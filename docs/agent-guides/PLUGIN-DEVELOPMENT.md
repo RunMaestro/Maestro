@@ -532,7 +532,7 @@ The API is three brokered calls plus event delivery:
 
 Caps and guarantees: at most **4 open sockets** per plugin; **64 KB** per frame in both directions; the connect is pinned through the same egress guard as `net.fetch` (loopback / RFC1918 / link-local / cloud-metadata are blocked); and `send`/`close` re-authorize your still-held grant on every call, so if the user revokes `net:connect` mid-stream the next call is denied. Every socket is force-closed when the plugin is disabled, crashes, or is uninstalled.
 
-Because the gateway must survive a crash, pair `net:connect` with `maestro.background.register(...)` (`background:service`) so the supervisor restarts your plugin and you reopen the socket in `activate`. For a reply and resumable provider session, call `maestro.agents.send(...)`. Both `send` and `dispatch` need the allowlist `agents:dispatch` grant and separate **unattended consent**.
+Because the gateway must survive a crash, pair `net:connect` with `maestro.background.register(...)` (`background:service`) so the supervisor restarts your plugin and you reopen the socket in `activate`. For a reply and resumable provider session, call `maestro.agents.send(...)`. The host records successful provider sessions and only resumes one for the same plugin and agent; persist the returned ID per external thread. Both `send` and `dispatch` need the allowlist `agents:dispatch` grant and separate **unattended consent**.
 
 ```js
 /** @import { MaestroSdk } from '@maestro/plugin-sdk' */

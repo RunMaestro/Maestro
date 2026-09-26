@@ -23,6 +23,7 @@ import type { PermissionBroker } from './permission-broker';
 import type { HostMethod } from '../../shared/plugins/rpc-protocol';
 import type { ActionGuard } from './action-guard';
 import type { PluginKvStore } from './plugin-kv-store';
+import type { PluginAgentSessionBindings } from './plugin-agent-session-bindings';
 import type { EgressGuard } from './net-egress-guard';
 import type { PluginBackgroundHealth } from './plugin-background-supervisor';
 import type { SpawnBinaryEntry } from './spawn-binary-registry';
@@ -300,6 +301,8 @@ export interface HostHandlerDeps {
 		sessionId: string | null;
 		error?: string;
 	}>;
+	/** Host-only persistent ownership ledger for resumable provider sessions. */
+	providerSessions?: PluginAgentSessionBindings;
 	/** Whether the plugin holds the separate, revocable UNATTENDED consent for
 	 * `agents:dispatch` against `agentId`. Direct plugin dispatch is definitionally
 	 * "nobody at the keyboard" (a plugin's own code called it), so the handler
@@ -1511,6 +1514,13 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 			}
 			assertTrustedActVerb(deps, pluginId);
 			assertLowOrMediumRisk(prompt);
+			const providerSessions = deps.providerSessions;
+			if (!providerSessions) {
+				throw new Error('agents.send: provider session binding store unavailable');
+			}
+			if (opts.sessionId) {
+				providerSessions.assertOwned(pluginId, agentId, opts.sessionId as string);
+			}
 			return underGuard(
 				deps.actionGuard,
 				pluginId,
@@ -1528,10 +1538,15 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 							opts.sessionId as string | undefined,
 							controller.signal
 						);
+						if (success && sessionId) {
+							providerSessions.remember(pluginId, agentId, sessionId);
+						}
 						return { success, response, sessionId, ...(error ? { error } : {}) };
 					} finally {
 						runs.delete(controller);
-						if (runs.size === 0) activeRuns.delete(pluginId);
+						if (runs.size === 0 && activeRuns.get(pluginId) === runs) {
+							activeRuns.delete(pluginId);
+						}
 					}
 				}
 			);

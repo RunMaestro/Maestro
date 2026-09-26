@@ -169,7 +169,13 @@ describe('cue-spawn-builder', () => {
 			expect(pluginToolRunIdentity.resolve(result.spec.pluginRunToken).callerAgentId).toBe(
 				'session-1'
 			);
-			expect(result.spec.args.join(' ')).toContain(result.spec.pluginRunProofFile);
+			const mcpConfigArg = result.spec.args[result.spec.args.indexOf('--mcp-config') + 1];
+			const mcpConfig = JSON.parse(mcpConfigArg) as {
+				mcpServers: { maestro: { env: { MAESTRO_PLUGIN_RUN_TOKEN_FILE: string } } };
+			};
+			expect(mcpConfig.mcpServers.maestro.env.MAESTRO_PLUGIN_RUN_TOKEN_FILE).toBe(
+				result.spec.pluginRunProofFile
+			);
 			pluginToolRunIdentity.revoke(result.spec.pluginRunToken!);
 			removePluginRunProofFile(result.spec.pluginRunProofFile!);
 		});

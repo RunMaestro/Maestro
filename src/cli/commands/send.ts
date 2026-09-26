@@ -7,7 +7,11 @@ import { resolveAgentId, getSessionById } from '../services/storage';
 import { prepareMaestroSystemPromptCli } from '../services/system-prompt';
 import { estimateContextUsage } from '../../main/parsers/usage-aggregator';
 import { getAgentDefinition } from '../../main/agents/definitions';
-import { MaestroClient, withMaestroClient } from '../services/maestro-client';
+import {
+	MaestroClient,
+	UnsupportedCommandError,
+	withMaestroClient,
+} from '../services/maestro-client';
 import type { ToolType } from '../../shared/types';
 
 interface SendOptions {
@@ -37,6 +41,15 @@ interface SendResponse {
 		contextWindow: number;
 		contextUsagePercent: number | null;
 	} | null;
+}
+
+interface DesktopSendAgentReply {
+	available?: boolean;
+	success?: boolean;
+	response?: string | null;
+	sessionId?: string | null;
+	error?: string;
+	usageStats?: AgentResult['usageStats'];
 }
 
 function emitErrorJson(error: string, code: string): void {
@@ -154,24 +167,31 @@ export async function send(
 					message.length <= 64 * 1024 &&
 					(!agentSessionId || /^[^\x00-\x1f\x7f]{1,256}$/.test(agentSessionId))
 				) {
-					const reply = await desktop.sendCommand<{
-						available?: boolean;
-						success?: boolean;
-						response?: string | null;
-						sessionId?: string | null;
-						error?: string;
-						usageStats?: AgentResult['usageStats'];
-					}>(
-						{
-							type: 'plugins_send_agent',
-							agentId,
-							prompt: message,
-							providerSessionId: agentSessionId || undefined,
-						},
-						'plugins_send_agent_result',
-						21 * 60_000
-					);
-					if (reply.available !== false)
+					let reply: DesktopSendAgentReply | null = null;
+					try {
+						reply = await desktop.sendCommand<DesktopSendAgentReply>(
+							{
+								type: 'plugins_send_agent',
+								agentId,
+								prompt: message,
+								providerSessionId: agentSessionId || undefined,
+							},
+							'plugins_send_agent_result',
+							21 * 60_000
+						);
+					} catch (error) {
+						// An older desktop echoes an unsupported verb before starting any
+						// provider run, so the standalone CLI path is safe to use.
+						if (!(error instanceof UnsupportedCommandError)) {
+							// A dropped connection or timeout may have happened AFTER the
+							// desktop started work. Never spawn a duplicate local run.
+							return {
+								success: false,
+								error: error instanceof Error ? error.message : String(error),
+							};
+						}
+					}
+					if (reply && reply.available !== false)
 						return {
 							success: reply.success === true,
 							response: reply.response ?? undefined,
