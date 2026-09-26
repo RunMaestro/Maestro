@@ -47,7 +47,11 @@ import { PermissionBroker } from './plugins/permission-broker';
 import { PluginSandboxHost } from './plugins/plugin-sandbox-host';
 import { PluginBackgroundSupervisor } from './plugins/plugin-background-supervisor';
 import { PluginGroupingRegistry } from './plugins/plugin-grouping-registry';
-import { setActivePluginManager } from './plugins/plugin-manager-singleton';
+import {
+	setActivePluginManager,
+	setHeadlessAgentRunner,
+	type HeadlessAgentRunner,
+} from './plugins/plugin-manager-singleton';
 import { PluginSchedulerHost } from './plugins/plugin-scheduler-host';
 import {
 	buildHostCallHandlers,
@@ -98,7 +102,12 @@ import {
 import { configureCueTelemetry } from './cue/cue-telemetry';
 import { executeCuePrompt, stopCueRun } from './cue/cue-executor';
 import { executeCueShell } from './cue/cue-shell-executor';
-import { executeCueCli } from './cue/cue-cli-executor';
+import { executeCueCli, resolveMaestroCliScriptPath } from './cue/cue-cli-executor';
+import { spawnAgent, detectAgent } from '../cli/services/agent-spawner';
+import { prepareMaestroSystemPromptCli } from '../cli/services/system-prompt';
+import { pluginToolRunIdentity } from './plugins/plugin-tool-run-identity';
+import { createPluginHeadlessAgentRunner } from './plugins/plugin-headless-agent-runner';
+import type { SessionInfo } from '../shared/types';
 import { executeCueNotify } from './cue/cue-notify-executor';
 import { reportCueAuthFailure } from './cue/cue-auth-detector';
 import { setSusFactorNotifier } from './cue/cue-susfactor';
@@ -2258,6 +2267,25 @@ app
 			}
 		});
 		pluginGroupingRegistry = groupingRegistry;
+		const runHeadlessAgent: HeadlessAgentRunner = createPluginHeadlessAgentRunner({
+			getAgent: (agentId) =>
+				(sessionsStore.get('sessions', []) as SessionInfo[]).find(
+					(session) => session.id === agentId
+				),
+			detectAgent,
+			hasPluginTools: () => (pluginManager?.getContributions().tools.length ?? 0) > 0,
+			spawn: spawnAgent,
+			prepareSystemPrompt: prepareMaestroSystemPromptCli,
+			issueRunToken: (agentId, ttlMs) => pluginToolRunIdentity.issue(agentId, ttlMs),
+			revokeRunToken: (token) => pluginToolRunIdentity.revoke(token),
+			cliScriptPath: resolveMaestroCliScriptPath,
+			audit: (agentId, resumed) =>
+				logger.info(
+					`agents.send -> agent ${agentId} providerSession=${resumed ? 'resume' : 'fresh'}`,
+					'[PluginAudit]'
+				),
+		});
+		setHeadlessAgentRunner(runHeadlessAgent);
 		const sandboxHost = new PluginSandboxHost({
 			broker: pluginBroker,
 			handlers: buildHostCallHandlers({
@@ -2396,6 +2424,7 @@ app
 					pluginManager?.getRegistry().records.find((r) => r.id === pluginId)?.signature?.status ===
 					'trusted',
 				dispatch: async (agentId, prompt) => dispatchPromptToSession(agentId, prompt),
+				sendAgent: runHeadlessAgent,
 				// Direct plugin dispatch is never user-present, so it requires the
 				// separate unattended consent on TOP of the interactive allowlist grant
 				// - the same grant source and check the time-based scheduler uses.

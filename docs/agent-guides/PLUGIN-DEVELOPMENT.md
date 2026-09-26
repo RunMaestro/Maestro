@@ -94,7 +94,7 @@ One folder per plugin. The folder name and the manifest `id` must agree on insta
 | `name`        | string                   | yes       | display name                                                                                                                                                                                                       |
 | `version`     | string                   | yes       | semver (distinct from `minHostApi`)                                                                                                                                                                                |
 | `tier`        | `0 \| 1 \| 2`            | yes       | trust/capability tier                                                                                                                                                                                              |
-| `maestro`     | `{ minHostApi: string }` | yes       | minimum host API (current host is `1.16.0`)                                                                                                                                                                        |
+| `maestro`     | `{ minHostApi: string }` | yes       | minimum host API (current host is `1.17.0`)                                                                                                                                                                        |
 | `description` | string                   | no        |                                                                                                                                                                                                                    |
 | `author`      | string                   | no        |                                                                                                                                                                                                                    |
 | `license`     | string                   | no        |                                                                                                                                                                                                                    |
@@ -277,7 +277,7 @@ The `key` must NOT: be a prototype segment (`__proto__` / `prototype` / `constru
 }
 ```
 
-Only `action: 'notify'` runs on tier 0. `action: 'dispatch'` needs `agents:dispatch`, which is currently inert.
+Only `action: 'notify'` runs on tier 0. `action: 'dispatch'` needs `agents:dispatch` and its host gates.
 
 ### commands (tier 1)
 
@@ -377,7 +377,7 @@ host controls the frame, icon mapping, tooltip, and non-suppressible plugin prov
 
 ### tools (tier 1)
 
-`{ id, name, description, inputSchema? }` - a named operation an agent can call. Register a handler with `maestro.tools.register(localId, fn)`; the host invokes it via a brokered request/response (`plugins:invoke-tool`) and your handler's return value is returned to the caller. When the `plugins` feature is on, registered tools are also exposed to a spawned agent's model over MCP: the host points the agent at `maestro-cli mcp serve` (claude and codex auto-inject the ephemeral config; other agents are best-guess), and every model-initiated call is risk-gated before the broker runs it.
+`{ id, name, description, inputSchema? }` - a named operation an agent can call. Register a handler with `maestro.tools.register(localId, fn)`; the host invokes it via a brokered request/response and returns the handler's result. The handler receives `(args, context)`, where `context.callerAgentId` is a host-verified agent ID or `null`. Never use `args.agentId` as caller identity. When the `plugins` feature is on, registered tools are also exposed to a spawned agent's model over MCP: the host points local Claude and Codex runs at `maestro-cli mcp serve`, and every model-initiated call is risk-gated. See [Relay host contract](../relay-host-contract.md).
 
 ### keybindings (tier 1)
 
@@ -462,42 +462,43 @@ module.exports = { activate, deactivate };
 
 Every method below is broker-gated and needs the matching capability granted. Signatures are copied from `buildSdk` (`src/main/plugins/plugin-sandbox-entry.ts`).
 
-| SDK method                                                                          | Capability                   |
-| ----------------------------------------------------------------------------------- | ---------------------------- |
-| `maestro.pluginId` (string)                                                         | -                            |
-| `maestro.fs.read(path)` -> `Promise<string>`                                        | `fs:read`                    |
-| `maestro.fs.write(path, contents)` -> `Promise<void>`                               | `fs:write`                   |
-| `maestro.net.fetch(url, init?)` -> `Promise<unknown>`                               | `net:fetch`                  |
-| `maestro.net.connect(url, opts?)` -> `Promise<{ socketId }>` (`wss://` only)        | `net:connect`                |
-| `maestro.net.send(socketId, data)` -> `Promise<{ ok: true }>`                       | `net:connect`                |
-| `maestro.net.close(socketId, opts?)` -> `Promise<{ ok: true }>`                     | `net:connect`                |
-| `maestro.agents.list()`                                                             | `agents:read`                |
-| `maestro.agents.get(agentId)`                                                       | `agents:read`                |
-| `maestro.agents.dispatch(agentId, prompt, opts?)` (needs unattended consent)        | `agents:dispatch`            |
-| `maestro.notifications.toast(message, opts?)` -> `Promise<void>`                    | `notifications:toast`        |
-| `maestro.settings.get(key)`                                                         | `settings:read`              |
-| `maestro.settings.set(key, value)` (key must be `plugins.<id>.*`)                   | `settings:write`             |
-| `maestro.sessions.list()` (metadata only)                                           | `sessions:read`              |
-| `maestro.sessions.get(sessionId)` (metadata only)                                   | `sessions:read`              |
-| `maestro.sessions.focus(sessionId, tabId?)` -> `Promise<void>` (lands on an AI tab) | `sessions:focus`             |
-| `maestro.transcripts.read({ sessionId, fields, projectPath?, limit?, since? })`     | `transcripts:read`           |
-| `maestro.storage.get(key)`                                                          | `storage:read`               |
-| `maestro.storage.keys()`                                                            | `storage:read`               |
-| `maestro.storage.set(key, value)` (value is a string)                               | `storage:write`              |
-| `maestro.storage.delete(key)`                                                       | `storage:write`              |
-| `maestro.ui.runCommand(commandId, args?)`                                           | `ui:command`                 |
-| `maestro.ui.hostView.update(localId, blocks)` -> `Promise<void>`                    | `ui:hostView`                |
-| `maestro.ui.hostView.remove(localId)` -> `Promise<void>`                            | `ui:hostView`                |
-| `maestro.ui.panelPost(panelId, data)` -> `Promise<void>` (own panels, 64 KB JSON)   | `ui:panel`                   |
-| `maestro.ui.openPanel(panelId)` -> `Promise<void>` (own `modal` panels only)        | `ui:panel`                   |
-| `maestro.ui.closePanel(panelId)` -> `Promise<void>` (own `modal` panels only)       | `ui:panel`                   |
-| `maestro.ui.togglePanel(panelId)` -> `Promise<void>` (own `modal` panels only)      | `ui:panel`                   |
-| `maestro.events.on(topic, handler(payload, meta))`                                  | - (delivery needs subscribe) |
-| `maestro.events.subscribe(topics[])`                                                | `events:subscribe`           |
-| `maestro.events.unsubscribe(topics?)`                                               | `events:subscribe`           |
-| `maestro.commands.register(commandId, handler(args))`                               | - (invoked by host)          |
-| `maestro.tools.register(toolId, handler(args))` (result returned to host)           | - (invoked by host)          |
-| `maestro.process.spawn(command, opts?)` (trusted + gated)                           | `process:spawn`              |
+| SDK method                                                                               | Capability                   |
+| ---------------------------------------------------------------------------------------- | ---------------------------- |
+| `maestro.pluginId` (string)                                                              | -                            |
+| `maestro.fs.read(path)` -> `Promise<string>`                                             | `fs:read`                    |
+| `maestro.fs.write(path, contents)` -> `Promise<void>`                                    | `fs:write`                   |
+| `maestro.net.fetch(url, init?)` -> `Promise<unknown>`                                    | `net:fetch`                  |
+| `maestro.net.connect(url, opts?)` -> `Promise<{ socketId }>` (`wss://` only)             | `net:connect`                |
+| `maestro.net.send(socketId, data)` -> `Promise<{ ok: true }>`                            | `net:connect`                |
+| `maestro.net.close(socketId, opts?)` -> `Promise<{ ok: true }>`                          | `net:connect`                |
+| `maestro.agents.list()`                                                                  | `agents:read`                |
+| `maestro.agents.get(agentId)`                                                            | `agents:read`                |
+| `maestro.agents.dispatch(agentId, prompt, opts?)` (needs unattended consent)             | `agents:dispatch`            |
+| `maestro.agents.send(agentId, prompt, { sessionId? })` -> response + provider session ID | `agents:dispatch`            |
+| `maestro.notifications.toast(message, opts?)` -> `Promise<void>`                         | `notifications:toast`        |
+| `maestro.settings.get(key)`                                                              | `settings:read`              |
+| `maestro.settings.set(key, value)` (key must be `plugins.<id>.*`)                        | `settings:write`             |
+| `maestro.sessions.list()` (metadata only)                                                | `sessions:read`              |
+| `maestro.sessions.get(sessionId)` (metadata only)                                        | `sessions:read`              |
+| `maestro.sessions.focus(sessionId, tabId?)` -> `Promise<void>` (lands on an AI tab)      | `sessions:focus`             |
+| `maestro.transcripts.read({ sessionId, fields, projectPath?, limit?, since? })`          | `transcripts:read`           |
+| `maestro.storage.get(key)`                                                               | `storage:read`               |
+| `maestro.storage.keys()`                                                                 | `storage:read`               |
+| `maestro.storage.set(key, value)` (value is a string)                                    | `storage:write`              |
+| `maestro.storage.delete(key)`                                                            | `storage:write`              |
+| `maestro.ui.runCommand(commandId, args?)`                                                | `ui:command`                 |
+| `maestro.ui.hostView.update(localId, blocks)` -> `Promise<void>`                         | `ui:hostView`                |
+| `maestro.ui.hostView.remove(localId)` -> `Promise<void>`                                 | `ui:hostView`                |
+| `maestro.ui.panelPost(panelId, data)` -> `Promise<void>` (own panels, 64 KB JSON)        | `ui:panel`                   |
+| `maestro.ui.openPanel(panelId)` -> `Promise<void>` (own `modal` panels only)             | `ui:panel`                   |
+| `maestro.ui.closePanel(panelId)` -> `Promise<void>` (own `modal` panels only)            | `ui:panel`                   |
+| `maestro.ui.togglePanel(panelId)` -> `Promise<void>` (own `modal` panels only)           | `ui:panel`                   |
+| `maestro.events.on(topic, handler(payload, meta))`                                       | - (delivery needs subscribe) |
+| `maestro.events.subscribe(topics[])`                                                     | `events:subscribe`           |
+| `maestro.events.unsubscribe(topics?)`                                                    | `events:subscribe`           |
+| `maestro.commands.register(commandId, handler(args))`                                    | - (invoked by host)          |
+| `maestro.tools.register(toolId, handler(args, context))` (verified caller ID or null)    | - (invoked by host)          |
+| `maestro.process.spawn(command, opts?)` (trusted + gated)                                | `process:spawn`              |
 
 `net.fetch` returns `{ status, statusText, headers, body }` (body is text, capped at 5 MB). Requests are egress-guarded: loopback, link-local, RFC1918, cloud-metadata, and the app's own port are blocked, and redirects are not followed (`redirect: 'error'`), so a 3xx to a non-granted host fails.
 
@@ -531,7 +532,7 @@ The API is three brokered calls plus event delivery:
 
 Caps and guarantees: at most **4 open sockets** per plugin; **64 KB** per frame in both directions; the connect is pinned through the same egress guard as `net.fetch` (loopback / RFC1918 / link-local / cloud-metadata are blocked); and `send`/`close` re-authorize your still-held grant on every call, so if the user revokes `net:connect` mid-stream the next call is denied. Every socket is force-closed when the plugin is disabled, crashes, or is uninstalled.
 
-Because the gateway must survive a crash, pair `net:connect` with `maestro.background.register(...)` (`background:service`) so the supervisor restarts your plugin and you reopen the socket in `activate`. And if your bridge turns inbound messages into agent work via `maestro.agents.dispatch(...)`, that path needs BOTH the allowlist `agents:dispatch` grant AND the separate **unattended consent** - dispatch driven by a socket event is never user-present.
+Because the gateway must survive a crash, pair `net:connect` with `maestro.background.register(...)` (`background:service`) so the supervisor restarts your plugin and you reopen the socket in `activate`. For a reply and resumable provider session, call `maestro.agents.send(...)`. Both `send` and `dispatch` need the allowlist `agents:dispatch` grant and separate **unattended consent**.
 
 ```js
 /** @import { MaestroSdk } from '@maestro/plugin-sdk' */
@@ -697,7 +698,7 @@ An integral-but-untrusted plugin still runs once the user enables = consents. A 
 - **Host-API compatibility is strict.** Same major and `host >= minHostApi`, or the plugin will not load.
 - **Setting-key rules are enforced twice** (declarative contributions and runtime `settings.set`): no prototype segments, no `encoreFeatures`, no secret-looking names, no path separators.
 - **`entry` rules:** required for tier >= 1, forbidden for tier 0, must stay inside the plugin folder.
-- **Inert capabilities:** `agents:dispatch` and `process:spawn` are declared but have no production handler; do not build on them yet.
+- **Local tool identity:** `context.callerAgentId` is `null` without a valid host-issued run proof. Reject it for identity-sensitive effects. Local Claude API-mode and Codex desktop, Cue, and desktop-backed CLI runs receive proofs; Claude maestro-p and SSH runs do not receive a local MCP bridge.
 - **Trusted chrome cannot be extended.** Declarative `uiItems`, sandboxed panels, and any high-trust `ui:render-unsafe` UI must never target or cover plugin management/enable-disable controls, consent dialogs, uninstall/grant-revoke flows, or SSH/permission-mode/agent-identity indicators.
 
 ## 14. Tooling: the SDK package and the `maestro plugin` CLI

@@ -21,7 +21,9 @@
 import semver from 'semver';
 
 /**
- * The host API version this Maestro build implements. Bumped to 1.16.0 for three
+ * The host API version this Maestro build implements. Bumped to 1.17.0 for
+ * `agents.send` and the verified second argument to plugin tool handlers.
+ * 1.16.0 added three
  * backward-compatible additions: the metadata-only `session.activated` event
  * topic (`{ sessionId, tabId? }`, opaque ids only, fired when the focused agent
  * changes), the `sessions.focus` method plus its narrow `sessions:focus`
@@ -52,7 +54,7 @@ import semver from 'semver';
  * `ui:contribute` / `ui:panel` / `ui:render-unsafe` UI capabilities; 1.3.0
  * added `tools` + `keybindings`; 1.2.0 added `transcripts:read`.
  */
-export const HOST_API_VERSION = '1.16.0';
+export const HOST_API_VERSION = '1.17.0';
 
 /** Result of checking a plugin's declared host-API requirement. */
 export interface HostApiCompatibility {

@@ -292,7 +292,12 @@ export class PluginSandboxHost {
 	 * too many tool calls are already in flight, the round-trip exceeds
 	 * {@link TOOL_INVOKE_TIMEOUT_MS}, or the child exits before replying.
 	 */
-	invokeTool(pluginId: string, commandId: string, args?: unknown): Promise<unknown> {
+	invokeTool(
+		pluginId: string,
+		commandId: string,
+		args?: unknown,
+		context: { callerAgentId: string | null } = { callerAgentId: null }
+	): Promise<unknown> {
 		const record = this.running.get(pluginId);
 		if (!record) return Promise.reject(new Error(`plugin "${pluginId}" is not running`));
 		// Bound the host->child payload exactly like invokeCommand / HostRequest.
@@ -318,7 +323,7 @@ export class PluginSandboxHost {
 			if (typeof timer.unref === 'function') timer.unref();
 			record.pendingTools.set(id, { resolve, reject, timer });
 			try {
-				record.proc.postMessage({ kind: 'invokeTool', id, commandId, args });
+				record.proc.postMessage({ kind: 'invokeTool', id, commandId, args, context });
 			} catch (err) {
 				record.pendingTools.delete(id);
 				clearTimeout(timer);
