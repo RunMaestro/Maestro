@@ -76,6 +76,12 @@ export const FEATURES_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		default: { ...ENCORE_FEATURE_DEFAULTS },
 		category: 'advanced',
 	},
+	pianolaAutoWatchNewAgents: {
+		description: 'Automatically watch newly created top-level agents when Pianola is enabled.',
+		type: 'boolean',
+		default: false,
+		category: 'advanced',
+	},
 	directorNotesSettings: {
 		description:
 			"Director's Notes settings: provider (or auto-select), lookback window, default reading mode, optional ideal end state.",

@@ -19,6 +19,7 @@ import type { ChildProcess } from 'child_process';
 // target list without touching electron, fs, or a real watcher.
 vi.mock('../../../main/pianola/pianola-store-main', () => ({
 	readSupervisorTargets: vi.fn(() => []),
+	writeSupervisorTargets: vi.fn(),
 	supervisorFilePath: vi.fn(() => '/fake/maestro-pianola-supervisor.json'),
 }));
 vi.mock('../../../main/cue/cue-cli-executor', () => ({
@@ -33,7 +34,10 @@ vi.mock('../../../main/utils/logger', () => ({
 vi.mock('../../../shared/platformDetection', () => ({ isWindows: () => false }));
 
 import { PianolaSupervisor } from '../../../main/pianola/pianola-supervisor';
-import { readSupervisorTargets } from '../../../main/pianola/pianola-store-main';
+import {
+	readSupervisorTargets,
+	writeSupervisorTargets,
+} from '../../../main/pianola/pianola-store-main';
 import type { PianolaSupervisedTarget } from '../../../shared/pianola/storage';
 
 // Mirror the (unexported) source constants so timing assertions stay in sync.
@@ -127,6 +131,55 @@ beforeEach(() => {
 
 afterEach(() => {
 	vi.useRealTimers();
+});
+
+describe('PianolaSupervisor automatic watches', () => {
+	it('registers only new top-level agents and waits for an AI tab', () => {
+		vi.mocked(writeSupervisorTargets).mockImplementation((targets) => {
+			setTargets(targets);
+			return targets;
+		});
+		const newAgent = { id: 'new', aiTabs: [] as Array<{ id: string }>, activeTabId: 'file' };
+		const pianola = { id: 'manager', isPianola: true, aiTabs: [{ id: 'manager-tab' }] };
+		const child = { id: 'child', parentSessionId: 'new', aiTabs: [{ id: 'child-tab' }] };
+		sup.autoWatchNewSessions([newAgent, pianola, child], [newAgent, pianola, child], true);
+		expect(writeSupervisorTargets).not.toHaveBeenCalled();
+
+		const ready = { ...newAgent, aiTabs: [{ id: 'ai-tab' }] };
+		sup.autoWatchNewSessions([], [ready, pianola, child], true);
+		expect(writeSupervisorTargets).toHaveBeenCalledOnce();
+		expect(vi.mocked(writeSupervisorTargets).mock.calls[0][0]).toEqual([
+			expect.objectContaining({ kind: 'watch', agentId: 'new', tabId: 'ai-tab', enabled: true }),
+		]);
+		expect(spawned).toHaveLength(1);
+		sup.autoWatchNewSessions([], [ready], true);
+		expect(writeSupervisorTargets).toHaveBeenCalledOnce();
+	});
+
+	it('respects the option, Encore gate, and existing disabled watches', () => {
+		const fresh = { id: 'fresh', aiTabs: [{ id: 'tab' }] };
+		sup.autoWatchNewSessions([fresh], [fresh], false);
+		expect(writeSupervisorTargets).not.toHaveBeenCalled();
+		enabled = false;
+		sup.autoWatchNewSessions([fresh], [fresh], true);
+		expect(writeSupervisorTargets).not.toHaveBeenCalled();
+		enabled = true;
+		setTargets([{ ...watchTarget(), agentId: 'fresh', enabled: false }]);
+		sup.autoWatchNewSessions([fresh], [fresh], true);
+		expect(writeSupervisorTargets).not.toHaveBeenCalled();
+	});
+
+	it('retires only automatically created watches when agents close', () => {
+		const automatic = { ...watchTarget('auto'), agentId: 'closed', autoCreated: true };
+		const manual = { ...watchTarget('manual'), agentId: 'closed' };
+		setTargets([automatic, manual]);
+		vi.mocked(writeSupervisorTargets).mockImplementation((targets) => {
+			setTargets(targets);
+			return targets;
+		});
+		sup.autoWatchNewSessions([], [], false, ['closed']);
+		expect(writeSupervisorTargets).toHaveBeenCalledWith([manual]);
+	});
 });
 
 describe('PianolaSupervisor spawn + exit lifecycle', () => {

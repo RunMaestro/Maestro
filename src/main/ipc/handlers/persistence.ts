@@ -176,6 +176,12 @@ export interface PersistenceHandlerDependencies {
 	emitPluginEvent?: (event: PluginEvent) => void;
 	/** Resolve only after the deferred sessions document reaches disk. */
 	flushSessionWrites: () => Promise<void>;
+	/** Called after a durable session write so Pianola can register new agents. */
+	onSessionsPersisted?: (
+		added: StoredSession[],
+		current: StoredSession[],
+		removedIds: string[]
+	) => void;
 }
 
 /**
@@ -208,6 +214,7 @@ export function registerPersistenceHandlers(
 		getWebServer,
 		emitPluginEvent,
 		flushSessionWrites,
+		onSessionsPersisted,
 	} = deps;
 	const sessionWriteQueue = createKeyedWriteQueue();
 	const queueWrite =
@@ -666,6 +673,11 @@ export function registerPersistenceHandlers(
 			// left, so an agent created or closed in one of them stops being
 			// invisible to - and resurrectable by - the rest.
 			const removedIds = removeIds.filter((id) => previousMap.has(id));
+			onSessionsPersisted?.(
+				merged.filter((s) => !previousMap.has(s.id)),
+				merged,
+				removedIds
+			);
 			rememberRemovedSessions(removedIds);
 			// A closed agent can never produce another turn, so drop whatever the
 			// spawn path noted about who was driving its tabs.
@@ -782,6 +794,11 @@ export function registerPersistenceHandlers(
 			}
 
 			// Tell the other clients about agents this bootstrap flush introduced.
+			onSessionsPersisted?.(
+				sessions.filter((s) => !previousSessionMap.has(s.id)),
+				sessions,
+				[]
+			);
 			// Only ADDITIONS travel from here: setAll is a client's opening statement
 			// of its own tree, made before it can have heard about anything a peer
 			// created since it loaded, so treating an absent id as a close would let

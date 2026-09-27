@@ -18,7 +18,7 @@ That agent is a real chat agent, so you can talk to it like any other. Its works
 
 ## The one thing to understand first
 
-**Nothing is watched until you say so, and nothing is auto-answered without a rule you wrote.**
+**Nothing is watched until you add an agent or enable automatic watching, and nothing is auto-answered without a rule you wrote.**
 
 With no rules at all, Pianola is a monitor. It tells you who is stuck and stays out of the way. That is a genuinely useful mode and it is where you should start, because the rules worth writing are the ones your own agents teach you they need.
 
@@ -28,7 +28,9 @@ Click the pinned Pianola agent, then use the Dashboard / Chat toggle in its tab 
 
 ### Dashboard
 
-Who needs you, who is working, who just finished. The **Watching** section lists what Pianola is babysitting, and the **+** button adds one of your other agents.
+Who needs you, who is working, who just finished. The **Watching** section lists what Pianola is babysitting, and the **+** button adds one of your other agents. Lists with more than five watches start collapsed; use **Show agents** to expand them.
+
+Turn on **Automatically watch new agents** in this section to watch newly created top-level agents as soon as they have an AI tab. This option is off by default and does not add existing agents or worktree children. A manually paused watch stays paused. Automatic watches are removed when their agent is closed.
 
 Each watch is supervised by the desktop app. It restarts on crash and comes back when you relaunch, so it keeps working while you are away from the keyboard. Busy worktree agents are grouped under their parent so a five-worktree project reads as one row rather than five.
 
@@ -82,7 +84,7 @@ These are not configurable, and that is the point.
 - **High-risk prompts always escalate.** No rule can auto-answer or silence one. The transcript Pianola is reading is not trusted input, so anything that reads as high risk goes to you.
 - **No matching rule means escalate.** Pianola never invents an answer.
 - **A low-confidence read escalates.** It does not guess.
-- **Only the agents you added a watch for are touched.** Everything else is left alone.
+- **Only agents with a watch are touched.** You can add watches manually or enable automatic watching for newly created agents. Everything else is left alone.
 
 ## Task plans
 

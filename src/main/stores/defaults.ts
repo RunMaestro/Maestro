@@ -127,6 +127,7 @@ export const SETTINGS_DEFAULTS: MaestroSettings = {
 	concertoStagePosition: null,
 	spellCheck: false,
 	usageRefreshIntervals: {},
+	pianolaAutoWatchNewAgents: false,
 	annotatorPenColor: '#9146FF',
 	annotatorPenSize: 10,
 	annotatorThinning: 0.5,

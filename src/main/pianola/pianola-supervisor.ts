@@ -23,8 +23,13 @@ import { resolveMaestroCliScriptPath } from '../cue/cue-cli-executor';
 import { captureException } from '../utils/sentry';
 import { logger } from '../utils/logger';
 import { isWindows } from '../../shared/platformDetection';
-import { readSupervisorTargets, supervisorFilePath } from './pianola-store-main';
+import {
+	readSupervisorTargets,
+	writeSupervisorTargets,
+	supervisorFilePath,
+} from './pianola-store-main';
 import type { PianolaSupervisedTarget, PianolaSupervisedKind } from '../../shared/pianola/storage';
+import { generateUUID } from '../../shared/uuid';
 
 const LOG_CONTEXT = '[PianolaSupervisor]';
 
@@ -96,6 +101,15 @@ export interface PianolaSupervisorDeps {
 	spawnChild?: PianolaChildSpawner;
 }
 
+/** Only fields needed to register a newly persisted agent's first AI tab. */
+export interface AutoWatchSession {
+	id: string;
+	isPianola?: boolean;
+	parentSessionId?: string;
+	activeTabId?: string;
+	aiTabs?: Array<{ id: string }>;
+}
+
 /**
  * Pure stale-detection: of the persisted targets, which enabled ones have no
  * live supervised child? `isAlive(id)` reports whether the supervisor currently
@@ -116,6 +130,8 @@ export function staleTargets(
 export class PianolaSupervisor {
 	private readonly deps: PianolaSupervisorDeps;
 	private readonly children = new Map<string, SupervisedChild>();
+	/** Newly created agents whose first AI tab has not reached persistence yet. */
+	private readonly pendingAutoWatchIds = new Set<string>();
 	private watcher: fs.FSWatcher | null = null;
 	private reconcileTimer: ReturnType<typeof setTimeout> | undefined;
 	private started = false;
@@ -124,6 +140,69 @@ export class PianolaSupervisor {
 	constructor(deps: PianolaSupervisorDeps) {
 		this.deps = deps;
 		this.spawnChild = deps.spawnChild ?? ((command, args, opts) => spawn(command, args, opts));
+	}
+
+	/** Register future top-level agents and retire their watches when they close. */
+	autoWatchNewSessions(
+		added: readonly AutoWatchSession[],
+		current: readonly AutoWatchSession[],
+		autoWatchEnabled: boolean,
+		removedIds: readonly string[] = []
+	): void {
+		const canAdd = autoWatchEnabled && this.deps.isEnabled();
+		if (!canAdd) {
+			this.pendingAutoWatchIds.clear();
+		} else {
+			for (const session of added) {
+				if (session.id && !session.isPianola && !session.parentSessionId) {
+					this.pendingAutoWatchIds.add(session.id);
+				}
+			}
+		}
+		if (this.pendingAutoWatchIds.size === 0 && removedIds.length === 0) return;
+
+		const sessionsById = new Map(current.map((session) => [session.id, session]));
+		const targets = readSupervisorTargets();
+		const removed = new Set(removedIds.filter((id) => !sessionsById.has(id)));
+		const next = targets.filter(
+			(target) =>
+				!(target.kind === 'watch' && target.autoCreated && removed.has(target.agentId ?? ''))
+		);
+		const changed = next.length !== targets.length;
+		const watchedIds = new Set(
+			next.filter((target) => target.kind === 'watch').map((target) => target.agentId)
+		);
+		const registered: string[] = [];
+		for (const id of this.pendingAutoWatchIds) {
+			const session = sessionsById.get(id);
+			if (!session || session.isPianola || session.parentSessionId || watchedIds.has(id)) {
+				this.pendingAutoWatchIds.delete(id);
+				continue;
+			}
+			const aiTabIds = Array.isArray(session.aiTabs)
+				? session.aiTabs.flatMap((tab) => (typeof tab?.id === 'string' && tab.id ? [tab.id] : []))
+				: [];
+			const tabId =
+				session.activeTabId && aiTabIds.includes(session.activeTabId)
+					? session.activeTabId
+					: aiTabIds[0];
+			if (!tabId) continue;
+			next.push({
+				id: generateUUID(),
+				kind: 'watch',
+				agentId: id,
+				tabId,
+				enabled: true,
+				createdAt: Date.now(),
+				autoCreated: true,
+			});
+			watchedIds.add(id);
+			registered.push(id);
+		}
+		if (!changed && registered.length === 0) return;
+		writeSupervisorTargets(next);
+		for (const id of registered) this.pendingAutoWatchIds.delete(id);
+		this.reconcile();
 	}
 
 	/** Begin watching the store file and reconcile immediately. Idempotent. */

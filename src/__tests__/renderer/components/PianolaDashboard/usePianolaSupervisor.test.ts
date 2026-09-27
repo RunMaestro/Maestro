@@ -58,6 +58,27 @@ afterEach(() => {
 });
 
 describe('usePianolaSupervisor', () => {
+	it('loads and saves the automatic watch setting', async () => {
+		vi.mocked(window.maestro.settings.get).mockResolvedValueOnce(true);
+		const { result } = renderHook(() => usePianolaSupervisor());
+		await waitFor(() => expect(result.current.autoWatchNewAgents).toBe(true));
+		await act(async () => {
+			await result.current.setAutoWatchNewAgents(false);
+		});
+		expect(window.maestro.settings.set).toHaveBeenCalledWith('pianolaAutoWatchNewAgents', false);
+		expect(result.current.autoWatchNewAgents).toBe(false);
+	});
+
+	it('keeps the last automatic watch setting when persistence rejects it', async () => {
+		vi.mocked(window.maestro.settings.set).mockResolvedValueOnce(false);
+		const { result } = renderHook(() => usePianolaSupervisor());
+		await act(async () => {
+			await result.current.setAutoWatchNewAgents(true);
+		});
+		expect(result.current.autoWatchNewAgents).toBe(false);
+		expect(notifyToast).toHaveBeenCalledWith(expect.objectContaining({ color: 'red' }));
+	});
+
 	it('clears watched rows when Pianola becomes disabled', async () => {
 		listImpl = () => Promise.resolve(watchSnap);
 		const { result } = renderHook(() => usePianolaSupervisor());
