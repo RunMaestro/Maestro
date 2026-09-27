@@ -110,6 +110,8 @@ export const CLI_BACKGROUND_DEFAULTS = {
 	 * on-screen agent in place, an off-screen one the moment the user opens it.
 	 */
 	'refresh-auto-run': true,
+	/** maestro-cli auto-run - opens the configured Auto Run view today. */
+	'auto-run': false,
 	/**
 	 * maestro-cli switch-mode - proceeds today.
 	 *

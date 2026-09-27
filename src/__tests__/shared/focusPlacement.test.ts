@@ -32,6 +32,7 @@ const FOCUSING_TODAY: BackgroundCapableVerb[] = [
 	'create-agent',
 	'create-worktree',
 	'switch-mode',
+	'auto-run',
 	// The two snooze verbs that announce. `--background` suppresses the notice;
 	// absent, they flash/toast exactly as the click paths do.
 	'snooze',

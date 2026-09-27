@@ -33,6 +33,7 @@ vi.mock('../../../cli/services/system-prompt', () => ({
 vi.mock('../../../cli/services/storage', () => ({
 	resolveAgentId: vi.fn(),
 	getSessionById: vi.fn(),
+	getConfigDirectory: vi.fn(() => '/tmp/maestro-test'),
 }));
 
 // Mock usage-aggregator
@@ -62,6 +63,7 @@ import { prepareMaestroSystemPromptCli } from '../../../cli/services/system-prom
 
 describe('send command', () => {
 	let consoleSpy: MockInstance;
+	let consoleErrorSpy: MockInstance;
 	let processExitSpy: MockInstance;
 
 	const mockAgent = (overrides: Partial<SessionInfo> = {}): SessionInfo => ({
@@ -76,6 +78,7 @@ describe('send command', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+		consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 		processExitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
 		// Default: system-prompt builder returns undefined so existing assertions
 		// that don't include `appendSystemPrompt` keep passing (vitest treats
@@ -408,5 +411,63 @@ describe('send command', () => {
 		const output = JSON.parse(consoleSpy.mock.calls[0][0]);
 		expect(output.success).toBe(true);
 		expect(output.usage).toBeNull();
+	});
+
+	it('should focus the Maestro session tab when --tab is provided', async () => {
+		vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
+		vi.mocked(getSessionById).mockReturnValue(mockAgent());
+		vi.mocked(detectAgent).mockResolvedValue({ available: true, path: '/usr/bin/claude' });
+		vi.mocked(spawnAgent).mockResolvedValue({
+			success: true,
+			response: 'OK',
+			agentSessionId: 'session-no-stats',
+		});
+		vi.mocked(withMaestroClient).mockImplementation(async (action) => {
+			await action({
+				sendCommand: vi.fn().mockResolvedValue({
+					type: 'select_session_result',
+					success: true,
+					sessionId: 'agent-abc-123',
+				}),
+			} as never);
+		});
+
+		await send('agent-abc', 'Simple message', { tab: true });
+
+		expect(withMaestroClient).toHaveBeenCalledTimes(1);
+		const action = vi.mocked(withMaestroClient).mock.calls[0][0];
+		const sendCommand = vi.fn().mockResolvedValue({
+			type: 'select_session_result',
+			success: true,
+			sessionId: 'agent-abc-123',
+		});
+		await action({ sendCommand } as never);
+		expect(sendCommand).toHaveBeenCalledWith(
+			{ type: 'select_session', sessionId: 'agent-abc-123', focus: true },
+			'select_session_result'
+		);
+		expect(consoleErrorSpy).not.toHaveBeenCalled();
+		expect(processExitSpy).not.toHaveBeenCalled();
+	});
+
+	it('should warn but not fail when --tab cannot reach Maestro desktop', async () => {
+		vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
+		vi.mocked(getSessionById).mockReturnValue(mockAgent());
+		vi.mocked(detectAgent).mockResolvedValue({ available: true, path: '/usr/bin/claude' });
+		vi.mocked(spawnAgent).mockResolvedValue({
+			success: true,
+			response: 'OK',
+			agentSessionId: 'session-no-stats',
+		});
+		vi.mocked(withMaestroClient).mockRejectedValue(new Error('Maestro desktop app is not running'));
+
+		await send('agent-abc', 'Simple message', { tab: true });
+
+		const output = JSON.parse(consoleSpy.mock.calls[0][0]);
+		expect(output.success).toBe(true);
+		expect(consoleErrorSpy).toHaveBeenCalledWith(
+			'Warning: Could not focus session tab in Maestro desktop (app may not be running)'
+		);
+		expect(processExitSpy).not.toHaveBeenCalled();
 	});
 });

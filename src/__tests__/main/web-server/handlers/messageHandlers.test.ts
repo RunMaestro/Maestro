@@ -2764,6 +2764,9 @@ describe('WebSocketMessageHandler', () => {
 					maxLoops: 3,
 					saveAsPlaybook: undefined,
 					launch: true,
+					background: false,
+					model: undefined,
+					effort: undefined,
 					worktree: undefined,
 				});
 			});
@@ -2772,6 +2775,22 @@ describe('WebSocketMessageHandler', () => {
 			expect(response.type).toBe('configure_auto_run_result');
 			expect(response.success).toBe(true);
 			expect(response.sessionId).toBe('session-1');
+		});
+
+		it('should forward background placement as a strict opt-in', async () => {
+			handler.handleMessage(client, {
+				type: 'configure_auto_run',
+				sessionId: 'session-1',
+				documents: [{ filename: 'doc1.md' }],
+				background: true,
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.configureAutoRun).toHaveBeenCalledWith(
+					'session-1',
+					expect.objectContaining({ background: true })
+				);
+			});
 		});
 
 		it('should reject configure auto run with missing sessionId', () => {
@@ -2832,6 +2851,9 @@ describe('WebSocketMessageHandler', () => {
 					maxLoops: undefined,
 					saveAsPlaybook: 'My Playbook',
 					launch: undefined,
+					background: false,
+					model: undefined,
+					effort: undefined,
 					worktree: undefined,
 				});
 			});
@@ -2886,6 +2908,9 @@ describe('WebSocketMessageHandler', () => {
 					maxLoops: undefined,
 					saveAsPlaybook: undefined,
 					launch: true,
+					background: false,
+					model: undefined,
+					effort: undefined,
 					worktree: {
 						enabled: true,
 						path: '/tmp/worktree',
