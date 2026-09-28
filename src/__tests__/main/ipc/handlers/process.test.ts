@@ -3207,6 +3207,28 @@ describe('process IPC handlers', () => {
 				},
 			};
 
+			it('lets a global shell var beat an inherited copy of the same key', async () => {
+				const saved = process.env.CLAUDE_CONFIG_DIR;
+				process.env.CLAUDE_CONFIG_DIR = 'C:\\inherited';
+				mockSettingsStore.get.mockImplementation((key: string, defaultValue: unknown) =>
+					key === 'shellEnvVars' ? { CLAUDE_CONFIG_DIR: 'C:\\global' } : defaultValue
+				);
+				mockAgentDetector.getAgent.mockResolvedValue(mockAgent);
+				mockProcessManager.spawn.mockReturnValue({ pid: 12345, success: true });
+				try {
+					const handler = handlers.get('process:spawn');
+					await handler!({} as any, buildSpawnConfig());
+				} finally {
+					if (saved === undefined) delete process.env.CLAUDE_CONFIG_DIR;
+					else process.env.CLAUDE_CONFIG_DIR = saved;
+				}
+
+				const spawnCall = mockProcessManager.spawn.mock.calls[0][0];
+				expect(spawnCall.shellEnvVars).toMatchObject({ CLAUDE_CONFIG_DIR: 'C:\\global' });
+				expect(spawnCall.customEnvVars?.CLAUDE_CONFIG_DIR).toBeUndefined();
+				expect(spawnCall.customEnvVars?.PATH).toBeDefined();
+			});
+
 			it('writes temp file with prompt content via fs/promises', async () => {
 				const fsp = await import('fs/promises');
 				mockAgentDetector.getAgent.mockResolvedValue(mockAgent);

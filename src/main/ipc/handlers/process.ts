@@ -892,9 +892,22 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 				if (isWindows() && !config.sessionSshRemoteConfig?.enabled) {
 					// Use expanded environment with custom env vars to ensure PATH includes all binary locations
 					const expandedEnv = buildExpandedEnv(customEnvVarsToPass);
-					// Filter out undefined values to match Record<string, string> type
+					// The expanded env carries every INHERITED variable, and custom vars are
+					// applied after the global shell layer. An inherited copy of a key the
+					// global layer sets would therefore beat it, which no other platform
+					// does (and which sent the API-resume sanitizer, keyed off the global
+					// CLAUDE_CONFIG_DIR, to a different transcript than claude used). Drop
+					// those inherited copies so the global value wins. PATH stays expanded.
+					const explicitKeys = new Set(
+						Object.keys(customEnvVarsToPass ?? {}).map((k) => k.toUpperCase())
+					);
+					const globalKeys = new Set(Object.keys(globalShellEnvVars).map((k) => k.toUpperCase()));
 					customEnvVarsToPass = Object.fromEntries(
-						Object.entries(expandedEnv).filter(([_, value]) => value !== undefined)
+						Object.entries(expandedEnv).filter(([key, value]) => {
+							if (value === undefined) return false;
+							const upper = key.toUpperCase();
+							return upper === 'PATH' || explicitKeys.has(upper) || !globalKeys.has(upper);
+						})
 					) as Record<string, string>;
 
 					// Get the preferred shell for Windows (custom -> current -> PowerShell)
