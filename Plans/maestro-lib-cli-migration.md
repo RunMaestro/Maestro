@@ -6,6 +6,10 @@ moves every CLI entry point onto the same library and the same turn contract,
 records what was decided where the contract left a choice, and states what
 happens to the callers that were deliberately not migrated.
 
+macOS and OpenCode validation landed separately in PR #1648
+(`test/macos-resume-agents`). Results are recorded under the verification
+section.
+
 ## Which CLI entry points spawn an agent
 
 Exactly one module spawns agents: `src/cli/services/agent-spawner.ts`
@@ -231,16 +235,29 @@ was not squeezed in at the end of this one.
   | claude-code, pre-aborted signal      | `interrupted` in 0 ms, nothing spawned                                 |
   | copilot-cli, fresh turn              | not runnable on this machine, see below                                |
 
+- **Real provider runs (macOS), from PR #1648 (`test/macos-resume-agents`):**
+  macOS coverage was added in a follow-on branch that also fixed the API-resume
+  transcript sanitizer. These runs drive `spawnAgent` directly against
+  claude-code and OpenCode on macOS:
+
+  | Provider, flow          | Result                                               |
+  | ----------------------- | ---------------------------------------------------- |
+  | claude-code, fresh turn | `completed`, session id and usage captured           |
+  | claude-code, resume     | `completed`, same session id, prior context recalled |
+  | claude-code, interrupt  | `interrupted`, session id kept, no orphaned process  |
+  | opencode, fresh turn    | `completed`, token usage captured                    |
+  | opencode, resume        | `completed`, same session context                    |
+  | opencode, interrupt     | `interrupted`, clean exit, no orphaned process       |
+
 ### End-to-end runner validation (Linux, 2026-09-25)
 
 The Windows runs above drive `spawnAgent` directly. This pass drives the two
 runners through the real commands, against a live claude-code 2.1.282, from
 the bundled `dist/cli/maestro-cli.js` built off this branch (`d259a6b0c`).
 
-- **Machine:** Linux x86_64 (kernel 7.0), Node 22.22.1. **Not macOS:** the
-  request was for macOS and none was available, so nothing below speaks for
-  macOS signal or process-group behavior.
-- **OpenCode was not run:** it is not installed on this machine.
+- **Machine:** Linux x86_64 (kernel 7.0), Node 22.22.1.
+- **macOS:** covered separately in PR #1648 (see above).
+- **OpenCode:** covered on macOS in PR #1648 (see above); not installed on this Linux machine.
 - **Isolation:** `MAESTRO_USER_DATA` pointed at a scratch data dir holding one
   claude-code agent whose working directory was a scratch git repo. See the
   `cli-activity` finding below for the one file that ignores it.
@@ -344,6 +361,16 @@ the bundled `dist/cli/maestro-cli.js` built off this branch (`d259a6b0c`).
   (lowercase `maestro`), so an isolated CLI run still registers itself in
   the real user's file, and a test run can be seen as "busy" by a real
   desktop app. Every other store the runners wrote went to the isolated dir.
+  The stale entry left by a double-Ctrl+C is not completely harmless: an OS
+  may recycle the dead process's pid for an unrelated process, and any code
+  that only checks "is pid alive" to decide whether the registration is valid
+  would falsely report the CLI as busy. PR #1647
+  (`fix/cross-process-engine-lock`) introduced the cross-process engine lease,
+  which guards against exactly this class of PID reuse: it compares the
+  recorded instance identity token (not just the pid) before trusting a lease
+  file, so a recycled pid cannot be mistaken for a running Cue engine. The
+  `cli-activity.json` stale-entry path does not yet have the same
+  identity-token guard; it relies on pid liveness only.
 - **`run-doc` prints an empty task label** (`⏳ Task 1: `) with
   `--no-synopsis`. Cosmetic. Not investigated whether the label is filled
   without that flag.
@@ -352,16 +379,15 @@ the bundled `dist/cli/maestro-cli.js` built off this branch (`d259a6b0c`).
   reported `interrupted` (in `send`, `response: null`). The resolver checks the
   interrupt first by contract; no path reports `interrupted` when no abort
   fired.
-- **Not run at all:** macOS, and CI's `test (ubuntu-latest)` and
+- **Not run at all (this branch):** CI's `test (ubuntu-latest)` and
   `test (windows-latest)` legs. Local validation on one OS cannot stand in for
-  them; the branch is not mergeable until both are green. The end-to-end
-  runner pass above ran on Linux, which covers POSIX signals in general but
-  not macOS specifically.
+  them; the branch is not mergeable until both are green. The end-to-end runner
+  pass ran on Linux. macOS coverage landed in PR #1648 (see verification above).
 - **Real providers not installed on this machine** (codex, opencode, droid,
   grok, gemini, qwen, omp, pi, antigravity, hermes) were covered by the
-  recorded-scenario and real-classifier tests only. OpenCode was also missing
-  from the Linux end-to-end machine, so no live OpenCode run has happened on
-  any platform.
+  recorded-scenario and real-classifier tests only. OpenCode was not installed
+  on the Linux machine; live OpenCode runs on macOS are recorded in PR #1648
+  (see verification above).
 
 ## Open questions after this stage
 
