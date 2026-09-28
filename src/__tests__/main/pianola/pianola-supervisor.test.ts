@@ -42,6 +42,8 @@ import {
 	readSupervisorTargets,
 	writeSupervisorTargets,
 } from '../../../main/pianola/pianola-store-main';
+import { captureException } from '../../../main/utils/sentry';
+import * as fs from 'fs';
 import type { PianolaSupervisedTarget } from '../../../shared/pianola/storage';
 
 // Mirror the (unexported) source constants so timing assertions stay in sync.
@@ -139,6 +141,27 @@ afterEach(() => {
 });
 
 describe('PianolaSupervisor automatic watches', () => {
+	it('starts manual watches when startup pruning cannot be persisted', () => {
+		const error = new Error('read-only store');
+		setTargets([
+			{ ...watchTarget('orphan'), agentId: 'gone', autoCreated: true },
+			watchTarget('manual'),
+		]);
+		vi.mocked(writeSupervisorTargets).mockImplementationOnce(() => {
+			throw error;
+		});
+		sup = makeSupervisor([{ id: 'a1', aiTabs: [{ id: 't1' }] }]);
+		expect(() => sup.start()).not.toThrow();
+		expect(fs.watch).toHaveBeenCalled();
+		expect(sup.getHealth()).toContainEqual(
+			expect.objectContaining({ id: 'manual', state: 'running' })
+		);
+		expect(captureException).toHaveBeenCalledWith(error, {
+			operation: 'pianola:supervisor:pruneAutoWatches',
+		});
+		sup.stopAll();
+	});
+
 	it('prunes orphaned automatic watches before starting children, preserving manual targets', () => {
 		const orphan = { ...watchTarget('orphan'), agentId: 'gone', autoCreated: true };
 		const retained = [

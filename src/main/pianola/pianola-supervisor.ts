@@ -215,13 +215,18 @@ export class PianolaSupervisor {
 	start(): void {
 		if (this.started) return;
 		if (this.deps.getStoredSessions) {
-			const storedIds = new Set(this.deps.getStoredSessions().map((session) => session.id));
-			const targets = readSupervisorTargets();
-			const retained = targets.filter(
-				(target) =>
-					!(target.kind === 'watch' && target.autoCreated && !storedIds.has(target.agentId ?? ''))
-			);
-			if (retained.length !== targets.length) writeSupervisorTargets(retained);
+			try {
+				const storedIds = new Set(this.deps.getStoredSessions().map((session) => session.id));
+				const targets = readSupervisorTargets();
+				const retained = targets.filter(
+					(target) =>
+						!(target.kind === 'watch' && target.autoCreated && !storedIds.has(target.agentId ?? ''))
+				);
+				if (retained.length !== targets.length) writeSupervisorTargets(retained);
+			} catch (error) {
+				// Cleanup must not prevent retained/manual targets from starting.
+				void captureException(error, { operation: 'pianola:supervisor:pruneAutoWatches' });
+			}
 		}
 		this.started = true;
 		this.startWatching();
