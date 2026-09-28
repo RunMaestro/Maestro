@@ -133,16 +133,18 @@ describe('captureCliRun', () => {
 		expect(secondUpsert.metadata?.exitCode).toBe(1);
 	});
 
-	it('supports legacy numeric exit code returned by resolveExit', async () => {
+	it('settles run to failed when resolveSettlement throws an exception', async () => {
 		await captureCliRun(
 			sampleInput,
-			async () => 'custom-result',
-			() => 0
+			async () => ({ success: true }),
+			() => {
+				throw new Error('extractor exploded');
+			}
 		);
 
 		const secondUpsert = vi.mocked(upsertAgentRun).mock.calls[1][0] as AgentRun;
-		expect(secondUpsert.status).toBe('completed');
-		expect(secondUpsert.metadata?.exitCode).toBe(0);
+		expect(secondUpsert.status).toBe('failed');
+		expect(secondUpsert.metadata?.exitCode).toBe(1);
 	});
 
 	it('settles run to failed when wrapped action throws and re-throws the error', async () => {
@@ -153,7 +155,7 @@ describe('captureCliRun', () => {
 				async () => {
 					throw actionError;
 				},
-				() => 0
+				() => ({ status: 'completed', exitCode: 0 })
 			)
 		).rejects.toThrow(actionError);
 
@@ -171,7 +173,7 @@ describe('captureCliRun', () => {
 		const result = await captureCliRun(
 			sampleInput,
 			async () => ({ success: true }),
-			() => 0
+			() => ({ status: 'completed', exitCode: 0 })
 		);
 
 		expect(result).toEqual({ success: true });

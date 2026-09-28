@@ -116,20 +116,16 @@ function startRun(input: CaptureCliRunInput, runId: string, startedAt: number): 
 	});
 }
 
-/** Settle the run to a terminal state from the resolved exit code or settlement. */
+/** Settle the run to a terminal state from the resolved settlement. */
 function settleRun(
 	input: CaptureCliRunInput,
 	runId: string,
 	startedAt: number,
-	settlement: number | CliRunSettlement
+	settlement: CliRunSettlement
 ): void {
 	const completedAt = Date.now();
 	const durationMs = completedAt - startedAt;
-	const resolved: CliRunSettlement =
-		typeof settlement === 'number'
-			? { status: settlement === 0 ? 'completed' : 'failed', exitCode: settlement }
-			: settlement;
-	const { status, exitCode } = resolved;
+	const { status, exitCode } = settlement;
 	// Guard the lifecycle edge (running -> completed/failed/cancelled) before persisting.
 	assertTransition('running', status);
 	upsertAgentRun(buildRun(input, runId, startedAt, completedAt, status, { durationMs, exitCode }));
@@ -147,14 +143,14 @@ function settleRun(
 /**
  * Wrap a `spawnAgent` invocation with ledger capture. Creates a running
  * AgentRun before `run()`, settles it to completed/failed/cancelled on return using the
- * settlement from `resolveExit`, and settles it to failed (then re-throws) if
+ * settlement from `resolveSettlement`, and settles it to failed (then re-throws) if
  * `run()` throws. All ledger errors are swallowed so the CLI path is never
  * broken by capture. Returns exactly what `run()` returned.
  */
 export async function captureCliRun<T>(
 	input: CaptureCliRunInput,
 	run: () => Promise<T>,
-	resolveExit: (result: T) => number | CliRunSettlement
+	resolveSettlement: (result: T) => CliRunSettlement
 ): Promise<T> {
 	const startedAt = Date.now();
 	const runId = createRunId(input.source, startedAt);
@@ -162,17 +158,17 @@ export async function captureCliRun<T>(
 	try {
 		const result = await run();
 		safeLedger(() => {
-			let settlement: number | CliRunSettlement = 1;
+			let settlement: CliRunSettlement = { status: 'failed', exitCode: 1 };
 			try {
-				settlement = resolveExit(result);
+				settlement = resolveSettlement(result);
 			} catch (error) {
-				logger.error('agent-run resolveExit failed', LOG_CONTEXT, error);
+				logger.error('agent-run resolveSettlement failed', LOG_CONTEXT, error);
 			}
 			settleRun(input, runId, startedAt, settlement);
 		});
 		return result;
 	} catch (error) {
-		safeLedger(() => settleRun(input, runId, startedAt, 1));
+		safeLedger(() => settleRun(input, runId, startedAt, { status: 'failed', exitCode: 1 }));
 		throw error;
 	}
 }

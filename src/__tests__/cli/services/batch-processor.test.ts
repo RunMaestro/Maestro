@@ -1176,7 +1176,6 @@ describe('batch-processor', () => {
 			vi.mocked(spawnAgent).mockResolvedValue({
 				success: true,
 				response: 'Done',
-				documentContent: '- [x] Task',
 				usageStats: {
 					inputTokens: 100,
 					outputTokens: 50,
