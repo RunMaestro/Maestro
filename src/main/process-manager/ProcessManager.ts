@@ -23,7 +23,9 @@ import { logger } from '../utils/logger';
 import { isPidAlive } from './utils/childProcessInfo';
 import { isWindows } from '../../shared/platformDetection';
 import { expandTilde } from '../../shared/pathUtils';
-import type { SshRemoteConfig } from '../../shared/types';
+import { agentAlreadyRunningMessage } from '../../shared/processErrors';
+import type { AgentError, SshRemoteConfig } from '../../shared/types';
+import { unusableCwdReason } from './utils/spawnCwd';
 import { getDefaultShell } from '../stores/defaults';
 import { captureException } from '../utils/sentry';
 import {
@@ -32,6 +34,7 @@ import {
 } from '../coworking/coworking-types';
 import { resolveOwningMaestroSessionId } from '../coworking/coworking-session-id';
 import { getBridgeSocketPath } from '../coworking/coworking-socket-path';
+import { killPty } from './utils/commandKill';
 
 /** Time (ms) to wait for a PTY process to exit after SIGTERM before sending SIGKILL. */
 const PTY_KILL_ESCALATION_MS = 2000;
@@ -116,6 +119,32 @@ export class ProcessManager extends EventEmitter {
 			}
 		}
 
+		// Refuse a working directory that is not there, rather than handing it to
+		// the OS. node-pty's Windows path throws ERROR_DIRECTORY asynchronously
+		// from a callback nothing can catch, which crashes the main process and
+		// leaves the caller retrying - see utils/spawnCwd.ts for the full trace.
+		//
+		// Failing is the right answer rather than falling back to the home
+		// directory: an agent silently pointed at the wrong tree would read and
+		// edit files nobody asked it to.
+		const cwdProblem = unusableCwdReason(config.cwd);
+		if (cwdProblem) {
+			logger.error(`[ProcessManager] Refusing to spawn: ${cwdProblem}`, 'ProcessManager', {
+				sessionId: config.sessionId,
+				toolType: config.toolType,
+				cwd: config.cwd,
+			});
+			this.emit('agent-error', config.sessionId, {
+				type: 'unknown',
+				message: cwdProblem,
+				recoverable: false,
+				agentId: config.toolType,
+				sessionId: config.sessionId,
+				timestamp: Date.now(),
+			} satisfies AgentError);
+			return { pid: -1, success: false };
+		}
+
 		// Never replace an AI process while it still owns the session entry. Node's
 		// `exit` event can set exitCode before `close` drains stdout, so exitCode is
 		// not enough to prove that the final response has been reconciled. The exit
@@ -168,7 +197,7 @@ export class ProcessManager extends EventEmitter {
 							requestedToolType: config.toolType,
 						}
 					);
-					throw new Error(`Agent process already running for session ${config.sessionId}`);
+					throw new Error(agentAlreadyRunningMessage(config.sessionId));
 				}
 
 				logger.warn(
@@ -484,7 +513,7 @@ export class ProcessManager extends EventEmitter {
 					// reaches EOF, node-pty's worker thread exits, and its TSFN releases
 					// before Electron's environment teardown runs CleanupHandles.
 					try {
-						proc.ptyProcess.kill('SIGKILL');
+						killPty(proc.ptyProcess, 'SIGKILL');
 					} catch {
 						// Process may already be dead
 					}
@@ -494,7 +523,7 @@ export class ProcessManager extends EventEmitter {
 
 					// Use SIGTERM (not the default SIGHUP which shells may survive on macOS)
 					try {
-						ptyProc.kill('SIGTERM');
+						killPty(ptyProc, 'SIGTERM');
 					} catch {
 						// Process may already be dead
 					}
@@ -502,7 +531,7 @@ export class ProcessManager extends EventEmitter {
 					// Escalate to SIGKILL if the process doesn't exit promptly.
 					const escalationTimer = setTimeout(() => {
 						try {
-							ptyProc.kill('SIGKILL');
+							killPty(ptyProc, 'SIGKILL');
 							logger.warn(
 								'[ProcessManager] PTY did not exit after SIGTERM, escalated to SIGKILL',
 								'ProcessManager',

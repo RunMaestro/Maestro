@@ -7,8 +7,10 @@ import { randomUUID } from 'crypto';
 import { BrowserWindow } from 'electron';
 import { WebServer } from './WebServer';
 import { logger } from '../utils/logger';
+import { isWebContentsAvailable } from '../utils/safe-send';
 import type { ProcessManager } from '../process-manager';
 import type { SettingsStoreInterface as SettingsStore } from '../stores/types';
+import type { DebugPackageDependencies } from '../debug-package';
 import type { CueGraphSession, CueRunResult } from '../../shared/cue/contracts';
 import type { CadenzaPayload } from '../../shared/cadenza-types';
 import { registerSessionCallbacks } from './callbacks/sessionCallbacks';
@@ -59,6 +61,8 @@ export interface WebServerFactoryDependencies {
 	groupsStore: GroupsStore;
 	/** Function to get the main window reference */
 	getMainWindow: () => BrowserWindow | null;
+	/** Resolve the Electron window that currently owns a session. */
+	getWindowForSession?: (sessionId: string) => BrowserWindow | null;
 	/**
 	 * Deliver a cadenza payload to the desktop HUD window - the transparent,
 	 * always-on-top overlay that floats cadenza views over other apps (created
@@ -93,6 +97,10 @@ export interface WebServerFactoryDependencies {
 	 *  Used by `setGetCueActivityCallback` (web UI's activity dashboard).
 	 *  Same dead-bridge fix as `getCueGraphData`. */
 	getCueActivityLog?: () => CueRunResult[];
+	/** Collectors for a support package (`maestro-cli support-package`,
+	 *  `feedback submit --support-package`). Absent = the CLI reports the
+	 *  feature as unconfigured instead of shipping a hollow zip. */
+	getDebugPackageDeps?: () => DebugPackageDependencies;
 }
 
 /**
@@ -142,6 +150,21 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 
 		const server = new WebServer(port, securityToken);
 
+		// Roaming to a different network changes the LAN IP the URL and QR code
+		// are built from. The server keeps serving (it binds 0.0.0.0), so all
+		// that is needed is telling every window to redraw the new address -
+		// no restart, no token rotation, and any phone already connected over
+		// the old address just reconnects. Broadcast rather than main-window
+		// only: each window draws its own Left Bar with its own LIVE panel.
+		server.setOnLocalAddressChanged((url) => {
+			logger.info(`Local network address changed, new web URL: ${url}`, 'WebServerFactory');
+			for (const win of BrowserWindow.getAllWindows()) {
+				if (isWebContentsAvailable(win)) {
+					win.webContents.send('live:urlChanged', { url });
+				}
+			}
+		});
+
 		registerSessionCallbacks(server, deps);
 		registerThemeCallbacks(server, deps);
 
@@ -180,6 +203,10 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 		registerDirectorNotesCallbacks(server, deps);
 
 		registerMarketplaceCallbacks(server, deps);
+
+		if (deps.getDebugPackageDeps) {
+			server.setGetDebugPackageDepsCallback(deps.getDebugPackageDeps);
+		}
 
 		return server;
 	};

@@ -33,6 +33,12 @@ export interface QuickAction {
 		thinkingStartTime?: number;
 		busyTabName?: string;
 		queueCount: number;
+		/**
+		 * Replaces the leading elapsed-time segment of the subtext. Group chat
+		 * rooms have no per-run start timestamp, so they describe what is running
+		 * ("Moderator thinking") instead of how long it has been running.
+		 */
+		statusLabel?: string;
 	};
 	// Jump-to-agent actions only: bookmark state and stable sort key.
 	bookmarked?: boolean;
@@ -69,6 +75,11 @@ export interface ActiveTabInfo {
 export interface QuickActionsModalProps {
 	theme: Theme;
 	sessions: Session[];
+	/**
+	 * Agents in the order the Left Bar draws them; the first ten own the
+	 * Opt+Cmd+1..0 slots, so their jump rows show that chord.
+	 */
+	visibleSessions?: Session[];
 	setSessions: React.Dispatch<React.SetStateAction<Session[]>>;
 	activeSessionId: string;
 	groups: Group[];
@@ -193,6 +204,7 @@ export interface QuickActionsModalProps {
 	 * the sidebar's visible ordering.
 	 */
 	onGoToNextUnread?: () => void;
+	onGoToPreviousUnread?: () => void;
 	/**
 	 * Shared session/tab history navigation - same callbacks bound to the
 	 * Cmd+Shift+, / Cmd+Shift+. keyboard shortcuts in App.tsx so the palette and

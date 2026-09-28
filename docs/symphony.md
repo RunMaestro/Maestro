@@ -41,7 +41,7 @@ Before starting a Symphony contribution, ensure you have:
 
 | Method                              | Description               |
 | ----------------------------------- | ------------------------- |
-| `Cmd+Shift+Y` / `Ctrl+Shift+Y`      | Keyboard shortcut         |
+| `Opt+Cmd+Y` / `Alt+Ctrl+Y`          | Keyboard shortcut         |
 | Quick Actions → "Maestro Symphony"  | Command palette (`Cmd+K`) |
 | Hamburger Menu → "Maestro Symphony" | Menu item                 |
 

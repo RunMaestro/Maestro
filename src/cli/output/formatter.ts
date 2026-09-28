@@ -97,6 +97,7 @@ export interface AgentDisplay {
 	cwd: string;
 	groupId?: string;
 	autoRunFolderPath?: string;
+	bookmarked?: boolean;
 }
 
 export function formatAgents(agents: AgentDisplay[], groupName?: string): string {
@@ -117,8 +118,9 @@ export function formatAgents(agents: AgentDisplay[], groupName?: string): string
 		const cwd = dim(truncate(agent.cwd, 60));
 		const id = dim(agent.id);
 		const autoRun = agent.autoRunFolderPath ? c('yellow', ' [Auto Run]') : '';
+		const bookmark = agent.bookmarked ? c('yellow', ' \u2605') : '';
 
-		lines.push(`  ${name} ${toolType}${autoRun}`);
+		lines.push(`  ${name}${bookmark} ${toolType}${autoRun}`);
 		lines.push(`      ${cwd}`);
 		lines.push(`      ${id}`);
 	}
@@ -385,6 +387,36 @@ export function formatRunEvent(event: RunEvent, options?: { debug?: boolean }): 
 			return `${timeStr} ${c('green', '✓')} Document complete ${dim(`(${completed} tasks)`)}`;
 		}
 
+		case 'document_stalled': {
+			const reason = event.reason as string;
+			const remaining = event.remainingTasks as number;
+			const next = event.hasNextDocument as boolean;
+			return [
+				`${timeStr} ${c('yellow', '⚠')} Document stalled ${dim(`(${reason})`)}`,
+				`${timeStr}       ${dim(`${remaining} task${remaining === 1 ? '' : 's'} left unchecked. ${next ? 'Moving to the next document.' : 'No more documents.'}`)}`,
+			].join('\n');
+		}
+
+		case 'document_gated': {
+			const reason = event.reason as string;
+			const artifact = event.artifact as string | undefined;
+			const line = event.line as number;
+			return [
+				`${timeStr} ${c('yellow', '⏸')} Document needs a human ${dim(`(line ${line})`)}`,
+				`${timeStr}       ${reason}`,
+				...(artifact ? [`${timeStr}       ${dim(artifact)}`] : []),
+			].join('\n');
+		}
+
+		case 'halt': {
+			const reason = event.reason as string;
+			return [
+				`${timeStr} ${c('red', '■')} ${bold('Playbook halted by the agent')}`,
+				`${timeStr}       ${reason}`,
+				`${timeStr}       ${dim('Remove the <!-- maestro:halt --> marker before re-running.')}`,
+			].join('\n');
+		}
+
 		case 'loop_complete': {
 			const loopNum = event.iteration as number;
 			return `${timeStr} ${c('magenta', '↻')} Loop ${loopNum} complete`;
@@ -414,6 +446,7 @@ export function formatRunEvent(event: RunEvent, options?: { debug?: boolean }): 
 				scan: 'blue',
 				loop: 'magenta',
 				reset: 'yellow',
+				stall: 'yellow',
 			};
 			const categoryColor = categoryColors[category] || 'gray';
 			return `${timeStr} ${c('gray', '🔍')} ${c(categoryColor, `[${category}]`)} ${dim(message)}`;
@@ -472,6 +505,7 @@ export interface AgentDetailDisplay {
 	groupId?: string;
 	groupName?: string;
 	autoRunFolderPath?: string;
+	bookmarked?: boolean;
 	// Editable per-agent settings (the Edit Agent modal fields). `null` = unset.
 	nudgeMessage?: string | null;
 	newSessionMessage?: string | null;
@@ -539,6 +573,10 @@ export function formatAgentDetail(agent: AgentDetailDisplay): string {
 
 	if (agent.autoRunFolderPath) {
 		lines.push(`  ${c('white', 'Auto Run:')}   ${dim(agent.autoRunFolderPath)}`);
+	}
+
+	if (agent.bookmarked) {
+		lines.push(`  ${c('white', 'Bookmarked:')} ${c('yellow', '\u2605 yes')}`);
 	}
 
 	// Configuration (the Edit Agent modal settings). Only render the rows that

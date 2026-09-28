@@ -16,6 +16,7 @@
  */
 
 import type { Session, ThinkingItem } from '../types';
+import { getBusyTabs } from './tabHelpers';
 
 /**
  * Build the flat list of thinking items that drives the ThinkingStatusPill.
@@ -35,21 +36,27 @@ export function buildThinkingItems(
 		// window's pill never surfaces an agent it does not own.
 		if (ownsSession && !ownsSession(session.id)) continue;
 
+		// Closed tabs count only while BUSY. A closed tab also stays parked in
+		// `orphanedThinkingTabs` (idle) when it still owns queued items, so it
+		// survives as a dispatch target: items waiting on another tab, or items the
+		// user HELD. No process runs for it, so listing it here would show
+		// "Thinking..." (and a Stop button) for a tab that is doing nothing - and a
+		// held item parks it indefinitely.
+		const busyOrphans = (session.orphanedThinkingTabs ?? []).filter((tab) => tab.state === 'busy');
 		if (session.state === 'busy' && session.busySource === 'ai') {
-			const busyTabs = session.aiTabs?.filter((t) => t.state === 'busy');
-			if (busyTabs && busyTabs.length > 0) {
-				for (const tab of busyTabs) {
-					items.push({ session, tab });
-				}
-			} else if (!session.orphanedThinkingTabs?.length) {
-				// Legacy: session is busy but no individual tab-level tracking.
+			const busyTabs = getBusyTabs(session);
+			for (const tab of busyTabs) {
+				items.push({ session, tab });
+			}
+			// Legacy: the agent is busy but no tab carries the state.
+			if (busyTabs.length === 0 && busyOrphans.length === 0) {
 				items.push({ session, tab: null });
 			}
 		}
-		// Closed-but-still-thinking tabs: keep showing them on the pill until the
-		// agent process actually exits. The exit/error listeners remove entries from
-		// orphanedThinkingTabs when the underlying process is gone.
-		for (const orphan of session.orphanedThinkingTabs ?? []) {
+		// Closed-but-still-thinking tabs stay on the pill until their process
+		// exits, independent of the agent-level state. The exit/error listeners
+		// remove entries from orphanedThinkingTabs when the underlying process is gone.
+		for (const orphan of busyOrphans) {
 			items.push({ session, tab: orphan });
 		}
 	}

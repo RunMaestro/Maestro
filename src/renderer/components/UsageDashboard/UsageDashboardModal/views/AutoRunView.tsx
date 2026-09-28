@@ -3,6 +3,7 @@ import { ChartErrorBoundary } from '../../ChartErrorBoundary';
 import { LongestAutoRunsTable } from '../../LongestAutoRunsTable';
 import { PercentilesCard } from '../../PercentilesCard';
 import { TasksByHourChart } from '../../TasksByHourChart';
+import { WizardStats } from '../../WizardStats';
 import { DashboardSection } from '../components';
 import { DashboardTabPanel } from './DashboardTabPanel';
 import type { AutoRunViewProps } from './types';
@@ -28,6 +29,23 @@ export function AutoRunView({
 			>
 				<ChartErrorBoundary theme={theme} chartName="Auto Run Stats">
 					<AutoRunStats timeRange={timeRange} theme={theme} columns={layout.autoRunStatsCols} />
+				</ChartErrorBoundary>
+			</DashboardSection>
+
+			{/* Wizard: what the /wizard conversations cost and produced.
+			    Sits right under the Auto Run totals because it is the
+			    upstream half of the same story - the wizard writes the
+			    documents Auto Run then executes. */}
+			<DashboardSection
+				sectionId="wizard-stats"
+				focusedSection={focusedSection}
+				setSectionRef={setSectionRef}
+				handleSectionKeyDown={handleSectionKeyDown}
+				theme={theme}
+				style={{ animationDelay: '25ms' }}
+			>
+				<ChartErrorBoundary theme={theme} chartName="Wizard Stats">
+					<WizardStats timeRange={timeRange} theme={theme} />
 				</ChartErrorBoundary>
 			</DashboardSection>
 

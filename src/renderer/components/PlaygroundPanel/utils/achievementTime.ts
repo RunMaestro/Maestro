@@ -1,18 +1,17 @@
+import { humanizeDuration, DURATION_LADDER_DAYS } from '../../../../shared/duration';
+
 const MIN_TIME = 1000;
 const MAX_TIME = 315360000000;
 const LOG_MIN = Math.log(MIN_TIME);
 const LOG_MAX = Math.log(MAX_TIME);
 
+/**
+ * Format a badge-preview duration, e.g. "45s", "5m 30s", "2h 15m", "3d 2h".
+ * Day-capped and zero-padded so the preview label holds a steady width as the
+ * playground slider sweeps across the whole range.
+ */
 export function formatPlaygroundDuration(ms: number): string {
-	const seconds = Math.floor(ms / 1000);
-	const minutes = Math.floor(seconds / 60);
-	const hours = Math.floor(minutes / 60);
-	const days = Math.floor(hours / 24);
-
-	if (days > 0) return `${days}d ${hours % 24}h`;
-	if (hours > 0) return `${hours}h ${minutes % 60}m`;
-	if (minutes > 0) return `${minutes}m ${seconds % 60}s`;
-	return `${seconds}s`;
+	return humanizeDuration(ms, { units: DURATION_LADDER_DAYS, keepZeroUnits: true });
 }
 
 export function sliderToTime(sliderValue: number): number {

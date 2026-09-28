@@ -27,6 +27,7 @@
 
 import { create } from 'zustand';
 import { generateId } from '../utils/ids';
+import { clampModalSize, normalizeModalSize, type ModalSize } from '../utils/modalSizing';
 
 /**
  * One turn's normalized context accounting. The provider-specific math
@@ -96,6 +97,49 @@ export type ContextTimelinePointInput = Omit<ContextTimelinePoint, 'id' | 'times
 export type ContextTimelineHydrationPoint = ContextTimelinePointInput & { timestamp: number };
 
 /**
+ * Shared footprint of the two surfaces the header context gauge opens: the
+ * Context Details popover (on hover) and the Timeline panel (on click). They are
+ * alternatives for ONE spot on screen, so they share a width, a gap under the
+ * gauge and a close delay - a click that swaps one for the other should land in
+ * the same space rather than resize it.
+ *
+ * The width is set by the Timeline's per-turn breakdown line (`in / cache r /
+ * cache w / out` plus cost), which wraps below it and doubles every row's height.
+ * The popover's label/value rows have room to spare at the same width.
+ */
+export const CONTEXT_SURFACE_WIDTH = 480;
+/** Narrower than this and the Timeline's breakdown line starts wrapping again. */
+export const CONTEXT_SURFACE_MIN_WIDTH = 380;
+/** Key under which the Timeline's dragged size is remembered (settingsStore.modalSizes). */
+export const CONTEXT_TIMELINE_RESIZE_KEY = 'context-timeline';
+
+/**
+ * The width both context surfaces draw at: the width the user dragged the
+ * Timeline to, or CONTEXT_SURFACE_WIDTH when they never did. Clamped with the
+ * same bounds the Timeline's resize hook applies, so the two cannot disagree.
+ *
+ * The popover used to draw at the constant alone. Once the Timeline had been
+ * dragged narrower, hovering showed a wider box than the one a click swapped it
+ * for, and the popover could not be resized at all.
+ */
+export function resolveContextSurfaceWidth(savedSize: unknown): number {
+	const saved = normalizeModalSize(savedSize);
+	return clampModalSize(
+		{ width: saved?.width ?? CONTEXT_SURFACE_WIDTH, height: CONTEXT_SURFACE_MIN_WIDTH },
+		{ minSize: { width: CONTEXT_SURFACE_MIN_WIDTH } }
+	).width;
+}
+
+/** Gap between the bottom of the gauge and the top of either surface (px). */
+export const CONTEXT_SURFACE_GAP = 8;
+/**
+ * Grace period after the pointer leaves a surface and its gauge. Covers the trip
+ * across the gap between them, and is short enough that moving away reads as
+ * dismissing it.
+ */
+export const CONTEXT_SURFACE_CLOSE_DELAY_MS = 150;
+
+/**
  * A plain (structured-clone-safe) copy of the trigger element's viewport rect,
  * so the panel can anchor itself to the header gauge that opened it instead of
  * always docking bottom-left. Stored as plain numbers - never a live DOMRect.
@@ -115,16 +159,21 @@ export type ContextTimelineView = 'bar' | 'graph';
 interface ContextTimelineState {
 	/** Session whose panel is currently focused/visible (null = panel hidden). */
 	panelSessionId: string | null;
-	/** Whether the visible panel is minimized to a status pill. */
-	minimized: boolean;
 	/**
-	 * Bar list (per-turn rows) or x/y line graph (trend across turns). Lives
-	 * alongside `minimized` so the choice survives closing and reopening the
-	 * panel. Defaults to 'bar' so nothing changes until a user opts in.
+	 * Bar list (per-turn rows) or x/y line graph (trend across turns). Lives on
+	 * the store rather than in the panel so the choice survives closing and
+	 * reopening. Defaults to 'bar' so nothing changes until a user opts in.
 	 */
 	view: ContextTimelineView;
 	/** Viewport rect of the element that opened the panel (null = dock bottom-left). */
 	anchorRect: TimelineAnchorRect | null;
+	/**
+	 * Measured size of the Context Details popover when the gauge was clicked. It
+	 * is the panel's DEFAULT size, so the swap lands in the space the popover held.
+	 * Null when nothing was on screen to measure (keyboard, programmatic open). A
+	 * size the user dragged still wins over it.
+	 */
+	sourceSize: ModalSize | null;
 	/** Per-session capture buffers (capture runs for all sessions, always). */
 	buffers: Record<string, ContextTimelineBuffer>;
 
@@ -141,11 +190,26 @@ interface ContextTimelineState {
 		trimmed: boolean
 	) => void;
 	/** Open (or refocus) the inspector for a session, optionally anchored to a rect. */
-	openPanel: (sessionId: string, anchorRect?: TimelineAnchorRect | null) => void;
-	/** Collapse the panel to a status pill; the buffer is untouched. */
-	minimizePanel: () => void;
-	/** Restore the panel from the minimized pill. */
-	restorePanel: () => void;
+	openPanel: (
+		sessionId: string,
+		anchorRect?: TimelineAnchorRect | null,
+		sourceSize?: ModalSize | null
+	) => void;
+	/**
+	 * Open the inspector, or close it when this same session's panel is already
+	 * showing. The context gauge is the ONLY open/close control the panel has, so
+	 * a plain `openPanel` there would be a one-way door: a second click on the
+	 * badge that just opened the panel has to put it away again.
+	 *
+	 * Switching agents while the panel is open re-anchors and re-targets rather
+	 * than closing, because that click asked to see a DIFFERENT agent's history,
+	 * not to dismiss the one on screen.
+	 */
+	togglePanel: (
+		sessionId: string,
+		anchorRect?: TimelineAnchorRect | null,
+		sourceSize?: ModalSize | null
+	) => void;
 	/** Switch between the bar list and the line graph. */
 	setView: (view: ContextTimelineView) => void;
 	/** Hide the panel. History is KEPT so reopening shows it again. */
@@ -158,9 +222,9 @@ interface ContextTimelineState {
 
 export const useContextTimelineStore = create<ContextTimelineState>((set) => ({
 	panelSessionId: null,
-	minimized: false,
 	view: 'bar',
 	anchorRect: null,
+	sourceSize: null,
 	buffers: {},
 
 	appendPoint: (sessionId, point) =>
@@ -223,24 +287,35 @@ export const useContextTimelineStore = create<ContextTimelineState>((set) => ({
 			};
 		}),
 
-	openPanel: (sessionId, anchorRect = null) =>
+	openPanel: (sessionId, anchorRect = null, sourceSize = null) =>
 		set((state) => ({
 			panelSessionId: sessionId,
-			minimized: false,
 			anchorRect,
+			sourceSize,
 			// Preserve any history already captured for this session.
 			buffers: state.buffers[sessionId]
 				? state.buffers
 				: { ...state.buffers, [sessionId]: { points: [], trimmed: false } },
 		})),
 
-	minimizePanel: () => set({ minimized: true }),
-
-	restorePanel: () => set({ minimized: false }),
+	togglePanel: (sessionId, anchorRect = null, sourceSize = null) =>
+		set((state) => {
+			if (state.panelSessionId === sessionId) {
+				return { panelSessionId: null, anchorRect: null, sourceSize: null };
+			}
+			return {
+				panelSessionId: sessionId,
+				anchorRect,
+				sourceSize,
+				buffers: state.buffers[sessionId]
+					? state.buffers
+					: { ...state.buffers, [sessionId]: { points: [], trimmed: false } },
+			};
+		}),
 
 	setView: (view) => set({ view }),
 
-	closePanel: () => set({ panelSessionId: null, minimized: false, anchorRect: null }),
+	closePanel: () => set({ panelSessionId: null, anchorRect: null, sourceSize: null }),
 
 	clearSession: (sessionId) =>
 		set((state) => ({

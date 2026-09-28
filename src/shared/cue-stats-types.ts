@@ -30,6 +30,20 @@ export interface CueStatsByGroup {
 	totals: CueStatsTotals;
 }
 
+/**
+ * One selectable entry in the Cue tab's trigger-type filter row.
+ *
+ * Counted over the FULL window, before `excludedTriggerTypes` is applied: the
+ * filter row is the only way back once a trigger is hidden, so it has to keep
+ * listing (and counting) the triggers the rest of the payload no longer sees.
+ */
+export interface CueTriggerTypeOption {
+	/** Raw `cue_events.type`, e.g. `time.heartbeat`. */
+	key: string;
+	label: string;
+	occurrences: number;
+}
+
 export interface CueChainNode {
 	eventId: string;
 	parentEventId: string | null;
@@ -91,6 +105,17 @@ export interface CueStatsAggregation {
 	bySubscription: CueStatsByGroup[];
 	/** Distribution by event trigger type (e.g. `file.changed`, `time.scheduled`). */
 	byTriggerType: CueStatsByGroup[];
+	/**
+	 * Every trigger type seen in the window with its UNFILTERED occurrence
+	 * count. Drives the filter row; unlike every other field here it ignores
+	 * `excludedTriggerTypes`.
+	 */
+	triggerTypeOptions: CueTriggerTypeOption[];
+	/**
+	 * Trigger types the caller asked to drop, echoed back so the renderer can
+	 * tell a stale response from a fresh one after toggling a chip.
+	 */
+	excludedTriggerTypes: string[];
 	/** Always 24 entries, hour 0..23 in local time. */
 	byHourOfDay: CueHourBucket[];
 	chains: CueChain[];

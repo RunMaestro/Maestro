@@ -47,15 +47,43 @@ export interface BootstrapSettings {
 
 export interface MaestroSettings {
 	activeThemeId: string;
-	llmProvider: string;
-	modelSlug: string;
-	apiKey: string;
 	shortcuts: Record<string, any>;
 	fontSize: number;
 	fontFamily: string;
+	terminalFontFamily: string;
+	chatFontFamily: string;
+	filePreviewFontFamily: string;
+	fileEditorFontFamily: string;
+	documentGraphFontFamily: string;
+	chatFontSize: number;
+	terminalFontSize: number;
+	filePreviewFontSize: number;
+	fileEditorFontSize: number;
+	documentGraphFontSize: number;
+	fontZoom: number;
+	typographySnapshot: unknown;
+	typographyPromptSeen: boolean;
+	themePromptSeen: boolean;
+	updatesPromptSeen: boolean;
+	agentPowersPromptSeen: boolean;
+	// Set once, on the first boot where `installationId` already existed (i.e.
+	// this is not the very first launch of this install ever). Distinguishes a
+	// returning user who has deleted every agent from a genuinely new one, since
+	// `sessions.length > 0` alone reads the former as new. See
+	// useAppInitialization.ts's first-run series gate.
+	hasPriorInstallation: boolean;
 	customFonts: string[];
 	mediaPlaybackRate: number;
-	mediaPlayerFloatRect: { top: number; left: number; width: number; height: number } | null;
+	/**
+	 * Floating player position plus its per-kind widths. Shape is owned by the
+	 * renderer (`PersistedMediaFloat`); the main process only stores it.
+	 */
+	mediaPlayerFloatRect: unknown;
+	/**
+	 * Play queue, loaded item, and remembered positions. Shape is owned by the
+	 * renderer (`PersistedMediaQueue`); the main process only stores it.
+	 */
+	mediaPlayerQueue: unknown;
 	logLevel: 'debug' | 'info' | 'warn' | 'error';
 	defaultShell: string;
 	// Web interface authentication
@@ -63,6 +91,8 @@ export interface MaestroSettings {
 	webAuthToken: string | null;
 	// Persistent web link (reuse token across restarts)
 	persistentWebLink: boolean;
+	// Turn on the full web interface automatically when Maestro starts
+	webInterfaceAutoStart: boolean;
 	// Web interface custom port
 	webInterfaceUseCustomPort: boolean;
 	webInterfaceCustomPort: number;
@@ -81,6 +111,9 @@ export interface MaestroSettings {
 	wakatimeDetailedTracking: boolean;
 	// Standalone hands-on time tracker (migrated from globalStats.totalActiveTimeMs)
 	totalActiveTimeMs: number;
+	// Highest delegation milestone ever unlocked (0 | 25 | 50 | 75 | 100).
+	// A high-water mark, not the live score - see src/shared/delegation.ts.
+	delegationMilestone: number;
 	// Last prompt edited in Settings → Maestro Prompts (restored on reopen)
 	lastSelectedPromptId: string | null;
 	// Spell check in input areas
@@ -93,6 +126,18 @@ export interface MaestroSettings {
 	// Empty array disables it. Stored in the same format as `shortcuts` so the UI can reuse
 	// the existing capture helpers; converted to an Electron Accelerator at registration time.
 	globalShowHotkey: string[];
+	// Utility agent for auxiliary tasks (tab naming, context grooming). When null,
+	// the task uses the session's own agent (fully backward compatible).
+	utilityAgentId: string | null;
+	// Optional model override for the utility agent. When null, the agent default model is used.
+	utilityModelId: string | null;
+	// Days of Maestro Cue run history kept in cue.db. Read by the Cue engine's
+	// prune pass at startup; declared explicitly (rather than left to the index
+	// signature) so main-process readers get `number` instead of `any`.
+	cueHistoryRetentionDays: number;
+	// Collapse repeated Cue runs in the History panel into one row per trigger.
+	// Declared explicitly for the same reason as the retention days above.
+	groupCueEntries: boolean;
 	// Allow dynamic settings keys (electron-store is a key-value store
 	// with many settings not explicitly declared above)
 	[key: string]: any;

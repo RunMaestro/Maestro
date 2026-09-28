@@ -23,6 +23,7 @@ import {
 	narrativeToMarkdown,
 	type DirectorNotesNarrative,
 } from '../../shared/directorNotesNarrative';
+import { buildNarrativeGroupLookup } from '../../shared/directorNotesGrouping';
 
 /**
  * A representative, fully-formed narrative exercising every optional field:
@@ -118,6 +119,17 @@ describe('parseDirectorNotesNarrative', () => {
 			expect(result).toEqual({ ok: true, narrative: braced });
 		});
 
+		it('says the object was cut off, not that no object was found', () => {
+			// Reporting "no JSON object found" about a response that visibly starts
+			// with one sends the reader hunting for the wrong problem.
+			const truncated = JSON.stringify(WELL_FORMED).slice(0, -1);
+			const result = parseDirectorNotesNarrative(truncated);
+			expect(result.ok).toBe(false);
+			if (result.ok) throw new Error('expected failure');
+			expect(result.error).toContain('cut off');
+			expect(result.error).not.toContain('No JSON object found');
+		});
+
 		it('accepts an empty sections array', () => {
 			const result = parseDirectorNotesNarrative('{ "version": 1, "sections": [] }');
 			expect(result).toEqual({ ok: true, narrative: { version: 1, sections: [] } });
@@ -198,7 +210,11 @@ describe('parseDirectorNotesNarrative', () => {
 
 			const markdown = narrativeToMarkdown(result.narrative);
 			expect(markdown).toContain('## Progress Toward Ideal End State');
-			expect(markdown).toContain('- Ingest pipeline is 3 of 5 milestones in. _(parser-a)_');
+			// The section mixes an attributed and an unattributed bullet, so it
+			// buckets: the agent moves to a subheading and stops repeating on the
+			// bullet itself.
+			expect(markdown).toContain('### parser-a');
+			expect(markdown).toContain('- Ingest pipeline is 3 of 5 milestones in.');
 		});
 	});
 
@@ -225,7 +241,12 @@ describe('parseDirectorNotesNarrative', () => {
 		});
 
 		it('rejects a closing brace appearing before any opening brace', () => {
-			expectParseError('} then {', 'No JSON object found in the response.');
+			// The scan starts at the FIRST `{`, so the leading `}` is not structure -
+			// what is left is an object that opened and never closed.
+			expectParseError(
+				'} then {',
+				'The JSON object was never closed - the response was cut off before it finished.'
+			);
 		});
 	});
 
@@ -235,7 +256,14 @@ describe('parseDirectorNotesNarrative', () => {
 		});
 
 		it('rejects an unterminated object', () => {
-			expectParseError('{ "version": 1, "sections": [1, 2, }', /Response is not valid JSON:/);
+			expectParseError('{ "version": 1, "sections": [1, 2, ', /never closed/);
+		});
+
+		// A `}` where a `]` belonged used to balance a plain depth counter back to
+		// zero, so the slice handed to JSON.parse looked complete and the error
+		// blamed the syntax rather than the bracket. Name what actually happened.
+		it('rejects a container closed with the wrong bracket', () => {
+			expectParseError('{ "version": 1, "sections": [1, 2, }', /brackets do not match/);
 		});
 	});
 
@@ -378,7 +406,7 @@ describe('parseDirectorNotesNarrative', () => {
 			expect(md).toContain('- Fixed the JSON leak');
 		});
 
-		it('bolds critical items and appends the agent as italic attribution', () => {
+		it('bolds critical items and buckets each agent under its own subheading', () => {
 			const md = narrativeToMarkdown({
 				version: 1,
 				sections: [
@@ -392,8 +420,65 @@ describe('parseDirectorNotesNarrative', () => {
 					},
 				],
 			});
+			expect(md).toContain('### rc');
+			expect(md).toContain('- **Build pipeline broke**');
+			expect(md).toContain('### Maestro');
+			expect(md).toContain('- Routine cleanup');
+			// Under an agent heading the attribution would only repeat the heading.
+			expect(md).not.toContain('_(rc)_');
+		});
+
+		it('keeps the attribution inline when every bullet shares one agent', () => {
+			const md = narrativeToMarkdown({
+				version: 1,
+				sections: [
+					{
+						kind: 'challenges',
+						title: 'Challenges',
+						items: [
+							{ text: 'Build pipeline broke', severity: 'critical', agent: 'rc' },
+							{ text: 'Routine cleanup', agent: 'rc' },
+						],
+					},
+				],
+			});
+			// One bucket means no subheading is worth drawing.
+			expect(md).not.toContain('###');
 			expect(md).toContain('- **Build pipeline broke** _(rc)_');
+			expect(md).toContain('- Routine cleanup _(rc)_');
+		});
+
+		it('buckets by GROUP when a lookup maps the agents into one', () => {
+			const md = narrativeToMarkdown(
+				{
+					version: 1,
+					sections: [
+						{
+							kind: 'challenges',
+							title: 'Challenges',
+							items: [
+								{ text: 'Build pipeline broke', agent: 'rc' },
+								{ text: 'Routine cleanup', agent: 'Maestro' },
+								{ text: 'Voice models stalled', agent: 'acappella' },
+							],
+						},
+					],
+				},
+				{
+					groupLookup: buildNarrativeGroupLookup([
+						{ agent: 'rc', group: 'Maestro Core', emoji: '🎬' },
+						{ agent: 'Maestro', group: 'Maestro Core', emoji: '🎬' },
+					]),
+				}
+			);
+			// Two grouped agents collapse into one bucket; the ungrouped one keeps
+			// its own, and inside a group the pill still names the member.
+			expect(md).toContain('### 🎬 Maestro Core');
+			expect(md).toContain('- Build pipeline broke _(rc)_');
 			expect(md).toContain('- Routine cleanup _(Maestro)_');
+			expect(md).toContain('### acappella');
+			expect(md).toContain('- Voice models stalled');
+			expect(md).not.toContain('_(acappella)_');
 		});
 
 		it('keeps warn/info items plain (no bold)', () => {
@@ -582,6 +667,91 @@ describe('recoverDirectorNotesNarrative', () => {
 		expect(md).toContain('## Accomplishments');
 		expect(md).not.toContain('"version"');
 		expect(md).not.toContain('"sections"');
+	});
+
+	// The field failure this distinction exists for: an agent writing right up
+	// against its output limit finishes the whole structure and loses only the
+	// final `}`. Every section and bullet is present, so the report is COMPLETE -
+	// and must not be handed to the user under a "may be incomplete" banner.
+	describe('lossless repair (report survives intact)', () => {
+		it('reports lossless when only the closing brace is missing', () => {
+			const truncated = fullResponse.slice(0, -1);
+			expect(parseDirectorNotesNarrative(truncated).ok).toBe(false);
+
+			const result = recoverDirectorNotesNarrative(truncated);
+			expect(result.ok).toBe(true);
+			if (!result.ok) return;
+			expect(result.lossless).toBe(true);
+			// Every section and bullet of the original response survived.
+			expect(result.narrative).toEqual(JSON.parse(fullResponse));
+			expect(result.reason).toContain('closing punctuation');
+			expect(result.reason).toContain('No report content was lost');
+			expect(result.reason).not.toContain('cut off');
+		});
+
+		// The field failure this whole branch exists for, verbatim: a 16 KB report
+		// whose final `]` came out as `}`. Every section and bullet was written -
+		// only one character was wrong - but the bracket-blind scanners counted
+		// the object as balanced, so the repair path declared "nothing to repair"
+		// and the user got a parse error over a report that was entirely intact.
+		it('reports lossless when the last container was closed with the wrong bracket', () => {
+			// The `]` that closes `sections` comes out as a second `}`.
+			const fumbled = fullResponse.slice(0, -2) + '}}';
+			expect(parseDirectorNotesNarrative(fumbled).ok).toBe(false);
+
+			const result = recoverDirectorNotesNarrative(fumbled);
+			expect(result.ok).toBe(true);
+			if (!result.ok) return;
+			expect(result.lossless).toBe(true);
+			expect(result.narrative).toEqual(JSON.parse(fullResponse));
+			expect(result.reason).not.toContain('cut off');
+		});
+
+		it('reports lossless for a stray line break inside a bullet', () => {
+			const raw =
+				'{"version":1,"sections":[{"kind":"accomplishments","title":"Accomplishments",' +
+				'"items":[{"text":"First line\nsecond line"}]}]}';
+			const result = recoverDirectorNotesNarrative(raw);
+			expect(result.ok).toBe(true);
+			if (!result.ok) return;
+			expect(result.lossless).toBe(true);
+		});
+
+		it('reports NOT lossless when the cut landed mid-report', () => {
+			const truncated = fullResponse.slice(0, fullResponse.indexOf('Fixed the platform') + 8);
+			const result = recoverDirectorNotesNarrative(truncated);
+			expect(result.ok).toBe(true);
+			if (!result.ok) return;
+			expect(result.lossless).toBe(false);
+			expect(result.reason).toContain('cut off');
+		});
+
+		it('reports NOT lossless when a bullet had to be dropped', () => {
+			const raw = JSON.stringify({
+				version: 1,
+				sections: [
+					{
+						kind: 'accomplishments',
+						title: 'Accomplishments',
+						items: [{ text: 'Kept this one' }, { agent: 'no text field' }],
+					},
+				],
+			});
+			const result = recoverDirectorNotesNarrative(raw);
+			expect(result.ok).toBe(true);
+			if (!result.ok) return;
+			expect(result.lossless).toBe(false);
+		});
+
+		it('reports NOT lossless when the sections array itself never closed', () => {
+			// Same "nothing discarded" shape as the brace-only case, but the agent
+			// stopped mid-list: more sections were still coming, so content IS lost.
+			const truncated = fullResponse.slice(0, fullResponse.indexOf('},{"kind":"challenges"') + 1);
+			const result = recoverDirectorNotesNarrative(truncated);
+			expect(result.ok).toBe(true);
+			if (!result.ok) return;
+			expect(result.lossless).toBe(false);
+		});
 	});
 
 	it('refuses output with no narrative content in it', () => {

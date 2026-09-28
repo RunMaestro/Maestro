@@ -98,6 +98,28 @@ describe('feedbackDraftStore', () => {
 		expect(state.drafts).toEqual(drafts);
 	});
 
+	it('saveActiveDraft writes out whatever the open editor holds', async () => {
+		const snapshot = makeDraft({ id: '', inputDraft: 'half-written report' });
+		useFeedbackDraftStore.setState({ activeDraft: snapshot });
+		window.maestro.feedback.drafts.save.mockResolvedValue({ draft: makeDraft({ id: 'quit-1' }) });
+
+		const id = await useFeedbackDraftStore.getState().saveActiveDraft();
+
+		expect(id).toBe('quit-1');
+		expect(window.maestro.feedback.drafts.save).toHaveBeenCalledWith(
+			expect.objectContaining({ inputDraft: 'half-written report' })
+		);
+	});
+
+	it('saveActiveDraft is a no-op when the editor is empty', async () => {
+		useFeedbackDraftStore.setState({ activeDraft: null });
+
+		const id = await useFeedbackDraftStore.getState().saveActiveDraft();
+
+		expect(id).toBeNull();
+		expect(window.maestro.feedback.drafts.save).not.toHaveBeenCalled();
+	});
+
 	it('saveDraft surfaces a failure as null and records a saveError', async () => {
 		window.maestro.feedback.drafts.save.mockRejectedValue(new Error('disk full'));
 

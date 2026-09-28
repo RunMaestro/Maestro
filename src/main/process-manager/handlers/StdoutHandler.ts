@@ -4,10 +4,11 @@ import { EventEmitter } from 'events';
 import { logger } from '../../utils/logger';
 import { stripAllAnsiCodes } from '../../utils/terminalFilter';
 import { appendToBuffer } from '../utils/bufferUtils';
+import { settleProvisionalAgentError } from '../utils/provisionalAgentError';
 import { aggregateModelUsage, type ModelStats } from '../../parsers/usage-aggregator';
 import { matchSshErrorPattern } from '../../parsers/error-patterns';
 import { FALLBACK_CONTEXT_WINDOW, COMBINED_CONTEXT_AGENTS } from '../../../shared/agentConstants';
-import { getAgentLoginCommand } from '../../../shared/agentMetadata';
+import { formatAgentLoginCommand, getAgentLoginCommand } from '../../../shared/agentMetadata';
 import { getOmpModelContextWindow } from '../../agents/omp-model-catalog';
 import type {
 	ManagedProcess,
@@ -474,7 +475,14 @@ export class StdoutHandler {
 		}
 
 		// ── Error detection from parser ──
-		if (outputParser && !managedProcess.errorEmitted) {
+		// `interrupted` means the USER pressed Stop, and `interrupt()` sets it
+		// before signalling. Anything a CLI reports after that is a consequence of
+		// the stop, not a failure of the turn: several agents flush a terminal
+		// envelope on their way out (grok emits `stopReason: "cancelled"`, which
+		// the parser correctly classifies as a turn that died early). Raising it
+		// would show a red error and arm recovery for a turn the user deliberately
+		// abandoned, so drop it - the turn is over either way.
+		if (outputParser && !managedProcess.errorEmitted && !managedProcess.interrupted) {
 			// Use pre-parsed object when available; fall back to line-based detection
 			// for non-JSON lines (e.g., Claude embedded JSON in stderr)
 			const agentError =
@@ -482,7 +490,25 @@ export class StdoutHandler {
 					? outputParser.detectErrorFromParsed(parsed)
 					: outputParser.detectErrorFromLine(line);
 			if (agentError) {
-				managedProcess.errorEmitted = true;
+				// Capture the PROVIDER's session id off this line before anything else:
+				// the branch returns without reaching `handleParsedEvent`, so this is the
+				// only chance, and `agentError.sessionId` below is Maestro's own
+				// composite id, not the agent's. A failing terminal envelope is exactly
+				// where an id can arrive for the first and last time - grok reports one
+				// only on `end`, and an `end` that died early now leaves through here.
+				// Losing it means recovery from a *recoverable* error silently opens a
+				// fresh conversation and drops the context the retry was supposed to
+				// continue. ExitHandler does the same for the flushed no-newline case.
+				if (parsed !== null) {
+					const event = outputParser.parseJsonObject(parsed);
+					if (event) {
+						this.emitSessionIdIfNeeded(
+							sessionId,
+							managedProcess,
+							outputParser.extractSessionId(event)
+						);
+					}
+				}
 				agentError.sessionId = sessionId;
 				// Tag the error with the remote UUID so downstream listeners
 				// (capabilitySnapshots.markAuthRequired) can flip the
@@ -497,12 +523,30 @@ export class StdoutHandler {
 					// are often generic (no CLI name) and first-match-wins ordering
 					// can shadow the ones that do name a command. A small map keeps
 					// every agent correct without depending on pattern text/order.
-					const loginCmd = getAgentLoginCommand(toolType);
-					agentError.message = loginCmd
-						? `Authentication failed on remote host "${managedProcess.sshRemoteHost}". SSH into the remote and run "${loginCmd}" to re-authenticate.`
+					const login = getAgentLoginCommand(toolType, undefined, { remote: true });
+					// Some agents have no login subcommand and only expose the flow
+					// as a slash command inside their TUI, so name that follow-up
+					// rather than implying the one-liner finishes the job.
+					const followUp = login?.followUp ? ` then type "${login.followUp}"` : '';
+					agentError.message = login
+						? `Authentication failed on remote host "${managedProcess.sshRemoteHost}". SSH into the remote and run "${formatAgentLoginCommand(login)}"${followUp} to re-authenticate.`
 						: `Authentication failed on remote host "${managedProcess.sshRemoteHost}". SSH into the remote to re-authenticate.`;
 				}
 
+				// A notice the CLI may retry past does not end the turn. Hold it, and let
+				// the lines that follow decide (see resolveProvisionalError).
+				if (parsed !== null && outputParser.isProvisionalErrorNotice?.(parsed)) {
+					managedProcess.provisionalError = agentError;
+					logger.info('[ProcessManager] Holding in-turn API error notice', 'ProcessManager', {
+						sessionId,
+						errorType: agentError.type,
+						errorMessage: agentError.message,
+					});
+					return;
+				}
+
+				managedProcess.errorEmitted = true;
+				managedProcess.provisionalError = undefined;
 				this.emitter.emit('agent-error', sessionId, agentError);
 				return;
 			}
@@ -531,6 +575,18 @@ export class StdoutHandler {
 			}
 		}
 
+		// ── Held in-turn error notice ──
+		// Not after a Stop: a result the CLI flushes on its way out would otherwise
+		// raise the held notice for a turn the user abandoned. Exit drops it.
+		if (
+			managedProcess.provisionalError &&
+			!managedProcess.interrupted &&
+			parsed !== null &&
+			outputParser
+		) {
+			this.resolveProvisionalError(sessionId, managedProcess, parsed, outputParser);
+		}
+
 		// ── Process parsed data ──
 		if (parsed !== null) {
 			if (outputParser) {
@@ -546,6 +602,41 @@ export class StdoutHandler {
 			this.bufferManager.emitDataBuffered(sessionId, line);
 		}
 		// Non-JSON lines from JSONL agents are silently suppressed (shell profile noise, MCP startup, etc.)
+	}
+
+	/**
+	 * Decide a held in-turn error notice from the line that followed it.
+	 *
+	 * - A result message: the turn ended on the failure. Emit the notice now, so
+	 *   the renderer sees the error before the result it explains.
+	 * - Model output (text or a tool call): the CLI recovered and the turn goes on.
+	 *   Drop the notice. Raising it was what put a working tab into the blocking
+	 *   error state and queued the user's next message behind a live process.
+	 * - Anything else (system, usage, init) says nothing yet. Keep holding; exit
+	 *   emits whatever is still held.
+	 */
+	private resolveProvisionalError(
+		sessionId: string,
+		managedProcess: ManagedProcess,
+		parsed: unknown,
+		outputParser: NonNullable<ManagedProcess['outputParser']>
+	): void {
+		const event = outputParser.parseJsonObject(parsed);
+		if (!event) return;
+
+		if (outputParser.isResultMessage(event)) {
+			settleProvisionalAgentError(this.emitter, sessionId, managedProcess);
+			return;
+		}
+
+		if (event.type === 'text' || event.type === 'tool_use') {
+			logger.info(
+				'[ProcessManager] Agent continued past in-turn API error notice; dropping it',
+				'ProcessManager',
+				{ sessionId, errorMessage: managedProcess.provisionalError?.message }
+			);
+			managedProcess.provisionalError = undefined;
+		}
 	}
 
 	/** Handle a parsed JSON event: extract usage, session IDs, tool executions, and result data. */

@@ -20,7 +20,7 @@ import {
 } from '../utils/terminalTabHelpers';
 import { useSessionStore } from '../stores/sessionStore';
 import { useTabStore } from '../stores/tabStore';
-import { captureException } from '../utils/sentry';
+import { spawnPtyForTab as spawnPty } from '../services/terminalSpawn';
 import { notifyToast } from '../stores/notificationStore';
 import { isCoarsePointer } from '../utils/touch';
 import type { PaneRect, Session, TerminalTab } from '../types';
@@ -40,7 +40,9 @@ export interface TerminalViewHandle {
 	 * `activeTabId`, and only for AI panes), so `focusActiveTerminal` would land on
 	 * the wrong terminal - or none at all - when a group owns the panel.
 	 */
-	focusTerminal(tabId: string): void;
+	/** Returns false when that tab's xterm has not registered yet (still
+	 *  mounting), so a caller can retry rather than silently losing the caret. */
+	focusTerminal(tabId: string): boolean;
 	searchActiveTerminal(query: string): boolean;
 	searchNext(): boolean;
 	searchPrevious(): boolean;
@@ -53,9 +55,6 @@ interface TerminalViewProps {
 	theme: Theme;
 	fontFamily: string;
 	fontSize?: number;
-	defaultShell: string;
-	shellArgs?: string;
-	shellEnvVars?: Record<string, string>;
 	onTabStateChange: (tabId: string, state: TerminalTab['state'], exitCode?: number) => void;
 	onTabPidChange: (tabId: string, pid: number) => void;
 	searchOpen?: boolean;
@@ -95,9 +94,6 @@ export const TerminalView = memo(
 			theme,
 			fontFamily,
 			fontSize,
-			defaultShell,
-			shellArgs,
-			shellEnvVars,
 			onTabStateChange,
 			onTabPidChange,
 			searchOpen,
@@ -118,8 +114,6 @@ export const TerminalView = memo(
 		// ref rather than on the tab so it stays out of the persisted session snapshot;
 		// it is only needed for the keep-or-close decision on the very next render.
 		const exitSignalsRef = useRef<Map<string, number | undefined>>(new Map());
-		// In-flight spawn guard: set of tabIds currently waiting for a PTY PID
-		const spawnInFlightRef = useRef<Set<string>>(new Set());
 		// Track which tabs have already had the loading message written to avoid duplicates
 		const loadingWrittenRef = useRef<Set<string>>(new Set());
 		// Dedup spawn-failure toasts: batch rapid failures into a single notification
@@ -250,8 +244,11 @@ export const TerminalView = memo(
 						terminalRefs.current.get(activeTab.id)?.focus();
 					}
 				},
-				focusTerminal(tabId: string) {
-					terminalRefs.current.get(tabId)?.focus();
+				focusTerminal(tabId: string): boolean {
+					const term = terminalRefs.current.get(tabId);
+					if (!term) return false;
+					term.focus();
+					return true;
 				},
 				searchActiveTerminal(query: string): boolean {
 					if (!activeTab) return false;
@@ -272,160 +269,60 @@ export const TerminalView = memo(
 			[activeTab]
 		);
 
-		// Shared spawn function - closes tab and shows error toast on failure
+		// Spawning lives in services/terminalSpawn so a tab this component never
+		// renders can still get a shell (see that module). The view supplies only the
+		// failure reporting, which is the one part that needs the live xterm buffer.
 		const spawnPtyForTab = useCallback(
 			(tab: TerminalTab) => {
-				const tabId = tab.id;
-				// Guard: skip if a spawn is already in flight for this tab
-				if (spawnInFlightRef.current.has(tabId)) return;
-				spawnInFlightRef.current.add(tabId);
-
-				// "Persistent" tabs carry user intent to keep running: a configured
-				// startup command, or any tab under an SSH/remote session (whose
-				// transport can drop for reasons unrelated to the user). We never
-				// silently discard these on failure - we keep them as a restartable
-				// exited husk instead of closing the tab and losing its config.
-				const isPersistent =
-					!!tab.startupCommand ||
-					!!(session.sessionSshRemoteConfig?.enabled || session.sshRemoteId);
-
-				const terminalSessionId = getTerminalSessionId(session.id, tabId);
-
-				// Build effective SSH config: prefer explicit sessionSshRemoteConfig, then fall back
-				// to sshRemoteId which is set after an AI agent connects. Without this fallback,
-				// terminal tabs under running SSH agents spawn locally instead of on the remote host.
-				//
-				// workingDirOverride must be a REMOTE path. Fallback chain:
-				//   1. sessionSshRemoteConfig.workingDirOverride - user-configured remote project root
-				//   2. session.remoteCwd - tracked remote cwd (set after agent reports cd)
-				//   3. session.cwd - the working directory from session creation; for SSH sessions
-				//      this IS a remote path (the user types a remote path when SSH is enabled)
-				const effectiveSshConfig = session.sessionSshRemoteConfig?.enabled
-					? {
-							...session.sessionSshRemoteConfig,
-							workingDirOverride:
-								session.sessionSshRemoteConfig.workingDirOverride ||
-								session.remoteCwd ||
-								session.cwd ||
-								undefined,
-						}
-					: session.sshRemoteId
-						? {
-								enabled: true,
-								remoteId: session.sshRemoteId,
-								workingDirOverride:
-									session.remoteCwd ||
-									session.sessionSshRemoteConfig?.workingDirOverride ||
-									session.cwd ||
-									undefined,
-							}
-						: undefined;
-
-				// When a startup command is configured, spawn the PTY in its configured cwd
-				// (if any) so the command runs in the right directory. Otherwise keep the
-				// existing fallback chain.
-				const spawnCwd =
-					(tab.startupCommand && tab.startupCommandCwd) ||
-					tab.cwd ||
-					session.cwd ||
-					session.projectRoot ||
-					'';
-
-				window.maestro.process
-					.spawnTerminalTab({
-						sessionId: terminalSessionId,
-						cwd: spawnCwd,
-						shell: defaultShell || undefined,
-						shellArgs,
-						shellEnvVars,
-						toolType: session.toolType,
-						sessionCustomEnvVars: session.customEnvVars,
-						sessionSshRemoteConfig: effectiveSshConfig,
-					})
-					.then((result) => {
-						if (result.success) {
-							onTabPidChangeRef.current(tabId, result.pid);
-							// Run the user-configured startup command. The PTY buffers stdin,
-							// so the shell will execute it once initialization (rc files, etc.)
-							// finishes.
-							if (tab.startupCommand) {
-								window.maestro.process
-									.write(terminalSessionId, tab.startupCommand + '\n')
-									.catch(() => {
-										// Write failures are surfaced by the process exit handler
-									});
-							}
-						} else {
-							// Spawn failed. Persistent tabs are kept (marked exited so the
-							// spawn effects stop retrying in a loop); scratch tabs are closed.
-							handleSpawnFailure(
-								tabId,
-								isPersistent,
-								effectiveSshConfig?.enabled
-									? 'SSH terminal could not be started. Check that the SSH remote is enabled and reachable.'
-									: 'The shell process could not be started. Check system PTY availability.'
-							);
-						}
-					})
-					.catch((err) => {
-						captureException(err, {
-							extra: {
-								tabId,
-								terminalSessionId,
-								operation: 'spawnTerminalTab',
-							},
-						});
-						// Spawn threw - same persistent-vs-scratch handling as a failed spawn.
-						handleSpawnFailure(
-							tabId,
-							isPersistent,
-							err instanceof Error ? err.message : 'An unexpected error occurred.'
-						);
-					})
-					.finally(() => {
-						spawnInFlightRef.current.delete(tabId);
-					});
+				// Spawn at the size the pane is actually showing. Without this the shell
+				// starts at 80x24 and anything that asks the kernel for the window size
+				// (nano, vim, less, top) paints into that box regardless of how large the
+				// pane is - ordinary command output still fills it, because xterm does
+				// the wrapping itself, which is why the bug looks like "only TUIs break".
+				const size = terminalRefs.current.get(tab.id)?.getSize();
+				void spawnPty({
+					session,
+					tab,
+					cols: size?.cols,
+					rows: size?.rows,
+					onPid: (id, pid) => {
+						onTabPidChangeRef.current(id, pid);
+						// Re-assert now that the PTY exists. Two cases need it: a tab spawned
+						// into the background had no rendered terminal to measure above, and a
+						// resize that raced the spawn was dropped (process:resize resolves
+						// false for an unknown session id, and nothing retried it).
+						terminalRefs.current.get(id)?.syncSize();
+					},
+					onSpawnFailure: handleSpawnFailure,
+				});
 			},
-			[
-				session.id,
-				session.cwd,
-				session.remoteCwd,
-				session.sessionSshRemoteConfig,
-				session.sshRemoteId,
-				defaultShell,
-				shellArgs,
-				shellEnvVars,
-				// onTabPidChange / onTabStateChange accessed via stable refs - not deps
-				handleSpawnFailure,
-			]
+			[session, handleSpawnFailure]
 		);
 
-		// Spawn PTY when active tab changes and has no PID yet
-		useEffect(() => {
-			if (!activeTab || activeTab.pid !== 0 || activeTab.state === 'exited') {
-				return;
-			}
-			spawnPtyForTab(activeTab);
-		}, [activeTab?.id, spawnPtyForTab]);
-
-		// Eagerly spawn any non-active terminal tab that has a startupCommand
-		// configured. Without this, a tab with `npm run dev` would silently sit
-		// dormant after an app restart until the user clicked it - defeating the
-		// whole point of a persistent startup command. spawnPtyForTab's in-flight
-		// guard + the pid===0 check make this safe to re-evaluate on every render.
+		// Spawn a PTY for every terminal that needs one. Three kinds qualify:
+		//
+		//   - the session's active terminal tab (the standalone, non-tiled view);
+		//   - every terminal that is a LEAF IN THE ACTIVE TAB GROUP, i.e. has a
+		//     published pane rect. A tiled terminal is on screen without ever being
+		//     `activeTerminalTabId`, so gating spawning on the active tab alone left
+		//     tiled terminals sitting on "Starting terminal..." forever - the one tab
+		//     kind that broke when tiled;
+		//   - any tab with a startupCommand, active or not. Without this a tab with
+		//     `npm run dev` would sit dormant after an app restart until the user
+		//     clicked it, defeating the point of a persistent startup command.
+		//
+		// spawnPtyForTab's in-flight guard plus the pid===0 check make this safe to
+		// re-evaluate on every render.
 		useEffect(() => {
 			const terminalTabs = session.terminalTabs || [];
 			for (const tab of terminalTabs) {
-				if (
-					tab.startupCommand &&
-					tab.pid === 0 &&
-					tab.state !== 'exited' &&
-					tab.id !== activeTab?.id
-				) {
+				if (tab.pid !== 0 || tab.state === 'exited') continue;
+				const onScreen = tab.id === activeTab?.id || paneRects?.has(tab.id) === true;
+				if (onScreen || tab.startupCommand) {
 					spawnPtyForTab(tab);
 				}
 			}
-		}, [session.terminalTabs, activeTab?.id, spawnPtyForTab]);
+		}, [session.terminalTabs, activeTab?.id, paneRects, spawnPtyForTab]);
 
 		// Focus and repaint the active terminal when the active tab changes.
 		// The refresh() call is necessary because switching tabs uses CSS visibility: hidden

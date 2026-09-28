@@ -1,9 +1,14 @@
-// Create agent command - create a new agent in the Maestro desktop app
+// Create agent command - create a new agent in the Maestro desktop app.
+//
+// Selects the new agent, as it always has. Pass --background to create it
+// without moving the Left Bar selection; the agent is still created and listed.
 
 import * as path from 'path';
 import { withMaestroClient } from '../services/maestro-client';
 import { formatError, formatSuccess } from '../output/formatter';
 import { AGENT_IDS } from '../../shared/agentIds';
+import { parseCliBool } from '../utils/parse';
+import { resolveBackgroundFlag } from '../../shared/focusPlacement';
 
 const VALID_TYPES: Set<string> = new Set(AGENT_IDS.filter((id) => id !== 'terminal'));
 
@@ -24,15 +29,9 @@ interface CreateAgentOptions {
 	sshCwd?: string;
 	syncHistoryToRemote?: string;
 	autoRunFolder?: string;
+	background?: boolean;
+	focus?: boolean;
 	json?: boolean;
-}
-
-// Parse a CLI boolean flag value. Accepts true/false/1/0/yes/no (case-insensitive).
-function parseBool(value: string, flag: string): boolean {
-	const v = value.trim().toLowerCase();
-	if (v === 'true' || v === '1' || v === 'yes') return true;
-	if (v === 'false' || v === '0' || v === 'no') return false;
-	throw new Error(`${flag} expects true or false, got "${value}"`);
 }
 
 export async function createAgent(name: string, options: CreateAgentOptions): Promise<void> {
@@ -87,7 +86,7 @@ export async function createAgent(name: string, options: CreateAgentOptions): Pr
 	let syncHistory: boolean | undefined;
 	if (options.syncHistoryToRemote !== undefined) {
 		try {
-			syncHistory = parseBool(options.syncHistoryToRemote, '--sync-history-to-remote');
+			syncHistory = parseCliBool(options.syncHistoryToRemote, '--sync-history-to-remote');
 		} catch (error) {
 			const msg = error instanceof Error ? error.message : String(error);
 			if (options.json) {
@@ -128,12 +127,14 @@ export async function createAgent(name: string, options: CreateAgentOptions): Pr
 	}
 
 	// Build the WebSocket message payload
+	const background = resolveBackgroundFlag(options, 'create-agent');
 	const payload: Record<string, unknown> = {
 		type: 'create_session',
 		name,
 		toolType: options.type,
 		cwd,
 		groupId: options.group,
+		background,
 	};
 
 	// Add optional config fields
@@ -144,7 +145,15 @@ export async function createAgent(name: string, options: CreateAgentOptions): Pr
 	if (customEnvVars) payload.customEnvVars = customEnvVars;
 	if (options.model) payload.customModel = options.model;
 	if (options.effort) payload.customEffort = options.effort;
-	if (customContextWindow !== undefined) payload.customContextWindow = customContextWindow;
+	if (customContextWindow !== undefined) {
+		payload.customContextWindow = customContextWindow;
+		// Typing `--context-window` is unambiguously a deliberate choice, exactly as
+		// it is on `update-agent` (finding AD1, review of PR #1362). Without this the
+		// same flag on the same CLI produced two different outcomes: a scripted
+		// create with a lowered budget was silently overridden by the provider's
+		// report and had to be re-applied with `update-agent` to stick.
+		payload.contextWindowSource = 'user-edited';
+	}
 	if (options.providerPath) payload.customProviderPath = options.providerPath;
 	if (sessionSshRemoteConfig) payload.sessionSshRemoteConfig = sessionSshRemoteConfig;
 	if (options.autoRunFolder) payload.autoRunFolderPath = path.resolve(options.autoRunFolder);
@@ -162,10 +171,20 @@ export async function createAgent(name: string, options: CreateAgentOptions): Pr
 		if (result.success) {
 			if (options.json) {
 				console.log(
-					JSON.stringify({ success: true, agentId: result.sessionId, name, type: options.type })
+					JSON.stringify({
+						success: true,
+						agentId: result.sessionId,
+						name,
+						type: options.type,
+						background,
+					})
 				);
 			} else {
-				console.log(formatSuccess(`Created agent "${name}" (${options.type})`));
+				console.log(
+					formatSuccess(
+						`Created agent "${name}" (${options.type})${background ? ' in the background' : ''}`
+					)
+				);
 				console.log(`  ID: ${result.sessionId}`);
 				console.log(`  CWD: ${cwd}`);
 			}

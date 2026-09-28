@@ -7,19 +7,23 @@ import {
 	DocumentGraphSection,
 	FileEditPreviewSection,
 	FileIndexingSection,
-	FontFamilySection,
-	FontSizeSection,
+	FontsSection,
+	FontZoomSection,
 	GroupChatSection,
 	IconThemeSection,
+	ProviderModePillSection,
 	LeftSidePanelSection,
 	MainHeaderPanelSection,
 	MaxLogBufferSection,
 	MaxOutputLinesSection,
 	MessageAlignmentSection,
 	ModalLayoutSection,
+	SavedTypographySection,
 	TabOptionsSection,
+	TypographyResetSection,
 	WindowChromeSection,
 } from './components';
+import { typographySnapshotMatches } from '../../../../../shared/typographySnapshot';
 import { useBionifyAlgorithmState, useFontConfigurationState } from './hooks';
 import type { DisplayTabProps } from './types';
 import { PluginPanelSlot } from '../../../plugins/PluginPanelSlot';
@@ -36,31 +40,51 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 		setBionifyAlgorithm: settings.setBionifyAlgorithm,
 	});
 
+	// The store read as a plain record, which is what both the snapshot
+	// comparison and the font pickers below want. Built once so the two cannot
+	// disagree about what is currently set.
+	const settingsRecord = settings as unknown as Record<string, unknown>;
+
 	return (
 		<div className="space-y-5">
-			<div data-setting-id="display-font-family">
-				<FontFamilySection
-					theme={theme}
-					fontFamily={settings.fontFamily}
-					setFontFamily={settings.setFontFamily}
-					fontConfiguration={fontConfiguration}
-				/>
-			</div>
-			<div data-setting-id="display-terminal-font-family">
-				<FontFamilySection
-					theme={theme}
-					heading="Terminal Font"
-					description="Font for the command terminal. Leave on 'Same as interface font' to inherit the UI font, or pick any installed font (e.g. a Nerd Font for shell prompt symbols)."
-					fontFamily={settings.terminalFontFamily}
-					setFontFamily={settings.setTerminalFontFamily}
-					fontConfiguration={fontConfiguration}
-					inheritOption={{ value: '', label: 'Same as interface font' }}
-				/>
-			</div>
-			<FontSizeSection
+			<TypographyResetSection
 				theme={theme}
-				fontSize={settings.fontSize}
-				setFontSize={settings.setFontSize}
+				fonts={{
+					fontFamily: settings.fontFamily,
+					chatFontFamily: settings.chatFontFamily,
+					terminalFontFamily: settings.terminalFontFamily,
+					filePreviewFontFamily: settings.filePreviewFontFamily,
+					fileEditorFontFamily: settings.fileEditorFontFamily,
+					documentGraphFontFamily: settings.documentGraphFontFamily,
+				}}
+				sizes={{
+					fontSize: settings.fontSize,
+					chatFontSize: settings.chatFontSize,
+					terminalFontSize: settings.terminalFontSize,
+					filePreviewFontSize: settings.filePreviewFontSize,
+					fileEditorFontSize: settings.fileEditorFontSize,
+					documentGraphFontSize: settings.documentGraphFontSize,
+				}}
+				onReset={settings.resetTypography}
+			/>
+			<SavedTypographySection
+				theme={theme}
+				snapshot={settings.typographySnapshot ?? null}
+				isCurrent={typographySnapshotMatches(settings.typographySnapshot ?? null, settingsRecord)}
+				onSave={settings.saveTypographySnapshot}
+				onRestore={settings.restoreTypographySnapshot}
+			/>
+			<FontsSection
+				theme={theme}
+				settings={settingsRecord}
+				fontConfiguration={fontConfiguration}
+				setSurfaceFontFamily={settings.setSurfaceFontFamily}
+				setSurfaceFontSize={settings.setSurfaceFontSize}
+			/>
+			<FontZoomSection
+				theme={theme}
+				fontZoom={settings.fontZoom}
+				setFontZoom={settings.setFontZoom}
 			/>
 			<MaxLogBufferSection
 				theme={theme}
@@ -81,6 +105,11 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 				theme={theme}
 				groupChatAutoScroll={settings.groupChatAutoScroll}
 				setGroupChatAutoScroll={settings.setGroupChatAutoScroll}
+			/>
+			<ProviderModePillSection
+				theme={theme}
+				showProviderModePill={settings.showProviderModePill}
+				setShowProviderModePill={settings.setShowProviderModePill}
 			/>
 			<IconThemeSection
 				theme={theme}
@@ -145,10 +174,16 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 				setShowStarredInUnreadFilter={settings.setShowStarredInUnreadFilter}
 				showFilePreviewsInUnreadFilter={settings.showFilePreviewsInUnreadFilter}
 				setShowFilePreviewsInUnreadFilter={settings.setShowFilePreviewsInUnreadFilter}
+				showTerminalTabsInUnreadFilter={settings.showTerminalTabsInUnreadFilter}
+				setShowTerminalTabsInUnreadFilter={settings.setShowTerminalTabsInUnreadFilter}
+				showBrowserTabsInUnreadFilter={settings.showBrowserTabsInUnreadFilter}
+				setShowBrowserTabsInUnreadFilter={settings.setShowBrowserTabsInUnreadFilter}
 				useCmd0AsLastTab={settings.useCmd0AsLastTab}
 				setUseCmd0AsLastTab={settings.setUseCmd0AsLastTab}
 				showBrowserTabDomain={settings.showBrowserTabDomain}
 				setShowBrowserTabDomain={settings.setShowBrowserTabDomain}
+				showTabCountBadge={settings.showTabCountBadge}
+				setShowTabCountBadge={settings.setShowTabCountBadge}
 				tabBarWheelScroll={settings.tabBarWheelScroll}
 				setTabBarWheelScroll={settings.setTabBarWheelScroll}
 			/>
@@ -156,6 +191,8 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 				theme={theme}
 				documentGraphShowExternalLinks={settings.documentGraphShowExternalLinks}
 				setDocumentGraphShowExternalLinks={settings.setDocumentGraphShowExternalLinks}
+				documentGraphConfirmClose={settings.documentGraphConfirmClose}
+				setDocumentGraphConfirmClose={settings.setDocumentGraphConfirmClose}
 				documentGraphMaxNodes={settings.documentGraphMaxNodes}
 				setDocumentGraphMaxNodes={settings.setDocumentGraphMaxNodes}
 			/>

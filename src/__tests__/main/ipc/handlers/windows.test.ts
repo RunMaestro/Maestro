@@ -86,6 +86,16 @@ function makeEvent(browserWindow: BrowserWindow | null) {
 	return { sender: { id: 1 } } as unknown as Electron.IpcMainInvokeEvent;
 }
 
+/** The synthetic event a web-desktop bridge invoke arrives on (FAKE_EVENT). */
+function makeBridgeEvent() {
+	return {
+		senderFrame: null,
+		frameId: -1,
+		processId: -1,
+		type: 'bridge',
+	} as unknown as Electron.IpcMainInvokeEvent;
+}
+
 describe('Windows IPC Handlers', () => {
 	let registry: WindowRegistry;
 	let handlers: Map<string, Function>;
@@ -358,18 +368,53 @@ describe('Windows IPC Handlers', () => {
 			expect(result).toBeNull();
 		});
 
-		it('returns null (not a throw) for a senderless bridge event', async () => {
+		it('returns null (not a throw) for a senderless bridge event with no primary', async () => {
 			// The web-desktop bridge dispatches invokes with a synthetic event that
-			// has no sender (FAKE_EVENT). getState must resolve to null so the web
-			// client's WindowContext hydrate degrades gracefully instead of the
-			// handler crashing on BrowserWindow.fromWebContents(undefined).
-			const bridgeEvent = {
-				senderFrame: null,
-				frameId: -1,
-				processId: -1,
-				type: 'bridge',
-			} as unknown as Electron.IpcMainInvokeEvent;
-			const result = await handlers.get('windows:getState')!(bridgeEvent);
+			// has no sender (FAKE_EVENT). With nothing registered there is no window
+			// to answer for, and the handler must still resolve rather than crash on
+			// BrowserWindow.fromWebContents(undefined).
+			const result = await handlers.get('windows:getState')!(makeBridgeEvent());
+			expect(result).toBeNull();
+		});
+
+		// A web-desktop client mirrors the primary window, so a READ answers for it.
+		// Before this, every window-scoped read returned "unknown caller" and the
+		// remote page booted with null window state.
+		it('answers a bridge read with the primary window state', async () => {
+			const secondary = makeFakeWindow();
+			const primary = makeFakeWindow({
+				getBounds: vi.fn(() => ({ x: 5, y: 6, width: 1280, height: 720 })),
+			});
+			registry.create({ browserWindow: secondary, sessionIds: ['agent-2'], isMain: false });
+			const primaryId = registry.create({
+				browserWindow: primary,
+				sessionIds: ['agent-1'],
+				isMain: true,
+			});
+
+			const result = (await handlers.get('windows:getState')!(makeBridgeEvent())) as {
+				id: string;
+				width: number;
+				sessionIds: string[];
+			} | null;
+
+			expect(result).not.toBeNull();
+			// Resolved by isMain, NOT by registration order - the secondary was
+			// registered first precisely so an order-based lookup would fail here.
+			expect(result!.id).toBe(primaryId);
+			expect(result!.width).toBe(1280);
+			expect(result!.sessionIds).toEqual(['agent-1']);
+		});
+
+		// The opt-in is per-handler and reads only. A senderless event that is not
+		// a bridge event must stay an unknown caller.
+		it('does not answer a senderless non-bridge event', async () => {
+			const primary = makeFakeWindow();
+			registry.create({ browserWindow: primary, sessionIds: [], isMain: true });
+
+			const result = await handlers.get('windows:getState')!(
+				{} as unknown as Electron.IpcMainInvokeEvent
+			);
 			expect(result).toBeNull();
 		});
 
@@ -446,6 +491,23 @@ describe('Windows IPC Handlers', () => {
 			expect(result.registered).toBe(false);
 			expect(registry.getWindowForSession('agent-new')).toBeNull();
 		});
+
+		// The bridge opt-in is READS ONLY. This handler documents that a window only
+		// ever claims an agent into itself; with two windows open, honoring a web
+		// client here would claim it into a window the remote user never chose.
+		it('does not claim an agent for a bridge caller', async () => {
+			const primary = makeFakeWindow();
+			const id = registry.create({ browserWindow: primary, sessionIds: [], isMain: true });
+
+			const result = (await handlers.get('windows:registerSession')!(
+				makeBridgeEvent(),
+				'agent-new'
+			)) as { registered: boolean };
+
+			expect(result.registered).toBe(false);
+			expect(registry.get(id)?.sessionIds).toEqual([]);
+			expect(registry.getWindowForSession('agent-new')).toBeNull();
+		});
 	});
 
 	describe('windows:setPanelState', () => {
@@ -497,6 +559,24 @@ describe('Windows IPC Handlers', () => {
 				renamed: boolean;
 			};
 			expect(result.renamed).toBe(false);
+		});
+
+		// Same rule as registerSession: a remote panel collapse must not rewrite a
+		// desktop window's persisted state.
+		it('does not write panel state for a bridge caller', async () => {
+			const primary = makeFakeWindow();
+			registry.create({ browserWindow: primary, sessionIds: [], isMain: true });
+
+			await handlers.get('windows:setPanelState')!(makeBridgeEvent(), {
+				leftPanelCollapsed: true,
+			});
+
+			// The read DOES answer for the primary, which is exactly how we can see
+			// that the write above did not land.
+			const state = (await handlers.get('windows:getState')!(makeBridgeEvent())) as {
+				leftPanelCollapsed: boolean;
+			};
+			expect(state.leftPanelCollapsed).toBe(false);
 		});
 	});
 

@@ -412,7 +412,7 @@ const UNSUPPORTED: TtsrAgentCapability = {
  * just fire once per tool call rather than as the arguments are typed.
  *
  * Agents absent from the plan's scope table (gemini-cli, qwen3-coder, hermes,
- * pi, omp) are marked unsupported rather than guessed at; they gain support
+ * pi, omp, antigravity) are marked unsupported rather than guessed at; they gain support
  * when their parser surface is verified the same way.
  */
 export const TTSR_AGENT_CAPABILITIES: Record<AgentId, TtsrAgentCapability> = {
@@ -489,6 +489,7 @@ export const TTSR_AGENT_CAPABILITIES: Record<AgentId, TtsrAgentCapability> = {
 	hermes: UNSUPPORTED,
 	pi: UNSUPPORTED,
 	omp: UNSUPPORTED,
+	antigravity: UNSUPPORTED,
 };
 
 /** Agent ids TTSR supports at all (any detection mode). */

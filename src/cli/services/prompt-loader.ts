@@ -8,6 +8,8 @@ import fsSync from 'fs';
 import path from 'path';
 import { CORE_PROMPTS, getPromptFilename } from '../../shared/promptDefinitions';
 import { getConfigDirectory } from './storage';
+import { describeSegmentLimit } from '../../shared/autorunModelHints';
+import { PROMPT_IDS } from '../../shared/promptDefinitions';
 
 const cliPromptCache = new Map<string, string>();
 let bundledPromptsDir: string | null = null;
@@ -147,4 +149,28 @@ export async function getCliPrompt(id: string): Promise<string> {
 export function _resetCliPromptCacheForTests(): void {
 	cliPromptCache.clear();
 	bundledPromptsDir = null;
+}
+
+/**
+ * The task-selection instruction block for a playbook's mode, ready to
+ * substitute into `{{TASK_SELECTION_BLOCK}}`.
+ *
+ * CLI twin of `getTaskSelectionBlock` in the renderer's `batchUtils`, and it
+ * has to strip trailing whitespace the same way: the block is spliced into the
+ * middle of a numbered list, so a trailing newline inserts a blank line between
+ * step 2 and step 3.
+ *
+ * Defaults to per-task, matching the renderer's fallback for an unrecognized
+ * mode. A playbook that predates the setting has no `taskSelectionMode`, and
+ * per-task is the behaviour those playbooks were written against.
+ */
+export async function getCliTaskSelectionBlock(
+	mode: 'task' | 'document' | undefined,
+	segment?: { count: number; total: number }
+): Promise<string> {
+	const id = mode === 'document' ? PROMPT_IDS.AUTORUN_PER_DOCUMENT : PROMPT_IDS.AUTORUN_PER_TASK;
+	const content = await getCliPrompt(id);
+	const block = content.replace(/\s+$/, '');
+	if (mode !== 'document') return block;
+	return `${block}${describeSegmentLimit(segment)}`;
 }

@@ -103,7 +103,7 @@ export function CalendarPicker({ theme, value, onChange, minDate }: CalendarPick
 					<button
 						type="button"
 						onClick={jumpToToday}
-						className="text-[10px] px-1.5 py-0.5 rounded hover:bg-white/10 transition-colors"
+						className="text-2xs px-1.5 py-0.5 rounded hover:bg-white/10 transition-colors"
 						style={{ color: theme.colors.textDim, border: `1px solid ${theme.colors.border}` }}
 					>
 						Today
@@ -126,7 +126,7 @@ export function CalendarPicker({ theme, value, onChange, minDate }: CalendarPick
 				{WEEKDAY_LABELS.map((label, index) => (
 					<div
 						key={`${label}-${index}`}
-						className="text-center text-[10px] font-medium py-1"
+						className="text-center text-2xs font-medium py-1"
 						style={{ color: theme.colors.textDim }}
 					>
 						{label}

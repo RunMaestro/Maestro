@@ -18,6 +18,7 @@ import type {
 } from '../../types';
 import type { FileTreeChanges } from '../../utils/fileExplorer';
 import type { FileNode } from '../../types/fileTree';
+import type { FileClickOptions } from '../ui/useAppHandlers';
 
 /**
  * Dependencies for computing RightPanel props.
@@ -45,7 +46,7 @@ export interface UseRightPanelPropsDeps {
 		activeSessionId: string,
 		setSessions: React.Dispatch<React.SetStateAction<Session[]>>
 	) => void;
-	handleFileClick: (node: FileNode, path: string, activeSession: Session) => Promise<void>;
+	handleFileClick: (node: FileNode, path: string, options?: FileClickOptions) => Promise<void>;
 	expandAllFolders: (
 		activeSessionId: string,
 		activeSession: Session,
@@ -102,7 +103,7 @@ export interface UseRightPanelPropsDeps {
 	handleLaunchWizardTab: () => void;
 
 	// File linking
-	handleMainPanelFileClick: (path: string) => void;
+	handleMainPanelFileClick: (path: string, options?: { openInNewTab?: boolean }) => void;
 	/** Send a composed prompt to the active agent (TTSR rule authoring hand-off). */
 	handleSendPromptToAgent: (prompt: string) => void;
 
@@ -161,11 +162,16 @@ export function useRightPanelProps(deps: UseRightPanelPropsDeps) {
 			onResumeAfterError: deps.handleResumeAfterError,
 			onJumpToAgentSession: deps.handleJumpToAgentSession,
 			onResumeSession: deps.handleResumeSession,
-			onOpenSessionAsTab: (agentSessionId: string, projectPath?: string) =>
+			// `sessionName` is the name the history entry already shows on its pill.
+			// It has to travel: the resume fallback reads the session-origins store,
+			// which is Claude-only and only ever written by a synopsis, so for every
+			// other provider (and for any session that never produced one) the history
+			// record is the ONLY surviving copy of that name.
+			onOpenSessionAsTab: (agentSessionId: string, projectPath?: string, sessionName?: string) =>
 				deps.handleResumeSession(
 					agentSessionId,
 					undefined,
-					undefined,
+					sessionName,
 					undefined,
 					undefined,
 					projectPath

@@ -4,7 +4,6 @@ import type {
 	BatchRunConfig,
 	Session,
 	HistoryEntry,
-	UsageStats,
 	Group,
 	AutoRunStats,
 	AgentError,
@@ -16,12 +15,13 @@ import { useSessionStore } from '../../stores/sessionStore';
 import { useTimeTracking } from './useTimeTracking';
 import { useWorktreeManager } from './useWorktreeManager';
 import { useDocumentProcessor } from './useDocumentProcessor';
-import type { AgentSpawnErrorKind, SpawnAgentRunOverrides } from '../agent/useAgentExecution';
+import type { AutoRunSpawnAgentFn } from './useDocumentProcessor';
 // Decomposed internal hooks (see ./internal/)
 import type { BatchAction } from './batchReducer';
 import { type AutoRunFlushState } from './internal/batchFlushState';
 import { useBatchSelectors } from './internal/useBatchSelectors';
 import { useBatchBroadcast } from './internal/useBatchBroadcast';
+import { useAutoRunStateMirror } from './useAutoRunStateMirror';
 import {
 	useBatchControlActions,
 	type ErrorResolutionEntry,
@@ -58,21 +58,7 @@ export interface PRResultInfo {
 export interface UseBatchProcessorProps {
 	groups: Group[];
 	onUpdateSession: (sessionId: string, updates: Partial<Session>) => void;
-	onSpawnAgent: (
-		sessionId: string,
-		prompt: string,
-		cwdOverride?: string,
-		/** Run-scoped model/effort override from the BatchRunConfig, when the run set one */
-		options?: SpawnAgentRunOverrides
-	) => Promise<{
-		success: boolean;
-		response?: string;
-		agentSessionId?: string;
-		usageStats?: UsageStats;
-		contextUsage?: number;
-		error?: string;
-		errorKind?: AgentSpawnErrorKind;
-	}>;
+	onSpawnAgent: AutoRunSpawnAgentFn;
 	/**
 	 * Resume an existing provider session and run a prompt (used by the goal
 	 * runner to fetch a handoff note between iterations). Same primitive the
@@ -226,20 +212,9 @@ export function useBatchProcessor({
 	const { broadcastAutoRunState, updateBatchStateAndBroadcast, flushDebouncedUpdate } =
 		useBatchBroadcast({ dispatch });
 
-	// External lifecycle controls (stop + pause/skip/resume/abort)
-	const {
-		stopBatchRun,
-		pauseBatchOnError,
-		skipCurrentDocument,
-		resumeAfterError,
-		abortBatchOnError,
-	} = useBatchControlActions({
-		broadcastAutoRunState,
-		dispatch,
-		errorResolutionRefs,
-		stopRequestedRefs,
-		isMountedRef,
-	});
+	// The inbound half of that same bridge: render runs OWNED by another Maestro
+	// client (web-desktop watching the desktop app). No-op in the Electron build.
+	useAutoRunStateMirror();
 
 	// Use extracted time tracking hook (replaces manual visibility-based time tracking)
 	const timeTracking = useTimeTracking({
@@ -256,12 +231,29 @@ export function useBatchProcessor({
 					sessionId,
 					payload: {
 						accumulatedElapsedMs: accumulatedMs,
-						lastActiveTimestamp: activeTimestamp ?? undefined,
+						lastActiveTimestamp: activeTimestamp,
 					},
 				});
 			},
 			[]
 		),
+	});
+
+	// External lifecycle controls (stop + pause/skip/resume/abort). Follows
+	// `useTimeTracking` because a pause stops the run's clock.
+	const {
+		stopBatchRun,
+		pauseBatchOnError,
+		skipCurrentDocument,
+		resumeAfterError,
+		abortBatchOnError,
+	} = useBatchControlActions({
+		broadcastAutoRunState,
+		dispatch,
+		errorResolutionRefs,
+		stopRequestedRefs,
+		isMountedRef,
+		timeTracking,
 	});
 
 	// Force-kill action with kill-vs-natural-completion arbitration.

@@ -14,7 +14,7 @@ import { ipcMain, type BrowserWindow } from 'electron';
 import { logger } from '../../utils/logger';
 import { createSafeSend } from '../../utils/safe-send';
 import { HistoryEntry, HistoryEntryType, ToolType } from '../../../shared/types';
-import { paginateEntries } from '../../../shared/history';
+import { MAX_ENTRIES_PER_SESSION, paginateEntries } from '../../../shared/history';
 import type { PaginatedResult, GraphBucket } from '../../../shared/history';
 import { getHistoryManager } from '../../history-manager';
 import { getSessionsStore, getSettingsStore } from '../../stores';
@@ -25,13 +25,15 @@ import {
 } from '../../utils/ipcHandler';
 import { groomContext } from '../../utils/context-groomer';
 import { buildDirectorNotesSynopsisPrompt } from '../../utils/director-notes-prompt';
+import { resolveSynopsisProvider } from '../../utils/director-notes-provider';
+import type { SynopsisProviderChoice } from '../../../shared/directorNotesProvider';
+import { getPrompt } from '../../prompt-manager';
 import {
 	looksLikeStructuredOutput,
 	parseDirectorNotesNarrative,
 	recoverDirectorNotesNarrative,
 	type DirectorNotesNarrative,
 } from '../../../shared/directorNotesNarrative';
-import { getPrompt } from '../../prompt-manager';
 import type { ProcessManager } from '../../process-manager';
 import type { AgentDetector } from '../../agents';
 import type Store from 'electron-store';
@@ -42,7 +44,30 @@ import {
 	HISTORY_BUCKET_CACHE_VERSION,
 } from '../../utils/history-bucket-cache';
 import { buildBucketAggregate } from '../../utils/history-bucket-builder';
+import {
+	cueScopeAgentsFromRecords,
+	dropCueRowsAlreadyInJsonl,
+	mergeEntriesById,
+	readCueEntries,
+	readCueGraphBuckets,
+	readCueGraphFingerprint,
+	sessionField,
+	type CueHistoryBucketsQuery,
+	type CueHistoryEntriesQuery,
+	type CueHistoryFingerprintQuery,
+} from '../../utils/cue-history-merge';
+import {
+	collectSharedHistoryEntries,
+	hasSharedHistorySources,
+	prepareSharedHistoryForSynopsis,
+	sharedEntryAgentKey,
+	sharedEntryAgentName,
+	type SharedHistoryCollection,
+} from '../../utils/director-notes-shared-history';
 import type { HistoryGraphData } from './history';
+
+/** Corpus with no foreign-host contribution - the all-local case. */
+const NO_SHARED_HISTORY: SharedHistoryCollection = { entries: [], hosts: [], scopeCount: 0 };
 
 const LOG_CONTEXT = '[DirectorNotes]';
 
@@ -65,30 +90,186 @@ const handlerOpts = (operation: string): Pick<CreateHandlerOptions, 'context' | 
 });
 
 /**
- * Re-walk session entries to count distinct agents and provider sessions.
- * Cheap (no bucketing) but unavoidable on cache hit because the bucket
+ * One agent's worth of history in the aggregated corpus.
+ *
+ * Local agents come from `userData/history/`; foreign agents are assembled from
+ * the shared JSONL files another Maestro instance mirrored into the project
+ * directory. Every Director's Notes surface reads this same shape so the list,
+ * the graph, Rich Mode, and the click-to-offset lookup can never disagree about
+ * which runs exist.
+ */
+interface CorpusAgent {
+	/** Key reported as `sourceSessionId`. Host-namespaced for foreign agents. */
+	sourceSessionId: string;
+	/** Left Bar name for local agents; host-qualified label for foreign ones. */
+	agentName?: string;
+	entries: HistoryEntry[];
+	/**
+	 * Whether a full file could have been trimmed by per-agent retention.
+	 * False for foreign agents: their entries are a merged read across hosts,
+	 * so entry count says nothing about any one file hitting the cap.
+	 */
+	canBeTruncated: boolean;
+}
+
+/**
+ * How a corpus read picks up Cue runs, which no longer reach the JSONL files.
+ *
+ * Omitting `query` means "JSONL only" - the right call for the activity-graph
+ * handler, which counts Cue from the database instead of materializing rows.
+ */
+interface CueCorpusOptions {
+	/** Cue runs as history rows; see `getCueHistoryEntries()`. */
+	query?: CueHistoryEntriesQuery;
+	/** Inclusive lower bound on run time. Unbounded when omitted. */
+	since?: number;
+}
+
+/**
+ * Fold `cue_events` runs into the corpus, one agent at a time.
+ *
+ * Cue stopped writing to the agent's history file in CUE-HISTORY-02, so without
+ * this every Director's Notes surface - the list, the CUE pill, the stats
+ * header, Rich Mode - would report zero Cue activity on a fleet doing thousands
+ * of runs a day.
+ *
+ * Two wrinkles the History panel's version also has to handle:
+ *
+ * - Runs recorded BEFORE the writes were removed are still in the JSONL file
+ *   and stay there (past the Cue retention window they are the only record), so
+ *   a DB row the file already carries is dropped rather than rendered twice.
+ * - An agent whose only activity is Cue has no history file at all, so it is
+ *   absent from `listSessionsWithHistory()` and has to be added here.
+ */
+function foldCueRunsIntoCorpus(corpus: CorpusAgent[], cue: CueCorpusOptions): CorpusAgent[] {
+	const scopes = cueScopeAgentsFromRecords(readSessionRecords());
+	// An agent deleted from the Left Bar keeps its history file, so the corpus
+	// can name agents the store no longer does. Keep their runs in scope.
+	const known = new Set(scopes.map((scope) => scope.id));
+	for (const agent of corpus) {
+		if (known.has(agent.sourceSessionId)) continue;
+		scopes.push({ id: agent.sourceSessionId, name: agent.agentName });
+	}
+
+	const byId = new Map(corpus.map((agent) => [agent.sourceSessionId, agent]));
+	for (const scope of scopes) {
+		const rows = readCueEntries(cue.query, [scope], {
+			since: cue.since,
+			limit: MAX_ENTRIES_PER_SESSION,
+		});
+		if (rows.length === 0) continue;
+
+		const existing = byId.get(scope.id);
+		if (existing) {
+			existing.entries = mergeEntriesById(
+				existing.entries,
+				dropCueRowsAlreadyInJsonl(existing.entries, rows)
+			);
+			continue;
+		}
+		const agent: CorpusAgent = {
+			sourceSessionId: scope.id,
+			agentName: scope.name,
+			entries: mergeEntriesById([], rows),
+			// The row cap, not file retention, is what could have trimmed this
+			// one - but the effect on the count is the same: it is a floor.
+			canBeTruncated: rows.length >= MAX_ENTRIES_PER_SESSION,
+		};
+		byId.set(scope.id, agent);
+		corpus.push(agent);
+	}
+	return corpus;
+}
+
+/**
+ * Load every agent's history - local JSONL store, Cue runs from `cue_events`,
+ * plus foreign-host shared entries.
+ *
+ * `shared` is passed in rather than fetched here so callers that can prove
+ * there is nothing shared (or that must not pay for an SSH round trip) can hand
+ * over an empty collection.
+ */
+async function loadUnifiedCorpus(
+	historyManager: ReturnType<typeof getHistoryManager>,
+	sessionNameMap: Map<string, string>,
+	shared: SharedHistoryCollection,
+	cue: CueCorpusOptions = {}
+): Promise<CorpusAgent[]> {
+	const sessionIds = await historyManager.listSessionsWithHistory();
+	// Parallel reads - independent files.
+	const sessionEntries = await Promise.all(sessionIds.map((sid) => historyManager.getEntries(sid)));
+
+	let corpus: CorpusAgent[] = sessionIds.map((sid, i) => ({
+		sourceSessionId: sid,
+		agentName: sessionNameMap.get(sid),
+		entries: sessionEntries[i],
+		canBeTruncated: true,
+	}));
+
+	if (cue.query) corpus = foldCueRunsIntoCorpus(corpus, cue);
+
+	if (shared.entries.length === 0) return corpus;
+
+	// A run we already hold locally can also appear in a peer's mirror; entry
+	// ids are stable across hosts, so they settle it.
+	const localIds = new Set<string>();
+	for (const agent of corpus) {
+		for (const entry of agent.entries) localIds.add(entry.id);
+	}
+
+	const foreignByAgent = new Map<string, CorpusAgent>();
+	for (const entry of shared.entries) {
+		if (localIds.has(entry.id)) continue;
+		const key = sharedEntryAgentKey(entry);
+		let agent = foreignByAgent.get(key);
+		if (!agent) {
+			agent = {
+				sourceSessionId: key,
+				agentName: sharedEntryAgentName(entry),
+				entries: [],
+				canBeTruncated: false,
+			};
+			foreignByAgent.set(key, agent);
+		}
+		agent.entries.push(entry);
+	}
+
+	return [...corpus, ...foreignByAgent.values()];
+}
+
+/**
+ * Count distinct agents and provider sessions across the corpus.
+ * Cheap (no bucketing) but unavoidable on a bucket-cache hit, because the
  * cache schema only stores per-type counts.
  */
-async function countAgentsAndSessions(
-	historyManager: ReturnType<typeof getHistoryManager>,
-	sessionIds: string[]
-): Promise<{ agentCount: number; sessionCount: number }> {
-	const agentSet = new Set<string>();
+function countAgentsAndSessions(corpus: CorpusAgent[]): {
+	agentCount: number;
+	sessionCount: number;
+} {
+	let agentCount = 0;
 	const providerSessionSet = new Set<string>();
-	// Parallel reads - independent files. Falls through to flat() so we can
-	// associate each result with its sessionId in the loop below.
-	const allEntriesArrays = await Promise.all(
-		sessionIds.map((sid) => historyManager.getEntries(sid))
-	);
-	sessionIds.forEach((sid, i) => {
-		const entries = allEntriesArrays[i];
-		if (entries.length === 0) return;
-		agentSet.add(sid);
-		for (const e of entries) {
+	for (const agent of corpus) {
+		if (agent.entries.length === 0) continue;
+		agentCount++;
+		for (const e of agent.entries) {
 			if (e.agentSessionId) providerSessionSet.add(e.agentSessionId);
 		}
-	});
-	return { agentCount: agentSet.size, sessionCount: providerSessionSet.size };
+	}
+	return { agentCount, sessionCount: providerSessionSet.size };
+}
+
+/**
+ * Every session record in the store, loosely typed.
+ *
+ * Both the display-name map and the Cue scope read the same list: an agent's
+ * name and its directory live here and nowhere else, and a `cue_events` row
+ * knows neither.
+ */
+function readSessionRecords(): Array<Record<string, unknown>> {
+	const stored = getSessionsStore().get('sessions', []) as unknown as Array<
+		Record<string, unknown>
+	>;
+	return stored.filter((s) => typeof s === 'object' && s !== null);
 }
 
 /**
@@ -96,13 +277,11 @@ async function countAgentsAndSessions(
  * Used to resolve the display name shown in the left bar for each session.
  */
 function buildSessionNameMap(): Map<string, string> {
-	const sessionsStore = getSessionsStore();
-	const storedSessions = sessionsStore.get('sessions', []);
 	const map = new Map<string, string>();
-	for (const s of storedSessions) {
-		if (s.id && s.name) {
-			map.set(s.id, s.name);
-		}
+	for (const record of readSessionRecords()) {
+		const id = sessionField(record, 'id');
+		const name = sessionField(record, 'name');
+		if (id && name) map.set(id, name);
 	}
 	return map;
 }
@@ -133,6 +312,27 @@ export interface DirectorNotesHandlerDependencies {
 	 * them alongside the desktop renderer.
 	 */
 	getMainWindow: () => BrowserWindow | null;
+	/**
+	 * Cue runs for one agent, already shaped as `HistoryEntry` - see
+	 * `getCueHistoryEntries()` in `src/main/cue/stats/cue-stats-query.ts`.
+	 *
+	 * Injected rather than imported so this module keeps no static edge to the
+	 * Cue SQLite layer (`better-sqlite3` is a native binding built for Electron's
+	 * ABI). Omitted means Director's Notes reports zero Cue activity.
+	 */
+	getCueHistoryEntries?: CueHistoryEntriesQuery;
+	/**
+	 * Per-minute Cue run counts for the activity graph. Asked fleet-wide (no
+	 * `sessionId`), because this graph aggregates every agent at once and one
+	 * GROUP BY beats one query per agent.
+	 */
+	getCueHistoryBuckets?: CueHistoryBucketsQuery;
+	/**
+	 * Change-detector mixed into the activity-graph cache key. Without it the key
+	 * covers only the JSONL files, which no longer move when a Cue run lands, and
+	 * the CUE bars freeze at whatever was first computed.
+	 */
+	getCueHistoryFingerprint?: CueHistoryFingerprintQuery;
 }
 
 export interface UnifiedHistoryOptions {
@@ -223,7 +423,12 @@ export interface RichOverviewStats {
 
 export interface SynopsisOptions {
 	lookbackDays: number;
-	provider: ToolType;
+	/**
+	 * The agent to spawn, or `'auto'` to use the first installed supported
+	 * provider (see `resolveSynopsisProvider`). Auto is what every surface sends
+	 * unless the conductor turned auto-selection off in Settings.
+	 */
+	provider: SynopsisProviderChoice;
 	customPath?: string;
 	customArgs?: string;
 	customEnvVars?: Record<string, string>;
@@ -259,6 +464,15 @@ export interface RichAgentStat {
 	entryCount: number;
 	successCount: number;
 	failureCount: number;
+	/**
+	 * True when RETENTION, not the lookback window, is what bounded this count:
+	 * the agent's history file sits at `MAX_ENTRIES_PER_SESSION` and its oldest
+	 * surviving entry is still inside the window, so older runs were already
+	 * evicted and the real total is unknown and larger. Without this, a busy
+	 * agent's bar silently pins to the cap and reads as an exact figure - two
+	 * agents at wildly different volumes both render "5.0K" and tie for top.
+	 */
+	truncated: boolean;
 }
 
 /**
@@ -318,6 +532,11 @@ export interface SynopsisResult {
 	 * partial report off as a complete one.
 	 */
 	narrativeRecovery?: string;
+	/**
+	 * The provider that actually ran. Worth reporting because under auto-selection
+	 * the caller does not know which agent it asked for.
+	 */
+	provider?: ToolType;
 }
 
 /**
@@ -331,6 +550,12 @@ export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependen
 	const { getProcessManager, getAgentDetector, agentConfigsStore, getMainWindow } = deps;
 	const safeSend = createSafeSend(getMainWindow);
 	const historyManager = getHistoryManager();
+
+	/** Cue read options for a corpus load bounded by `cutoffTime` (0 = all time). */
+	const cueSince = (cutoffTime: number): CueCorpusOptions => ({
+		query: deps.getCueHistoryEntries,
+		since: cutoffTime > 0 ? cutoffTime : undefined,
+	});
 
 	// Aggregate history from all sessions with pagination support
 	ipcMain.handle(
@@ -350,11 +575,15 @@ export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependen
 				// lookbackDays <= 0 means "all time" - no cutoff
 				const cutoffTime = lookbackDays > 0 ? now - lookbackDays * 24 * 60 * 60 * 1000 : 0;
 
-				// Get all session IDs from history manager
-				const sessionIds = await historyManager.listSessionsWithHistory();
-
-				// Resolve Maestro session names (the names shown in the left bar)
-				const sessionNameMap = buildSessionNameMap();
+				// Local history plus anything a peer Maestro mirrored into the
+				// shared project files. Names come from the left bar for local
+				// agents, host-qualified for foreign ones.
+				const corpus = await loadUnifiedCorpus(
+					historyManager,
+					buildSessionNameMap(),
+					await collectSharedHistoryEntries(),
+					cueSince(cutoffTime)
+				);
 
 				// Collect all entries within time range (unfiltered by type for stats)
 				const allEntries: UnifiedHistoryEntry[] = [];
@@ -384,15 +613,12 @@ export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependen
 					}));
 				}
 
-				for (const sessionId of sessionIds) {
-					const entries = await historyManager.getEntries(sessionId);
-					const maestroSessionName = sessionNameMap.get(sessionId);
-
-					for (const entry of entries) {
+				for (const agent of corpus) {
+					for (const entry of agent.entries) {
 						if (cutoffTime > 0 && entry.timestamp < cutoffTime) continue;
 
 						// Track stats from all entries (before type filter)
-						agentsWithEntries.add(sessionId);
+						agentsWithEntries.add(agent.sourceSessionId);
 						if (entry.type === 'AUTO') autoCount++;
 						else if (entry.type === 'USER') userCount++;
 						else if (entry.type === 'CUE') cueCount++;
@@ -423,8 +649,8 @@ export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependen
 
 						allEntries.push({
 							...entry,
-							sourceSessionId: sessionId,
-							agentName: maestroSessionName,
+							sourceSessionId: agent.sourceSessionId,
+							agentName: agent.agentName,
 						});
 					}
 				}
@@ -475,7 +701,7 @@ export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependen
 				};
 
 				logger.debug(
-					`Unified history: ${result.entries.length}/${result.total} entries from ${sessionIds.length} sessions (offset=${result.offset}, hasMore=${result.hasMore})`,
+					`Unified history: ${result.entries.length}/${result.total} entries from ${corpus.length} sessions (offset=${result.offset}, hasMore=${result.hasMore})`,
 					LOG_CONTEXT
 				);
 
@@ -499,6 +725,10 @@ export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependen
 				const safeBucketCount = Math.max(1, bucketCount | 0);
 				const lookbackMs =
 					lookbackHours !== null && lookbackHours > 0 ? lookbackHours * 60 * 60 * 1000 : null;
+				// One `now` for the whole call, so the window the Cue query is asked
+				// for is exactly the window the aggregate buckets.
+				const now = Date.now();
+				const cueSinceMs = lookbackMs !== null ? now - lookbackMs : undefined;
 				const sessionIds = await historyManager.listSessionsWithHistory();
 				const filePathsRaw = await Promise.all(
 					sessionIds.map((sid) => historyManager.getHistoryFilePath(sid))
@@ -508,19 +738,30 @@ export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependen
 				const cache = getHistoryBucketCache();
 				const lookbackKey = lookbackHours === null ? 'all' : String(lookbackHours);
 				const cacheKey = `unified:bc=${safeBucketCount}:lb=${lookbackKey}`;
-				const fp = multiFileFingerprint(filePaths);
+				// The JSONL half of the key stopped moving for Cue when those writes
+				// were removed, so the database contributes its own change-detector or
+				// the CUE bars freeze at whatever was first computed.
+				const fp = `${multiFileFingerprint(filePaths)}|cue=${readCueGraphFingerprint(
+					deps.getCueHistoryFingerprint
+				)}`;
+
+				// The fingerprint covers LOCAL history files only, so a cached
+				// aggregate cannot see foreign-host entries. Skip the cache
+				// whenever shared history could contribute - the probe is a
+				// directory listing, not a network call, so an all-local setup
+				// still takes the cached path. Mirrors `history:getGraphData`.
+				const mayHaveSharedHistory = hasSharedHistorySources();
 
 				// Stats need session/agent counts that aren't part of the bucket
 				// aggregate. Compute them once per cache miss; on hit, derive
 				// what we can from the cached aggregate and re-walk only when
 				// stats are stale (rare - they invalidate with the buckets).
-				const hit = await cache.get(cacheKey, fp);
+				const hit = mayHaveSharedHistory ? null : await cache.get(cacheKey, fp);
 				if (hit) {
 					// agent/session counts aren't in the cache schema - re-walk
 					// once. Cheap relative to bucketing.
-					const { agentCount, sessionCount } = await countAgentsAndSessions(
-						historyManager,
-						sessionIds
+					const { agentCount, sessionCount } = countAgentsAndSessions(
+						await loadUnifiedCorpus(historyManager, buildSessionNameMap(), NO_SHARED_HISTORY)
 					);
 					return {
 						buckets: hit.buckets,
@@ -546,42 +787,47 @@ export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependen
 					};
 				}
 
-				const allEntries: HistoryEntry[] = [];
-				const agentSet = new Set<string>();
-				const providerSessionSet = new Set<string>();
-				const sessionEntries = await Promise.all(
-					sessionIds.map((sid) => historyManager.getEntries(sid))
+				const corpus = await loadUnifiedCorpus(
+					historyManager,
+					buildSessionNameMap(),
+					mayHaveSharedHistory ? await collectSharedHistoryEntries() : NO_SHARED_HISTORY
 				);
-				for (let i = 0; i < sessionIds.length; i++) {
-					const sid = sessionIds[i];
-					const entries = sessionEntries[i];
-					if (entries.length === 0) continue;
-					agentSet.add(sid);
-					for (const e of entries) {
-						allEntries.push(e);
-						if (e.agentSessionId) providerSessionSet.add(e.agentSessionId);
-					}
-				}
+				const allEntries = corpus.flatMap((agent) => agent.entries);
+				const { agentCount, sessionCount } = countAgentsAndSessions(corpus);
 
-				const agg = buildBucketAggregate(allEntries, safeBucketCount, { lookbackMs });
+				// Counts, not rows: this graph spans every agent, and an all-time read
+				// would otherwise drag every run's stored output through memory just to
+				// increment a bar. The corpus above is deliberately loaded WITHOUT Cue
+				// rows for the same reason - which does mean `agentCount` misses an
+				// agent whose only activity is Cue, unlike `getUnifiedHistory`'s stats.
+				const agg = buildBucketAggregate(allEntries, safeBucketCount, {
+					lookbackMs,
+					endTime: now,
+					cueCounts: readCueGraphBuckets(deps.getCueHistoryBuckets, { since: cueSinceMs }),
+				});
 				// Fire-and-forget the disk write - the renderer doesn't need to
 				// wait for it; the in-memory cache layer was already updated.
-				void cache.set({
-					version: HISTORY_BUCKET_CACHE_VERSION,
-					cacheKey,
-					sourceFingerprint: fp,
-					bucketCount: safeBucketCount,
-					buckets: agg.buckets,
-					earliestTimestamp: agg.earliestTimestamp,
-					latestTimestamp: agg.latestTimestamp,
-					totalCount: agg.totalCount,
-					autoCount: agg.autoCount,
-					userCount: agg.userCount,
-					cueCount: agg.cueCount,
-					agentCount: agg.agentCount,
-					hostCounts: agg.hostCounts,
-					computedAt: Date.now(),
-				});
+				// Skipped when shared history is in play: the fingerprint would
+				// claim local files alone produced this aggregate, poisoning the
+				// cache for the next all-local read.
+				if (!mayHaveSharedHistory) {
+					void cache.set({
+						version: HISTORY_BUCKET_CACHE_VERSION,
+						cacheKey,
+						sourceFingerprint: fp,
+						bucketCount: safeBucketCount,
+						buckets: agg.buckets,
+						earliestTimestamp: agg.earliestTimestamp,
+						latestTimestamp: agg.latestTimestamp,
+						totalCount: agg.totalCount,
+						autoCount: agg.autoCount,
+						userCount: agg.userCount,
+						cueCount: agg.cueCount,
+						agentCount: agg.agentCount,
+						hostCounts: agg.hostCounts,
+						computedAt: Date.now(),
+					});
+				}
 
 				return {
 					buckets: agg.buckets,
@@ -596,8 +842,8 @@ export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependen
 					hostCounts: agg.hostCounts,
 					cached: false,
 					stats: {
-						agentCount: agentSet.size,
-						sessionCount: providerSessionSet.size,
+						agentCount,
+						sessionCount,
 						autoCount: agg.autoCount,
 						userCount: agg.userCount,
 						cueCount: agg.cueCount,
@@ -621,17 +867,23 @@ export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependen
 				timestamp: number,
 				options?: { lookbackDays?: number; filter?: UnifiedHistoryFilter }
 			): Promise<number> => {
-				const sessionIds = await historyManager.listSessionsWithHistory();
 				const lookback = options?.lookbackDays ?? 0;
 				const filter = options?.filter ?? null;
 				const cutoff = lookback > 0 ? Date.now() - lookback * 24 * 60 * 60 * 1000 : 0;
 
-				const all: HistoryEntry[] = [];
-				const entriesArrays = await Promise.all(
-					sessionIds.map((sid) => historyManager.getEntries(sid))
+				// Must aggregate exactly what `getUnifiedHistory` does, shared
+				// entries included - this offset indexes into that list, so a
+				// narrower corpus here scrolls the user to the wrong row.
+				const corpus = await loadUnifiedCorpus(
+					historyManager,
+					buildSessionNameMap(),
+					await collectSharedHistoryEntries(),
+					cueSince(cutoff)
 				);
-				for (const entries of entriesArrays) {
-					for (const e of entries) {
+
+				const all: HistoryEntry[] = [];
+				for (const agent of corpus) {
+					for (const e of agent.entries) {
 						if (cutoff > 0 && e.timestamp < cutoff) continue;
 						if (!entryPassesFilter(e.type, filter)) continue;
 						all.push(e);
@@ -665,12 +917,11 @@ export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependen
 				const cutoffTime = lookbackDays > 0 ? now - lookbackDays * 24 * 60 * 60 * 1000 : 0;
 				const lookbackMs = lookbackDays > 0 ? lookbackDays * 24 * 60 * 60 * 1000 : null;
 
-				const sessionIds = await historyManager.listSessionsWithHistory();
-				const sessionNameMap = buildSessionNameMap();
-
-				// Parallel reads - independent files.
-				const sessionEntries = await Promise.all(
-					sessionIds.map((sid) => historyManager.getEntries(sid))
+				const corpus = await loadUnifiedCorpus(
+					historyManager,
+					buildSessionNameMap(),
+					await collectSharedHistoryEntries(),
+					cueSince(cutoffTime)
 				);
 
 				const windowEntries: HistoryEntry[] = [];
@@ -686,9 +937,9 @@ export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependen
 				let elapsedSampleCount = 0;
 				const perAgentMap = new Map<string, RichAgentStat>();
 
-				for (let i = 0; i < sessionIds.length; i++) {
-					const sid = sessionIds[i];
-					const entries = sessionEntries[i];
+				for (const agent of corpus) {
+					const sid = agent.sourceSessionId;
+					const entries = agent.entries;
 					for (const entry of entries) {
 						if (cutoffTime > 0 && entry.timestamp < cutoffTime) continue;
 
@@ -714,16 +965,31 @@ export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependen
 						if (!agentStat) {
 							agentStat = {
 								sessionId: sid,
-								agentName: sessionNameMap.get(sid) ?? sid,
+								agentName: agent.agentName ?? sid,
 								entryCount: 0,
 								successCount: 0,
 								failureCount: 0,
+								truncated: false,
 							};
 							perAgentMap.set(sid, agentStat);
 						}
 						agentStat.entryCount++;
 						if (entry.success === true) agentStat.successCount++;
 						else if (entry.success === false) agentStat.failureCount++;
+					}
+
+					// Retention already evicted this agent's older runs if the file is
+					// full AND its oldest survivor is still inside the window - nothing
+					// was dropped by the cutoff, so the cap is what bounded the count.
+					// A file at the cap whose tail predates the window is fine: the
+					// window did the trimming and the number is exact.
+					const agentStat = agent.canBeTruncated ? perAgentMap.get(sid) : undefined;
+					if (agentStat && entries.length >= MAX_ENTRIES_PER_SESSION) {
+						const oldest = entries.reduce(
+							(min, e) => Math.min(min, e.timestamp),
+							Number.POSITIVE_INFINITY
+						);
+						if (oldest >= cutoffTime) agentStat.truncated = true;
 					}
 				}
 
@@ -793,24 +1059,27 @@ export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependen
 				const processManager = requireDependency(getProcessManager, 'Process manager');
 				const agentDetector = requireDependency(getAgentDetector, 'Agent detector');
 
-				// Verify the requested agent is available
-				const agent = await agentDetector.getAgent(options.provider);
-				if (!agent || !agent.available) {
-					return {
-						success: false,
-						synopsis: '',
-						error: `Agent "${options.provider}" is not available. Please install it or select a different provider in Settings > Director's Notes.`,
-					};
+				// Resolve 'auto' to a concrete agent and verify it is available.
+				const resolved = await resolveSynopsisProvider(options.provider, agentDetector);
+				if ('error' in resolved) {
+					return { success: false, synopsis: '', error: resolved.error };
+				}
+				const provider = resolved.provider;
+				if (resolved.auto) {
+					logger.info(`Auto-selected synopsis provider: ${provider}`, LOG_CONTEXT);
 				}
 
 				// Build the synopsis prompt: a manifest of history file paths scoped
 				// to the lookback window so the agent only reads files it needs.
+				const cutoffTime =
+					options.lookbackDays > 0 ? Date.now() - options.lookbackDays * 24 * 60 * 60 * 1000 : 0;
 				const { prompt, agentCount, entryCount } = await buildDirectorNotesSynopsisPrompt({
 					historyManager,
 					sessionNameMap: buildSessionNameMap(),
 					lookbackDays: options.lookbackDays,
 					basePrompt: getPrompt('director-notes'),
 					idealEndState: getConfiguredIdealEndState(),
+					sharedHistoryFile: await prepareSharedHistoryForSynopsis(cutoffTime),
 				});
 
 				if (!prompt) {
@@ -830,7 +1099,7 @@ export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependen
 				try {
 					// Look up agent-level config values for override resolution
 					const allConfigs = agentConfigsStore.get('configs', {});
-					const dnAgentConfigValues = allConfigs[options.provider] || {};
+					const dnAgentConfigValues = allConfigs[provider] || {};
 
 					// Send progress updates to the renderer and web-desktop bridge clients
 					const sendProgress = (update: {
@@ -841,10 +1110,14 @@ export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependen
 						safeSend('director-notes:synopsisProgress', update);
 					};
 
+					// Intentionally local: the synopsis prompt is a manifest of history
+					// file paths on THIS machine, so no `sessionSshRemoteConfig` is
+					// passed and groomContext spawns locally. See issue #1416 - the
+					// grooming path now honors SSH when a caller does supply a config.
 					const result = await groomContext(
 						{
 							projectRoot: process.cwd(),
-							agentType: options.provider,
+							agentType: provider,
 							prompt,
 							readOnlyMode: true,
 							sessionCustomPath: options.customPath,
@@ -899,21 +1172,31 @@ export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependen
 						logger.warn('Synopsis narrative parse failed', LOG_CONTEXT, {
 							narrativeError: parsed.error,
 							recovered: recovered.ok,
+							lossless: recovered.ok ? recovered.lossless : undefined,
 							recoveryReason: recovered.ok ? recovered.reason : undefined,
 						});
-						narrativeFields = recovered.ok
-							? {
-									narrative: recovered.narrative,
-									narrativeError: parsed.error,
-									narrativeRecovery: recovered.reason,
-								}
-							: { narrativeError: parsed.error };
+						// A lossless repair (an agent that stopped one brace short of
+						// finishing, a stray line break inside a string) produced the whole
+						// report. Shipping the error fields anyway put a red banner over a
+						// complete document and told the user it might be missing parts.
+						if (recovered.ok && recovered.lossless) {
+							narrativeFields = { narrative: recovered.narrative };
+						} else if (recovered.ok) {
+							narrativeFields = {
+								narrative: recovered.narrative,
+								narrativeError: parsed.error,
+								narrativeRecovery: recovered.reason,
+							};
+						} else {
+							narrativeFields = { narrativeError: parsed.error };
+						}
 					}
 
 					return {
 						success: true,
 						synopsis,
 						generatedAt: Date.now(),
+						provider,
 						stats: {
 							agentCount,
 							entryCount,

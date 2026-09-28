@@ -10,6 +10,8 @@
  *      single-dollar math (which would misparse `$5` / `$HOME`).
  *   3. normalizeChatDisplayMath - (chat only) put `$$...$$` delimiters on their
  *      own lines so remark-math doesn't break the block fence (#622).
+ *   4. hardBreakInlineFields - keep a block of Dataview-style `Key:: value`
+ *      lines on separate lines instead of collapsing into one paragraph.
  *
  * Raw-HTML sanitization is intentionally NOT done here. It happens at the HAST
  * level via rehype-sanitize (see sanitizeSchema.ts), after remark has tokenized
@@ -21,6 +23,7 @@
 
 import { normalizeChatDisplayMath } from '../../../shared/normalizeChatDisplayMath';
 import { convertBracketMath } from '../../../shared/convertBracketMath';
+import { forEachMarkdownLine } from '../../../shared/markdownTaskScan';
 
 // ============================================================================
 // fixMarkdownLinkSpaces - pre-process markdown so CommonMark can parse links
@@ -84,6 +87,57 @@ export function fixMarkdownLinkSpaces(text: string): string {
 	return result;
 }
 
+// ============================================================================
+// hardBreakInlineFields - keep Dataview-style inline fields on their own lines.
+//
+// Obsidian notes open with a run of `Key:: value` lines:
+//
+//   Type:: Briefing
+//   Period:: AM
+//   Date:: 2026-08-28
+//
+// CommonMark folds consecutive lines into one paragraph, so the preview renders
+// that header as a single run-on sentence. Appending a hard break (two trailing
+// spaces) to each line keeps the source shape without touching the text.
+//
+// A single field line is NOT enough to trigger this: prose that happens to
+// contain `::` would break mid-paragraph. Only a RUN of two or more adjacent
+// field lines counts as a field block, and the break also extends to the plain
+// line immediately above or below the block so the block stays separated from
+// surrounding prose.
+// ============================================================================
+
+/** `Key:: value` at the start of a line. The name may not contain a colon. */
+const INLINE_FIELD_REGEX = /^ {0,3}[A-Za-z0-9_][A-Za-z0-9 _()/-]{0,40}::(?:\s|$)/;
+
+/** Already ends in a hard break (two spaces or a trailing backslash). */
+const HARD_BREAK_SUFFIX_REGEX = / {2,}$|\\$/;
+
+export function hardBreakInlineFields(text: string): string {
+	const lines = text.replace(/\r\n?/g, '\n').split('\n');
+
+	// Fence-aware: a code fence documenting `Key:: value` must not be rewritten.
+	const isField: boolean[] = new Array(lines.length).fill(false);
+	forEachMarkdownLine(text, (line, index) => {
+		isField[index] = INLINE_FIELD_REGEX.test(line);
+	});
+
+	const inFieldBlock = isField.map(
+		(field, i) => field && (isField[i - 1] === true || isField[i + 1] === true)
+	);
+
+	let changed = false;
+	for (let i = 0; i < lines.length - 1; i++) {
+		if (!inFieldBlock[i] && !inFieldBlock[i + 1]) continue;
+		if (lines[i].trim() === '' || lines[i + 1].trim() === '') continue;
+		if (HARD_BREAK_SUFFIX_REGEX.test(lines[i])) continue;
+		lines[i] += '  ';
+		changed = true;
+	}
+
+	return changed ? lines.join('\n') : text;
+}
+
 export interface PreprocessMarkdownOptions {
 	/** Chat surfaces normalize multi-line `$$...$$` before remark-math parses. */
 	chatMath?: boolean;
@@ -99,5 +153,5 @@ export function preprocessMarkdown(
 		processed = convertBracketMath(processed);
 		processed = normalizeChatDisplayMath(processed);
 	}
-	return processed;
+	return hardBreakInlineFields(processed);
 }

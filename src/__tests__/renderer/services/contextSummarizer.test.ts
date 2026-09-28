@@ -270,6 +270,10 @@ Continue with implementation.`);
 					customPath: '/custom/agent',
 					customArgs: '--flag',
 					customEnvVars: { MY_VAR: 'value' },
+					// Summarization opts into the low tier / low effort turn. Asserted
+					// here so a future refactor cannot silently drop the flag and put
+					// summaries back on the agent's full model.
+					cheapTurn: true,
 				}
 			);
 		});

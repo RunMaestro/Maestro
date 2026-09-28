@@ -55,7 +55,7 @@ export function FeedbackIssueHistoryList({
 						>
 							<div className="flex items-center gap-2 min-w-0">
 								<span
-									className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full shrink-0"
+									className="text-2xs font-semibold px-1.5 py-0.5 rounded-full shrink-0"
 									style={{
 										backgroundColor: isOpen
 											? `${theme.colors.success}20`
@@ -74,14 +74,14 @@ export function FeedbackIssueHistoryList({
 								</p>
 							</div>
 							<div className="flex items-center gap-2 mt-0.5 flex-wrap">
-								<span className="text-[10px]" style={{ color: theme.colors.textDim }}>
+								<span className="text-2xs" style={{ color: theme.colors.textDim }}>
 									#{issue.number}
 								</span>
-								<span className="text-[10px]" style={{ color: theme.colors.textDim }}>
+								<span className="text-2xs" style={{ color: theme.colors.textDim }}>
 									Submitted {formatRelativeTime(issue.submittedAt)}
 								</span>
 								<span
-									className="flex items-center gap-0.5 text-[10px]"
+									className="flex items-center gap-0.5 text-2xs"
 									style={{ color: theme.colors.textDim }}
 								>
 									<ExternalLink className="w-3 h-3" />

@@ -346,6 +346,7 @@ describe('agent-detector', () => {
 			expect(agentIds).toContain('claude-code');
 			expect(agentIds).toContain('codex');
 			expect(agentIds).toContain('gemini-cli');
+			expect(agentIds).toContain('antigravity');
 			expect(agentIds).toContain('qwen3-coder');
 			expect(agentIds).toContain('hermes');
 			expect(agentIds).toContain('pi');

@@ -5,7 +5,10 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import React, { useRef } from 'react';
 import { render, screen } from '@testing-library/react';
-import { useAnchoredMenuPosition } from '../../../../renderer/hooks/ui/useAnchoredMenuPosition';
+import {
+	useAnchoredMenuPosition,
+	type AnchoredMenuOptions,
+} from '../../../../renderer/hooks/ui/useAnchoredMenuPosition';
 
 /** Stub an element's rect, which jsdom otherwise reports as all zeroes. */
 function stubRect(el: HTMLElement, rect: Partial<DOMRect>) {
@@ -17,11 +20,13 @@ interface HarnessProps {
 	anchorRect?: Partial<DOMRect>;
 	menuSize?: { width: number; height: number };
 	gap?: number;
+	/** Placement/alignment options; the bare `gap` prop covers the legacy form. */
+	options?: AnchoredMenuOptions;
 	/** Render without ever attaching the anchor ref, simulating a missing anchor. */
 	detachAnchor?: boolean;
 }
 
-function Harness({ anchorRect, menuSize, gap, detachAnchor }: HarnessProps) {
+function Harness({ anchorRect, menuSize, gap, options, detachAnchor }: HarnessProps) {
 	const anchorRef = useRef<HTMLDivElement>(null);
 	const menuRef = useRef<HTMLDivElement>(null);
 
@@ -36,7 +41,7 @@ function Harness({ anchorRect, menuSize, gap, detachAnchor }: HarnessProps) {
 		(menuRef as React.MutableRefObject<HTMLDivElement | null>).current = el;
 	};
 
-	const { left, top, ready } = useAnchoredMenuPosition(menuRef, anchorRef, gap);
+	const { left, top, ready } = useAnchoredMenuPosition(menuRef, anchorRef, options ?? gap);
 
 	return (
 		<>
@@ -120,6 +125,49 @@ describe('useAnchoredMenuPosition', () => {
 
 		// Without a measurable anchor the menu must not flash at the top-left.
 		expect(readPosition().ready).toBe(false);
+	});
+
+	it('grows upward from the anchor when placement is above', () => {
+		render(
+			<Harness
+				anchorRect={{ left: 100, top: 500, right: 160, bottom: 540 }}
+				menuSize={{ width: 200, height: 150 }}
+				options={{ placement: 'above' }}
+			/>
+		);
+
+		const { left, top, ready } = readPosition();
+		expect(ready).toBe(true);
+		expect(left).toBe(100);
+		expect(top).toBe(344); // anchor top - 6px gap - menu height
+	});
+
+	it('lines up the right edges when align is end', () => {
+		render(
+			<Harness
+				anchorRect={{ left: 340, top: 20, right: 400, bottom: 40 }}
+				menuSize={{ width: 200, height: 100 }}
+				options={{ align: 'end' }}
+			/>
+		);
+
+		const { left, top } = readPosition();
+		expect(left).toBe(200); // anchor right - menu width
+		expect(top).toBe(46);
+	});
+
+	it('combines above and end, the media transport case', () => {
+		render(
+			<Harness
+				anchorRect={{ left: 700, top: 600, right: 748, bottom: 624 }}
+				menuSize={{ width: 64, height: 220 }}
+				options={{ placement: 'above', align: 'end' }}
+			/>
+		);
+
+		const { left, top } = readPosition();
+		expect(left).toBe(684);
+		expect(top).toBe(374);
 	});
 
 	it('measures an anchor that mounts in the same commit as the menu', () => {

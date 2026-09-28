@@ -3,7 +3,7 @@
 // Maestro daemon so layout edits are atomic and don't race with the desktop
 // app's own writes.
 //
-// While the Pipeline Editor is open, the renderer's in-memory state is the
+// While the Pipeline Graph is open, the renderer's in-memory state is the
 // authoritative source of truth and will overwrite CLI edits on its next
 // save. Surface to the user via documentation; we don't gate here.
 

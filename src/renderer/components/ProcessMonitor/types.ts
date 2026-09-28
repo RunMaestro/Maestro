@@ -41,7 +41,9 @@ export type ProcessTypeTag =
 	| 'participant'
 	| 'wizard'
 	| 'wizard-gen'
-	| 'cue';
+	| 'cue'
+	/** An ephemeral `cross-agent-*` consult spawned by an `@mention`. */
+	| 'consult';
 
 export interface ProcessNode {
 	id: string;

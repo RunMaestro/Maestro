@@ -3,6 +3,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { execFileNoThrow } from './utils/execFile';
+import { atomicWriteFile } from './utils/atomic-json-store';
 import { getWhichCommand, isWindows } from '../shared/platformDetection';
 import { compareVersions } from '../shared/pathUtils';
 import { getExpandedEnv } from './utils/cliDetection';
@@ -12,8 +13,12 @@ import type { MaestroCliStatus, MaestroCliInstallResult } from '../shared/maestr
 const CLI_BINARY_NAME = 'maestro-cli';
 const LOG_CONTEXT = 'MaestroCliManager';
 
-function normalizeVersion(raw: string): string {
-	const firstLine = raw.trim().split(/\r?\n/)[0] || '';
+export function normalizeVersion(raw: string): string {
+	const lines = splitOutputLines(raw);
+	const exactVersionLine = lines.find((line) => /^v?\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(line));
+	if (exactVersionLine) return exactVersionLine.replace(/^v/i, '');
+
+	const firstLine = lines[0] || '';
 	const semverMatch = firstLine.match(/(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)/);
 	return semverMatch?.[1] || firstLine.replace(/^v/i, '').trim();
 }
@@ -159,6 +164,13 @@ export class MaestroCliManager {
 		return version;
 	}
 
+	/**
+	 * Shims are written via temp file + rename so the rename replaces whatever
+	 * sits at `installPath` itself. A plain `writeFile` follows a symlink, and a
+	 * hand-made `~/.local/bin/maestro-cli -> Maestro.app/.../maestro-cli.js` link
+	 * made it overwrite the app's own bundled CLI with this shim, which then
+	 * exec'd itself as JavaScript and broke every `maestro-cli` call.
+	 */
 	private async writeUnixShim(installPath: string, bundledCliPath: string): Promise<void> {
 		const safeCliPath = bundledCliPath.replace(/'/g, "'\\''");
 		const safeRuntimePath = process.execPath.replace(/'/g, "'\\''");
@@ -170,7 +182,7 @@ export class MaestroCliManager {
 			bundledCliPath,
 			runtimePath: process.execPath,
 		});
-		await fs.promises.writeFile(installPath, script, 'utf-8');
+		await atomicWriteFile(installPath, script);
 		await fs.promises.chmod(installPath, 0o755);
 	}
 
@@ -186,7 +198,7 @@ export class MaestroCliManager {
 			bundledCliPath,
 			runtimePath: process.execPath,
 		});
-		await fs.promises.writeFile(installPath, script, 'utf-8');
+		await atomicWriteFile(installPath, script);
 	}
 
 	private async ensurePosixPathExport(
@@ -266,9 +278,11 @@ export class MaestroCliManager {
 			"  $newPath = (($parts + $installDir) | Select-Object -Unique) -join ';'",
 			"  [Environment]::SetEnvironmentVariable('Path', $newPath, 'User')",
 			'}',
-		].join('; ');
+		].join('\n');
 
-		const result = await execFileNoThrow('powershell', [
+		// Use the executable name so execFileNoThrow does not route the command
+		// through cmd.exe, which would reinterpret PowerShell's pipe characters.
+		const result = await execFileNoThrow('powershell.exe', [
 			'-NoProfile',
 			'-NonInteractive',
 			'-Command',

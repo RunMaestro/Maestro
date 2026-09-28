@@ -12,7 +12,6 @@
 
 import React from 'react';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
 	TerminalOutput,
@@ -22,6 +21,7 @@ import { useCenterFlashStore } from '../../../renderer/stores/centerFlashStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { useUIStore } from '../../../renderer/stores/uiStore';
 import type { Session, Theme, LogEntry } from '../../../renderer/types';
+import { TRANSCRIPT_SCROLL_TO_BOTTOM_EVENT } from '../../../renderer/services/transcriptScroll';
 
 // Mock dependencies
 vi.mock('react-syntax-highlighter', () => ({
@@ -383,6 +383,40 @@ describe('TerminalOutput', () => {
 			expect(combinedText).not.toContain('response.Unknown command');
 			expect(combinedText).not.toContain('/nonexistentStart of a later response.');
 		});
+
+		it("keeps Claude's plan-limit banner off the front of the retried answer", () => {
+			// After a plan-quota outage, Claude forwards its banner as a plain
+			// `stdout` entry with no marker. The answer the auto-retry produces
+			// arrives half an hour later but is still the next `stdout` entry in the
+			// same response group, so grouping used to render the reply as
+			// "You've hit your session limit · resets 12:50am (America/Chicago)Yes,
+			// on the first part. ...".
+			const logs: LogEntry[] = [
+				createLogEntry({ id: 'user-1', text: 'Question', source: 'user' }),
+				createLogEntry({
+					id: 'limit-1',
+					text: "You've hit your session limit · resets 12:50am (America/Chicago)",
+					source: 'stdout',
+				}),
+				createLogEntry({ id: 'resp-1', text: 'Yes on the first part.', source: 'stdout' }),
+			];
+
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			const { container } = render(<TerminalOutput {...createDefaultProps({ session })} />);
+
+			// user + banner + answer, not user + one stitched bubble.
+			expect(container.querySelectorAll('[data-log-index]').length).toBe(3);
+
+			const combinedText = screen
+				.getAllByTestId('react-markdown')
+				.map((el) => el.textContent)
+				.join('|');
+			expect(combinedText).not.toContain('(America/Chicago)Yes on the first part.');
+		});
 	});
 
 	describe('command-mode cards are never merged into a response group', () => {
@@ -405,12 +439,12 @@ describe('TerminalOutput', () => {
 			});
 		}
 
-		function renderLogs(logs: LogEntry[]) {
+		function renderLogs(logs: LogEntry[], propOverrides: Record<string, unknown> = {}) {
 			const session = createDefaultSession({
 				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
 				activeTabId: 'tab-1',
 			});
-			return render(<TerminalOutput {...createDefaultProps({ session })} />);
+			return render(<TerminalOutput {...createDefaultProps({ session, ...propOverrides })} />);
 		}
 
 		it('gives the command its own row instead of appending it to the agent reply', () => {
@@ -478,6 +512,117 @@ describe('TerminalOutput', () => {
 			const { container } = renderLogs(logs);
 
 			expect(container.querySelectorAll('[data-log-index]').length).toBe(3);
+		});
+
+		it('offers delete on a finished card when the transcript is editable', () => {
+			// The card takes an early return and never reaches the shared hover
+			// toolbar, so it has to carry the affordance itself - this asserts the
+			// props actually arrive from TerminalOutput.
+			renderLogs([commandCard()], { onDeleteLog: vi.fn() });
+
+			expect(screen.getByTestId('shell-command-delete')).toBeInTheDocument();
+		});
+
+		it('repaints a finished card that produced no output at all', () => {
+			// Regression: the LogItem memo compared `log.text`, which never changes
+			// for a silent command (`!true`), so the card stayed frozen mid-run -
+			// spinner up, Stop offered, and delete hidden behind its finished gate.
+			// Both `tabs` (what this file's getActiveTab mock reads) and `aiTabs`
+			// (what TerminalOutput's active-tab useMemo keys on). A session carrying
+			// only one of them can never repaint on a rerender, which would make
+			// this test assert the harness rather than the component.
+			const sessionWith = (log: LogEntry) => {
+				const tabs = [{ id: 'tab-1', agentSessionId: 'claude-123', logs: [log], isUnread: false }];
+				return createDefaultSession({ tabs, aiTabs: tabs, activeTabId: 'tab-1' } as never);
+			};
+			const onDeleteLog = vi.fn();
+
+			const running = commandCard({
+				text: '',
+				shellCommand: { command: 'true', cwd: '/repo', status: 'running' },
+			});
+			const { rerender } = render(
+				<TerminalOutput {...createDefaultProps({ session: sessionWith(running), onDeleteLog })} />
+			);
+			expect(screen.queryByTestId('shell-command-delete')).not.toBeInTheDocument();
+
+			const finished = commandCard({
+				text: '',
+				shellCommand: {
+					command: 'true',
+					cwd: '/repo',
+					status: 'finished',
+					exitCode: 0,
+					durationMs: 12,
+				},
+			});
+			rerender(
+				<TerminalOutput {...createDefaultProps({ session: sessionWith(finished), onDeleteLog })} />
+			);
+
+			expect(screen.getByText(/exit 0/)).toBeInTheDocument();
+			expect(screen.queryByText('Stop')).not.toBeInTheDocument();
+			expect(screen.getByTestId('shell-command-delete')).toBeInTheDocument();
+		});
+	});
+
+	describe('turn duration in the timestamp gutter', () => {
+		const MINUTE = 60_000;
+		const renderTurn = (logs: LogEntry[]) => {
+			const tabs = [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }];
+			const session = createDefaultSession({ tabs, aiTabs: tabs, activeTabId: 'tab-1' } as never);
+			return render(<TerminalOutput {...createDefaultProps({ session })} />);
+		};
+
+		it('reports user-message-to-reply elapsed time on the agent reply only', () => {
+			const sentAt = Date.now() - 30 * MINUTE;
+			renderTurn([
+				createLogEntry({ text: 'How long?', source: 'user', timestamp: sentAt }),
+				createLogEntry({
+					text: 'Twenty five minutes.',
+					source: 'stdout',
+					timestamp: sentAt + 25 * MINUTE,
+				}),
+			]);
+
+			// Once, not twice: the user's own message is instantaneous and carries no
+			// duration line of its own.
+			expect(screen.getAllByText('25m')).toHaveLength(1);
+		});
+
+		it('measures to the END of a turn broken up by thinking, not the first reply', () => {
+			const sentAt = Date.now() - 30 * MINUTE;
+			renderTurn([
+				createLogEntry({ text: 'Go', source: 'user', timestamp: sentAt }),
+				createLogEntry({ text: 'Starting', source: 'stdout', timestamp: sentAt + MINUTE }),
+				createLogEntry({ text: 'Pondering', source: 'thinking', timestamp: sentAt + 5 * MINUTE }),
+				createLogEntry({ text: 'Done', source: 'stdout', timestamp: sentAt + 10 * MINUTE }),
+			]);
+
+			// One badge, on the last reply, covering the whole turn - not '1m' on the
+			// opening fragment and a climbing count on each one after it.
+			expect(screen.getAllByText('10m')).toHaveLength(1);
+			expect(screen.queryByText('1m')).not.toBeInTheDocument();
+		});
+
+		it('reads as instant when the agent answered inside a minute', () => {
+			const sentAt = Date.now() - 5 * MINUTE;
+			renderTurn([
+				createLogEntry({ text: 'Quick one', source: 'user', timestamp: sentAt }),
+				createLogEntry({ text: 'Done', source: 'stdout', timestamp: sentAt + 8_000 }),
+			]);
+
+			expect(screen.getByText('<1m')).toBeInTheDocument();
+		});
+
+		it('stays silent when no user message anchors the turn', () => {
+			// A transcript paged in mid-conversation starts on an agent reply. With
+			// nothing to measure from, printing anything would be a guess.
+			renderTurn([
+				createLogEntry({ text: 'Orphan reply', source: 'stdout', timestamp: Date.now() }),
+			]);
+
+			expect(screen.queryByText('<1m')).not.toBeInTheDocument();
 		});
 	});
 
@@ -1067,7 +1212,8 @@ describe('TerminalOutput', () => {
 		});
 
 		it('truncates long queued messages and shows expand button', () => {
-			const longMessage = 'A'.repeat(250);
+			// Collapse only kicks in past the 600-char preview plus 400 hidden chars.
+			const longMessage = 'A'.repeat(2000);
 			const session = createDefaultSession({
 				executionQueue: [{ id: 'q1', type: 'message', text: longMessage, tabId: 'tab-1' }],
 			});
@@ -1082,13 +1228,12 @@ describe('TerminalOutput', () => {
 		});
 
 		it('expands and collapses long queued messages when toggle is clicked', async () => {
-			// Create a message with >200 characters and multiple lines to trigger isLongMessage
-			// isLongMessage check: displayText.length > 200
+			// Long enough to collapse: the card previews 600 chars and only offers the
+			// toggle when at least 400 more stay hidden.
 			const longMessage = Array.from(
-				{ length: 20 },
+				{ length: 60 },
 				(_, i) => `This is line number ${i + 1} with some text`
 			).join('\n');
-			// Each line is ~35 chars, 20 lines = 700 chars (>200)
 			const session = createDefaultSession({
 				executionQueue: [{ id: 'q1', type: 'message', text: longMessage, tabId: 'tab-1' }],
 			});
@@ -1096,8 +1241,8 @@ describe('TerminalOutput', () => {
 			const props = createDefaultProps({ session });
 			render(<TerminalOutput {...props} />);
 
-			// Should show expand button initially (Show all X lines)
-			const expandButton = screen.getByText(/Show all.*lines/);
+			// Should show expand button initially (Show all N more characters)
+			const expandButton = screen.getByText(/Show all.*characters/);
 			expect(expandButton).toBeInTheDocument();
 
 			// Click to expand
@@ -1115,7 +1260,7 @@ describe('TerminalOutput', () => {
 			});
 
 			// Should show expand button again
-			expect(screen.getByText(/Show all.*lines/)).toBeInTheDocument();
+			expect(screen.getByText(/Show all.*characters/)).toBeInTheDocument();
 		});
 
 		it('dismisses confirmation modal when Cancel button is clicked', async () => {
@@ -1236,7 +1381,10 @@ describe('TerminalOutput', () => {
 					executionQueue: [{ id: 'q1', type: 'message', text: 'Queued message', tabId: 'tab-1' }],
 				});
 
-			it('does not render Force Send button when forcedParallelEnabled is false', () => {
+			// The inline card mirrors the Execution Queue modal exactly: present
+			// when force sending is possible or one settings toggle away, absent
+			// when the block is a dead end the user cannot act on from the card.
+			it('renders Force Send dimmed when forced parallel is off and another tab is busy', () => {
 				const props = createDefaultProps({
 					session: forceSendSession(),
 					forcedParallelEnabled: false,
@@ -1244,13 +1392,23 @@ describe('TerminalOutput', () => {
 					getForceSendContext: () => ({
 						targetTabBusy: false,
 						otherBusyTabs: [{ id: 'tab-2', displayName: 'Other Tab' }],
+						requiresParallel: true,
+						canForce: false,
+						blockedReason: 'needs-forced-parallel' as const,
 					}),
 				});
 				render(<TerminalOutput {...props} />);
-				expect(screen.queryByRole('button', { name: /Force Send/ })).not.toBeInTheDocument();
+				// Dimmed but clickable: the click explains which setting unlocks it.
+				expect(screen.getByRole('button', { name: /Force Send/ })).toHaveAttribute(
+					'aria-disabled',
+					'true'
+				);
 			});
 
-			it('does not render Force Send button when target tab is busy', () => {
+			it('hides Force Send when the target tab is busy', () => {
+				// The card is rendered under the turn that tab is already running,
+				// so the queued item is next in line by definition and there is
+				// nothing to force.
 				const props = createDefaultProps({
 					session: forceSendSession(),
 					forcedParallelEnabled: true,
@@ -1258,13 +1416,16 @@ describe('TerminalOutput', () => {
 					getForceSendContext: () => ({
 						targetTabBusy: true,
 						otherBusyTabs: [{ id: 'tab-2', displayName: 'Other Tab' }],
+						requiresParallel: true,
+						canForce: false,
+						blockedReason: 'target-tab-busy' as const,
 					}),
 				});
 				render(<TerminalOutput {...props} />);
-				expect(screen.queryByRole('button', { name: /Force Send/ })).not.toBeInTheDocument();
+				expect(screen.queryByRole('button', { name: /Force Send/ })).toBeNull();
 			});
 
-			it('does not render Force Send button when no other tabs are busy', () => {
+			it('renders Force Send ENABLED on a quiet agent - the always-allowed case', () => {
 				const props = createDefaultProps({
 					session: forceSendSession(),
 					forcedParallelEnabled: true,
@@ -1272,10 +1433,12 @@ describe('TerminalOutput', () => {
 					getForceSendContext: () => ({
 						targetTabBusy: false,
 						otherBusyTabs: [],
+						requiresParallel: false,
+						canForce: true,
 					}),
 				});
 				render(<TerminalOutput {...props} />);
-				expect(screen.queryByRole('button', { name: /Force Send/ })).not.toBeInTheDocument();
+				expect(screen.getByRole('button', { name: /Force Send/ })).toBeEnabled();
 			});
 
 			it('renders Force Send button when enabled, target idle, and another tab busy', () => {
@@ -1286,6 +1449,8 @@ describe('TerminalOutput', () => {
 					getForceSendContext: () => ({
 						targetTabBusy: false,
 						otherBusyTabs: [{ id: 'tab-2', displayName: 'Other Tab' }],
+						requiresParallel: true,
+						canForce: true,
 					}),
 				});
 				render(<TerminalOutput {...props} />);
@@ -1303,6 +1468,8 @@ describe('TerminalOutput', () => {
 							{ id: 'tab-2', displayName: 'Refactor' },
 							{ id: 'tab-3', displayName: 'A1B2C3D4' },
 						],
+						requiresParallel: true,
+						canForce: true,
 					}),
 				});
 				render(<TerminalOutput {...props} />);
@@ -1324,6 +1491,8 @@ describe('TerminalOutput', () => {
 					getForceSendContext: () => ({
 						targetTabBusy: false,
 						otherBusyTabs: [{ id: 'tab-2', displayName: 'Other' }],
+						requiresParallel: true,
+						canForce: true,
 					}),
 				});
 				render(<TerminalOutput {...props} />);
@@ -1343,6 +1512,8 @@ describe('TerminalOutput', () => {
 					getForceSendContext: () => ({
 						targetTabBusy: false,
 						otherBusyTabs: [{ id: 'tab-2', displayName: 'Other' }],
+						requiresParallel: true,
+						canForce: true,
 					}),
 				});
 				render(<TerminalOutput {...props} />);
@@ -1367,6 +1538,8 @@ describe('TerminalOutput', () => {
 					getForceSendContext: () => ({
 						targetTabBusy: false,
 						otherBusyTabs: [{ id: 'tab-2', displayName: 'Other' }],
+						requiresParallel: true,
+						canForce: true,
 					}),
 				});
 				render(<TerminalOutput {...props} />);
@@ -1404,6 +1577,8 @@ describe('TerminalOutput', () => {
 					getForceSendContext: () => ({
 						targetTabBusy: false,
 						otherBusyTabs: [{ id: 'tab-2', displayName: 'Other' }],
+						requiresParallel: true,
+						canForce: true,
 					}),
 				});
 				render(<TerminalOutput {...props} />);
@@ -2330,6 +2505,86 @@ describe('TerminalOutput', () => {
 			expect(screen.getByText('Fix lint issues (2/2)')).toBeInTheDocument();
 		});
 
+		it('expands the task list card to show individual task items', () => {
+			const logs: LogEntry[] = [
+				createLogEntry({
+					text: 'TodoWrite',
+					source: 'tool',
+					metadata: {
+						toolState: {
+							status: 'completed',
+							input: {
+								todos: [
+									{
+										content: 'Fix lint issues',
+										status: 'completed',
+										activeForm: 'Fixing lint issues',
+									},
+									{ content: 'Run tests', status: 'in_progress', activeForm: 'Running tests' },
+									{ content: 'Build project', status: 'pending', activeForm: 'Building project' },
+								],
+							},
+						},
+					},
+				}),
+			];
+
+			const session = createDefaultSession({
+				tabs: [
+					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showThinking: 'on' },
+				],
+				activeTabId: 'tab-1',
+			});
+
+			const props = createDefaultProps({ session });
+			render(<TerminalOutput {...props} />);
+
+			// Collapsed by default - individual items are not rendered
+			expect(screen.queryByText('Fix lint issues')).not.toBeInTheDocument();
+			expect(screen.queryByText('Build project')).not.toBeInTheDocument();
+
+			fireEvent.click(screen.getByRole('button', { name: 'Expand task list' }));
+
+			expect(screen.getByText('Fix lint issues')).toBeInTheDocument();
+			expect(screen.getByText('Build project')).toBeInTheDocument();
+			// In-progress task uses its present-tense activeForm
+			expect(screen.getByText('Running tests')).toBeInTheDocument();
+		});
+
+		it('renders a task list card for Codex update_plan payloads', () => {
+			const logs: LogEntry[] = [
+				createLogEntry({
+					text: 'update_plan',
+					source: 'tool',
+					metadata: {
+						toolState: {
+							status: 'completed',
+							input: {
+								plan: [
+									{ step: 'Read the failing spec', status: 'completed' },
+									{ step: 'Patch the parser', status: 'in_progress' },
+								],
+							},
+						},
+					},
+				}),
+			];
+
+			const session = createDefaultSession({
+				tabs: [
+					{ id: 'tab-1', agentSessionId: 'codex-123', logs, isUnread: false, showThinking: 'on' },
+				],
+				activeTabId: 'tab-1',
+			});
+
+			const props = createDefaultProps({ session });
+			render(<TerminalOutput {...props} />);
+
+			expect(screen.getByText('Patch the parser (1/2)')).toBeInTheDocument();
+			// Generic key/value fallback is suppressed for checklist payloads
+			expect(screen.queryByText('plan: [2]')).not.toBeInTheDocument();
+		});
+
 		it('renders Bash tool with command detail', () => {
 			const logs: LogEntry[] = [
 				createLogEntry({
@@ -2383,7 +2638,7 @@ describe('TerminalOutput', () => {
 			expect(screen.queryByText('npm run test')).not.toBeInTheDocument();
 		});
 
-		it('hides tool logs when the tab has Thinking off (even with showToolCalls on)', () => {
+		it('shows tool logs when the tab has Thinking off but showToolCalls is on', () => {
 			const logs: LogEntry[] = [
 				createLogEntry({
 					text: 'Bash',
@@ -2399,9 +2654,40 @@ describe('TerminalOutput', () => {
 				activeTabId: 'tab-1',
 			});
 
-			// showToolCalls is on (beforeEach), but Thinking is off for this tab, so
-			// tool cells are part of the hidden "behind the scenes" activity.
+			// The two settings are independent: showToolCalls alone decides whether
+			// tool cells are drawn, so Thinking off must not suppress them.
 			useSettingsStore.setState({ showToolCalls: true });
+			render(<TerminalOutput {...createDefaultProps({ session })} />);
+
+			expect(screen.getByText('Bash')).toBeInTheDocument();
+			expect(screen.getByText('npm run test')).toBeInTheDocument();
+		});
+
+		it('hides tool logs when showToolCalls is off even with Thinking sticky', () => {
+			const logs: LogEntry[] = [
+				createLogEntry({
+					text: 'Bash',
+					source: 'tool',
+					metadata: { toolState: { status: 'running', input: { command: 'npm run test' } } },
+				}),
+			];
+
+			const session = createDefaultSession({
+				tabs: [
+					{
+						id: 'tab-1',
+						agentSessionId: 'claude-123',
+						logs,
+						isUnread: false,
+						showThinking: 'sticky',
+					},
+				],
+				activeTabId: 'tab-1',
+			});
+
+			// The other direction of the same independence: a tab that keeps its
+			// reasoning chain still honours a global "no tool cells" preference.
+			useSettingsStore.setState({ showToolCalls: false });
 			render(<TerminalOutput {...createDefaultProps({ session })} />);
 
 			expect(screen.queryByText('Bash')).not.toBeInTheDocument();
@@ -2851,7 +3137,34 @@ describe('TerminalOutput', () => {
 			expect(screen.getByText('Generate a history synopsis')).toBeInTheDocument();
 		});
 
-		it('renders URLs in the AI command body as clickable links', () => {
+		it('renders the AI command body as markdown, keeping the command header', () => {
+			const body = '## Step 1\n\nRun `the script` and report **what moved**.';
+			const logs: LogEntry[] = [
+				createLogEntry({
+					text: body,
+					source: 'user',
+					aiCommand: {
+						command: '/archive-playbooks',
+						description: 'Archive finished playbooks',
+					},
+				}),
+			];
+
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			const props = createDefaultProps({ session });
+			render(<TerminalOutput {...props} />);
+
+			// Header pill still renders, body goes through the markdown stack
+			// (react-markdown is mocked to a div with this testid).
+			expect(screen.getByText('/archive-playbooks:')).toBeInTheDocument();
+			expect(screen.getByTestId('react-markdown')).toHaveTextContent('Step 1');
+		});
+
+		it('shows the AI command body as raw source in markdown edit mode', () => {
 			const url = 'https://github.com/RunMaestro/Maestro/pull/738';
 			const logs: LogEntry[] = [
 				createLogEntry({
@@ -2871,9 +3184,12 @@ describe('TerminalOutput', () => {
 				activeTabId: 'tab-1',
 			});
 
-			const props = createDefaultProps({ session });
+			const props = createDefaultProps({ session, markdownEditMode: true });
 			render(<TerminalOutput {...props} />);
 
+			expect(screen.queryByTestId('react-markdown')).not.toBeInTheDocument();
+
+			// Raw source still linkifies bare URLs.
 			const link = screen.getByText(url);
 			expect(link.tagName).toBe('A');
 			expect(link).toHaveAttribute('href', url);
@@ -3247,6 +3563,127 @@ describe('TerminalOutput', () => {
 		});
 	});
 
+	describe('explicit scroll-to-bottom request', () => {
+		/**
+		 * A bang command's output card is content the user asked for, so it has
+		 * to be revealed even when they had scrolled up to read history - the one
+		 * case where the auto-scroll pause is the wrong answer.
+		 */
+		function renderScrolledUp() {
+			const logs: LogEntry[] = [
+				createLogEntry({ id: 'user-1', text: 'Hello', source: 'user' }),
+				createLogEntry({ id: 'resp-1', text: 'Response', source: 'stdout' }),
+			];
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			const { container } = render(<TerminalOutput {...createDefaultProps({ session })} />);
+			const scrollContainer = container.querySelector('.overflow-y-auto') as HTMLElement;
+			const scrollToSpy = vi.fn();
+			scrollContainer.scrollTo = scrollToSpy;
+
+			// Park the view away from the bottom, which pauses auto-scroll.
+			Object.defineProperty(scrollContainer, 'scrollHeight', { value: 1000, configurable: true });
+			Object.defineProperty(scrollContainer, 'scrollTop', { value: 0, configurable: true });
+			Object.defineProperty(scrollContainer, 'clientHeight', { value: 400, configurable: true });
+			fireEvent.scroll(scrollContainer);
+
+			return { session, scrollToSpy };
+		}
+
+		async function dispatchScrollRequest(sessionId: string, tabId: string) {
+			await act(async () => {
+				window.dispatchEvent(
+					new CustomEvent(TRANSCRIPT_SCROLL_TO_BOTTOM_EVENT, {
+						detail: { sessionId, tabId },
+					})
+				);
+				vi.advanceTimersByTime(50);
+			});
+		}
+
+		it('jumps to the bottom even while auto-scroll is paused', async () => {
+			const { session, scrollToSpy } = renderScrolledUp();
+			await act(async () => {
+				vi.advanceTimersByTime(50);
+			});
+			scrollToSpy.mockClear();
+
+			await dispatchScrollRequest(session.id, 'tab-1');
+
+			expect(scrollToSpy).toHaveBeenCalledWith({ top: 1000, behavior: 'auto' });
+		});
+
+		it('ignores a request aimed at another tab or another agent', async () => {
+			const { session, scrollToSpy } = renderScrolledUp();
+			await act(async () => {
+				vi.advanceTimersByTime(50);
+			});
+			scrollToSpy.mockClear();
+
+			await dispatchScrollRequest(session.id, 'tab-2');
+			await dispatchScrollRequest('session-other', 'tab-1');
+
+			expect(scrollToSpy).not.toHaveBeenCalled();
+		});
+
+		it('resumes following the tail, so later output stays visible', async () => {
+			const logs: LogEntry[] = [createLogEntry({ id: 'user-1', text: 'Hello', source: 'user' })];
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			const { container, rerender } = render(
+				<TerminalOutput {...createDefaultProps({ session })} />
+			);
+			const scrollContainer = container.querySelector('.overflow-y-auto') as HTMLElement;
+			const scrollToSpy = vi.fn();
+			scrollContainer.scrollTo = scrollToSpy;
+
+			Object.defineProperty(scrollContainer, 'scrollHeight', { value: 1000, configurable: true });
+			Object.defineProperty(scrollContainer, 'scrollTop', { value: 0, configurable: true });
+			Object.defineProperty(scrollContainer, 'clientHeight', { value: 400, configurable: true });
+			fireEvent.scroll(scrollContainer);
+			await act(async () => {
+				vi.advanceTimersByTime(50);
+			});
+
+			await dispatchScrollRequest(session.id, 'tab-1');
+			scrollToSpy.mockClear();
+
+			// Streaming output lands after the request - it must follow, not stall.
+			const newSession = {
+				...session,
+				tabs: [
+					{
+						id: 'tab-1',
+						agentSessionId: 'claude-123',
+						logs: [
+							...logs,
+							createLogEntry({ id: 'out-1', text: 'command output', source: 'stdout' }),
+						],
+						isUnread: false,
+					},
+				],
+				// New reference so the activeTab memo (keyed on aiTabs) recomputes
+				// the test's mocked legacy `tabs` value after rerender.
+				aiTabs: [{}] as any,
+			};
+			rerender(<TerminalOutput {...createDefaultProps({ session: newSession })} />);
+			await act(async () => {
+				// The MutationObserver callback is a microtask that schedules the
+				// follow-scroll rAF. Drain microtasks between timer steps so the test
+				// cannot advance an empty frame queue on a loaded CI runner.
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			expect(scrollToSpy).toHaveBeenCalled();
+		});
+	});
+
 	describe('scroll position persistence', () => {
 		it('calls onScrollPositionChange when scrolling (throttled)', async () => {
 			const onScrollPositionChange = vi.fn();
@@ -3255,8 +3692,14 @@ describe('TerminalOutput', () => {
 
 			const scrollContainer = container.querySelector('.overflow-y-auto') as HTMLElement;
 
-			// Simulate scroll
-			Object.defineProperty(scrollContainer, 'scrollTop', { value: 100 });
+			// Simulate scroll. `writable` matters: real `scrollTop` is settable, and
+			// the mount-time restore writes to it, so a read-only stub throws where
+			// the browser would not.
+			Object.defineProperty(scrollContainer, 'scrollTop', {
+				value: 100,
+				writable: true,
+				configurable: true,
+			});
 			fireEvent.scroll(scrollContainer);
 
 			// Wait for throttle
@@ -3267,12 +3710,191 @@ describe('TerminalOutput', () => {
 			expect(onScrollPositionChange).toHaveBeenCalledWith(100);
 		});
 
-		it('restores scroll position from initialScrollTop', () => {
-			const props = createDefaultProps({ initialScrollTop: 500 });
-			const { container } = render(<TerminalOutput {...props} />);
+		/**
+		 * Mount a transcript and hand back a handle on the scroll box, with
+		 * `scrollTop` backed by a real variable so we can see where the restore
+		 * actually put the view. `scrollHeight` is settable because the whole
+		 * point of these tests is content whose height changes underneath the
+		 * restore - while the tab was off screen, or as it settles on mount.
+		 *
+		 * Writes to `scrollTop` are CLAMPED to `scrollHeight - clientHeight`, the
+		 * way a real browser clamps them. Without that, "scroll to the bottom"
+		 * (which asks for `scrollHeight`, the honest way to say "as far as this
+		 * goes") reads back as a number no element could ever hold, and the test
+		 * measures the stub rather than the restore.
+		 */
+		function mountWithScrollBox(
+			extraProps: Record<string, unknown>,
+			{ scrollHeight = 15000, clientHeight = 800 } = {}
+		) {
+			const { container } = render(<TerminalOutput {...createDefaultProps(extraProps)} />);
+			const el = container.querySelector('.overflow-y-auto') as HTMLElement;
+			let top = 0;
+			let height = scrollHeight;
+			const clamp = (v: number) => Math.max(0, Math.min(v, height - clientHeight));
+			Object.defineProperty(el, 'scrollTop', {
+				configurable: true,
+				get: () => top,
+				set: (v: number) => {
+					top = clamp(v);
+				},
+			});
+			Object.defineProperty(el, 'scrollHeight', { configurable: true, get: () => height });
+			Object.defineProperty(el, 'clientHeight', { configurable: true, value: clientHeight });
+			el.scrollTo = ((opts: { top: number }) => {
+				top = clamp(opts.top);
+			}) as unknown as typeof el.scrollTo;
 
-			// The scroll restoration happens via requestAnimationFrame
-			// In tests this is mocked, so we just verify the prop is used
+			return {
+				el,
+				scrollTop: () => top,
+				bottom: () => height - clientHeight,
+				grow: (to: number) => {
+					height = to;
+					// Growth the transcript can SEE. `scrollHeight` is a getter here,
+					// and moving a getter notifies nothing: the follow-the-tail
+					// re-pin hangs off a MutationObserver on the scroll container, so
+					// content has to actually arrive in the DOM for it to fire, the
+					// same as it does in the app.
+					el.appendChild(document.createElement('div'));
+				},
+				settle: async (ms = 800) => {
+					await act(async () => {
+						// Let any pending MutationObserver callback land FIRST. It is
+						// delivered as a microtask and it is what schedules the re-pin
+						// frame, so advancing timers before it runs drains an empty
+						// frame queue and the re-pin is never seen.
+						await Promise.resolve();
+						vi.advanceTimersByTime(ms);
+					});
+				},
+			};
+		}
+
+		it('restores a tab parked mid-history to its saved offset', async () => {
+			// isAtBottom false means the user deliberately scrolled up to read.
+			// New entries are appended BELOW them, so the offset still points at
+			// what they were reading and must be honored exactly.
+			const box = mountWithScrollBox({ initialScrollTop: 4200, initialIsAtBottom: false });
+			await box.settle();
+
+			expect(box.scrollTop()).toBe(4200);
+		});
+
+		it('pauses auto-scroll when it restores mid-history', async () => {
+			// Otherwise the MutationObserver yanks the view straight back down and
+			// the restore is pointless.
+			const onAtBottomChange = vi.fn();
+			const box = mountWithScrollBox({
+				initialScrollTop: 4200,
+				initialIsAtBottom: false,
+				onAtBottomChange,
+			});
+			await box.settle();
+
+			expect(box.scrollTop()).toBeLessThan(box.bottom() - 50);
+		});
+
+		it('restores a tail-following tab to the BOTTOM, not its saved offset', async () => {
+			// The regression: `scrollTop` is a snapshot of where the bottom was at
+			// save time. This tab was AT the bottom when it was 5000px tall (offset
+			// 4200), then the agent wrote another 10000px while it was off screen.
+			// Restoring 4200 verbatim strands the user 10000px above the reply they
+			// clicked a toast to go and read.
+			const box = mountWithScrollBox({ initialScrollTop: 4200, initialIsAtBottom: true });
+			await box.settle();
+
+			expect(box.scrollTop()).toBe(box.bottom());
+		});
+
+		it('treats an unset isAtBottom as following the tail', async () => {
+			// `undefined` is what a tab that has never been scrolled carries. It has
+			// to mean bottom, and it has to mean the SAME thing here as it does to
+			// the unread gate in useAgentDataListener, which reads `!== false`.
+			const box = mountWithScrollBox({ initialScrollTop: 4200 });
+			await box.settle();
+
+			expect(box.scrollTop()).toBe(box.bottom());
+		});
+
+		it('keeps chasing the bottom while the content is still settling', async () => {
+			// Images decoding and code blocks re-highlighting grow the transcript
+			// for several frames after mount, so "landed on the bottom" is true on
+			// the first frame and wrong on the next. Latching there would leave the
+			// tab short by however much arrived late.
+			const box = mountWithScrollBox({ initialIsAtBottom: true }, { scrollHeight: 6000 });
+			await box.settle(50);
+
+			box.grow(21000);
+			await box.settle();
+
+			expect(box.scrollTop()).toBe(box.bottom());
+		});
+
+		it('does not fight a user who scrolls while the restore is still settling', async () => {
+			// Their input wins - a restore that keeps yanking the view is worse
+			// than landing high. The wheel is what makes this the user: a bare
+			// `scroll` event is also what our own writes produce.
+			const box = mountWithScrollBox({ initialIsAtBottom: true }, { scrollHeight: 6000 });
+			fireEvent.wheel(box.el);
+			fireEvent.scroll(box.el);
+			await box.settle();
+
+			box.grow(21000);
+			await box.settle();
+
+			expect(box.scrollTop()).toBeLessThan(box.bottom());
+		});
+
+		it('does not mistake a late echo of its own write for the user scrolling up', async () => {
+			// THE regression behind "I come back and I am way up the transcript".
+			// Every scroll this component performs fires a `scroll` event that is
+			// indistinguishable from the user's, and the one-shot guard covers at
+			// most one of them: the restore writes each frame, the handler is
+			// throttled to 16ms, and `scrollToBottom` drops the guard on a 32ms
+			// timer. An event the guard missed reported an offset that was no longer
+			// the bottom (the content grew underneath it), which read as a scroll-up:
+			// auto-scroll paused and the tab was persisted as parked mid-history, so
+			// every later visit opened it high with the tail no longer followed.
+			const onAtBottomChange = vi.fn();
+			const box = mountWithScrollBox(
+				{ initialIsAtBottom: true, onAtBottomChange },
+				{ scrollHeight: 6000 }
+			);
+			await box.settle();
+			const landed = box.scrollTop();
+
+			// The agent writes more while the user sits at the bottom, then the
+			// event for OUR last write is delivered against the taller content.
+			box.grow(21000);
+			fireEvent.scroll(box.el);
+			await box.settle(250);
+
+			expect(landed).toBe(5200);
+			expect(onAtBottomChange).not.toHaveBeenCalledWith(false);
+		});
+
+		it('does not persist a position while the restore is still settling', async () => {
+			// Saving a way-point of our own restore overwrote the tab's real
+			// position with wherever the climb had got to, and wrote
+			// `isAtBottom: false` for a tab that was following the tail. The tab
+			// then opened there next time, higher every visit.
+			const onScrollPositionChange = vi.fn();
+			const onAtBottomChange = vi.fn();
+			const box = mountWithScrollBox(
+				{ initialIsAtBottom: true, onScrollPositionChange, onAtBottomChange },
+				{ scrollHeight: 6000 }
+			);
+			await box.settle(50);
+
+			box.grow(21000);
+			fireEvent.scroll(box.el);
+			await act(async () => {
+				vi.advanceTimersByTime(250);
+			});
+
+			expect(onAtBottomChange).not.toHaveBeenCalledWith(false);
+			expect(onScrollPositionChange).not.toHaveBeenCalledWith(5200);
 		});
 	});
 
@@ -3333,6 +3955,68 @@ describe('TerminalOutput', () => {
 	});
 
 	describe('mode pill rendering', () => {
+		// The pill is opt-in (Display -> Provider Mode Pill, default off), so every
+		// assertion about its label has to turn the display setting on first.
+		beforeEach(() => {
+			useSettingsStore.setState({ showProviderModePill: true });
+		});
+
+		afterEach(() => {
+			useSettingsStore.setState({ showProviderModePill: false });
+		});
+
+		it('is suppressed entirely when the display setting is off', () => {
+			useSettingsStore.setState({ showProviderModePill: false });
+
+			const logs: LogEntry[] = [
+				createLogEntry({ id: 'user-1', text: 'prompt', source: 'user' }),
+				createLogEntry({
+					id: 'resp-1',
+					text: 'response from API stream',
+					source: 'stdout',
+					renderStyle: 'structured',
+				}),
+			];
+
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			render(<TerminalOutput {...createDefaultProps({ session })} />);
+
+			expect(screen.getByText('response from API stream')).toBeInTheDocument();
+			expect(screen.queryByText('claude -p')).not.toBeInTheDocument();
+			expect(screen.queryByText('TUI Wrapper')).not.toBeInTheDocument();
+		});
+
+		it('still renders the model and effort pills when the mode pill is off', () => {
+			useSettingsStore.setState({ showProviderModePill: false });
+
+			const logs: LogEntry[] = [
+				createLogEntry({ id: 'user-1', text: 'prompt', source: 'user' }),
+				createLogEntry({
+					id: 'resp-1',
+					text: 'response',
+					source: 'stdout',
+					renderStyle: 'structured',
+					turnModel: 'opus',
+					turnEffort: 'high',
+				}),
+			];
+
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			render(<TerminalOutput {...createDefaultProps({ session })} />);
+
+			expect(screen.getByText('opus')).toBeInTheDocument();
+			expect(screen.getByText('high')).toBeInTheDocument();
+			expect(screen.queryByText('claude -p')).not.toBeInTheDocument();
+		});
+
 		it('labels TUI and API turns separately when both render styles coexist', () => {
 			const logs: LogEntry[] = [
 				createLogEntry({ id: 'user-1', text: 'first prompt', source: 'user' }),
@@ -3514,6 +4198,138 @@ describe('TerminalOutput', () => {
 		});
 	});
 
+	describe('model / effort pill rendering', () => {
+		it('labels each response with the model and effort its turn was sent with', () => {
+			// The point of the pills: the user switched configuration mid-conversation,
+			// so each response has to say which one produced it.
+			const logs: LogEntry[] = [
+				createLogEntry({ id: 'user-1', text: 'first prompt', source: 'user' }),
+				createLogEntry({
+					id: 'resp-1',
+					text: 'answered by opus',
+					source: 'stdout',
+					turnModel: 'opus',
+					turnEffort: 'high',
+				}),
+				createLogEntry({ id: 'user-2', text: 'second prompt', source: 'user' }),
+				createLogEntry({
+					id: 'resp-2',
+					text: 'answered by sonnet',
+					source: 'stdout',
+					turnModel: 'sonnet',
+					turnEffort: 'low',
+				}),
+			];
+
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			render(<TerminalOutput {...createDefaultProps({ session })} />);
+
+			expect(screen.getByText('opus')).toBeInTheDocument();
+			expect(screen.getByText('high')).toBeInTheDocument();
+			expect(screen.getByText('sonnet')).toBeInTheDocument();
+			expect(screen.getByText('low')).toBeInTheDocument();
+		});
+
+		it('renders on non-Claude agents, which have no token-source pill', () => {
+			const logs: LogEntry[] = [
+				createLogEntry({ id: 'user-1', text: 'prompt', source: 'user' }),
+				createLogEntry({
+					id: 'resp-1',
+					text: 'response',
+					source: 'stdout',
+					turnModel: 'gpt-5',
+					turnEffort: 'medium',
+				}),
+			];
+
+			const session = createDefaultSession({
+				toolType: 'codex',
+				tabs: [{ id: 'tab-1', agentSessionId: 'codex-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			render(<TerminalOutput {...createDefaultProps({ session })} />);
+
+			expect(screen.getByText('gpt-5')).toBeInTheDocument();
+			expect(screen.getByText('medium')).toBeInTheDocument();
+			expect(screen.queryByText('claude -p')).not.toBeInTheDocument();
+		});
+
+		it('omits a pill whose value is unset, meaning the agent default applied', () => {
+			const logs: LogEntry[] = [
+				createLogEntry({ id: 'user-1', text: 'prompt', source: 'user' }),
+				createLogEntry({ id: 'resp-1', text: 'response', source: 'stdout', turnModel: 'opus' }),
+			];
+
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			render(<TerminalOutput {...createDefaultProps({ session })} />);
+
+			expect(screen.getByTestId('turn-model-pill')).toHaveTextContent('opus');
+			expect(screen.queryByTestId('turn-effort-pill')).not.toBeInTheDocument();
+		});
+
+		it('does not render the pills on user messages', () => {
+			const logs: LogEntry[] = [
+				createLogEntry({
+					id: 'user-1',
+					text: 'a user prompt',
+					source: 'user',
+					turnModel: 'opus',
+					turnEffort: 'high',
+				}),
+			];
+
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			render(<TerminalOutput {...createDefaultProps({ session })} />);
+
+			expect(screen.getByText('a user prompt')).toBeInTheDocument();
+			expect(screen.queryByTestId('turn-model-pill')).not.toBeInTheDocument();
+			expect(screen.queryByTestId('turn-effort-pill')).not.toBeInTheDocument();
+		});
+
+		it('keeps the pills when a system banner leads the response group', () => {
+			// Same collapse trap the token-source pill hit: the combined entry is
+			// built from `[0]`, which here is the banner and carries no stamp.
+			const logs: LogEntry[] = [
+				createLogEntry({ id: 'user-1', text: 'prompt', source: 'user' }),
+				createLogEntry({
+					id: 'banner',
+					text: 'Adaptive Mode: switched from API Limits to Time Limits.',
+					source: 'system',
+				}),
+				createLogEntry({
+					id: 'resp-1',
+					text: 'streamed response',
+					source: 'stdout',
+					turnModel: 'opus',
+					turnEffort: 'xhigh',
+				}),
+			];
+
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			render(<TerminalOutput {...createDefaultProps({ session })} />);
+
+			expect(screen.getByTestId('turn-model-pill')).toHaveTextContent('opus');
+			expect(screen.getByTestId('turn-effort-pill')).toHaveTextContent('xhigh');
+		});
+	});
+
 	describe('progressive transcript rendering (#1342)', () => {
 		// Switching to an agent with a long transcript used to mount every entry in
 		// one synchronous commit, freezing the UI for seconds on the PREVIOUS agent's
@@ -3543,7 +4359,7 @@ describe('TerminalOutput', () => {
 
 			const indices = renderedIndices(container);
 			expect(indices.length).toBeLessThan(logs.length);
-			// The newest entry is what the user is looking at — it must be present.
+			// The newest entry is what the user is looking at - it must be present.
 			expect(screen.getByText('Message 399')).toBeInTheDocument();
 			// Ancient history is deferred, not dropped (see backfill test below).
 			expect(screen.queryByText('Message 0')).not.toBeInTheDocument();

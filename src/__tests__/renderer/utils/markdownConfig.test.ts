@@ -1,6 +1,6 @@
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 
 // Mock react-syntax-highlighter before importing the module under test
 vi.mock('react-syntax-highlighter', () => ({
@@ -23,6 +23,8 @@ vi.mock('../../../renderer/utils/openUrl', () => ({
 	openInMaestroBrowser: vi.fn(),
 }));
 
+import ReactMarkdown from 'react-markdown';
+import { rehypeSourceLine } from '../../../renderer/components/Markdown/rehypeSourceLine';
 import {
 	generateProseStyles,
 	generateAutoRunProseStyles,
@@ -1013,5 +1015,116 @@ describe('createMarkdownComponents reading mode', () => {
 		expect(screen.getByText('const value = 1')).toBeInTheDocument();
 		expect(document.querySelector('code .bionify-word')).not.toBeInTheDocument();
 		expect(document.querySelectorAll('.bionify-word').length).toBeGreaterThan(0);
+	});
+});
+
+// Checking a task off in a rendered preview was impossible before `onTaskToggle`:
+// react-markdown renders the GFM checkbox `disabled`, so the box looked clickable
+// (the prose styles even give it a pointer cursor) but swallowed every click.
+// These render through real ReactMarkdown because the wiring under test spans
+// `rehypeSourceLine`, the `input` override, and the shared `<TaskCheckbox>`.
+describe('createMarkdownComponents task checkboxes', () => {
+	const renderTasks = (markdown: string, onTaskToggle?: (line: number) => Promise<boolean>) =>
+		render(
+			React.createElement(
+				ReactMarkdown,
+				{
+					remarkPlugins: REMARK_GFM_PLUGINS,
+					rehypePlugins: [rehypeSourceLine],
+					components: createMarkdownComponents({ theme: mockTheme, onTaskToggle }),
+				} as any,
+				markdown
+			)
+		);
+
+	it('leaves checkboxes read-only when no toggle handler is provided', () => {
+		const { container } = renderTasks('- [ ] one\n- [x] two\n');
+		const boxes = container.querySelectorAll('input[type="checkbox"]');
+
+		expect(boxes.length).toBe(2);
+		expect((boxes[0] as HTMLInputElement).disabled).toBe(true);
+	});
+
+	it('reports the source line of the clicked task', () => {
+		const onTaskToggle = vi.fn().mockResolvedValue(true);
+		const { container } = renderTasks(
+			'# Doc\n\n- [ ] first\n- [x] second\n- [ ] third\n',
+			onTaskToggle
+		);
+		const boxes = container.querySelectorAll('input[type="checkbox"]');
+
+		expect(boxes.length).toBe(3);
+		expect((boxes[0] as HTMLInputElement).disabled).toBe(false);
+
+		fireEvent.click(boxes[2]);
+		expect(onTaskToggle).toHaveBeenCalledWith(5);
+	});
+
+	// Nested tasks render inside their parent's <li>, so the line must come from
+	// the nearest list item rather than the outermost one.
+	it('reports the nested task line, not its parent', () => {
+		const onTaskToggle = vi.fn().mockResolvedValue(true);
+		const { container } = renderTasks('- [ ] parent\n\t- [ ] child\n', onTaskToggle);
+		const boxes = container.querySelectorAll('input[type="checkbox"]');
+
+		expect(boxes.length).toBe(2);
+		fireEvent.click(boxes[1]);
+		expect(onTaskToggle).toHaveBeenCalledWith(2);
+	});
+
+	// A loose list wraps each item's content in a paragraph, which is where the
+	// synthesized checkbox ends up.
+	it('handles loose lists', () => {
+		const onTaskToggle = vi.fn().mockResolvedValue(true);
+		const { container } = renderTasks('- [ ] first\n\n- [ ] second\n', onTaskToggle);
+
+		fireEvent.click(container.querySelectorAll('input[type="checkbox"]')[1]);
+		expect(onTaskToggle).toHaveBeenCalledWith(3);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// data-source-line passthrough
+//
+// `rehypeSourceLine` stamps `data-source-line` on every block, and
+// `lineSync.domGetTopLineByAttr` reads those tags to keep the preview and the
+// editor on the same source line across the toggle. A component override that
+// renders `React.createElement('p', null, ...)` silently eats the attribute, so
+// only HEADINGS stayed anchored - a document scrolled to the very top reported
+// the first heading's line, and hitting Edit jumped there.
+// ---------------------------------------------------------------------------
+
+describe('createMarkdownComponents source-line passthrough', () => {
+	const render1 = (tag: 'p' | 'li' | 'blockquote', extra: Record<string, unknown> = {}) => {
+		const components = createMarkdownComponents({ theme: mockTheme });
+		const Comp = components[tag] as any;
+		return Comp({ node: null, children: 'text', 'data-source-line': 7, ...extra });
+	};
+
+	it('forwards data-source-line on a paragraph', () => {
+		expect(render1('p').props['data-source-line']).toBe(7);
+	});
+
+	it('forwards data-source-line on a list item', () => {
+		expect(render1('li').props['data-source-line']).toBe(7);
+	});
+
+	it('forwards data-source-line on a plain blockquote, keeping its className', () => {
+		const el = render1('blockquote', { className: 'quote' });
+		expect(el.props['data-source-line']).toBe(7);
+		expect(el.props.className).toBe('quote');
+	});
+
+	// An alert callout renders a component rather than a <blockquote>, and its
+	// own wrapper owns the styling - the tag is not forwarded there on purpose.
+	it('still renders an alert callout for a tagged alert blockquote', () => {
+		const el = render1('blockquote', { className: 'markdown-alert markdown-alert-note' });
+		expect(typeof el.type).not.toBe('string');
+	});
+
+	it('does not leak the react-markdown node prop into the DOM', () => {
+		expect(render1('p').props.node).toBeUndefined();
+		expect(render1('li').props.node).toBeUndefined();
+		expect(render1('blockquote').props.node).toBeUndefined();
 	});
 });

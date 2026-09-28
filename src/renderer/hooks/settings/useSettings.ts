@@ -16,7 +16,6 @@ import { shallow } from 'zustand/shallow';
 import type { BrowserConfirmPolicy } from '../../../shared/coworkingBrowser';
 import type { TtsrContextMode } from '../../../shared/ttsr-types';
 import type {
-	LLMProvider,
 	ThemeId,
 	ThemeColors,
 	Shortcut,
@@ -33,6 +32,7 @@ import type {
 } from '../../types';
 import type { FileExplorerIconTheme } from '../../utils/fileExplorerIcons/shared';
 import type { ToastWidth } from '../../../shared/toastWidth';
+import type { GlossLevel } from '../../../shared/themeGloss';
 import {
 	useSettingsStore,
 	loadAllSettings,
@@ -48,6 +48,10 @@ import type { ModalResizeKey, ModalSize, ModalSizes } from '../../utils/modalSiz
 import { notifyToast } from '../../stores/notificationStore';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
 import { logger } from '../../utils/logger';
+import type { TypographySurface } from '../../../shared/typography';
+import type { TypographyPresetId } from '../../../shared/typographyPresets';
+import type { TypographySnapshot } from '../../../shared/typographySnapshot';
+import { applyTypographyVars } from '../../utils/applyTypographyVars';
 
 export interface UseSettingsReturn {
 	// Loading state
@@ -61,14 +65,6 @@ export interface UseSettingsReturn {
 	globalShowHotkey: string[];
 	setGlobalShowHotkey: (value: string[]) => void;
 
-	// LLM settings
-	llmProvider: LLMProvider;
-	modelSlug: string;
-	apiKey: string;
-	setLlmProvider: (value: LLMProvider) => void;
-	setModelSlug: (value: string) => void;
-	setApiKey: (value: string) => void;
-
 	// Shell settings
 	defaultShell: string;
 	setDefaultShell: (value: string) => void;
@@ -78,6 +74,9 @@ export interface UseSettingsReturn {
 	setShellArgs: (value: string) => void;
 	shellEnvVars: Record<string, string>;
 	setShellEnvVars: (value: Record<string, string>) => void;
+	/** Variables switched off in the editor: kept for later, never spawned with. */
+	shellEnvVarsDisabled: Record<string, string>;
+	setShellEnvVarsDisabled: (value: Record<string, string>) => void;
 
 	// GitHub CLI settings
 	ghPath: string;
@@ -86,10 +85,38 @@ export interface UseSettingsReturn {
 	// Font settings
 	fontFamily: string;
 	terminalFontFamily: string;
+	chatFontFamily: string;
+	filePreviewFontFamily: string;
+	fileEditorFontFamily: string;
+	documentGraphFontFamily: string;
 	fontSize: number;
 	setFontFamily: (value: string) => void;
 	setTerminalFontFamily: (value: string) => void;
+	setChatFontFamily: (value: string) => void;
+	setFilePreviewFontFamily: (value: string) => void;
+	setFileEditorFontFamily: (value: string) => void;
 	setFontSize: (value: number) => void;
+	chatFontSize: number;
+	terminalFontSize: number;
+	filePreviewFontSize: number;
+	fileEditorFontSize: number;
+	documentGraphFontSize: number;
+	fontZoom: number;
+	setSurfaceFontFamily: (surface: TypographySurface, value: string) => void;
+	setSurfaceFontSize: (surface: TypographySurface, value: number) => void;
+	setFontZoom: (value: number) => void;
+	resetTypography: (id: TypographyPresetId) => void;
+	typographySnapshot: TypographySnapshot | null;
+	saveTypographySnapshot: () => void;
+	restoreTypographySnapshot: () => void;
+	typographyPromptSeen: boolean;
+	setTypographyPromptSeen: (value: boolean) => void;
+	themePromptSeen: boolean;
+	setThemePromptSeen: (value: boolean) => void;
+	updatesPromptSeen: boolean;
+	setUpdatesPromptSeen: (value: boolean) => void;
+	agentPowersPromptSeen: boolean;
+	setAgentPowersPromptSeen: (value: boolean) => void;
 
 	// UI settings
 	activeThemeId: ThemeId;
@@ -261,6 +288,8 @@ export interface UseSettingsReturn {
 	isLeaderboardRegistered: boolean;
 
 	// Web Interface settings
+	webInterfaceAutoStart: boolean;
+	setWebInterfaceAutoStart: (value: boolean) => void;
 	webInterfaceUseCustomPort: boolean;
 	setWebInterfaceUseCustomPort: (value: boolean) => void;
 	webInterfaceCustomPort: number;
@@ -282,21 +311,33 @@ export interface UseSettingsReturn {
 	colorBlindMode: boolean;
 	setColorBlindMode: (value: boolean) => void;
 
+	// Surface gloss (app-chrome lighting; changes no theme color)
+	themeGloss: GlossLevel;
+	setThemeGloss: (value: GlossLevel) => void;
+
 	// Tab filtering settings
 	showStarredInUnreadFilter: boolean;
 	setShowStarredInUnreadFilter: (value: boolean) => void;
 	showFilePreviewsInUnreadFilter: boolean;
 	setShowFilePreviewsInUnreadFilter: (value: boolean) => void;
+	showTerminalTabsInUnreadFilter: boolean;
+	setShowTerminalTabsInUnreadFilter: (value: boolean) => void;
+	showBrowserTabsInUnreadFilter: boolean;
+	setShowBrowserTabsInUnreadFilter: (value: boolean) => void;
 	useCmd0AsLastTab: boolean;
 	setUseCmd0AsLastTab: (value: boolean) => void;
 	showBrowserTabDomain: boolean;
 	setShowBrowserTabDomain: (value: boolean) => void;
 	tabBarWheelScroll: boolean;
 	setTabBarWheelScroll: (value: boolean) => void;
+	showTabCountBadge: boolean;
+	setShowTabCountBadge: (value: boolean) => void;
 
 	// Document Graph settings
 	documentGraphShowExternalLinks: boolean;
 	setDocumentGraphShowExternalLinks: (value: boolean) => void;
+	documentGraphConfirmClose: boolean;
+	setDocumentGraphConfirmClose: (value: boolean) => void;
 	documentGraphMaxNodes: number;
 	setDocumentGraphMaxNodes: (value: number) => void;
 	documentGraphPreviewCharLimit: number;
@@ -313,6 +354,8 @@ export interface UseSettingsReturn {
 	// Power management settings
 	preventSleepEnabled: boolean;
 	setPreventSleepEnabled: (value: boolean) => Promise<void>;
+	preventDisplaySleepEnabled: boolean;
+	setPreventDisplaySleepEnabled: (value: boolean) => Promise<void>;
 
 	// Rendering settings
 	disableGpuAcceleration: boolean;
@@ -357,6 +400,12 @@ export interface UseSettingsReturn {
 	// Automatic tab naming settings
 	automaticTabNamingEnabled: boolean;
 	setAutomaticTabNamingEnabled: (value: boolean) => void;
+
+	// Utility agent settings (auxiliary tasks: tab naming, context grooming)
+	utilityAgentId: string | null;
+	setUtilityAgentId: (value: string | null) => void;
+	utilityModelId: string | null;
+	setUtilityModelId: (value: string | null) => void;
 
 	// Where new tabs are inserted in the tab bar (per content type)
 	newTabPlacement: 'end' | 'after-current';
@@ -420,6 +469,14 @@ export interface UseSettingsReturn {
 	directorNotesSettings: DirectorNotesSettings;
 	setDirectorNotesSettings: (value: DirectorNotesSettings) => void;
 
+	// Maestro Cue history retention (days kept in cue.db)
+	cueHistoryRetentionDays: number;
+	setCueHistoryRetentionDays: (value: number) => void;
+
+	// Collapse repeated Cue runs in the History panel into one row per trigger
+	groupCueEntries: boolean;
+	setGroupCueEntries: (value: boolean) => void;
+
 	// WakaTime integration settings
 	wakatimeApiKey: string;
 	setWakatimeApiKey: (value: string) => void;
@@ -441,6 +498,8 @@ export interface UseSettingsReturn {
 	setShowSessionIdPill: (value: boolean) => void;
 	showSessionCostPill: boolean;
 	setShowSessionCostPill: (value: boolean) => void;
+	showProviderModePill: boolean;
+	setShowProviderModePill: (value: boolean) => void;
 
 	// Worktree display in left panel agent list
 	showWorktreePill: boolean;
@@ -549,16 +608,53 @@ export function useSettings(): UseSettingsReturn {
 		return cleanup;
 	}, []);
 
-	// Apply font size to HTML root element so rem-based Tailwind classes scale.
-	// Also expose --font-scale so fixed-width modals can scale proportionally
-	// (see .modal-w-* utility classes in index.css). 14px is the design baseline.
-	// Only apply after settings are loaded to prevent layout shift from default->saved font size
+	// Publish the resolved typography as CSS custom properties on the document
+	// root, and set the root font-size so rem-based Tailwind spacing scales.
+	//
+	// The custom properties are how a font setting reaches surfaces no prop can
+	// carry: everything that portals to document.body (47 components) and every
+	// `font-mono` utility (~200 sites). See applyTypographyVars.
+	//
+	// Gated on settingsLoaded so the app does not paint at the default size and
+	// then jump to the saved one.
 	useEffect(() => {
-		if (store.settingsLoaded) {
-			document.documentElement.style.fontSize = `${store.fontSize}px`;
-			document.documentElement.style.setProperty('--font-scale', String(store.fontSize / 14));
-		}
-	}, [store.fontSize, store.settingsLoaded]);
+		if (!store.settingsLoaded) return;
+		applyTypographyVars({
+			fonts: {
+				interface: store.fontFamily,
+				chat: store.chatFontFamily,
+				terminal: store.terminalFontFamily,
+				filePreview: store.filePreviewFontFamily,
+				fileEditor: store.fileEditorFontFamily,
+				documentGraph: store.documentGraphFontFamily,
+			},
+			sizes: {
+				interface: store.fontSize,
+				chat: store.chatFontSize,
+				terminal: store.terminalFontSize,
+				filePreview: store.filePreviewFontSize,
+				fileEditor: store.fileEditorFontSize,
+				documentGraph: store.documentGraphFontSize,
+			},
+			baseSize: store.fontSize,
+			zoom: store.fontZoom,
+		});
+	}, [
+		store.settingsLoaded,
+		store.fontFamily,
+		store.chatFontFamily,
+		store.terminalFontFamily,
+		store.filePreviewFontFamily,
+		store.fileEditorFontFamily,
+		store.documentGraphFontFamily,
+		store.fontSize,
+		store.chatFontSize,
+		store.terminalFontSize,
+		store.filePreviewFontSize,
+		store.fileEditorFontSize,
+		store.documentGraphFontSize,
+		store.fontZoom,
+	]);
 
 	// Surface global-hotkey registration failures (e.g. combo already owned by
 	// another app). Mounted here so the toast fires even when Settings is closed.

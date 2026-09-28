@@ -1,11 +1,13 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { X, GitPullRequest, AlertTriangle, ExternalLink } from 'lucide-react';
 import { GhostIconButton } from './ui/GhostIconButton';
+import { ModalSubtitle } from './ui/Modal';
 import { Spinner } from './ui/Spinner';
 import type { Theme, GhCliStatus } from '../types';
 import { useModalLayer } from '../hooks/ui/useModalLayer';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { openUrl } from '../utils/openUrl';
+import { usePRCreationStore, selectPRRun, prRunKey } from '../stores/prCreationStore';
 
 /**
  * Renders error text with URLs converted to clickable links
@@ -53,6 +55,8 @@ export interface PRDetails {
 	description: string;
 	sourceBranch: string;
 	targetBranch: string;
+	/** Agent the PR was opened from, so the toast and history entry land on it. */
+	sessionId?: string;
 }
 
 interface CreatePRModalProps {
@@ -62,10 +66,16 @@ interface CreatePRModalProps {
 	// Worktree info
 	worktreePath: string;
 	worktreeBranch: string;
+	/**
+	 * Agent whose branch the PR is opened from, shown in the header. Only
+	 * `cwd`/branch reach this component, so without it the modal has no way to
+	 * say which agent a right-click targeted.
+	 */
+	agentName?: string;
+	/** Agent this repo belongs to, recorded on the in-flight creation. */
+	sessionId?: string;
 	// Available branches for target selection
 	availableBranches: string[];
-	// Callback when PR is created
-	onPRCreated?: (details: PRDetails) => void;
 }
 
 /**
@@ -77,6 +87,12 @@ interface CreatePRModalProps {
  * - Optional description
  * - gh CLI status checking
  * - Progress indicator during PR creation
+ *
+ * The request itself belongs to `prCreationStore`, not to this component:
+ * closing the form while `gh` is working leaves it working, the menus badge the
+ * Create Pull Request row while it runs, reopening lands back here on the same
+ * attempt, and the outcome arrives as a toast either way. Nothing here may hold
+ * the in-flight state, or a close would throw the PR's result away.
  */
 export function CreatePRModal({
 	isOpen,
@@ -84,8 +100,9 @@ export function CreatePRModal({
 	theme,
 	worktreePath,
 	worktreeBranch,
+	sessionId,
 	availableBranches,
-	onPRCreated,
+	agentName,
 }: CreatePRModalProps) {
 	const onCloseRef = useRef(onClose);
 	onCloseRef.current = onClose;
@@ -102,16 +119,30 @@ export function CreatePRModal({
 
 	// Status state
 	const [ghCliStatus, setGhCliStatus] = useState<GhCliStatus | null>(null);
-	const [isCreating, setIsCreating] = useState(false);
-	const [error, setError] = useState<string | null>(null);
 	const [hasUncommittedChanges, setHasUncommittedChanges] = useState(false);
 	const [uncommittedCount, setUncommittedCount] = useState(0);
+
+	// The attempt itself lives in the store, so it survives this form closing.
+	const runKey = prRunKey(worktreePath);
+	const run = usePRCreationStore(selectPRRun(runKey));
+	const isCreating = run?.status === 'running';
+	const error = run?.status === 'failed' ? run.error || 'Failed to create PR' : null;
 
 	// Check gh CLI status and uncommitted changes on mount
 	useEffect(() => {
 		if (isOpen) {
 			checkGhCli();
 			checkUncommittedChanges();
+			// Re-attaching to an attempt already in flight (or to the one that just
+			// failed): show what was actually submitted, not what the branch name
+			// suggests.
+			const existing = usePRCreationStore.getState().runs[runKey];
+			if (existing) {
+				setTitle(existing.title);
+				setDescription(existing.description);
+				setTargetBranch(existing.targetBranch);
+				return;
+			}
 			// Auto-populate title from branch name
 			const branchTitle = worktreeBranch
 				.replace(/[-_]/g, ' ')
@@ -119,11 +150,14 @@ export function CreatePRModal({
 				.trim();
 			setTitle(branchTitle || worktreeBranch);
 		}
-	}, [isOpen, worktreeBranch, worktreePath]);
+	}, [isOpen, worktreeBranch, worktreePath, runKey]);
 
-	// Set default target branch (prefer main, fallback to master)
+	// Set default target branch (prefer main, fallback to master). The branch
+	// list can arrive after mount, so this must not stomp a re-attached run's
+	// target.
 	useEffect(() => {
 		if (isOpen && availableBranches.length > 0) {
+			if (usePRCreationStore.getState().runs[runKey]) return;
 			if (availableBranches.includes('main')) {
 				setTargetBranch('main');
 			} else if (availableBranches.includes('master')) {
@@ -132,7 +166,7 @@ export function CreatePRModal({
 				setTargetBranch(availableBranches[0]);
 			}
 		}
-	}, [isOpen, availableBranches]);
+	}, [isOpen, availableBranches, runKey]);
 
 	const checkGhCli = async () => {
 		try {
@@ -158,37 +192,19 @@ export function CreatePRModal({
 		}
 	};
 
-	const handleCreatePR = async () => {
-		if (!ghCliStatus?.authenticated) return;
-
-		setIsCreating(true);
-		setError(null);
-
-		try {
-			const result = await window.maestro.git.createPR(
-				worktreePath,
-				targetBranch,
-				title,
-				description
-			);
-
-			if (result.success && result.prUrl) {
-				onPRCreated?.({
-					url: result.prUrl,
-					title,
-					description,
-					sourceBranch: worktreeBranch,
-					targetBranch,
-				});
-				onClose();
-			} else {
-				setError(result.error || 'Failed to create PR');
-			}
-		} catch (err) {
-			setError(err instanceof Error ? err.message : 'Failed to create PR');
-		} finally {
-			setIsCreating(false);
-		}
+	// Hands the request to the store and returns. The form stays open showing
+	// the spinner, but it no longer owns the outcome: whoever is watching the
+	// store reports it, here or in a toast.
+	const handleCreatePR = () => {
+		if (!ghCliStatus?.authenticated || !title.trim()) return;
+		usePRCreationStore.getState().startPRCreation({
+			sessionId: sessionId ?? '',
+			worktreePath,
+			sourceBranch: worktreeBranch,
+			targetBranch,
+			title: title.trim(),
+			description,
+		});
 	};
 
 	if (!isOpen) return null;
@@ -213,11 +229,12 @@ export function CreatePRModal({
 					className="flex items-center justify-between px-4 py-3 border-b"
 					style={{ borderColor: theme.colors.border }}
 				>
-					<div className="flex items-center gap-2">
-						<GitPullRequest className="w-5 h-5" style={{ color: theme.colors.accent }} />
-						<h2 className="font-bold" style={{ color: theme.colors.textMain }}>
+					<div className="flex items-center gap-2 min-w-0">
+						<GitPullRequest className="w-5 h-5 shrink-0" style={{ color: theme.colors.accent }} />
+						<h2 className="font-bold shrink-0" style={{ color: theme.colors.textMain }}>
 							Create Pull Request
 						</h2>
+						<ModalSubtitle theme={theme} subtitle={agentName} />
 					</div>
 					<GhostIconButton onClick={onClose} ariaLabel="Close">
 						<X className="w-4 h-4" style={{ color: theme.colors.textDim }} />
@@ -356,7 +373,8 @@ export function CreatePRModal({
 								<select
 									value={targetBranch}
 									onChange={(e) => setTargetBranch(e.target.value)}
-									className="w-full px-3 py-2 rounded border bg-transparent outline-none text-sm cursor-pointer"
+									disabled={isCreating}
+									className="w-full px-3 py-2 rounded border bg-transparent outline-none text-sm cursor-pointer disabled:opacity-60"
 									style={{
 										borderColor: theme.colors.border,
 										color: theme.colors.textMain,
@@ -386,8 +404,9 @@ export function CreatePRModal({
 									type="text"
 									value={title}
 									onChange={(e) => setTitle(e.target.value)}
+									disabled={isCreating}
 									placeholder="PR title..."
-									className="w-full px-3 py-2 rounded border bg-transparent outline-none text-sm"
+									className="w-full px-3 py-2 rounded border bg-transparent outline-none text-sm disabled:opacity-60"
 									style={{
 										borderColor: theme.colors.border,
 										color: theme.colors.textMain,
@@ -406,9 +425,10 @@ export function CreatePRModal({
 								<textarea
 									value={description}
 									onChange={(e) => setDescription(e.target.value)}
+									disabled={isCreating}
 									placeholder="Add a description..."
 									rows={3}
-									className="w-full px-3 py-2 rounded border bg-transparent outline-none text-sm resize-none"
+									className="w-full px-3 py-2 rounded border bg-transparent outline-none text-sm resize-none disabled:opacity-60"
 									style={{
 										borderColor: theme.colors.border,
 										color: theme.colors.textMain,
@@ -447,8 +467,10 @@ export function CreatePRModal({
 						onClick={onClose}
 						className="px-4 py-2 rounded text-sm hover:bg-white/10 transition-colors"
 						style={{ color: theme.colors.textMain }}
+						title={isCreating ? 'Hide this form - the pull request keeps being created' : undefined}
+						data-testid="create-pr-close"
 					>
-						Cancel
+						{isCreating ? 'Run in Background' : 'Cancel'}
 					</button>
 					<button
 						onClick={handleCreatePR}

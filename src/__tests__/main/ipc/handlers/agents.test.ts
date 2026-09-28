@@ -24,6 +24,7 @@ vi.mock('electron', () => ({
 // Mock agents module (capabilities exports)
 vi.mock('../../../../main/agents', async () => {
 	const opencodeConfig = await import('../../../../main/agents/opencode-config');
+	const codexConfig = await import('../../../../main/agents/codex-config');
 	return {
 		getAgentCapabilities: vi.fn(),
 		AGENT_DEFINITIONS: [
@@ -55,6 +56,9 @@ vi.mock('../../../../main/agents', async () => {
 		extractModelsFromConfig: opencodeConfig.extractModelsFromConfig,
 		getOpenCodeConfigPaths: opencodeConfig.getOpenCodeConfigPaths,
 		getOpenCodeCommandDirs: opencodeConfig.getOpenCodeCommandDirs,
+		getCodexSkillDirs: codexConfig.getCodexSkillDirs,
+		getCodexPromptDirs: codexConfig.getCodexPromptDirs,
+		parseCodexMarkdownDoc: codexConfig.parseCodexMarkdownDoc,
 	};
 });
 
@@ -99,6 +103,7 @@ vi.mock('../../../../main/utils/stripAnsi', () => ({
 import { execFileNoThrow } from '../../../../main/utils/execFile';
 import { buildSshCommand } from '../../../../main/utils/ssh-command-builder';
 import * as fs from 'fs';
+import { getCodexSkillDirs, getCodexPromptDirs } from '../../../../main/agents/codex-config';
 
 describe('agents IPC handlers', () => {
 	let handlers: Map<string, (...args: never[]) => unknown>;
@@ -177,6 +182,7 @@ describe('agents IPC handlers', () => {
 				'agents:setCustomEnvVars',
 				'agents:getCustomEnvVars',
 				'agents:getAllCustomEnvVars',
+				'agents:getKnownEnvVarKeys',
 				'agents:getModels',
 				'agents:getConfigOptions',
 				'agents:discoverSlashCommands',
@@ -193,6 +199,9 @@ describe('agents IPC handlers', () => {
 				'claude:usage:refresh-all',
 				'agents:getCodexUsageSnapshots',
 				'agents:getCodexUsageAccountKeys',
+				// Codex rate-limit reset credits: READ the list, WRITE one back.
+				'agents:getCodexResetCredits',
+				'agents:consumeCodexResetCredit',
 				'codex:usage:refresh-all',
 			];
 
@@ -1257,6 +1266,62 @@ describe('agents IPC handlers', () => {
 		});
 	});
 
+	describe('agents:getKnownEnvVarKeys', () => {
+		it('remembers names set on agent configs, sessions, and the global environment', async () => {
+			mockAgentConfigsStore.get.mockImplementation((key: string, fallback?: unknown) => {
+				if (key !== 'configs') return fallback;
+				return {
+					'claude-code': {
+						customEnvVars: { CLAUDE_CONFIG_DIR: '/Users/me/.claude-agent' },
+						customEnvVarsDisabled: { ANTHROPIC_BASE_URL: 'https://gateway.example' },
+					},
+					codex: { customEnvVars: { CODEX_HOME: '/Users/me/.codex-agent' } },
+				};
+			});
+			const sessionsStore = {
+				get: vi.fn().mockReturnValue([
+					{ toolType: 'claude-code', customEnvVars: { MAX_THINKING_TOKENS: '31999' } },
+					{ toolType: 'opencode', customEnvVars: { OPENCODE_CONFIG: '/Users/me/oc.json' } },
+				]),
+			};
+			const settingsStore = {
+				get: vi.fn().mockImplementation((key: string, fallback?: unknown) => {
+					if (key === 'shellEnvVars') return { HTTPS_PROXY: 'http://proxy:3128' };
+					if (key === 'shellEnvVarsDisabled') return { NO_PROXY: 'localhost' };
+					return fallback;
+				}),
+			};
+			registerAgentsHandlers({
+				...deps,
+				sessionsStore: sessionsStore as any,
+				settingsStore: settingsStore as any,
+			});
+
+			const handler = handlers.get('agents:getKnownEnvVarKeys');
+			expect(handler).toBeDefined();
+
+			expect(await handler!({} as any)).toEqual({
+				byProvider: {
+					'claude-code': ['ANTHROPIC_BASE_URL', 'CLAUDE_CONFIG_DIR', 'MAX_THINKING_TOKENS'],
+					codex: ['CODEX_HOME'],
+					opencode: ['OPENCODE_CONFIG'],
+				},
+				global: ['HTTPS_PROXY', 'NO_PROXY'],
+			});
+		});
+
+		it('skips names with no value, so a half-finished row is never suggested back', async () => {
+			mockAgentConfigsStore.get.mockImplementation((key: string, fallback?: unknown) => {
+				if (key !== 'configs') return fallback;
+				return { 'claude-code': { customEnvVars: { VAR: '', ANTHROPIC_MODEL: '  ' } } };
+			});
+
+			const handler = handlers.get('agents:getKnownEnvVarKeys');
+
+			expect(await handler!({} as any)).toEqual({ byProvider: {}, global: [] });
+		});
+	});
+
 	describe('agents:getModels', () => {
 		it('should return models for agent', async () => {
 			const mockModels = ['opencode/gpt-5-nano', 'ollama/qwen3:8b', 'anthropic/claude-sonnet'];
@@ -1602,15 +1667,15 @@ describe('agents IPC handlers', () => {
 
 		it('should return null for unsupported agents', async () => {
 			const mockAgent = {
-				id: 'codex',
+				id: 'terminal',
 				available: true,
-				path: '/usr/bin/codex',
+				path: '/bin/bash',
 			};
 
 			mockAgentDetector.getAgent.mockResolvedValue(mockAgent);
 
 			const handler = handlers.get('agents:discoverSlashCommands');
-			const result = await handler!({} as any, 'codex', '/test');
+			const result = await handler!({} as any, 'terminal', '/test');
 
 			expect(result).toBeNull();
 			expect(execFileNoThrow).not.toHaveBeenCalled();
@@ -1874,6 +1939,178 @@ describe('agents IPC handlers', () => {
 			await expect(handler!({} as any, 'opencode', '/test')).rejects.toThrow('EACCES');
 		});
 
+		// ---- Codex (issue #1434) -------------------------------------------
+		// Codex custom commands live on disk as skills / prompts. Maestro drives
+		// Codex through headless `codex exec`, which does NOT expand a slash, so
+		// every discovered command must carry its body as `prompt` for the
+		// renderer to substitute before sending.
+
+		const codexAgent = { id: 'codex', available: true, path: '/usr/bin/codex' };
+		const enoentError = () => Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+
+		/** Build a readdir/readFile pair backed by a virtual path -> content map. */
+		const mockCodexDisk = (
+			dirs: Record<string, { name: string; isDirectory: () => boolean }[]>,
+			files: Record<string, string>
+		) => {
+			vi.mocked(fs.promises.readdir).mockImplementation(async (dir: any) => {
+				const entries = dirs[String(dir)];
+				if (!entries) throw enoentError();
+				return entries as any;
+			});
+			vi.mocked(fs.promises.readFile).mockImplementation(async (filePath: any) => {
+				const content = files[String(filePath)];
+				if (content === undefined) throw enoentError();
+				return content;
+			});
+		};
+
+		it('discovers Codex skills and carries SKILL.md body as the prompt', async () => {
+			mockAgentDetector.getAgent.mockResolvedValue(codexAgent);
+
+			const [projectSkills] = getCodexSkillDirs('/test');
+			mockCodexDisk(
+				{ [projectSkills]: [{ name: 'ship-it', isDirectory: () => true }] },
+				{
+					[path.join(projectSkills, 'ship-it', 'SKILL.md')]:
+						'---\nname: ship-it\ndescription: Cut a release\n---\n\nRun the release checklist.',
+				}
+			);
+
+			const handler = handlers.get('agents:discoverSlashCommands');
+			const result = await handler!({} as any, 'codex', '/test');
+
+			expect(result).toEqual([
+				{
+					name: 'ship-it',
+					description: 'Cut a release',
+					prompt: 'Run the release checklist.',
+				},
+			]);
+			// Discovery is pure disk reads - it must never spawn the CLI.
+			expect(execFileNoThrow).not.toHaveBeenCalled();
+		});
+
+		it('discovers legacy Codex prompts from <CODEX_HOME>/prompts/*.md', async () => {
+			mockAgentDetector.getAgent.mockResolvedValue(codexAgent);
+
+			const globalPrompts = getCodexPromptDirs('/test')[1];
+			// A prompts dir is read without withFileTypes, so it yields filenames.
+			vi.mocked(fs.promises.readdir).mockImplementation(async (dir: any) => {
+				if (String(dir) === globalPrompts) return ['triage.md', 'notes.txt'] as any;
+				throw enoentError();
+			});
+			vi.mocked(fs.promises.readFile).mockImplementation(async (filePath: any) => {
+				if (String(filePath) === path.join(globalPrompts, 'triage.md')) {
+					return 'Triage the open bugs.';
+				}
+				throw enoentError();
+			});
+
+			const handler = handlers.get('agents:discoverSlashCommands');
+			const result = await handler!({} as any, 'codex', '/test');
+
+			expect(result).toEqual([
+				{ name: 'triage', description: undefined, prompt: 'Triage the open bugs.' },
+			]);
+		});
+
+		it('skips Codex skills marked user-invocable: false', async () => {
+			mockAgentDetector.getAgent.mockResolvedValue(codexAgent);
+
+			const [projectSkills] = getCodexSkillDirs('/test');
+			mockCodexDisk(
+				{
+					[projectSkills]: [
+						{ name: 'background', isDirectory: () => true },
+						{ name: 'usable', isDirectory: () => true },
+					],
+				},
+				{
+					[path.join(projectSkills, 'background', 'SKILL.md')]:
+						'---\nname: background\nuser-invocable: false\n---\nReference only.',
+					[path.join(projectSkills, 'usable', 'SKILL.md')]: '---\nname: usable\n---\nDo it.',
+				}
+			);
+
+			const handler = handlers.get('agents:discoverSlashCommands');
+			const result = await handler!({} as any, 'codex', '/test');
+
+			expect(result.map((c: any) => c.name)).toEqual(['usable']);
+		});
+
+		it("skips Codex's internal .system skills directory", async () => {
+			mockAgentDetector.getAgent.mockResolvedValue(codexAgent);
+
+			const [projectSkills] = getCodexSkillDirs('/test');
+			mockCodexDisk(
+				{ [projectSkills]: [{ name: '.system', isDirectory: () => true }] },
+				{
+					[path.join(projectSkills, '.system', 'SKILL.md')]:
+						'---\nname: review-agent\n---\nInternal.',
+				}
+			);
+
+			const handler = handlers.get('agents:discoverSlashCommands');
+			expect(await handler!({} as any, 'codex', '/test')).toEqual([]);
+		});
+
+		it('lets a project-local Codex skill win over a same-named global one', async () => {
+			mockAgentDetector.getAgent.mockResolvedValue(codexAgent);
+
+			const [projectSkills, globalSkills] = getCodexSkillDirs('/test');
+			mockCodexDisk(
+				{
+					[projectSkills]: [{ name: 'dup', isDirectory: () => true }],
+					[globalSkills]: [{ name: 'dup', isDirectory: () => true }],
+				},
+				{
+					[path.join(projectSkills, 'dup', 'SKILL.md')]: 'project body',
+					[path.join(globalSkills, 'dup', 'SKILL.md')]: 'global body',
+				}
+			);
+
+			const handler = handlers.get('agents:discoverSlashCommands');
+			const result = await handler!({} as any, 'codex', '/test');
+
+			expect(result).toEqual([{ name: 'dup', description: undefined, prompt: 'project body' }]);
+		});
+
+		it('returns an empty list when Codex has no custom commands on disk', async () => {
+			mockAgentDetector.getAgent.mockResolvedValue(codexAgent);
+			vi.mocked(fs.promises.readdir).mockRejectedValue(enoentError());
+			vi.mocked(fs.promises.readFile).mockRejectedValue(enoentError());
+
+			const handler = handlers.get('agents:discoverSlashCommands');
+			expect(await handler!({} as any, 'codex', '/test')).toEqual([]);
+		});
+
+		it("returns null for an SSH-remote Codex agent rather than this machine's commands", async () => {
+			mockAgentDetector.getAgent.mockResolvedValue(codexAgent);
+
+			const [projectSkills] = getCodexSkillDirs('/test');
+			mockCodexDisk(
+				{ [projectSkills]: [{ name: 'local-only', isDirectory: () => true }] },
+				{ [path.join(projectSkills, 'local-only', 'SKILL.md')]: 'local body' }
+			);
+
+			const handler = handlers.get('agents:discoverSlashCommands');
+			const result = await handler!({} as any, 'codex', '/test', undefined, 'remote-1');
+
+			expect(result).toBeNull();
+			expect(fs.promises.readdir).not.toHaveBeenCalled();
+		});
+
+		it('rethrows non-ENOENT errors from Codex discovery so Sentry sees them', async () => {
+			mockAgentDetector.getAgent.mockResolvedValue(codexAgent);
+			vi.mocked(fs.promises.readdir).mockRejectedValue(
+				Object.assign(new Error('EACCES'), { code: 'EACCES' })
+			);
+
+			const handler = handlers.get('agents:discoverSlashCommands');
+			await expect(handler!({} as any, 'codex', '/test')).rejects.toThrow('EACCES');
+		});
+
 		it('should return null when agent is not available', async () => {
 			mockAgentDetector.getAgent.mockResolvedValue({ id: 'claude-code', available: false });
 
@@ -1943,9 +2180,12 @@ describe('agents IPC handlers', () => {
 	});
 
 	describe('agents:getClaudeUsageSnapshots', () => {
-		it('returns the full snapshot map from claudeUsageStore', async () => {
+		// The dashboard mirror serves the RETAINED map, not the live one: an
+		// account whose agents all moved away keeps its row (and its last known
+		// bars, badged stale) instead of vanishing at the 24h TTL.
+		it('returns the retained snapshot map from claudeUsageStore', async () => {
 			const claudeUsageStore = await import('../../../../main/stores/claudeUsageStore');
-			const getAllSpy = vi.spyOn(claudeUsageStore, 'getAllSnapshots').mockReturnValue({
+			const getAllSpy = vi.spyOn(claudeUsageStore, 'getRetainedSnapshots').mockReturnValue({
 				'/Users/me/.claude': {
 					sampledAt: '2026-05-15T00:00:00.000Z',
 					configDirKey: '/Users/me/.claude',
@@ -1966,13 +2206,43 @@ describe('agents IPC handlers', () => {
 
 		it('returns an empty object when no snapshots are cached', async () => {
 			const claudeUsageStore = await import('../../../../main/stores/claudeUsageStore');
-			const getAllSpy = vi.spyOn(claudeUsageStore, 'getAllSnapshots').mockReturnValue({});
+			const getAllSpy = vi.spyOn(claudeUsageStore, 'getRetainedSnapshots').mockReturnValue({});
 
 			const handler = handlers.get('agents:getClaudeUsageSnapshots')!;
 			const result = await handler({} as any);
 
 			expect(result).toEqual({});
 			getAllSpy.mockRestore();
+		});
+	});
+
+	describe('agents:getClaudeUsageAccountKeys', () => {
+		it('unions discovered dirs with remembered accounts', async () => {
+			// The remembered account is the one whose agents all moved away after it
+			// hit its limit: the sweep cannot see it (symlinked / outside $HOME /
+			// name filtered) but its row has to stay on the dashboard.
+			const claudeUsageStartup = await import('../../../../main/agents/claude-usage-startup');
+			const quotaAccountsStore = await import('../../../../main/stores/quotaAccountsStore');
+			// A remembered key was itself written through `resolveConfigDirKey`, so
+			// it arrives already resolved - spell both sides that way or the union
+			// stops deduping on Windows, where the discovered dir gains a drive
+			// letter the POSIX literal does not have.
+			const discoveredKey = path.resolve('/Users/me/.claude');
+			const cappedKey = path.resolve('/Volumes/keys/claude-capped');
+			const discoverSpy = vi
+				.spyOn(claudeUsageStartup, 'discoverClaudeConfigDirs')
+				.mockResolvedValue(['/Users/me/.claude']);
+			const pruneSpy = vi
+				.spyOn(quotaAccountsStore, 'pruneMissingQuotaAccounts')
+				.mockResolvedValue([discoveredKey, cappedKey]);
+
+			const handler = handlers.get('agents:getClaudeUsageAccountKeys')!;
+			const result = await handler({} as any);
+
+			expect(pruneSpy).toHaveBeenCalledWith('claude-code');
+			expect(result).toEqual([discoveredKey, cappedKey]);
+			discoverSpy.mockRestore();
+			pruneSpy.mockRestore();
 		});
 	});
 

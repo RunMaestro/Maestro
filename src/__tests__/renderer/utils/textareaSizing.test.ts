@@ -3,7 +3,9 @@ import {
 	clampTextareaHeight,
 	normalizeTextareaHeight,
 	resolveTextareaHeight,
+	resizeTextareaToContent,
 	sanitizeTextareaHeights,
+	scrollTextareaToCaretEnd,
 } from '../../../renderer/utils/textareaSizing';
 
 function setViewportHeight(height: number) {
@@ -90,5 +92,84 @@ describe('textareaSizing', () => {
 			setViewportHeight(500);
 			expect(resolveTextareaHeight({ savedHeight: 2000, minHeight: 100 })).toBe(436);
 		});
+	});
+});
+
+describe('resizeTextareaToContent', () => {
+	it('resizes to content height capped by max height', () => {
+		const textarea = document.createElement('textarea');
+		Object.defineProperty(textarea, 'scrollHeight', { value: 220, configurable: true });
+
+		resizeTextareaToContent(textarea, 176);
+
+		expect(textarea.style.height).toBe('176px');
+	});
+
+	it('resizes to exact content height below cap', () => {
+		const textarea = document.createElement('textarea');
+		Object.defineProperty(textarea, 'scrollHeight', { value: 80, configurable: true });
+
+		resizeTextareaToContent(textarea, 176);
+
+		expect(textarea.style.height).toBe('80px');
+	});
+
+	it('preserves scroll position across the auto-height toggle', () => {
+		const textarea = document.createElement('textarea');
+		Object.defineProperty(textarea, 'scrollHeight', { value: 300, configurable: true });
+		textarea.scrollTop = 120;
+
+		resizeTextareaToContent(textarea, 176);
+
+		expect(textarea.scrollTop).toBe(120);
+	});
+});
+
+describe('scrollTextareaToCaretEnd', () => {
+	it('scrolls the textarea to the bottom when the caret is at the end', () => {
+		const textarea = document.createElement('textarea');
+		textarea.value = 'hello';
+		textarea.scrollTop = 12;
+		Object.defineProperty(textarea, 'scrollHeight', { value: 240, configurable: true });
+		Object.defineProperty(textarea, 'selectionEnd', {
+			value: textarea.value.length,
+			configurable: true,
+		});
+
+		scrollTextareaToCaretEnd(textarea);
+
+		expect(textarea.scrollTop).toBe(240);
+	});
+
+	it('leaves scroll untouched when the caret is mid-way through the final logical line', () => {
+		const textarea = document.createElement('textarea');
+		// Regression for the soft-wrap edge case: a long final logical line can wrap
+		// across several visual rows past the height cap. A caret before the trailing
+		// characters (e.g. an inserted mention) belongs to an earlier visual row, so
+		// snapping to scrollHeight would scroll it out of view. The gate keys off the
+		// true end of the value, not the final logical line, precisely to avoid that.
+		textarea.value = 'first\nsecond\nlast line';
+		textarea.scrollTop = 12;
+		Object.defineProperty(textarea, 'scrollHeight', { value: 240, configurable: true });
+		Object.defineProperty(textarea, 'selectionEnd', {
+			value: textarea.value.indexOf('last line') + 4,
+			configurable: true,
+		});
+
+		scrollTextareaToCaretEnd(textarea);
+
+		expect(textarea.scrollTop).toBe(12);
+	});
+
+	it('leaves scroll untouched for mid-text typing', () => {
+		const textarea = document.createElement('textarea');
+		textarea.value = 'hello world';
+		textarea.scrollTop = 30;
+		Object.defineProperty(textarea, 'scrollHeight', { value: 240, configurable: true });
+		Object.defineProperty(textarea, 'selectionEnd', { value: 2, configurable: true });
+
+		scrollTextareaToCaretEnd(textarea);
+
+		expect(textarea.scrollTop).toBe(30);
 	});
 });

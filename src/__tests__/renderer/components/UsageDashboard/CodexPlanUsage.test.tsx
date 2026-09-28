@@ -7,7 +7,7 @@
  *   - multi-account tab selection
  *   - accessible quota progress bars
  *   - non-authenticated/error rows
- *   - refresh IPC wiring
+ *   - refresh IPC wiring, incl. the Cmd+R hotkey
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
@@ -98,6 +98,58 @@ describe('CodexPlanUsage - configured account without snapshot', () => {
 		fireEvent.click(screen.getByTestId('codex-plan-tab-pending'));
 		expect(screen.getByTestId('codex-plan-row-pending-pending')).toBeInTheDocument();
 		expect(screen.queryAllByRole('progressbar')).toHaveLength(0);
+	});
+});
+
+describe('CodexPlanUsage - window length labels', () => {
+	it('labels each bar with the window length the sampler recorded', () => {
+		seedSnapshots({
+			'/Users/me/.codex': {
+				sampledAt: '2026-05-15T00:00:00.000Z',
+				codexHomeKey: '/Users/me/.codex',
+				authState: 'authenticated',
+				session: { percent: 50, resetsAt: '2026-05-15T05:00:00.000Z', windowSeconds: 18000 },
+				weekly: { percent: 30, resetsAt: '2026-05-22T00:00:00.000Z', windowSeconds: 604800 },
+			},
+		});
+
+		render(<CodexPlanUsage theme={theme} />);
+
+		expect(screen.getByText('Session (5h)')).toBeInTheDocument();
+		expect(screen.getByText('Weekly')).toBeInTheDocument();
+	});
+
+	it('shows a weekly-only account under Weekly rather than as a 5h session (#1596)', () => {
+		// The `prolite` shape: one window, seven days long, arriving in the slot
+		// a positional map read as the session window.
+		seedSnapshots({
+			'/Users/me/.codex': {
+				sampledAt: '2026-05-15T00:00:00.000Z',
+				codexHomeKey: '/Users/me/.codex',
+				authState: 'authenticated',
+				weekly: { percent: 25, resetsAt: '2026-05-22T00:00:00.000Z', windowSeconds: 604800 },
+			},
+		});
+
+		render(<CodexPlanUsage theme={theme} />);
+
+		expect(screen.getByText('Weekly')).toBeInTheDocument();
+		expect(screen.queryByText(/^Session/)).toBeNull();
+	});
+
+	it('keeps the 5h session label on a snapshot taken before window lengths were recorded', () => {
+		seedSnapshots({
+			'/Users/me/.codex': {
+				sampledAt: '2026-05-15T00:00:00.000Z',
+				codexHomeKey: '/Users/me/.codex',
+				authState: 'authenticated',
+				session: { percent: 50, resetsAt: '2026-05-15T05:00:00.000Z' },
+			},
+		});
+
+		render(<CodexPlanUsage theme={theme} />);
+
+		expect(screen.getByText('Session (5h)')).toBeInTheDocument();
 	});
 });
 
@@ -239,6 +291,22 @@ describe('CodexPlanUsage - refresh wiring', () => {
 		});
 	});
 
+	it('re-samples on Cmd+R when the panel owns the hotkey', async () => {
+		render(<CodexPlanUsage theme={theme} refreshHotkey />);
+		fireEvent.keyDown(window, { key: 'r', metaKey: true });
+
+		await waitFor(() => {
+			expect(refreshCodexUsageSnapshotsMock).toHaveBeenCalledTimes(1);
+		});
+	});
+
+	it('ignores Cmd+R when the panel does not own the hotkey', () => {
+		render(<CodexPlanUsage theme={theme} />);
+		fireEvent.keyDown(window, { key: 'r', metaKey: true });
+
+		expect(refreshCodexUsageSnapshotsMock).not.toHaveBeenCalled();
+	});
+
 	it('disables the refresh button while a refresh is already in flight', () => {
 		useCodexUsageStore.setState({
 			snapshots: {},
@@ -331,5 +399,58 @@ describe('CodexPlanUsage - hide/show accounts (list view)', () => {
 
 		expect(screen.queryByTestId('codex-plan-visibility-default')).toBeNull();
 		expect(screen.queryByTestId('codex-plan-show-all')).toBeNull();
+	});
+});
+
+describe('CodexPlanUsage - agent count badge', () => {
+	const snapshotFor = (key: string) => ({
+		sampledAt: '2026-05-15T00:00:00.000Z',
+		codexHomeKey: key,
+		authState: 'authenticated',
+		session: { percent: 40, resetsAt: '2026-05-15T05:00:00.000Z' },
+		weekly: { percent: 20, resetsAt: '2026-05-22T00:00:00.000Z' },
+	});
+
+	it('counts the agents pointed at each CODEX_HOME', () => {
+		seedSnapshots({
+			'/Users/me/.codex-work': snapshotFor('/Users/me/.codex-work'),
+			'/Users/me/.codex-side': snapshotFor('/Users/me/.codex-side'),
+		});
+		seedSessions(['/Users/me/.codex-work', '/Users/me/.codex-work', '/Users/me/.codex-side']);
+
+		render(<CodexPlanUsage theme={theme} showAllAccounts autoRefresh={false} />);
+
+		expect(screen.getByTestId('codex-plan-agents-work')).toHaveTextContent('2 agents');
+		expect(screen.getByTestId('codex-plan-agents-side')).toHaveTextContent('1 agent');
+	});
+
+	it('shows the count on an account that has no snapshot yet', () => {
+		seedSessions(['/Users/me/.codex-pending']);
+
+		render(<CodexPlanUsage theme={theme} showAllAccounts autoRefresh={false} />);
+
+		expect(screen.getByTestId('codex-plan-row-pending-pending')).toBeInTheDocument();
+		expect(screen.getByTestId('codex-plan-agents-pending')).toHaveTextContent('1 agent');
+	});
+});
+
+describe('CodexPlanUsage - sample age', () => {
+	// The dashboard footer already prints "sampled Nm ago" for this tab, so the
+	// panel must NOT repeat it: two copies of the same age drift apart the moment
+	// one of them re-renders and the other does not.
+	it('leaves the sample age to the dashboard footer', () => {
+		seedSnapshots({
+			'/Users/me/.codex': {
+				sampledAt: '2026-05-15T11:48:00.000Z',
+				codexHomeKey: '/Users/me/.codex',
+				authState: 'authenticated',
+				session: { percent: 50, resetsAt: '2026-05-15T05:00:00.000Z' },
+				weekly: { percent: 30, resetsAt: '2026-05-22T00:00:00.000Z' },
+			},
+		});
+
+		render(<CodexPlanUsage theme={theme} autoRefresh={false} />);
+		expect(screen.queryByTestId('codex-plan-last-refreshed')).toBeNull();
+		expect(screen.queryByText(/Last refreshed/)).toBeNull();
 	});
 });

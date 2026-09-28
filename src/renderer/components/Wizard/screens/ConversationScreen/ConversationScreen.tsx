@@ -6,6 +6,8 @@ import { wizardDebugLogger } from '../../services/phaseGenerator';
 import { getNextFillerPhrase } from '../../services/fillerPhrases';
 import { ScreenReaderAnnouncement } from '../../ScreenReaderAnnouncement';
 import { TypingIndicator } from '../../shared/TypingIndicator';
+import { PlannerModelBar } from '../../shared/PlannerModelBar';
+import { usePlannerModel } from '../../shared/usePlannerModel';
 import {
 	ConfidenceMeter,
 	ConversationErrorPanel,
@@ -22,6 +24,7 @@ import {
 	useConversationBootstrap,
 	useConversationScrollFocus,
 	useWizardConversationSend,
+	useWizardOpeningKind,
 } from './hooks';
 import { getConversationProviderName } from './utils/providerName';
 import type {
@@ -43,6 +46,7 @@ export function ConversationScreen({
 		setIsReadyToProceed,
 		setConversationLoading,
 		setConversationError,
+		setPlannerModel,
 		previousStep,
 		nextStep,
 	} = useWizard();
@@ -54,7 +58,6 @@ export function ConversationScreen({
 	);
 	const [initialQuestion] = useState(() => getInitialQuestion());
 	const [errorRetryCount, setErrorRetryCount] = useState(0);
-	const [autoSentInitialMessage, setAutoSentInitialMessage] = useState(false);
 	const [streamingText, setStreamingText] = useState('');
 	const [fillerPhrase, setFillerPhrase] = useState('');
 	const [detectedError, setDetectedError] = useState<WizardError | null>(null);
@@ -67,6 +70,7 @@ export function ConversationScreen({
 	const isSendingRef = useRef(false);
 	const autoContinueTriggeredRef = useRef(false);
 	const initialQuestionAddedRef = useRef(false);
+	const autoSentOpeningRef = useRef(false);
 	const showThinkingRef = useRef(showThinking);
 	const handleSendMessageRef = useRef<(() => void) | null>(null);
 
@@ -99,6 +103,12 @@ export function ConversationScreen({
 		[]
 	);
 
+	const plannerModel = usePlannerModel({
+		selectedAgent: state.selectedAgent,
+		plannerModel: state.plannerModel,
+		setPlannerModel,
+	});
+
 	const { announcement, announcementKey, announce } = useConversationAnnouncements({
 		isReadyToProceed: state.isReadyToProceed,
 		confidenceLevel: state.confidenceLevel,
@@ -128,7 +138,7 @@ export function ConversationScreen({
 		handleSendMessageRef,
 	});
 
-	const { handleSendMessage, sendInitialContinueMessage } = useWizardConversationSend({
+	const { handleSendMessage, sendOpeningMessage } = useWizardConversationSend({
 		state,
 		inputValue,
 		showInitialQuestion,
@@ -148,26 +158,33 @@ export function ConversationScreen({
 		handleSendMessageRef.current = handleSendMessage;
 	}, [handleSendMessage]);
 
+	// The agent opens the conversation whenever there is something for it to
+	// read: playbooks the user chose to build on, or an existing project in the
+	// folder. Only a genuinely empty folder falls through to the canned question
+	// (issue #1225 - an established project should not have to be described by
+	// hand to an agent that can read it).
+	const openingKind = useWizardOpeningKind({
+		existingDocsChoice: state.existingDocsChoice,
+		directoryPath: state.directoryPath,
+		sessionSshRemoteConfig: state.sessionSshRemoteConfig,
+		enabled: conversationStarted && state.conversationHistory.length === 0,
+	});
+
+	// The "already sent" guard is a REF, and the send is immediate.
+	//
+	// This used to set a state flag and fire the send from a 100ms `setTimeout`
+	// with a `clearTimeout` cleanup. Writing the flag re-rendered, the effect
+	// re-ran, and its cleanup cancelled the pending timer before it ever fired -
+	// so the opening turn was scheduled and then silently dropped, every time.
+	// A ref does not re-render, and with no timer there is nothing to cancel.
 	useEffect(() => {
-		if (
-			conversationStarted &&
-			state.existingDocsChoice === 'continue' &&
-			!autoSentInitialMessage &&
-			state.conversationHistory.length === 0
-		) {
-			setAutoSentInitialMessage(true);
-			const timer = setTimeout(() => {
-				sendInitialContinueMessage();
-			}, 100);
-			return () => clearTimeout(timer);
-		}
-	}, [
-		conversationStarted,
-		state.existingDocsChoice,
-		autoSentInitialMessage,
-		state.conversationHistory.length,
-		sendInitialContinueMessage,
-	]);
+		if (!conversationStarted || !openingKind) return;
+		if (autoSentOpeningRef.current) return;
+		if (state.conversationHistory.length !== 0) return;
+
+		autoSentOpeningRef.current = true;
+		void sendOpeningMessage(openingKind);
+	}, [conversationStarted, openingKind, state.conversationHistory.length, sendOpeningMessage]);
 
 	const handleRetry = useCallback(() => {
 		setConversationError(null);
@@ -223,6 +240,18 @@ export function ConversationScreen({
 				}}
 			>
 				<ConfidenceMeter confidence={state.confidenceLevel} theme={theme} />
+
+				<div className="mt-3">
+					<PlannerModelBar
+						theme={theme}
+						selectedAgent={state.selectedAgent}
+						effectiveModel={plannerModel.effectiveModel}
+						topTierModel={plannerModel.topTierModel}
+						isOverridden={plannerModel.isOverridden}
+						onUseTopTier={plannerModel.useTopTier}
+						onUseAgentDefault={plannerModel.useAgentDefault}
+					/>
+				</div>
 			</div>
 
 			<div

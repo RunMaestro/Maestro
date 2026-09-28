@@ -24,6 +24,35 @@ export const SHORTCUTS_SETTINGS: SearchableSetting[] = [
 // ---------------------------------------------------------------------------
 export const THEME_SETTINGS: SearchableSetting[] = [
 	{
+		id: 'theme-surface-gloss',
+		tab: 'theme',
+		tabLabel: 'Themes',
+		label: 'Surface Gloss',
+		description:
+			'Add a light source to the app chrome so panels read as stacked layers instead of one flat sheet',
+		keywords: [
+			'gloss',
+			'glossy',
+			'sheen',
+			'shine',
+			'intensity',
+			'depth',
+			'elevation',
+			'shadow',
+			'highlight',
+			'flat',
+			'ashy',
+			'dull',
+			'pop',
+			'contrast',
+			'chrome',
+			'surface',
+			'off',
+			'strong',
+			'max',
+		],
+	},
+	{
 		id: 'theme-picker',
 		tab: 'theme',
 		tabLabel: 'Themes',

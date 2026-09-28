@@ -7,7 +7,9 @@ import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { useImageAnnotatorStore } from '../../../renderer/components/ImageAnnotator/imageAnnotatorStore';
 import { isWebDesktop } from '../../../renderer/utils/runtimeContext';
 
+import { installLocalStorageMock } from '../../helpers/mockLocalStorage';
 import { mockTheme } from '../../helpers/mockTheme';
+import { requestHeadingPalette } from '../../../renderer/services/headingPalette';
 // Mock lucide-react icons
 vi.mock('lucide-react', () => ({
 	FileCode: () => <span data-testid="file-code-icon">FileCode</span>,
@@ -40,12 +42,19 @@ vi.mock('lucide-react', () => ({
 	Zap: () => <span data-testid="zap-icon">Zap</span>,
 	Database: () => <span data-testid="database-icon">Database</span>,
 	WrapText: () => <span data-testid="wraptext-icon">WrapText</span>,
+	// Icon for the toolbar's delete-file button.
+	Trash2: () => <span data-testid="trash-icon">Trash2</span>,
 	AppWindow: () => <span data-testid="appwindow-icon">AppWindow</span>,
 	// Icons added by the search-kind toggle (text/regex/literal).
 	Filter: () => <span data-testid="filter-icon">Filter</span>,
 	Type: () => <span data-testid="type-icon">Type</span>,
 	Regex: () => <span data-testid="regex-icon">Regex</span>,
 	Hash: () => <span data-testid="hash-icon">Hash</span>,
+	// Icons added by the floating font-zoom control.
+	AArrowUp: () => <span data-testid="a-arrow-up-icon">AArrowUp</span>,
+	AArrowDown: () => <span data-testid="a-arrow-down-icon">AArrowDown</span>,
+	// Resting-circle icon for the collapsible variant of that control.
+	ALargeSmall: () => <span data-testid="a-large-small-icon">ALargeSmall</span>,
 }));
 
 // Mock react-markdown
@@ -223,6 +232,9 @@ describe('FilePreview', () => {
 		// opt in explicitly. (clearAllMocks resets call history, not the return
 		// value, so pin it back to false here.)
 		vi.mocked(isWebDesktop).mockReturnValue(false);
+		// `useFontScale` persists the pane's zoom to localStorage, so a test that
+		// zooms hands its scale to the next test. A fresh mock per test is the reset.
+		installLocalStorageMock();
 		useSettingsStore.setState({ bionifyReadingMode: false });
 		// Reset useClickOutside call counter so each test starts fresh
 		useClickOutsideCallCount = 0;
@@ -239,6 +251,41 @@ describe('FilePreview', () => {
 	});
 
 	describe('Document Graph button', () => {
+		it('leaves Cmd+Shift+G alone so View Git Log still gets it', () => {
+			// The graph used to claim Cmd+Shift+G here, in a hardcoded branch that
+			// called stopPropagation(). That chord belongs to View Git Log, so the
+			// graph silently won it whenever a markdown preview had focus - and
+			// because it was in no shortcut registry, it could not be seen in
+			// Settings or rebound out of the way. The button is the way in now.
+			const onOpenInGraph = vi.fn();
+			const onOpenFuzzySearch = vi.fn();
+			const { container } = render(
+				<FilePreview
+					{...defaultProps}
+					file={{ name: 'readme.md', content: '# Readme', path: '/test/readme.md' }}
+					onOpenInGraph={onOpenInGraph}
+					onOpenFuzzySearch={onOpenFuzzySearch}
+					shortcuts={{
+						fuzzyFileSearch: {
+							id: 'fuzzyFileSearch',
+							label: 'Fuzzy File Search',
+							keys: ['Meta', 'g'],
+						},
+					}}
+				/>
+			);
+
+			const previewContainer = container.querySelector('[tabindex="0"]');
+			expect(previewContainer).not.toBeNull();
+
+			fireEvent.keyDown(previewContainer!, { key: 'g', metaKey: true, shiftKey: true });
+
+			expect(onOpenInGraph).not.toHaveBeenCalled();
+			// Cmd+G's own handler must not catch the shifted chord on the way past.
+			// Modifier matching is exact, so this is the guard on that staying true.
+			expect(onOpenFuzzySearch).not.toHaveBeenCalled();
+		});
+
 		it('shows Document Graph button for markdown files when onOpenInGraph is provided', () => {
 			const onOpenInGraph = vi.fn();
 			render(
@@ -711,7 +758,7 @@ describe('FilePreview', () => {
 
 			const callsAfterMount = mockStat.mock.calls.length;
 
-			// Advance timers past multiple poll intervals — no additional calls should happen
+			// Advance timers past multiple poll intervals - no additional calls should happen
 			await act(async () => {
 				vi.advanceTimersByTime(6000);
 			});
@@ -888,7 +935,7 @@ describe('FilePreview', () => {
 	// `edit mode keyboard navigation` tests were removed when FilePreview's edit
 	// surface was swapped from a raw <textarea> to CodeMirror. Cmd+Up/Down and
 	// Cmd+Shift+Up/Down are now provided by CodeMirror's `defaultKeymap`
-	// (cursorDocStart / cursorDocEnd / selectDocStart / selectDocEnd) — there's
+	// (cursorDocStart / cursorDocEnd / selectDocStart / selectDocEnd) - there's
 	// no FilePreview-level handler to test, so the old tests would have only
 	// exercised our mock.
 
@@ -1335,6 +1382,131 @@ print("world")
 			fireEvent.keyDown(previewContainer!, { key: '\\', metaKey: true });
 			expect(screen.queryByText('Contents')).not.toBeInTheDocument();
 			expect(onShortcutUsed).not.toHaveBeenCalled();
+		});
+
+		it('opens the heading palette on a bare # and lists every heading', () => {
+			const { container } = render(
+				<FilePreview
+					{...defaultProps}
+					file={{
+						name: 'doc.md',
+						content: '# Heading 1\n## Heading 2\n### Heading 3',
+						path: '/test/doc.md',
+					}}
+					markdownEditMode={false}
+					isTabMode={true}
+				/>
+			);
+
+			const previewContainer = container.querySelector('[tabindex="0"]');
+			fireEvent.keyDown(previewContainer!, { key: '#' });
+
+			expect(screen.getByTestId('heading-palette-input')).toBeInTheDocument();
+			const rows = container.querySelectorAll('[data-testid="heading-palette-row"]');
+			expect(Array.from(rows).map((el) => (el as HTMLElement).title)).toEqual([
+				'Heading 1',
+				'Heading 2',
+				'Heading 3',
+			]);
+		});
+
+		it('Escape closes the heading palette before the TOC overlay', () => {
+			const { container } = render(
+				<FilePreview
+					{...defaultProps}
+					file={{ name: 'doc.md', content: '# Heading 1\n## Heading 2', path: '/test/doc.md' }}
+					markdownEditMode={false}
+					isTabMode={true}
+				/>
+			);
+
+			const previewContainer = container.querySelector('[tabindex="0"]');
+			fireEvent.click(screen.getByTitle('Table of Contents'));
+			fireEvent.keyDown(previewContainer!, { key: '#' });
+
+			// The palette supersedes the overlay rather than stacking on it.
+			expect(screen.getByTestId('heading-palette-input')).toBeInTheDocument();
+			expect(screen.queryByText('Contents')).not.toBeInTheDocument();
+
+			fireEvent.keyDown(previewContainer!, { key: 'Escape' });
+			expect(screen.queryByTestId('heading-palette-input')).not.toBeInTheDocument();
+		});
+
+		it('ignores # in markdown edit mode, where it is just a character', () => {
+			const { container } = render(
+				<FilePreview
+					{...defaultProps}
+					file={{ name: 'doc.md', content: '# Heading 1', path: '/test/doc.md' }}
+					markdownEditMode={true}
+					isTabMode={true}
+				/>
+			);
+
+			const previewContainer = container.querySelector('[tabindex="0"]');
+			fireEvent.keyDown(previewContainer!, { key: '#' });
+			expect(screen.queryByTestId('heading-palette-input')).not.toBeInTheDocument();
+		});
+
+		it('ignores # on a file with no headings', () => {
+			const { container } = render(
+				<FilePreview
+					{...defaultProps}
+					file={{ name: 'doc.md', content: 'Just prose, no headings.', path: '/test/doc.md' }}
+					markdownEditMode={false}
+					isTabMode={true}
+				/>
+			);
+
+			const previewContainer = container.querySelector('[tabindex="0"]');
+			fireEvent.keyDown(previewContainer!, { key: '#' });
+			expect(screen.queryByTestId('heading-palette-input')).not.toBeInTheDocument();
+		});
+
+		it('opens the heading palette when the command palette asks over the event', () => {
+			render(
+				<FilePreview
+					{...defaultProps}
+					file={{ name: 'doc.md', content: '# Heading 1\n## Heading 2', path: '/test/doc.md' }}
+					markdownEditMode={false}
+					isTabMode={true}
+				/>
+			);
+
+			act(() => {
+				requestHeadingPalette();
+			});
+			expect(screen.getByTestId('heading-palette-input')).toBeInTheDocument();
+		});
+
+		it('drops a heading-palette request on a file with no headings', () => {
+			render(
+				<FilePreview
+					{...defaultProps}
+					file={{ name: 'doc.md', content: 'Just prose.', path: '/test/doc.md' }}
+					markdownEditMode={false}
+					isTabMode={true}
+				/>
+			);
+
+			act(() => {
+				requestHeadingPalette();
+			});
+			expect(screen.queryByTestId('heading-palette-input')).not.toBeInTheDocument();
+		});
+
+		it('ignores Cmd+# so a modified chord still reaches the global handler', () => {
+			const { container } = render(
+				<FilePreview
+					{...defaultProps}
+					file={{ name: 'doc.md', content: '# Heading 1', path: '/test/doc.md' }}
+					markdownEditMode={false}
+					isTabMode={true}
+				/>
+			);
+
+			const previewContainer = container.querySelector('[tabindex="0"]');
+			fireEvent.keyDown(previewContainer!, { key: '#', metaKey: true });
+			expect(screen.queryByTestId('heading-palette-input')).not.toBeInTheDocument();
 		});
 
 		it('keeps TOC overlay open when clicking a heading entry', () => {
@@ -1940,6 +2112,80 @@ print("world")
 			);
 			fireEvent.click(screen.getByTestId('html-render-toggle'));
 			expect(onHtmlRenderModeChange).toHaveBeenCalledWith(true);
+		});
+	});
+
+	describe('bare font-zoom keys', () => {
+		// The scale is a persisted reading preference (`useScalePreference` writes
+		// it to localStorage), so a case that zooms leaves the next one starting
+		// at its value instead of at 100%. Install a fresh in-memory Storage per
+		// case: it resets the key AND makes the environment deterministic, which
+		// is why this only ever went red on CI - a local `vitest run` gets a
+		// Storage-less jsdom where the writes silently no-op and nothing leaks.
+		beforeEach(() => {
+			installLocalStorageMock();
+		});
+
+		// The floating zoom control also answers bare -/+ and 0, so a reader can
+		// resize the pane without reaching for the pill. Guarded on the view
+		// being zoomable and on the event target not being a text input.
+		function renderPreview(props: Record<string, unknown> = {}) {
+			const { container } = render(<FilePreview {...defaultProps} {...props} />);
+			const previewContainer = container.querySelector('[tabindex="0"]');
+			expect(previewContainer).not.toBeNull();
+			return previewContainer!;
+		}
+
+		function percentButton() {
+			return screen.queryByRole('button', { name: /Reset (preview|editor) font size/ });
+		}
+
+		it('does not show a percentage until the pane is zoomed', () => {
+			renderPreview();
+			expect(percentButton()).toBeNull();
+		});
+
+		it('zooms in on a bare + and on its unshifted twin =', () => {
+			const pane = renderPreview();
+			fireEvent.keyDown(pane, { key: '+' });
+			expect(percentButton()).toHaveTextContent('110%');
+			fireEvent.keyDown(pane, { key: '=' });
+			expect(percentButton()).toHaveTextContent('120%');
+		});
+
+		it('zooms out on a bare - and on its shifted twin _', () => {
+			const pane = renderPreview();
+			fireEvent.keyDown(pane, { key: '-' });
+			expect(percentButton()).toHaveTextContent('90%');
+			fireEvent.keyDown(pane, { key: '_' });
+			expect(percentButton()).toHaveTextContent('80%');
+		});
+
+		it('snaps back to 100% on a bare 0', () => {
+			const pane = renderPreview();
+			fireEvent.keyDown(pane, { key: '+' });
+			expect(percentButton()).toHaveTextContent('110%');
+			fireEvent.keyDown(pane, { key: '0' });
+			expect(percentButton()).toBeNull();
+		});
+
+		it('leaves a modified -/+ to the app font-size shortcuts', () => {
+			const pane = renderPreview();
+			fireEvent.keyDown(pane, { key: '+', metaKey: true });
+			fireEvent.keyDown(pane, { key: '-', ctrlKey: true });
+			fireEvent.keyDown(pane, { key: '0', altKey: true });
+			expect(percentButton()).toBeNull();
+		});
+
+		it('lets a text input inside the pane keep its keys', () => {
+			// The find bar and the CM6 editor live under the same keydown handler,
+			// so a bare '-' typed into one must reach the field, not the zoom.
+			const pane = renderPreview();
+			const input = document.createElement('input');
+			pane.appendChild(input);
+			fireEvent.keyDown(input, { key: '-', bubbles: true });
+			expect(percentButton()).toBeNull();
+			pane.removeChild(input);
 		});
 	});
 });

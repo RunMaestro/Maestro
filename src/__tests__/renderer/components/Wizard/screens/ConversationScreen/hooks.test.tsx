@@ -261,7 +261,9 @@ describe('ConversationScreen hooks', () => {
 			expect(conversationMocks.startConversation).toHaveBeenCalledWith({
 				agentType: 'claude-code',
 				directoryPath: '/project',
-				projectName: 'Project',
+				// The project is the FOLDER, not the agent's name (issue #1225).
+				projectName: 'project',
+				model: undefined,
 				existingDocs: undefined,
 				sshRemoteConfig: undefined,
 			});
@@ -480,7 +482,7 @@ describe('ConversationScreen hooks', () => {
 			const hook = renderSendHook({ inputValue: '', showInitialQuestion: true });
 
 			await act(async () => {
-				await hook.result.current.sendInitialContinueMessage();
+				await hook.result.current.sendOpeningMessage('existing-docs');
 			});
 
 			expect(hook.setters.setShowInitialQuestion).toHaveBeenCalledWith(false);
@@ -510,7 +512,8 @@ describe('ConversationScreen hooks', () => {
 			expect(conversationMocks.startConversation).toHaveBeenCalledWith({
 				agentType: 'claude-code',
 				directoryPath: '/project',
-				projectName: 'Project',
+				projectName: 'project',
+				model: undefined,
 				sshRemoteConfig: undefined,
 			});
 		});

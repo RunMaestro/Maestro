@@ -16,10 +16,10 @@
  */
 
 import { useCallback, useEffect, useMemo } from 'react';
-import type { Session, LogEntry, UsageStats } from '../../types';
+import type { LogEntry, UsageStats } from '../../types';
 import type { FlatFileItem } from '../../components/FileSearchModal';
 import type { FileNode } from '../../types/fileTree';
-import { useSessionStore, selectActiveSession } from '../../stores/sessionStore';
+import { useSessionStore, selectActiveSession, updateSessionWith } from '../../stores/sessionStore';
 import { useUIStore } from '../../stores/uiStore';
 import { useFileExplorerStore } from '../../stores/fileExplorerStore';
 import { aiTabFocusFields, focusAiTabInSession } from '../../utils/tabHelpers';
@@ -27,15 +27,8 @@ import { outputSearchKeyFor } from '../../utils/outputSearch';
 import type { CrossTabSearchJumpTarget } from '../../components/CrossTabSearchModal';
 import { subscribeToInAppDeepLinks } from '../../utils/openMaestroLink';
 import type { ParsedDeepLink } from '../../../shared/types';
-
-/** Helper: update a single session by ID using an updater function */
-function updateSession(sessionId: string, updater: (s: Session) => Session): void {
-	useSessionStore
-		.getState()
-		.setSessions((prev: Session[]) =>
-			prev.map((s: Session) => (s.id === sessionId ? updater(s) : s))
-		);
-}
+import { isWebDesktop } from '../../utils/runtimeContext';
+import { noteDesktopAiTabSelection } from '../../utils/desktopTabSelectionSync';
 
 // ============================================================================
 // Dependencies interface
@@ -142,13 +135,15 @@ export function useSessionSwitchCallbacks(
 					)
 				);
 			} else if (tabId) {
-				// Switch to the specific AI tab within the session. Clear file/terminal/browser
-				// state and force AI input mode so the view actually shows the target AI tab even
-				// if the target session was last viewed on a terminal/file/browser tab. Without
-				// this, activeTabId changes but the session still renders its previous non-AI
-				// view (the bug: jumping to an AI tab silently leaves the user on a terminal).
+				// Switch to the specific AI tab within the session, through the shared
+				// jump transform. It clears the file/terminal/browser selections that
+				// outrank the AI tab (without that, activeTabId changes and the session
+				// still renders its previous non-AI view), AND it REVEALS the tab first.
+				// The reveal is what makes a cross-agent consult row usable: consult tabs
+				// are hidden, so activating one the strip refuses to draw strands the
+				// user on a tab with no chip.
 				setSessions((prev) =>
-					prev.map((s) => (s.id === sessionId ? { ...s, ...aiTabFocusFields(tabId) } : s))
+					prev.map((s) => (s.id === sessionId ? focusAiTabInSession(s, tabId) : s))
 				);
 			}
 		},
@@ -175,7 +170,7 @@ export function useSessionSwitchCallbacks(
 			// is active silently leaves the user on the browser tab).
 			// Shared with the thinking status pill: reveals a hidden tab, reopens a
 			// closed one, and focuses the right pane when the tab lives in a tiled group.
-			updateSession(sessionId, (s) => focusAiTabInSession(s, tabId));
+			updateSessionWith(sessionId, (s) => focusAiTabInSession(s, tabId));
 		},
 		[setActiveSessionId]
 	);
@@ -286,7 +281,10 @@ export function useSessionSwitchCallbacks(
 		if (!activeSession) return;
 		// Land on the AI tab, clearing any active file/terminal/browser view that
 		// would otherwise outrank it in the render precedence.
-		updateSession(activeSession.id, (s) => ({ ...s, ...aiTabFocusFields(tabId) }));
+		updateSessionWith(activeSession.id, (s) => ({ ...s, ...aiTabFocusFields(tabId) }));
+		if (!isWebDesktop()) {
+			noteDesktopAiTabSelection(activeSession.id, tabId);
+		}
 	}, []);
 
 	// Jump to a specific message from cross-tab search: land on the tab, seed that
@@ -297,7 +295,10 @@ export function useSessionSwitchCallbacks(
 		({ tabId, logId, query, regex }: CrossTabSearchJumpTarget) => {
 			const activeSession = selectActiveSession(useSessionStore.getState());
 			if (!activeSession) return;
-			updateSession(activeSession.id, (s) => ({ ...s, ...aiTabFocusFields(tabId) }));
+			updateSessionWith(activeSession.id, (s) => ({ ...s, ...aiTabFocusFields(tabId) }));
+			if (!isWebDesktop()) {
+				noteDesktopAiTabSelection(activeSession.id, tabId);
+			}
 
 			const ui = useUIStore.getState();
 			const searchKey = outputSearchKeyFor(activeSession.id, tabId);
@@ -316,7 +317,7 @@ export function useSessionSwitchCallbacks(
 		if (!activeSession) return;
 		// Set activeFileTabId, keep activeTabId as-is (for when returning to AI tabs).
 		// Also reset inputMode to 'ai' and clear activeTerminalTabId in case we're coming from terminal mode.
-		updateSession(activeSession.id, (s) => ({
+		updateSessionWith(activeSession.id, (s) => ({
 			...s,
 			activeFileTabId: tabId,
 			activeTerminalTabId: null,

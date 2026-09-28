@@ -39,8 +39,9 @@ export const HistoryHelpModal = memo(function HistoryHelpModal({
 			title="History Panel Guide"
 			priority={MODAL_PRIORITIES.CONFIRM}
 			onClose={onClose}
-			width={1008}
-			maxHeight="85vh"
+			resizeKey="history-guide"
+			defaultSize={{ width: 880, height: 720 }}
+			minSize={{ width: 520, height: 400 }}
 			closeOnBackdropClick
 			zIndex={50}
 			footer={
@@ -74,7 +75,7 @@ export const HistoryHelpModal = memo(function HistoryHelpModal({
 					<div className="text-sm space-y-3 pl-7" style={{ color: theme.colors.textDim }}>
 						<div className="flex items-start gap-3">
 							<span
-								className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase shrink-0"
+								className="flex items-center gap-1 px-2 py-0.5 rounded-full text-2xs font-bold uppercase shrink-0"
 								style={{
 									backgroundColor: theme.colors.accent + '20',
 									color: theme.colors.accent,
@@ -102,7 +103,7 @@ export const HistoryHelpModal = memo(function HistoryHelpModal({
 						</div>
 						<div className="flex items-start gap-3">
 							<span
-								className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase shrink-0"
+								className="flex items-center gap-1 px-2 py-0.5 rounded-full text-2xs font-bold uppercase shrink-0"
 								style={{
 									backgroundColor: theme.colors.warning + '20',
 									color: theme.colors.warning,
@@ -119,7 +120,7 @@ export const HistoryHelpModal = memo(function HistoryHelpModal({
 						</div>
 						<div className="flex items-start gap-3">
 							<span
-								className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase shrink-0"
+								className="flex items-center gap-1 px-2 py-0.5 rounded-full text-2xs font-bold uppercase shrink-0"
 								style={{
 									backgroundColor: AGENT_COLOR + '20',
 									color: AGENT_COLOR,
@@ -138,7 +139,7 @@ export const HistoryHelpModal = memo(function HistoryHelpModal({
 						{maestroCueEnabled && (
 							<div className="flex items-start gap-3">
 								<span
-									className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase shrink-0"
+									className="flex items-center gap-1 px-2 py-0.5 rounded-full text-2xs font-bold uppercase shrink-0"
 									style={{
 										backgroundColor: CUE_COLOR + '20',
 										color: CUE_COLOR,

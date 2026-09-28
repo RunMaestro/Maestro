@@ -145,6 +145,31 @@ D  deleted.ts
 			expect(result.branch).toBeUndefined();
 		});
 
+		test('flags notARepo when git says the directory is not a repository', async () => {
+			mockGit.status.mockResolvedValue({
+				stdout: '',
+				stderr: 'fatal: not a git repository (or any of the parent directories): .git\n',
+			});
+			mockGit.branch.mockResolvedValue({ stdout: '' });
+
+			const result = await gitService.getStatus('/path/to/plain-dir');
+
+			expect(result.notARepo).toBe(true);
+			expect(result.files).toEqual([]);
+		});
+
+		test('does not flag notARepo for other failures', async () => {
+			mockGit.status.mockResolvedValue({
+				stdout: '',
+				stderr: 'ssh: connect to host example port 22: Connection refused',
+			});
+			mockGit.branch.mockResolvedValue({ stdout: '' });
+
+			const result = await gitService.getStatus('/path/to/repo');
+
+			expect(result.notARepo).toBeUndefined();
+		});
+
 		test('returns empty files array on error', async () => {
 			mockGit.status.mockRejectedValue(new Error('Git error'));
 			mockGit.branch.mockRejectedValue(new Error('Git error'));

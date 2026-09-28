@@ -30,3 +30,59 @@ export function buildKeysFromEvent(e: React.KeyboardEvent): string[] | null {
 	keys.push(mainKey);
 	return keys;
 }
+
+/**
+ * Punctuation keys whose `e.code` name isn't derivable from the character.
+ * Inverse of the codeToKey table in useKeyboardShortcutHelpers.ts - keep the
+ * two in sync so a replayed event matches the same shortcut a real one would.
+ */
+const KEY_TO_CODE: Record<string, string> = {
+	',': 'Comma',
+	'.': 'Period',
+	'/': 'Slash',
+	'\\': 'Backslash',
+	'[': 'BracketLeft',
+	']': 'BracketRight',
+	';': 'Semicolon',
+	"'": 'Quote',
+	'`': 'Backquote',
+	'-': 'Minus',
+	'=': 'Equal',
+};
+
+/** Derive the `e.code` value a real press of `key` would carry. */
+function codeForKey(key: string): string {
+	if (/^[a-z]$/i.test(key)) return `Key${key.toUpperCase()}`;
+	if (/^[0-9]$/.test(key)) return `Digit${key}`;
+	if (KEY_TO_CODE[key]) return KEY_TO_CODE[key];
+	// Arrow*, Backspace, Enter, Tab, Escape and F-keys already use their own name.
+	return key;
+}
+
+/**
+ * Build a synthetic keydown event from a shortcut's key array - the inverse of
+ * buildKeysFromEvent.
+ *
+ * Used to replay a shortcut through the normal window keydown handler when it
+ * was invoked by something other than the keyboard (today: the native
+ * application menu). Both `key` and `code` are populated because isShortcut
+ * falls back to `code` for Alt combos, where a real event's `key` would be
+ * rewritten by the layout.
+ */
+export function buildEventFromKeys(keys: string[]): KeyboardEvent | null {
+	if (keys.length === 0) return null;
+
+	const modifiers = new Set(keys.slice(0, -1).map((k) => k.toLowerCase()));
+	const mainKey = keys[keys.length - 1];
+
+	return new KeyboardEvent('keydown', {
+		key: mainKey,
+		code: codeForKey(mainKey),
+		metaKey: modifiers.has('meta') || modifiers.has('command'),
+		ctrlKey: modifiers.has('ctrl') || modifiers.has('control'),
+		altKey: modifiers.has('alt'),
+		shiftKey: modifiers.has('shift'),
+		bubbles: true,
+		cancelable: true,
+	});
+}

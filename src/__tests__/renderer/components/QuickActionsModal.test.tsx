@@ -7,8 +7,10 @@ import { formatShortcutKeys } from '../../../renderer/utils/shortcutFormatter';
 import type { Session, Group, Theme, Shortcut } from '../../../renderer/types';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 import { useUIStore } from '../../../renderer/stores/uiStore';
+import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useCenterFlashStore } from '../../../renderer/stores/centerFlashStore';
 import { useFileExplorerStore } from '../../../renderer/stores/fileExplorerStore';
+import { useGroupChatStore } from '../../../renderer/stores/groupChatStore';
 import { mockTheme } from '../../helpers/mockTheme';
 import { Z_LAYERS } from '../../../renderer/constants/zLayers';
 
@@ -93,6 +95,7 @@ vi.mock('../../../renderer/contexts/GitStatusContext', () => ({
 	useGitBranch: () => ({
 		getBranchInfo: () => ({ branch: 'main', remote: '', ahead: 0, behind: 0 }),
 	}),
+	useGitFileStatus: () => ({ getFileCount: () => 0 }),
 }));
 
 vi.mock('../../../renderer/utils/shortcutFormatter', () => ({
@@ -125,6 +128,8 @@ const mockShortcuts: Record<string, Shortcut> = {
 	toggleMarkdownMode: { id: 'toggleMarkdownMode', keys: ['Cmd', 'M'], enabled: true },
 	createDebugPackage: { id: 'createDebugPackage', keys: ['Alt', 'Cmd', 'D'], enabled: true },
 	nextUnreadTab: { id: 'nextUnreadTab', keys: ['Alt', 'Meta', 'ArrowDown'], enabled: true },
+	previousUnreadTab: { id: 'previousUnreadTab', keys: [], enabled: true },
+	focusActiveTab: { id: 'focusActiveTab', keys: ['Alt', 'Meta', 'ArrowUp'], enabled: true },
 	navBack: { id: 'navBack', keys: ['Meta', 'Shift', ','], enabled: true },
 	navForward: { id: 'navForward', keys: ['Meta', 'Shift', '.'], enabled: true },
 };
@@ -203,10 +208,22 @@ describe('QuickActionsModal', () => {
 			historySearchFilterOpen: false,
 			outputSearchOpen: false,
 			activeFocus: 'main',
+			showUnreadOnly: false,
+			showUnreadAgentsOnly: false,
 		});
 		// Reset fileExplorerStore state
 		useFileExplorerStore.setState({
 			fileTreeFilterOpen: false,
+		});
+		// The reveal half of a jump reads agents and groups straight from the
+		// session store (services/agentNavigation), not from props.
+		useSessionStore.setState({ sessions: [], groups: [] } as never);
+		// Reset group chat run state (drives the jumper's LIVE bucket)
+		useGroupChatStore.setState({
+			groupChatState: 'idle',
+			participantStates: new Map(),
+			groupChatStates: new Map(),
+			allGroupChatParticipantStates: new Map(),
 		});
 	});
 
@@ -313,6 +330,41 @@ describe('QuickActionsModal', () => {
 			).toBeInTheDocument();
 		});
 
+		it('renders Previous Unread Tab with the chord that actually reaches it', () => {
+			// previousUnreadTab ships unbound, so the entry borrows the Focus
+			// Active Tab chord - a second press of it is what fires this action.
+			const props = createDefaultProps();
+			render(<QuickActionsModal {...props} />);
+
+			expect(screen.getByText('Previous Unread / Draft Tab')).toBeInTheDocument();
+			expect(
+				screen.getByText(formatShortcutKeys(mockShortcuts.focusActiveTab.keys))
+			).toBeInTheDocument();
+		});
+
+		it('names the state the Unread Only entry puts you in, not the one you are in', () => {
+			const props = createDefaultProps();
+			const { unmount } = render(<QuickActionsModal {...props} />);
+			expect(screen.getByText('Unread Only: On')).toBeInTheDocument();
+			unmount();
+
+			// Both filters on - the entry now offers the way back out.
+			useUIStore.setState({ showUnreadOnly: true, showUnreadAgentsOnly: true });
+			render(<QuickActionsModal {...props} />);
+			expect(screen.getByText('Unread Only: Off')).toBeInTheDocument();
+		});
+
+		it('drives both unread filters from the Unread Only entry', () => {
+			const props = createDefaultProps();
+			render(<QuickActionsModal {...props} />);
+
+			fireEvent.click(screen.getByText('Unread Only: On'));
+
+			const { showUnreadOnly, showUnreadAgentsOnly } = useUIStore.getState();
+			expect(showUnreadOnly).toBe(true);
+			expect(showUnreadAgentsOnly).toBe(true);
+		});
+
 		it('renders Navigate Back / Forward actions with shortcuts when handlers provided', () => {
 			const props = createDefaultProps({
 				onNavBack: vi.fn(),
@@ -394,14 +446,12 @@ describe('QuickActionsModal', () => {
 				sessions: [session],
 				groups: [group],
 			});
+			useSessionStore.setState({ sessions: [session], groups: [group] } as never);
 			render(<QuickActionsModal {...props} />);
 
 			fireEvent.click(screen.getByText('Jump to: Test Session'));
 
-			expect(props.setGroups).toHaveBeenCalled();
-			const setGroupsFn = props.setGroups.mock.calls[0][0];
-			const result = setGroupsFn([group]);
-			expect(result[0].collapsed).toBe(false);
+			expect(useSessionStore.getState().groups[0].collapsed).toBe(false);
 		});
 
 		describe('bookmarked-agent jump routing', () => {
@@ -411,13 +461,15 @@ describe('QuickActionsModal', () => {
 				const session = createMockSession({ groupId: 'group-1', bookmarked: true });
 				const group = createMockGroup({ collapsed: true });
 				const props = createDefaultProps({ sessions: [session], groups: [group] });
+				useSessionStore.setState({ sessions: [session], groups: [group] } as never);
 				render(<QuickActionsModal {...props} />);
 
 				fireEvent.click(screen.getByText('Jump to: Test Session'));
 
 				expect(props.setActiveSessionId).toHaveBeenCalledWith('session-1');
 				expect(useUIStore.getState().bookmarksCollapsed).toBe(false);
-				expect(props.setGroups).not.toHaveBeenCalled();
+				// The group stays collapsed - the bookmark row is the lighter reveal.
+				expect(useSessionStore.getState().groups[0].collapsed).toBe(true);
 			});
 
 			it('leaves bookmarks collapsed when the parent group is already expanded', () => {
@@ -426,13 +478,14 @@ describe('QuickActionsModal', () => {
 				const session = createMockSession({ groupId: 'group-1', bookmarked: true });
 				const group = createMockGroup({ collapsed: false });
 				const props = createDefaultProps({ sessions: [session], groups: [group] });
+				useSessionStore.setState({ sessions: [session], groups: [group] } as never);
 				render(<QuickActionsModal {...props} />);
 
 				fireEvent.click(screen.getByText('Jump to: Test Session'));
 
 				expect(props.setActiveSessionId).toHaveBeenCalledWith('session-1');
 				expect(useUIStore.getState().bookmarksCollapsed).toBe(true);
-				expect(props.setGroups).not.toHaveBeenCalled();
+				expect(useSessionStore.getState().groups[0].collapsed).toBe(false);
 			});
 
 			it('does nothing extra when bookmarks section is already expanded', () => {
@@ -441,13 +494,67 @@ describe('QuickActionsModal', () => {
 				const session = createMockSession({ groupId: 'group-1', bookmarked: true });
 				const group = createMockGroup({ collapsed: true });
 				const props = createDefaultProps({ sessions: [session], groups: [group] });
+				useSessionStore.setState({ sessions: [session], groups: [group] } as never);
 				render(<QuickActionsModal {...props} />);
 
 				fireEvent.click(screen.getByText('Jump to: Test Session'));
 
 				expect(props.setActiveSessionId).toHaveBeenCalledWith('session-1');
 				expect(useUIStore.getState().bookmarksCollapsed).toBe(false);
-				expect(props.setGroups).not.toHaveBeenCalled();
+				// The group stays collapsed - the bookmark row is the lighter reveal.
+				expect(useSessionStore.getState().groups[0].collapsed).toBe(true);
+			});
+		});
+
+		describe('Opt+Cmd+# jump chord', () => {
+			const chord = (digit: string) => formatShortcutKeys(['Alt', 'Meta', digit]);
+			const rowFor = (label: string) => screen.getByText(label).closest('button')!;
+
+			it('shows the chord on jump rows for agents in the first ten Left Bar slots', () => {
+				const first = createMockSession({ id: 'session-1', name: 'First' });
+				const second = createMockSession({ id: 'session-2', name: 'Second' });
+				const props = createDefaultProps({
+					sessions: [first, second],
+					visibleSessions: [second, first],
+				});
+				render(<QuickActionsModal {...props} />);
+
+				// Slot order follows the Left Bar, not the sessions array.
+				expect(rowFor('Jump to: Second').textContent).toContain(chord('1'));
+				expect(rowFor('Jump to: First').textContent).toContain(chord('2'));
+			});
+
+			it('binds the tenth slot to 0 and gives the eleventh no chord', () => {
+				const sessions = Array.from({ length: 11 }, (_, i) =>
+					createMockSession({ id: `session-${i + 1}`, name: `Agent ${i + 1}` })
+				);
+				const props = createDefaultProps({ sessions, visibleSessions: sessions });
+				render(<QuickActionsModal {...props} />);
+
+				expect(rowFor('Jump to: Agent 10').textContent).toContain(chord('0'));
+				expect(rowFor('Jump to: Agent 11').textContent).not.toContain(
+					formatShortcutKeys(['Alt', 'Meta'])
+				);
+			});
+
+			it('shows the chord in the agent switcher', () => {
+				const session = createMockSession({ id: 'session-1', name: 'Solo' });
+				const props = createDefaultProps({
+					sessions: [session],
+					visibleSessions: [session],
+					initialMode: 'agents',
+				});
+				render(<QuickActionsModal {...props} />);
+
+				expect(rowFor('Solo').textContent).toContain(chord('1'));
+			});
+
+			it('shows no chord for an agent the Left Bar is not drawing', () => {
+				const session = createMockSession({ id: 'session-1', name: 'Hidden' });
+				const props = createDefaultProps({ sessions: [session], visibleSessions: [] });
+				render(<QuickActionsModal {...props} />);
+
+				expect(rowFor('Jump to: Hidden').textContent).not.toContain(chord('1'));
 			});
 		});
 
@@ -745,9 +852,9 @@ describe('QuickActionsModal', () => {
 			const props = createDefaultProps();
 			render(<QuickActionsModal {...props} />);
 
-			expect(screen.getByText('View Git Diff')).toBeInTheDocument();
-			expect(screen.getByText('View Git Log')).toBeInTheDocument();
-			expect(screen.getByText('Open Repository in Browser')).toBeInTheDocument();
+			expect(screen.getByText('Git: View Diff')).toBeInTheDocument();
+			expect(screen.getByText('Git: View Log')).toBeInTheDocument();
+			expect(screen.getByText('Git: Open Repository in Browser')).toBeInTheDocument();
 		});
 
 		it('does not render git actions for non-git repo', () => {
@@ -756,8 +863,8 @@ describe('QuickActionsModal', () => {
 			});
 			render(<QuickActionsModal {...props} />);
 
-			expect(screen.queryByText('View Git Diff')).not.toBeInTheDocument();
-			expect(screen.queryByText('View Git Log')).not.toBeInTheDocument();
+			expect(screen.queryByText('Git: View Diff')).not.toBeInTheDocument();
+			expect(screen.queryByText('Git: View Log')).not.toBeInTheDocument();
 		});
 
 		it('handles View Git Diff action', async () => {
@@ -765,7 +872,7 @@ describe('QuickActionsModal', () => {
 			const props = createDefaultProps();
 			render(<QuickActionsModal {...props} />);
 
-			fireEvent.click(screen.getByText('View Git Diff'));
+			fireEvent.click(screen.getByText('Git: View Diff'));
 
 			// The palette now routes through useGitAgentActions, which opens the
 			// viewer via the modal store rather than a prop setter.
@@ -784,7 +891,7 @@ describe('QuickActionsModal', () => {
 			const props = createDefaultProps({ sessions: [session] });
 			render(<QuickActionsModal {...props} />);
 
-			fireEvent.click(screen.getByText('View Git Diff'));
+			fireEvent.click(screen.getByText('Git: View Diff'));
 
 			await waitFor(() => {
 				expect(gitService.getDiff).toHaveBeenCalledWith(
@@ -800,7 +907,7 @@ describe('QuickActionsModal', () => {
 			const props = createDefaultProps();
 			render(<QuickActionsModal {...props} />);
 
-			fireEvent.click(screen.getByText('View Git Diff'));
+			fireEvent.click(screen.getByText('Git: View Diff'));
 
 			await waitFor(() => {
 				expect(gitService.getDiff).toHaveBeenCalledWith('/home/user/project', undefined, undefined);
@@ -815,7 +922,7 @@ describe('QuickActionsModal', () => {
 			const props = createDefaultProps({ sessions: [session] });
 			render(<QuickActionsModal {...props} />);
 
-			fireEvent.click(screen.getByText('View Git Diff'));
+			fireEvent.click(screen.getByText('Git: View Diff'));
 
 			await waitFor(() => {
 				expect(gitService.getDiff).toHaveBeenCalledWith('/home/user/project', undefined, undefined);
@@ -829,7 +936,7 @@ describe('QuickActionsModal', () => {
 			});
 			render(<QuickActionsModal {...props} />);
 
-			fireEvent.click(screen.getByText('View Git Diff'));
+			fireEvent.click(screen.getByText('Git: View Diff'));
 
 			await waitFor(() => {
 				expect(gitService.getDiff).toHaveBeenCalledWith('/different/path', undefined, undefined);
@@ -840,7 +947,7 @@ describe('QuickActionsModal', () => {
 			const props = createDefaultProps();
 			render(<QuickActionsModal {...props} />);
 
-			fireEvent.click(screen.getByText('View Git Log'));
+			fireEvent.click(screen.getByText('Git: View Log'));
 
 			expect(useModalStore.getState().isOpen('gitLog')).toBe(true);
 			expect(props.setQuickActionOpen).toHaveBeenCalledWith(false);
@@ -850,19 +957,19 @@ describe('QuickActionsModal', () => {
 			const props = createDefaultProps();
 			render(<QuickActionsModal {...props} />);
 
-			expect(screen.getByText('View Git Log')).toBeInTheDocument();
-			expect(screen.getByText('View Git Diff')).toBeInTheDocument();
-			expect(screen.getByText('Git Pull')).toBeInTheDocument();
-			expect(screen.getByText('Git Push')).toBeInTheDocument();
-			expect(screen.getByText('Change Branch')).toBeInTheDocument();
-			expect(screen.getByText('Configure Worktrees')).toBeInTheDocument();
+			expect(screen.getByText('Git: View Log')).toBeInTheDocument();
+			expect(screen.getByText('Git: View Diff')).toBeInTheDocument();
+			expect(screen.getByText('Git: Pull')).toBeInTheDocument();
+			expect(screen.getByText('Git: Push')).toBeInTheDocument();
+			expect(screen.getByText('Git: Change Branch')).toBeInTheDocument();
+			expect(screen.getByText('Git: Configure Worktrees')).toBeInTheDocument();
 		});
 
 		it('handles Git Pull action', () => {
 			const props = createDefaultProps();
 			render(<QuickActionsModal {...props} />);
 
-			fireEvent.click(screen.getByText('Git Pull'));
+			fireEvent.click(screen.getByText('Git: Pull'));
 
 			expect(useModalStore.getState().getData('gitCommandRunner')?.operation).toBe('pull');
 			expect(props.setQuickActionOpen).toHaveBeenCalledWith(false);
@@ -872,7 +979,7 @@ describe('QuickActionsModal', () => {
 			const props = createDefaultProps();
 			render(<QuickActionsModal {...props} />);
 
-			fireEvent.click(screen.getByText('Git Push'));
+			fireEvent.click(screen.getByText('Git: Push'));
 
 			expect(useModalStore.getState().getData('gitCommandRunner')?.operation).toBe('push');
 			expect(props.setQuickActionOpen).toHaveBeenCalledWith(false);
@@ -882,7 +989,7 @@ describe('QuickActionsModal', () => {
 			const props = createDefaultProps();
 			render(<QuickActionsModal {...props} />);
 
-			fireEvent.click(screen.getByText('Change Branch'));
+			fireEvent.click(screen.getByText('Git: Change Branch'));
 
 			expect(useModalStore.getState().isOpen('branchSwitcher')).toBe(true);
 			expect(props.setQuickActionOpen).toHaveBeenCalledWith(false);
@@ -892,7 +999,7 @@ describe('QuickActionsModal', () => {
 			const props = createDefaultProps();
 			render(<QuickActionsModal {...props} />);
 
-			fireEvent.click(screen.getByText('Configure Worktrees'));
+			fireEvent.click(screen.getByText('Git: Configure Worktrees'));
 
 			expect(useModalStore.getState().isOpen('worktreeConfig')).toBe(true);
 			expect(props.setQuickActionOpen).toHaveBeenCalledWith(false);
@@ -903,7 +1010,7 @@ describe('QuickActionsModal', () => {
 			const props = createDefaultProps();
 			render(<QuickActionsModal {...props} />);
 
-			fireEvent.click(screen.getByText('Open Repository in Browser'));
+			fireEvent.click(screen.getByText('Git: Open Repository in Browser'));
 
 			await waitFor(() => {
 				expect(gitService.getRemoteBrowserUrl).toHaveBeenCalledWith('/home/user/project');
@@ -1147,15 +1254,30 @@ describe('QuickActionsModal', () => {
 			expect(buttons[1]).toHaveStyle({ backgroundColor: mockTheme.colors.accent });
 		});
 
-		it('does not go below zero index', () => {
+		it('wraps to the last item when arrowing up from the first', () => {
 			const props = createDefaultProps();
 			render(<QuickActionsModal {...props} />);
 
 			const input = screen.getByPlaceholderText('Type a command or jump to agent...');
 
-			// Try to go up from zero
+			// Up from index 0 lands on the last row
 			fireEvent.keyDown(input, { key: 'ArrowUp' });
+
+			const buttons = getActionRows();
+			expect(buttons[buttons.length - 1]).toHaveStyle({
+				backgroundColor: mockTheme.colors.accent,
+			});
+		});
+
+		it('wraps to the first item when arrowing down from the last', () => {
+			const props = createDefaultProps();
+			render(<QuickActionsModal {...props} />);
+
+			const input = screen.getByPlaceholderText('Type a command or jump to agent...');
+
+			// Up wraps to the end, down wraps back to the start
 			fireEvent.keyDown(input, { key: 'ArrowUp' });
+			fireEvent.keyDown(input, { key: 'ArrowDown' });
 
 			const buttons = getActionRows();
 			expect(buttons[0]).toHaveStyle({ backgroundColor: mockTheme.colors.accent });
@@ -1511,7 +1633,26 @@ describe('QuickActionsModal', () => {
 			render(<QuickActionsModal {...props} />);
 
 			expect(screen.getByText('Refresh Files, Git, History')).toBeInTheDocument();
-			expect(screen.getByText('Reload file tree, git status, and history')).toBeInTheDocument();
+			expect(
+				screen.getByText('Reload file tree, git status, history, and the previewed file')
+			).toBeInTheDocument();
+		});
+
+		it('displays the Refresh Files shortcut when one is bound', () => {
+			const props = createDefaultProps({
+				onRefreshGitFileState: vi.fn(),
+				shortcuts: {
+					...mockShortcuts,
+					refreshGitFileState: {
+						id: 'refreshGitFileState',
+						keys: ['Alt', 'Cmd', 'R'],
+						enabled: true,
+					},
+				},
+			});
+			render(<QuickActionsModal {...props} />);
+
+			expect(screen.getByText(formatShortcutKeys(['Alt', 'Cmd', 'R']))).toBeInTheDocument();
 		});
 
 		it('handles Refresh Files action', async () => {
@@ -1649,7 +1790,7 @@ describe('QuickActionsModal', () => {
 			const props = createDefaultProps();
 			render(<QuickActionsModal {...props} />);
 
-			fireEvent.click(screen.getByText('View Git Diff'));
+			fireEvent.click(screen.getByText('Git: View Diff'));
 
 			await waitFor(() => {
 				expect(props.setGitDiffPreview).not.toHaveBeenCalled();
@@ -1667,7 +1808,7 @@ describe('QuickActionsModal', () => {
 			const props = createDefaultProps();
 			render(<QuickActionsModal {...props} />);
 
-			fireEvent.click(screen.getByText('Open Repository in Browser'));
+			fireEvent.click(screen.getByText('Git: Open Repository in Browser'));
 
 			await waitFor(() => {
 				expect(window.maestro.shell.openExternal).not.toHaveBeenCalled();
@@ -1688,7 +1829,7 @@ describe('QuickActionsModal', () => {
 			const props = createDefaultProps();
 			render(<QuickActionsModal {...props} />);
 
-			fireEvent.click(screen.getByText('Open Repository in Browser'));
+			fireEvent.click(screen.getByText('Git: Open Repository in Browser'));
 
 			await waitFor(() => {
 				expect(consoleSpy).toHaveBeenCalledWith(
@@ -1848,7 +1989,7 @@ describe('QuickActionsModal', () => {
 			});
 			render(<QuickActionsModal {...props} />);
 
-			expect(screen.getByText('Create Worktree')).toBeInTheDocument();
+			expect(screen.getByText('Git: Create Worktree')).toBeInTheDocument();
 		});
 
 		it('calls onQuickCreateWorktree with active session and closes modal', () => {
@@ -1860,7 +2001,7 @@ describe('QuickActionsModal', () => {
 			});
 			render(<QuickActionsModal {...props} />);
 
-			fireEvent.click(screen.getByText('Create Worktree'));
+			fireEvent.click(screen.getByText('Git: Create Worktree'));
 
 			expect(onQuickCreateWorktree).toHaveBeenCalledWith(session);
 			expect(props.setQuickActionOpen).toHaveBeenCalledWith(false);
@@ -1887,7 +2028,7 @@ describe('QuickActionsModal', () => {
 			});
 			render(<QuickActionsModal {...props} />);
 
-			fireEvent.click(screen.getByText('Create Worktree'));
+			fireEvent.click(screen.getByText('Git: Create Worktree'));
 
 			// Should resolve to parent, not the child
 			expect(onQuickCreateWorktree).toHaveBeenCalledWith(parentSession);
@@ -1901,7 +2042,7 @@ describe('QuickActionsModal', () => {
 			});
 			render(<QuickActionsModal {...props} />);
 
-			expect(screen.queryByText('Create Worktree')).not.toBeInTheDocument();
+			expect(screen.queryByText('Git: Create Worktree')).not.toBeInTheDocument();
 		});
 
 		it('does not show Create Worktree when callback is not provided', () => {
@@ -1910,7 +2051,7 @@ describe('QuickActionsModal', () => {
 			});
 			render(<QuickActionsModal {...props} />);
 
-			expect(screen.queryByText('Create Worktree')).not.toBeInTheDocument();
+			expect(screen.queryByText('Git: Create Worktree')).not.toBeInTheDocument();
 		});
 	});
 
@@ -2025,6 +2166,48 @@ describe('QuickActionsModal', () => {
 			expect(screen.queryByText('Open Settings')).not.toBeInTheDocument();
 		});
 
+		it('hides the Pianola agent while its Encore flag is off', async () => {
+			// Pianola persists in the session store after the flag is switched off, so
+			// the palette has to apply the same visibility predicate the Left Bar does -
+			// otherwise it hands the user an agent with no row to come back to.
+			const { useSettingsStore } = await import('../../../renderer/stores/settingsStore');
+			useSettingsStore.setState({
+				encoreFeatures: { ...useSettingsStore.getState().encoreFeatures, pianola: false },
+			} as never);
+			const props = createDefaultProps({
+				initialMode: 'agents',
+				sessions: [
+					createMockSession({ id: 'session-1', name: 'Agent Alpha' }),
+					{ ...createMockSession({ id: 'pianola-1', name: 'Pianola' }), isPianola: true },
+				],
+			});
+			render(<QuickActionsModal {...props} />);
+
+			expect(screen.getByText('Agent Alpha')).toBeInTheDocument();
+			expect(screen.queryByText('Pianola')).not.toBeInTheDocument();
+		});
+
+		it('lists the Pianola agent once its Encore flag is on', async () => {
+			const { useSettingsStore } = await import('../../../renderer/stores/settingsStore');
+			useSettingsStore.setState({
+				encoreFeatures: { ...useSettingsStore.getState().encoreFeatures, pianola: true },
+			} as never);
+			const props = createDefaultProps({
+				initialMode: 'agents',
+				sessions: [
+					createMockSession({ id: 'session-1', name: 'Agent Alpha' }),
+					{ ...createMockSession({ id: 'pianola-1', name: 'Pianola' }), isPianola: true },
+				],
+			});
+			render(<QuickActionsModal {...props} />);
+
+			expect(screen.getByText('Pianola')).toBeInTheDocument();
+
+			useSettingsStore.setState({
+				encoreFeatures: { ...useSettingsStore.getState().encoreFeatures, pianola: false },
+			} as never);
+		});
+
 		it('filters agents by search text in agents mode', () => {
 			const props = createDefaultProps({
 				initialMode: 'agents',
@@ -2052,7 +2235,7 @@ describe('QuickActionsModal', () => {
 			expect(props.setQuickActionOpen).toHaveBeenCalledWith(false);
 		});
 
-		it('sorts agents alphabetically and excludes group chats', () => {
+		it('sorts agents alphabetically and excludes idle group chats', () => {
 			const props = createDefaultProps({
 				initialMode: 'agents',
 				sessions: [
@@ -2075,8 +2258,39 @@ describe('QuickActionsModal', () => {
 			expect(alphaIdx).toBeLessThan(mikeIdx);
 			expect(mikeIdx).toBeLessThan(zuluIdx);
 
-			// Group chats are intentionally excluded from the agent jumper.
-			expect(screen.queryByText('Design Review')).not.toBeInTheDocument();
+			// An idle group chat is not "where work is happening", so it stays out
+			// of the jumper (it is still reachable from the main palette).
+			expect(screen.queryByText('Group Chat: Design Review')).not.toBeInTheDocument();
+		});
+
+		it('lists a running group chat in the LIVE bucket', () => {
+			const props = createDefaultProps({
+				initialMode: 'agents',
+				sessions: [createMockSession({ id: 'session-1', name: 'Alpha', state: 'idle' })],
+				groupChats: [
+					{ id: 'gc-1', name: 'Design Review', participants: ['a', 'b'] },
+					{ id: 'gc-2', name: 'Quiet Room', participants: ['a'] },
+				],
+				onOpenGroupChat: vi.fn(),
+			});
+			useGroupChatStore.setState({
+				groupChatStates: new Map([['gc-1', 'moderator-thinking' as const]]),
+			});
+			render(<QuickActionsModal {...props} />);
+
+			expect(screen.getByText('Group Chat: Design Review')).toBeInTheDocument();
+			expect(screen.getByText('Moderator thinking')).toBeInTheDocument();
+			expect(screen.queryByText('Group Chat: Quiet Room')).not.toBeInTheDocument();
+
+			// LIVE bucket, above the idle agent.
+			const dialog = screen.getByRole('dialog');
+			const text = dialog.textContent ?? '';
+			expect(text.indexOf('LIVE')).toBeLessThan(text.indexOf('Group Chat: Design Review'));
+			expect(text.indexOf('Group Chat: Design Review')).toBeLessThan(text.indexOf('IDLE'));
+
+			fireEvent.click(screen.getByText('Group Chat: Design Review'));
+			expect(props.onOpenGroupChat).toHaveBeenCalledWith('gc-1');
+			expect(props.setQuickActionOpen).toHaveBeenCalledWith(false);
 		});
 
 		it('buckets running agents above idle ones, alphabetical within each bucket', () => {

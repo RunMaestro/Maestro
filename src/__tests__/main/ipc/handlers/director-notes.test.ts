@@ -7,17 +7,31 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import * as os from 'os';
+import * as path from 'path';
 import { ipcMain } from 'electron';
 import { registerDirectorNotesHandlers } from '../../../../main/ipc/handlers/director-notes';
+import {
+	HistoryBucketCache,
+	setHistoryBucketCacheForTest,
+} from '../../../../main/utils/history-bucket-cache';
 import * as historyManagerModule from '../../../../main/history-manager';
 import type { HistoryManager } from '../../../../main/history-manager';
 import type { HistoryEntry } from '../../../../shared/types';
+import { MAX_ENTRIES_PER_SESSION } from '../../../../shared/history';
 
-// Mock electron's ipcMain
+// Mock electron's ipcMain. `app` is needed because the shared-history collector
+// materializes its cross-host corpus into userData for the synopsis agent.
 vi.mock('electron', () => ({
 	ipcMain: {
 		handle: vi.fn(),
 		removeHandler: vi.fn(),
+	},
+	app: {
+		getPath: vi.fn(() => '/tmp/maestro-test-userdata'),
+	},
+	BrowserWindow: {
+		getAllWindows: vi.fn(() => []),
 	},
 }));
 
@@ -26,8 +40,33 @@ vi.mock('../../../../main/history-manager', () => ({
 	getHistoryManager: vi.fn(),
 }));
 
-// Mock the shared-history-manager module (no longer imported by director-notes)
-vi.mock('../../../../main/shared-history-manager', () => ({}));
+// Mock the shared-history-manager module. Director's Notes reaches it through
+// `director-notes-shared-history` to fold in runs performed by OTHER Maestro
+// instances against the same project. Defaults to "nothing shared" so the
+// existing local-only assertions are untouched; the cross-host suite overrides
+// these per case.
+const mockHasLocalSharedHistory = vi.fn().mockReturnValue(false);
+const mockReadRemoteEntriesLocal = vi.fn().mockReturnValue([]);
+const mockReadRemoteEntriesSsh = vi.fn().mockResolvedValue([]);
+vi.mock('../../../../main/shared-history-manager', () => ({
+	hasLocalSharedHistory: (...args: any[]) => mockHasLocalSharedHistory(...args),
+	readRemoteEntriesLocal: (...args: any[]) => mockReadRemoteEntriesLocal(...args),
+	readRemoteEntriesSsh: (...args: any[]) => mockReadRemoteEntriesSsh(...args),
+}));
+
+// The cross-host corpus is materialized to disk for the synopsis agent; keep
+// the write in memory so the assertions don't depend on a writable temp path.
+const mockWriteFile = vi.fn().mockResolvedValue(undefined);
+vi.mock('fs/promises', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('fs/promises')>();
+	return { ...actual, writeFile: (...args: any[]) => mockWriteFile(...args) };
+});
+
+// Resolves SSH remotes for the shared-history collector.
+const mockGetSshRemoteById = vi.fn().mockReturnValue(undefined);
+vi.mock('../../../../main/stores/getters', () => ({
+	getSshRemoteById: (...args: any[]) => mockGetSshRemoteById(...args),
+}));
 
 // Mock the stores module
 const mockGetSessionsStore = vi.fn().mockReturnValue({
@@ -588,6 +627,556 @@ describe('director-notes IPC handlers', () => {
 			expect(page3.entries[0].id).toBe('e5');
 			expect(page3.total).toBe(5);
 			expect(page3.hasMore).toBe(false);
+		});
+	});
+
+	describe('director-notes:getRichOverviewStats', () => {
+		const DAY = 24 * 60 * 60 * 1000;
+
+		/** A full history file whose entries all land within `spanDays` of now. */
+		const fullFile = (spanDays: number, prefix: string): HistoryEntry[] => {
+			const now = Date.now();
+			const step = (spanDays * DAY) / MAX_ENTRIES_PER_SESSION;
+			return Array.from({ length: MAX_ENTRIES_PER_SESSION }, (_, i) =>
+				createMockEntry({ id: `${prefix}-${i}`, timestamp: now - i * step })
+			);
+		};
+
+		// A busy agent's history file evicts its own oldest entries at the retention
+		// cap, so its bar silently pins to exactly 5000 and reads as an exact figure.
+		// Two agents at wildly different volumes then tie for top. `truncated` is
+		// what lets the chart say "at least" instead of stating a number it cannot know.
+		it('flags an agent whose count was bounded by retention, not the window', async () => {
+			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockReturnValue(['busy']);
+			// 5000 entries spanning 5 days, well inside a 30-day window: the cutoff
+			// dropped nothing, so the cap is what produced this number.
+			vi.mocked(mockHistoryManager.getEntries).mockReturnValue(fullFile(5, 'busy'));
+
+			const handler = handlers.get('director-notes:getRichOverviewStats');
+			const result = await handler!({} as any, { lookbackDays: 30 });
+
+			expect(result.perAgent[0].entryCount).toBe(MAX_ENTRIES_PER_SESSION);
+			expect(result.perAgent[0].truncated).toBe(true);
+		});
+
+		it('does not flag a full file whose older entries fall outside the window', async () => {
+			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockReturnValue(['spread']);
+			// Also at the cap, but spread over 60 days: a 7-day window did the
+			// trimming, so the count it reports is exact.
+			vi.mocked(mockHistoryManager.getEntries).mockReturnValue(fullFile(60, 'spread'));
+
+			const handler = handlers.get('director-notes:getRichOverviewStats');
+			const result = await handler!({} as any, { lookbackDays: 7 });
+
+			expect(result.perAgent[0].entryCount).toBeLessThan(MAX_ENTRIES_PER_SESSION);
+			expect(result.perAgent[0].truncated).toBe(false);
+		});
+
+		it('does not flag an agent below the retention cap', async () => {
+			const now = Date.now();
+			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockReturnValue(['quiet']);
+			vi.mocked(mockHistoryManager.getEntries).mockReturnValue([
+				createMockEntry({ id: 'q1', timestamp: now - 1000 }),
+				createMockEntry({ id: 'q2', timestamp: now - 2000 }),
+			]);
+
+			const handler = handlers.get('director-notes:getRichOverviewStats');
+			const result = await handler!({} as any, { lookbackDays: 7 });
+
+			expect(result.perAgent[0].entryCount).toBe(2);
+			expect(result.perAgent[0].truncated).toBe(false);
+		});
+	});
+
+	// Cue runs stopped being written to the agent's JSONL history file in
+	// CUE-HISTORY-02 and now live only in `cue_events`. Every Director's Notes
+	// surface counted `entry.type === 'CUE'` over those files, so without the
+	// database read below a fleet doing thousands of runs a day reports zero.
+	describe('Cue runs sourced from cue_events', () => {
+		/** Temp dir for the activity-graph bucket cache. */
+		const GRAPH_CACHE_DIR = path.join(os.tmpdir(), `maestro-dn-cue-test-${process.pid}`);
+		let cacheRun = 0;
+
+		/** A Cue run as `getCueHistoryEntries()` shapes it. */
+		const cueRow = (overrides: Partial<HistoryEntry> = {}): HistoryEntry =>
+			createMockEntry({
+				id: 'cue-1',
+				type: 'CUE',
+				sessionId: 'session-1',
+				summary: 'Cue run output',
+				success: true,
+				cueTriggerName: 'Nightly sweep',
+				cueEventType: 'time.interval',
+				...overrides,
+			});
+
+		/** Re-register with Cue queries injected; returns the handler map getter. */
+		const registerWith = (overrides: Record<string, unknown>): ((channel: string) => Function) => {
+			registerDirectorNotesHandlers({
+				getProcessManager: () => mockProcessManager,
+				getAgentDetector: () => mockAgentDetector,
+				agentConfigsStore: { get: vi.fn(() => ({})) } as any,
+				...overrides,
+			} as any);
+			return (channel: string) => handlers.get(channel)!;
+		};
+
+		/** Point the graph handler at a cache nobody else is using. */
+		const useFreshGraphCache = (): void => {
+			setHistoryBucketCacheForTest(
+				new HistoryBucketCache(path.join(GRAPH_CACHE_DIR, `run-${cacheRun++}`))
+			);
+		};
+
+		afterEach(() => {
+			setHistoryBucketCacheForTest(null);
+		});
+
+		it('merges database Cue runs into the unified list and its CUE count', async () => {
+			const now = Date.now();
+			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockReturnValue(['session-1']);
+			vi.mocked(mockHistoryManager.getEntries).mockReturnValue([
+				createMockEntry({ id: 'u-new', type: 'USER', timestamp: now - 1000 }),
+				createMockEntry({ id: 'u-old', type: 'USER', timestamp: now - 3000 }),
+			]);
+
+			const handler = registerWith({
+				getCueHistoryEntries: () => [cueRow({ id: 'cue-mid', timestamp: now - 2000 })],
+			})('director-notes:getUnifiedHistory');
+			const result = await handler({} as any, { lookbackDays: 7 });
+
+			expect(result.entries.map((e: HistoryEntry) => e.id)).toEqual(['u-new', 'cue-mid', 'u-old']);
+			expect(result.stats.cueCount).toBe(1);
+			expect(result.stats.userCount).toBe(2);
+			expect(result.stats.totalCount).toBe(3);
+		});
+
+		it('asks the database for the lookback window and the agent it belongs to', async () => {
+			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockReturnValue([]);
+			mockGetSessionsStore.mockReturnValue({
+				get: vi
+					.fn()
+					.mockReturnValue([{ id: 'session-1', name: 'Sweeper', projectRoot: '/repo/maestro' }]),
+			});
+			const getCueHistoryEntries = vi.fn(() => []);
+
+			const handler = registerWith({ getCueHistoryEntries })('director-notes:getUnifiedHistory');
+			await handler({} as any, { lookbackDays: 7 });
+
+			expect(getCueHistoryEntries).toHaveBeenCalledTimes(1);
+			const query = getCueHistoryEntries.mock.calls[0][0] as any;
+			expect(query.sessionId).toBe('session-1');
+			expect(query.sessionName).toBe('Sweeper');
+			expect(query.projectPath).toBe('/repo/maestro');
+			expect(query.since).toBeGreaterThan(Date.now() - 8 * 24 * 60 * 60 * 1000);
+
+			// "All time" must not smuggle in a cutoff.
+			await handler({} as any, { lookbackDays: 0 });
+			expect((getCueHistoryEntries.mock.calls[1][0] as any).since).toBeUndefined();
+		});
+
+		it('returns database Cue rows when the CUE filter pill is the only one on', async () => {
+			const now = Date.now();
+			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockReturnValue(['session-1']);
+			vi.mocked(mockHistoryManager.getEntries).mockReturnValue([
+				createMockEntry({ id: 'u1', type: 'USER', timestamp: now - 1000 }),
+			]);
+
+			const handler = registerWith({
+				getCueHistoryEntries: () => [cueRow({ id: 'cue-1', timestamp: now - 2000 })],
+			})('director-notes:getUnifiedHistory');
+			const result = await handler({} as any, { lookbackDays: 7, filter: 'CUE' });
+
+			expect(result.entries.map((e: HistoryEntry) => e.id)).toEqual(['cue-1']);
+			// Stats stay unfiltered - the header counts every type.
+			expect(result.stats.userCount).toBe(1);
+		});
+
+		it('counts a run recorded by BOTH writers once', async () => {
+			// Runs from before the JSONL writes were removed are still on disk and
+			// stay there; the database also holds them. Ids differ between the two
+			// writers, so only the (trigger, type, summary, time) match sees it.
+			const now = Date.now();
+			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockReturnValue(['session-1']);
+			vi.mocked(mockHistoryManager.getEntries).mockReturnValue([
+				cueRow({ id: 'jsonl-cue', timestamp: now - 1000 }),
+			]);
+
+			const handler = registerWith({
+				getCueHistoryEntries: () => [
+					// Same run: the DB stamps dispatch, the JSONL entry stamped completion.
+					cueRow({ id: 'db-cue', timestamp: now - 3000, elapsedTimeMs: 2000 }),
+					cueRow({ id: 'db-cue-later', timestamp: now, summary: 'A different run' }),
+				],
+			})('director-notes:getUnifiedHistory');
+			const result = await handler({} as any, { lookbackDays: 7 });
+
+			expect(result.stats.cueCount).toBe(2);
+			expect(result.entries.map((e: HistoryEntry) => e.id)).toEqual(['db-cue-later', 'jsonl-cue']);
+		});
+
+		it('includes an agent whose only activity is Cue and has no history file', async () => {
+			const now = Date.now();
+			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockReturnValue([]);
+			mockGetSessionsStore.mockReturnValue({
+				get: vi.fn().mockReturnValue([{ id: 'automation', name: 'Automation' }]),
+			});
+
+			const handler = registerWith({
+				getCueHistoryEntries: () => [
+					cueRow({ id: 'cue-1', sessionId: 'automation', timestamp: now - 1000 }),
+				],
+			})('director-notes:getUnifiedHistory');
+			const result = await handler({} as any, { lookbackDays: 7 });
+
+			expect(result.entries).toHaveLength(1);
+			expect(result.entries[0].sourceSessionId).toBe('automation');
+			expect(result.entries[0].agentName).toBe('Automation');
+			expect(result.stats.agentCount).toBe(1);
+		});
+
+		it('keeps the JSONL history readable when the Cue database throws', async () => {
+			const now = Date.now();
+			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockReturnValue(['session-1']);
+			vi.mocked(mockHistoryManager.getEntries).mockReturnValue([
+				createMockEntry({ id: 'u1', type: 'USER', timestamp: now }),
+			]);
+
+			const handler = registerWith({
+				getCueHistoryEntries: () => {
+					throw new Error('database is locked');
+				},
+			})('director-notes:getUnifiedHistory');
+			const result = await handler({} as any, { lookbackDays: 7 });
+
+			expect(result.entries.map((e: HistoryEntry) => e.id)).toEqual(['u1']);
+			expect(result.stats.cueCount).toBe(0);
+		});
+
+		it('counts database Cue runs in Rich Mode stats and its timeline', async () => {
+			const now = Date.now();
+			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockReturnValue(['session-1']);
+			vi.mocked(mockHistoryManager.getEntries).mockReturnValue([
+				createMockEntry({ id: 'u1', type: 'USER', timestamp: now - 1000, success: true }),
+			]);
+
+			const handler = registerWith({
+				getCueHistoryEntries: () => [
+					cueRow({ id: 'cue-ok', timestamp: now - 2000, success: true }),
+					cueRow({
+						id: 'cue-bad',
+						timestamp: now - 3000,
+						success: false,
+						summary: 'Run failed silently',
+					}),
+				],
+			})('director-notes:getRichOverviewStats');
+			const result = await handler({} as any, { lookbackDays: 7, bucketCount: 4 });
+
+			expect(result.cueCount).toBe(2);
+			expect(result.totalEntries).toBe(3);
+			expect(result.failureCount).toBe(1);
+			expect(result.timelineBuckets.reduce((sum: number, b: any) => sum + b.cue, 0)).toBe(2);
+			expect(result.perAgent[0].entryCount).toBe(3);
+		});
+
+		it('counts Cue rows when resolving a graph-click offset', async () => {
+			// The offset indexes the rendered list, which now includes rows that
+			// are not in any JSONL file.
+			const now = Date.now();
+			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockReturnValue(['session-1']);
+			vi.mocked(mockHistoryManager.getEntries).mockReturnValue([
+				createMockEntry({ id: 'u-new', type: 'USER', timestamp: now }),
+				createMockEntry({ id: 'u-old', type: 'USER', timestamp: now - 4000 }),
+			]);
+
+			const handler = registerWith({
+				getCueHistoryEntries: () => [cueRow({ id: 'cue-mid', timestamp: now - 2000 })],
+			})('director-notes:getOffsetForTimestamp');
+
+			// Merged newest-first: [u-new, cue-mid, u-old]
+			expect(await handler({} as any, now - 4000, { lookbackDays: 0 })).toBe(2);
+		});
+
+		it('draws the graph CUE series from cue_events, fleet-wide', async () => {
+			useFreshGraphCache();
+			const now = Date.now();
+			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockReturnValue(['session-1']);
+			vi.mocked(mockHistoryManager.getEntries).mockReturnValue([
+				createMockEntry({ id: 'u1', type: 'USER', timestamp: now - 1000 }),
+			]);
+			const getCueHistoryBuckets = vi.fn(() => [
+				{ timestamp: now - 1000, count: 4 },
+				{ timestamp: now, count: 2 },
+			]);
+
+			const handler = registerWith({
+				getCueHistoryBuckets,
+				getCueHistoryFingerprint: () => 'fp',
+			})('director-notes:getGraphData');
+			const result = await handler({} as any, 2, null);
+
+			expect(result.cueCount).toBe(6);
+			expect(result.userCount).toBe(1);
+			expect(result.buckets.reduce((sum: number, b: any) => sum + b.cue, 0)).toBe(6);
+			// No sessionId: this graph spans every agent, so one GROUP BY answers
+			// it rather than one query per agent.
+			expect((getCueHistoryBuckets.mock.calls[0][0] as any).sessionId).toBeUndefined();
+			expect((getCueHistoryBuckets.mock.calls[0][0] as any).since).toBeUndefined();
+		});
+
+		it('asks the graph query for the lookback window when one is set', async () => {
+			useFreshGraphCache();
+			const getCueHistoryBuckets = vi.fn(() => []);
+
+			const handler = registerWith({
+				getCueHistoryBuckets,
+				getCueHistoryFingerprint: () => 'fp',
+			})('director-notes:getGraphData');
+			await handler({} as any, 24, 24);
+
+			const since = (getCueHistoryBuckets.mock.calls[0][0] as any).since;
+			expect(since).toBeGreaterThan(Date.now() - 25 * 60 * 60 * 1000);
+			expect(since).toBeLessThanOrEqual(Date.now() - 23 * 60 * 60 * 1000);
+		});
+
+		it('recomputes cached graph buckets when the Cue fingerprint moves', async () => {
+			// The cache keys off the history files' mtime+size, which no longer
+			// change when a Cue run lands. Without the Cue half of the key the
+			// graph would serve its first answer forever.
+			useFreshGraphCache();
+			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockReturnValue(['session-1']);
+			vi.mocked(mockHistoryManager.getEntries).mockReturnValue([]);
+
+			const now = Date.now();
+			let cueFingerprint = 'cue-1';
+			let cueCount = 3;
+			const handler = registerWith({
+				getCueHistoryBuckets: () => [{ timestamp: now, count: cueCount }],
+				getCueHistoryFingerprint: () => cueFingerprint,
+			})('director-notes:getGraphData');
+
+			const first = await handler({} as any, 4, null);
+			expect(first.cached).toBe(false);
+			expect(first.cueCount).toBe(3);
+
+			// Same fingerprint: the cached aggregate answers.
+			cueCount = 99;
+			const second = await handler({} as any, 4, null);
+			expect(second.cached).toBe(true);
+			expect(second.cueCount).toBe(3);
+
+			// Fingerprint moved: recompute, and the new runs show up.
+			cueFingerprint = 'cue-2';
+			const third = await handler({} as any, 4, null);
+			expect(third.cached).toBe(false);
+			expect(third.cueCount).toBe(99);
+		});
+
+		it('still returns the JSONL graph series when the Cue database throws', async () => {
+			useFreshGraphCache();
+			const now = Date.now();
+			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockReturnValue(['session-1']);
+			vi.mocked(mockHistoryManager.getEntries).mockReturnValue([
+				createMockEntry({ id: 'u1', type: 'USER', timestamp: now }),
+			]);
+
+			const handler = registerWith({
+				getCueHistoryBuckets: () => {
+					throw new Error('database is locked');
+				},
+			})('director-notes:getGraphData');
+			const result = await handler({} as any, 4, null);
+
+			expect(result.userCount).toBe(1);
+			expect(result.cueCount).toBe(0);
+		});
+	});
+
+	// Work performed by ANOTHER Maestro instance against the same project (an
+	// agent living on the remote box, rather than one this machine drives over
+	// SSH) is mirrored into `<project>/.maestro/history/history-<host>.jsonl`.
+	// The per-agent History panel already merged those files; Director's Notes
+	// did not, so the same runs were visible in one surface and absent from the
+	// other. These cover the merge in every Director's Notes surface.
+	describe('cross-host shared history', () => {
+		/** An entry authored by a peer Maestro on another machine. */
+		const foreignEntry = (overrides: Partial<HistoryEntry> = {}): HistoryEntry =>
+			createMockEntry({
+				id: 'foreign-1',
+				hostname: 'petopswatt',
+				sessionId: 'remote-session',
+				sessionName: 'Remote Agent',
+				summary: 'Work done on the remote box',
+				...overrides,
+			});
+
+		/** One local SSH agent whose project dir is where the mirror lands. */
+		const withSshAgent = () => {
+			mockGetSessionsStore.mockReturnValue({
+				get: vi.fn().mockReturnValue([
+					{
+						id: 'session-1',
+						name: 'Local Agent',
+						cwd: '/remote/project',
+						projectRoot: '/remote/project',
+						sessionSshRemoteConfig: {
+							enabled: true,
+							remoteId: 'petopswatt',
+							syncHistory: true,
+						},
+					},
+				]),
+			});
+			mockGetSshRemoteById.mockReturnValue({ id: 'petopswatt', host: 'petopswatt', port: 22 });
+		};
+
+		it('includes a peer host’s entries in the unified list', async () => {
+			withSshAgent();
+			const now = Date.now();
+			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockReturnValue(['session-1']);
+			vi.mocked(mockHistoryManager.getEntries).mockReturnValue([
+				createMockEntry({ id: 'local-1', timestamp: now - 1000 }),
+			]);
+			mockReadRemoteEntriesSsh.mockResolvedValue([
+				foreignEntry({ id: 'foreign-1', timestamp: now - 2000 }),
+			]);
+
+			const handler = handlers.get('director-notes:getUnifiedHistory');
+			const result = await handler!({} as any, { lookbackDays: 7 });
+
+			expect(result.entries.map((e: HistoryEntry) => e.id)).toEqual(['local-1', 'foreign-1']);
+			expect(result.stats.totalCount).toBe(2);
+			// Two distinct agents: the local one and the peer's.
+			expect(result.stats.agentCount).toBe(2);
+		});
+
+		// A run this machine drove over SSH is recorded locally AND mirrored to the
+		// project dir. Entry ids are stable across hosts, so the copy must not
+		// double count.
+		it('does not double count an entry that is also in the local store', async () => {
+			withSshAgent();
+			const now = Date.now();
+			const shared = createMockEntry({ id: 'local-1', timestamp: now - 1000 });
+			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockReturnValue(['session-1']);
+			vi.mocked(mockHistoryManager.getEntries).mockReturnValue([shared]);
+			mockReadRemoteEntriesSsh.mockResolvedValue([{ ...shared, hostname: 'petopswatt' }]);
+
+			const handler = handlers.get('director-notes:getUnifiedHistory');
+			const result = await handler!({} as any, { lookbackDays: 7 });
+
+			expect(result.entries).toHaveLength(1);
+			expect(result.stats.agentCount).toBe(1);
+		});
+
+		// A foreign session id lives in the peer's namespace, so it is prefixed
+		// with the host. Without that, a colliding id would fold two different
+		// agents' work into one row.
+		it('namespaces a foreign agent by host and labels it', async () => {
+			withSshAgent();
+			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockReturnValue([]);
+			vi.mocked(mockHistoryManager.getEntries).mockReturnValue([]);
+			mockReadRemoteEntriesSsh.mockResolvedValue([foreignEntry()]);
+
+			const handler = handlers.get('director-notes:getUnifiedHistory');
+			const result = await handler!({} as any, { lookbackDays: 7 });
+
+			expect(result.entries[0].sourceSessionId).toBe('shared:petopswatt:remote-session');
+			expect(result.entries[0].agentName).toBe('Remote Agent (petopswatt)');
+		});
+
+		it('counts peer entries in Rich Mode stats', async () => {
+			withSshAgent();
+			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockReturnValue([]);
+			vi.mocked(mockHistoryManager.getEntries).mockReturnValue([]);
+			mockReadRemoteEntriesSsh.mockResolvedValue([foreignEntry({ success: true })]);
+
+			const handler = handlers.get('director-notes:getRichOverviewStats');
+			const result = await handler!({} as any, { lookbackDays: 7 });
+
+			expect(result.totalEntries).toBe(1);
+			expect(result.agentCount).toBe(1);
+			expect(result.perAgent[0].agentName).toBe('Remote Agent (petopswatt)');
+			// Retention truncation is a per-FILE property; a merged cross-host read
+			// can never claim it.
+			expect(result.perAgent[0].truncated).toBe(false);
+		});
+
+		// The offset indexes into the unified list, so it has to aggregate the
+		// same corpus - a narrower one scrolls the user to the wrong row.
+		it('counts peer entries when resolving a graph click to an offset', async () => {
+			withSshAgent();
+			const now = Date.now();
+			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockReturnValue(['session-1']);
+			vi.mocked(mockHistoryManager.getEntries).mockReturnValue([
+				createMockEntry({ id: 'local-1', timestamp: now - 1000 }),
+			]);
+			mockReadRemoteEntriesSsh.mockResolvedValue([
+				foreignEntry({ id: 'foreign-1', timestamp: now - 2000 }),
+			]);
+
+			const handler = handlers.get('director-notes:getOffsetForTimestamp');
+			const offset = await handler!({} as any, now - 2000, { lookbackDays: 7 });
+
+			// Newest first: local-1 at 0, the peer's entry at 1.
+			expect(offset).toBe(1);
+		});
+
+		it('hands the synopsis agent a file of the peer’s entries', async () => {
+			const { groomContext } = await import('../../../../main/utils/context-groomer');
+			withSshAgent();
+			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockReturnValue(['session-1']);
+			vi.mocked(mockHistoryManager.getEntries).mockReturnValue([createMockEntry()]);
+			vi.mocked(mockHistoryManager.getHistoryFilePath).mockReturnValue('/history/session-1.json');
+			mockReadRemoteEntriesSsh.mockResolvedValue([foreignEntry()]);
+			vi.mocked(groomContext).mockResolvedValue({
+				response: 'Synopsis text',
+				durationMs: 10,
+				completionReason: 'complete',
+			} as any);
+
+			const handler = handlers.get('director-notes:generateSynopsis');
+			await handler!({} as any, { lookbackDays: 7, provider: 'claude-code' });
+
+			expect(mockWriteFile).toHaveBeenCalled();
+			const prompt = vi.mocked(groomContext).mock.calls[0][0].prompt;
+			expect(prompt).toContain('## Other Hosts');
+			expect(prompt).toContain('petopswatt');
+		});
+
+		it('leaves the prompt untouched when no peer history exists', async () => {
+			const { groomContext } = await import('../../../../main/utils/context-groomer');
+			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockReturnValue(['session-1']);
+			vi.mocked(mockHistoryManager.getEntries).mockReturnValue([createMockEntry()]);
+			vi.mocked(mockHistoryManager.getHistoryFilePath).mockReturnValue('/history/session-1.json');
+			vi.mocked(groomContext).mockResolvedValue({
+				response: 'Synopsis text',
+				durationMs: 10,
+				completionReason: 'complete',
+			} as any);
+
+			const handler = handlers.get('director-notes:generateSynopsis');
+			await handler!({} as any, { lookbackDays: 7, provider: 'claude-code' });
+
+			const prompt = vi.mocked(groomContext).mock.calls[0][0].prompt;
+			expect(prompt).not.toContain('## Other Hosts');
+			expect(mockWriteFile).not.toHaveBeenCalled();
+		});
+
+		// A remote that is down, or a rotated key, must degrade Director's Notes
+		// to local-only rather than break it.
+		it('falls back to local history when the peer read throws', async () => {
+			withSshAgent();
+			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockReturnValue(['session-1']);
+			vi.mocked(mockHistoryManager.getEntries).mockReturnValue([
+				createMockEntry({ id: 'local-1' }),
+			]);
+			mockReadRemoteEntriesSsh.mockRejectedValue(new Error('ssh: connect timed out'));
+
+			const handler = handlers.get('director-notes:getUnifiedHistory');
+			const result = await handler!({} as any, { lookbackDays: 7 });
+
+			expect(result.entries.map((e: HistoryEntry) => e.id)).toEqual(['local-1']);
 		});
 	});
 

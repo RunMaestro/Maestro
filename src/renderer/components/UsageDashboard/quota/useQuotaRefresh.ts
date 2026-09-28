@@ -2,10 +2,10 @@
  * useQuotaRefresh
  *
  * Refresh state machine shared by the provider quota panels. Owns the manual
- * Refresh handler, the visual-busy dwell (so a sub-100ms IPC round-trip still
- * animates a full beat), a one-shot auto-sample on first arrival with
- * configured-but-empty accounts, and read/write of the persisted per-provider
- * auto-refresh interval.
+ * Refresh handler, its optional Cmd/Ctrl+R chord, the visual-busy dwell (so a
+ * sub-100ms IPC round-trip still animates a full beat), a one-shot auto-sample
+ * on first arrival with configured-but-empty accounts, and read/write of the
+ * persisted per-provider auto-refresh interval.
  *
  * The periodic background sampling is NOT driven here - it lives in the main
  * process (`usage-refresh-scheduler.ts`), which reads the same persisted
@@ -19,6 +19,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useUIStore } from '../../../stores/uiStore';
+import { useCommandKeyShortcut } from '../../../hooks/keyboard/useCommandKeyShortcut';
 
 /** Minimum spinner dwell so a fast IPC round-trip still animates a full beat. */
 const MIN_VISIBLE_MS = 900;
@@ -39,6 +40,16 @@ export interface UseQuotaRefreshOptions {
 	snapshotCount: number;
 	/** Provider refresh: trigger the main sampler, then re-pull the store. */
 	doRefresh: () => Promise<void>;
+	/**
+	 * Claim Cmd/Ctrl+R for this panel's Refresh while it is mounted.
+	 *
+	 * Off by default: the chord belongs to whichever surface the user is
+	 * looking at, so only a panel that IS the visible surface may take it. The
+	 * Usage Dashboard's Anthropic Usage / OpenAI Usage tabs mount exactly one
+	 * of these panels at a time, which is what makes the claim unambiguous
+	 * there.
+	 */
+	refreshHotkey?: boolean;
 }
 
 export interface UseQuotaRefreshResult {
@@ -49,7 +60,14 @@ export interface UseQuotaRefreshResult {
 }
 
 export function useQuotaRefresh(opts: UseQuotaRefreshOptions): UseQuotaRefreshResult {
-	const { providerId, refreshing, autoRefresh, accountCount, snapshotCount } = opts;
+	const {
+		providerId,
+		refreshing,
+		autoRefresh,
+		accountCount,
+		snapshotCount,
+		refreshHotkey = false,
+	} = opts;
 
 	// Visual gate kept independent of `refreshing` so a fast sample still
 	// animates the button for a full beat instead of flashing.
@@ -96,6 +114,12 @@ export function useQuotaRefresh(opts: UseQuotaRefreshOptions): UseQuotaRefreshRe
 		if (!mountedRef.current) return;
 		setVisualBusy(false);
 	}, [refreshing, visualBusy]);
+
+	// Cmd/Ctrl+R re-samples this panel, same path as the Refresh button - so the
+	// busy guard inside handleRefresh covers a held-down key too. Nothing else
+	// owns the chord while a true modal is up: the app-level handler blocks its
+	// own Cmd+R (read-only toggle) behind `hasOpenModal()`.
+	useCommandKeyShortcut('r', handleRefresh, refreshHotkey);
 
 	// Auto-sample once when opened with configured-but-empty accounts - saves a
 	// manual click. The empty-snapshot CTA still acts as a fallback if the

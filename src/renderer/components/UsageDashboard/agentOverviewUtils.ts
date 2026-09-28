@@ -1,15 +1,19 @@
 import type { StatsAggregation } from '../../hooks/stats/useStats';
 import type { Session, SessionState, Theme } from '../../types';
 import { compareNamesIgnoringEmojis } from '../../../shared/emojiUtils';
+import { visibleAiTabs } from '../../utils/tabHelpers';
+import type { ProviderProfileIndex } from '../../hooks/stats/useProviderProfiles';
 
-export type SortMode = 'name' | 'created' | 'queries' | 'tabs' | 'auto';
+export type SortMode = 'name' | 'created' | 'recent' | 'queries' | 'tabs' | 'auto' | 'provider';
 
 export const AGENT_OVERVIEW_SORT_OPTIONS: { value: SortMode; label: string }[] = [
 	{ value: 'name', label: 'Name' },
 	{ value: 'created', label: 'Created' },
+	{ value: 'recent', label: 'Recent' },
 	{ value: 'queries', label: 'Queries' },
 	{ value: 'tabs', label: 'Tabs' },
 	{ value: 'auto', label: 'Auto %' },
+	{ value: 'provider', label: 'Provider' },
 ];
 
 const SPARKLINE_DAYS = 7;
@@ -55,6 +59,15 @@ export function getSessionQueryCount(
 	return data.byAgent?.[session.toolType]?.count ?? 0;
 }
 
+/**
+ * Epoch ms of the agent's most recent query inside the selected range, or
+ * `null` when it has none. `bySessionByDay` only resolves to a calendar day,
+ * so ordering by it would tie every agent that ran today.
+ */
+export function getSessionLastQueryAt(session: Session, data: StatsAggregation): number | null {
+	return data.bySessionLastQuery?.[session.id] ?? null;
+}
+
 export function getSessionAutoPercent(session: Session, data: StatsAggregation): number | null {
 	const split = data.bySessionSource?.[session.id];
 	if (!split) return null;
@@ -79,7 +92,8 @@ export function isSessionHighlighted(session: Session, activeFilterKey: string |
 export function sortAgentOverviewSessions(
 	sessions: Session[],
 	data: StatsAggregation,
-	sortMode: SortMode
+	sortMode: SortMode,
+	profileIndex?: ProviderProfileIndex
 ): Session[] {
 	const filtered = sessions.filter((session) => session.toolType !== 'terminal');
 	const byName = (a: Session, b: Session) => compareNamesIgnoringEmojis(a.name, b.name);
@@ -108,7 +122,38 @@ export function sortAgentOverviewSessions(
 	}
 
 	if (sortMode === 'tabs') {
-		return alphabetical.slice().sort((a, b) => (b.aiTabs?.length ?? 0) - (a.aiTabs?.length ?? 0));
+		return alphabetical
+			.slice()
+			.sort((a, b) => visibleAiTabs(b.aiTabs).length - visibleAiTabs(a.aiTabs).length);
+	}
+
+	if (sortMode === 'provider') {
+		// Alphabetical by profile label so the fleet reads as one block per
+		// account, names still ascending inside each block. An agent whose
+		// account has not resolved sorts last rather than into an arbitrary
+		// block it may not belong to.
+		return alphabetical.slice().sort((a, b) => {
+			const aLabel = profileIndex?.labelByKey[profileIndex.profileKeyBySessionId[a.id] ?? ''];
+			const bLabel = profileIndex?.labelByKey[profileIndex.profileKeyBySessionId[b.id] ?? ''];
+			if (aLabel === bLabel) return 0;
+			if (!aLabel) return 1;
+			if (!bLabel) return -1;
+			return aLabel.localeCompare(bLabel);
+		});
+	}
+
+	if (sortMode === 'recent') {
+		// Most-recently-queried first. Agents with no query in the range have no
+		// timestamp to rank on, so they sink below every agent that does rather
+		// than mixing into the middle on a zero.
+		return alphabetical.slice().sort((a, b) => {
+			const aTs = getSessionLastQueryAt(a, data);
+			const bTs = getSessionLastQueryAt(b, data);
+			if (aTs === null && bTs === null) return 0;
+			if (aTs === null) return 1;
+			if (bTs === null) return -1;
+			return bTs - aTs;
+		});
 	}
 
 	return alphabetical.slice().sort((a, b) => {

@@ -285,7 +285,7 @@ export const MergeProgressOverlay = memo(function MergeProgressOverlay({
 												/>
 											)}
 											<span
-												className="text-[10px]"
+												className="text-2xs"
 												style={{
 													color: isActive
 														? theme.colors.textMain

@@ -25,6 +25,7 @@ import { createSafeSend } from '../../utils/safe-send';
 import { getSessionStorage, hasSessionStorage, getAllSessionStorages } from '../../agents';
 import { getSshRemoteById as getSshRemoteByIdFromStore } from '../../stores';
 import { calculateModelCost, computeClaudeUsageCost } from '../../utils/pricing';
+import { CodexTokenCounts } from '../../../shared/codexTokenUsage';
 import {
 	loadGlobalStatsCache,
 	saveGlobalStatsCache,
@@ -43,6 +44,7 @@ import type {
 } from '../../agents';
 import type { GlobalAgentStats, ProviderStats, SshRemoteConfig } from '../../../shared/types';
 import { captureException } from '../../utils/sentry';
+import { isExpectedSessionReadError } from '../../utils/session-read-errors';
 import {
 	snapshotStarredTranscript,
 	releaseTranscriptMirror,
@@ -59,28 +61,12 @@ export type { GlobalAgentStats, ProviderStats };
 const LOG_CONTEXT = '[AgentSessions]';
 
 /**
- * Node fs error codes we expect when reading a provider transcript we merely
- * discovered on disk. The file belongs to the agent CLI, not to us: it can be
- * unreadable (restrictive umask, a `~/.claude` tree owned by another user),
- * deleted between the directory listing and the read, or briefly locked on
- * Windows. These are environmental, never a Maestro bug, so we keep the local
- * warn but skip Sentry to avoid telemetry noise (MAESTRO-W9). Same shape as the
- * `RangeError` carve-out in the loops below: classify the expected boundary,
- * log it locally, and let everything else report.
+ * Re-exported so existing importers keep resolving from here. The definition
+ * moved to `src/main/utils/session-read-errors.ts` because the sibling read
+ * sites that hit the same boundary (`storage/claude-session-storage.ts`,
+ * `ipc/handlers/claude.ts`) can't import from this module without a cycle.
  */
-const EXPECTED_SESSION_READ_ERROR_CODES = new Set([
-	'EACCES',
-	'EPERM',
-	'ENOENT',
-	'ENOTDIR',
-	'EISDIR',
-	'EBUSY',
-]);
-
-export function isExpectedSessionReadError(error: unknown): boolean {
-	const code = (error as NodeJS.ErrnoException | null)?.code;
-	return typeof code === 'string' && EXPECTED_SESSION_READ_ERROR_CODES.has(code);
-}
+export { isExpectedSessionReadError };
 
 /**
  * Generic agent session origins data structure
@@ -165,9 +151,7 @@ function parseCodexSessionContent(
 	const lines = content.split('\n').filter((l) => l.trim());
 
 	let messageCount = 0;
-	let inputTokens = 0;
-	let outputTokens = 0;
-	let cachedTokens = 0;
+	const tokenCounts = new CodexTokenCounts();
 
 	for (const line of lines) {
 		try {
@@ -181,15 +165,11 @@ function parseCodexSessionContent(
 				}
 			}
 
-			// Extract token usage from event_msg with token_count payload
+			// Extract token usage from event_msg with token_count payload.
+			// `total_token_usage` is cumulative, so it must never be summed - see
+			// CodexTokenCounts.
 			if (entry.type === 'event_msg' && entry.payload?.type === 'token_count') {
-				const usage = entry.payload.info?.total_token_usage;
-				if (usage) {
-					inputTokens += usage.input_tokens || 0;
-					outputTokens += usage.output_tokens || 0;
-					outputTokens += usage.reasoning_output_tokens || 0;
-					cachedTokens += usage.cached_input_tokens || 0;
-				}
+				tokenCounts.addTokenCountEvent(entry.payload.info);
 			}
 		} catch {
 			// Skip malformed lines
@@ -198,11 +178,11 @@ function parseCodexSessionContent(
 
 	return {
 		messages: messageCount,
-		inputTokens,
-		outputTokens,
+		inputTokens: tokenCounts.inputTokens,
+		outputTokens: tokenCounts.outputTokens,
 		cacheReadTokens: 0,
 		cacheCreationTokens: 0,
-		cachedInputTokens: cachedTokens,
+		cachedInputTokens: tokenCounts.cachedTokens,
 		sizeBytes,
 	};
 }
@@ -644,7 +624,12 @@ export function registerAgentSessionsHandlers(deps?: AgentSessionsHandlerDepende
 								)
 							);
 						} catch (error) {
-							void captureException(error);
+							// Walks every provider's transcript tree, so an unreadable one
+							// lands here on every call. That is environmental, not a bug -
+							// warn locally and keep aggregating the providers that do work.
+							if (!isExpectedSessionReadError(error)) {
+								void captureException(error);
+							}
 							logger.warn(
 								`Failed to get named sessions from ${storage.agentId}: ${error}`,
 								LOG_CONTEXT

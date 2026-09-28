@@ -1,5 +1,5 @@
 /**
- * Tests for useProgressiveRenderWindow — the tail-first render window that keeps
+ * Tests for useProgressiveRenderWindow - the tail-first render window that keeps
  * agent switching responsive on long transcripts (issue #1342).
  *
  * The hook returns a slice index plus a reveal escape hatch. The behaviours that
@@ -78,7 +78,7 @@ describe('useProgressiveRenderWindow', () => {
 		const afterBackfill = result.current.startIndex;
 
 		// Agent streams 40 more entries. They append at the tail, so they are inside
-		// the window already — the start index must not jump forward.
+		// the window already - the start index must not jump forward.
 		rerender({ total: 540 });
 		expect(result.current.startIndex).toBe(afterBackfill);
 	});
@@ -157,7 +157,7 @@ describe('useProgressiveRenderWindow', () => {
 				result.current.revealTo(100);
 			});
 			// A later request for a newer item must not re-hide the history already
-			// pulled in — that would unmount entries the user can see.
+			// pulled in - that would unmount entries the user can see.
 			act(() => {
 				result.current.revealTo(400);
 			});
@@ -172,6 +172,53 @@ describe('useProgressiveRenderWindow', () => {
 			});
 			expect(result.current.startIndex).toBe(0);
 			expect(vi.getTimerCount()).toBe(0);
+		});
+	});
+
+	describe('absorbPrepend (scroll-to-top history backfill, issue #1407)', () => {
+		it('keeps the visible slice stable when history is prepended', () => {
+			// 300 entries, window walked to the head, then 250 older ones arrive.
+			const { result, rerender } = renderHook(
+				({ total }) => useProgressiveRenderWindow(total, 'a'),
+				{ initialProps: { total: 300 } }
+			);
+			act(() => {
+				result.current.revealTo(0);
+			});
+			expect(result.current.startIndex).toBe(0);
+
+			act(() => {
+				result.current.absorbPrepend(250);
+			});
+			rerender({ total: 550 });
+
+			// The same 300 entries stay rendered - the new history sits above the
+			// window rather than mounting in one commit.
+			expect(result.current.startIndex).toBe(250);
+		});
+
+		it('lets the idle loop walk back through the prepended history', () => {
+			const { result, rerender } = renderHook(
+				({ total }) => useProgressiveRenderWindow(total, 'a'),
+				{ initialProps: { total: 300 } }
+			);
+			act(() => {
+				result.current.revealTo(0);
+				result.current.absorbPrepend(250);
+			});
+			rerender({ total: 550 });
+
+			flushIdleTick();
+			expect(result.current.startIndex).toBe(250 - DEFAULT_BACKFILL_CHUNK);
+		});
+
+		it('ignores non-positive counts', () => {
+			const { result } = renderHook(() => useProgressiveRenderWindow(500, 'a'));
+			const before = result.current.startIndex;
+			act(() => {
+				result.current.absorbPrepend(0);
+			});
+			expect(result.current.startIndex).toBe(before);
 		});
 	});
 

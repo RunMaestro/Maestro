@@ -271,7 +271,8 @@ export function BmadCommandsPanel({ theme, enabled, onEnabledChange }: BmadComma
 							className="rounded-lg border overflow-hidden"
 							style={{ backgroundColor: theme.colors.bgMain, borderColor: theme.colors.border }}
 						>
-							{editingCommand?.id === cmd.id ? (
+							{/* Non-null check, not `?.` - see AICommandsPanel for why. */}
+							{editingCommand !== null && editingCommand.id === cmd.id ? (
 								<div className="p-3 space-y-3">
 									<div className="flex items-center justify-between">
 										<span
@@ -370,7 +371,7 @@ export function BmadCommandsPanel({ theme, enabled, onEnabledChange }: BmadComma
 											</span>
 											{cmd.isModified && (
 												<span
-													className="px-1.5 py-0.5 rounded text-[10px] font-medium"
+													className="px-1.5 py-0.5 rounded text-2xs font-medium"
 													style={{
 														backgroundColor: `color-mix(in srgb, ${theme.colors.warning} 12.5%, transparent)`,
 														color: theme.colors.warning,

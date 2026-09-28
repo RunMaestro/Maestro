@@ -1,7 +1,9 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react';
 import { useModalLayer } from '../../hooks/ui/useModalLayer';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { useEventListener } from '../../hooks/utils/useEventListener';
+import { useFocusAfterRender } from '../../hooks/utils/useFocusAfterRender';
+import { useCommandKeyShortcut } from '../../hooks/keyboard/useCommandKeyShortcut';
 import {
 	useSessionViewer,
 	useSessionPagination,
@@ -26,6 +28,9 @@ import { SessionListStatsBar } from './components/SessionListStatsBar';
 import { SessionSearchBar } from './components/SessionSearchBar';
 import { SessionListView } from './components/SessionListView';
 import type { SearchMode } from './types';
+import { FIXED_SHORTCUTS } from '../../constants/shortcuts';
+import { eventMatchesShortcutKeys } from '../../utils/shortcutMatch';
+import { trackShortcutUsage } from '../../utils/shortcutTracking';
 
 export function AgentSessionsBrowser({
 	theme,
@@ -121,9 +126,11 @@ export function AgentSessionsBrowser({
 		renameValue,
 		setRenameValue,
 		setRenamingSessionId,
+		beginRename,
 		startRename,
 		submitRename,
 		cancelRename,
+		consumeFocusRestore,
 	} = useAgentSessionsRename({
 		activeSession,
 		agentId,
@@ -133,6 +140,27 @@ export function AgentSessionsBrowser({
 		onUpdateTab,
 		renameInputRef,
 	});
+
+	// The rename input takes the keyboard as soon as it mounts, whichever way the
+	// rename started (edit button, detail header, or the shortcut).
+	useFocusAfterRender(renameInputRef, !!renamingSessionId);
+
+	/**
+	 * ...and hands it back on the way out, to whichever element hosts the keys
+	 * on the surface we return to: the search input in the list view (Up/Down
+	 * and Enter live on it), the message pane in the detail view (Enter to
+	 * resume). Without this the caret lands on <body> and the browser stops
+	 * answering the keyboard entirely.
+	 *
+	 * A layout effect, not a timer: this must run in the commit that unmounts
+	 * the rename input, so focusing the new target cannot fire the old input's
+	 * onBlur and submit a name the user just escaped out of.
+	 */
+	useLayoutEffect(() => {
+		if (renamingSessionId || !consumeFocusRestore()) return;
+		const target = viewingSessionRef.current ? messagesContainerRef.current : inputRef.current;
+		target?.focus();
+	}, [renamingSessionId, consumeFocusRestore, messagesContainerRef, inputRef]);
 
 	// useFilteredAndSortedSessions MUST run before useAgentSessionsActivityEntries
 	// because activityEntries reads filteredSessions
@@ -162,6 +190,15 @@ export function AgentSessionsBrowser({
 		onClose,
 	});
 
+	// Cmd/Ctrl+R fires the detail view's Resume button, the same chord the Usage
+	// Dashboard claims for its own refresh. It is safe to take here because the
+	// app-level Cmd+R (read-only toggle) is already blocked behind
+	// `hasOpenModal()` while this browser is registered as a layer, and the
+	// capture-phase listener also beats the browser's own reload default. Off
+	// while a rename is in flight: resuming would close the browser and discard
+	// the name the user is mid-way through typing.
+	useCommandKeyShortcut('r', handleResume, !!viewingSession && !renamingSessionId);
+
 	useAgentSessionsAutoView({
 		loading,
 		sessions,
@@ -180,7 +217,12 @@ export function AgentSessionsBrowser({
 		MODAL_PRIORITIES.AGENT_SESSIONS,
 		'Agent Sessions Browser',
 		() => {
-			if (viewingSessionRef.current) {
+			// The layer stack handles Escape at capture on window, so the rename
+			// input never sees the key - cancel an in-progress rename here first,
+			// or renaming a session and pressing Escape closes the whole browser.
+			if (renamingSessionId) {
+				cancelRename();
+			} else if (viewingSessionRef.current) {
 				clearViewingSession();
 			} else {
 				onCloseRef.current();
@@ -221,6 +263,30 @@ export function AgentSessionsBrowser({
 				setShowSearchPanel(true);
 				setTimeout(() => inputRef.current?.focus(), 50);
 			}
+		},
+		{ target: document }
+	);
+
+	/**
+	 * Cmd/Ctrl+E renames the session in focus - the highlighted row in the list,
+	 * or the one being viewed in the detail pane.
+	 *
+	 * Bound here rather than left to the global handler because this browser
+	 * registers as a modal layer that blocks lower layers, so the app-level
+	 * shortcut never reaches its own handler while the browser is up.
+	 */
+	useEventListener(
+		'keydown',
+		(event: Event) => {
+			const e = event as KeyboardEvent;
+			if (renamingSessionId) return;
+			if (!eventMatchesShortcutKeys(e, FIXED_SHORTCUTS.renameAgentSession.keys)) return;
+			const target = viewingSession ?? filteredSessions[selectedIndex];
+			if (!target) return;
+			e.preventDefault();
+			e.stopPropagation();
+			trackShortcutUsage('renameAgentSession');
+			beginRename(target);
 		},
 		{ target: document }
 	);
@@ -303,15 +369,12 @@ export function AgentSessionsBrowser({
 						onRenameBlur={() => submitRename(viewingSession.sessionId)}
 						onStartRenameNamed={(e) => {
 							e.stopPropagation();
-							setRenamingSessionId(viewingSession.sessionId);
-							setRenameValue(viewingSession.sessionName || '');
-							setTimeout(() => renameInputRef.current?.focus(), 50);
+							beginRename(viewingSession);
 						}}
 						onStartRenameUnnamed={(e) => {
 							e.stopPropagation();
 							setRenamingSessionId(viewingSession.sessionId);
 							setRenameValue('');
-							setTimeout(() => renameInputRef.current?.focus(), 50);
 						}}
 					/>
 				) : (

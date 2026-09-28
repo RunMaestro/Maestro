@@ -9,6 +9,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import os from 'os';
+import type { AutoRunDebugSnapshot } from '../../../shared/debugPackage';
 
 // Mock Electron modules
 vi.mock('electron', () => ({
@@ -653,45 +654,59 @@ describe('Debug Package Collectors', () => {
 	});
 
 	describe('collectBatchState', () => {
-		it('should collect Auto Run state from sessions', async () => {
+		// Builds a snapshot the way the renderer service does, so these tests fail
+		// if the wire shape drifts. The previous version of this suite invented a
+		// `session.batchRunState` field that nothing ever wrote, which is why the
+		// collector shipped an empty section for its entire life.
+		const makeSnapshot = (
+			overrides: Partial<AutoRunDebugSnapshot> & { sessionId: string }
+		): AutoRunDebugSnapshot => ({
+			isRunning: false,
+			isStopping: false,
+			documentCount: 0,
+			currentDocumentIndex: 0,
+			currentDocTasksTotal: 0,
+			currentDocTasksCompleted: 0,
+			totalTasksAcrossAllDocs: 0,
+			completedTasksAcrossAllDocs: 0,
+			loopEnabled: false,
+			loopIteration: 0,
+			worktreeActive: false,
+			hasError: false,
+			errorPaused: false,
+			...overrides,
+		});
+
+		it('should collect Auto Run state from a renderer snapshot', async () => {
 			const { collectBatchState } =
 				await import('../../../main/debug-package/collectors/batch-state');
 
 			const startTime = Date.now() - 60000;
-			const mockStore = {
-				get: vi.fn().mockReturnValue([
-					{
-						id: 'session-1',
-						batchRunState: {
-							isRunning: true,
-							isStopping: false,
-							documentCount: 5,
-							currentDocumentIndex: 2,
-							loopEnabled: true,
-							loopIteration: 3,
-							worktreeActive: true,
-							error: null,
-							startTime,
-						},
-					},
-					{
-						id: 'session-2',
-						// No batch state
-					},
-					{
-						id: 'session-3',
-						batchRunState: {
-							isRunning: false,
-							error: { type: 'document_error' },
-						},
-					},
-				]),
-				set: vi.fn(),
-				store: {},
-			};
+			const lastActiveTimestamp = Date.now() - 30000;
 
-			const result = collectBatchState(mockStore as any);
+			const result = collectBatchState([
+				makeSnapshot({
+					sessionId: 'session-1',
+					isRunning: true,
+					documentCount: 5,
+					currentDocumentIndex: 2,
+					loopEnabled: true,
+					loopIteration: 3,
+					worktreeActive: true,
+					startTime,
+					lastActiveTimestamp,
+				}),
+				// Idle agent with no activity: filtered out as noise.
+				makeSnapshot({ sessionId: 'session-2' }),
+				makeSnapshot({
+					sessionId: 'session-3',
+					hasError: true,
+					errorType: 'document_error',
+					errorPaused: true,
+				}),
+			]);
 
+			expect(result.snapshotAvailable).toBe(true);
 			expect(result.activeSessions).toHaveLength(2);
 
 			const session1 = result.activeSessions.find((s) => s.sessionId === 'session-1');
@@ -705,11 +720,43 @@ describe('Debug Package Collectors', () => {
 			expect(session1!.hasError).toBe(false);
 			expect(session1!.startTime).toBe(startTime);
 			expect(session1!.elapsedMs).toBeGreaterThan(0);
+			// The signature of a hung run: started long ago, silent since.
+			expect(session1!.idleMs).toBeGreaterThan(0);
 
 			const session3 = result.activeSessions.find((s) => s.sessionId === 'session-3');
 			expect(session3).toBeDefined();
 			expect(session3!.hasError).toBe(true);
 			expect(session3!.errorType).toBe('document_error');
+		});
+
+		it('should report an unavailable snapshot distinctly from no active runs', async () => {
+			const { collectBatchState } =
+				await import('../../../main/debug-package/collectors/batch-state');
+
+			const missing = collectBatchState(undefined);
+			expect(missing.snapshotAvailable).toBe(false);
+			expect(missing.activeSessions).toEqual([]);
+
+			const empty = collectBatchState([]);
+			expect(empty.snapshotAvailable).toBe(true);
+			expect(empty.activeSessions).toEqual([]);
+		});
+
+		it('should keep a paused run that has completed work', async () => {
+			const { collectBatchState } =
+				await import('../../../main/debug-package/collectors/batch-state');
+
+			const result = collectBatchState([
+				makeSnapshot({
+					sessionId: 'session-paused',
+					isRunning: false,
+					completedTasksAcrossAllDocs: 66,
+					totalTasksAcrossAllDocs: 124,
+				}),
+			]);
+
+			expect(result.activeSessions).toHaveLength(1);
+			expect(result.activeSessions[0].completedTasksAcrossAllDocs).toBe(66);
 		});
 	});
 

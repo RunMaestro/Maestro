@@ -110,6 +110,53 @@ describe('Process CommandRemote Preload API', () => {
 				undefined
 			);
 		});
+
+		it('passes background through without coercing it', () => {
+			// `background` arrives as sent: the renderer opts in on a literal
+			// `true` only, so `false` and an absent field must stay distinct all
+			// the way through instead of being defaulted here into a decision.
+			const callback = vi.fn();
+			let registeredHandler: (
+				event: unknown,
+				sessionId: string,
+				command: string,
+				inputMode?: 'ai' | 'terminal',
+				tabId?: string,
+				force?: boolean,
+				images?: string[],
+				background?: boolean,
+				receiptChannel?: string
+			) => void;
+
+			mockOn.mockImplementation((channel: string, handler: typeof registeredHandler) => {
+				if (channel === 'remote:executeCommand') {
+					registeredHandler = handler;
+				}
+			});
+
+			api.onRemoteCommand(callback);
+			registeredHandler!(
+				{},
+				'session-123',
+				'test command',
+				'ai',
+				undefined,
+				undefined,
+				undefined,
+				false
+			);
+
+			expect(callback).toHaveBeenCalledWith(
+				'session-123',
+				'test command',
+				'ai',
+				undefined,
+				undefined,
+				undefined,
+				false,
+				undefined
+			);
+		});
 	});
 
 	describe('sendRemoteCommandReceipt', () => {
@@ -129,6 +176,52 @@ describe('Process CommandRemote Preload API', () => {
 				accepted: true,
 				reason: undefined,
 			});
+		});
+	});
+
+	describe('onRemoteAgentDelegation', () => {
+		it('hands the delegation notice to the callback and unsubscribes cleanly', () => {
+			const callback = vi.fn();
+			let registeredHandler: ((event: unknown, notice: unknown) => void) | undefined;
+			mockOn.mockImplementation((_channel: string, handler: typeof registeredHandler) => {
+				registeredHandler = handler;
+			});
+
+			const unsubscribe = api.onRemoteAgentDelegation(callback);
+			expect(mockOn).toHaveBeenCalledWith('remote:agentDelegation', expect.any(Function));
+
+			const notice = {
+				kind: 'dispatch',
+				fromSessionId: 'maestro',
+				fromTabId: 'caller-tab',
+				targetSessionId: 'proxmox',
+				prompt: 'Take care of the advisory bug',
+			};
+			registeredHandler?.({}, notice);
+			expect(callback).toHaveBeenCalledWith(notice);
+
+			unsubscribe();
+			expect(mockRemoveListener).toHaveBeenCalledWith('remote:agentDelegation', registeredHandler);
+		});
+
+		it('logs a throwing callback instead of letting it escape the IPC handler', () => {
+			let registeredHandler: ((event: unknown, notice: unknown) => void) | undefined;
+			mockOn.mockImplementation((_channel: string, handler: typeof registeredHandler) => {
+				registeredHandler = handler;
+			});
+
+			api.onRemoteAgentDelegation(() => {
+				throw new Error('store exploded');
+			});
+
+			expect(() => registeredHandler?.({}, {})).not.toThrow();
+			expect(mockInvoke).toHaveBeenCalledWith(
+				'logger:log',
+				'error',
+				'Error invoking remote agent delegation callback',
+				'Preload',
+				{ error: 'Error: store exploded' }
+			);
 		});
 	});
 });

@@ -12,6 +12,7 @@ import { useUIStore } from '../../stores/uiStore';
 import { generateId } from '../../utils/ids';
 import { isAbsolutePath } from '../../../shared/formatters';
 import { closeFileTab as closeFileTabHelper } from '../../utils/tabHelpers';
+import type { MediaOpenMode } from '../tabs/internal/types';
 import { logger } from '../../utils/logger';
 
 /**
@@ -62,6 +63,21 @@ export interface FileTabOpenOptions {
 	openInNewTab?: boolean;
 	/** Override which session the tab is created in (defaults to current active session). */
 	targetSessionId?: string;
+	/**
+	 * What to do when the file turns out to be playable media, which never gets
+	 * a tab. Defaults to playing it.
+	 */
+	mediaMode?: MediaOpenMode;
+}
+
+/** Options for opening a file from the file tree. */
+export interface FileClickOptions {
+	/**
+	 * Line up media behind whatever is playing instead of taking the player
+	 * over. Set by the multi-file open paths so the first selected file plays
+	 * and the rest queue.
+	 */
+	mediaMode?: MediaOpenMode;
 }
 
 export interface UseAppHandlersDeps {
@@ -102,7 +118,7 @@ export interface UseAppHandlersReturn {
 
 	// File handlers
 	/** Handle file click in file explorer */
-	handleFileClick: (node: FileNode, path: string) => Promise<void>;
+	handleFileClick: (node: FileNode, path: string, options?: FileClickOptions) => Promise<void>;
 	/** Update working directory via folder selection dialog */
 	updateSessionWorkingDirectory: () => Promise<void>;
 
@@ -330,7 +346,7 @@ export function useAppHandlers(deps: UseAppHandlersDeps): UseAppHandlersReturn {
 	// --- FILE HANDLERS ---
 
 	const handleFileClick = useCallback(
-		async (node: FileNode, path: string) => {
+		async (node: FileNode, path: string, options?: FileClickOptions) => {
 			const activeSession = selectActiveSession(useSessionStore.getState());
 			if (!activeSession) return; // Guard against null session
 			if (node.type !== 'file') return;
@@ -461,7 +477,7 @@ export function useAppHandlers(deps: UseAppHandlersDeps): UseAppHandlersReturn {
 						sshRemoteId,
 						lastModified,
 					},
-					{ targetSessionId }
+					{ targetSessionId, mediaMode: options?.mediaMode }
 				);
 				setActiveFocus('main');
 			} catch (error) {

@@ -14,22 +14,30 @@
  */
 
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { ALL_PROFILES_VALUE, providerProfileKey } from '../../../../shared/providerProfiles';
 import type { StatsTimeRange } from '../../../../shared/stats-types';
+import { GroupDetailModal } from '../GroupDetailModal';
 import { AgentDetailModal } from '../AgentDetailModal';
 import { EmptyState } from '../EmptyState';
 import { DashboardSkeleton } from '../ChartSkeletons';
 import { CueStats } from '../CueStats';
 import { TokenSeriesProvider } from '../TokenSeriesContext';
+import { buildModalOwnedFooterSummary } from '../footerSummary';
+import type { GroupStatRollup } from '../../../../shared/statsGroupRollup';
 import type { Session } from '../../../types';
 import { useModalLayer } from '../../../hooks/ui/useModalLayer';
+import { usePhoneLayout } from '../../../hooks/ui/useViewportBreakpoint';
 import { useResizableModal } from '../../../hooks/ui/useResizableModal';
 import { MODAL_PRIORITIES } from '../../../constants/modalPriorities';
+import { useSessionStore } from '../../../stores/sessionStore';
 import { useSettingsStore } from '../../../stores/settingsStore';
 import { useClaudeUsageStore } from '../../../stores/claudeUsageStore';
 import { useCodexUsageStore } from '../../../stores/codexUsageStore';
 import { useGlobalAgentStats } from '../../../hooks/stats/useGlobalAgentStats';
 import type { UsageDashboardModalProps } from './types';
 import { getSectionsForViewMode, type SectionId } from './sections';
+import { TIME_RANGE_OPTIONS } from './constants';
+import { formatDatabaseSize } from './formatters';
 import {
 	hasUsefulAnthropicQuotaDetails,
 	hasUsefulCodexQuotaDetails,
@@ -42,11 +50,13 @@ import {
 	useUsageDashboardLayout,
 	useUsageDashboardTabs,
 } from './hooks';
-import { UsageDashboardFooter, UsageDashboardHeader, UsageDashboardTabs } from './components';
+import { UsageDashboardHeader, UsageDashboardTabs } from './components';
+import { UsageDashboardFooter } from '../UsageDashboardFooter';
 import {
 	ActivityView,
 	AgentOverviewView,
 	AgentsView,
+	GroupsView,
 	AutoRunView,
 	DashboardTabPanel,
 	OverviewView,
@@ -94,15 +104,39 @@ export function UsageDashboardModal({
 		usageStatsTabEnabled && Object.values(codexUsageSnapshots).some(hasUsefulCodexQuotaDetails);
 	useQuotaTabDiscovery(isOpen, usageStatsTabEnabled);
 
+	const phone = usePhoneLayout();
 	const [timeRange, setTimeRange] = useState<StatsTimeRange>(defaultTimeRange);
-	const { data, cueSourceTotals, loading, error, showNewDataIndicator, databaseSize, fetchStats } =
-		useUsageDashboardData({
-			isOpen,
-			timeRange,
-			cueTabEnabled,
-		});
+	const {
+		data,
+		cueSourceTotals,
+		delegationTotals,
+		lifetimeDelegation,
+		delegationByDay,
+		loading,
+		error,
+		showNewDataIndicator,
+		databaseSize,
+		fetchStats,
+	} = useUsageDashboardData({
+		isOpen,
+		timeRange,
+		cueTabEnabled,
+	});
 	const [focusedSection, setFocusedSection] = useState<SectionId | null>(null);
 	const [detailSession, setDetailSession] = useState<Session | null>(null);
+	// Provider-profile filter for the Agents grid. Owned here (rather than
+	// inside the grid) so the quota tabs' "N agents" chips can select an account
+	// and send the user to the grid already narrowed to it.
+	const [agentProfileFilter, setAgentProfileFilter] = useState<string>(ALL_PROFILES_VALUE);
+	// Groups come straight from the store rather than a prop: the dashboard is
+	// the only consumer, and threading them through AppInfoModals would add a
+	// prop to a component that has no other reason to know about groups.
+	const groups = useSessionStore((s) => s.groups);
+	// The group whose detail modal is open. Holds the whole rollup rather than an
+	// id: the modal renders the same totals the clicked tile showed, and
+	// re-deriving them would let the two disagree if the aggregation refreshed
+	// underneath (the dashboard polls stats:updated) while the modal was open.
+	const [detailGroup, setDetailGroup] = useState<GroupStatRollup | null>(null);
 
 	const containerRef = useRef<HTMLDivElement>(null);
 	const contentRef = useRef<HTMLDivElement>(null);
@@ -118,6 +152,29 @@ export function UsageDashboardModal({
 		contentRef,
 		onViewModeChanged: handleViewModeChanged,
 	});
+
+	// Clicking an account's "N agents" chip on a quota tab answers the question
+	// the chip raises - WHICH agents? - by opening the Agents grid narrowed to
+	// that account. The tab switch is the point here, unlike the group tiles
+	// below: the chip has no detail view of its own to open instead.
+	const handleShowAccountAgents = useCallback(
+		(toolType: string, accountKey: string) => {
+			setAgentProfileFilter(providerProfileKey(toolType, accountKey));
+			switchViewMode('agents');
+		},
+		[switchViewMode]
+	);
+
+	// Clicking a group tile opens its detail modal - the per-agent breakdown of
+	// the totals on the tile. It does NOT switch tabs: the Agents tab answers a
+	// different question ("show me every agent"), and its own group dropdown
+	// covers narrowing that grid.
+	const handleSelectGroup = useCallback((rollup: GroupStatRollup) => setDetailGroup(rollup), []);
+
+	// An agent row inside the group modal opens the per-agent modal ON TOP,
+	// rather than replacing it - the group stays behind so Escape walks back to
+	// the breakdown the user came from instead of dumping them on the grid.
+	const handleSelectGroupMember = useCallback((session: Session) => setDetailSession(session), []);
 
 	// Reset time range to default when modal opens
 	useEffect(() => {
@@ -153,6 +210,22 @@ export function UsageDashboardModal({
 		() => sessions.some((session) => !!session.parentSessionId),
 		[sessions]
 	);
+	// Footer line for the tabs this modal can describe from `data` alone. Tabs
+	// backed by a panel that fetches for itself (Cue, Auto Run, Shortcuts, the
+	// quota panels) and the two card grids that own their own filter state
+	// publish their own line instead, which wins over this one.
+	// The footer is presentational: it takes finished strings rather than the
+	// range enum and a byte count, so it stays the one component both the split
+	// modal and its own test can drive.
+	const footerRangeLabel =
+		data && data.totalQueries > 0
+			? `Showing ${TIME_RANGE_OPTIONS.find((option) => option.value === timeRange)?.label.toLowerCase()} data`
+			: 'No data for selected time range';
+	const footerDatabaseSizeLabel = databaseSize !== null ? formatDatabaseSize(databaseSize) : null;
+	const footerSummary = useMemo(
+		() => buildModalOwnedFooterSummary(viewMode, { data, sessions }),
+		[viewMode, data, sessions]
+	);
 	const currentSections = useMemo(
 		() => getSectionsForViewMode(viewMode, { hasWorktreeAnalytics }),
 		[viewMode, hasWorktreeAnalytics]
@@ -186,14 +259,18 @@ export function UsageDashboardModal({
 				<DashboardSkeleton
 					theme={theme}
 					viewMode={
-						viewMode === 'cue' ||
-						viewMode === 'agent-overview' ||
-						viewMode === 'shortcuts' ||
-						viewMode === 'tokens' ||
-						viewMode === 'anthropic-usage' ||
-						viewMode === 'codex-usage'
-							? 'overview'
-							: viewMode
+						// Groups is a card grid like Agents, so it borrows that
+						// skeleton; the rest have no skeleton of their own.
+						viewMode === 'groups'
+							? 'agents'
+							: viewMode === 'cue' ||
+								  viewMode === 'agent-overview' ||
+								  viewMode === 'shortcuts' ||
+								  viewMode === 'tokens' ||
+								  viewMode === 'anthropic-usage' ||
+								  viewMode === 'codex-usage'
+								? 'overview'
+								: viewMode
 					}
 					chartGridCols={layout.chartGridCols}
 					summaryCardsCols={layout.summaryCardsCols}
@@ -250,6 +327,7 @@ export function UsageDashboardModal({
 					focusedSection={focusedSection}
 					setSectionRef={setSectionRef}
 					handleSectionKeyDown={handleSectionKeyDown}
+					onShowAccountAgents={handleShowAccountAgents}
 				/>
 			);
 		}
@@ -273,6 +351,8 @@ export function UsageDashboardModal({
 						sessions={sessions}
 						layout={layout}
 						cueSourceTotals={cueSourceTotals}
+						delegationTotals={delegationTotals}
+						lifetimeDelegation={lifetimeDelegation}
 						focusedSection={focusedSection}
 						setSectionRef={setSectionRef}
 						handleSectionKeyDown={handleSectionKeyDown}
@@ -289,6 +369,24 @@ export function UsageDashboardModal({
 						setSectionRef={setSectionRef}
 						handleSectionKeyDown={handleSectionKeyDown}
 						onShowAgentDetails={setDetailSession}
+						groups={groups}
+						profileFilter={agentProfileFilter}
+						onProfileFilterChange={setAgentProfileFilter}
+					/>
+				);
+			case 'groups':
+				return (
+					<GroupsView
+						key={viewMode}
+						data={data}
+						theme={theme}
+						sessions={sessions}
+						groups={groups}
+						activeGroupId={detailGroup?.groupId ?? null}
+						onSelectGroup={handleSelectGroup}
+						focusedSection={focusedSection}
+						setSectionRef={setSectionRef}
+						handleSectionKeyDown={handleSectionKeyDown}
 					/>
 				);
 			case 'agent-overview':
@@ -313,6 +411,7 @@ export function UsageDashboardModal({
 						timeRange={timeRange}
 						theme={theme}
 						colorBlindMode={colorBlindMode}
+						delegationByDay={delegationByDay}
 						focusedSection={focusedSection}
 						setSectionRef={setSectionRef}
 						handleSectionKeyDown={handleSectionKeyDown}
@@ -408,19 +507,35 @@ export function UsageDashboardModal({
 				{/* Main Content */}
 				<div
 					ref={contentRef}
-					className="flex-1 overflow-y-auto scrollbar-thin p-6"
+					// 48px of side padding is a seventh of a phone screen, spent on
+					// nothing. The tab strip keeps `px-6` because its first chip
+					// wants the indent; the charts and cards do not.
+					className={`flex-1 overflow-y-auto scrollbar-thin ${phone ? 'px-3 py-4' : 'p-6'}`}
 					style={{ backgroundColor: theme.colors.bgMain }}
+					data-testid="usage-dashboard-scroller"
 				>
 					<TokenSeriesProvider timeRange={timeRange}>{renderTabContent()}</TokenSeriesProvider>
 				</div>
 
 				<UsageDashboardFooter
 					theme={theme}
-					data={data}
-					timeRange={timeRange}
-					databaseSize={databaseSize}
+					viewMode={viewMode}
+					rangeLabel={footerRangeLabel}
+					fallbackSummary={footerSummary}
+					databaseSizeLabel={footerDatabaseSizeLabel}
 				/>
 			</div>
+
+			{detailGroup && data && (
+				<GroupDetailModal
+					rollup={detailGroup}
+					sessions={sessions}
+					data={data}
+					theme={theme}
+					onClose={() => setDetailGroup(null)}
+					onSelectAgent={handleSelectGroupMember}
+				/>
+			)}
 
 			{detailSession && data && (
 				<AgentDetailModal
@@ -429,6 +544,7 @@ export function UsageDashboardModal({
 					theme={theme}
 					allSessions={sessions}
 					onClose={() => setDetailSession(null)}
+					onCloseDashboard={onClose}
 				/>
 			)}
 		</div>

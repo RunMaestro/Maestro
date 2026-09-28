@@ -26,6 +26,7 @@ import {
 	writeTtsrConfigFile,
 	writeTtsrRuleFile,
 } from '../../ttsr';
+import { createTtsrAstMatcher } from '../../ttsr/ttsr-ast';
 import { parseTtsrRule } from '../../ttsr/config/ttsr-config-normalizer';
 import { ttsrRuleFilePath } from '../../../shared/maestro-paths';
 import type {
@@ -66,6 +67,7 @@ function toSerializable(rule: TtsrRule & { compiledCondition?: RegExp[] }): Ttsr
 }
 
 export function registerTtsrHandlers(deps: TtsrHandlerDependencies = {}): void {
+	const astMatcher = createTtsrAstMatcher();
 	// Every rule in a project, plus the load warnings. The warnings are the only
 	// feedback a user gets for a rule that parsed but can never fire (bad regex,
 	// an agent that cannot evaluate it), so they are surfaced, not swallowed.
@@ -82,10 +84,22 @@ export function registerTtsrHandlers(deps: TtsrHandlerDependencies = {}): void {
 					...result.rules.map((rule) => ({ ...toSerializable(rule), disabled: false })),
 					...result.disabledRules.map((rule) => ({ ...toSerializable(rule), disabled: true })),
 				];
+				// TypeScript has a bundled grammar, so a failed capability probe here
+				// means the native engine is unavailable. Reuse the panel's warnings
+				// transport so a packaged binary failure is visible beside the rules.
+				const warnings = [...result.warnings];
+				if (
+					listed.some((rule) => rule.astCondition.length > 0) &&
+					!astMatcher.supports('rule.ts')
+				) {
+					warnings.push(
+						'Structural matching is unavailable in this installation. astCondition patterns cannot match; regex conditions still work. Reinstall Maestro to restore the native matcher.'
+					);
+				}
 				return {
 					rules: listed.sort((a, b) => a.path.localeCompare(b.path)),
 					settings: result.settings,
-					warnings: result.warnings,
+					warnings,
 					errors: result.errors,
 					// `missing` just means the project has no rules yet, which the panel
 					// renders as an empty state rather than an error.

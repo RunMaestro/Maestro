@@ -24,6 +24,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { SendToAgentModal } from '../../../renderer/components/SendToAgentModal';
 import { LayerStackProvider } from '../../../renderer/contexts/LayerStackContext';
+import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import type { Theme, Session, AgentConfig, ToolType } from '../../../renderer/types';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 
@@ -617,6 +618,89 @@ describe('SendToAgentModal', () => {
 			// There should be at least one token display (source tokens)
 			const tokenElements = screen.getAllByText(/tokens/i);
 			expect(tokenElements.length).toBeGreaterThan(0);
+		});
+	});
+
+	describe('busy target', () => {
+		const renderModal = () =>
+			renderWithLayerStack(
+				<SendToAgentModal
+					theme={testTheme}
+					isOpen={true}
+					sourceSession={mockSession}
+					sourceTabId="tab-1"
+					allSessions={mockSessions}
+					onClose={mockOnClose}
+					onSend={mockOnSend}
+				/>
+			);
+
+		const selectBusySession = () => {
+			fireEvent.click(screen.getByText('Busy Session').closest('button')!);
+		};
+
+		afterEach(() => {
+			useSettingsStore.setState({ forcedParallelExecution: false });
+		});
+
+		it('queues to a busy agent and hides Force Send when Forced Parallel is off', async () => {
+			useSettingsStore.setState({ forcedParallelExecution: false });
+			renderModal();
+			selectBusySession();
+
+			expect(screen.queryByRole('button', { name: /force send to agent/i })).toBeNull();
+			expect(screen.getByText(/Turn on Forced Parallel Execution/)).toBeInTheDocument();
+
+			fireEvent.click(screen.getByRole('button', { name: /queue for agent/i }));
+			await waitFor(() => {
+				expect(mockOnSend).toHaveBeenCalledWith('session-busy', {
+					groomContext: true,
+					targetSessionId: 'session-busy',
+				});
+			});
+		});
+
+		it('offers Force Send to Agent for a busy agent when Forced Parallel is on', async () => {
+			useSettingsStore.setState({ forcedParallelExecution: true });
+			renderModal();
+			selectBusySession();
+
+			fireEvent.click(screen.getByRole('button', { name: /force send to agent/i }));
+			await waitFor(() => {
+				expect(mockOnSend).toHaveBeenCalledWith('session-busy', {
+					groomContext: true,
+					targetSessionId: 'session-busy',
+					forceSend: true,
+				});
+				expect(mockOnClose).toHaveBeenCalledTimes(1);
+			});
+		});
+
+		it('never offers Force Send for an idle agent', () => {
+			useSettingsStore.setState({ forcedParallelExecution: true });
+			renderModal();
+			fireEvent.click(screen.getByText('Codex Session').closest('button')!);
+
+			expect(screen.queryByRole('button', { name: /force send to agent/i })).toBeNull();
+			expect(screen.getByRole('button', { name: /send to session/i })).toBeInTheDocument();
+		});
+
+		it('force sends on the Forced Parallel Send chord', async () => {
+			useSettingsStore.setState({ forcedParallelExecution: true });
+			renderModal();
+			selectBusySession();
+
+			fireEvent.keyDown(screen.getByRole('dialog'), {
+				key: 'Enter',
+				metaKey: true,
+				shiftKey: true,
+			});
+			await waitFor(() => {
+				expect(mockOnSend).toHaveBeenCalledWith(
+					'session-busy',
+					expect.objectContaining({ forceSend: true })
+				);
+			});
 		});
 	});
 

@@ -1,7 +1,31 @@
 import { ipcRenderer } from 'electron';
+import type { AutoRunBroadcastState } from '../../../shared/autoRunBroadcast';
 
 export function createAutoRunControlRemoteApi() {
 	return {
+		/**
+		 * Subscribe to Auto Run state belonging to a DIFFERENT Maestro client.
+		 *
+		 * Two producers feed this one channel. In the web-desktop (browser) build
+		 * the WebSocket shim maps the server's `autorun_state` packet onto it. In
+		 * the Electron desktop app main sends it directly, for a run owned by a
+		 * browser tab - the desktop is not a WebSocket client, so without that
+		 * forward a web-started run was invisible here for its whole duration
+		 * (issue #1519).
+		 *
+		 * A window is never sent its own run back, so the owner keeps its
+		 * controls; see `forwardAutoRunStateToDesktopWindows` in
+		 * `main/ipc/handlers/web.ts`.
+		 */
+		onRemoteAutoRunStateMirror: (
+			callback: (sessionId: string, state: AutoRunBroadcastState | null) => void
+		): (() => void) => {
+			const handler = (_: unknown, sessionId: string, state: AutoRunBroadcastState | null) =>
+				callback(sessionId, state);
+			ipcRenderer.on('remote:autoRunStateMirror', handler);
+			return () => ipcRenderer.removeListener('remote:autoRunStateMirror', handler);
+		},
+
 		/**
 		 * Subscribe to remote stop auto-run from web interface (fire-and-forget)
 		 */

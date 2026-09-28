@@ -35,6 +35,13 @@ export const TTSR_RULES_DIR = '.maestro/rules';
  */
 export const DIAGRAMS_DIR = '.maestro/diagrams';
 
+/**
+ * Status file a running playbook / Auto Run can write to surface live progress
+ * (feature, phase, tests, summary) into the Maestro Auto Run panel. The main
+ * process watches this path; see the `PlaybookStatus` contract in shared/types.
+ */
+export const STATUS_PATH = '.maestro/STATUS.json';
+
 // ── Legacy paths (backwards compatibility, read-only fallback) ───────────────
 
 /** @deprecated Use PLAYBOOKS_DIR */

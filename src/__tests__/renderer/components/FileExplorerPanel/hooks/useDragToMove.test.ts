@@ -303,6 +303,67 @@ describe('useDragToMove', () => {
 		expect(mockMaestro.fs.rename).toHaveBeenCalledTimes(2);
 	});
 
+	// `internalDragActive` drives the mid-drag footer as a whole (the drag-out
+	// hint rides on it, and that must show for EVERY in-tree drag), while
+	// `showRootReceptacle` gates only the drop target. Keeping them separate is
+	// what lets a drag of root-level items still advertise the drag-out gesture.
+	describe('mid-drag footer flags', () => {
+		it('marks the drag active even when the root receptacle is suppressed', async () => {
+			const { result } = renderHook(() => useDragToMove(defaultArgs));
+			act(() => {
+				result.current.handleInternalDragStart(false);
+			});
+			// Both flags flip on the next tick, never synchronously inside dragstart.
+			await act(async () => {
+				await new Promise((resolve) => setTimeout(resolve, 0));
+			});
+			expect(result.current.internalDragActive).toBe(true);
+			expect(result.current.showRootReceptacle).toBe(false);
+		});
+
+		it('shows the root receptacle when the drag has somewhere to land', async () => {
+			const { result } = renderHook(() => useDragToMove(defaultArgs));
+			act(() => {
+				result.current.handleInternalDragStart(true);
+			});
+			await act(async () => {
+				await new Promise((resolve) => setTimeout(resolve, 0));
+			});
+			expect(result.current.internalDragActive).toBe(true);
+			expect(result.current.showRootReceptacle).toBe(true);
+		});
+
+		it('leaves both flags down when the drag ends before the deferred tick', async () => {
+			const { result } = renderHook(() => useDragToMove(defaultArgs));
+			// A flick or instant cancel: dragend lands first, so the footer must
+			// never mount afterwards.
+			act(() => {
+				result.current.handleInternalDragStart(true);
+				result.current.handleInternalDragEnd();
+			});
+			await act(async () => {
+				await new Promise((resolve) => setTimeout(resolve, 0));
+			});
+			expect(result.current.internalDragActive).toBe(false);
+			expect(result.current.showRootReceptacle).toBe(false);
+		});
+
+		it('clears both flags on dragend', async () => {
+			const { result } = renderHook(() => useDragToMove(defaultArgs));
+			act(() => {
+				result.current.handleInternalDragStart(true);
+			});
+			await act(async () => {
+				await new Promise((resolve) => setTimeout(resolve, 0));
+			});
+			act(() => {
+				result.current.handleInternalDragEnd();
+			});
+			expect(result.current.internalDragActive).toBe(false);
+			expect(result.current.showRootReceptacle).toBe(false);
+		});
+	});
+
 	describe('external OS file import', () => {
 		it('copies a dropped OS file into the target folder', async () => {
 			const { result } = renderHook(() => useDragToMove(defaultArgs));

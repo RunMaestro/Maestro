@@ -90,7 +90,6 @@ function Host(props: {
 		markdownEditMode: false,
 		editContent: '',
 		fileContent: props.fileContent ?? 'Hello world hello again hello upper',
-		accentColor: '#ff0000',
 		searchMode: 'text',
 		searchAdapter: props.adapter,
 	});
@@ -395,7 +394,6 @@ describe('useFilePreviewSearch - gutter exclusion (B5)', () => {
 				markdownEditMode: false,
 				editContent: '',
 				fileContent: '42 in body\nline 42',
-				accentColor: '#ff0000',
 				searchMode: 'text',
 			});
 			props.expose({
@@ -464,7 +462,6 @@ describe('useFilePreviewSearch - search kind (text / regex / line)', () => {
 			markdownEditMode: false,
 			editContent: '',
 			fileContent: 'axb a.b\nline three',
-			accentColor: '#ff0000',
 			searchMode: 'text',
 			supportsLineSearch: props.supportsLineSearch,
 			searchAdapter: props.adapter,
@@ -580,5 +577,149 @@ describe('useFilePreviewSearch - search kind (text / regex / line)', () => {
 			handle.setSearchQuery('a.b');
 		});
 		expect(findHits).toHaveBeenLastCalledWith('a.b', { regex: false });
+	});
+});
+
+/**
+ * Regression: the syntax-highlighted code tier used to wrap every match in an
+ * injected `<mark>` via `replaceChild`, mutating DOM that React owns. When the
+ * highlighter later re-rendered a token that now sat under one of those
+ * wrappers, Chromium threw
+ * `NotFoundError: Failed to execute 'removeChild' on 'Node'` and the app-level
+ * error boundary took the whole window down. Reported live from a file preview.
+ *
+ * The tier now paints through the CSS Custom Highlight API instead, so these
+ * tests assert the DOM is left byte-identical and the highlight registry does
+ * the work.
+ */
+describe('useFilePreviewSearch - code tier does not mutate React-owned DOM', () => {
+	interface CodeHandle {
+		setSearchQuery: (q: string) => void;
+		goToNextMatch: () => void;
+		getTotalMatches: () => number;
+		getCurrentMatchIndex: () => number;
+	}
+
+	function CodeHost(props: { expose: (h: CodeHandle) => void }) {
+		const containerRef = useRef<HTMLDivElement>(null);
+		const codeRef = useRef<HTMLDivElement>(null);
+		const contentRef = useRef<HTMLDivElement>(null);
+		const editorRef = useRef<MarkdownEditorHandle>(null);
+
+		const hook = useFilePreviewSearch({
+			codeContainerRef: codeRef,
+			markdownContainerRef: containerRef,
+			contentRef,
+			editorRef,
+			isMarkdown: false,
+			isReadableText: false,
+			isImage: false,
+			isCsv: false,
+			isJsonl: false,
+			isJson: false,
+			isEditableText: true,
+			markdownEditMode: false,
+			editContent: '',
+			fileContent: 'const alpha = 1;\nconst beta = alpha + alpha;',
+			searchMode: 'text',
+		});
+
+		props.expose({
+			setSearchQuery: hook.setSearchQuery,
+			goToNextMatch: hook.goToNextMatch,
+			getTotalMatches: () => hook.totalMatches,
+			getCurrentMatchIndex: () => hook.currentMatchIndex,
+		});
+
+		return (
+			<div>
+				<div ref={contentRef} style={{ height: 200, overflow: 'auto' }}>
+					{/* Mimics the highlighter's nested token tree. */}
+					<div ref={codeRef}>
+						<pre>
+							<code>
+								<span>const alpha = 1;</span>
+								<span>const beta = alpha + alpha;</span>
+							</code>
+						</pre>
+					</div>
+				</div>
+				<div ref={containerRef} />
+			</div>
+		);
+	}
+
+	function renderCodeHost() {
+		const ref: { current: CodeHandle | undefined } = { current: undefined };
+		const utils = render(
+			<CodeHost
+				expose={(h) => {
+					ref.current = h;
+				}}
+			/>
+		);
+		if (!ref.current) throw new Error('CodeHost failed to expose handle');
+		// Indirect through the holder, same reason as `renderHost` above: a
+		// captured handle goes stale the moment setState re-renders.
+		const handle: CodeHandle = {
+			setSearchQuery: (q) => ref.current!.setSearchQuery(q),
+			goToNextMatch: () => ref.current!.goToNextMatch(),
+			getTotalMatches: () => ref.current!.getTotalMatches(),
+			getCurrentMatchIndex: () => ref.current!.getCurrentMatchIndex(),
+		};
+		return { ...utils, handle };
+	}
+
+	it('leaves the code container untouched while highlighting matches', async () => {
+		const { handle, container } = renderCodeHost();
+		const codeEl = container.querySelector('pre') as HTMLElement;
+		const before = codeEl.innerHTML;
+
+		await act(async () => {
+			handle.setSearchQuery('alpha');
+		});
+
+		// The defect: any `<mark>` here means the crash path is back.
+		expect(codeEl.querySelectorAll('mark').length).toBe(0);
+		expect(codeEl.innerHTML).toBe(before);
+		// And the search still works: 3 occurrences of "alpha".
+		expect(handle.getTotalMatches()).toBe(3);
+		expect(fakeHighlightStore.get('search-results')?.ranges).toHaveLength(3);
+	});
+
+	it('swaps the current-match highlight without touching the DOM', async () => {
+		const { handle, container } = renderCodeHost();
+		const codeEl = container.querySelector('pre') as HTMLElement;
+
+		await act(async () => {
+			handle.setSearchQuery('alpha');
+		});
+		const afterQuery = codeEl.innerHTML;
+		const first = fakeHighlightStore.get('search-current')?.ranges[0];
+
+		await act(async () => {
+			handle.goToNextMatch();
+		});
+
+		expect(handle.getCurrentMatchIndex()).toBe(1);
+		expect(fakeHighlightStore.get('search-current')?.ranges[0]).not.toBe(first);
+		expect(codeEl.querySelectorAll('mark').length).toBe(0);
+		expect(codeEl.innerHTML).toBe(afterQuery);
+	});
+
+	it('clears its highlights when the query is emptied', async () => {
+		const { handle } = renderCodeHost();
+
+		await act(async () => {
+			handle.setSearchQuery('alpha');
+		});
+		expect(fakeHighlightStore.has('search-results')).toBe(true);
+
+		await act(async () => {
+			handle.setSearchQuery('');
+		});
+		expect(fakeHighlightStore.has('search-results')).toBe(false);
+		expect(fakeHighlightStore.has('search-current')).toBe(false);
+		expect(handle.getTotalMatches()).toBe(0);
 	});
 });

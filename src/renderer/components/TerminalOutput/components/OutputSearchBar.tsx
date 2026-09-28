@@ -39,6 +39,7 @@ export function OutputSearchBar({
 				<div className="relative flex-1">
 					<input
 						type="text"
+						data-output-search-input
 						value={outputSearchQuery}
 						onChange={(e) => setOutputSearchQuery(e.target.value)}
 						onKeyDown={(e) => {

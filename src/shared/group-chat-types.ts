@@ -166,6 +166,68 @@ export function getMentionNameForContext(name: string, peerNames: readonly strin
 	return normalizeMentionName(name);
 }
 
+/**
+ * The literal a group row inserts when it is accepted in an `@` picker: every
+ * member's own `@name` token, space-separated, with a trailing space.
+ *
+ * A group is shorthand for the agents inside it, never a message target of its
+ * own, so accepting one EXPANDS it instead of leaving a `@group` token in the
+ * composer. That is what keeps "is this a group or an agent?" from ever
+ * mattering downstream - the sent text only ever names agents. Group Chat, the
+ * Prompt Composer, and the standard AI chat picker all insert through here so
+ * the three cannot drift on the expansion.
+ *
+ * @param memberNames - Names of the group's mentionable members.
+ * @param peerNames - Every mentionable name in the same context, so each member
+ *   gets the alias that resolves uniquely back to it.
+ */
+export function formatGroupMentionExpansion(
+	memberNames: readonly string[],
+	peerNames: readonly string[]
+): string {
+	if (memberNames.length === 0) return '';
+	return memberNames.map((name) => `@${getMentionNameForContext(name, peerNames)}`).join(' ') + ' ';
+}
+
+/**
+ * Strips leading/trailing markdown formatting characters from a mention name.
+ * AI moderators often wrap mentions in bold/italic/code/strikethrough markdown
+ * (e.g. `**@name**`, `_@name_`, `` `@name` ``), which leaves formatting chars
+ * attached to the extracted name and breaks participant matching.
+ */
+export function stripMarkdownFormatting(name: string): string {
+	return cleanMentionName(name);
+}
+
+/**
+ * Extracts ALL @mentions from text (regardless of whether they're participants).
+ * Handles markdown-formatted mentions (e.g. **@name**, _@name_).
+ *
+ * The pattern captures characters after @ excluding whitespace, @, and the
+ * punctuation that typically follows a mention (:,;!?'"<>). Names with emojis,
+ * Unicode, dots, hyphens, underscores, and the bracket punctuation of legacy
+ * normalized display names survive: @RunMaestro.ai, @my-agent,
+ * @CIA-Agent-(Super-Cool), @日本語.
+ *
+ * @param text - The text to search for mentions
+ * @returns Array of unique names that were mentioned (without @ prefix)
+ */
+export function extractAllMentions(text: string): string[] {
+	const mentions: string[] = [];
+	const mentionPattern = /@([^\s@:,;!?'"<>]+)/g;
+	let match;
+
+	while ((match = mentionPattern.exec(text)) !== null) {
+		const name = stripMarkdownFormatting(match[1]);
+		if (!name) continue;
+		if (!mentions.includes(name)) {
+			mentions.push(name);
+		}
+	}
+
+	return mentions;
+}
+
 // ============================================================================
 // TYPE DEFINITIONS
 // ============================================================================
@@ -206,6 +268,8 @@ export interface ModeratorConfig {
 	customArgs?: string;
 	/** Custom environment variables */
 	customEnvVars?: Record<string, string>;
+	/** Env vars switched off in the editor: parked, never passed to the moderator. */
+	customEnvVarsDisabled?: Record<string, string>;
 	/** Custom model selection (e.g., 'ollama/qwen3:8b') */
 	customModel?: string;
 	/** SSH remote config for remote execution */
@@ -242,6 +306,27 @@ export interface GroupChat {
 	imagesDir: string;
 	draftMessage?: string;
 	archived?: boolean;
+	/**
+	 * When true (the default), the moderator only hands work to an agent whose
+	 * Maestro agent is idle, holding the handoff until it is rather than
+	 * starting a second process there. Undefined means enabled - read it through
+	 * {@link requiresIdleParticipants} rather than testing the field, so chats
+	 * created before this setting existed keep the safe behavior.
+	 */
+	requireIdleParticipants?: boolean;
+}
+
+/**
+ * Whether a group chat may only engage agents that are currently free.
+ *
+ * The default is ON and lives here rather than at each read site: the router,
+ * the create/edit modal, and the info overlay all have to agree, and a missing
+ * field must never read as "opted out".
+ */
+export function requiresIdleParticipants(
+	chat: { requireIdleParticipants?: boolean } | null | undefined
+): boolean {
+	return chat?.requireIdleParticipants !== false;
 }
 
 /**
@@ -262,9 +347,18 @@ export interface GroupChatMessage {
 export type GroupChatState = 'idle' | 'moderator-thinking' | 'agent-working';
 
 /**
+ * Name stamped on the conductor's own history entries. Shared so the main
+ * process writes exactly what the renderer colors and filters on.
+ */
+export const GROUP_CHAT_USER_NAME = 'You';
+
+/**
  * Type of history entry in a group chat
  */
-export type GroupChatHistoryEntryType = 'delegation' | 'response' | 'synthesis' | 'error';
+// 'user' is the conductor's own message into the room. It carries no cost or
+// duration, but without it the history reads as agent chatter with no visible
+// cause - the prompt that started each round is the anchor a reader needs.
+export type GroupChatHistoryEntryType = 'user' | 'delegation' | 'response' | 'synthesis' | 'error';
 
 /**
  * History entry for group chat activity tracking.
@@ -291,4 +385,53 @@ export interface GroupChatHistoryEntry {
 	cost?: number;
 	/** Full response text (optional, for detail view) */
 	fullResponse?: string;
+}
+
+/**
+ * One message waiting to be delivered to a group chat's moderator.
+ *
+ * Structurally a narrowed `QueuedItem` (the renderer type in
+ * `src/renderer/types/index.ts`), carrying only the fields a group chat send
+ * actually uses. It lives here rather than there because the QUEUE IS OWNED BY
+ * MAIN: the renderer copy was per-client, so a message queued on a phone was
+ * invisible to the desktop and died with the tab that held it. Main cannot
+ * import a renderer module, so the shape has to be shared.
+ *
+ * `failed` is set when a send attempt threw. The item is KEPT rather than
+ * dropped - a queue that silently discards what the user typed is the failure
+ * this whole change exists to end - and the chat is paused so the same failure
+ * is not retried on every subsequent idle.
+ */
+export interface GroupChatQueuedItem {
+	id: string;
+	timestamp: number;
+	text: string;
+	images?: string[];
+	readOnlyMode?: boolean;
+	failed?: boolean;
+	failureReason?: string;
+	/**
+	 * Handed to the moderator and not yet confirmed.
+	 *
+	 * Broadcast so clients can show it, and checked so remove and reorder refuse
+	 * to touch it: an item the moderator already has cannot be un-sent, and
+	 * letting it be deleted mid-flight is how the completion lands on whatever
+	 * item happened to be first instead.
+	 */
+	sending?: boolean;
+}
+
+/**
+ * A group chat's pending sends, as main holds and broadcasts them.
+ *
+ * `paused` is deliberately part of the persisted state rather than a runtime
+ * flag. It is set by Stop All (nobody presses that expecting the room to start
+ * itself again), by a failed send, and by main loading a non-empty queue at
+ * startup (launching the app must not spawn a moderator just to flush a queue
+ * from a previous session). Each of those must survive a restart, or the very
+ * next idle would undo the pause.
+ */
+export interface GroupChatQueueState {
+	items: GroupChatQueuedItem[];
+	paused: boolean;
 }

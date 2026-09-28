@@ -9,6 +9,13 @@ import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { ContextWarningSash } from '../../../renderer/components/ContextWarningSash';
+import {
+	AA_CONTRAST,
+	contrastRatio,
+	hexToRgb,
+	readableTextOn,
+	transparentize,
+} from '../../../shared/colorContrast';
 import type { Theme } from '../../../renderer/types';
 
 describe('ContextWarningSash', () => {
@@ -545,44 +552,95 @@ describe('ContextWarningSash', () => {
 		});
 	});
 
-	describe('light mode contrast', () => {
-		const lightTheme: Theme = {
+	describe('theme-derived severity colors', () => {
+		// A real light theme, not the dark fixture with mode flipped: the sash
+		// derives its wash from bgMain, so a light theme has to carry a light one.
+		const githubLight: Theme = {
 			...theme,
-			id: 'light-test',
-			name: 'Light Test',
+			id: 'github-light-test',
+			name: 'GitHub Light Test',
 			mode: 'light',
+			colors: {
+				...theme.colors,
+				bgMain: '#ffffff',
+				textMain: '#24292f',
+				accentForeground: '#ffffff',
+				warning: '#9a6700',
+				error: '#cf222e',
+			},
 		};
 
-		it('should use dark text colors in light mode for yellow warning', () => {
+		/** jsdom normalizes inline colors to `rgb(...)`, so expectations do too. */
+		const asRgb = (hex: string) => {
+			const rgb = hexToRgb(hex);
+			if (!rgb) throw new Error(`unparseable color: ${hex}`);
+			return `rgb(${rgb.r}, ${rgb.g}, ${rgb.b})`;
+		};
+
+		/** The wash the sash paints for a severity, mirroring the component. */
+		const severityBackground = (t: Theme, severity: 'warning' | 'error') =>
+			transparentize(t.colors[severity], t.colors.bgMain, t.mode === 'light' ? 0.12 : 0.15);
+
+		const renderAt = (t: Theme, usage: number) =>
 			render(
 				<ContextWarningSash
-					theme={lightTheme}
-					contextUsage={65}
+					theme={t}
+					contextUsage={usage}
 					yellowThreshold={60}
 					redThreshold={80}
 					enabled={true}
 					onSummarizeClick={mockOnSummarizeClick}
 				/>
 			);
-			const warningText = screen.getByText(/reaching/);
-			// yellow-800 (#854d0e) for light mode instead of yellow-300
-			expect(warningText).toHaveStyle({ color: '#854d0e' });
+
+		it.each([
+			['dark', theme],
+			['light', githubLight],
+		] as const)('keeps yellow warning text readable on a %s theme', (_mode, t) => {
+			renderAt(t, 65);
+			const background = severityBackground(t, 'warning');
+			const expectedText = readableTextOn(t.colors.warning, [background]);
+
+			expect(screen.getByText(/reaching/)).toHaveStyle({ color: expectedText });
+			expect(contrastRatio(expectedText, background)).toBeGreaterThanOrEqual(AA_CONTRAST);
 		});
 
-		it('should use dark text colors in light mode for red warning', () => {
-			render(
-				<ContextWarningSash
-					theme={lightTheme}
-					contextUsage={85}
-					yellowThreshold={60}
-					redThreshold={80}
-					enabled={true}
-					onSummarizeClick={mockOnSummarizeClick}
-				/>
+		it.each([
+			['dark', theme],
+			['light', githubLight],
+		] as const)('keeps red warning text readable on a %s theme', (_mode, t) => {
+			renderAt(t, 85);
+			const background = severityBackground(t, 'error');
+			const expectedText = readableTextOn(t.colors.error, [background]);
+
+			expect(screen.getByText(/consider compacting/)).toHaveStyle({ color: expectedText });
+			expect(contrastRatio(expectedText, background)).toBeGreaterThanOrEqual(AA_CONTRAST);
+		});
+
+		it('washes the sash with the theme error color rather than a fixed red', () => {
+			const teal: Theme = {
+				...theme,
+				id: 'teal-error',
+				colors: { ...theme.colors, error: '#00b3a4' },
+			};
+			const { container } = renderAt(teal, 85);
+			const sash = container.querySelector('.context-warning-sash') as HTMLElement;
+
+			expect(sash).toHaveStyle({ backgroundColor: severityBackground(teal, 'error') });
+			// jsdom does not reflect the `border` shorthand into computed style, so
+			// the border is asserted off the inline style the component wrote.
+			expect(sash.style.border).toBe(
+				`1px solid ${asRgb(transparentize('#00b3a4', teal.colors.bgMain, 0.5))}`
 			);
-			const warningText = screen.getByText(/consider compacting/);
-			// red-800 (#991b1b) for light mode instead of red-300
-			expect(warningText).toHaveStyle({ color: '#991b1b' });
+		});
+
+		it('paints the compact button with readable text on the severity fill', () => {
+			renderAt(theme, 85);
+			const button = screen.getByText('Compact & Continue');
+			const expectedText = readableTextOn(theme.colors.accentForeground, [theme.colors.error]);
+
+			expect(button).toHaveStyle({ backgroundColor: theme.colors.error, color: expectedText });
+			expect(contrastRatio(expectedText, theme.colors.error)).toBeGreaterThanOrEqual(AA_CONTRAST);
 		});
 	});
 });

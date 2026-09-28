@@ -3,6 +3,7 @@ import type { WebServerFactoryDependencies } from '../web-server-factory';
 import { logger } from '../../utils/logger';
 import { isWebContentsAvailable } from '../../utils/safe-send';
 import { requestFromRenderer } from './remoteRequest';
+import { broadcastBridgeEvent } from '../handlers/bridgeHandlers';
 import type { MovementStateSnapshot } from '../../../shared/movement-types';
 import type {
 	ConcertoDesignerAction,
@@ -102,6 +103,16 @@ export function registerCadenzaMovementCallbacks(
 				return false;
 			}
 			const routedParams = applyMovementHtmlPayload(params);
+			// Fan out to web-desktop browser clients as well. `requestFromRenderer`
+			// below talks to the Electron window directly rather than through
+			// `safeSend`, so it never reaches the bridge - without this line a
+			// browser client's Movement store stays empty and every chat chip
+			// pointing at a Movement reports it as unavailable (#1442). Sent with
+			// no response channel: a web client cannot answer the ad-hoc
+			// `remote:movement:response:<uuid>` channel (the bridge only routes
+			// `ipcMain.handle` channels), and the CLI's ack stays the desktop
+			// renderer's to give.
+			broadcastBridgeEvent('remote:movement', [routedParams]);
 			return requestFromRenderer<boolean>(mainWindow, 'remote:movement', {
 				fallback: false,
 				parse: (raw) => raw === true,

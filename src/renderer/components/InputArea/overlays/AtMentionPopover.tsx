@@ -10,6 +10,8 @@ import {
 } from '../../../hooks/input/useMentionPicker';
 import { getAgentIcon } from '../../../constants/agentIcons';
 import { getAgentDisplayName } from '../../../../shared/agentMetadata';
+import { useSshRemoteNames } from '../../../hooks/remote/useSshRemoteNames';
+import { SshRemotePill } from '../../ui/SshRemotePill';
 
 interface AtMentionPopoverProps {
 	isOpen: boolean;
@@ -33,6 +35,13 @@ interface AtMentionPopoverProps {
 	setStartIndex?: (index: number) => void;
 	setSelectedIndex?: (index: number) => void;
 	inputRef: React.RefObject<HTMLTextAreaElement>;
+	/**
+	 * Show the All/Files/Directories/Agents category bar. Defaults to true (InputArea's
+	 * behavior, unchanged). A caller that locks `category` to a single scope with no
+	 * `setCategory` (Group Chat, which has no file mentions) passes `false` so the bar
+	 * doesn't show three permanently-empty, non-functional tabs.
+	 */
+	showCategoryBar?: boolean;
 }
 
 /** Human labels for the category bar segments. */
@@ -84,7 +93,12 @@ export const AtMentionPopover = memo(function AtMentionPopover({
 	setStartIndex,
 	setSelectedIndex,
 	inputRef,
+	showCategoryBar = true,
 }: AtMentionPopoverProps) {
+	// Resolved before the early return (hooks can't sit behind a conditional).
+	// One shared, cached lookup labels every SSH row in the list.
+	const sshRemoteNames = useSshRemoteNames();
+
 	// The picker stays mounted while open (even with zero rows) so the category
 	// bar and empty-state row remain visible - it never silently collapses.
 	if (!isOpen || isTerminalMode) {
@@ -133,42 +147,44 @@ export const AtMentionPopover = memo(function AtMentionPopover({
 			style={{ backgroundColor: theme.colors.bgSidebar, borderColor: theme.colors.border }}
 		>
 			{/* Category bar: Left/Right cycle these; each shows its live count. */}
-			<div
-				className="flex items-stretch border-b text-xs"
-				style={{ borderColor: theme.colors.border }}
-			>
-				{MENTION_CATEGORY_CYCLE.map((cat) => {
-					const isActive = cat === category;
-					return (
-						<button
-							type="button"
-							key={cat}
-							onClick={() => selectCategory(cat)}
-							className="flex-1 px-2 py-1.5 flex items-center justify-center gap-1 transition-colors"
-							style={{
-								backgroundColor: isActive ? theme.colors.bgActivity : 'transparent',
-								color: isActive ? theme.colors.textMain : theme.colors.textDim,
-								fontWeight: isActive ? 600 : 400,
-								borderBottom: isActive
-									? `2px solid ${theme.colors.accent}`
-									: '2px solid transparent',
-							}}
-						>
-							<span>{CATEGORY_LABELS[cat]}</span>
-							<span
-								className="text-[10px] px-1 rounded"
+			{showCategoryBar && (
+				<div
+					className="flex items-stretch border-b text-xs"
+					style={{ borderColor: theme.colors.border }}
+				>
+					{MENTION_CATEGORY_CYCLE.map((cat) => {
+						const isActive = cat === category;
+						return (
+							<button
+								type="button"
+								key={cat}
+								onClick={() => selectCategory(cat)}
+								className="flex-1 px-2 py-1.5 flex items-center justify-center gap-1 transition-colors"
 								style={{
-									backgroundColor: isActive ? `${theme.colors.accent}30` : 'transparent',
-									color: isActive ? theme.colors.accent : theme.colors.textDim,
-									opacity: safeCounts[cat] === 0 ? 0.4 : 1,
+									backgroundColor: isActive ? theme.colors.bgActivity : 'transparent',
+									color: isActive ? theme.colors.textMain : theme.colors.textDim,
+									fontWeight: isActive ? 600 : 400,
+									borderBottom: isActive
+										? `2px solid ${theme.colors.accent}`
+										: '2px solid transparent',
 								}}
 							>
-								{safeCounts[cat]}
-							</span>
-						</button>
-					);
-				})}
-			</div>
+								<span>{CATEGORY_LABELS[cat]}</span>
+								<span
+									className="text-2xs px-1 rounded"
+									style={{
+										backgroundColor: isActive ? `${theme.colors.accent}30` : 'transparent',
+										color: isActive ? theme.colors.accent : theme.colors.textDim,
+										opacity: safeCounts[cat] === 0 ? 0.4 : 1,
+									}}
+								>
+									{safeCounts[cat]}
+								</span>
+							</button>
+						);
+					})}
+				</div>
+			)}
 
 			<div className="overflow-y-auto max-h-56 scrollbar-thin">
 				{items.length === 0 ? (
@@ -213,13 +229,31 @@ export const AtMentionPopover = memo(function AtMentionPopover({
 										</span>
 									)}
 									<span className="flex-1 truncate font-medium">{item.displayText}</span>
+									{/* Where the message will actually run. No pill means local -
+									    the same convention the Left Bar and header use. */}
+									{!isGroup && item.isSshRemote && (
+										<SshRemotePill
+											remoteName={
+												item.sshRemoteId ? sshRemoteNames.get(item.sshRemoteId) : undefined
+											}
+											className="max-w-[140px]"
+										/>
+									)}
 									{!isGroup && item.toolType && (
-										<span className="text-[10px] opacity-50 flex-shrink-0">
+										<span className="text-2xs opacity-50 flex-shrink-0">
 											{getAgentDisplayName(item.toolType)}
 										</span>
 									)}
+									{/* Groups expand into their members on accept, so say how many
+									    agents the row is about to insert. */}
+									{isGroup && (
+										<span className="text-2xs opacity-50 flex-shrink-0">
+											{item.memberSessionIds?.length ?? 0}{' '}
+											{item.memberSessionIds?.length === 1 ? 'agent' : 'agents'}
+										</span>
+									)}
 									<span
-										className="text-[9px] px-1 py-0.5 rounded flex-shrink-0 uppercase tracking-wide"
+										className="text-3xs px-1 py-0.5 rounded flex-shrink-0 uppercase tracking-wide"
 										style={{
 											backgroundColor: isGroup
 												? `${theme.colors.accent}30`
@@ -257,7 +291,7 @@ export const AtMentionPopover = memo(function AtMentionPopover({
 									<span className="flex-1 truncate">{item.fullPath}</span>
 									{item.source === 'autorun' && (
 										<span
-											className="text-[9px] px-1 py-0.5 rounded flex-shrink-0"
+											className="text-3xs px-1 py-0.5 rounded flex-shrink-0"
 											style={{
 												backgroundColor: `${theme.colors.accent}30`,
 												color: theme.colors.accent,
@@ -266,7 +300,7 @@ export const AtMentionPopover = memo(function AtMentionPopover({
 											Auto Run
 										</span>
 									)}
-									<span className="text-[10px] opacity-40 flex-shrink-0">
+									<span className="text-2xs opacity-40 flex-shrink-0">
 										{item.kind === 'directory' ? 'folder' : 'file'}
 									</span>
 								</button>

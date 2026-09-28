@@ -43,8 +43,11 @@ export {
 	getExpandedEnv,
 	checkCustomPath,
 	probeWindowsPaths,
+	probeWindowsPathsAll,
 	probeUnixPaths,
+	probeUnixPathsAll,
 	checkBinaryExists,
+	findAllBinaryPaths,
 } from './path-prober';
 
 // ============ OpenCode Config ============
@@ -58,6 +61,15 @@ export {
 	extractModelsFromConfig,
 	discoverModelsFromLocalConfigs,
 } from './opencode-config';
+
+// ============ Codex Config ============
+export {
+	type CodexMarkdownDoc,
+	getCodexHome,
+	getCodexSkillDirs,
+	getCodexPromptDirs,
+	parseCodexMarkdownDoc,
+} from './codex-config';
 
 // ============ Session Storage ============
 export {

@@ -54,7 +54,7 @@ Source directories:
 - `thinking-chunk` - partial streaming text from agent reasoning
 - `tool-execution` - tool use events (OpenCode, Codex)
 - `slash-commands` - available slash commands from agent init
-- `query-complete` - batch query finished (for stats tracking)
+- `query-complete` - batch query finished (flushes buffered data and thinking text, WakaTime heartbeat)
 
 ### Spawning Strategy: PTY vs child_process
 
@@ -132,7 +132,7 @@ Also handles:
 - Runs error detection on exit code + stderr/stdout buffers
 - SSH error detection on combined output
 - Cleans up temp image files
-- Emits `query-complete` for stats tracking
+- Emits `query-complete` (buffer flushes, WakaTime)
 
 ### Runner Classes
 
@@ -181,7 +181,6 @@ All listeners receive a `ProcessListenerDependencies` object containing:
 - `groupChatEmitters`, `groupChatRouter`, `groupChatStorage` - group chat integration
 - `sessionRecovery`, `outputBuffer`, `outputParser` - support utilities
 - `usageAggregator` - token counting
-- `getStatsDB` - usage database
 - `patterns` - compiled regex patterns for session ID parsing
 
 ### Listener Modules
@@ -202,6 +201,13 @@ All listeners receive a `ProcessListenerDependencies` object containing:
 - Web broadcast: extracts base session ID, generates message ID, broadcasts `session_output` to subscribed clients
 - Skips PTY terminal output and batch/synopsis output for web broadcast
 
+**group-chat-liveness-listener.ts** - Proof that a group chat turn is still working:
+
+- Subscribes to `AGENT_LIVENESS_EVENTS` (`src/main/utils/agent-liveness.ts`) plus `raw-stdout`
+- Filters on the `group-chat-` session prefix, then calls `noteGroupChatActivity(sessionId)`, which re-arms the router's per-turn silence budget (`createIdleWatchdog`)
+- Exists so `IProcessManager` stays a spawn/write/kill interface: the router never observes output directly, and widening it would put a second output path beside the buffering one in `data-listener.ts`
+- Miss an event here and the budget silently degrades into a wall-clock deadline that kills working agents
+
 **usage-listener.ts** - Token/cost statistics:
 
 - Group chat participants: calculates context usage percentage, updates participant storage
@@ -220,11 +226,7 @@ All listeners receive a `ProcessListenerDependencies` object containing:
 - Logs error details (type, message, recoverability)
 - Forwards via `safeSend('agent:error', ...)`
 
-**stats-listener.ts** - Query completion tracking:
-
-- Listens to `query-complete` events from batch mode processes
-- Inserts query events into StatsDB with retry logic (3 attempts, exponential backoff)
-- Broadcasts `stats:updated` to renderer for dashboard refresh
+**Query stats** are recorded by the renderer through `stats:record-query`, which carries the turn's tokens and cost. No main-process listener writes rows from `query-complete`: the former `stats-listener.ts` did, and every Auto Run turn landed twice, once without cost.
 
 **exit-listener.ts** - Process exit handling (most complex):
 
@@ -256,7 +258,6 @@ Process Listeners
     |
     +---> WebServer.broadcastToSessionClients() ---> WebSocket ---> Mobile/Web
     |
-    +---> StatsDB (query-complete only)
     |
     +---> WakaTimeManager (heartbeats)
     |

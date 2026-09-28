@@ -1,9 +1,20 @@
 // Refresh files command - refresh the file tree in the Maestro desktop app
 
-import { withMaestroClient, resolveTargetSessionId } from '../services/maestro-client';
+import { resolveTargetSessionId } from '../services/maestro-client';
+import { refreshFileTreeFor } from '../services/file-tree-refresh';
 
 interface RefreshFilesOptions {
 	agent?: string;
+	/**
+	 * Accepted and intentionally ignored: this verb is already quiet. It renders
+	 * no notice and moves no selection - the Files panel it refreshes is only
+	 * drawn for the agent already on screen - so there is nothing for the flag to
+	 * suppress. It exists because the guidance is "pass `--background` unless the
+	 * user asked to be taken there", and commander rejects an unknown option, so a
+	 * verb that refused the flag would turn that habit into a failed command. See
+	 * `ALREADY_QUIET_VERBS` in `shared/focusPlacement.ts`.
+	 */
+	background?: boolean;
 	json?: boolean;
 }
 
@@ -11,12 +22,7 @@ export async function refreshFiles(options: RefreshFilesOptions): Promise<void> 
 	const sessionId = resolveTargetSessionId(options.agent);
 
 	try {
-		const result = await withMaestroClient(async (client) => {
-			return client.sendCommand<{ type: string; success: boolean; error?: string }>(
-				{ type: 'refresh_file_tree', sessionId },
-				'refresh_file_tree_result'
-			);
-		});
+		const result = await refreshFileTreeFor(sessionId);
 
 		if (result.success) {
 			if (options.json) console.log(JSON.stringify({ success: true, sessionId }));

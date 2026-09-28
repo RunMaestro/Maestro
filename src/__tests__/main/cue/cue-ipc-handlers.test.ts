@@ -62,6 +62,10 @@ vi.mock('../../../main/cue/pipeline-layout-store', () => ({
 	loadPipelineLayout: vi.fn(),
 }));
 
+vi.mock('../../../main/cue/cue-pipeline-rename', () => ({
+	renamePipelineOnDisk: vi.fn(),
+}));
+
 vi.mock('../../../main/cue/cue-types', () => ({
 	CUE_YAML_FILENAME: 'maestro-cue.yaml', // legacy name kept in cue-types for compat
 }));
@@ -79,6 +83,7 @@ import {
 	removeEmptyMaestroDir,
 } from '../../../main/cue/config/cue-config-repository';
 import { savePipelineLayout, loadPipelineLayout } from '../../../main/cue/pipeline-layout-store';
+import { renamePipelineOnDisk } from '../../../main/cue/cue-pipeline-rename';
 import * as yaml from 'js-yaml';
 
 // Create a mock CueEngine
@@ -161,6 +166,7 @@ describe('Cue IPC Handlers', () => {
 				'cue:writeYaml',
 				'cue:deleteYaml',
 				'cue:validateYaml',
+				'cue:renamePipeline',
 				'cue:savePipelineLayout',
 				'cue:loadPipelineLayout',
 			];
@@ -735,6 +741,75 @@ describe('Cue IPC Handlers', () => {
 			const handler = registerAndGetHandler('cue:savePipelineLayout');
 			await handler(null, { layout });
 			expect(savePipelineLayout).toHaveBeenCalledWith(layout);
+		});
+	});
+
+	describe('cue:renamePipeline', () => {
+		const okResult = {
+			renamed: true,
+			subscriptionsUpdated: 2,
+			filesWritten: ['/a/.maestro/cue.yaml'],
+			warnings: [],
+		};
+
+		it('enumerates the roots itself rather than trusting the caller', async () => {
+			// The invariant that matters: a cross-agent pipeline is physically N
+			// files at N roots, and the engine is the only side that knows the
+			// whole set. A handler that renamed only a caller-supplied root would
+			// leave half the pipeline under the old name.
+			mockEngine.getStatus.mockReturnValue([
+				{ projectRoot: '/a' },
+				{ projectRoot: '/b' },
+				{ projectRoot: '/c' },
+			]);
+			vi.mocked(renamePipelineOnDisk).mockReturnValue(okResult);
+
+			const handler = registerAndGetHandler('cue:renamePipeline');
+			await handler(null, { oldName: 'Old', newName: 'New' });
+
+			expect(renamePipelineOnDisk).toHaveBeenCalledWith(['/a', '/b', '/c'], 'Old', 'New');
+		});
+
+		it('drops a session with no usable project root', async () => {
+			// A session can be registered before its root resolves. Passing '' or
+			// undefined down would make the rename resolve a config path relative
+			// to the process cwd.
+			mockEngine.getStatus.mockReturnValue([
+				{ projectRoot: '/a' },
+				{ projectRoot: '' },
+				{ projectRoot: undefined },
+				{},
+			]);
+			vi.mocked(renamePipelineOnDisk).mockReturnValue(okResult);
+
+			const handler = registerAndGetHandler('cue:renamePipeline');
+			await handler(null, { oldName: 'Old', newName: 'New' });
+
+			expect(renamePipelineOnDisk).toHaveBeenCalledWith(['/a'], 'Old', 'New');
+		});
+
+		it('returns the result unchanged, including a refusal', async () => {
+			// The renderer decides how to present a refusal, so the handler must
+			// not flatten one into a thrown error or a bare boolean.
+			const refusal = {
+				renamed: false,
+				subscriptionsUpdated: 0,
+				filesWritten: [],
+				reason: 'the name is unchanged',
+				warnings: ['could not read /b/.maestro/cue.yaml: EACCES'],
+			};
+			mockEngine.getStatus.mockReturnValue([{ projectRoot: '/a' }]);
+			vi.mocked(renamePipelineOnDisk).mockReturnValue(refusal);
+
+			const handler = registerAndGetHandler('cue:renamePipeline');
+			await expect(handler(null, { oldName: 'Old', newName: 'Old' })).resolves.toEqual(refusal);
+		});
+
+		it('throws when the engine is not initialized', async () => {
+			registerCueHandlers({ getCueEngine: () => null });
+			const handler = registeredHandlers.get('cue:renamePipeline')!;
+			await expect(handler(null, { oldName: 'Old', newName: 'New' })).rejects.toThrow();
+			expect(renamePipelineOnDisk).not.toHaveBeenCalled();
 		});
 	});
 

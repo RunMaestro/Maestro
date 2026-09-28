@@ -62,6 +62,13 @@ const TRIGGER_ITEMS: TriggerItem[] = [
 		color: EVENT_COLORS['github.issue'],
 	},
 	{
+		eventType: 'github.label',
+		label: 'Label Added',
+		description: 'A label lands on a PR or issue',
+		icon: EVENT_ICONS['github.label'],
+		color: EVENT_COLORS['github.label'],
+	},
+	{
 		eventType: 'task.pending',
 		label: 'Pending Task',
 		description: 'Markdown task checkboxes',
@@ -74,6 +81,13 @@ const TRIGGER_ITEMS: TriggerItem[] = [
 		description: 'Triggered via maestro-cli',
 		icon: EVENT_ICONS['cli.trigger'],
 		color: EVENT_COLORS['cli.trigger'],
+	},
+	{
+		eventType: 'webhook.received',
+		label: 'Webhook',
+		description: 'HTTP POST from any external service',
+		icon: EVENT_ICONS['webhook.received'],
+		color: EVENT_COLORS['webhook.received'],
 	},
 ];
 

@@ -1,6 +1,9 @@
 import { useRef, useState, useEffect, useCallback } from 'react';
 import { ListOrdered, Command, MessageSquare } from 'lucide-react';
 import type { Session, Theme } from '../types';
+import { resolveQueuedItemTabName } from '../utils/executionQueue';
+import { useSettingsStore } from '../stores/settingsStore';
+import { shortcutSuffix } from './ui/ShortcutHint';
 
 interface ExecutionQueueIndicatorProps {
 	session: Session;
@@ -23,6 +26,8 @@ export function ExecutionQueueIndicator({
 	onSwitchTab,
 }: ExecutionQueueIndicatorProps) {
 	const queue = session.executionQueue || [];
+	const executionQueueKeys = useSettingsStore((s) => s.shortcuts.executionQueue?.keys);
+	const openQueueTitle = `View execution queue${shortcutSuffix(executionQueueKeys)}`;
 	const containerRef = useRef<HTMLDivElement>(null);
 	const [maxVisiblePills, setMaxVisiblePills] = useState(3);
 
@@ -31,12 +36,18 @@ export function ExecutionQueueIndicator({
 	const commandCount = queue.filter((item) => item.type === 'command').length;
 
 	// Group by tab to show tab-specific counts. Keyed by tabId so a pill can jump
-	// to its tab; tabName is kept for display.
+	// to its tab; the label is resolved from the LIVE tab (see
+	// resolveQueuedItemTabName) so a tab named after its first item was queued
+	// stops showing up as a second, "New" pill.
 	const tabGroups = queue.reduce(
 		(acc, item) => {
 			const tabId = item.tabId || 'unknown';
 			if (!acc[tabId]) {
-				acc[tabId] = { tabId, tabName: item.tabName || 'Unknown', count: 0 };
+				acc[tabId] = {
+					tabId,
+					tabName: resolveQueuedItemTabName(session, item) || 'Unknown',
+					count: 0,
+				};
 			}
 			acc[tabId].count += 1;
 			return acc;
@@ -141,7 +152,7 @@ export function ExecutionQueueIndicator({
 				type="button"
 				onClick={onClick}
 				className="flex items-center gap-2 transition-all hover:opacity-90"
-				title="View execution queue"
+				title={openQueueTitle}
 			>
 				<ListOrdered className="w-4 h-4 flex-shrink-0" style={{ color: theme.colors.warning }} />
 
@@ -183,7 +194,12 @@ export function ExecutionQueueIndicator({
 							type="button"
 							onClick={canJump ? () => onSwitchTab?.(session.id, tab.tabId) : undefined}
 							disabled={!canJump}
-							className={`px-1.5 py-0.5 rounded text-xs font-mono overflow-hidden text-ellipsis transition-all ${
+							// A tab name is prose the user typed (or that was auto-named
+							// from their prompt), not code, so it follows the interface
+							// font. `font-mono` now resolves to the CODE face, which put
+							// these labels in a different font from every other label
+							// around them once the interface went proportional.
+							className={`px-1.5 py-0.5 rounded text-xs overflow-hidden text-ellipsis transition-all ${
 								canJump ? 'hover:opacity-80 cursor-pointer' : 'cursor-default'
 							}`}
 							style={{
@@ -216,7 +232,7 @@ export function ExecutionQueueIndicator({
 				type="button"
 				onClick={onClick}
 				className="text-xs opacity-50 flex-shrink-0 whitespace-nowrap transition-all hover:opacity-80"
-				title="View execution queue"
+				title={openQueueTitle}
 			>
 				Click to view
 			</button>

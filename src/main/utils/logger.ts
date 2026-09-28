@@ -76,9 +76,11 @@ class Logger extends EventEmitter {
 		this.logFilePath = getLogFilePath();
 		this.currentLogDate = getTodayDateString();
 
-		// Enable file logging on Windows by default for debugging
-		// Users can also enable it on other platforms via enableFileLogging()
-		if (isWindows()) {
+		// Enable file logging in the Windows desktop main process by default.
+		// CLI bundles also import this module, but process.type is undefined when
+		// Electron runs as Node; initializing the desktop logger there pollutes
+		// command output such as `maestro-cli --version`.
+		if (isWindows() && process.type === 'browser') {
 			this.enableFileLogging();
 		}
 	}

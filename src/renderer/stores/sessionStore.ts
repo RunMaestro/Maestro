@@ -14,10 +14,12 @@
  */
 
 import { create } from 'zustand';
-import type { Session, Group, LogEntry, AITab } from '../types';
+import type { Session, Group, LogEntry, AITab, FilePreviewTab, BrowserTab } from '../types';
 import { generateId } from '../utils/ids';
 import { getActiveTab } from '../utils/tabHelpers';
+import { hasRunnableQueueItem } from '../utils/executionQueue';
 import { logger } from '../utils/logger';
+import { persistActiveSessionId } from '../utils/activeSessionPersistence';
 import { useUIStore } from './uiStore';
 import {
 	normalizeGroupHierarchy,
@@ -43,6 +45,19 @@ export interface SessionStoreState {
 	sessionsLoaded: boolean;
 	initialLoadComplete: boolean;
 	initialFileTreeReady: boolean;
+
+	// True only once the group registry has been READ back successfully. Group
+	// persistence is gated on it, because an empty in-memory registry means two
+	// very different things - "this user has no groups" and "the registry could
+	// not be read" - and only the second must never be written to disk.
+	groupsLoaded: boolean;
+
+	// True only once the session registry has been READ back successfully.
+	// Distinct from `sessionsLoaded`, which is the splash-screen flag and is set
+	// in a `finally` whether or not the read worked. The flush in
+	// `useDebouncedPersistence` refuses to write while this is false, because
+	// the alternative is writing an unread (empty) tree over every agent.
+	sessionsReadOk: boolean;
 
 	// Worktree tracking (prevents re-discovery of manually removed worktrees)
 	removedWorktreePaths: Set<string>;
@@ -118,6 +133,8 @@ export interface SessionStoreActions {
 
 	setSessionsLoaded: (loaded: boolean | ((prev: boolean) => boolean)) => void;
 	setInitialLoadComplete: (complete: boolean | ((prev: boolean) => boolean)) => void;
+	setGroupsLoaded: (loaded: boolean | ((prev: boolean) => boolean)) => void;
+	setSessionsReadOk: (ok: boolean | ((prev: boolean) => boolean)) => void;
 	setInitialFileTreeReady: (ready: boolean | ((prev: boolean) => boolean)) => void;
 
 	// === Bookmarks ===
@@ -176,6 +193,8 @@ export const useSessionStore = create<SessionStore>()((set) => ({
 	sessionsLoaded: false,
 	initialLoadComplete: false,
 	initialFileTreeReady: false,
+	groupsLoaded: false,
+	sessionsReadOk: false,
 	removedWorktreePaths: new Set(),
 	cyclePosition: -1,
 
@@ -240,11 +259,12 @@ export const useSessionStore = create<SessionStore>()((set) => ({
 		// highlight never lingers. The cycle re-sets it afterward when it lands on
 		// a starred row (see useCycleSession.activateVisualItem).
 		useUIStore.getState().setSidebarExtraSelection(null);
-		// Fire-and-forget: persist to disk for restore on next launch.
-		// Not awaited - UI state must update synchronously; if the write
-		// fails the only consequence is the session won't be pre-selected
-		// on next launch (falls back to first session).
-		window.maestro?.sessions?.setActiveSessionId(id);
+		// Fire-and-forget: persist for restore on next launch. Not awaited - UI
+		// state must update synchronously; if the write fails the only consequence
+		// is the session won't be pre-selected on next launch (falls back to first
+		// session). Routed through the helper because a web-desktop client keeps
+		// its own focused agent rather than sharing the desktop's.
+		persistActiveSessionId(id);
 	},
 
 	hydrateActiveSessionId: (id) => set({ activeSessionId: id, cyclePosition: -1 }),
@@ -311,6 +331,8 @@ export const useSessionStore = create<SessionStore>()((set) => ({
 	setSessionsLoaded: (v) => set((s) => ({ sessionsLoaded: resolve(v, s.sessionsLoaded) })),
 	setInitialLoadComplete: (v) =>
 		set((s) => ({ initialLoadComplete: resolve(v, s.initialLoadComplete) })),
+	setGroupsLoaded: (v) => set((s) => ({ groupsLoaded: resolve(v, s.groupsLoaded) })),
+	setSessionsReadOk: (v) => set((s) => ({ sessionsReadOk: resolve(v, s.sessionsReadOk) })),
 	setInitialFileTreeReady: (v) =>
 		set((s) => ({ initialFileTreeReady: resolve(v, s.initialFileTreeReady) })),
 
@@ -406,6 +428,24 @@ export const selectSessionById =
 export const selectIsAnySessionBusy = (state: SessionStore): boolean =>
 	state.sessions.some((s) => s.state === 'busy');
 
+/**
+ * Whether any agent still has queued work that would actually run.
+ *
+ * `busy` only means a turn is in flight RIGHT NOW, and the dequeue is atomic:
+ * `applyQueuedItemDispatch` flips the session to `busy` and drops the item from
+ * the queue in one update. So between two queued turns the agent is genuinely
+ * `idle` with the next item still sitting in `executionQueue`, and anything
+ * gating on busy alone reads that gap as "all work finished" - draining a
+ * five-item queue hits that gap four times.
+ *
+ * Paused items deliberately do NOT count as work: a held item keeps its position
+ * but is invisible to every dispatch path, so it can never start on its own and
+ * must not suppress an idle signal forever. That rule lives in
+ * `hasRunnableQueueItem`; do not re-derive `!item.paused` at a call site.
+ */
+export const selectHasAnyRunnableQueuedWork = (state: SessionStore): boolean =>
+	state.sessions.some((s) => hasRunnableQueueItem(s.executionQueue ?? []));
+
 // ============================================================================
 // Non-React Access
 // ============================================================================
@@ -449,4 +489,74 @@ export function updateAiTab(
 			};
 		})
 	);
+}
+
+/**
+ * Update a specific file preview tab within a session using a mapper function.
+ * The file-tab counterpart to {@link updateAiTab}.
+ *
+ * Operates directly on the store outside of React - safe to call from callbacks.
+ *
+ * @example
+ * updateFileTab(sessionId, tabId, (tab) => ({ ...tab, scrollTop }));
+ */
+export function updateFileTab(
+	sessionId: string,
+	tabId: string,
+	updater: (tab: FilePreviewTab) => FilePreviewTab
+): void {
+	useSessionStore.getState().setSessions((prev: Session[]) =>
+		prev.map((s) => {
+			if (s.id !== sessionId) return s;
+			return {
+				...s,
+				filePreviewTabs: s.filePreviewTabs.map((t) => (t.id === tabId ? updater(t) : t)),
+			};
+		})
+	);
+}
+
+/**
+ * Update a specific browser tab within a session using a mapper function.
+ * The browser-tab counterpart to {@link updateAiTab}.
+ *
+ * Operates directly on the store outside of React - safe to call from callbacks.
+ *
+ * @example
+ * updateBrowserTab(sessionId, tabId, (tab) => ({ ...tab, isLoading: false }));
+ */
+export function updateBrowserTab(
+	sessionId: string,
+	tabId: string,
+	updater: (tab: BrowserTab) => BrowserTab
+): void {
+	useSessionStore.getState().setSessions((prev: Session[]) =>
+		prev.map((s) => {
+			if (s.id !== sessionId) return s;
+			return {
+				...s,
+				browserTabs: (s.browserTabs || []).map((t) => (t.id === tabId ? updater(t) : t)),
+			};
+		})
+	);
+}
+
+/**
+ * Prepend a tab's `pendingMergedContext` (set by merge, Send to Agent, and
+ * session-not-found recovery) to the prompt about to be spawned, and clear it
+ * so it is sent exactly once.
+ *
+ * Every spawn path must call this - the direct send AND the queue drain. A
+ * send that lands in the execution queue used to dispatch through
+ * `processQueuedItem`, which never read the context: the prompt went out bare
+ * and the context sat on the tab until some later, unrelated message.
+ *
+ * Reads the live store, so it is safe to call from async spawn code.
+ */
+export function takePendingMergedContext(sessionId: string, tabId: string, prompt: string): string {
+	const session = useSessionStore.getState().sessions.find((s) => s.id === sessionId);
+	const context = session?.aiTabs.find((t) => t.id === tabId)?.pendingMergedContext;
+	if (!context) return prompt;
+	updateAiTab(sessionId, tabId, (tab) => ({ ...tab, pendingMergedContext: undefined }));
+	return `${context}\n\n---\n\n${prompt}`;
 }

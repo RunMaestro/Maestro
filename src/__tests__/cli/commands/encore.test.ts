@@ -39,7 +39,7 @@ describe('encore commands', () => {
 
 	beforeEach(() => {
 		vi.clearAllMocks();
-		vi.mocked(readSettingValue).mockReturnValue({ symphony: true });
+		vi.mocked(readSettingValue).mockReturnValue({ symphony: true, maestroCue: false });
 		consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 		vi.spyOn(console, 'error').mockImplementation(() => {});
 		processExitSpy = vi.spyOn(process, 'exit').mockImplementation(() => {
@@ -51,7 +51,31 @@ describe('encore commands', () => {
 		encoreList({ json: true });
 		const parsed = JSON.parse(consoleSpy.mock.calls[0][0]);
 		expect(parsed.features.symphony).toBe(true);
-		expect(parsed.features.maestroCue).toBe(false);
+		expect(parsed.features.pianola).toBe(false);
+	});
+
+	it('list falls back to the shipped default for a flag never saved', () => {
+		vi.mocked(readSettingValue).mockReturnValue({ symphony: true, directorNotes: false });
+		encoreList({ json: true });
+		const parsed = JSON.parse(consoleSpy.mock.calls[0][0]);
+		expect(parsed.features.maestroCue).toBe(true);
+		expect(parsed.features.directorNotes).toBe(false);
+	});
+
+	it('list falls back to the shipped defaults for keys the user never stored', () => {
+		// Nothing persisted yet: every feature must read at its default (all on)
+		// rather than at `false`, which would contradict the running app.
+		vi.mocked(readSettingValue).mockReturnValue(undefined);
+		encoreList({ json: true });
+		const parsed = JSON.parse(consoleSpy.mock.calls[0][0]);
+		// rc's CLI also exposes Pianola, which has not graduated and ships off.
+		expect(parsed.features).toEqual({
+			directorNotes: true,
+			usageStats: true,
+			symphony: true,
+			maestroCue: true,
+			pianola: false,
+		});
 	});
 
 	it('enable sends the full merged encoreFeatures object', async () => {

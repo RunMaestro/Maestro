@@ -14,5 +14,5 @@ export type {
 	MarkdownPluginLists,
 	MarkdownFileLinkOptions,
 } from './plugins';
-export { preprocessMarkdown, fixMarkdownLinkSpaces } from './preprocess';
+export { preprocessMarkdown, fixMarkdownLinkSpaces, hardBreakInlineFields } from './preprocess';
 export { createChatMarkdownComponents } from './chatComponents';

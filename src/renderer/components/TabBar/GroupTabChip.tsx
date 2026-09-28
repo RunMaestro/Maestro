@@ -1,13 +1,24 @@
 import React, { useCallback, useRef, useState, memo } from 'react';
 import { createPortal } from 'react-dom';
-import { ChevronsLeft, ChevronsRight, LayoutGrid, Pencil, Smile, Ungroup } from 'lucide-react';
+import {
+	ChevronsLeft,
+	ChevronsRight,
+	Clock,
+	LayoutGrid,
+	Pencil,
+	Smile,
+	Ungroup,
+} from 'lucide-react';
 import type { TabGroup, Theme } from '../../types';
 import { useTabHoverOverlay } from '../../hooks/tabs/useTabHoverOverlay';
 import { useFocusAfterRender } from '../../hooks/utils/useFocusAfterRender';
 import { useModalStore } from '../../stores/modalStore';
 import { useSettingsStore } from '../../stores/settingsStore';
+import { isCoarsePointer } from '../../utils/touch';
 import { EmojiPickerOverlay } from '../ui';
-import { ShortcutHint } from './ShortcutHint';
+import { LongPressable } from '../shared/LongPressable';
+import { ShortcutHint } from '../ui/ShortcutHint';
+import { TabOverlayPortal } from './TabOverlayPortal';
 
 export interface GroupTabChipProps {
 	group: TabGroup;
@@ -17,6 +28,8 @@ export interface GroupTabChipProps {
 	onSelect: (groupId: string) => void;
 	/** Commit a new name for the group (raw input; upstream trims + auto-name fallback). */
 	onRename?: (groupId: string, name: string) => void;
+	/** Park the whole group until later. Omitted where snooze does not apply. */
+	onSnooze?: (groupId: string) => void;
 	/** Set the group's chip emoji (empty string clears it back to the grid glyph). */
 	onSetEmoji?: (groupId: string, emoji: string) => void;
 	/** Break the group apart into standalone tabs (gated by this chip's confirm dialog). */
@@ -55,6 +68,7 @@ export const GroupTabChip = memo(function GroupTabChip({
 	theme,
 	onSelect,
 	onRename,
+	onSnooze,
 	onSetEmoji,
 	onBreakApart,
 	onDragStart,
@@ -77,12 +91,16 @@ export const GroupTabChip = memo(function GroupTabChip({
 		setOverlayRef,
 		positionReady,
 		setTabRef,
+		openOverlay,
 		handleMouseEnter,
 		handleMouseLeave,
 		overlayMouseEnter,
 		overlayMouseLeave,
 		isOverOverlayRef,
 	} = useTabHoverOverlay({ registerRef });
+	// Coarse pointer (a finger): the menu opens on a long-press, so native drag
+	// is off - a long-press is also how the OS starts an HTML5 drag.
+	const coarse = isCoarsePointer();
 
 	const tabShortcuts = useSettingsStore((s) => s.tabShortcuts);
 
@@ -165,6 +183,15 @@ export const GroupTabChip = memo(function GroupTabChip({
 		[requestBreakApart]
 	);
 
+	const handleSnoozeClick = useCallback(
+		(e: React.MouseEvent) => {
+			e.stopPropagation();
+			onSnooze?.(group.id);
+			setOverlayOpen(false);
+		},
+		[onSnooze, group.id, setOverlayOpen]
+	);
+
 	const handleMoveToFirstClick = useCallback(
 		(e: React.MouseEvent) => {
 			e.stopPropagation();
@@ -212,8 +239,9 @@ export const GroupTabChip = memo(function GroupTabChip({
 	const hoverBgColor = theme.mode === 'light' ? 'rgba(0, 0, 0, 0.06)' : 'rgba(255, 255, 255, 0.08)';
 
 	return (
-		<div
-			ref={setTabRef}
+		<LongPressable
+			innerRef={setTabRef}
+			onLongPress={openOverlay}
 			data-tab-id={group.id}
 			className={`flex items-center gap-1.5 shrink-0 px-2 py-1 mb-1 rounded-t text-xs font-medium transition-colors cursor-pointer select-none outline-none ${
 				isActive ? '' : 'max-w-[180px]'
@@ -241,8 +269,9 @@ export const GroupTabChip = memo(function GroupTabChip({
 				handleMouseLeave();
 			}}
 			// Suppressed while the inline rename input is open: a native drag on the
-			// chip would otherwise hijack text selection inside that input.
-			draggable={!isRenaming}
+			// chip would otherwise hijack text selection inside that input. Also off
+			// on coarse pointers, where the long-press owns the gesture.
+			draggable={!isRenaming && !coarse}
 			onDragStart={handleChipDragStart}
 			onDragOver={handleChipDragOver}
 			onDragEnd={onDragEnd}
@@ -271,115 +300,117 @@ export const GroupTabChip = memo(function GroupTabChip({
 					}}
 				/>
 			) : (
-				<span className={isActive ? 'whitespace-nowrap' : 'truncate'}>{group.name}</span>
+				<span data-tab-label className={isActive ? 'whitespace-nowrap' : 'truncate'}>
+					{group.name}
+				</span>
 			)}
 
-			{/* Hover overlay menu (Rename group / Change icon / Break apart) */}
-			{overlayOpen &&
-				overlayPosition &&
-				(onRename || onSetEmoji || onBreakApart) &&
-				createPortal(
-					<div
-						ref={setOverlayRef}
-						className="fixed z-[100]"
-						style={{
-							top: overlayPosition.top,
-							left: overlayPosition.left,
-							opacity: positionReady ? 1 : 0,
-						}}
-						onClick={(e) => e.stopPropagation()}
-						onMouseEnter={overlayMouseEnter}
-						onMouseLeave={overlayMouseLeave}
-					>
-						<div
-							className="shadow-xl overflow-hidden whitespace-nowrap"
-							style={{
-								backgroundColor: theme.colors.bgSidebar,
-								borderLeft: `1px solid ${theme.colors.border}`,
-								borderRight: `1px solid ${theme.colors.border}`,
-								borderBottom: `1px solid ${theme.colors.border}`,
-								borderBottomLeftRadius: '8px',
-								borderBottomRightRadius: '8px',
-								minWidth: '12.5rem',
-							}}
-						>
-							<div className="p-1">
-								{onRename && (
-									<button
-										onClick={(e) => {
-											e.stopPropagation();
-											startRename();
-										}}
-										className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
-										style={{ color: theme.colors.textMain }}
-									>
-										<Pencil className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
-										Rename group
-									</button>
-								)}
-								{onSetEmoji && (
-									<button
-										onClick={(e) => {
-											e.stopPropagation();
-											startPickEmoji();
-										}}
-										className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
-										style={{ color: theme.colors.textMain }}
-									>
-										<Smile className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
-										Change icon
-									</button>
-								)}
-								{onBreakApart && (
-									<button
-										onClick={handleBreakApartClick}
-										className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
-										style={{ color: theme.colors.textMain }}
-									>
-										<Ungroup className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
-										Break apart
-									</button>
-								)}
+			{/* Hover / long-press overlay menu (Rename group / Change icon / Break
+			    apart) - a portal (anchored popover on desktop, bottom sheet on a phone) */}
+			<TabOverlayPortal
+				open={overlayOpen && !!(onRename || onSetEmoji || onBreakApart || onSnooze)}
+				position={overlayPosition}
+				positionReady={positionReady}
+				setOverlayRef={setOverlayRef}
+				onMouseEnter={overlayMouseEnter}
+				onMouseLeave={overlayMouseLeave}
+				onClose={() => setOverlayOpen(false)}
+				theme={theme}
+			>
+				<div
+					className="shadow-xl overflow-hidden whitespace-nowrap"
+					style={{
+						backgroundColor: theme.colors.bgSidebar,
+						borderLeft: `1px solid ${theme.colors.border}`,
+						borderRight: `1px solid ${theme.colors.border}`,
+						borderBottom: `1px solid ${theme.colors.border}`,
+						borderBottomLeftRadius: '8px',
+						borderBottomRightRadius: '8px',
+						minWidth: '12.5rem',
+					}}
+				>
+					<div className="p-1">
+						{onRename && (
+							<button
+								onClick={(e) => {
+									e.stopPropagation();
+									startRename();
+								}}
+								className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
+								style={{ color: theme.colors.textMain }}
+							>
+								<Pencil className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
+								Rename group
+							</button>
+						)}
+						{onSetEmoji && (
+							<button
+								onClick={(e) => {
+									e.stopPropagation();
+									startPickEmoji();
+								}}
+								className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
+								style={{ color: theme.colors.textMain }}
+							>
+								<Smile className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
+								Change icon
+							</button>
+						)}
+						{onSnooze && (
+							<button
+								onClick={handleSnoozeClick}
+								className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
+								style={{ color: theme.colors.textMain }}
+							>
+								<Clock className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
+								Snooze group
+							</button>
+						)}
+						{onBreakApart && (
+							<button
+								onClick={handleBreakApartClick}
+								className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
+								style={{ color: theme.colors.textMain }}
+							>
+								<Ungroup className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
+								Break apart
+							</button>
+						)}
 
-								{/* Move to First/Last - the keyboard/menu counterpart to dragging the
+						{/* Move to First/Last - the keyboard/menu counterpart to dragging the
 								    chip, matching the other tab items' overlay menus. */}
-								{((onMoveToFirst && !isFirstTab) || (onMoveToLast && !isLastTab)) && (
-									<div className="my-1 border-t" style={{ borderColor: theme.colors.border }} />
+						{((onMoveToFirst && !isFirstTab) || (onMoveToLast && !isLastTab)) && (
+							<div className="my-1 border-t" style={{ borderColor: theme.colors.border }} />
+						)}
+						{onMoveToFirst && !isFirstTab && (
+							<button
+								onClick={handleMoveToFirstClick}
+								className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
+								style={{ color: theme.colors.textMain }}
+							>
+								<ChevronsLeft className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
+								Move to First Position
+								{tabShortcuts.moveTabToStart && (
+									<ShortcutHint keys={tabShortcuts.moveTabToStart.keys} theme={theme} />
 								)}
-								{onMoveToFirst && !isFirstTab && (
-									<button
-										onClick={handleMoveToFirstClick}
-										className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
-										style={{ color: theme.colors.textMain }}
-									>
-										<ChevronsLeft className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
-										Move to First Position
-										{tabShortcuts.moveTabToStart && (
-											<ShortcutHint keys={tabShortcuts.moveTabToStart.keys} theme={theme} />
-										)}
-									</button>
+							</button>
+						)}
+						{onMoveToLast && !isLastTab && (
+							<button
+								onClick={handleMoveToLastClick}
+								className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
+								style={{ color: theme.colors.textMain }}
+							>
+								<ChevronsRight className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
+								Move to Last Position
+								{tabShortcuts.moveTabToEnd && (
+									<ShortcutHint keys={tabShortcuts.moveTabToEnd.keys} theme={theme} />
 								)}
-								{onMoveToLast && !isLastTab && (
-									<button
-										onClick={handleMoveToLastClick}
-										className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
-										style={{ color: theme.colors.textMain }}
-									>
-										<ChevronsRight
-											className="w-3.5 h-3.5"
-											style={{ color: theme.colors.textDim }}
-										/>
-										Move to Last Position
-										{tabShortcuts.moveTabToEnd && (
-											<ShortcutHint keys={tabShortcuts.moveTabToEnd.keys} theme={theme} />
-										)}
-									</button>
-								)}
-							</div>
-						</div>
-					</div>,
-					document.body
-				)}
+							</button>
+						)}
+					</div>
+				</div>
+			</TabOverlayPortal>
 
 			{/* Change-icon emoji selector (shared with agent-list groups). Portaled to
 			    the body so its backdrop clicks don't bubble into the chip's activate
@@ -394,6 +425,6 @@ export const GroupTabChip = memo(function GroupTabChip({
 					/>,
 					document.body
 				)}
-		</div>
+		</LongPressable>
 	);
 });

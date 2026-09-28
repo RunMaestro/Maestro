@@ -81,6 +81,15 @@ describe('agent-definitions', () => {
 			expect(codex?.jsonOutputArgs).toEqual(['--json']);
 		});
 
+		it('codex read-only must not carry the sandbox bypass flag', () => {
+			const codex = AGENT_DEFINITIONS.find((def) => def.id === 'codex');
+			// --dangerously-bypass-approvals-and-sandbox NULLIFIES --sandbox
+			// read-only, so carrying it in readOnlyArgs let read-only consults
+			// write files. `exec` is non-interactive on its own; the sandbox
+			// denial feeds back to the model and the run continues.
+			expect(codex?.readOnlyArgs).toEqual(['--sandbox', 'read-only', '--skip-git-repo-check']);
+		});
+
 		it('should have opencode with batch mode configuration', () => {
 			const opencode = AGENT_DEFINITIONS.find((def) => def.id === 'opencode');
 			expect(opencode).toBeDefined();
@@ -369,7 +378,11 @@ describe('agent-definitions', () => {
 			// ['--permission-mode', 'plan'].
 			expect(grok?.batchModeArgs).toEqual(['--always-approve']);
 			expect(grok?.yoloModeArgs).toEqual(['--always-approve']);
-			expect(grok?.readOnlyArgs).toEqual(['--permission-mode', 'plan']);
+			// --deny Bash(*) keeps headless read-only turns alive: without it a
+			// shell command classified non-read-only PROMPTS, headless grok answers
+			// every prompt with "cancelled", and a cancelled prompt kills the whole
+			// turn. A policy deny feeds back to the model and the turn continues.
+			expect(grok?.readOnlyArgs).toEqual(['--permission-mode', 'plan', '--deny', 'Bash(*)']);
 		});
 
 		it('should define the Grok model option as a dynamic select with static fallback', () => {

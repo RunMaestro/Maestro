@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { shellEscape, buildShellCommand } from '../../../main/utils/shell-escape';
+import {
+	shellEscape,
+	buildShellCommand,
+	shellEscapeRemotePath,
+} from '../../../main/utils/shell-escape';
 
 describe('shell-escape', () => {
 	describe('shellEscape', () => {
@@ -66,6 +70,33 @@ describe('shell-escape', () => {
 		it('handles complex command with multiple arguments', () => {
 			const result = buildShellCommand('git', ['commit', '-m', "fix: it's working"]);
 			expect(result).toBe("git 'commit' '-m' 'fix: it'\\''s working'");
+		});
+	});
+
+	describe('shellEscapeRemotePath', () => {
+		it('renders a bare tilde or $HOME as an expandable "$HOME"', () => {
+			expect(shellEscapeRemotePath('~')).toBe('"$HOME"');
+			expect(shellEscapeRemotePath('$HOME')).toBe('"$HOME"');
+		});
+
+		it('keeps a home-relative prefix expandable and escapes the rest', () => {
+			expect(shellEscapeRemotePath('~/git-projects')).toBe('"$HOME/git-projects"');
+			expect(shellEscapeRemotePath('$HOME/git-projects')).toBe('"$HOME/git-projects"');
+			// The remainder is in a double-quoted context, so its own metacharacters
+			// must be neutralized there rather than by single quotes.
+			expect(shellEscapeRemotePath('~/my "proj" $x')).toBe('"$HOME/my \\"proj\\" \\$x"');
+		});
+
+		it('falls through to shellEscape for every other path, byte for byte', () => {
+			for (const p of [
+				'/opt/Substrate',
+				"/Users/maestro/Dropbox-Amini&Conant/Amini & Conant Team Folder/it's here",
+				'relative/dir',
+				'~user/other', // another user's home is not our `~` and must stay literal
+				'',
+			]) {
+				expect(shellEscapeRemotePath(p)).toBe(shellEscape(p));
+			}
 		});
 	});
 });

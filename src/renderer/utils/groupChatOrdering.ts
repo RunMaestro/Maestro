@@ -16,16 +16,30 @@ export interface OrderableGroupChat {
 	createdAt?: number;
 }
 
+export interface OrderGroupChatsOptions {
+	/**
+	 * Draw archived chats too. Defaults to false, which is what the list does
+	 * until the user turns its "show archived" toggle on.
+	 *
+	 * This has to be an argument rather than the caller pre-filtering, because
+	 * the drop used to be unconditional here: a caller that had already decided
+	 * archived chats were on screen had them silently removed again on the way
+	 * through, and the Cmd+[ / Cmd+] cycle could never reach one.
+	 */
+	includeArchived?: boolean;
+}
+
 /**
- * Order group chats the way the sidebar renders them: archived dropped, then
- * alphabetical or most-recent-first per the toggle.
+ * Order group chats the way the sidebar renders them: archived dropped unless
+ * asked for, then alphabetical or most-recent-first per the toggle.
  */
 export function orderGroupChatsForDisplay<T extends OrderableGroupChat>(
 	groupChats: T[],
-	alphabetical: boolean
+	alphabetical: boolean,
+	options: OrderGroupChatsOptions = {}
 ): T[] {
 	return groupChats
-		.filter((c) => !c.archived)
+		.filter((c) => options.includeArchived || !c.archived)
 		.sort((a, b) => {
 			if (alphabetical) return a.name.localeCompare(b.name);
 			return (b.updatedAt ?? b.createdAt ?? 0) - (a.updatedAt ?? a.createdAt ?? 0);

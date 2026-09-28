@@ -158,11 +158,29 @@ export interface AgentSessionStorage {
 
 	/**
 	 * List all sessions for a project
+	 *
+	 * `accountDir` is the provider's config/home root for one account
+	 * (`~/.codex-work`), NOT the sessions subdir under it. It exists because a
+	 * provider's account-selecting env var (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`,
+	 * `COPILOT_HOME`) is set per agent in `customEnvVars` and never in Maestro's
+	 * own environment, so a storage that resolved its root from `process.env`
+	 * would read a directory no agent ever used. Undefined keeps the default
+	 * root, so callers that do not attribute by account need not pass it.
+	 *
+	 * A provider with no account-selecting env var (see
+	 * `PROVIDER_PROFILE_CONFIGS`) is free to leave the parameter unimplemented
+	 * rather than accept one it cannot honour.
+	 *
 	 * @param projectPath - The project directory path
 	 * @param sshConfig - Optional SSH config for remote access
+	 * @param accountDir - Optional account config/home root to read instead of the default
 	 * @returns Array of session metadata sorted by modified date (newest first)
 	 */
-	listSessions(projectPath: string, sshConfig?: SshRemoteConfig): Promise<AgentSessionInfo[]>;
+	listSessions(
+		projectPath: string,
+		sshConfig?: SshRemoteConfig,
+		accountDir?: string
+	): Promise<AgentSessionInfo[]>;
 
 	/**
 	 * List sessions with pagination support

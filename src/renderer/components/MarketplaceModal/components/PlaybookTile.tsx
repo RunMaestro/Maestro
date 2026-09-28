@@ -49,7 +49,7 @@ export function PlaybookTile({
 				<div className="absolute top-2 right-2 flex items-center gap-1.5 z-10">
 					{beta && (
 						<span
-							className="px-2 py-0.5 rounded text-[11px] font-semibold uppercase tracking-wide"
+							className="px-2 py-0.5 rounded text-xs-plus font-semibold uppercase tracking-wide"
 							style={{
 								backgroundColor: BETA_BADGE_BG,
 								color: BADGE_FG,
@@ -61,7 +61,7 @@ export function PlaybookTile({
 					)}
 					{!compatible && (
 						<span
-							className="px-2 py-0.5 rounded text-[11px] font-semibold"
+							className="px-2 py-0.5 rounded text-xs-plus font-semibold"
 							style={{
 								backgroundColor: INCOMPAT_BADGE_BG,
 								color: BADGE_FG,

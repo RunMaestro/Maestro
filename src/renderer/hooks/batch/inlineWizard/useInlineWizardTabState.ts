@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { WizardTabActivity } from '../../../utils/wizardActivity';
 import type { InlineWizardState, PreviousUIState, SetInlineWizardTabState } from './types';
 import { initialInlineWizardState } from './state';
 import type { InlineWizardConversationSession } from '../../../services/inlineWizardConversation';
@@ -54,13 +55,17 @@ export function useInlineWizardTabState() {
 		return tabId;
 	}, [currentTabId]);
 
-	const wizardActiveSessions = useMemo(() => {
-		const map = new Map<string, { isGeneratingDocs: boolean }>();
-		for (const tabState of tabStates.values()) {
-			if (!tabState.isActive || !tabState.sessionId) continue;
-			const existing = map.get(tabState.sessionId);
-			map.set(tabState.sessionId, {
-				isGeneratingDocs: (existing?.isGeneratingDocs ?? false) || tabState.isGeneratingDocs,
+	// Derived: the tabs running a wizard right now, narrowed to what an indicator
+	// needs. Kept keyed by TAB id rather than pre-rolled up to agents so consumers
+	// can check the tab still exists before drawing anything against its agent -
+	// see rollUpWizardActivityToSessions().
+	const wizardActiveTabs = useMemo(() => {
+		const map = new Map<string, WizardTabActivity>();
+		for (const [tabId, tabState] of tabStates) {
+			if (!tabState.isActive && !tabState.isGeneratingDocs) continue;
+			map.set(tabId, {
+				sessionId: tabState.sessionId,
+				isGeneratingDocs: tabState.isGeneratingDocs,
 			});
 		}
 		return map;
@@ -79,6 +84,6 @@ export function useInlineWizardTabState() {
 		getStateForTab,
 		isWizardActiveForTab,
 		getEffectiveTabId,
-		wizardActiveSessions,
+		wizardActiveTabs,
 	};
 }

@@ -115,24 +115,61 @@ export async function execGit(
 }
 
 /**
+ * Options for `execShellRemote`.
+ */
+export interface RemoteShellOptions {
+	/** Working directory on the remote host */
+	cwd?: string;
+	/** Extra environment variables, merged over the SSH config's `remoteEnv` */
+	env?: Record<string, string>;
+	/** Timeout in milliseconds for the whole SSH invocation */
+	timeoutMs?: number;
+}
+
+/**
  * Execute a shell command on a remote host via SSH.
  *
  * @param shellCommand The shell command to execute on the remote
  * @param sshRemote SSH remote configuration
+ * @param options Optional remote cwd, extra env, and timeout
  * @returns Execution result
+ */
+export async function execShellRemote(
+	shellCommand: string,
+	sshRemote: SshRemoteConfig,
+	options?: RemoteShellOptions
+): Promise<ExecResult> {
+	// Keep `env` undefined when there's nothing to set so the SSH command builder
+	// doesn't prepend an empty `env` prefix to the remote command.
+	const mergedEnv = options?.env
+		? { ...(sshRemote.remoteEnv ?? {}), ...options.env }
+		: sshRemote.remoteEnv;
+
+	const remoteOptions: RemoteCommandOptions = {
+		command: 'sh',
+		args: ['-c', shellCommand],
+		cwd: options?.cwd,
+		env: mergedEnv,
+	};
+
+	const sshCommand = await buildSshCommand(sshRemote, remoteOptions);
+	return execFileNoThrow(
+		sshCommand.command,
+		sshCommand.args,
+		undefined,
+		options?.timeoutMs ? { timeout: options.timeoutMs } : undefined
+	);
+}
+
+/**
+ * Backwards-compatible wrapper for the many callers below that only need a
+ * bare remote shell command with no cwd, env, or timeout.
  */
 async function execRemoteShellCommand(
 	shellCommand: string,
 	sshRemote: SshRemoteConfig
 ): Promise<ExecResult> {
-	const remoteOptions: RemoteCommandOptions = {
-		command: 'sh',
-		args: ['-c', shellCommand],
-		env: sshRemote.remoteEnv,
-	};
-
-	const sshCommand = await buildSshCommand(sshRemote, remoteOptions);
-	return execFileNoThrow(sshCommand.command, sshCommand.args);
+	return execShellRemote(shellCommand, sshRemote);
 }
 
 /**

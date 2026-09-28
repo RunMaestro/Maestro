@@ -270,7 +270,7 @@ export function TtsrRulesPanel({
 				</label>
 
 				<div className="flex items-center gap-2">
-					<span className="text-[10px] shrink-0" style={{ color: theme.colors.textDim }}>
+					<span className="text-2xs shrink-0" style={{ color: theme.colors.textDim }}>
 						On interrupt
 					</span>
 					<select
@@ -282,7 +282,7 @@ export function TtsrRulesPanel({
 								contextMode: e.target.value ? (e.target.value as TtsrContextMode) : undefined,
 							})
 						}
-						className="flex-1 px-2 py-1 rounded text-[11px] outline-none border"
+						className="flex-1 px-2 py-1 rounded text-xs-plus outline-none border"
 						style={{
 							backgroundColor: theme.colors.bgMain,
 							borderColor: theme.colors.border,
@@ -301,10 +301,7 @@ export function TtsrRulesPanel({
 				<div className="px-3 py-3 border-b space-y-2" style={{ borderColor: theme.colors.border }}>
 					<div className="flex items-center gap-1.5">
 						<Sparkles className="w-3 h-3" style={{ color: theme.colors.accent }} />
-						<span
-							className="text-[10px] font-bold uppercase"
-							style={{ color: theme.colors.textDim }}
-						>
+						<span className="text-2xs font-bold uppercase" style={{ color: theme.colors.textDim }}>
 							Ask the agent for a rule
 						</span>
 					</div>
@@ -319,7 +316,7 @@ export function TtsrRulesPanel({
 						}}
 						rows={2}
 						placeholder="stop you from force-pushing to main"
-						className="w-full px-2 py-1.5 rounded text-[11px] outline-none border resize-none select-text"
+						className="w-full px-2 py-1.5 rounded text-xs-plus outline-none border resize-none select-text"
 						style={{
 							backgroundColor: theme.colors.bgActivity,
 							borderColor: theme.colors.border,
@@ -330,7 +327,7 @@ export function TtsrRulesPanel({
 						type="button"
 						onClick={() => void authorRule(request, true)}
 						disabled={!request.trim()}
-						className="w-full flex items-center justify-center gap-1.5 px-2 py-1.5 rounded text-[11px] font-medium transition-colors disabled:opacity-50"
+						className="w-full flex items-center justify-center gap-1.5 px-2 py-1.5 rounded text-xs-plus font-medium transition-colors disabled:opacity-50"
 						style={{ backgroundColor: theme.colors.accent, color: theme.colors.bgMain }}
 					>
 						<Plus className="w-3 h-3" /> Write this rule
@@ -351,7 +348,7 @@ export function TtsrRulesPanel({
 								}}
 							/>
 							<span
-								className="text-[10px] leading-snug select-text"
+								className="text-2xs leading-snug select-text"
 								style={{ color: theme.colors.textDim }}
 							>
 								{message}
@@ -364,7 +361,7 @@ export function TtsrRulesPanel({
 			{/* Rule list */}
 			<div className="flex-1">
 				<div className="flex items-center justify-between px-3 py-2">
-					<span className="text-[10px] font-bold uppercase" style={{ color: theme.colors.textDim }}>
+					<span className="text-2xs font-bold uppercase" style={{ color: theme.colors.textDim }}>
 						{rules.length} rule{rules.length === 1 ? '' : 's'}
 						{rules.some((rule) => matches[matchKey(projectRoot, rule.path)]) && (
 							<span className="font-normal normal-case" title={MATCH_COUNT_HINT}>
@@ -386,7 +383,7 @@ export function TtsrRulesPanel({
 
 				{rules.length === 0 ? (
 					<div
-						className="px-3 pb-3 text-[11px] leading-relaxed"
+						className="px-3 pb-3 text-xs-plus leading-relaxed"
 						style={{ color: theme.colors.textDim }}
 					>
 						No rules in this project yet. Rules live in <code>{TTSR_RULES_DIR}/</code> and are
@@ -415,13 +412,13 @@ export function TtsrRulesPanel({
 											{rule.name}
 										</div>
 										<div
-											className="text-[10px] leading-snug mt-0.5 select-text"
+											className="text-2xs leading-snug mt-0.5 select-text"
 											style={{ color: theme.colors.textDim }}
 										>
 											{rule.description}
 										</div>
 										<div
-											className="text-[10px] mt-1 font-mono"
+											className="text-2xs mt-1 font-mono"
 											style={{ color: theme.colors.textDim }}
 										>
 											{scopeLabel(rule)} · {rule.interruptMode}
@@ -429,7 +426,7 @@ export function TtsrRulesPanel({
 										</div>
 										{stats && (
 											<div
-												className="text-[10px] mt-0.5"
+												className="text-2xs mt-0.5"
 												style={{ color: theme.colors.textDim }}
 												title={MATCH_COUNT_HINT}
 											>

@@ -3,6 +3,7 @@
 
 import WebSocket from 'ws';
 import { readCliServerInfo, isCliServerRunning } from '../../shared/cli-server-discovery';
+import { CLI_SECRET_HEADER } from '../../shared/webLogin';
 import { readSessions, resolveAgentId } from './storage';
 
 const CONNECT_TIMEOUT_MS = 5000;
@@ -76,7 +77,12 @@ export class MaestroClient {
 		return new Promise<void>((resolve, reject) => {
 			let settled = false;
 
-			const ws = new WebSocket(url);
+			// The per-boot secret is what admits the CLI when Web Login is on; the
+			// server never exempts a caller by address (the tunnel is loopback too).
+			const ws = new WebSocket(
+				url,
+				info.cliSecret ? { headers: { [CLI_SECRET_HEADER]: info.cliSecret } } : undefined
+			);
 
 			const timeout = setTimeout(() => {
 				if (!settled) {

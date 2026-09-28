@@ -497,17 +497,17 @@ describe('EncoreTab hooks', () => {
 			expect(setCustomEnvVars).toHaveBeenCalledWith({ NEW_KEY: 'value' });
 			expect(setCustomEnvVars).toHaveBeenCalledWith({ OLD_KEY: 'old', FOO: 'bar' });
 			expect(setCustomEnvVars).toHaveBeenCalledWith({});
-			expect(setCustomEnvVars).toHaveBeenCalledWith({ OLD_KEY: 'old', NEW_VAR: '' });
+			expect(setCustomEnvVars).toHaveBeenCalledWith({ OLD_KEY: 'old', '': '' });
 			expect(setAgentConfig).toHaveBeenCalledWith({ model: 'new-model' });
 			expect(agentConfigRef.current).toEqual({ model: 'new-model' });
 			expect(saveAgentConfig).toHaveBeenCalledWith('claude-code');
 		});
 
-		it('adds env vars with a unique key even when existing values are empty', () => {
+		it('keeps a single unnamed row when Add is pressed twice', () => {
 			const setCustomEnvVars = vi.fn();
 			vi.mocked(useAgentConfiguration).mockReturnValue(
 				makeAgentConfiguration({
-					customEnvVars: { NEW_VAR: '' },
+					customEnvVars: { FOO: 'bar', '': '' },
 					setCustomEnvVars,
 				})
 			);
@@ -524,7 +524,7 @@ describe('EncoreTab hooks', () => {
 				result.current.handleEnvVarAdd();
 			});
 
-			expect(setCustomEnvVars).toHaveBeenCalledWith({ NEW_VAR: '', NEW_VAR_1: '' });
+			expect(setCustomEnvVars).toHaveBeenCalledWith({ FOO: 'bar', '': '' });
 		});
 	});
 });

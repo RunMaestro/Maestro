@@ -4,10 +4,16 @@ import type { Theme } from '../types';
 import { useNotificationStore, type Toast as ToastType } from '../stores/notificationStore';
 import { useSettingsStore } from '../stores/settingsStore';
 import { openUrl } from '../utils/openUrl';
-import { isWebDesktop } from '../utils/runtimeContext';
-import { formatDurationParts as formatDuration } from '../../shared/formatters';
-import { getToastWidthDimensions } from '../../shared/toastWidth';
+import { dispatchToastClickAction } from '../services/toastClickActions';
+import { formatDurationParts as formatDuration, formatTimestamp } from '../../shared/formatters';
+import { getToastWidthDimensions, TOAST_VIEWPORT_GUTTER } from '../../shared/toastWidth';
+import { useMediaPlaybackStore } from '../stores/mediaPlaybackStore';
+import { mediaFloatLaneLift } from '../utils/mediaFloatGeometry';
+import { withMonoFallback } from '../../shared/fontStack';
 import { Z_LAYERS } from '../constants/zLayers';
+import { usePhoneLayout } from '../hooks/ui/useViewportBreakpoint';
+import { CopyIconButton } from './ui';
+import { isWebDesktop } from '../utils/runtimeContext';
 import type { TtsrToastMarker } from '../../shared/ttsr-types';
 
 /**
@@ -31,6 +37,19 @@ interface ToastContainerProps {
 	onSessionClick?: (sessionId: string, tabId?: string) => void;
 }
 
+/**
+ * Flatten a toast into the plain text a user would want on the clipboard:
+ * the context line, the title, the body, and any action URL. Exported for tests.
+ */
+export function buildToastClipboardText(toast: ToastType): string {
+	const context = [toast.group, toast.project, toast.tabName].filter(Boolean).join(' · ');
+	const lines = [context, toast.title, toast.message, toast.actionUrl];
+	return lines
+		.filter((line): line is string => Boolean(line && line.trim()))
+		.join('\n')
+		.trim();
+}
+
 const ToastItem = memo(function ToastItem({
 	toast,
 	theme,
@@ -42,7 +61,8 @@ const ToastItem = memo(function ToastItem({
 	theme: Theme;
 	onRemove: (toastId: string) => void;
 	onSessionClick?: (sessionId: string, tabId?: string) => void;
-	widthDimensions: { minWidth: number; maxWidth: number };
+	/** Pixel bounds from the toast-width setting, or null to fill the stack (phone). */
+	widthDimensions: { minWidth: number; maxWidth: number } | null;
 }) {
 	const [isExiting, setIsExiting] = useState(false);
 	const [isEntering, setIsEntering] = useState(true);
@@ -79,25 +99,10 @@ const ToastItem = memo(function ToastItem({
 			return;
 		}
 		if (toast.clickAction) {
-			const action = toast.clickAction;
-			switch (action.kind) {
-				case 'jump-session':
-					onSessionClick?.(action.sessionId, action.tabId);
-					break;
-				case 'open-file':
-					// Reuse the existing CLI/remote file-open path. The listener
-					// (useAppRemoteEventListeners) switches to the target session
-					// and opens the file in a preview tab.
-					window.dispatchEvent(
-						new CustomEvent('maestro:openFileTab', {
-							detail: { sessionId: action.sessionId, filePath: action.path },
-						})
-					);
-					break;
-				case 'open-url':
-					openUrl(action.url);
-					break;
-			}
+			// Every kind (AI tab, file preview, terminal tab, browser tab, external
+			// URL) is dispatched by one shared service so the behavior is identical
+			// wherever a toast came from.
+			dispatchToastClickAction(toast.clickAction, { onSessionClick });
 			handleClose();
 			return;
 		}
@@ -211,8 +216,12 @@ const ToastItem = memo(function ToastItem({
 				style={{
 					backgroundColor: theme.colors.bgSidebar,
 					border: `1px solid ${theme.colors.border}`,
-					minWidth: `${widthDimensions.minWidth}px`,
-					maxWidth: `${widthDimensions.maxWidth}px`,
+					...(widthDimensions
+						? {
+								minWidth: `${widthDimensions.minWidth}px`,
+								maxWidth: `${widthDimensions.maxWidth}px`,
+							}
+						: { width: '100%' }),
 				}}
 				onClick={isClickable ? handleToastClick : undefined}
 			>
@@ -229,7 +238,9 @@ const ToastItem = memo(function ToastItem({
 
 				{/* Content */}
 				<div className="flex-1 min-w-0">
-					{/* Line 1: Group + Agent/Project name + Tab name (wraps to line 2 if needed) */}
+					{/* Line 1: Group + Agent/Project name + Tab name (wraps to line 2 if
+					    needed). The arrival time rides the title row below instead, so a
+					    toast with no agent context does not spend a line on a lone clock. */}
 					{(toast.group || toast.project || toast.tabName) && (
 						<div
 							className="flex flex-wrap items-center gap-2 text-xs mb-1"
@@ -269,9 +280,25 @@ const ToastItem = memo(function ToastItem({
 						</div>
 					)}
 
-					{/* Title */}
-					<div className="font-medium text-sm" style={{ color: theme.colors.textMain }}>
-						{toast.title}
+					{/* Title, with the arrival time pinned right on the same line. Every
+					    toast is stamped, not just the ones that carry agent context. */}
+					<div className="flex items-baseline gap-2">
+						<div
+							className="font-medium text-sm min-w-0 flex-1"
+							style={{ color: theme.colors.textMain }}
+						>
+							{toast.title}
+						</div>
+						{toast.timestamp > 0 && (
+							<time
+								className="flex-shrink-0 text-xs tabular-nums"
+								style={{ color: theme.colors.textDim }}
+								dateTime={new Date(toast.timestamp).toISOString()}
+								title={formatTimestamp(toast.timestamp, 'full')}
+							>
+								{formatTimestamp(toast.timestamp, 'smart')}
+							</time>
+						)}
 					</div>
 
 					{/* Message */}
@@ -310,7 +337,7 @@ const ToastItem = memo(function ToastItem({
 					)}
 
 					{/* Duration badge */}
-					{toast.taskDuration && toast.taskDuration > 0 && (
+					{typeof toast.taskDuration === 'number' && toast.taskDuration > 0 && (
 						<div
 							className="flex items-center gap-1 text-xs mt-2"
 							style={{ color: theme.colors.textDim }}
@@ -328,35 +355,47 @@ const ToastItem = memo(function ToastItem({
 					)}
 				</div>
 
-				{/* Close button - emphasized when toast is dismissible (sticky) */}
-				<button
-					onClick={handleClose}
-					className="flex-shrink-0 p-1 rounded transition-colors"
-					style={
-						toast.dismissible
-							? {
-									color: getTypeColor(),
-									backgroundColor: `${getTypeColor()}1F`,
-									boxShadow: `0 0 0 1px ${getTypeColor()}40 inset`,
-								}
-							: { color: theme.colors.textDim }
-					}
-					title={toast.dismissible ? 'Dismiss' : undefined}
-					aria-label={toast.dismissible ? 'Dismiss notification' : 'Close'}
-				>
-					<svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-						<path
-							strokeLinecap="round"
-							strokeLinejoin="round"
-							strokeWidth={2}
-							d="M6 18L18 6M6 6l12 12"
-						/>
-					</svg>
-				</button>
+				{/* Right rail: close on top, copy pinned to the bottom */}
+				<div className="flex-shrink-0 self-stretch flex flex-col items-center justify-between gap-2">
+					{/* Close button - emphasized when toast is dismissible (sticky) */}
+					<button
+						onClick={handleClose}
+						className="p-1 rounded transition-colors"
+						style={
+							toast.dismissible
+								? {
+										color: getTypeColor(),
+										backgroundColor: `${getTypeColor()}1F`,
+										boxShadow: `0 0 0 1px ${getTypeColor()}40 inset`,
+									}
+								: { color: theme.colors.textDim }
+						}
+						title={toast.dismissible ? 'Dismiss' : undefined}
+						aria-label={toast.dismissible ? 'Dismiss notification' : 'Close'}
+					>
+						<svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+							<path
+								strokeLinecap="round"
+								strokeLinejoin="round"
+								strokeWidth={2}
+								d="M6 18L18 6M6 6l12 12"
+							/>
+						</svg>
+					</button>
+
+					{/* Copy the toast text - never navigates, even on a clickable toast */}
+					<CopyIconButton
+						value={() => buildToastClipboardText(toast)}
+						theme={theme}
+						title="Copy notification text"
+						iconClassName="w-3.5 h-3.5"
+						testId="toast-copy-button"
+					/>
+				</div>
 			</div>
 
 			{/* Progress bar - hidden for dismissible (sticky) toasts */}
-			{!toast.dismissible && toast.duration && toast.duration > 0 && (
+			{!toast.dismissible && typeof toast.duration === 'number' && toast.duration > 0 && (
 				<div
 					className="absolute bottom-0 left-0 h-1 rounded-b-lg transition-all ease-linear"
 					style={{
@@ -377,6 +416,12 @@ const ToastItem = memo(function ToastItem({
 	);
 });
 
+/** Breathing room left between a lifted toast stack and the media player. */
+const TOAST_MEDIA_PLAYER_GAP = 8;
+
+/** The phone stack is pinned `left-3 right-3`, so its gutter is 0.75rem. */
+const TOAST_PHONE_GUTTER = 12;
+
 export const ToastContainer = memo(function ToastContainer({
 	theme,
 	onSessionClick,
@@ -387,14 +432,55 @@ export const ToastContainer = memo(function ToastContainer({
 	// Subscribed so 'dynamic' toasts re-render (and re-resize) live as the user
 	// drags the Right Bar; ignored by the fixed presets.
 	const rightPanelWidth = useSettingsStore((s) => s.rightPanelWidth);
-	const widthDimensions = getToastWidthDimensions(toastWidth, rightPanelWidth);
+	// Phone: every width preset is wider than the screen (small starts at 320px
+	// plus the gutter, on a 390px viewport), and the stack is pinned to the
+	// right edge, so the left half of each toast ran off screen. The stack spans
+	// the width instead and each toast fills it.
+	const phone = usePhoneLayout();
+	const widthDimensions = phone ? null : getToastWidthDimensions(toastWidth, rightPanelWidth);
+
+	// The floating media player opens in this same corner and sits far below
+	// toasts in z-order (toasts have to stay readable over modals), so an
+	// arriving notification used to paint straight over the widget - it looked
+	// like the player had closed itself. The stack steps over it instead: toasts
+	// are transient, and the widget is where the user deliberately put it.
+	//
+	// The lane is measured at the preset's FULL width rather than at the width
+	// this toast happens to render at. A narrower toast is right-aligned inside
+	// the same column, so the worst case is lifting when a short toast would have
+	// cleared the widget anyway - which costs nothing, while the other way round
+	// is the bug being fixed.
+	const floatFootprint = useMediaPlaybackStore((s) => s.floatFootprint);
+	const playerLift = mediaFloatLaneLift(floatFootprint, {
+		fromRight: phone ? TOAST_PHONE_GUTTER : TOAST_VIEWPORT_GUTTER,
+		// A phone stack spans the screen, so it always shares the widget's column.
+		width: widthDimensions ? widthDimensions.maxWidth : Number.POSITIVE_INFINITY,
+		gap: TOAST_MEDIA_PLAYER_GAP,
+	});
+
+	// Toasts portal to document.body, which puts them OUTSIDE the app shell -
+	// the element that carries the interface font. Without restating it here
+	// they inherit the body's default face, so a user who switched the UI font
+	// kept getting toasts in the old one. Same monospace safety net the shell
+	// applies, so a bare picker name can't fall through to serif.
+	const fontFamily = useSettingsStore((s) => withMonoFallback(s.fontFamily));
 
 	if (toasts.length === 0) return null;
 
 	return createPortal(
 		<div
-			className="fixed bottom-0 right-4 flex flex-col-reverse"
-			style={{ pointerEvents: 'none', zIndex: Z_LAYERS.TOAST }}
+			className={`fixed bottom-0 flex flex-col-reverse ${phone ? 'left-3 right-3' : 'right-4'}`}
+			style={{
+				pointerEvents: 'none',
+				zIndex: Z_LAYERS.TOAST,
+				fontFamily,
+				paddingBottom: phone ? 'env(safe-area-inset-bottom, 0px)' : undefined,
+				// A margin rather than more padding: the stack is `bottom: 0`, so this
+				// offsets the whole thing upward and leaves the phone's safe-area
+				// padding to do its own job underneath.
+				marginBottom: playerLift || undefined,
+			}}
+			data-testid="toast-stack"
 		>
 			<div style={{ pointerEvents: 'auto' }}>
 				{toasts.map((toast) => (

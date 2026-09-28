@@ -1,4 +1,5 @@
 import { useRef, useCallback, useEffect } from 'react';
+import type { MarkdownEditorHandle } from '../../components/FilePreview/markdownEditor';
 
 /**
  * Undo/Redo state interface representing a snapshot of content and cursor position
@@ -28,8 +29,8 @@ export interface UseAutoRunUndoDeps {
 	localContent: string;
 	/** Function to update the local content state */
 	setLocalContent: (content: string) => void;
-	/** Ref to the textarea element for cursor position and focus */
-	textareaRef: React.RefObject<HTMLTextAreaElement>;
+	/** Ref to the CodeMirror editor, for cursor position and focus */
+	editorRef: React.RefObject<MarkdownEditorHandle>;
 }
 
 /**
@@ -65,7 +66,7 @@ export interface UseAutoRunUndoReturn {
  *   selectedFile,
  *   localContent,
  *   setLocalContent,
- *   textareaRef,
+ *   editorRef,
  * });
  *
  * // In onChange handler:
@@ -84,7 +85,7 @@ export function useAutoRunUndo({
 	selectedFile,
 	localContent,
 	setLocalContent,
-	textareaRef,
+	editorRef,
 }: UseAutoRunUndoDeps): UseAutoRunUndoReturn {
 	// Undo/Redo history maps - keyed by document filename (selectedFile)
 	// Using refs so history persists across re-renders without triggering re-renders
@@ -94,8 +95,18 @@ export function useAutoRunUndo({
 	// Track last content that was snapshotted for undo
 	const lastUndoSnapshotRef = useRef<string>(localContent);
 
-	// Timer ref for debounced undo snapshots
+	// Pending while a typing burst is in progress; it expires after
+	// UNDO_SNAPSHOT_DEBOUNCE_MS of inactivity, and the next keystroke opens a new
+	// burst.
 	const undoSnapshotTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+	/** Close the current typing burst so the next keystroke snapshots again. */
+	const endTypingBurst = useCallback(() => {
+		if (undoSnapshotTimeoutRef.current) {
+			clearTimeout(undoSnapshotTimeoutRef.current);
+			undoSnapshotTimeoutRef.current = null;
+		}
+	}, []);
 
 	/**
 	 * Push current state to undo history.
@@ -104,9 +115,12 @@ export function useAutoRunUndo({
 	const pushUndoState = useCallback(
 		(contentToSnapshot?: string, cursorPos?: number) => {
 			if (!selectedFile) return;
+			// An explicit edit (paste, tab, list continuation) is its own undo
+			// step; typing after it must open a fresh burst.
+			endTypingBurst();
 
 			const snapshotContent = contentToSnapshot ?? localContent;
-			const snapshotCursor = cursorPos ?? textareaRef.current?.selectionStart ?? 0;
+			const snapshotCursor = cursorPos ?? editorRef.current?.getCaret() ?? 0;
 
 			const currentState: UndoState = {
 				content: snapshotContent,
@@ -140,23 +154,30 @@ export function useAutoRunUndo({
 			// Clear redo stack on new edit action
 			redoHistoryRef.current.set(selectedFile, []);
 		},
-		[selectedFile, localContent, textareaRef]
+		[selectedFile, localContent, editorRef, endTypingBurst]
 	);
 
 	/**
-	 * Schedule a debounced undo snapshot.
-	 * Call this on each content change to capture typing sequences.
+	 * Group typing into undo steps. Call on each content change with the state
+	 * from BEFORE that change.
+	 *
+	 * The snapshot is taken on the FIRST keystroke of a burst, so one Cmd+Z
+	 * removes the whole burst. Snapshotting on the trailing edge instead would
+	 * capture the text before the burst's LAST keystroke: the first Cmd+Z then
+	 * drops one character, the second drops the rest of the burst plus the last
+	 * character of the one before it, and the text before the first burst can
+	 * never be reached at all.
 	 */
 	const scheduleUndoSnapshot = useCallback(
 		(previousContent: string, previousCursor: number) => {
-			// Clear any pending snapshot
-			if (undoSnapshotTimeoutRef.current) {
-				clearTimeout(undoSnapshotTimeoutRef.current);
-			}
-
-			// Schedule snapshot after debounce delay of inactivity
-			undoSnapshotTimeoutRef.current = setTimeout(() => {
+			const burstInProgress = undoSnapshotTimeoutRef.current !== null;
+			if (!burstInProgress) {
 				pushUndoState(previousContent, previousCursor);
+			} else {
+				clearTimeout(undoSnapshotTimeoutRef.current!);
+			}
+			undoSnapshotTimeoutRef.current = setTimeout(() => {
+				undoSnapshotTimeoutRef.current = null;
 			}, UNDO_SNAPSHOT_DEBOUNCE_MS);
 		},
 		[pushUndoState]
@@ -171,12 +192,13 @@ export function useAutoRunUndo({
 
 		const undoStack = undoHistoryRef.current.get(selectedFile) || [];
 		if (undoStack.length === 0) return;
+		endTypingBurst();
 
 		// Save current state to redo stack before undoing
 		const redoStack = redoHistoryRef.current.get(selectedFile) || [];
 		redoStack.push({
 			content: localContent,
-			cursorPosition: textareaRef.current?.selectionStart || 0,
+			cursorPosition: editorRef.current?.getCaret() || 0,
 		});
 		redoHistoryRef.current.set(selectedFile, redoStack);
 
@@ -190,12 +212,10 @@ export function useAutoRunUndo({
 
 		// Restore cursor position after React re-renders
 		requestAnimationFrame(() => {
-			if (textareaRef.current) {
-				textareaRef.current.setSelectionRange(prevState.cursorPosition, prevState.cursorPosition);
-				textareaRef.current.focus();
-			}
+			editorRef.current?.setSelection(prevState.cursorPosition, prevState.cursorPosition);
+			editorRef.current?.focus();
 		});
-	}, [selectedFile, localContent, setLocalContent, textareaRef]);
+	}, [selectedFile, localContent, setLocalContent, editorRef, endTypingBurst]);
 
 	/**
 	 * Handle redo action (Cmd+Shift+Z).
@@ -206,12 +226,13 @@ export function useAutoRunUndo({
 
 		const redoStack = redoHistoryRef.current.get(selectedFile) || [];
 		if (redoStack.length === 0) return;
+		endTypingBurst();
 
 		// Save current state to undo stack before redoing
 		const undoStack = undoHistoryRef.current.get(selectedFile) || [];
 		undoStack.push({
 			content: localContent,
-			cursorPosition: textareaRef.current?.selectionStart || 0,
+			cursorPosition: editorRef.current?.getCaret() || 0,
 		});
 		undoHistoryRef.current.set(selectedFile, undoStack);
 
@@ -225,30 +246,25 @@ export function useAutoRunUndo({
 
 		// Restore cursor position after React re-renders
 		requestAnimationFrame(() => {
-			if (textareaRef.current) {
-				textareaRef.current.setSelectionRange(nextState.cursorPosition, nextState.cursorPosition);
-				textareaRef.current.focus();
-			}
+			editorRef.current?.setSelection(nextState.cursorPosition, nextState.cursorPosition);
+			editorRef.current?.focus();
 		});
-	}, [selectedFile, localContent, setLocalContent, textareaRef]);
+	}, [selectedFile, localContent, setLocalContent, editorRef, endTypingBurst]);
 
 	/**
 	 * Reset undo history for current document.
 	 * Call when content changes externally (document switch, file watcher, etc.)
 	 */
-	const resetUndoHistory = useCallback((newContent: string) => {
-		lastUndoSnapshotRef.current = newContent;
-	}, []);
+	const resetUndoHistory = useCallback(
+		(newContent: string) => {
+			endTypingBurst();
+			lastUndoSnapshotRef.current = newContent;
+		},
+		[endTypingBurst]
+	);
 
-	// Cleanup pending timeout on unmount or when document changes
-	useEffect(() => {
-		return () => {
-			if (undoSnapshotTimeoutRef.current) {
-				clearTimeout(undoSnapshotTimeoutRef.current);
-				undoSnapshotTimeoutRef.current = null;
-			}
-		};
-	}, [selectedFile]);
+	// Close any open burst on unmount or when the document changes
+	useEffect(() => endTypingBurst, [selectedFile, endTypingBurst]);
 
 	return {
 		pushUndoState,

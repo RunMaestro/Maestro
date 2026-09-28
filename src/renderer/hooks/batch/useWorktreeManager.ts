@@ -11,6 +11,7 @@ import { useCallback } from 'react';
 import type { BatchDocumentEntry } from '../../types';
 import { captureException } from '../../utils/sentry';
 import { logger } from '../../utils/logger';
+import { runWorktreeSetupScript } from '../../utils/worktreeSetupScript';
 
 /**
  * Configuration for worktree operations
@@ -262,6 +263,18 @@ export function useWorktreeManager(): UseWorktreeManagerReturn {
 						worktreeActive: false,
 						error: setupResult.error || 'Failed to set up worktree',
 					};
+				}
+
+				// Fresh worktree on disk - run the owning agent's setup script before the
+				// batch run starts, so generated env files exist for the first prompt.
+				if (setupResult.created) {
+					await runWorktreeSetupScript({
+						mainRepoPath: sessionCwd,
+						worktreePath: worktree.path,
+						branchName: worktree.branchName,
+						baseBranch: worktree.baseBranch,
+						sshRemoteId: worktree.sshRemoteId,
+					});
 				}
 
 				// If worktree exists but on different branch, checkout the requested branch

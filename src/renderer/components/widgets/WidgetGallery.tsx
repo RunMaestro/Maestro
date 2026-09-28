@@ -86,7 +86,7 @@ function Boom(): ReactNode {
 function GroupHeading({ theme, children }: { theme: Theme; children: ReactNode }) {
 	return (
 		<h3
-			className="text-[11px] font-bold uppercase tracking-widest mb-3 mt-1"
+			className="text-xs-plus font-bold uppercase tracking-widest mb-3 mt-1"
 			style={{ color: theme.colors.textDim }}
 		>
 			{children}
@@ -206,13 +206,13 @@ export const WidgetGallery = memo(function WidgetGallery({ theme }: WidgetGaller
 						<SectionCard theme={theme} title="Sparkline" icon={TrendingUp}>
 							<div className="flex items-center gap-6">
 								<div className="flex flex-col gap-1">
-									<span className="text-[11px]" style={{ color: theme.colors.textDim }}>
+									<span className="text-xs-plus" style={{ color: theme.colors.textDim }}>
 										Trend
 									</span>
 									<Sparkline data={TREND_A} color={theme.colors.accent} width={120} height={32} />
 								</div>
 								<div className="flex flex-col gap-1">
-									<span className="text-[11px]" style={{ color: theme.colors.textDim }}>
+									<span className="text-xs-plus" style={{ color: theme.colors.textDim }}>
 										Empty
 									</span>
 									<Sparkline data={[]} color={theme.colors.textDim} width={120} height={32} />
@@ -242,7 +242,7 @@ export const WidgetGallery = memo(function WidgetGallery({ theme }: WidgetGaller
 								<button
 									type="button"
 									onClick={() => setBoom((b) => !b)}
-									className="focus-ring text-[11px] px-2 py-1 rounded border"
+									className="focus-ring text-xs-plus px-2 py-1 rounded border"
 									style={{ borderColor: theme.colors.border, color: theme.colors.textDim }}
 								>
 									{boom ? 'Reset' : 'Simulate error'}
@@ -291,7 +291,7 @@ export const WidgetGallery = memo(function WidgetGallery({ theme }: WidgetGaller
 								value={ranked}
 								onChange={setRanked}
 							/>
-							<p className="text-[11px] mt-2" style={{ color: theme.colors.textDim }}>
+							<p className="text-xs-plus mt-2" style={{ color: theme.colors.textDim }}>
 								Emitting: [{ranked.orderedIds.join(', ')}]
 							</p>
 						</SectionCard>

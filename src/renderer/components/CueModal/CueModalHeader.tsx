@@ -7,11 +7,34 @@
  */
 
 import { memo } from 'react';
-import { X, Zap, HelpCircle, LayoutDashboard, GitFork, Activity, Archive } from 'lucide-react';
+import {
+	X,
+	Zap,
+	HelpCircle,
+	LayoutDashboard,
+	GitFork,
+	Activity,
+	Archive,
+	AlarmClock,
+	ListChecks,
+} from 'lucide-react';
 import type { Theme } from '../../types';
+import { ToggleSwitchTrack } from '../ui/ToggleSwitch';
 import { CUE_COLOR } from '../../../shared/cue-pipeline-types';
 
-export type CueModalTab = 'dashboard' | 'pipeline' | 'activity' | 'backup';
+/** Tab ids. Kept in sync with the `cue` entry in `shared/uiSurfaces.ts`, which
+ *  is what `maestro-cli open cue --tab <id>` deep-links against.
+ *
+ *  `pipeline` is the graph canvas. Its id predates the "Pipeline Graph" label
+ *  and is deliberately unchanged: saved deep links, `maestro-cli open cue
+ *  --tab pipeline`, and the YAML editor's nav button all address it by id. */
+export type CueModalTab =
+	| 'dashboard'
+	| 'scheduled'
+	| 'pipeline'
+	| 'pipeline-list'
+	| 'activity'
+	| 'backup';
 
 const TABS: ReadonlyArray<{
 	id: CueModalTab;
@@ -19,7 +42,9 @@ const TABS: ReadonlyArray<{
 	icon: typeof LayoutDashboard;
 }> = [
 	{ id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
-	{ id: 'pipeline', label: 'Pipeline Editor', icon: GitFork },
+	{ id: 'scheduled', label: 'Scheduled Tasks', icon: AlarmClock },
+	{ id: 'pipeline', label: 'Pipeline Graph', icon: GitFork },
+	{ id: 'pipeline-list', label: 'Pipeline List', icon: ListChecks },
 	{ id: 'activity', label: 'Activity Log', icon: Activity },
 	{ id: 'backup', label: 'Backup', icon: Archive },
 ];
@@ -83,19 +108,12 @@ function CueModalHeaderInner({
 							color: isEnabled ? theme.colors.accent : theme.colors.textDim,
 						}}
 					>
-						<div
-							className="relative w-8 h-4 rounded-full transition-colors"
-							style={{
-								backgroundColor: isEnabled ? theme.colors.accent : theme.colors.border,
-							}}
-						>
-							<div
-								className="absolute top-0.5 w-3 h-3 rounded-full bg-white transition-transform"
-								style={{
-									transform: isEnabled ? 'translateX(17px)' : 'translateX(2px)',
-								}}
-							/>
-						</div>
+						<ToggleSwitchTrack
+							checked={isEnabled}
+							theme={theme}
+							size="sm"
+							inactiveColor={theme.colors.border}
+						/>
 						{isEnabled ? 'Enabled' : 'Disabled'}
 					</button>
 

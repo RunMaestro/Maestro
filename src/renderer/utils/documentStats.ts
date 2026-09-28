@@ -64,6 +64,12 @@ export interface DocumentStats {
 	brokenLinks?: string[];
 	/** True if the file is very large (>1MB) and was truncated for parsing */
 	isLargeFile?: boolean;
+	/**
+	 * Last-modified time in epoch milliseconds, or 0 when the stat call did not
+	 * report one. Stamped by the graph builder rather than computed here, since
+	 * only the caller has the file stat. The Timeline layout orders on it.
+	 */
+	mtime?: number;
 }
 
 /**

@@ -17,6 +17,7 @@
  * - close_tab: Close a tab within a session
  * - rename_tab: Rename a tab within a session
  * - open_file_tab: Open a file in a preview tab
+ * - open_document_graph: Render the Document Graph over a file set or directory
  * - refresh_file_tree: Refresh the file tree for a session
  * - get_file_tree: Read directory tree from filesystem for web file explorer
  * - get_settings: Fetch current web settings
@@ -40,7 +41,12 @@ import type {
 	MessageHandlerCallbacks,
 	MessageHandlerContext,
 } from './types';
-import { handleSendCommand, handleSwitchMode, handleSelectSession } from './commands';
+import {
+	handleSendCommand,
+	handleSwitchMode,
+	handleSelectSession,
+	handleCrossAgentAsk,
+} from './commands';
 import {
 	handleGetSessions,
 	handleCreateSession,
@@ -64,6 +70,13 @@ import {
 } from './movement';
 import { handleProfilingStart, handleProfilingStatus, handleProfilingStop } from './profiling';
 import {
+	handleSupportPackageCreate,
+	handleFeedbackCheckAuth,
+	handleFeedbackSearch,
+	handleFeedbackSubmit,
+	handleFeedbackSubscribe,
+} from './feedback';
+import {
 	handleMarketplaceGetManifest,
 	handleMarketplaceGetDocument,
 	handleMarketplaceGetReadme,
@@ -73,6 +86,7 @@ import { handlePluginsListTools, handlePluginsCallTool } from './plugins';
 import {
 	handleRefreshAutoRunDocs,
 	handleConfigureAutoRun,
+	handleLaunchGoalRun,
 	handleSetAutoRunFolder,
 	handleGetAutoRunDocs,
 	handleGetAutoRunState,
@@ -84,6 +98,7 @@ import {
 	handleSkipAutoRunDocument,
 	handleAbortAutoRunError,
 } from './autoRun';
+import { handleSnoozeCommand } from './snooze';
 import {
 	handleSelectTab,
 	handleNewTab,
@@ -93,7 +108,13 @@ import {
 	handleReorderTab,
 	handleToggleBookmark,
 	handleOpenFileTab,
+	handleOpenDocumentGraph,
 	handleOpenBrowserTab,
+	handleOpenModal,
+	handleWriteTerminalTab,
+	handleReadTerminalTab,
+	handleListTerminalTabs,
+	handleCloseBrowserTab,
 	handleOpenTerminalTab,
 	handleNewAITabWithPrompt,
 } from './tabs';
@@ -109,6 +130,7 @@ import {
 	handleGetGroups,
 	handleCreateGroup,
 	handleRenameGroup,
+	handleUpdateGroup,
 	handleDeleteGroup,
 	handleMoveSessionToGroup,
 } from './groups';
@@ -237,6 +259,10 @@ export class WebSocketMessageHandler {
 				handleSendCommand(this.ctx, client, message);
 				break;
 
+			case 'cross_agent_ask':
+				handleCrossAgentAsk(this.ctx, client, message);
+				break;
+
 			case 'switch_mode':
 				handleSwitchMode(this.ctx, client, message);
 				break;
@@ -273,6 +299,10 @@ export class WebSocketMessageHandler {
 				handleStarTab(this.ctx, client, message);
 				break;
 
+			case 'snooze_command':
+				handleSnoozeCommand(this.ctx, client, message);
+				break;
+
 			case 'reorder_tab':
 				handleReorderTab(this.ctx, client, message);
 				break;
@@ -285,8 +315,32 @@ export class WebSocketMessageHandler {
 				handleOpenFileTab(this.ctx, client, message);
 				break;
 
+			case 'open_document_graph':
+				handleOpenDocumentGraph(this.ctx, client, message);
+				break;
+
+			case 'write_terminal_tab':
+				void handleWriteTerminalTab(this.ctx, client, message);
+				break;
+
+			case 'list_terminal_tabs':
+				void handleListTerminalTabs(this.ctx, client, message);
+				break;
+
+			case 'read_terminal_tab':
+				void handleReadTerminalTab(this.ctx, client, message);
+				break;
+
+			case 'open_modal':
+				handleOpenModal(this.ctx, client, message);
+				break;
+
 			case 'open_browser_tab':
 				handleOpenBrowserTab(this.ctx, client, message);
+				break;
+
+			case 'close_browser_tab':
+				handleCloseBrowserTab(this.ctx, client, message);
 				break;
 
 			case 'open_terminal_tab':
@@ -323,6 +377,10 @@ export class WebSocketMessageHandler {
 
 			case 'configure_auto_run':
 				handleConfigureAutoRun(this.ctx, client, message);
+				break;
+
+			case 'launch_goal_run':
+				handleLaunchGoalRun(this.ctx, client, message);
 				break;
 
 			case 'create_worktree_session':
@@ -427,6 +485,10 @@ export class WebSocketMessageHandler {
 
 			case 'rename_group':
 				handleRenameGroup(this.ctx, client, message);
+				break;
+
+			case 'update_group':
+				handleUpdateGroup(this.ctx, client, message);
 				break;
 
 			case 'delete_group':
@@ -583,6 +645,26 @@ export class WebSocketMessageHandler {
 
 			case 'profiling_status':
 				handleProfilingStatus(this.ctx, client, message);
+				break;
+
+			case 'support_package_create':
+				void handleSupportPackageCreate(this.ctx, client, message);
+				break;
+
+			case 'feedback_check_auth':
+				void handleFeedbackCheckAuth(this.ctx, client, message);
+				break;
+
+			case 'feedback_search':
+				void handleFeedbackSearch(this.ctx, client, message);
+				break;
+
+			case 'feedback_submit':
+				void handleFeedbackSubmit(this.ctx, client, message);
+				break;
+
+			case 'feedback_subscribe':
+				void handleFeedbackSubscribe(this.ctx, client, message);
 				break;
 
 			case 'marketplace_get_manifest':

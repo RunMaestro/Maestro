@@ -10,21 +10,73 @@
  *
  * Effects:
  *   - Session & group loading on mount (with React Strict Mode guard)
+ *   - Re-derives busy state from the main process's live turns after load
  *   - Sets initialLoadComplete + sessionsLoaded flags for splash coordination
  */
 
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 import type { Session, SessionState, ToolType, LogEntry } from '../../types';
 import { isLimitError } from '../../../shared/types';
-import { useSessionStore } from '../../stores/sessionStore';
+import { updateSessionWith, useSessionStore } from '../../stores/sessionStore';
 import { useGroupChatStore } from '../../stores/groupChatStore';
 import { gitService } from '../../services/git';
 import { generateId } from '../../utils/ids';
 import { isEphemeralBrowserTab, rehydrateBrowserTab } from '../../utils/browserTabPersistence';
+import { applyLiveAiTurns } from '../../utils/liveTurnReattach';
+import { fetchLiveAiTurns } from '../../services/process';
+import { useOwnedSessionGate } from '../agent/internal/useOwnedSessionGate';
 import { getRepairedUnifiedTabOrder } from '../../utils/tabHelpers';
-import { collectLeafTabRefs, normalizeTabGroups } from '../../utils/panelLayout';
+import {
+	collectLeafTabRefs,
+	normalizeTabGroups,
+	resolveActiveTabRef,
+} from '../../utils/panelLayout';
+import { migrateLegacySnoozedTabs } from '../../utils/snoozeHelpers';
+import { isMediaStreamUrl } from '../../../shared/mediaTypes';
 import { PLAYBOOKS_DIR } from '../../../shared/maestro-paths';
 import { logger } from '../../utils/logger';
+import { readPersistedActiveSessionId } from '../../utils/activeSessionPersistence';
+import { useSessionLifecycleSync } from './useSessionLifecycleSync';
+import { useEventListener } from '../utils/useEventListener';
+import { WEB_BRIDGE_RECONCILE_EVENT } from '../../../shared/webClientConfig';
+import { requestWebBridgeReconcile } from '../../services/webBridgeReconcile';
+import { releaseConnectionHeldQueueItems } from '../../utils/executionQueue';
+import { isWebDesktop } from '../../utils/runtimeContext';
+import {
+	MAX_PERSISTED_AI_COMMAND_HISTORY,
+	mergeDeferredItems,
+} from '../../../shared/deferredSessionContent';
+
+const CONNECTION_RECONCILE_RETRY_MS = 1000;
+
+/** Ids of the terminal tabs that are tiled into one of the session's tab groups. */
+function collectGroupedTerminalIds(session: { tabGroups?: Session['tabGroups'] }): Set<string> {
+	const ids = new Set<string>();
+	for (const g of session.tabGroups ?? []) {
+		for (const ref of collectLeafTabRefs(g.layout)) {
+			if (ref.type === 'terminal') ids.add(ref.id);
+		}
+	}
+	return ids;
+}
+
+/**
+ * Whether a persisted terminal tab is still there after a restart.
+ *
+ * Tabs carrying a startup command are durable - the command re-runs on relaunch,
+ * which is the point of them. Group-tiled terminals are durable too: the tile is
+ * part of a layout the user deliberately built, so it comes back with a fresh
+ * shell rather than letting normalizeTabGroups prune the dangling leaf and
+ * dissolve the group. Restoration and the zero-tab corruption check both go
+ * through this so they cannot disagree about how many tabs an agent is about to
+ * have.
+ */
+function terminalTabSurvivesRestart(
+	tab: { id: string; startupCommand?: string },
+	groupedTerminalIds: Set<string>
+): boolean {
+	return (tab.startupCommand ?? '').trim() !== '' || groupedTerminalIds.has(tab.id);
+}
 
 // ============================================================================
 // Return type
@@ -53,8 +105,15 @@ export function useSessionRestoration(): SessionRestorationReturn {
 	// useCallback/useEffect without appearing in dependency arrays. Zustand
 	// store actions returned by getState() are stable singletons that never
 	// change, so the empty deps array is intentional.
-	const { setSessions, setGroups, setActiveSessionId, hydrateActiveSessionId, setSessionsLoaded } =
-		useMemo(() => useSessionStore.getState(), []);
+	const {
+		setSessions,
+		setGroups,
+		setActiveSessionId,
+		hydrateActiveSessionId,
+		setSessionsLoaded,
+		setGroupsLoaded,
+		setSessionsReadOk,
+	} = useMemo(() => useSessionStore.getState(), []);
 	const { setGroupChats } = useMemo(() => useGroupChatStore.getState(), []);
 
 	// --- initialLoadComplete proxy ref ---
@@ -79,6 +138,23 @@ export function useSessionRestoration(): SessionRestorationReturn {
 			},
 		});
 	}, []) as React.MutableRefObject<boolean>;
+
+	// Window scoping for the live-turn reconcile below. A secondary window must
+	// not light up an agent the primary owns, and the gate is the one place that
+	// answers that (web-desktop's is a permit-all, which is what makes the
+	// reconcile work there at all).
+	const ownedGate = useOwnedSessionGate();
+	const reconcileRetryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+	const retrySessionLoad = useRef<() => void>(() => {});
+	const deferredLoadsInFlight = useRef(new Set<string>());
+	const deferredLoadsFailed = useRef(new Set<string>());
+
+	useEffect(
+		() => () => {
+			if (reconcileRetryTimer.current) clearTimeout(reconcileRetryTimer.current);
+		},
+		[]
+	);
 
 	// --- validateAgentInBackground ---
 	// Checks agent availability without blocking session restoration.
@@ -115,6 +191,167 @@ export function useSessionRestoration(): SessionRestorationReturn {
 		},
 		[]
 	);
+
+	// --- reattachLiveAiTurns ---
+	// restoreSession resets every agent to idle because in the Electron app no
+	// spawned process survives a restart. The web-desktop bundle breaks that
+	// assumption: the page is a client of a main process that keeps running, so a
+	// browser reload (or a reconnect after the tab was suspended) drops the
+	// renderer's busy bookkeeping while the agent keeps working - the Left Bar
+	// draws the idle dot and the thinking pill never appears, even as the
+	// transcript fills in, because the output listeners route by process id and
+	// never needed that bookkeeping. Ask main what it is actually running and put
+	// the indicators back. On a cold Electron start the process table is empty, so
+	// this costs one round trip and changes nothing.
+	const reattachLiveAiTurns = useCallback(async () => {
+		const turns = await fetchLiveAiTurns();
+		// null means the probe failed, which is not the same answer as "nothing is
+		// running" - leave the restored state alone rather than guessing.
+		if (!turns) {
+			const hasConnectionHold = useSessionStore
+				.getState()
+				.sessions.some((session) =>
+					(session.executionQueue ?? []).some((item) => item.waitingForConnection)
+				);
+			if (hasConnectionHold && !reconcileRetryTimer.current) {
+				reconcileRetryTimer.current = setTimeout(() => {
+					reconcileRetryTimer.current = null;
+					requestWebBridgeReconcile();
+				}, CONNECTION_RECONCILE_RETRY_MS);
+			}
+			return;
+		}
+		if (reconcileRetryTimer.current) {
+			clearTimeout(reconcileRetryTimer.current);
+			reconcileRetryTimer.current = null;
+		}
+		const owned = turns.filter((turn) => ownedGate.current?.(`${turn.sessionId}-ai-${turn.tabId}`));
+		setSessions((prev) => {
+			let queueChanged = false;
+			const released = prev.map((session) => {
+				const executionQueue = releaseConnectionHeldQueueItems(session.executionQueue || []);
+				if (executionQueue === session.executionQueue) return session;
+				queueChanged = true;
+				return { ...session, executionQueue };
+			});
+			if (!queueChanged && owned.length === 0) return prev;
+			return applyLiveAiTurns(released, owned);
+		});
+	}, [ownedGate]);
+
+	const loadActiveDeferredContent = useCallback(() => {
+		if (!isWebDesktop() || !useSessionStore.getState().sessionsReadOk) return;
+		const { sessions, activeSessionId } = useSessionStore.getState();
+		const session = sessions.find((item) => item.id === activeSessionId);
+		const deferred = session?.deferredContent;
+		if (!session || !deferred) return;
+		const activeRef = resolveActiveTabRef(session);
+		const includeCommands = deferred.commands === true;
+		const group = session.tabGroups?.find((item) => item.id === session.activeGroupId);
+		const visibleAiTabIds = [
+			...(activeRef?.type === 'ai' ? [activeRef.id] : []),
+			...(group
+				? collectLeafTabRefs(group.layout)
+						.filter((ref) => ref.type === 'ai')
+						.map((ref) => ref.id)
+				: []),
+		];
+		const tabId =
+			visibleAiTabIds.find(
+				(id) =>
+					deferred.tabIds.includes(id) &&
+					!deferredLoadsFailed.current.has(`${session.id}:${id}:${includeCommands}`)
+			) ?? null;
+		if (!tabId && visibleAiTabIds.some((id) => deferred.tabIds.includes(id))) return;
+		if (!tabId && !includeCommands) return;
+		const key = `${session.id}:${tabId ?? ''}:${includeCommands}`;
+		if (deferredLoadsFailed.current.has(key)) return;
+		if (deferredLoadsInFlight.current.has(key)) return;
+		deferredLoadsInFlight.current.add(key);
+		void window.maestro.sessions
+			.getDeferredContent(session.id, tabId, includeCommands)
+			.then((content) => {
+				updateSessionWith(session.id, (current) => {
+					const pending = current.deferredContent;
+					if (!pending) return current;
+					let tabIds = pending.tabIds;
+					let aiTabs = current.aiTabs;
+					if (tabId && pending.tabIds.includes(tabId) && content.logs) {
+						const tab = current.aiTabs.find((item) => item.id === tabId);
+						if (tab) {
+							aiTabs = current.aiTabs.map((item) =>
+								item.id === tabId
+									? {
+											...item,
+											logs: mergeDeferredItems(content.logs, item.logs, (log) => log.id),
+										}
+									: item
+							);
+							tabIds = pending.tabIds.filter((id) => id !== tabId);
+						}
+					}
+					const commandsLoaded =
+						includeCommands &&
+						pending.commands === true &&
+						content.shellLogs &&
+						content.agentCommands &&
+						content.aiCommandHistory;
+					return {
+						...current,
+						aiTabs,
+						...(commandsLoaded
+							? {
+									shellLogs: mergeDeferredItems(
+										content.shellLogs,
+										current.shellLogs,
+										(log) => log.id
+									),
+									agentCommands: mergeDeferredItems(
+										content.agentCommands,
+										current.agentCommands,
+										(command) => command.command
+									),
+									aiCommandHistory: mergeDeferredItems(
+										content.aiCommandHistory,
+										current.aiCommandHistory,
+										(command) => command,
+										MAX_PERSISTED_AI_COMMAND_HISTORY
+									),
+								}
+							: {}),
+						deferredContent:
+							tabIds.length || (pending.commands && !commandsLoaded)
+								? {
+										tabIds,
+										...(pending.commands && !commandsLoaded ? { commands: true as const } : {}),
+									}
+								: undefined,
+					};
+				});
+			})
+			.catch((error) => {
+				deferredLoadsFailed.current.add(key);
+				logger.warn(`Failed to load conversation for agent ${session.id}:`, undefined, error);
+			})
+			.finally(() => {
+				deferredLoadsInFlight.current.delete(key);
+				if (deferredLoadsFailed.current.has(key)) loadActiveDeferredContent();
+			});
+	}, []);
+
+	useEffect(() => {
+		if (!isWebDesktop()) return;
+		const unsubscribe = useSessionStore.subscribe(loadActiveDeferredContent);
+		loadActiveDeferredContent();
+		return unsubscribe;
+	}, [loadActiveDeferredContent]);
+
+	useEventListener(WEB_BRIDGE_RECONCILE_EVENT, () => {
+		deferredLoadsFailed.current.clear();
+		if (!useSessionStore.getState().sessionsReadOk) retrySessionLoad.current();
+		loadActiveDeferredContent();
+		void reattachLiveAiTurns();
+	});
 
 	// --- fetchGitInfoInBackground ---
 	const fetchGitInfoInBackground = useCallback(
@@ -164,6 +401,11 @@ export function useSessionRestoration(): SessionRestorationReturn {
 	// --- restoreSession ---
 	const restoreSession = useCallback(async (session: Session): Promise<Session> => {
 		try {
+			// Migration: tag snoozes parked before SnoozedTabEntry carried a kind.
+			// An untagged entry falls through every per-kind switch, and the wake
+			// path would clear the snooze without restoring the tab.
+			session = migrateLegacySnoozedTabs(session);
+
 			// Migration: ensure projectRoot is set (for sessions created before this field was added)
 			if (!session.projectRoot) {
 				session = { ...session, projectRoot: session.cwd };
@@ -205,11 +447,27 @@ export function useSessionRestoration(): SessionRestorationReturn {
 				session = { ...session, createdAt: backfill };
 			}
 
-			// Sessions must have aiTabs - if missing, this is a data corruption issue
-			// Create a default tab to prevent crashes when code calls .find() on aiTabs
-			if (!session.aiTabs || session.aiTabs.length === 0) {
+			// An agent may legitimately have zero AI tabs as long as some other tab kind
+			// is still open (the user closed the last chat but kept a terminal around).
+			// Only a session with no tabs whatsoever is treated as data corruption -
+			// recovering the zero-AI-tab case would wipe the tabs the user still has.
+			//
+			// Terminal tabs are counted through `terminalTabSurvivesRestart` because
+			// restoration below drops the ones that are neither startup-command tabs
+			// nor group-tiled. Counting the raw array would let an agent whose sole
+			// tab is a plain terminal skip recovery here and then lose that terminal,
+			// landing on zero tabs.
+			const survivingTerminalIds = collectGroupedTerminalIds(session);
+			const restoredTabCount =
+				(session.aiTabs?.length ?? 0) +
+				(session.filePreviewTabs?.length ?? 0) +
+				(session.terminalTabs ?? []).filter((tab) =>
+					terminalTabSurvivesRestart(tab, survivingTerminalIds)
+				).length +
+				(session.browserTabs?.length ?? 0);
+			if (restoredTabCount === 0) {
 				logger.error(
-					'[restoreSession] Session has no aiTabs - data corruption, creating default tab:',
+					'[restoreSession] Session has no tabs of any kind - data corruption, creating default tab:',
 					undefined,
 					session.id
 				);
@@ -249,6 +507,12 @@ export function useSessionRestoration(): SessionRestorationReturn {
 					unifiedTabOrder: [{ type: 'ai' as const, id: defaultTabId }],
 					unifiedClosedTabHistory: [],
 				};
+			}
+
+			// Normalize a missing aiTabs array so the rest of the app can keep calling
+			// .find()/.map() on it. Zero AI tabs is a valid state; undefined is not.
+			if (!session.aiTabs) {
+				session = { ...session, aiTabs: [] };
 			}
 
 			// Fix inconsistency: activeFileTabId should only be set in AI mode.
@@ -408,14 +672,9 @@ export function useSessionRestoration(): SessionRestorationReturn {
 			// comes back with a fresh shell (scrollback isn't persisted). Keeping the tab
 			// also stops normalizeTabGroups from pruning its now-dangling leaf and
 			// dissolving the group. Collect the group-tiled terminal ids first.
-			const groupedTerminalIds = new Set<string>();
-			for (const g of correctedSession.tabGroups ?? []) {
-				for (const ref of collectLeafTabRefs(g.layout)) {
-					if (ref.type === 'terminal') groupedTerminalIds.add(ref.id);
-				}
-			}
+			const groupedTerminalIds = collectGroupedTerminalIds(correctedSession);
 			const resetTerminalTabs = (correctedSession.terminalTabs || [])
-				.filter((tab) => (tab.startupCommand ?? '').trim() !== '' || groupedTerminalIds.has(tab.id))
+				.filter((tab) => terminalTabSurvivesRestart(tab, groupedTerminalIds))
 				.map((tab) => ({
 					...tab,
 					pid: 0,
@@ -435,7 +694,20 @@ export function useSessionRestoration(): SessionRestorationReturn {
 			const restoredActiveTabId = validAiTabIds.has(correctedSession.activeTabId)
 				? correctedSession.activeTabId
 				: resetAiTabs[0]?.id || correctedSession.activeTabId;
-			let restoredActiveFileTabId = correctedSession.activeFileTabId ?? null;
+			// Media no longer gets a file preview tab - it opens in the floating
+			// player instead - so drop any left behind by an older build. Without
+			// this they come back as a permanent "Binary File" card the user has to
+			// close by hand. The stream URL's per-boot token is already stale, but
+			// the check is a prefix test, so they are still recognizable.
+			const restoredFilePreviewTabs = (correctedSession.filePreviewTabs || []).filter(
+				(tab) => !isMediaStreamUrl(tab.content)
+			);
+			const validFileTabIds = new Set(restoredFilePreviewTabs.map((tab) => tab.id));
+
+			let restoredActiveFileTabId =
+				correctedSession.activeFileTabId && validFileTabIds.has(correctedSession.activeFileTabId)
+					? correctedSession.activeFileTabId
+					: null;
 			let restoredActiveBrowserTabId =
 				correctedSession.activeBrowserTabId &&
 				validBrowserTabIds.has(correctedSession.activeBrowserTabId)
@@ -462,13 +734,7 @@ export function useSessionRestoration(): SessionRestorationReturn {
 				...correctedSession,
 				aiTabs: resetAiTabs,
 				activeTabId: restoredActiveTabId,
-				// autoplayMedia is a one-shot request from a user action, so it must
-				// never survive a restart. It is normally cleared the moment the
-				// player consumes it; stripping it here covers a quit that lands in
-				// between, which would otherwise start playing on next launch.
-				filePreviewTabs: (correctedSession.filePreviewTabs || []).map((tab) =>
-					tab.autoplayMedia ? { ...tab, autoplayMedia: undefined } : tab
-				),
+				filePreviewTabs: restoredFilePreviewTabs,
 				activeFileTabId: restoredActiveFileTabId,
 				browserTabs: resetBrowserTabs,
 				activeBrowserTabId: restoredActiveBrowserTabId,
@@ -543,6 +809,7 @@ export function useSessionRestoration(): SessionRestorationReturn {
 	// --- Session & group loading effect ---
 	// Use a ref to prevent duplicate execution in React Strict Mode
 	const sessionLoadStarted = useRef(false);
+	const sessionLoadInFlight = useRef(false);
 	useEffect(() => {
 		if (sessionLoadStarted.current) {
 			return;
@@ -550,10 +817,14 @@ export function useSessionRestoration(): SessionRestorationReturn {
 		sessionLoadStarted.current = true;
 
 		const loadSessionsAndGroups = async () => {
+			if (sessionLoadInFlight.current) return;
+			sessionLoadInFlight.current = true;
+			setSessionsLoaded(false);
 			try {
 				window.__updateSplash?.(50, 'Seating the musicians...');
-				const savedSessions = await window.maestro.sessions.getAll();
-				const savedGroups = await window.maestro.groups.getAll();
+				const savedSessions = isWebDesktop()
+					? await window.maestro.sessions.getBootstrap()
+					: await window.maestro.sessions.getAll();
 
 				// Handle sessions
 				if (savedSessions && savedSessions.length > 0) {
@@ -561,7 +832,10 @@ export function useSessionRestoration(): SessionRestorationReturn {
 					setSessions(restoredSessions);
 
 					// Restore persisted active session ID, falling back to first session.
-					const savedActiveSessionId = await window.maestro.sessions.getActiveSessionId();
+					// Read through the helper: a web-desktop client remembers its OWN
+					// focused agent, so a browser refresh returns to what the user was
+					// working in rather than to whatever the desktop has focused.
+					const savedActiveSessionId = await readPersistedActiveSessionId().catch(() => '');
 					if (savedActiveSessionId && restoredSessions.find((s) => s.id === savedActiveSessionId)) {
 						// Saved ID is valid - hydrate locally without writing back to disk
 						hydrateActiveSessionId(savedActiveSessionId);
@@ -570,6 +844,15 @@ export function useSessionRestoration(): SessionRestorationReturn {
 						// doesn't retry the invalid ID on next launch
 						setActiveSessionId(restoredSessions[0].id);
 					}
+					// A partial browser bootstrap is safe only because the main write
+					// boundary preserves every field marked deferred.
+					setSessionsReadOk(true);
+
+					// Put back the busy indicators for agents main is still running.
+					// Deliberately not awaited: it must not hold the splash, and a page
+					// that paints an agent idle for one frame before correcting itself is
+					// far better than one that waits on an IPC round trip to paint at all.
+					void reattachLiveAiTurns();
 
 					// Background tasks: agent validation + SSH git info.
 					// These run after splash hides so they never block startup.
@@ -591,15 +874,45 @@ export function useSessionRestoration(): SessionRestorationReturn {
 					}
 				} else {
 					setSessions([]);
+					setSessionsReadOk(true);
 					// No sessions means no file tree to load - unblock splash immediately
 					useSessionStore.getState().setInitialFileTreeReady(true);
 				}
 
-				// Handle groups
-				if (savedGroups && savedGroups.length > 0) {
-					setGroups(savedGroups);
-				} else {
-					setGroups([]);
+				// Handle groups.
+				//
+				// Read in its OWN try/catch, and mark the registry loaded only when
+				// the read actually came back. Three things depend on that
+				// distinction, and getting it wrong is how a user loses every group
+				// they have:
+				//
+				//   1. An empty result is ambiguous. `groups:getAll` answers `[]`
+				//      both for a user who has no groups and for a groups file that
+				//      could not be read - and the store lives under the configurable
+				//      sync path, so a cloud folder that has not finished mounting at
+				//      launch produces exactly that, with no exception anywhere.
+				//   2. The persistence effect in `useSessionLifecycle` writes the
+				//      in-memory registry straight back to disk, so an unverified
+				//      empty read becomes the new truth and every later launch
+				//      rewrites it. There is no backup and no undo.
+				//   3. A groups failure must not cost the user their AGENTS. Sharing
+				//      one try with the session read meant a rejected `groups:getAll`
+				//      landed in the outer catch and zeroed `setSessions` too.
+				//
+				// So: never persist a registry we never successfully read.
+				try {
+					const savedGroups = await window.maestro.groups.getAll();
+					setGroups(savedGroups && savedGroups.length > 0 ? savedGroups : []);
+					setGroupsLoaded(true);
+				} catch (groupsError) {
+					// Leave the in-memory registry alone and leave `groupsLoaded`
+					// false, which keeps group persistence switched off for this run.
+					// The groups on disk are untouched and come back on next launch.
+					logger.error(
+						'Failed to load groups - group saving disabled for this session:',
+						undefined,
+						groupsError
+					);
 				}
 
 				// Load group chats
@@ -611,9 +924,16 @@ export function useSessionRestoration(): SessionRestorationReturn {
 					setGroupChats([]);
 				}
 			} catch (e) {
-				logger.error('Failed to load sessions/groups:', undefined, e);
-				setSessions([]);
-				setGroups([]);
+				logger.error(
+					'Failed to load sessions - session saving disabled for this run:',
+					undefined,
+					e
+				);
+				// Keep any tree already in memory. A failed read is not evidence that
+				// the store is empty, and sessionsReadOk stays false until a retry works.
+				// Deliberately NOT setGroups([]) here. The group registry is read in
+				// its own try above; wiping it on an unrelated session failure is the
+				// same "unverified empty becomes truth" bug one level up.
 				// Error loading sessions - no file tree to wait for
 				useSessionStore.getState().setInitialFileTreeReady(true);
 			} finally {
@@ -622,10 +942,18 @@ export function useSessionRestoration(): SessionRestorationReturn {
 
 				// Mark sessions as loaded for splash screen coordination
 				setSessionsLoaded(true);
+				sessionLoadInFlight.current = false;
 			}
 		};
-		loadSessionsAndGroups();
+		retrySessionLoad.current = () => void loadSessionsAndGroups();
+		void loadSessionsAndGroups();
 	}, []);
+
+	// --- Peer client sync ---
+	// Agents another client (a second window, a web-desktop browser tab) creates
+	// or closes land here, restored through the same pass as a disk load. Wired
+	// from this hook because `restoreSession` is what prepares them.
+	useSessionLifecycleSync(restoreSession, reattachLiveAiTurns);
 
 	return {
 		initialLoadComplete,

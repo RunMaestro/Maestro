@@ -15,6 +15,7 @@ import { useTabStore } from '../../stores/tabStore';
 import { formatLogsForClipboard, hasThinkingEntries } from '../../utils/contextExtractor';
 import { notifyToast } from '../../stores/notificationStore';
 import { flashCopiedToClipboard } from '../../utils/flashCopiedToClipboard';
+import { safeClipboardWrite } from '../../utils/clipboard';
 import { logger } from '../../utils/logger';
 import { getModalActions } from '../../stores/modalStore';
 
@@ -42,6 +43,21 @@ export interface CopyContextOptions {
 	includeThinking?: boolean;
 }
 
+export interface PublishTextAsGistOptions {
+	/**
+	 * Exact gist filename. Defaults to `<stem>_buffer.txt`, which suits a
+	 * terminal scrollback but not a real file - a file publishes under its own
+	 * name so the gist keeps its extension (and GitHub's syntax highlighting).
+	 */
+	filename?: string;
+	/**
+	 * Absolute path of the file this content came from. When set, the published
+	 * URL is remembered against that path, so the file preview toolbar and the
+	 * file tab menu both show it as published afterwards.
+	 */
+	filePath?: string;
+}
+
 export interface UseTabExportHandlersReturn {
 	/**
 	 * Copy tab conversation to clipboard.
@@ -55,7 +71,11 @@ export interface UseTabExportHandlersReturn {
 	/** Copy arbitrary text (e.g. a terminal buffer) to the clipboard with a toast. */
 	handleCopyText: (text: string, subject?: string) => void;
 	/** Queue arbitrary text for the Gist publish modal and open it. */
-	handlePublishTextAsGist: (text: string, filenameStem: string) => void;
+	handlePublishTextAsGist: (
+		text: string,
+		filenameStem: string,
+		options?: PublishTextAsGistOptions
+	) => void;
 	/** Queue arbitrary text for transfer via the Send to Agent modal. */
 	handleSendTextToAgent: (text: string, sourceName: string) => void;
 }
@@ -98,22 +118,24 @@ export function useTabExportHandlers(deps: UseTabExportHandlersDeps): UseTabExpo
 			return;
 		}
 
-		navigator.clipboard
-			.writeText(text)
-			.then(() => {
+		// safeClipboardWrite, not navigator.clipboard: the async Clipboard API is
+		// undefined over plain HTTP, which is how web-desktop is usually reached on
+		// a plain LAN address, so the bare call threw before it ever copied.
+		void safeClipboardWrite(text).then((copied) => {
+			if (copied) {
 				flashCopiedToClipboard(
 					undefined,
 					hadThinking ? 'Conversation Copied (with reasoning)' : 'Conversation Copied'
 				);
-			})
-			.catch((err) => {
-				logger.error('Failed to copy context:', undefined, err);
-				notifyToast({
-					type: 'error',
-					title: 'Copy Failed',
-					message: 'Failed to copy context to clipboard.',
-				});
+				return;
+			}
+			logger.error('Failed to copy context: clipboard unavailable');
+			notifyToast({
+				type: 'error',
+				title: 'Copy Failed',
+				message: 'Failed to copy context to clipboard.',
 			});
+		});
 	}, []);
 
 	const handleExportHtml = useCallback(async (tabId: string) => {
@@ -183,35 +205,39 @@ export function useTabExportHandlers(deps: UseTabExportHandlersDeps): UseTabExpo
 			return;
 		}
 
-		navigator.clipboard
-			.writeText(text)
-			.then(() => {
+		void safeClipboardWrite(text).then((copied) => {
+			if (copied) {
 				flashCopiedToClipboard(undefined, `${subject} Copied`);
-			})
-			.catch((err) => {
-				console.error('Failed to copy text:', err);
-				notifyToast({
-					type: 'error',
-					title: 'Copy Failed',
-					message: `Failed to copy ${subject.toLowerCase()} to clipboard.`,
-				});
+				return;
+			}
+			logger.error('Failed to copy text: clipboard unavailable');
+			notifyToast({
+				type: 'error',
+				title: 'Copy Failed',
+				message: `Failed to copy ${subject.toLowerCase()} to clipboard.`,
 			});
+		});
 	}, []);
 
-	const handlePublishTextAsGist = useCallback((text: string, filenameStem: string) => {
-		if (!text.trim()) {
-			notifyToast({
-				type: 'warning',
-				title: 'Nothing to Publish',
-				message: 'Buffer is empty.',
-			});
-			return;
-		}
-		const safeStem = filenameStem.replace(/[^a-zA-Z0-9-_]/g, '_') || 'terminal';
-		const filename = `${safeStem}_buffer.txt`;
-		useTabStore.getState().setTabGistContent({ filename, content: text });
-		setGistPublishModalOpen(true);
-	}, []);
+	const handlePublishTextAsGist = useCallback(
+		(text: string, filenameStem: string, options?: PublishTextAsGistOptions) => {
+			if (!text.trim()) {
+				notifyToast({
+					type: 'warning',
+					title: 'Nothing to Publish',
+					message: 'Buffer is empty.',
+				});
+				return;
+			}
+			const safeStem = filenameStem.replace(/[^a-zA-Z0-9-_]/g, '_') || 'terminal';
+			const filename = options?.filename || `${safeStem}_buffer.txt`;
+			useTabStore
+				.getState()
+				.setTabGistContent({ filename, content: text, filePath: options?.filePath });
+			setGistPublishModalOpen(true);
+		},
+		[]
+	);
 
 	const handleSendTextToAgent = useCallback((text: string, sourceName: string) => {
 		if (!text.trim()) {

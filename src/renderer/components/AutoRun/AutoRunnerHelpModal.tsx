@@ -21,6 +21,7 @@ import {
 	Layers,
 	Target,
 	Brain,
+	PauseCircle,
 } from 'lucide-react';
 import type { Theme } from '../../types';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
@@ -47,8 +48,9 @@ export function AutoRunnerHelpModal({ theme, onClose, zIndex = 50 }: AutoRunnerH
 			title="Auto Run Guide"
 			priority={MODAL_PRIORITIES.CONFIRM}
 			onClose={onClose}
-			width={1008}
-			maxHeight="85vh"
+			resizeKey="auto-run-guide"
+			defaultSize={{ width: 880, height: 760 }}
+			minSize={{ width: 520, height: 400 }}
 			closeOnBackdropClick
 			zIndex={zIndex}
 			footer={
@@ -285,7 +287,7 @@ export function AutoRunnerHelpModal({ theme, onClose, zIndex = 50 }: AutoRunnerH
 							<span>
 								<strong style={{ color: theme.colors.textMain }}>Quick Insert:</strong> Press{' '}
 								<kbd
-									className="px-1.5 py-0.5 rounded text-[10px] font-mono font-bold"
+									className="px-1.5 py-0.5 rounded text-2xs font-mono font-bold"
 									style={{
 										backgroundColor: theme.colors.bgActivity,
 										border: `1px solid ${theme.colors.border}`,
@@ -775,6 +777,47 @@ export function AutoRunnerHelpModal({ theme, onClose, zIndex = 50 }: AutoRunnerH
 					</div>
 				</section>
 
+				{/* HITL Gate */}
+				<section>
+					<div className="flex items-center gap-2 mb-3">
+						<PauseCircle className="w-5 h-5" style={{ color: theme.colors.warning }} />
+						<h3 className="font-bold">Human Steps and HITL Gates</h3>
+					</div>
+					<div className="text-sm space-y-2 pl-7" style={{ color: theme.colors.textDim }}>
+						<p>
+							Every <code>- [ ]</code> task is handed to an AI agent, so a checkbox that needs a{' '}
+							<strong>person</strong> can never be completed - the run stalls, or the agent ticks a
+							box for work it never did. Auto Run flags tasks that look human-only with a warning in
+							the panel.
+						</p>
+						<p>
+							When the run genuinely must wait on a person, use a HITL (human-in-the-loop) gate
+							marker on its own line, above the tasks that depend on the human:
+						</p>
+						<div
+							className="font-mono text-xs p-2 rounded border"
+							style={{
+								backgroundColor: theme.colors.bgActivity,
+								borderColor: theme.colors.border,
+							}}
+						>
+							{'<!-- MAESTRO:HITL reason="Add STRIPE_SECRET_KEY to .env" artifact=".env" -->'}
+						</div>
+						<p>
+							The engine pauses at the marker, shows the <code>reason</code> (and optional{' '}
+							<code>artifact</code> to review) in the panel and a toast, and waits. Check the task
+							above the marker, or click Resume, to continue. This is a deliberate, visible pause
+							rather than a silent stall.
+						</p>
+						<p>
+							For work Auto Run should never attempt at all, use plain <code>-</code> bullets under
+							a trailing section such as{' '}
+							<strong>&quot;Manual Follow-Up (not executed by Auto Run)&quot;</strong>. The engine
+							only reads checkboxes, so those lines can never block a run.
+						</p>
+					</div>
+				</section>
+
 				{/* Halt Marker */}
 				<section>
 					<div className="flex items-center gap-2 mb-3">
@@ -801,6 +844,11 @@ export function AutoRunnerHelpModal({ theme, onClose, zIndex = 50 }: AutoRunnerH
 							When the engine sees this marker after a task, it stops immediately - no further tasks
 							in the current document, no further documents in the playbook. The reason is recorded
 							in the History panel and surfaced as a <code>halt</code> event in the JSONL stream.
+						</p>
+						<p>
+							The marker only counts when it stands alone on a line. One inside a code fence, inside
+							backticks, or riding a <code>- [ ]</code> checkbox line is read as an example and
+							ignored, so a playbook can describe its halt conditions without halting itself.
 						</p>
 						<p>
 							A stale halt marker left in a document will block re-runs until removed - Auto Run

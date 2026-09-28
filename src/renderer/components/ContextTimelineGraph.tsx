@@ -215,7 +215,7 @@ export const ContextTimelineGraph = memo(function ContextTimelineGraph({
 					</rect>
 				))}
 			</svg>
-			<div className="flex items-center justify-between gap-2 text-[10px]">
+			<div className="flex items-center justify-between gap-2 text-2xs">
 				<span style={{ color: theme.colors.textDim }}>
 					turn {(readout?.index ?? 0) + 1} of {plot.length}
 					{active ? '' : ' (latest)'}
@@ -228,7 +228,7 @@ export const ContextTimelineGraph = memo(function ContextTimelineGraph({
 					{readout?.label ?? ''}
 				</span>
 			</div>
-			<div className="text-[10px]" style={{ color: theme.colors.textDim }}>
+			<div className="text-2xs" style={{ color: theme.colors.textDim }}>
 				Oldest turn on the left. The dashed line is 100% of the window.
 			</div>
 		</div>

@@ -1,5 +1,5 @@
 // Panel layout helpers - pure, side-effect-free tree utilities for tmux-style
-// tab tiling (split panes). Mirrors the functional style of tabHelpers.ts and
+// tab tiling (split panes). Mirrors the functional style of tabHelpers and
 // terminalTabHelpers.ts: every function takes a node/group and returns a new
 // one, never mutating its input.
 //
@@ -119,7 +119,7 @@ export function dropZoneToSplit(
 }
 
 /** Compare two tab refs by type + id (leaves reference tabs by value, not identity). */
-function sameTabRef(a: UnifiedTabRef, b: UnifiedTabRef): boolean {
+export function sameTabRef(a: UnifiedTabRef, b: UnifiedTabRef): boolean {
 	return a.type === b.type && a.id === b.id;
 }
 
@@ -391,6 +391,31 @@ export function resolveSingleViewTabRef(session: Session): UnifiedTabRef | null 
  * pane when nothing is focused, and to the single-view tab when no group is
  * active.
  */
+/**
+ * The AI tab a model/effort change should retune, or `null` when there is no
+ * such tab and the control must not act at all.
+ *
+ * Two rules, and the second is the one that is easy to miss. A model belongs to
+ * an AI tab, so a file, terminal, or browser tab has nothing to retune. And a
+ * GROUP CHAT is not a target: a room has no model of its own, and it does not
+ * clear `activeSession` on the way in - that still points at whichever agent was
+ * selected before the room was opened. So resolving through the session alone
+ * while a room is on screen does not fail, it succeeds against the WRONG tab and
+ * silently retunes a background agent the user is not looking at.
+ *
+ * Both the `openModelEffort` shortcut and the command palette's "Change Tabs
+ * Model and Effort" entry resolve their target here, because two copies of this
+ * predicate is exactly how one surface keeps the guard and the other loses it.
+ */
+export function resolveModelEffortTabId(
+	session: Session | null | undefined,
+	activeGroupChatId?: string | null
+): string | null {
+	if (!session || activeGroupChatId) return null;
+	const ref = resolveActiveTabRef(session);
+	return ref?.type === 'ai' ? ref.id : null;
+}
+
 export function resolveActiveTabRef(session: Session): UnifiedTabRef | null {
 	const group =
 		session.activeGroupId != null
@@ -858,7 +883,7 @@ function activateRestoredPane(session: Session, groupId: string, ref: UnifiedTab
  * rather than restoring one, so pulling it into a rebuilt group would yank a live
  * tab out of wherever the user currently has it.
  *
- * Lives here rather than beside `reopenUnifiedClosedTab` because tabHelpers.ts
+ * Lives here rather than beside `reopenUnifiedClosedTab` because tabHelpers
  * must not import this module (it would close an import cycle).
  */
 export function reopenClosedTabWithTiling(session: Session): ReopenUnifiedClosedTabResult | null {
@@ -1271,7 +1296,7 @@ function parentSplitDirection(node: PanelLayoutNode, leafId: string): 'row' | 'c
 }
 
 /** Id of the first (top-left) leaf in a layout, or null for an empty tree. */
-function firstLeafId(node: PanelLayoutNode): string | null {
+export function firstLeafId(node: PanelLayoutNode): string | null {
 	if (node.kind === 'leaf') return node.id;
 	for (const child of node.children) {
 		const id = firstLeafId(child);

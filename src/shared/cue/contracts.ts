@@ -28,8 +28,10 @@ export type CueEventType =
 	| 'agent.completed'
 	| 'github.pull_request'
 	| 'github.issue'
+	| 'github.label'
 	| 'task.pending'
-	| 'cli.trigger';
+	| 'cli.trigger'
+	| 'webhook.received';
 
 /** All valid event type values */
 export const CUE_EVENT_TYPES: CueEventType[] = [
@@ -41,15 +43,71 @@ export const CUE_EVENT_TYPES: CueEventType[] = [
 	'agent.completed',
 	'github.pull_request',
 	'github.issue',
+	'github.label',
 	'task.pending',
 	'cli.trigger',
+	'webhook.received',
 ];
+
+/**
+ * Per-subscription config for `webhook.received` triggers.
+ *
+ * Maestro runs one local HTTP listener (loopback-only by default) shared by
+ * every `webhook.received` subscription across every agent. Each subscription
+ * claims a path segment under `/cue/` and authenticates deliveries with its
+ * own shared secret, so two projects can never read each other's payloads.
+ *
+ * Delivery URL: `http://127.0.0.1:<port>/cue/<path>`. Port and bind host come
+ * from `MAESTRO_CUE_WEBHOOK_PORT` / `MAESTRO_CUE_WEBHOOK_HOST`; to accept
+ * deliveries from the public internet, point a tunnel (ngrok, cloudflared) or
+ * a reverse proxy at the loopback port rather than binding it to 0.0.0.0.
+ */
+export interface CueWebhookConfig {
+	/** URL path segment under `/cue/`. Defaults to a slug of the subscription
+	 *  name when omitted. Multiple subscriptions may share a path - every
+	 *  matching subscription that authenticates receives the delivery. */
+	path?: string;
+	/** Literal shared secret. Discouraged: `cue.yaml` is normally committed.
+	 *  Prefer {@link secret_env}. Exactly one of the two is required. */
+	secret?: string;
+	/** Name of an environment variable holding the shared secret. Read from
+	 *  the Maestro process environment at delivery time, so rotating the
+	 *  secret does not require a config edit. */
+	secret_env?: string;
+	/** When set, deliveries authenticate by HMAC-SHA256 over the raw request
+	 *  body instead of by presenting the secret directly. The header value may
+	 *  be bare hex or `sha256=<hex>` (GitHub / GitLab style). */
+	signature_header?: string;
+}
+
+/**
+ * Normalize a user-supplied webhook path (or a subscription name used as the
+ * fallback) into a URL segment: lowercase, non-alphanumerics collapsed to
+ * single hyphens, trimmed. Returns an empty string when nothing usable
+ * survives, which the config validator reports as an error.
+ *
+ * Lives in the shared contract rather than the listener so the validator can
+ * check a config without pulling the HTTP server into its import graph.
+ */
+export function normalizeWebhookPath(raw: string): string {
+	return raw
+		.trim()
+		.toLowerCase()
+		.replace(/[^a-z0-9]+/g, '-')
+		.replace(/^-+|-+$/g, '');
+}
 
 /** Valid GitHub state filters for polling triggers */
 export type CueGitHubState = 'open' | 'closed' | 'merged' | 'all';
 
 /** All valid GitHub state values */
 export const CUE_GITHUB_STATES: CueGitHubState[] = ['open', 'closed', 'merged', 'all'];
+
+/** Which kind of item a `github.label` subscription watches. */
+export type CueGitHubLabelTarget = 'pr' | 'issue' | 'both';
+
+/** All valid `gh_label_target` values */
+export const CUE_GITHUB_LABEL_TARGETS: CueGitHubLabelTarget[] = ['pr', 'issue', 'both'];
 
 /** What a subscription does when it fires. */
 export type CueAction = 'prompt' | 'command' | 'notify';
@@ -193,6 +251,14 @@ export interface CueSubscription {
 	repo?: string;
 	poll_minutes?: number;
 	gh_state?: CueGitHubState;
+	/** Which kind of item a `github.label` subscription watches: pull requests
+	 *  only, issues only, or both. Defaults to `'both'`. Ignored by every
+	 *  other event type. */
+	gh_label_target?: CueGitHubLabelTarget;
+	/** Labels a `github.label` subscription fires on. Matched case-insensitively
+	 *  against the label that was just added. Empty / omitted = fire on ANY
+	 *  label being added. Ignored by every other event type. */
+	gh_labels?: string[];
 	/** Re-fire this subscription when a tracked PR/issue receives new activity
 	 *  (comments, edits, reviews, label changes) after its initial discovery.
 	 *  Default `false` (legacy behavior: fire once per item on creation).
@@ -206,6 +272,9 @@ export interface CueSubscription {
 	 *  freezes its tracked revision so raising the cap later resumes from
 	 *  the right point instead of replaying stale activity. */
 	max_notifications?: number;
+	/** Listener config for `webhook.received` events. Required for that event
+	 *  type; ignored for all others. See {@link CueWebhookConfig}. */
+	webhook?: CueWebhookConfig;
 	agent_id?: string;
 	label?: string;
 	fan_in_timeout_minutes?: number;
@@ -277,6 +346,28 @@ export interface CueSettings {
 	 * the session list wins (deterministic per launch).
 	 */
 	owner_agent_id?: string;
+	/**
+	 * Run the 0DIN.ai SusFactor prompt-injection check on GitHub issue/PR bodies
+	 * and comments before an agent sees them. Suspicious items are blocked and
+	 * the user is notified instead of being processed.
+	 *
+	 * NOTE ON EGRESS: enabling this POSTs the text of every scored issue body and
+	 * comment - including those in private repositories - to defense.0din.ai. The
+	 * check also no-ops unless `ODIN_API_TOKEN` is set in the environment.
+	 *
+	 * Defaults to true.
+	 */
+	susfactor_enabled?: boolean;
+	/**
+	 * Score at or above which an item is blocked, on a 0-1 scale, applied to the
+	 * highest-scoring chunk of the content rather than the document as a whole.
+	 *
+	 * Defaults to 0.95. Measured against the live endpoint, benign engineering
+	 * prose topped out around 0.86 while real injections landed at 0.96-0.999,
+	 * so 0.95 sits inside that gap. Lowering it below ~0.9 starts blocking
+	 * ordinary security-flavored text such as "stop logging the bearer token".
+	 */
+	susfactor_threshold?: number;
 }
 
 /** Default Cue settings */
@@ -285,6 +376,8 @@ export const DEFAULT_CUE_SETTINGS: CueSettings = {
 	timeout_on_fail: 'break',
 	max_concurrent: 1,
 	queue_size: 512,
+	susfactor_enabled: true,
+	susfactor_threshold: 0.95,
 };
 
 /** Top-level Cue configuration */

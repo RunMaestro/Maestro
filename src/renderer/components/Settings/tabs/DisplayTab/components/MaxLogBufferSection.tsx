@@ -19,7 +19,7 @@ export function MaxLogBufferSection({
 		<div data-setting-id="display-max-log-buffer">
 			<SettingsSectionHeading icon={Database}>Maximum Log Buffer</SettingsSectionHeading>
 			<ToggleButtonGroup
-				options={[1000, 5000, 10000, 25000].map((value) => ({
+				options={[1000, 5000, 10000, 25000, 50000].map((value) => ({
 					value,
 					label: formatNumber(value),
 				}))}

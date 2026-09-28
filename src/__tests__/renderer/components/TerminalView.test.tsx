@@ -24,6 +24,11 @@ const mockRefresh = vi.fn();
 const mockFocus = vi.fn();
 const mockWrite = vi.fn();
 const mockXtermClear = vi.fn();
+// The measured grid the stub reports, and the PTY size-push TerminalView triggers
+// after a spawn. A shell born at the 80x24 default paints every full-screen program
+// (nano, vim, less) into that box no matter how large the pane is.
+const mockGetSize = vi.fn(() => ({ cols: 170, rows: 59 }));
+const mockSyncSize = vi.fn();
 // Captures the most recent props passed to each mounted XTerminal instance, keyed by
 // sessionId (the `${sessionId}-terminal-${tabId}` string). Used by tests to invoke the
 // forwarded selection callbacks without needing a real xterm context menu.
@@ -45,6 +50,8 @@ vi.mock('../../../renderer/components/XTerminal', () => {
 				searchPrevious(): boolean;
 				getSelection(): string;
 				resize(): void;
+				getSize(): { cols: number; rows: number } | null;
+				syncSize(): void;
 			}>
 		) => {
 			xtermPropsBySessionId.set(String(props.sessionId), props);
@@ -59,6 +66,8 @@ vi.mock('../../../renderer/components/XTerminal', () => {
 				searchPrevious: vi.fn().mockReturnValue(false),
 				getSelection: vi.fn().mockReturnValue(''),
 				resize: vi.fn(),
+				getSize: mockGetSize,
+				syncSize: mockSyncSize,
 			}));
 			return React.createElement('div', { 'data-testid': 'xterm-mock' });
 		}
@@ -550,6 +559,73 @@ describe('TerminalView - killed shell keeps the tab (issue #1184)', () => {
 	});
 });
 
+describe('TerminalView - tiled panes spawn their PTY (regression)', () => {
+	// A terminal that is a leaf in the active tab group is on screen without ever
+	// being `activeTerminalTabId`. Spawning used to be gated on the active tab
+	// alone, so a tiled terminal sat on "Starting terminal..." forever - the one
+	// tab kind that broke when tiled. The visible set, not the active tab, is what
+	// drives spawning.
+
+	it('spawns a PTY for a terminal that only has a pane rect', async () => {
+		const tiled = makeTab({ id: 'tiled-1', pid: 0, state: 'idle' });
+		// Empty active terminal tab: the panel is showing the group, not a single tab.
+		const session = makeSession([tiled], '');
+		const paneRects = new Map([['tiled-1', { top: 0, left: 0, width: 400, height: 300 }]]);
+
+		await act(async () => {
+			render(
+				<TerminalView {...defaultProps} session={session} isVisible={true} paneRects={paneRects} />
+			);
+			await new Promise((resolve) => setTimeout(resolve, 50));
+		});
+
+		expect(maestro().process.spawnTerminalTab).toHaveBeenCalledWith(
+			expect.objectContaining({ sessionId: 'session-1-terminal-tiled-1' })
+		);
+	});
+
+	it('spawns a PTY for every terminal in the group, not just one', async () => {
+		const first = makeTab({ id: 'tiled-1', pid: 0, state: 'idle' });
+		const second = makeTab({ id: 'tiled-2', pid: 0, state: 'idle' });
+		const session = makeSession([first, second], '');
+		const paneRects = new Map([
+			['tiled-1', { top: 0, left: 0, width: 400, height: 150 }],
+			['tiled-2', { top: 150, left: 0, width: 400, height: 150 }],
+		]);
+
+		await act(async () => {
+			render(
+				<TerminalView {...defaultProps} session={session} isVisible={true} paneRects={paneRects} />
+			);
+			await new Promise((resolve) => setTimeout(resolve, 50));
+		});
+
+		const spawnedIds = maestro()
+			.process.spawnTerminalTab.mock.calls.map((c: [{ sessionId: string }]) => c[0].sessionId)
+			.sort();
+		expect(spawnedIds).toEqual(['session-1-terminal-tiled-1', 'session-1-terminal-tiled-2']);
+	});
+
+	it('leaves a terminal that is neither active nor tiled alone', async () => {
+		const tiled = makeTab({ id: 'tiled-1', pid: 0, state: 'idle' });
+		const offscreen = makeTab({ id: 'offscreen-1', pid: 0, state: 'idle' });
+		const session = makeSession([tiled, offscreen], '');
+		const paneRects = new Map([['tiled-1', { top: 0, left: 0, width: 400, height: 300 }]]);
+
+		await act(async () => {
+			render(
+				<TerminalView {...defaultProps} session={session} isVisible={true} paneRects={paneRects} />
+			);
+			await new Promise((resolve) => setTimeout(resolve, 50));
+		});
+
+		expect(maestro().process.spawnTerminalTab).toHaveBeenCalledTimes(1);
+		expect(maestro().process.spawnTerminalTab).toHaveBeenCalledWith(
+			expect.objectContaining({ sessionId: 'session-1-terminal-tiled-1' })
+		);
+	});
+});
+
 describe('TerminalView - SSH terminal working directory (regression)', () => {
 	// Regression test suite: SSH terminals must cd to the correct remote directory.
 	// The workingDirOverride in sessionSshRemoteConfig must follow the fallback chain:
@@ -858,5 +934,54 @@ describe('TerminalView - touch key bar (coarse pointer)', () => {
 			bridge?.onConsume();
 		});
 		expect(bridge?.isActive()).toBe(false);
+	});
+});
+
+describe('TerminalView — PTY window size', () => {
+	// The PTY is born 80x24 unless the spawn says otherwise. Anything that asks the
+	// kernel for the window size - nano, vim, less, top - then paints into that box
+	// however large the pane is, while ordinary command output still fills it,
+	// because xterm does the wrapping itself. So the view has to hand its measured
+	// grid to the spawn, and re-assert it once the pid exists: a resize that raced
+	// the spawn is dropped silently (process:resize resolves false for an unknown
+	// session id) and nothing else ever retries it.
+
+	it('spawns the shell at the grid the terminal is actually showing', async () => {
+		const tab = makeTab({ id: 'tab-1', pid: 0, state: 'idle', createdAt: Date.now() });
+
+		await act(async () => {
+			render(<TerminalView {...defaultProps} session={makeSession([tab])} isVisible={true} />);
+			await new Promise((resolve) => setTimeout(resolve, 50));
+		});
+
+		expect(maestro().process.spawnTerminalTab).toHaveBeenCalledWith(
+			expect.objectContaining({ cols: 170, rows: 59 })
+		);
+	});
+
+	it('omits the size when the terminal is hidden and has never been measured', async () => {
+		mockGetSize.mockReturnValueOnce(null as unknown as { cols: number; rows: number });
+		const tab = makeTab({ id: 'tab-1', pid: 0, state: 'idle', createdAt: Date.now() });
+
+		await act(async () => {
+			render(<TerminalView {...defaultProps} session={makeSession([tab])} isVisible={true} />);
+			await new Promise((resolve) => setTimeout(resolve, 50));
+		});
+
+		const config = (maestro().process.spawnTerminalTab as ReturnType<typeof vi.fn>).mock
+			.calls[0][0];
+		expect(config.cols).toBeUndefined();
+		expect(config.rows).toBeUndefined();
+	});
+
+	it('re-asserts the size once the pid lands', async () => {
+		const tab = makeTab({ id: 'tab-1', pid: 0, state: 'idle', createdAt: Date.now() });
+
+		await act(async () => {
+			render(<TerminalView {...defaultProps} session={makeSession([tab])} isVisible={true} />);
+			await new Promise((resolve) => setTimeout(resolve, 50));
+		});
+
+		expect(mockSyncSize).toHaveBeenCalled();
 	});
 });

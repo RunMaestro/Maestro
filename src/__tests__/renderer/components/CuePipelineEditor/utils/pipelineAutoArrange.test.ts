@@ -12,12 +12,16 @@ import {
 	arrangePipelineNodes,
 	untanglePipelineNodes,
 	arrangePipelineGroups,
+	beautifyPipelineLayouts,
+	estimateNodeWidth,
+	separateOverlappingNodes,
 } from '../../../../../renderer/components/CuePipelineEditor/utils/pipelineAutoArrange';
 import {
 	NODE_BG_WIDTH,
 	NODE_BG_HEIGHT,
 	PIPELINE_GROUP_PADDING,
 } from '../../../../../renderer/components/CuePipelineEditor/utils/pipelineGraph';
+import { pipelineCardBounds } from '../../../../../renderer/components/CuePipelineEditor/utils/nodeFootprint';
 import type { CuePipeline, PipelineNode } from '../../../../../shared/cue-pipeline-types';
 
 function agentNode(id: string, x: number, y: number): PipelineNode {
@@ -123,21 +127,28 @@ describe('arrangePipelineNodes', () => {
 				{ id: 'e2', source: 'mid', target: 'end', mode: 'pass' },
 			],
 		});
-		// Trigger 200px wide, the middle node a fat 560px (long path/name), end 300px.
+		// Trigger 400px wide, the middle node a fat 560px (long path/name), end 400px.
+		// (All above the NODE_BG_WIDTH estimate floor - a measurement NARROWER than
+		// the floor is ignored so short labels keep the uniform grid pitch.)
 		const widths = new Map<string, number>([
-			['t', 200],
+			['t', 400],
 			['mid', 560],
-			['end', 300],
+			['end', 400],
 		]);
 		const byId = new Map(arrangePipelineNodes(p, widths).map((n) => [n.id, n.position]));
 		// Three distinct, strictly increasing columns.
 		expect(byId.get('t')!.x).toBeLessThan(byId.get('mid')!.x);
 		expect(byId.get('mid')!.x).toBeLessThan(byId.get('end')!.x);
-		// Column 1 (mid) starts COLUMN_GAP past the trigger's real 200px right edge.
-		expect(byId.get('mid')!.x - (byId.get('t')!.x + 200)).toBe(COLUMN_GAP);
+		// Column 1 (mid) starts COLUMN_GAP past the trigger's real 400px right edge.
+		expect(byId.get('mid')!.x - (byId.get('t')!.x + 400)).toBe(COLUMN_GAP);
 		// Column 2 (end) starts COLUMN_GAP past the WIDE mid node's real 560px right
 		// edge - this is the guarantee that was violated with a fixed pitch.
 		expect(byId.get('end')!.x - (byId.get('mid')!.x + 560)).toBe(COLUMN_GAP);
+		// And a measurement below the floor does NOT shrink the pitch: the floor
+		// (NODE_BG_WIDTH) wins, keeping columns uniform for short labels.
+		const narrow = new Map<string, number>([['t', 200]]);
+		const narrowById = new Map(arrangePipelineNodes(p, narrow).map((n) => [n.id, n.position]));
+		expect(narrowById.get('mid')!.x - narrowById.get('t')!.x).toBe(NODE_BG_WIDTH + COLUMN_GAP);
 	});
 
 	it('aligns every component on ONE column grid sized by the widest node per rank', () => {
@@ -531,16 +542,16 @@ describe('arrangePipelineGroups', () => {
 	// the SAME footprint math as groupInfo, so we can assert geometric packing
 	// properties the old uniform-grid layout violated.
 	function cardRect(p: CuePipeline, offset: { x: number; y: number }) {
-		const minX = Math.min(...p.nodes.map((n) => n.position.x));
-		const minY = Math.min(...p.nodes.map((n) => n.position.y));
-		const maxX = Math.max(...p.nodes.map((n) => n.position.x + NODE_BG_WIDTH));
-		const maxY = Math.max(...p.nodes.map((n) => n.position.y + NODE_BG_HEIGHT));
-		const width = maxX - minX + 2 * PIPELINE_GROUP_PADDING;
-		const height = maxY - minY + 2 * PIPELINE_GROUP_PADDING;
-		// Card renders at (minX + offset - PADDING); offset is what arrange returns.
-		const left = minX + offset.x - PIPELINE_GROUP_PADDING;
-		const top = minY + offset.y - PIPELINE_GROUP_PADDING;
-		return { left, top, right: left + width, bottom: top + height };
+		// Ask for the rect the renderer draws rather than restating its geometry,
+		// so a change to the footprint cannot leave the packer and this test
+		// asserting different boxes.
+		const card = pipelineCardBounds(p.nodes, { offset })!;
+		return {
+			left: card.x,
+			top: card.y,
+			right: card.x + card.width,
+			bottom: card.y + card.height,
+		};
 	}
 
 	function rectsOverlap(a: ReturnType<typeof cardRect>, b: ReturnType<typeof cardRect>): boolean {
@@ -616,5 +627,263 @@ describe('arrangePipelineGroups', () => {
 			return r.top < giantRect.bottom && (r.right <= giantRect.left || r.left >= giantRect.right);
 		});
 		expect(beside).toBe(true);
+	});
+});
+
+describe('estimateNodeWidth', () => {
+	it('floors short-label nodes at NODE_BG_WIDTH so the grid pitch stays uniform', () => {
+		expect(estimateNodeWidth(agentNode('a', 0, 0))).toBe(NODE_BG_WIDTH);
+		expect(estimateNodeWidth(triggerNode('t', 0, 0))).toBe(NODE_BG_WIDTH);
+	});
+
+	it('grows past the floor for long text so wide nodes get a wide column', () => {
+		const wideCommand: PipelineNode = {
+			id: 'c',
+			type: 'command',
+			position: { x: 0, y: 0 },
+			data: {
+				name: 'options-desk-context',
+				mode: 'shell',
+				shell: 'BASE=/Volumes/VRAM/90-99_Archive/some/long/path run-context-collector --verbose',
+				owningSessionId: 's1',
+				owningSessionName: 'Finance Desk',
+			},
+		};
+		expect(estimateNodeWidth(wideCommand)).toBeGreaterThan(NODE_BG_WIDTH);
+
+		const wideAgent: PipelineNode = {
+			id: 'a',
+			type: 'agent',
+			position: { x: 0, y: 0 },
+			data: {
+				sessionId: 'a',
+				sessionName: 'An Extremely Long Agent Session Name That Overflows',
+				toolType: 'claude-code',
+			},
+		};
+		expect(estimateNodeWidth(wideAgent)).toBeGreaterThan(NODE_BG_WIDTH);
+	});
+
+	it('is deterministic: the same data always yields the same estimate', () => {
+		const n = agentNode('a', 12, 700);
+		expect(estimateNodeWidth(n)).toBe(estimateNodeWidth({ ...n, position: { x: 0, y: 0 } }));
+	});
+});
+
+describe('beautifyPipelineLayouts', () => {
+	// The naive yamlToPipeline defaults: fixed 300px pitch regardless of node
+	// width, everything at baseY - exactly the overlapping-boxes screenshot.
+	function naivePipeline(id: string): CuePipeline {
+		return pipeline({
+			id,
+			name: id,
+			nodes: [
+				triggerNode('t', 100, 200),
+				{
+					id: 'cmd',
+					type: 'command',
+					position: { x: 400, y: 200 },
+					data: {
+						name: 'options-desk-context',
+						mode: 'shell',
+						shell: 'BASE=/Volumes/VRAM/90-99_Archive/path collect-context --for-day',
+						owningSessionId: 's1',
+						owningSessionName: 'Finance Desk',
+					},
+				},
+				agentNode('a1', 700, 200),
+				agentNode('a2', 1000, 200),
+			],
+			edges: [
+				{ id: 'e1', source: 't', target: 'cmd', mode: 'pass' },
+				{ id: 'e2', source: 'cmd', target: 'a1', mode: 'pass' },
+				{ id: 'e3', source: 'a1', target: 'a2', mode: 'pass' },
+			],
+		});
+	}
+
+	function footprints(p: CuePipeline): Array<{ l: number; r: number; t: number; b: number }> {
+		return p.nodes.map((n) => ({
+			l: n.position.x,
+			r: n.position.x + estimateNodeWidth(n),
+			t: n.position.y,
+			b: n.position.y + (n.type === 'trigger' ? TRIGGER_H : AGENT_H),
+		}));
+	}
+
+	it('heals naive fixed-pitch layouts: no two node footprints overlap', () => {
+		const healed = beautifyPipelineLayouts([naivePipeline('p1')]);
+		const boxes = footprints(healed[0]);
+		for (let i = 0; i < boxes.length; i++) {
+			for (let j = i + 1; j < boxes.length; j++) {
+				const a = boxes[i];
+				const b = boxes[j];
+				const overlaps = a.l < b.r && b.l < a.r && a.t < b.b && b.t < a.b;
+				expect(overlaps).toBe(false);
+			}
+		}
+	});
+
+	it('assigns a packed viewOffset to every non-empty pipeline and leaves inputs unmutated', () => {
+		const p1 = naivePipeline('p1');
+		const p2 = naivePipeline('p2');
+		const before = JSON.stringify([p1, p2]);
+		const healed = beautifyPipelineLayouts([p1, p2]);
+		expect(healed[0].viewOffset).toBeDefined();
+		expect(healed[1].viewOffset).toBeDefined();
+		// Cards must not overlap in the All-Pipelines frame.
+		const rects = healed.map((p) => {
+			const card = pipelineCardBounds(p.nodes, { offset: p.viewOffset! })!;
+			return {
+				l: card.x,
+				r: card.x + card.width,
+				t: card.y,
+				b: card.y + card.height,
+			};
+		});
+		const cardsOverlap =
+			rects[0].l < rects[1].r &&
+			rects[1].l < rects[0].r &&
+			rects[0].t < rects[1].b &&
+			rects[1].t < rects[0].b;
+		expect(cardsOverlap).toBe(false);
+		// Pure: the input pipelines are untouched.
+		expect(JSON.stringify([p1, p2])).toBe(before);
+	});
+
+	it('keeps 0/1-node pipelines untouched apart from the packed offset', () => {
+		const single = pipeline({ id: 'solo', nodes: [agentNode('a', 123, 456)] });
+		const healed = beautifyPipelineLayouts([single, naivePipeline('p2')]);
+		expect(healed[0].nodes[0].position).toEqual({ x: 123, y: 456 });
+	});
+
+	it('is stable: beautifying an already-beautified state changes nothing', () => {
+		const healed = beautifyPipelineLayouts([naivePipeline('p1'), naivePipeline('p2')]);
+		const again = beautifyPipelineLayouts(healed);
+		expect(JSON.stringify(again)).toBe(JSON.stringify(healed));
+	});
+});
+
+describe('separateOverlappingNodes', () => {
+	// The collision guard is the backstop for the two ways a node ends up drawn
+	// on top of its neighbour: a width ESTIMATE that came in under the rendered
+	// width (a wide user font), and a DATA edit that grew a node without
+	// changing the topology (so no heal fired). It works off the widths
+	// ReactFlow measured, and moves only nodes that genuinely collide.
+	const WIDE = 900;
+
+	it('returns the input array reference when nothing overlaps', () => {
+		const p = pipeline({
+			nodes: [triggerNode('t', 0, 0), agentNode('a', 500, 0)],
+		});
+		expect(separateOverlappingNodes(p, new Map([['t', 400]]))).toBe(p.nodes);
+	});
+
+	it('returns the input array reference for 0- and 1-node pipelines', () => {
+		const empty = pipeline();
+		expect(separateOverlappingNodes(empty)).toBe(empty.nodes);
+		const single = pipeline({ nodes: [agentNode('a', 0, 0)] });
+		expect(separateOverlappingNodes(single)).toBe(single.nodes);
+	});
+
+	it('pushes a covered node clear of the wide node that overlaps it', () => {
+		// The screenshot bug: a trigger renders 900px wide but the layout spaced
+		// the agent at the 320px footprint pitch, so the agent sits ON the
+		// trigger's label.
+		const p = pipeline({
+			nodes: [triggerNode('t', 0, 10), agentNode('a', 365, 0)],
+		});
+		const out = separateOverlappingNodes(p, new Map([['t', WIDE]]));
+		const agent = out.find((n) => n.id === 'a')!;
+		expect(agent.position.x).toBe(WIDE + NODE_GAP);
+		// Rows are preserved: the guard only ever moves horizontally.
+		expect(agent.position.y).toBe(0);
+		// The left node of a collision never moves.
+		expect(out.find((n) => n.id === 't')!.position.x).toBe(0);
+	});
+
+	it('leaves nodes on other rows alone however wide the neighbour renders', () => {
+		const p = pipeline({
+			nodes: [triggerNode('t', 0, 0), agentNode('a', 365, 400)],
+		});
+		expect(separateOverlappingNodes(p, new Map([['t', WIDE]]))).toBe(p.nodes);
+	});
+
+	it('resolves a chain of collisions in one pass', () => {
+		const p = pipeline({
+			nodes: [triggerNode('t', 0, 0), agentNode('a1', 365, 0), agentNode('a2', 730, 0)],
+		});
+		const widths = new Map([
+			['t', WIDE],
+			['a1', 500],
+		]);
+		const out = separateOverlappingNodes(p, widths);
+		const a1 = out.find((n) => n.id === 'a1')!;
+		const a2 = out.find((n) => n.id === 'a2')!;
+		expect(a1.position.x).toBe(WIDE + NODE_GAP);
+		expect(a2.position.x).toBe(a1.position.x + 500 + NODE_GAP);
+	});
+
+	it('is idempotent: a repaired layout is left alone on the next pass', () => {
+		const p = pipeline({
+			nodes: [triggerNode('t', 0, 10), agentNode('a', 365, 0)],
+		});
+		const widths = new Map([['t', WIDE]]);
+		const repaired = pipeline({ nodes: separateOverlappingNodes(p, widths) });
+		expect(separateOverlappingNodes(repaired, widths)).toBe(repaired.nodes);
+	});
+
+	it('falls back to the text estimate for nodes ReactFlow has not measured', () => {
+		const longLabel = 'Renew the WebMCP origin trial token (expires Nov 17)';
+		const t: PipelineNode = {
+			id: 't',
+			type: 'trigger',
+			position: { x: 0, y: 10 },
+			data: { eventType: 'time.heartbeat', label: longLabel, config: {} },
+		};
+		const p = pipeline({ nodes: [t, agentNode('a', 365, 0)] });
+		const out = separateOverlappingNodes(p);
+		expect(out.find((n) => n.id === 'a')!.position.x).toBe(estimateNodeWidth(t) + NODE_GAP);
+	});
+});
+
+describe('group card footprints', () => {
+	it('packs cards without overlap when a node renders wider than its footprint', () => {
+		// A `max-content` node wider than NODE_BG_WIDTH used to hang outside its
+		// own card, which put it on top of the card packed beside it. Card
+		// footprints now come from the same measured widths the node layout uses.
+		const pipelines = [
+			pipeline({ id: 'wide', nodes: [agentNode('w', 0, 0)], viewOffset: { x: 0, y: 0 } }),
+			pipeline({ id: 'p2', nodes: [agentNode('b', 0, 0)], viewOffset: { x: 0, y: 100 } }),
+			pipeline({ id: 'p3', nodes: [agentNode('c', 0, 0)], viewOffset: { x: 0, y: 200 } }),
+			pipeline({ id: 'p4', nodes: [agentNode('d', 0, 0)], viewOffset: { x: 0, y: 300 } }),
+		];
+		const widths = new Map([['w', 1200]]);
+		const offsets = arrangePipelineGroups(pipelines, new Map(), widths);
+
+		const rect = (p: CuePipeline) => {
+			const offset = offsets.get(p.id)!;
+			const xs = p.nodes.map((n) => n.position.x + offset.x);
+			const ys = p.nodes.map((n) => n.position.y + offset.y);
+			const right = Math.max(
+				...p.nodes.map(
+					(n) => n.position.x + offset.x + Math.max(NODE_BG_WIDTH, widths.get(n.id) ?? 0)
+				)
+			);
+			return {
+				l: Math.min(...xs) - PIPELINE_GROUP_PADDING,
+				r: right + PIPELINE_GROUP_PADDING,
+				t: Math.min(...ys) - PIPELINE_GROUP_PADDING,
+				b: Math.max(...ys) + NODE_BG_HEIGHT + PIPELINE_GROUP_PADDING,
+			};
+		};
+		const rects = pipelines.map(rect);
+		for (let i = 0; i < rects.length; i++) {
+			for (let j = i + 1; j < rects.length; j++) {
+				const a = rects[i];
+				const b = rects[j];
+				expect(a.l < b.r && b.l < a.r && a.t < b.b && b.t < a.b).toBe(false);
+			}
+		}
 	});
 });

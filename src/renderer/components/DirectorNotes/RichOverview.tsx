@@ -30,6 +30,7 @@ import { Spinner } from '../ui/Spinner';
 import { CUE_COLOR } from '../../../shared/cue-pipeline-types';
 import { AGENT_COLOR } from '../../../shared/crossAgentTypes';
 import { formatNumber, formatDurationLong } from '../../../shared/formatters';
+import { MAX_ENTRIES_PER_SESSION } from '../../../shared/history';
 import { generateTerminalProseStyles } from '../../utils/markdownConfig';
 import { safeClipboardWrite } from '../../utils/clipboard';
 import { useSettingsStore } from '../../stores/settingsStore';
@@ -38,6 +39,7 @@ import { logger } from '../../utils/logger';
 import { daysToLookbackHours, bucketCountForLookback } from './lookback';
 import { NarrativeSections } from './NarrativeSections';
 import { richSectionId } from './directorNotesToc';
+import { useNarrativeGroupLookup } from './useNarrativeGroupLookup';
 import { NarrativeParseError } from './NarrativeParseError';
 import {
 	looksLikeStructuredOutput,
@@ -95,6 +97,9 @@ export function RichOverview({
 	chatMath = false,
 }: RichOverviewProps) {
 	const colorBlindMode = useSettingsStore((s) => s.colorBlindMode);
+	// Agent -> group mapping for narrative bucketing. Derived from live session
+	// state, never from the model.
+	const groupLookup = useNarrativeGroupLookup();
 	const [richStats, setRichStats] = useState<RichStats | null>(null);
 	const [isLoading, setIsLoading] = useState(true);
 	const requestIdRef = useRef(0);
@@ -194,6 +199,7 @@ export function RichOverview({
 	const agentBars: BarDatum[] = (richStats?.perAgent ?? []).map((a) => ({
 		label: a.agentName,
 		value: a.entryCount,
+		atLeast: a.truncated,
 	}));
 
 	const proseStyles = generateTerminalProseStyles(theme, '.director-notes-content');
@@ -220,10 +226,14 @@ export function RichOverview({
 				icon={Activity}
 			>
 				<ChartErrorBoundary theme={theme} chartName="Activity Timeline">
+					{/* Cue starts hidden: on a Cue-heavy install its bars dwarf every
+					    other source and flatten them into invisible slivers. The
+					    legend toggles it back on. */}
 					<ActivityTimeline
 						theme={theme}
 						buckets={timelineBuckets}
 						colors={{ auto: autoColor, user: userColor, cue: CUE_COLOR }}
+						defaultHiddenSeries={['cue']}
 					/>
 				</ChartErrorBoundary>
 			</SectionCard>
@@ -260,7 +270,8 @@ export function RichOverview({
 				</SectionCard>
 			</div>
 
-			{/* Per-agent activity */}
+			{/* Per-agent activity. The unit is spelled out: a bare "5.0K" beside an
+			    agent name is unreadable without knowing what was counted. */}
 			<SectionCard
 				theme={theme}
 				id={richSectionId('Agent Activity')}
@@ -268,7 +279,14 @@ export function RichOverview({
 				icon={Users}
 			>
 				<ChartErrorBoundary theme={theme} chartName="Agent Activity">
-					<AgentActivityBars theme={theme} data={agentBars} />
+					<AgentActivityBars
+						theme={theme}
+						data={agentBars}
+						unitLabel="history entries in this window"
+						atLeastHint={`At least this many. This agent's history file is full at its ${formatNumber(
+							MAX_ENTRIES_PER_SESSION
+						)}-entry retention limit, so older runs were already discarded and the real total is higher.`}
+					/>
 				</ChartErrorBoundary>
 			</SectionCard>
 
@@ -287,7 +305,7 @@ export function RichOverview({
 							recovery={narrativeRecovery}
 						/>
 					)}
-					<NarrativeSections theme={theme} narrative={narrative} />
+					<NarrativeSections theme={theme} narrative={narrative} groupLookup={groupLookup} />
 				</>
 			) : narrativeError || looksLikeStructuredOutput(synopsis) ? (
 				// Same invariant as Plain Mode: JSON-shaped output with no narrative

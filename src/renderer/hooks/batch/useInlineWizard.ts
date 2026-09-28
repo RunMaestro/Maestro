@@ -39,7 +39,7 @@ export function useInlineWizard(): UseInlineWizardReturn {
 		getStateForTab,
 		isWizardActiveForTab,
 		getEffectiveTabId,
-		wizardActiveSessions,
+		wizardActiveTabs,
 	} = useInlineWizardTabState();
 
 	const {
@@ -65,6 +65,7 @@ export function useInlineWizard(): UseInlineWizardReturn {
 	const {
 		startWizard,
 		sendMessage,
+		cancelTurn,
 		addAssistantMessage,
 		setMode,
 		retryLastMessage,
@@ -109,10 +110,11 @@ export function useInlineWizard(): UseInlineWizardReturn {
 		state,
 		getStateForTab,
 		isWizardActiveForTab,
-		wizardActiveSessions,
+		wizardActiveTabs,
 		startWizard,
 		endWizard,
 		sendMessage,
+		cancelTurn,
 		selectWizardTab: setCurrentTabId,
 		setConfidence,
 		setMode,

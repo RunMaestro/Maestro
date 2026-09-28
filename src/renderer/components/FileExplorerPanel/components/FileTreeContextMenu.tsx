@@ -10,11 +10,19 @@ import {
 	Trash2,
 	FilePlus,
 	FolderPlus,
+	Network,
 	FolderOpen,
 	Files,
 	Download,
+	Bot,
+	ListPlus,
+	Play,
+	PlayCircle,
+	FileArchive,
 } from 'lucide-react';
 import { getRevealLabel } from '../../../utils/platformUtils';
+import { usePhoneLayout } from '../../../hooks/ui/useViewportBreakpoint';
+import { isMediaFile } from '../../../../shared/mediaTypes';
 import { collectPreviewableFiles } from '../utils/pathHelpers';
 import type { Theme } from '../../../types';
 import type { ContextMenuState } from '../types';
@@ -23,12 +31,26 @@ interface FileTreeContextMenuProps {
 	theme: Theme;
 	contextMenu: ContextMenuState;
 	contextMenuRef: React.RefObject<HTMLDivElement>;
-	contextMenuPos: { top: number; left: number; ready?: boolean };
+	contextMenuPos: { top: number; left: number; maxHeight: number; ready?: boolean };
 	sshRemoteId: string | undefined;
 	onFocusFileInGraph?: (relativePath: string) => void;
+	/** Graph every markdown file under the right-clicked folder. */
+	onGraphFolder?: () => void;
+	/** Graph exactly the markdown files in the current multi-selection. */
+	onGraphSelection?: () => void;
 	onOpenBrowserTabAt?: (url: string, options?: { title?: string }) => void;
 	isMultiSelectionContext?: boolean;
 	selectedCount?: number;
+	/**
+	 * How many Auto Run documents the current menu context resolves to - a
+	 * folder's subtree, one markdown file, or the whole selection. Zero for
+	 * anything outside the agent's Auto Run folder, which hides the staging entry.
+	 */
+	autoRunStagedCount?: number;
+	/** How many of the selected files are playable audio/video. */
+	selectedMediaCount?: number;
+	/** Markdown files in the current selection - what "Open N in Document Graph" graphs. */
+	selectedMarkdownCount?: number;
 	onCopyPath: () => void;
 	onCopyFileName: () => void;
 	onDownloadFile: () => void;
@@ -37,9 +59,13 @@ interface FileTreeContextMenuProps {
 	onOpenInExplorer: () => void;
 	onOpenNewFile: () => void;
 	onOpenNewFolder: () => void;
+	onNewAgentHere: () => void;
 	onPreviewFile: () => void;
 	onPreviewAllInFolder: () => void;
+	onStageForAutoRun: () => void;
+	onCompressFolder: () => void;
 	onPreviewMulti: () => void;
+	onQueueMedia: () => void;
 	onOpenInDefaultAppMulti: () => void;
 	onOpenDeleteMulti: () => void;
 	onFocusInGraph: () => void;
@@ -54,9 +80,14 @@ export function FileTreeContextMenu({
 	contextMenuPos,
 	sshRemoteId,
 	onFocusFileInGraph,
+	onGraphFolder,
+	onGraphSelection,
 	onOpenBrowserTabAt,
 	isMultiSelectionContext = false,
 	selectedCount = 0,
+	selectedMediaCount = 0,
+	selectedMarkdownCount = 0,
+	autoRunStagedCount = 0,
 	onCopyPath,
 	onCopyFileName,
 	onDownloadFile,
@@ -65,9 +96,13 @@ export function FileTreeContextMenu({
 	onOpenInExplorer,
 	onOpenNewFile,
 	onOpenNewFolder,
+	onNewAgentHere,
 	onPreviewFile,
 	onPreviewAllInFolder,
+	onStageForAutoRun,
+	onCompressFolder,
 	onPreviewMulti,
+	onQueueMedia,
 	onOpenInDefaultAppMulti,
 	onOpenDeleteMulti,
 	onFocusInGraph,
@@ -90,32 +125,80 @@ export function FileTreeContextMenu({
 		[node, contextMenu.path]
 	);
 	const platform = window.maestro?.platform ?? 'unknown';
+	// The Document Graph is a pan-and-zoom canvas, so it needs room to be worth
+	// opening at all. On a phone it renders correctly and is still useless: the
+	// viewport holds a couple of nodes, which cannot show the shape of a document
+	// set, and that shape is the whole reason to open it. So the three entries
+	// that lead there are dropped rather than offered and then disappointing -
+	// which also buys back rows in a menu that already runs past the bottom of a
+	// 390px screen. This is a ROOM gate, not a capability gate: nothing about the
+	// graph is broken on a phone, every other client still offers it, and the
+	// palette and chord still reach it here for anyone who wants it anyway.
+	const showDocumentGraph = !usePhoneLayout();
 	const isHtml = isFile && (nodeName.endsWith('.html') || nodeName.endsWith('.htm'));
 	const isMarkdown = isFile && (nodeName.endsWith('.md') || nodeName.endsWith('.markdown'));
+	// Media plays in the floating player, which only serves local files - over
+	// SSH there is nothing to stream, so the playback actions stay hidden.
+	const isMedia = isFile && !sshRemoteId && isMediaFile(nodeName);
+	const queueableCount = sshRemoteId ? 0 : selectedMediaCount;
+	// Same entry in three branches (folder, file, multi-selection): the count is
+	// already resolved per context, so the only thing that varies is the label.
+	const stageForAutoRunButton =
+		autoRunStagedCount > 0 ? (
+			<button
+				onClick={onStageForAutoRun}
+				className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
+				style={{ color: theme.colors.textMain }}
+			>
+				<PlayCircle className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
+				<span>
+					{autoRunStagedCount === 1
+						? 'Stage Document for Auto Run'
+						: `Stage ${autoRunStagedCount} Documents for Auto Run`}
+				</span>
+			</button>
+		) : null;
 
 	return createPortal(
 		<div
 			ref={contextMenuRef}
-			className="fixed z-[10000] rounded-lg shadow-xl border overflow-hidden"
+			className="fixed z-[10000] rounded-lg shadow-xl border whitespace-nowrap"
 			style={{
 				backgroundColor: theme.colors.bgSidebar,
 				borderColor: theme.colors.border,
 				minWidth: '180px',
 				top: contextMenuPos.top,
 				left: contextMenuPos.left,
+				// This menu carries up to ~27 entries, which is taller than a phone
+				// in portrait and than a laptop in a short window. Clamped only by
+				// POSITION it pinned to the top edge and ran off the bottom, and
+				// `overflow-hidden` made everything past the fold unreachable - a
+				// context menu does not scroll the page behind it. Scroll instead.
+				maxHeight: contextMenuPos.maxHeight,
+				overflowY: 'auto',
 				opacity: contextMenuPos.ready ? 1 : 0,
 			}}
 		>
 			<div className="p-1">
 				{isRoot ? (
-					<button
-						onClick={onOpenNewFolder}
-						className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
-						style={{ color: theme.colors.textMain }}
-					>
-						<FolderPlus className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
-						<span>New Folder</span>
-					</button>
+					<>
+						<button
+							onClick={onOpenNewFile}
+							className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
+							style={{ color: theme.colors.textMain }}
+						>
+							<FilePlus className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
+							<span>New File</span>
+						</button>
+						<button
+							onClick={onOpenNewFolder}
+							className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
+							style={{ color: theme.colors.textMain }}
+						>
+							<FolderPlus className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
+							<span>New Folder</span>
+						</button>
+					</>
 				) : isMultiSelectionContext && selectedCount > 1 ? (
 					<>
 						<button
@@ -126,6 +209,19 @@ export function FileTreeContextMenu({
 							<FileText className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
 							<span>Preview {selectedCount} items</span>
 						</button>
+						{/* Opening the selection already plays the first media file and
+						    queues the rest. This is the other half: add everything to the
+						    queue and leave what is playing alone. */}
+						{queueableCount > 0 && (
+							<button
+								onClick={onQueueMedia}
+								className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
+								style={{ color: theme.colors.textMain }}
+							>
+								<ListPlus className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
+								<span>Add {queueableCount} to Play Queue</span>
+							</button>
+						)}
 						{!sshRemoteId && (
 							<button
 								onClick={onOpenInDefaultAppMulti}
@@ -136,6 +232,17 @@ export function FileTreeContextMenu({
 								<span>Open {selectedCount} in Default App</span>
 							</button>
 						)}
+						{showDocumentGraph && selectedMarkdownCount > 1 && onGraphSelection && (
+							<button
+								onClick={onGraphSelection}
+								className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
+								style={{ color: theme.colors.textMain }}
+							>
+								<Network className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
+								<span>Open {selectedMarkdownCount} in Document Graph</span>
+							</button>
+						)}
+						{stageForAutoRunButton}
 						<div className="my-1 border-t" style={{ borderColor: theme.colors.border }} />
 						<button
 							onClick={onOpenDeleteMulti}
@@ -167,6 +274,31 @@ export function FileTreeContextMenu({
 									<FolderPlus className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
 									<span>New Folder</span>
 								</button>
+								{/* New Agent Here - opens the New Agent modal with this folder
+								    pre-filled as the working directory. Hidden over SSH: the
+								    path is remote, and a fresh agent starts out local, so
+								    seeding it would point the new agent at a local path that
+								    doesn't exist. */}
+								{!sshRemoteId && (
+									<button
+										onClick={onNewAgentHere}
+										className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
+										style={{ color: theme.colors.textMain }}
+									>
+										<Bot className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
+										<span>New Agent Here</span>
+									</button>
+								)}
+								{showDocumentGraph && onGraphFolder && (
+									<button
+										onClick={onGraphFolder}
+										className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
+										style={{ color: theme.colors.textMain }}
+									>
+										<Network className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
+										<span>Open in Document Graph</span>
+									</button>
+								)}
 								{previewableCount > 0 && (
 									<button
 										onClick={onPreviewAllInFolder}
@@ -180,15 +312,34 @@ export function FileTreeContextMenu({
 										</span>
 									</button>
 								)}
+								{stageForAutoRunButton}
+								<button
+									onClick={onCompressFolder}
+									className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
+									style={{ color: theme.colors.textMain }}
+								>
+									<FileArchive className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
+									<span>Compress</span>
+								</button>
 								<div className="my-1 border-t" style={{ borderColor: theme.colors.border }} />
 							</>
 						)}
 
-						{/* New Folder - for files too, so a folder can be created alongside
-						    the file (in its parent dir, i.e. the workspace root for
-						    top-level files). Mirrors the folder menu's creation actions. */}
+						{/* New File / New Folder - for files too, so a sibling can be
+						    created alongside the file (in its parent dir, i.e. the
+						    workspace root for top-level files). Without this there is no
+						    way to create a top-level file when the root has no folder to
+						    right-click. Mirrors the folder menu's creation actions. */}
 						{isFile && (
 							<>
+								<button
+									onClick={onOpenNewFile}
+									className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
+									style={{ color: theme.colors.textMain }}
+								>
+									<FilePlus className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
+									<span>New File</span>
+								</button>
 								<button
 									onClick={onOpenNewFolder}
 									className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
@@ -201,20 +352,39 @@ export function FileTreeContextMenu({
 							</>
 						)}
 
-						{/* Preview option - for files only */}
+						{/* Preview option - for files only. Media has no tab to preview, so
+						    it says what it actually does: play now, or line up behind
+						    whatever is already playing. */}
 						{isFile && (
 							<button
 								onClick={onPreviewFile}
 								className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
 								style={{ color: theme.colors.textMain }}
 							>
-								<FileText className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
-								<span>Preview</span>
+								{isMedia ? (
+									<Play className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
+								) : (
+									<FileText className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
+								)}
+								<span>{isMedia ? 'Play' : 'Preview'}</span>
 							</button>
 						)}
 
+						{isMedia && (
+							<button
+								onClick={onQueueMedia}
+								className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
+								style={{ color: theme.colors.textMain }}
+							>
+								<ListPlus className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
+								<span>Add to Play Queue</span>
+							</button>
+						)}
+
+						{isFile && stageForAutoRunButton}
+
 						{/* Document Graph option - only for markdown files */}
-						{isMarkdown && onFocusFileInGraph && (
+						{showDocumentGraph && isMarkdown && onFocusFileInGraph && (
 							<button
 								onClick={onFocusInGraph}
 								className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"

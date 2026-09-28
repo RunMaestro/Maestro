@@ -6,7 +6,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { logger } from '../../../renderer/utils/logger';
-import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act, within } from '@testing-library/react';
 import { NewInstanceModal } from '../../../renderer/components/NewInstanceModal';
 import { formatShortcutKeys } from '../../../renderer/utils/shortcutFormatter';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
@@ -61,6 +61,18 @@ const createAgentConfig = (overrides: Partial<AgentConfig> = {}): AgentConfig =>
 	hidden: false,
 	...overrides,
 });
+
+/**
+ * Reveal every provider row.
+ *
+ * The picker hides what this machine cannot run by default, so a test that
+ * asserts on ordering, badges, or unavailable rows has to ask for them first -
+ * otherwise it is asserting against the filtered view.
+ */
+const showAllProviders = async (): Promise<void> => {
+	const toggle = await screen.findByRole('switch', { name: 'Show all supported providers' });
+	fireEvent.click(toggle);
+};
 
 describe('NewInstanceModal', () => {
 	let theme: Theme;
@@ -194,6 +206,47 @@ describe('NewInstanceModal', () => {
 			});
 		});
 
+		it('should list supported agents alphabetically, with coming-soon ones below', async () => {
+			// Detection order is arbitrary, so the rows must not inherit it. Each
+			// bucket sorts by the name the row renders, matching the wizard tile
+			// strip and the Group Chat moderator dropdown.
+			const expected = ['Antigravity CLI', 'Codex', 'Grok CLI', 'OpenCode', 'Gemini CLI'];
+			vi.mocked(window.maestro.agents.detect).mockResolvedValue([
+				createAgentConfig({ id: 'opencode', name: 'OpenCode', available: true }),
+				createAgentConfig({ id: 'gemini-cli', name: 'Gemini CLI', available: false }),
+				createAgentConfig({ id: 'grok', name: 'Grok CLI', available: true }),
+				createAgentConfig({ id: 'codex', name: 'Codex', available: true }),
+				createAgentConfig({ id: 'antigravity', name: 'Antigravity CLI', available: true }),
+			]);
+
+			render(
+				<NewInstanceModal
+					isOpen={true}
+					onClose={onClose}
+					onCreate={onCreate}
+					theme={theme}
+					existingSessions={[]}
+				/>
+			);
+
+			// Gemini CLI is unavailable, so the default filter hides it. This test is
+			// about ORDER across both buckets, so ask for every row.
+			await showAllProviders();
+
+			await waitFor(() => {
+				expect(screen.getByText('Antigravity CLI')).toBeInTheDocument();
+			});
+
+			const names = within(screen.getByRole('listbox', { name: 'Agent provider selection' }))
+				.getAllByRole('option')
+				.map((row) => row.textContent ?? '')
+				.map((text) => expected.find((name) => text.includes(name)));
+
+			// Gemini CLI is not pickable, so it sinks to the bottom even though
+			// its name sorts ahead of Grok CLI and OpenCode.
+			expect(names).toEqual(expected);
+		});
+
 		it('should display path for available agents', async () => {
 			vi.mocked(window.maestro.agents.detect).mockResolvedValue([
 				createAgentConfig({
@@ -262,8 +315,89 @@ describe('NewInstanceModal', () => {
 				/>
 			);
 
+			// A coming-soon provider cannot be run, so it is filtered out by default.
+			await showAllProviders();
+
 			await waitFor(() => {
 				expect(screen.getByText('Coming Soon')).toBeInTheDocument();
+			});
+		});
+
+		it('hides providers this machine cannot run until asked', async () => {
+			vi.mocked(window.maestro.agents.detect).mockResolvedValue([
+				createAgentConfig({ id: 'claude-code', name: 'Claude Code', available: true }),
+				createAgentConfig({ id: 'codex', name: 'Codex', available: false }),
+			]);
+
+			render(
+				<NewInstanceModal
+					isOpen={true}
+					onClose={onClose}
+					onCreate={onCreate}
+					theme={theme}
+					existingSessions={[]}
+				/>
+			);
+
+			await waitFor(() => {
+				expect(screen.getByText('Claude Code')).toBeInTheDocument();
+			});
+			expect(screen.queryByText('Codex')).toBeNull();
+
+			// The count describes ALL supported providers, not the filtered rows -
+			// "1 of 1" would answer nothing.
+			expect(screen.getByText('1 of 2 locally')).toBeInTheDocument();
+
+			await showAllProviders();
+			await waitFor(() => {
+				expect(screen.getByText('Codex')).toBeInTheDocument();
+			});
+		});
+
+		it('keeps the selected provider on screen even when it is missing', async () => {
+			// Duplicating an agent whose provider is not installed here would
+			// otherwise hide the row that shows what is selected.
+			vi.mocked(window.maestro.agents.detect).mockResolvedValue([
+				createAgentConfig({ id: 'claude-code', name: 'Claude Code', available: true }),
+				createAgentConfig({ id: 'codex', name: 'Codex', available: false }),
+			]);
+
+			render(
+				<NewInstanceModal
+					isOpen={true}
+					onClose={onClose}
+					onCreate={onCreate}
+					theme={theme}
+					existingSessions={[]}
+					sourceSession={
+						{
+							id: 'source-1',
+							name: 'Old Agent',
+							toolType: 'codex',
+							cwd: '/test/project',
+							projectRoot: '/test/project',
+							fullPath: '/test/project',
+							state: 'idle',
+							inputMode: 'ai',
+							aiTabs: [],
+							closedTabHistory: [],
+							shellLogs: [],
+							executionQueue: [],
+							contextUsage: 0,
+							workLog: [],
+							isGitRepo: false,
+							changedFiles: [],
+							fileTree: [],
+							fileExplorerExpanded: [],
+							fileExplorerScrollPos: 0,
+							isLive: false,
+						} as unknown as Session
+					}
+				/>
+			);
+
+			await waitFor(() => {
+				expect(screen.getByText('Codex')).toBeInTheDocument();
 			});
 		});
 
@@ -405,6 +539,9 @@ describe('NewInstanceModal', () => {
 					existingSessions={[]}
 				/>
 			);
+
+			// `openai-codex` is not a pickable id, so the default filter hides it.
+			await showAllProviders();
 
 			await waitFor(() => {
 				expect(screen.getByText('Claude Code')).toBeInTheDocument();
@@ -741,7 +878,8 @@ describe('NewInstanceModal', () => {
 				undefined, // maestroPMode unset until the user opts into TUI/Dynamic
 				true, // retryOnAvailabilityErrors
 				true, // retryOnTokenExhaustion
-				undefined // additionalDirectories
+				undefined, // additionalDirectories
+				false // codexAutoResetOnExhaustion: off by default
 			);
 		});
 
@@ -796,7 +934,8 @@ describe('NewInstanceModal', () => {
 				undefined, // maestroPMode unset until the user opts into TUI/Dynamic
 				true, // retryOnAvailabilityErrors
 				true, // retryOnTokenExhaustion
-				undefined // additionalDirectories
+				undefined, // additionalDirectories
+				false // codexAutoResetOnExhaustion: off by default
 			);
 		});
 
@@ -851,7 +990,8 @@ describe('NewInstanceModal', () => {
 				undefined, // maestroPMode unset until the user opts into TUI/Dynamic
 				true, // retryOnAvailabilityErrors
 				true, // retryOnTokenExhaustion
-				undefined // additionalDirectories
+				undefined, // additionalDirectories
+				false // codexAutoResetOnExhaustion: off by default
 			);
 		});
 	});
@@ -907,7 +1047,8 @@ describe('NewInstanceModal', () => {
 				undefined, // maestroPMode unset until the user opts into TUI/Dynamic
 				true, // retryOnAvailabilityErrors
 				true, // retryOnTokenExhaustion
-				undefined // additionalDirectories
+				undefined, // additionalDirectories
+				false // codexAutoResetOnExhaustion: off by default
 			);
 			expect(onClose).toHaveBeenCalled();
 		});
@@ -1461,7 +1602,8 @@ describe('NewInstanceModal', () => {
 				undefined, // maestroPMode unset until the user opts into TUI/Dynamic
 				true, // retryOnAvailabilityErrors
 				true, // retryOnTokenExhaustion
-				undefined // additionalDirectories
+				undefined, // additionalDirectories
+				false // codexAutoResetOnExhaustion: off by default
 			);
 		});
 
@@ -1616,7 +1758,8 @@ describe('NewInstanceModal', () => {
 				undefined, // maestroPMode unset until the user opts into TUI/Dynamic
 				true, // retryOnAvailabilityErrors
 				true, // retryOnTokenExhaustion
-				undefined // additionalDirectories
+				undefined, // additionalDirectories
+				false // codexAutoResetOnExhaustion: off by default
 			);
 		});
 	});
@@ -1874,6 +2017,9 @@ describe('NewInstanceModal', () => {
 				/>
 			);
 
+			// Two of the three are unavailable, so ask past the default filter.
+			await showAllProviders();
+
 			await waitFor(() => {
 				expect(screen.getByText('Claude Code')).toBeInTheDocument();
 				expect(screen.getByText('OpenAI Codex')).toBeInTheDocument();
@@ -1896,6 +2042,9 @@ describe('NewInstanceModal', () => {
 					existingSessions={[]}
 				/>
 			);
+
+			// The Coming Soon row only exists past the default filter.
+			await showAllProviders();
 
 			await waitFor(() => {
 				expect(screen.getByText('Available')).toBeInTheDocument();
@@ -2778,7 +2927,8 @@ describe('NewInstanceModal', () => {
 				undefined, // maestroPMode
 				true, // retryOnAvailabilityErrors
 				true, // retryOnTokenExhaustion
-				undefined // additionalDirectories
+				undefined, // additionalDirectories
+				false // codexAutoResetOnExhaustion: off by default
 			);
 		});
 
@@ -3010,7 +3160,196 @@ describe('NewInstanceModal', () => {
 				undefined, // maestroPMode unset until the user opts into TUI/Dynamic
 				true, // retryOnAvailabilityErrors
 				true, // retryOnTokenExhaustion
-				undefined // additionalDirectories
+				undefined, // additionalDirectories
+				false // codexAutoResetOnExhaustion: off by default
+			);
+		});
+
+		it('keeps a home-relative remote path verbatim when SSH is enabled (never expands it against the LOCAL home)', async () => {
+			// `~/git-projects` on an SSH agent is the REMOTE user's home. Expanding it
+			// locally produced `/Users/<local>/git-projects`, which validated green here
+			// (the validator stats the raw text on the remote) and then did not exist on
+			// the host the agent started on. The remote shell is the only thing that can
+			// expand it, and every remote cd/ls/stat renders it as "$HOME/git-projects".
+			vi.mocked(window.maestro.agents.detect).mockResolvedValue([
+				createAgentConfig({ id: 'claude-code', name: 'Claude Code', available: true }),
+			]);
+			vi.mocked(window.maestro.sshRemote.getConfigs).mockResolvedValue({
+				success: true,
+				configs: [
+					{
+						id: 'remote-1',
+						name: 'Dev Server',
+						host: 'dev.example.com',
+						port: 22,
+						username: 'devuser',
+						privateKeyPath: '/path/to/key',
+						enabled: true,
+					},
+				],
+			});
+			vi.mocked(window.maestro.fs.stat).mockResolvedValue({
+				size: 4096,
+				createdAt: '2024-01-01T00:00:00.000Z',
+				modifiedAt: '2024-01-15T12:30:00.000Z',
+				isDirectory: true,
+				isFile: false,
+			});
+
+			render(
+				<NewInstanceModal
+					isOpen={true}
+					onClose={onClose}
+					onCreate={onCreate}
+					theme={theme}
+					existingSessions={[]}
+				/>
+			);
+
+			await waitFor(() => {
+				expect(screen.getByText('SSH Remote Execution')).toBeInTheDocument();
+			});
+			fireEvent.change(screen.getByRole('combobox'), { target: { value: 'remote-1' } });
+			await waitFor(() => {
+				expect(screen.getByText('Claude Code')).toBeInTheDocument();
+			});
+			await act(async () => {
+				fireEvent.click(screen.getByRole('option', { name: /Claude Code/i }));
+			});
+
+			fireEvent.change(screen.getByLabelText('Agent Name'), {
+				target: { value: 'Remote Agent' },
+			});
+			fireEvent.change(screen.getByLabelText('Working Directory'), {
+				target: { value: '~/git-projects' },
+			});
+			await waitFor(
+				() => {
+					expect(screen.getByText('Directory found on dev.example.com')).toBeInTheDocument();
+				},
+				{ timeout: 3000 }
+			);
+
+			await act(async () => {
+				fireEvent.click(screen.getByText('Create Agent'));
+			});
+
+			expect(onCreate).toHaveBeenCalledTimes(1);
+			const [, cwd, , , , , , , , , , sshConfig] = onCreate.mock.calls[0];
+			expect(cwd).toBe('~/git-projects');
+			expect(sshConfig).toEqual(
+				expect.objectContaining({
+					enabled: true,
+					remoteId: 'remote-1',
+					workingDirOverride: '~/git-projects',
+				})
+			);
+		});
+
+		it('derives the duplicate workingDirOverride from the directory typed, not from the source agent', async () => {
+			// Duplicating an SSH agent and changing its directory used to carry the
+			// SOURCE agent's override into the copy: the new agent then started in the
+			// typed directory while its terminals, git calls and file tree were pinned
+			// to the old one. The field is prefilled with the source's remote directory
+			// and whatever is on screen at Create is the one source for both values.
+			const sourceSession: Session = {
+				id: 'session-1',
+				name: 'SSH Agent',
+				toolType: 'claude-code',
+				cwd: '/home/devuser/project',
+				projectRoot: '/home/devuser/project',
+				fullPath: '/home/devuser/project',
+				state: 'idle',
+				inputMode: 'ai',
+				aiPid: 12345,
+				terminalPid: 12346,
+				port: 3000,
+				aiTabs: [],
+				activeTabId: 'tab-1',
+				closedTabHistory: [],
+				shellLogs: [],
+				executionQueue: [],
+				contextUsage: 0,
+				workLog: [],
+				isGitRepo: false,
+				changedFiles: [],
+				fileTree: [],
+				fileExplorerExpanded: [],
+				fileExplorerScrollPos: 0,
+				isLive: false,
+				sessionSshRemoteConfig: {
+					enabled: true,
+					remoteId: 'remote-1',
+					workingDirOverride: '/explicit/override/path',
+				},
+			} as Session;
+
+			vi.mocked(window.maestro.agents.detect).mockResolvedValue([
+				createAgentConfig({ id: 'claude-code', name: 'Claude Code', available: true }),
+			]);
+			vi.mocked(window.maestro.sshRemote.getConfigs).mockResolvedValue({
+				success: true,
+				configs: [
+					{
+						id: 'remote-1',
+						name: 'Dev Server',
+						host: 'dev.example.com',
+						port: 22,
+						username: 'devuser',
+						privateKeyPath: '/path/to/key',
+						enabled: true,
+					},
+				],
+			});
+			vi.mocked(window.maestro.fs.stat).mockResolvedValue({
+				size: 4096,
+				createdAt: '2024-01-01T00:00:00.000Z',
+				modifiedAt: '2024-01-15T12:30:00.000Z',
+				isDirectory: true,
+				isFile: false,
+			});
+
+			render(
+				<NewInstanceModal
+					isOpen={true}
+					onClose={onClose}
+					onCreate={onCreate}
+					theme={theme}
+					existingSessions={[]}
+					sourceSession={sourceSession}
+				/>
+			);
+
+			// The field shows the directory the source agent actually runs in on the
+			// remote (its override), not the placeholder in `cwd`.
+			await waitFor(() => {
+				const dirInput = screen.getByLabelText('Working Directory') as HTMLInputElement;
+				expect(dirInput.value).toBe('/explicit/override/path');
+			});
+
+			fireEvent.change(screen.getByLabelText('Working Directory'), {
+				target: { value: '/home/devuser/new-project' },
+			});
+			await waitFor(
+				() => {
+					expect(screen.getByText(/Directory found/)).toBeInTheDocument();
+				},
+				{ timeout: 3000 }
+			);
+
+			await act(async () => {
+				fireEvent.click(screen.getByText('Create Agent'));
+			});
+
+			expect(onCreate).toHaveBeenCalledTimes(1);
+			const [, cwd, , , , , , , , , , sshConfig] = onCreate.mock.calls[0];
+			expect(cwd).toBe('/home/devuser/new-project');
+			expect(sshConfig).toEqual(
+				expect.objectContaining({
+					enabled: true,
+					remoteId: 'remote-1',
+					workingDirOverride: '/home/devuser/new-project',
+				})
 			);
 		});
 
@@ -3133,7 +3472,8 @@ describe('NewInstanceModal', () => {
 				undefined, // maestroPMode unset until the user opts into TUI/Dynamic
 				true, // retryOnAvailabilityErrors
 				true, // retryOnTokenExhaustion
-				undefined // additionalDirectories
+				undefined, // additionalDirectories
+				false // codexAutoResetOnExhaustion: off by default
 			);
 		});
 
@@ -3296,6 +3636,94 @@ describe('NewInstanceModal', () => {
 			await waitFor(() => {
 				expect(trigger).toHaveTextContent(/Preset/);
 			});
+		});
+	});
+
+	describe('presetWorkingDir', () => {
+		it('seeds the working directory and derives the agent name from its basename', async () => {
+			render(
+				<NewInstanceModal
+					isOpen={true}
+					onClose={onClose}
+					onCreate={onCreate}
+					theme={theme}
+					existingSessions={[]}
+					presetWorkingDir="/project/src/renderer"
+				/>
+			);
+
+			await waitFor(() => {
+				expect(screen.getByLabelText('Working Directory')).toHaveValue('/project/src/renderer');
+			});
+			expect(screen.getByLabelText('Agent Name')).toHaveValue('renderer');
+		});
+
+		it('leaves the seeded fields editable', async () => {
+			render(
+				<NewInstanceModal
+					isOpen={true}
+					onClose={onClose}
+					onCreate={onCreate}
+					theme={theme}
+					existingSessions={[]}
+					presetWorkingDir="/project/docs"
+				/>
+			);
+
+			const nameInput = await screen.findByLabelText('Agent Name');
+			await waitFor(() => expect(nameInput).toHaveValue('docs'));
+			fireEvent.change(nameInput, { target: { value: 'my agent' } });
+			expect(nameInput).toHaveValue('my agent');
+		});
+
+		it('ignores presetWorkingDir when duplicating so the source cwd wins', async () => {
+			const source: Session = {
+				id: 'src-1',
+				name: 'Source',
+				toolType: 'claude-code',
+				cwd: '/source/project',
+				projectRoot: '/source/project',
+				fullPath: '/source/project',
+				state: 'idle',
+				inputMode: 'ai',
+				aiPid: 1,
+				terminalPid: 2,
+				port: 3000,
+				aiTabs: [],
+				activeTabId: 'tab-1',
+				closedTabHistory: [],
+				shellLogs: [],
+				executionQueue: [],
+				contextUsage: 0,
+				workLog: [],
+				isGitRepo: false,
+				changedFiles: [],
+				fileTree: [],
+				fileExplorerExpanded: [],
+				fileExplorerScrollPos: 0,
+				isLive: false,
+			} as Session;
+
+			vi.mocked(window.maestro.agents.detect).mockResolvedValue([
+				createAgentConfig({ id: 'claude-code', name: 'Claude Code', available: true }),
+			]);
+
+			render(
+				<NewInstanceModal
+					isOpen={true}
+					onClose={onClose}
+					onCreate={onCreate}
+					theme={theme}
+					existingSessions={[source]}
+					sourceSession={source}
+					presetWorkingDir="/project/docs"
+				/>
+			);
+
+			await waitFor(() => {
+				expect(screen.getByLabelText('Working Directory')).toHaveValue('/source/project');
+			});
+			expect(screen.getByLabelText('Agent Name')).toHaveValue('Source (Copy)');
 		});
 	});
 });

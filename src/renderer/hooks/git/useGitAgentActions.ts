@@ -14,10 +14,12 @@
 import { useCallback, useMemo } from 'react';
 import { useModalStore } from '../../stores/modalStore';
 import { useSessionStore } from '../../stores/sessionStore';
-import { useGitBranch, useGitDetail } from '../../contexts/GitStatusContext';
+import { useGitBranch, useGitDetail, useGitFileStatus } from '../../contexts/GitStatusContext';
 import { gitService } from '../../services/git';
 import { notifyCenterFlash } from '../../stores/centerFlashStore';
-import type { GitStreamingOperation } from '../../../shared/gitUtils';
+import { useGitRunActive } from '../../stores/gitCommandRunStore';
+import { usePRCreationActive } from '../../stores/prCreationStore';
+import type { GitChangeTotals, GitStreamingOperation } from '../../../shared/gitUtils';
 import type { Session } from '../../types';
 
 export interface GitAgentActions {
@@ -29,6 +31,12 @@ export interface GitAgentActions {
 	ahead: number;
 	/** Commits behind upstream (0 when unknown). */
 	behind: number;
+	/**
+	 * Uncommitted-change totals for this agent's tree, so every git surface can
+	 * badge "there is a diff here" instead of offering a diff that may be empty.
+	 * Line counts are zero for non-active agents - see `GitChangeTotals`.
+	 */
+	changes: GitChangeTotals;
 	/** Whether opening a PR makes sense for this agent (needs a branch). */
 	canCreatePR: boolean;
 	viewLog: () => void;
@@ -40,8 +48,22 @@ export interface GitAgentActions {
 	viewDiff: () => Promise<void>;
 	pull: () => void;
 	push: () => void;
+	/**
+	 * True while a `git pull` / `git push` started from this agent's repo is
+	 * still running, including after its console was dismissed with Run in
+	 * Background. Menus badge the row with it; clicking the row re-opens the
+	 * console attached to that same run.
+	 */
+	pullRunning: boolean;
+	pushRunning: boolean;
 	switchBranch: () => void;
 	createPR: () => void;
+	/**
+	 * True while `gh pr create` started from this agent's repo is still running,
+	 * including after its form was dismissed with Run in Background. Menus badge
+	 * the row with it; clicking the row re-opens the form on that same attempt.
+	 */
+	prRunning: boolean;
 	/**
 	 * Open the worktree configuration modal for this agent. Activates the agent
 	 * first, because the modal reads the active session.
@@ -78,8 +100,26 @@ export function resolveGitSshRemoteId(session: Session): string | undefined {
 
 export function useGitAgentActions(session: Session | null | undefined): GitAgentActions {
 	const { getBranchInfo } = useGitBranch();
-	const { refreshGitStatus } = useGitDetail();
+	const { getFileDetails, refreshGitStatus } = useGitDetail();
+	const { getFileCount } = useGitFileStatus();
 	const branchInfo = session ? getBranchInfo(session.id) : undefined;
+	const fileDetails = session ? getFileDetails(session.id) : undefined;
+	const fileCount = session ? getFileCount(session.id) : 0;
+
+	const changes = useMemo<GitChangeTotals>(
+		() => ({
+			fileCount,
+			additions: fileDetails?.totalAdditions ?? 0,
+			deletions: fileDetails?.totalDeletions ?? 0,
+			modified: fileDetails?.modifiedCount ?? 0,
+		}),
+		[
+			fileCount,
+			fileDetails?.totalAdditions,
+			fileDetails?.totalDeletions,
+			fileDetails?.modifiedCount,
+		]
+	);
 
 	const target = useMemo(() => {
 		if (!session) return null;
@@ -107,6 +147,10 @@ export function useGitAgentActions(session: Session | null | undefined): GitAgen
 		useModalStore.getState().openModal('gitLog', {
 			cwd: target.cwd,
 			sshRemoteId: target.sshRemoteId,
+			// Names the agent in the viewer header. The path alone does not
+			// identify it: worktrees of one repo share a prefix, and two agents
+			// can sit on the same directory.
+			sessionId: target.sessionId,
 		});
 	}, [target]);
 
@@ -116,7 +160,9 @@ export function useGitAgentActions(session: Session | null | undefined): GitAgen
 		if (diff) {
 			// Pass the repo path so the viewer opens clicked files against THIS
 			// agent's tree, not whichever agent happens to be active.
-			useModalStore.getState().openModal('gitDiff', { diff, cwd: target.cwd });
+			useModalStore
+				.getState()
+				.openModal('gitDiff', { diff, cwd: target.cwd, sessionId: target.sessionId });
 			return;
 		}
 		// Same wording as the Cmd+Shift+D path and the command palette.
@@ -143,6 +189,12 @@ export function useGitAgentActions(session: Session | null | undefined): GitAgen
 	const pull = useCallback(() => runCommand('pull'), [runCommand]);
 	const push = useCallback(() => runCommand('push'), [runCommand]);
 
+	// Keyed on the same repo + operation the run store uses, so a run started
+	// from any surface (or from a different agent on the same worktree) shows up
+	// here too.
+	const pullRunning = useGitRunActive(target ? { ...target, operation: 'pull' } : null);
+	const pushRunning = useGitRunActive(target ? { ...target, operation: 'push' } : null);
+
 	const switchBranch = useCallback(() => {
 		if (!target) return;
 		useModalStore.getState().openModal('branchSwitcher', {
@@ -160,6 +212,10 @@ export function useGitAgentActions(session: Session | null | undefined): GitAgen
 		useModalStore.getState().openModal('createPR', { session, sourceBranch: branch });
 	}, [session, branch]);
 
+	// Keyed on the repo the PR is opened from, so an attempt started from any
+	// surface shows up on every surface.
+	const prRunning = usePRCreationActive(target?.cwd);
+
 	const configureWorktrees = useCallback(() => {
 		if (!session) return;
 		// The config modal renders against the active session, so activating is
@@ -173,6 +229,7 @@ export function useGitAgentActions(session: Session | null | undefined): GitAgen
 		branch,
 		ahead: branchInfo?.ahead ?? 0,
 		behind: branchInfo?.behind ?? 0,
+		changes,
 		// A PR needs a source branch to push. Worktree children always have one;
 		// plain git agents get theirs from status polling.
 		canCreatePR: Boolean(session?.isGitRepo && branch),
@@ -180,8 +237,11 @@ export function useGitAgentActions(session: Session | null | undefined): GitAgen
 		viewDiff,
 		pull,
 		push,
+		pullRunning,
+		pushRunning,
 		switchBranch,
 		createPR,
+		prRunning,
 		configureWorktrees,
 		// Worktree children can't own a worktree config of their own.
 		canConfigureWorktrees: Boolean(session?.isGitRepo && !session.parentSessionId),

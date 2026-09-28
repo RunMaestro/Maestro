@@ -134,6 +134,52 @@ describe('cue-process-lifecycle', () => {
 		vi.useRealTimers();
 	});
 
+	// Cue spawns agents directly rather than through the ProcessManager, so the
+	// desktop's WakaTime listener never sees these runs. `onActivity` is the
+	// hook that lets a run beat for its whole duration instead of going
+	// unrecorded - a long Cue run would otherwise blow past WakaTime's idle
+	// timeout with nothing reported.
+	describe('onActivity (WakaTime heartbeat hook)', () => {
+		it('fires on each stdout chunk so long runs keep beating', async () => {
+			const onActivity = vi.fn();
+			const resultPromise = runProcess('run-1', createSpec(), createOptions({ onActivity }));
+			await vi.advanceTimersByTimeAsync(0);
+
+			mockChild.stdout.emit('data', 'chunk one');
+			mockChild.stdout.emit('data', 'chunk two');
+
+			expect(onActivity).toHaveBeenCalledTimes(2);
+
+			mockChild.emit('close', 0);
+			await resultPromise;
+		});
+
+		it('fires on stderr too - a run streaming only stderr is still working', async () => {
+			const onActivity = vi.fn();
+			const resultPromise = runProcess('run-1', createSpec(), createOptions({ onActivity }));
+			await vi.advanceTimersByTimeAsync(0);
+
+			mockChild.stderr.emit('data', 'progress on stderr');
+
+			expect(onActivity).toHaveBeenCalledTimes(1);
+
+			mockChild.emit('close', 0);
+			await resultPromise;
+		});
+
+		it('is optional - runs still complete and capture output without it', async () => {
+			const resultPromise = runProcess('run-1', createSpec(), createOptions());
+			await vi.advanceTimersByTimeAsync(0);
+
+			mockChild.stdout.emit('data', 'hello');
+			mockChild.emit('close', 0);
+
+			const result = await resultPromise;
+			expect(result.stdout).toContain('hello');
+			expect(result.status).toBe('completed');
+		});
+	});
+
 	describe('runProcess', () => {
 		it('spawns process with correct command, args, and cwd', async () => {
 			const spec = createSpec();

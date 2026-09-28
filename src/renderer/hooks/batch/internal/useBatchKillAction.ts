@@ -3,6 +3,7 @@ import type { MutableRefObject } from 'react';
 import type { BatchRunState, HistoryEntry } from '../../../types';
 import { formatElapsedTime } from '../../../../shared/formatters';
 import { logger } from '../../../utils/logger';
+import { isMirroredBatchRun } from '../../../stores/batchStore';
 import type { BatchAction } from '../batchReducer';
 import { claimFlushState, type AutoRunFlushStateRefs } from './batchFlushState';
 import type { ErrorResolutionEntry } from './useBatchControlActions';
@@ -64,6 +65,11 @@ export function useBatchKillAction({
 }: UseBatchKillActionDeps): UseBatchKillActionReturn {
 	const killBatchRun = useCallback(
 		async (sessionId: string) => {
+			// A mirrored run's process was spawned by another Maestro client and is
+			// tracked in that client's refs, so there is nothing here to kill and the
+			// history entry this would write would be a fabrication.
+			if (isMirroredBatchRun(sessionId)) return;
+
 			// console.assert is a no-op in production builds and silently continues
 			// on failure - use logger.warn so the precondition violation reaches
 			// the same telemetry pipeline as the rest of this file.

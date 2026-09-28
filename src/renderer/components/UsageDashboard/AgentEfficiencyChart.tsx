@@ -17,7 +17,12 @@ import type { Theme, Session } from '../../types';
 import type { StatsAggregation } from '../../hooks/stats/useStats';
 import { COLORBLIND_AGENT_PALETTE } from '../../constants/colorblindPalettes';
 import { formatDurationHuman as formatDuration } from '../../../shared/formatters';
-import { findSessionByStatId, isWorktreeAgent, buildNameMap } from './chartUtils';
+import {
+	findSessionByStatId,
+	isWorktreeAgent,
+	buildNameMap,
+	barChartLabelWidth,
+} from './chartUtils';
 
 interface AgentEfficiencyChartProps {
 	/** Aggregated stats data from the API */
@@ -204,6 +209,15 @@ export const AgentEfficiencyChart = memo(function AgentEfficiencyChart({
 
 	const hasWorktreeBars = useMemo(() => efficiencyData.some((e) => e.isWorktree), [efficiencyData]);
 
+	const labelWidth = useMemo(
+		() =>
+			barChartLabelWidth(
+				efficiencyData.map((e) => e.label),
+				{ withSwatch: true }
+			),
+		[efficiencyData]
+	);
+
 	// Get max duration for bar scaling
 	const maxDuration = useMemo(() => {
 		if (efficiencyData.length === 0) return 0;
@@ -271,9 +285,10 @@ export const AgentEfficiencyChart = memo(function AgentEfficiencyChart({
 							>
 								{/* Agent name */}
 								<div
-									className="w-28 text-sm truncate flex-shrink-0 flex items-center gap-2"
-									style={{ color: theme.colors.textDim }}
+									className="text-sm flex-shrink-0 flex items-center gap-2"
+									style={{ width: labelWidth, color: theme.colors.textDim }}
 									title={agent.label}
+									data-testid="bar-chart-label"
 								>
 									<div
 										className="w-2.5 h-2.5 rounded-sm flex-shrink-0"
@@ -285,7 +300,7 @@ export const AgentEfficiencyChart = memo(function AgentEfficiencyChart({
 												: undefined,
 										}}
 									/>
-									{agent.label}
+									<span className="truncate">{agent.label}</span>
 								</div>
 
 								{/* Bar */}
@@ -324,7 +339,7 @@ export const AgentEfficiencyChart = memo(function AgentEfficiencyChart({
 									<span className="font-medium" style={{ color: theme.colors.textMain }}>
 										{formatDuration(agent.avgDuration)}
 									</span>
-									<span className="text-[10px] opacity-70">{agent.totalQueries} queries</span>
+									<span className="text-2xs opacity-70">{agent.totalQueries} queries</span>
 								</div>
 							</div>
 						);

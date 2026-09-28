@@ -21,15 +21,23 @@ Maestro ships a command-line interface (`maestro-cli`) for driving the running a
 Run `<group> --help` for the exact subcommands and flags.
 
 - **settings** - read/write any global or per-agent setting (`settings list -v`, `settings get/set/reset`, `settings agent ...`). Applies live, no restart.
-- **send / dispatch** - hand a prompt to another agent. `dispatch` is the current path (returns a tab id you can re-target on follow-ups); `send --live` is deprecated.
+- **ask** - ask another agent a QUESTION and get its answer back. `ask <agent> "..." --from {{AGENT_ID}}` runs a background consult (a hidden tab on that agent, a fresh context, no focus, no unread) and prints the reply on stdout. Reach for this whenever you want another agent's knowledge or opinion. Judgment note below.
+- **send / dispatch** - hand WORK to another agent. `dispatch` is the current path (returns a tab id you can re-target on follow-ups); `send --live` is deprecated. Pass `--background`: without it, handing work to another agent yanks the user's Left Bar selection onto that agent. Do NOT use it to ask a question - see `ask`.
 - **list / show** - inspect agents, groups, playbooks, sessions, ssh-remotes.
+- **group-chat start / send / status / list / stop** - hand a multi-agent job to a moderator without the New Group Chat modal. `group-chat start <name> -p <agent> -p <agent> --message-file <brief.md>` creates the chat and sends the brief; participants join by @mention exactly as if the user typed them, and the chat lands in the Left Bar without moving the view. Poll `group-chat status <chat>` for progress instead of sleeping. `send` is refused while the chat is busy.
+- **session list / session show** - enumerate every open AI tab across the fleet (ids, agent, state, and each tab's settings), and print one tab's transcript. This is the read side of `tab`.
 - **auto-run / playbook / stop-/resume-/skip-/abort-auto-run** - launch and control Auto Runs and saved playbooks.
-- **cue** - list and trigger Cue subscriptions (event model + YAML schema live in `_maestro-cue`).
-- **open-file / open-browser / open-terminal / refresh-files / refresh-auto-run** - desktop integration after filesystem changes so the user sees updates immediately.
+- **cue** - list and trigger Cue subscriptions, turn any one on or off (`cue enable|disable <name>`), read recent runs (`cue activity`), and manage Scheduled Tasks with `cue schedule` (event model + YAML schema live in `_maestro-cue`).
+- **marketplace list / show / import** - browse the Playbook Exchange and install a playbook into an agent's Auto Run folder. `auto-run-status -a <agent>` reads a run's progress; `auto-run-folder <path> -a <agent>` repoints the folder.
+- **open** - bring up a Maestro modal or dashboard, optionally on a tab (`open --list`, `open cue --tab scheduled`, `open settings --tab shortcuts`). Judgment note below.
+- **open-file / open-browser / close-browser / refresh-files / refresh-auto-run** - desktop integration after filesystem changes so the user sees updates immediately. `open-file` is also how you PLAY audio and video: it recognizes playable media and hands it to Maestro's floating player instead of making a tab, so never shell out to `open`/`afplay`/`xdg-open` for a media file.
+- **open-terminal / send-terminal / list terminals** - open a native terminal tab (optionally starting a command in it), type into one that already exists, and see what is open. Judgment note below.
 - **notify toast|flash** - surface in-app notifications (see the judgment below).
-- **create-agent / update-agent / create-worktree / tab / group / set-theme / theme / encore / ssh-remote** - agent lifecycle, tabs, groups, appearance, remotes. For `tab close|rename|star`, your own tab is the `Tab ID` in your system prompt's Session Information - never guess one out of `session list`, since every other row there is a different live conversation.
+- **image list / image save** - reach the screenshots the user pasted into the chat. You can SEE a pasted image but you have no path to it, so writing one into the repo (a doc screenshot, an asset, a bug repro) means `image save` - `image save` alone takes the newest, `image save <index|handle>` takes a specific one, `--all -o <dir>` takes a set. Pass `-a <your agent id>`: without it the scope is the whole fleet, so "the newest image" can be one another agent's user pasted seconds ago. Reads from disk, so it works with the app closed, but an image pasted this instant may trail the renderer's two-second write.
+- **create-agent / update-agent / create-worktree / tab / group / set-theme / theme / encore / ssh-remote** - agent lifecycle, tabs, groups, appearance, remotes. `tab` also owns the per-tab settings the composer chips toggle (see below). For `tab close|rename|star`, your own tab is the `Tab ID` in your system prompt's Session Information - never guess one out of `session list`, since every other row there is a different live conversation.
 - **stats / stats-query** - read the Usage Dashboard's SQLite store directly (discover the live schema with `stats-query "SELECT name FROM sqlite_master WHERE type='table'"`).
 - **director-notes / gist / prompts / status / doctor** - cross-agent history synopses, transcript export, prompt self-reference, diagnostics.
+- **feedback / support-package / profiling** - report a Maestro bug or idea the way Send Feedback does. `feedback auth` checks `gh`; `feedback search "<summary>"` finds duplicates; `feedback submit -c bug -s ... -e ... -a ... [--attach <png>] [--support-package]` files the issue and stops on likely duplicates unless `--force`; `feedback subscribe <n> --comment "..."` adds to an existing one instead. `support-package -o <dir>` writes the sanitized diagnostics zip; `profiling start|status|stop -o <zip>` captures a performance trace. Filing publishes to GitHub under the user's account, so confirm the draft with the user before `submit` or `subscribe`.
 
 ### Behavior that `--help` won't tell you
 
@@ -37,7 +45,7 @@ These are judgment calls and gotchas, not syntax - the part worth reading.
 
 **Settings requests** ("can I configure X", theme/preference/behavior asks): discover with `settings list -v [-c <category>]`, inspect the current value with `settings get <key> -v` (don't change something already set how they want), recommend the 1-3 most relevant keys with current value + what each controls (don't dump the catalogue), apply with `settings set <key> <value>` on confirmation, then re-read to confirm. Per-agent overrides (`nudge`, `model`, `effort`, `customArgs`, ...) via `settings agent set <agent-id> <key> <value>`.
 
-**Encore Features (gated).** Four optional capabilities ship behind `encoreFeatures.*` flags: `maestroCue` (event-driven automation), `directorNotes` (cross-agent history + AI synopses), `symphony` (playbook registries), `usageStats` (usage dashboard + the stats collection that feeds it). When a user's intent maps to one, check `settings get encoreFeatures.<flag>` - if `false`, do NOT silently enable it. Tell them the capability lives behind an Encore feature, give a one-line pitch, and offer a one-command opt-in (`settings set encoreFeatures.<flag> true` - instant, no restart). Trigger phrases:
+**Encore Features (toggled).** Four capabilities sit behind `encoreFeatures.*` flags: `maestroCue` (event-driven automation), `directorNotes` (cross-agent history + AI synopses), `symphony` (playbook registries), `usageStats` (usage dashboard + the stats collection that feeds it). All four ship ON, so a flag reading `false` means the user turned it off deliberately. When a user's intent maps to one, check `settings get encoreFeatures.<flag>` - if `false`, do NOT silently re-enable it. Say the capability is switched off, give a one-line pitch, and offer to flip it back (`settings set encoreFeatures.<flag> true` - instant, no restart). Trigger phrases:
 
 - "every morning / every N minutes / remind me / watch this file / when this PR opens / after agent X finishes" → **Maestro Cue**
 - "summarize today / what did the fleet do / give me a briefing / weekly recap" → **Director's Notes**
@@ -48,9 +56,91 @@ If declined, offer a manual fallback (e.g. a one-shot `send` later instead of a 
 
 **Auto Run.** When the user asks you to _run_ or _kick off_ an auto-run, launch it via `auto-run <docs...> --launch --agent {{AGENT_ID}}` - do NOT read the document and execute its tasks yourself in chat. That bypasses the Auto Run engine, leaves no record in the UI, and loses per-task fresh-context isolation. Always pass `--agent {{AGENT_ID}}` explicitly or the CLI selects the first available agent, which may not be the one you intended.
 
+**Remote agents over SSH, including transports with no open port.** An agent can run on another machine, and the transport is expressed as ordinary `ssh -o` options rather than a flag per product. There is no `--tailscale`, no `--tailcat`, no `--cloudflared`, and none is needed: `--ssh-option KEY=VALUE` (repeatable, on both `create-ssh-remote` and `update-ssh-remote`) is the escape hatch, and a command-line `-o` outranks `~/.ssh/config`, so it is also the only way to override one of Maestro's own defaults.
+
+Three shapes cover essentially every ask:
+
+- **A tunnel or overlay network, nothing listening on the public internet** (tailcat, Tailscale, cloudflared, Teleport, a SOCKS proxy). Point `ProxyCommand` at the tool: `--ssh-option "ProxyCommand=/path/to/tool <args> 22"`. This is the answer to "how do I SSH without opening a port / forwarding a tunnel". The host does not need to be reachable; the ProxyCommand carries the connection.
+- **A bastion or jump box.** `--ssh-option ProxyJump=user@bastion`.
+- **It already works from my terminal.** Use `--ssh-config` and pass the `Host` pattern as the host. Maestro then reads `~/.ssh/config` for User, Port, HostName, and IdentityFile, so a working setup is reused rather than restated.
+
+**A tunnelled remote needs connection sharing, and leaving it out looks like a flaky network.** Maestro opens several SSH connections per agent (AI tab, terminal tab, file tree, git probes, provider probes). Single-flight transports fail the extras: measured on a tailcat remote, three simultaneous dials produced one success and two `context deadline exceeded`, while the same three staggered two seconds apart all succeeded. Whenever you set a `ProxyCommand`, set these in the same command so every connection rides one master:
+
+```
+--ssh-option ControlMaster=auto --ssh-option ControlPath=~/.ssh/cm-%C \
+  --ssh-option ControlPersist=10m --ssh-option ServerAliveInterval=30 \
+  --ssh-option ConnectTimeout=45
+```
+
+A tunnel also completes its handshake slower than a LAN host, so raise `ConnectTimeout` above the 10s default. `RequestTTY` is reserved and rejected: it is derived per command from whether the remote agent speaks stream-json, and pinning it corrupts that stream.
+
+**Set one up end to end, and verify before handing it over.**
+
+1. `create-ssh-remote "<name>" -H <host> -u <user> --ssh-option ...` prints the remote ID.
+2. `test-ssh-remote <id> --agent claude-code` dials it and reports the remote's hostname, plus whether that binary is on the remote PATH. Always run this. Until it passes, a wrong `ProxyCommand` stays invisible and surfaces much later as an agent that will not start, somewhere that never mentions SSH.
+3. `create-agent "<name>" --ssh-remote <id> --ssh-cwd <remote path> --background`.
+
+If step 2 connects but reports the agent NOT found, the binary is installed somewhere off the non-interactive PATH. Pass `create-agent --custom-path /absolute/path/on/remote` rather than asking the user to edit their shell profile: an SSH command runs without their interactive rc files, so a PATH set in `.zshrc` is not in effect.
+
+**Never hand-edit `maestro-settings.json` to change a remote.** The desktop owns that file and rewrites it, so an edit made while Maestro is running is silently lost. `update-ssh-remote <id>` is the only safe path, and it can also park a value instead of destroying it: `--disable-ssh-option ProxyCommand` keeps the string while taking it out of the connection, and `--enable-ssh-option` puts it back. That is how you test whether the tunnel is the problem without making the user paste the blob again.
+
+**Asking another agent vs handing it work.** These are different verbs and the difference is the other agent's user.
+
+- `ask <agent> "<question>" --from {{AGENT_ID}}` when you want an ANSWER. It runs the same background consult a typed `@mention` does: a hidden tab on that agent, a fresh context, no focus, no unread, and the reply comes back to you on stdout. Nothing appears in the conversation the human has open with that agent. Pass `--from {{AGENT_ID}}` so the consult is attributed to you, a follow-up `ask` resumes the same thread, that agent may read YOUR working directory, and Stop on you cancels it.
+- `dispatch <agent> "<prompt>" --background` when you want the other agent to GO DO something. The prompt lands in a real tab - the active one unless you name another with `--tab` or `--new-tab` - so it appears mid-conversation in whatever the human has open there, and you get a tab id rather than an answer.
+
+Do NOT use `dispatch` to ask a question. It interrupts a live conversation with a question addressed to nobody in that thread, and the answer goes to the screen instead of to you.
+
+The question you send with `ask` must stand on its own: the target sees no transcript by default. Say who you are, what you are building, and exactly what you need - `--with-context` forwards your own transcript when the question really does depend on it.
+
 **Notifications - toast vs flash are not interchangeable.** Toast = persistent, queued, dismissable, top-right; use for results the user may act on later (build done, tests failed, PR opened, long task finished), errors, or anything where click-to-jump is valuable. Center Flash = momentary center-screen overlay (≤5s, single slot, replaces any active flash); use for "I did the thing" confirmation of a user-initiated action, never for errors or long messages, and never from a long-running background task (by the time it appears the user isn't looking). Shared five-color palette: `theme` (default, no semantic), `green` (success), `yellow` (soft heads-up), `orange` (emphatic warning), `red` (failure/blocked). Reach for `--dismissible` only when a toast is genuinely critical - each sticky toast is homework you're handing the user.
 
+**A toast body is a destination, so give it one.** Clicking a toast can land the user on any tab type, and a notice about a thing should open that thing rather than making them go find it. Pick the target with one `--open-*` flag (they are mutually exclusive, and every one but `--open-url` needs `--agent`): `--open-file <path>` opens it in the agent's File Preview pane, `--open-terminal [tab]` focuses a terminal tab by id or name (bare = that agent's active one), `--open-browser <url>` opens an in-app browser tab while `--open-browser-tab <id>` focuses one already open (the id `open-browser` printed), and `--open-url <url>` leaves Maestro for the system browser. With none of them, `--agent` (plus optional `--tab`) jumps to an AI tab. So "wrote the report" gets `--open-file`, "the dev server died" gets `--open-terminal`, "preview is up" gets `--open-browser`. `--action-url` is a different thing: a separate inline link button under the message, which does not change what clicking the body does. A closed target is safe - the click still lands on the agent and says what was missing.
+
+**Background is the default, and `--background` is how you say so.** Focus belongs to the human: you may create a surface, you may not decide they should be looking at it. Pass `--background` on every command that can move the view or raise a notice unless the user asked to be taken there - `open-file`, `open-terminal`, `open-browser`, `tab new`, `dispatch`, `create-agent`, `create-worktree`, `switch-mode`, `refresh-auto-run`, and `refresh-files`. The surface is still created, still listed, and still addressable by the ID the command prints; only the active agent and the active tab stay where the user left them. A tab that steals the viewport costs them their place mid-keystroke, and they usually cannot tell which of thirty agents took it. The flag is accepted on all of them, including `refresh-files`, which is already quiet and ignores it - so passing it is always safe and you never have to remember which verb disturbs anyone. `--focus` is the opposite ask and wins if both are passed. `focus-agent`, `send --tab`, `open <surface>`, and `open-graph` exist _to_ move the view, so they take no flag - reach for them only when the user asked to be shown something. On `open-file`, `--no-switch` is the weaker, older flag: it stays on the current agent but still activates the tab there, so `--background` is what you want. Errors are exempt: a failed command still raises its toast with `--background` set, because hiding a failure is not politeness.
+
+**Worktrees go in the Worktree Directory, through `create-worktree`.** Every parent agent can have a Worktree Directory (Git menu -> Configure Worktrees; the system prompt prints it, and `show agent <id> --json` / `list agents --json` expose it as `worktreeBasePath`). `create-worktree --agent <id> --branch <name>` creates the checkout there, runs the user's setup script, and registers a worktree agent the user can see in the Left Bar. A bare `git worktree add` into a path you chose does none of that: the checkout is invisible to the app, so the branch and any uncommitted work in it are forgotten the moment your conversation ends. That includes throwaway checkouts for a merge trial or a build check, and it includes worktree features built into your own tooling that pick their own location. When `worktreeBasePath` is null the user has not configured one; `create-worktree` still works and picks the desktop default, so use it rather than guessing a path.
+
+**Browser tabs are the user's screen, not your scratch space.** Research goes through web search first; open a browser only when search genuinely can't do the job (JS-rendered page, login wall, you must interact with the page). When you do, always pass `--background` so the app doesn't switch agents and swap the visible tab out from under whoever is working, then `close-browser <tab-id>` as soon as you have what you need. `open-browser` prints the tab ID for exactly that. Leave a tab open only when the page itself is the deliverable, and say so. If the Conductor Profile names a different browser tool, that wins - use theirs and skip `open-browser` entirely.
+
+**Terminals: yours by default, theirs on request.** Run commands in your own shell tool - it is invisible to the user, creates no tab, and moves nothing on their screen. That is the default for everything, including builds, watchers, and long-running work (background it in your own shell and read the log). A terminal tab takes over part of the user's window, so open one ONLY when they explicitly ask for a terminal ("open a terminal", "run it in a terminal", "start the dev server in a tab"). Long-running is not by itself a reason. When they DO ask, open the Maestro tab yourself - never answer by telling them to open their own terminal app.
+
+- `open-terminal --agent {{AGENT_ID}} --name "Dev server" --command "npm run dev"` makes a new tab and runs the command once the shell is ready. Reach for it only on an explicit request. Always pass `--name` (otherwise it reads "Terminal 3", and the name is how you address the tab later). `--command` is the tab's **startup** command, so it re-runs when the tab restarts or the app reopens - right for a server, wrong for a one-shot. `--cwd` is confined to the agent's working directory. The tab ID is printed; keep it.
+- `send-terminal --agent {{AGENT_ID}} [--tab <id-or-name>] "<cmd>"` types into a terminal that already exists, which is the right move when a suitable tab is open - don't stack up a new tab per command. `--control C` sends Ctrl-C (stop the dev server). `--no-enter` types without running, for handing a risky command to a human. It gives you no output back: read the result in the app, or use your own shell tool when you need to see it.
+- `list terminals [--agent <id>]` shows what is open, with IDs, names, and which one is active.
+
+Targeting: with no `--tab`, `send-terminal` hits the agent's **active** terminal. A `--tab` ID matches across agents (IDs are unique); a `--tab` name matches only inside the target agent, since "Dev server" exists in every project. A tab that has never been displayed has no shell yet and cannot receive a write - use `open-terminal --command` for that case.
+
+**A command you send runs on the user's machine, with their shell and credentials, possibly unattended.** Hold it to the same bar as running it yourself: confirm anything destructive first, and prefer `--no-enter` when you want a human to approve before it executes.
+
 **Messages that start with a dash** collide with option parsing. Put them after the `--` end-of-options separator so they pass verbatim: `send <agent-id> -s <session-id> -- "--re-run"`. Any flags must come before `--`.
+
+**Scheduling anything time-driven goes through `cue schedule`.** "In 20 minutes...", "at 4pm...", "every weekday at 9am...", "every 30 minutes..." are all one command; never hand-author a `time.*` subscription in YAML.
+
+- One-shot: `cue schedule --in 20m` or `--at "2026-08-20 16:00"` (local wall clock or ISO-8601 with an offset).
+- Repeating on a clock: `cue schedule --daily-at 09:00,17:30 [--days mon,tue,wed,thu,fri]`.
+- Repeating on an interval: `cue schedule --every 30m`.
+- Always pass `--agent <id-or-name>` (the agent that will run it) and `--prompt`, `--notify`, or both.
+- Inspect and edit: `--list [--kind once|daily|interval]`, `--reschedule <name>` plus the timing flag matching that task's kind, `--pause` / `--resume` (keeps the task, stops it firing), `--cancel <name>` (deletes it).
+
+The user sees and edits the same tasks in the app under **Maestro Cue → Scheduled Tasks** - offer `open cue --tab scheduled` after scheduling something so they know where it lives. A `--pause` is almost always the right answer to "stop doing that for now"; reach for `--cancel` only when they want it gone.
+
+**Opening a surface is a teaching move, not just navigation.** When the user asks where something lives ("where do I see my scheduled tasks / my token usage / the shortcut list?"), offer to open it and then relay the access line the command prints: `open` reports the hotkey, the command-palette entry, and the click target for that surface. Showing them the pane and the hotkey in one breath beats describing a menu path. Use `open --list` when you are unsure of the surface id; use `--tab` whenever the answer lives on a specific tab. Do not use it to yank the user's screen around mid-task - it changes what is in front of them, so open a surface because they asked about it or agreed to it.
+
+**Per-tab settings are scriptable - the composer chips have CLI equivalents.** An AI tab carries its own model, effort, thinking display, access mode, History behavior, and send key, each overriding the agent's default for that tab alone. `tab <verb> <tab-id> <value>` writes one; `tab show <tab-id>` reads them all back; `session list --json` reads them across the fleet.
+
+- `tab thinking <tab-id> off|on|sticky|cycle` - the thinking display. `on` shows reasoning and tool cells while the agent is busy and clears them when the reply lands; `sticky` pins them so they stay readable afterwards; `cycle` advances one step exactly as clicking the chip does. **Turn this on before you need to watch a stream, not after** - `off` means the entries are never created, so it cannot recover reasoning that already happened.
+- `tab read-only <tab-id> true|false` - read-only / plan mode, the access switch. The agent in that tab cannot modify files.
+- `tab model <tab-id> <model>` and `tab effort <tab-id> <level>` - per-tab overrides. Agent-wide defaults still live on `update-agent --model` / `--effort`; reach for the tab form when only this conversation should differ.
+- `tab enter-to-send <tab-id> true|false` - the send key for that tab.
+- `tab save-to-history <tab-id> true|false`, `tab star`/`unstar`, `tab read`/`unread`, `tab rename`, `tab move`, `tab close`.
+
+Two conventions that are easy to get wrong:
+
+- **`inherit` is not `false`.** `tab model <id> inherit` (also `default`, `none`, `clear`) drops the override so the tab follows the agent again. `tab enter-to-send <id> false` **pins** the tab to Cmd+Enter even when the global default is Enter; `inherit` is what returns it to the setting.
+- **`active` is a valid tab id on every `tab` verb.** It means the tab that agent currently has selected: `tab thinking active sticky -a {{AGENT_ID}}`. Without `-a` it resolves to the agent the desktop has focused, which is rarely what you want from a background task - name the agent.
+
+Everything here is an explicit set, not a toggle (the one exception is `thinking ... cycle`), so re-running a script lands on the same state. Get tab ids from `session list`, and remember these are per-tab: setting a model on one tab says nothing about the agent's other tabs.
 
 **Cue routing.** Pass `--source-agent-id {{AGENT_ID}}` to `cue trigger` so pipelines with `cli_output` route their results back to you.
 

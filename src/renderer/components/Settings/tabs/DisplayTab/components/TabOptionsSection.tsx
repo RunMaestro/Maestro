@@ -11,10 +11,16 @@ interface TabOptionsSectionProps {
 	setShowStarredInUnreadFilter: (enabled: boolean) => void;
 	showFilePreviewsInUnreadFilter: boolean;
 	setShowFilePreviewsInUnreadFilter: (enabled: boolean) => void;
+	showTerminalTabsInUnreadFilter: boolean;
+	setShowTerminalTabsInUnreadFilter: (enabled: boolean) => void;
+	showBrowserTabsInUnreadFilter: boolean;
+	setShowBrowserTabsInUnreadFilter: (enabled: boolean) => void;
 	useCmd0AsLastTab: boolean;
 	setUseCmd0AsLastTab: (enabled: boolean) => void;
 	showBrowserTabDomain: boolean;
 	setShowBrowserTabDomain: (enabled: boolean) => void;
+	showTabCountBadge: boolean;
+	setShowTabCountBadge: (enabled: boolean) => void;
 	tabBarWheelScroll: boolean;
 	setTabBarWheelScroll: (enabled: boolean) => void;
 }
@@ -25,10 +31,16 @@ export function TabOptionsSection({
 	setShowStarredInUnreadFilter,
 	showFilePreviewsInUnreadFilter,
 	setShowFilePreviewsInUnreadFilter,
+	showTerminalTabsInUnreadFilter,
+	setShowTerminalTabsInUnreadFilter,
+	showBrowserTabsInUnreadFilter,
+	setShowBrowserTabsInUnreadFilter,
 	useCmd0AsLastTab,
 	setUseCmd0AsLastTab,
 	showBrowserTabDomain,
 	setShowBrowserTabDomain,
+	showTabCountBadge,
+	setShowTabCountBadge,
 	tabBarWheelScroll,
 	setTabBarWheelScroll,
 }: TabOptionsSectionProps) {
@@ -60,6 +72,24 @@ export function TabOptionsSection({
 				/>
 				<ToggleSettingRow
 					theme={theme}
+					title="Show terminal tabs when filtering by unread"
+					description="When the unread filter is active, terminal tabs remain visible instead of being hidden."
+					checked={showTerminalTabsInUnreadFilter}
+					onChange={setShowTerminalTabsInUnreadFilter}
+					ariaLabel="Show terminal tabs when filtering by unread"
+					borderTop
+				/>
+				<ToggleSettingRow
+					theme={theme}
+					title="Show browser tabs when filtering by unread"
+					description="When the unread filter is active, browser tabs remain visible instead of being hidden."
+					checked={showBrowserTabsInUnreadFilter}
+					onChange={setShowBrowserTabsInUnreadFilter}
+					ariaLabel="Show browser tabs when filtering by unread"
+					borderTop
+				/>
+				<ToggleSettingRow
+					theme={theme}
 					title={`Treat ${shortcutPrefix}+0 as the last tab`}
 					description={
 						<>
@@ -80,6 +110,17 @@ export function TabOptionsSection({
 					checked={showBrowserTabDomain}
 					onChange={setShowBrowserTabDomain}
 					ariaLabel="Show domain on browser tabs"
+					borderTop
+				/>
+				<ToggleSettingRow
+					theme={theme}
+					title="Show tab count on the search icon"
+					description={
+						'Display the number of open tabs as a small badge on the tab bar search (magnifier) icon. When off, the count is still shown next to "Search Tabs" in the popover that opens when you click the icon.'
+					}
+					checked={showTabCountBadge}
+					onChange={setShowTabCountBadge}
+					ariaLabel="Show tab count on the search icon"
 					borderTop
 				/>
 				<ToggleSettingRow

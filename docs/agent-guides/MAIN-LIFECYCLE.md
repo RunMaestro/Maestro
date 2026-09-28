@@ -81,17 +81,41 @@ if (store.get('wakatimeEnabled', false)) {
 
 #### 7. Sentry Initialization
 
-Dynamic import to avoid module-load-time access to `electron.app`. Only enabled in production with crash reporting enabled:
+Dynamic import to avoid module-load-time access to `electron.app`. Only enabled in production, with crash reporting enabled, **and only when the build carries a DSN**:
 
 ```typescript
-if (crashReportingEnabled && !isDevelopment) {
+const buildProvenance = getBuildProvenance(); // src/main/utils/build-provenance.ts
+if (crashReportingEnabled && !isDevelopment && buildProvenance.sentryDsn) {
 	import('@sentry/electron/main').then(({ init, setTag, IPCMode }) => {
-		init({ dsn: '...', ipcMode: IPCMode.Classic, ... });
+		init({ dsn: buildProvenance.sentryDsn, ipcMode: IPCMode.Classic, ... });
 		setTag('installationId', installationId);
 		setTag('channel', version.includes('-RC') ? 'rc' : 'stable');
+		setTag('build', buildProvenance.official ? 'official' : 'unofficial');
 	});
 }
 ```
+
+**The DSN is not in source, and must not be put back.** It is injected at package
+time from the `MAESTRO_SENTRY_DSN` repository secret and written to
+`dist/build-provenance.json` by `scripts/write-build-provenance.mjs`. A build from
+source has no DSN, so Sentry is never initialized and the build reports nowhere.
+
+This exists because the DSN used to be a literal here, so every fork inherited it.
+Four separate forks were found reporting into `smash-labs/maestro` at the same time
+and one produced 655 events in three hours from a retry loop in code that does not
+exist upstream, firing error-volume alerts on somebody else's bug. It also meant fork
+users' stack traces and installation IDs went to a project they never chose.
+Filtering by release was rejected: two of the four forks reuse real Maestro version
+numbers. Full rationale in `src/shared/buildProvenance.ts`.
+
+The renderer mirrors the gate with the Vite-injected `__CRASH_REPORTING_BUILD__`
+constant (`vite.config.mts`). Renderer events travel to Sentry through the main
+process over Classic IPC, so an un-provisioned build already has nowhere to send
+them; the flag makes that explicit rather than relying on the IPC channel's absence.
+
+To report to your own Sentry project (a fork, or local debugging), set
+`MAESTRO_SENTRY_DSN` before `npm run build`. Those builds are tagged
+`build: unofficial`.
 
 Also starts memory monitoring for crash diagnostics (breadcrumbs every 60s, warns above 500MB heap).
 
@@ -288,9 +312,6 @@ Main settings store with many configuration options:
 ```typescript
 interface MaestroSettings {
 	activeThemeId: string;
-	llmProvider: string;
-	modelSlug: string;
-	apiKey: string;
 	shortcuts: Record<string, any>;
 	fontSize: number;
 	fontFamily: string;
@@ -515,6 +536,35 @@ On first run after upgrade, the manager:
 const historyManager = getHistoryManager();
 ```
 
+## Turn Attribution (Web Login)
+
+With Web Login on, every turn a browser sends is attributed to the account that
+sent it: `HistoryEntry.userName` / `userDisplayName` drive the History row's
+sender pill and its filter, and `query_events.user_name` carries the same answer
+into the stats database.
+
+The account is only ever in scope at SPAWN. A bridge call from a logged-in
+browser runs inside an AsyncLocalStorage context (`getActingUser()` in
+`src/main/web-server/auth/acting-user.ts`), but the one-shot effects of a turn -
+the `history:add` entry and the `stats:record-query` row - are written LATER, by
+the desktop renderer's exit listener, which owns them for every client. By then
+there is no acting user anywhere: reading `getActingUser()` at write time always
+answers `undefined`, so a turn sent from a phone would be recorded as if it had
+been typed at the keyboard.
+
+So `process:spawn` calls `noteTurnActor(agentId, tabId, getActingUser())`
+(`src/main/web-server/auth/turn-attribution.ts`) and the two write handlers look
+the answer back up with `resolveTurnActor(agentId, tabId)`. One entry per tab,
+overwritten by the next spawn - a tab runs one turn at a time. A DESKTOP spawn
+passes `undefined`, which CLEARS the entry, so a phone's earlier turn is never
+credited to a later one typed at the keyboard, and closing an agent drops every
+entry it owned (`forgetAgentActors`, called from `sessions:setMany`).
+
+The spawn also stamps `MAESTRO_QUERY_USER` into the agent's environment
+(`QUERY_USER_ENV_VAR`), at the same injection point as the caller-identity vars
+and for the same reason: it has to reach both the local and the SSH env merges.
+Terminal tabs are excluded - a shell the user drives is not an agent turn.
+
 ## IPC Handler Registration
 
 All IPC handlers are registered in `setupIpcHandlers()` within `src/main/ipc/bootstrap/index.ts`, called once from `src/main/index.ts`'s `app.whenReady()` with a deps object of getter closures over its module-level state. Each handler module is a self-contained file in `src/main/ipc/handlers/`:
@@ -549,7 +599,7 @@ All IPC handlers are registered in `setupIpcHandlers()` within `src/main/ipc/boo
 | `registerNotificationsHandlers()` | `notifications.ts`  | Main window                                                          |
 | `registerAttachmentsHandlers()`   | `attachments.ts`    | App                                                                  |
 | `registerLeaderboardHandlers()`   | `leaderboard.ts`    | App, settings store                                                  |
-| `registerSymphonyHandlers()`      | `symphony.ts`       | App, main window, sessions store                                     |
+| `registerSymphonyHandlers()`      | `symphony/`         | App, main window, sessions store                                     |
 | `registerTabNamingHandlers()`     | `tabNaming.ts`      | Process manager, agent detector, agent configs, settings             |
 | `registerWakatimeHandlers()`      | `wakatime.ts`       | WakaTime manager                                                     |
 | `registerFeedbackHandlers()`      | `feedback.ts`       | Process manager, agent detector, web server, settings, stores        |

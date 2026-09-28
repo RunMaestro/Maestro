@@ -1,5 +1,6 @@
 import type { RightPanelTab, Shortcut } from '../../../types';
 import type { QuickAction } from '../types';
+import { FIXED_SHORTCUTS } from '../../../constants/shortcuts';
 
 interface BuildSearchCommandsArgs {
 	setQuickActionOpen: (open: boolean) => void;
@@ -34,6 +35,10 @@ export function buildSearchCommands({
 			id: 'searchAgents',
 			label: 'Search: Agents',
 			subtext: 'Filter agents in the sidebar',
+			// The four in-context find bars are all Cmd+F, scoped by whatever has
+			// focus. Naming the chord here is how a user learns that; without it the
+			// palette reads as the only way in.
+			shortcut: FIXED_SHORTCUTS.filterSessions,
 			action: () => {
 				setQuickActionOpen(false);
 				setLeftSidebarOpen(true);
@@ -45,6 +50,7 @@ export function buildSearchCommands({
 			id: 'searchMessages',
 			label: 'Search: Messages (This Tab)',
 			subtext: 'Search messages in the current conversation',
+			shortcut: FIXED_SHORTCUTS.searchOutput,
 			action: () => {
 				setQuickActionOpen(false);
 				setActiveFocus('main');
@@ -70,6 +76,7 @@ export function buildSearchCommands({
 			id: 'searchFiles',
 			label: 'Search: Files',
 			subtext: 'Filter files in the file explorer',
+			shortcut: FIXED_SHORTCUTS.filterFiles,
 			action: () => {
 				setQuickActionOpen(false);
 				setRightPanelOpen(true);
@@ -82,6 +89,7 @@ export function buildSearchCommands({
 			id: 'searchHistory',
 			label: 'Search: History',
 			subtext: 'Search in the history panel',
+			shortcut: FIXED_SHORTCUTS.filterHistory,
 			action: () => {
 				setQuickActionOpen(false);
 				setRightPanelOpen(true);

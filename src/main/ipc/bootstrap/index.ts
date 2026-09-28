@@ -34,12 +34,15 @@ import {
 	registerDocumentGraphHandlers,
 	registerSshRemoteHandlers,
 	registerFilesystemHandlers,
+	registerParquetHandlers,
 	registerAttachmentsHandlers,
 	registerWebHandlers,
+	registerWebLoginHandlers,
 	registerLeaderboardHandlers,
 	registerNotificationsHandlers,
 	registerSymphonyHandlers,
 	registerTabNamingHandlers,
+	registerAiCommandHandlers,
 	registerAgentErrorHandlers,
 	registerDirectorNotesHandlers,
 	registerCrossAgentHandlers,
@@ -52,6 +55,7 @@ import {
 	registerPromptsHandlers,
 	registerMemoryHandlers,
 	registerTabsHandlers,
+	registerContextTimelineHandlers,
 	registerPianolaHandlers,
 	registerPluginsHandlers,
 	registerAgentRunHandlers,
@@ -70,11 +74,12 @@ import { resolveSessionFromPidWalk } from '../../coworking/pid-resolution';
 import { initializeOutputParsers } from '../../parsers';
 import { initializeSessionStorages } from '../../storage';
 import { getCueProcessList } from '../../cue/cue-executor';
-import { getSshRemoteById } from '../../stores';
+import { getSshRemoteById, flushPendingSessionWrites } from '../../stores';
 import { createSshRemoteStoreAdapter } from '../../utils/ssh-remote-resolver';
 import { tunnelManager } from '../../tunnel-manager';
 import { captureException } from '../../utils/sentry';
 import { logger } from '../../utils/logger';
+import { MAX_ENTRIES_PER_SESSION, resolveHistoryEntryLimit } from '../../../shared/history';
 import {
 	setGetSessionsCallback,
 	setGetCustomEnvVarsCallback,
@@ -98,6 +103,10 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 		createWebServer: deps.createWebServer,
 		settingsStore: deps.settingsStore,
 	});
+
+	// Web Login account management - desktop-only, the bridge refuses every
+	// `webLogin:*` channel. See src/main/ipc/handlers/webLogin.ts.
+	registerWebLoginHandlers();
 
 	// Git operations - extracted to src/main/ipc/handlers/git.ts
 	registerGitHandlers({
@@ -125,7 +134,8 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 	registerHistoryHandlers({
 		safeSend: deps.safeSend,
 		emitPluginEvent: (event) => deps.getPluginEventBus()?.emit(event),
-		getMaxEntries: () => deps.settingsStore.get('maxLogBuffer', 5000) as number,
+		getMaxEntries: () =>
+			resolveHistoryEntryLimit(deps.settingsStore.get('maxLogBuffer', MAX_ENTRIES_PER_SESSION)),
 		getSshRemoteById,
 		getSessionById: (id: string) => {
 			const sessions = (
@@ -230,6 +240,10 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 		// the bus is created during plugin init and re-authorizes every delivery
 		// against live grants, so this is a no-op when plugins are disabled.
 		emitPluginEvent: (event) => deps.getPluginEventBus()?.emit(event),
+		// Sessions are written behind a coalescing timer so a streaming turn can't
+		// block the UI thread. Await it here so the handlers' boolean
+		// acknowledgement keeps meaning "this revision reached disk".
+		flushSessionWrites: flushPendingSessionWrites,
 	});
 	// Wire the plugin focus verbs into the persistence layer's session.activated
 	// dedupe so the two emit paths share one last-emitted id.
@@ -276,13 +290,7 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 	// Register Debug Package handlers
 	registerDebugHandlers({
 		getMainWindow: deps.getMainWindow,
-		getAgentDetector: deps.getAgentDetector,
-		getProcessManager: deps.getProcessManager,
-		getWebServer: deps.getWebServer,
-		settingsStore: deps.settingsStore,
-		sessionsStore: deps.sessionsStore,
-		groupsStore: deps.groupsStore,
-		bootstrapStore: deps.bootstrapStore,
+		...deps.debugPackageDeps,
 	});
 
 	// Register Spec Kit handlers (no dependencies needed)
@@ -302,6 +310,12 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 
 	// Register tab lifecycle handlers (renderer -> main tab-close notification)
 	registerTabsHandlers();
+
+	// Register Context Timeline capture handlers (per-agent turn history backfill).
+	// The renderer calls these on every panel open and timeline clear, so leaving
+	// them out makes `contextTimeline:*` reject with "No handler registered"
+	// (MAESTRO-YV) and the panel silently starts empty after a reload.
+	registerContextTimelineHandlers();
 
 	// Register Pianola handlers (autonomous manager: rules, decisions, and the
 	// supervised daemon). The supervisor is constructed during core-service init
@@ -406,6 +420,8 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 		getProcessManager: deps.getProcessManager,
 		getAgentDetector: deps.getAgentDetector,
 		agentConfigsStore: deps.agentConfigsStore,
+		// Grooming reads the utility-agent selection at spawn time.
+		settingsStore: deps.settingsStore,
 	});
 
 	// Register Marketplace handlers for fetching and importing playbooks
@@ -443,7 +459,11 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 
 	// Set up callback for group chat router to lookup sessions for auto-add @mentions
 	setGetSessionsCallback(() =>
-		mapSessionsForMentions(deps.sessionsStore.get('sessions', []), getSshRemoteById)
+		mapSessionsForMentions(
+			deps.sessionsStore.get('sessions', []),
+			getSshRemoteById,
+			deps.getProcessManager()
+		)
 	);
 
 	// Set up callback for group chat router to lookup custom env vars for agents
@@ -469,6 +489,11 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 
 	// Register filesystem handlers (extracted to handlers/filesystem.ts)
 	registerFilesystemHandlers();
+
+	// Parquet preview handlers. Registered HERE, not only in registerAllHandlers()
+	// - that function is dead code, so a registration that lives solely there
+	// never runs and every Parquet preview fails with no handler.
+	registerParquetHandlers();
 
 	// System operations (dialog, fonts, shells, tunnel, devtools, updates, logger)
 	// extracted to src/main/ipc/handlers/system.ts
@@ -506,6 +531,15 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 		settingsStore: deps.settingsStore,
 	});
 
+	// AI Command handlers (plain-English request -> one shell command line).
+	// Same dependency shape as tab naming: both spawn a short-lived agent turn.
+	registerAiCommandHandlers({
+		getProcessManager: deps.getProcessManager,
+		getAgentDetector: deps.getAgentDetector,
+		agentConfigsStore: deps.agentConfigsStore,
+		settingsStore: deps.settingsStore,
+	});
+
 	// Register WakaTime handlers (CLI check, API key validation)
 	registerWakatimeHandlers(deps.wakatimeManager);
 
@@ -515,14 +549,6 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 	// Register feedback handlers (gh auth + feedback submission)
 	registerFeedbackHandlers({
 		getProcessManager: deps.getProcessManager,
-		debugPackageDeps: {
-			getAgentDetector: deps.getAgentDetector,
-			getProcessManager: deps.getProcessManager,
-			getWebServer: deps.getWebServer,
-			settingsStore: deps.settingsStore,
-			sessionsStore: deps.sessionsStore,
-			groupsStore: deps.groupsStore,
-			bootstrapStore: deps.bootstrapStore,
-		},
+		debugPackageDeps: deps.debugPackageDeps,
 	});
 }

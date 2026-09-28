@@ -18,6 +18,7 @@
 
 import type { Theme } from '../../../constants/themes';
 import { captureException } from '../../../utils/sentry';
+import { normalizeMermaidSource } from '../../../../shared/mermaidSource';
 
 type MermaidModule = typeof import('mermaid');
 
@@ -84,7 +85,8 @@ export function createMermaidRenderer(options: MermaidRendererOptions): MermaidR
 			// Mermaid runs with securityLevel: 'strict' (see ensureMermaid below)
 			// so its own output is sanitized. Injection of the returned SVG via
 			// innerHTML is the documented integration path.
-			const { svg } = await mermaid.render(id, source);
+			// Repairs the `@`-in-a-label case mermaid's edge-id lexer rejects.
+			const { svg } = await mermaid.render(id, normalizeMermaidSource(source));
 			const container = document.createElement('div');
 			container.className = 'markdown-fast-mermaid';
 			container.innerHTML = svg;

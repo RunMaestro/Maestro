@@ -20,7 +20,7 @@ export interface TabBarProps {
 	onRequestRename?: (tabId: string) => void;
 	onTabReorder?: (fromIndex: number, toIndex: number) => void;
 	/** Handler to reorder tabs in unified tab order (AI + file tabs) */
-	onUnifiedTabReorder?: (fromIndex: number, toIndex: number) => void;
+	onUnifiedTabReorder?: (sourceTabId: string, targetTabId: string) => void;
 	onTabStar?: (tabId: string, starred: boolean) => void;
 	onTabMarkUnread?: (tabId: string) => void;
 	/** Handler to open merge session modal with this tab as source */
@@ -72,6 +72,8 @@ export interface TabBarProps {
 	onFileTabClose?: (tabId: string) => void;
 	/** Handler to open the rename dialog for a file preview tab */
 	onFileTabRename?: (tabId: string) => void;
+	/** Handler to publish a file preview tab's contents as a GitHub Gist */
+	onPublishFileGist?: (tabId: string) => void;
 	/** Currently active browser tab ID (null if no browser tab is active) */
 	activeBrowserTabId?: string | null;
 	/** Handler to select a browser tab */

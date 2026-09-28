@@ -1,14 +1,25 @@
 import { memo } from 'react';
-import { AlertTriangle, Play, XCircle } from 'lucide-react';
+import { Play, XCircle } from 'lucide-react';
 import type { Theme } from '../../types';
+import { AutoRunNoticeBanner } from './AutoRunNoticeBanner';
 
 export interface AutoRunErrorBannerProps {
 	theme: Theme;
 	errorMessage: string;
 	errorDocumentName?: string;
 	isRecoverable: boolean;
+	/** The pause is a HITL gate: Resume records that the person did the step. */
+	isHumanGate?: boolean;
 	onResumeAfterError?: () => void;
 	onAbortBatchOnError?: () => void;
+	/**
+	 * When set, the actions render disabled with this string as their tooltip
+	 * instead of being hidden. Used when the paused run belongs to another
+	 * Maestro window: the pause is real and worth showing, but neither button
+	 * can reach the loop from here. Hiding them instead would make an error
+	 * pause look like it had no recovery path at all.
+	 */
+	disabledReason?: string;
 }
 
 export const AutoRunErrorBanner = memo(function AutoRunErrorBanner({
@@ -16,70 +27,73 @@ export const AutoRunErrorBanner = memo(function AutoRunErrorBanner({
 	errorMessage,
 	errorDocumentName,
 	isRecoverable,
+	isHumanGate = false,
 	onResumeAfterError,
 	onAbortBatchOnError,
+	disabledReason,
 }: AutoRunErrorBannerProps) {
+	const showResume = isRecoverable && Boolean(onResumeAfterError);
+	const showAbort = Boolean(onAbortBatchOnError);
+	const disabled = Boolean(disabledReason);
+
 	return (
-		<div
-			role="alert"
-			className="mx-2 mb-2 p-3 rounded-lg border"
-			style={{
-				backgroundColor: `${theme.colors.error}15`,
-				borderColor: theme.colors.error,
-			}}
-		>
-			<div className="flex items-start gap-2">
-				<AlertTriangle
-					className="w-4 h-4 mt-0.5 flex-shrink-0"
-					style={{ color: theme.colors.error }}
-				/>
-				<div className="flex-1 min-w-0">
-					<div className="text-xs font-semibold mb-1" style={{ color: theme.colors.error }}>
-						Auto Run Paused
-					</div>
-					<div className="text-xs mb-2" style={{ color: theme.colors.textMain }}>
-						{errorMessage}
-						{errorDocumentName && (
-							<span style={{ color: theme.colors.textDim }}>
-								{' '}
-								- while processing <strong>{errorDocumentName}</strong>
-							</span>
-						)}
-					</div>
-					<div className="flex gap-2 flex-wrap">
+		<AutoRunNoticeBanner
+			theme={theme}
+			severity="error"
+			title="Auto Run Paused"
+			actions={
+				showResume || showAbort ? (
+					<>
 						{/* Resume button - for recoverable errors */}
-						{isRecoverable && onResumeAfterError && (
+						{showResume && (
 							<button
 								onClick={onResumeAfterError}
-								className="flex items-center gap-1.5 px-2 py-1 rounded text-[10px] font-medium transition-colors hover:opacity-80"
+								disabled={disabled}
+								className={`flex items-center gap-1.5 px-2 py-1 rounded text-2xs font-medium transition-colors ${disabled ? 'cursor-not-allowed' : 'hover:opacity-80'}`}
 								style={{
 									backgroundColor: theme.colors.accent,
 									color: theme.colors.accentForeground,
+									opacity: disabled ? 0.6 : 1,
 								}}
-								title="Retry and resume Auto Run"
+								title={
+									disabledReason ??
+									(isHumanGate
+										? 'Tick the "Human step done" box under this gate and continue'
+										: 'Retry and resume Auto Run')
+								}
 							>
 								<Play className="w-3 h-3" />
-								Resume
+								{isHumanGate ? 'Done, Resume' : 'Resume'}
 							</button>
 						)}
 						{/* Abort button */}
-						{onAbortBatchOnError && (
+						{showAbort && (
 							<button
 								onClick={onAbortBatchOnError}
-								className="flex items-center gap-1.5 px-2 py-1 rounded text-[10px] font-medium transition-colors hover:opacity-80"
+								disabled={disabled}
+								className={`flex items-center gap-1.5 px-2 py-1 rounded text-2xs font-medium transition-colors ${disabled ? 'cursor-not-allowed' : 'hover:opacity-80'}`}
 								style={{
 									backgroundColor: theme.colors.error,
 									color: 'white',
+									opacity: disabled ? 0.6 : 1,
 								}}
-								title="Stop Auto Run completely"
+								title={disabledReason ?? 'Stop Auto Run completely'}
 							>
 								<XCircle className="w-3 h-3" />
 								Abort Run
 							</button>
 						)}
-					</div>
-				</div>
-			</div>
-		</div>
+					</>
+				) : undefined
+			}
+		>
+			{errorMessage}
+			{errorDocumentName && (
+				<span style={{ color: theme.colors.textDim }}>
+					{' '}
+					- while processing <strong>{errorDocumentName}</strong>
+				</span>
+			)}
+		</AutoRunNoticeBanner>
 	);
 });

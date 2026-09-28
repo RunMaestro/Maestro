@@ -11,7 +11,11 @@
 import { ipcRenderer } from 'electron';
 import type { CueStatsAggregation, CueStatsTimeRange } from '../../shared/cue-stats-types';
 
-export type { CueStatsAggregation, CueStatsTimeRange } from '../../shared/cue-stats-types';
+export type {
+	CueStatsAggregation,
+	CueStatsTimeRange,
+	CueTriggerTypeOption,
+} from '../../shared/cue-stats-types';
 
 export function createCueStatsApi() {
 	return {
@@ -21,9 +25,16 @@ export function createCueStatsApi() {
 		// `Error invoking remote method '...': Error: <original>`, so we
 		// detect that wrapper here and rethrow the bare sentinel - keeps the
 		// preload contract stable for renderer consumers.
-		getAggregation: async (range: CueStatsTimeRange): Promise<CueStatsAggregation> => {
+		//
+		// `excludeTriggerTypes` drops the named raw event types (`time.heartbeat`
+		// etc) from every rollup in the payload except `triggerTypeOptions`,
+		// which always reports the unfiltered universe.
+		getAggregation: async (
+			range: CueStatsTimeRange,
+			excludeTriggerTypes?: string[]
+		): Promise<CueStatsAggregation> => {
 			try {
-				return await ipcRenderer.invoke('cue-stats:get-aggregation', range);
+				return await ipcRenderer.invoke('cue-stats:get-aggregation', range, excludeTriggerTypes);
 			} catch (error) {
 				const message = error instanceof Error ? error.message : String(error);
 				if (message.includes('CueStatsDisabled')) {

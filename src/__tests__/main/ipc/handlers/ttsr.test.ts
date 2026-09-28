@@ -17,6 +17,11 @@ import { registerTtsrHandlers } from '../../../../main/ipc/handlers/ttsr';
 import { TTSR_CONFIG_PATH, TTSR_RULES_DIR } from '../../../../shared/maestro-paths';
 import type { TtsrRuleListResult, TtsrRuleValidation } from '../../../../shared/ttsr-types';
 
+const { supportsAst } = vi.hoisted(() => ({ supportsAst: vi.fn(() => true) }));
+vi.mock('../../../../main/ttsr/ttsr-ast', () => ({
+	createTtsrAstMatcher: () => ({ supports: supportsAst }),
+}));
+
 vi.mock('electron', () => ({
 	ipcMain: { handle: vi.fn(), removeHandler: vi.fn() },
 	app: { getPath: vi.fn(() => '/tmp') },
@@ -62,6 +67,7 @@ function readConfig(): Record<string, unknown> {
 
 beforeEach(() => {
 	vi.clearAllMocks();
+	supportsAst.mockReturnValue(true);
 	projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ttsr-ipc-'));
 	handlers = new Map();
 	vi.mocked(ipcMain.handle).mockImplementation(((channel: string, handler: Handler) => {
@@ -77,6 +83,27 @@ afterEach(() => {
 });
 
 describe('ttsr:listRules', () => {
+	it('surfaces an unavailable native matcher for structural rules', async () => {
+		writeRuleFile(
+			'no-console.md',
+			[
+				'---',
+				'description: No console logs',
+				"astCondition: 'console.log($$$)'",
+				'scope: [tool:edit]',
+				'---',
+				'Use the logger.',
+			].join('\n')
+		);
+		supportsAst.mockReturnValue(false);
+		const degraded = await call<TtsrRuleListResult>('ttsr:listRules', { projectRoot });
+		expect(degraded.rules).toHaveLength(1);
+		expect(degraded.warnings.join('\n')).toContain('Structural matching is unavailable');
+		supportsAst.mockReturnValue(true);
+		const healthy = await call<TtsrRuleListResult>('ttsr:listRules', { projectRoot });
+		expect(healthy.warnings.join('\n')).not.toContain('Structural matching is unavailable');
+	});
+
 	it('returns normalized rules without the compiled regexes', async () => {
 		writeRuleFile('no-force-push.md', RULE);
 

@@ -14,6 +14,7 @@ import { useUIStore } from '../../../renderer/stores/uiStore';
 import { useCenterFlashStore } from '../../../renderer/stores/centerFlashStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
+import { useContextTimelineStore } from '../../../renderer/stores/contextTimelineStore';
 import { WindowProvider } from '../../../renderer/contexts/WindowContext';
 import type { WindowState } from '../../../shared/window-types';
 import {
@@ -773,6 +774,23 @@ describe('MainPanel', () => {
 			renderMainPanel({ activeSession: session });
 
 			expect(screen.getByText('LOCAL')).toBeInTheDocument();
+		});
+
+		it('should tag the LOCAL badge with the phone-layout hook class', () => {
+			const session = createSession({ isGitRepo: false });
+			renderMainPanel({ activeSession: session });
+
+			// The phone stylesheet retires the inert LOCAL badge by this class.
+			expect(screen.getByText('LOCAL')).toHaveClass('header-local-badge');
+		});
+
+		it('should not tag the git branch pill with the phone-layout hook class', async () => {
+			const session = createSession({ isGitRepo: true });
+			renderMainPanel({ activeSession: session });
+
+			// The git pill opens a menu, so it survives on a phone.
+			const branch = await screen.findByText(/GIT|main/);
+			expect(branch.closest('button')).not.toHaveClass('header-local-badge');
 		});
 
 		it('should display GIT badge with branch name for git repos', async () => {
@@ -2059,6 +2077,84 @@ describe('MainPanel', () => {
 			expect(screen.getByText('Context Details')).toBeInTheDocument();
 		});
 
+		it('should hide Context Details while the Context Timeline is open', async () => {
+			renderMainPanel();
+
+			fireEvent.mouseEnter(screen.getByTestId('header-context-widget'));
+			await waitFor(() => {
+				expect(screen.getByText('Context Details')).toBeInTheDocument();
+			});
+
+			try {
+				// The two surfaces share one spot under the gauge, so an open timeline
+				// wins over a hover that is still in progress.
+				act(() => {
+					useContextTimelineStore.getState().openPanel('any-agent');
+				});
+				expect(screen.queryByText('Context Details')).not.toBeInTheDocument();
+			} finally {
+				act(() => {
+					useContextTimelineStore.getState().closePanel();
+				});
+			}
+		});
+
+		it('should swap Context Details for the Timeline on click, at the popover size', async () => {
+			renderMainPanel();
+
+			const contextWidget = screen.getByTestId('header-context-widget');
+			fireEvent.mouseEnter(contextWidget);
+			await waitFor(() => {
+				expect(screen.getByText('Context Details')).toBeInTheDocument();
+			});
+
+			// jsdom lays nothing out, so give the popover a real box to be measured.
+			const rectSpy = vi.spyOn(Element.prototype, 'getBoundingClientRect').mockReturnValue({
+				x: 0,
+				y: 0,
+				top: 0,
+				left: 0,
+				bottom: 512,
+				right: 480,
+				width: 480,
+				height: 512,
+				toJSON: () => ({}),
+			} as DOMRect);
+			try {
+				fireEvent.click(contextWidget);
+
+				const state = useContextTimelineStore.getState();
+				expect(state.panelSessionId).not.toBeNull();
+				expect(state.sourceSize).toEqual({ width: 480, height: 512 });
+				expect(screen.queryByText('Context Details')).not.toBeInTheDocument();
+			} finally {
+				rectSpy.mockRestore();
+				act(() => {
+					useContextTimelineStore.getState().closePanel();
+				});
+			}
+		});
+
+		it('should draw Context Details at the width the Timeline was resized to', async () => {
+			useSettingsStore.setState({
+				modalSizes: { 'context-timeline': { width: 430, height: 502 } },
+			});
+			try {
+				renderMainPanel();
+
+				fireEvent.mouseEnter(screen.getByTestId('header-context-widget'));
+				await waitFor(() => {
+					expect(screen.getByText('Context Details')).toBeInTheDocument();
+				});
+
+				// Heading -> bordered box -> positioned wrapper that carries the width.
+				const wrapper = screen.getByText('Context Details').parentElement?.parentElement;
+				expect(wrapper?.style.width).toBe('430px');
+			} finally {
+				useSettingsStore.setState({ modalSizes: {} });
+			}
+		});
+
 		it('should display token stats in context tooltip', async () => {
 			const session = createSession({
 				aiTabs: [
@@ -2101,6 +2197,146 @@ describe('MainPanel', () => {
 				expect(screen.getByText('Cache Write')).toBeInTheDocument();
 				expect(screen.getByText('100')).toBeInTheDocument();
 			});
+		});
+
+		it('should display the conversation message count and span', async () => {
+			const SPAN_MS = 2 * 60 * 60 * 1000 + 15 * 60 * 1000;
+			const start = Date.now() - SPAN_MS;
+			const session = createSession({
+				aiTabs: [
+					{
+						id: 'tab-1',
+						agentSessionId: 'claude-1',
+						name: 'Tab 1',
+						isUnread: false,
+						createdAt: start,
+						logs: [
+							{ id: 'l1', timestamp: start, source: 'user', text: 'hi' },
+							{ id: 'l2', timestamp: start + 1000, source: 'ai', text: 'hello' },
+							{ id: 'l3', timestamp: start + 2000, source: 'tool', text: 'Read' },
+							{
+								id: 'l4',
+								timestamp: start + SPAN_MS,
+								source: 'ai',
+								text: 'done',
+							},
+						],
+						usageStats: { contextWindow: 200000 },
+					},
+				],
+				activeTabId: 'tab-1',
+			});
+
+			// renderMainPanel, not a bare render: rc's header reads the agent out
+			// of the session store, so a panel rendered without seedSessionStore
+			// never draws the context widget at all.
+			renderMainPanel({ activeSession: session });
+
+			// rc also replaced the header's "Context" text label with a percentage
+			// readout, so the widget is addressed by its testid - the same way
+			// every other test in this block reaches it.
+			const contextWidget = screen.getByTestId('header-context-widget');
+			fireEvent.mouseEnter(contextWidget);
+
+			await waitFor(() => {
+				expect(screen.getByText('Messages')).toBeInTheDocument();
+				// Every conversation entry counts, tool calls included, matching
+				// the "Messages" card in the HTML export.
+				expect(screen.getByText('4')).toBeInTheDocument();
+				expect(screen.getByText('Duration')).toBeInTheDocument();
+				expect(screen.getByText('2h 15m')).toBeInTheDocument();
+			});
+		});
+
+		it('should omit the conversation rows for a tab with no messages', async () => {
+			const session = createSession({
+				aiTabs: [
+					{
+						id: 'tab-1',
+						agentSessionId: 'claude-1',
+						name: 'Tab 1',
+						isUnread: false,
+						createdAt: Date.now(),
+						logs: [],
+						usageStats: { contextWindow: 200000 },
+					},
+				],
+				activeTabId: 'tab-1',
+			});
+
+			// renderMainPanel, not a bare render: rc's header reads the agent out
+			// of the session store, so a panel rendered without seedSessionStore
+			// never draws the context widget at all.
+			renderMainPanel({ activeSession: session });
+
+			// rc also replaced the header's "Context" text label with a percentage
+			// readout, so the widget is addressed by its testid - the same way
+			// every other test in this block reaches it.
+			const contextWidget = screen.getByTestId('header-context-widget');
+			fireEvent.mouseEnter(contextWidget);
+
+			await waitFor(() => {
+				expect(screen.getByText('Context Details')).toBeInTheDocument();
+			});
+			expect(screen.queryByText('Messages')).not.toBeInTheDocument();
+			expect(screen.queryByText('Duration')).not.toBeInTheDocument();
+		});
+
+		it('should display the provider and the account profile the agent runs as', async () => {
+			const session = createSession({
+				customEnvVars: { CLAUDE_CONFIG_DIR: '/Users/test/.claude-gmail' },
+			});
+
+			renderMainPanel({ activeSession: session });
+
+			// rc's context widget is a plain percentage readout, not main's
+			// labelled gauge, so target it by test id like every other test here.
+			const contextWidget = screen.getByTestId('header-context-widget');
+			fireEvent.mouseEnter(contextWidget);
+
+			await waitFor(() => {
+				expect(screen.getByText('Provider')).toBeInTheDocument();
+				expect(screen.getByText('Claude Code')).toBeInTheDocument();
+				expect(screen.getByText('Profile')).toBeInTheDocument();
+				// The account is named by its config dir: `.claude-gmail` -> `gmail`.
+				expect(screen.getByText('gmail')).toBeInTheDocument();
+			});
+		});
+
+		it('should omit the profile row for a provider with no account split', async () => {
+			// OpenCode keeps no per-account config dir, so there is no profile to
+			// name - only the provider itself.
+			setCapabilitiesCache('opencode', {
+				supportsResume: true,
+				supportsReadOnlyMode: true,
+				supportsJsonOutput: true,
+				supportsSessionId: true,
+				supportsImageInput: true,
+				supportsImageInputOnResume: true,
+				supportsSlashCommands: true,
+				supportsSessionStorage: true,
+				supportsCostTracking: true,
+				supportsUsageStats: true,
+				supportsBatchMode: true,
+				requiresPromptToStart: false,
+				supportsStreaming: true,
+				supportsResultMessages: true,
+				supportsModelSelection: false,
+				supportsStreamJsonInput: true,
+			});
+			const session = createSession({ toolType: 'opencode' });
+
+			renderMainPanel({ activeSession: session });
+
+			// rc's context widget is a plain percentage readout, not main's
+			// labelled gauge, so target it by test id like every other test here.
+			const contextWidget = screen.getByTestId('header-context-widget');
+			fireEvent.mouseEnter(contextWidget);
+
+			await waitFor(() => {
+				expect(screen.getByText('Provider')).toBeInTheDocument();
+			});
+			expect(screen.queryByText('Profile')).not.toBeInTheDocument();
 		});
 	});
 
@@ -3750,4 +3986,31 @@ describe('MainPanel', () => {
 			});
 		});
 	});
+
+	describe('MainPanel width floor', () => {
+		const hasFloor = (container: HTMLElement) =>
+			Array.from(container.querySelectorAll('div')).some((el) => el.style.minWidth === '400px');
+
+		it('holds a 400px floor on desktop', () => {
+			vi.mocked(usePhoneLayout).mockReturnValue(false);
+			const { container } = renderMainPanel();
+			expect(hasFloor(container)).toBe(true);
+		});
+
+		it('drops the floor on a phone', () => {
+			vi.mocked(usePhoneLayout).mockReturnValue(true);
+			const { container } = renderMainPanel();
+			expect(hasFloor(container)).toBe(false);
+			vi.mocked(usePhoneLayout).mockReturnValue(false);
+		});
+	});
 });
+
+// The panel's 400px floor keeps the header usable between two desktop
+// sidebars. A phone is 390px wide with no sidebars, so the floor made the panel
+// wider than the screen and pushed the header's last button off the edge.
+vi.mock('../../../renderer/hooks/ui/useViewportBreakpoint', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../renderer/hooks/ui/useViewportBreakpoint')>()),
+	usePhoneLayout: vi.fn(() => false),
+}));
+import { usePhoneLayout } from '../../../renderer/hooks/ui/useViewportBreakpoint';

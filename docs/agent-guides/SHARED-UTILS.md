@@ -17,18 +17,70 @@ All utilities in Maestro organized by category. Each entry lists the file path, 
 
 ## Agent IDs & Metadata
 
-| Function / Constant       | File                           | Signature                                 | Process | Purpose                                                                                                                                                  |
-| ------------------------- | ------------------------------ | ----------------------------------------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `AGENT_IDS`               | `src/shared/agentIds.ts`       | `readonly string[]`                       | Both    | Single source of truth: `['terminal', 'claude-code', 'codex', 'gemini-cli', 'qwen3-coder', 'opencode', 'factory-droid', 'copilot-cli']`                  |
-| `AgentId`                 | `src/shared/agentIds.ts`       | Type derived from `AGENT_IDS`             | Both    | Union type of all valid agent IDs.                                                                                                                       |
-| `isValidAgentId`          | `src/shared/agentIds.ts`       | `(id: string) => id is AgentId`           | Both    | Type guard for agent ID validation.                                                                                                                      |
-| `AGENT_DISPLAY_NAMES`     | `src/shared/agentMetadata.ts`  | `Record<AgentId, string>`                 | Both    | Internal constant backing `getAgentDisplayName`. **Prefer `getAgentDisplayName()`** for external use - it falls back to the raw id for unknown agents.   |
-| `getAgentDisplayName`     | `src/shared/agentMetadata.ts`  | `(agentId: AgentId \| string) => string`  | Both    | Get display name, falls back to raw id.                                                                                                                  |
-| `BETA_AGENTS`             | `src/shared/agentMetadata.ts`  | `ReadonlySet<AgentId>`                    | Both    | Internal constant backing `isBetaAgent`. Currently contains `opencode`, `factory-droid`, and `copilot-cli`. **Prefer `isBetaAgent()`** for external use. |
-| `isBetaAgent`             | `src/shared/agentMetadata.ts`  | `(agentId: AgentId \| string) => boolean` | Both    | Check if an agent is in beta.                                                                                                                            |
-| `DEFAULT_CONTEXT_WINDOWS` | `src/shared/agentConstants.ts` | `Partial<Record<AgentId, number>>`        | Both    | Default context window sizes per agent (e.g., claude-code: 200000).                                                                                      |
-| `FALLBACK_CONTEXT_WINDOW` | `src/shared/agentConstants.ts` | `number` (200000)                         | Both    | Fallback when agent has no entry in DEFAULT_CONTEXT_WINDOWS.                                                                                             |
-| `COMBINED_CONTEXT_AGENTS` | `src/shared/agentConstants.ts` | `ReadonlySet<AgentId>`                    | Both    | Agents with combined input+output context windows (currently: codex).                                                                                    |
+| Function / Constant       | File                                | Signature                                                                 | Process  | Purpose                                                                                                                                                                                                                                                    |
+| ------------------------- | ----------------------------------- | ------------------------------------------------------------------------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `AGENT_IDS`               | `src/shared/agentIds.ts`            | `readonly string[]`                                                       | Both     | Single source of truth: `['terminal', 'claude-code', 'codex', 'gemini-cli', 'qwen3-coder', 'opencode', 'factory-droid', 'copilot-cli']`                                                                                                                    |
+| `AgentId`                 | `src/shared/agentIds.ts`            | Type derived from `AGENT_IDS`                                             | Both     | Union type of all valid agent IDs.                                                                                                                                                                                                                         |
+| `isValidAgentId`          | `src/shared/agentIds.ts`            | `(id: string) => id is AgentId`                                           | Both     | Type guard for agent ID validation.                                                                                                                                                                                                                        |
+| `AGENT_DISPLAY_NAMES`     | `src/shared/agentMetadata.ts`       | `Record<AgentId, string>`                                                 | Both     | Internal constant backing `getAgentDisplayName`. **Prefer `getAgentDisplayName()`** for external use - it falls back to the raw id for unknown agents.                                                                                                     |
+| `getAgentDisplayName`     | `src/shared/agentMetadata.ts`       | `(agentId: AgentId \| string) => string`                                  | Both     | Get display name, falls back to raw id.                                                                                                                                                                                                                    |
+| `BETA_AGENTS`             | `src/shared/agentMetadata.ts`       | `ReadonlySet<AgentId>`                                                    | Both     | Internal constant backing `isBetaAgent`. Currently contains `opencode`, `factory-droid`, and `copilot-cli`. **Prefer `isBetaAgent()`** for external use.                                                                                                   |
+| `isBetaAgent`             | `src/shared/agentMetadata.ts`       | `(agentId: AgentId \| string) => boolean`                                 | Both     | Check if an agent is in beta.                                                                                                                                                                                                                              |
+| `getAgentLoginCommand`    | `src/shared/agentMetadata.ts`       | `(agentId, customPath?) => AgentLoginCommand \| null`                     | Both     | Re-authentication command for an agent. Returns `null` for `terminal` and for unknown ids: never guess a command to run in a shell. Pass the agent's `customPath` so a non-PATH install still works.                                                       |
+| `formatAgentLoginCommand` | `src/shared/agentMetadata.ts`       | `(login, syntax?: LoginShellSyntax) => string`                            | Both     | Render a login command as the single line typed into a shell. Quotes a binary path containing spaces, and in PowerShell prefixes the call operator `&` - without it PowerShell echoes the quoted path instead of running it. `syntax` defaults to `posix`. |
+| `loginShellSyntaxFor`     | `src/shared/agentMetadata.ts`       | `(shellId: string, isWindows: boolean) => LoginShellSyntax`               | Both     | Map a Maestro shell id to its command-line dialect (`posix` \| `powershell` \| `cmd`). Everything is `posix` off Windows; Git Bash and WSL stay `posix` on it. Feed the result to `formatAgentLoginCommand`.                                               |
+| `DEFAULT_CONTEXT_WINDOWS` | `src/shared/agentConstants.ts`      | `Partial<Record<AgentId, number>>`                                        | Both     | Default context window sizes per agent (e.g., claude-code: 200000).                                                                                                                                                                                        |
+| `FALLBACK_CONTEXT_WINDOW` | `src/shared/agentConstants.ts`      | `number` (200000)                                                         | Both     | Fallback when agent has no entry in DEFAULT_CONTEXT_WINDOWS.                                                                                                                                                                                               |
+| `COMBINED_CONTEXT_AGENTS` | `src/shared/agentConstants.ts`      | `ReadonlySet<AgentId>`                                                    | Both     | Agents with combined input+output context windows (currently: codex).                                                                                                                                                                                      |
+| `getModelFamily`          | `src/renderer/utils/modelFamily.ts` | `(modelId: string) => string`                                             | Renderer | Vendor label for a model id ('Claude', 'OpenAI', 'Gemini', ... else 'Other'). Reads the last segment of a provider-qualified id. Display aid only.                                                                                                         |
+| `groupModelsByFamily`     | `src/renderer/utils/modelFamily.ts` | `(models: string[]) => Array<{family: string \| null; models: string[]}>` | Renderer | Group a model catalog by vendor for a picker. Returns one unlabelled group when everything shares a family, so no lone header appears.                                                                                                                     |
+
+---
+
+## Model & Effort Options (Renderer)
+
+An agent's model list, effort levels, and agent-level defaults are fetched
+through one hook, and the tab > session > agent-default ladder is applied by one
+resolver. Both live in `src/renderer/hooks/agent/useAgentModelEffortOptions.ts`
+and are shared by the composer pills (`ModelEffortPills`) and the keyboard-only
+picker (`ModelEffortModal`), so the two surfaces cannot disagree about what an
+agent offers or what a tab is currently running.
+
+| Function                     | Signature                                                                        | Purpose                                                                                                                                                                                                                                   |
+| ---------------------------- | -------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `useAgentModelEffortOptions` | `(agentId?: string) => { models, efforts, defaultModel, defaultEffort, loaded }` | Fetches all four with a stale guard. Probes BOTH `effort` and `reasoningEffort` config keys, since agents split between them. `loaded` is false until every lookup settles - an empty list means "still loading" and "not offered" alike. |
+| `resolveModelEffort`         | `(tab, session, { defaultModel, defaultEffort }) => { model, effort }`           | Applies tab override > session override > agent default > empty. Do NOT re-derive this ladder inline - it drifts.                                                                                                                         |
+
+Effort options are agent-scoped, not model-scoped: the underlying CLIs expose a
+single list per agent, and a model with no reasoning budget just ignores the
+flag. Don't invent per-model effort lists without a data source for them.
+
+---
+
+## Agent Environment (`src/shared/agentEnvironment.ts` - Both)
+
+An agent's environment is assembled from three layers, each edited in a different
+pane, so "which profile is this agent actually running as?" is a question no
+single settings screen can answer. This module does the same merge the spawner
+does and reports WHERE each surviving value came from.
+
+Precedence (later wins), mirroring `process:spawnTerminalTab`:
+
+1. `global` - Settings -> Environment, applies to every process Maestro spawns
+2. `agent` - Settings -> Agents, applies to every agent of one provider
+3. `session` - this agent's own overrides, from Edit Agent
+
+| Function                  | Signature                                              | Purpose                                                                                                                                                                                            |
+| ------------------------- | ------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `resolveAgentEnvironment` | `(layers: AgentEnvironmentLayers) => ResolvedEnvVar[]` | Merge the three layers, key-sorted. Each entry carries the winning `source` plus `shadowedBy`, the layers it overrode. Empty-string values are kept: `FOO=` is a real override, not an absent one. |
+| `isSecretEnvKey`          | `(key: string) => boolean`                             | Whether a value should be masked until revealed. Matched loosely on purpose - a false positive costs one click, a false negative puts a live key on screen during a screen share.                  |
+| `maskEnvValue`            | `(value: string) => string`                            | Mask a secret, keeping the last four characters so one credential is still tellable from another. Values of 8 characters or fewer are masked whole.                                                |
+| `envSourceLabel`          | `(source: EnvVarSource) => string`                     | Human label for a layer: `Global`, `Provider`, `This agent`.                                                                                                                                       |
+
+**Do NOT re-derive this merge inline.** The precedence has to match the spawner's
+or the UI describes a process nobody is running. Render the result with
+[`<EnvVarList>`](UI-PATTERNS.md), which owns the masking and the source badges.
+This is distinct from `Settings/EnvVarsEditor`, which EDITS one layer.
 
 ---
 
@@ -97,35 +149,82 @@ helpers below.
 
 ---
 
+## Zip Archives (`src/main/utils/zip-archive.ts` - Main)
+
+Playbook import and Cue backup inspect/restore only need entry names and bytes. This module is the one zip reader. Do not import `adm-zip` (its `extractAllTo` follows dest symlinks; no patched release).
+
+| Function / Type                      | Signature                                        | Purpose                                                                                                                                                                                                        |
+| ------------------------------------ | ------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `readZipArchive(filePath, options?)` | `(string, ReadZipArchiveOptions?) => ZipArchive` | Load a zip from disk. `names` / `filter` run before inflation so a manifest-only caller does not expand the rest. Default caps (`DEFAULT_ZIP_MAX_ENTRIES`, `DEFAULT_ZIP_MAX_ORIGINAL_SIZE`) refuse a zip bomb. |
+| `extractZipTo(zipPath, destDir)`     | `(string, string) => void`                       | Write entries under `destDir`. Refuses zip-slip names, dest-file symlinks, and intermediate path-component symlinks.                                                                                           |
+| `isUnsafeZipEntryName(name)`         | `(string) => boolean`                            | True for `..`, absolute paths, drive letters, or NUL. Used by extract and available to callers that write one file themselves.                                                                                 |
+
+---
+
 ## String Utilities
 
 ### Shared (`src/shared/stringUtils.ts` - Both)
 
-| Function               | Signature            | Purpose                                                                                                     |
-| ---------------------- | -------------------- | ----------------------------------------------------------------------------------------------------------- |
-| `stripAnsiCodes(text)` | `(string) => string` | Remove ANSI escape codes, OSC sequences, iTerm2/VSCode shell integration sequences. Handles SSH edge cases. |
+| Function                        | Signature            | Purpose                                                                                                                                                                                                                                    |
+| ------------------------------- | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `stripAnsiCodes(text)`          | `(string) => string` | Remove ANSI escape codes, OSC sequences, iTerm2/VSCode shell integration sequences. Handles SSH edge cases.                                                                                                                                |
+| `safeDecodeURIComponent(value)` | `(string) => string` | Percent-decode, returning the raw input on malformed escapes (`%`, `%ZZ`) instead of throwing `URIError`. Use for ANY untrusted path/href - agent output and Windows/non-ASCII paths routinely carry a bare `%`. Swallows only `URIError`. |
 
 ## Font Utilities (`src/shared/fontStack.ts` - Both)
 
-| Export                     | Signature                                 | Purpose                                                                                                                                                                                                                                                              |
-| -------------------------- | ----------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `withMonoFallback(family)` | `(string \| undefined \| null) => string` | Guarantee a CSS font-family degrades to monospace, not the browser's serif default. Apply where the `fontFamily` setting becomes a CSS value, not at the source (the picker `<select>` needs the raw name). No-ops when the value already carries a generic keyword. |
-| `MONO_FALLBACK_STACK`      | `string`                                  | The safe monospace chain appended by `withMonoFallback` (`ui-monospace` -> ... -> `monospace`). Matches the file-preview surfaces so the whole app degrades to the same faces.                                                                                       |
+| Export                                           | Signature                                                              | Purpose                                                                                                                                                                                                                                                              |
+| ------------------------------------------------ | ---------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `withMonoFallback(family)`                       | `(string \| undefined \| null) => string`                              | Guarantee a CSS font-family degrades to monospace, not the browser's serif default. Apply where the `fontFamily` setting becomes a CSS value, not at the source (the picker `<select>` needs the raw name). No-ops when the value already carries a generic keyword. |
+| `resolveSurfaceFont(surfaceFont, interfaceFont)` | `(string \| undefined \| null, string \| undefined \| null) => string` | Resolve a per-surface font setting against the interface font, then apply the fallback. The empty string means "inherit", so this is what that empty string MEANS - see the note below.                                                                              |
+| `MONO_FALLBACK_STACK`                            | `string`                                                               | The safe monospace chain appended by `withMonoFallback` (`ui-monospace` -> ... -> `monospace`). Matches the file-preview surfaces so the whole app degrades to the same faces.                                                                                       |
+| `SANS_FALLBACK_STACK`                            | `string`                                                               | The proportional counterpart, for the sans typography preset. Leads with each platform's own UI face so it looks native, and ends in `sans-serif`.                                                                                                                   |
+| `WORDMARK_FONT_STACK`                            | `string`                                                               | The MAESTRO wordmark's font. Fixed, and deliberately NOT derived from any setting - a brand mark that changes identity with the reading font is a bug. Kept in sync by hand with the two `index.html` splash rules, which paint before any JavaScript runs.          |
 
 The font picker stores a bare name (`Roboto Mono`) with no generic fallback, which resolves to serif on iOS / the web-desktop bundle. Do NOT re-derive a fallback chain inline; call `withMonoFallback(s.fontFamily)` at the render site.
 
+**Every surface font stores the empty string to mean "inherit the interface font"** (terminal, chat, file preview, file editor), so a surface the user never touches keeps following the UI. `resolveSurfaceFont` is the one place that chain is resolved, which is what keeps the pickers, the rendered surfaces, and any future surface from disagreeing about what empty means: a surface that re-derives it and forgets the `.trim()` renders a whitespace-only family, which resolves to nothing and drops the pane to the browser default. In the renderer, read it through `useSurfaceFontFamily()` / `useSurfaceTypography()` (`src/renderer/hooks/ui/useSurfaceTypography.ts`) rather than calling the resolver against the store by hand - those also apply the one hop of surface-to-surface inheritance (a surface may follow the TERMINAL, not just the interface font).
+
+**A fallback chain is not sufficient on its own for the terminal.** It only covers a font that fails to RESOLVE. A configured font can resolve perfectly and simply not be fixed-pitch, and xterm sizes its grid from the advance of `W` and then puts every glyph on that pitch, so narrow letters trail a gap (`Cl aude`) while wide ones sit flush - the appended generic is never reached because nothing ever fell through to it. CSS cannot be asked whether a family is fixed-pitch, so `isFixedPitchStack()` / `resolveTerminalFontFamily()` in `src/renderer/utils/fixedPitchFont.ts` MEASURE it on a canvas and override to `MONO_FALLBACK_STACK` only on evidence (unmeasurable input keeps the user's font). The two mechanisms cover different failures and compose; the terminal calls the shared helper for the chain rather than carrying its own. That module serves every surface showing shell text, not just the terminal (the command-mode composer and the shell command card ride it too). A local duplicate of the chain (`ensureMonospaceFallback`) has shipped twice now - once in `XTerminal.tsx` and once in `fixedPitchFont.ts` - and was folded back in both times; do not reintroduce one.
+
+## Font Utilities (`src/shared/fontStack.ts` - Both)
+
+| Export                                           | Signature                                                              | Purpose                                                                                                                                                                                                                                                              |
+| ------------------------------------------------ | ---------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `withMonoFallback(family)`                       | `(string \| undefined \| null) => string`                              | Guarantee a CSS font-family degrades to monospace, not the browser's serif default. Apply where the `fontFamily` setting becomes a CSS value, not at the source (the picker `<select>` needs the raw name). No-ops when the value already carries a generic keyword. |
+| `resolveSurfaceFont(surfaceFont, interfaceFont)` | `(string \| undefined \| null, string \| undefined \| null) => string` | Resolve a per-surface font setting against the interface font, then apply the fallback. The empty string means "inherit", so this is what that empty string MEANS - see the note below.                                                                              |
+| `MONO_FALLBACK_STACK`                            | `string`                                                               | The safe monospace chain appended by `withMonoFallback` (`ui-monospace` -> ... -> `monospace`). Matches the file-preview surfaces so the whole app degrades to the same faces.                                                                                       |
+| `SANS_FALLBACK_STACK`                            | `string`                                                               | The proportional counterpart, for the sans typography preset. Leads with each platform's own UI face so it looks native, and ends in `sans-serif`.                                                                                                                   |
+| `WORDMARK_FONT_STACK`                            | `string`                                                               | The MAESTRO wordmark's font. Fixed, and deliberately NOT derived from any setting - a brand mark that changes identity with the reading font is a bug. Kept in sync by hand with the two `index.html` splash rules, which paint before any JavaScript runs.          |
+
+The font picker stores a bare name (`Roboto Mono`) with no generic fallback, which resolves to serif on iOS / the web-desktop bundle. Do NOT re-derive a fallback chain inline; call `withMonoFallback(s.fontFamily)` at the render site.
+
+**Every surface font stores the empty string to mean "inherit the interface font"** (terminal, chat, file preview, file editor), so a surface the user never touches keeps following the UI. `resolveSurfaceFont` is the one place that chain is resolved, which is what keeps the pickers, the rendered surfaces, and any future surface from disagreeing about what empty means: a surface that re-derives it and forgets the `.trim()` renders a whitespace-only family, which resolves to nothing and drops the pane to the browser default.
+
+**A fallback chain is not sufficient on its own for the terminal.** It only covers a font that fails to RESOLVE. A configured font can resolve perfectly and simply not be fixed-pitch, and xterm sizes its grid from the advance of `W` and then puts every glyph on that pitch, so narrow letters trail a gap (`Cl aude`) while wide ones sit flush - the appended generic is never reached because nothing ever fell through to it. CSS cannot be asked whether a family is fixed-pitch, so `isFixedPitchStack()` / `resolveTerminalFontFamily()` in `src/renderer/utils/fixedPitchFont.ts` MEASURE it on a canvas and override to `MONO_FALLBACK_STACK` only on evidence (unmeasurable input keeps the user's font). The two mechanisms cover different failures and compose; the terminal calls the shared helper for the chain rather than carrying its own. That module serves every surface showing shell text, not just the terminal (the command-mode composer and the shell command card ride it too). A local duplicate of the chain (`ensureMonospaceFallback`) has shipped twice now - once in `XTerminal.tsx` and once in `fixedPitchFont.ts` - and was folded back in both times; do not reintroduce one.
+
 ## JSON Utilities (`src/shared/jsonUtils.ts` - Both)
 
-| Function           | Signature                         | Purpose                                                                   |
-| ------------------ | --------------------------------- | ------------------------------------------------------------------------- |
-| `stripJsonBom`     | `(value: string) => string`       | Remove a leading UTF-8 BOM from JSON text before parsing.                 |
-| `parseJsonWithBom` | `<T = unknown>(value: string): T` | `JSON.parse` wrapper that tolerates a leading BOM in persisted JSON text. |
+| Function                     | Signature                                                                           | Purpose                                                                                                                                             |
+| ---------------------------- | ----------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `stripJsonBom`               | `(value: string) => string`                                                         | Remove a leading UTF-8 BOM from JSON text before parsing.                                                                                           |
+| `parseJsonWithBom`           | `<T = unknown>(value: string): T`                                                   | `JSON.parse` wrapper that tolerates a leading BOM in persisted JSON text.                                                                           |
+| `assertSerializedJsonIsSafe` | `(serialized: string \| undefined, target: string) => asserts serialized is string` | Refuse to write a payload that would clobber a good file. Throws on `undefined`/empty; round-trip parses under 1MB, balanced-delimiter check above. |
+
+`assertSerializedJsonIsSafe` is the guard every atomic JSON writer runs before it
+creates its temp file. It catches the one thing `JSON.stringify` can silently
+hand you - `undefined`, which `writeFile` persists as the literal text
+`"undefined"` - and deliberately stops short of re-parsing large payloads,
+because that cost is paid on the main thread on every store write (~40ms on the
+20MB agent-runs file). Full rationale and the two duplicates it replaced are in
+[CANONICAL-UTILITIES.md](CANONICAL-UTILITIES.md).
 
 ### Search Highlighting (`src/renderer/utils/highlightMatches.tsx` - Renderer)
 
-| Function                                     | Signature                               | Purpose                                                                                                                          |
-| -------------------------------------------- | --------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| `highlightMatches(text, query, accentColor)` | `(string, string, string) => ReactNode` | Wrap every case-insensitive occurrence of `query` in an accent-colored `<mark>`. Used by the CSV table and its row detail modal. |
+| Function                                     | Signature                               | Purpose                                                                                                                                                                                        |
+| -------------------------------------------- | --------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `splitOnMatches(text, query)`                | `(string, string) => MatchSegment[]`    | Split `text` into alternating plain/match segments, each carrying its `start` offset. The one matcher the other two are built from, so escaping and match parity cannot drift.                 |
+| `highlightMatches(text, query, accentColor)` | `(string, string, string) => ReactNode` | Wrap every case-insensitive occurrence of `query` in an accent-colored `<mark>`. Used by the CSV table and its row detail modal.                                                               |
+| `searchMatchRanges(text, query)`             | `(string, string) => { from, to }[]`    | The same hits as byte ranges, for `MarkdownEditorHandle.setSearchMatches`. Use it rather than re-deriving offsets, or a pane's rendered half and its source half disagree about what is a hit. |
 
 ### Main Process (`src/main/utils/stripAnsi.ts`)
 
@@ -145,9 +244,9 @@ The font picker stores a bare name (`Roboto Mono`) with no generic fallback, whi
 | `formatTokensCompact(tokens)`          | `(number) => string`                   | Token counts without `~`: `"1.5K"`, `"2.3M"`.                                     |
 | `formatRelativeTime(dateOrTimestamp)`  | `(Date \| number \| string) => string` | `"just now"`, `"5m ago"`, `"2h ago"`, `"Dec 3"`.                                  |
 | `formatCacheAge(cacheAgeMs)`           | `(number \| null) => string`           | Cache age labels from elapsed milliseconds: `"just now"`, `"5m ago"`, `"2h ago"`. |
-| `formatActiveTime(ms)`                 | `(number) => string`                   | Duration: `"1D"`, `"2H 30M"`, `"<1M"`.                                            |
-| `formatElapsedTime(ms)`                | `(number) => string`                   | Precise: `"500ms"`, `"30s"`, `"5m 12s"`, `"1h 10m"`.                              |
+| `formatCalendarDay(isoDay)`            | `(string) => string`                   | A `YYYY-MM-DD` day for display: `"Jul 10, 2026"`. Parsed as LOCAL, not UTC.       |
 | `formatElapsedTimeColon(seconds)`      | `(number) => string`                   | Timer style: `"5:12"`, `"1:30:45"`.                                               |
+| `fileTimestampSlug(dateOrTimestamp?)`  | `(Date \| number?) => string`          | `"20260713-142530"` for a generated file name. Local time, sorts chronologically. |
 | `formatCost(cost)`                     | `(number) => string`                   | USD: `"$1.23"`, `"<$0.01"`, `"$0.00"`.                                            |
 | `estimateTokenCount(text)`             | `(string) => number`                   | Estimate at ~4 chars/token.                                                       |
 | `truncatePath(path, maxLength?)`       | `(string, number?) => string`          | `".../parent/current"` format. Default max 35 chars.                              |
@@ -159,12 +258,169 @@ The font picker stores a bare name (`Roboto Mono`) with no generic fallback, whi
 
 ---
 
+## Tool Output (`src/shared/toolOutput.ts` - Both)
+
+| Function / Constant                  | Signature                                  | Purpose                                                                                                               |
+| ------------------------------------ | ------------------------------------------ | --------------------------------------------------------------------------------------------------------------------- |
+| `MAX_PERSISTED_TOOL_OUTPUT_CHARS`    | `number`                                   | Maximum tool-result preview retained in a session.                                                                    |
+| `compactToolOutput(output)`          | `(unknown) => { output, truncated }`       | Preserve short values and replace oversized strings or objects with a bounded text preview.                           |
+| `compactSessionToolOutputs(session)` | `(T) => { session: T, compacted: number }` | Immutably compact tool results in legacy logs, live tabs, and snoozed AI tabs, returning the original when unchanged. |
+
+Use the same compactor at parser ingestion and session persistence boundaries. Browser clients
+receive the entire session tree during bootstrap, so a count-only log cap does not bound the frame
+when one log entry contains a multi-megabyte tool result.
+
+---
+
+## Durations (`src/shared/duration.ts` - Both)
+
+**Never write another unit ladder.** Every "how long was that?" string renders from one
+engine here. There used to be a dozen hand-rolled copies of the same
+divide-by-86400000 loop, each drifting on the details that matter (where the ladder
+stops, whether a zero segment is padded, whether a countdown rounds up). Those are real
+product decisions, so they are options on `humanizeDuration`, not separate functions.
+
+All of these are re-exported from `src/shared/formatters.ts`, so either import path
+works. `duration.ts` is canonical and is where new duration work belongs.
+
+| Function                             | Signature                     | Purpose                                                                                                                                                                                            |
+| ------------------------------------ | ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `humanizeDuration(ms, options?)`     | `(number, opts?) => string`   | The engine. Reach for it when no preset fits.                                                                                                                                                      |
+| `formatDurationHuman(ms)`            | `(number) => string`          | Hour-capped, zero-padded: `"45s"`, `"5m 30s"`, `"2h 15m"`, `"30h 0m"`. The default.                                                                                                                |
+| `formatDurationCompact(ms)`          | `(number) => string`          | Drops seconds past a minute: `"45s"`, `"5m"`, `"2h 15m"`.                                                                                                                                          |
+| `formatDurationVerbose(ms)`          | `(number) => string`          | Words: `"5 minutes 30 seconds"`, `"1 hour 15 minutes"`.                                                                                                                                            |
+| `formatDurationParts(ms)`            | `(number) => string`          | Up to four segments: `"500ms"`, `"2m 30s"`, `"1h 15m 20s"`, `"3d 2h 15m"`.                                                                                                                         |
+| `formatDurationDecimal(ms)`          | `(number) => string`          | One decimal, one unit, for CLI columns: `"5.2s"`, `"1.5h"`.                                                                                                                                        |
+| `formatDurationLong(ms)`             | `(number) => string`          | Abbreviated, ladders to years: `"6d 7h"`, `"3w 2d"`, `"1y 7w"`.                                                                                                                                    |
+| `formatDurationWords(ms, maxUnits?)` | `(number, number?) => string` | Prose with months: `"1 day, 12 hours"`, `"2 months, 1 week"`.                                                                                                                                      |
+| `formatActiveTime(ms)`               | `(number) => string`          | Uppercase stat pills: `"<1M"`, `"5M"`, `"2H 30M"`, `"1D"`.                                                                                                                                         |
+| `formatElapsedTime(ms)`              | `(number) => string`          | `formatDurationHuman` plus sub-second precision: `"500ms"`, `"5m 12s"`.                                                                                                                            |
+| `formatElapsedTicker(ms)`            | `(number) => string`          | Live ticker with a leading `0m` below an hour: `"0m 3s"`, `"1h 0m 5s"`. ThinkingStatusPill and Auto Run elapsed on that pill use this, not `formatElapsedTime`.                                    |
+| `formatElapsedTickerCompact(ms)`     | `(number) => string`          | Same ladder without the padded lead: `"3s"`, `"20m 4s"`, `"1h 2m 5s"`. For a counter inside a chip or sentence, where a bare seconds count reads fine below a minute but `1203s` does not past it. |
+| `formatTurnDuration(ms)`             | `(number) => string`          | Transcript turn time, day-capped and second-free: `"<1m"`, `"25m"`, `"5d 6h 25m"`.                                                                                                                 |
+
+`DURATION_MS` gives each unit's size in ms - use it instead of redeclaring
+`const DAY = 86400000`. `DURATION_LADDER_FULL` / `_DAYS` / `_HOURS` are the prebuilt
+ladders.
+
+### `humanizeDuration` options
+
+| Option            | Default    | Effect                                                                                                       |
+| ----------------- | ---------- | ------------------------------------------------------------------------------------------------------------ |
+| `units`           | full       | Which rungs to use, largest first. The ceiling decides whether 30 hours is `"1d 6h"` or `"30h"`.             |
+| `maxUnits`        | `2`        | How many rungs to print.                                                                                     |
+| `style`           | `'short'`  | `short` → `2h`, `long` → `2 hours` (pluralized), `caps` → `2H`.                                              |
+| `separator`       | `' '`      | Glue between rungs; prose usually wants `', '`.                                                              |
+| `keepZeroUnits`   | `false`    | Pad interior zeros (`"2h 0m"`) for steady-width columns. Leading zeros never print unless `keepLeadingZero`. |
+| `keepLeadingZero` | `false`    | With `keepZeroUnits`, also print a zero of the first ladder unit: `"0m 3s"`.                                 |
+| `adjacentUnits`   | `false`    | Print only the leading rung and the one below it: `"1h"`, not `"1h 59s"`. Overrides `maxUnits`.              |
+| `round`           | `'floor'`  | `ceil` for countdowns, so a live ticker never reads `"0s"` with time left.                                   |
+| `fallback`        | `"0s"`-ish | Printed below the smallest rung. Negative and non-finite input lands here rather than throwing.              |
+
+Calendar math is approximate on purpose: a year is 365 days, a month is the average
+Gregorian month (30.44 days, so twelve can never print as "12 months"). Anything needing
+true calendar arithmetic must use `Date`, not this module.
+
+---
+
+## Sleep-Aware Durations (`src/shared/sleepTracking.ts` - Both)
+
+**Any duration that measures work must not count machine sleep.** `Date.now() - start`
+does count it: the wall clock runs through a suspend, so an overnight sleep turns a
+20-minute Auto Run into an 8-hour one. The Page Visibility API does not save you either -
+a system suspend never fires `visibilitychange`, because the window stays "visible" while
+the whole process is frozen. Only `powerMonitor` in the main process sees the
+suspend/resume pair.
+
+`createSleepTracker()` is the shared math. Each process owns exactly one instance, and you
+use the process-local wrapper rather than the factory:
+
+| Process  | Module                                 | Fed by                                      |
+| -------- | -------------------------------------- | ------------------------------------------- |
+| Main     | `src/main/utils/sleep-tracker.ts`      | `powerMonitor` suspend/resume in `index.ts` |
+| Renderer | `src/renderer/services/systemSleep.ts` | the `app:systemResume` IPC payload          |
+
+Both expose the same shape:
+
+| Function                        | Purpose                                                                                       |
+| ------------------------------- | --------------------------------------------------------------------------------------------- |
+| `beginSleepAwareSpan()`         | Open a span. Keep the returned object: a start timestamp alone can't tell you what was sleep. |
+| `sleepAwareElapsedMs(span)`     | Elapsed time with sleep removed. Never negative.                                              |
+| `getTotalSleepMs()`             | Cumulative measured sleep since the process started.                                          |
+| `onSystemSleep(handler)`        | (Renderer) Subscribe to each measured gap - for live trackers that pause their own clock.     |
+| `sleepAwareElapsedSince(start)` | (Renderer) For a display that only has a stored `startTime` and can't hold a span.            |
+
+Prefer a span. `sleepAwareElapsedSince()` reads a bounded log of recent wakes and exists
+for UI that reads a start timestamp out of state (the thinking timer). Auto Run displays
+read the tracker's mirrored fields with `autoRunActiveElapsedMs()` (`useTimeTracking.ts`),
+which also stops the clock while the run is paused on an error or HITL gate.
+
+Live trackers that pause and resume their own clock (`useTimeTracking`) subscribe with
+`onSystemSleep()` and walk their stored timestamps forward by the gap, clamped to the live
+span so a platform that DID fire a hide/show pair can't subtract the same sleep twice.
+
+---
+
+## Group Chat Activity (`src/shared/groupChatActivity.ts` - Both)
+
+`computeGroupChatActivity(entries)` rolls a group chat's history log up into working time,
+tokens, and cost. Both the Group Chat Info overlay and the HTML export call it, so an
+export can't disagree with the app about how much work a chat did.
+
+**Never present the span between the first and last message as effort.** A group chat is a
+room, not a task: a chat used twice a week reports hundreds of hours without anyone doing
+anything. Working time is the UNION of the busy intervals, so participants running in
+PARALLEL collapse into one interval rather than summing - three agents working the same ten
+minutes is ten minutes of chat time, not thirty.
+
+Each entry covers `[timestamp - elapsedTimeMs, timestamp]` because a history entry is
+stamped when a turn ENDS. Entries recorded before per-turn timing existed carry no
+`elapsedTimeMs` and degenerate to points, which is what `GROUP_CHAT_ACTIVITY_STITCH_MS`
+(5 minutes) is for: turns closer together than the stitch are one block of work, an
+overnight gap ends it. Without it an older chat reports `0m`, which is a worse lie than the
+elapsed span it replaced.
+
+`turnsWithTokens` / `turnsWithCost` are the coverage counts. Render a dash rather than a
+zero when they are 0 - a chat whose turns reported no usage is UNKNOWN, not free.
+
+The producing half lives in `src/main/group-chat/group-chat-turn-metrics.ts`: group chat
+turns are batch processes spawned and reaped in the MAIN process, so they never reach the
+renderer's per-turn stats row and nothing else can measure them.
+
+---
+
 ## Emoji Utilities (`src/shared/emojiUtils.ts` - Both)
 
 | Function                           | Signature                    | Purpose                                         |
 | ---------------------------------- | ---------------------------- | ----------------------------------------------- |
 | `stripLeadingEmojis(str)`          | `(string) => string`         | Remove leading emojis for alphabetical sorting. |
 | `compareNamesIgnoringEmojis(a, b)` | `(string, string) => number` | Compare names ignoring leading emojis.          |
+
+---
+
+## Group Appearance (`src/shared/groupAppearance.ts` - Both)
+
+The one catalog of Left Bar group icon IDs and label colors, plus the
+normalization and validation over them. Three consumers read it: the renderer's
+picker (`renderer/components/ui/groupAppearanceOptions.ts`, which adds the only
+renderer-owned piece, the icon-ID -> Lucide mapping), the WebSocket
+`create_group` / `update_group` handlers, and the `create-group` /
+`update-group` CLI commands. Do NOT write a second icon-ID list: the CLI would
+happily accept an icon the picker cannot draw.
+
+Values are normalized, not merely checked, so `#ef4444` and `#EF4444` persist
+identically and a readback comparison is a plain string equal.
+
+| Export                           | Signature                                             | Purpose                                                                             |
+| -------------------------------- | ----------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| `GROUP_ICON_CATALOG`             | `readonly { id, label }[]`                            | Built-in icons, in picker order.                                                    |
+| `GROUP_ICON_IDS`                 | `readonly string[]`                                   | Just the IDs, for validation and error text.                                        |
+| `GROUP_LABEL_COLORS`             | `readonly { value, label }[]`                         | Built-in label colors; `value` is the persisted uppercase `#RRGGBB`.                |
+| `normalizeGroupIconId(raw)`      | `(string) => string \| null`                          | Canonical icon ID (built-in or `plugin/pack/local`), or `null` if unrecognized.     |
+| `normalizeGroupColor(raw)`       | `(string) => string \| null`                          | Uppercased `#RRGGBB` or a namespaced plugin color ID, or `null`.                    |
+| `validateGroupAppearance(input)` | `(GroupAppearanceInput) => GroupAppearanceValidation` | Enforces emoji/icon exclusivity and normalizes. Run BEFORE mutating any state.      |
+| `validateGroupUpdate(request)`   | `(GroupUpdateRequest) => GroupUpdateValidation`       | The above plus the clear-list rules and "an update must change something".          |
+| `GROUP_CLEARABLE_FIELDS`         | `readonly ['emoji','icon','color','parent']`          | What an update may clear. Clearing is explicit, never a `null` value over the wire. |
 
 ---
 
@@ -188,6 +444,69 @@ The font picker stores a bare name (`Roboto Mono`) with no generic fallback, whi
 
 ---
 
+## File Categories (`src/shared/fileCategories.ts` - Both)
+
+One extension table that answers two questions at once: "can Maestro open this
+file?" and "which bucket is it in?". `isPreviewableFile` is DERIVED from
+`getFileCategory`, so the two cannot disagree - a file that classifies into a
+bucket but refuses to open, or one that opens but is invisible under every
+filter pill, are both impossible by construction. Audio and video are not
+listed here; they resolve through `getMediaKind()` in `mediaTypes.ts`, which is
+the single source of truth for what Chromium can decode.
+
+Powers the Fuzzy File Search category pills (All / Code / Docs / Data / Media).
+Do NOT hand-roll another `TEXT_EXTENSIONS` set - the private copies inside
+`FileSearchModal` are what this replaced. Distinct from the sets in
+`src/renderer/utils/fileExplorerIcons/shared.ts`, which exist to pick an ICON
+and are split much more finely (lockfiles, test folders, config folders); pick
+by question, and do not merge them.
+
+| Function / Constant                 | Signature                                         | Purpose                                                                                    |
+| ----------------------------------- | ------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| `getFileCategory(path)`             | `(string) => FileCategory \| null`                | Bucket a file, or `null` when Maestro cannot open it. `null` != `'other'`.                 |
+| `isPreviewableFile(path)`           | `(string) => boolean`                             | Whether the file is listable/openable. Derived from `getFileCategory`.                     |
+| `matchesFileCategory(path, filter)` | `(string, FileCategoryFilter) => boolean`         | Filter predicate. `'all'` passes everything, including unclassified files.                 |
+| `getFileExtension(path)`            | `(string) => string`                              | Lowercase extension of the basename. `.gitignore` has none; parent-directory dots ignored. |
+| `FILE_CATEGORIES`                   | `readonly ['code','docs','data','media','other']` | Bucket vocabulary, in pill order.                                                          |
+| `FILE_CATEGORY_LABELS`              | `Record<FileCategoryFilter, string>`              | Human labels for the pills.                                                                |
+
+## Markdown File Links (`src/renderer/utils/fileLinks/` - Renderer)
+
+Everything behind a clickable `[[wiki]]`, `path/to/file.md`, `~/note.md`, or
+absolute-path reference in rendered markdown. `matcher.ts` is the pure
+resolution core shared by the Rich tier (`remarkFileLinks`) and the Fast tier
+(`markdownItAdapter`), so the two preview tiers cannot disagree about what a
+reference points at.
+
+A surface can sit over more than ONE root. The Auto Run panel resolves
+`[[Playbook]]` against its playbooks folder and `[[Notes/Thing]]` against the
+agent's project, and those trees have different roots so they cannot be
+concatenated as nodes - union their INDICES with `mergeFileTreeIndices`, whose
+argument order decides which tree wins a shared basename. Resolving against only
+one root is what left every cross-project link in an Auto Run document as inert
+text while the same link worked in a file-preview tab.
+
+<!-- doc-refs-ignore:start -->
+
+`resolve.ts` is the other half: what a click handler does with the path the
+plugin hands back. That path is project-RELATIVE for anything matched in the
+tree and absolute for everything else, and agents quote a path with a
+trailing `:42` constantly, so every consumer needs the same strip-then-join. Do
+NOT hand-roll it - a surface that skips the join hands a bare `Notes/Thing.md`
+to a reader expecting an absolute path and silently opens nothing.
+
+<!-- doc-refs-ignore:end -->
+
+| Function                                       | Signature                                             | Purpose                                                                        |
+| ---------------------------------------------- | ----------------------------------------------------- | ------------------------------------------------------------------------------ |
+| `buildFileTreeIndices(fileTree)`               | `(FileNode[]) => FileTreeIndices`                     | Index one tree. Memoize per tree; both plugins take prebuilt indices.          |
+| `mergeFileTreeIndices(...sets)`                | `(...(FileTreeIndices \| null)[]) => FileTreeIndices` | Union several roots. Earlier sets win a shared basename; nullish sets skipped. |
+| `findClosestMatch(ref, indices, cwd)`          | `(string, FileTreeIndices, string) => string \| null` | Resolve a `[[wiki]]` reference. Exact path, then basename, then cwd proximity. |
+| `validatePathReference(ref, indices)`          | `(string, FileTreeIndices) => string \| null`         | Stricter: exact path only (with or without `.md`). Used for bare path text.    |
+| `toRelativePath(absPath, projectRoot)`         | `(string, string \| undefined) => string \| null`     | Absolute -> project-relative. `null` when outside the root.                    |
+| `resolveFileReference(projectRoot, reference)` | `(string, string) => string`                          | Path a reader can open. Absolute verbatim, else joined onto the root.          |
+| `stripLineColumnSuffix(path)`                  | `(string) => string`                                  | Drop a trailing `:42` / `:42:7`.                                               |
+
 ## Media Types (`src/shared/mediaTypes.ts` - Both)
 
 Audio/video detection plus the `maestro-media://` stream URL format used by the
@@ -207,24 +526,65 @@ multi-GB recording never crosses IPC or lands in the renderer heap.
 | `MEDIA_PLAYBACK_RATES`                    | `readonly number[]`                        | Speed ladder shown in the transport.                                                                 |
 | `normalizePlaybackRate(value)`            | `(unknown) => number`                      | Clamp a persisted/CLI-supplied rate to 0.25-4, falling back to 1.                                    |
 
-### Media File Tabs (`src/renderer/utils/mediaTabs.ts` - Renderer)
+### Media Items (`src/renderer/utils/mediaItems.ts` - Renderer)
 
-| Function                              | Signature                                                        | Purpose                                                                     |
-| ------------------------------------- | ---------------------------------------------------------------- | --------------------------------------------------------------------------- |
-| `getFileTabMediaKind(name, content)`  | `(string, string) => MediaKind \| null`                          | The one predicate for "is this previewed file playable media".              |
-| `collectMediaTabs(sessions)`          | `(Session[]) => MediaTabRef[]`                                   | Every media tab across **all** agents, for the app-level playback host.     |
-| `getMediaTabLabel(ref)`               | `(MediaTabRef) => string`                                        | Display filename, extension included.                                       |
-| `stepMediaTab(refs, activeId, steps)` | `(MediaTabRef[], string \| null, number) => MediaTabRef \| null` | Prev/next target for the player. Open order, no wrapping; null at the ends. |
+| Function                                | Signature                                                    | Purpose                                                                     |
+| --------------------------------------- | ------------------------------------------------------------ | --------------------------------------------------------------------------- |
+| `getOpenedMediaKind(name, content)`     | `(string, string) => MediaKind \| null`                      | The one predicate for "is this opened file playable media".                 |
+| `mediaItemId(sessionId, path)`          | `(string, string) => string`                                 | Queue identity. Same agent + path re-uses the entry, so re-opening resumes. |
+| `stepMediaItem(items, activeId, steps)` | `(MediaItem[], string \| null, number) => MediaItem \| null` | Prev/next target. Open order, no wrapping; null at the ends.                |
+| `pushMediaHistory(history, item, max)`  | `(MediaItem[], MediaItem, number) => MediaItem[]`            | Recently played, newest first, deduped and capped.                          |
+| `trimMediaQueue(items, limit, keepId)`  | `(MediaItem[], number, string \| null) => MediaItem[]`       | Caps the persisted queue, oldest first, never dropping the loaded item.     |
+| `sanitizeMediaItems(value)`             | `(unknown) => MediaItem[]`                                   | Coerce a persisted queue off disk, dropping anything malformed.             |
+| `sanitizeMediaTimes(value, knownIds)`   | `(unknown, Set<string>) => Record<string, number>`           | Same for the seconds maps (positions, durations); drops unqueued IDs.       |
+| `formatMediaTime(seconds)`              | `(number \| undefined) => string`                            | Clock time for a fractional media second; `--:--` when unknown.             |
 
-`getFileTabMediaKind` takes the filename and content as separate scalars on
-purpose: a `FilePreviewTab` splits `name` from `extension` (`'song'` + `'.mp3'`)
-while the object handed to `FilePreview` joins them back. Passing either record
-shape directly classifies everything as non-media, which silently kills playback
-outright. Callers must pass a filename that still has its extension.
+`openFileUrl(href, onFileClick)` in `src/renderer/utils/openFileUrl.ts` is the one
+handler for a `file://` link clicked in markdown. The file-link plugins emit
+`file://` for any path OUTSIDE the project root, so sending every one of them to
+`shell.openPath` quietly routed media around the player and into the OS. It
+returns whether it took the href, so callers `if (openFileUrl(...)) return;`.
+
+It percent-decodes the path on the way through, and that half is not optional. A
+`file://` href is a URL: an agent writes `file:///a/Voice%20Cloning/x.wav` by
+hand, and mdast-util-to-hast runs every link destination through `normalizeUri`
+besides. The literal `%20` reaches `fs.readFile` as an ENOENT, and
+`handleMainPanelFileClick` reports a null read by returning - so the click dies
+one step before `handleOpenFileTab` can divert media to the player, and every
+file in a folder with a space in its name is a link that does nothing. The decode
+goes through `safeDecodeURIComponent`, so a genuine `100% done.md` survives
+instead of throwing. Same rule and reason as `resolveLocalImagePath` in
+`Markdown/components/LocalImage.tsx`.
+
+An absolute path outside the project root gets a `file://` URL too, not just the
+`~/` spelling: `remarkFileLinks` (plain text, inline code, and link hrefs) and
+the Fast-tier `markdownItAdapter` all emit one when `toRelativePath` returns
+null. Without it the same file was a working link written `~/x.wav` and dead text
+written `/Users/me/x.wav`, which is the form agents actually produce.
+
+**Media never becomes a file preview tab.** `handleOpenFileTab()` diverts it to
+`useMediaPlaybackStore.openMedia()` before a tab can be created, and the only
+surface it appears on is the floating player. Do not add an in-panel placement.
+
+`getOpenedMediaKind` takes the filename and content as separate scalars on
+purpose, and the filename must still carry its extension: a `FilePreviewTab`
+splits `name` from `extension` (`'song'` + `'.mp3'`), so passing `tab.name`
+directly classifies everything as non-media. The content check is what keeps a
+remote file (no local stream to serve) on the binary "open externally" path.
 
 Floating-widget geometry math lives in `src/renderer/utils/mediaFloatGeometry.ts`
-(`clampMediaFloatRect`, `initialMediaFloatRect`), split out of the component so
-the off-screen-recovery cases are testable without a DOM.
+(`fitMediaFloatRect`, `initialMediaFloatRect`, `mediaFloatHeight`,
+`mediaFloatResizeWidth`, `sanitizeMediaFloat`), split out of the component so the
+off-screen-recovery and aspect-fitting cases are testable without a DOM.
+
+**Height is derived, never stored.** The frame is chrome plus a stage, and the
+stage belongs to the media: audio has no picture so the frame collapses to the
+controls, and video gets exactly its own `videoWidth / videoHeight` or it plays
+inside black bars. So width is the only size the user picks, and it is remembered
+per kind. The chrome half of the math is measured at runtime (`transportHeight`
+reported by `MediaViewer`) because the transport's height comes out of font
+metrics - a hard-coded constant letterboxes video on whichever platform it was
+not tuned on.
 
 ---
 
@@ -262,9 +622,81 @@ Providers translate grants to their own CLI vocabulary in `additionalDirArgs` (`
 | `dirsWithWriteAccess(dirs)` | `(AdditionalDirectory[] \| undefined) => AdditionalDirectory[]` | Grants the agent may write. For writable-root flags (Codex).                                      |
 | `repeatDirFlag(flag, dirs)` | `(string, AdditionalDirectory[]) => string[]`                   | Emit `<flag> <path>` once per dir. Never use a variadic list - it swallows the prompt positional. |
 
-Adding a provider? See [AGENT_SUPPORT.md → Step 3.5](../../AGENT_SUPPORT.md#step-35-additional-directories). `agent-completeness.test.ts` fails CI if `supportsAdditionalDirectories` and `additionalDirArgs` disagree.
+Adding a provider? See [PROVIDER-SUPPORT.md → Step 3.5](../../PROVIDER-SUPPORT.md#step-35-additional-directories). `agent-completeness.test.ts` fails CI if `supportsAdditionalDirectories` and `additionalDirArgs` disagree.
 
 UI: use `<AdditionalDirectoriesSection>` (`src/renderer/components/shared/`) - do NOT hand-roll a row editor. It is already wired into NewInstanceModal, EditAgentModal, and the Wizard's DirectorySelectionScreen. Pass `nativelyEnforced` from the selected agent's capability so the copy doesn't promise enforcement the provider can't deliver.
+
+---
+
+## Auto Run Document Scanning (`src/shared/markdownTaskScan.ts` - Both)
+
+Fence-aware primitives every Auto Run document scanner rides. Shared because the desktop engine (`src/renderer/hooks/batch/`) and the CLI engine (`src/cli/services/batch-processor.ts`, which cannot import from the renderer) must read a document identically.
+
+| Function / Constant                   | Signature                                            | Purpose                                                                             |
+| ------------------------------------- | ---------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| `forEachMarkdownLine(content, visit)` | `(string, (line, index) => boolean \| void) => void` | Walk lines, skipping fenced code blocks. Return `false` from `visit` to stop early. |
+| `UNCHECKED_TASK_REGEX`                | `RegExp`                                             | An unchecked checkbox: `- [ ] task` (also `*`, `+`).                                |
+| `CHECKED_TASK_COUNT_REGEX`            | `RegExp`                                             | A checked checkbox: `- [x] task` (also `X`, `✓`, `✔`).                              |
+| `CHECKED_TASK_REGEX`                  | `RegExp` (global)                                    | Rewrite checked boxes back to unchecked (reset-on-completion).                      |
+
+Do NOT hand-roll another line loop. A scanner that forgets the fence bookkeeping fires on a playbook that merely DOCUMENTS the marker syntax, and hand-rolled copies drift on closing-fence length, tilde fences, and CRLF.
+
+---
+
+## Auto Run Staging (`src/renderer/utils/autoRunStaging.ts` - Renderer)
+
+Three pure helpers behind the Files tab's **Stage Documents for Auto Run** entry. The playbooks folder appears in the file tree like any other directory, so these answer what turning part of it into a run list takes: is this path inside the agent's Auto Run folder, and which documents does it resolve to. The entry serves three menu contexts - a folder (its whole subtree), a single markdown file (itself), and a multi-selection (the union) - so a path resolver and a folder resolver are both needed.
+
+| Function                                                   | Signature                              | Purpose                                                                                                                        |
+| ---------------------------------------------------------- | -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `relativeToAutoRunFolder(absolutePath, autoRunFolder)`     | `(string?, string?) => string \| null` | Path relative to the Auto Run folder, `''` for the folder itself, `null` when outside it. Normalizes `\` and trailing slashes. |
+| `collectAutoRunDocsInFolder(relativeFolder, documentList)` | `(string, string[]) => string[]`       | Document ids under that folder, nested included. `''` means every document. Order follows `documentList`.                      |
+| `autoRunDocIdForFile(fileAbsolutePath, autoRunFolder)`     | `(string?, string?) => string \| null` | Document id for one file, `null` outside the Auto Run folder or when it isn't `.md`. Drops only the extension.                 |
+
+Document ids are always reconciled against the batch store's `documentList`, NOT read off the file tree. The tree is truncated on large workspaces and the run list only accepts ids the Auto Run loader already knows about, so deriving them from a partial tree stages names the modal cannot resolve. `autoRunDocIdForFile` builds a candidate id from the path, and the caller (`useFileContextMenu`) filters it through `documentList` - which also emits the result in loader order, so a staged selection reads the same way the Auto Run panel does. A shared-prefix sibling (`plans-old/` next to `plans/`) must not match - that is what the trailing-slash normalization and the `${root}/` prefix test are for.
+
+---
+
+## Model Tiers & Effort (`src/shared/modelTiers.ts` - Both)
+
+One vocabulary (`low | medium | high`) for two independent axes: which model runs the turn (**tier**) and how hard it thinks (**effort**). The levels are ladder POSITIONS, not literal provider values - Claude's ceiling is `max`, Codex's floor is `minimal`.
+
+| Function / Constant                   | Signature                                           | Purpose                                                                               |
+| ------------------------------------- | --------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| `TIER_LEVELS`                         | `readonly ['low', 'medium', 'high']`                | The vocabulary. Both axes use it.                                                     |
+| `asTierLevel(value)`                  | `(unknown) => ModelTier \| undefined`               | Narrow an untrusted value to a rung.                                                  |
+| `resolveTierModel(toolType, tier)`    | `(ToolType, ModelTier) => string \| undefined`      | Model for a tier. `undefined` = no mapping, inherit the agent's model **and say so**. |
+| `resolveEffortLevel(toolType, level)` | `(ToolType, EffortLevel) => string \| undefined`    | Provider effort string for a level. `undefined` = provider has no effort knob.        |
+| `supportsTierSelection(toolType)`     | `(ToolType) => boolean`                             | Whether this provider can act on a tier hint at all.                                  |
+| `supportsEffortSelection(toolType)`   | `(ToolType) => boolean`                             | Whether this provider can act on an effort hint at all.                               |
+| `cheapTurnSettings(toolType)`         | `(ToolType) => { model?: string; effort?: string }` | Bottom of both ladders. Used to pin throwaway synopsis turns.                         |
+
+Tier maps ship only where model IDs are stable (`claude-code` permanent aliases, `factory-droid`). Do NOT add one for a provider that discovers its catalogue at runtime (`codex`, `copilot-cli`, `opencode`): a shipped guess rots into naming a model the user cannot run. `undefined` must never become a silent substitution.
+
+`cheapTurnSettings` is safe only because a synopsis is a LEAF - every caller discards the `agentSessionId` it returns. A future caller that adopts that id has to revisit the pin first, or the tab silently continues on the cheap model.
+
+---
+
+## Auto Run Model Hints (`src/shared/autorunModelHints.ts`, `src/shared/autorunTurnSettings.ts` - Both)
+
+`<!-- MAESTRO:MODEL tier="high" effort="high" -->` sets the model and effort. **Placement is the scope**, and there is no third syntax: a marker on its OWN line applies from there down until the next standalone marker (above the first task that is the whole document, under a section heading it is that phase), while a marker at the END of a task line applies to that ONE task and the next task reverts. Resolution is recomputed before every dispatch rather than tracked as run state, so editing a document mid-run takes effect on the next task.
+
+| Function                                                         | File                     | Purpose                                                                                                                |
+| ---------------------------------------------------------------- | ------------------------ | ---------------------------------------------------------------------------------------------------------------------- |
+| `findActiveModelHint(content)`                                   | `autorunModelHints.ts`   | The hint governing the next task, or `null`. Prevailing standalone marker with that task's inline marker layered over. |
+| `findAllModelHints(content)`                                     | `autorunModelHints.ts`   | Every marker in order, tagged with its scope, for authoring-time validation.                                           |
+| `parseModelMarker(inner, line, scope?)`                          | `autorunModelHints.ts`   | Parse one marker's attributes. Records invalid values instead of dropping them.                                        |
+| `resolveTurnSettings(toolType, hint, agentModel?, agentEffort?)` | `autorunTurnSettings.ts` | Join hint + provider capability into `{ model, effort, notes, warnings }`.                                             |
+| `describeTurnSettings(resolved)`                                 | `autorunTurnSettings.ts` | One-line summary for a log line or History entry. `null` when the document set no hint.                                |
+
+Precedence: the document's hint (if the provider can act on it), then the agent's configured value, then the provider default. A hint the provider cannot honor falls back **and warns** - the whole point is that an unresolvable hint is loud.
+
+Two rules the scopes turn on, both of which look like details and are not:
+
+- **The scopes layer PER AXIS.** An inline marker that names only `tier` keeps the prevailing `effort`. Merging wholesale would make `tier="high"` on a task inside a high-effort section quietly LOWER its effort to the agent default.
+- **`'default'` survives parsing rather than collapsing to `undefined`.** Both mean "use the agent's value" at resolution time, but they differ when scopes merge: a task saying `tier="default"` must override a document-wide `tier="high"`, while a task saying nothing about `tier` must inherit it. That is how one task opts out of a document-wide hint.
+
+A checked task is stepped over entirely, marker and all. That keeps a half-finished phase on the setting the rest of it needs, and stops a completed task's inline marker from leaking onto the tasks below it.
 
 ---
 
@@ -395,9 +827,10 @@ Renderer performance integration in `src/renderer/utils/logger.ts`:
 
 ### SSH Spawn Wrapper (`src/main/utils/ssh-spawn-wrapper.ts`)
 
-| Function                                        | Signature                                                                                            | Purpose                                                                                                                                     |
-| ----------------------------------------------- | ---------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| `wrapSpawnWithSsh(config, sshConfig, sshStore)` | `(SshSpawnWrapConfig, AgentSshRemoteConfig?, SshRemoteSettingsStore) => Promise<SshSpawnWrapResult>` | Wrap spawn config with SSH remote execution. Handles prompt embedding (small in CLI, large via stdin). Returns local or SSH-wrapped config. |
+| Function                                        | Signature                                                                                            | Purpose                                                                                                                                                                                      |
+| ----------------------------------------------- | ---------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `wrapSpawnWithSsh(config, sshConfig, sshStore)` | `(SshSpawnWrapConfig, AgentSshRemoteConfig?, SshRemoteSettingsStore) => Promise<SshSpawnWrapResult>` | Wrap spawn config with SSH remote execution. Handles prompt embedding (small in CLI, large via stdin). Returns local or SSH-wrapped config.                                                  |
+| `sshUnresolvedRemoteMessage(sshConfig)`         | `(AgentSshRemoteConfig) => string`                                                                   | The error every caller throws when SSH was enabled but the wrapper handed back `sshRemoteUsed: null` (it degrades to a LOCAL spawn carrying the remote's cwd, so taking it is always wrong). |
 
 ---
 
@@ -410,6 +843,29 @@ Renderer performance integration in `src/renderer/utils/logger.ts`:
 | `execFileNoThrow(command, args?, cwd?, options?)` | `(string, string[], string?, ExecOptions \| NodeJS.ProcessEnv) => Promise<ExecResult>` | Safe command execution. No shell injection. Returns `{ stdout, stderr, exitCode }` - never throws. Handles Windows batch files, stdin input, and timeouts.                                                                                         |
 | `execFileStreaming(command, args, options)`       | `(string, string[], ExecStreamingOptions) => ExecStreamingHandle`                      | Streaming sibling of `execFileNoThrow`: calls `onChunk(chunk, 'stdout' \| 'stderr')` as output arrives, plus `{ result, cancel }`. Use for long commands the user watches live (`git pull`/`git push`). Cancel resolves with exitCode `'SIGTERM'`. |
 | `needsWindowsShell(command)`                      | `(string) => boolean`                                                                  | Determine if command needs `shell: true` on Windows. `.cmd`/`.bat` need shell; known `.exe` commands (git, node, etc.) do not.                                                                                                                     |
+
+### Network Fetch (`src/main/utils/fetchWithTimeout.ts`)
+
+| Function                                      | Signature                                              | Purpose                                                                                                                                                   |
+| --------------------------------------------- | ------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `fetchWithTimeout(url, options?, timeoutMs?)` | `(string, RequestInit?, number?) => Promise<Response>` | The ONLY way to make an HTTP request from the main process. Adds a request budget to `fetch()`, composes rather than clobbers a caller-supplied `signal`. |
+| `isFetchTimeoutError(error)`                  | `(unknown) => boolean`                                 | Distinguishes a budget timeout from a caller-initiated abort or a transport failure.                                                                      |
+| `DEFAULT_FETCH_TIMEOUT_MS`                    | `number` (30s)                                         | Backstop for callers with no opinion. Latency-sensitive callers pass their own.                                                                           |
+
+A bare `fetch()` has no timeout: a stalled socket hangs the caller forever,
+which in the main process means an IPC handler that never settles and a
+renderer spinner that never stops. Always use `fetchWithTimeout`.
+
+Do NOT hand-roll `new AbortController()` + `setTimeout` around a `fetch`, and do
+NOT add another local `fetchWithTimeout`. There were previously three separate
+functions by that exact name with three different signatures (`leaderboard.ts`,
+`cue-telemetry.ts`, `bmad-manager.ts`), three more inline copies, and eleven
+call sites with no timeout at all.
+
+If a caller needs extra behaviour, wrap this function locally rather than
+reimplementing it. `bmad-manager.ts`'s `fetchBmadResource()` is the reference
+example: it delegates to `fetchWithTimeout` and adds only its own Sentry
+reporting.
 
 ### Safe IPC Send (`src/main/utils/safe-send.ts`)
 
@@ -471,6 +927,27 @@ Per-model token pricing is the single source of truth in `src/shared/modelPricin
 
 `MODEL_PRICING` (exact per-model table) and `DEFAULT_MODEL_PRICING` (unknown-model Sonnet-tier fallback) are also exported. `CLAUDE_PRICING` in `src/main/constants.ts` is now a deprecated re-export of `DEFAULT_MODEL_PRICING`.
 
+**Not Claude-only.** `resolveModelPricing` checks the OpenAI families FIRST (`gpt-5*` and any slug containing `codex`, split by size class into nano / mini / frontier), because a Codex slug contains no Anthropic family word and used to fall straight through to the Sonnet-tier default - pricing GPT tokens at Claude rates. Only the GPT-5 line Codex actually ships is claimed; older OpenAI models still take the default rather than being priced off a family they do not belong to. Codex model slugs are discovered at runtime and version faster than a table can track, so the entries in `MODEL_PRICING` are anchors and the family fallback covers the point releases.
+
+**The two providers disagree about what `input_tokens` means, and that is a pricing input.** Anthropic reports cache reads BESIDE `input_tokens`; OpenAI reports them INSIDE it. `PricingConfig.CACHE_READ_SUBSET_OF_INPUT` carries that on the tier, and `calculateWithPricing` bills only `input - cacheRead` at the input rate when it is set. Without it the cached half of a Codex turn is charged at the full input rate AND again as a cache read, which inverts the whole point of a cache hit. Set it on any provider tier that counts cached tokens inside the input total; leave it off for Anthropic.
+
+---
+
+## Codex Token Accounting (`src/shared/codexTokenUsage.ts` - Shared)
+
+`CodexTokenCounts` is the ONE accumulator for token totals scanned out of a Codex CLI rollout transcript. Feed it events; read `inputTokens` / `outputTokens` / `cachedTokens` / `isEmpty`.
+
+| Method                     | Purpose                                                                |
+| -------------------------- | ---------------------------------------------------------------------- |
+| `addTurn(usage)`           | A per-turn record: `turn.completed.usage`, or `info.last_token_usage`. |
+| `addTokenCountEvent(info)` | A `token_count` event payload's `info`. Picks the right field for you. |
+
+**Codex reports usage in two shapes and only one of them is incremental.** `turn.completed.usage` and `info.last_token_usage` are per-turn; `info.total_token_usage` is the running SESSION TOTAL. Summing the latter across events makes a session with N turns report 1+2+...+N times its real tokens, so cost grows with the SQUARE of the conversation length - on a real corpus that turned 1.3B input tokens into 75B and a ~$350 estimate into ~$250,000, which is how Codex came to outrank Claude on a dashboard driven almost entirely by Claude agents. `addTokenCountEvent` prefers `last_token_usage` and, when only the cumulative total is present, adds the DELTA since the previous event; a total that moves backwards is read as a restarted counter (a resume or a fork) and taken whole rather than clamped to zero.
+
+Reasoning output is folded into `outputTokens` (it bills as output), and `cachedTokens` stays a SUBSET of `inputTokens`, matching how Codex reports it - see `CACHE_READ_SUBSET_OF_INPUT` above. Do NOT hand-roll another sum: the three call sites that did (`main/storage/codex-session-storage.ts` x2, `main/ipc/handlers/agentSessions.ts`) all carried this bug independently.
+
+**A derivation fix needs a cache-version bump.** Both stats caches fingerprint a transcript on its mtime and size, neither of which a parser fix touches, so old numbers would be served forever. `TOKEN_USAGE_CACHE_VERSION` (`main/stats/token-usage/token-usage-cache.ts`) and `GLOBAL_STATS_CACHE_VERSION` (`main/utils/statsCache.ts`) both went to 4 for this.
+
 ---
 
 ## Stats Cache (`src/main/utils/statsCache.ts` - Main)
@@ -483,6 +960,24 @@ Per-model token pricing is the single source of truth in `src/shared/modelPricin
 | `getGlobalStatsCachePath()`          | `() => string`                                   | Global stats cache file path.              |
 | `loadGlobalStatsCache()`             | `() => Promise<GlobalStatsCache \| null>`        | Load global cache with version validation. |
 | `saveGlobalStatsCache(cache)`        | `(GlobalStatsCache) => Promise<void>`            | Save global cache.                         |
+
+## Active Agents in Range (`src/shared/statsActiveAgents.ts` - Both)
+
+| Function                                          | Signature                                      | Purpose                                  |
+| ------------------------------------------------- | ---------------------------------------------- | ---------------------------------------- |
+| `isAgentActiveInRange(sessionId, bySessionByDay)` | `(string, BySessionByDay?) => boolean`         | Did this agent record work in the range? |
+| `countActiveAgents(agents, bySessionByDay)`       | `(readonly {id}[], BySessionByDay?) => number` | How many of these agents did.            |
+
+"Active" is a RANGE question, not a live-status one: an agent counts when it recorded at least one
+`query_events` row inside the dashboard's selected range, which covers interactive turns, Auto Run
+tasks, execution-queue drains, and Cue runs alike. The Usage Dashboard's Overview card, the Agent
+Overview `Total Agents` card, and the Agents tab's "Active only" toggle all read it, so they cannot
+disagree about who counts.
+
+Do NOT answer this with `getSessionQueryCount()` from `AgentOverviewCards`: that one falls back to
+the PROVIDER total when a session has no rows of its own and is the only visible session for that
+provider, which would mark an agent that ran nothing as active because a sibling on the same
+provider did.
 
 ---
 
@@ -521,6 +1016,34 @@ the spelled-out platforms.
 | `calculateContextDisplay(usageStats, contextWindow, agentId?, fallbackPercentage?)`     | Returns `{ tokens, percentage, contextWindow }` | Single source of truth for context gauge rendering.                                  |
 | `estimateAccumulatedGrowth(currentUsage, outputTokens, cacheReadTokens, contextWindow)` | `(number, number, number, number) => number`    | Conservative growth estimate during tool-heavy turns. Bounded to 1-3% per turn.      |
 
+### Context Window Precedence (`src/renderer/utils/contextWindowPrecedence.ts`)
+
+**The canonical ranking for "which context window do we divide by".** Any new
+surface that needs the effective window MUST resolve through this rather than
+re-deriving the order - a divergent copy is how the header gauge and the Context
+Timeline disagreed before PR #1221, and findings P1/AD1 exist to keep them in
+step.
+
+| Function                                    | Signature                                        | Purpose                                                                |
+| ------------------------------------------- | ------------------------------------------------ | ---------------------------------------------------------------------- |
+| `resolveContextWindow(inputs)`              | `(ContextWindowInputs) => ResolvedContextWindow` | Effective window PLUS the `source` rank that supplied it.              |
+| `isStoredContextWindowOverridden(resolved)` | `(ResolvedContextWindow) => boolean`             | True when a stored `customContextWindow` exists but a higher rank won. |
+
+Precedence: `[1m]` model marker > user-edited `customContextWindow` > provider-resolved
+report > stored `customContextWindow` of unknown provenance > agent config > raw report.
+
+It returns the winning SOURCE, not just the number, because "is the stored value
+overridden?" is unanswerable from the figure alone - a stored 200k and a
+provider-reported 200k are numerically identical and opposite in meaning.
+
+Known consumers: `useContextWindow` (header gauge) and `EditAgentModal`'s
+override note. `useAgentUsageListener` mirrors the shared ranks for the Context
+Timeline with two timeline-only extras interleaved below rank 4; keep the shared
+ranks positionally identical there. A THIRD list exists in
+`resolveConfiguredContextWindow` (`contextWindowResolver.ts`, Auto Run's
+fresh-context picker) which ranks the stored value first unconditionally - it
+predates P1/AD1, serves a different purpose, and is deliberately NOT kept in sync.
+
 ### Session Helpers (`src/renderer/utils/sessionHelpers.ts`)
 
 | Function                                  | Signature                                                                        | Purpose                                                                                 |
@@ -544,12 +1067,34 @@ Single source of truth for the Left Bar "unread agents only" (a.k.a. "needs atte
 
 For the event-time (non-reactive) path - `useCycleSession`'s `getState()` reads - build the outage set with `getActiveOutageSessionIds()` from `src/renderer/stores/retryStore.ts` and the batch set with `selectActiveBatchSessionIds(useBatchStore.getState())`.
 
+### Sidebar Session Visibility (`src/renderer/utils/sessionVisibility.ts`)
+
+Which agents the Left Bar may surface AT ALL - a different question from the unread filter above (what to show right now) and from `scopeSessionsToOwningWindow()` in `windowTargets.ts` (which window owns an agent). Today it answers exactly one case: the pinned Pianola manager agent PERSISTS in the session store after its Encore flag is switched off (so re-enabling restores the same agent and its chat), and `SessionList` just stops rendering its row. Any other surface that walks `sessions` - `Cmd+[` / `Cmd+]` cycling, arrow-key nav, `Opt+Cmd+NUMBER` jumps, the Starred section - would otherwise still land on a hidden agent and show "Pianola" for a disabled feature. Applied in `SidebarNavSync` (nav projections), `useStarredItems` (starred rows), and `cycleSession` (its own event-time visual order). A new agent that is conditionally hidden belongs in this predicate, not in a fourth open-coded check.
+
+| Function / Type                                  | Signature                                                          | Purpose                                                                                                              |
+| ------------------------------------------------ | ------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------- |
+| `SidebarVisibilityOptions`                       | `{ pianolaEnabled?: boolean }`                                     | Encore flags the predicate needs; omitted / false means Pianola is hidden.                                           |
+| `isSessionVisibleInSidebar(session, options)`    | `(VisibilityScopableSession, SidebarVisibilityOptions) => boolean` | True when the agent may appear in the Left Bar and its keyboard orders.                                              |
+| `filterSessionsVisibleInSidebar(sessions, opts)` | `<T>(T[], SidebarVisibilityOptions) => T[]`                        | Drop hidden agents. Returns the ORIGINAL array when nothing is filtered, so memoized consumers stay identity-stable. |
+
 ### Sentry (`src/renderer/utils/sentry.ts`)
 
 | Function                                   | Signature                                 | Purpose                                 |
 | ------------------------------------------ | ----------------------------------------- | --------------------------------------- |
 | `captureException(error, captureContext?)` | `(Error \| unknown, { extra? }?) => void` | Report error to Sentry from renderer.   |
 | `captureMessage(message, captureContext?)` | `(string, { level?, extra? }?) => void`   | Report message to Sentry from renderer. |
+
+### Tool Activity Labels (`src/renderer/utils/toolActivityLabel.ts`)
+
+`describeToolActivity(toolName, input)` turns one raw agent tool call into ONE short line of plain English (`Read src/App.tsx`, `Ran npm test`, `Edited themes.ts`), returning `{ verb, target }`.
+
+Tool names differ per provider (Claude Code `Read`/`Bash`/`MultiEdit`, OpenCode lowercase `read`/`bash`, Codex `shell`/`apply_patch`/`update_plan`, Copilot `write_to_file`, MCP `mcp__server__tool`), so matching runs on a normalized name. An unrecognized tool still returns a usable `Used <name>` line rather than being dropped, so a provider that ships a new tool degrades to something readable instead of a hole in the feed. It never throws: a raw-string input (Codex `apply_patch` sends a whole diff, not an object) and an argv-array `command` are both handled.
+
+`describeToolActivityStatus(state)` is the other half of the same job: it turns a raw tool-lifecycle payload into `'running' | 'completed' | 'failed'`. **Read the whole payload through it, never `state.status` alone.** Codex reports a shell command that exited non-zero as `status: 'completed'` and puts the failure in `exit_code`, so trusting the word draws a check mark beside a failed build - the exact row an operator is scanning a supervision feed for. Failure signals (non-zero exit code, `isError`/`is_error`) win over the status word. A zero exit code reads as `completed` even when the provider sent no status word at all, since the shell already answered the question. `running` is only what is left when the payload carries neither a recognized terminal word nor a zero exit code - the reading that cannot mislead, because the completion event resolves it. `ToolActivityStatus` is declared here too, and re-exported from `thoughtStreamStore` for consumers of the timeline.
+
+**Do NOT confuse it with `summarizeToolInput()`** (`components/TerminalOutput/utils/toolSummaries.ts`), which builds the VERBOSE in-chat tool cell: every input key as `key=value`, the untruncated command, plus an output preview. Pick by surface - a chat transcript the user reads line by line wants the verbose cell; the Thought Stream's activity feed wants the one-liner, because its whole job is being scannable enough to spot a loop.
+
+---
 
 ### Touch Primitives (`src/renderer/utils/touch.ts`)
 

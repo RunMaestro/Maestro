@@ -2,8 +2,9 @@
  * YamlTextEditor - YAML textarea with line numbers gutter and validation display.
  */
 
-import { useCallback } from 'react';
+import { useCallback, useRef } from 'react';
 import type { Theme } from '../../types';
+import { TextareaLineNumbers, lineNumberGutterMetrics } from '../ui/TextareaLineNumbers';
 
 interface YamlTextEditorProps {
 	theme: Theme;
@@ -22,6 +23,8 @@ export function YamlTextEditor({
 	isValid,
 	validationErrors,
 }: YamlTextEditorProps) {
+	const textareaRef = useRef<HTMLTextAreaElement>(null);
+
 	// Handle Tab key in textarea for indentation
 	const handleYamlKeyDown = useCallback(
 		(e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -57,32 +60,24 @@ export function YamlTextEditor({
 					pointerEvents: readOnly ? 'none' : 'auto',
 				}}
 			>
-				{/* Line numbers gutter */}
-				<div
-					className="py-3 px-2 text-right select-none font-mono text-xs leading-[1.35rem] overflow-hidden"
-					style={{
-						backgroundColor: theme.colors.bgActivity,
-						color: theme.colors.textDim,
-						minWidth: 40,
-					}}
-					data-testid="line-numbers"
-					aria-hidden="true"
-				>
-					{yamlContent.split('\n').map((_, i) => (
-						<div key={i}>{i + 1}</div>
-					))}
+				{/* Editor textarea with a scroll-synced line-number gutter */}
+				<div className="relative flex-1 min-w-0">
+					<TextareaLineNumbers textareaRef={textareaRef} value={yamlContent} theme={theme} />
+					<textarea
+						ref={textareaRef}
+						value={yamlContent}
+						onChange={(e) => onYamlChange(e.target.value)}
+						onKeyDown={handleYamlKeyDown}
+						readOnly={readOnly}
+						spellCheck={false}
+						className="w-full h-full py-3 pr-3 bg-transparent outline-none text-sm resize-none font-mono leading-[1.35rem]"
+						style={{
+							color: theme.colors.textMain,
+							paddingLeft: lineNumberGutterMetrics(yamlContent).textPaddingLeft,
+						}}
+						data-testid="yaml-editor"
+					/>
 				</div>
-				{/* Editor textarea */}
-				<textarea
-					value={yamlContent}
-					onChange={(e) => onYamlChange(e.target.value)}
-					onKeyDown={handleYamlKeyDown}
-					readOnly={readOnly}
-					spellCheck={false}
-					className="flex-1 py-3 px-3 bg-transparent outline-none text-sm resize-none font-mono leading-[1.35rem]"
-					style={{ color: theme.colors.textMain }}
-					data-testid="yaml-editor"
-				/>
 			</div>
 
 			{/* Validation errors */}

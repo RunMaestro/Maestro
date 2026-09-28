@@ -3,8 +3,8 @@ import mermaid from 'mermaid';
 import DOMPurify from 'dompurify';
 import type { Theme } from '../types';
 import { logger } from '../utils/logger';
-import { SvgContextMenu } from './SvgContextMenu';
-import { useSvgContextMenu } from '../hooks/ui/useSvgContextMenu';
+import { normalizeMermaidSource } from '../../shared/mermaidSource';
+import { expandSvgViewBoxToContent } from '../utils/svgViewBox';
 import {
 	adjustBrightness,
 	blendColors,
@@ -15,6 +15,39 @@ import {
 
 // Track theme for mermaid initialization
 let lastThemeId: string | null = null;
+
+/**
+ * DOMPurify config for Mermaid's rendered SVG.
+ *
+ * Mermaid renders every flowchart/class/state label as HTML inside a
+ * `<foreignObject>` (`flowchart.htmlLabels: true`), so a `<br/>` in a node
+ * label is a real `<br>` element, the label text lives in `<div>/<span>/<p>`,
+ * and the edge-label background is a styled `<div>`. Two DOMPurify defaults
+ * used to delete all of it and leave only the bare text nodes:
+ *
+ *   1. `USE_PROFILES: { svg: true }` allows SVG tags only, so `div`/`span`/
+ *      `p`/`br` are not in the allow-list.
+ *   2. `HTML_INTEGRATION_POINTS` defaults to `annotation-xml` alone, so ANY
+ *      HTML-namespace child of `<foreignObject>` fails the namespace check
+ *      and is force-removed even when its tag is allowed.
+ *
+ * The visible damage: line breaks vanished ("Visibility only.<br/>Observation"
+ * rendered as "Visibility only.Observation"), the surviving text re-wrapped at
+ * the foreignObject's width, and anything past the box height mermaid had
+ * measured for the ORIGINAL markup was clipped away. Diagram content was
+ * silently lost, not just restyled.
+ *
+ * So: allow the HTML profile and declare `foreignObject` an HTML integration
+ * point. This is still a real security boundary - `<script>`, `on*` handlers,
+ * `<iframe>`, and `javascript:` URLs are all stripped - and it is the second
+ * pass, since mermaid runs its own DOMPurify at `securityLevel: 'strict'`.
+ */
+export const MERMAID_SANITIZE_CONFIG = {
+	USE_PROFILES: { svg: true, svgFilters: true, html: true },
+	ADD_TAGS: ['foreignObject'],
+	ADD_ATTR: ['xmlns', 'xmlns:xlink', 'xlink:href', 'dominant-baseline', 'text-anchor'],
+	HTML_INTEGRATION_POINTS: { foreignobject: true, 'annotation-xml': true },
+};
 
 interface MermaidRendererProps {
 	chart: string;
@@ -78,6 +111,56 @@ const initMermaid = (theme: Theme) => {
 	// Text drawn directly on the accent (gantt bars, sequence numbers). Themes
 	// ship `accentForeground` for exactly this pairing.
 	const onAccentColor = readableTextOn(colors.accentForeground, [colors.accent]);
+
+	/**
+	 * The twelve mindmap/timeline section fills, and a label color derived
+	 * against EACH one.
+	 *
+	 * Mermaid's mindmap CSS paints section `i` with `cScale{i}` and its label
+	 * with `cScaleLabel{i}`. Only `cScale0..5` used to be set here and no
+	 * `cScaleLabel*` at all, which broke this twice over:
+	 *
+	 * 1. Every label fell back to mermaid's derived `labelTextColor`, i.e. the
+	 *    theme's own `textMain`, painted straight onto a saturated fill. All 80
+	 *    theme/fill pairs failed WCAG AA; three themes were at ratio 1.00, where
+	 *    the label is literally the same color as the block behind it.
+	 * 2. Indices 6-11 were invented by mermaid from `primaryColor` as `hsl()`
+	 *    strings. `hexToRgb` cannot parse those, so `contrastRatio` returns its
+	 *    leave-it-alone 21 and any contrast test over them passes vacuously.
+	 *
+	 * So all twelve are declared, as hex, and each label is measured against its
+	 * own fill rather than one best-worst-case pick. Same shape as `pie1..pie12`
+	 * above. `readableTextOn` returns the theme's own text color untouched when
+	 * it already clears AA and nudges it otherwise, so labels stay tinted
+	 * versions of the theme rather than snapping to black or white.
+	 */
+	const cScaleFills = [
+		colors.accent,
+		colors.success,
+		colors.warning,
+		colors.error,
+		adjustBrightness(colors.accent, isDark ? 20 : -20),
+		adjustBrightness(colors.success, isDark ? 20 : -20),
+		adjustBrightness(colors.warning, isDark ? 20 : -20),
+		adjustBrightness(colors.error, isDark ? 20 : -20),
+		blendColors(colors.accent, colors.success, 0.5),
+		blendColors(colors.warning, colors.error, 0.5),
+		blendColors(colors.accent, colors.warning, 0.5),
+		blendColors(colors.success, colors.error, 0.5),
+	];
+	const cScaleVars = Object.fromEntries(
+		cScaleFills.flatMap((fill, i) => [
+			[`cScale${i}`, fill],
+			[`cScaleLabel${i}`, readableTextOn(colors.textMain, [fill])],
+		])
+	);
+
+	// Git branch labels sit on their own known `git{i}` fill, so each gets a
+	// color measured against that fill instead of sharing one worst-case pick.
+	const gitBranchFills = [colors.accent, colors.success, colors.warning, colors.error];
+	const gitBranchLabelVars = Object.fromEntries(
+		gitBranchFills.map((fill, i) => [`gitBranchLabel${i}`, readableTextOn(colors.textMain, [fill])])
+	);
 
 	// Create theme variables from the app's color scheme
 	const themeVariables = {
@@ -156,10 +239,7 @@ const initMermaid = (theme: Theme) => {
 		git5: adjustBrightness(colors.success, isDark ? 20 : -20),
 		git6: adjustBrightness(colors.warning, isDark ? 20 : -20),
 		git7: adjustBrightness(colors.error, isDark ? 20 : -20),
-		gitBranchLabel0: paletteTextColor,
-		gitBranchLabel1: paletteTextColor,
-		gitBranchLabel2: paletteTextColor,
-		gitBranchLabel3: paletteTextColor,
+		...gitBranchLabelVars,
 		gitInv0: colors.bgMain,
 		gitInv1: colors.bgMain,
 		gitInv2: colors.bgMain,
@@ -213,8 +293,10 @@ const initMermaid = (theme: Theme) => {
 		requirementBorderColor: primaryBorder,
 		requirementTextColor: nodeTextColor,
 
-		// Mindmap - colorful nodes
-		mindmapBkg: primaryNodeBg,
+		// Mindmap sections are colored by cScale*/cScaleLabel* below, NOT by a
+		// mindmap-specific variable. `mindmapBkg` was set here and is provably
+		// dead: the string does not appear anywhere in mermaid 11.15.0's dist.
+		// Removed rather than left as a plausible-looking no-op.
 
 		// Quadrant chart
 		quadrant1Fill: transparentize(colors.accent, colors.bgMain, 0.15),
@@ -244,13 +326,8 @@ const initMermaid = (theme: Theme) => {
 			plotColorPalette: `${colors.accent}, ${colors.success}, ${colors.warning}, ${colors.error}`,
 		},
 
-		// Timeline
-		cScale0: colors.accent,
-		cScale1: colors.success,
-		cScale2: colors.warning,
-		cScale3: colors.error,
-		cScale4: adjustBrightness(colors.accent, isDark ? 20 : -20),
-		cScale5: adjustBrightness(colors.success, isDark ? 20 : -20),
+		// Timeline and mindmap sections, with a label color per fill.
+		...cScaleVars,
 
 		// Sankey diagram
 		sankeyLinkColor: transparentize(colors.accent, colors.bgMain, 0.3),
@@ -313,7 +390,6 @@ export function MermaidRenderer({ chart, theme }: MermaidRendererProps) {
 	const [error, setError] = useState<string | null>(null);
 	const [isLoading, setIsLoading] = useState(true);
 	const [svgContent, setSvgContent] = useState<string | null>(null);
-	const { svgMenu, dismissSvgMenu, openSvgMenuFromContainer } = useSvgContextMenu();
 
 	// Use useLayoutEffect to ensure DOM is ready before we try to render
 	useLayoutEffect(() => {
@@ -337,7 +413,10 @@ export function MermaidRenderer({ chart, theme }: MermaidRendererProps) {
 
 			try {
 				// Pre-validate chart syntax before render to prevent DOM pollution.
-				const trimmed = chart.trim();
+				// `normalizeMermaidSource` first repairs the `@`-in-a-label case
+				// mermaid's edge-id lexer rule rejects (see that module); the
+				// error branch below still shows the author's original source.
+				const trimmed = normalizeMermaidSource(chart.trim());
 				try {
 					await mermaid.parse(trimmed);
 				} catch (parseErr) {
@@ -357,11 +436,7 @@ export function MermaidRenderer({ chart, theme }: MermaidRendererProps) {
 
 				if (result && result.svg) {
 					// Sanitize the SVG before setting it
-					const sanitizedSvg = DOMPurify.sanitize(result.svg, {
-						USE_PROFILES: { svg: true, svgFilters: true },
-						ADD_TAGS: ['foreignObject'],
-						ADD_ATTR: ['xmlns', 'xmlns:xlink', 'xlink:href', 'dominant-baseline', 'text-anchor'],
-					});
+					const sanitizedSvg = DOMPurify.sanitize(result.svg, MERMAID_SANITIZE_CONFIG);
 					setSvgContent(sanitizedSvg);
 					setError(null);
 				} else {
@@ -407,9 +482,15 @@ export function MermaidRenderer({ chart, theme }: MermaidRendererProps) {
 				containerRef.current.removeChild(containerRef.current.firstChild);
 			}
 
-			// Append new SVG
+			// Append new SVG, then rescue any content painted outside the viewBox
+			// mermaid declared (quadrantChart hard-codes 500x500 and lets long
+			// titles and point labels spill past it, where the browser clips
+			// them). Must happen after the append: getBBox needs a layout.
 			if (svgElement) {
-				containerRef.current.appendChild(document.importNode(svgElement, true));
+				const appended = containerRef.current.appendChild(
+					document.importNode(svgElement, true)
+				) as SVGSVGElement;
+				expandSvgViewBoxToContent(appended);
 			}
 		}
 	}, [svgContent, isLoading]);
@@ -462,20 +543,16 @@ export function MermaidRenderer({ chart, theme }: MermaidRendererProps) {
 	}
 
 	// Render container - SVG will be inserted via the effect above. The diagram is
-	// appended imperatively, so it never passes through React's element tree and
-	// can't carry an onContextMenu of its own; hang the right-click handler off
-	// the container and resolve the <svg> out of it.
+	// appended imperatively and never passes through React's element tree, so it
+	// carries no right-click handler of its own; the app-wide delegated listener
+	// in ImageContextMenuHost resolves it from the click target instead.
 	return (
-		<>
-			<div
-				ref={containerRef}
-				className="mermaid-container p-4 rounded-lg overflow-x-auto"
-				style={{
-					backgroundColor: theme.colors.bgActivity,
-				}}
-				onContextMenu={openSvgMenuFromContainer}
-			/>
-			{svgMenu && <SvgContextMenu menu={svgMenu} theme={theme} onDismiss={dismissSvgMenu} />}
-		</>
+		<div
+			ref={containerRef}
+			className="mermaid-container p-4 rounded-lg overflow-x-auto"
+			style={{
+				backgroundColor: theme.colors.bgActivity,
+			}}
+		/>
 	);
 }

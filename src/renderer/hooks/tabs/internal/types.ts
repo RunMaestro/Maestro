@@ -5,6 +5,7 @@ import type {
 	FilePreviewTab,
 	UnifiedTab,
 } from '../../../types';
+import type { MediaOpenMode } from '../../../../shared/mediaTypes';
 
 export interface CloseCurrentTabResult {
 	type: 'file' | 'browser' | 'ai' | 'terminal' | 'prevented' | 'none';
@@ -59,10 +60,19 @@ export interface AITabHandlersReturn {
 	handleToggleTabEnterToSend: () => void;
 }
 
+// Lives in shared/ because the CLI and the web server name it too.
+export type { MediaOpenMode };
+
 export interface FilePreviewTabHandlersReturn {
 	handleOpenFileTab: (
 		file: FileTabOpenParams,
-		options?: { openInNewTab?: boolean; targetSessionId?: string }
+		options?: {
+			openInNewTab?: boolean;
+			targetSessionId?: string;
+			mediaMode?: MediaOpenMode;
+			/** false = create the tab without showing it (background placement). */
+			activate?: boolean;
+		}
 	) => void;
 	handleSelectFileTab: (tabId: string) => Promise<void>;
 	handleCloseFileTab: (tabId: string) => void;
@@ -70,14 +80,18 @@ export interface FilePreviewTabHandlersReturn {
 	handleFileTabEditContentChange: (
 		tabId: string,
 		editContent: string | undefined,
-		savedContent?: string
+		savedContent?: string,
+		savedMtime?: number
 	) => void;
 	handleFileTabScrollPositionChange: (tabId: string, scrollTop: number) => void;
 	handleFileTabSearchQueryChange: (tabId: string, searchQuery: string) => void;
 	handleReloadFileTab: (tabId: string) => Promise<void>;
-	handleFileTabNavigateBack: () => Promise<void>;
-	handleFileTabNavigateForward: () => Promise<void>;
-	handleFileTabNavigateToIndex: (index: number) => Promise<void>;
+	// `tabId` defaults to the active file tab. A tiled file pane passes its own id:
+	// focusing a file pane does not set `activeFileTabId`, so the default would
+	// navigate whichever other file tab happens to be active.
+	handleFileTabNavigateBack: (tabId?: string) => Promise<void>;
+	handleFileTabNavigateForward: (tabId?: string) => Promise<void>;
+	handleFileTabNavigateToIndex: (index: number, tabId?: string) => Promise<void>;
 	handleClearFilePreviewHistory: () => void;
 	handleNewFileTab: () => void;
 }
@@ -91,7 +105,7 @@ export interface BrowserTabHandlersReturn {
 }
 
 export interface UnifiedTabHandlersReturn {
-	handleUnifiedTabReorder: (fromIndex: number, toIndex: number) => void;
+	handleUnifiedTabReorder: (sourceTabId: string, targetTabId: string) => void;
 	handleCloseOtherTabs: (pivotTabId?: string) => void;
 	handleCloseTabsLeft: (pivotTabId?: string) => void;
 	handleCloseTabsRight: (pivotTabId?: string) => void;

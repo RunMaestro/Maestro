@@ -11,7 +11,13 @@
  *
  * Cache invalidation: when the underlying file's `mtimeMs`/`size` changes
  * (i.e. a new entry is appended), the cache misses and the caller is
- * expected to recompute and re-`set()`.
+ * expected to recompute and re-`set()`. The fingerprint is the caller's to
+ * compose, and it has to cover EVERY source the aggregate reads - the history
+ * graph mixes in a Cue-database stamp because its CUE series no longer comes
+ * from the file (see `getCueHistoryFingerprint()`). The fingerprint is the caller's to
+ * compose, and it has to cover EVERY source the aggregate reads - the history
+ * graph mixes in a Cue-database stamp because its CUE series no longer comes
+ * from the file (see `getCueHistoryFingerprint()`).
  */
 
 import * as fs from 'fs';
@@ -29,7 +35,12 @@ const LOG_CONTEXT = '[HistoryBucketCache]';
 // v3: added the `agent` series / `agentCount` (cross-agent consults split out of
 // `auto`). Cached v2 buckets tallied consults as AUTO, so they must be discarded
 // rather than merged - the read path drops any entry whose version differs.
-export const HISTORY_BUCKET_CACHE_VERSION = 3;
+// v4: the CUE series now comes from cue_events rather than the history file.
+// Both branches had independently shipped a v3 for DIFFERENT reasons (the agent
+// series here, the cue_events source on main), so a cache written by either one
+// is wrong for the other and the shared number could not tell them apart. This
+// bump is what discards both.
+export const HISTORY_BUCKET_CACHE_VERSION = 4;
 
 /**
  * Single bucket of the activity graph - counts of each entry type within the

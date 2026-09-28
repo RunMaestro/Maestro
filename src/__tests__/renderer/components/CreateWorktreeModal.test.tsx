@@ -26,6 +26,33 @@ describe('CreateWorktreeModal', () => {
 		window.maestro.git.branch = originalBranch;
 	});
 
+	// Bespoke header (own <h2>, not <Modal>), so this goes through the shared
+	// <ModalSubtitle> rather than <Modal subtitle>.
+	it('names the agent the worktree is branched from', () => {
+		window.maestro.git.checkGhCli = vi
+			.fn()
+			.mockResolvedValue({ installed: true, authenticated: true });
+		window.maestro.git.branch = vi
+			.fn()
+			.mockResolvedValue({ stdout: 'rc', stderr: '', exitCode: 0 });
+
+		render(
+			<CreateWorktreeModal
+				isOpen
+				onClose={vi.fn()}
+				theme={mockTheme}
+				session={createMockSession({ cwd: '/repo', name: 'Sonoma-Fix' })}
+				onCreateWorktree={vi.fn()}
+			/>
+		);
+
+		expect(screen.getByTestId('modal-subtitle')).toHaveTextContent('Sonoma-Fix');
+		// The heading stays the bare action, so the name cannot leak into an
+		// aria-label or a title-derived persisted size.
+		expect(screen.getByRole('heading')).toHaveTextContent('Create New Worktree');
+		expect(screen.getByRole('heading')).not.toHaveTextContent('Sonoma-Fix');
+	});
+
 	it('wraps a long spaceless creation error without overflowing the modal', async () => {
 		const longError = 'failedtoaddworktreeoversshaborting'.repeat(20);
 		window.maestro.git.checkGhCli = vi

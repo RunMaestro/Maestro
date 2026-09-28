@@ -132,6 +132,45 @@ describe('director-notes:getRichOverviewStats', () => {
 		expect(handlers.has('director-notes:getRichOverviewStats')).toBe(true);
 	});
 
+	// `ipcMain.handle` throws on a second registration of the same channel, which
+	// aborts registerDirectorNotesHandlers mid-way and leaves every handler after
+	// it - plus the ~40 register*Handlers calls that follow in setupIpcHandlers -
+	// unregistered. A back-merge kept both branches' copies of the rich-stats
+	// handler and shipped exactly that (MAESTRO-YA). The `handlers` Map above
+	// cannot catch it (the duplicate just overwrites the entry), so assert on the
+	// raw call list.
+	it('registers every channel exactly once', () => {
+		const channels = vi.mocked(ipcMain.handle).mock.calls.map(([channel]) => channel);
+		const duplicates = channels.filter((c, i) => channels.indexOf(c) !== i);
+
+		expect(duplicates).toEqual([]);
+	});
+
+	// The Map mock above is forgiving where the real ipcMain is not, so re-run
+	// registration against a mock that throws like Electron does. This is what
+	// the field saw: the throw escaped into setupIpcHandlers, so generateSynopsis
+	// and every later register*Handlers call never ran.
+	it('completes registration against an Electron-faithful ipcMain', () => {
+		const registered = new Set<string>();
+		vi.mocked(ipcMain.handle).mockImplementation((channel, handler) => {
+			if (registered.has(channel)) {
+				throw new Error(`Attempted to register a second handler for '${channel}'`);
+			}
+			registered.add(channel);
+			handlers.set(channel, handler);
+		});
+
+		expect(() =>
+			registerDirectorNotesHandlers({
+				getProcessManager: () => null,
+				getAgentDetector: () => null,
+				agentConfigsStore: { get: vi.fn(() => ({})) } as any,
+				getMainWindow: () => null,
+			})
+		).not.toThrow();
+		expect(registered.has('director-notes:generateSynopsis')).toBe(true);
+	});
+
 	it('computes totals, agent/session counts from entries in the window', async () => {
 		const now = Date.now();
 		mockHistoryManager.listSessionsWithHistory.mockResolvedValue(['session-1', 'session-2']);

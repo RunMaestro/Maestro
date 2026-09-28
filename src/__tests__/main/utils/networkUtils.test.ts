@@ -698,4 +698,66 @@ describe('main/utils/networkUtils', () => {
 			expect(result).toBe('192.168.1.123');
 		});
 	});
+
+	// ===========================================
+	// getIpv4InterfaceFingerprint
+	// ===========================================
+	describe('getIpv4InterfaceFingerprint', () => {
+		const iface = (address: string, overrides: Record<string, unknown> = {}) => ({
+			address,
+			netmask: '255.255.255.0',
+			family: 'IPv4',
+			mac: '00:00:00:00:00:00',
+			internal: false,
+			cidr: `${address}/24`,
+			...overrides,
+		});
+
+		it('should include every non-internal IPv4 address', () => {
+			mockNetworkInterfaces.mockReturnValue({
+				en0: [iface('192.168.1.10')],
+				en1: [iface('10.0.0.5')],
+			});
+
+			expect(networkUtils.getIpv4InterfaceFingerprint()).toBe('en0=192.168.1.10,en1=10.0.0.5');
+		});
+
+		it('should ignore internal and IPv6 addresses', () => {
+			mockNetworkInterfaces.mockReturnValue({
+				lo0: [iface('127.0.0.1', { internal: true })],
+				en0: [iface('192.168.1.10'), iface('fe80::1', { family: 'IPv6' })],
+			});
+
+			expect(networkUtils.getIpv4InterfaceFingerprint()).toBe('en0=192.168.1.10');
+		});
+
+		it('should be stable across interface enumeration order', () => {
+			mockNetworkInterfaces.mockReturnValue({
+				en1: [iface('10.0.0.5')],
+				en0: [iface('192.168.1.10')],
+			});
+			const reordered = networkUtils.getIpv4InterfaceFingerprint();
+
+			mockNetworkInterfaces.mockReturnValue({
+				en0: [iface('192.168.1.10')],
+				en1: [iface('10.0.0.5')],
+			});
+
+			expect(networkUtils.getIpv4InterfaceFingerprint()).toBe(reordered);
+		});
+
+		it('should change when the machine moves to a different network', () => {
+			mockNetworkInterfaces.mockReturnValue({ en0: [iface('192.168.1.10')] });
+			const home = networkUtils.getIpv4InterfaceFingerprint();
+
+			mockNetworkInterfaces.mockReturnValue({ en0: [iface('172.20.10.3')] });
+
+			expect(networkUtils.getIpv4InterfaceFingerprint()).not.toBe(home);
+		});
+
+		it('should return an empty string when nothing is configured', () => {
+			mockNetworkInterfaces.mockReturnValue({ lo0: undefined });
+			expect(networkUtils.getIpv4InterfaceFingerprint()).toBe('');
+		});
+	});
 });

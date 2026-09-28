@@ -18,19 +18,29 @@ import {
 } from '../../../utils/mentionChipResolve';
 import { useSessionStore } from '../../../stores/sessionStore';
 import { buildKnownMentionNameSet } from '../../../hooks/input/useAgentMentionCompletion';
-import { TEXTAREA_MAX_HEIGHT } from '../utils/textareaSizing';
+import { KEYSTROKE_TEXTAREA_MAX_HEIGHT } from '../../../utils/textareaSizing';
 import { useEventListener } from '../../../hooks/utils/useEventListener';
+import { useFixedPitchFont } from '../../../hooks/ui/useFixedPitchFont';
 
 interface InputTextareaProps {
 	session: Session;
 	theme: Theme;
 	isTerminalMode: boolean;
 	/**
-	 * True while an AI-mode draft is in command mode (starts with `!`). Derived
-	 * once by InputArea, which also uses it to gate Tab completion, so both
+	 * True while an AI-mode draft is a literal shell command line. Derived once
+	 * by InputArea, which also uses it to gate Tab completion, so both
 	 * affordances can never disagree about whether this is a shell line.
 	 */
 	isCommandModeDraft: boolean;
+	/** True while an AI-mode draft is an AI command request (prose, not a line). */
+	isAiCommandDraft: boolean;
+	/**
+	 * True while a suggestion is in flight or a proposal is awaiting an answer.
+	 * The textarea goes read-only rather than unmounting: the caret has to stay
+	 * here, because Enter / arrows / Escape all answer the card from this
+	 * element's keydown handler.
+	 */
+	awaitingAiCommand: boolean;
 	inputValue: string;
 	spellCheckEnabled: boolean;
 	inputRef: React.RefObject<HTMLTextAreaElement>;
@@ -75,6 +85,8 @@ export const InputTextarea = memo(function InputTextarea({
 	theme,
 	isTerminalMode,
 	isCommandModeDraft,
+	isAiCommandDraft,
+	awaitingAiCommand,
 	inputValue,
 	spellCheckEnabled,
 	inputRef,
@@ -215,15 +227,24 @@ export const InputTextarea = memo(function InputTextarea({
 	});
 
 	// Command mode borrows the terminal composer's `$` affordance so the switch
-	// is visible before you hit Enter.
+	// is visible before you hit Enter. AI command mode deliberately does not: its
+	// draft is a sentence, and a `$` in front of one promises a shell line.
 	const showShellPrefix = isTerminalMode || isCommandModeDraft;
+
+	// A command line is shell text, so it is typed in the same fixed-pitch face
+	// the terminal and the output card use: paths and flags line up, and the
+	// switch out of chat is legible before the `$` is even read. AI command mode
+	// keeps the proportional font on purpose - that draft is a sentence, and the
+	// command it produces gets monospace when it appears in the proposal card.
+	const fontFamily = useSettingsStore((state) => state.fontFamily);
+	const shellFontFamily = useFixedPitchFont(fontFamily);
 
 	return (
 		<div className="relative flex items-start">
 			{showShellPrefix && (
 				<span
-					className="text-sm font-mono font-bold select-none pl-3 pt-3"
-					style={{ color: theme.colors.accent }}
+					className="text-sm font-bold select-none pl-3 pt-3"
+					style={{ color: theme.colors.accent, fontFamily: shellFontFamily }}
 					title={isCommandModeDraft ? 'Command mode: runs in the shell, not the agent' : undefined}
 				>
 					$
@@ -238,6 +259,12 @@ export const InputTextarea = memo(function InputTextarea({
 						// wordBreak comes from SHARED_TYPOGRAPHY so it stays in sync with
 						// the textarea; only overlay-specific props are set here.
 						...SHARED_TYPOGRAPHY,
+						// Track the textarea's command-mode font override exactly. The
+						// overlay is enabled for everything but terminal mode, so a command
+						// -mode draft containing an `@mention` puts this decoration under
+						// monospace glyphs - measured on a different font, every chip lands
+						// off the word it belongs to.
+						fontFamily: showShellPrefix ? shellFontFamily : undefined,
 						zIndex: 0,
 						whiteSpace: 'pre-wrap',
 						// Must stay identical to the textarea's `pt-3 pr-3 pb-1 pl-3`, or the
@@ -285,18 +312,29 @@ export const InputTextarea = memo(function InputTextarea({
 					caretColor: theme.colors.textMain,
 					// Single source of truth with the resize logic: the CSS cap and
 					// resizeTextareaToContent's clamp can never disagree.
-					maxHeight: `${TEXTAREA_MAX_HEIGHT}px`,
+					maxHeight: `${KEYSTROKE_TEXTAREA_MAX_HEIGHT}px`,
 					// Sit above the decorative overlay so the caret + native selection win.
 					zIndex: overlayRendered ? 1 : undefined,
+					// Shell text is a grid, so command mode overrides the composer font
+					// with a measured fixed-pitch stack. Set after SHARED_TYPOGRAPHY so it
+					// wins, and left undefined in agent mode so the shared value stands.
+					fontFamily: showShellPrefix ? shellFontFamily : undefined,
 				}}
 				placeholder={
 					isTerminalMode
 						? 'Run shell command...'
-						: isCommandModeDraft
-							? 'Run shell command... (Esc to go back to the agent)'
-							: `Talking to ${session.name} powered by ${getProviderDisplayName(session.toolType)}`
+						: awaitingAiCommand
+							? 'Enter runs it - arrows choose - Esc cancels'
+							: isAiCommandDraft
+								? 'Describe what you want to accomplish... (Esc for Command Mode)'
+								: isCommandModeDraft
+									? 'Run shell command... (! for AI Command, Esc for the agent)'
+									: `Talking to ${session.name} powered by ${getProviderDisplayName(session.toolType)}`
 				}
 				value={inputValue}
+				// Read-only, not disabled: a disabled textarea cannot hold focus, and
+				// every key that answers the proposal is read from this element.
+				readOnly={awaitingAiCommand}
 				spellCheck={spellCheckEnabled}
 				onFocus={onInputFocus}
 				onBlur={() => {

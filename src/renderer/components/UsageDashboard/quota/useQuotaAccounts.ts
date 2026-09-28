@@ -4,9 +4,11 @@
  * Derives the account list a provider quota panel should show, mirroring the
  * main-side sampler's sourcing rule: explicit prop keys + locally-discovered
  * account dirs + every `<TOOL>_HOME`/`CONFIG_DIR` referenced by a session
- * (agent-level customEnvVars merged under session-level, session wins) + any
- * key already present in the snapshot store. Sessions without an explicit env
- * var fall back to the implicit default (`~/<defaultSubdir>`).
+ * (the agent's own customEnvVars, or the provider-level set when it has none -
+ * the spawner replaces, it does not layer) + any key already present in the
+ * snapshot store. Sessions without an explicit env var fall back to that
+ * provider's implicit default account dir. Agents billing an API key, gateway,
+ * or cloud provider are on no account's plan and are not counted.
  *
  * The result includes selection state (which account tab is active) clamped to
  * the first account whenever the current selection disappears.
@@ -14,15 +16,21 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSessionStore } from '../../../stores/sessionStore';
+import {
+	effectiveAgentCustomEnvVars,
+	resolveAgentAccountKey,
+	resolveAgentBillingCredential,
+} from '../../../../shared/providerProfiles';
 import { getHomeDir, getHomeDirAsync } from '../../../utils/homeDir';
 
 export interface UseQuotaAccountsOptions {
-	/** Provider session `toolType` that owns this quota surface. */
+	/**
+	 * Provider session `toolType` that owns this quota surface. The env var and
+	 * default account subdir come from `PROVIDER_PROFILE_CONFIGS` keyed by this,
+	 * so a panel cannot attribute an agent to a different account than the
+	 * Agents grid's provider filter does.
+	 */
 	toolType: string;
-	/** Env var that selects the account home (`CLAUDE_CONFIG_DIR` / `CODEX_HOME`). */
-	envVarName: string;
-	/** Default account subdir under $HOME when no env var is set (`.claude` / `.codex`). */
-	defaultSubdir: string;
 	/** Explicit account keys from the parent (normalized internally). */
 	accountKeys: string[];
 	/** Live snapshot map from the provider store (keys are canonical account keys). */
@@ -39,21 +47,23 @@ export interface UseQuotaAccountsOptions {
 
 export interface UseQuotaAccountsResult {
 	configuredAccountKeys: string[];
+	/**
+	 * How many local agents of this provider resolve to each account key.
+	 * Computed in the same pass that builds `configuredAccountKeys` so the badge
+	 * can never disagree with the tab/row list about which account an agent
+	 * belongs to. Accounts with no agent (a cached snapshot, a discovered dir)
+	 * are absent.
+	 *
+	 * SSH-remote agents are NOT counted - see the note on the counting loop below.
+	 */
+	agentCountsByAccount: Record<string, number>;
 	selectedKey: string | null;
 	setSelectedKey: (key: string) => void;
 	effectiveSelectedKey: string | null;
 }
 
 export function useQuotaAccounts(opts: UseQuotaAccountsOptions): UseQuotaAccountsResult {
-	const {
-		toolType,
-		envVarName,
-		defaultSubdir,
-		accountKeys,
-		snapshots,
-		normalizeKey,
-		deriveShortName,
-	} = opts;
+	const { toolType, accountKeys, snapshots, normalizeKey, deriveShortName } = opts;
 	const sessions = useSessionStore((s) => s.sessions);
 
 	// Keep the latest fetchers in refs so the mount-only effects below can call
@@ -102,7 +112,7 @@ export function useQuotaAccounts(opts: UseQuotaAccountsOptions): UseQuotaAccount
 		};
 	}, []);
 
-	// Home dir for the implicit default `~/<defaultSubdir>` account. The
+	// Home dir for the provider's implicit default account dir. The
 	// renderer has no direct fs access; cached IPC fetch returns synchronously
 	// on subsequent renders.
 	const [homeDir, setHomeDir] = useState<string | undefined>(getHomeDir);
@@ -111,22 +121,37 @@ export function useQuotaAccounts(opts: UseQuotaAccountsOptions): UseQuotaAccount
 			getHomeDirAsync()?.then(setHomeDir);
 		}
 	}, [homeDir]);
-	const defaultAccountKey = homeDir ? normalizeKey(`${homeDir}/${defaultSubdir}`) : null;
 
-	const configuredAccountKeys = useMemo(() => {
+	const { configuredAccountKeys, agentCountsByAccount } = useMemo(() => {
 		const keys = new Set<string>();
+		const counts: Record<string, number> = {};
 		for (const key of accountKeys) keys.add(normalizeKey(key));
 		for (const key of discoveredAccountKeys) keys.add(normalizeKey(key));
 		for (const s of sessions) {
 			if (s.toolType !== toolType) continue;
-			const sessionEnv = (s.customEnvVars ?? {}) as Record<string, string>;
-			const merged = { ...agentLevelEnvVars, ...sessionEnv };
-			const dir = merged[envVarName];
-			if (typeof dir === 'string' && dir.length > 0) {
-				keys.add(normalizeKey(dir));
-			} else if (defaultAccountKey) {
-				keys.add(defaultAccountKey);
-			}
+			// SSH-remote agents are skipped entirely: neither counted nor turned
+			// into an account row. Their path names a directory on the remote
+			// host's disk, holding that host's own login, which can be a
+			// different account from this machine's same-named dir (one real
+			// setup had a dir logged into one account locally and another on the
+			// remote). The main-process sampler skips them for the same reason,
+			// and the Agents grid files them under their own `account @ host`
+			// profile, so the chip's count equals the grid it opens.
+			if (s.sessionSshRemoteConfig?.enabled) continue;
+			const env = effectiveAgentCustomEnvVars(
+				s.customEnvVars as Record<string, string> | undefined,
+				agentLevelEnvVars
+			);
+			// An API key, gateway, or cloud provider outranks the config dir's
+			// login, so that agent draws nothing from this plan's quota.
+			if (resolveAgentBillingCredential(toolType, env)) continue;
+			// An agent with no env var runs against the implicit `~/<subdir>`
+			// account, so it belongs to that bucket - unless $HOME hasn't
+			// resolved yet, in which case there is no key to attribute it to.
+			const resolved = resolveAgentAccountKey(toolType, env, homeDir);
+			if (!resolved) continue;
+			keys.add(resolved);
+			counts[resolved] = (counts[resolved] ?? 0) + 1;
 		}
 		// Also include any snapshot key not surfaced in session config - e.g. an
 		// account sampled in a previous run whose session was since deleted.
@@ -149,18 +174,31 @@ export function useQuotaAccounts(opts: UseQuotaAccountsOptions): UseQuotaAccount
 				byFold.set(fold, key);
 			}
 		}
-		return Array.from(byFold.values()).sort((a, b) =>
-			deriveShortName(a).localeCompare(deriveShortName(b))
-		);
+
+		// The counts were tallied per raw spelling, so fold them the same way. A
+		// count left under a spelling that just lost the fold would be stranded:
+		// its key is no longer in the list, and the surviving row would under-report
+		// its agents - exactly the tab/badge disagreement this map exists to prevent.
+		const foldedCounts: Record<string, number> = {};
+		for (const [rawKey, count] of Object.entries(counts)) {
+			const survivor = byFold.get(rawKey.toLowerCase()) ?? rawKey;
+			foldedCounts[survivor] = (foldedCounts[survivor] ?? 0) + count;
+		}
+
+		return {
+			configuredAccountKeys: Array.from(byFold.values()).sort((a, b) =>
+				deriveShortName(a).localeCompare(deriveShortName(b))
+			),
+			agentCountsByAccount: foldedCounts,
+		};
 	}, [
 		accountKeys,
 		discoveredAccountKeys,
 		sessions,
 		agentLevelEnvVars,
 		snapshots,
-		defaultAccountKey,
+		homeDir,
 		toolType,
-		envVarName,
 		normalizeKey,
 		deriveShortName,
 	]);
@@ -180,5 +218,11 @@ export function useQuotaAccounts(opts: UseQuotaAccountsOptions): UseQuotaAccount
 
 	const effectiveSelectedKey = selectedKey ?? configuredAccountKeys[0] ?? null;
 
-	return { configuredAccountKeys, selectedKey, setSelectedKey, effectiveSelectedKey };
+	return {
+		configuredAccountKeys,
+		agentCountsByAccount,
+		selectedKey,
+		setSelectedKey,
+		effectiveSelectedKey,
+	};
 }

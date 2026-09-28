@@ -18,7 +18,12 @@ import {
 } from '../../shared/agentCapabilities';
 import type { UsageSnapshot } from '../agents/claude-mode-selector';
 import type { CodexUsageSnapshot } from '../stores/codexUsageStore';
+import type {
+	CodexResetCreditConsumeResult,
+	CodexResetCreditsDetail,
+} from '../../shared/codexResetCredits';
 import type { KnownAuthDirs } from '../../shared/authPaths';
+import type { KnownEnvVarKeys } from '../../shared/envVarCatalog';
 
 // Re-export for consumers that import from preload. `AgentStatus` is
 // re-exported only (no local usage in this file); TypeScript's
@@ -169,6 +174,14 @@ export function createAgentsApi() {
 		getKnownAuthDirs: (): Promise<KnownAuthDirs> => ipcRenderer.invoke('agents:getKnownAuthDirs'),
 
 		/**
+		 * Return env-var NAMES the user has already set, per provider and
+		 * globally, for the name suggestions in the env-var editors. Values are
+		 * deliberately left behind: several of them are credentials.
+		 */
+		getKnownEnvVarKeys: (): Promise<KnownEnvVarKeys> =>
+			ipcRenderer.invoke('agents:getKnownEnvVarKeys'),
+
+		/**
 		 * Discover available models for agents that support model selection
 		 * (e.g., OpenCode with Ollama)
 		 */
@@ -283,6 +296,33 @@ export function createAgentsApi() {
 		 */
 		getCodexUsageAccountKeys: (): Promise<string[]> =>
 			ipcRenderer.invoke('agents:getCodexUsageAccountKeys'),
+
+		/**
+		 * READ: every rate-limit reset credit one Codex account holds.
+		 *
+		 * The COUNT already rides `getCodexUsageSnapshots()`, so call this only
+		 * when a surface renders the list itself - it is one request per account.
+		 */
+		getCodexResetCredits: (
+			codexHome: string
+		): Promise<{ ok: boolean; detail?: CodexResetCreditsDetail; error?: string }> =>
+			ipcRenderer.invoke('agents:getCodexResetCredits', codexHome),
+
+		/**
+		 * WRITE: redeem one reset credit, reopening that account's consumed usage
+		 * windows immediately.
+		 *
+		 * Irreversible and finite. Pass a stable `idempotencyKey` when the caller
+		 * may retry, so a retried redemption cannot spend a second credit; omitted,
+		 * main mints one for this single attempt. Main re-samples the account's
+		 * quota afterwards, so callers should refresh the usage store on success.
+		 */
+		consumeCodexResetCredit: (
+			codexHome: string,
+			creditId: string,
+			idempotencyKey?: string
+		): Promise<CodexResetCreditConsumeResult> =>
+			ipcRenderer.invoke('agents:consumeCodexResetCredit', codexHome, creditId, idempotencyKey),
 
 		/**
 		 * Trigger a fresh `runStartupUsageSampling()` pass on main so every known

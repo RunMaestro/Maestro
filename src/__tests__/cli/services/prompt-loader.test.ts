@@ -47,6 +47,7 @@ import path from 'path';
 import {
 	_getBundledPromptCandidatesForTests,
 	getCliPrompt,
+	getCliTaskSelectionBlock,
 	_resetCliPromptCacheForTests,
 } from '../../../cli/services/prompt-loader';
 
@@ -158,5 +159,64 @@ describe('CLI prompt-loader', () => {
 		});
 
 		await expect(getCliPrompt('autorun-default')).rejects.toThrow(/Failed to load prompt/);
+	});
+});
+
+/**
+ * The CLI Auto Run engine never substituted `{{TASK_SELECTION_BLOCK}}`, so step
+ * 2 of the default prompt reached the agent as a literal placeholder: it was
+ * handed a template instead of an instruction. These lock the twin of the
+ * desktop's `getTaskSelectionBlock` in place.
+ */
+describe('getCliTaskSelectionBlock', () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+		_resetCliPromptCacheForTests();
+		vi.mocked(fsSync.accessSync).mockReturnValue(undefined);
+	});
+
+	const customized = (id: string, content: string) =>
+		mockReadFile.mockResolvedValue(
+			JSON.stringify({ prompts: { [id]: { content, isModified: true } } })
+		);
+
+	it('loads the per-task block in task mode', async () => {
+		customized('autorun-per-task', 'do exactly one task\n\n');
+		expect(await getCliTaskSelectionBlock('task')).toBe('do exactly one task');
+	});
+
+	it('loads the per-document block in document mode', async () => {
+		customized('autorun-per-document', 'work the whole document\n');
+		expect(await getCliTaskSelectionBlock('document')).toBe('work the whole document');
+	});
+
+	it('defaults to the per-task block when the mode is unset', async () => {
+		customized('autorun-per-task', 'one task only');
+		expect(await getCliTaskSelectionBlock(undefined)).toBe('one task only');
+	});
+
+	it('leaves the document block untouched when the whole remainder shares one setting', async () => {
+		customized('autorun-per-document', 'work the whole document');
+		expect(await getCliTaskSelectionBlock('document', { count: 4, total: 4 })).toBe(
+			'work the whole document'
+		);
+	});
+
+	it('names the boundary when the document changes settings partway down', async () => {
+		customized('autorun-per-document', 'work the whole document');
+		const block = await getCliTaskSelectionBlock('document', { count: 2, total: 5 });
+		expect(block).toContain('work the whole document');
+		expect(block).toContain('ONLY the next 2 unchecked tasks');
+	});
+
+	it('never leaks an unexpanded placeholder into the prompt', async () => {
+		customized('autorun-default', 'step 1\n\n{{TASK_SELECTION_BLOCK}}\n\nstep 3');
+		const raw = await getCliPrompt('autorun-default');
+		_resetCliPromptCacheForTests();
+		customized('autorun-per-document', 'work the whole document');
+		const block = await getCliTaskSelectionBlock('document');
+		const finalPrompt = raw.replace(/\{\{TASK_SELECTION_BLOCK\}\}/gi, block);
+		expect(finalPrompt).not.toContain('{{');
+		expect(finalPrompt).toContain('work the whole document');
 	});
 });

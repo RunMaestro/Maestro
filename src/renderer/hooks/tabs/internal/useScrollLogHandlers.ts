@@ -1,8 +1,10 @@
 import { useCallback } from 'react';
-import { selectActiveSession, updateAiTab, useSessionStore } from '../../../stores/sessionStore';
+import { selectActiveSession, useSessionStore } from '../../../stores/sessionStore';
+import { useTabStore } from '../../../stores/tabStore';
 import type { Session } from '../../../types';
 import { getActiveTab } from '../../../utils/tabHelpers';
 import { logger } from '../../../utils/logger';
+import { deleteShellCommandLog } from './deleteShellCommandLog';
 import type { ScrollLogHandlersReturn } from './types';
 
 export function useScrollLogHandlers(): ScrollLogHandlersReturn {
@@ -19,6 +21,27 @@ export function useScrollLogHandlers(): ScrollLogHandlersReturn {
 		if (logIndex === -1) return null;
 
 		const log = logs[logIndex];
+
+		// A command-mode card is self-contained: it owns its command AND its
+		// output, and the agent never saw either. So it deletes as a single entry
+		// rather than as the span-to-the-next-user-message the branch below walks,
+		// and it must NOT reach the provider-transcript deletion down there - there
+		// is no message pair in the agent's session to delete.
+		if (log.shellCommand) {
+			if (!isAIMode || !currentActiveTab) return null;
+			setSessions((prev: Session[]) =>
+				deleteShellCommandLog(prev, {
+					sessionId: currentSession.id,
+					tabId: currentActiveTab.id,
+					logId,
+					command: log.shellCommand!.command,
+				})
+			);
+			// No scroll target: removing one card should leave the reader where
+			// they are, not jump them to some other message.
+			return null;
+		}
+
 		if (log.source !== 'user') return null;
 
 		let endIndex = logs.length;
@@ -104,13 +127,17 @@ export function useScrollLogHandlers(): ScrollLogHandlersReturn {
 		return nextUserCommandIndex;
 	}, []);
 
+	// Both scroll handlers resolve the ACTIVE AI tab and then defer to the
+	// tab-id-keyed store actions. A tiled AI pane can't use these - a wheel scroll
+	// never focuses a pane, so a background pane would write its offset onto the
+	// focused tab - so it calls the same store actions with its own tab id instead.
 	const handleScrollPositionChange = useCallback((scrollTop: number) => {
 		const session = selectActiveSession(useSessionStore.getState());
 		if (!session) return;
 		if (session.inputMode === 'ai') {
 			const currentActiveTab = getActiveTab(session);
 			if (!currentActiveTab) return;
-			updateAiTab(session.id, currentActiveTab.id, (tab) => ({ ...tab, scrollTop }));
+			useTabStore.getState().setAiTabScrollTop(currentActiveTab.id, scrollTop);
 		} else {
 			useSessionStore.getState().updateSession(session.id, { terminalScrollTop: scrollTop });
 		}
@@ -119,15 +146,10 @@ export function useScrollLogHandlers(): ScrollLogHandlersReturn {
 	const handleAtBottomChange = useCallback((isAtBottom: boolean) => {
 		const session = selectActiveSession(useSessionStore.getState());
 		if (!session) return;
-		if (session.inputMode === 'ai') {
-			const currentActiveTab = getActiveTab(session);
-			if (!currentActiveTab) return;
-			updateAiTab(session.id, currentActiveTab.id, (tab) => ({
-				...tab,
-				isAtBottom,
-				hasUnread: isAtBottom ? false : tab.hasUnread,
-			}));
-		}
+		if (session.inputMode !== 'ai') return;
+		const currentActiveTab = getActiveTab(session);
+		if (!currentActiveTab) return;
+		useTabStore.getState().setAiTabAtBottom(currentActiveTab.id, isAtBottom);
 	}, []);
 
 	return {

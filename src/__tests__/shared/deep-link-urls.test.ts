@@ -150,3 +150,38 @@ describe('buildFileDeepLink', () => {
 		expect(buildFileDeepLink('s', '/x.md', 3)).toMatch(/#L3$/);
 	});
 });
+
+describe('parseMaestroDeepLink with malformed percent encoding', () => {
+	it('preserves the raw segment instead of dropping the whole link', () => {
+		expect(parseMaestroDeepLink('maestro://session/abc%')).toEqual({
+			action: 'session',
+			sessionId: 'abc%',
+		});
+		expect(parseMaestroDeepLink('maestro://session/s1/tab/tab%zz')).toEqual({
+			action: 'session',
+			sessionId: 's1',
+			tabId: 'tab%zz',
+		});
+		expect(parseMaestroDeepLink('maestro://group/g%E0%A4')).toEqual({
+			action: 'group',
+			groupId: 'g%E0%A4',
+		});
+	});
+
+	it('still resolves file links whose path has a stray percent sign', () => {
+		expect(parseMaestroDeepLink('maestro://file/sess/report%20100%#L12')).toEqual({
+			action: 'file',
+			sessionId: 'sess',
+			filePath: 'report%20100%',
+			line: 12,
+		});
+	});
+
+	it('decodes the segments that are well-formed even when a sibling is not', () => {
+		expect(parseMaestroDeepLink('maestro://file/my%20sess/bad%')).toEqual({
+			action: 'file',
+			sessionId: 'my sess',
+			filePath: 'bad%',
+		});
+	});
+});
