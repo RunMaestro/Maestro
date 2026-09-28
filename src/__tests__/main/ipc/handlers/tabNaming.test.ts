@@ -12,6 +12,10 @@ import type { ProcessManager } from '../../../../main/process-manager';
 import type { AgentDetector, AgentConfig } from '../../../../main/agents';
 
 // Mock the logger
+vi.mock('../../../../main/utils/sentry', () => ({
+	captureException: vi.fn(),
+}));
+
 vi.mock('../../../../main/utils/logger', () => ({
 	logger: {
 		info: vi.fn(),
@@ -170,7 +174,13 @@ describe('Tab Naming IPC Handlers', () => {
 		};
 
 		mockSettingsStore = {
-			get: vi.fn().mockReturnValue({}),
+			// Return the provided default for utility-agent keys (null) so the
+			// resolver falls back to the session agent; other keys default to {}.
+			get: vi.fn((key: string, defaultValue?: unknown) =>
+				key === 'utilityAgentId' || key === 'utilityModelId'
+					? (defaultValue ?? null)
+					: (defaultValue ?? {})
+			),
 			set: vi.fn(),
 		};
 
@@ -259,6 +269,84 @@ describe('Tab Naming IPC Handlers', () => {
 
 			const result = await resultPromise;
 			expect(result).toBe('Login Form Implementation');
+		});
+
+		it('routes naming to the configured utility agent instead of the session agent', async () => {
+			// A cheaper/faster utility agent (codex) is configured; tab naming for a
+			// claude-code session must resolve to codex for detection AND the spawn.
+			const mockCodexAgent: AgentConfig = {
+				id: 'codex',
+				name: 'OpenAI Codex',
+				command: 'codex',
+				path: '/usr/local/bin/codex',
+				args: [],
+			};
+			mockAgentDetector.getAgent.mockResolvedValue(mockCodexAgent);
+			mockSettingsStore.get.mockImplementation((key: string, defaultValue?: unknown) => {
+				if (key === 'utilityAgentId') return 'codex';
+				if (key === 'utilityModelId') return 'gpt-4o-mini';
+				return defaultValue ?? {};
+			});
+
+			let onDataCallback: ((sessionId: string, data: string) => void) | undefined;
+			let onExitCallback: ((sessionId: string) => void) | undefined;
+			mockProcessManager.on.mockImplementation(
+				(event: string, callback: (...args: any[]) => void) => {
+					if (event === 'data') onDataCallback = callback;
+					if (event === 'exit') onExitCallback = callback;
+				}
+			);
+
+			const resultPromise = invokeHandler('tabNaming:generateTabName', {
+				userMessage: 'Help me implement a login form',
+				agentType: 'claude-code',
+				cwd: '/test/project',
+			});
+
+			await vi.waitFor(() => {
+				expect(mockProcessManager.spawn).toHaveBeenCalled();
+			});
+
+			// Detection and spawn must both use the utility agent, not claude-code.
+			expect(mockAgentDetector.getAgent).toHaveBeenCalledWith('codex');
+			expect(mockProcessManager.spawn).toHaveBeenCalledWith(
+				expect.objectContaining({ toolType: 'codex' })
+			);
+
+			onDataCallback?.('tab-naming-mock-uuid-1234', 'Login Form Implementation');
+			onExitCallback?.('tab-naming-mock-uuid-1234');
+			await resultPromise;
+		});
+
+		it('uses the session agent when no utility agent is configured (backward compatible)', async () => {
+			// Default settings (utilityAgentId = null) must leave the session agent untouched.
+			let onDataCallback: ((sessionId: string, data: string) => void) | undefined;
+			let onExitCallback: ((sessionId: string) => void) | undefined;
+			mockProcessManager.on.mockImplementation(
+				(event: string, callback: (...args: any[]) => void) => {
+					if (event === 'data') onDataCallback = callback;
+					if (event === 'exit') onExitCallback = callback;
+				}
+			);
+
+			const resultPromise = invokeHandler('tabNaming:generateTabName', {
+				userMessage: 'Help me implement a login form',
+				agentType: 'claude-code',
+				cwd: '/test/project',
+			});
+
+			await vi.waitFor(() => {
+				expect(mockProcessManager.spawn).toHaveBeenCalled();
+			});
+
+			expect(mockAgentDetector.getAgent).toHaveBeenCalledWith('claude-code');
+			expect(mockProcessManager.spawn).toHaveBeenCalledWith(
+				expect.objectContaining({ toolType: 'claude-code' })
+			);
+
+			onDataCallback?.('tab-naming-mock-uuid-1234', 'Login Form Implementation');
+			onExitCallback?.('tab-naming-mock-uuid-1234');
+			await resultPromise;
 		});
 
 		it('forwards promptArgs and noPromptSeparator so agents like copilot-cli receive -p <prompt>', async () => {
@@ -1365,9 +1453,11 @@ describe('Tab Naming IPC Handlers', () => {
 			// (CLAUDE_CODE_CONFIG_DIR / ANTHROPIC_API_KEY). Tab naming used to drop both,
 			// so a working chat could still fail naming with "Not logged in".
 			mockAgentDetector.getAgent.mockResolvedValue(interactiveClaudeAgent);
-			mockSettingsStore.get.mockImplementation((key: string, fallback?: unknown) =>
-				key === 'shellEnvVars' ? { CLAUDE_CONFIG_DIR: '/home/u/.claude' } : (fallback ?? {})
-			);
+			mockSettingsStore.get.mockImplementation((key: string, fallback?: unknown) => {
+				if (key === 'shellEnvVars') return { CLAUDE_CONFIG_DIR: '/home/u/.claude' };
+				if (key === 'utilityAgentId' || key === 'utilityModelId') return fallback ?? null;
+				return fallback ?? {};
+			});
 			const finish = wireProcessEvents();
 
 			const resultPromise = invokeHandler('tabNaming:generateTabName', {
@@ -1472,6 +1562,60 @@ describe('Tab Naming IPC Handlers', () => {
 			await resultPromise;
 		});
 	});
+
+	describe('spawn failures (MAESTRO-X4)', () => {
+		// child_process.spawn throws synchronously for an unusable binary. The
+		// call sits in the naming Promise's executor, and the enclosing
+		// try/catch returns that promise rather than awaiting it, so the throw
+		// escaped as a hard IPC rejection for a purely cosmetic feature.
+		async function spawnThrowing(error: unknown) {
+			const { captureException } = await import('../../../../main/utils/sentry');
+			(captureException as Mock).mockClear();
+			mockProcessManager.spawn.mockImplementation(() => {
+				throw error;
+			});
+
+			const result = await invokeHandler('tabNaming:generateTabName', {
+				userMessage: 'Help me implement a login form',
+				agentType: 'claude-code',
+				cwd: '/test/project',
+			});
+			return { result, captureException: captureException as Mock };
+		}
+
+		function errnoError(message: string, code: string): NodeJS.ErrnoException {
+			const err = new Error(message) as NodeJS.ErrnoException;
+			err.code = code;
+			return err;
+		}
+
+		it('resolves to null instead of rejecting when spawn throws EFTYPE', async () => {
+			const { result } = await spawnThrowing(errnoError('spawn EFTYPE', 'EFTYPE'));
+			expect(result).toBeNull();
+		});
+
+		it('does not page Sentry for an unusable agent binary', async () => {
+			for (const code of ['ENOENT', 'EFTYPE', 'EACCES', 'EPERM', 'ENOEXEC']) {
+				const { result, captureException } = await spawnThrowing(errnoError(`spawn ${code}`, code));
+				expect(result).toBeNull();
+				expect(captureException).not.toHaveBeenCalled();
+			}
+		});
+
+		it('still reports an unexpected spawn error to Sentry', async () => {
+			const { result, captureException } = await spawnThrowing(
+				new TypeError('spawnCommand is not a string')
+			);
+			expect(result).toBeNull();
+			expect(captureException).toHaveBeenCalledTimes(1);
+		});
+
+		it('removes its process listeners when the spawn fails', async () => {
+			await spawnThrowing(errnoError('spawn EFTYPE', 'EFTYPE'));
+			expect(mockProcessManager.off).toHaveBeenCalledWith('data', expect.any(Function));
+			expect(mockProcessManager.off).toHaveBeenCalledWith('exit', expect.any(Function));
+		});
+	});
 });
 
 describe('tab naming diagnostic logging', () => {
@@ -1536,7 +1680,13 @@ describe('tab naming diagnostic logging', () => {
 		};
 
 		mockSettingsStore = {
-			get: vi.fn().mockReturnValue({}),
+			// Return the provided default for utility-agent keys (null) so the
+			// resolver falls back to the session agent; other keys default to {}.
+			get: vi.fn((key: string, defaultValue?: unknown) =>
+				key === 'utilityAgentId' || key === 'utilityModelId'
+					? (defaultValue ?? null)
+					: (defaultValue ?? {})
+			),
 			set: vi.fn(),
 		};
 
@@ -1811,7 +1961,11 @@ describe('extractTabName utility', () => {
 			};
 
 			mockSettingsStore = {
-				get: vi.fn().mockReturnValue({}),
+				get: vi.fn((key: string, defaultValue?: unknown) =>
+					key === 'utilityAgentId' || key === 'utilityModelId'
+						? (defaultValue ?? null)
+						: (defaultValue ?? {})
+				),
 				set: vi.fn(),
 			};
 

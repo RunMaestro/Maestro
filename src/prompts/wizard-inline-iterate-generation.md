@@ -61,6 +61,26 @@ Each Auto Run document MUST follow this exact format:
 - [ ] Continue with more tasks...
 ```
 
+## CRITICAL: Human Steps Must NEVER Be Checkboxes
+
+Every `- [ ]` task is dispatched to an AI agent, so a checkbox that needs a **person** cannot be completed: the run either **stalls forever** waiting on someone who was never asked, or the agent ticks a box for work it never did.
+
+Before writing any `- [ ]`, ask: _can an AI agent with shell, file, and network access finish this alone?_ If no, it is not a checkbox.
+
+**Never checkbox these:** manual action ("manually test", "by hand"), visual judgment ("visually verify", "confirm it looks right"), waiting on a person ("ask the user", "confirm with the team"), approval gates ("get sign-off", "human review"), credentials or accounts a person must obtain ("sign up for an API key"), or physical/out-of-band work.
+
+**Use one of these two instead:**
+
+1. **The run must pause for a person** - emit a HITL gate marker on its own line above the dependent tasks. The engine pauses there, shows the reason in the Auto Run panel, and waits for the user to resume - a deliberate, visible pause instead of a silent stall:
+
+   ```markdown
+   <!-- MAESTRO:HITL reason="Add STRIPE_SECRET_KEY to .env before the billing tasks run" artifact=".env" -->
+   ```
+
+2. **The work simply isn't the engine's job** - list it as plain `-` bullets under a trailing `## Manual Follow-Up (not executed by Auto Run)` section the engine never reads.
+
+Note the difference from a legitimate verification task: "Run `npm run lint` and `npm test`, fix any failures" is a checkbox. "Visually confirm the layout looks polished" is not.
+
 ## Task Writing Guidelines
 
 ### Token Efficiency is Critical
@@ -80,6 +100,28 @@ Each task should be:
 - **Actionable**: Clear what needs to be done
 - **Verifiable**: You can tell when it's complete
 - **Autonomous**: Can be done without asking the user questions
+
+### Model Tier and Effort
+
+A marker sets the model tier and effort level for the work below it. The placement is the scope: on its own line it applies from there down (above the first task, that is the whole document); at the end of a task line it applies to that one task only.
+
+```markdown
+<!-- MAESTRO:MODEL tier="low" effort="low" -->
+
+- [ ] Catalogue every call site of the auth middleware
+- [ ] Design the migration <!-- MAESTRO:MODEL tier="high" effort="high" -->
+- [ ] Apply the mechanical renames
+```
+
+Both attributes take `low`, `medium`, or `high` - ladder positions, never provider-specific values like `max` or a model name. Use `tier="high" effort="high"` for architecture, planning, and subtle debugging; `tier="low" effort="low"` for mechanical work; nothing at all for ordinary implementation, which is most tasks. Do not decorate every task - a marker on all of them says nothing about which ones matter.
+
+Every marker must also carry a `reason` justifying both axes - at most three sentences, plain text, and no double quotes inside the value (an inner `"` truncates it):
+
+```markdown
+- [ ] Design the migration <!-- MAESTRO:MODEL tier="high" effort="high" reason="The ordering of these schema changes decides whether a rollback is possible, and the constraint is easy to miss. Worth the strongest model at full effort." -->
+```
+
+Say what makes the work hard or mechanical, not what the levels are. The reason does not affect how the task runs; it is shown behind an ⓘ on the pill so the choice can be reviewed later.
 
 ### Grouping Rules
 

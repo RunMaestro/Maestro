@@ -8,7 +8,13 @@
  * bridges to it. Folders dropped from the OS arrive as a single `File` entry
  * (the directory itself); the resolved path points at the folder and the main
  * process copies it recursively.
+ *
+ * In the web-desktop (browser) build there is no `webUtils` and no path to
+ * recover, so `uploadPathlessFile` uploads the bytes to the machine running
+ * Maestro instead.
  */
+
+import { generateId } from './ids';
 
 /** True when a drag carries OS files (as opposed to an internal element drag). */
 export function dragHasOsFiles(dataTransfer: DataTransfer | null): boolean {
@@ -30,4 +36,86 @@ export function getDroppedPaths(dataTransfer: DataTransfer | null): string[] {
 		if (path) out.push(path);
 	}
 	return out;
+}
+
+/**
+ * Largest browser upload we accept. The bytes travel to the host as base64
+ * inside a single WebSocket bridge message, so an unbounded file would stall
+ * the bridge for every other call.
+ */
+export const MAX_BROWSER_UPLOAD_BYTES = 25 * 1024 * 1024;
+
+/** Read a `File` as raw base64, with the `data:<mime>;base64,` prefix stripped. */
+function readFileAsBase64(file: File): Promise<string> {
+	return new Promise((resolve, reject) => {
+		const reader = new FileReader();
+		reader.onload = () => {
+			const result = typeof reader.result === 'string' ? reader.result : '';
+			const comma = result.indexOf(',');
+			if (comma === -1) {
+				reject(new Error(`Could not read ${file.name}`));
+				return;
+			}
+			resolve(result.slice(comma + 1));
+		};
+		// Folders dragged into a browser arrive as `File` entries that cannot be
+		// read, so this is the folder case as well as genuine read failures.
+		reader.onerror = () => reject(new Error(`Could not read ${file.name}`));
+		reader.readAsDataURL(file);
+	});
+}
+
+/**
+ * Give every upload its own filename.
+ *
+ * `attachments:save` writes straight to `<attachments>/<sessionId>/<filename>`
+ * with no collision handling, so two different files dropped under the same
+ * name (a `report.pdf` from two different folders, say) would leave the first
+ * drop's `@mention` silently pointing at the second file's bytes. A token from
+ * the shared id generator keeps the original name readable in the mention
+ * while making the write non-destructive.
+ *
+ * The token is truncated because the whole filename lands in the user's draft
+ * as an `@mention` they have to read past. 48 bits is far more than the job
+ * needs: two names only ever collide within one session's attachments
+ * directory and only when the base name already matches, so the space being
+ * drawn from is a handful of same-named drops, not the whole store.
+ */
+function uniqueAttachmentName(name: string): string {
+	const token = generateId().replace(/-/g, '').slice(0, 12);
+	const dot = name.lastIndexOf('.');
+	// `dot <= 0` covers both "no extension" and a leading-dot dotfile, where
+	// everything before the dot is the name rather than the extension.
+	if (dot <= 0) return `${name}-${token}`;
+	return `${name.slice(0, dot)}-${token}${name.slice(dot)}`;
+}
+
+/**
+ * Copy a dropped `File` that has no filesystem path onto the machine running
+ * Maestro, and resolve with the absolute path it landed on.
+ *
+ * The web-desktop build runs the renderer in a plain browser, where `File`
+ * objects carry no path (`getPathForFile` returns `''`) and the file may not
+ * even live on the same machine as the agent. Uploading the bytes into the
+ * session's attachments directory gives the agent a real path to read. Rejects
+ * with a user-readable message so callers can surface the failure instead of
+ * dropping the file silently.
+ *
+ * @param ownerId - Session (or group chat) id the attachment belongs to.
+ */
+export async function uploadPathlessFile(file: File, ownerId: string): Promise<string> {
+	if (file.size > MAX_BROWSER_UPLOAD_BYTES) {
+		const limitMb = Math.round(MAX_BROWSER_UPLOAD_BYTES / (1024 * 1024));
+		throw new Error(`${file.name} is larger than the ${limitMb} MB upload limit`);
+	}
+	const base64 = await readFileAsBase64(file);
+	const result = await window.maestro.attachments.save(
+		ownerId,
+		base64,
+		uniqueAttachmentName(file.name)
+	);
+	if (!result.success || !result.path) {
+		throw new Error(result.error || `Could not attach ${file.name}`);
+	}
+	return result.path;
 }

@@ -4,7 +4,7 @@
  */
 
 import React from 'react';
-import { Zap, Bot, Save, RotateCcw, Check, AlertTriangle } from 'lucide-react';
+import { Zap, Bot, Save, RotateCcw, Check, AlertTriangle, X } from 'lucide-react';
 import type { Theme } from '../../types';
 import type { CuePipeline } from '../../../shared/cue-pipeline-types';
 import { PipelineSelector } from './PipelineSelector';
@@ -30,6 +30,11 @@ export interface PipelineToolbarProps {
 	handleSave: () => void;
 	handleDiscard: () => void;
 	validationErrors: string[];
+	/** Agent name the All Pipelines view is currently narrowed to, if any. */
+	scopeLabel?: string | null;
+	/** How many pipelines the scope leaves visible. */
+	scopePipelineCount?: number;
+	onClearScope?: () => void;
 }
 
 export const PipelineToolbar = React.memo(function PipelineToolbar({
@@ -51,6 +56,9 @@ export const PipelineToolbar = React.memo(function PipelineToolbar({
 	handleSave,
 	handleDiscard,
 	validationErrors,
+	scopeLabel,
+	scopePipelineCount = 0,
+	onClearScope,
 }: PipelineToolbarProps) {
 	return (
 		<>
@@ -77,6 +85,34 @@ export const PipelineToolbar = React.memo(function PipelineToolbar({
 						<Zap size={12} />
 						Triggers
 					</button>
+
+					{scopeLabel && (
+						<span
+							data-testid="pipeline-scope-chip"
+							className="flex items-center gap-1 px-2 py-1 rounded text-xs"
+							style={{
+								backgroundColor: `${theme.colors.accent}15`,
+								color: theme.colors.accent,
+								border: `1px solid ${theme.colors.accent}40`,
+							}}
+						>
+							{scopeLabel}
+							<span style={{ opacity: 0.7 }}>
+								· {scopePipelineCount} pipeline{scopePipelineCount === 1 ? '' : 's'}
+							</span>
+							{onClearScope && (
+								<button
+									onClick={onClearScope}
+									className="flex items-center"
+									style={{ color: 'inherit', cursor: 'pointer' }}
+									title="Show all pipelines"
+									aria-label="Show all pipelines"
+								>
+									<X size={11} />
+								</button>
+							)}
+						</span>
+					)}
 				</div>
 				<div className="flex items-center gap-2">
 					<PipelineSelector

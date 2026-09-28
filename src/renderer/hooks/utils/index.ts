@@ -5,6 +5,9 @@
  * and persistence. These hooks have no dependencies on other hook modules.
  */
 
+// Identity-stable callback (keeps a rebuilt callback from remounting a subtree)
+export { useStableCallback } from './useStableCallback';
+
 // Debounce and throttle utilities
 export { useDebouncedValue, useThrottledCallback, useDebouncedCallback } from './useThrottle';
 

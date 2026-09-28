@@ -27,6 +27,7 @@ import { HistoryPanel, HistoryPanelHandle } from './HistoryPanel';
 import { AutoRun, AutoRunHandle } from './AutoRun';
 import { AutoRunExpandedModal } from './AutoRun/AutoRunExpandedModal';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
+import { shortcutSuffix } from './ui/ShortcutHint';
 import { ConfirmModal } from './ConfirmModal';
 import { useResizablePanel } from '../hooks';
 import { useAutoRunAutoFollow } from '../hooks/batch/useAutoRunAutoFollow';
@@ -34,16 +35,36 @@ import { useUIStore } from '../stores/uiStore';
 import { useSettingsStore } from '../stores/settingsStore';
 import { useFileExplorerStore } from '../stores/fileExplorerStore';
 import { useBatchStore } from '../stores/batchStore';
-import { useThoughtStreamStore } from '../stores/thoughtStreamStore';
+import { useThoughtStreamStore, selectActivityCount } from '../stores/thoughtStreamStore';
 import { useSessionStore, selectActiveSession } from '../stores/sessionStore';
 import { useWindowOwnsSession } from '../contexts/WindowContext';
+import { notifyToast } from '../stores/notificationStore';
+import { isAutoRunDocumentLocked, reconcileDiskContent } from '../utils/autoRunDraft';
 import type { FileNode } from '../types/fileTree';
-import { RIGHT_PANEL_MIN_WIDTH, RIGHT_PANEL_MAX_WIDTH } from '../constants/rightPanel';
+import type { FileClickOptions } from '../hooks/ui/useAppHandlers';
+import {
+	RIGHT_PANEL_MIN_WIDTH,
+	RIGHT_PANEL_MAX_WIDTH,
+	RIGHT_PANEL_TAB_FONT_SIZE,
+	RIGHT_PANEL_TAB_LINE_HEIGHT,
+} from '../constants/rightPanel';
 import { PluginUiItemsSlot } from './plugins/PluginUiItemsSlot';
+import { autoRunActiveElapsedMs } from '../hooks/batch/useTimeTracking';
+import {
+	MIRRORED_RUN_CONTROL_TITLE,
+	useIsMirroredBatchRun,
+} from '../hooks/batch/useAutoRunStateMirror';
 
 export interface RightPanelHandle {
 	refreshHistoryPanel: () => void;
 	focusAutoRun: () => void;
+	/**
+	 * Put real DOM focus on the file tree. The History and Auto Run tabs take
+	 * focus when they become active; Files did not, so "go to files" left the
+	 * caret behind in whatever editor the user came from while the app believed
+	 * the Files tab was focused.
+	 */
+	focusFileTree: () => void;
 	toggleAutoRunExpanded: () => void;
 	openAutoRunResetTasksModal: () => void;
 	getAutoRunCompletedTaskCount: () => number;
@@ -71,7 +92,7 @@ interface RightPanelProps {
 		activeSessionId: string,
 		setSessions: React.Dispatch<React.SetStateAction<Session[]>>
 	) => void;
-	handleFileClick: (node: FileNode, path: string, activeSession: Session) => Promise<void>;
+	handleFileClick: (node: FileNode, path: string, options?: FileClickOptions) => Promise<void>;
 	expandAllFolders: (
 		activeSessionId: string,
 		activeSession: Session,
@@ -114,11 +135,11 @@ interface RightPanelProps {
 	onResumeAfterError?: () => void;
 	onJumpToAgentSession?: (agentSessionId: string) => void;
 	onResumeSession?: (agentSessionId: string) => void;
-	onOpenSessionAsTab?: (agentSessionId: string, projectPath?: string) => void;
+	onOpenSessionAsTab?: (agentSessionId: string, projectPath?: string, sessionName?: string) => void;
 
 	// Modal handlers
 	onOpenAboutModal?: () => void;
-	onFileClick?: (path: string) => void;
+	onFileClick?: (path: string, options?: { openInNewTab?: boolean }) => void;
 	onOpenMarketplace?: () => void;
 	onLaunchWizard?: () => void;
 
@@ -177,16 +198,20 @@ export const RightPanel = memo(
 		const batchError = useBatchStore(
 			useCallback((s) => s.batchRunStates[sessionId ?? '']?.error, [sessionId])
 		);
+		// A run mirrored from another Maestro window renders in full but is not
+		// steerable from here - its loop and the refs these controls poke live in
+		// the window that started it.
+		const isMirroredRun = useIsMirroredBatchRun(sessionId);
 
 		// Thought Stream: brain button on the Auto Run card opens a persistent,
-		// searchable view of the agent's live thinking stream for this session.
-		// While capturing, the same button doubles as the (minimized) status
-		// indicator - it animates and reads "Capturing", and clicking re-expands
-		// the panel. There is no separate floating pill.
+		// searchable view of the agent's thinking stream for this session.
+		// Capture is ambient, so the button reports how much reasoning is already
+		// buffered and waiting to be read - clicking opens (or re-expands) the
+		// panel on that history. There is no separate floating pill.
 		const openThoughtStream = useThoughtStreamStore((s) => s.openPanel);
-		const isCapturingThoughts = useThoughtStreamStore(
-			(s) => !!sessionId && !!s.capturing[sessionId]
-		);
+		// Reasoning AND tool calls - a run that only acted and never narrated still
+		// has a feed worth opening, so the label must not promise thoughts alone.
+		const bufferedActivity = useThoughtStreamStore(selectActivityCount(sessionId));
 
 		// === Props (domain-hook handlers + theme + batch state + refs) ===
 		const {
@@ -248,7 +273,7 @@ export const RightPanel = memo(
 			side: 'right',
 		});
 
-		// Elapsed time for Auto Run display - tracks wall clock time from startTime
+		// Elapsed time for Auto Run display - active run time, excluding sleep and pauses
 		const [elapsedTime, setElapsedTime] = useState<string>('');
 
 		// Kill confirmation modal for force-killing during Auto Run stop
@@ -265,21 +290,59 @@ export const RightPanel = memo(
 		const prevSessionIdRef = useRef(session?.id);
 		const prevSelectedFileRef = useRef(session?.autoRunSelectedFile);
 
+		// A run driving the document owns it: disk replaces the draft outright.
+		const autoRunDiskWins = isAutoRunDocumentLocked(
+			currentSessionBatchState,
+			session?.autoRunSelectedFile ?? null,
+			errorPaused
+		);
+
 		useEffect(() => {
 			const contentChanged = autoRunContent !== prevAutoRunContentRef.current;
 			const versionChanged = autoRunContentVersion !== prevAutoRunContentVersionRef.current;
 			const sessionChanged = session?.id !== prevSessionIdRef.current;
 			const fileChanged = session?.autoRunSelectedFile !== prevSelectedFileRef.current;
+			if (!contentChanged && !versionChanged && !sessionChanged && !fileChanged) return;
 
-			if (contentChanged || versionChanged || sessionChanged || fileChanged) {
+			prevAutoRunContentRef.current = autoRunContent;
+			prevAutoRunContentVersionRef.current = autoRunContentVersion;
+			prevSessionIdRef.current = session?.id;
+			prevSelectedFileRef.current = session?.autoRunSelectedFile;
+
+			if (sessionChanged || fileChanged) {
 				setSharedLocalContent(autoRunContent);
 				setSharedSavedContent(autoRunContent);
-				prevAutoRunContentRef.current = autoRunContent;
-				prevAutoRunContentVersionRef.current = autoRunContentVersion;
-				prevSessionIdRef.current = session?.id;
-				prevSelectedFileRef.current = session?.autoRunSelectedFile;
+				return;
 			}
-		}, [autoRunContent, autoRunContentVersion, session?.id, session?.autoRunSelectedFile]);
+
+			// Same document re-read from disk. This layer holds the draft while the
+			// Auto Run tab is hidden, so it applies the same rule the editor does,
+			// and it is the one place that tells the user about a conflict.
+			const next = reconcileDiskContent({
+				draft: sharedLocalContent,
+				saved: sharedSavedContent,
+				incoming: autoRunContent,
+				diskWins: autoRunDiskWins,
+			});
+			setSharedLocalContent(next.draft);
+			setSharedSavedContent(next.saved);
+			if (next.conflict) {
+				notifyToast({
+					color: 'orange',
+					title: 'Auto Run document changed on disk',
+					message:
+						'Your unsaved edits were kept. Save to overwrite it, or Revert to load the new version.',
+				});
+			}
+		}, [
+			autoRunContent,
+			autoRunContentVersion,
+			session?.id,
+			session?.autoRunSelectedFile,
+			sharedLocalContent,
+			sharedSavedContent,
+			autoRunDiskWins,
+		]);
 
 		// Auto-follow: automatically select the active document during batch runs
 		const { autoFollowEnabled, setAutoFollowEnabled } = useAutoRunAutoFollow({
@@ -331,17 +394,26 @@ export const RightPanel = memo(
 			}
 		}, []);
 
-		// Update elapsed time display using wall clock time from startTime
+		// Update elapsed time display from the run's tracker fields, so the live
+		// counter matches the duration the run actually records: machine sleep and
+		// paused spans (error, HITL gate) are excluded, and a paused run's clock stops.
 		// Uses an interval to update every second while running
+		const runStartTime = currentSessionBatchState?.startTime;
+		const runAccumulatedMs = currentSessionBatchState?.accumulatedElapsedMs;
+		const runActiveSince = currentSessionBatchState?.lastActiveTimestamp;
 		useEffect(() => {
-			if (!currentSessionBatchState?.isRunning || !currentSessionBatchState?.startTime) {
+			if (!currentSessionBatchState?.isRunning || !runStartTime) {
 				setElapsedTime('');
 				return;
 			}
 
 			// Calculate elapsed immediately
 			const updateElapsed = () => {
-				const elapsed = Date.now() - currentSessionBatchState.startTime!;
+				const elapsed = autoRunActiveElapsedMs({
+					startTime: runStartTime,
+					accumulatedElapsedMs: runAccumulatedMs,
+					lastActiveTimestamp: runActiveSince,
+				});
 				setElapsedTime(formatElapsed(elapsed));
 			};
 
@@ -349,7 +421,13 @@ export const RightPanel = memo(
 			const interval = setInterval(updateElapsed, 1000);
 
 			return () => clearInterval(interval);
-		}, [currentSessionBatchState?.isRunning, currentSessionBatchState?.startTime, formatElapsed]);
+		}, [
+			currentSessionBatchState?.isRunning,
+			runStartTime,
+			runAccumulatedMs,
+			runActiveSince,
+			formatElapsed,
+		]);
 
 		// Expose methods to parent
 		useImperativeHandle(
@@ -360,6 +438,13 @@ export const RightPanel = memo(
 				},
 				focusAutoRun: () => {
 					autoRunRef.current?.focus();
+				},
+				focusFileTree: () => {
+					// Deferred a frame so the panel is open and the tree is mounted
+					// before we reach for it, matching the history/autorun effects.
+					requestAnimationFrame(() => {
+						fileTreeContainerRef.current?.focus();
+					});
 				},
 				toggleAutoRunExpanded,
 				openAutoRunResetTasksModal: () => {
@@ -403,6 +488,14 @@ export const RightPanel = memo(
 			selectedFile: session.autoRunSelectedFile || null,
 			documentList: autoRunDocumentList,
 			documentTree: autoRunDocumentTree,
+			// A playbook links to notes all over the project, not just to its
+			// sibling playbooks - resolve both, and hand project hits to the same
+			// handler the Files panel uses so they open as preview tabs.
+			projectFileTree: session.fileTree as FileNode[] | undefined,
+			// Same root the Files panel tree is loaded from, so the indices and the
+			// absolute-path conversion agree.
+			projectRoot: session.projectRoot || session.cwd,
+			onOpenProjectFile: onFileClick,
 			content: autoRunContent,
 			contentVersion: autoRunContentVersion,
 			onContentChange: onAutoRunContentChange,
@@ -442,7 +535,7 @@ export const RightPanel = memo(
 				tabIndex={0}
 				data-panel="right"
 				data-open={rightPanelOpen ? 'true' : 'false'}
-				className={`border-l flex flex-col ${rightPanelTransitionClass} outline-none relative ${rightPanelOpen ? '' : 'w-0 overflow-hidden opacity-0'} maestro-side-panel maestro-side-panel--right`}
+				className={`chrome-sheen border-l flex flex-col ${rightPanelTransitionClass} outline-none relative ${rightPanelOpen ? '' : 'w-0 overflow-hidden opacity-0'} maestro-side-panel maestro-side-panel--right`}
 				style={
 					{
 						width: rightPanelOpen ? `${rightPanelWidth}px` : '0',
@@ -457,12 +550,23 @@ export const RightPanel = memo(
 				onClick={() => setActiveFocus('right')}
 				onFocus={() => setActiveFocus('right')}
 				onBlur={(e) => {
-					// Clear focus ring when focus moves entirely outside this panel
-					if (!e.currentTarget.contains(e.relatedTarget as Node)) {
+					const panel = e.currentTarget;
+					const next = e.relatedTarget as Node | null;
+					// Focus moved to another node still inside this panel (tab button,
+					// file row, filter input). Keep the Right Bar focused.
+					if (next && panel.contains(next)) return;
+					// relatedTarget is null when the click landed on a non-focusable
+					// child (padding, file-tree row). That is NOT "left the panel" -
+					// React fires blur anyway, and treating null as outside handed
+					// focus to Main on a second click. Check after the click: only
+					// drop the ring when the caret actually left.
+					requestAnimationFrame(() => {
+						if (!panel.isConnected) return;
+						if (panel.contains(document.activeElement)) return;
 						if (useUIStore.getState().activeFocus === 'right') {
 							setActiveFocus('main');
 						}
-					}
+					});
 				}}
 			>
 				{/* Resize Handle */}
@@ -475,20 +579,41 @@ export const RightPanel = memo(
 
 				{/* Tab Header */}
 				<div className="flex border-b h-16" style={{ borderColor: theme.colors.border }}>
-					{(['files', 'history', ...(autoRunDisabled ? [] : ['autorun'])] as const).map((tab) => (
-						<button
-							key={tab}
-							onClick={() => setActiveRightTab(tab as RightPanelTab)}
-							className="flex-1 text-xs font-bold border-b-2 transition-colors"
-							style={{
-								borderColor: activeRightTab === tab ? theme.colors.accent : 'transparent',
-								color: activeRightTab === tab ? theme.colors.textMain : theme.colors.textDim,
-							}}
-							data-tour={`${tab}-tab`}
-						>
-							{tab === 'autorun' ? 'Auto Run' : tab.charAt(0).toUpperCase() + tab.slice(1)}
-						</button>
-					))}
+					{(['files', 'history', ...(autoRunDisabled ? [] : ['autorun'])] as const).map((tab) => {
+						const label =
+							tab === 'autorun' ? 'Auto Run' : tab.charAt(0).toUpperCase() + tab.slice(1);
+						// Each of these three tabs has its own chord. Surfacing it on the
+						// header the user is already clicking is the cheapest place to
+						// teach it.
+						const jumpShortcut =
+							tab === 'files'
+								? shortcuts.goToFiles
+								: tab === 'history'
+									? shortcuts.goToHistory
+									: shortcuts.goToAutoRun;
+						return (
+							<button
+								key={tab}
+								onClick={() => setActiveRightTab(tab as RightPanelTab)}
+								// This is the panel's HEADING - it names which of three views
+								// you are looking at - so it is the largest thing in the Right
+								// Bar header, not the smallest. Deliberately a different
+								// constant from the filter pills below it: a heading sits above
+								// its content, a control that labels rows sits below them.
+								className="flex-1 font-bold border-b-2 transition-colors"
+								style={{
+									fontSize: RIGHT_PANEL_TAB_FONT_SIZE,
+									lineHeight: RIGHT_PANEL_TAB_LINE_HEIGHT,
+									borderColor: activeRightTab === tab ? theme.colors.accent : 'transparent',
+									color: activeRightTab === tab ? theme.colors.textMain : theme.colors.textDim,
+								}}
+								title={`${label}${shortcutSuffix(jumpShortcut?.keys)}`}
+								data-tour={`${tab}-tab`}
+							>
+								{label}
+							</button>
+						);
+					})}
 
 					<PluginUiItemsSlot surface="rightPanelTab" className="px-1 shrink-0" />
 
@@ -636,10 +761,10 @@ export const RightPanel = memo(
 										<GitBranch className="w-4 h-4" style={{ color: theme.colors.warning }} />
 									</span>
 								)}
-								{currentSessionBatchState.isStopping && (
+								{currentSessionBatchState.isStopping && !isMirroredRun && (
 									<button
 										onClick={() => setShowKillConfirm(true)}
-										className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase transition-colors hover:opacity-90"
+										className="flex items-center gap-1 px-2 py-0.5 rounded-full text-2xs font-bold uppercase transition-colors hover:opacity-90"
 										style={{
 											backgroundColor: theme.colors.error,
 											color: 'white',
@@ -662,6 +787,60 @@ export const RightPanel = memo(
 								</span>
 							)}
 						</div>
+
+						{/* Live playbook status from .maestro/STATUS.json */}
+						{currentSessionBatchState.playbookStatus && (
+							<div
+								className="mb-2 px-2 py-1.5 rounded text-xs-plus leading-relaxed"
+								style={{
+									backgroundColor: theme.colors.accent + '10',
+									borderLeft: `2px solid ${theme.colors.accent}`,
+								}}
+							>
+								<div className="flex items-center gap-2 flex-wrap">
+									{currentSessionBatchState.playbookStatus.feature && (
+										<span className="font-mono font-bold" style={{ color: theme.colors.accent }}>
+											{currentSessionBatchState.playbookStatus.feature}
+										</span>
+									)}
+									{currentSessionBatchState.playbookStatus.phase && (
+										<span
+											className="px-1 py-0.5 rounded text-2xs font-medium uppercase"
+											style={{
+												backgroundColor: theme.colors.accent + '20',
+												color: theme.colors.accent,
+											}}
+										>
+											{currentSessionBatchState.playbookStatus.phase}
+										</span>
+									)}
+									{currentSessionBatchState.playbookStatus.tests && (
+										<span
+											className="text-2xs font-mono"
+											style={{
+												color:
+													currentSessionBatchState.playbookStatus.tests.fail > 0
+														? theme.colors.error
+														: theme.colors.success,
+											}}
+										>
+											{currentSessionBatchState.playbookStatus.tests.pass}✓
+											{currentSessionBatchState.playbookStatus.tests.fail > 0 &&
+												` ${currentSessionBatchState.playbookStatus.tests.fail}✗`}
+										</span>
+									)}
+								</div>
+								{currentSessionBatchState.playbookStatus.summary && (
+									<div
+										className="mt-1 truncate"
+										style={{ color: theme.colors.textDim }}
+										title={currentSessionBatchState.playbookStatus.summary}
+									>
+										{currentSessionBatchState.playbookStatus.summary}
+									</div>
+								)}
+							</div>
+						)}
 
 						{/* Current document name - for single document runs */}
 						{currentSessionBatchState.documents &&
@@ -766,7 +945,7 @@ export const RightPanel = memo(
 						    (which must always show "View History" / "View Thoughts" intact). */}
 						<div className="mt-2">
 							<span
-								className="block text-[10px] truncate"
+								className="block text-2xs truncate"
 								style={{
 									color: errorPaused ? theme.colors.error : theme.colors.textDim,
 								}}
@@ -824,7 +1003,7 @@ export const RightPanel = memo(
 										className="w-3 h-3 rounded cursor-pointer accent-current"
 										style={{ accentColor: theme.colors.accent }}
 									/>
-									<span className="text-[10px]" style={{ color: theme.colors.textDim }}>
+									<span className="text-2xs" style={{ color: theme.colors.textDim }}>
 										Follow active task
 									</span>
 								</label>
@@ -835,7 +1014,7 @@ export const RightPanel = memo(
 								{/* Loop iteration indicator */}
 								{currentSessionBatchState.loopEnabled && (
 									<span
-										className="text-[10px] px-1.5 py-0.5 rounded whitespace-nowrap"
+										className="text-2xs px-1.5 py-0.5 rounded whitespace-nowrap"
 										style={{
 											backgroundColor: theme.colors.accent + '20',
 											color: theme.colors.accent,
@@ -849,26 +1028,26 @@ export const RightPanel = memo(
 								    persistent, searchable panel; works for goal and task runs. */}
 								{sessionId && (
 									<button
-										className="flex items-center gap-1 text-[10px] whitespace-nowrap bg-transparent border-none p-0 cursor-pointer hover:opacity-80"
+										className="flex items-center gap-1 text-2xs whitespace-nowrap bg-transparent border-none p-0 cursor-pointer hover:opacity-80"
 										style={{
-											color: isCapturingThoughts ? theme.colors.accent : theme.colors.textDim,
+											color: bufferedActivity > 0 ? theme.colors.accent : theme.colors.textDim,
 											textDecoration: 'underline',
 										}}
 										onClick={() => openThoughtStream(sessionId)}
 										title={
-											isCapturingThoughts
-												? 'Capturing thoughts - click to expand'
-												: "Peer into the agent's thought stream"
+											bufferedActivity > 0
+												? `${bufferedActivity} buffered thought${bufferedActivity === 1 ? '' : 's'} and tool call${bufferedActivity === 1 ? '' : 's'} - click to read`
+												: "Peer into the agent's reasoning and tool calls"
 										}
 									>
-										<Brain className={`w-3 h-3 ${isCapturingThoughts ? 'animate-pulse' : ''}`} />
-										{isCapturingThoughts ? 'Capturing' : 'View Thoughts'}
+										<Brain className="w-3 h-3" />
+										View Thoughts
 									</button>
 								)}
 								{/* View history link - shown on all tabs except history */}
 								{activeRightTab !== 'history' && (
 									<button
-										className="flex items-center gap-1 text-[10px] whitespace-nowrap bg-transparent border-none p-0 cursor-pointer hover:opacity-80"
+										className="flex items-center gap-1 text-2xs whitespace-nowrap bg-transparent border-none p-0 cursor-pointer hover:opacity-80"
 										style={{
 											color: theme.colors.textDim,
 											textDecoration: 'underline',
@@ -886,12 +1065,18 @@ export const RightPanel = memo(
 										{batchError?.recoverable && onResumeAfterError && (
 											<button
 												onClick={onResumeAfterError}
-												className="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium transition-colors hover:opacity-80"
+												disabled={isMirroredRun}
+												className={`flex items-center gap-1 px-2 py-0.5 rounded text-2xs font-medium transition-colors ${isMirroredRun ? 'cursor-not-allowed' : 'hover:opacity-80'}`}
 												style={{
 													backgroundColor: theme.colors.accent,
 													color: theme.colors.accentForeground,
+													opacity: isMirroredRun ? 0.6 : 1,
 												}}
-												title="Resume Auto Run after re-authenticating"
+												title={
+													isMirroredRun
+														? MIRRORED_RUN_CONTROL_TITLE
+														: 'Resume Auto Run after re-authenticating'
+												}
 											>
 												<Play className="w-3 h-3" />
 												Resume
@@ -900,12 +1085,16 @@ export const RightPanel = memo(
 										{onAbortBatchOnError && (
 											<button
 												onClick={onAbortBatchOnError}
-												className="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium transition-colors hover:opacity-80"
+												disabled={isMirroredRun}
+												className={`flex items-center gap-1 px-2 py-0.5 rounded text-2xs font-medium transition-colors ${isMirroredRun ? 'cursor-not-allowed' : 'hover:opacity-80'}`}
 												style={{
 													backgroundColor: theme.colors.error,
 													color: 'white',
+													opacity: isMirroredRun ? 0.6 : 1,
 												}}
-												title="Stop Auto Run completely"
+												title={
+													isMirroredRun ? MIRRORED_RUN_CONTROL_TITLE : 'Stop Auto Run completely'
+												}
 											>
 												<XCircle className="w-3 h-3" />
 												Abort
@@ -917,13 +1106,19 @@ export const RightPanel = memo(
 									onStopBatchRun && (
 										<button
 											onClick={() => onStopBatchRun(session.id)}
-											className="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium transition-colors hover:opacity-80"
+											disabled={isMirroredRun}
+											className={`flex items-center gap-1 px-2 py-0.5 rounded text-2xs font-medium transition-colors ${isMirroredRun ? 'cursor-not-allowed' : 'hover:opacity-80'}`}
 											style={{
 												backgroundColor: theme.colors.error,
 												color: 'white',
 												border: `1px solid ${theme.colors.error}`,
+												opacity: isMirroredRun ? 0.6 : 1,
 											}}
-											title="Stop auto-run after the current task finishes"
+											title={
+												isMirroredRun
+													? MIRRORED_RUN_CONTROL_TITLE
+													: 'Stop auto-run after the current task finishes'
+											}
 										>
 											<Square className="w-3 h-3" />
 											Stop

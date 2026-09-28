@@ -11,6 +11,13 @@
  */
 
 import { registerServiceWorker } from '../web/utils/serviceWorker';
+import { installLoadFailureHandler, markBooted } from './loadFailure';
+import { installStandaloneStatusBarInset } from '../renderer/utils/standaloneStatusBar';
+
+// Take over the failure policy from index.html's inline listeners as early as
+// possible, so a stale hashed chunk auto-reloads instead of tearing down the
+// page with a network-isolation message. Must run before the renderer mounts.
+installLoadFailureHandler();
 
 declare global {
 	interface Window {
@@ -60,6 +67,11 @@ if (!(globalThis as Record<string, unknown>).global) {
 // already matches.
 document.documentElement.dataset.runtime = 'web-desktop';
 
+// Home-screen web apps on iOS: publish the status bar height that WebKit stopped
+// reporting through env() so the shell can clear the bar (see the module). Set
+// before the renderer boots for the same reason as the runtime marker above.
+installStandaloneStatusBarInset(window);
+
 interface WebDesktopBootstrapDependencies {
 	preload: () => Promise<unknown>;
 	renderer: () => Promise<unknown>;
@@ -81,6 +93,10 @@ void bootWebDesktop(window, {
 	renderer: () => import('../renderer/main'),
 })
 	.then(() => {
+		// The renderer is mounted. From here on a load failure must not wipe
+		// #root - React's error boundary reports app-level errors in context,
+		// and a stale-chunk failure recovers by reloading instead.
+		markBooted();
 		// Register the PWA service worker once the app is mounted. The server
 		// injects window.__MAESTRO_CONFIG__ inline before any module runs, so the
 		// security token is already available; registerServiceWorker() reads it to

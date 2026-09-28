@@ -14,6 +14,7 @@ import { captureException } from '../../../utils/sentry';
 import type { AutoRunState } from '../../types';
 import { LOG_CONTEXT } from './shared';
 import type { WebClient, WebClientMessage, MessageHandlerContext } from './types';
+import { readBackgroundField } from '../../../../shared/focusPlacement';
 
 /**
  * Validate that a filename is safe for Auto Run read/save operations.
@@ -58,7 +59,7 @@ export function handleRefreshAutoRunDocs(
 	}
 
 	ctx.callbacks
-		.refreshAutoRunDocs(sessionId)
+		.refreshAutoRunDocs(sessionId, readBackgroundField(message))
 		.then((success) => {
 			ctx.send(client, {
 				type: 'refresh_auto_run_docs_result',
@@ -160,6 +161,10 @@ export function handleConfigureAutoRun(
 		ctx.sendError(client, 'effort must be a non-empty string');
 		return;
 	}
+	if (message.ignoreModelHints !== undefined && typeof message.ignoreModelHints !== 'boolean') {
+		ctx.sendError(client, 'ignoreModelHints must be a boolean');
+		return;
+	}
 
 	// Validate optional worktree config - desktop app uses this to create a
 	// git worktree, checkout the branch, and optionally open a PR on completion.
@@ -222,6 +227,7 @@ export function handleConfigureAutoRun(
 		launch: message.launch as boolean | undefined,
 		model: message.model as string | undefined,
 		effort: message.effort as string | undefined,
+		ignoreModelHints: message.ignoreModelHints === true || undefined,
 		worktree,
 	};
 
@@ -239,6 +245,101 @@ export function handleConfigureAutoRun(
 		})
 		.catch((error) => {
 			ctx.sendError(client, `Failed to configure auto-run: ${error.message}`);
+		});
+}
+
+/**
+ * Handle launch_goal_run message - start a desktop-owned Goal-Driven Auto Run
+ * (`maestro-cli goal-run --visible`).
+ *
+ * Unlike `configure_auto_run` this carries no documents: goal mode is
+ * document-less, and the renderer routes it to the same `startBatchRun({
+ * goalConfig })` entry point the Auto Run modal's Go button uses. The reply
+ * carries a machine-readable `code` on failure so the CLI can distinguish
+ * "agent is busy" from "no such agent" without matching on prose.
+ */
+export function handleLaunchGoalRun(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): void {
+	const sessionId = message.sessionId as string;
+	logger.info(`[Web] Received launch_goal_run message: session=${sessionId}`, LOG_CONTEXT);
+
+	if (!sessionId) {
+		ctx.sendError(client, 'Missing sessionId');
+		return;
+	}
+
+	const goal = typeof message.goal === 'string' ? message.goal.trim() : '';
+	if (!goal) {
+		ctx.sendError(client, 'goal must be a non-empty string');
+		return;
+	}
+
+	if (message.exitCriteria !== undefined && typeof message.exitCriteria !== 'string') {
+		ctx.sendError(client, 'exitCriteria must be a string');
+		return;
+	}
+
+	// `null` is meaningful here (run indefinitely) and must survive the boundary,
+	// so it is checked before the numeric validation rather than folded into it.
+	let maxIterations: number | null | undefined;
+	if (message.maxIterations !== undefined && message.maxIterations !== null) {
+		const parsed = Number(message.maxIterations);
+		if (!Number.isInteger(parsed) || parsed < 1) {
+			ctx.sendError(client, 'maxIterations must be a positive integer or null');
+			return;
+		}
+		maxIterations = parsed;
+	} else {
+		maxIterations = message.maxIterations === null ? null : undefined;
+	}
+
+	// Same rule as configure_auto_run: an empty override would pin the run to a
+	// nonexistent model instead of falling back to the agent default.
+	if (
+		message.model !== undefined &&
+		(typeof message.model !== 'string' || message.model.trim() === '')
+	) {
+		ctx.sendError(client, 'model must be a non-empty string');
+		return;
+	}
+	if (
+		message.effort !== undefined &&
+		(typeof message.effort !== 'string' || message.effort.trim() === '')
+	) {
+		ctx.sendError(client, 'effort must be a non-empty string');
+		return;
+	}
+
+	if (!ctx.callbacks.launchGoalRun) {
+		ctx.sendError(client, 'Goal run launch not configured');
+		return;
+	}
+
+	ctx.callbacks
+		.launchGoalRun(sessionId, {
+			goal,
+			exitCriteria: (message.exitCriteria as string | undefined)?.trim() || undefined,
+			maxIterations,
+			model: message.model as string | undefined,
+			effort: message.effort as string | undefined,
+		})
+		.then((result) => {
+			ctx.send(client, {
+				type: 'launch_goal_run_result',
+				success: result.success,
+				tabId: result.tabId,
+				code: result.code,
+				error: result.error,
+				sessionId,
+				requestId: message.requestId,
+			});
+		})
+		.catch((error) => {
+			captureException(error, { extra: { sessionId, message: 'launch_goal_run' } });
+			ctx.sendError(client, `Failed to launch goal run: ${error.message}`);
 		});
 }
 
@@ -265,17 +366,19 @@ export function handleSetAutoRunFolder(
 	);
 
 	if (!sessionId) {
-		ctx.sendError(client, 'Missing sessionId');
+		ctx.sendError(client, 'Missing sessionId', { requestId: message.requestId });
 		return;
 	}
 
 	if (typeof folderPath !== 'string' || folderPath.trim() === '') {
-		ctx.sendError(client, 'Missing or invalid folderPath');
+		ctx.sendError(client, 'Missing or invalid folderPath', { requestId: message.requestId });
 		return;
 	}
 
 	if (!ctx.callbacks.setSessionAutoRunFolder) {
-		ctx.sendError(client, 'Auto Run folder updates not configured');
+		ctx.sendError(client, 'Auto Run folder updates not configured', {
+			requestId: message.requestId,
+		});
 		return;
 	}
 
@@ -301,7 +404,9 @@ export function handleSetAutoRunFolder(
 					requestId: message.requestId,
 				},
 			});
-			ctx.sendError(client, `Failed to set Auto Run folder: ${err.message}`);
+			ctx.sendError(client, `Failed to set Auto Run folder: ${err.message}`, {
+				requestId: message.requestId,
+			});
 		});
 }
 
@@ -353,12 +458,12 @@ export function handleGetAutoRunState(
 	logger.info(`[Web] Received get_auto_run_state message: session=${sessionId}`, LOG_CONTEXT);
 
 	if (!sessionId) {
-		ctx.sendError(client, 'Missing sessionId');
+		ctx.sendError(client, 'Missing sessionId', { requestId: message.requestId });
 		return;
 	}
 
 	if (!ctx.callbacks.getSessionDetail) {
-		ctx.sendError(client, 'Session detail not configured');
+		ctx.sendError(client, 'Session detail not configured', { requestId: message.requestId });
 		return;
 	}
 

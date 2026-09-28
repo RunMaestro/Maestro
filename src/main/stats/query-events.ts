@@ -7,36 +7,21 @@
 import type Database from 'better-sqlite3';
 import type { QueryEvent, StatsTimeRange, StatsFilters } from '../../shared/stats-types';
 import { generateId, getTimeRangeStart, normalizePath, LOG_CONTEXT } from './utils';
+import { INSERT_QUERY_EVENT_SQL, bindQueryEvent } from './query-event-insert';
 import { mapQueryEventRow, type QueryEventRow } from './row-mappers';
 import { StatementCache } from './utils';
 import { logger } from '../utils/logger';
 
 const stmtCache = new StatementCache();
 
-const INSERT_SQL = `
-  INSERT INTO query_events (id, session_id, agent_type, source, start_time, duration, project_path, tab_id, is_remote, is_worktree)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-`;
-
 /**
  * Insert a new query event
  */
 export function insertQueryEvent(db: Database.Database, event: Omit<QueryEvent, 'id'>): string {
 	const id = generateId();
-	const stmt = stmtCache.get(db, INSERT_SQL);
+	const stmt = stmtCache.get(db, INSERT_QUERY_EVENT_SQL);
 
-	stmt.run(
-		id,
-		event.sessionId,
-		event.agentType,
-		event.source,
-		event.startTime,
-		event.duration,
-		normalizePath(event.projectPath),
-		event.tabId ?? null,
-		event.isRemote !== undefined ? (event.isRemote ? 1 : 0) : null,
-		event.isWorktree !== undefined ? (event.isWorktree ? 1 : 0) : null
-	);
+	stmt.run(...bindQueryEvent(id, event));
 
 	logger.debug(`Inserted query event ${id}`, LOG_CONTEXT);
 	return id;

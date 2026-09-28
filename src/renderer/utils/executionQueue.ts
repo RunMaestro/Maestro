@@ -1,29 +1,87 @@
 /**
- * Helpers for the per-session AI execution queue, centralizing the "skip paused
- * items" rule so every dispatch path treats held items identically.
+ * Helpers for the per-session AI execution queue, centralizing the rules for
+ * user-paused items and connection-held items.
  *
  * A queued item with `paused: true` is held by the user: it stays in the queue
  * (preserving its position) but is invisible to dispatch. Auto-run, on-exit
  * dequeue, interrupt/kill re-dispatch, batch progression, and the manual
  * "process next" action all run the first *non-paused* item instead of blindly
- * taking index 0, and treat a queue with no runnable items as drained.
+ * taking index 0. A connection hold is an ordering barrier: later items cannot
+ * overtake a prompt whose delivery state is still unknown.
  */
 
-import type { QueuedItem } from '../types';
+import type { LogEntry, QueuedItem, QueuedItemEditPatch, Session, SessionState } from '../types';
+import { generateId } from './ids';
+import {
+	getBusyTabs,
+	getTabDisplayName,
+	markTabRunningQueuedItem,
+	markTabRunningTurn,
+	resolveQueuedItemTarget,
+} from './tabHelpers';
 
-/** A queued item is runnable when it is not held/paused by the user. */
+/**
+ * Apply an edit-modal patch to one queued item, returning the resulting queue.
+ *
+ * Both save paths route through here - the inline chat list edits the ACTIVE
+ * agent (App.tsx) while the Execution Queue browser edits any agent by id
+ * (useQueueHandlers) - so the two cannot drift on what an edit actually
+ * writes. They already had: one of them dropped `turnSettings` on the floor,
+ * silently discarding the model/effort the user had just picked.
+ *
+ * `turnSettings` is assigned, not merged. The modal always sends the complete
+ * settings it was displaying, so clearing a picker back to "Default" has to
+ * clear the stored field rather than leave the previous value behind.
+ *
+ * `crossAgent` is optional and carries the two `@mention` flags, re-derived by
+ * the caller from the EDITED text. It is a parameter rather than something this
+ * function works out for itself because deriving it needs `planCrossAgentMentions`,
+ * which reads the session store - a dependency a pure queue utility must not take
+ * on. Callers that can resolve a mention pass it; the rest omit it and leave the
+ * item's existing flags alone.
+ */
+export function applyQueuedItemEdit(
+	queue: QueuedItem[],
+	itemId: string,
+	patch: QueuedItemEditPatch,
+	crossAgent?: { crossAgentMention: boolean; crossAgentOnly: boolean }
+): QueuedItem[] {
+	return queue.map((item) =>
+		item.id === itemId
+			? {
+					...item,
+					text: patch.text,
+					images: patch.images,
+					turnSettings: patch.turnSettings,
+					...(crossAgent ?? {}),
+				}
+			: item
+	);
+}
+
+/** A queued item is runnable when neither the user nor the bridge holds it. */
 export function isRunnableQueueItem(item: QueuedItem): boolean {
-	return !item.paused;
+	return !item.paused && !item.waitingForConnection;
+}
+
+/** Release bridge holds after main process ownership is known. */
+export function releaseConnectionHeldQueueItems(queue: QueuedItem[]): QueuedItem[] {
+	if (!queue.some((item) => item.waitingForConnection)) return queue;
+	return queue.map(({ waitingForConnection: _waiting, ...item }) => item);
 }
 
 /** The first item that would actually run, or undefined if all are held/empty. */
 export function nextRunnableQueueItem(queue: QueuedItem[]): QueuedItem | undefined {
-	return queue.find(isRunnableQueueItem);
+	for (const item of queue) {
+		if (item.waitingForConnection) return undefined;
+		if (!item.paused) return item;
+	}
+	return undefined;
 }
 
 /** Whether the queue has at least one item that would run (not all held). */
 export function hasRunnableQueueItem(queue: QueuedItem[]): boolean {
-	return queue.some(isRunnableQueueItem);
+	return nextRunnableQueueItem(queue) !== undefined;
 }
 
 /**
@@ -36,13 +94,139 @@ export function takeNextRunnableQueueItem(queue: QueuedItem[]): {
 	item: QueuedItem | null;
 	remaining: QueuedItem[];
 } {
-	const index = queue.findIndex(isRunnableQueueItem);
-	if (index === -1) {
-		return { item: null, remaining: queue };
+	for (let index = 0; index < queue.length; index += 1) {
+		const candidate = queue[index];
+		if (candidate.waitingForConnection) return { item: null, remaining: queue };
+		if (candidate.paused) continue;
+		return {
+			item: candidate,
+			remaining: [...queue.slice(0, index), ...queue.slice(index + 1)],
+		};
 	}
+	return { item: null, remaining: queue };
+}
+
+/**
+ * Whether a message submitted right now would have work ahead of it in this
+ * agent's order: a tab mid-turn (including a closed-but-still-thinking orphan),
+ * or an item already waiting in the queue.
+ *
+ * This is the ORDERING question, deliberately separate from the fuller
+ * queue-vs-dispatch decision in `useInputProcessing`, which also weighs
+ * read-only parallelism and forced-parallel overrides. Those only matter to
+ * something that spawns a local turn. A cross-agent mention-only message spawns
+ * nothing, so the single thing that decides whether it waits is whether the user
+ * put work in front of it.
+ *
+ * `autoRunActive` comes from the batch store rather than the session (Auto Run
+ * runs in isolation and never marks the agent busy), so callers pass it in.
+ */
+export function hasWorkAheadOfNewMessage(
+	session: Session,
+	opts: { autoRunActive?: boolean } = {}
+): boolean {
+	if (opts.autoRunActive) return true;
+	if (getBusyTabs(session, { includeOrphans: true }).length > 0) return true;
+	return (session.executionQueue ?? []).some(
+		(item) => item.waitingForConnection || isRunnableQueueItem(item)
+	);
+}
+
+/**
+ * Release the busy state a dequeue took, without re-queueing anything: the
+ * inverse of {@link applyQueuedItemDispatch}'s state half.
+ *
+ * The agent only returns to idle when no OTHER tab is still working - a
+ * multi-tab agent can have a turn running elsewhere, and blanking the session
+ * state would strand its thinking pill.
+ *
+ * Used wherever a dequeued item ends without a process to close it out: a
+ * dispatch that threw before spawning, and a cross-agent mention-only item,
+ * which fires its consult and by design never spawns a local turn.
+ */
+export function applyQueuedItemRelease(session: Session, tabId: string | undefined): Session {
+	const releaseTab = <T extends { id: string; state?: string; thinkingStartTime?: number }>(
+		tab: T
+	): T => (tab.id === tabId ? { ...tab, state: 'idle', thinkingStartTime: undefined } : tab);
+
+	const aiTabs = session.aiTabs.map(releaseTab);
+	const orphans = session.orphanedThinkingTabs?.map(releaseTab);
+	const stillWorking =
+		aiTabs.some((tab) => tab.state === 'busy') || !!orphans?.some((tab) => tab.state === 'busy');
+
 	return {
-		item: queue[index],
-		remaining: [...queue.slice(0, index), ...queue.slice(index + 1)],
+		...session,
+		aiTabs,
+		...(orphans && { orphanedThinkingTabs: orphans }),
+		...(stillWorking
+			? {}
+			: {
+					state: 'idle' as SessionState,
+					busySource: undefined,
+					thinkingStartTime: undefined,
+				}),
+	};
+}
+
+/**
+ * The state transition for a dequeued item whose dispatch THREW before the
+ * agent process ever spawned: the exact inverse of
+ * {@link applyQueuedItemDispatch}.
+ *
+ * This is the one place that decides what happens to a prompt that was taken
+ * out of the queue and then failed to send, because the alternative - each
+ * dispatch site writing its own recovery - is what lost a user's work. Five of
+ * the eight sites had no recovery at all (the process-exit drain and the batch
+ * drain rejected into nothing; Stop and force-kill logged and moved on), so a
+ * spawn collision silently destroyed the message: the queue no longer held it,
+ * the transcript showed a card for it, and no model had ever seen it.
+ *
+ * Three things happen together, and they only make sense together:
+ *
+ * 1. **The tab is released.** Dispatch marked it busy; nothing is running.
+ * 2. **The card is removed.** The user-visible entry is appended BEFORE the
+ *    spawn, so a failed dispatch leaves a card for a prompt that was never
+ *    delivered. Matching is by `queuedItemId`, not by text, so an identical
+ *    message the user genuinely sent earlier is untouched.
+ * 3. **The item goes back to the head of the queue** - so it keeps its place
+ *    ahead of everything queued behind it - unless it is already there. The
+ *    idempotence matters: `retryStore.holdFailedItemInQueue` parks the failed
+ *    turn in the queue for the life of an outage, and a second copy would
+ *    double-send the prompt when the outage cleared.
+ *
+ * `hold` decides whether the item comes back runnable. A spawn collision (the
+ * tab's previous process has not exited yet) is transient and self-correcting,
+ * so the item stays runnable and the next drain trigger sends it a moment
+ * later. Any OTHER failure would fail again the same way on the next tick, so
+ * the item comes back `paused`: still there, still editable, still one click
+ * from Force Send, but not spinning the queue against a wall.
+ */
+export function applyQueuedItemDispatchFailure(
+	session: Session,
+	item: QueuedItem,
+	opts: { hold: boolean }
+): Session {
+	const released = applyQueuedItemRelease(session, item.tabId);
+
+	const stripCard = <T extends { id: string; logs: LogEntry[] }>(tab: T): T =>
+		tab.logs.some((log) => log.queuedItemId === item.id)
+			? { ...tab, logs: tab.logs.filter((log) => log.queuedItemId !== item.id) }
+			: tab;
+
+	const aiTabs = released.aiTabs.map(stripCard);
+	const orphans = released.orphanedThinkingTabs?.map(stripCard);
+
+	const queue = released.executionQueue ?? [];
+	const restored: QueuedItem = opts.hold ? { ...item, paused: true } : item;
+	const executionQueue = queue.some((i) => i.id === item.id)
+		? queue.map((i) => (i.id === item.id ? restored : i))
+		: [restored, ...queue];
+
+	return {
+		...released,
+		aiTabs,
+		...(orphans && { orphanedThinkingTabs: orphans }),
+		executionQueue,
 	};
 }
 
@@ -101,4 +285,298 @@ export function reorderQueueItem(
 		next[pos] = reordered[idx];
 	});
 	return next;
+}
+
+/**
+ * The label to show for a queued item's target tab.
+ *
+ * `item.tabName` is a SNAPSHOT frozen when the item was queued, so an item
+ * queued into a brand-new tab keeps reading "New" forever - including after
+ * auto-naming gave that tab a real title, and even next to a LATER item on the
+ * same tab that does carry the name. The queue is exactly where the user decides
+ * what to reorder, so two entries for one tab must not look like two tabs.
+ *
+ * Resolution mirrors {@link resolveQueuedItemTarget}: the live tab first, then a
+ * closed-but-still-draining orphan, and only then the snapshot - which by that
+ * point is the last thing we ever knew about a tab that is gone.
+ */
+export function resolveQueuedItemTabName(
+	session: Session,
+	item: Pick<QueuedItem, 'tabId' | 'tabName'>
+): string | undefined {
+	if (item.tabId) {
+		const tab =
+			session.aiTabs?.find((t) => t.id === item.tabId) ??
+			session.orphanedThinkingTabs?.find((t) => t.id === item.tabId);
+		if (tab) return getTabDisplayName(tab);
+	}
+	return item.tabName;
+}
+
+// ============================================================================
+// Force Send - dispatching one specific queued item out of turn
+// ============================================================================
+
+/** Minimal identity of a tab that is mid-turn, for Force Send copy. */
+export interface BusyTabSummary {
+	id: string;
+	displayName: string;
+}
+
+export interface QueueBusyContext {
+	/** The item's own target tab is already running a turn. */
+	targetTabBusy: boolean;
+	/** Other tabs in the same agent that are mid-turn right now. */
+	otherBusyTabs: BusyTabSummary[];
+}
+
+/**
+ * Busy-state snapshot for one queued item: whether its own tab is mid-turn, and
+ * which OTHER tabs of the same agent are. Both Force Send surfaces (the inline
+ * chat list and the Execution Queue browser) derive eligibility from this, so
+ * they cannot drift on what "safe to send right now" means.
+ */
+export function getQueueBusyContext(
+	session: Session,
+	item: Pick<QueuedItem, 'tabId'>
+): QueueBusyContext {
+	const tabs = session.aiTabs ?? [];
+	const targetTab = tabs.find((t) => t.id === item.tabId);
+	return {
+		targetTabBusy: targetTab?.state === 'busy',
+		otherBusyTabs: tabs
+			.filter((t) => t.id !== item.tabId && t.state === 'busy')
+			.map((t) => ({ id: t.id, displayName: getTabDisplayName(t) })),
+	};
+}
+
+/** Why a queued item cannot be force sent right now. */
+export type ForceSendBlockedReason = 'no-target-tab' | 'target-tab-busy' | 'needs-forced-parallel';
+
+export interface ForceSendEligibility extends QueueBusyContext {
+	/** Sending now means running alongside another tab's in-flight turn. */
+	requiresParallel: boolean;
+	canForce: boolean;
+	blockedReason?: ForceSendBlockedReason;
+}
+
+/**
+ * Whether a queued item can be dispatched out of turn, and what that would mean.
+ *
+ * A tab runs at most one turn at a time, so an item whose own tab is busy can
+ * never be forced. Sending while a *different* tab of the same agent is working
+ * breaks the sequential-per-agent rule that keeps two turns off the same files,
+ * so that case stays gated behind the Forced Parallel Execution setting. Every
+ * other case (jumping the queue order, releasing a held item) is always allowed.
+ */
+export function getForceSendEligibility(
+	session: Session,
+	item: Pick<QueuedItem, 'tabId'>,
+	opts: { forcedParallelEnabled: boolean }
+): ForceSendEligibility {
+	const busy = getQueueBusyContext(session, item);
+	const requiresParallel = busy.otherBusyTabs.length > 0;
+	const blockedReason: ForceSendBlockedReason | undefined = !resolveQueuedItemTarget(session, item)
+		? 'no-target-tab'
+		: busy.targetTabBusy
+			? 'target-tab-busy'
+			: requiresParallel && !opts.forcedParallelEnabled
+				? 'needs-forced-parallel'
+				: undefined;
+	return { ...busy, requiresParallel, canForce: !blockedReason, blockedReason };
+}
+
+/**
+ * Whether a Force Send control should be RENDERED at all, given its eligibility.
+ *
+ * Separate from {@link ForceSendEligibility.canForce}, which decides whether the
+ * control is enabled. Two of the three blocked reasons are dead ends the user
+ * cannot act on from the card: an item with no tab left to run on could never be
+ * sent, and an item whose own tab is already mid-turn is simply waiting its turn
+ * - a tab runs one turn at a time, so the wait resolves itself and offering
+ * "Force Send" there reads as a control that refuses to work. Only
+ * `needs-forced-parallel` stays visible (dimmed), because clicking it opens
+ * ForcedParallelRequiredModal, which links straight to the setting that unlocks it.
+ *
+ * Both Force Send surfaces (the inline QUEUED card and the Execution Queue
+ * browser) call this, so they cannot drift on when the button exists.
+ */
+export function shouldOfferForceSend(
+	eligibility: ForceSendEligibility | null | undefined
+): boolean {
+	if (!eligibility) return false;
+	return (
+		eligibility.blockedReason !== 'no-target-tab' && eligibility.blockedReason !== 'target-tab-busy'
+	);
+}
+
+/**
+ * The tooltip a Force Send control shows, given its eligibility.
+ *
+ * Both surfaces that offer Force Send - the Execution Queue modal and the
+ * inline QUEUED card in the AI chat - must say the same thing about the same
+ * state, so the copy lives with the decision rather than beside each button. A
+ * blocked button whose tooltip does not explain the block is just a dead
+ * control, which is the failure this whole path is fixing.
+ */
+export function getForceSendTitle(eligibility: ForceSendEligibility): string {
+	const otherBusyCount = eligibility.otherBusyTabs.length;
+	switch (eligibility.blockedReason) {
+		case 'target-tab-busy':
+			return 'This tab is already working - the message runs when the current turn finishes';
+		case 'needs-forced-parallel':
+			return 'Another tab in this agent is working. Forced Parallel Execution is off - click to turn it on in Settings.';
+		case 'no-target-tab':
+			return 'This message has no tab left to run on';
+		default:
+			return eligibility.requiresParallel
+				? `Send now, running in parallel with ${otherBusyCount} other working tab${otherBusyCount === 1 ? '' : 's'}`
+				: 'Send this message now, ahead of the rest of the queue';
+	}
+}
+
+/**
+ * State transition for dispatching ONE specific queued item now: drop it from the
+ * queue, mark its target tab busy (which appends the user-visible log entry), and
+ * put the agent in the busy/ai state. Returns the session untouched when the item
+ * is already gone or has no tab left to run on.
+ *
+ * The target is resolved orphan-aware, so an item queued on a since-closed tab
+ * still lands on that tab's background transcript rather than the active one.
+ */
+export function applyQueuedItemDispatch(session: Session, item: QueuedItem): Session {
+	if (!session.executionQueue?.some((i) => i.id === item.id)) return session;
+	const target = resolveQueuedItemTarget(session, item);
+	if (!target) return session;
+
+	const aiTabs = session.aiTabs.map((tab) =>
+		tab.id === target.tabId ? markTabRunningQueuedItem(tab, item, session) : tab
+	);
+	const orphans =
+		target.location === 'orphan' && session.orphanedThinkingTabs
+			? session.orphanedThinkingTabs.map((tab) =>
+					tab.id === target.tabId ? markTabRunningQueuedItem(tab, item, session) : tab
+				)
+			: session.orphanedThinkingTabs;
+
+	return {
+		...session,
+		state: 'busy' as SessionState,
+		busySource: 'ai',
+		thinkingStartTime: Date.now(),
+		currentCycleTokens: 0,
+		currentCycleBytes: 0,
+		executionQueue: session.executionQueue.filter((i) => i.id !== item.id),
+		aiTabs,
+		...(orphans !== session.orphanedThinkingTabs && { orphanedThinkingTabs: orphans }),
+	};
+}
+
+// ============================================================================
+// Replaying a turn the provider refused - not a queue dispatch
+// ============================================================================
+
+/**
+ * Is this queued item the same ask as `item`?
+ *
+ * Used to stop a re-authentication replay from running a prompt the user has
+ * ALREADY re-sent by hand. Both copies exist for one reason: the failed turn was
+ * invisible, so the user resent it while the resume had the same prompt
+ * snapshotted. Running both spends two full turns on one question and lands two
+ * sets of edits in the repo.
+ *
+ * Compared on what the user actually typed - target tab, kind, text/command, and
+ * attachment count - NOT on `id`, which is freshly generated per send and would
+ * make every duplicate look distinct. The user's own copy is the one that wins:
+ * it is visible, it is theirs, and the queue already owns its ordering.
+ */
+export function isSameQueuedPrompt(a: QueuedItem, b: QueuedItem): boolean {
+	if (a.tabId !== b.tabId) return false;
+	if (a.type !== b.type) return false;
+	if ((a.text ?? '').trim() !== (b.text ?? '').trim()) return false;
+	if ((a.command ?? '') !== (b.command ?? '')) return false;
+	if ((a.commandArgs ?? '') !== (b.commandArgs ?? '')) return false;
+	return (a.images?.length ?? 0) === (b.images?.length ?? 0);
+}
+
+/** The queued item that already carries this prompt, if the user re-sent it. */
+export function findQueuedDuplicate(
+	session: Pick<Session, 'executionQueue'>,
+	item: QueuedItem
+): QueuedItem | undefined {
+	return session.executionQueue?.find((queued) => isSameQueuedPrompt(queued, item));
+}
+
+/** Why a replay was not dispatched. See {@link applyReplayDispatch}. */
+export type ReplayBlockedReason = 'no-target-tab' | 'target-tab-busy' | 'already-queued';
+
+export interface ReplayDispatchResult {
+	/** The session to commit. Unchanged from the input when `blocked` is set. */
+	session: Session;
+	/** Set when nothing was dispatched - the caller must not spawn. */
+	blocked?: ReplayBlockedReason;
+}
+
+/**
+ * State transition for REPLAYING a turn that already failed: mark its target tab
+ * busy and note in the transcript that the prompt went back out.
+ *
+ * Distinct from {@link applyQueuedItemDispatch} in two ways, both because the
+ * item is not in the queue: nothing is dequeued, and no user bubble is appended
+ * (the original send already wrote one - see {@link markTabRunningTurn}).
+ *
+ * Blocks rather than dispatching when:
+ *  - the tab is gone (nothing to run on);
+ *  - the tab is already mid-turn - a second spawn on one tab key makes the main
+ *    process KILL the live one, so a replay must never race a running turn;
+ *  - the user has already re-sent this exact prompt, which is queued and will
+ *    drain on its own.
+ */
+export function applyReplayDispatch(
+	session: Session,
+	item: QueuedItem,
+	noteText: string
+): ReplayDispatchResult {
+	const duplicate = findQueuedDuplicate(session, item);
+	if (duplicate) return { session, blocked: 'already-queued' };
+
+	const target = resolveQueuedItemTarget(session, item);
+	if (!target) return { session, blocked: 'no-target-tab' };
+
+	const targetTab =
+		session.aiTabs.find((t) => t.id === target.tabId) ??
+		session.orphanedThinkingTabs?.find((t) => t.id === target.tabId);
+	if (targetTab?.state === 'busy') return { session, blocked: 'target-tab-busy' };
+
+	const note: LogEntry = {
+		id: generateId(),
+		timestamp: Date.now(),
+		source: 'system',
+		text: noteText,
+	};
+	const markReplayed = (tab: Session['aiTabs'][number]) => {
+		const next = markTabRunningTurn(tab, item, session);
+		return { ...next, logs: [...tab.logs, note] };
+	};
+
+	const aiTabs = session.aiTabs.map((tab) => (tab.id === target.tabId ? markReplayed(tab) : tab));
+	const orphans =
+		target.location === 'orphan' && session.orphanedThinkingTabs
+			? session.orphanedThinkingTabs.map((tab) =>
+					tab.id === target.tabId ? markReplayed(tab) : tab
+				)
+			: session.orphanedThinkingTabs;
+
+	return {
+		session: {
+			...session,
+			state: 'busy' as SessionState,
+			busySource: 'ai',
+			thinkingStartTime: Date.now(),
+			currentCycleTokens: 0,
+			currentCycleBytes: 0,
+			aiTabs,
+			...(orphans !== session.orphanedThinkingTabs && { orphanedThinkingTabs: orphans }),
+		},
+	};
 }

@@ -53,7 +53,7 @@ import {
 	type GiantPreviewHandle,
 } from '../../../../../renderer/components/FilePreview/giantPreview';
 
-function renderGiant(opts: { content: string; language?: string }) {
+function renderGiant(opts: { content: string; language?: string; fontScale?: number }) {
 	const containerRef = { current: null } as React.MutableRefObject<HTMLDivElement | null>;
 	const ref = { current: null } as React.MutableRefObject<GiantPreviewHandle | null>;
 	const result = render(
@@ -63,9 +63,17 @@ function renderGiant(opts: { content: string; language?: string }) {
 			language={opts.language ?? 'text'}
 			theme={mockTheme}
 			containerRef={containerRef}
+			fontScale={opts.fontScale}
 		/>
 	);
 	return { ...result, containerRef, ref };
+}
+
+/** Everything CM6 has injected into the document as a stylesheet. */
+function mountedStyleText(): string {
+	return Array.from(document.querySelectorAll('style'))
+		.map((el) => el.textContent ?? '')
+		.join('\n');
 }
 
 describe('GiantPreview', () => {
@@ -92,6 +100,20 @@ describe('GiantPreview', () => {
 			const { containerRef } = renderGiant({ content: 'x' });
 			expect(containerRef.current).not.toBeNull();
 			expect(containerRef.current).toBeInstanceOf(HTMLDivElement);
+		});
+	});
+
+	// Font zoom rides in the CM6 theme rather than an app-level CSS rule: an
+	// app rule of equal specificity would win or lose on injection order.
+	describe('font zoom', () => {
+		it('mounts at the base size when no zoom is passed', () => {
+			renderGiant({ content: 'x' });
+			expect(mountedStyleText()).toContain('font-size: 13px');
+		});
+
+		it('mounts at the scaled size when zoomed', () => {
+			renderGiant({ content: 'x', fontScale: 1.5 });
+			expect(mountedStyleText()).toContain('font-size: 19.5px');
 		});
 	});
 

@@ -109,7 +109,7 @@ export function useSettingsSearch({
 				if (target) {
 					e.preventDefault();
 					e.stopPropagation();
-					onNavigateRef.current?.(target.tab, target.id);
+					onNavigateRef.current?.(target.tab, target.jumpToId ?? target.id);
 				}
 			}
 		};
@@ -169,7 +169,8 @@ export function SettingsSearchInput({
 						{/* Phantom placeholder text positions the kbd hint right after where the real placeholder ends. */}
 						<span style={{ color: 'transparent' }}>Search settings...</span>
 						<kbd
-							className="text-[10px] px-1.5 py-0.5 rounded font-mono opacity-40"
+							data-shortcut-hint=""
+							className="text-2xs px-1.5 py-0.5 rounded font-mono opacity-40"
 							style={{ backgroundColor: theme.colors.bgActivity }}
 						>
 							{formatShortcutKeys(['Meta', 'f'])}
@@ -262,7 +263,7 @@ export function SettingsSearchResults({
 										<button
 											key={setting.id}
 											ref={isSelected ? selectedRef : undefined}
-											onClick={() => onNavigate(setting.tab, setting.id)}
+											onClick={() => onNavigate(setting.tab, setting.jumpToId ?? setting.id)}
 											onMouseEnter={() => setSelectedIndex(flatIndex)}
 											className="w-full text-left p-3 rounded border transition-colors"
 											style={{

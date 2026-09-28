@@ -1,3 +1,4 @@
 export { MediaPlaybackHost } from './MediaPlaybackHost';
-export { MediaViewportSlot } from './MediaViewportSlot';
 export { FloatingMediaPlayer } from './FloatingMediaPlayer';
+export { MediaListMenu } from './MediaListMenu';
+export { NowPlayingIndicator } from './NowPlayingIndicator';

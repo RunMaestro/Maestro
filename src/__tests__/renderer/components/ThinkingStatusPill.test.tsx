@@ -20,6 +20,8 @@ import { useUIStore } from '../../../renderer/stores/uiStore';
 import type { Session, Theme, BatchRunState, AITab, ThinkingItem } from '../../../renderer/types';
 import { createMockAITab as createBaseMockAITab } from '../../helpers/mockTab';
 import { createMockSession } from '../../helpers/mockSession';
+import { useBatchStore } from '../../../renderer/stores/batchStore';
+import { useSessionStore } from '../../../renderer/stores/sessionStore';
 
 import { mockTheme } from '../../helpers/mockTheme';
 // Mock theme for tests
@@ -192,6 +194,50 @@ describe('ThinkingStatusPill', () => {
 		});
 	});
 
+	describe('name slot font', () => {
+		/**
+		 * The slot beside Stop holds a NAME in the two cases that matter, and a
+		 * raw session-id octet only when both name sources are empty. A name is
+		 * prose and belongs in the interface font; the octet is an identifier and
+		 * reads better in the code face. `font-mono` for all three put user-typed
+		 * tab names in a different font from every label around them.
+		 */
+		it('renders a custom name in the interface font', () => {
+			const item = createThinkingItem({ agentSessionId: 'abc12345-def6' });
+			render(
+				<ThinkingStatusPill
+					thinkingItems={[item]}
+					theme={mockTheme}
+					namedSessions={{ 'abc12345-def6': 'Custom Name' }}
+				/>
+			);
+
+			expect(screen.getByText('Custom Name').className).not.toContain('font-mono');
+		});
+
+		it('renders a tab name in the interface font', () => {
+			const item = createThinkingItemWithTab(
+				{ agentSessionId: undefined },
+				{ name: 'My Tab Name', agentSessionId: 'def67890-ghi' }
+			);
+			render(<ThinkingStatusPill thinkingItems={[item]} theme={mockTheme} />);
+
+			expect(screen.getByText('My Tab Name').className).not.toContain('font-mono');
+		});
+
+		it('keeps the code face for a bare session-id fallback', () => {
+			// Both name sources empty, so this falls through to the hex octet.
+			const item = createThinkingItemWithTab(
+				{ name: '', agentSessionId: undefined },
+				{ name: '', agentSessionId: 'abc12345-def6' }
+			);
+			render(<ThinkingStatusPill thinkingItems={[item]} theme={mockTheme} />);
+
+			const octet = screen.queryByText('ABC12345');
+			if (octet) expect(octet.className).toContain('font-mono');
+		});
+	});
+
 	describe('getItemDisplayName (via UI)', () => {
 		it('uses namedSessions lookup when available', () => {
 			const item = createThinkingItem({ agentSessionId: 'abc12345-def6' });
@@ -332,9 +378,7 @@ describe('ThinkingStatusPill', () => {
 		beforeEach(() => {
 			useThoughtStreamStore.setState({
 				panelSessionId: null,
-				minimized: false,
 				buffers: {},
-				capturing: {},
 			});
 			useUIStore.setState({ rightPanelOpen: false });
 		});
@@ -360,7 +404,7 @@ describe('ThinkingStatusPill', () => {
 			expect(onSessionClick).toHaveBeenCalledWith('session-xyz', undefined);
 			const streamState = useThoughtStreamStore.getState();
 			expect(streamState.panelSessionId).toBeNull();
-			expect(streamState.capturing['session-xyz']).toBeUndefined();
+			expect(streamState.buffers['session-xyz']).toBeUndefined();
 			expect(useUIStore.getState().rightPanelOpen).toBe(false);
 		});
 
@@ -437,12 +481,18 @@ describe('ThinkingStatusPill', () => {
 			expect(onInterrupt).toHaveBeenCalledTimes(1);
 		});
 
-		it('has correct title attribute', () => {
+		it('names what stops rather than which provider is running', () => {
+			// The pill draws the shared <StopTurnButton>, whose tooltip deliberately
+			// says nothing about a provider: the pill sits above agents of every
+			// provider, and Stop is agent-level - it ends this turn's cross-agent
+			// consults as well as the process that is streaming.
 			const item = createThinkingItem();
 			render(
 				<ThinkingStatusPill thinkingItems={[item]} theme={mockTheme} onInterrupt={() => {}} />
 			);
-			expect(screen.getByTitle('Interrupt Claude (Ctrl+C)')).toBeInTheDocument();
+			const stop = screen.getByTitle('Stop this turn (Ctrl+C)');
+			expect(stop).toBeInTheDocument();
+			expect(stop).not.toHaveAttribute('title', expect.stringContaining('Claude'));
 		});
 	});
 
@@ -701,6 +751,32 @@ describe('ThinkingStatusPill', () => {
 			);
 			expect(screen.getByText('Elapsed:')).toBeInTheDocument();
 			expect(screen.getByText('0m 45s')).toBeInTheDocument();
+		});
+
+		it('freezes AutoRunPill elapsed time while the run is paused', () => {
+			// Started 40h ago, ran 1m, then parked on a HITL gate: the tracker
+			// cleared lastActiveTimestamp, so the pause adds nothing.
+			const autoRunState: BatchRunState = {
+				isRunning: true,
+				isStopping: false,
+				currentTaskIndex: 0,
+				totalTasks: 5,
+				completedTasks: 0,
+				startTime: Date.now() - 40 * 3_600_000,
+				accumulatedElapsedMs: 60_000,
+				lastActiveTimestamp: undefined,
+				errorPaused: true,
+				tasks: [],
+				batchName: 'Batch',
+			};
+			render(
+				<ThinkingStatusPill thinkingItems={[]} theme={mockTheme} autoRunState={autoRunState} />
+			);
+			expect(screen.getByText('1m 0s')).toBeInTheDocument();
+			act(() => {
+				vi.advanceTimersByTime(5000);
+			});
+			expect(screen.getByText('1m 0s')).toBeInTheDocument();
 		});
 
 		it('shows stop button in AutoRunPill when onStopAutoRun is provided', () => {
@@ -1664,6 +1740,106 @@ describe('ThinkingStatusPill', () => {
 			);
 
 			expect(screen.getAllByText('Custom Named Session').length).toBeGreaterThan(0);
+		});
+	});
+
+	describe('Auto Runs on other agents', () => {
+		const backgroundRun: BatchRunState = {
+			isRunning: true,
+			isPaused: false,
+			isStopping: false,
+			currentTaskIndex: 0,
+			totalTasks: 93,
+			completedTasks: 18,
+			startTime: Date.now() - 60_000,
+			tasks: [],
+			batchName: 'Batch',
+		};
+
+		beforeEach(() => {
+			useSessionStore.setState({
+				sessions: [
+					createMockSession({ id: 'viewed', name: 'Viewed Agent' }),
+					createMockSession({ id: 'asm', name: 'ASM Bots' }),
+				],
+			});
+			useBatchStore.setState({ batchRunStates: { asm: backgroundRun } });
+		});
+
+		afterEach(() => {
+			useBatchStore.setState({ batchRunStates: {} });
+			useSessionStore.setState({ sessions: [] });
+		});
+
+		it("counts another agent's Auto Run in the +N badge and lists it in the dropdown", () => {
+			const onSessionClick = vi.fn();
+			const thinking = createThinkingItem({ id: 'kensho', name: 'Kensho' });
+			render(
+				<ThinkingStatusPill
+					thinkingItems={[thinking]}
+					theme={mockTheme}
+					activeSessionId="viewed"
+					onSessionClick={onSessionClick}
+				/>
+			);
+
+			const indicator = screen.getByText('+1').parentElement!;
+			fireEvent.mouseEnter(indicator);
+
+			expect(screen.getByText('Running Processes')).toBeInTheDocument();
+			expect(screen.getByText('18/93 tasks')).toBeInTheDocument();
+			fireEvent.click(screen.getByText('ASM Bots'));
+			expect(onSessionClick).toHaveBeenCalledWith('asm');
+		});
+
+		it('shows a named Auto Run pill with no Stop when that run is the only work', () => {
+			const onSessionClick = vi.fn();
+			render(
+				<ThinkingStatusPill
+					thinkingItems={[]}
+					theme={mockTheme}
+					activeSessionId="viewed"
+					onSessionClick={onSessionClick}
+					onStopAutoRun={() => {}}
+					onInterrupt={() => {}}
+				/>
+			);
+
+			expect(screen.getByText('AutoRun')).toBeInTheDocument();
+			expect(screen.getByText('18/93')).toBeInTheDocument();
+			expect(screen.queryByText('Stop')).not.toBeInTheDocument();
+			fireEvent.click(screen.getByTitle('Go to ASM Bots'));
+			expect(onSessionClick).toHaveBeenCalledWith('asm');
+		});
+
+		it("does not repeat the viewed agent's own Auto Run as a background run", () => {
+			const { container } = render(
+				<ThinkingStatusPill thinkingItems={[]} theme={mockTheme} activeSessionId="asm" />
+			);
+			expect(container.firstChild).toBeNull();
+		});
+
+		it("adds background runs to the viewed agent's Auto Run pill badge", () => {
+			render(
+				<ThinkingStatusPill
+					thinkingItems={[]}
+					theme={mockTheme}
+					activeSessionId="viewed"
+					autoRunState={{ ...backgroundRun, totalTasks: 4, completedTasks: 1 }}
+				/>
+			);
+
+			expect(screen.getByText('+1')).toBeInTheDocument();
+			fireEvent.mouseEnter(screen.getByText('+1').parentElement!);
+			expect(screen.getByText('ASM Bots')).toBeInTheDocument();
+		});
+
+		it('ignores a run whose agent no longer exists', () => {
+			useBatchStore.setState({ batchRunStates: { gone: backgroundRun } });
+			const { container } = render(
+				<ThinkingStatusPill thinkingItems={[]} theme={mockTheme} activeSessionId="viewed" />
+			);
+			expect(container.firstChild).toBeNull();
 		});
 	});
 });

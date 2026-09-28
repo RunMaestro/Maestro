@@ -6,18 +6,18 @@
  * the MainPanel when a group chat is active.
  */
 
-import type {
-	Theme,
-	GroupChat,
-	GroupChatMessage,
-	GroupChatState,
-	Group,
-	Shortcut,
-	QueuedItem,
-} from '../types';
+import { useCallback, useEffect, useRef } from 'react';
+import type { GroupChatQueueState } from '../../shared/group-chat-types';
+import type { Theme, GroupChat, GroupChatMessage, GroupChatState, Group, Shortcut } from '../types';
 import { GroupChatHeader } from './GroupChatHeader';
 import { GroupChatMessages, type GroupChatMessagesHandle } from './GroupChatMessages';
 import { GroupChatInput } from './GroupChatInput';
+import { OutputSearchBar } from './TerminalOutput/components/OutputSearchBar';
+import { groupChatOutputSearchKey, groupChatSearchContentRevision } from '../utils/outputSearch';
+import { useOutputSearchSlot } from '../hooks/ui/useOutputSearchSlot';
+import { useOutputSearchLayer } from '../hooks/ui/useOutputSearchLayer';
+import { useOutputSearchMatching } from '../hooks/ui/useOutputSearchMatching';
+import { useDebouncedValue } from '../hooks/utils/useThrottle';
 
 interface GroupChatPanelProps {
 	theme: Theme;
@@ -53,7 +53,9 @@ interface GroupChatPanelProps {
 	// Image lightbox handler
 	onOpenLightbox?: (image: string, contextImages?: string[], source?: 'staged' | 'history') => void;
 	// Execution queue props
-	executionQueue?: QueuedItem[];
+	/** The chat's pending sends as MAIN reports them. Undefined until loaded. */
+	queueState?: GroupChatQueueState;
+	onResumeQueue?: () => void;
 	onRemoveQueuedItem?: (itemId: string) => void;
 	onReorderQueuedItems?: (fromIndex: number, toIndex: number) => void;
 	// Markdown toggle (Cmd+E)
@@ -74,6 +76,10 @@ interface GroupChatPanelProps {
 	ghCliAvailable?: boolean;
 	/** Callback to publish a message as a GitHub Gist */
 	onPublishMessageGist?: (text: string, messageId?: string) => void;
+	/** True when the room shows only the user <-> moderator conversation */
+	moderatorOnly?: boolean;
+	/** Flip between the team view and the moderator-only view */
+	onToggleModeratorOnly: () => void;
 }
 
 export function GroupChatPanel({
@@ -102,7 +108,8 @@ export function GroupChatPanel({
 	handlePaste,
 	handleDrop,
 	onOpenLightbox,
-	executionQueue,
+	queueState,
+	onResumeQueue,
 	onRemoveQueuedItem,
 	onReorderQueuedItems,
 	markdownEditMode,
@@ -115,13 +122,62 @@ export function GroupChatPanel({
 	messagesRef,
 	ghCliAvailable,
 	onPublishMessageGist,
+	moderatorOnly = false,
+	onToggleModeratorOnly,
 }: GroupChatPanelProps): JSX.Element {
+	const searchKey = groupChatOutputSearchKey(groupChat.id);
+	const {
+		outputSearchOpen,
+		outputSearchQuery,
+		outputSearchRegex,
+		setOutputSearchQuery,
+		setOutputSearchRegex,
+		clearOutputSearch,
+	} = useOutputSearchSlot(searchKey);
+
+	const messagesScrollRef = useRef<HTMLDivElement | null>(null);
+	const debouncedSearchQuery = useDebouncedValue(outputSearchQuery, 150);
+
+	const closeSearch = useCallback(() => {
+		clearOutputSearch();
+		inputRef?.current?.focus();
+	}, [clearOutputSearch, inputRef]);
+
+	useOutputSearchLayer({
+		open: outputSearchOpen,
+		onEscape: closeSearch,
+		ariaLabel: 'Group Chat Search',
+	});
+
+	const { currentMatchIndex, totalMatches, regexError, goToNextMatch, goToPrevMatch } =
+		useOutputSearchMatching({
+			containerRef: messagesScrollRef,
+			outputSearchOpen,
+			outputSearchRegex,
+			debouncedSearchQuery,
+			contentRevision: groupChatSearchContentRevision(
+				messages,
+				debouncedSearchQuery,
+				outputSearchOpen
+			),
+		});
+
+	// Leaving this group chat (unmount or switch to another id) must clear the
+	// slot so re-entry does not restore a stale open bar + query.
+	useEffect(() => {
+		return () => {
+			clearOutputSearch();
+		};
+	}, [searchKey, clearOutputSearch]);
+
 	return (
 		<div className="flex flex-col h-full" style={{ backgroundColor: theme.colors.bgMain }}>
 			<GroupChatHeader
 				theme={theme}
 				name={groupChat.name}
 				participantCount={groupChat.participants.length}
+				moderatorOnly={moderatorOnly}
+				onToggleModeratorOnly={onToggleModeratorOnly}
 				totalCost={totalCost}
 				costIncomplete={costIncomplete}
 				state={state}
@@ -133,6 +189,37 @@ export function GroupChatPanel({
 				shortcuts={shortcuts}
 			/>
 
+			{/* Same Custom Highlight styles as TerminalOutput - ::highlight is document-global,
+			    but TerminalOutput is unmounted while a group chat is active. */}
+			{outputSearchOpen && (
+				<style>{`
+					::highlight(terminal-search-all) {
+						background-color: ${theme.colors.warning};
+						color: ${theme.mode === 'light' ? '#fff' : '#000'};
+					}
+					::highlight(terminal-search-current) {
+						background-color: ${theme.colors.accent};
+						color: #fff;
+					}
+				`}</style>
+			)}
+
+			{outputSearchOpen && (
+				<OutputSearchBar
+					theme={theme}
+					outputSearchQuery={outputSearchQuery}
+					outputSearchRegex={outputSearchRegex}
+					regexError={regexError}
+					currentMatchIndex={currentMatchIndex}
+					totalMatches={totalMatches}
+					setOutputSearchQuery={setOutputSearchQuery}
+					setOutputSearchRegex={setOutputSearchRegex}
+					goToNextMatch={goToNextMatch}
+					goToPrevMatch={goToPrevMatch}
+					onClose={closeSearch}
+				/>
+			)}
+
 			<GroupChatMessages
 				ref={messagesRef}
 				theme={theme}
@@ -143,10 +230,13 @@ export function GroupChatPanel({
 				markdownEditMode={markdownEditMode}
 				onToggleMarkdownEditMode={onToggleMarkdownEditMode}
 				maxOutputLines={maxOutputLines}
+				moderatorOnly={moderatorOnly}
 				participantColors={participantColors}
 				onOpenLightbox={onOpenLightbox}
 				ghCliAvailable={ghCliAvailable}
 				onPublishGist={onPublishMessageGist}
+				searchActive={outputSearchOpen}
+				scrollContainerRef={messagesScrollRef}
 			/>
 
 			<GroupChatInput
@@ -168,7 +258,8 @@ export function GroupChatPanel({
 				handlePaste={handlePaste}
 				handleDrop={handleDrop}
 				onOpenLightbox={onOpenLightbox}
-				executionQueue={executionQueue}
+				queueState={queueState}
+				onResumeQueue={onResumeQueue}
 				onRemoveQueuedItem={onRemoveQueuedItem}
 				onReorderQueuedItems={onReorderQueuedItems}
 				enterToSendAI={enterToSendAI}

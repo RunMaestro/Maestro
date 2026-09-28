@@ -15,9 +15,12 @@
  * tasks that yield to input between them instead of one long blocking task.
  *
  * Invariants that make this safe for a live, streaming transcript:
- * - `startIndex` only ever DECREASES for a given conversation. New items are
- *   appended at the tail, so they fall inside the window automatically and an
- *   already-rendered entry never disappears mid-session.
+ * - `startIndex` only ever DECREASES for a given conversation, except via the
+ *   explicit `absorbPrepend` escape hatch. New items are appended at the tail,
+ *   so they fall inside the window automatically and an already-rendered entry
+ *   never disappears mid-session. Items prepended at the HEAD (scroll-to-top
+ *   history backfill, issue #1407) are the one case that grows the index again,
+ *   and only by exactly the number added, so nothing already on screen is hidden.
  * - The returned index is clamped so at least `initial` items stay visible, which
  *   keeps the view populated when entries are deleted and the list shrinks.
  * - `onBeforeExpand` fires synchronously before each expansion so the caller can
@@ -84,6 +87,15 @@ export interface ProgressiveRenderWindow {
 	 * reached yet - waiting for it would blow their timeout. Pass 0 to reveal all.
 	 */
 	revealTo: (index: number) => void;
+	/**
+	 * Account for `count` items just prepended at the HEAD of the list. Shifts
+	 * the window by exactly that many so the visible slice is unchanged, then
+	 * lets the normal idle loop walk back through the new history. Without this
+	 * a scroll-to-top backfill would mount a whole page in one commit - the long
+	 * task this hook exists to avoid. Call it in the same tick as the state
+	 * update that grew the list so both land in one React commit.
+	 */
+	absorbPrepend: (count: number) => void;
 }
 
 /**
@@ -128,6 +140,11 @@ export function useProgressiveRenderWindow(
 		setStartIndex((prev) => Math.min(prev, Math.max(0, index)));
 	}, []);
 
+	const absorbPrepend = useCallback((count: number) => {
+		if (count <= 0) return;
+		setStartIndex((prev) => prev + count);
+	}, []);
+
 	useEffect(() => {
 		if (startIndex <= 0) return;
 		const handle = scheduleIdle(expand);
@@ -139,5 +156,6 @@ export function useProgressiveRenderWindow(
 	return {
 		startIndex: Math.min(startIndex, Math.max(0, totalCount - initial)),
 		revealTo,
+		absorbPrepend,
 	};
 }

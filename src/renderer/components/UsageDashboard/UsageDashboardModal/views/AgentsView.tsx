@@ -1,3 +1,4 @@
+import type { GroupLike } from '../../../../../shared/statsGroupRollup';
 import type { Session } from '../../../../types';
 import { AgentOverviewCards } from '../../AgentOverviewCards';
 import { ChartErrorBoundary } from '../../ChartErrorBoundary';
@@ -7,6 +8,15 @@ import type { AgentsBaseViewProps } from './types';
 
 interface AgentsViewProps extends AgentsBaseViewProps {
 	onShowAgentDetails: (session: Session) => void;
+	/** Left Bar groups, used to populate the grid's own group filter dropdown. */
+	groups?: GroupLike[];
+	/**
+	 * Provider-account filter. Owned by the modal rather than by the grid so the
+	 * quota tabs' "N agents" chips can select an account and land the user here
+	 * already narrowed to it.
+	 */
+	profileFilter?: string;
+	onProfileFilterChange?: (value: string) => void;
 }
 
 export function AgentsView({
@@ -17,6 +27,9 @@ export function AgentsView({
 	setSectionRef,
 	handleSectionKeyDown,
 	onShowAgentDetails,
+	groups,
+	profileFilter,
+	onProfileFilterChange,
 }: AgentsViewProps) {
 	return (
 		<DashboardTabPanel viewMode="agents">
@@ -35,6 +48,9 @@ export function AgentsView({
 							data={data}
 							theme={theme}
 							onShowAgentDetails={onShowAgentDetails}
+							groups={groups}
+							profileFilter={profileFilter}
+							onProfileFilterChange={onProfileFilterChange}
 						/>
 					</ChartErrorBoundary>
 				) : (

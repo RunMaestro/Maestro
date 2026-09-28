@@ -10,7 +10,12 @@
  * 2. `HistoryBucketCache` - disk-backed, fingerprint-keyed cache so the
  *    aggregate doesn't have to be recomputed on every interaction. The
  *    fingerprint is the underlying source file's `mtime+size` (single
- *    file) or a SHA over many such fingerprints (unified view).
+ *    file) or a SHA over many such fingerprints (unified view), composed by
+ *    the caller with a stamp for any other source it reads.
+ *
+ * The CUE series is the second source: Cue runs are counted in `cue_events`
+ * and handed to the builder pre-bucketed, because they are no longer written
+ * to the JSONL file the other entries come from.
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
@@ -154,6 +159,89 @@ describe('buildBucketAggregate', () => {
 			expect(result.earliestTimestamp).toBe(now - lookbackMs);
 			expect(result.latestTimestamp).toBe(now);
 			expect(result.hostCounts).toEqual({});
+		});
+	});
+
+	describe('cueCounts from the Cue database', () => {
+		it('adds database Cue counts to the CUE series and the totals', () => {
+			const entries = [
+				makeEntry({ id: 'u1', type: 'USER', timestamp: 0 }),
+				makeEntry({ id: 'u2', type: 'USER', timestamp: 1000 }),
+			];
+			const result = buildBucketAggregate(entries, 2, {
+				cueCounts: [
+					{ timestamp: 0, count: 3 },
+					{ timestamp: 1000, count: 5 },
+				],
+			});
+
+			expect(result.buckets[0].cue).toBe(3);
+			expect(result.buckets[1].cue).toBe(5);
+			expect(result.cueCount).toBe(8);
+			expect(result.userCount).toBe(2);
+			expect(result.totalCount).toBe(10);
+			expect(result.hostCounts).toEqual({ [LOCAL_HOST_AGG_KEY]: 10 });
+		});
+
+		it('takes the larger of the two stores per bucket rather than summing', () => {
+			// Pre-cutover runs exist in BOTH stores: the JSONL entry and the
+			// `cue_events` row describe the same run, so summing would draw
+			// every historical bar at double height.
+			const entries = [
+				makeEntry({ id: 'c1', type: 'CUE', timestamp: 0 }),
+				makeEntry({ id: 'c2', type: 'CUE', timestamp: 10 }),
+				makeEntry({ id: 'c3', type: 'CUE', timestamp: 20 }),
+			];
+			const result = buildBucketAggregate(entries, 1, {
+				cueCounts: [{ timestamp: 0, count: 2 }],
+			});
+
+			expect(result.buckets[0].cue).toBe(3);
+			expect(result.cueCount).toBe(3);
+			expect(result.totalCount).toBe(3);
+			expect(result.hostCounts).toEqual({ [LOCAL_HOST_AGG_KEY]: 3 });
+		});
+
+		it('graphs an agent whose only activity is Cue runs', () => {
+			const result = buildBucketAggregate([], 4, {
+				cueCounts: [
+					{ timestamp: 1_000, count: 1 },
+					{ timestamp: 4_000, count: 2 },
+				],
+			});
+
+			expect(result.earliestTimestamp).toBe(1_000);
+			expect(result.latestTimestamp).toBe(4_000);
+			expect(result.buckets[0].cue).toBe(1);
+			expect(result.buckets[3].cue).toBe(2);
+			expect(result.cueCount).toBe(3);
+			expect(result.totalCount).toBe(3);
+		});
+
+		it('drops Cue counts outside the lookback window', () => {
+			const now = 10_000_000;
+			const lookbackMs = 1_000;
+			const result = buildBucketAggregate([makeEntry({ id: 'u', timestamp: now })], 4, {
+				lookbackMs,
+				endTime: now,
+				cueCounts: [
+					{ timestamp: now - 100_000, count: 9 },
+					{ timestamp: now - 500, count: 2 },
+				],
+			});
+
+			expect(result.cueCount).toBe(2);
+			expect(result.totalCount).toBe(3);
+		});
+
+		it('ignores empty buckets so they cannot widen the range', () => {
+			const result = buildBucketAggregate([makeEntry({ id: 'u', timestamp: 5_000 })], 2, {
+				cueCounts: [{ timestamp: 0, count: 0 }],
+			});
+
+			expect(result.earliestTimestamp).toBe(5_000);
+			expect(result.cueCount).toBe(0);
+			expect(result.totalCount).toBe(1);
 		});
 	});
 

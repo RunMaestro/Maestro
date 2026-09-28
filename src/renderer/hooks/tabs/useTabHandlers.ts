@@ -1,3 +1,4 @@
+import type { RefObject } from 'react';
 import { useAITabHandlers } from './internal/useAITabHandlers';
 import { useBrowserTabHandlers } from './internal/useBrowserTabHandlers';
 import { useFilePreviewTabHandlers } from './internal/useFilePreviewTabHandlers';
@@ -18,9 +19,16 @@ export { getTabDerivedState, useTabDerivedState } from './internal/useTabDerived
 /**
  * Tab action callbacks only. Paint/derived tab strip state lives in MainPanel via
  * {@link getTabDerivedState} so MaestroConsoleInner is not on the chrome equality path.
+ *
+ * @param inputRef - The AI composer textarea, so creating a tab can land the
+ *   caret in it the way `Cmd+T` already does. Same shape as the ref
+ *   `useModalHandlers` takes. Optional: a caller with no composer on screen
+ *   simply creates the tab.
  */
-export function useTabHandlers(): TabHandlersReturn {
-	const aiHandlers = useAITabHandlers();
+export function useTabHandlers(
+	inputRef?: RefObject<HTMLTextAreaElement | null>
+): TabHandlersReturn {
+	const aiHandlers = useAITabHandlers(inputRef);
 	const filePreviewHandlers = useFilePreviewTabHandlers();
 	const browserHandlers = useBrowserTabHandlers();
 	const unifiedHandlers = useUnifiedTabHandlers({

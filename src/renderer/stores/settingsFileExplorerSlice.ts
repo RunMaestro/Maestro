@@ -10,7 +10,7 @@
 
 import type { StateCreator } from 'zustand';
 import type { FileExplorerIconTheme } from '../utils/fileExplorerIcons/shared';
-import { isFileExplorerIconTheme } from '../utils/fileExplorerIcons/shared';
+import { normalizeFileExplorerIconTheme } from '../utils/fileExplorerIcons/shared';
 import type { SettingsStore } from './settingsStore';
 
 // ============================================================================
@@ -83,7 +83,7 @@ export const createFileExplorerSlice: StateCreator<SettingsStore, [], [], FileEx
 	set
 ) => ({
 	showHiddenFiles: true,
-	fileExplorerIconTheme: 'default',
+	fileExplorerIconTheme: 'rich',
 	localIgnorePatterns: [...DEFAULT_LOCAL_IGNORE_PATTERNS],
 	localHonorGitignore: true,
 	fileExplorerMaxDepth: DEFAULT_FILE_EXPLORER_MAX_DEPTH,
@@ -169,9 +169,8 @@ export function hydrateFileExplorerSettings(
 		patch.showHiddenFiles = allSettings['showHiddenFiles'] as boolean;
 
 	if (allSettings['fileExplorerIconTheme'] !== undefined) {
-		patch.fileExplorerIconTheme = isFileExplorerIconTheme(allSettings['fileExplorerIconTheme'])
-			? allSettings['fileExplorerIconTheme']
-			: 'default';
+		patch.fileExplorerIconTheme =
+			normalizeFileExplorerIconTheme(allSettings['fileExplorerIconTheme']) ?? 'rich';
 	}
 
 	// Local file indexing ignore patterns (with array validation)

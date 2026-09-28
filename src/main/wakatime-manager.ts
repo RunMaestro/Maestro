@@ -10,15 +10,12 @@
  * from GitHub releases to ~/.wakatime/.
  */
 
-import { app } from 'electron';
 import { execFileNoThrow } from './utils/execFile';
 import { logger } from './utils/logger';
 import os from 'os';
 import path from 'path';
 import fs from 'fs';
 import https from 'https';
-import type Store from 'electron-store';
-import type { MaestroSettings } from './stores/types';
 import { isWindows } from '../shared/platformDetection';
 import { captureException } from './utils/sentry';
 
@@ -241,8 +238,45 @@ function fetchJson(url: string, maxRedirects = 5): Promise<unknown> {
 /** How long a successfully-detected branch is cached before re-checking (5 min). */
 const BRANCH_CACHE_TTL_MS = 5 * 60 * 1000;
 
+/**
+ * Minimal read surface this manager needs from the settings store.
+ *
+ * Declared structurally rather than as `Store<MaestroSettings>` so the same
+ * manager runs in three places: the Electron main process (electron-store
+ * satisfies this shape as-is), the `maestro-cli` esbuild bundle (which has no
+ * native modules and reads `maestro-settings.json` directly), and tests.
+ */
+export interface WakaTimeSettingsSource {
+	get(key: 'wakatimeEnabled', defaultValue: boolean): boolean;
+	get(key: 'wakatimeDetailedTracking', defaultValue: boolean): boolean;
+	get(key: 'wakatimeApiKey', defaultValue: string): string;
+}
+
+/**
+ * Identifies the surface that produced a heartbeat. WakaTime shows this as the
+ * "editor", which is how Maestro-driven time is told apart from the time
+ * Anthropic's own Claude Code plugin reports for the same `claude` process.
+ */
+export type WakaTimeOrigin = 'desktop' | 'cue' | 'cli';
+
+/** Per-heartbeat context that is not derivable from the session id alone. */
+export interface HeartbeatContext {
+	source?: 'user' | 'auto';
+	/**
+	 * True when the agent runs on an SSH remote. Local git/manifest probing is
+	 * skipped in that case: `projectCwd` is a path on the REMOTE host, and a
+	 * path of the same name usually also exists locally (both machines check
+	 * out `~/Projects/Maestro`), so probing it would silently report the local
+	 * machine's branch and language for a remote session.
+	 */
+	isRemote?: boolean;
+	/** Which Maestro surface drove this heartbeat. Defaults to `desktop`. */
+	origin?: WakaTimeOrigin;
+}
+
 export class WakaTimeManager {
-	private settingsStore: Store<MaestroSettings>;
+	private settingsStore: WakaTimeSettingsSource;
+	private appVersion: string;
 	private lastHeartbeatPerSession: Map<string, number> = new Map();
 	private branchCache: Map<string, { branch: string; timestamp: number }> = new Map();
 	private languageCache: Map<string, string> = new Map();
@@ -251,8 +285,22 @@ export class WakaTimeManager {
 	private installing: Promise<boolean> | null = null;
 	private lastUpdateCheck = 0;
 
-	constructor(settingsStore: Store<MaestroSettings>) {
+	constructor(settingsStore: WakaTimeSettingsSource, appVersion: string) {
 		this.settingsStore = settingsStore;
+		this.appVersion = appVersion;
+	}
+
+	/**
+	 * Build the `--plugin` string WakaTime uses for editor attribution.
+	 *
+	 * The origin rides in the editor name so a WakaTime `slice_by=editor` query
+	 * separates desktop chat from Cue runs from CLI/playbook runs. Without it
+	 * every surface collapses into one "Maestro" bucket and there is no way to
+	 * tell which one is actually driving the time.
+	 */
+	private pluginString(origin: WakaTimeOrigin = 'desktop'): string {
+		const editor = origin === 'desktop' ? 'maestro' : `maestro-${origin}`;
+		return `${editor}/${this.appVersion} maestro-wakatime/${this.appVersion}`;
 	}
 
 	/** Get the expected local install path for the WakaTime CLI binary */
@@ -547,8 +595,11 @@ export class WakaTimeManager {
 		sessionId: string,
 		projectName: string,
 		projectCwd?: string,
-		source?: 'user' | 'auto'
+		sourceOrContext?: 'user' | 'auto' | HeartbeatContext
 	): Promise<void> {
+		const ctx: HeartbeatContext =
+			typeof sourceOrContext === 'string' ? { source: sourceOrContext } : (sourceOrContext ?? {});
+		const source = ctx.source;
 		// Check if enabled
 		const enabled = this.settingsStore.get('wakatimeEnabled', false);
 		if (!enabled) return;
@@ -582,21 +633,21 @@ export class WakaTimeManager {
 			'--project',
 			projectName,
 			'--plugin',
-			`maestro/${app.getVersion()} maestro-wakatime/${app.getVersion()}`,
+			this.pluginString(ctx.origin),
 			'--category',
 			source === 'auto' ? 'ai coding' : 'building',
 		];
 
-		// Detect project language from manifest files in cwd
-		if (projectCwd) {
+		// Probe the project directory only when it is on THIS machine. For an
+		// SSH session `projectCwd` names a directory on the remote host, and
+		// reading a same-named local directory would report the wrong branch
+		// and language rather than none at all.
+		if (projectCwd && !ctx.isRemote) {
 			const language = this.detectLanguage(sessionId, projectCwd);
 			if (language) {
 				args.push('--language', language);
 			}
-		}
 
-		// Add branch info if we can detect it from the project directory
-		if (projectCwd) {
 			const branch = await this.detectBranch(sessionId, projectCwd);
 			if (branch) {
 				args.push('--alternate-branch', branch);
@@ -620,9 +671,13 @@ export class WakaTimeManager {
 		files: Array<{ filePath: string; timestamp: number }>,
 		projectName: string,
 		projectCwd?: string,
-		source?: 'user' | 'auto'
+		sourceOrContext?: 'user' | 'auto' | HeartbeatContext
 	): Promise<void> {
 		if (files.length === 0) return;
+
+		const ctx: HeartbeatContext =
+			typeof sourceOrContext === 'string' ? { source: sourceOrContext } : (sourceOrContext ?? {});
+		const source = ctx.source;
 
 		const enabled = this.settingsStore.get('wakatimeEnabled', false);
 		if (!enabled) return;
@@ -641,7 +696,12 @@ export class WakaTimeManager {
 			return;
 		}
 
-		const branch = projectCwd ? await this.detectBranch(`file:${projectCwd}`, projectCwd) : null;
+		// Same local-probe rule as sendHeartbeat: a remote cwd must not be read
+		// off this machine's disk.
+		const branch =
+			projectCwd && !ctx.isRemote
+				? await this.detectBranch(`file:${projectCwd}`, projectCwd)
+				: null;
 
 		const primary = files[0];
 		const args = [
@@ -655,7 +715,7 @@ export class WakaTimeManager {
 			'--project',
 			projectName,
 			'--plugin',
-			`maestro/${app.getVersion()} maestro-wakatime/${app.getVersion()}`,
+			this.pluginString(ctx.origin),
 			'--category',
 			source === 'auto' ? 'ai coding' : 'building',
 			'--time',

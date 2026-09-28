@@ -31,6 +31,7 @@ The log viewer shows:
 - **Commit history** with messages, authors, and timestamps
 - **Branch visualization** with merge points
 - **Quick navigation** to any commit
+- **Search** (`Cmd+F` / `Ctrl+F`, or `/`) over hash, message, author, branch and date, narrowing the List and the Graph together
 
 Access via the git menu (branch pill or right-click) → **View Git Log**, **Command Palette** (`Cmd+K` / `Ctrl+K`) → "Git Log", or `Cmd+Shift+G` / `Ctrl+Shift+G`.
 
@@ -93,11 +94,65 @@ In the configuration modal:
 | --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Worktree Directory**      | Base folder where worktrees are created (should be outside the main repo). You can browse to select it (local sessions) or type the path directly. |
 | **Watch for new worktrees** | Auto-detect worktrees created outside Maestro (e.g., via command line)                                                                             |
+| **Setup Script**            | Shell command run inside every newly created worktree (see below). Leave blank to disable.                                                         |
 | **Create New Worktree**     | Enter a branch name and click **Create** to instantly create a new worktree sub-agent                                                              |
 
 **Tip:** Configure the worktree directory to be outside your main repository (e.g., `~/Projects/Maestro-WorkTrees/`). This keeps worktrees organized and prevents them from appearing in your main repo's file tree.
 
 **Note:** Once configured, you can quickly create additional worktrees by right-clicking the parent session and selecting **"Create Worktree"** (bypasses the full configuration modal).
+
+**Agents honor it too.** The directory is printed in every agent's system prompt as its Worktree Directory, and `maestro-cli show agent <id> --json` reports it as `worktreeBasePath`. Agents are told to create worktrees only through `maestro-cli create-worktree`, which uses this directory and registers the result as a worktree agent, so nothing an agent branches off ends up somewhere you cannot see.
+
+### Setup Scripts
+
+A fresh worktree only contains what git tracks, so anything gitignored (a `.env.local`, generated config, `node_modules`) is missing until you put it there. The **Setup Script** field runs a shell command inside each newly created worktree so that bootstrap happens automatically.
+
+The script runs:
+
+- With the new worktree as its working directory
+- Only when Maestro actually creates the worktree (not when it reuses or re-attaches an existing one)
+- Before the worktree's agent starts working, so generated files exist for the first prompt
+- On the remote host when the parent agent is configured for SSH remote execution
+
+These environment variables are available to the script:
+
+| Variable                  | Value                                                      |
+| ------------------------- | ---------------------------------------------------------- |
+| `MAESTRO_WORKTREE_PATH`   | Absolute path of the new worktree (also the script's cwd)  |
+| `MAESTRO_WORKTREE_BRANCH` | Branch checked out in the new worktree                     |
+| `MAESTRO_MAIN_REPO_PATH`  | Absolute path of the main repository                       |
+| `MAESTRO_BASE_BRANCH`     | Branch the new branch was based on, when one was specified |
+
+Examples:
+
+```bash
+# Copy gitignored env files in from the main repo
+cp "$MAESTRO_MAIN_REPO_PATH/.env.local" .
+
+# Copy env files, then run the project's own bootstrap script
+cp "$MAESTRO_MAIN_REPO_PATH/.env.local" . && ./scripts/setup.sh
+
+# Install dependencies in a subproject
+cd functions && npm install
+```
+
+On Windows the command runs through `cmd.exe`, so reference the variables as `%MAESTRO_MAIN_REPO_PATH%`:
+
+```bat
+copy "%MAESTRO_MAIN_REPO_PATH%\.env.local" . && npm install
+```
+
+Keep the platform-specific logic in a checked-in script and point the field at it - that way the setup steps live with the repo and the field stays a one-liner. Match the script to the shell that will run it: `./scripts/setup.sh` on macOS and Linux, `scripts\setup.cmd` on Windows, since `cmd.exe` cannot execute a `.sh` file directly. To keep one script for every platform, invoke the interpreter explicitly:
+
+```bat
+bash scripts/setup.sh
+```
+
+**Notes:**
+
+- The script is capped at 10 minutes. A script that waits for input will hit that cap and be killed.
+- A failing script raises a toast with the error but does not block the worktree or its agent; the worktree is already usable.
+- The setup script is stored per parent agent, so different repos can have different bootstrap steps.
 
 ### Worktree Actions
 
@@ -131,6 +186,14 @@ The PR modal shows:
 - Auto-generated title and description based on your work
 
 **Requirements:** GitHub CLI (`gh`) must be installed and authenticated. Maestro will detect if it's missing and show installation instructions.
+
+Opening a PR can take a while, and you don't have to sit and watch it. Once you
+press **Create PR**, the **Cancel** button becomes **Run in Background**: close
+the form (or press Escape) and the request keeps going. While it does, the
+**Create Pull Request** entry in the right-click menu, the branch pill menu and
+`Cmd+K` shows a **Creating** spinner - click it to bring the form back and see
+where the request got to. When it lands you get a toast with a link to the new
+PR, and if it fails, the error waits for you both in a toast and in the form.
 
 ### Removing Worktrees
 

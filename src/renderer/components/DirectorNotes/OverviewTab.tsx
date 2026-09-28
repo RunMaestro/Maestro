@@ -37,7 +37,7 @@ export const OverviewTab = forwardRef<TabFocusHandle, OverviewTabProps>(function
 	}));
 	const sectionHeaderClass = 'flex items-center gap-2 mb-3';
 	const sectionContentClass = 'text-sm space-y-2 pl-7';
-	const codeClass = 'px-1.5 py-0.5 rounded text-[11px] font-mono';
+	const codeClass = 'px-1.5 py-0.5 rounded text-xs-plus font-mono';
 
 	return (
 		<div
@@ -107,7 +107,7 @@ export const OverviewTab = forwardRef<TabFocusHandle, OverviewTabProps>(function
 					<div className={sectionContentClass} style={{ color: theme.colors.textDim }}>
 						<div className="flex items-start gap-3">
 							<span
-								className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase shrink-0"
+								className="flex items-center gap-1 px-2 py-0.5 rounded-full text-2xs font-bold uppercase shrink-0"
 								style={{
 									backgroundColor: theme.colors.accent + '20',
 									color: theme.colors.accent,
@@ -131,7 +131,7 @@ export const OverviewTab = forwardRef<TabFocusHandle, OverviewTabProps>(function
 						</div>
 						<div className="flex items-start gap-3">
 							<span
-								className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase shrink-0"
+								className="flex items-center gap-1 px-2 py-0.5 rounded-full text-2xs font-bold uppercase shrink-0"
 								style={{
 									backgroundColor: theme.colors.warning + '20',
 									color: theme.colors.warning,
@@ -220,7 +220,7 @@ export const OverviewTab = forwardRef<TabFocusHandle, OverviewTabProps>(function
 									}}
 								>
 									<kbd
-										className="px-2 py-0.5 rounded text-[11px] font-mono font-medium shrink-0 min-w-[140px]"
+										className="px-2 py-0.5 rounded text-xs-plus font-mono font-medium shrink-0 min-w-[140px]"
 										style={{
 											backgroundColor: theme.colors.bgActivity,
 											color: theme.colors.textMain,
@@ -251,7 +251,7 @@ export const OverviewTab = forwardRef<TabFocusHandle, OverviewTabProps>(function
 							- great for scripts, cron jobs, or piping into your own tooling.
 						</p>
 						<div
-							className="rounded border p-3 font-mono text-[11px] space-y-1.5"
+							className="rounded border p-3 font-mono text-xs-plus space-y-1.5"
 							style={{
 								borderColor: theme.colors.border,
 								backgroundColor: theme.colors.bgActivity,

@@ -269,5 +269,26 @@ describe('agent-flow plugin main.js', () => {
 			expect(shown[0].title).toBe('Three');
 			expect(stub.snapshot()?.focusedSessionId).toBe('s3');
 		});
+
+		it('keeps only active lanes and the current empty lane while browsing agents', async () => {
+			await activateWithSessions(SEED);
+			stub.emit('session.activated', { sessionId: 's1' });
+			stub.emit('session.activated', { sessionId: 's2' });
+			stub.emit('tool.executed', { sessionId: 's2', toolName: 'Read', timestamp: 1000 });
+			for (const sessionId of ['s3', 's4', 's5', 's6', 's6']) {
+				stub.emit('session.activated', { sessionId });
+			}
+
+			expect(
+				lanes()
+					.map((lane) => lane.sessionId)
+					.sort()
+			).toEqual(['s2', 's6']);
+			expect(stub.snapshot()?.focusedSessionId).toBe('s6');
+
+			// Evicting a browsed lane does not discard its title or future activity.
+			stub.emit('tool.executed', { sessionId: 's1', toolName: 'Read', timestamp: 2000 });
+			expect(lanes().find((lane) => lane.sessionId === 's1')?.title).toBe('One');
+		});
 	});
 });

@@ -40,8 +40,66 @@ describe('isSelfContainedCard', () => {
 		['custom AI command chip', { aiCommand: { command: '/commit', description: 'commit' } }],
 		['hidden progress placeholder', { metadata: { hiddenProgress: { kind: 'tool' as const } } }],
 		['tool call card', { metadata: { toolState: { status: 'running' as const } } }],
+		[
+			'back-from-snooze card',
+			{
+				snoozeReturn: {
+					snoozedAt: 1,
+					wakeAt: 2,
+					resolution: 'woke' as const,
+				},
+			},
+		],
+		[
+			'agent delegation pill',
+			{
+				delegation: {
+					kind: 'dispatch' as const,
+					toSessionId: 'proxmox',
+					toAgentName: 'Proxmox',
+					toToolType: 'claude-code' as const,
+					subject: 'Fix the advisory bug',
+				},
+			},
+		],
 	])('is true for a %s', (_label, overrides) => {
 		expect(isSelfContainedCard(entry(overrides as Partial<LogEntry>))).toBe(true);
+	});
+
+	describe("Claude's plan-limit banner", () => {
+		// The banner reaches the transcript as a plain `stdout` entry with no
+		// marker (Claude forwards it on the `result` envelope after the failure
+		// was already raised), so text is the only thing that can identify it.
+		it('is a card, so the retried answer is not glued to its front', () => {
+			const banner = entry({
+				source: 'stdout',
+				text: "You've hit your session limit · resets 12:50am (America/Chicago)",
+			});
+
+			expect(isSelfContainedCard(banner)).toBe(true);
+			expect(canAppendToLogEntry(banner, 'stdout')).toBe(false);
+		});
+
+		it('is a card for the weekly and legacy wordings too', () => {
+			expect(
+				isSelfContainedCard(entry({ text: "You've hit your weekly limit · resets Monday at 9am" }))
+			).toBe(true);
+			expect(isSelfContainedCard(entry({ text: 'Claude AI usage limit reached|1755500000' }))).toBe(
+				true
+			);
+		});
+
+		it('is NOT a card when an agent merely discusses limits', () => {
+			// Maestro's own agents write about quota constantly. A reply that
+			// quotes the banner carries surrounding prose, so it stays a stream and
+			// keeps coalescing normally.
+			const reply = entry({
+				text: 'Fixed. "You\'ve hit your session limit · resets 11:40am (America/Chicago)" now classifies as rate_limited, so resilience picks it up instead of letting the turn look successful.',
+			});
+
+			expect(isSelfContainedCard(reply)).toBe(false);
+			expect(canAppendToLogEntry(reply, 'stdout')).toBe(true);
+		});
 	});
 });
 
@@ -89,6 +147,12 @@ describe('canAppendToLogEntry', () => {
 			entry({ source: 'stdout', shellCommand: { command: 'ls', cwd: '/', status: 'finished' } }),
 			entry({ source: 'stdout', retryOutageId: 'o1' }),
 			entry({ source: 'stderr', metadata: { toolState: { status: 'error' } } }),
+			// A system-source card: the snooze marker shares its source with plain
+			// system chatter, so only the marker can tell them apart.
+			entry({
+				source: 'system',
+				snoozeReturn: { snoozedAt: 1, wakeAt: 2, resolution: 'woke' },
+			}),
 		];
 
 		for (const card of cards) {

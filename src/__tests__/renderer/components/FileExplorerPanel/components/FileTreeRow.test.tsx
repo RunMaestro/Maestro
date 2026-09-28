@@ -213,7 +213,10 @@ describe('FileTreeRow', () => {
 
 		fireEvent.click(container.firstElementChild!);
 
-		expect(handleFileClick).toHaveBeenCalledWith(fileNode, 'App.tsx', session);
+		// Two arguments, not three: the third slot used to carry the active
+		// session, which handleFileClick never read (it resolves the session from
+		// the store). It now belongs to an optional FileClickOptions.
+		expect(handleFileClick).toHaveBeenCalledWith(fileNode, 'App.tsx');
 	});
 
 	it('opens the context menu on touch long press', () => {

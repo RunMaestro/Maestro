@@ -3,7 +3,24 @@
  * Extracted from useBatchProcessor.ts for reusability.
  */
 
+import { describeSegmentLimit } from '../../../shared/autorunModelHints';
 import type { TaskSelectionMode } from '../../types';
+import {
+	CHECKED_TASK_REGEX,
+	UNCHECKED_TASK_REGEX,
+	countMarkdownTasks,
+	forEachMarkdownLine,
+} from '../../../shared/markdownTaskScan';
+
+// Task counting moved to `shared/markdownTaskScan` so the CLI engine counts a
+// document exactly the way this one does. Re-exported because the batch hooks
+// and several components import it from here.
+export { countMarkdownTasks, type MarkdownTaskCounts } from '../../../shared/markdownTaskScan';
+
+// HITL gate detection moved to `shared/autorunMarkers` so the CLI engine and the
+// markdown renderer can read gates the same way this engine does. Re-exported
+// here because the batch hooks import it from this module.
+export { findPendingHitlGate, type HitlGate } from '../../../shared/autorunMarkers';
 
 let cachedAutorunDefaultPrompt: string = '';
 let cachedAutorunPerTaskBlock: string = '';
@@ -45,82 +62,26 @@ function getAutorunDefaultPrompt(): string {
  * blank lines around the swapped block. Falls back to the per-task block if a
  * caller passes an unrecognized value.
  */
-export function getTaskSelectionBlock(mode: TaskSelectionMode | undefined): string {
+export function getTaskSelectionBlock(
+	mode: TaskSelectionMode | undefined,
+	segment?: { count: number; total: number }
+): string {
 	const content = mode === 'document' ? cachedAutorunPerDocumentBlock : cachedAutorunPerTaskBlock;
-	return content.replace(/\s+$/, '');
+	const block = content.replace(/\s+$/, '');
+
+	// Only document mode has a boundary to honour - per-task already stops after
+	// one. The shared helper returns '' when the whole remaining document shares
+	// one setting, which keeps the text BYTE-IDENTICAL to what it has always
+	// been: every playbook written before model hints existed has no markers, so
+	// anything else would change the behaviour of every existing document at
+	// once.
+	if (mode !== 'document') return block;
+	return `${block}${describeSegmentLimit(segment)}`;
 }
 
 // Default batch processing prompt (exported for use by BatchRunnerModal and playbook management)
 // Uses `let` so the binding can be updated after async IPC load completes
 export let DEFAULT_BATCH_PROMPT: string = getAutorunDefaultPrompt();
-
-// Regex to count unchecked markdown checkboxes: - [ ] task (also * [ ] or + [ ])
-const UNCHECKED_TASK_REGEX = /^[\s]*[-*+]\s*\[\s*\]\s*.+$/;
-
-// Regex to count checked markdown checkboxes: - [x] task (also * [x] or + [x])
-const CHECKED_TASK_COUNT_REGEX = /^[\s]*[-*+]\s*\[[xX✓✔]\]\s*.+$/;
-
-// Regex to match a HITL gate marker: <!-- MAESTRO:HITL reason="..." artifact="..." -->
-// The marker may span multiple lines in source, but we treat a single line as the unit
-// because playbook authors place it on its own line per the documented convention.
-const HITL_MARKER_REGEX = /<!--\s*MAESTRO:HITL\b([^]*?)-->/;
-
-// Regex to match checked markdown checkboxes for reset-on-completion
-// Matches both [x] and [X] with various checkbox formats (standard and GitHub-style)
-const CHECKED_TASK_REGEX = /^(\s*[-*+]\s*)\[[xX✓✔]\]/gm;
-
-export interface MarkdownTaskCounts {
-	checked: number;
-	unchecked: number;
-	total: number;
-}
-
-/**
- * Count markdown checkbox tasks while ignoring fenced code blocks.
- * This prevents example snippets from affecting Auto Run progress.
- */
-export function countMarkdownTasks(content: string): MarkdownTaskCounts {
-	const normalizedContent = content.replace(/\r\n?/g, '\n');
-	let checked = 0;
-	let unchecked = 0;
-	let inFencedCode = false;
-	let fenceChar: '`' | '~' | null = null;
-	let openFenceLength = 0;
-
-	for (const line of normalizedContent.split('\n')) {
-		const trimmed = line.trimStart();
-		const fenceMatch = trimmed.match(/^([`~]{3,})/);
-		if (fenceMatch) {
-			const currentFenceChar = fenceMatch[1][0] as '`' | '~';
-			if (!inFencedCode) {
-				inFencedCode = true;
-				fenceChar = currentFenceChar;
-				openFenceLength = fenceMatch[1].length;
-				continue;
-			}
-			if (fenceChar === currentFenceChar && fenceMatch[1].length >= openFenceLength) {
-				inFencedCode = false;
-				fenceChar = null;
-				openFenceLength = 0;
-				continue;
-			}
-		}
-
-		if (inFencedCode) continue;
-
-		if (CHECKED_TASK_COUNT_REGEX.test(line)) {
-			checked++;
-		} else if (UNCHECKED_TASK_REGEX.test(line)) {
-			unchecked++;
-		}
-	}
-
-	return {
-		checked,
-		unchecked,
-		total: checked + unchecked,
-	};
-}
 
 /**
  * Count unchecked tasks in markdown content
@@ -146,87 +107,97 @@ export function uncheckAllTasks(content: string): string {
 	return content.replace(CHECKED_TASK_REGEX, '$1[ ]');
 }
 
-export interface HitlGate {
-	reason: string;
-	artifact?: string;
-	/** 0-indexed line number of the marker within the document */
+/**
+ * Phrases that mark a task as something only a human can do. A checkbox task
+ * matching one of these is an Auto Run trap: the engine dispatches it, the
+ * agent has no way to finish it, and the run either stalls or the agent ticks
+ * a box it never actually completed.
+ *
+ * Patterns are deliberately narrow. Bare "verify" or "test" are normal agent
+ * work; only the qualified forms ("visually verify", "manually test") count.
+ * This drives a non-blocking warning, so a false positive costs the author a
+ * glance, not a blocked run.
+ */
+export const HUMAN_ONLY_TASK_PATTERNS: { id: string; label: string; pattern: RegExp }[] = [
+	{
+		id: 'manual-action',
+		label: 'manual action',
+		pattern: /\b(?:manually|by hand|hand-verify)\b/i,
+	},
+	{
+		id: 'visual-check',
+		label: 'visual verification',
+		// "visually" alone is not a human step: "distinguish A from B visually"
+		// or "visually separate the two states" is ordinary UI work an agent
+		// writes code for. Only pair it with a checking verb, in either order.
+		pattern:
+			/\bvisual(?:ly)?\s+(?:verif\w+|check\w*|confirm\w*|inspect\w*|review\w*|compar\w+|validat\w+|QA)\b|\b(?:verify|verified|check|checked|confirm|confirmed|inspect|review|compare|validate)\b[^.\n]{0,40}\bvisually\b|\beyeball\b/i,
+	},
+	{
+		id: 'user-input',
+		label: 'waiting on a person',
+		pattern:
+			/\b(?:ask|prompt|wait for|check with|confirm with|coordinate with)\s+(?:the\s+)?(?:user|conductor|human|team|reviewer|stakeholder|owner)\b/i,
+	},
+	{
+		id: 'approval',
+		label: 'approval gate',
+		pattern:
+			/\b(?:human|user|manual|stakeholder|owner)\s+(?:approval|sign-?off|review|verification|confirmation)\b|\bsign[-\s]?off\b|\b(?:get|await|obtain|request|pending)\s+approval\b/i,
+	},
+	{
+		id: 'human-actor',
+		label: 'a person is the actor',
+		pattern:
+			/\b(?:the\s+)?(?:user|conductor|human|developer|you)\s+(?:must|should|will|needs? to|has to)\s+(?:then\s+)?(?:manually\s+)?(?:test|verify|confirm|review|approve|check|click|open|inspect|decide|choose)\b/i,
+	},
+	{
+		id: 'external-credential',
+		label: 'credential or account a person must obtain',
+		pattern:
+			/\b(?:obtain|acquire|sign up for|create an account|register for|request)\b[^.\n]{0,48}\b(?:api key|access key|credentials?|secret|oauth token|license|subscription|account)\b/i,
+	},
+];
+
+export interface HumanOnlyTask {
+	/** 0-indexed line number of the offending checkbox within the document */
 	line: number;
+	/** Task text with the `- [ ]` prefix stripped */
+	text: string;
+	/** Human-readable description of why this looks human-only */
+	reason: string;
 }
 
 /**
- * Detect a pending HITL (human-in-the-loop) gate in playbook content.
+ * Find unchecked checkbox tasks that read as human-only steps.
  *
- * A gate is "pending" when an unchecked task appears below a HITL marker
- * with no checked task between them - the human hasn't acknowledged the
- * gate yet by ticking the approval checkbox. Once the user checks the box
- * (or any task between the marker and the next unchecked task), the marker
- * is considered "consumed" and the next call returns null.
+ * Auto Run has two correct ways to express a human step, and neither is a
+ * checkbox: a `<!-- MAESTRO:HITL reason="..." -->` marker (pauses the run
+ * deliberately and surfaces the reason), or plain `-` bullets at the end of
+ * the document (a post-run checklist the engine never sees). See
+ * `src/prompts/_autorun-playbooks.md`.
  *
- * Markers inside fenced code blocks are ignored so playbook authors can
- * document the syntax without triggering pauses.
- *
- * Returns the first marker in a pending chain (when multiple markers
- * appear before a single unchecked task), and null otherwise.
+ * Only unchecked tasks are scanned - a checked one has already been resolved
+ * one way or another and can no longer stall the run.
  */
-export function findPendingHitlGate(content: string): HitlGate | null {
-	const normalizedContent = content.replace(/\r\n?/g, '\n');
-	const lines = normalizedContent.split('\n');
-	let firstMarkerInPendingChain: HitlGate | null = null;
-	let inFencedCode = false;
-	let fenceChar: '`' | '~' | null = null;
-	let openFenceLength = 0;
+export function findHumanOnlyTasks(content: string): HumanOnlyTask[] {
+	const found: HumanOnlyTask[] = [];
 
-	for (let i = 0; i < lines.length; i++) {
-		const line = lines[i];
-		const trimmed = line.trimStart();
+	forEachMarkdownLine(content, (line, i) => {
+		if (!UNCHECKED_TASK_REGEX.test(line)) return;
 
-		const fenceMatch = trimmed.match(/^([`~]{3,})/);
-		if (fenceMatch) {
-			const currentFenceChar = fenceMatch[1][0] as '`' | '~';
-			if (!inFencedCode) {
-				inFencedCode = true;
-				fenceChar = currentFenceChar;
-				openFenceLength = fenceMatch[1].length;
-				continue;
-			}
-			if (fenceChar === currentFenceChar && fenceMatch[1].length >= openFenceLength) {
-				inFencedCode = false;
-				fenceChar = null;
-				openFenceLength = 0;
-				continue;
-			}
-		}
+		const text = line.replace(/^\s*[-*+]\s*\[\s*\]\s*/, '').trim();
+		const matched = HUMAN_ONLY_TASK_PATTERNS.filter(({ pattern }) => pattern.test(text));
+		if (matched.length === 0) return;
 
-		if (inFencedCode) continue;
+		found.push({
+			line: i,
+			text,
+			reason: matched.map(({ label }) => label).join(', '),
+		});
+	});
 
-		// Checked tasks consume any pending marker - the user already approved
-		// (or someone other than the user; either way the gate has been passed).
-		if (CHECKED_TASK_COUNT_REGEX.test(line)) {
-			firstMarkerInPendingChain = null;
-			continue;
-		}
-
-		// Unchecked task closes the pending chain: if we have a marker, it's
-		// the gate the run should pause at. Otherwise there's no gate above
-		// this task.
-		if (UNCHECKED_TASK_REGEX.test(line)) {
-			return firstMarkerInPendingChain;
-		}
-
-		const markerMatch = line.match(HITL_MARKER_REGEX);
-		if (markerMatch && firstMarkerInPendingChain === null) {
-			const inner = markerMatch[1] || '';
-			const reasonMatch = inner.match(/reason\s*=\s*"([^"]*)"/);
-			const artifactMatch = inner.match(/artifact\s*=\s*"([^"]*)"/);
-			firstMarkerInPendingChain = {
-				reason: reasonMatch?.[1]?.trim() || 'Human review requested',
-				artifact: artifactMatch?.[1]?.trim() || undefined,
-				line: i,
-			};
-		}
-	}
-
-	return null;
+	return found;
 }
 
 /**

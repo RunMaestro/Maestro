@@ -75,10 +75,18 @@ export class QwenOutputParser extends ClaudeOutputParser {
 			: 0;
 		if (event.usage) {
 			if (reportedContextWindow > 0) {
-				event.usage = { ...event.usage, contextWindow: reportedContextWindow };
+				// This branch is the only one holding a genuinely provider-reported
+				// window, so it is the only one allowed to mark it authoritative
+				// (finding P1 - see `contextWindowReported` on ParsedEvent.usage).
+				event.usage = {
+					...event.usage,
+					contextWindow: reportedContextWindow,
+					contextWindowReported: true,
+				};
 			} else if (event.usage.contextWindow === FALLBACK_CONTEXT_WINDOW) {
 				const usage = { ...event.usage };
 				delete usage.contextWindow;
+				delete usage.contextWindowReported;
 				event.usage = usage;
 			}
 		}

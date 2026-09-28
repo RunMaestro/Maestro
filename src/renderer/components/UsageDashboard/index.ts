@@ -8,5 +8,6 @@
 export { UsageDashboardModal } from './UsageDashboardModal';
 export { SessionStats } from './SessionStats';
 export { TokenStats } from './TokenStats';
+export { GroupOverviewCards } from './GroupOverviewCards';
 export { ClaudePlanUsage } from './ClaudePlanUsage';
 export { CodexPlanUsage } from './CodexPlanUsage';

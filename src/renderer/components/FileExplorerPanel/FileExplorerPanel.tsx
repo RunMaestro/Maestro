@@ -15,19 +15,23 @@ import {
 	FolderUp,
 	FileText,
 	HardDrive,
+	AlertTriangle,
+	ExternalLink,
 } from 'lucide-react';
 import { getBasename } from '../../../shared/formatters';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useGitDetail } from '../../contexts/GitStatusContext';
 import { buildChangedAncestors, buildFileChangeMap } from '../../utils/gitChangeMap';
 import { RIGHT_PANEL_COMPACT_THRESHOLD } from '../../constants/rightPanel';
-import { getOpenInLabel } from '../../utils/platformUtils';
+import { usePhoneLayout } from '../../hooks/ui/useViewportBreakpoint';
+import { getOpenInLabel, fileManagerName } from '../../utils/platformUtils';
 import { safeClipboardWrite } from '../../utils/clipboard';
 import { flashCopiedToClipboard } from '../../utils/flashCopiedToClipboard';
-import { formatShortcutKeys } from '../../utils/shortcutFormatter';
+import { formatShortcutKeys, formatKey, formatAltKeyName } from '../../utils/shortcutFormatter';
 import { dragHasOsFiles } from '../../utils/osFileDrop';
 
 import type { FileExplorerPanelProps } from './types';
+import { isMediaFile } from '../../../shared/mediaTypes';
 import { FILE_TREE_SINGLE_MIME, FILE_TREE_MULTI_MIME } from './types';
 
 // Sub-components
@@ -96,7 +100,13 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 	const dotfilesToggleHidden = useSettingsStore((s) => s.dotfilesToggleHidden);
 	const colorBlindMode = useSettingsStore((s) => s.colorBlindMode);
 	const htmlDoubleClickOpensInBrowser = useSettingsStore((s) => s.htmlDoubleClickOpensInBrowser);
-	const compact = rightPanelWidth < RIGHT_PANEL_COMPACT_THRESHOLD;
+	// Two ways to fit the toolbar in a narrow panel, by what is scarce: a narrow
+	// DESKTOP panel (`compact`) drops the icons and keeps the words for a mouse
+	// user; a PHONE (`iconOnly`) drops the words and keeps the icons, with the
+	// label living on in each button's title.
+	const phone = usePhoneLayout();
+	const iconOnly = phone;
+	const compact = !phone && rightPanelWidth < RIGHT_PANEL_COMPACT_THRESHOLD;
 
 	const [isTouchPointer, setIsTouchPointer] = useState<boolean>(() =>
 		typeof window !== 'undefined' && window.matchMedia
@@ -131,6 +141,14 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 	const changedAncestors = useMemo(() => buildChangedAncestors(changeMap.keys()), [changeMap]);
 
 	// Coordinator refs with ≥3 cross-hook readers
+	// The truncation warning is tall enough to swallow the top of the tree, so
+	// it can be collapsed down to the hazard icon beside the path. Keyed by
+	// session id rather than a bare boolean: collapsing it for one agent must
+	// not hide a fresh warning when the panel re-renders for another.
+	const [truncationCollapsedFor, setTruncationCollapsedFor] = useState<string | null>(null);
+	const truncationCollapsed = truncationCollapsedFor === session.id;
+	const showTruncationWarning = !session.fileTreeLoading && !!session.fileTreeTruncated;
+
 	const refreshFileTreeRef = useRef(refreshFileTree);
 	const sessionIdRef = useRef(session.id);
 	const lastClickedUnderFilterRef = useRef<string | null>(null);
@@ -174,6 +192,25 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 			setSelectedFileIndex,
 			flattenedTreeRef,
 		});
+
+	// Drives the context menu's "Add N to Play Queue" entry. Judged by extension,
+	// which is all the menu needs to decide whether to offer the action.
+	const selectedMediaCount = useMemo(
+		() => Array.from(selectedPaths).filter((path) => isMediaFile(path)).length,
+		[selectedPaths]
+	);
+
+	// Drives the context menu's "Open N in Document Graph" entry. Counts only
+	// markdown, because that is all the graph can parse - labelling the action
+	// with the raw selection size would promise to graph files it will drop.
+	const selectedMarkdownCount = useMemo(
+		() =>
+			Array.from(selectedPaths).filter((path) => {
+				const lower = path.toLowerCase();
+				return lower.endsWith('.md') || lower.endsWith('.markdown');
+			}).length,
+		[selectedPaths]
+	);
 
 	// ── Virtualizer ───────────────────────────────────────────────────────────
 
@@ -308,6 +345,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 		dragOverFolder,
 		isExternalDrag,
 		internalDragActive,
+		showRootReceptacle,
 		moveConflict,
 		isMoving,
 		handleFolderDrop,
@@ -352,12 +390,19 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 		handleOpenInExplorer,
 		handleOpenNewFile,
 		handleOpenNewFolder,
+		handleNewAgentHere,
 		handleOpenRename,
 		handleOpenDelete,
 		handleFocusInGraph,
+		handleGraphFolder,
+		handleGraphSelection,
+		autoRunStagedDocs,
+		handleStageForAutoRun,
 		handlePreviewFile,
 		handlePreviewAllInFolder,
+		handleCompressFolder,
 		handlePreviewMulti,
+		handleQueueMedia,
 		handleOpenInDefaultAppMulti,
 		handleOpenDeleteMulti,
 		handleDeleteMulti,
@@ -379,6 +424,33 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 		refreshFileTree,
 		sshRemoteId,
 	});
+
+	// ── Drag-out hint ─────────────────────────────────────────────────────────
+	// True once the user presses Option/Alt with an in-tree drag already in
+	// flight. The OS hand-off has to be claimed in `dragstart` (Electron's
+	// startDrag cancels the HTML5 drag, so the choice is made before anyone knows
+	// where the drop lands), which means pressing the key now does nothing. Rather
+	// than leave the user holding a dead key, the hint says so and tells them how
+	// to recover. Read from `dragover` because a keydown during a drag doesn't
+	// reach us - the drag session swallows key events, but every dragover carries
+	// the live modifier state.
+	const [altPressedMidDrag, setAltPressedMidDrag] = useState(false);
+	const handleDragOverCapture = useCallback(
+		(e: React.DragEvent) => {
+			// Capture phase: row and folder handlers stopPropagation, so a bubbling
+			// listener would never see a drag over the tree itself.
+			if (!internalDragActive) return;
+			setAltPressedMidDrag(e.altKey);
+		},
+		[internalDragActive]
+	);
+	const handleRowDragEnd = useCallback(() => {
+		setAltPressedMidDrag(false);
+		handleInternalDragEnd();
+	}, [handleInternalDragEnd]);
+
+	const altKeySymbol = formatKey('Alt');
+	const altKeyName = formatAltKeyName();
 
 	// ── Internal drag bubble suppression ──────────────────────────────────────
 	// Swallow drag-enter/leave that propagate to the app-level overlay handler
@@ -436,6 +508,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 			className="flex flex-col h-full relative"
 			onDragEnter={handleRootDragEnter}
 			onDragOver={handleRootDragOver}
+			onDragOverCapture={handleDragOverCapture}
 			onDragLeave={handleRootDragLeave}
 			onDrop={handleRootDrop}
 			style={
@@ -494,7 +567,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 								setTimeout(() => fileTreeFilterInputRef?.current?.focus(), 0);
 							}
 						}}
-						className="flex-1 flex items-center justify-center gap-1 py-0.5 px-2 rounded text-xs font-medium transition-colors hover:bg-white/10"
+						className="fx-btn fx-primary flex-1 flex items-center justify-center gap-1 py-0.5 px-2 rounded text-xs font-medium transition-colors hover:bg-white/10"
 						style={{
 							color: fileTreeFilterOpen ? theme.colors.accent : theme.colors.accent,
 							border: `1px solid ${theme.colors.accent}40`,
@@ -505,7 +578,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 						title={`Find Files (${formatShortcutKeys(shortcuts.filterFiles?.keys ?? ['Meta', 'f'])})`}
 					>
 						{!compact && <Search className="w-3 h-3" />}
-						Find
+						{!iconOnly && 'Find'}
 					</button>
 					{/* Open in file manager - local sessions only */}
 					{!sshRemoteId && (
@@ -513,7 +586,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 							onClick={() =>
 								window.maestro?.shell?.openPath(session.fullPath || session.projectRoot)
 							}
-							className="flex-1 flex items-center justify-center gap-1 py-0.5 px-2 rounded text-xs font-medium transition-colors hover:bg-white/10"
+							className="fx-btn flex-1 flex items-center justify-center gap-1 py-0.5 px-2 rounded text-xs font-medium transition-colors hover:bg-white/10"
 							style={{
 								color: theme.colors.accent,
 								border: `1px solid ${theme.colors.accent}40`,
@@ -522,14 +595,14 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 							title={getOpenInLabel(window.maestro?.platform || 'darwin')}
 						>
 							{!compact && <FolderOpen className="w-3 h-3" />}
-							Open
+							{!iconOnly && 'Open'}
 						</button>
 					)}
 					{/* Show/hide dotfiles */}
 					{!dotfilesToggleHidden && (
 						<button
 							onClick={() => setShowHiddenFiles(!showHiddenFiles)}
-							className="flex-1 flex items-center justify-center gap-1 py-0.5 px-2 rounded text-xs font-medium transition-colors hover:bg-white/10"
+							className="fx-btn flex-1 flex items-center justify-center gap-1 py-0.5 px-2 rounded text-xs font-medium transition-colors hover:bg-white/10"
 							style={{
 								color: theme.colors.accent,
 								border: `1px solid ${theme.colors.accent}40`,
@@ -541,7 +614,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 						>
 							{!compact &&
 								(showHiddenFiles ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />)}
-							.files
+							{!iconOnly && '.files'}
 						</button>
 					)}
 					{/* Refresh */}
@@ -550,7 +623,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 						onClick={handleRefresh}
 						onMouseEnter={handleRefreshMouseEnter}
 						onMouseLeave={handleRefreshMouseLeave}
-						className="flex-1 flex items-center justify-center gap-1 py-0.5 px-2 rounded text-xs font-medium transition-colors hover:bg-white/10"
+						className="fx-btn flex-1 flex items-center justify-center gap-1 py-0.5 px-2 rounded text-xs font-medium transition-colors hover:bg-white/10"
 						style={{
 							color: theme.colors.accent,
 							border: `1px solid ${theme.colors.accent}40`,
@@ -564,7 +637,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 						}
 					>
 						{!compact && <RefreshCw className={`w-3 h-3 ${isRefreshing ? 'animate-spin' : ''}`} />}
-						Refresh
+						{!iconOnly && 'Refresh'}
 					</button>
 					{/* Expand all */}
 					<button
@@ -627,6 +700,18 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 						>
 							<Server className="w-3.5 h-3.5" />
 						</span>
+					)}
+					{showTruncationWarning && truncationCollapsed && (
+						<button
+							type="button"
+							className="flex-shrink-0 opacity-70 hover:opacity-100 transition-opacity"
+							style={{ color: theme.colors.warning }}
+							onClick={() => setTruncationCollapsedFor(null)}
+							aria-label="Show file scan warning"
+							title="Not all files were loaded into the file panel. Click for options."
+						>
+							<AlertTriangle className="w-3.5 h-3.5" />
+						</button>
 					)}
 					<span
 						className="flex-shrink-0 cursor-pointer opacity-30 hover:opacity-70 transition-opacity"
@@ -723,7 +808,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 								/>
 							);
 						})()}
-					{!session.fileTreeLoading && session.fileTreeTruncated && (
+					{showTruncationWarning && !truncationCollapsed && (
 						<FileTreeTruncatedBanner
 							theme={theme}
 							previousCap={session.fileTreeLoadedCap}
@@ -737,6 +822,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 									maxEntriesOverride: Number.POSITIVE_INFINITY,
 								});
 							}}
+							onCollapse={() => setTruncationCollapsedFor(session.id)}
 						/>
 					)}
 					{!session.fileTreeLoading &&
@@ -808,7 +894,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 											handleFolderDragLeave={handleFolderDragLeave}
 											handleFolderDrop={handleFolderDrop}
 											onInternalDragStart={handleInternalDragStart}
-											onInternalDragEnd={handleInternalDragEnd}
+											onInternalDragEnd={handleRowDragEnd}
 											onOsDragOut={handleOsDragStart}
 											toggleFolder={toggleFolder}
 											toggleFolderRecursive={toggleFolderRecursive}
@@ -841,30 +927,89 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 				/>
 			)}
 
-			{/* Move-to-root receptacle - appears only while an in-tree row is being
-			    dragged, giving items buried in subfolders a target to land back at
-			    the workspace root. Sits at the bottom of the panel, just above the
-			    stats bar. Mirrors the Left Bar's "Drop here to ungroup" zone for UI
-			    consistency. Items already at root never trigger it (the dragstart
-			    handler suppresses it when every dragged item is already at root). */}
+			{/* Mid-drag footer - mounts on the deferred dragstart tick (see
+			    handleInternalDragStart: a synchronous reflow aborts the drag) and
+			    unmounts on dragend. Holds the move-to-root receptacle, when the drag
+			    has anywhere to land, above the drag-out hint. */}
 			{internalDragActive && (
-				<div
-					className="flex-shrink-0 mt-2 px-3 py-2 rounded border-2 border-dashed text-center text-xs flex items-center justify-center gap-1.5 transition-colors"
-					onDragEnter={(e) => handleFolderDragEnter(e, '')}
-					onDragOver={(e) => handleFolderDragOver(e, '')}
-					onDragLeave={handleFolderDragLeave}
-					onDrop={(e) => handleFolderDrop(e, '')}
-					style={{
-						borderColor: theme.colors.accent,
-						color: theme.colors.textDim,
-						backgroundColor:
-							dragOverFolder === '' && !isExternalDrag
-								? `${theme.colors.accent}25`
-								: `${theme.colors.accent}10`,
-					}}
-				>
-					<FolderUp className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
-					Drop here to move to root
+				<div className="flex-shrink-0 mt-2 flex flex-col gap-1.5 animate-in">
+					{/* Move-to-root receptacle - gives items buried in subfolders a
+					    target to land back at the workspace root. Mirrors the Left Bar's
+					    "Drop here to ungroup" zone for UI consistency. Items already at
+					    root never trigger it (the dragstart handler suppresses it when
+					    every dragged item is already at root). */}
+					{showRootReceptacle && (
+						<div
+							className="px-3 py-2 rounded border-2 border-dashed text-center text-xs flex items-center justify-center gap-1.5 transition-colors"
+							onDragEnter={(e) => handleFolderDragEnter(e, '')}
+							onDragOver={(e) => handleFolderDragOver(e, '')}
+							onDragLeave={handleFolderDragLeave}
+							onDrop={(e) => handleFolderDrop(e, '')}
+							style={{
+								borderColor: theme.colors.accent,
+								color: theme.colors.textDim,
+								backgroundColor:
+									dragOverFolder === '' && !isExternalDrag
+										? `${theme.colors.accent}25`
+										: `${theme.colors.accent}10`,
+							}}
+						>
+							<FolderUp className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
+							Drop here to move to root
+						</div>
+					)}
+
+					{/* Drag-out hint - a plain drag only reaches targets inside Maestro
+					    (a folder row, the AI composer), so the one gesture that leaves
+					    the app is worth saying out loud while the drag is live. Not a
+					    drop target: pointer-events-none keeps it out of the way of the
+					    receptacle above it and of anything the drag passes over. */}
+					<div
+						className="px-2.5 py-1.5 rounded text-xs-plus flex items-center justify-center gap-1.5 transition-colors pointer-events-none"
+						style={{
+							// Borderless and faintly tinted so it doesn't read as another
+							// bordered bar next to the stats strip right below it. The
+							// accent lifts when the key is pressed too late, so the hint
+							// visibly answers rather than sitting there as wallpaper.
+							backgroundColor: `${theme.colors.accent}${altPressedMidDrag ? '1f' : '0d'}`,
+							color: altPressedMidDrag ? theme.colors.textMain : theme.colors.textDim,
+						}}
+					>
+						{altPressedMidDrag ? (
+							<>
+								<AlertTriangle
+									className="w-3 h-3 flex-shrink-0"
+									style={{ color: theme.colors.accent }}
+								/>
+								<span>
+									Hold {altKeyName} <strong>before</strong> the drag - drop and try again
+								</span>
+							</>
+						) : (
+							<>
+								<ExternalLink
+									className="w-3 h-3 flex-shrink-0"
+									style={{ color: theme.colors.accent }}
+								/>
+								<span className="flex items-center gap-1.5">
+									{altKeySymbol !== altKeyName && (
+										<kbd
+											className="px-1 py-px rounded text-2xs font-semibold leading-none"
+											style={{
+												border: `1px solid ${theme.colors.border}`,
+												color: theme.colors.textMain,
+											}}
+										>
+											{altKeySymbol}
+										</kbd>
+									)}
+									<span>
+										{altKeyName}-drag to copy out to {fileManagerName()}
+									</span>
+								</span>
+							</>
+						)}
+					</div>
 				</div>
 			)}
 
@@ -925,9 +1070,13 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 					contextMenuPos={contextMenuPos}
 					sshRemoteId={sshRemoteId}
 					onFocusFileInGraph={onFocusFileInGraph}
+					onGraphFolder={handleGraphFolder}
+					onGraphSelection={handleGraphSelection}
 					onOpenBrowserTabAt={onOpenBrowserTabAt}
 					isMultiSelectionContext={selectedPaths.size > 1 && selectedPaths.has(contextMenu.path)}
 					selectedCount={selectedPaths.size}
+					selectedMediaCount={selectedMediaCount}
+					selectedMarkdownCount={selectedMarkdownCount}
 					onCopyPath={handleCopyPath}
 					onCopyFileName={handleCopyFileName}
 					onDownloadFile={handleDownloadFile}
@@ -936,9 +1085,14 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 					onOpenInExplorer={handleOpenInExplorer}
 					onOpenNewFile={handleOpenNewFile}
 					onOpenNewFolder={handleOpenNewFolder}
+					onNewAgentHere={handleNewAgentHere}
 					onPreviewFile={handlePreviewFile}
 					onPreviewAllInFolder={handlePreviewAllInFolder}
+					autoRunStagedCount={autoRunStagedDocs.length}
+					onStageForAutoRun={handleStageForAutoRun}
+					onCompressFolder={handleCompressFolder}
 					onPreviewMulti={handlePreviewMulti}
+					onQueueMedia={handleQueueMedia}
 					onOpenInDefaultAppMulti={handleOpenInDefaultAppMulti}
 					onOpenDeleteMulti={handleOpenDeleteMulti}
 					onFocusInGraph={handleFocusInGraph}

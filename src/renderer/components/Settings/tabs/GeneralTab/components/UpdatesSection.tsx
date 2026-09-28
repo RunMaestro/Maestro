@@ -43,7 +43,9 @@ export function UpdatesSection({
 							Check for updates automatically
 						</div>
 						<div className="text-xs opacity-70 mt-0.5">
-							Check for new Maestro versions on startup and once per day while the app is running
+							Check for new Maestro versions on startup and once per day while the app is running.
+							Also sends an anonymous check-in (a random install ID, app version, OS, and theme) so
+							we can count active installs. Turning this off disables both.
 						</div>
 					</div>
 					<ToggleSwitch

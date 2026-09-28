@@ -26,6 +26,12 @@ import {
 	primeOmpModelCatalog,
 	computeOmpCatalogKey,
 } from '../../../../main/agents/omp-model-catalog';
+import { runAsActingUser } from '../../../../main/web-server/auth/acting-user';
+import {
+	noteTurnActor,
+	resolveTurnActor,
+	resetTurnActors,
+} from '../../../../main/web-server/auth/turn-attribution';
 
 // Mock electron's ipcMain
 vi.mock('electron', () => ({
@@ -558,6 +564,8 @@ describe('process IPC handlers', () => {
 				vi.mocked(primeOmpModelCatalog).mock.calls[0];
 			expect(passedBinaryPath).toBe(binaryPath);
 			expect(passedKey).toBe('omp-catalog-key');
+			// The spawn stamps the caller identity into the env overrides; the key must
+			// ignore it, or it never matches the detector's no-override warm-up.
 			expect(computeOmpCatalogKey).toHaveBeenCalledWith(binaryPath, undefined);
 
 			// The prime env's PATH must lead with the binary dir (so the co-located
@@ -621,6 +629,117 @@ describe('process IPC handlers', () => {
 					}),
 				})
 			);
+		});
+
+		it('stamps the agent and tab identity so a CLI dispatch from its shell can be attributed', async () => {
+			mockAgentDetector.getAgent.mockResolvedValue({ id: 'opencode', requiresPty: false });
+			mockProcessManager.spawn.mockReturnValue({ pid: 2001, success: true });
+
+			const handler = handlers.get('process:spawn');
+			await handler!({} as any, {
+				sessionId: 'agent-identity-ai-tab-7',
+				tabId: 'tab-7',
+				toolType: 'opencode',
+				cwd: '/test',
+				command: 'opencode',
+				args: [],
+			});
+
+			expect(mockProcessManager.spawn).toHaveBeenCalledWith(
+				expect.objectContaining({
+					customEnvVars: expect.objectContaining({
+						MAESTRO_CALLER_AGENT_ID: 'agent-identity',
+						MAESTRO_CALLER_TAB_ID: 'tab-7',
+					}),
+				})
+			);
+		});
+
+		/**
+		 * Web Login turn attribution.
+		 *
+		 * Spawn is the ONLY point where the account that asked for the turn is in
+		 * scope: the History entry and the stats row are written later by the
+		 * DESKTOP renderer's exit listener, where `getActingUser()` is undefined.
+		 * So the spawn notes the actor for the exit-time lookup and stamps the
+		 * username into the agent's environment.
+		 */
+		describe('Web Login turn attribution', () => {
+			afterEach(() => {
+				resetTurnActors();
+			});
+
+			it('notes the acting user and stamps it into the agent env', async () => {
+				mockAgentDetector.getAgent.mockResolvedValue({ id: 'opencode', requiresPty: false });
+				mockProcessManager.spawn.mockReturnValue({ pid: 2100, success: true });
+
+				const handler = handlers.get('process:spawn');
+				await runAsActingUser({ id: 'u1', username: 'pedram', displayName: 'Pedram A' }, () =>
+					handler!({} as any, {
+						sessionId: 'agent-web-ai-tab-1',
+						tabId: 'tab-1',
+						toolType: 'opencode',
+						cwd: '/test',
+						command: 'opencode',
+						args: [],
+					})
+				);
+
+				expect(resolveTurnActor('agent-web', 'tab-1')).toEqual({
+					id: 'u1',
+					username: 'pedram',
+					displayName: 'Pedram A',
+				});
+				expect(mockProcessManager.spawn).toHaveBeenCalledWith(
+					expect.objectContaining({
+						customEnvVars: expect.objectContaining({ MAESTRO_QUERY_USER: 'pedram' }),
+					})
+				);
+			});
+
+			it('adds no query-user var for a desktop spawn', async () => {
+				mockAgentDetector.getAgent.mockResolvedValue({ id: 'opencode', requiresPty: false });
+				mockProcessManager.spawn.mockReturnValue({ pid: 2101, success: true });
+
+				const handler = handlers.get('process:spawn');
+				await handler!({} as any, {
+					sessionId: 'agent-desktop-ai-tab-1',
+					tabId: 'tab-1',
+					toolType: 'opencode',
+					cwd: '/test',
+					command: 'opencode',
+					args: [],
+				});
+
+				const spawned = mockProcessManager.spawn.mock.calls[0][0] as {
+					customEnvVars?: Record<string, string>;
+				};
+				expect(spawned.customEnvVars?.MAESTRO_QUERY_USER).toBeUndefined();
+			});
+
+			it('clears a browser actor when the desktop starts the next turn', async () => {
+				// Otherwise a phone's earlier turn is credited to a later one
+				// typed at the keyboard.
+				noteTurnActor('agent-clear', 'tab-1', {
+					id: 'u1',
+					username: 'pedram',
+					displayName: 'Pedram A',
+				});
+				mockAgentDetector.getAgent.mockResolvedValue({ id: 'opencode', requiresPty: false });
+				mockProcessManager.spawn.mockReturnValue({ pid: 2102, success: true });
+
+				const handler = handlers.get('process:spawn');
+				await handler!({} as any, {
+					sessionId: 'agent-clear-ai-tab-1',
+					tabId: 'tab-1',
+					toolType: 'opencode',
+					cwd: '/test',
+					command: 'opencode',
+					args: [],
+				});
+
+				expect(resolveTurnActor('agent-clear', 'tab-1')).toBeUndefined();
+			});
 		});
 
 		it('should NOT apply readOnlyEnvOverrides when readOnlyMode is false', async () => {
@@ -1860,7 +1979,9 @@ describe('process IPC handlers', () => {
 			const lastArg = spawnCall.args[spawnCall.args.length - 1];
 			// Path must be shell-escaped (single-quoted) to prevent injection
 			expect(lastArg).toContain("cd '/remote/project'");
-			expect(lastArg).toContain('exec "$SHELL"');
+			// Must be a LOGIN shell, otherwise /etc/zprofile (path_helper on macOS) never runs
+			// and the remote terminal gets a shorter PATH than a plain `ssh host` session.
+			expect(lastArg).toContain('exec "$SHELL" -l');
 			// SSH options must be present
 			expect(spawnCall.args).toContain('StrictHostKeyChecking=accept-new');
 			expect(spawnCall.args).toContain('ConnectTimeout=10');
@@ -1912,7 +2033,7 @@ describe('process IPC handlers', () => {
 			const spawnCall = mockProcessManager.spawn.mock.calls[0][0];
 			const lastArg = spawnCall.args[spawnCall.args.length - 1];
 			// Tilde must expand via $HOME, not be single-quoted (which suppresses expansion)
-			expect(lastArg).toContain('cd "$HOME"/\'project\'');
+			expect(lastArg).toContain('cd "$HOME/project"');
 			expect(lastArg).toContain('exec "$SHELL"');
 		});
 
@@ -2069,7 +2190,9 @@ describe('process IPC handlers', () => {
 			expect(lastArg).toContain("export AGENT_VAR='from-agent'");
 			expect(lastArg).toContain("export SESSION_VAR='from-session'");
 			expect(lastArg).toContain("cd '/remote/project'");
-			expect(lastArg).toContain('exec "$SHELL"');
+			// Must be a LOGIN shell, otherwise /etc/zprofile (path_helper on macOS) never runs
+			// and the remote terminal gets a shorter PATH than a plain `ssh host` session.
+			expect(lastArg).toContain('exec "$SHELL" -l');
 		});
 
 		it('should export env vars even without workingDirOverride for SSH terminals', async () => {

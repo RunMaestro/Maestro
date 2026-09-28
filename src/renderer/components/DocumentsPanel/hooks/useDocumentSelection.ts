@@ -3,6 +3,11 @@ import type { BatchDocumentEntry } from '../../../types';
 import type { DocTreeNode } from '../types';
 import { getFilesInNode } from '../utils/documentTree';
 import { getAllDocumentsTaskCount, getSelectedTaskCount } from '../utils/documentCounts';
+import {
+	deselectFolderFiles,
+	selectAllDocuments,
+	selectFolderFiles,
+} from '../../../utils/documentSelectionOrder';
 
 interface UseDocumentSelectionArgs {
 	documents: BatchDocumentEntry[];
@@ -32,8 +37,10 @@ export function useDocumentSelection({
 		});
 	}, []);
 
+	// Select all documents. Appends whatever isn't selected yet so the order the
+	// user already built by clicking survives.
 	const selectAll = useCallback(() => {
-		setSelectedDocs(new Set(allDocuments));
+		setSelectedDocs((prev) => selectAllDocuments(prev, allDocuments));
 	}, [allDocuments]);
 
 	const deselectAll = useCallback(() => {
@@ -52,20 +59,17 @@ export function useDocumentSelection({
 		});
 	}, []);
 
+	// Toggle all files in a folder. Selecting moves the folder's documents to the
+	// end of the selection as one block, so the order folders are clicked in is
+	// the order their documents run in.
 	const toggleFolderSelection = useCallback(
 		(node: DocTreeNode) => {
 			const files = getFilesInNode(node);
 			const allSelected = files.every((file) => selectedDocs.has(file));
 
-			setSelectedDocs((prev) => {
-				const next = new Set(prev);
-				if (allSelected) {
-					files.forEach((file) => next.delete(file));
-				} else {
-					files.forEach((file) => next.add(file));
-				}
-				return next;
-			});
+			setSelectedDocs((prev) =>
+				allSelected ? deselectFolderFiles(prev, files) : selectFolderFiles(prev, files)
+			);
 		},
 		[selectedDocs]
 	);

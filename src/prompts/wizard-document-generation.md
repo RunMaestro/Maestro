@@ -103,6 +103,40 @@ In the header component, add a toggle...
 
 **Rule: If the engine should do it, it MUST be a `- [ ]` checkbox. No exceptions.**
 
+## CRITICAL: Human Steps Must NEVER Be Checkboxes
+
+The rule above has an exact mirror image. Every `- [ ]` task is dispatched to an AI agent, so a checkbox that needs a **person** cannot be completed: the run either **stalls forever** waiting on someone who was never asked, or the agent ticks a box for work it never did. A stalled playbook is the single most common way a generated Playbook fails in the field.
+
+Before writing any `- [ ]`, ask: _can an AI agent with shell, file, and network access finish this alone?_ If no, it is not a checkbox.
+
+**Never checkbox these:**
+
+- Manual action - "manually test", "by hand", "click through the UI"
+- Visual judgment - "visually verify", "confirm it looks right", "eyeball the spacing"
+- Waiting on a person - "ask the user", "confirm with the team"
+- Approval gates - "get sign-off", "human review before proceeding"
+- Credentials or accounts a person must obtain - "sign up for an API key", "create a Stripe account"
+- Physical or out-of-band work - "plug in the device", "deploy from the admin console"
+
+**Use one of these two instead:**
+
+1. **The run must pause for a person** - emit a HITL gate marker on its own line, above the tasks that depend on the human. The engine pauses there, shows the reason in the Auto Run panel, and waits for the user to resume. This is a deliberate, visible pause instead of a silent stall:
+
+   ```markdown
+   <!-- MAESTRO:HITL reason="Add STRIPE_SECRET_KEY to .env before the billing tasks run" artifact=".env" -->
+   ```
+
+2. **The work simply isn't the engine's job** - list it as plain `-` bullets under a trailing section the engine never reads:
+
+   ```markdown
+   ## Manual Follow-Up (not executed by Auto Run)
+
+   - Verify the new empty state on a physical iPhone.
+   - Get design sign-off before launch.
+   ```
+
+Note the difference from a legitimate verification task: "Verify dark mode works: toggle switches themes, preference persists after reload, no TypeScript errors (`npm run lint`)" is a **checkbox** - an agent can run the app, the linter, and the tests. "Visually confirm the dark theme looks polished" is **not** - no agent can form that judgment.
+
 ## Task Writing Guidelines
 
 ### Group by Logical Context
@@ -214,6 +248,46 @@ If one item in a group is significantly more complex, give it its own task:
   - RBAC middleware that validates permissions per route
   - Permission decorator for controller methods
 ```
+
+### Model Tier and Effort
+
+You have just reasoned about which tasks are hard and which are mechanical - that same judgment selects the model. A marker sets the model tier and effort level, and the placement is the scope:
+
+```markdown
+<!-- MAESTRO:MODEL tier="low" effort="low" -->
+
+- [ ] Catalogue every call site of the auth middleware
+- [ ] Design the migration <!-- MAESTRO:MODEL tier="high" effort="high" -->
+- [ ] Apply the mechanical renames
+```
+
+- **On its own line**: applies from there down until the next standalone marker. Above the first task it covers the whole document; under a section heading it covers that phase.
+- **At the end of a task line**: applies to that one task only. "Apply the mechanical renames" above runs back at `low`/`low`.
+
+Both attributes take `low`, `medium`, or `high`. These are ladder positions, not provider-specific values - never write `max`, `xhigh`, or a model name. `tier` picks which model, `effort` picks how hard it thinks; they are independent, and an inline marker layers over a standalone one per axis.
+
+Emit hints when a phase or a task is genuinely mismatched with the rest of the document:
+
+- **`tier="high" effort="high"`** for architecture decisions, migration planning, subtle concurrency or security work, debugging something that has already resisted one attempt.
+- **`tier="low" effort="low"`** for mechanical renames, import updates, boilerplate scaffolding, applying a plan that another task already wrote.
+- **Nothing at all** for ordinary implementation work. This is most tasks.
+
+Every marker you write must also carry a `reason` explaining the choice:
+
+```markdown
+<!-- MAESTRO:MODEL tier="high" effort="high" reason="Redesigns lock ordering across three services. A wrong ordering corrupts data rather than failing loudly, so this needs the strongest model thinking hard." -->
+```
+
+Rules for the reason:
+
+- **Three sentences at most**, and one is usually enough.
+- **Justify both axes.** Say what makes the work hard (or mechanical), and why that calls for this much thinking. A reason that only restates the levels ("uses the high model at high effort") is worthless.
+- **Plain text, no double quotes inside the value.** The attribute is delimited by `"`, so an inner quote truncates it. Use single quotes if you must quote something.
+- Do not write a reason without a `tier` or `effort` alongside it. A marker that sets no level does nothing, whatever it says.
+
+The reason changes nothing about how the task runs. It is shown to the reader behind an ⓘ on the marker's pill, so that someone auditing the playbook later can see the judgment rather than only its result.
+
+Do not decorate every task. A document with a marker on all ten tasks says nothing about which two actually matter, and the agent's configured default already handles the ordinary case. The common useful shape is a document-wide `low` with one or two inline `high` tasks, which usually costs less than the default. When in doubt, omit the marker.
 
 ### Phase Sizing
 

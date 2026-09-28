@@ -5,6 +5,7 @@
  * token usage data from Claude Code responses.
  */
 
+import * as os from 'os';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // Mock node-pty before importing process-manager (native module)
@@ -92,6 +93,9 @@ describe('process-manager.ts', () => {
 					cacheCreationInputTokens: 100,
 					totalCostUsd: 0.05,
 					contextWindow: 200000,
+					// The model reported this window itself, so it is provider truth
+					// even though it equals the fallback (review of PR #1356).
+					contextWindowResolved: true,
 				});
 			});
 
@@ -125,6 +129,7 @@ describe('process-manager.ts', () => {
 					cacheCreationInputTokens: 100,
 					totalCostUsd: 0.1,
 					contextWindow: 200000, // Should use the highest context window
+					contextWindowResolved: true,
 				});
 			});
 
@@ -485,7 +490,7 @@ describe('process-manager.ts', () => {
 					toolType: 'terminal',
 					isTerminal: true,
 					pid: 12345,
-					cwd: '/tmp',
+					cwd: os.tmpdir(),
 					startTime: Date.now(),
 					ptyProcess: {
 						pid: 12345,
@@ -513,7 +518,7 @@ describe('process-manager.ts', () => {
 					toolType: 'terminal',
 					isTerminal: true,
 					pid: 12345,
-					cwd: '/tmp',
+					cwd: os.tmpdir(),
 					startTime: Date.now(),
 					ptyProcess: {
 						pid: 12345,
@@ -555,7 +560,7 @@ describe('process-manager.ts', () => {
 					toolType: 'terminal',
 					isTerminal: true,
 					pid: 12345,
-					cwd: '/tmp',
+					cwd: os.tmpdir(),
 					startTime: Date.now(),
 					ptyProcess: {
 						pid: 12345,
@@ -609,7 +614,7 @@ describe('process-manager.ts', () => {
 					ptyProcess: mockPtyProcess,
 					isTerminal: true,
 					pid: 12345,
-					cwd: '/tmp',
+					cwd: os.tmpdir(),
 					startTime: Date.now(),
 				});
 
@@ -658,7 +663,7 @@ describe('process-manager.ts', () => {
 					ptyProcess: mockPtyProcess,
 					isTerminal: true,
 					pid: 12345,
-					cwd: '/tmp',
+					cwd: os.tmpdir(),
 					startTime: Date.now(),
 				});
 
@@ -680,7 +685,7 @@ describe('process-manager.ts', () => {
 					childProcess: mockChildProcess,
 					isTerminal: false,
 					pid: 99999,
-					cwd: '/tmp',
+					cwd: os.tmpdir(),
 					startTime: Date.now(),
 				});
 
@@ -702,7 +707,7 @@ describe('process-manager.ts', () => {
 					ptyProcess: mockPtyProcess,
 					isTerminal: true,
 					pid: 12345,
-					cwd: '/tmp',
+					cwd: os.tmpdir(),
 					startTime: Date.now(),
 				});
 
@@ -733,7 +738,7 @@ describe('process-manager.ts', () => {
 					toolType: 'terminal',
 					isTerminal: true,
 					pid: 11111,
-					cwd: '/tmp',
+					cwd: os.tmpdir(),
 					startTime: Date.now(),
 					ptyProcess: {
 						pid: 11111,
@@ -749,7 +754,7 @@ describe('process-manager.ts', () => {
 					processManager.spawn({
 						sessionId: 'dup-session',
 						toolType: 'terminal',
-						cwd: '/tmp',
+						cwd: os.tmpdir(),
 						command: 'zsh',
 						args: [],
 						shell: 'zsh',
@@ -931,7 +936,7 @@ describe('process-manager.ts', () => {
 						toolType: 'terminal',
 						isTerminal: true,
 						pid: 1,
-						cwd: '/tmp',
+						cwd: os.tmpdir(),
 						startTime: Date.now(),
 						ptyProcess: {
 							pid: 1,
@@ -964,7 +969,7 @@ describe('process-manager.ts', () => {
 					toolType: 'terminal',
 					isTerminal: true,
 					pid: 1,
-					cwd: '/tmp',
+					cwd: os.tmpdir(),
 					startTime: Date.now(),
 					ptyProcess: {
 						pid: 1,
@@ -999,7 +1004,7 @@ describe('process-manager.ts', () => {
 					toolType: 'terminal',
 					isTerminal: true,
 					pid: 1,
-					cwd: '/tmp',
+					cwd: os.tmpdir(),
 					startTime: Date.now(),
 					ptyProcess: {
 						pid: 1,

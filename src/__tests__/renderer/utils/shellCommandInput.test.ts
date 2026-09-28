@@ -9,6 +9,11 @@
 import { describe, test, expect } from 'vitest';
 import {
 	detectCommandModeEntry,
+	isAiCommandMode,
+	isShellCommandMode,
+	nextComposerCommandMode,
+	normalizeComposerCommandMode,
+	previousComposerCommandMode,
 	stripShellCommandEscape,
 } from '../../../renderer/utils/shellCommandInput';
 
@@ -70,5 +75,50 @@ describe('stripShellCommandEscape', () => {
 
 	test('leaves a non-leading backslash-bang untouched', () => {
 		expect(stripShellCommandEscape('echo \\!x')).toBe('echo \\!x');
+	});
+});
+
+describe('the bang ladder', () => {
+	test('climbs agent -> shell -> ai and stops there', () => {
+		expect(nextComposerCommandMode('off')).toBe('shell');
+		expect(nextComposerCommandMode('shell')).toBe('ai');
+		// No rung above AI command mode, so the bang stays in the request text.
+		expect(nextComposerCommandMode('ai')).toBeNull();
+	});
+
+	test('descends ai -> shell -> agent and floors at agent', () => {
+		expect(previousComposerCommandMode('ai')).toBe('shell');
+		expect(previousComposerCommandMode('shell')).toBe('off');
+		expect(previousComposerCommandMode('off')).toBe('off');
+	});
+
+	test('only the shell rung reports as a shell command line', () => {
+		expect(isShellCommandMode('shell')).toBe(true);
+		expect(isShellCommandMode('ai')).toBe(false);
+		expect(isAiCommandMode('ai')).toBe(true);
+		expect(isAiCommandMode('shell')).toBe(false);
+	});
+});
+
+describe('normalizeComposerCommandMode', () => {
+	test('reads the legacy boolean encoding as the shell rung', () => {
+		// Tabs written before AI command mode existed stored `true` for what is
+		// now 'shell'. Those drafts must still route to the shell after an update.
+		expect(normalizeComposerCommandMode(true)).toBe('shell');
+		expect(normalizeComposerCommandMode(false)).toBe('off');
+	});
+
+	test('passes through the current encoding', () => {
+		expect(normalizeComposerCommandMode('shell')).toBe('shell');
+		expect(normalizeComposerCommandMode('ai')).toBe('ai');
+		expect(normalizeComposerCommandMode('off')).toBe('off');
+	});
+
+	test('falls back to ordinary chat for anything unrecognised', () => {
+		// A corrupt value must land the user in chat, never in a shell.
+		expect(normalizeComposerCommandMode(undefined)).toBe('off');
+		expect(normalizeComposerCommandMode(null)).toBe('off');
+		expect(normalizeComposerCommandMode('bogus')).toBe('off');
+		expect(normalizeComposerCommandMode(1)).toBe('off');
 	});
 });

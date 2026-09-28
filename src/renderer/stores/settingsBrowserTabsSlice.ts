@@ -9,9 +9,11 @@
 
 import type { StateCreator } from 'zustand';
 import type { SettingsStore } from './settingsStore';
+import { DEFAULT_BROWSER_TAB_URL } from '../utils/browserTabPersistence';
 
 export interface BrowserTabsState {
 	showBrowserTabDomain: boolean;
+	showTabCountBadge: boolean;
 	tabBarWheelScroll: boolean;
 	useSystemBrowser: boolean;
 	browserHomeUrl: string;
@@ -28,6 +30,7 @@ export interface BrowserTabsState {
 
 export interface BrowserTabsActions {
 	setShowBrowserTabDomain: (value: boolean) => void;
+	setShowTabCountBadge: (value: boolean) => void;
 	setTabBarWheelScroll: (value: boolean) => void;
 	setUseSystemBrowser: (value: boolean) => void;
 	setBrowserHomeUrl: (value: string) => void;
@@ -48,9 +51,14 @@ export const createBrowserTabsSlice: StateCreator<SettingsStore, [], [], Browser
 	set
 ) => ({
 	showBrowserTabDomain: true,
+	showTabCountBadge: true,
 	tabBarWheelScroll: true,
 	useSystemBrowser: false,
-	browserHomeUrl: 'https://runmaestro.ai/#leaderboard',
+	// Blank by default: a new browser tab is opened to go SOMEWHERE, and the caret
+	// lands in the address bar ready for it. Loading a page first means waiting for
+	// something you did not ask for and then typing over it. Users who do want a
+	// landing page set one in Settings.
+	browserHomeUrl: DEFAULT_BROWSER_TAB_URL,
 	htmlDoubleClickOpensInBrowser: false,
 	browserTabKeepAlive: 'off',
 	browserTabKeepAliveLimit: 10,
@@ -64,6 +72,11 @@ export const createBrowserTabsSlice: StateCreator<SettingsStore, [], [], Browser
 	setShowBrowserTabDomain: (value) => {
 		set({ showBrowserTabDomain: value });
 		window.maestro.settings.set('showBrowserTabDomain', value);
+	},
+
+	setShowTabCountBadge: (value) => {
+		set({ showTabCountBadge: value });
+		window.maestro.settings.set('showTabCountBadge', value);
 	},
 
 	setTabBarWheelScroll: (value) => {
@@ -135,6 +148,9 @@ export function hydrateBrowserTabsSettings(
 ): void {
 	if (allSettings['showBrowserTabDomain'] !== undefined)
 		patch.showBrowserTabDomain = allSettings['showBrowserTabDomain'] as boolean;
+
+	if (allSettings['showTabCountBadge'] !== undefined)
+		patch.showTabCountBadge = allSettings['showTabCountBadge'] as boolean;
 
 	if (typeof allSettings['tabBarWheelScroll'] === 'boolean')
 		patch.tabBarWheelScroll = allSettings['tabBarWheelScroll'];

@@ -1,11 +1,24 @@
 import type { GroupChat } from '../../../../shared/group-chat-types';
+import { useGroupChatStore } from '../../../stores/groupChatStore';
 import type { Session } from '../../../types';
+import {
+	describeGroupChatRunState,
+	getGroupChatRunState,
+	type GroupChatBusySnapshot,
+} from '../../../utils/groupChatStatus';
 import type { QuickAction } from '../types';
+import { alphabetizeKey } from '../utils/quickActionSorting';
 
 interface BuildGroupChatJumpCommandsArgs {
 	groupChats?: GroupChat[];
 	onOpenGroupChat?: (id: string) => void;
 	setQuickActionOpen: (open: boolean) => void;
+}
+
+interface BuildGroupChatSwitcherCommandsArgs {
+	groupChats?: GroupChat[];
+	busySnapshot: GroupChatBusySnapshot;
+	onOpenGroupChat?: (id: string) => void;
 }
 
 interface BuildGroupChatCommandsArgs {
@@ -18,6 +31,7 @@ interface BuildGroupChatCommandsArgs {
 	setQuickActionOpen: (open: boolean) => void;
 	newGroupChatShortcut?: QuickAction['shortcut'];
 	killShortcut?: QuickAction['shortcut'];
+	moderatorOnlyShortcut?: QuickAction['shortcut'];
 }
 
 export function buildGroupChatJumpCommands({
@@ -37,6 +51,44 @@ export function buildGroupChatJumpCommands({
 	}));
 }
 
+/**
+ * Group chat entries for the agent jumper (Cmd+K agents mode).
+ *
+ * Only RUNNING rooms are listed. The jumper's job is "where is work happening
+ * right now", and a busy room is work the same way a busy agent is; an idle
+ * room would just pad an already long list, and it is still reachable from the
+ * main palette via buildGroupChatJumpCommands.
+ */
+export function buildGroupChatSwitcherCommands({
+	groupChats,
+	busySnapshot,
+	onOpenGroupChat,
+}: BuildGroupChatSwitcherCommandsArgs): QuickAction[] {
+	if (!groupChats || !onOpenGroupChat) return [];
+
+	const commands: QuickAction[] = [];
+	for (const groupChat of groupChats) {
+		const run = getGroupChatRunState(groupChat.id, busySnapshot);
+		if (!run.isBusy) continue;
+		const label = `Group Chat: ${groupChat.name}`;
+		commands.push({
+			id: `jump-groupchat-${groupChat.id}`,
+			label,
+			action: () => onOpenGroupChat(groupChat.id),
+			isRunningAgent: true,
+			runningInfo: {
+				// Group chat runs have no per-room start timestamp, so the subtext
+				// carries a status label instead of an elapsed clock.
+				state: 'busy',
+				statusLabel: describeGroupChatRunState(run),
+				queueCount: 0,
+			},
+			agentSortKey: alphabetizeKey(label),
+		});
+	}
+	return commands;
+}
+
 export function buildGroupChatCommands({
 	sessions,
 	groupChats,
@@ -47,6 +99,7 @@ export function buildGroupChatCommands({
 	setQuickActionOpen,
 	newGroupChatShortcut,
 	killShortcut,
+	moderatorOnlyShortcut,
 }: BuildGroupChatCommandsArgs): QuickAction[] {
 	const commands: QuickAction[] = [];
 
@@ -68,6 +121,24 @@ export function buildGroupChatCommands({
 			label: 'Close Group Chat',
 			action: () => {
 				onCloseGroupChat();
+				setQuickActionOpen(false);
+			},
+		});
+	}
+
+	if (activeGroupChatId) {
+		// Read at build time, not at action time: the palette rebuilds its command
+		// list on every open, so the label always names the state you would move to.
+		const moderatorOnly = useGroupChatStore.getState().groupChatModeratorOnly;
+		commands.push({
+			id: 'toggleGroupChatModeratorOnly',
+			label: moderatorOnly ? 'Group Chat: Show Team Chat' : 'Group Chat: Show Moderator Only',
+			subtext: moderatorOnly
+				? 'Bring back agent delegations and replies in the transcript and history'
+				: 'Hide the agent back-and-forth and keep just your conversation with the moderator',
+			shortcut: moderatorOnlyShortcut,
+			action: () => {
+				useGroupChatStore.getState().toggleGroupChatModeratorOnly();
 				setQuickActionOpen(false);
 			},
 		});

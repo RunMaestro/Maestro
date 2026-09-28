@@ -114,6 +114,30 @@ describe('claude-mode-selector', () => {
 			});
 		});
 
+		// Claude paints no "Resets ..." row for a window with nothing running in
+		// it, so `resetsAt` can be absent. An unknown reset must not veto a
+		// freshly-sampled 100% - the snapshot's own TTL bounds staleness.
+		it('week at threshold with no scraped reset time still triggers', () => {
+			const snap = snapshot({ weekPercent: 100 });
+			delete snap.weekAllModels.resetsAt;
+			expect(selectMode(input({ usageSnapshot: snap }))).toEqual({
+				mode: 'api',
+				reason: 'limit',
+			});
+		});
+
+		// The sticky path leans the other way: with no reset time there is no
+		// window left to wait out, so a prior fallback must not latch.
+		it('sticky-limit does NOT latch on a window with no scraped reset time', () => {
+			const snap = snapshot({ sessionPercent: 10, weekPercent: 10 });
+			delete snap.session.resetsAt;
+			delete snap.weekAllModels.resetsAt;
+			expect(selectMode(input({ perTabReason: 'limit', usageSnapshot: snap }))).toEqual({
+				mode: 'interactive',
+				reason: 'auto',
+			});
+		});
+
 		it('session at threshold but window already reset → no trigger', () => {
 			const closedSession = new Date(NOW.getTime() - ONE_HOUR_MS).toISOString();
 			expect(

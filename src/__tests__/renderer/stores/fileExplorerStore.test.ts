@@ -8,6 +8,7 @@
 
 import { describe, it, expect, beforeEach } from 'vitest';
 import { useFileExplorerStore } from '../../../renderer/stores/fileExplorerStore';
+import { useModalStore } from '../../../renderer/stores/modalStore';
 import type { FlatTreeNode } from '../../../renderer/utils/fileExplorer';
 
 // ============================================================================
@@ -181,6 +182,36 @@ describe('fileExplorerStore', () => {
 			expect(useFileExplorerStore.getState().lastGraphFocusFilePath).toBe('important.ts');
 		});
 
+		it('openGraphScope records where closing the graph should return to', () => {
+			useFileExplorerStore
+				.getState()
+				.openGraphScope({ directory: '', rootPath: '/memory', returnTo: 'memoryViewer' });
+
+			expect(useFileExplorerStore.getState().graphReturnTo).toBe('memoryViewer');
+		});
+
+		it('leaves graphReturnTo unset for a graph opened in place', () => {
+			// Only a caller that CLOSED itself to make room has somewhere to hand
+			// control back to; the ordinary graph must not reopen anything.
+			useFileExplorerStore.getState().openGraphScope({ directory: 'docs' });
+
+			expect(useFileExplorerStore.getState().graphReturnTo).toBeUndefined();
+		});
+
+		it('clears graphReturnTo on close, so the next graph does not inherit it', () => {
+			useFileExplorerStore
+				.getState()
+				.openGraphScope({ directory: '', rootPath: '/memory', returnTo: 'memoryViewer' });
+			useFileExplorerStore.getState().closeGraphView();
+
+			expect(useFileExplorerStore.getState().graphReturnTo).toBeUndefined();
+
+			// A focus-rooted graph opened afterwards must be clean too - a stale
+			// target would pop the Memories viewer over an unrelated graph.
+			useFileExplorerStore.getState().focusFileInGraph('README.md');
+			expect(useFileExplorerStore.getState().graphReturnTo).toBeUndefined();
+		});
+
 		it('setIsGraphViewOpen directly sets the boolean', () => {
 			useFileExplorerStore.getState().setIsGraphViewOpen(true);
 			expect(useFileExplorerStore.getState().isGraphViewOpen).toBe(true);
@@ -269,6 +300,46 @@ describe('fileExplorerStore', () => {
 			expect(state.isGraphViewOpen).toBe(false);
 			expect(state.graphFocusFilePath).toBeUndefined();
 			expect(state.lastGraphFocusFilePath).toBeUndefined();
+		});
+	});
+	describe('destination surfaces (one at a time)', () => {
+		beforeEach(() => {
+			useModalStore.setState({ modals: new Map(), promptComposerFullscreen: false });
+		});
+
+		it('opening the graph closes the destination modal that was up', () => {
+			useModalStore.getState().openModal('usageDashboard');
+
+			useFileExplorerStore.getState().focusFileInGraph('docs/a.md');
+
+			expect(useFileExplorerStore.getState().isGraphViewOpen).toBe(true);
+			expect(useModalStore.getState().isOpen('usageDashboard')).toBe(false);
+		});
+
+		it('a scoped graph also takes the window over', () => {
+			useModalStore.getState().openModal('directorNotes');
+
+			useFileExplorerStore.getState().openGraphScope({ directory: 'docs' });
+
+			expect(useFileExplorerStore.getState().isGraphViewOpen).toBe(true);
+			expect(useModalStore.getState().isOpen('directorNotes')).toBe(false);
+		});
+
+		it('opening a destination modal closes the graph', () => {
+			useFileExplorerStore.getState().focusFileInGraph('docs/a.md');
+
+			useModalStore.getState().openModal('settings');
+
+			expect(useFileExplorerStore.getState().isGraphViewOpen).toBe(false);
+			expect(useModalStore.getState().isOpen('settings')).toBe(true);
+		});
+
+		it('a layered dialog leaves the graph open', () => {
+			useFileExplorerStore.getState().focusFileInGraph('docs/a.md');
+
+			useModalStore.getState().openModal('confirm', { message: 'Sure?', onConfirm: () => {} });
+
+			expect(useFileExplorerStore.getState().isGraphViewOpen).toBe(true);
 		});
 	});
 });

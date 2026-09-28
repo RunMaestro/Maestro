@@ -58,7 +58,7 @@ export function EventTimeline({
 							{event.message && <div className="mt-1 text-sm">{event.message}</div>}
 							{(event.data || event.metadata) && (
 								<pre
-									className="mt-2 max-h-28 overflow-auto rounded p-2 text-[11px]"
+									className="mt-2 max-h-28 overflow-auto rounded p-2 text-xs-plus"
 									style={{ backgroundColor: theme.colors.bgSidebar, color: theme.colors.textDim }}
 								>
 									{JSON.stringify({ data: event.data, metadata: event.metadata }, null, 2)}

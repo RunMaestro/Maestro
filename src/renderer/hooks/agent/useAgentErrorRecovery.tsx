@@ -20,6 +20,7 @@
 
 import { useMemo, useCallback } from 'react';
 import { KeyRound, MessageSquarePlus, RefreshCw, RotateCcw, Wifi, Terminal } from 'lucide-react';
+import { formatAgentLoginCommand, getAgentLoginCommand } from '../../../shared/agentMetadata';
 import type { AgentError, ToolType } from '../../types';
 import type { RecoveryAction } from '../../components/AgentErrorModal';
 
@@ -62,18 +63,21 @@ function getRecoveryActionsForError(
 	const actions: RecoveryAction[] = [];
 
 	switch (error.type) {
-		case 'auth_expired':
-			// Authentication error - offer to re-authenticate or start new session
+		case 'auth_expired': {
+			// Authentication error - offer to re-authenticate or start new session.
+			// The login runs inside Maestro's re-authentication terminal, so the
+			// description names the actual command instead of telling the user to
+			// go find a terminal themselves.
+			const login = getAgentLoginCommand(agentId);
 			if (options.onAuthenticate) {
-				const isClaude = agentId === 'claude-code';
 				actions.push({
 					id: 'authenticate',
-					label: isClaude ? 'Use Terminal' : 'Re-authenticate',
-					description: isClaude
-						? 'Run "claude login" in terminal'
+					label: 'Re-authenticate',
+					description: login
+						? `Run "${formatAgentLoginCommand(login)}" here`
 						: 'Log in again to restore access',
 					primary: true,
-					icon: isClaude ? <Terminal className="w-4 h-4" /> : <KeyRound className="w-4 h-4" />,
+					icon: login ? <Terminal className="w-4 h-4" /> : <KeyRound className="w-4 h-4" />,
 					onClick: options.onAuthenticate,
 				});
 			}
@@ -87,6 +91,7 @@ function getRecoveryActionsForError(
 				});
 			}
 			break;
+		}
 
 		case 'token_exhaustion':
 			// Context exhausted - offer new session or retry with truncation

@@ -62,6 +62,13 @@ interface FeedbackDraftState {
 	loadDrafts: () => Promise<void>;
 	/** Upsert a draft, refresh the list, and return its persisted id */
 	saveDraft: (draft: FeedbackDraft) => Promise<string | null>;
+	/**
+	 * Persist whatever the open editor currently holds. Called on the way out of
+	 * the app so an unsaved draft survives a quit; a no-op when the editor is
+	 * empty. Resolves to the persisted id, or null when there was nothing to save
+	 * or the write failed.
+	 */
+	saveActiveDraft: () => Promise<string | null>;
 	/** Delete a draft by id and refresh the list */
 	deleteDraft: (id: string) => Promise<void>;
 	requestResume: (id: string) => void;
@@ -140,6 +147,11 @@ export const useFeedbackDraftStore = create<FeedbackDraftState>((set, get) => ({
 		} finally {
 			if (pendingNewDraftSave === pending) pendingNewDraftSave = null;
 		}
+	},
+	saveActiveDraft: async () => {
+		const draft = get().activeDraft;
+		if (!draft) return null;
+		return get().saveDraft(draft);
 	},
 	deleteDraft: async (id) => {
 		try {

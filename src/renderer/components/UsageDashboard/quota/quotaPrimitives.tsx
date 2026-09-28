@@ -6,10 +6,16 @@
  */
 
 import { memo } from 'react';
-import { ChevronDown, Clock, Eye, EyeOff, Loader2, RefreshCw } from 'lucide-react';
+import { ChevronDown, Clock, Eye, EyeOff, Link2, Loader2, RefreshCw, Users } from 'lucide-react';
 import type { Theme } from '../../../types';
-import { formatFutureTime } from '../../../../shared/formatters';
-import { QUOTA_REFRESH_OPTIONS, resolveQuotaFillColor } from './quotaFormatting';
+import { formatFutureTime, formatTimestamp } from '../../../../shared/formatters';
+import {
+	isSampleBehindLatest,
+	isSampleExpired,
+	QUOTA_REFRESH_OPTIONS,
+	resolveQuotaFillColor,
+} from './quotaFormatting';
+import { formatShortcutKeys } from '../../../utils/shortcutFormatter';
 
 interface QuotaBarRowProps {
 	label: string;
@@ -35,15 +41,21 @@ export const QuotaBarRow = memo(function QuotaBarRow({
 	const displayPercent = Math.round(clampedPercent);
 
 	return (
-		<div className="flex items-center gap-4">
+		// Narrow (a phone): the label and the reset caption share the first line
+		// and the bar takes the whole of a second one. The row used to be one
+		// unbreakable line - a 176px label, a 192px `whitespace-nowrap` reset
+		// caption, and 32px of gaps - which is 400px of fixed width before the
+		// bar gets any, so on a 390px phone the bar was squeezed to nothing and
+		// the one number this panel exists to show was invisible.
+		<div className="flex flex-wrap items-center gap-x-4 gap-y-1 sm:flex-nowrap">
 			<div
-				className="w-44 text-sm whitespace-nowrap flex-shrink-0"
+				className="min-w-0 truncate text-sm sm:w-44 sm:flex-shrink-0 sm:whitespace-nowrap"
 				style={{ color: theme.colors.textMain }}
 			>
 				{label}
 			</div>
 			<div
-				className="flex-1 h-7 rounded overflow-hidden relative"
+				className="order-last h-7 w-full rounded overflow-hidden relative sm:order-none sm:w-auto sm:flex-1"
 				style={{ backgroundColor: theme.colors.border }}
 				role="progressbar"
 				aria-label={`${label}: ${displayPercent}%`}
@@ -87,11 +99,23 @@ export const QuotaBarRow = memo(function QuotaBarRow({
 				)}
 			</div>
 			<div
-				className="text-xs text-left whitespace-nowrap flex-shrink-0 ml-auto"
-				style={{ color: theme.colors.textDim, minWidth: '12rem' }}
-				title={resetsAt ? `Resets at ${new Date(resetsAt).toLocaleString()}` : undefined}
+				className="text-xs text-left whitespace-nowrap flex-shrink-0 ml-auto sm:min-w-[12rem]"
+				style={{ color: theme.colors.textDim }}
+				title={
+					resetsAt
+						? `Resets at ${new Date(resetsAt).toLocaleString()}`
+						: clampedPercent === 0
+							? 'No window is running yet, so there is no reset time. The window starts with the next request.'
+							: undefined
+				}
 			>
-				{resetsAt ? `resets ${formatFutureTime(resetsAt)}` : 'reset unknown'}
+				{/* A 0% window with no reset is idle, not unparsed: claude paints no
+				    "Resets" row until a request opens the window. */}
+				{resetsAt
+					? `resets ${formatFutureTime(resetsAt)}`
+					: clampedPercent === 0
+						? 'not started'
+						: 'reset unknown'}
 			</div>
 		</div>
 	);
@@ -123,6 +147,191 @@ export const QuotaAccountPill = memo(function QuotaAccountPill({
 });
 
 /**
+ * "N agents" chip shown beside an account pill: how many agents of this
+ * provider currently run against that account. Zero is rendered too - it is the
+ * answer to "is this profile still being used?", which is why an unused account
+ * still shows quota burn is a question worth asking.
+ */
+export const QuotaAgentCountBadge = memo(function QuotaAgentCountBadge({
+	count,
+	providerLabel,
+	testId,
+	theme,
+	onClick,
+}: {
+	/**
+	 * Local agents on this account. SSH-remote agents are not counted: the
+	 * directory they name lives on the remote host and holds THAT host's login,
+	 * so the Agents grid files them under their own `account @ host` profile.
+	 */
+	count: number;
+	/** Provider name for the hover title (`Claude` / `Codex`). */
+	providerLabel: string;
+	testId?: string;
+	theme: Theme;
+	/** Makes the chip a button that shows those agents. Omitted when there are
+	 *  none to show - a button that lands on an empty grid is worse than text. */
+	onClick?: () => void;
+}) {
+	const noun = count === 1 ? 'agent' : 'agents';
+	const label = `${count} ${noun}`;
+	const title =
+		count === 0
+			? `No ${providerLabel} agents are configured to use this account`
+			: onClick
+				? `Show the ${label} that ${count === 1 ? 'runs' : 'run'} against this ${providerLabel} account`
+				: `${label} ${count === 1 ? 'runs' : 'run'} against this ${providerLabel} account`;
+	const className =
+		'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs-plus font-medium flex-shrink-0';
+	const style = {
+		color: theme.colors.textDim,
+		backgroundColor: `${theme.colors.border}55`,
+		border: `1px solid ${theme.colors.border}`,
+	};
+
+	if (!onClick) {
+		return (
+			<span className={className} style={style} title={title} data-testid={testId}>
+				<Users className="w-3 h-3" aria-hidden="true" />
+				{label}
+			</span>
+		);
+	}
+
+	return (
+		<button
+			type="button"
+			onClick={onClick}
+			className={`${className} transition-colors cursor-pointer hover:brightness-125`}
+			style={{ ...style, color: theme.colors.accent, borderColor: `${theme.colors.accent}55` }}
+			title={title}
+			data-testid={testId}
+		>
+			<Users className="w-3 h-3" aria-hidden="true" />
+			{label}
+		</button>
+	);
+});
+
+/**
+ * The login email for an account row, printed beside the account pill.
+ *
+ * This is the account's real identity; the pill next to it is only the config
+ * DIRECTORY the user happened to name. The two disagree the moment someone runs
+ * `/login` inside an existing dir, so both are shown rather than picking one.
+ */
+export const QuotaAccountEmail = memo(function QuotaAccountEmail({
+	email,
+	testId,
+	theme,
+}: {
+	email: string;
+	testId?: string;
+	theme: Theme;
+}) {
+	return (
+		<div
+			className="text-xs truncate"
+			style={{ color: theme.colors.textDim, opacity: 0.7 }}
+			title={`Logged in as ${email}`}
+			data-testid={testId}
+		>
+			{email}
+		</div>
+	);
+});
+
+/**
+ * "Shares one quota with these other accounts" chip.
+ *
+ * Two config dirs logged into the SAME Anthropic account draw from one quota
+ * bucket, so their bars are identical by definition. Without this chip that
+ * looks like the sampler copying one account's numbers onto another row - the
+ * exact conclusion a user reaches when two differently-named rows show the same
+ * percentages. Naming the siblings turns an apparent bug into a fact.
+ */
+export const QuotaSharedAccountBadge = memo(function QuotaSharedAccountBadge({
+	siblingNames,
+	testId,
+	theme,
+}: {
+	/** Display names of the other accounts in this quota bucket. */
+	siblingNames: string[];
+	testId?: string;
+	theme: Theme;
+}) {
+	if (siblingNames.length === 0) return null;
+	const color = theme.colors.warning ?? theme.colors.accent;
+	const joined = siblingNames.join(', ');
+
+	return (
+		<span
+			className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs-plus font-medium flex-shrink-0"
+			style={{
+				color,
+				backgroundColor: `${color}15`,
+				border: `1px solid ${color}35`,
+			}}
+			title={`Same Anthropic account as ${joined}. These rows share one quota, so identical bars are expected.`}
+			data-testid={testId}
+		>
+			<Link2 className="w-3 h-3" aria-hidden="true" />
+			shared with {joined}
+		</span>
+	);
+});
+
+/**
+ * "Stale" chip for a row the latest refresh did not update.
+ *
+ * The dashboard footer reports the NEWEST sample, so one freshly-sampled account
+ * makes the whole panel read as just sampled - including a row whose bars are
+ * hours old because its account could not be sampled this pass (every agent
+ * using it runs over SSH, or the probe failed). The chip prints when that row
+ * was actually read. A clock time rather than an age, so it stays true without
+ * a ticking re-render.
+ *
+ * It also prints for any sample older than a day even when no row is newer -
+ * the state of an account whose agents have all moved elsewhere, whose row the
+ * panel keeps so the user can watch for its reset.
+ */
+export const QuotaStaleSampleBadge = memo(function QuotaStaleSampleBadge({
+	sampledAt,
+	latestSampledAtMs,
+	testId,
+	theme,
+}: {
+	/** This row's own `sampledAt` stamp. */
+	sampledAt: string | undefined;
+	/** Newest `sampledAt` across the panel (`resolveLatestSampledAt`). */
+	latestSampledAtMs: number | null;
+	testId?: string;
+	theme: Theme;
+}) {
+	if (!sampledAt) return null;
+	if (!isSampleBehindLatest(sampledAt, latestSampledAtMs) && !isSampleExpired(sampledAt)) {
+		return null;
+	}
+	const color = theme.colors.warning ?? theme.colors.accent;
+
+	return (
+		<span
+			className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs-plus font-medium flex-shrink-0"
+			style={{
+				color,
+				backgroundColor: `${color}15`,
+				border: `1px solid ${color}35`,
+			}}
+			title={`The last refresh did not update this account. These bars were read ${formatTimestamp(sampledAt, 'full')}.`}
+			data-testid={testId}
+		>
+			<Clock className="w-3 h-3" aria-hidden="true" />
+			stale, read {formatTimestamp(sampledAt, 'smart')}
+		</span>
+	);
+});
+
+/**
  * "No snapshot cached yet - hit Refresh" body for a configured-but-unsampled
  * account. `testIdPrefix` keeps each provider's testids distinct
  * (`claude-plan` / `codex-plan`).
@@ -132,19 +341,36 @@ export const QuotaPendingRow = memo(function QuotaPendingRow({
 	shortName,
 	displayName,
 	testIdPrefix,
+	agentCount,
+	providerLabel,
 	theme,
+	onShowAgents,
 }: {
 	accountKey: string;
 	shortName: string;
 	displayName: string;
 	testIdPrefix: string;
+	/** Agents attributed to this account; omit to hide the badge. */
+	agentCount?: number;
+	providerLabel: string;
 	theme: Theme;
+	/** Show those agents in the Agents tab, filtered to this account. */
+	onShowAgents?: () => void;
 }) {
 	return (
 		<div className="space-y-2" data-testid={`${testIdPrefix}-row-${shortName}-pending`}>
 			<div className="flex items-center gap-2">
 				<QuotaAccountPill accountKey={accountKey} displayName={displayName} theme={theme} />
-				<div className="text-xs" style={{ color: theme.colors.textDim, opacity: 0.7 }}>
+				{agentCount !== undefined && (
+					<QuotaAgentCountBadge
+						count={agentCount}
+						providerLabel={providerLabel}
+						testId={`${testIdPrefix}-agents-${shortName}`}
+						theme={theme}
+						onClick={agentCount > 0 ? onShowAgents : undefined}
+					/>
+				)}
+				<div className="text-xs truncate" style={{ color: theme.colors.textDim, opacity: 0.7 }}>
 					{accountKey}
 				</div>
 			</div>
@@ -177,6 +403,7 @@ export const QuotaRefreshControls = memo(function QuotaRefreshControls({
 	sweepClassName,
 	intervalAriaLabel,
 	buttonAriaLabel,
+	showHotkeyHint = false,
 }: {
 	theme: Theme;
 	refreshIntervalMs: number;
@@ -188,9 +415,15 @@ export const QuotaRefreshControls = memo(function QuotaRefreshControls({
 	sweepClassName: string;
 	intervalAriaLabel: string;
 	buttonAriaLabel: string;
+	/**
+	 * Advertise the Cmd/Ctrl+R chord in the button tooltip. Only true where the
+	 * panel actually claims the chord (`refreshHotkey`), so the hint can never
+	 * promise a key that does nothing.
+	 */
+	showHotkeyHint?: boolean;
 }) {
 	return (
-		<div className="flex flex-wrap items-center justify-end gap-2">
+		<div className="flex flex-wrap items-center justify-start gap-2 sm:justify-end">
 			<label className="relative flex items-center">
 				<Clock
 					className="w-3.5 h-3.5 absolute left-2.5 pointer-events-none"
@@ -236,6 +469,7 @@ export const QuotaRefreshControls = memo(function QuotaRefreshControls({
 				}}
 				data-testid={`${testIdPrefix}-refresh`}
 				aria-label={buttonAriaLabel}
+				title={showHotkeyHint ? `Refresh (${formatShortcutKeys(['Meta', 'r'])})` : undefined}
 				aria-busy={isBusy}
 			>
 				{isBusy ? (
@@ -367,6 +601,7 @@ export const QuotaAccountTabs = memo(function QuotaAccountTabs({
 	deriveShortName,
 	deriveDisplayName,
 	getTabStatus,
+	getTabTitle,
 }: {
 	theme: Theme;
 	accountKeys: string[];
@@ -378,6 +613,13 @@ export const QuotaAccountTabs = memo(function QuotaAccountTabs({
 	deriveShortName: (key: string | undefined) => string;
 	deriveDisplayName: (key: string | undefined) => string;
 	getTabStatus: (key: string) => QuotaTabStatus;
+	/**
+	 * Hover text for a tab. Defaults to the raw account key. Providers that can
+	 * resolve the account's real identity override this so a tab named after a
+	 * config directory still reveals which login it belongs to - two tabs can
+	 * be the same account, and the tab strip has no room to say so inline.
+	 */
+	getTabTitle?: (key: string) => string;
 }) {
 	return (
 		<div
@@ -403,7 +645,7 @@ export const QuotaAccountTabs = memo(function QuotaAccountTabs({
 							color: isActive ? theme.colors.accent : theme.colors.textDim,
 							borderBottom: `2px solid ${isActive ? theme.colors.accent : 'transparent'}`,
 						}}
-						title={key}
+						title={getTabTitle ? getTabTitle(key) : key}
 						data-testid={`${testIdPrefix}-tab-${shortName}`}
 					>
 						<span className="flex items-center gap-1.5">
@@ -414,7 +656,7 @@ export const QuotaAccountTabs = memo(function QuotaAccountTabs({
 							    - none    = snapshot present + healthy */}
 							{status === 'warning' ? (
 								<span
-									className="text-[10px]"
+									className="text-2xs"
 									style={{ color: theme.colors.warning ?? theme.colors.accent }}
 									title={warningTitle}
 								>
@@ -422,7 +664,7 @@ export const QuotaAccountTabs = memo(function QuotaAccountTabs({
 								</span>
 							) : status === 'pending' ? (
 								<span
-									className="text-[10px]"
+									className="text-2xs"
 									style={{ color: theme.colors.textDim, opacity: 0.6 }}
 									title="No snapshot yet - hit Refresh"
 								>

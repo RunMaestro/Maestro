@@ -4,3 +4,4 @@ export { DirectoryPathField } from './DirectoryPathField';
 export { DirectorySelectionHeader } from './DirectorySelectionHeader';
 export { DirectorySelectionLoading } from './DirectorySelectionLoading';
 export { DirectoryStatusPanel } from './DirectoryStatusPanel';
+export { PlaybookChoicePanel } from './PlaybookChoicePanel';

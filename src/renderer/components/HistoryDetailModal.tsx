@@ -15,11 +15,13 @@ import {
 	ChevronRight,
 	AlertTriangle,
 	Server,
+	User,
 } from 'lucide-react';
 import type { Theme, HistoryEntry, ToolType } from '../types';
 import type { FileNode } from '../types/fileTree';
 import { useEventListener } from '../hooks/utils/useEventListener';
 import { useModalLayer } from '../hooks/ui/useModalLayer';
+import { trackShortcutUsage } from '../utils/shortcutTracking';
 import { useResizableModal } from '../hooks/ui/useResizableModal';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { formatElapsedTime } from '../utils/formatters';
@@ -33,6 +35,7 @@ import { generateTerminalProseStyles } from '../utils/markdownConfig';
 import { calculateContextDisplay, calculateDisplayInputTokens } from '../utils/contextUsage';
 import { getContextColor } from '../utils/theme';
 import { DoubleCheck, getPillColor, getEntryIcon, hasRunOutcome } from './History';
+import { HoverTooltip } from './ui/HoverTooltip';
 import { safeClipboardWrite } from '../utils/clipboard';
 import { ResizeHandles } from './ui/ResizeHandles';
 import { useSettingsStore } from '../stores/settingsStore';
@@ -42,7 +45,12 @@ interface HistoryDetailModalProps {
 	entry: HistoryEntry;
 	onClose: () => void;
 	onJumpToAgentSession?: (agentSessionId: string) => void;
-	onResumeSession?: (agentSessionId: string) => void;
+	/**
+	 * Restore this entry's provider session as a tab. `sessionName` is the label
+	 * the entry displays; without it the restored tab falls back to the id octet
+	 * even though the modal it was launched from was showing the real name.
+	 */
+	onResumeSession?: (agentSessionId: string, projectPath?: string, sessionName?: string) => void;
 	onDelete?: (entryId: string) => void;
 	onUpdate?: (entryId: string, updates: { validated?: boolean }) => Promise<boolean>;
 	// Navigation props for prev/next
@@ -80,6 +88,7 @@ export function HistoryDetailModal({
 	agentId,
 }: HistoryDetailModalProps) {
 	const bionifyReadingMode = useSettingsStore((s) => s.bionifyReadingMode);
+	const showProviderModePill = useSettingsStore((s) => s.showProviderModePill);
 	const onCloseRef = useRef(onClose);
 	onCloseRef.current = onClose;
 	const [copiedSessionId, setCopiedSessionId] = useState(false);
@@ -127,7 +136,9 @@ export function HistoryDetailModal({
 		}
 	}, [showDeleteConfirm]);
 
-	// Keyboard navigation for prev/next with arrow keys.
+	// Keyboard navigation for prev/next with arrow keys, plus Cmd/Ctrl+Enter to
+	// jump to the entry's session - the same verb the History list offers, so
+	// the shortcut keeps working after Enter opened this modal.
 	useEventListener('keydown', (e) => {
 		// Don't handle if delete confirmation is showing
 		if (showDeleteConfirm) return;
@@ -139,6 +150,12 @@ export function HistoryDetailModal({
 		} else if (ke.key === 'ArrowRight') {
 			ke.preventDefault();
 			goToNext();
+		} else if (ke.key === 'Enter' && (ke.metaKey || ke.ctrlKey)) {
+			if (!onResumeSession || !entry.agentSessionId) return;
+			ke.preventDefault();
+			trackShortcutUsage('historyJumpToSession');
+			onResumeSession(entry.agentSessionId, entry.projectPath, entry.sessionName);
+			onClose();
 		}
 	});
 
@@ -151,11 +168,13 @@ export function HistoryDetailModal({
 	const Icon = getEntryIcon(entry.type);
 
 	// Claude-only per-turn token source pill (TUI = maestro-p / Max plan, API =
-	// claude --print). Absent on non-Claude and older entries. Shares its label and
+	// claude --print). Absent on non-Claude and older entries, and hidden entirely
+	// when the "Provider Mode Pill" display setting is off. Shares its label and
 	// tooltip with the live chat pill so the two can never drift.
-	const tokenPill = entry.tokenSource
-		? getTokenSourcePill({ mode: entry.tokenSource, reason: entry.tokenSourceReason })
-		: null;
+	const tokenPill =
+		showProviderModePill && entry.tokenSource
+			? getTokenSourcePill({ mode: entry.tokenSource, reason: entry.tokenSourceReason })
+			: null;
 	const tokenPillColor = tokenPill
 		? tokenPill.isTui
 			? theme.colors.accent
@@ -187,9 +206,17 @@ export function HistoryDetailModal({
 	// (and the xs full-screen layout from index.css) gets trapped inside the
 	// ~320px drawer instead of covering the screen.
 	return createPortal(
-		<div className="fixed inset-0 flex items-center justify-center z-[9999]">
-			{/* Backdrop */}
-			<div className="absolute inset-0 bg-black/60" onClick={onClose} />
+		// `modal-overlay` is not just the scrim: the phone block in index.css
+		// keys the status-bar / home-indicator padding on that class, and this
+		// overlay was the one full-screen modal missing it. Without the padding
+		// the modal is sized to the VISIBLE viewport but centered in the LAYOUT
+		// viewport, so on an iPhone home-screen web app it floated with a dead
+		// band above and below (measured 47px / 46px on a 390x844 screen) and its
+		// top edge tucked under the iOS status-bar layer, which swallows taps.
+		<div className="fixed inset-0 modal-overlay flex items-center justify-center z-[9999]">
+			{/* Click-anywhere-outside target. The scrim itself now comes from
+			    `modal-overlay` above, the same one every other modal draws. */}
+			<div className="absolute inset-0" onClick={onClose} />
 
 			{/* Modal. `history-detail-modal` lets index.css expand it to full-screen at the
 			    xs breakpoint (phones) where the centered dialog is too cramped. */}
@@ -271,7 +298,7 @@ export function HistoryDetailModal({
 									title={
 										entry.success
 											? entry.validated
-												? 'Task completed successfully and human-validated'
+												? 'Task completed successfully, and you marked it as checked'
 												: 'Task completed successfully'
 											: 'Task failed'
 									}
@@ -290,7 +317,7 @@ export function HistoryDetailModal({
 
 							{/* Type Pill */}
 							<span
-								className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase"
+								className="flex items-center gap-1 px-2 py-0.5 rounded-full text-2xs font-bold uppercase"
 								style={{
 									backgroundColor: colors.bg,
 									color: colors.text,
@@ -301,10 +328,26 @@ export function HistoryDetailModal({
 								{entry.type}
 							</span>
 
+							{/* Sender pill - shown for turns a logged-in browser sent */}
+							{entry.userName && (
+								<span
+									className="flex items-center gap-1 px-2 py-0.5 rounded-full text-2xs font-mono font-bold"
+									style={{
+										backgroundColor: theme.colors.bgActivity,
+										color: theme.colors.textDim,
+										border: `1px solid ${theme.colors.border}`,
+									}}
+									title={`Sent by ${entry.userName}`}
+								>
+									<User className="w-2.5 h-2.5" />
+									{entry.userDisplayName ?? entry.userName}
+								</span>
+							)}
+
 							{/* Remote hostname pill - shown for entries from other hosts */}
 							{entry.hostname && (
 								<span
-									className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-mono font-bold"
+									className="flex items-center gap-1 px-2 py-0.5 rounded-full text-2xs font-mono font-bold"
 									style={{
 										backgroundColor: theme.colors.bgActivity,
 										color: theme.colors.textDim,
@@ -320,7 +363,7 @@ export function HistoryDetailModal({
 							{/* Agent Name Pill - shown inline when agentName exists but isn't already in the header */}
 							{agentName && !entry.sessionName && (
 								<span
-									className="px-2 py-0.5 rounded-full text-[10px] font-bold truncate max-w-[200px]"
+									className="px-2 py-0.5 rounded-full text-2xs font-bold truncate max-w-[200px]"
 									style={{
 										backgroundColor: theme.colors.bgActivity,
 										color: theme.colors.textMain,
@@ -342,7 +385,7 @@ export function HistoryDetailModal({
 											setCopiedSessionId(true);
 											setTimeout(() => setCopiedSessionId(false), 2000);
 										}}
-										className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-mono font-bold uppercase transition-colors hover:opacity-80"
+										className="flex items-center gap-1 px-2 py-0.5 rounded-full text-2xs font-mono font-bold uppercase transition-colors hover:opacity-80"
 										style={{
 											backgroundColor: theme.colors.accent + '20',
 											color: theme.colors.accent,
@@ -361,10 +404,14 @@ export function HistoryDetailModal({
 									{onResumeSession && (
 										<button
 											onClick={() => {
-												onResumeSession(entry.agentSessionId!);
+												onResumeSession(
+													entry.agentSessionId!,
+													entry.projectPath,
+													entry.sessionName
+												);
 												onClose();
 											}}
-											className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase transition-colors hover:opacity-80"
+											className="flex items-center gap-1 px-2 py-0.5 rounded-full text-2xs font-bold uppercase transition-colors hover:opacity-80"
 											style={{
 												backgroundColor: theme.colors.success + '20',
 												color: theme.colors.success,
@@ -383,7 +430,7 @@ export function HistoryDetailModal({
 							    Sits right after the Resume button, before the timestamp. */}
 							{tokenPill && (
 								<span
-									className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold"
+									className="px-2 py-0.5 rounded-full text-2xs font-mono font-bold"
 									style={{
 										backgroundColor: tokenPillColor + '20',
 										color: tokenPillColor,
@@ -398,7 +445,7 @@ export function HistoryDetailModal({
 							{/* CUE metadata */}
 							{entry.type === 'CUE' && entry.cueTriggerName && (
 								<span
-									className="px-2 py-0.5 rounded-full text-[10px] font-bold"
+									className="px-2 py-0.5 rounded-full text-2xs font-bold"
 									style={{
 										backgroundColor: '#06b6d420',
 										color: '#06b6d4',
@@ -415,25 +462,34 @@ export function HistoryDetailModal({
 
 							{/* Validated toggle for dispatched work (AUTO / CUE / AGENT) */}
 							{hasRunOutcome(entry.type) && entry.success && onUpdate && (
-								<button
-									onClick={() => onUpdate(entry.id, { validated: !entry.validated })}
-									className="flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase transition-colors hover:opacity-80"
-									style={{
-										backgroundColor: entry.validated
-											? theme.colors.success + '20'
-											: theme.colors.bgActivity,
-										color: entry.validated ? theme.colors.success : theme.colors.textDim,
-										border: `1px solid ${entry.validated ? theme.colors.success + '40' : theme.colors.border}`,
-									}}
-									title={entry.validated ? 'Mark as not validated' : 'Mark as human-validated'}
+								<HoverTooltip
+									theme={theme}
+									maxWidth={260}
+									label={
+										entry.validated
+											? 'Clear the mark that says you checked this entry yourself.'
+											: 'Mark that you checked this entry yourself. Entirely optional, and only a bookmark for your own review pass - it changes nothing about the run.'
+									}
 								>
-									{entry.validated ? (
-										<DoubleCheck className="w-3 h-3" />
-									) : (
-										<Check className="w-3 h-3" />
-									)}
-									Validated
-								</button>
+									<button
+										onClick={() => onUpdate(entry.id, { validated: !entry.validated })}
+										className="flex items-center gap-1.5 px-2 py-0.5 rounded-full text-2xs font-bold uppercase transition-colors hover:opacity-80"
+										style={{
+											backgroundColor: entry.validated
+												? theme.colors.success + '20'
+												: theme.colors.bgActivity,
+											color: entry.validated ? theme.colors.success : theme.colors.textDim,
+											border: `1px solid ${entry.validated ? theme.colors.success + '40' : theme.colors.border}`,
+										}}
+									>
+										{entry.validated ? (
+											<DoubleCheck className="w-3 h-3" />
+										) : (
+											<Check className="w-3 h-3" />
+										)}
+										Validated
+									</button>
+								</HoverTooltip>
 							)}
 
 							{/* Timestamp - right-justified (last element pushes to the right edge) */}
@@ -460,7 +516,7 @@ export function HistoryDetailModal({
 									<div className="flex items-center gap-1.5">
 										<Cpu className="w-4 h-4" style={{ color: theme.colors.textDim }} />
 										<span
-											className="text-[10px] font-bold uppercase"
+											className="text-2xs font-bold uppercase"
 											style={{ color: theme.colors.textDim }}
 										>
 											Context
@@ -502,7 +558,7 @@ export function HistoryDetailModal({
 													</span>
 												</div>
 												<span
-													className="text-[10px] font-mono"
+													className="text-2xs font-mono"
 													style={{ color: theme.colors.textDim }}
 												>
 													{(contextTokens / 1000).toFixed(1)}k /{' '}
@@ -520,7 +576,7 @@ export function HistoryDetailModal({
 									<div className="flex items-center gap-1.5">
 										<Zap className="w-4 h-4" style={{ color: theme.colors.textDim }} />
 										<span
-											className="text-[10px] font-bold uppercase"
+											className="text-2xs font-bold uppercase"
 											style={{ color: theme.colors.textDim }}
 										>
 											Tokens

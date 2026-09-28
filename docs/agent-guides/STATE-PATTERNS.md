@@ -20,21 +20,22 @@ All stores are in `src/renderer/stores/`.
 
 ## Store Inventory
 
-| Store                  | File                    | Hook                    | Purpose                                                                                           |
-| ---------------------- | ----------------------- | ----------------------- | ------------------------------------------------------------------------------------------------- |
-| **sessionStore**       | `sessionStore.ts`       | `useSessionStore`       | Sessions, groups, active session, bookmarks, worktree tracking, initialization                    |
-| **uiStore**            | `uiStore.ts`            | `useUIStore`            | UI layout: sidebars, focus, notifications, search, drag-and-drop, editing                         |
-| **tabStore**           | `tabStore.ts`           | `useTabStore`           | Tab operations (CRUD, navigation, metadata), gist state. Wraps tabHelpers.ts + sessionStore       |
-| **agentStore**         | `agentStore.ts`         | `useAgentStore`         | Agent detection cache, error recovery, queue processing, agent lifecycle                          |
-| **modalStore**         | `modalStore.ts`         | `useModalStore`         | Modal visibility via registry pattern. Single Map replaces 90+ boolean fields                     |
-| **groupChatStore**     | `groupChatStore.ts`     | `useGroupChatStore`     | Group chat state: chats list, messages, moderator, participants, execution queue                  |
-| **settingsStore**      | `settingsStore.ts`      | `useSettingsStore`      | App settings (theme, font, shortcuts, agent configs, per-modal `modalSizes`, etc.)                |
-| **fileExplorerStore**  | `fileExplorerStore.ts`  | `useFileExplorerStore`  | File explorer panel state                                                                         |
-| **sidebarNavStore**    | `sidebarNavStore.ts`    | `useSidebarNavStore`    | Left Bar sort/nav/starred projections (`SidebarNavSync` host writes; SessionList + keyboard read) |
-| **batchStore**         | `batchStore.ts`         | `useBatchStore`         | Batch/Auto Run execution state                                                                    |
-| **notificationStore**  | `notificationStore.ts`  | `useNotificationStore`  | In-app notification queue                                                                         |
-| **operationStore**     | `operationStore.ts`     | `useOperationStore`     | Long-running operation tracking                                                                   |
-| **mediaPlaybackStore** | `mediaPlaybackStore.ts` | `useMediaPlaybackStore` | Audio/video playback state + slot geometry for the app-level media host                           |
+| Store                  | File                    | Hook                    | Purpose                                                                                             |
+| ---------------------- | ----------------------- | ----------------------- | --------------------------------------------------------------------------------------------------- |
+| **sessionStore**       | `sessionStore.ts`       | `useSessionStore`       | Sessions, groups, active session, bookmarks, worktree tracking, initialization                      |
+| **uiStore**            | `uiStore.ts`            | `useUIStore`            | UI layout: sidebars, focus, notifications, search, drag-and-drop, editing                           |
+| **tabStore**           | `tabStore.ts`           | `useTabStore`           | Tab operations (CRUD, navigation, metadata), gist state. Wraps tabHelpers + sessionStore            |
+| **agentStore**         | `agentStore.ts`         | `useAgentStore`         | Agent detection cache, error recovery, queue processing, agent lifecycle                            |
+| **modalStore**         | `modalStore.ts`         | `useModalStore`         | Modal visibility via registry pattern. Single Map replaces 90+ boolean fields                       |
+| **groupChatStore**     | `groupChatStore.ts`     | `useGroupChatStore`     | Group chat state: chats list, messages, moderator, participants, execution queue                    |
+| **settingsStore**      | `settingsStore.ts`      | `useSettingsStore`      | App settings (theme, font, shortcuts, agent configs, per-modal `modalSizes`, etc.)                  |
+| **fileExplorerStore**  | `fileExplorerStore.ts`  | `useFileExplorerStore`  | File explorer panel state                                                                           |
+| **sidebarNavStore**    | `sidebarNavStore.ts`    | `useSidebarNavStore`    | Left Bar sort/nav/starred projections (`SidebarNavSync` host writes; SessionList + keyboard read)   |
+| **batchStore**         | `batchStore.ts`         | `useBatchStore`         | Batch/Auto Run execution state                                                                      |
+| **notificationStore**  | `notificationStore.ts`  | `useNotificationStore`  | In-app notification queue                                                                           |
+| **operationStore**     | `operationStore.ts`     | `useOperationStore`     | Long-running operation tracking                                                                     |
+| **mediaPlaybackStore** | `mediaPlaybackStore.ts` | `useMediaPlaybackStore` | Audio/video playback state + slot geometry for the app-level media host                             |
+| **gitCommandRunStore** | `gitCommandRunStore.ts` | `useGitCommandRunStore` | In-flight `git pull` / `push` / `fetch` runs. Outlives the console modal: close hides, cancel kills |
 
 ---
 
@@ -90,13 +91,24 @@ selectIsAnySessionBusy; // (state) => boolean
 ### Non-React Access
 
 ```typescript
-import { getSessionState, getSessionActions } from './stores/sessionStore';
+import {
+	useSessionStore,
+	updateSessionWith,
+	updateAiTab,
+	updateFileTab,
+	updateBrowserTab,
+} from './stores/sessionStore';
 
-// Read current state (snapshot)
-const { sessions, activeSessionId } = getSessionState();
+// Read current state (snapshot) or call an action - both live on getState()
+const { sessions, activeSessionId, setSessions, setActiveSessionId } = useSessionStore.getState();
 
-// Get stable action references
-const { setSessions, setActiveSessionId } = getSessionActions();
+// Patch one agent without walking the sessions array yourself
+updateSessionWith(sessionId, (s) => ({ ...s, batchRunnerPrompt: prompt }));
+
+// One single-tab updater per tab type - all three take (sessionId, tabId, updater)
+updateAiTab(sessionId, tabId, (tab) => ({ ...tab, hasUnread: false }));
+updateFileTab(sessionId, tabId, (tab) => ({ ...tab, scrollTop }));
+updateBrowserTab(sessionId, tabId, (tab) => ({ ...tab, isLoading: false }));
 ```
 
 ---
@@ -121,6 +133,8 @@ const { setSessions, setActiveSessionId } = getSessionActions();
 | `outputSearchOpen`         | `boolean`                  | `false`      | Output search bar visible                                                 |
 | `outputSearchQuery`        | `string`                   | `''`         | Current search query                                                      |
 | `sessionFilterOpen`        | `boolean`                  | `false`      | Sidebar agent filter visible                                              |
+| `sessionFilter`            | `string`                   | `''`         | Sidebar agent filter text (shared, not local to `useSessionFilterMode`)   |
+| `showArchivedGroupChats`   | `boolean`                  | `false`      | Whether the group chat list draws archived chats                          |
 | `draggingSessionId`        | `string \| null`           | `null`       | Session being dragged                                                     |
 | `editingGroupId`           | `string \| null`           | `null`       | Group being renamed inline                                                |
 | `editingSessionId`         | `string \| null`           | `null`       | Session being renamed inline                                              |
@@ -129,6 +143,12 @@ const { setSessions, setActiveSessionId } = getSessionActions();
 
 All actions support functional updaters and have toggle variants where appropriate (e.g., `toggleLeftSidebar`, `toggleRightPanel`, `toggleShowUnreadOnly`).
 
+**`sessionFilter` and `showArchivedGroupChats` are here on purpose.** Both were `useState` inside the component that renders the list, which gave every other caller its own copy. `Cmd+[` / `Cmd+]` could not see either one, so the cycle walked agents and chats the sidebar was not drawing. Anything that decides MEMBERSHIP of a rendered list is a shared question: put it in the store, and read it from both the render path and the navigation path.
+
+A test that renders the Left Bar must reset both in `beforeEach`. They are module-global now, so a test that types into the filter leaves the query behind and every later test in the file renders an empty sidebar.
+
+**`closeLeftSidebarForNavigation()` is the one way to dismiss the drawer after a navigation.** On a narrow viewport (`xs` / `sm`) the Left Bar is an overlay over the main panel, so activating anything listed in it - an agent row, a group chat, a starred session, any `jumpToAgent()` - has to close it; on a wide viewport it is a permanent column and the action is a no-op. The width check (`isNarrowViewportNow()`) lives inside the action so no call site re-derives the breakpoint. Call it AT THE TAP, not from an effect keyed on `activeSessionId`: a group chat never moves that id, and a row that is already active moves nothing either, so a transition-keyed effect sees nothing to react to and the drawer stays over what the tap was meant to show. Full entry: [CANONICAL-UTILITIES.md](CANONICAL-UTILITIES.md).
+
 ---
 
 ## tabStore
@@ -136,7 +156,7 @@ All actions support functional updaters and have toggle variants where appropria
 **File:** `src/renderer/stores/tabStore.ts`
 **Hook:** `useTabStore`
 
-Tab data lives inside Session objects in sessionStore. This store provides orchestration actions that compose `tabHelpers.ts` pure functions with sessionStore mutations.
+Tab data lives inside Session objects in sessionStore. This store provides orchestration actions that compose `tabHelpers` pure functions with sessionStore mutations.
 
 ### Own State
 
@@ -269,6 +289,32 @@ getData<T extends ModalId>(id: T): ModalDataFor<T> | undefined
 closeAll(): void
 ```
 
+### Destination Surfaces (one at a time)
+
+`DESTINATION_MODALS` in `modalStore.ts` is the set of full-window views that are a place you
+go rather than a dialog you answer: `settings`, `usageDashboard`, `directorNotes`,
+`symphony`, `cueModal`, `marketplace`, `processMonitor`, plus the main-panel destinations
+`logViewer`, `agentSessions`, and `memoryViewer`. `openModal` (and `toggleModal`, which
+routes through it) closes whichever other destination was up, so only one is ever open.
+
+Without the rule, what you saw after a hotkey depended on the fixed rank each surface holds
+in `MODAL_PRIORITIES` rather than on what you just asked for: opening the Usage Dashboard
+(540) while Director's Notes (848) was up rendered it behind the notes, and opening a
+main-panel destination while any overlay was up changed nothing on screen. Both read as a
+dead keystroke.
+
+**When you add a modal, decide which kind it is.** Membership test: does it fill the window,
+own its own header/tabs, and is it reachable on its own from a hotkey, the command palette,
+the Left Bar footer, or `maestro-cli open`? Dialogs that answer a question _about_ the
+surface beneath them are not members and are meant to layer - confirmations, rename prompts,
+`cueYamlEditor`, the Usage Dashboard's per-agent detail, the Symphony agent picker.
+
+The Document Graph is a destination that lives in `fileExplorerStore`, not here. It joins the
+rule through `registerExternalDestination(close)`, which `modalStore` invokes when a
+destination opens; the graph store calls `closeOtherDestinations()` on its own way in. The
+dependency is one-way on purpose - `modalStore` must never import `fileExplorerStore`. Any
+future destination owned by another store registers the same way.
+
 ### Typed Data Map
 
 Modals with associated data have type-safe access:
@@ -338,56 +384,109 @@ interface GroupChatStoreState {
 **File:** `src/renderer/stores/mediaPlaybackStore.ts`
 **Hook:** `useMediaPlaybackStore`
 
-State for the app's single audio/video player. Only the float geometry persists.
+State for the app's single audio/video player. The queue and the float geometry
+persist; history deliberately does not.
 
 ```typescript
 interface MediaPlaybackStoreState {
-	activeTabId: string | null; // the one file tab with a mounted player
+	items: MediaItem[]; // play queue, in open order (persisted)
+	activeItemId: string | null; // the one item with a mounted player (persisted)
+	history: MediaItem[]; // DEPARTED tracks, newest first (per-boot; excludes the loaded one)
 	playing: boolean;
-	dismissed: boolean; // floating widget hidden (playback continues)
-	minimized: boolean; // collapsed to a pill
+	dismissed: boolean; // minimized to the Left Bar (playback continues)
 	pendingAutoplay: boolean; // one-shot: play when ready
 	toggleRequest: number; // nonce; each increment toggles play/pause
-	slots: Record<string, { rect: MediaSlotRect; visible: boolean }>; // docked placement
-	resumeTimes: Record<string, number>; // per tab, so navigating back resumes
-	floatRect: MediaFloatRect | null; // persisted via settings
+	resumeTimes: Record<string, number>; // per item, so coming back resumes (persisted)
+	durations: Record<string, number>; // per item length, for the list rows (persisted)
+	floatPosition: { top; left } | null; // where the player sits (persisted)
+	floatWidths: Partial<Record<MediaKind, number>>; // width per kind (persisted)
+	aspects: Record<string, number>; // item -> picture shape, learned on load (per-boot)
 }
 ```
 
 ### Why this store exists
 
-`MainPanelContent` renders `FilePreview` only for the **active file tab of the
-active session**, so switching tabs or agents unmounts it. Removing a media
+**Media never becomes a tab.** `handleOpenFileTab()` diverts a playable file to
+`openMedia()` before a tab can be created, so the queue lives here rather than
+being derived from `session.filePreviewTabs`. That is a product decision (a
+podcast should not cost the user their workspace) and a technical one: anything
+rendered per-tab or per-agent is unmounted on switch, and removing a media
 element from the document runs the HTML spec's internal pause steps, which would
 kill playback every time the user looked at something else.
 
-So the element lives in `MediaPlaybackHost`, mounted once in `App.tsx` and never
-unmounted. It renders in one of two placements:
-
-- **Docked** - `FilePreview` renders a `MediaViewportSlot` in place of the
-  player; the slot publishes its rect here and the host parks a `position: fixed`
-  box over it.
-- **Floating** - `FloatingMediaPlayer`, a draggable/resizable now-playing widget,
-  when the owning tab is off screen.
+The element lives in `MediaPlaybackHost`, mounted once in `App.tsx` and never
+unmounted. `FloatingMediaPlayer` is its **only** placement - there is no docked
+or in-panel mode. Do not add one.
 
 **One player, always.** Overlapping audio is structurally impossible rather than
-a rule to enforce: switching files unmounts the previous element. Use
-`stepMediaTab()` (`utils/mediaTabs.ts`) to navigate between open media tabs.
+a rule to enforce: switching items unmounts the previous element. Use
+`stepMediaItem()` (`utils/mediaItems.ts`) for prev/next, which walks the queue in
+open order, and `advanceAfterEnded()` for the end-of-file hand-off.
+
+**Queue and history have opposite lifetimes.** The queue survives a restart (the
+`mediaPlayerQueue` setting, written debounced and hydrated in `settingsStore`);
+history is per-boot. That is why history holds whole `MediaItem`s rather than IDs
+into the queue: it has to be able to name a file the queue no longer holds, and
+dropping a queue entry must not rewrite what the user already heard. Picking a
+history entry re-queues it.
 
 ### Gotchas
 
-- **Dismissing does not stop playback.** Hiding a control must not have the side
-  effect of stopping media. The widget returns via the "Show Floating Media
-  Player" palette command or by opening a media file.
-- **Minimizing must not unmount the player.** `FloatingMediaPlayer` hides the body
-  with a class; unmounting it would pause the media.
-- A visible media tab always owns the player - `MediaViewportSlot` claims it on
-  mount. Without that, viewing file B while A floats would leave B's tab showing
-  an empty slot.
-- `setSlotRect` bails out on an identical rect. Without that, ResizeObserver churn
-  re-renders the host and with it the media element.
-- `hideSlot` retains the rect; only `clearTab` (tab closed) forgets it. Never
-  zero-size a docked player: a collapsed video can lose its decode pipeline.
+- **`dismissed` is minimize, `closeItem` is close.** Minimizing keeps the element
+  mounted and playing (the header pill drives it through `requestToggle`);
+  closing releases the player and the sound stops. Collapsing the two is how you
+  get either a hide button that kills audio or a close button that leaves sound
+  coming from nowhere.
+- **Item IDs are `sessionId::path`, not generated.** That is what makes
+  re-opening a file land on its existing queue entry and pick up its remembered
+  position instead of stacking a duplicate that starts from zero.
+- **Re-opening preserves queue position.** `openMedia` replaces in place rather
+  than moving to the end, so prev/next order stays open order.
+- **`history` holds items, not IDs.** It outlives the queue, so a history entry
+  can name a file that is no longer queued. `removeHistoryItem` and `closeItem`
+  are separate actions on separate lists.
+- **`enqueueMedia` does not interrupt.** The one exception is an idle player:
+  with nothing loaded there is no widget on screen, so the first queued file
+  becomes active (paused) rather than landing in a queue nobody can see.
+- **Multi-file opens must pass `mediaMode: 'queue'` after the first media file**
+  (`openFilesInOrder()` in `useFileContextMenu.ts`), or each open steals the
+  player and only the last file survives.
+- **A restored queue comes back `dismissed`.** Nothing plays at launch;
+  `NowPlayingIndicator` in the Left Bar header is what advertises it.
+- **"Is the header pill on screen" has one owner: `selectNowPlayingVisible`.**
+  The pill renders only when the indicator is enabled AND something is loaded,
+  and the Left Bar header needs the same answer to decide how much width to
+  reserve for it (see [UI-PATTERNS.md -> Left Bar Header Width Gates](UI-PATTERNS.md#left-bar-header-width-gates)).
+  Re-deriving it in the header is how a width reserve ends up describing a
+  header nobody is looking at.
+- **Durations outlive the queue in memory but not on disk.** A history row still
+  shows the length of a file dropped from the queue, so `closeItem` leaves the
+  entry alone; `writeQueueNow` prunes to the queued IDs instead, or every file
+  ever played would accumulate in settings.
+- **Neither list shows the loaded track.** The queue menu filters it out at
+  display time via `upcomingMediaItems()` - it must STAY in `items`, because
+  that is how `stepMediaItem` finds its position for prev/next. History excludes
+  it by invariant instead (`historyForActiveChange` strips the incoming id), so
+  replaying something out of history does not leave it listed while it plays.
+- **`clearQueue` keeps the loaded track.** The menu it lives in means "what
+  plays next", so emptying it must not also stop the music; `closeItem` is what
+  stops playback.
+- **History records departures, not arrivals.** A track joins `history` when it
+  stops being active (next track, close, clear), never when it becomes active -
+  so the loaded track is never in its own "recently played". Pushing on arrival
+  put a single open file in the queue AND the history at once. See
+  `departingHistory()`.
+- **`MediaPlaybackHost` must render ONE tree.** Minimized and expanded differ by
+  a style flag on `FloatingMediaPlayer` (`hidden`), never by which wrapper the
+  player is rendered under: branching there moves the media element in the React
+  tree, and an unmount runs the HTML spec's internal pause steps, silently
+  stopping the audio minimizing is meant to preserve.
+- **The player's height is never stored.** It is derived from the loaded file:
+  chrome for audio, chrome plus `width / aspect` for video (`mediaFloatGeometry`).
+  Persisting a height is what let a video sit in black bars. Width is stored per
+  kind, because a movie's width is absurd on the next podcast.
+- **`closeItem` is stop, not skip.** Closing the active item releases the player
+  rather than auto-advancing to the next one.
 - `toggleRequest` is a nonce, not a callback in state, so the pill's play button
   can drive the element without a ref crossing the frame boundary.
 

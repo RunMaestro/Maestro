@@ -17,7 +17,7 @@ describe('createLoopSummaryEntry', () => {
 		const entry = createLoopSummaryEntry({
 			loopIteration: 0,
 			loopTasksCompleted: 4,
-			loopStartTime: FIXED_NOW - 90_000,
+			loopSpan: { startedAt: FIXED_NOW - 90_000, sleptMsAtStart: 0 },
 			loopTotalInputTokens: 0,
 			loopTotalOutputTokens: 0,
 			loopTotalCost: 0,
@@ -36,7 +36,7 @@ describe('createLoopSummaryEntry', () => {
 		const entry = createLoopSummaryEntry({
 			loopIteration: 2,
 			loopTasksCompleted: 1,
-			loopStartTime: FIXED_NOW - 1000,
+			loopSpan: { startedAt: FIXED_NOW - 1000, sleptMsAtStart: 0 },
 			loopTotalInputTokens: 0,
 			loopTotalOutputTokens: 0,
 			loopTotalCost: 0,
@@ -53,7 +53,7 @@ describe('createLoopSummaryEntry', () => {
 		const entry = createLoopSummaryEntry({
 			loopIteration: 0,
 			loopTasksCompleted: 1,
-			loopStartTime: FIXED_NOW,
+			loopSpan: { startedAt: FIXED_NOW, sleptMsAtStart: 0 },
 			loopTotalInputTokens: 0,
 			loopTotalOutputTokens: 0,
 			loopTotalCost: 0,
@@ -69,7 +69,7 @@ describe('createLoopSummaryEntry', () => {
 		const entry = createLoopSummaryEntry({
 			loopIteration: 0,
 			loopTasksCompleted: 0,
-			loopStartTime: FIXED_NOW,
+			loopSpan: { startedAt: FIXED_NOW, sleptMsAtStart: 0 },
 			loopTotalInputTokens: 0,
 			loopTotalOutputTokens: 0,
 			loopTotalCost: 0,
@@ -85,7 +85,7 @@ describe('createLoopSummaryEntry', () => {
 		const entry = createLoopSummaryEntry({
 			loopIteration: 0,
 			loopTasksCompleted: 2,
-			loopStartTime: FIXED_NOW,
+			loopSpan: { startedAt: FIXED_NOW, sleptMsAtStart: 0 },
 			loopTotalInputTokens: 0,
 			loopTotalOutputTokens: 0,
 			loopTotalCost: 0,
@@ -103,7 +103,7 @@ describe('createLoopSummaryEntry', () => {
 		const entry = createLoopSummaryEntry({
 			loopIteration: 0,
 			loopTasksCompleted: 3,
-			loopStartTime: FIXED_NOW - 5000,
+			loopSpan: { startedAt: FIXED_NOW - 5000, sleptMsAtStart: 0 },
 			loopTotalInputTokens: 1000,
 			loopTotalOutputTokens: 500,
 			loopTotalCost: 0.0123,
@@ -128,7 +128,7 @@ describe('createLoopSummaryEntry', () => {
 		const entry = createLoopSummaryEntry({
 			loopIteration: 0,
 			loopTasksCompleted: 1,
-			loopStartTime: FIXED_NOW,
+			loopSpan: { startedAt: FIXED_NOW, sleptMsAtStart: 0 },
 			loopTotalInputTokens: 100,
 			loopTotalOutputTokens: 0,
 			loopTotalCost: 0,
@@ -146,7 +146,7 @@ describe('createLoopSummaryEntry', () => {
 		const entry = createLoopSummaryEntry({
 			loopIteration: 1,
 			loopTasksCompleted: 0,
-			loopStartTime: FIXED_NOW,
+			loopSpan: { startedAt: FIXED_NOW, sleptMsAtStart: 0 },
 			loopTotalInputTokens: 0,
 			loopTotalOutputTokens: 0,
 			loopTotalCost: 0,
@@ -163,7 +163,7 @@ describe('createLoopSummaryEntry', () => {
 		const entry = createLoopSummaryEntry({
 			loopIteration: 0,
 			loopTasksCompleted: 2,
-			loopStartTime: FIXED_NOW,
+			loopSpan: { startedAt: FIXED_NOW, sleptMsAtStart: 0 },
 			loopTotalInputTokens: 0,
 			loopTotalOutputTokens: 0,
 			loopTotalCost: 0,
@@ -180,7 +180,7 @@ describe('createLoopSummaryEntry', () => {
 		const entry = createLoopSummaryEntry({
 			loopIteration: 0,
 			loopTasksCompleted: 2,
-			loopStartTime: FIXED_NOW,
+			loopSpan: { startedAt: FIXED_NOW, sleptMsAtStart: 0 },
 			loopTotalInputTokens: 0,
 			loopTotalOutputTokens: 0,
 			loopTotalCost: 0,
@@ -196,7 +196,7 @@ describe('createLoopSummaryEntry', () => {
 		const entry = createLoopSummaryEntry({
 			loopIteration: 0,
 			loopTasksCompleted: 1,
-			loopStartTime: FIXED_NOW,
+			loopSpan: { startedAt: FIXED_NOW, sleptMsAtStart: 0 },
 			loopTotalInputTokens: 0,
 			loopTotalOutputTokens: 0,
 			loopTotalCost: 0,

@@ -17,8 +17,7 @@ import { createMermaidRenderer } from './mermaidRenderer';
 import { findHits } from './searchHits';
 import { buildRangeAtOffset, scrollRangeIntoView } from '../search/scrollToOffset';
 import { FAST_BLOCK_CLASS, generateProseCss } from './proseStyles';
-import { SvgContextMenu } from '../../SvgContextMenu';
-import { useSvgContextMenu } from '../../../hooks/ui/useSvgContextMenu';
+import { ACTIVE_HEADING_FOLD_PX } from '../shared/headings';
 import type { MarkdownBlock, MarkdownPreviewFastHandle, MarkdownPreviewFastProps } from './types';
 
 /**
@@ -73,6 +72,30 @@ export const MarkdownPreviewFast = forwardRef<MarkdownPreviewFastHandle, Markdow
 					if (idx === -1) return false;
 					virtuosoRef.current?.scrollToIndex({ index: idx, align: 'start', behavior: 'auto' });
 					return true;
+				},
+				getActiveHeadingSlug: () => {
+					const root = containerRef.current;
+					if (!root) return null;
+					// Only the blocks around the viewport are mounted, and the
+					// overscan mounts some above it, so the block at the top of the
+					// view is the HIGHEST-indexed mounted block still above the fold.
+					const fold = root.getBoundingClientRect().top + ACTIVE_HEADING_FOLD_PX;
+					let topIndex = -1;
+					const mounted = root.querySelectorAll<HTMLElement>(
+						`.${FAST_BLOCK_CLASS}[data-block-index]`
+					);
+					mounted.forEach((el) => {
+						if (el.getBoundingClientRect().top > fold) return;
+						const index = Number(el.getAttribute('data-block-index'));
+						if (Number.isFinite(index) && index > topIndex) topIndex = index;
+					});
+					if (topIndex < 0) return null;
+					// Walk back to the heading that opened this block.
+					for (let i = topIndex; i >= 0; i--) {
+						const slug = blocksRef.current[i]?.headingSlug;
+						if (slug) return slug;
+					}
+					return null;
 				},
 				findInContent: (query: string) => {
 					const blockRanges = blocksRef.current
@@ -230,11 +253,6 @@ export const MarkdownPreviewFast = forwardRef<MarkdownPreviewFastHandle, Markdow
 
 		const proseCss = useMemo(() => generateProseCss(theme), [theme]);
 
-		// Mermaid diagrams in this tier are injected imperatively into the scroll
-		// root, so they get the same right-click Copy/Save menu as every other
-		// SVG surface via the shared container handler.
-		const { svgMenu, dismissSvgMenu, openSvgMenuFromContainer } = useSvgContextMenu();
-
 		// Lazy code-block syntax highlighter: observes the scroll container and
 		// fires Shiki on each code block as it scrolls into view. Disconnects on
 		// unmount so we don't leak the IntersectionObserver or the Shiki bundle.
@@ -264,13 +282,12 @@ export const MarkdownPreviewFast = forwardRef<MarkdownPreviewFastHandle, Markdow
 				className="file-preview-content"
 				style={{ height: '100%', display: 'flex', flexDirection: 'column' }}
 				onClick={onClick}
-				onContextMenu={openSvgMenuFromContainer}
 			>
 				<style>{proseCss}</style>
 				{blocks.length === 0 ? (
 					<div
 						data-testid="markdown-fast-skeleton"
-						style={{ padding: '24px', color: theme.colors.textDim, fontSize: '13px' }}
+						style={{ padding: '24px', color: theme.colors.textDim, fontSize: '0.8125rem' }}
 					>
 						Parsing large markdown…
 					</div>
@@ -283,7 +300,6 @@ export const MarkdownPreviewFast = forwardRef<MarkdownPreviewFastHandle, Markdow
 						increaseViewportBy={{ top: VIRTUOSO_OVERSCAN_PX, bottom: VIRTUOSO_OVERSCAN_PX }}
 					/>
 				)}
-				{svgMenu && <SvgContextMenu menu={svgMenu} theme={theme} onDismiss={dismissSvgMenu} />}
 			</div>
 		);
 	}

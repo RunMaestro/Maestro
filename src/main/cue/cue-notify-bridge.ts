@@ -12,11 +12,10 @@
 import { BrowserWindow } from 'electron';
 import { createSafeSend, isWebContentsAvailable } from '../utils/safe-send';
 import { logger } from '../utils/logger';
+import type { ToastClickAction } from '../../shared/toastClickAction';
 
-export type CueNotifyClickAction =
-	| { kind: 'jump-session'; sessionId: string; tabId?: string }
-	| { kind: 'open-file'; sessionId: string; path: string }
-	| { kind: 'open-url'; url: string };
+/** Alias of the canonical toast click intent (`shared/toastClickAction.ts`). */
+export type CueNotifyClickAction = ToastClickAction;
 
 export interface CueNotifyToastParams {
 	/** Owning agent (session) ID. Drives both `project` lookup in the renderer
@@ -30,6 +29,12 @@ export interface CueNotifyToastParams {
 	sticky?: boolean;
 	/** Override the default click intent (defaults to jump-session for the agent). */
 	clickAction?: CueNotifyClickAction;
+	/**
+	 * Toast color from the shared five-color language. Defaults to `theme`,
+	 * which is right for ordinary notify subscriptions; security blocks pass
+	 * `red` so they do not read as a routine automation ping.
+	 */
+	color?: 'green' | 'yellow' | 'orange' | 'red' | 'theme';
 }
 
 /**
@@ -67,7 +72,7 @@ export function emitCueNotifyToast(
 		safeSend('remote:notifyToast', {
 			title: params.title,
 			message: params.message,
-			color: 'theme' as const,
+			color: params.color ?? ('theme' as const),
 			dismissible: params.sticky === true,
 			sessionId: params.agentId,
 			clickAction,

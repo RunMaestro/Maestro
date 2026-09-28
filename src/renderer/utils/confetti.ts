@@ -7,6 +7,7 @@
  */
 
 import confetti from 'canvas-confetti';
+import { Z_LAYERS } from '../constants/zLayers';
 
 /**
  * Options for customizing the confetti animation
@@ -41,12 +42,6 @@ const DEFAULT_COLORS = [
 	'#F48FB1', // Pink
 	'#FFEAA7', // Yellow
 ];
-
-/**
- * Z-index for confetti canvas - high enough to be above most UI elements
- * but below modals (which typically use 99999)
- */
-const CONFETTI_Z_INDEX = 99998;
 
 /**
  * Triggers a confetti animation burst from the center of the screen.
@@ -109,7 +104,7 @@ export function triggerConfetti(options: ConfettiOptions = {}): void {
 		ticks: 200, // ~2 seconds at 60fps
 		shapes: ['circle', 'square'] as ('circle' | 'square')[],
 		colors,
-		zIndex: CONFETTI_Z_INDEX,
+		zIndex: Z_LAYERS.CONFETTI,
 		disableForReducedMotion: respectReducedMotion,
 	};
 
@@ -177,7 +172,7 @@ export function triggerCelebration(disabled = false): void {
 			ticks: 250,
 			shapes: ['star'] as 'star'[],
 			colors: ['#FFD700', '#FFA500', '#FFFFFF'],
-			zIndex: CONFETTI_Z_INDEX,
+			zIndex: Z_LAYERS.CONFETTI,
 			disableForReducedMotion: true,
 		});
 	}, 300);

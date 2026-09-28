@@ -9,6 +9,10 @@ import {
 	HISTORY_VERSION,
 	MAX_ENTRIES_PER_SESSION,
 	ORPHANED_SESSION_ID,
+	resolveHistoryEntryLimit,
+	parseHistoryJsonl,
+	serializeHistoryEntryLine,
+	trimHistoryEntriesToLimit,
 	sanitizeSessionId,
 	paginateEntries,
 	sortEntriesByTimestamp,
@@ -48,6 +52,121 @@ describe('shared/history', () => {
 
 		it('exports ORPHANED_SESSION_ID as _orphaned', () => {
 			expect(ORPHANED_SESSION_ID).toBe('_orphaned');
+		});
+	});
+
+	describe('resolveHistoryEntryLimit', () => {
+		it('returns the configured cap when it is a positive number', () => {
+			expect(resolveHistoryEntryLimit(25000)).toBe(25000);
+			expect(resolveHistoryEntryLimit(1)).toBe(1);
+		});
+
+		it('parses a numeric string (settings files hand-edited as text)', () => {
+			expect(resolveHistoryEntryLimit('12000')).toBe(12000);
+		});
+
+		it('floors a fractional cap so slice() gets an integer', () => {
+			expect(resolveHistoryEntryLimit(10.9)).toBe(10);
+		});
+
+		it('falls back to MAX_ENTRIES_PER_SESSION for unusable values', () => {
+			for (const value of [undefined, null, 0, -5, NaN, Infinity, 'abc', {}, []]) {
+				expect(resolveHistoryEntryLimit(value)).toBe(MAX_ENTRIES_PER_SESSION);
+			}
+		});
+	});
+
+	describe('JSONL storage format', () => {
+		describe('serializeHistoryEntryLine', () => {
+			it('emits exactly one newline-terminated line', () => {
+				const line = serializeHistoryEntryLine(createMockEntry({ id: 'x' }));
+				expect(line.endsWith('\n')).toBe(true);
+				expect(line.trimEnd().split('\n')).toHaveLength(1);
+			});
+
+			it('escapes embedded newlines so one entry stays one line', () => {
+				// The one-entry-one-line invariant is what makes torn-line recovery
+				// possible; a raw newline in a summary would break it.
+				const line = serializeHistoryEntryLine(
+					createMockEntry({ summary: 'first\nsecond\nthird' })
+				);
+				expect(line.trimEnd().split('\n')).toHaveLength(1);
+				expect(parseHistoryJsonl(line).entries[0].summary).toBe('first\nsecond\nthird');
+			});
+
+			it('round-trips through parseHistoryJsonl', () => {
+				const entries = [createMockEntry({ id: 'a' }), createMockEntry({ id: 'b' })];
+				const raw = entries.map(serializeHistoryEntryLine).join('');
+				const parsed = parseHistoryJsonl(raw);
+				expect(parsed.entries).toEqual(entries);
+				expect(parsed.malformedLines).toBe(0);
+			});
+		});
+
+		describe('parseHistoryJsonl', () => {
+			it('returns an empty result for empty input', () => {
+				expect(parseHistoryJsonl('')).toEqual({ entries: [], malformedLines: 0 });
+			});
+
+			it('ignores blank lines without counting them as malformed', () => {
+				const raw = `${serializeHistoryEntryLine(createMockEntry({ id: 'a' }))}\n\n`;
+				const parsed = parseHistoryJsonl(raw);
+				expect(parsed.entries).toHaveLength(1);
+				expect(parsed.malformedLines).toBe(0);
+			});
+
+			it('keeps every good line when the final line is torn', () => {
+				// An append interrupted by a crash leaves a partial last line. The
+				// whole point of the format is that this costs one entry, not the file.
+				const good = [createMockEntry({ id: 'a' }), createMockEntry({ id: 'b' })];
+				const raw = `${good.map(serializeHistoryEntryLine).join('')}{"id":"torn","summ`;
+				const parsed = parseHistoryJsonl(raw);
+				expect(parsed.entries.map((e) => e.id)).toEqual(['a', 'b']);
+				expect(parsed.malformedLines).toBe(1);
+			});
+
+			it('survives a torn line in the MIDDLE of the file', () => {
+				const raw = [
+					serializeHistoryEntryLine(createMockEntry({ id: 'a' })),
+					'{"id":"torn"\n',
+					serializeHistoryEntryLine(createMockEntry({ id: 'c' })),
+				].join('');
+				const parsed = parseHistoryJsonl(raw);
+				expect(parsed.entries.map((e) => e.id)).toEqual(['a', 'c']);
+				expect(parsed.malformedLines).toBe(1);
+			});
+
+			it('counts a line that parses but is not entry-shaped as malformed', () => {
+				const raw = `${serializeHistoryEntryLine(createMockEntry({ id: 'a' }))}null\n42\n`;
+				const parsed = parseHistoryJsonl(raw);
+				expect(parsed.entries).toHaveLength(1);
+				expect(parsed.malformedLines).toBe(2);
+			});
+
+			it('yields no entries for a legacy single-object file', () => {
+				// Pretty-printed legacy JSON spans many lines, none individually
+				// parseable. Callers detect this via the legacy path, not here.
+				const legacy = JSON.stringify({ version: 1, entries: [createMockEntry()] }, null, 2);
+				expect(parseHistoryJsonl(legacy).entries).toHaveLength(0);
+			});
+		});
+
+		describe('trimHistoryEntriesToLimit', () => {
+			const entries = ['a', 'b', 'c', 'd'].map((id) => createMockEntry({ id }));
+
+			it('keeps the NEWEST entries, i.e. the tail of file order', () => {
+				expect(trimHistoryEntriesToLimit(entries, 2).map((e) => e.id)).toEqual(['c', 'd']);
+			});
+
+			it('returns the input untouched when it already fits', () => {
+				expect(trimHistoryEntriesToLimit(entries, 4)).toBe(entries);
+				expect(trimHistoryEntriesToLimit(entries, 99)).toBe(entries);
+			});
+
+			it('refuses to trim on a nonsensical limit rather than emptying the file', () => {
+				expect(trimHistoryEntriesToLimit(entries, 0)).toBe(entries);
+				expect(trimHistoryEntriesToLimit(entries, -5)).toBe(entries);
+			});
 		});
 	});
 

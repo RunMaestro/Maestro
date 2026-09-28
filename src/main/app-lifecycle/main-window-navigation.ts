@@ -3,7 +3,16 @@ import { logger } from '../utils/logger';
 import { blocksSubframeNavigation } from '../../shared/plugins/panel-navigation';
 import { parseConcertoHtmlUrl } from '../../shared/concerto-html';
 
-const ALLOWED_APP_PERMISSIONS = new Set(['clipboard-read', 'clipboard-sanitized-write']);
+// 'local-fonts' backs the font pickers in Settings -> Display. Granted to the
+// app window only (never an embedded browser tab, where enumerating installed
+// fonts is a fingerprinting vector): reading the list of installed families is
+// the whole mechanism by which the picker can say a font exists, and the
+// previous fc-list probe silently failed on stock macOS and Windows.
+const ALLOWED_APP_PERMISSIONS = new Set([
+	'clipboard-read',
+	'clipboard-sanitized-write',
+	'local-fonts',
+]);
 
 export interface MainWindowNavigationOptions {
 	isDevelopment: boolean;

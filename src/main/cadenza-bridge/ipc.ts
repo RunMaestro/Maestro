@@ -33,6 +33,16 @@ export function registerCadenzaIpcHandlers(deps: CadenzaIpcDependencies): void {
 	// routed to whichever renderer actually holds the card: the HUD window when it's
 	// up, otherwise the main window (the in-app fallback layer). Gated by Concerto so
 	// it's inert when off (no cadenzas exist then anyway).
+	// The "stash all cadenzas" hotkey / palette entry lives in the main window, but
+	// the cards themselves render in the HUD window whenever it is up. Mirror the
+	// new value there so one toggle covers both renderers. Gated by Concerto like
+	// every other cadenza entry point.
+	ipcMain.on('cadenza:set-hidden', (_event, hidden: boolean) => {
+		if (deps.settingsStore.get('encoreFeatures')?.concerto !== true) return;
+		const hud = getCadenzaHudWindow();
+		if (hud && !hud.isDestroyed()) hud.webContents.send('remote:cadenzaHidden', hidden === true);
+	});
+
 	ipcMain.on('cadenza:flash', (_event, id: string) => {
 		if (!id) return;
 		if (deps.settingsStore.get('encoreFeatures')?.concerto !== true) return;

@@ -9,9 +9,12 @@
 import { marked } from 'marked';
 import type { GroupChat, GroupChatMessage, GroupChatHistoryEntry, Theme } from '../types';
 import {
+	formatCost,
 	formatDurationCompact,
+	formatTokens,
 	formatTimestamp as formatTimestampShared,
 } from '../../shared/formatters';
+import { computeGroupChatActivity } from '../../shared/groupChatActivity';
 import { escapeRegExp } from '../../shared/stringUtils';
 import { logger } from './logger';
 
@@ -41,9 +44,12 @@ function formatTimestamp(timestamp: string | number): string {
 }
 
 /**
- * Format duration from group chat messages by computing span between first and last
+ * Wall clock between the first and last message.
+ *
+ * Reported alongside working time, never instead of it: a group chat is a room
+ * rather than a task, so its span counts every night it sat idle.
  */
-function formatDuration(messages: GroupChatMessage[]): string {
+function formatSpan(messages: GroupChatMessage[]): string {
 	if (messages.length < 2) return '0m';
 
 	const firstTimestamp = new Date(messages[0].timestamp).getTime();
@@ -96,7 +102,7 @@ function formatContent(content: string, images: Record<string, string> = {}): st
 export function generateGroupChatExportHtml(
 	groupChat: GroupChat,
 	messages: GroupChatMessage[],
-	_history: GroupChatHistoryEntry[],
+	history: GroupChatHistoryEntry[],
 	images: Record<string, string>,
 	theme: Theme
 ): string {
@@ -104,12 +110,23 @@ export function generateGroupChatExportHtml(
 	const userMessages = messages.filter((m) => m.from === 'user').length;
 	const agentMessages = messages.filter((m) => m.from !== 'user' && m.from !== 'moderator').length;
 
+	// Working time, tokens, and cost come from the history log rather than the
+	// chat log - a message carries no duration or usage, a turn does - and use
+	// the same math the info overlay shows, so an export can't disagree with the
+	// app about how much work the chat did.
+	const activity = computeGroupChatActivity(history);
+
 	const stats = {
 		participantCount: groupChat.participants.length,
 		totalMessages: messages.length,
 		agentMessages,
 		userMessages,
-		duration: formatDuration(messages),
+		span: formatSpan(messages),
+		working: formatDurationCompact(activity.workingTimeMs),
+		// A dash rather than a zero: a chat whose turns reported no usage is
+		// unknown, not free.
+		tokens: activity.turnsWithTokens > 0 ? formatTokens(activity.tokenCount) : '-',
+		cost: activity.turnsWithCost > 0 ? formatCost(activity.costUsd) : '-',
 	};
 
 	// Generate messages HTML with embedded images
@@ -282,7 +299,7 @@ export function generateGroupChatExportHtml(
 
     .stats-grid {
       display: grid;
-      grid-template-columns: repeat(4, 1fr);
+      grid-template-columns: repeat(3, 1fr);
       gap: 1rem;
       margin-bottom: 2rem;
     }
@@ -695,9 +712,17 @@ export function generateGroupChatExportHtml(
         <div class="stat-value">${stats.agentMessages}</div>
         <div class="stat-label">Agent Replies</div>
       </div>
+      <div class="stat-card" title="Time agents spent working, idle gaps excluded. Chat spans ${stats.span} since the first message.">
+        <div class="stat-value">${stats.working}</div>
+        <div class="stat-label">Working</div>
+      </div>
       <div class="stat-card">
-        <div class="stat-value">${stats.duration}</div>
-        <div class="stat-label">Duration</div>
+        <div class="stat-value">${stats.tokens}</div>
+        <div class="stat-label">Tokens</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value">${stats.cost}</div>
+        <div class="stat-label">Cost</div>
       </div>
     </div>
 

@@ -218,6 +218,33 @@ describe('ClaudeOutputParser', () => {
 			expect(usage?.cacheCreationTokens).toBe(10);
 			expect(usage?.contextWindow).toBe(200000);
 			expect(usage?.costUsd).toBe(0.01);
+			// The model reported 200000 itself. That it happens to equal the
+			// fallback seed does not make it less of a provider report, so it is
+			// flagged authoritative (review of PR #1356). Before that fix the
+			// "is it LARGER than the fallback" test silently demoted every
+			// 200k-and-under model to unreported.
+			expect(usage?.contextWindowReported).toBe(true);
+		});
+
+		it('flags a genuinely reported context window as provider-reported', () => {
+			const event = parser.parseJsonLine(
+				JSON.stringify({
+					type: 'result',
+					result: 'test',
+					modelUsage: {
+						'claude-opus-5': {
+							inputTokens: 100,
+							outputTokens: 50,
+							contextWindow: 1000000,
+						},
+					},
+					total_cost_usd: 0.01,
+				})
+			);
+
+			const usage = parser.extractUsage(event!);
+			expect(usage?.contextWindow).toBe(1000000);
+			expect(usage?.contextWindowReported).toBe(true);
 		});
 
 		it('should extract usage with fallback to top-level usage', () => {
@@ -268,6 +295,165 @@ describe('ClaudeOutputParser', () => {
 			// MAX values: max(100, 200)=200, max(50, 100)=100
 			expect(usage?.inputTokens).toBe(200);
 			expect(usage?.outputTokens).toBe(100);
+		});
+	});
+
+	describe('absoluteUsage occupancy snapshot (finding Q1)', () => {
+		// A fresh parser per test: the snapshot is per-turn state on the instance,
+		// and the shared `parser` above has been fed unrelated messages.
+		const assistantMessage = (usage: Record<string, number>, extra: Record<string, unknown> = {}) =>
+			JSON.stringify({
+				type: 'assistant',
+				session_id: 'sess-q1',
+				message: {
+					id: 'msg-1',
+					role: 'assistant',
+					content: [{ type: 'text', text: 'working' }],
+					usage,
+				},
+				...extra,
+			});
+
+		const resultMessage = (modelUsage: Record<string, unknown>) =>
+			JSON.stringify({
+				type: 'result',
+				result: 'done',
+				session_id: 'sess-q1',
+				modelUsage,
+				total_cost_usd: 0.5,
+			});
+
+		it('attaches the LAST assistant call usage, not the sum and not the first call', () => {
+			const p = new ClaudeOutputParser();
+
+			p.parseJsonLine(
+				assistantMessage({
+					input_tokens: 2,
+					output_tokens: 90,
+					cache_read_input_tokens: 15007,
+					cache_creation_input_tokens: 9468,
+				})
+			);
+			p.parseJsonLine(
+				assistantMessage({
+					input_tokens: 3,
+					output_tokens: 40,
+					cache_read_input_tokens: 20000,
+					cache_creation_input_tokens: 100,
+				})
+			);
+			p.parseJsonLine(
+				assistantMessage({
+					input_tokens: 2,
+					output_tokens: 12,
+					cache_read_input_tokens: 24475,
+					cache_creation_input_tokens: 109,
+				})
+			);
+
+			// The CLI's own per-model sum across all three calls - the quantity that
+			// overflows the window and pinned the gauge at 0%.
+			const event = p.parseJsonLine(
+				resultMessage({
+					'claude-opus-5': {
+						inputTokens: 7,
+						outputTokens: 142,
+						cacheReadInputTokens: 59482,
+						cacheCreationInputTokens: 9677,
+						contextWindow: 1000000,
+					},
+				})
+			);
+
+			const usage = p.extractUsage(event!);
+			// Top-level fields stay the CLI's turn totals (token spend).
+			expect(usage?.inputTokens).toBe(7);
+			expect(usage?.cacheReadTokens).toBe(59482);
+			// The snapshot is the third call only: 2 / 12 / 24475 / 109.
+			expect(usage?.absoluteUsage).toEqual({
+				inputTokens: 2,
+				outputTokens: 12,
+				cacheReadInputTokens: 24475,
+				cacheCreationInputTokens: 109,
+				reasoningTokens: 0,
+			});
+		});
+
+		it('is idempotent when stream-json emits an assistant message twice', () => {
+			const p = new ClaudeOutputParser();
+			const line = assistantMessage({
+				input_tokens: 2,
+				output_tokens: 12,
+				cache_read_input_tokens: 24475,
+				cache_creation_input_tokens: 109,
+			});
+
+			p.parseJsonLine(line);
+			p.parseJsonLine(line);
+
+			const event = p.parseJsonLine(resultMessage({ 'claude-opus-5': { inputTokens: 7 } }));
+			expect(event?.usage?.absoluteUsage?.cacheReadInputTokens).toBe(24475);
+		});
+
+		it('ignores subagent assistant messages, which have their own context window', () => {
+			const p = new ClaudeOutputParser();
+
+			p.parseJsonLine(
+				assistantMessage({
+					input_tokens: 2,
+					output_tokens: 12,
+					cache_read_input_tokens: 24475,
+					cache_creation_input_tokens: 109,
+				})
+			);
+			p.parseJsonLine(
+				assistantMessage(
+					{
+						input_tokens: 5,
+						output_tokens: 20,
+						cache_read_input_tokens: 900,
+						cache_creation_input_tokens: 3,
+					},
+					{ parent_tool_use_id: 'toolu_subagent' }
+				)
+			);
+
+			const event = p.parseJsonLine(resultMessage({ 'claude-opus-5': { inputTokens: 7 } }));
+			// The main-transcript call, not the subagent's much smaller one.
+			expect(event?.usage?.absoluteUsage?.cacheReadInputTokens).toBe(24475);
+		});
+
+		it('does not leak a snapshot across turns', () => {
+			const p = new ClaudeOutputParser();
+
+			p.parseJsonLine(
+				assistantMessage({
+					input_tokens: 2,
+					output_tokens: 12,
+					cache_read_input_tokens: 24475,
+					cache_creation_input_tokens: 109,
+				})
+			);
+			p.parseJsonLine(resultMessage({ 'claude-opus-5': { inputTokens: 7 } }));
+
+			// Second turn: no assistant message carried usage this time.
+			const event = p.parseJsonLine(resultMessage({ 'claude-opus-5': { inputTokens: 9 } }));
+			expect(event?.usage).toBeDefined();
+			expect(event?.usage?.absoluteUsage).toBeUndefined();
+		});
+
+		it('omits the snapshot when assistant messages carry no usage', () => {
+			const p = new ClaudeOutputParser();
+
+			p.parseJsonLine(
+				JSON.stringify({
+					type: 'assistant',
+					message: { role: 'assistant', content: [{ type: 'text', text: 'hi' }] },
+				})
+			);
+
+			const event = p.parseJsonLine(resultMessage({ 'claude-opus-5': { inputTokens: 7 } }));
+			expect(event?.usage?.absoluteUsage).toBeUndefined();
 		});
 	});
 
@@ -901,6 +1087,67 @@ describe('ClaudeOutputParser', () => {
 		});
 	});
 
+	describe('isProvisionalErrorNotice', () => {
+		// Captured live: Claude Code emitted this, retried the call itself, and kept
+		// working for another twenty minutes before any result.
+		const connectionLost = {
+			type: 'assistant',
+			error: 'server_error',
+			is_api_error_message: true,
+			message: {
+				model: '<synthetic>',
+				role: 'assistant',
+				content: [
+					{
+						type: 'text',
+						text: 'API Error: Connection lost mid-response. The response above may be incomplete.',
+					},
+				],
+			},
+			session_id: 'sess-1',
+		};
+
+		it('is still detected as an error', () => {
+			expect(parser.detectErrorFromParsed(connectionLost)).not.toBeNull();
+		});
+
+		it('flags a synthetic API error message as provisional', () => {
+			expect(parser.isProvisionalErrorNotice(connectionLost)).toBe(true);
+		});
+
+		it('accepts the camelCase flag or the synthetic model on its own', () => {
+			expect(
+				parser.isProvisionalErrorNotice({
+					type: 'assistant',
+					error: 'server_error',
+					isApiErrorMessage: true,
+				})
+			).toBe(true);
+			expect(
+				parser.isProvisionalErrorNotice({
+					type: 'assistant',
+					error: 'server_error',
+					message: { model: '<synthetic>' },
+				})
+			).toBe(true);
+		});
+
+		it('treats error events and real model messages as final', () => {
+			expect(parser.isProvisionalErrorNotice({ type: 'error', message: 'Invalid API key' })).toBe(
+				false
+			);
+			expect(parser.isProvisionalErrorNotice({ error: 'context is too long' })).toBe(false);
+			expect(
+				parser.isProvisionalErrorNotice({
+					type: 'assistant',
+					error: 'server_error',
+					message: { model: 'claude-opus-5' },
+				})
+			).toBe(false);
+			expect(parser.isProvisionalErrorNotice(null)).toBe(false);
+		});
+	});
+
 	describe('detectErrorFromExit', () => {
 		it('should return null for exit code 0', () => {
 			expect(parser.detectErrorFromExit(0, '', '')).toBeNull();
@@ -946,6 +1193,153 @@ describe('ClaudeOutputParser', () => {
 
 			const error2 = parser.detectErrorFromExit(-1, '', '');
 			expect(error2?.message).toContain('exited with code -1');
+		});
+	});
+
+	describe('plan-limit notices in result events', () => {
+		it('reports the session-limit notice as a recoverable rate_limited error', () => {
+			const notice = "You've hit your session limit · resets 11:40am (America/Chicago)";
+			const error = parser.detectErrorFromParsed({
+				type: 'result',
+				subtype: 'success',
+				result: notice,
+				session_id: 'sess-1',
+			});
+			expect(error).not.toBeNull();
+			expect(error?.type).toBe('rate_limited');
+			expect(error?.recoverable).toBe(true);
+			// The CLI's own wording is preserved so the reset time survives to the
+			// retry scheduler and to the user.
+			expect(error?.message).toBe(notice);
+			expect(error?.parsedJson).toMatchObject({ result: notice });
+		});
+
+		it('reports the legacy "usage limit reached|<epoch>" marker', () => {
+			const error = parser.detectErrorFromParsed({
+				type: 'result',
+				result: 'Claude AI usage limit reached|1755500000',
+			});
+			expect(error?.type).toBe('rate_limited');
+			expect(error?.message).toBe('Claude AI usage limit reached|1755500000');
+		});
+
+		it('recognizes weekly and 5-hour limit phrasing', () => {
+			for (const notice of [
+				"You've hit your weekly limit · resets Monday at 9am (America/Chicago)",
+				"You've hit your 5-hour limit · resets 3pm (Europe/London)",
+			]) {
+				expect(parser.detectErrorFromParsed({ type: 'result', result: notice })).not.toBeNull();
+			}
+		});
+
+		it('does NOT flag a normal answer that merely discusses limits', () => {
+			const chatty =
+				'Here is what happens when you hit your usage limit: the CLI prints a notice and ' +
+				'Maestro schedules a retry. Rate limit handling lives in retryClassification.ts.';
+			expect(parser.detectErrorFromParsed({ type: 'result', result: chatty })).toBeNull();
+			expect(
+				parser.detectErrorFromParsed({ type: 'result', result: 'All done - tests pass.' })
+			).toBeNull();
+		});
+
+		// THE SHAPE THAT ACTUALLY HAPPENS. Copied from a real captured transcript
+		// (2026-08-22), trimmed of identifiers. Claude Code does not emit an error
+		// event for a hit plan limit - it emits a SYNTHETIC ASSISTANT MESSAGE whose
+		// text is the banner, with the reset time in `quotaLimits.resetsAt`.
+		//
+		// Before this was handled, `detectErrorFromParsed` took the generic
+		// `obj.error` branch, classified the bare tag "rate_limit" as `unknown`,
+		// and `classifyRetryableError` returned null - so no retry was ever
+		// scheduled and the notice rendered as an ordinary reply.
+		it('reports the real synthetic-assistant limit message', () => {
+			const error = parser.detectErrorFromParsed({
+				type: 'assistant',
+				error: 'rate_limit',
+				isApiErrorMessage: true,
+				apiErrorStatus: 429,
+				quotaLimits: {
+					status: 'rejected',
+					resetsAt: 1787416800,
+					rateLimitType: 'five_hour',
+					overageStatus: 'rejected',
+					overageDisabledReason: 'out_of_credits',
+				},
+				message: {
+					role: 'assistant',
+					model: '<synthetic>',
+					stop_reason: 'stop_sequence',
+					content: [
+						{
+							type: 'text',
+							text: "You've hit your session limit · resets 11:40am (America/Chicago)",
+						},
+					],
+				},
+			});
+			expect(error).not.toBeNull();
+			expect(error?.type).toBe('rate_limited');
+			expect(error?.recoverable).toBe(true);
+			expect(error?.message).toBe(
+				"You've hit your session limit · resets 11:40am (America/Chicago)"
+			);
+			// quotaLimits must survive onto parsedJson - it is what lets the retry
+			// land on the exact reset second instead of a blind hourly poll.
+			expect(
+				(error?.parsedJson as { quotaLimits?: { resetsAt?: number } })?.quotaLimits?.resetsAt
+			).toBe(1787416800);
+		});
+
+		it('flags the notice even when only `message` survives the transport', () => {
+			// Plain `--output-format stream-json` may forward just the message
+			// envelope, dropping the top-level error/quotaLimits markers. The text
+			// alone still has to be enough, or API-mode agents never retry.
+			const error = parser.detectErrorFromParsed({
+				type: 'assistant',
+				message: {
+					role: 'assistant',
+					content: [
+						{
+							type: 'text',
+							text: "You've hit your session limit · resets 11:40am (America/Chicago)",
+						},
+					],
+				},
+			});
+			expect(error?.type).toBe('rate_limited');
+		});
+
+		it('does NOT flag a real reply that merely discusses the banner', () => {
+			// Maestro's own agents write about this constantly. The banner has to BE
+			// the message, not appear inside it.
+			for (const text of [
+				'The CLI prints "You\'ve hit your session limit" and then just sits there.',
+				"When you've hit your session limit, Maestro schedules a retry for you.",
+				"Fixed. You've hit your session limit · resets 11:40am (America/Chicago) now classifies as rate_limited, so resilience picks it up.",
+			]) {
+				expect(
+					parser.detectErrorFromParsed({
+						type: 'assistant',
+						message: { role: 'assistant', content: [{ type: 'text', text }] },
+					})
+				).toBeNull();
+			}
+		});
+
+		it('does NOT flag an assistant turn that is doing tool work', () => {
+			// A message carrying tool_use blocks is a live turn, not a synthetic
+			// notice - even if some text block happens to lead with the wording.
+			expect(
+				parser.detectErrorFromParsed({
+					type: 'assistant',
+					message: {
+						role: 'assistant',
+						content: [
+							{ type: 'text', text: "You've hit your session limit" },
+							{ type: 'tool_use', name: 'Bash', id: 't1', input: {} },
+						],
+					},
+				})
+			).toBeNull();
 		});
 	});
 });

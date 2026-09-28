@@ -30,6 +30,12 @@ export interface DocumentGenerationViewProps {
 	/** Total number of documents to generate (for progress indicator) */
 	totalDocuments?: number;
 	/** Called when user wants to cancel generation */
+	/**
+	 * Called when user wants to cancel generation. Call it with NO arguments -
+	 * `onClick={onCancel}` type-checks but hands React's click event to a handler
+	 * whose first parameter is an optional tab id, which then matches no tab and
+	 * cancels nothing while looking like it worked.
+	 */
 	onCancel?: () => void;
 	/** Subfolder name where documents are saved (for completion message) */
 	subfolderName?: string;

@@ -30,6 +30,7 @@ import { formatDurationHuman as formatDuration, formatNumber } from '../../../sh
 import { MetricModeToggle, formatMetricValue, type ChartMetricMode } from './MetricModeToggle';
 import { useTokenSeries } from './TokenSeriesContext';
 import { ChartLoadingOverlay } from './ChartLoadingOverlay';
+import { DONUT_CHART, describeDonutArc } from './chartUtils';
 
 // Metric display mode
 type MetricMode = ChartMetricMode;
@@ -111,51 +112,6 @@ function getAutoColor(theme: Theme): string {
 	} else {
 		return '#94a3b8'; // slate-400
 	}
-}
-
-/**
- * SVG arc path generator for donut chart segments
- */
-function describeArc(
-	x: number,
-	y: number,
-	outerRadius: number,
-	innerRadius: number,
-	startAngle: number,
-	endAngle: number
-): string {
-	// Handle full circle case (nearly 360 degrees)
-	if (endAngle - startAngle >= 359.99) {
-		// Draw two half arcs to create a full circle
-		const midAngle = startAngle + 180;
-		return `
-      ${describeArc(x, y, outerRadius, innerRadius, startAngle, midAngle)}
-      ${describeArc(x, y, outerRadius, innerRadius, midAngle, endAngle)}
-    `;
-	}
-
-	const startRad = (startAngle - 90) * (Math.PI / 180);
-	const endRad = (endAngle - 90) * (Math.PI / 180);
-
-	const startOuterX = x + outerRadius * Math.cos(startRad);
-	const startOuterY = y + outerRadius * Math.sin(startRad);
-	const endOuterX = x + outerRadius * Math.cos(endRad);
-	const endOuterY = y + outerRadius * Math.sin(endRad);
-
-	const startInnerX = x + innerRadius * Math.cos(startRad);
-	const startInnerY = y + innerRadius * Math.sin(startRad);
-	const endInnerX = x + innerRadius * Math.cos(endRad);
-	const endInnerY = y + innerRadius * Math.sin(endRad);
-
-	const largeArcFlag = endAngle - startAngle > 180 ? 1 : 0;
-
-	return `
-    M ${startOuterX} ${startOuterY}
-    A ${outerRadius} ${outerRadius} 0 ${largeArcFlag} 1 ${endOuterX} ${endOuterY}
-    L ${endInnerX} ${endInnerY}
-    A ${innerRadius} ${innerRadius} 0 ${largeArcFlag} 0 ${startInnerX} ${startInnerY}
-    Z
-  `;
 }
 
 export const SourceDistributionChart = memo(function SourceDistributionChart({
@@ -249,10 +205,8 @@ export const SourceDistributionChart = memo(function SourceDistributionChart({
 		return sourceData.reduce((sum, s) => sum + s.value, 0);
 	}, [sourceData]);
 
-	// Donut chart configuration
-	const size = 160;
-	const outerRadius = 70;
-	const innerRadius = 45;
+	// Donut chart configuration (shared with LocationDistributionChart)
+	const { size, outerRadius, innerRadius, hoverExpansion, centerLabelWidth } = DONUT_CHART;
 	const centerX = size / 2;
 	const centerY = size / 2;
 
@@ -331,10 +285,10 @@ export const SourceDistributionChart = memo(function SourceDistributionChart({
 								{arcs.map((arc) => (
 									<path
 										key={arc.source}
-										d={describeArc(
+										d={describeDonutArc(
 											centerX,
 											centerY,
-											hoveredSource === arc.source ? outerRadius + 4 : outerRadius,
+											hoveredSource === arc.source ? outerRadius + hoverExpansion : outerRadius,
 											innerRadius,
 											arc.startAngle,
 											arc.endAngle
@@ -356,7 +310,10 @@ export const SourceDistributionChart = memo(function SourceDistributionChart({
 								className="absolute inset-0 flex flex-col items-center justify-center"
 								style={{ pointerEvents: 'none' }}
 							>
-								<span className="text-lg font-semibold" style={{ color: theme.colors.textMain }}>
+								<span
+									className="text-lg font-semibold leading-tight text-center truncate"
+									style={{ color: theme.colors.textMain, maxWidth: centerLabelWidth }}
+								>
 									{formatMetricValue(metricMode, total)}
 								</span>
 								<span className="text-xs" style={{ color: theme.colors.textDim }}>

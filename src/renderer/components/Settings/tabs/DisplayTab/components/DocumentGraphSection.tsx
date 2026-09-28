@@ -8,6 +8,8 @@ interface DocumentGraphSectionProps {
 	theme: Theme;
 	documentGraphShowExternalLinks: boolean;
 	setDocumentGraphShowExternalLinks: (enabled: boolean) => void;
+	documentGraphConfirmClose: boolean;
+	setDocumentGraphConfirmClose: (enabled: boolean) => void;
 	documentGraphMaxNodes: number;
 	setDocumentGraphMaxNodes: (value: number) => void;
 }
@@ -16,6 +18,8 @@ export function DocumentGraphSection({
 	theme,
 	documentGraphShowExternalLinks,
 	setDocumentGraphShowExternalLinks,
+	documentGraphConfirmClose,
+	setDocumentGraphConfirmClose,
 	documentGraphMaxNodes,
 	setDocumentGraphMaxNodes,
 }: DocumentGraphSectionProps) {
@@ -31,6 +35,13 @@ export function DocumentGraphSection({
 					description="Display external website links as nodes. Can be toggled in the graph view."
 					checked={documentGraphShowExternalLinks}
 					onChange={setDocumentGraphShowExternalLinks}
+				/>
+				<ToggleSettingRow
+					theme={theme}
+					title="Confirm before closing"
+					description="Ask before Escape discards the layout, depth, and node positions you set up. A graph opened from the Memories viewer never asks, since closing returns there."
+					checked={documentGraphConfirmClose}
+					onChange={setDocumentGraphConfirmClose}
 				/>
 				<div>
 					<label htmlFor="document-graph-max-nodes" className="block text-xs opacity-70 mb-2">

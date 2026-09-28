@@ -4,7 +4,6 @@ import type { WebServer } from '../WebServer';
 import type { WebServerFactoryDependencies } from '../web-server-factory';
 import { logger } from '../../utils/logger';
 import { isWebContentsAvailable } from '../../utils/safe-send';
-import type { Shortcut } from '../../../shared/shortcut-types';
 import type { Group } from '../../../shared/types';
 import type { StoredSession } from '../../stores/types';
 import { buildWebSettingsSnapshot } from '../web-settings-snapshot';
@@ -19,24 +18,9 @@ export function registerSettingsCallbacks(
 	const { settingsStore, getMainWindow, groupsStore, sessionsStore } = deps;
 
 	// Set up callback for web server to read settings
-	// Reads directly from settingsStore - maps store keys to WebSettings shape
-	server.setGetSettingsCallback(() => {
-		return {
-			theme: settingsStore.get('activeThemeId', 'dracula') as string,
-			fontSize: settingsStore.get('fontSize', 14) as number,
-			enterToSendAI: settingsStore.get('enterToSendAI', false) as boolean,
-			defaultSaveToHistory: settingsStore.get('defaultSaveToHistory', true) as boolean,
-			defaultShowThinking: settingsStore.get('defaultShowThinking', 'off') as string,
-			autoScroll: true,
-			notificationsEnabled: settingsStore.get('osNotificationsEnabled', true) as boolean,
-			audioFeedbackEnabled: settingsStore.get('audioFeedbackEnabled', false) as boolean,
-			colorBlindMode: settingsStore.get('colorBlindMode', 'none') as string,
-			conductorProfile: settingsStore.get('conductorProfile', '') as string,
-			// Infinity is JSON-serialized as null - web client maps null back to Infinity.
-			maxOutputLines: settingsStore.get('maxOutputLines', null) as number | null,
-			shortcuts: settingsStore.get('shortcuts', {}) as Record<string, Shortcut>,
-		};
-	});
+	// Shares the exact field mapping the broadcast path uses below, so the two
+	// can't silently drift out of sync.
+	server.setGetSettingsCallback(() => buildWebSettingsSnapshot(settingsStore));
 
 	// Set up callback for web server to modify settings
 	// Uses IPC request-response pattern - forwards to renderer which applies via existing settings infrastructure

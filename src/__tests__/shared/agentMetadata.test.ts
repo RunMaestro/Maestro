@@ -12,8 +12,9 @@ import {
 	getPermissionModeLabel,
 	getPermissionModeTooltip,
 	resolveTabPermissionMode,
+	formatAgentLoginCommand,
+	loginShellSyntaxFor,
 	AGENT_DISPLAY_NAMES,
-	AGENT_LOGIN_COMMANDS,
 	BETA_AGENTS,
 } from '../../shared/agentMetadata';
 import { AGENT_IDS } from '../../shared/agentIds';
@@ -207,28 +208,6 @@ describe('agentMetadata', () => {
 		});
 	});
 
-	describe('getAgentLoginCommand', () => {
-		it('returns known CLI login commands for agents that have them', () => {
-			expect(getAgentLoginCommand('claude-code')).toBe('claude login');
-			expect(getAgentLoginCommand('codex')).toBe('codex login');
-			expect(getAgentLoginCommand('copilot-cli')).toBe('gh auth login');
-			expect(getAgentLoginCommand('grok')).toBe('grok login');
-		});
-
-		it('returns undefined for agents without a known CLI login command', () => {
-			expect(getAgentLoginCommand('opencode')).toBeUndefined();
-			expect(getAgentLoginCommand('factory-droid')).toBeUndefined();
-			expect(getAgentLoginCommand('terminal')).toBeUndefined();
-			expect(getAgentLoginCommand('unknown-agent')).toBeUndefined();
-		});
-
-		it('only maps valid agent IDs', () => {
-			for (const id of Object.keys(AGENT_LOGIN_COMMANDS)) {
-				expect(AGENT_IDS).toContain(id);
-			}
-		});
-	});
-
 	describe('resolveTabPermissionMode', () => {
 		it('treats a nullish tab as full access', () => {
 			expect(resolveTabPermissionMode(undefined)).toBe('full');
@@ -252,6 +231,137 @@ describe('agentMetadata', () => {
 
 		it('prefers an explicit permissionMode over the legacy readOnlyMode boolean', () => {
 			expect(resolveTabPermissionMode({ permissionMode: 'full', readOnlyMode: true })).toBe('full');
+		});
+	});
+
+	describe('getAgentLoginCommand', () => {
+		it('knows the login flow for every agent that has one', () => {
+			// hermes, pi, and omp have no documented CLI login flow, and the
+			// terminal agent is a plain shell - all four are deliberately null.
+			const noLoginFlow = new Set(['terminal', 'hermes', 'pi', 'omp']);
+			for (const id of AGENT_IDS) {
+				const login = getAgentLoginCommand(id);
+				if (noLoginFlow.has(id)) {
+					expect(login, `${id} should have no login command`).toBeNull();
+					continue;
+				}
+				expect(login, `no login command for ${id}`).not.toBeNull();
+				expect(login!.binary.length).toBeGreaterThan(0);
+			}
+		});
+
+		it('returns null for the terminal agent and for unknown ids', () => {
+			expect(getAgentLoginCommand('terminal')).toBeNull();
+			expect(getAgentLoginCommand('not-an-agent')).toBeNull();
+		});
+
+		it('substitutes a configured custom binary path', () => {
+			const login = getAgentLoginCommand('claude-code', '/opt/tools/claude');
+			expect(login?.binary).toBe('/opt/tools/claude');
+			expect(login?.args).toBe('/login');
+		});
+
+		it('ignores a blank custom path', () => {
+			expect(getAgentLoginCommand('codex', '   ')?.binary).toBe('codex');
+		});
+
+		it('uses the device-code flow for a codex login on an SSH remote', () => {
+			expect(getAgentLoginCommand('codex')?.args).toBe('login');
+			expect(getAgentLoginCommand('codex', undefined, { remote: true })?.args).toBe(
+				'login --device-auth'
+			);
+			expect(getAgentLoginCommand('codex', '/opt/codex', { remote: true })).toMatchObject({
+				binary: '/opt/codex',
+				args: 'login --device-auth',
+			});
+		});
+
+		it('keeps the local args on a remote for agents with no remote variant', () => {
+			expect(getAgentLoginCommand('claude-code', undefined, { remote: true })?.args).toBe('/login');
+		});
+
+		it('flags agents whose login only exists as a slash command in their TUI', () => {
+			expect(getAgentLoginCommand('factory-droid')?.followUp).toBe('/login');
+			expect(getAgentLoginCommand('claude-code')?.followUp).toBeUndefined();
+		});
+	});
+
+	describe('formatAgentLoginCommand', () => {
+		it('joins the binary and its args', () => {
+			expect(formatAgentLoginCommand({ binary: 'codex', args: 'login' })).toBe('codex login');
+		});
+
+		it('emits the bare binary when there are no args', () => {
+			expect(formatAgentLoginCommand({ binary: 'droid', args: '' })).toBe('droid');
+		});
+
+		it('quotes a path containing spaces so the shell still runs it', () => {
+			expect(formatAgentLoginCommand({ binary: '/Apps/My Tools/claude', args: '/login' })).toBe(
+				'"/Apps/My Tools/claude" /login'
+			);
+		});
+	});
+	describe('Windows shell dialects', () => {
+		// PowerShell parses a line STARTING with a quoted string as an expression
+		// and echoes it, so a quoted path runs nothing. `&` is what makes it a
+		// command. Agents installing under C:\Program Files makes this the
+		// common Windows case, not an edge case.
+		it('prefixes the call operator for a quoted path in PowerShell', () => {
+			expect(
+				formatAgentLoginCommand(
+					{ binary: 'C:\\Program Files\\Claude\\claude.exe', args: '/login' },
+					'powershell'
+				)
+			).toBe('& "C:\\Program Files\\Claude\\claude.exe" /login');
+		});
+
+		it('does not add the call operator when no quoting was needed', () => {
+			expect(formatAgentLoginCommand({ binary: 'claude', args: '/login' }, 'powershell')).toBe(
+				'claude /login'
+			);
+		});
+
+		// cmd.exe runs a quoted path directly, so adding `&` there would break it.
+		it('leaves cmd.exe quoting alone', () => {
+			expect(
+				formatAgentLoginCommand({ binary: 'C:\\Program Files\\c.exe', args: 'login' }, 'cmd')
+			).toBe('"C:\\Program Files\\c.exe" login');
+		});
+
+		it('defaults to posix so macOS and Linux are unchanged', () => {
+			const login = { binary: '/Apps/My Tools/claude', args: '/login' };
+			expect(formatAgentLoginCommand(login)).toBe(formatAgentLoginCommand(login, 'posix'));
+			expect(formatAgentLoginCommand(login)).toBe('"/Apps/My Tools/claude" /login');
+		});
+	});
+
+	describe('loginShellSyntaxFor', () => {
+		it('treats every shell as posix off Windows', () => {
+			for (const shell of ['zsh', 'bash', 'fish', 'powershell']) {
+				expect(loginShellSyntaxFor(shell, false)).toBe('posix');
+			}
+		});
+
+		it('maps the Windows shell ids to their dialects', () => {
+			expect(loginShellSyntaxFor('powershell', true)).toBe('powershell');
+			expect(loginShellSyntaxFor('pwsh', true)).toBe('powershell');
+			expect(loginShellSyntaxFor('cmd', true)).toBe('cmd');
+		});
+
+		// Git Bash and WSL run a posix shell even though the host is Windows.
+		it('treats Git Bash and WSL as posix', () => {
+			expect(loginShellSyntaxFor('bash', true)).toBe('posix');
+			expect(loginShellSyntaxFor('wsl', true)).toBe('posix');
+		});
+
+		it('falls back to PowerShell for an unset or unknown Windows shell', () => {
+			expect(loginShellSyntaxFor('', true)).toBe('powershell');
+			expect(loginShellSyntaxFor('nushell', true)).toBe('powershell');
+		});
+
+		it('is not case or whitespace sensitive', () => {
+			expect(loginShellSyntaxFor('  WSL  ', true)).toBe('posix');
+			expect(loginShellSyntaxFor('CMD', true)).toBe('cmd');
 		});
 	});
 });

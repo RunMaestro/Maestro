@@ -75,47 +75,9 @@ import {
 	parseCueSubscriptionId,
 	pipelineKeyForSubscription,
 } from '../../shared/cue/subscription-id';
+import { triggerGroupKey } from '../../shared/cue/trigger-group-key';
 
 const MAX_CHAIN_DEPTH = 10;
-
-/**
- * Stable identity key grouping subs that represent parallel branches of the
- * same visual trigger. Used by manual-trigger dispatch to fire every sibling
- * sub a scheduled tick would fire - e.g. `Schedule → [Cmd1, Cmd2]` serializes
- * as two subs sharing event config but targeting different commands; both
- * must fire together when the user clicks Play.
- *
- * Mirrors `triggerGroupKey` in `yamlToPipeline.ts` so the runtime's notion of
- * "same trigger" matches the editor's collapse rule on load. Any divergence
- * in event-specific config (different schedule_times, different watch glob,
- * etc.) yields a distinct key and therefore a distinct group, preserving
- * author intent when they configured truly independent triggers.
- */
-function triggerGroupKey(sub: CueSubscription): string {
-	// Sort filter keys so two subs whose filter objects differ only in key
-	// insertion order (hand-written YAML or library-reordered round-trips)
-	// still hash to the same group.
-	const filter = sub.filter
-		? Object.keys(sub.filter)
-				.sort()
-				.reduce<Record<string, unknown>>((acc, k) => {
-					acc[k] = (sub.filter as Record<string, unknown>)[k];
-					return acc;
-				}, {})
-		: null;
-	return JSON.stringify({
-		event: sub.event,
-		schedule_times: sub.schedule_times ?? null,
-		schedule_days: sub.schedule_days ?? null,
-		interval_minutes: sub.interval_minutes ?? null,
-		watch: sub.watch ?? null,
-		repo: sub.repo ?? null,
-		poll_minutes: sub.poll_minutes ?? null,
-		gh_state: sub.gh_state ?? null,
-		label: sub.label ?? null,
-		filter,
-	});
-}
 
 /** Dependencies injected into the CueEngine */
 export interface CueEngineDeps {
@@ -154,6 +116,13 @@ export interface CueEngineDeps {
 	 * lifecycle (`cue.runStarted` / `cue.runFinished`) to subscribed plugins;
 	 * carries ids/status only, never prompt text or output. */
 	emitPluginEvent?: (event: PluginEvent) => void;
+	/**
+	 * The user's `cueHistoryRetentionDays` setting, forwarded to the recovery
+	 * service so the engine-start prune uses the window the user chose instead
+	 * of a hardcoded one. Read on every start so a change takes effect without
+	 * an app restart. Omit (tests) to prune with the default window.
+	 */
+	getCueHistoryRetentionDays?: () => unknown;
 }
 
 /**
@@ -579,6 +548,7 @@ export class CueEngine {
 			onDispatch: (sessionId, sub, event) => {
 				this.dispatchService.dispatchSubscription(sessionId, sub, event, sessionId);
 			},
+			getCueHistoryRetentionDays: deps.getCueHistoryRetentionDays,
 		});
 	}
 
@@ -969,6 +939,50 @@ export class CueEngine {
 			}
 		} finally {
 			this.heartbeat.start();
+		}
+	}
+
+	/**
+	 * The process just switched to a new system timezone (laptop crossed zones,
+	 * or the OS clock was reconfigured). Called by the main process's timezone
+	 * watcher AFTER `process.env.TZ` has been reassigned, so `new Date()` already
+	 * reports the new zone by the time this runs.
+	 *
+	 * `time.scheduled` matching needs no repair - it compares a freshly-read
+	 * wall clock against `schedule_times` on every 60s tick, so the first tick in
+	 * the new zone is already correct. What IS stale is each source's cached
+	 * next-fire projection (computed once at start), which drives the dashboard's
+	 * "next trigger" column. Recompute those.
+	 *
+	 * Deliberately does NOT synthesize catch-up events. Moving the wall clock
+	 * backward (flying west) lets a slot come around a second time, and moving it
+	 * forward (flying east) can skip one. That is what "run at 08:00 local" means,
+	 * and inventing a fire for a slot that never occurred in either zone would be
+	 * worse than skipping it. Sleep-gap catch-ups are unaffected: the resume
+	 * handler applies the zone change before `reconcileAfterWake()` runs, so the
+	 * reconciler measures the gap in the new zone.
+	 *
+	 * No-op when the engine is disabled.
+	 */
+	handleTimeZoneChange(previousZone: string, zone: string): void {
+		if (!this.enabled) return;
+
+		this.meteredOnLog(
+			'cue',
+			`[CUE] System timezone changed (${previousZone} -> ${zone}) - local-time schedules now follow the new zone`
+		);
+
+		for (const state of this.registry.snapshot().values()) {
+			for (const source of state.triggerSources) {
+				if (typeof source.onTimeZoneChange !== 'function') continue;
+				try {
+					source.onTimeZoneChange();
+				} catch (err) {
+					const message = err instanceof Error ? err.message : String(err);
+					this.meteredOnLog('warn', `[CUE] onTimeZoneChange() threw: ${message}`);
+					void captureException(err, { operation: 'cue.handleTimeZoneChange' });
+				}
+			}
 		}
 	}
 

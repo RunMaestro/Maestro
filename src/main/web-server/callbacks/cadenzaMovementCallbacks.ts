@@ -1,9 +1,9 @@
-import { randomUUID } from 'crypto';
-import { ipcMain, type BrowserWindow } from 'electron';
 import type { WebServer } from '../WebServer';
 import type { WebServerFactoryDependencies } from '../web-server-factory';
 import { logger } from '../../utils/logger';
 import { isWebContentsAvailable } from '../../utils/safe-send';
+import { requestFromRenderer } from './remoteRequest';
+import { broadcastBridgeEvent } from '../handlers/bridgeHandlers';
 import type { MovementStateSnapshot } from '../../../shared/movement-types';
 import type {
 	ConcertoDesignerAction,
@@ -16,36 +16,6 @@ import {
 	applyMovementHtmlPayload,
 	getConcertoHtmlDocumentRevision,
 } from '../../concerto-html';
-
-/**
- * One request/reply round-trip with a renderer over IPC: mint a fresh response
- * channel, send it on `requestChannel`, and resolve with the renderer's reply
- * (mapped by `parse`) or `fallback` if it doesn't answer within `timeoutMs`.
- * Extracts the hand-rolled once-listener + timeout dance used by several
- * `remote:*` reads. Caller must have already confirmed the window's webContents.
- */
-function requestFromRenderer<T>(
-	win: BrowserWindow,
-	requestChannel: string,
-	options: { fallback: T; parse?: (raw: unknown) => T; timeoutMs?: number; args?: unknown[] }
-): Promise<T> {
-	const { fallback, parse = (raw) => raw as T, timeoutMs = 3000, args = [] } = options;
-	return new Promise<T>((resolve) => {
-		const responseChannel = `${requestChannel}:response:${randomUUID()}`;
-		let settled = false;
-		const finish = (value: T) => {
-			if (settled) return;
-			settled = true;
-			clearTimeout(timeoutId);
-			ipcMain.removeListener(responseChannel, onReply);
-			resolve(value);
-		};
-		const onReply = (_event: Electron.IpcMainEvent, raw: unknown) => finish(parse(raw));
-		ipcMain.once(responseChannel, onReply);
-		win.webContents.send(requestChannel, ...args, responseChannel);
-		const timeoutId = setTimeout(() => finish(fallback), timeoutMs);
-	});
-}
 
 export function registerCadenzaMovementCallbacks(
 	server: WebServer,
@@ -133,6 +103,16 @@ export function registerCadenzaMovementCallbacks(
 				return false;
 			}
 			const routedParams = applyMovementHtmlPayload(params);
+			// Fan out to web-desktop browser clients as well. `requestFromRenderer`
+			// below talks to the Electron window directly rather than through
+			// `safeSend`, so it never reaches the bridge - without this line a
+			// browser client's Movement store stays empty and every chat chip
+			// pointing at a Movement reports it as unavailable (#1442). Sent with
+			// no response channel: a web client cannot answer the ad-hoc
+			// `remote:movement:response:<uuid>` channel (the bridge only routes
+			// `ipcMain.handle` channels), and the CLI's ack stays the desktop
+			// renderer's to give.
+			broadcastBridgeEvent('remote:movement', [routedParams]);
 			return requestFromRenderer<boolean>(mainWindow, 'remote:movement', {
 				fallback: false,
 				parse: (raw) => raw === true,

@@ -18,9 +18,14 @@ export {
 	useAgentCapabilities,
 	clearCapabilitiesCache,
 	setCapabilitiesCache,
+	getCachedCapabilities,
+	primeCapabilitiesCache,
 	DEFAULT_CAPABILITIES,
 } from './useAgentCapabilities';
 export type { AgentCapabilities, UseAgentCapabilitiesReturn } from './useAgentCapabilities';
+
+// Startup priming of the capability cache (see useCapabilitiesPriming for why)
+export { useCapabilitiesPriming } from './useCapabilitiesPriming';
 
 // Agent session history and resume
 export { useAgentSessionManagement } from './useAgentSessionManagement';

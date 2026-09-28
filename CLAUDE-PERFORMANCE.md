@@ -344,6 +344,113 @@ instead of pairing raw `addEventListener` / `removeEventListener` inside a
 `useEffect`. The hook handles cleanup, ref-stable handlers, and SSR safety.
 See the canonical-utilities table in [[CLAUDE.md]] for the full rule.
 
+## Looping CSS Animations Must Be Compositable
+
+A CSS animation that loops `infinite` is not a one-off cost: it runs for as long
+as its element is on screen. If it animates a property the compositor cannot
+own, it asks the MAIN THREAD for a frame every frame, forever - style recalc,
+paint, and a layer-tree rebuild at 60fps while the user is doing nothing.
+
+**Only these are composited.** Animate them and the main thread stays idle:
+
+| Safe to animate | Runs on the main thread every frame                               |
+| --------------- | ----------------------------------------------------------------- |
+| `transform`     | `box-shadow`, `filter`, `background-position`, `background-color` |
+| `opacity`       | `width`, `height`, `top`, `left`, `margin`, `padding`, `border-*` |
+
+**A `transform` on an SVG sub-element is the exception.** Chrome does not
+composite those, so animating a `<path>` costs layout or paint even though the
+same property on a `<div>` is free - see the wand sparkle rules in
+`src/renderer/index.css`.
+
+The recurring mistake in this codebase has been reaching for the property that
+describes the effect (`box-shadow` for a glow, `filter` for a drop-shadow throb,
+`background-position` for a marching stripe) instead of the property that can be
+cheaply animated. **Draw the effect once at a fixed value, then animate its
+`opacity` or `transform`** - usually on an absolutely-positioned `::after`
+overlay so the static paint and the animated property live on different nodes:
+
+```css
+/* WRONG - repaints the element every frame, forever */
+@keyframes glow {
+	0%,
+	100% {
+		box-shadow: 0 0 4px var(--c);
+	}
+	50% {
+		box-shadow: 0 0 8px var(--c);
+	}
+}
+.badge {
+	animation: glow 2s ease-in-out infinite;
+}
+
+/* RIGHT - the shadow is painted once; only opacity animates */
+@keyframes glow {
+	0%,
+	100% {
+		opacity: 0.45;
+	}
+	50% {
+		opacity: 1;
+	}
+}
+.badge {
+	position: relative;
+}
+.badge::after {
+	content: '';
+	position: absolute;
+	inset: 0;
+	border-radius: inherit;
+	pointer-events: none;
+	box-shadow: inset 0 0 8px var(--c);
+	animation: glow 2s ease-in-out infinite;
+	will-change: opacity;
+}
+```
+
+Measured: `background-position` stripes on a single 240x12px progress bar drove
+**744 main-thread frames in 4 seconds** (~186fps of pointless work) against a
+27-frame idle floor. The rewritten `transform` version measured at the floor.
+
+### When the Repaint Is Unavoidable, Confine It
+
+Some effects cannot be expressed in `opacity` and `transform` alone. A
+main-thread repaint invalidates the animated element's whole compositing layer,
+and a small icon normally shares a layer with its entire parent surface - so the
+cost is not the icon, it is everything drawn beside it. Add `will-change:
+transform` to the animated element so it gets a layer of its own, and scope that
+rule to the class that is present only WHILE animating, so nothing is promoted
+at rest. Mirror it with `will-change: auto` in any `prefers-reduced-motion`
+block that stops the animation.
+
+Measured: one 20px twinkling wand icon repainted the Left Bar's 772x2724
+device-px `.chrome-sheen` gradient three times per frame, at a locked 60fps,
+through eleven seconds in which the user touched nothing - 0.63ms of paint plus
+0.47ms of PaintArtifactCompositor per frame. The class driving it is set
+whenever any agent is busy, so that was the steady state of an ordinary working
+session, not a profiling artifact.
+
+**Lowering the animation's frequency does not help.** A 1.5s pulse and a 0.2s
+one both repaint every frame; only the property and the layer decide the cost.
+
+Notes:
+
+- **Use an inset shadow on an overlay when the host is `overflow-hidden`**, or
+  the parent clips a shadow drawn by a child.
+- **Add `will-change` to the animated property** so the layer is promoted before
+  the first frame rather than during it, and reset it to `auto` wherever the
+  animation is disabled.
+- **Name the pseudo-element in the `prefers-reduced-motion` block.**
+  `.thing { animation: none }` does NOT stop `.thing::after` - the reduced-motion
+  opt-out silently stops working when an animation moves onto an overlay.
+- Verify rather than assume. Trace the page and count
+  `ProxyMain::BeginMainFrame`: a composited animation produces none while it
+  plays. Chromium's compositing rules change between versions, so a property
+  that was main-thread-bound in an older engine may not be today - and vice
+  versa. Do not refactor a working animation on theory alone; measure first.
+
 ## Performance Profiling
 
 For React DevTools profiling workflow, see [[CONTRIBUTING.md#profiling]].
@@ -422,13 +529,44 @@ when a user reports lag.
    top-left Left Bar header turns recording-red and pulses for as long as the
    capture is running, so it's obvious profiling is on.
 2. Reproduce the slow interaction (type in the prompt, switch agents, open a
-   file, etc.).
+   file, etc.). **The recording ends itself when it has to** - see "The buffer
+   watchdog" below. There is no duration to aim for, because the limit is trace
+   buffer pressure, not time.
 3. `Cmd+K` -> **Debug: End Performance Profiling** (this entry only appears while
-   recording). A native Save dialog writes a compressed `.zip` (default to the
-   Desktop, `maestro-profile-<timestamp>.zip`). A progress modal
+   recording; its subtext shows how full the trace buffer is). A native Save
+   dialog writes a compressed `.zip` (default to the Desktop,
+   `maestro-profile-<timestamp>.zip`). A progress modal
    (`ProfilingCaptureModal`) owns the stop-and-bundle flow and shows live
    compression progress, driven by `debug:profilingProgress` events from the main
-   process, since zipping a large trace can take tens of seconds.
+   process, since zipping a large trace can take tens of seconds. When it
+   finishes it states whether the capture is complete.
+
+**The buffer watchdog.** Chromium records into a fixed per-process buffer
+(`TRACE_BUFFER_SIZE_KB` in `src/main/profiling/categories.ts`). Once it fills,
+events are dropped and _nothing says so_: the trace simply covers less time than
+the recording ran for, and every question asked of it is answered from a
+fragment. Two field captures in Sep 2026 retained 22% and 43% of their
+recordings, and the finding that mattered most could not be closed because the
+evidence had been thrown away.
+
+The guidance that failed was "keep captures short", which asks a person to
+estimate trace-buffer pressure by watching an app window. Nobody can do that. So
+`content-tracing.ts` polls `contentTracing.getTraceBufferUsage()` once a second
+and ends the recording at `BUFFER_STOP_THRESHOLD` (85%), before any events are
+lost. Three consequences:
+
+- A capture is allowed to run as long as the app stays quiet enough, and is cut
+  short when it does not. Duration is an output, not an input.
+- A desktop capture auto-stops by opening the same `ProfilingCaptureModal` the
+  user's own "End Performance Profiling" opens - one stop path, not two.
+- A **CLI capture is never auto-stopped** (it would raise a save dialog in the
+  middle of an unattended loop and write the bundle somewhere the caller never
+  looks). It sets `autoStopRequested`, which `maestro-cli profiling status`
+  reports, and the caller stops itself.
+
+Every capture now records `peakBufferPercent`, `autoStopped` and
+`bufferExhausted` in its metadata, so a bundle states its own completeness
+instead of leaving a reader to infer it.
 
 The capture uses Electron `contentTracing` (Chromium's built-in trace engine).
 When profiling is off the trace points compile to a disabled-flag check, so
@@ -437,11 +575,11 @@ through `debug:startProfiling` / `debug:stopProfiling` / `debug:getProfilingStat
 
 **What's in the bundle (`.zip`):**
 
-| File            | Purpose                                                                                                     |
-| --------------- | ----------------------------------------------------------------------------------------------------------- |
-| `trace.json`    | Full Chromium trace (Trace Event format). The raw data.                                                     |
-| `metadata.json` | Capture context: app/Electron/Chrome versions, hardware, CPU, memory, recording duration, trace categories. |
-| `README.md`     | Short pointer back to this workflow.                                                                        |
+| File            | Purpose                                                                                                                                                                                      |
+| --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `trace.json`    | Full Chromium trace (Trace Event format). The raw data.                                                                                                                                      |
+| `metadata.json` | Capture context: app/Electron/Chrome versions, hardware, CPU, memory, recording duration, trace categories, and buffer completeness (`peakBufferPercent`, `autoStopped`, `bufferExhausted`). |
+| `README.md`     | Whether the capture is complete, plus a short pointer back to this workflow.                                                                                                                 |
 
 Trace analysis is intentionally **not** done in the app - it is a development /
 agent activity. Do not add in-app trace parsing.
@@ -458,11 +596,27 @@ agent activity. Do not add in-app trace parsing.
    # accepts a .zip bundle, a raw trace.json, or a trace.json.gz
    ```
 
-   It prints, in Markdown: the longest main-thread tasks (the jank the user
-   feels), self-time grouped by subsystem (Layout / RecalcStyles / Paint /
-   FunctionCall / GC), and the hottest JS functions with `url:line` when the
-   trace carried script coordinates. Pipe to a file and read it, or let the
-   script's output drive the fix.
+   It prints, in Markdown: **a completeness verdict first** (read it - a
+   truncated trace answers questions about the fragment that survived, and
+   nothing in the numbers reveals that), the longest main-thread tasks (the jank
+   the user feels), frame production and V8 idle share, self-time grouped by
+   subsystem (Layout / RecalcStyles / Paint / GC), the hottest JS functions with
+   `url:line`, and **what dirtied style and layout** - the invalidation reason
+   plus the JS frame that scheduled it, which is the half that leads to a fix
+   rather than just a cost. Pipe to a file and read it, or let the script's
+   output drive the fix.
+
+   The script streams the trace line by line, so a multi-gigabyte `trace.json`
+   is fine. Do not "simplify" it back to `JSON.parse(readFileSync(...))`: a real
+   field trace is routinely past V8's 512MB max string length, and that is
+   exactly how this script used to fail on every capture worth reading.
+
+   > **Known limit:** the script reads the whole trace into one string, so a
+   > `trace.json` over ~512MB fails with `Cannot create a string longer than
+0x1fffffe8 characters`. A full-buffer capture can easily exceed that. Until
+   > it streams, analyze a trace that large by reading `trace.json` line by line
+   > (Chromium emits one event per line) with `readline` and aggregating
+   > yourself.
 
 3. **For frame-level detail**, load `trace.json` into <https://ui.perfetto.dev>
    (or `chrome://tracing`) and jump to the task start times the script reported.
@@ -472,8 +626,18 @@ agent activity. Do not add in-app trace parsing.
 - **Long tasks on `CrRendererMain`** are the user-perceived lag: a single task
   over ~50 ms blocks input and frame production for its whole duration. Rank by
   duration, start with the worst.
-- **High `FunctionCall` / `EvaluateScript` self-time** -> JavaScript is the
-  cost. Map the hottest `url:line` back to `src/renderer/`. Usual suspects:
+- **A renderer that commits a frame every ~16.7ms for the whole window while
+  V8 sits idle** is the most expensive thing a trace can show and the easiest to
+  miss, because no task in it is long. It means something is animating forever:
+  an `infinite` CSS animation on a non-composited property (`box-shadow`,
+  `filter`, `background`, SVG sub-element `transform`) or a permanent
+  `requestAnimationFrame` loop. Each frame costs the renderer, the compositor
+  thread and the GPU process, so a static-looking window can burn half a core.
+  The script calls this out under "Frame production".
+- **High JS self-time** -> map the hottest `url:line` back to `src/renderer/`.
+  Attribution comes from the V8 sampling profiler, so the file:line is the
+  bundled chunk; find the minified function body in
+  `app.asar > dist/renderer/assets/` to identify it. Usual suspects:
   unmemoized React re-renders, work done in a render body, state lifted too high
   so a keystroke re-renders the whole tree (see "React Component Optimization"
   above), synchronous IPC on a hot path.

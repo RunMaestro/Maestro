@@ -20,7 +20,9 @@ import { getModalActions } from '../../stores/modalStore';
 import { CONDUCTOR_BADGES } from '../../constants/conductorBadges';
 import type { AchievementTimeSource } from '../../types';
 import { cueService } from '../../services/cue';
-import { submitLeaderboardTimeDelta } from '../../services/leaderboard';
+import { submitLeaderboardTimeDelta, noteAutoRunCreditAccrued } from '../../services/leaderboard';
+import { beginSleepAwareSpan, sleepAwareElapsedMs } from '../../services/systemSleep';
+import type { SleepAwareSpan } from '../../services/systemSleep';
 
 // ============================================================================
 // Dependencies interface
@@ -51,14 +53,22 @@ export function useAutoRunAchievements(deps: UseAutoRunAchievementsDeps): void {
 		}
 		return `${nonTerminal}|${busy}|${queueDepth}`;
 	});
+	// The peak-usage effect below is a no-op until settings hydrate (the store
+	// would otherwise max against zeroed defaults). Subscribing here re-runs it
+	// on the render after hydration, so the sample taken during load is not lost.
+	const settingsLoaded = useSettingsStore((s) => s.settingsLoaded);
 
 	// --- Store actions (stable via getState) ---
 	const { updateAutoRunProgress, updateUsageStats } = useSettingsStore.getState();
 	const { setStandingOvationData } = getModalActions();
 
 	// --- Refs ---
-	const autoRunProgressRef = useRef<{ lastUpdateTime: number }>({
-		lastUpdateTime: 0,
+	// `lastUpdateSpan` is sleep-aware: the interval below is frozen while the
+	// machine sleeps but the wall clock is not, so a plain `Date.now()` delta
+	// would credit an overnight sleep as Auto Run time on the first tick after
+	// wake. `null` means no active run.
+	const autoRunProgressRef = useRef<{ lastUpdateSpan: SleepAwareSpan | null }>({
+		lastUpdateSpan: null,
 	});
 
 	// Credit a block of achievement time and raise the standing ovation if it
@@ -87,20 +97,21 @@ export function useAutoRunAchievements(deps: UseAutoRunAchievementsDeps): void {
 	useEffect(() => {
 		// Only set up timer if there are active batch runs
 		if (activeBatchSessionIds.length === 0) {
-			autoRunProgressRef.current.lastUpdateTime = 0;
+			autoRunProgressRef.current.lastUpdateSpan = null;
 			return;
 		}
 
 		// Initialize last update time on first active run
-		if (autoRunProgressRef.current.lastUpdateTime === 0) {
-			autoRunProgressRef.current.lastUpdateTime = Date.now();
+		if (autoRunProgressRef.current.lastUpdateSpan === null) {
+			autoRunProgressRef.current.lastUpdateSpan = beginSleepAwareSpan();
 		}
 
 		// Set up interval to update progress every minute
 		const intervalId = setInterval(() => {
-			const now = Date.now();
-			const elapsedMs = now - autoRunProgressRef.current.lastUpdateTime;
-			autoRunProgressRef.current.lastUpdateTime = now;
+			const span = autoRunProgressRef.current.lastUpdateSpan;
+			if (!span) return;
+			const elapsedMs = sleepAwareElapsedMs(span);
+			autoRunProgressRef.current.lastUpdateSpan = beginSleepAwareSpan();
 
 			// Multiply by number of concurrent sessions so each active Auto Run contributes its time
 			// e.g., 2 sessions running for 1 minute = 2 minutes toward cumulative achievement time
@@ -108,6 +119,12 @@ export function useAutoRunAchievements(deps: UseAutoRunAchievementsDeps): void {
 
 			// Update achievement stats with the delta (raises ovation on badge unlock)
 			creditAchievementTime(deltaMs, 'autoRun');
+
+			// Record the same delta as locally-credited-but-unshipped. Auto Run
+			// submits its whole elapsed time once at completion (useBatchHandlers),
+			// which retires this counter - so whatever is left at the next launch
+			// is time from a run that quit or crashed before it could submit.
+			void noteAutoRunCreditAccrued(deltaMs);
 		}, 60000); // Every 60 seconds
 
 		return () => {
@@ -141,6 +158,9 @@ export function useAutoRunAchievements(deps: UseAutoRunAchievementsDeps): void {
 
 	// Track peak usage stats for achievements image
 	useEffect(() => {
+		// Nothing sampled before hydration is trustworthy as a peak, and the
+		// store would be comparing it against zeros. Wait for the real baseline.
+		if (!settingsLoaded) return;
 		const sessions = useSessionStore.getState().sessions;
 
 		// Count current active agents (non-terminal sessions)
@@ -165,5 +185,5 @@ export function useAutoRunAchievements(deps: UseAutoRunAchievementsDeps): void {
 		});
 		// usagePeaksKey encodes the same counts read above; include it so peaks
 		// refresh when agent/busy/queue shift without a full sessions[] sub.
-	}, [usagePeaksKey, activeBatchSessionIds]);
+	}, [usagePeaksKey, activeBatchSessionIds, settingsLoaded]);
 }

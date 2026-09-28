@@ -25,6 +25,7 @@ import { useModalLayer } from '../hooks/ui/useModalLayer';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { formatDurationVerbose as formatDuration } from '../../shared/formatters';
+import { Z_LAYERS } from '../constants/zLayers';
 
 // 15 minutes in milliseconds - threshold for "Standing Ovation" variation
 const STANDING_OVATION_THRESHOLD_MS = 15 * 60 * 1000;
@@ -85,9 +86,6 @@ export function FirstRunCelebration({
 	const goldColor = '#FFD700';
 	const purpleAccent = theme.colors.accent;
 
-	// Z-index layering: backdrop (99997) < confetti (99998) < modal (99999)
-	const CONFETTI_Z_INDEX = 99998;
-
 	// Fire confetti burst
 	const fireConfetti = useCallback(() => {
 		// Skip if disabled by user preference
@@ -110,7 +108,7 @@ export function FirstRunCelebration({
 			flat: false,
 			shapes: ['circle', 'star', 'square'] as ('circle' | 'star' | 'square')[],
 			colors: CONFETTI_COLORS,
-			zIndex: CONFETTI_Z_INDEX,
+			zIndex: Z_LAYERS.CONFETTI,
 			disableForReducedMotion: true,
 		};
 
@@ -205,7 +203,7 @@ export function FirstRunCelebration({
 				}}
 			/>
 
-			{/* Confetti renders at z-index 99998 */}
+			{/* Confetti renders at Z_LAYERS.CONFETTI */}
 
 			{/* Modal container */}
 			<div

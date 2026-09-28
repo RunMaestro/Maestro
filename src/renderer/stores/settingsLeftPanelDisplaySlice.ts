@@ -13,6 +13,7 @@ export interface LeftPanelDisplayState {
 	showAgentName: boolean;
 	showSessionIdPill: boolean;
 	showSessionCostPill: boolean;
+	showProviderModePill: boolean;
 	showWorktreePill: boolean;
 	showWorktreeBranchName: boolean;
 	showStarredSessionsSection: boolean;
@@ -30,6 +31,7 @@ export interface LeftPanelDisplayActions {
 	setShowAgentName: (value: boolean) => void;
 	setShowSessionIdPill: (value: boolean) => void;
 	setShowSessionCostPill: (value: boolean) => void;
+	setShowProviderModePill: (value: boolean) => void;
 	setShowWorktreePill: (value: boolean) => void;
 	setShowWorktreeBranchName: (value: boolean) => void;
 	setShowStarredSessionsSection: (value: boolean) => void;
@@ -54,6 +56,7 @@ export const createLeftPanelDisplaySlice: StateCreator<
 	showAgentName: true,
 	showSessionIdPill: false,
 	showSessionCostPill: true,
+	showProviderModePill: false,
 	showWorktreePill: false,
 	showWorktreeBranchName: false,
 	showStarredSessionsSection: true,
@@ -79,6 +82,11 @@ export const createLeftPanelDisplaySlice: StateCreator<
 	setShowSessionCostPill: (value) => {
 		set({ showSessionCostPill: value });
 		window.maestro.settings.set('showSessionCostPill', value);
+	},
+
+	setShowProviderModePill: (value) => {
+		set({ showProviderModePill: value });
+		window.maestro.settings.set('showProviderModePill', value);
 	},
 
 	setShowWorktreePill: (value) => {
@@ -151,6 +159,9 @@ export function hydrateLeftPanelDisplaySettings(
 
 	if (allSettings['showSessionCostPill'] !== undefined)
 		patch.showSessionCostPill = allSettings['showSessionCostPill'] as boolean;
+
+	if (allSettings['showProviderModePill'] !== undefined)
+		patch.showProviderModePill = allSettings['showProviderModePill'] as boolean;
 
 	if (allSettings['showWorktreePill'] !== undefined)
 		patch.showWorktreePill = allSettings['showWorktreePill'] as boolean;

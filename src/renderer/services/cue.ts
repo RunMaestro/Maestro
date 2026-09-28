@@ -13,6 +13,11 @@ import type {
 	CueRunResult,
 } from '../../shared/cue/contracts';
 import type { CueLogPayload } from '../../shared/cue-log-types';
+import type {
+	ScheduledTask,
+	ScheduledTaskCreateInput,
+	ScheduledTaskUpdateInput,
+} from '../../shared/cue/scheduled-tasks';
 import { createIpcMethod } from './ipcWrapper';
 
 export const cueService = {
@@ -211,6 +216,49 @@ export const cueService = {
 		});
 	},
 
+	// ── Scheduled Tasks ───────────────────────────────────────────────────────
+	// Listing degrades to an empty list (the tab shows its empty state); every
+	// mutation rethrows so the tab can surface exactly what went wrong.
+
+	async listScheduledTasks(): Promise<{ tasks: ScheduledTask[]; warnings: string[] }> {
+		return createIpcMethod({
+			call: () => window.maestro.cue.listScheduledTasks(),
+			errorContext: 'Cue listScheduledTasks',
+			defaultValue: { tasks: [], warnings: [] },
+		});
+	},
+
+	async createScheduledTask(input: ScheduledTaskCreateInput): Promise<{ names: string[] }> {
+		return createIpcMethod({
+			call: () => window.maestro.cue.createScheduledTask(input),
+			errorContext: 'Cue createScheduledTask',
+			rethrow: true,
+		});
+	},
+
+	async updateScheduledTask(
+		projectRoot: string,
+		name: string,
+		patch: ScheduledTaskUpdateInput
+	): Promise<{ updated: boolean; reason?: string }> {
+		return createIpcMethod({
+			call: () => window.maestro.cue.updateScheduledTask(projectRoot, name, patch),
+			errorContext: 'Cue updateScheduledTask',
+			rethrow: true,
+		});
+	},
+
+	async cancelScheduledTask(
+		projectRoot: string,
+		name: string
+	): Promise<{ removed: boolean; reason?: string }> {
+		return createIpcMethod({
+			call: () => window.maestro.cue.cancelScheduledTask(projectRoot, name),
+			errorContext: 'Cue cancelScheduledTask',
+			rethrow: true,
+		});
+	},
+
 	async writeYaml(
 		projectRoot: string,
 		content: string,
@@ -227,6 +275,25 @@ export const cueService = {
 		return createIpcMethod({
 			call: () => window.maestro.cue.deleteYaml(projectRoot),
 			errorContext: 'Cue deleteYaml',
+			rethrow: true,
+		});
+	},
+
+	/** Rename a pipeline across every cue.yaml it spans. Rethrows so the caller
+	 *  can tell the user their rename did not land. */
+	async renamePipeline(
+		oldName: string,
+		newName: string
+	): Promise<{
+		renamed: boolean;
+		subscriptionsUpdated: number;
+		filesWritten: string[];
+		reason?: string;
+		warnings: string[];
+	}> {
+		return createIpcMethod({
+			call: () => window.maestro.cue.renamePipeline(oldName, newName),
+			errorContext: 'Cue renamePipeline',
 			rethrow: true,
 		});
 	},

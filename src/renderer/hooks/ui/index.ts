@@ -29,11 +29,37 @@ export type {
 	ScrollMetrics,
 } from './useScrollPosition';
 
+// Horizontal strip scrolling (edge affordances + wheel-to-horizontal)
+export { useHorizontalScroll } from './useHorizontalScroll';
+export type { HorizontalScrollState } from './useHorizontalScroll';
+
+// Live CSS-grid column count (for arrow navigation over a responsive grid)
+export { useGridColumnCount } from './useGridColumnCount';
+
 // Scroll into view helper
 export { useScrollIntoView } from './useScrollIntoView';
+export { useStickToBottom } from './useStickToBottom';
+
+// Edge auto-scroll while an HTML5 drag hovers a scrollable container
+export { useDragAutoScroll } from './useDragAutoScroll';
+export type { UseDragAutoScrollOptions } from './useDragAutoScroll';
 
 // Hover tooltip management
 export { useHoverTooltip } from './useHoverTooltip';
+
+// Fixed-pitch font for surfaces that render shell text
+export { useFixedPitchFont } from './useFixedPitchFont';
+
+// Per-surface font/size for canvas and CodeMirror (cannot read CSS variables)
+export {
+	useSurfaceFontFamily,
+	useSurfaceFontSize,
+	useSurfaceTypography,
+} from './useSurfaceTypography';
+export type { SurfaceTypography } from './useSurfaceTypography';
+
+// Theme-aware ANSI -> HTML converter for raw terminal output
+export { useAnsiConverter, createAnsiConverter } from './useAnsiConverter';
 
 // Theme styling utilities
 export { useThemeStyles } from './useThemeStyles';
@@ -44,7 +70,12 @@ export { useContextMenuPosition } from './useContextMenuPosition';
 
 // Portaled dropdown positioning beneath an anchor element
 export { useAnchoredMenuPosition } from './useAnchoredMenuPosition';
-export type { AnchoredMenuPosition } from './useAnchoredMenuPosition';
+export type {
+	AnchoredMenuPosition,
+	AnchoredMenuOptions,
+	AnchoredMenuPlacement,
+	AnchoredMenuAlign,
+} from './useAnchoredMenuPosition';
 
 // Resizable panel drag behavior
 export { useResizablePanel } from './useResizablePanel';
@@ -63,6 +94,43 @@ export type {
 	UseResizableTextareaOptions,
 	UseResizableTextareaReturn,
 } from './useResizableTextarea';
+
+// Persisted font zoom for reading surfaces
+export {
+	useFontScale,
+	clampFontScale,
+	FONT_SCALE_MIN,
+	FONT_SCALE_MAX,
+	FONT_SCALE_STEP,
+	FONT_SCALE_DEFAULT,
+} from './useFontScale';
+export type { UseFontScaleReturn } from './useFontScale';
+export { useScalePreference, clampScale } from './useScalePreference';
+export type { ScaleRange, UseScalePreferenceReturn } from './useScalePreference';
+export { useScaleShortcuts } from './useScaleShortcuts';
+export type { UseScaleShortcutsOptions } from './useScaleShortcuts';
+export { useIsTopLayer } from './useIsTopLayer';
+
+// Persisted view toggle (collapsed banners, folded sections)
+export { usePersistedToggle } from './usePersistedToggle';
+export type { UsePersistedToggleReturn } from './usePersistedToggle';
+export { usePersistedChoice } from './usePersistedChoice';
+export type { UsePersistedChoiceReturn } from './usePersistedChoice';
+export { usePersistedPanelWidth } from './usePersistedPanelWidth';
+export type {
+	UsePersistedPanelWidthOptions,
+	UsePersistedPanelWidthReturn,
+} from './usePersistedPanelWidth';
+
+// Client-side pagination for lists already held in memory
+export { usePagination } from './usePagination';
+export type { UsePaginationResult } from './usePagination';
+
+// ResizeObserver-backed element width, for JS-computed layout
+export { useElementWidth, useFreeHeightInFlexColumn } from './useElementWidth';
+
+// Whether an optional inline label still fits, so it can be dropped not clipped
+export { useOptionalLabelFits } from './useOptionalLabelFits';
 
 // App-level handlers (drag, file, folder operations)
 export { useAppHandlers } from './useAppHandlers';

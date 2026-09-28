@@ -14,7 +14,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as path from 'path';
 import { createZipPackage, PackageContents } from '../../../main/debug-package/packager';
-import AdmZip from 'adm-zip';
+import { extractZipTo, readZipArchive } from '../../../main/utils/zip-archive';
 
 // Use the native node:fs module to avoid any vitest mocks
 import * as nodeFs from 'node:fs';
@@ -25,15 +25,11 @@ const fs = nodeFs;
 // Create a temporary directory for test output
 const TEST_OUTPUT_DIR = '/tmp/maestro-debug-package-tests';
 
-// Helper to extract files using unzip CLI (bypasses AdmZip's potential issues in jsdom)
 function extractWithCli(zipPath: string, outputDir: string): void {
 	try {
-		// Use execFileSync with separate arguments for security
 		execFileSync('unzip', ['-o', zipPath, '-d', outputDir], { stdio: 'pipe' });
 	} catch {
-		// unzip might not be available on all systems, fall back to AdmZip
-		const zip = new AdmZip(zipPath);
-		zip.extractAllTo(outputDir, true);
+		extractZipTo(zipPath, outputDir);
 	}
 }
 
@@ -101,7 +97,7 @@ describe('Debug Package Packager', () => {
 
 			const result = await createZipPackage(TEST_OUTPUT_DIR, contents);
 
-			const zip = new AdmZip(result.path);
+			const zip = readZipArchive(result.path);
 			const entryNames = zip.getEntries().map((e) => e.entryName);
 
 			expect(entryNames).toContain('README.md');
@@ -119,7 +115,7 @@ describe('Debug Package Packager', () => {
 
 			const result = await createZipPackage(TEST_OUTPUT_DIR, contents);
 
-			const zip = new AdmZip(result.path);
+			const zip = readZipArchive(result.path);
 			const entryNames = zip.getEntries().map((e) => e.entryName);
 
 			expect(entryNames).toContain('system-info.json');
@@ -139,7 +135,7 @@ describe('Debug Package Packager', () => {
 
 			const result = await createZipPackage(TEST_OUTPUT_DIR, contents);
 
-			const zip = new AdmZip(result.path);
+			const zip = readZipArchive(result.path);
 			const entryNames = zip.getEntries().map((e) => e.entryName);
 
 			expect(entryNames).toContain('system-info.json');
@@ -155,7 +151,7 @@ describe('Debug Package Packager', () => {
 			expect(result.path).toBeDefined();
 			expect(result.sizeBytes).toBeGreaterThan(0);
 
-			const zip = new AdmZip(result.path);
+			const zip = readZipArchive(result.path);
 			const entryNames = zip.getEntries().map((e) => e.entryName);
 
 			// Should still have README
@@ -216,7 +212,7 @@ describe('Debug Package Packager', () => {
 
 			const result = await createZipPackage(TEST_OUTPUT_DIR, fullContents);
 
-			const zip = new AdmZip(result.path);
+			const zip = readZipArchive(result.path);
 			const entryNames = zip.getEntries().map((e) => e.entryName);
 
 			// All 15 JSON files + README

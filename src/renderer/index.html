@@ -16,22 +16,26 @@
 		     violation whenever the renderer boots under Vite. -->
 		<meta
 			http-equiv="Content-Security-Policy"
-			content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval' http://localhost:8097; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https: blob: maestro-image:; connect-src 'self' https: wss: ws:; frame-src 'self' maestro-concerto:; worker-src 'self' blob:; media-src 'self' blob: maestro-media:;"
+			content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval' http://localhost:8097; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data: https: blob: maestro-image:; connect-src 'self' https: wss: ws:; frame-src 'self' maestro-concerto:; worker-src 'self' blob:; media-src 'self' blob: maestro-media:;"
 		/>
 		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
 		<title>Maestro - Agent Orchestration Command Center</title>
 
-		<!-- Preload fonts to prevent FOUT (Flash of Unstyled Text) -->
-		<link rel="preconnect" href="https://fonts.googleapis.com" crossorigin />
-		<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+		<!-- Fonts are bundled with the app (see scripts/fetch-webfonts.mjs) and
+		     declared by generated-fonts.css, which index.css imports. There is
+		     deliberately no Google Fonts link here any more: a CDN font is a
+		     network round trip on every launch, it fails offline, and it told
+		     Google each time someone opened the app. -->
+		<!-- Preload the latin subset as a FONT, not as a stylesheet: the woff2 is
+		     then in flight immediately rather than waiting for generated-fonts.css
+		     to parse and reveal its URL. `crossorigin` is required even same-origin,
+		     because font fetches are always CORS-mode. -->
 		<link
 			rel="preload"
-			href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap"
-			as="style"
-		/>
-		<link
-			href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap"
-			rel="stylesheet"
+			href="./fonts/jetbrains-mono-latin-400_700-1.woff2"
+			as="font"
+			type="font/woff2"
+			crossorigin
 		/>
 
 		<!-- Critical CSS for splash screen - inline to prevent FOUC -->
@@ -99,7 +103,14 @@
 				object-fit: cover;
 			}
 
+			/* WORDMARK_FONT_STACK (src/shared/fontStack.ts). The wordmark is
+			   a logo, so it is pinned here and in SessionList's <h1> and never
+			   follows the user's fontFamily setting. */
 			.splash-title {
+				/* Fixed on purpose: the brand mark never follows the interface font.
+				   Kept in sync by hand with WORDMARK_FONT_STACK in
+				   src/shared/fontStack.ts - this paints before any JavaScript runs
+				   and cannot import it. Do not swap this for the CSS variable. */
 				font-family: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
 				font-weight: 700;
 				font-size: 36px;

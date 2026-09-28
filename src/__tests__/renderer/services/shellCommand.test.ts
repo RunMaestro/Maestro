@@ -8,6 +8,7 @@
 import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
 	runShellCommand,
+	dispatchShellCommand,
 	cancelShellCommand,
 	buildShellRunSessionId,
 	SHELL_COMMAND_OUTPUT_LIMIT,
@@ -16,6 +17,10 @@ import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { createMockSession } from '../../helpers/mockSession';
 import { createMockAITab } from '../../helpers/mockTab';
 import type { LogEntry } from '../../../renderer/types';
+import {
+	TRANSCRIPT_SCROLL_TO_BOTTOM_EVENT,
+	type TranscriptScrollToBottomDetail,
+} from '../../../renderer/services/transcriptScroll';
 
 const SESSION_ID = 'session-1';
 const TAB_ID = 'tab-1';
@@ -119,6 +124,31 @@ describe('buildShellRunSessionId', () => {
 });
 
 describe('runShellCommand', () => {
+	test('asks the transcript to scroll to the card it just appended', async () => {
+		const seen: TranscriptScrollToBottomDetail[] = [];
+		const onScroll = (e: Event) => {
+			seen.push((e as CustomEvent<TranscriptScrollToBottomDetail>).detail);
+			// The request must land after the card exists, or the transcript
+			// would scroll to a bottom that does not include it yet.
+			expect(getCard()?.shellCommand?.status).toBe('running');
+		};
+		window.addEventListener(TRANSCRIPT_SCROLL_TO_BOTTOM_EVENT, onScroll);
+
+		const promise = runShellCommand({
+			session: useSessionStore.getState().sessions[0],
+			tabId: TAB_ID,
+			command: 'ls',
+		});
+
+		expect(seen).toEqual([{ sessionId: SESSION_ID, tabId: TAB_ID }]);
+
+		emitExit(runCommand.mock.calls[0][0].sessionId, 0);
+		await promise;
+		// Once per run, not once per output chunk.
+		expect(seen).toHaveLength(1);
+		window.removeEventListener(TRANSCRIPT_SCROLL_TO_BOTTOM_EVENT, onScroll);
+	});
+
 	test('runs in the session cwd with a synthetic session id', async () => {
 		const promise = runShellCommand({
 			session: useSessionStore.getState().sessions[0],
@@ -308,5 +338,79 @@ describe('cancelShellCommand', () => {
 
 		await expect(cancelShellCommand(logId)).resolves.toBe(false);
 		expect(cancelCommand).not.toHaveBeenCalled();
+	});
+});
+
+describe('the generating request', () => {
+	test('is stamped on the card when the command came from AI command mode', async () => {
+		await runShellCommand({
+			session: useSessionStore.getState().sessions[0],
+			tabId: TAB_ID,
+			command: "find . -newermt '2 days ago' -type f",
+			request: 'what files were edited in the past two days',
+		});
+
+		expect(getCard()?.shellCommand?.request).toBe('what files were edited in the past two days');
+	});
+
+	test('is absent for a typed command, so its presence means "generated"', async () => {
+		await runShellCommand({
+			session: useSessionStore.getState().sessions[0],
+			tabId: TAB_ID,
+			command: 'git status',
+		});
+
+		expect(getCard()?.shellCommand).not.toHaveProperty('request');
+	});
+
+	test('survives dispatchShellCommand rather than being dropped in the handoff', async () => {
+		await dispatchShellCommand({
+			session: useSessionStore.getState().sessions[0],
+			tabId: TAB_ID,
+			command: 'du -sh *',
+			request: 'how big is everything here',
+		});
+
+		expect(getCard()?.shellCommand?.request).toBe('how big is everything here');
+	});
+});
+
+describe('dispatchShellCommand', () => {
+	function history(): string[] {
+		return (
+			useSessionStore.getState().sessions.find((s) => s.id === SESSION_ID)?.aiCommandHistory ?? []
+		);
+	}
+
+	test('records the command bang-prefixed so recall can tell it from a message', async () => {
+		// aiCommandHistory mixes agent messages and shell commands; the `!` is the
+		// only thing that distinguishes them on the way back out.
+		await dispatchShellCommand({
+			session: useSessionStore.getState().sessions[0],
+			tabId: TAB_ID,
+			command: 'npm test',
+		});
+
+		expect(history()).toContain('!npm test');
+	});
+
+	test('runs the command as well as recording it', async () => {
+		await dispatchShellCommand({
+			session: useSessionStore.getState().sessions[0],
+			tabId: TAB_ID,
+			command: 'git status',
+		});
+
+		expect(runCommand).toHaveBeenCalledTimes(1);
+		expect(getCard()?.shellCommand?.command).toBe('git status');
+	});
+
+	test('moves a repeated command to the end instead of duplicating it', async () => {
+		const session = () => useSessionStore.getState().sessions[0];
+		await dispatchShellCommand({ session: session(), tabId: TAB_ID, command: 'ls' });
+		await dispatchShellCommand({ session: session(), tabId: TAB_ID, command: 'pwd' });
+		await dispatchShellCommand({ session: session(), tabId: TAB_ID, command: 'ls' });
+
+		expect(history()).toEqual(['!pwd', '!ls']);
 	});
 });

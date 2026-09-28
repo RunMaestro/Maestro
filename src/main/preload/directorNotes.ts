@@ -9,6 +9,8 @@
 import { ipcRenderer } from 'electron';
 import type { ToolType, HistoryEntry, HistoryEntryType } from '../../shared/types';
 import type { DirectorNotesNarrative } from '../../shared/directorNotesNarrative';
+import type { GraphBucket } from '../../shared/history';
+import type { SynopsisProviderChoice } from '../../shared/directorNotesProvider';
 
 /** Aggregate stats returned alongside unified history */
 export interface UnifiedHistoryStats {
@@ -18,14 +20,6 @@ export interface UnifiedHistoryStats {
 	userCount: number; // Total USER entries
 	cueCount: number; // Total CUE entries
 	totalCount: number; // Total entries (autoCount + userCount + cueCount)
-}
-
-/** Pre-computed activity graph bucket for a time slice */
-export interface GraphBucket {
-	auto: number;
-	user: number;
-	cue: number;
-	agent: number;
 }
 
 /**
@@ -83,7 +77,8 @@ export interface UnifiedHistoryEntry {
  */
 export interface SynopsisOptions {
 	lookbackDays: number;
-	provider: ToolType;
+	/** The agent to spawn, or `'auto'` for the first installed supported provider. */
+	provider: SynopsisProviderChoice;
 	customPath?: string;
 	customArgs?: string;
 	customEnvVars?: Record<string, string>;
@@ -113,6 +108,8 @@ export interface SynopsisResult {
 	narrativeError?: string;
 	/** Set when `narrative` was salvaged; explains what had to be recovered. */
 	narrativeRecovery?: string;
+	/** The provider that actually ran (the resolved one under auto-selection). */
+	provider?: ToolType;
 }
 
 /**
@@ -152,6 +149,12 @@ export interface RichAgentStat {
 	entryCount: number;
 	successCount: number;
 	failureCount: number;
+	/**
+	 * True when retention capped this count rather than the lookback window, so
+	 * the real total is larger and unknown. Optional on the wire: a cached
+	 * payload from before this field existed simply reads as "not truncated".
+	 */
+	truncated?: boolean;
 }
 
 /**

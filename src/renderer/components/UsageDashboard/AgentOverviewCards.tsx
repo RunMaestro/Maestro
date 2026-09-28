@@ -6,32 +6,78 @@
  * name, live status dot, query count, and a 7-day activity sparkline.
  *
  * Worktree children render with a dashed accent border, a "WT" badge,
- * and their checked-out branch, so a parent and its worktrees are
+ * and their checked-out branch - so a parent and its worktrees are
  * visually distinguishable at a glance.
+ *
+ * A provider-profile dropdown sits beside the group filter: it narrows the grid
+ * to the agents backed by one provider account (each Claude config dir, each
+ * Codex home, each account-less provider on its own). The same profile is
+ * printed as a badge on every card whenever more than one is in play, so the
+ * backing account is readable without opening the filter, and "Provider" is
+ * offered as a sort so one pass groups the whole fleet by account.
+ *
+ * A fuzzy filter above the grid narrows the cards live as the user types,
+ * matching on the agent name (with or without its leading emoji) and on a
+ * worktree's branch name. An "Active only" toggle beside it drops every agent
+ * that recorded no work inside the dashboard's selected time range, so a
+ * hundred-agent install can be cut down to what was actually used this month
+ * (or this year, following the range picker).
  */
 
-import { memo, useMemo, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Activity, Minus, Plus, Search } from 'lucide-react';
 import type { Session, Theme } from '../../types';
 import type { StatsAggregation } from '../../hooks/stats/useStats';
-// Token/cost for an agent lives in the Agent Detail modal (double-click a card),
-// not on the card itself - four stats made the tile too crowded to scan.
+import { stripLeadingEmojis } from '../../../shared/emojiUtils';
 import { formatAgeShort } from '../../../shared/formatters';
-import { Sparkline } from './Sparkline';
+import { fuzzyMatchWithScore } from '../../utils/search';
+import { visibleAiTabs } from '../../utils/tabHelpers';
+import { useModalLayer } from '../../hooks/ui/useModalLayer';
+import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
+import { EscCloseButton } from '../ui/EscCloseButton';
+import { SegmentedControl } from '../ui/SegmentedControl';
+import { ThemedSelect, type ThemedSelectOption } from '../shared/ThemedSelect';
+import { UNGROUPED_ID, UNGROUPED_NAME, type GroupLike } from '../../../shared/statsGroupRollup';
+import { isAgentActiveInRange } from '../../../shared/statsActiveAgents';
+import { ALL_PROFILES_VALUE } from '../../../shared/providerProfiles';
+import {
+	useProviderProfiles,
+	type ProviderProfileIndex,
+} from '../../hooks/stats/useProviderProfiles';
+import { buildAgentsSummary } from './footerSummary';
+import { usePublishFooterSummary } from './useFooterSummary';
+import { EntityTile, type EntityTileBadge } from './EntityTile';
 import {
 	AGENT_OVERVIEW_SORT_OPTIONS,
 	buildSessionSparkline,
 	getSessionAutoPercent,
+	getSessionLastQueryAt,
 	getSessionQueryCount,
 	getStatusColor,
 	isSessionHighlighted,
 	sortAgentOverviewSessions,
 	type SortMode,
 } from './agentOverviewUtils';
+import { useScalePreference } from '../../hooks/ui/useScalePreference';
+import { useScaleShortcuts } from '../../hooks/ui/useScaleShortcuts';
+import { useIsTopLayer } from '../../hooks/ui/useIsTopLayer';
+import { usePhoneLayout } from '../../hooks/ui/useViewportBreakpoint';
+import { ScaleControl } from '../ui/ScaleControl';
+import {
+	AGENT_TILE_MIN_WIDTH,
+	AGENT_TILE_SCALE_KEY,
+	TILE_SCALE_RANGE,
+	tileGridColumns,
+} from './tileScale';
+
+/** Dropdown value meaning "do not narrow by group". */
+const ALL_GROUPS_VALUE = '__all__';
+
+const EMPTY_GROUPS: GroupLike[] = [];
 
 /** Per-card stat we should visually emphasize. Mirrors `SortMode` minus `name`
  *  (the default sort has no per-card highlight). */
-type HighlightedStat = 'created' | 'queries' | 'tabs' | 'auto' | null;
-const EMPTY_AUTO_PERCENT_LABEL = String.fromCharCode(8212);
+type HighlightedStat = 'created' | 'recent' | 'queries' | 'tabs' | 'auto' | null;
 
 interface AgentCardProps {
 	session: Session;
@@ -46,6 +92,9 @@ interface AgentCardProps {
 	/** Which stat to color-emphasize so it's obvious what the cards are sorted by.
 	 *  `null` (Name sort, the default) leaves all stats in their neutral color. */
 	highlightedStat: HighlightedStat;
+	/** Provider account backing this agent (`smash`), or undefined when the whole
+	 *  fleet shares one profile and the badge would say nothing. */
+	profileLabel?: string;
 	/** Click handler for the entire card. When provided, the tile becomes a
 	 *  button that opens the per-agent stats sub-modal and gains a hover
 	 *  affordance to signal clickability. */
@@ -60,227 +109,116 @@ const AgentCard = memo(function AgentCard({
 	isSelected,
 	visibleSessions,
 	highlightedStat,
+	profileLabel,
 	onShowDetails,
 }: AgentCardProps) {
 	const isWorktree = Boolean(session.parentSessionId);
-	const isBusy = session.state === 'busy';
-	const statusColor = getStatusColor(session.state, theme);
 	const isClickable = Boolean(onShowDetails);
-	const [isHovered, setIsHovered] = useState(false);
 
-	const { queryCount, sparklineData, autoPercent } = useMemo(() => {
+	const { queryCount, sparklineData, autoPercent, lastQueryAt } = useMemo(() => {
 		const sessionByDay = data.bySessionByDay?.[session.id];
 		const sparkline = buildSessionSparkline(sessionByDay);
 		return {
 			queryCount: getSessionQueryCount(session, data, visibleSessions),
 			sparklineData: sparkline,
 			autoPercent: getSessionAutoPercent(session, data),
+			lastQueryAt: getSessionLastQueryAt(session, data),
 		};
 	}, [data, session, visibleSessions]);
 
-	const tabCount = session.aiTabs?.length ?? 0;
-	const sparklineColor = isWorktree ? theme.colors.accent : statusColor;
+	// Hidden consult tabs have no chip, so counting them would show a tab total the
+	// agent's own strip contradicts.
+	const tabCount = visibleAiTabs(session.aiTabs).length;
+	const statusColor = getStatusColor(session.state, theme);
 
-	// When the dashboard filter selects this card's agent, the 1px default
-	// border is replaced with a 2px solid accent border. Worktree dashing is
-	// suppressed for the duration. The highlight outranks the worktree
-	// affordance, and the existing "WT" badge keeps the worktree distinction
-	// visible. While hovered (clickable cards only), we promote the border to
-	// the accent color so the tile reads as actionable.
-	const border = isSelected
-		? `2px solid ${theme.colors.accent}`
-		: isHovered && isClickable
-			? `1px solid ${theme.colors.accent}`
-			: isWorktree
-				? `1px dashed ${theme.colors.accent}99`
-				: `1px solid ${theme.colors.border}`;
-	const backgroundColor =
-		isHovered && isClickable ? `${theme.colors.accent}12` : theme.colors.bgActivity;
-
-	const handleClick = onShowDetails ? () => onShowDetails(session) : undefined;
-	const handleKeyDown = onShowDetails
-		? (e: React.KeyboardEvent<HTMLDivElement>) => {
-				if (e.key === 'Enter' || e.key === ' ') {
-					e.preventDefault();
-					onShowDetails(session);
-				}
-			}
-		: undefined;
+	const badges = useMemo(() => {
+		const list: EntityTileBadge[] = [];
+		if (isWorktree) list.push({ label: 'WT', testId: 'agent-card-wt-badge' });
+		if (profileLabel) {
+			list.push({
+				label: profileLabel,
+				title: `Backed by ${profileLabel}`,
+				testId: 'agent-card-profile-badge',
+				color: theme.colors.textDim,
+			});
+		}
+		return list.length > 0 ? list : undefined;
+	}, [isWorktree, profileLabel, theme]);
 
 	const autoPctLabel = autoPercent === null ? 'no recorded queries' : `${autoPercent}% auto`;
-	const ageLabel = session.createdAt ? formatAgeShort(session.createdAt) : null;
-	const ageTitle = session.createdAt
-		? `Created ${new Date(session.createdAt).toLocaleString()}`
-		: undefined;
+
+	// The corner badge normally carries the agent's age. Under the Recent sort
+	// that number explains nothing about the order, so the badge switches to the
+	// last-query time - the value the cards are actually ranked on.
+	const showLastQuery = highlightedStat === 'recent';
+	const cornerTs = showLastQuery ? lastQueryAt : (session.createdAt ?? null);
+	const ageLabel = cornerTs !== null ? formatAgeShort(cornerTs) : undefined;
+	const ageTitle =
+		cornerTs !== null
+			? `${showLastQuery ? 'Last query' : 'Created'} ${new Date(cornerTs).toLocaleString()}`
+			: showLastQuery
+				? 'No queries in this range'
+				: undefined;
+	const cornerAriaLabel = ageLabel ? `, ${showLastQuery ? 'last query' : 'age'} ${ageLabel}` : '';
 	const baseAriaLabel = `${session.name}, ${session.state}, ${queryCount} ${
 		queryCount === 1 ? 'query' : 'queries'
 	}, ${tabCount} ${tabCount === 1 ? 'tab' : 'tabs'}, ${autoPctLabel}${
-		ageLabel ? `, age ${ageLabel}` : ''
-	}`;
-	const ariaLabel = isClickable ? `${baseAriaLabel}. View detailed stats.` : baseAriaLabel;
+		profileLabel ? `, ${profileLabel}` : ''
+	}${cornerAriaLabel}`;
 
 	return (
-		<div
-			className={`card-enter relative p-3 rounded-lg flex flex-col gap-1.5 transition-colors ${
-				isClickable ? 'cursor-pointer focus:outline-none focus-visible:ring-2' : ''
-			}`}
-			style={{
-				backgroundColor,
-				border,
-				animationDelay: `${animationIndex * 60}ms`,
-				transitionDuration: '120ms',
-				...(isClickable ? ({ '--tw-ring-color': theme.colors.accent } as React.CSSProperties) : {}),
-			}}
-			data-testid="agent-card"
-			data-selected={isSelected ? 'true' : undefined}
-			data-clickable={isClickable ? 'true' : undefined}
-			role={isClickable ? 'button' : 'group'}
-			tabIndex={isClickable ? 0 : undefined}
-			onClick={handleClick}
-			onKeyDown={handleKeyDown}
-			onMouseEnter={isClickable ? () => setIsHovered(true) : undefined}
-			onMouseLeave={isClickable ? () => setIsHovered(false) : undefined}
-			aria-label={ariaLabel}
-		>
-			<div className="flex items-center gap-2 min-w-0">
-				<span
-					className="flex-shrink-0 w-2 h-2 rounded-full"
-					style={{
-						backgroundColor: statusColor,
-						animation: isBusy ? 'status-pulse 1.4s ease-in-out infinite' : undefined,
-					}}
-					aria-hidden="true"
-					data-testid="agent-card-status-dot"
-				/>
-				<span
-					className="text-sm font-medium truncate flex-1 min-w-0"
-					style={{ color: theme.colors.textMain }}
-					title={session.name}
-				>
-					{session.name}
-				</span>
-				{isWorktree && (
-					<span
-						className="flex-shrink-0 px-1 py-0.5 rounded text-[9px] font-bold uppercase tracking-wide"
-						style={{
-							backgroundColor: `${theme.colors.accent}20`,
-							color: theme.colors.accent,
-						}}
-						data-testid="agent-card-wt-badge"
-					>
-						WT
-					</span>
-				)}
-				{ageLabel && (
-					<span
-						className="flex-shrink-0 text-[10px] tabular-nums"
-						style={{
-							color: highlightedStat === 'created' ? theme.colors.accent : theme.colors.textDim,
-							fontWeight: highlightedStat === 'created' ? 600 : undefined,
-						}}
-						title={ageTitle}
-						data-testid="agent-card-age"
-						data-highlighted={highlightedStat === 'created' ? 'true' : undefined}
-					>
-						{ageLabel}
-					</span>
-				)}
-			</div>
-			{isWorktree && session.worktreeBranch && (
-				<div
-					className="text-[11px] truncate"
-					style={{ color: theme.colors.textDim }}
-					title={session.worktreeBranch}
-					data-testid="agent-card-branch"
-				>
-					{session.worktreeBranch}
-				</div>
-			)}
-			<div className="flex items-end justify-between gap-2 mt-auto">
-				<div className="flex items-end gap-3 min-w-0">
-					<div className="flex flex-col min-w-0">
-						<span
-							className="text-[9px] uppercase tracking-wide"
-							style={{
-								color: highlightedStat === 'queries' ? theme.colors.accent : theme.colors.textDim,
-							}}
-						>
-							Queries
-						</span>
-						<span
-							className="text-base font-semibold"
-							style={{
-								color: highlightedStat === 'queries' ? theme.colors.accent : theme.colors.textMain,
-							}}
-							data-testid="agent-card-query-count"
-							data-highlighted={highlightedStat === 'queries' ? 'true' : undefined}
-						>
-							{queryCount}
-						</span>
-					</div>
-					<div className="flex flex-col min-w-0">
-						<span
-							className="text-[9px] uppercase tracking-wide"
-							style={{
-								color: highlightedStat === 'tabs' ? theme.colors.accent : theme.colors.textDim,
-							}}
-						>
-							Tabs
-						</span>
-						<span
-							className="text-base font-semibold"
-							style={{
-								color: highlightedStat === 'tabs' ? theme.colors.accent : theme.colors.textMain,
-							}}
-							data-testid="agent-card-tab-count"
-							data-highlighted={highlightedStat === 'tabs' ? 'true' : undefined}
-						>
-							{tabCount}
-						</span>
-					</div>
-					<div className="flex flex-col min-w-0">
-						<span
-							className="text-[9px] uppercase tracking-wide"
-							style={{
-								color: highlightedStat === 'auto' ? theme.colors.accent : theme.colors.textDim,
-							}}
-						>
-							Auto %
-						</span>
-						<span
-							className="text-base font-semibold"
-							style={{
-								color:
-									highlightedStat === 'auto' && autoPercent !== null
-										? theme.colors.accent
-										: autoPercent === null
-											? theme.colors.textDim
-											: theme.colors.textMain,
-							}}
-							data-testid="agent-card-auto-pct"
-							data-highlighted={highlightedStat === 'auto' ? 'true' : undefined}
-							title={
-								autoPercent === null
-									? 'No recorded queries'
-									: `${autoPercent}% of queries from Auto Run / Cue`
-							}
-						>
-							{autoPercent === null ? EMPTY_AUTO_PERCENT_LABEL : `${autoPercent}%`}
-						</span>
-					</div>
-				</div>
-				<div className="flex-shrink-0 opacity-80 pointer-events-none">
-					<Sparkline data={sparklineData} color={sparklineColor} width={70} height={22} />
-				</div>
-			</div>
-		</div>
+		<EntityTile
+			theme={theme}
+			testId="agent-card"
+			title={session.name}
+			statusColor={statusColor}
+			statusPulsing={session.state === 'busy'}
+			age={ageLabel}
+			ageTitle={ageTitle}
+			ageHighlighted={highlightedStat === 'created' || showLastQuery}
+			badges={badges}
+			subtitle={isWorktree ? (session.worktreeBranch ?? undefined) : undefined}
+			subtitleTestId="agent-card-branch"
+			stats={[
+				{
+					label: 'Queries',
+					value: String(queryCount),
+					highlighted: highlightedStat === 'queries',
+					testId: 'agent-card-query-count',
+				},
+				{
+					label: 'Tabs',
+					value: String(tabCount),
+					highlighted: highlightedStat === 'tabs',
+					testId: 'agent-card-tab-count',
+				},
+				{
+					label: 'Auto %',
+					value: autoPercent === null ? '\u2014' : `${autoPercent}%`,
+					highlighted: highlightedStat === 'auto',
+					muted: autoPercent === null,
+					testId: 'agent-card-auto-pct',
+					title:
+						autoPercent === null
+							? 'No recorded queries'
+							: `${autoPercent}% of queries from Auto Run / Cue`,
+				},
+			]}
+			sparkline={sparklineData}
+			sparklineColor={isWorktree ? theme.colors.accent : statusColor}
+			animationIndex={animationIndex}
+			isSelected={isSelected}
+			isDashed={isWorktree}
+			onClick={onShowDetails ? () => onShowDetails(session) : undefined}
+			ariaLabel={isClickable ? `${baseAriaLabel}. View detailed stats.` : baseAriaLabel}
+		/>
 	);
 });
 
 interface AgentOverviewCardsProps {
 	/** All known sessions (terminal-only sessions are filtered out) */
 	sessions: Session[];
-	/** Aggregated stats used for per-session query counts and sparklines */
+	/** Aggregated stats - used for per-session query counts and sparklines */
 	data: StatsAggregation;
 	/** Current theme for color-aware styling */
 	theme: Theme;
@@ -290,9 +228,51 @@ interface AgentOverviewCardsProps {
 	 * the top of the dashboard. `null` means no filter is active.
 	 */
 	activeFilterKey?: string | null;
-	/** Click handler for the per-card "view stats" icon, opens the per-agent
+	/** Click handler for the per-card "view stats" icon - opens the per-agent
 	 *  stats sub-modal. When omitted, the icon is not rendered. */
 	onShowAgentDetails?: (session: Session) => void;
+	/**
+	 * Left Bar groups, used to populate the group filter dropdown. Omit (or pass
+	 * an empty array) and the dropdown is not rendered at all - a filter with
+	 * one option is a control that can only do nothing.
+	 */
+	groups?: GroupLike[];
+	/**
+	 * Provider-profile filter, when the parent owns it - which it does whenever
+	 * another surface can select one, e.g. clicking an account's agent-count
+	 * badge on a quota tab. Omit both and the dropdown keeps its own state.
+	 */
+	profileFilter?: string;
+	onProfileFilterChange?: (value: string) => void;
+}
+
+/**
+ * Fuzzy-score a session against the filter query. Returns `null` when the
+ * session doesn't match at all.
+ *
+ * Three haystacks are tried and the best score wins:
+ *   - the raw name, so an emoji-prefixed agent still matches on its emoji;
+ *   - the name with leading emojis stripped, so "ag" matches "🕵️ Agent OSINT"
+ *     from the first real letter (the raw name would force the query to skip
+ *     past the emoji, which kills the prefix bonus);
+ *   - a worktree's branch, discounted so a name match always outranks it.
+ */
+function scoreSessionForFilter(session: Session, query: string): number | null {
+	const nameScore = fuzzyMatchWithScore(session.name, query);
+	const strippedName = stripLeadingEmojis(session.name);
+	const strippedScore =
+		strippedName === session.name ? nameScore : fuzzyMatchWithScore(strippedName, query);
+
+	let best = -1;
+	if (nameScore.matches) best = Math.max(best, nameScore.score);
+	if (strippedScore.matches) best = Math.max(best, strippedScore.score);
+
+	if (session.worktreeBranch) {
+		const branchScore = fuzzyMatchWithScore(session.worktreeBranch, query);
+		if (branchScore.matches) best = Math.max(best, branchScore.score / 2);
+	}
+
+	return best < 0 ? null : best;
 }
 
 export const AgentOverviewCards = memo(function AgentOverviewCards({
@@ -301,78 +281,390 @@ export const AgentOverviewCards = memo(function AgentOverviewCards({
 	theme,
 	activeFilterKey = null,
 	onShowAgentDetails,
+	groups = EMPTY_GROUPS,
+	profileFilter: profileFilterProp,
+	onProfileFilterChange,
 }: AgentOverviewCardsProps) {
 	const [sortMode, setSortMode] = useState<SortMode>('name');
+	const [filterQuery, setFilterQuery] = useState('');
+	// How wide a tile is, remembered across restarts. `+` / `-` / `0` drive it
+	// from the keyboard; the control beside the sort pills is the same state.
+	const phone = usePhoneLayout();
+	const tileScale = useScalePreference(AGENT_TILE_SCALE_KEY, TILE_SCALE_RANGE);
+	// Narrow the grid to agents that did something inside the selected range.
+	// Off by default: the grid's job is still "every agent I have".
+	const [activeOnly, setActiveOnly] = useState(false);
+	// Which group the grid is narrowed to. ALL_GROUPS_VALUE means no narrowing;
+	// UNGROUPED_ID is the agents filed under no group.
+	const [groupFilter, setGroupFilter] = useState<string>(ALL_GROUPS_VALUE);
+	// Which provider account the grid is narrowed to. Controlled by the parent
+	// when it passes both props (a quota badge can then select a profile and
+	// send the user here); otherwise the dropdown owns it.
+	const [internalProfileFilter, setInternalProfileFilter] = useState<string>(ALL_PROFILES_VALUE);
+	const profileFilter = profileFilterProp ?? internalProfileFilter;
+	const setProfileFilter = onProfileFilterChange ?? setInternalProfileFilter;
 
-	// Terminal sessions aren't "agents". Exclude them so the card row
-	// matches the agent count shown elsewhere in the dashboard. Default sort
-	// is alphabetical (ascending), ignoring any leading emoji prefix to match
-	// how the Left Bar's session list orders names; the user can switch to
-	// query or tab count (descending) via the sort control above the grid.
+	// Which provider account backs each agent. Shared with the quota tabs'
+	// per-account badges, so a badge's count is this grid's card count.
+	const profileIndex: ProviderProfileIndex = useProviderProfiles(sessions);
+
+	const profileOptions = useMemo((): ThemedSelectOption[] => {
+		const options: ThemedSelectOption[] = [{ value: ALL_PROFILES_VALUE, label: 'All providers' }];
+		for (const profile of profileIndex.profiles) {
+			options.push({ value: profile.key, label: `${profile.label} (${profile.count})` });
+		}
+		return options;
+	}, [profileIndex]);
+
+	// Per-card badge text, precomputed so the grid does not scan the profile
+	// list once per card. Empty while the whole fleet shares one profile: a
+	// badge every card carries identically is noise.
+	const profileBadgeBySessionId = useMemo((): Record<string, string> => {
+		if (profileIndex.profiles.length < 2) return {};
+		const shortLabelByKey: Record<string, string> = {};
+		for (const profile of profileIndex.profiles) shortLabelByKey[profile.key] = profile.shortLabel;
+		const byId: Record<string, string> = {};
+		for (const [sessionId, key] of Object.entries(profileIndex.profileKeyBySessionId)) {
+			const label = shortLabelByKey[key];
+			if (label) byId[sessionId] = label;
+		}
+		return byId;
+	}, [profileIndex]);
+
+	// A profile disappears when its last agent is deleted or re-pointed. Leaving
+	// the filter on it would strand the grid on a selection with no option
+	// behind it, showing nothing and explaining nothing. Wait for the index to
+	// settle first: a profile named by an agent-level env var is absent until
+	// that fetch lands, and clearing it then wiped the filter a quota badge had
+	// just set.
+	useEffect(() => {
+		if (profileFilter === ALL_PROFILES_VALUE || !profileIndex.ready) return;
+		if (!profileOptions.some((o) => o.value === profileFilter)) {
+			setProfileFilter(ALL_PROFILES_VALUE);
+		}
+	}, [profileOptions, profileFilter, setProfileFilter, profileIndex.ready]);
+
+	// Only groups that actually hold an agent are offered, plus Ungrouped when
+	// any agent is unfiled. An option that can only ever produce an empty grid
+	// is a dead end the user has to back out of.
+	const groupOptions = useMemo((): ThemedSelectOption[] => {
+		const agents = sessions.filter((s) => s.toolType !== 'terminal');
+		const liveGroupIds = new Set(groups.map((g) => g.id));
+		const populated = new Set<string>();
+		for (const agent of agents) {
+			populated.add(
+				agent.groupId && liveGroupIds.has(agent.groupId) ? agent.groupId : UNGROUPED_ID
+			);
+		}
+
+		const options: ThemedSelectOption[] = [{ value: ALL_GROUPS_VALUE, label: 'All groups' }];
+		for (const group of groups) {
+			if (!populated.has(group.id)) continue;
+			options.push({
+				value: group.id,
+				label: group.emoji ? `${group.emoji} ${group.name}` : group.name,
+			});
+		}
+		if (populated.has(UNGROUPED_ID)) {
+			options.push({ value: UNGROUPED_ID, label: UNGROUPED_NAME });
+		}
+		return options;
+	}, [groups, sessions]);
+
+	// A group emptied or deleted while its filter was active would otherwise
+	// strand the grid on a selection with no option behind it, showing nothing.
+	useEffect(() => {
+		if (!groupOptions.some((o) => o.value === groupFilter)) {
+			setGroupFilter(ALL_GROUPS_VALUE);
+		}
+	}, [groupOptions, groupFilter]);
+	const filterInputRef = useRef<HTMLInputElement>(null);
+
+	const clearFilter = useCallback(() => {
+		setFilterQuery('');
+		filterInputRef.current?.focus();
+	}, []);
+
+	// While the filter holds text, it owns Escape: the key clears the box
+	// instead of closing the whole dashboard. The layer stack handles Escape on
+	// a capture-phase window listener, so an input-local key handler can never
+	// win - this has to be a real layer that outranks USAGE_DASHBOARD.
+	useModalLayer(MODAL_PRIORITIES.USAGE_DASHBOARD_AGENT_FILTER, undefined, clearFilter, {
+		enabled: filterQuery.length > 0,
+		focusTrap: 'none',
+		blocksLowerLayers: false,
+		capturesFocus: false,
+	});
+
+	// Bare `+` / `-` / `0` resize the tiles, but only while this grid is what
+	// the keyboard is pointed at - an agent detail modal opened from a tile
+	// sits on top and must own those keys instead. The filter's own Escape
+	// layer counts as this grid: it outranks the dashboard while the box holds
+	// text, and zoom has no reason to go dead just because a filter is set.
+	const dashboardIsTop = useIsTopLayer(MODAL_PRIORITIES.USAGE_DASHBOARD);
+	const filterIsTop = useIsTopLayer(MODAL_PRIORITIES.USAGE_DASHBOARD_AGENT_FILTER);
+	useScaleShortcuts(tileScale, { enabled: dashboardIsTop || filterIsTop });
+
+	// Terminal sessions aren't "agents" - excluded inside
+	// `sortAgentOverviewSessions`, which also owns the ordering so the grid and
+	// its sort control can't drift. The group filter narrows the input first:
+	// narrowing before sorting is what keeps the query-count ranking relative
+	// to the agents actually on screen rather than to the whole fleet.
 	const activeSessions = useMemo(() => {
-		return sortAgentOverviewSessions(sessions, data, sortMode);
-	}, [sessions, data, sortMode]);
+		// A groupId pointing at a deleted group counts as ungrouped, matching how
+		// the Left Bar and the group rollup both treat a dangling pointer - an
+		// agent must never become unreachable from every filter option.
+		const liveGroupIds = new Set(groups.map((g) => g.id));
+		const scoped = sessions.filter((session) => {
+			if (groupFilter !== ALL_GROUPS_VALUE) {
+				const resolved =
+					session.groupId && liveGroupIds.has(session.groupId) ? session.groupId : UNGROUPED_ID;
+				if (resolved !== groupFilter) return false;
+			}
+			// Provider-account narrowing. An agent whose account has not resolved
+			// yet is absent from the index, so it drops out of an explicit account
+			// filter rather than being lumped into whichever one was picked.
+			if (
+				profileFilter !== ALL_PROFILES_VALUE &&
+				profileIndex.profileKeyBySessionId[session.id] !== profileFilter
+			) {
+				return false;
+			}
+			// "Active only" is a RANGE question, so it narrows before sorting -
+			// the query-count ranking stays relative to the cards on screen.
+			return !activeOnly || isAgentActiveInRange(session.id, data.bySessionByDay);
+		});
+		return sortAgentOverviewSessions(scoped, data, sortMode, profileIndex);
+	}, [sessions, data, sortMode, groupFilter, groups, activeOnly, profileFilter, profileIndex]);
 
-	if (activeSessions.length === 0) return null;
+	// Live fuzzy filter. With the default Name sort we re-rank by match score so
+	// the best hit lands first; an explicit sort (Queries, Tabs, ...) is the
+	// user's stated order and survives filtering untouched.
+	const filteredSessions = useMemo(() => {
+		const query = filterQuery.trim();
+		if (!query) return activeSessions;
+
+		const scored = activeSessions
+			.map((session) => ({ session, score: scoreSessionForFilter(session, query) }))
+			.filter((entry): entry is { session: Session; score: number } => entry.score !== null);
+
+		if (sortMode === 'name') {
+			scored.sort((a, b) => b.score - a.score);
+		}
+		return scored.map((entry) => entry.session);
+	}, [activeSessions, filterQuery, sortMode]);
+
+	// Footer readout. The denominator is every agent, not the group-scoped or
+	// active-only subset, so the line always answers "how much of the fleet am
+	// I looking at" rather than restating the filter back to itself.
+	const totalAgentCount = useMemo(
+		() => sessions.filter((s) => s.toolType !== 'terminal').length,
+		[sessions]
+	);
+	usePublishFooterSummary('agents', buildAgentsSummary(filteredSessions.length, totalAgentCount));
+
+	// The dropdown earns its place only once a REAL group is on offer. With no
+	// groups configured the options collapse to "All groups" and "Ungrouped",
+	// which render the identical grid - a control whose every choice is a no-op.
+	const hasGroupChoice = groupOptions.some(
+		(o) => o.value !== ALL_GROUPS_VALUE && o.value !== UNGROUPED_ID
+	);
+	const isGroupFiltered = groupFilter !== ALL_GROUPS_VALUE;
+	// One profile means every card would carry the same badge and every dropdown
+	// choice would render the identical grid - the same "can only do nothing"
+	// test the group dropdown passes above.
+	const hasProfileChoice = profileIndex.profiles.length > 1;
+	const isProfileFiltered = profileFilter !== ALL_PROFILES_VALUE;
+	const profileFilterLabel = profileIndex.labelByKey[profileFilter];
+	// A group, provider, or active-only filter that matches nothing must still
+	// render the toolbar, otherwise the tab goes blank with no visible reason
+	// and no way back to the control that emptied it.
+	if (activeSessions.length === 0 && !isGroupFiltered && !isProfileFiltered && !activeOnly) {
+		return null;
+	}
 
 	return (
 		<div className="flex flex-col gap-3">
-			<div className="flex items-center justify-end gap-2">
-				<span className="text-xs" style={{ color: theme.colors.textDim }}>
-					Sort by:
-				</span>
-				<div
-					className="flex rounded overflow-hidden border"
-					style={{ borderColor: theme.colors.border }}
-					role="radiogroup"
-					aria-label="Sort agents"
-					data-testid="agent-overview-sort"
-				>
-					{AGENT_OVERVIEW_SORT_OPTIONS.map((opt, i) => {
-						const isActive = sortMode === opt.value;
-						return (
-							<button
-								key={opt.value}
-								type="button"
-								onClick={() => setSortMode(opt.value)}
-								className="px-2 py-1 text-xs transition-colors"
-								style={{
-									backgroundColor: isActive ? `${theme.colors.accent}20` : 'transparent',
-									color: isActive ? theme.colors.accent : theme.colors.textDim,
-									borderLeft: i === 0 ? undefined : `1px solid ${theme.colors.border}`,
-								}}
-								aria-pressed={isActive}
-								data-testid={`agent-overview-sort-${opt.value}`}
-							>
-								{opt.label}
-							</button>
-						);
-					})}
+			<div className="flex items-center justify-between gap-3 flex-wrap">
+				{/* On a phone the four controls pack and wrap: at their desktop
+				    widths they add up to ~780px, so they used to run off the right
+				    edge of a 390px screen and take the whole tab into a horizontal
+				    scroll. Desktop keeps the fixed widths and the single row - a
+				    shrinkable basis there rearranges a toolbar that already fit. */}
+				<div className={`flex items-center gap-2 min-w-0 ${phone ? 'flex-wrap' : ''}`}>
+					{hasGroupChoice && (
+						<ThemedSelect
+							value={groupFilter}
+							options={groupOptions}
+							onChange={setGroupFilter}
+							theme={theme}
+							style={phone ? { flex: '1 1 160px', minWidth: 0, maxWidth: 200 } : { width: 200 }}
+							aria-label="Filter agents by group"
+							// Long group lists are the normal case for anyone using
+							// groups per client, so the menu carries its own search.
+							filterable={groupOptions.length > 8}
+							filterPlaceholder="Filter groups…"
+						/>
+					)}
+					{hasProfileChoice && (
+						<ThemedSelect
+							value={profileFilter}
+							options={profileOptions}
+							onChange={setProfileFilter}
+							theme={theme}
+							style={phone ? { flex: '1 1 160px', minWidth: 0, maxWidth: 210 } : { width: 210 }}
+							aria-label="Filter agents by provider account"
+							filterable={profileOptions.length > 8}
+							filterPlaceholder="Filter providers…"
+						/>
+					)}
+					<div
+						className="relative flex items-center"
+						style={
+							phone
+								? { flex: '1 1 180px', minWidth: 0, maxWidth: 260 }
+								: { width: 260, maxWidth: '100%' }
+						}
+					>
+						<Search
+							className="absolute left-2 w-3.5 h-3.5 pointer-events-none"
+							style={{ color: filterQuery ? theme.colors.accent : theme.colors.textDim }}
+							aria-hidden="true"
+						/>
+						<input
+							ref={filterInputRef}
+							type="text"
+							value={filterQuery}
+							onChange={(e) => setFilterQuery(e.target.value)}
+							placeholder="Filter agents..."
+							className="w-full rounded border bg-transparent outline-none text-xs py-1 pl-7"
+							style={{
+								borderColor: filterQuery ? theme.colors.accent : theme.colors.border,
+								color: theme.colors.textMain,
+								paddingRight: filterQuery ? 52 : 8,
+							}}
+							aria-label="Filter agents"
+							data-testid="agent-overview-filter-input"
+						/>
+						{filterQuery && (
+							<EscCloseButton
+								theme={theme}
+								variant="adornment"
+								label="Clear filter (Esc)"
+								onClose={clearFilter}
+								testId="agent-overview-filter-clear"
+							/>
+						)}
+					</div>
+					<button
+						type="button"
+						role="switch"
+						aria-checked={activeOnly}
+						onClick={() => setActiveOnly((v) => !v)}
+						title="Show only agents that ran a query in the selected time range"
+						className="flex items-center gap-1.5 px-2 py-1 rounded border text-xs whitespace-nowrap transition-colors"
+						style={{
+							borderColor: activeOnly ? theme.colors.accent : theme.colors.border,
+							backgroundColor: activeOnly ? `${theme.colors.accent}20` : 'transparent',
+							color: activeOnly ? theme.colors.accent : theme.colors.textDim,
+						}}
+						data-testid="agent-overview-active-only"
+					>
+						<Activity className="w-3 h-3" aria-hidden="true" />
+						Active only
+					</button>
+					{filterQuery && (
+						<span
+							className="text-xs tabular-nums whitespace-nowrap"
+							style={{ color: theme.colors.textDim }}
+							data-testid="agent-overview-filter-count"
+						>
+							{filteredSessions.length} of {activeSessions.length}
+						</span>
+					)}
+				</div>
+				{/* Centered in the free space between the filters and the sort pills
+				    rather than crowding either: the control belongs to the grid, not
+				    to the filtering or the ordering. */}
+				<div className="flex-1 flex justify-center">
+					<ScaleControl
+						theme={theme}
+						control={tileScale}
+						decreaseIcon={Minus}
+						increaseIcon={Plus}
+						subject="tile size"
+						shortcutHint={{ decrease: '-', increase: '+', reset: '0' }}
+						size="sm"
+						showReset={false}
+						testId="agent-overview-tile-zoom"
+					/>
+				</div>
+				<div className="flex items-center gap-2 min-w-0">
+					<span className="text-xs shrink-0" style={{ color: theme.colors.textDim }}>
+						Sort by:
+					</span>
+					<SegmentedControl
+						value={sortMode}
+						onChange={setSortMode}
+						options={AGENT_OVERVIEW_SORT_OPTIONS}
+						theme={theme}
+						ariaLabel="Sort agents"
+						testId="agent-overview-sort"
+					/>
 				</div>
 			</div>
-			<div
-				className="grid gap-3"
-				style={{
-					gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))',
-				}}
-				data-testid="agent-overview-cards"
-				role="region"
-				aria-label="Active agents overview"
-			>
-				{activeSessions.map((session, index) => (
-					<AgentCard
-						key={session.id}
-						session={session}
-						data={data}
-						theme={theme}
-						animationIndex={index}
-						isSelected={isSessionHighlighted(session, activeFilterKey)}
-						visibleSessions={activeSessions}
-						highlightedStat={sortMode === 'name' ? null : sortMode}
-						onShowDetails={onShowAgentDetails}
-					/>
-				))}
-			</div>
+			{activeSessions.length === 0 ? (
+				<div
+					className="py-8 text-center text-sm"
+					style={{ color: theme.colors.textDim }}
+					data-testid="agent-overview-group-empty"
+					role="status"
+				>
+					{activeOnly
+						? isProfileFiltered
+							? `No ${profileFilterLabel ?? 'matching'} agents ran a query in this time range.`
+							: isGroupFiltered
+								? `No agents in ${groupOptions.find((o) => o.value === groupFilter)?.label ?? 'this group'} ran a query in this time range.`
+								: 'No agents ran a query in this time range.'
+						: isProfileFiltered && !isGroupFiltered
+							? `No agents are backed by ${profileFilterLabel ?? 'this provider account'}.`
+							: `${groupOptions.find((o) => o.value === groupFilter)?.label ?? 'This group'} has no agents${isProfileFiltered ? ` backed by ${profileFilterLabel ?? 'this provider account'}` : ''}.`}
+				</div>
+			) : filteredSessions.length === 0 ? (
+				<div
+					className="py-8 text-center text-sm"
+					style={{ color: theme.colors.textDim }}
+					data-testid="agent-overview-no-matches"
+					role="status"
+				>
+					No agents match &ldquo;{filterQuery.trim()}&rdquo;
+				</div>
+			) : (
+				<div
+					className="grid gap-3"
+					style={{
+						gridTemplateColumns: tileGridColumns(AGENT_TILE_MIN_WIDTH, tileScale.scale),
+					}}
+					data-testid="agent-overview-cards"
+					role="region"
+					aria-label="Active agents overview"
+				>
+					{filteredSessions.map((session, index) => (
+						<AgentCard
+							key={session.id}
+							session={session}
+							data={data}
+							theme={theme}
+							animationIndex={index}
+							isSelected={isSessionHighlighted(session, activeFilterKey)}
+							visibleSessions={activeSessions}
+							highlightedStat={sortMode === 'name' || sortMode === 'provider' ? null : sortMode}
+							profileLabel={profileBadgeBySessionId[session.id]}
+							onShowDetails={onShowAgentDetails}
+						/>
+					))}
+				</div>
+			)}
 		</div>
 	);
 });

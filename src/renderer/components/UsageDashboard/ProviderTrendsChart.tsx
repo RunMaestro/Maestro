@@ -12,7 +12,9 @@ import type { Theme, Session } from '../../types';
 import type { StatsTimeRange, StatsAggregation } from '../../hooks/stats/useStats';
 import { COLORBLIND_AGENT_PALETTE } from '../../constants/colorblindPalettes';
 import { formatDurationHuman as formatDuration, formatNumber } from '../../../shared/formatters';
-import { buildNameMap, computeAxisLabelIndices } from './chartUtils';
+import { humanizeDuration, DURATION_LADDER_HOURS } from '../../../shared/duration';
+import { buildNameMap, computeAxisLabelIndices, PHONE_AXIS_LABELS } from './chartUtils';
+import { usePhoneLayout } from '../../hooks/ui/useViewportBreakpoint';
 import { ChartTooltip } from './ChartTooltip';
 import { ChartLoadingOverlay } from './ChartLoadingOverlay';
 import { MetricModeToggle, formatMetricValue, type ChartMetricMode } from './MetricModeToggle';
@@ -65,14 +67,10 @@ function formatXAxisDate(dateStr: string, timeRange: StatsTimeRange): string {
 	}
 }
 
+/** One unit only, so tick labels stay narrow; a zero tick is bare "0". */
 function formatYAxisDuration(ms: number): string {
 	if (ms === 0) return '0';
-	const totalSeconds = Math.floor(ms / 1000);
-	const hours = Math.floor(totalSeconds / 3600);
-	const minutes = Math.floor(totalSeconds / 60);
-	if (hours > 0) return `${hours}h`;
-	if (minutes > 0) return `${minutes}m`;
-	return `${totalSeconds}s`;
+	return humanizeDuration(ms, { units: DURATION_LADDER_HOURS, maxUnits: 1 });
 }
 
 export const ProviderTrendsChart = memo(function ProviderTrendsChart({
@@ -160,7 +158,11 @@ export const ProviderTrendsChart = memo(function ProviderTrendsChart({
 		};
 	}, [dates, perDayValues, providers, metricMode]);
 
-	const xLabelIndices = useMemo(() => computeAxisLabelIndices(dates.length), [dates.length]);
+	const phone = usePhoneLayout();
+	const xLabelIndices = useMemo(
+		() => computeAxisLabelIndices(dates.length, phone ? PHONE_AXIS_LABELS : undefined),
+		[dates.length, phone]
+	);
 
 	const barWidth = dates.length > 0 ? innerWidth / dates.length : 0;
 	const barInner = Math.max(1, barWidth * 0.7);

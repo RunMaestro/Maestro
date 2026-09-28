@@ -21,8 +21,10 @@ import { getExplorerFileIcon } from '../../utils/theme';
 import { fuzzyMatchWithScore } from '../../utils/search';
 import { useModalLayer } from '../../hooks/ui/useModalLayer';
 import { useResizableModal } from '../../hooks/ui/useResizableModal';
+import { usePhoneLayout } from '../../hooks/ui/useViewportBreakpoint';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { ResizeHandles } from '../ui/ResizeHandles';
+import { aggregateFolderTaskCounts } from './documentTaskAggregation';
 
 // Module-level cache so the user's expand/collapse choices survive the dropdown
 // closing/reopening and the component remounting (e.g. switching agents) until
@@ -80,6 +82,10 @@ export const AutoRunDocumentSelector = forwardRef<
 	ref
 ) {
 	const [isOpen, setIsOpen] = useState(false);
+	// Phone: the row is the document dropdown alone. The three buttons beside it
+	// squeezed the selected name down to a couple of characters in a 390px
+	// drawer; "Change Folder..." is still in the dropdown's footer.
+	const phone = usePhoneLayout();
 	const [showCreateModal, setShowCreateModal] = useState(false);
 	const [newDocName, setNewDocName] = useState('');
 	const [isCreating, setIsCreating] = useState(false);
@@ -260,16 +266,30 @@ export const AutoRunDocumentSelector = forwardRef<
 		: normalizedNewName;
 	const isDuplicate = !!fullNewPath && documents.some((doc) => doc.toLowerCase() === fullNewPath);
 
-	// Get percentage and total task count for a document
-	const getTaskStats = (docPath: string): { pct: number; total: number } | null => {
-		if (!documentTaskCounts) return null;
-		const counts = documentTaskCounts.get(docPath);
+	// Per-folder rollup of the task counts of every document beneath it. Built
+	// from the unfiltered tree on purpose: a folder's badge describes the whole
+	// folder, not just the files that survived the current filter.
+	const folderTaskCounts = useMemo(
+		() => aggregateFolderTaskCounts(documentTree, documentTaskCounts),
+		[documentTree, documentTaskCounts]
+	);
+
+	// Turn raw counts into the percentage/total pair the badge renders.
+	const toTaskStats = (counts: DocumentTaskCount | undefined) => {
 		if (!counts || counts.total === 0) return null;
 		return {
 			pct: Math.round((counts.completed / counts.total) * 100),
 			total: counts.total,
 		};
 	};
+
+	// Get percentage and total task count for a document
+	const getTaskStats = (docPath: string): { pct: number; total: number } | null =>
+		toTaskStats(documentTaskCounts?.get(docPath));
+
+	// Same, for a folder: the sum of every document in its subtree.
+	const getFolderTaskStats = (folderPath: string): { pct: number; total: number } | null =>
+		toTaskStats(folderTaskCounts.get(folderPath));
 
 	// Pill badge showing "{pct}% ({total})" - rendered next to file entries in
 	// the dropdown list. Green when 100% complete, dim accent otherwise.
@@ -294,11 +314,12 @@ export const AutoRunDocumentSelector = forwardRef<
 		const paddingLeft = depth * 16 + 12;
 
 		if (node.type === 'folder') {
+			const folderStats = getFolderTaskStats(node.path);
 			return (
 				<div key={node.path}>
 					<button
 						onClick={() => toggleFolder(node.path)}
-						className="w-full flex items-center gap-1.5 py-1.5 text-sm transition-colors hover:bg-white/5"
+						className="w-full flex items-center gap-1.5 py-1.5 pr-3 text-sm transition-colors hover:bg-white/5"
 						style={{ paddingLeft, color: theme.colors.textDim }}
 					>
 						{isExpanded ? (
@@ -308,6 +329,7 @@ export const AutoRunDocumentSelector = forwardRef<
 						)}
 						<Folder className="w-3.5 h-3.5 shrink-0" style={{ color: theme.colors.accent }} />
 						<span className="truncate">{node.name}</span>
+						{folderStats && renderTaskBadge(folderStats, 'ml-auto')}
 					</button>
 					{isExpanded && node.children && (
 						<div>{node.children.map((child) => renderTreeNode(child, depth + 1))}</div>
@@ -606,45 +628,49 @@ export const AutoRunDocumentSelector = forwardRef<
 					)}
 				</div>
 
-				{/* Create New Document Button */}
-				<button
-					onClick={() => setShowCreateModal(true)}
-					className="inline-flex h-10 min-w-10 items-center justify-center p-2 rounded transition-colors hover:bg-white/10 shrink-0"
-					style={{
-						color: theme.colors.textDim,
-						border: `1px solid ${theme.colors.border}`,
-					}}
-					title="Create new document"
-				>
-					<Plus className="w-4 h-4" />
-				</button>
+				{!phone && (
+					<>
+						{/* Create New Document Button */}
+						<button
+							onClick={() => setShowCreateModal(true)}
+							className="inline-flex h-10 min-w-10 items-center justify-center p-2 rounded transition-colors hover:bg-white/10 shrink-0"
+							style={{
+								color: theme.colors.textDim,
+								border: `1px solid ${theme.colors.border}`,
+							}}
+							title="Create new document"
+						>
+							<Plus className="w-4 h-4" />
+						</button>
 
-				{/* Refresh Button */}
-				<button
-					onClick={onRefresh}
-					disabled={isLoading}
-					className={`inline-flex h-10 min-w-10 items-center justify-center p-2 rounded transition-colors hover:bg-white/10 shrink-0 ${isLoading ? 'opacity-50 cursor-not-allowed' : ''}`}
-					style={{
-						color: theme.colors.textDim,
-						border: `1px solid ${theme.colors.border}`,
-					}}
-					title="Refresh document list"
-				>
-					<RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
-				</button>
+						{/* Refresh Button */}
+						<button
+							onClick={onRefresh}
+							disabled={isLoading}
+							className={`inline-flex h-10 min-w-10 items-center justify-center p-2 rounded transition-colors hover:bg-white/10 shrink-0 ${isLoading ? 'opacity-50 cursor-not-allowed' : ''}`}
+							style={{
+								color: theme.colors.textDim,
+								border: `1px solid ${theme.colors.border}`,
+							}}
+							title="Refresh document list"
+						>
+							<RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
+						</button>
 
-				{/* Change Folder Button */}
-				<button
-					onClick={onChangeFolder}
-					className="inline-flex h-10 min-w-10 items-center justify-center p-2 rounded transition-colors hover:bg-white/10 shrink-0"
-					style={{
-						color: theme.colors.textDim,
-						border: `1px solid ${theme.colors.border}`,
-					}}
-					title="Change folder"
-				>
-					<FolderOpen className="w-4 h-4" />
-				</button>
+						{/* Change Folder Button */}
+						<button
+							onClick={onChangeFolder}
+							className="inline-flex h-10 min-w-10 items-center justify-center p-2 rounded transition-colors hover:bg-white/10 shrink-0"
+							style={{
+								color: theme.colors.textDim,
+								border: `1px solid ${theme.colors.border}`,
+							}}
+							title="Change folder"
+						>
+							<FolderOpen className="w-4 h-4" />
+						</button>
+					</>
+				)}
 			</div>
 
 			{/* Create New Document Modal */}

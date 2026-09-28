@@ -60,6 +60,7 @@ const mockSetDefaultShowThinking = vi.fn();
 const mockSetShowToolCalls = vi.fn();
 const mockSetAutomaticTabNamingEnabled = vi.fn();
 const mockSetPreventSleepEnabled = vi.fn();
+const mockSetPreventDisplaySleepEnabled = vi.fn();
 const mockSetDisableGpuAcceleration = vi.fn();
 const mockSetDisableConfetti = vi.fn();
 const mockSetCheckForUpdatesOnStartup = vi.fn();
@@ -113,6 +114,8 @@ vi.mock('../../../../../renderer/hooks/settings/useSettings', () => ({
 		// Power management
 		preventSleepEnabled: false,
 		setPreventSleepEnabled: mockSetPreventSleepEnabled,
+		preventDisplaySleepEnabled: false,
+		setPreventDisplaySleepEnabled: mockSetPreventDisplaySleepEnabled,
 		// Rendering
 		disableGpuAcceleration: false,
 		setDisableGpuAcceleration: mockSetDisableGpuAcceleration,
@@ -179,6 +182,21 @@ describe('GeneralTab', () => {
 			expect(screen.getByText('Updates')).toBeInTheDocument();
 			expect(screen.getByText('Privacy')).toBeInTheDocument();
 			expect(screen.getByText('Storage Location')).toBeInTheDocument();
+		});
+
+		it('places the Maestro CLI section directly below the Conductor Profile', async () => {
+			const { container } = render(<GeneralTab theme={mockTheme} isOpen={true} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(100);
+			});
+
+			const ids = Array.from(container.querySelectorAll('[data-setting-id]')).map((el) =>
+				el.getAttribute('data-setting-id')
+			);
+			const profileIndex = ids.indexOf('general-conductor-profile');
+			expect(profileIndex).toBeGreaterThanOrEqual(0);
+			expect(ids[profileIndex + 1]).toBe('general-maestro-cli');
 		});
 
 		it('should not render when isOpen is false (effects skipped)', async () => {
@@ -950,7 +968,7 @@ describe('GeneralTab', () => {
 			expect(toolCalls.closest('[data-setting-id="general-thinking-mode"]')).not.toBeNull();
 		});
 
-		it('calls setShowToolCalls when toggled (thinking on)', async () => {
+		it('calls setShowToolCalls when toggled', async () => {
 			mockUseSettingsOverrides = { showToolCalls: true, defaultShowThinking: 'on' };
 			render(<GeneralTab theme={mockTheme} isOpen={true} />);
 			await act(async () => {
@@ -963,7 +981,7 @@ describe('GeneralTab', () => {
 			expect(mockSetShowToolCalls).toHaveBeenCalledTimes(1);
 		});
 
-		it('toggles once when the row is activated by keyboard (thinking on)', async () => {
+		it('toggles once when the row is activated by keyboard', async () => {
 			mockUseSettingsOverrides = { showToolCalls: true, defaultShowThinking: 'on' };
 			render(<GeneralTab theme={mockTheme} isOpen={true} />);
 			await act(async () => {
@@ -978,23 +996,39 @@ describe('GeneralTab', () => {
 			expect(mockSetShowToolCalls).toHaveBeenCalledTimes(1);
 		});
 
-		it('ghosts out the tool-calls toggle when thinking is off', async () => {
-			// Default mock has defaultShowThinking: 'off'. Tool cells follow the
-			// thinking setting, so the switch is disabled and neither the switch nor
-			// the row can toggle it.
+		it('stays usable when the default thinking mode is off', async () => {
+			// The two settings are independent: tool-call visibility must be
+			// controllable whatever the thinking mode is, so the switch is never
+			// ghosted and both the switch and the row still toggle it.
 			mockUseSettingsOverrides = { showToolCalls: true, defaultShowThinking: 'off' };
 			render(<GeneralTab theme={mockTheme} isOpen={true} />);
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(100);
 			});
 			const toggle = screen.getByRole('switch', { name: 'Show tool calls in responses' });
-			expect(toggle).toBeDisabled();
+			expect(toggle).not.toBeDisabled();
+			expect(toggle).toBeChecked();
 			fireEvent.click(toggle);
+			expect(mockSetShowToolCalls).toHaveBeenCalledWith(false);
+
+			mockSetShowToolCalls.mockClear();
 			const section = screen
 				.getByText('Show tool calls in responses')
 				.closest('[data-setting-id="general-tool-calls"]') as HTMLElement;
 			fireEvent.keyDown(within(section).getByRole('button'), { key: 'Enter' });
-			expect(mockSetShowToolCalls).not.toHaveBeenCalled();
+			expect(mockSetShowToolCalls).toHaveBeenCalledTimes(1);
+		});
+
+		it('reflects the off state independently of the thinking mode', async () => {
+			mockUseSettingsOverrides = { showToolCalls: false, defaultShowThinking: 'sticky' };
+			render(<GeneralTab theme={mockTheme} isOpen={true} />);
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(100);
+			});
+			const toggle = screen.getByRole('switch', { name: 'Show tool calls in responses' });
+			expect(toggle).not.toBeChecked();
+			fireEvent.click(toggle);
+			expect(mockSetShowToolCalls).toHaveBeenCalledWith(true);
 		});
 	});
 
@@ -1118,6 +1152,66 @@ describe('GeneralTab', () => {
 			expect(
 				screen.queryByText(/limited support on some Linux desktop environments/)
 			).not.toBeInTheDocument();
+		});
+
+		it('should disable the display toggle while sleep prevention is off', async () => {
+			render(<GeneralTab theme={mockTheme} isOpen={true} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(100);
+			});
+
+			const toggle = screen.getByRole('switch', { name: 'Keep the display awake' });
+			expect(toggle).toBeDisabled();
+
+			fireEvent.click(screen.getByText('Keep the display awake').closest('[role="button"]')!);
+			expect(mockSetPreventDisplaySleepEnabled).not.toHaveBeenCalled();
+		});
+
+		it('should toggle keep display awake when sleep prevention is on', async () => {
+			mockUseSettingsOverrides = { preventSleepEnabled: true };
+			render(<GeneralTab theme={mockTheme} isOpen={true} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(100);
+			});
+
+			fireEvent.click(screen.getByRole('switch', { name: 'Keep the display awake' }));
+			expect(mockSetPreventDisplaySleepEnabled).toHaveBeenCalledWith(true);
+		});
+
+		it('should warn about paused macOS maintenance when the option is on', async () => {
+			const { isMacOSPlatform } = await import('../../../../../renderer/utils/platformUtils');
+			vi.mocked(isMacOSPlatform).mockReturnValue(true);
+			mockUseSettingsOverrides = {
+				preventSleepEnabled: true,
+				preventDisplaySleepEnabled: true,
+			};
+
+			render(<GeneralTab theme={mockTheme} isOpen={true} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(100);
+			});
+
+			expect(screen.getByText(/housekeeping stays parked/)).toBeInTheDocument();
+
+			vi.mocked(isMacOSPlatform).mockReturnValue(false);
+		});
+
+		it('should not warn about macOS maintenance on other platforms', async () => {
+			mockUseSettingsOverrides = {
+				preventSleepEnabled: true,
+				preventDisplaySleepEnabled: true,
+			};
+
+			render(<GeneralTab theme={mockTheme} isOpen={true} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(100);
+			});
+
+			expect(screen.queryByText(/housekeeping stays parked/)).not.toBeInTheDocument();
 		});
 	});
 

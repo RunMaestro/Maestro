@@ -22,6 +22,30 @@ export interface QueryEvent {
 	isRemote?: boolean;
 	/** Whether this query came from a worktree session (child of a parent agent) */
 	isWorktree?: boolean;
+	/**
+	 * Web Login account that sent the turn (username). Absent for turns typed at
+	 * the desktop, which is every turn when Web Login is off.
+	 */
+	userName?: string;
+	/**
+	 * Per-turn token and cost usage, when the provider reported any.
+	 *
+	 * These are DELTAS for the single turn this row represents, not the running
+	 * session totals - `Session.usageStats` accumulates for the life of the
+	 * agent, so writing that value here would multiply-count every turn. The
+	 * renderer drains a per-turn ledger (`turnUsageLedger`) at exit and passes
+	 * the difference.
+	 *
+	 * All of them are absent for rows recorded before the columns existed, and
+	 * for providers that report no usage at all - which is why the aggregation
+	 * counts priced queries separately rather than assuming zero means free.
+	 */
+	inputTokens?: number;
+	outputTokens?: number;
+	cacheReadTokens?: number;
+	cacheCreationTokens?: number;
+	/** Cost in USD for this turn, when the provider reports one. */
+	costUsd?: number;
 }
 
 /**
@@ -111,6 +135,20 @@ export interface StatsAggregation {
 	bySessionByDay: Record<string, Array<{ date: string; count: number; duration: number }>>;
 	/** User vs auto query counts per Maestro session (for per-card auto% on the dashboard) */
 	bySessionSource: Record<string, { user: number; auto: number }>;
+	/**
+	 * Epoch ms of the most recent query per Maestro session, scoped to the
+	 * selected range. Day-bucketed `bySessionByDay` can only order agents to the
+	 * nearest calendar day, so the "Recent" sort reads this instead.
+	 */
+	bySessionLastQuery: Record<string, number>;
+	/**
+	 * Token and cost totals per Maestro session, for agent and group cost
+	 * rollups. `pricedQueries` is how many of that session's rows actually
+	 * carried usage data: rows written before the token columns landed report
+	 * none, so a session can show a large query count against a small priced
+	 * count, and the UI must not present the total as if it covered every turn.
+	 */
+	bySessionTokens: Record<string, SessionTokenTotals>;
 	/** Count of queries originating from worktree (child) agents */
 	worktreeQueries: number;
 	/** Count of queries originating from parent (non-worktree) agents */
@@ -122,6 +160,19 @@ export interface StatsAggregation {
 	};
 	/** Number of image annotations saved in the time range */
 	imageAnnotations: number;
+}
+
+/**
+ * Token and cost totals for one Maestro session within a time range.
+ */
+export interface SessionTokenTotals {
+	inputTokens: number;
+	outputTokens: number;
+	cacheReadTokens: number;
+	cacheCreationTokens: number;
+	costUsd: number;
+	/** Number of queries in the range that reported any token usage. */
+	pricedQueries: number;
 }
 
 /**
@@ -157,6 +208,87 @@ export interface MultiWindowUsage {
 }
 
 /**
+ * An Agent Resilience outage, recorded once when it RESOLVES (never while
+ * counting down). One row per outage, not per retry attempt - the question the
+ * dashboard answers is "how often did Maestro carry my work across a wall",
+ * and an outage that took 3 retries is still one carried outage.
+ */
+export interface ResilienceEvent {
+	id: string;
+	/** Maestro agent (Session.id) the outage happened on. */
+	sessionId: string;
+	/** Provider id ('claude-code', 'codex', ...). */
+	agentType: string;
+	/** What we were waiting out. */
+	strategy: 'availability' | 'token-exhaustion';
+	/** 'recovered' = the auto-resend went through; 'stopped' = the user gave up or moved on. */
+	outcome: 'recovered' | 'stopped';
+	/** Epoch ms of the first failure. */
+	startedAt: number;
+	/** Epoch ms the outage resolved. */
+	resolvedAt: number;
+	/** Auto-retries dispatched during the outage. */
+	retries: number;
+}
+
+/**
+ * One conversation with the Auto Run wizard, from the moment it opens to the
+ * moment it closes.
+ *
+ * Unlike `resilience_events` (recorded once, at resolution), a wizard run is
+ * UPSERTED at every milestone - opened, each exchange, documents written,
+ * closed - because the payoff milestone (documents generated) and the close
+ * are separated by however long the user spends reading the result. Recording
+ * only at close would lose an entire run's output to a quit, so a run that is
+ * never closed still leaves an accurate row with `outcome: 'in-progress'`.
+ *
+ * `endedAt` is therefore "last activity", not "closed": `endedAt - startedAt`
+ * is always the time actually spent talking to the wizard.
+ */
+export interface WizardRun {
+	id: string;
+	/** Maestro agent (Session.id) the wizard ran on. `'onboarding'` for the first-run wizard. */
+	sessionId: string;
+	/** Provider id ('claude-code', 'codex', ...). */
+	agentType: string;
+	/** Which wizard: the inline `/wizard` command or the first-run onboarding wizard. */
+	surface: 'inline' | 'onboarding';
+	/** 'new' = writing fresh Auto Run docs; 'iterate' = revising existing ones. */
+	mode: 'new' | 'iterate';
+	/** 'generated' = documents were written; 'abandoned' = closed with nothing; 'in-progress' = never closed. */
+	outcome: 'in-progress' | 'generated' | 'abandoned';
+	/** Epoch ms the wizard opened. */
+	startedAt: number;
+	/** Epoch ms of the last recorded activity in the run. */
+	endedAt: number;
+	/** User messages sent to the wizard during the conversation. */
+	exchanges: number;
+	/** Auto Run documents the run produced. */
+	documents: number;
+	/** Task checkboxes across those documents. */
+	tasks: number;
+	/** Working directory the run targeted, when known. */
+	projectPath?: string;
+}
+
+/**
+ * File format for a Usage Dashboard export. `json` is one file holding every
+ * table plus the dashboard aggregation; `csv` is a zip with one CSV per table.
+ */
+export type UsageExportFormat = 'json' | 'csv';
+
+/** What a finished Usage Dashboard export reports back to the renderer. */
+export interface UsageExportResult {
+	/** Absolute path the export was written to. */
+	path: string;
+	format: UsageExportFormat;
+	/** Rows written per table, keyed by table name. */
+	rowCounts: Record<string, number>;
+	/** Plain-language notes on data the export could not include in full. */
+	notes: string[];
+}
+
+/**
  * Database schema version for migrations
  */
-export const STATS_DB_VERSION = 8;
+export const STATS_DB_VERSION = 12;

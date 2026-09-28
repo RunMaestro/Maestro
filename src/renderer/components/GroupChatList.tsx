@@ -6,6 +6,7 @@
 
 import { memo, useState, useRef, useMemo, useCallback } from 'react';
 import { useEventListener } from '../hooks/utils/useEventListener';
+import { useUIStore } from '../stores/uiStore';
 import {
 	MessageSquare,
 	ChevronDown,
@@ -20,7 +21,10 @@ import {
 } from 'lucide-react';
 import type { Theme, GroupChat, GroupChatState } from '../types';
 import { useClickOutside, useContextMenuPosition } from '../hooks';
+import { useOptionalLabelFits } from '../hooks/ui/useOptionalLabelFits';
 import { getStatusColor } from '../utils/theme';
+import { isGroupChatBusy, type GroupChatBusySnapshot } from '../utils/groupChatStatus';
+import { CornerDot } from './ui/CornerDot';
 
 // ============================================================================
 // GroupChatContextMenu - Right-click context menu for group chat items
@@ -64,7 +68,7 @@ function GroupChatContextMenu({
 	);
 
 	// Measure menu and adjust position to stay within viewport
-	const { left, top, ready } = useContextMenuPosition(menuRef, x, y);
+	const { left, top, maxHeight, ready } = useContextMenuPosition(menuRef, x, y);
 
 	return (
 		<div
@@ -73,6 +77,11 @@ function GroupChatContextMenu({
 			style={{
 				left,
 				top,
+				// A menu taller than the viewport pins to the top edge and runs off
+				// the bottom; the container is overflow-hidden, so those items are
+				// simply unreachable. Scroll instead of clipping.
+				maxHeight,
+				overflowY: 'auto',
 				opacity: ready ? 1 : 0,
 				backgroundColor: theme.colors.bgSidebar,
 				borderColor: theme.colors.border,
@@ -168,6 +177,8 @@ interface GroupChatListProps {
 	allGroupChatParticipantStates?: Map<string, Map<string, 'idle' | 'working'>>;
 	/** When true, only show group chats that are busy (moderator/participant working) or the active chat */
 	showUnreadAgentsOnly?: boolean;
+	/** Ids of rooms that produced output the user hasn't seen. */
+	unreadGroupChatIds?: Set<string>;
 }
 
 function GroupChatListInner({
@@ -191,6 +202,7 @@ function GroupChatListInner({
 	groupChatStates,
 	allGroupChatParticipantStates,
 	showUnreadAgentsOnly = false,
+	unreadGroupChatIds,
 }: GroupChatListProps): JSX.Element | null {
 	// Support both controlled and uncontrolled modes
 	// If isExpanded prop is provided, use it as controlled state
@@ -198,7 +210,17 @@ function GroupChatListInner({
 	const [internalIsExpanded, setInternalIsExpanded] = useState(groupChats.length > 0);
 	const isExpanded = controlledIsExpanded !== undefined ? controlledIsExpanded : internalIsExpanded;
 
-	const [showArchived, setShowArchived] = useState(false);
+	// "GROUP CHA..." is worse than nothing: it eats the same row space and says
+	// less than the icon next to it. Measured rather than a container query
+	// because the font size is a user setting and the controls to the right are
+	// conditional, so no fixed pixel threshold is right for every combination.
+	const headerRowRef = useRef<HTMLDivElement>(null);
+	const headerLabelFits = useOptionalLabelFits(headerRowRef);
+
+	// Shared, not local: whether archived chats are drawn decides which rows the
+	// list contains, and the Cmd+[ / Cmd+] cycle has to walk exactly that set.
+	const showArchived = useUIStore((s) => s.showArchivedGroupChats);
+	const setShowArchived = useUIStore((s) => s.setShowArchivedGroupChats);
 
 	const setIsExpanded = useCallback(
 		(expanded: boolean) => {
@@ -225,31 +247,51 @@ function GroupChatListInner({
 	const archivedCount = useMemo(() => groupChats.filter((c) => c.archived).length, [groupChats]);
 	const activeCount = groupChats.length - archivedCount;
 
-	// Determine which chats are busy (moderator thinking or any participant working).
-	// Mirrors the per-chat status logic in the render below so the unread filter
-	// matches what the user sees as a non-green status dot.
-	const isChatBusy = useCallback(
-		(chatId: string): boolean => {
-			const isActive = activeGroupChatId === chatId;
-			const chatState = isActive ? groupChatState : groupChatStates?.get(chatId) || 'idle';
-			if (chatState !== 'idle') return true;
-			const chatParticipantStates = isActive
-				? participantStates
-				: allGroupChatParticipantStates?.get(chatId);
-			if (!chatParticipantStates) return false;
-			for (const s of chatParticipantStates.values()) {
-				if (s === 'working') return true;
-			}
-			return false;
-		},
+	// Determine which chats are busy (moderator thinking or any participant
+	// working). Shared with the Left Bar wand and the agent jumper's LIVE bucket
+	// so a running chat can never light up in one place and not the others.
+	const busySnapshot = useMemo(
+		(): GroupChatBusySnapshot => ({
+			activeGroupChatId,
+			groupChatState,
+			participantStates,
+			groupChatStates,
+			allGroupChatParticipantStates,
+		}),
 		[
 			activeGroupChatId,
 			groupChatState,
-			groupChatStates,
 			participantStates,
+			groupChatStates,
 			allGroupChatParticipantStates,
 		]
 	);
+	const isChatBusy = useCallback(
+		(chatId: string): boolean => isGroupChatBusy(chatId, busySnapshot),
+		[busySnapshot]
+	);
+
+	const isChatUnread = useCallback(
+		(chatId: string): boolean => unreadGroupChatIds?.has(chatId) ?? false,
+		[unreadGroupChatIds]
+	);
+
+	// Collapsed-header summary of the rooms the count badge stands for. Archived
+	// rooms are excluded because the badge counts active ones, and a dot over a
+	// number should describe that number. Both flags are computed over the live
+	// chat list, so a busy/unread entry left behind by a deleted room can't
+	// strand the indicator on.
+	const { anyBusy: anyChatBusy, anyUnread: anyChatUnread } = useMemo(() => {
+		let busy = false;
+		let unread = false;
+		for (const chat of groupChats) {
+			if (chat.archived) continue;
+			busy ||= isChatBusy(chat.id);
+			unread ||= isChatUnread(chat.id);
+			if (busy && unread) break;
+		}
+		return { anyBusy: busy, anyUnread: unread };
+	}, [groupChats, isChatBusy, isChatUnread]);
 
 	// Filter and sort group chats: show active chats, plus archived if toggled.
 	// When the unread-agents filter is on, also drop idle chats (keeping the
@@ -260,7 +302,7 @@ function GroupChatListInner({
 			.filter((c) => {
 				if (!showUnreadAgentsOnly) return true;
 				if (c.id === activeGroupChatId) return true;
-				return isChatBusy(c.id);
+				return isChatBusy(c.id) || isChatUnread(c.id);
 			})
 			.sort((a, b) => {
 				// When showing archived, group active chats first
@@ -278,6 +320,7 @@ function GroupChatListInner({
 		showUnreadAgentsOnly,
 		activeGroupChatId,
 		isChatBusy,
+		isChatUnread,
 		sortAlphabetical,
 	]);
 
@@ -307,7 +350,11 @@ function GroupChatListInner({
 			    Contract is pinned by GroupChatList.test.tsx and
 			    groupChatHeaderResponsive.regression.test.ts. */}
 			<div
-				className="gc-header-container px-3 py-2 flex items-center justify-between cursor-pointer hover:bg-white/5 group"
+				ref={headerRowRef}
+				// overflow-hidden is what makes the fit measurable: with nothing in
+				// the row allowed to shrink, scrollWidth is the width the row wants
+				// and clientWidth is what it has.
+				className="gc-header-container px-3 py-2 flex items-center justify-between overflow-hidden cursor-pointer hover:bg-white/5 group"
 				onClick={() => setIsExpanded(!isExpanded)}
 			>
 				<div
@@ -320,16 +367,36 @@ function GroupChatListInner({
 						<ChevronRight className="w-3 h-3 shrink-0" />
 					)}
 					<MessageSquare className="w-3.5 h-3.5 shrink-0" />
-					<span className="truncate">Group Chats</span>
+					{/* shrink-0, so it either renders whole or not at all - the hook
+					    reads the resulting overflow to decide which. */}
+					{headerLabelFits && <span className="shrink-0">Group Chats</span>}
 					{activeCount > 0 && (
 						<span
-							className="gc-count-badge text-[10px] px-1.5 py-0.5 rounded-full font-medium shrink-0"
+							className="gc-count-badge relative text-2xs px-1.5 py-0.5 rounded-full font-medium shrink-0"
 							style={{
 								backgroundColor: theme.colors.border,
 								color: theme.colors.textDim,
 							}}
 						>
 							{activeCount}
+							{/* Collapsed only: expanded, the rows below say which room it is,
+							    and the header dot would just be a worse copy of them.
+
+							    Busy outranks unread rather than showing both, because there
+							    is one corner and a running room resolves itself: the moment
+							    it goes idle its output is unread, so the pulse hands off to
+							    the red dot instead of hiding it. */}
+							{!isExpanded && (anyChatBusy || anyChatUnread) && (
+								<CornerDot
+									color={anyChatBusy ? getStatusColor('busy', theme) : theme.colors.error}
+									pulse={anyChatBusy}
+									size="md"
+									// The badge is a filled pill, so the dot needs a ring in the
+									// sidebar's own color to read as a separate mark on top of it.
+									ringColor={theme.colors.bgSidebar}
+									title={anyChatBusy ? 'A group chat is working' : 'Unread group chat messages'}
+								/>
+							)}
 						</span>
 					)}
 				</div>
@@ -340,7 +407,7 @@ function GroupChatListInner({
 								e.stopPropagation();
 								onSortAlphabeticalChange(!sortAlphabetical);
 							}}
-							className="px-2 py-0.5 rounded-full text-[10px] font-medium hover:opacity-80 transition-opacity flex items-center gap-1"
+							className="px-2 py-0.5 rounded-full text-2xs font-medium hover:opacity-80 transition-opacity flex items-center gap-1"
 							style={{
 								backgroundColor: 'transparent',
 								color: theme.colors.textDim,
@@ -365,7 +432,7 @@ function GroupChatListInner({
 								e.stopPropagation();
 								setShowArchived(!showArchived);
 							}}
-							className="px-2 py-0.5 rounded-full text-[10px] font-medium hover:opacity-80 transition-opacity flex items-center gap-1"
+							className="px-2 py-0.5 rounded-full text-2xs font-medium hover:opacity-80 transition-opacity flex items-center gap-1"
 							style={{
 								backgroundColor: showArchived ? `${theme.colors.textDim}20` : 'transparent',
 								color: theme.colors.textDim,
@@ -388,7 +455,7 @@ function GroupChatListInner({
 							setIsExpanded(true);
 							onNewGroupChat();
 						}}
-						className="px-2 py-0.5 rounded-full text-[10px] font-medium hover:opacity-80 transition-opacity flex items-center gap-1"
+						className="px-2 py-0.5 rounded-full text-2xs font-medium hover:opacity-80 transition-opacity flex items-center gap-1"
 						style={{
 							backgroundColor: theme.colors.accent + '20',
 							color: theme.colors.accent,
@@ -417,21 +484,9 @@ function GroupChatListInner({
 							{sortedGroupChats.map((chat) => {
 								const isActive = activeGroupChatId === chat.id;
 								const isKeyboardSelected = keyboardSelectedChatId === chat.id;
-								// Determine status for this group chat
-								// For active chat, use the direct state props; for inactive chats, use the per-chat maps
-								const chatState = isActive
-									? groupChatState
-									: groupChatStates?.get(chat.id) || 'idle';
-								const isBusy = chatState !== 'idle';
-								// Check if any participant is working
-								const chatParticipantStates = isActive
-									? participantStates
-									: allGroupChatParticipantStates?.get(chat.id);
-								const hasWorkingParticipant =
-									chatParticipantStates &&
-									Array.from(chatParticipantStates.values()).some((s) => s === 'working');
-								// Show busy indicator if moderator is thinking OR any participant is working
-								const showBusy = isBusy || hasWorkingParticipant;
+								// Busy = moderator thinking OR any participant working, resolved
+								// from the active-chat props or the per-chat maps as appropriate.
+								const showBusy = isChatBusy(chat.id);
 								// Map to session state for getStatusColor compatibility
 								const effectiveState = showBusy ? 'busy' : 'idle';
 								const statusColor = getStatusColor(effectiveState, theme);
@@ -475,7 +530,7 @@ function GroupChatListInner({
 										</span>
 										{chat.participants.length > 0 && (
 											<span
-												className="text-[10px] px-1.5 py-0.5 rounded-full"
+												className="text-2xs px-1.5 py-0.5 rounded-full"
 												style={{
 													backgroundColor: theme.colors.border,
 													color: theme.colors.textDim,
@@ -485,12 +540,23 @@ function GroupChatListInner({
 												{chat.participants.length}
 											</span>
 										)}
-										{/* Status indicator circle - on right side to align with session indicators */}
-										<div
-											className={`w-2 h-2 rounded-full shrink-0 ${showBusy ? 'animate-pulse' : ''}`}
-											style={{ backgroundColor: statusColor }}
-											title={showBusy ? 'Thinking...' : 'Idle'}
-										/>
+										{/* Status indicator circle - on right side to align with session
+										    indicators. Carries the unread pip so expanding the section
+										    answers the question the header dot only raises. */}
+										<div className="relative shrink-0">
+											<div
+												className={`w-2 h-2 rounded-full ${showBusy ? 'animate-pulse' : ''}`}
+												style={{ backgroundColor: statusColor }}
+												title={showBusy ? 'Thinking...' : 'Idle'}
+											/>
+											{isChatUnread(chat.id) && (
+												<CornerDot
+													color={theme.colors.error}
+													ringColor={theme.colors.bgSidebar}
+													title="Unread messages"
+												/>
+											)}
+										</div>
 									</div>
 								);
 							})}

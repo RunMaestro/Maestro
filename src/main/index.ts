@@ -1,7 +1,6 @@
 import {
 	app,
 	BrowserWindow,
-	Menu,
 	powerMonitor,
 	protocol,
 	safeStorage,
@@ -11,6 +10,7 @@ import {
 	type IpcMainInvokeEvent,
 } from 'electron';
 import { isMacOS } from '../shared/platformDetection';
+import { installApplicationMenu } from './app-menu';
 import path from 'path';
 import os from 'os';
 import crypto from 'crypto';
@@ -25,6 +25,7 @@ import { WebServer } from './web-server';
 import { AgentDetector } from './agents';
 import { createAgentConfigLookup } from './agents/agent-config-lookup';
 import { shouldDropSentryEvent } from '../shared/sentryFilters';
+import { getBuildProvenance } from './utils/build-provenance';
 import {
 	initGlobalHotkey,
 	setGlobalShowHotkey,
@@ -95,16 +96,22 @@ import {
 	type OpenedConsentWindow,
 } from './plugins/consent-window';
 import { configureCueTelemetry } from './cue/cue-telemetry';
-import { executeCuePrompt, recordCueHistoryEntry, stopCueRun } from './cue/cue-executor';
+import { executeCuePrompt, stopCueRun } from './cue/cue-executor';
 import { executeCueShell, stopCueShellRun } from './cue/cue-shell-executor';
 import { executeCueCli, stopCueCliRun } from './cue/cue-cli-executor';
 import { executeCueNotify } from './cue/cue-notify-executor';
+import { reportCueAuthFailure } from './cue/cue-auth-detector';
+import { setSusFactorNotifier } from './cue/cue-susfactor';
+import { emitCueNotifyToast } from './cue/cue-notify-bridge';
 import { getAgentDisplayName } from '../shared/agentMetadata';
 import { logger } from './utils/logger';
 import { tunnelManager } from './tunnel-manager';
 import { powerManager } from './power-manager';
 import { getHistoryManager } from './history-manager';
 import { initDispatchCallbacks } from './dispatch-callbacks';
+import { MAX_ENTRIES_PER_SESSION } from '../shared/history';
+import { DEFAULT_CUE_HISTORY_RETENTION_DAYS } from '../shared/cue/retention';
+import { resolveEncoreFeatures } from '../shared/encoreFeatureDefaults';
 import {
 	initializeStores,
 	getEarlySettings,
@@ -118,6 +125,7 @@ import {
 	getAgentSessionOriginsStore,
 } from './stores';
 import { runSettingsMigrations } from './stores/migrations';
+import { migrateClaudeSessionNamesFromHistory } from './stores/migrations/claude-session-names-backfill';
 import {
 	ensureCliServer,
 	startCliDiscoveryWatchdog,
@@ -132,11 +140,17 @@ import { createSshRemoteStoreAdapter } from './utils/ssh-remote-resolver';
 import { stopSessionCleanup } from './group-chat/group-chat-moderator';
 import { initializePrompts, getPrompt, savePrompt } from './prompt-manager';
 import { captureException } from './utils/sentry';
-import { resolveToFilePath, configureImageStore } from './storage/session-image-store';
+import {
+	resolveToFilePath,
+	configureImageStore,
+	parseThumbnailRequest,
+} from './storage/session-image-store';
+import { getOrCreateThumbnail } from './storage/session-image-thumbnails';
 import { CONCERTO_HTML_SCHEME } from '../shared/concerto-html';
 import { createConcertoHtmlResponse } from './concerto-html';
 import { MEDIA_SCHEME } from '../shared/mediaTypes';
 import { handleMediaStreamRequest } from './media/media-stream';
+import { closeAllParquetFiles } from './parquet/parquet-file';
 import { DEMO_MODE, DEMO_DATA_PATH } from './constants';
 // initAutoUpdater is now used by window-manager.ts (Phase 4 refactoring)
 import { checkWslEnvironment } from './utils/wslDetector';
@@ -147,6 +161,7 @@ import { wireProcessListeners } from './process-listeners-wiring';
 import { createSafeSend, isWebContentsAvailable } from './utils/safe-send';
 import { capabilitySnapshots, createSnapshotBroadcaster } from './agents/capability-snapshot';
 import { createWebServerFactory } from './web-server/web-server-factory';
+import type { DebugPackageDependencies } from './debug-package';
 // Phase 4 refactoring - app lifecycle
 import {
 	setupGlobalErrorHandlers,
@@ -167,7 +182,11 @@ import { setupAgentRunCapture } from './agent-run/setup-capture-listener';
 import { setAgentRunSink } from './agent-run/broadcast';
 import { startAgentRunStoreWatcher } from './agent-run/store-watcher';
 import { setupAgentRunRecovery } from './agent-run/setup-recovery';
+import { createTimeZoneWatcher } from './utils/timezone-watcher';
+import { noteSystemSuspend, noteSystemResume } from './utils/sleep-tracker';
+import { clearGhCache } from './utils/cliDetection';
 import { WakaTimeManager } from './wakatime-manager';
+import { setWakaTimeManager } from './wakatime-instance';
 import { MaestroCliManager } from './maestro-cli-manager';
 import {
 	createInteractiveReplayController,
@@ -175,6 +194,7 @@ import {
 } from './agents/claude-interactive-replay';
 import { sampleUsage as sampleClaudeUsage } from './agents/claude-usage-sampler';
 import { setSnapshot as setClaudeUsageSnapshot } from './stores/claudeUsageStore';
+import { rememberQuotaAccounts } from './stores/quotaAccountsStore';
 import { getMaestroPBinPath, runStartupUsageSampling } from './agents/claude-usage-startup';
 import { UsageRefreshScheduler } from './agents/usage-refresh-scheduler';
 import type { ProcessConfig as ProcessSpawnConfig } from './process-manager/types';
@@ -293,6 +313,13 @@ if (disableGpuAcceleration) {
 // This creates a unique identifier per Maestro installation for telemetry differentiation
 const store = getSettingsStore();
 let installationId = store.get('installationId');
+// An installationId already on disk means this settings store existed before
+// this boot, i.e. the app has launched before. Record that once, permanently -
+// it is how the renderer tells a returning user who deleted every agent from a
+// genuinely new install (sessions.length alone reads both as "new").
+if (installationId && !store.get('hasPriorInstallation')) {
+	store.set('hasPriorInstallation', true);
+}
 if (!installationId) {
 	installationId = crypto.randomUUID();
 	store.set('installationId', installationId);
@@ -305,7 +332,10 @@ if (!installationId) {
 runSettingsMigrations(store);
 
 // Initialize WakaTime heartbeat manager
-const wakatimeManager = new WakaTimeManager(store);
+const wakatimeManager = new WakaTimeManager(store, app.getVersion());
+// Publish it so Cue (which spawns agents outside the ProcessManager) shares
+// this instance's debounce and CLI-install state instead of making its own.
+setWakaTimeManager(wakatimeManager);
 const maestroCliManager = new MaestroCliManager();
 
 // Auto-install WakaTime CLI on startup if enabled
@@ -324,11 +354,25 @@ store.onDidChange('wakatimeEnabled', (newValue) => {
 // Only enable in production - skip during development to avoid noise from hot-reload artifacts
 // The dynamic import is necessary because @sentry/electron accesses electron.app at module load time
 // which fails if the module is imported before app.whenReady() in some Node/Electron version combinations
-if (crashReportingEnabled && !isDevelopment) {
+//
+// The DSN is NOT in source. It comes from dist/build-provenance.json, injected at
+// package time from a CI secret, so a build from source has no DSN and this block is
+// skipped entirely: the build reports nowhere. That is what keeps fork builds out of
+// our Sentry project, and equally keeps fork users' telemetry out of it. Full
+// rationale in src/shared/buildProvenance.ts.
+const buildProvenance = getBuildProvenance();
+if (crashReportingEnabled && !isDevelopment && !buildProvenance.sentryDsn) {
+	logger.info(
+		'Crash reporting is off: this build carries no Sentry DSN. Set MAESTRO_SENTRY_DSN to report to your own Sentry project.',
+		'Startup'
+	);
+}
+if (crashReportingEnabled && !isDevelopment && buildProvenance.sentryDsn) {
+	const sentryDsn = buildProvenance.sentryDsn;
 	import('@sentry/electron/main')
 		.then(({ init, setTag, IPCMode }) => {
 			init({
-				dsn: 'https://2303c5f787f910863d83ed5d27ce8ed2@o4510554134740992.ingest.us.sentry.io/4510554135789568',
+				dsn: sentryDsn,
 				// Set release version for better debugging
 				release: app.getVersion(),
 				// Use Classic IPC mode to avoid "sentry-ipc:// URL scheme not supported" errors
@@ -364,6 +408,10 @@ if (crashReportingEnabled && !isDevelopment) {
 			// RC builds use -RC suffix (e.g., 0.16.1-RC), stable builds use plain semver
 			const version = app.getVersion();
 			setTag('channel', version.includes('-RC') ? 'rc' : 'stable');
+			// Distinguish our own release builds from a fork that supplied its own DSN.
+			// Only official builds should ever reach the smash-labs/maestro project, so an
+			// `unofficial` event there means the provenance gate has a hole in it.
+			setTag('build', buildProvenance.official ? 'official' : 'unofficial');
 
 			// Start memory monitoring for crash diagnostics (MAESTRO-5A/4Y)
 			// Records breadcrumbs with memory state every minute, warns above 1GB heap
@@ -434,6 +482,26 @@ const cliWatcher = createCliWatcher({
 	getUserDataPath: () => app.getPath('userData'),
 });
 
+// Watch for the laptop crossing timezones. Chromium refreshes its renderers on
+// an OS timezone change but leaves the main process's V8 date cache stale, so
+// without this every local-time Cue schedule would keep firing on the old wall
+// clock until the app restarted.
+const timeZoneWatcher = createTimeZoneWatcher({
+	onChange: ({ previousZone, zone }) => {
+		if (!cueEngine?.isEnabled()) return;
+		try {
+			cueEngine.handleTimeZoneChange(previousZone, zone);
+		} catch (err) {
+			logger.error(`Cue handleTimeZoneChange failed: ${err}`, 'TimeZone');
+			void captureException(err, { operation: 'cue.handleTimeZoneChange' });
+		}
+	},
+	onLog: (level, message) => {
+		if (level === 'warn') logger.warn(message, 'TimeZone');
+		else logger.info(message, 'TimeZone');
+	},
+});
+
 // Create settings file watcher for external changes (e.g., from maestro-cli)
 const settingsWatcher = createSettingsWatcher({
 	// Broadcast to EVERY open window so a settings change (from maestro-cli or
@@ -441,6 +509,25 @@ const settingsWatcher = createSettingsWatcher({
 	getBroadcastWindows: () => BrowserWindow.getAllWindows(),
 	getSettingsPath: () => syncPath,
 	getAgentConfigsPath: () => productionDataPath,
+	onSettingsChangedExternally: () => {
+		// Re-apply settings the MAIN process acts on. Without this, a CLI write
+		// updates the file and the renderer while the main process keeps running
+		// on the value it read at startup - for sleep prevention that means the
+		// OS power assertion stays held after the user has turned the feature off.
+		const enabled = store.get('preventSleepEnabled') === true;
+		if (enabled !== powerManager.isEnabled()) {
+			powerManager.setEnabled(enabled);
+		}
+		const keepDisplayAwake = store.get('preventDisplaySleepEnabled') === true;
+		if (keepDisplayAwake !== powerManager.isKeepingDisplayAwake()) {
+			powerManager.setKeepDisplayAwake(keepDisplayAwake);
+		}
+		// A CLI or hand write can repoint ghPath without going through
+		// settings:set, which is where the cache is otherwise invalidated. The
+		// clear is unconditional because the previous value is not available
+		// here, and the only cost of an unnecessary one is a single `which`.
+		clearGhCache();
+	},
 });
 
 // Fallback must match DEFAULT_START_PORT in scripts/dev-port.mjs. Never 5173
@@ -529,12 +616,31 @@ store.onDidChange('encoreFeatures', (encoreFeatures) => {
 	pluginHostViews.sync();
 });
 
+// Collectors for a support (debug) package. One object shared by the debug and
+// feedback IPC handlers and the CLI bridge, so every path builds the same zip.
+// Getters resolve the live instances at package time, not whatever existed here.
+const debugPackageDeps: DebugPackageDependencies = {
+	getAgentDetector: () => agentDetector,
+	getProcessManager: () => processManager,
+	getWebServer: () => webServer,
+	settingsStore: store,
+	sessionsStore,
+	groupsStore,
+	bootstrapStore,
+};
+
 // Create web server factory with dependency injection (Phase 2 refactoring)
 const createWebServer = createWebServerFactory({
 	settingsStore: store,
 	sessionsStore,
 	groupsStore,
+	getDebugPackageDeps: () => debugPackageDeps,
 	getMainWindow: () => mainWindow,
+	getWindowForSession: (sessionId: string) => {
+		const ownerId = windowRegistry.getWindowForSession(sessionId);
+		const owner = ownerId ? windowRegistry.get(ownerId) : windowRegistry.getPrimary();
+		return owner?.browserWindow ?? mainWindow;
+	},
 	deliverCadenza,
 	getProcessManager: () => processManager,
 	triggerCueSubscription: (subscriptionName, prompt, sourceAgentId) => {
@@ -678,17 +784,39 @@ app
 		// or the IPC payload. Registered in dev AND prod. Traversal is guarded by
 		// resolveToFilePath (only lowercase-hex sha256 + known image ext resolve).
 		protocol.handle(IMAGE_SCHEME, async (request) => {
-			const filePath = resolveToFilePath(request.url);
-			if (!filePath) return new Response('bad request', { status: 400 });
+			const sourcePath = resolveToFilePath(request.url);
+			if (!sourcePath) return new Response('bad request', { status: 400 });
+			// A `?tw=&th=` query asks for a downscaled rendition (the transcript's
+			// 200x80 chip). Bare refs - lightbox, clipboard, export - always get the
+			// original bytes. A null result means "no smaller version applies", so
+			// we fall back to the source rather than failing the request.
+			let filePath = sourcePath;
+			const thumb = parseThumbnailRequest(request.url);
+			if (thumb) {
+				try {
+					filePath =
+						(await getOrCreateThumbnail(sourcePath, thumb.maxWidth, thumb.maxHeight)) ?? sourcePath;
+				} catch (err) {
+					logger.warn(
+						`Session image thumbnail failed, serving original: ${(err as Error).message}`,
+						'SessionImages',
+						err
+					);
+				}
+			}
 			try {
 				const data = await readFile(filePath);
+				// Thumbnails are always re-encoded as PNG, so the content type comes
+				// from whatever we actually read, not from the ref's extension.
 				const ext = path.extname(filePath).toLowerCase();
 				const contentType =
 					ext === '.svg'
 						? 'image/svg+xml'
 						: ext === '.jpg' || ext === '.jpeg'
 							? 'image/jpeg'
-							: `image/${ext.slice(1)}`;
+							: ext === '.png'
+								? 'image/png'
+								: `image/${ext.slice(1)}`;
 				return new Response(new Uint8Array(data), {
 					status: 200,
 					headers: { 'content-type': contentType, 'cache-control': 'max-age=31536000, immutable' },
@@ -827,10 +955,12 @@ app
 				const snapshot = await sampleClaudeUsage({
 					binPath,
 					configDir: configDirKey,
-					cwd: app.getPath('home'),
 				});
 				if (snapshot) {
 					setClaudeUsageSnapshot(snapshot);
+					// An account that just hit its limit is the one the user moves
+					// every agent off; remember it so the dashboard keeps its row.
+					rememberQuotaAccounts('claude-code', [snapshot.configDirKey]);
 				}
 			},
 			updateSessionInteractive: (sessionId, update) => {
@@ -895,6 +1025,9 @@ app
 				return {
 					success: result.success === true,
 					...(result.error ? { error: result.error } : {}),
+					// Carried through so a closed `--callback-tab` can be told apart
+					// from every other failure and retried at agent level.
+					...(result.reason ? { reason: result.reason } : {}),
 				};
 			},
 			getTargetOutput: async (agentId, since) => {
@@ -1042,6 +1175,25 @@ app
 				});
 			});
 
+		// SusFactor blocks are raised deep in the GitHub poll path, which has no
+		// BrowserWindow in scope. Register the emitter here (the one place that
+		// holds `mainWindow`) so the block notice reuses the existing Cue toast
+		// channel instead of inventing a second notification surface.
+		setSusFactorNotifier((notice) => {
+			emitCueNotifyToast(mainWindow, {
+				agentId: notice.sessionId,
+				title: 'Cue blocked a suspicious item',
+				message: `${notice.itemRef} scored ${notice.score.toFixed(2)} on the 0DIN SusFactor check and was NOT sent to the agent. Subscription "${notice.subscriptionName}". Review it before overriding.`,
+				// Sticky: this is a security decision the user has to acknowledge,
+				// not a status ping they can miss while looking elsewhere.
+				sticky: true,
+				color: 'red',
+				clickAction: notice.url
+					? { kind: 'open-url', url: notice.url }
+					: { kind: 'jump-session', sessionId: notice.sessionId },
+			});
+		});
+
 		// Initialize Cue Engine for event-driven automation
 		cueEngine = new CueEngine({
 			getSessions: () => {
@@ -1131,8 +1283,10 @@ app
 						mainWindow,
 						onLog: notifyLog,
 					});
-					const notifyHistory = recordCueHistoryEntry(notifyResult, sessionInfo);
-					void historyManager.addEntry(storedSession.id, projectRoot, notifyHistory);
+					// No History write here: Cue runs are served to History from
+					// `cue_events` (see `getCueHistoryEntries`), so the agent's JSONL
+					// file keeps only USER/AUTO entries and CUE rows can no longer
+					// evict them.
 					return notifyResult;
 				}
 
@@ -1201,10 +1355,8 @@ app
 									// point at the wrong daemon and `maestro-cli.js` may not
 									// exist on the remote host.
 								});
-					const cmdHistory = recordCueHistoryEntry(cmdResult, sessionInfo);
-					// Fire-and-forget: this is on the Cue execution path; the
-					// caller doesn't need to wait for the disk write to settle.
-					void historyManager.addEntry(storedSession.id, projectRoot, cmdHistory);
+					// History reads Cue runs from `cue_events`, not the JSONL file -
+					// see the note on the notify path above.
 					return cmdResult;
 				}
 
@@ -1270,15 +1422,20 @@ app
 					agentConfigValues,
 				});
 
-				const historyEntry = recordCueHistoryEntry(result, {
-					id: storedSession.id,
-					name: storedSession.name,
-					toolType: storedSession.toolType,
-					cwd: projectRoot,
-					projectRoot,
-					autoRunFolderPath: storedSession.autoRunFolderPath,
-				});
-				void historyManager.addEntry(storedSession.id, projectRoot, historyEntry);
+				// Cue spawns agents outside the ProcessManager, so a failed run is the
+				// only place an expired token can surface for a pipeline. Without this
+				// the whole board goes quietly red until someone types a message.
+				reportCueAuthFailure(
+					mainWindow,
+					result,
+					storedSession.toolType,
+					storedSession.sessionSshRemoteConfig?.enabled
+						? (storedSession.sessionSshRemoteConfig.remoteId ?? undefined)
+						: undefined
+				);
+
+				// History reads Cue runs from `cue_events`, not the JSONL file -
+				// see the note on the notify path above.
 				return result;
 			},
 			onStopCueRun: (runId) => stopCueRun(runId) || stopCueShellRun(runId) || stopCueCliRun(runId),
@@ -1294,10 +1451,6 @@ app
 			// Phase 01 - gate cue_events stats lineage writes on the
 			// `encoreFeatures.usageStats` flag. Read on every record so toggling
 			// the Encore flag at runtime takes effect without an app restart.
-			getUsageStatsEnabled: () => {
-				const ef = store.get('encoreFeatures', {}) as Record<string, boolean>;
-				return ef.usageStats === true;
-			},
 			// Surface `cue.fired` to subscribed plugins (events:subscribe). Type
 			// only - NEVER prompt text. Null-safe; no-op when plugins are disabled.
 			onTriggerFired: (cueType) =>
@@ -1309,6 +1462,12 @@ app
 			// Surface Cue run lifecycle (`cue.runStarted` / `cue.runFinished`) to
 			// subscribed plugins (events:subscribe). Metadata-only; null-safe.
 			emitPluginEvent: (event) => pluginEventBus?.emit(event),
+			getUsageStatsEnabled: () => resolveEncoreFeatures(store.get('encoreFeatures')).usageStats,
+			// How far back the engine-start prune keeps cue_events. Read on every
+			// start (not captured once) so changing the setting takes effect the
+			// next time Cue is enabled, without an app restart.
+			getCueHistoryRetentionDays: () =>
+				store.get('cueHistoryRetentionDays', DEFAULT_CUE_HISTORY_RETENTION_DAYS),
 		});
 
 		// Configure Cue telemetry submitter. Reads installationId / encore flags
@@ -1320,8 +1479,8 @@ app
 			getAppVersion: () => app.getVersion(),
 			getPlatform: () => process.platform,
 			isEncoreEnabled: () => {
-				const ef = store.get('encoreFeatures', {}) as Record<string, boolean>;
-				return ef.maestroCue === true && ef.usageStats === true;
+				const ef = resolveEncoreFeatures(store.get('encoreFeatures'));
+				return ef.maestroCue && ef.usageStats;
 			},
 		});
 
@@ -1734,7 +1893,7 @@ app
 		};
 		/**
 		 * Main-side mirror of the renderer's `aiTabFocusFields()`
-		 * (`src/renderer/utils/tabHelpers.ts`): land a session on an AI tab by
+		 * (`src/renderer/utils/tabHelpers`): land a session on an AI tab by
 		 * clearing every non-AI view that would otherwise outrank it in the render
 		 * precedence. Shared by `tabs.focus` and `sessions.focus` so the two plugin
 		 * verbs can never drift into different notions of "focused".
@@ -2610,6 +2769,11 @@ app
 		// Initialize history manager (handles migration from legacy format if needed)
 		logger.info('Initializing history manager', 'Startup');
 		const historyManager = getHistoryManager();
+		// Before initialize(): every writer that passes no explicit cap - and the
+		// legacy-format migration, which never does - must trim to the user's
+		// maxLogBuffer. A writer using the lower built-in fallback silently
+		// truncates history the user raised the cap to keep.
+		historyManager.setMaxEntriesResolver(() => store.get('maxLogBuffer', MAX_ENTRIES_PER_SESSION));
 		try {
 			await historyManager.initialize();
 			logger.info('History manager initialized', 'Startup');
@@ -2635,6 +2799,15 @@ app
 			logger.warn('Continuing without history - history features will be unavailable', 'Startup');
 		}
 
+		// Restore Claude tab names the origins store lost; history is the source.
+		// Not awaited: it reads every history file and nothing at startup needs it.
+		migrateClaudeSessionNamesFromHistory(store, claudeSessionOriginsStore, historyManager).catch(
+			(error) => {
+				void captureException(error);
+				logger.error(`Claude session names backfill failed: ${error}`, 'Migration');
+			}
+		);
+
 		// Initialize stats database for usage tracking
 		logger.info('Initializing stats database', 'Startup');
 		try {
@@ -2651,6 +2824,7 @@ app
 		// Set up IPC handlers
 		logger.debug('Setting up IPC handlers', 'Startup');
 		setupIpcHandlers({
+			debugPackageDeps,
 			getMainWindow: () => mainWindow,
 			getProcessManager: () => processManager,
 			getWebServer: () => webServer,
@@ -2791,90 +2965,10 @@ app
 		// plugins flag, so enabling the feature later begins firing without a restart.
 		pluginScheduler?.start();
 
-		// Set custom application menu to prevent macOS from injecting native
-		// "Show Previous Tab" (Cmd+Shift+{) and "Show Next Tab" (Cmd+Shift+})
-		// menu items into the default Window menu. Without this, those keyboard
-		// events are intercepted at the NSMenu level and never reach the renderer.
-		//
-		// IMPORTANT: Do NOT include { role: 'close' } in the Window submenu.
-		// The 'close' role registers Cmd+W as a native accelerator, which intercepts
-		// the keystroke at the NSMenu level before it reaches the renderer. This
-		// breaks Cmd+W tab-close shortcuts in both AI and terminal modes. Window
-		// closing is handled by the app lifecycle (Cmd+Q quits, red traffic light
-		// hides) so the native Close menu item is unnecessary.
-		if (isMacOS()) {
-			const template: Electron.MenuItemConstructorOptions[] = [
-				{
-					// Explicit appMenu - uses a custom Quit item instead of `role: 'quit'`
-					// so we can swallow Opt+Cmd+Q. macOS auto-binds Opt+Cmd+Q to any
-					// quit role (as "Quit and Keep Windows"), and that keystroke sits
-					// one modifier away from Opt+Q (Maestro Cue), causing accidental
-					// quits. Click events from accelerators carry modifier flags, so
-					// we can detect Option held and ignore the keystroke entirely.
-					role: 'appMenu',
-					submenu: [
-						{ role: 'about' },
-						{ type: 'separator' },
-						{ role: 'services' },
-						{ type: 'separator' },
-						{ role: 'hide' },
-						{ role: 'hideOthers' },
-						{ role: 'unhide' },
-						{ type: 'separator' },
-						{
-							label: 'Quit Maestro',
-							accelerator: 'Cmd+Q',
-							click: (_item, _window, event) => {
-								if (event?.altKey) {
-									logger.info(
-										'Ignoring Opt+Cmd+Q to prevent accidental quit (too close to Opt+Q for Maestro Cue)',
-										'Menu'
-									);
-									return;
-								}
-								app.quit();
-							},
-						},
-					],
-				},
-				{
-					// Custom Edit menu - equivalent to `role: 'editMenu'` minus
-					// `undo` / `redo`. Those built-in roles register Cmd+Z /
-					// Cmd+Shift+Z as NSMenu-level accelerators that intercept the
-					// keystroke at the OS layer before the renderer can see it
-					// (same trap as `role: 'close'` eating Cmd+W - see the note
-					// above the appMenu block). Removing them frees Cmd+Z for the
-					// image annotator's stroke-undo handler.
-					//
-					// Side effect: Chromium in Electron relies on the Edit > Undo
-					// menu role to deliver Cmd+Z to focused textareas/inputs on
-					// macOS, so without it native text-field undo silently does
-					// nothing. The renderer-side `useTextEditorUndo` hook
-					// (src/renderer/hooks/keyboard/useTextEditorUndo.ts) restores
-					// that behavior by calling `document.execCommand('undo')` on
-					// text targets. The annotator's own Cmd+Z listener bails out
-					// for text targets, so the two paths don't conflict.
-					label: 'Edit',
-					submenu: [
-						{ role: 'cut' },
-						{ role: 'copy' },
-						{ role: 'paste' },
-						{ role: 'pasteAndMatchStyle' },
-						{ role: 'delete' },
-						{ type: 'separator' },
-						{ role: 'selectAll' },
-					],
-				},
-				{
-					label: 'Window',
-					submenu: [{ role: 'minimize' }, { role: 'zoom' }],
-				},
-			];
-			Menu.setApplicationMenu(Menu.buildFromTemplate(template));
-		} else {
-			// On Windows/Linux, hide the menu bar entirely (Maestro uses its own UI)
-			Menu.setApplicationMenu(null);
-		}
+		// Install the application menu (File / Edit / View / Window on macOS,
+		// removed entirely on Windows/Linux). See src/main/app-menu.ts for why the
+		// menu is display-only and how clicks are routed back to the renderer.
+		installApplicationMenu();
 
 		// Restore the saved multi-window layout (or a single primary window when
 		// there is nothing saved - backward compatible).
@@ -2904,6 +2998,10 @@ app
 		// Electron auto-unregisters globalShortcuts on quit, but be explicit so the
 		// behavior survives any future change to that policy.
 		app.on('will-quit', disposeGlobalHotkey);
+		// Release parquet file descriptors (and their cached scans) on the way
+		// out. The idle reaper would get to them eventually, but a preview tab
+		// left open otherwise holds a descriptor until the process dies.
+		app.on('will-quit', () => void closeAllParquetFiles());
 
 		// Flush any deep link URL that arrived before the window was ready (cold start)
 		flushPendingDeepLink(() => mainWindow);
@@ -2924,20 +3022,50 @@ app
 		// Start settings file watcher for external changes (e.g., maestro-cli settings set)
 		settingsWatcher.start();
 
+		// Start watching for system timezone changes (laptop crossing zones).
+		timeZoneWatcher.start();
+
 		app.on('activate', () => {
 			if (BrowserWindow.getAllWindows().length === 0) {
 				createWindow();
 			}
 		});
 
+		// The main process is the only place that can measure a sleep gap: the
+		// renderer is frozen through the whole suspend and its Page Visibility
+		// state never changes, so a renderer-side `Date.now()` span silently
+		// counts an overnight sleep as work time.
+		powerMonitor.on('suspend', () => {
+			logger.info('System suspending', 'PowerMonitor');
+			noteSystemSuspend();
+		});
+
 		// Listen for system resume (after sleep/suspend) and notify renderer
 		// This allows the renderer to refresh settings that may have been reset
+		// and to subtract the sleep gap from Auto Run / achievement durations.
 		powerMonitor.on('resume', () => {
-			logger.info('System resumed from sleep/suspend', 'PowerMonitor');
-			// intentionally not bridged: window-specific
-			if (isWebContentsAvailable(mainWindow)) {
-				mainWindow.webContents.send('app:systemResume');
+			const sleptMs = noteSystemResume();
+			logger.info(
+				`System resumed from sleep/suspend (slept ${Math.round(sleptMs / 1000)}s)`,
+				'PowerMonitor'
+			);
+			// Broadcast: every window runs its own Auto Run timers, so a secondary
+			// window must hear about the sleep too.
+			for (const win of BrowserWindow.getAllWindows()) {
+				if (isWebContentsAvailable(win)) {
+					win.webContents.send('app:systemResume', { sleptMs });
+				}
 			}
+			// A laptop that woke up on a different network is serving the web
+			// interface on a new LAN address. Re-detect it now so the URL and QR
+			// code are right before the user looks, instead of up to one poll
+			// interval later.
+			void webServer?.recheckLocalAddress();
+
+			// Apply any timezone change BEFORE reconciling: a laptop that flew
+			// across zones while asleep must measure the sleep gap and its missed
+			// local-time slots in the zone it woke up in, not the one it left.
+			timeZoneWatcher.check();
 			// Replay missed time-based Cue triggers and kick GitHub pollers so a
 			// laptop that's been asleep doesn't sit on stale subscriptions until
 			// the next scheduled tick. Idempotent against multiple resume events
@@ -3023,7 +3151,10 @@ quitHandler = createQuitHandler({
 		// Tear down the background quota refresh timers.
 		usageRefreshScheduler?.stop();
 	},
-	stopSettingsWatcher: () => settingsWatcher.stop(),
+	stopSettingsWatcher: () => {
+		settingsWatcher.stop();
+		timeZoneWatcher.stop();
+	},
 	powerManager,
 	stopSessionCleanup,
 	getPersistedSessions: () => sessionsStore.get('sessions', []) as Array<Record<string, unknown>>,

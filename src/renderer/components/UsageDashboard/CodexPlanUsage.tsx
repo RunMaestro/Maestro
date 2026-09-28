@@ -11,25 +11,70 @@
 
 import { memo, useCallback, useMemo, useState } from 'react';
 import type { Theme } from '../../types';
+import { DURATION_LADDER_DAYS, DURATION_MS, humanizeDuration } from '../../../shared/duration';
 import { useCodexUsageStore, type CodexUsageSnapshot } from '../../stores/codexUsageStore';
 import { useUIStore } from '../../stores/uiStore';
-import { makeAccountKeyHelpers } from './quota/quotaFormatting';
+import { makeAccountKeyHelpers, resolveLatestSampledAt } from './quota/quotaFormatting';
 import {
+	QuotaAccountEmail,
 	QuotaAccountPill,
+	QuotaAgentCountBadge,
 	QuotaAccountTabs,
 	QuotaBarRow,
 	QuotaPendingRow,
 	QuotaRefreshControls,
 	QuotaShowAllToggle,
+	QuotaStaleSampleBadge,
 	QuotaVisibilityToggle,
 	type QuotaTabStatus,
 } from './quota/quotaPrimitives';
+import { CodexResetCredits } from './quota/CodexResetCredits';
 import { useQuotaAccounts } from './quota/useQuotaAccounts';
 import { useQuotaRefresh } from './quota/useQuotaRefresh';
+import { buildQuotaSummary } from './footerSummary';
+import { usePublishFooterSummary } from './useFooterSummary';
 
 const TEST_ID_PREFIX = 'codex-plan';
+/**
+ * Window length the session row claims when the quota endpoint did not declare
+ * one. Every plan Codex ships today reports a 5h session window, so this is the
+ * right guess for an older response - but it stays a fallback, because a row
+ * that asserts a length the account does not have is the bug this label had
+ * before windows were classified by duration (#1596).
+ */
+const FALLBACK_SESSION_WINDOW_LABEL = '5h';
+/** Seconds in seven days, the length "Weekly" names without qualification. */
+const WEEK_SECONDS = DURATION_MS.week / 1000;
+
+/**
+ * Render a declared window length as a bar-row suffix: `18000` -> `"5h"`,
+ * `604800` -> `"7d"`. Returns null when the endpoint did not declare one, so
+ * each caller decides what to say in its absence rather than printing a guess
+ * that looks measured.
+ */
+function windowLengthLabel(windowSeconds: number | undefined): string | null {
+	if (typeof windowSeconds !== 'number' || !Number.isFinite(windowSeconds) || windowSeconds <= 0) {
+		return null;
+	}
+	return humanizeDuration(windowSeconds * 1000, { units: DURATION_LADDER_DAYS });
+}
+
+/**
+ * "Weekly" is the name of the bucket, not a measurement, so it is only spelled
+ * out when the window really is seven days. Anything else prints its own
+ * length - the whole point of classifying by duration is that a row never
+ * claims a span the account does not have.
+ */
+function weeklyRowLabel(windowSeconds: number | undefined): string {
+	const label = windowLengthLabel(windowSeconds);
+	if (label === null || windowSeconds === WEEK_SECONDS) return 'Weekly';
+	return `Weekly (${label})`;
+}
+
 /** Provider id used to key this panel's hidden-account set in uiStore. */
 const PROVIDER_ID = 'codex';
+/** Human-readable provider name used in the agent-count badge tooltip. */
+const PROVIDER_LABEL = 'Codex';
 const { deriveShortName, deriveDisplayName, normalizeKey } = makeAccountKeyHelpers('.codex');
 
 interface CodexPlanUsageProps {
@@ -38,15 +83,36 @@ interface CodexPlanUsageProps {
 	showAllAccounts?: boolean;
 	autoRefresh?: boolean;
 	showRefreshButton?: boolean;
+	/** Claim Cmd/Ctrl+R for Refresh while this panel is the visible surface. */
+	refreshHotkey?: boolean;
+	/**
+	 * Show the agents backed by one account. Given, each row's "N agents" chip
+	 * becomes a button that hands the account's CODEX_HOME back so the dashboard
+	 * can open the Agents tab filtered to it. Omitted, the chip stays a label.
+	 */
+	onShowAccountAgents?: (codexHomeKey: string) => void;
 }
 
 interface AccountRowProps {
 	codexHomeKey: string;
 	snapshot: CodexUsageSnapshot;
+	/** Local agents pointed at this CODEX_HOME. */
+	agentCount: number;
+	/** Newest `sampledAt` across the panel, so a row the last refresh skipped can say so. */
+	latestSampledAtMs: number | null;
 	theme: Theme;
+	/** Show this account's agents in the Agents tab. Omit to keep the chip inert. */
+	onShowAgents?: () => void;
 }
 
-const AccountRow = memo(function AccountRow({ codexHomeKey, snapshot, theme }: AccountRowProps) {
+const AccountRow = memo(function AccountRow({
+	codexHomeKey,
+	snapshot,
+	agentCount,
+	latestSampledAtMs,
+	theme,
+	onShowAgents,
+}: AccountRowProps) {
 	const shortName = deriveShortName(codexHomeKey);
 	const hasBars =
 		snapshot.session || snapshot.weekly || (snapshot.additionalLimits?.length ?? 0) > 0;
@@ -59,10 +125,19 @@ const AccountRow = memo(function AccountRow({ codexHomeKey, snapshot, theme }: A
 					displayName={deriveDisplayName(codexHomeKey)}
 					theme={theme}
 				/>
+				<QuotaAgentCountBadge
+					count={agentCount}
+					providerLabel={PROVIDER_LABEL}
+					testId={`${TEST_ID_PREFIX}-agents-${shortName}`}
+					theme={theme}
+					onClick={agentCount > 0 ? onShowAgents : undefined}
+				/>
 				{snapshot.email && (
-					<div className="text-xs" style={{ color: theme.colors.textDim, opacity: 0.7 }}>
-						{snapshot.email}
-					</div>
+					<QuotaAccountEmail
+						email={snapshot.email}
+						testId={`${TEST_ID_PREFIX}-email-${shortName}`}
+						theme={theme}
+					/>
 				)}
 				{snapshot.planType && (
 					<div
@@ -75,6 +150,12 @@ const AccountRow = memo(function AccountRow({ codexHomeKey, snapshot, theme }: A
 						{snapshot.planType}
 					</div>
 				)}
+				<QuotaStaleSampleBadge
+					sampledAt={snapshot.sampledAt}
+					latestSampledAtMs={latestSampledAtMs}
+					testId={`${TEST_ID_PREFIX}-stale-${shortName}`}
+					theme={theme}
+				/>
 			</div>
 
 			{snapshot.authState !== 'authenticated' ? (
@@ -94,7 +175,7 @@ const AccountRow = memo(function AccountRow({ codexHomeKey, snapshot, theme }: A
 				<>
 					{snapshot.session && (
 						<QuotaBarRow
-							label="Session (5h)"
+							label={`Session (${windowLengthLabel(snapshot.session.windowSeconds) ?? FALLBACK_SESSION_WINDOW_LABEL})`}
 							percent={snapshot.session.percent}
 							resetsAt={snapshot.session.resetsAt}
 							theme={theme}
@@ -102,7 +183,7 @@ const AccountRow = memo(function AccountRow({ codexHomeKey, snapshot, theme }: A
 					)}
 					{snapshot.weekly && (
 						<QuotaBarRow
-							label="Weekly"
+							label={weeklyRowLabel(snapshot.weekly.windowSeconds)}
 							percent={snapshot.weekly.percent}
 							resetsAt={snapshot.weekly.resetsAt}
 							theme={theme}
@@ -131,6 +212,19 @@ const AccountRow = memo(function AccountRow({ codexHomeKey, snapshot, theme }: A
 					<span>Quota endpoint returned no rate-limit windows for this account.</span>
 				</div>
 			)}
+
+			{/* Reset credits sit under the bars they act on, and only for an
+			    authenticated account: an account we cannot read quota for cannot
+			    redeem either, and offering the button there is a dead control. */}
+			{snapshot.authState === 'authenticated' && (
+				<CodexResetCredits
+					codexHomeKey={codexHomeKey}
+					accountLabel={deriveDisplayName(codexHomeKey)}
+					snapshotCounts={snapshot.resetCredits}
+					theme={theme}
+					testIdPrefix={`${TEST_ID_PREFIX}-${shortName}`}
+				/>
+			)}
 		</div>
 	);
 });
@@ -141,29 +235,64 @@ export const CodexPlanUsage = memo(function CodexPlanUsage({
 	showAllAccounts = false,
 	autoRefresh = true,
 	showRefreshButton = true,
+	refreshHotkey = false,
+	onShowAccountAgents,
 }: CodexPlanUsageProps) {
 	const snapshots = useCodexUsageStore((s) => s.snapshots);
 	const refreshing = useCodexUsageStore((s) => s.refreshing);
 
-	const { configuredAccountKeys, setSelectedKey, effectiveSelectedKey } = useQuotaAccounts({
-		toolType: 'codex',
-		envVarName: 'CODEX_HOME',
-		defaultSubdir: '.codex',
-		accountKeys,
-		snapshots,
-		normalizeKey,
-		deriveShortName,
-		fetchAgentEnvVars: () => window.maestro.agents.getCustomEnvVars('codex'),
-		fetchAccountKeys: () => {
-			const fn = window.maestro.agents.getCodexUsageAccountKeys;
-			return typeof fn === 'function' ? fn() : undefined;
-		},
-	});
+	const { configuredAccountKeys, agentCountsByAccount, setSelectedKey, effectiveSelectedKey } =
+		useQuotaAccounts({
+			toolType: 'codex',
+			accountKeys,
+			snapshots,
+			normalizeKey,
+			deriveShortName,
+			fetchAgentEnvVars: () => window.maestro.agents.getCustomEnvVars('codex'),
+			fetchAccountKeys: () => {
+				const fn = window.maestro.agents.getCodexUsageAccountKeys;
+				return typeof fn === 'function' ? fn() : undefined;
+			},
+		});
 
 	const selectedSnapshot: CodexUsageSnapshot | null = effectiveSelectedKey
 		? (snapshots[effectiveSelectedKey] ?? null)
 		: null;
 	const snapshotCount = Object.keys(snapshots).length;
+	const lastSampledAtMs = useMemo(() => resolveLatestSampledAt(snapshots), [snapshots]);
+
+	// Footer readout, mirroring the Anthropic panel: account count, how many are
+	// locked out, and the tightest window across every account. Codex reports
+	// extra named limits alongside session/weekly, so those count toward the
+	// peak too - a wall is a wall whatever the sampler calls it.
+	const quotaFooter = useMemo(() => {
+		let peak: number | null = null;
+		let needsLogin = 0;
+		for (const key of configuredAccountKeys) {
+			const snap = snapshots[key];
+			if (!snap) continue;
+			if (snap.authState === 'unauthenticated' || snap.authState === 'missing_auth') {
+				needsLogin++;
+				continue;
+			}
+			const windows = [snap.session, snap.weekly, ...(snap.additionalLimits ?? [])];
+			for (const window of windows) {
+				if (typeof window?.percent === 'number' && (peak === null || window.percent > peak)) {
+					peak = window.percent;
+				}
+			}
+		}
+		return { peak, needsLogin };
+	}, [configuredAccountKeys, snapshots]);
+	usePublishFooterSummary(
+		'codex-usage',
+		buildQuotaSummary({
+			accounts: configuredAccountKeys.length,
+			needsLogin: quotaFooter.needsLogin,
+			peakPercent: quotaFooter.peak,
+			sampledAtMs: lastSampledAtMs,
+		})
+	);
 
 	// Hidden-account state (only meaningful in the showAllAccounts list view).
 	const hiddenKeys = useUIStore((s) => s.hiddenQuotaAccounts[PROVIDER_ID]);
@@ -196,6 +325,7 @@ export const CodexPlanUsage = memo(function CodexPlanUsage({
 		accountCount: configuredAccountKeys.length,
 		snapshotCount,
 		doRefresh,
+		refreshHotkey,
 	});
 
 	const renderAccount = useCallback(
@@ -203,15 +333,26 @@ export const CodexPlanUsage = memo(function CodexPlanUsage({
 			const shortName = deriveShortName(codexHomeKey);
 			const snapshot = snapshots[codexHomeKey];
 			const isHidden = hiddenSet.has(codexHomeKey);
+			const agentCount = agentCountsByAccount[codexHomeKey] ?? 0;
 			const body = snapshot ? (
-				<AccountRow codexHomeKey={codexHomeKey} snapshot={snapshot} theme={theme} />
+				<AccountRow
+					codexHomeKey={codexHomeKey}
+					snapshot={snapshot}
+					agentCount={agentCount}
+					latestSampledAtMs={lastSampledAtMs}
+					theme={theme}
+					onShowAgents={onShowAccountAgents ? () => onShowAccountAgents(codexHomeKey) : undefined}
+				/>
 			) : (
 				<QuotaPendingRow
 					accountKey={codexHomeKey}
 					shortName={shortName}
 					displayName={deriveDisplayName(codexHomeKey)}
 					testIdPrefix={TEST_ID_PREFIX}
+					agentCount={agentCount}
+					providerLabel={PROVIDER_LABEL}
 					theme={theme}
+					onShowAgents={onShowAccountAgents ? () => onShowAccountAgents(codexHomeKey) : undefined}
 				/>
 			);
 			// Toggle sits inline to the left of the account pill (items-start keeps
@@ -239,7 +380,15 @@ export const CodexPlanUsage = memo(function CodexPlanUsage({
 				</div>
 			);
 		},
-		[snapshots, theme, hiddenSet, toggleHidden]
+		[
+			snapshots,
+			theme,
+			hiddenSet,
+			toggleHidden,
+			agentCountsByAccount,
+			lastSampledAtMs,
+			onShowAccountAgents,
+		]
 	);
 
 	return (
@@ -273,6 +422,7 @@ export const CodexPlanUsage = memo(function CodexPlanUsage({
 							sweepClassName="codex-plan-refresh-sweep"
 							intervalAriaLabel="Codex usage auto refresh interval"
 							buttonAriaLabel="Refresh Codex usage snapshots"
+							showHotkeyHint={refreshHotkey}
 						/>
 					)}
 				</div>
@@ -330,6 +480,8 @@ export const CodexPlanUsage = memo(function CodexPlanUsage({
 					key={effectiveSelectedKey}
 					codexHomeKey={effectiveSelectedKey}
 					snapshot={selectedSnapshot}
+					agentCount={agentCountsByAccount[effectiveSelectedKey] ?? 0}
+					latestSampledAtMs={lastSampledAtMs}
 					theme={theme}
 				/>
 			) : effectiveSelectedKey ? (
@@ -338,6 +490,8 @@ export const CodexPlanUsage = memo(function CodexPlanUsage({
 					shortName={deriveShortName(effectiveSelectedKey)}
 					displayName={deriveDisplayName(effectiveSelectedKey)}
 					testIdPrefix={TEST_ID_PREFIX}
+					agentCount={agentCountsByAccount[effectiveSelectedKey] ?? 0}
+					providerLabel={PROVIDER_LABEL}
 					theme={theme}
 				/>
 			) : null}

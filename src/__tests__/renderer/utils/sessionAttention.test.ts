@@ -40,6 +40,28 @@ describe('sessionNeedsAttention', () => {
 		expect(sessionNeedsAttention(session, EMPTY_CTX)).toBe(true);
 	});
 
+	it('is false when the only unread tab is a hidden consult tab', () => {
+		// A cross-agent @mention is answered in the background: it draws no chip on
+		// the consulted agent, so an unread on it would be a badge with nothing on
+		// screen to clear it.
+		const session = createMockSession({
+			id: 'a',
+			aiTabs: [createMockAITab({ hasUnread: true, hidden: true })],
+		});
+		expect(sessionNeedsAttention(session, EMPTY_CTX)).toBe(false);
+	});
+
+	it('is true when a visible tab is unread alongside a hidden consult tab', () => {
+		const session = createMockSession({
+			id: 'a',
+			aiTabs: [
+				createMockAITab({ id: 'consult', hasUnread: true, hidden: true }),
+				createMockAITab({ id: 'visible', hasUnread: true }),
+			],
+		});
+		expect(sessionNeedsAttention(session, EMPTY_CTX)).toBe(true);
+	});
+
 	it('is true when busy', () => {
 		expect(sessionNeedsAttention(createMockSession({ id: 'a', state: 'busy' }), EMPTY_CTX)).toBe(
 			true

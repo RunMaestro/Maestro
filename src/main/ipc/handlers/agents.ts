@@ -12,6 +12,9 @@ import {
 	extractModelsFromConfig,
 	getOpenCodeConfigPaths,
 	getOpenCodeCommandDirs,
+	getCodexSkillDirs,
+	getCodexPromptDirs,
+	parseCodexMarkdownDoc,
 } from '../../agents';
 import { capabilitySnapshots } from '../../agents/capability-snapshot';
 import type { AgentCapabilitiesSnapshotMap } from '../../../shared/agentCapabilities';
@@ -27,15 +30,22 @@ import {
 import { buildSshCommand, RemoteCommandOptions } from '../../utils/ssh-command-builder';
 import { stripAnsi } from '../../utils/stripAnsi';
 import { SshRemoteConfig } from '../../../shared/types';
+import type { AgentCapabilities } from '../../../shared/types';
 import { MaestroSettings } from './persistence';
 import { captureException } from '../../utils/sentry';
 import { parseJsonWithBom } from '../../../shared/jsonUtils';
 import {
 	getAllSnapshots as getAllClaudeUsageSnapshots,
+	getRetainedSnapshots as getRetainedClaudeUsageSnapshots,
 	resolveConfigDirKey,
 } from '../../stores/claudeUsageStore';
 import { getLimitResetAt } from '../../agents/limitResetEstimator';
-import { getAllCodexUsageSnapshots, resolveCodexHomeKey } from '../../stores/codexUsageStore';
+import {
+	getAllCodexUsageSnapshots,
+	getRetainedCodexUsageSnapshots,
+	resolveCodexHomeKey,
+} from '../../stores/codexUsageStore';
+import { pruneMissingQuotaAccounts } from '../../stores/quotaAccountsStore';
 import type { UsageSnapshot } from '../../agents/claude-mode-selector';
 import type { CodexUsageSnapshot } from '../../stores/codexUsageStore';
 import {
@@ -44,7 +54,14 @@ import {
 	discoverClaudeConfigDirs,
 } from '../../agents/claude-usage-startup';
 import { runCodexUsageSampling, discoverCodexHomes } from '../../agents/codex-usage-startup';
+import {
+	consumeCodexResetCredit,
+	fetchCodexResetCredits,
+	type CodexResetCreditsReadResult,
+} from '../../agents/codex-reset-credits';
+import type { CodexResetCreditConsumeResult } from '../../../shared/codexResetCredits';
 import type { KnownAuthDirs } from '../../../shared/authPaths';
+import { rememberableEnvVarKeys, type KnownEnvVarKeys } from '../../../shared/envVarCatalog';
 
 const LOG_CONTEXT = '[AgentDetector]';
 const CONFIG_LOG_CONTEXT = '[AgentConfig]';
@@ -116,6 +133,13 @@ function collectKnownAuthPaths(
 
 	return Array.from(pathsByKey.values()).sort((a, b) => a.localeCompare(b));
 }
+/** One env-var record off a config or session, active or parked. */
+function envVarRecord(value: unknown, field: string): Record<string, unknown> {
+	if (!value || typeof value !== 'object' || !(field in value)) return {};
+	const record = (value as Record<string, unknown>)[field];
+	return record && typeof record === 'object' ? (record as Record<string, unknown>) : {};
+}
+
 // Copilot CLI built-in slash commands (always available in interactive mode)
 const COPILOT_BUILTIN_COMMANDS = [
 	'help',
@@ -323,6 +347,101 @@ async function discoverOpenCodeSlashCommands(cwd: string): Promise<DiscoveredCom
 
 	const commandList = Array.from(commands.values());
 	logger.info(`Discovered ${commandList.length} OpenCode slash commands`, LOG_CONTEXT);
+	return commandList;
+}
+
+/**
+ * Discover Codex slash commands by reading from disk.
+ *
+ * Codex commands come from these sources (checked in priority order):
+ * 1. Project-local skills:  <cwd>/.codex/skills/<name>/SKILL.md
+ * 2. User-global skills:    <CODEX_HOME>/skills/<name>/SKILL.md
+ * 3. Project-local prompts: <cwd>/.codex/prompts/<name>.md
+ * 4. User-global prompts:   <CODEX_HOME>/prompts/<name>.md
+ *
+ * Every discovered command carries the file body as its `prompt`, because
+ * Maestro drives Codex through headless `codex exec`, where the CLI does not
+ * expand `/name` itself - the renderer substitutes the body before sending
+ * (see `useInputProcessing`), exactly as it already does for OpenCode.
+ *
+ * Codex's own built-in commands (/init, /compact, /review, ...) are excluded:
+ * they are implemented inside the TUI and have no on-disk prompt to inline, so
+ * offering them would send a literal "/compact" to the model.
+ */
+async function discoverCodexSlashCommands(cwd: string): Promise<DiscoveredCommand[]> {
+	const commands = new Map<string, DiscoveredCommand>();
+
+	const addCommand = (name: string, content: string) => {
+		if (commands.has(name)) return; // project-local wins over global
+		const doc = parseCodexMarkdownDoc(content);
+		// `user-invocable: false` marks a background/reference skill that Codex
+		// itself never offers as a `/name`, so Maestro must not either.
+		if (!doc.userInvocable) return;
+		if (!doc.body) return;
+		commands.set(name, { name, prompt: doc.body, description: doc.description });
+	};
+
+	// Skills: one directory per command, holding a SKILL.md.
+	const addSkillsFromDir = async (dir: string) => {
+		let entries: fs.Dirent[];
+		try {
+			entries = await fs.promises.readdir(dir, { withFileTypes: true });
+		} catch (error) {
+			if (isMissingEntryError(error)) {
+				logger.debug(`Codex skills directory not found: ${dir}`, LOG_CONTEXT);
+				return;
+			}
+			throw error;
+		}
+		for (const entry of entries) {
+			if (!entry.isDirectory()) continue;
+			// `.system/` holds Codex's own internal skills, and dotted names are
+			// hidden from its picker.
+			if (entry.name.startsWith('.')) continue;
+			if (commands.has(entry.name)) continue;
+			try {
+				const raw = await fs.promises.readFile(path.join(dir, entry.name, 'SKILL.md'), 'utf-8');
+				addCommand(entry.name, raw);
+			} catch (error) {
+				// A directory without a SKILL.md is not a skill.
+				if (!isMissingEntryError(error)) throw error;
+			}
+		}
+	};
+
+	// Prompts: one .md file per command.
+	const addPromptsFromDir = async (dir: string) => {
+		let files: string[];
+		try {
+			files = await fs.promises.readdir(dir);
+		} catch (error) {
+			if (isMissingEntryError(error)) {
+				logger.debug(`Codex prompts directory not found: ${dir}`, LOG_CONTEXT);
+				return;
+			}
+			throw error;
+		}
+		for (const file of files) {
+			if (!file.endsWith('.md')) continue;
+			const name = file.replace(/\.md$/, '');
+			if (commands.has(name)) continue;
+			try {
+				addCommand(name, await fs.promises.readFile(path.join(dir, file), 'utf-8'));
+			} catch (error) {
+				if (!isMissingEntryError(error)) throw error;
+			}
+		}
+	};
+
+	for (const dir of getCodexSkillDirs(cwd)) {
+		await addSkillsFromDir(dir);
+	}
+	for (const dir of getCodexPromptDirs(cwd)) {
+		await addPromptsFromDir(dir);
+	}
+
+	const commandList = Array.from(commands.values());
+	logger.info(`Discovered ${commandList.length} Codex slash commands`, LOG_CONTEXT);
 	return commandList;
 }
 
@@ -1180,6 +1299,26 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 		})
 	);
 
+	// Get capabilities for EVERY known agent type in one round trip.
+	// The renderer capability cache is otherwise only populated for the agent
+	// types the user has actually opened, which makes "never looked it up"
+	// indistinguishable from "unsupported" for background work such as CLI
+	// dispatch. The lookup is a synchronous static map, so this is cheap.
+	ipcMain.handle(
+		'agents:getAllCapabilities',
+		withIpcErrorLogging(
+			handlerOpts('getAllCapabilities'),
+			async (): Promise<Record<string, AgentCapabilities>> => {
+				const all: Record<string, AgentCapabilities> = {};
+				for (const agentDef of AGENT_DEFINITIONS) {
+					all[agentDef.id] = getAgentCapabilities(agentDef.id);
+				}
+				logger.debug(`Getting capabilities for all ${Object.keys(all).length} agents`, LOG_CONTEXT);
+				return all;
+			}
+		)
+	);
+
 	// Get all configuration for an agent
 	// Merges stored config with defaults from agent's configOptions
 	ipcMain.handle(
@@ -1465,6 +1604,65 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 		)
 	);
 
+	// Names the user has already set, so the env-var editors can offer them back
+	// instead of asking everyone to retype a variable they configured once. Only
+	// names travel; values stay where they were set, because a remembered value
+	// is often a credential and nothing here needs one.
+	ipcMain.handle(
+		'agents:getKnownEnvVarKeys',
+		withIpcErrorLogging(
+			handlerOpts('getKnownEnvVarKeys', CONFIG_LOG_CONTEXT),
+			async (): Promise<KnownEnvVarKeys> => {
+				const allConfigs = agentConfigsStore.get('configs', {});
+				const sessions = sessionsStore?.get('sessions', []) ?? [];
+
+				const byProvider = new Map<string, Set<string>>();
+				const remember = (toolType: unknown, source: Record<string, unknown>) => {
+					if (typeof toolType !== 'string' || toolType.length === 0) return;
+					const keys = [
+						...rememberableEnvVarKeys(envVarRecord(source, 'customEnvVars')),
+						...rememberableEnvVarKeys(envVarRecord(source, 'customEnvVarsDisabled')),
+					];
+					if (keys.length === 0) return;
+					let bucket = byProvider.get(toolType);
+					if (!bucket) {
+						bucket = new Set<string>();
+						byProvider.set(toolType, bucket);
+					}
+					for (const key of keys) bucket.add(key);
+				};
+
+				for (const [toolType, config] of Object.entries(allConfigs)) {
+					if (config && typeof config === 'object') {
+						remember(toolType, config as Record<string, unknown>);
+					}
+				}
+				for (const session of sessions) {
+					if (session && typeof session === 'object') {
+						remember(session.toolType, session);
+					}
+				}
+
+				const globalKeys = new Set<string>([
+					...rememberableEnvVarKeys(settingsStore?.get('shellEnvVars', {})),
+					...rememberableEnvVarKeys(settingsStore?.get('shellEnvVarsDisabled', {})),
+				]);
+
+				return {
+					byProvider: Object.fromEntries(
+						Array.from(byProvider.entries())
+							.sort(([a], [b]) => a.localeCompare(b))
+							.map(([toolType, keys]) => [
+								toolType,
+								Array.from(keys).sort((a, b) => a.localeCompare(b)),
+							])
+					),
+					global: Array.from(globalKeys).sort((a, b) => a.localeCompare(b)),
+				};
+			}
+		)
+	);
+
 	// Discover available models for an agent that supports model selection
 	// Supports SSH remote discovery via optional sshRemoteId parameter
 	ipcMain.handle(
@@ -1538,6 +1736,21 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 				// Agent-specific discovery paths
 				if (agentId === 'opencode') {
 					return discoverOpenCodeSlashCommands(cwd);
+				}
+
+				if (agentId === 'codex') {
+					// Codex skills/prompts live on the machine that runs the CLI.
+					// For an SSH-remote agent that is the remote host, so return
+					// nothing rather than offering this machine's commands - a
+					// command the remote Codex has never heard of is worse than none.
+					if (sshRemoteId) {
+						logger.debug(
+							'Skipping Codex slash command discovery for SSH remote agent',
+							LOG_CONTEXT
+						);
+						return null;
+					}
+					return discoverCodexSlashCommands(cwd);
 				}
 
 				if (agentId === 'copilot-cli') {
@@ -1754,8 +1967,11 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 		})
 	);
 
-	// Snapshot mirror for the renderer: returns every non-expired Claude plan
-	// usage snapshot keyed by canonical CLAUDE_CONFIG_DIR. The renderer's
+	// Snapshot mirror for the renderer: returns every RETAINED Claude plan usage
+	// snapshot keyed by canonical CLAUDE_CONFIG_DIR - expired ones included, so a
+	// panel row keeps its last known bars (the UI badges them stale) rather than
+	// vanishing 24h after the account's last agent moved away. Decision paths
+	// (mode selector, spawner) read the live map instead. The renderer's
 	// claudeUsageStore lazily fetches via this handler on first read and re-fetches
 	// whenever `process:claude-mode-resolved` arrives (the only signal that
 	// `sampleUsage()` may have refreshed the on-disk map).
@@ -1764,16 +1980,27 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 		withIpcErrorLogging(
 			handlerOpts('getClaudeUsageSnapshots'),
 			async (): Promise<Record<string, UsageSnapshot>> => {
-				return getAllClaudeUsageSnapshots();
+				return getRetainedClaudeUsageSnapshots();
 			}
 		)
 	);
 
+	// Every Claude account this machine has: the `~/.claude-*` dirs on disk plus
+	// the ones Maestro has actually sampled (`quotaAccountsStore`). The second
+	// source is what keeps an account the discovery sweep cannot see - symlinked,
+	// outside $HOME, or named like a backup - on the dashboard once its agents
+	// move away. Remembered accounts whose dir is gone are forgotten here.
 	ipcMain.handle(
 		'agents:getClaudeUsageAccountKeys',
 		withIpcErrorLogging(handlerOpts('getClaudeUsageAccountKeys'), async (): Promise<string[]> => {
 			const configDirs = await discoverClaudeConfigDirs();
-			return configDirs.map((configDir) => resolveConfigDirKey({ CLAUDE_CONFIG_DIR: configDir }));
+			const keys = new Set(
+				configDirs.map((configDir) => resolveConfigDirKey({ CLAUDE_CONFIG_DIR: configDir }))
+			);
+			for (const key of await pruneMissingQuotaAccounts('claude-code')) {
+				keys.add(key);
+			}
+			return Array.from(keys);
 		})
 	);
 
@@ -1835,24 +2062,82 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 		)
 	);
 
-	// Snapshot mirror for the renderer: returns every non-expired Codex quota
-	// usage snapshot keyed by canonical CODEX_HOME. The auth-sensitive auth.json
-	// read and ChatGPT metadata request stay in the main process.
+	// Snapshot mirror for the renderer: returns every RETAINED Codex quota usage
+	// snapshot keyed by canonical CODEX_HOME (expired included, same reasoning as
+	// the Claude mirror above). The auth-sensitive auth.json read and ChatGPT
+	// metadata request stay in the main process.
 	ipcMain.handle(
 		'agents:getCodexUsageSnapshots',
 		withIpcErrorLogging(
 			handlerOpts('getCodexUsageSnapshots'),
 			async (): Promise<Record<string, CodexUsageSnapshot>> => {
-				return getAllCodexUsageSnapshots();
+				return getRetainedCodexUsageSnapshots();
 			}
 		)
 	);
 
+	// READ primitive for Codex reset credits: the full per-credit list (ids,
+	// titles, expiry) for one account. The count alone rides the usage snapshot,
+	// so this is only called when a surface actually renders the list.
+	ipcMain.handle(
+		'agents:getCodexResetCredits',
+		withIpcErrorLogging(
+			handlerOpts('getCodexResetCredits'),
+			async (_event, codexHome: string): Promise<CodexResetCreditsReadResult> => {
+				return fetchCodexResetCredits({ codexHome });
+			}
+		)
+	);
+
+	// WRITE primitive: redeem one credit. Irreversible and finite, so it is only
+	// ever reached from an explicit user click or an explicitly enabled
+	// per-agent automation - never from a refresh, sweep, or retry default.
+	// Re-samples afterwards so the bars the user is looking at reflect the reset
+	// they just paid for rather than the pre-reset numbers.
+	ipcMain.handle(
+		'agents:consumeCodexResetCredit',
+		withIpcErrorLogging(
+			handlerOpts('consumeCodexResetCredit'),
+			async (
+				_event,
+				codexHome: string,
+				creditId: string,
+				idempotencyKey?: string
+			): Promise<CodexResetCreditConsumeResult> => {
+				const result = await consumeCodexResetCredit({ codexHome, creditId, idempotencyKey });
+				if (result.ok) {
+					const agentDetector = getAgentDetector();
+					if (agentDetector && sessionsStore) {
+						// Best-effort: a stale bar after a successful reset is confusing but
+						// not a failed redemption, so never let this turn a good spend into
+						// a reported error.
+						await runCodexUsageSampling({
+							sessionsStore,
+							agentConfigsStore,
+							agentDetector,
+						}).catch((error) => {
+							logger.warn('Post-reset Codex usage re-sample failed', LOG_CONTEXT, { error });
+						});
+					}
+				}
+				return result;
+			}
+		)
+	);
+
+	// Discovered `~/.codex-*` homes plus the ones Maestro has sampled before, so
+	// an account keeps its dashboard row after its last agent moves off it.
 	ipcMain.handle(
 		'agents:getCodexUsageAccountKeys',
 		withIpcErrorLogging(handlerOpts('getCodexUsageAccountKeys'), async (): Promise<string[]> => {
 			const codexHomes = await discoverCodexHomes();
-			return codexHomes.map((codexHome) => resolveCodexHomeKey({ CODEX_HOME: codexHome }));
+			const keys = new Set(
+				codexHomes.map((codexHome) => resolveCodexHomeKey({ CODEX_HOME: codexHome }))
+			);
+			for (const key of await pruneMissingQuotaAccounts('codex')) {
+				keys.add(key);
+			}
+			return Array.from(keys);
 		})
 	);
 

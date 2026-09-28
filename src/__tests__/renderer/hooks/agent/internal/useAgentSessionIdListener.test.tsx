@@ -145,7 +145,8 @@ describe('useAgentSessionIdListener', () => {
 		const setSessionsSpy = vi.spyOn(useSessionStore.getState(), 'setSessions');
 		renderHook(() => useAgentSessionIdListener({ batchedUpdater: makeBatched() }));
 		await handler!('missing-ai-tab-1', 'agent-uuid-1');
-		expect(setSessionsSpy).toHaveBeenCalled(); // setSessions is still invoked, but the inner reducer returns prev unchanged.
+		// No session found - nothing to update, so the store setter is never invoked at all.
+		expect(setSessionsSpy).not.toHaveBeenCalled();
 		const sessions = useSessionStore.getState().sessions;
 		expect(sessions).toEqual([]);
 	});

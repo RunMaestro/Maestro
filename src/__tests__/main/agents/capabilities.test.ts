@@ -101,7 +101,8 @@ describe('agent-capabilities', () => {
 			expect(capabilities.supportsUsageStats).toBe(true);
 			expect(capabilities.supportsBatchMode).toBe(true);
 			expect(capabilities.supportsStreaming).toBe(true);
-			expect(capabilities.supportsSlashCommands).toBe(false);
+			// Custom skills/prompts read off disk and expanded renderer-side.
+			expect(capabilities.supportsSlashCommands).toBe(true);
 			expect(capabilities.supportsResultMessages).toBe(false);
 			expect(capabilities.imageResumeMode).toBe('prompt-embed');
 		});

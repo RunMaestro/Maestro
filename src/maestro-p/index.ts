@@ -22,12 +22,17 @@ import * as fs from 'node:fs';
 import * as os from 'os';
 import * as path from 'path';
 
+import { isRateLimitErrorRow } from './api-error-row';
 import { parseArgs, type ParsedArgs } from './args';
+import { diagnoseApiUsageBilling } from './billing-mode';
+import { buildChildEnv } from './child-env';
 import { JsonEmitter, type EmitResultOptions } from './json-emitter';
 import { JsonlTailer, type ParseErrorPayload } from './jsonl-tailer';
 import { extractExitPlanText } from './plan-mode';
+import { checkPromptEcho, isPromptEchoVerifiable, promptEchoText } from './prompt-echo';
 import { discoverSessionId, cwdSlug } from './session-watcher';
 import { cleanupStreamJsonImages, translateStreamJsonInput } from './stream-json-input';
+import { formatScreenTailReport, idleTimeoutMessage } from './timeout-report';
 import { TuiDriver } from './tui-driver';
 import { parseUsage } from './usage-parser';
 import { VERSION } from './package-info';
@@ -50,6 +55,40 @@ const STATUS_INITIAL_WAIT_MS = 1500;
 // Then debounce on no-new-lines for this long before declaring the panel done.
 const STATUS_QUIET_DEBOUNCE_MS = 800;
 const STATUS_DEBOUNCE_POLL_MS = 100;
+// ── /usage retry ────────────────────────────────────────────────────────────
+// A /usage panel that does not parse is USUALLY transient. Measured over 204
+// scripted --status runs across three plan accounts, one account's probe failed
+// 11.8% of runs (19.0% over the trailing week) while six consecutive SERIAL
+// probes all succeeded: the failures track concurrency (the desktop Usage
+// Dashboard auto-refreshes every 15 min onto the same scrape, and a scheduled
+// poller hits it too), not plan layout and not auth.
+//
+// The blast radius is far larger than the error rate, which is why one attempt
+// is not enough. A consumer cannot tell "probe failed" from "account has no
+// measurable quota", so it has to drop that account as both a source and a
+// destination - one transient flake degrades a whole balancing pass into a
+// no-op that reads exactly like a considered decision.
+//
+// Retry the /usage SEND, not the spawn: the TUI is still alive at the parse
+// point, so a re-send costs ~2.4s against a full claude boot.
+//
+// Wall-clock deadline measured from process start, NOT an attempt count. The
+// ceiling that actually matters is the caller's: claude-usage-sampler.ts kills
+// the probe at DEFAULT_TIMEOUT_MS (30s), and blowing through that turns a parse
+// flake into classifySpawnError -> 'timeout' - the same no-op for the consumer
+// with a worse diagnosis. Boot time varies by seconds, so only a deadline keeps
+// the total honest. 25s leaves room for driver.quit()'s QUIT_GRACE_MS on top.
+const STATUS_RETRY_DEADLINE_MS = 25_000;
+// First re-send waits this long. Deliberately longer than the previous send's
+// last Enter re-tap (SEND_ENTER_DELAY_MS + SUBMIT_ENTER_RETRIES *
+// SUBMIT_ENTER_RETRY_INTERVAL_MS = 3080ms after the send, i.e. ~780ms after an
+// attempt ends), so a stray tap cannot land mid-type on the next attempt.
+const STATUS_RETRY_INITIAL_DELAY_MS = 800;
+const STATUS_RETRY_MAX_DELAY_MS = 1600;
+// What one attempt costs, for deciding whether another still fits the deadline.
+// Never start an attempt that cannot finish - a truncated attempt is a timeout
+// kill, which is strictly worse than giving up with a diagnosis.
+const STATUS_ATTEMPT_COST_MS = STATUS_INITIAL_WAIT_MS + STATUS_QUIET_DEBOUNCE_MS + 100;
 // Floor for how long to wait for the new JSONL file to appear after a
 // fresh-session spawn. This is only a FLOOR: the actual discovery window is
 // raised to the caller's `--max-wait` budget (see the fresh-session path
@@ -118,40 +157,6 @@ function resolveBinPath(): string {
 		return envBin;
 	}
 	return 'claude';
-}
-
-// Env vars that mark the CURRENT process as running inside a Claude Code
-// session. When maestro-p is invoked from within a Claude agent (or any
-// process that inherited these), they leak into the claude TUI we spawn and
-// make that child claude believe it is a NESTED/child session: it then runs in
-// an ephemeral mode and never writes its own `<session-id>.jsonl` transcript.
-// Since the JSONL is maestro-p's only source of truth, the run produces no
-// `assistant`/`result` envelopes and times out with `first_byte_timeout` even
-// though the answer rendered on screen - the "synopsis/tab-naming returns
-// empty in TUI mode" bug. Verified by A/B: keeping CLAUDE_CODE_SESSION_ID /
-// CLAUDE_CODE_CHILD_SESSION reproduces the empty-result timeout; stripping both
-// makes the TUI write its transcript and the run succeed. We strip the whole
-// CLAUDE_CODE_* identity family plus the CLAUDECODE marker defensively; auth
-// and config (CLAUDE_CONFIG_DIR, ANTHROPIC_*, MAESTRO_CLAUDE_BIN) are kept.
-const CLAUDE_SESSION_IDENTITY_ENV_VARS = [
-	'CLAUDECODE',
-	'CLAUDE_CODE_SESSION_ID',
-	'CLAUDE_CODE_CHILD_SESSION',
-	'CLAUDE_CODE_ENTRYPOINT',
-] as const;
-
-/**
- * Return a copy of `process.env` with the Claude session-identity markers
- * removed, so the claude TUI maestro-p drives starts as a clean top-level
- * session that persists its own JSONL transcript. See
- * {@link CLAUDE_SESSION_IDENTITY_ENV_VARS} for the why.
- */
-function sanitizeChildEnv(): NodeJS.ProcessEnv {
-	const env: NodeJS.ProcessEnv = { ...process.env };
-	for (const key of CLAUDE_SESSION_IDENTITY_ENV_VARS) {
-		delete env[key];
-	}
-	return env;
 }
 
 function waitForEvent(emitter: EventEmitter, event: string): Promise<void> {
@@ -265,11 +270,23 @@ async function runMode(args: ParsedArgs): Promise<never> {
 		passThroughArgs.push('--session-id', freshSessionId);
 	}
 
+	const childEnv = buildChildEnv();
 	const driver = new TuiDriver({
 		binPath,
 		args: passThroughArgs,
 		cwd,
-		env: sanitizeChildEnv(),
+		env: childEnv,
+	});
+
+	// A turn on API Usage Billing still completes, so nothing downstream would
+	// ever notice it billed per-token credit instead of plan quota. Say so on
+	// stderr, unless the environment asked for API billing on purpose.
+	driver.on('api-billing', () => {
+		const diagnosis = diagnoseApiUsageBilling(childEnv, configDir);
+		if (diagnosis.expected) return;
+		process.stderr.write(
+			`maestro-p: warning: ${diagnosis.reason} This turn is billed as per-token API credit, not plan quota.\n`
+		);
 	});
 
 	if (args.streamThinking) {
@@ -295,6 +312,8 @@ async function runMode(args: ParsedArgs): Promise<never> {
 	// the instant the turn starts (markFirstEntrySeen) and on any finalize.
 	let resubmitTimer: NodeJS.Timeout | null = null;
 	let firstEntrySeen = false;
+	// Set once the first prompt-echo row has been compared with what we typed.
+	let promptEchoChecked = false;
 	let limitHit = false;
 	let aggregatedText = '';
 	const usage = emptyUsage();
@@ -436,10 +455,41 @@ async function runMode(args: ParsedArgs): Promise<never> {
 			});
 	};
 
+	// A quota limit means claude reports the limit and sits - it won't emit
+	// (further) transcript output this turn. Don't wait for the first-byte /
+	// idle timeout to settle: that long stall is what makes a Dynamic-mode turn
+	// look like it produced "no response" after the mode-switch banner, and what
+	// makes a headless caller burn its whole --max-wait. Finalize after the same
+	// short drain grace used for end_turn (so any assistant text written BEFORE
+	// the limit still flushes), then exit. `limitHit` forces exit code 2, which
+	// fires the desktop's interactive→API replay so the user's prompt is promptly
+	// re-sent under `claude --print` and actually gets answered.
+	//
+	// Two sources report a limit - the TUI banner and the transcript's
+	// rate_limit row - and either can fire alone, so both land here. The first
+	// one wins; the second is a no-op.
+	const markLimitHit = (): void => {
+		if (limitHit) return;
+		limitHit = true;
+		setTimeout(() => {
+			if (!finalized) {
+				finalize({ isError: false, exitCode: 2 });
+			}
+		}, END_TURN_GRACE_MS);
+	};
+
 	const processEntry = (entry: unknown): void => {
 		if (finalized || !entry || typeof entry !== 'object') return;
 		const e = entry as Record<string, unknown>;
 		const message = e.message as Record<string, unknown> | undefined;
+
+		// Claude's plan-limit notice is a synthetic row too, so it has to be
+		// caught before the bookkeeping filter below drops it (see
+		// api-error-row.ts).
+		if (isRateLimitErrorRow(e)) {
+			markLimitHit();
+			return;
+		}
 
 		// Synthetic-model bookkeeping rows ("No response requested.") never
 		// reach the wire.
@@ -490,8 +540,26 @@ async function runMode(args: ParsedArgs): Promise<never> {
 			}
 			if (hasToolResultBlock(message)) {
 				emitter.emitUserMessage(message);
+				return;
 			}
-			// Otherwise it's the prompt echo claude logs on receipt; drop it.
+			// Otherwise it's the prompt echo claude logs on receipt. It is never
+			// re-emitted, but the first one is proof of what claude actually
+			// received: if the PTY lost part of the prompt on the way in (see
+			// prompt-echo.ts), stop the turn before it acts on a damaged prompt.
+			if (!promptEchoChecked) {
+				const echo = promptEchoText(e);
+				if (echo !== null) {
+					promptEchoChecked = true;
+					const mismatch = isPromptEchoVerifiable(prompt) ? checkPromptEcho(prompt, echo) : null;
+					if (mismatch) {
+						process.stderr.write(
+							`maestro-p: claude received a damaged prompt (${mismatch.receivedBytes} of ${mismatch.sentBytes} bytes; first missing text: "${mismatch.missingFrom}"). The terminal dropped part of the input. Stopping the turn and failing with prompt_truncated.\n`
+						);
+						driver.kill('SIGTERM');
+						finalize({ isError: true, error: 'prompt_truncated', exitCode: 6 });
+					}
+				}
+			}
 			return;
 		}
 
@@ -525,23 +593,7 @@ async function runMode(args: ParsedArgs): Promise<never> {
 		);
 	};
 
-	driver.on('limit-hit', () => {
-		limitHit = true;
-		// A quota limit means claude paints the limit line on the TUI and sits -
-		// it won't emit (further) transcript output this turn. Don't wait for the
-		// first-byte / idle timeout (up to 120s) to settle: that long stall is what
-		// makes a Dynamic-mode turn look like it produced "no response" after the
-		// mode-switch banner. Finalize after the same short drain grace used for
-		// end_turn (so any assistant text painted BEFORE the limit still flushes),
-		// then exit. `limitHit` forces exit code 2, which fires the desktop's
-		// interactive→API replay so the user's prompt is promptly re-sent under
-		// `claude --print` and actually gets answered.
-		setTimeout(() => {
-			if (!finalized) {
-				finalize({ isError: false, exitCode: 2 });
-			}
-		}, END_TURN_GRACE_MS);
-	});
+	driver.on('limit-hit', markLimitHit);
 	driver.on('exit', () => {
 		if (finalized) return;
 		finalize({ isError: true, error: 'tui_exited', exitCode: 1 });
@@ -569,10 +621,11 @@ async function runMode(args: ParsedArgs): Promise<never> {
 		// Dump the last screenful so the failure is diagnosable from stderr
 		// alone: an MCP-connecting banner, a blocking modal, or un-submitted
 		// prompt text each point at a different remaining fix.
-		const screenTail = driver.getScreenTail();
 		process.stderr.write(
-			`maestro-p: no transcript output within ${args.firstByteTimeoutSeconds}s of sending the prompt - claude never started the turn (prompt may have been swallowed by a startup modal). Failing with first_byte_timeout.\n` +
-				`maestro-p: last screen at timeout (ANSI-stripped tail):\n${screenTail}\n`
+			formatScreenTailReport(
+				`no transcript output within ${args.firstByteTimeoutSeconds}s of sending the prompt - claude never started the turn (prompt may have been swallowed by a startup modal). Failing with first_byte_timeout.`,
+				driver.getScreenTail()
+			)
 		);
 		finalize({ isError: true, error: 'first_byte_timeout', exitCode: 5 });
 	}, firstByteTimeoutMs);
@@ -595,7 +648,8 @@ async function runMode(args: ParsedArgs): Promise<never> {
 		emitter.emitInit({ sessionId: args.resumeSessionId, model: null, cwd });
 		initEmitted = true;
 		flushPending();
-		driver.send(prompt);
+		// Await the whole paced prompt before the resubmit loop can press Enter.
+		await driver.send(prompt);
 		startResubmitLoop();
 	} else {
 		// Fresh-session path: we pre-assigned `freshSessionId` and passed it to
@@ -617,7 +671,8 @@ async function runMode(args: ParsedArgs): Promise<never> {
 			// --max-wait window. The FLOOR still covers a slow cold start.
 			timeoutMs: Math.max(DISCOVERY_TIMEOUT_FLOOR_MS, firstByteTimeoutMs),
 		});
-		driver.send(prompt);
+		// Await the whole paced prompt before the resubmit loop can press Enter.
+		await driver.send(prompt);
 		startResubmitLoop();
 		let discovered: { sessionId: string; jsonlPath: string };
 		try {
@@ -629,8 +684,10 @@ async function runMode(args: ParsedArgs): Promise<never> {
 			// bubble to main()'s catch (a bare exit 1 with no result envelope).
 			if (!finalized) {
 				process.stderr.write(
-					`maestro-p: session discovery failed: ${err instanceof Error ? err.message : String(err)}\n` +
-						`maestro-p: last screen at timeout (ANSI-stripped tail):\n${driver.getScreenTail()}\n`
+					formatScreenTailReport(
+						`session discovery failed: ${err instanceof Error ? err.message : String(err)}`,
+						driver.getScreenTail()
+					)
 				);
 				finalize({ isError: true, error: 'first_byte_timeout', exitCode: 5 });
 			}
@@ -653,6 +710,16 @@ async function runMode(args: ParsedArgs): Promise<never> {
 		if (finalized || !tailer) return;
 		const idleMs = Date.now() - tailer.getLastByteAt();
 		if (idleMs > args.maxWaitSeconds * 1000) {
+			// Dump the screen before finalize() quits the TUI: a turn that goes
+			// silent mid-turn is parked on something (a permission prompt, a
+			// modal, a hung tool or API call), and the screen is the only record
+			// of which one.
+			process.stderr.write(
+				formatScreenTailReport(
+					idleTimeoutMessage(idleMs, args.maxWaitSeconds),
+					driver.getScreenTail()
+				)
+			);
 			finalize({ isError: true, error: 'timeout', exitCode: 3 });
 		}
 	}, WATCHDOG_INTERVAL_MS);
@@ -667,15 +734,21 @@ async function statusMode(args: ParsedArgs): Promise<never> {
 	const configDir = resolveConfigDir();
 	const binPath = resolveBinPath();
 
+	const childEnv = buildChildEnv();
 	const driver = new TuiDriver({
 		binPath,
 		args: args.passThroughArgs,
 		cwd,
-		env: sanitizeChildEnv(),
+		env: childEnv,
 		// Parse the /usage panel from the full raw screen, not the `\n`-delimited
 		// 'line' events: heavier panels paint via cursor-addressing with no line
 		// feeds, so the 'line' stream is empty and the content would be lost.
 		captureScreen: true,
+		// Set only by Maestro's usage sampler, which runs this from a dedicated
+		// folder it owns and keeps empty. In the home or temp dir claude's trust
+		// prompt defaults to "No, exit", so without this the probe quits before
+		// /usage renders. Never honored implicitly: trust persists for that folder.
+		acceptWorkspaceTrust: process.env.MAESTRO_P_ACCEPT_WORKSPACE_TRUST === '1',
 	});
 
 	const lines: string[] = [];
@@ -688,6 +761,14 @@ async function statusMode(args: ParsedArgs): Promise<never> {
 		}
 	});
 
+	// On API Usage Billing the /usage panel has no plan windows, so the parse
+	// below fails. Remember why, so the failure names the billing mode rather
+	// than blaming the parser.
+	let apiBilling = false;
+	driver.on('api-billing', () => {
+		apiBilling = true;
+	});
+
 	let statusFinalized = false;
 	driver.on('exit', () => {
 		if (statusFinalized) return;
@@ -696,33 +777,32 @@ async function statusMode(args: ParsedArgs): Promise<never> {
 		process.exit(1);
 	});
 
+	// Measured before start() so the retry budget below covers claude's boot too:
+	// the caller's 30s kill timer starts when this process does, not when the TUI
+	// becomes ready.
+	const startedAt = Date.now();
+	const deadline = startedAt + STATUS_RETRY_DEADLINE_MS;
+
 	await driver.start();
 	await waitForEvent(driver, 'ready');
 
-	driver.send('/usage');
-
-	// Initial hold so the panel has time to start rendering.
-	await new Promise<void>((resolve) => setTimeout(resolve, STATUS_INITIAL_WAIT_MS));
-
-	// Then debounce on no-new-lines: keep polling until the line stream has
-	// been quiet for STATUS_QUIET_DEBOUNCE_MS straight.
-	let quietSince = Date.now();
-	let lastSeenAt = lastLineAt;
-	while (Date.now() - quietSince < STATUS_QUIET_DEBOUNCE_MS) {
-		await new Promise<void>((resolve) => setTimeout(resolve, STATUS_DEBOUNCE_POLL_MS));
-		if (lastLineAt !== lastSeenAt) {
-			lastSeenAt = lastLineAt;
-			quietSince = Date.now();
+	// Wait out one /usage paint: an initial hold to let it start rendering, then
+	// debounce on no-new-lines until the stream has been quiet for
+	// STATUS_QUIET_DEBOUNCE_MS straight. Bounded by the deadline so a panel that
+	// never stops trickling gives up with a diagnosis instead of being killed
+	// mid-sentence by the sampler's timeout.
+	const settleUsagePanel = async (): Promise<void> => {
+		await new Promise<void>((resolve) => setTimeout(resolve, STATUS_INITIAL_WAIT_MS));
+		let quietSince = Date.now();
+		let lastSeenAt = lastLineAt;
+		while (Date.now() - quietSince < STATUS_QUIET_DEBOUNCE_MS && Date.now() < deadline) {
+			await new Promise<void>((resolve) => setTimeout(resolve, STATUS_DEBOUNCE_POLL_MS));
+			if (lastLineAt !== lastSeenAt) {
+				lastSeenAt = lastLineAt;
+				quietSince = Date.now();
+			}
 		}
-	}
-
-	// Parse from the full raw screen capture, not the `\n`-delimited 'line'
-	// events: heavier /usage panels (Team/Enterprise accounts, or any account
-	// with a long "what's contributing" breakdown) paint via cursor-addressing
-	// with no line feeds, leaving the 'line' stream empty. The screen capture is
-	// a superset that always carries the panel; fall back to the joined lines
-	// only if capture was somehow empty.
-	const raw = driver.getScreenCapture() || lines.join('\n');
+	};
 
 	// Diagnostic hook: when MAESTRO_P_DUMP_RAW points at a file, write the raw
 	// captured screen there before parsing. The /usage layout drifts by plan
@@ -731,16 +811,64 @@ async function statusMode(args: ParsedArgs): Promise<never> {
 	// lets a maintainer capture the exact panel a given account renders without
 	// rebuilding an instrumented binary. Best-effort: a write failure must never
 	// derail the status probe itself.
-	const dumpPath = process.env.MAESTRO_P_DUMP_RAW;
-	if (dumpPath) {
+	//
+	// Attempt 1 keeps the plain configured path so the existing single-file
+	// contract is unchanged; a retry writes alongside it as `.attempt2`, `.attempt3`
+	// and so on, because diagnosing a flake needs the screen that FLAKED, not just
+	// the last one.
+	const dumpRaw = (raw: string, attempt: number): void => {
+		const dumpPath = process.env.MAESTRO_P_DUMP_RAW;
+		if (!dumpPath) return;
 		try {
-			fs.writeFileSync(dumpPath, raw, 'utf8');
+			fs.writeFileSync(attempt === 1 ? dumpPath : `${dumpPath}.attempt${attempt}`, raw, 'utf8');
 		} catch {
 			// ignore - diagnostics are non-fatal
 		}
+	};
+
+	let attempts = 0;
+	let retryDelay = STATUS_RETRY_INITIAL_DELAY_MS;
+	let parsed: ReturnType<typeof parseUsage> = null;
+
+	for (;;) {
+		attempts += 1;
+
+		// NOTE: neither the screen capture nor `lines` is cleared between attempts,
+		// and that is load-bearing rather than an oversight. Both accumulate, so a
+		// retry's panel lands appended to the previous one - which is exactly the
+		// shape parseUsage already expects: sliceToFinalPanel() anchors on the LAST
+		// `Current session` header and reads forward from there, so the newest panel
+		// wins and the stale one is ignored. Clearing would break claude's
+		// differential repaints, where only the changed cells arrive and no fresh
+		// section header is painted: a cleared buffer would hold anchorless
+		// fragments and parse to null on every retry. Verified in
+		// usage-parser.test.ts, "stacked /usage panels".
+		driver.send('/usage');
+		await settleUsagePanel();
+
+		// Parse from the full raw screen capture, not the `\n`-delimited 'line'
+		// events: heavier /usage panels (Team/Enterprise accounts, or any account
+		// with a long "what's contributing" breakdown) paint via cursor-addressing
+		// with no line feeds, leaving the 'line' stream empty. The screen capture is
+		// a superset that always carries the panel; fall back to the joined lines
+		// only if capture was somehow empty.
+		const raw = driver.getScreenCapture() || lines.join('\n');
+		dumpRaw(raw, attempts);
+
+		parsed = parseUsage(raw, new Date().toISOString(), configDir);
+		if (parsed) break;
+
+		// An API Usage Billing account has no plan windows to render, so this panel
+		// will never parse no matter how often it is asked. Retrying a structurally
+		// unmeasurable account burns the whole budget on every single run for an
+		// answer that cannot change. Fail fast and name the billing mode.
+		if (apiBilling) break;
+
+		if (Date.now() + retryDelay + STATUS_ATTEMPT_COST_MS > deadline) break;
+		await new Promise<void>((resolve) => setTimeout(resolve, retryDelay));
+		retryDelay = Math.min(retryDelay * 2, STATUS_RETRY_MAX_DELAY_MS);
 	}
 
-	const parsed = parseUsage(raw, new Date().toISOString(), configDir);
 	statusFinalized = true;
 	if (parsed) {
 		const emitter = new JsonEmitter();
@@ -749,7 +877,20 @@ async function statusMode(args: ParsedArgs): Promise<never> {
 		process.exit(0);
 	}
 
-	process.stderr.write('maestro-p: failed to parse /usage output\n');
+	if (apiBilling) {
+		const { reason } = diagnoseApiUsageBilling(childEnv, configDir);
+		process.stderr.write(`maestro-p: ${reason} There is no plan usage to report.\n`);
+	} else {
+		// Report the attempt count and elapsed time, not just the failure. A
+		// consumer reading this has to decide whether the account is flaky or
+		// genuinely unparseable, and "gave up after 5 attempts" is a different
+		// diagnosis from "failed on the only attempt there was time for".
+		const elapsedMs = Date.now() - startedAt;
+		process.stderr.write(
+			`maestro-p: failed to parse /usage output after ${attempts} ` +
+				`attempt${attempts === 1 ? '' : 's'} over ${Math.round(elapsedMs / 100) / 10}s\n`
+		);
+	}
 	await driver.quit();
 	process.exit(1);
 }

@@ -15,6 +15,7 @@ import { app } from 'electron';
 import { bmadCatalog } from '../prompts/bmad/catalog';
 import { captureException } from './utils/sentry';
 import { logger } from './utils/logger';
+import { fetchWithTimeout } from './utils/fetchWithTimeout';
 
 const LOG_CONTEXT = '[BMAD]';
 const BMAD_REPO_URL = 'https://github.com/bmad-code-org/BMAD-METHOD';
@@ -26,6 +27,9 @@ const BMAD_REPO_URL = 'https://github.com/bmad-code-org/BMAD-METHOD';
 // this ref. Keep this in sync with scripts/refresh-bmad.mjs.
 const BMAD_REF = 'v6.2.0';
 const BMAD_RAW_BASE = `https://raw.githubusercontent.com/bmad-code-org/BMAD-METHOD/${BMAD_REF}`;
+
+/** Request budget for BMAD asset downloads from GitHub raw and the API. */
+const BMAD_FETCH_TIMEOUT_MS = 15_000;
 const REFERENCE_TOKEN_REGEX =
 	/`((?:\.\.?\/)?[A-Za-z0-9_./-]+\.md|\{project-root\}\/_bmad\/[^`]+\.md|\{installed_path\}\/[^`]+\.md)`/g;
 
@@ -148,8 +152,14 @@ async function loadUserCustomizations(): Promise<StoredData | null> {
 	}
 }
 
-function fetchWithTimeout(url: string, timeoutMs = 15000): Promise<Response> {
-	return fetch(url, { signal: AbortSignal.timeout(timeoutMs) }).catch((error) => {
+/**
+ * BMAD asset fetch. Thin wrapper over the shared `fetchWithTimeout` that adds
+ * the Sentry reporting this module wants on every transport failure. The
+ * reporting is deliberately kept here rather than in the shared helper: most
+ * callers of that helper treat an offline machine as routine, not as a bug.
+ */
+function fetchBmadResource(url: string, timeoutMs = BMAD_FETCH_TIMEOUT_MS): Promise<Response> {
+	return fetchWithTimeout(url, {}, timeoutMs).catch((error) => {
 		captureException(error, {
 			operation: 'bmad:fetch',
 			url,
@@ -208,7 +218,7 @@ async function collectReferencedAssets(
 
 		seen.add(repoPath);
 		try {
-			const response = await fetchWithTimeout(`${BMAD_RAW_BASE}/${repoPath}`);
+			const response = await fetchBmadResource(`${BMAD_RAW_BASE}/${repoPath}`);
 			if (!response.ok) {
 				throw new Error(`Failed to fetch referenced asset ${repoPath}: ${response.statusText}`);
 			}
@@ -501,9 +511,9 @@ export async function resetBmadPrompt(id: string): Promise<string> {
 
 async function getLatestCommitSha(): Promise<string> {
 	try {
-		const response = await fetchWithTimeout(
+		const response = await fetchBmadResource(
 			`${BMAD_REPO_URL.replace('https://github.com', 'https://api.github.com/repos')}/commits/${BMAD_REF}`,
-			15000
+			BMAD_FETCH_TIMEOUT_MS
 		);
 		if (!response.ok) {
 			throw new Error(`Failed to fetch latest commit: ${response.statusText}`);
@@ -519,7 +529,7 @@ async function getLatestCommitSha(): Promise<string> {
 
 async function getLatestVersion(): Promise<string> {
 	try {
-		const response = await fetchWithTimeout(`${BMAD_RAW_BASE}/package.json`);
+		const response = await fetchBmadResource(`${BMAD_RAW_BASE}/package.json`);
 		if (!response.ok) {
 			throw new Error(`Failed to fetch package.json: ${response.statusText}`);
 		}
@@ -542,7 +552,7 @@ export async function refreshBmadPrompts(): Promise<BmadMetadata> {
 		const downloadedPrompts: Array<{ id: string; prompt: string }> = [];
 
 		for (const cmd of BMAD_COMMANDS) {
-			const response = await fetchWithTimeout(`${BMAD_RAW_BASE}/${cmd.sourcePath}`);
+			const response = await fetchBmadResource(`${BMAD_RAW_BASE}/${cmd.sourcePath}`);
 			if (!response.ok) {
 				throw new Error(`Failed to fetch ${cmd.sourcePath}: ${response.statusText}`);
 			}

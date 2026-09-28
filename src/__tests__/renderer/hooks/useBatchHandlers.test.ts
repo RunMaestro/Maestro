@@ -48,6 +48,20 @@ vi.mock('../../../renderer/hooks/batch/useBatchProcessor', () => ({
 }));
 
 // ============================================================================
+// Mock the leaderboard service - the server accumulates deltas, so a delta that
+// is never sent is lost for good. Every completion path must ship it or queue
+// it, and the completing run must always retire its uncommitted counter.
+// ============================================================================
+
+const mockQueueLeaderboardDelta = vi.fn(() => Promise.resolve());
+const mockNoteAutoRunCreditSettled = vi.fn(() => Promise.resolve());
+
+vi.mock('../../../renderer/services/leaderboard', () => ({
+	queueLeaderboardDelta: (args: unknown) => mockQueueLeaderboardDelta(args as never),
+	noteAutoRunCreditSettled: (ms: unknown) => mockNoteAutoRunCreditSettled(ms as never),
+}));
+
+// ============================================================================
 // Now import the hook and stores
 // ============================================================================
 
@@ -60,6 +74,7 @@ import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { useBatchStore } from '../../../renderer/stores/batchStore';
 import { useModalStore } from '../../../renderer/stores/modalStore';
+import { useFeedbackDraftStore } from '../../../renderer/stores/feedbackDraftStore';
 
 // ============================================================================
 // Helpers
@@ -1520,6 +1535,33 @@ describe('useBatchHandlers', () => {
 			expect(window.maestro.app.confirmQuit).toHaveBeenCalled();
 		});
 
+		it('writes the open feedback draft out before deciding, then quits', async () => {
+			// A draft is no longer a reason to stop the user: the editor's live
+			// snapshot is persisted on the way out, so quitting cannot lose it and
+			// the confirmation modal never mentions it.
+			useSessionStore.setState({ sessions: [], activeSessionId: '' });
+			const saveActiveDraft = vi.fn().mockResolvedValue('draft-1');
+			useFeedbackDraftStore.setState({ hasDraft: true, saveActiveDraft } as never);
+
+			let quitCallback: () => Promise<void> = async () => {};
+			(window.maestro.app.onQuitConfirmationRequest as any).mockImplementation(
+				(cb: () => Promise<void>) => {
+					quitCallback = cb;
+					return vi.fn();
+				}
+			);
+
+			renderHook(() => useBatchHandlers(createDeps()));
+
+			await act(async () => {
+				await quitCallback();
+			});
+
+			expect(saveActiveDraft).toHaveBeenCalled();
+			expect(window.maestro.app.confirmQuit).toHaveBeenCalled();
+			expect(useModalStore.getState().modals.get('quitConfirm')?.open).not.toBe(true);
+		});
+
 		it('confirms quit immediately when there are no sessions at all', async () => {
 			useSessionStore.setState({ sessions: [], activeSessionId: '' });
 
@@ -1835,6 +1877,120 @@ describe('useBatchHandlers', () => {
 
 			expect(result.current.pauseBatchOnErrorRef).toBe(firstRender.pauseBatchOnErrorRef);
 			expect(result.current.getBatchStateRef).toBe(firstRender.getBatchStateRef);
+		});
+	});
+
+	// ====================================================================
+	// Leaderboard delta durability
+	// ====================================================================
+
+	describe('leaderboard delta durability on completion', () => {
+		const REGISTRATION = {
+			email: 'user@example.com',
+			displayName: 'User',
+			authToken: 'token123',
+			registeredAt: 0,
+			optedIn: true,
+			// selectIsLeaderboardRegistered gates on this - without it the whole
+			// leaderboard block is skipped and nothing is submitted or queued.
+			emailConfirmed: true,
+		};
+
+		function completeRun(overrides: Record<string, unknown> = {}) {
+			const session = createMockSession({ id: 'session-1', name: 'My Agent' });
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+			useSettingsStore.setState({
+				firstAutoRunCompleted: true,
+				autoRunStats: {
+					cumulativeTimeMs: 0,
+					totalRuns: 0,
+					currentBadgeLevel: 0,
+					longestRunMs: 0,
+					longestRunTimestamp: 0,
+					lastBadgeUnlockLevel: 0,
+					lastAcknowledgedBadgeLevel: 0,
+				},
+				recordAutoRunComplete: vi.fn().mockReturnValue({ newBadgeLevel: null, isNewRecord: false }),
+				...overrides,
+			} as never);
+
+			renderHook(() => useBatchHandlers(createDeps()));
+			const callArgs = vi.mocked(useBatchProcessor).mock.calls[0][0];
+
+			return act(async () => {
+				callArgs.onComplete({
+					sessionId: 'session-1',
+					sessionName: 'My Agent',
+					completedTasks: 5,
+					totalTasks: 5,
+					wasStopped: false,
+					elapsedTimeMs: 60000,
+					inputTokens: 1000,
+					outputTokens: 500,
+					totalCostUsd: 0.05,
+					documentsProcessed: 2,
+				});
+				await Promise.resolve();
+				await Promise.resolve();
+			});
+		}
+
+		it('queues the delta when the auth token has not arrived yet', async () => {
+			await completeRun({
+				leaderboardRegistration: { ...REGISTRATION, authToken: undefined },
+			});
+
+			expect(window.maestro.leaderboard.submit).not.toHaveBeenCalled();
+			expect(mockQueueLeaderboardDelta).toHaveBeenCalledWith({
+				deltaMs: 60000,
+				deltaRuns: 1,
+				source: 'auto-run',
+			});
+		});
+
+		it('queues the delta when the server rejects the submission', async () => {
+			vi.mocked(window.maestro.leaderboard.submit).mockResolvedValue({
+				success: false,
+				error: 'rate limited',
+			} as never);
+
+			await completeRun({ leaderboardRegistration: REGISTRATION });
+
+			expect(mockQueueLeaderboardDelta).toHaveBeenCalledWith({
+				deltaMs: 60000,
+				deltaRuns: 1,
+				source: 'auto-run',
+			});
+		});
+
+		it('queues the delta when the submission throws', async () => {
+			vi.mocked(window.maestro.leaderboard.submit).mockRejectedValue(new Error('offline'));
+
+			await completeRun({ leaderboardRegistration: REGISTRATION });
+
+			expect(mockQueueLeaderboardDelta).toHaveBeenCalledWith({
+				deltaMs: 60000,
+				deltaRuns: 1,
+				source: 'auto-run',
+			});
+		});
+
+		it('does not queue when the submission succeeds', async () => {
+			vi.mocked(window.maestro.leaderboard.submit).mockResolvedValue({
+				success: true,
+			} as never);
+
+			await completeRun({ leaderboardRegistration: REGISTRATION });
+
+			expect(mockQueueLeaderboardDelta).not.toHaveBeenCalled();
+		});
+
+		it('retires the uncommitted counter on every completion path', async () => {
+			await completeRun({ leaderboardRegistration: REGISTRATION });
+
+			// The 60s timer already credited this time locally; the completion now
+			// owns the delta, so the crash-recovery counter must give it back.
+			expect(mockNoteAutoRunCreditSettled).toHaveBeenCalledWith(60000);
 		});
 	});
 });

@@ -3,6 +3,7 @@ import type { Session, Theme, FocusArea } from '../../types';
 import type { FileNode } from '../../types/fileTree';
 import type { FileTreeChanges } from '../../utils/fileExplorer';
 import type { FileExplorerIconTheme } from '../../utils/fileExplorerIcons/shared';
+import type { FileClickOptions } from '../../hooks/ui/useAppHandlers';
 
 /** MIME type for dragging multiple file-tree rows as a JSON array of relative paths. */
 export const FILE_TREE_MULTI_MIME = 'application/x-maestro-file-paths';
@@ -117,7 +118,7 @@ export interface FileExplorerPanelProps {
 		activeSessionId: string,
 		setSessions: React.Dispatch<React.SetStateAction<Session[]>>
 	) => void;
-	handleFileClick: (node: FileNode, path: string, activeSession: Session) => Promise<void>;
+	handleFileClick: (node: FileNode, path: string, options?: FileClickOptions) => Promise<void>;
 	expandAllFolders: (
 		activeSessionId: string,
 		activeSession: Session,

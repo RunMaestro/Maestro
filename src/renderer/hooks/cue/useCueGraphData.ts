@@ -17,7 +17,9 @@ import { buildSubscriptionPipelineMap } from '../../components/CueModal/cueModal
 import type { CueGraphSession } from '../../../shared/cue-pipeline-types';
 import type { CuePipelineSessionInfo as SessionInfo } from '../../../shared/cue-pipeline-types';
 
-type CueModalTab = 'dashboard' | 'pipeline' | 'activity' | 'backup';
+// Imported rather than redeclared: this hook keys behavior off the tab, and a
+// local copy silently drifts every time a tab is added.
+import type { CueModalTab } from '../../components/CueModal/CueModalHeader';
 
 export interface UseCueGraphDataParams {
 	activeTab: CueModalTab;

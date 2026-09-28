@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { calculateContextDisplay } from '../../utils/contextUsage';
 import { resolveConfiguredContextWindow } from '../../utils/contextWindowResolver';
-import { getModelContextWindowOverride } from '../../../shared/agentConstants';
+import { resolveContextWindow } from '../../utils/contextWindowPrecedence';
 import type { Session, AITab } from '../../types';
 
 /**
@@ -33,28 +33,30 @@ export function useContextWindow(activeSession: Session | null, activeTab: AITab
 		};
 	}, [activeSession?.toolType, activeSession?.customContextWindow]);
 
-	const activeTabContextWindow = useMemo(() => {
-		// Explicit per-session override always wins.
-		const sessionOverride = activeSession?.customContextWindow ?? 0;
-		if (sessionOverride > 0) return sessionOverride;
-		// A `[1m]` marker on the session's custom model is an explicit model choice
-		// and outranks a runtime-resolved window, matching useAgentUsageListener's
-		// precedence so the header gauge and the timeline never disagree.
-		const modelMarker = getModelContextWindowOverride(activeSession?.customModel) ?? 0;
-		if (modelMarker > 0) return modelMarker;
-		const reported = activeTab?.usageStats?.contextWindow ?? 0;
-		// A genuinely provider/model-resolved window (omp's per-turn model catalog,
-		// flagged via `contextWindowResolved`) is the ACTUAL window, so it beats the
-		// agent-level configured fallback (e.g. opus's 1M vs the 200k default).
-		if (activeTab?.usageStats?.contextWindowResolved && reported > 0) return reported;
-		return configuredContextWindow > 0 ? configuredContextWindow : reported;
-	}, [
-		configuredContextWindow,
-		activeTab?.usageStats?.contextWindow,
-		activeTab?.usageStats?.contextWindowResolved,
-		activeSession?.customContextWindow,
-		activeSession?.customModel,
-	]);
+	// Resolved window AND which rank supplied it. The source is what lets the
+	// Edit Agent panel say "your stored value is being overridden" without
+	// re-deriving the ranking (#1370) - a second copy could disagree with this
+	// one, which is the bug PR #1221 fixed.
+	const resolvedContextWindow = useMemo(
+		() =>
+			resolveContextWindow({
+				customModel: activeSession?.customModel,
+				customContextWindow: activeSession?.customContextWindow,
+				contextWindowSource: activeSession?.contextWindowSource,
+				reportedWindow: activeTab?.usageStats?.contextWindow,
+				reportedResolved: activeTab?.usageStats?.contextWindowResolved,
+				configuredWindow: configuredContextWindow,
+			}),
+		[
+			configuredContextWindow,
+			activeTab?.usageStats?.contextWindow,
+			activeTab?.usageStats?.contextWindowResolved,
+			activeSession?.customContextWindow,
+			activeSession?.contextWindowSource,
+			activeSession?.customModel,
+		]
+	);
+	const activeTabContextWindow = resolvedContextWindow.window;
 
 	// Hold the last trustworthy result per tab so an untrustworthy frame
 	// (overflow without fallback, missing window) preserves the prior good
@@ -114,5 +116,7 @@ export function useContextWindow(activeSession: Session | null, activeTab: AITab
 		activeTabContextWindow,
 		activeTabContextTokens,
 		activeTabContextUsage,
+		/** Which rank supplied `activeTabContextWindow` (see contextWindowPrecedence). */
+		activeTabContextWindowSource: resolvedContextWindow.source,
 	};
 }

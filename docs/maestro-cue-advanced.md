@@ -369,4 +369,4 @@ Cue persists its state in a local SQLite database:
 - **GitHub seen tracking** - Remembers which PRs/issues have already triggered events (30-day retention)
 - **Heartbeat** - Tracks engine uptime for sleep/wake detection
 
-Events older than 7 days are automatically pruned to keep the database lean.
+Events older than your retention window are automatically pruned at engine start to keep the database lean. The window is the `cueHistoryRetentionDays` setting, 14 days by default. Change it with the **Keep** dropdown in the Cue modal's Activity Log header.

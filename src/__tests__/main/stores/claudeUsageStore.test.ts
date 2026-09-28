@@ -62,8 +62,10 @@ import {
 	setSnapshot,
 	getSnapshot,
 	getAllSnapshots,
+	getRetainedSnapshots,
 	clear,
 	resolveConfigDirKey,
+	SNAPSHOT_RETENTION_MS,
 	SNAPSHOT_TTL_MS,
 	__resetForTests,
 	type UsageSnapshot,
@@ -163,14 +165,67 @@ describe('claudeUsageStore', () => {
 		});
 	});
 
+	describe('retention beyond the TTL', () => {
+		it('keeps an expired snapshot for display while hiding it from live reads', () => {
+			// The account whose agents all moved away: the panel must still be able
+			// to draw its last known bars, the mode selector must not see them.
+			const expired = makeSnapshot({
+				configDirKey: '/Users/test/.claude-capped',
+				sampledAt: new Date(FROZEN_NOW - 25 * 60 * 60 * 1000).toISOString(),
+			});
+			setSnapshot(expired);
+
+			expect(getSnapshot(expired.configDirKey)).toBeNull();
+			expect(getAllSnapshots()).toEqual({});
+			expect(getRetainedSnapshots()).toEqual({ [expired.configDirKey]: expired });
+		});
+
+		it('survives a neighboring write', () => {
+			const expired = makeSnapshot({
+				configDirKey: '/Users/test/.claude-capped',
+				sampledAt: new Date(FROZEN_NOW - 30 * 60 * 60 * 1000).toISOString(),
+			});
+			setSnapshot(expired);
+			const fresh = makeSnapshot({ configDirKey: '/Users/test/.claude-spare' });
+			setSnapshot(fresh);
+
+			expect(getAllSnapshots()).toEqual({ [fresh.configDirKey]: fresh });
+			expect(getRetainedSnapshots()).toEqual({
+				[expired.configDirKey]: expired,
+				[fresh.configDirKey]: fresh,
+			});
+		});
+
+		it('drops a snapshot past the retention window', () => {
+			const ancient = makeSnapshot({
+				configDirKey: '/Users/test/.claude-ancient',
+				sampledAt: new Date(FROZEN_NOW - SNAPSHOT_RETENTION_MS - 60_000).toISOString(),
+			});
+			setSnapshot(ancient);
+
+			expect(getRetainedSnapshots()).toEqual({});
+		});
+
+		it('drops an unparseable snapshot rather than retaining it', () => {
+			setSnapshot(makeSnapshot({ configDirKey: '/Users/test/.claude-bad', sampledAt: 'garbage' }));
+			const fresh = makeSnapshot({ configDirKey: '/Users/test/.claude-new' });
+			setSnapshot(fresh);
+
+			expect(getRetainedSnapshots()).toEqual({ [fresh.configDirKey]: fresh });
+		});
+
+		it('SNAPSHOT_RETENTION_MS is 30 days', () => {
+			expect(SNAPSHOT_RETENTION_MS).toBe(30 * 24 * 60 * 60 * 1000);
+		});
+	});
+
 	describe('prune on read', () => {
-		it('removes an expired entry from disk when reading it directly', () => {
+		it('hides an expired entry from the live map when reading it directly', () => {
 			const expired = makeSnapshot({
 				configDirKey: '/Users/test/.claude-old',
 				sampledAt: new Date(FROZEN_NOW - 25 * 60 * 60 * 1000).toISOString(),
 			});
 			setSnapshot(expired);
-			// First read prunes; verify by inspecting the all-snapshots map.
 			expect(getSnapshot(expired.configDirKey)).toBeNull();
 			expect(getAllSnapshots()).toEqual({});
 		});
@@ -189,7 +244,7 @@ describe('claudeUsageStore', () => {
 	});
 
 	describe('prune on write', () => {
-		it('drops expired neighbors while writing a new snapshot', () => {
+		it('keeps expired neighbors out of the live map while writing a new snapshot', () => {
 			const expired = makeSnapshot({
 				configDirKey: '/Users/test/.claude-old',
 				sampledAt: new Date(FROZEN_NOW - 36 * 60 * 60 * 1000).toISOString(),

@@ -1,3 +1,4 @@
+/* global module, console, setTimeout, clearTimeout */
 // Agent Flow - tier-2 Maestro plugin sandbox entry.
 //
 // Plain CommonJS run through `new vm.Script` inside a utilityProcess: no
@@ -424,6 +425,12 @@ var HANDLERS = {
 	// to land on, even before it has produced any events.
 	'session.activated': function (payload, at) {
 		if (!payload || typeof payload.sessionId !== 'string') return;
+		// Browsing past an idle agent must not leave a permanent empty lane.
+		// Keep its metadata so later activity can materialize the lane again.
+		var outgoing = lanes.get(focusedSessionId);
+		if (outgoing && outgoing.nodes.length === 0 && focusedSessionId !== payload.sessionId) {
+			lanes.delete(focusedSessionId);
+		}
 		focusedSessionId = payload.sessionId;
 		touch(getLane(payload.sessionId), at);
 	},
@@ -573,7 +580,7 @@ function pushSnapshot() {
 		// panelPost is a brokered async call; swallow denial (ui:panel not yet
 		// granted) so we simply retry on the next mutation.
 		if (p && typeof p.then === 'function') p.then(undefined, function () {});
-	} catch (e) {
+	} catch {
 		/* denial or bridge gone; retry next mutation */
 	}
 }
@@ -633,7 +640,7 @@ function seedFromSessions() {
 				/* grant missing; tolerate */
 			}
 		);
-	} catch (e) {
+	} catch {
 		/* tolerate */
 	}
 }
@@ -653,7 +660,7 @@ function activate(maestro) {
 	try {
 		var sub = maestro.events.subscribe(TOPICS);
 		if (sub && typeof sub.then === 'function') sub.then(undefined, function () {});
-	} catch (e) {
+	} catch {
 		/* subscription denial is tolerated; handlers simply never fire */
 	}
 

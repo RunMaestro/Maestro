@@ -8,11 +8,6 @@ export interface FileStats {
 
 export interface FilePreviewProps {
 	file: { name: string; content: string; path: string } | null;
-	/**
-	 * ID of the file preview tab rendering this content. Required for media
-	 * files, whose player is hosted app-level and matched to the tab by this ID.
-	 */
-	fileTabId?: string;
 	onClose: () => void;
 	theme: any;
 	markdownEditMode: boolean;

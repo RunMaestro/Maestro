@@ -76,7 +76,9 @@ describe('WakaTimeManager', () => {
 		mockStore = {
 			get: vi.fn(),
 		};
-		manager = new WakaTimeManager(mockStore as never);
+		// Version is injected rather than read from `electron.app` so the same
+		// manager runs in the CLI bundle, which has no Electron.
+		manager = new WakaTimeManager(mockStore as never, '1.0.0');
 	});
 
 	describe('detectCli', () => {

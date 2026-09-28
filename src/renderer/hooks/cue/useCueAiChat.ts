@@ -11,7 +11,7 @@ import { prepareMaestroSystemPrompt } from '../../utils/spawnHelpers';
 
 const AI_SYSTEM_PROMPT = `You are configuring maestro-cue.yaml for the user. Be terse. Plain text only - no markdown, no code fences, no bullet lists, no formatting.
 
-Event types: app.startup (fires once on application start, no extra fields), time.heartbeat (interval_minutes), time.scheduled (schedule_times array, optional schedule_days), file.changed (watch glob), agent.completed (source_session, optional fan_out), github.pull_request (poll_minutes, optional repo), github.issue (poll_minutes, optional repo), task.pending (watch glob, poll_minutes).
+Event types: app.startup (fires once on application start, no extra fields), time.heartbeat (interval_minutes), time.scheduled (schedule_times array, optional schedule_days), file.changed (watch glob), agent.completed (source_session, optional fan_out), github.pull_request (poll_minutes, optional repo), github.issue (poll_minutes, optional repo), github.label (fires when a label is added to a PR or issue; optional gh_label_target: pr|issue|both, optional gh_labels array, poll_minutes, optional repo), task.pending (watch glob, poll_minutes).
 
 Optional filter block on any subscription: AND'd conditions on payload fields. Operators: exact string, "!value" negation, ">N"/"<N" numeric, glob patterns, boolean.
 
@@ -30,7 +30,7 @@ settings:
   queue_size: 10
   owner_agent_id: <agent id or name>  # optional - recommended when >1 agent shares this projectRoot, so unowned subscriptions fire once on a named agent instead of whichever happens to be first in the session list. If unset with >1 agent, the runtime deterministically picks the first-in-list as a fallback. Subs with explicit agent_id keep fanning out regardless.
 
-Multi-agent patterns: Startup (app.startup), Heartbeat (time.heartbeat), Scheduled (time.scheduled), File Enrichment (file.changed), Research Swarm (fan_out + fan-in), Sequential Chain (agent.completed chain), Debate (fan_out to opposing + fan-in to moderator), PR Review (github.pull_request), Issue Triage (github.issue), Task Queue (task.pending).
+Multi-agent patterns: Startup (app.startup), Heartbeat (time.heartbeat), Scheduled (time.scheduled), File Enrichment (file.changed), Research Swarm (fan_out + fan-in), Sequential Chain (agent.completed chain), Debate (fan_out to opposing + fan-in to moderator), PR Review (github.pull_request), Issue Triage (github.issue), Label Routing (github.label), Task Queue (task.pending).
 
 Edit the file directly using your tools. After editing, summarize what you changed in 1-2 short sentences. If you need clarification, ask briefly.`;
 

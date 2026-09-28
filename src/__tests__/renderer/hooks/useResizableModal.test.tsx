@@ -21,17 +21,20 @@ function Harness({
 	defaultSize = { width: 400, height: 300 },
 	minSize = { width: 320, height: 240 },
 	enabled = true,
+	anchor,
 }: {
 	resizeKey?: string;
 	defaultSize?: { width: number; height: number };
 	minSize?: { width: number; height: number };
 	enabled?: boolean;
+	anchor?: 'center' | 'top-left';
 }) {
 	const modal = useResizableModal({
 		resizeKey,
 		defaultSize,
 		minSize,
 		enabled,
+		anchor,
 	});
 
 	return (
@@ -94,6 +97,23 @@ describe('useResizableModal', () => {
 		expect(window.maestro.settings.set).toHaveBeenCalledWith('modalSizes', {
 			'test-modal': { width: 500, height: 340 },
 		});
+	});
+
+	it('grows a top-left anchored surface 1:1 with the cursor', () => {
+		render(<Harness anchor="top-left" />);
+
+		const modal = screen.getByTestId('modal');
+
+		fireEvent.mouseDown(screen.getByTestId('modal-resize-handle-se'), {
+			clientX: 0,
+			clientY: 0,
+		});
+		fireEvent.mouseMove(document, { clientX: 50, clientY: 20 });
+
+		// A centered modal would double these deltas to keep the corner under the
+		// cursor; an anchored one only moves the dragged edge.
+		expect(modal.style.width).toBe('450px');
+		expect(modal.style.height).toBe('320px');
 	});
 
 	it('cleans document drag listeners when unmounted during a drag', () => {

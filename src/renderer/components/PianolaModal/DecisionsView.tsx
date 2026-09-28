@@ -77,7 +77,7 @@ export function DecisionsView({
 										</span>
 										{d.dryRun && (
 											<span
-												className="text-[10px] px-1.5 py-0.5 rounded shrink-0"
+												className="text-2xs px-1.5 py-0.5 rounded shrink-0"
 												style={{
 													backgroundColor: theme.colors.border,
 													color: theme.colors.textDim,
@@ -112,7 +112,7 @@ export function DecisionsView({
 								</div>
 
 								<div
-									className="mt-1.5 flex items-center gap-3 text-[11px]"
+									className="mt-1.5 flex items-center gap-3 text-xs-plus"
 									style={{ color: theme.colors.textDim }}
 								>
 									<span>agent: {d.agentId}</span>

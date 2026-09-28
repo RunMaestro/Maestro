@@ -52,11 +52,16 @@
 					"context-management",
 					"document-graph",
 					"git-worktrees",
+					"agent-collaboration",
 					"group-chat",
 					"cross-agent-mentions",
 					"image-annotator",
+					"media-player",
+					"file-formats",
+					"parquet-preview",
 					"remote-control",
 					"ssh-remote-execution",
+					"agent-resilience",
 					"feedback",
 					"configuration"
 				]
@@ -82,6 +87,8 @@
 					"usage-dashboard",
 					"symphony",
 					"concerto",
+					"pianola",
+					"coworking",
 					{
 						"group": "Maestro Cue",
 						"icon": "bolt",
@@ -100,7 +107,7 @@
 			},
 			{
 				"group": "Providers & CLI",
-				"pages": ["provider-notes", "multi-claude", "cli"]
+				"pages": ["provider-notes", "multi-provider", "cli", "cli-reference"]
 			},
 			{
 				"group": "Integrations",
@@ -114,6 +121,12 @@
 			}
 		]
 	},
+	"redirects": [
+		{
+			"source": "/multi-claude",
+			"destination": "/multi-provider"
+		}
+	],
 	"navbar": {
 		"links": [
 			{

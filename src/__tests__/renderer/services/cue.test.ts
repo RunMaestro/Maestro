@@ -36,6 +36,7 @@ const mockCue = {
 	writeYaml: vi.fn(),
 	deleteYaml: vi.fn(),
 	savePipelineLayout: vi.fn(),
+	renamePipeline: vi.fn(),
 	onActivityUpdate: vi.fn(),
 };
 
@@ -287,6 +288,25 @@ describe('cueService - write methods', () => {
 		mockCue.savePipelineLayout.mockRejectedValue(new Error('IPC fail'));
 		await expect(cueService.savePipelineLayout({ x: 1 })).rejects.toThrow('IPC fail');
 		expect(mockCue.savePipelineLayout).toHaveBeenCalledWith({ x: 1 });
+	});
+
+	it('renamePipeline - passes both names and returns the result through', async () => {
+		const result = {
+			renamed: true,
+			subscriptionsUpdated: 3,
+			filesWritten: ['/a/.maestro/cue.yaml', '/b/.maestro/cue.yaml'],
+			warnings: [],
+		};
+		mockCue.renamePipeline.mockResolvedValue(result);
+		expect(await cueService.renamePipeline('Old', 'New')).toEqual(result);
+		expect(mockCue.renamePipeline).toHaveBeenCalledWith('Old', 'New');
+	});
+
+	it('renamePipeline - rethrows on error', async () => {
+		// Rethrow, not a default value: swallowing this would leave the list
+		// showing the old name with no indication the rename did not land.
+		mockCue.renamePipeline.mockRejectedValue(new Error('IPC fail'));
+		await expect(cueService.renamePipeline('Old', 'New')).rejects.toThrow('IPC fail');
 	});
 });
 

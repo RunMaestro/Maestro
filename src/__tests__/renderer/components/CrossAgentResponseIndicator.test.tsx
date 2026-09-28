@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { CrossAgentResponseIndicator } from '../../../renderer/components/CrossAgentResponseIndicator';
 import {
@@ -18,7 +18,7 @@ function req(over: Partial<InFlightCrossAgentRequest> = {}): InFlightCrossAgentR
 		targetSessionId: 'target-1',
 		targetAgentName: 'Backend',
 		targetToolType: 'claude-code',
-		startedAt: 1_700_000_000_000,
+		startedAt: Date.now(),
 		...over,
 	};
 }
@@ -30,13 +30,17 @@ function seed(...requests: InFlightCrossAgentRequest[]): void {
 
 function renderIndicator(
 	sourceSessionId: string | null = SESSION,
-	sourceTabId: string | null = TAB
+	sourceTabId: string | null = TAB,
+	onSessionClick?: (sessionId: string, tabId?: string) => void,
+	onInterrupt?: () => void
 ) {
 	return render(
 		<CrossAgentResponseIndicator
 			theme={mockTheme}
 			sourceSessionId={sourceSessionId}
 			sourceTabId={sourceTabId}
+			onSessionClick={onSessionClick}
+			onInterrupt={onInterrupt}
 		/>
 	);
 }
@@ -92,9 +96,83 @@ describe('CrossAgentResponseIndicator', () => {
 		expect(toggle).toHaveAttribute('title', 'Hide consulted agents');
 	});
 
+	it('jumps to the consulted agent AND its consult tab when a chip is clicked', () => {
+		seed(req({ targetSessionId: 'target-1', targetTabId: 'consult-tab-9' }));
+		const onSessionClick = vi.fn();
+		renderIndicator(SESSION, TAB, onSessionClick);
+
+		fireEvent.click(screen.getByRole('button', { name: /agent responding/ }));
+		const chip = screen.getByRole('button', { name: /Backend/ });
+		expect(chip).toHaveAttribute('title', expect.stringContaining('Jump to Backend'));
+
+		fireEvent.click(chip);
+		expect(onSessionClick).toHaveBeenCalledWith('target-1', 'consult-tab-9');
+	});
+
+	it('still jumps to the agent when the consult tab is unknown', () => {
+		seed(req({ targetSessionId: 'target-1', targetTabId: undefined }));
+		const onSessionClick = vi.fn();
+		renderIndicator(SESSION, TAB, onSessionClick);
+
+		fireEvent.click(screen.getByRole('button', { name: /agent responding/ }));
+		fireEvent.click(screen.getByRole('button', { name: /Backend/ }));
+		expect(onSessionClick).toHaveBeenCalledWith('target-1', undefined);
+	});
+
+	it('leaves the chip inert when no navigation handler is provided', () => {
+		seed(req());
+		renderIndicator();
+
+		fireEvent.click(screen.getByRole('button', { name: /agent responding/ }));
+		const chip = screen.getByRole('button', { name: /Backend/ });
+		expect(chip).toBeDisabled();
+		expect(chip.getAttribute('title')).toMatch(/^Backend · \d+s$/);
+	});
+
+	it('humanizes the chip elapsed time past a minute', () => {
+		// Below a minute a bare seconds count reads fine; past it, `1203s` does not.
+		seed(req({ startedAt: Date.now() - (20 * 60 + 4) * 1000 }));
+		renderIndicator();
+
+		fireEvent.click(screen.getByRole('button', { name: /agent responding/ }));
+		const chip = screen.getByRole('button', { name: /Backend/ });
+		expect(chip.getAttribute('title')).toBe('Backend · 20m 4s');
+	});
+
 	it('renders nothing when the tab id is missing', () => {
 		seed(req());
 		const { container } = renderIndicator(SESSION, null);
+		expect(container.firstChild).toBeNull();
+	});
+});
+
+/**
+ * A message that LEADS with a mention is answered only by the consulted agents,
+ * so the source agent never goes busy and the thinking pill - the usual home of
+ * Stop - never appears. Without a Stop here the user has no way at all to end
+ * work other agents are doing on their behalf.
+ */
+describe('CrossAgentResponseIndicator Stop', () => {
+	beforeEach(() => {
+		useCrossAgentInFlightStore.setState({ requests: {} });
+	});
+
+	it('omits Stop when the caller does not supply an interrupt', () => {
+		seed(req());
+		renderIndicator();
+		expect(screen.queryByRole('button', { name: /stop/i })).not.toBeInTheDocument();
+	});
+
+	it('offers Stop when the caller supplies an interrupt', () => {
+		seed(req());
+		const onInterrupt = vi.fn();
+		renderIndicator(SESSION, TAB, undefined, onInterrupt);
+		fireEvent.click(screen.getByRole('button', { name: /stop/i }));
+		expect(onInterrupt).toHaveBeenCalledTimes(1);
+	});
+
+	it('draws no Stop when nothing is in flight (the pill is absent entirely)', () => {
+		const { container } = renderIndicator(SESSION, TAB, undefined, vi.fn());
 		expect(container.firstChild).toBeNull();
 	});
 });

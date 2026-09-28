@@ -1,9 +1,12 @@
+import React from 'react';
 import { describe, it, expect } from 'vitest';
+import { render } from '@testing-library/react';
 import {
 	fuzzyMatch,
 	fuzzyMatchWithScore,
 	fuzzyMatchWithIndices,
 	filterSlashCommands,
+	renderFuzzyHighlight,
 	FuzzyMatchResult,
 } from '../../../renderer/utils/search';
 
@@ -557,6 +560,40 @@ describe('search utils', () => {
 			const withDot = fuzzyMatchWithScore('hello.world', 'w', '.');
 			const withoutDot = fuzzyMatchWithScore('hello.world', 'w');
 			expect(withDot.score).toBeGreaterThan(withoutDot.score);
+		});
+	});
+
+	describe('renderFuzzyHighlight', () => {
+		it('returns the plain string when nothing matched, so no query costs no DOM', () => {
+			expect(renderFuzzyHighlight('Section A', new Set())).toBe('Section A');
+		});
+
+		it('emphasizes exactly the matched character positions', () => {
+			const indices = new Set(fuzzyMatchWithIndices('Swept 2026-09-04', 'swe'));
+			const { container } = render(
+				React.createElement('div', null, renderFuzzyHighlight('Swept 2026-09-04', indices))
+			);
+			const bolded = Array.from(container.querySelectorAll('span'))
+				.filter((el) => el.style.fontWeight === '700')
+				.map((el) => el.textContent)
+				.join('');
+			expect(bolded).toBe('Swe');
+		});
+
+		it('honors caller-supplied styles', () => {
+			const { container } = render(
+				React.createElement(
+					'div',
+					null,
+					renderFuzzyHighlight('ab', new Set([0]), {
+						match: { color: 'rgb(145, 70, 255)' },
+						rest: {},
+					})
+				)
+			);
+			const spans = container.querySelectorAll('span');
+			expect(spans[0].style.color).toBe('rgb(145, 70, 255)');
+			expect(spans[1].style.color).toBe('');
 		});
 	});
 

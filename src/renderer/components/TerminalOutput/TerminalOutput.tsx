@@ -7,14 +7,17 @@ import React, {
 	useCallback,
 	memo,
 } from 'react';
+import { Loader2 } from 'lucide-react';
 import type { LogEntry } from '../../types';
 import type { TerminalOutputProps } from './types';
-import Convert from 'ansi-to-html';
+import { useAnsiConverter } from '../../hooks/ui/useAnsiConverter';
 import { getActiveTab } from '../../utils/tabHelpers';
+import { useTranscriptBackfill } from '../../hooks/agent/useTranscriptBackfill';
 import { useDebouncedValue, useProgressiveRenderWindow } from '../../hooks';
 import { jumpToMessageEdge, isTextInputTarget } from '../../utils/messageScrollNavigation';
 import { QueuedItemsList } from '../QueuedItemsList';
 import { SaveMarkdownModal } from '../SaveMarkdownModal';
+import { Spinner } from '../ui/Spinner';
 import { generateTerminalProseStyles } from '../../utils/markdownConfig';
 import { safeClipboardWrite } from '../../utils/clipboard';
 import { flashCopiedToClipboard } from '../../utils/flashCopiedToClipboard';
@@ -22,6 +25,7 @@ import { useSettingsStore } from '../../stores/settingsStore';
 import { useMessageGistStore } from '../../stores/messageGistStore';
 import { getClaudeTokenMode } from '../../../shared/claudeTokenMode';
 import { collapseAiResponseLogs } from './utils/collapseAiResponseLogs';
+import { computeTurnDurations } from './utils/turnDurations';
 import { groupSubagentToolLogs } from './utils/groupSubagentToolLogs';
 import { buildRenderedIdMap } from './utils/renderedLogIds';
 import { useUIStore } from '../../stores/uiStore';
@@ -32,6 +36,7 @@ import { ScrollToBottomButton } from './components/ScrollToBottomButton';
 import { useLogItemUiState } from './hooks/useLogItemUiState';
 import { useTerminalOutputSearch } from './hooks/useTerminalOutputSearch';
 import { useTerminalOutputScroll } from './hooks/useTerminalOutputScroll';
+import { requestWebBridgeReconcile } from '../../services/webBridgeReconcile';
 
 /**
  * Frames a cross-tab search jump keeps re-asserting its scroll position.
@@ -73,6 +78,7 @@ export const TerminalOutput = memo(
 			onForceSendQueuedItem,
 			forcedParallelEnabled,
 			getForceSendContext,
+			forceSendShortcutEnabled = true,
 			onInterrupt: _onInterrupt,
 			onScrollPositionChange,
 			onAtBottomChange,
@@ -123,37 +129,13 @@ export const TerminalOutput = memo(
 			}
 		}, []);
 
-		const ansiConverter = useMemo(() => {
-			const c = theme.colors;
-			return new Convert({
-				fg: c.textMain,
-				bg: c.bgMain,
-				newline: false,
-				escapeXML: true,
-				stream: false,
-				colors: {
-					0: c.ansiBlack ?? c.textMain,
-					1: c.ansiRed ?? c.error,
-					2: c.ansiGreen ?? c.success,
-					3: c.ansiYellow ?? c.warning,
-					4: c.ansiBlue ?? c.accent,
-					5: c.ansiMagenta ?? c.accentDim,
-					6: c.ansiCyan ?? c.accent,
-					7: c.ansiWhite ?? c.textDim,
-					8: c.ansiBrightBlack ?? c.textDim,
-					9: c.ansiBrightRed ?? c.error,
-					10: c.ansiBrightGreen ?? c.success,
-					11: c.ansiBrightYellow ?? c.warning,
-					12: c.ansiBrightBlue ?? c.accent,
-					13: c.ansiBrightMagenta ?? c.accentText,
-					14: c.ansiBrightCyan ?? c.accentText,
-					15: c.ansiBrightWhite ?? c.textMain,
-				},
-			});
-		}, [theme]);
+		// Theme-aware ANSI palette, shared with every other raw-output surface.
+		const ansiConverter = useAnsiConverter(theme);
 
 		const activeTab = useMemo(() => getActiveTab(session), [session.aiTabs, session.activeTabId]);
 		const activeLogs = useMemo((): LogEntry[] => activeTab?.logs ?? [], [activeTab?.logs]);
+		const transcriptDeferred =
+			!!activeTab && !!session.deferredContent?.tabIds.includes(activeTab.id);
 		// Collapse FIRST so tool logs still act as response boundaries
 		// (collapseAiResponseLogs treats source:'tool' as a boundary between
 		// assistant segments); only THEN hide them. Tool visibility is a pure render
@@ -161,13 +143,16 @@ export const TerminalOutput = memo(
 		// so hiding here keeps toggling from mutating log storage (the flicker bug)
 		// and preserves running->completed correlation.
 		const collapsedAll = useMemo(() => collapseAiResponseLogs(activeLogs), [activeLogs]);
-		const showToolCalls = useSettingsStore((s) => s.showToolCalls);
-		// Tool cells are part of the agent's "behind the scenes" activity, so they
-		// follow the per-tab Thinking toggle in addition to the global showToolCalls
-		// setting: with Thinking off the transcript stays clean (prompts + responses
-		// only). Hide when either the setting is off OR the tab has Thinking off.
-		const thinkingOn = (activeTab?.showThinking ?? 'off') !== 'off';
-		const toolsVisible = showToolCalls && thinkingOn;
+		// Per-turn elapsed time for the badge under each reply's clock. Derived from
+		// the RAW logs (not the collapsed ones) because the tool and thinking entries
+		// that mark when the agent stopped working can be filtered out below.
+		const responseDurationByLogId = useMemo(() => computeTurnDurations(activeLogs), [activeLogs]);
+		// Tool visibility is independent of the Thinking toggle. Reading the
+		// reasoning chain and watching tool activity are separate appetites: a tab
+		// can show thinking with a clean, tool-free transcript, or show tools with
+		// no reasoning at all. One switch, one meaning.
+		const toolsVisible = useSettingsStore((s) => s.showToolCalls);
+		const showProviderModePill = useSettingsStore((s) => s.showProviderModePill);
 		const collapsedLogs = useMemo(
 			() => (toolsVisible ? collapsedAll : collapsedAll.filter((l) => l.source !== 'tool')),
 			[collapsedAll, toolsVisible]
@@ -198,11 +183,33 @@ export const TerminalOutput = memo(
 			}
 		}, []);
 
-		const { startIndex: logStartIndex, revealTo: revealLogIndex } = useProgressiveRenderWindow(
-			filteredLogs.length,
-			`${session.id}-${activeTabId ?? ''}`,
-			{ onBeforeExpand: handleBeforeBackfill }
-		);
+		const {
+			startIndex: logStartIndex,
+			revealTo: revealLogIndex,
+			absorbPrepend: absorbLogPrepend,
+		} = useProgressiveRenderWindow(filteredLogs.length, `${session.id}-${activeTabId ?? ''}`, {
+			onBeforeExpand: handleBeforeBackfill,
+		});
+
+		// ============================================================================
+		// Scroll-to-top history backfill (issue #1407)
+		// ============================================================================
+		// The tab only holds the newest slice of its conversation (500 messages on
+		// resume, 100 after a restart), so scrolling up used to hit a hard stop
+		// mid-conversation. Reaching the top now pages older history back in from
+		// the provider transcript on disk. Entries arrive at the HEAD, so hand the
+		// count to the render window: it shifts by exactly that many, keeping the
+		// visible slice stable and letting the idle loop mount the new history a
+		// chunk at a time instead of one page-sized commit.
+		const historyBackfill = useTranscriptBackfill(session, activeTab, {
+			onPrepend: useCallback(
+				(count: number) => {
+					handleBeforeBackfill();
+					absorbLogPrepend(count);
+				},
+				[handleBeforeBackfill, absorbLogPrepend]
+			),
+		});
 
 		useLayoutEffect(() => {
 			const container = scrollContainerRef.current;
@@ -285,6 +292,7 @@ export const TerminalOutput = memo(
 			autoScrollPaused,
 			isAutoScrollActive,
 			handleScroll,
+			noteUserScrollInput,
 			scrollToBottomAndResume,
 			jumpInFlightRef,
 			pauseForJump,
@@ -298,6 +306,7 @@ export const TerminalOutput = memo(
 			filteredLogsLength: filteredLogs.length,
 			onScrollPositionChange,
 			onAtBottomChange,
+			onNearTop: historyBackfill.loadEarlier,
 		});
 
 		useEffect(() => {
@@ -485,6 +494,23 @@ export const TerminalOutput = memo(
 					}
 				}}
 			>
+				{transcriptDeferred && (
+					<div
+						className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 px-4 text-sm"
+						style={{ backgroundColor: theme.colors.bgMain, color: theme.colors.textDim }}
+					>
+						<Spinner size={24} ariaLabel="Loading conversation" />
+						<span>Loading conversation...</span>
+						<button
+							type="button"
+							className="rounded-lg px-3 py-2"
+							style={{ color: theme.colors.accent }}
+							onClick={requestWebBridgeReconcile}
+						>
+							Retry
+						</button>
+					</div>
+				)}
 				{/* CSS for Custom Highlight API - paints matches without mutating DOM */}
 				<style>{`
 					::highlight(terminal-search-all) {
@@ -522,16 +548,74 @@ export const TerminalOutput = memo(
 					className="flex-1 overflow-y-auto scrollbar-thin"
 					style={{
 						overflowAnchor: session.inputMode === 'ai' && autoScrollPaused ? 'none' : undefined,
+						// The AI Chat surface's own size. Set here and inherited by every
+						// log row rather than threaded as a prop: the transcript is DOM,
+						// so the CSS variable reaches the whole subtree - including the
+						// markdown, tool cards, and code fences nested several
+						// components deep - without touching any of them. The family
+						// still arrives as a prop because individual rows override it.
+						fontSize: 'var(--maestro-size-chat, inherit)',
 					}}
 					onScroll={handleScroll}
+					// The input events that prove a scroll is the user's. `scroll` itself
+					// cannot: this component writes `scrollTop` on every frame of a restore
+					// and on every mutation while following the tail, and each of those
+					// writes fires an indistinguishable `scroll` event.
+					onWheel={noteUserScrollInput}
+					onTouchMove={noteUserScrollInput}
+					onPointerDown={noteUserScrollInput}
+					onKeyDown={noteUserScrollInput}
 				>
 					{/* Content wrapper: unstyled block so its height tracks the scrollable
 					    content exactly, giving the scroll hook's ResizeObserver something
 					    that grows when late content settles. */}
 					<div ref={contentRef}>
+						{/* Older-history status row (issue #1407). Only meaningful once the
+						    idle render window has reached the head of the list - above that
+						    point there is still local history left to mount, so "beginning of
+						    conversation" would be a lie. Nothing renders until the user has
+						    actually scrolled up far enough to trigger a read. */}
+						{logStartIndex === 0 && filteredLogs.length > 0 && (
+							<>
+								{historyBackfill.isLoading && (
+									<div
+										className="flex items-center justify-center gap-2 py-3 text-xs"
+										style={{ color: theme.colors.textDim }}
+									>
+										<Loader2 className="w-3.5 h-3.5 animate-spin" />
+										Loading earlier messages...
+									</div>
+								)}
+								{!historyBackfill.isLoading && historyBackfill.error && (
+									<div
+										className="flex items-center justify-center gap-2 py-3 text-xs"
+										style={{ color: theme.colors.textDim }}
+									>
+										{historyBackfill.error}
+										<button
+											onClick={historyBackfill.loadEarlier}
+											className="underline hover:opacity-80 transition-opacity"
+											style={{ color: theme.colors.textMain }}
+										>
+											Retry
+										</button>
+									</div>
+								)}
+								{!historyBackfill.isLoading &&
+									!historyBackfill.error &&
+									historyBackfill.reachedStart && (
+										<div
+											className="flex items-center justify-center py-3 text-xs"
+											style={{ color: theme.colors.textDim }}
+										>
+											Beginning of conversation
+										</div>
+									)}
+							</>
+						)}
 						{/* Log entries */}
 						{visibleLogs.map((log, visibleIndex) => {
-							// Absolute index into filteredLogs — sibling lookups (echo stripping)
+							// Absolute index into filteredLogs - sibling lookups (echo stripping)
 							// and jump-to-message targeting must not see the window offset.
 							const index = logStartIndex + visibleIndex;
 							return (
@@ -590,8 +674,10 @@ export const TerminalOutput = memo(
 									bionifyIntensity={globalBionifyIntensity}
 									bionifyAlgorithm={globalBionifyAlgorithm}
 									userMessageAlignment={userMessageAlignment}
+									responseDurationMs={responseDurationByLogId.get(log.id)}
 									isClaudeCode={session.toolType === 'claude-code'}
 									isAdaptiveMode={getClaudeTokenMode(session) === 'dynamic'}
+									showProviderModePill={showProviderModePill}
 								/>
 							);
 						})}
@@ -613,18 +699,19 @@ export const TerminalOutput = memo(
 								onForceSendQueuedItem={onForceSendQueuedItem}
 								forcedParallelEnabled={forcedParallelEnabled}
 								getForceSendContext={getForceSendContext}
+								shortcutEnabled={forceSendShortcutEnabled}
 								activeTabId={activeTabId || undefined}
 								onOpenLightbox={setLightboxImage}
 							/>
 						)}
 					</div>
 
-					{/* End ref for scrolling - always rendered so Cmd+Shift+J works even when busy.
+					{/* End ref for scrolling - always rendered so the jump works even when busy.
 					    LOAD-BEARING: this marker MUST stay a direct child of the scroll container
 					    (the overflow-y-auto element above), NOT nested inside the contentRef wrapper.
-					    useMainKeyboardHandler's Alt+J "Jump to Bottom" resolves the scroll target via
-					    logsEndRef.current.parentElement, so if you wrap this marker in another subtree
-					    parentElement lands on an unscrollable element and Alt+J silently no-ops. */}
+					    useMainKeyboardHandler's Cmd+Shift+J "Jump to Bottom" resolves the scroll target
+					    via logsEndRef.current.parentElement, so if you wrap this marker in another
+					    subtree parentElement lands on an unscrollable element and it silently no-ops. */}
 					<div ref={logsEndRef} />
 				</div>
 

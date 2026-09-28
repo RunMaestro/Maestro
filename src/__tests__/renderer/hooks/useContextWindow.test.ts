@@ -100,6 +100,84 @@ describe('useContextWindow', () => {
 		await waitFor(() => expect(result.current.activeTabContextWindow).toBe(1_000_000));
 	});
 
+	it('lets a resolved runtime window beat a stored customContextWindow override', async () => {
+		// Finding P1 / D1: the stored value is a materialized creation-time default,
+		// so a provider-resolved window outranks it. Note the ABSENCE of
+		// `contextWindowSource` is what marks it materialized - there is no
+		// `'materialized'` value to assign, by design (review of PR #1362).
+		const session = makeSession({ toolType: 'omp', customContextWindow: 200000 });
+		const tab = {
+			usageStats: {
+				contextWindow: 1_000_000,
+				contextWindowResolved: true,
+				inputTokens: 1000,
+				outputTokens: 500,
+			},
+		};
+
+		const { result } = renderHook(() => useContextWindow(session, tab));
+
+		await waitFor(() => expect(result.current.activeTabContextWindow).toBe(1_000_000));
+	});
+
+	it('still returns the stored override when the reported window is not flagged resolved', async () => {
+		// Without the authority flag the reported window may be a parser-injected
+		// static fallback, so the stored value stays in charge.
+		const session = makeSession({ toolType: 'omp', customContextWindow: 200000 });
+		const tab = {
+			usageStats: {
+				contextWindow: 1_000_000,
+				inputTokens: 1000,
+				outputTokens: 500,
+			},
+		};
+
+		const { result } = renderHook(() => useContextWindow(session, tab));
+
+		await waitFor(() => expect(result.current.activeTabContextWindow).toBe(200000));
+	});
+
+	// Finding AD1. P1 ranks a provider report above every stored value, which is
+	// right for the materialized defaults that dominate the store but silently
+	// discards the intent of someone who deliberately lowered their window to
+	// force earlier compaction. Provenance is what tells the two apart.
+	it('keeps a user-edited window above a resolved runtime window', async () => {
+		const session = makeSession({
+			toolType: 'omp',
+			customContextWindow: 120000,
+			contextWindowSource: 'user-edited',
+		});
+		const tab = {
+			usageStats: {
+				contextWindow: 1_000_000,
+				contextWindowResolved: true,
+				inputTokens: 1000,
+				outputTokens: 500,
+			},
+		};
+
+		const { result } = renderHook(() => useContextWindow(session, tab));
+
+		await waitFor(() => expect(result.current.activeTabContextWindow).toBe(120000));
+	});
+
+	it('keeps a [1m] custom-model marker above a user-edited window', async () => {
+		mockGetConfig.mockResolvedValue({ contextWindow: 200000 });
+		// Both are deliberate choices, but the model marker is the more specific
+		// one: picking `[1m]` selects a model variant, and a stale window typed
+		// before that switch must not shrink it back.
+		const session = makeSession({
+			customModel: 'opus[1m]',
+			customContextWindow: 120000,
+			contextWindowSource: 'user-edited',
+		});
+		const tab = { usageStats: { contextWindow: 200000, inputTokens: 10, outputTokens: 5 } };
+
+		const { result } = renderHook(() => useContextWindow(session, tab));
+
+		await waitFor(() => expect(result.current.activeTabContextWindow).toBe(1_000_000));
+	});
+
 	it('keeps a [1m] custom-model marker above a resolved window', async () => {
 		mockGetConfig.mockResolvedValue({ contextWindow: 200000 });
 		// An explicit [1m] model choice is authoritative and must outrank a
@@ -144,6 +222,54 @@ describe('useContextWindow', () => {
 		expect(result.current.activeTabContextTokens).toBeGreaterThan(0);
 		expect(result.current.activeTabContextUsage).toBeGreaterThanOrEqual(0);
 		expect(result.current.activeTabContextUsage).toBeLessThanOrEqual(100);
+	});
+
+	it('holds the last good values when an overflow frame has a zero contextUsage fallback', async () => {
+		// Finding Q1 / D3: a zero fallback used to be laundered into a
+		// trustworthy `0 tokens / 0%` result, which `lastGoodRef` then cached as
+		// last-known-good and re-latched on every later frame. With the `> 0`
+		// guard in calculateContextDisplay the overflow frame is untrustworthy,
+		// so the cache keeps the real reading from the in-window frame.
+		const session = makeSession({ customContextWindow: 200000, contextUsage: 30 });
+		const inWindowTab = {
+			id: 'tab-1',
+			usageStats: {
+				inputTokens: 50000,
+				outputTokens: 1000,
+				cacheCreationInputTokens: 0,
+				cacheReadInputTokens: 10000,
+			},
+		};
+
+		const { result, rerender } = renderHook(
+			({ s, t }: { s: Session; t: any }) => useContextWindow(s, t),
+			{ initialProps: { s: session, t: inWindowTab } }
+		);
+
+		await waitFor(() => {
+			expect(result.current.activeTabContextWindow).toBe(200000);
+		});
+		// 60,000 of 200,000 = 30%
+		expect(result.current.activeTabContextTokens).toBe(60000);
+		expect(result.current.activeTabContextUsage).toBe(30);
+
+		// A tool-heavy turn reports accumulated tokens above the window while the
+		// session has no preserved percentage to fall back on.
+		const overflowSession = makeSession({ customContextWindow: 200000, contextUsage: 0 });
+		const overflowTab = {
+			id: 'tab-1',
+			usageStats: {
+				inputTokens: 2_400_000,
+				outputTokens: 5000,
+				cacheCreationInputTokens: 0,
+				cacheReadInputTokens: 0,
+			},
+		};
+
+		rerender({ s: overflowSession, t: overflowTab });
+
+		expect(result.current.activeTabContextTokens).toBe(60000);
+		expect(result.current.activeTabContextUsage).toBe(30);
 	});
 
 	it('returns zero tokens when no usage stats', async () => {

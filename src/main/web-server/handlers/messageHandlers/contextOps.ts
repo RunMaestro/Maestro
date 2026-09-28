@@ -158,6 +158,22 @@ export function handleCreateGist(
 		reply({ success: false, error: 'isPublic must be a boolean when provided' });
 		return;
 	}
+	// `agentSessionId` narrows the publish to one provider session (a headless
+	// `send -s <id>` conversation) instead of the agent's open AI tabs. Reject a
+	// blank string rather than treating it as absent: silently falling back to
+	// the tabs is how a caller aiming at one conversation publishes another.
+	const rawAgentSessionId = message.agentSessionId;
+	let agentSessionId: string | undefined;
+	if (rawAgentSessionId !== undefined) {
+		if (typeof rawAgentSessionId !== 'string' || !rawAgentSessionId) {
+			reply({
+				success: false,
+				error: 'agentSessionId must be a non-empty string when provided',
+			});
+			return;
+		}
+		agentSessionId = rawAgentSessionId;
+	}
 	const description = message.description ?? '';
 	const isPublic = message.isPublic ?? false;
 
@@ -167,7 +183,7 @@ export function handleCreateGist(
 	}
 
 	ctx.callbacks
-		.createGist(sessionId, description, isPublic)
+		.createGist(sessionId, description, isPublic, agentSessionId)
 		.then((result) => {
 			reply(result);
 		})

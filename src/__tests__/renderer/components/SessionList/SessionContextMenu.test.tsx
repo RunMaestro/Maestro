@@ -9,15 +9,31 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import React from 'react';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { SessionContextMenu } from '../../../../renderer/components/SessionList/SessionContextMenu';
+import {
+	gitRunKey,
+	useGitCommandRunStore,
+	type GitCommandRun,
+} from '../../../../renderer/stores/gitCommandRunStore';
+import { usePRCreationStore, prRunKey } from '../../../../renderer/stores/prCreationStore';
 import type { Session } from '../../../../renderer/types';
 import { mockTheme } from '../../../helpers/mockTheme';
 
 const DEFAULT_BRANCH_INFO = { branch: 'feature/login', remote: '', ahead: 2, behind: 3 };
 const mockGetBranchInfo = vi.fn(() => DEFAULT_BRANCH_INFO);
 const mockRefreshGitStatus = vi.fn().mockResolvedValue(undefined);
+const mockGetFileDetails = vi.fn(() => ({
+	totalAdditions: 206,
+	totalDeletions: 37,
+	modifiedCount: 5,
+}));
+const mockGetFileCount = vi.fn(() => 5);
 vi.mock('../../../../renderer/contexts/GitStatusContext', () => ({
 	useGitBranch: () => ({ getBranchInfo: mockGetBranchInfo }),
-	useGitDetail: () => ({ refreshGitStatus: mockRefreshGitStatus }),
+	useGitDetail: () => ({
+		getFileDetails: mockGetFileDetails,
+		refreshGitStatus: mockRefreshGitStatus,
+	}),
+	useGitFileStatus: () => ({ getFileCount: mockGetFileCount }),
 }));
 
 vi.mock('../../../../renderer/services/git', () => ({
@@ -29,7 +45,11 @@ vi.mock('../../../../renderer/stores/centerFlashStore', () => ({
 }));
 
 const mockOpenModal = vi.fn();
-vi.mock('../../../../renderer/stores/modalStore', () => ({
+// Spread the real module so a new modalStore export cannot break this mock at
+// import time. `fileExplorerStore` calls `registerExternalDestination` at module
+// scope, and a factory mock that omits it throws before any test runs.
+vi.mock('../../../../renderer/stores/modalStore', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../../renderer/stores/modalStore')>()),
 	useModalStore: Object.assign(
 		vi.fn((selector) => selector({ openModal: mockOpenModal })),
 		{ getState: () => ({ openModal: mockOpenModal }) }
@@ -77,6 +97,12 @@ describe('SessionContextMenu', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		mockGetBranchInfo.mockReturnValue(DEFAULT_BRANCH_INFO);
+		mockGetFileDetails.mockReturnValue({
+			totalAdditions: 206,
+			totalDeletions: 37,
+			modifiedCount: 5,
+		});
+		mockGetFileCount.mockReturnValue(5);
 	});
 
 	it('renders the git actions for a git agent', () => {
@@ -103,6 +129,99 @@ describe('SessionContextMenu', () => {
 		renderMenu();
 		expect(screen.getByTestId('session-context-git-pull')).toHaveTextContent('3');
 		expect(screen.getByTestId('session-context-git-push')).toHaveTextContent('2');
+	});
+
+	// A push dismissed with Run in Background left no trace anywhere until this
+	// badge, so the menu that started it now says it is still going.
+	it('badges push as running while a backgrounded run is in flight', () => {
+		const key = gitRunKey({ operation: 'push', cwd: '/test/repo' });
+		useGitCommandRunStore.setState({
+			runs: {
+				[key]: {
+					key,
+					runId: 'run-1',
+					sessionId: 'session-1',
+					operation: 'push',
+					cwd: '/test/repo',
+					setUpstream: false,
+					output: '',
+					status: 'running',
+					announced: false,
+				} as GitCommandRun,
+			},
+		});
+		renderMenu();
+
+		expect(screen.getByTestId('session-context-git-push-running')).toBeInTheDocument();
+		// The running badge replaces the ahead count, which is stale mid-push.
+		expect(screen.getByTestId('session-context-git-push')).not.toHaveTextContent('2');
+		// Pull is untouched: the runs are keyed per operation.
+		expect(screen.queryByTestId('session-context-git-pull-running')).not.toBeInTheDocument();
+		expect(screen.getByTestId('session-context-git-pull')).toHaveTextContent('3');
+
+		useGitCommandRunStore.setState({ runs: {} });
+	});
+
+	// Closing the Create PR form no longer abandons the request, so the row that
+	// opens it says the request is still going.
+	it('badges Create Pull Request while a backgrounded creation is in flight', () => {
+		const key = prRunKey('/test/repo');
+		usePRCreationStore.setState({
+			runs: {
+				[key]: {
+					key,
+					sessionId: 'session-1',
+					worktreePath: '/test/repo',
+					sourceBranch: 'feature/login',
+					targetBranch: 'main',
+					title: 'feature login',
+					description: '',
+					status: 'running',
+					announced: false,
+				},
+			},
+		});
+		renderMenu();
+
+		expect(screen.getByTestId('session-context-create-pr-running')).toBeInTheDocument();
+		// Clicking the badged row re-opens the form on that same attempt.
+		fireEvent.click(screen.getByTestId('session-context-create-pr'));
+		expect(mockOpenModal).toHaveBeenCalledWith('createPR', expect.anything());
+
+		usePRCreationStore.setState({ runs: {} });
+	});
+
+	// Without this the row offered a diff without saying whether there was one.
+	it('badges the diff row with the working-tree change counts', () => {
+		renderMenu();
+		const row = screen.getByTestId('session-context-git-diff');
+		expect(row).toHaveTextContent('206');
+		expect(row).toHaveTextContent('37');
+		expect(row).toHaveAttribute('title', '+206 −37 ~5 in 5 files');
+	});
+
+	it('falls back to a file count when only basic status was polled', () => {
+		// Non-active agents are polled without numstat, so they have no line counts.
+		mockGetFileDetails.mockReturnValue({
+			totalAdditions: 0,
+			totalDeletions: 0,
+			modifiedCount: 0,
+		});
+		mockGetFileCount.mockReturnValue(4);
+		renderMenu();
+
+		const row = screen.getByTestId('session-context-git-diff');
+		expect(row).toHaveTextContent('4');
+		expect(row).toHaveAttribute('title', '4 files changed');
+	});
+
+	it('leaves the diff row unbadged on a clean tree', () => {
+		mockGetFileCount.mockReturnValue(0);
+		renderMenu();
+
+		const row = screen.getByTestId('session-context-git-diff');
+		expect(row).toHaveTextContent(/^View Git Diff$/);
+		expect(row).toHaveAttribute('title', 'No uncommitted changes');
 	});
 
 	it('opens the git log for the right-clicked agent, not the active one', () => {
@@ -222,5 +341,106 @@ describe('SessionContextMenu', () => {
 				expect.objectContaining({ cwd: '/other/repo' })
 			)
 		);
+	});
+
+	it('lists Move to Group targets in the Left Bar order, ignoring leading emojis', () => {
+		// Stored order is arbitrary; the submenu must read in the order the user
+		// already scans the sidebar in, and an emoji in the name must not sort a
+		// group to the top of the list.
+		renderMenu({
+			groups: [
+				{ id: 'g1', name: 'Zebra', emoji: '🦓', collapsed: false },
+				{ id: 'g2', name: '🚀 Apollo', emoji: '🚀', collapsed: false },
+				{ id: 'g3', name: 'Mercury', emoji: '☿', collapsed: false },
+			],
+		});
+
+		fireEvent.mouseEnter(screen.getByText('Move to Group').closest('div') as HTMLElement);
+
+		const names = screen
+			.getAllByRole('button')
+			.map((button) => button.textContent ?? '')
+			.filter((text) => ['Zebra', '🚀 Apollo', 'Mercury'].some((name) => text.includes(name)));
+
+		expect(names.map((text) => text.replace(/[^A-Za-z]/g, ''))).toEqual([
+			'Apollo',
+			'Mercury',
+			'Zebra',
+		]);
+	});
+
+	// The menu itself is `overflow-y: auto` so a long one can scroll, and CSS
+	// computes the other axis to `auto` the moment one axis is not `visible`. A
+	// flyout rendered INSIDE it is therefore clipped away entirely, which is what
+	// made hovering these rows look like nothing happened at all.
+	describe('submenu flyouts escape the scrollable menu', () => {
+		const GROUPS = [{ id: 'g1', name: 'Alpha', emoji: '🅰️', collapsed: false }];
+
+		function openFlyout(label: string) {
+			fireEvent.mouseEnter(screen.getByText(label).closest('div') as HTMLElement);
+			return screen.getByTestId('session-context-flyout');
+		}
+
+		it('renders the Move to Group flyout outside the menu container', () => {
+			renderMenu({ groups: GROUPS, session: makeSession({ groupId: 'g1' }) });
+
+			const flyout = openFlyout('Move to Group');
+
+			expect(screen.getByTestId('session-context-menu')).not.toContainElement(flyout);
+			expect(flyout).toContainElement(screen.getByText('Ungrouped'));
+		});
+
+		it('renders the Move to Window flyout outside the menu container', () => {
+			renderMenu({
+				onMoveToNewWindow: vi.fn(),
+				onMoveToWindow: vi.fn(),
+				windowTargets: [
+					{
+						windowId: 'w1',
+						windowNumber: 1,
+						label: 'Main Window',
+						isMain: true,
+						isCurrentOwner: true,
+					},
+					{
+						windowId: 'w2',
+						windowNumber: 2,
+						label: 'Window 2',
+						isMain: false,
+						isCurrentOwner: false,
+					},
+				],
+			});
+
+			const flyout = openFlyout('Move to Window');
+
+			expect(screen.getByTestId('session-context-menu')).not.toContainElement(flyout);
+			expect(flyout).toContainElement(screen.getByText('Window 2'));
+		});
+
+		// Portaling puts the flyout outside `menuRef`, so the menu's click-outside
+		// watcher has to know about it: otherwise mousedown on a submenu item
+		// dismisses the menu and the click never reaches the item.
+		it('does not dismiss the menu when a flyout item is pressed', () => {
+			const props = renderMenu({ groups: GROUPS, session: makeSession({ groupId: 'g1' }) });
+
+			openFlyout('Move to Group');
+			const ungrouped = screen.getByText('Ungrouped').closest('button') as HTMLElement;
+
+			fireEvent.mouseDown(ungrouped);
+			expect(props.onDismiss).not.toHaveBeenCalled();
+
+			fireEvent.click(ungrouped);
+			expect(props.onMoveToGroup).toHaveBeenCalledWith('');
+		});
+
+		it('still closes the menu on a mousedown outside both the menu and its flyout', () => {
+			const props = renderMenu({ groups: GROUPS, session: makeSession({ groupId: 'g1' }) });
+
+			openFlyout('Move to Group');
+			fireEvent.mouseDown(document.body);
+
+			expect(props.onDismiss).toHaveBeenCalled();
+		});
 	});
 });

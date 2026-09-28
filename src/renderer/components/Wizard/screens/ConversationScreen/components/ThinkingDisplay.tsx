@@ -28,7 +28,7 @@ export function ThinkingDisplay({
 						{formatAgentName(agentName)}
 					</span>
 					<span
-						className="text-[10px] px-1.5 py-0.5 rounded"
+						className="text-2xs px-1.5 py-0.5 rounded"
 						style={{
 							backgroundColor: `${theme.colors.accent}30`,
 							color: theme.colors.accent,

@@ -25,6 +25,7 @@ import {
 	dissolveGroup,
 	findLeafById,
 	findPaneInDirection,
+	firstLeafId,
 	focusPaneInSession,
 	rebalanceLayout,
 	removeLeafByTabRef,
@@ -239,16 +240,6 @@ function promoteRef(session: Session, ref: UnifiedTabRef): Session {
 	const order = session.unifiedTabOrder ?? [];
 	if (order.some((r) => r.type === ref.type && r.id === ref.id)) return session;
 	return { ...session, unifiedTabOrder: [...order, ref] };
-}
-
-/** First leaf id in a layout (document order), or null for an empty tree. */
-function firstLeafId(layout: PanelLayoutNode): string | null {
-	if (layout.kind === 'leaf') return layout.id;
-	for (const child of layout.children) {
-		const id = firstLeafId(child);
-		if (id) return id;
-	}
-	return null;
 }
 
 /**

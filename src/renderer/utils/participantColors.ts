@@ -11,6 +11,7 @@ export {
 	normalizeMentionName,
 	mentionMatches,
 	getMentionNameForContext,
+	formatGroupMentionExpansion,
 } from '../../shared/group-chat-types';
 
 /**

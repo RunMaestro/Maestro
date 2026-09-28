@@ -20,8 +20,31 @@ import { createMockSession as baseCreateMockSession } from '../../helpers/mockSe
 // Mock modules BEFORE importing the hook
 // ============================================================================
 
+const captureExceptionMock = vi.hoisted(() => vi.fn());
+vi.mock('../../../renderer/utils/sentry', () => ({
+	captureException: captureExceptionMock,
+	captureMessage: vi.fn(),
+}));
+
+// Cross-agent mention planning is exercised through its seam: the planner
+// decides, the hook must act on the decision (consult, and skip the spawn for
+// a leading mention).
+vi.mock('../../../renderer/services/crossAgentMentions', () => ({
+	planCrossAgentMentions: vi.fn(() => null),
+	dispatchCrossAgentMentions: vi.fn(),
+}));
+
 vi.mock('../../../renderer/utils/ids', () => ({
 	generateId: vi.fn(() => 'mock-id-' + Math.random().toString(36).slice(2, 8)),
+}));
+
+// Agent Resilience records its retry snapshot through `noteDirectDispatch`. Only
+// that one export is replaced - the rest of the store is real, because other
+// modules this file pulls in read the live store.
+const noteDirectDispatchMock = vi.hoisted(() => vi.fn());
+vi.mock('../../../renderer/stores/retryStore', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../renderer/stores/retryStore')>()),
+	noteDirectDispatch: noteDirectDispatchMock,
 }));
 
 vi.mock('../../../renderer/utils/templateVariables', () => ({
@@ -42,14 +65,12 @@ vi.mock('../../../renderer/utils/tabHelpers', () => ({
 	}),
 }));
 
-// Mock hasCapabilityCached - agents with batch mode support
-const BATCH_MODE_AGENTS = new Set(['claude-code', 'codex', 'opencode', 'factory-droid']);
-vi.mock('../../../renderer/hooks/agent/useAgentCapabilities', () => ({
-	hasCapabilityCached: vi.fn((agentId: string, capability: string) => {
-		if (capability === 'supportsBatchMode') return BATCH_MODE_AGENTS.has(agentId);
-		return false;
-	}),
-}));
+// Agents with batch mode support. The real capability module is used (not
+// mocked) so the miss-vs-cached-false distinction the hook now depends on is
+// exercised for real; `seedCapabilitiesCache()` below stands in for the startup
+// priming that fills this cache in the app.
+const BATCH_MODE_AGENTS = ['claude-code', 'codex', 'opencode', 'factory-droid'];
+const NON_BATCH_MODE_AGENTS = ['terminal', 'web'];
 
 // ============================================================================
 // Now import the hook and stores
@@ -59,9 +80,32 @@ import {
 	useRemoteHandlers,
 	type UseRemoteHandlersDeps,
 } from '../../../renderer/hooks/remote/useRemoteHandlers';
+import { agentAlreadyRunningMessage } from '../../../shared/processErrors';
+import {
+	planCrossAgentMentions,
+	dispatchCrossAgentMentions,
+} from '../../../renderer/services/crossAgentMentions';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { useUIStore } from '../../../renderer/stores/uiStore';
+import {
+	clearCapabilitiesCache,
+	setCapabilitiesCache,
+	getCachedCapabilities,
+	DEFAULT_CAPABILITIES,
+} from '../../../renderer/hooks/agent/useAgentCapabilities';
+
+/** Stand-in for the startup priming: fills the capability cache so no lookup in
+ *  these tests hits the on-demand fetch path unless the test wants it to. */
+function seedCapabilitiesCache(): void {
+	clearCapabilitiesCache();
+	for (const agentId of BATCH_MODE_AGENTS) {
+		setCapabilitiesCache(agentId, { ...DEFAULT_CAPABILITIES, supportsBatchMode: true });
+	}
+	for (const agentId of NON_BATCH_MODE_AGENTS) {
+		setCapabilitiesCache(agentId, { ...DEFAULT_CAPABILITIES, supportsBatchMode: false });
+	}
+}
 
 // ============================================================================
 // Helpers
@@ -105,12 +149,21 @@ function createMockDeps(overrides: Partial<UseRemoteHandlersDeps> = {}): UseRemo
 	};
 }
 
+/** Extract the maestro:remoteCommand event handler from the addEventListener mock */
+function getRemoteCommandHandler() {
+	const call = (window.addEventListener as any).mock.calls.find(
+		(c: any[]) => c[0] === 'maestro:remoteCommand'
+	);
+	return call[1] as (event: Event) => Promise<void>;
+}
+
 // ============================================================================
 // Setup / Teardown
 // ============================================================================
 
 beforeEach(() => {
 	vi.clearAllMocks();
+	seedCapabilitiesCache();
 
 	// Reset stores
 	const session = createMockSession();
@@ -132,6 +185,7 @@ beforeEach(() => {
 		process: {
 			spawn: vi.fn().mockResolvedValue(undefined),
 			runCommand: vi.fn().mockResolvedValue(undefined),
+			sendRemoteCommandReceipt: vi.fn(),
 		},
 		agents: {
 			get: vi.fn().mockResolvedValue({
@@ -139,6 +193,12 @@ beforeEach(() => {
 				path: '/usr/local/bin/claude',
 				args: [],
 			}),
+			// On-demand capability resolution for the cache-miss path. Tests that
+			// care override this per case; by default the cache is pre-seeded so
+			// this is never reached.
+			getCapabilities: vi
+				.fn()
+				.mockResolvedValue({ ...DEFAULT_CAPABILITIES, supportsBatchMode: true }),
 		},
 		prompts: {
 			get: vi.fn().mockResolvedValue({
@@ -433,6 +493,125 @@ describe('useRemoteHandlers', () => {
 				expect.objectContaining({
 					prompt: 'explain this code',
 				})
+			);
+		});
+
+		it('consults the mentioned agent instead of spawning when the prompt leads with @mention', async () => {
+			// A CLI-dispatched "@Reviewer look at this" is addressed at Reviewer
+			// only: no local turn, but the consult MUST fire (it used to be inert -
+			// the remote path never planned mentions, so the target was never asked).
+			const session = createMockSession({ inputMode: 'ai' });
+			const deps = createMockDeps({ sessionsRef: { current: [session] } });
+			const plan = { targetSessionIds: ['reviewer-1'], suppressLocal: true };
+			vi.mocked(planCrossAgentMentions).mockReturnValueOnce(plan as any);
+
+			renderHook(() => useRemoteHandlers(deps));
+			const handler = (window.addEventListener as any).mock.calls.find(
+				(call: any[]) => call[0] === 'maestro:remoteCommand'
+			)[1];
+
+			await act(async () => {
+				await handler(
+					new CustomEvent('maestro:remoteCommand', {
+						detail: {
+							sessionId: 'session-1',
+							command: '@Reviewer look at this',
+							inputMode: 'ai',
+							receiptChannel: 'receipt-1',
+						},
+					})
+				);
+			});
+
+			expect(planCrossAgentMentions).toHaveBeenCalledWith('@Reviewer look at this', 'session-1');
+			expect(dispatchCrossAgentMentions).toHaveBeenCalledWith(
+				plan,
+				'@Reviewer look at this',
+				expect.objectContaining({ id: 'session-1' }),
+				'tab-1'
+			);
+			expect(window.maestro.process.spawn).not.toHaveBeenCalled();
+			// Delivery is acked: the consult IS the dispatch.
+			expect(window.maestro.process.sendRemoteCommandReceipt).toHaveBeenCalledWith(
+				'receipt-1',
+				true,
+				undefined
+			);
+			// The user's bubble still lands in the tab so the consult reply has context.
+			const tab = useSessionStore.getState().sessions[0].aiTabs[0];
+			expect(tab.logs).toEqual([
+				expect.objectContaining({ source: 'user', text: '@Reviewer look at this' }),
+			]);
+		});
+
+		it('drops a leading @mention when the agent has no AI tab to anchor the reply', async () => {
+			// `suppressLocal` means "this agent must not be sent to". With no tab
+			// there is nowhere to stream the consult's reply, so the dispatch is
+			// dropped and reported as undelivered. Falling through to the spawn
+			// would hand the local agent a message addressed to someone else.
+			const session = createMockSession({ inputMode: 'ai', aiTabs: [], activeTabId: '' });
+			const deps = createMockDeps({ sessionsRef: { current: [session] } });
+			const plan = { targetSessionIds: ['reviewer-1'], suppressLocal: true };
+			vi.mocked(planCrossAgentMentions).mockReturnValueOnce(plan as any);
+
+			renderHook(() => useRemoteHandlers(deps));
+			const handler = (window.addEventListener as any).mock.calls.find(
+				(call: any[]) => call[0] === 'maestro:remoteCommand'
+			)[1];
+
+			await act(async () => {
+				await handler(
+					new CustomEvent('maestro:remoteCommand', {
+						detail: {
+							sessionId: 'session-1',
+							command: '@Reviewer look at this',
+							inputMode: 'ai',
+							receiptChannel: 'receipt-1',
+						},
+					})
+				);
+			});
+
+			expect(dispatchCrossAgentMentions).not.toHaveBeenCalled();
+			expect(window.maestro.process.spawn).not.toHaveBeenCalled();
+			expect(window.maestro.process.sendRemoteCommandReceipt).toHaveBeenCalledWith(
+				'receipt-1',
+				false,
+				'no-target-tab-for-mention'
+			);
+		});
+
+		it('spawns AND consults when the @mention is not leading', async () => {
+			const session = createMockSession({ inputMode: 'ai' });
+			const deps = createMockDeps({ sessionsRef: { current: [session] } });
+			const plan = { targetSessionIds: ['reviewer-1'], suppressLocal: false };
+			vi.mocked(planCrossAgentMentions).mockReturnValueOnce(plan as any);
+
+			renderHook(() => useRemoteHandlers(deps));
+			const handler = (window.addEventListener as any).mock.calls.find(
+				(call: any[]) => call[0] === 'maestro:remoteCommand'
+			)[1];
+
+			await act(async () => {
+				await handler(
+					new CustomEvent('maestro:remoteCommand', {
+						detail: {
+							sessionId: 'session-1',
+							command: 'fix it, then ask @Reviewer',
+							inputMode: 'ai',
+						},
+					})
+				);
+			});
+
+			expect(window.maestro.process.spawn).toHaveBeenCalledWith(
+				expect.objectContaining({ prompt: 'fix it, then ask @Reviewer' })
+			);
+			expect(dispatchCrossAgentMentions).toHaveBeenCalledWith(
+				plan,
+				'fix it, then ask @Reviewer',
+				expect.objectContaining({ id: 'session-1' }),
+				'tab-1'
 			);
 		});
 
@@ -762,18 +941,10 @@ describe('useRemoteHandlers', () => {
 	});
 
 	// ========================================================================
-	// handleRemoteCommand – Terminal mode edge cases
+	// handleRemoteCommand - Terminal mode edge cases
 	// ========================================================================
 
-	describe('handleRemoteCommand – terminal mode edge cases', () => {
-		/** Helper: extract the maestro:remoteCommand event handler from addEventListener mock */
-		function getRemoteCommandHandler() {
-			const call = (window.addEventListener as any).mock.calls.find(
-				(c: any[]) => c[0] === 'maestro:remoteCommand'
-			);
-			return call[1] as (event: Event) => Promise<void>;
-		}
-
+	describe('handleRemoteCommand - terminal mode edge cases', () => {
 		it('appends user command text to shellLogs', async () => {
 			const session = createMockSession({ inputMode: 'terminal', shellLogs: [] });
 			const deps = createMockDeps({ sessionsRef: { current: [session] } });
@@ -902,17 +1073,10 @@ describe('useRemoteHandlers', () => {
 	});
 
 	// ========================================================================
-	// handleRemoteCommand – AI mode edge cases
+	// handleRemoteCommand - AI mode edge cases
 	// ========================================================================
 
-	describe('handleRemoteCommand – AI mode edge cases', () => {
-		function getRemoteCommandHandler() {
-			const call = (window.addEventListener as any).mock.calls.find(
-				(c: any[]) => c[0] === 'maestro:remoteCommand'
-			);
-			return call[1] as (event: Event) => Promise<void>;
-		}
-
+	describe('handleRemoteCommand - AI mode edge cases', () => {
 		it('supports codex agent type for AI mode', async () => {
 			const session = createMockSession({ inputMode: 'ai', toolType: 'codex' as any });
 			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' } as any);
@@ -976,6 +1140,107 @@ describe('useRemoteHandlers', () => {
 
 		it('rejects terminal agent type (no supportsBatchMode capability)', async () => {
 			const session = createMockSession({ inputMode: 'ai', toolType: 'terminal' as any });
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' } as any);
+			const deps = createMockDeps({ sessionsRef: { current: [session] } });
+
+			renderHook(() => useRemoteHandlers(deps));
+			const handler = getRemoteCommandHandler();
+
+			await act(async () => {
+				await handler(
+					new CustomEvent('maestro:remoteCommand', {
+						detail: { sessionId: 'session-1', command: 'test', inputMode: 'ai' },
+					})
+				);
+			});
+
+			expect(window.maestro.process.spawn).not.toHaveBeenCalled();
+		});
+
+		// V1 regression: a cache MISS used to read as "unsupported" (the
+		// conservative DEFAULT_CAPABILITIES fallback), so any dispatch to an agent
+		// type the user had not opened this renderer session was silently dropped.
+		it('resolves capabilities on a cache miss instead of dropping the command', async () => {
+			clearCapabilitiesCache();
+			(window.maestro.agents.getCapabilities as any).mockResolvedValue({
+				...DEFAULT_CAPABILITIES,
+				supportsBatchMode: true,
+			});
+
+			const session = createMockSession({ inputMode: 'ai', toolType: 'opencode' as any });
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' } as any);
+			const deps = createMockDeps({ sessionsRef: { current: [session] } });
+
+			renderHook(() => useRemoteHandlers(deps));
+			const handler = getRemoteCommandHandler();
+
+			await act(async () => {
+				await handler(
+					new CustomEvent('maestro:remoteCommand', {
+						detail: { sessionId: 'session-1', command: 'explain', inputMode: 'ai' },
+					})
+				);
+			});
+
+			expect(window.maestro.agents.getCapabilities).toHaveBeenCalledWith('opencode');
+			expect(window.maestro.process.spawn).toHaveBeenCalledWith(
+				expect.objectContaining({ prompt: 'explain', toolType: 'opencode' })
+			);
+			// The resolved value is seeded into the cache, so the next dispatch is free.
+			expect(getCachedCapabilities('opencode')?.supportsBatchMode).toBe(true);
+		});
+
+		it('still drops the command when resolved capabilities say supportsBatchMode is false', async () => {
+			clearCapabilitiesCache();
+			(window.maestro.agents.getCapabilities as any).mockResolvedValue({
+				...DEFAULT_CAPABILITIES,
+				supportsBatchMode: false,
+			});
+
+			const session = createMockSession({ inputMode: 'ai', toolType: 'terminal' as any });
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' } as any);
+			const deps = createMockDeps({ sessionsRef: { current: [session] } });
+
+			renderHook(() => useRemoteHandlers(deps));
+			const handler = getRemoteCommandHandler();
+
+			await act(async () => {
+				await handler(
+					new CustomEvent('maestro:remoteCommand', {
+						detail: { sessionId: 'session-1', command: 'test', inputMode: 'ai' },
+					})
+				);
+			});
+
+			expect(window.maestro.agents.getCapabilities).toHaveBeenCalledWith('terminal');
+			expect(window.maestro.process.spawn).not.toHaveBeenCalled();
+		});
+
+		it('does not re-fetch when the cache already holds a false answer', async () => {
+			const session = createMockSession({ inputMode: 'ai', toolType: 'terminal' as any });
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' } as any);
+			const deps = createMockDeps({ sessionsRef: { current: [session] } });
+
+			renderHook(() => useRemoteHandlers(deps));
+			const handler = getRemoteCommandHandler();
+
+			await act(async () => {
+				await handler(
+					new CustomEvent('maestro:remoteCommand', {
+						detail: { sessionId: 'session-1', command: 'test', inputMode: 'ai' },
+					})
+				);
+			});
+
+			expect(window.maestro.agents.getCapabilities).not.toHaveBeenCalled();
+			expect(window.maestro.process.spawn).not.toHaveBeenCalled();
+		});
+
+		it('drops the command when capability resolution fails', async () => {
+			clearCapabilitiesCache();
+			(window.maestro.agents.getCapabilities as any).mockRejectedValue(new Error('IPC down'));
+
+			const session = createMockSession({ inputMode: 'ai', toolType: 'opencode' as any });
 			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' } as any);
 			const deps = createMockDeps({ sessionsRef: { current: [session] } });
 
@@ -1441,10 +1706,10 @@ describe('useRemoteHandlers', () => {
 	});
 
 	// ========================================================================
-	// handleQuickActionsToggleRemoteControl – edge cases
+	// handleQuickActionsToggleRemoteControl - edge cases
 	// ========================================================================
 
-	describe('handleQuickActionsToggleRemoteControl – edge cases', () => {
+	describe('handleQuickActionsToggleRemoteControl - edge cases', () => {
 		it('clears notification after 4 seconds', async () => {
 			vi.useFakeTimers();
 
@@ -1503,10 +1768,10 @@ describe('useRemoteHandlers', () => {
 	});
 
 	// ========================================================================
-	// sessionSshRemoteNames – edge cases
+	// sessionSshRemoteNames - edge cases
 	// ========================================================================
 
-	describe('sessionSshRemoteNames – edge cases', () => {
+	describe('sessionSshRemoteNames - edge cases', () => {
 		it('skips session with null remoteId', () => {
 			const session = createMockSession({
 				name: 'Agent X',
@@ -1583,6 +1848,246 @@ describe('useRemoteHandlers', () => {
 	});
 
 	// ========================================================================
+	// Delivery receipts - what `maestro-cli dispatch` reports as success
+	// ========================================================================
+
+	describe('delivery receipts', () => {
+		const RECEIPT_CHANNEL = 'remote:executeCommand:response:test';
+
+		const dispatchWithReceipt = async (
+			session: Session,
+			detail: Record<string, unknown>
+		): Promise<void> => {
+			const deps = createMockDeps({ sessionsRef: { current: [session] } });
+			renderHook(() => useRemoteHandlers(deps));
+			const handler = (window.addEventListener as any).mock.calls.find(
+				(call: any[]) => call[0] === 'maestro:remoteCommand'
+			)[1];
+			await act(async () => {
+				await handler(
+					new CustomEvent('maestro:remoteCommand', {
+						detail: { receiptChannel: RECEIPT_CHANNEL, ...detail },
+					})
+				);
+			});
+		};
+
+		const receipts = () =>
+			(window.maestro.process.sendRemoteCommandReceipt as any).mock.calls as unknown[][];
+
+		it('acks acceptance once the AI prompt reaches the spawn path', async () => {
+			await dispatchWithReceipt(createMockSession({ inputMode: 'ai' }), {
+				sessionId: 'session-1',
+				command: 'explain this code',
+				inputMode: 'ai',
+			});
+
+			expect(window.maestro.process.spawn).toHaveBeenCalled();
+			expect(receipts()).toEqual([[RECEIPT_CHANNEL, true, undefined]]);
+		});
+
+		// The V1 secondary defect in renderer form: this branch used to drop the
+		// command with the caller told `success: true`.
+		it('reports the capability drop as a rejection naming the toolType', async () => {
+			await dispatchWithReceipt(
+				createMockSession({ inputMode: 'ai', toolType: 'terminal' as any }),
+				{ sessionId: 'session-1', command: 'test', inputMode: 'ai' }
+			);
+
+			expect(window.maestro.process.spawn).not.toHaveBeenCalled();
+			expect(receipts()).toHaveLength(1);
+			expect(receipts()[0][1]).toBe(false);
+			expect(String(receipts()[0][2])).toContain('terminal');
+		});
+
+		it('reports a requested tab that does not exist as a rejection', async () => {
+			await dispatchWithReceipt(createMockSession({ inputMode: 'ai' }), {
+				sessionId: 'session-1',
+				command: 'test',
+				inputMode: 'ai',
+				tabId: 'no-such-tab',
+			});
+
+			expect(window.maestro.process.spawn).not.toHaveBeenCalled();
+			expect(receipts()[0][1]).toBe(false);
+			expect(String(receipts()[0][2])).toContain('no-such-tab');
+		});
+
+		it('reports an unknown session as a rejection', async () => {
+			await dispatchWithReceipt(createMockSession({ inputMode: 'ai' }), {
+				sessionId: 'ghost-session',
+				command: 'test',
+				inputMode: 'ai',
+			});
+
+			expect(receipts()).toEqual([[RECEIPT_CHANNEL, false, 'session-not-found']]);
+		});
+
+		it('reports a busy session as a rejection unless forced', async () => {
+			await dispatchWithReceipt(createMockSession({ inputMode: 'ai', state: 'busy' }), {
+				sessionId: 'session-1',
+				command: 'test',
+				inputMode: 'ai',
+			});
+
+			expect(receipts()).toEqual([[RECEIPT_CHANNEL, false, 'session-busy']]);
+		});
+
+		it('acks a terminal command when it is handed to runCommand', async () => {
+			await dispatchWithReceipt(createMockSession({ inputMode: 'terminal' }), {
+				sessionId: 'session-1',
+				command: 'ls -la',
+				inputMode: 'terminal',
+			});
+
+			expect(window.maestro.process.runCommand).toHaveBeenCalled();
+			expect(receipts()).toEqual([[RECEIPT_CHANNEL, true, undefined]]);
+		});
+
+		// Review of PR #1357 (Greptile P1): the ack used to be sent
+		// unconditionally BEFORE awaiting the spawn, which made the catch block's
+		// corrective `reportDelivery(false, ...)` dead code - `receiptSent` was
+		// already true. A spawn that rejects immediately, the usual shape of a
+		// missing or misconfigured agent binary, therefore still reported
+		// `accepted: true`: the exact "accepted but never runs" defect this PR
+		// exists to remove.
+		it('reports a spawn that rejects immediately as a rejection', async () => {
+			(window.maestro.process.spawn as any).mockRejectedValueOnce(
+				new Error('spawn ENOENT: claude')
+			);
+
+			await dispatchWithReceipt(createMockSession({ inputMode: 'ai' }), {
+				sessionId: 'session-1',
+				command: 'explain this code',
+				inputMode: 'ai',
+			});
+
+			expect(receipts()).toHaveLength(1);
+			expect(receipts()[0][1]).toBe(false);
+			expect(String(receipts()[0][2])).toContain('remote-spawn-error');
+		});
+
+		it('reports a rejecting spawn to Sentry', async () => {
+			captureExceptionMock.mockClear();
+			(window.maestro.process.spawn as any).mockRejectedValueOnce(
+				new Error('spawn ENOENT: claude')
+			);
+
+			await dispatchWithReceipt(createMockSession({ inputMode: 'ai' }), {
+				sessionId: 'session-1',
+				command: 'explain this code',
+				inputMode: 'ai',
+			});
+
+			expect(captureExceptionMock).toHaveBeenCalledTimes(1);
+		});
+
+		// MAESTRO-ZS: a remote command that lands while the agent is mid-turn is
+		// refused by ProcessManager on purpose. The caller still gets an honest
+		// rejection - it just isn't a fault worth paging Sentry over, and the
+		// remote sender can retry on any cadence it likes, so it repeated.
+		it('does not report a busy-agent refusal to Sentry but still rejects', async () => {
+			captureExceptionMock.mockClear();
+			(window.maestro.process.spawn as any).mockRejectedValueOnce(
+				new Error(
+					"Error invoking remote method 'process:spawn': Error: " +
+						agentAlreadyRunningMessage('session-1-ai-tab-1')
+				)
+			);
+
+			await dispatchWithReceipt(createMockSession({ inputMode: 'ai' }), {
+				sessionId: 'session-1',
+				command: 'explain this code',
+				inputMode: 'ai',
+			});
+
+			expect(captureExceptionMock).not.toHaveBeenCalled();
+			expect(receipts()).toHaveLength(1);
+			expect(receipts()[0][1]).toBe(false);
+			expect(String(receipts()[0][2])).toContain('remote-spawn-error');
+		});
+
+		// The other half of the same fix: the grace timer must still ack a spawn
+		// that is merely SLOW, or the caller times out and a real dispatch is
+		// reported as a failure.
+		it('acks a slow spawn before the caller can time out', async () => {
+			vi.useFakeTimers();
+			try {
+				let releaseSpawn: (() => void) | undefined;
+				(window.maestro.process.spawn as any).mockReturnValueOnce(
+					new Promise<void>((resolve) => {
+						releaseSpawn = resolve;
+					})
+				);
+
+				const deps = createMockDeps({
+					sessionsRef: { current: [createMockSession({ inputMode: 'ai' })] },
+				});
+				renderHook(() => useRemoteHandlers(deps));
+				const handler = (window.addEventListener as any).mock.calls.find(
+					(call: any[]) => call[0] === 'maestro:remoteCommand'
+				)[1];
+
+				const pending = handler(
+					new CustomEvent('maestro:remoteCommand', {
+						detail: {
+							receiptChannel: RECEIPT_CHANNEL,
+							sessionId: 'session-1',
+							command: 'explain this code',
+							inputMode: 'ai',
+						},
+					})
+				);
+
+				// Nothing acked yet: the spawn has not settled and the grace timer
+				// has not fired.
+				await act(async () => {});
+				expect(receipts()).toHaveLength(0);
+
+				await act(async () => {
+					vi.advanceTimersByTime(1500);
+				});
+				expect(receipts()).toEqual([[RECEIPT_CHANNEL, true, undefined]]);
+
+				// The later success must not double-send.
+				releaseSpawn?.();
+				await act(async () => {
+					await pending;
+				});
+				expect(receipts()).toHaveLength(1);
+			} finally {
+				vi.useRealTimers();
+			}
+		});
+
+		// CodeRabbit on PR #1357: the reason string is logged at warn level in the
+		// main process, so remote command text must not ride along in it.
+		it('rejects an unknown slash command without echoing the command text', async () => {
+			await dispatchWithReceipt(createMockSession({ inputMode: 'ai' }), {
+				sessionId: 'session-1',
+				command: '/nope sk-secret-token-value',
+				inputMode: 'ai',
+			});
+
+			expect(window.maestro.process.spawn).not.toHaveBeenCalled();
+			expect(receipts()).toEqual([[RECEIPT_CHANNEL, false, 'unknown-command']]);
+			expect(JSON.stringify(receipts())).not.toContain('sk-secret-token-value');
+		});
+
+		it('sends nothing when the command arrived without a receipt channel', async () => {
+			await dispatchWithReceipt(createMockSession({ inputMode: 'ai' }), {
+				sessionId: 'session-1',
+				command: 'explain this code',
+				inputMode: 'ai',
+				receiptChannel: undefined,
+			});
+
+			expect(window.maestro.process.spawn).toHaveBeenCalled();
+			expect(receipts()).toHaveLength(0);
+		});
+	});
+
+	// ========================================================================
 	// Event listener lifecycle
 	// ========================================================================
 
@@ -1603,6 +2108,44 @@ describe('useRemoteHandlers', () => {
 			const removedFn = removeCall[1];
 
 			expect(addedFn).toBe(removedFn);
+		});
+	});
+
+	// ========================================================================
+	// Agent Resilience prompt snapshot
+	// ========================================================================
+
+	// Prompts that arrive from `maestro-cli dispatch`, a Cue pipeline, or the
+	// web/mobile composer come through THIS handler, which spawns directly
+	// instead of going through `agentStore.processQueuedItem` (which snapshots
+	// for itself). Without a snapshot here,
+	// `scheduleRetryForError` logs "No prompt snapshot to resend" and falls back
+	// to the error modal - so every unattended prompt lost auto-retry, which is
+	// the case that needs it most.
+	describe('Agent Resilience prompt snapshot', () => {
+		it('records a retry snapshot so a remote prompt can be auto-resent', async () => {
+			const session = createMockSession();
+			const deps = createMockDeps({ sessionsRef: { current: [session] } });
+
+			renderHook(() => useRemoteHandlers(deps));
+			const handler = getRemoteCommandHandler();
+
+			await act(async () => {
+				await handler(
+					new CustomEvent('maestro:remoteCommand', {
+						detail: { sessionId: 'session-1', command: 'explain this code', inputMode: 'ai' },
+					})
+				);
+			});
+
+			expect(noteDirectDispatchMock).toHaveBeenCalled();
+			const [snapSessionId, item] = noteDirectDispatchMock.mock.calls[0];
+			expect(snapSessionId).toBe('session-1');
+			// Pinned to the resolved target tab, so a replay lands on the tab this
+			// spawn actually wrote to rather than the agent's current active tab.
+			expect(item.tabId).toBe('tab-1');
+			expect(item.type).toBe('message');
+			expect(item.text).toBe('explain this code');
 		});
 	});
 });

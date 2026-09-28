@@ -5,6 +5,10 @@
  * the entries' full time range (earliest → latest). Output feeds the
  * activity-graph cache and ultimately the renderer's `<ActivityGraph>`.
  *
+ * Two sources, not one: USER and AUTO entries come from the agent's JSONL
+ * history file, while Cue runs are counted in `cue_events` and handed in
+ * pre-bucketed via `options.cueCounts`.
+ *
  * The output is "all-encompassing" by design: the time window covers every
  * entry in `entries`, not a configurable lookback. The renderer's lookback
  * selector only filters the entry list, never the graph.
@@ -47,6 +51,26 @@ export interface BucketAggregateOptions {
 	 * a fixed value to keep results deterministic.
 	 */
 	endTime?: number;
+	/**
+	 * Cue runs counted straight out of `cue_events`, since they are no longer
+	 * written to the JSONL file the `entries` come from. See
+	 * {@link CueBucketSource} for how they fold into the CUE series.
+	 */
+	cueCounts?: CueBucketSource[];
+}
+
+/**
+ * A pre-counted slice of Cue activity - one minute of runs, from
+ * `getCueHistoryBuckets()` in `src/main/cue/stats/cue-stats-query.ts`.
+ *
+ * Counts rather than rows because the graph only ever needs a bar height, and
+ * an all-time graph would otherwise pull every run's stored output through
+ * memory to increment a counter.
+ */
+export interface CueBucketSource {
+	/** Start of the slice, unix ms. Bucketed like any entry timestamp. */
+	timestamp: number;
+	count: number;
 }
 
 /**
@@ -58,8 +82,31 @@ export interface BucketAggregateOptions {
  *   entries outside that window are excluded - the renderer's lookback
  *   selector hits this path.
  *
- * If no entries fall in range, returns a zero-filled bucket array with the
+ * If nothing falls in range, returns a zero-filled bucket array with the
  * window's endpoints as timestamps so the renderer can render an empty graph.
+ *
+ * ## How the CUE series is counted
+ *
+ * Cue runs arrive from two places: `options.cueCounts`, read from `cue_events`,
+ * and any CUE entries still sitting in the JSONL file from before those writes
+ * were removed. Per bucket the series takes the LARGER of the two rather than
+ * their sum, because in every bucket the two stores describe the same runs, not
+ * different ones:
+ *
+ * - Before the cutover both writers saw each run, and the database set is a
+ *   subset of the JSONL set (older rows predate the `output_excerpt` column, so
+ *   only the failures among them pass the filter). Summing would double-count.
+ * - After the cutover only the database has rows, so the max IS the database's
+ *   count.
+ * - Once Cue retention prunes a run, only the JSONL entry is left, so the max
+ *   is the JSONL count.
+ *
+ * Two known imprecisions, both bounded to a single bar and accepted rather than
+ * paying for row-level dedupe (which would mean loading every run's text):
+ * the one bucket containing the cutover instant undercounts by whatever it held
+ * before the cutover, and a run that starts in one bucket and finishes in the
+ * next can be counted in both, since the database stamps dispatch time and the
+ * JSONL entry stamped completion.
  */
 export function buildBucketAggregate(
 	entries: HistoryEntry[],
@@ -77,8 +124,9 @@ export function buildBucketAggregate(
 	};
 
 	const filtered = windowStart === null ? entries : entries.filter((e) => inRange(e.timestamp));
+	const cueSource = (options.cueCounts ?? []).filter((c) => c.count > 0 && inRange(c.timestamp));
 
-	if (filtered.length === 0) {
+	if (filtered.length === 0 && cueSource.length === 0) {
 		const fallbackEnd = endTime;
 		const fallbackStart = windowStart ?? endTime;
 		return {
@@ -118,6 +166,14 @@ export function buildBucketAggregate(
 		hostCounts[hostKey] = (hostCounts[hostKey] ?? 0) + 1;
 	}
 
+	// Database-sourced Cue runs widen the range like any other activity -
+	// otherwise an agent whose only recent work was Cue would graph an
+	// all-time window that ends before its newest bar.
+	for (const slice of cueSource) {
+		if (slice.timestamp < earliest) earliest = slice.timestamp;
+		if (slice.timestamp > latest) latest = slice.timestamp;
+	}
+
 	// For windowed mode the range is fixed by the lookback, not the
 	// observed entries - keeps the axis labels stable as entries arrive
 	// or get filtered out.
@@ -133,21 +189,43 @@ export function buildBucketAggregate(
 		agent: 0,
 	}));
 
+	const bucketIndexFor = (timestamp: number): number =>
+		Math.min(safeBucketCount - 1, Math.max(0, Math.floor((timestamp - rangeStart) / msPerBucket)));
+
 	for (const entry of filtered) {
-		const offset = entry.timestamp - rangeStart;
-		const idx = Math.min(safeBucketCount - 1, Math.max(0, Math.floor(offset / msPerBucket)));
-		const bucket = buckets[idx];
+		const bucket = buckets[bucketIndexFor(entry.timestamp)];
 		if (entry.type === 'AUTO') bucket.auto++;
 		else if (entry.type === 'USER') bucket.user++;
 		else if (entry.type === 'CUE') bucket.cue++;
 		else if (entry.type === 'AGENT') bucket.agent++;
 	}
 
+	// Fold in the database's Cue counts, taking the larger of the two stores
+	// per bucket rather than their sum - see the note on this function.
+	let cueDelta = 0;
+	if (cueSource.length > 0) {
+		const fromDb = new Array<number>(safeBucketCount).fill(0);
+		for (const slice of cueSource) {
+			fromDb[bucketIndexFor(slice.timestamp)] += slice.count;
+		}
+		for (let i = 0; i < safeBucketCount; i++) {
+			const merged = Math.max(buckets[i].cue, fromDb[i]);
+			cueDelta += merged - buckets[i].cue;
+			buckets[i].cue = merged;
+		}
+	}
+	if (cueDelta > 0) {
+		cueCount += cueDelta;
+		// Cue rows carry no hostname, so they belong to the local bucket - the
+		// host picker's counts come from here.
+		hostCounts[LOCAL_HOST_AGG_KEY] = (hostCounts[LOCAL_HOST_AGG_KEY] ?? 0) + cueDelta;
+	}
+
 	return {
 		buckets,
 		earliestTimestamp: rangeStart,
 		latestTimestamp: rangeEnd,
-		totalCount: filtered.length,
+		totalCount: filtered.length + cueDelta,
 		autoCount,
 		userCount,
 		cueCount,

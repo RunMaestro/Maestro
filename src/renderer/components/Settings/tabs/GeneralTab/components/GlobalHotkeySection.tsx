@@ -23,12 +23,14 @@ export function GlobalHotkeySection({
 				Windows, and Linux. Leave blank to disable. (Tip: pick something with two modifiers, e.g.{' '}
 				{formatShortcutKeys(['Meta', 'Shift', 'M'])}, to avoid clashes.)
 			</p>
-			<KeyCaptureButton
-				theme={theme}
-				keys={globalShowHotkey}
-				onKeysChange={setGlobalShowHotkey}
-				emptyLabel="Click to set hotkey"
-			/>
+			<div className="flex justify-center">
+				<KeyCaptureButton
+					theme={theme}
+					keys={globalShowHotkey}
+					onKeysChange={setGlobalShowHotkey}
+					emptyLabel="Click to set hotkey"
+				/>
+			</div>
 		</div>
 	);
 }

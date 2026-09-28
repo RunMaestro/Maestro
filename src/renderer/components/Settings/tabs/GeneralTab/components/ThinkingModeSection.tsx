@@ -19,12 +19,11 @@ export function ThinkingModeSection({
 	showToolCalls,
 	setShowToolCalls,
 }: ThinkingModeSectionProps) {
-	// Tool cells are part of the agent's "behind the scenes" activity, so they
-	// follow the Thinking toggle: with Thinking off they never show regardless of
-	// this switch. Ghost it out to signal the dependency (mirrors the forced-parallel
-	// shortcut ghosting in InputBehaviorSection).
-	const thinkingOff = defaultShowThinking === 'off';
-
+	// Tool-call visibility is independent of the thinking mode. The two settings
+	// live under one heading because they both shape how much of the agent's work
+	// the transcript shows, but neither gates the other: thinking On with tools
+	// hidden gives a pure reasoning chain, and tools On with thinking Off gives a
+	// pure activity log.
 	return (
 		<div data-setting-id="general-thinking-mode">
 			<SettingsSectionHeading icon={Brain}>Default Thinking Mode</SettingsSectionHeading>
@@ -55,28 +54,18 @@ export function ThinkingModeSection({
 			<div
 				data-setting-id="general-tool-calls"
 				className="p-3 rounded border"
-				style={{
-					borderColor: theme.colors.border,
-					backgroundColor: theme.colors.bgMain,
-					opacity: thinkingOff ? 0.55 : 1,
-				}}
+				style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgMain }}
 			>
 				<div
-					className="flex items-center justify-between"
-					onClick={() => {
-						if (thinkingOff) return;
-						setShowToolCalls(!showToolCalls);
-					}}
+					className="flex items-center justify-between cursor-pointer"
+					onClick={() => setShowToolCalls(!showToolCalls)}
 					role="button"
-					tabIndex={thinkingOff ? -1 : 0}
-					aria-disabled={thinkingOff}
-					style={{ cursor: thinkingOff ? 'not-allowed' : 'pointer' }}
+					tabIndex={0}
 					onKeyDown={(e) => {
 						// Only activate from the row itself. The nested ToggleSwitch handles
 						// its own keyboard events, so ignoring descendant keydowns keeps a
 						// focused switch from toggling twice (row handler + native click).
 						if (e.target !== e.currentTarget) return;
-						if (thinkingOff) return;
 						if (e.key === 'Enter' || e.key === ' ') {
 							e.preventDefault();
 							setShowToolCalls(!showToolCalls);
@@ -88,18 +77,16 @@ export function ThinkingModeSection({
 							Show tool calls in responses
 						</div>
 						<div className="text-xs opacity-70 mt-0.5">
-							{thinkingOff
-								? 'Tool calls follow the thinking setting. With thinking Off they stay hidden; agents still run tools normally.'
-								: 'Display tool-call activity (tool badges and their input/output) in AI responses. Turn off to hide tool calls from the transcript; agents still run tools normally.'}
+							Display tool-call activity (tool badges and their input/output) in AI responses.
+							Independent of the thinking mode above, so you can watch the reasoning chain without
+							the tool noise. Agents still run tools normally either way.
 						</div>
 					</div>
 					<ToggleSwitch
-						checked={showToolCalls && !thinkingOff}
+						checked={showToolCalls}
 						onChange={setShowToolCalls}
 						theme={theme}
-						disabled={thinkingOff}
 						ariaLabel="Show tool calls in responses"
-						title={thinkingOff ? 'Turn on thinking to control tool-call visibility' : undefined}
 					/>
 				</div>
 			</div>

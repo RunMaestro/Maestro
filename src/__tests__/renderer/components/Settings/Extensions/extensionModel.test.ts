@@ -8,8 +8,17 @@ import {
 import {
 	buildExtensions,
 	builtinExtension,
+	extensionBadge,
+	filterExtensions,
+	filterLabel,
+	isEncoreFlag,
 	pluginExtension,
+	sortExtensions,
 	BUILTIN_FEATURES,
+	CATEGORY_FILTERS,
+	EXTENSION_SORT_VALUES,
+	SORT_OPTIONS,
+	type UnifiedExtension,
 } from '../../../../../renderer/components/Settings/Extensions/extensionModel';
 import type { EncoreFeatureFlags } from '../../../../../renderer/types';
 
@@ -96,6 +105,7 @@ describe('extensionModel first-party projection (all Encore features)', () => {
 			'opencodeServer',
 			'concerto',
 			'groupsPlus',
+			'webLogin',
 		]);
 
 		for (const def of BUILTIN_FEATURES) {
@@ -175,14 +185,147 @@ describe('extensionModel plugin beta projection', () => {
 		expect(ext.beta).toBeUndefined();
 	});
 
-	it('leaves built-in beta-list projection unchanged', () => {
+	it('badges a graduated built-in Encore and an opt-in one Beta', () => {
+		// The badge is derived from the shipped default, so a flag that flips to
+		// true in ENCORE_FEATURE_DEFAULTS graduates without a second edit here.
 		const cueDef = BUILTIN_FEATURES.find((def) => def.flag === 'maestroCue');
 		expect(cueDef).toBeDefined();
-		// maestroCue is on the builtin beta list, so its tile stays beta: true.
-		expect(builtinExtension(cueDef!, flags()).beta).toBe(true);
-		const usageDef = BUILTIN_FEATURES.find((def) => def.flag === 'usageStats');
-		expect(usageDef).toBeDefined();
-		// usageStats is not on the beta list, so its tile stays non-beta.
-		expect(builtinExtension(usageDef!, flags()).beta).toBe(false);
+		const cue = builtinExtension(cueDef!, flags());
+		expect(cue.encore).toBe(true);
+		expect(cue.beta).toBe(false);
+		expect(extensionBadge(cue)).toEqual({ label: 'Encore', tone: 'accent' });
+
+		const pianolaDef = BUILTIN_FEATURES.find((def) => def.flag === 'pianola');
+		expect(pianolaDef).toBeDefined();
+		const pianola = builtinExtension(pianolaDef!, flags());
+		expect(pianola.encore).toBe(false);
+		expect(pianola.beta).toBe(true);
+		expect(extensionBadge(pianola)).toEqual({ label: 'Beta', tone: 'warning' });
+	});
+
+	it('badges every built-in from its shipped default, with no hand-kept list', () => {
+		for (const def of BUILTIN_FEATURES) {
+			const ext = builtinExtension(def, flags());
+			const expected = isEncoreFlag(def.flag);
+			expect(ext.encore, `${def.flag} encore`).toBe(expected);
+			expect(extensionBadge(ext)?.label, `${def.flag} badge`).toBe(expected ? 'Encore' : 'Beta');
+		}
+	});
+
+	it('leaves a community plugin unbadged unless its manifest says beta', () => {
+		expect(extensionBadge(pluginExtension(pluginRecord('com.example.stable')))).toBeNull();
+		const betaRecord = pluginRecord('com.example.beta');
+		betaRecord.manifest = { ...betaRecord.manifest!, beta: true };
+		expect(extensionBadge(pluginExtension(betaRecord))).toEqual({
+			label: 'Beta',
+			tone: 'warning',
+		});
+	});
+});
+
+describe('extensionModel Encore filter', () => {
+	it('labels the pill bar: All, Encore, then the categories', () => {
+		expect(CATEGORY_FILTERS[0]).toBe('all');
+		expect(CATEGORY_FILTERS[1]).toBe('encore');
+		expect(CATEGORY_FILTERS.map(filterLabel).slice(0, 3)).toEqual(['All', 'Encore', 'Automation']);
+	});
+
+	it('narrows to graduated built-ins regardless of their category', () => {
+		const all = buildExtensions(flags(), [pluginRecord('com.example.plain')]);
+		const encoreOnly = filterExtensions(all, {
+			category: 'encore',
+			onlyInstalled: false,
+			query: '',
+		});
+		expect(encoreOnly.length).toBeGreaterThan(0);
+		expect(encoreOnly.every((e) => e.encore)).toBe(true);
+		// Cross-cutting, not a category: the results span more than one category.
+		expect(new Set(encoreOnly.map((e) => e.category)).size).toBeGreaterThan(1);
+		// A community plugin is never Encore.
+		expect(encoreOnly.some((e) => e.kind === 'plugin')).toBe(false);
+	});
+
+	it('still combines with the search box', () => {
+		const all = buildExtensions(flags(), []);
+		const named = all.find((e) => e.encore)!.name;
+		const hits = filterExtensions(all, {
+			category: 'encore',
+			onlyInstalled: false,
+			query: named,
+		});
+		expect(hits.map((e) => e.name)).toContain(named);
+	});
+});
+
+describe('extensionModel release dates', () => {
+	it('gives every first-party feature a well-formed calendar day', () => {
+		for (const def of BUILTIN_FEATURES) {
+			const ext = builtinExtension(def, flags());
+			expect(ext.releaseDate, `${def.flag} has no releaseDate`).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+			expect(Number.isNaN(Date.parse(`${ext.releaseDate}T00:00:00Z`))).toBe(false);
+		}
+	});
+
+	it('carries a plugin manifest releaseDate onto its tile, and leaves it off when absent', () => {
+		const dated = pluginRecord('com.example.dated');
+		dated.manifest = { ...dated.manifest!, releaseDate: '2026-07-10' };
+		expect(pluginExtension(dated).releaseDate).toBe('2026-07-10');
+		expect(pluginExtension(pluginRecord('com.example.undated')).releaseDate).toBeUndefined();
+	});
+});
+
+describe('sortExtensions', () => {
+	function tile(name: string, releaseDate?: string): UnifiedExtension {
+		return {
+			key: `plugin:${name}`,
+			kind: 'plugin',
+			id: name,
+			name,
+			description: '',
+			category: 'other',
+			state: 'installed',
+			...(releaseDate ? { releaseDate } : {}),
+		};
+	}
+
+	const list = [
+		tile('Zeta', '2026-01-01'),
+		tile('alpha', '2025-06-01'),
+		tile('Undated'),
+		tile('Mid', '2026-07-04'),
+	];
+
+	it('sorts A-Z case-insensitively', () => {
+		expect(sortExtensions(list, 'name').map((e) => e.name)).toEqual([
+			'alpha',
+			'Mid',
+			'Undated',
+			'Zeta',
+		]);
+	});
+
+	it('sorts newest first and parks undated tiles at the end', () => {
+		expect(sortExtensions(list, 'newest').map((e) => e.name)).toEqual([
+			'Mid',
+			'Zeta',
+			'alpha',
+			'Undated',
+		]);
+	});
+
+	it('breaks ties on the same day by name, in both modes', () => {
+		const sameDay = [tile('Beta', '2026-02-02'), tile('Alpha', '2026-02-02')];
+		expect(sortExtensions(sameDay, 'newest').map((e) => e.name)).toEqual(['Alpha', 'Beta']);
+		expect(sortExtensions(sameDay, 'name').map((e) => e.name)).toEqual(['Alpha', 'Beta']);
+	});
+
+	it('does not mutate the input list', () => {
+		const original = [...list];
+		sortExtensions(list, 'newest');
+		expect(list).toEqual(original);
+	});
+
+	it('keeps the sort-option values and the persisted-choice list in step', () => {
+		expect(EXTENSION_SORT_VALUES).toEqual(SORT_OPTIONS.map((o) => o.value));
 	});
 });

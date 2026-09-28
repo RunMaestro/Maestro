@@ -1,4 +1,4 @@
-import { AlertTriangle } from 'lucide-react';
+import { AlertTriangle, X } from 'lucide-react';
 import type { Theme } from '../../../types';
 
 interface FileTreeTruncatedBannerProps {
@@ -7,6 +7,8 @@ interface FileTreeTruncatedBannerProps {
 	onLoadMore: () => void;
 	onLoadAll: () => void;
 	isRefreshing: boolean;
+	/** Collapses the banner down to the hazard icon next to the path row. */
+	onCollapse: () => void;
 }
 
 export function FileTreeTruncatedBanner({
@@ -15,6 +17,7 @@ export function FileTreeTruncatedBanner({
 	onLoadMore,
 	onLoadAll,
 	isRefreshing,
+	onCollapse,
 }: FileTreeTruncatedBannerProps) {
 	const capLabel =
 		previousCap !== undefined && Number.isFinite(previousCap)
@@ -40,7 +43,7 @@ export function FileTreeTruncatedBanner({
 			/>
 			<div className="flex-1 min-w-0">
 				<div className="text-xs font-medium">Unable to load all files into the file panel.</div>
-				<div className="text-[11px] opacity-70 mt-0.5">
+				<div className="text-xs-plus opacity-70 mt-0.5">
 					Scan stopped at {capLabel} entries to protect memory. Adjust the cap in Settings → Display
 					→ File Indexing.
 				</div>
@@ -49,7 +52,7 @@ export function FileTreeTruncatedBanner({
 						type="button"
 						onClick={onLoadMore}
 						disabled={isRefreshing}
-						className="px-2 py-0.5 rounded text-[11px] font-medium transition-colors disabled:opacity-50"
+						className="px-2 py-0.5 rounded text-xs-plus font-medium transition-colors disabled:opacity-50"
 						style={{
 							backgroundColor: theme.colors.accent,
 							color: theme.colors.bgMain,
@@ -61,7 +64,7 @@ export function FileTreeTruncatedBanner({
 						type="button"
 						onClick={onLoadAll}
 						disabled={isRefreshing}
-						className="px-2 py-0.5 rounded text-[11px] font-medium border transition-colors disabled:opacity-50"
+						className="px-2 py-0.5 rounded text-xs-plus font-medium border transition-colors disabled:opacity-50"
 						style={{
 							borderColor: theme.colors.border,
 							color: theme.colors.textMain,
@@ -71,6 +74,16 @@ export function FileTreeTruncatedBanner({
 					</button>
 				</div>
 			</div>
+			<button
+				type="button"
+				onClick={onCollapse}
+				aria-label="Minimize file scan warning"
+				title="Minimize (click the warning icon next to the path to reopen)"
+				className="flex-shrink-0 p-0.5 rounded opacity-50 hover:opacity-100 transition-opacity"
+				style={{ color: theme.colors.textMain }}
+			>
+				<X className="w-3.5 h-3.5" />
+			</button>
 		</div>
 	);
 }

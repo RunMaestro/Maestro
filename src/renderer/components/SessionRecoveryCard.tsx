@@ -11,11 +11,12 @@
  * MergeSession; we just point it at the same agent (in-place recovery).
  */
 
-import { useMemo, useState } from 'react';
-import { ArrowRight, Loader2 } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { ArrowRight, Check, Clock, Loader2 } from 'lucide-react';
 import type { Theme, AITab, LogEntry } from '../types';
 import { formatTokensCompact } from '../utils/formatters';
 import { estimateTokensFromLogs } from '../../shared/formatters';
+import { useSessionStore } from '../stores/sessionStore';
 
 export interface SessionRecoveryCardProps {
 	theme: Theme;
@@ -42,6 +43,25 @@ export function SessionRecoveryCard({
 	onRecover,
 }: SessionRecoveryCardProps) {
 	const [groomContext, setGroomContext] = useState(true);
+	// This card fires a send; a send does not always start a turn. When the agent
+	// is working, the prompt lands in the execution queue and runs later, which
+	// looks identical to nothing happening - so the card has to say which one it
+	// was and stop offering the button, or the user clicks again and queues a
+	// second copy of the same prompt (and a third, and a fourth).
+	const [attempted, setAttempted] = useState(false);
+
+	// How many copies of this recovery are waiting on this tab right now.
+	const queuedOnTab = useSessionStore((s) => {
+		const session = s.sessions.find((sess) => sess.id === sessionId);
+		if (!session) return 0;
+		return session.executionQueue.filter((item) => item.tabId === tab.id).length;
+	});
+
+	// A failure re-arms the button: the send never happened, so the user has to
+	// be able to try again.
+	useEffect(() => {
+		if (recoveryError) setAttempted(false);
+	}, [recoveryError]);
 
 	const sourceTokens = useMemo<number>(
 		() => estimateTokensFromLogs(tab.logs as LogEntry[]),
@@ -55,8 +75,12 @@ export function SessionRecoveryCard({
 	);
 
 	const handleSend = () => {
+		setAttempted(true);
 		onRecover({ sessionId, tabId: tab.id, lastUserPrompt, groomContext });
 	};
+
+	const settled = attempted && !isRecovering && !recoveryError;
+	const queued = settled && queuedOnTab > 0;
 
 	return (
 		<div
@@ -105,13 +129,20 @@ export function SessionRecoveryCard({
 				</div>
 			)}
 
-			<div className="flex justify-end gap-2">
+			<div className="flex items-center justify-between gap-2">
+				<div className="text-xs" style={{ color: theme.colors.textDim }} role="status">
+					{queued
+						? `Queued behind this agent's current work${queuedOnTab > 1 ? ` (${queuedOnTab} waiting)` : ''}. It sends as soon as the agent is free.`
+						: settled
+							? 'Sent. The reply appears below.'
+							: null}
+				</div>
 				<button
 					type="button"
 					onClick={handleSend}
-					disabled={isRecovering}
+					disabled={isRecovering || settled}
 					aria-busy={isRecovering}
-					className="px-3 py-1.5 rounded text-xs font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+					className="shrink-0 px-3 py-1.5 rounded text-xs font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
 					style={{
 						backgroundColor: theme.colors.accent,
 						color: theme.colors.accentForeground,
@@ -121,6 +152,15 @@ export function SessionRecoveryCard({
 						<>
 							<Loader2 className="w-3.5 h-3.5 animate-spin" aria-hidden="true" />
 							Recovering...
+						</>
+					) : settled ? (
+						<>
+							{queued ? (
+								<Clock className="w-3.5 h-3.5" aria-hidden="true" />
+							) : (
+								<Check className="w-3.5 h-3.5" aria-hidden="true" />
+							)}
+							{queued ? 'Queued' : 'Recovered'}
 						</>
 					) : (
 						<>

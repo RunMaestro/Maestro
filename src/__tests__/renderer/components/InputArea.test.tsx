@@ -4,11 +4,26 @@ import userEvent from '@testing-library/user-event';
 import { InputArea } from '../../../renderer/components/InputArea';
 import { useComposerInputStore } from '../../../renderer/stores/composerInputStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
+import { useAiCommandStore } from '../../../renderer/stores/aiCommandStore';
 import { formatEnterToSend } from '../../../renderer/utils/shortcutFormatter';
 import type { Session } from '../../../renderer/types';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 
 import { mockTheme } from '../../helpers/mockTheme';
+
+/**
+ * Put an AI command request (and optionally its answer) on a tab, the way
+ * `requestAiCommand` would. Fixed request id so tests can resolve/fail it.
+ */
+function seedAiCommand(sessionId: string, tabId: string, command?: string) {
+	useAiCommandStore.getState().beginAiCommand({
+		requestId: 'req-1',
+		sessionId,
+		tabId,
+		request: 'what is eating disk space',
+	});
+	if (command) useAiCommandStore.getState().resolveAiCommand('req-1', command);
+}
 // Mock scrollIntoView since jsdom doesn't support it
 Element.prototype.scrollIntoView = vi.fn();
 
@@ -83,6 +98,18 @@ vi.mock('../../../renderer/components/ThinkingStatusPill', () => ({
 			<div data-testid="thinking-status-pill">ThinkingStatusPill</div>
 		) : null
 	),
+}));
+
+// Captures the `onInterrupt` prop, which is the whole decision under test: the
+// indicator only carries Stop when the thinking pill is NOT already offering it.
+vi.mock('../../../renderer/components/CrossAgentResponseIndicator', () => ({
+	CrossAgentResponseIndicator: vi.fn(({ onInterrupt }) => (
+		<div
+			data-testid="cross-agent-indicator"
+			data-has-stop={onInterrupt ? 'yes' : 'no'}
+			onClick={onInterrupt}
+		/>
+	)),
 }));
 
 vi.mock('../../../renderer/components/ExecutionQueueIndicator', () => ({
@@ -170,10 +197,10 @@ const createDefaultProps = (
 	overrides: Partial<Parameters<typeof InputArea>[0]> & {
 		inputValue?: string;
 		/** Command mode is composer state, not a `!` in the text - seed it here. */
-		commandMode?: boolean;
+		commandMode?: 'off' | 'shell' | 'ai';
 	} = {}
 ) => {
-	const { inputValue = '', commandMode = false, ...rest } = overrides;
+	const { inputValue = '', commandMode = 'off', ...rest } = overrides;
 	useComposerInputStore.setState({
 		aiValue: inputValue,
 		terminalValue: inputValue,
@@ -722,8 +749,10 @@ describe('InputArea', () => {
 			render(<InputArea {...props} />);
 
 			expect(
+				// Prefix match: the tooltip now carries the toggle's chord as a
+				// suffix, so an exact-string lookup would break on every rebind.
 				screen.getByTitle(
-					'Full Access: All permission prompts bypassed. Agent can read, write, and execute without confirmation. Ask-back questions (AskUserQuestion) are not surfaced in this mode.'
+					/^Full Access: All permission prompts bypassed\. Agent can read, write, and execute without confirmation\. Ask-back questions \(AskUserQuestion\) are not surfaced in this mode\./
 				)
 			).toBeInTheDocument();
 		});
@@ -751,8 +780,11 @@ describe('InputArea', () => {
 			});
 			render(<InputArea {...props} />);
 
-			const images = screen.getAllByRole('img');
-			expect(images).toHaveLength(2);
+			// One tile per staged image. The thumbnail <img> is decorative
+			// (alt="") so the accessible name lives on the tile, which is also the
+			// drag source and the click target.
+			const tiles = screen.getAllByRole('button', { name: /^Staged image/ });
+			expect(tiles).toHaveLength(2);
 		});
 
 		it('does NOT show staged images in terminal mode', () => {
@@ -763,7 +795,7 @@ describe('InputArea', () => {
 			});
 			render(<InputArea {...props} />);
 
-			expect(screen.queryByRole('img')).not.toBeInTheDocument();
+			expect(screen.queryByRole('button', { name: /^Staged image/ })).not.toBeInTheDocument();
 		});
 
 		it('calls setLightboxImage when clicking staged image', () => {
@@ -776,7 +808,7 @@ describe('InputArea', () => {
 			});
 			render(<InputArea {...props} />);
 
-			fireEvent.click(screen.getByRole('img'));
+			fireEvent.click(screen.getByRole('button', { name: /^Staged image/ }));
 
 			expect(setLightboxImage).toHaveBeenCalledWith(
 				'data:image/png;base64,ABC123',
@@ -878,7 +910,11 @@ describe('InputArea', () => {
 			expect(setSelectedSlashCommandIndex).toHaveBeenCalledWith(1);
 		});
 
-		it('fills input on double-click', () => {
+		it('accepts the command on a single click, through the full composer', () => {
+			// A single click must accept. This popover used to reserve acceptance for
+			// a double-click, which a touch screen cannot produce and a phone has no
+			// Enter key to substitute for: the menu opened and every tap did nothing.
+			// The trailing space matches what Tab/Enter write in useInputKeyDown.
 			const setInputValue = vi.fn();
 			const setSlashCommandOpen = vi.fn();
 			const inputRef = { current: { focus: vi.fn() } } as any;
@@ -892,10 +928,12 @@ describe('InputArea', () => {
 			render(<InputArea {...props} />);
 
 			const clearCmd = screen.getByText('/clear').closest('button');
-			fireEvent.doubleClick(clearCmd!);
+			fireEvent.click(clearCmd!);
 
-			expect(setInputValue).toHaveBeenCalledWith('/clear');
+			expect(setInputValue).toHaveBeenCalledWith('/clear ');
 			expect(setSlashCommandOpen).toHaveBeenCalledWith(false);
+			// Focus is asserted at the overlay level (SlashCommandPopover.test): the
+			// full composer mounts a real textarea onto this ref, replacing the spy.
 		});
 
 		it('shows slash command autocomplete for all agents (built-in commands always available)', async () => {
@@ -962,27 +1000,20 @@ describe('InputArea', () => {
 			expect(screen.queryByText('/help')).not.toBeInTheDocument();
 		});
 
-		it('single click updates selection without closing dropdown', () => {
+		it('a single click also records the row as selected', () => {
+			// The highlight follows the accepted row so a reopened menu lands where
+			// the user left it; acceptance itself is covered above.
 			const setSelectedSlashCommandIndex = vi.fn();
-			const setSlashCommandOpen = vi.fn();
-			const setInputValue = vi.fn();
 			const props = createDefaultProps({
 				slashCommandOpen: true,
 				inputValue: '/',
 				setSelectedSlashCommandIndex,
-				setSlashCommandOpen,
-				setInputValue,
 			});
 			render(<InputArea {...props} />);
 
-			const helpCmd = screen.getByText('/help').closest('button');
-			fireEvent.click(helpCmd!);
+			fireEvent.click(screen.getByText('/help').closest('button')!);
 
-			// Single click should update selection
 			expect(setSelectedSlashCommandIndex).toHaveBeenCalledWith(1);
-			// But should NOT close dropdown or fill input
-			expect(setSlashCommandOpen).not.toHaveBeenCalled();
-			expect(setInputValue).not.toHaveBeenCalled();
 		});
 
 		it('renders command description text', () => {
@@ -1228,7 +1259,7 @@ describe('InputArea', () => {
 			const props = createDefaultProps({
 				session: createMockSession({ inputMode: 'ai', cwd: '/Users/test/project' }),
 				inputValue: 'git status',
-				commandMode: true,
+				commandMode: 'shell',
 			});
 			render(<InputArea {...props} />);
 
@@ -1239,7 +1270,7 @@ describe('InputArea', () => {
 			const props = createDefaultProps({
 				session: createMockSession({ inputMode: 'ai' }),
 				inputValue: '',
-				commandMode: true,
+				commandMode: 'shell',
 			});
 			render(<InputArea {...props} />);
 
@@ -1249,7 +1280,7 @@ describe('InputArea', () => {
 		it('tells the user how to get out', () => {
 			const props = createDefaultProps({
 				session: createMockSession({ inputMode: 'ai' }),
-				commandMode: true,
+				commandMode: 'shell',
 			});
 			render(<InputArea {...props} />);
 
@@ -1273,7 +1304,7 @@ describe('InputArea', () => {
 			const props = createDefaultProps({
 				session: createMockSession({ inputMode: 'ai' }),
 				inputValue: '!important note',
-				commandMode: false,
+				commandMode: 'off',
 			});
 			render(<InputArea {...props} />);
 
@@ -1284,11 +1315,103 @@ describe('InputArea', () => {
 			const props = createDefaultProps({
 				session: createMockSession({ inputMode: 'terminal' }),
 				inputValue: 'ls',
-				commandMode: true,
+				commandMode: 'shell',
 			});
 			render(<InputArea {...props} />);
 
 			expect(screen.queryByText('Command Mode')).not.toBeInTheDocument();
+		});
+	});
+
+	describe('AI Command Mode', () => {
+		beforeEach(() => {
+			useAiCommandStore.setState({ entries: {} });
+		});
+
+		function aiCommandProps(overrides: Record<string, unknown> = {}) {
+			return createDefaultProps({
+				session: createMockSession({ inputMode: 'ai', cwd: '/Users/test/project' }),
+				commandMode: 'ai',
+				...overrides,
+			});
+		}
+
+		it('shows the AI command bar instead of the shell one', () => {
+			render(<InputArea {...aiCommandProps()} />);
+
+			expect(screen.getByText('AI Command')).toBeInTheDocument();
+			expect(screen.queryByText('Command Mode')).not.toBeInTheDocument();
+		});
+
+		it('says Escape steps back to command mode, not out to the agent', () => {
+			render(<InputArea {...aiCommandProps()} />);
+
+			expect(screen.getByText(/back to Command Mode/)).toBeInTheDocument();
+		});
+
+		it('asks for a description rather than a command line', () => {
+			render(<InputArea {...aiCommandProps()} />);
+
+			expect(
+				screen.getByPlaceholderText(/Describe what you want to accomplish/)
+			).toBeInTheDocument();
+		});
+
+		it('shows a spinner while the model is working', () => {
+			const props = aiCommandProps();
+			seedAiCommand(props.session.id, props.session.activeTabId);
+			render(<InputArea {...props} />);
+
+			expect(screen.getByTestId('ai-command-thinking')).toBeInTheDocument();
+			expect(screen.getByText('Processing')).toBeInTheDocument();
+		});
+
+		it('shows the proposed command with Run and Cancel', () => {
+			const props = aiCommandProps();
+			seedAiCommand(props.session.id, props.session.activeTabId, 'du -sh * | sort -rh');
+			render(<InputArea {...props} />);
+
+			expect(screen.getByTestId('ai-command-proposed')).toHaveTextContent('du -sh * | sort -rh');
+			expect(screen.getByTestId('ai-command-run')).toBeInTheDocument();
+			expect(screen.getByTestId('ai-command-cancel')).toBeInTheDocument();
+		});
+
+		it('keeps the request on screen so the command can be judged against it', () => {
+			const props = aiCommandProps();
+			seedAiCommand(props.session.id, props.session.activeTabId, 'du -sh *');
+			render(<InputArea {...props} />);
+
+			expect(screen.getByText('what is eating disk space')).toBeInTheDocument();
+		});
+
+		it('surfaces a failure instead of proposing nothing', () => {
+			const props = aiCommandProps();
+			seedAiCommand(props.session.id, props.session.activeTabId);
+			useAiCommandStore.getState().failAiCommand('req-1', 'the model returned no command');
+			render(<InputArea {...props} />);
+
+			expect(screen.getByTestId('ai-command-error')).toHaveTextContent(
+				'the model returned no command'
+			);
+		});
+
+		it('does not render a proposal parked on a different tab', () => {
+			const props = aiCommandProps();
+			seedAiCommand(props.session.id, 'some-other-tab', 'du -sh *');
+			render(<InputArea {...props} />);
+
+			expect(screen.queryByTestId('ai-command-proposal')).not.toBeInTheDocument();
+		});
+
+		it('does not offer shell tab completion for a prose request', () => {
+			const props = aiCommandProps({
+				inputValue: 'delete the build output',
+				tabCompletionOpen: true,
+				tabCompletionSuggestions: [{ value: 'build', type: 'file', displayText: 'build' }],
+			});
+			render(<InputArea {...props} />);
+
+			expect(screen.queryByText('Tab Completion')).not.toBeInTheDocument();
 		});
 	});
 
@@ -1326,7 +1449,7 @@ describe('InputArea', () => {
 			const props = createDefaultProps({
 				session: createMockSession({ inputMode: 'ai', isGitRepo: true }),
 				inputValue: 'git checkout ma',
-				commandMode: true,
+				commandMode: 'shell',
 				tabCompletionOpen: true,
 				tabCompletionSuggestions: [
 					{ value: 'git checkout main', type: 'branch', displayText: 'main' },
@@ -2494,5 +2617,116 @@ describe('InputArea', () => {
 
 			expect(screen.queryByTestId('context-warning-sash')).not.toBeInTheDocument();
 		});
+	});
+});
+
+/**
+ * Stop is one agent-level action, so exactly one Stop may be on screen. The
+ * thinking pill owns it whenever it renders; the cross-agent pill picks it up
+ * only when the thinking pill is absent, which is what happens to a message
+ * addressed solely to other agents (this agent never goes busy). The two render
+ * conditions have to stay each other's inverse or the user gets two Stops or
+ * none.
+ */
+describe('InputArea cross-agent Stop placement', () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+		useSessionStore.setState({ sessions: [], groups: [] });
+	});
+
+	const indicator = () => screen.getByTestId('cross-agent-indicator');
+
+	it('carries Stop when nothing else is offering one', () => {
+		const props = createDefaultProps();
+		render(<InputArea {...props} />);
+
+		expect(indicator()).toHaveAttribute('data-has-stop', 'yes');
+		expect(screen.queryByTestId('thinking-status-pill')).not.toBeInTheDocument();
+	});
+
+	it('runs the same agent-level interrupt the thinking pill would', () => {
+		const handleInterrupt = vi.fn();
+		const props = createDefaultProps({ handleInterrupt });
+		render(<InputArea {...props} />);
+
+		fireEvent.click(indicator());
+		expect(handleInterrupt).toHaveBeenCalledTimes(1);
+	});
+
+	it('yields Stop to the pill while Auto Run is running', () => {
+		const props = createDefaultProps({ autoRunState: { isRunning: true } as never });
+		render(<InputArea {...props} />);
+
+		expect(indicator()).toHaveAttribute('data-has-stop', 'no');
+	});
+
+	it('draws no indicator at all outside AI mode', () => {
+		const props = createDefaultProps({
+			session: createMockSession({ inputMode: 'terminal' }),
+		});
+		render(<InputArea {...props} />);
+
+		expect(screen.queryByTestId('cross-agent-indicator')).not.toBeInTheDocument();
+	});
+});
+
+// Phone layout: the whole composer folds away behind a slim handle so the
+// transcript gets the screen. Default is folded; a tap on the handle reveals it.
+vi.mock('../../../renderer/hooks/ui/useViewportBreakpoint', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../renderer/hooks/ui/useViewportBreakpoint')>()),
+	usePhoneLayout: vi.fn(() => false),
+}));
+import { usePhoneLayout } from '../../../renderer/hooks/ui/useViewportBreakpoint';
+import { PHONE_COMPOSER_COLLAPSED_KEY } from '../../../renderer/components/InputArea/InputArea';
+
+describe('InputArea on a phone', () => {
+	const mockedUsePhoneLayout = vi.mocked(usePhoneLayout);
+
+	beforeEach(() => {
+		mockedUsePhoneLayout.mockReturnValue(true);
+		useSessionStore.setState({ sessions: [], groups: [] });
+		try {
+			window.localStorage?.removeItem(PHONE_COMPOSER_COLLAPSED_KEY);
+		} catch {
+			/* storage may be absent */
+		}
+	});
+
+	afterEach(() => {
+		mockedUsePhoneLayout.mockReturnValue(false);
+		try {
+			window.localStorage?.removeItem(PHONE_COMPOSER_COLLAPSED_KEY);
+		} catch {
+			/* storage may be absent */
+		}
+	});
+
+	it('starts folded: only the handle, no textarea', () => {
+		render(<InputArea {...createDefaultProps()} />);
+		const handle = screen.getByTestId('phone-composer-handle');
+		expect(handle).toHaveAttribute('aria-expanded', 'false');
+		expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
+	});
+
+	it('unfolds on a tap and keeps the handle on top for folding back', () => {
+		render(<InputArea {...createDefaultProps()} />);
+		fireEvent.click(screen.getByTestId('phone-composer-handle'));
+		expect(screen.getByRole('textbox')).toBeInTheDocument();
+		expect(screen.getByTestId('phone-composer-handle')).toHaveAttribute('aria-expanded', 'true');
+
+		fireEvent.click(screen.getByTestId('phone-composer-handle'));
+		expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
+	});
+
+	it('marks a folded handle when an unsent draft is waiting behind it', () => {
+		render(<InputArea {...createDefaultProps({ inputValue: 'half a thought' })} />);
+		expect(screen.getByTestId('phone-composer-handle-draft')).toBeInTheDocument();
+	});
+
+	it('draws no handle at all on desktop', () => {
+		mockedUsePhoneLayout.mockReturnValue(false);
+		render(<InputArea {...createDefaultProps()} />);
+		expect(screen.queryByTestId('phone-composer-handle')).not.toBeInTheDocument();
+		expect(screen.getByRole('textbox')).toBeInTheDocument();
 	});
 });

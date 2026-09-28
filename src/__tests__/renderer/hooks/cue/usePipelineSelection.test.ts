@@ -3,7 +3,7 @@ import { renderHook, act } from '@testing-library/react';
 import { usePipelineSelection } from '../../../../renderer/hooks/cue/usePipelineSelection';
 import type { CuePipelineState } from '../../../../shared/cue-pipeline-types';
 
-vi.mock('../../../../renderer/components/CuePipelineEditor/utils/pipelineGraph', () => ({
+vi.mock('../../../../shared/cue-pipeline-summary', () => ({
 	getTriggerConfigSummary: vi.fn(() => 'summary'),
 }));
 

@@ -11,6 +11,7 @@
  */
 
 import { useState, useEffect, useRef, useCallback } from 'react';
+import type { Dispatch, SetStateAction } from 'react';
 import type { AgentConfig } from '../../types';
 import type { SshRemoteConfig, AgentSshRemoteConfig } from '../../../shared/types';
 import { logger } from '../../utils/logger';
@@ -46,6 +47,8 @@ export interface UseAgentConfigurationOptions {
 		customPath?: string;
 		customArgs?: string;
 		customEnvVars?: Record<string, string>;
+		/** Env vars switched off in the editor: parked, never spawned with. */
+		customEnvVarsDisabled?: Record<string, string>;
 		/** Claude token-source: legacy Adaptive opt-in (off => pure API). */
 		enableMaestroP?: boolean;
 		/** Refines `enableMaestroP`: 'interactive' always TUI, 'dynamic' auto-switch. */
@@ -77,6 +80,12 @@ export interface UseAgentConfigurationReturn {
 	setCustomArgs: (args: string) => void;
 	customEnvVars: Record<string, string>;
 	setCustomEnvVars: (vars: Record<string, string>) => void;
+	/**
+	 * Env vars the user switched off. Held separately from `customEnvVars` so a
+	 * parked var never reaches a spawn - see Session.customEnvVarsDisabled.
+	 */
+	customEnvVarsDisabled: Record<string, string>;
+	setCustomEnvVarsDisabled: Dispatch<SetStateAction<Record<string, string>>>;
 
 	// Claude token source (maestro-p TUI vs `claude --print` API)
 	enableMaestroP: boolean;
@@ -146,6 +155,9 @@ export function useAgentConfiguration(
 	const [customArgs, setCustomArgs] = useState(initialValues?.customArgs ?? '');
 	const [customEnvVars, setCustomEnvVars] = useState<Record<string, string>>(
 		initialValues?.customEnvVars ?? {}
+	);
+	const [customEnvVarsDisabled, setCustomEnvVarsDisabled] = useState<Record<string, string>>(
+		initialValues?.customEnvVarsDisabled ?? {}
 	);
 
 	// Claude token source (maestro-p TUI vs `claude --print` API)
@@ -401,6 +413,8 @@ export function useAgentConfiguration(
 		setCustomArgs,
 		customEnvVars,
 		setCustomEnvVars,
+		customEnvVarsDisabled,
+		setCustomEnvVarsDisabled,
 
 		// Claude token source
 		enableMaestroP,

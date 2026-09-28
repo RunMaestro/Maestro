@@ -204,6 +204,24 @@ subscriptions:
 `,
 	},
 	{
+		id: 'label-routing',
+		name: 'Label Routing',
+		description: 'Run an agent the moment a label lands on a PR or issue',
+		explanation:
+			'Watches GitHub label activity and fires when a label is added, so applying a label becomes the button that starts the work. Choose whether to watch pull requests, issues, or both, and list the labels that should fire (omit gh_labels to fire on any label). {{CUE_GH_LABEL}} carries the label that landed and {{CUE_GH_LABEL_ACTOR}} carries who applied it. Labels already present when the subscription is first saved never fire - only new ones do.',
+		yaml: `subscriptions:
+  - name: "Work Labeled PRs"
+    event: github.label
+    # repo: "owner/repo"  # optional - auto-detected from git remote
+    gh_label_target: pr   # pr | issue | both (default: both)
+    gh_labels:
+      - "ready-to-merge"
+    poll_minutes: 2
+    prompt_file: prompts/labeled-pr.md
+    enabled: true
+`,
+	},
+	{
 		id: 'task-queue',
 		name: 'Task Queue',
 		description: 'Process pending markdown tasks from a directory',
@@ -243,6 +261,44 @@ subscriptions:
 #
 # Template variables available in your prompt:
 #   {{CUE_CLI_PROMPT}} - The prompt text passed via --prompt flag (empty if not provided)
+`,
+	},
+	{
+		id: 'webhook-received',
+		name: 'Webhook',
+		description: 'Trigger from any external service over HTTP',
+		explanation:
+			'Maestro runs a local HTTP listener (default port 17997, loopback only) that turns an inbound POST into a Cue run. Any service that can send a webhook works: GitHub, GitLab, Slack, CI systems, your own scripts. Every subscription needs a secret - set `secret_env` to keep the value out of the committed cue.yaml. Use `signature_header` for senders that sign the body (GitHub, GitLab) instead of presenting the secret directly. Filters read the payload, so one endpoint can drive different pipelines per event type. To take deliveries from the internet, point a tunnel (ngrok, cloudflared) or a reverse proxy at the loopback port rather than binding it publicly.',
+		yaml: `subscriptions:
+  - name: "pr-opened"
+    event: webhook.received
+    webhook:
+      path: gh-pr
+      secret_env: GH_WEBHOOK_SECRET
+      signature_header: X-Hub-Signature-256
+    filter:
+      webhook_event: pull_request
+      body.action: opened
+    prompt: |
+      A pull request was just opened. Review it.
+
+      {{CUE_WEBHOOK_BODY}}
+    enabled: true
+
+# Delivery URL:
+#   POST http://127.0.0.1:17997/cue/gh-pr
+#
+# Without signature_header, the sender presents the secret instead:
+#   X-Maestro-Cue-Secret: <secret>   (or  Authorization: Bearer <secret>)
+#
+# Override the listener with MAESTRO_CUE_WEBHOOK_PORT / MAESTRO_CUE_WEBHOOK_HOST.
+#
+# Template variables available in your prompt:
+#   {{CUE_WEBHOOK_BODY}}        - Payload, pretty-printed JSON (raw text if not JSON)
+#   {{CUE_WEBHOOK_EVENT}}       - Vendor event name (e.g. "pull_request")
+#   {{CUE_WEBHOOK_PATH}}        - Path segment the delivery arrived on
+#   {{CUE_WEBHOOK_DELIVERY_ID}} - Vendor delivery id
+#   {{CUE_WEBHOOK_HEADERS}}     - Request headers, secrets redacted
 `,
 	},
 ];

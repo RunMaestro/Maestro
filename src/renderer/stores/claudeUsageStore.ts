@@ -24,6 +24,10 @@ import { useEffect, useState } from 'react';
 import { create } from 'zustand';
 import { getHomeDir, getHomeDirAsync } from '../utils/homeDir';
 import type { Session } from '../types';
+import {
+	effectiveAgentCustomEnvVars,
+	resolveAgentBillingCredential,
+} from '../../shared/providerProfiles';
 
 /**
  * Snapshot shape mirrors `UsageSnapshot` in `src/main/agents/claude-mode-selector.ts`.
@@ -38,9 +42,27 @@ export interface ClaudeUsageSnapshot {
 	sampledAt: string;
 	configDirKey: string;
 	authState?: 'authenticated' | 'unauthenticated';
-	session: { percent: number; resetsAt: string };
-	weekAllModels: { percent: number; resetsAt: string };
-	weekSonnetOnly: { percent: number; resetsAt: string };
+	/**
+	 * The Anthropic account this config dir was logged into at sample time.
+	 * Absent for dirs that have never been logged into, and for snapshots
+	 * cached before these fields existed - the panel falls back to the config
+	 * dir name in both cases. `accountUuid` is what lets the panel spot two
+	 * dirs sharing one account (and therefore one quota bucket).
+	 */
+	accountEmail?: string;
+	accountUuid?: string;
+	organizationName?: string;
+	// `resetsAt` is absent when claude's panel painted a percentage but no
+	// "Resets ..." row (it omits the row for an idle 0% window). Render the
+	// percentage anyway and drop the caption.
+	session: { percent: number; resetsAt?: string };
+	weekAllModels: { percent: number; resetsAt?: string };
+	/**
+	 * The separately-metered premium-model weekly limit. The field name is
+	 * historical - claude has renamed this window from "Sonnet only" to "Opus"
+	 * to "Fable" - so `label` carries whatever the panel actually called it.
+	 */
+	weekSonnetOnly: { percent: number; resetsAt?: string; label?: string };
 }
 
 interface ClaudeUsageState {
@@ -211,11 +233,12 @@ function fetchClaudeAgentEnv(): Promise<Record<string, string>> {
 
 /**
  * Resolve the canonical `CLAUDE_CONFIG_DIR` key for a Claude Code session
- * the same way the main-side spawner does: session env wins over agent env,
- * with the implicit default `~/.claude` as the final fallback. Returns
- * `undefined` only when the session isn't a Claude Code session, when no
- * useful resolution is possible yet (no home dir, no env vars, no
- * pre-stamped key), or when the inputs explicitly disable resolution.
+ * the same way the main-side spawner does: the session's own env vars replace
+ * the agent-level set (they do not layer), with the implicit default
+ * `~/.claude` as the final fallback. Returns `undefined` when the session isn't
+ * a Claude Code session, when it bills an API key, gateway, or cloud provider
+ * (there is no plan quota to show), when it runs over SSH, or when no useful
+ * resolution is possible yet (no home dir, no env vars, no pre-stamped key).
  */
 function resolveSessionConfigDirKey(
 	session: Session | null | undefined,
@@ -223,6 +246,14 @@ function resolveSessionConfigDirKey(
 	homeDir: string | undefined
 ): string | undefined {
 	if (!session || session.toolType !== 'claude-code') return undefined;
+	// A remote agent's config dir holds the REMOTE host's login. This machine's
+	// snapshot of the same-named dir is a different account, so show no bars.
+	if (session.sessionSshRemoteConfig?.enabled) return undefined;
+	const env = effectiveAgentCustomEnvVars(
+		session.customEnvVars as Record<string, string> | undefined,
+		agentEnv
+	);
+	if (resolveAgentBillingCredential('claude-code', env)) return undefined;
 	// The spawner stamps the canonical key onto claudeInteractive when it
 	// resolves the mode. Prefer that - it's already canonicalized via
 	// `path.resolve()` on the main side.
@@ -230,8 +261,7 @@ function resolveSessionConfigDirKey(
 	if (typeof stamped === 'string' && stamped.length > 0) {
 		return stamped.replace(/\/+$/, '');
 	}
-	const sessionEnv = (session.customEnvVars ?? {}) as Record<string, string>;
-	const explicit = sessionEnv.CLAUDE_CONFIG_DIR ?? agentEnv.CLAUDE_CONFIG_DIR;
+	const explicit = env.CLAUDE_CONFIG_DIR;
 	if (typeof explicit === 'string' && explicit.length > 0) {
 		return explicit.replace(/\/+$/, '');
 	}

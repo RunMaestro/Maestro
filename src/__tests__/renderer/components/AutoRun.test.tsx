@@ -12,6 +12,7 @@ import { formatShortcutKeys } from '../../../renderer/utils/shortcutFormatter';
 import type { Theme, BatchRunState, SessionState } from '../../../renderer/types';
 import { useBatchStore } from '../../../renderer/stores/batchStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
+import { installLocalStorageMock } from '../../helpers/mockLocalStorage';
 
 const createMarkdownComponentsCalls = vi.hoisted(() => [] as Array<Record<string, unknown>>);
 
@@ -56,6 +57,13 @@ beforeEach(() => {
 });
 
 // Mock the external dependencies
+// CodeMirror cannot lay itself out in jsdom, so the Auto Run source editor is
+// swapped for the shared textarea double (it still implements the editor handle).
+vi.mock('../../../renderer/components/FilePreview/markdownEditor', async () => {
+	const { markdownEditorModuleMock } = await import('../../helpers/mockMarkdownEditor');
+	return markdownEditorModuleMock();
+});
+
 vi.mock('react-markdown', () => ({
 	default: ({ children }: { children: string }) => (
 		<div data-testid="react-markdown">{children}</div>
@@ -359,6 +367,187 @@ describe('AutoRun', () => {
 			renderWithProvider(<AutoRun {...props} />);
 
 			expect(screen.getByTitle('Editing disabled while Auto Run active')).toBeDisabled();
+		});
+	});
+
+	// The source editor is CodeMirror, which owns its own scroller and draws no
+	// frame, so the panel outline lives on the wrapper around it. That wrapper is
+	// also where a locked document announces itself: while a batch run holds the
+	// file the editor is readOnly, and the warning-colored frame plus the tint are
+	// the only signal that typing will be refused.
+	describe('Locked document framing', () => {
+		it('frames the editor in the border color when the document is free', () => {
+			const props = createDefaultProps({ mode: 'edit' });
+			renderWithProvider(<AutoRun {...props} />);
+
+			const frame = screen.getByRole('textbox').closest('.border');
+			expect(frame).toHaveStyle({ borderColor: createMockTheme().colors.border });
+		});
+
+		it('turns the frame warning-colored while a batch run holds the document', () => {
+			const props = createDefaultProps({ mode: 'edit', batchRunState: createBatchRunState() });
+			renderWithProvider(<AutoRun {...props} />);
+
+			const frame = screen.getByRole('textbox').closest('.border');
+			expect(frame).toHaveStyle({ borderColor: createMockTheme().colors.warning });
+			// The editor itself refuses edits; the frame only says so out loud.
+			expect(screen.getByRole('textbox')).toHaveAttribute('readonly');
+		});
+	});
+
+	// A run parked on an agent error or a MAESTRO:HITL gate is waiting on the
+	// user, not driving the document. Holding the lock there makes the gate
+	// unanswerable: the user cannot tick the box the gate is asking about.
+	describe('Paused run releases the document', () => {
+		const pausedProps = (overrides: Partial<React.ComponentProps<typeof AutoRun>> = {}) => {
+			const props = createDefaultProps({ batchRunState: createBatchRunState(), ...overrides });
+			// errorPaused reaches the component through the store, not the prop chain.
+			seedBatchStore(props.sessionId, createBatchRunState({ errorPaused: true }));
+			return props;
+		};
+
+		afterEach(() => {
+			useBatchStore.setState({ batchRunStates: {} });
+		});
+
+		it('leaves the editor writable while the run is paused', () => {
+			const props = pausedProps({ mode: 'edit' });
+			renderWithProvider(<AutoRun {...props} />);
+
+			expect(screen.getByRole('textbox')).not.toHaveAttribute('readonly');
+			expect(screen.getByRole('textbox').closest('.border')).toHaveStyle({
+				borderColor: createMockTheme().colors.border,
+			});
+		});
+
+		it('re-enables the Edit toggle while the run is paused', () => {
+			const props = pausedProps({ mode: 'preview' });
+			renderWithProvider(<AutoRun {...props} />);
+
+			expect(screen.getByTitle('Switch to edit')).toBeEnabled();
+			expect(screen.queryByTitle('Editing disabled while Auto Run active')).toBeNull();
+		});
+
+		it('keeps offering Stop while the run is paused', () => {
+			const props = pausedProps();
+			renderWithProvider(<AutoRun {...props} />);
+
+			expect(screen.getByText('Stop')).toBeInTheDocument();
+			expect(screen.queryByText('Run')).toBeNull();
+		});
+
+		it('hands preview checkboxes back to the user while the run is paused', () => {
+			createMarkdownComponentsCalls.length = 0;
+			const props = pausedProps({ mode: 'preview' });
+			renderWithProvider(<AutoRun {...props} />);
+
+			const call = createMarkdownComponentsCalls.at(-1);
+			expect(call?.onTaskToggle).toBeTypeOf('function');
+		});
+	});
+
+	// Reading a rendered document and editing its source are different jobs at
+	// different comfortable sizes, so the two modes keep separate scales.
+	describe('Font Zoom', () => {
+		beforeEach(() => {
+			installLocalStorageMock();
+			// The panel has no font size of its own: it reads the File Preview /
+			// File Editor surfaces, so the base has to be seeded explicitly.
+			useSettingsStore.setState({ fontSize: 14, fontZoom: 1, filePreviewFontSize: 0 });
+		});
+
+		// The source editor is CodeMirror, which carries its font size in the
+		// editor theme rather than an inline style, so the assertion is on the
+		// persisted scale the zoom control writes (and the editor reads).
+		it('scales the editor font and persists under the edit key', () => {
+			const props = createDefaultProps({ mode: 'edit' });
+			renderWithProvider(<AutoRun {...props} />);
+
+			expect(window.localStorage.getItem('autoRun.editFontScale')).toBeNull();
+
+			fireEvent.click(screen.getByLabelText('Increase editor font size'));
+
+			expect(window.localStorage.getItem('autoRun.editFontScale')).toBe('1.1');
+			// The preview keeps its own scale - zooming one must not move the other.
+			expect(window.localStorage.getItem('autoRun.previewFontScale')).toBeNull();
+		});
+
+		it('scales the preview font and persists under the preview key', () => {
+			const props = createDefaultProps({ mode: 'preview' });
+			const { container } = renderWithProvider(<AutoRun {...props} />);
+
+			// The base is the File Preview SURFACE size (this pane renders the same
+			// markdown that tab does), not a literal 13px, so the zoom multiplies
+			// whatever the user set there.
+			const preview = container.querySelector('.prose') as HTMLElement;
+			expect(parseFloat(preview.style.fontSize)).toBeCloseTo(14, 5);
+
+			fireEvent.click(screen.getByLabelText('Increase preview font size'));
+
+			expect(
+				parseFloat((container.querySelector('.prose') as HTMLElement).style.fontSize)
+			).toBeCloseTo(15.4, 5);
+			expect(window.localStorage.getItem('autoRun.previewFontScale')).toBe('1.1');
+		});
+
+		// The panel used to carry a hard-coded 13px, so it stayed put while the
+		// rest of the app moved and read visibly smaller than the transcript
+		// beside it. It is a File Preview surface like any other document pane.
+		it('takes its base size from the File Preview surface, zoom included', () => {
+			useSettingsStore.setState({ fontSize: 16, fontZoom: 1.2, filePreviewFontSize: 0 });
+			const props = createDefaultProps({ mode: 'preview' });
+			const { container } = renderWithProvider(<AutoRun {...props} />);
+
+			// 16 interface px * 1.2 zoom, inherited because the surface is unset.
+			expect(
+				parseFloat((container.querySelector('.prose') as HTMLElement).style.fontSize)
+			).toBeCloseTo(19.2, 5);
+		});
+
+		it('follows an explicit File Preview size over the interface size', () => {
+			useSettingsStore.setState({ fontSize: 16, fontZoom: 1, filePreviewFontSize: 20 });
+			const props = createDefaultProps({ mode: 'preview' });
+			const { container } = renderWithProvider(<AutoRun {...props} />);
+
+			expect(
+				parseFloat((container.querySelector('.prose') as HTMLElement).style.fontSize)
+			).toBeCloseTo(20, 5);
+		});
+
+		// The whole point of two keys: zooming one mode must leave the other alone.
+		it('keeps the two scales independent', () => {
+			window.localStorage.setItem('autoRun.editFontScale', '1.5');
+			const props = createDefaultProps({ mode: 'preview' });
+			renderWithProvider(<AutoRun {...props} />);
+
+			// Preview is untouched by the edit-mode zoom, so its reset percentage
+			// (which only appears once zoomed) is absent.
+			expect(screen.queryByLabelText('Reset preview font size')).toBeNull();
+			expect(screen.getByLabelText('Increase preview font size')).toBeInTheDocument();
+		});
+
+		// Same collapsible "Aa" circle the file preview floats over its document,
+		// so zooming reads identically in a file tab and in this panel. It rests
+		// over the content rather than taking a slot in the button row.
+		it('floats the zoom as the collapsible handle instead of a button-row control', () => {
+			const props = createDefaultProps({ mode: 'preview' });
+			renderWithProvider(<AutoRun {...props} />);
+
+			expect(screen.getByTestId('autorun-font-scale-handle')).toBeInTheDocument();
+			expect(screen.getByTestId('autorun-font-scale').className).toContain('rounded-full');
+		});
+
+		// A zoom that moves nothing reads as broken, and the pill would otherwise
+		// float over the "pick a folder" empty state with no type to scale.
+		it('hides the zoom when the folder has no documents', () => {
+			const props = createDefaultProps({
+				mode: 'preview',
+				documentList: [],
+				selectedFile: null,
+			});
+			renderWithProvider(<AutoRun {...props} />);
+
+			expect(screen.queryByTestId('autorun-font-scale')).toBeNull();
 		});
 	});
 
@@ -3106,16 +3295,12 @@ describe('Content Versioning and External Changes', () => {
 		vi.useRealTimers();
 	});
 
-	it('force-syncs content when contentVersion increments', async () => {
+	it('force-syncs a clean editor when contentVersion increments', async () => {
 		const props = createDefaultProps({ content: 'Original', contentVersion: 1 });
 		const { rerender } = renderWithProvider(<AutoRun {...props} />);
 
 		const textarea = screen.getByRole('textbox');
 		expect(textarea).toHaveValue('Original');
-
-		// User makes local edits
-		fireEvent.change(textarea, { target: { value: 'User edits' } });
-		expect(textarea).toHaveValue('User edits');
 
 		// External file change triggers contentVersion increment
 		rerender(
@@ -3126,8 +3311,25 @@ describe('Content Versioning and External Changes', () => {
 			vi.advanceTimersByTime(100);
 		});
 
-		// Content should be force-synced from external change
 		expect(textarea).toHaveValue('External update');
+	});
+
+	it('keeps unsaved edits when contentVersion increments', async () => {
+		const props = createDefaultProps({ content: 'Original', contentVersion: 1 });
+		const { rerender } = renderWithProvider(<AutoRun {...props} />);
+
+		const textarea = screen.getByRole('textbox');
+		fireEvent.change(textarea, { target: { value: 'User edits' } });
+
+		rerender(
+			<AutoRun {...createDefaultProps({ content: 'External update', contentVersion: 2 })} />
+		);
+
+		await act(async () => {
+			vi.advanceTimersByTime(100);
+		});
+
+		expect(textarea).toHaveValue('User edits');
 	});
 
 	it('preserves local content when only content prop changes (no version change)', async () => {
@@ -3174,7 +3376,7 @@ describe('Content Versioning and External Changes', () => {
 		expect(screen.getByRole('textbox')).toHaveValue('V100');
 	});
 
-	it('resets dirty state when external change arrives', async () => {
+	it('stays dirty when an external change arrives under unsaved edits', async () => {
 		const props = createDefaultProps({ content: 'Original', contentVersion: 1 });
 		const { rerender } = renderWithProvider(<AutoRun {...props} />);
 
@@ -3193,8 +3395,9 @@ describe('Content Versioning and External Changes', () => {
 			vi.advanceTimersByTime(100);
 		});
 
-		// Content synced, no longer dirty
-		expect(screen.queryByText('Save')).not.toBeInTheDocument();
+		// The draft survives, so Save is still offered
+		expect(textarea).toHaveValue('Dirty content');
+		expect(screen.getByText('Save')).toBeInTheDocument();
 	});
 });
 
@@ -3442,6 +3645,38 @@ describe('Reset Tasks Flash Notification', () => {
 		// since the ResetTasksConfirmModal is a separate component
 		// Instead, let's just verify onShowFlash is part of the component props
 		expect(onShowFlash).not.toHaveBeenCalled(); // Not called until confirmed
+	});
+
+	// The reset is saved immediately, but only against the saved text: writing
+	// the draft would persist the user's unsaved edits and defeat Revert.
+	it('saves the reset without persisting unsaved edits', async () => {
+		const saved = '- [x] Done task\n- [ ] Pending task';
+		const draft = saved + '\nunsaved line';
+		const mockMaestro = setupMaestroMock();
+		const ref = React.createRef<AutoRunHandle>();
+		const props = createDefaultProps({
+			content: saved,
+			externalLocalContent: draft,
+			externalSavedContent: saved,
+		});
+		renderWithProvider(<AutoRun ref={ref} {...props} />);
+
+		await act(async () => {
+			ref.current?.openResetTasksModal();
+		});
+		await act(async () => {
+			fireEvent.click(screen.getByRole('button', { name: 'Reset Tasks' }));
+		});
+
+		expect(mockMaestro.autorun.writeDoc).toHaveBeenCalledWith(
+			props.folderPath,
+			`${props.selectedFile}.md`,
+			'- [ ] Done task\n- [ ] Pending task',
+			undefined
+		);
+		expect(screen.getByRole('textbox')).toHaveValue(
+			'- [ ] Done task\n- [ ] Pending task\nunsaved line'
+		);
 	});
 
 	it('onShowFlash is called after handleResetTasks saves the document', async () => {

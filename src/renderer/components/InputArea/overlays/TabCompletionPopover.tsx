@@ -112,7 +112,7 @@ export const TabCompletionPopover = memo(function TabCompletionPopover({
 										setFilter(filterType);
 										setSelectedIndex?.(0);
 									}}
-									className={`px-2 py-0.5 text-[10px] rounded flex items-center gap-1 transition-colors ${
+									className={`px-2 py-0.5 text-2xs rounded flex items-center gap-1 transition-colors ${
 										isActive ? 'font-medium' : 'opacity-60 hover:opacity-100'
 									}`}
 									style={{
@@ -162,7 +162,7 @@ export const TabCompletionPopover = memo(function TabCompletionPopover({
 									style={{ color: getSuggestionColor(suggestion.type, theme) }}
 								/>
 								<span className="flex-1 truncate">{suggestion.displayText}</span>
-								<span className="text-[10px] opacity-40 flex-shrink-0">{suggestion.type}</span>
+								<span className="text-2xs opacity-40 flex-shrink-0">{suggestion.type}</span>
 							</button>
 						);
 					})

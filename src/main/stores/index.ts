@@ -30,7 +30,11 @@ export * from './types';
 // Store Initialization
 // ============================================================================
 
-export { initializeStores } from './instances';
+export {
+	initializeStores,
+	flushPendingSessionWrites,
+	flushPendingSessionWritesSync,
+} from './instances';
 export type { StoreInitOptions } from './instances';
 
 // ============================================================================

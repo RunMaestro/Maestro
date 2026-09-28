@@ -121,9 +121,18 @@ export function buildWorktreeSession(params: BuildWorktreeSessionParams): Sessio
 		customPath: params.parentSession.customPath,
 		customArgs: params.parentSession.customArgs,
 		customEnvVars: params.parentSession.customEnvVars,
+		// Parked vars come along too, or the worktree agent silently loses the
+		// switched-off entries the user is keeping for later.
+		customEnvVarsDisabled: params.parentSession.customEnvVarsDisabled,
 		customModel: params.parentSession.customModel,
 		// New model inherits these; legacy does not
 		customContextWindow: isLegacy ? undefined : params.parentSession.customContextWindow,
+		// Provenance travels WITH the value it describes (finding AD1). Copying
+		// the number alone would demote a parent's deliberate budget to unknown
+		// provenance in the worktree, so a provider report would override it there
+		// while still being outranked in the parent - the same agent's gauge,
+		// timeline and compaction threshold disagreeing across a worktree split.
+		contextWindowSource: isLegacy ? undefined : params.parentSession.contextWindowSource,
 		nudgeMessage: isLegacy ? undefined : params.parentSession.nudgeMessage,
 		newSessionMessage: isLegacy ? undefined : params.parentSession.newSessionMessage,
 		autoRunFolderPath: isLegacy ? undefined : params.parentSession.autoRunFolderPath,

@@ -1,23 +1,27 @@
 import { useCallback, useRef } from 'react';
 import { getClaudeTokenSourceFields } from '../../../shared/claudeTokenMode';
-import type {
-	Session,
-	SessionState,
-	UsageStats,
-	QueuedItem,
-	LogEntry,
-	ToolType,
-} from '../../types';
-import { getActiveTab, resolveQueuedItemTarget } from '../../utils/tabHelpers';
+import type { Session, SessionState, UsageStats, QueuedItem, ToolType } from '../../types';
+import {
+	getActiveTab,
+	markTabRunningQueuedItem,
+	resolveQueuedItemTarget,
+} from '../../utils/tabHelpers';
 import { filterYoloArgs } from '../../utils/agentArgs';
 import { prepareMaestroSystemPrompt } from '../../utils/spawnHelpers';
-import { generateId } from '../../utils/ids';
 import {
 	hasRunnableQueueItem,
 	nextRunnableQueueItem,
 	takeNextRunnableQueueItem,
 } from '../../utils/executionQueue';
 import { estimateContextUsage } from '../../utils/contextUsage';
+import { usageStatsToTurnFields } from '../../../shared/turnUsageLedger';
+import { cheapTurnSettings } from '../../../shared/modelTiers';
+import {
+	FALLBACK_CONTEXT_WINDOW,
+	getModelContextWindowOverride,
+} from '../../../shared/agentConstants';
+import { isFailedSynopsisResponse } from '../../../shared/synopsis';
+import { stripAnsiCodes } from '../../../shared/stringUtils';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { logger } from '../../utils/logger';
 
@@ -226,6 +230,12 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 			sessionId: string,
 			prompt: string,
 			cwdOverride?: string,
+			/**
+			 * `modelOverride` / `effortOverride` carry whatever the caller resolved for
+			 * this spawn: an Auto Run document's per-task model hint, else the run-scoped
+			 * override from the Auto Run config or `--model`. Absent on every other call
+			 * path, in which case the agent's own configured values are used.
+			 */
 			options?: SpawnAgentOptions
 		): Promise<AgentSpawnResult> => {
 			// Use sessionsRef to get latest sessions (fixes stale closure when called right after session creation)
@@ -341,6 +351,11 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 										tabId: activeTab?.id,
 										isRemote: session.sessionSshRemoteConfig?.enabled ?? false,
 										isWorktree: !!session.parentSessionId,
+										// `taskUsageStats` is already scoped to this task -
+										// it is declared inside the per-task closure and only
+										// accumulates that task's usage events - so it is the
+										// per-turn delta the row wants, no ledger needed.
+										...usageStatsToTurnFields(taskUsageStats),
 									})
 									.catch((err) => {
 										// Don't fail the batch flow if stats recording fails
@@ -409,33 +424,22 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 												};
 											}
 
-											const logEntry: LogEntry | null =
-												nextItem.type === 'message' && nextItem.text
-													? {
-															id: generateId(),
-															timestamp: Date.now(),
-															source: 'user',
-															text: nextItem.text,
-															images: nextItem.images,
-														}
-													: null;
-
 											// Orphan target: the user closed this tab while the message was
-											// still queued. Route the user log to orphanedThinkingTabs and
-											// leave the active tab untouched - the send is fire-and-forget.
+											// still queued. Route the busy state + user log to
+											// orphanedThinkingTabs and leave the active tab untouched - the
+											// send is fire-and-forget.
 											if (target.location === 'orphan') {
 												return {
 													...s,
 													state: 'busy' as SessionState,
 													busySource: 'ai',
-													...(logEntry &&
-														s.orphanedThinkingTabs && {
-															orphanedThinkingTabs: s.orphanedThinkingTabs.map((tab) =>
-																tab.id === target.tabId
-																	? { ...tab, logs: [...tab.logs, logEntry] }
-																	: tab
-															),
-														}),
+													...(s.orphanedThinkingTabs && {
+														orphanedThinkingTabs: s.orphanedThinkingTabs.map((tab) =>
+															tab.id === target.tabId
+																? markTabRunningQueuedItem(tab, nextItem, s)
+																: tab
+														),
+													}),
 													executionQueue: remainingQueue,
 													thinkingStartTime: Date.now(),
 													currentCycleTokens: 0,
@@ -444,14 +448,14 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 												};
 											}
 
-											// Foreground target: append the user log and bring the tab into view.
-											const updatedAiTabs = logEntry
-												? s.aiTabs.map((tab) =>
-														tab.id === target.tabId
-															? { ...tab, logs: [...tab.logs, logEntry] }
-															: tab
-													)
-												: s.aiTabs;
+											// Foreground target: mark the tab busy (so its chip keeps the
+											// in-progress indicator while the dequeued turn runs), append the
+											// user log, and bring the tab into view. Shares
+											// markTabRunningQueuedItem with the other dispatch paths so the
+											// busy-state + log construction stays identical.
+											const updatedAiTabs = s.aiTabs.map((tab) =>
+												tab.id === target.tabId ? markTabRunningQueuedItem(tab, nextItem, s) : tab
+											);
 
 											return {
 												...s,
@@ -467,24 +471,20 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 											};
 										}
 
-										// No queued items - set to idle
-										// Set ALL busy tabs to 'idle' for write-mode tracking
-										const updatedAiTabs =
-											s.aiTabs?.length > 0
-												? s.aiTabs.map((tab) =>
-														tab.state === 'busy'
-															? { ...tab, state: 'idle' as const, thinkingStartTime: undefined }
-															: tab
-													)
-												: s.aiTabs;
+										// No queued items. This spawn ran under its own `-batch-` process id
+										// and deliberately never marked a tab busy (see the spawn site), so
+										// its exit must not clear tabs whose own `-ai-{tabId}` agents are
+										// still running in parallel - that drops the in-progress indicator
+										// from threads that are very much still working. Each of those tabs
+										// is cleared by its own onExit handler.
+										const anyTabStillBusy = s.aiTabs?.some((tab) => tab.state === 'busy') ?? false;
 
 										return {
 											...s,
-											state: 'idle' as SessionState,
-											busySource: undefined,
-											thinkingStartTime: undefined,
+											state: anyTabStillBusy ? ('busy' as SessionState) : ('idle' as SessionState),
+											busySource: anyTabStillBusy ? s.busySource : undefined,
+											thinkingStartTime: anyTabStillBusy ? s.thinkingStartTime : undefined,
 											pendingAICommandForSynopsis: undefined,
-											aiTabs: updatedAiTabs,
 										};
 									})
 								);
@@ -626,20 +626,27 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 							sessionCustomArgs: session.customArgs,
 							sessionAdditionalDirectories: session.additionalDirectories,
 							sessionCustomEnvVars: session.customEnvVars,
-							// A per-run override (Auto Run model picker, CLI --model) wins over the
-							// session's configured model. There is no active tab in this path, so
-							// the override sits directly above session.customModel and never
-							// touches the session itself - it dies when the run ends.
+							// A resolved override (document model hint, Auto Run model picker,
+							// CLI --model) wins over the session's configured model. There is no
+							// active tab in this path, so the override sits directly above
+							// session.customModel and never touches the session itself - it dies
+							// when the run ends.
 							sessionCustomModel: options?.modelOverride ?? session.customModel,
 							// Auto Run is session-level (no active tab), so the session's effort
 							// is the source. Interactive spawns pass this too; omitting it here
 							// dropped the user's configured reasoning effort in Auto Run, which for
 							// Codex meant no reasoning summary was streamed (Thought Stream stayed
 							// stuck on "Waiting for the agent to start thinking...") - see #1147.
+							// It also made the same playbook run at a different effort depending on
+							// whether it was launched from the app or maestro-cli, which passed it.
 							sessionCustomEffort: options?.effortOverride ?? session.customEffort,
 							sessionCustomContextWindow: session.customContextWindow,
 							// Per-session SSH remote config (takes precedence over agent-level SSH config)
 							sessionSshRemoteConfig: session.sessionSshRemoteConfig,
+							// Origin of the turn. Auto Run is the one dispatcher that reaches
+							// this path without a human in the loop; everything else here is a
+							// slash command or another user action, so it stays 'user'.
+							querySource: isBatchProcess ? 'auto' : 'user',
 						})
 						.catch((err: unknown) => {
 							resolveOnce({
@@ -719,6 +726,25 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 					throw new Error(`${toolType} agent has no command configured`);
 				}
 
+				const cheapSynopsis = cheapTurnSettings(toolType);
+
+				// The cheap tier is a MODEL swap, and a model carries a context
+				// window with it. Resuming replays the whole transcript, so
+				// downgrading an agent running Anthropic's 1M beta (`opus[1m]`)
+				// onto a 200k model makes every synopsis of a long conversation
+				// fail with "Prompt is too long" - the transcript fit the tab's
+				// model and cannot fit the cheap one. Keep the tab's model
+				// whenever the downgrade would shrink the window; effort still
+				// drops to the bottom rung, since that costs nothing to read.
+				const tabContextWindow = getModelContextWindowOverride(sessionConfig?.customModel);
+				const cheapContextWindow = getModelContextWindowOverride(cheapSynopsis.model);
+				const downgradeShrinksWindow =
+					(tabContextWindow ?? FALLBACK_CONTEXT_WINDOW) >
+					(cheapContextWindow ?? FALLBACK_CONTEXT_WINDOW);
+				const synopsisModel = downgradeShrinksWindow
+					? sessionConfig?.customModel
+					: (cheapSynopsis.model ?? sessionConfig?.customModel);
+
 				// Use a unique target ID for background synopsis
 				const targetSessionId = `${sessionId}-synopsis-${Date.now()}`;
 
@@ -772,18 +798,34 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 					);
 
 					cleanupFns.push(
-						window.maestro.process.onExit((sid: string) => {
+						window.maestro.process.onExit((sid: string, code: number | null | undefined) => {
 							if (sid === targetSessionId) {
 								cleanup();
 								const ctx = lastSynopsisUsageEvent
 									? (estimateContextUsage(lastSynopsisUsageEvent, toolType) ?? undefined)
 									: undefined;
+								// A failed synopsis still writes to stdout: the provider
+								// prints its error ("Prompt is too long") and exits. Reported
+								// as a success, that text is parsed as a summary and lands in
+								// History as the record of the turn, AND stamps
+								// lastSynopsisTime - so the next synopsis skips everything the
+								// agent did before the failure. Report the failure instead and
+								// let the caller write nothing.
+								const failed =
+									(typeof code === 'number' && code !== 0) ||
+									isFailedSynopsisResponse(responseText, toolType);
 								resolve({
-									success: true,
+									success: !failed,
 									response: responseText,
 									agentSessionId,
 									usageStats: synopsisUsageStats,
 									contextUsage: ctx,
+									...(failed
+										? {
+												error: stripAnsiCodes(responseText).trim() || `exit code ${code}`,
+												errorKind: 'process-exit' as const,
+											}
+										: {}),
 								});
 							}
 						})
@@ -819,8 +861,20 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 							sessionCustomPath: sessionConfig?.customPath,
 							sessionCustomArgs: sessionConfig?.customArgs,
 							sessionCustomEnvVars: sessionConfig?.customEnvVars,
-							sessionCustomModel: sessionConfig?.customModel,
-							sessionCustomEffort: sessionConfig?.customEffort,
+							// A synopsis summarizes a conversation that already happened. It is
+							// pinned to the bottom of both ladders rather than inheriting the
+							// tab's model, because running a few sentences of prose on the model
+							// that just did the engineering is pure waste - one premium turn per
+							// completed turn, forever. Falls back to the tab's own model where
+							// the provider has no tier mapping, or where the cheap model's
+							// context window is smaller than the tab's (see synopsisModel).
+							//
+							// Safe only because the synopsis is a LEAF: every caller discards the
+							// agentSessionId it returns rather than adopting it, so the cheap
+							// model cannot follow the conversation into the next real turn. A
+							// future caller that adopts that id must revisit this.
+							sessionCustomModel: synopsisModel,
+							sessionCustomEffort: cheapSynopsis.effort ?? sessionConfig?.customEffort,
 							sessionCustomContextWindow: sessionConfig?.customContextWindow,
 							// Forward the agent's Claude token source. The synopsis runs under a
 							// synthetic sessionId, so the process:spawn handler can't hydrate the

@@ -31,9 +31,33 @@ export interface UsageSnapshot {
 	sampledAt: string;
 	configDirKey: string;
 	authState?: 'authenticated' | 'unauthenticated';
-	session: { percent: number; resetsAt: string };
-	weekAllModels: { percent: number; resetsAt: string };
-	weekSonnetOnly: { percent: number; resetsAt: string };
+	/**
+	 * Which Anthropic account `configDirKey` was logged into at sample time,
+	 * read from `<configDir>/.claude.json`. All three are optional: a dir that
+	 * has never been logged into carries no `oauthAccount`, and older blobs can
+	 * hold the email without the uuid.
+	 *
+	 * The quota is bucketed per ACCOUNT, not per directory, so two config dirs
+	 * pointing at one account legitimately show identical bars. Without these
+	 * fields the dashboard can only label rows by directory name, and identical
+	 * numbers under two different names read as a sampling bug. `accountUuid`
+	 * is what makes that case detectable - see `groupAccountKeysByIdentity()`
+	 * in `src/shared/claudeAccountIdentity.ts`.
+	 */
+	accountEmail?: string;
+	accountUuid?: string;
+	organizationName?: string;
+	// `resetsAt` is absent when claude painted a percentage but no "Resets ..."
+	// row for that window (it omits the row for an idle 0% session). Consumers
+	// render the percentage anyway and drop the reset caption.
+	session: { percent: number; resetsAt?: string };
+	weekAllModels: { percent: number; resetsAt?: string };
+	/**
+	 * The separately-metered premium-model weekly limit. The field name is
+	 * historical - claude has renamed this window from "Sonnet only" to "Opus"
+	 * to "Fable" - so `label` carries whatever the panel actually called it.
+	 */
+	weekSonnetOnly: { percent: number; resetsAt?: string; label?: string };
 }
 
 export interface SelectModeInput {
@@ -56,10 +80,14 @@ export function selectMode(input: SelectModeInput): SelectModeResult {
 		return { mode: 'interactive', reason: 'auto' };
 	}
 
-	const sessionResetsAt = new Date(snap.session.resetsAt);
-	const weekResetsAt = new Date(snap.weekAllModels.resetsAt);
-	const sessionWindowOpen = input.now < sessionResetsAt;
-	const weekWindowOpen = input.now < weekResetsAt;
+	const sessionWindow = windowState(snap.session.resetsAt, input.now);
+	const weekWindow = windowState(snap.weekAllModels.resetsAt, input.now);
+	// An unknown reset time does NOT veto the fallback: the reset time is here
+	// to age out a cached percentage, and the snapshot's own TTL already bounds
+	// that, so refusing to act on a freshly-sampled 100% because the panel
+	// printed no reset row would be the wrong way to be cautious.
+	const sessionWindowOpen = sessionWindow !== 'closed';
+	const weekWindowOpen = weekWindow !== 'closed';
 
 	const sessionOverThreshold = snap.session.percent >= LIMIT_THRESHOLD_PERCENT;
 	const weekOverThreshold = snap.weekAllModels.percent >= LIMIT_THRESHOLD_PERCENT;
@@ -72,10 +100,28 @@ export function selectMode(input: SelectModeInput): SelectModeResult {
 
 	// Sticky-limit: a previous turn already fell back. Hold the API choice as
 	// long as either reset window remains open. We don't persist which limit
-	// fired, so the disjunction is the safest interpretation.
-	if (input.perTabReason === 'limit' && (sessionWindowOpen || weekWindowOpen)) {
+	// fired, so the disjunction is the safest interpretation. Unlike the
+	// trigger above this demands a KNOWN open window - an unknown reset time
+	// carries no expiry, so treating it as open would latch API mode until the
+	// snapshot's 24h TTL ran out.
+	if (input.perTabReason === 'limit' && (sessionWindow === 'open' || weekWindow === 'open')) {
 		return { mode: 'api', reason: 'limit' };
 	}
 
 	return { mode: 'interactive', reason: 'auto' };
+}
+
+type WindowState = 'open' | 'closed' | 'unknown';
+
+/**
+ * Classify a quota window from its scraped reset time. `unknown` covers both a
+ * missing reset (claude paints no "Resets ..." row for an idle window) and an
+ * unparseable one; callers decide which way to lean, since the two checks in
+ * `selectMode` want opposite answers.
+ */
+function windowState(resetsAt: string | undefined, now: Date): WindowState {
+	if (!resetsAt) return 'unknown';
+	const at = new Date(resetsAt);
+	if (Number.isNaN(at.getTime())) return 'unknown';
+	return now < at ? 'open' : 'closed';
 }

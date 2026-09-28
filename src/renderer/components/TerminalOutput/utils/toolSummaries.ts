@@ -9,17 +9,6 @@ const safeCommand = (v: unknown): string | null => {
 	return null;
 };
 
-/** Summarize TodoWrite todos array - shows in-progress task and progress count */
-const summarizeTodos = (v: unknown): string | null => {
-	if (!Array.isArray(v) || v.length === 0) return null;
-	const todos = v as Array<{ content?: string; status?: string; activeForm?: string }>;
-	const completed = todos.filter((t) => t.status === 'completed').length;
-	const inProgress = todos.find((t) => t.status === 'in_progress');
-	const label = inProgress?.activeForm || inProgress?.content || todos[0]?.content;
-	if (!label) return `${todos.length} tasks`;
-	return `${label} (${completed}/${todos.length})`;
-};
-
 /**
  * Summarize tool input generically - no per-tool extractors needed.
  * Returns structured data so the renderer can display description and command
@@ -40,10 +29,6 @@ export const summarizeToolInput = (input: unknown): ToolSummary | null => {
 		return null;
 	}
 	const inputRecord = input as Record<string, unknown>;
-
-	// Special case: TodoWrite todos array
-	const todosResult = summarizeTodos(inputRecord.todos);
-	if (todosResult) return { detail: todosResult };
 
 	// Extract description field separately for structured display
 	const description =

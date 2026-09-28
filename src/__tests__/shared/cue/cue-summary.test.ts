@@ -45,6 +45,19 @@ describe('getCueEventDetail', () => {
 		expect(getCueEventDetail(event)).toBe('#891 Feature: Support arbitrary CLI agents');
 	});
 
+	it('formats github.label with the label that landed and the item number', () => {
+		const event = makeEvent({
+			type: 'github.label',
+			payload: { number: 42, title: 'Add feature', label: 'ready-to-merge' },
+		});
+		expect(getCueEventDetail(event)).toBe('ready-to-merge on #42');
+	});
+
+	it('formats github.label with the number alone when the label is missing', () => {
+		const event = makeEvent({ type: 'github.label', payload: { number: 42 } });
+		expect(getCueEventDetail(event)).toBe('#42');
+	});
+
 	it('formats github.pull_request with number only when title missing', () => {
 		const event = makeEvent({
 			type: 'github.pull_request',

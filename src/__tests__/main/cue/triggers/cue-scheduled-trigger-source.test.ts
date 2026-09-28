@@ -203,6 +203,49 @@ describe('cue-scheduled-trigger-source', () => {
 		expect(source.nextTriggerAt()).toBeNull();
 	});
 
+	it('onTimeZoneChange() recomputes the next-fire projection', () => {
+		// Local Monday 08:00, next fire 09:00 the same day.
+		vi.setSystemTime(new Date('2026-03-09T08:00:00'));
+		const source = createCueScheduledTriggerSource({
+			session: makeSession(),
+			subscription: makeSub({ schedule_times: ['09:00'] }),
+			registry: createCueSessionRegistry(),
+			enabled: () => true,
+			onLog: vi.fn(),
+			emit: vi.fn(),
+		})!;
+
+		source.start();
+		expect(new Date(source.nextTriggerAt()!).getDate()).toBe(9);
+
+		// Stand-in for the wall clock jumping past today's slot, which is what a
+		// zone change does. Without the recompute the projection would still
+		// advertise a fire time that has already gone by.
+		vi.setSystemTime(new Date('2026-03-09T10:00:00'));
+		source.onTimeZoneChange!();
+
+		const next = new Date(source.nextTriggerAt()!);
+		expect(next.getHours()).toBe(9);
+		expect(next.getDate()).toBe(10); // rolled to tomorrow
+
+		source.stop();
+	});
+
+	it('onTimeZoneChange() leaves a stopped source dormant', () => {
+		vi.setSystemTime(new Date('2026-03-09T08:00:00'));
+		const source = createCueScheduledTriggerSource({
+			session: makeSession(),
+			subscription: makeSub({ schedule_times: ['09:00'] }),
+			registry: createCueSessionRegistry(),
+			enabled: () => true,
+			onLog: vi.fn(),
+			emit: vi.fn(),
+		})!;
+
+		source.onTimeZoneChange!();
+		expect(source.nextTriggerAt()).toBeNull();
+	});
+
 	it('start() and stop() are idempotent', () => {
 		vi.setSystemTime(new Date('2026-03-09T08:59:00'));
 		const source = createCueScheduledTriggerSource({

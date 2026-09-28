@@ -58,7 +58,7 @@ export function AgentResilienceSection({
 						<span className="text-xs font-medium" style={{ color: theme.colors.textMain }}>
 							Retry on availability errors
 						</span>
-						<span className="text-[10px]" style={{ color: theme.colors.textDim }}>
+						<span className="text-2xs" style={{ color: theme.colors.textDim }}>
 							Overloaded / 529 / server errors. Backs off 30s → 30m, then keeps trying.
 						</span>
 					</div>
@@ -80,7 +80,7 @@ export function AgentResilienceSection({
 						<span className="text-xs font-medium" style={{ color: theme.colors.textMain }}>
 							Retry on token exhaustion
 						</span>
-						<span className="text-[10px]" style={{ color: theme.colors.textDim }}>
+						<span className="text-2xs" style={{ color: theme.colors.textDim }}>
 							Plan/quota limit reached. Waits until reset (or hourly), then keeps trying.
 						</span>
 					</div>

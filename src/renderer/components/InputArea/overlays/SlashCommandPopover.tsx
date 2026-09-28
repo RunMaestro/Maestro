@@ -55,10 +55,17 @@ export const SlashCommandPopover = memo(function SlashCommandPopover({
 							color: idx === selectedIndex ? theme.colors.bgMain : theme.colors.textMain,
 						}}
 						onClick={() => {
+							// A single click ACCEPTS, the way every other composer popover
+							// behaves (`AtMentionPopover`, `CommandHistoryPopover`,
+							// `TabCompletionPopover`). This used to only move the highlight
+							// and leave acceptance to a double-click, which a touch screen
+							// cannot produce: on a phone the menu opened, every tap did
+							// nothing visible, and there was no keyboard to press Enter on.
+							// The trailing space matches what Tab/Enter writes in
+							// `useInputKeyDown`, so a tapped command and a typed one leave
+							// the caret in the same place.
 							setSelectedSlashCommandIndex(idx);
-						}}
-						onDoubleClick={() => {
-							setInputValue(cmd.command);
+							setInputValue(cmd.command + ' ');
 							setSlashCommandOpen(false);
 							inputRef.current?.focus();
 						}}
@@ -67,7 +74,7 @@ export const SlashCommandPopover = memo(function SlashCommandPopover({
 						<div className="font-mono text-sm leading-tight">
 							{highlightSlashCommand(cmd.command, inputValueLower.replace(/^\//, ''))}
 						</div>
-						<div className="text-[11px] opacity-70 leading-tight">{cmd.description}</div>
+						<div className="text-xs-plus opacity-70 leading-tight">{cmd.description}</div>
 					</button>
 				))}
 			</div>

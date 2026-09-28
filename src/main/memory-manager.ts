@@ -32,12 +32,40 @@ export interface MemoryStats {
 	totalBytes: number;
 }
 
+export interface MemorySearchMatch {
+	name: string; // filename of the matching entry
+	matchedName: boolean; // the query matched the filename itself
+	snippet?: string; // first matching body line, trimmed and capped
+}
+
 export interface MemoryListResult {
 	directoryPath: string;
 	exists: boolean;
 	entries: MemoryEntry[];
 	stats: MemoryStats;
 }
+
+/**
+ * A memory nothing points at.
+ *
+ * Claude reads MEMORY.md to decide which entries to load, so an entry the index
+ * does not list and no other entry links to is never recalled - it costs disk
+ * and reads as remembered while being, in practice, forgotten. Surfacing these
+ * is the whole point of the viewer's Unlinked filter.
+ */
+export interface OrphanMemoryReport {
+	/** Filenames nothing references, in the same pinned/alphabetical list order. */
+	orphans: string[];
+	/**
+	 * Link targets that resolve to no memory file, with the file that wrote
+	 * them. These are the other half of the same problem: a pointer that renders
+	 * as nothing, so the entry looks indexed and is not.
+	 */
+	brokenLinks: { source: string; target: string }[];
+}
+
+/** Longest body excerpt a search match carries back to the list row. */
+const SNIPPET_MAX_CHARS = 120;
 
 /** Resolve the memory directory path for a given project. */
 export function getMemoryDirectoryPath(
@@ -199,4 +227,129 @@ export async function deleteMemoryEntry(
 	}
 	const dir = getMemoryDirectoryPath(projectPath, agentId, homeDir);
 	await fs.unlink(path.join(dir, filename));
+}
+
+/**
+ * Case-insensitive keyword search across memory files.
+ *
+ * Matches on the filename AND on the file body, because the viewer's filter box
+ * is how the user finds a memory they only remember the contents of. Returns
+ * the matching entries in the same pinned/alphabetical order `listMemoryEntries`
+ * uses, each carrying the first matching body line so the list row can show why
+ * it matched.
+ *
+ * An empty/whitespace query returns every entry (no filter applied).
+ */
+export async function searchMemoryEntries(
+	projectPath: string,
+	query: string,
+	agentId: string = 'claude-code',
+	homeDir?: string
+): Promise<MemorySearchMatch[]> {
+	const { entries } = await listMemoryEntries(projectPath, agentId, homeDir);
+	const needle = query.trim().toLowerCase();
+	if (!needle) return entries.map((e) => ({ name: e.name, matchedName: false }));
+
+	const dir = getMemoryDirectoryPath(projectPath, agentId, homeDir);
+	const matches: MemorySearchMatch[] = [];
+
+	for (const entry of entries) {
+		const matchedName = entry.name.toLowerCase().includes(needle);
+		let snippet: string | undefined;
+		try {
+			const content = await fs.readFile(path.join(dir, entry.name), 'utf8');
+			const line = content
+				.split('\n')
+				.find((l) => l.toLowerCase().includes(needle))
+				?.trim();
+			if (line)
+				snippet = line.length > SNIPPET_MAX_CHARS ? `${line.slice(0, SNIPPET_MAX_CHARS)}…` : line;
+		} catch {
+			// Unreadable file (deleted mid-search): fall back to the name match alone.
+		}
+		if (matchedName || snippet) matches.push({ name: entry.name, matchedName, snippet });
+	}
+
+	return matches;
+}
+
+/**
+ * Find memories nothing links to, and links that point at nothing.
+ *
+ * Resolution deliberately accepts BOTH ways these files address each other,
+ * because both are in active use and a checker that knows only one reports
+ * mass false positives:
+ *   - the filename stem (`[[project_foo]]` -> `project_foo.md`), which is what
+ *     the Document Graph resolves, and
+ *   - the frontmatter `name:` slug, which is what the memory instructions tell
+ *     the agent to write and what most existing entries actually use.
+ *
+ * Separator-insensitive on top of that (`-` vs `_`): the two spellings are a
+ * single character apart, the mistake is invisible in rendered markdown, and
+ * treating them as different targets is how a correct-looking index ends up
+ * pointing nowhere.
+ *
+ * MEMORY.md is never an orphan - it is the index, so nothing is expected to
+ * point at it.
+ */
+export async function findOrphanMemories(
+	projectPath: string,
+	agentId: string = 'claude-code',
+	homeDir?: string
+): Promise<OrphanMemoryReport> {
+	const { entries } = await listMemoryEntries(projectPath, agentId, homeDir);
+	const dir = getMemoryDirectoryPath(projectPath, agentId, homeDir);
+
+	/** Normalize a link target so `-` and `_` spellings collapse together. */
+	const normalize = (value: string): string =>
+		value
+			.trim()
+			.toLowerCase()
+			.replace(/\.(md|markdown)$/, '')
+			.replace(/[-_]/g, '-');
+
+	// Every alias a file answers to: its stem and its frontmatter name.
+	const aliasToFile = new Map<string, string>();
+	const contents = new Map<string, string>();
+	for (const entry of entries) {
+		let content = '';
+		try {
+			content = await fs.readFile(path.join(dir, entry.name), 'utf8');
+		} catch {
+			// Unreadable mid-scan. It still exists as a link TARGET, so register
+			// its filename alias and move on rather than reporting it orphaned.
+		}
+		contents.set(entry.name, content);
+		aliasToFile.set(normalize(entry.name), entry.name);
+		const frontMatterName = /^name:\s*(.+)$/m.exec(content)?.[1];
+		if (frontMatterName) aliasToFile.set(normalize(frontMatterName), entry.name);
+	}
+
+	const referenced = new Set<string>();
+	const brokenLinks: { source: string; target: string }[] = [];
+
+	for (const [source, content] of contents) {
+		const targets: string[] = [];
+		for (const match of content.matchAll(/\[\[([^\]|]+)(?:\|[^\]]+)?\]\]/g)) {
+			targets.push(match[1]);
+		}
+		for (const match of content.matchAll(/\]\(([^)]+\.(?:md|markdown))\)/gi)) {
+			targets.push(match[1]);
+		}
+		for (const target of targets) {
+			const resolved = aliasToFile.get(normalize(target));
+			if (!resolved) {
+				brokenLinks.push({ source, target: target.trim() });
+				continue;
+			}
+			// A file linking to itself does not make it referenced.
+			if (resolved !== source) referenced.add(resolved);
+		}
+	}
+
+	const orphans = entries
+		.map((e) => e.name)
+		.filter((name) => name !== 'MEMORY.md' && !referenced.has(name));
+
+	return { orphans, brokenLinks };
 }

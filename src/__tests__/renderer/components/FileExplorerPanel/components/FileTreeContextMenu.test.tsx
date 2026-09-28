@@ -14,6 +14,17 @@ vi.mock('../../../../../renderer/utils/shortcutFormatter', () => ({
 	formatShortcutKeys: (keys: string[]) => keys.join('+'),
 }));
 
+// The Document Graph entries are gated on room, not capability, so the phone
+// branch is the only thing these tests need to steer. Spread the real module so
+// any other consumer in the tree keeps its genuine implementation.
+const { mockUsePhoneLayout } = vi.hoisted(() => ({ mockUsePhoneLayout: vi.fn(() => false) }));
+vi.mock('../../../../../renderer/hooks/ui/useViewportBreakpoint', async (importOriginal) => ({
+	...(await importOriginal<
+		typeof import('../../../../../renderer/hooks/ui/useViewportBreakpoint')
+	>()),
+	usePhoneLayout: () => mockUsePhoneLayout(),
+}));
+
 const theme = {
 	colors: {
 		bgSidebar: '#1a1a1a',
@@ -25,7 +36,7 @@ const theme = {
 	},
 } as any;
 
-const contextMenuPos = { top: 100, left: 200, ready: true };
+const contextMenuPos = { top: 100, left: 200, maxHeight: 600, ready: true };
 
 const fileNode: FileNode = { name: 'App.tsx', type: 'file' };
 const folderNode: FileNode = {
@@ -38,6 +49,7 @@ const folderNode: FileNode = {
 };
 const emptyFolderNode: FileNode = { name: 'empty', type: 'folder', children: [] };
 const htmlNode: FileNode = { name: 'index.html', type: 'file' };
+const mediaNode: FileNode = { name: 'podcast.mp3', type: 'file' };
 const mdNode: FileNode = { name: 'README.MD', type: 'file' };
 
 const makeContextMenu = (node: FileNode): ContextMenuState => ({
@@ -62,9 +74,13 @@ const defaultProps = {
 	onOpenInExplorer: vi.fn(),
 	onOpenNewFile: vi.fn(),
 	onOpenNewFolder: vi.fn(),
+	onNewAgentHere: vi.fn(),
 	onPreviewFile: vi.fn(),
 	onPreviewAllInFolder: vi.fn(),
+	onStageForAutoRun: vi.fn(),
+	onCompressFolder: vi.fn(),
 	onPreviewMulti: vi.fn(),
+	onQueueMedia: vi.fn(),
 	onOpenInDefaultAppMulti: vi.fn(),
 	onOpenDeleteMulti: vi.fn(),
 	onFocusInGraph: vi.fn(),
@@ -77,6 +93,7 @@ const origMaestro = (window as any).maestro;
 describe('FileTreeContextMenu', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		mockUsePhoneLayout.mockReturnValue(false);
 		(window as any).maestro = { platform: 'darwin' };
 	});
 
@@ -94,6 +111,27 @@ describe('FileTreeContextMenu', () => {
 		expect(screen.getByText('Delete')).toBeTruthy();
 	});
 
+	// Right-clicking a top-level file is the only way to create a sibling in the
+	// workspace root when the root has no folder to right-click.
+	it('offers New File and New Folder on a file, creating alongside it', () => {
+		render(<FileTreeContextMenu {...defaultProps} contextMenu={makeContextMenu(fileNode)} />);
+		fireEvent.click(screen.getByText('New File'));
+		expect(defaultProps.onOpenNewFile).toHaveBeenCalled();
+		fireEvent.click(screen.getByText('New Folder'));
+		expect(defaultProps.onOpenNewFolder).toHaveBeenCalled();
+	});
+
+	it('offers New File and New Folder on the empty-space root menu', () => {
+		render(
+			<FileTreeContextMenu {...defaultProps} contextMenu={{ x: 10, y: 20, node: null, path: '' }} />
+		);
+		fireEvent.click(screen.getByText('New File'));
+		expect(defaultProps.onOpenNewFile).toHaveBeenCalled();
+		expect(screen.getByText('New Folder')).toBeTruthy();
+		// Root menu has no target row, so nothing to rename or delete.
+		expect(screen.queryByText('Rename')).toBeNull();
+	});
+
 	it('shows New File + Preview all + Copy Path + Reveal + Rename + Delete for a folder', () => {
 		render(<FileTreeContextMenu {...defaultProps} contextMenu={makeContextMenu(folderNode)} />);
 		expect(screen.getByText('New File')).toBeTruthy();
@@ -102,6 +140,65 @@ describe('FileTreeContextMenu', () => {
 		expect(screen.getByText('Preview All 2 Files in Folder')).toBeTruthy();
 		expect(screen.getByText('Copy Path')).toBeTruthy();
 		expect(screen.queryByText('Preview')).toBeNull();
+	});
+
+	it('shows New Agent Here for a folder and fires the callback', () => {
+		const onNewAgentHere = vi.fn();
+		render(
+			<FileTreeContextMenu
+				{...defaultProps}
+				onNewAgentHere={onNewAgentHere}
+				contextMenu={makeContextMenu(folderNode)}
+			/>
+		);
+		fireEvent.click(screen.getByText('New Agent Here'));
+		expect(onNewAgentHere).toHaveBeenCalledTimes(1);
+	});
+
+	it('hides New Agent Here for files and for the empty-space root menu', () => {
+		const { unmount } = render(
+			<FileTreeContextMenu {...defaultProps} contextMenu={makeContextMenu(fileNode)} />
+		);
+		expect(screen.queryByText('New Agent Here')).toBeNull();
+		unmount();
+
+		render(
+			<FileTreeContextMenu {...defaultProps} contextMenu={{ x: 1, y: 2, node: null, path: '' }} />
+		);
+		expect(screen.queryByText('New Agent Here')).toBeNull();
+	});
+
+	it('hides New Agent Here over SSH, where the folder path is remote', () => {
+		render(
+			<FileTreeContextMenu
+				{...defaultProps}
+				sshRemoteId="remote-1"
+				contextMenu={makeContextMenu(folderNode)}
+			/>
+		);
+		expect(screen.queryByText('New Agent Here')).toBeNull();
+		// The rest of the folder menu is unaffected.
+		expect(screen.getByText('New Folder')).toBeTruthy();
+	});
+
+	it('offers Compress on a folder, including one with nothing to preview', () => {
+		const { unmount } = render(
+			<FileTreeContextMenu {...defaultProps} contextMenu={makeContextMenu(folderNode)} />
+		);
+		fireEvent.click(screen.getByText('Compress'));
+		expect(defaultProps.onCompressFolder).toHaveBeenCalled();
+		unmount();
+
+		// An empty folder still zips - there is just nothing inside the archive.
+		render(
+			<FileTreeContextMenu {...defaultProps} contextMenu={makeContextMenu(emptyFolderNode)} />
+		);
+		expect(screen.getByText('Compress')).toBeTruthy();
+	});
+
+	it('does not offer Compress on a file', () => {
+		render(<FileTreeContextMenu {...defaultProps} contextMenu={makeContextMenu(fileNode)} />);
+		expect(screen.queryByText('Compress')).toBeNull();
 	});
 
 	it('pluralizes the preview-all label to singular for one previewable file', () => {
@@ -292,15 +389,251 @@ describe('FileTreeContextMenu', () => {
 		expect(screen.getByText('Reveal in Finder')).toBeTruthy();
 	});
 
+	// -----------------------------------------------------------------------
+	// Document Graph is hidden on a phone
+	// -----------------------------------------------------------------------
+	describe('Document Graph on a phone', () => {
+		// A pan-and-zoom canvas needs room to be worth opening. It is not broken
+		// at 390px, it is just useless there, and it costs rows in a menu that
+		// already overflows the screen. All three routes to it are dropped.
+		const onGraphFolder = vi.fn();
+		const onGraphSelection = vi.fn();
+
+		it('hides the per-file entry', () => {
+			mockUsePhoneLayout.mockReturnValue(true);
+			render(<FileTreeContextMenu {...defaultProps} contextMenu={makeContextMenu(mdNode)} />);
+			expect(screen.queryByText('Document Graph')).toBeNull();
+		});
+
+		it('hides the folder entry', () => {
+			mockUsePhoneLayout.mockReturnValue(true);
+			render(
+				<FileTreeContextMenu
+					{...defaultProps}
+					contextMenu={makeContextMenu(folderNode)}
+					onGraphFolder={onGraphFolder}
+				/>
+			);
+			expect(screen.queryByText('Open in Document Graph')).toBeNull();
+		});
+
+		it('hides the multi-selection entry', () => {
+			mockUsePhoneLayout.mockReturnValue(true);
+			render(
+				<FileTreeContextMenu
+					{...defaultProps}
+					contextMenu={makeContextMenu(mdNode)}
+					isMultiSelectionContext
+					selectedCount={3}
+					selectedMarkdownCount={3}
+					onGraphSelection={onGraphSelection}
+				/>
+			);
+			expect(screen.queryByText('Open 3 in Document Graph')).toBeNull();
+		});
+
+		it('leaves the rest of the menu alone', () => {
+			// The gate must drop exactly three rows, not thin the menu out.
+			mockUsePhoneLayout.mockReturnValue(true);
+			render(<FileTreeContextMenu {...defaultProps} contextMenu={makeContextMenu(mdNode)} />);
+			expect(screen.getByText('Preview')).toBeTruthy();
+			expect(screen.getByText('Copy Path')).toBeTruthy();
+			expect(screen.getByText('Rename')).toBeTruthy();
+			expect(screen.getByText('Delete')).toBeTruthy();
+		});
+
+		it('keeps all three entries on a desktop viewport', () => {
+			mockUsePhoneLayout.mockReturnValue(false);
+			const { unmount } = render(
+				<FileTreeContextMenu {...defaultProps} contextMenu={makeContextMenu(mdNode)} />
+			);
+			expect(screen.getByText('Document Graph')).toBeTruthy();
+			unmount();
+
+			const folder = render(
+				<FileTreeContextMenu
+					{...defaultProps}
+					contextMenu={makeContextMenu(folderNode)}
+					onGraphFolder={onGraphFolder}
+				/>
+			);
+			expect(screen.getByText('Open in Document Graph')).toBeTruthy();
+			folder.unmount();
+
+			render(
+				<FileTreeContextMenu
+					{...defaultProps}
+					contextMenu={makeContextMenu(mdNode)}
+					isMultiSelectionContext
+					selectedCount={3}
+					selectedMarkdownCount={3}
+					onGraphSelection={onGraphSelection}
+				/>
+			);
+			expect(screen.getByText('Open 3 in Document Graph')).toBeTruthy();
+		});
+	});
+
+	describe('media actions', () => {
+		it('says Play rather than Preview, since media never becomes a tab', () => {
+			render(<FileTreeContextMenu {...defaultProps} contextMenu={makeContextMenu(mediaNode)} />);
+			expect(screen.getByText('Play')).toBeTruthy();
+			expect(screen.queryByText('Preview')).toBeNull();
+			expect(screen.getByText('Add to Play Queue')).toBeTruthy();
+		});
+
+		it('offers no playback actions for an ordinary file', () => {
+			render(<FileTreeContextMenu {...defaultProps} contextMenu={makeContextMenu(fileNode)} />);
+			expect(screen.queryByText('Add to Play Queue')).toBeNull();
+		});
+
+		it('hides playback over SSH, where there is nothing to stream', () => {
+			render(
+				<FileTreeContextMenu
+					{...defaultProps}
+					contextMenu={makeContextMenu(mediaNode)}
+					sshRemoteId="remote-1"
+				/>
+			);
+			expect(screen.getByText('Preview')).toBeTruthy();
+			expect(screen.queryByText('Add to Play Queue')).toBeNull();
+		});
+
+		it('counts the media in a multi-selection', () => {
+			const onQueueMedia = vi.fn();
+			render(
+				<FileTreeContextMenu
+					{...defaultProps}
+					contextMenu={makeContextMenu(mediaNode)}
+					isMultiSelectionContext
+					selectedCount={5}
+					selectedMediaCount={3}
+					onQueueMedia={onQueueMedia}
+				/>
+			);
+			fireEvent.click(screen.getByText('Add 3 to Play Queue'));
+			expect(onQueueMedia).toHaveBeenCalled();
+		});
+
+		it('leaves the multi menu alone when nothing selected is playable', () => {
+			render(
+				<FileTreeContextMenu
+					{...defaultProps}
+					contextMenu={makeContextMenu(fileNode)}
+					isMultiSelectionContext
+					selectedCount={5}
+					selectedMediaCount={0}
+				/>
+			);
+			expect(screen.queryByText(/Add \d+ to Play Queue/)).toBeNull();
+		});
+	});
+
 	it('applies opacity 0 when contextMenuPos.ready is false', () => {
 		const { container } = render(
 			<FileTreeContextMenu
 				{...defaultProps}
 				contextMenu={makeContextMenu(fileNode)}
-				contextMenuPos={{ top: 0, left: 0, ready: false }}
+				contextMenuPos={{ top: 0, left: 0, maxHeight: 600, ready: false }}
 			/>
 		);
 		const menu = document.body.querySelector('.fixed') as HTMLElement;
 		expect(menu.style.opacity).toBe('0');
+	});
+
+	// The menu is shrink-to-fit and positioned by measured width, so letting it
+	// grow is free - a wrapped label just looks broken. Every other context menu
+	// in the app already sets this.
+	it('never wraps a menu label', () => {
+		render(<FileTreeContextMenu {...defaultProps} contextMenu={makeContextMenu(folderNode)} />);
+
+		const menu = document.body.querySelector('.fixed') as HTMLElement;
+		expect(menu.className).toContain('whitespace-nowrap');
+	});
+
+	describe('Auto Run staging', () => {
+		it('offers staging when the folder holds Auto Run documents', () => {
+			const onStageForAutoRun = vi.fn();
+			render(
+				<FileTreeContextMenu
+					{...defaultProps}
+					contextMenu={makeContextMenu(folderNode)}
+					autoRunStagedCount={11}
+					onStageForAutoRun={onStageForAutoRun}
+				/>
+			);
+
+			fireEvent.click(screen.getByText('Stage 11 Documents for Auto Run'));
+			expect(onStageForAutoRun).toHaveBeenCalled();
+		});
+
+		it('uses the singular label for one document', () => {
+			render(
+				<FileTreeContextMenu
+					{...defaultProps}
+					contextMenu={makeContextMenu(folderNode)}
+					autoRunStagedCount={1}
+				/>
+			);
+
+			expect(screen.getByText('Stage Document for Auto Run')).toBeInTheDocument();
+		});
+
+		it('hides staging for a folder with no Auto Run documents', () => {
+			render(<FileTreeContextMenu {...defaultProps} contextMenu={makeContextMenu(folderNode)} />);
+
+			expect(screen.queryByText(/Stage .*for Auto Run/)).not.toBeInTheDocument();
+		});
+
+		it('offers staging on a single Auto Run document file', () => {
+			const onStageForAutoRun = vi.fn();
+			render(
+				<FileTreeContextMenu
+					{...defaultProps}
+					contextMenu={makeContextMenu(mdNode)}
+					autoRunStagedCount={1}
+					onStageForAutoRun={onStageForAutoRun}
+				/>
+			);
+
+			fireEvent.click(screen.getByText('Stage Document for Auto Run'));
+			expect(onStageForAutoRun).toHaveBeenCalled();
+		});
+
+		it('hides staging on a file outside the Auto Run folder', () => {
+			render(<FileTreeContextMenu {...defaultProps} contextMenu={makeContextMenu(fileNode)} />);
+
+			expect(screen.queryByText(/Stage .*for Auto Run/)).not.toBeInTheDocument();
+		});
+
+		it('offers staging for a multi-selection of Auto Run documents', () => {
+			const onStageForAutoRun = vi.fn();
+			render(
+				<FileTreeContextMenu
+					{...defaultProps}
+					contextMenu={makeContextMenu(mdNode)}
+					isMultiSelectionContext
+					selectedCount={5}
+					autoRunStagedCount={5}
+					onStageForAutoRun={onStageForAutoRun}
+				/>
+			);
+
+			fireEvent.click(screen.getByText('Stage 5 Documents for Auto Run'));
+			expect(onStageForAutoRun).toHaveBeenCalled();
+		});
+
+		it('hides staging for a multi-selection outside the Auto Run folder', () => {
+			render(
+				<FileTreeContextMenu
+					{...defaultProps}
+					contextMenu={makeContextMenu(fileNode)}
+					isMultiSelectionContext
+					selectedCount={5}
+				/>
+			);
+
+			expect(screen.queryByText(/Stage .*for Auto Run/)).not.toBeInTheDocument();
+		});
 	});
 });

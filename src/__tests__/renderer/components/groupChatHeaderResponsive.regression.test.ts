@@ -16,6 +16,17 @@
  * These tests are that missing link: they assert the JSX and the CSS still
  * agree. They deliberately check the *pairing*, not the pixel values, so
  * tuning a breakpoint stays a one-line change that does not touch tests.
+ *
+ * The thresholds are written in `em`, which resolves against the query
+ * container's own font size, so the rungs move with the `fontSize` setting the
+ * app writes to `documentElement.style.fontSize`. `containerWidthPx` below
+ * normalizes either unit at the 16px default so the ordering and floor checks
+ * stay unit-agnostic.
+ *
+ * The "Group Chats" label is deliberately NOT one of these rungs: whether it
+ * fits depends on which conditional controls are rendered beside it, which a
+ * width threshold cannot see, so it is decided by measurement in
+ * `useOptionalLabelFits`.
  */
 
 import { readFileSync } from 'node:fs';
@@ -26,6 +37,13 @@ const COMPONENT = 'src/renderer/components/GroupChatList.tsx';
 const STYLESHEET = 'src/renderer/index.css';
 
 const read = (file: string) => readFileSync(resolve(process.cwd(), file), 'utf8');
+
+/** Root font size the `em` thresholds are authored against. */
+const DEFAULT_ROOT_FONT_PX = 16;
+
+/** Normalize a `@container` threshold written in either `px` or `em` to px. */
+const containerWidthPx = (value: string, unit: string): number =>
+	unit === 'em' ? Number(value) * DEFAULT_ROOT_FONT_PX : Number(value);
 
 /** Every element that is allowed to disappear as the header narrows. */
 const droppable = [
@@ -92,9 +110,9 @@ describe('Group Chats header stays on one line', () => {
 				b.includes(`.${className}`)
 			);
 			expect(block, `no @container gcheader rule hides .${className}`).toBeTruthy();
-			const width = block?.match(/max-width:\s*(\d+)px/);
+			const width = block?.match(/max-width:\s*([\d.]+)(px|em)/);
 			expect(width, `rule for .${className} has no max-width`).toBeTruthy();
-			return Number(width?.[1]);
+			return containerWidthPx(width?.[1] ?? '0', width?.[2] ?? 'px');
 		};
 
 		expect(widthFor('gc-count-badge')).toBeGreaterThan(widthFor('gc-archived-count'));
@@ -111,9 +129,9 @@ describe('Group Chats header stays on one line', () => {
 		expect(sessionList).toContain(`minWidth: ${MIN_SIDEBAR_WIDTH}`);
 
 		const css = read(STYLESHEET);
-		const thresholds = (css.match(/@container\s+gcheader\s*\(max-width:\s*(\d+)px\)/g) ?? []).map(
-			(rule) => Number(rule.match(/(\d+)px/)?.[1])
-		);
+		const thresholds = [
+			...css.matchAll(/@container\s+gcheader\s*\(max-width:\s*([\d.]+)(px|em)\)/g),
+		].map((match) => containerWidthPx(match[1], match[2]));
 		expect(thresholds.length).toBe(droppable.length);
 		// The last thing to drop must still drop at/above the narrowest sidebar.
 		expect(Math.min(...thresholds)).toBeGreaterThanOrEqual(MIN_SIDEBAR_WIDTH - 24);

@@ -11,19 +11,13 @@
  * shape geometry survives untouched.
  */
 
-const loadImage = (src: string): Promise<HTMLImageElement> =>
-	new Promise((resolve, reject) => {
-		const img = new Image();
-		img.onload = () => resolve(img);
-		img.onerror = () => reject(new Error('Failed to load image'));
-		img.src = src;
-	});
+import { loadImageElement } from '../../utils/loadImage';
 
 export default async function compositeAnnotatedImage(
 	imageDataUrl: string,
 	svgElement: SVGSVGElement
 ): Promise<string> {
-	const baseImg = await loadImage(imageDataUrl);
+	const baseImg = await loadImageElement(imageDataUrl);
 	const width = baseImg.naturalWidth;
 	const height = baseImg.naturalHeight;
 
@@ -42,7 +36,7 @@ export default async function compositeAnnotatedImage(
 
 	const svgString = new XMLSerializer().serializeToString(clone);
 	const svgDataUrl = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svgString)}`;
-	const overlayImg = await loadImage(svgDataUrl);
+	const overlayImg = await loadImageElement(svgDataUrl);
 	ctx.drawImage(overlayImg, 0, 0, width, height);
 
 	return canvas.toDataURL('image/png');

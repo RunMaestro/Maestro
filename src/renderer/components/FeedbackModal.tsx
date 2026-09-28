@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { Minimize2, X, History, ArrowLeft, PencilLine } from 'lucide-react';
+import { Minimize2, Trash2, X, History, ArrowLeft, PencilLine } from 'lucide-react';
 import type { Session, Theme } from '../types';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { Modal } from './ui/Modal';
@@ -10,6 +10,7 @@ import { FeedbackIssueHistoryList } from './FeedbackIssueHistoryList';
 import { useFeedbackDraftStore } from '../stores/feedbackDraftStore';
 import { useFeedbackIssueHistoryStore } from '../stores/feedbackIssueHistoryStore';
 import { useUIStore } from '../stores/uiStore';
+import { notifyCenterFlash } from '../stores/centerFlashStore';
 
 interface FeedbackModalProps {
 	theme: Theme;
@@ -20,6 +21,17 @@ interface FeedbackModalProps {
 
 const FEEDBACK_BUTTON_SELECTOR = '[data-feedback-button]';
 const ANIMATION_MS = 260;
+
+/**
+ * Tell the user their conversation survived. Parking is silent otherwise, and a
+ * modal that vanishes without a word reads exactly like the discard it replaced.
+ */
+function flashDraftKept(): void {
+	notifyCenterFlash({
+		message: 'Feedback kept',
+		detail: 'Still running - reopen it from the Feedback button',
+	});
+}
 
 type AnimPhase = 'open' | 'minimizing' | 'minimized' | 'restoring';
 
@@ -179,14 +191,28 @@ export function FeedbackModal({ theme, sessions, onClose, onSwitchToSession }: F
 		}
 	}, [phase, applyTransform]);
 
-	// --- Close handler with confirmation when there's draft work to lose ---
+	// --- Close handler ---
+	//
+	// Closing NEVER discards a conversation. The agent turn lives on this
+	// component's mount: unmounting kills the process and drops the reply, so a
+	// user who clicked away mid-answer used to lose it. When there is work in
+	// progress, X / Escape / backdrop-click all park the modal exactly like
+	// Minimize does - the conversation keeps running in the background and the
+	// sidebar Feedback button carries the draft indicator. Discarding is now its
+	// own explicit action (the trash button below), never a side effect of
+	// wanting to look at something else.
 	const handleCloseRequest = useCallback(() => {
 		if (hasDraft) {
-			setConfirmCloseOpen(true);
+			handleMinimize();
+			flashDraftKept();
 			return;
 		}
 		onClose();
-	}, [hasDraft, onClose]);
+	}, [hasDraft, handleMinimize, onClose]);
+
+	const handleDiscardRequest = useCallback(() => {
+		setConfirmCloseOpen(true);
+	}, []);
 
 	const handleSaveAndClose = useCallback(async () => {
 		setConfirmCloseOpen(false);
@@ -257,6 +283,10 @@ export function FeedbackModal({ theme, sessions, onClose, onSwitchToSession }: F
 					width={width}
 					maxHeight="85vh"
 					allowOverflow
+					// Clicking outside is the gesture users reach for when they want to
+					// go look at something else. It used to be a dead click; now it
+					// parks the conversation like every other exit.
+					closeOnBackdropClick
 					contentClassName="flex-1 flex flex-col min-h-0 p-0"
 					cardRef={cardRef}
 					layerOptions={{ enabled: !isHidden }}
@@ -269,6 +299,16 @@ export function FeedbackModal({ theme, sessions, onClose, onSwitchToSession }: F
 								Send Feedback
 							</h2>
 							<div className="flex items-center gap-1">
+								{hasDraft && (
+									<GhostIconButton
+										onClick={handleDiscardRequest}
+										ariaLabel="Discard feedback"
+										color={theme.colors.textDim}
+										title="Discard this feedback"
+									>
+										<Trash2 className="w-4 h-4" />
+									</GhostIconButton>
+								)}
 								<GhostIconButton
 									onClick={() => {
 										setShowHistory(false);
@@ -282,7 +322,7 @@ export function FeedbackModal({ theme, sessions, onClose, onSwitchToSession }: F
 										<PencilLine className="w-4 h-4" />
 										{drafts.length > 0 && (
 											<span
-												className="absolute -top-2 -right-2 text-[9px] font-bold rounded-full px-1 leading-tight"
+												className="absolute -top-2 -right-2 text-3xs font-bold rounded-full px-1 leading-tight"
 												style={{
 													backgroundColor: theme.colors.accent,
 													color: theme.colors.accentForeground,
@@ -303,7 +343,7 @@ export function FeedbackModal({ theme, sessions, onClose, onSwitchToSession }: F
 										<History className="w-4 h-4" />
 										{openIssueCount > 0 && (
 											<span
-												className="absolute -top-2 -right-2 text-[9px] font-bold rounded-full px-1 leading-tight"
+												className="absolute -top-2 -right-2 text-3xs font-bold rounded-full px-1 leading-tight"
 												style={{
 													backgroundColor: theme.colors.success,
 													color: theme.colors.accentForeground,
@@ -326,6 +366,7 @@ export function FeedbackModal({ theme, sessions, onClose, onSwitchToSession }: F
 									onClick={handleCloseRequest}
 									ariaLabel="Close modal"
 									color={theme.colors.textDim}
+									title={hasDraft ? 'Close (keeps your draft running)' : 'Close'}
 								>
 									<X className="w-4 h-4" />
 								</GhostIconButton>
@@ -424,7 +465,7 @@ export function FeedbackModal({ theme, sessions, onClose, onSwitchToSession }: F
 							<button
 								type="button"
 								onClick={handleDiscard}
-								className="px-4 py-2 rounded border transition-colors hover:bg-white/5"
+								className="px-4 py-1.5 rounded border transition-colors hover:bg-white/5 text-sm"
 								style={{ borderColor: theme.colors.border, color: theme.colors.error }}
 							>
 								Discard
@@ -433,7 +474,7 @@ export function FeedbackModal({ theme, sessions, onClose, onSwitchToSession }: F
 							<button
 								type="button"
 								onClick={() => setConfirmCloseOpen(false)}
-								className="px-4 py-2 rounded border transition-colors hover:bg-white/5"
+								className="px-4 py-1.5 rounded border transition-colors hover:bg-white/5 text-sm"
 								style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
 							>
 								Keep editing
@@ -441,7 +482,7 @@ export function FeedbackModal({ theme, sessions, onClose, onSwitchToSession }: F
 							<button
 								type="button"
 								onClick={handleSaveAndClose}
-								className="px-4 py-2 rounded transition-colors hover:opacity-90"
+								className="px-4 py-1.5 rounded transition-colors hover:opacity-90 text-sm"
 								style={{
 									backgroundColor: theme.colors.accent,
 									color: theme.colors.accentForeground,

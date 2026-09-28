@@ -4,10 +4,21 @@
 import { getSessionById } from '../services/storage';
 import { detectAgent } from '../services/agent-spawner';
 import { getAgentDefinition } from '../../main/agents/definitions';
-import { emitError } from '../output/jsonl';
-import { formatRunEvent, formatError, formatInfo, RunEvent } from '../output/formatter';
-import { checkAgentBusy } from '../services/agent-busy';
+import { emitError, emitJsonl } from '../output/jsonl';
+import {
+	formatRunEvent,
+	formatError,
+	formatInfo,
+	formatSuccess,
+	RunEvent,
+} from '../output/formatter';
+import { checkAgentBusy, waitForAgentAvailable } from '../services/agent-busy';
 import { runGoal } from '../services/goal-runner';
+import {
+	withMaestroClient,
+	UnsupportedCommandError,
+	CommandTimeoutError,
+} from '../services/maestro-client';
 import type { GoalRunConfig } from '../../shared/goalDriven/types';
 
 interface GoalRunOptions {
@@ -23,6 +34,15 @@ interface GoalRunOptions {
 	 */
 	model?: string;
 	effort?: string;
+	/**
+	 * Hand the run to the running desktop app instead of executing it in this
+	 * process. The run then behaves exactly like one started from the Auto Run
+	 * modal's Go button: visible in the Auto Run surface, stoppable with
+	 * `stop-auto-run`, listed by `session list`.
+	 */
+	visible?: boolean;
+	/** Poll until the agent is free instead of failing immediately when busy. */
+	wait?: boolean;
 }
 
 /**
@@ -42,6 +62,176 @@ function parseMaxIterations(raw: string | undefined, useJson: boolean): number |
 		process.exit(1);
 	}
 	return parsed;
+}
+
+/**
+ * Assemble the run config from parsed options. Shared by the headless and
+ * `--visible` paths so a goal launched either way is described identically -
+ * same trimming, same infinite-iteration default.
+ */
+function buildGoalConfig(
+	trimmedGoal: string,
+	options: GoalRunOptions,
+	useJson: boolean
+): GoalRunConfig {
+	return {
+		goal: trimmedGoal,
+		exitCriteria: options.exitCriteria?.trim() ?? '',
+		maxIterations: parseMaxIterations(options.maxIterations, useJson),
+	};
+}
+
+/** Response shape of the desktop's `launch_goal_run_result` message. */
+interface LaunchGoalRunResult {
+	type: string;
+	success: boolean;
+	sessionId?: string;
+	tabId?: string;
+	code?: string;
+	error?: string;
+}
+
+/**
+ * Build the deep link that reopens a launched run. Tab-less form is a valid
+ * target on its own, so an agent whose active tab the desktop could not report
+ * still gets a usable link rather than a `.../tab/undefined` string.
+ */
+function goalRunDeepLink(agentId: string, tabId?: string): string {
+	return tabId ? `maestro://session/${agentId}/tab/${tabId}` : `maestro://session/${agentId}`;
+}
+
+/**
+ * Emit a launch failure in whichever format the caller asked for and exit 1.
+ * Every `--visible` failure path routes through here so the JSON contract stays
+ * one shape and no path can silently fall back to a headless run - the whole
+ * point of `--visible` is that the user can watch it.
+ */
+function failVisibleLaunch(message: string, code: string, useJson: boolean): never {
+	if (useJson) {
+		emitError(message, code);
+	} else {
+		console.error(formatError(message));
+	}
+	process.exit(1);
+}
+
+/**
+ * Hand a Goal-Driven Auto Run to the running desktop app (`--visible`).
+ *
+ * The desktop owns the run from here: it spawns the agent, arbitrates busy
+ * state, and answers `stop-auto-run` / `session list`. This function's job is
+ * only to deliver the request and report back stable identifiers, so it returns
+ * as soon as the desktop confirms the run is running rather than streaming
+ * iterations the way the headless path does.
+ */
+async function runVisibleGoalRun(
+	agent: { id: string; name: string },
+	goalConfig: GoalRunConfig,
+	options: GoalRunOptions
+): Promise<void> {
+	const useJson = options.json ?? false;
+
+	// Busy arbitration happens twice on purpose. Here it is advisory - it is what
+	// makes `--wait` possible, since polling from inside the desktop would just
+	// hold the IPC round-trip open. The desktop re-checks authoritatively and can
+	// still answer AGENT_BUSY if something claimed the agent in between.
+	const busyCheck = checkAgentBusy(agent.id);
+	if (busyCheck.busy) {
+		if (!options.wait) {
+			failVisibleLaunch(
+				`Agent "${agent.name}" is busy: ${busyCheck.reason}.`,
+				'AGENT_BUSY',
+				useJson
+			);
+		}
+		await waitForAgentAvailable(agent, busyCheck, { useJson });
+	}
+
+	if (!useJson) {
+		console.log(formatInfo('Goal-Driven Auto Run (visible)'));
+		console.log(formatInfo(`Agent: ${agent.name}`));
+		console.log(formatInfo(`Goal: ${goalConfig.goal}`));
+		if (goalConfig.exitCriteria) {
+			console.log(formatInfo(`Exit criteria: ${goalConfig.exitCriteria}`));
+		}
+		console.log(
+			formatInfo(
+				`Iterations: ${goalConfig.maxIterations === null ? '∞ (infinite)' : `max ${goalConfig.maxIterations}`}`
+			)
+		);
+		console.log('');
+	}
+
+	let result: LaunchGoalRunResult;
+	try {
+		result = await withMaestroClient((client) =>
+			client.sendCommand<LaunchGoalRunResult>(
+				{
+					type: 'launch_goal_run',
+					sessionId: agent.id,
+					goal: goalConfig.goal,
+					exitCriteria: goalConfig.exitCriteria || undefined,
+					maxIterations: goalConfig.maxIterations,
+					...(options.model?.trim() && { model: options.model.trim() }),
+					...(options.effort?.trim() && { effort: options.effort.trim() }),
+				},
+				'launch_goal_run_result',
+				// The desktop waits for the run to actually reach a running state
+				// before replying (it loads the goal prompt template and reads git
+				// status first), so this must outlast the renderer's own wait.
+				30000
+			)
+		);
+	} catch (error) {
+		// Fail closed. Never fall back to a headless run: the caller asked for a
+		// run they could watch, and a silent headless substitute is invisible in
+		// exactly the surface they were pointing at.
+		if (error instanceof UnsupportedCommandError) {
+			failVisibleLaunch(error.message, 'UNSUPPORTED_COMMAND', useJson);
+		}
+		if (error instanceof CommandTimeoutError) {
+			failVisibleLaunch(error.message, 'LAUNCH_TIMEOUT', useJson);
+		}
+		const message = error instanceof Error ? error.message : String(error);
+		failVisibleLaunch(
+			`Maestro desktop app is not reachable: ${message}. ` +
+				'Start Maestro and retry, or drop --visible to run headlessly.',
+			'MAESTRO_NOT_RUNNING',
+			useJson
+		);
+	}
+
+	if (!result.success) {
+		failVisibleLaunch(
+			result.error || 'The desktop app rejected the goal run',
+			result.code || 'VISIBLE_LAUNCH_REJECTED',
+			useJson
+		);
+	}
+
+	const tabId = result.tabId;
+	const uri = goalRunDeepLink(agent.id, tabId);
+
+	if (useJson) {
+		// Keys are camelCase to match the rest of this command's JSONL stream
+		// (`taskIndex`, `elapsedMs`, `agentSessionId`) rather than the snake_case
+		// sketched in the feature request.
+		emitJsonl({
+			type: 'visible_launch',
+			ok: true,
+			mode: 'goal',
+			visible: true,
+			agentId: agent.id,
+			sessionId: agent.id,
+			tabId: tabId ?? null,
+			status: 'running',
+			uri,
+		});
+	} else {
+		console.log(formatSuccess(`Goal run started in Maestro on agent "${agent.name}"`));
+		console.log(formatInfo(`Open: ${uri}`));
+		console.log(formatInfo(`Stop with: maestro-cli stop-auto-run -a ${agent.id}`));
+	}
 }
 
 export async function goalRun(
@@ -72,6 +262,30 @@ export async function goalRun(
 				console.error(formatError(message));
 			}
 			process.exit(1);
+		}
+
+		// `--wait` polls for the agent to free up, which only the desktop handoff
+		// does. Rejecting it outright beats silently ignoring it: a script that
+		// passes `--wait` expecting a queue would otherwise just fail on a busy
+		// agent and look flaky. The headless path is deliberately left alone.
+		if (options.wait && !options.visible) {
+			const message = '--wait requires --visible.';
+			if (useJson) {
+				emitError(message, 'WAIT_REQUIRES_VISIBLE');
+			} else {
+				console.error(formatError(message));
+			}
+			process.exit(1);
+		}
+
+		// `--visible` hands the run to the desktop, which spawns the agent itself.
+		// Branch BEFORE the local-binary checks below: the desktop resolves the
+		// provider (and honors SSH remotes), so a CLI-side `detectAgent` here would
+		// reject a perfectly runnable agent just because this machine lacks the
+		// binary. Everything after this point is the headless path.
+		if (options.visible) {
+			await runVisibleGoalRun(agent, buildGoalConfig(trimmedGoal, options, useJson), options);
+			return;
 		}
 
 		// Agent CLI must be supported and installed.
@@ -110,12 +324,8 @@ export async function goalRun(
 			process.exit(1);
 		}
 
-		const maxIterations = parseMaxIterations(options.maxIterations, useJson);
-		const goalConfig: GoalRunConfig = {
-			goal: trimmedGoal,
-			exitCriteria: options.exitCriteria?.trim() ?? '',
-			maxIterations,
-		};
+		const goalConfig = buildGoalConfig(trimmedGoal, options, useJson);
+		const maxIterations = goalConfig.maxIterations;
 
 		if (!useJson) {
 			console.log(formatInfo(`Goal-Driven Auto Run`));

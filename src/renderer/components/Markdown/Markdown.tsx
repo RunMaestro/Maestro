@@ -29,8 +29,7 @@ import {
 } from '../../utils/markdownConfig';
 import { LinkContextMenu, type LinkContextMenuState } from '../LinkContextMenu';
 import { FileContextMenu, type FileContextMenuState } from '../FileContextMenu';
-import { SvgContextMenu } from '../SvgContextMenu';
-import { useSvgContextMenu } from '../../hooks/ui/useSvgContextMenu';
+import { remarkStripHtmlComments } from '../../../shared/remarkStripHtmlComments';
 import { buildMarkdownPlugins } from './plugins';
 import { preprocessMarkdown } from './preprocess';
 import { createChatMarkdownComponents } from './chatComponents';
@@ -97,7 +96,10 @@ export interface MarkdownProps {
 	extraRehypePlugins?: PluggableList;
 }
 
-const EMPTY_PLUGINS: PluggableList = [];
+// Release notes get no GFM and no frontmatter, but they still must not show
+// their own HTML comments: without rehype-raw, react-markdown renders raw HTML
+// as visible text. See `remarkStripHtmlComments`.
+const RELEASE_NOTES_PLUGINS: PluggableList = [remarkStripHtmlComments];
 
 export const Markdown = memo(function Markdown({
 	content,
@@ -156,13 +158,12 @@ export const Markdown = memo(function Markdown({
 	const dismissLinkMenu = useCallback(() => setLinkMenu(null), []);
 	const [fileMenu, setFileMenu] = useState<FileContextMenuState | null>(null);
 	const dismissFileMenu = useCallback(() => setFileMenu(null), []);
-	const { svgMenu, dismissSvgMenu, openSvgMenu } = useSvgContextMenu();
 
 	// Build the remark/rehype plugin stack per preset.
 	const { remarkPlugins, rehypePlugins } = useMemo(() => {
 		// Release notes render plain CommonMark (no GFM, no frontmatter) - preserved.
 		if (preset === 'release-notes') {
-			return { remarkPlugins: EMPTY_PLUGINS, rehypePlugins: undefined };
+			return { remarkPlugins: RELEASE_NOTES_PLUGINS, rehypePlugins: undefined };
 		}
 		// Wizard bubbles: GFM only.
 		if (preset === 'wizard-bubble') {
@@ -172,6 +173,10 @@ export const Markdown = memo(function Markdown({
 			frontmatter,
 			chatLineBreaks: isChat ? chatLineBreaks : false,
 			chatMath: isChat ? chatMath : false,
+			// Auto Run marker pills are a DOCUMENT affordance: the document directs a
+			// run, so a marker in it is live configuration worth showing. A chat
+			// message only ever describes one.
+			autorunMarkers: preset === 'document',
 			allowRawHtml: effectiveAllowRawHtml,
 			fileLinks: { indices: fileTreeIndices, cwd, projectRoot, homeDir },
 			mentionChips: isChat,
@@ -216,7 +221,6 @@ export const Markdown = memo(function Markdown({
 					onLinkContextMenu: (e, url) => setLinkMenu({ x: e.clientX, y: e.clientY, url }),
 					onFileContextMenu: (e, absPath, fileName) =>
 						setFileMenu({ x: e.clientX, y: e.clientY, filePath: absPath, fileName }),
-					onSvgContextMenu: (e) => openSvgMenu(e.currentTarget, e.clientX, e.clientY),
 				});
 			case 'wizard-bubble':
 				return createWizardBubbleMarkdownComponents(theme);
@@ -256,7 +260,6 @@ export const Markdown = memo(function Markdown({
 		containerRef,
 		searchHighlight,
 		codeBlockStyle,
-		openSvgMenu,
 	]);
 
 	// Memoize the ReactMarkdown element: react-markdown re-runs the full remark+
@@ -286,7 +289,12 @@ export const Markdown = memo(function Markdown({
 
 	return (
 		<div
-			className={`prose prose-sm max-w-none text-sm ${className}`}
+			// No text-sm: Tailwind pins that to a fixed 0.875rem, which would
+			// override the chat surface's font size (set inline by the container
+			// that owns it, e.g. GroupChatMessages) instead of inheriting it, and
+			// make the Settings -> Display -> AI Chat size row a no-op for chat
+			// prose. `prose-sm` alone still keeps the tighter chat spacing.
+			className={`prose prose-sm max-w-none ${className}`}
 			style={{ color: theme.colors.textMain, lineHeight: 1.4, paddingLeft: '0.5em' }}
 			onCopy={(event) => {
 				writeRenderedChatSelectionToClipboard(event.nativeEvent, event.currentTarget);
@@ -304,7 +312,6 @@ export const Markdown = memo(function Markdown({
 					sshRemote={!!sshRemoteId}
 				/>
 			)}
-			{svgMenu && <SvgContextMenu menu={svgMenu} theme={theme} onDismiss={dismissSvgMenu} />}
 		</div>
 	);
 });

@@ -17,8 +17,20 @@ import {
 	PlayCircle,
 	HelpCircle,
 	Target,
+	LogOut,
 } from 'lucide-react';
 import { Spinner } from './ui/Spinner';
+import { ToggleSwitch } from './ui/ToggleSwitch';
+import {
+	AUTO_RESUME_DEFAULT_MINUTES,
+	AUTO_RESUME_DEFAULT_MAX_ATTEMPTS,
+	AUTO_RESUME_MIN_MINUTES,
+	AUTO_RESUME_MAX_MINUTES,
+	AUTO_RESUME_MIN_ATTEMPTS,
+	AUTO_RESUME_MAX_ATTEMPTS,
+	clampAutoResumeMinutes,
+	clampMaxAutoResumes,
+} from '../../shared/autorunAutoResume';
 import type { Theme, BatchDocumentEntry, BatchRunConfig, TaskSelectionMode } from '../types';
 import { useModalLayer } from '../hooks/ui/useModalLayer';
 import { useResizableModal } from '../hooks/ui/useResizableModal';
@@ -43,10 +55,12 @@ import {
 	usePromptComposerState,
 	useSpecDrivenConfig,
 	useWorktreeRunTarget,
+	autoPlaybookName,
 	validateAgentPromptHasTaskReference,
 } from '../hooks';
 import { formatMetaKey } from '../utils/shortcutFormatter';
 import { logger } from '../utils/logger';
+import { notifyCenterFlash } from '../stores/centerFlashStore';
 import { ResizeHandles } from './ui/ResizeHandles';
 
 // Re-export for external consumers
@@ -150,6 +164,15 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 	// changing the agent's own model, which Session settings already does.
 	const [runModel, setRunModel] = useState('');
 	const [runEffort, setRunEffort] = useState('');
+	// Off on every open, like the pickers. A playbook's hints are its author's
+	// intent, so overriding them is a choice made for one run, never a default.
+	const [ignoreModelHints, setIgnoreModelHints] = useState(false);
+	// Auto-resume: ON by default, unlike the run-scoped overrides above. An
+	// unattended run that stops on a recoverable error and waits for a click is
+	// the failure this exists to prevent, so the safe default is to try again.
+	const [autoResumeOnError, setAutoResumeOnError] = useState(true);
+	const [autoResumeAfterMin, setAutoResumeAfterMin] = useState(AUTO_RESUME_DEFAULT_MINUTES);
+	const [maxAutoResumes, setMaxAutoResumes] = useState(AUTO_RESUME_DEFAULT_MAX_ATTEMPTS);
 	const [availableModels, setAvailableModels] = useState<string[]>([]);
 	const [availableEfforts, setAvailableEfforts] = useState<string[]>([]);
 
@@ -267,47 +290,6 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 		hasUnsavedChanges,
 	} = usePromptComposerState({ initialPrompt, showConfirmation, onSave });
 
-	// Compute if there are unsaved configuration changes
-	// This checks if documents, loop settings, or prompt have changed from initial values
-	const hasUnsavedConfigChanges = useCallback(() => {
-		// Check if documents have changed (compare filenames)
-		const currentDocFilenames = documents.map((d) => d.filename).sort();
-		const initialDocFilenames = [...initialDocumentsRef.current].sort();
-		const documentsChanged =
-			currentDocFilenames.length !== initialDocFilenames.length ||
-			currentDocFilenames.some((f, i) => f !== initialDocFilenames[i]);
-
-		// Check if loop settings have changed
-		const loopChanged =
-			loopEnabled !== initialLoopEnabledRef.current || maxLoops !== initialMaxLoopsRef.current;
-
-		// Check if prompt has changed
-		const promptChanged = prompt !== initialPromptRef.current;
-
-		// Check if task-selection mode has changed
-		const taskSelectionModeChanged = taskSelectionMode !== initialTaskSelectionModeRef.current;
-
-		return documentsChanged || loopChanged || promptChanged || taskSelectionModeChanged;
-	}, [documents, loopEnabled, maxLoops, prompt, taskSelectionMode]);
-
-	// Handler for closing with unsaved changes check
-	const handleCloseWithConfirmation = useCallback(() => {
-		// Persist any pending goal edits before closing so a quick close (before the
-		// debounce fires) doesn't drop the user's last keystrokes. Goal config auto-saves,
-		// so it isn't part of the spec-mode "unsaved changes" prompt below.
-		flushGoalConfig();
-		if (hasUnsavedConfigChanges()) {
-			showConfirmation(
-				'You have unsaved changes to your Auto Run configuration. Close without saving?',
-				() => {
-					onClose();
-				}
-			);
-		} else {
-			onClose();
-		}
-	}, [flushGoalConfig, hasUnsavedConfigChanges, showConfirmation, onClose]);
-
 	// Playbook management callback to apply loaded playbook configuration
 	const handleApplyPlaybook = useCallback(
 		(data: {
@@ -380,6 +362,59 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 		initialTaskSelectionModeRef,
 	});
 
+	// Compute if there are unsaved configuration changes
+	// This checks if documents, loop settings, or prompt have changed from initial values
+	// When a playbook is loaded, it is the saved baseline: comparing against the
+	// open-time snapshot flagged a just-saved playbook as unsaved.
+	const hasUnsavedConfigChanges = useCallback(() => {
+		if (loadedPlaybook) return isPlaybookModified;
+
+		// Check if documents have changed (compare filenames)
+		const currentDocFilenames = documents.map((d) => d.filename).sort();
+		const initialDocFilenames = [...initialDocumentsRef.current].sort();
+		const documentsChanged =
+			currentDocFilenames.length !== initialDocFilenames.length ||
+			currentDocFilenames.some((f, i) => f !== initialDocFilenames[i]);
+
+		// Check if loop settings have changed
+		const loopChanged =
+			loopEnabled !== initialLoopEnabledRef.current || maxLoops !== initialMaxLoopsRef.current;
+
+		// Check if prompt has changed
+		const promptChanged = prompt !== initialPromptRef.current;
+
+		// Check if task-selection mode has changed
+		const taskSelectionModeChanged = taskSelectionMode !== initialTaskSelectionModeRef.current;
+
+		return documentsChanged || loopChanged || promptChanged || taskSelectionModeChanged;
+	}, [
+		loadedPlaybook,
+		isPlaybookModified,
+		documents,
+		loopEnabled,
+		maxLoops,
+		prompt,
+		taskSelectionMode,
+	]);
+
+	// Handler for closing with unsaved changes check
+	const handleCloseWithConfirmation = useCallback(() => {
+		// Persist any pending goal edits before closing so a quick close (before the
+		// debounce fires) doesn't drop the user's last keystrokes. Goal config auto-saves,
+		// so it isn't part of the spec-mode "unsaved changes" prompt below.
+		flushGoalConfig();
+		if (hasUnsavedConfigChanges()) {
+			showConfirmation(
+				'You have unsaved changes to your Auto Run configuration. Close without saving?',
+				() => {
+					onClose();
+				}
+			);
+		} else {
+			onClose();
+		}
+	}, [flushGoalConfig, hasUnsavedConfigChanges, showConfirmation, onClose]);
+
 	// Validate agent prompt has task references
 	const hasValidPrompt = validateAgentPromptHasTaskReference(prompt);
 	const isPromptEmpty = !prompt || !prompt.trim();
@@ -439,6 +474,29 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 		onChange: setAutoRunMode,
 	});
 
+	// One-click save: update the loaded playbook in place, or create a new one
+	// named YYYY-MM-DD-CODENAME from the first document, then close.
+	const handleSaveAndExit = async () => {
+		if (documents.length === 0 || savingPlaybook) return;
+		onSave(prompt);
+		let saved = loadedPlaybook;
+		if (!loadedPlaybook) {
+			const name = autoPlaybookName(
+				documents[0].filename,
+				playbooks.map((p) => p.name)
+			);
+			saved = await handleSaveAsPlaybook(name);
+		} else if (isPlaybookModified) {
+			saved = await handleSaveUpdate();
+		}
+		if (!saved) {
+			notifyCenterFlash({ message: 'Failed to save playbook', color: 'red' });
+			return;
+		}
+		notifyCenterFlash({ message: `Saved playbook "${saved.name}"`, color: 'green' });
+		onClose();
+	};
+
 	const handleGo = async () => {
 		// Also save when running
 		onSave(prompt);
@@ -449,6 +507,15 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 
 		// Filter out missing documents before starting batch run
 		const validDocuments = documents.filter((doc) => !doc.isMissing);
+
+		// Auto-resume travels on both run kinds. `autoResumeOnError` is written
+		// only when OFF: absence means ON everywhere else in the codebase, so
+		// writing `true` would be noise in every logged config.
+		const autoResumeFields = {
+			...(autoResumeOnError ? {} : { autoResumeOnError: false }),
+			autoResumeAfterMin: clampAutoResumeMinutes(autoResumeAfterMin),
+			maxAutoResumes: clampMaxAutoResumes(maxAutoResumes),
+		};
 
 		// Build config (worktree configuration is now managed separately via WorktreeConfigModal).
 		// The presence of `goalConfig` is the discriminator the engine uses to route to the
@@ -464,6 +531,7 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 						...(worktreeTarget && { worktreeTarget }),
 						...(runModel && { model: runModel }),
 						...(runEffort && { effort: runEffort }),
+						...autoResumeFields,
 					}
 				: {
 						documents: validDocuments,
@@ -474,6 +542,8 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 						...(worktreeTarget && { worktreeTarget }),
 						...(runModel && { model: runModel }),
 						...(runEffort && { effort: runEffort }),
+						...(ignoreModelHints && { ignoreModelHints: true }),
+						...autoResumeFields,
 					};
 
 		logger.info('[BatchRunnerModal] handleGo - calling onGo with config:', undefined, config);
@@ -558,7 +628,7 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 						    flight, explaining why Go is disabled in both modes. */}
 						{isBatchRunningForSession && (
 							<div
-								className="flex items-center gap-1 px-2 py-1 rounded-full text-[10px] font-semibold whitespace-nowrap"
+								className="flex items-center gap-1 px-2 py-1 rounded-full text-2xs font-semibold whitespace-nowrap"
 								style={{
 									backgroundColor: theme.colors.accent,
 									color: theme.colors.bgMain,
@@ -575,7 +645,7 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 						    visible without forcing the modal footer to grow. */}
 						{isAgentBusy && !isBatchRunningForSession && (
 							<div
-								className="flex items-center gap-1 px-2 py-1 rounded-full text-[10px] font-semibold whitespace-nowrap"
+								className="flex items-center gap-1 px-2 py-1 rounded-full text-2xs font-semibold whitespace-nowrap"
 								style={{
 									backgroundColor: theme.colors.warning,
 									color: theme.colors.bgMain,
@@ -710,7 +780,7 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 																{pb.name}
 															</span>
 															<span
-																className="text-[10px] shrink-0"
+																className="text-2xs shrink-0"
 																style={{ color: theme.colors.textDim }}
 															>
 																{pb.documents.length} doc{pb.documents.length !== 1 ? 's' : ''}
@@ -876,14 +946,14 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 							{documents.length > 0 && (
 								<div className="mb-2">
 									<div
-										className="text-[10px] font-bold uppercase mb-1.5"
+										className="text-2xs font-bold uppercase mb-1.5"
 										style={{ color: theme.colors.textDim }}
 									>
 										Fresh context per:
 									</div>
 									{recommendationExplanation && (
 										<p
-											className="text-[10px] mb-1.5"
+											className="text-2xs mb-1.5"
 											style={{
 												color: showRecommendationWarning
 													? theme.colors.warning
@@ -902,7 +972,7 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 										onChange={handleTaskSelectionModeChange}
 										theme={theme}
 									/>
-									<p className="text-[10px] mt-1.5" style={{ color: theme.colors.textDim }}>
+									<p className="text-2xs mt-1.5" style={{ color: theme.colors.textDim }}>
 										{taskSelectionMode === 'task'
 											? 'A new agent session is spawned for each unchecked task, clean context per work in the document.'
 											: 'A new agent session is spawned for each document, processing all tasks together.'}
@@ -920,7 +990,7 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 									</label>
 									{isModified && (
 										<span
-											className="text-[10px] px-2 py-0.5 rounded-full"
+											className="text-2xs px-2 py-0.5 rounded-full"
 											style={{
 												backgroundColor: theme.colors.accent + '20',
 												color: theme.colors.accent,
@@ -941,7 +1011,7 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 									Reset
 								</button>
 							</div>
-							<div className="text-[10px] mb-2" style={{ color: theme.colors.textDim }}>
+							<div className="text-2xs mb-2" style={{ color: theme.colors.textDim }}>
 								This prompt is sent to the AI agent for each {queueItemNoun} in the queue.{' '}
 								{isModified && lastModifiedAt && (
 									<span style={{ color: theme.colors.textMain }}>
@@ -979,7 +1049,7 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 										className="px-3 pb-3 pt-1 border-t select-text"
 										style={{ borderColor: theme.colors.border }}
 									>
-										<p className="text-[10px] mb-2" style={{ color: theme.colors.textDim }}>
+										<p className="text-2xs mb-2" style={{ color: theme.colors.textDim }}>
 											Use these variables in your prompt. They will be replaced with actual values
 											at runtime.
 										</p>
@@ -987,7 +1057,7 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 											{TEMPLATE_VARIABLES.map(({ variable, description }) => (
 												<div key={variable} className="flex items-center gap-2 py-0.5">
 													<code
-														className="text-[10px] font-mono px-1 py-0.5 rounded shrink-0"
+														className="text-2xs font-mono px-1 py-0.5 rounded shrink-0"
 														style={{
 															backgroundColor: theme.colors.bgActivity,
 															color: theme.colors.accent,
@@ -996,7 +1066,7 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 														{variable}
 													</code>
 													<span
-														className="text-[10px] truncate"
+														className="text-2xs truncate"
 														style={{ color: theme.colors.textDim }}
 													>
 														{description}
@@ -1079,10 +1149,7 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 					    both modes so the two layouts stay consistent. */}
 					{(availableModels.length > 0 || availableEfforts.length > 0) && (
 						<div className="flex flex-col gap-2">
-							<div
-								className="text-[10px] font-bold uppercase"
-								style={{ color: theme.colors.textDim }}
-							>
+							<div className="text-2xs font-bold uppercase" style={{ color: theme.colors.textDim }}>
 								Model for this run
 							</div>
 							<div className="flex items-center gap-2">
@@ -1127,12 +1194,101 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 									</select>
 								)}
 							</div>
-							<p className="text-[10px]" style={{ color: theme.colors.textDim }}>
+							<p className="text-2xs" style={{ color: theme.colors.textDim }}>
 								Overrides the agent&apos;s configured model for this run only. The agent&apos;s own
 								settings and its interactive tabs are unchanged.
 							</p>
+							{/* Spec-Driven only: a Goal-Driven run has no documents, so there are
+							    no markers to ignore. */}
+							{autoRunMode !== 'goal' && (
+								<div className="flex items-start justify-between gap-3 pt-1">
+									<div className="flex flex-col gap-0.5">
+										<span className="text-xs font-medium" style={{ color: theme.colors.textMain }}>
+											Ignore model hints in documents
+										</span>
+										<span className="text-2xs" style={{ color: theme.colors.textDim }}>
+											Run every task at the model and effort above, skipping the playbook&apos;s
+											per-phase and per-task model markers. With the pickers on their defaults, that
+											means the agent&apos;s own settings.
+										</span>
+									</div>
+									<ToggleSwitch
+										checked={ignoreModelHints}
+										onChange={setIgnoreModelHints}
+										theme={theme}
+										size="sm"
+										ariaLabel="Ignore model hints in documents"
+									/>
+								</div>
+							)}
 						</div>
 					)}
+
+					{/* Auto-resume. Deliberately OUTSIDE the model block above: that block
+					    only renders when the agent reports models or efforts, and an agent
+					    that reports neither still stops on errors. Nesting it there would
+					    silently deny auto-resume to exactly the agents nobody is watching. */}
+					<div className="flex flex-col gap-2">
+						<div className="text-2xs font-bold uppercase" style={{ color: theme.colors.textDim }}>
+							If this run hits an error
+						</div>
+						<div className="flex items-start justify-between gap-3">
+							<div className="flex flex-col gap-0.5">
+								<span className="text-xs font-medium" style={{ color: theme.colors.textMain }}>
+									Auto-resume after
+								</span>
+								<span className="text-2xs" style={{ color: theme.colors.textDim }}>
+									An error pauses the run until someone clicks Resume. With this on, Maestro waits
+									and clicks it for you, then gives up after the attempts below and leaves an ERR
+									badge on the agent. Quota pauses are left to Auto-Resume on Limit, which waits for
+									the window to actually reopen.
+								</span>
+							</div>
+							<ToggleSwitch
+								checked={autoResumeOnError}
+								onChange={setAutoResumeOnError}
+								theme={theme}
+								size="sm"
+								ariaLabel="Auto-resume after an error"
+							/>
+						</div>
+						{autoResumeOnError && (
+							<div className="flex flex-wrap items-center gap-4 pt-1">
+								<label className="flex items-center gap-2">
+									<span className="text-2xs" style={{ color: theme.colors.textDim }}>
+										Wait (minutes)
+									</span>
+									<input
+										type="number"
+										min={AUTO_RESUME_MIN_MINUTES}
+										max={AUTO_RESUME_MAX_MINUTES}
+										value={autoResumeAfterMin}
+										onChange={(e) => setAutoResumeAfterMin(parseInt(e.target.value, 10))}
+										onBlur={() => setAutoResumeAfterMin(clampAutoResumeMinutes(autoResumeAfterMin))}
+										aria-label="Minutes to wait before auto-resuming"
+										className="w-20 rounded border px-2 py-1 text-xs bg-transparent outline-none"
+										style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
+									/>
+								</label>
+								<label className="flex items-center gap-2">
+									<span className="text-2xs" style={{ color: theme.colors.textDim }}>
+										Max auto-resumes
+									</span>
+									<input
+										type="number"
+										min={AUTO_RESUME_MIN_ATTEMPTS}
+										max={AUTO_RESUME_MAX_ATTEMPTS}
+										value={maxAutoResumes}
+										onChange={(e) => setMaxAutoResumes(parseInt(e.target.value, 10))}
+										onBlur={() => setMaxAutoResumes(clampMaxAutoResumes(maxAutoResumes))}
+										aria-label="Maximum automatic resumes before stopping"
+										className="w-20 rounded border px-2 py-1 text-xs bg-transparent outline-none"
+										style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
+									/>
+								</label>
+							</div>
+						)}
+					</div>
 				</div>
 
 				{/* Footer */}
@@ -1140,13 +1296,29 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 					className="p-4 border-t flex items-center justify-between shrink-0"
 					style={{ borderColor: theme.colors.border }}
 				>
-					{/* Left side: Auto-follow toggle + Hint. Both are document-centric
-					    (following the active task, drag-to-copy a document) and have no
+					{/* Left side: Save & Exit, auto-follow toggle, hint. All three are document-centric
+					    (following the active task, drag-to-copy a document, saving a checklist playbook) and have no
 					    meaning in Goal-Driven mode, so they hide there. The container
 					    stays mounted to preserve the footer's justify-between layout. */}
 					<div className="flex items-center gap-4">
 						{!goalMode && (
 							<>
+								<button
+									onClick={handleSaveAndExit}
+									disabled={documents.length === 0 || savingPlaybook}
+									className="flex items-center gap-2 px-3 py-2 rounded border hover:bg-white/5 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+									style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
+									title={
+										documents.length === 0
+											? 'No documents selected'
+											: loadedPlaybook
+												? `Save "${loadedPlaybook.name}" and close`
+												: 'Save as a dated playbook and close'
+									}
+								>
+									<LogOut className="w-4 h-4" style={{ color: theme.colors.accent }} />
+									{savingPlaybook ? 'Saving...' : 'Save & Exit'}
+								</button>
 								<label className="flex items-center gap-1.5 cursor-pointer">
 									<input
 										type="checkbox"
@@ -1164,7 +1336,7 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 									style={{ color: theme.colors.textDim }}
 								>
 									<span
-										className="px-1.5 py-0.5 rounded border text-[10px] font-mono"
+										className="px-1.5 py-0.5 rounded border text-2xs font-mono"
 										style={{
 											borderColor: theme.colors.border,
 											backgroundColor: theme.colors.bgActivity,

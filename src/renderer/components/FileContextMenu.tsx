@@ -52,7 +52,7 @@ export function FileContextMenu({
 	const onDismissRef = useRef(onDismiss);
 	onDismissRef.current = onDismiss;
 
-	const { left, top, ready } = useContextMenuPosition(menuRef, menu.x, menu.y);
+	const { left, top, maxHeight, ready } = useContextMenuPosition(menuRef, menu.x, menu.y);
 
 	// Dismiss on click outside or Escape. The menu is portaled to document.body,
 	// so a click inside it doesn't reach this listener via the React tree - guard
@@ -98,6 +98,11 @@ export function FileContextMenu({
 		onDismiss();
 	}, [menu.filePath, onDismiss]);
 
+	const handleCopyFileName = useCallback(() => {
+		safeClipboardWrite(menu.fileName);
+		onDismiss();
+	}, [menu.fileName, onDismiss]);
+
 	const handleRevealInFinder = useCallback(() => {
 		window.maestro?.shell?.showItemInFolder(menu.filePath);
 		onDismiss();
@@ -112,6 +117,11 @@ export function FileContextMenu({
 			style={{
 				left,
 				top,
+				// A menu taller than the viewport pins to the top edge and runs off
+				// the bottom; the container is overflow-hidden, so those items are
+				// simply unreachable. Scroll instead of clipping.
+				maxHeight,
+				overflowY: 'auto',
 				opacity: ready ? 1 : 0,
 				backgroundColor: theme.colors.bgSidebar,
 				borderColor: theme.colors.border,
@@ -169,6 +179,16 @@ export function FileContextMenu({
 				>
 					<Copy className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
 					<span>Copy Path</span>
+				</button>
+
+				{/* Copy File Name */}
+				<button
+					onClick={handleCopyFileName}
+					className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
+					style={{ color: theme.colors.textMain }}
+				>
+					<Copy className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
+					<span>Copy File Name</span>
 				</button>
 
 				{/* Reveal in Finder / Explorer */}
