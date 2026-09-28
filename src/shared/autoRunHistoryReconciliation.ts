@@ -40,6 +40,8 @@ export interface AutoRunHistoryTotals extends FinalSummaryTotals {
 const FINAL_AUTORUN_SUMMARY_RE =
 	/^Auto Run (completed|completed with stalls|stalled|stopped|killed|halted):/;
 const LOOP_SUMMARY_RE = /^Loop \d+(?: \(final\))? completed:/;
+// The CLI and desktop word some goal-run control entries differently; both
+// are listed on purpose so neither runner's summaries inflate task counts.
 const CONTROL_SUMMARY_PREFIXES = [
 	'Auto Run started in worktree',
 	'Auto Run error:',
@@ -49,10 +51,12 @@ const CONTROL_SUMMARY_PREFIXES = [
 	'Goal-Driven Auto Run started',
 	'Goal progress:',
 	'Goal completed',
+	'Goal run deadlocked',
 	'Goal run hit a deadlock',
+	'Goal run hit iteration limit',
 	'Goal run reached its iteration limit',
 	'Goal run stalled',
-	'Goal run stopped by user',
+	'Goal run stopped',
 ];
 
 function isFinalAutoRunSummary(entry: AutoRunHistoryEntry): boolean {
