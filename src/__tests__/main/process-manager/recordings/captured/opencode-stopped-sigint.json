@@ -1,0 +1,26 @@
+{
+	"provider": "opencode",
+	"providerVersion": "1.18.23",
+	"capturedOn": "2026-09-28",
+	"platform": "darwin",
+	"command": [
+		"opencode",
+		"run",
+		"--format",
+		"json",
+		"--model",
+		"opencode/big-pickle",
+		"--",
+		"<prompt>"
+	],
+	"prompt": "Run this exact shell command with your bash tool: sleep 41. After it finishes, reply with the single word: done.",
+	"stop": "SIGINT 9000ms after the step_start event, while the bash tool was running `sleep 41`. This is what the desktop Stop button sends (ProcessManager.interrupt). The `sleep` outlived OpenCode.",
+	"chunks": [
+		"{\"type\":\"step_start\",\"timestamp\":1790624869642,\"sessionID\":\"ses_f1670fa0cffec9SBOfmQDDuvFz\",\"part\":{\"id\":\"prt_0e98f2d04001JGci8mswW2KFe5\",\"messageID\":\"msg_0e98f0764001Ddvn6oEswIqr3t\",\"sessionID\":\"ses_f1670fa0cffec9SBOfmQDDuvFz\",\"type\":\"step-start\"}}\n"
+	],
+	"stderr": "",
+	"close": {
+		"code": null,
+		"signal": "SIGINT"
+	}
+}
