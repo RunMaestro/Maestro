@@ -29,7 +29,7 @@ import { hasCapability } from '../../shared/maestro-lib/providers/capabilities';
 import { substituteTemplateVariables, TemplateContext } from '../../shared/templateVariables';
 import { prependNewSessionMessage } from '../../shared/newSessionMessage';
 import { spawnAgent } from './agent-spawner';
-import { captureCliRun } from './agent-run-capture';
+import { captureCliRun, settlementFromAgentResult } from './agent-run-capture';
 import { addHistoryEntry, readGroups } from './storage';
 import { getCliPrompt } from './prompt-loader';
 import { PROMPT_IDS } from '../../shared/promptDefinitions';
@@ -117,7 +117,7 @@ async function requestHandoffBlurb(
 					appendSystemPrompt,
 					signal: runOverrides.signal,
 				}),
-			(r) => (r.success ? 0 : 1)
+			settlementFromAgentResult
 		);
 		if (result.success) {
 			return { blurb: sanitizeHandoffBlurb(result.response), usageStats: result.usageStats };
@@ -271,7 +271,7 @@ export async function* runGoal(
 						appendSystemPrompt,
 						signal,
 					}),
-				(r) => (r.success ? 0 : 1)
+				settlementFromAgentResult
 			);
 			const elapsedMs = Date.now() - iterationStart;
 

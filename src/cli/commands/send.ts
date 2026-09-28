@@ -2,7 +2,7 @@
 // Requires a Maestro agent ID. Optionally resumes an existing agent session.
 
 import { spawnAgent, detectAgent, type AgentResult } from '../services/agent-spawner';
-import { captureCliRun } from '../services/agent-run-capture';
+import { captureCliRun, settlementFromAgentResult } from '../services/agent-run-capture';
 import { resolveAgentId, getSessionById } from '../services/storage';
 import { prepareMaestroSystemPromptCli } from '../services/system-prompt';
 import { estimateContextUsage } from '../../shared/maestro-lib/parsers/usage-aggregator';
@@ -167,7 +167,7 @@ export async function send(
 					maestroPMode: agent.maestroPMode,
 					maestroPPath: agent.maestroPPath,
 				}),
-			(r) => (r.success ? 0 : 1)
+			settlementFromAgentResult
 		);
 	} finally {
 		interrupt.dispose();
