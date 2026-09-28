@@ -467,7 +467,6 @@ export const DESTINATION_MODALS: ReadonlySet<ModalId> = new Set<ModalId>([
 	'symphony',
 	'cueModal',
 	'boardModal',
-	'profilesModal',
 	'marketplace',
 	'processMonitor',
 	// Main-panel destinations - these replace the whole center workspace, so an

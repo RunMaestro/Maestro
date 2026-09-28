@@ -21,7 +21,8 @@ vi.mock('../../../renderer/hooks/ui/useModalLayer', () => ({
 	useModalLayer: vi.fn(),
 }));
 
-vi.mock('../../../renderer/stores/notificationStore', () => ({
+vi.mock('../../../renderer/stores/notificationStore', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../renderer/stores/notificationStore')>()),
 	notifyToast: vi.fn(),
 }));
 
@@ -33,9 +34,13 @@ vi.mock('../../../renderer/utils/openUrl', () => ({
 
 /** Spy for the Board's "no profiles yet" escape hatch into the Profiles modal. */
 const setProfilesModalOpen = vi.fn();
-vi.mock('../../../renderer/stores/modalStore', () => ({
-	getModalActions: () => ({ setProfilesModalOpen }),
-}));
+vi.mock('../../../renderer/stores/modalStore', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('../../../renderer/stores/modalStore')>();
+	return {
+		...actual,
+		getModalActions: () => ({ ...actual.getModalActions(), setProfilesModalOpen }),
+	};
+});
 
 const PROJECT_ROOT = '/test/project';
 
