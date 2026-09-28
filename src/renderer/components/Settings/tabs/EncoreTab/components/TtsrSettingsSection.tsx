@@ -43,7 +43,7 @@ export function TtsrSettingsSection({
 						<span className="block text-sm" style={{ color: theme.colors.textMain }}>
 							Watch agent output streams
 						</span>
-						<span className="block text-[10px] mt-0.5" style={{ color: theme.colors.textDim }}>
+						<span className="block text-2xs mt-0.5" style={{ color: theme.colors.textDim }}>
 							Match each project&apos;s <code>{TTSR_RULES_DIR}/*.md</code> rules against live agent
 							output. When off, the stream monitor is a complete no-op.
 						</span>
@@ -54,7 +54,7 @@ export function TtsrSettingsSection({
 			<div>
 				<label
 					htmlFor="ttsr-context-mode"
-					className="block text-[11px] font-medium mb-1"
+					className="block text-xs-plus font-medium mb-1"
 					style={{ color: theme.colors.textDim }}
 				>
 					When a rule interrupts a turn
@@ -79,7 +79,7 @@ export function TtsrSettingsSection({
 						style={{ color: theme.colors.textDim }}
 					/>
 				</div>
-				<p className="text-[10px] mt-1 opacity-70">
+				<p className="text-2xs mt-1 opacity-70">
 					&quot;Keep&quot; sends an interrupt so the agent commits what it already wrote before the
 					corrective turn. &quot;Discard&quot; kills the process immediately to try to drop the
 					partial turn. Discard is best-effort: Maestro cannot edit an external provider&apos;s
@@ -146,7 +146,7 @@ export function TtsrSettingsSection({
 						/>
 						{ttsrState.disabledRuleError && (
 							<p
-								className="absolute -bottom-4 left-0 text-[10px]"
+								className="absolute -bottom-4 left-0 text-2xs"
 								style={{ color: theme.colors.error }}
 							>
 								{ttsrState.disabledRuleError}
