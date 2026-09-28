@@ -14,10 +14,9 @@ export const DATA_BUFFER_FLUSH_INTERVAL = 50;
  */
 export const DATA_BUFFER_SIZE_THRESHOLD = 8192; // 8KB
 
-/**
- * Standard Unix paths for PATH environment variable
- */
-export const STANDARD_UNIX_PATHS = '/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin';
+// Moved into maestro-lib with the spawn PATH builder that uses it; re-exported so
+// existing imports keep resolving unchanged.
+export { STANDARD_UNIX_PATHS } from '../../shared/maestro-lib/launch/spawn-path';
 
 /**
  * Common shell binary locations for path resolution
