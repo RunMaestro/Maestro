@@ -390,6 +390,7 @@ export async function* runPlaybook(
 		// back to. Skipping it for non-loop runs - as this did - left the next run
 		// with no boundary, so its aggregation swept up the previous run's task
 		// rows and reported the two runs added together.
+		const OPERATOR_STOP_OUTCOME = 'stopped: by operator';
 		const createAutoRunSummary = (reconciled: FinalSummaryTotals, outcome?: string): void => {
 			if (!writeHistory) return;
 
@@ -832,7 +833,7 @@ export async function* runPlaybook(
 						unregisterCliActivity(session.id);
 
 						const stopReconciled = reconcileTotals();
-						createAutoRunSummary(stopReconciled, 'stopped by operator');
+						createAutoRunSummary(stopReconciled, OPERATOR_STOP_OUTCOME);
 
 						yield {
 							type: 'complete',
@@ -1150,7 +1151,7 @@ export async function* runPlaybook(
 		// now ("All tasks completed" and the like), so history records why the
 		// LOOP ended while this records why the RUN did.
 		if (signal?.aborted) {
-			createAutoRunSummary(reconciled, 'stopped by operator');
+			createAutoRunSummary(reconciled, OPERATOR_STOP_OUTCOME);
 
 			yield {
 				type: 'complete',
