@@ -24,7 +24,12 @@
  */
 
 import { isWebDesktop } from './runtimeContext';
-import { safeLocalStorage, safeSessionStorage, writeStorageValue } from './safeLocalStorage';
+import {
+	safeLocalStorage,
+	safeSessionStorage,
+	safeStorageGet,
+	writeStorageValue,
+} from './safeLocalStorage';
 
 /** Storage key for a web-desktop client's own focused agent. */
 export const WEB_ACTIVE_SESSION_STORAGE_KEY = 'maestro:web-desktop:activeSessionId';
@@ -57,9 +62,14 @@ export function persistActiveSessionId(id: string): void {
  */
 export async function readPersistedActiveSessionId(): Promise<string> {
 	if (isWebDesktop()) {
-		const ownTab = safeSessionStorage()?.getItem(WEB_ACTIVE_SESSION_STORAGE_KEY);
+		let ownTab: string | null = null;
+		try {
+			ownTab = safeSessionStorage()?.getItem(WEB_ACTIVE_SESSION_STORAGE_KEY) ?? null;
+		} catch {
+			// A blocked Storage must not stop the agent list from loading.
+		}
 		if (ownTab) return ownTab;
-		const thisBrowser = safeLocalStorage()?.getItem(WEB_ACTIVE_SESSION_STORAGE_KEY);
+		const thisBrowser = safeStorageGet(WEB_ACTIVE_SESSION_STORAGE_KEY);
 		if (thisBrowser) return thisBrowser;
 	}
 	return (await window.maestro?.sessions?.getActiveSessionId()) ?? '';

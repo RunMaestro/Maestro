@@ -5,6 +5,8 @@
 // failure, not a specific message. New code should prefer these over a bare
 // `process.exit(1)`; existing call sites are migrated opportunistically.
 
+import { CommandTimeoutError, UnsupportedCommandError } from './services/maestro-client';
+
 export enum ExitCode {
 	/** Command succeeded. */
 	Success = 0,
@@ -23,4 +25,15 @@ export enum ExitCode {
 /** Exit the process with a typed code. Never returns. */
 export function exitWith(code: ExitCode): never {
 	return process.exit(code);
+}
+
+/**
+ * Map a failure from a bridge call to its exit code, so a script can tell an
+ * old app build (`Unsupported`) or a hung renderer (`Timeout`) from an
+ * ordinary error without parsing the message.
+ */
+export function exitCodeForError(error: unknown): ExitCode {
+	if (error instanceof UnsupportedCommandError) return ExitCode.Unsupported;
+	if (error instanceof CommandTimeoutError) return ExitCode.Timeout;
+	return ExitCode.GeneralError;
 }

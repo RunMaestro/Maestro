@@ -240,6 +240,15 @@ export const UI_SURFACES: UiSurface[] = [
 		shortcutId: 'quickAction',
 	},
 	{
+		id: 'feedback',
+		label: 'Send Feedback',
+		aliases: ['send-feedback', 'bug-report'],
+		modal: 'feedback',
+		description: 'Report a bug or suggest a feature; files a GitHub issue via gh.',
+		commandPalette: 'Send Feedback',
+		click: 'the Feedback button at the bottom of the Left Bar',
+	},
+	{
 		id: 'about',
 		label: 'About Maestro',
 		modal: 'about',

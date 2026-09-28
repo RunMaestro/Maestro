@@ -22,6 +22,8 @@ import type {
 	ConcertoDesignerActionResult,
 	MovementDesignerInspection,
 } from '../../shared/concerto-html';
+import type { MediaOpenMode } from '../../shared/mediaTypes';
+import type { DebugPackageDependencies } from '../debug-package';
 
 // Re-export Theme for convenience
 export type { Theme } from '../../shared/theme-types';
@@ -261,6 +263,8 @@ export interface WebClientMessage {
 	background?: boolean;
 	/** open_file_tab only: the older, weaker `--no-switch` ask. */
 	switchToAgent?: boolean;
+	/** open_file_tab only: `'queue'` adds audio/video to the player paused. */
+	mediaMode?: MediaOpenMode;
 	[key: string]: unknown;
 }
 
@@ -388,15 +392,22 @@ export type ReorderTabCallback = (
 	toIndex: number
 ) => Promise<boolean>;
 export type ToggleBookmarkCallback = (sessionId: string) => Promise<boolean>;
+/**
+ * Placement for `open_file_tab`. `switchToAgent: false` (`--no-switch`) stays on
+ * the current agent but still activates the new tab inside the target.
+ * `background: true` changes nothing currently rendered anywhere, and wins when
+ * both are given. `mediaMode: 'queue'` (`--queue`) adds audio/video to the
+ * player's queue without starting playback.
+ */
+export interface OpenFileTabOptions {
+	background: boolean;
+	switchToAgent: boolean;
+	mediaMode: MediaOpenMode;
+}
 export type OpenFileTabCallback = (
 	sessionId: string,
 	filePath: string,
-	/**
-	 * `switchToAgent: false` (`--no-switch`) stays on the current agent but still
-	 * activates the new tab inside the target. `background: true` changes nothing
-	 * currently rendered anywhere, and wins when both are given.
-	 */
-	options: { background: boolean; switchToAgent: boolean }
+	options: OpenFileTabOptions
 ) => Promise<boolean>;
 export type RefreshFileTreeCallback = (sessionId: string) => Promise<boolean>;
 /**
@@ -799,6 +810,12 @@ export type InteractMovementDesignerCallback = (
 	action: ConcertoDesignerAction
 ) => Promise<ConcertoDesignerActionResult>;
 export type NotifyCenterFlashCallback = (params: NotifyCenterFlashParams) => Promise<boolean>;
+/**
+ * Everything a support package collects from (agent detector, process manager,
+ * stores). `maestro-cli support-package` and `feedback submit --support-package`
+ * need it to build the same zip the desktop's Create Debug Package does.
+ */
+export type GetDebugPackageDepsCallback = () => DebugPackageDependencies;
 export type ConfigureAutoRunCallback = (
 	sessionId: string,
 	config: {

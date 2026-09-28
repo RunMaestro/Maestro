@@ -10,6 +10,7 @@ import { logger } from '../utils/logger';
 import { isWebContentsAvailable } from '../utils/safe-send';
 import type { ProcessManager } from '../process-manager';
 import type { SettingsStoreInterface as SettingsStore } from '../stores/types';
+import type { DebugPackageDependencies } from '../debug-package';
 import type { CueGraphSession, CueRunResult } from '../../shared/cue/contracts';
 import type { CadenzaPayload } from '../../shared/cadenza-types';
 import { registerSessionCallbacks } from './callbacks/sessionCallbacks';
@@ -96,6 +97,10 @@ export interface WebServerFactoryDependencies {
 	 *  Used by `setGetCueActivityCallback` (web UI's activity dashboard).
 	 *  Same dead-bridge fix as `getCueGraphData`. */
 	getCueActivityLog?: () => CueRunResult[];
+	/** Collectors for a support package (`maestro-cli support-package`,
+	 *  `feedback submit --support-package`). Absent = the CLI reports the
+	 *  feature as unconfigured instead of shipping a hollow zip. */
+	getDebugPackageDeps?: () => DebugPackageDependencies;
 }
 
 /**
@@ -198,6 +203,10 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 		registerDirectorNotesCallbacks(server, deps);
 
 		registerMarketplaceCallbacks(server, deps);
+
+		if (deps.getDebugPackageDeps) {
+			server.setGetDebugPackageDepsCallback(deps.getDebugPackageDeps);
+		}
 
 		return server;
 	};

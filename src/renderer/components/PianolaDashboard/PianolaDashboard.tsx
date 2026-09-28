@@ -264,6 +264,9 @@ function WatchedSection({
 	const [expanded, setExpanded] = React.useState(false);
 	const canCollapse = watched.length > 5;
 	const collapsed = canCollapse && !expanded;
+	const failingCount = watched.filter(
+		(row) => row.enabled && (row.state === 'failed' || row.state === 'backing-off')
+	).length;
 
 	const addButton = (
 		<div className="relative">
@@ -328,6 +331,15 @@ function WatchedSection({
 			collapsed={collapsed}
 			headerAction={
 				<div className="flex items-center gap-1">
+					{collapsed && failingCount > 0 && (
+						<span
+							className="text-xs normal-case"
+							style={{ color: theme.colors.error }}
+							role="status"
+						>
+							{failingCount} failing
+						</span>
+					)}
 					{canCollapse && (
 						<button
 							type="button"

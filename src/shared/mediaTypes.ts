@@ -50,6 +50,19 @@ const VIDEO_MIME_TYPES: Record<string, string> = {
 export type MediaKind = 'audio' | 'video';
 
 /**
+ * What opening a playable audio/video file should do.
+ *
+ * `play` (the default) hands it to the floating player and starts it. `queue`
+ * appends it instead, leaving whatever is playing alone - that is how opening
+ * ten files at once plays the first and lines up the other nine. Queueing into
+ * an idle player loads the file PAUSED, so it is also how an agent puts media
+ * on screen for the user to start themselves (`maestro-cli open-file --queue`).
+ *
+ * Ignored for everything that is not media.
+ */
+export type MediaOpenMode = 'play' | 'queue';
+
+/**
  * Extract a lowercase file extension, or `null` when the name has none.
  *
  * Unlike a bare `split('.').pop()` this does not treat an extensionless file

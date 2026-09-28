@@ -1,5 +1,6 @@
 import { ipcRenderer } from 'electron';
 import type { AITabData } from '../../web-server/types';
+import type { MediaOpenMode } from '../../../shared/mediaTypes';
 import type { SnoozeCommandRequest, SnoozeCommandResult } from '../../../shared/snoozeCommands';
 
 export function createTabRemoteApi() {
@@ -135,23 +136,25 @@ export function createTabRemoteApi() {
 		 * neither the active agent nor the active tab within any agent changes.
 		 * `switchToAgent: false` is the older, weaker `--no-switch` ask - stay on
 		 * the current agent, but still activate the tab inside the target one.
+		 * `mediaMode: 'queue'` adds audio/video to the player without playing it.
 		 */
 		onRemoteOpenFileTab: (
 			callback: (
 				sessionId: string,
 				filePath: string,
-				options: { background: boolean; switchToAgent: boolean }
+				options: { background: boolean; switchToAgent: boolean; mediaMode: MediaOpenMode }
 			) => void
 		): (() => void) => {
 			const handler = (
 				_: unknown,
 				sessionId: string,
 				filePath: string,
-				options?: { background?: boolean; switchToAgent?: boolean }
+				options?: { background?: boolean; switchToAgent?: boolean; mediaMode?: MediaOpenMode }
 			) =>
 				callback(sessionId, filePath, {
 					background: options?.background === true,
 					switchToAgent: options?.switchToAgent !== false,
+					mediaMode: options?.mediaMode === 'queue' ? 'queue' : 'play',
 				});
 			ipcRenderer.on('remote:openFileTab', handler);
 			return () => ipcRenderer.removeListener('remote:openFileTab', handler);

@@ -16,6 +16,7 @@ import { memo, useMemo, useCallback, useState, type MouseEvent } from 'react';
 import type { Theme, Session } from '../../types';
 import type { StatsAggregation } from '../../hooks/stats/useStats';
 import { formatDurationHuman as formatDuration, formatNumber } from '../../../shared/formatters';
+import { barChartLabelWidth } from './chartUtils';
 import { ChartTooltip } from './ChartTooltip';
 import { buildAgentComparisonData, buildAgentSplitAggregation } from './agentComparisonUtils';
 
@@ -65,6 +66,8 @@ export const AgentComparisonChart = memo(function AgentComparisonChart({
 	}, [data.byAgent, splitAggregation, theme, colorBlindMode, sessions]);
 
 	const hasWorktreeBars = useMemo(() => agentData.some((d) => d.isWorktree), [agentData]);
+
+	const labelWidth = useMemo(() => barChartLabelWidth(agentData.map((d) => d.label)), [agentData]);
 
 	// Get max duration for bar width calculation
 	const maxDuration = useMemo(() => {
@@ -175,11 +178,13 @@ export const AgentComparisonChart = memo(function AgentComparisonChart({
 								>
 									{/* Agent name label */}
 									<div
-										className="w-28 text-sm truncate flex-shrink-0"
+										className="text-sm truncate flex-shrink-0"
 										style={{
+											width: labelWidth,
 											color: isHovered ? theme.colors.textMain : theme.colors.textDim,
 										}}
 										title={agent.label}
+										data-testid="bar-chart-label"
 									>
 										{agent.label}
 									</div>

@@ -1384,7 +1384,7 @@ describe('TerminalOutput', () => {
 			// The inline card mirrors the Execution Queue modal exactly: present
 			// when force sending is possible or one settings toggle away, absent
 			// when the block is a dead end the user cannot act on from the card.
-			it('renders Force Send disabled when forced parallel is off and another tab is busy', () => {
+			it('renders Force Send dimmed when forced parallel is off and another tab is busy', () => {
 				const props = createDefaultProps({
 					session: forceSendSession(),
 					forcedParallelEnabled: false,
@@ -1398,7 +1398,11 @@ describe('TerminalOutput', () => {
 					}),
 				});
 				render(<TerminalOutput {...props} />);
-				expect(screen.getByRole('button', { name: /Force Send/ })).toBeDisabled();
+				// Dimmed but clickable: the click explains which setting unlocks it.
+				expect(screen.getByRole('button', { name: /Force Send/ })).toHaveAttribute(
+					'aria-disabled',
+					'true'
+				);
 			});
 
 			it('hides Force Send when the target tab is busy', () => {

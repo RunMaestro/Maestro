@@ -14,6 +14,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSessionStore } from '../../stores/sessionStore';
+import { useSettingsStore } from '../../stores/settingsStore';
 import type { Session } from '../../types';
 import type { PianolaSupervisedTarget } from '../../../shared/pianola/storage';
 import type {
@@ -127,47 +128,26 @@ export function usePianolaSupervisor(): PianolaSupervisorState {
 	const sessions = useSessionStore((s) => s.sessions);
 	const [targets, setTargets] = useState<PianolaSupervisedTarget[]>([]);
 	const [health, setHealth] = useState<PianolaSupervisorHealth[]>([]);
-	const [autoWatchNewAgents, setAutoWatchState] = useState(false);
-	const settingEpochRef = useRef(0);
-	useEffect(() => {
-		let active = true;
-		const loadSetting = async (): Promise<void> => {
-			const epoch = settingEpochRef.current;
+	const autoWatchNewAgents = useSettingsStore((s) => s.pianolaAutoWatchNewAgents);
+	const saveAutoWatchNewAgents = useSettingsStore((s) => s.setPianolaAutoWatchNewAgents);
+	const setAutoWatchNewAgents = useCallback(
+		async (enabled: boolean): Promise<void> => {
 			try {
-				const enabled = await window.maestro.settings.get('pianolaAutoWatchNewAgents');
-				if (active && settingEpochRef.current === epoch) setAutoWatchState(enabled === true);
+				await saveAutoWatchNewAgents(enabled);
 			} catch (error) {
+				notifyToast({
+					color: 'red',
+					title: 'Pianola setting failed',
+					message: 'Could not save automatic watching.',
+				});
 				captureException(error, {
 					tags: { feature: 'pianola' },
-					extra: { action: 'load auto-watch setting' },
+					extra: { action: 'save auto-watch setting' },
 				});
 			}
-		};
-		void loadSetting();
-		const unsubscribe = window.maestro.settings.onExternalChange(() => void loadSetting());
-		return () => {
-			active = false;
-			unsubscribe();
-		};
-	}, []);
-	const setAutoWatchNewAgents = useCallback(async (enabled: boolean): Promise<void> => {
-		settingEpochRef.current += 1;
-		try {
-			const saved = await window.maestro.settings.set('pianolaAutoWatchNewAgents', enabled);
-			if (saved === false) throw new Error('Setting was not saved');
-			if (mountedRef.current) setAutoWatchState(enabled);
-		} catch (error) {
-			notifyToast({
-				color: 'red',
-				title: 'Pianola setting failed',
-				message: 'Could not save automatic watching.',
-			});
-			captureException(error, {
-				tags: { feature: 'pianola' },
-				extra: { action: 'save auto-watch setting' },
-			});
-		}
-	}, []);
+		},
+		[saveAutoWatchNewAgents]
+	);
 	// Mutations (add/remove/setEnabled) are authoritative: each bumps this epoch
 	// before and after its IPC call and always applies its returned snapshot. A
 	// poll captures the epoch when it starts and applies only if it is unchanged

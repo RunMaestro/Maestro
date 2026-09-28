@@ -14,6 +14,7 @@ import { useSessionStore, selectSessionById } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { PLAYBOOKS_DIR } from '../../../shared/maestro-paths';
 import { asThinkingMode } from '../../../shared/types';
+import type { MediaOpenMode } from '../../../shared/mediaTypes';
 import { getBrowserTabPartition } from '../../utils/browserTabPersistence';
 import { insertAfterActiveInUnifiedTabOrder } from '../../utils/unifiedTabOrderUtils';
 import {
@@ -139,7 +140,7 @@ export interface UseAppRemoteEventListenersDeps {
 			/** Optional 1-based line to jump to once the editor mounts (deep links). */
 			pendingScrollToLine?: number;
 		},
-		options?: { targetSessionId?: string; activate?: boolean }
+		options?: { targetSessionId?: string; activate?: boolean; mediaMode?: MediaOpenMode }
 	) => void;
 	/** Refresh the file tree for a session */
 	refreshFileTree: (sessionId: string) => void;
@@ -199,7 +200,8 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 
 	// Handle remote open file tab events from CLI/web interface
 	useEventListener('maestro:openFileTab', async (e: Event) => {
-		const { sessionId, filePath, background, switchToAgent, line } = (e as CustomEvent).detail as {
+		const { sessionId, filePath, background, switchToAgent, mediaMode, line } = (e as CustomEvent)
+			.detail as {
 			sessionId: string;
 			filePath: string;
 			/**
@@ -214,6 +216,11 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 			 * but still activate the tab inside the target one. Absent means switch.
 			 */
 			switchToAgent?: boolean;
+			/**
+			 * 'queue' = audio/video goes into the player's queue without starting
+			 * (`maestro-cli open-file --queue`). Absent means open-and-play.
+			 */
+			mediaMode?: MediaOpenMode;
 			/** Optional 1-based line to jump to once the file is open. Set by
 			 *  maestro://file/...#L<n> deep links. */
 			line?: number;
@@ -236,7 +243,10 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 		// a file tab outranks the AI tab in the render precedence, so activating
 		// one changes the view even when the caller stayed on the same agent.
 		// That is exactly why `--no-switch` reads like `--background` and is not.
-		if (!background && switchToAgent !== false) {
+		//
+		// Queueing media never switches agents either: the player is app-wide, so
+		// the agent the file belongs to is not somewhere the user needs to be.
+		if (!background && switchToAgent !== false && mediaMode !== 'queue') {
 			switchActiveSession(sessionId, 'open-file');
 		}
 		try {
@@ -256,7 +266,7 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 						sshRemoteId,
 						pendingScrollToLine: line,
 					},
-					{ targetSessionId: sessionId, activate: !background }
+					{ targetSessionId: sessionId, activate: !background, mediaMode }
 				);
 			}
 		} catch (error) {

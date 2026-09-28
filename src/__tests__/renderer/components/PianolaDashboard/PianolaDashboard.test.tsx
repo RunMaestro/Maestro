@@ -117,6 +117,22 @@ describe('PianolaDashboard data mapping', () => {
 		expect(screen.queryByText('Agent 0')).not.toBeInTheDocument();
 	});
 
+	it('shows failures and backing-off watches while the watch list is collapsed', () => {
+		supervisorMock.usePianolaSupervisor.mockReturnValue({
+			...supervisorMock.usePianolaSupervisor(),
+			watched: Array.from({ length: 6 }, (_, i) => ({
+				targetId: `target-${i}`,
+				agentId: `agent-${i}`,
+				agentName: `Agent ${i}`,
+				enabled: true,
+				state: i === 0 ? 'failed' : i === 1 ? 'backing-off' : 'running',
+			})),
+		});
+		render(<PianolaDashboard theme={theme} onJumpToAgent={vi.fn()} />);
+		expect(screen.queryByText('Agent 0')).not.toBeInTheDocument();
+		expect(screen.getByRole('status')).toHaveTextContent('2 failing');
+	});
+
 	it('offers the automatic watch setting in the dashboard', () => {
 		const setAutoWatchNewAgents = vi.fn();
 		supervisorMock.usePianolaSupervisor.mockReturnValue({

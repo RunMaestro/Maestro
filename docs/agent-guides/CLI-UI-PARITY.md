@@ -1,8 +1,9 @@
 # CLI / UI Parity Audit
 
-Goal: (almost) anything a person can do by pointing and clicking in Maestro, an
-agent should be able to do through `maestro-cli`. This file records where that
-holds today, where it does not, and why.
+Rule (constitutional, see CLAUDE.md): anything a person can do by pointing and
+clicking in Maestro, an agent MUST be able to do through `maestro-cli`, through
+the same code path. A UI action ships with its CLI verb. This file records where
+that holds today, where it does not yet, and why.
 
 Audited 2026-08-19 against the three surfaces that define "clickable": the
 keyboard shortcut registry (`src/renderer/constants/shortcuts.ts`), the Quick
@@ -257,6 +258,15 @@ of taking a second round trip or trusting a value the caller guessed.
 | Save a pasted chat image (right-click)             | `image save` (`image list` to find it)                                                           |
 | Cue subscriptions and scheduled tasks              | `cue trigger`, `cue schedule`, `cue pipeline`                                                    |
 | Snooze a tab, list / wake / dismiss what is parked | `snooze tab`, `snooze list`, `unsnooze`, `snooze dismiss`, `snooze reschedule`, `snooze history` |
+| Send Feedback modal (open / file / +1)             | `open feedback`, `feedback auth\|search\|submit\|subscribe`                                      |
+| Feedback: screenshots, support package box         | `feedback submit --attach <png...> --support-package`                                            |
+| Create Debug Package (support package)             | `support-package -o <dir> [--no-logs ...]`                                                       |
+| Start / End Performance Profiling                  | `profiling start`, `profiling status`, `profiling stop -o <zip>`                                 |
+| Cue dashboard: subscription on/off switch          | `cue enable <sub>`, `cue disable <sub>` (any event type)                                         |
+| Cue dashboard: activity log                        | `cue activity [-a <agent>] [-n <limit>]`                                                         |
+| Auto Run panel: progress                           | `auto-run-status -a <agent>`                                                                     |
+| Auto Run panel: Change folder                      | `auto-run-folder <path> -a <agent>`                                                              |
+| Playbook Exchange: browse, README, install         | `marketplace list`, `marketplace show <id>`, `marketplace import`                                |
 
 ## Open gaps
 
@@ -283,3 +293,51 @@ a design constraint; they are simply not built yet.
    Tab Switcher, Search: Messages). These are interactive by definition; the
    underlying data is reachable through `list`, `session show`, and
    `director-notes history`.
+8. **Auto Run state in a CLI-built support package.** The desktop's Create
+   Debug Package hands main a snapshot of the renderer's in-memory batch store
+   (`captureAutoRunSnapshots()`). `support-package` and
+   `feedback submit --support-package` are built in main with no renderer round
+   trip, so that section reads "unavailable". The Feedback modal's own support
+   package checkbox has the same gap today. Closing it needs a main-to-renderer
+   request with a response channel.
+9. **Context: Compact, Merge Into, Send to Agent.** The WS messages
+   (`summarize_context`, `merge_context`, `transfer_context`) and the preload
+   listeners exist, but NO renderer code subscribes to
+   `onRemoteSummarizeContext` / `onRemoteMergeContext` /
+   `onRemoteTransferContext`, so every call times out. Closing it means wiring
+   those listeners to the same hooks the tab overlay menu uses, then adding
+   `tab compact / merge / transfer`. Do not wrap the dead messages.
+10. **Interrupt, precisely.** Beyond "no CLI verb": the only backend (REST
+    `POST /api/session/:id/interrupt` -> `remote:interrupt`) signals the
+    legacy `${sessionId}-ai` process id, which misses per-tab processes
+    (`${sessionId}-ai-${tabId}`). Fix the renderer handler to take a tab id,
+    then add `interrupt <agent> [--tab]`.
+
+### Audit backlog (2026-09-27)
+
+A full sweep of the palette, shortcuts, context menus, and modals found these
+still missing. Grouped, highest value first:
+
+- **Execution queue:** list, remove, edit, reorder, hold, force-send (`queue ...`).
+- **Composer:** send images with a prompt (`dispatch --image`); fork a tab from a
+  message (`tab fork --at`); resume a stored provider session into a tab
+  (`tab new --resume`), read a stored transcript (`session read`).
+- **Tabs of every kind:** `tab close/rename/move` resolve AI tabs only; no
+  listing of file/terminal/browser tabs; bulk close (others/left/right);
+  terminal close, restart, startup command; `read-browser` page text;
+  `open-browser` refuses `file://`.
+- **Playbooks:** update an existing one, export/import `.maestro-playbook.zip`.
+- **Group chat:** delete, rename, archive, edit moderator/participants, export.
+- **History:** delete an entry, toggle validated, generate a synopsis now, search.
+- **Diagnostics:** Process Monitor kill (`process list/kill`), read/clear system
+  logs (`logs`), reset stuck busy state, restart agent, retry, re-auth.
+- **SSH remotes:** test, edit, enable/disable, set default.
+- **Prompts:** edit or reset a Maestro prompt (`prompts set/reset`).
+- **Web access:** dashboard URL, QR pairing, persistent token, tunnel.
+- **Updates:** check/download/install.
+- **Exports:** tab as HTML, Usage Dashboard CSV, plan usage.
+- **Media player:** play/pause/next/prev/seek/volume, queue management.
+- **Cue:** engine start/stop, stop a run, backups, global settings, rename pipeline.
+- **Agents/groups:** worktree folder + scan, group emoji, `remove-agent --erase`.
+- **Symphony** contributions; **low value:** devtools, tour, leaderboard,
+  `notify clear`, clear terminal, `gist --file`, deep link, reveal in Finder.

@@ -4,8 +4,8 @@
  * Re-exports all route modules for the web server.
  */
 
-export {
-	ApiRoutes,
+export { ApiRoutes } from './apiRoutes';
+export type {
 	ApiRouteCallbacks,
 	SessionUsageStats,
 	LastResponsePreview,
@@ -28,8 +28,8 @@ export { ImageRoutes } from './imageRoutes';
 
 export { StaticRoutes } from './staticRoutes';
 
-export {
-	WsRoute,
+export { WsRoute } from './wsRoute';
+export type {
 	WsRouteCallbacks,
 	WsSessionData,
 	LiveSessionInfo as WsLiveSessionInfo,

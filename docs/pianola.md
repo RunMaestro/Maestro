@@ -32,6 +32,8 @@ Who needs you, who is working, who just finished. The **Watching** section lists
 
 Turn on **Automatically watch new agents** in this section to watch newly created top-level agents as soon as they have an AI tab. This option is off by default and does not add existing agents or worktree children. A manually paused watch stays paused. Automatic watches are removed when their agent is closed.
 
+The collapsed watch list still shows a count of failed or backing-off watches. On startup, Pianola removes automatic watches whose agents are no longer stored; manually added watches are preserved.
+
 Each watch is supervised by the desktop app. It restarts on crash and comes back when you relaunch, so it keeps working while you are away from the keyboard. Busy worktree agents are grouped under their parent so a five-worktree project reads as one row rather than five.
 
 ### Decisions

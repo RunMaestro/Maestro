@@ -109,6 +109,7 @@ export function InputBehaviorSection({
 			</div>
 
 			<div
+				data-setting-id="general-forced-parallel"
 				className="mt-4 p-3 rounded border"
 				style={{
 					borderColor: theme.colors.border,

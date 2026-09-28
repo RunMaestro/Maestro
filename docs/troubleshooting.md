@@ -120,6 +120,8 @@ If you encounter deep-seated issues that are difficult to diagnose, Maestro can 
 3. Choose a save location for the `.zip` file
 4. Attach the file to your [GitHub issue](https://github.com/RunMaestro/Maestro/issues)
 
+From the command line, `maestro-cli support-package -o <dir>` writes the same zip into `<dir>` with no save dialog. Flags like `--no-logs` leave a section out. See the [CLI reference](./cli-reference#maestro-cli-support-package).
+
 ### What's Included
 
 The debug package collects metadata and configuration - never your conversations or sensitive data:

@@ -456,13 +456,14 @@ Stop a group chat's moderator and participants
 
 Open a file as a preview tab in the Maestro desktop app (audio and video play in the floating media player instead)
 
-| Option             | Description                                                                     | Default |
-| ------------------ | ------------------------------------------------------------------------------- | ------- |
-| `-a, --agent <id>` | Target agent (defaults to auto-detect by file path's owning agent)              | -       |
-| `--background`     | Open the preview tab without changing anything currently rendered, on any agent | -       |
-| `--focus`          | Switch to the file after opening it (default)                                   | -       |
-| `--no-switch`      | Don't switch to the target agent, but still activate the tab there              | -       |
-| `--json`           | Output as JSON (for scripting)                                                  | -       |
+| Option             | Description                                                                                   | Default |
+| ------------------ | --------------------------------------------------------------------------------------------- | ------- |
+| `-a, --agent <id>` | Target agent (defaults to auto-detect by file path's owning agent)                            | -       |
+| `--background`     | Open the preview tab without changing anything currently rendered, on any agent               | -       |
+| `--focus`          | Switch to the file after opening it (default)                                                 | -       |
+| `--no-switch`      | Don't switch to the target agent, but still activate the tab there                            | -       |
+| `--queue`          | Audio/video only: add to the media player queue and show the player without starting playback | -       |
+| `--json`           | Output as JSON (for scripting)                                                                | -       |
 
 ## `maestro-cli open-graph [paths]`
 
@@ -657,6 +658,57 @@ Reset all completed [x] tasks back to [ ] in an Auto Run document
 | `-a, --agent <id>` | Target agent ID                | -       |
 | `--json`           | Output as JSON (for scripting) | -       |
 
+## `maestro-cli auto-run-status`
+
+Show whether an Auto Run is active and its document/task progress
+
+| Option             | Description                    | Default |
+| ------------------ | ------------------------------ | ------- |
+| `-a, --agent <id>` | Target agent ID                | -       |
+| `--json`           | Output as JSON (for scripting) | -       |
+
+## `maestro-cli auto-run-folder <path>`
+
+Point an agent at a different Auto Run folder (relative paths resolve against this shell's cwd)
+
+| Option             | Description                    | Default |
+| ------------------ | ------------------------------ | ------- |
+| `-a, --agent <id>` | Target agent ID                | -       |
+| `--json`           | Output as JSON (for scripting) | -       |
+
+## `maestro-cli marketplace`
+
+Browse and import Playbook Exchange playbooks (the modal: `open marketplace`)
+
+## `maestro-cli marketplace list`
+
+List playbooks in the official + local catalog
+
+| Option                  | Description                           | Default |
+| ----------------------- | ------------------------------------- | ------- |
+| `-c, --category <name>` | Only this category                    | -       |
+| `-s, --search <text>`   | Match id, title, description, or tags | -       |
+| `--refresh`             | Bypass the catalog cache              | -       |
+| `--json`                | Output as JSON (for scripting)        | -       |
+
+## `maestro-cli marketplace show <playbook-id>`
+
+Show a playbook's details, documents, and README
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+## `maestro-cli marketplace import <playbook-id>`
+
+Install a playbook into an agent's Auto Run folder
+
+| Option                | Description                                                     | Default |
+| --------------------- | --------------------------------------------------------------- | ------- |
+| `-a, --agent <id>`    | Target agent ID                                                 | -       |
+| `-f, --folder <name>` | Folder name under the Auto Run folder (default: from the title) | -       |
+| `--json`              | Output as JSON (for scripting)                                  | -       |
+
 ## `maestro-cli remove-playbook <agent-id> <playbook-id>`
 
 Remove a saved playbook from an agent (find IDs via "list playbooks -a <agent>")
@@ -686,6 +738,34 @@ List all Cue subscriptions across agents
 | Option   | Description                    | Default |
 | -------- | ------------------------------ | ------- |
 | `--json` | Output as JSON (for scripting) | -       |
+
+## `maestro-cli cue enable <subscription>`
+
+Turn a Cue subscription on (name, or the full id from `cue list --json`)
+
+| Option             | Description                              | Default |
+| ------------------ | ---------------------------------------- | ------- |
+| `-a, --agent <id>` | Disambiguate a name several agents share | -       |
+| `--json`           | Output as JSON (for scripting)           | -       |
+
+## `maestro-cli cue disable <subscription>`
+
+Turn a Cue subscription off without deleting it
+
+| Option             | Description                              | Default |
+| ------------------ | ---------------------------------------- | ------- |
+| `-a, --agent <id>` | Disambiguate a name several agents share | -       |
+| `--json`           | Output as JSON (for scripting)           | -       |
+
+## `maestro-cli cue activity`
+
+Show recent Cue runs, newest first
+
+| Option             | Description                        | Default |
+| ------------------ | ---------------------------------- | ------- |
+| `-a, --agent <id>` | Only runs for this agent           | -       |
+| `-n, --limit <n>`  | How many runs to show (default 20) | -       |
+| `--json`           | Output as JSON (for scripting)     | -       |
 
 ## `maestro-cli cue schedule`
 
@@ -1886,6 +1966,66 @@ Interact with a live HTML Movement by CSS selector
 | `--type <selector>`  | Enter text into the matching input or editable element | -       |
 | `--value <text>`     | Text used with --type                                  | -       |
 | `--json`             | Output as JSON (for scripting)                         | -       |
+
+## `maestro-cli support-package`
+
+Write a sanitized support (debug) package zip, as Create Debug Package does, without a save dialog
+
+| Option               | Description                                                                            | Default |
+| -------------------- | -------------------------------------------------------------------------------------- | ------- |
+| `-o, --output <dir>` | Directory to write maestro-debug-<timestamp>.zip into (created if missing; ~ expanded) | -       |
+| `--no-logs`          | Leave out application logs                                                             | -       |
+| `--no-errors`        | Leave out recent errors                                                                | -       |
+| `--no-sessions`      | Leave out agent/session metadata                                                       | -       |
+| `--no-group-chats`   | Leave out group chat metadata                                                          | -       |
+| `--no-batch-state`   | Leave out Auto Run state                                                               | -       |
+| `--json`             | Output as JSON (for scripting)                                                         | -       |
+
+## `maestro-cli feedback`
+
+Send Feedback from the CLI: check gh, find duplicates, +1 an issue, or file a new one (open the modal with `open feedback`)
+
+## `maestro-cli feedback auth`
+
+Check that the GitHub CLI (gh) is installed and logged in (required to file)
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+## `maestro-cli feedback search <query>`
+
+Search RunMaestro/Maestro for issues matching a description
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+## `maestro-cli feedback submit`
+
+File a GitHub issue exactly as the Feedback modal does. Stops on likely duplicates unless --force
+
+| Option                      | Description                                                                          | Default |
+| --------------------------- | ------------------------------------------------------------------------------------ | ------- |
+| `-c, --category <category>` | bug \| feature \| improvement \| general                                             | -       |
+| `-s, --summary <text>`      | One-line summary (max 120 chars; becomes the title)                                  | -       |
+| `-e, --expected <text>`     | Expected behavior (bug) or desired outcome (other categories)                        | -       |
+| `-a, --actual <text>`       | Actual behavior (bug) or details (other categories)                                  | -       |
+| `--steps <text>`            | Steps to reproduce                                                                   | -       |
+| `--context <text>`          | Additional context                                                                   | -       |
+| `--attach <image...>`       | Screenshots to attach: PNG, JPG, GIF, or WebP, up to 5 files, 10 MB each             | -       |
+| `--support-package`         | Generate a sanitized support package and link it from the issue (the modal checkbox) | -       |
+| `--force`                   | File even when possible duplicates exist                                             | -       |
+| `--json`                    | Output as JSON (for scripting)                                                       | -       |
+
+## `maestro-cli feedback subscribe <issue>`
+
+Add a +1 to an existing issue instead of filing a duplicate
+
+| Option             | Description                         | Default |
+| ------------------ | ----------------------------------- | ------- |
+| `--comment <text>` | Also post this comment on the issue | -       |
+| `--json`           | Output as JSON (for scripting)      | -       |
 
 ## `maestro-cli stats`
 

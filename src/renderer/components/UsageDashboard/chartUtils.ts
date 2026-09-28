@@ -12,6 +12,7 @@
 
 import type { Session } from '../../types';
 import { AGENT_DISPLAY_NAMES } from '../../../shared/agentMetadata';
+import { widestLabelWidth } from '../../utils/labelWidth';
 
 // `clampTooltipToViewport` was relocated into the shared widget library (so the
 // library's ChartTooltip primitive owns its geometry without depending back on
@@ -214,6 +215,28 @@ export function computeAxisLabelIndices(count: number, maxLabels = 7): Set<numbe
 	}
 
 	return new Set(indices);
+}
+
+/**
+ * Width, in px, of the name column in the dashboard's horizontal bar charts
+ * (Agent Efficiency, Agent Comparison, By Agent Type). Sized to the longest
+ * label so "Claude Code (Worktree)" reads in full instead of clipping at a
+ * fixed 112px while the bar beside it has room to spare. Labels render at
+ * `text-sm`; `withSwatch` counts the color square and its gap. The ceiling
+ * keeps one long user-assigned agent name from eating the bars; past it the
+ * label ellipsizes and the row's `title` carries the full name.
+ */
+export function barChartLabelWidth(
+	labels: Iterable<string>,
+	{ withSwatch = false }: { withSwatch?: boolean } = {}
+): number {
+	return widestLabelWidth(labels, {
+		fontSizePx: 14,
+		// w-2.5 swatch (10px) + gap-2 (8px)
+		chromePx: withSwatch ? 18 : 0,
+		minPx: 112,
+		maxPx: 320,
+	});
 }
 
 /**

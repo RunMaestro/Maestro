@@ -13,6 +13,7 @@ import type { InteractiveReplayController } from '../../agents/claude-interactiv
 import type { ProcessConfig as ProcessSpawnConfig } from '../../process-manager/types';
 import type { WakaTimeManager } from '../../wakatime-manager';
 import type { MaestroCliManager } from '../../maestro-cli-manager';
+import type { DebugPackageDependencies } from '../../debug-package';
 import type { SafeSendFn } from '../../utils/safe-send';
 import type { WindowRegistry } from '../../window-registry';
 import type { createWindowManager } from '../../app-lifecycle';
@@ -42,6 +43,11 @@ export interface IpcBootstrapDependencies {
 	getPluginAuthStore: () => AuthorizationStore | null;
 	getPluginEventBus: () => PluginEventBusImpl | null;
 	getInteractiveReplayController: () => InteractiveReplayController<ProcessSpawnConfig> | null;
+	/**
+	 * Collectors for a support (debug) package. One object shared by the debug and
+	 * feedback IPC handlers and the CLI bridge, so every path builds the same zip.
+	 */
+	debugPackageDeps: DebugPackageDependencies;
 
 	// setters - out-params this module currently mutates back in index.ts
 	setWebServer: (server: WebServer | null) => void;

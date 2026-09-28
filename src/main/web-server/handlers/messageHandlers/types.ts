@@ -40,7 +40,10 @@ import type {
 	ConsultAgentResult,
 	RenameTabResult,
 	SnoozeCommandCallback,
+	OpenFileTabOptions,
 } from '../../types';
+import type { DebugPackageDependencies } from '../../../debug-package';
+import type { MediaOpenMode } from '../../../../shared/mediaTypes';
 import type { AgentDelegationNotice } from '../../../../shared/agentDelegation';
 import type { GroupAppearance, GroupUpdateRequest } from '../../../../shared/groupAppearance';
 import type { CadenzaPayload } from '../../../../shared/cadenza-types';
@@ -67,6 +70,8 @@ export interface WebClientMessage {
 	background?: boolean;
 	/** open_file_tab only: the older, weaker `--no-switch` ask. */
 	switchToAgent?: boolean;
+	/** open_file_tab only: `'queue'` adds audio/video to the player paused. */
+	mediaMode?: MediaOpenMode;
 	[key: string]: unknown;
 }
 
@@ -138,7 +143,7 @@ export interface MessageHandlerCallbacks {
 	openFileTab: (
 		sessionId: string,
 		filePath: string,
-		options: { background: boolean; switchToAgent: boolean }
+		options: OpenFileTabOptions
 	) => Promise<boolean>;
 	refreshFileTree: (sessionId: string) => Promise<boolean>;
 	openBrowserTab: (
@@ -393,6 +398,8 @@ export interface MessageHandlerCallbacks {
 		action: ConcertoDesignerAction
 	) => Promise<ConcertoDesignerActionResult>;
 	notifyCenterFlash: (params: NotifyCenterFlashParams) => Promise<boolean>;
+	/** Collectors for a support package; `null` until the factory wires them. */
+	getDebugPackageDeps: () => DebugPackageDependencies | null;
 	getMarketplaceManifest: (options?: {
 		refresh?: boolean;
 	}) => Promise<MarketplaceManifestResult | null>;

@@ -155,7 +155,9 @@ describe('AgentEfficiencyChart', () => {
 				<AgentEfficiencyChart data={data} theme={theme} sessions={[session]} />
 			);
 
-			const labelEl = container.querySelector('.w-28[title]') as HTMLElement | null;
+			const labelEl = container.querySelector(
+				'[data-testid="bar-chart-label"]'
+			) as HTMLElement | null;
 			expect(labelEl).not.toBeNull();
 			expect(labelEl?.title).toBe('Backend API');
 		});
@@ -236,6 +238,36 @@ describe('AgentEfficiencyChart', () => {
 			// the prettified type for the regular row plus a "(Worktree)" suffix.
 			expect(screen.getAllByText('Claude Code').length).toBeGreaterThanOrEqual(1);
 			expect(screen.getAllByText('Claude Code (Worktree)').length).toBeGreaterThanOrEqual(1);
+		});
+
+		it('widens the label column so "(Worktree)" labels are not clipped', () => {
+			const parent = makeSession({ id: 'parent', toolType: 'claude-code' });
+			const worktree = makeSession({
+				id: 'wt-1',
+				toolType: 'claude-code',
+				parentSessionId: 'parent',
+			});
+
+			const dataWithSessions: StatsAggregation = {
+				...baseData,
+				bySessionByDay: {
+					parent: [{ date: '2024-12-20', count: 20, duration: 1500000 }],
+					'wt-1': [{ date: '2024-12-20', count: 10, duration: 500000 }],
+				},
+			};
+
+			const { container } = render(
+				<AgentEfficiencyChart data={dataWithSessions} theme={theme} sessions={[parent, worktree]} />
+			);
+
+			const labels = Array.from(
+				container.querySelectorAll<HTMLElement>('[data-testid="bar-chart-label"]')
+			);
+			expect(labels.length).toBeGreaterThanOrEqual(2);
+			// Every row shares one column width, wider than the old fixed 112px.
+			const widths = new Set(labels.map((el) => el.style.width));
+			expect(widths.size).toBe(1);
+			expect(parseInt(labels[0].style.width, 10)).toBeGreaterThan(112);
 		});
 	});
 });

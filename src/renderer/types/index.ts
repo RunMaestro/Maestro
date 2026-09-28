@@ -1255,6 +1255,8 @@ export type SnoozedGroupEntry = SnoozedGroupPayload & SnoozedTabEntryBase;
 
 export interface Session {
 	id: string;
+	/** Browser-only marker. Main restores omitted content on every partial save. */
+	deferredContent?: import('../../shared/deferredSessionContent').DeferredSessionContent;
 	groupId?: string;
 	name: string;
 	toolType: ToolType;

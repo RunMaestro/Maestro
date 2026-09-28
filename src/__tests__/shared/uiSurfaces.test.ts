@@ -46,6 +46,12 @@ describe('resolveUiSurface', () => {
 		expect(resolveUiSurface('  Usage  ')?.id).toBe('usage-dashboard');
 	});
 
+	it('resolves the Send Feedback modal so `open feedback` works', () => {
+		const feedback = resolveUiSurface('feedback');
+		expect(feedback?.modal).toBe('feedback');
+		expect(resolveUiSurface('bug-report')?.id).toBe('feedback');
+	});
+
 	it('returns null for an unknown or empty name', () => {
 		expect(resolveUiSurface('nope')).toBeNull();
 		expect(resolveUiSurface('')).toBeNull();

@@ -75,6 +75,11 @@ export interface ActiveTabInfo {
 export interface QuickActionsModalProps {
 	theme: Theme;
 	sessions: Session[];
+	/**
+	 * Agents in the order the Left Bar draws them; the first ten own the
+	 * Opt+Cmd+1..0 slots, so their jump rows show that chord.
+	 */
+	visibleSessions?: Session[];
 	setSessions: React.Dispatch<React.SetStateAction<Session[]>>;
 	activeSessionId: string;
 	groups: Group[];

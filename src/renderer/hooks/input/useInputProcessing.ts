@@ -40,7 +40,7 @@ import {
 	takePendingMergedContext,
 } from '../../stores/sessionStore';
 import { logger } from '../../utils/logger';
-import { WEB_BRIDGE_RECONCILE_EVENT } from '../../../shared/webClientConfig';
+import { requestWebBridgeReconcile } from '../../services/webBridgeReconcile';
 
 let cachedImageOnlyPrompt: string = '';
 let inputProcessingPromptsLoaded = false;
@@ -770,7 +770,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 						syncAiInputToSession('', syncTarget);
 						if (inputRef.current) inputRef.current.style.height = 'auto';
 						if (mentionProbe.probeFailed) {
-							window.dispatchEvent(new Event(WEB_BRIDGE_RECONCILE_EVENT));
+							requestWebBridgeReconcile();
 						}
 						return;
 					}
@@ -1038,7 +1038,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 					syncAiInputToSession('', syncTarget); // Sync empty value to session state
 					if (inputRef.current) inputRef.current.style.height = 'auto';
 					if (processState.probeFailed) {
-						window.dispatchEvent(new Event(WEB_BRIDGE_RECONCILE_EVENT));
+						requestWebBridgeReconcile();
 					}
 					return;
 				}

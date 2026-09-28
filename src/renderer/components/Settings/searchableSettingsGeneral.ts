@@ -140,6 +140,22 @@ export const GENERAL_SETTINGS: SearchableSetting[] = [
 		],
 	},
 	{
+		id: 'general-forced-parallel',
+		tab: 'general',
+		tabLabel: 'General',
+		label: 'Forced Parallel Execution',
+		description:
+			'Send a message (or Force Send a queued one) while another tab in the same agent is still working',
+		keywords: [
+			'parallel',
+			'forced parallel execution',
+			'force send',
+			'busy',
+			'concurrent',
+			'queue',
+		],
+	},
+	{
 		id: 'general-cross-agent-mentions',
 		tab: 'general',
 		tabLabel: 'General',

@@ -105,6 +105,7 @@ export function createPianolaLifecycle(deps: PianolaLifecycleDependencies): Pian
 	// nohup model. It self-gates on encoreFeatures.pianola and reconciles from a
 	// shared store file that both the CLI and renderer write.
 	const supervisor = new PianolaSupervisor({
+		getStoredSessions: () => deps.sessionsStore.get('sessions', []),
 		isEnabled: () => {
 			const ef = deps.settingsStore.get('encoreFeatures', {}) as Record<string, boolean>;
 			return ef.pianola === true;

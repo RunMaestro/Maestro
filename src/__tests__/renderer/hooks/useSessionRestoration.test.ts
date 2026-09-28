@@ -8,6 +8,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act, cleanup } from '@testing-library/react';
 
+const runtime = vi.hoisted(() => ({ web: false }));
+vi.mock('../../../renderer/utils/runtimeContext', () => ({
+	isWebDesktop: () => runtime.web,
+	isElectronDesktop: () => !runtime.web,
+}));
+
 // Mock gitService before any imports that use it
 vi.mock('../../../renderer/services/git', () => ({
 	gitService: {
@@ -24,11 +30,16 @@ vi.mock('../../../renderer/utils/ids', () => ({
 }));
 
 import { useSessionRestoration } from '../../../renderer/hooks/session/useSessionRestoration';
-import { useSessionStore } from '../../../renderer/stores/sessionStore';
+import {
+	updateAiTab,
+	updateSessionWith,
+	useSessionStore,
+} from '../../../renderer/stores/sessionStore';
 import { useGroupChatStore } from '../../../renderer/stores/groupChatStore';
 import { gitService } from '../../../renderer/services/git';
 import type { BrowserTab, Session } from '../../../renderer/types';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
+import { WEB_BRIDGE_RECONCILE_EVENT } from '../../../shared/webClientConfig';
 
 // Cast to access mock methods
 const mockGitService = gitService as {
@@ -93,6 +104,8 @@ function createMockSession(overrides: Partial<Session> = {}): Session {
 
 // Mock IPC
 const mockGetAll = vi.fn();
+const mockGetBootstrap = vi.fn();
+const mockGetDeferredContent = vi.fn();
 const mockGroupsGetAll = vi.fn();
 const mockGroupChatList = vi.fn();
 const mockAgentsGet = vi.fn();
@@ -104,6 +117,7 @@ const mockAgentsGet = vi.fn();
 beforeEach(() => {
 	vi.clearAllMocks();
 	idCounter = 0;
+	runtime.web = false;
 
 	useSessionStore.setState({
 		sessions: [],
@@ -125,6 +139,8 @@ beforeEach(() => {
 	}
 	(window as any).maestro.sessions = {
 		getAll: mockGetAll,
+		getBootstrap: mockGetBootstrap,
+		getDeferredContent: mockGetDeferredContent,
 		getActiveSessionId: vi.fn().mockResolvedValue(''),
 		setActiveSessionId: vi.fn(),
 	};
@@ -135,6 +151,7 @@ beforeEach(() => {
 	};
 
 	mockGetAll.mockResolvedValue([]);
+	mockGetBootstrap.mockResolvedValue([]);
 	mockGroupsGetAll.mockResolvedValue([]);
 	mockGroupChatList.mockResolvedValue([]);
 });
@@ -1440,6 +1457,135 @@ describe('initialLoadComplete proxy', () => {
 // ============================================================================
 
 describe('Session & Group loading effect', () => {
+	it('loads browser metadata first, then merges a live log into the selected transcript', async () => {
+		runtime.web = true;
+		const thin = createMockSession({
+			id: 'web-agent',
+			shellLogs: [],
+			deferredContent: { tabIds: ['tab-1'], commands: true },
+		});
+		mockGetBootstrap.mockResolvedValueOnce([thin]);
+		let resolveContent!: (content: {
+			logs: Session['aiTabs'][number]['logs'];
+			shellLogs: Session['shellLogs'];
+			agentCommands: NonNullable<Session['agentCommands']>;
+			aiCommandHistory: string[];
+		}) => void;
+		mockGetDeferredContent.mockReturnValueOnce(
+			new Promise((resolve) => {
+				resolveContent = resolve;
+			})
+		);
+		renderHook(() => useSessionRestoration());
+		await vi.waitFor(() => expect(mockGetBootstrap).toHaveBeenCalled());
+		await vi.waitFor(() =>
+			expect(mockGetDeferredContent).toHaveBeenCalledWith('web-agent', 'tab-1', true)
+		);
+		expect(mockGetAll).not.toHaveBeenCalled();
+		act(() => {
+			updateAiTab('web-agent', 'tab-1', (tab) => ({
+				...tab,
+				logs: [{ id: 'live', timestamp: 2, source: 'stdout', text: 'new' }],
+			}));
+			updateSessionWith('web-agent', (session) => ({
+				...session,
+				shellLogs: [{ id: 'live-shell', timestamp: 2, source: 'stdout', text: 'new shell' }],
+			}));
+		});
+		await act(async () => {
+			resolveContent({
+				logs: [{ id: 'old', timestamp: 1, source: 'stdout', text: 'saved' }],
+				shellLogs: [{ id: 'old-shell', timestamp: 1, source: 'stdout', text: 'shell' }],
+				agentCommands: [{ command: '/old', description: 'Old' }],
+				aiCommandHistory: ['old prompt'],
+			});
+		});
+		await vi.waitFor(() => {
+			const session = useSessionStore.getState().sessions[0];
+			expect(session.aiTabs[0].logs.map((log) => log.id)).toEqual(['old', 'live']);
+			expect(session.shellLogs.map((log) => log.id)).toEqual(['old-shell', 'live-shell']);
+			expect(session.deferredContent).toBeUndefined();
+			expect(session.aiCommandHistory).toEqual(['old prompt']);
+		});
+	});
+
+	it('retries a failed deferred read only after the bridge reconnects', async () => {
+		runtime.web = true;
+		mockGetBootstrap.mockResolvedValueOnce([
+			createMockSession({
+				id: 'web-agent',
+				deferredContent: { tabIds: ['tab-1'], commands: true },
+			}),
+		]);
+		mockGetDeferredContent
+			.mockRejectedValueOnce(new Error('bridge disconnected'))
+			.mockResolvedValueOnce({ logs: [], shellLogs: [], agentCommands: [], aiCommandHistory: [] });
+		renderHook(() => useSessionRestoration());
+		await vi.waitFor(() => expect(mockGetDeferredContent).toHaveBeenCalledTimes(1));
+		await act(async () => {
+			updateSessionWith('web-agent', (session) => ({ ...session, name: 'Renamed' }));
+		});
+		expect(mockGetDeferredContent).toHaveBeenCalledTimes(1);
+		act(() => window.dispatchEvent(new Event(WEB_BRIDGE_RECONCILE_EVENT)));
+		await vi.waitFor(() => expect(mockGetDeferredContent).toHaveBeenCalledTimes(2));
+	});
+
+	it.each([false, true])(
+		'loads visible deferred AI panes when the focused pane fails: %s',
+		async (failFocusedPane) => {
+			runtime.web = true;
+			const base = createMockSession({ id: 'web-agent' });
+			mockGetBootstrap.mockResolvedValueOnce([
+				createMockSession({
+					id: 'web-agent',
+					aiTabs: [base.aiTabs[0], { ...base.aiTabs[0], id: 'tab-2' }],
+					unifiedTabOrder: [
+						{ type: 'ai', id: 'tab-1' },
+						{ type: 'ai', id: 'tab-2' },
+					],
+					activeGroupId: 'g1',
+					tabGroups: [
+						{
+							id: 'g1',
+							name: 'G',
+							createdAt: 0,
+							focusedPaneId: 'l1',
+							layout: {
+								kind: 'split',
+								id: 's1',
+								direction: 'row',
+								sizes: [0.5, 0.5],
+								children: [
+									{ kind: 'leaf', id: 'l1', tab: { type: 'ai', id: 'tab-1' } },
+									{ kind: 'leaf', id: 'l2', tab: { type: 'ai', id: 'tab-2' } },
+								],
+							},
+						},
+					],
+					deferredContent: { tabIds: ['tab-1', 'tab-2'], commands: true },
+				}),
+			]);
+			mockGetDeferredContent.mockImplementation(async (_sessionId, tabId: string) => {
+				if (failFocusedPane && tabId === 'tab-1') throw new Error('tab unavailable');
+				return {
+					logs: [{ id: `saved-${tabId}`, timestamp: 1, source: 'stdout', text: 'saved' }],
+					shellLogs: [],
+					agentCommands: [],
+					aiCommandHistory: [],
+				};
+			});
+			renderHook(() => useSessionRestoration());
+			await vi.waitFor(() => {
+				const session = useSessionStore.getState().sessions[0];
+				expect(session?.aiTabs.map((tab) => tab.logs.map((log) => log.id))).toEqual([
+					failFocusedPane ? [] : ['saved-tab-1'],
+					['saved-tab-2'],
+				]);
+				expect(session.deferredContent?.tabIds).toEqual(failFocusedPane ? ['tab-1'] : undefined);
+			});
+		}
+	);
+
 	it('loads sessions from IPC on mount', async () => {
 		const session = createMockSession({ id: 'loaded-1' });
 		mockGetAll.mockResolvedValueOnce([session]);
@@ -1652,6 +1798,25 @@ describe('Session & Group loading effect', () => {
 
 			expect(useSessionStore.getState().sessionsReadOk).toBe(false);
 			expect(useSessionStore.getState().initialLoadComplete).toBe(true);
+		});
+
+		it('retries a failed read after the bridge reconnects', async () => {
+			runtime.web = true;
+			mockGetBootstrap
+				.mockRejectedValueOnce(new Error('bridge disconnected'))
+				.mockResolvedValueOnce([createMockSession({ id: 'recovered' })]);
+			renderHook(() => useSessionRestoration());
+			await vi.waitFor(() => expect(useSessionStore.getState().sessionsLoaded).toBe(true));
+			expect(useSessionStore.getState().sessionsReadOk).toBe(false);
+
+			act(() => window.dispatchEvent(new Event(WEB_BRIDGE_RECONCILE_EVENT)));
+			await vi.waitFor(() => {
+				expect(useSessionStore.getState().sessionsReadOk).toBe(true);
+				expect(useSessionStore.getState().sessions.map((session) => session.id)).toEqual([
+					'recovered',
+				]);
+			});
+			expect(mockGetBootstrap).toHaveBeenCalledTimes(2);
 		});
 	});
 

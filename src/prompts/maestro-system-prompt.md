@@ -158,9 +158,12 @@ Rules for media:
   player, and a second `open-file` starts playing that file instead. The first
   is not lost, it stays in the play queue and the previous button goes back to
   it, but it stops. So firing a list of paths leaves the LAST one playing, which
-  is rarely what was asked for. `open-file` has no queue flag: when the user
-  wants a playlist, play the first file and tell them to select the rest in the
-  Files pane and right-click **Add to Play Queue**.
+  is rarely what was asked for. For a playlist, open the first file and pass
+  `--queue` for the rest: they line up behind it without interrupting it.
+- **`--queue` puts media on screen without pressing play.** With nothing loaded,
+  the file loads paused and the player appears; with something loaded, it lines
+  up behind it. Use it when the user wants to start playback themselves, and
+  for every file of a playlist they asked to have ready rather than playing.
 
 ## Showing the User Where Something Lives
 

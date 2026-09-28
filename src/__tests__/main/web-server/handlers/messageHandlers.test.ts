@@ -42,6 +42,33 @@ import {
 	disposeDispatchCallbacks,
 } from '../../../../main/dispatch-callbacks';
 
+// The feedback service shells out to `gh` and the debug package reads real
+// stores; the handler tests only care what reaches them and what comes back.
+vi.mock('../../../../main/feedback', () => ({
+	checkFeedbackGhAuth: vi.fn().mockResolvedValue({ authenticated: true }),
+	searchFeedbackIssues: vi.fn().mockResolvedValue({ issues: [] }),
+	submitFeedbackConversation: vi.fn().mockResolvedValue({
+		success: true,
+		issueUrl: 'https://github.com/RunMaestro/Maestro/issues/1',
+	}),
+	subscribeFeedbackIssue: vi.fn().mockResolvedValue({ success: true }),
+}));
+vi.mock('../../../../main/debug-package', () => ({
+	generateDebugPackage: vi.fn().mockResolvedValue({
+		success: true,
+		path: '/tmp/p.zip',
+		filesIncluded: ['a'],
+		totalSizeBytes: 9,
+	}),
+}));
+
+import {
+	searchFeedbackIssues,
+	submitFeedbackConversation,
+	subscribeFeedbackIssue,
+} from '../../../../main/feedback';
+import { generateDebugPackage } from '../../../../main/debug-package';
+
 // Mock the logger
 vi.mock('../../../../main/utils/logger', () => ({
 	logger: {
@@ -243,6 +270,7 @@ function createMockCallbacks(): MessageHandlerCallbacks {
 		deletePlaybook: vi.fn().mockResolvedValue(true),
 		notifyToast: vi.fn().mockResolvedValue(true),
 		notifyCenterFlash: vi.fn().mockResolvedValue(true),
+		getDebugPackageDeps: vi.fn().mockReturnValue({ settingsStore: {} }),
 		getMarketplaceManifest: vi.fn().mockResolvedValue({
 			manifest: { lastUpdated: '2026-01-01', playbooks: [] },
 			fromCache: false,
@@ -1200,7 +1228,7 @@ describe('WebSocketMessageHandler', () => {
 				expect(callbacks.openFileTab).toHaveBeenCalledWith(
 					'session-1',
 					path.resolve(path.resolve('/home/user/project'), '/home/user/project/src/index.ts'),
-					{ background: false, switchToAgent: true }
+					{ background: false, switchToAgent: true, mediaMode: 'play' }
 				);
 			});
 
@@ -1226,7 +1254,7 @@ describe('WebSocketMessageHandler', () => {
 				expect(callbacks.openFileTab).toHaveBeenCalledWith(
 					'session-1',
 					path.resolve(path.resolve('/home/user/project'), '/home/user/project/src/index.ts'),
-					{ background: false, switchToAgent: false }
+					{ background: false, switchToAgent: false, mediaMode: 'play' }
 				);
 			});
 		});
@@ -1243,7 +1271,7 @@ describe('WebSocketMessageHandler', () => {
 				expect(callbacks.openFileTab).toHaveBeenCalledWith(
 					'session-1',
 					path.resolve(path.resolve('/home/user/project'), '/home/user/project/src/index.ts'),
-					{ background: true, switchToAgent: true }
+					{ background: true, switchToAgent: true, mediaMode: 'play' }
 				);
 			});
 		});
@@ -1261,7 +1289,42 @@ describe('WebSocketMessageHandler', () => {
 				expect(callbacks.openFileTab).toHaveBeenCalledWith(
 					'session-1',
 					path.resolve(path.resolve('/home/user/project'), '/home/user/project/src/index.ts'),
-					{ background: true, switchToAgent: false }
+					{ background: true, switchToAgent: false, mediaMode: 'play' }
+				);
+			});
+		});
+
+		it("forwards mediaMode 'queue' so audio/video is queued without playing", async () => {
+			handler.handleMessage(client, {
+				type: 'open_file_tab',
+				sessionId: 'session-1',
+				filePath: '/home/user/project/ep1.mp3',
+				mediaMode: 'queue',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.openFileTab).toHaveBeenCalledWith(
+					'session-1',
+					path.resolve(path.resolve('/home/user/project'), '/home/user/project/ep1.mp3'),
+					{ background: false, switchToAgent: true, mediaMode: 'queue' }
+				);
+			});
+		});
+
+		it("treats any mediaMode other than 'queue' as play", async () => {
+			handler.handleMessage(client, {
+				type: 'open_file_tab',
+				sessionId: 'session-1',
+				filePath: '/home/user/project/ep1.mp3',
+				// Untrusted wire input: the handler narrows anything unknown to play.
+				mediaMode: 'shuffle' as never,
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.openFileTab).toHaveBeenCalledWith(
+					'session-1',
+					path.resolve(path.resolve('/home/user/project'), '/home/user/project/ep1.mp3'),
+					{ background: false, switchToAgent: true, mediaMode: 'play' }
 				);
 			});
 		});
@@ -1324,7 +1387,7 @@ describe('WebSocketMessageHandler', () => {
 				expect(callbacks.openFileTab).toHaveBeenCalledWith(
 					'session-1',
 					path.resolve(path.resolve('/home/user/project'), '/home/user/project/../../etc/passwd'),
-					{ background: false, switchToAgent: true }
+					{ background: false, switchToAgent: true, mediaMode: 'play' }
 				);
 			});
 
@@ -4777,5 +4840,83 @@ describe('WebSocketMessageHandler - plugin MCP tool bridge', () => {
 		expect(res.ok).toBe(true);
 		expect(res.result).toEqual({ done: true });
 		expect(invokeTool).toHaveBeenCalledWith('acme/dostuff', { value: 1 });
+	});
+	describe('Feedback and support package (maestro-cli feedback / support-package)', () => {
+		const lastResponse = () => {
+			const calls = (client.socket.send as any).mock.calls;
+			return JSON.parse(calls[calls.length - 1][0]);
+		};
+
+		it('support_package_create writes into an absolute dir with only the section toggles', async () => {
+			handler.handleMessage(client, {
+				type: 'support_package_create',
+				requestId: 'sp-1',
+				outputDir: '/tmp/out',
+				options: { includeLogs: false, evil: 'x' },
+			});
+			await vi.waitFor(() => expect(generateDebugPackage).toHaveBeenCalled());
+			expect(vi.mocked(generateDebugPackage).mock.calls[0][0]).toBe('/tmp/out');
+			expect(vi.mocked(generateDebugPackage).mock.calls[0][2]).toEqual({ includeLogs: false });
+			await vi.waitFor(() => expect(lastResponse().type).toBe('support_package_create_result'));
+			expect(lastResponse()).toMatchObject({
+				success: true,
+				path: '/tmp/p.zip',
+				requestId: 'sp-1',
+			});
+		});
+
+		it('support_package_create refuses a relative outputDir', async () => {
+			handler.handleMessage(client, {
+				type: 'support_package_create',
+				requestId: 'sp-2',
+				outputDir: 'relative/dir',
+			});
+			await vi.waitFor(() => expect(lastResponse().type).toBe('support_package_create_result'));
+			expect(lastResponse().success).toBe(false);
+		});
+
+		it('feedback_search passes the query through', async () => {
+			handler.handleMessage(client, { type: 'feedback_search', requestId: 'fs', query: 'tabs' });
+			await vi.waitFor(() => expect(lastResponse().type).toBe('feedback_search_result'));
+			expect(searchFeedbackIssues).toHaveBeenCalledWith({ query: 'tabs' });
+			expect(lastResponse()).toMatchObject({ success: true, issues: [] });
+		});
+
+		it('feedback_submit hands the support-package collectors over only when asked', async () => {
+			handler.handleMessage(client, {
+				type: 'feedback_submit',
+				requestId: 'sub',
+				payload: { category: 'bug_report', includeDebugPackage: true },
+			});
+			await vi.waitFor(() => expect(lastResponse().type).toBe('feedback_submit_result'));
+			expect(vi.mocked(submitFeedbackConversation).mock.calls[0][1]).toEqual({ settingsStore: {} });
+			expect(lastResponse().issueUrl).toContain('/issues/1');
+		});
+
+		it('feedback_submit refuses more screenshots than the modal allows', async () => {
+			handler.handleMessage(client, {
+				type: 'feedback_submit',
+				requestId: 'sub2',
+				payload: {
+					attachments: new Array(6).fill({ name: 'a', dataUrl: 'data:image/png;base64,' }),
+				},
+			});
+			await vi.waitFor(() => expect(lastResponse().type).toBe('feedback_submit_result'));
+			expect(lastResponse().success).toBe(false);
+		});
+
+		it('feedback_subscribe forwards the issue number and comment', async () => {
+			handler.handleMessage(client, {
+				type: 'feedback_subscribe',
+				requestId: 'fsub',
+				issueNumber: 42,
+				comment: 'same here',
+			});
+			await vi.waitFor(() => expect(lastResponse().type).toBe('feedback_subscribe_result'));
+			expect(subscribeFeedbackIssue).toHaveBeenCalledWith({
+				issueNumber: 42,
+				comment: 'same here',
+			});
+		});
 	});
 });

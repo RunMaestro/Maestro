@@ -26,6 +26,10 @@ vi.mock('../../../main/cue/cue-cli-executor', () => ({
 	resolveMaestroCliScriptPath: () => '/fake/maestro-cli.js',
 }));
 vi.mock('../../../main/utils/sentry', () => ({ captureException: vi.fn() }));
+vi.mock('fs', () => ({
+	existsSync: vi.fn(() => true),
+	watch: vi.fn(() => ({ on: vi.fn(), close: vi.fn() })),
+}));
 vi.mock('../../../main/utils/logger', () => ({
 	logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
@@ -33,7 +37,7 @@ vi.mock('../../../main/utils/logger', () => ({
 // shelling out to taskkill against a fake pid on Windows.
 vi.mock('../../../shared/platformDetection', () => ({ isWindows: () => false }));
 
-import { PianolaSupervisor } from '../../../main/pianola/pianola-supervisor';
+import { PianolaSupervisor, type AutoWatchSession } from '../../../main/pianola/pianola-supervisor';
 import {
 	readSupervisorTargets,
 	writeSupervisorTargets,
@@ -94,8 +98,9 @@ let pidSeq: number;
 let enabled: boolean;
 let sup: PianolaSupervisor;
 
-function makeSupervisor(): PianolaSupervisor {
+function makeSupervisor(storedSessions?: AutoWatchSession[]): PianolaSupervisor {
 	return new PianolaSupervisor({
+		getStoredSessions: storedSessions ? () => storedSessions : undefined,
 		isEnabled: () => enabled,
 		getPianolaAgentId: () => 'pianola-agent',
 		spawnChild: () => {
@@ -134,6 +139,30 @@ afterEach(() => {
 });
 
 describe('PianolaSupervisor automatic watches', () => {
+	it('prunes orphaned automatic watches before starting children, preserving manual targets', () => {
+		const orphan = { ...watchTarget('orphan'), agentId: 'gone', autoCreated: true };
+		const retained = [
+			{ ...watchTarget('existing'), autoCreated: true },
+			{ ...watchTarget('manual'), agentId: 'gone' },
+			orchestrateTarget(),
+		];
+		setTargets([orphan, ...retained]);
+		vi.mocked(writeSupervisorTargets).mockImplementation((targets) => {
+			setTargets(targets);
+			return targets;
+		});
+		sup = makeSupervisor([{ id: 'a1', aiTabs: [{ id: 't1' }] }]);
+		sup.start();
+		expect(writeSupervisorTargets).toHaveBeenCalledWith(retained);
+		expect(
+			sup
+				.getHealth()
+				.map((target) => target.id)
+				.sort()
+		).toEqual(['existing', 'manual', 'o1']);
+		sup.stopAll();
+	});
+
 	it('registers only new top-level agents and waits for an AI tab', () => {
 		vi.mocked(writeSupervisorTargets).mockImplementation((targets) => {
 			setTargets(targets);

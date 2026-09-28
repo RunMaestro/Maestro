@@ -97,6 +97,8 @@ export interface PianolaSupervisorDeps {
 	isEnabled: () => boolean;
 	/** Resolves the isPianola session id, injected as MAESTRO_AGENT_ID for handoffs. */
 	getPianolaAgentId: () => string | undefined;
+	/** Stored sessions at startup, used to retire auto-watches left behind by a crash. */
+	getStoredSessions?: () => readonly AutoWatchSession[];
 	/** Spawns a supervised child; defaults to node:child_process spawn. Injectable for tests. */
 	spawnChild?: PianolaChildSpawner;
 }
@@ -130,7 +132,11 @@ export function staleTargets(
 export class PianolaSupervisor {
 	private readonly deps: PianolaSupervisorDeps;
 	private readonly children = new Map<string, SupervisedChild>();
-	/** Newly created agents whose first AI tab has not reached persistence yet. */
+	/**
+	 * Defensive same-process retry for incomplete writes. All supported creation
+	 * paths (modal, wizard, CLI/remote, plugin) persist their initial AI tab with
+	 * the agent, so no supported creation path relies on this set across restart.
+	 */
 	private readonly pendingAutoWatchIds = new Set<string>();
 	private watcher: fs.FSWatcher | null = null;
 	private reconcileTimer: ReturnType<typeof setTimeout> | undefined;
@@ -208,6 +214,15 @@ export class PianolaSupervisor {
 	/** Begin watching the store file and reconcile immediately. Idempotent. */
 	start(): void {
 		if (this.started) return;
+		if (this.deps.getStoredSessions) {
+			const storedIds = new Set(this.deps.getStoredSessions().map((session) => session.id));
+			const targets = readSupervisorTargets();
+			const retained = targets.filter(
+				(target) =>
+					!(target.kind === 'watch' && target.autoCreated && !storedIds.has(target.agentId ?? ''))
+			);
+			if (retained.length !== targets.length) writeSupervisorTargets(retained);
+		}
 		this.started = true;
 		this.startWatching();
 		this.reconcile();
