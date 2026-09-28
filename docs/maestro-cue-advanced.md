@@ -272,14 +272,14 @@ All prompts support `{{VARIABLE}}` syntax. Variables are replaced with event pay
 
 ### Agent Variables (`agent.completed`)
 
-| Variable                      | Description                                   |
-| ----------------------------- | --------------------------------------------- |
-| `{{CUE_SOURCE_SESSION}}`      | Source agent name(s)                          |
-| `{{CUE_SOURCE_OUTPUT}}`       | Source agent output (truncated to 5K)         |
-| `{{CUE_SOURCE_STATUS}}`       | Run status (`completed`, `failed`, `timeout`) |
-| `{{CUE_SOURCE_EXIT_CODE}}`    | Process exit code                             |
-| `{{CUE_SOURCE_DURATION}}`     | Run duration in milliseconds                  |
-| `{{CUE_SOURCE_TRIGGERED_BY}}` | Subscription that triggered the source run    |
+| Variable                      | Description                                              |
+| ----------------------------- | -------------------------------------------------------- |
+| `{{CUE_SOURCE_SESSION}}`      | Source agent name(s)                                     |
+| `{{CUE_SOURCE_OUTPUT}}`       | Source agent output (truncated to 5K)                    |
+| `{{CUE_SOURCE_STATUS}}`       | Run status (`completed`, `failed`, `stopped`, `timeout`) |
+| `{{CUE_SOURCE_EXIT_CODE}}`    | Process exit code                                        |
+| `{{CUE_SOURCE_DURATION}}`     | Run duration in milliseconds                             |
+| `{{CUE_SOURCE_TRIGGERED_BY}}` | Subscription that triggered the source run               |
 
 ### GitHub Variables (`github.pull_request`, `github.issue`)
 

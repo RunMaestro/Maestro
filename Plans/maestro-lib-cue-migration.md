@@ -31,6 +31,10 @@ a pipeline must not chain off a silent failure or a truncated answer:
 deliberate stop resolves as `interrupted` rather than as a crash caused by our
 own SIGTERM.
 
+Desktop agent turns exiting through `exit-listener.ts` similarly resolve their
+turn settlement via `cueStatusForTurn` (in `cue-turn-status.ts`), aligning
+desktop `agent.completed` trigger notifications with Cue's own execution.
+
 ## Decisions
 
 **1. `timeout` stays Cue's own status (turn contract open question 3).**
