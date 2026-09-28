@@ -5,6 +5,7 @@
  * start_group_chat, get_group_chat_state, send_group_chat_message, stop_group_chat.
  */
 
+import type { StartGroupChatOptions } from '../../types';
 import type { WebClient, WebClientMessage, MessageHandlerContext } from './types';
 
 /**
@@ -30,12 +31,17 @@ export function handleGetGroupChats(
 			});
 		})
 		.catch((error) => {
-			ctx.sendError(client, `Failed to get group chats: ${error.message}`);
+			ctx.sendError(client, `Failed to get group chats: ${error.message}`, {
+				requestId: message.requestId,
+			});
 		});
 }
 
 /**
- * Handle start_group_chat message - start a new group chat
+ * Handle start_group_chat message - start a new group chat.
+ *
+ * Validation errors carry the requestId so a CLI caller gets the reason
+ * instead of waiting out its command timeout.
  */
 export function handleStartGroupChat(
 	ctx: MessageHandlerContext,
@@ -44,34 +50,48 @@ export function handleStartGroupChat(
 ): void {
 	const topic = message.topic as string;
 	const participantIds = message.participantIds as string[];
+	const reply = { requestId: message.requestId };
 
 	if (!topic || typeof topic !== 'string') {
-		ctx.sendError(client, 'Missing or invalid topic');
+		ctx.sendError(client, 'Missing or invalid topic', reply);
 		return;
 	}
 
-	if (!participantIds || !Array.isArray(participantIds) || participantIds.length < 2) {
-		ctx.sendError(client, 'At least 2 participants are required');
+	if (
+		!Array.isArray(participantIds) ||
+		participantIds.length === 0 ||
+		participantIds.some((id) => typeof id !== 'string' || !id)
+	) {
+		ctx.sendError(client, 'At least 1 participant is required', reply);
 		return;
+	}
+
+	const options: StartGroupChatOptions = {};
+	if (typeof message.moderatorAgentId === 'string' && message.moderatorAgentId) {
+		options.moderatorAgentId = message.moderatorAgentId;
+	}
+	if (typeof message.message === 'string' && message.message.trim()) {
+		options.message = message.message;
 	}
 
 	if (!ctx.callbacks.startGroupChat) {
-		ctx.sendError(client, 'Group chat not configured');
+		ctx.sendError(client, 'Group chat not configured', reply);
 		return;
 	}
 
 	ctx.callbacks
-		.startGroupChat(topic, participantIds)
+		.startGroupChat(topic, participantIds, options)
 		.then((result) => {
 			ctx.send(client, {
 				type: 'start_group_chat_result',
-				success: !!result,
+				success: !!result?.chatId && !result.error,
 				chatId: result?.chatId,
+				error: result ? result.error : 'The desktop app did not answer',
 				requestId: message.requestId,
 			});
 		})
 		.catch((error) => {
-			ctx.sendError(client, `Failed to start group chat: ${error.message}`);
+			ctx.sendError(client, `Failed to start group chat: ${error.message}`, reply);
 		});
 }
 
@@ -86,12 +106,12 @@ export function handleGetGroupChatState(
 	const chatId = message.chatId as string;
 
 	if (!chatId) {
-		ctx.sendError(client, 'Missing chatId');
+		ctx.sendError(client, 'Missing chatId', { requestId: message.requestId });
 		return;
 	}
 
 	if (!ctx.callbacks.getGroupChatState) {
-		ctx.sendError(client, 'Group chat not configured');
+		ctx.sendError(client, 'Group chat not configured', { requestId: message.requestId });
 		return;
 	}
 
@@ -106,7 +126,9 @@ export function handleGetGroupChatState(
 			});
 		})
 		.catch((error) => {
-			ctx.sendError(client, `Failed to get group chat state: ${error.message}`);
+			ctx.sendError(client, `Failed to get group chat state: ${error.message}`, {
+				requestId: message.requestId,
+			});
 		});
 }
 
@@ -122,17 +144,17 @@ export function handleSendGroupChatMessage(
 	const chatMessage = message.message as string;
 
 	if (!chatId) {
-		ctx.sendError(client, 'Missing chatId');
+		ctx.sendError(client, 'Missing chatId', { requestId: message.requestId });
 		return;
 	}
 
 	if (!chatMessage || typeof chatMessage !== 'string') {
-		ctx.sendError(client, 'Missing or invalid message');
+		ctx.sendError(client, 'Missing or invalid message', { requestId: message.requestId });
 		return;
 	}
 
 	if (!ctx.callbacks.sendGroupChatMessage) {
-		ctx.sendError(client, 'Group chat not configured');
+		ctx.sendError(client, 'Group chat not configured', { requestId: message.requestId });
 		return;
 	}
 
@@ -147,7 +169,9 @@ export function handleSendGroupChatMessage(
 			});
 		})
 		.catch((error) => {
-			ctx.sendError(client, `Failed to send group chat message: ${error.message}`);
+			ctx.sendError(client, `Failed to send group chat message: ${error.message}`, {
+				requestId: message.requestId,
+			});
 		});
 }
 
@@ -162,12 +186,12 @@ export function handleStopGroupChat(
 	const chatId = message.chatId as string;
 
 	if (!chatId) {
-		ctx.sendError(client, 'Missing chatId');
+		ctx.sendError(client, 'Missing chatId', { requestId: message.requestId });
 		return;
 	}
 
 	if (!ctx.callbacks.stopGroupChat) {
-		ctx.sendError(client, 'Group chat not configured');
+		ctx.sendError(client, 'Group chat not configured', { requestId: message.requestId });
 		return;
 	}
 
@@ -182,6 +206,8 @@ export function handleStopGroupChat(
 			});
 		})
 		.catch((error) => {
-			ctx.sendError(client, `Failed to stop group chat: ${error.message}`);
+			ctx.sendError(client, `Failed to stop group chat: ${error.message}`, {
+				requestId: message.requestId,
+			});
 		});
 }

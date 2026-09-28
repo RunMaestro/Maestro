@@ -97,6 +97,12 @@ function rewriteStandardLinks(
 
 		if (projectRoot && decoded.startsWith('/')) {
 			resolved = toRelativePath(decoded, projectRoot);
+			if (!resolved) {
+				// Outside projectRoot - same treatment as the tilde branch below, so
+				// openFileUrl can route it (preview tab, player, or the OS).
+				token.attrSet('href', `file://${decoded}`);
+				continue;
+			}
 		}
 		if (!resolved && homeDir && decoded.startsWith('~/')) {
 			const absolute = homeDir + decoded.slice(1);
@@ -105,7 +111,7 @@ function rewriteStandardLinks(
 				resolved = relative;
 			} else {
 				// Outside projectRoot - emit a file:// URL so the click handler can
-				// hand it to shell.openPath.
+				// route it through openFileUrl (preview tab, player, or the OS).
 				token.attrSet('href', `file://${absolute}`);
 				continue;
 			}

@@ -12,8 +12,10 @@ import {
 	listWorktreesRemote,
 } from '../../../utils/remote-git';
 import { markStaleForDeletedWorktreeUsingStore } from '../../../agent-run/worktree-stale';
-import { setupWorktreeLocal } from '../../../utils/git-worktree';
+import { runWorktreeSetupScript } from '../../../utils/worktree-setup-script';
+import type { SshRemoteConfig } from '../../../../shared/types';
 import { LOG_CONTEXT, handlerOpts } from './shared';
+import { setupWorktreeLocal } from '../../../utils/git-worktree';
 
 /**
  * Register worktree lifecycle Git IPC handlers: worktreeInfo, worktreeSetup,
@@ -146,16 +148,45 @@ export function registerWorktreeHandlers(): void {
 					return result.data;
 				}
 
-				// Local execution: delegated to the single shared implementation in
-				// `utils/git-worktree` so the Board's per-card provisioning and this
-				// handler cannot drift apart.
+				// Local execution (existing code)
 				logger.debug(
 					`worktreeSetup called with: ${JSON.stringify({ mainRepoCwd, worktreePath, branchName, baseBranch })}`,
 					LOG_CONTEXT
 				);
-				return setupWorktreeLocal(mainRepoCwd, worktreePath, branchName, baseBranch, (msg) =>
-					logger.debug(msg, LOG_CONTEXT)
+
+				return setupWorktreeLocal(mainRepoCwd, worktreePath, branchName, baseBranch, (message) =>
+					logger.debug(message, LOG_CONTEXT)
 				);
+			}
+		)
+	);
+
+	// Run the agent's configured post-create setup script inside a new worktree.
+	// Callers invoke this right after `worktreeSetup` reports a freshly created
+	// worktree; a blank script is a no-op (ran: false).
+	// Supports SSH remote execution via optional sshRemoteId parameter.
+	ipcMain.handle(
+		'git:worktreeRunSetup',
+		withIpcErrorLogging(
+			handlerOpts('worktreeRunSetup'),
+			async (
+				script: string,
+				context: {
+					worktreePath: string;
+					branchName: string;
+					mainRepoPath: string;
+					baseBranch?: string;
+				},
+				sshRemoteId?: string
+			) => {
+				let sshConfig: SshRemoteConfig | undefined;
+				if (sshRemoteId) {
+					sshConfig = getSshRemoteById(sshRemoteId);
+					if (!sshConfig) {
+						throw new Error(`SSH remote not found: ${sshRemoteId}`);
+					}
+				}
+				return runWorktreeSetupScript(script, context, sshConfig);
 			}
 		)
 	);

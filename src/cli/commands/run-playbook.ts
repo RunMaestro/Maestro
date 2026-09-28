@@ -25,6 +25,8 @@ interface RunPlaybookOptions {
 	 */
 	model?: string;
 	effort?: string;
+	/** Skip the documents' MAESTRO:MODEL markers for this run (--ignore-model-hints). */
+	ignoreModelHints?: boolean;
 }
 
 export async function runPlaybook(playbookId: string, options: RunPlaybookOptions): Promise<void> {
@@ -119,6 +121,9 @@ export async function runPlaybook(playbookId: string, options: RunPlaybookOption
 			const runEffort = options.effort?.trim();
 			if (runModel) console.log(formatInfo(`Model: ${runModel} (this run only)`));
 			if (runEffort) console.log(formatInfo(`Effort: ${runEffort} (this run only)`));
+			if (options.ignoreModelHints) {
+				console.log(formatInfo('Model hints in documents: ignored (this run only)'));
+			}
 			if (options.dryRun) {
 				console.log(formatInfo('Dry run mode - no changes will be made'));
 			}
@@ -134,6 +139,7 @@ export async function runPlaybook(playbookId: string, options: RunPlaybookOption
 			skipSynopsis: options.synopsis === false, // --no-synopsis sets synopsis to false
 			model: options.model?.trim() || undefined,
 			effort: options.effort?.trim() || undefined,
+			ignoreModelHints: options.ignoreModelHints || undefined,
 		});
 
 		for await (const event of generator) {

@@ -12,6 +12,8 @@ Directory write restrictions for Maestro-managed agents and the Auto Run folder 
 
 **Exception:** The Auto Run folder (`{{AUTORUN_FOLDER}}`) is explicitly allowed even if it's outside your working directory. This enables worktree sessions to share Auto Run documents with their parent repository.
 
+**Exception:** The Worktree Directory (`{{WORKTREE_BASE_PATH}}`, when set) is where git worktrees of this repository live. It is reached only through `maestro-cli create-worktree`, which creates the checkout there and registers it as a worktree agent, and through work done inside a worktree you created that way. It is not a general scratch area, and a bare `git worktree add` anywhere is still prohibited.
+
 **Additional Directories:** The Conductor may grant extra directories, each with its own Read and/or Write permission. When granted, they appear as an "Additional Directories" table in your Maestro system prompt. Those grants are additive to the rules below and their listed permission is binding: a Read-only grant must never be written to, and a Write-only grant must never be read back.
 
 This restriction ensures:

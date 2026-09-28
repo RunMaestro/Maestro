@@ -10,9 +10,10 @@
  * on initialization logic only.
  */
 
+import path from 'path';
 import { app } from 'electron';
 import Store from 'electron-store';
-import { parseJsonWithBom } from '../../shared/jsonUtils';
+import { createStoreDeserializer } from './corrupt-store-recovery';
 
 import type {
 	BootstrapSettings,
@@ -41,9 +42,22 @@ import { getCustomSyncPath } from './utils';
 import { migrateWindowStateToMultiWindow } from './migrations/multi-window-state';
 import { readExistingAgentIds } from '../window-state-persistence';
 import { trackStoreWrites } from './write-tracker';
+import { deferStoreWrites, type DeferredWriteStore } from './deferred-writes';
 
-function deserializeStoreJson<T = Record<string, unknown>>(value: string): T {
-	return parseJsonWithBom<T>(value);
+/**
+ * `deserialize` hook for the store named `name` under `cwd`.
+ *
+ * The path has to be rebuilt here rather than read off the Store, because conf
+ * calls `deserialize` from inside its own constructor - there is no instance to
+ * ask yet. It mirrors conf's own `path.resolve(cwd, `${name}.json`)`.
+ *
+ * See `stores/corrupt-store-recovery.ts` for why this is not a bare JSON.parse.
+ */
+function deserializeStoreJson<T = Record<string, unknown>>(
+	name: string,
+	cwd: string
+): (value: string) => T {
+	return createStoreDeserializer<T>(path.resolve(cwd, `${name}.json`));
 }
 
 // ============================================================================
@@ -53,6 +67,7 @@ function deserializeStoreJson<T = Record<string, unknown>>(value: string): T {
 let _bootstrapStore: Store<BootstrapSettings> | null = null;
 let _settingsStore: Store<MaestroSettings> | null = null;
 let _sessionsStore: Store<SessionsData> | null = null;
+let _sessionsWriter: DeferredWriteStore<SessionsData> | null = null;
 let _groupsStore: Store<GroupsData> | null = null;
 let _agentConfigsStore: Store<AgentConfigsData> | null = null;
 let _agentCapabilitiesStore: Store<AgentCapabilitiesData> | null = null;
@@ -85,20 +100,21 @@ export function initializeStores(options: StoreInitOptions): {
 } {
 	const { productionDataPath } = options;
 	_productionDataPath = productionDataPath;
+	const userDataPath = app.getPath('userData');
 
 	// 1. Initialize bootstrap store first (determines sync path)
 	_bootstrapStore = new Store<BootstrapSettings>({
 		name: 'maestro-bootstrap',
-		cwd: app.getPath('userData'),
+		cwd: userDataPath,
 		defaults: {},
-		deserialize: deserializeStoreJson,
+		deserialize: deserializeStoreJson('maestro-bootstrap', userDataPath),
 	});
 
 	// 2. Determine sync path
-	_syncPath = getCustomSyncPath(_bootstrapStore) || app.getPath('userData');
+	_syncPath = getCustomSyncPath(_bootstrapStore) || userDataPath;
 
 	// Log paths for debugging
-	console.log(`[STARTUP] userData path: ${app.getPath('userData')}`);
+	console.log(`[STARTUP] userData path: ${userDataPath}`);
 	console.log(`[STARTUP] syncPath (sessions/settings): ${_syncPath}`);
 	console.log(`[STARTUP] productionDataPath (agent configs): ${_productionDataPath}`);
 
@@ -110,23 +126,34 @@ export function initializeStores(options: StoreInitOptions): {
 			name: 'maestro-settings',
 			cwd: _syncPath,
 			defaults: SETTINGS_DEFAULTS,
-			deserialize: deserializeStoreJson,
+			deserialize: deserializeStoreJson('maestro-settings', _syncPath),
 		}),
 		'maestro-settings.json'
 	);
 
-	_sessionsStore = new Store<SessionsData>({
-		name: 'maestro-sessions',
-		cwd: _syncPath,
-		defaults: SESSIONS_DEFAULTS,
-		deserialize: deserializeStoreJson,
-	});
+	// The sessions store is read and written far more than any other, and is the
+	// only one that grows with agent count into the multi-megabyte range. Served
+	// from an in-memory cache and flushed asynchronously so a streaming turn
+	// can't block the UI thread that dispatches keyboard input (issue #1501).
+	// Safe to cache: single-instance lock, no file watcher, and maestro-cli only
+	// reads this file. See stores/deferred-writes.ts.
+	const sessionsWriter = deferStoreWrites(
+		new Store<SessionsData>({
+			name: 'maestro-sessions',
+			cwd: _syncPath,
+			defaults: SESSIONS_DEFAULTS,
+			deserialize: deserializeStoreJson('maestro-sessions', _syncPath),
+		}),
+		'sessions'
+	);
+	_sessionsWriter = sessionsWriter;
+	_sessionsStore = sessionsWriter.store;
 
 	_groupsStore = new Store<GroupsData>({
 		name: 'maestro-groups',
 		cwd: _syncPath,
 		defaults: GROUPS_DEFAULTS,
-		deserialize: deserializeStoreJson,
+		deserialize: deserializeStoreJson('maestro-groups', _syncPath),
 	});
 
 	// Agent configs are ALWAYS stored in the production path, even in dev mode
@@ -136,7 +163,7 @@ export function initializeStores(options: StoreInitOptions): {
 			name: 'maestro-agent-configs',
 			cwd: _productionDataPath,
 			defaults: AGENT_CONFIGS_DEFAULTS,
-			deserialize: deserializeStoreJson,
+			deserialize: deserializeStoreJson('maestro-agent-configs', productionDataPath),
 		}),
 		'maestro-agent-configs.json'
 	);
@@ -148,14 +175,15 @@ export function initializeStores(options: StoreInitOptions): {
 		name: 'maestro-agent-capabilities',
 		cwd: _productionDataPath,
 		defaults: AGENT_CAPABILITIES_DEFAULTS,
-		deserialize: deserializeStoreJson,
+		deserialize: deserializeStoreJson('maestro-agent-capabilities', productionDataPath),
 	});
 
 	// Window state is intentionally NOT synced - it's per-device
 	_windowStateStore = new Store<WindowState>({
 		name: 'maestro-window-state',
 		defaults: WINDOW_STATE_DEFAULTS,
-		deserialize: deserializeStoreJson,
+		// No `cwd` - electron-store defaults it to userData.
+		deserialize: deserializeStoreJson('maestro-window-state', userDataPath),
 	});
 
 	// Fold any legacy single-window bounds into the multi-window schema. Runs
@@ -170,7 +198,7 @@ export function initializeStores(options: StoreInitOptions): {
 		name: 'maestro-claude-session-origins',
 		cwd: _syncPath,
 		defaults: CLAUDE_SESSION_ORIGINS_DEFAULTS,
-		deserialize: deserializeStoreJson,
+		deserialize: deserializeStoreJson('maestro-claude-session-origins', _syncPath),
 	});
 
 	// Generic agent session origins - supports all agents (Codex, OpenCode, etc.)
@@ -178,7 +206,7 @@ export function initializeStores(options: StoreInitOptions): {
 		name: 'maestro-agent-session-origins',
 		cwd: _syncPath,
 		defaults: AGENT_SESSION_ORIGINS_DEFAULTS,
-		deserialize: deserializeStoreJson,
+		deserialize: deserializeStoreJson('maestro-agent-session-origins', _syncPath),
 	});
 
 	return {
@@ -217,4 +245,28 @@ export function getCachedPaths() {
 		syncPath: _syncPath,
 		productionDataPath: _productionDataPath,
 	};
+}
+
+/**
+ * Write any pending sessions document to disk synchronously.
+ *
+ * Sessions are normally flushed asynchronously behind a short coalescing timer
+ * (see stores/deferred-writes.ts). On the quit path there is no later tick to
+ * rely on - the process is force-exited shortly after cleanup - so the last
+ * write has to land before we return. No-op when nothing is pending.
+ */
+export function flushPendingSessionWritesSync(): void {
+	_sessionsWriter?.flushSync();
+}
+
+/**
+ * Resolve after pending session changes pass through their bounded coalescing
+ * window and become durable.
+ *
+ * Session persistence IPC handlers await this so their boolean acknowledgement
+ * retains its original meaning: `true` means the update reached disk, while a
+ * rejected write leaves the renderer's diff baseline dirty for a later retry.
+ */
+export async function flushPendingSessionWrites(): Promise<void> {
+	await _sessionsWriter?.flushAsync();
 }

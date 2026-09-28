@@ -123,6 +123,27 @@ describe('HistoryDetailModal', () => {
 			// The timestamp should be formatted (month, day, time)
 			expect(screen.getByText(/Jun/i)).toBeInTheDocument();
 		});
+
+		it('should render the sender pill for a turn a browser sent', () => {
+			render(
+				<HistoryDetailModal
+					theme={mockTheme}
+					entry={createMockEntry({ userName: 'pedram', userDisplayName: 'Pedram A' })}
+					onClose={mockOnClose}
+				/>
+			);
+
+			expect(screen.getByTitle('Sent by pedram')).toBeInTheDocument();
+			expect(screen.getByText('Pedram A')).toBeInTheDocument();
+		});
+
+		it('should draw no sender pill for a turn typed at the desktop', () => {
+			render(
+				<HistoryDetailModal theme={mockTheme} entry={createMockEntry()} onClose={mockOnClose} />
+			);
+
+			expect(screen.queryByTitle(/^Sent by /)).not.toBeInTheDocument();
+		});
 	});
 
 	describe('Entry Types', () => {
@@ -187,7 +208,7 @@ describe('HistoryDetailModal', () => {
 			);
 
 			const validatedIndicator = screen.getByTitle(
-				'Task completed successfully and human-validated'
+				'Task completed successfully, and you marked it as checked'
 			);
 			expect(validatedIndicator).toBeInTheDocument();
 		});
@@ -420,7 +441,11 @@ describe('HistoryDetailModal', () => {
 			render(
 				<HistoryDetailModal
 					theme={mockTheme}
-					entry={createMockEntry({ agentSessionId: sessionId })}
+					entry={createMockEntry({
+						agentSessionId: sessionId,
+						projectPath: '/test/project',
+						sessionName: 'PP Farm Meta Data',
+					})}
 					onClose={mockOnClose}
 					onResumeSession={mockOnResumeSession}
 				/>
@@ -428,7 +453,13 @@ describe('HistoryDetailModal', () => {
 
 			fireEvent.click(screen.getByRole('button', { name: 'Resume' }));
 
-			expect(mockOnResumeSession).toHaveBeenCalledWith(sessionId);
+			// The name travels with the id: the restored tab is otherwise named
+			// after the id octet even though this modal was showing the real name.
+			expect(mockOnResumeSession).toHaveBeenCalledWith(
+				sessionId,
+				'/test/project',
+				'PP Farm Meta Data'
+			);
 			expect(mockOnClose).toHaveBeenCalled();
 		});
 
@@ -1137,6 +1168,78 @@ describe('HistoryDetailModal', () => {
 			expect(mockOnNavigate).toHaveBeenCalledWith(mockEntries[2], 2);
 		});
 
+		// Enter opens this modal from the History list, so the list's Cmd+Enter
+		// has to keep working once you are inside it - otherwise the shortcut
+		// silently stops halfway through the flow it belongs to.
+		it('should jump to the entry session with Cmd+Enter and close', () => {
+			const entry = createMockEntry({
+				agentSessionId: 'abc12345-def6-7890',
+				projectPath: '/test/project',
+				sessionName: 'Named Session',
+			});
+			render(
+				<HistoryDetailModal
+					theme={mockTheme}
+					entry={entry}
+					onClose={mockOnClose}
+					filteredEntries={[entry]}
+					currentIndex={0}
+					onNavigate={mockOnNavigate}
+					onResumeSession={mockOnResumeSession}
+				/>
+			);
+
+			fireEvent.keyDown(window, { key: 'Enter', metaKey: true });
+
+			expect(mockOnResumeSession).toHaveBeenCalledWith(
+				'abc12345-def6-7890',
+				'/test/project',
+				'Named Session'
+			);
+			expect(mockOnClose).toHaveBeenCalled();
+		});
+
+		it('should not jump on plain Enter', () => {
+			const entry = createMockEntry({ agentSessionId: 'abc12345-def6-7890' });
+			render(
+				<HistoryDetailModal
+					theme={mockTheme}
+					entry={entry}
+					onClose={mockOnClose}
+					filteredEntries={[entry]}
+					currentIndex={0}
+					onNavigate={mockOnNavigate}
+					onResumeSession={mockOnResumeSession}
+				/>
+			);
+
+			fireEvent.keyDown(window, { key: 'Enter' });
+
+			expect(mockOnResumeSession).not.toHaveBeenCalled();
+		});
+
+		// Nothing to resume: the modal must stay open rather than closing on a
+		// shortcut that did nothing.
+		it('should stay open on Cmd+Enter when the entry has no session', () => {
+			const entry = createMockEntry({ agentSessionId: undefined });
+			render(
+				<HistoryDetailModal
+					theme={mockTheme}
+					entry={entry}
+					onClose={mockOnClose}
+					filteredEntries={[entry]}
+					currentIndex={0}
+					onNavigate={mockOnNavigate}
+					onResumeSession={mockOnResumeSession}
+				/>
+			);
+
+			fireEvent.keyDown(window, { key: 'Enter', metaKey: true });
+
+			expect(mockOnResumeSession).not.toHaveBeenCalled();
+			expect(mockOnClose).not.toHaveBeenCalled();
+		});
+
 		it('should not navigate when delete confirmation is showing', () => {
 			render(
 				<HistoryDetailModal
@@ -1627,7 +1730,7 @@ describe('HistoryDetailModal', () => {
 			expect(pills.length).toBe(2);
 			const pillElement = pills.find((el) => el.tagName === 'SPAN');
 			expect(pillElement).toBeDefined();
-			expect(pillElement).toHaveClass('rounded-full', 'text-[10px]', 'font-bold');
+			expect(pillElement).toHaveClass('rounded-full', 'text-2xs', 'font-bold');
 		});
 	});
 

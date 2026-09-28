@@ -461,6 +461,56 @@ describe('cue-stats-query - getCueStatsAggregation', () => {
 		});
 	});
 
+	describe('excludeTriggerTypes filter', () => {
+		function heartbeatHeavy(now: number) {
+			return [
+				makeEvent({ id: 'h1', type: 'time.heartbeat', createdAt: now - 60_000 }),
+				makeEvent({ id: 'h2', type: 'time.heartbeat', createdAt: now - 50_000 }),
+				makeEvent({ id: 'h3', type: 'time.heartbeat', createdAt: now - 40_000 }),
+				makeEvent({ id: 'f1', type: 'file.changed', createdAt: now - 30_000 }),
+			];
+		}
+
+		it('drops the excluded types from totals and every rollup', async () => {
+			const now = Date.now();
+			mockEvents = heartbeatHeavy(now);
+
+			const result = await getCueStatsAggregation('day', {
+				excludeTriggerTypes: ['time.heartbeat'],
+			});
+
+			expect(result.totals.occurrences).toBe(1);
+			expect(result.byTriggerType.map((g) => g.key)).toEqual(['file.changed']);
+			expect(result.excludedTriggerTypes).toEqual(['time.heartbeat']);
+			expect(result.byHourOfDay.reduce((sum, bucket) => sum + bucket.occurrences, 0)).toBe(1);
+			expect(result.timeSeries.reduce((sum, bucket) => sum + bucket.occurrences, 0)).toBe(1);
+		});
+
+		it('still reports the excluded type in triggerTypeOptions with its full count', async () => {
+			const now = Date.now();
+			mockEvents = heartbeatHeavy(now);
+
+			const result = await getCueStatsAggregation('day', {
+				excludeTriggerTypes: ['time.heartbeat'],
+			});
+
+			expect(result.triggerTypeOptions).toEqual([
+				{ key: 'time.heartbeat', label: 'Heartbeat', occurrences: 3 },
+				{ key: 'file.changed', label: 'File Change', occurrences: 1 },
+			]);
+		});
+
+		it('is a no-op when no exclusions are supplied', async () => {
+			const now = Date.now();
+			mockEvents = heartbeatHeavy(now);
+
+			const result = await getCueStatsAggregation('day');
+
+			expect(result.totals.occurrences).toBe(4);
+			expect(result.excludedTriggerTypes).toEqual([]);
+		});
+	});
+
 	describe('byHourOfDay distribution', () => {
 		it('always returns 24 entries (hour 0..23) regardless of input volume', async () => {
 			mockEvents = [];

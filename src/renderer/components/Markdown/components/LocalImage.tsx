@@ -11,6 +11,7 @@
 import React, { memo, useEffect, useMemo, useState } from 'react';
 import { ImageOff } from 'lucide-react';
 import { Spinner } from '../../ui/Spinner';
+import { safeDecodeURIComponent } from '../../../../shared/stringUtils';
 import type { Theme } from '../../../types';
 
 // Module-level cache for local images to prevent flicker on re-render.
@@ -28,6 +29,20 @@ function cacheLocalImage(filePath: string, dataUrl: string): void {
 	localImageCache.set(filePath, dataUrl);
 }
 
+/**
+ * Turn a markdown image `src` into the on-disk path to hand `fs.readFile`.
+ *
+ * Percent-decoding is NOT optional and NOT limited to `file://`: mdast-util-to-hast
+ * runs every destination through `normalizeUri`, so `![x](</a/Prop Firm/x.png>)`
+ * reaches this component as `/a/Prop%20Firm/x.png`. Reading that literal string is
+ * an ENOENT, which the loader reports as a broken image for a file that is right
+ * there. Any path with a space, a `#`, or a non-ASCII character hits it.
+ */
+export function resolveLocalImagePath(src: string): string {
+	const withoutProtocol = src.startsWith('file://') ? src.slice('file://'.length) : src;
+	return safeDecodeURIComponent(withoutProtocol);
+}
+
 export interface LocalImageProps {
 	src?: string;
 	alt?: string;
@@ -40,19 +55,6 @@ export interface LocalImageProps {
 	draggable?: boolean;
 	/** SSH remote ID for remote file operations */
 	sshRemoteId?: string;
-}
-
-/** Extract the path from a file:// URL. Agent-authored paths can carry
- *  malformed percent-encoding (e.g. %ZZ) that makes decodeURIComponent throw
- *  mid-render; fall back to the raw path so one bad URL degrades to a broken
- *  image instead of taking down the surface rendering it. */
-function safeDecodeFileUrl(src: string): string {
-	const raw = src.replace('file://', '');
-	try {
-		return decodeURIComponent(raw);
-	} catch {
-		return raw;
-	}
 }
 
 // Helper to compute initial image state synchronously from cache.
@@ -73,10 +75,7 @@ function getLocalImageInitialState(src: string | undefined) {
 	}
 
 	// Check cache for file paths
-	let filePath = src;
-	if (src.startsWith('file://')) {
-		filePath = safeDecodeFileUrl(src);
-	}
+	const filePath = resolveLocalImagePath(src);
 
 	if (localImageCache.has(filePath)) {
 		return { dataUrl: localImageCache.get(filePath)!, loading: false };
@@ -108,11 +107,8 @@ export const LocalImage = memo((props: LocalImageProps) => {
 			return;
 		}
 
-		// For file:// URLs, extract the path and load via IPC
-		let filePath = src;
-		if (src.startsWith('file://')) {
-			filePath = safeDecodeFileUrl(src);
-		}
+		// Strip any file:// prefix and percent-decode before the IPC read
+		const filePath = resolveLocalImagePath(src);
 
 		// Double-check cache
 		if (localImageCache.has(filePath)) {

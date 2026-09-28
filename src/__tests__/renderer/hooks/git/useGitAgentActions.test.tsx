@@ -10,14 +10,27 @@ import {
 	resolveGitCwd,
 	resolveGitSshRemoteId,
 } from '../../../../renderer/hooks/git/useGitAgentActions';
+import {
+	gitRunKey,
+	useGitCommandRunStore,
+	type GitCommandRun,
+	type GitRunStatus,
+} from '../../../../renderer/stores/gitCommandRunStore';
 import type { Session } from '../../../../renderer/types';
 
 const DEFAULT_BRANCH_INFO = { branch: 'feature/login', remote: '', ahead: 4, behind: 1 };
 const mockGetBranchInfo = vi.fn(() => DEFAULT_BRANCH_INFO);
 const mockRefreshGitStatus = vi.fn().mockResolvedValue(undefined);
+const DEFAULT_FILE_DETAILS = { totalAdditions: 206, totalDeletions: 37, modifiedCount: 5 };
+const mockGetFileDetails = vi.fn(() => DEFAULT_FILE_DETAILS);
+const mockGetFileCount = vi.fn(() => 5);
 vi.mock('../../../../renderer/contexts/GitStatusContext', () => ({
 	useGitBranch: () => ({ getBranchInfo: mockGetBranchInfo }),
-	useGitDetail: () => ({ refreshGitStatus: mockRefreshGitStatus }),
+	useGitDetail: () => ({
+		getFileDetails: mockGetFileDetails,
+		refreshGitStatus: mockRefreshGitStatus,
+	}),
+	useGitFileStatus: () => ({ getFileCount: mockGetFileCount }),
 }));
 
 const mockGetDiff = vi.fn();
@@ -110,7 +123,42 @@ describe('useGitAgentActions', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		mockGetBranchInfo.mockReturnValue(DEFAULT_BRANCH_INFO);
+		mockGetFileDetails.mockReturnValue(DEFAULT_FILE_DETAILS);
+		mockGetFileCount.mockReturnValue(5);
 		mockGetDiff.mockResolvedValue({ diff: 'diff --git a/x b/x' });
+	});
+
+	// Every git surface badges its diff row off these, so they have to survive
+	// the trip out of the two separate contexts that carry them.
+	it('surfaces the working-tree change totals', () => {
+		const { result } = renderHook(() => useGitAgentActions(makeSession()));
+
+		expect(result.current.changes).toEqual({
+			fileCount: 5,
+			additions: 206,
+			deletions: 37,
+			modified: 5,
+		});
+	});
+
+	it('reports zero line counts for an agent with no detail polled', () => {
+		// Only the active agent gets numstat, so the others have counts but no lines.
+		mockGetFileDetails.mockReturnValue(undefined as unknown as typeof DEFAULT_FILE_DETAILS);
+		mockGetFileCount.mockReturnValue(4);
+		const { result } = renderHook(() => useGitAgentActions(makeSession()));
+
+		expect(result.current.changes).toEqual({
+			fileCount: 4,
+			additions: 0,
+			deletions: 0,
+			modified: 0,
+		});
+	});
+
+	it('reports a clean tree for a null session', () => {
+		const { result } = renderHook(() => useGitAgentActions(null));
+
+		expect(result.current.changes.fileCount).toBe(0);
 	});
 
 	it('surfaces the polled branch and ahead/behind counts', () => {
@@ -162,6 +210,9 @@ describe('useGitAgentActions', () => {
 		expect(mockOpenModal).toHaveBeenCalledWith('gitLog', {
 			cwd: '/test/repo',
 			sshRemoteId: undefined,
+			// Names the agent in the viewer header: the cwd pill alone does not
+			// identify it, since worktrees of one repo share a path prefix.
+			sessionId: 'session-1',
 		});
 	});
 
@@ -229,6 +280,7 @@ describe('useGitAgentActions', () => {
 			expect(mockOpenModal).toHaveBeenCalledWith('gitDiff', {
 				diff: 'diff --git a/x b/x',
 				cwd: '/other/repo',
+				sessionId: 'session-1',
 			});
 		});
 
@@ -311,6 +363,87 @@ describe('useGitAgentActions', () => {
 		it('is unavailable for a non-git agent', () => {
 			const { result } = renderHook(() => useGitAgentActions(makeSession({ isGitRepo: false })));
 			expect(result.current.canConfigureWorktrees).toBe(false);
+		});
+	});
+
+	// A pull/push survives its console being dismissed with Run in Background,
+	// so every menu row has to be able to say the command is still going.
+	describe('background run indicators', () => {
+		function seedRun(overrides: Partial<GitCommandRun> & { operation: 'pull' | 'push' }) {
+			const key = gitRunKey({ operation: overrides.operation, cwd: '/test/repo' });
+			useGitCommandRunStore.setState({
+				runs: {
+					[key]: {
+						key,
+						runId: 'run-1',
+						sessionId: 'session-1',
+						cwd: '/test/repo',
+						setUpstream: false,
+						output: '',
+						status: 'running' as GitRunStatus,
+						announced: false,
+						...overrides,
+					} as GitCommandRun,
+				},
+			});
+			return key;
+		}
+
+		beforeEach(() => {
+			useGitCommandRunStore.setState({ runs: {} });
+		});
+
+		it('reports nothing running on a quiet repo', () => {
+			const { result } = renderHook(() => useGitAgentActions(makeSession()));
+
+			expect(result.current.pullRunning).toBe(false);
+			expect(result.current.pushRunning).toBe(false);
+		});
+
+		it('flags the operation that is running, not the other one', () => {
+			seedRun({ operation: 'push' });
+			const { result } = renderHook(() => useGitAgentActions(makeSession()));
+
+			expect(result.current.pushRunning).toBe(true);
+			expect(result.current.pullRunning).toBe(false);
+		});
+
+		it('stops flagging once the run settles', () => {
+			seedRun({ operation: 'push', status: 'success' });
+			const { result } = renderHook(() => useGitAgentActions(makeSession()));
+
+			expect(result.current.pushRunning).toBe(false);
+		});
+
+		// Runs are keyed by repo, so a push in a sibling worktree must not light
+		// up this agent's row.
+		it('ignores a run against a different repo', () => {
+			const key = gitRunKey({ operation: 'push', cwd: '/other/repo' });
+			useGitCommandRunStore.setState({
+				runs: {
+					[key]: {
+						key,
+						runId: 'run-2',
+						sessionId: 'session-2',
+						operation: 'push',
+						cwd: '/other/repo',
+						setUpstream: false,
+						output: '',
+						status: 'running',
+						announced: false,
+					} as GitCommandRun,
+				},
+			});
+			const { result } = renderHook(() => useGitAgentActions(makeSession()));
+
+			expect(result.current.pushRunning).toBe(false);
+		});
+
+		it('reports nothing for a null agent', () => {
+			const { result } = renderHook(() => useGitAgentActions(null));
+
+			expect(result.current.pullRunning).toBe(false);
+			expect(result.current.pushRunning).toBe(false);
 		});
 	});
 });

@@ -613,11 +613,9 @@ describe('AchievementCard', () => {
 
 			expect(screen.getByText('Copy to Clipboard')).toBeInTheDocument();
 
-			// Advance timers
-			vi.advanceTimersByTime(10);
-
-			// Click outside
-			fireEvent.click(document.body);
+			// Press outside. The menu listens for mousedown, which still reaches the
+			// document inside a modal that stops click propagation.
+			fireEvent.mouseDown(document.body);
 
 			await waitFor(() => {
 				expect(screen.queryByText('Copy to Clipboard')).not.toBeInTheDocument();

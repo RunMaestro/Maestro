@@ -1,13 +1,10 @@
 import { useCallback, useMemo } from 'react';
 import { useStoreWithEqualityFn } from 'zustand/traditional';
+import { passesUnreadFilter } from '../../utils/sidebarMembership';
 import type { Session, Group } from '../../types';
 import { useSessionStore } from '../../stores/sessionStore';
 import { sidebarSessionEquality } from '../../stores/sessionEquality';
 import { compareNamesIgnoringEmojis as compareSessionNames } from '../../../shared/emojiUtils';
-import {
-	sessionOrChildrenNeedAttention,
-	type AttentionContext,
-} from '../../utils/sessionAttention';
 
 export interface SessionCategories {
 	worktreeChildrenByParentId: Map<string, Session[]>;
@@ -134,10 +131,6 @@ export function useSessionCategories(
 		// the busy/unread checks below would drop them. Keep them visible in the
 		// unread filter using the same set that drives the badge.
 		const batchSessionIds = new Set(activeBatchSessionIds);
-		const attentionCtx: AttentionContext = {
-			batchSessionIds,
-			stuckOutageIds: stuckOutageSessionIds,
-		};
 
 		for (const s of sessions) {
 			// Exclude worktree children from main list (they appear under parent)
@@ -147,17 +140,18 @@ export function useSessionCategories(
 			// section, never in Bookmarks/Groups/Ungrouped, so exclude it here.
 			if (s.isPianola) continue;
 
-			// Apply the unread-agents filter. Always keep the active session (or its
-			// parent) visible so the user doesn't lose their place; otherwise defer to
-			// the shared "needs attention" predicate (unread / busy / error /
-			// auto-running / stuck), including worktree children.
-			const isActiveOrParentOfActive =
-				s.id === activeSessionId ||
-				worktreeChildrenByParentId.get(s.id)?.some((child) => child.id === activeSessionId);
+			// Apply the unread-agents filter through the SHARED predicate, which the
+			// Cmd+[ / Cmd+] cycle also uses - the two disagreeing about which agents
+			// are on screen is what made the cycle walk agents the sidebar was not
+			// drawing. It keeps the active session (or its parent) visible either way.
 			if (
-				showUnreadAgentsOnly &&
-				!isActiveOrParentOfActive &&
-				!sessionOrChildrenNeedAttention(s, worktreeChildrenByParentId.get(s.id), attentionCtx)
+				!passesUnreadFilter(s, {
+					showUnreadAgentsOnly,
+					activeSessionId,
+					worktreeChildren: worktreeChildrenByParentId.get(s.id) ?? [],
+					batchSessionIds,
+					stuckOutageIds: stuckOutageSessionIds,
+				})
 			) {
 				continue;
 			}

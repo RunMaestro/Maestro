@@ -34,10 +34,9 @@ For a screenshot example of every option, see [THEMES.md](https://github.com/Run
 
 Custom themes with unique personality:
 
-- **Pedurple** - Deep purple aesthetic (shown in most screenshots)
+- **Pedurple** - Slate base with a `#9146FF` accent (shown in most screenshots)
 - **Maestro's Choice** - Golden accents on midnight blue
 - **Dre Synth** - Cyberpunk cyan and magenta
-- **InQuest** - Minimal black with crimson accents
 
 ### Custom Theme
 

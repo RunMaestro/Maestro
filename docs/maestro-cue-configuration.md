@@ -57,6 +57,8 @@ subscriptions:
     filter: object # Optional. Payload field conditions
     repo: string # Optional for github.* (auto-detected if omitted)
     poll_minutes: number # Optional for github.*, task.pending
+    gh_label_target: string # Optional for github.label. "pr" | "issue" | "both" (default "both")
+    gh_labels: list # Optional for github.label. Labels to watch (omit to fire on any label)
 
     # Action-specific fields
     action: string # Optional. One of "prompt" (default), "notify", "command"
@@ -104,9 +106,9 @@ Where each role lives:
 
 **Always set `source_session` / `fan_out`; add the `_ids` companions for rename stability.** The validator requires `source_session` on every `agent.completed` subscription, and `fan_out` is the canonical field for fan-out targets. **Additionally** populate the parallel UUID arrays - `source_session_ids: [<agent-uuid>]` next to `source_session: <agent-name>`, `fan_out_ids: [<uuid>, ...]` next to `fan_out: [<name>, ...]`. The dispatcher prefers ids at lookup time and falls back to names, so cross-root edges survive an upstream agent rename. Omitting the ids works but silently breaks on rename.
 
-**Pipeline grouping across files.** A pipeline that spans roots still appears as one card in the Cue dashboard / Pipeline Editor as long as every participating subscription carries the same `pipeline_name` (and same `# Pipeline: Name (color: #hex)` comment header in each file). The visual editor handles this automatically; if you hand-author, keep the values consistent across every file.
+**Pipeline grouping across files.** A pipeline that spans roots still appears as one card in the Cue dashboard / Pipeline Graph as long as every participating subscription carries the same `pipeline_name` (and same `# Pipeline: Name (color: #hex)` comment header in each file). The visual editor handles this automatically; if you hand-author, keep the values consistent across every file.
 
-**The visual editor is the easy path.** When you save a multi-root pipeline from the Pipeline Editor, Maestro automatically partitions the subscriptions by owning agent's project root and writes one yaml per participating cwd. If you find yourself authoring a multi-root pipeline by hand and it gets fiddly, building it in the Pipeline Editor and letting it emit the per-cwd files is the supported path.
+**The visual editor is the easy path.** When you save a multi-root pipeline from the Pipeline Graph, Maestro automatically partitions the subscriptions by owning agent's project root and writes one yaml per participating cwd. If you find yourself authoring a multi-root pipeline by hand and it gets fiddly, building it in the Pipeline Graph and letting it emit the per-cwd files is the supported path.
 
 ## Subscriptions
 
@@ -117,7 +119,7 @@ Each subscription is a trigger-prompt pairing. When the trigger fires, Cue sends
 | Field    | Type   | Description                                                                   |
 | -------- | ------ | ----------------------------------------------------------------------------- |
 | `name`   | string | Unique identifier. Used in logs, history, and as a reference in chains        |
-| `event`  | string | One of the ten [event types](./maestro-cue-events)                            |
+| `event`  | string | One of the eleven [event types](./maestro-cue-events)                         |
 | `prompt` | string | The prompt to send as inline text. Required unless `prompt_file` is specified |
 
 <Note>
@@ -129,7 +131,7 @@ Either `prompt` or `prompt_file` must be provided. If both are present, `prompt_
 | Field                      | Type              | Default  | Description                                                                                                                                                                                                                               |
 | -------------------------- | ----------------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `enabled`                  | boolean           | `true`   | Set to `false` to pause a subscription without removing it                                                                                                                                                                                |
-| `agent_id`                 | string (UUID)     | -        | UUID of the target agent. Auto-assigned by the Pipeline Editor                                                                                                                                                                            |
+| `agent_id`                 | string (UUID)     | -        | UUID of the target agent. Auto-assigned by the Pipeline Graph                                                                                                                                                                             |
 | `prompt_file`              | string            | -        | Path to a `.md` file containing the prompt (alternative to inline `prompt`)                                                                                                                                                               |
 | `interval_minutes`         | number            | -        | Timer interval. Required for `time.heartbeat`                                                                                                                                                                                             |
 | `schedule_times`           | list of strings   | -        | Times in `HH:MM` format. Required for `time.scheduled`                                                                                                                                                                                    |
@@ -146,6 +148,8 @@ Either `prompt` or `prompt_file` must be provided. If both are present, `prompt_
 | `filter`                   | object            | -        | Payload conditions (see [Filtering](./maestro-cue-advanced#filtering))                                                                                                                                                                    |
 | `repo`                     | string            | -        | GitHub repo (`owner/repo`). Auto-detected from git remote                                                                                                                                                                                 |
 | `poll_minutes`             | number            | varies   | Poll interval for `github.*` (default 5) and `task.pending` (default 1)                                                                                                                                                                   |
+| `gh_label_target`          | string            | `both`   | `github.label` only. Which kind of item to watch: `pr`, `issue`, or `both`                                                                                                                                                                |
+| `gh_labels`                | list of strings   | -        | `github.label` only. Labels that fire the trigger, matched case-insensitively. Omit to fire on any label                                                                                                                                  |
 | `output_prompt`            | string            | -        | Follow-up prompt sent after the main run completes successfully                                                                                                                                                                           |
 | `output_prompt_file`       | string            | -        | Path to a `.md` file for the output prompt (alternative to inline)                                                                                                                                                                        |
 | `label`                    | string            | -        | Human-readable label displayed in the Cue dashboard and pipeline editor                                                                                                                                                                   |
@@ -170,7 +174,7 @@ prompt: |
 prompt_file: .maestro/prompts/my-prompt.md
 ```
 
-File paths are resolved relative to the project root. Prompt files support the same `{{VARIABLE}}` template syntax as inline prompts. Using `prompt_file` keeps your `cue.yaml` clean when prompts are long or complex - the Pipeline Editor uses this approach by default, storing prompt files in `.maestro/prompts/`.
+File paths are resolved relative to the project root. Prompt files support the same `{{VARIABLE}}` template syntax as inline prompts. Using `prompt_file` keeps your `cue.yaml` clean when prompts are long or complex - the Pipeline Graph uses this approach by default, storing prompt files in `.maestro/prompts/`.
 
 ### Output Prompt (Two-Phase Runs)
 
@@ -207,7 +211,7 @@ The output prompt only fires when the main run completes successfully. If the ma
 
 ### Pipelines
 
-A **pipeline** groups multiple subscriptions under a single name in the Pipeline Editor. This is useful when you have related automations (e.g., a daily scan and a weekly review) that logically belong together.
+A **pipeline** groups multiple subscriptions under a single name in the Pipeline Graph. This is useful when you have related automations (e.g., a daily scan and a weekly review) that logically belong together.
 
 **Defining a pipeline:**
 
@@ -235,16 +239,16 @@ subscriptions:
 1. The `# Pipeline: Name (color: hex)` comment declares the pipeline name and its color in the UI
 2. The first subscription's `name` matches the pipeline name exactly
 3. Additional subscriptions in the same pipeline use the convention `Name-chain-N` (e.g., `My Pipeline-chain-1`, `My Pipeline-chain-2`)
-4. All subscriptions with matching names appear as separate trigger lines within a single pipeline in the Pipeline Editor
+4. All subscriptions with matching names appear as separate trigger lines within a single pipeline in the Pipeline Graph
 
 **Notes:**
 
 - The `color` in the comment sets the pipeline's dot color in the UI (any valid hex color)
 - Each subscription in a pipeline can have its own event type, schedule, and prompt - they don't need to share configuration
 - Use the `label` field to give each line a descriptive name (e.g., "Daily Analysis", "Weekly Review")
-- The Pipeline Editor creates this structure automatically when you use the visual editor
+- The Pipeline Graph creates this structure automatically when you use the visual editor
 
-**Visual-node identity (`target_node_key`, `fan_out_node_keys`):** When you save from the Pipeline Editor, you may see UUID-valued `target_node_key` / `fan_out_node_keys` fields on subscriptions. These are renderer-only - the Cue engine ignores them. They let the editor distinguish "two visual nodes that happen to point at the same agent" (different keys → two nodes on the canvas) from "one shared node with multiple inputs" (same key → explicit fan-in onto a single node). If you hand-edit YAML and want two separate visual instances of the same agent for the same trigger, give each sub a different `target_node_key`; if you want them to merge into one fan-in target, give them the same key. Leave the keys alone when round-tripping through the editor - clearing them silently re-merges your visual nodes by `agent_id` on the next reload.
+**Visual-node identity (`target_node_key`, `fan_out_node_keys`):** When you save from the Pipeline Graph, you may see UUID-valued `target_node_key` / `fan_out_node_keys` fields on subscriptions. These are renderer-only - the Cue engine ignores them. They let the editor distinguish "two visual nodes that happen to point at the same agent" (different keys → two nodes on the canvas) from "one shared node with multiple inputs" (same key → explicit fan-in onto a single node). If you hand-edit YAML and want two separate visual instances of the same agent for the same trigger, give each sub a different `target_node_key`; if you want them to merge into one fan-in target, give them the same key. Leave the keys alone when round-tripping through the editor - clearing them silently re-merges your visual nodes by `agent_id` on the next reload.
 
 #### Agent-authored Trigger -> Command -> Agent YAML checklist
 
@@ -367,7 +371,7 @@ The engine validates your YAML on every load. Common validation errors:
 | Error                                      | Fix                                                                                                 |
 | ------------------------------------------ | --------------------------------------------------------------------------------------------------- |
 | `"name" is required`                       | Every subscription needs a unique `name` field                                                      |
-| `"event" is required`                      | Specify one of the ten event types                                                                  |
+| `"event" is required`                      | Specify one of the eleven event types                                                               |
 | `"prompt" is required`                     | Provide inline text or a file path                                                                  |
 | `"interval_minutes" is required`           | `time.heartbeat` events must specify a positive interval                                            |
 | `"schedule_times" is required`             | `time.scheduled` events must have at least one `HH:MM` time                                         |
@@ -454,4 +458,4 @@ settings:
   queue_size: 15
 ```
 
-All four subscriptions appear as separate trigger lines within a single **DevOps** pipeline in the Pipeline Editor.
+All four subscriptions appear as separate trigger lines within a single **DevOps** pipeline in the Pipeline Graph.

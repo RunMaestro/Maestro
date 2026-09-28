@@ -750,6 +750,79 @@ describe('useFileExplorerEffects', () => {
 			expect(handleFileClick).toHaveBeenCalledWith(flatList[0], 'src/index.ts');
 		});
 
+		it('Enter typed into a contenteditable editor does not open the selected file', async () => {
+			const useFileExplorerEffects = await loadHook();
+			// The app believes the Files tab is focused (e.g. after Cmd+Shift+F)
+			// while the caret is really in the markdown editor.
+			useUIStore.setState({ activeFocus: 'right', activeRightTab: 'files' });
+
+			useSessionStore.setState({
+				sessions: [createMockSession()],
+				activeSessionId: 'session-1',
+			});
+
+			const handleFileClick = vi.fn();
+			const deps = createDeps({ handleFileClick });
+			const { rerender } = renderHook(() => useFileExplorerEffects(deps));
+
+			act(() => {
+				useFileExplorerStore.setState({
+					flatFileList: [
+						{ name: 'index.ts', fullPath: 'src/index.ts', isFolder: false, type: 'file' as const },
+					],
+					selectedFileIndex: 0,
+				});
+			});
+			rerender();
+
+			const editor = document.createElement('div');
+			editor.contentEditable = 'true';
+			// jsdom does not derive isContentEditable from the attribute, so stub it.
+			Object.defineProperty(editor, 'isContentEditable', { value: true, configurable: true });
+			document.body.appendChild(editor);
+
+			act(() => {
+				editor.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+			});
+
+			expect(handleFileClick).not.toHaveBeenCalled();
+			editor.remove();
+		});
+
+		it('ArrowDown typed into a text input does not move the tree selection', async () => {
+			const useFileExplorerEffects = await loadHook();
+			useUIStore.setState({ activeFocus: 'right', activeRightTab: 'files' });
+
+			useSessionStore.setState({
+				sessions: [createMockSession()],
+				activeSessionId: 'session-1',
+			});
+
+			const deps = createDeps();
+			const { rerender } = renderHook(() => useFileExplorerEffects(deps));
+
+			act(() => {
+				useFileExplorerStore.setState({
+					flatFileList: [
+						{ name: 'a.ts', fullPath: 'a.ts', isFolder: false, type: 'file' as const },
+						{ name: 'b.ts', fullPath: 'b.ts', isFolder: false, type: 'file' as const },
+					],
+					selectedFileIndex: 0,
+				});
+			});
+			rerender();
+
+			const input = document.createElement('input');
+			document.body.appendChild(input);
+
+			act(() => {
+				input.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+			});
+
+			expect(useFileExplorerStore.getState().selectedFileIndex).toBe(0);
+			input.remove();
+		});
+
 		it('Enter on folder calls toggleFolder', async () => {
 			const useFileExplorerEffects = await loadHook();
 			useUIStore.setState({ activeFocus: 'right', activeRightTab: 'files' });

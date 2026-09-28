@@ -14,7 +14,34 @@ import { THEMES } from '../../../../shared/themes';
 import { AA_LARGE_CONTRAST, contrastRatio, transparentize } from '../../../../shared/colorContrast';
 
 const SETTINGS_ROOT = resolve(__dirname, '../../../../renderer/components/Settings');
-const GENERAL_TAB = join(SETTINGS_ROOT, 'tabs/GeneralTab');
+const RENDERER_COMPONENTS = resolve(__dirname, '../../../../renderer/components');
+
+/**
+ * Tabs that have been migrated to `SettingsSectionHeading`, so a hand-rolled
+ * heading appearing in one is a regression rather than known debt.
+ *
+ * Widen this as each remaining tab is migrated - the guard is per-tab on
+ * purpose, because a tree-wide rule would fail on the tabs CLAUDE-SETTINGS.md
+ * still lists as outstanding and would then simply be disabled.
+ */
+const MIGRATED_HEADING_SCOPES = [
+	join(SETTINGS_ROOT, 'tabs/GeneralTab'),
+	join(SETTINGS_ROOT, 'tabs/ThemeTab.tsx'),
+	join(SETTINGS_ROOT, 'tabs/ShortcutsTab.tsx'),
+];
+
+/** Every tab root owns the vertical rhythm between its sections, and it is `space-y-5`. */
+const TAB_ROOT_RHYTHM = 'space-y-5';
+
+/**
+ * Files that render INTO the Settings tree but live outside it, so the dim-scale
+ * rule has to reach them explicitly. Both are font controls the Display tab
+ * mounts, and both are where the off-scale `opacity-60` came from.
+ */
+const SETTINGS_ADJACENT = [
+	join(RENDERER_COMPONENTS, 'FontConfigurationPanel.tsx'),
+	join(RENDERER_COMPONENTS, 'ui/FontSizeStepper.tsx'),
+];
 
 function walkTsx(dir: string, out: string[] = []): string[] {
 	for (const name of readdirSync(dir)) {
@@ -23,6 +50,11 @@ function walkTsx(dir: string, out: string[] = []): string[] {
 		else if (full.endsWith('.tsx')) out.push(full);
 	}
 	return out;
+}
+
+/** Accepts either a directory to walk or a single `.tsx` path. */
+function tsxFilesIn(target: string): string[] {
+	return statSync(target).isDirectory() ? walkTsx(target) : [target];
 }
 
 interface JsxTag {
@@ -116,28 +148,120 @@ describe('Settings style guide', () => {
 	});
 
 	describe('shared primitives (CLAUDE-SETTINGS.md rule 3)', () => {
-		it('GeneralTab uses SettingsSectionHeading instead of hand-rolled headings', () => {
+		it('migrated tabs use SettingsSectionHeading instead of hand-rolled headings', () => {
 			const offenders: string[] = [];
 
-			for (const file of walkTsx(GENERAL_TAB)) {
-				const src = readFileSync(file, 'utf8');
-				src.split('\n').forEach((text, index) => {
-					const className = text.match(/className="([^"]*)"/)?.[1];
-					if (!className) return;
-					// The section-heading signature. Small uppercase pills/badges are a
-					// different thing and are identified by their padding + tiny type.
-					if (!/font-bold/.test(className) || !/uppercase/.test(className)) return;
-					if (/px-\d|text-\[[89]px\]/.test(className)) return;
+			for (const scope of MIGRATED_HEADING_SCOPES) {
+				for (const file of tsxFilesIn(scope)) {
+					const src = readFileSync(file, 'utf8');
+					src.split('\n').forEach((text, index) => {
+						const className = text.match(/className="([^"]*)"/)?.[1];
+						if (!className) return;
+						// The section-heading signature. Small uppercase pills/badges are a
+						// different thing and are identified by their padding + tiny type.
+						if (!/font-bold/.test(className) || !/uppercase/.test(className)) return;
+						if (/px-\d|text-\[[89]px\]/.test(className)) return;
 
-					offenders.push(`  ${file.replace(GENERAL_TAB, 'GeneralTab')}:${index + 1}`);
-				});
+						offenders.push(`  ${file.replace(SETTINGS_ROOT, 'Settings')}:${index + 1}`);
+					});
+				}
 			}
 
 			expect(
 				offenders,
-				'Hand-rolled section headings found in GeneralTab. Use ' +
+				'Hand-rolled section headings found in a migrated tab. Use ' +
 					'<SettingsSectionHeading icon={Icon}>Label</SettingsSectionHeading> so every heading ' +
 					'shares one spelling:\n' +
+					offenders.join('\n')
+			).toEqual([]);
+		});
+
+		// `SettingsSectionHeading` owns the gap between a heading and its intro
+		// paragraph, via the `description` prop. Before it did, four sections
+		// hand-rolled that paragraph and each pulled it back up with a negative
+		// margin cancelling the heading's own `mb-2` - which is the same distance
+		// written twice, in opposite directions, in two different files.
+		it('never claws back a heading margin with a negative top margin', () => {
+			const offenders: string[] = [];
+
+			for (const file of walkTsx(SETTINGS_ROOT)) {
+				const src = readFileSync(file, 'utf8');
+				for (const { tag, body, line } of parseJsxTags(src)) {
+					const className = classNameOf(body);
+					if (className === null) continue;
+					if (!/(?:^|\s)-mt-\d/.test(className)) continue;
+
+					offenders.push(`  ${file.replace(SETTINGS_ROOT, 'Settings')}:${line} <${tag}>`);
+				}
+			}
+
+			expect(
+				offenders,
+				'Negative top margin found in the Settings tree. A heading followed by an intro ' +
+					'paragraph passes that copy as <SettingsSectionHeading description={...}>, which ' +
+					'states the gap once instead of setting it and then subtracting it:\n' +
+					offenders.join('\n')
+			).toEqual([]);
+		});
+	});
+
+	describe('one vertical rhythm per tab (CLAUDE-SETTINGS.md rule 6)', () => {
+		// Sections carry no margins of their own, so the tab root is the only
+		// place the gap between them is decided. Three tabs had drifted to their
+		// own value, which reads as three different densities inside one modal.
+		const TAB_ROOTS: Array<[string, string]> = [
+			['DisplayTab', 'tabs/DisplayTab/DisplayTab.tsx'],
+			['GeneralTab', 'tabs/GeneralTab/GeneralTab.tsx'],
+			['ThemeTab', 'tabs/ThemeTab.tsx'],
+			['ShortcutsTab', 'tabs/ShortcutsTab.tsx'],
+			['EncoreTab', 'tabs/EncoreTab/EncoreTab.tsx'],
+			['EnvironmentTab', 'tabs/EnvironmentTab.tsx'],
+		];
+
+		it.each(TAB_ROOTS)('%s spaces its sections with space-y-5', (_name, relative) => {
+			const src = readFileSync(join(SETTINGS_ROOT, relative), 'utf8');
+			const rhythms = [...src.matchAll(/space-y-(\d+)/g)]
+				.map((match) => Number(match[1]))
+				// Rows inside a card are a tighter scale and are not the tab rhythm.
+				.filter((value) => value > 3);
+
+			expect(
+				[...new Set(rhythms)],
+				`Section rhythm must be ${TAB_ROOT_RHYTHM}. Anything looser or tighter makes one tab ` +
+					'read at a different density from the rest of the modal.'
+			).toEqual([5]);
+		});
+	});
+
+	describe('two dim levels only (CLAUDE-SETTINGS.md rule 4)', () => {
+		// The scale is `opacity-70` for descriptions and `opacity-55` for
+		// micro-notes. `opacity-60` is the value the tree keeps drifting back to,
+		// because it is what a new section gets when someone eyeballs a dim
+		// instead of reading the guide - and at 60 the contrast measurement in
+		// the block below no longer holds. Banning the one wrong value keeps the
+		// guard specific enough to name the fix.
+		it('never uses opacity-60 on text', () => {
+			const offenders: string[] = [];
+
+			for (const file of [...walkTsx(SETTINGS_ROOT), ...SETTINGS_ADJACENT]) {
+				const src = readFileSync(file, 'utf8');
+				for (const { tag, body, line } of parseJsxTags(src)) {
+					const className = classNameOf(body);
+					if (className === null) continue;
+					if (!/(?:^|\s)opacity-60(?:\s|$)/.test(className)) continue;
+					// A dimmed icon is deliberate de-emphasis of a glyph, not text
+					// on the description scale.
+					if (isDecorativeIcon(tag, className)) continue;
+
+					offenders.push(`  ${file.replace(RENDERER_COMPONENTS, 'components')}:${line} <${tag}>`);
+				}
+			}
+
+			expect(
+				offenders,
+				'Off-scale dim found. Settings text has exactly two dim levels: `opacity-70` for a ' +
+					'description (`text-xs`) and `opacity-55` for a micro-note (`text-[11px]`). Pick the ' +
+					'one that matches the role of the line:\n' +
 					offenders.join('\n')
 			).toEqual([]);
 		});

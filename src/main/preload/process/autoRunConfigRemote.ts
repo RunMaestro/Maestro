@@ -5,8 +5,11 @@ export function createAutoRunConfigRemoteApi() {
 		/**
 		 * Subscribe to remote refresh auto-run docs from web interface
 		 */
-		onRemoteRefreshAutoRunDocs: (callback: (sessionId: string) => void): (() => void) => {
-			const handler = (_: unknown, sessionId: string) => callback(sessionId);
+		onRemoteRefreshAutoRunDocs: (
+			callback: (sessionId: string, background?: boolean) => void
+		): (() => void) => {
+			const handler = (_: unknown, sessionId: string, background?: boolean) =>
+				callback(sessionId, background);
 			ipcRenderer.on('remote:refreshAutoRunDocs', handler);
 			return () => ipcRenderer.removeListener('remote:refreshAutoRunDocs', handler);
 		},
@@ -43,6 +46,71 @@ export function createAutoRunConfigRemoteApi() {
 		sendRemoteConfigureAutoRunResponse: (
 			responseChannel: string,
 			result: { success: boolean; playbookId?: string; error?: string }
+		): void => {
+			ipcRenderer.send(responseChannel, result);
+		},
+
+		/**
+		 * Subscribe to a remote Goal-Driven Auto Run launch (`goal-run --visible`).
+		 * Mirrors `onRemoteConfigureAutoRun`, but carries the goal config instead
+		 * of a document list.
+		 */
+		onRemoteLaunchGoalRun: (
+			callback: (
+				sessionId: string,
+				config: {
+					goal: string;
+					exitCriteria?: string;
+					maxIterations?: number | null;
+					model?: string;
+					effort?: string;
+				},
+				responseChannel: string
+			) => void
+		): (() => void) => {
+			const handler = (
+				_: unknown,
+				sessionId: string,
+				config: {
+					goal: string;
+					exitCriteria?: string;
+					maxIterations?: number | null;
+					model?: string;
+					effort?: string;
+				},
+				responseChannel: string
+			) => {
+				// Ack with a failure so the CLI never hangs on a renderer regression,
+				// then rethrow so Sentry still sees the bug (same shape as
+				// `onRemoteSetAutoRunFolder`).
+				try {
+					Promise.resolve(callback(sessionId, config, responseChannel)).catch((error) => {
+						ipcRenderer.send(responseChannel, {
+							success: false,
+							code: 'LAUNCH_FAILED',
+							error: error instanceof Error ? error.message : String(error),
+						});
+						throw error;
+					});
+				} catch (error) {
+					ipcRenderer.send(responseChannel, {
+						success: false,
+						code: 'LAUNCH_FAILED',
+						error: error instanceof Error ? error.message : String(error),
+					});
+					throw error;
+				}
+			};
+			ipcRenderer.on('remote:launchGoalRun', handler);
+			return () => ipcRenderer.removeListener('remote:launchGoalRun', handler);
+		},
+
+		/**
+		 * Send response for a remote Goal-Driven Auto Run launch
+		 */
+		sendRemoteLaunchGoalRunResponse: (
+			responseChannel: string,
+			result: { success: boolean; tabId?: string; code?: string; error?: string }
 		): void => {
 			ipcRenderer.send(responseChannel, result);
 		},

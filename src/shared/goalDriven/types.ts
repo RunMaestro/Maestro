@@ -33,7 +33,7 @@ export interface GoalRunConfig {
  * treat a missing progress report.
  */
 export interface GoalMarkers {
-	/** Reported progress, clamped to 0–100 and rounded; `null` if not reported. */
+	/** Reported progress, clamped to 0-100 and rounded; `null` if not reported. */
 	progress: number | null;
 	/** Optional short rationale accompanying the progress marker; `null` if absent or empty. */
 	rationale: string | null;
@@ -49,7 +49,7 @@ export interface GoalMarkers {
 export interface GoalIterationRecord {
 	/** 1-based iteration number. */
 	iteration: number;
-	/** Normalized progress for this iteration (0–100, never null in history). */
+	/** Normalized progress for this iteration (0-100, never null in history). */
 	progress: number;
 	/** Optional rationale captured from the iteration's progress marker. */
 	rationale: string | null;

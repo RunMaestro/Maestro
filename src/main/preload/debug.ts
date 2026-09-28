@@ -7,17 +7,9 @@
  */
 
 import { ipcRenderer } from 'electron';
+import type { DebugPackageOptions } from '../../shared/debugPackage';
 
-/**
- * Debug package options
- */
-export interface DebugPackageOptions {
-	includeLogs?: boolean;
-	includeErrors?: boolean;
-	includeSessions?: boolean;
-	includeGroupChats?: boolean;
-	includeBatchState?: boolean;
-}
+export type { DebugPackageOptions };
 
 /**
  * Document graph file change event
@@ -70,7 +62,26 @@ export interface ProfilingStatusResponse {
 	startedAt: number;
 	elapsedMs: number;
 	categories: string[];
+	/**
+	 * Trace-buffer usage, 0-1. This - not elapsed time - is what limits a
+	 * recording: Chromium drops events once the buffer fills, so the UI shows
+	 * this so a capture's remaining headroom is visible rather than guessed at.
+	 */
+	bufferPercent: number;
+	peakBufferPercent: number;
+	bufferSizeKb: number;
+	/** True once the watchdog has asked for the recording to end. */
+	autoStopRequested: boolean;
 	error?: string;
+}
+
+/**
+ * Emitted when the buffer watchdog ends a recording (debug:profilingAutoStopped).
+ * The renderer responds by opening the capture modal, which runs the ordinary
+ * stop-and-save flow.
+ */
+export interface ProfilingAutoStoppedEvent extends Omit<ProfilingStatusResponse, 'success'> {
+	reason: 'buffer-full';
 }
 
 /**
@@ -83,6 +94,12 @@ export interface StopProfilingResponse {
 	bundleSizeBytes: number;
 	traceSizeBytes: number;
 	durationMs: number;
+	/** Highest trace-buffer usage the recording reached, 0-1. */
+	peakBufferPercent?: number;
+	/** The buffer watchdog ended the recording rather than the user. */
+	autoStopped?: boolean;
+	/** Usage hit the stop threshold; the trace may be missing events. */
+	bufferExhausted?: boolean;
 	error?: string;
 }
 
@@ -148,6 +165,17 @@ export function createDebugApi() {
 		// Delete an abandoned temp trace zip produced by stopProfilingToFile.
 		discardTrace: (filePath: string): Promise<{ success: boolean }> =>
 			ipcRenderer.invoke('debug:discardTrace', filePath),
+		/**
+		 * Fire a synthetic provider credential failure through the real event
+		 * channel, so the whole re-authentication flow can be exercised without
+		 * waiting for a token to actually expire.
+		 */
+		simulateAuthExpiry: (payload: {
+			processSessionId: string;
+			agentId: string;
+			sshRemoteId?: string;
+			fromPipeline?: boolean;
+		}): Promise<{ success: boolean }> => ipcRenderer.invoke('debug:simulateAuthExpiry', payload),
 
 		// Subscribe to capture progress (stopping -> compressing -> done). Returns
 		// an unsubscribe function. Mirrors the documentGraph:filesChanged pattern.
@@ -156,6 +184,17 @@ export function createDebugApi() {
 				handler(data);
 			ipcRenderer.on('debug:profilingProgress', wrapped);
 			return () => ipcRenderer.removeListener('debug:profilingProgress', wrapped);
+		},
+
+		/**
+		 * Subscribe to the buffer watchdog ending a recording. Returns an
+		 * unsubscribe function.
+		 */
+		onProfilingAutoStopped: (handler: (event: ProfilingAutoStoppedEvent) => void) => {
+			const wrapped = (_event: Electron.IpcRendererEvent, data: ProfilingAutoStoppedEvent) =>
+				handler(data);
+			ipcRenderer.on('debug:profilingAutoStopped', wrapped);
+			return () => ipcRenderer.removeListener('debug:profilingAutoStopped', wrapped);
 		},
 	};
 }

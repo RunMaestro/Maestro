@@ -9,8 +9,10 @@ import {
 	XCircle,
 } from 'lucide-react';
 import type { Theme } from '../../types';
+import { AGENT_COLOR } from '../../../shared/crossAgentTypes';
 import type { ProcessNode, ProcessMonitorProps } from './types';
 import { formatRuntime } from './runtime';
+import { isCoarsePointer } from '../../utils/touch';
 
 export interface ProcessListViewProps {
 	theme: Theme;
@@ -67,7 +69,7 @@ export function ProcessListView(props: ProcessListViewProps) {
 							onSelectNode(node.id);
 							onToggleNode(node.id);
 						}}
-						className="w-full text-left px-4 py-2 flex items-center gap-2 hover:bg-opacity-5"
+						className="w-full text-left px-4 py-2 flex items-center gap-2 row-hover"
 						style={{
 							paddingLeft: `${paddingLeft}px`,
 							backgroundColor: isSelected ? `${theme.colors.accent}25` : 'transparent',
@@ -135,7 +137,7 @@ export function ProcessListView(props: ProcessListViewProps) {
 								onToggleNode(node.id);
 							}
 						}}
-						className="w-full text-left px-4 py-2 flex items-center gap-2 hover:bg-opacity-5 group"
+						className="w-full text-left px-4 py-2 flex items-center gap-2 row-hover group"
 						style={{
 							paddingLeft: `${paddingLeft}px`,
 							backgroundColor: isSelected ? `${theme.colors.accent}25` : 'transparent',
@@ -199,7 +201,7 @@ export function ProcessListView(props: ProcessListViewProps) {
 						</span>
 						{node.sessionId && onNavigateToSession && (
 							<button
-								className="p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-opacity-20 transition-opacity flex-shrink-0"
+								className="p-1 rounded opacity-0 group-hover:opacity-100 row-hover transition-opacity flex-shrink-0"
 								style={{ color: theme.colors.accent }}
 								onClick={(e) => {
 									e.stopPropagation();
@@ -228,6 +230,7 @@ export function ProcessListView(props: ProcessListViewProps) {
 				node.processType === 'moderator' || node.processType === 'participant';
 			const isWizardProcess = node.processType === 'wizard' || node.processType === 'wizard-gen';
 			const isCueProcess = node.processType === 'cue';
+			const isConsultProcess = node.processType === 'consult';
 			const altBg = index % 2 === 1 ? `${theme.colors.textDim}08` : 'transparent';
 
 			return (
@@ -246,6 +249,13 @@ export function ProcessListView(props: ProcessListViewProps) {
 						}}
 						onClick={() => {
 							onSelectNode(node.id);
+							// A finger cannot double-tap, so on a coarse pointer the row
+							// itself opens the detail and the chevron below owns expand /
+							// collapse. A mouse keeps the click-to-toggle it always had.
+							if (isCoarsePointer()) {
+								onOpenDetail(node);
+								return;
+							}
 							if (hasChildren) onToggleNode(node.id);
 						}}
 						onDoubleClick={() => onOpenDetail(node)}
@@ -258,17 +268,27 @@ export function ProcessListView(props: ProcessListViewProps) {
 					>
 						<div className="flex items-center gap-2">
 							{hasChildren ? (
-								isExpanded ? (
-									<ChevronDown
-										className="w-4 h-4 flex-shrink-0"
-										style={{ color: theme.colors.textDim }}
-									/>
-								) : (
-									<ChevronRight
-										className="w-4 h-4 flex-shrink-0"
-										style={{ color: theme.colors.textDim }}
-									/>
-								)
+								// A real control, not a glyph: on touch the row tap opens the
+								// detail, so this is the only way to expand a parent there.
+								// `min-h-0` opts out of the phone stylesheet's 44px button
+								// floor, which would otherwise stretch every row.
+								<button
+									type="button"
+									className="w-4 h-4 min-h-0 p-0 flex-shrink-0 flex items-center justify-center bg-transparent border-0"
+									style={{ color: theme.colors.textDim }}
+									aria-label={isExpanded ? 'Collapse' : 'Expand'}
+									aria-expanded={isExpanded}
+									onClick={(e) => {
+										e.stopPropagation();
+										onToggleNode(node.id);
+									}}
+								>
+									{isExpanded ? (
+										<ChevronDown className="w-4 h-4" />
+									) : (
+										<ChevronRight className="w-4 h-4" />
+									)}
+								</button>
 							) : (
 								<div className="w-4 h-4 flex-shrink-0" />
 							)}
@@ -301,7 +321,7 @@ export function ProcessListView(props: ProcessListViewProps) {
 										{node.agentSessionId.substring(0, 8)}
 									</span>
 								)}
-								{(isGroupChatProcess || isWizardProcess) && node.toolType && (
+								{(isGroupChatProcess || isWizardProcess || isConsultProcess) && node.toolType && (
 									<span>{node.toolType}</span>
 								)}
 								<span>PID {node.pid}</span>
@@ -380,6 +400,18 @@ export function ProcessListView(props: ProcessListViewProps) {
 										GENERATING
 									</span>
 								)}
+								{isConsultProcess && (
+									<span
+										className="text-xs font-semibold px-1.5 py-0.5 rounded"
+										style={{
+											backgroundColor: `${AGENT_COLOR}30`,
+											color: AGENT_COLOR,
+											border: `1px solid ${AGENT_COLOR}50`,
+										}}
+									>
+										CONSULT
+									</span>
+								)}
 								{node.processType === 'cue' && (
 									<span
 										className="text-xs font-semibold px-1.5 py-0.5 rounded"
@@ -398,7 +430,7 @@ export function ProcessListView(props: ProcessListViewProps) {
 									!isWizardProcess &&
 									!isCueProcess && (
 										<button
-											className="p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-opacity-20 transition-opacity"
+											className="p-1 rounded opacity-0 group-hover:opacity-100 row-hover transition-opacity"
 											style={{ color: theme.colors.accent }}
 											onClick={(e) => {
 												e.stopPropagation();
@@ -416,7 +448,7 @@ export function ProcessListView(props: ProcessListViewProps) {
 									)}
 								{isGroupChatProcess && node.groupChatId && onNavigateToGroupChat && (
 									<button
-										className="p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-opacity-20 transition-opacity"
+										className="p-1 rounded opacity-0 group-hover:opacity-100 row-hover transition-opacity"
 										style={{ color: theme.colors.accent }}
 										onClick={(e) => {
 											e.stopPropagation();
@@ -434,7 +466,7 @@ export function ProcessListView(props: ProcessListViewProps) {
 								)}
 								{node.processSessionId && (
 									<button
-										className="p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-opacity-20 transition-opacity"
+										className="p-1 rounded opacity-0 group-hover:opacity-100 row-hover transition-opacity"
 										style={{ color: theme.colors.error }}
 										onClick={(e) => {
 											e.stopPropagation();
@@ -470,7 +502,7 @@ export function ProcessListView(props: ProcessListViewProps) {
 							onSelectNode(node.id);
 							onToggleNode(node.id);
 						}}
-						className="w-full text-left px-4 py-2 flex items-center gap-2 hover:bg-opacity-5"
+						className="w-full text-left px-4 py-2 flex items-center gap-2 row-hover"
 						style={{
 							paddingLeft: `${paddingLeft}px`,
 							backgroundColor: isSelected ? `${theme.colors.accent}25` : 'transparent',

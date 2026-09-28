@@ -1,242 +1,772 @@
 /**
  * Media Playback Store
  *
- * Transient state for the app's single audio/video player.
+ * State for the app's single audio/video player.
  *
- * Exactly one media file plays at a time. Several media tabs can be open, but
- * only the **active** one has a mounted player; the widget navigates between
- * them rather than stacking one control per file. Switching pauses whatever was
- * playing, which is what keeps two audio streams from ever overlapping.
+ * Media never becomes a file preview tab. Opening an audio or video file adds
+ * it to this queue and shows the floating player - that widget is the only
+ * surface media appears on, and it can be dragged anywhere or minimized to the
+ * Left Bar header without stopping playback. Nothing takes over the main panel,
+ * so a podcast plays while the user keeps working.
  *
- * The player has two placements, both driven from here:
- *  - **Docked** - the owning tab is on screen, so the player fills the
- *    `MediaViewportSlot` that `FilePreview` renders in place of its content.
- *  - **Floating** - the owning tab is not on screen, so the player becomes a
- *    draggable, resizable now-playing widget that survives switching tabs and
- *    agents.
+ * **Minimizing and closing are different things**, which is what `dismissed`
+ * and `closeItem` express: minimizing (`dismissed`) only hides the widget and
+ * playback carries on from the header pill, while closing releases the player
+ * and the sound stops. A control that hides itself must not silently also stop
+ * the audio, and a close button that only hid it would leave sound coming from
+ * nowhere.
  *
- * Why the element cannot live in FilePreview: `MainPanelContent` renders it only
- * for the active file tab of the active session, so switching tabs or agents
- * unmounts it, and removing a media element from the document runs the HTML
- * spec's internal pause steps. The element therefore lives in
- * `MediaPlaybackHost`, mounted once in `App.tsx`; this store is how the in-tab
- * slot and that host talk to each other.
+ * Exactly one item plays at a time. Several can be queued, but only the
+ * **active** one has a mounted player; the transport's prev/next move between
+ * them, a finished item hands off to the next, and the history menu jumps by
+ * recency. Switching pauses whatever was playing, which is what keeps two audio
+ * streams from ever overlapping.
  *
- * Only the float geometry persists (via settings). Which file was playing does
- * not survive a restart, and `maestro-media://` stream URLs are re-minted per
- * boot anyway.
+ * The element itself lives in `MediaPlaybackHost`, mounted once in `App.tsx`
+ * and never unmounted: removing a media element from the document runs the HTML
+ * spec's internal pause steps, so anything that renders per-tab or per-agent
+ * would kill playback on every switch.
  *
- * Multi-window note: each renderer holds its own copy of this store. On a build
- * with multiple windows, two windows each showing a media tab would each mount a
- * player. Single-window builds cannot hit this.
+ * **Queue and history are two lists, not one.** The queue is what plays next,
+ * in open order, and it survives a restart (via the `mediaPlayerQueue` setting,
+ * along with the loaded item and every remembered position) so a half-listened
+ * playlist is still there tomorrow. History is what was played, newest first,
+ * and it is deliberately per-boot: a fresh session should not open onto a log
+ * of last week's files. Because they outlive each other in opposite directions,
+ * history holds whole items rather than pointers into the queue - removing
+ * something from the queue must not rewrite what the user already heard, and
+ * picking it out of history re-queues it.
+ *
+ * `maestro-media://` stream URLs are minted per boot, so only paths are
+ * persisted; the player re-resolves the URL when an item loads.
+ *
+ * Float geometry is position plus a width **per kind**: the frame's height is
+ * always derived from the media (audio has no picture, video wants its own
+ * aspect ratio), so it is not a number anyone stores. See `mediaFloatGeometry`.
+ *
+ * Multi-window note: each renderer holds its own copy of this store, so on a
+ * multi-window build two windows can each own a player.
  */
 
 import { create } from 'zustand';
 
-/** Viewport rect (CSS pixels, viewport-relative) of a media tab's docked slot. */
-export interface MediaSlotRect {
-	top: number;
-	left: number;
-	width: number;
-	height: number;
-}
+import { mediaItemId, pushMediaHistory, trimMediaQueue, type MediaItem } from '../utils/mediaItems';
+import {
+	normalizeMediaAspect,
+	type MediaFloatFootprint,
+	type PersistedMediaFloat,
+} from '../utils/mediaFloatGeometry';
+import type { MediaKind } from '../../shared/mediaTypes';
 
-/** Position and size of the floating widget. */
-export interface MediaFloatRect {
-	top: number;
-	left: number;
-	width: number;
-	height: number;
-}
+/** Everything needed to queue a file, minus the derived ID. */
+export type MediaOpenRequest = Omit<MediaItem, 'id'>;
 
-export interface MediaSlotState {
+/**
+ * Entries kept in the history menu. Deep enough to cover a listening session,
+ * shallow enough that the menu stays scannable.
+ */
+export const MEDIA_HISTORY_LIMIT = 20;
+
+/**
+ * Entries kept in the queue. The queue persists, so without a cap every file
+ * the user ever opened would accumulate on disk forever.
+ */
+export const MEDIA_QUEUE_LIMIT = 50;
+
+/** Settings key holding the queue across restarts. */
+export const MEDIA_QUEUE_SETTINGS_KEY = 'mediaPlayerQueue';
+
+/** Settings key holding the player's position and per-kind widths. */
+export const MEDIA_FLOAT_SETTINGS_KEY = 'mediaPlayerFloatRect';
+
+/** What `mediaPlayerQueue` stores. Stream URLs are not persisted, only paths. */
+export interface PersistedMediaQueue {
+	items: MediaItem[];
+	activeItemId: string | null;
+	resumeTimes: Record<string, number>;
 	/**
-	 * Last known rect of the in-tab slot. Retained even while hidden so a docked
-	 * player keeps non-zero dimensions - a zero-sized video can get its decode
-	 * pipeline torn down, the same failure `visibility: hidden` (rather than
-	 * unmounting) exists to avoid for terminals and browser tabs.
+	 * Known lengths. Persisted because only the loaded file is ever mounted: with
+	 * nothing on disk, a restored queue would show a length for one row and
+	 * `--:--` for the other nine until each was played.
 	 */
-	rect: MediaSlotRect;
-	/** Whether the owning tab is currently on screen. */
-	visible: boolean;
+	durations: Record<string, number>;
 }
 
 interface MediaPlaybackStoreState {
-	/** File tab whose player is mounted. Null when no media is loaded. */
-	activeTabId: string | null;
+	/** Play queue, in open order. Persisted. */
+	items: MediaItem[];
+	/** Item whose player is mounted. Null when nothing is loaded. Persisted. */
+	activeItemId: string | null;
+	/** Recently played, newest first. Per-boot: never persisted. */
+	history: MediaItem[];
 	/** Whether the active player is currently playing. */
 	playing: boolean;
 	/**
-	 * User closed the floating widget. Playback continues - dismissing hides a
-	 * control, it does not stop media. Cleared by opening a media file or by the
-	 * "Show Floating Media Player" command.
+	 * Player minimized to the Left Bar header. Playback continues - minimizing is
+	 * not stopping. Cleared by opening a media file, by queueing one, by the
+	 * now-playing pill's restore button, or by the palette's "Open Media Player".
 	 */
 	dismissed: boolean;
-	/** Floating widget collapsed to a compact pill. */
-	minimized: boolean;
-	/** One-shot: start playing once the active file is ready. */
+	/**
+	 * The queue came back from disk and the user has not touched the player yet.
+	 *
+	 * A restored queue is loaded but DORMANT, and the difference matters to the
+	 * Left Bar: `dismissed` plus a loaded item is also what "the user minimized
+	 * a paused track" looks like, and that state earns a header pill while a
+	 * queue nobody has asked for since launch does not. Without this, every
+	 * launch after a single MP3 opened onto media controls with nothing playing.
+	 *
+	 * Cleared by anything that means the user engaged the player this session:
+	 * opening a file, queueing one, activating a queue entry, or reopening the
+	 * widget from the command palette. The palette entry is deliberately NOT
+	 * gated on it, so a dormant queue is still reachable, just not advertised.
+	 */
+	dormant: boolean;
+	/** One-shot: start playing once the active item is ready. */
 	pendingAutoplay: boolean;
 	/**
 	 * Incremented to ask the player to toggle play/pause. A nonce rather than a
-	 * function in state, so the minimized pill's button can drive the element
-	 * without anyone holding a ref across the floating frame boundary.
+	 * function in state, so the Left Bar's now-playing pill can drive the element
+	 * without anyone holding a ref across the frame boundary.
 	 */
 	toggleRequest: number;
-	/** File tab ID -> where to park a docked player. */
-	slots: Record<string, MediaSlotState>;
-	/** File tab ID -> last playback position, so navigating back resumes. */
+	/**
+	 * Incremented to ask the widget to take keyboard focus.
+	 *
+	 * Bringing the player up is a request to USE it, so it must land focused -
+	 * Escape minimizes it and the transport has its own keys, and none of that
+	 * works until something claims the caret. Requiring a click first makes a
+	 * keyboard-opened surface keyboard-dead, which in a keyboard-first app reads
+	 * as the shortcut half-working.
+	 *
+	 * A nonce rather than a boolean flag, for the same reason `toggleRequest` is:
+	 * the widget is never unmounted, so there is no mount to hang focus off, and
+	 * reopening it twice in a row has to fire twice. Raised only by the deliberate
+	 * "show me the player" gestures (`openPlayer`, `restore`) - never by opening
+	 * or queueing a file, which would pull the caret out of whatever the user was
+	 * typing in.
+	 */
+	focusRequest: number;
+	/** Item ID -> last playback position, so coming back resumes. Persisted. */
 	resumeTimes: Record<string, number>;
-	/** Floating widget geometry. Null until the user moves or resizes it. */
-	floatRect: MediaFloatRect | null;
+	/**
+	 * Item ID -> length in seconds, learned when a file loads. Persisted, so the
+	 * queue and history lists can show how long something is without having to
+	 * mount it first.
+	 */
+	durations: Record<string, number>;
+	/** Where the player sits. Null until the user moves or resizes it. Persisted. */
+	floatPosition: { top: number; left: number } | null;
+	/**
+	 * Width the user last chose, per media kind. Height is derived from the
+	 * media, so it is never stored. Persisted.
+	 */
+	floatWidths: Partial<Record<MediaKind, number>>;
+	/**
+	 * Where the visible widget actually sits, in the bottom-right lane's own
+	 * coordinates. Null whenever nothing is on screen (no loaded item, or
+	 * minimized).
+	 *
+	 * Separate from `floatPosition`, which is the PERSISTED position and only
+	 * moves when the user lets go of a drag. This is the live rect, republished
+	 * mid-gesture and on every window resize, and it exists so the toast stack
+	 * can get out of the widget's way - a toast landing on the player at
+	 * z-index 100000 made it look like the widget had closed itself.
+	 */
+	floatFootprint: MediaFloatFootprint | null;
+	/**
+	 * Item ID -> picture aspect ratio, learned from the file when it loads.
+	 *
+	 * Per boot: it costs one frame to re-learn and would otherwise be one more
+	 * thing on disk that could disagree with the file.
+	 */
+	aspects: Record<string, number>;
 
 	/**
-	 * Make a tab the active player, un-dismissing the widget.
+	 * Queue a file the user just opened and play it.
 	 *
-	 * @param tabId - Media file tab to activate.
-	 * @param opts.autoplay - Start playing when ready. Set when the user opened
-	 *   the file or navigated here with the widget's own controls.
+	 * Re-opening a file already in the queue reuses its entry rather than
+	 * stacking a duplicate, so it resumes where it left off.
 	 */
-	setActiveTab: (tabId: string, opts?: { autoplay?: boolean }) => void;
+	openMedia: (request: MediaOpenRequest) => void;
+	/**
+	 * Add files to the end of the queue without interrupting what is playing.
+	 *
+	 * Queueing always brings the widget back, whether it was minimized or is a
+	 * queue restored from disk: adding files is a request to see the queue, and
+	 * doing it into a hidden player produces no visible response anywhere in the
+	 * app. It does not disturb the loaded track - what is playing keeps playing.
+	 *
+	 * The one exception is an idle player: with nothing loaded there is no
+	 * widget on screen, so the first file the user asked for becomes the active
+	 * one (paused, not autoplaying) rather than landing in a queue nobody can
+	 * see.
+	 *
+	 * All of that happens whether or not anything was actually ADDED. Queueing
+	 * files that are already queued adds nothing, and a version of this that
+	 * bailed on `added === 0` turned "Add to Play Queue" into a silent no-op the
+	 * second time it was used on the same files - which is exactly when a user
+	 * retries a command that looked like it did nothing.
+	 *
+	 * @returns How many files were newly queued. Already-queued files are left
+	 *   where they are, so "add to queue" twice does not reorder anything.
+	 */
+	enqueueMedia: (requests: MediaOpenRequest[]) => number;
+	/**
+	 * Make a queued item the active player, un-hiding the widget.
+	 *
+	 * @param itemId - Queue entry to activate.
+	 * @param opts.autoplay - Start playing when ready. Set when the user opened
+	 *   the file or navigated here with the player's own controls.
+	 */
+	setActiveItem: (itemId: string, opts?: { autoplay?: boolean }) => void;
 	setPlaying: (playing: boolean) => void;
+	/**
+	 * Hand off to the next queued item when one finishes.
+	 *
+	 * Distinct from the transport's next button only in what happens at the end
+	 * of the queue: there is nothing to advance to, so the finished item stays
+	 * loaded and paused rather than the player going blank.
+	 */
+	advanceAfterEnded: () => void;
 	/** Consume the one-shot autoplay request. */
 	consumeAutoplay: () => void;
 	/** Ask the active player to toggle play/pause. */
 	requestToggle: () => void;
-	/** Publish the docked slot rect and mark the tab visible. */
-	setSlotRect: (tabId: string, rect: MediaSlotRect) => void;
-	/** Mark a slot off screen, keeping its last rect. */
-	hideSlot: (tabId: string) => void;
-	/** Drop everything for a tab. Called when the tab itself goes away. */
-	clearTab: (tabId: string) => void;
-	/** Hide the floating widget without stopping playback. */
+	/** Drop an item from the queue. Releases the player if it was active. */
+	closeItem: (itemId: string) => void;
+	/** Empty the queue and release the player. */
+	clearQueue: () => void;
+	/** Drop one entry from the recently-played list. Leaves the queue alone. */
+	removeHistoryItem: (itemId: string) => void;
+	/** Forget everything played this session. */
+	clearHistory: () => void;
+	/** Hide the player without stopping playback. */
 	dismiss: () => void;
-	/** Bring the floating widget back. */
+	/** Bring the player back. */
 	restore: () => void;
-	setMinimized: (minimized: boolean) => void;
-	setFloatRect: (rect: MediaFloatRect) => void;
-	/** Remember where a tab was paused, so returning to it resumes. */
-	rememberTime: (tabId: string, seconds: number) => void;
+	/**
+	 * Put the player on screen, loaded on whatever it should be showing.
+	 *
+	 * What the command palette's "Open Media Player" and its shortcut both call,
+	 * so there is one answer to "open the player" instead of copies that drift.
+	 * It lands on the loaded item, else the most recently played one, else the
+	 * head of the queue, and it loads PAUSED at the remembered position: opening
+	 * the player is a request to see it, not a request to start listening.
+	 *
+	 * Re-queues a target that only survives in history. History outlives the
+	 * queue, so the most recent thing played is routinely something the user
+	 * closed, and only queue entries are ever drawn - without the re-queue the
+	 * command resolved a target, activated nothing, and rendered nothing, which
+	 * is indistinguishable from the feature being broken.
+	 */
+	openPlayer: () => void;
+	/**
+	 * Remember where the user put the player, and how wide they made it for this
+	 * kind of media.
+	 */
+	setFloatGeometry: (kind: MediaKind, rect: { top: number; left: number; width: number }) => void;
+	/**
+	 * Publish (or clear) the widget's live on-screen footprint.
+	 *
+	 * Called by the widget itself, which is the only thing that knows where it
+	 * ended up - it clamps itself to the viewport, so its rect is not derivable
+	 * from the persisted position.
+	 */
+	setFloatFootprint: (footprint: MediaFloatFootprint | null) => void;
+	/** Remember where an item was paused, so returning to it resumes. */
+	rememberTime: (itemId: string, seconds: number) => void;
+	/** Record how long a file is, for the queue and history lists. */
+	rememberDuration: (itemId: string, seconds: number) => void;
+	/** Record a video's real shape, so the frame can fit it. */
+	rememberAspect: (itemId: string, aspect: number) => void;
 }
 
-function persistFloatRect(rect: MediaFloatRect): void {
-	window.maestro?.settings?.set('mediaPlayerFloatRect', rect);
+function persistFloat(float: PersistedMediaFloat): void {
+	window.maestro?.settings?.set(MEDIA_FLOAT_SETTINGS_KEY, float);
 }
 
-export const useMediaPlaybackStore = create<MediaPlaybackStoreState>()((set) => ({
-	activeTabId: null,
+/**
+ * Queue writes are debounced because `rememberTime` fires several times a
+ * second while media plays. Half a second is short enough that a restart loses
+ * nothing a listener would notice, and long enough to collapse a burst of
+ * position updates (or a ten-file "add to queue") into one settings write.
+ */
+const QUEUE_PERSIST_DELAY_MS = 500;
+let queuePersistTimer: ReturnType<typeof setTimeout> | null = null;
+
+/** Write the queue, the loaded item, and every remembered position to settings. */
+function writeQueueNow(): void {
+	const { items, activeItemId, resumeTimes, durations } = useMediaPlaybackStore.getState();
+	const queued = new Set(items.map((item) => item.id));
+	// Durations outlive the queue in memory, because history rows still show the
+	// length of a file that was removed. On disk they are pruned to the queue, or
+	// every file the user ever played would accumulate there forever.
+	const persistedDurations: Record<string, number> = {};
+	for (const [id, seconds] of Object.entries(durations)) {
+		if (queued.has(id)) persistedDurations[id] = seconds;
+	}
+	const payload: PersistedMediaQueue = {
+		items,
+		activeItemId,
+		resumeTimes,
+		durations: persistedDurations,
+	};
+	window.maestro?.settings?.set(MEDIA_QUEUE_SETTINGS_KEY, payload);
+}
+
+function persistQueue(): void {
+	if (queuePersistTimer) clearTimeout(queuePersistTimer);
+	queuePersistTimer = setTimeout(() => {
+		queuePersistTimer = null;
+		writeQueueNow();
+	}, QUEUE_PERSIST_DELAY_MS);
+}
+
+/** Flush a pending queue write immediately. Used when the window is going away. */
+export function flushMediaQueuePersist(): void {
+	if (!queuePersistTimer) return;
+	clearTimeout(queuePersistTimer);
+	queuePersistTimer = null;
+	writeQueueNow();
+}
+
+/**
+ * History patch for a change of loaded track.
+ *
+ * Enforces one invariant: **the loaded track is never in history.** "Recently
+ * played" means what you already heard and are not hearing now, so the track in
+ * the player is excluded - it is named in the title bar two inches away, and
+ * listing it in both places at once is what made a single open file appear
+ * twice.
+ *
+ * That takes two moves, not one. The outgoing track joins the list, because it
+ * has just become something you played rather than something you are playing.
+ * The incoming track leaves it, which matters when you replay something from
+ * history: without the removal it would sit at the top of "recently played"
+ * while audibly playing.
+ *
+ * @returns A `history` patch, or nothing when neither move applies.
+ */
+function historyForActiveChange(
+	state: MediaPlaybackStoreState,
+	incomingId: string | null
+): { history: MediaItem[] } | undefined {
+	const outgoingId = state.activeItemId;
+	let history = state.history;
+
+	if (outgoingId && outgoingId !== incomingId) {
+		// Prefer the queue's copy for fresh metadata, but fall back to the history
+		// entry so a track already dropped from the queue still records its exit.
+		const outgoing =
+			state.items.find((item) => item.id === outgoingId) ??
+			state.history.find((item) => item.id === outgoingId);
+		if (outgoing) history = pushMediaHistory(history, outgoing, MEDIA_HISTORY_LIMIT);
+	}
+
+	if (incomingId) {
+		const withoutIncoming = history.filter((item) => item.id !== incomingId);
+		if (withoutIncoming.length !== history.length) history = withoutIncoming;
+	}
+
+	return history === state.history ? undefined : { history };
+}
+
+export const useMediaPlaybackStore = create<MediaPlaybackStoreState>()((set, get) => ({
+	items: [],
+	activeItemId: null,
+	history: [],
 	playing: false,
 	dismissed: false,
-	minimized: false,
+	dormant: false,
 	pendingAutoplay: false,
 	toggleRequest: 0,
-	slots: {},
+	focusRequest: 0,
 	resumeTimes: {},
-	floatRect: null,
+	durations: {},
+	floatPosition: null,
+	floatWidths: {},
+	floatFootprint: null,
+	aspects: {},
 
-	setActiveTab: (tabId, opts) =>
+	openMedia: (request) => {
 		set((state) => {
+			const id = mediaItemId(request.sessionId, request.path);
+			const existing = state.items.find((item) => item.id === id);
+			const item: MediaItem = { ...request, id };
+			const items = existing
+				? // Keep its queue position (prev/next order is open order) but refresh
+					// the metadata, since the agent may have been renamed since.
+					state.items.map((current) => (current.id === id ? item : current))
+				: [...state.items, item];
+
+			return {
+				items: trimMediaQueue(items, MEDIA_QUEUE_LIMIT, id),
+				activeItemId: id,
+				...historyForActiveChange(state, id),
+				// Opening is an explicit request to hear it, even if it was already
+				// active and paused.
+				pendingAutoplay: true,
+				dismissed: false,
+				dormant: false,
+				// Switching items unmounts the outgoing player, which pauses it. Only
+				// one element is ever mounted, so overlapping audio is structurally
+				// impossible rather than something we have to remember to prevent.
+				...(state.activeItemId === id ? {} : { playing: false }),
+			};
+		});
+		persistQueue();
+	},
+
+	enqueueMedia: (requests) => {
+		if (requests.length === 0) return 0;
+		let added = 0;
+		set((state) => {
+			const items = [...state.items];
+			const known = new Set(items.map((item) => item.id));
+			// The first file the user POINTED AT, whether or not it was already in
+			// the queue. That difference is the whole bug this replaced a
+			// `firstAddedId` with: queueing files that are all already queued adds
+			// nothing, and keying the response off what was added made the command
+			// a silent no-op the second time it was used on the same files.
+			const firstRequestedId = mediaItemId(requests[0].sessionId, requests[0].path);
+			for (const request of requests) {
+				const id = mediaItemId(request.sessionId, request.path);
+				if (known.has(id)) continue;
+				known.add(id);
+				items.push({ ...request, id });
+				added++;
+			}
+
+			// Queueing NEVER interrupts: whatever is loaded stays loaded and keeps
+			// playing, which is the entire difference between this and `openMedia`.
+			// It is also not conditional on `playing` - a paused track is still the
+			// one the user is on, so queueing behind it must not yank the player
+			// away from it.
+			if (state.activeItemId) {
+				// Queueing counts as engaging the player, so the widget comes back
+				// here - a restored queue stops being dormant AND a minimized player
+				// un-hides. Otherwise queueing ten files while the widget is hidden
+				// produces no visible response anywhere in the app, which reads as
+				// the command having done nothing. Un-hiding is not interrupting:
+				// the loaded track is untouched and keeps playing.
+				//
+				// This runs even when nothing was added: "put these in the player"
+				// is answered by showing the player, and the files ARE in it.
+				if (added === 0 && !state.dismissed && !state.dormant) return state;
+				return {
+					...(added > 0
+						? { items: trimMediaQueue(items, MEDIA_QUEUE_LIMIT, state.activeItemId) }
+						: {}),
+					dismissed: false,
+					dormant: false,
+				};
+			}
+
+			// Idle player: there is no widget on screen, so a pure append would
+			// queue into the void. Load the file the user asked for - NOT
+			// `items[0]`, which after a close is some leftover they never named.
+			// It loads paused, because queueing is not a request to listen.
+			return {
+				items: trimMediaQueue(items, MEDIA_QUEUE_LIMIT, firstRequestedId),
+				activeItemId: firstRequestedId,
+				...historyForActiveChange(state, firstRequestedId),
+				dismissed: false,
+				dormant: false,
+			};
+		});
+		if (added > 0) persistQueue();
+		return added;
+	},
+
+	setActiveItem: (itemId, opts) => {
+		set((state) => {
+			const target = state.items.find((item) => item.id === itemId);
+			if (!target) return state;
 			const autoplay = opts?.autoplay ?? false;
-			if (state.activeTabId === tabId) {
-				// Already active. Still honor a fresh autoplay request (re-opening a
-				// paused file should play it) and un-dismiss, but do not restart.
-				if (!autoplay && !state.dismissed) return state;
+			if (state.activeItemId === itemId) {
+				// Already active. Honor a fresh autoplay request and un-hide, but do
+				// not restart something mid-listen.
+				if (!autoplay && !state.dismissed && !state.dormant) return state;
 				return {
 					dismissed: false,
+					dormant: false,
 					pendingAutoplay: state.pendingAutoplay || autoplay,
 				};
 			}
-			// Switching files: the outgoing player unmounts, which pauses it. Only
-			// one media element is ever mounted, so overlapping audio is structurally
-			// impossible rather than something we have to remember to prevent.
 			return {
-				activeTabId: tabId,
+				activeItemId: itemId,
+				...historyForActiveChange(state, itemId),
 				playing: false,
 				dismissed: false,
+				dormant: false,
 				pendingAutoplay: autoplay,
 			};
-		}),
+		});
+		persistQueue();
+	},
 
 	setPlaying: (playing) => set((state) => (state.playing === playing ? state : { playing })),
+
+	advanceAfterEnded: () => {
+		const { items, activeItemId, setActiveItem, rememberTime } = get();
+		const index = items.findIndex((item) => item.id === activeItemId);
+		// A finished file should start from the top next time, not from its own
+		// end - otherwise coming back to it plays nothing.
+		if (activeItemId) rememberTime(activeItemId, 0);
+		if (index === -1) return;
+		const next = items[index + 1];
+		if (!next) return;
+		setActiveItem(next.id, { autoplay: true });
+	},
 
 	consumeAutoplay: () =>
 		set((state) => (state.pendingAutoplay ? { pendingAutoplay: false } : state)),
 
 	requestToggle: () => set((state) => ({ toggleRequest: state.toggleRequest + 1 })),
 
-	setSlotRect: (tabId, rect) =>
+	closeItem: (itemId) => {
+		let changed = false;
 		set((state) => {
-			const prev = state.slots[tabId];
-			if (
-				prev?.visible &&
-				prev.rect.top === rect.top &&
-				prev.rect.left === rect.left &&
-				prev.rect.width === rect.width &&
-				prev.rect.height === rect.height
-			) {
-				// Identical rect: bail out so ResizeObserver churn does not re-render
-				// the host and with it the media element.
-				return state;
-			}
-			return { slots: { ...state.slots, [tabId]: { rect, visible: true } } };
-		}),
-
-	hideSlot: (tabId) =>
-		set((state) => {
-			const prev = state.slots[tabId];
-			if (!prev || !prev.visible) return state;
-			return { slots: { ...state.slots, [tabId]: { ...prev, visible: false } } };
-		}),
-
-	clearTab: (tabId) =>
-		set((state) => {
-			const hasSlot = state.slots[tabId] !== undefined;
-			const hasTime = state.resumeTimes[tabId] !== undefined;
-			const isActive = state.activeTabId === tabId;
-			if (!hasSlot && !hasTime && !isActive) return state;
-
-			const slots = { ...state.slots };
+			if (!state.items.some((item) => item.id === itemId)) return state;
+			changed = true;
+			const items = state.items.filter((item) => item.id !== itemId);
+			const wasActive = state.activeItemId === itemId;
+			const historyPatch = wasActive ? historyForActiveChange(state, null) : undefined;
+			const history = historyPatch?.history ?? state.history;
+			// Keep the position of anything that survives in "recently played":
+			// reopening it from the history menu or from "Open Media Player" has to
+			// land where the user stopped, not back at zero. Only a track leaving
+			// BOTH lists loses its bookmark.
 			const resumeTimes = { ...state.resumeTimes };
-			delete slots[tabId];
-			delete resumeTimes[tabId];
+			if (!history.some((entry) => entry.id === itemId)) delete resumeTimes[itemId];
 
 			return {
-				slots,
+				items,
 				resumeTimes,
-				// Closing the playing tab releases the player. The host picks a
-				// remaining media tab on its next pass if there is one.
-				...(isActive ? { activeTabId: null, playing: false, pendingAutoplay: false } : {}),
+				// Closing the playing item releases the player rather than
+				// auto-advancing: closing is "stop", not "skip". The track is leaving
+				// the player, so it lands in history the same as if the next one had
+				// started - otherwise playing something and then closing it would
+				// lose it from "recently played" entirely.
+				...(wasActive
+					? {
+							activeItemId: null,
+							playing: false,
+							pendingAutoplay: false,
+							...historyPatch,
+						}
+					: {}),
 			};
+		});
+		if (changed) persistQueue();
+	},
+
+	clearQueue: () => {
+		set((state) => {
+			// Clears what is QUEUED, which no longer includes the track in the
+			// player: the menu this button lives in lists what plays next, so
+			// emptying it must not also stop the music. Closing (the `x`) is what
+			// stops playback, and it is one button away.
+			const loaded = state.items.find((item) => item.id === state.activeItemId);
+			const items = loaded ? [loaded] : [];
+			if (items.length === state.items.length) return state;
+
+			const resumeTimes = loaded ? { [loaded.id]: state.resumeTimes[loaded.id] ?? 0 } : {};
+			return { items, resumeTimes };
+		});
+		persistQueue();
+	},
+
+	removeHistoryItem: (itemId) =>
+		set((state) => {
+			const history = state.history.filter((entry) => entry.id !== itemId);
+			return history.length === state.history.length ? state : { history };
 		}),
+
+	clearHistory: () => set((state) => (state.history.length === 0 ? state : { history: [] })),
 
 	dismiss: () => set((state) => (state.dismissed ? state : { dismissed: true })),
 
-	restore: () => set((state) => (state.dismissed ? { dismissed: false } : state)),
+	restore: () =>
+		// Always bumps the focus nonce, even when the widget was already on
+		// screen: this is only ever called by the header pill's restore button and
+		// the palette, and both are the user saying "put me in the player".
+		set((state) => ({
+			...(state.dismissed || state.dormant ? { dismissed: false, dormant: false } : {}),
+			focusRequest: state.focusRequest + 1,
+		})),
 
-	setMinimized: (minimized) =>
-		set((state) => (state.minimized === minimized ? state : { minimized })),
+	openPlayer: () => {
+		set((state) => {
+			const targetId = selectMediaPlayerTargetId(state);
+			if (!targetId) return state;
 
-	setFloatRect: (rect) => {
-		persistFloatRect(rect);
-		set({ floatRect: rect });
+			// A target that is not in the queue was closed out of it and lives only
+			// in history. Only queue entries are rendered, so put it back rather
+			// than activating an id nothing will draw.
+			const queued = state.items.some((item) => item.id === targetId);
+			const fromHistory = queued ? null : state.history.find((item) => item.id === targetId);
+			if (!queued && !fromHistory) return state;
+
+			const items = fromHistory
+				? trimMediaQueue([...state.items, fromHistory], MEDIA_QUEUE_LIMIT, targetId)
+				: state.items;
+
+			return {
+				items,
+				// Never autoplay: this opens the widget, and the transport is right
+				// there. It resumes from `resumeTimes`, so the file comes back where
+				// the user left it.
+				pendingAutoplay: false,
+				dismissed: false,
+				dormant: false,
+				// Opened from the palette or its shortcut, so the user's hands are on
+				// the keyboard. Land focused or none of the player's keys work.
+				focusRequest: state.focusRequest + 1,
+				...(state.activeItemId === targetId
+					? {}
+					: {
+							activeItemId: targetId,
+							...historyForActiveChange(state, targetId),
+							playing: false,
+						}),
+			};
+		});
+		persistQueue();
 	},
 
-	rememberTime: (tabId, seconds) =>
-		set((state) => ({ resumeTimes: { ...state.resumeTimes, [tabId]: seconds } })),
+	setFloatGeometry: (kind, rect) => {
+		set((state) => {
+			const float: PersistedMediaFloat = {
+				top: rect.top,
+				left: rect.left,
+				widths: { ...state.floatWidths, [kind]: rect.width },
+			};
+			persistFloat(float);
+			return { floatPosition: { top: float.top, left: float.left }, floatWidths: float.widths };
+		});
+	},
+
+	setFloatFootprint: (footprint) =>
+		set((state) => {
+			const current = state.floatFootprint;
+			if (current === footprint) return state;
+			if (
+				current &&
+				footprint &&
+				current.fromBottom === footprint.fromBottom &&
+				current.fromRight === footprint.fromRight &&
+				current.width === footprint.width &&
+				current.viewportHeight === footprint.viewportHeight
+			) {
+				// A drag fires this on every mousemove; only real movement should
+				// re-render the toast stack subscribed to it.
+				return state;
+			}
+			return { floatFootprint: footprint };
+		}),
+
+	rememberTime: (itemId, seconds) => {
+		set((state) => ({ resumeTimes: { ...state.resumeTimes, [itemId]: seconds } }));
+		persistQueue();
+	},
+
+	rememberDuration: (itemId, seconds) => {
+		// A live or unknown-length stream reports Infinity; the lists show `--:--`
+		// for it rather than a nonsense number.
+		if (!Number.isFinite(seconds) || seconds <= 0) return;
+		if (useMediaPlaybackStore.getState().durations[itemId] === seconds) return;
+		set((state) => ({ durations: { ...state.durations, [itemId]: seconds } }));
+		persistQueue();
+	},
+
+	rememberAspect: (itemId, aspect) =>
+		set((state) => {
+			const value = normalizeMediaAspect(aspect);
+			if (state.aspects[itemId] === value) return state;
+			return { aspects: { ...state.aspects, [itemId]: value } };
+		}),
 }));
 
 /** Non-React access, for callers outside the component tree. */
 export function getMediaPlaybackActions() {
 	const state = useMediaPlaybackStore.getState();
 	return {
-		setActiveTab: state.setActiveTab,
+		openMedia: state.openMedia,
+		enqueueMedia: state.enqueueMedia,
+		setActiveItem: state.setActiveItem,
 		setPlaying: state.setPlaying,
 		dismiss: state.dismiss,
 		restore: state.restore,
-		clearTab: state.clearTab,
+		openPlayer: state.openPlayer,
+		closeItem: state.closeItem,
 	};
 }
 
-/** Whether a floating widget could be restored right now. */
+/**
+ * Whether a hidden player could be brought back right now.
+ *
+ * True for a dormant restored queue as well. The header pill uses the stricter
+ * check below; the palette asks the looser `selectCanOpenMediaPlayer`, since
+ * "open the player" covers more than un-hiding a loaded one.
+ */
 export function selectCanRestoreFloatingPlayer(state: MediaPlaybackStoreState): boolean {
-	return state.dismissed && state.activeTabId !== null;
+	return state.dismissed && state.activeItemId !== null;
+}
+
+/**
+ * Whether the Left Bar header should show the minimized player.
+ *
+ * Stricter than `selectCanRestoreFloatingPlayer` by exactly one condition: the
+ * pill is passive chrome the user did not ask for, so it has to be earned by
+ * engaging the player this session. Restoring a queue from disk does not earn
+ * it, which is why a fresh launch is quiet even with ten files still queued.
+ */
+export function selectShowNowPlayingIndicator(state: MediaPlaybackStoreState): boolean {
+	return !state.dormant && selectCanRestoreFloatingPlayer(state);
+}
+
+/**
+ * Whether the palette should offer "Open Media Player" as an ACTIONABLE command.
+ *
+ * True whenever there is something to open - a loaded item, a queue, or
+ * anything in this session's history. Deliberately looser than
+ * {@link selectCanRestoreFloatingPlayer}, which answers a narrower question
+ * ("is a loaded player merely hidden?").
+ *
+ * The command is LISTED either way; this only decides whether invoking it does
+ * something. Hiding a control the rule permits is how the inline Force Send
+ * button went missing for a release, so the entry stays visible with an
+ * explanatory subtext when there is nothing to play, rather than vanishing and
+ * leaving the user to wonder whether the feature exists.
+ */
+export function selectCanOpenMediaPlayer(state: MediaPlaybackStoreState): boolean {
+	return state.activeItemId !== null || state.items.length > 0 || state.history.length > 0;
+}
+
+/**
+ * The item "Open Media Player" should land on: whatever is loaded, else the
+ * most recent thing played. Null when there is nothing to open.
+ */
+export function selectMediaPlayerTargetId(state: MediaPlaybackStoreState): string | null {
+	return state.activeItemId ?? state.history[0]?.id ?? state.items[0]?.id ?? null;
+}
+
+/** The loaded item, or null when the player is idle. */
+export function selectActiveMediaItem(state: MediaPlaybackStoreState): MediaItem | null {
+	if (!state.activeItemId) return null;
+	return state.items.find((item) => item.id === state.activeItemId) ?? null;
+}
+
+/**
+ * Whether the Left Bar header's now-playing pill is actually on screen.
+ *
+ * `NowPlayingIndicator` renders nothing unless BOTH of these hold, and the
+ * header needs the same answer to decide how much width the pill is taking.
+ * One selector because two copies of "is the pill on screen" is how a width
+ * reserve ends up describing a header nobody is looking at.
+ */
+export function selectNowPlayingVisible(state: MediaPlaybackStoreState): boolean {
+	return selectShowNowPlayingIndicator(state) && selectActiveMediaItem(state) !== null;
 }

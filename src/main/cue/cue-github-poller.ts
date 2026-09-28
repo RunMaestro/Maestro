@@ -1,8 +1,10 @@
 /**
- * GitHub poller provider for Maestro Cue github.pull_request and github.issue subscriptions.
+ * GitHub poller provider for Maestro Cue github.pull_request, github.issue,
+ * and github.label subscriptions.
  *
- * Polls GitHub CLI (`gh`) for new PRs/issues, tracks "seen" state in SQLite,
- * and fires CueEvents for new items. Follows the same factory pattern as cue-file-watcher.ts.
+ * Polls GitHub CLI (`gh`) for new PRs/issues (and for label-add events), tracks
+ * "seen" state in SQLite, and fires CueEvents for new items. Follows the same
+ * factory pattern as cue-file-watcher.ts.
  */
 
 import { execFile as cpExecFile } from 'child_process';
@@ -13,9 +15,12 @@ import {
 	markGitHubItemSeen,
 	hasAnyGitHubSeen,
 	pruneGitHubSeen,
+	pruneSusFactorBlocks,
 	getGitHubItemState,
 	recordGitHubRetrigger,
+	setGitHubItemRevision,
 } from './cue-db';
+import type { CueGitHubLabelTarget } from '../../shared/cue';
 import { resolveGhPath, getExpandedEnv } from '../utils/cliDetection';
 import { captureException } from '../utils/sentry';
 import type { CueLogPayload } from '../../shared/cue-log-types';
@@ -34,6 +39,47 @@ export const DEFAULT_MAX_NOTIFICATIONS = 10;
  * treats `0` and any negative value as unlimited.
  */
 const UNLIMITED_NOTIFICATIONS = 0;
+
+/**
+ * `item_key` of the single row a `github.label` subscription keeps in
+ * `cue_github_seen`. Its `last_revision` holds the highest GitHub issue-event
+ * id already processed; everything newer fires. A watermark beats per-item
+ * label-set diffing here because the events feed reports the label add itself
+ * (with its actor and timestamp), so a label removed and re-added is two
+ * distinct events instead of one indistinguishable set difference.
+ */
+const LABEL_WATERMARK_KEY = '__label_watermark__';
+
+/**
+ * Pages of 100 issue events fetched per poll. The feed is repo-wide and
+ * newest-first, and it carries every issue event (subscribed, mentioned,
+ * renamed, ...), not just label changes, so a busy repo can bury a label add
+ * quickly. Three pages covers ~300 events between polls; past that the poller
+ * warns rather than silently skipping.
+ */
+const MAX_LABEL_EVENT_PAGES = 3;
+
+/** Per-page size for the issue-events feed. GitHub's maximum. */
+const LABEL_EVENT_PAGE_SIZE = 100;
+
+/** Raw label event projected out of `repos/{repo}/issues/events` by `--jq`. */
+interface RawLabelEvent {
+	id: number;
+	created_at: string;
+	label: string;
+	actor: string;
+	number: number;
+	title: string;
+	url: string;
+	body: string;
+	state: string;
+	labels: string[];
+	is_pr: boolean;
+	merged: boolean;
+	author: string;
+	item_created_at: string;
+	item_updated_at: string;
+}
 
 /** Raw shape of a comment returned by `gh pr view --json comments`. */
 interface RawGitHubComment {
@@ -68,11 +114,13 @@ export function formatNewCommentsForTemplate(comments: GitHubComment[]): string 
 export const GITHUB_RATE_LIMIT_MAX_BACKOFF_MS = 60 * 60 * 1000;
 
 /**
- * Heuristic rate-limit detector for `gh` CLI failures. GitHub surfaces rate
- * limits in stderr text rather than a structured error code, so we pattern
- * match the user-visible strings. Exported for tests.
+ * Lowercased `message` + `stderr` of a `gh` CLI failure, joined for pattern
+ * matching. `gh` reports the interesting detail (rate limits, HTTP status,
+ * auth hints) in stderr text rather than in a structured error code, and
+ * `execFile` rejections carry it on a separate property from the message, so
+ * every classifier below has to look at both.
  */
-export function isGitHubRateLimitError(err: unknown): boolean {
+function ghErrorHaystack(err: unknown): string {
 	const msg = (
 		err && typeof err === 'object' && 'message' in err && typeof err.message === 'string'
 			? err.message
@@ -85,7 +133,16 @@ export function isGitHubRateLimitError(err: unknown): boolean {
 		typeof (err as { stderr: unknown }).stderr === 'string'
 			? (err as { stderr: string }).stderr.toLowerCase()
 			: '';
-	const haystack = `${msg}\n${stderr}`;
+	return `${msg}\n${stderr}`;
+}
+
+/**
+ * Heuristic rate-limit detector for `gh` CLI failures. GitHub surfaces rate
+ * limits in stderr text rather than a structured error code, so we pattern
+ * match the user-visible strings. Exported for tests.
+ */
+export function isGitHubRateLimitError(err: unknown): boolean {
+	const haystack = ghErrorHaystack(err);
 	return (
 		haystack.includes('api rate limit exceeded') ||
 		haystack.includes('secondary rate limit') ||
@@ -104,19 +161,7 @@ export function isGitHubRateLimitError(err: unknown): boolean {
  * paging Sentry on every tick of a GitHub outage is pure noise (MAESTRO-KE).
  */
 export function isGitHubConnectivityError(err: unknown): boolean {
-	const msg = (
-		err && typeof err === 'object' && 'message' in err && typeof err.message === 'string'
-			? err.message
-			: String(err ?? '')
-	).toLowerCase();
-	const stderr =
-		err &&
-		typeof err === 'object' &&
-		'stderr' in err &&
-		typeof (err as { stderr: unknown }).stderr === 'string'
-			? (err as { stderr: string }).stderr.toLowerCase()
-			: '';
-	const haystack = `${msg}\n${stderr}`;
+	const haystack = ghErrorHaystack(err);
 	return (
 		haystack.includes('error connecting to api.github.com') ||
 		haystack.includes('check your internet connection') ||
@@ -125,7 +170,38 @@ export function isGitHubConnectivityError(err: unknown): boolean {
 		haystack.includes('etimedout') ||
 		haystack.includes('network is unreachable') ||
 		haystack.includes('could not resolve host: api.github.com') ||
+		// `gh` is a Go binary, so a transport-level failure surfaces with Go's
+		// wording rather than a libuv errno: `Post "https://api.github.com/graphql":
+		// net/http: TLS handshake timeout`. Same unreachable-right-now condition as
+		// the ECONNRESET/ETIMEDOUT spellings above, different vocabulary.
+		haystack.includes('tls handshake timeout') ||
+		haystack.includes('i/o timeout') ||
+		haystack.includes('no such host') ||
 		/\bhttp\s+5\d{2}\b/.test(haystack)
+	);
+}
+
+/**
+ * Detect GitHub CLI authentication failures - an expired, revoked, or missing
+ * `gh` token.
+ *
+ * Deliberately NOT folded into `isGitHubConnectivityError`: that predicate is
+ * documented and unit-tested as *not* matching auth/configuration failures, and
+ * the two want different user-facing guidance ("GitHub is unreachable, we'll
+ * retry" vs "re-authenticate `gh`"). What they share is that neither is a
+ * Maestro bug, so neither should page Sentry. Without this, one install whose
+ * token went stale files an event on every poll tick indefinitely - MAESTRO-KE
+ * collected 924 of them from a single trigger.
+ */
+export function isGitHubAuthError(err: unknown): boolean {
+	const haystack = ghErrorHaystack(err);
+	return (
+		/\bhttp\s+401\b/.test(haystack) ||
+		haystack.includes('bad credentials') ||
+		haystack.includes('gh auth login') ||
+		haystack.includes('requires authentication') ||
+		haystack.includes('authentication required') ||
+		haystack.includes('not logged into any github hosts')
 	);
 }
 
@@ -149,7 +225,7 @@ function execFileAsync(
 }
 
 export interface CueGitHubPollerConfig {
-	eventType: 'github.pull_request' | 'github.issue';
+	eventType: 'github.pull_request' | 'github.issue' | 'github.label';
 	repo?: string;
 	pollMinutes: number;
 	projectRoot: string;
@@ -159,6 +235,18 @@ export interface CueGitHubPollerConfig {
 	subscriptionId: string;
 	/** GitHub state filter: "open" (default), "closed", "merged" (PRs only), or "all" */
 	ghState?: string;
+	/**
+	 * `github.label` only: which kind of item to watch. Defaults to `'both'`.
+	 * The issue-events feed covers PRs and issues in one call, so this is a
+	 * client-side narrowing rather than a different query.
+	 */
+	labelTarget?: CueGitHubLabelTarget;
+	/**
+	 * `github.label` only: labels that fire this subscription, matched
+	 * case-insensitively against the label just added. Empty / omitted fires
+	 * on ANY label add.
+	 */
+	watchLabels?: string[];
 	/**
 	 * When true, the poller re-fires this subscription on any post-discovery
 	 * activity (comments, edits, reviews, label changes) detected via the
@@ -209,6 +297,11 @@ export function createCueGitHubPoller(config: CueGitHubPollerConfig): () => void
 		maxNotifications,
 	} = config;
 	const stateFilter = ghState ?? 'open';
+	const labelTarget = config.labelTarget ?? 'both';
+	// Lowercased once so the per-event check is a plain Set lookup.
+	const watchedLabels = new Set(
+		(config.watchLabels ?? []).map((l) => l.trim().toLowerCase()).filter(Boolean)
+	);
 	const isActive = config.isActive ?? (() => true);
 	const retrigger = retriggerOnComments === true;
 	// Treat undefined as "use default 10". 0/negative = unlimited (sentinel
@@ -270,13 +363,26 @@ export function createCueGitHubPoller(config: CueGitHubPollerConfig): () => void
 			if (isGitHubRateLimitError(err)) {
 				throw err;
 			}
+			// A stale token fails here first, before `doPoll` ever gets a repo to
+			// poll, so the auth guidance has to be repeated at this call site -
+			// otherwise an auto-detect trigger only ever says "could not auto-detect
+			// repo", which reads like a project problem rather than a login one.
+			if (isGitHubAuthError(err)) {
+				const message = err instanceof Error ? err.message : String(err);
+				onLog(
+					'warn',
+					`[CUE] GitHub poll skipped for "${triggerName}" - the GitHub CLI is not authenticated. Run \`gh auth login\` to reconnect: ${message}`
+				);
+				return null;
+			}
 			onLog('warn', `[CUE] Could not auto-detect repo for "${triggerName}" - skipping poll`);
 			// GitHub being unreachable or degraded is the same expected operational
 			// condition the doPoll catch below suppresses. Repo auto-detection runs
 			// first, so without this a `gh repo view` 5xx during an outage would
 			// still page Sentry once per tick for every auto-detect trigger
 			// (MAESTRO-KE). Skipping the poll and returning null is unchanged.
-			if (!isGitHubConnectivityError(err)) {
+			// A stale `gh` token is the same story with a different cause.
+			if (!isGitHubConnectivityError(err) && !isGitHubAuthError(err)) {
 				void captureException(err, { operation: 'cue:github:resolveRepo', triggerName });
 			}
 			return null;
@@ -543,6 +649,153 @@ export function createCueGitHubPoller(config: CueGitHubPollerConfig): () => void
 		}
 	}
 
+	/**
+	 * Fetch one page of label-add events, newest first. Projected with `--jq`
+	 * so the (very large) embedded issue objects never cross the pipe: a single
+	 * unprojected page of 100 events runs to several megabytes of bodies,
+	 * reactions, and user objects we would immediately discard.
+	 */
+	async function fetchLabelEventPage(repo: string, page: number): Promise<RawLabelEvent[]> {
+		const { stdout } = await execFileAsync(
+			ghCommand!,
+			[
+				'api',
+				`repos/${repo}/issues/events?per_page=${LABEL_EVENT_PAGE_SIZE}&page=${page}`,
+				'--jq',
+				`[.[] | select(.event == "labeled") | {
+					id: .id,
+					created_at: .created_at,
+					label: (.label.name // ""),
+					actor: (.actor.login // "unknown"),
+					number: .issue.number,
+					title: (.issue.title // ""),
+					url: (.issue.html_url // ""),
+					body: ((.issue.body // "")[0:5000]),
+					state: (.issue.state // "open"),
+					labels: [(.issue.labels // [])[].name],
+					is_pr: (.issue.pull_request != null),
+					merged: (.issue.pull_request.merged_at != null),
+					author: (.issue.user.login // "unknown"),
+					item_created_at: (.issue.created_at // ""),
+					item_updated_at: (.issue.updated_at // "")
+				}]`,
+			],
+			{ cwd: projectRoot, timeout: 30000 }
+		);
+		const trimmed = stdout.trim();
+		if (!trimmed) return [];
+		try {
+			const parsed = JSON.parse(trimmed);
+			return Array.isArray(parsed) ? (parsed as RawLabelEvent[]) : [];
+		} catch {
+			onLog('warn', `[CUE] "${triggerName}" received malformed JSON from gh api issues/events`);
+			return [];
+		}
+	}
+
+	/** True when this label event matches the subscription's kind + label + state filters. */
+	function labelEventMatches(ev: RawLabelEvent): boolean {
+		if (labelTarget === 'pr' && !ev.is_pr) return false;
+		if (labelTarget === 'issue' && ev.is_pr) return false;
+		if (watchedLabels.size > 0 && !watchedLabels.has((ev.label ?? '').toLowerCase())) return false;
+		// `gh_state` is optional here (unlike the PR/issue pollers, which
+		// default to "open"): a label subscription with no explicit state
+		// should fire wherever the label lands.
+		if (!ghState || stateFilter === 'all') return true;
+		if (stateFilter === 'merged') return ev.is_pr && ev.merged;
+		return (ev.state ?? '').toLowerCase() === stateFilter;
+	}
+
+	/**
+	 * Poll the repo-wide issue-events feed and fire for every `labeled` event
+	 * newer than the stored watermark.
+	 *
+	 * Paginates backwards from the newest page until it reaches an event at or
+	 * below the watermark, so a burst of unrelated issue activity between polls
+	 * cannot hide a label add inside page 1. The first run only records the
+	 * watermark - it never replays a repo's label history.
+	 */
+	async function pollLabelEvents(repo: string): Promise<void> {
+		const watermarkState = getGitHubItemState(subscriptionId, LABEL_WATERMARK_KEY);
+		const watermark = Number(watermarkState?.lastRevision ?? '');
+		const isFirstRun = watermarkState?.lastRevision == null || !Number.isFinite(watermark);
+
+		const collected: RawLabelEvent[] = [];
+		let highestId = Number.isFinite(watermark) ? watermark : 0;
+		let reachedWatermark = false;
+
+		for (let page = 1; page <= MAX_LABEL_EVENT_PAGES; page++) {
+			if (stopped) return;
+			const events = await fetchLabelEventPage(repo, page);
+			for (const ev of events) {
+				if (typeof ev.id !== 'number') continue;
+				if (ev.id > highestId) highestId = ev.id;
+				if (!isFirstRun && ev.id > watermark) collected.push(ev);
+			}
+			// The first page alone establishes the watermark on a first run, and
+			// a page that isn't full is the end of the feed either way.
+			if (isFirstRun || events.length === 0) {
+				reachedWatermark = true;
+				break;
+			}
+			// `events` is the LABEL subset of the page, so an empty array does
+			// not mean the page was empty. Stop only once a returned label event
+			// sits at or below the watermark, which proves we crossed it.
+			if (events.some((ev) => ev.id <= watermark)) {
+				reachedWatermark = true;
+				break;
+			}
+		}
+
+		if (!reachedWatermark) {
+			onLog(
+				'warn',
+				`[CUE] "${triggerName}" scanned ${MAX_LABEL_EVENT_PAGES} pages of GitHub events without reaching its last-seen point - some label events may have been skipped. Lower poll_minutes to keep up.`
+			);
+		}
+
+		if (isFirstRun) {
+			setGitHubItemRevision(subscriptionId, LABEL_WATERMARK_KEY, String(highestId));
+			onLog('info', `[CUE] "${triggerName}" seeded GitHub label watermark at event ${highestId}`);
+			return;
+		}
+
+		// Oldest first so a batch of label adds reaches the agent in the order
+		// a human applied them.
+		collected.sort((a, b) => a.id - b.id);
+
+		for (const ev of collected) {
+			if (stopped) return;
+			if (!labelEventMatches(ev)) continue;
+			const event = createCueEvent('github.label', triggerName, {
+				type: ev.is_pr ? 'pull_request' : 'issue',
+				label: ev.label,
+				label_actor: ev.actor,
+				labeled_at: ev.created_at,
+				number: ev.number,
+				title: ev.title,
+				author: ev.author,
+				url: ev.url,
+				body: ev.body ?? '',
+				state: ev.is_pr && ev.merged ? 'merged' : (ev.state ?? 'open'),
+				labels: (ev.labels ?? []).join(','),
+				repo,
+				created_at: ev.item_created_at ?? '',
+				updated_at: ev.item_updated_at ?? '',
+				is_retrigger: false,
+				retrigger_count: 0,
+				new_comments: [],
+			});
+			onEvent(event);
+		}
+
+		// Advance past everything scanned, matched or not: an event filtered out
+		// by kind/label must not be re-examined forever.
+		if (highestId > watermark) {
+			setGitHubItemRevision(subscriptionId, LABEL_WATERMARK_KEY, String(highestId));
+		}
+	}
+
 	async function doPoll(): Promise<void> {
 		if (stopped) return;
 		// Visibility-aware pause: skip the gh CLI fetch when inactive. The
@@ -562,6 +815,8 @@ export function createCueGitHubPoller(config: CueGitHubPollerConfig): () => void
 
 			if (eventType === 'github.pull_request') {
 				await pollPRs(repo);
+			} else if (eventType === 'github.label') {
+				await pollLabelEvents(repo);
 			} else {
 				await pollIssues(repo);
 			}
@@ -589,6 +844,13 @@ export function createCueGitHubPoller(config: CueGitHubPollerConfig): () => void
 				onLog(
 					'warn',
 					`[CUE] GitHub poll skipped for "${triggerName}" because GitHub is unreachable: ${message}`
+				);
+			} else if (isGitHubAuthError(err)) {
+				// Actionable by the user and only by the user, so say what to do
+				// instead of filing a crash report on every tick (MAESTRO-KE).
+				onLog(
+					'warn',
+					`[CUE] GitHub poll skipped for "${triggerName}" - the GitHub CLI is not authenticated. Run \`gh auth login\` to reconnect: ${message}`
 				);
 			} else {
 				// Emit typed payload so the metric interceptor bumps the
@@ -672,6 +934,10 @@ export function createCueGitHubPoller(config: CueGitHubPollerConfig): () => void
 		() => {
 			if (!isCueDbReady()) return;
 			pruneGitHubSeen(30 * 24 * 60 * 60 * 1000);
+			// Same retention as the seen-set above: both are per-item poll dedup
+			// state, so an item aging out of one must age out of the other or a
+			// rediscovered issue would be re-fired while still silently blocked.
+			pruneSusFactorBlocks(30 * 24 * 60 * 60 * 1000);
 		},
 		24 * 60 * 60 * 1000
 	);

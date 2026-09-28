@@ -34,9 +34,21 @@ const LOG_CONTEXT = '[CopilotSessionStorage]';
  */
 const MAX_REMOTE_EVENTS_FILE_SIZE = 100 * 1024 * 1024;
 
-/** Resolve the local Copilot session state directory, respecting COPILOT_CONFIG_DIR. */
-function getLocalCopilotSessionStateDir(): string {
-	const configDir = process.env.COPILOT_CONFIG_DIR || path.join(os.homedir(), '.copilot');
+/**
+ * Resolve the local Copilot session state directory.
+ *
+ * `accountDir` is the Copilot home an agent was pointed at (`COPILOT_HOME`),
+ * not the `session-state` subdir; leaving it undefined reads the default
+ * account. The env fallback reads Maestro's OWN environment, which only helps
+ * a user who exported the var in their shell profile: a per-agent
+ * `COPILOT_HOME` never lands in this process, and reaches here as `accountDir`.
+ *
+ * The var is `COPILOT_HOME`, not `COPILOT_CONFIG_DIR`. GitHub's CLI docs are
+ * explicit: "By default this directory is `~/.copilot`. To override it, set
+ * `COPILOT_HOME`." No release has ever read `COPILOT_CONFIG_DIR`.
+ */
+function getLocalCopilotSessionStateDir(accountDir?: string): string {
+	const configDir = accountDir || process.env.COPILOT_HOME || path.join(os.homedir(), '.copilot');
 	return path.join(configDir, 'session-state');
 }
 
@@ -351,44 +363,69 @@ export class CopilotSessionStorage extends BaseSessionStorage {
 		return '~/.copilot/session-state';
 	}
 
-	/** Resolve the session state base directory (local or remote). */
-	private getSessionStateDir(sshConfig?: SshRemoteConfig): string {
-		return sshConfig ? this.getRemoteSessionStateDir() : getLocalCopilotSessionStateDir();
+	/**
+	 * Resolve the session state base directory (local or remote).
+	 *
+	 * `accountDir` only applies locally: a remote agent's `COPILOT_HOME` names a
+	 * directory on THAT host, and the remote path already expands `~` there.
+	 */
+	private getSessionStateDir(sshConfig?: SshRemoteConfig, accountDir?: string): string {
+		return sshConfig ? this.getRemoteSessionStateDir() : getLocalCopilotSessionStateDir(accountDir);
 	}
 
 	/** Resolve the directory path for a specific session. */
-	private getSessionDir(sessionId: string, sshConfig?: SshRemoteConfig): string {
+	private getSessionDir(
+		sessionId: string,
+		sshConfig?: SshRemoteConfig,
+		accountDir?: string
+	): string {
 		return sshConfig
 			? path.posix.join(this.getRemoteSessionStateDir(), sessionId)
-			: path.join(getLocalCopilotSessionStateDir(), sessionId);
+			: path.join(getLocalCopilotSessionStateDir(accountDir), sessionId);
 	}
 
 	/** Resolve the workspace.yaml path for a specific session. */
-	private getWorkspacePath(sessionId: string, sshConfig?: SshRemoteConfig): string {
+	private getWorkspacePath(
+		sessionId: string,
+		sshConfig?: SshRemoteConfig,
+		accountDir?: string
+	): string {
 		return sshConfig
 			? path.posix.join(this.getSessionDir(sessionId, sshConfig), 'workspace.yaml')
-			: path.join(this.getSessionDir(sessionId), 'workspace.yaml');
+			: path.join(this.getSessionDir(sessionId, undefined, accountDir), 'workspace.yaml');
 	}
 
 	/** Resolve the events.jsonl path for a specific session. */
-	private getEventsPath(sessionId: string, sshConfig?: SshRemoteConfig): string {
+	private getEventsPath(
+		sessionId: string,
+		sshConfig?: SshRemoteConfig,
+		accountDir?: string
+	): string {
 		return sshConfig
 			? path.posix.join(this.getSessionDir(sessionId, sshConfig), 'events.jsonl')
-			: path.join(this.getSessionDir(sessionId), 'events.jsonl');
+			: path.join(this.getSessionDir(sessionId, undefined, accountDir), 'events.jsonl');
 	}
 
-	/** List all Copilot sessions matching the given project path. */
+	/**
+	 * List all Copilot sessions matching the given project path.
+	 *
+	 * `accountDir` selects which `COPILOT_HOME` account's sessions to read;
+	 * undefined reads the default account. See {@link AgentSessionStorage}.
+	 */
 	async listSessions(
 		projectPath: string,
-		sshConfig?: SshRemoteConfig
+		sshConfig?: SshRemoteConfig,
+		accountDir?: string
 	): Promise<AgentSessionInfo[]> {
 		if (sshConfig) {
 			return this.listSessionsRemote(projectPath, sshConfig);
 		}
 
-		const sessionIds = await this.listSessionIds();
+		const sessionIds = await this.listSessionIds(undefined, accountDir);
 		const sessions = await Promise.all(
-			sessionIds.map((sessionId) => this.loadSessionInfo(projectPath, sessionId))
+			sessionIds.map((sessionId) =>
+				this.loadSessionInfo(projectPath, sessionId, undefined, undefined, accountDir)
+			)
 		);
 
 		return sessions
@@ -729,8 +766,11 @@ export class CopilotSessionStorage extends BaseSessionStorage {
 	}
 
 	/** List all session directory names from the session state directory. */
-	private async listSessionIds(sshConfig?: SshRemoteConfig): Promise<string[]> {
-		const sessionStateDir = this.getSessionStateDir(sshConfig);
+	private async listSessionIds(
+		sshConfig?: SshRemoteConfig,
+		accountDir?: string
+	): Promise<string[]> {
+		const sessionStateDir = this.getSessionStateDir(sshConfig, accountDir);
 		if (sshConfig) {
 			const result = await readDirRemote(sessionStateDir, sshConfig);
 			if (!result.success || !result.data) {
@@ -774,10 +814,11 @@ export class CopilotSessionStorage extends BaseSessionStorage {
 		projectPath: string,
 		sessionId: string,
 		sshConfig?: SshRemoteConfig,
-		precomputedSizeBytes?: number
+		precomputedSizeBytes?: number,
+		accountDir?: string
 	): Promise<AgentSessionInfo | null> {
-		const sessionDir = this.getSessionDir(sessionId, sshConfig);
-		const workspacePath = this.getWorkspacePath(sessionId, sshConfig);
+		const sessionDir = this.getSessionDir(sessionId, sshConfig, accountDir);
+		const workspacePath = this.getWorkspacePath(sessionId, sshConfig, accountDir);
 		try {
 			const workspaceContent = sshConfig
 				? await this.readRemoteFile(workspacePath, sshConfig)
@@ -792,7 +833,7 @@ export class CopilotSessionStorage extends BaseSessionStorage {
 				return null;
 			}
 
-			const eventsContent = await this.readEventsFile(sessionId, sshConfig);
+			const eventsContent = await this.readEventsFile(sessionId, sshConfig, accountDir);
 			if (!eventsContent?.trim()) {
 				logger.debug(`Skipping Copilot session ${sessionId} with empty events log`, LOG_CONTEXT);
 				return null;
@@ -873,9 +914,10 @@ export class CopilotSessionStorage extends BaseSessionStorage {
 	/** Read the events.jsonl file content for a session. Returns null on missing/unreadable files. */
 	private async readEventsFile(
 		sessionId: string,
-		sshConfig?: SshRemoteConfig
+		sshConfig?: SshRemoteConfig,
+		accountDir?: string
 	): Promise<string | null> {
-		const eventsPath = this.getEventsPath(sessionId, sshConfig);
+		const eventsPath = this.getEventsPath(sessionId, sshConfig, accountDir);
 
 		try {
 			return sshConfig

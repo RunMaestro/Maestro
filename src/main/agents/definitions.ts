@@ -258,25 +258,24 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 		// Base args for interactive mode (no flags that are exec-only)
 		args: [],
 		// Codex CLI argument builders
-		// Batch mode: codex [-C dir] exec --json --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check [--sandbox read-only] [resume <id>] -- "prompt"
+		// Batch mode: codex [-C dir] exec --json --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check [resume <id>] -- "prompt"
+		// Read-only mode: codex [-C dir] exec --json --sandbox read-only --skip-git-repo-check [resume <id>] -- "prompt"
 		// `-C` is a root-level global flag and MUST appear before the `exec` subcommand
 		// or Codex silently ignores it (see #959). buildAgentArgs prepends workingDirArgs accordingly.
 		// Sandbox modes:
 		//   - Default (YOLO): --dangerously-bypass-approvals-and-sandbox (full system access, required by Maestro)
-		//   - Read-only: --sandbox read-only (can only read files, overrides YOLO permissions)
-		// NOTE: --dangerously-bypass-approvals-and-sandbox is needed for ALL non-interactive exec
-		// invocations (including read-only) to bypass the interactive approval UI. The --sandbox
-		// flag independently controls what permissions the agent has.
+		//   - Read-only: --sandbox read-only (can only read files)
 		batchModePrefix: ['exec'], // Codex uses 'exec' subcommand for batch mode
 		batchModeArgs: ['--dangerously-bypass-approvals-and-sandbox', '--skip-git-repo-check'], // Args only valid on 'exec' subcommand
 		jsonOutputArgs: ['--json'], // JSON output format (must come before resume subcommand)
 		resumeArgs: (sessionId: string) => ['resume', sessionId], // Resume with session/thread ID
-		readOnlyArgs: [
-			'--sandbox',
-			'read-only',
-			'--dangerously-bypass-approvals-and-sandbox',
-			'--skip-git-repo-check',
-		], // Read-only/plan mode - includes bypass flags for non-interactive execution (sandbox read-only overrides YOLO permissions)
+		// Read-only/plan mode. Do NOT add --dangerously-bypass-approvals-and-sandbox
+		// here: it does what its name says and NULLIFIES --sandbox read-only, so
+		// read-only consults were writing files (verified live on codex 0.149.0:
+		// with the bypass flag a `touch` succeeded; with --sandbox read-only alone
+		// the OS sandbox denied it, the model got the error, and the run continued
+		// non-interactively - `exec` has no approval prompt to bypass).
+		readOnlyArgs: ['--sandbox', 'read-only', '--skip-git-repo-check'],
 		readOnlyCliEnforced: true, // CLI enforces read-only via --sandbox read-only
 		// Codex's `--add-dir` is narrower than Claude's: it adds a WRITABLE root to
 		// the sandbox ("Additional directories that should be writable alongside the
@@ -367,6 +366,79 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 				label: 'Context Window Size',
 				description:
 					'Maximum context window size in tokens. Common values: 1048576 (Gemini 2.5 Pro), 32767 (Gemini 2.5 Flash).',
+				default: 1048576,
+			},
+		],
+	},
+	{
+		id: 'antigravity',
+		name: 'Antigravity CLI',
+		binaryName: 'agy',
+		command: 'agy',
+		args: [],
+		batchModePrefix: [],
+		// Headless mode soft-denies anything that would normally prompt (shell commands
+		// default to "Ask"), so a batch run without this flag stalls out on its first
+		// terminal tool call instead of failing loudly.
+		// https://antigravity.google/docs/cli/headless
+		batchModeArgs: ['--dangerously-skip-permissions'],
+		jsonOutputArgs: ['--output-format', 'stream-json'],
+		// `agy -p "..." --conversation <id>` resumes a specific conversation. The id
+		// comes back as `conversation_id` on every stream-json event.
+		resumeArgs: (sessionId: string) => ['--conversation', sessionId],
+		// Best-effort only: `--sandbox` restricts terminal commands, but reading AND
+		// writing files inside the active workspace stays auto-allowed in headless
+		// mode. There is no CLI flag that makes the agent truly read-only, hence
+		// readOnlyCliEnforced: false and supportsReadOnlyMode: false.
+		//
+		// Consequence worth knowing: tab naming spawns with readOnlyMode: true and
+		// relies on `noToolsArgs` to keep a task-like first message from turning into
+		// a real agentic run. The CLI exposes no tool-disabling flag, so there is
+		// nothing to put in `noToolsArgs` and a naming run can still touch workspace
+		// files. Wire `noToolsArgs` here the moment such a flag ships.
+		readOnlyArgs: ['--sandbox'],
+		readOnlyCliEnforced: false,
+		yoloModeArgs: ['--dangerously-skip-permissions'],
+		// No working-directory flag; the CLI takes its workspace from the spawn cwd
+		// (echoed back as `init.cwd`). No documented image attachment flag either.
+		workingDirArgs: undefined,
+		imageArgs: undefined,
+		modelArgs: (modelId: string) => ['--model', modelId],
+		promptArgs: (prompt: string) => ['-p', prompt],
+		configOptions: [
+			{
+				key: 'model',
+				type: 'text',
+				label: 'Model',
+				description:
+					'Model slug override (e.g., gemini-3.6-flash-high). Leave empty to use the CLI default. Run `agy --help` for the slugs your account can reach.',
+				default: '',
+				argBuilder: (value: string) => (value && value.trim() ? ['--model', value.trim()] : []),
+			},
+			{
+				key: 'effort',
+				type: 'select',
+				label: 'Reasoning Effort',
+				description: 'How much the model should reason before responding.',
+				options: ['', 'low', 'medium', 'high'],
+				default: '',
+				argBuilder: (value: string) => (value && value.trim() ? ['--effort', value.trim()] : []),
+			},
+			{
+				key: 'printTimeout',
+				type: 'text',
+				label: 'Headless Timeout',
+				description:
+					'Maximum time a single headless run may take (Go duration, e.g. 30m, 2h). The CLI default of 5m cuts off longer agent runs.',
+				default: '30m',
+				argBuilder: (value: string) =>
+					value && value.trim() ? ['--print-timeout', value.trim()] : [],
+			},
+			{
+				key: 'contextWindow',
+				type: 'number',
+				label: 'Context Window Size',
+				description: 'Maximum context window size in tokens. Gemini 3.x models expose a 1M window.',
 				default: 1048576,
 			},
 		],
@@ -774,8 +846,18 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 		jsonOutputArgs: ['--output-format', 'streaming-json'], // JSONL event stream on stdout
 		promptArgs: (prompt: string) => ['-p', prompt], // Single-turn headless prompt
 		resumeArgs: (sessionId: string) => ['--resume', sessionId], // Resume by session UUID
-		readOnlyArgs: ['--permission-mode', 'plan'], // Read-only/plan mode
-		readOnlyCliEnforced: true, // CLI enforces read-only via --permission-mode plan
+		// Plan mode alone is not enough for non-interactive read-only runs:
+		// headless grok answers every permission prompt with "cancelled" (there
+		// is no TTY to ask) and a cancelled prompt KILLS THE WHOLE TURN, so a
+		// consult whose shell command was classified non-read-only died
+		// mid-answer with its preamble delivered as the "result". A --deny RULE
+		// resolves by policy without ever prompting: the tool call fails, the
+		// denial feeds back to the model, and the turn continues on read_file/
+		// grep/list_dir. Deny rules take precedence over plan mode's read-only
+		// auto-allow, so read-only shell commands are lost too - the cost of a
+		// turn that always survives (verified live on grok 1.0.5).
+		readOnlyArgs: ['--permission-mode', 'plan', '--deny', 'Bash(*)'],
+		readOnlyCliEnforced: true, // CLI enforces read-only via --permission-mode plan + --deny
 		// No noToolsArgs (tab naming falls back to the same graceful path as
 		// Codex/Copilot: batch mode + readOnlyArgs). Verified live on v0.2.93:
 		// grok has no reliable "disable ALL tools" switch. `--tools ""` is

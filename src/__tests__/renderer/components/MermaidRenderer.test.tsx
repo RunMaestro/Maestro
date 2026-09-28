@@ -5,6 +5,7 @@ import { MermaidRenderer } from '../../../renderer/components/MermaidRenderer';
 import { createMockTheme, mockTheme } from '../../helpers/mockTheme';
 import { AA_CONTRAST, contrastRatio } from '../../../shared/colorContrast';
 import type { ThemeColors } from '../../../shared/theme-types';
+import { THEMES } from '../../../shared/themes';
 
 // Mermaid is a static default import in MermaidRenderer. We stub parse (always
 // valid) and render (returns a caller-supplied SVG) so each test controls the
@@ -70,6 +71,102 @@ describe('MermaidRenderer', () => {
 		expect(container.querySelector('.mermaid-container svg image')).not.toBeNull();
 	});
 
+	describe('@ in a label (mermaid edge-id lexer rule)', () => {
+		// Mermaid lexes `[^\\s"]+@` as an edge id and jison takes the longest
+		// match, so `-->|@maestro ...|` fails to parse. The renderer escapes `@`
+		// to `#64;` first; mermaid decodes it back when it draws the label.
+		const chart = 'flowchart LR\n  C -->|@maestro from user| E[send]';
+
+		it('escapes @ before parsing and rendering', async () => {
+			renderMock.mockResolvedValue({
+				svg: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><g/></svg>',
+			});
+			const parseSpy = vi.mocked(mermaid.parse);
+			parseSpy.mockClear();
+
+			const { container } = render(<MermaidRenderer chart={chart} theme={mockTheme} />);
+
+			await waitFor(() => {
+				expect(container.querySelector('.mermaid-container svg')).not.toBeNull();
+			});
+			expect(parseSpy.mock.calls[0][0]).toContain('|#64;maestro from user|');
+			expect(renderMock.mock.calls[0][1]).toContain('|#64;maestro from user|');
+		});
+
+		it('shows the author their own source when a diagram still fails', async () => {
+			// The escape is invisible on the happy path; it must stay invisible on
+			// the error path too, or the source view shows text nobody wrote.
+			const parseSpy = vi.mocked(mermaid.parse);
+			parseSpy.mockRejectedValueOnce(new Error('Parse error on line 2'));
+
+			const { container } = render(<MermaidRenderer chart={chart} theme={mockTheme} />);
+
+			await waitFor(() => {
+				expect(container.textContent).toContain('Failed to render Mermaid diagram');
+			});
+			expect(container.textContent).toContain('|@maestro from user|');
+			expect(container.textContent).not.toContain('#64;');
+		});
+	});
+
+	describe('foreignObject labels (htmlLabels: true)', () => {
+		// Mermaid renders flowchart labels as HTML inside <foreignObject>, so a
+		// `<br/>` in `A[Visibility only.<br/>Observation]` is a real <br> element.
+		// DOMPurify's defaults (SVG-only profile + foreignObject not being an HTML
+		// integration point) used to delete that whole subtree and leave the bare
+		// text, which collapsed the line break, re-wrapped the text at the
+		// foreignObject width, and clipped whatever no longer fit the height
+		// mermaid had measured. Diagram content was lost, not just restyled.
+		const labelSvg = (inner: string) =>
+			`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 100"><g><foreignObject width="120" height="40">${inner}</foreignObject></g></svg>`;
+
+		it('keeps the <br> and its wrapper markup in a node label', async () => {
+			renderMock.mockResolvedValue({
+				svg: labelSvg(
+					'<div xmlns="http://www.w3.org/1999/xhtml" style="display: table-cell;" class="labelBkg"><span class="nodeLabel"><p>Visibility only.<br/>Observation, not control</p></span></div>'
+				),
+			});
+
+			const { container } = render(
+				<MermaidRenderer chart="flowchart LR\nA[x]" theme={mockTheme} />
+			);
+
+			await waitFor(() => {
+				expect(container.querySelector('.mermaid-container svg')).not.toBeNull();
+			});
+
+			const label = container.querySelector('.mermaid-container foreignObject');
+			expect(label).not.toBeNull();
+			expect(label?.querySelector('br')).not.toBeNull();
+			expect(label?.querySelector('span.nodeLabel')).not.toBeNull();
+			// The break must sit BETWEEN the two halves, not be dropped so the text
+			// collapses into "Visibility only.Observation".
+			expect(label?.innerHTML).toContain('Visibility only.<br>Observation, not control');
+		});
+
+		it('still strips scripts and event handlers from inside a foreignObject', async () => {
+			renderMock.mockResolvedValue({
+				svg: labelSvg(
+					'<div xmlns="http://www.w3.org/1999/xhtml"><script>globalThis.pwned = 1;</script><img src="x" onerror="globalThis.pwned = 1"/><iframe src="javascript:1"></iframe><a href="javascript:1">z</a></div>'
+				),
+			});
+
+			const { container } = render(
+				<MermaidRenderer chart="flowchart LR\nA[x]" theme={mockTheme} />
+			);
+
+			await waitFor(() => {
+				expect(container.querySelector('.mermaid-container svg')).not.toBeNull();
+			});
+
+			const mounted = container.querySelector('.mermaid-container')!;
+			expect(mounted.querySelector('script')).toBeNull();
+			expect(mounted.querySelector('iframe')).toBeNull();
+			expect(mounted.querySelector('[onerror]')).toBeNull();
+			expect(mounted.querySelector('a[href]')).toBeNull();
+		});
+	});
+
 	it('renders a standard flowchart SVG', async () => {
 		renderMock.mockResolvedValue({
 			svg: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 100"><g><rect width="10" height="10"/></g></svg>',
@@ -83,6 +180,52 @@ describe('MermaidRenderer', () => {
 	});
 
 	describe('theme contrast', () => {
+		it('keeps every mindmap section label readable on its own fill, in every theme', async () => {
+			// Mermaid paints section `i` with cScale{i} and its label with
+			// cScaleLabel{i}. Before this was fixed, cScaleLabel* was never set, so
+			// every label fell back to the theme's textMain painted straight onto a
+			// saturated fill: 80 of 80 theme/fill pairs failed AA, three at ratio
+			// 1.00 where label and fill were literally the same color.
+			for (const [themeId, theme] of Object.entries(THEMES)) {
+				const vars = await captureThemeVariables(`cscale-${themeId}`, theme.colors);
+				for (let i = 0; i < 12; i++) {
+					const fill = vars[`cScale${i}`];
+					const label = vars[`cScaleLabel${i}`];
+					// Assert both are real hex BEFORE measuring. contrastRatio returns
+					// its leave-it-alone 21 for anything hexToRgb cannot parse -
+					// including undefined and mermaid's derived hsl() strings - so a
+					// bare ratio assertion here would pass while measuring nothing.
+					expect(fill, `${themeId} cScale${i} fill`).toMatch(/^#[0-9a-fA-F]{6}$/);
+					expect(label, `${themeId} cScaleLabel${i}`).toMatch(/^#[0-9a-fA-F]{6}$/);
+					expect(contrastRatio(label, fill), `${themeId} cScale${i}`).toBeGreaterThanOrEqual(
+						AA_CONTRAST
+					);
+				}
+			}
+		});
+
+		it('declares all twelve section fills as parseable hex', async () => {
+			// This is what keeps the test above honest. Indices mermaid derives on
+			// its own come back as hsl() strings; hexToRgb returns null for those
+			// and contrastRatio then returns its leave-it-alone 21, so a contrast
+			// assertion over them passes without measuring anything.
+			const vars = await captureThemeVariables('cscale-hex', mockTheme.colors);
+			for (let i = 0; i < 12; i++) {
+				expect(vars[`cScale${i}`], `cScale${i}`).toMatch(/^#[0-9a-fA-F]{6}$/);
+				expect(vars[`cScaleLabel${i}`], `cScaleLabel${i}`).toMatch(/^#[0-9a-fA-F]{6}$/);
+			}
+		});
+
+		it('gives each git branch label a color measured against its own fill', async () => {
+			const vars = await captureThemeVariables('git-labels', mockTheme.colors);
+			for (let i = 0; i < 4; i++) {
+				expect(
+					contrastRatio(vars[`gitBranchLabel${i}`], vars[`git${i}`]),
+					`gitBranchLabel${i}`
+				).toBeGreaterThanOrEqual(AA_CONTRAST);
+			}
+		});
+
 		it('pins ER attribute row fills so labels stay readable', async () => {
 			// Regression: Mermaid's base theme derives rowOdd from
 			// lighten(primaryColor, 75), which renders a near-white attribute row

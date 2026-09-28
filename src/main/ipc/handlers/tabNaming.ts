@@ -28,6 +28,8 @@ import {
 	type ClaudeSpawnDecision,
 } from '../../agents/resolveClaudeSpawnMode';
 import { getClaudeTokenMode } from '../../../shared/claudeTokenMode';
+import { cheapTurnSettings } from '../../../shared/modelTiers';
+import type { ToolType } from '../../../shared/types';
 import { getSshRemoteConfig, createSshRemoteStoreAdapter } from '../../utils/ssh-remote-resolver';
 import { ensureRemoteMaestroPProbed } from '../../agents/probeRemoteMaestroP';
 import { buildSshCommand } from '../../utils/ssh-command-builder';
@@ -148,11 +150,18 @@ export function registerTabNamingHandlers(deps: TabNamingHandlerDependencies): v
 				});
 
 				try {
+					// Resolve the agent: use the utility agent if configured, otherwise the
+					// session agent. Null/empty leaves behavior unchanged (session agent).
+					const utilityAgentId = settingsStore.get('utilityAgentId', null) as string | null;
+					const utilityModelId = settingsStore.get('utilityModelId', null) as string | null;
+					const effectiveAgentType = utilityAgentId || config.agentType;
+
 					// Get the agent configuration
-					const agent = await agentDetector.getAgent(config.agentType);
+					const agent = await agentDetector.getAgent(effectiveAgentType);
 					if (!agent) {
 						logger.warn('Agent not found for tab naming', LOG_CONTEXT, {
-							agentType: config.agentType,
+							agentType: effectiveAgentType,
+							isUtilityAgent: !!utilityAgentId,
 						});
 						return null;
 					}
@@ -172,13 +181,28 @@ export function registerTabNamingHandlers(deps: TabNamingHandlerDependencies): v
 						prompt: fullPrompt,
 						cwd: config.cwd,
 						readOnlyMode: true, // Always read-only since we're not modifying anything
+						// Only apply the model override when a utility agent is actually in use.
+						modelId: utilityAgentId ? (utilityModelId ?? undefined) : undefined,
 					});
 
-					// Apply config overrides from store
+					// Apply config overrides from store.
+					//
+					// Naming is pinned to the bottom of both ladders, the same way a
+					// synopsis is (see cheapTurnSettings). The whole job is turning one
+					// sentence into 2-4 words, and running it on whatever the agent is
+					// configured with means paying opus rates for a tab title on every
+					// first message. `undefined` from either resolver means the provider
+					// isn't mapped, and applyAgentConfigOverrides then falls through to
+					// the agent's own configured value - so an unmapped provider keeps
+					// exactly the behaviour it had before.
+					const cheapNaming = cheapTurnSettings(config.agentType as ToolType);
 					const allConfigs = agentConfigsStore.get('configs', {});
-					const agentConfigValues = allConfigs[config.agentType] || {};
+					const agentConfigValues = allConfigs[effectiveAgentType] || {};
 					const configResolution = applyAgentConfigOverrides(agent, finalArgs, {
 						agentConfigValues,
+						readOnlyMode: true,
+						sessionCustomModel: cheapNaming.model,
+						sessionCustomEffort: cheapNaming.effort,
 					});
 					finalArgs = configResolution.args;
 
@@ -207,9 +231,14 @@ export function registerTabNamingHandlers(deps: TabNamingHandlerDependencies): v
 						string,
 						string
 					>;
+					// The session's env overrides belong to the SESSION's agent (its
+					// API keys, its base URL). Layering them onto a different utility
+					// agent points that agent at the wrong provider, so they are only
+					// merged when the two are the same agent. `configResolution` is
+					// already keyed by `effectiveAgentType` and always applies.
 					let customEnvVars: Record<string, string> | undefined = {
 						...(configResolution.effectiveCustomEnvVars ?? {}),
-						...(config.sessionCustomEnvVars ?? {}),
+						...(effectiveAgentType === config.agentType ? (config.sessionCustomEnvVars ?? {}) : {}),
 					};
 
 					// Resolve the triggering agent's Claude token source ONCE, up front,
@@ -449,7 +478,7 @@ export function registerTabNamingHandlers(deps: TabNamingHandlerDependencies): v
 						const earlyExtractIntervalId = setInterval(() => {
 							if (resolved || !output.trim()) return;
 							const earlyResult = extractTabNameFromOutput(
-								config.agentType,
+								effectiveAgentType,
 								output,
 								requireStructuredOutput
 							);
@@ -493,7 +522,7 @@ export function registerTabNamingHandlers(deps: TabNamingHandlerDependencies): v
 							}
 
 							const extraction = extractTabNameFromOutput(
-								config.agentType,
+								effectiveAgentType,
 								output,
 								requireStructuredOutput
 							);
@@ -537,7 +566,7 @@ export function registerTabNamingHandlers(deps: TabNamingHandlerDependencies): v
 						try {
 							processManager.spawn({
 								sessionId,
-								toolType: config.agentType,
+								toolType: effectiveAgentType,
 								cwd,
 								command,
 								args: finalArgs,

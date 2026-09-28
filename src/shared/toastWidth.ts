@@ -20,6 +20,17 @@ export const isToastWidth = (value: unknown): value is ToastWidth =>
 	typeof value === 'string' && TOAST_WIDTHS.includes(value as ToastWidth);
 
 /**
+ * Display name for each preset. Single source of truth so the Settings toggle
+ * group and the preview toast fired when the setting changes never drift apart.
+ */
+export const TOAST_WIDTH_LABELS: Record<ToastWidth, string> = {
+	small: 'Small',
+	medium: 'Medium',
+	large: 'Large',
+	dynamic: 'Dynamic',
+};
+
+/**
  * Min/max width in px for each fixed preset. 'small' matches the legacy
  * hardcoded values so existing behavior is unchanged when the setting defaults
  * to small. 'dynamic' is intentionally absent - it derives its width from the
@@ -60,4 +71,17 @@ export const getToastWidthDimensions = (
 		return { minWidth: dynamicWidth, maxWidth: dynamicWidth };
 	}
 	return TOAST_WIDTH_DIMENSIONS[width];
+};
+
+/**
+ * One-line description of what a preset means in pixels, phrased for the
+ * preview toast fired when the user picks a new width. Fixed presets quote
+ * their min/max pair; 'dynamic' quotes the live Right Bar width it tracks.
+ */
+export const describeToastWidth = (width: ToastWidth, rightPanelWidth: number): string => {
+	const { minWidth, maxWidth } = getToastWidthDimensions(width, rightPanelWidth);
+	if (width === 'dynamic') {
+		return `Toasts now match the Right Bar width (${Math.round(minWidth)}px) and follow it as you resize the panel.`;
+	}
+	return `Toasts now render ${minWidth}-${maxWidth}px wide. This is what that looks like.`;
 };

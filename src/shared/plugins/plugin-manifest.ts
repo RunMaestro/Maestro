@@ -91,6 +91,13 @@ export interface PluginManifest {
 	 * requires no minHostApi bump.
 	 */
 	beta?: boolean;
+	/**
+	 * The day this version of the plugin was published, as `YYYY-MM-DD`.
+	 * Optional and presentation-only: the marketplace's "Newest" sort uses it,
+	 * and a plugin without one sorts after everything that has a date rather
+	 * than being guessed at from a file timestamp.
+	 */
+	releaseDate?: string;
 	/** Declarative contributions. Structurally validated; semantics land later. */
 	contributes?: Record<string, unknown>;
 	/**
@@ -120,6 +127,9 @@ export interface ManifestValidationResult {
 export const PLUGIN_ID_PATTERN = /^[a-z][a-z0-9]*([._-][a-z0-9]+)*$/;
 
 const SEMVER_PATTERN = /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)*$/;
+
+/** `YYYY-MM-DD`. Calendar-day precision only: a release date is a day, not an instant. */
+const RELEASE_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
 function isNonEmptyString(value: unknown): value is string {
 	return typeof value === 'string' && value.trim() !== '';
@@ -160,6 +170,7 @@ export function validatePluginManifest(input: unknown): ManifestValidationResult
 		homepage,
 		category,
 		beta,
+		releaseDate,
 		contributes,
 		entry,
 		permissions,
@@ -230,6 +241,15 @@ export function validatePluginManifest(input: unknown): ManifestValidationResult
 	if (beta !== undefined && typeof beta !== 'boolean') {
 		errors.push('beta, when present, must be a boolean');
 	}
+	if (releaseDate !== undefined) {
+		if (typeof releaseDate !== 'string') {
+			errors.push('releaseDate, when present, must be a string');
+		} else if (!RELEASE_DATE_PATTERN.test(releaseDate.trim())) {
+			errors.push(`releaseDate "${releaseDate}" is invalid: use YYYY-MM-DD`);
+		} else if (Number.isNaN(Date.parse(`${releaseDate.trim()}T00:00:00Z`))) {
+			errors.push(`releaseDate "${releaseDate}" is not a real calendar date`);
+		}
+	}
 	if (contributes !== undefined && !isPlainObject(contributes)) {
 		errors.push('contributes, when present, must be an object');
 	}
@@ -280,6 +300,7 @@ export function validatePluginManifest(input: unknown): ManifestValidationResult
 		...(isNonEmptyString(homepage) ? { homepage: (homepage as string).trim() } : {}),
 		...(normalizedCategory ? { category: normalizedCategory } : {}),
 		...(beta === true ? { beta: true } : {}),
+		...(isNonEmptyString(releaseDate) ? { releaseDate: (releaseDate as string).trim() } : {}),
 		...(isPlainObject(contributes) ? { contributes } : {}),
 		...(safeEntry ? { entry: safeEntry } : {}),
 		...(parsedPermissions.requests.length > 0 ? { permissions: parsedPermissions.requests } : {}),

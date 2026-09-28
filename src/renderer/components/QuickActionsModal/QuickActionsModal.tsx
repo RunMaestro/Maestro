@@ -1,7 +1,7 @@
-import React, { memo, useState, useEffect, useRef, useCallback } from 'react';
+import React, { memo, useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useShallow } from 'zustand/react/shallow';
-import type { Session } from '../../types';
 import type { QuickAction, QuickActionsModalProps } from './types';
+import { usePhoneLayout } from '../../hooks/ui/useViewportBreakpoint';
 import { useModalLayer } from '../../hooks/ui/useModalLayer';
 import { useResizableModal } from '../../hooks/ui/useResizableModal';
 import { useFocusAfterRender } from '../../hooks/utils/useFocusAfterRender';
@@ -10,23 +10,33 @@ import { notifyToast, useNotificationStore } from '../../stores/notificationStor
 import { notifyCenterFlash } from '../../stores/centerFlashStore';
 import { flashCopiedToClipboard } from '../../utils/flashCopiedToClipboard';
 import { captureException } from '../../utils/sentry';
-import { useModalStore } from '../../stores/modalStore';
+import { getModalActions, selectModalOpen, useModalStore } from '../../stores/modalStore';
+import { toggleAllCadenzas, useCadenzaStore } from '../../stores/cadenzaStore';
+import { buildConcertoCommands } from './commands/concertoCommands';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { Z_LAYERS } from '../../constants/zLayers';
 import { gitService } from '../../services/git';
 import { useWindowContextOptional } from '../../contexts/WindowContext';
+import { filterSessionsVisibleInSidebar } from '../../utils/sessionVisibility';
+import { revealAgentInSidebar } from '../../services/agentNavigation';
+import { buildSessionJumpSlotMap } from '../../utils/sessionJumpSlots';
 import { useGitAgentActions } from '../../hooks/git/useGitAgentActions';
 import { safeClipboardWrite } from '../../utils/clipboard';
 import { getOpenInLabel } from '../../utils/platformUtils';
+import { visibleAiTabs } from '../../utils/tabHelpers';
 import { useListNavigation } from '../../hooks';
 import { useUIStore } from '../../stores/uiStore';
+import { useSidebarNavStore } from '../../stores/sidebarNavStore';
 import { useSettingsStore, selectIsLeaderboardRegistered } from '../../stores/settingsStore';
 import { useBatchStore, selectActiveBatchSessionIds } from '../../stores/batchStore';
 import { useFileExplorerStore } from '../../stores/fileExplorerStore';
 import { useFeedbackDraftStore } from '../../stores/feedbackDraftStore';
+import { useGroupChatStore } from '../../stores/groupChatStore';
+import type { GroupChatBusySnapshot } from '../../utils/groupChatStatus';
 import { openUrl } from '../../utils/openUrl';
 import { outputSearchKeyFor } from '../../utils/outputSearch';
 import { logger } from '../../utils/logger';
+import { createDebugPackage } from '../../services/debugPackage';
 import { getActiveTabInfo } from './utils/activeTabInfo';
 import {
 	filterAndSortQuickActions,
@@ -38,21 +48,23 @@ import { ResizeHandles } from '../ui/ResizeHandles';
 import { buildAgentPanelCommands } from './commands/agentPanelCommands';
 import { buildAgentSwitcherCommands } from './commands/agentSwitcherCommands';
 import { buildMediaPlayerCommands } from './commands/mediaPlayerCommands';
-import {
-	selectCanRestoreFloatingPlayer,
-	useMediaPlaybackStore,
-} from '../../stores/mediaPlaybackStore';
+import { selectCanOpenMediaPlayer, useMediaPlaybackStore } from '../../stores/mediaPlaybackStore';
 import { buildActiveTabContextCommands } from './commands/contextCommands';
 import { buildDebugCommands } from './commands/debugCommands';
 import { buildFeatureCommands } from './commands/featureCommands';
 import { buildGitWorktreeCommands } from './commands/gitWorktreeCommands';
-import { buildGroupChatCommands, buildGroupChatJumpCommands } from './commands/groupChatCommands';
+import {
+	buildGroupChatCommands,
+	buildGroupChatJumpCommands,
+	buildGroupChatSwitcherCommands,
+} from './commands/groupChatCommands';
 import { buildMoveToGroupCommands } from './commands/moveToGroupCommands';
 import { buildNavigationCommands } from './commands/navigationCommands';
 import { buildPluginCommandPaletteCommands } from './commands/pluginCommandPaletteCommands';
 import { mergePluginContributions } from '../../utils/pluginContributionMerge';
 import { buildNotificationCommands } from './commands/notificationCommands';
 import { buildRightPanelCommands } from './commands/rightPanelCommands';
+import { buildFilePreviewCommands } from './commands/filePreviewCommands';
 import { buildSearchCommands } from './commands/searchCommands';
 import {
 	buildSessionJumpCommands,
@@ -61,6 +73,7 @@ import {
 import { buildSupportCommands } from './commands/supportCommands';
 import { buildNewTabCommands, buildTabCommands } from './commands/tabCommands';
 import { buildTabGroupCommands } from './commands/tabGroupCommands';
+import { buildTileCommands } from './commands/tileCommands';
 import { buildWindowCommands } from './commands/windowCommands';
 import { buildWindowMoveTargets } from '../../utils/windowTargets';
 
@@ -68,6 +81,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	const {
 		theme,
 		sessions,
+		visibleSessions: visibleSessionsProp,
 		setSessions,
 		activeSessionId,
 		groups,
@@ -175,6 +189,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		onNewBrowserTab,
 		onNewTerminalTab,
 		onGoToNextUnread,
+		onGoToPreviousUnread,
 		onNavBack,
 		onNavForward,
 	} = props;
@@ -213,6 +228,17 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	const showStarredSessionsSection = useSettingsStore((s) => s.showStarredSessionsSection);
 	const setShowStarredSessionsSection = useSettingsStore((s) => s.setShowStarredSessionsSection);
 	const enterToSendAI = useSettingsStore((s) => s.enterToSendAI);
+	// Agents the Left Bar does not render must not be jump targets either. Pianola
+	// persists in the session store once its Encore flag is off, and the palette's
+	// agent list is built from the raw `sessions` array - so a fuzzy match on its
+	// name handed the user an agent with no row to come back to (and, before the
+	// render gate in MainPanel, the whole Pianola Dashboard for a disabled
+	// feature). Same predicate the Left Bar and Cmd+[ / Cmd+] cycling use.
+	const pianolaEnabled = useSettingsStore((s) => s.encoreFeatures?.pianola);
+	const switchableSessions = useMemo(
+		() => filterSessionsVisibleInSidebar(sessions, { pianolaEnabled }),
+		[sessions, pianolaEnabled]
+	);
 	const storeSetHistorySearchFilterOpen = useUIStore((s) => s.setHistorySearchFilterOpen);
 	const setSuccessFlashNotification = useUIStore((s) => s.setSuccessFlashNotification);
 	const bookmarksCollapsed = useUIStore((s) => s.bookmarksCollapsed);
@@ -223,10 +249,40 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	const setGroupChatsExpanded = useSettingsStore((s) => s.setGroupChatsExpanded);
 	const isLeaderboardRegistered = useSettingsStore(selectIsLeaderboardRegistered);
 	const activeBatchSessionIds = useBatchStore(useShallow(selectActiveBatchSessionIds));
-	const canRestoreFloatingPlayer = useMediaPlaybackStore(selectCanRestoreFloatingPlayer);
-	const restoreFloatingPlayer = useMediaPlaybackStore((s) => s.restore);
+	// Concerto's two surfaces are store-owned toggles, so read their live state
+	// here: the palette entries name what the keypress will actually do.
+	const concertoEnabled = useSettingsStore((s) => s.encoreFeatures.concerto === true);
+	const concertoStageOpen = useModalStore(selectModalOpen('concertoStage'));
+	const cadenzasHidden = useCadenzaStore((s) => s.hidden);
+	const concertoStageFloating = useSettingsStore((s) => s.concertoStageFloating);
+	const setConcertoStageFloating = useSettingsStore((s) => s.setConcertoStageFloating);
+	const toggleConcertoStage = useCallback(() => getModalActions().toggleConcertoStage(), []);
+	const toggleConcertoStageFloating = useCallback(
+		() => setConcertoStageFloating(!concertoStageFloating),
+		[concertoStageFloating, setConcertoStageFloating]
+	);
+	const canOpenMediaPlayer = useMediaPlaybackStore(selectCanOpenMediaPlayer);
+	// Resolved at INVOKE time inside the store, not render time: the palette can
+	// sit open while a queued file advances, and landing on a stale id would open
+	// the player on something the user already finished.
+	const openMediaPlayer = useCallback(() => useMediaPlaybackStore.getState().openPlayer(), []);
 	const visibleToastCount = useNotificationStore((s) => s.toasts.length);
 	const clearToasts = useNotificationStore((s) => s.clearToasts);
+	// Which group chat rooms are running. Only the chat list and the active id
+	// arrive as props; the live moderator/participant states are store-only, so
+	// read them here rather than threading four more props through the chain.
+	const groupChatState = useGroupChatStore((s) => s.groupChatState);
+	const participantStates = useGroupChatStore((s) => s.participantStates);
+	const groupChatStates = useGroupChatStore((s) => s.groupChatStates);
+	const allGroupChatParticipantStates = useGroupChatStore((s) => s.allGroupChatParticipantStates);
+	// Consumed synchronously when the action list is built, so no memo needed.
+	const groupChatBusySnapshot: GroupChatBusySnapshot = {
+		activeGroupChatId,
+		groupChatState,
+		participantStates,
+		groupChatStates,
+		allGroupChatParticipantStates,
+	};
 
 	const [search, setSearch] = useState('');
 	const [mode, setMode] = useState<'main' | 'move-to-group' | 'agents'>(initialMode);
@@ -270,6 +326,8 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	// uiStore so the Left Bar wand can animate, and reconcile on palette open.
 	const profilingActive = useUIStore((s) => s.profilingActive);
 	const setProfilingActive = useUIStore((s) => s.setProfilingActive);
+	const profilingBufferPercent = useUIStore((s) => s.profilingBufferPercent);
+	const setProfilingBufferPercent = useUIStore((s) => s.setProfilingBufferPercent);
 	useEffect(() => {
 		let cancelled = false;
 		// Optional-chained: this runs on every palette open, so tolerate a bridge
@@ -278,22 +336,32 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		if (!statusPromise) return;
 		statusPromise
 			.then((res) => {
-				if (!cancelled && res?.success) setProfilingActive(res.active);
+				if (cancelled || !res?.success) return;
+				setProfilingActive(res.active);
+				// Buffer usage is pulled on palette open rather than streamed. A
+				// per-second push would be renderer work during the exact window the
+				// capture is trying to measure, and this number is only ever read when
+				// the user comes here to end the recording anyway.
+				setProfilingBufferPercent(res.active ? (res.bufferPercent ?? 0) : 0);
 			})
 			.catch(() => {});
 		return () => {
 			cancelled = true;
 		};
-	}, [setProfilingActive]);
+	}, [setProfilingActive, setProfilingBufferPercent]);
 	const handleStartProfiling = useCallback(async () => {
 		try {
 			const res = await window.maestro.debug.startProfiling();
 			if (res?.success && res.active) {
 				setProfilingActive(true);
+				setProfilingBufferPercent(0);
 				notifyCenterFlash({
 					message: 'Performance profiling started',
 					color: 'green',
-					detail: 'Reproduce the lag, then run "End Performance Profiling"',
+					// No duration advice here on purpose. The limit is trace-buffer
+					// pressure, which nobody can estimate by watching the app, so the
+					// recording now ends itself before data is lost.
+					detail: 'Reproduce the lag. Ends automatically if the trace buffer fills.',
 				});
 			} else {
 				notifyToast({
@@ -306,7 +374,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			notifyToast({ color: 'red', title: 'Profiling', message: 'Failed to start profiling' });
 			captureException(err);
 		}
-	}, [setProfilingActive]);
+	}, [setProfilingActive, setProfilingBufferPercent]);
 	// Stopping is slow (flush + zip compression can take tens of seconds), so we
 	// hand off to the ProfilingCaptureModal, which owns the whole stop-and-bundle
 	// flow, shows live progress, and clears the wand indicator when it finishes.
@@ -315,6 +383,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	}, [openModal]);
 
 	const inputRef = useRef<HTMLInputElement>(null);
+	const phone = usePhoneLayout();
 	const selectedItemRef = useRef<HTMLButtonElement>(null);
 	const scrollContainerRef = useRef<HTMLDivElement>(null);
 	const modalRef = useRef<HTMLDivElement>(null);
@@ -340,8 +409,9 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 
 	const activeTabInfo = getActiveTabInfo(activeSession, isAiMode);
 
-	// Cross-tab search needs AI tabs to search; group chats have none.
-	const canSearchAllTabs = !activeGroupChatId && (activeSession?.aiTabs?.length ?? 0) > 0;
+	// Cross-tab search needs AI tabs to search; group chats have none, and hidden
+	// consult tabs are outside the corpus.
+	const canSearchAllTabs = !activeGroupChatId && visibleAiTabs(activeSession?.aiTabs).length > 0;
 	const activeTabType = activeTabInfo.activeTabType;
 
 	// Dismissal shared by the Escape layer handler and the ESC pill in the
@@ -362,7 +432,13 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	// Register layer on mount - escape behavior depends on current mode.
 	useModalLayer(MODAL_PRIORITIES.QUICK_ACTION, 'Quick Actions', handleEscape);
 
-	useFocusAfterRender(inputRef, true, 0);
+	// Not on a phone. Focusing the field raises the iOS keyboard, which covers
+	// roughly the bottom half of a full-screen palette - so the list the user
+	// opened the palette to browse is buried before they have seen a single row,
+	// and the only way to reach it is to dismiss a keyboard they never asked for.
+	// A phone user taps the field when they want to filter; a desktop user is
+	// already typing, and there the keyboard costs nothing.
+	useFocusAfterRender(inputRef, !phone, 0);
 
 	// Track scroll position to determine which items are visible.
 	// Items have variable height (subtext / runningInfo presence, plus LIVE/IDLE
@@ -411,31 +487,26 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		setQuickActionOpen(false);
 	};
 
-	// Reveal a jumped-to agent without unnecessarily expanding sections.
-	// - Not bookmarked: expand the parent group if collapsed (existing behavior).
-	// - Bookmarked: prefer whichever section the agent is already visible in. If
-	//   neither bookmarks nor the parent group is open, expand bookmarks (the
-	//   pinned bookmark row is the lighter-weight reveal of the two).
-	const revealJumpTarget = (s: Session) => {
-		if (!s.bookmarked) {
-			if (s.groupId) {
-				setGroups((prev) =>
-					prev.map((g) => (g.id === s.groupId && g.collapsed ? { ...g, collapsed: false } : g))
-				);
-			}
-			return;
-		}
-		const groupOpen = s.groupId ? !groups.find((g) => g.id === s.groupId)?.collapsed : false;
-		if (bookmarksCollapsed && !groupOpen) {
-			setBookmarksCollapsed(false);
-		}
-	};
+	// Reveal a jumped-to agent without unnecessarily expanding sections. Shared
+	// with the Usage Dashboard's Jump to Agent action - see agentNavigation.
+	const revealJumpTarget = revealAgentInSidebar;
+
+	// Agents in the Left Bar's first ten slots advertise their Opt+Cmd+# chord.
+	// The Left Bar publishes its draw order to sidebarNavStore, so the modal reads
+	// it there rather than having App re-render on every sidebar change.
+	const storeVisibleSessions = useSidebarNavStore((s) => s.visibleSessions);
+	const visibleSessions = visibleSessionsProp ?? storeVisibleSessions;
+	const jumpSlots = useMemo(
+		() => buildSessionJumpSlotMap(visibleSessions ?? []),
+		[visibleSessions]
+	);
 
 	const sessionActions = buildSessionJumpCommands({
 		sessions,
 		setActiveSessionId,
 		revealJumpTarget,
 		getSessionWindow,
+		jumpSlots,
 	});
 
 	const groupChatActions = buildGroupChatJumpCommands({
@@ -448,13 +519,29 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		...sessionActions,
 		...groupChatActions,
 		...buildMediaPlayerCommands({
-			canRestoreFloatingPlayer,
-			restoreFloatingPlayer,
+			canOpenMediaPlayer,
+			openMediaPlayer,
+			openMediaPlayerShortcut: shortcuts.openMediaPlayer,
 			setQuickActionOpen,
+		}),
+		...buildConcertoCommands({
+			concertoEnabled,
+			stageOpen: concertoStageOpen,
+			cadenzasHidden,
+			stageFloating: concertoStageFloating,
+			toggleConcertoStage,
+			toggleStageFloating: toggleConcertoStageFloating,
+			toggleCadenzas: toggleAllCadenzas,
+			setQuickActionOpen,
+			shortcuts: {
+				toggleConcerto: shortcuts.toggleConcerto,
+				toggleCadenzas: shortcuts.toggleCadenzas,
+			},
 		}),
 		...buildNotificationCommands({
 			visibleToastCount,
 			clearToasts,
+			clearAllNotificationsShortcut: shortcuts.clearAllNotifications,
 			setQuickActionOpen,
 		}),
 		...buildNavigationCommands({
@@ -470,6 +557,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			platform: window.maestro?.platform || 'darwin',
 			openPath: window.maestro?.shell?.openPath,
 			onGoToNextUnread,
+			onGoToPreviousUnread,
 			onNavBack,
 			onNavForward,
 			shortcuts: {
@@ -478,6 +566,9 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 				toggleSidebar: shortcuts.toggleSidebar,
 				toggleRightPanel: shortcuts.toggleRightPanel,
 				nextUnreadTab: shortcuts.nextUnreadTab,
+				previousUnreadTab: shortcuts.previousUnreadTab,
+				focusActiveTab: shortcuts.focusActiveTab,
+				toggleUnreadFilters: shortcuts.toggleUnreadFilters,
 				killInstance: shortcuts.killInstance,
 				navBack: shortcuts.navBack,
 				navForward: shortcuts.navForward,
@@ -493,6 +584,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			newTabShortcut: tabShortcuts?.newTab,
 			newFileTabShortcut: tabShortcuts?.newFileTab,
 			newBrowserTabShortcut: tabShortcuts?.newBrowserTab,
+			newTerminalTabShortcut: shortcuts.toggleMode,
 		}),
 		...buildSessionManagementCommands({
 			activeSession,
@@ -564,6 +656,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		}),
 		...buildTabCommands({
 			activeSession,
+			activeGroupChatId,
 			isAiMode,
 			activeTabInfo,
 			enterToSendAI,
@@ -585,10 +678,11 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			onClearActiveTerminal,
 			setQuickActionOpen,
 			shortcuts: {
-				toggleMode: shortcuts.toggleMode,
 				toggleMarkdownMode: shortcuts.toggleMarkdownMode,
+				showSnoozeList: shortcuts.showSnoozeList,
 				focusActiveTab: shortcuts.focusActiveTab,
 				clearTerminal: shortcuts.clearTerminal,
+				openModelEffort: shortcuts.openModelEffort,
 			},
 			tabShortcuts,
 			toggleInputMode,
@@ -596,6 +690,16 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		...buildTabGroupCommands({
 			activeSession,
 			setQuickActionOpen,
+		}),
+		...buildTileCommands({
+			activeSession,
+			setQuickActionOpen,
+			shortcuts: {
+				tileAiBelow: shortcuts.tileAiBelow,
+				tileBrowserBelow: shortcuts.tileBrowserBelow,
+				tileFileBelow: shortcuts.tileFileBelow,
+				tileTerminalBelow: shortcuts.tileTerminalBelow,
+			},
 		}),
 		...buildFeatureCommands({
 			activeSession,
@@ -643,6 +747,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 				agentSessions: shortcuts.agentSessions,
 				openMemoryViewer: shortcuts.openMemoryViewer,
 				executionQueue: shortcuts.executionQueue,
+				editLastQueuedMessage: shortcuts.editLastQueuedMessage,
 				openSymphony: shortcuts.openSymphony,
 				directorNotes: shortcuts.directorNotes,
 				openCue: shortcuts.openCue,
@@ -681,7 +786,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			setDebugPackageModalOpen,
 			startTour,
 			getFeedbackDraft: () => useFeedbackDraftStore.getState(),
-			createDebugPackage: () => window.maestro.debug.createPackage(),
+			createDebugPackage: () => createDebugPackage(),
 			notifyToast,
 			openUrl,
 			toggleDevtools: () => window.maestro.devtools.toggle(),
@@ -690,6 +795,8 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 				help: shortcuts.help,
 				systemLogs: shortcuts.systemLogs,
 				processMonitor: shortcuts.processMonitor,
+				openThemeSettings: shortcuts.openThemeSettings,
+				openLeaderboard: shortcuts.openLeaderboard,
 			},
 		}),
 		...buildGitWorktreeCommands({
@@ -703,6 +810,11 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			shortcuts: {
 				viewGitDiff: shortcuts.viewGitDiff,
 				viewGitLog: shortcuts.viewGitLog,
+				gitPull: shortcuts.gitPull,
+				gitPush: shortcuts.gitPush,
+				gitChangeBranch: shortcuts.gitChangeBranch,
+				gitCreatePR: shortcuts.gitCreatePR,
+				refreshGitFileState: shortcuts.refreshGitFileState,
 			},
 			gitService,
 			notifyToast,
@@ -724,6 +836,10 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 				goToAutoRun: shortcuts.goToAutoRun,
 				toggleAutoRunExpanded: shortcuts.toggleAutoRunExpanded,
 			},
+		}),
+		...buildFilePreviewCommands({
+			activeSession,
+			setQuickActionOpen,
 		}),
 		...buildSearchCommands({
 			setQuickActionOpen,
@@ -748,6 +864,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			setQuickActionOpen,
 			newGroupChatShortcut: shortcuts.newGroupChat,
 			killShortcut: shortcuts.killInstance,
+			moderatorOnlyShortcut: shortcuts.toggleGroupChatModeratorOnly,
 		}),
 		...buildDebugCommands({
 			activeSession,
@@ -760,6 +877,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			setDebugAgentProbeOpen,
 			onDebugReleaseQueuedItem,
 			profilingActive,
+			profilingBufferPercent,
 			onStartProfiling: handleStartProfiling,
 			onStopProfiling: handleStopProfiling,
 			getInstallationId: () => window.maestro.leaderboard.getInstallationId(),
@@ -805,13 +923,21 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		resetSelectionToFirst,
 	});
 
-	const agentActions = buildAgentSwitcherCommands({
-		sessions,
-		activeBatchSessionIds,
-		setActiveSessionId,
-		revealJumpTarget,
-		getSessionWindow,
-	});
+	const agentActions = [
+		...buildAgentSwitcherCommands({
+			sessions: switchableSessions,
+			activeBatchSessionIds,
+			setActiveSessionId,
+			revealJumpTarget,
+			getSessionWindow,
+			jumpSlots,
+		}),
+		...buildGroupChatSwitcherCommands({
+			groupChats,
+			busySnapshot: groupChatBusySnapshot,
+			onOpenGroupChat,
+		}),
+	];
 
 	const actions =
 		mode === 'agents' ? agentActions : mode === 'main' ? mainActionsWithPlugins : groupActions;
@@ -855,6 +981,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	} = useListNavigation({
 		listLength: filtered.length,
 		onSelect: handleSelectByIndex,
+		wrap: true,
 		enableNumberHotkeys: true,
 		firstVisibleIndex,
 		enabled: !renamingSession && !renamingWindow, // Disable navigation while renaming

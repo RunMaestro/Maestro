@@ -81,9 +81,17 @@ export function MaestroCliSection({ theme, appVersion, maestroCli }: MaestroCliS
 					aria-atomic="true"
 					className="text-xs space-y-1"
 				>
-					{checking && <div className="opacity-60">Checking Maestro CLI status...</div>}
+					{checking && <div className="opacity-70">Checking Maestro CLI status...</div>}
 					{statusError && <div style={{ color: theme.colors.warning }}>{statusError}</div>}
-					{installMessage && <div style={{ color: theme.colors.success }}>{installMessage}</div>}
+					{installMessage && (
+						<div
+							style={{
+								color: installMessage.ok ? theme.colors.success : theme.colors.warning,
+							}}
+						>
+							{installMessage.text}
+						</div>
+					)}
 				</div>
 
 				<div className="flex gap-2">
@@ -116,7 +124,7 @@ export function MaestroCliSection({ theme, appVersion, maestroCli }: MaestroCliS
 								: 'Reinstall CLI'}
 					</button>
 				</div>
-				<div className="text-[11px] opacity-55">
+				<div className="text-xs-plus opacity-55">
 					Install target: <code>{status?.installDir || '~/.local/bin'}</code>
 				</div>
 			</div>

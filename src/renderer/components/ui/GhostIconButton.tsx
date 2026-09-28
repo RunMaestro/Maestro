@@ -4,6 +4,15 @@
  * Encapsulates the common "p-X rounded hover:bg-white/10 transition-colors" pattern
  * used throughout the app for toolbar-style icon buttons.
  *
+ * The button is a centering flex container, and must stay one. Without it the
+ * icon is inline content sitting on the line box's BASELINE, so the button's
+ * height comes from the inherited line-height rather than the icon: a 16px icon
+ * with `p-1` produced a 27.5px-tall button with the icon riding 1.75px above its
+ * own center, which is where the hover pill and the focus ring are drawn. It
+ * also made the row fragile - anything that changed a button's inherited
+ * font-size moved that icon relative to its neighbours, since baseline position
+ * depends on font metrics but icon size does not.
+ *
  * Usage:
  * ```tsx
  * <GhostIconButton
@@ -29,6 +38,14 @@ export interface GhostIconButtonProps {
 	title?: string;
 	/** Accessible label (recommended for icon-only buttons) */
 	ariaLabel?: string;
+	/**
+	 * Mark the button as a two-state toggle and say which state it is in.
+	 * Renders `aria-pressed`, so a screen reader announces "pressed"/"not
+	 * pressed" instead of a plain button whose effect is invisible. Leave it
+	 * undefined for an ordinary action button - `aria-pressed="false"` on a
+	 * button that does not toggle is a lie about what it does.
+	 */
+	pressed?: boolean;
 	/** Padding tailwind utility. Defaults to 'p-1' */
 	padding?: string;
 	/** Icon/text color applied via inline style */
@@ -67,6 +84,7 @@ export const GhostIconButton = forwardRef<HTMLButtonElement, GhostIconButtonProp
 			onClick,
 			title,
 			ariaLabel,
+			pressed,
 			padding = 'p-1',
 			color,
 			className = '',
@@ -98,9 +116,10 @@ export const GhostIconButton = forwardRef<HTMLButtonElement, GhostIconButtonProp
 				disabled={disabled}
 				title={title}
 				aria-label={ariaLabel}
+				aria-pressed={pressed}
 				tabIndex={tabIndex}
 				data-testid={testId}
-				className={`${padding} rounded hover:bg-white/10 transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${className}`.trim()}
+				className={`inline-flex items-center justify-center ${padding} rounded hover:bg-white/10 transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${className}`.trim()}
 				style={{ color, ...style }}
 			>
 				{children}

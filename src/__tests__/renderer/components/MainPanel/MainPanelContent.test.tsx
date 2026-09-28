@@ -26,13 +26,19 @@ vi.mock('../../../../renderer/stores/settingsStore', () => ({
 	),
 }));
 
-// Pane-focus plumbing: `paneFocusRequest` is the one-shot leaf id the tiling
-// shortcuts publish, and the component is expected to consume (clear) it and put
-// DOM focus in that pane. Held in hoisted state so a test can seed a request
-// before render and assert on the store calls the effect makes.
+// Focus plumbing: `focusRequest` is the one-shot request the tiling shortcuts and
+// the new-tab handlers publish, and the component is expected to consume (clear)
+// it and put DOM focus in that pane/tab. Held in hoisted state so a test can seed
+// a request before render and assert on the store calls the effect makes.
+//
+// `clearFocusRequest` really does null the hoisted value, because that is the
+// whole hazard: the component subscribes to the field it clears, so consuming a
+// request re-renders it with a null one. A mock that merely recorded the call
+// could not catch an implementation that tore its own retry down on that
+// re-render (which is what shipped, and meant nothing ever took focus).
 const uiState = vi.hoisted(() => ({
-	paneFocusRequest: null as string | null,
-	clearPaneFocusRequest: vi.fn(),
+	focusRequest: null as { leafId: string } | { tab: { type: string; id: string } } | null,
+	clearFocusRequest: vi.fn(),
 	setActiveFocus: vi.fn(),
 }));
 vi.mock('../../../../renderer/stores/uiStore', () => ({
@@ -42,7 +48,7 @@ vi.mock('../../../../renderer/stores/uiStore', () => ({
 				activeFocus: 'main',
 				outputSearchOpen: false,
 				outputSearchQuery: '',
-				paneFocusRequest: uiState.paneFocusRequest,
+				focusRequest: uiState.focusRequest,
 			})
 		),
 		{
@@ -50,7 +56,7 @@ vi.mock('../../../../renderer/stores/uiStore', () => ({
 				setOutputSearchOpen: vi.fn(),
 				setOutputSearchQuery: vi.fn(),
 				setActiveFocus: uiState.setActiveFocus,
-				clearPaneFocusRequest: uiState.clearPaneFocusRequest,
+				clearFocusRequest: uiState.clearFocusRequest,
 			}),
 		}
 	),
@@ -208,7 +214,7 @@ describe('MainPanelContent', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		layerState.count = 0;
-		uiState.paneFocusRequest = null;
+		uiState.focusRequest = null;
 	});
 
 	it('renders TerminalOutput in AI mode', () => {
@@ -366,14 +372,17 @@ describe('MainPanelContent', () => {
 });
 
 // Switching tiles with a keyboard shortcut must carry the CARET, not just the
-// focus ring: the tiling shortcuts publish a one-shot `paneFocusRequest` (leaf
-// id) and MainPanelContent routes DOM focus into that pane's real input.
+// focus ring: the tiling shortcuts publish a one-shot `focusRequest` (leaf id)
+// and MainPanelContent routes DOM focus into that pane's real input.
 describe('MainPanelContent tiled pane focus routing', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		vi.useFakeTimers();
 		layerState.count = 0;
-		uiState.paneFocusRequest = null;
+		uiState.focusRequest = null;
+		uiState.clearFocusRequest.mockImplementation(() => {
+			uiState.focusRequest = null;
+		});
 	});
 
 	afterEach(() => {
@@ -410,7 +419,7 @@ describe('MainPanelContent tiled pane focus routing', () => {
 
 	function renderWithRequest(leafId: string | null) {
 		const inputFocus = vi.fn();
-		uiState.paneFocusRequest = leafId;
+		uiState.focusRequest = leafId ? { leafId } : null;
 
 		const session = makeGroupSession();
 		const props = makeDefaultProps();
@@ -421,8 +430,14 @@ describe('MainPanelContent tiled pane focus routing', () => {
 		props.mountedTerminalSessionsRef = { current: new Map([['session-1', session]]) } as any;
 		props.inputRef = { current: { focus: inputFocus } } as any;
 
-		render(<MainPanelContent {...props} />);
-		return { focusTerminal: terminalHandle.focusTerminal, inputFocus };
+		const view = render(<MainPanelContent {...props} />);
+		return {
+			focusTerminal: terminalHandle.focusTerminal,
+			inputFocus,
+			/** Re-render with whatever `focusRequest` currently is (i.e. after the
+			 *  consume nulled it), the way the real store subscription would. */
+			rerender: () => view.rerender(<MainPanelContent {...props} />),
+		};
 	}
 
 	it('focuses the requested terminal pane by TAB id', () => {
@@ -457,13 +472,13 @@ describe('MainPanelContent tiled pane focus routing', () => {
 
 		expect(focusTerminal).not.toHaveBeenCalled();
 		expect(inputFocus).not.toHaveBeenCalled();
-		expect(uiState.clearPaneFocusRequest).not.toHaveBeenCalled();
+		expect(uiState.clearFocusRequest).not.toHaveBeenCalled();
 	});
 
 	it('consumes the request so a later remount cannot re-steal focus', () => {
 		renderWithRequest('leaf-term');
 
-		expect(uiState.clearPaneFocusRequest).toHaveBeenCalled();
+		expect(uiState.clearFocusRequest).toHaveBeenCalled();
 	});
 
 	it('clears a request that points at a pane which no longer exists', () => {
@@ -473,7 +488,7 @@ describe('MainPanelContent tiled pane focus routing', () => {
 			vi.runAllTimers();
 		});
 
-		expect(uiState.clearPaneFocusRequest).toHaveBeenCalled();
+		expect(uiState.clearFocusRequest).toHaveBeenCalled();
 		expect(focusTerminal).not.toHaveBeenCalled();
 		expect(inputFocus).not.toHaveBeenCalled();
 	});
@@ -482,5 +497,45 @@ describe('MainPanelContent tiled pane focus routing', () => {
 		renderWithRequest('leaf-term');
 
 		expect(uiState.setActiveFocus).toHaveBeenCalledWith('main');
+	});
+
+	// Regression: consuming the request nulls the very store field this component
+	// subscribes to, so the consume itself re-renders it. When the retry was owned
+	// by the effect's cleanup, that re-render cancelled the retry a few ms in -
+	// always before its first attempt - and NO pane ever took focus.
+	it('still focuses after the re-render its own consume causes', () => {
+		const { focusTerminal, rerender } = renderWithRequest('leaf-term');
+
+		act(() => {
+			rerender();
+		});
+		act(() => {
+			vi.runAllTimers();
+		});
+
+		expect(focusTerminal).toHaveBeenCalledWith('term-1');
+	});
+
+	// A tab request names the tab outright, for the paths that never build a group
+	// (a plain new file / browser tab). Terminal is used here because it is the one
+	// kind the test harness can observe without a real DOM editor/address bar.
+	it('focuses a tab-ref request without needing an active group', () => {
+		const inputFocus = vi.fn();
+		uiState.focusRequest = { tab: { type: 'terminal', id: 'term-1' } };
+		const session = makeSession({
+			terminalTabs: [{ id: 'term-1', name: null }],
+		} as Partial<Session>);
+		const props = makeDefaultProps();
+		props.activeSession = session;
+		props.mountedTerminalSessionIds = ['session-1'];
+		props.mountedTerminalSessionsRef = { current: new Map([['session-1', session]]) } as any;
+		props.inputRef = { current: { focus: inputFocus } } as any;
+
+		render(<MainPanelContent {...props} />);
+		act(() => {
+			vi.runAllTimers();
+		});
+
+		expect(terminalHandle.focusTerminal).toHaveBeenCalledWith('term-1');
 	});
 });

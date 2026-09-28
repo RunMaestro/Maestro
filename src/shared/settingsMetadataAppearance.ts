@@ -15,6 +15,13 @@ export const APPEARANCE_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		default: 'dracula',
 		category: 'appearance',
 	},
+	themeGloss: {
+		description:
+			"How much light the app chrome catches: 'off' (flat, the shipped look), 'sheen', 'strong', or 'max'. Adds highlights and shadows only; it changes no theme color, and it has no effect on light themes.",
+		type: 'string',
+		default: 'off',
+		category: 'appearance',
+	},
 	customThemeColors: {
 		description: 'Custom color overrides when using a user-defined theme.',
 		type: 'object',
@@ -46,6 +53,110 @@ export const APPEARANCE_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		default: '',
 		category: 'appearance',
 	},
+	chatFontFamily: {
+		description:
+			'Font family for the AI chat transcript, independent of the UI font. Accepts any CSS font-family string. When empty, the chat inherits the UI font.',
+		type: 'string',
+		default: '',
+		category: 'appearance',
+	},
+	filePreviewFontFamily: {
+		description:
+			'Font family for rendered file previews, independent of the UI font. Accepts any CSS font-family string. When empty, the preview inherits the UI font.',
+		type: 'string',
+		default: '',
+		category: 'appearance',
+	},
+	fileEditorFontFamily: {
+		description:
+			'Font family for the file editor, independent of the UI font. Accepts any CSS font-family string. When empty, the editor inherits the UI font.',
+		type: 'string',
+		default: '',
+		category: 'appearance',
+	},
+	chatFontSize: {
+		description:
+			'Font size in px for the AI chat transcript, before zoom. 0 means inherit the interface font size.',
+		type: 'number',
+		default: 0,
+		category: 'appearance',
+	},
+	terminalFontSize: {
+		description:
+			'Font size in px for the command terminal, before zoom. 0 means inherit the interface font size.',
+		type: 'number',
+		default: 0,
+		category: 'appearance',
+	},
+	filePreviewFontSize: {
+		description:
+			'Font size in px for a file being read, before zoom. 0 means inherit the interface font size.',
+		type: 'number',
+		default: 0,
+		category: 'appearance',
+	},
+	fileEditorFontSize: {
+		description:
+			'Font size in px for a file being edited, before zoom. 0 means inherit the interface font size.',
+		type: 'number',
+		default: 0,
+		category: 'appearance',
+	},
+	documentGraphFontFamily: {
+		description:
+			'Font family for node titles and previews in the document graph. Empty inherits the interface font; "@terminal" follows the terminal font.',
+		type: 'string',
+		default: '',
+		category: 'appearance',
+	},
+	documentGraphFontSize: {
+		description:
+			'Font size in px for document graph node titles, before zoom. 0 means inherit the interface font size.',
+		type: 'number',
+		default: 0,
+		category: 'appearance',
+	},
+	fontZoom: {
+		description:
+			'Zoom multiplier applied to every surface font size equally, moved by Cmd/Ctrl+= and Cmd/Ctrl+-. Preserves the relative proportions between surfaces.',
+		type: 'number',
+		default: 1,
+		category: 'appearance',
+	},
+	typographySnapshot: {
+		description:
+			"The user's own saved fonts and sizes, restored in one click after trying a Factory Reset preset. Null until they save one. Zoom is deliberately not part of it.",
+		type: 'object',
+		default: null,
+		category: 'appearance',
+	},
+	typographyPromptSeen: {
+		description:
+			'Whether the first-run typography chooser has been shown. False on a fresh install and on any install predating the chooser, which is what shows it to existing users once after the update.',
+		type: 'boolean',
+		default: false,
+		category: 'appearance',
+	},
+	themePromptSeen: {
+		description:
+			'Whether the first-run theme chooser has been shown. Its own flag rather than one for the whole first-run series, so a later step can be added without re-showing this one.',
+		type: 'boolean',
+		default: false,
+		category: 'appearance',
+	},
+	updatesPromptSeen: {
+		description:
+			'Whether the first-run step covering release candidate updates, crash reporting, and the Maestro CLI install has been shown.',
+		type: 'boolean',
+		default: false,
+		category: 'appearance',
+	},
+	agentPowersPromptSeen: {
+		description: 'Whether the "your agents can drive Maestro" first-run step has been shown.',
+		type: 'boolean',
+		default: false,
+		category: 'appearance',
+	},
 	customFonts: {
 		description: 'List of user-installed custom font names available in the font picker.',
 		type: 'array',
@@ -54,7 +165,14 @@ export const APPEARANCE_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 	},
 	mediaPlayerFloatRect: {
 		description:
-			'Position and size of the floating media player, remembered across restarts. Null until the user moves or resizes it.',
+			'Position of the floating media player and the width it was last given for each media kind, remembered across restarts. Its height is derived from whatever is playing, so it is not stored. Null until the user moves or resizes it.',
+		type: 'object',
+		default: null,
+		category: 'appearance',
+	},
+	mediaPlayerQueue: {
+		description:
+			'Media play queue, the loaded item, and remembered playback positions, kept across restarts. Null until something is queued. Recently-played history is deliberately not stored here - it is per-session.',
 		type: 'object',
 		default: null,
 		category: 'appearance',
@@ -114,6 +232,13 @@ export const APPEARANCE_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		description: 'Show the per-session running cost pill (e.g. "$21.33") in the main header.',
 		type: 'boolean',
 		default: true,
+		category: 'appearance',
+	},
+	showProviderModePill: {
+		description:
+			'Show the provider mode pill (e.g. "claude -p" / "TUI Wrapper") on Claude turns in the chat footer, History entries, and the history detail view.',
+		type: 'boolean',
+		default: false,
 		category: 'appearance',
 	},
 	showWorktreePill: {
@@ -206,7 +331,7 @@ export const APPEARANCE_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 	},
 	filePreviewToolbarVisibility: {
 		description:
-			'Per-button visibility map for the file preview / edit toolbar. Keys: save, wordWrap, remoteImages, htmlRender, openInBrowser, previewTier, editToggle, editImage, copyContent, publishGist, documentGraph, openInDefault, revealInFolder, copyPath.',
+			'Per-button visibility map for the file preview / edit toolbar. Keys: save, wordWrap, remoteImages, htmlRender, openInBrowser, previewTier, editToggle, editImage, copyContent, publishGist, documentGraph, openInDefault, revealInFolder, copyPath, delete.',
 		type: 'object',
 		default: {
 			save: true,
@@ -223,13 +348,15 @@ export const APPEARANCE_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 			openInDefault: true,
 			revealInFolder: true,
 			copyPath: true,
+			delete: true,
 		},
 		category: 'appearance',
 	},
 	fileExplorerIconTheme: {
-		description: 'Icon theme for the file explorer sidebar. Options: default, material, or none.',
+		description:
+			'Icon theme for the file explorer sidebar. Options: rich (default, Material Icon Theme style) or flat.',
 		type: 'string',
-		default: 'default',
+		default: 'rich',
 		category: 'appearance',
 	},
 	toastWidth: {

@@ -17,11 +17,12 @@ import {
 	CreateHandlerOptions,
 } from '../../utils/ipcHandler';
 import { getSshRemoteConfig, createSshRemoteStoreAdapter } from '../../utils/ssh-remote-resolver';
-import { shellEscape } from '../../utils/shell-escape';
+import { shellEscape, shellEscapeRemotePath } from '../../utils/shell-escape';
 import { resolveSshPath } from '../../utils/cliDetection';
 import type { SshRemoteConfig } from '../../../shared/types';
+import { buildSshOptionArgs } from '../../../shared/sshOptions';
 import { MaestroSettings } from './persistence';
-import { getDefaultShell } from '../../stores/defaults';
+import { getDefaultShell, resolveConfiguredShell } from '../../stores/defaults';
 import { handleProcessSpawn } from './process/handle-spawn';
 import type { SpawnProcessConfig } from './process/spawn-types';
 import {
@@ -406,10 +407,14 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 						// For SSH terminal tabs we spawn ssh interactively so xterm.js can interact
 						const sshArgs: string[] = [];
 
-						// SSH options for reliable connection (consistent with SshRemoteManager)
-						sshArgs.push('-o', 'StrictHostKeyChecking=accept-new');
-						sshArgs.push('-o', 'ConnectTimeout=10');
-						sshArgs.push('-o', 'ClearAllForwardings=yes');
+						// SSH options for reliable connection, plus this remote's overrides.
+						// The 'interactive' context deliberately drops BatchMode (the user is
+						// at the keyboard and may need to answer a passphrase prompt),
+						// RequestTTY (the -t below does that job), and LogLevel (someone is
+						// watching this terminal, so SSH's own warnings are the diagnostics).
+						sshArgs.push(
+							...buildSshOptionArgs(sshResult.config.sshOptions, { context: 'interactive' })
+						);
 
 						if (sshResult.config.privateKeyPath) {
 							sshArgs.push('-i', sshResult.config.privateKeyPath);
@@ -436,13 +441,9 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 
 						// Remote command (must come after destination)
 						if (workingDirOverride) {
-							// Handle leading ~ by using $HOME outside of quotes so the remote shell expands it
-							const cdPath = workingDirOverride.startsWith('~/')
-								? `"$HOME"/${shellEscape(workingDirOverride.slice(2))}`
-								: workingDirOverride === '~'
-									? '"$HOME"'
-									: shellEscape(workingDirOverride);
-							remoteParts.push(`cd ${cdPath}`);
+							// Tilde-aware: `~/proj` reaches the remote as `"$HOME/proj"` so the
+							// shell expands it. The same rule every other remote `cd` uses.
+							remoteParts.push(`cd ${shellEscapeRemotePath(workingDirOverride)}`);
 						}
 
 						// Export merged env vars on the remote side
@@ -456,7 +457,14 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 							remoteParts.push(envExports.join(' && '));
 						}
 
-						remoteParts.push('exec "$SHELL"');
+						// `-l` makes the remote shell a LOGIN shell, matching what the user gets from
+						// a plain `ssh host`. Because we pass a remote command, sshd runs it under a
+						// non-login shell, so without `-l` the login profiles never run. On macOS that
+						// means /etc/zprofile never calls /usr/libexec/path_helper, and the terminal is
+						// missing every /etc/paths + /etc/paths.d entry (/opt/homebrew/bin, TeX, etc.)
+						// while still having the ~/.zshrc additions. Local terminals already spawn with
+						// `-l -i` (see PtySpawner), so this keeps remote terminals consistent.
+						remoteParts.push('exec "$SHELL" -l');
 						sshArgs.push(remoteParts.join(' && '));
 
 						return processManager.spawn({
@@ -517,13 +525,9 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 				);
 				const processManager = requireProcessManager(getProcessManager);
 
-				// Get the shell from settings if not provided
-				// Custom shell path takes precedence over the selected shell ID
-				let shell = config.shell || settingsStore.get('defaultShell', getDefaultShell());
-				const customShellPath = settingsStore.get('customShellPath', '');
-				if (customShellPath && customShellPath.trim()) {
-					shell = customShellPath.trim();
-				}
+				// Get the shell from settings if not provided. Shared with AI command
+				// mode, which has to name this exact shell to the model.
+				const shell = config.shell || resolveConfiguredShell(settingsStore);
 
 				// Get shell env vars for passing to runCommand
 				const shellEnvVars = settingsStore.get('shellEnvVars', {}) as Record<string, string>;

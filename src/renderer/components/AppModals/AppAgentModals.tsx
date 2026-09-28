@@ -1,4 +1,6 @@
 import { memo } from 'react';
+import { selectModalData, useModalStore } from '../../stores/modalStore';
+import { selectAuthOutage, useAuthOutageStore } from '../../stores/authOutageStore';
 import type {
 	Theme,
 	Session,
@@ -13,6 +15,7 @@ import type { GroomingProgress, MergeResult } from '../../types/contextMerge';
 
 // Agent/Transfer Modal Components
 import { AgentErrorModal, type RecoveryAction } from '../AgentErrorModal';
+import { ReauthModal } from '../ReauthModal';
 import { MergeSessionModal, type MergeOptions } from '../MergeSessionModal';
 import { SendToAgentModal, type SendToAgentOptions } from '../SendToAgentModal';
 import { TransferProgressModal } from '../TransferProgressModal';
@@ -148,6 +151,20 @@ export const AppAgentModals = memo(function AppAgentModals({
 	onCloseSendToAgent,
 	onSendToAgent,
 }: AppAgentModalsProps) {
+	// Self-sourced (Tier 1B): the re-authentication modal is opened from the
+	// agent-error listener and from Cue pipeline failures, neither of which
+	// routes through App.tsx's modal props. It is keyed by PROVIDER - the roster
+	// of blocked agents lives in authOutageStore and grows while the dialog is
+	// open, so it is read live rather than captured at open time.
+	const reauthData = useModalStore(selectModalData('reauth'));
+	const closeReauthModal = useModalStore((s) => s.closeModal);
+	const reauthOutage = useAuthOutageStore(selectAuthOutage(reauthData?.providerKey));
+	// Any blocked agent can host the login shell; they share the credential
+	// store. The first is the one that failed first.
+	const reauthSession = reauthOutage
+		? sessions.find((s) => s.id === reauthOutage.blocked[0]?.sessionId)
+		: undefined;
+
 	return (
 		<>
 			{/* --- LEADERBOARD REGISTRATION MODAL --- */}
@@ -181,6 +198,16 @@ export const AppAgentModals = memo(function AppAgentModals({
 					onDismiss={onDismissAgentError}
 					dismissible={effectiveAgentError.recoverable !== false}
 					onJumpToAgent={onJumpToAgent}
+				/>
+			)}
+
+			{/* --- PROVIDER RE-AUTHENTICATION MODAL --- */}
+			{reauthOutage && reauthSession && (
+				<ReauthModal
+					theme={theme}
+					outage={reauthOutage}
+					session={reauthSession}
+					onClose={() => closeReauthModal('reauth')}
 				/>
 			)}
 

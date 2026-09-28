@@ -61,6 +61,26 @@ export const CREATE_QUERY_EVENTS_INDEXES_SQL = `
 `;
 
 // ============================================================================
+// Query Event Token Columns (Migration v8)
+// ============================================================================
+
+/**
+ * Per-turn token and cost columns on `query_events`.
+ *
+ * Nullable with no default on purpose: NULL means "this turn predates token
+ * recording, or the provider reported nothing", which is a different fact from
+ * a genuine zero. Defaulting to 0 would make every historical row look like a
+ * free turn and silently understate cost-per-agent averages.
+ */
+export const ADD_QUERY_EVENT_TOKEN_COLUMNS = [
+	'input_tokens',
+	'output_tokens',
+	'cache_read_tokens',
+	'cache_creation_tokens',
+	'cost_usd',
+] as const;
+
+// ============================================================================
 // Auto Run Sessions (Migration v1)
 // ============================================================================
 
@@ -156,13 +176,77 @@ export const CREATE_SHORTCUT_USAGE_DAILY_SQL = `
 // ============================================================================
 // Multi-Window Usage Daily (Migration v8)
 // ============================================================================
-
 export const CREATE_MULTI_WINDOW_USAGE_DAILY_SQL = `
   CREATE TABLE IF NOT EXISTS multi_window_usage_daily (
     date TEXT PRIMARY KEY,
     windows_opened INTEGER NOT NULL DEFAULT 0,
     peak_concurrent INTEGER NOT NULL DEFAULT 0
   )
+`;
+
+// ============================================================================
+// Resilience Events (Migration v10)
+// ============================================================================
+
+/**
+ * One row per RESOLVED Agent Resilience outage (recovered or stopped by the
+ * user) - never per retry attempt, and never while a countdown is live, so an
+ * app quit mid-outage simply records nothing rather than a phantom row.
+ *
+ * `waited_ms` is derivable (resolved_at - started_at) but the split columns
+ * keep range queries index-friendly.
+ */
+export const CREATE_RESILIENCE_EVENTS_SQL = `
+  CREATE TABLE IF NOT EXISTS resilience_events (
+    id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL,
+    agent_type TEXT NOT NULL,
+    strategy TEXT NOT NULL CHECK(strategy IN ('availability', 'token-exhaustion')),
+    outcome TEXT NOT NULL CHECK(outcome IN ('recovered', 'stopped')),
+    started_at INTEGER NOT NULL,
+    resolved_at INTEGER NOT NULL,
+    retries INTEGER NOT NULL
+  )
+`;
+
+export const CREATE_RESILIENCE_EVENTS_INDEXES_SQL = `
+  CREATE INDEX IF NOT EXISTS idx_resilience_started ON resilience_events(started_at);
+  CREATE INDEX IF NOT EXISTS idx_resilience_strategy ON resilience_events(strategy, started_at)
+`;
+
+// ============================================================================
+// Wizard Runs (Migration v10)
+// ============================================================================
+
+/**
+ * One row per Auto Run wizard conversation, UPSERTED at every milestone rather
+ * than written once at the end (see `WizardRun` in shared/stats-types.ts). A
+ * run that is never closed keeps `outcome = 'in-progress'` and still carries
+ * accurate exchange/document/task counts.
+ *
+ * `ended_at` means "last activity", so `ended_at - started_at` is the time
+ * spent talking to the wizard whether or not the run was ever closed.
+ */
+export const CREATE_WIZARD_RUNS_SQL = `
+  CREATE TABLE IF NOT EXISTS wizard_runs (
+    id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL,
+    agent_type TEXT NOT NULL,
+    surface TEXT NOT NULL CHECK(surface IN ('inline', 'onboarding')),
+    mode TEXT NOT NULL CHECK(mode IN ('new', 'iterate')),
+    outcome TEXT NOT NULL CHECK(outcome IN ('in-progress', 'generated', 'abandoned')),
+    started_at INTEGER NOT NULL,
+    ended_at INTEGER NOT NULL,
+    exchanges INTEGER NOT NULL,
+    documents INTEGER NOT NULL,
+    tasks INTEGER NOT NULL,
+    project_path TEXT
+  )
+`;
+
+export const CREATE_WIZARD_RUNS_INDEXES_SQL = `
+  CREATE INDEX IF NOT EXISTS idx_wizard_started ON wizard_runs(started_at);
+  CREATE INDEX IF NOT EXISTS idx_wizard_surface ON wizard_runs(surface, started_at)
 `;
 
 // ============================================================================

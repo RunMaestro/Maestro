@@ -7,6 +7,8 @@ import React from 'react';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { GitPillMenu } from '../../../renderer/components/GitPillMenu';
 import { mockTheme } from '../../helpers/mockTheme';
+import { useSettingsStore } from '../../../renderer/stores/settingsStore';
+import { DEFAULT_SHORTCUTS } from '../../../renderer/constants/shortcuts';
 
 const mockOpenUrl = vi.fn();
 vi.mock('../../../renderer/utils/openUrl', () => ({
@@ -28,6 +30,7 @@ function renderMenu(overrides: Partial<React.ComponentProps<typeof GitPillMenu>>
 		anchorRef: { current: null },
 		ahead: 0,
 		behind: 0,
+		changes: { fileCount: 0, additions: 0, deletions: 0, modified: 0 },
 		onViewLog: vi.fn(),
 		onViewDiff: vi.fn(),
 		onPull: vi.fn(),
@@ -158,9 +161,82 @@ describe('GitPillMenu', () => {
 		expect(screen.getByTestId('git-pill-menu-push')).toHaveTextContent('3');
 	});
 
+	// The run outlives its console, so the row that started it reports it.
+	it('badges a row whose command is still running in the background', () => {
+		renderMenu({ ahead: 3, behind: 2, pushRunning: true });
+
+		expect(screen.getByTestId('git-pill-menu-push-running')).toBeInTheDocument();
+		// The running badge takes the slot from the ahead count, stale mid-push.
+		expect(screen.getByTestId('git-pill-menu-push')).not.toHaveTextContent('3');
+		// Pull keeps its own badge: the two operations run independently.
+		expect(screen.queryByTestId('git-pill-menu-pull-running')).not.toBeInTheDocument();
+		expect(screen.getByTestId('git-pill-menu-pull')).toHaveTextContent('2');
+	});
+
 	it('omits the counts when in sync with upstream', () => {
 		renderMenu();
 		expect(screen.getByTestId('git-pill-menu-pull')).toHaveTextContent(/^Git Pull$/);
 		expect(screen.getByTestId('git-pill-menu-push')).toHaveTextContent(/^Git Push$/);
+	});
+
+	// The diff row has to say whether opening it will show anything - a clean
+	// tree and a 200-line diff used to look identical here.
+	describe('diff badge', () => {
+		it('badges the diff row with the working-tree line counts', () => {
+			renderMenu({ changes: { fileCount: 5, additions: 206, deletions: 37, modified: 5 } });
+			const row = screen.getByTestId('git-pill-menu-diff');
+			expect(row).toHaveTextContent('206');
+			expect(row).toHaveTextContent('37');
+		});
+
+		it('falls back to a file count when line detail is missing', () => {
+			// Non-active agents get file counts only - no numstat is run for them.
+			renderMenu({ changes: { fileCount: 4, additions: 0, deletions: 0, modified: 0 } });
+			expect(screen.getByTestId('git-pill-menu-diff')).toHaveTextContent('4');
+		});
+
+		it('shows no badge on a clean tree', () => {
+			renderMenu();
+			// The row still carries its keyboard hint, so assert on the badge's
+			// absence rather than on the row's full text.
+			expect(screen.getByTestId('git-pill-menu-diff')).toHaveTextContent(/^View Git Diff/);
+			expect(
+				screen.getByTestId('git-pill-menu-diff').querySelector('[data-testid="git-change-counts"]')
+			).toBeNull();
+		});
+	});
+
+	describe('keyboard hints', () => {
+		// The four git actions below ship unbound, so the row that advertises a
+		// chord has to follow the user's binding rather than a default.
+		beforeEach(() => {
+			useSettingsStore.setState({ shortcuts: DEFAULT_SHORTCUTS });
+		});
+
+		it('advertises a chord the user bound to one of the unbound actions', () => {
+			useSettingsStore.setState({
+				shortcuts: {
+					...DEFAULT_SHORTCUTS,
+					gitPull: { ...DEFAULT_SHORTCUTS.gitPull, keys: ['Meta', 'Shift', 'F9'] },
+				},
+			});
+			renderMenu();
+
+			expect(screen.getByTestId('git-pill-menu-pull').textContent).toContain('F9');
+		});
+
+		it('draws no key-cap on an action that is still unbound', () => {
+			renderMenu();
+
+			// Exact text: a blank key-cap would show up as trailing whitespace or a
+			// stray separator rather than as a missing element.
+			expect(screen.getByTestId('git-pill-menu-push')).toHaveTextContent(/^Git Push$/);
+			expect(screen.getByTestId('git-pill-menu-switch-branch')).toHaveTextContent(
+				/^Change Branch$/
+			);
+			expect(screen.getByTestId('git-pill-menu-create-pr')).toHaveTextContent(
+				/^Create Pull Request$/
+			);
+		});
 	});
 });

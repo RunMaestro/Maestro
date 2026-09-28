@@ -1,4 +1,5 @@
 import { ipcRenderer } from 'electron';
+import type { ToastClickAction } from '../../../shared/toastClickAction';
 
 export function createNotificationRemoteApi() {
 	return {
@@ -18,10 +19,7 @@ export function createNotificationRemoteApi() {
 				tabId?: string;
 				actionUrl?: string;
 				actionLabel?: string;
-				clickAction?:
-					| { kind: 'jump-session'; sessionId: string; tabId?: string }
-					| { kind: 'open-file'; sessionId: string; path: string }
-					| { kind: 'open-url'; url: string };
+				clickAction?: ToastClickAction;
 			}) => void
 		): (() => void) => {
 			const handler = (_: unknown, params: Parameters<typeof callback>[0]) => callback(params);

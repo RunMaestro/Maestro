@@ -12,14 +12,17 @@
  */
 
 import React from 'react';
-import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { render, screen, fireEvent, act } from '@testing-library/react';
 import { ContextTimelinePanel } from '../../../renderer/components/ContextTimelinePanel';
 import { LayerStackProvider } from '../../../renderer/contexts/LayerStackContext';
 import {
 	useContextTimelineStore,
+	CONTEXT_SURFACE_CLOSE_DELAY_MS,
+	CONTEXT_SURFACE_WIDTH,
 	type ContextTimelinePointInput,
 } from '../../../renderer/stores/contextTimelineStore';
+import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { computeOverLimitDisplay } from '../../../renderer/utils/contextUsage';
 import type { Theme } from '../../../renderer/types';
 
@@ -76,6 +79,7 @@ function reset() {
 		minimized: false,
 		view: 'bar',
 		anchorRect: null,
+		sourceSize: null,
 		buffers: {},
 	});
 }
@@ -385,5 +389,133 @@ describe('ContextTimelinePanel view toggle and empty state', () => {
 		expect(screen.getByTestId('timeline-graph-readout')).toHaveTextContent('75% · 150.0K / 200.0K');
 		fireEvent.mouseEnter(screen.getAllByTestId('timeline-graph-hit')[0]);
 		expect(screen.getByTestId('timeline-graph-readout')).toHaveTextContent('50% · 100.0K / 200.0K');
+	});
+});
+
+describe('ContextTimelinePanel size and hover-dismiss', () => {
+	beforeEach(() => {
+		reset();
+		useSettingsStore.setState({ modalSizes: {} });
+	});
+
+	afterEach(() => {
+		vi.useRealTimers();
+		document.querySelectorAll('[data-testid="header-context-widget"]').forEach((el) => el.remove());
+	});
+
+	function panelElement(): HTMLElement {
+		return document.querySelector('[data-modal-resize-key="context-timeline"]') as HTMLElement;
+	}
+
+	function advance(ms: number) {
+		act(() => {
+			vi.advanceTimersByTime(ms);
+		});
+	}
+
+	const panelSessionId = () => useContextTimelineStore.getState().panelSessionId;
+
+	it('opens at the size of the Context Details popover the click replaced', () => {
+		useContextTimelineStore.getState().openPanel(SID, null, { width: 432, height: 511 });
+		renderPanel();
+		expect(panelElement().style.width).toBe('432px');
+		expect(panelElement().style.height).toBe('511px');
+	});
+
+	it('falls back to the shared surface width when nothing was measured', () => {
+		useContextTimelineStore.getState().openPanel(SID);
+		renderPanel();
+		expect(panelElement().style.width).toBe(`${CONTEXT_SURFACE_WIDTH}px`);
+	});
+
+	it('keeps a size the user dragged over the measured popover size', () => {
+		useSettingsStore.setState({ modalSizes: { 'context-timeline': { width: 700, height: 400 } } });
+		useContextTimelineStore.getState().openPanel(SID, null, { width: 432, height: 511 });
+		renderPanel();
+		expect(panelElement().style.width).toBe('700px');
+		expect(panelElement().style.height).toBe('400px');
+	});
+
+	it('closes once the pointer leaves it, after the grace period', () => {
+		vi.useFakeTimers();
+		useContextTimelineStore.getState().openPanel(SID);
+		renderPanel();
+
+		fireEvent.mouseOver(panelElement());
+		fireEvent.mouseOver(document.body);
+		advance(CONTEXT_SURFACE_CLOSE_DELAY_MS - 1);
+		expect(panelSessionId()).toBe(SID);
+
+		advance(1);
+		expect(panelSessionId()).toBeNull();
+	});
+
+	it('stays open when the pointer comes back within the grace period', () => {
+		vi.useFakeTimers();
+		useContextTimelineStore.getState().openPanel(SID);
+		renderPanel();
+
+		fireEvent.mouseOver(panelElement());
+		fireEvent.mouseOver(document.body);
+		advance(CONTEXT_SURFACE_CLOSE_DELAY_MS / 2);
+		fireEvent.mouseOver(panelElement());
+		advance(CONTEXT_SURFACE_CLOSE_DELAY_MS * 4);
+		expect(panelSessionId()).toBe(SID);
+	});
+
+	it('treats the gauge that opened it as part of the panel', () => {
+		vi.useFakeTimers();
+		const gauge = document.createElement('div');
+		gauge.setAttribute('data-testid', 'header-context-widget');
+		document.body.appendChild(gauge);
+		useContextTimelineStore.getState().openPanel(SID);
+		renderPanel();
+
+		fireEvent.mouseOver(panelElement());
+		fireEvent.mouseOver(gauge);
+		advance(CONTEXT_SURFACE_CLOSE_DELAY_MS * 4);
+		expect(panelSessionId()).toBe(SID);
+	});
+
+	it('does not close for a pointer that was never over it (keyboard open)', () => {
+		vi.useFakeTimers();
+		useContextTimelineStore.getState().openPanel(SID);
+		renderPanel();
+
+		fireEvent.mouseOver(document.body);
+		advance(CONTEXT_SURFACE_CLOSE_DELAY_MS * 4);
+		expect(panelSessionId()).toBe(SID);
+	});
+
+	it('closes when the pointer leaves the window', () => {
+		vi.useFakeTimers();
+		useContextTimelineStore.getState().openPanel(SID);
+		renderPanel();
+
+		fireEvent.mouseOver(panelElement());
+		fireEvent.mouseOut(panelElement(), { relatedTarget: null });
+		advance(CONTEXT_SURFACE_CLOSE_DELAY_MS);
+		expect(panelSessionId()).toBeNull();
+	});
+
+	it('holds open through a resize drag, then closes if the drag ended outside', () => {
+		vi.useFakeTimers();
+		useContextTimelineStore.getState().openPanel(SID);
+		renderPanel();
+
+		fireEvent.mouseOver(panelElement());
+		fireEvent.mouseDown(screen.getByTestId('modal-resize-handle-e'), {
+			clientX: 400,
+			clientY: 100,
+		});
+		// Growing the panel drags the pointer well outside it.
+		fireEvent.mouseOver(document.body);
+		fireEvent.mouseMove(document.body, { clientX: 900, clientY: 100 });
+		advance(CONTEXT_SURFACE_CLOSE_DELAY_MS * 4);
+		expect(panelSessionId()).toBe(SID);
+
+		fireEvent.mouseUp(document);
+		advance(CONTEXT_SURFACE_CLOSE_DELAY_MS);
+		expect(panelSessionId()).toBeNull();
 	});
 });

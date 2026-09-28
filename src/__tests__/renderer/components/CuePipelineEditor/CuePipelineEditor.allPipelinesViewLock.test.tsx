@@ -55,6 +55,8 @@ vi.mock('reactflow', () => ({
 		setViewport: vi.fn(),
 	}),
 	useNodesInitialized: () => false,
+	// The collision guard subscribes to measured node widths through the store.
+	useStore: (selector: any) => selector({ nodeInternals: new Map() }),
 	applyNodeChanges: (_changes: any[], nodes: any[]) => nodes,
 	Background: () => null,
 	Controls: () => null,

@@ -12,7 +12,12 @@ import {
 	GroupChatHandlerDependencies,
 	groupChatEmitters,
 	isExpectedGroomingFailure,
+	resolveParticipantSshRemoteConfig,
 } from '../../../../main/ipc/handlers/groupChat';
+import {
+	resetGroupChatQueueForTests,
+	waitForQueueSettledForTests,
+} from '../../../../main/group-chat/group-chat-queue';
 
 // Import types we need for mocking
 import type {
@@ -42,6 +47,9 @@ vi.mock('../../../../main/group-chat/group-chat-storage', () => ({
 	getGroupChatHistory: vi.fn(),
 	deleteGroupChatHistoryEntry: vi.fn(),
 	clearGroupChatHistory: vi.fn(),
+	// Added when the execution queue moved into main: the queue resolves
+	// `queue.json` through this, and `stopAll` now pauses the queue.
+	getGroupChatDir: vi.fn((id: string) => `/tmp/maestro-test-group-chats/${id}`),
 	getGroupChatHistoryFilePath: vi.fn(),
 }));
 
@@ -97,6 +105,18 @@ vi.mock('../../../../main/utils/logger', () => ({
 // clients through safeSend, independently of the Electron renderer's liveness.
 vi.mock('../../../../main/web-server/handlers/bridgeHandlers', () => ({
 	broadcastBridgeEvent: vi.fn(),
+}));
+
+// Mock the main-process stores. Only the sessions store matters here: it is what
+// resolveParticipantSshRemoteConfig reads to recover a participant's SSH config.
+const mockStoredSessions: Record<string, unknown>[] = [];
+vi.mock('../../../../main/stores', () => ({
+	getSessionsStore: () => ({
+		get: () => mockStoredSessions,
+	}),
+	getSettingsStore: () => ({
+		get: () => undefined,
+	}),
 }));
 
 // Import mocked modules for test setup
@@ -155,6 +175,10 @@ describe('groupChat IPC handlers', () => {
 			getAgentConfig: vi.fn(),
 		};
 
+		// The queue is module state in main, so it has to be cleared between tests
+		// or one test's items and armed drains leak into the next.
+		resetGroupChatQueueForTests();
+
 		// Register handlers
 		registerGroupChatHandlers(mockDeps);
 	});
@@ -181,6 +205,13 @@ describe('groupChat IPC handlers', () => {
 				// Moderator handlers
 				'groupChat:startModerator',
 				'groupChat:sendToModerator',
+				// Execution queue, now owned by main rather than each client.
+				'groupChat:submitMessage',
+				'groupChat:getQueue',
+				'groupChat:queueAdd',
+				'groupChat:queueRemove',
+				'groupChat:queueReorder',
+				'groupChat:queueResume',
 				'groupChat:stopModerator',
 				'groupChat:stopAll',
 				'groupChat:reportAutoRunComplete',
@@ -236,6 +267,7 @@ describe('groupChat IPC handlers', () => {
 			expect(groupChatStorage.createGroupChat).toHaveBeenCalledWith(
 				'Test Chat',
 				'claude-code',
+				undefined,
 				undefined
 			);
 			expect(groupChatModerator.spawnModerator).toHaveBeenCalledWith(mockChat, mockProcessManager);
@@ -270,7 +302,36 @@ describe('groupChat IPC handlers', () => {
 			expect(groupChatStorage.createGroupChat).toHaveBeenCalledWith(
 				'Config Chat',
 				'claude-code',
-				moderatorConfig
+				moderatorConfig,
+				undefined
+			);
+		});
+
+		it('should forward the idle-agent requirement to storage', async () => {
+			const mockChat: GroupChat = {
+				id: 'gc-idle',
+				name: 'Idle Chat',
+				createdAt: Date.now(),
+				updatedAt: Date.now(),
+				moderatorAgentId: 'claude-code',
+				moderatorSessionId: '',
+				participants: [],
+				logPath: '/logs/idle',
+				imagesDir: '/images/idle',
+				requireIdleParticipants: false,
+			};
+			vi.mocked(groupChatStorage.createGroupChat).mockResolvedValue(mockChat);
+			vi.mocked(groupChatModerator.spawnModerator).mockResolvedValue('session-idle');
+			vi.mocked(groupChatStorage.loadGroupChat).mockResolvedValue(mockChat);
+
+			const handler = handlers.get('groupChat:create');
+			await handler!({} as any, 'Idle Chat', 'claude-code', undefined, false);
+
+			expect(groupChatStorage.createGroupChat).toHaveBeenCalledWith(
+				'Idle Chat',
+				'claude-code',
+				undefined,
+				false
 			);
 		});
 
@@ -401,6 +462,7 @@ describe('groupChat IPC handlers', () => {
 				'gc-delete',
 				mockProcessManager
 			);
+			expect(groupChatRouter.clearPendingParticipants).toHaveBeenCalledWith('gc-delete');
 			expect(groupChatStorage.deleteGroupChat).toHaveBeenCalledWith('gc-delete');
 			expect(result).toBe(true);
 		});
@@ -1317,6 +1379,40 @@ describe('groupChat IPC handlers', () => {
 			}).not.toThrow();
 		});
 	});
+	describe('W1: the execution queue is reachable through IPC and drained by main', () => {
+		// The end-to-end shape of the fix. A client submits; MAIN decides whether that
+		// is a send or a queue, and MAIN drains it when the moderator frees up. No
+		// renderer is involved in either decision, which is what makes a phone's queue
+		// visible to the desktop and delivered even if the phone goes away.
+		it('queues a submit while the moderator is busy and sends it once on idle', async () => {
+			const chatId = 'gc-w1';
+
+			// Busy: the emitter is the single funnel main records state from.
+			groupChatEmitters.emitStateChange?.(chatId, 'moderator-thinking');
+
+			const submit = handlers.get('groupChat:submitMessage')!;
+			const getQueueHandler = handlers.get('groupChat:getQueue')!;
+
+			await submit({} as never, chatId, {
+				id: 'w1-item',
+				timestamp: Date.now(),
+				text: 'queued while busy',
+			});
+
+			// Nothing was handed to the moderator, and every client can see the item.
+			const queued = (await getQueueHandler({} as never, chatId)) as {
+				items: Array<{ id: string }>;
+			};
+			expect(queued.items.map((i) => i.id)).toEqual(['w1-item']);
+
+			// The moderator frees up. Main drains on its own, with no client involved.
+			groupChatEmitters.emitStateChange?.(chatId, 'idle');
+			await waitForQueueSettledForTests();
+
+			const after = (await getQueueHandler({} as never, chatId)) as { items: unknown[] };
+			expect(after.items).toHaveLength(0);
+		});
+	});
 });
 
 describe('isExpectedGroomingFailure', () => {
@@ -1360,5 +1456,56 @@ describe('isExpectedGroomingFailure', () => {
 	it('still reports genuine grooming faults', () => {
 		expect(isExpectedGroomingFailure(new Error('Grooming timed out after 60000ms'))).toBe(false);
 		expect(isExpectedGroomingFailure(new Error('spawn ENOENT'))).toBe(false);
+	});
+});
+
+describe('resolveParticipantSshRemoteConfig', () => {
+	// A participant record stores only the remote's display name, so the reset
+	// summary has to recover the full config off the agent it was added from.
+	// Reading the wrong field silently groomed a remote participant locally.
+	beforeEach(() => {
+		mockStoredSessions.length = 0;
+	});
+
+	it('reads the persisted sessionSshRemoteConfig field', () => {
+		mockStoredSessions.push({
+			id: 's1',
+			name: 'Backend',
+			sessionSshRemoteConfig: { enabled: true, remoteId: 'remote-1' },
+		});
+
+		expect(resolveParticipantSshRemoteConfig('Backend')).toEqual({
+			enabled: true,
+			remoteId: 'remote-1',
+		});
+	});
+
+	it('uses the same normalized-name matcher the router dispatches turns with', () => {
+		mockStoredSessions.push({
+			id: 's1',
+			name: 'Backend-Agent',
+			sessionSshRemoteConfig: { enabled: true, remoteId: 'remote-1' },
+		});
+
+		expect(resolveParticipantSshRemoteConfig('Backend Agent')).toEqual({
+			enabled: true,
+			remoteId: 'remote-1',
+		});
+	});
+
+	it('returns undefined for a local participant', () => {
+		mockStoredSessions.push({ id: 's1', name: 'Backend' });
+
+		expect(resolveParticipantSshRemoteConfig('Backend')).toBeUndefined();
+	});
+
+	it('returns undefined when the source agent is gone', () => {
+		mockStoredSessions.push({
+			id: 's1',
+			name: 'Frontend',
+			sessionSshRemoteConfig: { enabled: true, remoteId: 'remote-1' },
+		});
+
+		expect(resolveParticipantSshRemoteConfig('Backend')).toBeUndefined();
 	});
 });

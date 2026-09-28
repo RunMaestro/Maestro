@@ -21,6 +21,15 @@ You can also jump to the four most commonly edited prompts from **Quick Actions*
 Click the expand button (top-right of the editor) to give the editor the full width of the settings panel. Click the help button for an inline reference of all categories and template variables.
 </Tip>
 
+### Finding, reading, and editing
+
+The toolbar above the list carries everything the pane offers:
+
+- **Filter** - narrows the list by prompt name, description, **and body**, so you can find a prompt by a phrase you remember from inside it. Press `/` to jump into the box from anywhere outside a text field. Matches are marked in the list and in the editor.
+- **Preview / Edit** - `Preview` renders the prompt as Markdown with its `{{TEMPLATE}}` variables resolved against the active agent, so you see what the agent actually receives. `Edit` is the syntax-highlighted source, the same editor Maestro uses for file previews and memories. `Cmd+E` / `Ctrl+E` flips between them.
+
+The keyboard works the way it does in the Memories viewer: `Up`/`Down` walk the prompt list, and `Esc` steps back out one rung at a time (autocomplete popup, then the filter box, then the filter text, then the help panel or the expanded editor) before it closes Settings. See [Keyboard Shortcuts](./keyboard-shortcuts#maestro-prompts-settings) for the full table.
+
 ## Prompt Categories
 
 Prompts are organized by the feature they control:
@@ -32,7 +41,7 @@ Prompts are organized by the feature they control:
 | **Auto Run**      | Auto Run behavior - the default execution prompt and synopsis generation                                                                                   |
 | **Group Chat**    | Group chat sessions - moderator system/synthesis prompts, participant behavior, and participant request formatting                                         |
 | **Context**       | Context window management - grooming (trimming), transferring between sessions, and summarization                                                          |
-| **Commands**      | Built-in commands - image-only message handling and git commit message generation                                                                          |
+| **Commands**      | Built-in commands - image-only message handling, git commit message generation, and AI command mode                                                        |
 | **System**        | Core system behavior - the Maestro system prompt injected into agents, tab naming, Director's Notes, and feedback                                          |
 | **Includes**      | Reusable fragments (filenames begin with `_`) referenced from other prompts via `{{INCLUDE:name}}` or `{{REF:name}}` - never sent to an agent on their own |
 
@@ -48,21 +57,22 @@ Type `{{` in the prompt editor to trigger autocomplete. Use arrow keys to naviga
 
 Available in all prompts:
 
-| Variable                 | Description                                              |
-| ------------------------ | -------------------------------------------------------- |
-| `{{CONDUCTOR_PROFILE}}`  | Your About Me profile from Settings → General            |
-| `{{AGENT_NAME}}`         | Agent name                                               |
-| `{{AGENT_ID}}`           | Agent UUID (for CLI targeting)                           |
-| `{{AGENT_PATH}}`         | Agent home directory path                                |
-| `{{AGENT_GROUP}}`        | Agent's group name (if grouped)                          |
-| `{{AGENT_SESSION_ID}}`   | Agent session ID                                         |
-| `{{AGENT_HISTORY_PATH}}` | Path to agent's history JSON file                        |
-| `{{TAB_ID}}`             | This conversation's AI tab ID (for CLI targeting)        |
-| `{{TAB_NAME}}`           | Custom tab name                                          |
-| `{{TOOL_TYPE}}`          | Agent type (claude-code, codex, opencode, factory-droid) |
-| `{{CWD}}`                | Working directory                                        |
-| `{{CONTEXT_USAGE}}`      | Context window usage percentage                          |
-| `{{MAESTRO_CLI_PATH}}`   | Path to the maestro-cli binary                           |
+| Variable                 | Description                                                |
+| ------------------------ | ---------------------------------------------------------- |
+| `{{CONDUCTOR_PROFILE}}`  | Your About Me profile from Settings → General              |
+| `{{AGENT_NAME}}`         | Agent name                                                 |
+| `{{AGENT_ID}}`           | Agent UUID (for CLI targeting)                             |
+| `{{AGENT_PATH}}`         | Agent home directory path                                  |
+| `{{AGENT_GROUP}}`        | Agent's group name (if grouped)                            |
+| `{{AGENT_SESSION_ID}}`   | Agent session ID                                           |
+| `{{AGENT_HISTORY_PATH}}` | Path to agent's history JSON file                          |
+| `{{TAB_ID}}`             | This conversation's AI tab ID (for CLI targeting)          |
+| `{{TAB_NAME}}`           | Custom tab name                                            |
+| `{{TOOL_TYPE}}`          | Agent type (claude-code, codex, opencode, factory-droid)   |
+| `{{CWD}}`                | Working directory                                          |
+| `{{WORKTREE_BASE_PATH}}` | Directory where git worktrees are created (empty if unset) |
+| `{{CONTEXT_USAGE}}`      | Context window usage percentage                            |
+| `{{MAESTRO_CLI_PATH}}`   | Path to the maestro-cli binary                             |
 
 ### Date & Time Variables
 

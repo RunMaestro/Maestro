@@ -6,6 +6,7 @@ import {
 	getRepairedUnifiedTabOrder,
 	hasActiveWizard,
 	hasDraft,
+	isAiTabHidden,
 } from '../../../utils/tabHelpers';
 import { closeTerminalTab as closeTerminalTabHelper } from '../../../utils/terminalTabHelpers';
 
@@ -105,6 +106,28 @@ export function excludeDraftRefs(session: Session, refs: UnifiedTabRef[]): Unifi
 	return refs.filter((ref) => !(ref.type === 'ai' && draftAiIds.has(ref.id)));
 }
 
+/**
+ * Drop refs for hidden AI tabs (unopened cross-agent consults). The repaired
+ * order deliberately KEEPS their refs so a revealed consult lands back in its
+ * original position, which means a bulk close computed from that order would
+ * take out a tab the strip never drew - destroying the consult transcript and
+ * its resume id without the user ever seeing a chip for it.
+ */
+export function excludeHiddenAiRefs(session: Session, refs: UnifiedTabRef[]): UnifiedTabRef[] {
+	const hiddenAiIds = new Set((session.aiTabs || []).filter(isAiTabHidden).map((tab) => tab.id));
+	if (hiddenAiIds.size === 0) return refs;
+	return refs.filter((ref) => !(ref.type === 'ai' && hiddenAiIds.has(ref.id)));
+}
+
+/**
+ * Every preservation rule a bulk close (close-others / close-left / close-right)
+ * must honor: keep unsent drafts, and keep tabs the strip never drew. One entry
+ * point so the three bulk paths cannot drift on what survives.
+ */
+export function excludePreservedRefs(session: Session, refs: UnifiedTabRef[]): UnifiedTabRef[] {
+	return excludeHiddenAiRefs(session, excludeDraftRefs(session, refs));
+}
+
 export function applyUnifiedTabClosures(session: Session, refsToClose: UnifiedTabRef[]): Session {
 	let updatedSession = session;
 
@@ -125,6 +148,8 @@ export function applyUnifiedTabClosures(session: Session, refsToClose: UnifiedTa
 			const tab = updatedSession.aiTabs.find((t) => t.id === tabRef.id);
 			if (tab) {
 				const isWizardTab = hasActiveWizard(tab);
+				// Bulk close keeps the pivot tab active, so no neighbor is picked and
+				// the unread filter has nothing to say here.
 				const result = closeTab(updatedSession, tab.id, false, {
 					skipHistory: isWizardTab,
 				});

@@ -38,6 +38,19 @@ describe('Filesystem Preload API', () => {
 		});
 	});
 
+	describe('readDirTree', () => {
+		it('should invoke fs:readDirTree with the scan options', async () => {
+			const scan = { tree: [], truncated: false, filesFound: 0, directoriesScanned: 0 };
+			mockInvoke.mockResolvedValue(scan);
+
+			const options = { maxDepth: 5, maxEntries: 1000, honorGitignore: true };
+			const result = await api.readDirTree('/home/user', options);
+
+			expect(mockInvoke).toHaveBeenCalledWith('fs:readDirTree', '/home/user', options);
+			expect(result).toEqual(scan);
+		});
+	});
+
 	describe('readDir', () => {
 		it('should invoke fs:readDir with dirPath', async () => {
 			const mockEntries = [

@@ -79,7 +79,9 @@ export interface UseSessionCrudReturn {
 		maestroPMode?: 'interactive' | 'dynamic',
 		retryOnAvailabilityErrors?: boolean,
 		retryOnTokenExhaustion?: boolean,
-		additionalDirectories?: AdditionalDirectory[]
+		additionalDirectories?: AdditionalDirectory[],
+		/** Codex only: spend a reset credit automatically on quota exhaustion. Defaults off. */
+		codexAutoResetOnExhaustion?: boolean
 	) => Promise<void>;
 	/** Opens the delete agent confirmation modal */
 	deleteSession: (id: string) => void;
@@ -172,7 +174,9 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 			maestroPMode?: 'interactive' | 'dynamic',
 			retryOnAvailabilityErrors?: boolean,
 			retryOnTokenExhaustion?: boolean,
-			additionalDirectories?: AdditionalDirectory[]
+			additionalDirectories?: AdditionalDirectory[],
+			/** Codex only: spend a reset credit automatically on quota exhaustion. Defaults off. */
+			codexAutoResetOnExhaustion?: boolean
 		) => {
 			try {
 				// Get agent definition to get correct command
@@ -309,6 +313,10 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 					// behavior needs no stored value.
 					retryOnAvailabilityErrors,
 					retryOnTokenExhaustion,
+					// Only persist an explicit opt-IN. The default is off, so an absent
+					// value already means off and storing `false` on every non-Codex
+					// agent would be noise in every session record.
+					codexAutoResetOnExhaustion: codexAutoResetOnExhaustion === true ? true : undefined,
 					claudeInteractive:
 						agentId === 'claude-code' ? { mode: 'api', modeReason: 'auto' } : undefined,
 				};

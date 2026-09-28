@@ -50,6 +50,19 @@ const VIDEO_MIME_TYPES: Record<string, string> = {
 export type MediaKind = 'audio' | 'video';
 
 /**
+ * What opening a playable audio/video file should do.
+ *
+ * `play` (the default) hands it to the floating player and starts it. `queue`
+ * appends it instead, leaving whatever is playing alone - that is how opening
+ * ten files at once plays the first and lines up the other nine. Queueing into
+ * an idle player loads the file PAUSED, so it is also how an agent puts media
+ * on screen for the user to start themselves (`maestro-cli open-file --queue`).
+ *
+ * Ignored for everything that is not media.
+ */
+export type MediaOpenMode = 'play' | 'queue';
+
+/**
  * Extract a lowercase file extension, or `null` when the name has none.
  *
  * Unlike a bare `split('.').pop()` this does not treat an extensionless file
@@ -120,6 +133,23 @@ export function buildMediaStreamUrl(token: string, absolutePath: string): string
 /** Cheap check for "is this `fs:readFile` result a media stream URL". */
 export function isMediaStreamUrl(value: string | null | undefined): boolean {
 	return typeof value === 'string' && value.startsWith(`${MEDIA_SCHEME}://${MEDIA_STREAM_HOST}/`);
+}
+
+/**
+ * The HTTP address the web-desktop bundle loads a stream URL from.
+ *
+ * A browser has no handler for the custom scheme, so the embedded web server
+ * exposes the same handler at `/<securityToken>/media/stream/<token>/<hex>`
+ * (see `src/main/web-server/routes/mediaRoutes.ts`). The per-boot media token
+ * still rides in the path, so the route grants exactly what the scheme does.
+ *
+ * @returns The route path, or `null` when `streamUrl` is not a stream URL.
+ */
+export function buildMediaStreamHttpPath(securityToken: string, streamUrl: string): string | null {
+	if (!securityToken || !isMediaStreamUrl(streamUrl)) return null;
+	const segments = streamUrl.slice(`${MEDIA_SCHEME}://${MEDIA_STREAM_HOST}/`.length).split('/');
+	if (segments.length !== 2 || !segments[0] || !segments[1]) return null;
+	return `/${securityToken}/media/stream/${segments[0]}/${segments[1]}`;
 }
 
 /**

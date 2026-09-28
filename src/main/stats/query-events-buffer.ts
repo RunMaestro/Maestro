@@ -25,7 +25,8 @@
 
 import type Database from 'better-sqlite3';
 import type { QueryEvent } from '../../shared/stats-types';
-import { generateId, normalizePath, LOG_CONTEXT, StatementCache } from './utils';
+import { generateId, LOG_CONTEXT, StatementCache } from './utils';
+import { INSERT_QUERY_EVENT_SQL, bindQueryEvent } from './query-event-insert';
 import { logger } from '../utils/logger';
 import { captureException } from '../utils/sentry';
 
@@ -33,11 +34,6 @@ import { captureException } from '../utils/sentry';
 export const QUERY_EVENT_BATCH_SIZE = 50;
 /** Auto-flush after this many ms since the first event in the current batch. */
 export const QUERY_EVENT_FLUSH_INTERVAL_MS = 500;
-
-const INSERT_SQL = `
-  INSERT INTO query_events (id, session_id, agent_type, source, start_time, duration, project_path, tab_id, is_remote)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-`;
 
 interface PendingEvent {
 	id: string;
@@ -101,25 +97,43 @@ export function flushQueryEventsSync(): void {
 		return;
 	}
 
+	// The stats DB can already be closed by the time we get here. `closeStatsDB()`
+	// runs from the quit handler's cleanup, which itself executes inside a
+	// `before-quit` listener that re-enters `app.quit()`; the re-emitted
+	// `before-quit` then runs the stats module's flush listener *after* the close.
+	// better-sqlite3 answers that with `TypeError: The database connection is not
+	// open`, thrown from inside the transaction, which the catch below used to
+	// report to Sentry as a crash (MAESTRO-ZC).
+	//
+	// A closed handle during shutdown is an expected boundary, not a bug: drop the
+	// batch with a warning and let go of the dead handle so a late `enqueueQueryEvent`
+	// can't keep feeding it. `StatsDB.close()` now flushes while the connection is
+	// still open, so in practice there is nothing left to drop here.
+	if (!lastDb.open) {
+		logger.warn('Stats DB already closed - dropping buffered query events', LOG_CONTEXT, {
+			count: buffer.length,
+		});
+		buffer = [];
+		stmtCache.clear();
+		lastDb = null;
+		return;
+	}
+
 	const events = buffer;
 	buffer = [];
-
-	const stmt = stmtCache.get(lastDb, INSERT_SQL);
+	const db = lastDb;
 
 	try {
-		const tx = lastDb.transaction(() => {
+		// Statement preparation is inside the try on purpose. This runs from
+		// `StatsDB.close()` during quit cleanup, and a prepare can still fail on a
+		// handle that reports `open` (a damaged schema, a disk fault). Outside the
+		// try that exception escapes the flush, aborts the close, and leaves the
+		// connection and the singleton's `initialized` flag alive for the rest of
+		// shutdown.
+		const stmt = stmtCache.get(db, INSERT_QUERY_EVENT_SQL);
+		const tx = db.transaction(() => {
 			for (const { id, event } of events) {
-				stmt.run(
-					id,
-					event.sessionId,
-					event.agentType,
-					event.source,
-					event.startTime,
-					event.duration,
-					normalizePath(event.projectPath),
-					event.tabId ?? null,
-					event.isRemote !== undefined ? (event.isRemote ? 1 : 0) : null
-				);
+				stmt.run(...bindQueryEvent(id, event));
 			}
 		});
 		tx();

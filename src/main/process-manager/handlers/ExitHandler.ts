@@ -5,7 +5,9 @@ import { logger } from '../../utils/logger';
 import { matchSshErrorPattern } from '../../parsers/error-patterns';
 import { aggregateModelUsage } from '../../parsers/usage-aggregator';
 import { cleanupTempFiles } from '../utils/imageUtils';
+import { settleProvisionalAgentError } from '../utils/provisionalAgentError';
 import type { ManagedProcess, AgentError } from '../types';
+import type { ParsedEvent } from '../../parsers/agent-output-parser';
 import type { DataBufferManager } from './DataBufferManager';
 import type { SshRemoteConfig } from '../../../shared/types';
 import { captureException } from '../../utils/sentry';
@@ -17,6 +19,7 @@ import {
 	type CopilotShutdownWaitResult,
 } from '../CopilotShutdownWaiter';
 import { FALLBACK_CONTEXT_WINDOW } from '../../../shared/agentConstants';
+import { isSupersededGeneration } from '../generation';
 
 interface ExitHandlerDependencies {
 	processes: Map<string, ManagedProcess>;
@@ -98,6 +101,36 @@ export class ExitHandler {
 		// with (not the stale planning narration our parent saw last).
 		await this.awaitCopilotShutdown(sessionId, managedProcess);
 
+		// The main guard. `awaitCopilotShutdown` is the only suspension point in
+		// this method, so it is the only place a replacement can claim the session
+		// id mid-flight, and this is the earliest point the question can be asked
+		// for everything downstream. (That method has awaits of its OWN and emits
+		// from inside them, so it carries a second check at its emit site - this
+		// one runs after it has already returned.) Every step below emits
+		// into shared per-session state (batch-mode result text, the stream-json
+		// remainder, the streamedText fallback, usage, agent-error, query-complete,
+		// the final flush, exit), so a guard placed any lower silently lets some of
+		// this process's output land in the successor's turn.
+		if (this.isSuperseded(sessionId, managedProcess)) {
+			logger.warn(
+				'[ProcessManager] Session re-spawned during exit handling, suppressing all exit side effects',
+				'ProcessManager',
+				{ sessionId, code }
+			);
+			return;
+		}
+
+		// An in-turn error notice still held at exit had nothing after it, so the
+		// turn ended on it. Emit it first: ahead of the exit event it explains, and
+		// ahead of detectErrorFromExit below, which would report a vaguer failure.
+		// A notice still undecided when the user pressed Stop is dropped instead:
+		// the turn ended on the stop, not on the notice, and raising it would show a
+		// red error for a turn the user deliberately abandoned (see `interrupted`).
+		if (managedProcess.interrupted) {
+			managedProcess.provisionalError = undefined;
+		}
+		settleProvisionalAgentError(this.emitter, sessionId, managedProcess);
+
 		// Handle regular batch mode (not stream-json)
 		if (isBatchMode && !isStreamJsonMode && managedProcess.jsonBuffer) {
 			this.handleBatchModeExit(sessionId, managedProcess);
@@ -115,18 +148,63 @@ export class ExitHandler {
 				remainingLineLength: remainingLine.length,
 				remainingLinePreview: remainingLine.substring(0, 200),
 			});
+			// Scoped to the parse alone. A malformed last line is an expected,
+			// recoverable condition with a defined fallback (emit it raw), but
+			// classifying and dispatching the event below is not - widening this
+			// catch around that work would swallow a real defect AND emit the failed
+			// envelope's JSON to the user as if it were the answer.
+			let event: ParsedEvent | null = null;
 			try {
-				const event = outputParser.parseJsonLine(remainingLine);
-				if (event && outputParser.isResultMessage(event) && !managedProcess.resultEmitted) {
-					managedProcess.resultEmitted = true;
-					const resultText = event.text || managedProcess.streamedText || '';
-					if (resultText) {
-						this.bufferManager.emitDataBuffered(sessionId, resultText, managedProcess);
+				event = outputParser.parseJsonLine(remainingLine);
+			} catch {
+				this.bufferManager.emitDataBuffered(sessionId, remainingLine, managedProcess);
+			}
+
+			// Capture the provider's session id BEFORE dispatching, and for a failed
+			// envelope as much as a successful one. When the flushed line is the first
+			// event to carry one - a short-lived run whose whole output is this single
+			// trailing envelope - this is the only chance to record it. Without it the
+			// tab has no id to resume from, so recovery from a *recoverable* error
+			// silently opens a fresh conversation and drops the context the retry was
+			// supposed to continue. StdoutHandler does this for mid-stream lines; the
+			// flush is the same event arriving without a trailing newline.
+			if (event) {
+				const eventSessionId = outputParser.extractSessionId(event);
+				if (eventSessionId) {
+					managedProcess.agentSessionId = eventSessionId;
+					if (!managedProcess.sessionIdEmitted) {
+						managedProcess.sessionIdEmitted = true;
+						this.emitter.emit('session-id', sessionId, eventSessionId);
 					}
 				}
-			} catch {
-				// If parsing fails, emit the raw line as data
-				this.bufferManager.emitDataBuffered(sessionId, remainingLine, managedProcess);
+			}
+
+			// A terminal envelope that reports a FAILURE has to leave through the
+			// error path, not the result path. Emitting its text as data would render
+			// a provider failure as the agent's answer, and dropping it silently is
+			// worse still: `detectErrorFromExit` below returns null on exit code 0, so
+			// a CLI that reports the failure in-band and then exits clean would settle
+			// the turn with no answer and no error at all - the tab just stops, and no
+			// retry or recovery handling ever fires.
+			// `interrupted` (the user pressed Stop) suppresses this the same way it
+			// does in StdoutHandler: a terminal envelope flushed on the way out of a
+			// deliberate stop is not a turn failure.
+			if (event?.type === 'error' && !managedProcess.errorEmitted && !managedProcess.interrupted) {
+				const agentError = outputParser.detectErrorFromParsed((event.raw as unknown) ?? event);
+				if (agentError) {
+					managedProcess.errorEmitted = true;
+					agentError.sessionId = sessionId;
+					if (managedProcess.sshRemoteId) {
+						agentError.sshRemoteId = managedProcess.sshRemoteId;
+					}
+					this.emitter.emit('agent-error', sessionId, agentError);
+				}
+			} else if (event && outputParser.isResultMessage(event) && !managedProcess.resultEmitted) {
+				managedProcess.resultEmitted = true;
+				const resultText = event.text || managedProcess.streamedText || '';
+				if (resultText) {
+					this.bufferManager.emitDataBuffered(sessionId, resultText, managedProcess);
+				}
 			}
 		}
 
@@ -279,7 +357,10 @@ export class ExitHandler {
 			cleanupTempFiles(managedProcess.tempImageFiles);
 		}
 
-		// Emit query-complete event for batch mode processes (for stats tracking)
+		// Emit query-complete for batch mode processes. Listeners flush buffered data
+		// and thinking text and send WakaTime heartbeats. No stats row is written from
+		// it: the renderer records each turn, with its tokens and cost, and a second
+		// writer here double-counted every Auto Run turn.
 		if (isBatchMode && managedProcess.querySource) {
 			const duration = Date.now() - managedProcess.startTime;
 			this.emitter.emit('query-complete', sessionId, {
@@ -303,23 +384,42 @@ export class ExitHandler {
 		// before the exit event, so listeners see all data before exit fires.
 		this.bufferManager.flushDataBuffer(sessionId, managedProcess);
 
-		const currentProcess = this.processes.get(sessionId);
-		if (currentProcess && currentProcess !== managedProcess) {
-			logger.warn('[ProcessManager] Ignoring stale process exit', 'ProcessManager', {
-				sessionId,
-				exitingPid: managedProcess.pid,
-				currentPid: currentProcess.pid,
-			});
+		// Re-checked immediately before settling the turn: `flushDataBuffer` above
+		// is async-adjacent enough that a replacement can still land between the
+		// two points.
+		if (this.isSuperseded(sessionId, managedProcess)) {
+			logger.warn(
+				'[ProcessManager] Session re-spawned during exit handling, suppressing exit event',
+				'ProcessManager',
+				{ sessionId, code }
+			);
 			return;
 		}
 
-		// Release ownership before notifying listeners. Replay handlers can spawn
-		// the next process synchronously from `exit` without replacing this one
-		// before its final buffered data has been emitted.
-		if (currentProcess === managedProcess) {
+		// Release ownership BEFORE notifying listeners. A replay handler can spawn
+		// the next process synchronously from `exit`, and it must find the key free
+		// rather than racing this one's teardown. Only OUR entry is deleted:
+		// deleting unconditionally would untrack a successor that already claimed
+		// the key, leaving a process the user cannot stop.
+		if (this.processes.get(sessionId) === managedProcess) {
 			this.processes.delete(sessionId);
 		}
 		this.emitter.emit('exit', sessionId, code);
+	}
+
+	/**
+	 * True when a newer spawn has taken over this session id, so this process's
+	 * remaining work must not touch shared per-session state.
+	 *
+	 * Generation first: it stays meaningful after the successor deletes its own
+	 * map entry, which is exactly when an identity check silently starts passing
+	 * again. The map comparison is kept as a fallback for processes registered
+	 * without a generation.
+	 */
+	private isSuperseded(sessionId: string, managedProcess: ManagedProcess): boolean {
+		if (isSupersededGeneration(sessionId, managedProcess.spawnGeneration)) return true;
+		const current = this.processes.get(sessionId);
+		return current !== undefined && current !== managedProcess;
 	}
 
 	/**
@@ -407,6 +507,20 @@ export class ExitHandler {
 					managedProcess.contextWindow && managedProcess.contextWindow > 0
 						? managedProcess.contextWindow
 						: FALLBACK_CONTEXT_WINDOW;
+				// This method has its own awaits (the shutdown wait plus two disk
+				// reads), so a replacement can claim the session id before we get
+				// here - and `usage` is keyed by sessionId alone, so it would land on
+				// the live successor and misreport its context gauge with the dead
+				// turn's token counts. handleExit's guard runs only after this method
+				// RETURNS, so it cannot cover this emit.
+				if (this.isSuperseded(sessionId, managedProcess)) {
+					logger.warn(
+						'[ProcessManager] Session re-spawned during Copilot reconciliation, dropping usage',
+						'ProcessManager',
+						{ sessionId, agentSessionId }
+					);
+					return;
+				}
 				this.emitter.emit('usage', sessionId, {
 					inputTokens: usage.inputTokens,
 					outputTokens: usage.outputTokens,

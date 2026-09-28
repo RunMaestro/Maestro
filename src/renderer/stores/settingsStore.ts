@@ -18,7 +18,6 @@ import { create } from 'zustand';
 import type { BrowserConfirmPolicy } from '../../shared/coworkingBrowser';
 import { isWindowsPlatform } from '../utils/platformUtils';
 import type {
-	LLMProvider,
 	CustomAICommand,
 	AchievementTimeSource,
 	AutoRunStats,
@@ -31,11 +30,38 @@ import type {
 	DirectorNotesSettings,
 	EncoreFeatureFlags,
 } from '../types';
-import { DEFAULT_SHORTCUTS, TAB_SHORTCUTS, FIXED_SHORTCUTS } from '../constants/shortcuts';
-import { getLevelIndex } from '../constants/keyboardMastery';
+import { FIXED_SHORTCUTS } from '../constants/shortcuts';
+import {
+	TYPOGRAPHY_SURFACE_LIST,
+	canInherit,
+	clampFontZoom,
+	clampSurfaceFontSize,
+} from '../../shared/typography';
+import { parseTypographySnapshot } from '../../shared/typographySnapshot';
+import {
+	DEFAULT_CUE_HISTORY_RETENTION_DAYS,
+	resolveCueHistoryRetentionDays,
+} from '../../shared/cue/retention';
+import { resolveEncoreFeatures } from '../../shared/encoreFeatureDefaults';
+import {
+	collectBoundShortcuts,
+	countUsedBoundShortcuts,
+	getLevelIndex,
+} from '../constants/keyboardMastery';
 import { RIGHT_PANEL_MIN_WIDTH, RIGHT_PANEL_MAX_WIDTH } from '../constants/rightPanel';
+import type { MindMapLayoutType } from '../components/DocumentGraph/layoutTypes';
+import { isMindMapLayoutType } from '../components/DocumentGraph/layoutTypes';
 import { normalizePlaybackRate } from '../../shared/mediaTypes';
-import { useMediaPlaybackStore, type MediaFloatRect } from './mediaPlaybackStore';
+import { ENCORE_FEATURE_DEFAULTS } from '../../shared/encoreFeatureDefaults';
+import { ZERO_USAGE_PEAKS, mergeUsagePeaks, usagePeaksEqual } from '../../shared/usagePeaks';
+import {
+	MEDIA_FLOAT_SETTINGS_KEY,
+	MEDIA_QUEUE_SETTINGS_KEY,
+	useMediaPlaybackStore,
+	type PersistedMediaQueue,
+} from './mediaPlaybackStore';
+import { sanitizeMediaItems, sanitizeMediaTimes } from '../utils/mediaItems';
+import { sanitizeMediaFloat } from '../utils/mediaFloatGeometry';
 import { logger } from '../utils/logger';
 import { useUIStore } from './uiStore';
 import {
@@ -43,8 +69,8 @@ import {
 	sanitizeSnoozeHistory,
 	SNOOZE_HISTORY_SETTINGS_KEY,
 } from './snoozeHistoryStore';
-import type { ModalResizeKey, ModalSize, ModalSizes } from '../utils/modalSizing';
-import { sanitizeModalSizes } from '../utils/modalSizing';
+import type { ModalPosition, ModalResizeKey, ModalSize, ModalSizes } from '../utils/modalSizing';
+import { normalizeModalPosition, sanitizeModalSizes } from '../utils/modalSizing';
 import type { AnnotatorState, AnnotatorActions } from './settingsAnnotatorSlice';
 import { createAnnotatorSlice, hydrateAnnotatorSettings } from './settingsAnnotatorSlice';
 import type { WakatimeState, WakatimeActions } from './settingsWakatimeSlice';
@@ -85,6 +111,7 @@ export {
 } from './settingsFileExplorerSlice';
 import type { TextareaHeights, TextareaSizeKey } from '../utils/textareaSizing';
 import { sanitizeTextareaHeights } from '../utils/textareaSizing';
+import { normalizeUnlockedMilestone } from '../../shared/delegation';
 
 // ============================================================================
 // Prompt cache (loaded via IPC at startup)
@@ -145,13 +172,13 @@ function getCommitCommandPrompt(): string {
 // Shared Type Aliases
 // ============================================================================
 
-export type DocumentGraphLayoutType = 'mindmap' | 'radial' | 'hierarchical' | 'force';
-const DOCUMENT_GRAPH_LAYOUT_TYPES: DocumentGraphLayoutType[] = [
-	'mindmap',
-	'radial',
-	'hierarchical',
-	'force',
-];
+/**
+ * Alias kept for the existing call sites. The layout names themselves live in
+ * `DocumentGraph/layoutTypes`, which is also what the graph's own toolbar and
+ * `L` cycle read - a private copy here silently rejected any layout added to
+ * the graph but not mirrored into this file.
+ */
+export type DocumentGraphLayoutType = MindMapLayoutType;
 
 const DEFAULT_CONTEXT_MANAGEMENT_SETTINGS: ContextManagementSettings = {
 	autoGroomContexts: true,
@@ -176,13 +203,7 @@ const DEFAULT_AUTO_RUN_STATS: AutoRunStats = {
 	badgeHistory: [],
 };
 
-const DEFAULT_USAGE_STATS: MaestroUsageStats = {
-	maxAgents: 0,
-	maxDefinedAgents: 0,
-	maxSimultaneousAutoRuns: 0,
-	maxSimultaneousQueries: 0,
-	maxQueueDepth: 0,
-};
+const DEFAULT_USAGE_STATS: MaestroUsageStats = { ...ZERO_USAGE_PEAKS };
 
 const DEFAULT_KEYBOARD_MASTERY_STATS: KeyboardMasteryStats = {
 	usedShortcuts: [],
@@ -190,11 +211,6 @@ const DEFAULT_KEYBOARD_MASTERY_STATS: KeyboardMasteryStats = {
 	lastLevelUpTimestamp: 0,
 	lastAcknowledgedLevel: 0,
 };
-
-const TOTAL_SHORTCUTS_COUNT =
-	Object.keys(DEFAULT_SHORTCUTS).length +
-	Object.keys(TAB_SHORTCUTS).length +
-	Object.keys(FIXED_SHORTCUTS).length;
 
 const DEFAULT_ONBOARDING_STATS: OnboardingStats = {
 	wizardStartCount: 0,
@@ -218,17 +234,7 @@ const DEFAULT_ONBOARDING_STATS: OnboardingStats = {
 	averageTasksPerPhase: 0,
 };
 
-const DEFAULT_ENCORE_FEATURES: EncoreFeatureFlags = {
-	directorNotes: false,
-	usageStats: true,
-	symphony: true,
-	maestroCue: false,
-	pianola: false,
-	plugins: false,
-	concerto: false,
-	board: false,
-	groupsPlus: false,
-};
+const DEFAULT_ENCORE_FEATURES: EncoreFeatureFlags = { ...ENCORE_FEATURE_DEFAULTS };
 
 // File Preview / Edit toolbar buttons. Each key maps to a visibility toggle in
 // Settings → Display → File Edit & Preview. Buttons can be hidden but the
@@ -248,6 +254,7 @@ export const FILE_PREVIEW_TOOLBAR_BUTTON_KEYS = [
 	'openInDefault',
 	'revealInFolder',
 	'copyPath',
+	'delete',
 ] as const;
 
 export type FilePreviewToolbarButton = (typeof FILE_PREVIEW_TOOLBAR_BUTTON_KEYS)[number];
@@ -262,6 +269,7 @@ export const DEFAULT_FILE_PREVIEW_TOOLBAR_VISIBILITY: FilePreviewToolbarVisibili
 
 const DEFAULT_DIRECTOR_NOTES_SETTINGS: DirectorNotesSettings = {
 	provider: 'claude-code',
+	autoSelectProvider: true,
 	defaultLookbackDays: 7,
 	defaultMode: 'rich',
 };
@@ -330,14 +338,27 @@ export interface SettingsStoreState
 	settingsLoaded: boolean;
 	conductorProfile: string;
 	globalShowHotkey: string[];
-	llmProvider: LLMProvider;
-	modelSlug: string;
-	apiKey: string;
 	defaultShell: string;
 	customShellPath: string;
 	shellArgs: string;
 	shellEnvVars: Record<string, string>;
+	/**
+	 * Variables the user switched OFF in the environment editor. Same shape as
+	 * `shellEnvVars`, but nothing reads it except the editor: parking a variable
+	 * here is what keeps it out of every spawned process while preserving its
+	 * value for later. Never merge this into a spawn env.
+	 */
+	shellEnvVarsDisabled: Record<string, string>;
 	ghPath: string;
+	/** Playback speed for audio/video in the file preview. Sticky across files. */
+	/**
+	 * True when the main process found an installation id already on disk (i.e.
+	 * this is not the app's very first launch ever). Read-only from the
+	 * renderer's side; the main process is the sole writer. Lets the first-run
+	 * series tell a returning user who deleted every agent from a genuinely new
+	 * install.
+	 */
+	hasPriorInstallation: boolean;
 	/** Playback speed for audio/video in the file preview. Sticky across files. */
 	mediaPlaybackRate: number;
 	enterToSendAI: boolean;
@@ -355,6 +376,10 @@ export interface SettingsStoreState
 	leftSidebarWidth: number;
 	rightPanelWidth: number;
 	modalSizes: ModalSizes;
+	/** Concerto stage presentation: true = popped out into a floating window. */
+	concertoStageFloating: boolean;
+	/** Where the popped-out Concerto stage was last dragged to, or null. */
+	concertoStagePosition: ModalPosition | null;
 	textareaHeights: TextareaHeights;
 	markdownEditMode: boolean;
 	chatRawTextMode: boolean;
@@ -375,6 +400,15 @@ export interface SettingsStoreState
 	logViewerSelectedLevels: string[];
 	customAICommands: CustomAICommand[];
 	totalActiveTimeMs: number;
+	/**
+	 * Highest delegation milestone ever unlocked (0 | 25 | 50 | 75 | 100).
+	 *
+	 * A high-water mark, not the live score: the delegation percentage is a
+	 * ratio over retained history and can fall when you do a stretch of
+	 * interactive work, and a bar that un-fills would read as losing something
+	 * you earned. The live number rides a separate marker on the same track.
+	 */
+	delegationMilestone: number;
 	autoRunStats: AutoRunStats;
 	usageStats: MaestroUsageStats;
 	ungroupedCollapsed: boolean;
@@ -386,24 +420,31 @@ export interface SettingsStoreState
 	onboardingStats: OnboardingStats;
 	leaderboardRegistration: LeaderboardRegistration | null;
 	persistentWebLink: boolean;
+	webInterfaceAutoStart: boolean;
 	webInterfaceUseCustomPort: boolean;
 	webInterfaceCustomPort: number;
 	contextManagementSettings: ContextManagementSettings;
 	keyboardMasteryStats: KeyboardMasteryStats;
 	showStarredInUnreadFilter: boolean;
 	showFilePreviewsInUnreadFilter: boolean;
+	showTerminalTabsInUnreadFilter: boolean;
+	showBrowserTabsInUnreadFilter: boolean;
 	useCmd0AsLastTab: boolean;
 	documentGraphShowExternalLinks: boolean;
+	documentGraphConfirmClose: boolean;
 	documentGraphMaxNodes: number;
 	documentGraphPreviewCharLimit: number;
 	documentGraphLayoutType: DocumentGraphLayoutType;
 	statsCollectionEnabled: boolean;
 	defaultStatsTimeRange: 'day' | 'week' | 'month' | 'quarter' | 'year' | 'all';
 	preventSleepEnabled: boolean;
+	preventDisplaySleepEnabled: boolean;
 	disableGpuAcceleration: boolean;
 	disableConfetti: boolean;
 	suppressWindowsWarning: boolean;
 	userMessageAlignment: 'left' | 'right';
+	utilityAgentId: string | null;
+	utilityModelId: string | null;
 	encoreFeatures: EncoreFeatureFlags;
 	symphonyRegistryUrls: string[];
 	coworkingBrowserInteraction: string[];
@@ -411,6 +452,8 @@ export interface SettingsStoreState
 	coworkingBackgroundBrowsers: boolean;
 	coworkingBackgroundBrowsersLimit: number;
 	directorNotesSettings: DirectorNotesSettings;
+	cueHistoryRetentionDays: number;
+	groupCueEntries: boolean;
 	useNativeTitleBar: boolean;
 	autoHideMenuBar: boolean;
 	// File Edit & Preview
@@ -442,13 +485,11 @@ export interface SettingsStoreActions
 	// Simple setters
 	setConductorProfile: (value: string) => void;
 	setGlobalShowHotkey: (value: string[]) => void;
-	setLlmProvider: (value: LLMProvider) => void;
-	setModelSlug: (value: string) => void;
-	setApiKey: (value: string) => void;
 	setDefaultShell: (value: string) => void;
 	setCustomShellPath: (value: string) => void;
 	setShellArgs: (value: string) => void;
 	setShellEnvVars: (value: Record<string, string>) => void;
+	setShellEnvVarsDisabled: (value: Record<string, string>) => void;
 	setGhPath: (value: string) => void;
 	setMediaPlaybackRate: (value: number) => void;
 	setEnterToSendAI: (value: boolean) => void;
@@ -467,6 +508,8 @@ export interface SettingsStoreActions
 	/** Forget ONE modal's remembered size, so it reopens at its declared default. */
 	resetModalSize: (key: ModalResizeKey) => void;
 	resetModalSizes: () => void;
+	setConcertoStageFloating: (value: boolean) => void;
+	setConcertoStagePosition: (value: ModalPosition | null) => void;
 	/** Remember the height a user dragged a resizable textarea to. */
 	setTextareaHeight: (key: TextareaSizeKey, value: number) => void;
 	setMarkdownEditMode: (value: boolean) => void;
@@ -493,12 +536,16 @@ export interface SettingsStoreActions
 	setFirstAutoRunCompleted: (value: boolean) => void;
 	setLeaderboardRegistration: (value: LeaderboardRegistration | null) => void;
 	setPersistentWebLink: (value: boolean) => Promise<void>;
+	setWebInterfaceAutoStart: (value: boolean) => void;
 	setWebInterfaceUseCustomPort: (value: boolean) => void;
 	setWebInterfaceCustomPort: (value: number) => void;
 	setShowStarredInUnreadFilter: (value: boolean) => void;
 	setShowFilePreviewsInUnreadFilter: (value: boolean) => void;
+	setShowTerminalTabsInUnreadFilter: (value: boolean) => void;
+	setShowBrowserTabsInUnreadFilter: (value: boolean) => void;
 	setUseCmd0AsLastTab: (value: boolean) => void;
 	setDocumentGraphShowExternalLinks: (value: boolean) => void;
+	setDocumentGraphConfirmClose: (value: boolean) => void;
 	setDocumentGraphMaxNodes: (value: number) => void;
 	setDocumentGraphPreviewCharLimit: (value: number) => void;
 	setDocumentGraphLayoutType: (value: DocumentGraphLayoutType) => void;
@@ -508,6 +555,8 @@ export interface SettingsStoreActions
 	setDisableConfetti: (value: boolean) => void;
 	setSuppressWindowsWarning: (value: boolean) => void;
 	setUserMessageAlignment: (value: 'left' | 'right') => void;
+	setUtilityAgentId: (value: string | null) => void;
+	setUtilityModelId: (value: string | null) => void;
 	setEncoreFeatures: (value: EncoreFeatureFlags) => void;
 	setSymphonyRegistryUrls: (value: string[]) => void;
 	setCoworkingBrowserInteraction: (value: string[]) => void;
@@ -515,6 +564,8 @@ export interface SettingsStoreActions
 	setCoworkingBackgroundBrowsers: (value: boolean) => void;
 	setCoworkingBackgroundBrowsersLimit: (value: number) => void;
 	setDirectorNotesSettings: (value: DirectorNotesSettings) => void;
+	setCueHistoryRetentionDays: (value: number) => void;
+	setGroupCueEntries: (value: boolean) => void;
 	setUseNativeTitleBar: (value: boolean) => void;
 	setAutoHideMenuBar: (value: boolean) => void;
 	setFileEditWordWrap: (value: boolean) => void;
@@ -535,10 +586,14 @@ export interface SettingsStoreActions
 	setLogLevel: (value: string) => Promise<void>;
 	setMaxLogBuffer: (value: number) => Promise<void>;
 	setPreventSleepEnabled: (value: boolean) => Promise<void>;
+	setPreventDisplaySleepEnabled: (value: boolean) => Promise<void>;
 
 	// Standalone active time
 	setTotalActiveTimeMs: (value: number) => void;
 	addTotalActiveTimeMs: (delta: number) => void;
+
+	// Delegation milestone high-water mark
+	unlockDelegationMilestone: (milestone: number) => void;
 
 	// Usage stats
 	setUsageStats: (value: MaestroUsageStats) => void;
@@ -668,14 +723,13 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		settingsLoaded: false,
 		conductorProfile: '',
 		globalShowHotkey: [],
-		llmProvider: 'openrouter',
-		modelSlug: 'anthropic/claude-3.5-sonnet',
-		apiKey: '',
 		defaultShell: isWindowsPlatform() ? 'powershell' : 'zsh',
 		customShellPath: '',
 		shellArgs: '',
 		shellEnvVars: {},
+		shellEnvVarsDisabled: {},
 		ghPath: '',
+		hasPriorInstallation: false,
 		mediaPlaybackRate: 1,
 		enterToSendAI: true,
 		enterToSendAIExpanded: false,
@@ -686,10 +740,12 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		defaultSaveToHistory: true,
 		synopsisDebounceSeconds: 0,
 		defaultShowThinking: 'off',
-		showToolCalls: true,
+		showToolCalls: false,
 		leftSidebarWidth: 256,
 		rightPanelWidth: 384,
 		modalSizes: {},
+		concertoStageFloating: false,
+		concertoStagePosition: null,
 		textareaHeights: {},
 		markdownEditMode: false,
 		chatRawTextMode: false,
@@ -710,6 +766,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		logViewerSelectedLevels: ['debug', 'info', 'warn', 'error', 'toast'],
 		customAICommands: DEFAULT_AI_COMMANDS,
 		totalActiveTimeMs: 0,
+		delegationMilestone: 0,
 		autoRunStats: DEFAULT_AUTO_RUN_STATS,
 		usageStats: DEFAULT_USAGE_STATS,
 		ungroupedCollapsed: false,
@@ -721,24 +778,31 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		onboardingStats: DEFAULT_ONBOARDING_STATS,
 		leaderboardRegistration: null,
 		persistentWebLink: false,
+		webInterfaceAutoStart: false,
 		webInterfaceUseCustomPort: false,
 		webInterfaceCustomPort: 8080,
 		contextManagementSettings: DEFAULT_CONTEXT_MANAGEMENT_SETTINGS,
 		keyboardMasteryStats: DEFAULT_KEYBOARD_MASTERY_STATS,
 		showStarredInUnreadFilter: false,
 		showFilePreviewsInUnreadFilter: false,
+		showTerminalTabsInUnreadFilter: false,
+		showBrowserTabsInUnreadFilter: false,
 		useCmd0AsLastTab: true,
 		documentGraphShowExternalLinks: false,
+		documentGraphConfirmClose: true,
 		documentGraphMaxNodes: 50,
 		documentGraphPreviewCharLimit: 100,
 		documentGraphLayoutType: 'hierarchical',
 		statsCollectionEnabled: true,
 		defaultStatsTimeRange: 'week',
 		preventSleepEnabled: false,
+		preventDisplaySleepEnabled: false,
 		disableGpuAcceleration: false,
 		disableConfetti: false,
 		suppressWindowsWarning: false,
 		userMessageAlignment: 'right',
+		utilityAgentId: null,
+		utilityModelId: null,
 		encoreFeatures: DEFAULT_ENCORE_FEATURES,
 		symphonyRegistryUrls: [],
 		coworkingBrowserInteraction: [],
@@ -746,6 +810,8 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		coworkingBackgroundBrowsers: false,
 		coworkingBackgroundBrowsersLimit: 2,
 		directorNotesSettings: DEFAULT_DIRECTOR_NOTES_SETTINGS,
+		cueHistoryRetentionDays: DEFAULT_CUE_HISTORY_RETENTION_DAYS,
+		groupCueEntries: true,
 		useNativeTitleBar: isWindowsPlatform(),
 		autoHideMenuBar: false,
 		fileEditWordWrap: true,
@@ -786,21 +852,6 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 			window.maestro.settings.set('globalShowHotkey', value);
 		},
 
-		setLlmProvider: (value) => {
-			set({ llmProvider: value });
-			window.maestro.settings.set('llmProvider', value);
-		},
-
-		setModelSlug: (value) => {
-			set({ modelSlug: value });
-			window.maestro.settings.set('modelSlug', value);
-		},
-
-		setApiKey: (value) => {
-			set({ apiKey: value });
-			window.maestro.settings.set('apiKey', value);
-		},
-
 		setDefaultShell: (value) => {
 			set({ defaultShell: value });
 			window.maestro.settings.set('defaultShell', value);
@@ -819,6 +870,11 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		setShellEnvVars: (value) => {
 			set({ shellEnvVars: value });
 			window.maestro.settings.set('shellEnvVars', value);
+		},
+
+		setShellEnvVarsDisabled: (value) => {
+			set({ shellEnvVarsDisabled: value });
+			window.maestro.settings.set('shellEnvVarsDisabled', value);
 		},
 
 		setGhPath: (value) => {
@@ -921,6 +977,17 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		resetModalSizes: () => {
 			set({ modalSizes: {} });
 			window.maestro.settings.set('modalSizes', {});
+		},
+
+		setConcertoStageFloating: (value) => {
+			set({ concertoStageFloating: value });
+			window.maestro.settings.set('concertoStageFloating', value);
+		},
+
+		setConcertoStagePosition: (value) => {
+			const normalized = value ? normalizeModalPosition(value) : null;
+			set({ concertoStagePosition: normalized });
+			window.maestro.settings.set('concertoStagePosition', normalized);
 		},
 
 		setTextareaHeight: (key, value) => {
@@ -1130,6 +1197,11 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 			}
 		},
 
+		setWebInterfaceAutoStart: (value) => {
+			set({ webInterfaceAutoStart: value });
+			window.maestro.settings.set('webInterfaceAutoStart', value);
+		},
+
 		setWebInterfaceUseCustomPort: (value) => {
 			set({ webInterfaceUseCustomPort: value });
 			window.maestro.settings.set('webInterfaceUseCustomPort', value);
@@ -1154,6 +1226,16 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 			window.maestro.settings.set('showFilePreviewsInUnreadFilter', value);
 		},
 
+		setShowTerminalTabsInUnreadFilter: (value) => {
+			set({ showTerminalTabsInUnreadFilter: value });
+			window.maestro.settings.set('showTerminalTabsInUnreadFilter', value);
+		},
+
+		setShowBrowserTabsInUnreadFilter: (value) => {
+			set({ showBrowserTabsInUnreadFilter: value });
+			window.maestro.settings.set('showBrowserTabsInUnreadFilter', value);
+		},
+
 		setUseCmd0AsLastTab: (value) => {
 			set({ useCmd0AsLastTab: value });
 			window.maestro.settings.set('useCmd0AsLastTab', value);
@@ -1164,6 +1246,11 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 			window.maestro.settings.set('documentGraphShowExternalLinks', value);
 		},
 
+		setDocumentGraphConfirmClose: (value) => {
+			set({ documentGraphConfirmClose: value });
+			window.maestro.settings.set('documentGraphConfirmClose', value);
+		},
+
 		setDocumentGraphMaxNodes: (value) => {
 			const clamped = Math.max(50, Math.min(1000, value));
 			set({ documentGraphMaxNodes: clamped });
@@ -1171,13 +1258,15 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		},
 
 		setDocumentGraphPreviewCharLimit: (value) => {
-			const clamped = Math.max(50, Math.min(500, value));
+			// 0 is a real value, not a floor to clamp away: it means "previews off",
+			// which draws each node as a filename pill.
+			const clamped = Math.max(0, Math.min(500, value));
 			set({ documentGraphPreviewCharLimit: clamped });
 			window.maestro.settings.set('documentGraphPreviewCharLimit', clamped);
 		},
 
 		setDocumentGraphLayoutType: (value) => {
-			const layoutType = DOCUMENT_GRAPH_LAYOUT_TYPES.includes(value) ? value : 'hierarchical';
+			const layoutType = isMindMapLayoutType(value) ? value : 'hierarchical';
 			set({ documentGraphLayoutType: layoutType });
 			window.maestro.settings.set('documentGraphLayoutType', layoutType);
 		},
@@ -1210,6 +1299,16 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		setUserMessageAlignment: (value) => {
 			set({ userMessageAlignment: value });
 			window.maestro.settings.set('userMessageAlignment', value);
+		},
+
+		setUtilityAgentId: (value) => {
+			set({ utilityAgentId: value });
+			window.maestro.settings.set('utilityAgentId', value);
+		},
+
+		setUtilityModelId: (value) => {
+			set({ utilityModelId: value });
+			window.maestro.settings.set('utilityModelId', value);
 		},
 
 		setEncoreFeatures: (value) => {
@@ -1245,6 +1344,16 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		setDirectorNotesSettings: (value) => {
 			set({ directorNotesSettings: value });
 			window.maestro.settings.set('directorNotesSettings', value);
+		},
+
+		setCueHistoryRetentionDays: (value) => {
+			set({ cueHistoryRetentionDays: value });
+			window.maestro.settings.set('cueHistoryRetentionDays', value);
+		},
+
+		setGroupCueEntries: (value) => {
+			set({ groupCueEntries: value });
+			window.maestro.settings.set('groupCueEntries', value);
 		},
 
 		setUseNativeTitleBar: (value) => {
@@ -1359,6 +1468,19 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 			}
 		},
 
+		setPreventDisplaySleepEnabled: async (value) => {
+			const prev = get().preventDisplaySleepEnabled;
+			set({ preventDisplaySleepEnabled: value });
+			try {
+				await window.maestro.settings.set('preventDisplaySleepEnabled', value);
+				await window.maestro.power.setKeepDisplayAwake(value);
+			} catch (error) {
+				// Rollback on failure so UI stays in sync with actual power state
+				set({ preventDisplaySleepEnabled: prev });
+				throw error; // Let Sentry capture
+			}
+		},
+
 		// ============================================================================
 		// Standalone Active Time Actions
 		// ============================================================================
@@ -1376,57 +1498,53 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		},
 
 		// ============================================================================
+		// Delegation Milestone Actions
+		// ============================================================================
+
+		// Raise the delegation high-water mark. Monotonic on purpose: the caller
+		// passes whatever milestone the CURRENT score has reached, and a score
+		// that has since fallen must not claw back a mark already unlocked. The
+		// value is normalized to a real milestone so nothing can fill the bar to
+		// a mark the track does not have.
+		unlockDelegationMilestone: (milestone) => {
+			const normalized = normalizeUnlockedMilestone(milestone);
+			const prev = get().delegationMilestone;
+			if (normalized <= prev) return;
+			set({ delegationMilestone: normalized });
+			window.maestro.settings.set('delegationMilestone', normalized);
+		},
+
+		// ============================================================================
 		// Usage Stats Actions
 		// ============================================================================
 
 		setUsageStats: (value) => {
 			const prev = get().usageStats;
-			const updated: MaestroUsageStats = {
-				maxAgents: Math.max(prev.maxAgents, value.maxAgents ?? 0),
-				maxDefinedAgents: Math.max(prev.maxDefinedAgents, value.maxDefinedAgents ?? 0),
-				maxSimultaneousAutoRuns: Math.max(
-					prev.maxSimultaneousAutoRuns,
-					value.maxSimultaneousAutoRuns ?? 0
-				),
-				maxSimultaneousQueries: Math.max(
-					prev.maxSimultaneousQueries,
-					value.maxSimultaneousQueries ?? 0
-				),
-				maxQueueDepth: Math.max(prev.maxQueueDepth, value.maxQueueDepth ?? 0),
-			};
+			const updated = mergeUsagePeaks(prev, value);
 			set({ usageStats: updated });
 			window.maestro.settings.set('usageStats', updated);
 		},
 
 		updateUsageStats: (currentValues) => {
+			// Peaks are lifetime high-water marks, and the max below is only
+			// meaningful against a hydrated baseline. Until loadAllSettings
+			// resolves, `prev` is still DEFAULT_USAGE_STATS (all zeros), so a
+			// sample taken now would look like a new record for every counter.
+			// This hook fires on the first `sessions` ref flip, which routinely
+			// beats the settings load, so without this guard a launch persisted a
+			// live snapshot over the real peaks. The main process refuses the
+			// regression too; this keeps the displayed number honest as well.
+			if (!get().settingsLoaded) return;
+
 			const prev = get().usageStats;
-			const updated: MaestroUsageStats = {
-				maxAgents: Math.max(prev.maxAgents, currentValues.maxAgents ?? 0),
-				maxDefinedAgents: Math.max(prev.maxDefinedAgents, currentValues.maxDefinedAgents ?? 0),
-				maxSimultaneousAutoRuns: Math.max(
-					prev.maxSimultaneousAutoRuns,
-					currentValues.maxSimultaneousAutoRuns ?? 0
-				),
-				maxSimultaneousQueries: Math.max(
-					prev.maxSimultaneousQueries,
-					currentValues.maxSimultaneousQueries ?? 0
-				),
-				maxQueueDepth: Math.max(prev.maxQueueDepth, currentValues.maxQueueDepth ?? 0),
-			};
+			const updated = mergeUsagePeaks(prev, currentValues);
 			// PERF: Skip both the persist AND the in-memory set when nothing changed.
 			// updateUsageStats fires from useAutoRunAchievements on every `sessions` ref flip
 			// (i.e., every ~200ms streaming flush). Calling `set` with a fresh object identity
 			// each time triggers every consumer of useSettingsStore() to re-render, which
 			// cascades through MaestroConsoleInner → GitStatusProvider → entire workspace tree.
-			if (
-				updated.maxAgents === prev.maxAgents &&
-				updated.maxDefinedAgents === prev.maxDefinedAgents &&
-				updated.maxSimultaneousAutoRuns === prev.maxSimultaneousAutoRuns &&
-				updated.maxSimultaneousQueries === prev.maxSimultaneousQueries &&
-				updated.maxQueueDepth === prev.maxQueueDepth
-			) {
-				return;
-			}
+			if (usagePeaksEqual(updated, prev)) return;
+
 			window.maestro.settings.set('usageStats', updated);
 			set({ usageStats: updated });
 		},
@@ -1720,8 +1838,15 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 			// Add new shortcut to the list
 			const updatedShortcuts = [...currentStats.usedShortcuts, shortcutId];
 
-			// Calculate new percentage and level
-			const percentage = (updatedShortcuts.length / TOTAL_SHORTCUTS_COUNT) * 100;
+			// Calculate new percentage and level over the BOUND shortcuts only - an
+			// unbound one can never be fired, so counting it would make the top
+			// level unreachable. Read from the live maps so a binding the user
+			// cleared in Settings leaves the denominator too.
+			const bound = collectBoundShortcuts(get().shortcuts, get().tabShortcuts, FIXED_SHORTCUTS);
+			const percentage =
+				bound.length > 0
+					? (countUsedBoundShortcuts(bound, updatedShortcuts) / bound.length) * 100
+					: 0;
 			const newLevelIndex = getLevelIndex(percentage);
 
 			// Check if user leveled up
@@ -1802,14 +1927,6 @@ export async function loadAllSettings(): Promise<void> {
 		if (Array.isArray(allSettings['globalShowHotkey']))
 			patch.globalShowHotkey = allSettings['globalShowHotkey'] as string[];
 
-		if (allSettings['llmProvider'] !== undefined)
-			patch.llmProvider = allSettings['llmProvider'] as LLMProvider;
-
-		if (allSettings['modelSlug'] !== undefined)
-			patch.modelSlug = allSettings['modelSlug'] as string;
-
-		if (allSettings['apiKey'] !== undefined) patch.apiKey = allSettings['apiKey'] as string;
-
 		if (allSettings['defaultShell'] !== undefined)
 			patch.defaultShell = allSettings['defaultShell'] as string;
 
@@ -1822,9 +1939,41 @@ export async function loadAllSettings(): Promise<void> {
 		if (allSettings['shellEnvVars'] !== undefined)
 			patch.shellEnvVars = allSettings['shellEnvVars'] as Record<string, string>;
 
+		if (allSettings['shellEnvVarsDisabled'] !== undefined)
+			patch.shellEnvVarsDisabled = allSettings['shellEnvVarsDisabled'] as Record<string, string>;
+
 		if (allSettings['ghPath'] !== undefined) patch.ghPath = allSettings['ghPath'] as string;
 
 		hydrateThemeSettings(allSettings, patch);
+
+		for (const spec of TYPOGRAPHY_SURFACE_LIST) {
+			if (!canInherit(spec)) continue;
+			const raw = allSettings[spec.sizeKey];
+			if (raw !== undefined) {
+				(patch as Record<string, unknown>)[spec.sizeKey] = clampSurfaceFontSize(Number(raw));
+			}
+		}
+
+		if (allSettings['fontZoom'] !== undefined)
+			patch.fontZoom = clampFontZoom(Number(allSettings['fontZoom']));
+
+		if (allSettings['typographySnapshot'] !== undefined)
+			patch.typographySnapshot = parseTypographySnapshot(allSettings['typographySnapshot']);
+
+		if (allSettings['typographyPromptSeen'] !== undefined)
+			patch.typographyPromptSeen = Boolean(allSettings['typographyPromptSeen']);
+
+		if (allSettings['themePromptSeen'] !== undefined)
+			patch.themePromptSeen = Boolean(allSettings['themePromptSeen']);
+
+		if (allSettings['updatesPromptSeen'] !== undefined)
+			patch.updatesPromptSeen = Boolean(allSettings['updatesPromptSeen']);
+
+		if (allSettings['agentPowersPromptSeen'] !== undefined)
+			patch.agentPowersPromptSeen = Boolean(allSettings['agentPowersPromptSeen']);
+
+		if (allSettings['hasPriorInstallation'] !== undefined)
+			patch.hasPriorInstallation = Boolean(allSettings['hasPriorInstallation']);
 
 		if (allSettings['mediaPlaybackRate'] !== undefined)
 			patch.mediaPlaybackRate = normalizePlaybackRate(allSettings['mediaPlaybackRate']);
@@ -1876,6 +2025,12 @@ export async function loadAllSettings(): Promise<void> {
 
 		if (allSettings['modalSizes'] !== undefined)
 			patch.modalSizes = sanitizeModalSizes(allSettings['modalSizes']);
+
+		if (allSettings['concertoStageFloating'] !== undefined)
+			patch.concertoStageFloating = allSettings['concertoStageFloating'] === true;
+
+		if (allSettings['concertoStagePosition'] !== undefined)
+			patch.concertoStagePosition = normalizeModalPosition(allSettings['concertoStagePosition']);
 
 		if (allSettings['textareaHeights'] !== undefined)
 			patch.textareaHeights = sanitizeTextareaHeights(allSettings['textareaHeights']);
@@ -1958,6 +2113,31 @@ export async function loadAllSettings(): Promise<void> {
 			const commandsById = new Map<string, CustomAICommand>();
 			DEFAULT_AI_COMMANDS.forEach((cmd) => commandsById.set(cmd.id, cmd));
 			(allSettings['customAICommands'] as CustomAICommand[]).forEach((cmd: CustomAICommand) => {
+				// The persisted array is whatever is on disk, not necessarily CustomAICommand[]:
+				// electron-store hands back hand-edited / sync-mangled / legacy-schema entries
+				// unchanged. Every consumer keys off `id` (edit, save, reset, delete, React keys),
+				// so an entry without one is unusable and would otherwise be stored under the
+				// Map key `undefined` and rendered anyway. Skip it instead of crashing later.
+				// `id`, `command` and `prompt` are all load-bearing: consumers key off
+				// `id` (edit, save, reset, delete, React keys), and the panel calls
+				// `command.startsWith('/')` and `prompt.substring(...)` directly, so a
+				// missing one is a crash rather than a cosmetic gap. `description` is
+				// only rendered, so default it instead of discarding a command the
+				// user may still want.
+				if (
+					!cmd ||
+					typeof cmd !== 'object' ||
+					typeof cmd.id !== 'string' ||
+					!cmd.id ||
+					typeof cmd.command !== 'string' ||
+					typeof cmd.prompt !== 'string'
+				) {
+					logger.warn('Skipping malformed customAICommands entry (missing id, command or prompt)');
+					return;
+				}
+				if (typeof cmd.description !== 'string') {
+					cmd = { ...cmd, description: '' };
+				}
 				// Migration: Skip old /synopsis command
 				if (cmd.command === '/synopsis' || cmd.id === 'synopsis') {
 					return;
@@ -1989,36 +2169,37 @@ export async function loadAllSettings(): Promise<void> {
 			}
 		}
 
+		if (allSettings['delegationMilestone'] !== undefined) {
+			patch.delegationMilestone = normalizeUnlockedMilestone(allSettings['delegationMilestone']);
+		}
+
 		if (allSettings['autoRunStats'] !== undefined) {
-			let stats = {
+			// NOTE: a `concurrentAutoRunTimeMigrationApplied` migration used to add
+			// 3 hours to `cumulativeTimeMs` here. It was removed because it grew the
+			// local total without submitting a delta, which is exactly what
+			// `services/leaderboard.ts` forbids: the 3 hours never reached the
+			// leaderboard, pushed the local total above the server's, and (before the
+			// drift branch in useAppInitialization) latched the startup sync off for
+			// good. It was also keyed per install, so a multi-machine user collected
+			// it once per machine, and it fired for installs that never saw the
+			// concurrent-tallying bug at all (the flag is only written by the
+			// migration, so a brand new install qualified after its first run).
+			// Installs that already took the 3 hours keep them; nothing claws back.
+			patch.autoRunStats = {
 				...DEFAULT_AUTO_RUN_STATS,
 				...(allSettings['autoRunStats'] as Partial<AutoRunStats>),
 			};
-
-			// One-time migration: Add 3 hours to compensate for concurrent Auto Run tallying bug
-			const concurrentAutoRunTimeMigrationApplied =
-				allSettings['concurrentAutoRunTimeMigrationApplied'];
-			if (!concurrentAutoRunTimeMigrationApplied && stats.cumulativeTimeMs > 0) {
-				const THREE_HOURS_MS = 3 * 60 * 60 * 1000;
-				stats = {
-					...stats,
-					cumulativeTimeMs: stats.cumulativeTimeMs + THREE_HOURS_MS,
-				};
-				window.maestro.settings.set('autoRunStats', stats);
-				window.maestro.settings.set('concurrentAutoRunTimeMigrationApplied', true);
-				logger.info(
-					'[Settings] Applied concurrent Auto Run time migration: added 3 hours to cumulative time'
-				);
-			}
-
-			patch.autoRunStats = stats;
 		}
 
 		if (allSettings['usageStats'] !== undefined) {
-			patch.usageStats = {
-				...DEFAULT_USAGE_STATS,
-				...(allSettings['usageStats'] as Partial<MaestroUsageStats>),
-			};
+			// Merge rather than replace: this also runs on reload (system resume,
+			// a peer window's write), and a peak read back from disk must never
+			// lower one this window already holds. mergeUsagePeaks also sanitizes
+			// a missing or non-numeric stored key to 0 instead of NaN.
+			patch.usageStats = mergeUsagePeaks(
+				useSettingsStore.getState().usageStats,
+				allSettings['usageStats'] as Partial<MaestroUsageStats>
+			);
 		}
 
 		if (allSettings['onboardingStats'] !== undefined) {
@@ -2105,14 +2286,65 @@ export async function loadAllSettings(): Promise<void> {
 		// round-trip. (Per-modal `modalSizes` is NOT hydrated here: rc keeps it in
 		// settingsStore behind sanitizeModalSizes, hydrated above with the other
 		// settings-owned keys.)
-		if (
-			allSettings['mediaPlayerFloatRect'] !== undefined &&
-			allSettings['mediaPlayerFloatRect'] !== null &&
-			typeof allSettings['mediaPlayerFloatRect'] === 'object'
-		)
-			useMediaPlaybackStore.setState({
-				floatRect: allSettings['mediaPlayerFloatRect'] as MediaFloatRect,
-			});
+		// Position and per-kind width only: the player's height is derived from
+		// whatever is loaded (audio has no picture, video wants its own aspect
+		// ratio), so it is not a stored number.
+		if (allSettings[MEDIA_FLOAT_SETTINGS_KEY] !== undefined) {
+			const float = sanitizeMediaFloat(allSettings[MEDIA_FLOAT_SETTINGS_KEY]);
+			if (float)
+				useMediaPlaybackStore.setState({
+					floatPosition: { top: float.top, left: float.left },
+					floatWidths: float.widths,
+				});
+		}
+
+		// The play queue outlives a restart so a half-listened playlist is still
+		// there tomorrow. It comes back hidden, paused, and DORMANT: restoring
+		// what was queued should not start a podcast at launch, and it should not
+		// put media controls in the Left Bar header either, since the user has not
+		// played anything yet. The command palette's "Open Media Player" is what
+		// reaches a dormant queue, and the first thing the user opens or
+		// queues wakes it. Recently played is NOT restored - it is per-session by
+		// design.
+		//
+		// RESTORE ONLY ONTO AN EMPTY PLAYER. `loadAllSettings` is not a
+		// startup-only call - it re-runs on system resume, whenever an external
+		// settings edit is detected (maestro-cli, a peer window), and after a
+		// remote set-setting. Re-applying the snapshot there took a player the
+		// user was listening to and set `dismissed` AND `dormant`, which hides the
+		// widget and suppresses the Left Bar pill that is the only thing it parks
+		// in: the player did not minimize, it vanished, with the track still
+		// playing from nowhere. It also swapped `items` / `activeItemId` for
+		// whatever was last flushed to disk, so the file the user opened was
+		// replaced by an older queue.
+		//
+		// Anything already loaded means this snapshot is stale by definition - it
+		// describes a session that has since moved on - so the live store wins and
+		// the read is skipped entirely. That also makes the hydration idempotent,
+		// which matters because a second `useSettings` mount calls it again.
+		const mediaAlreadyLoaded = (): boolean => {
+			const media = useMediaPlaybackStore.getState();
+			return media.activeItemId !== null || media.items.length > 0;
+		};
+		if (allSettings[MEDIA_QUEUE_SETTINGS_KEY] !== undefined && !mediaAlreadyLoaded()) {
+			const stored = allSettings[MEDIA_QUEUE_SETTINGS_KEY] as PersistedMediaQueue | null;
+			const items = sanitizeMediaItems(stored?.items);
+			if (items.length > 0) {
+				const ids = new Set(items.map((item) => item.id));
+				const storedActive = stored?.activeItemId;
+				useMediaPlaybackStore.setState({
+					items,
+					activeItemId:
+						typeof storedActive === 'string' && ids.has(storedActive) ? storedActive : items[0].id,
+					resumeTimes: sanitizeMediaTimes(stored?.resumeTimes, ids),
+					durations: sanitizeMediaTimes(stored?.durations, ids),
+					dismissed: true,
+					dormant: true,
+					playing: false,
+					pendingAutoplay: false,
+				});
+			}
+		}
 
 		if (allSettings['tourCompleted'] !== undefined)
 			patch.tourCompleted = allSettings['tourCompleted'] as boolean;
@@ -2128,6 +2360,9 @@ export async function loadAllSettings(): Promise<void> {
 		if (allSettings['persistentWebLink'] !== undefined)
 			patch.persistentWebLink = allSettings['persistentWebLink'] as boolean;
 
+		if (typeof allSettings['webInterfaceAutoStart'] === 'boolean')
+			patch.webInterfaceAutoStart = allSettings['webInterfaceAutoStart'];
+
 		if (allSettings['webInterfaceUseCustomPort'] !== undefined)
 			patch.webInterfaceUseCustomPort = allSettings['webInterfaceUseCustomPort'] as boolean;
 
@@ -2142,6 +2377,14 @@ export async function loadAllSettings(): Promise<void> {
 				'showFilePreviewsInUnreadFilter'
 			] as boolean;
 
+		if (allSettings['showTerminalTabsInUnreadFilter'] !== undefined)
+			patch.showTerminalTabsInUnreadFilter = allSettings[
+				'showTerminalTabsInUnreadFilter'
+			] as boolean;
+
+		if (allSettings['showBrowserTabsInUnreadFilter'] !== undefined)
+			patch.showBrowserTabsInUnreadFilter = allSettings['showBrowserTabsInUnreadFilter'] as boolean;
+
 		if (allSettings['useCmd0AsLastTab'] !== undefined)
 			patch.useCmd0AsLastTab = allSettings['useCmd0AsLastTab'] as boolean;
 
@@ -2150,6 +2393,9 @@ export async function loadAllSettings(): Promise<void> {
 			patch.documentGraphShowExternalLinks = allSettings[
 				'documentGraphShowExternalLinks'
 			] as boolean;
+
+		if (allSettings['documentGraphConfirmClose'] !== undefined)
+			patch.documentGraphConfirmClose = allSettings['documentGraphConfirmClose'] as boolean;
 
 		if (allSettings['documentGraphMaxNodes'] !== undefined) {
 			const maxNodes = allSettings['documentGraphMaxNodes'] as number;
@@ -2160,15 +2406,18 @@ export async function loadAllSettings(): Promise<void> {
 
 		if (allSettings['documentGraphPreviewCharLimit'] !== undefined) {
 			const charLimit = allSettings['documentGraphPreviewCharLimit'] as number;
-			if (typeof charLimit === 'number' && charLimit >= 50 && charLimit <= 500) {
+			// 0 means "previews off" (filename pills), so the floor is 0, not 50 -
+			// a stricter floor here would silently discard the user's saved choice
+			// on every launch and snap the graph back to full cards.
+			if (typeof charLimit === 'number' && charLimit >= 0 && charLimit <= 500) {
 				patch.documentGraphPreviewCharLimit = charLimit;
 			}
 		}
 
 		if (allSettings['documentGraphLayoutType'] !== undefined) {
 			const lt = allSettings['documentGraphLayoutType'] as string;
-			if (DOCUMENT_GRAPH_LAYOUT_TYPES.includes(lt as DocumentGraphLayoutType)) {
-				patch.documentGraphLayoutType = lt as DocumentGraphLayoutType;
+			if (isMindMapLayoutType(lt)) {
+				patch.documentGraphLayoutType = lt;
 			}
 		}
 
@@ -2192,6 +2441,9 @@ export async function loadAllSettings(): Promise<void> {
 		if (allSettings['preventSleepEnabled'] !== undefined)
 			patch.preventSleepEnabled = allSettings['preventSleepEnabled'] as boolean;
 
+		if (allSettings['preventDisplaySleepEnabled'] !== undefined)
+			patch.preventDisplaySleepEnabled = allSettings['preventDisplaySleepEnabled'] as boolean;
+
 		if (allSettings['disableGpuAcceleration'] !== undefined)
 			patch.disableGpuAcceleration = allSettings['disableGpuAcceleration'] as boolean;
 
@@ -2206,12 +2458,16 @@ export async function loadAllSettings(): Promise<void> {
 		if (allSettings['userMessageAlignment'] !== undefined)
 			patch.userMessageAlignment = allSettings['userMessageAlignment'] as 'left' | 'right';
 
-		// Encore Features (merge with defaults to preserve new flags)
+		if (allSettings['utilityAgentId'] !== undefined)
+			patch.utilityAgentId = allSettings['utilityAgentId'] as string | null;
+
+		if (allSettings['utilityModelId'] !== undefined)
+			patch.utilityModelId = allSettings['utilityModelId'] as string | null;
+
+		// Encore Features (merge with defaults so a flag the stored object predates
+		// keeps its default instead of reading as off)
 		if (allSettings['encoreFeatures'] !== undefined) {
-			patch.encoreFeatures = {
-				...DEFAULT_ENCORE_FEATURES,
-				...(allSettings['encoreFeatures'] as Partial<EncoreFeatureFlags>),
-			};
+			patch.encoreFeatures = resolveEncoreFeatures(allSettings['encoreFeatures']);
 		}
 
 		// Symphony registry URLs (additional user-configured registries)
@@ -2262,6 +2518,19 @@ export async function loadAllSettings(): Promise<void> {
 		}
 
 		hydrateWakatimeSettings(allSettings, patch);
+		// Cue history retention. A stored value that isn't a usable day count
+		// falls back to the default rather than being shown as-is: the number in
+		// the UI is a promise about what the prune keeps, so it must never read
+		// back as NaN or 0. Shared with the engine's prune so the window shown
+		// and the window deleted by can't disagree.
+		if (allSettings['cueHistoryRetentionDays'] !== undefined) {
+			patch.cueHistoryRetentionDays = resolveCueHistoryRetentionDays(
+				allSettings['cueHistoryRetentionDays']
+			);
+		}
+
+		if (allSettings['groupCueEntries'] !== undefined)
+			patch.groupCueEntries = allSettings['groupCueEntries'] as boolean;
 
 		if (allSettings['useNativeTitleBar'] !== undefined)
 			patch.useNativeTitleBar = allSettings['useNativeTitleBar'] as boolean;
@@ -2426,16 +2695,26 @@ export function getSettingsActions() {
 	return {
 		setConductorProfile: state.setConductorProfile,
 		setGlobalShowHotkey: state.setGlobalShowHotkey,
-		setLlmProvider: state.setLlmProvider,
-		setModelSlug: state.setModelSlug,
-		setApiKey: state.setApiKey,
 		setDefaultShell: state.setDefaultShell,
 		setCustomShellPath: state.setCustomShellPath,
 		setShellArgs: state.setShellArgs,
 		setShellEnvVars: state.setShellEnvVars,
+		setShellEnvVarsDisabled: state.setShellEnvVarsDisabled,
 		setGhPath: state.setGhPath,
 		setFontFamily: state.setFontFamily,
 		setTerminalFontFamily: state.setTerminalFontFamily,
+		setChatFontFamily: state.setChatFontFamily,
+		setFilePreviewFontFamily: state.setFilePreviewFontFamily,
+		setFileEditorFontFamily: state.setFileEditorFontFamily,
+		setSurfaceFontFamily: state.setSurfaceFontFamily,
+		setSurfaceFontSize: state.setSurfaceFontSize,
+		setFontZoom: state.setFontZoom,
+		resetTypography: state.resetTypography,
+		setTypographyPromptSeen: state.setTypographyPromptSeen,
+		setThemePromptSeen: state.setThemePromptSeen,
+		setUpdatesPromptSeen: state.setUpdatesPromptSeen,
+		setAgentPowersPromptSeen: state.setAgentPowersPromptSeen,
+		applyTypographyPreset: state.applyTypographyPreset,
 		setFontSize: state.setFontSize,
 		setMediaPlaybackRate: state.setMediaPlaybackRate,
 		setActiveThemeId: state.setActiveThemeId,
@@ -2451,6 +2730,8 @@ export function getSettingsActions() {
 		setModalSize: state.setModalSize,
 		resetModalSize: state.resetModalSize,
 		resetModalSizes: state.resetModalSizes,
+		setConcertoStageFloating: state.setConcertoStageFloating,
+		setConcertoStagePosition: state.setConcertoStagePosition,
 		setTextareaHeight: state.setTextareaHeight,
 		setMarkdownEditMode: state.setMarkdownEditMode,
 		setChatRawTextMode: state.setChatRawTextMode,
@@ -2481,6 +2762,7 @@ export function getSettingsActions() {
 		setCustomAICommands: state.setCustomAICommands,
 		setTotalActiveTimeMs: state.setTotalActiveTimeMs,
 		addTotalActiveTimeMs: state.addTotalActiveTimeMs,
+		unlockDelegationMilestone: state.unlockDelegationMilestone,
 		setAutoRunStats: state.setAutoRunStats,
 		recordAutoRunComplete: state.recordAutoRunComplete,
 		updateAutoRunProgress: state.updateAutoRunProgress,
@@ -2505,6 +2787,7 @@ export function getSettingsActions() {
 		getOnboardingAnalytics: state.getOnboardingAnalytics,
 		setLeaderboardRegistration: state.setLeaderboardRegistration,
 		setPersistentWebLink: state.setPersistentWebLink,
+		setWebInterfaceAutoStart: state.setWebInterfaceAutoStart,
 		setWebInterfaceUseCustomPort: state.setWebInterfaceUseCustomPort,
 		setWebInterfaceCustomPort: state.setWebInterfaceCustomPort,
 		setContextManagementSettings: state.setContextManagementSettings,
@@ -2514,13 +2797,16 @@ export function getSettingsActions() {
 		acknowledgeKeyboardMasteryLevel: state.acknowledgeKeyboardMasteryLevel,
 		getUnacknowledgedKeyboardMasteryLevel: state.getUnacknowledgedKeyboardMasteryLevel,
 		setColorBlindMode: state.setColorBlindMode,
+		setThemeGloss: state.setThemeGloss,
 		setDocumentGraphShowExternalLinks: state.setDocumentGraphShowExternalLinks,
+		setDocumentGraphConfirmClose: state.setDocumentGraphConfirmClose,
 		setDocumentGraphMaxNodes: state.setDocumentGraphMaxNodes,
 		setDocumentGraphPreviewCharLimit: state.setDocumentGraphPreviewCharLimit,
 		setDocumentGraphLayoutType: state.setDocumentGraphLayoutType,
 		setStatsCollectionEnabled: state.setStatsCollectionEnabled,
 		setDefaultStatsTimeRange: state.setDefaultStatsTimeRange,
 		setPreventSleepEnabled: state.setPreventSleepEnabled,
+		setPreventDisplaySleepEnabled: state.setPreventDisplaySleepEnabled,
 		setDisableGpuAcceleration: state.setDisableGpuAcceleration,
 		setDisableConfetti: state.setDisableConfetti,
 		setLocalIgnorePatterns: state.setLocalIgnorePatterns,
@@ -2534,6 +2820,8 @@ export function getSettingsActions() {
 		setOpenedFilePlacement: state.setOpenedFilePlacement,
 		setFileTabAutoRefreshEnabled: state.setFileTabAutoRefreshEnabled,
 		setSuppressWindowsWarning: state.setSuppressWindowsWarning,
+		setUtilityAgentId: state.setUtilityAgentId,
+		setUtilityModelId: state.setUtilityModelId,
 		setEncoreFeatures: state.setEncoreFeatures,
 		setDirectorNotesSettings: state.setDirectorNotesSettings,
 		setWakatimeApiKey: state.setWakatimeApiKey,
@@ -2544,6 +2832,7 @@ export function getSettingsActions() {
 		setShowAgentName: state.setShowAgentName,
 		setShowSessionIdPill: state.setShowSessionIdPill,
 		setShowSessionCostPill: state.setShowSessionCostPill,
+		setShowProviderModePill: state.setShowProviderModePill,
 		setShowWorktreePill: state.setShowWorktreePill,
 		setShowWorktreeBranchName: state.setShowWorktreeBranchName,
 		setShowLeftPanelGroupMemberCount: state.setShowLeftPanelGroupMemberCount,

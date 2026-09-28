@@ -1,0 +1,20 @@
+{
+	"now_iso": "2026-08-19T22:30:00Z",
+	"config_dir": "/Users/test/.claude-gmail",
+	"snapshot": {
+		"type": "status",
+		"config_dir": "/Users/test/.claude-gmail",
+		"session": {
+			"percent": 0
+		},
+		"week_all_models": {
+			"percent": 100,
+			"resets_at": "2026-08-20T14:59:00.000Z"
+		},
+		"week_sonnet_only": {
+			"percent": 36,
+			"resets_at": "2026-08-20T14:59:00.000Z",
+			"label": "Fable"
+		}
+	}
+}

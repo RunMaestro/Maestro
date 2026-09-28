@@ -23,6 +23,7 @@ Cue is an event-driven automation system that triggers AI agent prompts in respo
 | `agent.completed`     | Fires when another agent finishes                         | `cue-engine` (reactive)                        |
 | `github.pull_request` | New PRs detected via `gh` CLI polling                     | `triggers/cue-github-poller-trigger-source.ts` |
 | `github.issue`        | New issues detected via `gh` CLI polling                  | `triggers/cue-github-poller-trigger-source.ts` |
+| `github.label`        | A label added to a PR or issue (repo issue-event feed)    | `triggers/cue-github-poller-trigger-source.ts` |
 | `task.pending`        | Unchecked markdown tasks (`- [ ]`) found in watched files | `triggers/cue-task-scanner-trigger-source.ts`  |
 
 ### Execution Patterns
@@ -102,7 +103,6 @@ Spawns background agent processes when triggers fire. Follows the same spawn pat
   8. Returns `CueRunResult`
 - `stopCueRun(runId)` - SIGTERM then SIGKILL after 5 seconds
 - `getCueProcessList()` - Returns serializable process info for the Process Monitor
-- `recordCueHistoryEntry()` - Creates a `HistoryEntry` with type `'CUE'`
 
 Template variables populated for events:
 
@@ -133,7 +133,7 @@ The `cue-subscription-setup.ts` module was deleted on rc. Each event source is n
 | `cue-scheduled-trigger-source.ts`     | `time.scheduled` cron-like firing                                   |
 | `cue-schedule-utils.ts`               | Next-occurrence calculation (replaces `calculateNextScheduledTime`) |
 | `cue-file-watcher-trigger-source.ts`  | `file.changed` chokidar wrapper                                     |
-| `cue-github-poller-trigger-source.ts` | `github.pull_request` / `github.issue` poller                       |
+| `cue-github-poller-trigger-source.ts` | `github.pull_request` / `github.issue` / `github.label` poller      |
 | `cue-task-scanner-trigger-source.ts`  | `task.pending` markdown scanner                                     |
 
 ### cue-run-manager.ts (~452 lines)
@@ -176,7 +176,7 @@ Wraps chokidar to watch glob patterns with per-file debouncing. (The trigger sou
 
 ### cue-github-poller.ts (~313 lines)
 
-Polls GitHub CLI for new PRs/issues, tracks "seen" state in SQLite.
+Polls GitHub CLI for new PRs/issues (and for label adds), tracks "seen" state in SQLite.
 
 Key design:
 
@@ -187,6 +187,8 @@ Key design:
 - 30-day retention on seen records; prunes every 24 hours
 - Has its own `execFileAsync` wrapper (local, not the shared utils version)
 - **Re-trigger on activity** (`retrigger_on_comments: true`): re-fires when an item's `updatedAt` advances past the stored revision. Default off - when on, fetches comments-since-last-fire via `gh pr|issue view --json comments` and attaches them to the event payload as `new_comments` (surfaced as `{{CUE_NEW_COMMENTS}}` template var). Capped per-item by `max_notifications` (default 10, `0` = unlimited). Counter tracks re-fires only - initial discovery is always allowed regardless of cap. Once the cap is hit, the poller stops emitting events but freezes `last_revision` so raising the cap later resumes from the right point rather than replaying stale activity.
+
+- **Label events** (`github.label`): a third poll mode that reads `gh api repos/<repo>/issues/events` instead of the PR/issue lists, because that feed reports the label add itself (name, actor, timestamp) rather than a state difference. Projected through `--jq` so the multi-megabyte embedded issue objects never cross the pipe. Dedup is one watermark row per subscription (`item_key = '__label_watermark__'`, `last_revision` = highest processed event id) written via `setGitHubItemRevision`, NOT one row per item - `markGitHubItemSeen` is INSERT OR IGNORE and would silently no-op on the second write. Paginates back up to 3 pages of 100 to find the watermark, warns when it cannot reach it. Narrowed client-side by `gh_label_target` (pr/issue/both) and `gh_labels` (case-insensitive; empty = any label).
 
 ### cue-heartbeat.ts (~52 lines)
 
@@ -299,27 +301,95 @@ Dashboard modal for monitoring and controlling Cue.
 | `ActiveRunsList.tsx`    | Currently running executions with stop controls |
 | `ActivityLog.tsx`       | History of completed/failed runs                |
 | `ActivityLogDetail.tsx` | Detailed view of a single run result            |
+| `PipelineListTab.tsx`   | Pipeline List tab - prose + health, read-only   |
 | `StatusDot.tsx`         | Color-coded status indicator                    |
 | `cueModalUtils.ts`      | Utility functions for the modal                 |
+
+**Tabs.** `CueModalTab` in `CueModalHeader.tsx` is the tab union, and it must stay
+in sync with `CUE_MODAL_TABS` in `src/shared/uiSurfaces.ts` - that registry is what
+`maestro-cli open cue --tab <id>` validates against, and `CueModalHeader.test.tsx`
+asserts the two render in the same order. Note the id/label mismatch on the graph
+tab: its id is `pipeline` while its label is "Pipeline Graph". The id predates the
+rename and is deliberately frozen, because saved deep links, the YAML editor's nav
+button, and `useModalHandlers`' first-run routing all address it by id.
+
+**Pipeline Graph vs Pipeline List.** Two tabs over the same data, not two modes of
+one tab. The graph (`CuePipelineEditor`) owns editing and is the only place a
+pipeline can be changed. The list (`PipelineListTab`) is read-only and answers the
+questions a canvas is bad at: what does each pipeline do, and is it working? It
+renders `dashboardPipelines` (the same disk-loaded pipelines the Dashboard uses),
+so it needs no editor state and no save path.
+
+**The prompt renders on the STEP, never the trigger.** A trigger's outgoing edge
+and its target's incoming edge are the same edge, so rendering `prompts` in both
+columns prints every prompt twice; a fan-out trigger also has one prompt per
+target rather than one of its own. `CuePipelineTriggerSummary.prompts` still
+exists for callers describing a trigger on its own - just do not put it in the
+trigger column. Same reason the search haystack indexes step prompts only.
+
+**Row-level "Run now" is gated on a SINGLE trigger subscription.** With several
+triggers the button is ambiguous (each trigger is its own subscription with its
+own prompt) and destructive - the real 39-trigger "Pedsidian" pipeline would
+dispatch 39 agent runs on one click. Multi-trigger pipelines expose a per-trigger
+Run inside the expanded detail instead. Do not "simplify" this back to a
+fire-them-all button.
+
+**Renaming a pipeline** goes through `src/main/cue/cue-pipeline-rename.ts`, NOT
+the editor's save path - the list has no editor state to save. A pipeline is not
+an object on disk, it is the set of subscriptions sharing a `pipeline_name`, so
+the rename rewrites that field on every member in every root the pipeline spans.
+Three invariants:
+
+- **Subscription names are never rewritten.** They are stable identities: the
+  layout store keys trigger positions by them and `source_sub` points at them.
+  So `Old-chain-2` survives a rename to `New`, and that is correct - membership
+  is decided by `pipeline_name`, not by the name suffix.
+- **The handler enumerates roots itself** from `engine.getStatus()`. A caller
+  passing "the root of the agent I clicked" would silently rename half of a
+  cross-agent pipeline.
+- **A layout failure is a warning, not a failure.** The YAML write has already
+  landed by then; reporting the whole rename as failed would send the user
+  looking for a change that is already on disk. The layout re-key exists because
+  the visual id is `pipeline-${name}`, so a rename orphans the old entry.
+
+Note that health history legitimately reads as empty right after a rename: runs
+recorded the name they ran under, and `derivePipelineHealth` matches on it.
+
+**Escape during a rename is a LAYER, not a keydown handler.** `PipelineListTab`
+registers `MODAL_PRIORITIES.CUE_PIPELINE_RENAME` (462, above `CUE_MODAL`) while
+`renamingId !== null`. The layer stack listens on `window` at CAPTURE, so an
+`onKeyDown` on the rename input can never see Escape - it would close the whole
+Cue modal instead of cancelling the rename. Same mechanism and same reason as
+`CUE_SCHEDULED_TASK_FILTER`. Register it with `focusTrap: 'none'`,
+`blocksLowerLayers: false`, `capturesFocus: false`: it is an inline field, not
+an overlay, and it must not dim the modal or trap focus.
+
+**Remembered tab.** `lastOpenCueTab` is module-level state in `CueModal.tsx`,
+resolved in the `useState` lazy initializer (a restore effect double-fires under
+StrictMode and clobbers the saved value). Same shape as `lastOpenSettingsTab` in
+`Settings/SettingsModal.tsx`. An explicit `initialTab` from modal data always
+wins. Tests must call `__resetLastOpenCueTabForTests()` in `beforeEach`, or the
+remembered tab leaks between cases.
 
 ### CuePipelineEditor (`src/renderer/components/CuePipelineEditor/`)
 
 Visual pipeline editor using React Flow for drag-and-drop pipeline construction.
 
-| File / Directory          | Purpose                                          |
-| ------------------------- | ------------------------------------------------ |
-| `CuePipelineEditor.tsx`   | Main editor component                            |
-| `PipelineCanvas.tsx`      | React Flow canvas with nodes and edges           |
-| `PipelineSelector.tsx`    | Dropdown for selecting/managing pipelines        |
-| `PipelineToolbar.tsx`     | Toolbar with layout and zoom controls            |
-| `PipelineContextMenu.tsx` | Right-click context menu                         |
-| `cueEventConstants.ts`    | Event type metadata and icons                    |
-| `pipelineColors.ts`       | Pipeline color palette                           |
-| `drawers/`                | Trigger and agent drawer panels                  |
-| `nodes/`                  | Custom React Flow node components                |
-| `edges/`                  | Custom React Flow edge components                |
-| `panels/`                 | Node and edge configuration panels               |
-| `utils/`                  | Pipeline-to-YAML and YAML-to-pipeline conversion |
+| File / Directory              | Purpose                                          |
+| ----------------------------- | ------------------------------------------------ |
+| `CuePipelineEditor.tsx`       | Main editor component                            |
+| `PipelineCanvas.tsx`          | React Flow canvas with nodes and edges           |
+| `PipelineSelector.tsx`        | Dropdown for selecting/managing pipelines        |
+| `PipelineToolbar.tsx`         | Toolbar with layout and zoom controls            |
+| `PipelineContextMenu.tsx`     | Right-click context menu                         |
+| `cueEventConstants.ts`        | Event type metadata and icons                    |
+| `pipelineColors.ts`           | Pipeline color palette                           |
+| `drawers/`                    | Trigger and agent drawer panels                  |
+| `nodes/`                      | Custom React Flow node components                |
+| `edges/`                      | Custom React Flow edge components                |
+| `panels/`                     | Node and edge configuration panels               |
+| `utils/`                      | Pipeline-to-YAML and YAML-to-pipeline conversion |
+| `utils/pipelineMembership.ts` | Which pipelines belong to a given agent          |
 
 #### Layout buttons (Tidy and Arrange)
 
@@ -330,6 +400,36 @@ Two top-right canvas buttons (in `PipelineCanvas.tsx`, props `onTidy` / `onArran
 - **All Pipelines view** - `arrangePipelineGroups` packs the per-pipeline group cards into a balanced grid via `viewOffset`, leaving node positions untouched. No edges cross between cards, so the Tidy button is hidden here and both modes route through this path.
 
 Pressing either opens a `ConfirmModal` (`arrangeConfirmMode` drives its title/label/copy), then `handleArrange` mutates canonical state (flips dirty, undoable via Discard), persists, and re-fits the view. The layout helpers are pure and unit-tested in `pipelineAutoArrange.test.ts`; the crossing-minimizer is verified with a true segment-intersection count, independent of the layout's internal ordering.
+
+#### Agent scope in the All Pipelines view (`CueGraphTarget` / `CueGraphScope`)
+
+"View in Graph" in the Sessions table hands the editor a `CueGraphTarget`:
+`{ id, nonce, scope? }`. The nonce is what lets a repeat click on the same row
+re-trigger navigation. `id` selects a single pipeline; when it is `null` and
+`scope` is set, the All Pipelines view is narrowed to that agent's pipelines.
+
+Membership is resolved by `pipelinesForSession()` (see
+`utils/pipelineMembership.ts`), never by pipeline color - several pipelines can
+share a color, and a command-only pipeline has no agent node to match at all.
+One owned pipeline selects it outright; several apply a scope; none falls
+through to the unfiltered view.
+
+Three invariants the implementation depends on:
+
+- **The scope filters the CANVAS only.** `visiblePipelines` is what feeds
+  `convertToReactFlowNodes`/`Edges`, the node count, and the viewport hook;
+  `pipelineState.pipelines` stays canonical. Every mutation is already blocked
+  in the All Pipelines view, so a scoped canvas cannot write a partial layout
+  back to disk.
+- **The viewport hook must see the same set the canvas draws.** It stacks
+  pipelines vertically and fits the result, so passing it the unfiltered list
+  fits the view around the empty bands of the pipelines it filtered out. That is
+  why `usePipelineViewport` takes `scopeKey` and re-fits on it: scoping in or
+  out swaps the visible set without changing the selection, which its
+  selection-change re-fit alone would miss.
+- **A scope that resolves to nothing falls back to the unfiltered view**, not an
+  empty canvas - pipelines can be renamed or deleted between the click and the
+  render. Any manual selection clears the scope: the user navigated elsewhere.
 
 #### Visual node identity round-trip (`target_node_key` / `fan_out_node_keys`)
 
@@ -379,6 +479,39 @@ Types for the visual pipeline editor (React Flow canvas):
 - `CuePipeline` - Named pipeline with nodes, edges, and color
 - `PipelineLayoutState` - Saved node positions and viewport
 
+### `src/shared/cue-pipeline-summary.ts`
+
+Pure prose + health derivation over a `CuePipeline`. No React, no IPC, so the
+renderer, a future CLI listing, and tests all describe a pipeline identically.
+
+- `getTriggerConfigSummary(data)` - short config line for a trigger (`every 15min`,
+  `09:00, 17:00`). Used by BOTH the graph's trigger nodes and the list, which is
+  why it lives here rather than in `CuePipelineEditor/utils/pipelineGraph.ts`.
+- `summarizeCommandNode(data)` - the `$ cmd` / `cli send → target` line.
+- `describePipeline(pipeline)` - triggers, steps in execution order, and the
+  strings the list renders. Step order comes from a BFS over the edges, NOT array
+  position: hand-authored YAML can list the last agent first. It returns BOTH
+  `flow` (the full `a → b → c` chain) and `headline` (what the collapsed row
+  shows). Render `headline`, never `flow`: a pipeline with >1 trigger or >4 steps
+  is usually N independent chains grouped under one name, so arrow-chaining their
+  node names describes a sequence that does not exist - and a 39-node line buries
+  every other row. `flow` stays exported for the search haystack.
+- Every trigger and step carries a `CueNodePrompts` (`prompts`, `count`,
+  `preview`). Resolution order matters: a step reads its INCOMING edges first and
+  only falls back to `AgentNodeData.inputPrompt` when none carried one. That
+  mirrors the loader, which deliberately CLEARS `inputPrompt` on trigger→agent
+  edges (mirroring the two caused stale saves) and reserves it for chain agents.
+  `preview` is whitespace-collapsed but NOT length-capped - the list clips it with
+  CSS so it fits the real column width; a character cap would waste space on a
+  wide window and still overflow on a narrow one.
+- `derivePipelineHealth(pipeline, ctx)` - the health badge. Precedence is
+  `running > invalid > disabled > failing > healthy > idle`. Feed it `configErrors`
+  from `validatePipelines` (prefix-stripped via `stripPipelinePrefix`) and the
+  `disabled` flag from the subscriptions' on-disk `enabled` fields; it matches runs
+  to the pipeline itself via `pipelineName` with a `-chain-N` / `-fanin` fallback.
+  The `idle` label is "No recent runs", never "never run" - the activity log is a
+  bounded window and a stronger claim would be false.
+
 ### `src/shared/maestro-paths.ts`
 
 Path constants:
@@ -396,7 +529,7 @@ Path constants:
 3. **SSH Remote** - Full SSH wrapping support via `wrapSpawnWithSsh()`
 4. **Template Variables** - Uses shared `substituteTemplateVariables()` from `src/shared/templateVariables.ts`
 5. **Agent System** - Uses `getAgentDefinition()`, `getAgentCapabilities()`, `buildAgentArgs()`, `applyAgentConfigOverrides()`
-6. **History** - Records history entries with type `'CUE'` and Cue-specific metadata
+6. **History** - Cue runs are served to the History panel from the `cue_events` table (`getCueHistoryEntries()` in `src/main/cue/stats/cue-stats-query.ts`), shaped as `HistoryEntry` rows with type `'CUE'`. Nothing writes them to the agent's JSONL history file.
 7. **Output Parsers** - Uses per-agent output parsers to extract clean text from JSON/NDJSON stdout
 8. **CLI Detection** - Uses `resolveGhPath()` and `getExpandedEnv()` from shared utils for GitHub polling
 9. **Stats DB** - Follows the same `better-sqlite3` + WAL pattern as `stats-db.ts`

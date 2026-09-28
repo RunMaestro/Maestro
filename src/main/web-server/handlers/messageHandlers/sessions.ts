@@ -8,6 +8,7 @@
  */
 
 import { AGENT_IDS } from '../../../../shared/agentIds';
+import { readBackgroundField } from '../../../../shared/focusPlacement';
 import type { CreateSessionConfig } from '../../types';
 import type { WebClient, WebClientMessage, MessageHandlerContext } from './types';
 
@@ -102,7 +103,14 @@ export function handleCreateSession(
 	const hasConfig = Object.keys(config).length > 0;
 
 	ctx.callbacks
-		.createSession(name, toolType, cwd, groupId, hasConfig ? config : undefined)
+		.createSession(
+			name,
+			toolType,
+			cwd,
+			groupId,
+			hasConfig ? config : undefined,
+			readBackgroundField(message)
+		)
 		.then((result) => {
 			ctx.send(client, {
 				type: 'create_session_result',
@@ -156,7 +164,7 @@ export function handleCreateWorktreeSession(
 	};
 
 	ctx.callbacks
-		.createWorktreeSession(parentSessionId, config)
+		.createWorktreeSession(parentSessionId, config, readBackgroundField(message))
 		.then((result) => {
 			ctx.send(client, {
 				type: 'create_worktree_session_result',
@@ -255,10 +263,10 @@ export function handleRenameSession(
 
 /**
  * Handle update_session_cwd message - update an agent's working directory.
- * The desktop's `projectRoot` (used for provider session storage) is left
- * untouched so historical conversations stay addressable; only the UI-facing
- * `cwd`/`fullPath` move. Renderer-side validation rejects updates while an
- * agent process is alive - the PTY's cwd is fixed at spawn time.
+ * The renderer moves `cwd`, `fullPath`, `shellCwd`, `projectRoot`, and an
+ * Auto Run folder under the old root together (#1565). Renderer-side
+ * validation rejects updates while an agent process is alive - the PTY's cwd
+ * is fixed at spawn time.
  */
 export function handleUpdateSessionCwd(
 	ctx: MessageHandlerContext,
@@ -349,11 +357,16 @@ export function handleUpdateSessionSsh(
 /**
  * Handle update_session_config message - update an agent's editable
  * per-session config (nudge / new-session message, custom path / args / env
- * vars, model, effort, context window, Claude token-source tri-state). Only
- * the keys present in `configPatch` are applied; a key with value `null`
- * clears that field. These are spawn-time settings (they take effect on the
- * next launch), so unlike cwd/SSH the renderer applies them even while the
+ * vars, model, effort, context window, Claude token-source tri-state) or its
+ * Left Bar bookmark. Only the keys present in `configPatch` are applied; a key
+ * with value `null` clears that field. The spawn-time settings take effect on
+ * the next launch, so unlike cwd/SSH the renderer applies them even while the
  * agent process is alive.
+ *
+ * A `configPatch.tabId` retargets the patch at one AI tab inside the agent
+ * (starred / hasUnread / saveToHistory / readOnlyMode / showThinking /
+ * customModel / customEffort / enterToSend - the composer chips). The
+ * renderer owns both allowlists and type-checks the tab values.
  */
 export function handleUpdateSessionConfig(
 	ctx: MessageHandlerContext,

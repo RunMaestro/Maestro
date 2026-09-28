@@ -5,6 +5,7 @@
  *   - handleRemoveQueueItem: removes item from queue, no-op for missing item, only affects target session
  *   - handleSwitchQueueSession: sets active session ID
  *   - handleReorderQueueItems: move item up, move item down, first to last, last to first, only affects target session, empty queue edge case
+ *   - handleForceSendQueueItem: out-of-turn dispatch, busy-tab guard, forceParallel stamping, failure re-queue
  *   - Return type completeness
  */
 
@@ -95,8 +96,12 @@ function createSession(overrides: Partial<Session> = {}): Session {
 // Setup / Teardown
 // ============================================================================
 
+// Stable across renders so the hook's useCallback identities stay stable too.
+const processQueuedItem = vi.fn((_sessionId: string, _item: QueuedItem) => Promise.resolve());
+
 beforeEach(() => {
 	vi.clearAllMocks();
+	processQueuedItem.mockResolvedValue();
 
 	useSessionStore.setState({
 		sessions: [],
@@ -117,13 +122,112 @@ describe('useQueueHandlers', () => {
 	// ========================================================================
 	// handleRemoveQueueItem
 	// ========================================================================
+	// ========================================================================
+	// handleEditQueueItem - per-message model/effort override
+	// ========================================================================
+	describe('handleEditQueueItem', () => {
+		it('persists the model/effort override onto the queued item', () => {
+			const item = createQueuedItem({ id: 'item-a' });
+			useSessionStore.setState({
+				sessions: [createSession({ id: 'sess-1', executionQueue: [item] })],
+			});
+
+			const { result } = renderHook(() => useQueueHandlers({ processQueuedItem }));
+			act(() => {
+				result.current.handleEditQueueItem('sess-1', 'item-a', {
+					text: 'edited',
+					images: [],
+					turnSettings: { model: 'opus', effort: 'ultrathink' },
+				});
+			});
+
+			const saved = useSessionStore.getState().sessions[0].executionQueue[0];
+			expect(saved.text).toBe('edited');
+			expect(saved.turnSettings).toEqual({ model: 'opus', effort: 'ultrathink' });
+		});
+
+		it('does not change the agent default model/effort', () => {
+			const item = createQueuedItem({ id: 'item-a' });
+			useSessionStore.setState({
+				sessions: [
+					createSession({
+						id: 'sess-1',
+						executionQueue: [item],
+						customModel: 'sonnet',
+						customEffort: 'think',
+					}),
+				],
+			});
+
+			const { result } = renderHook(() => useQueueHandlers({ processQueuedItem }));
+			act(() => {
+				result.current.handleEditQueueItem('sess-1', 'item-a', {
+					text: 'edited',
+					images: [],
+					turnSettings: { model: 'opus', effort: 'ultrathink' },
+				});
+			});
+
+			// The override is per-message. The agent keeps its own settings.
+			const updated = useSessionStore.getState().sessions[0];
+			expect(updated.customModel).toBe('sonnet');
+			expect(updated.customEffort).toBe('think');
+		});
+
+		it('clears a stored override rather than merging the old value forward', () => {
+			const item = createQueuedItem({
+				id: 'item-a',
+				turnSettings: { model: 'opus', effort: 'ultrathink' },
+			});
+			useSessionStore.setState({
+				sessions: [createSession({ id: 'sess-1', executionQueue: [item] })],
+			});
+
+			const { result } = renderHook(() => useQueueHandlers({ processQueuedItem }));
+			act(() => {
+				result.current.handleEditQueueItem('sess-1', 'item-a', {
+					text: 'edited',
+					images: [],
+					turnSettings: { effort: 'ultrathink' },
+				});
+			});
+
+			const saved = useSessionStore.getState().sessions[0].executionQueue[0];
+			expect(saved.turnSettings).toEqual({ effort: 'ultrathink' });
+			expect(saved.turnSettings?.model).toBeUndefined();
+		});
+
+		it('only edits the target session queue', () => {
+			useSessionStore.setState({
+				sessions: [
+					createSession({ id: 'sess-1', executionQueue: [createQueuedItem({ id: 'item-a' })] }),
+					createSession({ id: 'sess-2', executionQueue: [createQueuedItem({ id: 'item-a' })] }),
+				],
+			});
+
+			const { result } = renderHook(() => useQueueHandlers({ processQueuedItem }));
+			act(() => {
+				result.current.handleEditQueueItem('sess-1', 'item-a', {
+					text: 'edited',
+					images: [],
+					turnSettings: { model: 'opus' },
+				});
+			});
+
+			const [a, b] = useSessionStore.getState().sessions;
+			expect(a.executionQueue[0].turnSettings).toEqual({ model: 'opus' });
+			expect(b.executionQueue[0].turnSettings).toBeUndefined();
+			expect(b.executionQueue[0].text).toBe('Test message');
+		});
+	});
+
 	describe('handleRemoveQueueItem', () => {
 		it('removes the specified item from the session execution queue', () => {
 			const item = createQueuedItem({ id: 'item-a', tabId: 'tab-1' });
 			const session = createSession({ id: 'sess-1', executionQueue: [item] });
 			useSessionStore.setState({ sessions: [session] });
 
-			const { result } = renderHook(() => useQueueHandlers());
+			const { result } = renderHook(() => useQueueHandlers({ processQueuedItem }));
 
 			act(() => {
 				result.current.handleRemoveQueueItem('sess-1', 'item-a');
@@ -143,7 +247,7 @@ describe('useQueueHandlers', () => {
 			});
 			useSessionStore.setState({ sessions: [session] });
 
-			const { result } = renderHook(() => useQueueHandlers());
+			const { result } = renderHook(() => useQueueHandlers({ processQueuedItem }));
 
 			act(() => {
 				result.current.handleRemoveQueueItem('sess-1', 'item-b');
@@ -160,7 +264,7 @@ describe('useQueueHandlers', () => {
 			const session = createSession({ id: 'sess-1', executionQueue: [item] });
 			useSessionStore.setState({ sessions: [session] });
 
-			const { result } = renderHook(() => useQueueHandlers());
+			const { result } = renderHook(() => useQueueHandlers({ processQueuedItem }));
 
 			act(() => {
 				result.current.handleRemoveQueueItem('sess-1', 'nonexistent-item');
@@ -176,7 +280,7 @@ describe('useQueueHandlers', () => {
 			const session = createSession({ id: 'sess-1', executionQueue: [item] });
 			useSessionStore.setState({ sessions: [session] });
 
-			const { result } = renderHook(() => useQueueHandlers());
+			const { result } = renderHook(() => useQueueHandlers({ processQueuedItem }));
 
 			act(() => {
 				result.current.handleRemoveQueueItem('nonexistent-session', 'item-a');
@@ -192,7 +296,7 @@ describe('useQueueHandlers', () => {
 			const session = createSession({ id: 'sess-1', executionQueue: [] });
 			useSessionStore.setState({ sessions: [session] });
 
-			const { result } = renderHook(() => useQueueHandlers());
+			const { result } = renderHook(() => useQueueHandlers({ processQueuedItem }));
 
 			expect(() => {
 				act(() => {
@@ -211,7 +315,7 @@ describe('useQueueHandlers', () => {
 			const session2 = createSession({ id: 'sess-2', executionQueue: [item2] });
 			useSessionStore.setState({ sessions: [session1, session2] });
 
-			const { result } = renderHook(() => useQueueHandlers());
+			const { result } = renderHook(() => useQueueHandlers({ processQueuedItem }));
 
 			act(() => {
 				result.current.handleRemoveQueueItem('sess-1', 'item-a');
@@ -236,7 +340,7 @@ describe('useQueueHandlers', () => {
 				activeSessionId: 'sess-1',
 			});
 
-			const { result } = renderHook(() => useQueueHandlers());
+			const { result } = renderHook(() => useQueueHandlers({ processQueuedItem }));
 
 			act(() => {
 				result.current.handleSwitchQueueSession('sess-2');
@@ -249,7 +353,7 @@ describe('useQueueHandlers', () => {
 			const session = createSession({ id: 'sess-1' });
 			useSessionStore.setState({ sessions: [session], activeSessionId: 'sess-1' });
 
-			const { result } = renderHook(() => useQueueHandlers());
+			const { result } = renderHook(() => useQueueHandlers({ processQueuedItem }));
 
 			act(() => {
 				result.current.handleSwitchQueueSession('sess-1');
@@ -296,7 +400,7 @@ describe('useQueueHandlers', () => {
 			});
 			useSessionStore.setState({ sessions: [session], activeSessionId: '' });
 
-			const { result } = renderHook(() => useQueueHandlers());
+			const { result } = renderHook(() => useQueueHandlers({ processQueuedItem }));
 
 			act(() => {
 				result.current.handleSwitchQueueSession('sess-1', 'tab-2');
@@ -317,7 +421,7 @@ describe('useQueueHandlers', () => {
 			});
 			useSessionStore.setState({ sessions: [session], activeSessionId: '' });
 
-			const { result } = renderHook(() => useQueueHandlers());
+			const { result } = renderHook(() => useQueueHandlers({ processQueuedItem }));
 
 			act(() => {
 				result.current.handleSwitchQueueSession('sess-1', 'nonexistent-tab');
@@ -336,7 +440,7 @@ describe('useQueueHandlers', () => {
 			});
 			useSessionStore.setState({ sessions: [session], activeSessionId: '' });
 
-			const { result } = renderHook(() => useQueueHandlers());
+			const { result } = renderHook(() => useQueueHandlers({ processQueuedItem }));
 
 			act(() => {
 				result.current.handleSwitchQueueSession('sess-1');
@@ -351,7 +455,7 @@ describe('useQueueHandlers', () => {
 		it('sets active session ID even for an unknown session ID', () => {
 			useSessionStore.setState({ sessions: [], activeSessionId: '' });
 
-			const { result } = renderHook(() => useQueueHandlers());
+			const { result } = renderHook(() => useQueueHandlers({ processQueuedItem }));
 
 			act(() => {
 				result.current.handleSwitchQueueSession('nonexistent');
@@ -376,7 +480,7 @@ describe('useQueueHandlers', () => {
 			});
 			useSessionStore.setState({ sessions: [session] });
 
-			const { result } = renderHook(() => useQueueHandlers());
+			const { result } = renderHook(() => useQueueHandlers({ processQueuedItem }));
 
 			// Move item at index 2 to index 0
 			act(() => {
@@ -399,7 +503,7 @@ describe('useQueueHandlers', () => {
 			});
 			useSessionStore.setState({ sessions: [session] });
 
-			const { result } = renderHook(() => useQueueHandlers());
+			const { result } = renderHook(() => useQueueHandlers({ processQueuedItem }));
 
 			// Move item at index 0 to index 2
 			act(() => {
@@ -423,7 +527,7 @@ describe('useQueueHandlers', () => {
 			});
 			useSessionStore.setState({ sessions: [session] });
 
-			const { result } = renderHook(() => useQueueHandlers());
+			const { result } = renderHook(() => useQueueHandlers({ processQueuedItem }));
 
 			act(() => {
 				result.current.handleReorderQueueItems('sess-1', 0, 3);
@@ -444,7 +548,7 @@ describe('useQueueHandlers', () => {
 			});
 			useSessionStore.setState({ sessions: [session] });
 
-			const { result } = renderHook(() => useQueueHandlers());
+			const { result } = renderHook(() => useQueueHandlers({ processQueuedItem }));
 
 			act(() => {
 				result.current.handleReorderQueueItems('sess-1', 3, 0);
@@ -463,7 +567,7 @@ describe('useQueueHandlers', () => {
 			});
 			useSessionStore.setState({ sessions: [session] });
 
-			const { result } = renderHook(() => useQueueHandlers());
+			const { result } = renderHook(() => useQueueHandlers({ processQueuedItem }));
 
 			act(() => {
 				result.current.handleReorderQueueItems('sess-1', 0, 1);
@@ -483,7 +587,7 @@ describe('useQueueHandlers', () => {
 			});
 			useSessionStore.setState({ sessions: [session] });
 
-			const { result } = renderHook(() => useQueueHandlers());
+			const { result } = renderHook(() => useQueueHandlers({ processQueuedItem }));
 
 			act(() => {
 				result.current.handleReorderQueueItems('sess-1', 1, 1);
@@ -503,7 +607,7 @@ describe('useQueueHandlers', () => {
 			});
 			useSessionStore.setState({ sessions: [session] });
 
-			const { result } = renderHook(() => useQueueHandlers());
+			const { result } = renderHook(() => useQueueHandlers({ processQueuedItem }));
 
 			act(() => {
 				result.current.handleReorderQueueItems('nonexistent-session', 0, 1);
@@ -523,7 +627,7 @@ describe('useQueueHandlers', () => {
 			const session2 = createSession({ id: 'sess-2', executionQueue: [itemB1, itemB2] });
 			useSessionStore.setState({ sessions: [session1, session2] });
 
-			const { result } = renderHook(() => useQueueHandlers());
+			const { result } = renderHook(() => useQueueHandlers({ processQueuedItem }));
 
 			act(() => {
 				result.current.handleReorderQueueItems('sess-1', 0, 1);
@@ -556,7 +660,7 @@ describe('useQueueHandlers', () => {
 			const session = createSession({ id: 'sess-1', executionQueue: [item1, item2] });
 			useSessionStore.setState({ sessions: [session] });
 
-			const { result } = renderHook(() => useQueueHandlers());
+			const { result } = renderHook(() => useQueueHandlers({ processQueuedItem }));
 
 			act(() => {
 				result.current.handleReorderQueueItems('sess-1', 0, 1);
@@ -583,19 +687,288 @@ describe('useQueueHandlers', () => {
 	});
 
 	// ========================================================================
+	// handleEditQueueItem
+	// ========================================================================
+	describe('handleEditQueueItem', () => {
+		// The consult for a queued `@mention` fires when the item dispatches, so the
+		// item's pending-consult flag has to track whatever the user last edited the
+		// text to - not what they originally typed.
+		it('sets the pending consult when an edit adds an @mention', () => {
+			const target = createSession({ id: 'sess-2', name: 'Backend' });
+			const session = createSession({
+				executionQueue: [createQueuedItem({ id: 'item-1', text: 'ship it' })],
+			});
+			useSessionStore.setState({ sessions: [session, target] });
+
+			const { result } = renderHook(() => useQueueHandlers({ processQueuedItem }));
+			act(() => {
+				result.current.handleEditQueueItem('sess-1', 'item-1', {
+					text: 'ship it, then ask @Backend to review',
+					images: [],
+				});
+			});
+
+			const item = useSessionStore.getState().sessions[0].executionQueue[0];
+			expect(item.text).toBe('ship it, then ask @Backend to review');
+			expect(item.crossAgentMention).toBe(true);
+		});
+
+		it('clears the pending consult when an edit removes the @mention', () => {
+			const target = createSession({ id: 'sess-2', name: 'Backend' });
+			const session = createSession({
+				executionQueue: [
+					createQueuedItem({ id: 'item-1', text: 'ask @Backend', crossAgentMention: true }),
+				],
+			});
+			useSessionStore.setState({ sessions: [session, target] });
+
+			const { result } = renderHook(() => useQueueHandlers({ processQueuedItem }));
+			act(() => {
+				result.current.handleEditQueueItem('sess-1', 'item-1', {
+					text: 'never mind, do it yourself',
+					images: [],
+				});
+			});
+
+			expect(useSessionStore.getState().sessions[0].executionQueue[0].crossAgentMention).toBe(
+				false
+			);
+		});
+
+		// Where the mention sits decides whether THIS agent answers at all, and an
+		// edit can move it. Re-deriving only `crossAgentMention` left the stale
+		// `crossAgentOnly` in charge of that half of the decision.
+		it('clears crossAgentOnly when an edit moves the mention off the front', () => {
+			const target = createSession({ id: 'sess-2', name: 'Backend' });
+			const session = createSession({
+				executionQueue: [
+					createQueuedItem({
+						id: 'item-1',
+						text: '@Backend review this',
+						crossAgentMention: true,
+						crossAgentOnly: true,
+					}),
+				],
+			});
+			useSessionStore.setState({ sessions: [session, target] });
+
+			const { result } = renderHook(() => useQueueHandlers({ processQueuedItem }));
+			act(() => {
+				result.current.handleEditQueueItem('sess-1', 'item-1', {
+					text: 'review this, and ask @Backend too',
+					images: [],
+				});
+			});
+
+			const item = useSessionStore.getState().sessions[0].executionQueue[0];
+			expect(item.crossAgentMention).toBe(true);
+			expect(item.crossAgentOnly).toBe(false);
+		});
+
+		it('sets crossAgentOnly when an edit moves the mention to the front', () => {
+			const target = createSession({ id: 'sess-2', name: 'Backend' });
+			const session = createSession({
+				executionQueue: [
+					createQueuedItem({
+						id: 'item-1',
+						text: 'review this, and ask @Backend too',
+						crossAgentMention: true,
+					}),
+				],
+			});
+			useSessionStore.setState({ sessions: [session, target] });
+
+			const { result } = renderHook(() => useQueueHandlers({ processQueuedItem }));
+			act(() => {
+				result.current.handleEditQueueItem('sess-1', 'item-1', {
+					text: '@Backend review this',
+					images: [],
+				});
+			});
+
+			const item = useSessionStore.getState().sessions[0].executionQueue[0];
+			expect(item.crossAgentMention).toBe(true);
+			expect(item.crossAgentOnly).toBe(true);
+		});
+	});
+
+	// ========================================================================
+	// handleForceSendQueueItem
+	// ========================================================================
+	describe('handleForceSendQueueItem', () => {
+		function twoTabSession(overrides: Partial<Session> = {}): Session {
+			const base = createSession(overrides);
+			return {
+				...base,
+				aiTabs: [
+					base.aiTabs[0],
+					{ ...base.aiTabs[0], id: 'tab-2', state: 'idle' as const, logs: [] },
+				],
+				unifiedTabOrder: [
+					{ type: 'ai' as const, id: 'tab-1' },
+					{ type: 'ai' as const, id: 'tab-2' },
+				],
+			} as Session;
+		}
+
+		it('dequeues the item, marks its tab busy, and dispatches it', () => {
+			const first = createQueuedItem({ id: 'item-a', tabId: 'tab-1', text: 'First' });
+			const second = createQueuedItem({ id: 'item-b', tabId: 'tab-1', text: 'Second' });
+			useSessionStore.setState({
+				sessions: [createSession({ id: 'sess-1', executionQueue: [first, second] })],
+			});
+
+			const { result } = renderHook(() => useQueueHandlers({ processQueuedItem }));
+
+			act(() => {
+				result.current.handleForceSendQueueItem('sess-1', 'item-b');
+			});
+
+			const updated = useSessionStore.getState().sessions[0];
+			// The out-of-turn item leaves the queue; the one ahead of it stays put.
+			expect(updated.executionQueue.map((i) => i.id)).toEqual(['item-a']);
+			expect(updated.state).toBe('busy');
+			expect(updated.aiTabs[0].state).toBe('busy');
+			const lastLog = updated.aiTabs[0].logs[updated.aiTabs[0].logs.length - 1];
+			expect(lastLog).toMatchObject({ source: 'user', text: 'Second' });
+			expect(processQueuedItem).toHaveBeenCalledWith(
+				'sess-1',
+				expect.objectContaining({ id: 'item-b' })
+			);
+		});
+
+		it('releases a held item without resuming it first', () => {
+			const held = createQueuedItem({ id: 'item-a', tabId: 'tab-1', paused: true });
+			useSessionStore.setState({
+				sessions: [createSession({ id: 'sess-1', executionQueue: [held] })],
+			});
+
+			const { result } = renderHook(() => useQueueHandlers({ processQueuedItem }));
+
+			act(() => {
+				result.current.handleForceSendQueueItem('sess-1', 'item-a');
+			});
+
+			expect(useSessionStore.getState().sessions[0].executionQueue).toHaveLength(0);
+			expect(processQueuedItem).toHaveBeenCalledTimes(1);
+		});
+
+		it('refuses to send when the target tab is already working', () => {
+			const item = createQueuedItem({ id: 'item-a', tabId: 'tab-1' });
+			const session = createSession({ id: 'sess-1', executionQueue: [item] });
+			session.aiTabs[0].state = 'busy';
+			useSessionStore.setState({ sessions: [session] });
+
+			const { result } = renderHook(() => useQueueHandlers({ processQueuedItem }));
+
+			act(() => {
+				result.current.handleForceSendQueueItem('sess-1', 'item-a');
+			});
+
+			expect(useSessionStore.getState().sessions[0].executionQueue).toHaveLength(1);
+			expect(processQueuedItem).not.toHaveBeenCalled();
+		});
+
+		it('stamps forceParallel when another tab of the agent is working', () => {
+			const item = createQueuedItem({ id: 'item-a', tabId: 'tab-1' });
+			const session = twoTabSession({ id: 'sess-1', executionQueue: [item] });
+			session.aiTabs[1].state = 'busy';
+			useSessionStore.setState({ sessions: [session] });
+
+			const { result } = renderHook(() => useQueueHandlers({ processQueuedItem }));
+
+			act(() => {
+				result.current.handleForceSendQueueItem('sess-1', 'item-a');
+			});
+
+			expect(processQueuedItem).toHaveBeenCalledWith(
+				'sess-1',
+				expect.objectContaining({ id: 'item-a', forceParallel: true })
+			);
+			// The badge has to reach the chat log too, not just the spawn payload.
+			const tabLogs = useSessionStore.getState().sessions[0].aiTabs[0].logs;
+			expect(tabLogs[tabLogs.length - 1]).toMatchObject({ forceParallel: true });
+		});
+
+		it('does not stamp forceParallel when nothing else is running', () => {
+			const item = createQueuedItem({ id: 'item-a', tabId: 'tab-1' });
+			useSessionStore.setState({
+				sessions: [createSession({ id: 'sess-1', executionQueue: [item] })],
+			});
+
+			const { result } = renderHook(() => useQueueHandlers({ processQueuedItem }));
+
+			act(() => {
+				result.current.handleForceSendQueueItem('sess-1', 'item-a');
+			});
+
+			expect(processQueuedItem).toHaveBeenCalledWith(
+				'sess-1',
+				expect.not.objectContaining({ forceParallel: true })
+			);
+		});
+
+		it('is a no-op for an unknown session or item', () => {
+			const item = createQueuedItem({ id: 'item-a', tabId: 'tab-1' });
+			useSessionStore.setState({
+				sessions: [createSession({ id: 'sess-1', executionQueue: [item] })],
+			});
+
+			const { result } = renderHook(() => useQueueHandlers({ processQueuedItem }));
+
+			act(() => {
+				result.current.handleForceSendQueueItem('sess-1', 'missing');
+				result.current.handleForceSendQueueItem('missing', 'item-a');
+			});
+
+			expect(useSessionStore.getState().sessions[0].executionQueue).toHaveLength(1);
+			expect(processQueuedItem).not.toHaveBeenCalled();
+		});
+
+		// Recovery moved to `agentStore.processQueuedItem`, which is the only place
+		// that can tell a transient spawn collision from a real failure. Force Send
+		// must own the REJECTION (an unhandled one is a crash report) but must not
+		// re-queue on its own, or the prompt would come back twice.
+		it('owns the rejection without re-queueing when the dispatch fails', async () => {
+			processQueuedItem.mockRejectedValueOnce(new Error('spawn failed'));
+			const item = createQueuedItem({ id: 'item-a', tabId: 'tab-1' });
+			useSessionStore.setState({
+				sessions: [createSession({ id: 'sess-1', executionQueue: [item] })],
+			});
+
+			const { result } = renderHook(() => useQueueHandlers({ processQueuedItem }));
+
+			let threw = false;
+			await act(async () => {
+				try {
+					result.current.handleForceSendQueueItem('sess-1', 'item-a');
+				} catch {
+					threw = true;
+				}
+			});
+
+			expect(threw).toBe(false);
+			// The dispatch transition ran; the store is left exactly as agentStore's
+			// recovery (mocked out here) would find it, with no second re-queue.
+			expect(useSessionStore.getState().sessions[0].executionQueue).toEqual([]);
+		});
+	});
+
+	// ========================================================================
 	// Return type completeness
 	// ========================================================================
 	describe('return type', () => {
 		it('returns all three handler functions', () => {
-			const { result } = renderHook(() => useQueueHandlers());
+			const { result } = renderHook(() => useQueueHandlers({ processQueuedItem }));
 
 			expect(typeof result.current.handleRemoveQueueItem).toBe('function');
 			expect(typeof result.current.handleSwitchQueueSession).toBe('function');
 			expect(typeof result.current.handleReorderQueueItems).toBe('function');
+			expect(typeof result.current.handleForceSendQueueItem).toBe('function');
 		});
 
 		it('returns stable handler references across renders', () => {
-			const { result, rerender } = renderHook(() => useQueueHandlers());
+			const { result, rerender } = renderHook(() => useQueueHandlers({ processQueuedItem }));
 
 			const first = result.current;
 			rerender();

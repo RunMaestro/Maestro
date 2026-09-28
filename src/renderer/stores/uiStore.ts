@@ -11,8 +11,9 @@
  */
 
 import { create } from 'zustand';
-import type { FocusArea, RightPanelTab, UsageDashboardViewMode } from '../types';
+import type { FocusArea, RightPanelTab, UnifiedTabRef, UsageDashboardViewMode } from '../types';
 import { notifyCenterFlash } from './centerFlashStore';
+import { isNarrowViewportNow } from '../hooks/ui/useViewportBreakpoint';
 
 /**
  * Keyboard-selection cursor for the two Left Bar sections that are NOT plain
@@ -75,16 +76,22 @@ export interface UIStoreState {
 		hover: { leafId: string; zone: import('../utils/panelLayout').DropZone } | null;
 	} | null;
 
-	// Tab tiling: one-shot request to move DOM FOCUS into the pane with this leaf
-	// id (the caret into its terminal / chat input), consumed and cleared by
-	// MainPanelContent. Fired ONLY by the keyboard pane commands - moving the focus
-	// ring alone leaves the user typing into whatever had focus before.
+	// One-shot request to move DOM FOCUS into a tab's real input (the caret into
+	// its terminal / editor / address bar / chat box), consumed and cleared by
+	// MainPanelContent. Addressed EITHER by tiled pane leaf id or by tab ref, since
+	// both routes end at the same place: a keyboard pane command knows the leaf it
+	// moved to, while a plain "new tab" handler only ever knows the tab it minted.
+	// One request slot rather than two so there is a single focus owner and a
+	// single cancel chain - a later request always supersedes an earlier one.
+	//
+	// Fired ONLY by explicit create/move commands - moving the focus ring alone
+	// leaves the user typing into whatever had focus before.
 	//
 	// Deliberately a request rather than an effect keyed on `focusedPaneId`: a mouse
 	// press anywhere in a pane also moves `focusedPaneId`, so a derived effect would
 	// yank the caret into the AI input mid-drag and break text selection in the
-	// conversation. Keyboard-only keeps the steal tied to explicit user intent.
-	paneFocusRequest: string | null;
+	// conversation. Keeping it explicit ties the steal to user intent.
+	focusRequest: { leafId: string } | { tab: UnifiedTabRef } | null;
 
 	// Sidebar collapse/expand
 	bookmarksCollapsed: boolean;
@@ -117,6 +124,19 @@ export interface UIStoreState {
 
 	// Session filter (sidebar agent search)
 	sessionFilterOpen: boolean;
+	/**
+	 * The sidebar's filter text. Shared rather than local to the filter hook,
+	 * because Cmd+[ / Cmd+] has to cycle exactly the rows the sidebar is drawing
+	 * and a `useState` inside the hook gives every caller its own copy - the
+	 * cycle could not see the filter at all, so it walked agents that were not
+	 * on screen.
+	 */
+	sessionFilter: string;
+	/**
+	 * Whether archived group chats are shown. Same reason as `sessionFilter`:
+	 * membership of the drawn list is a shared question, not a private one.
+	 */
+	showArchivedGroupChats: boolean;
 
 	// History panel search
 	historySearchFilterOpen: boolean;
@@ -131,6 +151,12 @@ export interface UIStoreState {
 	editingGroupId: string | null;
 	editingSessionId: string | null;
 
+	// Queued message currently open in the edit modal (QueuedItemEditModal), or
+	// null when it is closed. Lives here rather than inside QueuedItemsList so
+	// the "Edit Last Queued Message" shortcut can open the modal from anywhere -
+	// the list itself is buried in the transcript scroll area.
+	editingQueuedItemId: string | null;
+
 	// Auto-follow active task during batch runs
 	autoFollowEnabled: boolean;
 
@@ -138,6 +164,12 @@ export interface UIStoreState {
 	// wand indicator in the Left Bar header. Source of truth is the main process
 	// (contentTracing singleton); the command palette reconciles this on open.
 	profilingActive: boolean;
+
+	// Trace-buffer usage of the active recording, 0-1. Chromium drops events once
+	// the buffer fills, so this - not elapsed time - is what limits a capture, and
+	// showing it is what lets a user see how much window they have left instead of
+	// guessing. Refreshed whenever the palette reconciles profiling status.
+	profilingBufferPercent: number;
 
 	// Last-selected Usage Dashboard tab. In-memory only: survives closing and
 	// reopening the dashboard within a session, resets to 'overview' on restart.
@@ -181,6 +213,34 @@ export interface UIStoreActions {
 	cycleLeftSidebar: () => void;
 	setRightPanelOpen: (open: boolean | ((prev: boolean) => boolean)) => void;
 	toggleRightPanel: () => void;
+	/**
+	 * Narrow viewports: the left drawer covers the main panel, so activating
+	 * anything listed in it - an agent row, a group chat, a starred session - is
+	 * a request to LOOK at that thing, and the drawer gets out of the way. No-op
+	 * on a wide viewport, where the Left Bar is a permanent column beside the
+	 * panel and closing it would be a surprise.
+	 *
+	 * Call it AT THE TAP rather than from an effect keyed on what became active:
+	 * tapping the row that is already active (an agent still selected behind an
+	 * open group chat, the chat the user is already in) changes no state at all,
+	 * and a transition-keyed effect reads that as nothing having happened -
+	 * leaving the user staring at the drawer they just tapped through.
+	 */
+	closeLeftSidebarForNavigation: () => void;
+	/**
+	 * The right drawer's half of the same rule, and it fails the same way.
+	 * Opening a file from the Files panel is a request to LOOK at that file, and
+	 * on a phone the drawer covers the whole screen - so it gets out of the way.
+	 *
+	 * Call it AT THE OPEN, for the same reason as its left-hand twin: the
+	 * transition-keyed effect in `App.tsx` watches `activeFileTabId` and friends,
+	 * and re-previewing the file that is ALREADY the active tab moves none of
+	 * them. The effect reads that as nothing having happened, so the file the
+	 * user just tapped Preview on stays behind the tree they tapped it in.
+	 * Media is the permanent case: it never becomes a tab at all, so that key
+	 * can never change for it.
+	 */
+	closeRightPanelForNavigation: () => void;
 
 	// Focus
 	setActiveFocus: (focus: FocusArea | ((prev: FocusArea) => FocusArea)) => void;
@@ -192,10 +252,11 @@ export interface UIStoreActions {
 	// Tab tiling: set/clear the transient pane-rearrange drag state.
 	setPaneDrag: (drag: UIStore['paneDrag']) => void;
 
-	// Tab tiling: ask the panel to put DOM focus inside the pane with this leaf id,
-	// and clear that request once it has been acted on.
+	// Ask the panel to put DOM focus inside a pane (by tiled leaf id) or a tab (by
+	// ref), and clear that request once it has been acted on.
 	requestPaneFocus: (leafId: string) => void;
-	clearPaneFocusRequest: () => void;
+	requestTabFocus: (tab: UnifiedTabRef) => void;
+	clearFocusRequest: () => void;
 
 	// Sidebar collapse/expand
 	setBookmarksCollapsed: (collapsed: boolean | ((prev: boolean) => boolean)) => void;
@@ -242,6 +303,8 @@ export interface UIStoreActions {
 
 	// Session filter (sidebar agent search)
 	setSessionFilterOpen: (open: boolean | ((prev: boolean) => boolean)) => void;
+	setSessionFilter: (value: string | ((prev: string) => string)) => void;
+	setShowArchivedGroupChats: (show: boolean | ((prev: boolean) => boolean)) => void;
 
 	// History panel search
 	setHistorySearchFilterOpen: (open: boolean | ((prev: boolean) => boolean)) => void;
@@ -255,12 +318,14 @@ export interface UIStoreActions {
 	// Editing
 	setEditingGroupId: (id: string | null | ((prev: string | null) => string | null)) => void;
 	setEditingSessionId: (id: string | null | ((prev: string | null) => string | null)) => void;
+	setEditingQueuedItemId: (id: string | null) => void;
 
 	// Auto-follow
 	setAutoFollowEnabled: (enabled: boolean | ((prev: boolean) => boolean)) => void;
 
 	// Performance-profiling indicator (drives the wand animation)
 	setProfilingActive: (active: boolean | ((prev: boolean) => boolean)) => void;
+	setProfilingBufferPercent: (percent: number) => void;
 
 	// Usage Dashboard last-selected tab
 	setUsageDashboardViewMode: (
@@ -360,7 +425,7 @@ export const useUIStore = create<UIStore>()((set) => ({
 	activeRightTab: 'files',
 	zoomedPaneId: null,
 	paneDrag: null,
-	paneFocusRequest: null,
+	focusRequest: null,
 	bookmarksCollapsed: false,
 	showUnreadOnly: false,
 	showUnreadAgentsOnly: false,
@@ -372,13 +437,17 @@ export const useUIStore = create<UIStore>()((set) => ({
 	outputSearchByKey: {},
 	pendingLogJump: null,
 	sessionFilterOpen: false,
+	sessionFilter: '',
+	showArchivedGroupChats: false,
 	historySearchFilterOpen: false,
 	groupChatHistorySearchFilterOpen: false,
 	draggingSessionId: null,
 	editingGroupId: null,
 	editingSessionId: null,
+	editingQueuedItemId: null,
 	autoFollowEnabled: false,
 	profilingActive: false,
+	profilingBufferPercent: 0,
 	usageDashboardViewMode: 'overview',
 	hiddenQuotaAccounts: {},
 	usageRefreshIntervals: {},
@@ -399,6 +468,10 @@ export const useUIStore = create<UIStore>()((set) => ({
 		}),
 	setRightPanelOpen: (v) => set((s) => ({ rightPanelOpen: resolve(v, s.rightPanelOpen) })),
 	toggleRightPanel: () => set((s) => ({ rightPanelOpen: !s.rightPanelOpen })),
+	closeLeftSidebarForNavigation: () =>
+		set((s) => (s.leftSidebarOpen && isNarrowViewportNow() ? { leftSidebarOpen: false } : s)),
+	closeRightPanelForNavigation: () =>
+		set((s) => (s.rightPanelOpen && isNarrowViewportNow() ? { rightPanelOpen: false } : s)),
 
 	setActiveFocus: (v) => set((s) => ({ activeFocus: resolve(v, s.activeFocus) })),
 	setActiveRightTab: (v) => set((s) => ({ activeRightTab: resolve(v, s.activeRightTab) })),
@@ -406,8 +479,9 @@ export const useUIStore = create<UIStore>()((set) => ({
 	setZoomedPaneId: (id) => set({ zoomedPaneId: id }),
 	setPaneDrag: (drag) => set({ paneDrag: drag }),
 
-	requestPaneFocus: (leafId) => set({ paneFocusRequest: leafId }),
-	clearPaneFocusRequest: () => set({ paneFocusRequest: null }),
+	requestPaneFocus: (leafId) => set({ focusRequest: { leafId } }),
+	requestTabFocus: (tab) => set({ focusRequest: { tab } }),
+	clearFocusRequest: () => set({ focusRequest: null }),
 
 	setBookmarksCollapsed: (v) =>
 		set((s) => {
@@ -477,6 +551,9 @@ export const useUIStore = create<UIStore>()((set) => ({
 		set((s) => (s.pendingLogJump?.logId === logId ? { pendingLogJump: null } : s)),
 
 	setSessionFilterOpen: (v) => set((s) => ({ sessionFilterOpen: resolve(v, s.sessionFilterOpen) })),
+	setSessionFilter: (v) => set((s) => ({ sessionFilter: resolve(v, s.sessionFilter) })),
+	setShowArchivedGroupChats: (v) =>
+		set((s) => ({ showArchivedGroupChats: resolve(v, s.showArchivedGroupChats) })),
 	setHistorySearchFilterOpen: (v) =>
 		set((s) => ({ historySearchFilterOpen: resolve(v, s.historySearchFilterOpen) })),
 	setGroupChatHistorySearchFilterOpen: (v) =>
@@ -488,10 +565,12 @@ export const useUIStore = create<UIStore>()((set) => ({
 
 	setEditingGroupId: (v) => set((s) => ({ editingGroupId: resolve(v, s.editingGroupId) })),
 	setEditingSessionId: (v) => set((s) => ({ editingSessionId: resolve(v, s.editingSessionId) })),
+	setEditingQueuedItemId: (id) => set({ editingQueuedItemId: id }),
 
 	setAutoFollowEnabled: (v) => set((s) => ({ autoFollowEnabled: resolve(v, s.autoFollowEnabled) })),
 
 	setProfilingActive: (v) => set((s) => ({ profilingActive: resolve(v, s.profilingActive) })),
+	setProfilingBufferPercent: (percent) => set({ profilingBufferPercent: percent }),
 
 	setUsageDashboardViewMode: (v) =>
 		set((s) => ({ usageDashboardViewMode: resolve(v, s.usageDashboardViewMode) })),

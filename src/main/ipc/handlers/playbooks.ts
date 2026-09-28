@@ -4,7 +4,7 @@ import path from 'path';
 import crypto from 'crypto';
 import { createWriteStream } from 'fs';
 import archiver from 'archiver';
-import AdmZip from 'adm-zip';
+import { readZipArchive } from '../../utils/zip-archive';
 import { logger } from '../../utils/logger';
 import { createIpcHandler, CreateHandlerOptions } from '../../utils/ipcHandler';
 
@@ -380,8 +380,7 @@ export function registerPlaybooksHandlers(deps: PlaybooksHandlerDependencies): v
 
 				const zipPath = result.filePaths[0];
 
-				// Read ZIP file
-				const zip = new AdmZip(zipPath);
+				const zip = readZipArchive(zipPath);
 				const zipEntries = zip.getEntries();
 
 				// Find and parse manifest

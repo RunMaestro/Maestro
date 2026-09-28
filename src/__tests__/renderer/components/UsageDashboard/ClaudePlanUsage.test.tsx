@@ -7,10 +7,13 @@
  *     (incl. the `.claude` → `default` fallback)
  *   - bars render with progressbar role + accessible percentage
  *   - refresh button calls the IPC and triggers a store refresh
+ *   - Cmd+R re-samples only when the panel owns the hotkey
  *   - in-flight `refreshing` flag disables the refresh button
+ *   - the centered "last refreshed" footer reports the newest sample's age
+ *   - the "N agents" chip is a button only when there are agents to show
  */
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
 import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
 import { ClaudePlanUsage } from '../../../../renderer/components/UsageDashboard/ClaudePlanUsage';
 import { useClaudeUsageStore } from '../../../../renderer/stores/claudeUsageStore';
@@ -237,6 +240,77 @@ describe('ClaudePlanUsage - case-variant dedup', () => {
 	});
 });
 
+describe('ClaudePlanUsage - exhausted account', () => {
+	// The panel an account renders once its weekly limit is gone: no reset row
+	// under the idle session, and a second weekly window named after the
+	// current premium tier rather than Sonnet.
+	function seedExhausted(): void {
+		seedSnapshots({
+			'/Users/me/.claude-gmail': {
+				sampledAt: '2026-05-15T00:00:00.000Z',
+				configDirKey: '/Users/me/.claude-gmail',
+				session: { percent: 0 },
+				weekAllModels: { percent: 100, resetsAt: '2026-05-22T00:00:00.000Z' },
+				weekSonnetOnly: { percent: 36, resetsAt: '2026-05-22T00:00:00.000Z', label: 'Fable' },
+			},
+		});
+	}
+
+	it('renders all three bars when the session window carries no reset time', () => {
+		seedExhausted();
+
+		render(<ClaudePlanUsage theme={theme} />);
+
+		const values = screen.getAllByRole('progressbar').map((b) => b.getAttribute('aria-valuenow'));
+		expect(values).toEqual(['0', '100', '36']);
+		// An idle 0% window has no reset because none has started - not a parse miss.
+		expect(screen.getByText('not started')).toBeInTheDocument();
+		expect(screen.queryByText('reset unknown')).toBeNull();
+	});
+
+	it('still says "reset unknown" when a window with usage lost its reset time', () => {
+		seedSnapshots({
+			'/Users/me/.claude-gmail': {
+				sampledAt: '2026-05-15T00:00:00.000Z',
+				configDirKey: '/Users/me/.claude-gmail',
+				session: { percent: 40 },
+				weekAllModels: { percent: 100, resetsAt: '2026-05-22T00:00:00.000Z' },
+				weekSonnetOnly: { percent: 36, resetsAt: '2026-05-22T00:00:00.000Z', label: 'Fable' },
+			},
+		});
+
+		render(<ClaudePlanUsage theme={theme} />);
+
+		expect(screen.getByText('reset unknown')).toBeInTheDocument();
+		expect(screen.queryByText('not started')).toBeNull();
+	});
+
+	it('labels the second weekly window with the name the panel reported', () => {
+		seedExhausted();
+
+		render(<ClaudePlanUsage theme={theme} />);
+
+		expect(screen.getByText('Week (Fable)')).toBeInTheDocument();
+		expect(screen.queryByText('Week (Sonnet only)')).toBeNull();
+	});
+
+	it('falls back to the legacy label for snapshots cached before labels existed', () => {
+		seedSnapshots({
+			'/Users/me/.claude-gmail': {
+				sampledAt: '2026-05-15T00:00:00.000Z',
+				configDirKey: '/Users/me/.claude-gmail',
+				session: { percent: 0, resetsAt: '2026-05-15T05:00:00.000Z' },
+				weekAllModels: { percent: 100, resetsAt: '2026-05-22T00:00:00.000Z' },
+				weekSonnetOnly: { percent: 36, resetsAt: '2026-05-22T00:00:00.000Z' },
+			},
+		});
+
+		render(<ClaudePlanUsage theme={theme} />);
+
+		expect(screen.getByText('Week (Sonnet only)')).toBeInTheDocument();
+	});
+});
+
 describe('ClaudePlanUsage - unauthenticated row', () => {
 	it('renders the "run /login" CTA in place of bars when authState is unauthenticated', () => {
 		seedSnapshots({
@@ -340,6 +414,29 @@ describe('ClaudePlanUsage - refresh wiring', () => {
 		});
 	});
 
+	it('re-samples on Cmd+R when the panel owns the hotkey', async () => {
+		render(<ClaudePlanUsage theme={theme} refreshHotkey />);
+		fireEvent.keyDown(window, { key: 'r', metaKey: true });
+
+		await waitFor(() => {
+			expect(refreshClaudeUsageSnapshotsMock).toHaveBeenCalledTimes(1);
+		});
+	});
+
+	it('ignores Cmd+R when the panel does not own the hotkey', () => {
+		render(<ClaudePlanUsage theme={theme} />);
+		fireEvent.keyDown(window, { key: 'r', metaKey: true });
+
+		expect(refreshClaudeUsageSnapshotsMock).not.toHaveBeenCalled();
+	});
+
+	it('ignores Cmd+Shift+R so a qualified chord is not swallowed', () => {
+		render(<ClaudePlanUsage theme={theme} refreshHotkey />);
+		fireEvent.keyDown(window, { key: 'R', metaKey: true, shiftKey: true });
+
+		expect(refreshClaudeUsageSnapshotsMock).not.toHaveBeenCalled();
+	});
+
 	it('disables the refresh button while a refresh is in flight', () => {
 		useClaudeUsageStore.setState({
 			snapshots: {},
@@ -423,5 +520,419 @@ describe('ClaudePlanUsage - hide/show accounts (list view)', () => {
 
 		expect(screen.queryByTestId('claude-plan-visibility-default')).toBeNull();
 		expect(screen.queryByTestId('claude-plan-show-all')).toBeNull();
+	});
+});
+
+describe('ClaudePlanUsage - stale row chip', () => {
+	// The dashboard footer reports the NEWEST sample, so without a per-row marker
+	// an account the last refresh skipped reads as freshly sampled beside old bars.
+	const snapshotAt = (key: string, sampledAt: string) => ({
+		sampledAt,
+		configDirKey: key,
+		authState: 'authenticated',
+		session: { percent: 0 },
+		weekAllModels: { percent: 100, resetsAt: '2026-05-22T00:00:00.000Z' },
+		weekSonnetOnly: { percent: 87, resetsAt: '2026-05-22T00:00:00.000Z' },
+	});
+
+	beforeEach(() => {
+		vi.useFakeTimers();
+		vi.setSystemTime(new Date('2026-05-15T02:05:00.000Z'));
+	});
+
+	afterEach(() => {
+		vi.useRealTimers();
+	});
+
+	it('flags only the row whose sample trails the newest by more than five minutes', () => {
+		seedSnapshots({
+			'/Users/me/.claude-work': snapshotAt('/Users/me/.claude-work', '2026-05-15T02:00:00.000Z'),
+			'/Users/me/.claude-side': snapshotAt('/Users/me/.claude-side', '2026-05-15T00:24:00.000Z'),
+			'/Users/me/.claude-near': snapshotAt('/Users/me/.claude-near', '2026-05-15T01:57:00.000Z'),
+		});
+
+		render(<ClaudePlanUsage theme={theme} showAllAccounts autoRefresh={false} />);
+
+		expect(screen.getByTestId('claude-plan-stale-side')).toHaveTextContent('stale, read');
+		expect(screen.queryByTestId('claude-plan-stale-work')).toBeNull();
+		expect(screen.queryByTestId('claude-plan-stale-near')).toBeNull();
+	});
+
+	it('flags a day-old row even when no other row is newer', () => {
+		// The retained-snapshot case: an account nobody runs agents against keeps
+		// its row so the user can watch for the reset, and every row is equally
+		// old, so nothing "trails the newest". The bars still are not current.
+		seedSnapshots({
+			'/Users/me/.claude-work': snapshotAt('/Users/me/.claude-work', '2026-05-13T02:00:00.000Z'),
+			'/Users/me/.claude-side': snapshotAt('/Users/me/.claude-side', '2026-05-13T02:01:00.000Z'),
+		});
+
+		render(<ClaudePlanUsage theme={theme} showAllAccounts autoRefresh={false} />);
+
+		expect(screen.getByTestId('claude-plan-stale-work')).toHaveTextContent('stale, read');
+		expect(screen.getByTestId('claude-plan-stale-side')).toHaveTextContent('stale, read');
+	});
+});
+
+describe('ClaudePlanUsage - agent count badge', () => {
+	const snapshotFor = (key: string) => ({
+		sampledAt: '2026-05-15T00:00:00.000Z',
+		configDirKey: key,
+		authState: 'authenticated',
+		session: { percent: 50, resetsAt: '2026-05-15T05:00:00.000Z' },
+		weekAllModels: { percent: 30, resetsAt: '2026-05-22T00:00:00.000Z' },
+		weekSonnetOnly: { percent: 10, resetsAt: '2026-05-22T00:00:00.000Z' },
+	});
+
+	it('counts the agents pointed at each account', () => {
+		seedSnapshots({
+			'/Users/me/.claude-work': snapshotFor('/Users/me/.claude-work'),
+			'/Users/me/.claude-side': snapshotFor('/Users/me/.claude-side'),
+		});
+		seedSessions([
+			'/Users/me/.claude-work',
+			'/Users/me/.claude-work',
+			'/Users/me/.claude-work',
+			'/Users/me/.claude-side',
+		]);
+
+		render(<ClaudePlanUsage theme={theme} showAllAccounts autoRefresh={false} />);
+
+		expect(screen.getByTestId('claude-plan-agents-work')).toHaveTextContent('3 agents');
+		// Singular when exactly one agent uses the account.
+		expect(screen.getByTestId('claude-plan-agents-side')).toHaveTextContent('1 agent');
+	});
+
+	it('ignores agents from other providers', () => {
+		seedSnapshots({ '/Users/me/.claude-work': snapshotFor('/Users/me/.claude-work') });
+		useSessionStore.setState({
+			sessions: [
+				{
+					id: 'a',
+					name: 'a',
+					toolType: 'claude-code',
+					cwd: '/tmp',
+					customEnvVars: { CLAUDE_CONFIG_DIR: '/Users/me/.claude-work' },
+				},
+				{
+					id: 'b',
+					name: 'b',
+					toolType: 'codex',
+					cwd: '/tmp',
+					customEnvVars: { CLAUDE_CONFIG_DIR: '/Users/me/.claude-work' },
+				},
+			],
+		} as any);
+
+		render(<ClaudePlanUsage theme={theme} showAllAccounts autoRefresh={false} />);
+
+		expect(screen.getByTestId('claude-plan-agents-work')).toHaveTextContent('1 agent');
+	});
+
+	it('does not count an agent that bills an API key against the plan', () => {
+		seedSnapshots({ '/Users/me/.claude-work': snapshotFor('/Users/me/.claude-work') });
+		useSessionStore.setState({
+			sessions: [
+				{
+					id: 'a',
+					name: 'a',
+					toolType: 'claude-code',
+					cwd: '/tmp',
+					customEnvVars: { CLAUDE_CONFIG_DIR: '/Users/me/.claude-work' },
+				},
+				{
+					// Same dir, but the key outranks its login: these turns bill the key.
+					id: 'b',
+					name: 'b',
+					toolType: 'claude-code',
+					cwd: '/tmp',
+					customEnvVars: {
+						CLAUDE_CONFIG_DIR: '/Users/me/.claude-work',
+						ANTHROPIC_API_KEY: 'sk-ant-test',
+					},
+				},
+			],
+		} as any);
+
+		render(<ClaudePlanUsage theme={theme} showAllAccounts autoRefresh={false} />);
+
+		expect(screen.getByTestId('claude-plan-agents-work')).toHaveTextContent('1 agent');
+	});
+
+	it('shows zero for a cached account no agent uses any more', () => {
+		seedSnapshots({ '/Users/me/.claude-stale': snapshotFor('/Users/me/.claude-stale') });
+
+		render(<ClaudePlanUsage theme={theme} showAllAccounts autoRefresh={false} />);
+
+		expect(screen.getByTestId('claude-plan-agents-stale')).toHaveTextContent('0 agents');
+	});
+
+	it('shows the count on an account that has no snapshot yet', () => {
+		seedSessions(['/Users/me/.claude-pending', '/Users/me/.claude-pending']);
+
+		render(<ClaudePlanUsage theme={theme} showAllAccounts autoRefresh={false} />);
+
+		expect(screen.getByTestId('claude-plan-row-pending-pending')).toBeInTheDocument();
+		expect(screen.getByTestId('claude-plan-agents-pending')).toHaveTextContent('2 agents');
+	});
+
+	// An SSH-remote agent's config dir is a path on the REMOTE host, holding that
+	// host's own login, so it is not on the local account these bars measure
+	// whatever the directory is called. The Agents grid files it under its own
+	// `account @ host` profile instead.
+	it('does not count SSH-remote agents against the local account', () => {
+		seedSnapshots({ '/Users/me/.claude-work': snapshotFor('/Users/me/.claude-work') });
+		useSessionStore.setState({
+			sessions: [
+				{
+					id: 'local',
+					name: 'local',
+					toolType: 'claude-code',
+					cwd: '/tmp',
+					customEnvVars: { CLAUDE_CONFIG_DIR: '/Users/me/.claude-work' },
+				},
+				{
+					id: 'remote',
+					name: 'remote',
+					toolType: 'claude-code',
+					cwd: '/tmp',
+					customEnvVars: { CLAUDE_CONFIG_DIR: '/Users/me/.claude-work' },
+					sessionSshRemoteConfig: { enabled: true, remoteId: 'box' },
+				},
+			],
+		} as any);
+
+		render(<ClaudePlanUsage theme={theme} showAllAccounts autoRefresh={false} />);
+
+		expect(screen.getByTestId('claude-plan-agents-work')).toHaveTextContent('1 agent');
+	});
+
+	it('shows zero when every agent on the dir runs over SSH', () => {
+		seedSnapshots({ '/Users/me/.claude-work': snapshotFor('/Users/me/.claude-work') });
+		useSessionStore.setState({
+			sessions: [
+				{
+					id: 'remote',
+					name: 'remote',
+					toolType: 'claude-code',
+					cwd: '/tmp',
+					customEnvVars: { CLAUDE_CONFIG_DIR: '/Users/me/.claude-work' },
+					sessionSshRemoteConfig: { enabled: true, remoteId: 'box' },
+				},
+			],
+		} as any);
+
+		render(<ClaudePlanUsage theme={theme} showAllAccounts autoRefresh={false} />);
+
+		expect(screen.getByTestId('claude-plan-agents-work')).toHaveTextContent('0 agents');
+	});
+
+	it('hands the account back when the chip is clicked, so the grid can filter to it', () => {
+		seedSnapshots({ '/Users/me/.claude-work': snapshotFor('/Users/me/.claude-work') });
+		seedSessions(['/Users/me/.claude-work']);
+		const onShowAccountAgents = vi.fn();
+
+		render(
+			<ClaudePlanUsage
+				theme={theme}
+				showAllAccounts
+				autoRefresh={false}
+				onShowAccountAgents={onShowAccountAgents}
+			/>
+		);
+
+		fireEvent.click(screen.getByTestId('claude-plan-agents-work'));
+
+		expect(onShowAccountAgents).toHaveBeenCalledWith('/Users/me/.claude-work');
+	});
+
+	it('leaves the chip inert for an account no agent uses', () => {
+		// A button that lands on an empty grid answers nothing.
+		seedSnapshots({ '/Users/me/.claude-stale': snapshotFor('/Users/me/.claude-stale') });
+
+		render(
+			<ClaudePlanUsage
+				theme={theme}
+				showAllAccounts
+				autoRefresh={false}
+				onShowAccountAgents={vi.fn()}
+			/>
+		);
+
+		expect(screen.getByTestId('claude-plan-agents-stale').tagName).toBe('SPAN');
+	});
+
+	it('stays a label when no handler is given', () => {
+		seedSnapshots({ '/Users/me/.claude-work': snapshotFor('/Users/me/.claude-work') });
+		seedSessions(['/Users/me/.claude-work']);
+
+		render(<ClaudePlanUsage theme={theme} showAllAccounts autoRefresh={false} />);
+
+		expect(screen.getByTestId('claude-plan-agents-work').tagName).toBe('SPAN');
+	});
+});
+
+describe('ClaudePlanUsage — account identity', () => {
+	const identifiedSnapshot = (key: string, identity: Record<string, string>) => ({
+		sampledAt: '2026-05-15T00:00:00.000Z',
+		configDirKey: key,
+		authState: 'authenticated',
+		session: { percent: 50, resetsAt: '2026-05-15T05:00:00.000Z' },
+		weekAllModels: { percent: 30, resetsAt: '2026-05-22T00:00:00.000Z' },
+		weekSonnetOnly: { percent: 10, resetsAt: '2026-05-22T00:00:00.000Z' },
+		...identity,
+	});
+
+	it('prints the login email beside the config-dir pill', () => {
+		// The pill names the DIRECTORY; only the email says which Anthropic
+		// account the numbers belong to.
+		seedSnapshots({
+			'/Users/me/.claude-gmail': identifiedSnapshot('/Users/me/.claude-gmail', {
+				accountEmail: 'someone@smashlabs.com',
+			}),
+		});
+
+		render(<ClaudePlanUsage theme={theme} showAllAccounts autoRefresh={false} />);
+
+		expect(screen.getByTestId('claude-plan-email-gmail')).toHaveTextContent(
+			'someone@smashlabs.com'
+		);
+	});
+
+	it('omits the email chip for a snapshot cached before the field existed', () => {
+		seedSnapshots({
+			'/Users/me/.claude-legacy': identifiedSnapshot('/Users/me/.claude-legacy', {}),
+		});
+
+		render(<ClaudePlanUsage theme={theme} showAllAccounts autoRefresh={false} />);
+
+		expect(screen.queryByTestId('claude-plan-email-legacy')).toBeNull();
+	});
+
+	it('flags two config dirs that share one Anthropic account', () => {
+		// The bug this whole feature exists for: identical bars under two
+		// different directory names read as the sampler double-reporting one
+		// account, when in fact both dirs are logged into the same account.
+		seedSnapshots({
+			'/Users/me/.claude-gmail': identifiedSnapshot('/Users/me/.claude-gmail', {
+				accountEmail: 'p@smashlabs.com',
+				accountUuid: 'shared-uuid',
+			}),
+			'/Users/me/.claude-smash': identifiedSnapshot('/Users/me/.claude-smash', {
+				accountEmail: 'p@smashlabs.com',
+				accountUuid: 'shared-uuid',
+			}),
+		});
+
+		render(<ClaudePlanUsage theme={theme} showAllAccounts autoRefresh={false} />);
+
+		expect(screen.getByTestId('claude-plan-shared-gmail')).toHaveTextContent('shared with smash');
+		expect(screen.getByTestId('claude-plan-shared-smash')).toHaveTextContent('shared with gmail');
+	});
+
+	it('does not flag accounts that are genuinely distinct', () => {
+		seedSnapshots({
+			'/Users/me/.claude-gmail': identifiedSnapshot('/Users/me/.claude-gmail', {
+				accountEmail: 'a@example.com',
+				accountUuid: 'uuid-a',
+			}),
+			'/Users/me/.claude-banaco': identifiedSnapshot('/Users/me/.claude-banaco', {
+				accountEmail: 'b@example.com',
+				accountUuid: 'uuid-b',
+			}),
+		});
+
+		render(<ClaudePlanUsage theme={theme} showAllAccounts autoRefresh={false} />);
+
+		expect(screen.queryByTestId('claude-plan-shared-gmail')).toBeNull();
+		expect(screen.queryByTestId('claude-plan-shared-banaco')).toBeNull();
+	});
+
+	it('flags the shared account in the single-account tab view too', () => {
+		// The tab view renders one row at a time, so the badge has to come
+		// from the full snapshot map rather than from the visible row.
+		seedSnapshots({
+			'/Users/me/.claude-gmail': identifiedSnapshot('/Users/me/.claude-gmail', {
+				accountEmail: 'p@smashlabs.com',
+				accountUuid: 'shared-uuid',
+			}),
+			'/Users/me/.claude-smash': identifiedSnapshot('/Users/me/.claude-smash', {
+				accountEmail: 'p@smashlabs.com',
+				accountUuid: 'shared-uuid',
+			}),
+		});
+
+		render(<ClaudePlanUsage theme={theme} autoRefresh={false} />);
+
+		expect(screen.getByTestId('claude-plan-shared-gmail')).toBeInTheDocument();
+		expect(screen.queryByTestId('claude-plan-shared-smash')).toBeNull();
+	});
+
+	it('names the account and its quota siblings in the tab hover text', () => {
+		seedSnapshots({
+			'/Users/me/.claude-gmail': identifiedSnapshot('/Users/me/.claude-gmail', {
+				accountEmail: 'p@smashlabs.com',
+				accountUuid: 'shared-uuid',
+			}),
+			'/Users/me/.claude-smash': identifiedSnapshot('/Users/me/.claude-smash', {
+				accountEmail: 'p@smashlabs.com',
+				accountUuid: 'shared-uuid',
+			}),
+		});
+
+		render(<ClaudePlanUsage theme={theme} autoRefresh={false} />);
+
+		const title = screen.getByTestId('claude-plan-tab-gmail').getAttribute('title') ?? '';
+		expect(title).toContain('/Users/me/.claude-gmail');
+		expect(title).toContain('Logged in as p@smashlabs.com');
+		expect(title).toContain('Shares one quota with smash');
+	});
+});
+
+describe('ClaudePlanUsage - sample age', () => {
+	// The dashboard footer already prints "sampled Nm ago" for this tab, so the
+	// panel must NOT repeat it: two copies of the same age drift apart the moment
+	// one of them re-renders and the other does not.
+	it('leaves the sample age to the dashboard footer', () => {
+		seedSnapshots({
+			'/Users/me/.claude': {
+				sampledAt: '2026-05-15T06:35:00.000Z',
+				configDirKey: '/Users/me/.claude',
+				session: { percent: 50, resetsAt: '2026-05-15T05:00:00.000Z' },
+				weekAllModels: { percent: 30, resetsAt: '2026-05-22T00:00:00.000Z' },
+				weekSonnetOnly: { percent: 10, resetsAt: '2026-05-22T00:00:00.000Z' },
+			},
+		});
+
+		render(<ClaudePlanUsage theme={theme} autoRefresh={false} />);
+		expect(screen.queryByTestId('claude-plan-last-refreshed')).toBeNull();
+		expect(screen.queryByText(/Last refreshed/)).toBeNull();
+	});
+});
+
+describe('ClaudePlanUsage - narrow rows', () => {
+	// A 176px label, a 192px `whitespace-nowrap` reset caption and 32px of gaps
+	// is 400px of fixed width before the bar gets any, so on a 390px phone the
+	// bar - the one number this panel exists to show - was squeezed to nothing.
+	// The row wraps below `sm`: label and caption share the first line, the bar
+	// takes the whole of a second one.
+	it('lets the bar take its own full-width line below the sm breakpoint', () => {
+		seedSnapshots({
+			'/Users/me/.claude': {
+				sampledAt: '2026-05-15T00:00:00.000Z',
+				configDirKey: '/Users/me/.claude',
+				session: { percent: 42, resetsAt: '2026-05-15T05:00:00.000Z' },
+				weekAllModels: { percent: 7, resetsAt: '2026-05-22T00:00:00.000Z' },
+				weekSonnetOnly: { percent: 99, resetsAt: '2026-05-22T00:00:00.000Z' },
+			},
+		});
+
+		render(<ClaudePlanUsage theme={theme} />);
+
+		const bar = screen.getAllByRole('progressbar')[0];
+		expect(bar).toHaveClass('w-full', 'order-last');
+		// ...and goes back to sharing the row from `sm` up.
+		expect(bar).toHaveClass('sm:w-auto', 'sm:flex-1', 'sm:order-none');
+		expect(bar.parentElement).toHaveClass('flex-wrap', 'sm:flex-nowrap');
 	});
 });

@@ -14,7 +14,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { app } from 'electron';
+import { resolveUserDataDir } from '../../shared/userDataDir';
 import {
 	PIPELINE_LAYOUT_DEFAULT_PROJECT_KEY,
 	type PipelineLayoutState,
@@ -26,7 +26,7 @@ let cachedLayoutFilePath: string | null = null;
 
 function getLayoutFilePath(): string {
 	if (!cachedLayoutFilePath) {
-		cachedLayoutFilePath = path.join(app.getPath('userData'), 'cue-pipeline-layout.json');
+		cachedLayoutFilePath = path.join(resolveUserDataDir(), 'cue-pipeline-layout.json');
 	}
 	return cachedLayoutFilePath;
 }

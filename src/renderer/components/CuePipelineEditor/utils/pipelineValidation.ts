@@ -25,8 +25,10 @@ export const DEFAULT_TRIGGER_LABELS: Record<CueEventType, string> = {
 	'agent.completed': 'Agent Done',
 	'github.pull_request': 'Pull Request',
 	'github.issue': 'Issue',
+	'github.label': 'Label Added',
 	'task.pending': 'Pending Task',
 	'cli.trigger': 'CLI Trigger',
+	'webhook.received': 'Webhook',
 };
 
 /**
@@ -73,6 +75,7 @@ function validateTriggerConfig(
 			break;
 		case 'github.pull_request':
 		case 'github.issue':
+		case 'github.label':
 			// repo is optional in the YAML schema (defaults to current repo via gh CLI)
 			// but if provided it must be non-empty.
 			if (
@@ -81,6 +84,20 @@ function validateTriggerConfig(
 			) {
 				errors.push(
 					`"${pipelineName}": ${label} trigger has an empty "repo" - leave blank or set "owner/repo"`
+				);
+			}
+			break;
+		case 'webhook.received':
+			// Mirrors the YAML validator: a webhook with no secret is a remote
+			// trigger anyone on the machine can fire, so block it at save time
+			// rather than letting the loader reject the whole file on restart.
+			if (
+				(typeof cfg.webhook_secret_env !== 'string' ||
+					cfg.webhook_secret_env.trim().length === 0) &&
+				(typeof cfg.webhook_secret !== 'string' || cfg.webhook_secret.trim().length === 0)
+			) {
+				errors.push(
+					`"${pipelineName}": ${label} trigger needs a secret environment variable - webhooks must be authenticated`
 				);
 			}
 			break;
@@ -163,7 +180,13 @@ export function validatePipelines(pipelines: CuePipeline[]): string[] {
 					return src?.type === 'trigger';
 				});
 				const hasNodePrompt = !!agentData.inputPrompt?.trim();
-				const allEdgesHavePrompts = triggerEdges.every((e) => e.prompt?.trim());
+				// A notify edge carries a toast, not work: the engine surfaces
+				// the message through this agent and never spawns it, so
+				// `cue-config-validator.ts` accepts an empty prompt there. Any
+				// agent fed by a `cue schedule --notify` task has such an edge,
+				// and demanding a prompt for it reported a permanent phantom
+				// error that blocked Save for EVERY pipeline in the editor.
+				const allEdgesHavePrompts = triggerEdges.every((e) => e.notify || e.prompt?.trim());
 				if (!hasNodePrompt && !allEdgesHavePrompts) {
 					const name = agentData.sessionName;
 					errors.push(`"${pipeline.name}": agent "${name}" is missing a prompt`);

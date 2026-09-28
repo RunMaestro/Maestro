@@ -124,8 +124,11 @@ export const NewTabPopover = memo(function NewTabPopover({
 
 	return (
 		<>
+			{/* Opaque so tabs scroll under it, so it carries the tab bar's sheen and
+			    reaches the bar's top edge (-mt-2 cancels the container's pt-2, pt-2
+			    keeps the button on the same baseline). */}
 			<div
-				className={`flex items-center shrink-0 pl-2 pr-2 self-stretch ${isOverflowing ? 'sticky right-0' : ''}`}
+				className={`chrome-sheen flex items-center shrink-0 -mt-2 pt-2 pl-2 pr-2 self-stretch ${isOverflowing ? 'sticky right-0' : ''}`}
 				style={{ backgroundColor: theme.colors.bgSidebar, zIndex: 5 }}
 			>
 				<button
@@ -170,8 +173,31 @@ export const NewTabPopover = memo(function NewTabPopover({
 								style={{ color: getTabKindColor('ai', theme) }}
 							/>
 							New AI Chat
-							<span className="ml-auto text-xs" style={{ color: theme.colors.textDim }}>
+							<span
+								className="ml-auto text-xs"
+								data-shortcut-hint=""
+								style={{ color: theme.colors.textDim }}
+							>
 								{formatShortcutKeys(newTabKeys)}
+							</span>
+						</button>
+						{/* Terminal sits second: it is the most-reached-for tab after a chat. */}
+						<button
+							className="flex items-center gap-2 w-full px-3 py-2 text-sm text-left hover:bg-white/10 transition-colors"
+							style={{ color: theme.colors.textMain }}
+							onClick={() => closeAndDo(() => onNewTerminalTab?.())}
+						>
+							<Terminal
+								className="w-3.5 h-3.5"
+								style={{ color: getTabKindColor('terminal', theme) }}
+							/>
+							New Terminal
+							<span
+								className="ml-auto text-xs"
+								data-shortcut-hint=""
+								style={{ color: theme.colors.textDim }}
+							>
+								{formatShortcutKeys(terminalKeys)}
 							</span>
 						</button>
 						{onNewFileTab && (
@@ -185,7 +211,11 @@ export const NewTabPopover = memo(function NewTabPopover({
 									style={{ color: getTabKindColor('file', theme) }}
 								/>
 								New File
-								<span className="ml-auto text-xs" style={{ color: theme.colors.textDim }}>
+								<span
+									className="ml-auto text-xs"
+									data-shortcut-hint=""
+									style={{ color: theme.colors.textDim }}
+								>
 									{formatShortcutKeys(fileTabKeys)}
 								</span>
 							</button>
@@ -203,7 +233,11 @@ export const NewTabPopover = memo(function NewTabPopover({
 									style={{ color: getTabKindColor('browser', theme) }}
 								/>
 								New Browser
-								<span className="ml-auto text-xs" style={{ color: theme.colors.textDim }}>
+								<span
+									className="ml-auto text-xs"
+									data-shortcut-hint=""
+									style={{ color: theme.colors.textDim }}
+								>
 									{formatShortcutKeys(browserTabKeys)}
 								</span>
 							</button>
@@ -222,20 +256,6 @@ export const NewTabPopover = memo(function NewTabPopover({
 								New Incognito Browser
 							</button>
 						)}
-						<button
-							className="flex items-center gap-2 w-full px-3 py-2 text-sm text-left hover:bg-white/10 transition-colors"
-							style={{ color: theme.colors.textMain }}
-							onClick={() => closeAndDo(() => onNewTerminalTab?.())}
-						>
-							<Terminal
-								className="w-3.5 h-3.5"
-								style={{ color: getTabKindColor('terminal', theme) }}
-							/>
-							New Terminal
-							<span className="ml-auto text-xs" style={{ color: theme.colors.textDim }}>
-								{formatShortcutKeys(terminalKeys)}
-							</span>
-						</button>
 					</div>,
 					document.body
 				)}

@@ -3,15 +3,18 @@ import {
 	readDirRemote,
 	readFileRemote,
 	readBinaryFileRemoteAsBase64,
+	readBinaryFileBlockRemoteAsBase64,
 	readFileTailRemote,
 	statRemote,
 	directorySizeRemote,
 	writeFileRemote,
 	existsRemote,
 	mkdirRemote,
+	compressFolderRemote,
 	listDirWithStatsRemote,
 	bulkStatFileInSubdirsRemote,
 	listTreeRemote,
+	deleteManyRemote,
 	__resetHostLimitersForTest,
 	type RemoteFsDeps,
 } from '../../../main/utils/remote-fs';
@@ -443,6 +446,100 @@ describe('remote-fs', () => {
 
 			expect(result.success).toBe(false);
 			expect(result.error).toContain('File not found');
+		});
+	});
+
+	describe('readBinaryFileBlockRemoteAsBase64', () => {
+		it('seeks with dd by block index rather than reading and discarding', async () => {
+			const deps = createMockDeps({ stdout: 'YWJj\n', stderr: '', exitCode: 0 });
+
+			const result = await readBinaryFileBlockRemoteAsBase64(
+				'/data/events.parquet',
+				baseConfig,
+				7,
+				4194304,
+				deps
+			);
+
+			expect(result.success).toBe(true);
+			expect(result.data).toBe('YWJj');
+
+			const sshArgs = (deps.execSsh as any).mock.calls[0][1] as string[];
+			const remoteCommand = sshArgs[sshArgs.length - 1];
+			// `bs`/`skip` is what makes this a seek: dd jumps to block*size
+			// instead of streaming past the earlier bytes. `count=1` keeps the
+			// read to exactly one block.
+			expect(remoteCommand).toContain('bs=4194304');
+			expect(remoteCommand).toContain('skip=7');
+			expect(remoteCommand).toContain('count=1');
+			expect(remoteCommand).toContain('| base64');
+			// dd writes its summary to stderr; without this it looks like failure.
+			expect(remoteCommand).toContain('2>/dev/null');
+		});
+
+		it('strips the line wrapping GNU base64 adds', async () => {
+			const deps = createMockDeps({ stdout: 'aVBO\nRw0K\nGgoA\n', stderr: '', exitCode: 0 });
+
+			const result = await readBinaryFileBlockRemoteAsBase64(
+				'/f.parquet',
+				baseConfig,
+				0,
+				1024,
+				deps
+			);
+
+			expect(result.data).toBe('aVBORw0KGgoA');
+		});
+
+		it('returns empty data past EOF instead of erroring', async () => {
+			// dd past the end exits 0 with nothing on stdout. The caller uses
+			// that to detect a file that shrank mid-transfer.
+			const deps = createMockDeps({ stdout: '', stderr: '', exitCode: 0 });
+
+			const result = await readBinaryFileBlockRemoteAsBase64(
+				'/f.parquet',
+				baseConfig,
+				99,
+				1024,
+				deps
+			);
+
+			expect(result.success).toBe(true);
+			expect(result.data).toBe('');
+		});
+
+		it('maps a missing file to a file-not-found error', async () => {
+			const deps = createMockDeps({
+				stdout: '',
+				stderr: 'dd: /missing.parquet: No such file or directory',
+				exitCode: 1,
+			});
+
+			const result = await readBinaryFileBlockRemoteAsBase64(
+				'/missing.parquet',
+				baseConfig,
+				0,
+				1024,
+				deps
+			);
+
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('File not found');
+		});
+
+		it('rejects a nonsensical block index or size without touching the network', async () => {
+			const deps = createMockDeps({ stdout: '', stderr: '', exitCode: 0 });
+
+			expect(
+				(await readBinaryFileBlockRemoteAsBase64('/f', baseConfig, -1, 1024, deps)).success
+			).toBe(false);
+			expect((await readBinaryFileBlockRemoteAsBase64('/f', baseConfig, 0, 0, deps)).success).toBe(
+				false
+			);
+			expect(
+				(await readBinaryFileBlockRemoteAsBase64('/f', baseConfig, 1.5, 1024, deps)).success
+			).toBe(false);
+			expect(deps.execSsh).not.toHaveBeenCalled();
 		});
 	});
 
@@ -1195,6 +1292,57 @@ describe('remote-fs', () => {
 		});
 	});
 
+	describe('compressFolderRemote', () => {
+		it('zips from the parent dir so the folder is the archive root', async () => {
+			const deps = createMockDeps({ stdout: '', stderr: '', exitCode: 0 });
+
+			const result = await compressFolderRemote(
+				'/home/user/project/docs',
+				'/home/user/project/docs.zip',
+				baseConfig,
+				deps
+			);
+
+			expect(result.success).toBe(true);
+			const call = (deps.execSsh as any).mock.calls[0][1];
+			const remoteCommand = call[call.length - 1];
+			expect(remoteCommand).toContain("cd '/home/user/project'");
+			expect(remoteCommand).toContain("zip -r -q -y '/home/user/project/docs.zip' 'docs'");
+		});
+
+		it('reports a missing zip binary in plain language', async () => {
+			const deps = createMockDeps({
+				stdout: '',
+				stderr: 'bash: zip: command not found',
+				exitCode: 127,
+			});
+
+			const result = await compressFolderRemote(
+				'/home/user/docs',
+				'/home/user/docs.zip',
+				baseConfig,
+				deps
+			);
+
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('zip');
+			expect(result.error).toContain('installed');
+		});
+
+		it('handles permission denied on the destination', async () => {
+			const deps = createMockDeps({
+				stdout: '',
+				stderr: 'zip I/O error: Permission denied',
+				exitCode: 1,
+			});
+
+			const result = await compressFolderRemote('/srv/docs', '/srv/docs.zip', baseConfig, deps);
+
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('Permission denied');
+		});
+	});
+
 	describe('SSH context integration', () => {
 		it('passes correct SSH remote config to buildSshArgs', async () => {
 			const customConfig: SshRemoteConfig = {
@@ -1379,6 +1527,105 @@ describe('remote-fs', () => {
 			);
 
 			expect(results.every((r) => r.status === 'rejected')).toBe(true);
+		});
+	});
+
+	describe('deleteManyRemote', () => {
+		const ok: ExecResult = { stdout: '', stderr: '', exitCode: 0 };
+
+		it('deletes a whole batch in a single SSH round trip', async () => {
+			const deps = createMockDeps(ok);
+
+			const results = await deleteManyRemote(
+				['/remote/a.txt', '/remote/b.txt', '/remote/c.txt'],
+				baseConfig,
+				true,
+				deps
+			);
+
+			// This is the whole point: one handshake for N paths, not N.
+			expect(deps.execSsh).toHaveBeenCalledTimes(1);
+			const cmd = (deps.execSsh as any).mock.calls[0][1].at(-1);
+			expect(cmd).toBe("rm -rf '/remote/a.txt' '/remote/b.txt' '/remote/c.txt'");
+			expect(results).toEqual([{ success: true }, { success: true }, { success: true }]);
+		});
+
+		it('uses rm -f when recursive is off', async () => {
+			const deps = createMockDeps(ok);
+
+			await deleteManyRemote(['/remote/a.txt'], baseConfig, false, deps);
+
+			expect((deps.execSsh as any).mock.calls[0][1].at(-1)).toBe("rm -f '/remote/a.txt'");
+		});
+
+		it('escapes paths so a hostile filename cannot break out of the command', async () => {
+			const deps = createMockDeps(ok);
+
+			await deleteManyRemote(["/remote/a'; rm -rf ~; echo '.txt"], baseConfig, true, deps);
+
+			const cmd = (deps.execSsh as any).mock.calls[0][1].at(-1);
+			// The whole filename stays one single-quoted argument - the embedded
+			// quote is closed and re-opened as '\'' rather than ending it, so the
+			// injected `rm -rf ~` is data the outer rm receives, not a command the
+			// shell runs. Batching several paths into one command line makes this
+			// the load-bearing property of the whole function.
+			expect(cmd).toBe(`rm -rf '/remote/a'\\''; rm -rf ~; echo '\\''.txt'`);
+		});
+
+		it('chunks a batch too large for one command line', async () => {
+			const deps = createMockDeps(ok);
+			// Each path is ~1 KB escaped, so 64 of them blow past the 32 KB cap.
+			const paths = Array.from({ length: 64 }, (_, i) => `/remote/${'x'.repeat(1000)}-${i}.txt`);
+
+			const results = await deleteManyRemote(paths, baseConfig, true, deps);
+
+			expect((deps.execSsh as any).mock.calls.length).toBeGreaterThan(1);
+			for (const call of (deps.execSsh as any).mock.calls) {
+				expect(Buffer.byteLength(call[1].at(-1), 'utf8')).toBeLessThanOrEqual(32 * 1024);
+			}
+			// Chunking must not drop or reorder anything.
+			expect(results).toHaveLength(paths.length);
+			expect(results.every((r) => r.success)).toBe(true);
+		});
+
+		it('retries a failed chunk per path to attribute the failure', async () => {
+			// `rm` exits non-zero without naming the offending argument, so the
+			// batch is replayed one path at a time to find out which one failed.
+			const execSsh = vi
+				.fn()
+				// Batch attempt fails as a whole.
+				.mockResolvedValueOnce({ stdout: '', stderr: 'rm: permission denied', exitCode: 1 })
+				// Per-path replay: a.txt fine, b.txt is the culprit, c.txt fine.
+				.mockResolvedValueOnce(ok)
+				.mockResolvedValueOnce({
+					stdout: '',
+					stderr: 'rm: /remote/b.txt: Permission denied',
+					exitCode: 1,
+				})
+				.mockResolvedValueOnce(ok);
+			const deps: RemoteFsDeps = {
+				execSsh,
+				buildSshArgs: vi.fn().mockReturnValue(['testuser@dev.example.com']),
+			};
+
+			const results = await deleteManyRemote(
+				['/remote/a.txt', '/remote/b.txt', '/remote/c.txt'],
+				baseConfig,
+				true,
+				deps
+			);
+
+			expect(results[0]).toEqual({ success: true });
+			expect(results[1].success).toBe(false);
+			expect(results[1].error).toContain('Permission denied');
+			expect(results[2]).toEqual({ success: true });
+		});
+
+		it('returns nothing and opens no connection for an empty batch', async () => {
+			const deps = createMockDeps(ok);
+
+			expect(await deleteManyRemote([], baseConfig, true, deps)).toEqual([]);
+			expect(deps.execSsh).not.toHaveBeenCalled();
 		});
 	});
 });

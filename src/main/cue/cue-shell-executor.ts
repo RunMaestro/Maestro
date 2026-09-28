@@ -19,6 +19,7 @@ import { isWindows } from '../../shared/platformDetection';
 import { wrapSpawnWithSsh } from '../utils/ssh-spawn-wrapper';
 import type { SshRemoteSettingsStore } from '../utils/ssh-remote-resolver';
 import { getShellPath } from '../runtime/getShellPath';
+import { buildSpawnPath } from '../utils/spawnPath';
 
 const SIGKILL_DELAY_MS = 5000;
 
@@ -186,20 +187,21 @@ export async function executeCueShell(config: CueShellExecutionConfig): Promise<
 	// macOS GUI apps inherit a minimal launchd PATH (no `~/.local/bin`,
 	// `/opt/homebrew/bin`, etc.), so shell commands that rely on user-installed
 	// binaries fail with "command not found". Source the user's login-shell PATH
-	// to match terminal behavior. SSH mode is unaffected - the remote shell
-	// resolves PATH on its own host.
+	// to match terminal behavior. When the probe fails (a slow `.zshrc` blows its
+	// 2s budget), fall back to the expanded spawn PATH rather than the inherited
+	// one: that IS the launchd PATH, which is exactly what broke (#1573). SSH mode
+	// is unaffected - the remote shell resolves PATH on its own host.
 	if (useLocalShell) {
+		let shellPath = '';
 		try {
-			const shellPath = await getShellPath();
-			if (shellPath) {
-				spawnEnv.PATH = shellPath;
-			}
+			shellPath = await getShellPath();
 		} catch (err) {
 			captureMessage(
-				`cue:shell falling back to default PATH: ${err instanceof Error ? err.message : String(err)}`,
+				`cue:shell falling back to expanded PATH: ${err instanceof Error ? err.message : String(err)}`,
 				'warning'
 			);
 		}
+		spawnEnv.PATH = shellPath || buildSpawnPath();
 	}
 
 	return new Promise<CueRunResult>((resolve) => {

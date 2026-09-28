@@ -6,9 +6,9 @@ import React, {
 	memo,
 	useCallback,
 	useDeferredValue,
+	useSyncExternalStore,
 } from 'react';
 import {
-	Wand2,
 	Plus,
 	ChevronRight,
 	ChevronDown,
@@ -24,6 +24,15 @@ import {
 } from 'lucide-react';
 import { GhostIconButton } from '../ui/GhostIconButton';
 import { HamburgerDropdown } from './HamburgerDropdown';
+import { NowPlayingIndicator } from '../MediaPlayback/NowPlayingIndicator';
+import {
+	subscribeSidebarReveal,
+	getSidebarRevealToken,
+	markLeftBarPointerInput,
+	clearLeftBarPointerInput,
+	takeLeftBarPointerInput,
+} from '../../utils/sidebarReveal';
+import { useMediaPlaybackStore, selectNowPlayingVisible } from '../../stores/mediaPlaybackStore';
 import type { Session, Group, Theme } from '../../types';
 import { isWorktreeGroup } from '../../../shared/types';
 import { canSetGroupParent, removeGroupAndPromoteChildren } from '../../../shared/groupHierarchy';
@@ -47,12 +56,15 @@ import { useGroupChatStore } from '../../stores/groupChatStore';
 import { useSidebarNavStore } from '../../stores/sidebarNavStore';
 import { useInlineWizardContext } from '../../contexts/InlineWizardContext';
 import { useWindowContextOptional } from '../../contexts/WindowContext';
+import { rollUpWizardActivityToSessions } from '../../utils/wizardActivity';
+import { buildSessionJumpSlotMap } from '../../utils/sessionJumpSlots';
 import { getModalActions, useModalStore } from '../../stores/modalStore';
 import { SessionContextMenu } from './SessionContextMenu';
 import { buildWindowMoveTargets, scopeSessionsToOwningWindow } from '../../utils/windowTargets';
 import { GroupContextMenu } from './GroupContextMenu';
 import { WizardIndicator } from './WizardIndicator';
 import { PluginUiItemsSlot } from '../plugins/PluginUiItemsSlot';
+import { BusyWand } from './BusyWand';
 import { HamburgerMenuContent } from './HamburgerMenuContent';
 import { CollapsedSessionPillRows } from './CollapsedSessionPill';
 import { EscCloseButton } from '../ui/EscCloseButton';
@@ -69,11 +81,65 @@ import {
 import { cueService } from '../../services/cue';
 import { captureException } from '../../utils/sentry';
 import { isWebDesktop } from '../../utils/runtimeContext';
+import { getBusyGroupChatIds } from '../../utils/groupChatStatus';
 import { useEventListener } from '../../hooks/utils/useEventListener';
 import type { StarredItem } from '../../hooks/session/useStarredItems';
+import { useHeaderTextDelta } from '../../hooks/ui/useHeaderTextDelta';
+import { Wordmark } from '../ui/Wordmark';
 import { usePluginContributions } from '../../hooks/usePluginContributions';
 import { usePluginGroupings } from '../../hooks/usePluginGroupings';
 import { buildVirtualGrouping } from '../../utils/pluginGroupings';
+
+/**
+ * Sidebar widths at which the header's two pills can afford their text labels.
+ *
+ * The header row neither wraps nor scrolls, so every element in it earns its
+ * width or drops its text. Both pills shed their label the same way; the
+ * now-playing one needs more room because it sits further right and carries
+ * more chrome (two buttons and a divider, none of which are ever dropped -
+ * they are the whole transport a minimized player has). Its tooltip names the
+ * file at any width.
+ */
+/**
+ * All of these are measured against the BASELINE font - Roboto Mono at a 14px
+ * root, which is what Maestro always rendered in before the interface font
+ * became a setting. They are corrected for the font actually in use by
+ * `useHeaderTextDelta`, which adds however much wider each label got. Do not
+ * re-measure them against whatever font you happen to be running: the delta
+ * would then be applied on top of a correction already baked in.
+ */
+const LIVE_LABEL_MIN_WIDTH = 256;
+const NOW_PLAYING_LABEL_MIN_WIDTH = 401;
+/**
+ * Room the achievements badge takes when the conductor has one, pushing both
+ * label thresholds out by the same amount. Shared so the two cannot drift.
+ */
+const HEADER_BADGE_WIDTH = 39;
+/**
+ * Width the header's left cluster needs before the MAESTRO wordmark is drawn:
+ * the wand, the wordmark itself, the hamburger, and the row's own padding.
+ * Excludes the LIVE pill and the now-playing pill, which are added below.
+ *
+ * The wordmark is drawn IN FULL or not at all. It used to `truncate`, which is
+ * how a narrow sidebar rendered the brand as "MAE...", and a clipped brand
+ * reads as a rendering bug rather than as a deliberate space saving. The wand
+ * stays at every width, so the header never loses its identity or its
+ * switch-agent affordance.
+ */
+const WORDMARK_MIN_WIDTH = 232;
+/**
+ * The LIVE toggle's own reserve, broken out rather than folded into the
+ * constant above so a build that hides the toggle can zero it in one line.
+ */
+const LIVE_PILL_RESERVE = 48;
+/**
+ * What the now-playing pill costs, by the form it is currently drawn in. It
+ * sheds its filename below NOW_PLAYING_LABEL_MIN_WIDTH, so reserving the wide
+ * figure at every width would hide the wordmark for a pill that is no longer
+ * that wide.
+ */
+const NOW_PLAYING_COMPACT_RESERVE = 59;
+const NOW_PLAYING_LABEL_RESERVE = 181;
 
 // ============================================================================
 // SessionContextMenu - Right-click context menu for session items
@@ -222,6 +288,35 @@ function SessionListInner(props: SessionListProps) {
 	const showLeftPanelGroupMemberCount = useSettingsStore((s) => s.showLeftPanelGroupMemberCount);
 	const leftPanelCollapsedPillsPerRow = useSettingsStore((s) => s.leftPanelCollapsedPillsPerRow);
 	const autoRunStats = useSettingsStore((s) => s.autoRunStats);
+	// The badge pill occupies part of the header's left cluster, so both label
+	// thresholds below shift by the same amount when it is showing.
+	const headerBadgeWidth =
+		autoRunStats && autoRunStats.currentBadgeLevel > 0 ? HEADER_BADGE_WIDTH : 0;
+	// Whether the now-playing pill is on screen, and in which form. Read from the
+	// store's own selector rather than re-derived here, so the reserve below
+	// cannot end up describing a header nobody is looking at.
+	const nowPlayingVisible = useMediaPlaybackStore(selectNowPlayingVisible);
+	const nowPlayingCompact = leftSidebarWidthState < NOW_PLAYING_LABEL_MIN_WIDTH + headerBadgeWidth;
+	const nowPlayingReserve = !nowPlayingVisible
+		? 0
+		: nowPlayingCompact
+			? NOW_PLAYING_COMPACT_RESERVE
+			: NOW_PLAYING_LABEL_RESERVE;
+	// How much wider the header's own labels render in the current interface font
+	// than in the one the thresholds below were measured against. Zero when the
+	// user is on the original monospace face.
+	const headerTextDelta = useHeaderTextDelta();
+	// Constant on this build. The indirection is deliberate: a build that hides
+	// the LIVE toggle zeroes this one line instead of re-deriving the threshold.
+	// The label's own delta rides with it, since the reserve exists to hold it.
+	const livePillReserve = LIVE_PILL_RESERVE + headerTextDelta.liveLabel;
+	const showWordmark =
+		leftSidebarWidthState >=
+		WORDMARK_MIN_WIDTH +
+			headerTextDelta.wordmark +
+			livePillReserve +
+			headerBadgeWidth +
+			nowPlayingReserve;
 	const contextWarningYellowThreshold = useSettingsStore(
 		(s) => s.contextManagementSettings.contextWarningYellowThreshold
 	);
@@ -233,7 +328,16 @@ function SessionListInner(props: SessionListProps) {
 	// Inline wizard activity per agent (Session.id). Used by the Left Bar to
 	// render the wand glyph on agent rows AND on the group header / Bookmarks
 	// header for the group(s) those agents live in.
-	const { wizardActiveSessions } = useInlineWizardContext();
+	const { wizardActiveTabs } = useInlineWizardContext();
+
+	// Roll live wizard tabs up to their owning agent, dropping any whose tab is no
+	// longer open. Without that liveness check a single missed eviction (a close
+	// path that forgot to end the wizard, a cancel that ended the wrong tab) leaves
+	// a wand burning on an agent that has no wizard tab to switch to.
+	const wizardActiveSessions = useMemo(
+		() => rollUpWizardActivityToSessions(wizardActiveTabs, sessions),
+		[wizardActiveTabs, sessions]
+	);
 
 	// Multi-window awareness. `windowCtx` is declared above (next to the scoped
 	// session list it drives). It is optional so the Left Bar still renders
@@ -347,29 +451,92 @@ function SessionListInner(props: SessionListProps) {
 	const participantStates = useGroupChatStore((s) => s.participantStates);
 	const groupChatStates = useGroupChatStore((s) => s.groupChatStates);
 	const allGroupChatParticipantStates = useGroupChatStore((s) => s.allGroupChatParticipantStates);
+	const unreadGroupChatIds = useGroupChatStore((s) => s.unreadGroupChatIds);
 
-	// Keep the keyboard-selected Left Bar row in view as navigation moves it.
-	// Rows are tagged with `data-nav-key`; we resolve the current key from the
-	// active cursor (priority: Starred/Group-Chat extra cursor, then the active
-	// group chat, then the agent index) and scroll it into the list viewport.
-	// Fires for both arrow-key navigation and the global Cmd+[ / Cmd+] cycle.
+	// Latest nav cursor, read by the reveal effect on the next frame rather than
+	// captured when the reveal was requested. The cursor is not settled at
+	// request time: `selectedSidebarIndex` is synced from `activeSessionId` by a
+	// parent effect, and parent effects run after child ones, so reading it
+	// synchronously gives the row the cursor was leaving.
+	const navCursorRef = useRef({ selectedSidebarIndex, sidebarExtraSelection, activeGroupChatId });
+	navCursorRef.current = { selectedSidebarIndex, sidebarExtraSelection, activeGroupChatId };
+
+	// Shared with the group chat rows' status dots and the agent jumper's LIVE
+	// bucket, so all three agree on what "running" means.
+	const isAnyGroupChatBusy = useMemo(
+		() =>
+			getBusyGroupChatIds(groupChats, {
+				activeGroupChatId,
+				groupChatState,
+				participantStates,
+				groupChatStates,
+				allGroupChatParticipantStates,
+			}).length > 0,
+		[
+			groupChats,
+			activeGroupChatId,
+			groupChatState,
+			participantStates,
+			groupChatStates,
+			allGroupChatParticipantStates,
+		]
+	);
+
+	// Bring the keyboard cursor into view whenever the active agent or group chat
+	// changes, or when a caller asks (`requestSidebarReveal`) - except when the
+	// switch came from a click in the Left Bar itself, where the user is already
+	// looking at the row. See utils/sidebarReveal.ts.
+	//
+	// Deferred to the next frame so the cursor has settled. Without that, a
+	// programmatic jump scrolls to the row the cursor is leaving and never
+	// corrects, because nothing asks a second time.
+	const revealToken = useSyncExternalStore(subscribeSidebarReveal, getSidebarRevealToken);
+	// Seeded with the state as it stands at mount, because MOUNTING IS NOT A
+	// REQUEST. The counter is global and monotonic, so a fresh SessionList (a new
+	// window, a remount) would otherwise run this effect once against whatever
+	// the last reveal left behind and scroll a list nobody had touched.
+	const handledRevealRef = useRef(revealToken);
+	const lastActiveRef = useRef({ sessionId: activeSessionId, groupChatId: activeGroupChatId });
 	useEffect(() => {
-		const container = listScrollRef.current;
-		if (!container) return;
-		let navKey: string | null = null;
-		if (sidebarExtraSelection?.kind === 'starred') {
-			navKey = `starred:${sidebarExtraSelection.key}`;
-		} else if (sidebarExtraSelection?.kind === 'groupChat') {
-			navKey = `groupchat:${sidebarExtraSelection.id}`;
-		} else if (activeGroupChatId) {
-			navKey = `groupchat:${activeGroupChatId}`;
-		} else if (selectedSidebarIndex >= 0) {
-			navKey = `idx:${selectedSidebarIndex}`;
-		}
-		if (!navKey) return;
-		const el = container.querySelector(`[data-nav-key="${CSS.escape(navKey)}"]`);
-		el?.scrollIntoView({ block: 'nearest' });
-	}, [selectedSidebarIndex, sidebarExtraSelection, activeGroupChatId, activeSessionId]);
+		const requested = revealToken !== handledRevealRef.current;
+		handledRevealRef.current = revealToken;
+		const prev = lastActiveRef.current;
+		lastActiveRef.current = { sessionId: activeSessionId, groupChatId: activeGroupChatId };
+		// A switch is landing ON something. Closing a group chat drops the view back
+		// to the agent that was already active, which is not a switch.
+		const switched = activeGroupChatId
+			? activeGroupChatId !== prev.groupChatId
+			: activeSessionId !== prev.sessionId;
+		const revealSwitch = switched && !takeLeftBarPointerInput();
+		if (!requested && !revealSwitch) return;
+		const frame = requestAnimationFrame(() => {
+			const container = listScrollRef.current;
+			if (!container) return;
+			const cursor = navCursorRef.current;
+			let navKey: string | null = null;
+			if (cursor.sidebarExtraSelection?.kind === 'starred') {
+				navKey = `starred:${cursor.sidebarExtraSelection.key}`;
+			} else if (cursor.sidebarExtraSelection?.kind === 'groupChat') {
+				navKey = `groupchat:${cursor.sidebarExtraSelection.id}`;
+			} else if (cursor.activeGroupChatId) {
+				navKey = `groupchat:${cursor.activeGroupChatId}`;
+			} else if (cursor.selectedSidebarIndex >= 0) {
+				navKey = `idx:${cursor.selectedSidebarIndex}`;
+			}
+			if (!navKey) return;
+			const el = container.querySelector(`[data-nav-key="${CSS.escape(navKey)}"]`);
+			el?.scrollIntoView({ block: 'nearest' });
+		});
+		return () => cancelAnimationFrame(frame);
+	}, [revealToken, activeSessionId, activeGroupChatId]);
+
+	// Track where the user's latest input went, so a switch made by clicking a
+	// Left Bar row is not re-aimed. Window capture runs before React's root
+	// listener (which fires the Left Bar's onPointerDownCapture below) and before
+	// any handler can stop a keydown, so the order is: clear, then re-mark if the
+	// press was ours. Portaled menus the Left Bar owns count as the Left Bar.
+	useEventListener('pointerdown', clearLeftBarPointerInput, { capture: true });
+	useEventListener('keydown', clearLeftBarPointerInput, { capture: true });
 
 	// Stable store actions
 	const setActiveFocus = useUIStore.getState().setActiveFocus;
@@ -378,12 +545,18 @@ function SessionListInner(props: SessionListProps) {
 	const setGroupChatSortAlphabetical = useSettingsStore.getState().setGroupChatSortAlphabetical;
 	const setActiveSessionIdRaw = useSessionStore.getState().setActiveSessionId;
 	const setActiveGroupChatId = useGroupChatStore.getState().setActiveGroupChatId;
+	const closeLeftSidebarForNavigation = useUIStore.getState().closeLeftSidebarForNavigation;
 	const setActiveSessionId = useCallback(
 		(id: string) => {
 			setActiveGroupChatId(null);
 			setActiveSessionIdRaw(id);
+			// Narrow viewports: the drawer covers the agent that was just picked.
+			// Closed here rather than from an effect on activeSessionId, because
+			// picking the agent that is ALREADY active - the common case behind an
+			// open group chat - changes no id at all.
+			closeLeftSidebarForNavigation();
 		},
-		[setActiveSessionIdRaw, setActiveGroupChatId]
+		[setActiveSessionIdRaw, setActiveGroupChatId, closeLeftSidebarForNavigation]
 	);
 	const setSessions = useSessionStore.getState().setSessions;
 	const setGroups = useSessionStore.getState().setGroups;
@@ -463,10 +636,15 @@ function SessionListInner(props: SessionListProps) {
 		[scopeSessionsToWindow, sortedSessionsAll]
 	);
 
-	// Derive whether any session is busy or in auto-run (for wand sparkle animation)
+	// Derive whether any session is busy or in auto-run (for wand sparkle
+	// animation). A running group chat counts too: the room burns real agent
+	// time, and the wand is the app-wide "something is working" tell.
 	const isAnyBusy = useMemo(
-		() => sessions.some((s) => s.state === 'busy') || activeBatchSessionIds.length > 0,
-		[sessions, activeBatchSessionIds]
+		() =>
+			sessions.some((s) => s.state === 'busy') ||
+			activeBatchSessionIds.length > 0 ||
+			isAnyGroupChatBusy,
+		[sessions, activeBatchSessionIds, isAnyGroupChatBusy]
 	);
 
 	const { sessionFilter, setSessionFilter } = useSessionFilterMode();
@@ -499,9 +677,15 @@ function SessionListInner(props: SessionListProps) {
 		}),
 		[activeBatchSessionIds, stuckOutageSignature]
 	);
+	// Drives the Bell button's dot. It must agree with what the unread filter
+	// would actually reveal, and that filter keeps unread group chats too - a
+	// dot-less bell that still un-hides a room reads as a bug. Agents route
+	// through sessionNeedsAttention so this can't drift from the filter itself.
 	const hasUnreadAgents = useMemo(
-		() => sessions.some((s) => sessionNeedsAttention(s, attentionCtx)),
-		[sessions, attentionCtx]
+		() =>
+			sessions.some((s) => sessionNeedsAttention(s, attentionCtx)) ||
+			groupChats.some((c) => !c.archived && unreadGroupChatIds.has(c.id)),
+		[sessions, attentionCtx, groupChats, unreadGroupChatIds]
 	);
 	const [menuOpen, setMenuOpen] = useState(false);
 
@@ -1129,11 +1313,7 @@ function SessionListInner(props: SessionListProps) {
 	// Precomputed jump number map (1-9, 0=10th) for sessions based on position in visibleSessions
 	const jumpNumberMap = useMemo(() => {
 		if (!showSessionJumpNumbers) return new Map<string, string>();
-		const map = new Map<string, string>();
-		for (let i = 0; i < Math.min(visibleSessions.length, 10); i++) {
-			map.set(visibleSessions[i].id, i === 9 ? '0' : String(i + 1));
-		}
-		return map;
+		return buildSessionJumpSlotMap(visibleSessions);
 	}, [showSessionJumpNumbers, visibleSessions]);
 
 	const getSessionJumpNumber = (sessionId: string): string | null => {
@@ -1147,7 +1327,7 @@ function SessionListInner(props: SessionListProps) {
 			data-panel="left"
 			data-collapsed={leftSidebarOpen ? 'false' : 'true'}
 			data-hidden={leftSidebarHidden ? 'true' : 'false'}
-			className={`border-r flex flex-col shrink-0 ${sidebarTransitionClass} outline-none relative z-20 maestro-side-panel maestro-side-panel--left`}
+			className={`chrome-sheen border-r flex flex-col shrink-0 ${sidebarTransitionClass} outline-none relative z-20 maestro-side-panel maestro-side-panel--left`}
 			style={
 				{
 					width: leftSidebarOpen ? `${leftSidebarWidthState}px` : '64px',
@@ -1159,6 +1339,7 @@ function SessionListInner(props: SessionListProps) {
 							: undefined,
 				} as React.CSSProperties
 			}
+			onPointerDownCapture={markLeftBarPointerInput}
 			onClick={() => setActiveFocus('sidebar')}
 			onFocus={() => setActiveFocus('sidebar')}
 			onKeyDown={(e) => {
@@ -1202,7 +1383,18 @@ function SessionListInner(props: SessionListProps) {
 			>
 				{leftSidebarOpen ? (
 					<>
-						<div className="flex items-center gap-2">
+						{/* Three zones, left to right: identity, indicators, menu. The
+						    indicator band is the flexible one, so it centers itself in
+						    whatever the other two leave behind and reads as its own group
+						    rather than as a tail on the wordmark.
+
+						    This row neither wraps nor scrolls, so it needs a legitimate
+						    shrink target or any added indicator pushes the hamburger menu
+						    off the edge on a narrow sidebar. That role belongs to the
+						    now-playing pill's filename, which can be clipped without looking
+						    broken. The wordmark is drawn in full or dropped entirely - see
+						    `showWordmark`. */}
+						<div className="flex items-center gap-2 shrink-0">
 							<button
 								type="button"
 								onClick={() => {
@@ -1214,24 +1406,36 @@ function SessionListInner(props: SessionListProps) {
 								title="Switch agent"
 								aria-label="Switch agent"
 							>
-								<Wand2
-									className={`w-5 h-5${isAnyBusy ? ' wand-sparkle-active' : ''}${
-										profilingActive ? ' wand-profiling-active' : ''
-									}`}
-									style={{ color: theme.colors.accent }}
+								<BusyWand
+									busy={isAnyBusy}
+									profiling={profilingActive}
+									sizeClass="w-5 h-5"
+									color={theme.colors.accent}
 								/>
 							</button>
-							<h1
-								className="font-bold tracking-widest text-lg"
-								style={{ color: theme.colors.textMain }}
-							>
-								MAESTRO
-							</h1>
+							{showWordmark && (
+								<Wordmark
+									as="h1"
+									className="text-lg shrink-0 whitespace-nowrap"
+									style={{ color: theme.colors.textMain }}
+								/>
+							)}
+						</div>
+
+						{/* Indicator band. `flex-1` is what centers it: it takes the space
+						    the identity and menu zones do not, and centers its contents in
+						    that. Anything status-shaped added to the header belongs here,
+						    not beside the wordmark. `min-w-0` so the now-playing filename
+						    stays the row's shrink target. */}
+						<div
+							data-testid="sidebar-header-indicators"
+							className="flex flex-1 items-center justify-center gap-2 min-w-0"
+						>
 							{/* Badge Level Indicator */}
 							{autoRunStats && autoRunStats.currentBadgeLevel > 0 && (
 								<button
 									onClick={() => setAboutModalOpen(true)}
-									className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold transition-colors hover:bg-white/10"
+									className="flex items-center gap-1 px-1.5 py-0.5 rounded text-2xs font-bold transition-colors hover:bg-white/10"
 									title={`${getBadgeForTime(autoRunStats.cumulativeTimeMs)?.name || 'Apprentice'} - Click to view achievements`}
 									style={{
 										color: autoRunStats.currentBadgeLevel >= 8 ? '#FFD700' : theme.colors.accent,
@@ -1241,6 +1445,11 @@ function SessionListInner(props: SessionListProps) {
 									<span>{autoRunStats.currentBadgeLevel}</span>
 								</button>
 							)}
+							{/* Now playing - only while the floating player is hidden, so the
+							    user can always see that audio is coming from Maestro and get
+							    the widget back with one click. Sheds its label on a narrow
+							    sidebar, the same way the LIVE pill below does. */}
+							<NowPlayingIndicator theme={theme} compact={nowPlayingCompact} />
 							{/* Global LIVE Toggle - hidden in the web-desktop bundle, where
 							    toggling it would kill the webserver the user's browser is
 							    currently connected to. */}
@@ -1255,7 +1464,7 @@ function SessionListInner(props: SessionListProps) {
 												setLiveOverlayOpen(!liveOverlayOpen);
 											}
 										}}
-										className={`flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-bold transition-colors ${
+										className={`flex items-center gap-1.5 px-2 py-0.5 rounded text-2xs font-bold transition-colors ${
 											isLiveMode
 												? 'bg-green-500/20 text-green-500 hover:bg-green-500/30'
 												: 'text-gray-500 hover:bg-white/10'
@@ -1267,9 +1476,16 @@ function SessionListInner(props: SessionListProps) {
 										}
 									>
 										<Radio className={`w-3 h-3 ${isLiveMode ? 'animate-pulse' : ''}`} />
+										{/* The badge is an indicator and the wordmark is the yield ahead of
+										    it: once the wordmark has been dropped the row already holds more
+										    width than the badge costs, so charging for it either way is what
+										    left a 256px sidebar showing a bare radio dot beside the space the
+										    wordmark had just vacated. */}
 										{leftSidebarWidthState >=
-											(autoRunStats && autoRunStats.currentBadgeLevel > 0 ? 295 : 256) &&
-											(isLiveMode ? 'LIVE' : 'OFFLINE')}
+											LIVE_LABEL_MIN_WIDTH +
+												headerTextDelta.liveLabel +
+												headerTextDelta.wordmark +
+												(showWordmark ? headerBadgeWidth : 0) && (isLiveMode ? 'LIVE' : 'OFFLINE')}
 									</button>
 
 									{/* LIVE Overlay with URL and QR Code */}
@@ -1302,7 +1518,7 @@ function SessionListInner(props: SessionListProps) {
 								</div>
 							)}
 						</div>
-						<div className="flex items-center">
+						<div className="flex items-center shrink-0">
 							{/* Hamburger Menu */}
 							<div className="relative z-30" ref={menuRef} data-tour="hamburger-menu">
 								<GhostIconButton
@@ -1334,15 +1550,31 @@ function SessionListInner(props: SessionListProps) {
 						</div>
 					</>
 				) : (
+					// The collapsed rail gets the pill too, in its compact form.
+					//
+					// It used to be left out on the grounds that a 64px icon strip is
+					// for agents and a media control there competes with them. That
+					// reasoning ignored what minimizing MEANS: the pill is the only
+					// place the widget parks, so on the rail "minimize" hid the player
+					// with nothing left on screen and no way back - the user reads that
+					// as the player having closed itself, which is precisely what the
+					// minimize/close split exists to prevent. A control the user can
+					// always get back to is worth more than 24px of rail.
+					//
+					// The compact form is the transport and the restore button and
+					// nothing else, which fits the rail's width without a label to clip.
 					<div className="w-full flex flex-col items-center gap-2 relative z-30" ref={menuRef}>
 						<GhostIconButton onClick={() => setMenuOpen(!menuOpen)} padding="p-2" title="Menu">
-							<Wand2
-								className={`w-6 h-6${isAnyBusy ? ' wand-sparkle-active' : ''}${
-									profilingActive ? ' wand-profiling-active' : ''
-								}`}
-								style={{ color: theme.colors.accent }}
+							<BusyWand
+								busy={isAnyBusy}
+								profiling={profilingActive}
+								sizeClass="w-6 h-6"
+								color={theme.colors.accent}
 							/>
 						</GhostIconButton>
+						{/* Renders nothing unless the player is actually minimized, so
+						    the rail is unchanged for anyone not playing anything. */}
+						<NowPlayingIndicator theme={theme} compact />
 						{/* Menu Overlay for Collapsed Sidebar */}
 						{menuOpen && (
 							<HamburgerDropdown theme={theme} isPhone={isXs} onClose={() => setMenuOpen(false)}>
@@ -1459,7 +1691,7 @@ function SessionListInner(props: SessionListProps) {
 							<div className="mb-1">
 								<button
 									type="button"
-									className="w-full px-3 py-1.5 flex items-center justify-between cursor-pointer hover:bg-opacity-50 group"
+									className="w-full px-3 py-1.5 flex items-center justify-between cursor-pointer row-hover group"
 									onClick={() => setStarredSectionCollapsed(!starredSectionCollapsed)}
 									aria-expanded={!starredSectionCollapsed}
 								>
@@ -1539,7 +1771,7 @@ function SessionListInner(props: SessionListProps) {
 						<div className="mb-1">
 							<button
 								type="button"
-								className="w-full px-3 py-1.5 flex items-center justify-between cursor-pointer hover:bg-opacity-50 group"
+								className="w-full px-3 py-1.5 flex items-center justify-between cursor-pointer row-hover group"
 								onClick={() => setBookmarksCollapsed(!bookmarksCollapsed)}
 								aria-expanded={!bookmarksCollapsed}
 							>
@@ -1628,7 +1860,7 @@ function SessionListInner(props: SessionListProps) {
 									<div key={group.id} className={parent ? 'ml-4 mb-1 rounded' : 'mb-1 rounded'}>
 										<button
 											type="button"
-											className="w-full px-3 py-1.5 flex items-center gap-2 text-xs font-bold uppercase tracking-wider hover:bg-opacity-50"
+											className="w-full px-3 py-1.5 flex items-center gap-2 text-xs font-bold uppercase tracking-wider row-hover"
 											style={{ color: theme.colors.textDim }}
 											aria-expanded={!collapsed}
 											onClick={() =>
@@ -1734,7 +1966,7 @@ function SessionListInner(props: SessionListProps) {
 												toggleGroup(group.id);
 											}
 										}}
-										className="px-3 py-1.5 flex items-center justify-between cursor-pointer hover:bg-opacity-50 group"
+										className="px-3 py-1.5 flex items-center justify-between cursor-pointer row-hover group"
 										style={
 											dragOverTarget === group.id
 												? { backgroundColor: `${theme.colors.accent}33` }
@@ -1903,7 +2135,7 @@ function SessionListInner(props: SessionListProps) {
 								<div className="mt-4 px-3">
 									<button
 										onClick={() => createNewGroup()}
-										className="w-full px-2 py-1.5 rounded-full text-[10px] font-medium hover:opacity-80 transition-opacity flex items-center justify-center gap-1"
+										className="w-full px-2 py-1.5 rounded-full text-2xs font-medium hover:opacity-80 transition-opacity flex items-center justify-center gap-1"
 										style={{
 											backgroundColor: theme.colors.accent + '20',
 											color: theme.colors.accent,
@@ -1937,7 +2169,7 @@ function SessionListInner(props: SessionListProps) {
 							onDragLeave={handleDropTargetLeave}
 						>
 							<div
-								className="px-3 py-1.5 flex items-center justify-between cursor-pointer hover:bg-opacity-50 group"
+								className="px-3 py-1.5 flex items-center justify-between cursor-pointer row-hover group"
 								style={
 									dragOverTarget === UNGROUPED_DROP_TARGET
 										? { backgroundColor: `${theme.colors.accent}33` }
@@ -1976,7 +2208,7 @@ function SessionListInner(props: SessionListProps) {
 											e.stopPropagation();
 											createNewGroup();
 										}}
-										className="px-2 py-0.5 rounded-full text-[10px] font-medium hover:opacity-80 transition-opacity flex items-center gap-1"
+										className="px-2 py-0.5 rounded-full text-2xs font-medium hover:opacity-80 transition-opacity flex items-center gap-1"
 										style={{
 											backgroundColor: theme.colors.accent + '20',
 											color: theme.colors.accent,
@@ -2051,7 +2283,7 @@ function SessionListInner(props: SessionListProps) {
 							)}
 							<button
 								onClick={() => createNewGroup()}
-								className="w-full px-2 py-1.5 rounded-full text-[10px] font-medium hover:opacity-80 transition-opacity flex items-center justify-center gap-1"
+								className="w-full px-2 py-1.5 rounded-full text-2xs font-medium hover:opacity-80 transition-opacity flex items-center justify-center gap-1"
 								style={{
 									backgroundColor: theme.colors.accent + '20',
 									color: theme.colors.accent,
@@ -2100,6 +2332,7 @@ function SessionListInner(props: SessionListProps) {
 								groupChatStates={groupChatStates}
 								allGroupChatParticipantStates={allGroupChatParticipantStates}
 								showUnreadAgentsOnly={showUnreadAgentsOnly}
+								unreadGroupChatIds={unreadGroupChatIds}
 							/>
 						)}
 				</div>

@@ -24,6 +24,10 @@ import {
 	SymphonyHandlerDependencies,
 } from '../../main/ipc/handlers/symphony';
 import {
+	toSafeDocumentFileName,
+	uniqueDocumentFileName,
+} from '../../main/ipc/handlers/symphony/shared';
+import {
 	REGISTRY_CACHE_TTL_MS,
 	ISSUES_CACHE_TTL_MS,
 	DEFAULT_CONTRIBUTOR_STATS,
@@ -2667,6 +2671,96 @@ error: failed to push some refs to 'https://github.com/owner/protected-repo.git'
 
 			expect(result.success).toBe(false);
 			expect(result.error).toContain('GitHub');
+		});
+
+		// ----------------------------------------------------------------------
+		// contributionId is joined into the Symphony directory by startContribution
+		// and createDraftPR. The cases above only ever passed a clean ID, so these
+		// sinks had no coverage.
+		// ----------------------------------------------------------------------
+
+		it('should reject a contributionId containing traversal in startContribution', async () => {
+			const result = (await invokeHandler(handlers, 'symphony:startContribution', {
+				contributionId: '../../../evil',
+				sessionId: 'session-id-traversal',
+				repoSlug: 'owner/repo',
+				issueNumber: 1,
+				issueTitle: 'ID Traversal Test',
+				localPath: path.join(testTempDir, 'id-traversal-repo'),
+				documentPaths: [],
+			})) as { success: boolean; error?: string };
+
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('Invalid contribution ID');
+		});
+
+		it('should reject a contributionId containing a separator in createDraftPR', async () => {
+			const result = (await invokeHandler(handlers, 'symphony:createDraftPR', {
+				contributionId: '../../etc/passwd',
+			})) as { success: boolean; error?: string };
+
+			expect(result.success).toBe(false);
+			// Asserting the specific message matters here: without validation this
+			// handler still fails, but with "metadata not found" after it has
+			// already built and read an out-of-tree path.
+			expect(result.error).toContain('Invalid contribution ID');
+		});
+
+		it('should accept the generated contribution ID formats', async () => {
+			// Positive control. A valid ID must pass validation and reach the real
+			// logic, otherwise the rejection tests above could pass simply because
+			// every ID is refused.
+			for (const id of ['contrib_abc123_def456', 'manual_42_1700000000000']) {
+				const result = (await invokeHandler(handlers, 'symphony:createDraftPR', {
+					contributionId: id,
+				})) as { success: boolean; error?: string };
+
+				expect(result.error).not.toContain('Invalid contribution ID');
+				expect(result.error).toContain('metadata not found');
+			}
+		});
+
+		// ----------------------------------------------------------------------
+		// doc.name is joined onto the documents cache directory when an external
+		// document is downloaded. validateContributionParams checks doc.path but
+		// never checked doc.name.
+		// ----------------------------------------------------------------------
+
+		// doc.name is the link text of a markdown link in the issue body, and it is
+		// joined onto the documents cache directory when an external document is
+		// downloaded. It is reduced to a bare file name at that join, so these
+		// exercise the reduction directly.
+		it('should reduce traversal in a document name to a bare file name', () => {
+			expect(toSafeDocumentFileName('../../../evil.json')).toBe('evil.json');
+			expect(toSafeDocumentFileName('..\\..\\evil.json')).toBe('evil.json');
+			expect(toSafeDocumentFileName('/etc/passwd')).toBe('passwd');
+			// Nothing usable is left, so the document is skipped rather than written.
+			expect(toSafeDocumentFileName('../../..')).toBeNull();
+			expect(toSafeDocumentFileName('.')).toBeNull();
+			expect(toSafeDocumentFileName('')).toBeNull();
+		});
+
+		it('should not let two references collide onto one file name', () => {
+			// docs/architecture.md and spec/architecture.md both reduce to
+			// architecture.md. Writing both would leave only the second.
+			const used = new Set<string>();
+			expect(uniqueDocumentFileName('architecture.md', used)).toBe('architecture.md');
+			expect(uniqueDocumentFileName('architecture.md', used)).toBe('architecture-2.md');
+			expect(uniqueDocumentFileName('architecture.md', used)).toBe('architecture-3.md');
+			// Matching is case-insensitive, since the destination may be too.
+			expect(uniqueDocumentFileName('ARCHITECTURE.MD', used)).toBe('ARCHITECTURE-4.MD');
+			// An extensionless name still disambiguates.
+			expect(uniqueDocumentFileName('README', used)).toBe('README');
+			expect(uniqueDocumentFileName('README', used)).toBe('README-2');
+		});
+
+		it('should keep real issue-body document names working', () => {
+			// Regression guard. An ordinary markdown link such as
+			// [docs/architecture.md](https://...) yields a name with a separator,
+			// which must still resolve to a usable file name rather than be refused.
+			expect(toSafeDocumentFileName('docs/architecture.md')).toBe('architecture.md');
+			expect(toSafeDocumentFileName('My Design Doc.md')).toBe('My Design Doc.md');
+			expect(toSafeDocumentFileName('spec.md')).toBe('spec.md');
 		});
 	});
 

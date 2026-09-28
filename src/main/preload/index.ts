@@ -18,6 +18,7 @@ import {
 } from './settings';
 import { createContextApi } from './context';
 import { createWebApi, createWebserverApi, createLiveApi } from './web';
+import { createWebLoginApi } from './webLogin';
 import {
 	createDialogApi,
 	createFontsApi,
@@ -48,10 +49,12 @@ import { createProcessApi } from './process';
 import { createGitApi } from './git';
 import { createFeedbackApi } from './feedback';
 import { createFsApi } from './fs';
+import { createParquetApi } from './parquet';
 import { createAgentsApi } from './agents';
 import { createSymphonyApi } from './symphony';
 import { createTabNamingApi } from './tabNaming';
 import { createTabsApi } from './tabs';
+import { createAiCommandApi } from './aiCommand';
 import { createDirectorNotesApi } from './directorNotes';
 import { createCueApi } from './cue';
 import { createProfilesApi } from './profiles';
@@ -113,12 +116,16 @@ contextBridge.exposeInMainWorld('maestro', {
 
 	// File System API
 	fs: createFsApi(),
+	parquet: createParquetApi(),
 
 	// Web Server API
 	webserver: createWebserverApi(),
 
 	// Live Session API
 	live: createLiveApi(),
+
+	// Web Login API (accounts for the web interface - desktop-only)
+	webLogin: createWebLoginApi(),
 
 	// Agent API
 	agents: createAgentsApi(),
@@ -234,6 +241,8 @@ contextBridge.exposeInMainWorld('maestro', {
 
 	// Tab lifecycle API (renderer -> main tab-close notification)
 	tabs: createTabsApi(),
+	// AI Command API (plain-English request -> one shell command line)
+	aiCommand: createAiCommandApi(),
 
 	// Director's Notes API (unified history + synopsis)
 	directorNotes: createDirectorNotesApi(),
@@ -294,6 +303,8 @@ export {
 	createWebApi,
 	createWebserverApi,
 	createLiveApi,
+	// Web Login accounts
+	createWebLoginApi,
 	// System utilities
 	createDialogApi,
 	createFontsApi,
@@ -349,6 +360,7 @@ export {
 	createGitApi,
 	// Filesystem
 	createFsApi,
+	createParquetApi,
 	// Agents
 	createAgentsApi,
 	// Symphony
@@ -599,6 +611,12 @@ export type {
 	// From tabs
 	TabsApi,
 } from './tabs';
+export type {
+	// From aiCommand
+	AiCommandApi,
+	AiCommandSuggestRequest,
+	AiCommandSuggestResult,
+} from './aiCommand';
 export type {
 	// From directorNotes
 	DirectorNotesApi,

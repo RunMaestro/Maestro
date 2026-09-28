@@ -14,8 +14,10 @@ import {
 	isImageFile,
 	getImageMimeType,
 	isWorktreeAlreadyUsedError,
+	isNotAGitRepositoryError,
 	parseWorktreePathForBranch,
 	sanitizeGitBranchName,
+	formatGitChangeSummary,
 } from '../../shared/gitUtils';
 
 describe('gitUtils', () => {
@@ -308,8 +310,41 @@ describe('gitUtils', () => {
 			expect(getImageMimeType('gif')).toBe('image/gif');
 			expect(getImageMimeType('svg')).toBe('image/svg+xml');
 			expect(getImageMimeType('webp')).toBe('image/webp');
-			expect(getImageMimeType('ico')).toBe('image/ico');
+			expect(getImageMimeType('ico')).toBe('image/x-icon');
 			expect(getImageMimeType('bmp')).toBe('image/bmp');
+		});
+
+		// A JPEG labeled `image/jpg` decodes to an empty NativeImage, which is what
+		// broke "Copy Image" on every .jpg in the app.
+		it('normalizes case and a leading dot', () => {
+			expect(getImageMimeType('.JPG')).toBe('image/jpeg');
+			expect(getImageMimeType('.PNG')).toBe('image/png');
+			expect(getImageMimeType('SVG')).toBe('image/svg+xml');
+		});
+	});
+
+	describe('isNotAGitRepositoryError', () => {
+		it('detects the message git prints outside a repo', () => {
+			expect(
+				isNotAGitRepositoryError(
+					'fatal: not a git repository (or any of the parent directories): .git'
+				)
+			).toBe(true);
+		});
+
+		it('detects a broken .git file pointing at a missing gitdir', () => {
+			expect(
+				isNotAGitRepositoryError('fatal: not a git repository: /repo/.git/worktrees/feature')
+			).toBe(true);
+		});
+
+		it('returns false for connection, path, and empty errors', () => {
+			expect(
+				isNotAGitRepositoryError('ssh: connect to host example port 22: Connection refused')
+			).toBe(false);
+			expect(isNotAGitRepositoryError('cd: /missing: No such file or directory')).toBe(false);
+			expect(isNotAGitRepositoryError('')).toBe(false);
+			expect(isNotAGitRepositoryError(undefined)).toBe(false);
 		});
 	});
 
@@ -432,6 +467,33 @@ describe('gitUtils', () => {
 			expect(sanitizeGitBranchName('')).toBe('');
 			expect(sanitizeGitBranchName('   ')).toBe('');
 			expect(sanitizeGitBranchName('///')).toBe('');
+		});
+	});
+
+	describe('formatGitChangeSummary', () => {
+		it('reads out the line counts and the file total', () => {
+			expect(
+				formatGitChangeSummary({ fileCount: 5, additions: 206, deletions: 37, modified: 5 })
+			).toBe('+206 −37 ~5 in 5 files');
+		});
+
+		it('omits the parts that are zero', () => {
+			expect(
+				formatGitChangeSummary({ fileCount: 1, additions: 12, deletions: 0, modified: 0 })
+			).toBe('+12 in 1 file');
+		});
+
+		// Only the active agent is polled with numstat, so the rest have counts only.
+		it('falls back to the file count when no lines were counted', () => {
+			expect(
+				formatGitChangeSummary({ fileCount: 4, additions: 0, deletions: 0, modified: 0 })
+			).toBe('4 files changed');
+		});
+
+		it('reports a clean tree', () => {
+			expect(
+				formatGitChangeSummary({ fileCount: 0, additions: 0, deletions: 0, modified: 0 })
+			).toBe('No uncommitted changes');
 		});
 	});
 });

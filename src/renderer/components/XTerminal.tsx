@@ -19,6 +19,11 @@ import { toControlChar } from '../utils/terminalKeys';
 import { isTapGesture, type TouchPoint } from '../utils/touch';
 import { readLogicalLine } from '../utils/terminalBuffer';
 import { logger } from '../utils/logger';
+import {
+	createCanvasMeasureAdvance,
+	resolveTerminalFontFamily,
+	type MeasureAdvance,
+} from '../utils/fixedPitchFont';
 
 // ============================================================================
 // Custom key event handler logic
@@ -210,6 +215,10 @@ export interface XTerminalHandle {
 	resize(): void;
 	/** Force fit + full canvas repaint - call when the terminal becomes visible after being hidden */
 	refresh(): void;
+	/** The measured grid, or null when the container is hidden and has never been fit. */
+	getSize(): { cols: number; rows: number } | null;
+	/** Publish the current grid size to the PTY. No-op when the shell already has it. */
+	syncSize(): void;
 }
 
 export interface XTerminalProps {
@@ -265,7 +274,22 @@ export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XT
 	const fitAddonRef = useRef<FitAddon | null>(null);
 	const searchAddonRef = useRef<SearchAddon | null>(null);
 	const resizeObserverRef = useRef<ResizeObserver | null>(null);
+	// Canvas used to check the configured font is fixed-pitch. Created once and
+	// reused: a terminal in a proportional font renders a broken grid, and the
+	// only way to detect that is to measure two glyphs.
+	const measureAdvanceRef = useRef<MeasureAdvance | null>(null);
+	if (measureAdvanceRef.current === null) {
+		measureAdvanceRef.current = createCanvasMeasureAdvance();
+	}
 	const resizeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+	// The grid size the PTY has ACCEPTED, recorded only once the main process
+	// confirms it. `process:resize` resolves `false` (it does not throw) when the
+	// session id is unknown, which is exactly what happens when the first
+	// ResizeObserver fire beats the spawn. Latching the size unconditionally would
+	// treat that dropped resize as delivered and leave the shell stuck on its
+	// 80x24 spawn default, so full-screen programs (nano, vim, less) paint into a
+	// small box while ordinary command output still fills the pane.
+	const lastSentSizeRef = useRef<{ cols: number; rows: number } | null>(null);
 	const selectionCopyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 	const lastAutoCopiedSelectionRef = useRef<string>('');
 	const lastSearchQueryRef = useRef<string>('');
@@ -375,10 +399,58 @@ export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XT
 				}
 				fitAddon.fit();
 				term.refresh(0, term.rows - 1);
+				// fit() only changes xterm's own grid. Without this push the shell keeps
+				// whatever size it had while the pane was hidden, and the next TUI the
+				// user starts paints at that stale size.
+				pushPtySizeRef.current();
+			},
+			getSize() {
+				const term = terminalRef.current;
+				const container = containerRef.current;
+				// A hidden container has never been fit, so xterm still reports its
+				// constructor default. Report nothing rather than a measurement that
+				// isn't one.
+				if (!term || !container || container.offsetWidth === 0 || container.offsetHeight === 0) {
+					return null;
+				}
+				if (term.cols <= 0 || term.rows <= 0) return null;
+				return { cols: term.cols, rows: term.rows };
+			},
+			syncSize() {
+				pushPtySizeRef.current();
 			},
 		}),
 		[]
 	);
+
+	// Tell the PTY what the visible grid is. Cheap to call as often as you like: a
+	// size the shell already has is skipped, and a size it never received is
+	// retried on the next call, so this is the one place the winsize is published.
+	const pushPtySize = useCallback(() => {
+		const term = terminalRef.current;
+		if (!term || term.cols <= 0 || term.rows <= 0) return;
+		const { cols, rows } = term;
+		const last = lastSentSizeRef.current;
+		if (last && last.cols === cols && last.rows === rows) return;
+		onResize?.(cols, rows);
+		window.maestro.process
+			.resize(sessionId, cols, rows)
+			.then((delivered) => {
+				if (delivered) lastSentSizeRef.current = { cols, rows };
+			})
+			.catch(() => {
+				// Non-critical: the size stays unrecorded, so the next push retries it.
+			});
+	}, [sessionId, onResize]);
+	// The imperative handle is built once (empty deps), so it reaches the current
+	// callback through a ref rather than capturing a stale closure.
+	const pushPtySizeRef = useRef(pushPtySize);
+	pushPtySizeRef.current = pushPtySize;
+
+	// A different PTY knows nothing about what the previous one was told.
+	useEffect(() => {
+		lastSentSizeRef.current = null;
+	}, [sessionId]);
 
 	// Debounced resize handler
 	const handleResize = useCallback(() => {
@@ -407,13 +479,9 @@ export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XT
 			// This handles the display:none → display:flex transition (returning from AI mode):
 			// fitAddon.fit() only resizes rows/cols but doesn't always repaint WebGL content.
 			term.refresh(0, term.rows - 1);
-			const { cols, rows } = term;
-			onResize?.(cols, rows);
-			window.maestro.process.resize(sessionId, cols, rows).catch(() => {
-				// Resize failures are non-critical; the PTY will resize on next interaction
-			});
+			pushPtySize();
 		}, 100);
-	}, [sessionId, onResize]);
+	}, [pushPtySize]);
 
 	// Create a WebGL renderer, wire its context-loss recovery, and attach it to the
 	// terminal. Shared by the initial load, tab reactivation, and post-loss recovery
@@ -474,7 +542,7 @@ export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XT
 			// (macOS) / Shift+drag (win/linux) force a local selection so copy works
 			// regardless of what's running. Matches iTerm2 / Terminal.app muscle memory.
 			macOptionClickForcesSelection: true,
-			fontFamily,
+			fontFamily: resolveTerminalFontFamily(fontFamily, fontSize, measureAdvanceRef.current),
 			fontSize,
 			theme: mapThemeToXterm(theme),
 			// Route OSC 8 hyperlinks (escape-code terminal links) through openUrl so they
@@ -808,7 +876,11 @@ export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XT
 	// Update font settings when props change
 	useEffect(() => {
 		if (terminalRef.current) {
-			terminalRef.current.options.fontFamily = fontFamily;
+			terminalRef.current.options.fontFamily = resolveTerminalFontFamily(
+				fontFamily,
+				fontSize,
+				measureAdvanceRef.current
+			);
 			terminalRef.current.options.fontSize = fontSize;
 			// Guard: skip fit() when the container is hidden (display:none → offsetWidth/Height = 0).
 			// Calling fit() on a zero-size container resizes the terminal to the minimum (2×2),

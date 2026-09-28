@@ -12,7 +12,7 @@
  */
 
 import { useState, useCallback, useMemo } from 'react';
-import type { Session, ToolType, LogEntry, AITab } from '../../types';
+import type { Session, ToolType, LogEntry, AITab, QueuedItem } from '../../types';
 import type { GroomingProgress } from '../../types/contextMerge';
 import type { MergeOptions } from '../../components/MergeSessionModal';
 import type { SendToAgentOptions } from '../../components/SendToAgentModal';
@@ -20,12 +20,15 @@ import type { MergeState } from '../../stores/operationStore';
 import type { TransferState } from '../../stores/operationStore';
 import { useSessionStore, selectActiveSession } from '../../stores/sessionStore';
 import { useTabStore } from '../../stores/tabStore';
+import { useSettingsStore } from '../../stores/settingsStore';
 import { getModalActions } from '../../stores/modalStore';
 import { notifyToast, showOsNotification } from '../../stores/notificationStore';
 import { useMergeSessionWithSessions } from './useMergeSession';
 import { useSendToAgentWithSessions } from './useSendToAgent';
 import { captureException } from '../../utils/sentry';
 import { aiTabFocusFields } from '../../utils/tabHelpers';
+import { generateId } from '../../utils/ids';
+import { captureQueuedTurnSettings } from '../../utils/providerTabSessions';
 import { prepareMaestroSystemPrompt } from '../../utils/spawnHelpers';
 
 // ============================================================================
@@ -414,6 +417,81 @@ You are taking over this conversation. Based on the context above, provide a bri
 						}`,
 			};
 
+			// Calculate estimated tokens for the toast
+			const estimatedTokens = pendingBuffer
+				? Math.round(pendingBuffer.content.length / 4)
+				: sourceTab!.logs
+						.filter((log) => log.text && log.source !== 'system')
+						.reduce((sum, log) => sum + Math.round((log.text?.length || 0) / 4), 0);
+			const tokenInfo = estimatedTokens > 0 ? ` (~${estimatedTokens.toLocaleString()} tokens)` : '';
+
+			const finishTransfer = () => {
+				resetTransfer();
+				setTransferSourceAgent(null);
+				setTransferTargetAgent(null);
+				// Clear pending terminal buffer so subsequent AI-tab sends use the normal path
+				useTabStore.getState().setPendingTerminalBufferSend(null);
+			};
+
+			// A busy target keeps the sequential-per-agent rule: the context waits in
+			// its execution queue behind the running turn. Only an explicit Force Send
+			// with Forced Parallel Execution on spawns alongside it - the same gate the
+			// queue's own Force Send uses (see getForceSendEligibility).
+			const forceParallel =
+				options.forceSend === true && useSettingsStore.getState().forcedParallelExecution;
+			if (targetSession.state === 'busy' && !forceParallel) {
+				const queuedTab: AITab = {
+					id: newTabId,
+					name: `From: ${sourceName}`,
+					// The user entry is appended when the queue dispatches the item.
+					logs: [transferNotice],
+					agentSessionId: null,
+					starred: false,
+					inputValue: '',
+					stagedImages: [],
+					createdAt: Date.now(),
+					state: 'idle',
+				};
+				const queuedItem: QueuedItem = {
+					id: generateId(),
+					timestamp: Date.now(),
+					tabId: newTabId,
+					type: 'message',
+					text: contextMessage,
+					tabName: `From: ${sourceName}`,
+					turnSettings: captureQueuedTurnSettings(queuedTab, targetSession),
+				};
+
+				setSessions((prev) =>
+					prev.map((s) =>
+						s.id === targetSessionId
+							? {
+									...s,
+									aiTabs: [...s.aiTabs, queuedTab],
+									...aiTabFocusFields(newTabId),
+									unifiedTabOrder: [
+										...(s.unifiedTabOrder || []),
+										{ type: 'ai' as const, id: newTabId },
+									],
+									executionQueue: [...s.executionQueue, queuedItem],
+								}
+							: s
+					)
+				);
+				setActiveSessionId(targetSessionId);
+
+				notifyToast({
+					type: 'info',
+					title: 'Context Queued',
+					message: `"${sourceName}" → "${targetSession.name}"${tokenInfo} - runs when the current turn finishes`,
+					sessionId: targetSessionId,
+					tabId: newTabId,
+				});
+
+				finishTransfer();
+				return { success: true, newSessionId: targetSessionId, newTabId };
+			}
+
 			// Create user message entry for the context being sent
 			const userContextMessage: LogEntry = {
 				id: `user-context-${Date.now()}`,
@@ -460,14 +538,6 @@ You are taking over this conversation. Based on the context above, provide a bri
 			// Navigate to the target session
 			setActiveSessionId(targetSessionId);
 
-			// Calculate estimated tokens for the toast
-			const estimatedTokens = pendingBuffer
-				? Math.round(pendingBuffer.content.length / 4)
-				: sourceTab!.logs
-						.filter((log) => log.text && log.source !== 'system')
-						.reduce((sum, log) => sum + Math.round((log.text?.length || 0) / 4), 0);
-			const tokenInfo = estimatedTokens > 0 ? ` (~${estimatedTokens.toLocaleString()} tokens)` : '';
-
 			// Show success toast
 			notifyToast({
 				type: 'success',
@@ -477,12 +547,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 				tabId: newTabId,
 			});
 
-			// Reset transfer state
-			resetTransfer();
-			setTransferSourceAgent(null);
-			setTransferTargetAgent(null);
-			// Clear pending terminal buffer so subsequent AI-tab sends use the normal path
-			useTabStore.getState().setPendingTerminalBufferSend(null);
+			finishTransfer();
 
 			// Spawn the agent with the context - do this after state updates
 			(async () => {

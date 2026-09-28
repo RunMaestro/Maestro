@@ -75,17 +75,17 @@ describe('cue schedule --list', () => {
 		nowSpy.mockRestore();
 	});
 
-	it('prints "No pending one-shot tasks." when no agent has any', async () => {
+	it('prints "No scheduled tasks." when no agent has any', async () => {
 		mockReadSessions.mockReturnValue([session()]);
 		mockLoadCueConfigDetailed.mockReturnValue({ ok: false, reason: 'missing' });
 
 		await cueSchedule({ list: true });
 
-		expect(consoleSpy).toHaveBeenCalledWith('No pending one-shot tasks.');
+		expect(consoleSpy).toHaveBeenCalledWith('No scheduled tasks.');
 		expect(processExitSpy).not.toHaveBeenCalled();
 	});
 
-	it('aggregates time.once subscriptions across multiple agents and sorts by fire_at', async () => {
+	it('aggregates scheduled tasks across multiple agents and sorts by next fire', async () => {
 		const alpha = session({ id: 'agent-aaaaaaaa-1111', name: 'Alpha', projectRoot: '/p/alpha' });
 		const beta = session({ id: 'agent-bbbbbbbb-2222', name: 'Beta', projectRoot: '/p/beta' });
 		mockReadSessions.mockReturnValue([alpha, beta]);
@@ -131,14 +131,15 @@ describe('cue schedule --list', () => {
 		expect(consoleSpy).toHaveBeenCalledTimes(1);
 		const output = consoleSpy.mock.calls[0][0] as string;
 		expect(output).toContain('NAME');
-		expect(output).toContain('FIRES_AT');
+		expect(output).toContain('SCHEDULE');
 		// Soonest must appear before later-task (sort ascending by fire_at).
 		const soonestIdx = output.indexOf('soonest-task');
 		const laterIdx = output.indexOf('later-task');
 		expect(soonestIdx).toBeGreaterThan(-1);
 		expect(laterIdx).toBeGreaterThan(soonestIdx);
-		// Non-time.once subs are filtered out.
-		expect(output).not.toContain('unrelated-heartbeat');
+		// Recurring tasks are listed too - the tab and the CLI both cover every
+		// clock-driven event, not just time.once.
+		expect(output).toContain('unrelated-heartbeat');
 		// Relative duration column populated for future fire_at.
 		expect(output).toMatch(/30m/);
 	});
@@ -276,7 +277,7 @@ describe('cue schedule --cancel <name>', () => {
 		expect(processExitSpy).not.toHaveBeenCalled();
 	});
 
-	it('exits 1 with "No pending task" when the name matches nothing', async () => {
+	it('exits 1 with "No scheduled task" when the name matches nothing', async () => {
 		// Switch to throwing exit so errorOut behaves like real process termination
 		// - without this the code under test keeps running past the failure point.
 		processExitSpy.mockImplementation(() => {
@@ -288,7 +289,7 @@ describe('cue schedule --cancel <name>', () => {
 		await expect(cueSchedule({ cancel: 'ghost-task' })).rejects.toThrow('process.exit');
 
 		expect(consoleErrorSpy).toHaveBeenCalledWith(
-			expect.stringContaining(`No pending task named 'ghost-task' found.`)
+			expect.stringContaining(`No scheduled task named 'ghost-task' found.`)
 		);
 		expect(processExitSpy).toHaveBeenCalledWith(1);
 		expect(mockRemoveSubscriptionFromYaml).not.toHaveBeenCalled();

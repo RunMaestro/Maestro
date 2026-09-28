@@ -8,6 +8,9 @@
 export { useRemoteIntegration } from './useRemoteIntegration';
 export type { UseRemoteIntegrationDeps, UseRemoteIntegrationReturn } from './useRemoteIntegration';
 
+// Group chat requests from the CLI / web client (mounted by useRemoteIntegration)
+export { useRemoteGroupChat } from './useRemoteGroupChat';
+
 // Live overlay panel state
 export { useLiveOverlay } from './useLiveOverlay';
 export type { UseLiveOverlayReturn, TunnelStatus, UrlTab } from './useLiveOverlay';

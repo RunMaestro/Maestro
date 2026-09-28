@@ -15,8 +15,19 @@ export interface UseSortedSessionsDeps {
 	sessions: Session[];
 	groups: Group[];
 	bookmarksCollapsed: boolean;
+	/**
+	 * When true, visibleSessions excludes agents that don't need attention (and
+	 * whose worktree children likewise don't). The active session (or its parent)
+	 * is always kept visible so the user doesn't lose their place. Uses the same
+	 * `sessionNeedsAttention` predicate as useSessionCategories so jump numbers
+	 * and Alt+Cmd+N shortcuts match the rendered list.
+	 */
 	showUnreadAgentsOnly?: boolean;
 	activeSessionId?: string | null;
+	/** Agent ids auto-running an Auto Run playbook (the AUTO badge). */
+	activeBatchSessionIds?: string[];
+	/** Agent ids stuck auto-retrying an Agent Resilience outage. */
+	stuckOutageSessionIds?: string[];
 }
 
 /** @deprecated Prefer SortedSessionsProjection from computeSortedSessions */

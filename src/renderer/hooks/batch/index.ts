@@ -14,6 +14,9 @@ export {
 	validateAgentPromptHasTaskReference,
 } from './batchUtils';
 
+// Whether a run is parked waiting on the user (agent error or HITL gate)
+export { useAutoRunErrorPaused } from './useAutoRunPause';
+
 // Debounce hook for per-session state updates
 export { useSessionDebounce } from './useSessionDebounce';
 export type { UseSessionDebounceOptions, UseSessionDebounceReturn } from './useSessionDebounce';
@@ -97,7 +100,11 @@ export { useAutoRunUndo } from './useAutoRunUndo';
 export type { UseAutoRunUndoReturn, UseAutoRunUndoDeps, UndoState } from './useAutoRunUndo';
 
 // Playbook management
-export { usePlaybookManagement } from './usePlaybookManagement';
+export {
+	usePlaybookManagement,
+	autoPlaybookName,
+	extractPlaybookCodename,
+} from './usePlaybookManagement';
 export type {
 	UsePlaybookManagementReturn,
 	UsePlaybookManagementDeps,

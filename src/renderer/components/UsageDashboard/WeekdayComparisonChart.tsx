@@ -140,7 +140,7 @@ export const WeekdayComparisonChart = memo(function WeekdayComparisonChart({
 				Weekday vs Weekend
 			</h3>
 
-			<div className="grid grid-cols-2 gap-6">
+			<div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
 				{/* Weekday Card */}
 				<div className="p-4 rounded-lg" style={{ backgroundColor: theme.colors.bgActivity }}>
 					<div className="flex items-center gap-2 mb-3">

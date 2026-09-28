@@ -165,7 +165,14 @@ describe('useFilePreviewHandlers', () => {
 			'new content',
 			undefined
 		);
-		expect(onEditContent).toHaveBeenCalledWith('file-1', undefined, 'new content');
+		// The saved mtime rides along so the tab stops looking stale to the
+		// file-change poller after its own save.
+		expect(onEditContent).toHaveBeenCalledWith(
+			'file-1',
+			undefined,
+			'new content',
+			expect.any(Number)
+		);
 	});
 
 	it('handleFilePreviewSave passes sshRemoteId for SSH-backed previews', async () => {
@@ -378,6 +385,10 @@ describe('useFilePreviewHandlers', () => {
 
 		it('updates tab metadata after save-as', async () => {
 			mockSaveFile.mockResolvedValue('/test/project/src/notes.md');
+			const writtenAt = new Date('2026-09-14T12:18:01.000Z');
+			// The untitled path skips the existence check, so the only stat is the
+			// post-write one that reads back the new file's mtime.
+			mockStat.mockResolvedValue({ modifiedAt: writtenAt.toISOString() });
 			const session = makeSession();
 			useSessionStore.setState({
 				sessions: [
@@ -414,6 +425,7 @@ describe('useFilePreviewHandlers', () => {
 				extension: '.md',
 				content: 'my notes',
 				editContent: undefined,
+				lastModified: writtenAt.getTime(),
 			});
 		});
 
@@ -435,7 +447,66 @@ describe('useFilePreviewHandlers', () => {
 			expect(mockSaveFile).not.toHaveBeenCalled();
 			expect(mockStat).toHaveBeenCalledWith('/test/project/src/test.ts', undefined);
 			expect(mockWriteFile).toHaveBeenCalledWith('/test/project/src/test.ts', 'updated', undefined);
-			expect(onEditContent).toHaveBeenCalledWith('file-1', undefined, 'updated');
+			expect(onEditContent).toHaveBeenCalledWith(
+				'file-1',
+				undefined,
+				'updated',
+				expect.any(Number)
+			);
+		});
+
+		it('hands the tab the post-write mtime so its own save is not seen as an external change', async () => {
+			const onEditContent = vi.fn();
+			const writtenAt = new Date('2026-09-14T12:18:01.000Z');
+			// First stat is the pre-write existence check, second reads the mtime the
+			// write just produced.
+			mockStat
+				.mockResolvedValueOnce({ modifiedAt: new Date('2026-09-14T12:16:36.000Z').toISOString() })
+				.mockResolvedValueOnce({ modifiedAt: writtenAt.toISOString() });
+
+			const { result } = renderHook(() =>
+				useFilePreviewHandlers({
+					activeSession: makeSession(),
+					activeFileTabId: 'file-1',
+					activeFileTab: makeFileTab(),
+					onFileTabEditContentChange: onEditContent,
+				})
+			);
+
+			await act(async () => {
+				await result.current.handleFilePreviewSave('/test/project/src/test.ts', 'updated');
+			});
+
+			expect(onEditContent).toHaveBeenCalledWith(
+				'file-1',
+				undefined,
+				'updated',
+				writtenAt.getTime()
+			);
+		});
+
+		it('falls back to the wall clock when the post-write stat fails', async () => {
+			const onEditContent = vi.fn();
+			mockStat
+				.mockResolvedValueOnce({ modifiedAt: new Date().toISOString() })
+				.mockRejectedValueOnce(new Error('EIO'));
+
+			const { result } = renderHook(() =>
+				useFilePreviewHandlers({
+					activeSession: makeSession(),
+					activeFileTabId: 'file-1',
+					activeFileTab: makeFileTab(),
+					onFileTabEditContentChange: onEditContent,
+				})
+			);
+
+			const before = Date.now();
+			await act(async () => {
+				await result.current.handleFilePreviewSave('/test/project/src/test.ts', 'updated');
+			});
+
+			const [, , , mtime] = onEditContent.mock.calls[0];
+			expect(mtime).toBeGreaterThanOrEqual(before);
 		});
 	});
 

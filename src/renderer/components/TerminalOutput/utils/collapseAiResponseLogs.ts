@@ -40,11 +40,18 @@ export function collapseAiResponseLogs(logs: LogEntry[]): LogEntry[] {
 			// missing renderStyle and mislabel an interactive turn as "API".
 			// Preserve text-stream if ANY grouped entry carries it.
 			const hasTextStream = currentResponseGroup.some((l) => l.renderStyle === 'text-stream');
+			// Same trap for the model/effort pills: only streamed agent output
+			// carries the turn's codified settings, so a group led by a system
+			// banner would lose them if the combined entry took `[0]` alone.
+			const turnModel = currentResponseGroup.find((l) => l.turnModel)?.turnModel;
+			const turnEffort = currentResponseGroup.find((l) => l.turnEffort)?.turnEffort;
 			result.push({
 				...currentResponseGroup[0],
 				text: combinedText,
 				// Keep the first entry's timestamp and id.
 				...(hasTextStream ? { renderStyle: 'text-stream' as const } : {}),
+				...(turnModel ? { turnModel } : {}),
+				...(turnEffort ? { turnEffort } : {}),
 			});
 			currentResponseGroup = [];
 		}

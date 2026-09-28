@@ -1029,6 +1029,91 @@ describe('useBatchProcessor hook', () => {
 			});
 
 			expect(mockOnSpawnAgent).not.toHaveBeenCalled();
+			expect(window.maestro.web.releaseAutoRunStartClaim).toHaveBeenCalledWith('test-session-id');
+		});
+
+		it('should not start over a halt marker an earlier run left in a document', async () => {
+			const sessions = [createMockSession()];
+			// Checkboxes were reset for a fresh launch, but the previous run's halt
+			// marker is still in the document (#1588).
+			mockReadDoc.mockResolvedValue({
+				success: true,
+				content: '# Review\n- [ ] Review the queue\n\n<!-- maestro:halt: queue already empty -->',
+			});
+
+			useSessionStore.setState({ sessions, activeSessionId: sessions[0]?.id ?? '' });
+			const { result } = renderHook(() =>
+				useBatchProcessor({
+					groups: [createMockGroup()],
+					onUpdateSession: mockOnUpdateSession,
+					onSpawnAgent: mockOnSpawnAgent,
+					onAddHistoryEntry: mockOnAddHistoryEntry,
+				})
+			);
+
+			await act(async () => {
+				await result.current.startBatchRun(
+					'test-session-id',
+					{
+						documents: [{ filename: 'review', resetOnCompletion: false }],
+						prompt: 'Test prompt',
+						loopEnabled: true,
+						maxLoops: 12,
+					},
+					'/test/folder'
+				);
+			});
+
+			expect(mockOnSpawnAgent).not.toHaveBeenCalled();
+			expect(mockBroadcastAutoRunState).not.toHaveBeenCalled();
+			expect(mockOnAddHistoryEntry).not.toHaveBeenCalled();
+			expect(window.maestro.web.releaseAutoRunStartClaim).toHaveBeenCalledWith('test-session-id');
+			expect(mockNotifyToast).toHaveBeenCalledWith(
+				expect.objectContaining({
+					title: 'Auto Run Not Started',
+					message: expect.stringContaining(
+						'Document "review" contains an unresolved halt marker on line 4: queue already empty'
+					),
+				})
+			);
+		});
+
+		it('should not start when another client wins the main-process claim', async () => {
+			const sessions = [createMockSession()];
+			useSessionStore.setState({ sessions, activeSessionId: sessions[0]?.id ?? '' });
+			vi.mocked(window.maestro.web.claimAutoRunStart).mockResolvedValueOnce(false);
+			const { result } = renderHook(() =>
+				useBatchProcessor({
+					groups: [createMockGroup()],
+					onUpdateSession: mockOnUpdateSession,
+					onSpawnAgent: mockOnSpawnAgent,
+					onAddHistoryEntry: mockOnAddHistoryEntry,
+				})
+			);
+
+			await act(async () => {
+				await result.current.startBatchRun(
+					'test-session-id',
+					{
+						documents: [{ filename: 'tasks', resetOnCompletion: false }],
+						prompt: 'Test prompt',
+						loopEnabled: false,
+						worktree: {
+							enabled: true,
+							path: '/test/worktree',
+							branchName: 'feature/test',
+						},
+					},
+					'/test/folder'
+				);
+			});
+
+			expect(mockOnSpawnAgent).not.toHaveBeenCalled();
+			expect(mockWorktreeSetup).not.toHaveBeenCalled();
+			expect(mockBroadcastAutoRunState).not.toHaveBeenCalled();
+			expect(mockNotifyToast).toHaveBeenCalledWith(
+				expect.objectContaining({ title: 'Auto Run Already Active' })
+			);
 		});
 
 		it('should start batch run and process tasks', async () => {
@@ -1547,6 +1632,8 @@ describe('useBatchProcessor hook', () => {
 
 			// Should not have spawned agent due to worktree failure
 			expect(mockOnSpawnAgent).not.toHaveBeenCalled();
+			expect(window.maestro.web.claimAutoRunStart).toHaveBeenCalledWith('test-session-id');
+			expect(window.maestro.web.releaseAutoRunStartClaim).toHaveBeenCalledWith('test-session-id');
 		});
 
 		it('should checkout different branch when worktree exists with branch mismatch', async () => {
@@ -3740,13 +3827,12 @@ describe('useBatchProcessor hook', () => {
 				);
 			});
 
-			// Should have called spawn with cwd override. The 4th arg is the run-scoped
-			// model/effort override, undefined for a run that uses the agent default.
+			// Should have called spawn with cwd override
 			expect(mockOnSpawnAgent).toHaveBeenCalledWith(
 				'test-session-id',
 				'Test',
 				'/custom/worktree',
-				undefined
+				expect.anything()
 			);
 		});
 	});
@@ -4032,13 +4118,12 @@ describe('useBatchProcessor hook', () => {
 				undefined // sshRemoteId (undefined for local sessions)
 			);
 
-			// Should have spawned agent with worktree path. The 4th arg is the run-scoped
-			// model/effort override, undefined for a run that uses the agent default.
+			// Should have spawned agent with worktree path
 			expect(mockOnSpawnAgent).toHaveBeenCalledWith(
 				'test-session-id',
 				'Test',
 				'/test/worktree',
-				undefined
+				expect.anything()
 			);
 		});
 
@@ -6345,12 +6430,14 @@ describe('useBatchProcessor hook', () => {
 		// startBatchRun -> useBatchRunner -> useDocumentProcessor delegation chain
 		// to reach onSpawnAgent as the 4th argument.
 		const startRun = async (
-			extraConfig: Partial<{ model: string; effort: string }>
+			extraConfig: Partial<{ model: string; effort: string; ignoreModelHints: boolean }>,
+			content = '- [ ] Task'
 		): Promise<void> => {
-			const sessions = [createMockSession()];
+			// Claude Code, so a tier marker resolves to a real model name.
+			const sessions = [createMockSession({ toolType: 'claude-code' })];
 			const groups = [createMockGroup()];
 
-			mockReadDoc.mockResolvedValue({ success: true, content: '- [ ] Task' });
+			mockReadDoc.mockResolvedValue({ success: true, content });
 
 			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
 			const { result } = renderHook(() =>
@@ -6394,15 +6481,50 @@ describe('useBatchProcessor hook', () => {
 			});
 		});
 
-		it('passes no overrides at all when the config omits both fields', async () => {
+		it('lets a document marker win over the run model by default', async () => {
+			await startRun({ model: 'sonnet' }, '<!-- MAESTRO:MODEL tier="high" -->\n\n- [ ] Task');
+
+			expect(mockOnSpawnAgent).toHaveBeenCalledWith('test-session-id', 'Test', undefined, {
+				modelOverride: 'opus',
+				effortOverride: undefined,
+			});
+		});
+
+		it('runs at the run model when ignoreModelHints is set, whatever the document asks', async () => {
+			await startRun(
+				{ model: 'sonnet', ignoreModelHints: true },
+				'<!-- MAESTRO:MODEL tier="high" effort="high" -->\n\n- [ ] Task'
+			);
+
+			expect(mockOnSpawnAgent).toHaveBeenCalledWith('test-session-id', 'Test', undefined, {
+				modelOverride: 'sonnet',
+				effortOverride: undefined,
+			});
+		});
+
+		it('falls back to the agent settings when hints are ignored and no model was picked', async () => {
+			await startRun(
+				{ ignoreModelHints: true },
+				'<!-- MAESTRO:MODEL tier="high" -->\n\n- [ ] Task'
+			);
+
+			expect(mockOnSpawnAgent).toHaveBeenCalledWith('test-session-id', 'Test', undefined, {
+				modelOverride: undefined,
+				effortOverride: undefined,
+			});
+		});
+
+		it('resolves both axes to undefined when the config omits them', async () => {
 			await startRun({});
 
-			expect(mockOnSpawnAgent).toHaveBeenCalledWith(
-				'test-session-id',
-				'Test',
-				undefined,
-				undefined
-			);
+			// The document processor always resolves a turn-settings object now (it
+			// has to, to carry a document's model hint), so the 4th argument is
+			// present but empty on both axes. That is what "no override" looks like:
+			// the spawn falls through to the agent's own configured values.
+			expect(mockOnSpawnAgent).toHaveBeenCalledWith('test-session-id', 'Test', undefined, {
+				modelOverride: undefined,
+				effortOverride: undefined,
+			});
 		});
 	});
 });

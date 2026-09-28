@@ -48,7 +48,7 @@ export function BrowserSection({
 			/>
 			<div
 				data-setting-id="general-html-double-click"
-				className="mt-3 flex items-center justify-between p-3 rounded border cursor-pointer hover:bg-opacity-10"
+				className="mt-3 flex items-center justify-between p-3 rounded border cursor-pointer row-hover"
 				style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgMain }}
 				onClick={() => setHtmlDoubleClickOpensInBrowser(!htmlDoubleClickOpensInBrowser)}
 				role="button"
@@ -104,7 +104,8 @@ export function BrowserSection({
 					)}
 				</div>
 				<p className="text-xs opacity-70 mt-2">
-					The URL loaded when opening a new browser tab (Cmd+B).
+					The URL loaded when opening a new browser tab (Cmd+B). Blank by default, so a new tab
+					opens ready for you to type an address instead of loading a page first.
 				</p>
 			</div>
 			<div

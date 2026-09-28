@@ -10,6 +10,8 @@ import { remarkFrontmatterTable } from '../../../../renderer/utils/remarkFrontma
 import { remarkFileLinks } from '../../../../renderer/utils/remarkFileLinks';
 import { remarkMentionChips } from '../../../../renderer/utils/remarkMentionChips';
 import { remarkPromoteDisplayMath } from '../../../../shared/remarkPromoteDisplayMath';
+import { remarkMaestroMarkers } from '../../../../renderer/components/Markdown/remarkMaestroMarkers';
+import { remarkStripHtmlComments } from '../../../../shared/remarkStripHtmlComments';
 import { buildMarkdownPlugins } from '../../../../renderer/components/Markdown/plugins';
 
 // Helper: a tuple plugin is [plugin, options]; a bare plugin is the function.
@@ -53,6 +55,27 @@ describe('buildMarkdownPlugins', () => {
 		).not.toContain(remarkBreaks);
 	});
 
+	it('adds the Auto Run marker plugin only when autorunMarkers is set', () => {
+		expect(
+			pluginFns(buildMarkdownPlugins({ autorunMarkers: true }).remarkPlugins as unknown[])
+		).toContain(remarkMaestroMarkers);
+		// Off by default: a marker pill asserts that something is configured, so
+		// it must be opted into rather than inherited by every surface.
+		expect(pluginFns(buildMarkdownPlugins().remarkPlugins as unknown[])).not.toContain(
+			remarkMaestroMarkers
+		);
+	});
+
+	// The marker has to still be its own `html` node when the plugin runs. Once
+	// remark-breaks has spliced a <br> into the line, it is not.
+	it('runs the marker plugin before remark-breaks', () => {
+		const fns = pluginFns(
+			buildMarkdownPlugins({ autorunMarkers: true, chatLineBreaks: true })
+				.remarkPlugins as unknown[]
+		);
+		expect(fns.indexOf(remarkMaestroMarkers)).toBeLessThan(fns.indexOf(remarkBreaks));
+	});
+
 	it('adds remark-math (single-dollar disabled) + promote + rehype-katex for chatMath', () => {
 		const { remarkPlugins, rehypePlugins } = buildMarkdownPlugins({ chatMath: true });
 		const remark = remarkPlugins as unknown[];
@@ -76,6 +99,22 @@ describe('buildMarkdownPlugins', () => {
 		// sanitize must run AFTER raw so it inspects parsed elements, not raw strings
 		expect(fns.indexOf(rehypeSanitize)).toBeGreaterThan(fns.indexOf(rehypeRaw));
 		expect(buildMarkdownPlugins({ allowRawHtml: false }).rehypePlugins).toBeUndefined();
+	});
+
+	it('strips HTML comments exactly when raw HTML is off', () => {
+		// With rehype-raw, a comment is parsed into a real comment node and React
+		// drops it. Without it, react-markdown prints the comment as text - so the
+		// stripper has to cover precisely the surfaces rehype-raw does not.
+		const withRaw = pluginFns(buildMarkdownPlugins({ allowRawHtml: true }).remarkPlugins);
+		expect(withRaw).not.toContain(remarkStripHtmlComments);
+
+		const withoutRaw = pluginFns(buildMarkdownPlugins({ allowRawHtml: false }).remarkPlugins);
+		expect(withoutRaw).toContain(remarkStripHtmlComments);
+	});
+
+	it('strips comments after the marker plugin, so marker pills are not stripped too', () => {
+		const fns = pluginFns(buildMarkdownPlugins({ autorunMarkers: true }).remarkPlugins);
+		expect(fns.indexOf(remarkStripHtmlComments)).toBeGreaterThan(fns.indexOf(remarkMaestroMarkers));
 	});
 
 	describe('file links gating (mirrors chat renderer logic)', () => {

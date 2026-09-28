@@ -1,8 +1,18 @@
-import { memo, useMemo, type ReactElement } from 'react';
-import { Gitgraph, templateExtend, TemplateName } from '@gitgraph/react';
-import { GitgraphCore } from '@gitgraph/core';
+import {
+	createContext,
+	memo,
+	useCallback,
+	useContext,
+	useEffect,
+	useMemo,
+	useRef,
+	type ReactElement,
+} from 'react';
+import { Gitgraph } from '@gitgraph/react';
 import type { Theme } from '../types';
 import type { GitGraphNode } from '../services/git';
+import { useStableCallback } from '../hooks/utils/useStableCallback';
+import { buildGitGraphCore, buildGitGraphTemplate } from '../utils/gitGraphLayout';
 
 // `@gitgraph/react`'s public Gitgraph component is parameterised on
 // `ReactElement<SVGElement>` (its internal `ReactSvgElement`). The library
@@ -10,87 +20,86 @@ import type { GitGraphNode } from '../services/git';
 // userland-built `GitgraphCore` instance type-checks against the `graph` prop.
 type ReactSvgElement = ReactElement<SVGElement>;
 
-// Maestro's monospace stack (mirrors `--font-mono` in index.css / tailwind.config).
-// SVG font strings need a size prefix, so callers build `<px>px ${MONO_FONT}`.
-const MONO_FONT = "'JetBrains Mono', 'Fira Code', 'Courier New', monospace";
+// Radius of the invisible circle that catches clicks. The drawn dot is ~5px
+// across, a target under every pointer-size guideline and genuinely painful to
+// hit in a dense graph, so the hit area is widened well past it without making
+// the graph look heavier. It stays under half the 24px commit pitch so
+// neighbouring commits cannot steal each other's clicks.
+const DOT_HIT_RADIUS = 11;
+// How far the selection ring sits outside the dot itself.
+const SELECTION_RING_GAP = 3.5;
+
+/**
+ * Which commit is selected, and what to do when one is clicked.
+ *
+ * This rides a context rather than the @gitgraph core because the core must
+ * stay STABLE: rebuilding it swaps the `graph` prop, and `<Gitgraph>` reads
+ * that only in its constructor, so a changed core means a remounted SVG. During
+ * the remount the scroll container is briefly empty, which clamps its scroll
+ * offsets to zero - the graph snaps back to the newest commit on every arrow
+ * keypress, which reads as the keys being broken. Only the dots depend on the
+ * selection, and only the dots re-render when it changes.
+ */
+const GitGraphSelectionContext = createContext<{
+	selectedHash?: string;
+	accent: string;
+	onCommitClick?: (hash: string) => void;
+}>({ accent: 'currentColor' });
+
+/**
+ * One commit dot: a wide invisible hit target, the visible dot, and the
+ * selection ring when this is the selected commit.
+ *
+ * @gitgraph's own `<Dot>` returns `commit.renderDot(commit)` and nothing else,
+ * so the click handler it would normally wrap the dot in is not applied - this
+ * wires `onClick` itself.
+ */
+const GitGraphDot = memo(function GitGraphDot({
+	hash,
+	radius,
+	color,
+}: {
+	hash: string;
+	radius: number;
+	color: string;
+}) {
+	const { selectedHash, accent, onCommitClick } = useContext(GitGraphSelectionContext);
+	const selected = selectedHash === hash;
+	const handleClick = useCallback(() => onCommitClick?.(hash), [onCommitClick, hash]);
+
+	// Every circle is centered on (radius, radius), which is where @gitgraph
+	// draws the branch line through this commit. Centering the hit area anywhere
+	// else would put the clickable region beside the dot the user is aiming at.
+	return (
+		<g
+			data-commit-dot={hash}
+			data-selected={selected || undefined}
+			onClick={handleClick}
+			style={{ cursor: onCommitClick ? 'pointer' : 'default' }}
+		>
+			{/* Hit area. A `transparent` fill is what makes it catch pointer events -
+			    `fill="none"` would let clicks pass straight through it. */}
+			<circle cx={radius} cy={radius} r={DOT_HIT_RADIUS} fill="transparent" />
+			{selected && (
+				<circle
+					cx={radius}
+					cy={radius}
+					r={radius + SELECTION_RING_GAP}
+					fill="none"
+					stroke={accent}
+					strokeWidth={2}
+				/>
+			)}
+			<circle cx={radius} cy={radius} r={radius} fill={color} />
+		</g>
+	);
+});
 
 interface GitGraphViewProps {
 	nodes: GitGraphNode[];
 	theme: Theme;
 	onCommitClick?: (hash: string) => void;
 	selectedHash?: string;
-}
-
-// Pull a branch label out of a commit's refs (e.g. "HEAD -> main, origin/main, tag: v1").
-// Prefers local branches over remote-tracking refs; ignores tag: entries.
-function pickBranchFromRefs(refs: string[]): string | null {
-	const cleaned = refs
-		.map((r) => r.replace(/^HEAD -> /, '').trim())
-		.filter((r) => r && !r.startsWith('tag:'));
-	if (cleaned.length === 0) return null;
-	const local = cleaned.find((r) => !r.includes('/'));
-	return local || cleaned[0];
-}
-
-// Branch/lane color palette. Every branch line, dot, message and label pill
-// picks its color from here (via the branch's column), so a single source keeps
-// text and its branch line in sync.
-export const GIT_GRAPH_BRANCH_COLORS = (theme: Theme): string[] => [
-	theme.colors.accent,
-	'rgb(34, 197, 94)',
-	'rgb(59, 130, 246)',
-	'rgb(234, 179, 8)',
-	'rgb(168, 85, 247)',
-	'rgb(244, 63, 94)',
-	'rgb(20, 184, 166)',
-	'rgb(236, 72, 153)',
-];
-
-// Build the @gitgraph template from the active Maestro theme. Kept as a pure,
-// exported helper so its typography/color choices are unit-testable without
-// mounting an SVG (jsdom lacks getBBox, which @gitgraph's label layout needs).
-export function buildGitGraphTemplate(theme: Theme) {
-	return templateExtend(TemplateName.Metro, {
-		colors: GIT_GRAPH_BRANCH_COLORS(theme),
-		branch: {
-			lineWidth: 2,
-			spacing: 14,
-			label: {
-				display: true,
-				bgColor: theme.colors.bgSidebar,
-				// Leave `color`/`strokeColor` unset so @gitgraph falls back to the
-				// commit's branch color (see BranchLabel in @gitgraph/react), keeping
-				// each branch pill in sync with its line/dot color.
-				borderRadius: 4,
-				font: `10px ${MONO_FONT}`,
-			},
-		},
-		commit: {
-			// Slightly tighter than the Metro default for a denser, neater log.
-			spacing: 24,
-			hasTooltipInCompactMode: false,
-			dot: {
-				size: 5,
-				strokeWidth: 0,
-			},
-			message: {
-				display: true,
-				displayAuthor: false,
-				displayHash: false,
-				// Leave `color` unset so each commit message inherits its branch
-				// color (@gitgraph's withDefaultColor fills it from the same source
-				// as the branch line), instead of a flat textMain.
-				font: `12px ${MONO_FONT}`,
-			},
-		},
-		tag: {
-			bgColor: 'rgba(234, 179, 8, 0.2)',
-			color: 'rgb(234, 179, 8)',
-			strokeColor: 'rgb(234, 179, 8)',
-			borderRadius: 3,
-			font: `9px ${MONO_FONT}`,
-		},
-	});
 }
 
 export const GitGraphView = memo(function GitGraphView({
@@ -100,11 +109,18 @@ export const GitGraphView = memo(function GitGraphView({
 	selectedHash,
 }: GitGraphViewProps) {
 	const template = useMemo(() => buildGitGraphTemplate(theme), [theme]);
+	const scrollRef = useRef<HTMLDivElement>(null);
 
-	// Sort oldest → newest so we can build branches forward.
-	const ordered = useMemo(
-		() => [...nodes].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()),
-		[nodes]
+	// Identity-stable so a fresh parent render cannot invalidate the core below.
+	const handleCommitClick = useStableCallback((hash: string) => onCommitClick?.(hash));
+
+	const selection = useMemo(
+		() => ({
+			selectedHash,
+			accent: theme.colors.accent,
+			onCommitClick: onCommitClick ? handleCommitClick : undefined,
+		}),
+		[selectedHash, theme.colors.accent, onCommitClick, handleCommitClick]
 	);
 
 	// Build the GitgraphCore imperatively here (not via the children-callback API).
@@ -113,86 +129,96 @@ export const GitGraphView = memo(function GitGraphView({
 	// SVG. Owning the graph instance ourselves keeps the data stable across the
 	// dev-only mount→unmount→remount cycle, so what the user sees in dev matches
 	// production.
-	const gitgraph = useMemo(() => {
-		const core = new GitgraphCore<ReactSvgElement>({ template });
-		const api = core.getUserApi();
+	//
+	// The construction is shared with the keyboard navigation, which reads its
+	// geometry back out of a core built the same way - see gitGraphLayout. Its
+	// dependencies are deliberately only the DATA and the THEME: nothing about
+	// the current selection may enter here, or the SVG is torn down on every
+	// keypress (see GitGraphSelectionContext).
+	const gitgraph = useMemo(
+		() =>
+			buildGitGraphCore<ReactSvgElement>(nodes, {
+				template,
+				onCommitClick: handleCommitClick,
+				renderDot: (commit) => (
+					<GitGraphDot
+						hash={commit.hash}
+						radius={commit.style.dot.size}
+						color={commit.style.dot.color ?? theme.colors.accent}
+					/>
+				),
+			}),
+		[nodes, template, handleCommitClick, theme.colors.accent]
+	);
 
-		const branches = new Map<string, ReturnType<typeof api.branch>>();
-		const commitToBranch = new Map<string, ReturnType<typeof api.branch>>();
-		let laneCounter = 0;
+	// `<Gitgraph>` reads `props.graph` in its CONSTRUCTOR only, so a new core takes
+	// effect on a remount and nowhere else. The key is therefore derived from the
+	// core's own contents: new commits (or a new theme, which repaints the whole
+	// graph) must remount, and anything else - above all a change of selection -
+	// must not. Keying on the selection is what threw the scroll position away on
+	// every keypress: the replacement SVG is momentarily empty, so the browser
+	// clamps the container's scroll offsets to zero.
+	const graphKey = useMemo(() => {
+		const commits = gitgraph.commits;
+		const first = commits[0]?.hash ?? '';
+		const last = commits[commits.length - 1]?.hash ?? '';
+		return `${theme.name}:${commits.length}:${first}:${last}`;
+	}, [gitgraph, theme.name]);
 
-		const ensureBranch = (name: string, parentHash?: string) => {
-			const existing = branches.get(name);
-			if (existing) return existing;
-			const parentBranch = parentHash ? commitToBranch.get(parentHash) : undefined;
-			const created = parentBranch ? parentBranch.branch(name) : api.branch(name);
-			branches.set(name, created);
-			return created;
+	// Keep the selected commit on screen. Arrow keys can walk a 200-commit graph
+	// well past the viewport in either axis, and a selection the user cannot see
+	// is indistinguishable from the keys not working. The dot is found by the
+	// marker its own renderer stamps on it, and MEASURED rather than recomputed,
+	// so this stays correct through @gitgraph's label offsets and root translate.
+	useEffect(() => {
+		if (!selectedHash) return;
+		let frame = 0;
+
+		const reveal = (): boolean => {
+			const container = scrollRef.current;
+			if (!container) return true;
+			const dot = container.querySelector(`[data-commit-dot="${CSS.escape(selectedHash)}"]`);
+			if (!dot || typeof dot.getBoundingClientRect !== 'function') return false;
+
+			const target = dot.getBoundingClientRect();
+			const view = container.getBoundingClientRect();
+			// jsdom reports every rect as zero, which would read as "off screen" and
+			// scroll on every selection change; a zero-size viewport is never real.
+			if (view.height === 0 || view.width === 0) return true;
+
+			const margin = 48;
+			if (target.top < view.top + margin) {
+				container.scrollTop -= view.top + margin - target.top;
+			} else if (target.bottom > view.bottom - margin) {
+				container.scrollTop += target.bottom - (view.bottom - margin);
+			}
+			if (target.left < view.left + margin) {
+				container.scrollLeft -= view.left + margin - target.left;
+			} else if (target.right > view.right - margin) {
+				container.scrollLeft += target.right - (view.right - margin);
+			}
+			return true;
 		};
 
-		for (const node of ordered) {
-			const refBranch = pickBranchFromRefs(node.refs);
-			const firstParent = node.parents[0];
-			const inheritedBranchName = firstParent
-				? ([...branches.entries()].find(([, br]) => commitToBranch.get(firstParent) === br)?.[0] ??
-					null)
-				: null;
-
-			const branchName = refBranch ?? inheritedBranchName ?? `lane-${++laneCounter}`;
-			const branch = ensureBranch(branchName, firstParent);
-
-			const subject = node.subject || '(no message)';
-			const truncated = subject.length > 60 ? subject.slice(0, 57) + '…' : subject;
-			// Pass the full hash so @gitgraph/react's internal React keys are unique;
-			// shortHash (7 chars) can collide on busy `--all` ranges and cause React to
-			// drop duplicate children → a blank graph. displayHash:false in the template
-			// keeps the hash off the rendered label.
-			const commitOptions = {
-				hash: node.hash,
-				subject: truncated,
-				author: node.author,
-				onClick: onCommitClick ? () => onCommitClick(node.hash) : undefined,
-				style:
-					selectedHash && selectedHash === node.hash
-						? { dot: { size: 10, strokeWidth: 2, strokeColor: theme.colors.accent } }
-						: undefined,
-			};
-
-			if (node.parents.length >= 2) {
-				const secondParent = node.parents[1];
-				const sourceBranch = commitToBranch.get(secondParent);
-				if (sourceBranch) {
-					branch.merge({ branch: sourceBranch, commitOptions });
-				} else {
-					branch.commit(commitOptions);
-				}
-			} else {
-				branch.commit(commitOptions);
-			}
-
-			commitToBranch.set(node.hash, branch);
-
-			// Attach tag refs (skip duplicate branch labels - gitgraph adds those automatically).
-			for (const ref of node.refs) {
-				const cleaned = ref.replace(/^HEAD -> /, '').trim();
-				if (cleaned.startsWith('tag:')) {
-					branch.tag(cleaned.replace(/^tag:\s*/, ''));
-				}
-			}
+		// @gitgraph populates its own commits from a `setTimeout(0)` the core
+		// schedules while it is being built, so right after a rebuild there is no
+		// dot to measure yet. Retry once on the next frame rather than silently
+		// skipping the very first jump after the graph loads.
+		if (!reveal() && typeof requestAnimationFrame === 'function') {
+			frame = requestAnimationFrame(() => {
+				reveal();
+			});
 		}
+		return () => {
+			if (frame) cancelAnimationFrame(frame);
+		};
+	}, [selectedHash, graphKey]);
 
-		return core;
-	}, [ordered, template, onCommitClick, selectedHash, theme.colors.accent]);
-
-	// `<Gitgraph>` reads `props.graph` once in its constructor, so swapping in a
-	// fresh GitgraphCore (e.g. when `selectedHash` changes) requires a remount.
-	// `key={selectedHash}` is StrictMode-safe here because the GitgraphCore itself
-	// is owned by `useMemo` above - both mounts in StrictMode's double-render share
-	// the same fully-populated instance, so React only re-renders the SVG, never
-	// re-runs the imperative graph construction that breaks the children-callback API.
 	return (
-		<div className="overflow-auto h-full p-2">
-			<Gitgraph key={selectedHash ?? 'none'} graph={gitgraph} />
+		<div ref={scrollRef} className="overflow-auto h-full p-2">
+			<GitGraphSelectionContext.Provider value={selection}>
+				<Gitgraph key={graphKey} graph={gitgraph} />
+			</GitGraphSelectionContext.Provider>
 		</div>
 	);
 });

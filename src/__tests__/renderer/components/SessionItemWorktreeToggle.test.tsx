@@ -7,6 +7,11 @@
  * without writing `worktreeConfig` on the parent, so those parents rendered an
  * always-visible subtree with no way to collapse it. The toggle must appear
  * whenever the parent actually has worktree children.
+ *
+ * And for #1616, the other half of the same rule: `worktreeConfig` is a
+ * persistent per-agent setting that survives the last worktree being removed,
+ * so a parent whose children are gone must NOT keep a chevron over an empty
+ * subtree. The live child count is the only input.
  */
 
 import { describe, it, expect, vi } from 'vitest';
@@ -74,7 +79,7 @@ describe('SessionItem worktree collapse toggle', () => {
 		expect(screen.getByRole('button', { name: 'Collapse worktrees' })).toBeInTheDocument();
 	});
 
-	it('shows the toggle for a parent that has worktreeConfig', () => {
+	it('shows the toggle for a configured parent that still has children', () => {
 		render(
 			<SessionItem
 				{...defaultProps}
@@ -87,6 +92,21 @@ describe('SessionItem worktree collapse toggle', () => {
 		);
 
 		expect(screen.getByRole('button', { name: 'Collapse worktrees' })).toBeInTheDocument();
+	});
+
+	it('drops the toggle once the last worktree is removed, worktreeConfig and all (#1616)', () => {
+		render(
+			<SessionItem
+				{...defaultProps}
+				session={createMockSession({
+					worktreeConfig: { basePath: '/home/user/worktrees', watchEnabled: true },
+				})}
+				worktreeChildCount={0}
+				onToggleWorktrees={vi.fn()}
+			/>
+		);
+
+		expect(screen.queryByRole('button', { name: /worktrees$/ })).not.toBeInTheDocument();
 	});
 
 	it('does not show the toggle for a plain agent with no worktrees', () => {

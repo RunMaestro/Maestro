@@ -18,6 +18,8 @@ import { ipcMain } from 'electron';
 import { logger } from '../../utils/logger';
 import type { WebClient } from '../types';
 import type { BroadcastService } from '../services';
+import { runAsActingUser } from '../auth/acting-user';
+import { bridgeDeniedChannelError, isBridgeDeniedChannel } from './bridgeDenyList';
 
 const LOG_CONTEXT = 'WebServer:Bridge';
 
@@ -125,9 +127,56 @@ export async function handleBridgeInvoke(
 		return;
 	}
 
+	// Refused BEFORE any lookup: a denied channel must not be distinguishable
+	// from an unregistered one by timing, and more importantly must not reach a
+	// handler at all. See bridgeDenyList.ts.
+	if (isBridgeDeniedChannel(channel)) {
+		logger.warn(`Refused bridge channel "${channel}" from ${client.id}`, LOG_CONTEXT);
+		send(client, {
+			type: 'bridge.response',
+			requestId,
+			ok: false,
+			error: bridgeDeniedChannelError(channel),
+		});
+		return;
+	}
+
 	const handlers = (ipcMain as unknown as IpcMainInternal)._invokeHandlers;
 	const handler = handlers?.get(channel);
 	if (!handler) {
+		// Electron has TWO renderer→main directions and the bridge carries both
+		// over this one frame. `ipcRenderer.invoke` pairs with `ipcMain.handle`
+		// (an entry in `_invokeHandlers`, above); `ipcRenderer.send` is
+		// fire-and-forget and pairs with `ipcMain.on`, which is an ordinary
+		// EventEmitter listener and appears nowhere in that map.
+		//
+		// The web shim routes BOTH through `bridge.invoke`, because a WebSocket
+		// has no second channel to send on. So before this, every `send`-based
+		// API was a silent no-op on web-desktop: the server answered "No ipcMain
+		// handler registered", and the shim's `send` wrapper - fire-and-forget by
+		// contract, so it cannot throw at the caller - logged it to the console
+		// and swallowed it. `tabs:aiTabClosed` is the one that bites in practice
+		// (closing a tab from a browser left its armed dispatch callbacks armed),
+		// but the failure is per-DIRECTION, not per-channel: any `send` API added
+		// later is born broken on the web the same way.
+		//
+		// Emitting is the honest equivalent of what `ipcRenderer.send` does, and
+		// it grants no new authority: this same function already dispatches every
+		// registered invoke handler to an authenticated client, so a `send`
+		// listener is strictly less reachable than what is already exposed.
+		if (ipcMain.listenerCount(channel) > 0) {
+			try {
+				// Same acting-user context as the invoke path below: a `send`-style
+				// API mutates state too, and a turn started through one has to be
+				// attributed to the account that asked for it.
+				runAsActingUser(client.user, () => ipcMain.emit(channel, FAKE_EVENT, ...args));
+				send(client, { type: 'bridge.response', requestId, ok: true, result: undefined });
+			} catch (err) {
+				const error = err instanceof Error ? err.message : String(err);
+				send(client, { type: 'bridge.response', requestId, ok: false, error });
+			}
+			return;
+		}
 		send(client, {
 			type: 'bridge.response',
 			requestId,
@@ -138,7 +187,12 @@ export async function handleBridgeInvoke(
 	}
 
 	try {
-		const result = await handler(FAKE_EVENT, ...args);
+		// The handler runs INSIDE the acting-user context, not beside it: the
+		// context has to be established before the call so every await the
+		// handler performs still reads the same account from `getActingUser()`.
+		// `client.user` is undefined for maestro-cli (admitted by its secret) and
+		// for every client when the gate is off, which reads as "the desktop".
+		const result = await runAsActingUser(client.user, () => handler(FAKE_EVENT, ...args));
 		send(client, {
 			type: 'bridge.response',
 			requestId,

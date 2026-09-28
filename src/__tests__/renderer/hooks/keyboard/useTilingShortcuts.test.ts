@@ -2,7 +2,7 @@
  * @file useTilingShortcuts.test.ts
  * @description Covers the Ctrl+Cmd pane-tiling shortcut family, focusing on the
  * contract that a keyboard pane move carries DOM FOCUS with it: each handler that
- * moves `focusedPaneId` must also publish a `paneFocusRequest` (the destination
+ * moves `focusedPaneId` must also publish a `focusRequest` (the destination
  * leaf id) for MainPanelContent to consume. Without it the focus ring moves but
  * the caret stays behind, so typing goes to the previous pane.
  */
@@ -77,7 +77,7 @@ describe('useTilingShortcuts', () => {
 			act(() => result.current.focusPane('right'));
 
 			expect(focusedPaneId()).toBe('leaf-b');
-			expect(useUIStore.getState().paneFocusRequest).toBe('leaf-b');
+			expect(useUIStore.getState().focusRequest).toEqual({ leafId: 'leaf-b' });
 		});
 
 		it('does not request focus when there is no neighbor that way', () => {
@@ -88,7 +88,7 @@ describe('useTilingShortcuts', () => {
 			act(() => result.current.focusPane('left'));
 
 			expect(focusedPaneId()).toBe('leaf-a');
-			expect(useUIStore.getState().paneFocusRequest).toBeNull();
+			expect(useUIStore.getState().focusRequest).toBeNull();
 		});
 
 		it('does not request focus when no group is active', () => {
@@ -97,7 +97,7 @@ describe('useTilingShortcuts', () => {
 
 			act(() => result.current.focusPane('right'));
 
-			expect(useUIStore.getState().paneFocusRequest).toBeNull();
+			expect(useUIStore.getState().focusRequest).toBeNull();
 		});
 	});
 
@@ -109,7 +109,7 @@ describe('useTilingShortcuts', () => {
 			act(() => result.current.cyclePane('next'));
 
 			expect(focusedPaneId()).toBe('leaf-b');
-			expect(useUIStore.getState().paneFocusRequest).toBe('leaf-b');
+			expect(useUIStore.getState().focusRequest).toEqual({ leafId: 'leaf-b' });
 		});
 
 		it('requests DOM focus for the wrapped-around pane', () => {
@@ -120,7 +120,7 @@ describe('useTilingShortcuts', () => {
 			act(() => result.current.cyclePane('prev'));
 
 			expect(focusedPaneId()).toBe('leaf-b');
-			expect(useUIStore.getState().paneFocusRequest).toBe('leaf-b');
+			expect(useUIStore.getState().focusRequest).toEqual({ leafId: 'leaf-b' });
 		});
 
 		it('does not request focus for a single-pane group (nothing to cycle to)', () => {
@@ -141,7 +141,7 @@ describe('useTilingShortcuts', () => {
 
 			act(() => result.current.cyclePane('next'));
 
-			expect(useUIStore.getState().paneFocusRequest).toBeNull();
+			expect(useUIStore.getState().focusRequest).toBeNull();
 		});
 	});
 
@@ -160,10 +160,10 @@ describe('useTilingShortcuts', () => {
 
 			act(() => result.current.splitFocusedPane('column'));
 
-			const request = useUIStore.getState().paneFocusRequest;
+			const request = useUIStore.getState().focusRequest;
 			expect(request).not.toBeNull();
 			// The new pane is the one that took focus, so typing lands in it.
-			expect(request).toBe(focusedPaneId());
+			expect(request).toEqual({ leafId: focusedPaneId() });
 		});
 
 		it('requests no focus when there is no standalone tab to split into', () => {
@@ -172,7 +172,7 @@ describe('useTilingShortcuts', () => {
 
 			act(() => result.current.splitFocusedPane('column'));
 
-			expect(useUIStore.getState().paneFocusRequest).toBeNull();
+			expect(useUIStore.getState().focusRequest).toBeNull();
 		});
 	});
 
@@ -210,10 +210,10 @@ describe('useTilingShortcuts', () => {
 
 			act(() => result.current.closeFocusedPane());
 
-			const request = useUIStore.getState().paneFocusRequest;
+			const request = useUIStore.getState().focusRequest;
 			expect(request).not.toBeNull();
 			// Whatever survived as the focused pane is what focus was requested for.
-			expect(request).toBe(focusedPaneId());
+			expect(request).toEqual({ leafId: focusedPaneId() });
 		});
 
 		it('requests no focus when closing dissolves the group', () => {
@@ -225,7 +225,7 @@ describe('useTilingShortcuts', () => {
 			act(() => result.current.closeFocusedPane());
 
 			expect(useSessionStore.getState().sessions[0].tabGroups).toHaveLength(0);
-			expect(useUIStore.getState().paneFocusRequest).toBeNull();
+			expect(useUIStore.getState().focusRequest).toBeNull();
 		});
 	});
 
@@ -237,7 +237,7 @@ describe('useTilingShortcuts', () => {
 			act(() => result.current.rebalance());
 			act(() => result.current.toggleZoom());
 
-			expect(useUIStore.getState().paneFocusRequest).toBeNull();
+			expect(useUIStore.getState().focusRequest).toBeNull();
 		});
 	});
 });

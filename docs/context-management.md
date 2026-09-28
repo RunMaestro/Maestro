@@ -125,6 +125,25 @@ Customize warning thresholds in **Settings** (`Cmd+,` / `Ctrl+,`) → **Display*
 - Set red to **70-80%** - going higher risks quality degradation
 - Lower both thresholds if you frequently work on complex tasks that require the AI to remember many details
 
+### Context Details
+
+Hover the context gauge in the main window header to open **Context Details**, a breakdown of the tab you are looking at:
+
+| Row                                               | What it tells you                                                     |
+| ------------------------------------------------- | --------------------------------------------------------------------- |
+| **Provider** / **Profile**                        | Which agent and which account produced these numbers                  |
+| **Messages**                                      | Conversation entries in this tab. Hover it for the user / agent split |
+| **Duration**                                      | Time between the first and last entry                                 |
+| **Input / Output / Cache Read / Cache Write**     | Token usage reported by the provider                                  |
+| **Context Tokens** / **Context Size** / **Usage** | How full the context window is                                        |
+| **Max Plan Usage**                                | 5-hour and weekly plan windows (Claude Code only)                     |
+
+Messages and Duration are the same figures the [HTML export](#tab-export) prints at the top of the document, so you can read them without exporting first. Duration is wall clock between the first and last entry, not time the agent spent working: a tab left open overnight counts the night.
+
+The same two figures appear in `maestro-cli sessions <agent-id>` for every session Maestro has a tab for.
+
+Click the gauge to swap Context Details for the **Context Timeline**, a turn-by-turn record of how the context window filled. The Timeline opens in the space the popover held and closes as soon as you move the pointer off it, or when you click the gauge again or press `Esc`. The two never show at the same time. Drag an edge to resize the Timeline: the size is remembered for every agent and across restarts, and double-clicking an edge resets it. Context Details has no edges of its own, since it closes when the pointer leaves it, so it takes the Timeline's width. Resize the Timeline to resize both.
+
 ## Compact & Continue
 
 When your conversation approaches context limits, you can compress it while preserving essential information:
@@ -228,6 +247,8 @@ Transfer your context to a different AI agent:
 2. Search for or select the target agent from the list
 3. Review the token estimate and cleaning options
 4. Click **"Send to Session"**
+
+If the target agent is busy, the button reads **"Queue for Agent"**: the context opens in a new tab and runs when the agent's current turn finishes. With **Forced Parallel Execution** on (Settings → General), a **"Force Send to Agent"** button (or the Forced Parallel Send shortcut, `Cmd+Shift+Enter` / `Ctrl+Shift+Enter`) sends it now, in parallel with the running turn.
 
 ![Send to Agent Modal](./screenshots/tab-send.png)
 

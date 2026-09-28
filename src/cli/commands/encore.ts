@@ -1,13 +1,14 @@
-// Encore Features commands - list and toggle Maestro's experimental "Encore"
-// features in the running desktop app. Toggling routes through the set_setting
+// Encore Features commands - list and toggle Maestro's Encore Features in the
+// running desktop app. Toggling routes through the set_setting
 // WS message (key: encoreFeatures), so changes apply live and persist. Mirrors
 // the Settings -> Encore Features toggles.
 
+import { resolveEncoreFeatures } from '../../shared/encoreFeatureDefaults';
 import { readSettingValue } from '../services/storage';
 import { sendSimpleCommand, reportResult, failCommand } from '../services/session-command';
 
 // Feature ID -> display name. Keys mirror EncoreFeatureFlags in
-// src/renderer/types/index.ts. Aliases let an agent say "group chat" or "cue".
+// src/shared/encoreFeatures.ts. Aliases let an agent say "group chat" or "cue".
 const FEATURES: Record<string, string> = {
 	directorNotes: "Director's Notes",
 	usageStats: 'Usage Dashboard',
@@ -41,10 +42,13 @@ interface EncoreOptions {
 }
 
 function readFlags(): Record<string, boolean> {
-	const raw = readSettingValue('encoreFeatures');
+	// Resolve against the shared defaults, not against `false`: on an install
+	// where the user has never opened the Encore tab nothing is persisted yet,
+	// and reporting every feature as off would contradict the running app.
+	const resolved = resolveEncoreFeatures(readSettingValue('encoreFeatures'));
 	const flags: Record<string, boolean> = {};
 	for (const key of Object.keys(FEATURES)) {
-		flags[key] = Boolean((raw as Record<string, unknown> | undefined)?.[key]);
+		flags[key] = resolved[key as keyof typeof resolved];
 	}
 	return flags;
 }

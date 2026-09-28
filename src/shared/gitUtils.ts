@@ -324,6 +324,23 @@ export function isWorktreeAlreadyUsedError(stderr: string): boolean {
 }
 
 /**
+ * Whether git refused a command because the directory is not inside a repo:
+ * `fatal: not a git repository (or any of the parent directories): .git`.
+ *
+ * This is the one failure that proves the directory stopped being a repo
+ * (its `.git` was removed). An SSH drop, a missing directory, or a timeout
+ * prints something else, so none of them is mistaken for "not a repo".
+ * Git localizes the message; on a non-English git this returns false, which
+ * errs on the side of keeping the agent marked as a repo.
+ *
+ * @param stderr - Raw stderr from any git command run in the directory
+ */
+export function isNotAGitRepositoryError(stderr: string | undefined): boolean {
+	if (!stderr) return false;
+	return /not a git repository/i.test(stderr);
+}
+
+/**
  * Parse `git worktree list --porcelain` output and return the absolute path
  * of the worktree currently checked out on the given branch, or null.
  *
@@ -377,7 +394,7 @@ export function parseWorktreePathForBranch(stdout: string, branchName: string): 
  * same sanitized branch ("Cue-Dashboard") regardless of entry point.
  */
 // Built from string form so the source file doesn't carry raw control bytes.
-// Matches ASCII control characters (U+0000–U+001F, U+007F) which git rejects in refs.
+// Matches ASCII control characters (U+0000-U+001F, U+007F) which git rejects in refs.
 const GIT_REF_CONTROL_CHARS_RE = new RegExp('[\\u0000-\\u001f\\u007f]', 'g');
 
 export interface SanitizeGitBranchNameOptions {
@@ -418,6 +435,45 @@ export function sanitizeGitBranchName(
 }
 
 /**
+ * Uncommitted-change totals for one repo, as the renderer's git status polling
+ * reports them. Line-level counts are only collected for the active agent, so
+ * `additions`/`deletions`/`modified` are all 0 for every other agent even when
+ * `fileCount` is not - anything rendering these must fall back to the count.
+ */
+export interface GitChangeTotals {
+	/** Number of changed files in the working tree. */
+	fileCount: number;
+	/** Added lines (0 when line-level detail was not collected). */
+	additions: number;
+	/** Removed lines (0 when line-level detail was not collected). */
+	deletions: number;
+	/** Modified files (0 when line-level detail was not collected). */
+	modified: number;
+}
+
+/**
+ * One-line readout of a working tree's uncommitted changes, for tooltips and
+ * command-palette subtext.
+ *
+ * @param totals - Change totals from git status polling
+ * @returns e.g. `+206 −37 ~5 in 5 files`, `5 files changed`, or `No uncommitted changes`
+ */
+export function formatGitChangeSummary(totals: GitChangeTotals): string {
+	const { fileCount, additions, deletions, modified } = totals;
+	if (fileCount <= 0) return 'No uncommitted changes';
+
+	const files = `${fileCount} file${fileCount === 1 ? '' : 's'}`;
+	const parts: string[] = [];
+	if (additions > 0) parts.push(`+${additions}`);
+	if (deletions > 0) parts.push(`−${deletions}`);
+	if (modified > 0) parts.push(`~${modified}`);
+
+	// No line-level detail (a non-active agent, or untracked files only).
+	if (parts.length === 0) return `${files} changed`;
+	return `${parts.join(' ')} in ${files}`;
+}
+
+/**
  * Common image file extensions for git file handling
  */
 const GIT_IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp', 'svg', 'ico'];
@@ -434,13 +490,20 @@ export function isImageFile(filePath: string): boolean {
 }
 
 /**
- * Get MIME type for an image extension
+ * Get MIME type for an image extension.
  *
- * @param ext - File extension (without dot)
+ * The mapping has to be exact, not `image/${ext}`: `image/jpg` and `image/ico`
+ * are not real MIME types, and Electron's `nativeImage.createFromDataURL()`
+ * matches the declared type literally, so a JPEG labeled `image/jpg` decodes to
+ * an empty image and cannot be copied to the clipboard.
+ *
+ * @param ext - File extension, with or without a leading dot
  * @returns MIME type string
  */
 export function getImageMimeType(ext: string): string {
-	if (ext === 'svg') return 'image/svg+xml';
-	if (ext === 'jpg') return 'image/jpeg';
-	return `image/${ext}`;
+	const normalized = ext.replace(/^\./, '').toLowerCase();
+	if (normalized === 'svg') return 'image/svg+xml';
+	if (normalized === 'jpg' || normalized === 'jpeg') return 'image/jpeg';
+	if (normalized === 'ico') return 'image/x-icon';
+	return `image/${normalized}`;
 }

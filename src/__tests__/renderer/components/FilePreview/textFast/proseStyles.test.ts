@@ -3,6 +3,7 @@ import {
 	TEXT_PAGE_CLASS,
 	TEXT_PAGE_GUTTER_CLASS,
 	TEXT_PAGE_CONTENT_CLASS,
+	TEXT_BASE_FONT_PX,
 	generateTextProseCss,
 } from '../../../../../renderer/components/FilePreview/textFast/proseStyles';
 import { createMockTheme } from '../../../../helpers/mockTheme';
@@ -51,9 +52,13 @@ describe('generateTextProseCss', () => {
 		expect(css).toContain('#abcdef');
 	});
 
-	it('uses a monospace font stack', () => {
+	it('inherits the pane font rather than pinning its own stack', () => {
+		// The File Preview font setting reaches this tier by inheritance from the
+		// scroll container. A second hard-coded stack here would win over it and
+		// silently exempt plain-text files from the setting.
 		const css = generateTextProseCss(makeTheme());
-		expect(css.toLowerCase()).toContain('monospace');
+		expect(css).toContain('font-family: inherit;');
+		expect(css.toLowerCase()).not.toContain('ui-monospace');
 	});
 
 	it('disables user-select on the gutter so line numbers do not copy', () => {
@@ -71,5 +76,13 @@ describe('generateTextProseCss', () => {
 		const a = generateTextProseCss(makeTheme({ textMain: '#000' }));
 		const b = generateTextProseCss(makeTheme({ textMain: '#fff' }));
 		expect(a).not.toBe(b);
+	});
+
+	it('renders at the base size when no zoom is passed', () => {
+		expect(generateTextProseCss(makeTheme())).toContain(`font-size: ${TEXT_BASE_FONT_PX}px`);
+	});
+
+	it('multiplies the base size by the reader font zoom', () => {
+		expect(generateTextProseCss(makeTheme(), 2)).toContain(`font-size: ${TEXT_BASE_FONT_PX * 2}px`);
 	});
 });

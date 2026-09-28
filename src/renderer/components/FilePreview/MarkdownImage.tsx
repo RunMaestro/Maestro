@@ -2,6 +2,7 @@ import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { Image } from 'lucide-react';
 import { Spinner } from '../ui/Spinner';
 import { imageCache, resolveImagePath } from './filePreviewUtils';
+import { safeDecodeURIComponent } from '../../../shared/stringUtils';
 
 /**
  * Custom image component for markdown that loads images from file paths.
@@ -42,12 +43,9 @@ export const MarkdownImage = React.memo(function MarkdownImage({
 		if (src.startsWith('data:')) return src; // data URLs are self-contained
 		if (isRemoteUrl) return src;
 
-		let decodedSrc = src;
-		try {
-			decodedSrc = decodeURIComponent(src);
-		} catch {
-			// Use original if decode fails
-		}
+		// mdast-util-to-hast percent-encodes every destination, so a path with a
+		// space arrives as `%20` and must be decoded before it reaches disk.
+		const decodedSrc = safeDecodeURIComponent(src);
 
 		if (isFromFileTree && projectRoot) {
 			return `${projectRoot}/${decodedSrc}`;

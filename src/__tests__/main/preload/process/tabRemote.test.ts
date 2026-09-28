@@ -26,6 +26,27 @@ describe('Process TabRemote Preload API', () => {
 		api = createTabRemoteApi();
 	});
 
+	it('forwards the optional desktop tab inventory with remote selection events', () => {
+		const callback = vi.fn();
+		const tabs = [
+			{
+				id: 'tab-1',
+				agentSessionId: null,
+				name: 'New tab',
+				starred: false,
+				inputValue: '',
+				createdAt: 1700000000000,
+				state: 'idle' as const,
+			},
+		];
+
+		api.onRemoteSelectTab(callback);
+		const handler = mockOn.mock.calls.find(([channel]) => channel === 'remote:selectTab')?.[1];
+		handler({}, 'session-1', 'tab-1', tabs);
+
+		expect(callback).toHaveBeenCalledWith('session-1', 'tab-1', tabs);
+	});
+
 	describe('sendRemoteNewTabResponse', () => {
 		it('should send response via ipcRenderer.send', () => {
 			api.sendRemoteNewTabResponse('response-channel', { tabId: 'tab-123' });
@@ -37,6 +58,27 @@ describe('Process TabRemote Preload API', () => {
 			api.sendRemoteNewTabResponse('response-channel', null);
 
 			expect(mockSend).toHaveBeenCalledWith('response-channel', null);
+		});
+	});
+
+	describe('remote rename tab', () => {
+		it('forwards responseChannel with rename events', () => {
+			const callback = vi.fn();
+
+			api.onRemoteRenameTab(callback);
+			const handler = mockOn.mock.calls.find(([channel]) => channel === 'remote:renameTab')?.[1];
+			handler({}, 'session-1', 'tab-1', 'New name', 'rename-response');
+
+			expect(callback).toHaveBeenCalledWith('session-1', 'tab-1', 'New name', 'rename-response');
+		});
+
+		it('sends rename response via ipcRenderer.send', () => {
+			api.sendRemoteRenameTabResponse('rename-response', { success: false, error: 'No tab' });
+
+			expect(mockSend).toHaveBeenCalledWith('rename-response', {
+				success: false,
+				error: 'No tab',
+			});
 		});
 	});
 });

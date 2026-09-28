@@ -1,4 +1,7 @@
 import type { Theme } from '../../../constants/themes';
+import { ALERT_TYPES } from '../../Markdown/remarkAlert';
+import { alertAccent, alertTint } from '../../Markdown/alertMeta';
+import { ALERT_TITLE_CLASS } from './alertTagger';
 
 /** CSS class name applied to each rendered block by the component. */
 export const FAST_BLOCK_CLASS = 'markdown-fast-block';
@@ -16,11 +19,37 @@ export const FAST_BLOCK_CLASS = 'markdown-fast-block';
  * Kept as a function (not a static template) so we can re-evaluate when the
  * theme changes; the React shell drops the returned string into a `<style>`
  * tag inside the scrolling container.
+ *
+ * The block base size reads `--fp-font-scale` (set by FilePreview's font-zoom
+ * control, default 1) rather than taking a prop, so a zoom change repaints via
+ * CSS without re-running the parse pipeline. Heading/code sizes stay in `em`
+ * and follow it.
  */
+/**
+ * Callout rules for the blockquotes `alertTagger` tagged. The Rich path styles
+ * these inline in `<AlertCallout>`; the Fast path emits plain HTML, so the
+ * accent, tint, and header color arrive through CSS instead. Both read the same
+ * `alertMeta` palette, so the two tiers stay in step.
+ */
+function generateAlertCss(theme: Theme): string {
+	const base = `
+		.${FAST_BLOCK_CLASS} .markdown-alert { border-radius: 6px; padding: 8px 12px; margin: 0.5em 0; color: ${theme.colors.textMain}; font-style: normal; }
+		.${FAST_BLOCK_CLASS} .${ALERT_TITLE_CLASS} { display: flex; align-items: center; gap: 6px; font-weight: 600; font-size: 0.85em; margin-bottom: 4px; }
+		.${FAST_BLOCK_CLASS} .${ALERT_TITLE_CLASS} svg { flex-shrink: 0; }
+		.${FAST_BLOCK_CLASS} .markdown-alert > :last-child { margin-bottom: 0; }
+	`;
+	const perType = ALERT_TYPES.map(
+		(type) => `
+		.${FAST_BLOCK_CLASS} .markdown-alert-${type} { border-left: 4px solid ${alertAccent(type, theme)}; background: ${alertTint(type, theme)}; }
+		.${FAST_BLOCK_CLASS} .markdown-alert-${type} .${ALERT_TITLE_CLASS} { color: ${alertAccent(type, theme)}; }`
+	).join('');
+	return base + perType;
+}
+
 export function generateProseCss(theme: Theme): string {
 	const c = theme.colors;
 	return `
-		.${FAST_BLOCK_CLASS} { color: ${c.textMain}; }
+		.${FAST_BLOCK_CLASS} { color: ${c.textMain}; font-size: calc(0.875rem * var(--fp-font-scale, 1)); }
 		.${FAST_BLOCK_CLASS} h1 { color: ${c.accent}; font-size: 2em; font-weight: bold; margin: 0.67em 0; }
 		.${FAST_BLOCK_CLASS} h2 { color: ${c.success}; font-size: 1.5em; font-weight: bold; margin: 0.75em 0; }
 		.${FAST_BLOCK_CLASS} h3 { color: ${c.warning}; font-size: 1.17em; font-weight: bold; margin: 0.83em 0; }
@@ -43,5 +72,6 @@ export function generateProseCss(theme: Theme): string {
 		.${FAST_BLOCK_CLASS} strong { font-weight: bold; }
 		.${FAST_BLOCK_CLASS} em { font-style: italic; }
 		.${FAST_BLOCK_CLASS} img { display: block; max-width: 100%; height: auto; }
+		${generateAlertCss(theme)}
 	`;
 }

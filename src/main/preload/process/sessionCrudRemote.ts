@@ -7,17 +7,25 @@ export function createSessionCrudRemoteApi() {
 		 * agent in a git worktree branched off a parent agent, without Auto Run.
 		 */
 		onRemoteCreateWorktreeSession: (
-			callback: (parentSessionId: string, config: any, responseChannel: string) => void
+			callback: (
+				parentSessionId: string,
+				config: any,
+				responseChannel: string,
+				background?: boolean
+			) => void
 		): (() => void) => {
 			const handler = (
 				_: unknown,
 				parentSessionId: string,
 				config: any,
-				responseChannel: string
+				responseChannel: string,
+				background?: boolean
 			) => {
 				try {
 					// callback may return a promise even though typed as void
-					Promise.resolve(callback(parentSessionId, config, responseChannel)).catch((error) => {
+					Promise.resolve(
+						callback(parentSessionId, config, responseChannel, background === true)
+					).catch((error) => {
 						ipcRenderer.send(responseChannel, {
 							success: false,
 							error: error instanceof Error ? error.message : String(error),
@@ -47,6 +55,11 @@ export function createSessionCrudRemoteApi() {
 		/**
 		 * Subscribe to remote create session from web interface
 		 * Uses request-response pattern with a unique responseChannel
+		 *
+		 * `background` is the last argument and must be forwarded: the renderer
+		 * gates its Left Bar switch on it, and a handler that stops at
+		 * `responseChannel` silently turns every `create-agent --background` back
+		 * into a foreground create (issue #1496).
 		 */
 		onRemoteCreateSession: (
 			callback: (
@@ -55,7 +68,8 @@ export function createSessionCrudRemoteApi() {
 				cwd: string,
 				groupId: string | undefined,
 				config: Record<string, unknown> | undefined,
-				responseChannel: string
+				responseChannel: string,
+				background?: boolean
 			) => void
 		): (() => void) => {
 			const handler = (
@@ -65,8 +79,9 @@ export function createSessionCrudRemoteApi() {
 				cwd: string,
 				groupId: string | undefined,
 				config: Record<string, unknown> | undefined,
-				responseChannel: string
-			) => callback(name, toolType, cwd, groupId, config, responseChannel);
+				responseChannel: string,
+				background?: boolean
+			) => callback(name, toolType, cwd, groupId, config, responseChannel, background);
 			ipcRenderer.on('remote:createSession', handler);
 			return () => ipcRenderer.removeListener('remote:createSession', handler);
 		},

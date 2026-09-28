@@ -10,8 +10,8 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
 import { app } from 'electron';
-import AdmZip from 'adm-zip';
 import archiver from 'archiver';
+import { readZipArchive, type ZipArchive } from '../../utils/zip-archive';
 import { CUE_CONFIG_PATH, CUE_PROMPTS_DIR, MAESTRO_DIR } from '../../../shared/maestro-paths';
 import {
 	CUE_BACKUP_MANIFEST_VERSION,
@@ -32,6 +32,31 @@ import { captureException } from '../../utils/sentry';
 const LOG_CONTEXT = '[CueBackup]';
 const BACKUP_DIR_NAME = 'cue-backups';
 const MANIFEST_NAME = 'manifest.json';
+const MANIFEST_ONLY = { names: [MANIFEST_NAME] } as const;
+/**
+ * Create writes every cue.yaml and prompt with no size or entry cap.
+ * Full restore / diff must cover that, so they opt out of the untrusted
+ * zip-bomb defaults on `readZipArchive`. List/inspect still use those
+ * defaults because they only inflate `manifest.json`.
+ */
+const CUE_BACKUP_FULL_READ = {
+	maxEntries: Number.POSITIVE_INFINITY,
+	maxOriginalSize: Number.POSITIVE_INFINITY,
+} as const;
+
+function workspaceZipEntryName(workspaceId: string, relativePath: string): string {
+	return `workspaces/${workspaceId}/${relativePath}`;
+}
+
+function readZipWorkspaceFile(
+	zip: ZipArchive,
+	workspaceId: string,
+	relativePath: string
+): string | null {
+	const entry = zip.getEntry(workspaceZipEntryName(workspaceId, relativePath));
+	if (!entry) return null;
+	return entry.getData().toString('utf-8');
+}
 
 function backupsDir(): string {
 	const dir = path.join(app.getPath('userData'), BACKUP_DIR_NAME);
@@ -208,7 +233,7 @@ export async function createCueBackup(
 	};
 }
 
-function readManifestFromZip(zip: AdmZip): CueBackupManifest | null {
+function readManifestFromZip(zip: ZipArchive): CueBackupManifest | null {
 	const entry = zip.getEntry(MANIFEST_NAME);
 	if (!entry) return null;
 	try {
@@ -236,7 +261,7 @@ export function listCueBackups(): CueBackupSummary[] {
 		const filePath = path.join(dir, entry.name);
 		try {
 			const stat = fs.statSync(filePath);
-			const zip = new AdmZip(filePath);
+			const zip = readZipArchive(filePath, MANIFEST_ONLY);
 			const manifest = readManifestFromZip(zip);
 			if (!manifest) continue;
 			summaries.push({
@@ -265,7 +290,7 @@ function assertBackupPath(filePath: string): void {
 /** Read the manifest of a specific backup zip. */
 export function inspectCueBackup(filePath: string): CueBackupManifest {
 	assertBackupPath(filePath);
-	const zip = new AdmZip(filePath);
+	const zip = readZipArchive(filePath, MANIFEST_ONLY);
 	const manifest = readManifestFromZip(zip);
 	if (!manifest) {
 		throw new Error('Backup is missing or has an invalid manifest');
@@ -284,10 +309,11 @@ export function readCueBackupFile(
 	relativePath: string
 ): string | null {
 	assertBackupPath(filePath);
-	const zip = new AdmZip(filePath);
-	const entry = zip.getEntry(`workspaces/${workspaceId}/${relativePath}`);
-	if (!entry) return null;
-	return entry.getData().toString('utf-8');
+	const zip = readZipArchive(filePath, {
+		...CUE_BACKUP_FULL_READ,
+		names: [workspaceZipEntryName(workspaceId, relativePath)],
+	});
+	return readZipWorkspaceFile(zip, workspaceId, relativePath);
 }
 
 /**
@@ -326,7 +352,14 @@ export function restoreCueBackupFile(
 	relativePath: string
 ): void {
 	assertBackupPath(filePath);
-	const manifest = inspectCueBackup(filePath);
+	const zip = readZipArchive(filePath, {
+		...CUE_BACKUP_FULL_READ,
+		names: [MANIFEST_NAME, workspaceZipEntryName(workspaceId, relativePath)],
+	});
+	const manifest = readManifestFromZip(zip);
+	if (!manifest) {
+		throw new Error('Backup is missing or has an invalid manifest');
+	}
 	const ws = manifest.workspaces.find((w) => w.id === workspaceId);
 	if (!ws) {
 		throw new Error(`Workspace ${workspaceId} not found in backup`);
@@ -334,7 +367,7 @@ export function restoreCueBackupFile(
 	if (!fs.existsSync(ws.cwd)) {
 		throw new Error(`Workspace path no longer exists: ${ws.cwd}`);
 	}
-	const contents = readCueBackupFile(filePath, workspaceId, relativePath);
+	const contents = readZipWorkspaceFile(zip, workspaceId, relativePath);
 	if (contents === null) {
 		throw new Error(`File not found in backup: ${relativePath}`);
 	}
@@ -358,7 +391,11 @@ export function restoreCueBackupFile(
  */
 export function restoreCueBackupAll(filePath: string): CueBackupRestoreResult {
 	assertBackupPath(filePath);
-	const manifest = inspectCueBackup(filePath);
+	const zip = readZipArchive(filePath, CUE_BACKUP_FULL_READ);
+	const manifest = readManifestFromZip(zip);
+	if (!manifest) {
+		throw new Error('Backup is missing or has an invalid manifest');
+	}
 	const result: CueBackupRestoreResult = { written: 0, skipped: [] };
 
 	for (const ws of manifest.workspaces) {
@@ -374,7 +411,7 @@ export function restoreCueBackupAll(filePath: string): CueBackupRestoreResult {
 		}
 		for (const f of ws.files) {
 			try {
-				const contents = readCueBackupFile(filePath, ws.id, f.relativePath);
+				const contents = readZipWorkspaceFile(zip, ws.id, f.relativePath);
 				if (contents === null) {
 					result.skipped.push({
 						workspaceId: ws.id,
@@ -419,7 +456,7 @@ export function restoreCueBackupAll(filePath: string): CueBackupRestoreResult {
  */
 export function getCueBackupDiffStatus(filePath: string): CueBackupDiffStatusMap {
 	assertBackupPath(filePath);
-	const zip = new AdmZip(filePath);
+	const zip = readZipArchive(filePath, CUE_BACKUP_FULL_READ);
 	const manifest = readManifestFromZip(zip);
 	if (!manifest) {
 		throw new Error('Backup is missing or has an invalid manifest');
@@ -430,7 +467,7 @@ export function getCueBackupDiffStatus(filePath: string): CueBackupDiffStatusMap
 		for (const f of ws.files) {
 			const key = cueBackupStatusKey(ws.id, f.relativePath);
 			try {
-				const entry = zip.getEntry(`workspaces/${ws.id}/${f.relativePath}`);
+				const entry = zip.getEntry(workspaceZipEntryName(ws.id, f.relativePath));
 				if (!entry) {
 					// No content in zip - treat as missing so the user can still
 					// notice; Diff/Restore will both fail loudly with a clear error.
@@ -443,7 +480,7 @@ export function getCueBackupDiffStatus(filePath: string): CueBackupDiffStatusMap
 					continue;
 				}
 				const liveStat = fs.statSync(liveAbs);
-				if (liveStat.size !== entry.header.size) {
+				if (liveStat.size !== entry.size) {
 					result[key] = 'changed';
 					continue;
 				}

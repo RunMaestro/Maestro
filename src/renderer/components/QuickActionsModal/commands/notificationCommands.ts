@@ -4,6 +4,7 @@ interface BuildNotificationCommandsArgs {
 	/** Number of toasts currently on screen. */
 	visibleToastCount: number;
 	clearToasts: () => void;
+	clearAllNotificationsShortcut?: QuickAction['shortcut'];
 	setQuickActionOpen: (open: boolean) => void;
 }
 
@@ -24,12 +25,14 @@ interface BuildNotificationCommandsArgs {
 export function buildNotificationCommands({
 	visibleToastCount,
 	clearToasts,
+	clearAllNotificationsShortcut,
 	setQuickActionOpen,
 }: BuildNotificationCommandsArgs): QuickAction[] {
 	return [
 		{
 			id: 'clear-all-notifications',
 			label: 'Clear All Notifications',
+			shortcut: clearAllNotificationsShortcut,
 			subtext:
 				visibleToastCount > 0
 					? `Dismiss ${visibleToastCount} visible toast${visibleToastCount === 1 ? '' : 's'}`

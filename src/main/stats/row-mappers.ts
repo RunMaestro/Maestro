@@ -28,6 +28,12 @@ export interface QueryEventRow {
 	tab_id: string | null;
 	is_remote: number | null;
 	is_worktree: number | null;
+	user_name: string | null;
+	input_tokens: number | null;
+	output_tokens: number | null;
+	cache_read_tokens: number | null;
+	cache_creation_tokens: number | null;
+	cost_usd: number | null;
 }
 
 export interface AutoRunSessionRow {
@@ -90,6 +96,14 @@ export function mapQueryEventRow(row: QueryEventRow): QueryEvent {
 		tabId: row.tab_id ?? undefined,
 		isRemote: row.is_remote !== null ? row.is_remote === 1 : undefined,
 		isWorktree: row.is_worktree !== null ? row.is_worktree === 1 : undefined,
+		userName: row.user_name ?? undefined,
+		// NULL stays undefined rather than collapsing to 0 - a turn with no
+		// reported usage is not a turn that used nothing.
+		inputTokens: row.input_tokens ?? undefined,
+		outputTokens: row.output_tokens ?? undefined,
+		cacheReadTokens: row.cache_read_tokens ?? undefined,
+		cacheCreationTokens: row.cache_creation_tokens ?? undefined,
+		costUsd: row.cost_usd ?? undefined,
 	};
 }
 

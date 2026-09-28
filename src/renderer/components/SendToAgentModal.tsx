@@ -10,11 +10,13 @@
  * - Fuzzy search for session names
  * - Real-time token estimation
  * - Option for AI-powered context grooming
+ * - Busy targets queue the context; with Forced Parallel Execution on, a
+ *   "Force Send to Agent" action spawns it alongside the running turn
  * - Keyboard navigation with arrow keys, Enter, Escape
  */
 
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { Search, ArrowRight, X, Loader2, Circle } from 'lucide-react';
+import { Search, ArrowRight, X, Loader2, Circle, Hammer } from 'lucide-react';
 import { GhostIconButton } from './ui/GhostIconButton';
 import { Spinner } from './ui/Spinner';
 import type { Theme, Session, ToolType } from '../types';
@@ -30,6 +32,9 @@ import { ScreenReaderAnnouncement, useAnnouncement } from './Wizard/ScreenReader
 import { getTabDisplayName } from '../utils/tabHelpers';
 import { logger } from '../utils/logger';
 import { ResizeHandles } from './ui/ResizeHandles';
+import { ShortcutHint } from './ui/ShortcutHint';
+import { useSettingsStore } from '../stores/settingsStore';
+import { eventMatchesShortcutKeys } from '../utils/shortcutMatch';
 
 /**
  * Session availability status for display in the selection list
@@ -57,6 +62,11 @@ export interface SendToAgentOptions {
 	targetSessionId: string;
 	/** Whether to create a new session (default: true) */
 	createNewSession?: boolean;
+	/**
+	 * Spawn now even though the target agent is busy (Forced Parallel Execution).
+	 * Without it, a busy target queues the context behind its current turn.
+	 */
+	forceSend?: boolean;
 }
 
 export interface SendToAgentModalProps {
@@ -138,6 +148,10 @@ export function SendToAgentModal({
 
 	// Send options
 	const [groomContext, setGroomContext] = useState(true);
+
+	// Force Send to a busy agent is gated on the same setting as the queue's Force Send
+	const forcedParallelEnabled = useSettingsStore((s) => s.forcedParallelExecution);
+	const forceSendKeys = useSettingsStore((s) => s.shortcuts.forcedParallelSend?.keys);
 
 	// Sending state
 	const [isSending, setIsSending] = useState(false);
@@ -296,23 +310,33 @@ export function SendToAgentModal({
 		[sessionOptions]
 	);
 
-	// Handle send action
-	const handleSend = useCallback(async () => {
-		if (!selectedSessionId) return;
+	// Handle send action. `forceSend` spawns into a busy target instead of queueing.
+	const sendTo = useCallback(
+		async (targetSessionId: string, forceSend: boolean) => {
+			setIsSending(true);
+			try {
+				await onSend(targetSessionId, {
+					groomContext,
+					targetSessionId,
+					...(forceSend && { forceSend: true }),
+				});
+				onClose();
+			} catch (error) {
+				logger.error('Send to session failed:', undefined, error);
+			} finally {
+				setIsSending(false);
+			}
+		},
+		[groomContext, onSend, onClose]
+	);
 
-		setIsSending(true);
-		try {
-			await onSend(selectedSessionId, {
-				groomContext,
-				targetSessionId: selectedSessionId,
-			});
-			onClose();
-		} catch (error) {
-			logger.error('Send to session failed:', undefined, error);
-		} finally {
-			setIsSending(false);
-		}
-	}, [selectedSessionId, groomContext, onSend, onClose]);
+	const handleSend = useCallback(() => {
+		if (selectedSessionId) void sendTo(selectedSessionId, false);
+	}, [selectedSessionId, sendTo]);
+
+	const handleForceSend = useCallback(() => {
+		if (selectedSessionId) void sendTo(selectedSessionId, true);
+	}, [selectedSessionId, sendTo]);
 
 	// Handle key down - list navigation (up/down only)
 	const handleKeyDown = useCallback(
@@ -361,6 +385,14 @@ export function SendToAgentModal({
 			if (e.key === 'Enter') {
 				e.preventDefault();
 				e.stopPropagation();
+				// Forced Parallel Send chord: force-send to the chosen (or highlighted) busy agent
+				if (forcedParallelEnabled && forceSendKeys && eventMatchesShortcutKeys(e, forceSendKeys)) {
+					const target =
+						sessionOptions.find((s) => s.id === selectedSessionId) ??
+						filteredSessions[selectedIndex];
+					if (target?.status === 'busy' && !isSending) void sendTo(target.id, true);
+					return;
+				}
 				if (selectedSessionId) {
 					handleSend();
 				} else if (filteredSessions[selectedIndex]) {
@@ -372,7 +404,18 @@ export function SendToAgentModal({
 				return;
 			}
 		},
-		[filteredSessions, selectedIndex, selectedSessionId, handleSelectSession, handleSend]
+		[
+			filteredSessions,
+			selectedIndex,
+			selectedSessionId,
+			handleSelectSession,
+			handleSend,
+			forcedParallelEnabled,
+			forceSendKeys,
+			sessionOptions,
+			isSending,
+			sendTo,
+		]
 	);
 
 	// Get selected session details
@@ -393,6 +436,8 @@ export function SendToAgentModal({
 		const session = sessionOptions.find((s) => s.id === selectedSessionId);
 		return session && session.status !== 'current';
 	}, [selectedSessionId, sessionOptions, isSending]);
+
+	const targetIsBusy = selectedSession?.status === 'busy';
 	const resizableModal = useResizableModal({
 		resizeKey: 'send-to-agent',
 		defaultSize: { width: 640, height: 720 },
@@ -539,7 +584,6 @@ export function SendToAgentModal({
 															? theme.colors.accent
 															: theme.colors.border,
 													opacity: isDisabled ? 0.5 : 1,
-													'--pulse-color': `${theme.colors.accent}40`,
 												} as React.CSSProperties
 											}
 										>
@@ -594,7 +638,7 @@ export function SendToAgentModal({
 											{/* Quick Select Number */}
 											{index < 9 && !isDisabled && (
 												<div
-													className="text-[10px] opacity-50 shrink-0"
+													className="text-2xs opacity-50 shrink-0"
 													style={{
 														color: isSelected
 															? theme.colors.accentForeground
@@ -647,6 +691,14 @@ export function SendToAgentModal({
 							</div>
 						)}
 
+						{targetIsBusy && (
+							<div style={{ color: theme.colors.warning }}>
+								{forcedParallelEnabled
+									? 'Agent is busy. Queue to run after its current turn, or Force Send to run in parallel now.'
+									: 'Agent is busy. The context runs when its current turn finishes. Turn on Forced Parallel Execution in Settings to send now.'}
+							</div>
+						)}
+
 						{groomContext && (
 							<div className="flex justify-between">
 								<span style={{ color: theme.colors.success }}>After cleaning:</span>
@@ -694,6 +746,23 @@ export function SendToAgentModal({
 					>
 						Cancel
 					</button>
+					{targetIsBusy && forcedParallelEnabled && (
+						<button
+							type="button"
+							onClick={handleForceSend}
+							disabled={!canSend}
+							title="Send now, running in parallel with the agent's current turn"
+							className="px-4 py-2 rounded text-sm font-medium border transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 hover:bg-white/5"
+							style={{
+								borderColor: theme.colors.warning,
+								color: theme.colors.warning,
+							}}
+						>
+							<Hammer className="w-4 h-4" aria-hidden="true" />
+							Force Send to Agent
+							{forceSendKeys && <ShortcutHint theme={theme} keys={forceSendKeys} />}
+						</button>
+					)}
 					<button
 						type="button"
 						onClick={handleSend}
@@ -713,7 +782,7 @@ export function SendToAgentModal({
 						) : (
 							<>
 								<ArrowRight className="w-4 h-4" aria-hidden="true" />
-								Send to Session
+								{targetIsBusy ? 'Queue for Agent' : 'Send to Session'}
 							</>
 						)}
 					</button>

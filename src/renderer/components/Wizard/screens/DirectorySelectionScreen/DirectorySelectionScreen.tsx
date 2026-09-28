@@ -10,21 +10,29 @@ import {
 	DirectorySelectionHeader,
 	DirectorySelectionLoading,
 	DirectoryStatusPanel,
+	PlaybookChoicePanel,
 } from './components';
 import {
+	useAutoAgentName,
 	useDirectoryActions,
 	useDirectoryAgentConfig,
 	useDirectoryAnnouncements,
 	useDirectoryKeyboard,
 	useDirectorySshRemoteHost,
 	useDirectoryValidation,
+	useSkipPlaybookLaunch,
 } from './hooks';
 import type { DirectorySelectionScreenProps } from './types';
 import { getWizardYoloFlag } from './utils/yoloFlag';
 
-export function DirectorySelectionScreen({ theme }: DirectorySelectionScreenProps): JSX.Element {
+export function DirectorySelectionScreen({
+	theme,
+	onLaunchSession,
+}: DirectorySelectionScreenProps): JSX.Element {
 	const {
 		state,
+		setAgentName,
+		setAutoRunMode,
 		setDirectoryPath,
 		setAdditionalDirectories,
 		setIsGitRepo,
@@ -84,6 +92,20 @@ export function DirectorySelectionScreen({ theme }: DirectorySelectionScreenProp
 		focusInput,
 		focusContinue,
 		announce,
+	});
+
+	useAutoAgentName({
+		agentName: state.agentName,
+		directoryPath: state.directoryPath,
+		directoryError: state.directoryError,
+		setAgentName,
+	});
+
+	const skipPlaybook = useSkipPlaybookLaunch({
+		directoryPath: state.directoryPath,
+		selectedAgent: state.selectedAgent,
+		setAutoRunMode,
+		onLaunchSession,
 	});
 
 	const handleKeyDown = useDirectoryKeyboard({
@@ -183,6 +205,14 @@ export function DirectorySelectionScreen({ theme }: DirectorySelectionScreenProp
 				isValidating={validation.isValidating}
 				buttonRef={continueButtonRef}
 				onContinue={actions.handleContinue}
+			/>
+
+			<PlaybookChoicePanel
+				theme={theme}
+				show={showContinue && !!onLaunchSession}
+				isSkipping={skipPlaybook.isSkipping}
+				skipError={skipPlaybook.skipError}
+				onSkip={skipPlaybook.handleSkipPlaybook}
 			/>
 
 			<div className="flex-1" />

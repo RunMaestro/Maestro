@@ -21,9 +21,14 @@ import { useRemotePathValidation } from '../../hooks/agent/useRemotePathValidati
 import { NudgeMessageField } from './NudgeMessageField';
 import { RemotePathStatus } from './RemotePathStatus';
 import { AgentPickerGrid } from './AgentPickerGrid';
+import {
+	filterToAvailableProviders,
+	providerLocationLabel,
+} from '../../utils/providerAvailability';
 import { logger } from '../../utils/logger';
 import { getEffortConfigKey, readEffortFromConfig } from '../../utils/agentEffort';
 import { gitService } from '../../services/git';
+import { withBlankEnvVarRow } from '../../../shared/envVarCatalog';
 
 export function NewInstanceModal({
 	isOpen,
@@ -38,6 +43,7 @@ export function NewInstanceModal({
 	const [agents, setAgents] = useState<AgentConfig[]>([]);
 	const [selectedAgent, setSelectedAgent] = useState('');
 	const [expandedAgent, setExpandedAgent] = useState<string | null>(null);
+	const [showAllProviders, setShowAllProviders] = useState(false);
 	const [workingDir, setWorkingDir] = useState('');
 	const [additionalDirectories, setAdditionalDirectories] = useState<AdditionalDirectory[]>([]);
 	const [instanceName, setInstanceName] = useState('');
@@ -64,6 +70,9 @@ export function NewInstanceModal({
 		{}
 	);
 	const [retryTokenByAgent, setRetryTokenByAgent] = useState<Record<string, boolean>>({});
+	// Codex automatic usage resets, per provider. Defaults OFF - unlike the
+	// resilience toggles above, spending a reset credit is irreversible.
+	const [codexAutoResetByAgent, setCodexAutoResetByAgent] = useState<Record<string, boolean>>({});
 	const [agentConfigs, setAgentConfigs] = useState<Record<string, Record<string, any>>>({});
 	const [availableModels, setAvailableModels] = useState<Record<string, string[]>>({});
 	const [loadingModels, setLoadingModels] = useState<Record<string, boolean>>({});
@@ -281,7 +290,16 @@ export function NewInstanceModal({
 
 			// Pre-fill form fields AFTER agents are loaded (ensures no race condition)
 			if (source) {
-				handleWorkingDirChange(source.cwd);
+				// For an SSH agent the field must show the REMOTE directory the agent
+				// actually runs in. A CLI-created agent (`create-agent --ssh-cwd`) keeps
+				// a local placeholder in `cwd` and the real path in the override, so the
+				// override is what the copy should start from. The value on screen is
+				// then the single source for the new agent's cwd AND its override.
+				handleWorkingDirChange(
+					(source.sessionSshRemoteConfig?.enabled &&
+						source.sessionSshRemoteConfig.workingDirOverride) ||
+						source.cwd
+				);
 				// Clone the grants, don't alias them - the rows are edited in place and
 				// would otherwise mutate the source agent's persisted array.
 				setAdditionalDirectories((source.additionalDirectories ?? []).map((d) => ({ ...d })));
@@ -332,6 +350,13 @@ export function NewInstanceModal({
 				setRetryTokenByAgent((prev) => ({
 					...prev,
 					[source.toolType]: resilienceEnabled(source.retryOnTokenExhaustion),
+				}));
+				// Duplicating an agent carries its automatic-reset preference too, so a
+				// copy does not silently start spending credits the original never did
+				// (and vice versa).
+				setCodexAutoResetByAgent((prev) => ({
+					...prev,
+					[source.toolType]: source.codexAutoResetOnExhaustion === true,
 				}));
 
 				// Pre-fill SSH remote configuration if source session has it
@@ -498,15 +523,21 @@ export function NewInstanceModal({
 	const handleCreate = React.useCallback(() => {
 		const name = instanceName.trim();
 		if (!name) return; // Name is required
-		// Expand tilde before passing to callback
-		const expandedWorkingDir = expandTilde(workingDir.trim());
 
-		// Validate before creating
 		const sshConfig = agentSshRemoteConfigs[selectedAgent] || agentSshRemoteConfigs['_pending_'];
 		const sshRemoteId = sshConfig?.enabled ? sshConfig?.remoteId : null;
+		// With SSH enabled the field holds a REMOTE path, so a leading `~` is the
+		// remote user's home and only the remote shell can expand it: every
+		// remote `cd`/`ls`/`stat` renders it as `"$HOME/..."`. Expanding locally
+		// turned `~/git-projects` into `/Users/<local>/git-projects`, a path that
+		// validated green here (the validator statted the raw text) and then did
+		// not exist on the host the agent started on.
+		const effectiveWorkingDir = sshRemoteId ? workingDir.trim() : expandTilde(workingDir.trim());
+
+		// Validate before creating
 		const result = validateNewSession(
 			name,
-			expandedWorkingDir,
+			effectiveWorkingDir,
 			selectedAgent as ToolType,
 			existingSessions,
 			sshRemoteId
@@ -542,8 +573,11 @@ export function NewInstanceModal({
 						remoteId: sshRemoteConfig.remoteId,
 						// When SSH is enabled, the Working Directory field contains a remote path.
 						// Use it as workingDirOverride so SSH terminals cd to the right place.
-						workingDirOverride:
-							sshRemoteConfig.workingDirOverride || expandedWorkingDir || undefined,
+						// Always the directory TYPED here, never a value carried over from
+						// the agent being duplicated: that carry-over pinned every terminal,
+						// git call and file tree of the new agent to the OLD agent's remote
+						// directory while the agent itself started in the new one.
+						workingDirOverride: effectiveWorkingDir || undefined,
 						syncHistory: sshRemoteConfig.syncHistory,
 						shareHistoryToProjectDir: sshRemoteConfig.shareHistoryToProjectDir,
 					}
@@ -580,7 +614,7 @@ export function NewInstanceModal({
 
 		onCreate(
 			selectedAgent,
-			expandedWorkingDir,
+			effectiveWorkingDir,
 			name,
 			nudgeMessage.trim() || undefined,
 			newSessionMessage.trim() || undefined,
@@ -598,7 +632,8 @@ export function NewInstanceModal({
 			agentMaestroPMode,
 			retryAvailabilityByAgent[selectedAgent] ?? true,
 			retryTokenByAgent[selectedAgent] ?? true,
-			normalizeAdditionalDirectories(additionalDirectories, homeDir)
+			normalizeAdditionalDirectories(additionalDirectories, homeDir),
+			codexAutoResetByAgent[selectedAgent] ?? false
 		);
 		onClose();
 
@@ -720,13 +755,43 @@ export function NewInstanceModal({
 		return () => window.removeEventListener('keydown', handler, true);
 	}, [isOpen, handleSelectFolder, handleCreate, isFormValid, isSshEnabled]);
 
-	// Sort agents: supported first, then coming soon at the bottom
+	// Sort agents: supported first, then coming soon at the bottom. Each bucket is
+	// alphabetical by the name the row renders, matching the wizard's tile strip
+	// and the Group Chat moderator dropdown.
 	const sortedAgents = useMemo(() => {
+		const byName = (a: AgentConfig, b: AgentConfig) => a.name.localeCompare(b.name);
 		const visible = agents.filter((a) => !a.hidden);
-		const supported = visible.filter((a) => SUPPORTED_AGENTS.includes(a.id));
-		const comingSoon = visible.filter((a) => !SUPPORTED_AGENTS.includes(a.id));
+		const supported = visible.filter((a) => SUPPORTED_AGENTS.includes(a.id)).sort(byName);
+		const comingSoon = visible.filter((a) => !SUPPORTED_AGENTS.includes(a.id)).sort(byName);
 		return [...supported, ...comingSoon];
 	}, [agents]);
+
+	// The rows the picker draws. Same rule as the wizard's tile strip: hide what
+	// this machine cannot run, unless asked, and never filter down to nothing.
+	const visibleAgents = useMemo(
+		() =>
+			filterToAvailableProviders(
+				sortedAgents,
+				(agent) => SUPPORTED_AGENTS.includes(agent.id) && !!agent.available,
+				showAllProviders,
+				(agent) => agent.id === selectedAgent
+			),
+		[sortedAgents, showAllProviders, selectedAgent]
+	);
+
+	// Counted over ALL supported providers, not the filtered rows - a count that
+	// shrank with the list would read "4 of 4" and answer nothing.
+	const providerCounts = useMemo(() => {
+		const supported = sortedAgents.filter((agent) => SUPPORTED_AGENTS.includes(agent.id));
+		return {
+			total: supported.length,
+			available: supported.filter((agent) => agent.available).length,
+		};
+	}, [sortedAgents]);
+
+	// The counts describe whichever machine detection probed, so name that machine
+	// rather than claiming "locally" while an SSH remote is selected.
+	const providerLocation = useMemo(() => providerLocationLabel(sshRemoteHost), [sshRemoteHost]);
 
 	// Effects - load agents and optionally pre-fill from source session
 	// Dependency uses sourceSession?.id (not the full object) so unrelated
@@ -897,7 +962,12 @@ export function NewInstanceModal({
 					theme={theme}
 					loading={loading}
 					sshConnectionError={sshConnectionError}
-					sortedAgents={sortedAgents}
+					visibleAgents={visibleAgents}
+					availableProviderCount={providerCounts.available}
+					totalProviderCount={providerCounts.total}
+					providerLocationLabel={providerLocation}
+					showAllProviders={showAllProviders}
+					onShowAllProvidersChange={setShowAllProviders}
 					selectedAgent={selectedAgent}
 					expandedAgent={expandedAgent}
 					refreshingAgent={refreshingAgent}
@@ -966,19 +1036,9 @@ export function NewInstanceModal({
 						}
 					}}
 					onEnvVarAdd={(agentId) => {
-						const currentVars = customAgentEnvVars[agentId] || {};
-						let newKey = 'NEW_VAR';
-						let counter = 1;
-						while (currentVars[newKey]) {
-							newKey = `NEW_VAR_${counter}`;
-							counter++;
-						}
 						setCustomAgentEnvVars((prev) => ({
 							...prev,
-							[agentId]: {
-								...prev[agentId],
-								[newKey]: '',
-							},
+							[agentId]: withBlankEnvVarRow(prev[agentId] ?? {}),
 						}));
 					}}
 					onConfigChange={(agentId, key, value) => {
@@ -1016,6 +1076,10 @@ export function NewInstanceModal({
 					dynamicOptions={dynamicOptions}
 					loadingDynamicOptions={loadingDynamicOptions}
 					onLoadDynamicOptionsForAgent={loadDynamicOptionsForAgent}
+					codexAutoResetByAgent={codexAutoResetByAgent}
+					onCodexAutoResetChange={(agentId, value) =>
+						setCodexAutoResetByAgent((prev) => ({ ...prev, [agentId]: value }))
+					}
 				/>
 
 				{/* Agent Resilience: auto-retry toggles (default ON). Sits directly
@@ -1052,7 +1116,7 @@ export function NewInstanceModal({
 						<button
 							onClick={isSshEnabled ? undefined : handleSelectFolder}
 							disabled={isSshEnabled}
-							className={`p-2 rounded border transition-colors ${isSshEnabled ? 'opacity-40 cursor-not-allowed' : 'hover:bg-opacity-10'}`}
+							className={`p-2 rounded border transition-colors ${isSshEnabled ? 'opacity-40 cursor-not-allowed' : 'row-hover'}`}
 							style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
 							title={
 								isSshEnabled

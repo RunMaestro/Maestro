@@ -17,4 +17,5 @@ export const TOOLBAR_BUTTON_LABELS: Record<FilePreviewToolbarButton, string> = {
 	// is resolved at render time via getRevealLabel().
 	revealInFolder: 'Reveal in Finder',
 	copyPath: 'Copy file path',
+	delete: 'Delete file',
 };

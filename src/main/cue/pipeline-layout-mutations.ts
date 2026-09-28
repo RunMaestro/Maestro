@@ -7,7 +7,7 @@
  * atomic-write semantics that protect the layout file from the desktop app
  * also protect CLI edits. Runs in the main process; no renderer round-trip.
  *
- * Caveat for callers: while the Pipeline Editor is open the renderer's
+ * Caveat for callers: while the Pipeline Graph is open the renderer's
  * in-memory pipeline state is the authoritative source of truth and will
  * overwrite CLI edits on its next save. Surface this to users via a
  * clear error message when in doubt; we don't gate the mutation here.
@@ -242,7 +242,7 @@ export function setPipelineOnDisk(
 			return {
 				ok: false,
 				code: 'no_layout',
-				message: 'no saved pipeline layout exists yet (open the Pipeline Editor once or use add)',
+				message: 'no saved pipeline layout exists yet (open the Pipeline Graph once or use add)',
 			};
 		}
 		const fresh: PipelineLayoutState = {

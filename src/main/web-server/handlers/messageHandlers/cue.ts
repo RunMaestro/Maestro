@@ -51,17 +51,17 @@ export function handleToggleCueSubscription(
 	const enabled = message.enabled as boolean;
 
 	if (!subscriptionId) {
-		ctx.sendError(client, 'Missing subscriptionId');
+		ctx.sendError(client, 'Missing subscriptionId', { requestId: message.requestId });
 		return;
 	}
 
 	if (typeof enabled !== 'boolean') {
-		ctx.sendError(client, 'Missing or invalid enabled flag');
+		ctx.sendError(client, 'Missing or invalid enabled flag', { requestId: message.requestId });
 		return;
 	}
 
 	if (!ctx.callbacks.toggleCueSubscription) {
-		ctx.sendError(client, 'Cue toggle not available');
+		ctx.sendError(client, 'Cue toggle not available', { requestId: message.requestId });
 		return;
 	}
 
@@ -78,7 +78,9 @@ export function handleToggleCueSubscription(
 			});
 		})
 		.catch((error) => {
-			ctx.sendError(client, `Failed to toggle Cue subscription: ${error.message}`);
+			ctx.sendError(client, `Failed to toggle Cue subscription: ${error.message}`, {
+				requestId: message.requestId,
+			});
 		});
 }
 
@@ -94,7 +96,7 @@ export function handleGetCueActivity(
 	const limit = (message.limit as number) ?? 50;
 
 	if (!ctx.callbacks.getCueActivity) {
-		ctx.sendError(client, 'Cue activity not available');
+		ctx.sendError(client, 'Cue activity not available', { requestId: message.requestId });
 		return;
 	}
 
@@ -109,7 +111,9 @@ export function handleGetCueActivity(
 			});
 		})
 		.catch((error) => {
-			ctx.sendError(client, `Failed to get Cue activity: ${error.message}`);
+			ctx.sendError(client, `Failed to get Cue activity: ${error.message}`, {
+				requestId: message.requestId,
+			});
 		});
 }
 

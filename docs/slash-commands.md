@@ -43,6 +43,8 @@ The `/skills` command is a Maestro feature that reads skill files directly - it 
 
 Create your own slash commands in **Settings → AI Commands**. Each command has a trigger (e.g., `/deploy`) and a prompt that gets sent to the AI agent.
 
+Once you have more than a handful, the **Filter commands...** box at the top of the panel narrows the list. It fuzzy-matches the command name and the description, so `dpy` finds `/deploy`, and it also does a plain text search of the prompt body, which is how you find the command that mentions a file or a tool when you cannot remember what you named it. Name and description hits sort above body-only hits, the matched letters are highlighted, and the count beside the box reads `3 of 20` so you can see how much of the list you are looking at.
+
 Commands support **template variables** that are automatically substituted at runtime. These same variables also work in [core system prompts](/prompt-customization).
 
 ### Conductor Variables
@@ -175,9 +177,30 @@ See [OpenSpec Commands](/openspec-commands) for the complete workflow guide and 
 
 ## Agent Native Commands
 
-When using Claude Code, Maestro automatically discovers and displays the agent's native slash commands in the autocomplete menu. These commands are sent via the `system/init` event when Claude Code starts and appear with a "Claude Code command" label to distinguish them from Maestro's custom commands.
+Maestro automatically discovers the commands your provider already knows about and
+shows them in the `/` autocomplete alongside Maestro's own. How they are discovered
+depends on the provider:
 
-### Supported in Batch Mode
+| Provider    | Discovered from                                                                                    |
+| ----------- | -------------------------------------------------------------------------------------------------- |
+| Claude Code | The `system/init` event when the agent starts                                                      |
+| Codex       | `<CODEX_HOME>/skills/<name>/SKILL.md`, `.codex/skills/`, and `<CODEX_HOME>/prompts/*.md`           |
+| OpenCode    | `.opencode/commands/*.md`, `~/.opencode/commands/*.md`, and the `command` block in `opencode.json` |
+| Copilot CLI | A built-in list                                                                                    |
+
+For Codex and OpenCode, Maestro expands the command itself: the file's contents are
+substituted into your message before it is sent, because both CLIs run headless under
+Maestro and would otherwise receive a literal `/name`. A project-local command shadows
+a global one with the same name, and a Codex skill marked `user-invocable: false` is
+skipped, matching Codex's own picker.
+
+<Note>
+Provider **built-in** commands (`/compact`, `/model`, `/review`, ...) only work where the
+CLI implements them outside its interactive TUI. For Codex and OpenCode they are not
+offered at all, since there is no on-disk prompt for Maestro to expand.
+</Note>
+
+### Claude Code: Supported in Batch Mode
 
 Claude Code runs in batch/print mode within Maestro, which means only certain native commands work. The following commands are **supported**:
 
@@ -193,7 +216,7 @@ Claude Code runs in batch/print mode within Maestro, which means only certain na
 
 Additionally, any **custom commands from Claude Code plugins/skills** (e.g., `/commit`, `/pdf`, `/docx`) are fully supported and will appear in the autocomplete menu.
 
-### Not Supported in Batch Mode
+### Claude Code: Not Supported in Batch Mode
 
 The following Claude Code commands are **interactive-only** and don't work through Maestro:
 

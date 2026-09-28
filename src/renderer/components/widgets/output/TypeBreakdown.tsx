@@ -80,7 +80,7 @@ export const TypeBreakdown = memo(function TypeBreakdown({
 						{formatNumber(total)}
 					</span>
 					<span
-						className="text-[10px] uppercase tracking-wide"
+						className="text-2xs uppercase tracking-wide"
 						style={{ color: theme.colors.textDim }}
 					>
 						Total

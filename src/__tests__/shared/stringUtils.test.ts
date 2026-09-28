@@ -229,3 +229,38 @@ describe('stripAnsiCodes', () => {
 		});
 	});
 });
+
+describe('safeDecodeURIComponent', () => {
+	it('should decode well-formed percent encoding', () => {
+		expect(safeDecodeURIComponent('my%20file.md')).toBe('my file.md');
+		expect(safeDecodeURIComponent('%2Fa%2Fb.md')).toBe('/a/b.md');
+		expect(safeDecodeURIComponent('caf%C3%A9')).toBe('café');
+	});
+
+	it('should return the original value for malformed percent encoding', () => {
+		expect(safeDecodeURIComponent('100%')).toBe('100%');
+		expect(safeDecodeURIComponent('%')).toBe('%');
+		expect(safeDecodeURIComponent('%zz')).toBe('%zz');
+		expect(safeDecodeURIComponent('%E0%A4%A')).toBe('%E0%A4%A');
+		expect(safeDecodeURIComponent('C:\\temp\\50%off')).toBe('C:\\temp\\50%off');
+	});
+
+	it('should pass through strings with nothing to decode', () => {
+		expect(safeDecodeURIComponent('')).toBe('');
+		expect(safeDecodeURIComponent('plain-text')).toBe('plain-text');
+	});
+
+	// Only URIError means "this was not valid encoding". Anything else is a real
+	// fault and must reach Sentry rather than be silently returned as the input.
+	it('rethrows a non-URIError so it is not silently swallowed', () => {
+		const boom = new RangeError('unexpected');
+		const spy = vi.spyOn(globalThis, 'decodeURIComponent').mockImplementation(() => {
+			throw boom;
+		});
+		try {
+			expect(() => safeDecodeURIComponent('anything')).toThrow(boom);
+		} finally {
+			spy.mockRestore();
+		}
+	});
+});

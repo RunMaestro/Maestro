@@ -3,6 +3,8 @@ import { createPortal } from 'react-dom';
 import { Search, Clock, Layers } from 'lucide-react';
 import type { Theme } from '../../types';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
+import { useSettingsStore } from '../../stores/settingsStore';
+import { usePhoneLayout } from '../../hooks/ui/useViewportBreakpoint';
 
 interface SearchPopoverProps {
 	theme: Theme;
@@ -42,7 +44,7 @@ function CountPill({
 }) {
 	return (
 		<span
-			className="px-1.5 py-0.5 rounded-full text-[10px] font-medium leading-none"
+			className="px-1.5 py-0.5 rounded-full text-2xs font-medium leading-none"
 			style={{
 				backgroundColor: `${theme.colors.accent}20`,
 				color: theme.colors.accent,
@@ -71,6 +73,22 @@ export const SearchPopover = memo(function SearchPopover({
 	onShowSnoozedTabs,
 	snoozedTabCount,
 }: SearchPopoverProps) {
+	// Where the open-tab count lives. On (the default) it rides the magnifier in
+	// the tab bar, so the number is visible without opening anything; off, it
+	// falls back to the pill next to "Search Tabs" inside the popover. It is
+	// never in both places at once - two copies of the same number read as two
+	// different counts.
+	const showTabCountBadge = useSettingsStore((s) => s.showTabCountBadge);
+	const hasCount = typeof openTabCount === 'number';
+	const badgeCount = hasCount && showTabCountBadge ? (openTabCount as number) : null;
+	const popoverCount = hasCount && !showTabCountBadge ? (openTabCount as number) : null;
+
+	// On a phone the magnifier is the tab list, full stop. The four-item menu it
+	// opens on desktop is mostly keyboard chords a phone cannot press, and the
+	// message-search modals it leads to do not fit a 390px screen; the one
+	// thing a handheld user wants from this button is to switch tabs.
+	const phone = usePhoneLayout();
+
 	const [popoverOpen, setPopoverOpen] = useState(false);
 	const [popoverPos, setPopoverPos] = useState<{ top: number; left: number } | null>(null);
 	const btnRef = useRef<HTMLButtonElement>(null);
@@ -113,12 +131,16 @@ export const SearchPopover = memo(function SearchPopover({
 	}, [popoverOpen]);
 
 	const handleClick = useCallback(() => {
+		if (phone) {
+			onSearchTabs();
+			return;
+		}
 		const btn = btnRef.current;
 		if (!btn) return;
 		const rect = btn.getBoundingClientRect();
 		setPopoverPos({ top: rect.bottom + 4, left: rect.left });
 		setPopoverOpen((open) => !open);
-	}, []);
+	}, [phone, onSearchTabs]);
 
 	const closeAndDo = useCallback((action: () => void) => {
 		actionTakenRef.current = true;
@@ -131,11 +153,32 @@ export const SearchPopover = memo(function SearchPopover({
 			<button
 				ref={btnRef}
 				onClick={handleClick}
-				className="flex items-center justify-center w-6 h-6 rounded hover:bg-white/10 transition-colors"
+				className="relative flex items-center justify-center w-6 h-6 rounded hover:bg-white/10 transition-colors"
 				style={{ color: theme.colors.textDim }}
-				title="Search…"
+				title={
+					phone
+						? badgeCount != null
+							? `Switch tab (${badgeCount} open tabs)`
+							: 'Switch tab'
+						: badgeCount != null
+							? `Search… (${badgeCount} open tabs)`
+							: 'Search…'
+				}
 			>
 				<Search className="w-4 h-4" />
+				{badgeCount != null && (
+					<span
+						className="absolute -top-1 -right-1.5 px-1 rounded-full text-3xs font-medium leading-[13px] min-w-[13px] text-center pointer-events-none"
+						style={{
+							backgroundColor: theme.colors.bgSidebar,
+							color: theme.colors.accent,
+							border: `1px solid ${theme.colors.accent}60`,
+						}}
+						aria-label={`${badgeCount} open tabs`}
+					>
+						{badgeCount > 99 ? '99+' : badgeCount}
+					</span>
+				)}
 			</button>
 
 			{popoverOpen &&
@@ -166,11 +209,11 @@ export const SearchPopover = memo(function SearchPopover({
 						>
 							<Search className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
 							Search Tabs
-							{typeof openTabCount === 'number' && (
+							{popoverCount != null && (
 								<CountPill
 									theme={theme}
-									count={openTabCount}
-									ariaLabel={`${openTabCount} open tabs`}
+									count={popoverCount}
+									ariaLabel={`${popoverCount} open tabs`}
 								/>
 							)}
 							<span className="ml-auto text-xs" style={{ color: theme.colors.textDim }}>

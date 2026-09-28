@@ -23,6 +23,7 @@ import * as path from 'path';
 import type { App } from 'electron';
 import { atomicWriteJson } from './utils/atomic-json-store';
 import { logger } from './utils/logger';
+import { fetchWithTimeout } from './utils/fetchWithTimeout';
 
 const CHECKIN_ENDPOINT = 'https://runmaestro.ai/api/telemetry/checkin';
 const CHECKIN_ID_FILE = 'checkin-id.json';
@@ -108,27 +109,24 @@ export async function sendCheckin(app: App, theme?: string | null): Promise<void
 			body.theme = theme;
 		}
 
-		const controller = new AbortController();
-		const timeout = setTimeout(() => controller.abort(), CHECKIN_TIMEOUT_MS);
-		try {
-			const response = await fetch(CHECKIN_ENDPOINT, {
+		const response = await fetchWithTimeout(
+			CHECKIN_ENDPOINT,
+			{
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify(body),
-				signal: controller.signal,
-			});
-			// A rejected ping used to be indistinguishable from a delivered one:
-			// the response was never inspected, so a 500 or a validation 400 read
-			// as success. Warn on it - if the endpoint starts turning check-ins
-			// away, the install-base numbers quietly flatline and nothing says so.
-			if (!response.ok) {
-				logger.warn(
-					`Check-in ping rejected: HTTP ${response.status} ${response.statusText}`,
-					'Checkin'
-				);
-			}
-		} finally {
-			clearTimeout(timeout);
+			},
+			CHECKIN_TIMEOUT_MS
+		);
+		// A rejected ping used to be indistinguishable from a delivered one:
+		// the response was never inspected, so a 500 or a validation 400 read
+		// as success. Warn on it - if the endpoint starts turning check-ins
+		// away, the install-base numbers quietly flatline and nothing says so.
+		if (!response.ok) {
+			logger.warn(
+				`Check-in ping rejected: HTTP ${response.status} ${response.statusText}`,
+				'Checkin'
+			);
 		}
 	} catch (err) {
 		// Transport-level failure - offline, DNS, timeout. Expected and routine

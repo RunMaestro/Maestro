@@ -4,6 +4,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, type MockInstance } from 'vitest';
+import * as path from 'path';
 
 vi.mock('../../../cli/services/maestro-client', () => ({ withMaestroClient: vi.fn() }));
 vi.mock('../../../cli/services/storage', () => ({
@@ -20,6 +21,8 @@ import {
 	skipAutoRun,
 	abortAutoRun,
 	resetAutoRunTasks,
+	autoRunStatus,
+	autoRunFolder,
 } from '../../../cli/commands/auto-run-control';
 import { withMaestroClient } from '../../../cli/services/maestro-client';
 import { resolveAgentId } from '../../../cli/services/storage';
@@ -91,5 +94,42 @@ describe('auto-run control commands', () => {
 		await expect(stopAutoRun('agent-1', {})).rejects.toThrow('__exit__');
 		expect(formatError).toHaveBeenCalledWith('Auto-run stopping not configured');
 		expect(processExitSpy).toHaveBeenCalledWith(1);
+	});
+
+	describe('auto-run-status', () => {
+		it('asks for the agent state and reports progress as JSON', async () => {
+			const captured = mockSend({
+				type: 'auto_run_state',
+				state: { isRunning: true, totalTasks: 4, completedTasks: 1 },
+			});
+			await autoRunStatus('agent-1', { json: true });
+			expect(captured()).toMatchObject({ type: 'get_auto_run_state', sessionId: 'agent-1' });
+			const out = JSON.parse(vi.mocked(console.log).mock.calls[0][0] as string);
+			expect(out).toMatchObject({ success: true, running: true });
+		});
+
+		it('fails on a generic error frame instead of reporting an idle agent', async () => {
+			mockSend({ type: 'error', message: 'Session detail not configured' });
+			await expect(autoRunStatus('agent-1', {})).rejects.toThrow('__exit__');
+			expect(processExitSpy).toHaveBeenCalledWith(1);
+		});
+	});
+
+	describe('auto-run-folder', () => {
+		it('resolves a relative path against the cwd', async () => {
+			const captured = mockSend({ success: true });
+			await autoRunFolder('agent-1', 'docs/runs', {});
+			expect(captured()).toMatchObject({
+				type: 'set_auto_run_folder',
+				sessionId: 'agent-1',
+				folderPath: path.resolve(process.cwd(), 'docs/runs'),
+			});
+		});
+
+		it('sends absolute and ~ paths as typed (they may name a remote host path)', async () => {
+			const captured = mockSend({ success: true });
+			await autoRunFolder('agent-1', '~/runs', {});
+			expect(captured().folderPath).toBe('~/runs');
+		});
 	});
 });

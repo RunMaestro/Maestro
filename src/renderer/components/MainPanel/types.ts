@@ -7,8 +7,13 @@ import type {
 	BrowserTab,
 	AgentError,
 	QueuedItem,
+	QueuedItemEditPatch,
 } from '../../types';
-import type { CopyContextOptions } from '../../hooks/tabs/useTabExportHandlers';
+import type {
+	CopyContextOptions,
+	PublishTextAsGistOptions,
+} from '../../hooks/tabs/useTabExportHandlers';
+import type { ForceSendEligibility } from '../../utils/executionQueue';
 
 export interface SlashCommand {
 	command: string;
@@ -37,8 +42,13 @@ export interface MainPanelHandle {
 	browserBack: () => void;
 	/** Navigate forward in the active browser tab's history */
 	browserForward: () => void;
-	/** Scroll the active tab header into view and focus it */
-	focusActiveTab: () => void;
+	/**
+	 * Scroll the active tab header into view and focus it. Returns true when it
+	 * was ALREADY focused and fully in view, i.e. the call had nothing to do -
+	 * which is what lets the Opt+Cmd+Up chord escalate to Previous Unread /
+	 * Draft Tab on a second press instead of doing nothing.
+	 */
+	focusActiveTab: () => boolean;
 	/** Reload the active browser tab (or stop loading if in progress) */
 	reloadBrowserTab: () => void;
 	/** Copy the active terminal tab's buffer (scrollback) to the clipboard */
@@ -139,13 +149,17 @@ export interface MainPanelProps {
 	onDeleteLog?: (logId: string) => number | null;
 	onRemoveQueuedItem?: (itemId: string) => void;
 	onTogglePauseQueuedItem?: (itemId: string) => void;
-	onEditQueuedItem?: (itemId: string, patch: { text: string; images: string[] }) => void;
+	onEditQueuedItem?: (itemId: string, patch: QueuedItemEditPatch) => void;
 	onReorderQueuedItem?: (fromIndex: number, toIndex: number, tabId?: string) => void;
 	onForceSendQueuedItem?: (itemId: string) => void;
 	forcedParallelEnabled?: boolean;
-	getForceSendContext?: (
-		item: QueuedItem
-	) => { targetTabBusy: boolean; otherBusyTabs: { id: string; displayName: string }[] } | null;
+	/**
+	 * Force Send eligibility for a queued item: can it be dispatched now, why not
+	 * if it can't, and which other tabs are working. Carries the FULL
+	 * ForceSendEligibility so the inline card renders the same decision the
+	 * Execution Queue modal does instead of re-deriving one from a subset.
+	 */
+	getForceSendContext?: (item: QueuedItem) => ForceSendEligibility | null;
 	onOpenQueueBrowser?: () => void;
 
 	// Auto mode props
@@ -158,7 +172,7 @@ export interface MainPanelProps {
 	onNewTab?: () => void;
 	onRequestTabRename?: (tabId: string) => void;
 	onTabReorder?: (fromIndex: number, toIndex: number) => void;
-	onUnifiedTabReorder?: (fromIndex: number, toIndex: number) => void;
+	onUnifiedTabReorder?: (sourceTabId: string, targetTabId: string) => void;
 	onTabStar?: (tabId: string, starred: boolean) => void;
 	onTabMarkUnread?: (tabId: string) => void;
 	onUpdateTabByClaudeSessionId?: (
@@ -212,7 +226,9 @@ export interface MainPanelProps {
 	onFileTabEditContentChange?: (
 		tabId: string,
 		editContent: string | undefined,
-		savedContent?: string
+		savedContent?: string,
+		/** mtime of the bytes just written, so the tab stops looking stale to the change poller */
+		savedMtime?: number
 	) => void;
 	/** Handler to update file tab scrollTop when scrolling in FilePreview */
 	onFileTabScrollPositionChange?: (tabId: string, scrollTop: number) => void;
@@ -269,7 +285,9 @@ export interface MainPanelProps {
 	backHistory?: { name: string; path: string; scrollTop?: number }[];
 	forwardHistory?: { name: string; path: string; scrollTop?: number }[];
 	currentHistoryIndex?: number;
-	onNavigateToIndex?: (index: number) => void;
+	// `tabId` addresses a specific file tab; omitted it means the active one. Tiled
+	// file panes pass their own id (focusing a file pane does not set activeFileTabId).
+	onNavigateToIndex?: (index: number, tabId?: string) => void;
 	onClearFilePreviewHistory?: () => void;
 
 	// Agent error handling
@@ -295,8 +313,12 @@ export interface MainPanelProps {
 	onPublishTabGist?: (tabId: string) => void;
 	/** Copy arbitrary text to the clipboard (wired by MainPanel for terminal buffer actions). */
 	onCopyText?: (text: string, subject?: string) => void;
-	/** Queue arbitrary text for the Gist modal (wired by MainPanel for terminal buffer actions). */
-	onPublishTextAsGist?: (text: string, filenameStem: string) => void;
+	/** Queue arbitrary text for the Gist modal (wired by MainPanel for terminal buffer and file tab actions). */
+	onPublishTextAsGist?: (
+		text: string,
+		filenameStem: string,
+		options?: PublishTextAsGistOptions
+	) => void;
 	/** Queue arbitrary text for Send to Agent (wired by MainPanel for terminal buffer actions). */
 	onSendTextToAgent?: (text: string, sourceName: string) => void;
 
@@ -350,6 +372,8 @@ export interface MainPanelProps {
 	onWizardClearError?: () => void;
 	/** Called when user exits inline wizard mode (Escape or clicks pill) */
 	onExitWizard?: () => void;
+	/** Stop the wizard turn currently running on the active tab */
+	onStopWizardTurn?: (tabId?: string) => void;
 	/** Toggle showing wizard thinking instead of filler phrases */
 	onToggleWizardShowThinking?: () => void;
 	/** Called when user cancels document generation */

@@ -43,7 +43,7 @@ export const EDITOR_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 	},
 	crossAgentMentionsWritable: {
 		description:
-			'When true, agents consulted via @-mention may modify files. When false (default), consults run read-only.',
+			'When true, an @-mention is a delegation: the mentioned agent may modify files. When false (default), it is a consult and runs read-only.',
 		type: 'boolean',
 		default: false,
 		category: 'editor',
@@ -71,7 +71,7 @@ export const EDITOR_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		description:
 			'Show tool-call activity (tool badges and their input/output) in AI responses. When false, tool calls are hidden from the transcript.',
 		type: 'boolean',
-		default: true,
+		default: false,
 		category: 'editor',
 	},
 	leftSidebarWidth: {
@@ -91,6 +91,20 @@ export const EDITOR_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 			'Per-modal remembered sizes in pixels, keyed by modal identifier. Values are clamped to the current viewport when used.',
 		type: 'object',
 		default: {},
+		category: 'editor',
+	},
+	concertoStageFloating: {
+		description:
+			'Whether the Concerto stage is popped out into a floating window (true) or shown as a centered dialog (false).',
+		type: 'boolean',
+		default: false,
+		category: 'editor',
+	},
+	concertoStagePosition: {
+		description:
+			'Top-left corner of the popped-out Concerto stage in pixels, as {x, y}. Clamped to the current viewport when used.',
+		type: 'object',
+		default: null,
 		category: 'editor',
 	},
 	markdownEditMode: {

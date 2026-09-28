@@ -19,6 +19,7 @@ import { safeDecodeURIComponent } from '../../shared/stringUtils';
 import type { FileNode } from '../types/fileTree';
 import {
 	buildFileTreeIndices,
+	mergeFileTreeIndices,
 	findClosestMatch as findClosestMatchCore,
 	toRelativePath as toRelativePathCore,
 	validatePathReference as validatePathReferenceCore,
@@ -36,7 +37,7 @@ import {
 
 // Re-export the shared core so existing callers don't need to learn a new
 // import path. New code should import from `./fileLinks/matcher` directly.
-export { buildFileTreeIndices };
+export { buildFileTreeIndices, mergeFileTreeIndices };
 export type { FileTreeIndices };
 
 export interface RemarkFileLinksOptions {
@@ -198,6 +199,12 @@ export function remarkFileLinks(options: RemarkFileLinksOptions) {
 					);
 					if (isInsideExisting) continue;
 
+					// A match starting right after a `~` is the tail of a tilde path,
+					// not an absolute one - leave it for the tilde pass below, which
+					// knows how to expand it. The pattern's segments admit spaces, so
+					// an absolute link minted here would also swallow whatever follows.
+					if (absMatch.index > 0 && text[absMatch.index - 1] === '~') continue;
+
 					// Convert to relative path
 					const relativePath = toRelativePath(absolutePath);
 					// For absolute paths within projectRoot, always create a link even if not in file tree
@@ -209,6 +216,19 @@ export function remarkFileLinks(options: RemarkFileLinksOptions) {
 							display: absolutePath,
 							resolvedPath: relativePath,
 							type: 'link',
+						});
+					} else {
+						// Outside projectRoot - same file, different spelling from the
+						// tilde branch below, so it gets the same file:// URL rather
+						// than being left as dead text. openFileUrl routes it to the
+						// preview tab, the floating player, or the OS by file type.
+						matches.push({
+							start: absMatch.index,
+							end: absMatch.index + absMatch[0].length,
+							display: absolutePath,
+							resolvedPath: absolutePath,
+							type: 'link',
+							absoluteUrl: `file://${absolutePath}`,
 						});
 					}
 				}
@@ -241,7 +261,8 @@ export function remarkFileLinks(options: RemarkFileLinksOptions) {
 							type: 'link',
 						});
 					} else {
-						// Outside projectRoot - use file:// URL to open in system default app
+						// Outside projectRoot - use a file:// URL, which openFileUrl routes
+						// to the preview tab, the player, or the OS by file type
 						matches.push({
 							start: tildeMatch.index,
 							end: tildeMatch.index + tildePath.length,
@@ -335,7 +356,7 @@ export function remarkFileLinks(options: RemarkFileLinksOptions) {
 					} as Image);
 				} else if (match.absoluteUrl) {
 					// External file link (outside projectRoot) - use file:// URL
-					// MarkdownRenderer's <a> handler calls shell.openPath for file:// URLs
+					// MarkdownRenderer's <a> handler passes file:// URLs to openFileUrl
 					replacements.push({
 						type: 'link',
 						url: match.absoluteUrl,
@@ -412,9 +433,9 @@ export function remarkFileLinks(options: RemarkFileLinksOptions) {
 				const extMatch = code.match(INLINE_CODE_EXT_PATTERN);
 				if (extMatch) {
 					const relativePath = toRelativePath(code);
+					// Extract just the filename for display
+					const filename = code.split('/').pop() || code;
 					if (relativePath) {
-						// Extract just the filename for display
-						const filename = code.split('/').pop() || code;
 						const link: Link = {
 							type: 'link',
 							url: `maestro-file://${relativePath}`,
@@ -428,6 +449,15 @@ export function remarkFileLinks(options: RemarkFileLinksOptions) {
 						parent.children.splice(index, 1, link);
 						return index + 1;
 					}
+					// Outside projectRoot - open via file:// URL, matching the tilde
+					// branch below and the plain-text absolute path above.
+					const link: Link = {
+						type: 'link',
+						url: `file://${code}`,
+						children: [{ type: 'text', value: filename }],
+					};
+					parent.children.splice(index, 1, link);
+					return index + 1;
 				}
 			}
 
@@ -515,6 +545,13 @@ export function remarkFileLinks(options: RemarkFileLinksOptions) {
 			// These should be resolved directly, not searched via filename index
 			if (projectRoot && decodedHref.startsWith('/')) {
 				resolvedPath = toRelativePath(decodedHref);
+				if (!resolvedPath) {
+					// Outside projectRoot - use a file:// URL, same as the tilde branch
+					// below. Left as a bare absolute href, nothing in the click router
+					// claims it and the link is dead.
+					node.url = `file://${decodedHref}`;
+					return;
+				}
 			}
 
 			// Handle tilde paths (e.g., [file](~/Projects/file.tsx))

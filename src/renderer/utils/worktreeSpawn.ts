@@ -22,6 +22,7 @@ import {
 	sessionOwnedByParent,
 } from './worktreeDedup';
 import { sanitizeGitBranchName } from '../../shared/gitUtils';
+import { runWorktreeSetupScript } from './worktreeSetupScript';
 
 /**
  * TTL for the pre-`git worktree add` dedup mark. Sized to comfortably outlast a
@@ -126,6 +127,17 @@ export async function spawnWorktreeAgentAndDispatch(
 				type: 'info',
 				title: 'Worktree Already Existed',
 				message: `Opened existing worktree at ${worktreePath}`,
+			});
+		} else if (result.created) {
+			// Fresh worktree on disk - run the parent agent's setup script before the
+			// agent spawns so .env files and generated config are already in place.
+			await runWorktreeSetupScript({
+				parentSession,
+				mainRepoPath: parentSession.cwd,
+				worktreePath,
+				branchName,
+				baseBranch: target.baseBranch || undefined,
+				sshRemoteId,
 			});
 		}
 

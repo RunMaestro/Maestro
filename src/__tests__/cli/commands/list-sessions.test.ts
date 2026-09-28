@@ -251,6 +251,112 @@ describe('list sessions command', () => {
 		expect(output.totalCount).toBe(0);
 	});
 
+	describe('conversation stats parity with the app', () => {
+		// One log entry per conversation card, the same set the Context Details
+		// popover and the HTML export count.
+		const START = Date.parse('2026-02-08T10:00:00.000Z');
+		const tabLog = (source: string, offsetMs: number) => ({
+			id: `log-${source}-${offsetMs}`,
+			source,
+			text: 'x',
+			timestamp: START + offsetMs,
+		});
+
+		const agentWithTabs = (tabs: unknown[]) =>
+			({
+				id: 'agent-abc-123',
+				name: 'Test Agent',
+				toolType: 'claude-code',
+				cwd: '/path/to/project',
+				projectRoot: '/path/to/project',
+				aiTabs: tabs,
+			}) as unknown as SessionInfo;
+
+		it('should overlay the tab conversation figures onto disk-derived Claude sessions', () => {
+			vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
+			vi.mocked(getSessionById).mockReturnValue(mockAgent());
+			vi.mocked(listClaudeSessions).mockReturnValue(mockSessionResult);
+			vi.mocked(readSessions).mockReturnValue([
+				agentWithTabs([
+					{
+						id: 'tab-1',
+						agentSessionId: 'session-1',
+						logs: [
+							tabLog('user', 0),
+							tabLog('ai', 1000),
+							tabLog('tool', 2000),
+							tabLog('thinking', 3000),
+							tabLog('ai', 120_000),
+						],
+					},
+				]),
+			]);
+
+			listSessions('agent-abc', { json: true });
+
+			const output = JSON.parse(consoleSpy.mock.calls[0][0]);
+			// session-1 has a tab, so the app's own count (5 cards over 2 minutes)
+			// wins over the JSONL-derived 12 msgs / 300s.
+			expect(output.sessions[0].sessionId).toBe('session-1');
+			expect(output.sessions[0].messageCount).toBe(5);
+			expect(output.sessions[0].durationSeconds).toBe(120);
+			// session-2 has no tab, so the disk figures stand.
+			expect(output.sessions[1].messageCount).toBe(4);
+			expect(output.sessions[1].durationSeconds).toBe(60);
+		});
+
+		it('should keep the disk figures when the matching tab holds no conversation', () => {
+			// A tab that was never opened in this install still has the session id.
+			// Overlaying its empty log would report "0 msgs" for a real conversation.
+			vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
+			vi.mocked(getSessionById).mockReturnValue(mockAgent());
+			vi.mocked(listClaudeSessions).mockReturnValue(mockSessionResult);
+			vi.mocked(readSessions).mockReturnValue([
+				agentWithTabs([{ id: 'tab-1', agentSessionId: 'session-1', logs: [] }]),
+			]);
+
+			listSessions('agent-abc', { json: true });
+
+			const output = JSON.parse(consoleSpy.mock.calls[0][0]);
+			expect(output.sessions[0].messageCount).toBe(12);
+			expect(output.sessions[0].durationSeconds).toBe(300);
+		});
+
+		it('should count every conversation source for a non-Claude agent', () => {
+			vi.mocked(resolveAgentId).mockReturnValue('agent-codex-1');
+			vi.mocked(getSessionById).mockReturnValue(
+				mockAgent({ id: 'agent-codex-1', toolType: 'codex' })
+			);
+			vi.mocked(readSessions).mockReturnValue([
+				{
+					...agentWithTabs([
+						{
+							id: 'tab-1',
+							agentSessionId: 'codex-session-1',
+							logs: [
+								tabLog('user', 0),
+								tabLog('stdout', 1000),
+								tabLog('tool', 2000),
+								// Not a conversation source, so it is neither counted nor
+								// allowed to stretch the span.
+								{ id: 'log-command', source: 'command', text: 'ls', timestamp: START + 90_000 },
+								tabLog('ai', 60_000),
+							],
+						},
+					]),
+					id: 'agent-codex-1',
+					toolType: 'codex',
+				} as unknown as SessionInfo,
+			]);
+
+			listSessions('agent-codex', { json: true });
+
+			const output = JSON.parse(consoleSpy.mock.calls[0][0]);
+			expect(output.sessions[0].messageCount).toBe(4);
+			expect(output.sessions[0].durationSeconds).toBe(60);
+		});
+	});
+
 	it('should exit with error for invalid limit', () => {
 		vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
 		vi.mocked(getSessionById).mockReturnValue(mockAgent());

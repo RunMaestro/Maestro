@@ -1,9 +1,16 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { AlertTriangle, Copy, Check, X } from 'lucide-react';
+import { Info, Copy, Check, X, Folder } from 'lucide-react';
 import { GhostIconButton } from '../ui/GhostIconButton';
 import { AgentResilienceSection } from './AgentResilienceSection';
 import { resilienceEnabled } from '../../../shared/agentConstants';
 import { normalizeAdditionalDirectories } from '../../../shared/additionalDirectories';
+import { formatTokensCompact } from '../../../shared/formatters';
+import { getActiveTab } from '../../utils/tabHelpers';
+import { useSessionStore, selectSessionById } from '../../stores/sessionStore';
+import {
+	resolveContextWindow,
+	isStoredContextWindowOverridden,
+} from '../../utils/contextWindowPrecedence';
 import type { AdditionalDirectory, AgentConfig, ToolType } from '../../types';
 import type { SshRemoteConfig, AgentSshRemoteConfig } from '../../../shared/types';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
@@ -23,17 +30,15 @@ import { RemotePathStatus } from './RemotePathStatus';
 import type { EditAgentModalProps } from './types';
 import { SUPPORTED_AGENTS, NEW_SESSION_MESSAGE_MAX_LENGTH } from './types';
 import { logger } from '../../utils/logger';
+import { isAbsolutePath } from '../../../shared/formatters';
+import { isSameDirectory, workingDirectoryChangeBlocker } from '../../utils/agentWorkingDirectory';
+import { withBlankEnvVarRow } from '../../../shared/envVarCatalog';
 
 /**
  * EditAgentModal - Modal for editing an existing agent's settings
  *
- * Allows editing:
- * - Agent name
- * - Nudge message
- *
- * Does NOT allow editing:
- * - Agent provider (toolType)
- * - Working directory (projectRoot)
+ * Allows editing the agent's name, provider, working directory (refused while
+ * the agent is running), messages, provider settings, and SSH configuration.
  */
 export function EditAgentModal({
 	isOpen,
@@ -44,6 +49,7 @@ export function EditAgentModal({
 	existingSessions,
 }: EditAgentModalProps) {
 	const [instanceName, setInstanceName] = useState('');
+	const [workingDir, setWorkingDir] = useState('');
 	const [nudgeMessage, setNudgeMessage] = useState('');
 	const [newSessionMessage, setNewSessionMessage] = useState('');
 	const [additionalDirectories, setAdditionalDirectories] = useState<AdditionalDirectory[]>([]);
@@ -62,6 +68,8 @@ export function EditAgentModal({
 	const [customPath, setCustomPath] = useState('');
 	const [customArgs, setCustomArgs] = useState('');
 	const [customEnvVars, setCustomEnvVars] = useState<Record<string, string>>({});
+	// Vars the user switched off: listed and editable, never passed to the agent.
+	const [customEnvVarsDisabled, setCustomEnvVarsDisabled] = useState<Record<string, string>>({});
 	// Tri-state, NOT coerced to a boolean: undefined = never configured (so the
 	// SSH default - TUI - applies), false = explicit API, true = explicit
 	// maestro-p. Coercing undefined->false here (or false->undefined on save)
@@ -78,6 +86,10 @@ export function EditAgentModal({
 	// Board worker pool opt-in (Board Phase 6). Default OFF: an agent is never a
 	// board worker unless explicitly enabled here.
 	const [boardWorker, setBoardWorker] = useState(false);
+	// Codex automatic usage resets. Defaults OFF - see `codexAutoResetOnExhaustion`
+	// on Session for why this one does NOT follow the resilience flags' default-on
+	// rule: reset credits are finite and irreversible.
+	const [codexAutoReset, setCodexAutoReset] = useState(false);
 	const [editDynamicOptions, setEditDynamicOptions] = useState<Record<string, string[]>>({});
 	const [editLoadingDynamicOptions, setEditLoadingDynamicOptions] = useState(false);
 	const [refreshingAgent, setRefreshingAgent] = useState(false);
@@ -292,6 +304,7 @@ export function EditAgentModal({
 			setCustomPath('');
 			setCustomArgs('');
 			setCustomEnvVars({});
+			setCustomEnvVarsDisabled({});
 			setEnableMaestroP(undefined);
 			setMaestroPMode('dynamic');
 			setMaestroPPath('');
@@ -301,6 +314,7 @@ export function EditAgentModal({
 			setCustomPath(session.customPath ?? '');
 			setCustomArgs(session.customArgs ?? '');
 			setCustomEnvVars(session.customEnvVars ?? {});
+			setCustomEnvVarsDisabled(session.customEnvVarsDisabled ?? {});
 			// Preserve the tri-state (undefined stays undefined) so an unconfigured
 			// SSH agent keeps its "unset" signal instead of looking like explicit API.
 			setEnableMaestroP(session.enableMaestroP);
@@ -310,6 +324,7 @@ export function EditAgentModal({
 			setRetryOnAvailabilityErrors(resilienceEnabled(session.retryOnAvailabilityErrors));
 			setRetryOnTokenExhaustion(resilienceEnabled(session.retryOnTokenExhaustion));
 			setBoardWorker(session.boardWorker === true);
+			setCodexAutoReset(session.codexAutoResetOnExhaustion === true);
 		}
 
 		return () => {
@@ -321,6 +336,7 @@ export function EditAgentModal({
 	useEffect(() => {
 		if (isOpen && session) {
 			setInstanceName(session.name);
+			setWorkingDir(session.projectRoot);
 			setNudgeMessage(session.nudgeMessage || '');
 			setNewSessionMessage(session.newSessionMessage || '');
 			// Clone the grants so editing a row doesn't mutate the persisted array
@@ -354,13 +370,110 @@ export function EditAgentModal({
 		return remote?.host;
 	}, [isSshEnabled, sshRemoteConfig?.remoteId, sshRemotes]);
 
-	// Validate remote path when SSH is enabled (debounced)
-	// Prefer workingDirOverride (user-specified remote path) over session.projectRoot
+	const trimmedWorkingDir = workingDir.trim();
+	// Compared as directories, so a trailing slash is not a move.
+	const workingDirChanged =
+		!!session &&
+		trimmedWorkingDir !== '' &&
+		!isSameDirectory(trimmedWorkingDir, session.projectRoot);
+	const workingDirBlocker = session ? workingDirectoryChangeBlocker(session) : null;
+	// A local path is typed as well as picked, so it is checked for shape here
+	// and for existence below. A remote path may start with `~`, which only the
+	// remote shell can expand, so its shape is left to the remote check.
+	const localWorkingDirRelative =
+		workingDirChanged && !isSshEnabled && !isAbsolutePath(trimmedWorkingDir);
+
+	// Validate the path (debounced): on the remote when SSH is enabled, locally
+	// when a new local directory was typed. Prefer a newly entered directory,
+	// then workingDirOverride (user-specified remote path), then session.projectRoot.
 	const remotePathValidation = useRemotePathValidation({
 		isSshEnabled: !!isSshEnabled,
-		path: sshRemoteConfig?.workingDirOverride ?? session?.projectRoot ?? '',
+		validateLocal: workingDirChanged && !isSshEnabled && !localWorkingDirRelative,
+		path: workingDirChanged
+			? trimmedWorkingDir
+			: (sshRemoteConfig?.workingDirOverride ?? session?.projectRoot ?? ''),
 		sshRemoteId: sshRemoteConfig?.remoteId,
 	});
+	// A NEW directory must be confirmed to exist before it is saved: it becomes
+	// the spawn cwd, and a typo would strand every later launch. The existing
+	// path is not gated, so an agent whose remote is offline can still have its
+	// other settings edited.
+	const newWorkingDirUnverified =
+		workingDirChanged && (remotePathValidation.checking || !remotePathValidation.isDirectory);
+
+	const workingDirError = useMemo(() => {
+		if (!session) return undefined;
+		if (!trimmedWorkingDir) return 'Working directory is required';
+		if (localWorkingDirRelative) return 'Enter an absolute path';
+		// The SSH status line below the field reports remote failures.
+		if (workingDirChanged && !isSshEnabled && remotePathValidation.error) {
+			return remotePathValidation.error;
+		}
+		return undefined;
+	}, [
+		session,
+		trimmedWorkingDir,
+		localWorkingDirRelative,
+		workingDirChanged,
+		isSshEnabled,
+		remotePathValidation.error,
+	]);
+
+	const handleSelectFolder = useCallback(async () => {
+		const folder = await window.maestro.dialog.selectFolder();
+		if (folder) setWorkingDir(folder);
+	}, []);
+
+	/** Live store entry for this agent; see the snapshot note in the memo below. */
+	const liveSession = useSessionStore(selectSessionById(session?.id ?? ''));
+
+	/**
+	 * Advisory note for the context-window control when the stored value is NOT
+	 * the one in use (#1370, following finding AD1).
+	 *
+	 * Only this surface can compute it: the decision needs the session AND its
+	 * live usage stats, which `AgentConfigPanel` does not receive. The ranking
+	 * itself is deliberately NOT re-derived here - `resolveContextWindow` is the
+	 * same helper the header gauge resolves through, so the note and the gauge
+	 * cannot disagree about which window won.
+	 */
+	const configOptionNotes = useMemo(() => {
+		// The `session` prop is a snapshot taken when the modal opened
+		// (`openModal('editAgent', { session })`), which is right for the form
+		// fields - they must not change under someone mid-edit. The note describes
+		// what the gauge is doing RIGHT NOW though, and a turn completing while
+		// this is open changes that, so it reads the live store entry instead
+		// (review of #1371).
+		const current = liveSession ?? session;
+		if (!current) return undefined;
+		// Mid provider switch the panel already shows the NEW provider's config
+		// while this would still describe the OLD provider's window, captioning
+		// the wrong control. The switch clears the stored window anyway.
+		if (providerChanged) return undefined;
+		const activeTab = getActiveTab(current);
+		const resolved = resolveContextWindow({
+			customModel: current.customModel,
+			customContextWindow: current.customContextWindow,
+			contextWindowSource: current.contextWindowSource,
+			reportedWindow: activeTab?.usageStats?.contextWindow,
+			reportedResolved: activeTab?.usageStats?.contextWindowResolved,
+			// Deliberately omitted: the agent-level configured window ranks BELOW
+			// the stored value, so it can never be what overrides it. Leaving it
+			// out keeps this from waiting on the async lookup the panel does not do.
+		});
+		// Nothing stored means nothing to override, and a value that won needs no
+		// explaining.
+		if (!current.customContextWindow || !isStoredContextWindowOverridden(resolved)) {
+			return undefined;
+		}
+		const winner =
+			resolved.source === 'model-marker'
+				? `the selected model (${formatTokensCompact(resolved.window)})`
+				: `the provider, which reports ${formatTokensCompact(resolved.window)}`;
+		return {
+			contextWindow: `Currently overridden by ${winner}. Edit this field to use your own value instead.`,
+		};
+	}, [liveSession, session, providerChanged]);
 
 	const handleSave = useCallback(() => {
 		if (!session) return;
@@ -369,7 +482,7 @@ export function EditAgentModal({
 
 		// Validate before saving
 		const result = validateEditSession(name, session.id, existingSessions);
-		if (!result.valid) return;
+		if (!result.valid || workingDirError || newWorkingDirUnverified) return;
 
 		// Get model, contextWindow and effort from agentConfig (updated via onConfigChange).
 		// Pass empty string to explicitly clear (distinguishes from undefined = never set)
@@ -402,10 +515,12 @@ export function EditAgentModal({
 				? {
 						enabled: true,
 						remoteId: sshRemoteConfig.remoteId,
-						// Ensure workingDirOverride is set: prefer explicit override, then session's
-						// projectRoot (which is the remote path the user originally configured).
-						workingDirOverride:
-							sshRemoteConfig.workingDirOverride || session?.projectRoot || undefined,
+						// Ensure workingDirOverride is set: a newly entered directory wins, then
+						// the explicit override, then session's projectRoot (which is the remote
+						// path the user originally configured).
+						workingDirOverride: workingDirChanged
+							? trimmedWorkingDir
+							: sshRemoteConfig.workingDirOverride || session?.projectRoot || undefined,
 						syncHistory: sshRemoteConfig.syncHistory,
 						shareHistoryToProjectDir: sshRemoteConfig.shareHistoryToProjectDir,
 					}
@@ -438,12 +553,19 @@ export function EditAgentModal({
 			retryOnTokenExhaustion,
 			normalizeAdditionalDirectories(additionalDirectories, homeDir),
 			contextWindowSource,
+			Object.keys(customEnvVarsDisabled).length > 0 ? customEnvVarsDisabled : undefined,
+			workingDirChanged ? trimmedWorkingDir : undefined,
+			codexAutoReset,
 			boardWorker
 		);
 		onClose();
 	}, [
 		session,
 		instanceName,
+		workingDirChanged,
+		trimmedWorkingDir,
+		workingDirError,
+		newWorkingDirUnverified,
 		nudgeMessage,
 		newSessionMessage,
 		additionalDirectories,
@@ -451,11 +573,13 @@ export function EditAgentModal({
 		customPath,
 		customArgs,
 		customEnvVars,
+		customEnvVarsDisabled,
 		enableMaestroP,
 		maestroPMode,
 		maestroPPath,
 		retryOnAvailabilityErrors,
 		retryOnTokenExhaustion,
+		codexAutoReset,
 		agent,
 		boardWorker,
 		agentConfig,
@@ -497,10 +621,13 @@ export function EditAgentModal({
 
 	// Check if form is valid for submission
 	const isFormValid = useMemo(() => {
-		// Remote path validation is informational only - don't block save
-		// Users may want to configure SSH remote before the path exists
-		return !!instanceName.trim() && validation.valid;
-	}, [instanceName, validation.valid]);
+		// Path validation only blocks a NEW directory (newWorkingDirUnverified).
+		// The existing path stays informational so an agent whose remote is offline
+		// can still be edited.
+		return (
+			!!instanceName.trim() && validation.valid && !workingDirError && !newWorkingDirUnverified
+		);
+	}, [instanceName, validation.valid, workingDirError, newWorkingDirUnverified]);
 
 	// Handle keyboard shortcuts via window listener (Modal stops propagation on its backdrop)
 	useEffect(() => {
@@ -541,7 +668,7 @@ export function EditAgentModal({
 						<button
 							type="button"
 							onClick={handleCopySessionId}
-							className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-mono font-bold uppercase transition-colors hover:opacity-80"
+							className="flex items-center gap-1 px-2 py-0.5 rounded-full text-2xs font-mono font-bold uppercase transition-colors hover:opacity-80"
 							style={{
 								backgroundColor: copiedId
 									? theme.colors.success + '20'
@@ -612,15 +739,16 @@ export function EditAgentModal({
 						<div
 							className="mt-2 p-2 rounded border text-xs flex items-start gap-2"
 							style={{
-								borderColor: theme.colors.warning + '60',
-								backgroundColor: theme.colors.warning + '10',
-								color: theme.colors.warning,
+								borderColor: theme.colors.accent + '60',
+								backgroundColor: theme.colors.accent + '10',
+								color: theme.colors.accent,
 							}}
 						>
-							<AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+							<Info className="w-3.5 h-3.5 mt-0.5 shrink-0" />
 							<span>
-								Changing the provider will clear your session list (tabs). Your history panel data
-								will persist.
+								Your tabs and their transcripts are kept. Each provider remembers its own session
+								per tab, so switching back picks up where you left off. Any turn already running
+								finishes on the current provider.
 							</span>
 						</div>
 					)}
@@ -656,28 +784,47 @@ export function EditAgentModal({
 					</span>
 				</label>
 
-				{/* Working Directory (read-only) */}
+				{/* Working Directory */}
 				<div>
-					<div
-						className="block text-xs font-bold opacity-70 uppercase mb-2"
-						style={{ color: theme.colors.textMain }}
-					>
-						Working Directory
-					</div>
-					<div
-						className="p-2 rounded border font-mono text-sm overflow-hidden text-ellipsis"
-						style={{
-							borderColor: theme.colors.border,
-							color: theme.colors.textDim,
-							backgroundColor: theme.colors.bgActivity,
-						}}
-						title={session.projectRoot}
-					>
-						{session.projectRoot}
-					</div>
-					<p className="mt-1 text-xs" style={{ color: theme.colors.textDim }}>
-						Directory cannot be changed. Create a new agent for a different directory.
-					</p>
+					<FormInput
+						id="edit-agent-working-dir-input"
+						theme={theme}
+						label="Working Directory"
+						value={workingDir}
+						onChange={setWorkingDir}
+						placeholder={
+							isSshEnabled
+								? `Enter remote path${sshRemoteHost ? ` on ${sshRemoteHost}` : ''} (e.g., /home/user/project)`
+								: 'Select directory...'
+						}
+						error={workingDirError}
+						helperText={
+							workingDirBlocker ??
+							(workingDirChanged
+								? 'On save, the Files panel, Auto Run folder, and git follow the new directory. Conversations the provider stored under the old path may not resume.'
+								: undefined)
+						}
+						disabled={!!workingDirBlocker}
+						monospace
+						heightClass="p-2"
+						addon={
+							<button
+								type="button"
+								onClick={handleSelectFolder}
+								disabled={isSshEnabled || !!workingDirBlocker}
+								className={`p-2 rounded border transition-colors ${isSshEnabled || workingDirBlocker ? 'opacity-40 cursor-not-allowed' : 'row-hover'}`}
+								style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
+								title={
+									isSshEnabled
+										? `Folder picker unavailable for SSH remote${sshRemoteHost ? ` (${sshRemoteHost})` : ''}. Enter the remote path manually.`
+										: 'Browse folders'
+								}
+								aria-label="Browse folders"
+							>
+								<Folder className="w-5 h-5" />
+							</button>
+						}
+					/>
 					{/* Remote path validation status (only shown when SSH is enabled) */}
 					{isSshEnabled && (
 						<RemotePathStatus
@@ -725,6 +872,7 @@ export function EditAgentModal({
 						<AgentConfigPanel
 							theme={theme}
 							agent={agent}
+							configOptionNotes={configOptionNotes}
 							customPath={customPath}
 							onCustomPathChange={setCustomPath}
 							onCustomPathBlur={() => {
@@ -736,28 +884,41 @@ export function EditAgentModal({
 								/* Saved on modal save */
 							}}
 							customEnvVars={customEnvVars}
-							onEnvVarKeyChange={(oldKey, newKey, value) => {
-								const newVars = { ...customEnvVars };
-								delete newVars[oldKey];
-								newVars[newKey] = value;
-								setCustomEnvVars(newVars);
+							customEnvVarsDisabled={customEnvVarsDisabled}
+							onEnvVarToggle={(key, nextEnabled) => {
+								// Move the var between the two records, value intact.
+								const from = nextEnabled ? customEnvVarsDisabled : customEnvVars;
+								const setFrom = nextEnabled ? setCustomEnvVarsDisabled : setCustomEnvVars;
+								const setTo = nextEnabled ? setCustomEnvVars : setCustomEnvVarsDisabled;
+								const value = from[key] ?? '';
+								const remaining = { ...from };
+								delete remaining[key];
+								setFrom(remaining);
+								setTo((prev) => ({ ...prev, [key]: value }));
 							}}
-							onEnvVarValueChange={(key, value) => {
-								setCustomEnvVars((prev) => ({ ...prev, [key]: value }));
+							onEnvVarKeyChange={(oldKey, newKey, value, enabled) => {
+								const setVars = enabled === false ? setCustomEnvVarsDisabled : setCustomEnvVars;
+								setVars((prev) => {
+									const newVars = { ...prev };
+									delete newVars[oldKey];
+									newVars[newKey] = value;
+									return newVars;
+								});
 							}}
-							onEnvVarRemove={(key) => {
-								const newVars = { ...customEnvVars };
-								delete newVars[key];
-								setCustomEnvVars(newVars);
+							onEnvVarValueChange={(key, value, enabled) => {
+								const setVars = enabled === false ? setCustomEnvVarsDisabled : setCustomEnvVars;
+								setVars((prev) => ({ ...prev, [key]: value }));
+							}}
+							onEnvVarRemove={(key, enabled) => {
+								const setVars = enabled === false ? setCustomEnvVarsDisabled : setCustomEnvVars;
+								setVars((prev) => {
+									const newVars = { ...prev };
+									delete newVars[key];
+									return newVars;
+								});
 							}}
 							onEnvVarAdd={() => {
-								let newKey = 'NEW_VAR';
-								let counter = 1;
-								while (customEnvVars[newKey]) {
-									newKey = `NEW_VAR_${counter}`;
-									counter++;
-								}
-								setCustomEnvVars((prev) => ({ ...prev, [newKey]: '' }));
+								setCustomEnvVars((prev) => withBlankEnvVarRow(prev));
 							}}
 							onEnvVarsBlur={() => {
 								/* Saved on modal save */
@@ -814,6 +975,8 @@ export function EditAgentModal({
 								/* Saved on modal save */
 							}}
 							detectedMaestroPPath={detectedMaestroPPath}
+							codexAutoResetOnExhaustion={codexAutoReset}
+							onCodexAutoResetChange={setCodexAutoReset}
 						/>
 					</div>
 				)}

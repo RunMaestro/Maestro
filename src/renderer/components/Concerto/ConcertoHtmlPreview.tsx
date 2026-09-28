@@ -2,11 +2,13 @@
  * ConcertoHtmlPreview renders an agent-authored, single-page HTML mockup in an
  * isolated iframe. Main serves the document from a dedicated protocol with a
  * restrictive CSP, so inline CSS and JavaScript work without weakening the
- * parent renderer's policy.
+ * parent renderer's policy. In the web-desktop browser bundle the same document
+ * arrives over HTTP instead - see `resolveConcertoHtmlSrc`.
  */
 
 import { memo, useLayoutEffect, useRef } from 'react';
-import { buildConcertoHtmlUrl, type ConcertoHtmlSurface } from '../../../shared/concerto-html';
+import { type ConcertoHtmlSurface } from '../../../shared/concerto-html';
+import { resolveConcertoHtmlSrc } from '../../utils/concertoHtmlSrc';
 import {
 	handleConcertoDesignerMessage,
 	registerConcertoDesignerFrame,
@@ -48,7 +50,7 @@ export const ConcertoHtmlPreview = memo(function ConcertoHtmlPreview({
 			key={revision}
 			ref={frameRef}
 			title={title}
-			src={buildConcertoHtmlUrl(surface, id, revision)}
+			src={resolveConcertoHtmlSrc(surface, id, revision)}
 			sandbox="allow-scripts"
 			referrerPolicy="no-referrer"
 			data-testid="concerto-html-iframe"

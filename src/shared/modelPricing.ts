@@ -1,15 +1,20 @@
 /**
  * Per-model token pricing for AI cost estimation.
  *
- * Single source of truth for Claude token pricing, shared by the Electron main
- * process and the standalone CLI (no Electron imports here, so the CLI can bundle
- * it directly instead of duplicating a hardcoded table).
+ * Single source of truth for token pricing across providers, shared by the
+ * Electron main process and the standalone CLI (no Electron imports here, so the
+ * CLI can bundle it directly instead of duplicating a hardcoded table).
  *
  * Pricing is keyed by canonical model ID. Cache prices follow Anthropic's standard
  * multipliers relative to the base input price (read = 0.1x, write/creation = 1.25x),
  * so a tier only needs its input/output rates. Unknown models fall back to a family
- * match (fable/opus/sonnet/haiku) and finally to the default Sonnet-tier rates, so
- * cost never silently breaks when a new model ID ships.
+ * match (gpt/fable/opus/sonnet/haiku) and finally to the default Sonnet-tier rates,
+ * so cost never silently breaks when a new model ID ships.
+ *
+ * The two providers also disagree about what `input_tokens` means: Anthropic
+ * reports cache reads BESIDE it, OpenAI reports them INSIDE it. That is a pricing
+ * input, not a display detail, so it rides on the tier as
+ * `CACHE_READ_SUBSET_OF_INPUT`.
  */
 
 export const TOKENS_PER_MILLION = 1_000_000;
@@ -20,6 +25,14 @@ export interface PricingConfig {
 	OUTPUT_PER_MILLION: number;
 	CACHE_READ_PER_MILLION: number;
 	CACHE_CREATION_PER_MILLION: number;
+	/**
+	 * True when the provider reports cached input tokens as a SUBSET of
+	 * `input_tokens` rather than alongside it. OpenAI does; Anthropic does not.
+	 * Without this the cached half of a Codex turn is billed at the full input
+	 * rate AND again as a cache read, which is backwards - a cache hit is the
+	 * cheap case. See `calculateWithPricing`.
+	 */
+	CACHE_READ_SUBSET_OF_INPUT?: boolean;
 }
 
 /** Token counts for a cost calculation. */
@@ -59,6 +72,30 @@ const HAIKU_35_PRICING = tier(0.8, 4);
 const HAIKU_3_PRICING = tier(0.25, 1.25);
 
 /**
+ * Build an OpenAI-shaped PricingConfig. Cached input is billed at 0.1x the input
+ * rate (matching OpenAI's published discount), there is no separate cache-write
+ * charge, and cached tokens are a subset of the reported input tokens.
+ */
+function openAiTier(inputPerMillion: number, outputPerMillion: number): PricingConfig {
+	return {
+		INPUT_PER_MILLION: inputPerMillion,
+		OUTPUT_PER_MILLION: outputPerMillion,
+		CACHE_READ_PER_MILLION: round6(inputPerMillion * CACHE_READ_MULTIPLIER),
+		CACHE_CREATION_PER_MILLION: 0,
+		CACHE_READ_SUBSET_OF_INPUT: true,
+	};
+}
+
+// GPT-5 family. Codex model slugs are discovered at runtime and version faster
+// than any table can track (`gpt-5.4`, `gpt-5.6-sol`, ...), so the exact entries
+// below are anchors and everything else in the family resolves by size class
+// (mini / nano / frontier) rather than by exact slug. Better a same-family rate
+// than the Anthropic Sonnet default these used to silently fall through to.
+const GPT5_PRICING = openAiTier(1.25, 10);
+const GPT5_MINI_PRICING = openAiTier(0.25, 2);
+const GPT5_NANO_PRICING = openAiTier(0.05, 0.4);
+
+/**
  * Default pricing for unknown models. Matches the historical flat Sonnet-tier
  * constant, so behavior is unchanged when a model can't be resolved.
  */
@@ -87,6 +124,12 @@ export const MODEL_PRICING: Record<string, PricingConfig> = {
 	'claude-haiku-4-5': HAIKU_PRICING,
 	'claude-3-5-haiku': HAIKU_35_PRICING,
 	'claude-3-haiku': HAIKU_3_PRICING,
+	// OpenAI (Codex CLI) anchors; the family fallback in `resolveModelPricing`
+	// covers the point releases.
+	'gpt-5': GPT5_PRICING,
+	'gpt-5-codex': GPT5_PRICING,
+	'gpt-5-mini': GPT5_MINI_PRICING,
+	'gpt-5-nano': GPT5_NANO_PRICING,
 };
 
 /**
@@ -111,6 +154,16 @@ export function resolveModelPricing(modelId?: string | null): PricingConfig {
 	const normalized = normalizeModelId(modelId);
 	const exact = MODEL_PRICING[normalized];
 	if (exact) return exact;
+	// OpenAI first: a Codex slug never contains an Anthropic family word, and
+	// leaving it to fall through priced GPT tokens at Anthropic Sonnet rates.
+	// Deliberately scoped to the GPT-5 family and codex slugs - the models Codex
+	// actually ships. Older OpenAI lines still fall through to the default rather
+	// than being priced off a family they don't belong to.
+	if (normalized.startsWith('gpt-5') || normalized.includes('codex')) {
+		if (normalized.includes('nano')) return GPT5_NANO_PRICING;
+		if (normalized.includes('mini')) return GPT5_MINI_PRICING;
+		return GPT5_PRICING;
+	}
 	if (normalized.includes('fable') || normalized.includes('mythos')) return FABLE_PRICING;
 	if (normalized.includes('haiku')) return HAIKU_PRICING;
 	if (normalized.includes('opus')) return OPUS_PRICING;
@@ -124,8 +177,13 @@ export function calculateWithPricing(
 	pricing: PricingConfig = DEFAULT_MODEL_PRICING
 ): number {
 	const { inputTokens, outputTokens, cacheReadTokens = 0, cacheCreationTokens = 0 } = tokens;
+	// When the provider counts cached tokens inside `input_tokens`, only the
+	// uncached remainder is billed at the input rate.
+	const billableInput = pricing.CACHE_READ_SUBSET_OF_INPUT
+		? Math.max(0, inputTokens - cacheReadTokens)
+		: inputTokens;
 	return (
-		(inputTokens / TOKENS_PER_MILLION) * pricing.INPUT_PER_MILLION +
+		(billableInput / TOKENS_PER_MILLION) * pricing.INPUT_PER_MILLION +
 		(outputTokens / TOKENS_PER_MILLION) * pricing.OUTPUT_PER_MILLION +
 		(cacheReadTokens / TOKENS_PER_MILLION) * pricing.CACHE_READ_PER_MILLION +
 		(cacheCreationTokens / TOKENS_PER_MILLION) * pricing.CACHE_CREATION_PER_MILLION

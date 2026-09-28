@@ -32,12 +32,22 @@ function indicesFor(paths: string[]): FileTreeIndices {
 	return buildFileTreeIndices(root);
 }
 
-function render(source: string, opts: { indices?: FileTreeIndices; cwd?: string } = {}): string {
+function render(
+	source: string,
+	opts: {
+		indices?: FileTreeIndices;
+		cwd?: string;
+		projectRoot?: string;
+		homeDir?: string;
+	} = {}
+): string {
 	const md = new MarkdownIt({ html: true, linkify: true });
 	const tokens = md.parse(source, {});
 	applyFileLinks(md, tokens, {
 		indices: opts.indices,
 		cwd: opts.cwd ?? '',
+		projectRoot: opts.projectRoot,
+		homeDir: opts.homeDir,
 	});
 	return md.renderer.render(tokens, md.options, {});
 }
@@ -80,6 +90,37 @@ describe('applyFileLinks - standard markdown link rewriting', () => {
 		const indices = indicesFor(['docs/My Note.md']);
 		const html = render('[doc](docs/My%20Note.md)', { indices });
 		expect(html).toContain('maestro-file://docs/My Note.md');
+	});
+
+	it('rewrites an absolute href inside projectRoot to maestro-file://', () => {
+		const html = render('[doc](/Users/pedram/Project/docs/Notes.md)', {
+			projectRoot: '/Users/pedram/Project',
+		});
+		expect(html).toContain('href="maestro-file://docs/Notes.md"');
+	});
+
+	it('rewrites an absolute href outside projectRoot to file://', () => {
+		// Same file, different spelling from the tilde case below. Left as a bare
+		// absolute href nothing in the click router claims it, so the link is dead.
+		const html = render('[sample](/Users/pedram/Downloads/sample.wav)', {
+			projectRoot: '/Users/pedram/Project',
+		});
+		expect(html).toContain('href="file:///Users/pedram/Downloads/sample.wav"');
+		expect(html).not.toContain('maestro-file://');
+	});
+
+	it('rewrites a tilde href outside projectRoot to file://', () => {
+		const html = render('[sample](~/Downloads/sample.wav)', {
+			projectRoot: '/Users/pedram/Project',
+			homeDir: '/Users/pedram',
+		});
+		expect(html).toContain('href="file:///Users/pedram/Downloads/sample.wav"');
+	});
+
+	it('does not rewrite an absolute href when projectRoot is unknown', () => {
+		const html = render('[sample](/Users/pedram/Downloads/sample.wav)');
+		expect(html).toContain('href="/Users/pedram/Downloads/sample.wav"');
+		expect(html).not.toContain('file://');
 	});
 
 	it('does not rewrite already-rewritten maestro-file:// hrefs', () => {

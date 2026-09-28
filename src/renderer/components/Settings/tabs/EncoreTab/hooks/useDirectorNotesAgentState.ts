@@ -1,4 +1,5 @@
 import { useAgentConfiguration } from '../../../../../hooks/agent/useAgentConfiguration';
+import { withBlankEnvVarRow } from '../../../../../../shared/envVarCatalog';
 import { AGENT_TILES } from '../../../../Wizard/screens/AgentSelectionScreen';
 import type { AgentConfig, DirectorNotesSettings, ToolType } from '../../../../../types';
 import type { DirectorNotesAgentState, DirectorNotesTile } from '../types';
@@ -49,10 +50,17 @@ export function useDirectorNotesAgentState({
 		agentConfiguration.handleAgentChange(agentId);
 	};
 
-	const persistCustomConfig = () => {
+	// Shared by onCustomPathBlur/onCustomArgsBlur/onEnvVarsBlur. Optional
+	// `pathValue` is for the path chooser specifically: it calls this in the
+	// same handler as the change that sets customPath, so reading
+	// agentConfiguration.customPath back out of this closure would still see
+	// the path from before that update landed. The args/env-var blur paths call
+	// this with no argument, unaffected, and keep reading current state as
+	// before.
+	const persistCustomConfig = (pathValue?: string) => {
 		setDirectorNotesSettings({
 			...directorNotesSettings,
-			customPath: agentConfiguration.customPath || undefined,
+			customPath: (pathValue ?? agentConfiguration.customPath) || undefined,
 			customArgs: agentConfiguration.customArgs || undefined,
 			customEnvVars:
 				Object.keys(agentConfiguration.customEnvVars).length > 0
@@ -79,13 +87,7 @@ export function useDirectorNotesAgentState({
 	};
 
 	const handleEnvVarAdd = () => {
-		let newKey = 'NEW_VAR';
-		let counter = 1;
-		while (Object.prototype.hasOwnProperty.call(agentConfiguration.customEnvVars, newKey)) {
-			newKey = `NEW_VAR_${counter}`;
-			counter++;
-		}
-		agentConfiguration.setCustomEnvVars({ ...agentConfiguration.customEnvVars, [newKey]: '' });
+		agentConfiguration.setCustomEnvVars(withBlankEnvVarRow(agentConfiguration.customEnvVars));
 	};
 
 	const handleConfigChange = (key: string, value: unknown) => {

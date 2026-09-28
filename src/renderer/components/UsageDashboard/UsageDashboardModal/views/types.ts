@@ -2,6 +2,7 @@ import type { KeyboardEvent } from 'react';
 import type { StatsAggregation, StatsTimeRange } from '../../../../../shared/stats-types';
 import type { Session, Theme } from '../../../../types';
 import type { CueSourceTotals } from '../../SourceDistributionChart';
+import type { DelegationDay, DelegationTotals } from '../../../../../shared/delegation';
 import type { SectionId } from '../sections';
 import type { UsageDashboardLayout } from '../types';
 
@@ -25,6 +26,10 @@ export interface OverviewViewProps extends StatsViewProps {
 	sessions: Session[];
 	layout: UsageDashboardLayout;
 	cueSourceTotals: CueSourceTotals | null;
+	/** Interactive vs autonomous split for the SELECTED range. */
+	delegationTotals: DelegationTotals | null;
+	/** The same split over all retained history - the delegation score is lifetime. */
+	lifetimeDelegation: DelegationTotals | null;
 }
 
 export interface AgentOverviewViewProps extends StatsViewProps {
@@ -36,7 +41,10 @@ export interface AgentsBaseViewProps extends DashboardViewBaseProps {
 	sessions: Session[];
 }
 
-export interface ActivityViewProps extends StatsViewProps {}
+export interface ActivityViewProps extends StatsViewProps {
+	/** Per-day interactive vs delegated series for the selected range. */
+	delegationByDay: DelegationDay[];
+}
 
 export interface AutoRunViewProps extends DashboardViewBaseProps {
 	data: StatsAggregation;

@@ -284,6 +284,30 @@ describe('runAutoResumeTick', () => {
 		expect(useNotificationStore.getState().toasts).toHaveLength(1);
 	});
 
+	it('does not resume when the run becomes mirrored while its probe is pending', async () => {
+		setSessions([makeLimitPausedSession({ id: 'sess-batch', toolType: 'opencode' })]);
+		const resumeAutoRun = vi.fn();
+
+		const tick = runAutoResumeTick(new Set(), resumeAutoRun);
+		useBatchStore.setState({
+			batchRunStates: {
+				'sess-batch': {
+					...DEFAULT_BATCH_STATE,
+					isRunning: true,
+					errorPaused: true,
+					mirrored: true,
+				} as BatchRunState,
+			},
+			customPrompts: {},
+		});
+		await tick;
+		await flush();
+
+		expect(resumeAutoRun).not.toHaveBeenCalled();
+		expect(useSessionStore.getState().sessions[0]?.state).toBe('error');
+		expect(useNotificationStore.getState().toasts).toHaveLength(0);
+	});
+
 	it('(e) skips a session whose limitResetAt is in the future', async () => {
 		const future = Date.now() + 60 * 60 * 1000;
 		setSessions([

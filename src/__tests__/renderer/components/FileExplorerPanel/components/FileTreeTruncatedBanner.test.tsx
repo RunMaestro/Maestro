@@ -16,6 +16,7 @@ describe('FileTreeTruncatedBanner', () => {
 				onLoadMore={vi.fn()}
 				onLoadAll={vi.fn()}
 				isRefreshing={false}
+				onCollapse={vi.fn()}
 			/>
 		);
 		expect(screen.getByText(/100,000/)).toBeTruthy();
@@ -28,6 +29,7 @@ describe('FileTreeTruncatedBanner', () => {
 				onLoadMore={vi.fn()}
 				onLoadAll={vi.fn()}
 				isRefreshing={false}
+				onCollapse={vi.fn()}
 			/>
 		);
 		expect(screen.getByText(/the configured cap/)).toBeTruthy();
@@ -41,6 +43,7 @@ describe('FileTreeTruncatedBanner', () => {
 				onLoadMore={vi.fn()}
 				onLoadAll={vi.fn()}
 				isRefreshing={false}
+				onCollapse={vi.fn()}
 			/>
 		);
 		expect(screen.getByText(/Load more \(100,000\)/)).toBeTruthy();
@@ -55,6 +58,7 @@ describe('FileTreeTruncatedBanner', () => {
 				onLoadMore={onLoadMore}
 				onLoadAll={vi.fn()}
 				isRefreshing={false}
+				onCollapse={vi.fn()}
 			/>
 		);
 		fireEvent.click(screen.getByText(/Load more/));
@@ -70,10 +74,27 @@ describe('FileTreeTruncatedBanner', () => {
 				onLoadMore={vi.fn()}
 				onLoadAll={onLoadAll}
 				isRefreshing={false}
+				onCollapse={vi.fn()}
 			/>
 		);
 		fireEvent.click(screen.getByText('Load all'));
 		expect(onLoadAll).toHaveBeenCalledTimes(1);
+	});
+
+	it('calls onCollapse when the minimize button is clicked', () => {
+		const onCollapse = vi.fn();
+		render(
+			<FileTreeTruncatedBanner
+				theme={theme}
+				previousCap={100000}
+				onLoadMore={vi.fn()}
+				onLoadAll={vi.fn()}
+				isRefreshing={false}
+				onCollapse={onCollapse}
+			/>
+		);
+		fireEvent.click(screen.getByLabelText('Minimize file scan warning'));
+		expect(onCollapse).toHaveBeenCalledTimes(1);
 	});
 
 	it('disables buttons while refreshing', () => {
@@ -84,6 +105,7 @@ describe('FileTreeTruncatedBanner', () => {
 				onLoadMore={vi.fn()}
 				onLoadAll={vi.fn()}
 				isRefreshing={true}
+				onCollapse={vi.fn()}
 			/>
 		);
 		expect((screen.getByText(/Load more/) as HTMLButtonElement).disabled).toBe(true);

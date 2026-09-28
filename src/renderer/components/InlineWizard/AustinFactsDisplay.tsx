@@ -218,7 +218,7 @@ export function AustinFactsDisplay({
 				<TexasFlag className="w-8 h-6 shrink-0 mt-0.5" style={{ opacity: 0.85 }} />
 				<div className="flex-1 min-w-0">
 					<p
-						className="text-[10px] font-medium uppercase tracking-wide mb-1"
+						className="text-2xs font-medium uppercase tracking-wide mb-1"
 						style={{ color: theme.colors.accent }}
 					>
 						Austin Facts

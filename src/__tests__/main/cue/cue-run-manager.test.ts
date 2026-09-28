@@ -496,12 +496,76 @@ describe('createCueRunManager', () => {
 			await vi.advanceTimersByTimeAsync(0);
 
 			// Third arg is the run's provider session id (undefined here - the
-			// mocked result sets none). Fourth is the failure diagnostics: a
-			// completed run has no error message but still carries its exit code.
+			// mocked result sets none). Fourth is the completion info: a
+			// completed run has no error message but still carries its exit
+			// code, plus the output the Activity Log and History render.
 			expect(updateCueEventStatus).toHaveBeenCalledWith('run-1', 'completed', undefined, {
 				errorMessage: null,
 				exitCode: 0,
+				outputExcerpt: 'output',
+				fullOutput: 'output',
 			});
+		});
+
+		it('stores NULL output for a silent run', async () => {
+			// The whole point of the output columns: a heartbeat that printed
+			// nothing leaves them NULL, so `WHERE output_excerpt IS NOT NULL`
+			// filters Cue noise out of History without a second store.
+			const deps = createDeps({
+				onCueRun: vi.fn(async () => makeResult({ stdout: '', stderr: '' })),
+			});
+			const manager = createCueRunManager(deps);
+
+			manager.execute('session-1', 'prompt', createEvent(), 'test-sub');
+			await vi.advanceTimersByTimeAsync(0);
+
+			expect(updateCueEventStatus).toHaveBeenCalledWith(
+				expect.any(String),
+				'completed',
+				undefined,
+				expect.objectContaining({ outputExcerpt: null, fullOutput: null })
+			);
+		});
+
+		it('stores the excerpt and full output for a chatty run', async () => {
+			const stdout = 'Merged PR #12. Closed two stale issues.';
+			const deps = createDeps({
+				onCueRun: vi.fn(async () => makeResult({ stdout })),
+			});
+			const manager = createCueRunManager(deps);
+
+			manager.execute('session-1', 'prompt', createEvent(), 'test-sub');
+			await vi.advanceTimersByTimeAsync(0);
+
+			expect(updateCueEventStatus).toHaveBeenCalledWith(
+				expect.any(String),
+				'completed',
+				undefined,
+				expect.objectContaining({ outputExcerpt: stdout, fullOutput: stdout })
+			);
+		});
+
+		it('falls back to stderr for the excerpt when a failed run printed nothing', async () => {
+			const deps = createDeps({
+				onCueRun: vi.fn(async () =>
+					makeResult({ status: 'failed', stdout: '', stderr: 'maestro-p idle timeout.' })
+				),
+			});
+			const manager = createCueRunManager(deps);
+
+			manager.execute('session-1', 'prompt', createEvent(), 'test-sub');
+			await vi.advanceTimersByTimeAsync(0);
+
+			expect(updateCueEventStatus).toHaveBeenCalledWith(
+				expect.any(String),
+				'failed',
+				undefined,
+				expect.objectContaining({
+					errorMessage: 'maestro-p idle timeout.',
+					outputExcerpt: 'maestro-p idle timeout.',
+					fullOutput: null,
+				})
+			);
 		});
 
 		it('updates DB status to stopped on manual stop', () => {
@@ -576,7 +640,7 @@ describe('createCueRunManager', () => {
 				expect.any(String),
 				'completed',
 				undefined,
-				{ errorMessage: null, exitCode: 0 }
+				{ errorMessage: null, exitCode: 0, outputExcerpt: 'hi', fullOutput: 'hi' }
 			);
 			// And a log should explain the run was recorded post-stop AND
 			// include the structured runFinished payload so the renderer
@@ -614,7 +678,7 @@ describe('createCueRunManager', () => {
 				expect.any(String),
 				'failed',
 				undefined,
-				{ errorMessage: 'boom', exitCode: 0 }
+				{ errorMessage: 'boom', exitCode: 0, outputExcerpt: 'output', fullOutput: 'output' }
 			);
 		});
 
@@ -733,7 +797,7 @@ describe('createCueRunManager', () => {
 				expect.any(String),
 				'completed',
 				undefined,
-				{ errorMessage: null, exitCode: 0 }
+				{ errorMessage: null, exitCode: 0, outputExcerpt: 'output', fullOutput: 'output' }
 			);
 			// And the post-stop log MUST include the structured runFinished
 			// payload so renderer listeners observe the transition.

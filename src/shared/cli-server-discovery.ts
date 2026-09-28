@@ -25,6 +25,13 @@ export interface CliServerInfo {
 	 * `status` to compare against the CLI's own build version.
 	 */
 	version?: string;
+	/**
+	 * Per-boot secret the CLI presents on its WebSocket upgrade
+	 * (`CLI_SECRET_HEADER`) so the Web Login gate admits it without a session
+	 * cookie. Optional: an older app did not write it, and the gate simply
+	 * stays closed to the CLI on such a build when Web Login is on.
+	 */
+	cliSecret?: string;
 }
 
 // Get the Maestro config directory path (lowercase "maestro")
@@ -115,7 +122,12 @@ export function isCliServerRunning(): boolean {
 	try {
 		process.kill(info.pid, 0); // Doesn't kill, just checks if process exists
 		return true;
-	} catch {
+	} catch (error) {
+		// EPERM means the process exists but this caller cannot signal it. This is
+		// common for sandboxed read-only monitors and must not turn a reachable
+		// desktop into a stale discovery result. The authenticated WebSocket
+		// connection remains the authoritative reachability check.
+		if ((error as NodeJS.ErrnoException).code === 'EPERM') return true;
 		return false;
 	}
 }

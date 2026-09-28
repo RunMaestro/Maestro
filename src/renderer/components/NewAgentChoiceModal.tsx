@@ -10,6 +10,7 @@ import { Bot, Wand2, Info } from 'lucide-react';
 import type { Theme } from '../types';
 import { Modal } from './ui/Modal';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
+import { usePhoneLayout } from '../hooks/ui/useViewportBreakpoint';
 
 interface NewAgentChoiceModalProps {
 	theme: Theme;
@@ -36,6 +37,11 @@ export function NewAgentChoiceModal({
 		onWizardSetup();
 	};
 
+	// Two tiles side by side at 390px wrap their copy into columns a few words
+	// wide; on a phone they stack.
+	const phone = usePhoneLayout();
+	const tileClass = `flex flex-col items-center gap-4 ${phone ? 'p-5' : 'p-8'} rounded-xl border-2 transition-all hover:scale-[1.02] active:scale-[0.98] cursor-pointer text-center`;
+
 	return (
 		<Modal
 			theme={theme}
@@ -47,12 +53,12 @@ export function NewAgentChoiceModal({
 		>
 			<div className="flex flex-col gap-5">
 				{/* Two large tiles */}
-				<div className="grid grid-cols-2 gap-4">
+				<div className={`grid gap-4 ${phone ? 'grid-cols-1' : 'grid-cols-2'}`}>
 					{/* Manual Setup Tile */}
 					<button
 						type="button"
 						onClick={handleManual}
-						className="flex flex-col items-center gap-4 p-8 rounded-xl border-2 transition-all hover:scale-[1.02] active:scale-[0.98] cursor-pointer text-center"
+						className={tileClass}
 						style={{
 							borderColor: theme.colors.border,
 							backgroundColor: theme.colors.bgMain,
@@ -88,7 +94,7 @@ export function NewAgentChoiceModal({
 						type="button"
 						onClick={handleWizard}
 						disabled={!wizardAvailable}
-						className="flex flex-col items-center gap-4 p-8 rounded-xl border-2 transition-all hover:scale-[1.02] active:scale-[0.98] cursor-pointer text-center disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:scale-100"
+						className={`${tileClass} disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:scale-100`}
 						style={{
 							borderColor: theme.colors.border,
 							backgroundColor: theme.colors.bgMain,
@@ -136,7 +142,7 @@ export function NewAgentChoiceModal({
 						captures application inputs until complete. For a lighter touch, create an agent
 						manually then run{' '}
 						<code
-							className="px-1 py-0.5 rounded text-[11px]"
+							className="px-1 py-0.5 rounded text-xs-plus"
 							style={{ backgroundColor: theme.colors.border }}
 						>
 							/wizard

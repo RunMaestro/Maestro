@@ -19,7 +19,9 @@ import type { Session, SettingsTab, AgentError } from '../types';
 import type { GitStreamingOperation } from '../../shared/gitUtils';
 import type { SerializableWizardState } from '../components/Wizard';
 import type { ConductorBadge } from '../constants/conductorBadges';
+import { UI_SURFACES } from '../../shared/uiSurfaces';
 import { logger } from '../utils/logger';
+import { safeStorageGet, safeStorageSet } from '../utils/safeLocalStorage';
 
 // ============================================================================
 // Prompt Composer full-screen preference (persisted)
@@ -32,21 +34,11 @@ import { logger } from '../utils/logger';
 const PROMPT_COMPOSER_FULLSCREEN_KEY = 'maestro.promptComposer.fullscreen';
 
 function readStoredPromptComposerFullscreen(): boolean {
-	if (typeof window === 'undefined') return false;
-	try {
-		return window.localStorage.getItem(PROMPT_COMPOSER_FULLSCREEN_KEY) === 'true';
-	} catch {
-		return false;
-	}
+	return safeStorageGet(PROMPT_COMPOSER_FULLSCREEN_KEY) === 'true';
 }
 
 function writeStoredPromptComposerFullscreen(value: boolean): void {
-	if (typeof window === 'undefined') return;
-	try {
-		window.localStorage.setItem(PROMPT_COMPOSER_FULLSCREEN_KEY, String(value));
-	} catch {
-		// Ignore quota / privacy-mode errors - preference just won't persist.
-	}
+	safeStorageSet(PROMPT_COMPOSER_FULLSCREEN_KEY, String(value));
 }
 
 // ============================================================================
@@ -82,6 +74,9 @@ export interface SettingsModalData {
 	 *  back to 'general' on first open. Set to a specific tab to deep-link. */
 	tab?: SettingsTab;
 	promptId?: string;
+	/** A `data-setting-id` (see searchableSettings.ts) to scroll to and flash on
+	 *  open, the same jump a Settings search result makes. Belongs to `tab`. */
+	settingId?: string;
 }
 
 /** New instance modal data */
@@ -123,10 +118,31 @@ export interface RenameTabModalData {
 	initialName: string;
 }
 
-/** Snooze tab modal data - which AI tab is being snoozed, and how to label it */
+/**
+ * Snooze tab modal data - what is being snoozed, how to label it, and what the
+ * dialog may offer for it. Openers build this with `resolveSnoozeTarget()`
+ * (utils/snoozeHelpers.ts) rather than assembling it by hand: `tabId` can name
+ * a tab of any kind OR a tiled group, and only that resolver knows which.
+ */
 export interface SnoozeTabModalData {
 	tabId: string;
 	tabLabel: string;
+	/**
+	 * Whether the parked tab can be prompted on return. Only a conversation
+	 * can, so a file, terminal, or browser tab answers false and the dialog
+	 * hides the prompt field rather than collecting one that could never be
+	 * sent. Required rather than optional so a new opener has to answer it.
+	 */
+	canRunWakePrompt: boolean;
+}
+
+/**
+ * Model & effort modal data. Only the tab id travels: the modal resolves the
+ * agent, the option lists, and the tab > session > agent-default ladder from
+ * the stores itself, so an opener can't hand it a stale snapshot.
+ */
+export interface ModelEffortModalData {
+	tabId: string;
 }
 
 /** Terminal tab startup command modal data */
@@ -164,6 +180,19 @@ export interface AgentErrorModalData {
 	historicalError?: AgentError;
 }
 
+/**
+ * Provider re-authentication modal data.
+ *
+ * Addressed by PROVIDER, not by agent: one expired token blocks every agent
+ * that shares the credential store, and they are all fixed by one login. The
+ * roster of blocked agents (and the error text) lives in `authOutageStore`
+ * keyed by this value, so it stays correct as more agents fail while the prompt
+ * is already open.
+ */
+export interface ReauthModalData {
+	providerKey: string;
+}
+
 /** Delete agent modal data */
 export interface DeleteAgentModalData {
 	session: Session;
@@ -179,11 +208,30 @@ export interface QuitConfirmModalData {
 	activeTerminalTasks?: string[];
 	activeCueRunCount?: number;
 	activeGroupChatCount?: number;
-	hasFeedbackDraft?: boolean;
 }
 
 export interface CueModalData {
-	initialTab?: 'dashboard' | 'pipeline';
+	/** Tab the modal opens on. Values match `CueModalTab` in
+	 *  `components/CueModal/CueModalHeader.tsx` and the `cue` entry in
+	 *  `shared/uiSurfaces.ts`. */
+	initialTab?: 'dashboard' | 'scheduled' | 'pipeline' | 'pipeline-list' | 'activity' | 'backup';
+	/**
+	 * Agent to highlight and scroll to in the dashboard's session table.
+	 *
+	 * The Left Bar's per-agent "Configure Maestro Cue" opens a table of EVERY
+	 * Cue-enabled agent, so without this the menu item promises one agent and
+	 * delivers a list with nothing marking which row you asked for.
+	 *
+	 * Deliberately NOT a filter: cue.yaml is a per-PROJECT file and several
+	 * agents can share one projectRoot, so narrowing the table to one agent
+	 * would hide the sibling that actually owns the config - which is exactly
+	 * the row that explains why this agent shows zero subscriptions.
+	 *
+	 * Optional: the keyboard shortcut, command palette and Settings entry
+	 * points open the dashboard with no agent in hand and nothing to
+	 * disambiguate.
+	 */
+	focusSessionId?: string;
 }
 
 /** Cue YAML editor data */
@@ -218,6 +266,12 @@ export interface GitDiffModalData {
 	 * it so it can diff an agent that isn't active.
 	 */
 	cwd?: string;
+	/**
+	 * Agent the diff was taken for, used to name it in the header. Optional for
+	 * the same reason as `cwd`: the keyboard shortcut and command palette follow
+	 * the active agent, so there is nothing to disambiguate.
+	 */
+	sessionId?: string;
 }
 
 /**
@@ -228,6 +282,8 @@ export interface GitDiffModalData {
 export interface GitLogModalData {
 	cwd: string;
 	sshRemoteId?: string;
+	/** Agent the log belongs to, used to name it in the header. */
+	sessionId?: string;
 }
 
 /** Git command runner data - which streaming operation the console modal runs */
@@ -290,6 +346,7 @@ export type ModalId =
 	| 'deleteAgent'
 	| 'renameInstance'
 	| 'agentError'
+	| 'reauth'
 	// Quick Actions
 	| 'quickAction'
 	| 'tabSwitcher'
@@ -300,6 +357,7 @@ export type ModalId =
 	| 'renameTab'
 	| 'terminalStartupCommand'
 	| 'snoozeTab'
+	| 'modelEffort'
 	| 'snoozedTabs'
 	// Group Management
 	| 'renameGroup'
@@ -357,6 +415,8 @@ export type ModalId =
 	| 'symphony'
 	// Platform Warnings
 	| 'windowsWarning'
+	// First-run typography chooser
+	| 'typographyChoice'
 	// Director's Notes
 	| 'directorNotes'
 	// Maestro Cue
@@ -367,7 +427,113 @@ export type ModalId =
 	// Board (task DAG kanban; depends on Maestro Cue)
 	| 'boardModal'
 	// Agent Profiles (the assignees a board card names; ships with Board)
-	| 'profilesModal';
+	| 'profilesModal'
+	// Concerto (agent-composed views)
+	| 'concertoStage';
+
+// ============================================================================
+// Destination surfaces (mutually exclusive)
+// ============================================================================
+
+/**
+ * Destination surfaces: full-window views that are a PLACE YOU GO, not a dialog
+ * you answer. Only one is ever open - opening any of them closes whichever
+ * other one was up.
+ *
+ * Without this rule, every one of these surfaces had a fixed rank in
+ * `MODAL_PRIORITIES`, so what you saw after a hotkey depended on which surface
+ * happened to rank higher rather than on what you just asked for. Opening the
+ * Usage Dashboard (540) while Director's Notes (848) was up rendered it BEHIND
+ * the notes, and opening a main-panel destination (System Logs, Agent Sessions,
+ * Memory) while any overlay was up changed nothing on screen at all. Both read
+ * as a dead keystroke.
+ *
+ * Membership test: does it fill the window, own its own header/tabs, and is it
+ * reachable on its own from a hotkey, the command palette, the Left Bar footer,
+ * or `maestro-cli open`? Dialogs that answer a question ABOUT the surface
+ * beneath them are not members and are meant to layer: confirmations, rename
+ * prompts, the Cue YAML editor, the Playbook name box, the Usage Dashboard's
+ * per-agent detail, the Symphony agent picker.
+ *
+ * `documentGraph` is a destination too but lives in `fileExplorerStore`, so it
+ * registers itself through `registerExternalDestination` instead of appearing
+ * here.
+ */
+export const DESTINATION_MODALS: ReadonlySet<ModalId> = new Set<ModalId>([
+	// Full-window overlays
+	'settings',
+	'usageDashboard',
+	'directorNotes',
+	'symphony',
+	'cueModal',
+	'boardModal',
+	'profilesModal',
+	'marketplace',
+	'processMonitor',
+	// Main-panel destinations - these replace the whole center workspace, so an
+	// overlay left open on top of one hides it completely.
+	'logViewer',
+	'agentSessions',
+	'memoryViewer',
+]);
+
+/**
+ * Shortcut ids that open a destination surface.
+ *
+ * The window-level keyboard handler blocks most shortcuts while a modal is up,
+ * so a destination hotkey only reaches its branch if it is on that guard's
+ * allowlist. The allowlist used to be a hardcoded chord test (Alt+Cmd plus
+ * l/p/u/s), which let exactly three destinations through and killed the rest:
+ * Director's Notes to Usage Dashboard worked, Usage Dashboard back to
+ * Director's Notes did nothing, because `Opt+Cmd+U` matched the chord and
+ * `Cmd+Shift+O` did not. Switching between two surfaces worked in one
+ * direction only, which reads as a dead key.
+ *
+ * Derived from `UI_SURFACES` rather than hand-listed, so adding a destination
+ * (or rebinding one) cannot silently drop it back out of the guard. A user who
+ * rebinds a surface keeps a working hotkey, which a chord test cannot promise.
+ */
+export const DESTINATION_SHORTCUT_IDS: ReadonlySet<string> = new Set(
+	UI_SURFACES.filter(
+		(surface) => DESTINATION_MODALS.has(surface.modal as ModalId) && surface.shortcutId
+	).map((surface) => surface.shortcutId as string)
+);
+
+/**
+ * Destinations that are not modal-store entries (currently just the Document
+ * Graph, which lives in `fileExplorerStore`). Each registered closer runs when
+ * a `DESTINATION_MODALS` member opens, so an external surface obeys the same
+ * one-at-a-time rule without this store having to import that one - which would
+ * be a cycle, since the external store imports this one to close modal
+ * destinations on its own way in.
+ */
+type DestinationCloser = () => void;
+const externalDestinationClosers = new Set<DestinationCloser>();
+
+/** Register an out-of-store destination. Returns an unregister function. */
+export function registerExternalDestination(close: DestinationCloser): () => void {
+	externalDestinationClosers.add(close);
+	return () => externalDestinationClosers.delete(close);
+}
+
+/**
+ * Close every open destination surface EXCEPT `keep`. Exported for stores that
+ * own a destination of their own (see `registerExternalDestination`) and need
+ * to clear the modal-store ones before opening it.
+ */
+export function closeOtherDestinations(keep?: ModalId): void {
+	useModalStore.setState((state) => {
+		let changed = false;
+		const newModals = new Map(state.modals);
+		for (const [id, entry] of newModals) {
+			if (entry.open && id !== keep && DESTINATION_MODALS.has(id)) {
+				newModals.set(id, { open: false, data: undefined });
+				changed = true;
+			}
+		}
+		return changed ? { modals: newModals } : state;
+	});
+}
 
 /**
  * Type mapping from ModalId to its data type.
@@ -382,13 +548,21 @@ export interface ModalDataMap {
 	renameInstance: RenameInstanceModalData;
 	renameTab: RenameTabModalData;
 	snoozeTab: SnoozeTabModalData;
+	modelEffort: ModelEffortModalData;
 	terminalStartupCommand: TerminalStartupCommandModalData;
 	renameGroup: RenameGroupModalData;
 	agentSessions: AgentSessionsModalData;
 	batchRunner: BatchRunnerModalData;
 	wizardResume: WizardResumeModalData;
 	agentError: AgentErrorModalData;
+	reauth: ReauthModalData;
 	deleteAgent: DeleteAgentModalData;
+	/**
+	 * Present when opened from the Left Bar's right-click menu, naming the agent
+	 * to configure. Absent when opened from the header or Settings, where the
+	 * modal follows the active agent.
+	 */
+	worktreeConfig: WorktreeModalData;
 	createWorktree: WorktreeModalData;
 	createPR: WorktreeModalData;
 	deleteWorktree: WorktreeModalData;
@@ -491,11 +665,25 @@ export const useModalStore = create<ModalStore>()((set, get) => ({
 	promptComposerFullscreen: readStoredPromptComposerFullscreen(),
 
 	openModal: (id, data) => {
+		const isDestination = DESTINATION_MODALS.has(id);
+		// Hand the window over from any non-modal destination (Document Graph)
+		// before this one opens, so the two can't be up at once.
+		if (isDestination && externalDestinationClosers.size > 0) {
+			for (const close of externalDestinationClosers) close();
+		}
 		set((state) => {
 			const current = state.modals.get(id);
 			// Skip if already open with same data reference
 			if (current?.open && current.data === data) return state;
 			const newModals = new Map(state.modals);
+			// One destination at a time - see DESTINATION_MODALS.
+			if (isDestination) {
+				for (const [openId, entry] of newModals) {
+					if (entry.open && openId !== id && DESTINATION_MODALS.has(openId)) {
+						newModals.set(openId, { open: false, data: undefined });
+					}
+				}
+			}
 			newModals.set(id, { open: true, data });
 			// DEBUG: Trace rename modal open/close
 			if (id === 'renameTab') {
@@ -525,16 +713,10 @@ export const useModalStore = create<ModalStore>()((set, get) => ({
 	},
 
 	toggleModal: (id, data) => {
-		set((state) => {
-			const current = state.modals.get(id);
-			const newModals = new Map(state.modals);
-			if (current?.open) {
-				newModals.set(id, { open: false, data: undefined });
-			} else {
-				newModals.set(id, { open: true, data });
-			}
-			return { modals: newModals };
-		});
+		// Routed through open/close rather than flipping the entry inline, so a
+		// toggled destination surface still evicts the other destinations.
+		if (get().isOpen(id)) get().closeModal(id);
+		else get().openModal(id, data);
 	},
 
 	updateModalData: (id, data) => {
@@ -634,7 +816,7 @@ export const selectModalData =
  * Use this for event handlers and callbacks.
  */
 export function getModalActions() {
-	const { openModal, closeModal, updateModalData } = useModalStore.getState();
+	const { openModal, closeModal, toggleModal, updateModalData } = useModalStore.getState();
 
 	return {
 		// Settings Modal
@@ -644,7 +826,8 @@ export function getModalActions() {
 		setSettingsModalOpen: (open: boolean) =>
 			open ? openModal('settings', { tab: undefined }) : closeModal('settings'),
 		setSettingsTab: (tab: SettingsTab) => updateModalData('settings', { tab }),
-		openSettings: (tab?: SettingsTab) => openModal('settings', { tab }),
+		openSettings: (tab?: SettingsTab, settingId?: string) =>
+			openModal('settings', { tab, settingId }),
 		closeSettings: () => closeModal('settings'),
 
 		// New Instance Modal
@@ -927,9 +1110,20 @@ export function getModalActions() {
 		showHistoricalAgentError: (sessionId: string, error: AgentError) =>
 			openModal('agentError', { sessionId, historicalError: error }),
 
+		// Provider Re-authentication Modal
+		openReauthModal: (data: ReauthModalData) => openModal('reauth', data),
+		closeReauthModal: () => closeModal('reauth'),
+
 		// Worktree Modals
+		// Opened WITHOUT a target (header pill, Settings): follows the active agent.
 		setWorktreeConfigModalOpen: (open: boolean) =>
 			open ? openModal('worktreeConfig') : closeModal('worktreeConfig'),
+		// Opened WITH a target (Left Bar right-click): configures that agent
+		// wherever the selection happens to be. This used to be done by
+		// force-activating the right-clicked agent first, which silently moved
+		// the user's selection as a side effect of opening a dialog.
+		setWorktreeConfigSession: (session: Session | null) =>
+			session ? openModal('worktreeConfig', { session }) : closeModal('worktreeConfig'),
 		setCreateWorktreeModalOpen: (open: boolean) =>
 			open ? openModal('createWorktree') : closeModal('createWorktree'),
 		setCreateWorktreeSession: (session: Session | null) =>
@@ -1007,14 +1201,18 @@ export function getModalActions() {
 		setWindowsWarningModalOpen: (open: boolean) =>
 			open ? openModal('windowsWarning') : closeModal('windowsWarning'),
 
+		// Typography Choice Modal (first run / first launch after the update)
+		setTypographyChoiceModalOpen: (open: boolean) =>
+			open ? openModal('typographyChoice') : closeModal('typographyChoice'),
+
 		// Director's Notes Modal
 		setDirectorNotesOpen: (open: boolean) =>
 			open ? openModal('directorNotes') : closeModal('directorNotes'),
 
 		// Maestro Cue Modal
 		setCueModalOpen: (open: boolean) => (open ? openModal('cueModal') : closeModal('cueModal')),
-		openCueModalWithTab: (tab: 'dashboard' | 'pipeline') =>
-			openModal('cueModal', { initialTab: tab }),
+		openCueModalWithTab: (tab: NonNullable<CueModalData['initialTab']>, focusSessionId?: string) =>
+			openModal('cueModal', { initialTab: tab, focusSessionId }),
 
 		// Maestro Cue YAML Editor (standalone, bypasses CueModal dashboard)
 		openCueYamlEditor: (sessionId: string, projectRoot: string) =>
@@ -1032,6 +1230,13 @@ export function getModalActions() {
 		// Agent Profiles Modal (board card assignees; same Encore gate as Board)
 		setProfilesModalOpen: (open: boolean) =>
 			open ? openModal('profilesModal') : closeModal('profilesModal'),
+		// Concerto stage. This one flag is the whole truth about whether the stage
+		// is up: the movement store reads it back rather than keeping its own
+		// `hidden` copy, so the hotkey, the palette, the CLI and an agent adding a
+		// panel cannot disagree about it.
+		setConcertoStageOpen: (open: boolean) =>
+			open ? openModal('concertoStage') : closeModal('concertoStage'),
+		toggleConcertoStage: () => toggleModal('concertoStage'),
 
 		// Lightbox refs replacement - use updateModalData instead
 		setLightboxIsGroupChat: (isGroupChat: boolean) => updateModalData('lightbox', { isGroupChat }),
@@ -1104,6 +1309,7 @@ export function useModalActions() {
 	const wizardResumeModalOpen = useModalStore(selectModalOpen('wizardResume'));
 	const wizardResumeData = useModalStore(selectModalData('wizardResume'));
 	const agentErrorData = useModalStore(selectModalData('agentError'));
+	const reauthData = useModalStore(selectModalData('reauth'));
 	const worktreeConfigModalOpen = useModalStore(selectModalOpen('worktreeConfig'));
 	const createWorktreeModalOpen = useModalStore(selectModalOpen('createWorktree'));
 	const createWorktreeData = useModalStore(selectModalData('createWorktree'));
@@ -1129,6 +1335,7 @@ export function useModalActions() {
 	const tourData = useModalStore(selectModalData('tour'));
 	const symphonyModalOpen = useModalStore(selectModalOpen('symphony'));
 	const windowsWarningModalOpen = useModalStore(selectModalOpen('windowsWarning'));
+	const typographyChoiceModalOpen = useModalStore(selectModalOpen('typographyChoice'));
 	const directorNotesOpen = useModalStore(selectModalOpen('directorNotes'));
 	const cueModalOpen = useModalStore(selectModalOpen('cueModal'));
 	const cueYamlEditorOpen = useModalStore(selectModalOpen('cueYamlEditor'));
@@ -1147,6 +1354,7 @@ export function useModalActions() {
 		// the last in-session tab, falling back to 'general' on first open.
 		settingsTab: settingsData?.tab,
 		settingsPromptId: settingsData?.promptId,
+		settingsSettingId: settingsData?.settingId,
 		...actions,
 
 		// New Instance Modal
@@ -1230,7 +1438,6 @@ export function useModalActions() {
 		// Quit Confirmation Modal
 		quitConfirmModalOpen,
 		activeTerminalTasks: (quitConfirmData?.activeTerminalTasks as string[]) ?? [],
-		hasFeedbackDraft: quitConfirmData?.hasFeedbackDraft ?? false,
 
 		// Rename Instance Modal
 		renameInstanceModalOpen,
@@ -1275,6 +1482,9 @@ export function useModalActions() {
 
 		// Agent Error Modal
 		agentErrorModalSessionId: agentErrorData?.sessionId ?? null,
+
+		// Provider Re-authentication Modal
+		reauthModalData: reauthData ?? null,
 
 		// Worktree Modals
 		worktreeConfigModalOpen,
@@ -1330,6 +1540,9 @@ export function useModalActions() {
 
 		// Windows Warning Modal
 		windowsWarningModalOpen,
+
+		// Typography Choice Modal
+		typographyChoiceModalOpen,
 
 		// Director's Notes Modal
 		directorNotesOpen,

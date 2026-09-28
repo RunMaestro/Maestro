@@ -20,6 +20,9 @@ import {
 // and only renders content the user explicitly opens.
 const ALLOWED_BROWSER_TAB_EMBED_PROTOCOLS = new Set(['http:', 'https:', 'file:']);
 const ALLOWED_BROWSER_TAB_ABOUT_URLS = new Set(['about:blank']);
+// A modifier pressed on its own is never an app shortcut. Browser-tab key
+// forwarding must skip it, see the before-input-event handler below.
+const BARE_MODIFIER_KEYS = new Set(['Meta', 'Control', 'Alt', 'Shift']);
 
 type BrowserTabWebPreferences = Record<string, unknown> & {
 	partition?: string;
@@ -345,6 +348,10 @@ export function attachGuestWebviewSecurity(
 		guest.on('before-input-event', (event, input) => {
 			if (!input.meta && !input.control && !input.alt) return;
 			if (input.type !== 'keyDown') return;
+			// Pressing Cmd alone fires a keyDown for "Meta" before the V of Cmd+V.
+			// Forwarding it made the renderer blur the webview, so the V landed
+			// outside the page and paste did nothing in any browser-tab field.
+			if (BARE_MODIFIER_KEYS.has(input.key)) return;
 			const k = input.key.toLowerCase();
 			// Cmd/Ctrl+V: drive paste through the trusted guest webContents API.
 			// Chromium's native paste needs the `clipboard-read` permission, which
@@ -386,7 +393,7 @@ export function attachGuestWebviewSecurity(
 			document.addEventListener('keydown',function(e){
 				var hasMod=e.metaKey||e.ctrlKey;
 				var hasAlt=e.altKey;
-				if(!hasMod&&!hasAlt)return;
+				if((!hasMod&&!hasAlt)||/^(Meta|Control|Alt|Shift)$/.test(e.key))return;
 				var k=e.key.toLowerCase();
 				var te=hasMod&&!hasAlt&&!e.shiftKey&&'acxz'.indexOf(k)!==-1;
 				var re=hasMod&&!hasAlt&&e.shiftKey&&k==='z';

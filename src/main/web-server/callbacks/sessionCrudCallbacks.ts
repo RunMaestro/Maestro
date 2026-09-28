@@ -13,7 +13,12 @@ export function registerSessionCrudCallbacks(
 
 	// Set up callback for web server to create a session
 	// Uses IPC request-response pattern - renderer creates the session and responds with sessionId
-	server.setCreateSessionCallback(async (name, toolType, cwd, groupId, config) => {
+	//
+	// `background` has to reach the renderer for `create-agent --background` to
+	// mean anything: the renderer's gate reads it off the event detail, so an
+	// argument dropped here is indistinguishable from a foreground create and
+	// the new agent takes the window from whoever is working (issue #1496).
+	server.setCreateSessionCallback(async (name, toolType, cwd, groupId, config, background) => {
 		const mainWindow = getMainWindow();
 		if (!mainWindow) {
 			logger.warn('mainWindow is null for createSession', 'WebServer');
@@ -45,7 +50,8 @@ export function registerSessionCrudCallbacks(
 				cwd,
 				groupId,
 				config,
-				responseChannel
+				responseChannel,
+				background === true
 			);
 
 			const timeoutId = setTimeout(() => {
@@ -61,50 +67,53 @@ export function registerSessionCrudCallbacks(
 	// Set up callback for web server to create a worktree agent off a parent.
 	// Mirrors the createSession bridge: hand off to the renderer (which owns
 	// the worktree-spawn helper) and resolve with the new agent's session id.
-	server.setCreateWorktreeSessionCallback(async (parentSessionId: string, config: any) => {
-		const mainWindow = getMainWindow();
-		if (!mainWindow) {
-			logger.warn('mainWindow is null for createWorktreeSession', 'WebServer');
-			return { success: false, error: 'Main window not available' };
-		}
-
-		return new Promise((resolve) => {
-			const responseChannel = `remote:createWorktreeSession:response:${randomUUID()}`;
-			let resolved = false;
-
-			const handleResponse = (_event: Electron.IpcMainEvent, result: any) => {
-				if (resolved) return;
-				resolved = true;
-				clearTimeout(timeoutId);
-				resolve(result || { success: false, error: 'No response' });
-			};
-
-			ipcMain.once(responseChannel, handleResponse);
-			if (!isWebContentsAvailable(mainWindow)) {
-				logger.warn('webContents is not available for createWorktreeSession', 'WebServer');
-				ipcMain.removeListener(responseChannel, handleResponse);
-				resolve({ success: false, error: 'Web contents not available' });
-				return;
+	server.setCreateWorktreeSessionCallback(
+		async (parentSessionId: string, config: any, background?: boolean) => {
+			const mainWindow = getMainWindow();
+			if (!mainWindow) {
+				logger.warn('mainWindow is null for createWorktreeSession', 'WebServer');
+				return { success: false, error: 'Main window not available' };
 			}
-			mainWindow.webContents.send(
-				'remote:createWorktreeSession',
-				parentSessionId,
-				config,
-				responseChannel
-			);
 
-			const timeoutId = setTimeout(() => {
-				if (resolved) return;
-				resolved = true;
-				ipcMain.removeListener(responseChannel, handleResponse);
-				logger.warn(
-					`createWorktreeSession callback timed out for parent ${parentSessionId}`,
-					'WebServer'
+			return new Promise((resolve) => {
+				const responseChannel = `remote:createWorktreeSession:response:${randomUUID()}`;
+				let resolved = false;
+
+				const handleResponse = (_event: Electron.IpcMainEvent, result: any) => {
+					if (resolved) return;
+					resolved = true;
+					clearTimeout(timeoutId);
+					resolve(result || { success: false, error: 'No response' });
+				};
+
+				ipcMain.once(responseChannel, handleResponse);
+				if (!isWebContentsAvailable(mainWindow)) {
+					logger.warn('webContents is not available for createWorktreeSession', 'WebServer');
+					ipcMain.removeListener(responseChannel, handleResponse);
+					resolve({ success: false, error: 'Web contents not available' });
+					return;
+				}
+				mainWindow.webContents.send(
+					'remote:createWorktreeSession',
+					parentSessionId,
+					config,
+					responseChannel,
+					background === true
 				);
-				resolve({ success: false, error: 'Timeout' });
-			}, 30000);
-		});
-	});
+
+				const timeoutId = setTimeout(() => {
+					if (resolved) return;
+					resolved = true;
+					ipcMain.removeListener(responseChannel, handleResponse);
+					logger.warn(
+						`createWorktreeSession callback timed out for parent ${parentSessionId}`,
+						'WebServer'
+					);
+					resolve({ success: false, error: 'Timeout' });
+				}, 30000);
+			});
+		}
+	);
 
 	// Set up callback for web server to delete a session
 	// Fire-and-forget pattern
