@@ -51,6 +51,7 @@ import type {
 	ManagedProcess,
 	AgentError,
 	UsageStats,
+	TurnSettlement,
 } from '../../../../main/process-manager/types';
 import { RECORDINGS, type TurnRecording } from './fixtures';
 
@@ -60,6 +61,7 @@ interface CapturedEvents {
 	data: string[];
 	agentErrors: AgentError[];
 	exits: number[];
+	settlements: Array<TurnSettlement | undefined>;
 }
 
 function createManagedProcess(sessionId: string, recording: TurnRecording): ManagedProcess {
@@ -111,12 +113,19 @@ async function runRecording(recording: TurnRecording): Promise<CapturedEvents> {
 		data: [],
 		agentErrors: [],
 		exits: [],
+		settlements: [],
 	};
 	emitter.on('session-id', (_sid: string, id: string) => captured.sessionIds.push(id));
 	emitter.on('usage', (_sid: string, usage: UsageStats) => captured.usages.push(usage));
 	emitter.on('data', (_sid: string, text: string) => captured.data.push(text));
 	emitter.on('agent-error', (_sid: string, error: AgentError) => captured.agentErrors.push(error));
-	emitter.on('exit', (_sid: string, code: number) => captured.exits.push(code));
+	emitter.on(
+		'exit',
+		(_sid: string, code: number, _signal?: string, settlement?: TurnSettlement) => {
+			captured.exits.push(code);
+			captured.settlements.push(settlement);
+		}
+	);
 
 	for (const chunk of recording.chunks) {
 		stdoutHandler.handleData(sessionId, chunk);
@@ -140,6 +149,7 @@ describe('turn recordings', () => {
 		expect(events.data.join('')).toContain('Here is the answer.');
 		expect(events.agentErrors).toEqual([]);
 		expect(events.exits).toEqual([0]);
+		expect(events.settlements).toEqual([{ outcome: 'completed', answerCaptured: true }]);
 	});
 
 	it('resumed: a process pre-seeded with agentSessionId confirms continuity with the same id', async () => {
@@ -156,6 +166,7 @@ describe('turn recordings', () => {
 		// conversation-identity concept, not a usage-accumulator one.
 		expect(events.usages).toHaveLength(1);
 		expect(events.usages[0].inputTokens).toBe(500);
+		expect(events.settlements).toEqual([{ outcome: 'completed', answerCaptured: true }]);
 	});
 
 	it('interrupted: no agent-error fires, and the partial answer still flushes at exit', async () => {
@@ -164,6 +175,7 @@ describe('turn recordings', () => {
 		expect(events.agentErrors).toEqual([]);
 		expect(events.data.join('')).toContain('Working on it when stopped');
 		expect(events.exits).toEqual([1]);
+		expect(events.settlements).toEqual([{ outcome: 'interrupted', answerCaptured: true }]);
 	});
 
 	it('chunked: fragmented delivery of every line produces the identical result to an unfragmented stream', async () => {
@@ -172,6 +184,7 @@ describe('turn recordings', () => {
 		expect(events.sessionIds).toEqual(['sess-chunked-1']);
 		expect(events.data.join('')).toContain('Here is the chunked answer.');
 		expect(events.agentErrors).toEqual([]);
+		expect(events.settlements).toEqual([{ outcome: 'completed', answerCaptured: true }]);
 	});
 
 	it('interleaved: text and tool_use events interleave without corrupting the final answer', async () => {
@@ -180,6 +193,7 @@ describe('turn recordings', () => {
 		expect(events.sessionIds).toEqual(['sess-interleaved-1']);
 		expect(events.data.join('')).toContain('Done - final answer.');
 		expect(events.agentErrors).toEqual([]);
+		expect(events.settlements).toEqual([{ outcome: 'completed', answerCaptured: true }]);
 	});
 
 	it("cut-stream: a result with no trailing newline is recovered by ExitHandler's exit-time flush", async () => {
@@ -188,6 +202,7 @@ describe('turn recordings', () => {
 		expect(events.sessionIds).toEqual(['sess-cutstream-1']);
 		expect(events.data.join('')).toContain('Answer that arrived with no trailing newline.');
 		expect(events.agentErrors).toEqual([]);
+		expect(events.settlements).toEqual([{ outcome: 'completed', answerCaptured: true }]);
 	});
 
 	it('classified-exit-with-answer: a specific exit classification outranks a captured answer', async () => {
@@ -207,6 +222,7 @@ describe('turn recordings', () => {
 			message: 'OAuth token has expired. Sign in again to continue.',
 		});
 		expect(events.exits).toEqual([1]);
+		expect(events.settlements).toEqual([{ outcome: 'crashed', answerCaptured: true }]);
 	});
 
 	it('bad-exit-with-answer: documents a real CLI-vs-desktop divergence - desktop still reports a generic crash despite a captured answer', async () => {
@@ -229,6 +245,7 @@ describe('turn recordings', () => {
 			message: 'Agent exited with code 1',
 		});
 		expect(events.exits).toEqual([1]);
+		expect(events.settlements).toEqual([{ outcome: 'crashed', answerCaptured: true }]);
 	});
 
 	it('silent-resume: the provider silently reports a rotated session id, which the pipeline follows', async () => {
@@ -238,6 +255,7 @@ describe('turn recordings', () => {
 		expect(events.sessionIds).toEqual(['sess-new-after-rotation']);
 		expect(events.agentErrors).toEqual([]);
 		expect(events.data.join('')).toContain('Answer under the rotated session.');
+		expect(events.settlements).toEqual([{ outcome: 'completed', answerCaptured: true }]);
 	});
 
 	it('stop-vs-crash: identical rate-limit stderr is suppressed when interrupted and surfaced when not', async () => {
@@ -245,8 +263,10 @@ describe('turn recordings', () => {
 		const crashed = await runRecording(RECORDINGS['stop-vs-crash-crashed']);
 
 		expect(stopped.agentErrors).toEqual([]);
+		expect(stopped.settlements).toEqual([{ outcome: 'interrupted', answerCaptured: true }]);
 
 		expect(crashed.agentErrors).toHaveLength(1);
 		expect(crashed.agentErrors[0].type).toBe('rate_limited');
+		expect(crashed.settlements).toEqual([{ outcome: 'crashed', answerCaptured: true }]);
 	});
 });

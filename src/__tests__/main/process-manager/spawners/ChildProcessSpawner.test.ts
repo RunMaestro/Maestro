@@ -695,7 +695,12 @@ describe('ChildProcessSpawner', () => {
 			// handleExit is async (post-exit reconciliation) - let it settle.
 			await vi.waitFor(() => expect(onExit).toHaveBeenCalled());
 
-			expect(onExit).toHaveBeenCalledWith(baseConfig.sessionId, 0);
+			expect(onExit).toHaveBeenCalledWith(
+				baseConfig.sessionId,
+				0,
+				undefined,
+				expect.objectContaining({ outcome: 'completed' })
+			);
 			expect(processes.has(baseConfig.sessionId)).toBe(false);
 		});
 	});
