@@ -8,7 +8,6 @@ import {
 	setCachedGhStatus,
 	getExpandedEnv,
 } from '../../../utils/cliDetection';
-import { getShellPath } from '../../../runtime/getShellPath';
 import { captureMessage } from '../../../utils/sentry';
 import { createPullRequest } from '../../../utils/pr-creator';
 import { LOG_CONTEXT, handlerOpts } from './shared';
