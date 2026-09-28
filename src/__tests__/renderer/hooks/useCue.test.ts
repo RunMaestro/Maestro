@@ -138,6 +138,27 @@ describe('useCue', () => {
 
 			expect(result.current.loading).toBe(false);
 		});
+
+		it('exposes the lease-blocked reason', async () => {
+			mockGetLeaseBlockedReason.mockResolvedValue('held by pid 4242');
+
+			const { result } = await renderAndSettle();
+
+			expect(result.current.leaseBlockedReason).toBe('held by pid 4242');
+			expect(result.current.error).toBeNull();
+		});
+
+		it('still applies the status data when the lease-reason read fails', async () => {
+			mockGetStatus.mockResolvedValue([mockSession]);
+			mockGetActivityLog.mockResolvedValue([mockRun]);
+			mockGetLeaseBlockedReason.mockRejectedValue(new Error('lease IPC failed'));
+
+			const { result } = await renderAndSettle();
+
+			expect(result.current.sessions).toEqual([mockSession]);
+			expect(result.current.activityLog).toEqual([mockRun]);
+			expect(result.current.error).toBe('lease IPC failed');
+		});
 	});
 
 	describe('actions', () => {

@@ -68,22 +68,32 @@ export function useCue(options?: UseCueOptions): UseCueReturn {
 			// powers the Cue dashboard, where an IPC failure must surface as
 			// a user-visible error banner. Going direct preserves the catch
 			// path below; the wrapper would make `err` unreachable here.
-			const [statusData, runsData, logData, queueData, eventCountData, blockedReason] =
-				await Promise.all([
+			// The lease reason is settled on its own: a failure there must not
+			// discard the status data, which would leave the dashboard stale.
+			const [core, blocked] = await Promise.allSettled([
+				Promise.all([
 					window.maestro.cue.getStatus(),
 					window.maestro.cue.getActiveRuns(),
 					window.maestro.cue.getActivityLog(100),
 					window.maestro.cue.getQueueStatus(),
 					window.maestro.cue.getEventCount(),
-					window.maestro.cue.getLeaseBlockedReason(),
-				]);
+				]),
+				window.maestro.cue.getLeaseBlockedReason(),
+			]);
 			if (!mountedRef.current) return;
+			if (core.status === 'rejected') throw core.reason;
+			const [statusData, runsData, logData, queueData, eventCountData] = core.value;
 			setSessions(statusData);
 			setActiveRuns(runsData);
 			setActivityLog(logData);
 			setQueueStatus(queueData);
 			setEventCount(eventCountData);
-			setLeaseBlockedReason(blockedReason);
+			if (blocked.status === 'fulfilled') {
+				setLeaseBlockedReason(blocked.value);
+			} else {
+				const reason = blocked.reason;
+				setError(reason instanceof Error ? reason.message : 'Failed to fetch Cue lease status');
+			}
 		} catch (err) {
 			if (!mountedRef.current) return;
 			setError(err instanceof Error ? err.message : 'Failed to fetch Cue status');

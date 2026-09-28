@@ -3973,6 +3973,21 @@ describe('CueEngine', () => {
 
 			expect(engine.isEnabled()).toBe(false);
 			expect(deps.onLog).toHaveBeenCalledWith('warn', expect.stringContaining('pid 4242'));
+			// Cue is still on: the dashboard says why, and the engine keeps polling
+			// so it takes over once the peer quits.
+			expect(engine.getLeaseBlockedReason()).toContain('pid 4242');
+			expect(acquire).toHaveBeenCalledTimes(2);
+
+			vi.advanceTimersByTime(30_000);
+			expect(acquire).toHaveBeenCalledTimes(3);
+			expect(engine.isEnabled()).toBe(false);
+
+			acquire.mockImplementation(() => ({ ok: true }));
+			vi.advanceTimersByTime(30_000);
+			expect(engine.isEnabled()).toBe(true);
+			expect(engine.getLeaseBlockedReason()).toBeNull();
+
+			engine.stop();
 		});
 
 		it('renews the lease on each heartbeat tick', () => {

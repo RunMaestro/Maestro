@@ -687,6 +687,10 @@ export class CueEngine {
 				`[CUE] Stopping: ${result.reason}. This engine had been running without the lease.`
 			);
 			this.stop();
+			// `stop()` clears both; Cue is still switched on, so report why it is
+			// idle and keep polling, the same as a lost renewal does.
+			this.leaseBlockedReason = result.reason;
+			this.scheduleLeaseRetry();
 			return false;
 		} catch (err) {
 			// Still unreadable. Keep running, exactly as the start did.
