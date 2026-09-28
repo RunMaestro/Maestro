@@ -382,6 +382,8 @@ export async function* runPlaybook(
 			}
 		};
 
+		const OPERATOR_STOP_OUTCOME = 'stopped: by operator';
+
 		// Helper to create total Auto Run summary from reconciled totals.
 		//
 		// Written for EVERY run, including a single-pass non-looping one. Besides
@@ -390,7 +392,6 @@ export async function* runPlaybook(
 		// back to. Skipping it for non-loop runs - as this did - left the next run
 		// with no boundary, so its aggregation swept up the previous run's task
 		// rows and reported the two runs added together.
-		const OPERATOR_STOP_OUTCOME = 'stopped: by operator';
 		const createAutoRunSummary = (reconciled: FinalSummaryTotals, outcome?: string): void => {
 			if (!writeHistory) return;
 
