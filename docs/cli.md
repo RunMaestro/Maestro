@@ -125,12 +125,12 @@ The response is always JSON:
 
 `outcome` says how the turn ended:
 
-| `outcome`                | `success` | Meaning                                                                                                    |
-| ------------------------ | --------- | ---------------------------------------------------------------------------------------------------------- |
-| `completed`              | `true`    | Clean exit with the provider's explicit done signal.                                                       |
-| `completed-with-warning` | `true`    | An answer was captured, but the process exited non-zero or never sent a done signal.                       |
-| `interrupted`            | `false`   | The send was stopped (Ctrl+C or SIGTERM). Never reported as a crash, even if the agent wrote to stderr.    |
-| `crashed`                | `false`   | No usable answer, a classified provider error (auth, rate limit, ...), or the process failed to start.     |
+| `outcome`                | `success` | Meaning                                                                                                 |
+| ------------------------ | --------- | ------------------------------------------------------------------------------------------------------- |
+| `completed`              | `true`    | Clean exit with the provider's explicit done signal.                                                    |
+| `completed-with-warning` | `true`    | An answer was captured, but the process exited non-zero or never sent a done signal.                    |
+| `interrupted`            | `false`   | The send was stopped (Ctrl+C or SIGTERM). Never reported as a crash, even if the agent wrote to stderr. |
+| `crashed`                | `false`   | No usable answer, a classified provider error (auth, rate limit, ...), or the process failed to start.  |
 
 For providers that stream JSON lines (everything except Claude Code), a captured answer outranks a bare non-zero exit, but not a specific provider error: a turn whose stderr says the login expired fails even if some text was produced. Claude Code keeps requiring a clean exit. A process killed by a signal nobody requested is always `crashed`.
 
