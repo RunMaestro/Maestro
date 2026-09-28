@@ -5,9 +5,13 @@
  */
 
 import type { ProcessManager } from '../process-manager';
+import type { ProcessManagerEvents } from '../process-manager/types';
+import { cueStatusForTurn } from '../cue/cue-turn-status';
 import { captureException } from '../utils/sentry';
 import { GROUP_CHAT_PREFIX, type ProcessListenerDependencies } from './types';
 import { extractCopilotUsageFromDisk } from '../group-chat/copilot-usage-extractor';
+
+type ExitEventArgs = Parameters<ProcessManagerEvents['exit']>;
 
 /**
  * True when routing a participant's response failed only because the group chat
@@ -117,7 +121,7 @@ export function setupExitListener(
 		}
 	}
 
-	processManager.on('exit', (sessionId: string, code: number, signal?: number) => {
+	processManager.on('exit', (...[sessionId, code, signal, settlement]: ExitEventArgs) => {
 		// Remove power block reason for this session
 		// This allows system sleep when no AI sessions are active
 		powerManager.removeBlockReason(`session:${sessionId}`);
@@ -596,11 +600,22 @@ export function setupExitListener(
 
 		// Notify Cue engine that this agent session has completed.
 		// This triggers agent.completed subscriptions for completion chains.
+		// Desktop completions use the same rule as Cue's own runs, and the
+		// exit-code test is only a fallback for exits that carry no settlement.
 		if (isCueEnabled?.() && getCueEngine) {
 			const cueEngine = getCueEngine();
 			if (cueEngine?.hasCompletionSubscribers(sessionId)) {
 				cueEngine.notifyAgentCompleted(sessionId, {
-					status: code === 0 ? 'completed' : 'failed',
+					status: settlement
+						? cueStatusForTurn({
+								outcome: settlement.outcome,
+								exitCode: code,
+								answerCaptured: settlement.answerCaptured,
+								killedBySignal: signal != null,
+							})
+						: code === 0
+							? 'completed'
+							: 'failed',
 					exitCode: code,
 				});
 			}

@@ -84,7 +84,11 @@ import { waitForCopilotShutdown } from '../../../../main/process-manager/Copilot
 const { waitForCopilotShutdown: actualWaitForCopilotShutdown } = await vi.importActual<
 	typeof import('../../../../main/process-manager/CopilotShutdownWaiter')
 >('../../../../main/process-manager/CopilotShutdownWaiter');
-import type { AgentError, ManagedProcess } from '../../../../main/process-manager/types';
+import type {
+	AgentError,
+	ManagedProcess,
+	TurnSettlement,
+} from '../../../../main/process-manager/types';
 import type { AgentOutputParser, ParsedEvent } from '../../../../main/parsers';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -1346,6 +1350,183 @@ describe('ExitHandler', () => {
 
 			expect(errors).toHaveLength(1);
 			expect(errors[0].message).toContain('code 1');
+		});
+	});
+
+	describe('exit event settlement argument', () => {
+		it('emits completed-with-warning when result was emitted but process exited with code 1', async () => {
+			const mockParser = createMockOutputParser();
+			const proc = createMockProcess({
+				toolType: 'claude-code',
+				isStreamJsonMode: true,
+				resultEmitted: true,
+				streamedText: 'Final answer text',
+				outputParser: mockParser,
+			});
+			processes.set('test-session', proc);
+
+			let receivedSettlement: TurnSettlement | undefined;
+			emitter.on(
+				'exit',
+				(_sid: string, _code: number, _signal?: string, settlement?: TurnSettlement) => {
+					receivedSettlement = settlement;
+				}
+			);
+
+			await exitHandler.handleExit('test-session', 1);
+
+			expect(receivedSettlement).toEqual({
+				outcome: 'completed-with-warning',
+				answerCaptured: true,
+			});
+		});
+
+		it('emits completed-with-warning when batch mode JSON result was parsed followed by exit 1', async () => {
+			const batchResultJson = JSON.stringify({ result: 'Batch task finished' });
+			const proc = createMockProcess({
+				toolType: 'claude-code',
+				isBatchMode: true,
+				isStreamJsonMode: false,
+				jsonBuffer: batchResultJson,
+				outputParser: createMockOutputParser(),
+			});
+			processes.set('test-session', proc);
+
+			let receivedSettlement: TurnSettlement | undefined;
+			emitter.on(
+				'exit',
+				(_sid: string, _code: number, _signal?: string, settlement?: TurnSettlement) => {
+					receivedSettlement = settlement;
+				}
+			);
+
+			await exitHandler.handleExit('test-session', 1);
+
+			expect(receivedSettlement).toEqual({
+				outcome: 'completed-with-warning',
+				answerCaptured: true,
+			});
+		});
+
+		it('emits interrupted when process was marked as interrupted', async () => {
+			const mockParser = createMockOutputParser();
+			const proc = createMockProcess({
+				toolType: 'claude-code',
+				isStreamJsonMode: true,
+				interrupted: true,
+				streamedText: 'partial answer',
+				outputParser: mockParser,
+			});
+			processes.set('test-session', proc);
+
+			let receivedSettlement: TurnSettlement | undefined;
+			emitter.on(
+				'exit',
+				(_sid: string, _code: number, _signal?: string, settlement?: TurnSettlement) => {
+					receivedSettlement = settlement;
+				}
+			);
+
+			await exitHandler.handleExit('test-session', 0);
+
+			expect(receivedSettlement).toEqual({
+				outcome: 'interrupted',
+				answerCaptured: true,
+			});
+		});
+
+		it('emits crashed when provider classifies an exit error', async () => {
+			const mockParser = createMockOutputParser({
+				detectErrorFromExit: vi.fn(() => ({
+					type: 'rate_limited',
+					message: 'Rate limit exceeded',
+					recoverable: true,
+					agentId: 'claude-code',
+				})) as unknown as AgentOutputParser['detectErrorFromExit'],
+			});
+			const proc = createMockProcess({
+				toolType: 'claude-code',
+				isStreamJsonMode: true,
+				outputParser: mockParser,
+			});
+			processes.set('test-session', proc);
+
+			let receivedSettlement: TurnSettlement | undefined;
+			emitter.on(
+				'exit',
+				(_sid: string, _code: number, _signal?: string, settlement?: TurnSettlement) => {
+					receivedSettlement = settlement;
+				}
+			);
+
+			await exitHandler.handleExit('test-session', 1);
+
+			expect(receivedSettlement).toEqual({
+				outcome: 'crashed',
+				answerCaptured: false,
+			});
+		});
+
+		it('emits crashed when errorEmitted was already set', async () => {
+			const mockParser = createMockOutputParser();
+			const proc = createMockProcess({
+				toolType: 'claude-code',
+				isStreamJsonMode: true,
+				errorEmitted: true,
+				streamedText: 'some partial output',
+				outputParser: mockParser,
+			});
+			processes.set('test-session', proc);
+
+			let receivedSettlement: TurnSettlement | undefined;
+			emitter.on(
+				'exit',
+				(_sid: string, _code: number, _signal?: string, settlement?: TurnSettlement) => {
+					receivedSettlement = settlement;
+				}
+			);
+
+			await exitHandler.handleExit('test-session', 1);
+
+			expect(receivedSettlement).toEqual({
+				outcome: 'crashed',
+				answerCaptured: true,
+			});
+		});
+
+		it('emits crashed with answerCaptured false on handleError', () => {
+			const proc = createMockProcess({ toolType: 'claude-code' });
+			processes.set('test-session', proc);
+
+			let receivedSettlement: TurnSettlement | undefined;
+			let receivedCode: number | undefined;
+			emitter.on(
+				'exit',
+				(_sid: string, code: number, _signal?: string, settlement?: TurnSettlement) => {
+					receivedCode = code;
+					receivedSettlement = settlement;
+				}
+			);
+
+			exitHandler.handleError('test-session', new Error('spawn failed'));
+
+			expect(receivedCode).toBe(1);
+			expect(receivedSettlement).toEqual({
+				outcome: 'crashed',
+				answerCaptured: false,
+			});
+		});
+
+		it('does not include settlement argument when no managed process exists', async () => {
+			let receivedArgs: unknown[] = [];
+			emitter.on('exit', (...args: unknown[]) => {
+				receivedArgs = args;
+			});
+
+			await exitHandler.handleExit('unknown-session', 0);
+
+			expect(receivedArgs).toEqual(['unknown-session', 0]);
+			expect(receivedArgs[3]).toBeUndefined();
 		});
 	});
 });
