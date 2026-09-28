@@ -6,7 +6,7 @@ import { matchSshErrorPattern } from '../../parsers/error-patterns';
 import { aggregateModelUsage } from '../../parsers/usage-aggregator';
 import { cleanupTempFiles } from '../utils/imageUtils';
 import { settleProvisionalAgentError } from '../utils/provisionalAgentError';
-import type { ManagedProcess, AgentError } from '../types';
+import type { ManagedProcess, AgentError, TurnSettlement } from '../types';
 import type { ParsedEvent } from '../../parsers/agent-output-parser';
 import type { DataBufferManager } from './DataBufferManager';
 import type { SshRemoteConfig } from '../../../shared/types';
@@ -207,6 +207,8 @@ export class ExitHandler {
 				managedProcess.resultEmitted = true;
 				const resultText = event.text || managedProcess.streamedText || '';
 				if (resultText) {
+					// Record the answer so the exit settlement knows one was captured
+					managedProcess.streamedText = resultText;
 					this.bufferManager.emitDataBuffered(sessionId, resultText, managedProcess);
 				}
 			}
@@ -231,19 +233,26 @@ export class ExitHandler {
 		// resolveTurnOutcome (Plans/maestro-lib-turn-contract.md, section 1)
 		// instead of the three independent checks this block used to run
 		// (detectErrorFromExit, then an SSH-pattern fallback, then omp's
-		// silent-exit override). Skipped entirely once `!managedProcess.
-		// interrupted` is false or an error was already emitted upstream
-		// (the terminal-envelope-flush branch above) - matching the original
-		// per-check `!managedProcess.errorEmitted` guards, plus a stricter
-		// rule approved for this migration: a user-requested stop now skips
-		// this whole cascade (detectErrorFromExit and the SSH match included,
-		// not just the omp override), so a stopped turn can never surface as
-		// a crash. Previously only the omp override and the terminal-
-		// envelope-flush branch honored `interrupted`; detectErrorFromExit
-		// and the SSH match did not, which could report a stopped turn as an
-		// error (e.g. opencode-output-parser flags exit code 0 with empty
-		// stdout and non-empty stderr, a shape a stop can produce).
-		if (!managedProcess.errorEmitted && !managedProcess.interrupted) {
+		// silent-exit override). Skipped entirely once managedProcess.interrupted
+		// is true or an error was already emitted upstream (the terminal-envelope-
+		// flush branch above) - matching the original per-check errorEmitted
+		// guards, plus a stricter rule approved for this migration: a user-
+		// requested stop skips this whole cascade (detectErrorFromExit and the
+		// SSH match included, not just the omp override), so a stopped turn can
+		// never surface as a crash.
+		let settlement: TurnSettlement | undefined;
+
+		if (managedProcess.interrupted) {
+			settlement = {
+				outcome: 'interrupted',
+				answerCaptured: Boolean(managedProcess.streamedText?.trim()),
+			};
+		} else if (managedProcess.errorEmitted) {
+			settlement = {
+				outcome: 'crashed',
+				answerCaptured: Boolean(managedProcess.streamedText?.trim()),
+			};
+		} else {
 			// SSH transport-error matching only runs when the provider's own
 			// exit heuristic found nothing - matches the original precedence
 			// (detectErrorFromExit checked first, SSH gated on `!errorEmitted`).
@@ -335,6 +344,11 @@ export class ExitHandler {
 				{ providerId: toolType, sessionId },
 				{ generalizeEmptyAnswerRule: false }
 			);
+
+			settlement = {
+				outcome: result.outcome,
+				answerCaptured: Boolean(managedProcess.streamedText?.trim()),
+			};
 
 			if (result.outcome === 'crashed') {
 				let agentError = result.error;
@@ -433,7 +447,7 @@ export class ExitHandler {
 		if (this.processes.get(sessionId) === managedProcess) {
 			this.processes.delete(sessionId);
 		}
-		this.emitter.emit('exit', sessionId, code);
+		this.emitter.emit('exit', sessionId, code, undefined, settlement);
 	}
 
 	/**
@@ -579,6 +593,8 @@ export class ExitHandler {
 			// Emit the result text (only once per process)
 			if (jsonResponse.result && !managedProcess.resultEmitted) {
 				managedProcess.resultEmitted = true;
+				// Record the answer so the exit settlement knows one was captured
+				managedProcess.streamedText = jsonResponse.result;
 				this.emitter.emit('data', sessionId, jsonResponse.result);
 			}
 
@@ -656,7 +672,10 @@ export class ExitHandler {
 		}
 
 		this.emitter.emit('data', sessionId, `[error] ${error.message}`);
-		this.emitter.emit('exit', sessionId, 1);
+		this.emitter.emit('exit', sessionId, 1, undefined, {
+			outcome: 'crashed',
+			answerCaptured: false,
+		});
 		this.processes.delete(sessionId);
 	}
 }

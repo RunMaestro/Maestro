@@ -13,10 +13,8 @@ import type { CueRunStatus } from './cue-types';
 import type { SpawnSpec } from './cue-spawn-builder';
 import type { ToolType, UsageStats } from '../../shared/types';
 import { getOutputParser } from '../parsers';
-import {
-	resolveTurnOutcome,
-	type TurnOutcome,
-} from '../../shared/maestro-lib/streaming/turn-outcome';
+import { resolveTurnOutcome } from '../../shared/maestro-lib/streaming/turn-outcome';
+import { cueStatusForTurn } from './cue-turn-status';
 import { UsageAccumulator } from '../../shared/maestro-lib/streaming/usage-accumulator';
 import { addUsageStats, parsedUsageToStats } from '../../shared/maestro-lib/streaming/usage-totals';
 import { captureException } from '../utils/sentry';
@@ -247,23 +245,6 @@ function extractCleanStderr(rawStderr: string, toolType: string): string {
 // ─── Public API ─────────────���─────────────────────────���──────────────────────
 
 /**
- * Map a shared turn outcome onto Cue's run status. `completed-with-warning` (a
- * full answer, then a bad exit) is a success per the turn contract; Cue used to
- * record it as `failed`. `timeout` never comes from here - Cue's own watchdog
- * sets it without consulting the resolver.
- */
-function cueStatusForOutcome(outcome: TurnOutcome): CueRunStatus {
-	switch (outcome) {
-		case 'interrupted':
-			return 'stopped';
-		case 'crashed':
-			return 'failed';
-		default:
-			return 'completed';
-	}
-}
-
-/**
  * Kill a Cue child process, using taskkill on Windows to terminate the entire
  * process tree (POSIX signals don't work for shell-spawned processes on Windows).
  *
@@ -452,18 +433,12 @@ export function runProcess(
 				},
 				{ providerId: toolType, sessionId: runId }
 			);
-			// Two rules the CLI adapter also carries, because a pipeline must not
-			// chain off a silent failure or a truncated answer:
-			// - a non-zero exit that captured nothing, which the resolver leaves
-			//   as `completed` for every parser-less agent;
-			// - a signal kill nobody requested, however much text had streamed by
-			//   then (`interrupted` is handled above, so this signal was not ours).
-			const nonZeroWithoutAnswer = code !== 0 && code !== null && !parsed.answerText?.trim();
-			const killedBySignal = (closeSignal ?? null) !== null;
-			const status =
-				outcome !== 'interrupted' && (nonZeroWithoutAnswer || killedBySignal)
-					? 'failed'
-					: cueStatusForOutcome(outcome);
+			const status = cueStatusForTurn({
+				outcome,
+				exitCode: code,
+				answerCaptured: Boolean(parsed.answerText?.trim()),
+				killedBySignal: (closeSignal ?? null) !== null,
+			});
 			finish(status, code, parsed);
 		});
 
