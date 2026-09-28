@@ -1217,6 +1217,10 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 					const originalEffectivePrompt = effectivePrompt;
 					const originalCustomEnvVars = effectiveCustomEnvVars;
 					const originalContextWindow = contextWindow;
+					// Snapshot the global shell vars at registration time so the replay
+					// spawn uses the same environment as the original turn even if settings
+					// change before the quota retry fires.
+					const originalGlobalShellEnvVars = globalShellEnvVars;
 
 					deps.interactiveReplayController.registerInteractiveReplay(config.sessionId, {
 						configDirKey: resolvedConfigDirKey,
@@ -1291,6 +1295,7 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 								noPromptSeparator: originalAgent.noPromptSeparator,
 								projectPath: originalConfig.cwd,
 								querySource: originalConfig.querySource,
+								shellEnvVars: originalGlobalShellEnvVars,
 								tabId: originalConfig.tabId,
 							};
 						},
