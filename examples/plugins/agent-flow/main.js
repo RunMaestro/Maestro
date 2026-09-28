@@ -68,6 +68,7 @@ var snapshotTimer = 0;
 var focusedSessionId = '';
 /** @type {MaestroSdk | null} */
 var sdk = null;
+var activationGeneration = 0;
 
 function getLane(sessionId) {
 	var lane = lanes.get(sessionId);
@@ -109,20 +110,21 @@ function touch(lane, at) {
 function recordMeta(sessionId, fields, onlyIfUnset) {
 	var meta = sessionMeta.get(sessionId);
 	if (!meta) {
-		meta = { title: '', agentId: '', status: '' };
+		meta = { title: '', agentId: '', status: '', setFields: Object.create(null) };
 		sessionMeta.set(sessionId, meta);
 	}
 	if (fields) {
 		// `onlyIfUnset` is the startup seed: `sessions.list()` resolves
 		// asynchronously, and event handlers are registered before it does, so a
 		// `session.created` / `session.updated` that lands in between carries
-		// NEWER data than the list snapshot. Filling only blank fields keeps the
+		// NEWER data than the list snapshot. Filling only fields never set keeps the
 		// seed from overwriting it. Live events pass this falsy and always win.
 		// (review)
 		var take = function (key, value) {
 			if (typeof value !== 'string') return;
-			if (onlyIfUnset && meta[key]) return;
+			if (onlyIfUnset && meta.setFields[key]) return;
 			meta[key] = value;
+			meta.setFields[key] = true;
 		};
 		take('title', fields.title);
 		take('agentId', fields.agentId);
@@ -604,12 +606,13 @@ function scheduleSnapshot() {
 // missing.
 function seedFromSessions() {
 	if (!sdk) return;
+	var generation = activationGeneration;
 	try {
 		var p = sdk.sessions.list();
 		if (!p || typeof p.then !== 'function') return;
 		p.then(
 			function (list) {
-				if (!Array.isArray(list)) return;
+				if (generation !== activationGeneration || !sdk || !Array.isArray(list)) return;
 				for (var i = 0; i < list.length; i++) {
 					var s = list[i];
 					if (!s || typeof s.id !== 'string') continue;
@@ -646,6 +649,7 @@ function seedFromSessions() {
 }
 
 function activate(maestro) {
+	activationGeneration++;
 	sdk = maestro;
 	console.log('[agent-flow] starting up');
 
@@ -716,6 +720,7 @@ function activate(maestro) {
 }
 
 function deactivate() {
+	activationGeneration++;
 	if (snapshotTimer) {
 		clearTimeout(snapshotTimer);
 		snapshotTimer = 0;

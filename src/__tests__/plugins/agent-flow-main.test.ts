@@ -42,7 +42,7 @@ interface Stub {
 	snapshot: () => Record<string, unknown> | undefined;
 }
 
-function makeStub(seed: SeedSession[] = []): Stub {
+function makeStub(seed: SeedSession[] | Promise<SeedSession[]> = []): Stub {
 	const events = new Map<string, EventHandler[]>();
 	const commands = new Map<string, CommandHandler>();
 	const panelPost = vi.fn(() => Promise.resolve(undefined));
@@ -246,6 +246,39 @@ describe('agent-flow plugin main.js', () => {
 			// A field the event did NOT carry still comes from the seed.
 			expect(shown[0].agentId).toBe('a1');
 		});
+
+		it('preserves live empty metadata while the startup list is pending', async () => {
+			plugin.deactivate();
+			stub = makeStub(SEED);
+			plugin.activate(stub.sdk);
+			stub.emit('session.created', { sessionId: 's1', title: '', agentId: '', status: '' });
+			stub.emit('session.activated', { sessionId: 's1' });
+			await Promise.resolve();
+			expect(lanes()[0]).toMatchObject({ title: '', agentId: '', status: '' });
+		});
+
+		it.each([false, true])(
+			'ignores a stale startup list after deactivation (reactivated: %s)',
+			async (reactivateFirst) => {
+				plugin.deactivate();
+				let resolveList!: (sessions: SeedSession[]) => void;
+				stub = makeStub(
+					new Promise<SeedSession[]>((resolve) => {
+						resolveList = resolve;
+					})
+				);
+				plugin.activate(stub.sdk);
+				plugin.deactivate();
+				const next = makeStub();
+				if (reactivateFirst) plugin.activate(next.sdk);
+				resolveList(SEED);
+				await Promise.resolve();
+				if (!reactivateFirst) plugin.activate(next.sdk);
+				stub = next;
+				stub.emit('session.activated', { sessionId: 's1' });
+				expect(lanes()[0]).toMatchObject({ title: '', agentId: '', status: '' });
+			}
+		);
 
 		// CodeRabbit on PR #1354: session.created recorded the status into the meta
 		// map but never copied it onto an already-live lane, so the lane displayed a
