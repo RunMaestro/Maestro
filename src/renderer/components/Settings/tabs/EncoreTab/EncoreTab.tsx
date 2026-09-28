@@ -7,12 +7,14 @@ import {
 	CueSettingsSection,
 	DirectorNotesSection,
 	SymphonyRegistrySection,
+	TtsrSettingsSection,
 	UsageStatsSection,
 } from './components';
 import {
 	useCueSettingsState,
 	useDirectorNotesAgentState,
 	useSymphonyRegistryState,
+	useTtsrSettingsState,
 	useWakatimeSettingsState,
 } from './hooks';
 import type { EncoreTabProps, StatsTimeRange } from './types';
@@ -43,6 +45,10 @@ export function EncoreTab({ theme, isOpen }: EncoreTabProps) {
 	const cueState = useCueSettingsState({
 		isOpen,
 		maestroCueEnabled: settings.encoreFeatures.maestroCue,
+	});
+	const ttsrState = useTtsrSettingsState({
+		ttsrDisabledRules: settings.ttsrDisabledRules,
+		setTtsrDisabledRules: settings.setTtsrDisabledRules,
 	});
 	const directorNotesAgentState = useDirectorNotesAgentState({
 		isOpen,
@@ -76,6 +82,17 @@ export function EncoreTab({ theme, isOpen }: EncoreTabProps) {
 			/>
 		),
 		maestroCue: <CueSettingsSection theme={theme} cueState={cueState} />,
+		ttsr: (
+			<TtsrSettingsSection
+				theme={theme}
+				ttsrEnabled={settings.ttsrEnabled}
+				setTtsrEnabled={settings.setTtsrEnabled}
+				ttsrContextMode={settings.ttsrContextMode}
+				setTtsrContextMode={settings.setTtsrContextMode}
+				ttsrDisabledRules={settings.ttsrDisabledRules}
+				ttsrState={ttsrState}
+			/>
+		),
 		directorNotes: (
 			<DirectorNotesSection
 				theme={theme}

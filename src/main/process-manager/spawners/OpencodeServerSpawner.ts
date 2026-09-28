@@ -22,7 +22,7 @@ import { EventEmitter } from 'events';
 import { logger } from '../../utils/logger';
 import { createOutputParser } from '../../parsers';
 import { captureException } from '../../utils/sentry';
-import type { ProcessConfig, ManagedProcess, SpawnResult } from '../types';
+import type { ProcessConfig, ManagedProcess, SpawnResult, ParsedEventObserver } from '../types';
 import type { DataBufferManager } from '../handlers/DataBufferManager';
 import { StdoutHandler } from '../handlers/StdoutHandler';
 import { ExitHandler } from '../handlers/ExitHandler';
@@ -101,6 +101,11 @@ export class OpencodeServerSpawner {
 			emitter: this.emitter,
 			bufferManager,
 		});
+	}
+
+	/** Forward the parsed-event observer to this spawner's stdout handler. */
+	setParsedEventObserver(observer: ParsedEventObserver | null): void {
+		this.stdoutHandler.setParsedEventObserver(observer);
 	}
 
 	/**

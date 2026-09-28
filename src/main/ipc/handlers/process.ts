@@ -20,6 +20,7 @@ import { getSshRemoteConfig, createSshRemoteStoreAdapter } from '../../utils/ssh
 import { shellEscape, shellEscapeRemotePath } from '../../utils/shell-escape';
 import { resolveSshPath } from '../../utils/cliDetection';
 import type { SshRemoteConfig } from '../../../shared/types';
+import type { TtsrReminderPeek } from './process/apply-ttsr-reminders';
 import { buildSshOptionArgs } from '../../../shared/sshOptions';
 import { MaestroSettings } from './persistence';
 import { getDefaultShell, resolveConfiguredShell } from '../../stores/defaults';
@@ -89,6 +90,13 @@ export interface ProcessHandlerDependencies {
 	 * can omit it cleanly.
 	 */
 	interactiveReplayController?: InteractiveReplayController<ProcessSpawnConfig>;
+	/**
+	 * Optional non-destructive read of TTSR's deferred `<system-reminder>` queue
+	 * for a conversation, with the commit that clears it once the spawn has
+	 * succeeded. Injected (never imported) so the process handlers stay free of
+	 * any TTSR dependency; omitted, spawns simply carry no reminders.
+	 */
+	peekTtsrReminders?: (sessionId: string) => TtsrReminderPeek;
 }
 
 /**
@@ -167,6 +175,7 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 				safeSend,
 				sessionsStore: deps.sessionsStore,
 				interactiveReplayController: deps.interactiveReplayController,
+				peekTtsrReminders: deps.peekTtsrReminders,
 			})
 		)
 	);

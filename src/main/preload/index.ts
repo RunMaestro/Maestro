@@ -57,6 +57,7 @@ import { createTabsApi } from './tabs';
 import { createAiCommandApi } from './aiCommand';
 import { createDirectorNotesApi } from './directorNotes';
 import { createCueApi } from './cue';
+import { createTtsrApi } from './ttsr';
 import { createCueBackupApi } from './cueBackup';
 import { createPianolaApi } from './pianola';
 import { createPluginsApi } from './plugins';
@@ -250,6 +251,9 @@ contextBridge.exposeInMainWorld('maestro', {
 
 	// Cue Backup API (Cue modal Backup tab - snapshot/restore cue.yaml + prompts)
 	cueBackup: createCueBackupApi(),
+
+	// TTSR API (Time-Traveling Stream Rules - push events only)
+	ttsr: createTtsrApi(),
 
 	// Pianola API (autonomous manager: rules + decision log)
 	pianola: createPianolaApi(),
@@ -623,6 +627,14 @@ export type {
 	CueEventType,
 	CueRunStatus,
 } from './cue';
+export type {
+	// From ttsr
+	TtsrApi,
+	TtsrAbortClearedPayload,
+	TtsrAbortPendingPayload,
+	TtsrMatchedPayload,
+	TtsrTriggeredPayload,
+} from './ttsr';
 export type {
 	// From pianola
 	PianolaApi,
