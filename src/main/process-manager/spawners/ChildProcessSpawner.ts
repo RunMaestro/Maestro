@@ -3,7 +3,6 @@
 import { spawn } from 'child_process';
 import { EventEmitter } from 'events';
 import * as path from 'path';
-import * as fs from 'fs';
 import { logger } from '../../utils/logger';
 import { createOutputParser } from '../../parsers';
 import { getAgentCapabilities } from '../../agents';
@@ -19,8 +18,21 @@ import { saveImageToTempFile, buildImagePromptPrefix } from '../utils/imageUtils
 import { buildStreamJsonMessage } from '../utils/streamJsonBuilder';
 import { escapeArgsForShell, isPowerShellShell } from '../utils/shellEscape';
 import { isWindows } from '../../../shared/platformDetection';
+import {
+	quoteCommandForCmdShell,
+	windowsShellReason,
+	type WindowsShellReason,
+} from '../../../shared/maestro-lib/launch/windows-command';
 import { captureException } from '../../utils/sentry';
 import { nextSpawnGeneration, isSupersededGeneration } from '../generation';
+
+// The log line each Windows shell promotion writes (see windowsShellReason).
+const WINDOWS_SHELL_LOG_MESSAGES: Record<WindowsShellReason, string> = {
+	'bare-exe':
+		'[ProcessManager] Auto-enabling shell for Windows to allow PATH resolution of basename exe',
+	'batch-file': '[ProcessManager] Auto-enabling shell for Windows to spawn batch-file command',
+	'shebang-script': '[ProcessManager] Auto-enabling shell for Windows to execute shell script',
+};
 
 /**
  * Handles spawning of child processes (non-PTY).
@@ -268,47 +280,19 @@ export class ChildProcessSpawner {
 			// the runInShell flag.
 			let useShell = !!config.runInShell;
 
-			// Auto-enable shell for Windows when command is a bare .exe (no path)
-			const commandHasPath = /\\|\//.test(spawnCommand);
-			const commandExt = path.extname(spawnCommand).toLowerCase();
-			if (isWindows() && !useShell && !commandHasPath && commandExt === '.exe') {
-				useShell = true;
-				logger.info(
-					'[ProcessManager] Auto-enabling shell for Windows to allow PATH resolution of basename exe',
-					'ProcessManager',
-					{ command: spawnCommand }
-				);
-			}
-
-			// Auto-enable shell for Windows when command is a batch file (.cmd/.bat).
-			// Node.js refuses to spawn .cmd/.bat directly (throws "spawn EINVAL") after
-			// the CVE-2024-27980 fix - they must be launched through a shell. npm-installed
-			// agent CLIs resolve to shims like claude.cmd / codex.cmd / opencode.cmd, which
-			// is exactly what tab naming spawns on Windows. Fixes MAESTRO-Q8.
-			if (isWindows() && !useShell && (commandExt === '.cmd' || commandExt === '.bat')) {
-				useShell = true;
-				logger.info(
-					'[ProcessManager] Auto-enabling shell for Windows to spawn batch-file command',
-					'ProcessManager',
-					{ command: spawnCommand }
-				);
-			}
-
-			// Auto-enable shell for Windows when command is a shell script (extensionless with shebang)
-			// This handles tools like OpenCode installed via npm with shell scripts
-			if (isWindows() && !useShell && !commandExt && commandHasPath) {
-				try {
-					const fileContent = fs.readFileSync(spawnCommand, 'utf8');
-					if (fileContent.startsWith('#!')) {
-						useShell = true;
-						logger.info(
-							'[ProcessManager] Auto-enabling shell for Windows to execute shell script',
-							'ProcessManager',
-							{ command: spawnCommand, shebang: fileContent.split('\n')[0] }
-						);
-					}
-				} catch {
-					// If we can't read the file, just continue without special handling
+			// Auto-enable shell for Windows when the command cannot be spawned directly:
+			// a bare .exe (PATH resolution), a .cmd/.bat shim (spawn EINVAL since the
+			// CVE-2024-27980 fix, MAESTRO-Q8), or an extensionless shebang script. The
+			// rules live in maestro-lib's windowsShellReason(); the logging stays here.
+			if (isWindows() && !useShell) {
+				const { reason, shebang } = windowsShellReason(spawnCommand);
+				if (reason) {
+					useShell = true;
+					logger.info(
+						WINDOWS_SHELL_LOG_MESSAGES[reason],
+						'ProcessManager',
+						shebang !== undefined ? { command: spawnCommand, shebang } : { command: spawnCommand }
+					);
 				}
 			}
 
@@ -340,20 +324,11 @@ export class ChildProcessSpawner {
 				spawnShell = config.shell.trim();
 			}
 
-			// When spawning through the default Windows shell (cmd.exe via ComSpec),
-			// Node concatenates the command and args into a single command line without
-			// quoting the command itself. A command path that contains spaces - e.g. an
-			// npm shim under "C:\Users\First Last\AppData\Roaming\npm\claude.cmd" - would
-			// be split by cmd.exe and fail. Quote it defensively. We only do this for the
-			// boolean (cmd.exe) shell path; an explicit shell string carries its own
-			// quoting rules and is the caller's responsibility.
-			if (
-				isWindows() &&
-				spawnShell === true &&
-				/\s/.test(spawnCommand) &&
-				!spawnCommand.startsWith('"')
-			) {
-				spawnCommand = `"${spawnCommand}"`;
+			// cmd.exe splits an unquoted command path that contains spaces; see
+			// quoteCommandForCmdShell() in maestro-lib. Only for the boolean (cmd.exe)
+			// shell - an explicit shell string carries its own quoting rules.
+			if (isWindows() && spawnShell === true) {
+				spawnCommand = quoteCommandForCmdShell(spawnCommand);
 			}
 
 			// Log spawn details
