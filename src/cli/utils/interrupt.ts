@@ -10,7 +10,7 @@
  */
 
 /** Conventional exit status for a process ended by SIGINT (128 + 2). */
-const SIGINT_EXIT_CODE = 130;
+export const SIGINT_EXIT_CODE = 130;
 
 export interface InterruptController {
 	signal: AbortSignal;
