@@ -26,8 +26,15 @@ import { formatShortcutKeys } from '../../../utils/shortcutFormatter';
 import { MarkdownRenderer } from '../../MarkdownRenderer';
 import { LogFilterControls } from '../../LogFilterControls';
 import { linkifyNode } from '../../../utils/linkify';
+import { formatDurationWords, formatTurnDuration } from '../../../../shared/duration';
+import { sessionImageThumbnailSrc } from '../../../../shared/sessionImageRefs';
+import { displayImageSrc } from '../../../utils/sessionImageSrc';
 import { RetryStatusCard } from '../../RetryStatusCard';
+import { SnoozeReturnCard } from '../../SnoozeReturnCard';
+import { AgentDelegationCard } from '../../AgentDelegationCard';
+import { ShellCommandCard } from '../../ShellCommandCard';
 import { getTokenSourcePill } from '../../../../shared/claudeTokenModeLabel';
+import { TurnSettingPills } from '../../ui/TurnSettingPills';
 import { CrossAgentResponseHeader } from '../../CrossAgentResponseHeader';
 import { isHiddenProgressEntry } from '../utils/collapseAiResponseLogs';
 import { SessionRecoveryCardConnector } from './SessionRecoveryCardConnector';
@@ -96,8 +103,10 @@ export const LogItem = memo(
 		bionifyIntensity,
 		bionifyAlgorithm,
 		userMessageAlignment,
+		responseDurationMs,
 		isClaudeCode,
 		isAdaptiveMode,
+		showProviderModePill,
 		sessionId,
 		onSessionRecover,
 		isRecoveringSession,
@@ -220,6 +229,95 @@ export const LogItem = memo(
 			? userMessageAlignment === 'left'
 			: userMessageAlignment === 'right';
 
+		// An AI-command entry is a header pill plus an ordinary prompt body. The
+		// body is authored markdown like any other chat message, so it goes through
+		// the markdown stack too - raw source only in edit mode or a shell tab.
+		const renderAiCommandBody = (text: string) =>
+			isAIMode && !markdownEditMode ? (
+				<MarkdownRenderer
+					content={text}
+					theme={theme}
+					onCopy={copyToClipboard}
+					enableBionifyReadingMode={bionifyReadingMode}
+					bionifyIntensity={bionifyIntensity}
+					bionifyAlgorithm={bionifyAlgorithm}
+					fileTree={fileTree}
+					cwd={cwd}
+					projectRoot={projectRoot}
+					onFileClick={onFileClick}
+					sshRemoteId={sshRemoteId}
+					chatLineBreaks
+					chatMath
+				/>
+			) : (
+				<div className="whitespace-pre-wrap text-sm break-words">{linkifyNode(text, theme)}</div>
+			);
+
+		// Command mode: a `!command` run renders as its own terminal-output card
+		// (monospace, ANSI preserved) rather than a markdown chat bubble.
+		if (log.shellCommand) {
+			return (
+				<div
+					ref={logItemRef}
+					className="flex gap-4 px-3 sm:px-6 py-2"
+					data-log-index={index}
+					data-log-id={log.id}
+					style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 120px' }}
+				>
+					<div className="hidden sm:block w-20 shrink-0" />
+					<div className="flex-1 min-w-0">
+						<ShellCommandCard
+							log={log}
+							theme={theme}
+							fontFamily={fontFamily}
+							ansiConverter={ansiConverter}
+							onDelete={onDeleteLog}
+							deleteConfirmLogId={deleteConfirmLogId}
+							onSetDeleteConfirmLogId={onSetDeleteConfirmLogId}
+						/>
+					</div>
+				</div>
+			);
+		}
+
+		// A snoozed tab that came back marks the gap with its own card, carrying
+		// the note the user left themselves. Same clean row as the other cards.
+		if (log.snoozeReturn) {
+			return (
+				<div
+					ref={logItemRef}
+					className="flex gap-4 px-3 sm:px-6 py-2"
+					data-log-index={index}
+					data-log-id={log.id}
+					style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 80px' }}
+				>
+					<div className="hidden sm:block w-20 shrink-0" />
+					<div className="flex-1 min-w-0">
+						<SnoozeReturnCard log={log} theme={theme} />
+					</div>
+				</div>
+			);
+		}
+
+		// This agent handed work or a question to another agent from its shell.
+		// A compact pill in the same clean row, so the hand-off reads in place.
+		if (log.delegation) {
+			return (
+				<div
+					ref={logItemRef}
+					className="flex gap-4 px-3 sm:px-6 py-1.5"
+					data-log-index={index}
+					data-log-id={log.id}
+					style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 36px' }}
+				>
+					<div className="hidden sm:block w-20 shrink-0" />
+					<div className="flex-1 min-w-0">
+						<AgentDelegationCard log={log} theme={theme} />
+					</div>
+				</div>
+			);
+		}
+
 		// Agent Resilience: an outage marker renders as a live status card in a
 		// clean row (no error-tinted bubble chrome), left gutter kept for alignment.
 		if (log.retryOutageId) {
@@ -228,6 +326,7 @@ export const LogItem = memo(
 					ref={logItemRef}
 					className="flex gap-4 px-3 sm:px-6 py-2"
 					data-log-index={index}
+					data-log-id={log.id}
 					style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 120px' }}
 				>
 					<div className="hidden sm:block w-20 shrink-0" />
@@ -266,6 +365,9 @@ export const LogItem = memo(
 				// side-by-side layout with the w-20 timestamp column.
 				className={`flex flex-col gap-1 sm:gap-4 group ${isReversed ? 'sm:flex-row-reverse' : 'sm:flex-row'} px-3 sm:px-6 py-2`}
 				data-log-index={index}
+				// Jump anchor for cross-tab message search. For a collapsed response
+				// group this is the FIRST entry's id (see buildRenderedIdMap).
+				data-log-id={log.id}
 				// PERF: the transcript is not virtualized, so every message stays in the
 				// DOM. content-visibility:auto lets the browser skip style/layout/paint for
 				// off-screen rows (the dominant scroll cost - a huge static layer tree the
@@ -276,7 +378,7 @@ export const LogItem = memo(
 				style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 120px' }}
 			>
 				<div
-					className={`shrink-0 text-[10px] sm:w-20 sm:pt-2 flex gap-1 sm:block ${isReversed ? 'text-right justify-end' : 'text-left'}`}
+					className={`shrink-0 text-2xs sm:w-20 sm:pt-2 flex gap-1 sm:block ${isReversed ? 'text-right justify-end' : 'text-left'}`}
 					style={{ fontFamily, color: theme.colors.textDim, opacity: 0.6 }}
 				>
 					{(() => {
@@ -300,6 +402,21 @@ export const LogItem = memo(
 							</>
 						);
 					})()}
+					{/*
+						Turn time, under the clock. Only ever on an agent reply: a user
+						message is instantaneous, so the same line under it would be
+						meaningless. Minutes are the finest rung on purpose - see
+						formatTurnDuration.
+					*/}
+					{responseDurationMs !== undefined && !isUserMessage && (
+						<div
+							className="mt-0.5 tabular-nums"
+							style={{ opacity: 0.7 }}
+							title={`Agent took ${formatDurationWords(responseDurationMs)} to answer`}
+						>
+							{formatTurnDuration(responseDurationMs)}
+						</div>
+					)}
 				</div>
 				<div
 					className={`flex-1 min-w-0 p-4 pb-10 rounded-xl border ${isReversed ? 'rounded-tr-none' : 'rounded-tl-none'} relative overflow-hidden ${isCrossAgentStreaming ? 'animate-status-glow' : ''}`}
@@ -364,11 +481,29 @@ export const LogItem = memo(
 									className="shrink-0 p-0 bg-transparent outline-none focus:ring-2 focus:ring-accent rounded"
 									onClick={() => setLightboxImage(img, log.images, 'history')}
 								>
+									{/*
+										The chip is 200x80 CSS px but the source is whatever was
+										pasted - routinely a 4984x2578 Retina screenshot. Ask the
+										protocol handler for a 2x-DPR rendition so Chromium decodes
+										~400x160 instead of 12 megapixels, and let it skip the fetch
+										entirely until the chip scrolls into view. The lightbox
+										(onClick above) still opens the untouched original.
+
+										Order matters: `displayImageSrc` runs FIRST because in
+										web-desktop it rewrites the ref to the token-scoped HTTP
+										route, and `sessionImageThumbnailSrc` no-ops on anything
+										that is not a bare ref. So the desktop gets a thumbnail and
+										a browser client keeps receiving originals; appending the
+										query first would leave a `maestro-image://` URL that no
+										browser can load.
+									*/}
 									<img
-										src={img}
+										src={sessionImageThumbnailSrc(displayImageSrc(img), 400, 160)}
 										alt={`Terminal output image ${imgIdx + 1}`}
 										className="h-20 rounded border cursor-zoom-in block"
 										style={{ objectFit: 'contain', maxWidth: '200px' }}
+										loading="lazy"
+										decoding="async"
 									/>
 								</button>
 							))}
@@ -437,7 +572,7 @@ export const LogItem = memo(
 						>
 							<div className="flex items-center gap-2 mb-1">
 								<span
-									className="text-[10px] px-1.5 py-0.5 rounded"
+									className="text-2xs px-1.5 py-0.5 rounded"
 									style={{
 										backgroundColor: `${theme.colors.accent}30`,
 										color: theme.colors.accent,
@@ -672,7 +807,9 @@ export const LogItem = memo(
 													{log.aiCommand.description}
 												</span>
 											</div>
-											<div>{linkifyNode(filteredText, theme)}</div>
+											<div style={{ color: theme.colors.textMain }}>
+												{renderAiCommandBody(filteredText)}
+											</div>
 										</div>
 									) : isAIMode && !markdownEditMode ? (
 										// Expanded markdown rendering
@@ -748,11 +885,8 @@ export const LogItem = memo(
 												{log.aiCommand.description}
 											</span>
 										</div>
-										<div
-											className="whitespace-pre-wrap text-sm break-words"
-											style={{ color: theme.colors.textMain }}
-										>
-											{linkifyNode(filteredText, theme)}
+										<div style={{ color: theme.colors.textMain }}>
+											{renderAiCommandBody(filteredText)}
 										</div>
 									</div>
 								) : isAIMode && !markdownEditMode ? (
@@ -799,33 +933,42 @@ export const LogItem = memo(
 					)}
 					{/* Cross-agent attribution now lives in the header at the TOP of the
 					    bubble (CrossAgentResponseHeader); no bottom pill is rendered here. */}
-					{/* Mode pill - shows which CLI captured this Claude turn (TUI Wrapper =
-					    maestro-p, claude -p = claude --print). "Dynamic " prefix indicates the
-					    session has Dynamic Mode enabled (auto-switching between the two).
+					{/* Turn attribution pills, centered in the message footer. The mode pill
+					    shows which CLI captured this Claude turn (TUI Wrapper = maestro-p,
+					    claude -p = claude --print; a "Dynamic " prefix means the session
+					    auto-switches between the two). The model and effort pills name the
+					    configuration the turn was SENT with, so a conversation that changed
+					    model or effort partway through still says who answered what.
 					    Suppressed on cross-agent entries so the attribution pill above
 					    replaces it. */}
 					{!crossAgent &&
-						isClaudeCode &&
 						log.source !== 'user' &&
-						(() => {
-							const { label, title } = getTokenSourcePill({
-								mode: log.renderStyle === 'text-stream' ? 'interactive' : 'api',
-								adaptive: isAdaptiveMode,
-							});
-							return (
-								<span
-									className="absolute bottom-2 left-1/2 -translate-x-1/2 text-[10px] px-1.5 py-0.5 rounded pointer-events-none select-none"
-									style={{
-										backgroundColor: `${theme.colors.accent}20`,
-										color: theme.colors.accent,
-										opacity: 0.7,
-									}}
-									title={title}
-								>
-									{label}
-								</span>
-							);
-						})()}
+						((isClaudeCode && showProviderModePill) || log.turnModel || log.turnEffort) && (
+							<div className="absolute bottom-2 left-1/2 -translate-x-1/2 flex items-center gap-1 max-w-[60%] pointer-events-none select-none">
+								{isClaudeCode &&
+									showProviderModePill &&
+									(() => {
+										const { label, title } = getTokenSourcePill({
+											mode: log.renderStyle === 'text-stream' ? 'interactive' : 'api',
+											adaptive: isAdaptiveMode,
+										});
+										return (
+											<span
+												className="text-2xs px-1.5 py-0.5 rounded shrink-0 whitespace-nowrap"
+												style={{
+													backgroundColor: `${theme.colors.accent}20`,
+													color: theme.colors.accent,
+													opacity: 0.7,
+												}}
+												title={title}
+											>
+												{label}
+											</span>
+										);
+									})()}
+								<TurnSettingPills theme={theme} model={log.turnModel} effort={log.turnEffort} />
+							</div>
+						)}
 					{/* Jump to top of this message - bottom left corner */}
 					<JumpToMessageTopButton
 						scrollContainerRef={scrollContainerRef}
@@ -1015,6 +1158,15 @@ export const LogItem = memo(
 			prevProps.log.renderStyle === nextProps.log.renderStyle &&
 			prevProps.log.metadata?.hiddenProgress === nextProps.log.metadata?.hiddenProgress &&
 			prevProps.log.metadata?.toolState?.status === nextProps.log.metadata?.toolState?.status &&
+			// A command card's whole header is driven by these, and none of them
+			// touch `text`. A command that prints NOTHING (`!true`, `!mkdir foo`)
+			// changes only these fields when it exits, so without them the card is
+			// frozen mid-run: still spinning, still offering Stop, and still hiding
+			// the delete button, which is gated on the command having finished.
+			prevProps.log.shellCommand?.status === nextProps.log.shellCommand?.status &&
+			prevProps.log.shellCommand?.exitCode === nextProps.log.shellCommand?.exitCode &&
+			prevProps.log.shellCommand?.durationMs === nextProps.log.shellCommand?.durationMs &&
+			prevProps.log.shellCommand?.truncated === nextProps.log.shellCommand?.truncated &&
 			// Nested subagent badges live inside this entry, so their status
 			// transitions have to defeat the memo too. The grouping helper rebuilds
 			// the array each render, so compare contents, not identity.
@@ -1026,6 +1178,10 @@ export const LogItem = memo(
 			// A terminal error chunk may add `error` without changing text; the
 			// red-tinted bubble variant depends on it.
 			prevProps.log.metadata?.crossAgent?.error === nextProps.log.metadata?.crossAgent?.error &&
+			// An ask pill settles without its text changing: spinner to verb, and the
+			// consult tab id the jump arrow needs only arrives with the answer.
+			prevProps.log.delegation?.status === nextProps.log.delegation?.status &&
+			prevProps.log.delegation?.toTabId === nextProps.log.delegation?.toTabId &&
 			prevProps.isExpanded === nextProps.isExpanded &&
 			prevProps.localFilterQuery === nextProps.localFilterQuery &&
 			prevProps.filterMode.mode === nextProps.filterMode.mode &&
@@ -1042,7 +1198,13 @@ export const LogItem = memo(
 			prevProps.userMessageAlignment === nextProps.userMessageAlignment &&
 			prevProps.ghCliAvailable === nextProps.ghCliAvailable &&
 			prevProps.onForkConversation === nextProps.onForkConversation &&
-			prevProps.publishedGistUrl === nextProps.publishedGistUrl
+			prevProps.publishedGistUrl === nextProps.publishedGistUrl &&
+			// Unlike isClaudeCode/isAdaptiveMode, which are fixed for the life of an
+			// agent, this one is a toggle the user flips while looking at the
+			// transcript - leave it out and every message already on screen keeps its
+			// pill until something unrelated re-renders it.
+			prevProps.responseDurationMs === nextProps.responseDurationMs &&
+			prevProps.showProviderModePill === nextProps.showProviderModePill
 		);
 	}
 );

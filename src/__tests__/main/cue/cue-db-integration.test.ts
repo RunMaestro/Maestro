@@ -64,6 +64,66 @@ describe('Phase 15B - cue-db in-memory contract', () => {
 
 	// ─── Event journal ────────────────────────────────────────────────────
 
+	// ─── Historical Conductor credit ──────────────────────────────────────
+
+	describe('historical conductor credit', () => {
+		const MINUTE = 60_000;
+
+		/** Record an event at `startMs` and complete it `durationMs` later. */
+		function runFor(id: string, startMs: number, durationMs: number, status = 'completed') {
+			db.setNowOverride(startMs);
+			db.recordCueEvent({
+				id,
+				type: 'time.heartbeat',
+				triggerName: 'hb',
+				sessionId: 'session-1',
+				subscriptionName: 'sub',
+				status: 'running',
+			});
+			db.setNowOverride(startMs + durationMs);
+			db.updateCueEventStatus(id, status);
+		}
+
+		it('returns 0 with no events', () => {
+			expect(db.getHistoricalConductorCreditMs()).toBe(0);
+		});
+
+		it('floors each run to whole minutes independently', () => {
+			// 90s + 90s credits 1m + 1m, NOT the 3m a sum-then-floor would give.
+			runFor('a', 1_000_000, 90_000);
+			runFor('b', 2_000_000, 90_000);
+			expect(db.getHistoricalConductorCreditMs()).toBe(2 * MINUTE);
+		});
+
+		it('ignores sub-minute runs, matching the live credit rule', () => {
+			runFor('a', 1_000_000, 59_999);
+			expect(db.getHistoricalConductorCreditMs()).toBe(0);
+		});
+
+		it('counts only completed runs', () => {
+			runFor('ok', 1_000_000, 5 * MINUTE);
+			runFor('bad', 2_000_000, 30 * MINUTE, 'failed');
+			runFor('gone', 3_000_000, 10 * MINUTE, 'timeout');
+			// A hung run that failed after 30 minutes is wall-clock time, not
+			// credited agent work - the Usage Dashboard's total duration counts it
+			// but the Conductor level must not.
+			expect(db.getHistoricalConductorCreditMs()).toBe(5 * MINUTE);
+		});
+
+		it('skips in-flight runs that have no completion timestamp', () => {
+			db.setNowOverride(1_000_000);
+			db.recordCueEvent({
+				id: 'running',
+				type: 'time.heartbeat',
+				triggerName: 'hb',
+				sessionId: 'session-1',
+				subscriptionName: 'sub',
+				status: 'running',
+			});
+			expect(db.getHistoricalConductorCreditMs()).toBe(0);
+		});
+	});
+
 	describe('event journal', () => {
 		it('records and retrieves a single event', () => {
 			db.recordCueEvent({

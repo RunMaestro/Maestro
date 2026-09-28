@@ -7,6 +7,7 @@
 import fsSync from 'fs';
 import { logger } from '../utils/logger';
 import { createSafeSend, type GetBroadcastWindows } from '../utils/safe-send';
+import { hadRecentInternalWrite } from '../stores/write-tracker';
 
 /** Dependencies for settings watcher */
 export interface SettingsWatcherDependencies {
@@ -22,6 +23,19 @@ export interface SettingsWatcherDependencies {
 	getSettingsPath: () => string;
 	/** Function to get the agent configs file directory */
 	getAgentConfigsPath: () => string;
+	/**
+	 * Called after an EXTERNAL change to maestro-settings.json, so main-process
+	 * consumers of a setting can re-read it.
+	 *
+	 * Notifying only the renderer is not enough for settings the main process
+	 * acts on. `preventSleepEnabled` is the case that motivated this: the main
+	 * process reads it once at startup and otherwise only learns about changes
+	 * through the `power:setEnabled` IPC call the Settings UI makes. A CLI write
+	 * (`maestro-cli settings set preventSleepEnabled false`) therefore updated
+	 * the file and the renderer while leaving the OS-level power assertion held,
+	 * so the user was told the feature was off while it was still on.
+	 */
+	onSettingsChangedExternally?: () => void;
 }
 
 /** Settings watcher instance */
@@ -40,12 +54,13 @@ export interface SettingsWatcher {
  * Uses debouncing to avoid excessive reloads from rapid writes.
  */
 export function createSettingsWatcher(deps: SettingsWatcherDependencies): SettingsWatcher {
-	const { getBroadcastWindows, getSettingsPath, getAgentConfigsPath } = deps;
+	const { getBroadcastWindows, getSettingsPath, getAgentConfigsPath, onSettingsChangedExternally } =
+		deps;
 	const safeSend = createSafeSend(getBroadcastWindows);
 	const watchers: fsSync.FSWatcher[] = [];
 
-	// Debounce: ignore changes within 500ms of an IPC-driven write
-	// This prevents the watcher from firing when the app itself writes settings
+	// Debounce to coalesce rapid writes. Self-caused events are dropped up front
+	// via hadRecentInternalWrite() - see the comment in watchFile().
 	let settingsDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 	let agentConfigsDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -54,7 +69,8 @@ export function createSettingsWatcher(deps: SettingsWatcherDependencies): Settin
 		filename: string,
 		channel: string,
 		getDebounce: () => ReturnType<typeof setTimeout> | null,
-		setDebounce: (t: ReturnType<typeof setTimeout> | null) => void
+		setDebounce: (t: ReturnType<typeof setTimeout> | null) => void,
+		onExternalChange?: () => void
 	) {
 		if (!fsSync.existsSync(dirPath)) {
 			fsSync.mkdirSync(dirPath, { recursive: true });
@@ -63,6 +79,17 @@ export function createSettingsWatcher(deps: SettingsWatcherDependencies): Settin
 		try {
 			const watcher = fsSync.watch(dirPath, (_eventType, changedFile) => {
 				if (changedFile === filename) {
+					// Our own writes land here too. Telling the renderer to reload
+					// because of a write it just made is not merely wasteful: the
+					// reload is async, so it can overwrite whatever the user typed
+					// while it was in flight (the Conductor Profile textarea saves
+					// on every keystroke, and the caret jumped to the end of the
+					// field every time this fired). Checked at event time rather
+					// than after the debounce so continuous typing stays suppressed.
+					if (hadRecentInternalWrite(filename)) {
+						return;
+					}
+
 					// Debounce to coalesce rapid writes
 					const existing = getDebounce();
 					if (existing) clearTimeout(existing);
@@ -74,6 +101,18 @@ export function createSettingsWatcher(deps: SettingsWatcherDependencies): Settin
 								'SettingsWatcher'
 							);
 							safeSend(channel);
+							// Main-process consumers re-read too. A listener that
+							// throws must not take down the watcher for everyone
+							// else, so failures are logged and swallowed.
+							try {
+								onExternalChange?.();
+							} catch (error) {
+								const message = error instanceof Error ? error.message : String(error);
+								logger.error(
+									`External-change listener failed for ${filename}: ${message}`,
+									'SettingsWatcher'
+								);
+							}
 						}, 300)
 					);
 				}
@@ -102,7 +141,8 @@ export function createSettingsWatcher(deps: SettingsWatcherDependencies): Settin
 				() => settingsDebounceTimer,
 				(t) => {
 					settingsDebounceTimer = t;
-				}
+				},
+				onSettingsChangedExternally
 			);
 
 			// Only watch agent configs dir separately if it differs from settings dir

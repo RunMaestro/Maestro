@@ -18,10 +18,17 @@ import { hasCapability } from '../../main/agents/capabilities';
 import { checkCustomPath } from '../../main/agents/path-prober';
 import { getAgentCustomPath, readAgentConfig, readSshRemotes } from './storage';
 import { generateUUID } from '../../shared/uuid';
+import {
+	DEFAULT_QUERY_SOURCE,
+	QUERY_SOURCE_ENV_VAR,
+	type QuerySource,
+} from '../../shared/querySource';
 import { sanitizeSessionId } from '../../shared/history';
 import { buildExpandedPath, buildExpandedEnv } from '../../shared/pathUtils';
 import { isWindows, getWhichCommand } from '../../shared/platformDetection';
+import { embedSystemPromptInPrompt } from '../../shared/embeddedSystemPrompt';
 import { applyAgentConfigOverrides, buildAdditionalDirArgs } from '../../main/utils/agent-args';
+import { buildCliWakaTimeHeartbeat } from './wakatime';
 import {
 	getClaudeTokenMode,
 	getClaudeTokenSourceFields,
@@ -124,6 +131,7 @@ type SpawnOverrides = Pick<
 	| 'customEnvVars'
 	| 'appendSystemPrompt'
 	| 'additionalDirectories'
+	| 'querySource'
 >;
 
 /**
@@ -152,7 +160,8 @@ function resolveAgentOverrides(
 	toolType: ToolType,
 	def: ReturnType<typeof getAgentDefinition>,
 	baseArgs: string[],
-	overrides: SpawnOverrides
+	overrides: SpawnOverrides,
+	readOnlyMode?: boolean
 ): { args: string[]; userCustomEnvVars?: Record<string, string> } {
 	const agentConfigValues = readAgentConfig(toolType);
 	const result = applyAgentConfigOverrides(def ?? null, baseArgs, {
@@ -161,6 +170,7 @@ function resolveAgentOverrides(
 		sessionCustomEffort: overrides.customEffort,
 		sessionCustomArgs: overrides.customArgs,
 		sessionCustomEnvVars: overrides.customEnvVars,
+		readOnlyMode,
 	});
 	const userCustomEnvVars =
 		overrides.customEnvVars ??
@@ -380,6 +390,37 @@ export function getAgentCommand(toolType: ToolType): string {
 	return def?.binaryName || toolType;
 }
 
+/**
+ * Resolve the command a LOCAL spawn should exec, warming the detection cache
+ * when it is cold.
+ *
+ * `getAgentCommand()` answers from that cache and falls back to the bare
+ * `binaryName` when nothing has populated it - which is every spawn that did
+ * not run `detectAgent()` first, i.e. every playbook (`batch-processor.ts`),
+ * every goal run (`goal-runner.ts`), and every `maestro-cli send`. A bare name
+ * costs two things. The user's configured custom path is silently ignored,
+ * because `detectAgent()` is the ONLY reader of `getAgentCustomPath()` - so a
+ * CLI run executed whatever `claude` PATH happened to offer while the desktop
+ * ran the binary the user pointed at. And on Windows `spawn('claude')` finds
+ * nothing at all: CreateProcess does not apply PATHEXT the way a shell does, so
+ * an agent installed as an npm `.cmd` shim never resolves (#1608).
+ *
+ * Resolve here rather than at each call site: a resolution the spawner performs
+ * itself cannot be forgotten by the next caller that lands.
+ *
+ * Detection that comes up empty falls back to the bare name, which is exactly
+ * today's behavior - a machine where `which`/`where` fails must still get its
+ * spawn attempted (and its real error) rather than being refused here.
+ *
+ * SSH spawns deliberately do NOT come through here: the remote host resolves
+ * the command through its own login-shell PATH, and a path resolved on THIS
+ * machine names nothing over there.
+ */
+export async function resolveLocalAgentCommand(toolType: ToolType): Promise<string> {
+	const detection = await detectAgent(toolType);
+	return detection.available && detection.path ? detection.path : getAgentCommand(toolType);
+}
+
 // Backward-compatible wrappers
 export const getClaudeCommand = () => getAgentCommand('claude-code');
 export const getCodexCommand = () => getAgentCommand('codex');
@@ -432,7 +473,8 @@ async function spawnClaudeAgent(
 		'claude-code',
 		def,
 		preOverrideArgs,
-		overrides
+		overrides,
+		readOnlyMode
 	);
 
 	// Inject the Maestro system prompt via `--append-system-prompt(-file)`. The
@@ -463,8 +505,13 @@ async function spawnClaudeAgent(
 		userCustomEnvVars,
 		readOnlyMode ? def?.readOnlyEnvOverrides : undefined
 	);
+	env[QUERY_SOURCE_ENV_VAR] = overrides.querySource ?? DEFAULT_QUERY_SOURCE;
 
-	const claudeCommand = getAgentCommand('claude-code');
+	// A local spawn needs a REAL path (see resolveLocalAgentCommand). An SSH run
+	// keeps the bare name so the remote's own PATH resolves it.
+	const claudeCommand = sshRemoteConfig?.enabled
+		? getAgentCommand('claude-code')
+		: await resolveLocalAgentCommand('claude-code');
 	const sshEnabled = !!sshRemoteConfig?.enabled;
 	const agentCustomPath = getAgentCustomPath('claude-code');
 
@@ -504,6 +551,15 @@ async function spawnClaudeAgent(
 		cliSpawnCoreDeps
 	);
 
+	// Beat WakaTime for the life of the run. CLI-spawned agents never reach the
+	// desktop's ProcessManager listener, so without this their time goes
+	// unrecorded under Maestro entirely.
+	const wakaHeartbeat = buildCliWakaTimeHeartbeat(
+		`cli:${cwd}`,
+		cwd,
+		Boolean(sshRemoteConfig?.enabled)
+	);
+
 	// SSH-wrap if a remote is configured; otherwise append prompt locally.
 	// Claude uses '-- <prompt>' positional form - the default in wrapSpawnWithSsh.
 	let spawnCommand = claudeCommand;
@@ -532,6 +588,7 @@ async function spawnClaudeAgent(
 				prompt,
 				customEnvVars: remoteInteractive ? { ...remoteEnv, ...remoteInteractive.env } : remoteEnv,
 				agentBinaryName: remoteInteractive ? remoteInteractive.command : def?.binaryName,
+				querySource: overrides.querySource,
 			},
 			sshRemoteConfig
 		);
@@ -616,6 +673,7 @@ async function spawnClaudeAgent(
 
 		// Handle stdout - parse stream-json format
 		child.stdout?.on('data', (data: Buffer) => {
+			wakaHeartbeat?.();
 			jsonBuffer += data.toString();
 
 			// Process complete lines
@@ -843,7 +901,8 @@ async function spawnJsonLineAgent(
 		toolType,
 		def,
 		preOverrideArgs,
-		overrides
+		overrides,
+		readOnlyMode
 	);
 
 	// Pass only the user-level env (no agent defaults) so shell-provided values
@@ -855,6 +914,7 @@ async function spawnJsonLineAgent(
 		userCustomEnvVars,
 		readOnlyMode ? def?.readOnlyEnvOverrides : undefined
 	);
+	env[QUERY_SOURCE_ENV_VAR] = overrides.querySource ?? DEFAULT_QUERY_SOURCE;
 
 	// System prompt delivery for JSON-line agents:
 	//  - Agents declaring `supportsAppendSystemPrompt: true` get the dedicated
@@ -878,7 +938,7 @@ async function spawnJsonLineAgent(
 			: resolvedArgs;
 	const effectivePrompt =
 		overrides.appendSystemPrompt && !supportsNativeSystemPrompt && !isResume
-			? `${overrides.appendSystemPrompt}\n\n---\n\n# User Request\n\n${prompt}`
+			? embedSystemPromptInPrompt(overrides.appendSystemPrompt, prompt)
 			: prompt;
 
 	const noPromptSeparator = !!def?.noPromptSeparator;
@@ -894,7 +954,19 @@ async function spawnJsonLineAgent(
 			? [...baseArgs, effectivePrompt]
 			: [...baseArgs, '--', effectivePrompt];
 
-	const agentCommand = getAgentCommand(toolType);
+	// A local spawn needs a REAL path (see resolveLocalAgentCommand). An SSH run
+	// keeps the bare name so the remote's own PATH resolves it.
+	const agentCommand = sshRemoteConfig?.enabled
+		? getAgentCommand(toolType)
+		: await resolveLocalAgentCommand(toolType);
+
+	// See the note in spawnClaudeAgent: CLI runs are invisible to the desktop
+	// WakaTime listener, so they beat from their own output stream.
+	const wakaHeartbeat = buildCliWakaTimeHeartbeat(
+		`cli:${cwd}`,
+		cwd,
+		Boolean(sshRemoteConfig?.enabled)
+	);
 
 	let spawnCommand = agentCommand;
 	let spawnArgs = localArgs;
@@ -917,6 +989,7 @@ async function spawnJsonLineAgent(
 				agentBinaryName: def?.binaryName,
 				noPromptSeparator,
 				promptArgs: def?.promptArgs,
+				querySource: overrides.querySource,
 			},
 			sshRemoteConfig
 		);
@@ -999,6 +1072,7 @@ async function spawnJsonLineAgent(
 		};
 
 		child.stdout?.on('data', (data: Buffer) => {
+			wakaHeartbeat?.();
 			jsonBuffer += data.toString();
 			const lines = jsonBuffer.split('\n');
 			jsonBuffer = lines.pop() || '';
@@ -1103,6 +1177,13 @@ export interface SpawnAgentOptions {
 	enableMaestroP?: boolean;
 	maestroPMode?: 'interactive' | 'dynamic';
 	maestroPPath?: string;
+	/**
+	 * Who asked for this turn. Stamped into the agent's env as
+	 * MAESTRO_QUERY_SOURCE so tooling downstream of the spawn can tell a
+	 * playbook or Auto Run task apart from a `maestro send` the user typed -
+	 * the processes are otherwise identical. Defaults to 'user'.
+	 */
+	querySource?: QuerySource;
 }
 
 /**
@@ -1124,6 +1205,7 @@ export async function spawnAgent(
 		customEnvVars: options?.customEnvVars,
 		appendSystemPrompt: options?.appendSystemPrompt,
 		additionalDirectories: options?.additionalDirectories,
+		querySource: options?.querySource,
 	};
 	// Single source of truth for the token-source triple (never a partial forward).
 	const tokenSource = getClaudeTokenSourceFields(options);

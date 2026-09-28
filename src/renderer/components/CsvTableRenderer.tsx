@@ -1,7 +1,21 @@
-import { useMemo, useState, useEffect, type ReactNode } from 'react';
+import { useMemo, useState, useEffect } from 'react';
 import { ChevronUp, ChevronDown } from 'lucide-react';
 import type { Theme } from '../types';
+import { highlightMatches } from '../utils/highlightMatches';
+import { CsvRowDetailModal } from './CsvRowDetailModal';
+import { isCoarsePointer } from '../utils/touch';
 
+/**
+ * Typography note: this viewer sets no font-family and sizes everything in
+ * `em`, on purpose.
+ *
+ * It renders INSIDE the File Preview pane, which already applies the File
+ * Preview font and size to its content box - so inheriting is what makes that
+ * setting reach a CSV file. It previously hard-coded a monospace stack and
+ * px sizes, which meant the setting silently did nothing here and Cmd+= did
+ * not resize it. Every size below is relative to the pane, so both follow
+ * automatically.
+ */
 interface CsvTableRendererProps {
 	content: string;
 	theme: Theme;
@@ -137,39 +151,6 @@ function compareValues(a: string, b: string, direction: SortDirection): number {
 	return direction === 'asc' ? cmp : -cmp;
 }
 
-/**
- * Highlight matching substrings within a cell value.
- */
-function highlightMatches(text: string, query: string, accentColor: string): ReactNode {
-	if (!query) return text;
-	const escaped = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-	const regex = new RegExp(`(${escaped})`, 'gi');
-	const parts = text.split(regex);
-	if (parts.length === 1) return text;
-	// Use running character offset as key to guarantee uniqueness across
-	// identical substrings appearing at different positions.
-	let offset = 0;
-	return parts.map((part) => {
-		const key = offset;
-		offset += part.length;
-		return regex.test(part) ? (
-			<mark
-				key={key}
-				style={{
-					backgroundColor: accentColor,
-					color: '#fff',
-					padding: '0 1px',
-					borderRadius: '2px',
-				}}
-			>
-				{part}
-			</mark>
-		) : (
-			<span key={key}>{part}</span>
-		);
-	});
-}
-
 export function CsvTableRenderer({
 	content,
 	theme,
@@ -178,6 +159,9 @@ export function CsvTableRenderer({
 	onMatchCount,
 }: CsvTableRendererProps) {
 	const [sort, setSort] = useState<SortState | null>(null);
+	// Index into the currently displayed rows, not the source file: sorting or
+	// filtering while the modal is open would otherwise point it at a stale row.
+	const [detailRowIndex, setDetailRowIndex] = useState<number | null>(null);
 	const query = (searchQuery?.trim() ?? '').slice(0, 200);
 
 	const allRows = useMemo(() => parseCsv(content, delimiter), [content, delimiter]);
@@ -211,6 +195,13 @@ export function CsvTableRenderer({
 			compareValues(a[sort.column] ?? '', b[sort.column] ?? '', sort.direction)
 		);
 	}, [filteredRows, sort, isTruncated]);
+
+	// Clamp against the live row list: changing the sort or the search query
+	// while the detail modal is open can shrink the displayed rows out from
+	// under it.
+	const detailIndex =
+		detailRowIndex === null ? -1 : Math.min(detailRowIndex, sortedRows.length - 1);
+	const detailRow = detailIndex >= 0 ? sortedRows[detailIndex] : undefined;
 
 	// Report match count back to FilePreview
 	useEffect(() => {
@@ -260,8 +251,7 @@ export function CsvTableRenderer({
 					className="w-full"
 					style={{
 						borderCollapse: 'collapse',
-						fontSize: '13px',
-						fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+						fontSize: '1em',
 					}}
 				>
 					<thead>
@@ -276,7 +266,7 @@ export function CsvTableRenderer({
 									borderRight: `1px solid ${theme.colors.border}`,
 									color: theme.colors.textDim,
 									fontWeight: 'normal',
-									fontSize: '11px',
+									fontSize: '0.85em',
 									position: 'sticky',
 									top: 0,
 									userSelect: 'none',
@@ -333,7 +323,18 @@ export function CsvTableRenderer({
 									backgroundColor:
 										rowIdx % 2 === 0 ? 'transparent' : theme.colors.bgActivity + '60',
 								}}
-								className="hover:brightness-110 transition-[filter] duration-75"
+								className="hover:brightness-110 transition-[filter] duration-75 cursor-default"
+								// Suppress the browser's double-click word selection so the
+								// row flips to the detail view without flashing selected text.
+								onMouseDown={(e) => {
+									if (e.detail > 1) e.preventDefault();
+								}}
+								// One tap opens the row on a coarse pointer: a finger cannot
+								// double-tap, and a phone has no keyboard to fall back on.
+								onClick={() => {
+									if (isCoarsePointer()) setDetailRowIndex(rowIdx);
+								}}
+								onDoubleClick={() => setDetailRowIndex(rowIdx)}
 							>
 								{/* Row number */}
 								<td
@@ -342,7 +343,7 @@ export function CsvTableRenderer({
 										textAlign: 'right',
 										borderRight: `1px solid ${theme.colors.border}`,
 										color: theme.colors.textDim,
-										fontSize: '11px',
+										fontSize: '0.85em',
 										userSelect: 'none',
 									}}
 								>
@@ -374,12 +375,30 @@ export function CsvTableRenderer({
 					</tbody>
 				</table>
 			</div>
-			<div className="mt-2 text-xs" style={{ color: theme.colors.textDim }}>
-				{query
-					? `${filteredRows.length.toLocaleString()} of ${totalDataRows.toLocaleString()} rows match`
-					: `${totalDataRows.toLocaleString()} rows`}{' '}
-				× {columnCount} columns
+			<div className="mt-2 text-xs flex items-center gap-2" style={{ color: theme.colors.textDim }}>
+				<span>
+					{query
+						? `${filteredRows.length.toLocaleString()} of ${totalDataRows.toLocaleString()} rows match`
+						: `${totalDataRows.toLocaleString()} rows`}{' '}
+					× {columnCount} columns
+				</span>
+				{sortedRows.length > 0 && (
+					<span style={{ opacity: 0.7 }}>· double-click a row to see it vertically</span>
+				)}
 			</div>
+
+			{detailRow && (
+				<CsvRowDetailModal
+					headers={headerRow}
+					row={detailRow}
+					columnCount={columnCount}
+					index={detailIndex}
+					total={sortedRows.length}
+					onNavigate={setDetailRowIndex}
+					onClose={() => setDetailRowIndex(null)}
+					theme={theme}
+				/>
+			)}
 		</div>
 	);
 }

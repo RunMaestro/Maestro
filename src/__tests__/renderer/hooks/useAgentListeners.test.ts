@@ -16,6 +16,7 @@ import {
 } from '../../../renderer/hooks/agent/useAgentListeners';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useModalStore } from '../../../renderer/stores/modalStore';
+import { useAuthOutageStore } from '../../../renderer/stores/authOutageStore';
 import { useGroupChatStore } from '../../../renderer/stores/groupChatStore';
 import type { Session, AITab, AgentError } from '../../../renderer/types';
 import { createMockAITab } from '../../helpers/mockTab';
@@ -112,6 +113,7 @@ const mockProcess = {
 		onAgentErrorHandler = handler;
 		return mockUnsubscribeAgentError;
 	}),
+	onAuthExpired: vi.fn(() => vi.fn()),
 	onThinkingChunk: vi.fn((handler: ListenerCallback) => {
 		onThinkingChunkHandler = handler;
 		return mockUnsubscribeThinkingChunk;
@@ -121,7 +123,12 @@ const mockProcess = {
 		return mockUnsubscribeSshRemote;
 	}),
 	onToolExecution: vi.fn((handler: ListenerCallback) => {
-		onToolExecutionHandler = handler;
+		// TWO subscribers, as with onThinkingChunk: useAgentToolExecutionListener
+		// (writes tool cells into a tab's logs) registers FIRST, then
+		// useThoughtStreamToolListener (feeds the Thought Stream's action feed).
+		// The tests below drive the transcript listener, so keep the first
+		// registration rather than letting the later one overwrite it.
+		onToolExecutionHandler ??= handler;
 		return mockUnsubscribeToolExecution;
 	}),
 	onUserInput: vi.fn((handler: ListenerCallback) => {
@@ -172,6 +179,9 @@ function createMockDeps(overrides: Partial<UseAgentListenersDeps> = {}): UseAgen
 
 beforeEach(() => {
 	vi.clearAllMocks();
+	// Auth outages are provider-scoped and deliberately deduplicate, so a
+	// leftover outage would stop the next test's prompt from opening.
+	useAuthOutageStore.setState({ outages: {} });
 
 	// Reset captured handlers
 	onDataHandler = undefined;
@@ -252,11 +262,16 @@ describe('getErrorTitleForType', () => {
 
 describe('useAgentListeners', () => {
 	describe('listener registration', () => {
-		// onThinkingChunk has TWO subscribers: useAgentThinkingListener (records to
-		// tab logs, gated by showThinking) and useThoughtStreamCaptureListener (feeds
-		// the Thought Stream panel, independent of showThinking). So 11 channels but
-		// 12 subscriptions, with thinking-chunk subscribed twice.
-		it('registers all IPC listeners on mount (thinking-chunk subscribed twice)', () => {
+		// Two channels carry TWO subscribers each, for the same reason: the
+		// transcript needs the event gated by a tab's display settings, and the
+		// Thought Stream needs it raw.
+		// - onThinkingChunk: useAgentThinkingListener (tab logs, gated by
+		//   showThinking) + useThoughtStreamCaptureListener (panel, ungated).
+		// - onToolExecution: useAgentToolExecutionListener (tab logs) +
+		//   useThoughtStreamToolListener (panel's action feed, and the only
+		//   surface that sees an Auto Run's tool calls at all).
+		// So 11 channels but 13 subscriptions.
+		it('registers all IPC listeners on mount (thinking-chunk and tool-execution twice)', () => {
 			const deps = createMockDeps();
 			renderHook(() => useAgentListeners(deps));
 
@@ -270,10 +285,10 @@ describe('useAgentListeners', () => {
 			expect(mockProcess.onAgentError).toHaveBeenCalledTimes(1);
 			expect(mockProcess.onThinkingChunk).toHaveBeenCalledTimes(2);
 			expect(mockProcess.onSshRemote).toHaveBeenCalledTimes(1);
-			expect(mockProcess.onToolExecution).toHaveBeenCalledTimes(1);
+			expect(mockProcess.onToolExecution).toHaveBeenCalledTimes(2);
 		});
 
-		it('unsubscribes all listeners on unmount (thinking-chunk twice)', () => {
+		it('unsubscribes all listeners on unmount (thinking-chunk and tool-execution twice)', () => {
 			const deps = createMockDeps();
 			const { unmount } = renderHook(() => useAgentListeners(deps));
 
@@ -289,7 +304,7 @@ describe('useAgentListeners', () => {
 			expect(mockUnsubscribeAgentError).toHaveBeenCalledTimes(1);
 			expect(mockUnsubscribeThinkingChunk).toHaveBeenCalledTimes(2);
 			expect(mockUnsubscribeSshRemote).toHaveBeenCalledTimes(1);
-			expect(mockUnsubscribeToolExecution).toHaveBeenCalledTimes(1);
+			expect(mockUnsubscribeToolExecution).toHaveBeenCalledTimes(2);
 		});
 
 		it('does not register listeners twice on re-render', () => {
@@ -1040,7 +1055,34 @@ describe('useAgentListeners', () => {
 			expect(updated?.agentErrorPaused).toBe(true);
 		});
 
-		it('opens the agent error modal', () => {
+		it('opens the agent error modal for a non-auth error', () => {
+			const deps = createMockDeps();
+			const tab = createMockTab({ id: 'tab-1' });
+			const session = createMockSession({
+				id: 'sess-1',
+				state: 'busy',
+				aiTabs: [tab],
+				activeTabId: 'tab-1',
+			});
+			useSessionStore.setState({
+				sessions: [session],
+				activeSessionId: 'sess-1',
+			});
+
+			renderHook(() => useAgentListeners(deps));
+
+			onAgentErrorHandler?.('sess-1-ai-tab-1', { ...baseError, type: 'agent_crashed' });
+
+			// Check that the agentError modal was opened
+			const agentErrorOpen = useModalStore.getState().isOpen('agentError');
+			expect(agentErrorOpen).toBe(true);
+			const data = useModalStore.getState().getData('agentError');
+			expect(data?.sessionId).toBe('sess-1');
+		});
+
+		// auth_expired bypasses the generic error modal: the login flow runs in the
+		// re-authentication terminal so the whole fix happens in one place.
+		it('opens the reauth modal for auth_expired', () => {
 			const deps = createMockDeps();
 			const tab = createMockTab({ id: 'tab-1' });
 			const session = createMockSession({
@@ -1058,11 +1100,10 @@ describe('useAgentListeners', () => {
 
 			onAgentErrorHandler?.('sess-1-ai-tab-1', baseError);
 
-			// Check that the agentError modal was opened
-			const agentErrorOpen = useModalStore.getState().isOpen('agentError');
-			expect(agentErrorOpen).toBe(true);
-			const data = useModalStore.getState().getData('agentError');
-			expect(data?.sessionId).toBe('sess-1');
+			expect(useModalStore.getState().isOpen('agentError')).toBe(false);
+			expect(useModalStore.getState().isOpen('reauth')).toBe(true);
+			// Keyed by provider: one login fixes every agent sharing the credentials.
+			expect(useModalStore.getState().getData('reauth')?.providerKey).toBe('claude-code');
 		});
 
 		it('does not open modal for session_not_found errors', () => {

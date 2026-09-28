@@ -31,7 +31,11 @@ export interface SessionFilterModeState {
 export function useSessionFilterMode(): SessionFilterModeState {
 	const sessionFilterOpen = useUIStore((s) => s.sessionFilterOpen);
 
-	const [sessionFilter, setSessionFilter] = useState('');
+	// Lives in uiStore, not here. A `useState` inside this hook gave every caller
+	// its own copy, so the Cmd+[ / Cmd+] cycle could not see the filter and walked
+	// agents the sidebar was not drawing.
+	const sessionFilter = useUIStore((s) => s.sessionFilter);
+	const setSessionFilter = useUIStore((s) => s.setSessionFilter);
 
 	// Pre-filter state (saved on open, restored on close)
 	const [preFilterGroupStates, setPreFilterGroupStates] = useState<Map<string, boolean>>(new Map());

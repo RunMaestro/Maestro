@@ -14,7 +14,7 @@ describe('TabCompletionPopover', () => {
 		return render(
 			<TabCompletionPopover
 				isOpen
-				isTerminalMode
+				isShellInput
 				isGitRepo
 				suggestions={suggestions}
 				selectedIndex={0}
@@ -31,14 +31,14 @@ describe('TabCompletionPopover', () => {
 		);
 	}
 
-	it('renders nothing outside terminal mode or when closed', () => {
+	it('renders nothing for a non-shell draft or when closed', () => {
 		const { rerender } = renderPopover({ isOpen: false });
 		expect(screen.queryByText('Tab Completion')).not.toBeInTheDocument();
 
 		rerender(
 			<TabCompletionPopover
 				isOpen
-				isTerminalMode={false}
+				isShellInput={false}
 				suggestions={suggestions}
 				selectedIndex={0}
 				filter="all"
@@ -102,6 +102,20 @@ describe('TabCompletionPopover', () => {
 		expect(setInputValue).toHaveBeenCalledWith('git checkout main');
 		expect(setOpen).toHaveBeenCalledWith(false);
 		expect(focus).toHaveBeenCalled();
+	});
+
+	it('renders for an AI-mode command-mode draft, with the bang kept on accept', () => {
+		// isShellInput is true in AI mode while the draft starts with `!`, and the
+		// completed value must stay a runnable bang command.
+		const setInputValue = vi.fn();
+		renderPopover({
+			setInputValue,
+			suggestions: [{ value: '!git checkout main', displayText: 'main', type: 'branch' as const }],
+		});
+
+		expect(screen.getByText('Tab Completion')).toBeInTheDocument();
+		fireEvent.click(screen.getByText('main').closest('button')!);
+		expect(setInputValue).toHaveBeenCalledWith('!git checkout main');
 	});
 
 	it('renders filter-specific empty state', () => {

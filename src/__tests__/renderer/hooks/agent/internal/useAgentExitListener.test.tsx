@@ -2,8 +2,16 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useAgentExitListener } from '../../../../../renderer/hooks/agent/internal/useAgentExitListener';
 import { useSessionStore } from '../../../../../renderer/stores/sessionStore';
+import { useRetryStore } from '../../../../../renderer/stores/retryStore';
+import { DEFAULT_BATCH_STATE } from '../../../../../renderer/hooks/batch/batchReducer';
+import type { BatchRunState } from '../../../../../renderer/types';
 import { createMockSession } from '../../../../helpers/mockSession';
 import { createMockAITab } from '../../../../helpers/mockTab';
+
+let mockIsWebDesktop = false;
+vi.mock('../../../../../renderer/utils/runtimeContext', () => ({
+	isWebDesktop: () => mockIsWebDesktop,
+}));
 
 let handler: ((sessionId: string, code: number) => Promise<void>) | undefined;
 const mockUnsubscribe = vi.fn();
@@ -46,6 +54,8 @@ function makeDeps() {
 beforeEach(() => {
 	vi.clearAllMocks();
 	handler = undefined;
+	mockIsWebDesktop = false;
+	useRetryStore.setState({ retries: {}, outages: {} } as any);
 	useSessionStore.setState({
 		sessions: [],
 		groups: [],
@@ -96,6 +106,116 @@ describe('useAgentExitListener', () => {
 		const updated = useSessionStore.getState().sessions[0];
 		expect(updated.aiTabs[0].state).toBe('idle');
 		expect(updated.state).toBe('idle');
+	});
+
+	describe('on a web-desktop client', () => {
+		// Every process:* event is fanned out to every connected browser, so a
+		// web-desktop client must render the exit (tab idle) but never run the
+		// one-shot effects the desktop renderer owns: stats row, queue dequeue,
+		// synopsis (and with it the History entry), spoken notification.
+		beforeEach(() => {
+			mockIsWebDesktop = true;
+		});
+
+		it('flips the tab idle but records no stats row', async () => {
+			const tab = createMockAITab({ id: 'tab-1', state: 'busy', thinkingStartTime: 0 });
+			const session = createMockSession({
+				id: 'sess-1',
+				aiTabs: [tab],
+				activeTabId: 'tab-1',
+				state: 'busy',
+				busySource: 'ai',
+				thinkingStartTime: 1000,
+			});
+			useSessionStore.setState({ sessions: [session] } as any);
+
+			renderHook(() => useAgentExitListener(makeDeps()));
+			await act(async () => {
+				await handler!('sess-1-ai-tab-1', 0);
+				await new Promise((r) => setTimeout(r, 0));
+			});
+
+			const updated = useSessionStore.getState().sessions[0];
+			expect(updated.aiTabs[0].state).toBe('idle');
+			expect(updated.state).toBe('idle');
+			expect((window as any).maestro.stats.recordQuery).not.toHaveBeenCalled();
+		});
+
+		it('leaves the execution queue intact and dispatches nothing', async () => {
+			const tabA = createMockAITab({ id: 'tab-A', state: 'busy', thinkingStartTime: 0 });
+			const tabB = createMockAITab({ id: 'tab-B', state: 'idle' });
+			const itemB = {
+				id: 'item-B',
+				timestamp: 1,
+				tabId: 'tab-B',
+				type: 'message' as const,
+				text: 'BRAVO',
+				readOnlyMode: true,
+			};
+			const session = createMockSession({
+				id: 'sess-1',
+				aiTabs: [tabA, tabB],
+				activeTabId: 'tab-A',
+				state: 'busy',
+				busySource: 'ai',
+				executionQueue: [itemB] as any,
+			});
+			useSessionStore.setState({ sessions: [session] } as any);
+
+			const processQueuedItem = vi.fn().mockResolvedValue(undefined);
+			const deps = makeDeps();
+			deps.processQueuedItemRef.current = processQueuedItem as any;
+
+			renderHook(() => useAgentExitListener(deps));
+			await act(async () => {
+				await handler!('sess-1-ai-tab-A', 0);
+				await new Promise((r) => setTimeout(r, 0));
+			});
+
+			const updated = useSessionStore.getState().sessions[0];
+			expect(updated.aiTabs.find((t) => t.id === 'tab-A')?.state).toBe('idle');
+			expect(updated.aiTabs.find((t) => t.id === 'tab-B')?.state).toBe('idle');
+			expect(updated.executionQueue.map((i) => i.id)).toEqual(['item-B']);
+			expect(updated.state).toBe('idle');
+			expect(processQueuedItem).not.toHaveBeenCalled();
+		});
+
+		it('never spawns the exit synopsis', async () => {
+			const tab = createMockAITab({
+				id: 'tab-1',
+				state: 'busy',
+				thinkingStartTime: 0,
+				agentSessionId: 'asid-1',
+				logs: [
+					{ id: 'l-user', timestamp: 1, source: 'user', text: 'do work' },
+					{ id: 'l-tool', timestamp: 2, source: 'tool', text: 'Edit(file.ts)' },
+					{ id: 'l-out', timestamp: 3, source: 'stdout', text: 'done' },
+				] as any,
+			});
+			const session = createMockSession({
+				id: 'sess-1',
+				aiTabs: [tab],
+				activeTabId: 'tab-1',
+				state: 'busy',
+				busySource: 'ai',
+			});
+			useSessionStore.setState({ sessions: [session] } as any);
+
+			const spawn = vi.fn();
+			const addHistory = vi.fn();
+			const deps = makeDeps();
+			deps.spawnBackgroundSynopsisRef.current = spawn as any;
+			deps.addHistoryEntryRef.current = addHistory as any;
+
+			renderHook(() => useAgentExitListener(deps));
+			await act(async () => {
+				await handler!('sess-1-ai-tab-1', 0);
+				await new Promise((r) => setTimeout(r, 0));
+			});
+
+			expect(spawn).not.toHaveBeenCalled();
+			expect(addHistory).not.toHaveBeenCalled();
+		});
 	});
 
 	it('appends a system log on terminal exit', async () => {
@@ -199,6 +319,178 @@ describe('useAgentExitListener', () => {
 		expect(updated.orphanedThinkingTabs).toBeUndefined();
 		expect(updated.state).toBe('idle');
 		expect(processQueuedItem).not.toHaveBeenCalled();
+	});
+
+	// Desktop document/spec-mode Auto Run synopsizes each task from this exit path,
+	// which sets up the synopsis and dispatches it via runExitSynopsis (reaching
+	// spawnBackgroundSynopsisRef), so the run-scoped model override must reach the
+	// synopsis spawn config here for parity with the CLI batch processor.
+	function setupSynopsisRun(opts: { sessionCustomModel?: string; runModelOverride?: string }) {
+		const tab = createMockAITab({
+			id: 'tab-1',
+			state: 'busy',
+			thinkingStartTime: 0,
+			agentSessionId: 'asid-1',
+			// Auto Run tabs opt into the exit-path synopsis via saveToHistory.
+			saveToHistory: true,
+			// Thinking on -> tool logs are recorded, so the activity gate trusts the
+			// tool log below as evidence of meaningful work.
+			showThinking: 'on',
+			logs: [
+				{ id: 'l-user', timestamp: 1, source: 'user', text: 'do the task' },
+				{ id: 'l-tool', timestamp: 2, source: 'tool', text: 'Edit(file.ts)' },
+			],
+		} as any);
+		const session = createMockSession({
+			id: 'sess-1',
+			aiTabs: [tab],
+			activeTabId: 'tab-1',
+			state: 'busy',
+			customModel: opts.sessionCustomModel,
+		});
+		useSessionStore.setState({ sessions: [session] } as any);
+
+		const spawn = vi.fn().mockResolvedValue({ success: false });
+		const deps = makeDeps();
+		deps.spawnBackgroundSynopsisRef.current = spawn as any;
+		// runExitSynopsis bails before spawning unless a history-entry sink exists.
+		deps.addHistoryEntryRef.current = vi.fn() as any;
+		// The active run exposes its per-run model override via getBatchStateRef.
+		const batchState: BatchRunState = {
+			...DEFAULT_BATCH_STATE,
+			isRunning: true,
+			runModelOverride: opts.runModelOverride,
+		};
+		deps.getBatchStateRef.current = (() => batchState) as any;
+		return { deps, spawn };
+	}
+
+	it('spawns the exit-path synopsis under the run model override, not the session model', async () => {
+		const { deps, spawn } = setupSynopsisRun({
+			sessionCustomModel: 'session-sonnet',
+			runModelOverride: 'run-opus',
+		});
+
+		renderHook(() => useAgentExitListener(deps));
+		await act(async () => {
+			await handler!('sess-1-ai-tab-1', 0);
+			await new Promise((r) => setTimeout(r, 0));
+		});
+
+		expect(spawn).toHaveBeenCalledTimes(1);
+		// 6th arg is the synopsis sessionConfig.
+		const sessionConfig = spawn.mock.calls[0][5];
+		expect(sessionConfig.customModel).toBe('run-opus');
+	});
+
+	it('falls back to the session model when the run has no model override', async () => {
+		const { deps, spawn } = setupSynopsisRun({
+			sessionCustomModel: 'session-sonnet',
+			runModelOverride: undefined,
+		});
+
+		renderHook(() => useAgentExitListener(deps));
+		await act(async () => {
+			await handler!('sess-1-ai-tab-1', 0);
+			await new Promise((r) => setTimeout(r, 0));
+		});
+
+		expect(spawn).toHaveBeenCalledTimes(1);
+		const sessionConfig = spawn.mock.calls[0][5];
+		expect(sessionConfig.customModel).toBe('session-sonnet');
+	});
+
+	// Agent Resilience: the exiting turn failed and a resend is counting down.
+	// The reducer must leave the queue alone. Draining it would fail every item
+	// against the same provider, and the dispatch would supersede the pending
+	// retry (noteDispatch), silently discarding the prompt that is waiting.
+	it('holds the execution queue while a retry is counting down', async () => {
+		const tab = createMockAITab({ id: 'tab-1', state: 'busy', thinkingStartTime: 0 });
+		const queued = {
+			id: 'item-1',
+			timestamp: 1,
+			tabId: 'tab-1',
+			type: 'message' as const,
+			text: 'QUEUED',
+			readOnlyMode: true,
+		};
+		const session = createMockSession({
+			id: 'sess-1',
+			aiTabs: [tab],
+			activeTabId: 'tab-1',
+			state: 'busy',
+			busySource: 'ai',
+			executionQueue: [queued] as any,
+		});
+		useSessionStore.setState({ sessions: [session] } as any);
+		useRetryStore.setState({
+			retries: {
+				'sess-1:tab-1': {
+					sessionId: 'sess-1',
+					tabId: 'tab-1',
+					key: 'sess-1:tab-1',
+					outageId: 'outage-1',
+					strategy: { kind: 'fixed', delayMs: 60_000, maxAttempts: 5 },
+					mode: 'auto',
+					status: 'scheduled',
+					attempt: 0,
+					startedAt: 0,
+					nextRetryAt: 60_000,
+					lastMessage: 'overloaded',
+				},
+			},
+		} as any);
+
+		const processQueuedItem = vi.fn().mockResolvedValue(undefined);
+		const deps = makeDeps();
+		deps.processQueuedItemRef.current = processQueuedItem as any;
+
+		renderHook(() => useAgentExitListener(deps));
+		await act(async () => {
+			await handler!('sess-1-ai-tab-1', 1);
+			await new Promise((r) => setTimeout(r, 0));
+		});
+
+		const updated = useSessionStore.getState().sessions[0];
+		expect(updated.executionQueue.map((i) => i.id)).toEqual(['item-1']);
+		expect(updated.aiTabs[0].state).toBe('idle');
+		expect(processQueuedItem).not.toHaveBeenCalled();
+	});
+
+	it('drains the queue normally once the retry has settled', async () => {
+		// Same shape as above with no retry entry: proves the hold is the retry's
+		// doing, not the exit code or the read-only flag.
+		const tab = createMockAITab({ id: 'tab-1', state: 'busy', thinkingStartTime: 0 });
+		const queued = {
+			id: 'item-1',
+			timestamp: 1,
+			tabId: 'tab-1',
+			type: 'message' as const,
+			text: 'QUEUED',
+			readOnlyMode: true,
+		};
+		const session = createMockSession({
+			id: 'sess-1',
+			aiTabs: [tab],
+			activeTabId: 'tab-1',
+			state: 'busy',
+			busySource: 'ai',
+			executionQueue: [queued] as any,
+		});
+		useSessionStore.setState({ sessions: [session] } as any);
+
+		const processQueuedItem = vi.fn().mockResolvedValue(undefined);
+		const deps = makeDeps();
+		deps.processQueuedItemRef.current = processQueuedItem as any;
+
+		renderHook(() => useAgentExitListener(deps));
+		await act(async () => {
+			await handler!('sess-1-ai-tab-1', 1);
+			await new Promise((r) => setTimeout(r, 0));
+		});
+
+		expect(useSessionStore.getState().sessions[0].executionQueue).toEqual([]);
+		expect(processQueuedItem).toHaveBeenCalledTimes(1);
 	});
 
 	it('deletes activeHiddenToolRef entry on AI exit', async () => {

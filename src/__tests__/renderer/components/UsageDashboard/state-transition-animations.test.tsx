@@ -18,6 +18,7 @@ import '@testing-library/jest-dom';
 import { UsageDashboardModal } from '../../../../renderer/components/UsageDashboard/UsageDashboardModal';
 import { SummaryCards } from '../../../../renderer/components/UsageDashboard/SummaryCards';
 import { useUIStore } from '../../../../renderer/stores/uiStore';
+import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
 
 import { mockTheme } from '../../../helpers/mockTheme';
 // Mock lucide-react icons
@@ -63,11 +64,17 @@ vi.mock('lucide-react', () => {
 		Cpu: createIcon('cpu', '🖥️'),
 		DollarSign: createIcon('dollar', '💲'),
 		Activity: createIcon('activity', '📈'),
+		// AgentOverviewCards agent filter icon
+		Search: createIcon('search', '🔎'),
 		// New SummaryCards momentum-row icons
 		Flame: createIcon('flame', '🔥'),
 		CalendarCheck: createIcon('calendar-check', '📆'),
 		PenLine: createIcon('pen-line', '✏️'),
 		Coins: createIcon('coins', '🪙'),
+		// Delegation score card + summary ratio card icons
+		Rocket: createIcon('rocket', '🚀'),
+		Info: createIcon('info', 'ℹ️'),
+		Split: createIcon('split', '🔀'),
 	};
 });
 
@@ -133,10 +140,12 @@ class MockResizeObserver {
 // Mock the maestro API
 const mockStats = {
 	getAggregation: vi.fn(),
+	getDelegationTotals: vi.fn(),
+	getDelegationByDay: vi.fn(),
 	getDatabaseSize: vi.fn(),
 	getAutoRunSessions: vi.fn().mockResolvedValue([]),
 	onStatsUpdate: vi.fn(() => () => {}),
-	exportCsv: vi.fn(),
+	exportUsage: vi.fn(),
 };
 
 const mockDialog = {
@@ -152,6 +161,11 @@ beforeEach(() => {
 	// in this file. Reset it so each test starts on 'overview' instead of inheriting
 	// the tab a prior test navigated to (which can mount the Shortcuts panel).
 	useUIStore.setState({ usageDashboardViewMode: 'overview' });
+	// Pin the Encore flags this file was written against. Cue ships on by
+	// default, which adds a Cue tab and a cueStats fetch these tests do not mock.
+	useSettingsStore.setState((s) => ({
+		encoreFeatures: { ...s.encoreFeatures, usageStats: true, maestroCue: false },
+	}));
 	(window as any).maestro = {
 		stats: mockStats,
 		dialog: mockDialog,
@@ -215,6 +229,12 @@ beforeEach(() => {
 		bySessionByDay: {},
 		bySessionSource: {},
 	});
+	mockStats.getDelegationTotals.mockResolvedValue({
+		interactive: { count: 0, durationMs: 0 },
+		autoRun: { count: 0, durationMs: 0 },
+		cue: { count: 0, durationMs: 0 },
+	});
+	mockStats.getDelegationByDay.mockResolvedValue([]);
 	mockStats.getDatabaseSize.mockResolvedValue(1024 * 1024); // 1 MB
 });
 

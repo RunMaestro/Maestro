@@ -98,7 +98,7 @@ export function LeftSidePanelSection({
 					<p className="text-sm" style={{ color: theme.colors.textMain }}>
 						Collapsed group pills per row
 					</p>
-					<p className="text-xs opacity-50 mt-0.5 mb-2">
+					<p className="text-xs opacity-70 mt-0.5 mb-2">
 						When a group is collapsed, its agents render as a row of activity pills. Pills wrap to a
 						new row once this many are shown, so large groups stay readable instead of condensing
 						into invisible slivers.

@@ -4,6 +4,11 @@
 
 Command-line interface, playbook system, batch processing, and agent spawning for headless Maestro automation.
 
+Before adding a command that mirrors something a user does by clicking, read
+[CLI-UI-PARITY.md](CLI-UI-PARITY.md): it records which UI actions are already
+scriptable, which are not, and the one write path (`update_session_config`) that
+new per-agent and per-tab state should go through.
+
 ---
 
 ## Overview
@@ -32,6 +37,7 @@ src/cli/
 │   ├── refresh-files.ts
 │   ├── remove-agent.ts       # Remove agent via WebSocket (requires running app)
 │   ├── update-agent.ts       # Move agent to group / change cwd via WebSocket (requires running app)
+│   ├── update-ssh-remote.ts  # Edit an SSH remote via disk I/O
 │   ├── remove-ssh-remote.ts  # Remove SSH remote via disk I/O
 │   ├── run-playbook.ts
 │   ├── run-doc.ts            # Run raw Auto Run docs headlessly (no saved playbook)
@@ -55,6 +61,8 @@ src/cli/
 │   ├── session-command.ts   # Shared helpers for desktop-driving commands (see below)
 │   ├── playbooks.ts         # Playbook file management
 │   └── storage.ts           # Electron Store file reader + SSH remote helpers
+├── utils/                  # Argument parsing shared by commands
+│   └── parse.ts             # parseCliBool / isInheritValue (one vocabulary for every verb)
 └── output/                 # Output formatting
     ├── formatter.ts         # Human-readable terminal output (incl. SSH remote tables)
     └── jsonl.ts             # Machine-parseable JSON Lines
@@ -67,9 +75,12 @@ Note: `run-playbook.ts` is the file name, but the command is registered under th
 - `runAgentCommand(agentId, options, build)` - the one-liner path: resolves the agent (partial IDs), sends the message `build()` describes, reports the result. Used by `rename-agent`, `auto-run-control` (stop/resume/skip/abort/reset), `remove-playbook`, `agent-control` (focus/switch-mode).
 - `sendSimpleCommand(payload, responseType)` + `reportResult(result, opts)` + `failCommand(msg, json)` - the building blocks, for commands that don't key off an agent ID (e.g. `rename-group` uses `resolveGroupId`; `set-theme`/`encore` send `set_setting`).
 - `resolveAgentOrFail(agentId, json)` - resolve-or-exit helper.
-- `resolveTabOwner(tabId)` - resolve the agent that owns a desktop tab (exact ID or unique prefix) via `list_desktop_sessions`; used by the `tab` verbs so the user only supplies a tab ID.
+- `resolveTabEntry(tabId, agentHint?)` - resolve one desktop tab via `list_desktop_sessions` and return its whole `DesktopTabEntry` (`src/shared/desktopTabs.ts`). Accepts an exact ID, a unique prefix, or the literal `active` - the tab that `agentHint`'s agent has selected, or the desktop's focused agent (`readActiveAgentId()`) when no hint is given. Use it rather than matching IDs yourself: a verb that has to read before it writes (`tab show`, `tab thinking cycle`) gets the current settings from the same call that resolved the tab, instead of a second round trip or a value the caller guessed.
+- `resolveTabOwner(tabId, agentHint?)` - thin wrapper over `resolveTabEntry` for the verbs that only need `{ agentId, tabId }`.
 
 Do NOT re-implement the withMaestroClient + sendCommand + JSON/text + `process.exit(1)` boilerplate in a new command file; extend `session-command.ts` if your case needs a new shape.
+
+**Parsing an argument? Use `utils/parse.ts`.** `parseCliBool(value, flag)` is the one boolean vocabulary (`true/false`, `1/0`, `yes/no`, `on/off`, case-insensitive) - three near-identical copies had already drifted on whether they accepted `on`/`off`. `isInheritValue(value)` recognizes the words that clear an override (`inherit`, `default`, `none`, `clear`, `unset`, empty) so a per-tab or per-agent value falls back to what it inherits. Clearing is not the same as `false`: `tab enter-to-send <id> false` pins the tab to Cmd+Enter, while `inherit` returns it to the global `enterToSendAI` setting.
 
 ### Shared Code with Desktop
 
@@ -143,6 +154,31 @@ Options:
 - `--skip <count>` - Pagination offset (default: 0)
 - `--search <keyword>` - Filter by name or first message content
 
+### `image list` / `image save`
+
+Reach the images a user pasted into a chat. An agent sees a pasted screenshot as pixels in its context and has no path to it, so writing one into the repo used to be a right-click only the human could perform (`ImageContextMenu` -> Save to Project).
+
+```bash
+maestro-cli image list [-a, --agent <id>] [-t, --tab <tab-id>] [--limit <n>] [--json]
+maestro-cli image save [target] [-a <id>] [-t <tab-id>] [-o, --output <path>] [--all] [--force] [--json]
+```
+
+`target` is a 1-based index from `image list`, a content handle (leading hex of the sha256), or `latest` (the default).
+
+Implementation notes:
+
+- After writing, it calls `nudgeFileTreeForPaths()` so the Files panel picks the new file up instead of waiting for its next timed refresh. Best-effort by contract: the bytes are already on disk, so a closed desktop must not turn a good save into a failure. `--json` reports which agents were nudged as `refreshedAgents`.
+- Reads the sessions file directly (`readSessions()`), not the running app, so it works with the desktop closed. Pasted images are relocated into the content-addressed store on persistence, so the transcript holds `maestro-image://store/<sha>.<ext>` refs that `resolveToBytesSync()` turns back into bytes. The cost is the renderer's 2s persistence debounce: an image pasted this instant may not be on disk yet.
+- The written extension is derived from the resolved media type, never from the requested filename - the same rule `saveImageToProject()` follows in the renderer.
+- `--all` always treats `--output` as a folder, so the same command cannot produce a directory on one conversation and a file on another.
+
+### Shared CLI helpers worth reusing
+
+Two things several verbs need, written once rather than per-command:
+
+- **`resolveOwningAgent(absolutePath)`** in `src/cli/utils/owning-agent.ts` - which agent's workspace a path lives in. Every agent whose `cwd` contains the path is a candidate, the deepest `cwd` wins (nested worktrees), and a genuine tie goes to the most recently active by history-file mtime. It returns the losers as `others` so the caller can name what it picked and how to override. `open-file`, `open-graph`, and the `image save` refresh nudge all ride it; it had already been written out twice, byte for byte, before it was extracted.
+- **`nudgeFileTreeForPaths(paths)` / `refreshFileTreeFor(sessionId)`** in `src/cli/services/file-tree-refresh.ts` - tell the desktop's Files panel to re-read a workspace. The quiet form never throws and never prints (the caller's write already succeeded); the loud form is what `refresh-files` reports on. Any new verb that writes a file into an agent's workspace should call the quiet one.
+
 ### `show agent <id>`
 
 Show detailed agent information including history and usage stats.
@@ -164,7 +200,7 @@ maestro-cli show playbook <id> [--json]
 Run a playbook (batch execution of Auto Run documents).
 
 ```bash
-maestro-cli playbook <playbook-id> [--dry-run] [--no-history] [--json] [--debug] [--verbose] [--wait]
+maestro-cli playbook <playbook-id> [--dry-run] [--no-history] [--json] [--debug] [--verbose] [--wait] [--model <model>] [--effort <effort>] [--ignore-model-hints]
 ```
 
 Options:
@@ -175,6 +211,8 @@ Options:
 - `--debug` - Detailed debug output
 - `--verbose` - Show full prompt sent to agent on each iteration
 - `--wait` - Wait for agent to become available if busy
+- `--model <model>` / `--effort <effort>` - Run-scoped model/effort override (see [Per-run model override](#per-run-model-override))
+- `--ignore-model-hints` - Skip the documents' `MAESTRO:MODEL` markers so every task runs at the run override or the agent default
 
 This command is lazy-loaded to avoid eager resolution of prompt templates.
 
@@ -183,7 +221,7 @@ This command is lazy-loaded to avoid eager resolution of prompt templates.
 Launch a Goal-Driven Auto Run: instead of working through a checklist of documents (the `playbook` command), pursue a single free-text objective. Each iteration spawns a FRESH agent that makes one increment of progress, self-reports how far along it is via Maestro markers, and exits, repeating until the goal is reached, a deadlock is declared, the iteration limit is hit, or progress stalls.
 
 ```bash
-maestro-cli goal-run <agent-id> "<goal>" [--exit-criteria <text>] [--max-iterations <n>] [--no-history] [--json] [--verbose]
+maestro-cli goal-run <agent-id> "<goal>" [--exit-criteria <text>] [--max-iterations <n>] [--no-history] [--json] [--verbose] [--model <model>] [--effort <effort>]
 ```
 
 Options:
@@ -193,6 +231,7 @@ Options:
 - `--no-history` - Skip writing history entries
 - `--json` - Output as JSON Lines (events: `goal_start`, `goal_iteration_start`, `goal_iteration_complete`, `goal_complete`)
 - `--verbose` - Show full prompt sent to agent on each iteration
+- `--model <model>` / `--effort <effort>` - Run-scoped model/effort override (see [Per-run model override](#per-run-model-override))
 
 Implemented by `services/goal-runner.ts` (`runGoal`), the CLI counterpart to the desktop `useGoalRunner` hook. Both drive the SAME pure engine in `src/shared/goalDriven/*` (marker parsing + exit evaluation) so CLI and desktop behave identically. Like `playbook`, it is lazy-loaded, refuses to start when the agent is busy (`services/agent-busy.ts`), and threads per-agent SSH remote + model/effort/args/env overrides into every spawn.
 
@@ -201,7 +240,7 @@ Implemented by `services/goal-runner.ts` (`runGoal`), the CLI counterpart to the
 Run one or more raw Auto Run `.md` documents without a saved playbook. Mirrors `playbook` but builds an ephemeral `Playbook` on the fly (`src/cli/commands/run-doc.ts`), then drives it through the same `batch-processor` generator. Headless and self-contained - it does **not** route through the desktop renderer (unlike `auto-run --launch`), so it runs whether or not the Maestro window is open. This is the path group-chat participants use to execute a document they just wrote.
 
 ```bash
-maestro-cli run-doc <docs...> --agent <id-or-name> [--prompt <text>] [--loop] [--max-loops <n>] [--reset-on-completion] [--dry-run] [--no-history] [--json] [--debug] [--verbose] [--no-synopsis] [--wait]
+maestro-cli run-doc <docs...> --agent <id-or-name> [--prompt <text>] [--loop] [--max-loops <n>] [--reset-on-completion] [--dry-run] [--no-history] [--json] [--debug] [--verbose] [--no-synopsis] [--wait] [--model <model>] [--effort <effort>] [--ignore-model-hints]
 ```
 
 - `-a, --agent <id>` (required) - target agent by ID (full/partial) or display name
@@ -210,6 +249,21 @@ maestro-cli run-doc <docs...> --agent <id-or-name> [--prompt <text>] [--loop] [-
 - Busy-state detection and `--wait` are shared with `playbook` via `src/cli/services/agent-busy.ts` (`checkAgentBusy`, `waitForAgentAvailable`).
 
 Note: `resolveAgentId()` in `src/cli/services/storage.ts` resolves `--agent` by ID first, then falls back to an exact case-insensitive display-name match, so name targeting works across `run-doc`, `playbook` lookups, `list playbooks`, and `auto-run`.
+
+### Per-run model override
+
+`--model <model>` and `--effort <effort>` are registered on all four Auto Run entry points (`playbook`, `run-doc`, `goal-run`, `auto-run` in `src/cli/index.ts`). The value is **run-scoped**: it wins over `session.customModel` / `session.customEffort` for every spawn the run makes, and nothing is ever written back to the session, so the agent's interactive tabs are unaffected and the override dies with the run. Resolution order for an Auto Run spawn is `run override -> session.customModel -> agent default`.
+
+Threading, by entry point:
+
+- **Headless (`playbook`, `run-doc`, `goal-run`)** - the flag rides the command's options object into `services/goal-runner.ts` (`RunGoalOptions`) or `services/batch-processor.ts` (`runPlaybook` options), and both pass `runModel ?? session.customModel` / `runEffort ?? session.customEffort` at every `spawnAgent` call site. `agent-spawner.ts` already accepted `customModel` / `customEffort`, so it needed no change. Note the synopsis and goal-handoff spawns take the override too, so the summary runs on the same model as the work it summarizes.
+- **Desktop-routed (`auto-run`)** - the flags travel in the `configure_auto_run` WebSocket message (`commands/auto-run.ts`), are validated as optional non-empty strings in `handleConfigureAutoRun` (`src/main/web-server/handlers/messageHandlers/autoRun.ts`), pass through `ConfigureAutoRunCallback` (`src/main/web-server/types.ts`) and `CallbackRegistry.configureAutoRun`, and land on the `BatchRunConfig` built in `useAppRemoteEventListeners.ts`. From there the desktop runners apply them via `spawnAgentForSession`'s `modelOverride` / `effortOverride` options.
+
+Conventions to preserve when touching this:
+
+- **Spread-when-set everywhere.** Producers use `...(model && { model })` so an unset override is absent, never an empty string. The CLI trims first (`options.model?.trim() || undefined`), so `--model "   "` reads as unset.
+- **No CLI-side validation.** Valid model names are provider-specific and only the desktop/provider layer knows them, so the CLI passes the value through. The WebSocket boundary rejects non-strings and blank strings, nothing more.
+- **The override is config, not session state.** In particular `buildWorktreeSession` (`src/renderer/utils/worktreeSession.ts`) still copies the PARENT session's `customModel` into a worktree child - do not "fix" that to use the run override. Worktree dispatch gets the override for free because it hands the same `BatchRunConfig` to the same runners.
 
 ### `send <agent-id> <message>`
 
@@ -298,8 +352,8 @@ maestro-cli update-agent <agent-id> [-g <group-id|none>] [-d <new-cwd>] [--json]
 ```
 
 - `--group <id>` sends a `move_session_to_group` message (reuses the same write path as drag-and-drop in the Left Bar). Pass `none`, `null`, or `""` to ungroup. Supports partial group IDs via `resolveGroupId()`.
-- `--cwd <path>` sends the new `update_session_cwd` message. Resolves to absolute via `path.resolve()`. The renderer mutates `cwd`/`fullPath`/`shellCwd` only - `projectRoot` is preserved so historical provider sessions stay addressable (important for archive workflows where you relocate the case folder but want prior conversations to remain attached).
-- The renderer refuses cwd updates when `aiPid > 0` (the PTY's cwd is fixed at spawn time) and returns `{ success: false, error: '...' }`; the CLI surfaces that error and exits non-zero.
+- `--cwd <path>` sends the new `update_session_cwd` message. Resolves to absolute via `path.resolve()`. The renderer relocates the agent through `withWorkingDirectory()` (`src/renderer/utils/agentWorkingDirectory.ts`), which moves `cwd`/`fullPath`/`shellCwd`/`projectRoot` together, rebases `autoRunFolderPath` when it lives under the old root, and clears the file tree and git state so they reload from the new directory. Moving `cwd` alone left the Files panel and the Edit dialog on the old folder (#1565). Provider conversations stored under the old path are not carried over.
+- The renderer refuses cwd updates while the agent is busy or `aiPid > 0` (`workingDirectoryChangeBlocker()`; the PTY's cwd is fixed at spawn time) and returns `{ success: false, error: '...' }`; the CLI surfaces that error and exits non-zero.
 
 ### `list ssh-remotes`
 
@@ -314,7 +368,7 @@ maestro-cli list ssh-remotes [--json]
 Create a new SSH remote configuration. Direct disk I/O via `readSshRemotes()`/`writeSshRemotes()`.
 
 ```bash
-maestro-cli create-ssh-remote <name> -H <host> [-p <port>] [-u <user>] [-k <key-path>] [--env KEY=VALUE]... [--ssh-config] [--disabled] [--set-default] [--json]
+maestro-cli create-ssh-remote <name> -H <host> [-p <port>] [-u <user>] [-k <key-path>] [--env KEY=VALUE]... [--ssh-option KEY=VALUE]... [--ssh-config] [--disabled] [--set-default] [--json]
 ```
 
 Options:
@@ -324,8 +378,30 @@ Options:
 - `--ssh-config` - Use `~/.ssh/config` mode; host becomes the Host pattern
 - `--set-default` - Writes `defaultSshRemoteId` to settings
 - `--env KEY=VALUE` - Repeatable remote environment variable
+- `--ssh-option KEY=VALUE` - Repeatable extra `ssh -o` option, validated by
+  `validateSshOption()` in `src/shared/sshOptions.ts`
 
 Generates a UUID via `crypto.randomUUID()` for the remote ID.
+
+### `update-ssh-remote <remote-id>`
+
+Edit an existing SSH remote in place. Same direct disk I/O and partial ID
+matching as the other two.
+
+```bash
+maestro-cli update-ssh-remote <remote-id> [-n <name>] [-H <host>] [-p <port>] [-u <user>] [-k <key-path>] [--env KEY=VALUE]... [--clear-env] [--ssh-option KEY=VALUE]... [--clear-ssh-options] [--ssh-config <bool>] [--enabled <bool>] [--set-default] [--json]
+```
+
+`--env` and `--ssh-option` MERGE into the existing maps rather than replacing
+them, so setting one option cannot silently drop the others; `--clear-env` and
+`--clear-ssh-options` empty the respective map first. An empty string to `-u` or
+`-k` clears that field.
+
+`--json` (and `list-ssh-remotes --json`) reports `resolvedSshOptions` alongside
+the stored `sshOptions`: the full merged set `ssh` receives once
+`resolveSshOptions()` has folded the overrides over Maestro's defaults. That is
+the field that answers "did my override take effect?" - the stored map alone
+cannot, since a reserved key is dropped and a default may already hold the slot.
 
 ### `remove-ssh-remote <remote-id>`
 
@@ -477,8 +553,11 @@ The CLI spawner is simpler than the desktop process manager but honors the same
 per-agent/per-session overrides that users configure in the desktop app:
 
 - **Honored**: custom binary path, custom CLI args, custom env vars, custom model,
-  custom effort/reasoning - all merged via `applyAgentConfigOverrides()` just
+  custom effort/reasoning - all resolved via `applyAgentConfigOverrides()` just
   like the desktop (`session` wins over `agent config` wins over defaults).
+  Env vars REPLACE rather than layer: an agent with any vars of its own gets
+  none of the provider-level set, so usage attribution can read the same
+  single set back (`effectiveAgentCustomEnvVars()` in `shared/providerProfiles.ts`).
 - **Honored**: SSH remote execution - when `sessionSshRemoteConfig.enabled` is
   true, the spawn is wrapped via `wrapSpawnWithSsh()` (dynamic import so the
   SSH chain stays out of the local hot path). If the configured remote can't
@@ -583,24 +662,29 @@ Prompts support template variables substituted at runtime via `src/shared/templa
 
 The batch processor outputs machine-parseable JSON Lines events (defined in `src/cli/output/jsonl.ts`):
 
-| Event               | Fields                                                                   | Description                 |
-| ------------------- | ------------------------------------------------------------------------ | --------------------------- |
-| `start`             | `playbook`, `session`                                                    | Batch run started           |
-| `document_start`    | `document`, `index`, `taskCount`                                         | Starting a document         |
-| `task_start`        | `document`, `taskIndex`                                                  | Starting a task             |
-| `task_complete`     | `document`, `taskIndex`, `success`, `summary`, `elapsedMs`, `usageStats` | Task finished               |
-| `document_complete` | `document`, `tasksCompleted`                                             | All tasks in document done  |
-| `loop_complete`     | `iteration`                                                              | One loop iteration finished |
-| `synopsis`          | `text`, `sessionId`                                                      | AI-generated summary        |
-| `history`           | `entry`                                                                  | History entry written       |
-| `complete`          | `documentsProcessed`, `tasksCompleted`, `totalElapsedMs`, `totalCost`    | Batch run finished          |
-| `error`             | `message`, `document?`, `taskIndex?`                                     | Error occurred              |
-| `skipped`           | `reason`                                                                 | Task or document skipped    |
-| `waiting`           | `reason`                                                                 | Waiting for agent           |
+| Event               | Fields                                                                     | Description                                          |
+| ------------------- | -------------------------------------------------------------------------- | ---------------------------------------------------- |
+| `start`             | `playbook`, `session`                                                      | Batch run started                                    |
+| `document_start`    | `document`, `index`, `taskCount`                                           | Starting a document                                  |
+| `task_start`        | `document`, `taskIndex`                                                    | Starting a task                                      |
+| `task_complete`     | `document`, `taskIndex`, `success`, `summary`, `elapsedMs`, `usageStats`   | Task finished                                        |
+| `document_complete` | `document`, `tasksCompleted`                                               | All tasks in document done                           |
+| `loop_complete`     | `iteration`                                                                | One loop iteration finished                          |
+| `synopsis`          | `text`, `sessionId`                                                        | AI-generated summary                                 |
+| `history`           | `entry`                                                                    | History entry written                                |
+| `complete`          | `documentsProcessed`, `tasksCompleted`, `totalElapsedMs`, `totalCost`      | Batch run finished                                   |
+| `error`             | `message`, `document?`, `taskIndex?`                                       | Error occurred                                       |
+| `skipped`           | `reason`                                                                   | Task or document skipped                             |
+| `waiting`           | `reason`                                                                   | Waiting for agent                                    |
+| `model_resolution`  | `document`, `taskIndex`, `model`, `effort`, `notes`, `warnings`, `message` | A `MAESTRO:MODEL` hint was applied (or could not be) |
+
+`model_resolution` is deliberately NOT gated on `--verbose`. A hint the provider could not honor (non-empty `warnings`) is exactly the case the feature exists to make visible, and an operator who never sees it concludes tier hints are broken rather than unmapped. `model`/`effort` are `null` when the agent's own default was used.
 
 ### Synopsis Generation
 
 After all tasks complete, the batch processor spawns the agent one more time to generate a synopsis (summary of work done). This uses a special prompt from `src/prompts/` and the same agent session for context continuity. The synopsis is parsed for structured data (title, description, files changed).
+
+The synopsis turn is pinned to the bottom of both ladders via `cheapTurnSettings()` (`src/shared/modelTiers.ts`) regardless of what the tasks ran at - it summarizes work that already happened, so paying premium rates for it is one wasted turn per task. Safe only because the synopsis is a leaf: its returned `agentSessionId` is discarded, so the downgrade cannot follow the conversation into a later real turn.
 
 ### CLI Activity Registration
 
@@ -677,26 +761,27 @@ Machine-parseable output format. Each line is a complete JSON object. Used when 
 
 ## Key Files Reference
 
-| Concern             | Primary Files                                                                          |
-| ------------------- | -------------------------------------------------------------------------------------- |
-| CLI entry point     | `src/cli/index.ts`                                                                     |
-| Storage reader      | `src/cli/services/storage.ts`                                                          |
-| Agent spawner       | `src/cli/services/agent-spawner.ts`                                                    |
-| Batch processor     | `src/cli/services/batch-processor.ts`                                                  |
-| Playbook management | `src/cli/services/playbooks.ts`                                                        |
-| Agent sessions      | `src/cli/services/agent-sessions.ts`                                                   |
-| Desktop IPC client  | `src/cli/services/maestro-client.ts`                                                   |
-| Human output        | `src/cli/output/formatter.ts`                                                          |
-| JSONL output        | `src/cli/output/jsonl.ts`                                                              |
-| Send command        | `src/cli/commands/send.ts`                                                             |
-| Run playbook        | `src/cli/commands/run-playbook.ts`                                                     |
-| Create agent        | `src/cli/commands/create-agent.ts`                                                     |
-| Remove agent        | `src/cli/commands/remove-agent.ts`                                                     |
-| Update agent        | `src/cli/commands/update-agent.ts`                                                     |
-| SSH remote CRUD     | `src/cli/commands/create-ssh-remote.ts`, `list-ssh-remotes.ts`, `remove-ssh-remote.ts` |
-| Shared types        | `src/shared/types.ts`                                                                  |
-| Template variables  | `src/shared/templateVariables.ts`                                                      |
-| Agent definitions   | `src/main/agents/definitions.ts`                                                       |
-| Agent IDs           | `src/shared/agentIds.ts`                                                               |
-| CLI activity        | `src/shared/cli-activity.ts`                                                           |
-| Prompt templates    | `src/prompts/`                                                                         |
+| Concern             | Primary Files                                                                                                  |
+| ------------------- | -------------------------------------------------------------------------------------------------------------- |
+| CLI entry point     | `src/cli/index.ts`                                                                                             |
+| Storage reader      | `src/cli/services/storage.ts`                                                                                  |
+| Agent spawner       | `src/cli/services/agent-spawner.ts`                                                                            |
+| Batch processor     | `src/cli/services/batch-processor.ts`                                                                          |
+| Playbook management | `src/cli/services/playbooks.ts`                                                                                |
+| Agent sessions      | `src/cli/services/agent-sessions.ts`                                                                           |
+| Desktop IPC client  | `src/cli/services/maestro-client.ts`                                                                           |
+| Human output        | `src/cli/output/formatter.ts`                                                                                  |
+| JSONL output        | `src/cli/output/jsonl.ts`                                                                                      |
+| Send command        | `src/cli/commands/send.ts`                                                                                     |
+| Run playbook        | `src/cli/commands/run-playbook.ts`                                                                             |
+| Create agent        | `src/cli/commands/create-agent.ts`                                                                             |
+| Remove agent        | `src/cli/commands/remove-agent.ts`                                                                             |
+| Update agent        | `src/cli/commands/update-agent.ts`                                                                             |
+| SSH remote CRUD     | `src/cli/commands/create-ssh-remote.ts`, `list-ssh-remotes.ts`, `update-ssh-remote.ts`, `remove-ssh-remote.ts` |
+| SSH `-o` resolution | `src/shared/sshOptions.ts`                                                                                     |
+| Shared types        | `src/shared/types.ts`                                                                                          |
+| Template variables  | `src/shared/templateVariables.ts`                                                                              |
+| Agent definitions   | `src/main/agents/definitions.ts`                                                                               |
+| Agent IDs           | `src/shared/agentIds.ts`                                                                                       |
+| CLI activity        | `src/shared/cli-activity.ts`                                                                                   |
+| Prompt templates    | `src/prompts/`                                                                                                 |

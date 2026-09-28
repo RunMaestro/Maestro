@@ -6,6 +6,7 @@ import {
 	type FilePreviewToolbarVisibility,
 } from '../../../../../stores/settingsStore';
 import { SettingsSectionHeading } from '../../../SettingsSectionHeading';
+import { getRevealLabel } from '../../../../../utils/platformUtils';
 import { TOOLBAR_BUTTON_LABELS } from '../utils';
 import { SectionCard } from './SectionCard';
 import { ToggleSettingRow } from './ToggleSettingRow';
@@ -58,13 +59,16 @@ export function FileEditPreviewSection({
 					<p className="text-sm" style={{ color: theme.colors.textMain }}>
 						Toolbar buttons
 					</p>
-					<p className="text-xs opacity-50 mt-0.5">
+					<p className="text-xs opacity-70 mt-0.5">
 						Hide buttons you never use. Hidden actions stay reachable via command palette and
 						keyboard shortcuts.
 					</p>
 					<div className="grid grid-cols-2 gap-2 mt-3">
 						{FILE_PREVIEW_TOOLBAR_BUTTON_KEYS.map((key) => {
-							const label = TOOLBAR_BUTTON_LABELS[key];
+							const label =
+								key === 'revealInFolder'
+									? getRevealLabel(window.maestro?.platform ?? '')
+									: TOOLBAR_BUTTON_LABELS[key];
 							const enabled = filePreviewToolbarVisibility[key];
 							return (
 								<label

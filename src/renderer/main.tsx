@@ -25,7 +25,11 @@ const initSentry = async () => {
 	try {
 		const crashReportingEnabled =
 			(await window.maestro?.settings?.get('crashReportingEnabled')) ?? true;
-		if (crashReportingEnabled && !isDevelopment) {
+		// __CRASH_REPORTING_BUILD__ is false in any build from source. The main process
+		// holds the DSN and the renderer reports through it over Classic IPC, so an
+		// un-provisioned build already has nowhere to send events - this check just makes
+		// that explicit instead of relying on the IPC channel being absent.
+		if (crashReportingEnabled && !isDevelopment && __CRASH_REPORTING_BUILD__) {
 			Sentry.init({
 				// Set release version for filtering errors by app version
 				release: __APP_VERSION__,

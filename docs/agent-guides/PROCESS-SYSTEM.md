@@ -40,6 +40,7 @@ Source directories:
 | `getParser(sessionId)`                 | Get the output parser for a session's agent          |
 | `parseLine(sessionId, line)`           | Parse a JSON line using the session's parser         |
 | `runCommand(sessionId, cmd, cwd, ...)` | Run a one-off command (local or SSH)                 |
+| `cancelCommand(sessionId)`             | Kill an in-flight `runCommand` (local or SSH)        |
 
 **Emitted events** (defined in `ProcessManagerEvents`):
 
@@ -53,7 +54,7 @@ Source directories:
 - `thinking-chunk` - partial streaming text from agent reasoning
 - `tool-execution` - tool use events (OpenCode, Codex)
 - `slash-commands` - available slash commands from agent init
-- `query-complete` - batch query finished (for stats tracking)
+- `query-complete` - batch query finished (flushes buffered data and thinking text, WakaTime heartbeat)
 
 ### Spawning Strategy: PTY vs child_process
 
@@ -131,7 +132,7 @@ Also handles:
 - Runs error detection on exit code + stderr/stdout buffers
 - SSH error detection on combined output
 - Cleans up temp image files
-- Emits `query-complete` for stats tracking
+- Emits `query-complete` (buffer flushes, WakaTime)
 
 ### Runner Classes
 
@@ -140,6 +141,8 @@ Runs one-off terminal commands. On Unix, uses a transient PTY for shell alias su
 
 **SshCommandRunner** (`runners/SshCommandRunner.ts`):
 Runs terminal commands on remote hosts via SSH. Builds SSH args (key, options, port, destination), wraps command with `cd` and env exports, and spawns the SSH binary directly.
+
+Both runners keep a `sessionId -> kill` registry of in-flight commands so `cancelCommand()` can terminate one that never exits on its own (a program waiting on stdin, `tail -f`, a runaway build). These children are deliberately NOT in the ProcessManager's process map, so `kill(sessionId)` cannot reach them - `cancelCommand()` is the only way to stop one. The registry entry is removed on exit/error.
 
 ### Utility Modules
 
@@ -178,7 +181,6 @@ All listeners receive a `ProcessListenerDependencies` object containing:
 - `groupChatEmitters`, `groupChatRouter`, `groupChatStorage` - group chat integration
 - `sessionRecovery`, `outputBuffer`, `outputParser` - support utilities
 - `usageAggregator` - token counting
-- `getStatsDB` - usage database
 - `patterns` - compiled regex patterns for session ID parsing
 
 ### Listener Modules
@@ -199,6 +201,13 @@ All listeners receive a `ProcessListenerDependencies` object containing:
 - Web broadcast: extracts base session ID, generates message ID, broadcasts `session_output` to subscribed clients
 - Skips PTY terminal output and batch/synopsis output for web broadcast
 
+**group-chat-liveness-listener.ts** - Proof that a group chat turn is still working:
+
+- Subscribes to `AGENT_LIVENESS_EVENTS` (`src/main/utils/agent-liveness.ts`) plus `raw-stdout`
+- Filters on the `group-chat-` session prefix, then calls `noteGroupChatActivity(sessionId)`, which re-arms the router's per-turn silence budget (`createIdleWatchdog`)
+- Exists so `IProcessManager` stays a spawn/write/kill interface: the router never observes output directly, and widening it would put a second output path beside the buffering one in `data-listener.ts`
+- Miss an event here and the budget silently degrades into a wall-clock deadline that kills working agents
+
 **usage-listener.ts** - Token/cost statistics:
 
 - Group chat participants: calculates context usage percentage, updates participant storage
@@ -217,11 +226,7 @@ All listeners receive a `ProcessListenerDependencies` object containing:
 - Logs error details (type, message, recoverability)
 - Forwards via `safeSend('agent:error', ...)`
 
-**stats-listener.ts** - Query completion tracking:
-
-- Listens to `query-complete` events from batch mode processes
-- Inserts query events into StatsDB with retry logic (3 attempts, exponential backoff)
-- Broadcasts `stats:updated` to renderer for dashboard refresh
+**Query stats** are recorded by the renderer through `stats:record-query`, which carries the turn's tokens and cost. No main-process listener writes rows from `query-complete`: the former `stats-listener.ts` did, and every Auto Run turn landed twice, once without cost.
 
 **exit-listener.ts** - Process exit handling (most complex):
 
@@ -253,7 +258,6 @@ Process Listeners
     |
     +---> WebServer.broadcastToSessionClients() ---> WebSocket ---> Mobile/Web
     |
-    +---> StatsDB (query-complete only)
     |
     +---> WakaTimeManager (heartbeats)
     |
@@ -377,17 +381,18 @@ Tracks which sessions are visible in the web interface:
 
 Centralizes all web-server callback types. Core categories include: session/tab operations (`getSessions`, `getSessionDetail`, `writeToSession`, `executeCommand`, `interruptSession`, `switchMode`, `selectSession`, `selectTab`, `newTab`, `closeTab`, `renameTab`, `starTab`, `reorderTab`, `toggleBookmark`, `renameSession`), UI/config (`getTheme`, `getCustomCommands`, `getSettings`, `setSetting`), history/autorun (`getHistory`, `getAutoRunDocs`, `getAutoRunDocContent`), groups/group chat (`getGroups`, `renameGroup`, `getGroupChats`, `startGroupChat`, `getGroupChatState`), git (`getGitStatus`, `getGitDiff`), and cue/usage (`getCueSubscriptions`, `toggleCueSubscription`, `getCueActivity`, `getUsageDashboard`, `getAchievements`).
 
-### Web Server Factory (`web-server-factory.ts`)
+### Web Server Factory (`web-server-factory.ts` + `callbacks/`)
 
-Factory function that creates and configures the WebServer with all callbacks wired up. Handles:
+`web-server-factory.ts` is a thin orchestrator: it resolves the port (custom or random), resolves the security token (persistent or ephemeral), constructs the `WebServer`, and calls one `registerXCallbacks(server, deps)` per domain to wire up all `server.setXCallback(...)` registrations. It also owns the exported `WebServerFactoryDependencies` interface, which every domain module's `deps` parameter is a `Pick<...>` of.
 
-- Port selection (custom or random)
-- Security token (persistent or ephemeral)
-- Session callbacks (maps stored sessions to web-safe format, strips logs)
-- Command execution (forwards to renderer via IPC for single source of truth)
-- Tab operations (all forwarded to renderer via `mainWindow.webContents.send()`)
+The actual callback implementations live one directory down, in `web-server/callbacks/`, one file per domain (`sessionCallbacks.ts`, `terminalCallbacks.ts`, `tabCallbacks.ts`, `gitCallbacks.ts`, `cadenzaMovementCallbacks.ts`, `settingsCallbacks.ts`, `marketplaceCallbacks.ts`, etc. - 23 files in total). Each exports `registerXCallbacks(server: WebServer, deps: Pick<WebServerFactoryDependencies, ...>): void`. The `*Callbacks.ts` suffix is deliberate: `handlers/messageHandlers/` has same-named files (`sessions.ts`, `git.ts`, `cadenza.ts`) for a completely different `(ctx, client, message)` dispatch pattern, and the suffix keeps the two from being confused.
 
-The factory pattern with `isWebContentsAvailable()` guards ensures safe forwarding even when the renderer window is closing.
+Two cross-domain details worth knowing before touching this code:
+
+- `createRemoteRequest(getMainWindow)` (`callbacks/remoteRequest.ts`) is a shared IPC round-trip helper used by both `autoRunControlCallbacks.ts` and `playbookCallbacks.ts`.
+- `cadenzaMovementCallbacks.ts` owns the only genuine cross-callback mutable state in the module: a `pendingMovementRendererOperation` promise chain that serializes movement updates against designer inspections so a renderer HTML update can't land mid-inspection. It's declared inside `registerCadenzaMovementCallbacks`'s function scope (one instance per `createWebServer()` call), not at module top level.
+
+All callback bodies still forward to the renderer via `mainWindow.webContents.send()` (or the request/reply variant, `requestFromRenderer()`) guarded by `isWebContentsAvailable()`, so forwarding stays safe even while the renderer window is closing.
 
 ### Types (`types.ts`)
 

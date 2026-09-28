@@ -33,11 +33,30 @@ export interface QuickAction {
 		thinkingStartTime?: number;
 		busyTabName?: string;
 		queueCount: number;
+		/**
+		 * Replaces the leading elapsed-time segment of the subtext. Group chat
+		 * rooms have no per-run start timestamp, so they describe what is running
+		 * ("Moderator thinking") instead of how long it has been running.
+		 */
+		statusLabel?: string;
 	};
 	// Jump-to-agent actions only: bookmark state and stable sort key.
 	bookmarked?: boolean;
 	agentSortKey?: string;
 }
+
+/**
+ * Which section of the agents-mode list an entry belongs to, in display order.
+ * Derived rather than stored so the bucket, the section headers, and the sort
+ * can never disagree.
+ */
+export type AgentBucket = 'live' | 'idle';
+
+export function getAgentBucket(action: QuickAction): AgentBucket {
+	return action.isRunningAgent ? 'live' : 'idle';
+}
+
+export const AGENT_BUCKET_ORDER: readonly AgentBucket[] = ['live', 'idle'];
 
 export interface ActiveTabInfo {
 	isTerminalMode: boolean;
@@ -56,6 +75,11 @@ export interface ActiveTabInfo {
 export interface QuickActionsModalProps {
 	theme: Theme;
 	sessions: Session[];
+	/**
+	 * Agents in the order the Left Bar draws them; the first ten own the
+	 * Opt+Cmd+1..0 slots, so their jump rows show that chord.
+	 */
+	visibleSessions?: Session[];
 	setSessions: React.Dispatch<React.SetStateAction<Session[]>>;
 	activeSessionId: string;
 	groups: Group[];
@@ -90,8 +114,6 @@ export interface QuickActionsModalProps {
 	setAgentSessionsOpen: (open: boolean) => void;
 	setMemoryViewerOpen?: (open: boolean) => void;
 	setActiveAgentSessionId: (id: string | null) => void;
-	setGitDiffPreview: (diff: string | null) => void;
-	setGitLogOpen: (open: boolean) => void;
 	onRenameTab?: () => void;
 	onToggleReadOnlyMode?: () => void;
 	onToggleTabShowThinking?: () => void;
@@ -182,6 +204,7 @@ export interface QuickActionsModalProps {
 	 * the sidebar's visible ordering.
 	 */
 	onGoToNextUnread?: () => void;
+	onGoToPreviousUnread?: () => void;
 	/**
 	 * Shared session/tab history navigation - same callbacks bound to the
 	 * Cmd+Shift+, / Cmd+Shift+. keyboard shortcuts in App.tsx so the palette and

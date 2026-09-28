@@ -1,6 +1,7 @@
-import GithubSlugger from 'github-slugger';
-import type { TocEntry } from './types';
 import { formatSize } from '../../../shared/formatters';
+import { isImageFile } from '../../../shared/gitUtils';
+import { isParquetPreviewMarker } from '../../../shared/parquet/preview';
+import { getOpenedMediaKind } from '../../utils/mediaItems';
 
 // ─── Image Cache ──────────────────────────────────────────────────────────────
 
@@ -149,14 +150,62 @@ export function countLines(content: string): number {
 	return scanLineStats(content).lines;
 }
 
+// ─── Font Zoom ────────────────────────────────────────────────────────────────
+
+/** What the file preview currently shows, as far as font zoom is concerned. */
+export interface FontScaleTargetView {
+	/** The CodeMirror edit pane is up (it scales whatever the file type is). */
+	isEditing: boolean;
+	/** Edit mode is available at all - false for images and binaries. */
+	isEditableText: boolean;
+	isImage: boolean;
+	isBinary: boolean;
+	isMermaid: boolean;
+	/** CSV / TSV table view. */
+	isCsv: boolean;
+	/** Parquet grid, which owns its own row height and column widths. */
+	isParquet: boolean;
+	/** JSONL viewer, including JSON under a jq filter. */
+	isJsonlView: boolean;
+	/** HTML being rendered in the sandboxed iframe (not shown as source). */
+	isRenderedHtml: boolean;
+}
+
+/**
+ * Should the font-zoom control be offered for this view?
+ *
+ * Only where zoom actually moves type. The views that own their own layout -
+ * images, the binary card, rendered HTML inside a sandboxed iframe we cannot
+ * style, Mermaid diagrams, and the CSV / JSONL / parquet table viewers - are
+ * excluded: a
+ * control that changes nothing reads as broken, which is exactly why Rich Mode
+ * lost its copy of these buttons in Director's Notes.
+ */
+export function canScaleFontForView(view: FontScaleTargetView): boolean {
+	if (view.isEditing) return view.isEditableText;
+	return (
+		!view.isImage &&
+		!view.isBinary &&
+		!view.isCsv &&
+		!view.isParquet &&
+		!view.isJsonlView &&
+		!view.isMermaid &&
+		!view.isRenderedHtml
+	);
+}
+
 // ─── Language Detection ───────────────────────────────────────────────────────
 
 /** Map filename extension to syntax highlighting language code */
 /** Extension → syntax highlighting language (module-scope for reuse) */
 const LANGUAGE_MAP: Record<string, string> = {
 	ts: 'typescript',
+	mts: 'typescript',
+	cts: 'typescript',
 	tsx: 'tsx',
 	js: 'javascript',
+	mjs: 'javascript',
+	cjs: 'javascript',
 	jsx: 'jsx',
 	json: 'json',
 	md: 'markdown',
@@ -314,6 +363,28 @@ export const isBinaryExtension = (filename: string): boolean => {
 	return BINARY_EXTENSIONS.has(ext || '');
 };
 
+// ─── Gist Publishing ──────────────────────────────────────────────────────────
+
+/**
+ * Whether a previewed file can go up as a GitHub Gist. A gist body is plain
+ * text, so images, playable media, binaries, and the parquet marker (which
+ * holds a path rather than the file) are all out, and so is an empty file -
+ * publishing one produces a gist with nothing in it.
+ *
+ * Shared so the FilePreview toolbar button and the file tab's overlay menu
+ * offer the action on exactly the same files. `filename` must carry the
+ * extension (a file tab stores name and extension apart).
+ */
+export function isGistPublishableFile(filename: string, content: string): boolean {
+	if (!content.trim()) return false;
+	if (isImageFile(filename)) return false;
+	if (getOpenedMediaKind(filename, content) !== null) return false;
+	// Parquet is binary on disk but never arrives as content, so it is checked
+	// off the marker before the binary tests below (which the marker passes).
+	if (isParquetPreviewMarker(content)) return false;
+	return !isBinaryExtension(filename) && !isBinaryContent(content);
+}
+
 // ─── Formatting ───────────────────────────────────────────────────────────────
 
 /** Format file size in human-readable format */
@@ -357,31 +428,20 @@ export const countMarkdownTasks = (content: string): { open: number; closed: num
 	return { open, closed };
 };
 
-/** Extract headings from markdown content for table of contents */
-export const extractHeadings = (content: string): TocEntry[] => {
-	const headings: TocEntry[] = [];
-	const lines = content.split('\n');
-	let inCodeFence = false;
-	const slugger = new GithubSlugger();
+/**
+ * Re-exported from the shared TOC library, which owns heading extraction now
+ * that Director's Notes builds a jump list too. Kept here so existing File
+ * Preview imports keep resolving.
+ */
+export { extractHeadings } from '../Toc';
 
-	for (const line of lines) {
-		if (/^ {0,3}(`{3,}|~{3,})/.test(line)) {
-			inCodeFence = !inCodeFence;
-			continue;
-		}
-		if (inCodeFence) continue;
-
-		const match = line.match(/^(#{1,6})\s+(.+)$/);
-		if (match) {
-			const level = match[1].length;
-			const text = match[2].trim();
-			const slug = slugger.slug(text);
-			headings.push({ level, text, slug });
-		}
-	}
-
-	return headings;
-};
+/**
+ * Re-exported from the shared markdown-task helper, which main extracted so the
+ * chat renderer's clickable checkboxes and the File Preview toggle share one
+ * implementation. Kept here so existing File Preview imports keep resolving.
+ */
+export { toggleTaskCheckboxAtLine } from '../../utils/markdownTasks';
+export type { TaskToggleResult } from '../../utils/markdownTasks';
 
 /**
  * Normalize a POSIX-style path by resolving `.` and `..` segments.

@@ -1,4 +1,5 @@
 import type { LogEntry } from '../../../types';
+import { isSelfContainedCard } from '../../../utils/logEntries';
 
 export const isHiddenProgressEntry = (log: LogEntry): boolean =>
 	log.source === 'system' && log.id.startsWith('hidden-progress:');
@@ -11,8 +12,9 @@ export const isHiddenProgressEntry = (log: LogEntry): boolean =>
  * several streamed entries reads as a single reply. These kinds stay standalone:
  *   - `user` messages,
  *   - `tool` / `thinking` entries,
- *   - Agent Resilience outage markers (`retryOutageId`), which render as a live
- *     status card and must not fold into a text group,
+ *   - self-contained cards (`isSelfContainedCard`): `!` command output, Agent
+ *     Resilience outage markers, recovery prompts, tool-call cards. Each owns
+ *     its own body and must not fold into a text group,
  *   - cross-agent (`@mention`) replies. Each cross-agent reply already streams
  *     into its own single entry and carries its own attribution header, so it
  *     must never fold into the local response group OR into a sibling
@@ -38,11 +40,18 @@ export function collapseAiResponseLogs(logs: LogEntry[]): LogEntry[] {
 			// missing renderStyle and mislabel an interactive turn as "API".
 			// Preserve text-stream if ANY grouped entry carries it.
 			const hasTextStream = currentResponseGroup.some((l) => l.renderStyle === 'text-stream');
+			// Same trap for the model/effort pills: only streamed agent output
+			// carries the turn's codified settings, so a group led by a system
+			// banner would lose them if the combined entry took `[0]` alone.
+			const turnModel = currentResponseGroup.find((l) => l.turnModel)?.turnModel;
+			const turnEffort = currentResponseGroup.find((l) => l.turnEffort)?.turnEffort;
 			result.push({
 				...currentResponseGroup[0],
 				text: combinedText,
 				// Keep the first entry's timestamp and id.
 				...(hasTextStream ? { renderStyle: 'text-stream' as const } : {}),
+				...(turnModel ? { turnModel } : {}),
+				...(turnEffort ? { turnEffort } : {}),
 			});
 			currentResponseGroup = [];
 		}
@@ -56,13 +65,24 @@ export function collapseAiResponseLogs(logs: LogEntry[]): LogEntry[] {
 			log.source === 'tool' ||
 			log.source === 'thinking' ||
 			log.source === 'error' ||
-			log.retryOutageId
+			isSelfContainedCard(log)
 		) {
-			// Flush the response group, then keep tool/thinking/error entries and Agent
-			// Resilience outage markers as their own entries. The outage marker must not
-			// merge into a text group - it renders as a live status card. An error entry
-			// must not either, or it gets silently concatenated (no separator) into a
-			// later, unrelated AI response.
+			// Flush the response group, then keep tool/thinking/error entries and any
+			// self-contained card as their own entries.
+			//
+			// A card MUST NOT be merged into a text group. Grouping concatenates
+			// `text` and renders the result with the FIRST entry's props, so a card
+			// swallowed by a group loses its marker (`shellCommand`, `retryOutageId`,
+			// ...) and its body gets pasted onto the preceding agent reply as plain
+			// markdown - which is how `!ls` output ended up inside a chat bubble with
+			// its ANSI codes showing as literal text. An error entry must not merge
+			// either, or it gets silently concatenated (no separator) into a later,
+			// unrelated AI response.
+			//
+			// This used to name `retryOutageId` alone; every new card kind hit the
+			// same bug until it was added here too. isSelfContainedCard is the shared
+			// rule (see utils/logEntries.ts), so new kinds are standalone by
+			// construction.
 			flushResponseGroup();
 			result.push(log);
 		} else if (log.metadata?.crossAgent) {

@@ -1,5 +1,5 @@
 /**
- * Tests for tabHelpers.ts - AI multi-tab management utilities
+ * Tests for tabHelpers - AI multi-tab management utilities
  *
  * Functions tested:
  * - getActiveTab
@@ -26,8 +26,9 @@
  * - extractQuickTabName
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
+import { useUIStore } from '../../../renderer/stores/uiStore';
 import {
 	getActiveTab,
 	createTab,
@@ -56,21 +57,33 @@ import {
 	navigateToClosestTerminalTab,
 	createMergedSession,
 	hasActiveWizard,
+	flattenWizardIntoTab,
 	extractQuickTabName,
 	buildUnifiedTabs,
 	revealAiTab,
 	ensureInUnifiedTabOrder,
 	getRepairedUnifiedTabOrder,
 	moveActiveUnifiedTabToEdge,
+	moveUnifiedTabToTarget,
 	toggleReadOnlyModeFields,
+	permissionModeFields,
+	nextPermissionMode,
+	cycleShowThinkingFields,
+	setShowThinkingFields,
 	findNextUnreadSession,
+	findPreviousUnreadSession,
 	resolveQueuedItemTarget,
 	markTabRunningQueuedItem,
 	isSoleAiTabReplacement,
 	groupHasUnreadTabs,
 	computeUnreadGroupIds,
 	computeQueuedTabIds,
+	settleTabThinkingState,
 	filterUnifiedTabOrderForUnread,
+	groupFocusFields,
+	isSessionIdLabel,
+	visibleAiTabs,
+	hasUnreadVisibleTab,
 } from '../../../renderer/utils/tabHelpers';
 import { resolveTabPermissionMode } from '../../../shared/agentMetadata';
 import type { LogEntry } from '../../../renderer/types';
@@ -177,6 +190,22 @@ describe('tabHelpers', () => {
 			expect(result.session.activeTabId).toBe('mock-generated-id');
 		});
 
+		it('adopts an id minted elsewhere instead of generating one', () => {
+			// A web-desktop client draws the tab the DESKTOP just minted for it. The
+			// id has to be the desktop's, or the inventory broadcast that follows
+			// matches nothing and adds the same tab a second time.
+			const session = createMockSession({ aiTabs: [] });
+
+			const result = createTab(session, { id: 'desktop-minted-1' })!;
+
+			expect(result.tab.id).toBe('desktop-minted-1');
+			expect(result.session.activeTabId).toBe('desktop-minted-1');
+			expect(result.session.unifiedTabOrder).toContainEqual({
+				type: 'ai',
+				id: 'desktop-minted-1',
+			});
+		});
+
 		it('leaves any active tiled group so the new tab gets focus', () => {
 			// Regression: a new AI tab created while a group is active must clear
 			// activeGroupId, otherwise the group keeps taking over the panel and the new
@@ -205,6 +234,53 @@ describe('tabHelpers', () => {
 
 			expect(result.session.activeGroupId).toBeNull();
 			expect(result.session.activeTabId).toBe('mock-generated-id');
+		});
+
+		it('leaves every visible-surface pointer alone when activate is false', () => {
+			// Background create. The tab has to exist and be reachable, and NOTHING
+			// the user is currently looking at may change - "created but invisible"
+			// and "created and stole the view" are both failures.
+			const session = createMockSession({
+				aiTabs: [],
+				activeTabId: 'was-active',
+				activeFileTabId: 'file-1',
+				activeBrowserTabId: 'browser-1',
+				activeTerminalTabId: 'terminal-1',
+				inputMode: 'terminal',
+			});
+
+			const result = createTab(session, { activate: false })!;
+
+			expect(result.session.aiTabs).toHaveLength(1);
+			expect(result.session.unifiedTabOrder).toContainEqual({
+				type: 'ai',
+				id: 'mock-generated-id',
+			});
+			expect(result.session.activeTabId).toBe('was-active');
+			expect(result.session.activeFileTabId).toBe('file-1');
+			expect(result.session.activeBrowserTabId).toBe('browser-1');
+			expect(result.session.activeTerminalTabId).toBe('terminal-1');
+			expect(result.session.inputMode).toBe('terminal');
+		});
+
+		it('clears the higher-precedence surfaces when activate is true', () => {
+			// The other half: a browser/file/terminal selection outranks the AI tab
+			// in the render precedence, so activation that left one set would show
+			// the old view and look like the new tab did nothing.
+			const session = createMockSession({
+				aiTabs: [],
+				activeFileTabId: 'file-1',
+				activeBrowserTabId: 'browser-1',
+				activeTerminalTabId: 'terminal-1',
+				inputMode: 'terminal',
+			});
+
+			const result = createTab(session, { activate: true })!;
+
+			expect(result.session.activeTabId).toBe('mock-generated-id');
+			expect(result.session.activeFileTabId).toBeNull();
+			expect(result.session.activeBrowserTabId).toBeNull();
+			expect(result.session.activeTerminalTabId).toBeNull();
 			expect(result.session.inputMode).toBe('ai');
 		});
 
@@ -465,6 +541,71 @@ describe('tabHelpers', () => {
 			expect(result!.session.aiTabs[0].id).toBe('tab-2');
 		});
 
+		// Main has no tab state of its own, so this notification is the ONLY way it
+		// learns a tab went away (W1: an armed dispatch callback bound to a closed
+		// tab used to sit armed until its hour-long timeout).
+		describe('main-process tab-close notification', () => {
+			const notify = () => window.maestro.tabs.notifyAiTabClosed as ReturnType<typeof vi.fn>;
+
+			it('notifies main when a tab is really closed', () => {
+				const session = createMockSession({
+					id: 'agent-9',
+					aiTabs: [createMockTab({ id: 'tab-1' }), createMockTab({ id: 'tab-2' })],
+					activeTabId: 'tab-1',
+				});
+
+				closeTab(session, 'tab-1');
+
+				expect(notify()).toHaveBeenCalledTimes(1);
+				expect(notify()).toHaveBeenCalledWith('agent-9', 'tab-1');
+			});
+
+			it('does not notify when the tab was not found', () => {
+				const session = createMockSession({ aiTabs: [createMockTab({ id: 'tab-1' })] });
+
+				closeTab(session, 'nope');
+
+				expect(notify()).not.toHaveBeenCalled();
+			});
+
+			it('does not notify for a busy tab - it survives as an orphan and stays a dispatch target', () => {
+				const session = createMockSession({
+					id: 'agent-9',
+					aiTabs: [createMockTab({ id: 'tab-1', state: 'busy' }), createMockTab({ id: 'tab-2' })],
+					activeTabId: 'tab-1',
+				});
+
+				closeTab(session, 'tab-1');
+
+				expect(notify()).not.toHaveBeenCalled();
+			});
+
+			it('does not notify for a tab with queued items still to fire', () => {
+				const session = createMockSession({
+					id: 'agent-9',
+					aiTabs: [createMockTab({ id: 'tab-1' }), createMockTab({ id: 'tab-2' })],
+					activeTabId: 'tab-1',
+					executionQueue: [{ id: 'q-1', tabId: 'tab-1' } as unknown as QueuedItem],
+				});
+
+				closeTab(session, 'tab-1');
+
+				expect(notify()).not.toHaveBeenCalled();
+			});
+
+			it('does not notify when the caller preserves tab-scoped work (snooze)', () => {
+				const session = createMockSession({
+					id: 'agent-9',
+					aiTabs: [createMockTab({ id: 'tab-1' }), createMockTab({ id: 'tab-2' })],
+					activeTabId: 'tab-1',
+				});
+
+				closeTab(session, 'tab-1', false, { preserveTabScopedWork: true });
+
+				expect(notify()).not.toHaveBeenCalled();
+			});
+		});
+
 		it('selects previous tab (to the left) when active tab is closed', () => {
 			const tab1 = createMockTab({ id: 'tab-1' });
 			const tab2 = createMockTab({ id: 'tab-2' });
@@ -520,6 +661,189 @@ describe('tabHelpers', () => {
 			expect(result!.session.aiTabs).toHaveLength(1);
 			expect(result!.session.aiTabs[0].id).toBe('mock-generated-id');
 			expect(result!.session.activeTabId).toBe('mock-generated-id');
+		});
+
+		it('leaves zero AI tabs when closing the only AI tab beside a terminal tab', () => {
+			const tab = createMockTab({ id: 'tab-1' });
+			const session = createMockSession({
+				aiTabs: [tab],
+				activeTabId: 'tab-1',
+				terminalTabs: [{ id: 'term-1' }] as never,
+				unifiedTabOrder: [
+					{ type: 'terminal', id: 'term-1' },
+					{ type: 'ai', id: 'tab-1' },
+				],
+			});
+
+			const result = closeTab(session, 'tab-1');
+
+			expect(result!.session.aiTabs).toHaveLength(0);
+			// activeTabId must not keep pointing at the tab we just removed
+			expect(result!.session.activeTabId).toBe('');
+			// the surviving terminal tab takes over the view
+			expect(result!.session.activeTerminalTabId).toBe('term-1');
+			expect(result!.session.inputMode).toBe('terminal');
+			// no phantom AI ref is left behind in the unified order
+			expect(result!.session.unifiedTabOrder).toEqual([{ type: 'terminal', id: 'term-1' }]);
+		});
+
+		it('leaves zero AI tabs when closing the only AI tab beside a browser tab', () => {
+			const tab = createMockTab({ id: 'tab-1' });
+			const session = createMockSession({
+				aiTabs: [tab],
+				activeTabId: 'tab-1',
+				browserTabs: [createMockBrowserTab()] as never,
+				unifiedTabOrder: [
+					{ type: 'browser', id: 'browser-tab-1' },
+					{ type: 'ai', id: 'tab-1' },
+				],
+			});
+
+			const result = closeTab(session, 'tab-1');
+
+			expect(result!.session.aiTabs).toHaveLength(0);
+			expect(result!.session.activeTabId).toBe('');
+			expect(result!.session.activeBrowserTabId).toBe('browser-tab-1');
+		});
+
+		it('does not crash closing the only AI tab beside a terminal tab in unread-filter mode', () => {
+			const tab = createMockTab({ id: 'tab-1' });
+			const session = createMockSession({
+				aiTabs: [tab],
+				activeTabId: 'tab-1',
+				terminalTabs: [{ id: 'term-1' }] as never,
+				unifiedTabOrder: [
+					{ type: 'terminal', id: 'term-1' },
+					{ type: 'ai', id: 'tab-1' },
+				],
+			});
+
+			const result = closeTab(session, 'tab-1', true);
+
+			expect(result!.session.aiTabs).toHaveLength(0);
+			expect(result!.session.activeTabId).toBe('');
+		});
+
+		describe('unread-filter neighbor selection', () => {
+			// Two tabs are on screen under the filter: the active one (visible because
+			// it is active - viewing it cleared its unread flag) and one still unread.
+			// A read tab sits to the LEFT of the active tab and is hidden by the
+			// filter, so the plain left-neighbor math would land on a tab the user
+			// cannot see.
+			function createFilteredSession(): Session {
+				return createMockSession({
+					aiTabs: [
+						createMockTab({ id: 'read-left' }),
+						createMockTab({ id: 'active-tab' }),
+						createMockTab({ id: 'unread-right', hasUnread: true }),
+					],
+					activeTabId: 'active-tab',
+					inputMode: 'ai',
+					unifiedTabOrder: [
+						{ type: 'ai', id: 'read-left' },
+						{ type: 'ai', id: 'active-tab' },
+						{ type: 'ai', id: 'unread-right' },
+					],
+				});
+			}
+
+			afterEach(() => {
+				useUIStore.setState({ showUnreadOnly: false });
+			});
+
+			it('lands on the other visible unread tab, not the hidden read tab', () => {
+				const result = closeTab(createFilteredSession(), 'active-tab', true);
+
+				expect(result!.session.activeTabId).toBe('unread-right');
+			});
+
+			it('reads the live filter state when no override is passed', () => {
+				useUIStore.setState({ showUnreadOnly: true });
+
+				const result = closeTab(createFilteredSession(), 'active-tab');
+
+				expect(result!.session.activeTabId).toBe('unread-right');
+			});
+
+			it('falls back to the plain left neighbor when the filter is off', () => {
+				const result = closeTab(createFilteredSession(), 'active-tab');
+
+				expect(result!.session.activeTabId).toBe('read-left');
+			});
+
+			it('falls back to the plain left neighbor when nothing visible survives', () => {
+				const session = createMockSession({
+					aiTabs: [createMockTab({ id: 'read-left' }), createMockTab({ id: 'active-tab' })],
+					activeTabId: 'active-tab',
+					inputMode: 'ai',
+					unifiedTabOrder: [
+						{ type: 'ai', id: 'read-left' },
+						{ type: 'ai', id: 'active-tab' },
+					],
+				});
+
+				const result = closeTab(session, 'active-tab', true);
+
+				expect(result!.session.activeTabId).toBe('read-left');
+			});
+
+			it('lands on a visible terminal tab and switches the view to it', () => {
+				// The terminal tab survives the filter because it is the active terminal
+				// tab, so it is a legitimate neighbor even though it has no unread state.
+				const session = createMockSession({
+					aiTabs: [createMockTab({ id: 'read-left' }), createMockTab({ id: 'active-tab' })],
+					activeTabId: 'active-tab',
+					inputMode: 'ai',
+					terminalTabs: [{ id: 'term-1' }] as never,
+					activeTerminalTabId: 'term-1',
+					unifiedTabOrder: [
+						{ type: 'ai', id: 'read-left' },
+						{ type: 'terminal', id: 'term-1' },
+						{ type: 'ai', id: 'active-tab' },
+					],
+				});
+
+				const result = closeTab(session, 'active-tab', true);
+
+				expect(result!.session.activeTerminalTabId).toBe('term-1');
+				expect(result!.session.inputMode).toBe('terminal');
+			});
+		});
+
+		it('clears activeTabId when the closed sole AI tab was not the active tab', () => {
+			const tab = createMockTab({ id: 'tab-1' });
+			const session = createMockSession({
+				aiTabs: [tab],
+				// User is focused on the terminal, so activeTabId is not the tab being closed
+				activeTabId: 'tab-1-stale',
+				inputMode: 'terminal',
+				terminalTabs: [{ id: 'term-1' }] as never,
+				activeTerminalTabId: 'term-1',
+				unifiedTabOrder: [
+					{ type: 'terminal', id: 'term-1' },
+					{ type: 'ai', id: 'tab-1' },
+				],
+			});
+
+			const result = closeTab(session, 'tab-1');
+
+			expect(result!.session.aiTabs).toHaveLength(0);
+			expect(result!.session.activeTabId).toBe('');
+		});
+
+		it('still creates a fresh tab when closing the only AI tab with no other tabs', () => {
+			const tab = createMockTab({ id: 'tab-1' });
+			const session = createMockSession({
+				aiTabs: [tab],
+				activeTabId: 'tab-1',
+				unifiedTabOrder: [{ type: 'ai', id: 'tab-1' }],
+			});
+
+			const result = closeTab(session, 'tab-1');
+
+			expect(result!.session.aiTabs).toHaveLength(1);
+			expect(result!.session.activeTabId).toBe('mock-generated-id');
+			expect(result!.session.unifiedTabOrder).toEqual([{ type: 'ai', id: 'mock-generated-id' }]);
 		});
 
 		it('maintains max 25 items in closed tab history', () => {
@@ -1188,6 +1512,154 @@ describe('tabHelpers', () => {
 			expect(next.activeBrowserTabId).toBeNull();
 			expect(next.activeTabId).toBe('tab-1');
 			expect(next.inputMode).toBe('ai');
+		});
+	});
+
+	// Shared group-activation patch. The bug it fixes: the shared AI input targets
+	// session.activeTabId, so a group activated without syncing that id sends the
+	// user's message into a standalone tab that isn't even in the group.
+	describe('groupFocusFields', () => {
+		/** A group of `refs`, focused on the pane at `focusedIndex` (-1 = no focus). */
+		const makeGroup = (
+			refs: Array<{ type: 'ai' | 'file' | 'terminal' | 'browser'; id: string }>,
+			focusedIndex: number,
+			overrides: Record<string, unknown> = {}
+		) =>
+			({
+				id: 'g1',
+				name: 'Group',
+				createdAt: 0,
+				focusedPaneId: focusedIndex >= 0 ? `leaf-${focusedIndex}` : null,
+				layout: {
+					kind: 'split',
+					id: 'split-1',
+					direction: 'row',
+					sizes: refs.map(() => 1 / refs.length),
+					children: refs.map((tab, i) => ({ kind: 'leaf', id: `leaf-${i}`, tab })),
+				},
+				...overrides,
+			}) as never;
+
+		it('points activeTabId at the focused AI pane', () => {
+			const fields = groupFocusFields(
+				makeGroup(
+					[
+						{ type: 'ai', id: 'tab-1' },
+						{ type: 'ai', id: 'tab-2' },
+					],
+					1
+				)
+			);
+
+			expect(fields).toEqual({
+				activeGroupId: 'g1',
+				activeTabId: 'tab-2',
+				activeFileTabId: null,
+				activeBrowserTabId: null,
+				activeTerminalTabId: null,
+				inputMode: 'ai',
+			});
+		});
+
+		it('retargets a stale activeTabId that points outside the group', () => {
+			// The reported bug: clicking the group chip while a standalone tab was
+			// active left the composer aimed at that standalone tab, so messages typed
+			// into a visible tile landed in an invisible conversation.
+			const session = createMockSession({
+				aiTabs: [
+					createMockTab({ id: 'standalone' }),
+					createMockTab({ id: 'tiled-1' }),
+					createMockTab({ id: 'tiled-2' }),
+				],
+				activeTabId: 'standalone',
+				activeGroupId: null,
+			});
+			const group = makeGroup(
+				[
+					{ type: 'ai', id: 'tiled-1' },
+					{ type: 'ai', id: 'tiled-2' },
+				],
+				0
+			);
+
+			const next = { ...session, ...groupFocusFields(group) };
+
+			expect(next.activeGroupId).toBe('g1');
+			expect(next.activeTabId).toBe('tiled-1');
+		});
+
+		it('clears the standalone ids that outrank the group in render precedence', () => {
+			const session = createMockSession({
+				activeFileTabId: 'file-1',
+				activeTerminalTabId: 'term-1',
+				activeBrowserTabId: 'browser-1',
+				inputMode: 'terminal',
+			});
+
+			const next = {
+				...session,
+				...groupFocusFields(makeGroup([{ type: 'ai', id: 'tab-1' }], 0)),
+			};
+
+			expect(next.activeFileTabId).toBeNull();
+			expect(next.activeTerminalTabId).toBeNull();
+			expect(next.activeBrowserTabId).toBeNull();
+			expect(next.inputMode).toBe('ai');
+		});
+
+		it('leaves activeTabId alone when the focused pane is a non-AI tab', () => {
+			// MainPanelContent hides the input entirely in this case, so there is
+			// nothing to target and retargeting would be noise.
+			const fields = groupFocusFields(
+				makeGroup(
+					[
+						{ type: 'ai', id: 'tab-1' },
+						{ type: 'file', id: 'file-1' },
+					],
+					1
+				)
+			);
+
+			expect(fields).not.toHaveProperty('activeTabId');
+			expect(fields.activeGroupId).toBe('g1');
+		});
+
+		it('falls back to the first AI pane when the group has no focused pane', () => {
+			// With no resolvable focused leaf the input still RENDERS (the non-AI check
+			// needs a leaf to conclude anything), so it needs a target inside the group.
+			const fields = groupFocusFields(
+				makeGroup(
+					[
+						{ type: 'file', id: 'file-1' },
+						{ type: 'ai', id: 'tab-2' },
+					],
+					-1
+				)
+			);
+
+			expect(fields.activeTabId).toBe('tab-2');
+		});
+
+		it('falls back to the first AI pane when focusedPaneId is stale', () => {
+			const fields = groupFocusFields(
+				makeGroup([{ type: 'ai', id: 'tab-1' }], 0, { focusedPaneId: 'leaf-gone' })
+			);
+
+			expect(fields.activeTabId).toBe('tab-1');
+		});
+
+		it('omits activeTabId for an all-non-AI group', () => {
+			const fields = groupFocusFields(
+				makeGroup(
+					[
+						{ type: 'terminal', id: 'term-1' },
+						{ type: 'browser', id: 'browser-1' },
+					],
+					-1
+				)
+			);
+
+			expect(fields).not.toHaveProperty('activeTabId');
 		});
 	});
 
@@ -2757,6 +3229,95 @@ describe('tabHelpers', () => {
 		});
 	});
 
+	describe('flattenWizardIntoTab', () => {
+		const wizardTab = (overrides: Record<string, unknown> = {}) =>
+			createMockTab({
+				id: 'tab-1',
+				logs: [],
+				agentSessionId: null,
+				wizardState: {
+					isActive: true,
+					mode: 'new',
+					confidence: 60,
+					agentSessionId: 'provider-session-abc',
+					conversationHistory: [
+						{ id: 'm1', role: 'user', content: 'build me a playbook', timestamp: 1000 },
+						{ id: 'm2', role: 'assistant', content: 'what is the goal?', timestamp: 2000 },
+					],
+					previousUIState: { readOnlyMode: false, saveToHistory: true, showThinking: 'off' },
+				},
+				...overrides,
+			});
+
+		it('returns the tab untouched when there is no wizard', () => {
+			const tab = createMockTab({ id: 'tab-1' });
+			expect(flattenWizardIntoTab(tab)).toBe(tab);
+		});
+
+		// The wizard conversation lives ONLY in wizardState. Clearing wizardState without
+		// flattening is what used to leave the user staring at an empty tab.
+		it('moves the wizard conversation into the tab log', () => {
+			const result = flattenWizardIntoTab(wizardTab());
+			expect(result.wizardState).toBeUndefined();
+			expect(result.logs.map((l) => l.text)).toEqual(['build me a playbook', 'what is the goal?']);
+			expect(result.logs.map((l) => l.source)).toEqual(['user', 'ai']);
+		});
+
+		it('preserves entries already in the tab and appends the wizard after them', () => {
+			const existing: LogEntry = {
+				id: 'pre-existing',
+				timestamp: 1,
+				source: 'user',
+				text: 'conversation from before /wizard',
+			};
+			const result = flattenWizardIntoTab(wizardTab({ logs: [existing] }));
+			expect(result.logs[0]).toBe(existing);
+			expect(result.logs).toHaveLength(3);
+		});
+
+		// Without this the tab loses the handle to the running provider conversation and
+		// the next message starts a brand new one.
+		it('promotes the wizard provider session onto the tab', () => {
+			expect(flattenWizardIntoTab(wizardTab()).agentSessionId).toBe('provider-session-abc');
+		});
+
+		it('keeps the tab session when the wizard never got one', () => {
+			const tab = wizardTab({ agentSessionId: 'tab-session' });
+			tab.wizardState!.agentSessionId = undefined;
+			expect(flattenWizardIntoTab(tab).agentSessionId).toBe('tab-session');
+		});
+
+		it('appends the summary entry last when one is given', () => {
+			const summary: LogEntry = {
+				id: 'wizard-ended-tab-1',
+				timestamp: 3000,
+				source: 'system',
+				text: 'Wizard mode ended.',
+			};
+			const result = flattenWizardIntoTab(wizardTab(), { summary });
+			expect(result.logs[result.logs.length - 1]).toBe(summary);
+		});
+
+		// A racing state update can call this twice on the same tab. Duplicated transcript
+		// entries would be as confusing as losing them.
+		it('does not duplicate entries when applied twice', () => {
+			const summary: LogEntry = {
+				id: 'wizard-ended-tab-1',
+				timestamp: 3000,
+				source: 'system',
+				text: 'Wizard mode ended.',
+			};
+			const first = flattenWizardIntoTab(wizardTab(), { summary });
+			const second = flattenWizardIntoTab(
+				{ ...first, wizardState: wizardTab().wizardState },
+				{
+					summary,
+				}
+			);
+			expect(second.logs).toHaveLength(3);
+		});
+	});
+
 	// closeFileTab tests
 	describe('closeFileTab', () => {
 		it('returns null for empty session', () => {
@@ -3492,7 +4053,8 @@ describe('tabHelpers', () => {
 			expect(result!.id).toBe('read-tab');
 		});
 
-		it('includes browser tabs in showUnreadOnly mode', () => {
+		it('includes browser tabs in showUnreadOnly mode when setting enabled', () => {
+			useSettingsStore.setState({ showBrowserTabsInUnreadFilter: true });
 			const readTab = createMockTab({ id: 'read-tab', hasUnread: false, inputValue: '' });
 			const browserTab = createMockBrowserTab({ id: 'browser-1' });
 			const session = createMockSession({
@@ -3510,6 +4072,31 @@ describe('tabHelpers', () => {
 
 			expect(result!.type).toBe('browser');
 			expect(result!.id).toBe('browser-1');
+			useSettingsStore.setState({ showBrowserTabsInUnreadFilter: false });
+		});
+
+		it('skips browser tabs in showUnreadOnly mode when setting disabled', () => {
+			useSettingsStore.setState({ showBrowserTabsInUnreadFilter: false });
+			const readTab = createMockTab({ id: 'read-tab', hasUnread: false, inputValue: '' });
+			const unreadTab = createMockTab({ id: 'unread-tab', hasUnread: true, inputValue: '' });
+			const browserTab = createMockBrowserTab({ id: 'browser-1' });
+			const session = createMockSession({
+				aiTabs: [readTab, unreadTab],
+				browserTabs: [browserTab as any],
+				activeTabId: 'read-tab',
+				activeBrowserTabId: null,
+				activeFileTabId: null,
+				unifiedTabOrder: [
+					{ type: 'ai', id: 'read-tab' },
+					{ type: 'browser', id: 'browser-1' },
+					{ type: 'ai', id: 'unread-tab' },
+				],
+			});
+
+			const result = navigateToNextUnifiedTab(session, true);
+
+			expect(result!.type).toBe('ai');
+			expect(result!.id).toBe('unread-tab');
 		});
 
 		it('navigates to first tab when current tab not found in unified order', () => {
@@ -3604,7 +4191,9 @@ describe('tabHelpers', () => {
 			// Regression: prev/next used to treat activeTabId as reachable regardless of
 			// inputMode, so pressing next/prev on a terminal tab while an AI tab was the
 			// last-active one would jump through the hidden AI tab. TabBar hides that AI
-			// tab when inputMode !== 'ai', and navigation must match.
+			// tab when inputMode !== 'ai', and navigation must match. Terminal tabs are
+			// kept visible here so the scenario isolates the AI-tab skip.
+			useSettingsStore.setState({ showTerminalTabsInUnreadFilter: true });
 			const unreadAi = createMockTab({ id: 'ai-unread', hasUnread: true });
 			const readAi = createMockTab({ id: 'ai-read', hasUnread: false, inputValue: '' });
 			const session = createMockSession({
@@ -3636,6 +4225,36 @@ describe('tabHelpers', () => {
 			const backward = navigateToPrevUnifiedTab(session, true);
 			expect(backward!.type).toBe('terminal');
 			expect(backward!.id).toBe('term-1');
+			useSettingsStore.setState({ showTerminalTabsInUnreadFilter: false });
+		});
+
+		it('skips non-active terminal tabs in showUnreadOnly mode when setting disabled', () => {
+			useSettingsStore.setState({ showTerminalTabsInUnreadFilter: false });
+			const unreadAi = createMockTab({ id: 'ai-unread', hasUnread: true });
+			const readAi = createMockTab({ id: 'ai-read', hasUnread: false, inputValue: '' });
+			const session = createMockSession({
+				aiTabs: [unreadAi, readAi],
+				terminalTabs: [
+					{ id: 'term-1', name: 'Terminal 1' } as any,
+					{ id: 'term-2', name: 'Terminal 2' } as any,
+				],
+				activeTabId: 'ai-read',
+				activeTerminalTabId: 'term-2',
+				activeFileTabId: null,
+				inputMode: 'terminal',
+				unifiedTabOrder: [
+					{ type: 'ai', id: 'ai-unread' },
+					{ type: 'terminal', id: 'term-1' },
+					{ type: 'ai', id: 'ai-read' },
+					{ type: 'terminal', id: 'term-2' },
+				],
+			});
+
+			// Terminal 1 is hidden by the filter, so prev from the active Terminal 2 wraps
+			// past it (and past the hidden read AI tab) onto the unread AI tab.
+			const backward = navigateToPrevUnifiedTab(session, true);
+			expect(backward!.type).toBe('ai');
+			expect(backward!.id).toBe('ai-unread');
 		});
 	});
 
@@ -3802,7 +4421,8 @@ describe('tabHelpers', () => {
 			expect(result!.id).toBe('unread-tab');
 		});
 
-		it('includes browser tabs in showUnreadOnly mode', () => {
+		it('includes browser tabs in showUnreadOnly mode when setting enabled', () => {
+			useSettingsStore.setState({ showBrowserTabsInUnreadFilter: true });
 			const readTab = createMockTab({ id: 'read-tab', hasUnread: false, inputValue: '' });
 			const browserTab = createMockBrowserTab({ id: 'browser-1' });
 			const session = createMockSession({
@@ -3820,6 +4440,41 @@ describe('tabHelpers', () => {
 
 			expect(result!.type).toBe('browser');
 			expect(result!.id).toBe('browser-1');
+			useSettingsStore.setState({ showBrowserTabsInUnreadFilter: false });
+		});
+
+		it('keeps the active browser and terminal tabs visible when their settings are disabled', () => {
+			useSettingsStore.setState({
+				showBrowserTabsInUnreadFilter: false,
+				showTerminalTabsInUnreadFilter: false,
+			});
+			const readTab = createMockTab({ id: 'read-tab', hasUnread: false, inputValue: '' });
+			const session = createMockSession({
+				aiTabs: [readTab],
+				browserTabs: [
+					createMockBrowserTab({ id: 'browser-active' }) as any,
+					createMockBrowserTab({ id: 'browser-other' }) as any,
+				],
+				terminalTabs: [
+					{ id: 'term-active', name: 'Terminal 1' } as any,
+					{ id: 'term-other', name: 'Terminal 2' } as any,
+				],
+				activeTabId: 'read-tab',
+				activeBrowserTabId: 'browser-active',
+				activeTerminalTabId: 'term-active',
+				activeFileTabId: null,
+			});
+			const order = [
+				{ type: 'ai' as const, id: 'read-tab' },
+				{ type: 'browser' as const, id: 'browser-active' },
+				{ type: 'browser' as const, id: 'browser-other' },
+				{ type: 'terminal' as const, id: 'term-active' },
+				{ type: 'terminal' as const, id: 'term-other' },
+			];
+
+			const visible = filterUnifiedTabOrderForUnread(session, order).map((ref) => ref.id);
+
+			expect(visible).toEqual(['read-tab', 'browser-active', 'term-active']);
 		});
 
 		it('navigates to last tab when current tab not found in unified order', () => {
@@ -4018,6 +4673,34 @@ describe('tabHelpers', () => {
 	});
 
 	describe('hidden AI tabs', () => {
+		it('visibleAiTabs drops hidden consult tabs', () => {
+			const visible = createMockTab({ id: 'ai-1' });
+			const consult = createMockTab({ id: 'consult', hidden: true });
+
+			expect(visibleAiTabs([visible, consult]).map((t) => t.id)).toEqual(['ai-1']);
+		});
+
+		it('visibleAiTabs returns the input by reference when nothing is hidden', () => {
+			const tabs = [createMockTab({ id: 'ai-1' }), createMockTab({ id: 'ai-2' })];
+
+			expect(visibleAiTabs(tabs)).toBe(tabs);
+		});
+
+		it('visibleAiTabs tolerates a missing tab list', () => {
+			expect(visibleAiTabs(undefined)).toEqual([]);
+		});
+
+		it('hasUnreadVisibleTab ignores an unread hidden consult tab', () => {
+			const consult = createMockTab({ id: 'consult', hidden: true, hasUnread: true });
+
+			expect(hasUnreadVisibleTab([consult])).toBe(false);
+			expect(hasUnreadVisibleTab([consult, createMockTab({ id: 'ai-1', hasUnread: true })])).toBe(
+				true
+			);
+			expect(hasUnreadVisibleTab([])).toBe(false);
+			expect(hasUnreadVisibleTab(undefined)).toBe(false);
+		});
+
 		it('keeps a hidden tab out of the strip even though it holds a unifiedTabOrder ref', () => {
 			const visible = createMockTab({ id: 'ai-1' });
 			const consult = createMockTab({ id: 'consult', hidden: true });
@@ -4067,6 +4750,153 @@ describe('tabHelpers', () => {
 
 			expect(revealAiTab(session, 'ai-1')).toBe(session);
 			expect(revealAiTab(session, 'nope')).toBe(session);
+		});
+
+		// A hidden tab keeps its unifiedTabOrder ref (that's what restores its position
+		// on reveal), so every index the keyboard uses has to be taken from the strip's
+		// list rather than the stored one. Otherwise cycling stops on chips that aren't
+		// drawn: the user presses prev-tab and the panel changes with no tab selected.
+		const hiddenConsultSession = () =>
+			createMockSession({
+				aiTabs: [
+					createMockTab({ id: 'ai-1' }),
+					createMockTab({ id: 'consult-1', hidden: true }),
+					createMockTab({ id: 'consult-2', hidden: true }),
+					createMockTab({ id: 'ai-2' }),
+				],
+				activeTabId: 'ai-2',
+				unifiedTabOrder: [
+					{ type: 'ai', id: 'ai-1' },
+					{ type: 'ai', id: 'consult-1' },
+					{ type: 'ai', id: 'consult-2' },
+					{ type: 'ai', id: 'ai-2' },
+				],
+			});
+
+		it('steps prev-tab straight past hidden tabs onto the previous chip', () => {
+			const result = navigateToPrevUnifiedTab(hiddenConsultSession());
+
+			expect(result?.id).toBe('ai-1');
+		});
+
+		it('steps next-tab straight past hidden tabs when wrapping', () => {
+			const session = { ...hiddenConsultSession(), activeTabId: 'ai-1' };
+
+			const result = navigateToNextUnifiedTab(session);
+
+			expect(result?.id).toBe('ai-2');
+		});
+
+		it('counts Cmd+N over visible chips only', () => {
+			const session = hiddenConsultSession();
+
+			expect(navigateToUnifiedTabByIndex(session, 1)?.id).toBe('ai-2');
+			// Two chips are rendered, so there is no third position to reach.
+			expect(navigateToUnifiedTabByIndex(session, 2)).toBeNull();
+		});
+
+		it('treats the last visible chip as the last tab', () => {
+			expect(navigateToLastUnifiedTab(hiddenConsultSession())?.id).toBe('ai-2');
+		});
+
+		it('resolves a tab by id against the visible order', () => {
+			const session = hiddenConsultSession();
+
+			expect(navigateToUnifiedTabById(session, 'ai', 'ai-2')?.id).toBe('ai-2');
+		});
+
+		it('hands focus to a visible neighbor when the active tab is closed', () => {
+			const result = closeTab(hiddenConsultSession(), 'ai-2');
+
+			expect(result?.session.activeTabId).toBe('ai-1');
+		});
+
+		// Closing the ONLY chip in the strip while hidden consult tabs sit in the
+		// session used to leave an empty strip with one of those consults painted
+		// under it - a conversation the user never opened, and no chip to click back
+		// from. Hidden tabs are data containers, not company.
+		const soleVisibleTabSession = () =>
+			createMockSession({
+				aiTabs: [
+					createMockTab({ id: 'consult-1', hidden: true }),
+					createMockTab({ id: 'consult-2', hidden: true }),
+					createMockTab({ id: 'ai-1' }),
+				],
+				activeTabId: 'ai-1',
+				unifiedTabOrder: [
+					{ type: 'ai', id: 'consult-1' },
+					{ type: 'ai', id: 'consult-2' },
+					{ type: 'ai', id: 'ai-1' },
+				],
+			});
+
+		it('replaces the only visible tab rather than falling onto a hidden consult', () => {
+			const session = soleVisibleTabSession();
+
+			const result = closeTab(session, 'ai-1')!;
+
+			const strip = buildUnifiedTabs(result.session);
+			expect(strip).toHaveLength(1);
+			expect(result.session.activeTabId).toBe(strip[0].id);
+			expect(result.session.activeTabId).not.toBe('consult-1');
+			expect(result.session.activeTabId).not.toBe('consult-2');
+			// The fresh tab is a new empty chat, not one of the consults.
+			expect(getActiveTab(result.session)?.logs).toEqual([]);
+		});
+
+		it('keeps the hidden consult tabs when it creates the replacement', () => {
+			const result = closeTab(soleVisibleTabSession(), 'ai-1')!;
+
+			expect(result.session.aiTabs.map((t) => t.id)).toContain('consult-1');
+			expect(result.session.aiTabs.map((t) => t.id)).toContain('consult-2');
+			expect(result.session.unifiedTabOrder).toContainEqual({ type: 'ai', id: 'consult-1' });
+		});
+
+		it('blanks activeTabId instead of landing on a hidden tab when a terminal survives', () => {
+			const base = soleVisibleTabSession();
+			const session = createMockSession({
+				...base,
+				terminalTabs: [{ id: 'term-1' }] as never,
+				unifiedTabOrder: [...base.unifiedTabOrder, { type: 'terminal', id: 'term-1' }],
+			});
+
+			const result = closeTab(session, 'ai-1')!;
+
+			// No replacement chat: the terminal is still there to land on.
+			expect(result.session.aiTabs.map((t) => t.id)).toEqual(['consult-1', 'consult-2']);
+			expect(result.session.activeTabId).toBe('');
+			expect(result.session.activeTerminalTabId).toBe('term-1');
+		});
+
+		it('getActiveTab prefers a visible tab when activeTabId points nowhere', () => {
+			const session = createMockSession({
+				aiTabs: [createMockTab({ id: 'consult-1', hidden: true }), createMockTab({ id: 'ai-1' })],
+				activeTabId: '',
+			});
+
+			expect(getActiveTab(session)?.id).toBe('ai-1');
+		});
+
+		it('hands focus to a visible neighbor when the active file tab is closed', () => {
+			const fileTab = createMockFileTab({ id: 'file-1' });
+			const session = createMockSession({
+				aiTabs: [createMockTab({ id: 'ai-1' }), createMockTab({ id: 'consult-1', hidden: true })],
+				activeTabId: 'ai-1',
+				filePreviewTabs: [fileTab],
+				activeFileTabId: 'file-1',
+				unifiedTabOrder: [
+					{ type: 'ai', id: 'ai-1' },
+					{ type: 'ai', id: 'consult-1' },
+					{ type: 'file', id: 'file-1' },
+				],
+			});
+
+			const result = closeFileTab(session, 'file-1');
+
+			expect(result?.session.activeTabId).toBe('ai-1');
+			expect(result?.session.activeFileTabId).toBeNull();
+			// The hidden tab keeps its stored ref so revealing it still restores position.
+			expect(result?.session.unifiedTabOrder).toContainEqual({ type: 'ai', id: 'consult-1' });
 		});
 	});
 
@@ -4744,6 +5574,30 @@ describe('tabHelpers', () => {
 			expect(result.targetSessionId).toBe('b');
 		});
 
+		it('never jumps to a hidden consult tab, in this session or another', () => {
+			// The jump path reveals whatever it lands on, so stopping on a hidden
+			// cross-agent consult tab would open a conversation the user never asked
+			// for - the background consult would become a foreground tab.
+			const sessions = [
+				createMockSession({
+					id: 'a',
+					aiTabs: [
+						createMockTab({ id: 'tab-a', hasUnread: false }),
+						createMockTab({ id: 'consult-a', hasUnread: true, hidden: true }),
+					],
+					activeTabId: 'tab-a',
+				}),
+				createMockSession({
+					id: 'b',
+					aiTabs: [createMockTab({ id: 'consult-b', hasUnread: true, hidden: true })],
+					activeTabId: 'consult-b',
+				}),
+			];
+			const result = findNextUnreadSession(sessions, 'a');
+			expect(result.jumped).toBe(false);
+			expect(result.targetTabId).toBeUndefined();
+		});
+
 		it('returns the first unread tab that differs from activeTabId', () => {
 			const sessions = [
 				createMockSession({ id: 'a', aiTabs: [], activeTabId: '' }),
@@ -5024,6 +5878,129 @@ describe('tabHelpers', () => {
 		});
 	});
 
+	describe('findPreviousUnreadSession', () => {
+		it('walks sessions backwards, wrapping around', () => {
+			const sessions = [
+				createMockSession({
+					id: 'a',
+					aiTabs: [createMockTab({ id: 'tab-a', hasUnread: true })],
+					activeTabId: 'tab-a',
+				}),
+				createMockSession({
+					id: 'b',
+					aiTabs: [createMockTab({ id: 'tab-b', hasUnread: false })],
+					activeTabId: 'tab-b',
+				}),
+				createMockSession({
+					id: 'c',
+					aiTabs: [createMockTab({ id: 'tab-c', hasUnread: true })],
+					activeTabId: 'tab-c',
+				}),
+			];
+			// Forward from 'b' lands on 'c'; backward has to land on 'a'.
+			expect(findNextUnreadSession(sessions, 'b').targetSessionId).toBe('c');
+			expect(findPreviousUnreadSession(sessions, 'b').targetSessionId).toBe('a');
+		});
+
+		it('wraps backwards past index 0 without a negative index', () => {
+			const sessions = [
+				createMockSession({
+					id: 'a',
+					aiTabs: [createMockTab({ id: 'tab-a', hasUnread: false })],
+					activeTabId: 'tab-a',
+				}),
+				createMockSession({
+					id: 'b',
+					aiTabs: [createMockTab({ id: 'tab-b', hasUnread: true })],
+					activeTabId: 'tab-b',
+				}),
+			];
+			const result = findPreviousUnreadSession(sessions, 'a');
+			expect(result.jumped).toBe(true);
+			expect(result.targetSessionId).toBe('b');
+		});
+
+		it('picks the LAST actionable tab in the current session, mirroring next', () => {
+			const sessions = [
+				createMockSession({
+					id: 'a',
+					aiTabs: [
+						createMockTab({ id: 'tab-a1', hasUnread: true }),
+						createMockTab({ id: 'tab-a2', hasUnread: false }),
+						createMockTab({ id: 'tab-a3', hasUnread: true }),
+					],
+					activeTabId: 'tab-a2',
+				}),
+			];
+			expect(findNextUnreadSession(sessions, 'a').targetTabId).toBe('tab-a1');
+			expect(findPreviousUnreadSession(sessions, 'a').targetTabId).toBe('tab-a3');
+		});
+
+		it('picks the last actionable tab of the target session', () => {
+			const sessions = [
+				createMockSession({ id: 'a', aiTabs: [], activeTabId: '' }),
+				createMockSession({
+					id: 'b',
+					aiTabs: [
+						createMockTab({ id: 'tab-b1', hasUnread: true }),
+						createMockTab({ id: 'tab-b2', hasUnread: true }),
+					],
+					activeTabId: 'tab-b1',
+				}),
+			];
+			const result = findPreviousUnreadSession(sessions, 'a');
+			expect(result.targetSessionId).toBe('b');
+			expect(result.targetTabId).toBe('tab-b2');
+		});
+
+		it('reports jumped=false when nothing is actionable', () => {
+			const sessions = [
+				createMockSession({
+					id: 'a',
+					aiTabs: [createMockTab({ id: 'tab-a', hasUnread: false })],
+					activeTabId: 'tab-a',
+				}),
+			];
+			const result = findPreviousUnreadSession(sessions, 'a');
+			expect(result.jumped).toBe(false);
+			expect(result.clearedCurrent).toBe(false);
+		});
+
+		it('honors drafts and active wizards the same way the forward walk does', () => {
+			const sessions = [
+				createMockSession({
+					id: 'a',
+					aiTabs: [createMockTab({ id: 'tab-a', hasUnread: false })],
+					activeTabId: 'tab-a',
+				}),
+				createMockSession({
+					id: 'b',
+					aiTabs: [createMockTab({ id: 'tab-b', hasUnread: false, inputValue: 'draft' })],
+					activeTabId: 'tab-b',
+				}),
+			];
+			expect(findPreviousUnreadSession(sessions, 'a').targetSessionId).toBe('b');
+
+			const wizardSessions = [
+				createMockSession({
+					id: 'a',
+					aiTabs: [
+						createMockTab({ id: 'tab-a1', hasUnread: false }),
+						createMockTab({ id: 'tab-a2', hasUnread: false }),
+					],
+					activeTabId: 'tab-a1',
+				}),
+			];
+			const result = findPreviousUnreadSession(
+				wizardSessions,
+				'a',
+				(tabId: string) => tabId === 'tab-a2'
+			);
+			expect(result.jumped).toBe(true);
+			expect(result.targetTabId).toBe('tab-a2');
+		});
+	});
+
 	describe('browser tabs', () => {
 		it('navigates to a browser tab from unified order', () => {
 			const aiTab = createMockTab({ id: 'ai-1' });
@@ -5149,7 +6126,7 @@ describe('tabHelpers', () => {
 				text: 'run this',
 				timestamp: 1700000000000,
 			};
-			const result = markTabRunningQueuedItem(tab, item);
+			const result = markTabRunningQueuedItem(tab, item, createMockSession({ aiTabs: [tab] }));
 			expect(result.state).toBe('busy');
 			expect(result.thinkingStartTime).toBeDefined();
 			expect(result.logs).toHaveLength(1);
@@ -5169,7 +6146,7 @@ describe('tabHelpers', () => {
 				forceParallel: true,
 				readOnlyMode: true,
 			};
-			const result = markTabRunningQueuedItem(tab, item);
+			const result = markTabRunningQueuedItem(tab, item, createMockSession({ aiTabs: [tab] }));
 			expect(result.logs[0]).toMatchObject({ forceParallel: true, readOnly: true });
 		});
 
@@ -5182,9 +6159,94 @@ describe('tabHelpers', () => {
 				command: '/commit',
 				timestamp: 1700000000000,
 			};
-			const result = markTabRunningQueuedItem(tab, item);
+			const result = markTabRunningQueuedItem(tab, item, createMockSession({ aiTabs: [tab] }));
 			expect(result.state).toBe('busy');
 			expect(result.logs).toHaveLength(0);
+		});
+
+		// A dequeued turn is a send, so it must freeze the same model/effort stamp the
+		// direct composer path freezes. Every message typed while the agent was busy
+		// comes through here, and an unstamped turn renders no attribution pills.
+		it('codifies the turn provider, model, and effort at dispatch', () => {
+			const tab = createMockTab({ id: 't1', logs: [] });
+			const session = createMockSession({
+				aiTabs: [tab],
+				toolType: 'claude-code',
+				customModel: 'opus[1m]',
+				customEffort: 'high',
+			});
+			const item: QueuedItem = {
+				id: 'q1',
+				tabId: 't1',
+				type: 'message',
+				text: 'queued while busy',
+				timestamp: 1700000000000,
+			};
+			const result = markTabRunningQueuedItem(tab, item, session);
+			expect(result.turnProvider).toBe('claude-code');
+			expect(result.turnModel).toBe('opus[1m]');
+			expect(result.turnEffort).toBe('high');
+		});
+
+		it('prefers the tab override over the agent default when codifying', () => {
+			const tab = createMockTab({ id: 't1', logs: [], customModel: 'fable' });
+			const session = createMockSession({
+				aiTabs: [tab],
+				customModel: 'opus[1m]',
+				customEffort: 'high',
+			});
+			const result = markTabRunningQueuedItem(
+				tab,
+				{ id: 'q1', tabId: 't1', type: 'command', command: '/commit', timestamp: 1700000000000 },
+				session
+			);
+			expect(result.turnModel).toBe('fable');
+			expect(result.turnEffort).toBe('high');
+		});
+
+		// The queue can sit through any number of model changes. The item carries
+		// what the user had selected when they hit Enter, and THAT is what the turn
+		// runs under and what the response pills name.
+		it('stamps the settings the item was queued with, not the live ones', () => {
+			const tab = createMockTab({ id: 't1', logs: [], customModel: 'opus[1m]' });
+			const session = createMockSession({
+				aiTabs: [tab],
+				toolType: 'claude-code',
+				customEffort: 'xhigh',
+			});
+			const item: QueuedItem = {
+				id: 'q1',
+				tabId: 't1',
+				type: 'message',
+				text: 'queued on the cheap model',
+				timestamp: 1700000000000,
+				turnSettings: { model: 'haiku', effort: 'low' },
+			};
+			const result = markTabRunningQueuedItem(tab, item, session);
+			expect(result.turnProvider).toBe('claude-code');
+			expect(result.turnModel).toBe('haiku');
+			expect(result.turnEffort).toBe('low');
+		});
+
+		// An empty capture is not a missing capture: the user queued on the agent
+		// default, so a model they picked afterwards must not be attributed to it.
+		it('keeps an item queued on the agent default unstamped', () => {
+			const tab = createMockTab({ id: 't1', logs: [], customModel: 'opus[1m]' });
+			const session = createMockSession({ aiTabs: [tab], customEffort: 'xhigh' });
+			const result = markTabRunningQueuedItem(
+				tab,
+				{
+					id: 'q1',
+					tabId: 't1',
+					type: 'message',
+					text: 'queued on the default',
+					timestamp: 1700000000000,
+					turnSettings: {},
+				},
+				session
+			);
+			expect(result.turnModel).toBeUndefined();
+			expect(result.turnEffort).toBeUndefined();
 		});
 	});
 
@@ -5363,6 +6425,81 @@ describe('tabHelpers', () => {
 		});
 	});
 
+	describe('moveUnifiedTabToTarget', () => {
+		/** ai(a1) -> terminal(t1) -> file(f1) -> browser(b1) */
+		function stripSession(overrides: Record<string, unknown> = {}) {
+			return createMockSession({
+				aiTabs: [createMockTab({ id: 'a1' })],
+				terminalTabs: [
+					{ id: 't1', name: null, shellType: 'zsh', pid: 0, cwd: '', createdAt: 1, state: 'idle' },
+				],
+				filePreviewTabs: [createMockFileTab({ id: 'f1', path: '/tmp/f1' })],
+				browserTabs: [createMockBrowserTab({ id: 'b1' })],
+				unifiedTabOrder: [
+					{ type: 'ai', id: 'a1' },
+					{ type: 'terminal', id: 't1' },
+					{ type: 'file', id: 'f1' },
+					{ type: 'browser', id: 'b1' },
+				],
+				activeTabId: 'a1',
+				...overrides,
+			});
+		}
+
+		it('drops a tab just past the target when dragging forwards', () => {
+			const result = moveUnifiedTabToTarget(stripSession(), 'a1', 'f1');
+			expect(result.unifiedTabOrder.map((r) => r.id)).toEqual(['t1', 'f1', 'a1', 'b1']);
+		});
+
+		it('drops a tab into the target slot when dragging backwards', () => {
+			const result = moveUnifiedTabToTarget(stripSession(), 'b1', 't1');
+			expect(result.unifiedTabOrder.map((r) => r.id)).toEqual(['a1', 'b1', 't1', 'f1']);
+		});
+
+		it('reorders across kinds without touching the tabs themselves', () => {
+			const session = stripSession();
+			const result = moveUnifiedTabToTarget(session, 'f1', 'a1');
+			expect(result.unifiedTabOrder.map((r) => `${r.type}:${r.id}`)).toEqual([
+				'file:f1',
+				'ai:a1',
+				'terminal:t1',
+				'browser:b1',
+			]);
+			expect(result.aiTabs).toBe(session.aiTabs);
+		});
+
+		it('moves the tab the user grabbed even when hidden refs sit between the chips', () => {
+			// The strip omits hidden AI tabs, so chip positions and unifiedTabOrder
+			// positions disagree. Addressing by id is what keeps the two in step.
+			const session = createMockSession({
+				aiTabs: [
+					createMockTab({ id: 'a1' }),
+					createMockTab({ id: 'consult', hidden: true }),
+					createMockTab({ id: 'a2' }),
+				],
+				unifiedTabOrder: [
+					{ type: 'ai', id: 'a1' },
+					{ type: 'ai', id: 'consult' },
+					{ type: 'ai', id: 'a2' },
+				],
+				activeTabId: 'a1',
+			});
+			const result = moveUnifiedTabToTarget(session, 'a1', 'a2');
+			expect(result.unifiedTabOrder.map((r) => r.id)).toEqual(['consult', 'a2', 'a1']);
+		});
+
+		it('is a no-op when the source and target are the same tab', () => {
+			const session = stripSession();
+			expect(moveUnifiedTabToTarget(session, 'a1', 'a1')).toBe(session);
+		});
+
+		it('is a no-op when either id is absent from the order', () => {
+			const session = stripSession();
+			expect(moveUnifiedTabToTarget(session, 'a1', 'gone')).toBe(session);
+			expect(moveUnifiedTabToTarget(session, 'gone', 'a1')).toBe(session);
+		});
+	});
+
 	describe('toggleReadOnlyModeFields', () => {
 		it('toggles a non-read-only tab to readonly on both fields', () => {
 			expect(toggleReadOnlyModeFields({ readOnlyMode: false })).toEqual({
@@ -5394,5 +6531,249 @@ describe('tabHelpers', () => {
 			const afterOff = toggleReadOnlyModeFields(afterOn);
 			expect(resolveTabPermissionMode(afterOff)).toBe('full');
 		});
+	});
+
+	describe('cycleShowThinkingFields', () => {
+		const thinkingLog: LogEntry = {
+			id: 'think-1',
+			timestamp: 1,
+			source: 'thinking',
+			text: 'reasoning',
+		};
+		const toolLog: LogEntry = { id: 'tool-1', timestamp: 2, source: 'tool', text: 'edit' };
+		const stdoutLog: LogEntry = { id: 'out-1', timestamp: 3, source: 'stdout', text: 'ok' };
+		const mixedLogs = [thinkingLog, toolLog, stdoutLog];
+
+		it('cycles off to on and leaves logs unchanged', () => {
+			expect(cycleShowThinkingFields({ showThinking: 'off', logs: mixedLogs })).toEqual({
+				showThinking: 'on',
+				logs: mixedLogs,
+			});
+		});
+
+		it('treats an unset mode as off, same as nextThinkingMode', () => {
+			expect(cycleShowThinkingFields({ showThinking: undefined, logs: mixedLogs })).toEqual({
+				showThinking: 'on',
+				logs: mixedLogs,
+			});
+		});
+
+		it('cycles on to sticky and leaves logs unchanged', () => {
+			expect(cycleShowThinkingFields({ showThinking: 'on', logs: mixedLogs })).toEqual({
+				showThinking: 'sticky',
+				logs: mixedLogs,
+			});
+		});
+
+		it('cycles sticky to off and drops only thinking logs', () => {
+			expect(cycleShowThinkingFields({ showThinking: 'sticky', logs: mixedLogs })).toEqual({
+				showThinking: 'off',
+				logs: [toolLog, stdoutLog],
+			});
+		});
+	});
+
+	describe('setShowThinkingFields', () => {
+		const thinkingLog: LogEntry = {
+			id: 'think-1',
+			timestamp: 1,
+			source: 'thinking',
+			text: 'reasoning',
+		};
+		const toolLog: LogEntry = { id: 'tool-1', timestamp: 2, source: 'tool', text: 'edit' };
+		const mixedLogs = [thinkingLog, toolLog];
+
+		it('sets the named mode without stepping through the cycle', () => {
+			// The phone options sheet lists all three modes; from 'off' the cycle
+			// would reach 'sticky' only on a second tap.
+			expect(setShowThinkingFields({ logs: mixedLogs }, 'sticky')).toEqual({
+				showThinking: 'sticky',
+				logs: mixedLogs,
+			});
+		});
+
+		it('drops only thinking logs when the mode is set to off', () => {
+			expect(setShowThinkingFields({ logs: mixedLogs }, 'off')).toEqual({
+				showThinking: 'off',
+				logs: [toolLog],
+			});
+		});
+
+		it('agrees with cycleShowThinkingFields on every step of the cycle', () => {
+			// The cycle delegates here, so the log-clearing rule is written once.
+			for (const [from, to] of [
+				['off', 'on'],
+				['on', 'sticky'],
+				['sticky', 'off'],
+			] as const) {
+				expect(cycleShowThinkingFields({ showThinking: from, logs: mixedLogs })).toEqual(
+					setShowThinkingFields({ logs: mixedLogs }, to)
+				);
+			}
+		});
+	});
+
+	describe('permissionModeFields', () => {
+		it('keeps readOnlyMode in lockstep with the named mode', () => {
+			// The pill resolves through resolveTabPermissionMode and the spawn path
+			// reads readOnlyMode, so a mode written without its boolean drifts.
+			expect(permissionModeFields('full')).toEqual({
+				permissionMode: 'full',
+				readOnlyMode: false,
+			});
+			expect(permissionModeFields('standard')).toEqual({
+				permissionMode: 'standard',
+				readOnlyMode: false,
+			});
+			expect(permissionModeFields('readonly')).toEqual({
+				permissionMode: 'readonly',
+				readOnlyMode: true,
+			});
+		});
+
+		it('agrees with resolveTabPermissionMode on what it wrote', () => {
+			for (const mode of ['full', 'standard', 'readonly'] as const) {
+				expect(resolveTabPermissionMode(permissionModeFields(mode))).toBe(mode);
+			}
+		});
+	});
+
+	describe('nextPermissionMode', () => {
+		it('cycles full to standard to readonly and back', () => {
+			expect(nextPermissionMode('full', true)).toBe('standard');
+			expect(nextPermissionMode('standard', true)).toBe('readonly');
+			expect(nextPermissionMode('readonly', true)).toBe('full');
+		});
+
+		it('skips standard for an agent with no working relay', () => {
+			// Landing on it would put the tab in a mode whose tool approvals never
+			// arrive.
+			expect(nextPermissionMode('full', false)).toBe('readonly');
+			expect(nextPermissionMode('readonly', false)).toBe('full');
+		});
+	});
+
+	// A recorded display name is not proof of a name: an unnamed tab records the
+	// very label the strip drew for it. Restoring that as `tab.name` looks
+	// identical and silently opts the tab out of ever being auto-named.
+	describe('isSessionIdLabel', () => {
+		it('recognizes every shape getTabDisplayName falls back to', () => {
+			expect(isSessionIdLabel('8535E0E3', '8535e0e3-90ca-43c7-98ae-c42a09cf23ad')).toBe(true);
+			expect(isSessionIdLabel('SES_4BCD', 'ses_4bcd1234')).toBe(true);
+			expect(isSessionIdLabel('THR_ABC1', 'thread_abc12345')).toBe(true);
+			expect(isSessionIdLabel('ABCDEFGH', 'abcdefghijkl')).toBe(true);
+		});
+
+		it('leaves a real name alone', () => {
+			expect(isSessionIdLabel('PP Farm Meta Data', '8535e0e3-90ca-43c7-98ae-c42a09cf23ad')).toBe(
+				false
+			);
+			// The octet of a DIFFERENT session is just a name that looks like one.
+			expect(isSessionIdLabel('8535E0E3', 'deadbeef-90ca-43c7-98ae-c42a09cf23ad')).toBe(false);
+		});
+
+		it('is false when either side is missing', () => {
+			expect(isSessionIdLabel(null, 'ses_4bcd1234')).toBe(false);
+			expect(isSessionIdLabel('', 'ses_4bcd1234')).toBe(false);
+			expect(isSessionIdLabel('SES_4BCD', undefined)).toBe(false);
+		});
+	});
+});
+
+/**
+ * settleTabThinkingState - ending a turn that had no process to exit.
+ *
+ * The busy dot and the Thinking pill are normally cleared by the process-exit
+ * listener. A cancelled auto-retry whose resend never spawned has no such exit,
+ * so this is what stops the tab pulsing for work nobody is doing. The session
+ * fields are the part worth guarding: they describe the AGENT, so they may only
+ * be cleared once nothing is left running.
+ */
+describe('settleTabThinkingState', () => {
+	it('idles the tab and clears the agent when nothing else is running', () => {
+		const session = createMockSession({
+			state: 'busy',
+			busySource: 'ai',
+			thinkingStartTime: 1_000,
+			aiTabs: [createMockTab({ id: 't1', state: 'busy', thinkingStartTime: 1_000 })],
+		});
+
+		const result = settleTabThinkingState(session, 't1');
+
+		expect(result.aiTabs[0].state).toBe('idle');
+		expect(result.aiTabs[0].thinkingStartTime).toBeUndefined();
+		expect(result.state).toBe('idle');
+		expect(result.busySource).toBeUndefined();
+		expect(result.thinkingStartTime).toBeUndefined();
+	});
+
+	// Settling one tab must not report the agent as finished: another tab is
+	// mid-turn, and the pill still has to count it.
+	it('leaves the agent busy while another tab is still working', () => {
+		const session = createMockSession({
+			state: 'busy',
+			busySource: 'ai',
+			thinkingStartTime: 1_000,
+			aiTabs: [
+				createMockTab({ id: 't1', state: 'busy' }),
+				createMockTab({ id: 't2', state: 'busy' }),
+			],
+		});
+
+		const result = settleTabThinkingState(session, 't1');
+
+		expect(result.aiTabs[0].state).toBe('idle');
+		expect(result.aiTabs[1].state).toBe('busy');
+		expect(result.state).toBe('busy');
+		expect(result.busySource).toBe('ai');
+		expect(result.thinkingStartTime).toBe(1_000);
+	});
+
+	// A tab closed mid-turn survives only so the pill keeps counting it, so
+	// settling it has to retire the orphan outright - otherwise the agent stays
+	// marked busy for a tab that no longer exists.
+	it('retires an orphaned thinking tab rather than leaving it counting', () => {
+		const session = createMockSession({
+			state: 'busy',
+			busySource: 'ai',
+			thinkingStartTime: 1_000,
+			aiTabs: [createMockTab({ id: 't1', state: 'idle' })],
+			orphanedThinkingTabs: [createMockTab({ id: 'gone', state: 'busy' })],
+		});
+
+		const result = settleTabThinkingState(session, 'gone');
+
+		expect(result.orphanedThinkingTabs).toBeUndefined();
+		expect(result.state).toBe('idle');
+		expect(result.busySource).toBeUndefined();
+	});
+
+	it('keeps the agent busy for an orphan that is not the one being settled', () => {
+		const session = createMockSession({
+			state: 'busy',
+			busySource: 'ai',
+			aiTabs: [createMockTab({ id: 't1', state: 'busy' })],
+			orphanedThinkingTabs: [createMockTab({ id: 'gone', state: 'busy' })],
+		});
+
+		const result = settleTabThinkingState(session, 't1');
+
+		expect(result.orphanedThinkingTabs?.map((t) => t.id)).toEqual(['gone']);
+		expect(result.state).toBe('busy');
+	});
+
+	// 'error' is the blocking modal's state, not a thinking state. Settling a tab
+	// must not dismiss an error the user still has to act on.
+	it('does not clear an error state', () => {
+		const session = createMockSession({
+			state: 'error',
+			busySource: 'ai',
+			aiTabs: [createMockTab({ id: 't1', state: 'busy' })],
+		});
+
+		const result = settleTabThinkingState(session, 't1');
+
+		expect(result.aiTabs[0].state).toBe('idle');
+		expect(result.state).toBe('error');
 	});
 });

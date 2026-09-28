@@ -58,7 +58,7 @@ export function ProcessDetailView({ theme, detail, onBack, onClose }: ProcessDet
 		<div
 			ref={containerRef}
 			tabIndex={-1}
-			className="flex flex-col h-full min-h-0 overflow-hidden outline-none"
+			className="flex flex-col h-full min-h-0 overflow-hidden outline-none select-text"
 		>
 			{/* Detail Header */}
 			<div
@@ -68,7 +68,7 @@ export function ProcessDetailView({ theme, detail, onBack, onClose }: ProcessDet
 				<div className="flex items-center gap-3">
 					<button
 						onClick={onBack}
-						className="p-1.5 rounded hover:bg-opacity-10 flex items-center gap-1"
+						className="p-1.5 rounded row-hover flex items-center gap-1"
 						style={{ color: theme.colors.textDim }}
 						onMouseEnter={(e) =>
 							(e.currentTarget.style.backgroundColor = `${theme.colors.accent}20`)
@@ -96,7 +96,7 @@ export function ProcessDetailView({ theme, detail, onBack, onClose }: ProcessDet
 				</div>
 				<button
 					onClick={onClose}
-					className="p-1.5 rounded hover:bg-opacity-10"
+					className="p-1.5 rounded row-hover"
 					style={{ color: theme.colors.textDim }}
 					onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = `${theme.colors.accent}20`)}
 					onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
@@ -461,7 +461,7 @@ export function ProcessDetailView({ theme, detail, onBack, onClose }: ProcessDet
 								{envOverflow > 0 && (
 									<button
 										onClick={() => setEnvExpanded((v) => !v)}
-										className="flex items-center gap-1 text-xs px-2 py-1 rounded hover:bg-opacity-10"
+										className="flex items-center gap-1 text-xs px-2 py-1 rounded row-hover"
 										style={{ color: theme.colors.accent }}
 										onMouseEnter={(e) =>
 											(e.currentTarget.style.backgroundColor = `${theme.colors.accent}20`)

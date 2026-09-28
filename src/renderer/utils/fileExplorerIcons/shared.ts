@@ -1,9 +1,19 @@
-export const FILE_EXPLORER_ICON_THEMES = ['default', 'rich'] as const;
+export const FILE_EXPLORER_ICON_THEMES = ['flat', 'rich'] as const;
 
 export type FileExplorerIconTheme = (typeof FILE_EXPLORER_ICON_THEMES)[number];
 
 export const isFileExplorerIconTheme = (value: unknown): value is FileExplorerIconTheme =>
 	typeof value === 'string' && FILE_EXPLORER_ICON_THEMES.includes(value as FileExplorerIconTheme);
+
+/**
+ * 'default' was the id of the flat theme before it was renamed. Settings written
+ * before the rename still carry it, so map it forward rather than treating an
+ * existing user's choice as garbage and flipping them to Rich.
+ */
+export const normalizeFileExplorerIconTheme = (value: unknown): FileExplorerIconTheme | null => {
+	if (value === 'default') return 'flat';
+	return isFileExplorerIconTheme(value) ? value : null;
+};
 
 export const CODE_EXTENSIONS = new Set([
 	'ts',

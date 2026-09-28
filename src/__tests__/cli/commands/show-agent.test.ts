@@ -353,6 +353,7 @@ describe('show-agent command', () => {
 					projectRoot: '/project/root',
 					groupId: 'group-1',
 					autoRunFolderPath: '/project/playbooks',
+					worktreeConfig: { basePath: '/project-worktrees', watchEnabled: true },
 				})
 			);
 			vi.mocked(readGroups).mockReturnValue([
@@ -373,6 +374,18 @@ describe('show-agent command', () => {
 			expect(parsed.groupId).toBe('group-1');
 			expect(parsed.groupName).toBe('My Group');
 			expect(parsed.autoRunFolderPath).toBe('/project/playbooks');
+			expect(parsed.worktreeBasePath).toBe('/project-worktrees');
+		});
+
+		it('should report worktreeBasePath as null when no worktree directory is configured', () => {
+			vi.mocked(getSessionById).mockReturnValue(mockSession({ worktreeConfig: undefined }));
+			vi.mocked(readGroups).mockReturnValue([]);
+			vi.mocked(readHistory).mockReturnValue([]);
+
+			showAgent('agent-123', { json: true });
+
+			const parsed = JSON.parse(consoleSpy.mock.calls[0][0]);
+			expect(parsed.worktreeBasePath).toBeNull();
 		});
 	});
 

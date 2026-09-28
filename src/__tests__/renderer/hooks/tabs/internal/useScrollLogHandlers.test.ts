@@ -76,6 +76,97 @@ describe('useScrollLogHandlers', () => {
 		});
 	});
 
+	describe('deleting a command-mode card', () => {
+		function cardLog(id: string, command: string) {
+			return {
+				id,
+				source: 'stdout',
+				text: 'output',
+				timestamp: Date.now(),
+				shellCommand: { command, cwd: '/repo', status: 'finished', exitCode: 0 },
+			};
+		}
+
+		it('removes just that card and prunes its bang-prefixed recall entry', () => {
+			const tab = createMockAITab({
+				id: 'ai-1',
+				agentSessionId: 'agent-1',
+				logs: [
+					{ id: 'u1', source: 'user', text: 'run tests', timestamp: Date.now() },
+					cardLog('c1', 'npm test'),
+					{ id: 'a1', source: 'claude', text: 'ok', timestamp: Date.now() },
+				] as any,
+			});
+			setupSession({ aiTabs: [tab], cwd: '/repo', aiCommandHistory: ['!npm test', 'run tests'] });
+			const { result } = renderHook(() => useScrollLogHandlers());
+
+			let nextIndex: number | null = 0;
+			act(() => {
+				nextIndex = result.current.handleDeleteLog('c1');
+			});
+
+			// Only the card goes; the surrounding conversation is untouched.
+			expect(getSession().aiTabs[0].logs.map((log) => log.id)).toEqual(['u1', 'a1']);
+			expect(getSession().aiCommandHistory).toEqual(['run tests']);
+			// No scroll target - removing a card should not move the reader.
+			expect(nextIndex).toBeNull();
+		});
+
+		it('never asks the provider to delete a message pair for it', () => {
+			// The agent was bypassed entirely, so there is no pair in its session.
+			const tab = createMockAITab({
+				id: 'ai-1',
+				agentSessionId: 'agent-1',
+				logs: [cardLog('c1', 'npm test')] as any,
+			});
+			setupSession({ aiTabs: [tab], cwd: '/repo', aiCommandHistory: ['!npm test'] });
+			const { result } = renderHook(() => useScrollLogHandlers());
+
+			act(() => {
+				result.current.handleDeleteLog('c1');
+			});
+
+			expect(window.maestro.claude.deleteMessagePair).not.toHaveBeenCalled();
+		});
+
+		it('keeps the recall entry while another card still shows that command', () => {
+			// aiCommandHistory is per agent and deduplicated, so pruning on the
+			// first delete would contradict the cards still on screen.
+			const tab = createMockAITab({
+				id: 'ai-1',
+				logs: [cardLog('c1', 'ls'), cardLog('c2', 'ls')] as any,
+			});
+			setupSession({ aiTabs: [tab], aiCommandHistory: ['!ls'] });
+			const { result } = renderHook(() => useScrollLogHandlers());
+
+			act(() => {
+				result.current.handleDeleteLog('c1');
+			});
+			expect(getSession().aiCommandHistory).toEqual(['!ls']);
+
+			act(() => {
+				result.current.handleDeleteLog('c2');
+			});
+			expect(getSession().aiCommandHistory).toEqual([]);
+		});
+
+		it('counts survivors across every tab, not just the active one', () => {
+			const active = createMockAITab({ id: 'ai-1', logs: [cardLog('c1', 'ls')] as any });
+			const other = createMockAITab({ id: 'ai-2', logs: [cardLog('c2', 'ls')] as any });
+			setupSession({ aiTabs: [active, other], aiCommandHistory: ['!ls'] });
+			const { result } = renderHook(() => useScrollLogHandlers());
+
+			act(() => {
+				result.current.handleDeleteLog('c1');
+			});
+
+			// Guard against a silent no-op passing this assertion: the card really
+			// went, and the recall entry really survived because ai-2 still has one.
+			expect(getSession().aiTabs[0].logs).toEqual([]);
+			expect(getSession().aiCommandHistory).toEqual(['!ls']);
+		});
+	});
+
 	it('deletes shell logs and returns null for non-user logs', () => {
 		setupSession({
 			inputMode: 'terminal',

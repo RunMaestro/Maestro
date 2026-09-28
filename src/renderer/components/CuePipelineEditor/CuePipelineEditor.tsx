@@ -14,7 +14,7 @@
  */
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ReactFlowProvider, useReactFlow, type Node, type Edge } from 'reactflow';
+import { ReactFlowProvider, useReactFlow, useStore, type Node, type Edge } from 'reactflow';
 import type { Theme } from '../../types';
 import type { CueGraphSession } from '../../../shared/cue-pipeline-types';
 import { convertToReactFlowNodes, convertToReactFlowEdges } from './utils/pipelineGraph';
@@ -32,6 +32,8 @@ import {
 	arrangePipelineNodes,
 	untanglePipelineNodes,
 	arrangePipelineGroups,
+	beautifyPipelineLayouts,
+	separateOverlappingNodes,
 } from './utils/pipelineAutoArrange';
 import { ConfirmModal } from '../ConfirmModal';
 import { LayoutGrid } from 'lucide-react';
@@ -39,6 +41,27 @@ import type { TriggerNodeData } from '../../../shared/cue-pipeline-types';
 
 export { validatePipelines, DEFAULT_TRIGGER_LABELS } from '../../hooks/cue/usePipelineState';
 export type { SessionInfo, ActiveRunInfo } from '../../hooks/cue/usePipelineState';
+
+/**
+ * Restricts the All Pipelines view to one agent's pipelines. Set when the user
+ * clicks "View in Graph" on an agent that owns several - selecting just one of
+ * them would be arbitrary, and showing every pipeline on the machine answers a
+ * question nobody asked.
+ */
+export interface CueGraphScope {
+	sessionId: string;
+	sessionName: string;
+	pipelineIds: string[];
+}
+
+/** Navigation token produced by "View in Graph". */
+export interface CueGraphTarget {
+	/** Pipeline to select, or null for the All Pipelines view. */
+	id: string | null;
+	nonce: string;
+	/** Only meaningful when `id` is null. */
+	scope?: CueGraphScope;
+}
 
 export interface CuePipelineEditorProps {
 	sessions: SessionInfo[];
@@ -53,9 +76,9 @@ export interface CuePipelineEditorProps {
 	/** Callback fired after a successful save. Used by CueModal to refresh
 	 *  dashboard graph data so saved state is visible immediately (Fix #3). */
 	onSaveSuccess?: () => void;
-	/** Pre-select a specific pipeline when navigating from "View in Pipeline".
-	 *  Nonce ensures repeated clicks on the same pipeline re-trigger selection. */
-	initialPipelineId?: { id: string | null; nonce: string };
+	/** Where "View in Graph" wants the editor to land. Nonce ensures repeated
+	 *  clicks on the same target re-trigger the navigation. */
+	initialGraphTarget?: CueGraphTarget;
 	/** True while the initial graph-data fetch is in flight. Combined with the
 	 *  hook's own pipeline-restore state to render a loading spinner instead of
 	 *  flashing the "Create your first pipeline" CTA before pipelines arrive. */
@@ -71,7 +94,7 @@ function CuePipelineEditorInner({
 	activeRuns: activeRunsProp,
 	onTriggerPipeline,
 	onSaveSuccess,
-	initialPipelineId,
+	initialGraphTarget,
 	graphLoading = false,
 }: CuePipelineEditorProps) {
 	const reactFlowInstance = useReactFlow();
@@ -150,17 +173,22 @@ function CuePipelineEditorInner({
 		pipelineState: stateHook.pipelineState,
 	});
 
-	// When opened via "View in Pipeline", pre-select the resolved pipeline once
-	// the pipeline list has loaded. appliedNonce prevents pipelines.length changes
+	// Agent scope for the All Pipelines view (see CueGraphScope). Cleared by any
+	// manual pipeline selection - the user has navigated somewhere else.
+	const [graphScope, setGraphScope] = useState<CueGraphScope | null>(null);
+
+	// When opened via "View in Graph", apply the resolved target once the
+	// pipeline list has loaded. appliedNonce prevents pipelines.length changes
 	// (e.g. a pipeline being added) from overriding a subsequent user selection.
 	const appliedNonce = useRef<string | null>(null);
 	useEffect(() => {
-		const nonce = initialPipelineId?.nonce;
+		const nonce = initialGraphTarget?.nonce;
 		if (!nonce || stateHook.pipelineState.pipelines.length === 0) return;
 		if (nonce === appliedNonce.current) return;
 		appliedNonce.current = nonce;
-		stateHook.selectPipeline(initialPipelineId!.id);
-	}, [initialPipelineId?.nonce, stateHook.pipelineState.pipelines.length]);
+		setGraphScope(initialGraphTarget!.scope ?? null);
+		stateHook.selectPipeline(initialGraphTarget!.id);
+	}, [initialGraphTarget?.nonce, stateHook.pipelineState.pipelines.length]);
 
 	// Update ref in render body so next render (and any post-render callback
 	// invocation) reads the latest selection values.
@@ -176,6 +204,7 @@ function CuePipelineEditorInner({
 		setPipelineState,
 		isAllPipelinesView,
 		isDirty,
+		savedStateRef,
 		saveStatus,
 		validationErrors,
 		runningPipelineIds,
@@ -223,6 +252,42 @@ function CuePipelineEditorInner({
 		onPaneClick,
 		handleConfigureNode,
 	} = selectionHook;
+
+	// ─── Agent scope (All Pipelines view only) ─────────────────────────────
+	// The scope narrows what the CANVAS renders; it never touches canonical
+	// state. Selecting a single pipeline supersedes it, and every mutation is
+	// already blocked in the All Pipelines view, so a scoped canvas cannot
+	// write a partial layout back to disk.
+	const scopedPipelineIds = useMemo(() => {
+		if (!graphScope || pipelineState.selectedPipelineId !== null) return null;
+		const live = new Set(
+			graphScope.pipelineIds.filter((id) => pipelineState.pipelines.some((p) => p.id === id))
+		);
+		// A scope that resolves to nothing (pipelines renamed or deleted since the
+		// click) falls back to the unfiltered view rather than an empty canvas.
+		return live.size > 0 ? live : null;
+	}, [graphScope, pipelineState.pipelines, pipelineState.selectedPipelineId]);
+
+	const visiblePipelines = useMemo(
+		() =>
+			scopedPipelineIds
+				? pipelineState.pipelines.filter((p) => scopedPipelineIds.has(p.id))
+				: pipelineState.pipelines,
+		[pipelineState.pipelines, scopedPipelineIds]
+	);
+
+	const activeScope = scopedPipelineIds ? graphScope : null;
+
+	// Any manual navigation drops the scope - the user asked for somewhere else.
+	const handleSelectPipeline = useCallback(
+		(id: string | null) => {
+			setGraphScope(null);
+			selectPipeline(id);
+		},
+		[selectPipeline]
+	);
+
+	const handleClearScope = useCallback(() => setGraphScope(null), []);
 
 	// Wrap the manual-trigger handler so the click produces immediate UI feedback:
 	// mark the owning pipeline as optimistically triggered so the trigger
@@ -274,17 +339,26 @@ function CuePipelineEditorInner({
 	// pipelineState alone (sum of nodes across visible pipelines).
 	const totalNodeCount = useMemo(() => {
 		if (pipelineState.selectedPipelineId === null) {
-			return pipelineState.pipelines.reduce((acc, p) => acc + p.nodes.length, 0);
+			return visiblePipelines.reduce((acc, p) => acc + p.nodes.length, 0);
 		}
-		const pipeline = pipelineState.pipelines.find((p) => p.id === pipelineState.selectedPipelineId);
+		const pipeline = visiblePipelines.find((p) => p.id === pipelineState.selectedPipelineId);
 		return pipeline?.nodes.length ?? 0;
-	}, [pipelineState.pipelines, pipelineState.selectedPipelineId]);
+	}, [visiblePipelines, pipelineState.selectedPipelineId]);
+
+	// The viewport hook stacks pipelines vertically and fits the result, so it
+	// must see the same set the canvas draws - otherwise a scoped view is fitted
+	// around the empty bands of the pipelines it filtered out.
+	const viewportPipelineState = useMemo(
+		() => ({ pipelines: visiblePipelines, selectedPipelineId: pipelineState.selectedPipelineId }),
+		[visiblePipelines, pipelineState.selectedPipelineId]
+	);
 
 	const { stableYOffsets, stableYOffsetsRef } = usePipelineViewport({
-		pipelineState,
+		pipelineState: viewportPipelineState,
 		computedNodeCount: totalNodeCount,
 		pendingSavedViewportRef,
 		reactFlowInstance,
+		scopeKey: activeScope?.sessionId ?? null,
 	});
 
 	// ─── ReactFlow nodes/edges ──────────────────────────────────────────────
@@ -293,7 +367,7 @@ function CuePipelineEditorInner({
 	const computedNodes = useMemo(
 		() =>
 			convertToReactFlowNodes(
-				pipelineState.pipelines,
+				visiblePipelines,
 				pipelineState.selectedPipelineId,
 				handleConfigureNodeGuarded,
 				{
@@ -308,7 +382,7 @@ function CuePipelineEditorInner({
 				interactionMode === 'hand'
 			),
 		[
-			pipelineState.pipelines,
+			visiblePipelines,
 			pipelineState.selectedPipelineId,
 			handleConfigureNodeGuarded,
 			handleTriggerPipeline,
@@ -332,7 +406,7 @@ function CuePipelineEditorInner({
 	// This is load-bearing for discard specifically: discard reverts canonical
 	// positions to values that may equal an EARLIER snapshot, which the per-node
 	// position comparison below cannot distinguish from a no-op poll refire.
-	const lastSyncedPipelinesRef = useRef(pipelineState.pipelines);
+	const lastSyncedPipelinesRef = useRef(visiblePipelines);
 	// Tracks the selected pipeline the resync last observed. A selection change
 	// (single ↔ All Pipelines, or between pipelines) is USER navigation: it asks
 	// for a different set of visible nodes and a different view geometry, so the
@@ -357,9 +431,9 @@ function CuePipelineEditorInner({
 	// and clears this on the next resync.
 	const forceAdoptComputedRef = useRef(false);
 	useEffect(() => {
-		const pipelinesChanged = lastSyncedPipelinesRef.current !== pipelineState.pipelines;
+		const pipelinesChanged = lastSyncedPipelinesRef.current !== visiblePipelines;
 		const selectionChanged = lastSyncedSelectedIdRef.current !== pipelineState.selectedPipelineId;
-		lastSyncedPipelinesRef.current = pipelineState.pipelines;
+		lastSyncedPipelinesRef.current = visiblePipelines;
 		lastSyncedSelectedIdRef.current = pipelineState.selectedPipelineId;
 		// Capture the PREVIOUS computed positions before overwriting the ref, so
 		// the state updater (which runs during reconciliation, after this effect
@@ -417,14 +491,14 @@ function CuePipelineEditorInner({
 			});
 		});
 		lastComputedPosRef.current = new Map(computedNodes.map((n) => [n.id, n.position]));
-	}, [computedNodes, pipelineState.pipelines, pipelineState.selectedPipelineId, isDirty]);
+	}, [computedNodes, visiblePipelines, pipelineState.selectedPipelineId, isDirty]);
 
 	const nodes = displayNodes;
 
 	const edges = useMemo(
 		() =>
 			convertToReactFlowEdges(
-				pipelineState.pipelines,
+				visiblePipelines,
 				pipelineState.selectedPipelineId,
 				selectedEdgeId,
 				theme,
@@ -432,7 +506,7 @@ function CuePipelineEditorInner({
 				optimisticTriggeredPipelineIds
 			),
 		[
-			pipelineState.pipelines,
+			visiblePipelines,
 			pipelineState.selectedPipelineId,
 			runningAgentsByPipeline,
 			optimisticTriggeredPipelineIds,
@@ -447,26 +521,35 @@ function CuePipelineEditorInner({
 	// flow-depth columns. Either way: mutate canonical state (flips dirty,
 	// undoable via Discard), persist like a drag, then re-fit so the result
 	// is centered in view.
+	// Snapshot the CURRENTLY rendered node widths before a layout pass.
+	// Nodes render at `width: max-content`, so the layout can only space
+	// columns correctly if it knows each node's real width - ReactFlow has
+	// already measured them. Keyed by canonical node id (strip the
+	// `${pipelineId}:` composite prefix). Heights are fixed per type, so
+	// only width needs measuring.
+	const snapshotMeasuredWidths = useCallback(() => {
+		const measuredWidths = new Map<string, number>();
+		for (const n of reactFlowInstance.getNodes()) {
+			if (typeof n.width !== 'number' || n.width <= 0) continue;
+			const sep = n.id.indexOf(':');
+			measuredWidths.set(sep === -1 ? n.id : n.id.slice(sep + 1), n.width);
+		}
+		return measuredWidths;
+	}, [reactFlowInstance]);
+
 	const handleArrange = useCallback(
 		(mode: 'tidy' | 'untangle') => {
-			// Snapshot the CURRENTLY rendered node widths before mutating state.
-			// Nodes render at `width: max-content`, so the layout can only space
-			// columns correctly if it knows each node's real width - ReactFlow has
-			// already measured them. Keyed by canonical node id (strip the
-			// `${pipelineId}:` composite prefix). Heights are fixed per type, so
-			// only width needs measuring.
-			const measuredWidths = new Map<string, number>();
-			for (const n of reactFlowInstance.getNodes()) {
-				if (typeof n.width !== 'number' || n.width <= 0) continue;
-				const sep = n.id.indexOf(':');
-				measuredWidths.set(sep === -1 ? n.id : n.id.slice(sep + 1), n.width);
-			}
+			const measuredWidths = snapshotMeasuredWidths();
 
 			setPipelineState((prev) => {
 				if (prev.selectedPipelineId === null) {
 					// All-Pipelines view: no edges between cards to cross, so both
 					// modes just pack the group cards into a tidy grid.
-					const offsets = arrangePipelineGroups(prev.pipelines, stableYOffsetsRef.current);
+					const offsets = arrangePipelineGroups(
+						prev.pipelines,
+						stableYOffsetsRef.current,
+						measuredWidths
+					);
 					if (offsets.size === 0) return prev;
 					// Explicit re-layout that actually moves something: let the next
 					// resync adopt the freshly arranged positions despite dirty.
@@ -509,8 +592,160 @@ function CuePipelineEditorInner({
 			// Wait for React → ReactFlow to re-measure the moved nodes before fitting.
 			setTimeout(() => reactFlowInstance.fitView({ padding: 0.2, duration: 300 }), 180);
 		},
-		[setPipelineState, persistLayout, stableYOffsetsRef, reactFlowInstance, containerRef]
+		[
+			setPipelineState,
+			persistLayout,
+			stableYOffsetsRef,
+			reactFlowInstance,
+			containerRef,
+			snapshotMeasuredWidths,
+		]
 	);
+
+	// ─── Auto-heal: the layout maintains itself ────────────────────────────
+	// The canvas is machine-formatted (gofmt for pipelines): whenever a
+	// pipeline's TOPOLOGY changes - a node dropped, an edge connected, a node
+	// or edge deleted, a node duplicated, a discard reloading from YAML - the
+	// whole board is re-beautified automatically: crossing-minimized flow
+	// columns per pipeline, masonry-packed group cards. Nobody should ever
+	// need the Tidy/Arrange buttons to make it presentable; they remain as
+	// explicit "re-layout now" verbs.
+	//
+	// Topology signatures are per-pipeline (sorted node ids + edge pairs), so
+	// drags and data edits (renames, prompt/config changes, color changes)
+	// never trigger a heal - the untangle order-seed respects drag ordering,
+	// and healing on keystrokes would make the config panels unusable.
+	//
+	// Dirtiness is preserved, not created: when the pre-heal state matched
+	// savedStateRef (clean - e.g. right after Discard restores naive YAML
+	// positions), the ref is advanced to the healed snapshot so healing alone
+	// never raises the unsaved-changes banner. A real user mutation is already
+	// dirty before the heal and stays dirty.
+	const topologySignaturesRef = useRef<Map<string, string> | null>(null);
+	useEffect(() => {
+		// Until the initial restore lands, pipelines are empty/partial; the load
+		// path (usePipelineLayout) beautifies its own result, so the first
+		// observation here just records signatures.
+		if (!pipelinesLoaded) return;
+		const signatures = new Map(
+			pipelineState.pipelines.map((p) => [
+				p.id,
+				p.nodes
+					.map((n) => n.id)
+					.sort()
+					.join(',') +
+					';' +
+					p.edges
+						.map((e) => `${e.source}>${e.target}`)
+						.sort()
+						.join(','),
+			])
+		);
+		const prev = topologySignaturesRef.current;
+		topologySignaturesRef.current = signatures;
+		if (!prev) return;
+		let structureChanged = prev.size !== signatures.size;
+		if (!structureChanged) {
+			for (const [id, sig] of signatures) {
+				if (prev.get(id) !== sig) {
+					structureChanged = true;
+					break;
+				}
+			}
+		}
+		if (!structureChanged) return;
+
+		const basePipelines = pipelineState.pipelines;
+		const rect = containerRef.current?.getBoundingClientRect();
+		const viewport =
+			rect && rect.width > 0 && rect.height > 0
+				? { width: rect.width, height: rect.height }
+				: { width: window.innerWidth, height: window.innerHeight };
+		const healed = beautifyPipelineLayouts(basePipelines, viewport, snapshotMeasuredWidths());
+		const baseJson = JSON.stringify(basePipelines);
+		const healedJson = JSON.stringify(healed);
+		if (healedJson === baseJson) return;
+
+		// Explicit machine re-layout: let the resync adopt the healed positions
+		// even while dirty (same one-shot flag the Tidy/Arrange buttons use).
+		forceAdoptComputedRef.current = true;
+		setPipelineState((prevState) =>
+			prevState.pipelines === basePipelines ? { ...prevState, pipelines: healed } : prevState
+		);
+		if (savedStateRef.current === baseJson) {
+			savedStateRef.current = healedJson;
+		}
+		persistLayout();
+	}, [
+		pipelineState.pipelines,
+		pipelinesLoaded,
+		setPipelineState,
+		persistLayout,
+		savedStateRef,
+		snapshotMeasuredWidths,
+	]);
+
+	// ─── Collision guard: two nodes may never be drawn on top of each other ──
+	// The heal above only fires on TOPOLOGY changes, and every layout pass has
+	// to guess a node's width when it runs (nodes are `width: max-content`, and
+	// the load heal runs before ReactFlow has measured anything). Two ordinary
+	// edits slip through that: renaming a subscription - a DATA edit, no
+	// topology change - grows the node under the old column spacing, and a
+	// wide UI font renders every label wider than the text estimate predicted.
+	// Both end with one node covering its neighbour.
+	//
+	// So the last word on spacing belongs to the geometry ReactFlow actually
+	// measured, not to an estimate: this re-runs whenever a measured width
+	// changes and pushes any colliding nodes apart. It is a no-op unless nodes
+	// genuinely overlap, which is what lets it watch every measurement without
+	// fighting the user's own arrangement.
+	const measuredWidthSignature = useStore((s) => {
+		let signature = '';
+		s.nodeInternals.forEach((n) => {
+			signature += `${n.id}:${Math.round(n.width ?? 0)};`;
+		});
+		return signature;
+	});
+	useEffect(() => {
+		if (!pipelinesLoaded) return;
+		// The guard's authority IS the measurement: with nothing measured yet
+		// (first mount, headless render) there is no collision to be sure of, and
+		// re-deriving positions from the estimate alone would just be the heal
+		// again, moving nodes nobody can see overlapping.
+		const measuredWidths = snapshotMeasuredWidths();
+		if (measuredWidths.size === 0) return;
+		const basePipelines = pipelineState.pipelines;
+		let changed = false;
+		const separated = basePipelines.map((p) => {
+			const nodes = separateOverlappingNodes(p, measuredWidths);
+			if (nodes === p.nodes) return p;
+			changed = true;
+			return { ...p, nodes };
+		});
+		if (!changed) return;
+
+		// Un-overlapping is a machine re-layout, like Tidy: it is allowed to move
+		// nodes while dirty (leaving them stacked is never the right answer), and
+		// it never CREATES dirt - when the pre-guard state was saved, the saved
+		// snapshot advances with it.
+		forceAdoptComputedRef.current = true;
+		const baseJson = JSON.stringify(basePipelines);
+		setPipelineState((prevState) =>
+			prevState.pipelines === basePipelines ? { ...prevState, pipelines: separated } : prevState
+		);
+		if (savedStateRef.current === baseJson) {
+			savedStateRef.current = JSON.stringify(separated);
+		}
+		persistLayout();
+	}, [
+		measuredWidthSignature,
+		pipelineState.pipelines,
+		pipelinesLoaded,
+		setPipelineState,
+		persistLayout,
+		savedStateRef,
+		snapshotMeasuredWidths,
+	]);
 
 	const arrangeConfirmMessage = useMemo(() => {
 		if (isAllPipelinesView) {
@@ -621,7 +856,10 @@ function CuePipelineEditorInner({
 				setAgentDrawerOpen={setAgentDrawerOpen}
 				pipelines={pipelineState.pipelines}
 				selectedPipelineId={pipelineState.selectedPipelineId}
-				selectPipeline={selectPipeline}
+				selectPipeline={handleSelectPipeline}
+				scopeLabel={activeScope?.sessionName ?? null}
+				scopePipelineCount={visiblePipelines.length}
+				onClearScope={handleClearScope}
 				createPipeline={createPipeline}
 				deletePipeline={deletePipeline}
 				renamePipeline={renamePipeline}

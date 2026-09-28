@@ -112,6 +112,13 @@ export const CORE_PROMPTS: PromptDefinition[] = [
 		description: 'Git commit command prompt',
 		category: 'commands',
 	},
+	{
+		id: 'ai-command',
+		filename: 'ai-command.md',
+		description:
+			'AI command mode: turns a plain-English request into one shell command line for confirmation',
+		category: 'commands',
+	},
 	// Per-agent prompt preambles
 	{
 		id: 'copilot-preamble',
@@ -292,6 +299,7 @@ export const PROMPT_IDS = {
 	// Commands
 	IMAGE_ONLY_DEFAULT: 'image-only-default',
 	COMMIT_COMMAND: 'commit-command',
+	AI_COMMAND: 'ai-command',
 	// Per-agent prompt preambles
 	COPILOT_PREAMBLE: 'copilot-preamble',
 	// System
@@ -326,6 +334,7 @@ export const QUICK_ACTION_PROMPTS: { id: PromptId; label: string }[] = [
 	{ id: 'pianola-system', label: 'Pianola Manager System Prompt' },
 	{ id: 'autorun-default', label: 'Auto Run Default' },
 	{ id: 'commit-command', label: 'Commit Command' },
+	{ id: 'ai-command', label: 'AI Command Mode' },
 	{ id: 'group-chat-moderator-system', label: 'Group Chat Moderator' },
 ];
 

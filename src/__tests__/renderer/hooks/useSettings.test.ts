@@ -38,9 +38,6 @@ describe('useSettings', () => {
 			settingsLoaded: false,
 			conductorProfile: '',
 			globalShowHotkey: [],
-			llmProvider: 'openrouter',
-			modelSlug: 'anthropic/claude-3.5-sonnet',
-			apiKey: '',
 			defaultShell: 'zsh',
 			customShellPath: '',
 			shellArgs: '',
@@ -59,7 +56,7 @@ describe('useSettings', () => {
 			markdownEditMode: false,
 			chatRawTextMode: false,
 			showHiddenFiles: true,
-			fileExplorerIconTheme: 'default',
+			fileExplorerIconTheme: 'rich',
 			terminalWidth: 100,
 			logLevel: 'info',
 			maxLogBuffer: 5000,
@@ -96,6 +93,7 @@ describe('useSettings', () => {
 			statsCollectionEnabled: true,
 			defaultStatsTimeRange: 'week',
 			preventSleepEnabled: false,
+			preventDisplaySleepEnabled: false,
 			disableGpuAcceleration: false,
 			disableConfetti: false,
 			sshRemoteIgnorePatterns: ['.git', '*cache*'],
@@ -131,15 +129,6 @@ describe('useSettings', () => {
 			expect(result.current.settingsLoaded).toBe(true);
 		});
 
-		it('should have correct default values for LLM settings', async () => {
-			const { result } = renderHook(() => useSettings());
-			await waitForSettingsLoaded(result);
-
-			expect(result.current.llmProvider).toBe('openrouter');
-			expect(result.current.modelSlug).toBe('anthropic/claude-3.5-sonnet');
-			expect(result.current.apiKey).toBe('');
-		});
-
 		it('should have correct default values for shell settings', async () => {
 			const { result } = renderHook(() => useSettings());
 			await waitForSettingsLoaded(result);
@@ -166,7 +155,7 @@ describe('useSettings', () => {
 			expect(result.current.leftSidebarWidth).toBe(256);
 			expect(result.current.rightPanelWidth).toBe(384);
 			expect(result.current.markdownEditMode).toBe(false);
-			expect(result.current.fileExplorerIconTheme).toBe('default');
+			expect(result.current.fileExplorerIconTheme).toBe('rich');
 		});
 
 		it('should have correct default values for logging settings', async () => {
@@ -252,6 +241,7 @@ describe('useSettings', () => {
 
 			expect(result.current.autoRunStats).toEqual({
 				cumulativeTimeMs: 0,
+				cueTimeMs: 0,
 				longestRunMs: 0,
 				longestRunTimestamp: 0,
 				totalRuns: 0,
@@ -264,24 +254,9 @@ describe('useSettings', () => {
 	});
 
 	describe('loading saved settings', () => {
-		it('should load saved LLM settings', async () => {
-			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
-				llmProvider: 'anthropic',
-				modelSlug: 'claude-3-opus',
-				apiKey: 'test-api-key',
-			});
-
-			const { result } = renderHook(() => useSettings());
-			await waitForSettingsLoaded(result);
-
-			expect(result.current.llmProvider).toBe('anthropic');
-			expect(result.current.modelSlug).toBe('claude-3-opus');
-			expect(result.current.apiKey).toBe('test-api-key');
-		});
-
 		it('should load saved UI settings', async () => {
 			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
-				activeThemeId: 'gruvbox',
+				activeThemeId: 'gruvbox-dark',
 				enterToSendAI: true,
 				defaultSaveToHistory: true,
 				leftSidebarWidth: 300,
@@ -292,7 +267,7 @@ describe('useSettings', () => {
 			const { result } = renderHook(() => useSettings());
 			await waitForSettingsLoaded(result);
 
-			expect(result.current.activeThemeId).toBe('gruvbox');
+			expect(result.current.activeThemeId).toBe('gruvbox-dark');
 			expect(result.current.enterToSendAI).toBe(true);
 			expect(result.current.defaultSaveToHistory).toBe(true);
 			expect(result.current.leftSidebarWidth).toBe(300);
@@ -421,7 +396,7 @@ describe('useSettings', () => {
 
 			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
 				autoRunStats: savedStats,
-				concurrentAutoRunTimeMigrationApplied: true, // Skip migration in tests
+				concurrentAutoRunTimeMigrationApplied: true, // Legacy flag, now ignored on load
 			});
 
 			const { result } = renderHook(() => useSettings());
@@ -467,44 +442,6 @@ describe('useSettings', () => {
 			await waitForSettingsLoaded(result);
 
 			expect(result.current.automaticTabNamingEnabled).toBe(false);
-		});
-	});
-
-	describe('setter functions - LLM settings', () => {
-		it('should update llmProvider and persist to settings', async () => {
-			const { result } = renderHook(() => useSettings());
-			await waitForSettingsLoaded(result);
-
-			act(() => {
-				result.current.setLlmProvider('anthropic');
-			});
-
-			expect(result.current.llmProvider).toBe('anthropic');
-			expect(window.maestro.settings.set).toHaveBeenCalledWith('llmProvider', 'anthropic');
-		});
-
-		it('should update modelSlug and persist to settings', async () => {
-			const { result } = renderHook(() => useSettings());
-			await waitForSettingsLoaded(result);
-
-			act(() => {
-				result.current.setModelSlug('claude-3-opus');
-			});
-
-			expect(result.current.modelSlug).toBe('claude-3-opus');
-			expect(window.maestro.settings.set).toHaveBeenCalledWith('modelSlug', 'claude-3-opus');
-		});
-
-		it('should update apiKey and persist to settings', async () => {
-			const { result } = renderHook(() => useSettings());
-			await waitForSettingsLoaded(result);
-
-			act(() => {
-				result.current.setApiKey('new-api-key');
-			});
-
-			expect(result.current.apiKey).toBe('new-api-key');
-			expect(window.maestro.settings.set).toHaveBeenCalledWith('apiKey', 'new-api-key');
 		});
 	});
 
@@ -1002,7 +939,7 @@ describe('useSettings', () => {
 						lastAcknowledgedBadgeLevel: 0,
 						badgeHistory: [],
 					},
-					concurrentAutoRunTimeMigrationApplied: true, // Skip migration in tests
+					concurrentAutoRunTimeMigrationApplied: true, // Legacy flag, now ignored on load
 				});
 
 				const { result } = renderHook(() => useSettings());
@@ -1061,7 +998,7 @@ describe('useSettings', () => {
 						lastAcknowledgedBadgeLevel: 0,
 						badgeHistory: [],
 					},
-					concurrentAutoRunTimeMigrationApplied: true, // Skip migration in tests
+					concurrentAutoRunTimeMigrationApplied: true, // Legacy flag, now ignored on load
 				});
 
 				const { result } = renderHook(() => useSettings());
@@ -1449,7 +1386,7 @@ describe('useSettings', () => {
 			await waitForSettingsLoaded(result);
 
 			// Should use defaults
-			expect(result.current.llmProvider).toBe('openrouter');
+			expect(result.current.defaultShell).toBe('zsh');
 			expect(result.current.activeThemeId).toBe('dracula');
 		});
 

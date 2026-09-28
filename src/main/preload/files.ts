@@ -8,15 +8,8 @@
  */
 
 import { ipcRenderer } from 'electron';
-
-/**
- * Single bucket in the activity-graph aggregate.
- */
-export interface GraphBucket {
-	auto: number;
-	user: number;
-	cue: number;
-}
+import type { HistoryEntryType } from '../../shared/types';
+import type { GraphBucket } from '../../shared/history';
 
 /**
  * All-time graph data returned by `history:getGraphData` and
@@ -41,7 +34,7 @@ export interface HistoryGraphData {
  */
 export interface HistoryEntry {
 	id: string;
-	type: 'AUTO' | 'USER' | 'CUE';
+	type: HistoryEntryType;
 	timestamp: number;
 	summary: string;
 	fullResponse?: string;
@@ -99,9 +92,24 @@ export function createHistoryApi() {
 			pagination?: { limit?: number; offset?: number };
 			lookbackHours?: number | null;
 			sharedContext?: { sshRemoteId: string; remoteCwd: string };
-			types?: ('AUTO' | 'USER' | 'CUE')[];
+			types?: HistoryEntryType[];
 			hostKey?: string | null;
+			/** Collapse Cue runs to one row per trigger (`groupCueEntries`). */
+			groupCue?: boolean;
 		}) => ipcRenderer.invoke('history:getAllPaginated', options),
+
+		/**
+		 * The individual runs behind one collapsed Cue row. `groupKey` is the
+		 * `cueGroup.key` the grouped read put on that row, and `lookbackHours`
+		 * must match the window it was counted over.
+		 */
+		getCueGroupRuns: (options: {
+			sessionId: string;
+			groupKey: string;
+			projectPath?: string;
+			lookbackHours?: number | null;
+			limit?: number;
+		}) => ipcRenderer.invoke('history:getCueGroupRuns', options),
 
 		add: (entry: HistoryEntry, sharedContext?: { sshRemoteId: string; remoteCwd: string }) =>
 			ipcRenderer.invoke('history:add', entry, sharedContext),
@@ -149,7 +157,7 @@ export function createHistoryApi() {
 			sessionId: string,
 			timestamp: number,
 			lookbackHours?: number | null,
-			types?: ('AUTO' | 'USER' | 'CUE')[]
+			types?: HistoryEntryType[]
 		): Promise<number> =>
 			ipcRenderer.invoke(
 				'history:getOffsetForTimestamp',

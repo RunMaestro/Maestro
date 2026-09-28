@@ -7,7 +7,8 @@ icon: clapperboard
 Director's Notes is your bird's-eye view of everything happening across all your AI agents. Instead of switching between tabs to check what each agent has been doing, Director's Notes aggregates all history entries into a single, searchable, filterable timeline - and can generate an AI-powered synopsis of recent activity.
 
 <Note>
-Director's Notes is an **Encore Feature** - it's disabled by default. Enable it in **Settings > Encore Features** to access the shortcut, menu entry, and command palette action.
+Director's Notes is an **Encore Feature** and is on by default. Turn it off in **Settings > Plugins** to remove the shortcut, menu entry, and command palette action.
+The Settings tab is called **Plugins** in v0.18.x and later. On **v0.17.4** and earlier it is called **Encore Features**.
 </Note>
 
 ![Encore Features settings panel](./screenshots/encore-features.png)
@@ -62,6 +63,14 @@ Click the session pill on any entry to jump directly to that agent's tab - Direc
 **Infinite Scroll:**
 Entries load progressively (100 at a time). Scroll to load more as needed.
 
+**Work from other machines:**
+Every tab reads two sources, and so does the AI synopsis:
+
+- **This machine's agents**, including any whose process runs over SSH. A remote agent you drive from here is recorded here, so its runs are always covered.
+- **Peer Maestro instances** that worked on the same project from a different machine, via [Cross-Host Shared History](/history#cross-host-shared-history). Their entries carry the originating hostname, and their agents appear in the list named `Agent (hostname)`.
+
+The second source needs the sharing toggles turned on: **Sync history to remote** on the SSH agent here, and **This agent is remote-controlled** on the agent over there. Without them, Director's Notes sees only what this machine did.
+
 ### AI Overview
 
 An AI-generated synopsis of recent activity across all agents. This tab uses a configurable AI provider to read history files and produce a structured report.
@@ -75,6 +84,7 @@ An AI-generated synopsis of recent activity across all agents. This tab uses a c
 - **Refresh** - Regenerate the synopsis with current settings
 - **Save** - Export the synopsis as a markdown file
 - **Copy** - Copy the synopsis to the clipboard as readable markdown
+- **Font zoom** - A circle in the top-right corner of the notes that expands to an **A- / A+** pill on hover or keyboard focus. It scales the reading text in both Rich Mode and Plain Mode, and Maestro remembers the size you picked. The stat cards and charts around the notes keep their own sizing: they are chrome, not reading text.
 
 **Stats Bar:**
 After generation, a stats bar shows:
@@ -99,10 +109,43 @@ The AI Overview renders the same synopsis two ways, switchable with the **Rich /
 
 **Copy** and **Save** always export the Plain markdown regardless of the mode you're viewing, so a copied or saved synopsis is the readable report - not the dashboard's underlying data.
 
-You can set which mode opens by default in **Settings > Encore Features > Director's Notes**; the in-tab toggle overrides it for the current session.
+You can set which mode opens by default in **Settings > Plugins > Director's Notes**; the in-tab toggle overrides it for the current session.
+
+#### Jumping between sections
+
+Both reading modes carry the same table of contents as the Markdown file preview, in the same place (the round button at the bottom right) with the same behavior:
+
+- Toggle it with the **Table of Contents** shortcut (<kbd>Cmd</kbd>/<kbd>Ctrl</kbd> + <kbd>\</kbd>) or by clicking the button.
+- The first entry is focused when it opens, so <kbd>↑</kbd> / <kbd>↓</kbd> (plus <kbd>Home</kbd> / <kbd>End</kbd>) move through sections and scroll as you go.
+- Clicking an entry scrolls to that section and leaves the panel open, so you can jump a few times in a row.
+- **Top** and **Bottom** jump to the ends of the report.
+- <kbd>Esc</kbd> or a click outside dismisses it, leaving Director's Notes open.
+
+Rich mode lists the dashboard widgets followed by the narrative sections; Plain mode lists the narrative headings.
+
+#### When the AI's output cannot be parsed
+
+The synopsis agent returns a structured narrative, and both reading modes render from it. If a run comes back malformed (cut off mid-response, or with formatting the parser rejects), Maestro salvages the readable portion and shows it with a banner saying what had to be recovered - a partial report is never presented as a complete one. When nothing usable survives, both modes show a parse-failure banner with the raw output preserved behind **View raw output**. Neither mode ever renders the raw structured output as if it were the report.
+
+**Grouping:**
+Inside each section the bullets are bucketed under a subheading so you are not re-deriving who did what on every line. An agent that belongs to a Left Bar group is filed under the group (emoji and all), and each bullet keeps a small pill naming which member did it. An agent with no group gets its own subheading, and the pill is dropped because it would only repeat the heading. A section whose bullets all share one owner stays a flat list.
+
+The grouping comes from Maestro's own session and group state, not from the AI, so it always matches what the Left Bar shows. It applies to Rich Mode, Plain Mode, Copy, and Save alike.
 
 **Provider Configuration:**
-Configure which AI provider generates the synopsis in **Settings > Encore Features**. Any installed agent (Claude Code, Codex, OpenCode) can be used. The default lookback window is also configurable there.
+Configure which AI provider generates the synopsis in **Settings > Plugins**. Any installed agent (Claude Code, Codex, OpenCode) can be used. The default lookback window is also configurable there.
+
+#### Ideal End State
+
+An optional free-form description of where you are trying to get the fleet to: the projects in flight, which agents belong to each, and what finished looks like. Set it in **Settings > Plugins** under Director's Notes.
+
+Leave it empty and the synopsis is generated exactly as described above. Fill it in and three things change:
+
+- **Reading priority** - Sessions named in the end state are read first and in the most depth. Every session in the window is still covered; the detail budget just shifts toward what you said matters.
+- **Framing** - Accomplishments, Challenges, and Next Steps favor items that bear on the end state, so Next Steps reads as "what moves us toward the target" rather than a generic backlog.
+- **A fourth section** - **Progress Toward Ideal End State** is added after Next Steps, measuring how far the window moved you. It calls out what got closer, what saw no activity at all (flagged as a warning), what looks finished, and where current work appears to diverge from the target.
+
+The field accepts up to 4,000 characters and applies to the CLI synopsis (`maestro-cli notes --ai`) as well as the desktop AI Overview.
 
 <Note>
 The AI Overview tab becomes available once the synopsis has finished generating. A spinning indicator on the tab shows generation is in progress. Results are cached for the session - switching tabs won't trigger a regeneration.
@@ -141,15 +184,19 @@ A built-in reference guide explaining all Director's Notes features, entry types
 
 ## Settings
 
-Access Director's Notes settings via **Settings > Encore Features** (enable Director's Notes first):
+Access Director's Notes settings via **Settings > Plugins**:
 
-| Setting              | Description                                                |
-| -------------------- | ---------------------------------------------------------- |
-| **AI Provider**      | Which agent generates the AI Overview synopsis             |
-| **Default Lookback** | Default number of days for the AI Overview lookback slider |
-| **Default Mode**     | Whether the AI Overview opens in Rich or Plain mode        |
-| **Custom Path**      | Optional custom binary path for the synopsis provider      |
-| **Custom Args**      | Optional custom arguments for the synopsis provider        |
+| Setting                              | Description                                                                                         |
+| ------------------------------------ | --------------------------------------------------------------------------------------------------- |
+| **Use the first available provider** | On by default. Picks an installed provider each time the synopsis runs, so you never have to choose |
+| **AI Provider**                      | Which agent generates the AI Overview synopsis. Only used when the setting above is off             |
+| **Default Lookback**                 | Default number of days for the AI Overview lookback slider                                          |
+| **Default Mode**                     | Whether the AI Overview opens in Rich or Plain mode                                                 |
+| **Custom Path**                      | Optional custom binary path for the synopsis provider                                               |
+| **Custom Args**                      | Optional custom arguments for the synopsis provider                                                 |
+| **Ideal End State**                  | Optional goal description that prioritizes named projects and adds a Progress section to the notes  |
+
+Auto-selection resolves at generation time against the providers actually installed, in this order: Claude Code, Codex, OpenCode, Factory Droid, Copilot-CLI. Turn it off to pin the synopsis to one agent - the picker, Custom Path, and Custom Args only apply to a pinned provider.
 
 ## Tips
 

@@ -87,7 +87,7 @@ export function KeyCaptureButton({
 					onClick={() => onKeysChange([])}
 					aria-label="Clear shortcut"
 					title="Clear shortcut"
-					className="p-1 rounded hover:bg-opacity-20 transition-colors"
+					className="p-1 rounded row-hover transition-colors"
 					style={{
 						color: theme.colors.textDim,
 					}}

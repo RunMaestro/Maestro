@@ -25,6 +25,25 @@ vi.mock('../../../main/agents/resolveClaudeSpawnMode', async () => {
 	};
 });
 
+// SSH: stub the wrapper so we can hand back either a resolved remote or the
+// silent local-fallback shape it produces when the remote can't be found.
+const mockWrapSpawnWithSsh = vi.fn();
+vi.mock('../../../main/utils/ssh-spawn-wrapper', async () => {
+	const actual = await vi.importActual<typeof import('../../../main/utils/ssh-spawn-wrapper')>(
+		'../../../main/utils/ssh-spawn-wrapper'
+	);
+	return {
+		...actual,
+		wrapSpawnWithSsh: (...args: unknown[]) => mockWrapSpawnWithSsh(...args),
+	};
+});
+vi.mock('../../../main/agents/probeRemoteMaestroP', () => ({
+	ensureRemoteMaestroPProbed: vi.fn().mockResolvedValue(undefined),
+}));
+vi.mock('../../../main/utils/ssh-remote-resolver', () => ({
+	getSshRemoteConfig: vi.fn(() => ({ config: null, source: 'session' })),
+}));
+
 import { spawnGroupChatAgent } from '../../../main/group-chat/spawnGroupChatAgent';
 import type { AgentConfig } from '../../../main/agents/definitions';
 import type { IProcessManager } from '../../../main/group-chat/group-chat-moderator';
@@ -126,5 +145,73 @@ describe('spawnGroupChatAgent', () => {
 		const spawned = spawnSpy.mock.calls[0][0] as { command: string; args: string[] };
 		expect(spawned.command).toBe('/usr/local/bin/claude');
 		expect(spawned.args).not.toContain('--max-wait');
+	});
+
+	describe('SSH remote resolution', () => {
+		const sshRemoteConfig = { enabled: true, remoteId: 'jennifer-box' };
+		const sshStore = {} as never;
+
+		beforeEach(() => {
+			mockResolve.mockReturnValue({ mode: 'api', reason: 'auto', maestroPBinPath: null });
+		});
+
+		it('fails loudly instead of silently spawning locally when the remote cannot be resolved', async () => {
+			// The shape wrapSpawnWithSsh returns on its local-fallback path: the
+			// original command, unchanged, with no remote recorded.
+			mockWrapSpawnWithSsh.mockResolvedValue({
+				command: '/usr/local/bin/claude',
+				args: ['--print', '--', 'hello'],
+				cwd: '/remote/only/path',
+				prompt: 'hello',
+				customEnvVars: undefined,
+				sshRemoteUsed: null,
+			});
+
+			await expect(
+				spawnGroupChatAgent({
+					sessionId: 'sess-ssh-1',
+					agentId: 'claude-code',
+					agent: makeAgent(),
+					command: '/usr/local/bin/claude',
+					args: ['--print', '--', 'hello'],
+					cwd: '/remote/only/path',
+					prompt: 'hello',
+					sshRemoteConfig,
+					sshStore,
+					processManager,
+				})
+			).rejects.toThrow(/jennifer-box/);
+
+			// The whole point: nothing ran on this machine.
+			expect(spawnSpy).not.toHaveBeenCalled();
+		});
+
+		it('spawns normally when the remote resolves', async () => {
+			mockWrapSpawnWithSsh.mockResolvedValue({
+				command: 'ssh',
+				args: ['user@host', 'claude --print'],
+				cwd: '/Users/local/home',
+				prompt: undefined,
+				customEnvVars: undefined,
+				sshRemoteUsed: { id: 'jennifer-box', name: 'Jennifer', host: 'host' },
+			});
+
+			await spawnGroupChatAgent({
+				sessionId: 'sess-ssh-2',
+				agentId: 'claude-code',
+				agent: makeAgent(),
+				command: '/usr/local/bin/claude',
+				args: ['--print', '--', 'hello'],
+				cwd: '/remote/only/path',
+				prompt: 'hello',
+				sshRemoteConfig,
+				sshStore,
+				processManager,
+			});
+
+			expect(spawnSpy).toHaveBeenCalledTimes(1);
+			const spawned = spawnSpy.mock.calls[0][0] as { command: string };
+			expect(spawned.command).toBe('ssh');
+		});
 	});
 });

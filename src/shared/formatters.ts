@@ -29,6 +29,90 @@
  * - abbreviateGroupName: Shorten a group name for badge/pill display
  */
 
+// ============================================================================
+// Cached Intl formatters
+// ============================================================================
+// `date.toLocaleTimeString(...)`, `date.toLocaleString(...)` and
+// `number.toLocaleString(...)` construct a brand new `Intl` formatter on EVERY
+// call, and constructing one costs one to two orders of magnitude more than
+// formatting with one that already exists.
+//
+// This is not a micro-optimization. A field performance trace (Sep 2026,
+// 95-second window) measured `formatTimestamp` alone at 2.1s of renderer
+// main-thread self-time - 38% of ALL renderer JS work in that window - because
+// a transcript and a history list each call it once per visible row on every
+// React render, and every one of those calls built a throwaway
+// `Intl.DateTimeFormat`.
+//
+// These are lazy module singletons rather than a keyed cache so there is no
+// per-call key to build either. `undefined` as the locale resolves to the
+// user's default, which is exactly what `toLocale*String()` and
+// `toLocale*String([])` resolve to, so output is byte-identical to the calls
+// these replaced (including the implicit numeric year/month/day/hour/minute/
+// second option set that a bare `toLocaleString()` expands to).
+//
+// Adding a new date or number format: add a singleton here rather than calling
+// `toLocale*String` in a formatter body.
+
+function lazyDateTimeFormat(
+	locale: string | undefined,
+	options?: Intl.DateTimeFormatOptions
+): () => Intl.DateTimeFormat {
+	let cached: Intl.DateTimeFormat | undefined;
+	return () => (cached ??= new Intl.DateTimeFormat(locale, options));
+}
+
+function lazyNumberFormat(
+	locale?: string,
+	options?: Intl.NumberFormatOptions
+): () => Intl.NumberFormat {
+	let cached: Intl.NumberFormat | undefined;
+	return () => (cached ??= new Intl.NumberFormat(locale, options));
+}
+
+/** `8:30 AM` in the user's locale. */
+const dtfLocalTime = lazyDateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' });
+/** `Mar 5, 8:30 AM` in the user's locale. */
+const dtfLocalDateTime = lazyDateTimeFormat(undefined, {
+	month: 'short',
+	day: 'numeric',
+	hour: 'numeric',
+	minute: '2-digit',
+});
+/** `Mar 5` in the user's locale. */
+const dtfLocalMonthDay = lazyDateTimeFormat(undefined, { month: 'short', day: 'numeric' });
+/** `3/5/2026, 8:30:45 AM` - the option set a bare `toLocaleString()` expands to. */
+const dtfLocalFull = lazyDateTimeFormat(undefined, {
+	year: 'numeric',
+	month: 'numeric',
+	day: 'numeric',
+	hour: 'numeric',
+	minute: 'numeric',
+	second: 'numeric',
+});
+/** `Mar 5`, always US English (these call sites hard-coded `en-US`). */
+const dtfUsMonthDay = lazyDateTimeFormat('en-US', { month: 'short', day: 'numeric' });
+/** `8:30 AM`, always US English. */
+const dtfUsTime = lazyDateTimeFormat('en-US', { hour: 'numeric', minute: '2-digit' });
+/** `Thu`, always US English. */
+const dtfUsWeekday = lazyDateTimeFormat('en-US', { weekday: 'short' });
+/** `1,204,993` in the user's locale. */
+const nfLocalCount = lazyNumberFormat();
+/** `40,950.60`, always US English, always two decimals. */
+const nfUsdAmount = lazyNumberFormat('en-US', {
+	minimumFractionDigits: 2,
+	maximumFractionDigits: 2,
+});
+
+/** True when both dates fall on the same local calendar day. */
+function isSameLocalDay(a: Date, b: Date): boolean {
+	return (
+		a.getFullYear() === b.getFullYear() &&
+		a.getMonth() === b.getMonth() &&
+		a.getDate() === b.getDate()
+	);
+}
+
 /**
  * Format a file size in bytes to a human-readable string.
  * Automatically scales to appropriate unit (B, KB, MB, GB, TB).
@@ -55,6 +139,22 @@ export function formatNumber(num: number): string {
 	if (num < 1000000) return `${(num / 1000).toFixed(1)}K`;
 	if (num < 1000000000) return `${(num / 1000000).toFixed(1)}M`;
 	return `${(num / 1000000000).toFixed(1)}B`;
+}
+
+/**
+ * Format a count exactly, with locale digit grouping.
+ *
+ * The counterpart to {@link formatNumber}: use this wherever the number IS the
+ * information rather than a rough magnitude on a badge. `1,204,993 of
+ * 8,412,004 rows match` tells a person how selective their filter was;
+ * `1.2M of 8.4M` tells them nothing they did not already assume, and rounds
+ * away exactly the digits they were reading for.
+ *
+ * @param count - The number to format
+ * @returns Formatted string (e.g., "42", "1,204,993")
+ */
+export function formatCount(count: number): string {
+	return nfLocalCount().format(count);
 }
 
 /**
@@ -125,7 +225,7 @@ export function formatRelativeTime(
 	if (diffHours < 24) return `${diffHours}h ago`;
 	if (diffDays < 7) return `${diffDays}d ago`;
 	// Show compact date format (e.g., "Dec 3") for older dates
-	return new Date(timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+	return dtfUsMonthDay().format(new Date(timestamp));
 }
 
 /**
@@ -196,6 +296,24 @@ export function formatAgeShort(dateOrTimestamp: Date | number | string): string 
 }
 
 /**
+ * Format a calendar day (`YYYY-MM-DD`) for display, e.g. "Jul 10, 2026".
+ *
+ * The parts are read out of the string and fed to a LOCAL `Date` rather than
+ * letting `new Date('2026-07-10')` do it: that form is parsed as UTC midnight,
+ * so every timezone west of Greenwich renders the day before. Returns the input
+ * unchanged when it is not a well-formed day, since the caller's alternative is
+ * showing nothing at all.
+ */
+export function formatCalendarDay(isoDay: string): string {
+	const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(isoDay.trim());
+	if (!match) return isoDay;
+	const [, year, month, day] = match;
+	const date = new Date(Number(year), Number(month) - 1, Number(day));
+	if (Number.isNaN(date.getTime())) return isoDay;
+	return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+/**
  * Format a future timestamp as a forward-looking relative string.
  *
  * `formatRelativeTime` only models the past - every future timestamp collapses
@@ -236,73 +354,18 @@ export function formatFutureTime(dateOrTimestamp: Date | number | string): strin
 	if (diffMins < 60) return `in ${diffMins}m`;
 
 	const target = new Date(timestamp);
-	const nowDate = new Date(now);
-	const sameDay =
-		target.getFullYear() === nowDate.getFullYear() &&
-		target.getMonth() === nowDate.getMonth() &&
-		target.getDate() === nowDate.getDate();
+	const sameDay = isSameLocalDay(target, new Date(now));
 
-	const timeStr = target.toLocaleTimeString('en-US', {
-		hour: 'numeric',
-		minute: '2-digit',
-	});
+	const timeStr = dtfUsTime().format(target);
 
 	if (sameDay) return `today at ${timeStr}`;
 	if (diffHours < 24) return `in ${diffHours}h`;
 	if (diffDays < 7) {
-		const weekday = target.toLocaleDateString('en-US', { weekday: 'short' });
+		const weekday = dtfUsWeekday().format(target);
 		return `${weekday} ${timeStr}`;
 	}
-	const dateStr = target.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+	const dateStr = dtfUsMonthDay().format(target);
 	return `${dateStr} at ${timeStr}`;
-}
-
-/**
- * Format duration in milliseconds as compact display string.
- * Uses uppercase units (D, H, M) for consistency.
- *
- * @param ms - Duration in milliseconds
- * @returns Formatted string (e.g., "1D", "2H 30M", "15M", "<1M")
- */
-export function formatActiveTime(ms: number): string {
-	const totalSeconds = Math.floor(ms / 1000);
-	const totalMinutes = Math.floor(totalSeconds / 60);
-	const totalHours = Math.floor(totalMinutes / 60);
-	const totalDays = Math.floor(totalHours / 24);
-
-	if (totalDays > 0) {
-		return `${totalDays}D`;
-	} else if (totalHours > 0) {
-		const remainingMinutes = totalMinutes % 60;
-		if (remainingMinutes > 0) {
-			return `${totalHours}H ${remainingMinutes}M`;
-		}
-		return `${totalHours}H`;
-	} else if (totalMinutes > 0) {
-		return `${totalMinutes}M`;
-	} else {
-		return '<1M';
-	}
-}
-
-/**
- * Format elapsed time in milliseconds as precise human-readable format.
- * Shows milliseconds for sub-second, seconds for <1m, minutes+seconds for <1h,
- * and hours+minutes for longer durations.
- *
- * @param ms - Duration in milliseconds
- * @returns Formatted string (e.g., "500ms", "30s", "5m 12s", "1h 10m")
- */
-export function formatElapsedTime(ms: number): string {
-	if (ms < 1000) return `${ms}ms`;
-	const seconds = Math.floor(ms / 1000);
-	if (seconds < 60) return `${seconds}s`;
-	const minutes = Math.floor(seconds / 60);
-	const remainingSeconds = seconds % 60;
-	if (minutes < 60) return `${minutes}m ${remainingSeconds}s`;
-	const hours = Math.floor(minutes / 60);
-	const remainingMinutes = minutes % 60;
-	return `${hours}h ${remainingMinutes}m`;
 }
 
 /**
@@ -315,7 +378,9 @@ export function formatElapsedTime(ms: number): string {
 export function formatCost(cost: number): string {
 	if (cost === 0) return '$0.00';
 	if (cost < 0.01) return '<$0.01';
-	return '$' + cost.toFixed(2);
+	// Thousands separators: large all-time totals (e.g. $40,950.60) are unreadable
+	// as an undelimited digit run.
+	return '$' + nfUsdAmount().format(cost);
 }
 
 /**
@@ -482,164 +547,6 @@ export function truncateText(text: string, maxLength: number = 24): string {
 }
 
 /**
- * Format duration in milliseconds as human-readable string without millisecond precision.
- * Suitable for dashboard displays where sub-second precision is unnecessary.
- *
- * @param ms - Duration in milliseconds
- * @returns Formatted string (e.g., "0s", "45s", "5m 30s", "2h 15m")
- */
-export function formatDurationHuman(ms: number): string {
-	if (ms === 0) return '0s';
-
-	const totalSeconds = Math.floor(ms / 1000);
-	const hours = Math.floor(totalSeconds / 3600);
-	const minutes = Math.floor((totalSeconds % 3600) / 60);
-	const seconds = totalSeconds % 60;
-
-	if (hours > 0) {
-		return `${hours}h ${minutes}m`;
-	}
-	if (minutes > 0) {
-		return `${minutes}m ${seconds}s`;
-	}
-	return `${seconds}s`;
-}
-
-/**
- * Format duration in milliseconds compactly, omitting seconds in the minute range.
- * Useful for summary displays where second-level precision is noise.
- *
- * @param ms - Duration in milliseconds
- * @returns Formatted string (e.g., "0s", "45s", "5m", "2h 15m")
- */
-export function formatDurationCompact(ms: number): string {
-	const totalSeconds = Math.floor(ms / 1000);
-	const hours = Math.floor(totalSeconds / 3600);
-	const minutes = Math.floor((totalSeconds % 3600) / 60);
-
-	if (hours > 0) {
-		return `${hours}h ${minutes}m`;
-	}
-	if (minutes > 0) {
-		return `${minutes}m`;
-	}
-	return `${totalSeconds}s`;
-}
-
-/**
- * Format duration in milliseconds with full English words.
- * Suitable for celebratory or detailed displays.
- *
- * @param ms - Duration in milliseconds
- * @returns Formatted string (e.g., "5 minutes 30 seconds", "1 hour 15 minutes")
- */
-export function formatDurationVerbose(ms: number): string {
-	const seconds = Math.floor(ms / 1000);
-	const minutes = Math.floor(seconds / 60);
-	const hours = Math.floor(minutes / 60);
-
-	if (hours > 0) {
-		const remainingMinutes = minutes % 60;
-		if (remainingMinutes > 0) {
-			return `${hours} hour${hours > 1 ? 's' : ''} ${remainingMinutes} minute${remainingMinutes > 1 ? 's' : ''}`;
-		}
-		return `${hours} hour${hours > 1 ? 's' : ''}`;
-	}
-
-	if (minutes > 0) {
-		const remainingSeconds = seconds % 60;
-		if (remainingSeconds > 0) {
-			return `${minutes} minute${minutes > 1 ? 's' : ''} ${remainingSeconds} second${remainingSeconds > 1 ? 's' : ''}`;
-		}
-		return `${minutes} minute${minutes > 1 ? 's' : ''}`;
-	}
-
-	return `${seconds} second${seconds > 1 ? 's' : ''}`;
-}
-
-/**
- * Format duration in milliseconds as multi-part string with days support.
- * Useful for toast notifications and long-running processes.
- *
- * @param ms - Duration in milliseconds
- * @returns Formatted string (e.g., "5s", "2m 30s", "1h 15m", "3d 2h 15m")
- */
-export function formatDurationParts(ms: number): string {
-	if (ms < 1000) return `${ms}ms`;
-	const totalSeconds = Math.floor(ms / 1000);
-	if (totalSeconds < 60) return `${totalSeconds}s`;
-
-	const days = Math.floor(totalSeconds / 86400);
-	const hours = Math.floor((totalSeconds % 86400) / 3600);
-	const minutes = Math.floor((totalSeconds % 3600) / 60);
-	const seconds = totalSeconds % 60;
-
-	const parts: string[] = [];
-	if (days > 0) parts.push(`${days}d`);
-	if (hours > 0) parts.push(`${hours}h`);
-	if (minutes > 0) parts.push(`${minutes}m`);
-	if (seconds > 0 && days === 0) parts.push(`${seconds}s`);
-
-	return parts.join(' ') || '0s';
-}
-
-/**
- * Format a duration in milliseconds as a compact human-readable string that
- * ladders through every unit from seconds up to years, showing the two largest
- * non-zero units. Unlike formatDurationParts (caps at days) and formatDuration
- * (caps at seconds), this keeps long spans readable instead of dumping a giant
- * seconds count: "45s", "5m 30s", "2h 15m", "6d 7h", "3w 2d", "1y 7w".
- *
- * Week = 7 days, year = 365 days - coarse enough for summary/dashboard displays
- * where exact calendar math is unnecessary. Months are intentionally skipped so
- * the ladder stays: seconds, minutes, hours, days, weeks, years.
- *
- * @param ms - Duration in milliseconds
- * @returns Human-readable duration (e.g., "6d 7h")
- */
-export function formatDurationLong(ms: number): string {
-	if (!Number.isFinite(ms) || ms < 1000) return '0s';
-	const totalSeconds = Math.floor(ms / 1000);
-
-	const units: Array<[label: string, size: number]> = [
-		['y', 31_536_000],
-		['w', 604_800],
-		['d', 86_400],
-		['h', 3_600],
-		['m', 60],
-		['s', 1],
-	];
-
-	for (let i = 0; i < units.length; i++) {
-		const [label, size] = units[i];
-		const value = Math.floor(totalSeconds / size);
-		if (value <= 0) continue;
-		const parts = [`${value}${label}`];
-		const next = units[i + 1];
-		if (next) {
-			const nextValue = Math.floor((totalSeconds % size) / next[1]);
-			if (nextValue > 0) parts.push(`${nextValue}${next[0]}`);
-		}
-		return parts.join(' ');
-	}
-	return '0s';
-}
-
-/**
- * Format duration in milliseconds as decimal string for compact CLI output.
- * Uses single-decimal precision with appropriate unit suffix.
- *
- * @param ms - Duration in milliseconds
- * @returns Formatted string (e.g., "500ms", "5.2s", "3.1m", "1.5h")
- */
-export function formatDurationDecimal(ms: number): string {
-	if (ms < 1000) return `${ms}ms`;
-	if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
-	if (ms < 3600_000) return `${(ms / 60_000).toFixed(1)}m`;
-	return `${(ms / 3600_000).toFixed(1)}h`;
-}
-
-/**
  * Estimate token count from an array of log entries.
  * Uses the same ~4 characters per token heuristic as estimateTokenCount.
  *
@@ -743,35 +650,77 @@ export function formatTimestamp(
 	style: 'time' | 'datetime' | 'smart' | 'full' = 'smart'
 ): string {
 	const date = new Date(timestamp);
+	// `Intl.DateTimeFormat.format()` THROWS on an invalid date, where the
+	// `toLocale*String()` calls the cached formatters replaced returned the string
+	// "Invalid Date". Callers pass whatever a transcript, a group chat, or a
+	// history row carries - a numeric string that `Date` cannot parse reaches here
+	// in practice - so keep the old, non-throwing answer rather than letting a
+	// single bad row take a render down.
+	if (Number.isNaN(date.getTime())) return 'Invalid Date';
 
 	switch (style) {
 		case 'time':
-			return date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+			return dtfLocalTime().format(date);
 
 		case 'datetime':
-			return date.toLocaleString([], {
-				month: 'short',
-				day: 'numeric',
-				hour: 'numeric',
-				minute: '2-digit',
-			});
+			return dtfLocalDateTime().format(date);
 
 		case 'full':
-			return date.toLocaleString();
+			return dtfLocalFull().format(date);
 
 		case 'smart':
 		default: {
-			const now = new Date();
-			const isToday = date.toDateString() === now.toDateString();
-
-			if (isToday) {
-				return date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+			if (isSameLocalDay(date, new Date())) {
+				return dtfLocalTime().format(date);
 			}
-			return (
-				date.toLocaleDateString([], { month: 'short', day: 'numeric' }) +
-				' ' +
-				date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
-			);
+			return dtfLocalMonthDay().format(date) + ' ' + dtfLocalTime().format(date);
 		}
 	}
 }
+
+/**
+ * `20260713-142530` - a filesystem-safe, chronologically sortable stamp for a
+ * generated file name (saved chat images, exports).
+ *
+ * Local time on purpose: the name is read by a human who pasted the image at
+ * that wall-clock moment, and a UTC stamp reads as the wrong hour to everyone
+ * outside UTC.
+ */
+export function fileTimestampSlug(dateOrTimestamp: Date | number = new Date()): string {
+	const date = typeof dateOrTimestamp === 'number' ? new Date(dateOrTimestamp) : dateOrTimestamp;
+	const pad = (n: number) => String(n).padStart(2, '0');
+	return (
+		`${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}` +
+		`-${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`
+	);
+}
+
+// ============================================================================
+// Durations
+// ============================================================================
+// Every duration formatter lives in ./duration.ts, built on one shared unit
+// ladder. They are re-exported here because ~50 call sites already import them
+// from this module, and because a duration is a formatter - somebody looking
+// for one should find it. Import either path; ./duration.ts is canonical and is
+// where new duration work belongs.
+
+export {
+	humanizeDuration,
+	formatDurationHuman,
+	formatDurationCompact,
+	formatDurationVerbose,
+	formatDurationParts,
+	formatDurationDecimal,
+	formatDurationLong,
+	formatDurationWords,
+	formatActiveTime,
+	formatElapsedTime,
+	formatElapsedTicker,
+	formatElapsedTickerCompact,
+	formatTurnDuration,
+	DURATION_MS,
+	DURATION_LADDER_FULL,
+	DURATION_LADDER_DAYS,
+	DURATION_LADDER_HOURS,
+} from './duration';
+export type { DurationUnit, DurationStyle, HumanizeDurationOptions } from './duration';

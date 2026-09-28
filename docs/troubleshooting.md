@@ -14,6 +14,10 @@ Yes. Maestro is a pass-through - it calls your provider (Claude Code, Codex, Ope
 
 The only difference is execution mode. When you run Claude Code directly, it's interactive - you send a message, watch it work, and respond in real-time. Maestro runs in batch mode: it sends a prompt, the provider processes it fully, and returns the response. This enables unattended automation via Auto Run and parallel agent management. Everything else - your tools, permissions, context - remains identical.
 
+**Claude said it was asking me a question, but no prompt appeared and the agent is stuck.**
+
+Claude Code's `AskUserQuestion` ask-back tool is only wired into Maestro when the tab is in Standard permission mode. In Standard mode, Maestro attaches a permission relay that renders the question as an in-app question picker (the same relay that surfaces tool approvals). In Full Access mode the relay is not attached (permission checks are bypassed with `--dangerously-skip-permissions`), so the question never reaches Maestro and the tool call waits forever, leaving the agent busy (yellow). To unstick it, stop the agent; a follow-up message only queues behind the stalled turn (which never completes), so it won't dispatch and can't recover the turn. If you want ask-back questions to work, switch the tab to Standard mode using the permission pill in the input toolbar. The same limitation applies in Read-Only mode. SSH remote agents can't use Standard mode at all: a Standard-mode Claude Code spawn over SSH fails loudly instead of downgrading, so they always run in Full Access or Read-Only and never surface ask-backs.
+
 ---
 
 ## System Logs
@@ -50,16 +54,17 @@ The **Process Monitor** displays a hierarchical tree view:
 - **Wizard processes** - Active wizard conversations and playbook generation
 
 **Process types shown:**
-| Type | Description |
-|------|-------------|
-| AI Agent | Main Claude Code (or other agent) process |
-| Terminal | Shell process for the session |
-| Batch | Auto Run document processing agent |
-| Synopsis | Context compaction synopsis generation |
-| Moderator | Group chat moderator process |
-| Participant | Group chat participant agent |
-| Wizard | Wizard conversation process |
-| Wizard Gen | Playbook document generation process |
+
+| Type        | Description                               |
+| ----------- | ----------------------------------------- |
+| AI Agent    | Main Claude Code (or other agent) process |
+| Terminal    | Shell process for the session             |
+| Batch       | Auto Run document processing agent        |
+| Synopsis    | Context compaction synopsis generation    |
+| Moderator   | Group chat moderator process              |
+| Participant | Group chat participant agent              |
+| Wizard      | Wizard conversation process               |
+| Wizard Gen  | Playbook document generation process      |
 
 **Features:**
 
@@ -72,6 +77,8 @@ The **Process Monitor** displays a hierarchical tree view:
 This is useful when an agent becomes unresponsive or you need to diagnose process-related issues.
 
 ## Agent Errors
+
+Two of the errors below rarely reach you at all. **Rate Limit Exceeded** and a spent plan quota are handled by [Agent Resilience](/agent-resilience), which resends your prompt on its own and shows a live countdown card in the transcript instead of a modal. The table applies when resilience is turned off for that agent, or when the failure is one it deliberately does not retry.
 
 When an AI agent encounters an error, Maestro displays a modal with clear recovery options. Common error types include:
 
@@ -92,6 +99,16 @@ Each error modal shows:
 - Collapsible JSON details for debugging
 - Recovery action buttons specific to the error type
 
+### Expired Provider Credentials
+
+An expired token is handled differently from the errors above, because it takes down every agent AND every Cue pipeline on that provider at once. Instead of the generic error modal, Maestro opens a re-authentication dialog with a terminal embedded in it and runs the provider's own login command for you (`claude /login`, `codex login`, `opencode auth login`, and so on). Finish the login in that terminal and click Done. The agent keeps its view and its transcript.
+
+Two details worth knowing:
+
+- **Agents on an SSH remote log in on that remote.** The embedded terminal is spawned exactly like a terminal tab, so the login runs on the host the agent actually runs on. Codex switches to `codex login --device-auth` there: its default browser login waits for a callback on the remote's localhost, which your browser cannot reach.
+- **Cue pipelines raise the same dialog.** Cue spawns its agents outside the normal streaming path, so a pipeline that fails on expired credentials used to fail silently in the background. Maestro now classifies the failed run and prompts once per provider. It stays quiet after that until a run for that provider succeeds again, so a busy board cannot bury you in dialogs.
+- **You can sign in before anything breaks.** Command K -> **Re-authenticate Provider** opens the same dialog for the current agent's provider, with nothing failed. Useful when you are switching accounts, or when you know a token is about to lapse and would rather not have it expire mid-run.
+
 ## Debug Package
 
 If you encounter deep-seated issues that are difficult to diagnose, Maestro can generate a **Debug Package** - a compressed bundle of diagnostic information that you can safely share when reporting bugs.
@@ -102,6 +119,8 @@ If you encounter deep-seated issues that are difficult to diagnose, Maestro can 
 2. Search for "Create Debug Package"
 3. Choose a save location for the `.zip` file
 4. Attach the file to your [GitHub issue](https://github.com/RunMaestro/Maestro/issues)
+
+From the command line, `maestro-cli support-package -o <dir>` writes the same zip into `<dir>` with no save dialog. Flags like `--no-logs` leave a section out. See the [CLI reference](./cli-reference#maestro-cli-support-package).
 
 ### What's Included
 
@@ -116,38 +135,44 @@ The debug package collects metadata and configuration - never your conversations
 | `agents.json`              | Agent configurations, availability, and capability flags  |
 | `external-tools.json`      | Shell, git, GitHub CLI, and cloudflared availability      |
 | `windows-diagnostics.json` | Windows-specific diagnostics (minimal on other platforms) |
-| `groups.json`              | Session group configurations                              |
+| `groups.json`              | Group structure (no group names)                          |
 | `processes.json`           | Active process information                                |
 | `web-server.json`          | Web server and Cloudflare tunnel status                   |
-| `storage-info.json`        | Storage paths and sizes                                   |
+| `storage-info.json`        | Storage locations and sizes                               |
 
 **Optional (toggleable in UI):**
 
-| File               | Contents                                                        |
-| ------------------ | --------------------------------------------------------------- |
-| `sessions.json`    | Session metadata (names, states, tab counts - no conversations) |
-| `logs.json`        | Recent system log entries                                       |
-| `errors.json`      | Current error states and recent error events                    |
-| `group-chats.json` | Group chat metadata (participant lists, routing - no messages)  |
-| `batch-state.json` | Auto Run state and document queue                               |
+| File               | Contents                                                           |
+| ------------------ | ------------------------------------------------------------------ |
+| `sessions.json`    | Session metadata (states, tab counts - no names, no conversations) |
+| `logs.json`        | Recent system log entries                                          |
+| `errors.json`      | Current error states and recent error events                       |
+| `group-chats.json` | Group chat metadata (participant lists, routing - no messages)     |
+| `batch-state.json` | Auto Run state and document queue                                  |
 
 ### Privacy Protections
 
-The debug package is designed to be **safe to share publicly**:
+Support packages usually end up attached to a public GitHub issue, so the debug package is designed to be **safe to share publicly** - nothing in one identifies you or your work:
 
 - **API keys and tokens** - Replaced with `[REDACTED]`
 - **Passwords and secrets** - Never included
 - **Conversation content** - Excluded entirely (no AI responses, no user messages)
 - **File contents** - Not included from your projects
 - **Custom prompts** - Not included (may contain sensitive context)
-- **File paths** - Sanitized to replace your username with `~`
+- **Your username and computer name** - Replaced with `[user]` and `[host]` wherever they appear
+- **File paths** - Replaced with an opaque descriptor, so no folder, project, or repository names survive
+- **Agent, session, and group names** - Not included
+- **SSH remote identities** - Hosts and usernames replaced with `[REDACTED]`
+- **URLs** - Reduced to scheme and domain, so tunnel URLs cannot be reused
 - **Environment variables** - Only counts shown, not values (may contain secrets)
 - **Custom agent arguments** - Only `[SET]` or `[NOT SET]` shown, not actual values
 
-**Example path sanitization:**
+**Example path redaction:**
 
-- Before: `/Users/johndoe/Projects/MyApp`
-- After: `~/Projects/MyApp`
+- Before: `/Users/johndoe/Projects/MyApp/config.json`
+- After: `[path#3f9a1c04 root=home depth=3 ext=.json]`
+
+The descriptor keeps only what is useful for debugging: where the path starts (`root`), how deep it is (`depth`), the file extension, and flags for spaces or non-ASCII characters (a common cause of process spawn failures). The `path#` fingerprint is stable within a single package, so identical paths still line up, and it is salted per package so it cannot be reversed or matched against another package.
 
 ## WSL2 Issues (Windows)
 
@@ -229,6 +254,41 @@ EOF
 ```
 
 Then rebuild the cache: `fc-cache -f -v`
+
+## macOS Privacy Permissions
+
+macOS gates calendars, reminders, contacts, photos, the local network, and the Desktop / Documents / Downloads folders behind TCC (Transparency, Consent, and Control). TCC attributes a request to the **responsible process**, which for anything an agent shells out to is Maestro itself:
+
+```
+Maestro.app -> claude -> zsh -> ical
+```
+
+So when an agent runs a CLI that touches one of those services, the consent dialog names **Maestro**, and the switch you flip afterwards lives under Maestro's row in System Settings > Privacy & Security. That attribution is expected, not a bug: the tool is borrowing Maestro's identity because Maestro is what launched it.
+
+### A tool reports "access denied" and no dialog ever appears
+
+On older builds, Maestro declared no usage-description string for these services, so macOS denied every such request instantly and silently. It will not prompt on behalf of a purpose string an app never declared, and with nothing to prompt for, no Maestro row appears in the Privacy pane to enable. Update Maestro.
+
+On a current build, a missing prompt usually means macOS has cached an earlier decision. Reset the relevant service and run the command again:
+
+```bash
+tccutil reset Calendar com.maestro.app
+tccutil reset Reminders com.maestro.app
+tccutil reset AddressBook com.maestro.app
+tccutil reset Photos com.maestro.app
+tccutil reset MediaLibrary com.maestro.app
+tccutil reset AppleEvents com.maestro.app
+tccutil reset SpeechRecognition com.maestro.app
+tccutil reset SystemPolicyDesktopFolder com.maestro.app
+tccutil reset SystemPolicyDocumentsFolder com.maestro.app
+tccutil reset SystemPolicyDownloadsFolder com.maestro.app
+tccutil reset SystemPolicyRemovableVolumes com.maestro.app
+tccutil reset SystemPolicyNetworkVolumes com.maestro.app
+```
+
+Run `tccutil reset All com.maestro.app` to clear every service at once. Local network access has no `tccutil` service name; toggle Maestro off and on under System Settings > Privacy & Security > Local Network instead.
+
+Omitting the bundle id resets that service for every app on the machine.
 
 ## Getting Help
 

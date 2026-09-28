@@ -22,6 +22,9 @@ export function ShortcutFilterButton({
 	const buttonRef = React.useRef<HTMLButtonElement>(null);
 	const active = recording || keys.length > 0;
 
+	// Recording is STICKY: a captured combo updates the filter but keeps the
+	// button live, so the user can rapid-fire one key after another to explore
+	// what each is bound to. Only Escape or moving focus away ends it.
 	const handleKeyDown = (e: React.KeyboardEvent) => {
 		if (!recording) return;
 		e.preventDefault();
@@ -37,7 +40,6 @@ export function ShortcutFilterButton({
 		if (!captured) return;
 
 		onKeysChange(captured);
-		onRecordingChange(false);
 	};
 
 	return (
@@ -54,6 +56,11 @@ export function ShortcutFilterButton({
 			}}
 			onKeyDownCapture={handleKeyDown}
 			onBlur={() => onRecordingChange(false)}
+			title={
+				recording
+					? 'Press any shortcut to see what it does. Keep pressing to explore - Escape or click away to stop.'
+					: 'Filter by pressing a shortcut'
+			}
 			className={`px-3 py-2 rounded border text-xs font-mono whitespace-nowrap text-center transition-colors ${recording ? 'ring-2' : ''}`}
 			style={
 				{
@@ -64,7 +71,7 @@ export function ShortcutFilterButton({
 				} as React.CSSProperties
 			}
 		>
-			{recording ? (
+			{recording && keys.length === 0 ? (
 				'Press keys...'
 			) : keys.length > 0 ? (
 				formatShortcutKeys(keys)

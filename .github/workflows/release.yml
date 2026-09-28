@@ -12,6 +12,13 @@ on:
 permissions:
   contents: write
 
+# One release run per tag at a time. A single tag push once started two identical
+# runs (v0.18.6-RC) that raced to upload into the same release. Queue, never cancel:
+# cancelling a half-finished release would strand a draft with partial files.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   build:
     strategy:
@@ -236,6 +243,20 @@ jobs:
         run: npm run build
         env:
           VITE_APP_VERSION: ${{ steps.version.outputs.VERSION }}
+          # Crash-reporting address. Deliberately a secret rather than a source
+          # literal: when the DSN sat in src/main/index.ts every fork inherited it and
+          # reported into smash-labs/maestro, which both drowned our issue stream and
+          # shipped fork users' telemetry to a project they never chose. Forks do not
+          # inherit secrets, so a fork build gets no DSN and reports nowhere.
+          # See src/shared/buildProvenance.ts.
+          MAESTRO_SENTRY_DSN: ${{ secrets.MAESTRO_SENTRY_DSN }}
+          MAESTRO_OFFICIAL_BUILD: '1'
+
+      # Fail loudly rather than shipping a release with crash reporting silently off.
+      - name: Verify crash reporting was provisioned
+        run: npm run verify:provenance
+        env:
+          MAESTRO_SENTRY_DSN: ${{ secrets.MAESTRO_SENTRY_DSN }}
 
       # Sign every bundled plugin with the publisher key so the baked
       # MAESTRO_PUBLISHER_KEYS anchor resolves them "trusted" at seed time and
@@ -261,7 +282,7 @@ jobs:
           # only make sense once a public key exists to validate against.
           ANCHOR=$(node -e "console.log(require('./dist/shared/plugins/publisher-keys.js').MAESTRO_PUBLISHER_KEYS.join(','))")
 
-          # No anchor baked: a fork, or this repo before the key was minted.
+          # This branch runs only when the committed anchor was deliberately emptied.
           # There is nothing to validate a signature against, so skip signing and
           # ship the bundled plugins unsigned rather than breaking every release
           # target. Unsigned bundled plugins are simply not seeded at runtime
@@ -291,6 +312,7 @@ jobs:
           trap 'rm -f "$KEYFILE"' EXIT
           printf '%s' "$MAESTRO_PLUGIN_SIGNING_KEY" > "$KEYFILE"
           for dir in examples/plugins/*/; do
+            [ -f "$dir/plugin.json" ] || continue
             node dist/cli/maestro-cli.js plugin sign "$dir" --key "$KEYFILE" --json
           done
 
@@ -299,7 +321,8 @@ jobs:
           # secret was rotated without re-baking publisher-keys.ts (or vice
           # versa), the produced signature would be seed-skipped at runtime and
           # ship a permanently non-runnable plugin. Fail the release here instead.
-          if ! node dist/cli/maestro-cli.js plugin validate examples/plugins/agent-flow --trusted-key "$ANCHOR" --json | grep -q '"status":"trusted"'; then
+          VALIDATION=$(node dist/cli/maestro-cli.js plugin validate examples/plugins/agent-flow --trusted-key "$ANCHOR" --json)
+          if ! grep -q '"status":"trusted"' <<< "$VALIDATION"; then
             echo "::error::agent-flow signature does not resolve 'trusted' against the baked MAESTRO_PUBLISHER_KEYS anchor. The CI signing key (MAESTRO_PLUGIN_SIGNING_KEY) and the baked public key have drifted." >&2
             exit 1
           fi
@@ -660,57 +683,129 @@ jobs:
             exit 1
           fi
 
-      - name: Create Release
-        id: create_release
+      # Attach the builds to the curated draft and publish it, in one place we control.
+      #
+      # This replaced softprops/action-gh-release, which did not treat a hand-written
+      # draft as the tag's release. It created a second release, uploaded the files
+      # to the draft, then could not publish the draft (already_exists on tag_name).
+      # On v0.18.6-RC the empty duplicate went live instead, with zero downloads.
+      # Release notes are always written into a draft ahead of the tag, so every
+      # release took that path.
+      #
+      # Order matters: files first, publish last, so a release is never public with
+      # missing downloads. If any platform failed to build, the files that did build
+      # stay on the draft, the release stays unpublished, and the job fails loudly.
+      - name: Attach artifacts and publish
+        id: publish
         if: steps.check_artifacts.outputs.has_artifacts == 'true'
-        uses: softprops/action-gh-release@v2
-        with:
-          files: artifacts/release/*
-          fail_on_unmatched_files: false
-          draft: false
-          prerelease: ${{ contains(github.ref_name, '-rc') || contains(github.ref_name, '-RC') || contains(github.ref_name, '-beta') || contains(github.ref_name, '-alpha') }}
-          generate_release_notes: true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Get release notes
-        if: steps.check_artifacts.outputs.has_artifacts == 'true'
-        id: release_notes
         uses: actions/github-script@v8
+        env:
+          ALL_BUILDS_PASSED: ${{ needs.build.result == 'success' }}
         with:
           script: |
-            const release = await github.rest.repos.getReleaseByTag({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              tag: context.ref.replace('refs/tags/', '')
+            const fs = require('fs');
+            const path = require('path');
+            const { owner, repo } = context.repo;
+            const tag = context.ref.replace('refs/tags/', '');
+            const prerelease = /-(rc|beta|alpha)/i.test(tag);
+            const dir = 'artifacts/release';
+            const files = fs
+              .readdirSync(dir)
+              .filter((f) => fs.statSync(path.join(dir, f)).isFile());
+
+            // Drafts are invisible to getReleaseByTag, so look through the list.
+            const releases = await github.paginate(github.rest.repos.listReleases, {
+              owner,
+              repo,
+              per_page: 100,
             });
+            const forTag = releases.filter((r) => r.tag_name === tag);
+            const published = forTag.find((r) => !r.draft);
+            const drafts = forTag.filter((r) => r.draft);
+            let release;
+            if (published) {
+              // A re-run after a successful publish: refresh the files in place.
+              release = published;
+            } else if (drafts.length === 1) {
+              release = drafts[0];
+            } else if (drafts.length > 1) {
+              core.setFailed(
+                `${drafts.length} draft releases carry tag ${tag} (ids ${drafts
+                  .map((d) => d.id)
+                  .join(', ')}). Delete all but the curated one and re-run this job.`
+              );
+              return;
+            } else {
+              core.warning(`No draft release for ${tag}; creating one with generated notes.`);
+              ({ data: release } = await github.rest.repos.createRelease({
+                owner,
+                repo,
+                tag_name: tag,
+                name: tag,
+                draft: true,
+                prerelease,
+                generate_release_notes: true,
+              }));
+            }
+            core.info(`Using release ${release.id} (${release.draft ? 'draft' : 'published'})`);
 
-            // Get the release body (auto-generated notes)
-            let notes = release.data.body || '';
-
-            // Truncate if too long for Discord (max ~2000 chars for description)
-            // Leave room for the download link text
-            const maxLength = 1800;
-            if (notes.length > maxLength) {
-              notes = notes.substring(0, maxLength) + '...\n\n*See full changelog on GitHub*';
+            const existing = new Map(release.assets.map((a) => [a.name, a.id]));
+            for (const name of files) {
+              if (existing.has(name)) {
+                await github.rest.repos.deleteReleaseAsset({
+                  owner,
+                  repo,
+                  asset_id: existing.get(name),
+                });
+              }
+              const filePath = path.join(dir, name);
+              await github.rest.repos.uploadReleaseAsset({
+                owner,
+                repo,
+                release_id: release.id,
+                name,
+                data: fs.readFileSync(filePath),
+                headers: {
+                  'content-type': 'application/octet-stream',
+                  'content-length': fs.statSync(filePath).size,
+                },
+              });
+              core.info(`Attached ${name}`);
             }
 
-            // Set output
-            core.setOutput('notes', notes);
+            const { data: attached } = await github.rest.repos.listReleaseAssets({
+              owner,
+              repo,
+              release_id: release.id,
+              per_page: 100,
+            });
+            const names = new Set(attached.map((a) => a.name));
+            const missing = files.filter((f) => !names.has(f));
+            if (missing.length > 0) {
+              core.setFailed(`Upload incomplete; missing on the release: ${missing.join(', ')}`);
+              return;
+            }
 
-      - name: Notify Discord
-        if: steps.check_artifacts.outputs.has_artifacts == 'true' && !contains(github.ref_name, '-rc') && !contains(github.ref_name, '-RC')
-        uses: sarisia/actions-status-discord@v1
-        with:
-          webhook: ${{ secrets.DISCORD_WEBHOOK_URL }}
-          nodetail: true
-          title: '🎉 Maestro ${{ github.ref_name }} Released!'
-          description: |
-            ${{ steps.release_notes.outputs.notes }}
+            if (process.env.ALL_BUILDS_PASSED !== 'true') {
+              core.setFailed(
+                `At least one platform build failed. ${files.length} files are attached to ` +
+                  `release ${release.id}, which stays a draft. Fix the build and re-run the ` +
+                  `failed jobs; this step will attach the rest and publish.`
+              );
+              return;
+            }
 
-            **[Download & Full Changelog](${{ github.server_url }}/${{ github.repository }}/releases/tag/${{ github.ref_name }})**
-          url: ${{ github.server_url }}/${{ github.repository }}/releases/tag/${{ github.ref_name }}
-          color: 0x58B09C
+            await github.rest.repos.updateRelease({
+              owner,
+              repo,
+              release_id: release.id,
+              tag_name: tag,
+              draft: false,
+              prerelease,
+              make_latest: prerelease ? 'false' : 'true',
+            });
+            core.info(`Published ${tag} with ${files.length} files`);
+            core.setOutput('release_id', String(release.id));
 
   # Sync release notes to docs after release is published
   sync-docs:

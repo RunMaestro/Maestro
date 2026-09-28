@@ -44,7 +44,7 @@ export function SymphonyRegistrySection({
 					{SYMPHONY_REGISTRY_URL}
 				</span>
 				<span
-					className="text-[10px] px-1.5 py-0.5 rounded flex-shrink-0"
+					className="text-2xs px-1.5 py-0.5 rounded flex-shrink-0"
 					style={{ color: theme.colors.textDim, backgroundColor: theme.colors.border }}
 				>
 					default
@@ -99,10 +99,7 @@ export function SymphonyRegistrySection({
 						}}
 					/>
 					{registryState.registryUrlError && (
-						<p
-							className="absolute -bottom-4 left-0 text-[10px]"
-							style={{ color: theme.colors.error }}
-						>
+						<p className="absolute -bottom-4 left-0 text-2xs" style={{ color: theme.colors.error }}>
 							{registryState.registryUrlError}
 						</p>
 					)}

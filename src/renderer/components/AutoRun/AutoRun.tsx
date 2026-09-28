@@ -4,16 +4,21 @@ import {
 	useEffect,
 	useCallback,
 	memo,
+	useMemo,
 	forwardRef,
 	useImperativeHandle,
 } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { urlTransformAllowingMaestro } from '../../utils/markdownUrlTransform';
 import rehypeSlug from 'rehype-slug';
+import { rehypeSourceLine } from '../Markdown/rehypeSourceLine';
 import { AutoRunnerHelpModal } from './AutoRunnerHelpModal';
 // Module-level constant - react-markdown re-parses the document if rehypePlugins
 // changes by reference, so the array must be hoisted out of render.
-const REHYPE_PLUGINS = [rehypeSlug];
+// rehypeSourceLine runs first so it reads the original source positions before
+// any later plugin rewrites the tree. It stamps each task checkbox with the line
+// its `- [ ]` marker lives on, which is what makes the box clickable.
+const REHYPE_PLUGINS = [rehypeSourceLine, rehypeSlug];
 
 // Memoized ReactMarkdown wrapper. AutoRunInner re-renders on every keystroke in
 // the AI input (input state lives in App.tsx and cascades down), and ReactMarkdown
@@ -45,14 +50,24 @@ import { AutoRunLightbox } from './AutoRunLightbox';
 import { AutoRunSearchBar } from './AutoRunSearchBar';
 import { AutoRunToolbar } from './AutoRunToolbar';
 import { AutoRunErrorBanner } from './AutoRunErrorBanner';
+import { AutoRunHumanStepBanner } from './AutoRunHumanStepBanner';
 import { AutoRunBottomPanel } from './AutoRunBottomPanel';
 import { NoFolderState, EmptyFolderState } from './AutoRunEmptyStates';
 import { useBatchStore } from '../../stores/batchStore';
-import { useThoughtStreamStore } from '../../stores/thoughtStreamStore';
+import { useThoughtStreamStore, selectActivityCount } from '../../stores/thoughtStreamStore';
 import { AutoRunAttachmentsPanel } from './AutoRunAttachmentsPanel';
-import { useTemplateAutocomplete, useAutoRunUndo, useAutoRunImageHandling } from '../../hooks';
+import { useAutoRunUndo, useAutoRunImageHandling } from '../../hooks';
+import { useEditorTemplateAutocomplete } from '../../hooks/input/useEditorTemplateAutocomplete';
+import { MarkdownEditor, type MarkdownEditorHandle } from '../FilePreview/markdownEditor';
 import { TemplateAutocompleteDropdown } from '../TemplateAutocompleteDropdown';
 import type { AutoRunProps, AutoRunHandle } from './types';
+import { FontScaleControl } from '../ui/FontScaleControl';
+import { useFontScale } from '../../hooks/ui/useFontScale';
+import { useSurfaceTypography } from '../../hooks/ui/useSurfaceTypography';
+import { findHumanOnlyTasks } from '../../hooks/batch/batchUtils';
+import { toggleTaskCheckboxAtLine } from '../../utils/markdownTasks';
+import { isAutoRunRunDocument } from '../../utils/autoRunDraft';
+import { useAutoRunErrorPaused } from '../../hooks/batch/useAutoRunPause';
 import { useAutoRunContentSync } from '../../hooks/batch/useAutoRunContentSync';
 import { useAutoRunSearch } from '../../hooks/batch/useAutoRunSearch';
 import { useAutoRunKeyboard } from '../../hooks/batch/useAutoRunKeyboard';
@@ -62,7 +77,13 @@ import { Maximize2, Edit as EditIcon, Eye, Search, Brain } from 'lucide-react';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
 import { logger } from '../../utils/logger';
 import { useSettingsStore } from '../../stores/settingsStore';
+import { usePhoneLayout } from '../../hooks/ui/useViewportBreakpoint';
+import { notifyToast } from '../../stores/notificationStore';
 import { useImageAnnotatorStore } from '../ImageAnnotator/imageAnnotatorStore';
+import {
+	MIRRORED_RUN_CONTROL_TITLE,
+	useIsMirroredBatchRun,
+} from '../../hooks/batch/useAutoRunStateMirror';
 
 // Inner implementation component
 const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInner(
@@ -74,8 +95,10 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 		selectedFile,
 		documentList,
 		documentTree,
+		projectFileTree,
+		projectRoot,
+		onOpenProjectFile,
 		content,
-		onContentChange,
 		contentVersion = 0, // Used to force-sync on external file changes
 		externalLocalContent,
 		onExternalLocalContentChange,
@@ -107,45 +130,46 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 		onLaunchWizard,
 		shortcuts,
 		hideTopControls = false,
+		showLineNumbers = false,
 		onShowFlash,
 	},
 	ref
 ) {
-	// Only lock the editor when Auto Run is running WITHOUT a worktree (directly on main repo)
-	// AND only for documents that are part of the current Auto Run
-	// Documents not in the Auto Run can still be edited
-	const isLocked =
-		(batchRunState?.isRunning &&
-			!batchRunState?.worktreeActive &&
-			selectedFile !== null &&
-			batchRunState?.lockedDocuments?.includes(selectedFile)) ||
-		false;
 	const isAgentBusy = sessionState === 'busy' || sessionState === 'connecting';
 	const isAutoRunActive = batchRunState?.isRunning || false;
+	// Mirrored from another Maestro window - visible, but not steerable here.
+	const isMirroredRun = useIsMirroredBatchRun(sessionId);
 	const isRunningRef = useRef(isAutoRunActive);
 	useEffect(() => {
 		isRunningRef.current = isAutoRunActive;
 	}, [isAutoRunActive]);
 	const isStopping = batchRunState?.isStopping || false;
 
-	// Thought Stream restore affordance. While a run is active the brain /
+	// Thought Stream reopen affordance. While a run is active the brain /
 	// "View Thoughts" button lives on the Right Panel's active-run card, but that
-	// card is gated on `isRunning` and disappears once the run completes. If the
-	// user had minimized the Thought Stream, it would be left with no way back -
-	// so once the run is done we surface a restore button in the footer for this
-	// session's minimized stream, until they dismiss it with the panel's X.
+	// card is gated on `isRunning` and disappears once the run completes - which
+	// is exactly when someone wants to read back why the run did what it did.
+	// The buffer outlives the run, so once the run is done we surface the entry
+	// point here for as long as there is something buffered to read.
 	const thoughtStreamSessionId = useThoughtStreamStore((s) => s.panelSessionId);
-	const thoughtStreamMinimized = useThoughtStreamStore((s) => s.minimized);
-	const restoreThoughtStream = useThoughtStreamStore((s) => s.restorePanel);
-	const showRestoreThoughtStream =
-		!isAutoRunActive && thoughtStreamMinimized && thoughtStreamSessionId === sessionId;
+	const openThoughtStream = useThoughtStreamStore((s) => s.openPanel);
+	// Reasoning AND tool calls: a run that only acted and never narrated still
+	// has a feed worth reopening, so this gate must not be thoughts-only.
+	const bufferedActivity = useThoughtStreamStore(selectActivityCount(sessionId));
+	const showOpenThoughtStream =
+		!isAutoRunActive && bufferedActivity > 0 && thoughtStreamSessionId !== sessionId;
 	// Error state (Phase 5.10)
-	// Subscribe directly to the Zustand store to bypass the multi-hop prop chain
+	// Subscribes to the Zustand store to bypass the multi-hop prop chain
 	// (store → useBatchProcessor → useBatchHandlers → App → RightPanel → AutoRun)
 	// which drops errorPaused updates via updateBatchStateAndBroadcast/UPDATE_PROGRESS.
-	const isErrorPaused = useBatchStore(
-		useCallback((s) => s.batchRunStates[sessionId]?.errorPaused ?? false, [sessionId])
-	);
+	const isErrorPaused = useAutoRunErrorPaused(sessionId);
+	const isRunDocument = isAutoRunRunDocument(batchRunState, selectedFile);
+	// Editing is blocked only while the run is actually DRIVING that document.
+	// A paused run hands it back: an agent error and a MAESTRO:HITL review gate
+	// both park the engine on `errorPaused` until the user clicks Resume, and in
+	// both cases editing is the point - the user is there to tick a box or fix
+	// the step that stalled. Locking them out makes the gate unanswerable here.
+	const isLocked = isRunDocument && !isErrorPaused;
 	const batchError = useBatchStore(
 		useCallback((s) => s.batchRunStates[sessionId]?.error, [sessionId])
 	);
@@ -168,9 +192,6 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 		[onModeChange]
 	);
 
-	// Use onContentChange if provided, otherwise no-op
-	const handleContentChange = onContentChange || (() => {});
-
 	// Content sync: manages local/saved state, external sync for expanded modal, save/revert
 	const {
 		localContent,
@@ -191,20 +212,45 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 		onExternalLocalContentChange,
 		externalSavedContent,
 		onExternalSavedContentChange,
+		diskWins: isLocked,
 	});
+
+	// Unchecked tasks that read as human-only steps. Auto Run would dispatch
+	// these to an agent that cannot finish them, so the run stalls. Warn while
+	// the author still has the document open, before they hit Run.
+	const humanOnlyTasks = useMemo(() => findHumanOnlyTasks(localContent), [localContent]);
 
 	// Track mode before auto-run to restore when it ends
 	const modeBeforeAutoRunRef = useRef<'edit' | 'preview' | null>(null);
 	const [helpModalOpen, setHelpModalOpen] = useState(false);
 	const [resetTasksModalOpen, setResetTasksModalOpen] = useState(false);
-	const textareaRef = useRef<HTMLTextAreaElement>(null);
+	const editorRef = useRef<MarkdownEditorHandle>(null);
 	const previewRef = useRef<HTMLDivElement>(null);
 	const documentSelectorRef = useRef<AutoRunDocumentSelectorHandle>(null);
+
+	// Move the editor caret to a 0-indexed document line, switching to edit
+	// mode first when the user is reading the rendered preview.
+	const handleJumpToLine = useCallback(
+		(line: number) => {
+			setMode('edit');
+			// Defer so the editor exists when we came from preview mode.
+			// CodeMirror lines are 1-based; the caller's line is 0-indexed.
+			requestAnimationFrame(() => {
+				editorRef.current?.focus();
+				editorRef.current?.scrollToLine(line + 1);
+			});
+		},
+		[setMode]
+	);
 
 	// Bionify reading mode (global setting; disabled while search highlights are active)
 	const bionifyReadingMode = useSettingsStore((s) => s.bionifyReadingMode);
 	const bionifyIntensity = useSettingsStore((s) => s.bionifyIntensity);
 	const bionifyAlgorithm = useSettingsStore((s) => s.bionifyAlgorithm);
+
+	// Phone: the editor mode bar goes icon-only (each button keeps its title as
+	// the accessible name) so its four or five buttons fit a 390px drawer.
+	const phone = usePhoneLayout();
 
 	// Search state and effects
 	const {
@@ -221,7 +267,7 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 	} = useAutoRunSearch({
 		localContent,
 		mode,
-		textareaRef,
+		editorRef,
 		previewRef,
 	});
 
@@ -233,7 +279,7 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 	const { switchMode, toggleMode, handlePreviewScroll } = useAutoRunScrollSync({
 		mode,
 		setMode,
-		textareaRef,
+		editorRef,
 		previewRef,
 		localContent,
 		searchOpen,
@@ -252,9 +298,8 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 		selectVariable,
 		closeAutocomplete: _closeAutocomplete,
 		autocompleteRef,
-	} = useTemplateAutocomplete({
-		textareaRef,
-		value: localContent,
+	} = useEditorTemplateAutocomplete({
+		editorRef,
 		onChange: setLocalContent,
 	});
 
@@ -270,7 +315,7 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 		selectedFile,
 		localContent,
 		setLocalContent,
-		textareaRef,
+		editorRef,
 	});
 
 	// Reset undo history when document changes (session or file change)
@@ -292,19 +337,23 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 		pushUndoState();
 
 		// Replace all completed checkboxes with unchecked ones
-		const resetContent = localContent.replace(/^([\s]*[-*]\s*)\[x\]/gim, '$1[ ]');
+		const uncheckAll = (text: string) => text.replace(/^([\s]*[-*]\s*)\[x\]/gim, '$1[ ]');
+		const resetContent = uncheckAll(localContent);
 		setLocalContent(resetContent);
 		lastUndoSnapshotRef.current = resetContent;
 
-		// Auto-save the reset content
+		// Auto-save the reset, applied to the SAVED text rather than the draft:
+		// persisting the draft would bake the user's unsaved edits into the file
+		// and leave Revert nothing to discard.
+		const resetSaved = uncheckAll(savedContent);
 		try {
 			await window.maestro.autorun.writeDoc(
 				folderPath,
 				selectedFile + '.md',
-				resetContent,
+				resetSaved,
 				sshRemoteId
 			);
-			setSavedContent(resetContent);
+			setSavedContent(resetSaved);
 
 			// Show flash notification with the count of reset tasks
 			if (onShowFlash && resetCount > 0) {
@@ -317,6 +366,7 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 		folderPath,
 		selectedFile,
 		localContent,
+		savedContent,
 		setLocalContent,
 		setSavedContent,
 		pushUndoState,
@@ -324,6 +374,68 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 		sshRemoteId,
 		onShowFlash,
 	]);
+
+	// Latest content, read by the preview's checkbox handler. Keeping it in a ref
+	// leaves the toggle callback reference-stable, so the memoized markdown
+	// components (and the parse behind them) survive every content change.
+	const localContentRef = useRef(localContent);
+	const savedContentRef = useRef(savedContent);
+	useEffect(() => {
+		localContentRef.current = localContent;
+		savedContentRef.current = savedContent;
+	}, [localContent, savedContent]);
+
+	// Tick a task off straight from the rendered preview. Preview is a first-class
+	// way to work a playbook, so checking a box must not require a trip through
+	// edit mode. Resolves false when nothing was written, which reverts the box.
+	const handleToggleTask = useCallback(
+		async (line: number): Promise<boolean> => {
+			if (!folderPath || !selectedFile) return false;
+
+			const result = toggleTaskCheckboxAtLine(localContentRef.current, line);
+			// No task marker on that line: the render is out of step with the
+			// source. Leave the document alone rather than rewriting the wrong line.
+			if (!result) return false;
+
+			const hasUnsavedEdits = localContentRef.current !== savedContentRef.current;
+			pushUndoState();
+			setLocalContent(result.content);
+			lastUndoSnapshotRef.current = result.content;
+
+			// With unsaved edits the toggle joins the draft instead of saving it:
+			// writing now would persist those edits too, and Revert could no
+			// longer discard them. Save commits both together.
+			if (hasUnsavedEdits) return true;
+
+			try {
+				await window.maestro.autorun.writeDoc(
+					folderPath,
+					selectedFile + '.md',
+					result.content,
+					sshRemoteId
+				);
+				setSavedContent(result.content);
+				return true;
+			} catch (err) {
+				logger.error('Failed to save toggled task:', undefined, err);
+				notifyToast({
+					color: 'red',
+					title: 'Could not save task',
+					message: err instanceof Error ? err.message : String(err),
+				});
+				return false;
+			}
+		},
+		[
+			folderPath,
+			selectedFile,
+			sshRemoteId,
+			setLocalContent,
+			setSavedContent,
+			pushUndoState,
+			lastUndoSnapshotRef,
+		]
+	);
 
 	// Image handling hook (attachments, paste, upload, lightbox)
 	const {
@@ -347,9 +459,8 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 		selectedFile,
 		localContent,
 		setLocalContent,
-		handleContentChange,
 		isLocked,
-		textareaRef,
+		editorRef,
 		pushUndoState,
 		lastUndoSnapshotRef,
 		sshRemoteId,
@@ -381,8 +492,8 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 		() => ({
 			focus: () => {
 				// Focus the appropriate element based on current mode
-				if (mode === 'edit' && textareaRef.current) {
-					textareaRef.current.focus();
+				if (mode === 'edit' && editorRef.current) {
+					editorRef.current.focus();
 				} else if (mode === 'preview' && previewRef.current) {
 					previewRef.current.focus();
 				}
@@ -411,9 +522,12 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 		]
 	);
 
-	// Auto-switch to preview mode when auto-run starts, restore when it ends
+	// Auto-switch to preview mode when auto-run starts, restore when it ends.
+	// Keyed on `isRunDocument`, not `isLocked`: a pause unlocks editing but does
+	// not end the run, and flipping the pane back and forth on every HITL gate
+	// would yank the user out of the view they were watching.
 	useEffect(() => {
-		if (isLocked) {
+		if (isRunDocument) {
 			// Auto-run started: save current mode and switch to preview
 			modeBeforeAutoRunRef.current = mode;
 			if (mode !== 'preview') {
@@ -424,15 +538,15 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 			setMode(modeBeforeAutoRunRef.current);
 			modeBeforeAutoRunRef.current = null;
 		}
-	}, [isLocked]);
+	}, [isRunDocument]);
 
 	// Auto-focus the active element after mode change
 	useEffect(() => {
 		// Skip focus when auto-follow is driving changes during a batch run
 		if (autoFollowEnabled && isRunningRef.current) return;
 
-		if (mode === 'edit' && textareaRef.current) {
-			textareaRef.current.focus();
+		if (mode === 'edit' && editorRef.current) {
+			editorRef.current.focus();
 		} else if (mode === 'preview' && previewRef.current) {
 			previewRef.current.focus();
 		}
@@ -454,8 +568,8 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 
 			// Focus on document change
 			requestAnimationFrame(() => {
-				if (mode === 'edit' && textareaRef.current) {
-					textareaRef.current.focus();
+				if (mode === 'edit' && editorRef.current) {
+					editorRef.current.focus();
 				} else if (mode === 'preview' && previewRef.current) {
 					previewRef.current.focus();
 				}
@@ -509,8 +623,7 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 	// Keyboard handler for textarea (Tab, undo/redo, save, checkbox, list continuation)
 	const handleKeyDown = useAutoRunKeyboard({
 		localContent,
-		setLocalContent,
-		textareaRef,
+		editorRef,
 		pushUndoState,
 		lastUndoSnapshotRef,
 		handleUndo,
@@ -522,6 +635,19 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 		openSearch,
 		handleAutocompleteKeyDown,
 	});
+
+	// Font zoom. Reading a rendered document and editing its Markdown source are
+	// different jobs at different comfortable sizes, so each mode keeps its own
+	// scale rather than sharing one. Both hooks stay mounted so switching modes
+	// restores the size that mode was left at.
+	const previewFontScale = useFontScale('autoRun.previewFontScale');
+	const editFontScale = useFontScale('autoRun.editFontScale');
+	// The panel reads and edits a Markdown document, so it is the File Preview /
+	// File Editor surfaces - not a font size of its own. The zoom controls above
+	// multiply on top, the same two-knob split FilePreview uses.
+	const previewTypography = useSurfaceTypography('filePreview');
+	const editorTypography = useSurfaceTypography('fileEditor');
+	const activeFontScale = mode === 'edit' ? editFontScale : previewFontScale;
 
 	// Disable Bionify while search is active so search highlights remain visible
 	const hasActivePreviewSearch = searchOpen && searchQuery.trim().length > 0;
@@ -536,6 +662,9 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 			sshRemoteId,
 			documentTree,
 			onSelectDocument,
+			projectFileTree,
+			projectRoot,
+			onOpenProjectFile,
 			searchOpen,
 			searchQuery,
 			totalMatches,
@@ -546,6 +675,9 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 			enableBionifyReadingMode: effectivePreviewBionifyReadingMode,
 			bionifyIntensity,
 			bionifyAlgorithm,
+			// Locked documents belong to the running Auto Run - leave their
+			// checkboxes read-only, matching the disabled editor.
+			onTaskToggle: isLocked ? undefined : handleToggleTask,
 		});
 
 	// Keep the document selector badge in sync with the bottom-panel counter.
@@ -563,7 +695,7 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 			tabIndex={-1}
 			onKeyDown={(e) => {
 				// CMD+E to toggle edit/preview (without Shift)
-				// Cmd+Shift+E is allowed to propagate to global handler for "Toggle Auto Run Expanded"
+				// Cmd+Shift+E is left to the global handler ("Edit Last Queued Message")
 				// Skip if edit mode is locked (during Auto Run) - matches button disabled state
 				if ((e.metaKey || e.ctrlKey) && e.key === 'e' && !e.shiftKey) {
 					e.preventDefault();
@@ -632,8 +764,19 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 					errorMessage={batchError.message}
 					errorDocumentName={errorDocumentName}
 					isRecoverable={batchError.recoverable || false}
+					isHumanGate={batchError.type === 'hitl_gate'}
 					onResumeAfterError={onResumeAfterError}
 					onAbortBatchOnError={onAbortBatchOnError}
+					disabledReason={isMirroredRun ? MIRRORED_RUN_CONTROL_TITLE : undefined}
+				/>
+			)}
+
+			{/* Human-step warning - unchecked tasks no agent can complete */}
+			{folderPath && selectedFile && (
+				<AutoRunHumanStepBanner
+					theme={theme}
+					tasks={humanOnlyTasks}
+					onSelectLine={isLocked ? undefined : handleJumpToLine}
 				/>
 			)}
 
@@ -663,6 +806,25 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 								: '2px solid transparent',
 					}}
 				>
+					{/* Floating font zoom - the same collapsible "Aa" circle the file
+					    preview uses, so zooming a document reads identically whether it
+					    is open in a file tab or in this panel. Sticky (not absolute) so
+					    it stays pinned while the document scrolls without needing a
+					    positioned ancestor, and h-0 so it never displaces the content. */}
+					{documentList.length > 0 && (
+						<div className="sticky top-2 z-20 h-0 flex items-start justify-end pr-2 pointer-events-none">
+							<FontScaleControl
+								theme={theme}
+								control={activeFontScale}
+								variant="floating"
+								collapsible
+								size="sm"
+								target={mode === 'edit' ? 'editor' : 'preview'}
+								className="pointer-events-auto"
+								testId="autorun-font-scale"
+							/>
+						</div>
+					)}
 					{/* Empty folder state - show when folder is configured but has no documents */}
 					{documentList.length === 0 && !isLoadingDocuments ? (
 						<EmptyFolderState
@@ -672,33 +834,49 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 							onOpenSetup={onOpenSetup}
 						/>
 					) : mode === 'edit' ? (
-						<div className="relative w-full h-full">
-							<textarea
-								ref={textareaRef}
+						// Markdown source editor. Same CodeMirror editor the file
+						// preview uses, so a document reads the same - syntax colors,
+						// wrap-aware line numbers, painted search hits - whether it is
+						// open in a file tab or in this panel.
+						// The border lives on the wrapper rather than the editor: CM6 owns
+						// its own scroller, and preview mode draws the same frame, so the
+						// panel keeps one outline across the Cmd+E flip. While a batch run
+						// holds the document the frame turns warning-colored and the box
+						// tints, which is the only signal that typing will be refused.
+						<div
+							className="relative w-full h-full border rounded overflow-hidden"
+							style={{
+								borderColor: isLocked ? theme.colors.warning : theme.colors.border,
+								backgroundColor: isLocked ? theme.colors.bgActivity + '30' : 'transparent',
+							}}
+						>
+							<MarkdownEditor
+								ref={editorRef}
 								value={localContent}
-								onChange={(e) => {
-									if (!isLocked) {
-										// Schedule undo snapshot with current content before the change
-										const previousContent = localContent;
-										const previousCursor = textareaRef.current?.selectionStart || 0;
-										// Use autocomplete handler to detect "{{" triggers
-										handleAutocompleteChange(e);
+								onChange={(next) => {
+									if (isLocked) return;
+									const previousContent = localContent;
+									const previousCursor = editorRef.current?.getCaret() ?? 0;
+									// Autocomplete handler both stores the value and detects "{{"
+									handleAutocompleteChange(next);
+									// An explicit edit (tab, list continuation, checkbox) has already
+									// pushed its own undo entry and stamped the snapshot ref with the
+									// result, so scheduling a second one would double it up.
+									if (next !== lastUndoSnapshotRef.current) {
 										scheduleUndoSnapshot(previousContent, previousCursor);
 									}
 								}}
-								onFocus={() => {
-									/* no-op, manual save only */
-								}}
 								onKeyDown={!isLocked ? handleKeyDown : undefined}
 								onPaste={handlePaste}
+								language="markdown"
 								placeholder="Capture notes, images, and tasks in Markdown. (type {{ for variables)"
+								theme={theme}
 								readOnly={isLocked}
-								className={`w-full h-full border rounded p-4 bg-transparent outline-none resize-none font-mono text-sm ${isLocked ? 'cursor-not-allowed opacity-70' : ''}`}
-								style={{
-									borderColor: isLocked ? theme.colors.warning : theme.colors.border,
-									color: theme.colors.textMain,
-									backgroundColor: isLocked ? theme.colors.bgActivity + '30' : 'transparent',
-								}}
+								showLineNumbers={showLineNumbers}
+								fontScale={editFontScale.fontScale}
+								fontFamily={editorTypography.fontFamily}
+								baseFontPx={editorTypography.fontSize}
+								className={isLocked ? 'opacity-70 cursor-not-allowed' : ''}
 							/>
 							{/* Template Variable Autocomplete Dropdown */}
 							<TemplateAutocompleteDropdown
@@ -715,7 +893,7 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 							tabIndex={0}
 							onKeyDown={(e) => {
 								// CMD+E to toggle edit/preview (without Shift)
-								// Cmd+Shift+E is allowed to propagate to global handler for "Toggle Auto Run Expanded"
+								// Cmd+Shift+E is left to the global handler ("Edit Last Queued Message")
 								// Skip if edit mode is locked (during Auto Run) - matches button disabled state
 								if ((e.metaKey || e.ctrlKey) && e.key === 'e' && !e.shiftKey) {
 									e.preventDefault();
@@ -736,7 +914,16 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 							style={{
 								borderColor: theme.colors.border,
 								color: theme.colors.textMain,
-								fontSize: '13px',
+								// This IS a file preview - the same markdown the File Preview tab
+								// renders, in a different frame - so it follows that surface's
+								// font and size rather than a hard-coded 13px. Tailwind's
+								// `prose-sm` pins an absolute rem size, so the explicit size
+								// here is what actually wins; everything inside is in `em` and
+								// follows, so the pane's zoom carries headings, code, and lists
+								// with it. Rounded to a tenth of a px so a scaled size does not
+								// carry float noise into the style string.
+								fontFamily: previewTypography.fontFamily,
+								fontSize: `${Math.round(previewTypography.fontSize * previewFontScale.fontScale * 10) / 10}px`,
 							}}
 						>
 							<style>{proseStyles}</style>
@@ -780,7 +967,7 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 							title={`Expand to full screen${shortcuts?.toggleAutoRunExpanded ? ` (${formatShortcutKeys(shortcuts.toggleAutoRunExpanded.keys)})` : ''}`}
 						>
 							<Maximize2 className="w-3 h-3" />
-							Expand
+							{!phone && 'Expand'}
 						</button>
 					)}
 					{/* Search button */}
@@ -795,7 +982,7 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 						title={`Search (${formatShortcutKeys(['Meta', 'f'])})`}
 					>
 						<Search className="w-3 h-3" />
-						Search
+						{!phone && 'Search'}
 					</button>
 					{/* Edit / Preview toggle */}
 					<button
@@ -824,29 +1011,29 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 						{mode === 'edit' ? (
 							<>
 								<Eye className="w-3 h-3" />
-								Preview
+								{!phone && 'Preview'}
 							</>
 						) : (
 							<>
 								<EditIcon className="w-3 h-3" />
-								Edit
+								{!phone && 'Edit'}
 							</>
 						)}
 					</button>
 					{/* Thought Stream restore: a temporary home for a minimized stream once the run completes and the Right Panel's active-run card (with its brain button) is gone. Vanishes when dismissed via the panel's X (which clears panelSessionId). */}
-					{showRestoreThoughtStream && (
+					{showOpenThoughtStream && (
 						<button
-							onClick={restoreThoughtStream}
+							onClick={() => openThoughtStream(sessionId)}
 							className="flex-1 flex items-center justify-center gap-1.5 px-2 py-1 rounded text-xs font-medium transition-colors hover:bg-white/10"
 							style={{
 								color: theme.colors.accent,
 								border: `1px solid ${theme.colors.accent}40`,
 								backgroundColor: `${theme.colors.accent}15`,
 							}}
-							title="Restore the minimized Thought Stream"
+							title={`Read this run's ${bufferedActivity} buffered thought${bufferedActivity === 1 ? '' : 's'} and tool call${bufferedActivity === 1 ? '' : 's'}`}
 						>
 							<Brain className="w-3 h-3" />
-							Thoughts
+							{!phone && 'Thoughts'}
 						</button>
 					)}
 				</div>

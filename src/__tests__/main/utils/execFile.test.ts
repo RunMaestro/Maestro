@@ -87,6 +87,149 @@ describe('execFile.ts', () => {
 		});
 	});
 
+	describe('execFileNoThrow with input (stdin path)', () => {
+		// Spawns a real short-lived node process, same as execFileStreaming below -
+		// the child_process mock only replaces execFile, not spawn.
+		const NODE = process.execPath;
+
+		// A lone `{ input }` with no other fields is a real call shape (git.ts
+		// pipes gist content to `gh` this way) - the discriminator fix for the
+		// legacy-env-named-"input" collision must not break it.
+		it('treats a lone { input } as ExecOptions and delivers it to stdin', async () => {
+			const { execFileNoThrow } = await import('../../../main/utils/execFile');
+
+			const result = await execFileNoThrow(
+				NODE,
+				['-e', 'process.stdin.on("data", (d) => process.stdout.write(d))'],
+				undefined,
+				{
+					input: 'hello from stdin',
+				}
+			);
+
+			expect(result.stdout).toBe('hello from stdin');
+		});
+
+		// Regression: when `input` is set, execFileNoThrow hands off to
+		// execFileWithInput, which never received or forwarded `env` - a caller
+		// passing { input, env } silently got process.env in the child instead
+		// of the environment it asked for.
+		it('passes env through to the spawned process', async () => {
+			const { execFileNoThrow } = await import('../../../main/utils/execFile');
+
+			const result = await execFileNoThrow(
+				NODE,
+				['-e', 'process.stdout.write(process.env.MAESTRO_TEST_VAR || "MISSING")'],
+				undefined,
+				{ input: 'unused stdin content', env: { MAESTRO_TEST_VAR: 'present' } }
+			);
+
+			expect(result.stdout).toBe('present');
+		});
+	});
+
+	describe('execFileStreaming', () => {
+		// These spawn real short-lived node processes: the child_process mock above
+		// only replaces execFile, so spawn is the genuine implementation.
+		const NODE = process.execPath;
+
+		it('delivers stdout chunks as they arrive and resolves with the exit code', async () => {
+			const { execFileStreaming } = await import('../../../main/utils/execFile');
+			const chunks: Array<[string, string]> = [];
+
+			const handle = execFileStreaming(NODE, ['-e', 'process.stdout.write("hello")'], {
+				onChunk: (chunk, stream) => chunks.push([chunk, stream]),
+			});
+			const result = await handle.result;
+
+			expect(chunks).toContainEqual(['hello', 'stdout']);
+			expect(result.stdout).toBe('hello');
+			expect(result.exitCode).toBe(0);
+		});
+
+		it('captures stderr separately and reports a non-zero exit code', async () => {
+			const { execFileStreaming } = await import('../../../main/utils/execFile');
+			const streams: string[] = [];
+
+			const handle = execFileStreaming(
+				NODE,
+				['-e', 'process.stderr.write("boom"); process.exit(3)'],
+				{ onChunk: (_chunk, stream) => streams.push(stream) }
+			);
+			const result = await handle.result;
+
+			expect(streams).toEqual(['stderr']);
+			expect(result.stderr).toBe('boom');
+			expect(result.stdout).toBe('');
+			expect(result.exitCode).toBe(3);
+		});
+
+		it('cancel() terminates the process and reports SIGTERM', async () => {
+			const { execFileStreaming } = await import('../../../main/utils/execFile');
+
+			const handle = execFileStreaming(
+				NODE,
+				['-e', 'process.stdout.write("up"); setInterval(() => {}, 1000)'],
+				{
+					onChunk: () => handle.cancel(),
+				}
+			);
+			const result = await handle.result;
+
+			expect(result.exitCode).toBe('SIGTERM');
+			expect(result.stdout).toBe('up');
+		});
+
+		it('cancel() kills a grandchild that inherited the pipes', async () => {
+			const { execFileStreaming } = await import('../../../main/utils/execFile');
+
+			// The shape that made Cancel look broken: `git push` runs a pre-push
+			// hook, the hook inherits stdout/stderr, and signalling git alone
+			// leaves the hook running with the pipes open - so `close` never
+			// fires and the console sits on "Running..." forever.
+			const script = [
+				'const { spawn } = require("child_process");',
+				'const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: ["ignore", "inherit", "inherit"] });',
+				'process.stdout.write("pid:" + child.pid + "\\n");',
+				'setInterval(() => {}, 1000);',
+			].join('');
+
+			let grandchildPid = 0;
+			const handle = execFileStreaming(NODE, ['-e', script], {
+				onChunk: (chunk) => {
+					const match = /pid:(\d+)/.exec(chunk);
+					if (!match) return;
+					grandchildPid = Number(match[1]);
+					handle.cancel();
+				},
+			});
+
+			const result = await handle.result;
+			expect(result.exitCode).toBe('SIGTERM');
+			expect(grandchildPid).toBeGreaterThan(0);
+
+			await vi.waitFor(() => {
+				// kill(pid, 0) throws ESRCH once the process is gone.
+				expect(() => process.kill(grandchildPid, 0)).toThrow();
+			});
+		});
+
+		it('resolves with the spawn error code when the binary is missing', async () => {
+			const { execFileStreaming } = await import('../../../main/utils/execFile');
+
+			// Use a .exe suffix so Windows does not route through cmd.exe
+			// (needsWindowsShell). Shell-spawned missing commands exit 1 instead
+			// of surfacing spawn ENOENT.
+			const handle = execFileStreaming('definitely-not-a-real-binary-xyz.exe', [], {
+				onChunk: () => {},
+			});
+			const result = await handle.result;
+
+			expect(result.exitCode).toBe('ENOENT');
+			expect(result.stderr).toBeTruthy();
+		});
+	});
+
 	describe('execFileNoThrow', () => {
 		describe('successful execution', () => {
 			it('should return stdout and stderr with exitCode 0 on success', async () => {
@@ -154,6 +297,128 @@ describe('execFile.ts', () => {
 					expect.objectContaining({
 						env: customEnv,
 					}),
+					expect.any(Function)
+				);
+			});
+
+			// Regression: the legacy/ExecOptions discriminator used to check only
+			// whether a key named `input`/`timeout`/`env` was present, not its
+			// value's shape. A real environment variable can be named any of
+			// those, so a plain legacy env dict containing one got misread as the
+			// structured form and had its actual entries dropped or mangled.
+			it('treats a legacy env dict with a var literally named "timeout" as the whole environment', async () => {
+				mockExecFile.mockImplementation(
+					(_cmd: string, _args: readonly string[], _options: any, callback?: any) => {
+						callback?.(null, 'output', '');
+						return {} as any;
+					}
+				);
+
+				const { execFileNoThrow } = await import('../../../main/utils/execFile');
+				// A real env var's value is always a string, never the number
+				// ExecOptions.timeout expects.
+				const legacyEnv = { timeout: '30', PATH: '/custom/path' };
+				await execFileNoThrow('mycmd', [], '/cwd', legacyEnv);
+
+				expect(mockExecFile).toHaveBeenCalledWith(
+					'mycmd',
+					[],
+					expect.objectContaining({ env: legacyEnv, timeout: undefined }),
+					expect.any(Function)
+				);
+			});
+
+			it('treats a legacy env dict with a var literally named "env" as the whole environment', async () => {
+				mockExecFile.mockImplementation(
+					(_cmd: string, _args: readonly string[], _options: any, callback?: any) => {
+						callback?.(null, 'output', '');
+						return {} as any;
+					}
+				);
+
+				const { execFileNoThrow } = await import('../../../main/utils/execFile');
+				// A real env var's value is always a string, never the object
+				// ExecOptions.env expects.
+				const legacyEnv = { env: 'production', PATH: '/custom/path' };
+				await execFileNoThrow('mycmd', [], '/cwd', legacyEnv);
+
+				expect(mockExecFile).toHaveBeenCalledWith(
+					'mycmd',
+					[],
+					expect.objectContaining({ env: legacyEnv }),
+					expect.any(Function)
+				);
+			});
+
+			it('still recognizes the structured ExecOptions form when env is a real object', async () => {
+				mockExecFile.mockImplementation(
+					(_cmd: string, _args: readonly string[], _options: any, callback?: any) => {
+						callback?.(null, 'output', '');
+						return {} as any;
+					}
+				);
+
+				const { execFileNoThrow } = await import('../../../main/utils/execFile');
+				await execFileNoThrow('mycmd', [], '/cwd', { env: { MY_VAR: 'value' }, timeout: 5000 });
+
+				expect(mockExecFile).toHaveBeenCalledWith(
+					'mycmd',
+					[],
+					expect.objectContaining({ env: { MY_VAR: 'value' }, timeout: 5000 }),
+					expect.any(Function)
+				);
+			});
+
+			// Regression (CodeRabbit, PR #1383): a lone `{ input: 'x' }` is a real
+			// ExecOptions call (git.ts uses exactly this shape to pipe gist content
+			// to stdin), but `{ input: 'x', PATH: '/bin' }` is a legacy env dict that
+			// happens to define a variable called `input` - the extra PATH key is
+			// what tells them apart. Getting this wrong would silently feed the
+			// caller's PATH override to the child's stdin instead of its environment.
+			it('treats a legacy env dict with a var literally named "input" as the whole environment, not stdin content', async () => {
+				mockExecFile.mockImplementation(
+					(_cmd: string, _args: readonly string[], _options: any, callback?: any) => {
+						callback?.(null, 'output', '');
+						return {} as any;
+					}
+				);
+
+				const { execFileNoThrow } = await import('../../../main/utils/execFile');
+				const legacyEnv = { input: 'not stdin content', PATH: '/custom/path' };
+				await execFileNoThrow('mycmd', [], '/cwd', legacyEnv);
+
+				// Legacy interpretation goes through execFileAsync (mocked here), not
+				// the spawn-based stdin path - if this were misread as ExecOptions.input,
+				// mockExecFile would never be called at all.
+				expect(mockExecFile).toHaveBeenCalledWith(
+					'mycmd',
+					[],
+					expect.objectContaining({ env: legacyEnv }),
+					expect.any(Function)
+				);
+			});
+
+			// Regression (Greptile, PR #1383): `{ timeout: undefined }` is valid
+			// ExecOptions (equivalent to omitting timeout), but the key is still
+			// present, so a value-type check alone can't tell it apart from "key
+			// absent". The all-keys-known check recognizes it regardless of value.
+			it('still recognizes ExecOptions when a known field is explicitly undefined', async () => {
+				mockExecFile.mockImplementation(
+					(_cmd: string, _args: readonly string[], _options: any, callback?: any) => {
+						callback?.(null, 'output', '');
+						return {} as any;
+					}
+				);
+
+				const { execFileNoThrow } = await import('../../../main/utils/execFile');
+				await execFileNoThrow('mycmd', [], '/cwd', { timeout: undefined });
+
+				// If misread as legacy, env would be the literal { timeout: undefined }
+				// object instead of undefined (inherit the parent environment).
+				expect(mockExecFile).toHaveBeenCalledWith(
+					'mycmd',
+					[],
+					expect.objectContaining({ env: undefined }),
 					expect.any(Function)
 				);
 			});

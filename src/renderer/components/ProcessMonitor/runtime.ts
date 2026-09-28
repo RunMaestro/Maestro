@@ -1,22 +1,15 @@
-// Format runtime in human readable format (e.g., "2m 30s", "1h 5m", "3d 2h")
-export function formatRuntime(startTime: number): string {
-	const elapsed = Date.now() - startTime;
-	const seconds = Math.floor(elapsed / 1000);
-	const minutes = Math.floor(seconds / 60);
-	const hours = Math.floor(minutes / 60);
-	const days = Math.floor(hours / 24);
+import { humanizeDuration, DURATION_LADDER_DAYS } from '../../../shared/duration';
 
-	if (days > 0) {
-		const remainingHours = hours % 24;
-		return `${days}d ${remainingHours}h`;
-	}
-	if (hours > 0) {
-		const remainingMinutes = minutes % 60;
-		return `${hours}h ${remainingMinutes}m`;
-	}
-	if (minutes > 0) {
-		const remainingSeconds = seconds % 60;
-		return `${minutes}m ${remainingSeconds}s`;
-	}
-	return `${seconds}s`;
+/**
+ * Format how long a process has been running, e.g. "45s", "2m 30s", "1h 5m",
+ * "3d 2h". Day-capped: a process alive for 30 hours reads "1d 6h".
+ *
+ * Zero segments are kept ("2h 0m") so a column of live runtimes does not jitter
+ * between one and two segments as the minutes roll over.
+ */
+export function formatRuntime(startTime: number): string {
+	return humanizeDuration(Date.now() - startTime, {
+		units: DURATION_LADDER_DAYS,
+		keepZeroUnits: true,
+	});
 }

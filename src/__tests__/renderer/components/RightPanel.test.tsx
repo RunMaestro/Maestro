@@ -1,6 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, act } from '@testing-library/react';
 import { RightPanel, RightPanelHandle } from '../../../renderer/components/RightPanel';
+import {
+	RIGHT_PANEL_PILL_FONT_SIZE,
+	RIGHT_PANEL_TAB_FONT_SIZE,
+	RIGHT_PANEL_TAB_LINE_HEIGHT,
+} from '../../../renderer/constants/rightPanel';
 import { createRef } from 'react';
 import type { Session, Shortcut, BatchRunState } from '../../../renderer/types';
 import { useUIStore } from '../../../renderer/stores/uiStore';
@@ -10,6 +15,8 @@ import { useBatchStore } from '../../../renderer/stores/batchStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { WindowProvider } from '../../../renderer/contexts/WindowContext';
 import type { WindowState } from '../../../shared/window-types';
+import { notifyToast } from '../../../renderer/stores/notificationStore';
+import { AutoRun } from '../../../renderer/components/AutoRun';
 import { mockTheme } from '../../helpers/mockTheme';
 
 /** Set the renderer URL so WindowProvider reads the desired `?windowId=` param. */
@@ -33,6 +40,11 @@ function makeWindowState(partial: Partial<WindowState> & Pick<WindowState, 'id'>
 		...partial,
 	};
 }
+
+vi.mock('../../../renderer/stores/notificationStore', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../renderer/stores/notificationStore')>()),
+	notifyToast: vi.fn(),
+}));
 
 // Mock child components
 vi.mock('../../../renderer/components/FileExplorerPanel', () => ({
@@ -236,6 +248,72 @@ describe('RightPanel', () => {
 		vi.restoreAllMocks();
 	});
 
+	describe('Tab label type scale', () => {
+		/**
+		 * The Files / History / Auto Run labels are rem-based and so grow with the
+		 * interface font and the Cmd+= zoom, while the History entries beneath
+		 * them are pinned at an absolute `text-[10px]` and never grow. At a 16px
+		 * interface font with a 1.2 zoom the labels rendered near 14px against
+		 * 10px content - a header shouting over its own list.
+		 */
+		function tabButton(name: RegExp): HTMLElement {
+			const props = createDefaultProps();
+			render(<RightPanel {...props} />);
+			return screen.getByRole('button', { name });
+		}
+
+		it('sizes the labels as a heading', () => {
+			expect(tabButton(/^History$/).style.fontSize).toBe(RIGHT_PANEL_TAB_FONT_SIZE);
+		});
+
+		it('stays close to the Left Bar section headers across the window', () => {
+			// Those are `text-xs` (0.75rem) with uppercase + wide tracking, which
+			// reads quieter than the tabs' mixed case at the same measured size.
+			// A large gap here makes the two panels look like different systems.
+			const tabRem = parseFloat(RIGHT_PANEL_TAB_FONT_SIZE);
+			const leftHeaderRem = 0.75;
+			expect(tabRem).toBeGreaterThan(leftHeaderRem);
+			expect(tabRem / leftHeaderRem).toBeLessThan(1.15);
+		});
+
+		it('renders larger than the filter pills beneath it', () => {
+			// These name which of three views you are in, so they are the panel's
+			// heading. An earlier pass shared one constant with the pills, which
+			// inverted the hierarchy and made the title read as a footnote.
+			expect(parseFloat(RIGHT_PANEL_TAB_FONT_SIZE)).toBeGreaterThan(
+				parseFloat(RIGHT_PANEL_PILL_FONT_SIZE)
+			);
+		});
+
+		it('no longer relies on the text-xs class it outgrew', () => {
+			// Leaving the class on would let it win over the inline size.
+			expect(tabButton(/^History$/).className).not.toContain('text-xs');
+		});
+
+		it('states a line height, since dropping text-xs dropped its own', () => {
+			expect(tabButton(/^History$/).style.lineHeight).toBe(RIGHT_PANEL_TAB_LINE_HEIGHT);
+		});
+
+		it('keeps the labels bold', () => {
+			expect(tabButton(/^History$/).className).toContain('font-bold');
+		});
+
+		it('applies the same size to every tab', () => {
+			const props = createDefaultProps();
+			render(<RightPanel {...props} />);
+
+			for (const name of [/^Files$/, /^History$/]) {
+				expect(screen.getByRole('button', { name }).style.fontSize).toBe(RIGHT_PANEL_TAB_FONT_SIZE);
+			}
+		});
+
+		it('stays in rem, so the labels still scale with Cmd+=', () => {
+			// A pixel literal would freeze the chrome while everything around it
+			// grew, which is the same class of bug in reverse.
+			expect(RIGHT_PANEL_TAB_FONT_SIZE.endsWith('rem')).toBe(true);
+		});
+	});
+
 	describe('Render conditions', () => {
 		it('should return null when session is null', () => {
 			useSessionStore.setState({ sessions: [], activeSessionId: null });
@@ -402,6 +480,78 @@ describe('RightPanel', () => {
 		});
 	});
 
+	describe('Auto Run shared draft vs disk changes', () => {
+		const lastAutoRunProps = () => vi.mocked(AutoRun).mock.calls.at(-1)![0] as any;
+		const setDisk = (content: string, version: number) =>
+			act(() => {
+				useSessionStore.setState({
+					sessions: [{ ...mockSession, autoRunContent: content, autoRunContentVersion: version }],
+				});
+			});
+
+		beforeEach(() => {
+			useUIStore.setState({ activeRightTab: 'autorun' });
+			useSessionStore.setState({
+				sessions: [{ ...mockSession, autoRunContent: 'Saved.', autoRunContentVersion: 1 }],
+			});
+		});
+
+		it('keeps text typed after a save when the save echoes back from disk', () => {
+			render(<RightPanel {...createDefaultProps()} />);
+			act(() => {
+				lastAutoRunProps().onExternalLocalContentChange('Saved. Still typing');
+			});
+
+			// Watcher re-reads the file: it holds exactly the saved text
+			setDisk('Saved.', 2);
+
+			expect(lastAutoRunProps().externalLocalContent).toBe('Saved. Still typing');
+			expect(lastAutoRunProps().externalSavedContent).toBe('Saved.');
+			expect(notifyToast).not.toHaveBeenCalled();
+		});
+
+		it('keeps the draft and warns when the disk changes under unsaved edits', () => {
+			render(<RightPanel {...createDefaultProps()} />);
+			act(() => {
+				lastAutoRunProps().onExternalLocalContentChange('Saved. My sentence.');
+			});
+
+			setDisk('Saved. Agent edit.', 2);
+
+			expect(lastAutoRunProps().externalLocalContent).toBe('Saved. My sentence.');
+			expect(lastAutoRunProps().externalSavedContent).toBe('Saved. Agent edit.');
+			expect(notifyToast).toHaveBeenCalledWith(expect.objectContaining({ color: 'orange' }));
+		});
+
+		it('adopts the disk version while a run drives the document', () => {
+			const batchState = {
+				isRunning: true,
+				isStopping: false,
+				documents: ['test.md'],
+				lockedDocuments: ['test.md'],
+				worktreeActive: false,
+				currentDocumentIndex: 0,
+				totalTasks: 1,
+				completedTasks: 0,
+				currentDocTasksTotal: 1,
+				currentDocTasksCompleted: 0,
+				totalTasksAcrossAllDocs: 1,
+				completedTasksAcrossAllDocs: 0,
+				loopEnabled: false,
+				loopIteration: 0,
+			} as unknown as BatchRunState;
+			render(<RightPanel {...createDefaultProps({ currentSessionBatchState: batchState })} />);
+			act(() => {
+				lastAutoRunProps().onExternalLocalContentChange('Saved. Stale draft');
+			});
+
+			setDisk('- [x] Saved.', 2);
+
+			expect(lastAutoRunProps().externalLocalContent).toBe('- [x] Saved.');
+			expect(notifyToast).not.toHaveBeenCalled();
+		});
+	});
+
 	describe('Focus management', () => {
 		it('should call setActiveFocus when panel is clicked', () => {
 			const spy = vi.spyOn(useUIStore.getState(), 'setActiveFocus');
@@ -419,6 +569,45 @@ describe('RightPanel', () => {
 
 			fireEvent.focus(container.firstChild as Element);
 			expect(spy).toHaveBeenCalledWith('right');
+		});
+
+		it('keeps Right Bar focus when blur relatedTarget is null but a child is still active', async () => {
+			useUIStore.setState({ activeFocus: 'right' });
+			const spy = vi.spyOn(useUIStore.getState(), 'setActiveFocus');
+			const props = createDefaultProps();
+			const { container } = render(<RightPanel {...props} />);
+
+			const panel = container.firstChild as HTMLElement;
+			const contentArea = container.querySelector('.overflow-y-auto') as HTMLElement;
+			contentArea.focus();
+			spy.mockClear();
+
+			fireEvent.blur(panel, { relatedTarget: null });
+			await act(async () => {
+				await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+			});
+
+			expect(spy).not.toHaveBeenCalledWith('main');
+			expect(useUIStore.getState().activeFocus).toBe('right');
+		});
+
+		it('hands focus to Main when blur really leaves the panel', async () => {
+			useUIStore.setState({ activeFocus: 'right' });
+			const outside = document.createElement('button');
+			document.body.appendChild(outside);
+			const props = createDefaultProps();
+			const { container } = render(<RightPanel {...props} />);
+
+			const panel = container.firstChild as HTMLElement;
+			panel.focus();
+			fireEvent.blur(panel, { relatedTarget: outside });
+			outside.focus();
+			await act(async () => {
+				await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+			});
+
+			expect(useUIStore.getState().activeFocus).toBe('main');
+			outside.remove();
 		});
 
 		it('should show focus ring when activeFocus is right', () => {
@@ -1284,6 +1473,74 @@ describe('RightPanel', () => {
 
 			expect(screen.queryByText('View History')).not.toBeInTheDocument();
 		});
+
+		// Every control on the action row is whitespace-nowrap, so a non-wrapping
+		// row overflowed the card and pushed Stop past its right border once the
+		// Right Panel got narrow (issue #1333). jsdom has no layout engine, so
+		// assert on the classes that let the row reflow instead.
+		describe('Action row wrapping at narrow widths', () => {
+			const runningState: BatchRunState = {
+				isRunning: true,
+				isStopping: false,
+				documents: ['doc1'],
+				currentDocumentIndex: 0,
+				totalTasks: 10,
+				completedTasks: 5,
+				currentDocTasksTotal: 10,
+				currentDocTasksCompleted: 5,
+				totalTasksAcrossAllDocs: 10,
+				completedTasksAcrossAllDocs: 5,
+				loopEnabled: true,
+				loopIteration: 0,
+				maxLoops: 5,
+			};
+
+			const getControlsGroup = () =>
+				screen.getByTitle('Stop auto-run after the current task finishes')
+					.parentElement as HTMLElement;
+
+			it('should let the action row wrap so controls stay inside the card', () => {
+				const props = createDefaultProps({ currentSessionBatchState: runningState });
+				render(<RightPanel {...props} />);
+
+				const actionRow = getControlsGroup().parentElement as HTMLElement;
+				expect(actionRow).toHaveClass('flex-wrap');
+				// justify-end (not justify-between) so a wrapped controls line still
+				// hugs the right edge instead of jumping to the left.
+				expect(actionRow).toHaveClass('justify-end');
+				expect(actionRow).not.toHaveClass('justify-between');
+			});
+
+			it('should push the follow-task toggle away from the controls with mr-auto', () => {
+				const props = createDefaultProps({ currentSessionBatchState: runningState });
+				render(<RightPanel {...props} />);
+
+				const toggle = screen.getByText('Follow active task').closest('label') as HTMLElement;
+				expect(toggle).toHaveClass('mr-auto');
+			});
+
+			it('should let the controls group wrap internally rather than overflow', () => {
+				const props = createDefaultProps({ currentSessionBatchState: runningState });
+				render(<RightPanel {...props} />);
+
+				const controls = getControlsGroup();
+				expect(controls).toHaveClass('flex-wrap');
+				expect(controls).toHaveClass('justify-end');
+				// shrink-0 would pin the group at its max-content width and re-introduce
+				// the overflow the wrapping is meant to prevent.
+				expect(controls).not.toHaveClass('shrink-0');
+			});
+
+			it('should keep controls right-aligned in goal mode where the toggle is hidden', () => {
+				const props = createDefaultProps({
+					currentSessionBatchState: { ...runningState, goalMode: true, goalProgress: 40 },
+				});
+				render(<RightPanel {...props} />);
+
+				expect(screen.queryByText('Follow active task')).not.toBeInTheDocument();
+				expect(getControlsGroup().parentElement).toHaveClass('justify-end');
+			});
+		});
 	});
 
 	describe('Imperative handle', () => {
@@ -1319,6 +1576,35 @@ describe('RightPanel', () => {
 			render(<RightPanel {...props} ref={ref} />);
 
 			expect(() => ref.current?.focusAutoRun()).not.toThrow();
+		});
+
+		it('should expose focusFileTree method', () => {
+			const ref = createRef<RightPanelHandle>();
+			const props = createDefaultProps();
+			render(<RightPanel {...props} ref={ref} />);
+
+			expect(typeof ref.current?.focusFileTree).toBe('function');
+		});
+
+		it('focusFileTree puts DOM focus on the file tree container', async () => {
+			const ref = createRef<RightPanelHandle>();
+			const fileTreeContainerRef = { current: null } as React.RefObject<HTMLDivElement>;
+			const props = { ...createDefaultProps(), fileTreeContainerRef };
+			render(<RightPanel {...props} ref={ref} />);
+
+			const container = fileTreeContainerRef.current;
+			expect(container).not.toBeNull();
+			const focusSpy = vi.spyOn(container!, 'focus');
+
+			act(() => {
+				ref.current?.focusFileTree();
+			});
+			// The focus is deferred a frame so the panel is mounted first.
+			await act(async () => {
+				await new Promise((resolve) => requestAnimationFrame(() => resolve(null)));
+			});
+
+			expect(focusSpy).toHaveBeenCalled();
 		});
 	});
 

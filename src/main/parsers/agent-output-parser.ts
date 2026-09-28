@@ -104,6 +104,18 @@ export interface ParsedEvent {
 		cacheCreationTokens?: number;
 		contextWindow?: number;
 		/**
+		 * Authority marker for `contextWindow`: true only when the window value
+		 * came from the provider's own payload, never from a config value or a
+		 * static-table fallback the parser injected. Parsers routinely seed
+		 * `contextWindow` with a fallback (see `usage-aggregator.ts` and
+		 * `codex-output-parser.ts`), so the presence of a window says nothing
+		 * about its provenance - only this flag does. Downstream,
+		 * `StdoutHandler.buildUsageStats` forwards it into
+		 * `UsageStats.contextWindowResolved`, which the renderer ranks above a
+		 * stored `customContextWindow` (finding P1).
+		 */
+		contextWindowReported?: boolean;
+		/**
 		 * Model identifier the provider reported for this turn (e.g.
 		 * `claude-opus-4-8`). Enables downstream resolution of the model's real
 		 * context window from the provider catalog. Set by providers whose window
@@ -117,6 +129,23 @@ export interface ParsedEvent {
 		 * These are already included in outputTokens but tracked separately for UI display.
 		 */
 		reasoningTokens?: number;
+		/**
+		 * Absolute context-occupancy snapshot for the turn, when the provider can
+		 * report one. Distinct from the fields above, which for some providers are
+		 * per-turn token SPEND (claude-code sums every internal API call of a turn,
+		 * so a tool-heavy turn can exceed the context window). Set by the
+		 * claude-code parser from the LAST internal API call's `message.usage`,
+		 * which is real occupancy because a single call's input is what was
+		 * physically sent to the model. Copied straight onto `UsageStats.absoluteUsage`
+		 * by StdoutHandler.buildUsageStats.
+		 */
+		absoluteUsage?: {
+			inputTokens: number;
+			outputTokens: number;
+			cacheReadInputTokens: number;
+			cacheCreationInputTokens: number;
+			reasoningTokens: number;
+		};
 	};
 
 	/**
@@ -258,6 +287,21 @@ export interface AgentOutputParser {
 	 * @returns AgentError if an error was detected, null otherwise
 	 */
 	detectErrorFromParsed(parsed: unknown): AgentError | null;
+
+	/**
+	 * Is this detected error a notice the CLI may still recover from inside the
+	 * same turn? Optional: a parser without it treats every detected error as final.
+	 *
+	 * When true, StdoutHandler holds the error instead of emitting it. More model
+	 * output from the same process drops it; the end of the turn (a result message,
+	 * or process exit) emits it. Emitting it at once put the agent into the
+	 * blocking error state while the turn kept running out of sight, and the next
+	 * message then queued behind a process that was still busy.
+	 *
+	 * @param parsed - The pre-parsed JSON object detectErrorFromParsed flagged
+	 * @returns true if the error must wait for the turn to show whether it recovered
+	 */
+	isProvisionalErrorNotice?(parsed: unknown): boolean;
 
 	/**
 	 * Detect an error from process exit information

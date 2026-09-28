@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { isWebDesktop } from '../../utils/runtimeContext';
 
 export type Breakpoint = 'xs' | 'sm' | 'md' | 'lg' | 'xl';
 
@@ -10,6 +11,22 @@ function classify(width: number): Breakpoint {
 	if (width >= BREAKPOINTS.md) return 'md';
 	if (width >= BREAKPOINTS.sm) return 'sm';
 	return 'xs';
+}
+
+function isNarrowBreakpoint(bp: Breakpoint): boolean {
+	return bp === 'xs' || bp === 'sm';
+}
+
+/**
+ * The non-hook form of `useViewportBreakpoint().isNarrow`, for code that runs
+ * outside React - a store action or a service reacting to a tap. It reads the
+ * live window width through the SAME classification the hook uses, so a caller
+ * outside the component tree cannot disagree with the layout about where the
+ * drawers stop being permanent columns.
+ */
+export function isNarrowViewportNow(): boolean {
+	if (typeof window === 'undefined') return false;
+	return isNarrowBreakpoint(classify(window.innerWidth));
 }
 
 /**
@@ -53,6 +70,38 @@ export function useViewportBreakpoint() {
 		isMdDown: bp === 'xs' || bp === 'sm' || bp === 'md',
 		isMdUp: bp === 'md' || bp === 'lg' || bp === 'xl',
 		isLgUp: bp === 'lg' || bp === 'xl',
-		isNarrow: bp === 'xs' || bp === 'sm',
+		isNarrow: isNarrowBreakpoint(bp),
 	};
+}
+
+/**
+ * Phone layout: the web-desktop bundle at the xs breakpoint (< 640px), which
+ * is a phone held upright. This is THE predicate for simplifying a surface on
+ * a handheld - fewer controls, icon-only buttons, full-screen drawers, sheets
+ * instead of anchored popovers - so every surface makes the same call and the
+ * CSS twin `html[data-runtime='web-desktop'][data-bp='xs']` matches exactly
+ * what this returns.
+ *
+ * It is viewport-driven on purpose, not pointer-driven: space is the
+ * constraint, and a desktop browser squeezed to phone width gets the same
+ * layout (which is also what makes it testable without touch emulation).
+ * Touch-specific GESTURES (long-press for a menu, swipe to dismiss) gate on
+ * `isCoarsePointer()` separately, because a tablet has a finger without being
+ * short on room. The native Electron app never reports phone layout, however
+ * narrow its window: it has a keyboard and a mouse, and its users chose that
+ * width.
+ */
+export function usePhoneLayout(): boolean {
+	const { isXs } = useViewportBreakpoint();
+	return isXs && isWebDesktop();
+}
+
+/**
+ * Non-hook twin of {@link usePhoneLayout} for event handlers and module code
+ * that cannot call a hook. Reads the live viewport, so it agrees with the hook
+ * at the moment it is called.
+ */
+export function isPhoneLayout(): boolean {
+	if (typeof window === 'undefined') return false;
+	return isWebDesktop() && classify(window.innerWidth) === 'xs';
 }

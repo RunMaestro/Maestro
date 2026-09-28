@@ -63,6 +63,19 @@ export function useBatchBroadcast({ dispatch }: UseBatchBroadcastDeps): UseBatch
 				goalProgress: state.goalProgress,
 				goalRationale: state.goalRationale,
 				goalIteration: state.goalIteration,
+				// Mirror fields - what a web-desktop client needs to draw the same
+				// Auto Run card the owning client draws. Auto Run is renderer-owned
+				// in-memory state, so this broadcast is the only way a second client
+				// learns a run exists at all.
+				documents: state.documents,
+				lockedDocuments: state.lockedDocuments,
+				currentDocTasksTotal: state.currentDocTasksTotal,
+				currentDocTasksCompleted: state.currentDocTasksCompleted,
+				worktreeActive: state.worktreeActive,
+				worktreeBranch: state.worktreeBranch,
+				startTime: state.startTime,
+				loopEnabled: state.loopEnabled,
+				loopIteration: state.loopIteration,
 			});
 		} else {
 			window.maestro.web.broadcastAutoRunState(sessionId, null);

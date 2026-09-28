@@ -42,6 +42,8 @@ const lightTheme: Theme = {
 const defaultProps: GraphLegendProps = {
 	theme: mockTheme,
 	showExternalLinks: true,
+	scrollMode: 'zoom',
+	onScrollModeChange: vi.fn(),
 	onClose: vi.fn(),
 };
 
@@ -169,6 +171,15 @@ describe('GraphLegend', () => {
 
 			expect(screen.getByText(formatShortcutKeys(['Meta', 'f']))).toBeInTheDocument();
 			expect(screen.getByText('Focus search')).toBeInTheDocument();
+		});
+
+		it('displays the preview-length shortcut', () => {
+			// P used to duplicate Enter; the legend is where a user finds out it
+			// now cycles preview length instead.
+			render(<GraphLegend {...defaultProps} />);
+
+			expect(screen.getByText('P')).toBeInTheDocument();
+			expect(screen.getByText('Cycle preview length (ends at Off)')).toBeInTheDocument();
 		});
 	});
 
@@ -420,6 +431,69 @@ describe('GraphLegend', () => {
 				'Keyboard Shortcuts',
 				'Mouse Actions',
 			]);
+		});
+	});
+
+	describe('Scroll mode toggle', () => {
+		it('offers both modes as an inline segmented control', () => {
+			render(<GraphLegend {...defaultProps} />);
+
+			expect(screen.getByTestId('graph-legend-scroll-mode-zoom')).toBeInTheDocument();
+			expect(screen.getByTestId('graph-legend-scroll-mode-pan')).toBeInTheDocument();
+			expect(screen.getByRole('radiogroup', { name: 'Scroll wheel action' })).toBeInTheDocument();
+		});
+
+		it('marks the active mode, so the panel says which binding is live', () => {
+			const { rerender } = render(<GraphLegend {...defaultProps} scrollMode="zoom" />);
+			expect(screen.getByTestId('graph-legend-scroll-mode-zoom')).toHaveAttribute(
+				'aria-checked',
+				'true'
+			);
+			expect(screen.getByTestId('graph-legend-scroll-mode-pan')).toHaveAttribute(
+				'aria-checked',
+				'false'
+			);
+
+			rerender(<GraphLegend {...defaultProps} scrollMode="pan" />);
+			expect(screen.getByTestId('graph-legend-scroll-mode-pan')).toHaveAttribute(
+				'aria-checked',
+				'true'
+			);
+		});
+
+		it('names a destination rather than toggling', () => {
+			// Clicking the mode already active must be a no-op, not a flip - a
+			// segmented control that toggles undoes itself on a second click.
+			const onScrollModeChange = vi.fn();
+			render(
+				<GraphLegend {...defaultProps} scrollMode="zoom" onScrollModeChange={onScrollModeChange} />
+			);
+
+			fireEvent.click(screen.getByTestId('graph-legend-scroll-mode-pan'));
+			expect(onScrollModeChange).toHaveBeenCalledWith('pan');
+
+			fireEvent.click(screen.getByTestId('graph-legend-scroll-mode-zoom'));
+			expect(onScrollModeChange).toHaveBeenLastCalledWith('zoom');
+		});
+
+		it('rewrites the Mouse Actions lines to match the live mode', () => {
+			// The panel described Scroll as "Zoom in/out" unconditionally, which
+			// is a lie in pan mode - and this is the section the user reads to
+			// find out what the wheel does.
+			const { rerender } = render(<GraphLegend {...defaultProps} scrollMode="zoom" />);
+			expect(screen.getByText('Zoom in/out')).toBeInTheDocument();
+			expect(screen.getByText('Pan the canvas')).toBeInTheDocument();
+
+			rerender(<GraphLegend {...defaultProps} scrollMode="pan" />);
+			const scrollRow = screen.getByText('Scroll').parentElement!;
+			expect(within(scrollRow).getByText('Pan the canvas')).toBeInTheDocument();
+			const shiftRow = screen.getByText('Shift+Scroll').parentElement!;
+			expect(within(shiftRow).getByText('Zoom in/out')).toBeInTheDocument();
+		});
+
+		it('documents the S shortcut alongside the other single-key controls', () => {
+			render(<GraphLegend {...defaultProps} />);
+			expect(screen.getByText('Switch scroll between zoom and pan')).toBeInTheDocument();
 		});
 	});
 });

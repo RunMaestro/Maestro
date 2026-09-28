@@ -510,7 +510,7 @@ describe('CallbackRegistry', () => {
 
 			await registry.switchMode('session-3', 'terminal');
 
-			expect(callback).toHaveBeenCalledWith('session-3', 'terminal');
+			expect(callback).toHaveBeenCalledWith('session-3', 'terminal', undefined);
 		});
 
 		it('passes ai mode correctly', async () => {
@@ -519,7 +519,7 @@ describe('CallbackRegistry', () => {
 
 			await registry.switchMode('session-3', 'ai');
 
-			expect(callback).toHaveBeenCalledWith('session-3', 'ai');
+			expect(callback).toHaveBeenCalledWith('session-3', 'ai', undefined);
 		});
 	});
 
@@ -591,7 +591,7 @@ describe('CallbackRegistry', () => {
 
 			await registry.newTab('session-15');
 
-			expect(callback).toHaveBeenCalledWith('session-15');
+			expect(callback).toHaveBeenCalledWith('session-15', undefined);
 		});
 	});
 
@@ -756,6 +756,16 @@ describe('CallbackRegistry', () => {
 			registry.setTriggerCueSubscriptionCallback(callback);
 			await registry.triggerCueSubscription('my-sub');
 			expect(callback).toHaveBeenCalledWith('my-sub', undefined, undefined);
+		});
+
+		it('getDebugPackageDeps() returns null when no callback set', () => {
+			expect(registry.getDebugPackageDeps()).toBeNull();
+		});
+
+		it('getDebugPackageDeps() returns what the registered callback returns', () => {
+			const deps = { getAgentDetector: () => null } as any;
+			registry.setGetDebugPackageDepsCallback(() => deps);
+			expect(registry.getDebugPackageDeps()).toBe(deps);
 		});
 
 		it('multiple callbacks can be set and work independently', async () => {

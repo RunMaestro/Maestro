@@ -132,6 +132,7 @@ import {
 } from '../../../renderer/hooks/agent/useMergeTransferHandlers';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useTabStore } from '../../../renderer/stores/tabStore';
+import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { useMergeSessionWithSessions } from '../../../renderer/hooks/agent/useMergeSession';
 import { useSendToAgentWithSessions } from '../../../renderer/hooks/agent/useSendToAgent';
 
@@ -1146,6 +1147,98 @@ describe('useMergeTransferHandlers', () => {
 					expect(newTab?.logs[1].source).toBe('user');
 				}
 			});
+		});
+	});
+
+	// ----------------------------------------------------------------
+	// handleSendToAgent - busy target (queue vs Force Send)
+	// ----------------------------------------------------------------
+
+	describe('handleSendToAgent — busy target', () => {
+		const setupBusyTarget = () => {
+			const targetSession = createMockSession({
+				id: 'busy-target',
+				name: 'Busy Agent',
+				state: 'busy',
+				executionQueue: [],
+			});
+			useSessionStore.setState({
+				sessions: [createMockSession(), targetSession],
+				activeSessionId: 'session-1',
+			});
+			return renderHook(() => useMergeTransferHandlers(createMockDeps()));
+		};
+
+		afterEach(() => {
+			useSettingsStore.setState({ forcedParallelExecution: false });
+		});
+
+		it('queues the context behind the running turn instead of spawning', async () => {
+			const { result } = setupBusyTarget();
+
+			let sendResult: any;
+			await act(async () => {
+				sendResult = await result.current.handleSendToAgent('busy-target', {
+					groomContext: false,
+					targetSessionId: 'busy-target',
+				});
+			});
+
+			expect(sendResult.success).toBe(true);
+			expect((window as any).maestro.process.spawn).not.toHaveBeenCalled();
+
+			const target = useSessionStore.getState().sessions.find((s) => s.id === 'busy-target')!;
+			const newTab = target.aiTabs.find((t) => t.id === sendResult.newTabId)!;
+			expect(newTab.state).toBe('idle');
+			expect(newTab.logs.map((l) => l.source)).toEqual(['system']);
+			expect(target.executionQueue).toHaveLength(1);
+			expect(target.executionQueue[0]).toMatchObject({
+				tabId: sendResult.newTabId,
+				type: 'message',
+				text: expect.stringContaining('# Context from Previous Session'),
+			});
+			expect(mockNotifyToast).toHaveBeenCalledWith(
+				expect.objectContaining({ title: 'Context Queued' })
+			);
+		});
+
+		it('still queues a Force Send when Forced Parallel Execution is off', async () => {
+			useSettingsStore.setState({ forcedParallelExecution: false });
+			const { result } = setupBusyTarget();
+
+			await act(async () => {
+				await result.current.handleSendToAgent('busy-target', {
+					groomContext: false,
+					targetSessionId: 'busy-target',
+					forceSend: true,
+				});
+			});
+
+			expect((window as any).maestro.process.spawn).not.toHaveBeenCalled();
+			const target = useSessionStore.getState().sessions.find((s) => s.id === 'busy-target')!;
+			expect(target.executionQueue).toHaveLength(1);
+		});
+
+		it('spawns immediately on Force Send when Forced Parallel Execution is on', async () => {
+			useSettingsStore.setState({ forcedParallelExecution: true });
+			const { result } = setupBusyTarget();
+
+			let sendResult: any;
+			await act(async () => {
+				sendResult = await result.current.handleSendToAgent('busy-target', {
+					groomContext: false,
+					targetSessionId: 'busy-target',
+					forceSend: true,
+				});
+			});
+
+			await vi.waitFor(() => {
+				expect((window as any).maestro.process.spawn).toHaveBeenCalledTimes(1);
+			});
+			const target = useSessionStore.getState().sessions.find((s) => s.id === 'busy-target')!;
+			expect(target.executionQueue).toHaveLength(0);
+			const newTab = target.aiTabs.find((t) => t.id === sendResult.newTabId)!;
+			expect(newTab.state).toBe('busy');
 		});
 	});
 

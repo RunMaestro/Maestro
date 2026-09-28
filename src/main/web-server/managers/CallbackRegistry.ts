@@ -18,15 +18,38 @@ import type {
 	NewTabCallback,
 	CloseTabCallback,
 	RenameTabCallback,
+	RenameTabResult,
 	StarTabCallback,
+	SnoozeCommandCallback,
 	ReorderTabCallback,
 	ToggleBookmarkCallback,
 	OpenFileTabCallback,
+	OpenFileTabOptions,
+	OpenDocumentGraphCallback,
+	OpenDocumentGraphParams,
+	OpenModalCallback,
+	OpenModalParams,
 	RefreshFileTreeCallback,
 	OpenBrowserTabCallback,
+	OpenBrowserTabOptions,
+	OpenBrowserTabResult,
+	CloseBrowserTabCallback,
 	OpenTerminalTabCallback,
 	OpenTerminalTabConfig,
+	OpenTerminalTabResult,
+	WriteTerminalTabCallback,
+	WriteTerminalTabPayload,
+	WriteTerminalTabResult,
+	ListTerminalTabsCallback,
+	TerminalTabInfo,
+	ReadTerminalTabCallback,
+	ReadTerminalTabPayload,
+	ReadTerminalTabResult,
 	NewAITabWithPromptCallback,
+	ConsultAgentCallback,
+	ConsultAgentParams,
+	ConsultAgentResult,
+	NoteAgentDelegationCallback,
 	EnqueueCommandCallback,
 	EnqueueCommandResult,
 	ListQueueCallback,
@@ -35,6 +58,7 @@ import type {
 	RemoveQueueItemResult,
 	RefreshAutoRunDocsCallback,
 	ConfigureAutoRunCallback,
+	LaunchGoalRunCallback,
 	SetSessionAutoRunFolderCallback,
 	GetThemeCallback,
 	GetBionifyReadingModeCallback,
@@ -59,6 +83,7 @@ import type {
 	GetGroupsCallback,
 	CreateGroupCallback,
 	RenameGroupCallback,
+	UpdateGroupCallback,
 	DeleteGroupCallback,
 	MoveSessionToGroupCallback,
 	CreateSessionCallback,
@@ -82,6 +107,8 @@ import type {
 	ListWorktreesResult,
 	GetGroupChatsCallback,
 	StartGroupChatCallback,
+	StartGroupChatOptions,
+	StartGroupChatResult,
 	GetGroupChatStateCallback,
 	StopGroupChatCallback,
 	SendGroupChatMessageCallback,
@@ -109,6 +136,7 @@ import type {
 	GetMovementDesignerInspectionCallback,
 	InteractMovementDesignerCallback,
 	NotifyCenterFlashCallback,
+	GetDebugPackageDepsCallback,
 	NotifyToastParams,
 	NotifyCenterFlashParams,
 	GetMarketplaceManifestCallback,
@@ -123,6 +151,8 @@ import type {
 	DesktopSessionEntry,
 	SessionHistoryResult,
 } from '../types';
+import type { SnoozeCommandRequest, SnoozeCommandResult } from '../../../shared/snoozeCommands';
+import type { GroupAppearance, GroupUpdateRequest } from '../../../shared/groupAppearance';
 import type { CadenzaPayload } from '../../../shared/cadenza-types';
 import type { MovementPayload, MovementStateSnapshot } from '../../../shared/movement-types';
 
@@ -147,18 +177,28 @@ export interface WebServerCallbacks {
 	closeTab: CloseTabCallback | null;
 	renameTab: RenameTabCallback | null;
 	starTab: StarTabCallback | null;
+	snoozeCommand: SnoozeCommandCallback | null;
 	reorderTab: ReorderTabCallback | null;
 	toggleBookmark: ToggleBookmarkCallback | null;
 	openFileTab: OpenFileTabCallback | null;
+	openDocumentGraph: OpenDocumentGraphCallback | null;
+	openModal: OpenModalCallback | null;
 	refreshFileTree: RefreshFileTreeCallback | null;
 	openBrowserTab: OpenBrowserTabCallback | null;
+	closeBrowserTab: CloseBrowserTabCallback | null;
 	openTerminalTab: OpenTerminalTabCallback | null;
+	writeTerminalTab: WriteTerminalTabCallback | null;
+	listTerminalTabs: ListTerminalTabsCallback | null;
+	readTerminalTab: ReadTerminalTabCallback | null;
 	newAITabWithPrompt: NewAITabWithPromptCallback | null;
+	consultAgent: ConsultAgentCallback | null;
+	noteAgentDelegation: NoteAgentDelegationCallback | null;
 	enqueueCommand: EnqueueCommandCallback | null;
 	listQueue: ListQueueCallback | null;
 	removeQueueItem: RemoveQueueItemCallback | null;
 	refreshAutoRunDocs: RefreshAutoRunDocsCallback | null;
 	configureAutoRun: ConfigureAutoRunCallback | null;
+	launchGoalRun: LaunchGoalRunCallback | null;
 	setSessionAutoRunFolder: SetSessionAutoRunFolderCallback | null;
 	getHistory: GetHistoryCallback | null;
 	getAutoRunDocs: GetAutoRunDocsCallback | null;
@@ -178,6 +218,7 @@ export interface WebServerCallbacks {
 	getGroups: GetGroupsCallback | null;
 	createGroup: CreateGroupCallback | null;
 	renameGroup: RenameGroupCallback | null;
+	updateGroup: UpdateGroupCallback | null;
 	deleteGroup: DeleteGroupCallback | null;
 	moveSessionToGroup: MoveSessionToGroupCallback | null;
 	createSession: CreateSessionCallback | null;
@@ -214,6 +255,7 @@ export interface WebServerCallbacks {
 	getMovementDesignerInspection: GetMovementDesignerInspectionCallback | null;
 	interactMovementDesigner: InteractMovementDesignerCallback | null;
 	notifyCenterFlash: NotifyCenterFlashCallback | null;
+	getDebugPackageDeps: GetDebugPackageDepsCallback | null;
 	getMarketplaceManifest: GetMarketplaceManifestCallback | null;
 	getMarketplaceDocument: GetMarketplaceDocumentCallback | null;
 	getMarketplaceReadme: GetMarketplaceReadmeCallback | null;
@@ -239,18 +281,28 @@ export class CallbackRegistry {
 		closeTab: null,
 		renameTab: null,
 		starTab: null,
+		snoozeCommand: null,
 		reorderTab: null,
 		toggleBookmark: null,
 		openFileTab: null,
+		openDocumentGraph: null,
+		openModal: null,
 		refreshFileTree: null,
 		openBrowserTab: null,
+		closeBrowserTab: null,
 		openTerminalTab: null,
+		writeTerminalTab: null,
+		listTerminalTabs: null,
+		readTerminalTab: null,
 		newAITabWithPrompt: null,
+		consultAgent: null,
+		noteAgentDelegation: null,
 		enqueueCommand: null,
 		listQueue: null,
 		removeQueueItem: null,
 		refreshAutoRunDocs: null,
 		configureAutoRun: null,
+		launchGoalRun: null,
 		setSessionAutoRunFolder: null,
 		getHistory: null,
 		getAutoRunDocs: null,
@@ -270,6 +322,7 @@ export class CallbackRegistry {
 		getGroups: null,
 		createGroup: null,
 		renameGroup: null,
+		updateGroup: null,
 		deleteGroup: null,
 		moveSessionToGroup: null,
 		createSession: null,
@@ -306,6 +359,7 @@ export class CallbackRegistry {
 		getMovementDesignerInspection: null,
 		interactMovementDesigner: null,
 		notifyCenterFlash: null,
+		getDebugPackageDeps: null,
 		getMarketplaceManifest: null,
 		getMarketplaceDocument: null,
 		getMarketplaceReadme: null,
@@ -365,9 +419,13 @@ export class CallbackRegistry {
 		return this.callbacks.interruptSession?.(sessionId) ?? false;
 	}
 
-	async switchMode(sessionId: string, mode: 'ai' | 'terminal'): Promise<boolean> {
+	async switchMode(
+		sessionId: string,
+		mode: 'ai' | 'terminal',
+		background?: boolean
+	): Promise<boolean> {
 		if (!this.callbacks.switchMode) return false;
-		return this.callbacks.switchMode(sessionId, mode);
+		return this.callbacks.switchMode(sessionId, mode, background);
 	}
 
 	async selectSession(sessionId: string, tabId?: string, focus?: boolean): Promise<boolean> {
@@ -380,9 +438,9 @@ export class CallbackRegistry {
 		return this.callbacks.selectTab(sessionId, tabId);
 	}
 
-	async newTab(sessionId: string): Promise<{ tabId: string } | null> {
+	async newTab(sessionId: string, background?: boolean): Promise<{ tabId: string } | null> {
 		if (!this.callbacks.newTab) return null;
-		return this.callbacks.newTab(sessionId);
+		return this.callbacks.newTab(sessionId, background);
 	}
 
 	async closeTab(sessionId: string, tabId: string): Promise<boolean> {
@@ -390,7 +448,11 @@ export class CallbackRegistry {
 		return this.callbacks.closeTab(sessionId, tabId);
 	}
 
-	async renameTab(sessionId: string, tabId: string, newName: string): Promise<boolean> {
+	async renameTab(
+		sessionId: string,
+		tabId: string,
+		newName: string
+	): Promise<boolean | RenameTabResult> {
 		if (!this.callbacks.renameTab) return false;
 		return this.callbacks.renameTab(sessionId, tabId, newName);
 	}
@@ -398,6 +460,13 @@ export class CallbackRegistry {
 	async starTab(sessionId: string, tabId: string, starred: boolean): Promise<boolean> {
 		if (!this.callbacks.starTab) return false;
 		return this.callbacks.starTab(sessionId, tabId, starred);
+	}
+
+	async snoozeCommand(request: SnoozeCommandRequest): Promise<SnoozeCommandResult> {
+		if (!this.callbacks.snoozeCommand) {
+			return { success: false, error: 'Snooze is not configured' };
+		}
+		return this.callbacks.snoozeCommand(request);
 	}
 
 	async reorderTab(sessionId: string, fromIndex: number, toIndex: number): Promise<boolean> {
@@ -410,9 +479,23 @@ export class CallbackRegistry {
 		return this.callbacks.toggleBookmark(sessionId);
 	}
 
-	async openFileTab(sessionId: string, filePath: string, switchToAgent: boolean): Promise<boolean> {
+	async openFileTab(
+		sessionId: string,
+		filePath: string,
+		options: OpenFileTabOptions
+	): Promise<boolean> {
 		if (!this.callbacks.openFileTab) return false;
-		return this.callbacks.openFileTab(sessionId, filePath, switchToAgent);
+		return this.callbacks.openFileTab(sessionId, filePath, options);
+	}
+
+	async openDocumentGraph(params: OpenDocumentGraphParams): Promise<boolean> {
+		if (!this.callbacks.openDocumentGraph) return false;
+		return this.callbacks.openDocumentGraph(params);
+	}
+
+	async openModal(params: OpenModalParams): Promise<boolean> {
+		if (!this.callbacks.openModal) return false;
+		return this.callbacks.openModal(params);
 	}
 
 	async refreshFileTree(sessionId: string): Promise<boolean> {
@@ -420,14 +503,52 @@ export class CallbackRegistry {
 		return this.callbacks.refreshFileTree(sessionId);
 	}
 
-	async openBrowserTab(sessionId: string, url: string): Promise<boolean> {
-		if (!this.callbacks.openBrowserTab) return false;
-		return this.callbacks.openBrowserTab(sessionId, url);
+	async openBrowserTab(
+		sessionId: string,
+		url: string,
+		options?: OpenBrowserTabOptions
+	): Promise<OpenBrowserTabResult> {
+		if (!this.callbacks.openBrowserTab) return { success: false };
+		return this.callbacks.openBrowserTab(sessionId, url, options);
 	}
 
-	async openTerminalTab(sessionId: string, config: OpenTerminalTabConfig): Promise<boolean> {
-		if (!this.callbacks.openTerminalTab) return false;
-		return this.callbacks.openTerminalTab(sessionId, config);
+	async closeBrowserTab(tabId: string): Promise<boolean> {
+		if (!this.callbacks.closeBrowserTab) return false;
+		return this.callbacks.closeBrowserTab(tabId);
+	}
+
+	async openTerminalTab(
+		sessionId: string,
+		config: OpenTerminalTabConfig,
+		options?: { background?: boolean }
+	): Promise<OpenTerminalTabResult> {
+		if (!this.callbacks.openTerminalTab) return { success: false };
+		return this.callbacks.openTerminalTab(sessionId, config, options);
+	}
+
+	async writeTerminalTab(
+		sessionId: string,
+		payload: WriteTerminalTabPayload
+	): Promise<WriteTerminalTabResult> {
+		if (!this.callbacks.writeTerminalTab) {
+			return { success: false, error: 'Terminal writes not configured' };
+		}
+		return this.callbacks.writeTerminalTab(sessionId, payload);
+	}
+
+	async listTerminalTabs(sessionId?: string): Promise<TerminalTabInfo[]> {
+		if (!this.callbacks.listTerminalTabs) return [];
+		return this.callbacks.listTerminalTabs(sessionId);
+	}
+
+	async readTerminalTab(
+		sessionId: string,
+		payload: ReadTerminalTabPayload
+	): Promise<ReadTerminalTabResult> {
+		if (!this.callbacks.readTerminalTab) {
+			return { success: false, error: 'Terminal reads not configured' };
+		}
+		return this.callbacks.readTerminalTab(sessionId, payload);
 	}
 
 	async newAITabWithPrompt(
@@ -437,6 +558,18 @@ export class CallbackRegistry {
 	): Promise<{ success: boolean; tabId?: string }> {
 		if (!this.callbacks.newAITabWithPrompt) return { success: false };
 		return this.callbacks.newAITabWithPrompt(sessionId, prompt, background);
+	}
+
+	async consultAgent(params: ConsultAgentParams): Promise<ConsultAgentResult> {
+		if (!this.callbacks.consultAgent) {
+			return { success: false, error: 'Cross-agent consults are not configured' };
+		}
+		return this.callbacks.consultAgent(params);
+	}
+
+	noteAgentDelegation(notice: Parameters<NoteAgentDelegationCallback>[0]): void {
+		if (!this.callbacks.noteAgentDelegation) return;
+		this.callbacks.noteAgentDelegation(notice);
 	}
 
 	async enqueueCommand(
@@ -462,9 +595,9 @@ export class CallbackRegistry {
 		return this.callbacks.removeQueueItem(sessionId, itemId);
 	}
 
-	async refreshAutoRunDocs(sessionId: string): Promise<boolean> {
+	async refreshAutoRunDocs(sessionId: string, background?: boolean): Promise<boolean> {
 		if (!this.callbacks.refreshAutoRunDocs) return false;
-		return this.callbacks.refreshAutoRunDocs(sessionId);
+		return this.callbacks.refreshAutoRunDocs(sessionId, background);
 	}
 
 	async configureAutoRun(
@@ -476,6 +609,11 @@ export class CallbackRegistry {
 			maxLoops?: number;
 			saveAsPlaybook?: string;
 			launch?: boolean;
+			/** Per-run model/effort override - wins over the session model for this run only. */
+			model?: string;
+			effort?: string;
+			/** Skip the documents' MAESTRO:MODEL markers for this run (CLI `--ignore-model-hints`). */
+			ignoreModelHints?: boolean;
 			worktree?: {
 				enabled: boolean;
 				path: string;
@@ -487,6 +625,16 @@ export class CallbackRegistry {
 	): Promise<{ success: boolean; playbookId?: string; error?: string }> {
 		if (!this.callbacks.configureAutoRun) return { success: false, error: 'Not configured' };
 		return this.callbacks.configureAutoRun(sessionId, config);
+	}
+
+	async launchGoalRun(
+		sessionId: string,
+		config: Parameters<LaunchGoalRunCallback>[1]
+	): ReturnType<LaunchGoalRunCallback> {
+		if (!this.callbacks.launchGoalRun) {
+			return { success: false, code: 'NOT_CONFIGURED', error: 'Not configured' };
+		}
+		return this.callbacks.launchGoalRun(sessionId, config);
 	}
 
 	async setSessionAutoRunFolder(
@@ -612,15 +760,21 @@ export class CallbackRegistry {
 	async createGroup(
 		name: string,
 		emoji?: string,
-		parentGroupId?: string
+		parentGroupId?: string,
+		appearance?: GroupAppearance
 	): Promise<{ id: string } | null> {
 		if (!this.callbacks.createGroup) return null;
-		return this.callbacks.createGroup(name, emoji, parentGroupId);
+		return this.callbacks.createGroup(name, emoji, parentGroupId, appearance);
 	}
 
 	async renameGroup(groupId: string, name: string): Promise<boolean> {
 		if (!this.callbacks.renameGroup) return false;
 		return this.callbacks.renameGroup(groupId, name);
+	}
+
+	async updateGroup(groupId: string, update: GroupUpdateRequest): Promise<boolean> {
+		if (!this.callbacks.updateGroup) return false;
+		return this.callbacks.updateGroup(groupId, update);
 	}
 
 	async deleteGroup(groupId: string): Promise<boolean> {
@@ -638,10 +792,11 @@ export class CallbackRegistry {
 		toolType: string,
 		cwd: string,
 		groupId?: string,
-		config?: CreateSessionConfig
+		config?: CreateSessionConfig,
+		background?: boolean
 	): Promise<{ sessionId: string } | null> {
 		if (!this.callbacks.createSession) return null;
-		return this.callbacks.createSession(name, toolType, cwd, groupId, config);
+		return this.callbacks.createSession(name, toolType, cwd, groupId, config, background);
 	}
 
 	async createWorktreeSession(
@@ -649,10 +804,11 @@ export class CallbackRegistry {
 		config: {
 			branchName: string;
 			baseBranch?: string;
-		}
+		},
+		background?: boolean
 	): Promise<{ success: boolean; sessionId?: string; error?: string }> {
 		if (!this.callbacks.createWorktreeSession) return { success: false, error: 'Not configured' };
-		return this.callbacks.createWorktreeSession(parentSessionId, config);
+		return this.callbacks.createWorktreeSession(parentSessionId, config, background);
 	}
 
 	async deleteSession(sessionId: string): Promise<boolean> {
@@ -722,10 +878,11 @@ export class CallbackRegistry {
 
 	async startGroupChat(
 		topic: string,
-		participantIds: string[]
-	): Promise<{ chatId: string } | null> {
+		participantIds: string[],
+		options?: StartGroupChatOptions
+	): Promise<StartGroupChatResult | null> {
 		if (!this.callbacks.startGroupChat) return null;
-		return this.callbacks.startGroupChat(topic, participantIds);
+		return this.callbacks.startGroupChat(topic, participantIds, options);
 	}
 
 	async getGroupChatState(chatId: string): Promise<GroupChatState | null> {
@@ -761,12 +918,13 @@ export class CallbackRegistry {
 	async createGist(
 		sessionId: string,
 		description: string,
-		isPublic: boolean
+		isPublic: boolean,
+		agentSessionId?: string
 	): Promise<{ success: boolean; gistUrl?: string; error?: string }> {
 		if (!this.callbacks.createGist) {
 			return { success: false, error: 'Gist creation not configured' };
 		}
-		return this.callbacks.createGist(sessionId, description, isPublic);
+		return this.callbacks.createGist(sessionId, description, isPublic, agentSessionId);
 	}
 
 	async getCueSubscriptions(sessionId?: string): Promise<CueSubscriptionInfo[]> {
@@ -866,6 +1024,10 @@ export class CallbackRegistry {
 	async notifyCenterFlash(params: NotifyCenterFlashParams): Promise<boolean> {
 		if (!this.callbacks.notifyCenterFlash) return false;
 		return this.callbacks.notifyCenterFlash(params);
+	}
+
+	getDebugPackageDeps(): ReturnType<GetDebugPackageDepsCallback> | null {
+		return this.callbacks.getDebugPackageDeps?.() ?? null;
 	}
 
 	async getMarketplaceManifest(options?: {
@@ -978,6 +1140,10 @@ export class CallbackRegistry {
 		this.callbacks.starTab = callback;
 	}
 
+	setSnoozeCommandCallback(callback: SnoozeCommandCallback): void {
+		this.callbacks.snoozeCommand = callback;
+	}
+
 	setReorderTabCallback(callback: ReorderTabCallback): void {
 		this.callbacks.reorderTab = callback;
 	}
@@ -990,6 +1156,14 @@ export class CallbackRegistry {
 		this.callbacks.openFileTab = callback;
 	}
 
+	setOpenDocumentGraphCallback(callback: OpenDocumentGraphCallback): void {
+		this.callbacks.openDocumentGraph = callback;
+	}
+
+	setOpenModalCallback(callback: OpenModalCallback): void {
+		this.callbacks.openModal = callback;
+	}
+
 	setRefreshFileTreeCallback(callback: RefreshFileTreeCallback): void {
 		this.callbacks.refreshFileTree = callback;
 	}
@@ -998,12 +1172,36 @@ export class CallbackRegistry {
 		this.callbacks.openBrowserTab = callback;
 	}
 
+	setCloseBrowserTabCallback(callback: CloseBrowserTabCallback): void {
+		this.callbacks.closeBrowserTab = callback;
+	}
+
+	setWriteTerminalTabCallback(callback: WriteTerminalTabCallback): void {
+		this.callbacks.writeTerminalTab = callback;
+	}
+
+	setListTerminalTabsCallback(callback: ListTerminalTabsCallback): void {
+		this.callbacks.listTerminalTabs = callback;
+	}
+
+	setReadTerminalTabCallback(callback: ReadTerminalTabCallback): void {
+		this.callbacks.readTerminalTab = callback;
+	}
+
 	setOpenTerminalTabCallback(callback: OpenTerminalTabCallback): void {
 		this.callbacks.openTerminalTab = callback;
 	}
 
 	setNewAITabWithPromptCallback(callback: NewAITabWithPromptCallback): void {
 		this.callbacks.newAITabWithPrompt = callback;
+	}
+
+	setConsultAgentCallback(callback: ConsultAgentCallback): void {
+		this.callbacks.consultAgent = callback;
+	}
+
+	setNoteAgentDelegationCallback(callback: NoteAgentDelegationCallback): void {
+		this.callbacks.noteAgentDelegation = callback;
 	}
 
 	setEnqueueCommandCallback(callback: EnqueueCommandCallback): void {
@@ -1024,6 +1222,10 @@ export class CallbackRegistry {
 
 	setConfigureAutoRunCallback(callback: ConfigureAutoRunCallback): void {
 		this.callbacks.configureAutoRun = callback;
+	}
+
+	setLaunchGoalRunCallback(callback: LaunchGoalRunCallback): void {
+		this.callbacks.launchGoalRun = callback;
 	}
 
 	setSessionAutoRunFolderCallback(callback: SetSessionAutoRunFolderCallback): void {
@@ -1100,6 +1302,10 @@ export class CallbackRegistry {
 
 	setRenameGroupCallback(callback: RenameGroupCallback): void {
 		this.callbacks.renameGroup = callback;
+	}
+
+	setUpdateGroupCallback(callback: UpdateGroupCallback): void {
+		this.callbacks.updateGroup = callback;
 	}
 
 	setDeleteGroupCallback(callback: DeleteGroupCallback): void {
@@ -1244,6 +1450,10 @@ export class CallbackRegistry {
 
 	setNotifyCenterFlashCallback(callback: NotifyCenterFlashCallback): void {
 		this.callbacks.notifyCenterFlash = callback;
+	}
+
+	setGetDebugPackageDepsCallback(callback: GetDebugPackageDepsCallback): void {
+		this.callbacks.getDebugPackageDeps = callback;
 	}
 
 	setGetMarketplaceManifestCallback(callback: GetMarketplaceManifestCallback): void {

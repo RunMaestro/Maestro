@@ -53,12 +53,17 @@ vi.mock('../../../cli/services/system-prompt', () => ({
 // + synopsis prompts without hitting disk. Per-test overrides allowed.
 vi.mock('../../../cli/services/prompt-loader', () => ({
 	getCliPrompt: vi.fn().mockResolvedValue('Default Auto Run prompt'),
+	// The engine now resolves `{{TASK_SELECTION_BLOCK}}` before the
+	// template-variable pass; without this the placeholder reaches the agent
+	// verbatim, which is the bug the substitution fixed.
+	getCliTaskSelectionBlock: vi.fn().mockResolvedValue('SELECTION BLOCK'),
 }));
 
 // Mock storage
 vi.mock('../../../cli/services/storage', () => ({
 	addHistoryEntry: vi.fn(),
 	readGroups: vi.fn(),
+	readHistory: vi.fn(),
 }));
 
 // Mock cli-activity
@@ -89,9 +94,12 @@ import {
 	uncheckAllTasks,
 	writeDoc,
 } from '../../../cli/services/agent-spawner';
-import { addHistoryEntry, readGroups } from '../../../cli/services/storage';
+import { addHistoryEntry, readGroups, readHistory } from '../../../cli/services/storage';
 import { registerCliActivity, unregisterCliActivity } from '../../../shared/cli-activity';
 import { prepareMaestroSystemPromptCli } from '../../../cli/services/system-prompt';
+import { getCliTaskSelectionBlock } from '../../../cli/services/prompt-loader';
+import { logger } from '../../../main/utils/logger';
+import type { HistoryEntry } from '../../../shared/types';
 
 describe('batch-processor', () => {
 	// Helper to create mock session
@@ -132,6 +140,8 @@ describe('batch-processor', () => {
 		vi.mocked(readGroups).mockReturnValue([
 			{ id: 'group-456', name: 'Test Group', emoji: '🧪', collapsed: false },
 		]);
+		// By default, no persisted history so reconciliation is a no-op.
+		vi.mocked(readHistory).mockReturnValue([]);
 		// By default, return 0 tasks to prevent infinite loops
 		vi.mocked(readDocAndCountTasks).mockReturnValue({ content: '', taskCount: 0 });
 		vi.mocked(readDocAndGetTasks).mockReturnValue({ content: '', tasks: [] });
@@ -462,6 +472,151 @@ describe('batch-processor', () => {
 			const promptArg = vi.mocked(spawnAgent).mock.calls[0][2];
 			expect(promptArg).toContain('Custom prompt for processing');
 			expect(promptArg).toContain('My task');
+		});
+
+		it('expands the task-selection placeholder rather than sending it verbatim', async () => {
+			// readDocAndCountTasks is called several times per pass (initial scan,
+			// loop check, prompt build, post-task remaining check). Feed the task
+			// through the first three and then report the document as done, or the
+			// loop never terminates.
+			let calls = 0;
+			vi.mocked(readDocAndCountTasks).mockImplementation(() => {
+				calls++;
+				return calls <= 3
+					? { content: '- [ ] My task', taskCount: 1 }
+					: { content: '', taskCount: 0 };
+			});
+			vi.mocked(readDocAndGetTasks).mockReturnValue({
+				content: '- [ ] My task',
+				tasks: ['My task'],
+			});
+
+			const session = mockSession();
+			const playbook = mockPlaybook({
+				prompt: 'Step 1\n\n{{TASK_SELECTION_BLOCK}}\n\nStep 3',
+			});
+
+			await collectEvents(runPlaybook(session, playbook, '/playbooks'));
+
+			const promptArg = vi.mocked(spawnAgent).mock.calls[0][2] as string;
+			expect(promptArg).toContain('SELECTION BLOCK');
+			expect(promptArg).not.toContain('{{');
+		});
+
+		it('asks for the selection block matching the playbook mode', async () => {
+			// readDocAndCountTasks is called several times per pass (initial scan,
+			// loop check, prompt build, post-task remaining check). Feed the task
+			// through the first three and then report the document as done, or the
+			// loop never terminates.
+			let calls = 0;
+			vi.mocked(readDocAndCountTasks).mockImplementation(() => {
+				calls++;
+				return calls <= 3
+					? { content: '- [ ] My task', taskCount: 1 }
+					: { content: '', taskCount: 0 };
+			});
+			vi.mocked(readDocAndGetTasks).mockReturnValue({
+				content: '- [ ] My task',
+				tasks: ['My task'],
+			});
+
+			const session = mockSession();
+			await collectEvents(
+				runPlaybook(session, mockPlaybook({ taskSelectionMode: 'document' }), '/playbooks')
+			);
+
+			expect(getCliTaskSelectionBlock).toHaveBeenCalledWith('document', {
+				count: 1,
+				total: 1,
+			});
+		});
+
+		describe('per-run model/effort override', () => {
+			/** Feed the loop exactly one task, then report the document as drained. */
+			const singleTask = (): void => {
+				let callCount = 0;
+				vi.mocked(readDocAndCountTasks).mockImplementation(() => {
+					callCount++;
+					if (callCount <= 3) return { content: '- [ ] My task', taskCount: 1 };
+					return { content: '', taskCount: 0 };
+				});
+			};
+
+			it('lets the run model/effort win over the session values on the task spawn', async () => {
+				singleTask();
+				const session = mockSession({ customModel: 'opus', customEffort: 'high' });
+
+				await collectEvents(
+					runPlaybook(session, mockPlaybook(), '/playbooks', {
+						model: 'sonnet',
+						effort: 'low',
+					})
+				);
+
+				const taskSpawnOpts = vi.mocked(spawnAgent).mock.calls[0][4];
+				expect(taskSpawnOpts).toMatchObject({ customModel: 'sonnet', customEffort: 'low' });
+				// Run-scoped: the session object is never rewritten.
+				expect(session.customModel).toBe('opus');
+				expect(session.customEffort).toBe('high');
+			});
+
+			it('falls back to the session values when no run override is given', async () => {
+				singleTask();
+
+				await collectEvents(
+					runPlaybook(
+						mockSession({ customModel: 'opus', customEffort: 'high' }),
+						mockPlaybook(),
+						'/playbooks'
+					)
+				);
+
+				const taskSpawnOpts = vi.mocked(spawnAgent).mock.calls[0][4];
+				expect(taskSpawnOpts).toMatchObject({ customModel: 'opus', customEffort: 'high' });
+			});
+
+			it('falls back per field when only the model is overridden', async () => {
+				singleTask();
+
+				await collectEvents(
+					runPlaybook(
+						mockSession({ customModel: 'opus', customEffort: 'high' }),
+						mockPlaybook(),
+						'/playbooks',
+						{ model: 'sonnet' }
+					)
+				);
+
+				const taskSpawnOpts = vi.mocked(spawnAgent).mock.calls[0][4];
+				expect(taskSpawnOpts).toMatchObject({ customModel: 'sonnet', customEffort: 'high' });
+			});
+
+			it('does NOT spend the run override on the synopsis spawn', async () => {
+				singleTask();
+				vi.mocked(spawnAgent).mockResolvedValue({
+					success: true,
+					response: '**Summary:** ok\n**Details:** ok',
+					agentSessionId: 'claude-session-123',
+				});
+
+				await collectEvents(
+					runPlaybook(mockSession({ customModel: 'opus' }), mockPlaybook(), '/playbooks', {
+						model: 'sonnet',
+					})
+				);
+
+				// Index 0 = task spawn, index 1 = synopsis resume.
+				expect(vi.mocked(spawnAgent).mock.calls.length).toBeGreaterThanOrEqual(2);
+				// The run override says which model does the WORK. A synopsis is a few
+				// sentences of prose about work that already happened, so it is pinned to
+				// the bottom of the ladder instead - otherwise every task costs a second
+				// premium turn. Safe because the synopsis is a leaf: its agentSessionId is
+				// discarded, so the cheap model cannot follow the conversation onward.
+				const taskSpawnOpts = vi.mocked(spawnAgent).mock.calls[0][4];
+				expect(taskSpawnOpts).toMatchObject({ customModel: 'sonnet' });
+				const synopsisSpawnOpts = vi.mocked(spawnAgent).mock.calls[1][4];
+				expect(synopsisSpawnOpts).toMatchObject({ customModel: 'haiku' });
+			});
 		});
 
 		it('should track usage statistics', async () => {
@@ -1008,6 +1163,203 @@ describe('batch-processor', () => {
 		});
 	});
 
+	describe('runPlaybook - history reconciliation', () => {
+		// Completes exactly one checkbox in the current run, with the given usage.
+		const oneTaskRun = (taskCost = 0.01) => {
+			let callCount = 0;
+			vi.mocked(readDocAndCountTasks).mockImplementation(() => {
+				callCount++;
+				if (callCount <= 2) return { content: '- [ ] Task', taskCount: 1 };
+				return { content: '', taskCount: 0 };
+			});
+			vi.mocked(spawnAgent).mockResolvedValue({
+				success: true,
+				response: 'Done',
+				usageStats: {
+					inputTokens: 100,
+					outputTokens: 50,
+					cacheReadInputTokens: 0,
+					cacheCreationInputTokens: 0,
+					totalCostUsd: taskCost,
+					contextWindow: 200000,
+				},
+			});
+		};
+
+		// Minimal AUTO per-task history entry (carries completedTaskCount, like a
+		// real persisted task row).
+		const taskEntry = (timestamp: number, cost: number): HistoryEntry => ({
+			id: `e-${timestamp}`,
+			type: 'AUTO',
+			timestamp,
+			summary: '[tasks] Task completed',
+			fullResponse: '',
+			projectPath: '/path/to/project',
+			sessionId: 'session-123',
+			success: true,
+			elapsedTimeMs: 1000,
+			completedTaskCount: 1,
+			usageStats: {
+				inputTokens: 100,
+				outputTokens: 50,
+				cacheReadInputTokens: 0,
+				cacheCreationInputTokens: 0,
+				totalCostUsd: cost,
+				contextWindow: 200000,
+			},
+		});
+
+		it('reconciles cumulative totals across a restart (no intervening summary)', async () => {
+			oneTaskRun(0.01);
+			// History holds 3 task rows from before a restart plus this run's 1 row.
+			// None are preceded by an "Auto Run completed" summary, so all belong to
+			// the same logical session and the totals should span the restart.
+			vi.mocked(readHistory).mockReturnValue([
+				taskEntry(1, 0.02),
+				taskEntry(2, 0.02),
+				taskEntry(3, 0.02),
+				taskEntry(4, 0.01),
+			]);
+
+			const session = mockSession();
+			const events = await collectEvents(runPlaybook(session, mockPlaybook(), '/playbooks'));
+
+			const complete = events.find((e) => e.type === 'complete');
+			expect(complete?.totalTasksCompleted).toBe(4);
+			expect(complete?.totalCost).toBeCloseTo(0.07, 5);
+		});
+
+		it('does not absorb a previously-completed run on the same session', async () => {
+			oneTaskRun(0.01);
+			// A prior run wrote 3 task rows then an "Auto Run completed" summary
+			// (t=4). This run added 1 row (t=5). Only rows after the last summary
+			// should count.
+			vi.mocked(readHistory).mockReturnValue([
+				taskEntry(1, 0.02),
+				taskEntry(2, 0.02),
+				taskEntry(3, 0.02),
+				{
+					id: 'summary-1',
+					type: 'AUTO',
+					timestamp: 4,
+					summary: 'Auto Run completed: 3 tasks in 1 loop',
+					fullResponse: '',
+					projectPath: '/path/to/project',
+					sessionId: 'session-123',
+					success: true,
+					elapsedTimeMs: 3000,
+				},
+				taskEntry(5, 0.01),
+			]);
+
+			const session = mockSession();
+			const events = await collectEvents(runPlaybook(session, mockPlaybook(), '/playbooks'));
+
+			const complete = events.find((e) => e.type === 'complete');
+			expect(complete?.totalTasksCompleted).toBe(1);
+			expect(complete?.totalCost).toBeCloseTo(0.01, 5);
+		});
+
+		// The boundary IS the final summary row. A run that writes none leaves the
+		// next run nothing to scan back to, so the next aggregation sweeps up this
+		// run's task rows and reports the two added together.
+		it('writes a boundary summary even for a single-pass non-looping run', async () => {
+			oneTaskRun(0.01);
+			vi.mocked(readHistory).mockReturnValue([]);
+
+			const session = mockSession();
+			await collectEvents(runPlaybook(session, mockPlaybook({ loopEnabled: false }), '/playbooks'));
+
+			const summaries = vi
+				.mocked(addHistoryEntry)
+				.mock.calls.map((call) => call[0].summary as string);
+			expect(summaries.some((s) => /^Auto Run completed:/.test(s))).toBe(true);
+		});
+
+		it('reconciles and writes a boundary when the agent halts the run', async () => {
+			// Halt returns early, so it used to skip reconciliation entirely: the
+			// complete event carried this process's raw counters, and no boundary row
+			// was written at all.
+			// The halt marker is read back off the DOCUMENT after the agent runs,
+			// not off the agent's response. Call 1 is the pre-scan and call 2 the
+			// loop's own read - the marker must not appear until the post-read, or
+			// the pre-existing-halt guard rejects the run before it starts.
+			let callCount = 0;
+			vi.mocked(readDocAndCountTasks).mockImplementation(() => {
+				callCount++;
+				if (callCount <= 2) return { content: '- [ ] Task', taskCount: 1 };
+				return { content: '<!-- maestro:halt: needs review -->', taskCount: 0 };
+			});
+			vi.mocked(spawnAgent).mockResolvedValue({
+				success: true,
+				response: 'Done',
+				usageStats: {
+					inputTokens: 100,
+					outputTokens: 50,
+					cacheReadInputTokens: 0,
+					cacheCreationInputTokens: 0,
+					totalCostUsd: 0.01,
+					contextWindow: 200000,
+				},
+			});
+			// Three task rows survive from before a restart; this run adds one.
+			vi.mocked(readHistory).mockReturnValue([
+				taskEntry(1, 0.02),
+				taskEntry(2, 0.02),
+				taskEntry(3, 0.02),
+				taskEntry(4, 0.01),
+			]);
+
+			const session = mockSession();
+			const events = await collectEvents(runPlaybook(session, mockPlaybook(), '/playbooks'));
+
+			const complete = events.find((e) => e.type === 'complete');
+			expect(complete?.halted).toBe(true);
+			// Reconciled across the restart rather than reporting only this process.
+			expect(complete?.totalTasksCompleted).toBe(4);
+			expect(complete?.totalCost).toBeCloseTo(0.07, 5);
+
+			const summaries = vi
+				.mocked(addHistoryEntry)
+				.mock.calls.map((call) => call[0].summary as string);
+			expect(summaries.some((s) => /^Auto Run halted:/.test(s))).toBe(true);
+		});
+
+		it('does not undercount the current run when history lags behind', async () => {
+			// Current run completes one task; history read returns nothing (e.g. the
+			// per-task write has not been flushed yet). Reconciliation must keep the
+			// in-memory total, not clobber it to zero.
+			oneTaskRun(0.05);
+			vi.mocked(readHistory).mockReturnValue([]);
+
+			const session = mockSession();
+			const events = await collectEvents(runPlaybook(session, mockPlaybook(), '/playbooks'));
+
+			const complete = events.find((e) => e.type === 'complete');
+			expect(complete?.totalTasksCompleted).toBe(1);
+			expect(complete?.totalCost).toBeCloseTo(0.05, 5);
+		});
+
+		it('falls back to in-memory counters and warns when history read throws', async () => {
+			oneTaskRun(0.05);
+			vi.mocked(readHistory).mockImplementation(() => {
+				throw new Error('disk read failed');
+			});
+
+			const session = mockSession();
+			const events = await collectEvents(runPlaybook(session, mockPlaybook(), '/playbooks'));
+
+			const complete = events.find((e) => e.type === 'complete');
+			expect(complete?.totalTasksCompleted).toBe(1);
+			expect(complete?.totalCost).toBeCloseTo(0.05, 5);
+			expect(logger.warn).toHaveBeenCalledWith(
+				'History reconciliation failed, using in-memory counters',
+				session.name,
+				expect.objectContaining({ sessionId: session.id })
+			);
+		});
+	});
+
 	describe('runPlaybook - multiple documents', () => {
 		it('should process multiple documents in order', async () => {
 			// Mock for two documents: initial scan for both, then processing
@@ -1213,6 +1565,197 @@ describe('batch-processor', () => {
 			expect(spawnAgent).not.toHaveBeenCalled();
 			expect(unregisterCliActivity).toHaveBeenCalledWith(session.id);
 		});
+
+		it('names the line so the user can find the invisible comment', async () => {
+			vi.mocked(readDocAndCountTasks).mockReturnValue({
+				content: '# Doc\n\n- [ ] Task\n<!-- maestro:halt: stale -->',
+				taskCount: 1,
+			});
+
+			const events = await collectEvents(runPlaybook(mockSession(), mockPlaybook(), '/playbooks'));
+
+			expect(events.find((e) => e.type === 'error')?.message).toContain('line 4');
+		});
+
+		it('does not block on a halt an authoring agent merely DESCRIBED', async () => {
+			// The field bug: playbooks arrive with the marker written as a
+			// conditional, and the run refused to start with no visible cause. Every
+			// halt below is quoted, checkbox-bound, or fenced, so none of them stop
+			// the run. Calls 1-4 are the scans; call 5+ is the post-spawn re-read,
+			// which reports the task done so the loop terminates.
+			const described = [
+				'If the build breaks, halt with `<!-- maestro:halt: reason -->`.',
+				'',
+				'```markdown',
+				'<!-- maestro:halt: brief reason here -->',
+				'```',
+			];
+			let callCount = 0;
+			vi.mocked(readDocAndCountTasks).mockImplementation(() => {
+				callCount++;
+				return callCount <= 4
+					? {
+							content: [
+								...described,
+								'- [ ] Build it <!-- maestro:halt: only when unrecoverable -->',
+							].join('\n'),
+							taskCount: 1,
+						}
+					: {
+							content: [
+								...described,
+								'- [x] Build it <!-- maestro:halt: only when unrecoverable -->',
+							].join('\n'),
+							taskCount: 0,
+						};
+			});
+
+			const events = await collectEvents(
+				runPlaybook(mockSession(), mockPlaybook(), '/playbooks', { skipSynopsis: true })
+			);
+
+			expect(
+				events.find((e) => e.type === 'error' && e.code === 'HALT_MARKER_PRESENT')
+			).toBeUndefined();
+			expect(events.find((e) => e.type === 'halt')).toBeUndefined();
+			expect(spawnAgent).toHaveBeenCalled();
+		});
+	});
+
+	describe('runPlaybook - stalled documents', () => {
+		it('gives up on a document after 3 runs that move no checkbox', async () => {
+			// Without this guard the loop is `while (remainingTasks > 0)` with no
+			// other exit, so an unfinishable task is dispatched forever - which is
+			// why agents were reaching for the halt marker to escape.
+			vi.mocked(readDocAndCountTasks).mockReturnValue({
+				content: '- [ ] Something the agent cannot do',
+				taskCount: 1,
+			});
+
+			const events = await collectEvents(
+				runPlaybook(mockSession(), mockPlaybook(), '/playbooks', { skipSynopsis: true })
+			);
+
+			const stalled = events.find((e) => e.type === 'document_stalled');
+			expect(stalled).toBeDefined();
+			expect(stalled?.reason).toBe('3 consecutive runs with no progress');
+			expect(stalled?.remainingTasks).toBe(1);
+			expect(spawnAgent).toHaveBeenCalledTimes(3);
+		});
+
+		it('does not report a stalled document as complete', async () => {
+			vi.mocked(readDocAndCountTasks).mockReturnValue({
+				content: '- [ ] Stuck',
+				taskCount: 1,
+			});
+
+			const events = await collectEvents(
+				runPlaybook(mockSession(), mockPlaybook(), '/playbooks', { skipSynopsis: true })
+			);
+
+			expect(events.find((e) => e.type === 'document_complete')).toBeUndefined();
+		});
+
+		it('continues to the next document rather than ending the playbook', async () => {
+			// A stall is not a halt: only the stuck document is abandoned.
+			vi.mocked(readDocAndCountTasks).mockReturnValue({
+				content: '- [ ] Stuck',
+				taskCount: 1,
+			});
+
+			const events = await collectEvents(
+				runPlaybook(
+					mockSession(),
+					mockPlaybook({
+						documents: [
+							{ filename: 'first', resetOnCompletion: false },
+							{ filename: 'second', resetOnCompletion: false },
+						],
+					}),
+					'/playbooks',
+					{ skipSynopsis: true }
+				)
+			);
+
+			const stalled = events.filter((e) => e.type === 'document_stalled');
+			expect(stalled.map((e) => e.document)).toEqual(['first', 'second']);
+			expect(stalled[0]?.hasNextDocument).toBe(true);
+			expect(stalled[1]?.hasNextDocument).toBe(false);
+		});
+
+		it('resets the counter when the agent makes progress again', async () => {
+			// Two dead runs then a completion must NOT leave the document one run
+			// away from being abandoned.
+			// Keyed off DISPATCHES rather than reads: the engine reads the document
+			// several times per iteration, so a read counter would be guesswork.
+			let dispatches = 0;
+			vi.mocked(spawnAgent).mockImplementation(async () => {
+				dispatches++;
+				return { success: true, output: 'done', agentSessionId: 'sess-1' } as never;
+			});
+			vi.mocked(readDocAndCountTasks).mockImplementation(() =>
+				dispatches < 2
+					? { content: '- [ ] One\n- [ ] Two', taskCount: 2 }
+					: { content: '- [x] One\n- [x] Two', taskCount: 0 }
+			);
+
+			const events = await collectEvents(
+				runPlaybook(mockSession(), mockPlaybook(), '/playbooks', { skipSynopsis: true })
+			);
+
+			expect(events.find((e) => e.type === 'document_stalled')).toBeUndefined();
+			expect(events.find((e) => e.type === 'document_complete')).toBeDefined();
+		});
+	});
+
+	describe('runPlaybook - HITL gates', () => {
+		it('skips a gated document instead of dispatching a task no one can finish', async () => {
+			// A batch run has no human to tick the box, so waiting is not an option.
+			vi.mocked(readDocAndCountTasks).mockReturnValue({
+				content: [
+					'<!-- MAESTRO:HITL reason="Add SENDGRID_API_KEY to .env" artifact="https://example.com" -->',
+					'- [ ] Wire the mailer',
+				].join('\n'),
+				taskCount: 1,
+			});
+
+			const events = await collectEvents(
+				runPlaybook(mockSession(), mockPlaybook(), '/playbooks', { skipSynopsis: true })
+			);
+
+			const gated = events.find((e) => e.type === 'document_gated');
+			expect(gated).toMatchObject({
+				document: 'tasks',
+				reason: 'Add SENDGRID_API_KEY to .env',
+				artifact: 'https://example.com',
+				line: 1,
+			});
+			expect(spawnAgent).not.toHaveBeenCalled();
+		});
+
+		it('runs normally once the gate has been passed', async () => {
+			// A checked box below the marker consumes the gate.
+			let call = 0;
+			vi.mocked(readDocAndCountTasks).mockImplementation(() => {
+				call++;
+				return call <= 4
+					? {
+							content: '<!-- MAESTRO:HITL reason="Approve it" -->\n- [x] Approved\n- [ ] Do work',
+							taskCount: 1,
+						}
+					: {
+							content: '<!-- MAESTRO:HITL reason="Approve it" -->\n- [x] Approved\n- [x] Do work',
+							taskCount: 0,
+						};
+			});
+
+			const events = await collectEvents(
+				runPlaybook(mockSession(), mockPlaybook(), '/playbooks', { skipSynopsis: true })
+			);
+
+			expect(events.find((e) => e.type === 'document_gated')).toBeUndefined();
+			expect(spawnAgent).toHaveBeenCalled();
+		});
 	});
 
 	describe('runPlaybook - mid-execution halt marker', () => {
@@ -1292,6 +1835,170 @@ describe('batch-processor', () => {
 			const completeEvent = events.find((e) => e.type === 'complete');
 			expect(completeEvent?.halted).toBe(true);
 			expect(completeEvent?.totalTasksCompleted).toBe(0);
+		});
+	});
+
+	describe('runPlaybook - model hints', () => {
+		// One task, then the document reads as done. Mirrors the halt tests above:
+		// the engine re-reads the document several times per task.
+		const singleTaskDocument = (content: string) => {
+			let callCount = 0;
+			vi.mocked(readDocAndCountTasks).mockImplementation(() => {
+				callCount++;
+				if (callCount <= 3) return { content, taskCount: 1 };
+				return { content: '', taskCount: 0 };
+			});
+		};
+
+		it('spawns the task with the tier model and reports the resolution', async () => {
+			singleTaskDocument('<!-- MAESTRO:MODEL tier="high" effort="high" -->\n- [ ] Task one');
+
+			const session = mockSession({ toolType: 'claude-code', customModel: 'sonnet' });
+			const events = await collectEvents(
+				runPlaybook(session, mockPlaybook(), '/playbooks', { skipSynopsis: true })
+			);
+
+			// Claude's ceiling, not the literal word "high" - the levels are ladder
+			// positions, so effort="high" has to reach the process as `max`.
+			const taskSpawnOpts = vi.mocked(spawnAgent).mock.calls[0][4];
+			expect(taskSpawnOpts?.customModel).toBe('opus');
+			expect(taskSpawnOpts?.customEffort).toBe('max');
+
+			const resolution = events.find((e) => e.type === 'model_resolution');
+			expect(resolution?.model).toBe('opus');
+			expect(resolution?.effort).toBe('max');
+			expect(resolution?.warnings).toEqual([]);
+		});
+
+		it('falls back to the agent model AND warns when the provider has no tier mapping', async () => {
+			singleTaskDocument('<!-- MAESTRO:MODEL tier="high" -->\n- [ ] Task one');
+
+			// OpenCode's catalogue is whatever the user configured, so a tier hint
+			// has nothing to resolve to. Running anyway is right; running silently
+			// is the failure this feature exists to prevent.
+			const session = mockSession({ toolType: 'opencode', customModel: 'local-model' });
+			const events = await collectEvents(
+				runPlaybook(session, mockPlaybook(), '/playbooks', { skipSynopsis: true })
+			);
+
+			expect(vi.mocked(spawnAgent).mock.calls[0][4]?.customModel).toBe('local-model');
+
+			const resolution = events.find((e) => e.type === 'model_resolution');
+			expect(resolution?.model).toBe('local-model');
+			const warnings = resolution?.warnings as string[];
+			expect(warnings).toHaveLength(1);
+			expect(warnings[0]).toContain('opencode');
+		});
+
+		it('ignores the marker and runs at the run model when ignoreModelHints is set', async () => {
+			singleTaskDocument('<!-- MAESTRO:MODEL tier="high" effort="high" -->\n- [ ] Task one');
+
+			const session = mockSession({ toolType: 'claude-code', customModel: 'sonnet' });
+			const events = await collectEvents(
+				runPlaybook(session, mockPlaybook(), '/playbooks', {
+					skipSynopsis: true,
+					model: 'haiku',
+					ignoreModelHints: true,
+				})
+			);
+
+			const taskSpawnOpts = vi.mocked(spawnAgent).mock.calls[0][4];
+			expect(taskSpawnOpts?.customModel).toBe('haiku');
+			// Nothing was read from the document, so there is no resolution to report.
+			expect(events.find((e) => e.type === 'model_resolution')).toBeUndefined();
+		});
+
+		it('falls back to the agent model when hints are ignored and no run model is given', async () => {
+			singleTaskDocument('<!-- MAESTRO:MODEL tier="high" -->\n- [ ] Task one');
+
+			const session = mockSession({ toolType: 'claude-code', customModel: 'sonnet' });
+			await collectEvents(
+				runPlaybook(session, mockPlaybook(), '/playbooks', {
+					skipSynopsis: true,
+					ignoreModelHints: true,
+				})
+			);
+
+			expect(vi.mocked(spawnAgent).mock.calls[0][4]?.customModel).toBe('sonnet');
+		});
+
+		it('measures the document-mode segment against the run model, not the agent model', async () => {
+			// Regression: the segment used the agent's own model as its baseline while the
+			// task resolved against the run override. With --model opus both tasks below
+			// run on opus, but the old baseline (sonnet) saw a boundary and told the
+			// agent to stop after the first.
+			const content = '- [ ] a\n- [ ] b <!-- MAESTRO:MODEL tier="high" -->';
+			let calls = 0;
+			vi.mocked(readDocAndCountTasks).mockImplementation(() => {
+				calls++;
+				return calls <= 3 ? { content, taskCount: 2 } : { content: '', taskCount: 0 };
+			});
+
+			await collectEvents(
+				runPlaybook(
+					mockSession({ toolType: 'claude-code', customModel: 'sonnet' }),
+					mockPlaybook({ taskSelectionMode: 'document' }),
+					'/playbooks',
+					{ skipSynopsis: true, model: 'opus' }
+				)
+			);
+
+			expect(getCliTaskSelectionBlock).toHaveBeenCalledWith('document', { count: 2, total: 2 });
+		});
+
+		it('asks for no segment boundary when hints are ignored', async () => {
+			const content = '- [ ] a\n- [ ] b <!-- MAESTRO:MODEL tier="high" -->';
+			let calls = 0;
+			vi.mocked(readDocAndCountTasks).mockImplementation(() => {
+				calls++;
+				return calls <= 3 ? { content, taskCount: 2 } : { content: '', taskCount: 0 };
+			});
+
+			await collectEvents(
+				runPlaybook(
+					mockSession({ toolType: 'claude-code', customModel: 'sonnet' }),
+					mockPlaybook({ taskSelectionMode: 'document' }),
+					'/playbooks',
+					{ skipSynopsis: true, ignoreModelHints: true }
+				)
+			);
+
+			expect(getCliTaskSelectionBlock).toHaveBeenCalledWith('document', undefined);
+		});
+
+		it('emits no model_resolution event for a document without a marker', async () => {
+			singleTaskDocument('- [ ] Task one');
+
+			const session = mockSession({ customModel: 'sonnet', customEffort: 'medium' });
+			const events = await collectEvents(
+				runPlaybook(session, mockPlaybook(), '/playbooks', { skipSynopsis: true })
+			);
+
+			expect(events.find((e) => e.type === 'model_resolution')).toBeUndefined();
+			// The agent's own configuration stands, untouched.
+			const taskSpawnOpts = vi.mocked(spawnAgent).mock.calls[0][4];
+			expect(taskSpawnOpts?.customModel).toBe('sonnet');
+			expect(taskSpawnOpts?.customEffort).toBe('medium');
+		});
+
+		it('runs the synopsis at the bottom of both ladders even when the task ran at the top', async () => {
+			singleTaskDocument('<!-- MAESTRO:MODEL tier="high" effort="high" -->\n- [ ] Task one');
+			vi.mocked(spawnAgent).mockResolvedValue({
+				success: true,
+				response: '**Summary:** ok\n**Details:** ok',
+				agentSessionId: 'claude-session-123',
+			});
+
+			const session = mockSession({ toolType: 'claude-code', customModel: 'sonnet' });
+			await collectEvents(runPlaybook(session, mockPlaybook(), '/playbooks'));
+
+			// Spawn 0 = task, spawn 1 = synopsis resume. A synopsis summarizes work
+			// that already happened, so it must never inherit the task's tier.
+			expect(vi.mocked(spawnAgent).mock.calls.length).toBeGreaterThanOrEqual(2);
+			expect(vi.mocked(spawnAgent).mock.calls[0][4]?.customModel).toBe('opus');
+			const synopsisSpawnOpts = vi.mocked(spawnAgent).mock.calls[1][4];
+			expect(synopsisSpawnOpts?.customModel).toBe('haiku');
+			expect(synopsisSpawnOpts?.customEffort).toBe('low');
 		});
 	});
 });

@@ -1,5 +1,6 @@
 import type React from 'react';
 import { buildSessionDeepLink } from '../../../../shared/deep-link-urls';
+import { requestFileDeletion } from '../../../services/fileDeletion';
 import type { Session } from '../../../types';
 import type { MainPanelHandle } from '../../MainPanel/types';
 import type { ActiveTabInfo, QuickAction } from '../types';
@@ -99,7 +100,35 @@ export function buildActiveTabContextCommands({
 		return commands;
 	}
 
-	// File previews have no buffer/content actions; only AI tabs get Context.
+	// File preview tab -> destructive file action. Only offered while a preview
+	// is actually open, and it routes through the same confirmation the
+	// toolbar's trash button raises.
+	if (activeTabType === 'file') {
+		// inputMode gates the render too: a file tab can be selected while the
+		// main panel is showing a terminal, and there is no preview to act on then.
+		const fileTab =
+			activeSession.inputMode === 'ai'
+				? activeSession.filePreviewTabs.find((tab) => tab.id === activeSession.activeFileTabId)
+				: undefined;
+		if (fileTab) {
+			commands.push({
+				id: 'deletePreviewedFile',
+				label: 'File: Delete',
+				subtext: `${fileTab.name}${fileTab.extension}`,
+				action: () => {
+					setQuickActionOpen(false);
+					requestFileDeletion({
+						path: fileTab.path,
+						sshRemoteId: fileTab.sshRemoteId,
+						sessionId: activeSession.id,
+					});
+				},
+			});
+		}
+		return commands;
+	}
+
+	// Only AI tabs get Context actions.
 	if (activeTabType !== 'ai') return commands;
 
 	const activeTab = activeSession.aiTabs.find((tab) => tab.id === activeSession.activeTabId);

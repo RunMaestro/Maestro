@@ -27,6 +27,7 @@ import { isBetaAgent } from '../../shared/agentMetadata';
 import { isAdaptiveModeDefaultOn } from '../../shared/agentConstants';
 import { logger } from '../utils/logger';
 import { ResizeHandles } from './ui/ResizeHandles';
+import { withBlankEnvVarRow } from '../../shared/envVarCatalog';
 
 // ============================================================================
 // Types
@@ -357,6 +358,8 @@ export function AgentCreationDialog({
 				<ResizeHandles
 					onResizeStart={resizableModal.onResizeStart}
 					accentColor={theme.colors.accent}
+					onResetSize={resizableModal.onResetSize}
+					canReset={resizableModal.canReset}
 				/>
 
 				{/* Header */}
@@ -462,7 +465,7 @@ export function AgentCreationDialog({
 													<span className="font-medium">{agent.name}</span>
 													{agentIsBeta && (
 														<span
-															className="text-[9px] px-1.5 py-0.5 rounded font-bold uppercase"
+															className="text-3xs px-1.5 py-0.5 rounded font-bold uppercase"
 															style={{
 																backgroundColor: theme.colors.warning + '30',
 																color: theme.colors.warning,
@@ -552,19 +555,9 @@ export function AgentCreationDialog({
 															}
 														}}
 														onEnvVarAdd={() => {
-															const currentVars = customAgentEnvVars[agent.id] || {};
-															let newKey = 'NEW_VAR';
-															let counter = 1;
-															while (currentVars[newKey]) {
-																newKey = `NEW_VAR_${counter}`;
-																counter++;
-															}
 															setCustomAgentEnvVars((prev) => ({
 																...prev,
-																[agent.id]: {
-																	...prev[agent.id],
-																	[newKey]: '',
-																},
+																[agent.id]: withBlankEnvVarRow(prev[agent.id] ?? {}),
 															}));
 														}}
 														onEnvVarsBlur={() => {}}

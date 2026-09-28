@@ -96,9 +96,9 @@ describe('@maestro/plugin-sdk vendored-contract drift guard', () => {
 		expect(HOST_METHOD_CAPABILITY).toEqual(SRC_HOST_METHOD_CAPABILITY);
 	});
 
-	it('HOST_API_VERSION matches the source and is pinned to 1.14.0', () => {
+	it('HOST_API_VERSION matches the source and is pinned to 1.16.0', () => {
 		expect(HOST_API_VERSION).toBe(SRC_HOST_API_VERSION);
-		expect(HOST_API_VERSION).toBe('1.14.0');
+		expect(HOST_API_VERSION).toBe('1.16.0');
 	});
 
 	it('capability risk and descriptions match the source', () => {
@@ -201,6 +201,30 @@ describe('@maestro/plugin-sdk vendored-contract drift guard', () => {
 		expect(validatePluginManifest(invalidCategory)).toEqual(
 			srcValidatePluginManifest(invalidCategory)
 		);
+	});
+
+	it('validatePluginManifest agrees with the source on the optional beta flag', () => {
+		const base = {
+			id: 'com.example.transcript-reader',
+			name: 'Transcript Reader',
+			version: '0.1.0',
+			tier: 1,
+			maestro: { minHostApi: HOST_API_VERSION },
+			entry: 'dist/entry.js',
+			permissions: [{ capability: 'transcripts:read', reason: 'Summarize the active session.' }],
+		};
+
+		const betaTrue = { ...base, beta: true };
+		expect(validatePluginManifest(betaTrue)).toEqual(srcValidatePluginManifest(betaTrue));
+		expect(validatePluginManifest(betaTrue).manifest?.beta).toBe(true);
+
+		const betaFalse = { ...base, beta: false };
+		expect(validatePluginManifest(betaFalse)).toEqual(srcValidatePluginManifest(betaFalse));
+		expect(validatePluginManifest(betaFalse).manifest?.beta).toBeUndefined();
+
+		const betaInvalid = { ...base, beta: 'yes' };
+		expect(validatePluginManifest(betaInvalid)).toEqual(srcValidatePluginManifest(betaInvalid));
+		expect(validatePluginManifest(betaInvalid).manifest).toBeNull();
 	});
 
 	it('validatePluginManifest agrees with the source on allowlist-scoped act verbs (Phase-4 promotion)', () => {

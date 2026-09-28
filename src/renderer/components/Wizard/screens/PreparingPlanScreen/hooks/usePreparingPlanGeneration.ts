@@ -5,6 +5,7 @@ import type { CreatedFileInfo } from '../types';
 import { upsertCreatedFile } from '../utils/createdFiles';
 import { logger } from '../../../../../utils/logger';
 import { captureException, captureMessage } from '../../../../../utils/sentry';
+import { projectNameFromPath } from '../../../shared/projectIdentity';
 
 interface UsePreparingPlanGenerationParams {
 	state: WizardState;
@@ -108,7 +109,8 @@ export function usePreparingPlanGeneration({
 				{
 					agentType: state.selectedAgent!,
 					directoryPath: state.directoryPath,
-					projectName: state.agentName || 'My Project',
+					projectName: projectNameFromPath(state.directoryPath),
+					model: state.plannerModel,
 					conversationHistory: state.conversationHistory,
 					subfolder: 'Initiation',
 					sshRemoteConfig: state.sessionSshRemoteConfig,
@@ -174,7 +176,6 @@ export function usePreparingPlanGeneration({
 		setGenerationError,
 		state.selectedAgent,
 		state.directoryPath,
-		state.agentName,
 		state.conversationHistory,
 		state.sessionSshRemoteConfig,
 	]);

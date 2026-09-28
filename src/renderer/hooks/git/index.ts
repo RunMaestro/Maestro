@@ -13,6 +13,10 @@ export type {
 	GitFileChange,
 } from './useGitStatusPolling';
 
+// Per-agent git actions shared by the header pill menu and the Left Bar menu
+export { useGitAgentActions, resolveGitCwd, resolveGitSshRemoteId } from './useGitAgentActions';
+export type { GitAgentActions } from './useGitAgentActions';
+
 // File tree state management
 export { useFileTreeManagement } from './useFileTreeManagement';
 export type {

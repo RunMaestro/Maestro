@@ -70,4 +70,16 @@ describe('quickActionSorting', () => {
 			false
 		);
 	});
+
+	it('hides headers when every row is in the same bucket', () => {
+		expect(
+			shouldShowAgentBucketHeaders(
+				[
+					action({ id: 'a', label: 'A', isRunningAgent: false }),
+					action({ id: 'b', label: 'B', isRunningAgent: false }),
+				],
+				'agents'
+			)
+		).toBe(false);
+	});
 });

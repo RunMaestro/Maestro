@@ -3,6 +3,7 @@ import {
 	endInlineWizardConversation,
 	type InlineWizardConversationSession,
 } from '../../../services/inlineWizardConversation';
+import { finishWizardRun } from '../../../services/wizardStats';
 import { logger } from '../../../utils/logger';
 import { captureException } from '../../../utils/sentry';
 import type { InlineWizardState, PreviousUIState } from './types';
@@ -23,7 +24,16 @@ export function useInlineWizardLifecycleActions({
 	const endWizard = useCallback(
 		async (explicitTabId?: string): Promise<PreviousUIState | null> => {
 			// Prefer an explicit tab id from the caller because currentTabId tracks the last-touched wizard.
-			const tabId = explicitTabId || currentTabId || 'default';
+			//
+			// The typeof guard is load-bearing, not paranoia: this ends up behind `() => void`
+			// props, and `onClick={onCancel}` hands React's click event in as the first argument.
+			// A non-string tabId matches no entry, so every cleanup below silently no-ops and the
+			// wizard is left registered forever - a wand on an agent whose wizard tab is gone.
+			const requestedTabId = typeof explicitTabId === 'string' ? explicitTabId : undefined;
+			const tabId = requestedTabId || currentTabId || 'default';
+
+			// Settle the analytics row before the state below is dropped.
+			finishWizardRun(tabId);
 
 			const previousState = previousUIStateRefsMap.current.get(tabId) || null;
 			previousUIStateRefsMap.current.delete(tabId);
@@ -64,6 +74,9 @@ export function useInlineWizardLifecycleActions({
 
 	const reset = useCallback(() => {
 		const tabId = currentTabId || 'default';
+
+		// Settle the analytics row - reset is a close, same as endWizard.
+		finishWizardRun(tabId);
 
 		const session = conversationSessionsMap.current.get(tabId);
 		if (session) {

@@ -54,7 +54,7 @@ Use the format `PREFIX-XX.md` where `XX` is a zero-padded two-digit phase number
 Each checkbox task runs in a **fresh agent context** with no memory of previous tasks. Tasks must be:
 
 - **Self-contained**: Include all context needed (file paths, what to change, why)
-- **Machine-executable**: An AI agent must be able to complete it without human help
+- **Machine-executable**: An AI agent must be able to complete it without human help. If it needs a person, it is NOT a checkbox - see "Human Steps Must NEVER Be Checkboxes" below
 - **Verifiable**: Clear success criteria (tests pass, lint clean, feature works)
 - **Appropriately scoped**: 1-3 files, < 500 lines changed
 
@@ -73,17 +73,124 @@ Sub-bullets are allowed under a single `- [ ]` checkbox to describe compound wor
 
 **Split into separate tasks** when: unrelated concerns, different risk levels, independent verification needed, or the work mixes code/tests/test-runs (always separate these three).
 
-**Human-only steps** (manual testing, visual verification, approval) should NOT use checkbox syntax. Use plain bullet points at the end of the document instead.
+### Human Steps Must NEVER Be Checkboxes (MANDATORY)
+
+The Auto Run engine dispatches every `- [ ]` task to an AI agent. If the task needs a person, the agent cannot finish it, and one of two bad things happens: the run **stalls forever** waiting on someone who was never asked, or the agent **ticks a box for work it never did**. Both are worse than not writing the task at all.
+
+Before you write any `- [ ]`, ask: _can an AI agent with shell, file, and network access finish this alone?_ If the answer is no, it is not a checkbox.
+
+**Signals that a step is human-only.** If a task contains any of these, it must not be a checkbox:
+
+- Manual action: "manually test", "by hand", "walk through the UI"
+- Visual judgment: "visually verify", "confirm it looks right", "eyeball the layout", "check the animation feels smooth"
+- Waiting on a person: "ask the user", "wait for the conductor", "confirm with the team"
+- Approval gates: "get sign-off", "human review", "await approval before continuing"
+- Credentials or accounts only a person can obtain: "sign up for an API key", "create a Stripe account", "request production access"
+- Physical or out-of-band work: "plug in the device", "call the vendor", "deploy from the admin console"
+
+**Two correct encodings** - pick by whether the run must stop:
+
+1. **The run must pause here** - emit a HITL gate marker on its own line, immediately above the tasks that depend on the human:
+
+   ```markdown
+   - [ ] Build the checkout flow and deploy it to the staging environment.
+
+   <!-- MAESTRO:HITL reason="Click through checkout on staging and confirm the payment step renders" artifact="https://staging.example.com/checkout" -->
+
+   - [ ] Apply the fixes from the staging review, then run the checkout test suite.
+   ```
+
+   The engine pauses the run at that marker, surfaces the `reason` (and optional `artifact` to look at) in the Auto Run panel and a toast, and waits. The user does the step and clicks **Done, Resume**, which writes a ticked `Human step done` box under the marker. Do not add an approval checkbox of your own. This is a **deliberate, visible pause** - the opposite of a stall.
+
+2. **The work just isn't the engine's job** - put it as plain `-` bullets under a trailing section. The engine never reads these, so they cannot stall anything:
+
+   ```markdown
+   ## Manual Follow-Up (not executed by Auto Run)
+
+   - Verify the dark mode toggle looks correct on a physical iPhone.
+   - Get design sign-off on the new empty state.
+   ```
+
+**Wrong:**
+
+```markdown
+- [ ] Manually test the login flow in the browser and confirm it looks right
+- [ ] Get approval from the team before proceeding
+- [ ] Sign up for a SendGrid account and add the API key to .env
+```
+
+**Right:**
+
+```markdown
+- [ ] Add Playwright coverage for the login flow in `e2e/login.spec.ts` (happy path, wrong password, locked account) and run `npm run e2e` until green.
+
+<!-- MAESTRO:HITL reason="Add SENDGRID_API_KEY to .env before the mailer tasks run" -->
+
+- [ ] Wire the SendGrid transport in `src/mail/transport.ts` using `process.env.SENDGRID_API_KEY` and add a unit test that mocks the client.
+
+## Manual Follow-Up (not executed by Auto Run)
+
+- Get design sign-off on the new login screen.
+```
+
+A stale HITL marker left above an unchecked task will pause every re-run until a person passes it, so use gates only where a person genuinely must act.
 
 ### Token Efficiency
 
 Each `- [ ]` task starts a fresh AI context and receives the entire document. This is token-heavy, so favor grouping related operations and separating unrelated work.
 
+### Model Tier and Effort
+
+A playbook rarely wants one setting end to end. Surveying a codebase is cheap mechanical work; designing the migration that follows is not. A marker sets the model tier and the effort level, at whichever scope fits:
+
+```markdown
+<!-- MAESTRO:MODEL tier="low" effort="low" -->
+
+- [ ] Catalogue every call site of the auth middleware
+- [ ] Summarize the current request flow
+- [ ] Design the migration <!-- MAESTRO:MODEL tier="high" effort="high" -->
+- [ ] Apply the mechanical renames
+```
+
+Two placements, and the placement IS the scope:
+
+| Placement                 | Scope                                                     |
+| ------------------------- | --------------------------------------------------------- |
+| On its own line           | Applies from there down, until the next standalone marker |
+| At the end of a task line | Applies to that ONE task; the next task reverts           |
+
+Put a standalone marker above the first task and it governs the whole document. Put one under a section heading and it governs that phase. Put an inline marker on a single task and only that task is affected - in the example above, "Apply the mechanical renames" runs back at `low`/`low`, not at `high`/`high`.
+
+Both attributes take `low`, `medium`, or `high`, and both are optional. The two scopes layer **per axis**: an inline marker that sets only `tier` keeps the prevailing `effort`. Use `tier="default"` (or `effort="default"`) to push one axis back to the agent's own configuration - that is how a single expensive-looking task opts out of a document-wide hint.
+
+A marker should also carry a `reason` justifying the choice - at most three sentences, plain text, with no double quotes inside the value:
+
+```markdown
+<!-- MAESTRO:MODEL tier="low" effort="low" reason="This phase only catalogues what already exists. Reading and listing call sites needs no judgment, so the cheap model at low effort is enough." -->
+```
+
+Explain what makes the work hard or mechanical rather than restating the levels. The reason has no effect on the run; Maestro shows it behind an ⓘ on the marker's pill so a reader can audit the judgment.
+
+The rules that matter when authoring:
+
+- **`low`/`medium`/`high` are ladder POSITIONS, not literal provider values.** `high` means the ceiling of whatever that provider offers, so on Claude Code `effort="high"` becomes `max`, not `high`. Never write a provider-specific value here.
+- **`tier` and `effort` are different axes.** `tier` picks which model; `effort` picks how hard it thinks. A low tier at high effort is a sensible request.
+- **Not every provider can honor a tier.** Model tiers ship for Claude Code and Factory Droid; Codex, Copilot-CLI, and OpenCode discover their catalogues at runtime, so a tier hint there falls back to the agent's configured model and logs a warning. Effort works everywhere except OpenCode, which has no effort setting.
+- **Markers inside fenced code blocks are ignored**, so a playbook can document this syntax (as above) without changing its own behavior.
+
+Reach for a hint when a task's cost and its difficulty are genuinely mismatched - a document-wide `low` with a couple of inline `high` tasks is the common shape, and it is usually cheaper than the default. Omit markers entirely when the whole playbook wants one setting; the agent's own configuration is then used, which is the right default.
+
+Per-task synopses always run at the cheapest model and lowest effort regardless of what the task ran at. They summarize work that already happened, so they never need the expensive model, and there is nothing to configure.
+
 ### Early Exit (Halt Marker)
 
 A running agent can abort the entire Auto Run mid-playbook by writing the marker `<!-- maestro:halt: reason here -->` (or bare `<!-- maestro:halt -->`) into the current document. When the engine sees this marker after a task, it stops dispatch immediately - no further tasks in the current document, no further documents in the playbook. The optional reason is recorded in the History panel and emitted to the JSONL stream as a `halt` event.
 
-The default Auto Run prompt already instructs executing agents that this option exists and when to use it (true playbook-wide blockers, not ordinary task failures). You generally do not need to mention the marker in your playbook unless you want to call out specific halt-worthy conditions, e.g. "If the build is broken before you start, halt the playbook." A stale halt marker left in a document will block re-runs with an error - the user must remove it before the playbook will start again.
+**When AUTHORING a playbook, never write a bare halt marker into it.** The marker is not a conditional - it does not mean "stop if this check fails", it means "this run has stopped". A document that ships one is a document that refuses to start, and because an HTML comment renders as nothing, the user sees a playbook that will not go with no visible cause. This is the single most common way an authored playbook arrives broken.
+
+The default Auto Run prompt already tells executing agents that the option exists and when to use it (true playbook-wide blockers, not ordinary task failures), so you usually need not mention it at all. When you do want to name a halt-worthy condition, write the condition in plain words - "If the build is already broken before you start, halt the playbook and say so" - and if you must show the literal syntax, put it in backticks or a fenced code block. Markers inside inline code, inside a fence, or riding a `- [ ]` checkbox line are read as examples and ignored; a marker standing alone in the document body is obeyed.
+
+A stale halt marker left in a document blocks re-runs with an error naming the file and line - the user must remove it before the playbook will start again.
 
 ### Structured Output Artifacts
 

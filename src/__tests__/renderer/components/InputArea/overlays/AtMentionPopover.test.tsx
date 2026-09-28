@@ -1,10 +1,11 @@
-import { fireEvent, render, screen } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { AtMentionPopover } from '../../../../../renderer/components/InputArea/overlays/AtMentionPopover';
 import type {
 	MentionCategory,
 	MentionPickerItem,
 } from '../../../../../renderer/hooks/input/useMentionPicker';
+import { ipcCache } from '../../../../../renderer/services/ipcWrapper';
 import { createItemRefs, inputAreaTheme } from '../_fixtures';
 
 /**
@@ -44,6 +45,12 @@ describe('AtMentionPopover', () => {
 		directories: 1,
 		agents: 1,
 	};
+
+	beforeEach(() => {
+		// The SSH name lookup reads through the shared 30s ipcCache entry, so a
+		// prior test's configs would otherwise leak into the next one.
+		ipcCache.invalidate('ssh-configs');
+	});
 
 	function renderPopover(overrides: Record<string, unknown> = {}) {
 		return render(
@@ -117,6 +124,71 @@ describe('AtMentionPopover', () => {
 		expect(
 			screen.getByText(/No other agents available - open another agent in the Left Bar/)
 		).toBeInTheDocument();
+	});
+
+	describe('SSH pill on agent rows', () => {
+		const agentItems: MentionPickerItem[] = [
+			{
+				kind: 'agent',
+				value: '@Local ',
+				displayText: 'Local',
+				targetSessionId: 'local',
+				toolType: 'claude-code',
+				isSshRemote: false,
+				sshRemoteId: null,
+				score: 1,
+			},
+			{
+				kind: 'agent',
+				value: '@Remote ',
+				displayText: 'Remote',
+				targetSessionId: 'remote',
+				toolType: 'claude-code',
+				isSshRemote: true,
+				sshRemoteId: 'remote-1',
+				score: 1,
+			},
+		];
+
+		function renderAgents() {
+			return renderPopover({
+				items: agentItems,
+				category: 'agents' as MentionCategory,
+				filter: '',
+			});
+		}
+
+		it('labels an SSH agent with its resolved remote name and leaves local rows bare', async () => {
+			vi.mocked(window.maestro.sshRemote.getConfigs).mockResolvedValueOnce({
+				success: true,
+				configs: [{ id: 'remote-1', name: 'build-box' }],
+			} as never);
+
+			renderAgents();
+
+			await waitFor(() => expect(screen.getByText('build-box')).toBeInTheDocument());
+
+			// The pill lives on the SSH row only - absence means local.
+			const remoteRow = screen.getByText('Remote').closest('button')!;
+			const localRow = screen.getByText('Local').closest('button')!;
+			expect(remoteRow).toContainElement(screen.getByText('build-box'));
+			expect(localRow.textContent).not.toMatch(/build-box|SSH/);
+		});
+
+		it('falls back to a generic SSH label when the remote name cannot be resolved', async () => {
+			vi.mocked(window.maestro.sshRemote.getConfigs).mockResolvedValueOnce({
+				success: true,
+				configs: [],
+			} as never);
+
+			renderAgents();
+
+			// Still marked remote: a missing name must never read as "local".
+			await waitFor(() => expect(screen.getByText('SSH')).toBeInTheDocument());
+			expect(screen.getByText('Remote').closest('button')).toContainElement(
+				screen.getByText('SSH')
+			);
+		});
 	});
 
 	it('replaces @filter on click and clears mention state', () => {

@@ -13,10 +13,21 @@ const settingsMock = vi.hoisted(() => ({
 	value: {
 		directorNotesSettings: {
 			provider: 'claude-code',
+			autoSelectProvider: undefined as boolean | undefined,
+			customPath: undefined as string | undefined,
 			defaultLookbackDays: 7,
 			defaultMode: undefined as 'rich' | 'plain' | undefined,
 		},
 		bionifyReadingMode: false,
+		// The table-of-contents hotkey is matched against the user's configured
+		// shortcuts, so the mock has to carry the binding the real settings do.
+		shortcuts: {
+			toggleFilePreviewToc: {
+				id: 'toggleFilePreviewToc',
+				label: 'Toggle Table of Contents (Markdown Preview)',
+				keys: ['Meta', '\\'],
+			},
+		},
 	},
 }));
 vi.mock('../../../../renderer/hooks/settings/useSettings', () => ({
@@ -83,7 +94,11 @@ vi.mock('../../../../renderer/stores/notificationStore', () => ({
 
 // Mock modalStore so the toast onClick handler doesn't explode in tests
 const mockOpenModal = vi.fn();
-vi.mock('../../../../renderer/stores/modalStore', () => ({
+// Spread the real module so a new modalStore export cannot break this mock at
+// import time. `fileExplorerStore` calls `registerExternalDestination` at module
+// scope, and a factory mock that omits it throws before any test runs.
+vi.mock('../../../../renderer/stores/modalStore', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../../renderer/stores/modalStore')>()),
 	useModalStore: { getState: () => ({ openModal: mockOpenModal }) },
 }));
 
@@ -105,6 +120,8 @@ beforeEach(() => {
 
 	// Reset the persisted default mode so each test starts from "unset".
 	settingsMock.value.directorNotesSettings.defaultMode = undefined;
+	settingsMock.value.directorNotesSettings.autoSelectProvider = undefined;
+	settingsMock.value.directorNotesSettings.customPath = undefined;
 
 	// jsdom in this environment doesn't provide a working Storage on
 	// window.localStorage, so install a minimal in-memory mock that satisfies
@@ -188,13 +205,44 @@ describe('AIOverviewTab', () => {
 			expect(screen.getByTestId('markdown-renderer')).toBeInTheDocument();
 		});
 
+		// Auto-selection is the default, so the renderer sends the sentinel and the
+		// main process resolves it against live agent detection.
 		expect(mockGenerateSynopsis).toHaveBeenCalledWith(
 			expect.objectContaining({
 				lookbackDays: 7,
-				provider: 'claude-code',
+				provider: 'auto',
 			})
 		);
 		expect(screen.getByTestId('markdown-renderer')).toHaveAttribute('data-bionify', 'off');
+	});
+
+	it('sends the pinned provider and its overrides when auto-selection is off', async () => {
+		settingsMock.value.directorNotesSettings.autoSelectProvider = false;
+		settingsMock.value.directorNotesSettings.customPath = '/custom/claude';
+		mockGenerateSynopsis.mockResolvedValue({ success: true, synopsis: '# Synopsis' });
+
+		render(<AIOverviewTab theme={mockTheme} />);
+
+		await waitFor(() => {
+			expect(mockGenerateSynopsis).toHaveBeenCalledWith(
+				expect.objectContaining({ provider: 'claude-code', customPath: '/custom/claude' })
+			);
+		});
+	});
+
+	it('withholds per-provider overrides under auto-selection', async () => {
+		// The stored overrides belong to the MANUAL pick. Applying one provider's
+		// binary path to whichever agent auto lands on would be worse than nothing.
+		settingsMock.value.directorNotesSettings.customPath = '/custom/claude';
+		mockGenerateSynopsis.mockResolvedValue({ success: true, synopsis: '# Synopsis' });
+
+		render(<AIOverviewTab theme={mockTheme} />);
+
+		await waitFor(() => {
+			expect(mockGenerateSynopsis).toHaveBeenCalledWith(
+				expect.objectContaining({ provider: 'auto', customPath: undefined })
+			);
+		});
 	});
 
 	it('calls onSynopsisReady when synopsis is generated', async () => {
@@ -232,6 +280,45 @@ describe('AIOverviewTab', () => {
 
 		await waitFor(() => {
 			expect(screen.getByText('Network error')).toBeInTheDocument();
+		});
+	});
+
+	// The modal header drives its spinner off these callbacks. A failure that
+	// never reports out leaves the tab disabled behind a spinner forever.
+	it('reports start and failure so the modal header can stop spinning', async () => {
+		mockGenerateSynopsis.mockResolvedValue({
+			success: false,
+			synopsis: '',
+			error: 'Usage limit reached',
+		});
+
+		const onSynopsisStart = vi.fn();
+		const onSynopsisError = vi.fn();
+		const onSynopsisReady = vi.fn();
+		render(
+			<AIOverviewTab
+				theme={mockTheme}
+				onSynopsisStart={onSynopsisStart}
+				onSynopsisError={onSynopsisError}
+				onSynopsisReady={onSynopsisReady}
+			/>
+		);
+
+		await waitFor(() => {
+			expect(onSynopsisError).toHaveBeenCalledWith('Usage limit reached');
+		});
+		expect(onSynopsisStart).toHaveBeenCalledTimes(1);
+		expect(onSynopsisReady).not.toHaveBeenCalled();
+	});
+
+	it('reports a thrown generation error', async () => {
+		mockGenerateSynopsis.mockRejectedValue(new Error('Network error'));
+
+		const onSynopsisError = vi.fn();
+		render(<AIOverviewTab theme={mockTheme} onSynopsisError={onSynopsisError} />);
+
+		await waitFor(() => {
+			expect(onSynopsisError).toHaveBeenCalledWith('Network error');
 		});
 	});
 
@@ -357,9 +444,44 @@ describe('AIOverviewTab', () => {
 				synopsis: '# Synopsis',
 				stats: { agentCount: 3, entryCount: 42, durationMs: 95000 },
 			});
+			settingsMock.value.directorNotesSettings.defaultMode = 'plain';
 		});
 
-		it('renders increase/decrease font-size controls with the stats bar', async () => {
+		// The zoom floats over the notes in BOTH modes: Rich Mode's narrative
+		// bullets are reading text too, and a control that vanishes in the default
+		// mode is a control nobody finds.
+		it('renders the controls in Rich Mode', async () => {
+			settingsMock.value.directorNotesSettings.defaultMode = 'rich';
+
+			render(<AIOverviewTab theme={mockTheme} />);
+
+			await waitFor(() => {
+				expect(screen.getByTestId('rich-overview')).toBeInTheDocument();
+			});
+
+			expect(screen.getByLabelText('Increase font size')).toBeInTheDocument();
+			expect(screen.getByLabelText('Decrease font size')).toBeInTheDocument();
+		});
+
+		// The narrative bullets are widgets, not prose, so they need their own
+		// scaled rule or the control moves nothing in Rich Mode.
+		it('scales the Rich narrative bullets as well as prose', async () => {
+			settingsMock.value.directorNotesSettings.defaultMode = 'rich';
+
+			render(<AIOverviewTab theme={mockTheme} />);
+
+			await waitFor(() => {
+				expect(screen.getByTestId('rich-overview')).toBeInTheDocument();
+			});
+
+			const narrativeRule = Array.from(document.querySelectorAll('style'))
+				.map((el) => el.textContent || '')
+				.find((css) => css.includes('.director-notes-narrative .text-sm'));
+
+			expect(narrativeRule).toContain('font-size: calc(0.875rem * 1)');
+		});
+
+		it('renders increase/decrease font-size controls over the notes', async () => {
 			render(<AIOverviewTab theme={mockTheme} />);
 
 			await waitFor(() => {
@@ -801,6 +923,284 @@ describe('AIOverviewTab', () => {
 			const content = screen.getByTestId('save-markdown-modal').getAttribute('data-content') || '';
 			expect(content).toContain('## Accomplishments');
 			expect(content).not.toContain('"version"');
+		});
+	});
+
+	// The Director's Notes prompt is a USER SETTING persisted to userData, so a
+	// profile can hold a prompt written against the other branch's contract. Both
+	// directions have to degrade correctly, and neither may put raw JSON on
+	// screen. See looksLikeStructuredOutput in shared/directorNotesNarrative.
+	describe('Plain Mode tolerates either prompt contract', () => {
+		it('renders a markdown synopsis as the report when no narrative came back', async () => {
+			// Direction 1: markdown-contract prompt meeting a JSON-expecting build.
+			// The agent obeyed its prompt, so this IS the report - not a failure.
+			mockGenerateSynopsis.mockResolvedValue({
+				success: true,
+				synopsis: '# Synopsis\n\n## Accomplishments\n\n- Shipped the thing',
+				stats: { agentCount: 2, entryCount: 9, durationMs: 5000 },
+			});
+
+			render(<AIOverviewTab theme={mockTheme} />);
+			await waitFor(() => {
+				expect(screen.getByTestId('rich-overview')).toBeInTheDocument();
+			});
+			fireEvent.click(screen.getByRole('button', { name: /^plain$/i }));
+
+			const md = screen.getByTestId('markdown-renderer');
+			expect(md.textContent).toContain('- Shipped the thing');
+			// No accusation of a broken narrative - nothing was broken.
+			expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+		});
+
+		it('never renders raw JSON even when no narrativeError came back', async () => {
+			// Direction 2, and the invariant: JSON-shaped output with NEITHER a
+			// narrative nor an error - the shape of a result cached before the
+			// narrative fields existed. This used to fall through to the raw string
+			// and paint a wall of JSON where the report belongs.
+			mockGenerateSynopsis.mockResolvedValue({
+				success: true,
+				synopsis: '{"version":1,"sections":[{"kind":"accomplishments"}]}',
+				stats: { agentCount: 2, entryCount: 9, durationMs: 5000 },
+			});
+
+			render(<AIOverviewTab theme={mockTheme} />);
+			await waitFor(() => {
+				expect(screen.getByTestId('rich-overview')).toBeInTheDocument();
+			});
+			fireEvent.click(screen.getByRole('button', { name: /^plain$/i }));
+
+			expect(screen.getByRole('alert')).toBeInTheDocument();
+			expect(screen.queryByTestId('markdown-renderer')).not.toBeInTheDocument();
+		});
+	});
+
+	// When the structured output cannot be parsed at all, Plain Mode used to feed
+	// the raw string straight to the markdown renderer - which meant a wall of raw
+	// JSON where the report should be. It must fail as loudly as Rich Mode does.
+	describe('Plain Mode with an unparseable narrative', () => {
+		const rawJson = '{"version":1,"sections":[{"kind":"accomplishments","title":"Accomp';
+
+		beforeEach(() => {
+			mockGenerateSynopsis.mockResolvedValue({
+				success: true,
+				synopsis: rawJson,
+				narrativeError: 'No JSON object found in the response.',
+				stats: { agentCount: 2, entryCount: 9, durationMs: 5000 },
+			});
+		});
+
+		it('shows the parse-failure banner instead of dumping the raw output', async () => {
+			render(<AIOverviewTab theme={mockTheme} />);
+
+			await waitFor(() => {
+				expect(screen.getByTestId('rich-overview')).toBeInTheDocument();
+			});
+
+			fireEvent.click(screen.getByRole('button', { name: /^plain$/i }));
+
+			expect(screen.getByRole('alert')).toHaveTextContent(
+				/could not parse the AI's structured output/i
+			);
+			expect(screen.getByText('No JSON object found in the response.')).toBeInTheDocument();
+			// The raw output is reachable behind the disclosure, never rendered as
+			// if it were the report.
+			expect(screen.queryByTestId('markdown-renderer')).not.toBeInTheDocument();
+		});
+
+		it('keeps the raw output reachable behind the disclosure', async () => {
+			render(<AIOverviewTab theme={mockTheme} />);
+
+			await waitFor(() => {
+				expect(screen.getByTestId('rich-overview')).toBeInTheDocument();
+			});
+
+			fireEvent.click(screen.getByRole('button', { name: /^plain$/i }));
+			fireEvent.click(screen.getByText('View raw output'));
+
+			expect(screen.getByText(rawJson)).toBeInTheDocument();
+		});
+	});
+
+	// A salvaged narrative is still shown - a run costs minutes - but never
+	// silently: the banner says what had to be recovered.
+	describe('Plain Mode with a salvaged narrative', () => {
+		beforeEach(() => {
+			mockGenerateSynopsis.mockResolvedValue({
+				success: true,
+				synopsis:
+					'{"version":1,"sections":[{"kind":"challenges","title":"Challenges","items":[{"tex',
+				narrative: {
+					version: 1 as const,
+					sections: [
+						{
+							kind: 'accomplishments' as const,
+							title: 'Accomplishments',
+							items: [{ text: 'Recovered bullet', severity: 'info' as const }],
+						},
+					],
+				},
+				narrativeError: 'No JSON object found in the response.',
+				narrativeRecovery:
+					'Recovered what could be read: the response was cut off before it finished.',
+				stats: { agentCount: 2, entryCount: 9, durationMs: 5000 },
+			});
+		});
+
+		it('renders the recovered prose alongside the partial-recovery banner', async () => {
+			render(<AIOverviewTab theme={mockTheme} />);
+
+			await waitFor(() => {
+				expect(screen.getByTestId('rich-overview')).toBeInTheDocument();
+			});
+
+			fireEvent.click(screen.getByRole('button', { name: /^plain$/i }));
+
+			expect(screen.getByRole('alert')).toHaveTextContent(/cut off before it finished/i);
+			expect(screen.getByRole('alert')).toHaveTextContent(
+				/Part of the AI's structured output could not be parsed/i
+			);
+
+			const md = screen.getByTestId('markdown-renderer');
+			expect(md.textContent).toContain('## Accomplishments');
+			expect(md.textContent).toContain('- Recovered bullet');
+			expect(md.textContent).not.toContain('"version"');
+		});
+
+		it('Copy exports the recovered prose rather than the unparseable raw output', async () => {
+			render(<AIOverviewTab theme={mockTheme} />);
+
+			await waitFor(() => {
+				expect(screen.getByTestId('rich-overview')).toBeInTheDocument();
+			});
+
+			fireEvent.click(screen.getByText('Copy'));
+
+			await waitFor(() => {
+				expect(mockWriteText).toHaveBeenCalled();
+			});
+			const copied = mockWriteText.mock.calls[0][0] as string;
+			expect(copied).toContain('- Recovered bullet');
+			expect(copied).not.toContain('"version"');
+		});
+	});
+
+	// The TOC is the File Preview control, reused. These pin the behavior a user
+	// has muscle memory for: the same hotkey toggles it, Escape dismisses it (and
+	// is reported as consumed so the modal stays open), and the jump list matches
+	// whichever reading mode is showing.
+	describe('table of contents', () => {
+		const narrative = {
+			version: 1 as const,
+			sections: [
+				{
+					kind: 'accomplishments' as const,
+					title: 'Accomplishments',
+					items: [{ text: 'Shipped the TOC' }],
+				},
+				{ kind: 'challenges' as const, title: 'Challenges', items: [{ text: 'A blocker' }] },
+			],
+		};
+
+		beforeEach(() => {
+			mockGenerateSynopsis.mockResolvedValue({
+				success: true,
+				synopsis: JSON.stringify(narrative),
+				narrative,
+				stats: { agentCount: 2, entryCount: 9, durationMs: 5000 },
+			});
+		});
+
+		/** The content region owns the keydown, matching File Preview's container. */
+		const contentRegion = () => document.querySelector('.scrollbar-thin') as HTMLElement;
+
+		const pressToggle = () =>
+			fireEvent.keyDown(contentRegion(), { key: '\\', metaKey: true, code: 'Backslash' });
+
+		async function renderReady(ref?: React.Ref<{ onEscape?: () => boolean; focus: () => void }>) {
+			render(<AIOverviewTab ref={ref as never} theme={mockTheme} />);
+			await waitFor(() => {
+				expect(screen.getByTestId('rich-overview')).toBeInTheDocument();
+			});
+		}
+
+		it('shows the toggle button once there is something to jump to', async () => {
+			await renderReady();
+			expect(screen.getByTitle('Table of Contents')).toBeInTheDocument();
+		});
+
+		it('opens and closes on the same hotkey File Preview uses', async () => {
+			await renderReady();
+			expect(screen.queryByText('Contents')).not.toBeInTheDocument();
+
+			pressToggle();
+			expect(screen.getByText('Contents')).toBeInTheDocument();
+
+			pressToggle();
+			expect(screen.queryByText('Contents')).not.toBeInTheDocument();
+		});
+
+		it('lists the Rich Mode sections: widgets then narrative', async () => {
+			await renderReady();
+			pressToggle();
+
+			// The entry list sits between the two boundary sashes.
+			const entryList = screen.getByTestId('toc-top-button').nextElementSibling as HTMLElement;
+			const labels = Array.from(entryList.querySelectorAll('button[title]')).map((b) =>
+				b.getAttribute('title')
+			);
+			expect(labels).toEqual([
+				'Activity Timeline',
+				'Success vs Failure',
+				'Source Breakdown',
+				'Agent Activity',
+				'Accomplishments',
+				'Challenges',
+			]);
+		});
+
+		it('lists the narrative headings in Plain Mode', async () => {
+			await renderReady();
+			fireEvent.click(screen.getByRole('button', { name: /^plain$/i }));
+			pressToggle();
+
+			expect(screen.getByTitle('Accomplishments')).toBeInTheDocument();
+			expect(screen.getByTitle('Challenges')).toBeInTheDocument();
+			// The widget cards don't exist in Plain Mode, so they aren't offered.
+			expect(screen.queryByTitle('Activity Timeline')).not.toBeInTheDocument();
+		});
+
+		it('offers Top and Bottom sashes', async () => {
+			await renderReady();
+			pressToggle();
+			expect(screen.getByTestId('toc-top-button')).toBeInTheDocument();
+			expect(screen.getByTestId('toc-bottom-button')).toBeInTheDocument();
+		});
+
+		it('dismisses on Escape and reports the key as consumed', async () => {
+			const ref = React.createRef<{ onEscape?: () => boolean; focus: () => void }>();
+			await renderReady(ref);
+			pressToggle();
+			expect(screen.getByText('Contents')).toBeInTheDocument();
+
+			// The modal delegates Escape to the tab first: true means "I handled it",
+			// which is what keeps Escape from closing Director's Notes outright.
+			expect(ref.current?.onEscape?.()).toBe(true);
+			await waitFor(() => {
+				expect(screen.queryByText('Contents')).not.toBeInTheDocument();
+			});
+		});
+
+		it('leaves Escape to the modal when the panel is closed', async () => {
+			const ref = React.createRef<{ onEscape?: () => boolean; focus: () => void }>();
+			await renderReady(ref);
+			expect(ref.current?.onEscape?.()).toBe(false);
+		});
+
+		it('exposes focus() so the modal can hand keys to the content region', async () => {
+			const ref = React.createRef<{ onEscape?: () => boolean; focus: () => void }>();
+			await renderReady(ref);
+			ref.current?.focus();
+			expect(document.activeElement).toBe(contentRegion());
 		});
 	});
 });

@@ -1,7 +1,6 @@
 import {
 	app,
 	BrowserWindow,
-	Menu,
 	powerMonitor,
 	protocol,
 	safeStorage,
@@ -11,6 +10,7 @@ import {
 	type IpcMainInvokeEvent,
 } from 'electron';
 import { isMacOS } from '../shared/platformDetection';
+import { installApplicationMenu } from './app-menu';
 import path from 'path';
 import os from 'os';
 import crypto from 'crypto';
@@ -23,10 +23,9 @@ import { readFile } from 'fs/promises';
 import { ProcessManager } from './process-manager';
 import { WebServer } from './web-server';
 import { AgentDetector } from './agents';
-import { getAgentDefinition } from './agents/definitions';
-import { DEFAULT_CONTEXT_WINDOWS, FALLBACK_CONTEXT_WINDOW } from '../shared/agentConstants';
+import { createAgentConfigLookup } from './agents/agent-config-lookup';
 import { shouldDropSentryEvent } from '../shared/sentryFilters';
-import type { AgentId } from '../shared/agentIds';
+import { getBuildProvenance } from './utils/build-provenance';
 import {
 	initGlobalHotkey,
 	setGlobalShowHotkey,
@@ -36,11 +35,8 @@ import { CueEngine } from './cue/cue-engine';
 import { createCueSupervisorHooks } from './cue/cue-first-party';
 import { PianolaSupervisor } from './pianola/pianola-supervisor';
 import { PianolaRelearnScheduler } from './pianola/pianola-relearn-scheduler';
-import { runRelearnJob } from './pianola/pianola-relearn';
-import { readRules, writeSuggestions, getProfile } from './pianola/pianola-store-main';
-import type { DecisionPair } from '../shared/pianola/transcript-mining';
-import type { PianolaRule } from '../shared/pianola/types';
-import { spawn, execFile, type ChildProcess } from 'child_process';
+import { createPianolaLifecycle } from './pianola/pianola-lifecycle';
+import { execFile } from 'child_process';
 import { PluginManager } from './plugins/plugin-manager';
 import { resolveTrustedKeys } from '../shared/plugins/publisher-keys';
 import { seedBundledPlugins } from './plugins/bundled-plugins';
@@ -59,8 +55,8 @@ import {
 	type PluginSessionMetadata,
 	type PluginTabMetadata,
 } from './plugins/plugin-host-handlers';
-import { PluginHostViewRegistry, type HostViewMutation } from './plugins/plugin-host-view-registry';
-import { forwardPluginHostViewToRenderer } from './plugins/plugin-host-view-forwarder';
+import { createCadenzaDelivery, registerCadenzaIpcHandlers } from './cadenza-bridge';
+import { createPluginHostViewBridge } from './plugin-host-view-bridge';
 import { ActionGuard } from './plugins/action-guard';
 import { PluginKvStore } from './plugins/plugin-kv-store';
 import { PluginEventBusImpl } from './plugins/plugin-event-bus';
@@ -100,20 +96,22 @@ import {
 	type OpenedConsentWindow,
 } from './plugins/consent-window';
 import { configureCueTelemetry } from './cue/cue-telemetry';
-import {
-	executeCuePrompt,
-	recordCueHistoryEntry,
-	stopCueRun,
-	getCueProcessList,
-} from './cue/cue-executor';
+import { executeCuePrompt, stopCueRun } from './cue/cue-executor';
 import { executeCueShell, stopCueShellRun } from './cue/cue-shell-executor';
-import { executeCueCli, stopCueCliRun, resolveMaestroCliScriptPath } from './cue/cue-cli-executor';
+import { executeCueCli, stopCueCliRun } from './cue/cue-cli-executor';
 import { executeCueNotify } from './cue/cue-notify-executor';
+import { reportCueAuthFailure } from './cue/cue-auth-detector';
+import { setSusFactorNotifier } from './cue/cue-susfactor';
+import { emitCueNotifyToast } from './cue/cue-notify-bridge';
 import { getAgentDisplayName } from '../shared/agentMetadata';
 import { logger } from './utils/logger';
 import { tunnelManager } from './tunnel-manager';
 import { powerManager } from './power-manager';
 import { getHistoryManager } from './history-manager';
+import { initDispatchCallbacks } from './dispatch-callbacks';
+import { MAX_ENTRIES_PER_SESSION } from '../shared/history';
+import { DEFAULT_CUE_HISTORY_RETENTION_DAYS } from '../shared/cue/retention';
+import { resolveEncoreFeatures } from '../shared/encoreFeatureDefaults';
 import {
 	initializeStores,
 	getEarlySettings,
@@ -125,122 +123,45 @@ import {
 	getWindowStateStore,
 	getClaudeSessionOriginsStore,
 	getAgentSessionOriginsStore,
-	getSshRemoteById,
 } from './stores';
 import { runSettingsMigrations } from './stores/migrations';
+import { migrateClaudeSessionNamesFromHistory } from './stores/migrations/claude-session-names-backfill';
 import {
-	registerGitHandlers,
-	registerAutorunHandlers,
-	registerPlaybooksHandlers,
-	registerHistoryHandlers,
-	registerAgentsHandlers,
-	registerProcessHandlers,
-	registerPersistenceHandlers,
-	registerSystemHandlers,
-	registerClaudeHandlers,
-	registerAgentSessionsHandlers,
-	registerGroupChatHandlers,
-	registerDebugHandlers,
-	registerSpeckitHandlers,
-	registerOpenSpecHandlers,
-	registerBmadHandlers,
-	registerContextHandlers,
-	registerMarketplaceHandlers,
-	registerStatsHandlers,
-	registerCueStatsHandlers,
-	registerDocumentGraphHandlers,
-	registerSshRemoteHandlers,
-	registerFilesystemHandlers,
-	registerAttachmentsHandlers,
-	registerWebHandlers,
 	ensureCliServer,
 	startCliDiscoveryWatchdog,
 	stopCliDiscoveryWatchdog,
-	registerLeaderboardHandlers,
-	registerNotificationsHandlers,
-	registerSymphonyHandlers,
-	registerTabNamingHandlers,
-	registerAgentErrorHandlers,
-	registerDirectorNotesHandlers,
-	registerCrossAgentHandlers,
-	registerCueHandlers,
-	registerCueBackupHandlers,
-	registerWakatimeHandlers,
-	registerFeedbackHandlers,
-	registerMaestroCliHandlers,
-	registerPromptsHandlers,
-	registerMemoryHandlers,
-	registerPianolaHandlers,
-	registerPluginsHandlers,
-	registerAgentRunHandlers,
-	registerCoworkingHandlers,
-	registerBrowserSessionHandlers,
-	registerWindowsHandlers,
-	wireWindowRegistryBroadcast,
-	wireEmptySecondaryWindowAutoClose,
-	setupLoggerEventForwarding,
 	cleanupAllGroomingSessions,
 	getActiveGroomingSessionCount,
 } from './ipc/handlers';
-import { startCoworkingBridge, stopCoworkingBridge } from './coworking/coworking-bridge';
-import { ensureCoworkingServerScript } from './coworking/coworking-server-paths';
-import { resolveSessionFromPidWalk } from './coworking/pid-resolution';
-import { initializeStatsDB, closeStatsDB, getStatsDB, wireMultiWindowTelemetry } from './stats';
-import { groupChatEmitters } from './ipc/handlers/groupChat';
-import {
-	routeModeratorResponse,
-	routeAgentResponse,
-	setGetSessionsCallback,
-	setGetCustomEnvVarsCallback,
-	setGetAgentConfigCallback,
-	setGetModeratorSettingsCallback,
-	setSshStore,
-	setGetCustomShellPathCallback,
-	markParticipantResponded,
-	spawnModeratorSynthesis,
-	getGroupChatReadOnlyState,
-	respawnParticipantWithRecovery,
-	clearActiveParticipantTaskSession,
-	clearModeratorResponseTimeout,
-} from './group-chat/group-chat-router';
+import { setupIpcHandlers } from './ipc/bootstrap';
+import { stopCoworkingBridge } from './coworking/coworking-bridge';
+import { initializeStatsDB, closeStatsDB } from './stats';
 import { createSshRemoteStoreAdapter } from './utils/ssh-remote-resolver';
-import { updateParticipant, loadGroupChat, updateGroupChat } from './group-chat/group-chat-storage';
 import { stopSessionCleanup } from './group-chat/group-chat-moderator';
-import { needsSessionRecovery, initiateSessionRecovery } from './group-chat/session-recovery';
 import { initializePrompts, getPrompt, savePrompt } from './prompt-manager';
 import { captureException } from './utils/sentry';
-import { initializeSessionStorages } from './storage';
-import { resolveToFilePath, configureImageStore } from './storage/session-image-store';
+import {
+	resolveToFilePath,
+	configureImageStore,
+	parseThumbnailRequest,
+} from './storage/session-image-store';
+import { getOrCreateThumbnail } from './storage/session-image-thumbnails';
 import { CONCERTO_HTML_SCHEME } from '../shared/concerto-html';
 import { createConcertoHtmlResponse } from './concerto-html';
-import { initializeOutputParsers } from './parsers';
-import { calculateContextTokens } from './parsers/usage-aggregator';
-import {
-	DEMO_MODE,
-	DEMO_DATA_PATH,
-	REGEX_MODERATOR_SESSION,
-	REGEX_MODERATOR_SESSION_TIMESTAMP,
-	REGEX_AI_SUFFIX,
-	REGEX_AI_TAB_ID,
-	REGEX_BATCH_SESSION,
-	REGEX_SYNOPSIS_SESSION,
-	debugLog,
-} from './constants';
+import { MEDIA_SCHEME } from '../shared/mediaTypes';
+import { handleMediaStreamRequest } from './media/media-stream';
+import { closeAllParquetFiles } from './parquet/parquet-file';
+import { DEMO_MODE, DEMO_DATA_PATH } from './constants';
 // initAutoUpdater is now used by window-manager.ts (Phase 4 refactoring)
 import { checkWslEnvironment } from './utils/wslDetector';
 import { setupDeepLinkHandling, flushPendingDeepLink } from './deep-links';
 // Extracted modules (Phase 1 refactoring)
-import { parseParticipantSessionId } from './group-chat/session-parser';
-import { extractTextFromStreamJson } from './group-chat/output-parser';
-import {
-	appendToGroupChatBuffer,
-	getGroupChatBufferedOutput,
-	clearGroupChatBuffer,
-} from './group-chat/output-buffer';
+import { wireProcessListeners } from './process-listeners-wiring';
 // Phase 2 refactoring - dependency injection
 import { createSafeSend, isWebContentsAvailable } from './utils/safe-send';
 import { capabilitySnapshots, createSnapshotBroadcaster } from './agents/capability-snapshot';
 import { createWebServerFactory } from './web-server/web-server-factory';
+import type { DebugPackageDependencies } from './debug-package';
 // Phase 4 refactoring - app lifecycle
 import {
 	setupGlobalErrorHandlers,
@@ -248,30 +169,24 @@ import {
 	createSettingsWatcher,
 	createWindowManager,
 	createQuitHandler,
-	deliverCadenzaToHud,
-	deliverCadenzaToExistingHud,
 	closeCadenzaHudWindow,
-	getCadenzaHudWindow,
 	type QuitHandler,
 } from './app-lifecycle';
 // Multi-window registry (single source of truth for window<->session ownership)
 import { WindowRegistry } from './window-registry';
 // Multi-window startup restore: turn the persisted MultiWindowState back into
 // window-creation specs (pruning agents that no longer exist).
-import {
-	planWindowRestore,
-	pickFocusWindowSpec,
-	saveWindowState,
-} from './window-state-persistence';
+import { planWindowRestore, pickFocusWindowSpec } from './window-state-persistence';
 import type { WindowState as SharedWindowState } from '../shared/window-types';
-// Phase 3 refactoring - process listeners
-import { setupProcessListeners as setupProcessListenersModule } from './process-listeners';
 import { setupAgentRunCapture } from './agent-run/setup-capture-listener';
 import { setAgentRunSink } from './agent-run/broadcast';
 import { startAgentRunStoreWatcher } from './agent-run/store-watcher';
 import { setupAgentRunRecovery } from './agent-run/setup-recovery';
-import { setupWakaTimeListener } from './process-listeners/wakatime-listener';
+import { createTimeZoneWatcher } from './utils/timezone-watcher';
+import { noteSystemSuspend, noteSystemResume } from './utils/sleep-tracker';
+import { clearGhCache } from './utils/cliDetection';
 import { WakaTimeManager } from './wakatime-manager';
+import { setWakaTimeManager } from './wakatime-instance';
 import { MaestroCliManager } from './maestro-cli-manager';
 import {
 	createInteractiveReplayController,
@@ -279,6 +194,7 @@ import {
 } from './agents/claude-interactive-replay';
 import { sampleUsage as sampleClaudeUsage } from './agents/claude-usage-sampler';
 import { setSnapshot as setClaudeUsageSnapshot } from './stores/claudeUsageStore';
+import { rememberQuotaAccounts } from './stores/quotaAccountsStore';
 import { getMaestroPBinPath, runStartupUsageSampling } from './agents/claude-usage-startup';
 import { UsageRefreshScheduler } from './agents/usage-refresh-scheduler';
 import type { ProcessConfig as ProcessSpawnConfig } from './process-manager/types';
@@ -312,6 +228,19 @@ const IMAGE_SCHEME = 'maestro-image';
 		{
 			scheme: CONCERTO_HTML_SCHEME,
 			privileges: { standard: true, secure: true },
+		},
+		// Streams local audio/video into <audio>/<video> in the file preview.
+		// `stream: true` keeps range responses flowing chunk-by-chunk instead of
+		// buffering, which is what makes seeking a multi-GB video cheap.
+		{
+			scheme: MEDIA_SCHEME,
+			privileges: {
+				standard: true,
+				secure: true,
+				supportFetchAPI: true,
+				corsEnabled: true,
+				stream: true,
+			},
 		},
 	];
 	if (!isDevelopment) {
@@ -384,6 +313,13 @@ if (disableGpuAcceleration) {
 // This creates a unique identifier per Maestro installation for telemetry differentiation
 const store = getSettingsStore();
 let installationId = store.get('installationId');
+// An installationId already on disk means this settings store existed before
+// this boot, i.e. the app has launched before. Record that once, permanently -
+// it is how the renderer tells a returning user who deleted every agent from a
+// genuinely new install (sessions.length alone reads both as "new").
+if (installationId && !store.get('hasPriorInstallation')) {
+	store.set('hasPriorInstallation', true);
+}
 if (!installationId) {
 	installationId = crypto.randomUUID();
 	store.set('installationId', installationId);
@@ -396,7 +332,10 @@ if (!installationId) {
 runSettingsMigrations(store);
 
 // Initialize WakaTime heartbeat manager
-const wakatimeManager = new WakaTimeManager(store);
+const wakatimeManager = new WakaTimeManager(store, app.getVersion());
+// Publish it so Cue (which spawns agents outside the ProcessManager) shares
+// this instance's debounce and CLI-install state instead of making its own.
+setWakaTimeManager(wakatimeManager);
 const maestroCliManager = new MaestroCliManager();
 
 // Auto-install WakaTime CLI on startup if enabled
@@ -415,11 +354,25 @@ store.onDidChange('wakatimeEnabled', (newValue) => {
 // Only enable in production - skip during development to avoid noise from hot-reload artifacts
 // The dynamic import is necessary because @sentry/electron accesses electron.app at module load time
 // which fails if the module is imported before app.whenReady() in some Node/Electron version combinations
-if (crashReportingEnabled && !isDevelopment) {
+//
+// The DSN is NOT in source. It comes from dist/build-provenance.json, injected at
+// package time from a CI secret, so a build from source has no DSN and this block is
+// skipped entirely: the build reports nowhere. That is what keeps fork builds out of
+// our Sentry project, and equally keeps fork users' telemetry out of it. Full
+// rationale in src/shared/buildProvenance.ts.
+const buildProvenance = getBuildProvenance();
+if (crashReportingEnabled && !isDevelopment && !buildProvenance.sentryDsn) {
+	logger.info(
+		'Crash reporting is off: this build carries no Sentry DSN. Set MAESTRO_SENTRY_DSN to report to your own Sentry project.',
+		'Startup'
+	);
+}
+if (crashReportingEnabled && !isDevelopment && buildProvenance.sentryDsn) {
+	const sentryDsn = buildProvenance.sentryDsn;
 	import('@sentry/electron/main')
 		.then(({ init, setTag, IPCMode }) => {
 			init({
-				dsn: 'https://2303c5f787f910863d83ed5d27ce8ed2@o4510554134740992.ingest.us.sentry.io/4510554135789568',
+				dsn: sentryDsn,
 				// Set release version for better debugging
 				release: app.getVersion(),
 				// Use Classic IPC mode to avoid "sentry-ipc:// URL scheme not supported" errors
@@ -455,6 +408,10 @@ if (crashReportingEnabled && !isDevelopment) {
 			// RC builds use -RC suffix (e.g., 0.16.1-RC), stable builds use plain semver
 			const version = app.getVersion();
 			setTag('channel', version.includes('-RC') ? 'rc' : 'stable');
+			// Distinguish our own release builds from a fork that supplied its own DSN.
+			// Only official builds should ever reach the smash-labs/maestro project, so an
+			// `unofficial` event there means the provenance gate has a hole in it.
+			setTag('build', buildProvenance.official ? 'official' : 'unofficial');
 
 			// Start memory monitoring for crash diagnostics (MAESTRO-5A/4Y)
 			// Records breadcrumbs with memory state every minute, warns above 1GB heap
@@ -481,14 +438,8 @@ const windowStateStore = getWindowStateStore();
 const claudeSessionOriginsStore = getClaudeSessionOriginsStore();
 const agentSessionOriginsStore = getAgentSessionOriginsStore();
 
-function getAgentConfigForAgent(agentId: string): Record<string, any> {
-	const allConfigs = agentConfigsStore.get('configs', {});
-	return allConfigs[agentId] || {};
-}
-
-function getCustomEnvVarsForAgent(agentId: string): Record<string, string> | undefined {
-	return getAgentConfigForAgent(agentId).customEnvVars as Record<string, string> | undefined;
-}
+const { getAgentConfigForAgent, getCustomEnvVarsForAgent } =
+	createAgentConfigLookup(agentConfigsStore);
 
 // Note: History storage is now handled by HistoryManager which uses per-session files
 // in the history/ directory. The legacy maestro-history.json file is migrated automatically.
@@ -508,76 +459,12 @@ let pluginGroupingRegistry: PluginGroupingRegistry | null = null;
 let pluginBackgroundSupervisor: PluginBackgroundSupervisor | null = null;
 let pluginAuthStore: AuthorizationStore | null = null;
 let pluginEventBus: PluginEventBusImpl | null = null;
+// Set by registerPersistenceHandlers (in setupIpcHandlers). Lets the plugin
+// focus verbs record into the persistence layer's `session.activated` dedupe so
+// the two emit paths never desync. Null before IPC setup / when unavailable.
+let noteSessionActivatedInPersistence: ((sessionId: string) => void) | null = null;
 let usageRefreshScheduler: UsageRefreshScheduler | null = null;
 let interactiveReplayController: InteractiveReplayController<ProcessSpawnConfig> | null = null;
-
-/** Cap on decision pairs the scheduled re-learn pulls from the CLI per run. */
-const RELEARN_MAX_PAIRS = 100_000;
-
-/**
- * Mine the installed CLIs' native transcripts into a decision corpus by spawning
- * the existing `pianola learn --json` crawler (the single source of transcript
- * discovery + parsing) and parsing its `pairs`. Rejects on spawn/exit/parse
- * failure so a failed mine leaves the previously staged suggestions untouched.
- */
-function mineDecisionPairsViaCli(): Promise<DecisionPair[]> {
-	const cliScriptPath = resolveMaestroCliScriptPath();
-	return new Promise<DecisionPair[]>((resolve, reject) => {
-		let child: ChildProcess;
-		try {
-			child = spawn(
-				process.execPath,
-				[cliScriptPath, 'pianola', 'learn', '--json', '--max-pairs', String(RELEARN_MAX_PAIRS)],
-				{
-					env: {
-						...process.env,
-						// In packaged Electron, process.execPath is the app binary, not
-						// Node; without this it would launch the app instead of the CLI.
-						ELECTRON_RUN_AS_NODE: '1',
-						MAESTRO_CLI_JS: cliScriptPath,
-					},
-					stdio: ['ignore', 'pipe', 'pipe'],
-				}
-			);
-		} catch (err) {
-			reject(err instanceof Error ? err : new Error(String(err)));
-			return;
-		}
-		let stdout = '';
-		let stderr = '';
-		child.stdout?.setEncoding('utf8');
-		child.stdout?.on('data', (d: string) => {
-			stdout += d;
-		});
-		child.stderr?.setEncoding('utf8');
-		child.stderr?.on('data', (d: string) => {
-			stderr += d;
-		});
-		child.on('error', (err) => reject(err));
-		child.on('exit', (code) => {
-			if (code !== 0) {
-				reject(new Error(`pianola learn exited ${code ?? 'null'}: ${stderr.trim().slice(0, 200)}`));
-				return;
-			}
-			try {
-				const parsed = JSON.parse(stdout) as { pairs?: unknown };
-				resolve(Array.isArray(parsed.pairs) ? (parsed.pairs as DecisionPair[]) : []);
-			} catch (err) {
-				reject(err instanceof Error ? err : new Error(String(err)));
-			}
-		});
-	});
-}
-
-/**
- * Read the user's live rules and global decision-profile markdown for the
- * re-learn baseline. A missing or malformed profiles file degrades to an empty
- * baseline (getProfile already returns a well-formed empty result), so the job
- * stages a fresh draft rather than crashing.
- */
-function readExistingForRelearn(): { rules: PianolaRule[]; profile: string } {
-	return { rules: readRules(), profile: getProfile().entry?.profile ?? '' };
-}
 
 // Create safeSend with dependency injection (Phase 2 refactoring).
 // Broadcasts to EVERY open window, not just the primary one - see the
@@ -595,6 +482,26 @@ const cliWatcher = createCliWatcher({
 	getUserDataPath: () => app.getPath('userData'),
 });
 
+// Watch for the laptop crossing timezones. Chromium refreshes its renderers on
+// an OS timezone change but leaves the main process's V8 date cache stale, so
+// without this every local-time Cue schedule would keep firing on the old wall
+// clock until the app restarted.
+const timeZoneWatcher = createTimeZoneWatcher({
+	onChange: ({ previousZone, zone }) => {
+		if (!cueEngine?.isEnabled()) return;
+		try {
+			cueEngine.handleTimeZoneChange(previousZone, zone);
+		} catch (err) {
+			logger.error(`Cue handleTimeZoneChange failed: ${err}`, 'TimeZone');
+			void captureException(err, { operation: 'cue.handleTimeZoneChange' });
+		}
+	},
+	onLog: (level, message) => {
+		if (level === 'warn') logger.warn(message, 'TimeZone');
+		else logger.info(message, 'TimeZone');
+	},
+});
+
 // Create settings file watcher for external changes (e.g., from maestro-cli)
 const settingsWatcher = createSettingsWatcher({
 	// Broadcast to EVERY open window so a settings change (from maestro-cli or
@@ -602,6 +509,25 @@ const settingsWatcher = createSettingsWatcher({
 	getBroadcastWindows: () => BrowserWindow.getAllWindows(),
 	getSettingsPath: () => syncPath,
 	getAgentConfigsPath: () => productionDataPath,
+	onSettingsChangedExternally: () => {
+		// Re-apply settings the MAIN process acts on. Without this, a CLI write
+		// updates the file and the renderer while the main process keeps running
+		// on the value it read at startup - for sleep prevention that means the
+		// OS power assertion stays held after the user has turned the feature off.
+		const enabled = store.get('preventSleepEnabled') === true;
+		if (enabled !== powerManager.isEnabled()) {
+			powerManager.setEnabled(enabled);
+		}
+		const keepDisplayAwake = store.get('preventDisplaySleepEnabled') === true;
+		if (keepDisplayAwake !== powerManager.isKeepingDisplayAwake()) {
+			powerManager.setKeepDisplayAwake(keepDisplayAwake);
+		}
+		// A CLI or hand write can repoint ghPath without going through
+		// settings:set, which is where the cache is otherwise invalidated. The
+		// clear is unconditional because the previous value is not available
+		// here, and the only cost of an unnecessary one is a single `which`.
+		clearGhCache();
+	},
 });
 
 // Fallback must match DEFAULT_START_PORT in scripts/dev-port.mjs. Never 5173
@@ -658,59 +584,21 @@ const cadenzaHudDeps = {
 	windowRegistry,
 };
 
-/**
- * Route a cadenza payload to the HUD window (creating it lazily). Returns
- * false when there's no main window to parent it, so the caller can fall back
- * to the in-app renderer.
- */
-function deliverCadenza(payload: Parameters<typeof deliverCadenzaToHud>[2]): boolean {
-	if (!mainWindow) return false;
-	// Concerto is an opt-in Encore feature: don't spawn the HUD window (or
-	// route anything) unless the user enabled it in Extensions.
-	if (store.get('encoreFeatures')?.concerto !== true) return false;
-	// The HUD window has no session store, so resolve the owning agent's display
-	// name here (for the "opened by X" attribution chip) and stamp it on.
-	let stamped = payload;
-	if (payload.sessionId && !payload.sourceAgent) {
-		const sessions = sessionsStore.get('sessions', []) as Array<{ id?: string; name?: string }>;
-		const sourceAgent = sessions.find((s) => s.id === payload.sessionId)?.name;
-		if (sourceAgent) stamped = { ...payload, sourceAgent };
-	}
-	return deliverCadenzaToHud(mainWindow, cadenzaHudDeps, stamped);
-}
-
-/** Host views are a bridge between two opt-in Encore features. Re-read both
- * flags on every mutation: a disabled feature must never retain a pending view. */
-function arePluginHostViewsEnabled(): boolean {
-	const features = store.get('encoreFeatures', {}) as Record<string, boolean>;
-	return features.plugins === true && features.concerto === true;
-}
-
-/** Forward one host-owned mutation over the exact Concerto renderer channels
- * used by the CLI bridge. No renderer handles or plugin code cross this seam. */
-function forwardPluginHostView(mutation: HostViewMutation): boolean {
-	if (!(mutation.kind === 'remove' && mutation.force) && !arePluginHostViewsEnabled()) return false;
-	if (!mainWindow || mainWindow.isDestroyed() || !isWebContentsAvailable(mainWindow)) return false;
-	const targetWindow = mainWindow;
-	const sourcePlugin =
-		pluginManager?.getRegistry().records.find((record) => record.id === mutation.view.pluginId)
-			?.manifest?.name ?? mutation.view.pluginId;
-	return forwardPluginHostViewToRenderer(mutation, {
-		sourcePlugin,
-		isCadenzaEnabled: store.get('encoreFeatures', {})?.concerto === true,
-		sendToMain: (channel, payload) => targetWindow.webContents.send(channel, payload),
-		deliverCadenza,
-		deliverCadenzaToExistingHud,
-	});
-}
-
-const pluginHostViews = new PluginHostViewRegistry({
-	isEnabled: arePluginHostViewsEnabled,
-	getHostViews: () => pluginManager?.getContributions().hostViews ?? [],
-	isPluginRecordPresent: (pluginId) =>
-		pluginManager?.getRegistry().records.some((record) => record.id === pluginId) ?? false,
-	forward: forwardPluginHostView,
+// See src/main/cadenza-bridge/ and src/main/plugin-host-view-bridge/ for what
+// each of these does (Phase 5 refactoring).
+const { deliverCadenza } = createCadenzaDelivery({
+	getMainWindow: () => mainWindow,
+	sessionsStore,
+	settingsStore: store,
+	cadenzaHudDeps,
 });
+const { arePluginHostViewsEnabled, pluginHostViews } = createPluginHostViewBridge({
+	getMainWindow: () => mainWindow,
+	getPluginManager: () => pluginManager,
+	settingsStore: store,
+	deliverCadenza,
+});
+registerCadenzaIpcHandlers({ getMainWindow: () => mainWindow, settingsStore: store });
 
 // Disabling either side of the bridge purges any live views immediately. If both
 // are enabled after a flag change, re-sync static data without asking a renderer
@@ -728,43 +616,31 @@ store.onDidChange('encoreFeatures', (encoreFeatures) => {
 	pluginHostViews.sync();
 });
 
-// A `decision` cadenza's chosen option replies to the owning agent: inject the
-// value as a live prompt into that agent's session via the main renderer's
-// existing remote-command path (the same one `maestro-cli dispatch` uses). The
-// agent process is already spawned (with SSH if configured), so feeding its live
-// session inherits that transport - no new spawn, no separate SSH handling.
-ipcMain.on('cadenza-hud:decision', (_event, sessionId: string, message: string) => {
-	// Same Concerto gate as the other cadenza entry points: with the flag off no
-	// decision card can exist, so a decision arriving anyway must not inject a
-	// prompt into a live agent session.
-	if (store.get('encoreFeatures')?.concerto !== true) return;
-	if (!mainWindow || mainWindow.isDestroyed()) return;
-	if (!sessionId || !message) return;
-	// force=true (5th arg): a decision card is answered mid-turn, so the owning
-	// agent is busy by definition; without the force flag the renderer's busy
-	// guard would silently drop the choice while the UI reports it was sent.
-	mainWindow.webContents.send('remote:executeCommand', sessionId, message, 'ai', undefined, true);
-});
-
-// A chat "point" chip that targets a cadenza asks main to pulse it. Cadenzas live
-// in the HUD renderer (a separate window with its own store), so the flash must be
-// routed to whichever renderer actually holds the card: the HUD window when it's
-// up, otherwise the main window (the in-app fallback layer). Gated by Concerto so
-// it's inert when off (no cadenzas exist then anyway).
-ipcMain.on('cadenza:flash', (_event, id: string) => {
-	if (!id) return;
-	if (store.get('encoreFeatures')?.concerto !== true) return;
-	const hud = getCadenzaHudWindow();
-	const target = hud && !hud.isDestroyed() ? hud : mainWindow;
-	if (target && !target.isDestroyed()) target.webContents.send('remote:cadenzaFlash', id);
-});
+// Collectors for a support (debug) package. One object shared by the debug and
+// feedback IPC handlers and the CLI bridge, so every path builds the same zip.
+// Getters resolve the live instances at package time, not whatever existed here.
+const debugPackageDeps: DebugPackageDependencies = {
+	getAgentDetector: () => agentDetector,
+	getProcessManager: () => processManager,
+	getWebServer: () => webServer,
+	settingsStore: store,
+	sessionsStore,
+	groupsStore,
+	bootstrapStore,
+};
 
 // Create web server factory with dependency injection (Phase 2 refactoring)
 const createWebServer = createWebServerFactory({
 	settingsStore: store,
 	sessionsStore,
 	groupsStore,
+	getDebugPackageDeps: () => debugPackageDeps,
 	getMainWindow: () => mainWindow,
+	getWindowForSession: (sessionId: string) => {
+		const ownerId = windowRegistry.getWindowForSession(sessionId);
+		const owner = ownerId ? windowRegistry.get(ownerId) : windowRegistry.getPrimary();
+		return owner?.browserWindow ?? mainWindow;
+	},
 	deliverCadenza,
 	getProcessManager: () => processManager,
 	triggerCueSubscription: (subscriptionName, prompt, sourceAgentId) => {
@@ -908,17 +784,39 @@ app
 		// or the IPC payload. Registered in dev AND prod. Traversal is guarded by
 		// resolveToFilePath (only lowercase-hex sha256 + known image ext resolve).
 		protocol.handle(IMAGE_SCHEME, async (request) => {
-			const filePath = resolveToFilePath(request.url);
-			if (!filePath) return new Response('bad request', { status: 400 });
+			const sourcePath = resolveToFilePath(request.url);
+			if (!sourcePath) return new Response('bad request', { status: 400 });
+			// A `?tw=&th=` query asks for a downscaled rendition (the transcript's
+			// 200x80 chip). Bare refs - lightbox, clipboard, export - always get the
+			// original bytes. A null result means "no smaller version applies", so
+			// we fall back to the source rather than failing the request.
+			let filePath = sourcePath;
+			const thumb = parseThumbnailRequest(request.url);
+			if (thumb) {
+				try {
+					filePath =
+						(await getOrCreateThumbnail(sourcePath, thumb.maxWidth, thumb.maxHeight)) ?? sourcePath;
+				} catch (err) {
+					logger.warn(
+						`Session image thumbnail failed, serving original: ${(err as Error).message}`,
+						'SessionImages',
+						err
+					);
+				}
+			}
 			try {
 				const data = await readFile(filePath);
+				// Thumbnails are always re-encoded as PNG, so the content type comes
+				// from whatever we actually read, not from the ref's extension.
 				const ext = path.extname(filePath).toLowerCase();
 				const contentType =
 					ext === '.svg'
 						? 'image/svg+xml'
 						: ext === '.jpg' || ext === '.jpeg'
 							? 'image/jpeg'
-							: `image/${ext.slice(1)}`;
+							: ext === '.png'
+								? 'image/png'
+								: `image/${ext.slice(1)}`;
 				return new Response(new Uint8Array(data), {
 					status: 200,
 					headers: { 'content-type': contentType, 'cache-control': 'max-age=31536000, immutable' },
@@ -930,6 +828,12 @@ app
 				throw err;
 			}
 		});
+
+		// Stream local audio/video files into the file preview's <audio>/<video>
+		// element with HTTP range support, so scrubbing a large recording does not
+		// pull it through IPC or into the renderer heap. Registered on the default
+		// session only, so browser tab webviews (own partitions) cannot reach it.
+		protocol.handle(MEDIA_SCHEME, handleMediaStreamRequest);
 
 		// Serve the production renderer over `app://` so static and dynamic ES
 		// module imports succeed on Electron 41 (Chromium 138 blocks both under
@@ -1051,10 +955,12 @@ app
 				const snapshot = await sampleClaudeUsage({
 					binPath,
 					configDir: configDirKey,
-					cwd: app.getPath('home'),
 				});
 				if (snapshot) {
 					setClaudeUsageSnapshot(snapshot);
+					// An account that just hit its limit is the one the user moves
+					// every agent off; remember it so the dashboard keeps its row.
+					rememberQuotaAccounts('claude-code', [snapshot.configDirKey]);
 				}
 			},
 			updateSessionInteractive: (sessionId, update) => {
@@ -1106,6 +1012,41 @@ app
 			settingsStore: store,
 		};
 		await ensureCliServer(cliServerDeps);
+
+		// dispatch --notify-on-complete. Wired here because it needs the same
+		// web-server handle the CLI round-trips through: the callback is
+		// delivered as a real turn in the caller's live tab via the renderer's
+		// execution queue, not as a fresh headless process.
+		initDispatchCallbacks({
+			enqueue: async (agentId, prompt, tabId) => {
+				const server = webServer;
+				if (!server) return { success: false, error: 'Desktop web server unavailable' };
+				const result = await server.enqueueCommandFromMain(agentId, prompt, tabId);
+				return {
+					success: result.success === true,
+					...(result.error ? { error: result.error } : {}),
+					// Carried through so a closed `--callback-tab` can be told apart
+					// from every other failure and retried at agent level.
+					...(result.reason ? { reason: result.reason } : {}),
+				};
+			},
+			getTargetOutput: async (agentId, since) => {
+				// Best-effort: the newest history entry the target wrote after the
+				// dispatch was armed. History is per agent (entries carry no tabId),
+				// so the timestamp floor is the correlation we have - the tab handle
+				// in the callback prompt is how the caller reads the real transcript.
+				const entries = await getHistoryManager().getEntries(agentId);
+				const candidate = entries
+					.filter((entry) => entry.timestamp >= since)
+					.sort((a, b) => b.timestamp - a.timestamp)[0];
+				return candidate?.fullResponse || candidate?.summary || undefined;
+			},
+			logger: {
+				info: (msg, context) => logger.info(msg, context ?? 'DispatchCallback'),
+				warn: (msg, context) => logger.warn(msg, context ?? 'DispatchCallback'),
+			},
+		});
+
 		// Defense in depth: if the initial attempt silently dropped the
 		// discovery file (or any later code deletes / clobbers it), the
 		// watchdog republishes within seconds so maestro-cli works without
@@ -1188,7 +1129,7 @@ app
 		// context-window popover has fresh quota data on first turn. Failures here
 		// are non-fatal - the spawner's resolver tolerates a null snapshot by
 		// defaulting to interactive, and the next sampler refresh will repopulate.
-		void runStartupUsageSampling({
+		const startupUsageSampling = runStartupUsageSampling({
 			sessionsStore,
 			agentConfigsStore,
 			settingsStore: store,
@@ -1218,6 +1159,40 @@ app
 		if ((store.get('encoreFeatures', {}) as Record<string, boolean>).usageStats !== false) {
 			usageRefreshScheduler.start();
 		}
+
+		// Warm any provider the strict startup pass left cold (no auto-refresh
+		// interval picked, no eligible recent maestro-p session, Codex not sampled
+		// on boot at all). Runs after that pass settles so the two can't spawn
+		// `maestro-p --status` for the same account at once, and no-ops when the
+		// snapshots already hold renderable data. This is what makes the Usage
+		// Dashboard's Anthropic / OpenAI tabs show up on the first open instead of
+		// only after a close-and-reopen.
+		void startupUsageSampling
+			.then(() => usageRefreshScheduler?.warmUp())
+			.catch((err: unknown) => {
+				logger.warn('Provider quota warm-up failed', 'Startup', {
+					error: err instanceof Error ? err.message : String(err),
+				});
+			});
+
+		// SusFactor blocks are raised deep in the GitHub poll path, which has no
+		// BrowserWindow in scope. Register the emitter here (the one place that
+		// holds `mainWindow`) so the block notice reuses the existing Cue toast
+		// channel instead of inventing a second notification surface.
+		setSusFactorNotifier((notice) => {
+			emitCueNotifyToast(mainWindow, {
+				agentId: notice.sessionId,
+				title: 'Cue blocked a suspicious item',
+				message: `${notice.itemRef} scored ${notice.score.toFixed(2)} on the 0DIN SusFactor check and was NOT sent to the agent. Subscription "${notice.subscriptionName}". Review it before overriding.`,
+				// Sticky: this is a security decision the user has to acknowledge,
+				// not a status ping they can miss while looking elsewhere.
+				sticky: true,
+				color: 'red',
+				clickAction: notice.url
+					? { kind: 'open-url', url: notice.url }
+					: { kind: 'jump-session', sessionId: notice.sessionId },
+			});
+		});
 
 		// Initialize Cue Engine for event-driven automation
 		cueEngine = new CueEngine({
@@ -1308,8 +1283,10 @@ app
 						mainWindow,
 						onLog: notifyLog,
 					});
-					const notifyHistory = recordCueHistoryEntry(notifyResult, sessionInfo);
-					void historyManager.addEntry(storedSession.id, projectRoot, notifyHistory);
+					// No History write here: Cue runs are served to History from
+					// `cue_events` (see `getCueHistoryEntries`), so the agent's JSONL
+					// file keeps only USER/AUTO entries and CUE rows can no longer
+					// evict them.
 					return notifyResult;
 				}
 
@@ -1378,10 +1355,8 @@ app
 									// point at the wrong daemon and `maestro-cli.js` may not
 									// exist on the remote host.
 								});
-					const cmdHistory = recordCueHistoryEntry(cmdResult, sessionInfo);
-					// Fire-and-forget: this is on the Cue execution path; the
-					// caller doesn't need to wait for the disk write to settle.
-					void historyManager.addEntry(storedSession.id, projectRoot, cmdHistory);
+					// History reads Cue runs from `cue_events`, not the JSONL file -
+					// see the note on the notify path above.
 					return cmdResult;
 				}
 
@@ -1447,15 +1422,20 @@ app
 					agentConfigValues,
 				});
 
-				const historyEntry = recordCueHistoryEntry(result, {
-					id: storedSession.id,
-					name: storedSession.name,
-					toolType: storedSession.toolType,
-					cwd: projectRoot,
-					projectRoot,
-					autoRunFolderPath: storedSession.autoRunFolderPath,
-				});
-				void historyManager.addEntry(storedSession.id, projectRoot, historyEntry);
+				// Cue spawns agents outside the ProcessManager, so a failed run is the
+				// only place an expired token can surface for a pipeline. Without this
+				// the whole board goes quietly red until someone types a message.
+				reportCueAuthFailure(
+					mainWindow,
+					result,
+					storedSession.toolType,
+					storedSession.sessionSshRemoteConfig?.enabled
+						? (storedSession.sessionSshRemoteConfig.remoteId ?? undefined)
+						: undefined
+				);
+
+				// History reads Cue runs from `cue_events`, not the JSONL file -
+				// see the note on the notify path above.
 				return result;
 			},
 			onStopCueRun: (runId) => stopCueRun(runId) || stopCueShellRun(runId) || stopCueCliRun(runId),
@@ -1471,10 +1451,6 @@ app
 			// Phase 01 - gate cue_events stats lineage writes on the
 			// `encoreFeatures.usageStats` flag. Read on every record so toggling
 			// the Encore flag at runtime takes effect without an app restart.
-			getUsageStatsEnabled: () => {
-				const ef = store.get('encoreFeatures', {}) as Record<string, boolean>;
-				return ef.usageStats === true;
-			},
 			// Surface `cue.fired` to subscribed plugins (events:subscribe). Type
 			// only - NEVER prompt text. Null-safe; no-op when plugins are disabled.
 			onTriggerFired: (cueType) =>
@@ -1486,6 +1462,12 @@ app
 			// Surface Cue run lifecycle (`cue.runStarted` / `cue.runFinished`) to
 			// subscribed plugins (events:subscribe). Metadata-only; null-safe.
 			emitPluginEvent: (event) => pluginEventBus?.emit(event),
+			getUsageStatsEnabled: () => resolveEncoreFeatures(store.get('encoreFeatures')).usageStats,
+			// How far back the engine-start prune keeps cue_events. Read on every
+			// start (not captured once) so changing the setting takes effect the
+			// next time Cue is enabled, without an app restart.
+			getCueHistoryRetentionDays: () =>
+				store.get('cueHistoryRetentionDays', DEFAULT_CUE_HISTORY_RETENTION_DAYS),
 		});
 
 		// Configure Cue telemetry submitter. Reads installationId / encore flags
@@ -1497,55 +1479,20 @@ app
 			getAppVersion: () => app.getVersion(),
 			getPlatform: () => process.platform,
 			isEncoreEnabled: () => {
-				const ef = store.get('encoreFeatures', {}) as Record<string, boolean>;
-				return ef.maestroCue === true && ef.usageStats === true;
+				const ef = resolveEncoreFeatures(store.get('encoreFeatures'));
+				return ef.maestroCue && ef.usageStats;
 			},
 		});
 
-		// Initialize the Pianola supervised daemon. It owns Pianola's background
-		// watchers and orchestrations as supervised child processes (restart on
-		// crash, relaunch on app start, visible health), replacing the unmanaged
-		// nohup model. It self-gates on encoreFeatures.pianola and reconciles from a
-		// shared store file that both the CLI and renderer write.
-		pianolaSupervisor = new PianolaSupervisor({
-			isEnabled: () => {
-				const ef = store.get('encoreFeatures', {}) as Record<string, boolean>;
-				return ef.pianola === true;
-			},
-			getPianolaAgentId: () => {
-				const sessions = sessionsStore.get('sessions', []) as Array<{
-					id?: string;
-					isPianola?: boolean;
-				}>;
-				return sessions.find((s) => s?.isPianola === true)?.id;
-			},
+		// Initialize the Pianola supervised daemon and its scheduled re-learn job.
+		// See src/main/pianola/pianola-lifecycle.ts for what each one does.
+		const pianolaLifecycle = createPianolaLifecycle({
+			settingsStore: store,
+			sessionsStore,
+			logger,
 		});
-
-		// Pianola scheduled re-learn: keeps the learned profile fresh as a PROPOSAL
-		// (stages suggestions; never overwrites the live profile/rules) and
-		// relaunches stale supervised targets, on a fixed cadence. Self-gates per
-		// tick on encoreFeatures.pianola. Mining reuses the existing `pianola learn`
-		// crawler via the bundled CLI; the composition is pure with injected deps.
-		pianolaRelearnScheduler = new PianolaRelearnScheduler({
-			isEnabled: () => {
-				const ef = store.get('encoreFeatures', {}) as Record<string, boolean>;
-				return ef.pianola === true;
-			},
-			runJob: async () => {
-				await runRelearnJob({
-					isEnabled: () => {
-						const ef = store.get('encoreFeatures', {}) as Record<string, boolean>;
-						return ef.pianola === true;
-					},
-					mine: mineDecisionPairsViaCli,
-					readExisting: readExistingForRelearn,
-					writeSuggestions,
-					relaunchStale: () => pianolaSupervisor?.relaunchStale() ?? 0,
-					now: Date.now,
-					log: (line) => logger.info(line, '[PianolaRelearn]'),
-				});
-			},
-		});
+		pianolaSupervisor = pianolaLifecycle.supervisor;
+		pianolaRelearnScheduler = pianolaLifecycle.relearnScheduler;
 
 		// Plugin manager: discovers installed community plugins, tracks their
 		// enable state, verifies signatures, and (tier 1) runs their sandboxed
@@ -1944,21 +1891,48 @@ app
 				...(typeof session.cwd === 'string' ? { projectPath: session.cwd } : {}),
 			};
 		};
+		/**
+		 * Main-side mirror of the renderer's `aiTabFocusFields()`
+		 * (`src/renderer/utils/tabHelpers`): land a session on an AI tab by
+		 * clearing every non-AI view that would otherwise outrank it in the render
+		 * precedence. Shared by `tabs.focus` and `sessions.focus` so the two plugin
+		 * verbs can never drift into different notions of "focused".
+		 */
+		const pluginAiFocusFields = (tabId?: string): Record<string, unknown> => ({
+			...(tabId ? { activeTabId: tabId } : {}),
+			activeFileTabId: null,
+			activeBrowserTabId: null,
+			activeTerminalTabId: null,
+			inputMode: 'ai',
+			activeGroupId: null,
+		});
+		// Plugin focus verbs write sessionsStore directly, so they never reach the
+		// sessions:setActiveSessionId IPC handler where session.activated is emitted
+		// for event subscribers. Emit here so plugins observing focus changes see
+		// plugin-driven jumps, not only user-driven Left Bar navigation.
+		const emitPluginSessionActivated = (sessionId: string): void => {
+			if (!sessionId) return;
+			pluginEventBus?.emit({
+				topic: 'session.activated',
+				at: new Date().toISOString(),
+				payload: { sessionId },
+			});
+			// Keep the persistence-layer dedupe in sync: flushSessionActivated guards
+			// repeats with its own last-emitted id, and this direct emit bypasses it.
+			// Without recording here, a later user navigation back to the previously
+			// focused session would be wrongly suppressed (see PersistenceHandlers).
+			noteSessionActivatedInPersistence?.(sessionId);
+		};
 		const pluginTabsFocus = async (tabId: string): Promise<boolean> => {
 			const sessions = pluginSessionsRaw();
 			let focused = false;
+			let focusedSessionId: string | undefined;
 			const next = sessions.map((session) => {
 				if ((Array.isArray(session.aiTabs) ? session.aiTabs : []).some((t) => t?.id === tabId)) {
 					focused = true;
+					focusedSessionId = session.id as string;
 					sessionsStore.set('activeSessionId', session.id as string);
-					return {
-						...session,
-						activeTabId: tabId,
-						activeFileTabId: null,
-						activeBrowserTabId: null,
-						activeTerminalTabId: null,
-						inputMode: 'ai',
-					};
+					return { ...session, ...pluginAiFocusFields(tabId) };
 				}
 				if (
 					(Array.isArray(session.terminalTabs) ? session.terminalTabs : []).some(
@@ -1966,6 +1940,7 @@ app
 					)
 				) {
 					focused = true;
+					focusedSessionId = session.id as string;
 					sessionsStore.set('activeSessionId', session.id as string);
 					return {
 						...session,
@@ -1977,8 +1952,45 @@ app
 				}
 				return session;
 			});
-			if (focused) setPluginSessionsRaw(next);
+			if (focused) {
+				setPluginSessionsRaw(next);
+				if (focusedSessionId) emitPluginSessionActivated(focusedSessionId);
+			}
 			return focused;
+		};
+		/**
+		 * Jump the user to an existing session (the `sessions.focus` verb). Without
+		 * a tabId it keeps whichever AI tab the session already had active, falling
+		 * back to its first AI tab; with one, that tab must belong to the session or
+		 * the call is rejected rather than silently landing somewhere else.
+		 */
+		const pluginSessionsFocus = async (sessionId: string, tabId?: string): Promise<boolean> => {
+			const sessions = pluginSessionsRaw();
+			const session = sessions.find((s) => s.id === sessionId);
+			if (!session) return false;
+			const aiTabs = (Array.isArray(session.aiTabs) ? session.aiTabs : []) as Array<
+				Record<string, unknown> | undefined
+			>;
+			const hasAiTab = (id: unknown) =>
+				typeof id === 'string' && aiTabs.some((t) => t?.id === id) ? id : undefined;
+			if (tabId !== undefined && !hasAiTab(tabId)) return false;
+			const target =
+				tabId ??
+				hasAiTab(session.activeTabId) ??
+				(typeof aiTabs[0]?.id === 'string' ? (aiTabs[0].id as string) : undefined);
+			sessionsStore.set('activeSessionId', sessionId);
+			setPluginSessionsRaw(
+				sessions.map((s) => (s.id === sessionId ? { ...s, ...pluginAiFocusFields(target) } : s))
+			);
+			emitPluginSessionActivated(sessionId);
+			// The store write above is only the persistence path: the renderer's
+			// Zustand session store is canonical and reads main's store only at
+			// startup, then flushes its own tree back down - so a main-side write is
+			// invisible to the live UI and gets clobbered on the next flush. Push a
+			// focus-request event alongside it so a renderer listener applies the
+			// jump through the same canonical helpers, moving the visible workspace.
+			safeSend('sessions:focus-request', { sessionId, tabId: target });
+			return true;
 		};
 		const pluginTabsClose = async (tabId: string): Promise<boolean> => {
 			const sessions = pluginSessionsRaw();
@@ -2269,6 +2281,7 @@ app
 				sessionsCreate: pluginSessionsCreate,
 				sessionsUpdate: pluginSessionsUpdate,
 				sessionsDelete: pluginSessionsDelete,
+				sessionsFocus: pluginSessionsFocus,
 				tabsList: pluginTabsList,
 				tabsCreate: pluginTabsCreate,
 				tabsFocus: pluginTabsFocus,
@@ -2345,6 +2358,13 @@ app
 						.panels.find((p) => p.pluginId === pluginId && p.localId === localId) ?? null,
 				panelPost: (pluginId, panelId, data) => {
 					safeSend('plugins:panel-data', { pluginId, panelId, data });
+				},
+				// ui.openPanel/closePanel/togglePanel: a pure show/hide signal for the
+				// caller's own modal panel, already resolved and namespaced by the
+				// handler. The renderer owns the single modal-panel mount, so all main
+				// does is broadcast the requested action.
+				panelVisibility: (pluginId, panelId, action) => {
+					safeSend('plugins:panel-visibility', { pluginId, panelId, action });
 				},
 				listAgents: () => {
 					const sessions = sessionsStore.get('sessions', []) as Array<{
@@ -2749,6 +2769,11 @@ app
 		// Initialize history manager (handles migration from legacy format if needed)
 		logger.info('Initializing history manager', 'Startup');
 		const historyManager = getHistoryManager();
+		// Before initialize(): every writer that passes no explicit cap - and the
+		// legacy-format migration, which never does - must trim to the user's
+		// maxLogBuffer. A writer using the lower built-in fallback silently
+		// truncates history the user raised the cap to keep.
+		historyManager.setMaxEntriesResolver(() => store.get('maxLogBuffer', MAX_ENTRIES_PER_SESSION));
 		try {
 			await historyManager.initialize();
 			logger.info('History manager initialized', 'Startup');
@@ -2774,6 +2799,15 @@ app
 			logger.warn('Continuing without history - history features will be unavailable', 'Startup');
 		}
 
+		// Restore Claude tab names the origins store lost; history is the source.
+		// Not awaited: it reads every history file and nothing at startup needs it.
+		migrateClaudeSessionNamesFromHistory(store, claudeSessionOriginsStore, historyManager).catch(
+			(error) => {
+				void captureException(error);
+				logger.error(`Claude session names backfill failed: ${error}`, 'Migration');
+			}
+		);
+
 		// Initialize stats database for usage tracking
 		logger.info('Initializing stats database', 'Startup');
 		try {
@@ -2789,11 +2823,57 @@ app
 
 		// Set up IPC handlers
 		logger.debug('Setting up IPC handlers', 'Startup');
-		setupIpcHandlers();
+		setupIpcHandlers({
+			debugPackageDeps,
+			getMainWindow: () => mainWindow,
+			getProcessManager: () => processManager,
+			getWebServer: () => webServer,
+			setWebServer: (server) => {
+				webServer = server;
+			},
+			getAgentDetector: () => agentDetector,
+			getCueEngine: () => cueEngine,
+			getPianolaSupervisor: () => pianolaSupervisor,
+			getPluginManager: () => pluginManager,
+			getPluginSandboxHost: () => pluginSandboxHost,
+			getPluginGroupingRegistry: () => pluginGroupingRegistry,
+			getPluginAuthStore: () => pluginAuthStore,
+			getPluginEventBus: () => pluginEventBus,
+			getInteractiveReplayController: () => interactiveReplayController,
+			setNoteSessionActivated: (fn) => {
+				noteSessionActivatedInPersistence = fn;
+			},
+			app,
+			settingsStore: store,
+			sessionsStore,
+			groupsStore,
+			agentConfigsStore,
+			windowStateStore,
+			claudeSessionOriginsStore,
+			agentSessionOriginsStore,
+			bootstrapStore,
+			safeSend,
+			windowRegistry,
+			windowManager,
+			createWebServer,
+			wakatimeManager,
+			maestroCliManager,
+			getAgentConfigForAgent,
+			getCustomEnvVarsForAgent,
+		});
 
 		// Set up process event listeners
 		logger.debug('Setting up process event listeners', 'Startup');
-		setupProcessListeners();
+		wireProcessListeners({
+			getProcessManager: () => processManager,
+			getWebServer: () => webServer,
+			getAgentDetector: () => agentDetector,
+			getCueEngine: () => cueEngine,
+			getPluginEventBus: () => pluginEventBus,
+			safeSend,
+			settingsStore: store,
+			wakatimeManager,
+		});
 
 		// Wire agent-run lifecycle capture to the ProcessManager (F1). Always-on
 		// per D1: minimal metadata capture is observability, not an opt-in feature.
@@ -2885,90 +2965,10 @@ app
 		// plugins flag, so enabling the feature later begins firing without a restart.
 		pluginScheduler?.start();
 
-		// Set custom application menu to prevent macOS from injecting native
-		// "Show Previous Tab" (Cmd+Shift+{) and "Show Next Tab" (Cmd+Shift+})
-		// menu items into the default Window menu. Without this, those keyboard
-		// events are intercepted at the NSMenu level and never reach the renderer.
-		//
-		// IMPORTANT: Do NOT include { role: 'close' } in the Window submenu.
-		// The 'close' role registers Cmd+W as a native accelerator, which intercepts
-		// the keystroke at the NSMenu level before it reaches the renderer. This
-		// breaks Cmd+W tab-close shortcuts in both AI and terminal modes. Window
-		// closing is handled by the app lifecycle (Cmd+Q quits, red traffic light
-		// hides) so the native Close menu item is unnecessary.
-		if (isMacOS()) {
-			const template: Electron.MenuItemConstructorOptions[] = [
-				{
-					// Explicit appMenu - uses a custom Quit item instead of `role: 'quit'`
-					// so we can swallow Opt+Cmd+Q. macOS auto-binds Opt+Cmd+Q to any
-					// quit role (as "Quit and Keep Windows"), and that keystroke sits
-					// one modifier away from Opt+Q (Maestro Cue), causing accidental
-					// quits. Click events from accelerators carry modifier flags, so
-					// we can detect Option held and ignore the keystroke entirely.
-					role: 'appMenu',
-					submenu: [
-						{ role: 'about' },
-						{ type: 'separator' },
-						{ role: 'services' },
-						{ type: 'separator' },
-						{ role: 'hide' },
-						{ role: 'hideOthers' },
-						{ role: 'unhide' },
-						{ type: 'separator' },
-						{
-							label: 'Quit Maestro',
-							accelerator: 'Cmd+Q',
-							click: (_item, _window, event) => {
-								if (event?.altKey) {
-									logger.info(
-										'Ignoring Opt+Cmd+Q to prevent accidental quit (too close to Opt+Q for Maestro Cue)',
-										'Menu'
-									);
-									return;
-								}
-								app.quit();
-							},
-						},
-					],
-				},
-				{
-					// Custom Edit menu - equivalent to `role: 'editMenu'` minus
-					// `undo` / `redo`. Those built-in roles register Cmd+Z /
-					// Cmd+Shift+Z as NSMenu-level accelerators that intercept the
-					// keystroke at the OS layer before the renderer can see it
-					// (same trap as `role: 'close'` eating Cmd+W - see the note
-					// above the appMenu block). Removing them frees Cmd+Z for the
-					// image annotator's stroke-undo handler.
-					//
-					// Side effect: Chromium in Electron relies on the Edit > Undo
-					// menu role to deliver Cmd+Z to focused textareas/inputs on
-					// macOS, so without it native text-field undo silently does
-					// nothing. The renderer-side `useTextEditorUndo` hook
-					// (src/renderer/hooks/keyboard/useTextEditorUndo.ts) restores
-					// that behavior by calling `document.execCommand('undo')` on
-					// text targets. The annotator's own Cmd+Z listener bails out
-					// for text targets, so the two paths don't conflict.
-					label: 'Edit',
-					submenu: [
-						{ role: 'cut' },
-						{ role: 'copy' },
-						{ role: 'paste' },
-						{ role: 'pasteAndMatchStyle' },
-						{ role: 'delete' },
-						{ type: 'separator' },
-						{ role: 'selectAll' },
-					],
-				},
-				{
-					label: 'Window',
-					submenu: [{ role: 'minimize' }, { role: 'zoom' }],
-				},
-			];
-			Menu.setApplicationMenu(Menu.buildFromTemplate(template));
-		} else {
-			// On Windows/Linux, hide the menu bar entirely (Maestro uses its own UI)
-			Menu.setApplicationMenu(null);
-		}
+		// Install the application menu (File / Edit / View / Window on macOS,
+		// removed entirely on Windows/Linux). See src/main/app-menu.ts for why the
+		// menu is display-only and how clicks are routed back to the renderer.
+		installApplicationMenu();
 
 		// Restore the saved multi-window layout (or a single primary window when
 		// there is nothing saved - backward compatible).
@@ -2998,6 +2998,10 @@ app
 		// Electron auto-unregisters globalShortcuts on quit, but be explicit so the
 		// behavior survives any future change to that policy.
 		app.on('will-quit', disposeGlobalHotkey);
+		// Release parquet file descriptors (and their cached scans) on the way
+		// out. The idle reaper would get to them eventually, but a preview tab
+		// left open otherwise holds a descriptor until the process dies.
+		app.on('will-quit', () => void closeAllParquetFiles());
 
 		// Flush any deep link URL that arrived before the window was ready (cold start)
 		flushPendingDeepLink(() => mainWindow);
@@ -3018,20 +3022,50 @@ app
 		// Start settings file watcher for external changes (e.g., maestro-cli settings set)
 		settingsWatcher.start();
 
+		// Start watching for system timezone changes (laptop crossing zones).
+		timeZoneWatcher.start();
+
 		app.on('activate', () => {
 			if (BrowserWindow.getAllWindows().length === 0) {
 				createWindow();
 			}
 		});
 
+		// The main process is the only place that can measure a sleep gap: the
+		// renderer is frozen through the whole suspend and its Page Visibility
+		// state never changes, so a renderer-side `Date.now()` span silently
+		// counts an overnight sleep as work time.
+		powerMonitor.on('suspend', () => {
+			logger.info('System suspending', 'PowerMonitor');
+			noteSystemSuspend();
+		});
+
 		// Listen for system resume (after sleep/suspend) and notify renderer
 		// This allows the renderer to refresh settings that may have been reset
+		// and to subtract the sleep gap from Auto Run / achievement durations.
 		powerMonitor.on('resume', () => {
-			logger.info('System resumed from sleep/suspend', 'PowerMonitor');
-			// intentionally not bridged: window-specific
-			if (isWebContentsAvailable(mainWindow)) {
-				mainWindow.webContents.send('app:systemResume');
+			const sleptMs = noteSystemResume();
+			logger.info(
+				`System resumed from sleep/suspend (slept ${Math.round(sleptMs / 1000)}s)`,
+				'PowerMonitor'
+			);
+			// Broadcast: every window runs its own Auto Run timers, so a secondary
+			// window must hear about the sleep too.
+			for (const win of BrowserWindow.getAllWindows()) {
+				if (isWebContentsAvailable(win)) {
+					win.webContents.send('app:systemResume', { sleptMs });
+				}
 			}
+			// A laptop that woke up on a different network is serving the web
+			// interface on a new LAN address. Re-detect it now so the URL and QR
+			// code are right before the user looks, instead of up to one poll
+			// interval later.
+			void webServer?.recheckLocalAddress();
+
+			// Apply any timezone change BEFORE reconciling: a laptop that flew
+			// across zones while asleep must measure the sleep gap and its missed
+			// local-time slots in the zone it woke up in, not the one it left.
+			timeZoneWatcher.check();
 			// Replay missed time-based Cue triggers and kick GitHub pollers so a
 			// laptop that's been asleep doesn't sit on stale subscriptions until
 			// the next scheduled tick. Idempotent against multiple resume events
@@ -3117,7 +3151,10 @@ quitHandler = createQuitHandler({
 		// Tear down the background quota refresh timers.
 		usageRefreshScheduler?.stop();
 	},
-	stopSettingsWatcher: () => settingsWatcher.stop(),
+	stopSettingsWatcher: () => {
+		settingsWatcher.stop();
+		timeZoneWatcher.stop();
+	},
 	powerManager,
 	stopSessionCleanup,
 	getPersistedSessions: () => sessionsStore.get('sessions', []) as Array<Record<string, unknown>>,
@@ -3127,529 +3164,3 @@ quitHandler = createQuitHandler({
 	getWindowRegistry: () => windowRegistry,
 });
 quitHandler.setup();
-
-// startCliActivityWatcher is now handled by cliWatcher (Phase 4 refactoring)
-
-function setupIpcHandlers() {
-	// Settings, sessions, and groups persistence - extracted to src/main/ipc/handlers/persistence.ts
-
-	// Web/Live handlers - extracted to src/main/ipc/handlers/web.ts
-	registerWebHandlers({
-		getWebServer: () => webServer,
-		setWebServer: (server) => {
-			webServer = server;
-		},
-		createWebServer,
-		settingsStore: store,
-	});
-
-	// Git operations - extracted to src/main/ipc/handlers/git.ts
-	registerGitHandlers({
-		settingsStore: store,
-		getMainWindow: () => mainWindow,
-	});
-
-	// Auto Run operations - extracted to src/main/ipc/handlers/autorun.ts
-	registerAutorunHandlers({
-		mainWindow,
-		getMainWindow: () => mainWindow,
-		app,
-		settingsStore: store,
-	});
-
-	// Playbook operations - extracted to src/main/ipc/handlers/playbooks.ts
-	registerPlaybooksHandlers({
-		mainWindow,
-		getMainWindow: () => mainWindow,
-		app,
-	});
-
-	// History operations - extracted to src/main/ipc/handlers/history.ts
-	// Uses HistoryManager singleton for per-session storage
-	registerHistoryHandlers({
-		safeSend,
-		emitPluginEvent: (event) => pluginEventBus?.emit(event),
-		getMaxEntries: () => store.get('maxLogBuffer', 5000) as number,
-		getSshRemoteById,
-		getSessionById: (id: string) => {
-			const sessions = (sessionsStore.get('sessions', []) as Array<Record<string, unknown>>).filter(
-				(s) => typeof s === 'object' && s !== null
-			);
-			return sessions.find((s) => s.id === id);
-		},
-	});
-
-	// Director's Notes - unified history + synopsis generation
-	registerDirectorNotesHandlers({
-		getProcessManager: () => processManager,
-		getAgentDetector: () => agentDetector,
-		agentConfigsStore,
-		getMainWindow: () => mainWindow,
-	});
-
-	// Cross-agent @mention dispatch - streams a target agent's response back
-	// into the source agent's transcript (Phase 03).
-	registerCrossAgentHandlers({
-		getProcessManager: () => processManager,
-		getAgentDetector: () => agentDetector,
-		sessionsStore,
-		agentConfigsStore,
-		settingsStore: store,
-		sshStore: createSshRemoteStoreAdapter(store),
-		getCustomEnvVars: getCustomEnvVarsForAgent,
-		safeSend,
-	});
-
-	// Cue - event-driven automation engine
-	registerCueHandlers({
-		getCueEngine: () => cueEngine,
-	});
-
-	// Cue Backup - snapshot / restore .maestro/cue.yaml + prompts (Cue modal Backup tab)
-	registerCueBackupHandlers({
-		sessionsStore,
-	});
-
-	// Agent management operations - extracted to src/main/ipc/handlers/agents.ts
-	registerAgentsHandlers({
-		getAgentDetector: () => agentDetector,
-		agentConfigsStore,
-		settingsStore: store,
-		sessionsStore,
-	});
-
-	// Process management operations - extracted to src/main/ipc/handlers/process.ts
-	registerProcessHandlers({
-		getProcessManager: () => processManager,
-		getAgentDetector: () => agentDetector,
-		agentConfigsStore,
-		settingsStore: store,
-		getMainWindow: () => mainWindow,
-		safeSend,
-		sessionsStore,
-		interactiveReplayController: interactiveReplayController ?? undefined,
-		getCueProcesses: () => {
-			// Always query the executor's active process map - processes may still be
-			// running even if the engine has been disabled (in-flight runs complete
-			// independently of engine state).
-			const processList = getCueProcessList();
-			if (processList.length === 0) return [];
-			const activeRuns = cueEngine?.getActiveRuns() ?? [];
-			// Merge PID/command data from executor with metadata from run manager
-			return processList.map((proc) => {
-				const run = activeRuns.find((r) => r.runId === proc.runId);
-				return {
-					...proc,
-					sessionName: run?.sessionName ?? '',
-					subscriptionName: run?.subscriptionName ?? '',
-					eventType: run?.event.type ?? '',
-				};
-			});
-		},
-	});
-
-	// Persistence operations - extracted to src/main/ipc/handlers/persistence.ts
-	registerPersistenceHandlers({
-		settingsStore: store,
-		sessionsStore,
-		groupsStore,
-		getWebServer: () => webServer,
-		// Metadata-only session/agent lifecycle -> subscribed plugins. Null-safe:
-		// the bus is created during plugin init and re-authorizes every delivery
-		// against live grants, so this is a no-op when plugins are disabled.
-		emitPluginEvent: (event) => pluginEventBus?.emit(event),
-		safeSend,
-	});
-
-	// System operations - extracted to src/main/ipc/handlers/system.ts
-	registerSystemHandlers({
-		getMainWindow: () => mainWindow,
-		app,
-		settingsStore: store,
-		tunnelManager,
-		getWebServer: () => webServer,
-		bootstrapStore, // For iCloud/sync settings
-	});
-
-	// Claude Code sessions - extracted to src/main/ipc/handlers/claude.ts
-	registerClaudeHandlers({
-		claudeSessionOriginsStore,
-		getMainWindow: () => mainWindow,
-	});
-
-	// Initialize output parsers for all agents (Codex, OpenCode, Claude Code)
-	// This must be called before any agent output is processed
-	initializeOutputParsers();
-
-	// Initialize session storages and register generic agent sessions handlers
-	// This provides the new window.maestro.agentSessions.* API
-	// Pass the shared claudeSessionOriginsStore so session names/stars are consistent
-	initializeSessionStorages({ claudeSessionOriginsStore });
-	registerAgentSessionsHandlers({ getMainWindow: () => mainWindow, agentSessionOriginsStore });
-
-	// Register Group Chat handlers
-	registerGroupChatHandlers({
-		getMainWindow: () => mainWindow,
-		getProcessManager: () => processManager,
-		getAgentDetector: () => agentDetector,
-		getCustomEnvVars: getCustomEnvVarsForAgent,
-		getAgentConfig: getAgentConfigForAgent,
-	});
-
-	// Register Debug Package handlers
-	registerDebugHandlers({
-		getMainWindow: () => mainWindow,
-		getAgentDetector: () => agentDetector,
-		getProcessManager: () => processManager,
-		getWebServer: () => webServer,
-		settingsStore: store,
-		sessionsStore,
-		groupsStore,
-		bootstrapStore,
-	});
-
-	// Register Spec Kit handlers (no dependencies needed)
-	registerSpeckitHandlers();
-
-	// Register OpenSpec handlers (no dependencies needed)
-	registerOpenSpecHandlers();
-
-	// Register BMAD handlers (no dependencies needed)
-	registerBmadHandlers();
-
-	// Register Core Prompts handlers (no dependencies needed)
-	registerPromptsHandlers();
-
-	// Register project Memory handlers (Claude Code per-project memory viewer)
-	registerMemoryHandlers();
-
-	// Register Pianola handlers (autonomous manager: rules, decisions, and the
-	// supervised daemon). The supervisor is constructed during core-service init
-	// above, so it is available here; guard anyway to keep types honest.
-	if (pianolaSupervisor) {
-		registerPianolaHandlers({
-			settingsStore: store,
-			supervisor: pianolaSupervisor,
-		});
-	}
-
-	// Register Plugins handlers (community plugin subsystem, list-only in Phase 0).
-	// The manager is constructed during core-service init above; guard for types.
-	if (pluginManager && pluginAuthStore) {
-		registerPluginsHandlers({
-			settingsStore: store,
-			manager: pluginManager,
-			sandboxHost: pluginSandboxHost ?? undefined,
-			authStore: pluginAuthStore,
-			groupingRegistry: pluginGroupingRegistry ?? undefined,
-		});
-	}
-
-	// Register AgentRun control-plane handlers (neutral run/campaign ledger).
-	registerAgentRunHandlers({
-		getProcessManager: () => processManager,
-		settingsStore: store,
-	});
-
-	// Register Browser Session handlers (clear per-partition browsing data)
-	registerBrowserSessionHandlers();
-
-	// Register Coworking handlers + start the IPC bridge socket and refresh the bundled
-	// MCP-server script. The bridge runs whenever Maestro is up; per-agent activation
-	// is opt-in via Settings → Encore Features → Coworking Setup. Bridge startup is
-	// non-fatal - feature degrades to "not available" until next launch.
-	registerCoworkingHandlers({ getMainWindow: () => mainWindow });
-	void (async () => {
-		try {
-			await ensureCoworkingServerScript();
-			await startCoworkingBridge({
-				resolveSessionFromPid: (pid) =>
-					resolveSessionFromPidWalk(
-						pid,
-						(candidate) => processManager?.getSessionIdByPid(candidate) ?? null
-					),
-			});
-		} catch (err) {
-			// EADDRINUSE means another Maestro process already owns the bridge
-			// socket/pipe for this userData slug. Bridge startup is deliberately
-			// non-fatal (the feature degrades to "not available" until the next
-			// launch), so a second instance losing the race is an expected
-			// outcome rather than a defect worth reporting (MAESTRO-WH).
-			const code = (err as NodeJS.ErrnoException | null)?.code;
-			if (code !== 'EADDRINUSE') {
-				void captureException(err instanceof Error ? err : new Error(String(err)), {
-					operation: 'startup:coworkingBridge',
-				});
-			}
-			logger.warn(`Failed to start coworking bridge: ${String(err)}`, 'Startup');
-		}
-	})();
-	// Register multi-window handlers (windows:* channel surface). Registered here
-	// because the running app wires handlers through setupIpcHandlers(), not
-	// registerAllHandlers(). The registry and window manager are module-scope
-	// instances; lazy getters resolve the live instance at call time.
-	registerWindowsHandlers({
-		getWindowRegistry: () => windowRegistry,
-		getWindowManager: () => windowManager,
-	});
-	// Push registry ownership moves out to every window so each renderer's
-	// WindowContext can refresh which agents it surfaces (and the Left Bar's
-	// cross-window badges). The registry is a module-scope instance, so pass it
-	// directly rather than through the handlers' lazy getter.
-	wireWindowRegistryBroadcast(windowRegistry);
-	// Close a secondary window as soon as its last agent moves out - an empty
-	// secondary shell can surface nothing (every agent is owned by some window),
-	// so the agent-level move flow tidies it up automatically.
-	wireEmptySecondaryWindowAutoClose(windowRegistry);
-	// Persist a window rename or a panel-collapse toggle as soon as it happens
-	// (rather than only on quit), so both survive even an abrupt exit. A panel
-	// toggle fires no window move/resize, so without this its saved value would go
-	// stale. saveWindowState snapshots the whole live registry, so passing the
-	// affected window's id is enough.
-	windowRegistry.onChange((change) => {
-		if ((change.type === 'name-changed' || change.type === 'panel-changed') && change.windowId) {
-			saveWindowState(windowStateStore, windowRegistry, change.windowId);
-		}
-	});
-
-	// Record aggregate multi-window usage telemetry (secondary windows opened +
-	// peak concurrent windows) as windows open. Gated on the user's
-	// `statsCollectionEnabled` analytics setting; records nothing when off, and a
-	// stats failure can never break window creation (see wireMultiWindowTelemetry).
-	wireMultiWindowTelemetry(windowRegistry, { settingsStore: store });
-	// Register Context Merge handlers for session context transfer and grooming
-	registerContextHandlers({
-		getMainWindow: () => mainWindow,
-		getProcessManager: () => processManager,
-		getAgentDetector: () => agentDetector,
-		agentConfigsStore,
-	});
-
-	// Register Marketplace handlers for fetching and importing playbooks
-	registerMarketplaceHandlers({
-		app,
-		settingsStore: store,
-		getMainWindow: () => mainWindow,
-	});
-
-	// Register Stats handlers for usage tracking
-	registerStatsHandlers({
-		getMainWindow: () => mainWindow,
-		settingsStore: store,
-	});
-
-	// Register Cue Stats handlers for the Cue Dashboard aggregation query.
-	// Pass `getCueEngine` so the handler can fall back to the live cue config
-	// when persisted `pipeline_id` is null (legacy events / events recorded
-	// before lineage tracking was enabled).
-	registerCueStatsHandlers({
-		settingsStore: store,
-		getCueEngine: () => cueEngine,
-	});
-
-	// Register Document Graph handlers for file watching
-	registerDocumentGraphHandlers({
-		getMainWindow: () => mainWindow,
-		app,
-	});
-
-	// Register SSH Remote handlers for managing SSH configurations
-	registerSshRemoteHandlers({
-		settingsStore: store,
-	});
-
-	// Set up callback for group chat router to lookup sessions for auto-add @mentions
-	setGetSessionsCallback(() => {
-		const sessions = sessionsStore.get('sessions', []);
-		return sessions.map((s: any) => {
-			// Resolve SSH remote name if session has SSH config
-			let sshRemoteName: string | undefined;
-			if (s.sessionSshRemoteConfig?.enabled && s.sessionSshRemoteConfig.remoteId) {
-				const sshConfig = getSshRemoteById(s.sessionSshRemoteConfig.remoteId);
-				sshRemoteName = sshConfig?.name;
-			}
-			return {
-				id: s.id,
-				name: s.name,
-				toolType: s.toolType,
-				cwd: s.cwd || s.fullPath || os.homedir(),
-				customArgs: s.customArgs,
-				customEnvVars: s.customEnvVars,
-				customModel: s.customModel,
-				// Claude token-source selection, so group chat participants honor
-				// the same maestro-p TUI / API / dynamic choice as their agent.
-				enableMaestroP: s.enableMaestroP,
-				maestroPMode: s.maestroPMode,
-				maestroPPath: s.maestroPPath,
-				sshRemoteName,
-				// Pass full SSH config for remote execution support
-				sshRemoteConfig: s.sessionSshRemoteConfig,
-				autoRunFolderPath: s.autoRunFolderPath,
-				worktreeBasePath: s.worktreeConfig?.basePath,
-			};
-		});
-	});
-
-	// Set up callback for group chat router to lookup custom env vars for agents
-	setGetCustomEnvVarsCallback(getCustomEnvVarsForAgent);
-	setGetAgentConfigCallback(getAgentConfigForAgent);
-
-	// Set up callback for group chat router to get moderator conductor profile
-	setGetModeratorSettingsCallback(() => ({
-		conductorProfile: (store.get('conductorProfile', '') as string) || '',
-	}));
-
-	// Set up SSH store for group chat SSH remote execution support
-	setSshStore(createSshRemoteStoreAdapter(store));
-
-	// Set up callback for group chat to get custom shell path (for Windows PowerShell preference)
-	// This is used by both group-chat-router.ts and group-chat-agent.ts via the shared config module
-	const getCustomShellPathFn = () => store.get('customShellPath', '') as string | undefined;
-	setGetCustomShellPathCallback(getCustomShellPathFn);
-
-	// Setup logger event forwarding to renderer
-	setupLoggerEventForwarding(() => mainWindow);
-
-	// Register filesystem handlers (extracted to handlers/filesystem.ts)
-	registerFilesystemHandlers();
-
-	// System operations (dialog, fonts, shells, tunnel, devtools, updates, logger)
-	// extracted to src/main/ipc/handlers/system.ts
-
-	// Claude Code sessions - extracted to src/main/ipc/handlers/claude.ts
-
-	// Agent Error Handling API - extracted to src/main/ipc/handlers/agent-error.ts
-	registerAgentErrorHandlers();
-
-	// Register notification handlers (extracted to handlers/notifications.ts)
-	registerNotificationsHandlers({ getMainWindow: () => mainWindow });
-
-	// Register attachments handlers (extracted to handlers/attachments.ts)
-	registerAttachmentsHandlers({ app });
-
-	// Register leaderboard handlers (extracted to handlers/leaderboard.ts)
-	registerLeaderboardHandlers({
-		app,
-		settingsStore: store,
-	});
-
-	// Register Symphony handlers for token donation / open source contributions
-	registerSymphonyHandlers({
-		app,
-		getMainWindow: () => mainWindow,
-		sessionsStore,
-		settingsStore: store,
-	});
-
-	// Register tab naming handlers for automatic tab naming
-	registerTabNamingHandlers({
-		getProcessManager: () => processManager,
-		getAgentDetector: () => agentDetector,
-		agentConfigsStore,
-		settingsStore: store,
-	});
-
-	// Register WakaTime handlers (CLI check, API key validation)
-	registerWakatimeHandlers(wakatimeManager);
-
-	// Register Maestro CLI handlers (status check + install/update)
-	registerMaestroCliHandlers(maestroCliManager);
-
-	// Register feedback handlers (gh auth + feedback submission)
-	registerFeedbackHandlers({
-		getProcessManager: () => processManager,
-		debugPackageDeps: {
-			getAgentDetector: () => agentDetector,
-			getProcessManager: () => processManager,
-			getWebServer: () => webServer,
-			settingsStore: store,
-			sessionsStore,
-			groupsStore,
-			bootstrapStore,
-		},
-	});
-}
-
-// Handle process output streaming (set up after initialization)
-// Phase 3 refactoring - delegates to extracted process-listeners module
-function setupProcessListeners() {
-	if (processManager) {
-		setupProcessListenersModule(processManager, {
-			getProcessManager: () => processManager,
-			getWebServer: () => webServer,
-			getAgentDetector: () => agentDetector,
-			safeSend,
-			powerManager,
-			groupChatEmitters,
-			emitPluginEvent: (event) => pluginEventBus?.emit(event),
-			groupChatRouter: {
-				routeModeratorResponse,
-				routeAgentResponse,
-				markParticipantResponded,
-				spawnModeratorSynthesis,
-				getGroupChatReadOnlyState,
-				respawnParticipantWithRecovery,
-				clearActiveParticipantTaskSession,
-				clearModeratorResponseTimeout,
-			},
-			groupChatStorage: {
-				loadGroupChat,
-				updateGroupChat,
-				updateParticipant,
-			},
-			sessionRecovery: {
-				needsSessionRecovery,
-				initiateSessionRecovery,
-			},
-			outputBuffer: {
-				appendToGroupChatBuffer,
-				getGroupChatBufferedOutput,
-				clearGroupChatBuffer,
-			},
-			outputParser: {
-				extractTextFromStreamJson,
-				parseParticipantSessionId,
-			},
-			usageAggregator: {
-				calculateContextTokens,
-			},
-			getStatsDB,
-			debugLog,
-			patterns: {
-				REGEX_MODERATOR_SESSION,
-				REGEX_MODERATOR_SESSION_TIMESTAMP,
-				REGEX_AI_SUFFIX,
-				REGEX_AI_TAB_ID,
-				REGEX_BATCH_SESSION,
-				REGEX_SYNOPSIS_SESSION,
-			},
-			logger,
-			getCueEngine: () => cueEngine,
-			isCueEnabled: () => {
-				const ef = store.get('encoreFeatures', {}) as Record<string, boolean>;
-				return !!ef.maestroCue;
-			},
-			getSshRemoteByName: (name: string) => {
-				const remotes = store.get('sshRemotes', []);
-				return remotes.find((r) => r.name === name) ?? null;
-			},
-			getAgentContextWindow: (agentId: string) => {
-				// Prefer a runtime-discovered context window from the capability
-				// snapshot if one was probed. Falls back to the static table and
-				// finally to the agent definition's configOption default.
-				const snapshot = capabilitySnapshots.get(agentId);
-				if (typeof snapshot?.contextWindow === 'number' && snapshot.contextWindow > 0) {
-					return snapshot.contextWindow;
-				}
-				const def = getAgentDefinition(agentId);
-				const contextOpt = def?.configOptions?.find((o) => o.key === 'contextWindow');
-				const fallbackDefault =
-					typeof contextOpt?.default === 'number' ? contextOpt.default : FALLBACK_CONTEXT_WINDOW;
-				return DEFAULT_CONTEXT_WINDOWS[agentId as AgentId] ?? fallbackDefault;
-			},
-		});
-
-		// WakaTime heartbeat listener (query-complete → heartbeat, exit → cleanup)
-		setupWakaTimeListener(processManager, wakatimeManager, store);
-	}
-}

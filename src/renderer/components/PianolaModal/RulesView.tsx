@@ -111,10 +111,10 @@ export function RulesView({
 										<span className="text-sm font-medium" style={{ color: meta.color }}>
 											{meta.label}
 										</span>
-										<span className="text-[11px]" style={{ color: theme.colors.textDim }}>
+										<span className="text-xs-plus" style={{ color: theme.colors.textDim }}>
 											{scopeLabel(rule)}
 										</span>
-										<span className="text-[11px]" style={{ color: theme.colors.textDim }}>
+										<span className="text-xs-plus" style={{ color: theme.colors.textDim }}>
 											priority {rule.priority}
 										</span>
 									</div>
@@ -134,7 +134,7 @@ export function RulesView({
 									)}
 									{rule.description && (
 										<div
-											className="mt-0.5 text-[11px] select-text"
+											className="mt-0.5 text-xs-plus select-text"
 											style={{ color: theme.colors.textDim }}
 										>
 											{rule.description}

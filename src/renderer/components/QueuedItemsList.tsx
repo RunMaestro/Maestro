@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useRef, memo } from 'react';
+import React, { useState, useCallback, useEffect, useMemo, useRef, memo } from 'react';
 import {
 	X,
 	ChevronDown,
@@ -11,12 +11,25 @@ import {
 	Pencil,
 	ImageIcon,
 } from 'lucide-react';
-import type { Theme, QueuedItem } from '../types';
+import type { Theme, QueuedItem, QueuedItemEditPatch } from '../types';
+import type { BusyTabSummary, ForceSendEligibility } from '../utils/executionQueue';
+import { getForceSendTitle, shouldOfferForceSend } from '../utils/executionQueue';
 import { safeClipboardWrite } from '../utils/clipboard';
+import { displayImageSrc } from '../utils/sessionImageSrc';
+import { formatNumber } from '../../shared/formatters';
 import { Modal, ModalFooter } from './ui/Modal';
+import { MarkdownRenderer } from './MarkdownRenderer';
+import { generateTerminalProseStyles } from '../utils/markdownConfig';
 import { QueuedItemEditModal } from './QueuedItemEditModal';
+import { ForcedParallelRequiredModal } from './ForcedParallelRequiredModal';
+import { TurnSettingPills } from './ui/TurnSettingPills';
+import { MiniBadge } from './ui/MiniBadge';
+import { HeldForRetryBadge } from './HeldForRetryBadge';
+import { useIsHeldRetryItem } from '../stores/retryStore';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { useEventListener } from '../hooks/utils/useEventListener';
+import { useUIStore } from '../stores/uiStore';
+import { useSettingsStore } from '../stores/settingsStore';
 import {
 	useQueueReorder,
 	useQueueRowDrag,
@@ -30,14 +43,26 @@ import {
 // so a constant identifies its lone drag group for the shared reorder hook.
 const INLINE_QUEUE_KEY = 'inline-queue';
 
+// Queued messages are authored markdown like any other chat message, so the
+// cards render them through the chat markdown stack. The prose rules are scoped
+// to this class because the list also renders outside `.terminal-output` (group
+// chat's composer), where the transcript's styles never reach.
+const QUEUE_PROSE_SCOPE = 'queued-item-prose';
+
+// How much of a long message a collapsed card shows, and how much text has to
+// stay hidden before the collapse is worth offering. Below the second number the
+// card just renders the whole message: a toggle that saves one wrapped line is
+// pure chrome, and the two states look nearly identical.
+const QUEUE_PREVIEW_CHARS = 600;
+const QUEUE_COLLAPSE_MIN_HIDDEN_CHARS = 400;
+
 // ============================================================================
 // QueuedItemsList - Displays queued execution items with expand/collapse
 // ============================================================================
 
-export interface BusyTabSummary {
-	id: string;
-	displayName: string;
-}
+// Re-exported for the surfaces that already import it from here; the type is
+// owned by the shared queue helpers so both Force Send surfaces agree on it.
+export type { BusyTabSummary };
 
 interface QueuedItemsListProps {
 	executionQueue: QueuedItem[];
@@ -46,7 +71,7 @@ interface QueuedItemsListProps {
 	onTogglePauseQueuedItem?: (itemId: string) => void;
 	// Edit a queued message's prompt text and attached images. Only wired for
 	// message items (commands have no image attachments).
-	onEditQueuedItem?: (itemId: string, patch: { text: string; images: string[] }) => void;
+	onEditQueuedItem?: (itemId: string, patch: QueuedItemEditPatch) => void;
 	onReorderItems?: (fromIndex: number, toIndex: number) => void;
 	activeTabId?: string; // If provided, only show queued items for this tab
 	// Force Send support: when forcedParallelExecution is enabled, allow the user
@@ -56,10 +81,12 @@ interface QueuedItemsListProps {
 	// Lookup for tab state/name used by the Force Send button + confirm modal.
 	// Returns the tab's current busy state, the other tabs currently busy in the
 	// same agent, and the item's own target tab display name.
-	getForceSendContext?: (item: QueuedItem) => {
-		targetTabBusy: boolean;
-		otherBusyTabs: BusyTabSummary[];
-	} | null;
+	getForceSendContext?: (item: QueuedItem) => ForceSendEligibility | null;
+	// Whether this list answers the global Force Send keyboard shortcut. Defaults
+	// to true (the single-view chat is the only list on screen). A tiled group
+	// renders one list per AI pane, so only the focused pane's list opts in -
+	// otherwise every pane holding a queue would pop its own confirmation.
+	shortcutEnabled?: boolean;
 	// Opens the shared full-screen image carousel for a queued item's attachments.
 	// Reuses the same lightbox as history/staged images; pass 'history' source so
 	// the images are read-only (navigable, no delete).
@@ -88,6 +115,7 @@ export const QueuedItemsList = memo(
 		forcedParallelEnabled = false,
 		onForceSendQueuedItem,
 		getForceSendContext,
+		shortcutEnabled = true,
 		onOpenLightbox,
 	}: QueuedItemsListProps) => {
 		// Filter to only show items for the active tab if activeTabId is provided
@@ -99,9 +127,23 @@ export const QueuedItemsList = memo(
 
 		// Force Send confirmation state
 		const [forceSendConfirmId, setForceSendConfirmId] = useState<string | null>(null);
+		// Explainer for a dimmed Force Send that only Forced Parallel Execution unlocks
+		const [showForcedParallelRequired, setShowForcedParallelRequired] = useState(false);
 
-		// Edit-message modal state (holds the id of the item being edited)
-		const [editItemId, setEditItemId] = useState<string | null>(null);
+		// Edit-message modal state (holds the id of the item being edited). Kept in
+		// uiStore rather than local state so the "Edit Last Queued Message"
+		// shortcut can open this modal without reaching into the transcript.
+		const editItemId = useUIStore((s) => s.editingQueuedItemId);
+		const setEditItemId = useUIStore((s) => s.setEditingQueuedItemId);
+
+		// Same global toggle the transcript honors (Cmd+E): raw source instead of
+		// rendered markdown. A queued message is the user's own chat message, so it
+		// follows the chat's rendering mode rather than a mode of its own.
+		const chatRawTextMode = useSettingsStore((s) => s.chatRawTextMode);
+		const proseStyles = useMemo(
+			() => generateTerminalProseStyles(theme, `.${QUEUE_PROSE_SCOPE}`),
+			[theme]
+		);
 
 		// Track which queued messages are expanded (for viewing full content)
 		const [expandedQueuedMessages, setExpandedQueuedMessages] = useState<Set<string>>(new Set());
@@ -114,6 +156,19 @@ export const QueuedItemsList = memo(
 		// Refs for confirm-button focus management in confirmation modals
 		const removeConfirmButtonRef = useRef<HTMLButtonElement>(null);
 		const forceSendConfirmButtonRef = useRef<HTMLButtonElement>(null);
+
+		// A queued item can be dispatched or removed while its edit modal is open
+		// (or while this list is unmounted). Drop the id once the item leaves the
+		// queue so the modal closes instead of lingering as dead state.
+		//
+		// This checks the WHOLE queue, not this tab's slice: "Edit Last Queued
+		// Message" can target a message on another tab and switch to it, and
+		// clearing on the filtered list would race that switch and cancel the open.
+		// Not being on this tab means "not visible yet", not "gone".
+		const editItemMissing = !!editItemId && !executionQueue.some((item) => item.id === editItemId);
+		useEffect(() => {
+			if (editItemMissing) setEditItemId(null);
+		}, [editItemMissing, setEditItemId]);
 
 		// Can only drag if we have reorder handler and more than 1 item
 		const canDrag = !!onReorderItems && filteredQueue.length > 1;
@@ -171,6 +226,7 @@ export const QueuedItemsList = memo(
 		// keyboard equivalent of clicking the button.
 		useEventListener('maestro:triggerForceSendQueued', () => {
 			if (
+				!shortcutEnabled ||
 				!forcedParallelEnabled ||
 				!onForceSendQueuedItem ||
 				!getForceSendContext ||
@@ -181,8 +237,13 @@ export const QueuedItemsList = memo(
 			for (let i = filteredQueue.length - 1; i >= 0; i--) {
 				const item = filteredQueue[i];
 				if (item.forceParallel) continue;
+				// Ask the shared helper, not the busy-tab shape of it. The old test
+				// skipped any item with an idle target and nothing else running -
+				// exactly the case where force send is ALWAYS allowed - so the
+				// shortcut was dead on a quiet agent, which is when a user is most
+				// likely to reach for it.
 				const ctx = getForceSendContext(item);
-				if (!ctx || ctx.targetTabBusy || ctx.otherBusyTabs.length === 0) continue;
+				if (!ctx?.canForce) continue;
 				setForceSendConfirmId(item.id);
 				return;
 			}
@@ -218,23 +279,27 @@ export const QueuedItemsList = memo(
 				</div>
 
 				{/* Queued items (wrapped so drop-indicator lines align to the cards) */}
-				<div className="mx-6">
+				<div className={`mx-6 ${QUEUE_PROSE_SCOPE}`}>
+					<style>{proseStyles}</style>
 					{filteredQueue.map((item, index) => {
-						// Force Send visibility: setting enabled, item not already forceParallel,
-						// a handler is wired, the target tab is idle (force-parallel only helps
-						// when *this* tab can dispatch), and at least one other tab is busy
-						// (otherwise nothing to bypass).
+						// Ask for eligibility whenever a handler is wired and the item is
+						// not already flagged to run in parallel. `forcedParallelEnabled` is
+						// deliberately NOT a gate here: it is one of the inputs the shared
+						// helper weighs, and gating on it up front hid the button in every
+						// case where force send is allowed without it - jumping the queue
+						// order, or releasing a held item on an otherwise idle agent.
 						const forceSendContext =
-							forcedParallelEnabled &&
-							onForceSendQueuedItem &&
-							getForceSendContext &&
-							!item.forceParallel
+							onForceSendQueuedItem && getForceSendContext && !item.forceParallel
 								? getForceSendContext(item)
 								: null;
-						const showForceSendButton =
-							!!forceSendContext &&
-							!forceSendContext.targetTabBusy &&
-							forceSendContext.otherBusyTabs.length > 0;
+						// Same rule as the Execution Queue modal, deliberately - see
+						// shouldOfferForceSend for why a busy target tab hides the button
+						// rather than dimming it.
+						const showForceSendButton = shouldOfferForceSend(forceSendContext);
+						const canForceSend = !!forceSendContext?.canForce;
+						const forceSendTitle = forceSendContext
+							? getForceSendTitle(forceSendContext)
+							: undefined;
 
 						return (
 							<React.Fragment key={item.id}>
@@ -261,13 +326,20 @@ export const QueuedItemsList = memo(
 									onToggleExpand={() => toggleExpanded(item.id)}
 									isCopied={copiedItemId === item.id}
 									onCopy={() => handleCopy(item)}
+									renderMarkdown={!chatRawTextMode}
 									onEdit={
 										onEditQueuedItem && item.type !== 'command'
 											? () => setEditItemId(item.id)
 											: undefined
 									}
 									showForceSendButton={showForceSendButton}
-									onForceSend={() => setForceSendConfirmId(item.id)}
+									canForceSend={canForceSend}
+									forceSendTitle={forceSendTitle}
+									onForceSend={() =>
+										canForceSend
+											? setForceSendConfirmId(item.id)
+											: setShowForcedParallelRequired(true)
+									}
 									onOpenLightbox={onOpenLightbox}
 									onTogglePause={
 										onTogglePauseQueuedItem ? () => onTogglePauseQueuedItem(item.id) : undefined
@@ -357,13 +429,20 @@ export const QueuedItemsList = memo(
 												className="inline-block w-2 h-2 rounded-full"
 												style={{ backgroundColor: theme.colors.warning }}
 											/>
-											<span className="font-mono">{tab.displayName}</span>
+											<span>{tab.displayName}</span>
 										</li>
 									))}
 								</ul>
 							</div>
 						)}
 					</Modal>
+				)}
+
+				{showForcedParallelRequired && (
+					<ForcedParallelRequiredModal
+						theme={theme}
+						onClose={() => setShowForcedParallelRequired(false)}
+					/>
 				)}
 
 				{/* Edit queued message modal */}
@@ -409,8 +488,15 @@ interface QueuedItemRowProps {
 	onToggleExpand: () => void;
 	isCopied: boolean;
 	onCopy: () => void;
+	/** Render the message body as markdown. False shows the raw source (Cmd+E). */
+	renderMarkdown: boolean;
 	onEdit?: () => void;
 	showForceSendButton: boolean;
+	/** False when the item cannot be forced right now - button renders dimmed but
+	 *  stays clickable, so onForceSend can explain what unlocks it. */
+	canForceSend: boolean;
+	/** Why it can or cannot be forced. Shown as the button's tooltip. */
+	forceSendTitle?: string;
 	onForceSend: () => void;
 	onTogglePause?: () => void;
 	onRequestRemove: () => void;
@@ -432,8 +518,11 @@ function QueuedItemRow({
 	onToggleExpand,
 	isCopied,
 	onCopy,
+	renderMarkdown,
 	onEdit,
 	showForceSendButton,
+	canForceSend,
+	forceSendTitle,
 	onForceSend,
 	onTogglePause,
 	onRequestRemove,
@@ -456,8 +545,21 @@ function QueuedItemRow({
 
 	const isCommand = item.type === 'command';
 	const isPaused = !!item.paused;
+	const isWaitingForConnection = !!item.waitingForConnection;
+	const isHeldForRetry = useIsHeldRetryItem(item.id);
 	const displayText = isCommand ? (item.command ?? '') : (item.text ?? '');
-	const isLongMessage = displayText.length > 200;
+	const hiddenChars = Math.max(0, displayText.length - QUEUE_PREVIEW_CHARS);
+	// Only collapse when collapsing actually buys back screen: a message that is a
+	// line or two over the preview costs more in toggle chrome than it saves, so it
+	// renders in full with no toggle at all.
+	const isLongMessage = hiddenChars >= QUEUE_COLLAPSE_MIN_HIDDEN_CHARS;
+	const visibleText =
+		isLongMessage && !isExpanded
+			? displayText.substring(0, QUEUE_PREVIEW_CHARS) + '...'
+			: displayText;
+	// Commands are a fixed name + args pill, so only message bodies go through the
+	// markdown stack.
+	const showMarkdown = !isCommand && renderMarkdown;
 	const accent = isCommand ? theme.colors.success : theme.colors.accent;
 
 	return (
@@ -476,31 +578,37 @@ function QueuedItemRow({
 					...queueDragCardStyle(theme, { isDragging, showGrabbed }),
 					// Queued items render dimmed (they're pending); lift the grabbed one and
 					// recede the rest while a drag is in progress.
-					opacity: isDragging ? 0.95 : isPaused ? 0.35 : isDimmed ? 0.3 : 0.6,
+					opacity: isDragging
+						? 0.95
+						: isPaused || isWaitingForConnection
+							? 0.35
+							: isDimmed
+								? 0.3
+								: 0.6,
 				}}
 				{...cardHandlers}
 			>
 				{/* Drag handle - only show when draggable */}
 				{canDrag && <QueueDragHandle theme={theme} visible={showDragReady || showGrabbed} />}
 
-				{/* HELD badge for paused items */}
-				{isPaused && (
-					<div className={canDrag ? 'pl-4 mb-1.5' : 'mb-1.5'}>
-						<span
-							className="px-1.5 py-0.5 rounded text-[10px] font-bold tracking-wider"
-							style={{
-								backgroundColor: theme.colors.warning + '33',
-								color: theme.colors.warning,
-							}}
-						>
-							HELD
-						</span>
+				{(isPaused || isWaitingForConnection || isHeldForRetry) && (
+					<div className={`flex items-center gap-1.5 ${canDrag ? 'pl-4 mb-1.5' : 'mb-1.5'}`}>
+						{isHeldForRetry && <HeldForRetryBadge theme={theme} />}
+						{isPaused && <MiniBadge label="HELD" theme={theme} color={theme.colors.warning} />}
+						{isWaitingForConnection && (
+							<MiniBadge
+								label="WAITING FOR CONNECTION"
+								theme={theme}
+								color={theme.colors.warning}
+								title="This message will run after Maestro reconnects"
+							/>
+						)}
 					</div>
 				)}
 
 				{/* Item content */}
 				<div
-					className={`text-sm whitespace-pre-wrap break-words ${canDrag ? 'pl-4' : ''}`}
+					className={`text-sm break-words ${showMarkdown ? '' : 'whitespace-pre-wrap'} ${canDrag ? 'pl-4' : ''}`}
 					style={{ color: theme.colors.textMain }}
 				>
 					{isCommand && (
@@ -519,7 +627,17 @@ function QueuedItemRow({
 						</span>
 					)}
 					{!isCommand &&
-						(isLongMessage && !isExpanded ? displayText.substring(0, 200) + '...' : displayText)}
+						(showMarkdown ? (
+							<MarkdownRenderer
+								content={visibleText}
+								theme={theme}
+								onCopy={(text) => void safeClipboardWrite(text)}
+								chatLineBreaks
+								chatMath
+							/>
+						) : (
+							visibleText
+						))}
 				</div>
 
 				{/* Show more/less toggle for long messages */}
@@ -540,7 +658,7 @@ function QueuedItemRow({
 						) : (
 							<>
 								<ChevronDown className="w-3 h-3" />
-								Show all ({displayText.split('\n').length} lines)
+								Show all ({formatNumber(hiddenChars)} more characters)
 							</>
 						)}
 					</button>
@@ -587,7 +705,7 @@ function QueuedItemRow({
 										title="Click to view full size"
 									>
 										<img
-											src={img}
+											src={displayImageSrc(img)}
 											alt={`Queued attachment ${imgIdx + 1}`}
 											className="h-16 rounded border block"
 											style={{
@@ -605,25 +723,49 @@ function QueuedItemRow({
 				)}
 
 				{/* Bottom footer: Force Send anchored bottom-left, control
-				    buttons anchored bottom-right (always visible). mt-auto
-				    pushes the row to the bottom of the flex column. */}
-				<div className={`mt-auto pt-2 flex items-center gap-2 ${canDrag ? 'pl-4' : ''}`}>
-					{showForceSendButton && (
-						<button
-							onClick={onForceSend}
-							className="flex items-center gap-1 px-2 py-1 rounded text-xs font-medium hover:opacity-80 transition-opacity"
-							style={{
-								backgroundColor: theme.colors.warning + '33',
-								color: theme.colors.warning,
-							}}
-							title="Force send this message now (skips cross-tab wait)"
-						>
-							<Hammer className="w-3.5 h-3.5" />
-							Force Send
-						</button>
-					)}
+				    buttons anchored bottom-right (always visible), model/effort
+				    pills centered between them. mt-auto pushes the row to the
+				    bottom of the flex column. The three-column grid is what puts
+				    the pills on the card's true center line the way the finished
+				    turn's pills sit on the message's: the outer columns are equal
+				    1fr tracks, so the middle one stays centered no matter how wide
+				    the Force Send button or the control cluster gets, and nothing
+				    overlaps the way an absolutely-positioned center would. */}
+				<div
+					className={`mt-auto pt-2 grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 ${canDrag ? 'pl-4' : ''}`}
+				>
+					<div className="flex items-center gap-2 min-w-0">
+						{showForceSendButton && (
+							<button
+								onClick={onForceSend}
+								aria-disabled={!canForceSend}
+								className="flex items-center gap-1 px-2 py-1 rounded text-xs font-medium whitespace-nowrap transition-opacity hover:opacity-80"
+								style={{
+									backgroundColor: theme.colors.warning + (canForceSend ? '33' : '15'),
+									color: theme.colors.warning,
+									opacity: canForceSend ? 1 : 0.5,
+								}}
+								title={forceSendTitle}
+							>
+								<Hammer className="w-3.5 h-3.5" />
+								Force Send
+							</button>
+						)}
+					</div>
 
-					<div className="ml-auto flex items-center gap-1">
+					{/* What this item will actually run under. The queue can sit through
+					    any number of model/effort changes, so naming the frozen values
+					    here is the only way the user can tell which pending message is
+					    on the big model. Same pills the finished turn gets. */}
+					<div className="flex items-center justify-center gap-1 min-w-0">
+						<TurnSettingPills
+							theme={theme}
+							model={item.turnSettings?.model}
+							effort={item.turnSettings?.effort}
+						/>
+					</div>
+
+					<div className="flex items-center justify-end gap-1">
 						{/* Edit button */}
 						{onEdit && (
 							<button

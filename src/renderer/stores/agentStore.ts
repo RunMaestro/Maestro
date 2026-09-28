@@ -32,10 +32,12 @@ import type {
 } from '../../shared/agentCapabilities';
 import { buildSnapshotKey } from '../../shared/agentCapabilities';
 import { resolveTabPermissionMode } from '../../shared/agentMetadata';
+import { isAgentAlreadyRunningError } from '../../shared/processErrors';
 import { createTab, getActiveTab } from '../utils/tabHelpers';
+import { codifyQueuedTurnSettings } from '../utils/providerTabSessions';
 import { prepareMaestroSystemPrompt } from '../utils/spawnHelpers';
 import { generateId } from '../utils/ids';
-import { useSessionStore, selectSessionById } from './sessionStore';
+import { useSessionStore, selectSessionById, takePendingMergedContext } from './sessionStore';
 // Agent Resilience: snapshot dispatched prompts for auto-retry. Import cycle
 // with retryStore is safe - both sides only touch each other inside runtime
 // callbacks, never at module-eval time.
@@ -43,7 +45,9 @@ import { noteDispatch } from './retryStore';
 import { DEFAULT_IMAGE_ONLY_PROMPT } from '../hooks/input/useInputProcessing';
 import { substituteTemplateVariables } from '../utils/templateVariables';
 import { gitService } from '../services/git';
+import { dispatchCrossAgentMentionsForMessage } from '../services/crossAgentMentions';
 import { filterYoloArgs } from '../utils/agentArgs';
+import { applyQueuedItemDispatchFailure, applyQueuedItemRelease } from '../utils/executionQueue';
 import { logger } from '../utils/logger';
 
 // ============================================================================
@@ -128,12 +132,21 @@ export interface AgentStoreActions {
 	/**
 	 * Process a queued item (message or command) for a session.
 	 * Builds spawn config and dispatches to the agent process.
+	 *
+	 * Resolves `true` when something is now running that will settle this turn,
+	 * and `false` when the call returned having dispatched nothing - its target
+	 * tab was closed while the item waited, or the command has no definition.
+	 * A caller that took the item OUT of a queue to run it has to be able to tell
+	 * those apart: reading a `false` as success destroys the prompt, because
+	 * nothing sent it and nothing is left holding it. Anything that DID reach a
+	 * dispatch attempt and failed still throws; this is only for the paths that
+	 * resolve normally having done nothing.
 	 */
 	processQueuedItem: (
 		sessionId: string,
 		item: QueuedItem,
 		deps: ProcessQueuedItemDeps
-	) => Promise<void>;
+	) => Promise<boolean>;
 
 	// === Agent Lifecycle ===
 
@@ -260,12 +273,29 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 			const updatedAiTabs = targetTabId
 				? s.aiTabs.map((tab) => (tab.id === targetTabId ? { ...tab, agentError: undefined } : tab))
 				: s.aiTabs;
+			// Clearing the error must not claim the AGENT is idle while one of its
+			// tabs is still mid-turn. A re-authentication resumes blocked agents one
+			// after another (see `resolveAuthOutage`), so this runs while an earlier
+			// tab's replayed turn is already on the wire - and overwriting the busy
+			// state there hides the Thinking pill for live work and tells the queue
+			// recovery pass the agent is free.
+			const stillBusy =
+				updatedAiTabs.some((tab) => tab.state === 'busy') ||
+				!!s.orphanedThinkingTabs?.some((tab) => tab.state === 'busy');
 			return {
 				...s,
 				agentError: undefined,
 				agentErrorTabId: undefined,
 				agentErrorPaused: false,
-				state: 'idle' as SessionState,
+				// Either way the session leaves 'error': the busy branch reports the
+				// work that is genuinely running, the idle branch the absence of any.
+				...(stillBusy
+					? {
+							state: 'busy' as SessionState,
+							busySource: s.busySource ?? 'ai',
+							thinkingStartTime: s.thinkingStartTime ?? Date.now(),
+						}
+					: { state: 'idle' as SessionState }),
 				aiTabs: updatedAiTabs,
 			};
 		});
@@ -316,18 +346,19 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 		const session = getSession(sessionId);
 		if (!session) return;
 
+		// The login itself runs in the re-authentication modal (opened by the
+		// caller), so this only has to clear the error and select the agent whose
+		// provider failed - switching the agent into terminal mode would leave the
+		// user in a shell they never asked for once the modal closes.
 		get().clearAgentError(sessionId);
-
-		// Switch to terminal mode for re-auth (clear activeFileTabId to prevent orphaned file preview)
 		useSessionStore.getState().setActiveSessionId(sessionId);
-		updateSession(sessionId, (s) => ({ ...s, inputMode: 'terminal', activeFileTabId: null }));
 	},
 
 	processQueuedItem: async (sessionId, item, deps) => {
 		const session = getSession(sessionId);
 		if (!session) {
 			logger.error('[processQueuedItem] Session not found:', undefined, sessionId);
-			return;
+			return false;
 		}
 
 		// Find the TARGET tab for this queued item (NOT the active tab!)
@@ -357,7 +388,7 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 					};
 				})
 			);
-			return;
+			return false;
 		}
 
 		const targetTab = tabByItemId || getActiveTab(session);
@@ -368,17 +399,48 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 				undefined,
 				{ sessionId, itemTabId: item.tabId }
 			);
-			return;
+			return false;
 		}
 
 		const targetSessionId = `${sessionId}-ai-${targetTab.id}`;
+
+		// Cross-agent `@mentions` inside a QUEUED message fire HERE, as the message
+		// becomes this agent's turn - not when the user typed it. Deferring is the
+		// whole point: consulting at submit time pulls the mentioned agent into a
+		// question that is still sitting behind other queued work.
+		if (item.crossAgentMention && item.type === 'message' && item.text?.trim()) {
+			dispatchCrossAgentMentionsForMessage(item.text, session, targetTab.id);
+
+			// Addressed ONLY at the mentioned agent(s): the consult above IS the whole
+			// dispatch. Return before spawning - and before `noteDispatch`, since there
+			// is no local turn for Agent Resilience to retry. The dequeue already marked
+			// this tab busy and appended the user's bubble, so release it here; nothing
+			// else will, because no process is starting. Going idle with items still
+			// queued is what lets the drain pick up the next one.
+			if (item.crossAgentOnly) {
+				useSessionStore
+					.getState()
+					.setSessions((prev) =>
+						prev.map((s) => (s.id === sessionId ? applyQueuedItemRelease(s, targetTab.id) : s))
+					);
+				// The consult IS this item's dispatch, so the turn is accounted for.
+				return true;
+			}
+		}
+
+		// The model/effort this turn runs under were frozen when the user queued
+		// it, so a queue that drains after the user switched models still spawns
+		// each item on what it was queued with. Falls back to the live values only
+		// for items queued before the capture existed.
+		const { turnModel, turnEffort } = codifyQueuedTurnSettings(item, targetTab, session);
 
 		// Agent Resilience: snapshot the exact prompt (keyed on the RESOLVED target
 		// tab so it matches the error listener's tab) so it can be auto-resent if
 		// this turn fails with a transient upstream error. We record the item with
 		// its tabId pinned to the resolved target - `item.tabId` may be undefined
-		// when the item fell back to the active tab.
-		noteDispatch(sessionId, { ...item, tabId: targetTab.id }, deps);
+		// when the item fell back to the active tab. `crossAgentMention` is dropped:
+		// the consult just fired, and an auto-retry of this turn must not re-fire it.
+		noteDispatch(sessionId, { ...item, tabId: targetTab.id, crossAgentMention: undefined }, deps);
 
 		try {
 			// Get agent configuration for this session's tool type
@@ -407,7 +469,11 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 
 			if (item.type === 'message' && (hasText || isImageOnlyMessage)) {
 				// Process a message - spawn agent with the message text
-				const effectivePrompt = isImageOnlyMessage ? DEFAULT_IMAGE_ONLY_PROMPT : item.text!;
+				const effectivePrompt = takePendingMergedContext(
+					sessionId,
+					targetTab.id,
+					isImageOnlyMessage ? DEFAULT_IMAGE_ONLY_PROMPT : item.text!
+				);
 
 				// NOTE: The user-visible log entry for this message is appended by the
 				// caller that dequeued the item (e.g. useAgentListeners onExit,
@@ -449,8 +515,8 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 					sessionCustomArgs: session.customArgs,
 					sessionAdditionalDirectories: session.additionalDirectories,
 					sessionCustomEnvVars: session.customEnvVars,
-					sessionCustomModel: targetTab.customModel ?? session.customModel,
-					sessionCustomEffort: targetTab.customEffort ?? session.customEffort,
+					sessionCustomModel: turnModel,
+					sessionCustomEffort: turnEffort,
 					sessionCustomContextWindow: session.customContextWindow,
 					sessionSshRemoteConfig: session.sessionSshRemoteConfig,
 				});
@@ -521,6 +587,10 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 								command: matchingCommand.command,
 								description: matchingCommand.description,
 							},
+							// Same stamp `markTabRunningQueuedItem` puts on a message card:
+							// this entry is written before the spawn, so a spawn that throws
+							// has to be able to take it back out again.
+							queuedItemId: item.id,
 							...(item.forceParallel && { forceParallel: true }),
 						},
 						item.tabId
@@ -548,8 +618,8 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 						sessionCustomArgs: session.customArgs,
 						sessionAdditionalDirectories: session.additionalDirectories,
 						sessionCustomEnvVars: session.customEnvVars,
-						sessionCustomModel: targetTab.customModel ?? session.customModel,
-						sessionCustomEffort: targetTab.customEffort ?? session.customEffort,
+						sessionCustomModel: turnModel,
+						sessionCustomEffort: turnEffort,
 						sessionCustomContextWindow: session.customContextWindow,
 						sessionSshRemoteConfig: session.sessionSshRemoteConfig,
 					});
@@ -584,55 +654,71 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 							};
 						})
 					);
+					// Nothing spawned and nothing will: the command does not exist, so
+					// no exit is coming to settle this turn.
+					return false;
 				}
 			}
+			return true;
 		} catch (error: any) {
 			logger.error('[processQueuedItem] Failed to process queued item:', undefined, error);
+
+			// This is the ONE owner of dispatch-failure recovery. It used to only do
+			// the bookkeeping half (idle the tab, write an error frame) and leave the
+			// prompt itself to whichever caller happened to be driving, on the theory
+			// that "every caller wraps this in a .catch() that puts the prompt back".
+			// Five of the eight did not: the process-exit drain and the batch drain
+			// rejected into nothing at all, and Stop / force-kill only logged. A spawn
+			// collision there destroyed the message outright - out of the queue, into
+			// a transcript card, never sent. Recovery therefore lives HERE, where the
+			// failure is known, and every call site is free to just log.
+			//
+			// "Agent process already running" is a collision, not an outcome the user
+			// can act on: the tab is mid-turn and this dispatch simply arrived too
+			// early (Stop dispatches the next item before the interrupted child has
+			// exited, and the exit listener then dispatches it again). It self-corrects
+			// on the next drain trigger, so the item goes back runnable and no red
+			// frame is written - during an outage that frame lands directly under the
+			// retry card already explaining the wait. Any other failure would repeat
+			// identically on the next tick, so the item comes back HELD: preserved,
+			// visible, one click from Force Send, and unable to spin the queue.
+			const isSpawnCollision = isAgentAlreadyRunningError(error);
 			const errorLogEntry: LogEntry = {
 				id: generateId(),
 				timestamp: Date.now(),
 				source: 'error',
-				text: `Error: Failed to process queued ${item.type} - ${error.message}`,
+				text: `Error: Failed to send queued ${item.type} - ${error.message}. The message is held in the queue.`,
 			};
 			useSessionStore.getState().setSessions((prev) =>
 				prev.map((s) => {
 					if (s.id !== sessionId) return s;
-					const resolvedTabId = item.tabId ?? s.activeTabId;
-					const updatedAiTabs =
-						s.aiTabs?.length > 0
-							? s.aiTabs.map((tab) =>
-									tab.id === resolvedTabId
-										? {
-												...tab,
-												state: 'idle' as const,
-												thinkingStartTime: undefined,
-												logs: [...tab.logs, errorLogEntry],
-											}
-										: tab
-								)
-							: s.aiTabs;
+					const recovered = applyQueuedItemDispatchFailure(s, item, { hold: !isSpawnCollision });
+					if (isSpawnCollision) return recovered;
 
-					const targetTabExists = s.aiTabs?.some((tab) => tab.id === resolvedTabId);
+					const resolvedTabId = item.tabId ?? s.activeTabId;
+					const targetTabExists = recovered.aiTabs?.some((tab) => tab.id === resolvedTabId);
 					if (!targetTabExists) {
 						logger.error(
 							'[processQueuedItem error] Target tab not found - error log dropped',
 							undefined,
-							{
-								sessionId,
-								resolvedTabId,
-							}
+							{ sessionId, resolvedTabId }
 						);
+						return recovered;
 					}
-
 					return {
-						...s,
-						state: 'idle',
-						busySource: undefined,
-						thinkingStartTime: undefined,
-						aiTabs: updatedAiTabs,
+						...recovered,
+						aiTabs: recovered.aiTabs.map((tab) =>
+							tab.id === resolvedTabId ? { ...tab, logs: [...tab.logs, errorLogEntry] } : tab
+						),
 					};
 				})
 			);
+
+			// Rethrow. Recovery is not the same as handling: `retryStore.fireRetry`
+			// documents that it expects a dispatch-time throw so it can reschedule
+			// rather than strand an outage entry in-flight, and callers that want to
+			// know a send failed (Force Send's toast, the batch loop) read it here.
+			throw error;
 		}
 	},
 

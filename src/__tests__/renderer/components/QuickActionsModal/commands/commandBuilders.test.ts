@@ -9,6 +9,7 @@ import { buildGitWorktreeCommands } from '../../../../../renderer/components/Qui
 import {
 	buildGroupChatCommands,
 	buildGroupChatJumpCommands,
+	buildGroupChatSwitcherCommands,
 } from '../../../../../renderer/components/QuickActionsModal/commands/groupChatCommands';
 import { buildMoveToGroupCommands } from '../../../../../renderer/components/QuickActionsModal/commands/moveToGroupCommands';
 import { buildNavigationCommands } from '../../../../../renderer/components/QuickActionsModal/commands/navigationCommands';
@@ -25,6 +26,8 @@ import {
 import { buildTabGroupCommands } from '../../../../../renderer/components/QuickActionsModal/commands/tabGroupCommands';
 import { buildSupportCommands } from '../../../../../renderer/components/QuickActionsModal/commands/supportCommands';
 import { createGroupFromTabRefs } from '../../../../../renderer/utils/panelLayout';
+import { createMockAITab } from '../../../../helpers/mockTab';
+import { useModalStore } from '../../../../../renderer/stores/modalStore';
 
 const noop = () => {};
 const setSessions = vi.fn();
@@ -127,7 +130,39 @@ describe('QuickActions command builders', () => {
 				onDeleteGroupChat: vi.fn(),
 				setQuickActionOpen: close,
 			}).map((a) => a.id)
-		).toEqual(['newGroupChat', 'closeGroupChat', 'deleteGroupChat']);
+		).toEqual([
+			'newGroupChat',
+			'closeGroupChat',
+			'toggleGroupChatModeratorOnly',
+			'deleteGroupChat',
+		]);
+	});
+
+	it('lists only running group chats in the agent switcher, bucketed live', () => {
+		const chats = [
+			{ id: 'chat1', name: 'Squad', participants: [] },
+			{ id: 'chat2', name: 'Idle Room', participants: [] },
+		] as any;
+		const onOpenGroupChat = vi.fn();
+		const commands = buildGroupChatSwitcherCommands({
+			groupChats: chats,
+			busySnapshot: {
+				activeGroupChatId: 'chat1',
+				groupChatState: 'moderator-thinking',
+			},
+			onOpenGroupChat,
+		});
+
+		expect(commands).toHaveLength(1);
+		expect(commands[0]).toMatchObject({
+			id: 'jump-groupchat-chat1',
+			label: 'Group Chat: Squad',
+			isRunningAgent: true,
+			runningInfo: { state: 'busy', statusLabel: 'Moderator thinking', queueCount: 0 },
+		});
+
+		commands[0].action();
+		expect(onOpenGroupChat).toHaveBeenCalledWith('chat1');
 	});
 
 	it('builds navigation, tab, context, right-panel, and search commands', async () => {
@@ -157,9 +192,10 @@ describe('QuickActions command builders', () => {
 				platform: 'darwin',
 				openPath: vi.fn(),
 				onGoToNextUnread: vi.fn(),
+				onGoToPreviousUnread: vi.fn(),
 				shortcuts: {},
 			}).map((a) => a.id)
-		).toContain('nextUnreadTab');
+		).toEqual(expect.arrayContaining(['nextUnreadTab', 'previousUnreadTab']));
 
 		expect(
 			buildNewTabCommands({
@@ -291,8 +327,36 @@ describe('QuickActions command builders', () => {
 		browser.find((a) => a.id === 'copyBrowserContent')!.action();
 		expect(copyActiveBrowserContent).toHaveBeenCalled();
 
-		// File previews expose no context/buffer/content actions.
+		// File previews expose no context/buffer/content actions, and no delete
+		// entry either while there is no open preview tab to act on.
 		expect(buildActiveTabContextCommands({ ...baseArgs, activeTabType: 'file' })).toEqual([]);
+
+		// ...but an open file preview offers the (confirmed) delete action.
+		const fileSession = createMockSession({
+			id: 's1',
+			inputMode: 'ai',
+			activeFileTabId: 'file-1',
+			filePreviewTabs: [
+				{ id: 'file-1', path: '/repo/notes.md', name: 'notes', extension: '.md' },
+			] as any,
+		});
+		const fileCommands = buildActiveTabContextCommands({
+			...baseArgs,
+			activeSession: fileSession,
+			activeTabType: 'file',
+		});
+		expect(fileCommands.map((a) => a.id)).toEqual(['deletePreviewedFile']);
+		expect(fileCommands[0].subtext).toBe('notes.md');
+
+		// A file tab selected while the panel shows a terminal is not a live
+		// preview, so the delete entry stays out of the palette.
+		expect(
+			buildActiveTabContextCommands({
+				...baseArgs,
+				activeSession: { ...fileSession, inputMode: 'terminal' } as any,
+				activeTabType: 'file',
+			})
+		).toEqual([]);
 
 		// AI-context feature commands (Compact / Merge / Send) hide on non-AI tabs.
 		const featureArgs = {
@@ -340,26 +404,66 @@ describe('QuickActions command builders', () => {
 			worktreeBranch: 'feat/test',
 			parentSessionId: 'parent',
 		});
-		const getDiff = vi.fn().mockResolvedValue({ diff: 'diff' });
+		// The git entries delegate to useGitAgentActions (exercised in its own
+		// suite); here we assert the palette surfaces the whole set and wires
+		// each entry to the matching action.
+		const gitActions = {
+			isGitRepo: true,
+			branch: 'feat/test',
+			ahead: 2,
+			behind: 1,
+			canCreatePR: true,
+			canConfigureWorktrees: true,
+			changes: { fileCount: 5, additions: 206, deletions: 37, modified: 5 },
+			viewLog: vi.fn(),
+			viewDiff: vi.fn().mockResolvedValue(undefined),
+			pull: vi.fn(),
+			push: vi.fn(),
+			switchBranch: vi.fn(),
+			createPR: vi.fn(),
+			configureWorktrees: vi.fn(),
+		};
 		const git = buildGitWorktreeCommands({
 			activeSession: session,
 			sessions: [createMockSession({ id: 'parent', name: 'Parent' }), session],
-			setGitDiffPreview: vi.fn(),
-			setGitLogOpen: vi.fn(),
+			gitActions,
 			setQuickActionOpen: close,
 			onQuickCreateWorktree: vi.fn(),
 			onOpenCreatePR: vi.fn(),
 			onRefreshGitFileState: vi.fn(),
 			shortcuts: {},
-			gitService: { getDiff, getRemoteBrowserUrl: vi.fn().mockResolvedValue(null) },
-			notifyCenterFlash: vi.fn(),
+			gitService: { getRemoteBrowserUrl: vi.fn().mockResolvedValue(null) },
 			notifyToast: vi.fn(),
 			openUrl: vi.fn(),
 			logger: { error: vi.fn() },
 		});
+
+		// Every git menu entry has a palette equivalent.
+		expect(git.map((a) => a.id)).toEqual(
+			expect.arrayContaining([
+				'gitLog',
+				'gitDiff',
+				'gitPull',
+				'gitPush',
+				'changeBranch',
+				'createPR',
+				'configureWorktrees',
+			])
+		);
+
+		// The palette says whether the diff has anything in it, like the menu badges.
+		expect(git.find((a) => a.id === 'gitDiff')!.subtext).toBe('+206 −37 ~5 in 5 files');
+
 		await git.find((a) => a.id === 'gitDiff')!.action();
-		expect(getDiff).toHaveBeenCalledWith('/test/project', undefined, 'remote-1');
-		expect(git.map((a) => a.id)).toContain('createPR');
+		expect(gitActions.viewDiff).toHaveBeenCalled();
+		git.find((a) => a.id === 'gitPull')!.action();
+		expect(gitActions.pull).toHaveBeenCalled();
+		git.find((a) => a.id === 'gitPush')!.action();
+		expect(gitActions.push).toHaveBeenCalled();
+		git.find((a) => a.id === 'changeBranch')!.action();
+		expect(gitActions.switchBranch).toHaveBeenCalled();
+		git.find((a) => a.id === 'configureWorktrees')!.action();
+		expect(gitActions.configureWorktrees).toHaveBeenCalled();
 
 		expect(
 			buildFeatureCommands({
@@ -629,5 +733,178 @@ describe('agent-switch window scoping', () => {
 		expect(focusWindow).toHaveBeenCalledWith('win-3');
 		expect(setActiveSessionId).not.toHaveBeenCalled();
 		expect(revealJumpTarget).not.toHaveBeenCalled();
+	});
+	it('offers the model/effort picker for an AI tab and targets the focused pane', () => {
+		const session = createMockSession({
+			id: 's1',
+			aiTabs: [createMockAITab({ id: 'tab-1' }), createMockAITab({ id: 'tab-2' })],
+			activeTabId: 'tab-1',
+		});
+		const args = {
+			activeSession: session,
+			isAiMode: true,
+			activeTabInfo: {
+				isTerminalMode: false,
+				hasActiveTab: true,
+				activeUnifiedIndex: 0,
+				unifiedTabCount: 2,
+				activeTabType: 'ai' as const,
+			},
+			enterToSendAI: true,
+			setQuickActionOpen: close,
+			shortcuts: {},
+			toggleInputMode: vi.fn(),
+		};
+
+		const command = buildTabCommands(args).find((a) => a.id === 'changeModelEffort');
+		expect(command?.label).toBe('Change Tabs Model and Effort');
+		command!.action();
+		expect(useModalStore.getState().modals.get('modelEffort')).toMatchObject({
+			open: true,
+			data: { tabId: 'tab-1' },
+		});
+
+		// A tiled group owns the panel: the focused pane wins over the standalone
+		// tab hidden behind it.
+		useModalStore.getState().closeModal('modelEffort');
+		const group = createGroupFromTabRefs([
+			{ type: 'ai', id: 'tab-2' },
+			{ type: 'ai', id: 'tab-1' },
+		]);
+		const grouped = createMockSession({
+			...session,
+			tabGroups: [group],
+			activeGroupId: group.id,
+		});
+		buildTabCommands({ ...args, activeSession: grouped })
+			.find((a) => a.id === 'changeModelEffort')!
+			.action();
+		expect(useModalStore.getState().modals.get('modelEffort')?.data).toMatchObject({
+			tabId: 'tab-2',
+		});
+	});
+
+	// A group chat has no model of its own, and opening one does not clear
+	// `activeSession` - it still points at whichever agent was selected before the
+	// room was opened. So the entry has to be ABSENT, not merely inert: left in
+	// place it resolved a live target and retuned a background agent's tab.
+	it('withholds the model/effort picker while a group chat owns the view', () => {
+		const session = createMockSession({
+			id: 's1',
+			aiTabs: [createMockAITab({ id: 'tab-1' })],
+			activeTabId: 'tab-1',
+		});
+		const args = {
+			activeSession: session,
+			isAiMode: true,
+			activeTabInfo: {
+				isTerminalMode: false,
+				hasActiveTab: true,
+				activeUnifiedIndex: 0,
+				unifiedTabCount: 1,
+				activeTabType: 'ai' as const,
+			},
+			enterToSendAI: true,
+			setQuickActionOpen: close,
+			shortcuts: {},
+			toggleInputMode: vi.fn(),
+		};
+
+		expect(buildTabCommands(args).find((a) => a.id === 'changeModelEffort')).toBeDefined();
+		expect(
+			buildTabCommands({ ...args, activeGroupChatId: 'chat-1' }).find(
+				(a) => a.id === 'changeModelEffort'
+			)
+		).toBeUndefined();
+	});
+
+	// The count in "Close all N tabs" has to match what a close-all actually takes
+	// out, and hidden consult tabs survive it.
+	it('counts only visible tabs in the Close All Tabs subtext', () => {
+		const session = createMockSession({
+			id: 's1',
+			aiTabs: [
+				createMockAITab({ id: 'tab-1' }),
+				createMockAITab({ id: 'tab-2' }),
+				createMockAITab({ id: 'consult', hidden: true }),
+			],
+			activeTabId: 'tab-1',
+		});
+
+		const command = buildTabCommands({
+			activeSession: session,
+			isAiMode: true,
+			activeTabInfo: {
+				isTerminalMode: false,
+				hasActiveTab: true,
+				activeUnifiedIndex: 0,
+				unifiedTabCount: 2,
+				activeTabType: 'ai',
+			},
+			enterToSendAI: true,
+			onCloseAllTabs: vi.fn(),
+			setQuickActionOpen: vi.fn(),
+			shortcuts: {},
+			toggleInputMode: vi.fn(),
+		}).find((a) => a.id === 'closeAllTabs');
+
+		expect(command?.subtext).toBe('Close all 2 tabs');
+	});
+
+	// An agent whose only other tabs are hidden consults has one closable tab, so
+	// the entry must not offer to close a plural it cannot reach.
+	it('omits Close All Tabs when every tab is a hidden consult', () => {
+		const session = createMockSession({
+			id: 's1',
+			aiTabs: [createMockAITab({ id: 'consult', hidden: true })],
+			activeTabId: 'consult',
+		});
+
+		const ids = buildTabCommands({
+			activeSession: session,
+			isAiMode: true,
+			activeTabInfo: {
+				isTerminalMode: false,
+				hasActiveTab: true,
+				activeUnifiedIndex: 0,
+				unifiedTabCount: 0,
+				activeTabType: 'ai',
+			},
+			enterToSendAI: true,
+			onCloseAllTabs: vi.fn(),
+			setQuickActionOpen: vi.fn(),
+			shortcuts: {},
+			toggleInputMode: vi.fn(),
+		}).map((a) => a.id);
+
+		expect(ids).not.toContain('closeAllTabs');
+	});
+
+	it('hides the model/effort picker when the active tab is not an AI tab', () => {
+		const session = createMockSession({
+			id: 's1',
+			aiTabs: [createMockAITab({ id: 'tab-1' })],
+			activeTabId: 'tab-1',
+			inputMode: 'terminal',
+			activeTerminalTabId: 'term-1',
+		});
+
+		const ids = buildTabCommands({
+			activeSession: session,
+			isAiMode: false,
+			activeTabInfo: {
+				isTerminalMode: true,
+				hasActiveTab: true,
+				activeUnifiedIndex: 0,
+				unifiedTabCount: 1,
+				activeTabType: 'terminal',
+			},
+			enterToSendAI: true,
+			setQuickActionOpen: close,
+			shortcuts: {},
+			toggleInputMode: vi.fn(),
+		}).map((a) => a.id);
+
+		expect(ids).not.toContain('changeModelEffort');
 	});
 });

@@ -2,6 +2,7 @@ import { useCallback } from 'react';
 import type React from 'react';
 import type { BatchDocumentEntry } from '../../../types';
 import { generateId } from '../../../utils/ids';
+import { applySelectionOrder } from '../../../utils/documentSelectionOrder';
 
 interface UseDocumentListActionsArgs {
 	documents: BatchDocumentEntry[];
@@ -52,24 +53,21 @@ export function useDocumentListActions({
 		[setDocuments]
 	);
 
+	// The run list follows the picker's selection order: documents appear in the
+	// order the user clicked them (or clicked the folder holding them). Entries
+	// already in the list keep their id, reset flag, and duplicates - the picker
+	// seeds its selection from the list, so an order built by dragging rows is
+	// carried straight back in.
 	const handleAddSelectedDocs = useCallback(
 		(selectedDocs: Set<string>) => {
-			const existingFilenames = new Set(documents.map((doc) => doc.filename));
-
-			const newDocs: BatchDocumentEntry[] = [];
-			selectedDocs.forEach((filename) => {
-				if (!existingFilenames.has(filename)) {
-					newDocs.push({
-						id: generateId(),
-						filename,
-						resetOnCompletion: false,
-						isDuplicate: false,
-					});
-				}
-			});
-
-			const filteredDocs = documents.filter((doc) => selectedDocs.has(doc.filename));
-			setDocuments([...filteredDocs, ...newDocs]);
+			setDocuments(
+				applySelectionOrder(documents, selectedDocs, (filename) => ({
+					id: generateId(),
+					filename,
+					resetOnCompletion: false,
+					isDuplicate: false,
+				}))
+			);
 			onAddComplete?.();
 		},
 		[documents, onAddComplete, setDocuments]

@@ -52,6 +52,16 @@ export function CoworkingSetup({ theme }: CoworkingSetupProps) {
 	const [busyAgentId, setBusyAgentId] = useState<string | null>(null);
 	const [busyAll, setBusyAll] = useState(false);
 	const [loading, setLoading] = useState(true);
+	// Alphabetical by display name, matching every other provider list.
+	const sortedStatuses = useMemo(
+		() =>
+			[...statuses].sort((a, b) =>
+				getAgentDisplayName(a.agentId as AgentId).localeCompare(
+					getAgentDisplayName(b.agentId as AgentId)
+				)
+			),
+		[statuses]
+	);
 	const browserInteractionAgents = useSettingsStore((s) => s.coworkingBrowserInteraction);
 	const setBrowserInteractionAgents = useSettingsStore((s) => s.setCoworkingBrowserInteraction);
 	const toggleInteraction = useCallback(
@@ -279,7 +289,7 @@ export function CoworkingSetup({ theme }: CoworkingSetupProps) {
 			</div>
 
 			<div className="space-y-1.5">
-				{statuses.map((s) => {
+				{sortedStatuses.map((s) => {
 					const isBusy = busyAgentId === s.agentId || busyAll;
 					const interactionOn = browserInteractionAgents.includes(s.agentId);
 					const confirmPolicy = browserConfirm[s.agentId] ?? DEFAULT_BROWSER_CONFIRM_POLICY;
@@ -312,11 +322,7 @@ export function CoworkingSetup({ theme }: CoworkingSetupProps) {
 										>
 											{getAgentDisplayName(s.agentId as AgentId)}
 										</div>
-										<div
-											className="text-[10px] font-mono truncate opacity-60"
-											title={s.configPath}
-											style={{ color: theme.colors.textDim }}
-										>
+										<div className="text-2xs font-mono truncate opacity-55" title={s.configPath}>
 											{s.configPath}
 										</div>
 									</div>
@@ -356,10 +362,7 @@ export function CoworkingSetup({ theme }: CoworkingSetupProps) {
 											<p className="text-sm" style={{ color: theme.colors.textMain }}>
 												Browser interaction
 											</p>
-											<p
-												className="text-xs opacity-60 mt-0.5"
-												style={{ color: theme.colors.textDim }}
-											>
+											<p className="text-xs opacity-70 mt-0.5">
 												Let this agent drive browser tabs: navigate, click, type, run JavaScript,
 												screenshot, open and close tabs. Reading tabs works without this.
 											</p>
@@ -387,10 +390,7 @@ export function CoworkingSetup({ theme }: CoworkingSetupProps) {
 												<p className="text-sm" style={{ color: theme.colors.textMain }}>
 													Ask before actions
 												</p>
-												<p
-													className="text-xs opacity-60 mt-0.5"
-													style={{ color: theme.colors.textDim }}
-												>
+												<p className="text-xs opacity-70 mt-0.5">
 													{CONFIRM_POLICY_DESCRIPTIONS[confirmPolicy]}
 												</p>
 											</div>

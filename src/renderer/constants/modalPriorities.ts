@@ -20,11 +20,30 @@ export const MODAL_PRIORITIES = {
 	/** Keyboard mastery level-up celebration - high priority celebration */
 	KEYBOARD_MASTERY: 1095,
 
+	/**
+	 * First-run typography chooser. Above the tour because it decides what every
+	 * later surface is drawn in - touring an app whose look is about to change
+	 * shows the user the wrong app.
+	 */
+	TYPOGRAPHY_CHOICE: 1060,
+
+	/**
+	 * First-run theme chooser, updates step, and the "your agents can drive
+	 * Maestro" step. They run in sequence after the typography chooser, one at a
+	 * time, so they share its band - only one of the four is ever mounted.
+	 */
+	THEME_CHOICE: 1059,
+	UPDATES_CHOICE: 1058,
+	AGENT_POWERS: 1057,
+
 	/** Onboarding tour overlay - above wizard, guides new users */
 	TOUR: 1050,
 
 	/** Quit confirmation modal - highest priority, blocks app quit */
 	QUIT_CONFIRM: 1020,
+
+	/** Provider re-authentication terminal - above the agent error modal it replaces */
+	REAUTH: 1015,
 
 	/** Agent error modal - critical, shows recovery options */
 	AGENT_ERROR: 1010,
@@ -53,8 +72,21 @@ export const MODAL_PRIORITIES = {
 	/** Rename tab modal */
 	RENAME_TAB: 875,
 
+	/**
+	 * Snooze tab modal (pick a wake time).
+	 * Sits above SNOOZED_TABS because it opens on top of that list when
+	 * rescheduling an existing snooze.
+	 */
+	SNOOZE_TAB: 874,
+
 	/** Terminal tab startup command configuration modal */
 	TERMINAL_STARTUP_COMMAND: 873,
+
+	/**
+	 * Keyboard-only model/effort picker for the active AI tab. Sits with the
+	 * other per-tab dialogs: it retunes one tab and nothing else.
+	 */
+	MODEL_EFFORT: 872,
 
 	/** Director's Notes modal - unified history and AI overview */
 	DIRECTOR_NOTES: 848,
@@ -122,8 +154,21 @@ export const MODAL_PRIORITIES = {
 	/** Tab switcher modal (Opt+Cmd+T) */
 	TAB_SWITCHER: 710,
 
+	/** Cross-tab message search modal (Opt+Cmd+F) */
+	CROSS_TAB_SEARCH: 709,
+
 	/** Tab context menu (right-click on tab) */
 	TAB_CONTEXT_MENU: 708,
+
+	/** Snoozed tabs list modal (shows every agent's snoozed tabs) */
+	SNOOZED_TABS: 703,
+
+	/**
+	 * Snooze history log. Must rank ABOVE SNOOZED_TABS: it opens on top of that
+	 * list, and Escape closes the highest-priority layer. Ranked below, Escape
+	 * closed the list instead, which unmounted the history with it.
+	 */
+	SNOOZE_HISTORY: 704,
 
 	/** Prompt composer modal for long prompts */
 	PROMPT_COMPOSER: 725,
@@ -234,11 +279,22 @@ export const MODAL_PRIORITIES = {
 	/** Usage Dashboard modal */
 	USAGE_DASHBOARD: 540,
 
-	/** AgentRun ledger dashboard modal */
-	AGENT_RUN_DASHBOARD: 542,
+	/** AgentRun ledger dashboard modal - above the Usage Dashboard and its sub-modals */
+	AGENT_RUN_DASHBOARD: 544,
+	/** Agent card fuzzy filter in the Usage Dashboard's Agents tab. Registered
+	 *  only while the box holds text, so Escape clears the filter before it
+	 *  closes the dashboard. Sits below the detail sub-modal: with both open,
+	 *  Escape dismisses the sub-modal first. */
+	USAGE_DASHBOARD_AGENT_FILTER: 541,
 
-	/** Per-agent detail sub-modal opened from the Usage Dashboard's Agents tab */
-	USAGE_DASHBOARD_AGENT_DETAIL: 541,
+	/** Per-group detail sub-modal opened from the Usage Dashboard's Groups tab.
+	 *  Sits BELOW the per-agent detail: an agent row inside this modal opens the
+	 *  agent detail on top of it, and Escape has to unwind agent-then-group. */
+	USAGE_DASHBOARD_GROUP_DETAIL: 542,
+
+	/** Per-agent detail sub-modal opened from the Usage Dashboard's Agents tab,
+	 *  or from an agent row inside the group detail modal. */
+	USAGE_DASHBOARD_AGENT_DETAIL: 543,
 
 	/** System log viewer overlay */
 	LOG_VIEWER: 500,
@@ -247,13 +303,26 @@ export const MODAL_PRIORITIES = {
 	CUE_BACKUP_DIFF: 470,
 
 	/** Maestro Cue help modal (above Cue modal) */
-	CUE_HELP: 465,
+	CUE_HELP: 466,
 
 	/** Maestro Cue pattern preview modal (above YAML editor) */
-	CUE_PATTERN_PREVIEW: 464,
+	CUE_PATTERN_PREVIEW: 465,
 
 	/** Maestro Cue YAML editor modal (above Cue modal, below help) */
-	CUE_YAML_EDITOR: 463,
+	CUE_YAML_EDITOR: 464,
+
+	/** Inline pipeline-rename field in the Cue modal's Pipeline List tab.
+	 *  Registered only while a rename is open, so Escape cancels the rename
+	 *  instead of closing the Cue modal. Same reasoning as
+	 *  CUE_SCHEDULED_TASK_FILTER below - an inline control inside the Cue modal
+	 *  can only claim Escape by outranking it in the layer stack. */
+	CUE_PIPELINE_RENAME: 463,
+
+	/** Fuzzy filter box in the Cue modal's Scheduled Tasks tab. Registered only
+	 *  while the box holds text, so Escape clears the filter before it closes
+	 *  the Cue modal. Sits just above CUE_MODAL and below every Cue sub-modal.
+	 *  461 is taken by PIANOLA_RULE_EDITOR, so this sits at 462. */
+	CUE_SCHEDULED_TASK_FILTER: 462,
 
 	/** Maestro Cue dashboard modal */
 	CUE_MODAL: 460,
@@ -267,6 +336,12 @@ export const MODAL_PRIORITIES = {
 	/** SSH Remote configuration modal (above settings) */
 	SSH_REMOTE: 458,
 
+	/** Concerto stage - the agent-composed movement panels in one resizable
+	 * window. Sits below the plugin band and every settings-level modal, so a
+	 * modal opened on top of the stage takes Escape first and the stage stays up
+	 * behind it. */
+	CONCERTO_STAGE: 415,
+
 	/** Reserved band for community-plugin panels/modals. Plugin UI is allocated
 	 * sequentially from PLUGIN_PANEL_BASE up to (but not reaching) SSH_REMOTE/
 	 * Settings, so plugins always sit below first-party settings-level modals and
@@ -277,18 +352,32 @@ export const MODAL_PRIORITIES = {
 	 * the dropdown first, leaving the Settings modal open for a second Esc). */
 	CUSTOM_THEME_BASE_SELECTOR: 451,
 
+	/** Extension/plugin details pane inside Settings (above settings so Escape
+	 * goes back to the extensions grid instead of closing the whole modal). */
+	EXTENSION_DETAILS: 452,
+
 	/** Settings modal */
 	SETTINGS: 450,
 
 	/** Thought Stream introspection panel - floating, non-blocking; sits below
 	 * real modals so they take Escape/focus first, above git overlays. */
 	THOUGHT_STREAM: 210,
+	/** Header git pill dropdown - above the modals it launches so Escape closes
+	 * the menu first. */
+	GIT_PILL_MENU: 220,
+
+	/** Branch switcher (fuzzy branch picker from the header git pill) - above the
+	 * git viewers so it layers on top when opened while one is showing. 205, not
+	 * 210: THOUGHT_STREAM already owns 210, and the uniqueness guard in
+	 * modalPriorities.test.ts caps the tree at four duplicate values. */
+	BRANCH_SWITCHER: 205,
+
+	/** Streaming git command console (pull / push) - above the branch switcher,
+	 * which is what launches a checkout that can spill into it. */
+	GIT_COMMAND_RUNNER: 215,
 
 	/** Git diff preview overlay */
 	GIT_DIFF: 200,
-
-	/** Branch switcher dropdown (opens from header branch chip) */
-	BRANCH_SWITCHER: 195,
 
 	/** Git log viewer overlay */
 	GIT_LOG: 190,
@@ -309,6 +398,19 @@ export const MODAL_PRIORITIES = {
 	/** Edit-queued-item modal (below lightbox/annotator so those open on top of it
 	 * and Escape closes them first while editing a queued message's images). */
 	QUEUED_ITEM_EDIT: 145,
+
+	/** Staged-images organizer (drag-to-reorder at a readable size). Below the
+	 * lightbox and annotator, both of which open from inside it. */
+	STAGED_IMAGES_ORGANIZER: 143,
+
+	/**
+	 * Record view for one row of a tabular preview - CSV/TSV and parquet both
+	 * open `<RecordDetailModal>` from the file preview beneath them. One
+	 * constant rather than one per format: they are the same surface at the
+	 * same tier, and two names at the same number is a distinction the layer
+	 * stack cannot act on.
+	 */
+	TABLE_ROW_DETAIL: 110,
 
 	/** File preview overlay */
 	FILE_PREVIEW: 100,

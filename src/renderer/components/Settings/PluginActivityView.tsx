@@ -82,7 +82,7 @@ export function PluginActivityView({ theme, records, pollMs = 4000 }: PluginActi
 	return (
 		<div className="mt-4">
 			<div
-				className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide mb-2"
+				className="flex items-center gap-1.5 text-xs-plus font-semibold uppercase tracking-wide mb-2"
 				style={{ color: theme.colors.textDim }}
 			>
 				<ActivityIcon className="w-3.5 h-3.5" />
@@ -105,7 +105,7 @@ export function PluginActivityView({ theme, records, pollMs = 4000 }: PluginActi
 								>
 									{nameFor(id)}
 								</div>
-								<div className="flex items-center gap-3 shrink-0 text-[11px]">
+								<div className="flex items-center gap-3 shrink-0 text-xs-plus">
 									<span style={{ color: theme.colors.textDim }} title="Total host calls">
 										{a.totalCalls} call{a.totalCalls === 1 ? '' : 's'}
 									</span>
@@ -131,14 +131,14 @@ export function PluginActivityView({ theme, records, pollMs = 4000 }: PluginActi
 							</div>
 
 							{(a.inFlight > 0 || a.peakInFlight > 0) && (
-								<div className="text-[11px] mt-1" style={{ color: theme.colors.textDim }}>
+								<div className="text-xs-plus mt-1" style={{ color: theme.colors.textDim }}>
 									In-flight {a.inFlight} (peak {a.peakInFlight})
 								</div>
 							)}
 
 							{a.recentLogs.length > 0 && (
 								<div
-									className="mt-2 pt-2 flex flex-col gap-0.5 max-h-32 overflow-auto font-mono text-[10px]"
+									className="mt-2 pt-2 flex flex-col gap-0.5 max-h-32 overflow-auto font-mono text-2xs"
 									style={{ borderTop: `1px solid ${theme.colors.border}` }}
 								>
 									{a.recentLogs.slice(-8).map((line, i) => (

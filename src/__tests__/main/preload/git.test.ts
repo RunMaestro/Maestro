@@ -359,4 +359,70 @@ describe('Git Preload API', () => {
 			expect(callback).toHaveBeenCalledWith(data);
 		});
 	});
+
+	describe('runCommand', () => {
+		it('should invoke git:runCommand with the full option object', async () => {
+			const expected = { success: true, exitCode: 0, cancelled: false };
+			mockInvoke.mockResolvedValue(expected);
+
+			const options = {
+				runId: 'run-1',
+				operation: 'push' as const,
+				cwd: '/home/user/project',
+				sshRemoteId: 'remote-1',
+				setUpstream: true,
+			};
+			const result = await api.runCommand(options);
+
+			expect(mockInvoke).toHaveBeenCalledWith('git:runCommand', options);
+			expect(result).toEqual(expected);
+		});
+	});
+
+	describe('cancelCommand', () => {
+		it('should invoke git:cancelCommand with the run id', async () => {
+			mockInvoke.mockResolvedValue({ success: true });
+
+			const result = await api.cancelCommand('run-1');
+
+			expect(mockInvoke).toHaveBeenCalledWith('git:cancelCommand', 'run-1');
+			expect(result).toEqual({ success: true });
+		});
+	});
+
+	describe('onCommandOutput', () => {
+		it('should subscribe and return a cleanup that removes the listener', () => {
+			const callback = vi.fn();
+			let registeredHandler: (event: unknown, data: unknown) => void = () => {};
+			mockOn.mockImplementation((channel: string, handler: typeof registeredHandler) => {
+				if (channel === 'git:commandOutput') registeredHandler = handler;
+			});
+
+			const cleanup = api.onCommandOutput(callback);
+			const chunk = { runId: 'run-1', stream: 'stdout' as const, chunk: 'hello' };
+			registeredHandler({}, chunk);
+
+			expect(callback).toHaveBeenCalledWith(chunk);
+
+			cleanup();
+			expect(mockRemoveListener).toHaveBeenCalledWith('git:commandOutput', registeredHandler);
+		});
+	});
+
+	describe('checkoutBranch', () => {
+		it('should invoke git:checkoutBranch with all parameters', async () => {
+			mockInvoke.mockResolvedValue({ success: true });
+
+			await api.checkoutBranch('/home/user/project', 'main', true, 'remote-1', '/remote/cwd');
+
+			expect(mockInvoke).toHaveBeenCalledWith(
+				'git:checkoutBranch',
+				'/home/user/project',
+				'main',
+				true,
+				'remote-1',
+				'/remote/cwd'
+			);
+		});
+	});
 });

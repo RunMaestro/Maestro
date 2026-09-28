@@ -24,9 +24,12 @@ import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useModalStore } from '../../../renderer/stores/modalStore';
 import { useUIStore } from '../../../renderer/stores/uiStore';
 import type { Session, AITab } from '../../../renderer/types';
-import { createMockFileTab } from '../../helpers/mockTab';
+import { createMockFileTab, createMockAITab } from '../../helpers/mockTab';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 import { createGroupFromTabRefs } from '../../../renderer/utils/panelLayout';
+import { notifyToast } from '../../../renderer/stores/notificationStore';
+
+vi.mock('../../../renderer/stores/notificationStore', () => ({ notifyToast: vi.fn() }));
 
 // ============================================================================
 // Test Helpers
@@ -96,6 +99,8 @@ beforeEach(() => {
 		sessionsLoaded: false,
 		initialLoadComplete: false,
 		groups: [],
+		groupsLoaded: false,
+		sessionsReadOk: false,
 	});
 
 	useModalStore.setState({ modals: new Map() });
@@ -195,6 +200,45 @@ describe('useSessionLifecycle', () => {
 			});
 		});
 
+		it('persists parked env vars alongside the live ones', () => {
+			// The editor keeps switched-off vars OUT of customEnvVars so no spawn
+			// path has to filter. If this argument were dropped here, the parked
+			// rows would vanish the moment the user saved.
+			const session = createMockSession({ id: 'session-1' });
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+
+			const { result } = renderHook(() => useSessionLifecycle(createDeps()));
+
+			act(() => {
+				result.current.handleSaveEditAgent(
+					'session-1',
+					'Agent',
+					undefined, // toolType unchanged
+					undefined, // nudgeMessage
+					undefined, // newSessionMessage
+					undefined, // customPath
+					undefined, // customArgs
+					{ LIVE: 'a' },
+					undefined, // customModel
+					undefined, // customEffort
+					undefined, // customContextWindow
+					undefined, // sessionSshRemoteConfig
+					undefined, // enableMaestroP
+					undefined, // maestroPPath
+					undefined, // maestroPMode
+					undefined, // retryOnAvailabilityErrors
+					undefined, // retryOnTokenExhaustion
+					undefined, // additionalDirectories
+					undefined, // contextWindowSource
+					{ PARKED: 'b' }
+				);
+			});
+
+			const updated = useSessionStore.getState().sessions[0];
+			expect(updated.customEnvVars).toEqual({ LIVE: 'a' });
+			expect(updated.customEnvVarsDisabled).toEqual({ PARKED: 'b' });
+		});
+
 		it('only modifies the targeted session', () => {
 			const session1 = createMockSession({ id: 'session-1', name: 'Session 1' });
 			const session2 = createMockSession({ id: 'session-2', name: 'Session 2' });
@@ -236,8 +280,93 @@ describe('useSessionLifecycle', () => {
 			expect(updated.customPath).toBeUndefined();
 		});
 
-		it('resets tabs and provider-specific config when toolType changes', () => {
-			const tab = createMockAITab({ id: 'old-tab', agentSessionId: 'old-session' });
+		const saveWithWorkingDirectory = (
+			save: ReturnType<typeof useSessionLifecycle>['handleSaveEditAgent'],
+			workingDirectory: string
+		) =>
+			save(
+				'session-1',
+				'Agent',
+				undefined, // toolType
+				undefined, // nudgeMessage
+				undefined, // newSessionMessage
+				undefined, // customPath
+				undefined, // customArgs
+				undefined, // customEnvVars
+				undefined, // customModel
+				undefined, // customEffort
+				undefined, // customContextWindow
+				undefined, // sessionSshRemoteConfig
+				undefined, // enableMaestroP
+				undefined, // maestroPPath
+				undefined, // maestroPMode
+				undefined, // retryOnAvailabilityErrors
+				undefined, // retryOnTokenExhaustion
+				undefined, // additionalDirectories
+				undefined, // contextWindowSource
+				undefined, // customEnvVarsDisabled
+				workingDirectory
+			);
+
+		it('moves every path field when the working directory changes', () => {
+			const session = createMockSession({
+				id: 'session-1',
+				shellCwd: '/projects/myapp',
+				autoRunFolderPath: '/projects/myapp/.maestro/playbooks',
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+
+			const { result } = renderHook(() => useSessionLifecycle(createDeps()));
+
+			act(() => {
+				saveWithWorkingDirectory(result.current.handleSaveEditAgent, '/projects/moved');
+			});
+
+			const updated = useSessionStore.getState().sessions[0];
+			expect(updated.cwd).toBe('/projects/moved');
+			expect(updated.fullPath).toBe('/projects/moved');
+			expect(updated.shellCwd).toBe('/projects/moved');
+			expect(updated.projectRoot).toBe('/projects/moved');
+			expect(updated.autoRunFolderPath).toBe('/projects/moved/.maestro/playbooks');
+		});
+
+		it('does not refuse a busy agent when the directory differs only by a trailing slash', () => {
+			const session = createMockSession({ id: 'session-1', state: 'busy' });
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+
+			const { result } = renderHook(() => useSessionLifecycle(createDeps()));
+
+			act(() => {
+				saveWithWorkingDirectory(result.current.handleSaveEditAgent, '/projects/myapp/');
+			});
+
+			expect(notifyToast).not.toHaveBeenCalled();
+			expect(useSessionStore.getState().sessions[0].projectRoot).toBe('/projects/myapp');
+		});
+
+		it('keeps the directory when the agent started running before save', () => {
+			const session = createMockSession({ id: 'session-1', state: 'busy' });
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+
+			const { result } = renderHook(() => useSessionLifecycle(createDeps()));
+
+			act(() => {
+				saveWithWorkingDirectory(result.current.handleSaveEditAgent, '/projects/moved');
+			});
+
+			const updated = useSessionStore.getState().sessions[0];
+			expect(updated.name).toBe('Agent');
+			expect(updated.cwd).toBe('/projects/myapp');
+			expect(updated.projectRoot).toBe('/projects/myapp');
+		});
+
+		it('preserves tabs and parks the old provider session when toolType changes', () => {
+			const tab = createMockAITab({
+				id: 'old-tab',
+				agentSessionId: 'claude-session',
+				logs: [{ id: 'log-1', timestamp: 1, source: 'user', text: 'hello' }] as any,
+				usageStats: { inputTokens: 10 } as any,
+			});
 			const session = createMockSession({
 				id: 'session-1',
 				name: 'My Agent',
@@ -247,6 +376,7 @@ describe('useSessionLifecycle', () => {
 				customPath: '/old/claude/path',
 				customArgs: '--old-args',
 				customEnvVars: { OLD_KEY: 'old' },
+				customEnvVarsDisabled: { OLD_PARKED: 'old' },
 				customModel: 'sonnet',
 				customEffort: 'high',
 				customContextWindow: 200000,
@@ -264,32 +394,92 @@ describe('useSessionLifecycle', () => {
 			});
 
 			const updated = useSessionStore.getState().sessions[0];
-			// Provider changed
 			expect(updated.toolType).toBe('opencode');
-			// Tabs reset to a single fresh tab
+
+			// The tab and its transcript survive - same tab, same logs, still active.
 			expect(updated.aiTabs).toHaveLength(1);
+			expect(updated.aiTabs[0].id).toBe('old-tab');
+			expect(updated.aiTabs[0].logs).toHaveLength(1);
+			expect(updated.activeTabId).toBe('old-tab');
+
+			// The incoming provider starts fresh in the live slot...
 			expect(updated.aiTabs[0].agentSessionId).toBeNull();
-			expect(updated.aiTabs[0].logs).toEqual([]);
-			expect(updated.activeTabId).toBe(updated.aiTabs[0].id);
-			expect(updated.activeTabId).not.toBe('old-tab');
-			// Provider-specific config cleared
+			expect(updated.aiTabs[0].usageStats).toBeUndefined();
+			// ...while the outgoing provider's session is parked for the trip back.
+			expect(updated.aiTabs[0].providerSessions?.['claude-code']).toEqual({
+				agentSessionId: 'claude-session',
+				usageStats: { inputTokens: 10 },
+				customModel: undefined,
+				customEffort: undefined,
+			});
+			// The live provider must never hold a parked entry of its own.
+			expect(updated.aiTabs[0].providerSessions?.['opencode']).toBeUndefined();
+
+			// Agent-level provider-specific config is still cleared.
 			expect(updated.customPath).toBeUndefined();
 			expect(updated.customArgs).toBeUndefined();
 			expect(updated.customEnvVars).toBeUndefined();
+			expect(updated.customEnvVarsDisabled).toBeUndefined();
 			expect(updated.customModel).toBeUndefined();
 			expect(updated.customEffort).toBeUndefined();
 			expect(updated.customContextWindow).toBeUndefined();
-			// File preview tabs reset
-			expect(updated.filePreviewTabs).toEqual([]);
-			expect(updated.activeFileTabId).toBeNull();
-			// Unified tab order reset to single entry
-			expect(updated.unifiedTabOrder).toHaveLength(1);
-			expect(updated.unifiedTabOrder[0]).toEqual({ type: 'ai', id: updated.aiTabs[0].id });
-			// Runtime state reset
-			expect(updated.state).toBe('idle');
-			expect(updated.aiPid).toBe(0);
-			// Existing AI process killed
-			expect((window as any).maestro.process.kill).toHaveBeenCalledWith('session-1-ai');
+
+			// A running turn is codified at send, so nothing is killed.
+			expect((window as any).maestro.process.kill).not.toHaveBeenCalled();
+		});
+
+		it('restores a provider session when switching back to it', () => {
+			const tab = createMockAITab({
+				id: 'tab-1',
+				agentSessionId: 'codex-session',
+				providerSessions: { 'claude-code': { agentSessionId: 'claude-session' } },
+			});
+			const session = createMockSession({
+				id: 'session-1',
+				toolType: 'codex' as any,
+				aiTabs: [tab],
+				activeTabId: 'tab-1',
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+
+			const { result } = renderHook(() => useSessionLifecycle(createDeps()));
+
+			act(() => {
+				result.current.handleSaveEditAgent('session-1', 'My Agent', 'claude-code' as any);
+			});
+
+			const updated = useSessionStore.getState().sessions[0];
+			// Back on Claude: its original session is live again, Codex is parked.
+			expect(updated.aiTabs[0].agentSessionId).toBe('claude-session');
+			expect(updated.aiTabs[0].providerSessions?.['codex']?.agentSessionId).toBe('codex-session');
+			expect(updated.aiTabs[0].providerSessions?.['claude-code']).toBeUndefined();
+		});
+
+		it('preserves closed-tab history and file preview tabs across a provider change', () => {
+			const session = createMockSession({
+				id: 'session-1',
+				toolType: 'claude-code' as any,
+				aiTabs: [createMockAITab({ id: 'tab-1' })],
+				activeTabId: 'tab-1',
+				closedTabHistory: [{ tab: createMockAITab({ id: 'gone' }), index: 0, closedAt: 1 }] as any,
+				unifiedClosedTabHistory: [{ kind: 'ai', index: 0, closedAt: 1 }] as any,
+				filePreviewTabs: [{ id: 'file-1' }] as any,
+				activeFileTabId: 'file-1',
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+
+			const { result } = renderHook(() => useSessionLifecycle(createDeps()));
+
+			act(() => {
+				result.current.handleSaveEditAgent('session-1', 'My Agent', 'codex' as any);
+			});
+
+			const updated = useSessionStore.getState().sessions[0];
+			// Undo (Cmd+Shift+T) must still work after a provider change.
+			expect(updated.closedTabHistory).toHaveLength(1);
+			expect(updated.unifiedClosedTabHistory).toHaveLength(1);
+			expect(updated.filePreviewTabs).toHaveLength(1);
+			expect(updated.activeFileTabId).toBe('file-1');
 		});
 
 		it('does not reset tabs when toolType is same as current', () => {
@@ -383,6 +573,50 @@ describe('useSessionLifecycle', () => {
 				'agent-123',
 				'New Tab Name'
 			);
+		});
+
+		// A terminal tile inside a tiled group renames through this same modal, so the
+		// commit must land on terminalTabs[].name (the tile title reads it back).
+		it('renames a terminal tab that lives in a tiled group', () => {
+			const session = createMockSession({
+				id: 'session-1',
+				aiTabs: [createMockAITab({ id: 'tab-1' })],
+				activeTabId: 'tab-1',
+				terminalTabs: [{ id: 'term-1', name: null } as any],
+				activeGroupId: 'group-1',
+				tabGroups: [
+					{
+						id: 'group-1',
+						name: 'Group: Terminal 1',
+						focusedPaneId: 'leaf-term',
+						createdAt: 0,
+						layout: {
+							kind: 'split',
+							id: 'split-1',
+							direction: 'row',
+							sizes: [0.5, 0.5],
+							children: [
+								{ kind: 'leaf', id: 'leaf-ai', tab: { type: 'ai', id: 'tab-1' } },
+								{ kind: 'leaf', id: 'leaf-term', tab: { type: 'terminal', id: 'term-1' } },
+							],
+						},
+					} as any,
+				],
+			});
+
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+			useModalStore.getState().openModal('renameTab', { tabId: 'term-1', initialName: '' });
+
+			const { result } = renderHook(() => useSessionLifecycle(createDeps()));
+
+			act(() => {
+				result.current.handleRenameTab('Build Logs');
+			});
+
+			const updated = useSessionStore.getState().sessions[0];
+			expect(updated.terminalTabs[0].name).toBe('Build Logs');
+			// The group itself is untouched - only the tile was renamed.
+			expect(updated.tabGroups?.[0].name).toBe('Group: Terminal 1');
 		});
 
 		it('persists to agentSessions for non-claude agents', () => {
@@ -1297,6 +1531,7 @@ describe('useSessionLifecycle', () => {
 				activeSessionId: '',
 				groups,
 				initialLoadComplete: true,
+				groupsLoaded: true,
 			});
 
 			renderHook(() => useSessionLifecycle(createDeps()));
@@ -1311,6 +1546,7 @@ describe('useSessionLifecycle', () => {
 				activeSessionId: '',
 				groups,
 				initialLoadComplete: false,
+				groupsLoaded: true,
 			});
 
 			renderHook(() => useSessionLifecycle(createDeps()));
@@ -1325,6 +1561,7 @@ describe('useSessionLifecycle', () => {
 				activeSessionId: '',
 				groups: groups1,
 				initialLoadComplete: true,
+				groupsLoaded: true,
 			});
 
 			renderHook(() => useSessionLifecycle(createDeps()));
@@ -1341,6 +1578,58 @@ describe('useSessionLifecycle', () => {
 			});
 
 			expect(window.maestro.groups.setAll).toHaveBeenCalledWith(groups2);
+		});
+
+		// Regression: a group registry that was never successfully READ must never
+		// be written back. `initialLoadComplete` is set in a `finally` and so is
+		// true even when the groups read failed, which let an empty in-memory
+		// registry overwrite a good one on disk and cost the user every group.
+		it('does not persist groups when the registry was never loaded', () => {
+			useSessionStore.setState({
+				sessions: [],
+				activeSessionId: '',
+				groups: [],
+				initialLoadComplete: true,
+				groupsLoaded: false,
+			});
+
+			renderHook(() => useSessionLifecycle(createDeps()));
+
+			expect(window.maestro.groups.setAll).not.toHaveBeenCalled();
+		});
+
+		it('does not persist a group change while the registry is unloaded', () => {
+			useSessionStore.setState({
+				sessions: [],
+				activeSessionId: '',
+				groups: [],
+				initialLoadComplete: true,
+				groupsLoaded: false,
+			});
+
+			renderHook(() => useSessionLifecycle(createDeps()));
+
+			act(() => {
+				useSessionStore.setState({ groups: [] });
+			});
+
+			expect(window.maestro.groups.setAll).not.toHaveBeenCalled();
+		});
+
+		// A user who genuinely has no groups must still be able to persist: the
+		// gate is "did the read succeed", never "was the result non-empty".
+		it('persists an empty registry that was read successfully', () => {
+			useSessionStore.setState({
+				sessions: [],
+				activeSessionId: '',
+				groups: [],
+				initialLoadComplete: true,
+				groupsLoaded: true,
+			});
+
+			renderHook(() => useSessionLifecycle(createDeps()));
+
+			expect(window.maestro.groups.setAll).toHaveBeenCalledWith([]);
 		});
 	});
 

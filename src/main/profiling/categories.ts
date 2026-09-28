@@ -21,9 +21,16 @@ export const DEFAULT_TRACE_CATEGORIES: string[] = [
 	// Blink rendering engine + our own performance.mark()/measure() marks.
 	'blink',
 	'blink.user_timing',
-	// Compositor + GPU: paint, layerize, frame production.
+	// Compositor: paint, layerize, frame production. This is the single largest
+	// emitter in a capture (1.26M events, 37% of a 95-second trace) and it stays
+	// because PaintArtifactCompositor::Update and the frame-commit stream are
+	// what tell us whether the renderer is doing work nobody asked for.
+	//
+	// The `gpu` category used to sit beside it and was dropped: 247,490 events
+	// (~7% of the same trace) from the GPU process, which produced zero findings
+	// across two field captures. Buffer spent there is buffer not spent on the
+	// renderer, which is where every answer has come from.
 	'cc',
-	'gpu',
 	// V8 execution (JS).
 	'v8',
 	'v8.execute',
@@ -32,29 +39,54 @@ export const DEFAULT_TRACE_CATEGORIES: string[] = [
 	'disabled-by-default-devtools.timeline',
 	'disabled-by-default-devtools.timeline.frame',
 	'disabled-by-default-devtools.timeline.stack',
-	// Sampling CPU profiler: attributes time to JS call stacks. Kept because the
-	// raw samples live in the trace for deep dives in Perfetto, even though the
-	// markdown analysis leans on the cheaper timeline FunctionCall events.
+	// WHY a style recalc or layout happened, not just that it did. Emits
+	// StyleRecalcInvalidationTracking / LayoutInvalidationTracking carrying the
+	// invalidated node, the reason, and the JS stack that dirtied it.
+	//
+	// Added after a Sep 2026 field trace could establish that the renderer was
+	// repainting every frame while completely idle, and that 41,672 forced
+	// synchronous layouts happened in 95 seconds, but could NOT establish who
+	// was responsible for either. Without this category those two questions are
+	// unanswerable from a trace, which makes the trace unable to close them.
+	'disabled-by-default-devtools.timeline.invalidationTracking',
+	// Sampling CPU profiler. This is the ONLY usable JS attribution in an
+	// Electron trace: the devtools timeline FunctionCall / EvaluateScript events
+	// the analysis script originally looked for are not emitted here, so its
+	// "hottest JS" table was empty until it learned to read these samples. Drop
+	// this category and every JS question becomes unanswerable.
 	'disabled-by-default-v8.cpu_profiler',
 	// Input -> response latency.
 	'latencyInfo',
-	// Resource loading.
-	'loading',
 ];
+
+/**
+ * Per-process trace buffer, in KB. NOT a whole-capture budget: every process in
+ * the app fills its own, so a capture's bundle is a multiple of this.
+ *
+ * Exported because the buffer watchdog in content-tracing.ts reports usage
+ * against it, and because it is the number that decides how long a recording
+ * can run before data starts being lost.
+ */
+export const TRACE_BUFFER_SIZE_KB = 150_000;
 
 /**
  * Build the TraceConfig passed to contentTracing.startRecording().
  *
- * `record-until-full` keeps the earliest events and stops capturing once the
- * buffer fills, which suits the intended workflow: start, reproduce the lag for
- * a few seconds, stop. The buffer cap also bounds the on-disk trace size so a
- * forgotten recording cannot grow without limit.
+ * `record-until-full` is the right mode BECAUSE the buffer is now watched: the
+ * recording is stopped before the buffer fills (see content-tracing.ts), so
+ * what lands on disk is a complete window rather than a fragment.
+ *
+ * This replaced a "keep captures short" instruction that did not work. Two
+ * field captures taken under it retained 22% and 43% of their recordings; the
+ * rest was silently discarded, and the analysis could only be done on whatever
+ * happened to survive. A person cannot judge how full a trace buffer is by
+ * watching an app, so asking them to was never going to hold. The watchdog
+ * measures it instead and ends the recording while the data is still intact.
  */
 export function buildTraceConfig(categories: string[] = DEFAULT_TRACE_CATEGORIES): TraceConfig {
 	return {
 		recording_mode: 'record-until-full',
 		included_categories: categories,
-		// ~150MB ceiling. Generous for a manual capture, still bounded.
-		trace_buffer_size_in_kb: 150_000,
+		trace_buffer_size_in_kb: TRACE_BUFFER_SIZE_KB,
 	};
 }

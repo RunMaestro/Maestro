@@ -7,7 +7,7 @@
  * - Save the markdown content to the specified location
  */
 
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { FolderOpen } from 'lucide-react';
 import type { Theme } from '../types';
@@ -51,13 +51,6 @@ export function SaveMarkdownModal({
 	const [error, setError] = useState<string | null>(null);
 	const [openInTab, setOpenInTab] = useState(false);
 	const filenameInputRef = useRef<HTMLInputElement>(null);
-
-	// Focus the filename input on mount
-	useEffect(() => {
-		requestAnimationFrame(() => {
-			filenameInputRef.current?.focus();
-		});
-	}, []);
 
 	const handleBrowseFolder = async () => {
 		try {
@@ -127,6 +120,7 @@ export function SaveMarkdownModal({
 			theme={theme}
 			title="Save Markdown"
 			priority={MODAL_PRIORITIES.SAVE_MARKDOWN}
+			initialFocusRef={filenameInputRef}
 			onClose={onClose}
 			width={480}
 			closeOnBackdropClick

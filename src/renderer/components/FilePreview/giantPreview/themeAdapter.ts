@@ -4,6 +4,9 @@ import { tags as t } from '@lezer/highlight';
 import type { Extension } from '@codemirror/state';
 import type { Theme } from '../../../constants/themes';
 
+/** Unzoomed editor font size, in CSS pixels. */
+export const EDITOR_BASE_FONT_PX = 13;
+
 /**
  * Build a CodeMirror 6 theme extension from the app's Theme object.
  *
@@ -21,9 +24,20 @@ import type { Theme } from '../../../constants/themes';
  *   - strings           → warning
  *   - comments          → textDim
  *
+ * `fontScale` is the reader's font zoom (1 = unzoomed). It lives in the theme
+ * rather than in a CSS rule because CM6 injects its own scoped stylesheet for
+ * `.cm-scroller`; an app-level rule of equal specificity would win or lose on
+ * injection order. CM6 re-measures line heights on reconfigure, so scrolling
+ * and the gutter stay aligned after a zoom.
+ *
  * Pure: theme in, extension out. No side effects, no DOM.
  */
-export function buildEditorTheme(theme: Theme): Extension {
+export function buildEditorTheme(
+	theme: Theme,
+	fontScale = 1,
+	fontFamily?: string,
+	baseFontPx: number = EDITOR_BASE_FONT_PX
+): Extension {
 	const c = theme.colors;
 	const isDark = theme.mode !== 'light';
 
@@ -35,9 +49,18 @@ export function buildEditorTheme(theme: Theme): Extension {
 				height: '100%',
 			},
 			'.cm-scroller': {
+				// CM6 sets its own font on `.cm-scroller`, so the surface font cannot
+				// arrive by inheritance from the pane the way the prose tiers get it -
+				// it has to be threaded in here. Undefined keeps the built-in stack,
+				// which is what the read-only Giant tier used before per-surface fonts.
 				fontFamily:
+					fontFamily ??
 					'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
-				fontSize: '13px',
+				// `baseFontPx` is the File Preview / File Editor size setting; the
+				// hard-coded constant survives only as its default. `fontScale` is
+				// the pane's own zoom control, which multiplies on top - two
+				// independent knobs, and the surface size is the one that persists.
+				fontSize: `${Math.round(baseFontPx * fontScale * 10) / 10}px`,
 				lineHeight: '1.6',
 			},
 			'.cm-content': {

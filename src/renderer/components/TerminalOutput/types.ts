@@ -1,5 +1,14 @@
 import type React from 'react';
-import type { Session, Theme, LogEntry, FocusArea, AgentError, QueuedItem } from '../../types';
+import type { ForceSendEligibility } from '../../utils/executionQueue';
+import type {
+	Session,
+	Theme,
+	LogEntry,
+	FocusArea,
+	AgentError,
+	QueuedItem,
+	QueuedItemEditPatch,
+} from '../../types';
 import type { FileNode } from '../../types/fileTree';
 import type Convert from 'ansi-to-html';
 
@@ -86,9 +95,18 @@ export interface LogItemProps {
 	bionifyAlgorithm: string;
 	// Message alignment
 	userMessageAlignment: 'left' | 'right';
-	// Claude mode pill - both passed as primitives so LogItem memo equality stays cheap.
+	/**
+	 * How long the agent took on this turn, in ms - user message to the last
+	 * thing the agent emitted before the next one. Set only on the final reply
+	 * of a turn (see `computeTurnDurations`); undefined everywhere else,
+	 * including on every user message.
+	 */
+	responseDurationMs?: number;
+	// Claude mode pill - all passed as primitives so LogItem memo equality stays cheap.
 	isClaudeCode: boolean;
 	isAdaptiveMode: boolean;
+	/** Display setting: when false the provider mode pill is suppressed entirely. */
+	showProviderModePill: boolean;
 	// Session recovery (session_not_found inline card). Only consumed when
 	// log.recoveryAction is set; otherwise these props are ignored.
 	sessionId: string;
@@ -125,17 +143,26 @@ export interface TerminalOutputProps {
 	onDeleteLog?: (logId: string) => number | null; // Returns the index to scroll to after deletion
 	onRemoveQueuedItem?: (itemId: string) => void; // Callback to remove a queued item from execution queue
 	onTogglePauseQueuedItem?: (itemId: string) => void; // Callback to toggle held/paused state of a queued item
-	onEditQueuedItem?: (itemId: string, patch: { text: string; images: string[] }) => void; // Edit a queued message's text + images
+	onEditQueuedItem?: (itemId: string, patch: QueuedItemEditPatch) => void; // Edit a queued message's text, images and turn settings
 	onReorderQueuedItem?: (fromIndex: number, toIndex: number, tabId?: string) => void; // Reorder a queued item within the active tab's queue
 	onForceSendQueuedItem?: (itemId: string) => void; // Callback to Force Send a queued item (parallel execution)
 	forcedParallelEnabled?: boolean; // Whether forcedParallelExecution setting is on (gates Force Send button)
-	getForceSendContext?: (
-		item: QueuedItem
-	) => { targetTabBusy: boolean; otherBusyTabs: { id: string; displayName: string }[] } | null;
+	/** Full Force Send eligibility for a queued item - see QueuedItemsList. */
+	getForceSendContext?: (item: QueuedItem) => ForceSendEligibility | null;
+	/**
+	 * Whether this chat view answers the global Force Send keyboard shortcut
+	 * (`maestro:triggerForceSendQueued`). The single view is the only chat on
+	 * screen, so it defaults to true. A tiled group mounts one chat per AI pane,
+	 * and the event is global - without this gate every pane with a queue would
+	 * pop its own confirmation. Only the focused pane (the one the shared AI input
+	 * targets) sets it.
+	 */
+	forceSendShortcutEnabled?: boolean;
 	onInterrupt?: () => void; // Callback to interrupt the current process
 	onScrollPositionChange?: (scrollTop: number) => void; // Callback to save scroll position
 	onAtBottomChange?: (isAtBottom: boolean) => void; // Callback when user scrolls to/away from bottom
 	initialScrollTop?: number; // Initial scroll position to restore
+	initialIsAtBottom?: boolean; // Whether the tab was following the bottom when it lost focus; undefined means legacy tab / treated as "was at bottom"
 	markdownEditMode: boolean; // Whether to show raw markdown or rendered markdown for AI responses
 	setMarkdownEditMode: (value: boolean) => void; // Toggle markdown mode
 	onReplayMessage?: (text: string, images?: string[]) => void; // Replay a user message

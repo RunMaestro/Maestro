@@ -1230,6 +1230,126 @@ describe('applyAgentConfigOverrides', () => {
 		applyAgentConfigOverrides(agent, baseArgs, {});
 		expect(baseArgs).toEqual(['--print']);
 	});
+
+	// -- readOnlyMode: read-only flags must not be overridable --
+	//
+	// buildAgentArgs emits readOnlyArgs BEFORE these overrides are appended, so
+	// a repeat of the same flag would win on the CLI. OpenCode is the live case:
+	// plan mode is `--agent plan`, and a user selecting an OpenCode agent stores
+	// `--agent <name>` in their per-agent custom args.
+	describe('readOnlyMode flag pinning', () => {
+		const openCodeLike = makeAgent({
+			readOnlyArgs: ['--agent', 'plan'],
+			configOptions: [
+				{
+					key: 'model',
+					type: 'text',
+					label: 'Model',
+					description: 'Model',
+					default: '',
+					argBuilder: (val: any) => (val ? ['--model', String(val)] : []),
+				},
+			],
+		});
+
+		it('drops a custom-args --agent that would override plan mode', () => {
+			const result = applyAgentConfigOverrides(openCodeLike, ['run', '--agent', 'plan'], {
+				sessionCustomArgs: '--agent prometheus --verbose',
+				readOnlyMode: true,
+			});
+			expect(result.args).toEqual(['run', '--agent', 'plan', '--verbose']);
+		});
+
+		it('drops the `--agent=name` spelling too', () => {
+			const result = applyAgentConfigOverrides(openCodeLike, ['run', '--agent', 'plan'], {
+				sessionCustomArgs: '--agent=prometheus --verbose',
+				readOnlyMode: true,
+			});
+			expect(result.args).toEqual(['run', '--agent', 'plan', '--verbose']);
+		});
+
+		it('reports customArgsSource as none when every custom arg was dropped', () => {
+			const result = applyAgentConfigOverrides(openCodeLike, ['run', '--agent', 'plan'], {
+				sessionCustomArgs: '--agent prometheus',
+				readOnlyMode: true,
+			});
+			expect(result.args).toEqual(['run', '--agent', 'plan']);
+			expect(result.customArgsSource).toBe('none');
+		});
+
+		it('keeps the custom --agent when not in read-only mode', () => {
+			const result = applyAgentConfigOverrides(openCodeLike, ['run'], {
+				sessionCustomArgs: '--agent prometheus --verbose',
+			});
+			expect(result.args).toEqual(['run', '--agent', 'prometheus', '--verbose']);
+		});
+
+		it('leaves non-conflicting flags alone in read-only mode', () => {
+			const result = applyAgentConfigOverrides(openCodeLike, ['run', '--agent', 'plan'], {
+				sessionCustomModel: 'anthropic/claude-sonnet-4-20250514',
+				sessionCustomArgs: '--verbose',
+				readOnlyMode: true,
+			});
+			expect(result.args).toEqual([
+				'run',
+				'--agent',
+				'plan',
+				'--model',
+				'anthropic/claude-sonnet-4-20250514',
+				'--verbose',
+			]);
+		});
+
+		it('drops a config option that builds a pinned read-only flag', () => {
+			const agent = makeAgent({
+				readOnlyArgs: ['--agent', 'plan'],
+				configOptions: [
+					{
+						key: 'agent',
+						type: 'text',
+						label: 'Agent',
+						description: 'Agent',
+						default: '',
+						argBuilder: (val: any) => (val ? ['--agent', String(val)] : []),
+					},
+				],
+			});
+			const result = applyAgentConfigOverrides(agent, ['run', '--agent', 'plan'], {
+				agentConfigValues: { agent: 'prometheus' },
+				readOnlyMode: true,
+			});
+			expect(result.args).toEqual(['run', '--agent', 'plan']);
+		});
+
+		// Regression: a pinned flag with no value of its own (e.g. Codex's
+		// `--skip-git-repo-check`) used to eat whatever unrelated token followed
+		// it, since stripFlags couldn't tell a boolean switch from a value-taking
+		// one and only checked whether the next token looked like a flag.
+		const codexLike = makeAgent({
+			readOnlyArgs: [
+				'--sandbox',
+				'read-only',
+				'--dangerously-bypass-approvals-and-sandbox',
+				'--skip-git-repo-check',
+			],
+		});
+
+		it('does not eat an unrelated custom arg following a boolean pinned flag', () => {
+			const result = applyAgentConfigOverrides(codexLike, ['exec'], {
+				sessionCustomArgs: '--foo bar --skip-git-repo-check my-value',
+				readOnlyMode: true,
+			});
+			expect(result.args).toEqual(['exec', '--foo', 'bar', 'my-value']);
+		});
+
+		it('still eats the value for a pinned flag that genuinely takes one', () => {
+			const result = applyAgentConfigOverrides(codexLike, ['exec'], {
+				sessionCustomArgs: '--sandbox danger-full-access --other-flag keep-me',
+				readOnlyMode: true,
+			});
+			expect(result.args).toEqual(['exec', '--other-flag', 'keep-me']);
+		});
+	});
 });
 
 // ---------------------------------------------------------------------------
@@ -1393,5 +1513,66 @@ describe('buildAgentArgs: additionalDirectories', () => {
 
 		expect(args).toEqual(['--print', '--add-dir', '/shared/src']);
 		expect(args[args.length - 1]).not.toMatch(/^-/);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Antigravity CLI (`agy`) - real definition wiring
+// ---------------------------------------------------------------------------
+describe('buildAgentArgs with the Antigravity definition', () => {
+	const antigravity = () =>
+		({
+			...getAgentDefinition('antigravity'),
+			available: true,
+			capabilities: {} as AgentConfig['capabilities'],
+		}) as AgentConfig;
+
+	it('composes a headless run that auto-approves tools and streams JSON', () => {
+		const result = buildAgentArgs(antigravity(), { baseArgs: [], prompt: 'hi' });
+
+		expect(result).toEqual(['--dangerously-skip-permissions', '--output-format', 'stream-json']);
+	});
+
+	it('resumes a specific conversation by id', () => {
+		const result = buildAgentArgs(antigravity(), {
+			baseArgs: [],
+			prompt: 'follow up',
+			agentSessionId: '055a398f-db14-4c5f-abbb-1bf03f8120a7',
+		});
+
+		expect(result).toContain('--conversation');
+		expect(result).toContain('055a398f-db14-4c5f-abbb-1bf03f8120a7');
+	});
+
+	it('drops the permission-skip flag in read-only mode and sandboxes the terminal instead', () => {
+		const result = buildAgentArgs(antigravity(), {
+			baseArgs: [],
+			prompt: 'read only please',
+			readOnlyMode: true,
+		});
+
+		expect(result).not.toContain('--dangerously-skip-permissions');
+		expect(result).toContain('--sandbox');
+	});
+
+	it('raises the headless timeout past the 5m CLI default without any user config', () => {
+		const { args } = applyAgentConfigOverrides(antigravity(), [], {});
+
+		expect(args).toEqual(['--print-timeout', '30m']);
+	});
+
+	it('adds model and effort flags only once the user sets them', () => {
+		const { args } = applyAgentConfigOverrides(antigravity(), [], {
+			agentConfigValues: { model: 'gemini-3.6-flash-high', effort: 'high' },
+		});
+
+		expect(args).toEqual([
+			'--model',
+			'gemini-3.6-flash-high',
+			'--effort',
+			'high',
+			'--print-timeout',
+			'30m',
+		]);
 	});
 });

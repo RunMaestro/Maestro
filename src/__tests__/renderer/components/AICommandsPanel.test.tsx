@@ -1459,4 +1459,216 @@ describe('AICommandsPanel', () => {
 			expect(mockHandleKeyDown).toHaveBeenCalled();
 		});
 	});
+
+	describe('Malformed persisted commands (MAESTRO-YP/YQ/YR)', () => {
+		// settings.json is user/sync/legacy editable, so a stored command can be
+		// missing its `id`. That used to make `editingCommand?.id === cmd.id`
+		// evaluate `undefined === undefined` -> true while nothing was being
+		// edited, rendering the edit form against a null `editingCommand` and
+		// taking the whole Settings modal down through the ErrorBoundary.
+		const idLessCommand = {
+			command: '/legacy',
+			description: 'Command persisted before ids existed',
+			prompt: 'Legacy prompt',
+			isBuiltIn: false,
+		} as unknown as CustomAICommand;
+
+		it('renders a command with no id without crashing', () => {
+			expect(() =>
+				render(
+					<AICommandsPanel
+						theme={mockTheme}
+						customAICommands={[idLessCommand]}
+						setCustomAICommands={mockSetCustomAICommands}
+					/>
+				)
+			).not.toThrow();
+
+			expect(screen.getByText('/legacy')).toBeInTheDocument();
+		});
+
+		it('shows the id-less command collapsed, not in edit mode', () => {
+			render(
+				<AICommandsPanel
+					theme={mockTheme}
+					customAICommands={[idLessCommand]}
+					setCustomAICommands={mockSetCustomAICommands}
+				/>
+			);
+
+			// The edit form's Save/Cancel pair only exists in the editing branch.
+			expect(screen.queryByRole('button', { name: /^Save$/i })).not.toBeInTheDocument();
+			expect(screen.queryByRole('button', { name: /^Cancel$/i })).not.toBeInTheDocument();
+		});
+
+		it('still renders normally alongside well-formed commands', () => {
+			render(
+				<AICommandsPanel
+					theme={mockTheme}
+					customAICommands={[idLessCommand, createMockCommand({ command: '/ok' })]}
+					setCustomAICommands={mockSetCustomAICommands}
+				/>
+			);
+
+			expect(screen.getByText('/legacy')).toBeInTheDocument();
+			expect(screen.getByText('/ok')).toBeInTheDocument();
+		});
+	});
+	describe('Fuzzy filter', () => {
+		const filterCommands: CustomAICommand[] = [
+			createMockCommand({
+				id: 'cmd-deploy',
+				command: '/deploy',
+				description: 'Ship the build',
+				prompt: 'Run the release script and tag it',
+			}),
+			createMockCommand({
+				id: 'cmd-assess',
+				command: '/assess',
+				description: 'Assess code quality',
+				prompt: 'Review the diff for bugs',
+			}),
+			createMockCommand({
+				id: 'cmd-close',
+				command: '/close',
+				description: 'Update issue on GitHub',
+				prompt: 'Close the issue with a summary',
+			}),
+		];
+
+		const renderWithFilter = () =>
+			render(
+				<AICommandsPanel
+					theme={mockTheme}
+					customAICommands={filterCommands}
+					setCustomAICommands={mockSetCustomAICommands}
+				/>
+			);
+
+		const typeFilter = (query: string) => {
+			fireEvent.change(screen.getByPlaceholderText('Filter commands...'), {
+				target: { value: query },
+			});
+		};
+
+		const rowFor = (command: string) =>
+			screen.queryByRole('button', { name: new RegExp(command.replace('/', '\\/')) });
+
+		it('does not render the filter when there are no commands', () => {
+			render(
+				<AICommandsPanel
+					theme={mockTheme}
+					customAICommands={[]}
+					setCustomAICommands={mockSetCustomAICommands}
+				/>
+			);
+
+			expect(screen.queryByPlaceholderText('Filter commands...')).not.toBeInTheDocument();
+		});
+
+		it('narrows the list on a command-name match and reports the count', () => {
+			renderWithFilter();
+			typeFilter('deploy');
+
+			expect(rowFor('/deploy')).toBeInTheDocument();
+			expect(rowFor('/assess')).not.toBeInTheDocument();
+			expect(rowFor('/close')).not.toBeInTheDocument();
+			expect(screen.getByText('1 of 3')).toBeInTheDocument();
+		});
+
+		it('ignores a leading slash, the way the composer popover does', () => {
+			// These ARE slash commands, so typing the slash is the natural move.
+			// Matching runs on the name with the slash already stripped, so a
+			// literal '/' in the query used to match nothing at all.
+			renderWithFilter();
+			typeFilter('/dep');
+
+			expect(rowFor('/deploy')).toBeInTheDocument();
+			expect(rowFor('/assess')).not.toBeInTheDocument();
+			expect(screen.getByText('1 of 3')).toBeInTheDocument();
+		});
+
+		it('treats a bare slash as no filter at all', () => {
+			renderWithFilter();
+			typeFilter('/');
+
+			expect(rowFor('/deploy')).toBeInTheDocument();
+			expect(rowFor('/assess')).toBeInTheDocument();
+			expect(rowFor('/close')).toBeInTheDocument();
+		});
+
+		it('quotes back what was typed when nothing matches', () => {
+			// The slash is stripped before matching, but echoing the stripped query
+			// would quote back something the user never entered.
+			renderWithFilter();
+			typeFilter('/zzzznotacommand');
+
+			expect(screen.getByText(/No commands match "\/zzzznotacommand"/)).toBeInTheDocument();
+		});
+
+		it('emphasizes the characters that earned the match', () => {
+			renderWithFilter();
+			typeFilter('dpy');
+
+			// A fuzzy hit is a scattered subsequence, so the name renders one span
+			// per character with the matched ones bolded.
+			const row = rowFor('/deploy');
+			const bolded = Array.from(row?.querySelectorAll('span') ?? [])
+				.filter((el) => el.style.fontWeight === '700')
+				.map((el) => el.textContent)
+				.join('');
+			expect(bolded).toBe('dpy');
+		});
+
+		it('matches a fuzzy subsequence of the command name', () => {
+			renderWithFilter();
+			typeFilter('dpy');
+
+			expect(rowFor('/deploy')).toBeInTheDocument();
+			expect(rowFor('/assess')).not.toBeInTheDocument();
+		});
+
+		it('matches the description', () => {
+			renderWithFilter();
+			typeFilter('quality');
+
+			expect(rowFor('/assess')).toBeInTheDocument();
+			expect(rowFor('/deploy')).not.toBeInTheDocument();
+		});
+
+		it('matches the prompt body', () => {
+			renderWithFilter();
+			typeFilter('tag it');
+
+			expect(rowFor('/deploy')).toBeInTheDocument();
+			expect(rowFor('/assess')).not.toBeInTheDocument();
+			expect(rowFor('/close')).not.toBeInTheDocument();
+		});
+
+		it('ranks a name match above a body-only match', () => {
+			renderWithFilter();
+			// "close" is the name of one command and appears in another's prompt body.
+			typeFilter('close');
+
+			const rows = screen
+				.getAllByRole('button')
+				.map((el) => el.textContent ?? '')
+				.filter((text) => text.includes('/'));
+			expect(rows[0]).toContain('/close');
+		});
+
+		it('shows a no-match state whose Clear filter button restores the list', () => {
+			renderWithFilter();
+			typeFilter('zzzznotacommand');
+
+			expect(screen.getByText(/No commands match/)).toBeInTheDocument();
+			expect(rowFor('/deploy')).not.toBeInTheDocument();
+
+			fireEvent.click(screen.getByRole('button', { name: 'Show all commands' }));
+
+			expect(rowFor('/deploy')).toBeInTheDocument();
+			expect(rowFor('/assess')).toBeInTheDocument();
+			expect(rowFor('/close')).toBeInTheDocument();
+		});
+	});
 });

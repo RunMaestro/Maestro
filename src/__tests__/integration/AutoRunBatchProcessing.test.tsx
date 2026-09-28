@@ -30,6 +30,13 @@ const renderWithProvider = (ui: React.ReactElement) => {
 };
 
 // Mock external dependencies
+// CodeMirror cannot lay itself out in jsdom, so the Auto Run source editor is
+// swapped for the shared textarea double (it still implements the editor handle).
+vi.mock('../../renderer/components/FilePreview/markdownEditor', async () => {
+	const { markdownEditorModuleMock } = await import('../helpers/mockMarkdownEditor');
+	return markdownEditorModuleMock();
+});
+
 vi.mock('react-markdown', () => ({
 	default: ({ children }: { children: string }) => (
 		<div data-testid="react-markdown">{children}</div>
@@ -831,13 +838,15 @@ describe('AutoRun + Batch Processing Integration', () => {
 	});
 
 	describe('Progress Display During Batch Run', () => {
-		it('shows warning border color on textarea during batch run', () => {
+		// The source editor is CodeMirror, which owns its own scroller, so the
+		// panel frame lives on the wrapper around it rather than on the input.
+		it('shows warning border color around the editor during batch run', () => {
 			const batchRunState = createBatchRunState({ isRunning: true });
 			const props = createDefaultProps({ batchRunState });
 			renderWithProvider(<AutoRun {...props} />);
 
-			const textarea = screen.getByRole('textbox');
-			expect(textarea).toHaveStyle({ borderColor: createMockTheme().colors.warning });
+			const editorFrame = screen.getByRole('textbox').closest('.border');
+			expect(editorFrame).toHaveStyle({ borderColor: createMockTheme().colors.warning });
 		});
 
 		it('displays document name during batch run', () => {

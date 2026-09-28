@@ -495,6 +495,26 @@ describe('notificationStore', () => {
 				expect(mockShow).not.toHaveBeenCalled();
 			});
 
+			it('does not call show when the toast opts out with skipOsNotification', () => {
+				notifyToast({
+					type: 'info',
+					title: 'Toast Width: Large',
+					message: 'Toasts now render 480-720px wide.',
+					skipOsNotification: true,
+				});
+				expect(mockShow).not.toHaveBeenCalled();
+			});
+
+			it('still renders an in-app toast when the OS notification is skipped', () => {
+				notifyToast({
+					type: 'info',
+					title: 'Toast Width: Large',
+					message: 'Toasts now render 480-720px wide.',
+					skipOsNotification: true,
+				});
+				expect(useNotificationStore.getState().toasts).toHaveLength(1);
+			});
+
 			it('uses project as notification title when available', () => {
 				notifyToast({
 					type: 'success',

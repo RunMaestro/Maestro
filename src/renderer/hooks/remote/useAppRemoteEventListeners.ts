@@ -13,23 +13,108 @@ import { generateId } from '../../utils/ids';
 import { useSessionStore, selectSessionById } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { PLAYBOOKS_DIR } from '../../../shared/maestro-paths';
+import { asThinkingMode } from '../../../shared/types';
+import type { MediaOpenMode } from '../../../shared/mediaTypes';
 import { getBrowserTabPartition } from '../../utils/browserTabPersistence';
 import { insertAfterActiveInUnifiedTabOrder } from '../../utils/unifiedTabOrderUtils';
 import {
 	createTerminalTab as createTerminalTabHelper,
 	addTerminalTab as addTerminalTabHelper,
+	resolveTerminalTab,
+	getTerminalTabDisplayName,
+	getTerminalSessionId,
 } from '../../utils/terminalTabHelpers';
 import type { Session, AITab, ToolType, Group, BatchRunConfig, BrowserTab } from '../../types';
 import { logger } from '../../utils/logger';
+import { FILE_TREE_REFRESH_EVENT } from '../../utils/fileTreeRefresh';
+import {
+	withWorkingDirectory,
+	workingDirectoryChangeBlocker,
+} from '../../utils/agentWorkingDirectory';
+import { spawnPtyForTab } from '../../services/terminalSpawn';
+import { useTabStore } from '../../stores/tabStore';
+import {
+	createTabPidChangeHandler,
+	createTabStateChangeHandler,
+} from '../../components/TerminalView';
 import { captureException, captureMessage } from '../../utils/sentry';
 import { DEFAULT_BATCH_PROMPT } from '../batch/batchUtils';
 import { gitService } from '../../services/git';
 import { spawnWorktreeAgentAndDispatch } from '../../utils/worktreeSpawn';
 import { notifyToast } from '../../stores/notificationStore';
+import { reserveGoalRunLaunch, releaseGoalRunLaunch, waitForGoalRunStart } from './goalRunLaunch';
 import {
 	canCreateGroupInside,
+	canSetGroupParent,
 	removeGroupAndPromoteChildren,
+	setGroupParent,
 } from '../../../shared/groupHierarchy';
+import {
+	validateGroupAppearance,
+	validateGroupUpdate,
+	type GroupUpdateRequest,
+} from '../../../shared/groupAppearance';
+
+// ============================================================================
+// Group update helpers
+// ============================================================================
+
+/**
+ * Write the group list straight to disk and wait for it.
+ *
+ * The store's own persistence runs from a React effect, so it lands after this
+ * listener has already answered the caller. A CLI that verifies its write by
+ * reading `maestro-groups.json` back would then see the pre-update list and
+ * report a false mismatch. Flushing before responding makes the readback
+ * deterministic; the effect's later write is the same data and is idempotent.
+ * Same reasoning as the remote session-rename handler above.
+ */
+async function flushGroupsToDisk(groups: Group[]): Promise<void> {
+	try {
+		await window.maestro.groups.setAll(groups);
+	} catch (error) {
+		logger.error('[Remote] Failed to persist group change:', undefined, error);
+	}
+}
+
+/**
+ * Apply a validated update to one group. Pure so the ordering rules are
+ * testable: the parent move runs first (it can reject on its own terms and
+ * returns the list unchanged when it does), then the field-level sets and
+ * clears are applied to the moved list.
+ */
+function applyGroupUpdate(
+	groups: Group[],
+	groupId: string,
+	request: GroupUpdateRequest,
+	clear: Set<string>
+): Group[] {
+	let next = groups;
+	if (request.parentGroupId) {
+		next = setGroupParent(next, groupId, request.parentGroupId);
+	} else if (clear.has('parent')) {
+		next = setGroupParent(next, groupId, undefined);
+	}
+
+	return next.map((group) => {
+		if (group.id !== groupId) return group;
+		const updated: Group = { ...group };
+		if (request.name) updated.name = request.name.toUpperCase();
+		// An icon and an emoji are alternative presentations of the same group,
+		// and the Groups+ gate falls back to the emoji, so setting one never
+		// discards the other - clearing is always explicit.
+		if (request.emoji) updated.emoji = request.emoji;
+		if (request.icon) updated.icon = request.icon;
+		if (request.color) updated.color = request.color;
+		// The emoji is non-optional on Group and the Left Bar renders it when
+		// Groups+ is off, so clearing it restores the default folder rather
+		// than leaving a group with no glyph at all.
+		if (clear.has('emoji')) updated.emoji = '\u{1F4C2}';
+		if (clear.has('icon')) delete updated.icon;
+		if (clear.has('color')) delete updated.color;
+		return updated;
+	});
+}
 
 // ============================================================================
 // Dependencies interface
@@ -55,12 +140,12 @@ export interface UseAppRemoteEventListenersDeps {
 			/** Optional 1-based line to jump to once the editor mounts (deep links). */
 			pendingScrollToLine?: number;
 		},
-		options?: { targetSessionId?: string }
+		options?: { targetSessionId?: string; activate?: boolean; mediaMode?: MediaOpenMode }
 	) => void;
 	/** Refresh the file tree for a session */
 	refreshFileTree: (sessionId: string) => void;
 	/** Refresh the Auto Run document list for the active session */
-	handleAutoRunRefresh: () => void;
+	handleAutoRunRefresh: (options?: { silent?: boolean }) => void;
 	/** Start a batch (Auto Run) for a session */
 	startBatchRun: (sessionId: string, config: BatchRunConfig, folderPath: string) => Promise<void>;
 	/** Stop a batch run directly (no confirmation dialog) */
@@ -93,14 +178,49 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 		abortBatchOnError,
 	} = deps;
 
+	/**
+	 * Switch the active agent and say who asked.
+	 *
+	 * A remote verb moving the Left Bar selection is indistinguishable, once it
+	 * has happened, from the human clicking an agent: the state looks identical
+	 * and nothing records which verb arrived. That is the evidence gap that made
+	 * the last reported focus jump untraceable, so every agent-level switch this
+	 * file performs goes through here and names its origin.
+	 *
+	 * Logged at `info` deliberately. The main-process logger defaults to
+	 * `minLevel: 'info'` and drops `debug`, and file logging is Windows-only, so
+	 * a `debug` line would be invisible to the macOS users who hit this.
+	 */
+	const switchActiveSession = (sessionId: string, origin: string) => {
+		logger.info('[Remote] active agent switched', undefined, { origin, sessionId });
+		setActiveSessionId(sessionId);
+	};
+
 	// --- File Operations ---
 
 	// Handle remote open file tab events from CLI/web interface
 	useEventListener('maestro:openFileTab', async (e: Event) => {
-		const { sessionId, filePath, switchToAgent, line } = (e as CustomEvent).detail as {
+		const { sessionId, filePath, background, switchToAgent, mediaMode, line } = (e as CustomEvent)
+			.detail as {
 			sessionId: string;
 			filePath: string;
+			/**
+			 * true = create the preview tab without moving the human at all: neither
+			 * the active agent nor the active tab inside any agent changes. Absent
+			 * means an in-app open (a toast click, a file-tree click, a deep link),
+			 * which is a human asking to be taken there.
+			 */
+			background?: boolean;
+			/**
+			 * false = the older, weaker `--no-switch` ask: stay on the current agent,
+			 * but still activate the tab inside the target one. Absent means switch.
+			 */
 			switchToAgent?: boolean;
+			/**
+			 * 'queue' = audio/video goes into the player's queue without starting
+			 * (`maestro-cli open-file --queue`). Absent means open-and-play.
+			 */
+			mediaMode?: MediaOpenMode;
 			/** Optional 1-based line to jump to once the file is open. Set by
 			 *  maestro://file/...#L<n> deep links. */
 			line?: number;
@@ -112,10 +232,22 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 		}
 		const sshRemoteId =
 			session.sshRemoteId || session.sessionSshRemoteConfig?.remoteId || undefined;
-		// Honor `--no-switch`: register the tab on the target agent but leave the
-		// active agent untouched so the CLI invocation doesn't hijack focus.
-		if (switchToAgent !== false) {
-			setActiveSessionId(sessionId);
+		// Three distinct outcomes, because `--no-switch` and `--background` are
+		// different asks and both have to keep working:
+		//
+		//   neither          -> switch agent, activate the tab (today's default)
+		//   --no-switch      -> stay on this agent, still activate the tab there
+		//   --background     -> touch nothing that is currently rendered, anywhere
+		//
+		// Suppressing only the agent switch was never enough for the strong case:
+		// a file tab outranks the AI tab in the render precedence, so activating
+		// one changes the view even when the caller stayed on the same agent.
+		// That is exactly why `--no-switch` reads like `--background` and is not.
+		//
+		// Queueing media never switches agents either: the player is app-wide, so
+		// the agent the file belongs to is not somewhere the user needs to be.
+		if (!background && switchToAgent !== false && mediaMode !== 'queue') {
+			switchActiveSession(sessionId, 'open-file');
 		}
 		try {
 			const [content, stat] = await Promise.all([
@@ -134,7 +266,7 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 						sshRemoteId,
 						pendingScrollToLine: line,
 					},
-					{ targetSessionId: sessionId }
+					{ targetSessionId: sessionId, activate: !background, mediaMode }
 				);
 			}
 		} catch (error) {
@@ -143,7 +275,7 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 	});
 
 	// Handle remote refresh file tree events from CLI/web interface
-	useEventListener('maestro:refreshFileTree', (e: Event) => {
+	useEventListener(FILE_TREE_REFRESH_EVENT, (e: Event) => {
 		const { sessionId } = (e as CustomEvent).detail;
 		refreshFileTree(sessionId);
 	});
@@ -152,14 +284,15 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 	// Acks success to responseChannel so the CLI only reports success after
 	// the tab is actually created.
 	useEventListener('maestro:openBrowserTab', (e: Event) => {
-		const { sessionId, url, responseChannel } = (e as CustomEvent).detail as {
+		const { sessionId, url, responseChannel, background } = (e as CustomEvent).detail as {
 			sessionId: string;
 			url: string;
 			responseChannel?: string;
+			background?: boolean;
 		};
-		const ack = (success: boolean) => {
+		const ack = (success: boolean, tabId?: string) => {
 			if (responseChannel) {
-				window.maestro.process.sendRemoteOpenBrowserTabResponse(responseChannel, success);
+				window.maestro.process.sendRemoteOpenBrowserTabResponse(responseChannel, success, tabId);
 			}
 		};
 		const session = sessionsRef.current.find((s) => s.id === sessionId);
@@ -168,7 +301,12 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 			ack(false);
 			return;
 		}
-		setActiveSessionId(sessionId);
+		// A background tab must not move the user: leave the active agent alone
+		// and leave whatever tab they were on visible. Agents doing research
+		// open tabs this way so the window doesn't jump mid-keystroke.
+		if (!background) {
+			switchActiveSession(sessionId, 'open-browser');
+		}
 		const newBrowserTab: BrowserTab = {
 			id: generateId(),
 			url,
@@ -183,17 +321,60 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 		setSessions((prev) =>
 			prev.map((s) => {
 				if (s.id !== sessionId) return s;
-				return {
+				const withTab = {
 					...s,
 					browserTabs: [...(s.browserTabs || []), newBrowserTab],
-					activeFileTabId: null,
-					activeBrowserTabId: newBrowserTab.id,
-					activeTerminalTabId: null,
-					inputMode: 'ai' as const,
 					unifiedTabOrder: insertAfterActiveInUnifiedTabOrder(s, {
 						type: 'browser',
 						id: newBrowserTab.id,
 					}),
+				};
+				if (background) return withTab;
+				return {
+					...withTab,
+					activeFileTabId: null,
+					activeBrowserTabId: newBrowserTab.id,
+					activeTerminalTabId: null,
+					inputMode: 'ai' as const,
+				};
+			})
+		);
+		ack(true, newBrowserTab.id);
+	});
+
+	// Handle remote close browser tab events from CLI/web interface. Resolves
+	// the owning agent from the tab id so callers only need what open-browser
+	// handed back. Acks false when no such tab exists, so an agent cleaning up
+	// after itself can tell a no-op from a real close.
+	useEventListener('maestro:closeBrowserTab', (e: Event) => {
+		const { tabId, responseChannel } = (e as CustomEvent).detail as {
+			tabId: string;
+			responseChannel?: string;
+		};
+		const ack = (success: boolean) => {
+			if (responseChannel) {
+				window.maestro.process.sendRemoteCloseBrowserTabResponse(responseChannel, success);
+			}
+		};
+		const owner = sessionsRef.current.find((s) =>
+			(s.browserTabs || []).some((t) => t.id === tabId)
+		);
+		if (!owner) {
+			ack(false);
+			return;
+		}
+		setSessions((prev) =>
+			prev.map((s) => {
+				if (s.id !== owner.id) return s;
+				return {
+					...s,
+					browserTabs: (s.browserTabs || []).filter((t) => t.id !== tabId),
+					// Only clear the active pointer when the closed tab was the
+					// visible one; a background tab closing must not change the view.
+					activeBrowserTabId: s.activeBrowserTabId === tabId ? null : s.activeBrowserTabId,
+					unifiedTabOrder: (s.unifiedTabOrder || []).filter(
+						(ref) => !(ref.type === 'browser' && ref.id === tabId)
+					),
 				};
 			})
 		);
@@ -204,14 +385,15 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 	// Acks success to responseChannel so the CLI only reports success after
 	// the tab is actually created.
 	useEventListener('maestro:openTerminalTab', (e: Event) => {
-		const { sessionId, config, responseChannel } = (e as CustomEvent).detail as {
+		const { sessionId, config, responseChannel, background } = (e as CustomEvent).detail as {
 			sessionId: string;
-			config: { cwd?: string; shell?: string; name?: string | null };
+			config: { cwd?: string; shell?: string; name?: string | null; command?: string };
 			responseChannel?: string;
+			background?: boolean;
 		};
-		const ack = (success: boolean) => {
+		const ack = (success: boolean, tabId?: string) => {
 			if (responseChannel) {
-				window.maestro.process.sendRemoteOpenTerminalTabResponse(responseChannel, success);
+				window.maestro.process.sendRemoteOpenTerminalTabResponse(responseChannel, success, tabId);
 			}
 		};
 		const session = sessionsRef.current.find((s) => s.id === sessionId);
@@ -220,35 +402,212 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 			ack(false);
 			return;
 		}
-		setActiveSessionId(sessionId);
-		const tab = createTerminalTabHelper(
+		if (!background) {
+			switchActiveSession(sessionId, 'open-terminal');
+		}
+		const baseTab = createTerminalTabHelper(
 			config?.shell,
 			config?.cwd ?? session.cwd,
 			config?.name ?? null
 		);
+		// A requested command becomes the tab's startup command rather than a
+		// one-shot write: TerminalView already runs that once the PTY is up, and
+		// storing it means a `npm run dev` terminal comes back after a restart or
+		// a manual restart of the tab instead of reopening to an empty shell.
+		const command = config?.command?.trim();
+		const tab = command ? { ...baseTab, startupCommand: command } : baseTab;
 		setSessions((prev) =>
 			prev.map((s) => {
 				if (s.id !== sessionId) return s;
-				const updated = addTerminalTabHelper(s, tab);
-				return { ...updated, inputMode: 'terminal' as const };
+				// A background terminal is added to the tab bar and nothing else:
+				// `activate: false` leaves every active-* id alone, and the mode is
+				// left as-is because flipping the agent into terminal mode is itself
+				// a view change for anyone looking at that agent.
+				if (background) return addTerminalTabHelper(s, tab, { activate: false });
+				return { ...addTerminalTabHelper(s, tab), inputMode: 'terminal' as const };
 			})
 		);
-		ack(true);
+
+		// Start the shell here rather than leaving it to TerminalView. That component
+		// only renders the agent the user is looking at, and only spawns for the ACTIVE
+		// tab (or a non-active one carrying a startup command), so a backgrounded
+		// terminal never got a PTY at all: the tab existed, `send-terminal` reported
+		// "has no running shell yet", and the only fix was to click it - which is the
+		// one thing `--background` exists to avoid. Spawning at creation makes the tab
+		// usable immediately no matter which agent is on screen.
+		//
+		// Safe to call unconditionally: the spawn dedupes in-flight calls by process
+		// id, and once the PID lands TerminalView's own `pid !== 0` check stops it
+		// spawning a second one when it later mounts.
+		const sessionForSpawn = selectSessionById(sessionId)(useSessionStore.getState());
+		if (sessionForSpawn) {
+			void spawnPtyForTab({
+				session: sessionForSpawn,
+				tab,
+				onPid: createTabPidChangeHandler(sessionId),
+				onSpawnFailure: (tabId, isPersistent, message) => {
+					// No xterm to write into from here, so report through the store and a
+					// toast. Persistent tabs stay as restartable husks exactly as they do
+					// on the view path; scratch tabs are closed.
+					logger.warn('Background terminal PTY spawn failed', 'RemoteEvents', {
+						sessionId,
+						tabId,
+						isPersistent,
+						message,
+					});
+					if (isPersistent) {
+						createTabStateChangeHandler(sessionId)(tabId, 'exited');
+					} else {
+						useTabStore.getState().closeTerminalTab(tabId, 'spawn-failure');
+					}
+					notifyToast({ type: 'error', title: 'Failed to start terminal', message });
+				},
+			});
+		}
+
+		ack(true, tab.id);
+	});
+
+	// Handle remote writes into an existing terminal tab from CLI/web interface.
+	// This is the "type into the terminal the user is looking at" path, as
+	// opposed to openTerminalTab which makes a new one.
+	useEventListener('maestro:writeTerminalTab', async (e: Event) => {
+		const { sessionId, tabRef, data, responseChannel } = (e as CustomEvent).detail as {
+			sessionId: string;
+			tabRef?: string;
+			data: string;
+			responseChannel?: string;
+		};
+		const ack = (
+			success: boolean,
+			result?: { error?: string; tabId?: string; tabName?: string }
+		) => {
+			if (responseChannel) {
+				window.maestro.process.sendRemoteWriteTerminalTabResponse(responseChannel, success, result);
+			}
+		};
+
+		const resolved = resolveTerminalTab(sessionsRef.current, sessionId, tabRef);
+		if (!resolved) {
+			const session = sessionsRef.current.find((s) => s.id === sessionId);
+			if (!session) {
+				ack(false, { error: 'Agent not found' });
+			} else if (tabRef) {
+				ack(false, { error: `No terminal tab matching "${tabRef}"` });
+			} else if ((session.terminalTabs || []).length === 0) {
+				ack(false, {
+					error: 'No terminal tab is open for this agent. Use open-terminal first.',
+				});
+			} else {
+				ack(false, {
+					error: 'Several terminal tabs are open and none is active. Pass --tab to pick one.',
+				});
+			}
+			return;
+		}
+
+		const { session: owner, tab } = resolved;
+		const index = (owner.terminalTabs || []).findIndex((t) => t.id === tab.id);
+		const tabName = getTerminalTabDisplayName(tab, index);
+
+		// The PTY lives in the main process and outlives its React view, so a
+		// write lands even when the owning agent is not on screen. A tab that was
+		// never rendered has no PTY at all though (pid 0), and only the ACTIVE
+		// session has a live TerminalView that would spawn one. Waiting for a
+		// background agent would stall until the timeout for a shell that is
+		// never coming, so wait only when it can actually arrive - and never
+		// switch agents to force it, since that would yank the screen away to
+		// service a background command.
+		let pid = tab.pid;
+		if (pid === 0 && tab.state !== 'exited') {
+			const isActiveSession = useSessionStore.getState().activeSessionId === owner.id;
+			if (isActiveSession) {
+				const deadline = Date.now() + 4000;
+				while (pid === 0 && Date.now() < deadline) {
+					await new Promise((resolve) => setTimeout(resolve, 100));
+					pid =
+						(sessionsRef.current.find((s) => s.id === owner.id)?.terminalTabs || []).find(
+							(t) => t.id === tab.id
+						)?.pid ?? 0;
+				}
+			}
+		}
+		if (pid === 0) {
+			ack(false, {
+				error:
+					tab.state === 'exited'
+						? `Terminal "${tabName}" has exited. Restart it from the tab menu, or open a new one.`
+						: `Terminal "${tabName}" has no running shell yet. Select the tab in Maestro, or use open-terminal --command.`,
+				tabId: tab.id,
+				tabName,
+			});
+			return;
+		}
+
+		const success = await window.maestro.process.write(
+			getTerminalSessionId(owner.id, tab.id),
+			data
+		);
+		ack(success, {
+			error: success ? undefined : `Failed to write to terminal "${tabName}"`,
+			tabId: tab.id,
+			tabName,
+		});
+	});
+
+	// Handle remote terminal tab listing from CLI/web interface. Terminal tabs
+	// live only in renderer state, so this is the only way a caller can discover
+	// what is open before writing to it.
+	useEventListener('maestro:listTerminalTabs', (e: Event) => {
+		const { sessionId, responseChannel } = (e as CustomEvent).detail as {
+			sessionId?: string;
+			responseChannel?: string;
+		};
+		if (!responseChannel) return;
+		const sessions = sessionId
+			? sessionsRef.current.filter((s) => s.id === sessionId)
+			: sessionsRef.current;
+		const tabs = sessions.flatMap((session) =>
+			(session.terminalTabs || []).map((tab, index) => ({
+				tabId: tab.id,
+				agentId: session.id,
+				agentName: session.name,
+				name: getTerminalTabDisplayName(tab, index),
+				cwd: tab.cwd || session.cwd || '',
+				pid: tab.pid,
+				state: tab.state,
+				active: session.activeTerminalTabId === tab.id,
+				startupCommand: tab.startupCommand ?? null,
+			}))
+		);
+		window.maestro.process.sendRemoteListTerminalTabsResponse(responseChannel, tabs);
 	});
 
 	// --- Auto Run Operations ---
 
 	// Handle remote refresh auto-run docs events from CLI/web interface
 	useEventListener('maestro:refreshAutoRunDocs', (e: Event) => {
-		const { sessionId } = (e as CustomEvent).detail;
+		const { sessionId, background } = (e as CustomEvent).detail as {
+			sessionId: string;
+			background?: boolean;
+		};
 		const currentActiveId = useSessionStore.getState().activeSessionId;
 		if (sessionId === currentActiveId) {
-			// Already the active session - refresh immediately
-			handleAutoRunRefresh();
+			// Already the active session - refresh immediately. A background caller
+			// still gets the refresh; what it opts out of is the flash, which is a
+			// confirmation of an action the user took and not of one an agent took.
+			handleAutoRunRefresh(background === true ? { silent: true } : undefined);
+		} else if (background === true) {
+			// Nothing on screen is showing this agent's Auto Run list, so there is
+			// nothing to re-read into: the loader effect reads the folder fresh when
+			// the user switches to it. Doing nothing here IS the refresh, and it is
+			// the only reading of `--background` that leaves the view alone - the
+			// switch below is how the non-background path gets the target refreshed
+			// at all.
 		} else {
 			// Switch to the target session - the autoRunFolderPath useEffect
 			// will trigger handleAutoRunRefresh for the newly active session
-			setActiveSessionId(sessionId);
+			switchActiveSession(sessionId, 'refresh-auto-run');
 		}
 	});
 
@@ -454,11 +813,18 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 				// helper writes the resolved values back into config.worktree when
 				// createPROnCompletion is true; we mirror that result onto batchConfig
 				// below so PR creation downstream sees the correct path/branch.
+				// Per-run model/effort override (CLI `--model` / `--effort`). Spread
+				// only when set so an omitted flag never serializes as an empty string,
+				// which would pin the run to a nonexistent model instead of falling
+				// through to the agent default.
 				const batchConfig: BatchRunConfig = {
 					documents,
 					prompt: config.prompt || DEFAULT_BATCH_PROMPT,
 					loopEnabled: config.loopEnabled || false,
 					maxLoops: config.maxLoops,
+					...(config.model && { model: config.model }),
+					...(config.effort && { effort: config.effort }),
+					...(config.ignoreModelHints && { ignoreModelHints: true }),
 				};
 
 				// Mirror desktop's useAutoRunHandlers: when worktree dispatch is enabled,
@@ -576,13 +942,127 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 		}
 	});
 
+	// Handle a remote Goal-Driven Auto Run launch from the CLI
+	// (`maestro-cli goal-run --visible`). Routes to the SAME
+	// `startBatchRun({ goalConfig })` entry point the Auto Run modal's Go button
+	// uses, so the run is desktop-owned: it appears in the Auto Run surface, is
+	// stoppable via `stop-auto-run`, and shows up in `session list` for free.
+	//
+	// Unlike `maestro:configureAutoRun`, this does NOT ack success up front.
+	// Every cheap failure is checked synchronously before the agent is claimed,
+	// and the reply then waits for the run to actually reach a running state -
+	// a CLI that is told "launched" needs that to be true.
+	useEventListener('maestro:launchGoalRun', async (e: Event) => {
+		const { sessionId, config, responseChannel } = (e as CustomEvent).detail as {
+			sessionId: string;
+			config: {
+				goal: string;
+				exitCriteria?: string;
+				maxIterations?: number | null;
+				model?: string;
+				effort?: string;
+			};
+			responseChannel: string;
+		};
+
+		const respond = (result: { success: boolean; tabId?: string; code?: string; error?: string }) =>
+			window.maestro.process.sendRemoteLaunchGoalRunResponse(responseChannel, result);
+
+		const session =
+			sessionsRef.current.find((s) => s.id === sessionId) ||
+			selectSessionById(sessionId)(useSessionStore.getState());
+		if (!session) {
+			respond({
+				success: false,
+				code: 'SESSION_NOT_FOUND',
+				error: `Agent ${sessionId} not found`,
+			});
+			return;
+		}
+
+		const goal = config?.goal?.trim() ?? '';
+		if (!goal) {
+			respond({ success: false, code: 'EMPTY_GOAL', error: 'A non-empty goal is required' });
+			return;
+		}
+
+		// The goal runner honors this too, but it bails with only a toast, which
+		// would surface to the CLI as an opaque failed launch.
+		if (useSettingsStore.getState().autoRunDisabled) {
+			respond({
+				success: false,
+				code: 'AUTO_RUN_DISABLED',
+				error: 'Auto Run is disabled in Settings',
+			});
+			return;
+		}
+
+		// Synchronous claim - see goalRunLaunch.ts for why this cannot be a plain
+		// isRunning read.
+		if (!reserveGoalRunLaunch(sessionId)) {
+			respond({
+				success: false,
+				code: 'AGENT_BUSY',
+				error: `Agent "${session.name}" already has an Auto Run in progress`,
+			});
+			return;
+		}
+
+		try {
+			const batchConfig: BatchRunConfig = {
+				documents: [],
+				prompt: '',
+				loopEnabled: false,
+				maxLoops: null,
+				goalConfig: {
+					goal,
+					exitCriteria: config.exitCriteria?.trim() ?? '',
+					maxIterations: config.maxIterations ?? null,
+				},
+				...(config.model && { model: config.model }),
+				...(config.effort && { effort: config.effort }),
+			};
+
+			// Goal mode is document-less, so folderPath is only used for history
+			// bookkeeping; the agent runs in its own cwd.
+			const runPromise = startBatchRun(sessionId, batchConfig, session.autoRunFolderPath || '');
+			runPromise.catch((err) => {
+				logger.error('[Remote] Visible goal run failed:', undefined, err);
+			});
+
+			const started = await waitForGoalRunStart(sessionId, runPromise);
+			if (!started) {
+				respond({
+					success: false,
+					code: 'LAUNCH_FAILED',
+					error:
+						'The desktop app did not start the goal run (check the Auto Run prompt template and Settings)',
+				});
+				return;
+			}
+
+			// Goal runs attach to the AGENT, not a tab, and surface on whichever AI
+			// tab is active - that is the tab the returned deep link addresses.
+			respond({ success: true, tabId: session.activeTabId });
+		} catch (error) {
+			captureException(error, { extra: { event: 'maestro:launchGoalRun', sessionId } });
+			respond({
+				success: false,
+				code: 'LAUNCH_FAILED',
+				error: error instanceof Error ? error.message : String(error),
+			});
+		} finally {
+			releaseGoalRunLaunch(sessionId);
+		}
+	});
+
 	// Handle remote create-worktree-agent from the CLI. Creates a new agent in a
 	// git worktree branched off a parent agent, without an Auto Run playbook.
 	// Reuses spawnWorktreeAgentAndDispatch (the same helper the Auto Run launch
 	// path uses) but skips the batch dispatch: the new agent is left idle, and
 	// the CLI optionally follows up with `dispatch` to send an initial prompt.
 	useEventListener('maestro:createWorktreeSession', async (e: Event) => {
-		const { parentSessionId, config, responseChannel } = (e as CustomEvent).detail;
+		const { parentSessionId, config, responseChannel, background } = (e as CustomEvent).detail;
 
 		try {
 			const parent = sessionsRef.current.find((s) => s.id === parentSessionId);
@@ -623,6 +1103,14 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 					error: 'Failed to create worktree agent',
 				});
 				return;
+			}
+
+			// spawnWorktreeAgentAndDispatch does not select the child on its own
+			// (unlike the desktop worktree flows, where a human clicked Create), so
+			// background placement is already the behaviour here and `--focus` is
+			// what has to be implemented rather than suppressed.
+			if (!background) {
+				switchActiveSession(newSessionId, 'create-worktree');
 			}
 
 			window.maestro.process.sendRemoteCreateWorktreeSessionResponse(responseChannel, {
@@ -951,7 +1439,8 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 
 	// Handle remote create session from web interface
 	useEventListener('maestro:remoteCreateSession', async (e: Event) => {
-		const { name, toolType, cwd, groupId, config, responseChannel } = (e as CustomEvent).detail;
+		const { name, toolType, cwd, groupId, config, responseChannel, background } = (e as CustomEvent)
+			.detail;
 		try {
 			// Get agent definition to validate
 			const agent = await (window as any).maestro.agents.get(toolType);
@@ -1066,6 +1555,9 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 				...(config?.customContextWindow && {
 					customContextWindow: config.customContextWindow as number,
 				}),
+				...(config?.contextWindowSource === 'user-edited' && {
+					contextWindowSource: 'user-edited' as const,
+				}),
 				...(config?.customProviderPath && {
 					customProviderPath: config.customProviderPath as string,
 				}),
@@ -1079,7 +1571,12 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 			};
 
 			setSessions((prev: Session[]) => [...prev, newSession]);
-			setActiveSessionId(newId);
+			// A background create leaves the Left Bar selection where it is. The
+			// agent still exists, is listed, and is addressable by the id handed
+			// back - it just does not take the window from whoever is working.
+			if (!background) {
+				switchActiveSession(newId, 'create-agent');
+			}
 			(window as any).maestro.stats.recordSessionCreated({
 				sessionId: newId,
 				agentType: toolType,
@@ -1140,7 +1637,7 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 		setSessions((prev: Session[]) => {
 			const filtered = prev.filter((s) => s.id !== sessionId);
 			if (filtered.length > 0 && useSessionStore.getState().activeSessionId === sessionId) {
-				setActiveSessionId(filtered[0].id);
+				switchActiveSession(filtered[0].id, 'delete-agent-survivor');
 			}
 			return filtered;
 		});
@@ -1157,11 +1654,13 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 		}
 	});
 
-	// Handle remote update session cwd from CLI/web. Mutates the UI-facing
-	// cwd/fullPath only; projectRoot is intentionally preserved so historical
-	// provider sessions (stored under the original project root) remain
-	// addressable. The PTY's cwd is fixed at spawn time, so we refuse the
-	// update when an agent process is alive.
+	// Handle remote update session cwd from CLI/web. Every path field moves
+	// together through withWorkingDirectory(): moving cwd alone left projectRoot
+	// and autoRunFolderPath on the old directory, so the Files panel and the Edit
+	// dialog kept describing a folder the agent no longer ran in (#1565). A
+	// spawned process keeps the cwd it launched with, so the update is refused
+	// while the agent is busy or its process is alive
+	// (workingDirectoryChangeBlocker).
 	useEventListener('maestro:remoteUpdateSessionCwd', (e: Event) => {
 		const { sessionId, newCwd, responseChannel } = (e as CustomEvent).detail;
 		const session = sessionsRef.current.find((s) => s.id === sessionId);
@@ -1172,17 +1671,16 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 			});
 			return;
 		}
-		if (session.aiPid && session.aiPid > 0) {
+		const blocker = workingDirectoryChangeBlocker(session);
+		if (blocker) {
 			window.maestro.process.sendRemoteUpdateSessionCwdResponse(responseChannel, {
 				success: false,
-				error: 'Agent process is running; stop it before changing cwd',
+				error: blocker,
 			});
 			return;
 		}
 		setSessions((prev: Session[]) =>
-			prev.map((s) =>
-				s.id === sessionId ? { ...s, cwd: newCwd, fullPath: newCwd, shellCwd: newCwd } : s
-			)
+			prev.map((s) => (s.id === sessionId ? withWorkingDirectory(s, newCwd) : s))
 		);
 		window.maestro.process.sendRemoteUpdateSessionCwdResponse(responseChannel, { success: true });
 	});
@@ -1294,6 +1792,9 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 				customEnvVars: undefined,
 				customModel: undefined,
 				customContextWindow: undefined,
+				// Provenance describes the value cleared above and must not outlive
+				// it (finding AD1); mirrors the Edit Agent modal's switch branch.
+				contextWindowSource: undefined,
 				enableMaestroP: undefined,
 				maestroPPath: undefined,
 				maestroPMode: undefined,
@@ -1325,8 +1826,103 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 			return;
 		}
 
+		// A patch carrying a `tabId` targets one AI tab inside the agent rather
+		// than the agent itself. It rides this message (instead of a new one)
+		// because everything a scriptable write needs is already here: an
+		// allowlist, a response channel the caller can await, and a setMany flush
+		// so the value is on disk before the ack. Prefer extending this for new
+		// persistent state over adding another fire-and-forget renderer channel.
+		const targetTabId = typeof patchObj.tabId === 'string' ? patchObj.tabId : undefined;
+		if (targetTabId !== undefined) {
+			// Everything the composer chips toggle, keyed by the value it accepts.
+			// The type is enforced here rather than trusted from the wire: these
+			// land straight in the persisted tab, so a bad value (a string in
+			// `readOnlyMode`, a typo'd thinking mode) would be a permanently wrong
+			// chip rather than a rejected command.
+			const TAB_EDITABLE_KEYS: Record<string, 'boolean' | 'string' | 'thinking'> = {
+				starred: 'boolean',
+				hasUnread: 'boolean',
+				saveToHistory: 'boolean',
+				readOnlyMode: 'boolean',
+				enterToSend: 'boolean',
+				showThinking: 'thinking',
+				customModel: 'string',
+				customEffort: 'string',
+			};
+			const tabPatch: Record<string, unknown> = {};
+			for (const key of Object.keys(patchObj)) {
+				const kind = TAB_EDITABLE_KEYS[key];
+				if (!kind) continue;
+				const value = patchObj[key];
+				// `null` clears the field, which is how a tab drops an override and
+				// goes back to inheriting the agent's model/effort or the global
+				// enter-to-send setting. Distinct from `false`.
+				if (value === null) {
+					tabPatch[key] = undefined;
+					continue;
+				}
+				const valid =
+					kind === 'boolean'
+						? typeof value === 'boolean'
+						: kind === 'string'
+							? typeof value === 'string'
+							: asThinkingMode(value) !== undefined;
+				if (!valid) {
+					window.maestro.process.sendRemoteUpdateSessionConfigResponse(responseChannel, {
+						success: false,
+						error: `Invalid value for tab field '${key}'`,
+					});
+					return;
+				}
+				tabPatch[key] = value;
+			}
+
+			if (Object.keys(tabPatch).length === 0) {
+				window.maestro.process.sendRemoteUpdateSessionConfigResponse(responseChannel, {
+					success: false,
+					error: 'No editable tab fields in patch',
+				});
+				return;
+			}
+
+			if (!session.aiTabs?.some((t) => t.id === targetTabId)) {
+				window.maestro.process.sendRemoteUpdateSessionConfigResponse(responseChannel, {
+					success: false,
+					error: 'Tab not found',
+				});
+				return;
+			}
+
+			const applyTabPatch = (s: Session): Session => ({
+				...s,
+				aiTabs: s.aiTabs.map((t) => (t.id === targetTabId ? { ...t, ...tabPatch } : t)),
+			});
+
+			setSessions((prev: Session[]) =>
+				prev.map((s) => (s.id === sessionId ? applyTabPatch(s) : s))
+			);
+
+			try {
+				await window.maestro.sessions.setMany([applyTabPatch(session) as any], []);
+			} catch (persistErr) {
+				logger.error('[Remote] Failed to persist tab config:', undefined, persistErr);
+			}
+
+			window.maestro.process.sendRemoteUpdateSessionConfigResponse(responseChannel, {
+				success: true,
+			});
+			return;
+		}
+
 		// Allowlist of editable session config keys. Anything else in the patch is
 		// ignored so the CLI can't write arbitrary Session internals.
+		//
+		// Two groups live here. The spawn-time settings (the Edit Agent modal
+		// fields) take effect on the next launch. The UI-state fields below them
+		// are what the user would otherwise toggle by clicking in the Left Bar;
+		// they apply immediately and are flushed to disk by the setMany below, so
+		// a CLI read straight after the write sees the new value rather than
+		// waiting on the renderer's 2s debounce.
 		const EDITABLE_KEYS = new Set([
 			'nudgeMessage',
 			'newSessionMessage',
@@ -1336,9 +1932,16 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 			'customModel',
 			'customEffort',
 			'customContextWindow',
+			// Provenance for the key above (finding AD1). Must be allowlisted or
+			// `maestro-cli update-agent --context-window` writes the number without
+			// its provenance, and the value it just set stays outranked by the
+			// provider's report - the deliberate edit would silently not apply.
+			'contextWindowSource',
 			'enableMaestroP',
 			'maestroPMode',
 			'maestroPPath',
+			// UI state
+			'bookmarked',
 		]);
 
 		// Build the field patch. A `null` value clears the field (sets undefined);
@@ -1349,6 +1952,14 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 			if (!EDITABLE_KEYS.has(key)) continue;
 			const value = patch[key];
 			(updated as Record<string, unknown>)[key] = value === null ? undefined : value;
+		}
+
+		// Clearing the window clears its provenance too, even when the caller sent
+		// only `customContextWindow: null`. Otherwise a stale 'user-edited' outlives
+		// the value it described and the next window set without provenance
+		// inherits precedence nobody asked for (finding AD1).
+		if (patch.customContextWindow === null) {
+			updated.contextWindowSource = undefined;
 		}
 
 		if (Object.keys(updated).length === 0) {
@@ -1422,11 +2033,12 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 	// --- Group CRUD ---
 
 	// Handle remote create group from web interface
-	useEventListener('maestro:remoteCreateGroup', (e: Event) => {
+	useEventListener('maestro:remoteCreateGroup', async (e: Event) => {
 		const {
 			name,
 			emoji,
 			parentGroupId: requestedParentGroupId,
+			appearance,
 			responseChannel,
 		} = (e as CustomEvent).detail;
 		const trimmed = name.trim();
@@ -1442,18 +2054,31 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 			window.maestro.process.sendRemoteCreateGroupResponse(responseChannel, null);
 			return;
 		}
+		// Re-validate here rather than trusting the sender: this listener is
+		// reachable from any client on the WS bridge, and a bad icon id written
+		// into the group list would survive every later read.
+		const validated = validateGroupAppearance({
+			emoji,
+			icon: appearance?.icon,
+			color: appearance?.color,
+		});
+		if (!validated.ok) {
+			window.maestro.process.sendRemoteCreateGroupResponse(responseChannel, null);
+			return;
+		}
 		const newGroupId = `group-${generateId()}`;
-		setGroups((prev: Group[]) => [
-			...prev,
-			{
-				id: newGroupId,
-				name: trimmed.toUpperCase(),
-				emoji: emoji || '\u{1F4C2}',
-				kind: 'user',
-				...(parentGroupId ? { parentGroupId } : {}),
-				collapsed: false,
-			},
-		]);
+		const newGroup: Group = {
+			id: newGroupId,
+			name: trimmed.toUpperCase(),
+			emoji: validated.value.emoji || '\u{1F4C2}',
+			kind: 'user',
+			...(validated.value.icon ? { icon: validated.value.icon } : {}),
+			...(validated.value.color ? { color: validated.value.color } : {}),
+			...(parentGroupId ? { parentGroupId } : {}),
+			collapsed: false,
+		};
+		setGroups((prev: Group[]) => [...prev, newGroup]);
+		await flushGroupsToDisk(useSessionStore.getState().groups);
 		window.maestro.process.sendRemoteCreateGroupResponse(responseChannel, { id: newGroupId });
 	});
 
@@ -1469,6 +2094,46 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 			prev.map((g) => (g.id === groupId ? { ...g, name: trimmed.toUpperCase() } : g))
 		);
 		window.maestro.process.sendRemoteRenameGroupResponse(responseChannel, true);
+	});
+
+	// Handle a remote group update (name / appearance / parent). The payload is
+	// already validated by the WS handler; what only the renderer can decide is
+	// whether the group exists and whether the requested reparent is legal, so
+	// both are checked before any state is written.
+	useEventListener('maestro:remoteUpdateGroup', async (e: Event) => {
+		const { groupId, update, responseChannel } = (e as CustomEvent).detail as {
+			groupId: string;
+			update: GroupUpdateRequest;
+			responseChannel: string;
+		};
+		const respond = (success: boolean) =>
+			window.maestro.process.sendRemoteUpdateGroupResponse(responseChannel, success);
+
+		const validated = validateGroupUpdate(update ?? {});
+		if (!validated.ok) {
+			respond(false);
+			return;
+		}
+		const request = validated.value;
+		const clear = new Set(request.clear ?? []);
+
+		const currentGroups = useSessionStore.getState().groups;
+		if (!currentGroups.some((g) => g.id === groupId)) {
+			respond(false);
+			return;
+		}
+		if (
+			request.parentGroupId &&
+			!canSetGroupParent(currentGroups, groupId, request.parentGroupId)
+		) {
+			respond(false);
+			return;
+		}
+
+		const nextGroups = applyGroupUpdate(currentGroups, groupId, request, clear);
+		setGroups(() => nextGroups);
+		await flushGroupsToDisk(nextGroups);
+		respond(true);
 	});
 
 	// Handle remote delete group from web interface (fire-and-forget)

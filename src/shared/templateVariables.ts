@@ -25,6 +25,7 @@ import type { AdditionalDirectory } from './types';
  *   {{CWD}}               - Current working directory
  *   {{AUTORUN_FOLDER}}    - Auto Run documents folder path
  *   {{ADDITIONAL_DIRECTORIES}} - Markdown block of extra granted directories (empty when none)
+ *   {{WORKTREE_BASE_PATH}} - Directory where this agent's git worktrees are created (empty when none is configured)
  *
  * Auto Run Variables:
  *   {{DOCUMENT_NAME}}     - Current Auto Run document name (without .md)
@@ -61,7 +62,7 @@ import type { AdditionalDirectory } from './types';
  *   {{MAESTRO_CLI_PATH}}  - Platform-appropriate path to maestro-cli
  *
  * Cue Variables (Cue automation only):
- *   {{CUE_EVENT_TYPE}}      - Cue event type (app.startup, time.heartbeat, time.scheduled, file.changed, agent.completed, github.*, task.pending, cli.trigger)
+ *   {{CUE_EVENT_TYPE}}      - Cue event type (app.startup, time.heartbeat, time.scheduled, file.changed, agent.completed, github.*, task.pending, cli.trigger, webhook.received)
  *   {{CUE_EVENT_TIMESTAMP}} - Cue event timestamp
  *   {{CUE_TRIGGER_NAME}}   - Cue trigger/subscription name
  *   {{CUE_RUN_ID}}         - Cue run UUID
@@ -102,6 +103,12 @@ import type { AdditionalDirectory } from './types';
  *   {{CUE_FROM_AGENT}}      - Triggering upstream agent ID or session ID - populated from sourceSessionId (agent.completed) or sourceAgentId (cli.trigger)
  *
  *   {{CUE_FIRE_AT}}         - Originally-scheduled fire timestamp (ISO-8601 with timezone) for time.once events
+ *
+ *   {{CUE_WEBHOOK_BODY}}        - Webhook payload, pretty-printed JSON (webhook.received events)
+ *   {{CUE_WEBHOOK_EVENT}}       - Vendor event name, e.g. "pull_request" (webhook.received events)
+ *   {{CUE_WEBHOOK_PATH}}        - Path segment the delivery arrived on (webhook.received events)
+ *   {{CUE_WEBHOOK_DELIVERY_ID}} - Vendor delivery id (webhook.received events)
+ *   {{CUE_WEBHOOK_HEADERS}}     - Request headers as key: value lines, secrets redacted (webhook.received events)
  */
 
 /**
@@ -178,6 +185,11 @@ export interface TemplateSessionInfo {
 	contextUsage?: number;
 	/** Extra directories granted beyond the working directory (prompt-level grants). */
 	additionalDirectories?: AdditionalDirectory[];
+	/**
+	 * Per-agent worktree settings. Only `basePath` is read here: it becomes
+	 * {{WORKTREE_BASE_PATH}}, the one place an agent may create a worktree.
+	 */
+	worktreeConfig?: { basePath?: string };
 }
 
 export interface TemplateContext {
@@ -241,6 +253,12 @@ export interface TemplateContext {
 		ghBaseBranch?: string;
 		ghAssignees?: string;
 		ghMergedAt?: string;
+		/** The label that was just added (github.label only). */
+		ghLabel?: string;
+		/** Who added the label (github.label only). */
+		ghLabelActor?: string;
+		/** ISO timestamp of the label add (github.label only). */
+		ghLabeledAt?: string;
 		/**
 		 * Comments posted to this PR/issue since the previous Cue fire,
 		 * formatted as a single human-readable block. Empty on the initial
@@ -260,6 +278,17 @@ export interface TemplateContext {
 		fromAgent?: string;
 		// time.once fields - originally-scheduled fire timestamp (ISO-8601 with TZ).
 		fireAt?: string;
+		// webhook.received fields
+		/** Path segment the delivery arrived on (the part after `/cue/`). */
+		webhookPath?: string;
+		/** Vendor event name from `X-GitHub-Event` / `X-GitLab-Event` / etc. */
+		webhookEvent?: string;
+		/** Vendor delivery id, or a locally generated UUID when absent. */
+		webhookDeliveryId?: string;
+		/** Pretty-printed JSON payload (raw text for non-JSON bodies), truncated. */
+		webhookBody?: string;
+		/** Request headers as `key: value` lines, with auth material redacted. */
+		webhookHeaders?: string;
 	};
 }
 
@@ -280,6 +309,10 @@ export const TEMPLATE_VARIABLES = [
 	{ variable: '{{AGENT_PATH}}', description: 'Agent home directory path' },
 	{ variable: '{{AGENT_SESSION_ID}}', description: 'Agent session ID' },
 	{ variable: '{{AUTORUN_FOLDER}}', description: 'Auto Run folder path', autoRunOnly: true },
+	{
+		variable: '{{WORKTREE_BASE_PATH}}',
+		description: 'Directory where git worktrees are created (empty when not configured)',
+	},
 	{ variable: '{{TAB_ID}}', description: "This conversation's tab ID (for CLI targeting)" },
 	{ variable: '{{TAB_NAME}}', description: 'Custom tab name' },
 	{ variable: '{{CONTEXT_USAGE}}', description: 'Context usage %' },
@@ -313,6 +346,21 @@ export const TEMPLATE_VARIABLES = [
 	{
 		variable: '{{CUE_GH_IS_RETRIGGER}}',
 		description: '"true" if this fire is a re-trigger (vs. initial discovery)',
+		cueOnly: true,
+	},
+	{
+		variable: '{{CUE_GH_LABEL}}',
+		description: 'The label that was just added (github.label)',
+		cueOnly: true,
+	},
+	{
+		variable: '{{CUE_GH_LABEL_ACTOR}}',
+		description: 'Who added the label (github.label)',
+		cueOnly: true,
+	},
+	{
+		variable: '{{CUE_GH_LABELED_AT}}',
+		description: 'When the label was added (github.label)',
 		cueOnly: true,
 	},
 	{ variable: '{{CUE_GH_LABELS}}', description: 'Labels (comma-separated)', cueOnly: true },
@@ -386,6 +434,31 @@ export const TEMPLATE_VARIABLES = [
 		cueOnly: true,
 	},
 	{ variable: '{{CUE_TRIGGER_NAME}}', description: 'Cue trigger name', cueOnly: true },
+	{
+		variable: '{{CUE_WEBHOOK_BODY}}',
+		description: 'Webhook payload, pretty-printed JSON (webhook.received events)',
+		cueOnly: true,
+	},
+	{
+		variable: '{{CUE_WEBHOOK_DELIVERY_ID}}',
+		description: 'Webhook delivery id (webhook.received events)',
+		cueOnly: true,
+	},
+	{
+		variable: '{{CUE_WEBHOOK_EVENT}}',
+		description: 'Vendor event name, e.g. "pull_request" (webhook.received events)',
+		cueOnly: true,
+	},
+	{
+		variable: '{{CUE_WEBHOOK_HEADERS}}',
+		description: 'Request headers as key: value lines, secrets redacted',
+		cueOnly: true,
+	},
+	{
+		variable: '{{CUE_WEBHOOK_PATH}}',
+		description: 'Path segment the delivery arrived on (webhook.received events)',
+		cueOnly: true,
+	},
 	{ variable: '{{CWD}}', description: 'Working directory' },
 	{ variable: '{{DATE}}', description: 'Date (YYYY-MM-DD)' },
 	{ variable: '{{DATETIME}}', description: 'Full datetime' },
@@ -423,7 +496,6 @@ export const TEMPLATE_VARIABLES = [
 		autoRunOnly: true,
 	},
 	{ variable: '{{MONTH}}', description: 'Month (01-12)' },
-	{ variable: '{{MAESTRO_CLI_PATH}}', description: 'Path to maestro-cli' },
 	{ variable: '{{TAB_DEEP_LINK}}', description: 'Deep link to agent + active tab (maestro://)' },
 	{ variable: '{{TIME}}', description: 'Time (HH:MM:SS)' },
 	{ variable: '{{TIMESTAMP}}', description: 'Unix timestamp (ms)' },
@@ -487,6 +559,11 @@ export function substituteTemplateVariables(template: string, context: TemplateC
 			autoRunFolder ||
 			session.autoRunFolderPath ||
 			`${session.fullPath || session.projectRoot || session.cwd}/.maestro/playbooks`,
+		// Deliberately NOT defaulted: the desktop falls back to `<parent>/worktrees`
+		// only inside its own create flow. An agent told a guessed path would
+		// `git worktree add` there by hand, and that worktree is exactly the kind
+		// the app never learns about. Empty means "use create-worktree".
+		WORKTREE_BASE_PATH: session.worktreeConfig?.basePath || '',
 
 		// Aliases (not documented in TEMPLATE_VARIABLES but still supported for internal use and backwards compatibility)
 		SESSION_ID: session.id,
@@ -580,6 +657,9 @@ export function substituteTemplateVariables(template: string, context: TemplateC
 		CUE_GH_BASE_BRANCH: context.cue?.ghBaseBranch || '',
 		CUE_GH_ASSIGNEES: context.cue?.ghAssignees || '',
 		CUE_GH_MERGED_AT: context.cue?.ghMergedAt || '',
+		CUE_GH_LABEL: context.cue?.ghLabel || '',
+		CUE_GH_LABEL_ACTOR: context.cue?.ghLabelActor || '',
+		CUE_GH_LABELED_AT: context.cue?.ghLabeledAt || '',
 		CUE_NEW_COMMENTS: context.cue?.ghNewComments || '',
 		CUE_GH_IS_RETRIGGER: context.cue?.ghIsRetrigger || '',
 		CUE_GH_RETRIGGER_COUNT: context.cue?.ghRetriggerCount || '',
@@ -589,6 +669,13 @@ export function substituteTemplateVariables(template: string, context: TemplateC
 
 		// Cue time.once variables
 		CUE_FIRE_AT: context.cue?.fireAt || '',
+
+		// Cue webhook.received variables
+		CUE_WEBHOOK_PATH: context.cue?.webhookPath || '',
+		CUE_WEBHOOK_EVENT: context.cue?.webhookEvent || '',
+		CUE_WEBHOOK_DELIVERY_ID: context.cue?.webhookDeliveryId || '',
+		CUE_WEBHOOK_BODY: context.cue?.webhookBody || '',
+		CUE_WEBHOOK_HEADERS: context.cue?.webhookHeaders || '',
 	};
 
 	// Add dynamic per-source output variables from the Cue context.

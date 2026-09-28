@@ -12,12 +12,14 @@
  *    `metadata.crossAgent` provenance so Phase 04 can render the attribution
  *    pill.
  *
- * Mount this once (App-level) so the subscription is a singleton; call
- * `sendCrossAgentRequest` from the message-send path.
+ * Mount the hook once (App-level) so the subscription is a singleton. The send
+ * side is a plain module function, not a hook member, because the queue drain
+ * dispatches a deferred consult from outside React - see
+ * `services/crossAgentMentions` for who calls it and when.
  */
 
 import { useCallback, useEffect, useRef } from 'react';
-import type { LogEntry, Session, ToolType } from '../../types';
+import type { HistoryEntry, LogEntry, Session, ToolType } from '../../types';
 import { updateSessionWith, updateAiTab, useSessionStore } from '../../stores/sessionStore';
 import { useCrossAgentInFlightStore } from '../../stores/crossAgentInFlightStore';
 import { createTab } from '../../utils/tabHelpers';
@@ -97,27 +99,68 @@ export interface SendCrossAgentRequestOptions {
 	 * cwd, so this is the only pointer it has to the user's project).
 	 */
 	sourceCwd?: string;
+	/**
+	 * Called once with the finished answer. A typed `@mention` needs nothing here
+	 * (the streamed bubble IS the delivery), but a consult asked for over the CLI
+	 * has to hand the text back to a caller that is blocked waiting for it, so
+	 * `maestro-cli ask` rides this instead of growing a second dispatch path.
+	 *
+	 * Guaranteed to fire exactly once per request, including for a failure that
+	 * lands before `crossAgent.send` resolves - see `completedRequests`.
+	 */
+	onComplete?: (completion: CrossAgentCompletion) => void;
+}
+
+/**
+ * The terminal state of one consult: what the target said, and why it stopped
+ * if it stopped early. Handed to {@link SendCrossAgentRequestOptions.onComplete}.
+ */
+export interface CrossAgentCompletion {
+	/** Accumulated answer text (may be empty when the consult failed outright). */
+	text: string;
+	/** Failure reason, when the consult errored. */
+	error?: string;
+	/** The user pressed Stop; not a failure of the target agent. */
+	canceled?: boolean;
+	/** The consult tab on the target that holds the persisted answer. */
+	targetTabId?: string;
+	/** The target's provider session id, when one was captured. */
+	targetAgentSessionId?: string;
+}
+
+/**
+ * Pure: the note explaining why a consult ended, or null when it simply
+ * finished. The attribution header only carries `error` in an `sr-only` span, so
+ * the reason has to reach the bubble body or the user never sees it.
+ *
+ * Stop and failure are deliberately worded apart: the user pressing Stop is not
+ * the target agent failing to answer, and reporting it as one blames the wrong
+ * party for something the user chose.
+ */
+export function crossAgentTerminationNote(chunk: CrossAgentResponseChunk): string | null {
+	if (chunk.canceled) return `⏹ ${chunk.targetAgentName} was stopped.`;
+	if (chunk.error) return `⚠️ ${chunk.targetAgentName} could not respond: ${chunk.error}`;
+	return null;
 }
 
 /**
  * Pure: fold a chunk's text into the prior accumulation and resolve what should
  * be displayed. Exported for unit testing.
  *
- * Three cases, all of which must show the user WHY a consult failed - the
- * attribution header only carries `error` in an `sr-only` span, so the reason has
- * to reach the bubble body:
- * - success: the accumulated text, verbatim.
- * - error, nothing accumulated: a standalone failure note.
- * - error WITH partial text (a timed-out consult that had already said something):
- *   the partial, followed by the reason. Dropping either one loses information.
+ * Three cases:
+ * - finished cleanly: the accumulated text, verbatim.
+ * - ended early, nothing accumulated: the termination note on its own.
+ * - ended early WITH partial text (a stopped or timed-out consult that had
+ *   already said something): the partial, followed by the note. Dropping either
+ *   one loses information.
  */
 export function accumulateCrossAgentChunk(
 	prior: string,
 	chunk: CrossAgentResponseChunk
 ): { accumulated: string; displayText: string } {
 	const accumulated = prior + (chunk.chunk ?? '');
-	if (!chunk.error) return { accumulated, displayText: accumulated };
-	const note = `⚠️ ${chunk.targetAgentName} could not respond: ${chunk.error}`;
+	const note = crossAgentTerminationNote(chunk);
+	if (!note) return { accumulated, displayText: accumulated };
 	return {
 		accumulated,
 		displayText: accumulated ? `${accumulated}\n\n${note}` : note,
@@ -280,6 +323,110 @@ interface TrackedRequest {
 	 */
 	subject?: string;
 	accumulated: string;
+	/** Delivered the finished answer to a blocked caller (`maestro-cli ask`). */
+	onComplete?: (completion: CrossAgentCompletion) => void;
+}
+
+/**
+ * requestId -> tracking state, and the terminal state of the ids whose `done`
+ * chunk already landed. Module scope, not hook state, for two reasons: the send
+ * path is a plain function (callable from the queue drain, which is not React),
+ * and an in-flight consult must survive a remount of the subscribing hook.
+ *
+ * `completedRequests` guards the race where a fast failure/short response
+ * arrives BEFORE send() resolves: without it, the late `.then()` re-registers
+ * the request and calls start() for an already-finished one, leaving the
+ * "N agents responding" pill stuck.
+ *
+ * It remembers the COMPLETION rather than just the id because that same race
+ * decides whether a blocked caller ever hears back. `crossAgent.send` resolves
+ * on a round trip to main, and "target agent not found" is emitted before it
+ * does - so a bare id set would let the `.then()` return having never run
+ * `onComplete`, and `maestro-cli ask` would sit there until its own timeout for
+ * a consult that failed instantly. Bounded: this is a race guard, not a log.
+ */
+const pendingRequests = new Map<string, TrackedRequest>();
+const completedRequests = new Map<string, CrossAgentCompletion>();
+const COMPLETED_REQUEST_MEMORY = 100;
+
+/** Record a finished request, evicting the oldest once past the cap. */
+function rememberCompletion(requestId: string, completion: CrossAgentCompletion): void {
+	completedRequests.set(requestId, completion);
+	while (completedRequests.size > COMPLETED_REQUEST_MEMORY) {
+		const oldest = completedRequests.keys().next();
+		if (oldest.done) break;
+		completedRequests.delete(oldest.value);
+	}
+}
+
+/**
+ * Pure: build the History entry for a finished consult. Exported for unit
+ * testing; `recordConsultHistory` resolves the store state and hands the pieces
+ * in, so every derivation rule below is verifiable without IPC or a store.
+ */
+export function buildConsultHistoryEntry(opts: {
+	entryId: string;
+	timestamp: number;
+	/** Display name of the agent that did the consulting. */
+	sourceAgentName: string;
+	/** Short subject derived from the question; may be empty. */
+	subject: string;
+	/** Accumulated response text (empty on a consult that failed before answering). */
+	accumulated: string;
+	/** Failure reason, when the consult errored. */
+	error?: string;
+	/** The user stopped the consult; not a failure of the target agent. */
+	canceled?: boolean;
+	/** The target agent's provider session id, when one was captured. */
+	agentSessionId?: string;
+	/** Fallback label when there is no subject. */
+	consultTabName?: string | null;
+	targetName?: string | null;
+	historySessionId: string;
+	projectPath: string;
+}): HistoryEntry {
+	// Summary names WHO consulted and ABOUT WHAT; the pill carries the subject so
+	// multiple consults from the same agent are distinguishable at a glance. The
+	// consult TAB stays named after the source agent (it's the reused container
+	// for every consult from that tab) - only this per-consult entry gets the subject.
+	const summary = opts.subject
+		? `Consulted by ${opts.sourceAgentName}: ${opts.subject}`
+		: `Consulted by ${opts.sourceAgentName}`;
+	const sessionName = opts.subject
+		? `↩ ${opts.subject}`
+		: (opts.consultTabName ?? opts.targetName ?? undefined) || undefined;
+
+	// A failed or stopped consult may accumulate nothing, so the raw text alone
+	// would leave the detail view blank. The reason lives on the chunk - not in
+	// `accumulated` - so fold it in here the same way the inline bubble does
+	// (partial text first, then the reason). A cancel is recorded as a SUCCESS
+	// with a note: the user stopping a consult is not the target failing.
+	const endNote = opts.canceled
+		? '⏹ Consult stopped by the user.'
+		: opts.error
+			? `⚠️ Consult failed: ${opts.error}`
+			: '';
+	const detailFallback = [opts.accumulated, endNote].filter(Boolean).join('\n\n');
+
+	return {
+		id: opts.entryId,
+		// A consult is an ordinary message that happened to be proxied in from
+		// another agent - NOT automation. Logging it as AUTO made it render as an
+		// Auto Run task and inflated the Auto Run counts.
+		type: 'AGENT',
+		timestamp: opts.timestamp,
+		summary,
+		// Raw response (or the failure reason) is the immediate fallback for the
+		// detail view; replaced with a condensed summary by enrichConsultDetail
+		// once it returns.
+		fullResponse: detailFallback || undefined,
+		agentSessionId: opts.agentSessionId,
+		sessionId: opts.historySessionId,
+		sessionName,
+		projectPath: opts.projectPath,
+		sourceAgentName: opts.sourceAgentName,
+		success: !opts.error,
+	};
 }
 
 /**
@@ -309,37 +456,27 @@ function recordConsultHistory(
 		state.sessions.find((s) => s.id === chunk.sourceSessionId)?.name ??
 		'another agent';
 	const consultTab = target.aiTabs.find((t) => t.id === tracked.targetTabId);
-	const subject = tracked.subject?.trim() || '';
-
-	// List body names WHO consulted and ABOUT WHAT; the pill carries the subject
-	// so multiple consults from the same agent are distinguishable at a glance.
-	// The actual consult TAB stays named after the source agent (it's the reused
-	// container for every consult from that tab) - only this per-consult entry
-	// gets the subject.
-	const summary = subject
-		? `Consulted by ${sourceAgentName}: ${subject}`
-		: `Consulted by ${sourceAgentName}`;
-	const sessionName = subject ? `↩ ${subject}` : (consultTab?.name ?? target.name ?? undefined);
 
 	const entryId = generateId();
 	const historySessionId = chunk.targetSessionId;
 
 	void window.maestro.history
-		.add({
-			id: entryId,
-			type: 'AUTO',
-			timestamp: Date.now(),
-			summary,
-			// Raw response is the immediate fallback for the detail view; replaced
-			// with a condensed summary by enrichConsultDetail once it returns.
-			fullResponse: tracked.accumulated || undefined,
-			agentSessionId: chunk.targetAgentSessionId ?? consultTab?.agentSessionId ?? undefined,
-			sessionId: historySessionId,
-			sessionName,
-			projectPath: target.cwd,
-			sourceAgentName,
-			success: !chunk.error,
-		})
+		.add(
+			buildConsultHistoryEntry({
+				entryId,
+				timestamp: Date.now(),
+				sourceAgentName,
+				subject: tracked.subject?.trim() || '',
+				accumulated: tracked.accumulated,
+				error: chunk.error,
+				canceled: chunk.canceled,
+				agentSessionId: chunk.targetAgentSessionId ?? consultTab?.agentSessionId ?? undefined,
+				consultTabName: consultTab?.name,
+				targetName: target.name,
+				historySessionId,
+				projectPath: target.cwd,
+			})
+		)
 		.catch((err) => {
 			logger.warn('[useCrossAgentDispatch] Failed to record consult history', undefined, err);
 		});
@@ -410,6 +547,114 @@ async function enrichConsultDetail(opts: {
 	}
 }
 
+/**
+ * Fire a cross-agent consult at ONE resolved target. Fire-and-forget: the
+ * caller's chat is never blocked.
+ *
+ * A plain module function, not a hook member: the queue drain
+ * (`agentStore.processQueuedItem`) dispatches deferred mentions from outside
+ * React, and both callers must share the one `pendingRequests` tracker so the
+ * streamed chunks land on a single LogEntry.
+ */
+export function sendCrossAgentRequest(opts: SendCrossAgentRequestOptions): void {
+	const strategy = inferContextStrategy(opts.userPrompt);
+	// Subject for the target's History entry + attribution pill. Derived once,
+	// synchronously, from the user's question (mentions stripped).
+	const subject = deriveConsultSubject(opts.userPrompt);
+	const windowed = selectContextWindow(opts.sourceLogs, strategy);
+	const transcript: CrossAgentTranscriptEntry[] = windowed.map((l) => ({
+		source: l.source,
+		text: l.text,
+		timestamp: l.timestamp,
+	}));
+
+	// Find-or-create the consult tab on the target BEFORE dispatch, so the
+	// question is persisted immediately and we know which provider session to
+	// resume. A repeat mention from the same source tab reuses the tab (and its
+	// captured `agentSessionId`); a fresh source tab makes a new one.
+	const consult = ensureConsultTab({
+		targetSessionId: opts.targetSessionId,
+		sourceSessionId: opts.sourceSessionId,
+		sourceTabId: opts.sourceTabId,
+		sourceAgentName: opts.sourceAgentName,
+		question: opts.userPrompt,
+	});
+
+	// Fire-and-forget: never await before the caller clears the input.
+	void window.maestro.crossAgent
+		.send({
+			sourceSessionId: opts.sourceSessionId,
+			sourceAgentName: opts.sourceAgentName,
+			sourceTabId: opts.sourceTabId,
+			targetSessionId: opts.targetSessionId,
+			targetTabId: consult?.targetTabId,
+			resumeAgentSessionId: consult?.resumeAgentSessionId,
+			userPrompt: opts.userPrompt,
+			transcript,
+			strategy,
+			sourceCwd: opts.sourceCwd,
+		})
+		.then(({ requestId }) => {
+			// The terminal chunk already landed (fast failure/short response that
+			// beat this resolution) - don't resurrect a finished request, but DO
+			// deliver its answer: this is the only path a caller blocked on
+			// `onComplete` has when the consult failed before send() resolved.
+			const finished = completedRequests.get(requestId);
+			if (finished) {
+				opts.onComplete?.(finished);
+				return;
+			}
+			// Pre-register so streamed chunks reuse one stable LogEntry id. If a
+			// chunk already created a fallback entry (it lacks the source name +
+			// subject, which only the send side knows), backfill them.
+			const existing = pendingRequests.get(requestId);
+			if (existing) {
+				existing.sourceAgentName ??= opts.sourceAgentName;
+				existing.subject ??= subject;
+				existing.onComplete ??= opts.onComplete;
+			} else {
+				pendingRequests.set(requestId, {
+					sourceSessionId: opts.sourceSessionId,
+					sourceTabId: opts.sourceTabId,
+					logEntryId: generateId(),
+					targetSessionId: opts.targetSessionId,
+					targetTabId: consult?.targetTabId,
+					targetLogEntryId: generateId(),
+					sourceAgentName: opts.sourceAgentName,
+					subject,
+					accumulated: '',
+					onComplete: opts.onComplete,
+				});
+			}
+			// Register for the live "N agents responding…" indicator. Resolve
+			// the target's display name/tool type now (it came from the same
+			// sessions list) rather than waiting on the first response chunk.
+			const target = useSessionStore.getState().sessions.find((s) => s.id === opts.targetSessionId);
+			useCrossAgentInFlightStore.getState().start({
+				requestId,
+				sourceSessionId: opts.sourceSessionId,
+				sourceTabId: opts.sourceTabId,
+				targetSessionId: opts.targetSessionId,
+				// Carries the consult tab so the indicator chip is a deep link into the
+				// exact conversation processing this request.
+				targetTabId: consult?.targetTabId,
+				targetAgentName: target?.name ?? 'agent',
+				targetToolType: target?.toolType,
+				startedAt: Date.now(),
+			});
+		})
+		.catch((err) => {
+			logger.error(
+				'[useCrossAgentDispatch] Failed to dispatch cross-agent request',
+				undefined,
+				err
+			);
+			// A rejected send never produces a chunk, so nothing else will ever
+			// settle a caller blocked on the answer.
+			opts.onComplete?.({ text: '', error: err instanceof Error ? err.message : String(err) });
+		});
+}
+
 export interface UseCrossAgentDispatchResult {
 	sendCrossAgentRequest: (opts: SendCrossAgentRequestOptions) => void;
 }
@@ -421,17 +666,9 @@ export function useCrossAgentDispatch(
 	// latest summarizer without being torn down and re-subscribed each render.
 	const spawnSynopsisRef = useRef(spawnBackgroundSynopsis);
 	spawnSynopsisRef.current = spawnBackgroundSynopsis;
-	// requestId -> tracking state. A ref (not state): chunk handling mutates it
-	// between renders and must not itself trigger a re-render.
-	const pendingRef = useRef<Map<string, TrackedRequest>>(new Map());
-	// requestIds whose terminal (`done`) chunk already landed. Guards the race
-	// where a fast failure/short response arrives BEFORE send() resolves: without
-	// it, the late .then() re-registers pendingRef and calls start() for an
-	// already-finished request, leaving the "N agents responding" pill stuck.
-	const completedRef = useRef<Set<string>>(new Set());
 
 	const applyChunk = useCallback((chunk: CrossAgentResponseChunk): void => {
-		const map = pendingRef.current;
+		const map = pendingRequests;
 		let tracked = map.get(chunk.requestId);
 		if (!tracked) {
 			// Chunk for a request this instance didn't register (e.g. a reload
@@ -510,7 +747,18 @@ export function useCrossAgentDispatch(
 			// caller so its History shows who consulted it (and about what).
 			recordConsultHistory(tracked, chunk, spawnSynopsisRef.current);
 			map.delete(chunk.requestId);
-			completedRef.current.add(chunk.requestId);
+			const completion: CrossAgentCompletion = {
+				text: accumulated,
+				error: chunk.error,
+				canceled: chunk.canceled,
+				targetTabId: tracked.targetTabId,
+				targetAgentSessionId: chunk.targetAgentSessionId,
+			};
+			rememberCompletion(chunk.requestId, completion);
+			// Hand the answer to a caller blocked on it (`maestro-cli ask`). Runs
+			// after the transcript writes so the consult tab already holds the text
+			// the caller is about to be given.
+			tracked.onComplete?.(completion);
 			// Drop it from the live "N agents responding…" indicator.
 			useCrossAgentInFlightStore.getState().finish(chunk.requestId);
 		}
@@ -520,93 +768,6 @@ export function useCrossAgentDispatch(
 		const unsubscribe = window.maestro.crossAgent.onChunk(applyChunk);
 		return () => unsubscribe();
 	}, [applyChunk]);
-
-	const sendCrossAgentRequest = useCallback((opts: SendCrossAgentRequestOptions): void => {
-		const strategy = inferContextStrategy(opts.userPrompt);
-		// Subject for the target's History entry + attribution pill. Derived once,
-		// synchronously, from the user's question (mentions stripped).
-		const subject = deriveConsultSubject(opts.userPrompt);
-		const windowed = selectContextWindow(opts.sourceLogs, strategy);
-		const transcript: CrossAgentTranscriptEntry[] = windowed.map((l) => ({
-			source: l.source,
-			text: l.text,
-			timestamp: l.timestamp,
-		}));
-
-		// Find-or-create the consult tab on the target BEFORE dispatch, so the
-		// question is persisted immediately and we know which provider session to
-		// resume. A repeat mention from the same source tab reuses the tab (and its
-		// captured `agentSessionId`); a fresh source tab makes a new one.
-		const consult = ensureConsultTab({
-			targetSessionId: opts.targetSessionId,
-			sourceSessionId: opts.sourceSessionId,
-			sourceTabId: opts.sourceTabId,
-			sourceAgentName: opts.sourceAgentName,
-			question: opts.userPrompt,
-		});
-
-		// Fire-and-forget: never await before the caller clears the input.
-		void window.maestro.crossAgent
-			.send({
-				sourceSessionId: opts.sourceSessionId,
-				sourceAgentName: opts.sourceAgentName,
-				sourceTabId: opts.sourceTabId,
-				targetSessionId: opts.targetSessionId,
-				targetTabId: consult?.targetTabId,
-				resumeAgentSessionId: consult?.resumeAgentSessionId,
-				userPrompt: opts.userPrompt,
-				transcript,
-				strategy,
-				sourceCwd: opts.sourceCwd,
-			})
-			.then(({ requestId }) => {
-				// The terminal chunk already landed (fast failure/short response that
-				// beat this resolution) - don't resurrect a finished request.
-				if (completedRef.current.has(requestId)) return;
-				// Pre-register so streamed chunks reuse one stable LogEntry id. If a
-				// chunk already created a fallback entry (it lacks the source name +
-				// subject, which only the send side knows), backfill them.
-				const existing = pendingRef.current.get(requestId);
-				if (existing) {
-					existing.sourceAgentName ??= opts.sourceAgentName;
-					existing.subject ??= subject;
-				} else {
-					pendingRef.current.set(requestId, {
-						sourceSessionId: opts.sourceSessionId,
-						sourceTabId: opts.sourceTabId,
-						logEntryId: generateId(),
-						targetSessionId: opts.targetSessionId,
-						targetTabId: consult?.targetTabId,
-						targetLogEntryId: generateId(),
-						sourceAgentName: opts.sourceAgentName,
-						subject,
-						accumulated: '',
-					});
-				}
-				// Register for the live "N agents responding…" indicator. Resolve
-				// the target's display name/tool type now (it came from the same
-				// sessions list) rather than waiting on the first response chunk.
-				const target = useSessionStore
-					.getState()
-					.sessions.find((s) => s.id === opts.targetSessionId);
-				useCrossAgentInFlightStore.getState().start({
-					requestId,
-					sourceSessionId: opts.sourceSessionId,
-					sourceTabId: opts.sourceTabId,
-					targetSessionId: opts.targetSessionId,
-					targetAgentName: target?.name ?? 'agent',
-					targetToolType: target?.toolType,
-					startedAt: Date.now(),
-				});
-			})
-			.catch((err) => {
-				logger.error(
-					'[useCrossAgentDispatch] Failed to dispatch cross-agent request',
-					undefined,
-					err
-				);
-			});
-	}, []);
 
 	return { sendCrossAgentRequest };
 }

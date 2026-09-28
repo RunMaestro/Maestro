@@ -20,7 +20,7 @@ export interface TabBarProps {
 	onRequestRename?: (tabId: string) => void;
 	onTabReorder?: (fromIndex: number, toIndex: number) => void;
 	/** Handler to reorder tabs in unified tab order (AI + file tabs) */
-	onUnifiedTabReorder?: (fromIndex: number, toIndex: number) => void;
+	onUnifiedTabReorder?: (sourceTabId: string, targetTabId: string) => void;
 	onTabStar?: (tabId: string, starred: boolean) => void;
 	onTabMarkUnread?: (tabId: string) => void;
 	/** Handler to open merge session modal with this tab as source */
@@ -33,6 +33,8 @@ export interface TabBarProps {
 	onCopyContext?: (tabId: string, options?: CopyContextOptions) => void;
 	/** Handler to export tab as HTML */
 	onExportHtml?: (tabId: string) => void;
+	/** Open the snooze picker for an AI tab (AI tabs only). */
+	onSnooze?: (tabId: string) => void;
 	/** Handler to publish tab context as GitHub Gist */
 	onPublishGist?: (tabId: string) => void;
 	/** Whether GitHub CLI is available for gist publishing */
@@ -48,6 +50,8 @@ export interface TabBarProps {
 	onOpenTabSearch?: () => void;
 	/** Handler to open message search (Cmd+F) */
 	onOpenOutputSearch?: () => void;
+	/** Handler to open cross-tab message search (Opt+Cmd+F) */
+	onOpenCrossTabSearch?: () => void;
 	/** Handler to close all tabs */
 	onCloseAllTabs?: () => void;
 	/** Handler to close all tabs except the pivot (clicked) tab, or the active tab when no id is given */
@@ -68,6 +72,8 @@ export interface TabBarProps {
 	onFileTabClose?: (tabId: string) => void;
 	/** Handler to open the rename dialog for a file preview tab */
 	onFileTabRename?: (tabId: string) => void;
+	/** Handler to publish a file preview tab's contents as a GitHub Gist */
+	onPublishFileGist?: (tabId: string) => void;
 	/** Currently active browser tab ID (null if no browser tab is active) */
 	activeBrowserTabId?: string | null;
 	/** Handler to select a browser tab */

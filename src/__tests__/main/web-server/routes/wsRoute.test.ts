@@ -17,6 +17,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { WebSocket } from 'ws';
 import { WsRoute, type WsRouteCallbacks } from '../../../../main/web-server/routes/wsRoute';
+import { getCliSecret } from '../../../../main/web-server/auth/cli-secret';
+import { CLI_SECRET_HEADER } from '../../../../shared/webLogin';
+import { WEB_LOGIN_COOKIE, WEB_LOGIN_WS_CLOSE_CODE } from '../../../../shared/webLogin';
 
 // Mock the logger
 vi.mock('../../../../main/utils/logger', () => ({
@@ -26,6 +29,31 @@ vi.mock('../../../../main/utils/logger', () => ({
 		warn: vi.fn(),
 		error: vi.fn(),
 	},
+}));
+
+// Web Login. The REAL policy runs (the CLI secret and the cookie rule are
+// exactly what the gate tests below are about); only its two data sources are
+// stubbed, because both reach for Electron's userData path.
+const { webLogin } = vi.hoisted(() => ({
+	webLogin: {
+		/** The `webLogin` Encore flag. */
+		enabled: false,
+		/** Session id -> the account behind it. */
+		sessions: new Map<string, { id: string; username: string; displayName: string }>(),
+	},
+}));
+
+vi.mock('../../../../main/stores/getters', () => ({
+	getSettingsStore: () => ({
+		get: () => ({ webLogin: webLogin.enabled }),
+	}),
+}));
+
+vi.mock('../../../../main/web-server/auth/web-user-store', () => ({
+	getWebUserStore: () => ({
+		resolveSession: (sessionId?: string) =>
+			sessionId ? webLogin.sessions.get(sessionId) : undefined,
+	}),
 }));
 
 /**
@@ -95,6 +123,7 @@ function createMockSocket() {
 	return {
 		readyState: WebSocket.OPEN,
 		send: vi.fn(),
+		close: vi.fn(),
 		on: vi.fn((event: string, handler: Function) => {
 			if (!eventHandlers.has(event)) {
 				eventHandlers.set(event, []);
@@ -110,24 +139,26 @@ function createMockSocket() {
 }
 
 /**
- * Create mock Fastify connection
+ * Create mock Fastify connection.
+ *
+ * @fastify/websocket v10+ passes the raw WebSocket to the route handler
+ * directly (no `{ socket }` wrapper), so the mock IS the socket.
  */
 function createMockConnection() {
-	return {
-		socket: createMockSocket(),
-	};
+	return createMockSocket();
 }
 
 /**
  * Create mock Fastify request
  */
-function createMockRequest(sessionId?: string) {
+function createMockRequest(sessionId?: string, overrides: Record<string, unknown> = {}) {
 	const queryString = sessionId ? `?sessionId=${sessionId}` : '';
 	return {
 		url: `/test-token/ws${queryString}`,
 		headers: {
 			host: 'localhost:3000',
 		},
+		...overrides,
 	};
 }
 
@@ -156,6 +187,8 @@ describe('WsRoute', () => {
 	let mockFastify: ReturnType<typeof createMockFastify>;
 
 	beforeEach(() => {
+		webLogin.enabled = false;
+		webLogin.sessions.clear();
 		wsRoute = new WsRoute(securityToken);
 		callbacks = createMockCallbacks();
 		wsRoute.setCallbacks(callbacks);
@@ -204,7 +237,7 @@ describe('WsRoute', () => {
 			expect(callbacks.onClientConnect).toHaveBeenCalledWith(
 				expect.objectContaining({
 					id: expect.stringMatching(/^web-client-/),
-					socket: connection.socket,
+					socket: connection,
 					connectedAt: expect.any(Number),
 				})
 			);
@@ -241,7 +274,7 @@ describe('WsRoute', () => {
 			const connection = createMockConnection();
 			route!.handler(connection, createMockRequest('session-123'));
 
-			const sentMessages = (connection.socket.send as any).mock.calls.map((call: any[]) =>
+			const sentMessages = (connection.send as any).mock.calls.map((call: any[]) =>
 				JSON.parse(call[0])
 			);
 
@@ -257,7 +290,7 @@ describe('WsRoute', () => {
 			const connection = createMockConnection();
 			route!.handler(connection, createMockRequest());
 
-			const sentMessages = (connection.socket.send as any).mock.calls.map((call: any[]) =>
+			const sentMessages = (connection.send as any).mock.calls.map((call: any[]) =>
 				JSON.parse(call[0])
 			);
 
@@ -274,7 +307,7 @@ describe('WsRoute', () => {
 			const connection = createMockConnection();
 			route!.handler(connection, createMockRequest());
 
-			const sentMessages = (connection.socket.send as any).mock.calls.map((call: any[]) =>
+			const sentMessages = (connection.send as any).mock.calls.map((call: any[]) =>
 				JSON.parse(call[0])
 			);
 
@@ -290,7 +323,7 @@ describe('WsRoute', () => {
 			const connection = createMockConnection();
 			route!.handler(connection, createMockRequest());
 
-			const sentMessages = (connection.socket.send as any).mock.calls.map((call: any[]) =>
+			const sentMessages = (connection.send as any).mock.calls.map((call: any[]) =>
 				JSON.parse(call[0])
 			);
 
@@ -303,7 +336,7 @@ describe('WsRoute', () => {
 			const connection = createMockConnection();
 			route!.handler(connection, createMockRequest());
 
-			const sentMessages = (connection.socket.send as any).mock.calls.map((call: any[]) =>
+			const sentMessages = (connection.send as any).mock.calls.map((call: any[]) =>
 				JSON.parse(call[0])
 			);
 
@@ -318,7 +351,7 @@ describe('WsRoute', () => {
 			const connection = createMockConnection();
 			route!.handler(connection, createMockRequest());
 
-			const sentMessages = (connection.socket.send as any).mock.calls.map((call: any[]) =>
+			const sentMessages = (connection.send as any).mock.calls.map((call: any[]) =>
 				JSON.parse(call[0])
 			);
 
@@ -348,7 +381,7 @@ describe('WsRoute', () => {
 			const connection = createMockConnection();
 			route!.handler(connection, createMockRequest());
 
-			const sentMessages = (connection.socket.send as any).mock.calls.map((call: any[]) =>
+			const sentMessages = (connection.send as any).mock.calls.map((call: any[]) =>
 				JSON.parse(call[0])
 			);
 
@@ -365,7 +398,7 @@ describe('WsRoute', () => {
 
 			// Simulate incoming message
 			const message = JSON.stringify({ type: 'ping' });
-			connection.socket.emit('message', message);
+			connection.emit('message', message);
 
 			expect(callbacks.handleMessage).toHaveBeenCalledWith(expect.stringMatching(/^web-client-/), {
 				type: 'ping',
@@ -378,12 +411,12 @@ describe('WsRoute', () => {
 			route!.handler(connection, createMockRequest());
 
 			// Clear previous sends
-			(connection.socket.send as any).mockClear();
+			(connection.send as any).mockClear();
 
 			// Simulate invalid message
-			connection.socket.emit('message', 'not valid json');
+			connection.emit('message', 'not valid json');
 
-			const lastSend = (connection.socket.send as any).mock.calls[0];
+			const lastSend = (connection.send as any).mock.calls[0];
 			const errorMsg = JSON.parse(lastSend[0]);
 			expect(errorMsg.type).toBe('error');
 			expect(errorMsg.message).toBe('Invalid message format');
@@ -399,7 +432,7 @@ describe('WsRoute', () => {
 			const clientId = (callbacks.onClientConnect as any).mock.calls[0][0].id;
 
 			// Simulate close event
-			connection.socket.emit('close');
+			connection.emit('close');
 
 			expect(callbacks.onClientDisconnect).toHaveBeenCalledWith(clientId);
 		});
@@ -415,7 +448,7 @@ describe('WsRoute', () => {
 			const error = new Error('Connection lost');
 
 			// Simulate error event
-			connection.socket.emit('error', error);
+			connection.emit('error', error);
 
 			expect(callbacks.onClientError).toHaveBeenCalledWith(clientId, error);
 		});
@@ -437,7 +470,7 @@ describe('WsRoute', () => {
 			}).not.toThrow();
 
 			// Should still send connected message
-			const sentMessages = (connection.socket.send as any).mock.calls.map((call: any[]) =>
+			const sentMessages = (connection.send as any).mock.calls.map((call: any[]) =>
 				JSON.parse(call[0])
 			);
 			const connectedMsg = sentMessages.find((m: any) => m.type === 'connected');
@@ -485,7 +518,7 @@ describe('WsRoute', () => {
 			const connection = createMockConnection();
 			route!.handler(connection, createMockRequest());
 
-			const sentMessages = (connection.socket.send as any).mock.calls.map((call: any[]) =>
+			const sentMessages = (connection.send as any).mock.calls.map((call: any[]) =>
 				JSON.parse(call[0])
 			);
 
@@ -493,5 +526,186 @@ describe('WsRoute', () => {
 			expect(autoRunMsgs).toHaveLength(2); // Only running sessions
 			expect(autoRunMsgs.map((m: any) => m.sessionId)).toEqual(['session-1', 'session-2']);
 		});
+	});
+});
+
+describe('WsRoute bridge resume', () => {
+	const securityToken = 'test-token-123';
+
+	function setup(extra: Partial<WsRouteCallbacks>) {
+		const route = new WsRoute(securityToken);
+		const callbacks = { ...createMockCallbacks(), ...extra };
+		route.setCallbacks(callbacks);
+		const fastify = createMockFastify();
+		route.registerRoute(fastify as any);
+		return fastify.getRoute('GET', `/${securityToken}/ws`)!;
+	}
+
+	function sentFrames(connection: ReturnType<typeof createMockConnection>) {
+		return (connection.send as any).mock.calls.map((call: any[]) => JSON.parse(call[0]));
+	}
+
+	function resumeRequest(query: string) {
+		return { url: `/test-token/ws?${query}`, headers: { host: 'localhost:3000' } };
+	}
+
+	it('replays the missed frames right after `connected` when the client can be resumed', () => {
+		const resumeBridgeClient = vi
+			.fn()
+			.mockReturnValue([
+				JSON.stringify({ type: 'bridge.event', seq: 4 }),
+				JSON.stringify({ type: 'bridge.event', seq: 5 }),
+			]);
+		const route = setup({ resumeBridgeClient, getBridgeEpoch: () => 'run-1' });
+
+		const connection = createMockConnection();
+		route.handler(connection, resumeRequest('since=3&epoch=run-1'));
+
+		expect(resumeBridgeClient).toHaveBeenCalledWith('run-1', 3, undefined);
+		const frames = sentFrames(connection);
+		expect(frames[0]).toMatchObject({ type: 'connected', bridgeEpoch: 'run-1', resumed: true });
+		expect(frames[1]).toMatchObject({ type: 'bridge.event', seq: 4 });
+		expect(frames[2]).toMatchObject({ type: 'bridge.event', seq: 5 });
+	});
+
+	it('hands the client subscription to the replay so it is narrowed like a live send', () => {
+		const resumeBridgeClient = vi.fn().mockReturnValue([]);
+		const route = setup({ resumeBridgeClient, getBridgeEpoch: () => 'run-1' });
+
+		const connection = createMockConnection();
+		route.handler(connection, resumeRequest('since=3&epoch=run-1&sessionId=session-a'));
+
+		expect(resumeBridgeClient).toHaveBeenCalledWith('run-1', 3, 'session-a');
+	});
+
+	it('reports resumed=false when the gap cannot be replayed, and never asks without a since', () => {
+		const resumeBridgeClient = vi.fn().mockReturnValue(null);
+		const route = setup({
+			resumeBridgeClient,
+			getBridgeEpoch: () => 'run-1',
+			getBridgeSeq: () => 42,
+		});
+
+		const stale = createMockConnection();
+		route.handler(stale, resumeRequest('since=3&epoch=run-0'));
+		expect(resumeBridgeClient).toHaveBeenCalledWith('run-0', 3, undefined);
+		expect(sentFrames(stale)[0]).toMatchObject({ type: 'connected', resumed: false });
+
+		const fresh = createMockConnection();
+		route.handler(fresh, createMockRequest());
+		expect(resumeBridgeClient).toHaveBeenCalledTimes(1);
+		// A fresh client is told where the counter stands so its first resume
+		// asks for frames after THIS point, not after 0.
+		expect(sentFrames(fresh)[0]).toMatchObject({
+			type: 'connected',
+			resumed: false,
+			bridgeSeq: 42,
+		});
+	});
+});
+
+/**
+ * The Web Login gate on the WebSocket upgrade.
+ *
+ * This is the enforcement point that matters most: the socket minted here can
+ * invoke every registered ipcMain handler, so it IS the app. An unauthorized
+ * upgrade must be closed before `onClientConnect`, or the client lands in
+ * `webClients` and starts receiving every broadcast in the process.
+ *
+ * `maestro-cli` is admitted by the per-boot secret it presents as a header,
+ * NOT by arriving over loopback: the Cloudflare tunnel and any local reverse
+ * proxy deliver every remote request over 127.0.0.1 too, so an address-based
+ * exemption would wave the whole internet through the moment Remote Control
+ * was on.
+ */
+describe('WsRoute Web Login gate', () => {
+	const securityToken = 'test-token-123';
+
+	function setup() {
+		const route = new WsRoute(securityToken);
+		const callbacks = createMockCallbacks();
+		route.setCallbacks(callbacks);
+		const fastify = createMockFastify();
+		route.registerRoute(fastify as any);
+		return { route: fastify.getRoute('GET', `/${securityToken}/ws`)!, callbacks };
+	}
+
+	beforeEach(() => {
+		webLogin.enabled = false;
+		webLogin.sessions.clear();
+	});
+
+	it('accepts a maestro-cli upgrade carrying the boot secret while the gate is on', () => {
+		webLogin.enabled = true;
+		const { route, callbacks } = setup();
+		const connection = createMockConnection();
+
+		route.handler(
+			connection,
+			createMockRequest(undefined, {
+				ip: '127.0.0.1',
+				headers: { host: 'localhost:3000', [CLI_SECRET_HEADER]: getCliSecret() },
+			})
+		);
+
+		expect(connection.close).not.toHaveBeenCalled();
+		expect(callbacks.onClientConnect).toHaveBeenCalledTimes(1);
+		// Admitted is not the same as signed in: a CLI caller acts as the desktop.
+		expect((callbacks.onClientConnect as any).mock.calls[0][0].user).toBeUndefined();
+	});
+
+	it('closes a bare loopback upgrade: the tunnel arrives over loopback too', () => {
+		webLogin.enabled = true;
+		const { route, callbacks } = setup();
+		const connection = createMockConnection();
+
+		route.handler(connection, createMockRequest(undefined, { ip: '127.0.0.1' }));
+
+		expect(connection.close).toHaveBeenCalledWith(WEB_LOGIN_WS_CLOSE_CODE, 'Login required');
+		expect(callbacks.onClientConnect).not.toHaveBeenCalled();
+	});
+
+	it('closes a LAN upgrade with no cookie using the login close code', () => {
+		webLogin.enabled = true;
+		const { route, callbacks } = setup();
+		const connection = createMockConnection();
+
+		route.handler(connection, createMockRequest(undefined, { ip: '192.168.1.42' }));
+
+		expect(connection.close).toHaveBeenCalledWith(WEB_LOGIN_WS_CLOSE_CODE, 'Login required');
+		// Closed BEFORE the client exists anywhere: nothing can broadcast to it.
+		expect(callbacks.onClientConnect).not.toHaveBeenCalled();
+		expect(connection.send).not.toHaveBeenCalled();
+	});
+
+	it('accepts a LAN upgrade carrying a valid session and stamps the account on the client', () => {
+		webLogin.enabled = true;
+		webLogin.sessions.set('sid-1', { id: 'u1', username: 'ada', displayName: 'Ada' });
+		const { route, callbacks } = setup();
+		const connection = createMockConnection();
+
+		route.handler(
+			connection,
+			createMockRequest(undefined, {
+				ip: '192.168.1.42',
+				headers: { host: 'localhost:3000', cookie: `${WEB_LOGIN_COOKIE}=sid-1` },
+			})
+		);
+
+		expect(connection.close).not.toHaveBeenCalled();
+		const client = (callbacks.onClientConnect as any).mock.calls[0][0];
+		expect(client.user).toEqual({ id: 'u1', username: 'ada', displayName: 'Ada' });
+		// Revocation is keyed on the session, so the client must remember it.
+		expect(client.sessionId).toBe('sid-1');
+	});
+
+	it('leaves a LAN upgrade alone while the Encore flag is off', () => {
+		const { route, callbacks } = setup();
+		const connection = createMockConnection();
+
+		route.handler(connection, createMockRequest(undefined, { ip: '192.168.1.42' }));
+
+		expect(connection.close).not.toHaveBeenCalled();
+		expect(callbacks.onClientConnect).toHaveBeenCalledTimes(1);
 	});
 });

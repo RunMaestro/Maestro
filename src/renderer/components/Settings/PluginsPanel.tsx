@@ -22,12 +22,10 @@ import {
 import type { Theme } from '../../types';
 import type { PluginListSnapshot } from '../../../main/ipc/handlers/plugins';
 import type { PluginRecord } from '../../../shared/plugins/plugin-registry';
-import type {
-	AggregatedContributions,
-	PanelContribution,
-} from '../../../shared/plugins/contributions';
+import type { AggregatedContributions } from '../../../shared/plugins/contributions';
 import { notifyToast } from '../../stores/notificationStore';
-import { PluginPanelHost } from './PluginPanelHost';
+import { useUIStore } from '../../stores/uiStore';
+import { launchFromSettings } from '../../utils/launchFromSettings';
 import { PluginActivityView } from './PluginActivityView';
 
 interface PluginsPanelProps {
@@ -47,7 +45,12 @@ export function PluginsPanel({ theme }: PluginsPanelProps) {
 	const [loading, setLoading] = useState(false);
 	const [busyId, setBusyId] = useState<string | null>(null);
 	const [contributions, setContributions] = useState<AggregatedContributions | null>(null);
-	const [openPanel, setOpenPanel] = useState<PanelContribution | null>(null);
+	// The modal panel host is mounted ONCE at App level (PluginModalPanelMount);
+	// this launch button just names the panel to open, so the Settings path and a
+	// plugin's own `ui.openPanel` summon share one mount and one webview guest.
+	// The launch goes through `launchFromSettings` because that host renders
+	// below the settings modal, so leaving Settings open hides the panel.
+	const setOpenPluginPanelId = useUIStore((s) => s.setOpenPluginPanelId);
 
 	const load = useCallback(async () => {
 		setLoading(true);
@@ -259,14 +262,14 @@ export function PluginsPanel({ theme }: PluginsPanelProps) {
 												<span className="truncate">{record.manifest?.name ?? record.id}</span>
 												{record.manifest && (
 													<span
-														className="text-[10px] font-normal"
+														className="text-2xs font-normal"
 														style={{ color: theme.colors.textDim }}
 													>
 														v{record.manifest.version}
 													</span>
 												)}
 												<span
-													className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase"
+													className="px-1.5 py-0.5 rounded text-3xs font-bold uppercase"
 													style={{
 														backgroundColor: statusColor(status.color) + '25',
 														color: statusColor(status.color),
@@ -276,7 +279,7 @@ export function PluginsPanel({ theme }: PluginsPanelProps) {
 												</span>
 												{record.signature && record.signature.status !== 'unsigned' && (
 													<span
-														className="inline-flex items-center gap-0.5 text-[10px]"
+														className="inline-flex items-center gap-0.5 text-2xs"
 														style={{
 															color:
 																record.signature.status === 'trusted'
@@ -293,7 +296,7 @@ export function PluginsPanel({ theme }: PluginsPanelProps) {
 												)}
 											</div>
 											<div
-												className="text-[11px] mt-0.5 truncate"
+												className="text-xs-plus mt-0.5 truncate"
 												style={{ color: theme.colors.textDim }}
 											>
 												{record.id}
@@ -305,7 +308,7 @@ export function PluginsPanel({ theme }: PluginsPanelProps) {
 											)}
 											{record.errors.length > 0 && (
 												<div
-													className="text-[11px] mt-1.5 flex items-start gap-1"
+													className="text-xs-plus mt-1.5 flex items-start gap-1"
 													style={{ color: theme.colors.error }}
 												>
 													<AlertTriangle className="w-3 h-3 mt-0.5 shrink-0" />
@@ -363,7 +366,7 @@ export function PluginsPanel({ theme }: PluginsPanelProps) {
 												{cmds.map((cmd) => (
 													<button
 														key={cmd.id}
-														className="flex items-center gap-1 px-2 py-1 rounded text-[11px]"
+														className="flex items-center gap-1 px-2 py-1 rounded text-xs-plus"
 														style={{
 															backgroundColor: theme.colors.accent + '18',
 															color: theme.colors.accent,
@@ -378,12 +381,12 @@ export function PluginsPanel({ theme }: PluginsPanelProps) {
 												{panels.map((panel) => (
 													<button
 														key={panel.id}
-														className="flex items-center gap-1 px-2 py-1 rounded text-[11px]"
+														className="flex items-center gap-1 px-2 py-1 rounded text-xs-plus"
 														style={{
 															backgroundColor: theme.colors.accent + '18',
 															color: theme.colors.accent,
 														}}
-														onClick={() => setOpenPanel(panel)}
+														onClick={() => launchFromSettings(() => setOpenPluginPanelId(panel.id))}
 														title={`Open ${panel.title}`}
 													>
 														<PanelTop className="w-3 h-3" />
@@ -401,10 +404,6 @@ export function PluginsPanel({ theme }: PluginsPanelProps) {
 
 			{/* Read-only per-plugin observability for running tier-1 plugins. */}
 			<PluginActivityView theme={theme} records={records} />
-
-			{openPanel && (
-				<PluginPanelHost theme={theme} panel={openPanel} onClose={() => setOpenPanel(null)} />
-			)}
 		</div>
 	);
 }

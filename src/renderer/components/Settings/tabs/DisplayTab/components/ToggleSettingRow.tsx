@@ -55,7 +55,7 @@ export function ToggleSettingRow({
 				<div className="text-sm" style={{ color: theme.colors.textMain }}>
 					{title}
 				</div>
-				{description && <p className="text-xs opacity-50 mt-0.5">{description}</p>}
+				{description && <p className="text-xs opacity-70 mt-0.5">{description}</p>}
 			</div>
 			<ToggleSwitch
 				checked={checked}

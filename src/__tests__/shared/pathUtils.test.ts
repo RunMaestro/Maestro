@@ -21,6 +21,7 @@ import {
 	compareVersions,
 	buildExpandedPath,
 	buildExpandedEnv,
+	encodeClaudeProjectPath,
 } from '../../shared/pathUtils';
 
 // Mock os.homedir for consistent test behavior
@@ -408,5 +409,34 @@ describe('buildExpandedEnv', () => {
 
 		expect(process.env.PATH).toBe(originalPathValue);
 		expect(process.env.NEW_VAR).toBeUndefined();
+	});
+});
+
+describe('encodeClaudeProjectPath', () => {
+	it('should replace every non-alphanumeric character with a dash', () => {
+		expect(encodeClaudeProjectPath('/Users/test/my_project.v2')).toBe('-Users-test-my-project-v2');
+	});
+
+	it('should strip a trailing slash so the encoding matches what Claude Code writes', () => {
+		expect(encodeClaudeProjectPath('/Volumes/VRAM/01_Tools/Interceptor/')).toBe(
+			encodeClaudeProjectPath('/Volumes/VRAM/01_Tools/Interceptor')
+		);
+		expect(encodeClaudeProjectPath('/Volumes/VRAM/01_Tools/Interceptor/')).toBe(
+			'-Volumes-VRAM-01-Tools-Interceptor'
+		);
+	});
+
+	it('should strip repeated and backslash trailing separators', () => {
+		expect(encodeClaudeProjectPath('/path/to/repo///')).toBe('-path-to-repo');
+		expect(encodeClaudeProjectPath('C:\\Users\\test\\repo\\')).toBe('C--Users-test-repo');
+	});
+
+	it('should leave filesystem roots intact', () => {
+		expect(encodeClaudeProjectPath('/')).toBe('-');
+		expect(encodeClaudeProjectPath('C:\\')).toBe('C--');
+	});
+
+	it('should handle an empty path', () => {
+		expect(encodeClaudeProjectPath('')).toBe('');
 	});
 });

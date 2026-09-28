@@ -58,14 +58,21 @@ vi.mock('fs/promises', () => ({
 
 // Don't mock path - use the real Node.js implementation
 
-// Mock chokidar
-vi.mock('chokidar', () => ({
-	default: {
-		watch: vi.fn(() => ({
+// Mock chokidar. The watch fn and the per-watcher close are hoisted so tests
+// can assert WHEN a watcher is created and closed (reference counting).
+const { mockChokidarWatch, mockWatcherClose } = vi.hoisted(() => {
+	const close = vi.fn();
+	return {
+		mockWatcherClose: close,
+		mockChokidarWatch: vi.fn(() => ({
 			on: vi.fn().mockReturnThis(),
-			close: vi.fn(),
+			close,
 		})),
-	},
+	};
+});
+
+vi.mock('chokidar', () => ({
+	default: { watch: mockChokidarWatch },
 }));
 
 // Mock electron-store
@@ -86,6 +93,7 @@ const {
 	mockExistsRemote,
 	mockMkdirRemote,
 	mockDeleteRemote,
+	mockListTreeRemote,
 } = vi.hoisted(() => ({
 	mockReadDirRemote: vi.fn(),
 	mockReadFileRemote: vi.fn(),
@@ -93,6 +101,7 @@ const {
 	mockExistsRemote: vi.fn(),
 	mockMkdirRemote: vi.fn(),
 	mockDeleteRemote: vi.fn(),
+	mockListTreeRemote: vi.fn(),
 }));
 
 vi.mock('../../../../main/utils/remote-fs', () => ({
@@ -102,6 +111,8 @@ vi.mock('../../../../main/utils/remote-fs', () => ({
 	existsRemote: mockExistsRemote,
 	mkdirRemote: mockMkdirRemote,
 	deleteRemote: mockDeleteRemote,
+	listTreeRemote: mockListTreeRemote,
+	statRemote: vi.fn(),
 }));
 
 // Mock the logger
@@ -112,6 +123,11 @@ vi.mock('../../../../main/utils/logger', () => ({
 		error: vi.fn(),
 		debug: vi.fn(),
 	},
+}));
+
+// Mock Sentry so malformed-STATUS.json reporting has no real side effects
+vi.mock('../../../../main/utils/sentry', () => ({
+	captureException: vi.fn(),
 }));
 
 describe('autorun IPC handlers', () => {
@@ -167,6 +183,7 @@ describe('autorun IPC handlers', () => {
 		mockExistsRemote.mockReset();
 		mockMkdirRemote.mockReset();
 		mockDeleteRemote.mockReset();
+		mockListTreeRemote.mockReset();
 
 		// Create mock App and capture event handlers
 		appEventHandlers = new Map();
@@ -209,6 +226,8 @@ describe('autorun IPC handlers', () => {
 				'autorun:restoreBackup',
 				'autorun:deleteBackups',
 				'autorun:createWorkingCopy',
+				'autorun:watchStatus',
+				'autorun:unwatchStatus',
 			];
 
 			for (const channel of expectedChannels) {
@@ -219,6 +238,106 @@ describe('autorun IPC handlers', () => {
 
 		it('should register app before-quit event handler', () => {
 			expect(appEventHandlers.has('before-quit')).toBe(true);
+		});
+	});
+
+	describe('autorun:watchStatus / unwatchStatus (STATUS.json)', () => {
+		it('returns the parsed initial status when .maestro/STATUS.json exists', async () => {
+			const status = {
+				feature: 'F-13',
+				phase: 'IMPLEMENT',
+				summary: '11/14 tasks complete',
+				tests: { pass: 394, fail: 0 },
+			};
+			vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify(status));
+
+			const handler = handlers.get('autorun:watchStatus');
+			const result = await handler!({} as any, '/test/project');
+
+			expect(result.success).toBe(true);
+			expect(result.status).toEqual(status);
+			// Reads the canonical .maestro/STATUS.json path
+			expect(vi.mocked(fs.readFile).mock.calls[0][0]).toBe(
+				path.join('/test/project', '.maestro', 'STATUS.json')
+			);
+		});
+
+		it('returns null status when the file does not exist', async () => {
+			vi.mocked(fs.readFile).mockRejectedValue(
+				Object.assign(new Error('not found'), { code: 'ENOENT' })
+			);
+
+			const handler = handlers.get('autorun:watchStatus');
+			const result = await handler!({} as any, '/test/project');
+
+			expect(result.success).toBe(true);
+			expect(result.status).toBeNull();
+		});
+
+		it('does not throw and returns null status on malformed initial JSON', async () => {
+			vi.mocked(fs.readFile).mockResolvedValue('{ not valid json');
+
+			const handler = handlers.get('autorun:watchStatus');
+			const result = await handler!({} as any, '/test/project');
+
+			expect(result.success).toBe(true);
+			expect(result.status).toBeNull();
+		});
+
+		it('unwatchStatus resolves cleanly even when nothing is being watched', async () => {
+			const handler = handlers.get('autorun:unwatchStatus');
+			const result = await handler!({} as any, '/never/watched');
+
+			expect(result.success).toBe(true);
+		});
+
+		it('before-quit cleanup runs without throwing after a status watch', async () => {
+			vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify({ feature: 'F-1' }));
+			await handlers.get('autorun:watchStatus')!({} as any, '/test/project', 'agent-1');
+
+			const beforeQuit = appEventHandlers.get('before-quit');
+			expect(() => beforeQuit!()).not.toThrow();
+		});
+
+		// Several agents can run Auto Run against one project at the same time.
+		// The watcher is shared, so it must outlive any single one of them.
+		it('keeps the watcher alive while another agent is still subscribed', async () => {
+			vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify({ feature: 'F-1' }));
+
+			await handlers.get('autorun:watchStatus')!({} as any, '/test/project', 'agent-1');
+			const second = await handlers.get('autorun:watchStatus')!(
+				{} as any,
+				'/test/project',
+				'agent-2'
+			);
+			// The second agent joins the existing watcher instead of replacing it.
+			expect(second.watching).toBe(true);
+			expect(mockWatcherClose).not.toHaveBeenCalled();
+
+			// agent-1 finishing must not blind agent-2.
+			await handlers.get('autorun:unwatchStatus')!({} as any, '/test/project', 'agent-1');
+			expect(mockWatcherClose).not.toHaveBeenCalled();
+
+			// Only the last release actually closes it.
+			await handlers.get('autorun:unwatchStatus')!({} as any, '/test/project', 'agent-2');
+			expect(mockWatcherClose).toHaveBeenCalled();
+		});
+
+		// An SSH agent writes STATUS.json on the remote host; chokidar only sees
+		// the local disk, so watching would report nothing forever, or report an
+		// unrelated same-named local file.
+		it('declines to watch for a remote session instead of watching the wrong host', async () => {
+			const result = await handlers.get('autorun:watchStatus')!(
+				{} as any,
+				'/test/project',
+				'agent-1',
+				true
+			);
+
+			expect(result.watching).toBe(false);
+			expect(result.isRemote).toBe(true);
+			expect(result.status).toBeNull();
+			expect(mockChokidarWatch).not.toHaveBeenCalled();
 		});
 	});
 
@@ -532,6 +651,83 @@ describe('autorun IPC handlers', () => {
 
 			expect(result.success).toBe(true);
 			expect(result.files).toEqual(['visible']);
+		});
+	});
+
+	describe('autorun:listDocs SSH', () => {
+		const listTreeOk = (files: string[], directories: string[] = []) => ({
+			success: true,
+			data: { files, directories, truncated: false },
+		});
+
+		it('should scan a remote folder in a single round trip', async () => {
+			mockListTreeRemote.mockResolvedValue(
+				listTreeOk(['root.md', 'message-bus/1_DETECT.md', 'message-bus/2_PLAN.md'])
+			);
+
+			const handler = handlers.get('autorun:listDocs');
+			const result = await handler!({} as any, '/remote/folder', 'ssh-remote-1');
+
+			expect(result.success).toBe(true);
+			expect(result.files).toEqual(['message-bus/1_DETECT', 'message-bus/2_PLAN', 'root']);
+			// One bundled `find`, not one `ls` per directory - a playbooks folder
+			// with hundreds of subdirectories used to time out every caller.
+			expect(mockListTreeRemote).toHaveBeenCalledTimes(1);
+			expect(mockReadDirRemote).not.toHaveBeenCalled();
+			expect(mockListTreeRemote).toHaveBeenCalledWith(
+				'/remote/folder',
+				expect.objectContaining({ ignorePatterns: ['.*'] }),
+				sampleSshRemote
+			);
+		});
+
+		it('should build folders before files and drop the .md extension', async () => {
+			mockListTreeRemote.mockResolvedValue(
+				listTreeOk(['zeta.md', 'alpha/nested/deep.md', 'alpha/one.md'])
+			);
+
+			const handler = handlers.get('autorun:listDocs');
+			const result = await handler!({} as any, '/remote/folder', 'ssh-remote-1');
+
+			expect(result.tree).toEqual([
+				{
+					name: 'alpha',
+					type: 'folder',
+					path: 'alpha',
+					children: [
+						{
+							name: 'nested',
+							type: 'folder',
+							path: 'alpha/nested',
+							children: [{ name: 'deep', type: 'file', path: 'alpha/nested/deep' }],
+						},
+						{ name: 'one', type: 'file', path: 'alpha/one' },
+					],
+				},
+				{ name: 'zeta', type: 'file', path: 'zeta' },
+			]);
+		});
+
+		it('should ignore non-markdown files returned by the scan', async () => {
+			mockListTreeRemote.mockResolvedValue(
+				listTreeOk(['Working/notes.txt', 'Working/report.md', 'script.py'])
+			);
+
+			const handler = handlers.get('autorun:listDocs');
+			const result = await handler!({} as any, '/remote/folder', 'ssh-remote-1');
+
+			expect(result.files).toEqual(['Working/report']);
+		});
+
+		it('should return an empty listing when the remote scan fails', async () => {
+			mockListTreeRemote.mockResolvedValue({ success: false, error: 'ssh: connect failed' });
+
+			const handler = handlers.get('autorun:listDocs');
+			const result = await handler!({} as any, '/remote/folder', 'ssh-remote-1');
+
+			expect(result.success).toBe(true);
+			expect(result.files).toEqual([]);
+			expect(result.tree).toEqual([]);
 		});
 	});
 

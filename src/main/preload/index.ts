@@ -18,6 +18,7 @@ import {
 } from './settings';
 import { createContextApi } from './context';
 import { createWebApi, createWebserverApi, createLiveApi } from './web';
+import { createWebLoginApi } from './webLogin';
 import {
 	createDialogApi,
 	createFontsApi,
@@ -48,9 +49,12 @@ import { createProcessApi } from './process';
 import { createGitApi } from './git';
 import { createFeedbackApi } from './feedback';
 import { createFsApi } from './fs';
+import { createParquetApi } from './parquet';
 import { createAgentsApi } from './agents';
 import { createSymphonyApi } from './symphony';
 import { createTabNamingApi } from './tabNaming';
+import { createTabsApi } from './tabs';
+import { createAiCommandApi } from './aiCommand';
 import { createDirectorNotesApi } from './directorNotes';
 import { createCueApi } from './cue';
 import { createCueBackupApi } from './cueBackup';
@@ -60,6 +64,7 @@ import { createWakatimeApi } from './wakatime';
 import { createMaestroCliApi } from './maestroCli';
 import { createPromptsApi } from './prompts';
 import { createMemoryApi } from './memory';
+import { createContextTimelineApi } from './contextTimeline';
 import { createAgentRunApi } from './agentRun';
 import { createCoworkingApi } from './coworking';
 import { createBrowserSessionApi } from './browserSession';
@@ -109,12 +114,16 @@ contextBridge.exposeInMainWorld('maestro', {
 
 	// File System API
 	fs: createFsApi(),
+	parquet: createParquetApi(),
 
 	// Web Server API
 	webserver: createWebserverApi(),
 
 	// Live Session API
 	live: createLiveApi(),
+
+	// Web Login API (accounts for the web interface - desktop-only)
+	webLogin: createWebLoginApi(),
 
 	// Agent API
 	agents: createAgentsApi(),
@@ -228,6 +237,11 @@ contextBridge.exposeInMainWorld('maestro', {
 	// Tab Naming API (automatic tab name generation)
 	tabNaming: createTabNamingApi(),
 
+	// Tab lifecycle API (renderer -> main tab-close notification)
+	tabs: createTabsApi(),
+	// AI Command API (plain-English request -> one shell command line)
+	aiCommand: createAiCommandApi(),
+
 	// Director's Notes API (unified history + synopsis)
 	directorNotes: createDirectorNotesApi(),
 
@@ -252,6 +266,8 @@ contextBridge.exposeInMainWorld('maestro', {
 	prompts: createPromptsApi(),
 	// Per-project Memory API (Claude Code memory viewer)
 	memory: createMemoryApi(),
+	// Context Timeline capture log (backfills the per-agent turn history)
+	contextTimeline: createContextTimelineApi(),
 	// AgentRun control-plane API (neutral run/campaign ledger)
 	agentRun: createAgentRunApi(),
 	// Coworking API (per-agent MCP installer + terminal registry sync)
@@ -279,6 +295,8 @@ export {
 	createWebApi,
 	createWebserverApi,
 	createLiveApi,
+	// Web Login accounts
+	createWebLoginApi,
 	// System utilities
 	createDialogApi,
 	createFontsApi,
@@ -334,6 +352,7 @@ export {
 	createGitApi,
 	// Filesystem
 	createFsApi,
+	createParquetApi,
 	// Agents
 	createAgentsApi,
 	// Symphony
@@ -576,6 +595,16 @@ export type {
 	TabNamingApi,
 	TabNamingConfig,
 } from './tabNaming';
+export type {
+	// From tabs
+	TabsApi,
+} from './tabs';
+export type {
+	// From aiCommand
+	AiCommandApi,
+	AiCommandSuggestRequest,
+	AiCommandSuggestResult,
+} from './aiCommand';
 export type {
 	// From directorNotes
 	DirectorNotesApi,

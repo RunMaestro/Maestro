@@ -54,6 +54,48 @@ describe('SshRemoteManager', () => {
 			expect(result.errors).toHaveLength(0);
 		});
 
+		it('accepts a well-formed sshOptions record', () => {
+			const result = manager.validateConfig({
+				...validConfig,
+				sshOptions: { ProxyCommand: 'tailcat tcABC 22' },
+			});
+
+			expect(result.valid).toBe(true);
+		});
+
+		it('does not validate the parked record, since parking is the escape hatch', () => {
+			// A value that cannot work right now is exactly what the user parks. If
+			// a parked entry blocked validation the eye would be useless.
+			const result = manager.validateConfig({
+				...validConfig,
+				sshOptionsDisabled: { 'Proxy Command': 'tailcat tcABC 22' },
+			});
+
+			expect(result.valid).toBe(true);
+		});
+
+		it('rejects a malformed ssh option keyword', () => {
+			// ssh exits before it dials on a bad keyword, so naming the offending
+			// option here beats a bare "Bad configuration option" at spawn time.
+			const result = manager.validateConfig({
+				...validConfig,
+				sshOptions: { 'Proxy Command': 'tailcat tcABC 22' },
+			});
+
+			expect(result.valid).toBe(false);
+			expect(result.errors.join(' ')).toMatch(/Invalid SSH option name/);
+		});
+
+		it('rejects an attempt to override the reserved RequestTTY option', () => {
+			const result = manager.validateConfig({
+				...validConfig,
+				sshOptions: { RequestTTY: 'force' },
+			});
+
+			expect(result.valid).toBe(false);
+			expect(result.errors.join(' ')).toMatch(/cannot be overridden/);
+		});
+
 		it('allows empty id (assigned by save handler; enables test-before-save)', () => {
 			const config = { ...validConfig, id: '' };
 			const result = manager.validateConfig(config);
@@ -173,6 +215,41 @@ describe('SshRemoteManager', () => {
 			expect(argsString).toContain('BatchMode=yes');
 			expect(argsString).toContain('StrictHostKeyChecking=accept-new');
 			expect(argsString).toContain('ConnectTimeout=10');
+		});
+
+		it('includes LogLevel, matching the agent spawn builder', () => {
+			// Test Connection and the actual spawn used to build separate option
+			// lists, so a remote could verify green here and then connect with a
+			// different option set when an agent ran on it.
+			const argsString = manager.buildSshArgs(validConfig).join(' ');
+
+			expect(argsString).toContain('LogLevel=ERROR');
+			expect(argsString).toContain('ClearAllForwardings=yes');
+			expect(argsString).toContain('RequestTTY=no');
+		});
+
+		it('applies per-remote sshOptions overrides', () => {
+			const argsString = manager
+				.buildSshArgs({
+					...validConfig,
+					sshOptions: { ProxyCommand: 'tailcat tcABC 22', ConnectTimeout: '45' },
+				})
+				.join(' ');
+
+			expect(argsString).toContain('ProxyCommand=tailcat tcABC 22');
+			expect(argsString).toContain('ConnectTimeout=45');
+			expect(argsString).not.toContain('ConnectTimeout=10');
+		});
+
+		it('ignores the parked record, so Test Connection matches the real spawn', () => {
+			const argsString = manager
+				.buildSshArgs({
+					...validConfig,
+					sshOptionsDisabled: { ProxyCommand: 'tailcat tcABC 22' },
+				})
+				.join(' ');
+
+			expect(argsString).not.toContain('ProxyCommand');
 		});
 
 		it('expands tilde in private key path', () => {
@@ -346,6 +423,70 @@ describe('SshRemoteManager', () => {
 			expect(result.error).toContain('Unexpected response');
 		});
 
+		it('reports a PowerShell remote instead of the raw parser dump', async () => {
+			mockExecSsh
+				.mockResolvedValueOnce({
+					stdout: '',
+					stderr: [
+						'At line:1 char:15',
+						'+ echo "SSH_OK" && hostname',
+						"The token '&&' is not a valid statement separator in this version.",
+						'    + CategoryInfo          : ParserError: (:) []',
+						'    + FullyQualifiedErrorId : InvalidEndOfLine',
+					].join('\n'),
+					exitCode: 1,
+				})
+				.mockResolvedValueOnce({
+					stdout: 'PEDSIM\n',
+					stderr: '',
+					exitCode: 0,
+				});
+
+			const result = await manager.testConnection(validConfig);
+
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('PEDSIM');
+			expect(result.error).toContain('Windows PowerShell');
+			expect(result.error).toContain('DefaultShell');
+			// The PowerShell noise must not leak into the user-facing message
+			expect(result.error).not.toContain('ParserError');
+			// The UI renders the fix from the structured form, not the sentence
+			expect(result.remediation?.code).toBe('non-posix-remote-shell');
+			expect(result.remediation?.command).toContain('DefaultShell');
+		});
+
+		it('names the remote generically when the hostname probe also fails', async () => {
+			mockExecSsh
+				.mockResolvedValueOnce({
+					stdout: '',
+					stderr: "The token '&&' is not a valid statement separator in this version.",
+					exitCode: 1,
+				})
+				.mockResolvedValueOnce({ stdout: '', stderr: 'nope', exitCode: 1 });
+
+			const result = await manager.testConnection(validConfig);
+
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('Windows PowerShell');
+		});
+
+		it('reports a cmd.exe remote that echoes the marker with its quotes', async () => {
+			mockExecSsh.mockResolvedValue({
+				stdout: '"SSH_OK"\nPEDSIM\n',
+				stderr: '',
+				exitCode: 0,
+			});
+
+			const result = await manager.testConnection(validConfig);
+
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('cmd.exe');
+			expect(result.error).toContain('PEDSIM');
+			expect(result.remediation?.code).toBe('non-posix-remote-shell');
+			// A single round trip is enough: cmd already returned the hostname
+			expect(mockExecSsh).toHaveBeenCalledTimes(1);
+		});
+
 		it('handles exception during connection', async () => {
 			mockExecSsh.mockRejectedValue(new Error('Spawn failed'));
 
@@ -384,7 +525,11 @@ describe('SshRemoteManager', () => {
 
 			const args = mockExecSsh.mock.calls[0][1] as string[];
 			const lastArg = args[args.length - 1];
-			expect(lastArg).toContain('which claude');
+			// `command -v`, not `which`: `which` is an external binary that minimal
+			// remote images (BusyBox, slim containers) do not ship, and its own "not
+			// found" would be misread as the AGENT being absent. `command -v` is a
+			// POSIX shell builtin, so it is always there.
+			expect(lastArg).toContain('command -v claude');
 		});
 
 		it('handles no route to host error', async () => {

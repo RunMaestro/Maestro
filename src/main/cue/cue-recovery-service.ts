@@ -13,6 +13,10 @@
  */
 
 import type { MainLogLevel } from '../../shared/logger-types';
+import {
+	DEFAULT_CUE_HISTORY_RETENTION_MS,
+	resolveCueHistoryRetentionMs,
+} from '../../shared/cue/retention';
 import { closeCueDb, getLastHeartbeat, initCueDb, pruneCueEvents } from './cue-db';
 import { reconcileMissedTimeEvents, type ReconcileSessionInfo } from './cue-reconciler';
 import { captureException } from '../utils/sentry';
@@ -20,8 +24,16 @@ import type { CueConfig, CueEvent, CueSubscription } from './cue-types';
 
 /** Sleep gap threshold for triggering reconciliation. Same as the old heartbeat module. */
 export const SLEEP_THRESHOLD_MS = 120_000; // 2 minutes
-/** Cue events older than this are pruned at engine start. */
-export const EVENT_PRUNE_AGE_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+/**
+ * Fallback prune window: Cue events older than this are pruned at engine start
+ * when the user's `cueHistoryRetentionDays` setting is missing or unusable.
+ *
+ * Aliases {@link DEFAULT_CUE_HISTORY_RETENTION_MS} so the fallback and the
+ * setting's own default are the same number. They used to differ (this was a
+ * hardcoded 7 days), which would have had the engine delete a week of rows the
+ * Activity Log promised to keep for two.
+ */
+export const EVENT_PRUNE_AGE_MS = DEFAULT_CUE_HISTORY_RETENTION_MS;
 
 export type CueRecoveryInitResult = { ok: true } | { ok: false; error: Error };
 
@@ -31,6 +43,17 @@ export interface CueRecoveryServiceDeps {
 	getSessions: () => Map<string, { config: CueConfig; sessionName: string }>;
 	/** Dispatch a missed event back through the engine's normal execution path. */
 	onDispatch: (sessionId: string, sub: CueSubscription, event: CueEvent) => void;
+	/**
+	 * The user's `cueHistoryRetentionDays` setting, read fresh on every `init()`
+	 * so a change takes effect at the next engine start without an app restart.
+	 *
+	 * Returns `unknown` on purpose: the settings store's declared type describes
+	 * what the app writes, not what is on disk, and this value can also arrive
+	 * from a hand-edited JSON file or the CLI. `resolveCueHistoryRetentionMs()`
+	 * does the clamping. Omit the dep (tests, older call sites) to prune with
+	 * {@link EVENT_PRUNE_AGE_MS}.
+	 */
+	getCueHistoryRetentionDays?: () => unknown;
 }
 
 export interface CueRecoveryService {
@@ -54,7 +77,7 @@ export function createCueRecoveryService(deps: CueRecoveryServiceDeps): CueRecov
 	function init(): CueRecoveryInitResult {
 		try {
 			initCueDb((level, msg) => deps.onLog(level as MainLogLevel, msg));
-			pruneCueEvents(EVENT_PRUNE_AGE_MS);
+			pruneCueEvents(resolveCueHistoryRetentionMs(deps.getCueHistoryRetentionDays?.()));
 			return { ok: true };
 		} catch (error) {
 			const err = error instanceof Error ? error : new Error(String(error));

@@ -25,8 +25,10 @@ const {
 	mockMarkGitHubItemSeen,
 	mockHasAnyGitHubSeen,
 	mockPruneGitHubSeen,
+	mockPruneSusFactorBlocks,
 	mockGetGitHubItemState,
 	mockRecordGitHubRetrigger,
+	mockSetGitHubItemRevision,
 	mockCaptureException,
 } = vi.hoisted(() => ({
 	mockExecFile: vi.fn(),
@@ -35,10 +37,12 @@ const {
 	mockMarkGitHubItemSeen: vi.fn<(subId: string, key: string, lastRevision?: string) => void>(),
 	mockHasAnyGitHubSeen: vi.fn<(subId: string) => boolean>().mockReturnValue(true),
 	mockPruneGitHubSeen: vi.fn<(olderThanMs: number) => void>(),
+	mockPruneSusFactorBlocks: vi.fn<(olderThanMs: number) => void>(),
 	mockGetGitHubItemState: vi
 		.fn<(subId: string, key: string) => { lastRevision: string | null; fireCount: number } | null>()
 		.mockReturnValue(null),
 	mockRecordGitHubRetrigger: vi.fn<(subId: string, key: string, newRevision: string) => void>(),
+	mockSetGitHubItemRevision: vi.fn<(subId: string, key: string, revision: string) => void>(),
 	mockCaptureException: vi.fn(),
 }));
 
@@ -75,14 +79,18 @@ vi.mock('../../../main/cue/cue-db', () => ({
 		mockMarkGitHubItemSeen(subId, key, lastRevision),
 	hasAnyGitHubSeen: (subId: string) => mockHasAnyGitHubSeen(subId),
 	pruneGitHubSeen: (olderThanMs: number) => mockPruneGitHubSeen(olderThanMs),
+	pruneSusFactorBlocks: (olderThanMs: number) => mockPruneSusFactorBlocks(olderThanMs),
 	getGitHubItemState: (subId: string, key: string) => mockGetGitHubItemState(subId, key),
 	recordGitHubRetrigger: (subId: string, key: string, newRevision: string) =>
 		mockRecordGitHubRetrigger(subId, key, newRevision),
+	setGitHubItemRevision: (subId: string, key: string, revision: string) =>
+		mockSetGitHubItemRevision(subId, key, revision),
 }));
 
 import {
 	createCueGitHubPoller,
 	isGitHubConnectivityError,
+	isGitHubAuthError,
 	isGitHubRateLimitError,
 	GITHUB_RATE_LIMIT_MAX_BACKOFF_MS,
 	type CueGitHubPollerConfig,
@@ -925,8 +933,73 @@ describe('cue-github-poller', () => {
 			expect(isGitHubConnectivityError(new Error('ENOTFOUND api.github.com'))).toBe(true);
 		});
 
+		it('matches Go transport failures (gh is a Go binary, not libuv)', () => {
+			// `Post "https://api.github.com/graphql": net/http: TLS handshake timeout`
+			// is the same unreachable-right-now condition as ETIMEDOUT, spelled the
+			// way Go's http client spells it.
+			expect(
+				isGitHubConnectivityError(
+					new Error('Post "https://api.github.com/graphql": net/http: TLS handshake timeout')
+				)
+			).toBe(true);
+			expect(isGitHubConnectivityError(new Error('dial tcp 140.82.121.6:443: i/o timeout'))).toBe(
+				true
+			);
+			expect(
+				isGitHubConnectivityError(new Error('dial tcp: lookup api.github.com: no such host'))
+			).toBe(true);
+		});
+
 		it('does not match auth/configuration failures', () => {
+			// Auth stays outside this predicate on purpose - it is a different
+			// condition with different user guidance. isGitHubAuthError owns it.
 			expect(isGitHubConnectivityError(new Error('gh auth login required'))).toBe(false);
+			expect(isGitHubConnectivityError(new Error('HTTP 401: Bad credentials'))).toBe(false);
+		});
+	});
+
+	// MAESTRO-KE: a single install whose `gh` token had gone stale filed 924
+	// events - one per poll tick - because no predicate claimed HTTP 401.
+	describe('auth detection (isGitHubAuthError)', () => {
+		it('matches the field message verbatim', () => {
+			expect(
+				isGitHubAuthError(
+					new Error(
+						'Command failed: /usr/bin/gh issue list --repo acme/widgets --json number\n' +
+							'HTTP 401: Bad credentials (https://api.github.com/graphql)\n' +
+							'Try authenticating with:  gh auth login\n'
+					)
+				)
+			).toBe(true);
+		});
+
+		it('matches an unauthenticated gh CLI', () => {
+			expect(
+				isGitHubAuthError(
+					new Error('You are not logged into any GitHub hosts. Run gh auth login to authenticate.')
+				)
+			).toBe(true);
+			expect(isGitHubAuthError(new Error('HTTP 401: Requires authentication'))).toBe(true);
+		});
+
+		it('reads stderr as well as message', () => {
+			const err = Object.assign(new Error('Command failed: gh pr list'), {
+				stderr: 'HTTP 401: Bad credentials (https://api.github.com/graphql)',
+			});
+			expect(isGitHubAuthError(err)).toBe(true);
+		});
+
+		it('does not match rate limits, connectivity failures, or real faults', () => {
+			// 403/429 belong to isGitHubRateLimitError and get exponential backoff;
+			// misrouting them here would drop that behaviour on the floor.
+			expect(isGitHubAuthError(new Error('HTTP 403: API rate limit exceeded'))).toBe(false);
+			expect(isGitHubAuthError(new Error('ENOTFOUND api.github.com'))).toBe(false);
+			expect(isGitHubAuthError(new Error('HTTP 422: Validation Failed'))).toBe(false);
+		});
+
+		it('handles null/undefined safely', () => {
+			expect(isGitHubAuthError(null)).toBe(false);
+			expect(isGitHubAuthError(undefined)).toBe(false);
 		});
 	});
 
@@ -969,9 +1042,135 @@ describe('cue-github-poller', () => {
 			cleanup();
 		});
 
-		it('reports non-rate-limit/non-connectivity errors to Sentry with cue:github:doPoll tag', async () => {
+		it('does not report GitHub-side 5xx responses to Sentry (MAESTRO-KE)', async () => {
 			const config = makeConfig();
-			setupExecFileReject('pr list', 'gh auth login required');
+			// `gh` surfaces a degraded GitHub as an HTTP 5xx on stderr. The poller
+			// retries on its own schedule, so paging Sentry once per tick for the
+			// duration of a GitHub outage is pure noise.
+			setupExecFileReject(
+				'pr list',
+				'HTTP 504: 504 Gateway Timeout (https://api.github.com/graphql)'
+			);
+			mockExecFile.mockImplementationOnce((_c, _a, _o, cb) => cb(null, '2.0.0', ''));
+
+			const cleanup = createCueGitHubPoller(config);
+			await vi.advanceTimersByTimeAsync(2100);
+
+			// Prove the injected failure actually ran: a zero-Sentry assertion also
+			// passes if polling bailed out before `pr list` (e.g. repo resolution).
+			expect(
+				mockExecFile.mock.calls.some((c) => (c[1] as string[]).join(' ').includes('pr list'))
+			).toBe(true);
+			const sentryCalls = mockCaptureException.mock.calls.filter(
+				(c) => (c[1] as { operation: string }).operation === 'cue:github:doPoll'
+			);
+			expect(sentryCalls).toHaveLength(0);
+
+			cleanup();
+		});
+
+		it('does not report a GitHub-side 5xx during repo auto-detection (MAESTRO-KE)', async () => {
+			// Repo auto-detection runs before the poll, so a `gh repo view` failure
+			// short-circuits doPoll entirely and has to suppress on its own.
+			const config = makeConfig({ repo: undefined });
+			mockExecFile.mockImplementation((_c, args, _o, cb) => {
+				if ((args as string[]).includes('--version')) return cb(null, '2.0.0', '');
+				return cb(new Error('HTTP 503: 503 Service Unavailable (https://api.github.com)'), '', '');
+			});
+
+			const cleanup = createCueGitHubPoller(config);
+			await vi.advanceTimersByTimeAsync(2100);
+
+			const sentryCalls = mockCaptureException.mock.calls.filter(
+				(c) => (c[1] as { operation: string }).operation === 'cue:github:resolveRepo'
+			);
+			expect(sentryCalls).toHaveLength(0);
+
+			cleanup();
+		});
+
+		it('does not report an unauthenticated gh CLI to Sentry (MAESTRO-KE)', async () => {
+			// A stale/revoked `gh` token is only fixable by the user, and the poller
+			// keeps ticking - so without a carve-out one install files an event
+			// every poll interval, indefinitely.
+			const config = makeConfig();
+			setupExecFileReject(
+				'pr list',
+				'HTTP 401: Bad credentials (https://api.github.com/graphql)\nTry authenticating with:  gh auth login'
+			);
+			mockExecFile.mockImplementationOnce((_c, _a, _o, cb) => cb(null, '2.0.0', ''));
+
+			const cleanup = createCueGitHubPoller(config);
+			await vi.advanceTimersByTimeAsync(2100);
+
+			// Prove the injected failure actually ran - a zero-Sentry assertion
+			// also passes if polling never reached `pr list`.
+			expect(
+				mockExecFile.mock.calls.some((c) => (c[1] as string[]).join(' ').includes('pr list'))
+			).toBe(true);
+			const sentryCalls = mockCaptureException.mock.calls.filter(
+				(c) => (c[1] as { operation: string }).operation === 'cue:github:doPoll'
+			);
+			expect(sentryCalls).toHaveLength(0);
+
+			cleanup();
+		});
+
+		it('tells the user to run gh auth login instead of failing silently', async () => {
+			const config = makeConfig();
+			setupExecFileReject('pr list', 'HTTP 401: Bad credentials (https://api.github.com/graphql)');
+			mockExecFile.mockImplementationOnce((_c, _a, _o, cb) => cb(null, '2.0.0', ''));
+
+			const cleanup = createCueGitHubPoller(config);
+			await vi.advanceTimersByTimeAsync(2100);
+
+			const authLog = (config.onLog as ReturnType<typeof vi.fn>).mock.calls.find(
+				(c) => typeof c[1] === 'string' && (c[1] as string).includes('gh auth login')
+			);
+			expect(authLog).toBeDefined();
+			expect(authLog?.[0]).toBe('warn');
+
+			cleanup();
+		});
+
+		it('does not report an unauthenticated gh CLI during repo auto-detection (MAESTRO-KE)', async () => {
+			const config = makeConfig({ repo: undefined });
+			mockExecFile.mockImplementation((_c, args, _o, cb) => {
+				if ((args as string[]).includes('--version')) return cb(null, '2.0.0', '');
+				return cb(new Error('HTTP 401: Bad credentials (https://api.github.com)'), '', '');
+			});
+
+			const cleanup = createCueGitHubPoller(config);
+			await vi.advanceTimersByTimeAsync(2100);
+
+			const sentryCalls = mockCaptureException.mock.calls.filter(
+				(c) => (c[1] as { operation: string }).operation === 'cue:github:resolveRepo'
+			);
+			expect(sentryCalls).toHaveLength(0);
+
+			// Auto-detection fails before doPoll ever has a repo, so the actionable
+			// guidance has to come from resolveRepo itself. Without it the only
+			// message the user sees is "could not auto-detect repo", which points
+			// at the project instead of at the login.
+			const authLog = (config.onLog as ReturnType<typeof vi.fn>).mock.calls.find(
+				(c) => typeof c[1] === 'string' && (c[1] as string).includes('gh auth login')
+			);
+			expect(authLog).toBeDefined();
+			expect(authLog?.[0]).toBe('warn');
+
+			cleanup();
+		});
+
+		it('reports non-rate-limit/non-connectivity/non-auth errors to Sentry with cue:github:doPoll tag', async () => {
+			// Fixture is a 422: GitHub rejected a query *we* built, which is a real
+			// bug on our side and must keep paging. (This case used to use
+			// `gh auth login required`, which is now classified as an expected auth
+			// failure - see isGitHubAuthError / MAESTRO-KE.)
+			const config = makeConfig();
+			setupExecFileReject(
+				'pr list',
+				'HTTP 422: Validation Failed (https://api.github.com/graphql)'
+			);
 			mockExecFile.mockImplementationOnce((_c, _a, _o, cb) => cb(null, '2.0.0', ''));
 
 			const cleanup = createCueGitHubPoller(config);
@@ -1336,6 +1535,204 @@ describe('cue-github-poller', () => {
 			expect(event.type).toBe('github.issue');
 			expect(event.payload.is_retrigger).toBe(true);
 			expect(event.payload.new_comments).toHaveLength(1);
+			cleanup();
+		});
+	});
+
+	describe('github.label - label-add events', () => {
+		/** One projected row from `gh api repos/<repo>/issues/events --jq ...`. */
+		function labelEvent(overrides: Record<string, unknown> = {}) {
+			return {
+				id: 1000,
+				created_at: '2026-03-04T00:00:00Z',
+				label: 'ready-to-merge',
+				actor: 'alice',
+				number: 42,
+				title: 'Add feature',
+				url: 'https://github.com/owner/repo/pull/42',
+				body: 'Feature description',
+				state: 'open',
+				labels: ['ready-to-merge', 'enhancement'],
+				is_pr: true,
+				merged: false,
+				author: 'bob',
+				item_created_at: '2026-03-01T00:00:00Z',
+				item_updated_at: '2026-03-04T00:00:00Z',
+				...overrides,
+			};
+		}
+
+		/** Serve the events feed one page at a time, keyed by `page=N`. */
+		function setupLabelFeed(pages: Record<number, unknown[]>) {
+			mockExecFile.mockImplementation(
+				(
+					cmd: string,
+					args: string[],
+					_opts: unknown,
+					cb: (err: Error | null, stdout: string, stderr: string) => void
+				) => {
+					const key = `${cmd} ${args.join(' ')}`;
+					if (key.includes('--version')) return cb(null, '2.0.0', '');
+					if (key.includes('issues/events')) {
+						const match = key.match(/[?&]page=(\d+)/);
+						const page = match ? parseInt(match[1], 10) : 1;
+						return cb(null, JSON.stringify(pages[page] ?? []), '');
+					}
+					cb(new Error(`Command not found: ${key}`), '', '');
+				}
+			);
+		}
+
+		function labelConfig(overrides: Partial<CueGitHubPollerConfig> = {}) {
+			return makeConfig({ eventType: 'github.label', ...overrides });
+		}
+
+		it('first run records the watermark and fires nothing', async () => {
+			mockGetGitHubItemState.mockReturnValue(null);
+			const config = labelConfig();
+			setupLabelFeed({ 1: [labelEvent({ id: 5000 }), labelEvent({ id: 4000 })] });
+
+			const cleanup = createCueGitHubPoller(config);
+			await vi.advanceTimersByTimeAsync(2100);
+
+			expect(config.onEvent).not.toHaveBeenCalled();
+			expect(mockSetGitHubItemRevision).toHaveBeenCalledWith(
+				'session-1:test-sub',
+				'__label_watermark__',
+				'5000'
+			);
+			cleanup();
+		});
+
+		it('fires oldest-first for events past the watermark and carries the label payload', async () => {
+			mockGetGitHubItemState.mockReturnValue({ lastRevision: '4000', fireCount: 0 });
+			const config = labelConfig();
+			setupLabelFeed({
+				1: [
+					labelEvent({ id: 6000, label: 'needs-rebase' }),
+					labelEvent({ id: 5000, label: 'ready-to-merge' }),
+					labelEvent({ id: 4000, label: 'already-seen' }),
+				],
+			});
+
+			const cleanup = createCueGitHubPoller(config);
+			await vi.advanceTimersByTimeAsync(2100);
+
+			const calls = (config.onEvent as ReturnType<typeof vi.fn>).mock.calls;
+			expect(calls).toHaveLength(2);
+			expect(calls[0][0].payload.label).toBe('ready-to-merge');
+			expect(calls[1][0].payload.label).toBe('needs-rebase');
+
+			const first = calls[0][0];
+			expect(first.type).toBe('github.label');
+			expect(first.payload.type).toBe('pull_request');
+			expect(first.payload.number).toBe(42);
+			expect(first.payload.label_actor).toBe('alice');
+			expect(first.payload.labels).toBe('ready-to-merge,enhancement');
+			expect(first.payload.repo).toBe('owner/repo');
+
+			expect(mockSetGitHubItemRevision).toHaveBeenCalledWith(
+				'session-1:test-sub',
+				'__label_watermark__',
+				'6000'
+			);
+			cleanup();
+		});
+
+		it('only fires for watched labels, matched case-insensitively', async () => {
+			mockGetGitHubItemState.mockReturnValue({ lastRevision: '4000', fireCount: 0 });
+			const config = labelConfig({ watchLabels: ['Ready-To-Merge'] });
+			setupLabelFeed({
+				1: [
+					labelEvent({ id: 6000, label: 'wontfix' }),
+					labelEvent({ id: 5000, label: 'ready-to-merge' }),
+					labelEvent({ id: 4000 }),
+				],
+			});
+
+			const cleanup = createCueGitHubPoller(config);
+			await vi.advanceTimersByTimeAsync(2100);
+
+			const calls = (config.onEvent as ReturnType<typeof vi.fn>).mock.calls;
+			expect(calls).toHaveLength(1);
+			expect(calls[0][0].payload.label).toBe('ready-to-merge');
+			cleanup();
+		});
+
+		it('narrows to issues when gh_label_target is "issue"', async () => {
+			mockGetGitHubItemState.mockReturnValue({ lastRevision: '4000', fireCount: 0 });
+			const config = labelConfig({ labelTarget: 'issue' });
+			setupLabelFeed({
+				1: [
+					labelEvent({ id: 6000, is_pr: true, number: 42 }),
+					labelEvent({ id: 5000, is_pr: false, number: 7 }),
+					labelEvent({ id: 4000 }),
+				],
+			});
+
+			const cleanup = createCueGitHubPoller(config);
+			await vi.advanceTimersByTimeAsync(2100);
+
+			const calls = (config.onEvent as ReturnType<typeof vi.fn>).mock.calls;
+			expect(calls).toHaveLength(1);
+			expect(calls[0][0].payload.type).toBe('issue');
+			expect(calls[0][0].payload.number).toBe(7);
+			cleanup();
+		});
+
+		it('pages back until it crosses the watermark', async () => {
+			mockGetGitHubItemState.mockReturnValue({ lastRevision: '4000', fireCount: 0 });
+			const config = labelConfig();
+			setupLabelFeed({
+				1: Array.from({ length: 100 }, (_, i) => labelEvent({ id: 6000 - i })),
+				2: [labelEvent({ id: 5000 }), labelEvent({ id: 4000 })],
+			});
+
+			const cleanup = createCueGitHubPoller(config);
+			await vi.advanceTimersByTimeAsync(2100);
+
+			// 100 from page 1 plus the one page-2 event above the watermark.
+			expect(config.onEvent).toHaveBeenCalledTimes(101);
+			expect(config.onLog).not.toHaveBeenCalledWith(
+				'warn',
+				expect.stringContaining('may have been skipped')
+			);
+			cleanup();
+		});
+
+		it('warns when the watermark is out of reach instead of skipping silently', async () => {
+			mockGetGitHubItemState.mockReturnValue({ lastRevision: '1', fireCount: 0 });
+			const config = labelConfig();
+			const fullPage = (base: number) =>
+				Array.from({ length: 100 }, (_, i) => labelEvent({ id: base - i }));
+			setupLabelFeed({ 1: fullPage(9000), 2: fullPage(8000), 3: fullPage(7000) });
+
+			const cleanup = createCueGitHubPoller(config);
+			await vi.advanceTimersByTimeAsync(2100);
+
+			expect(config.onLog).toHaveBeenCalledWith(
+				'warn',
+				expect.stringContaining('may have been skipped')
+			);
+			cleanup();
+		});
+
+		it('advances the watermark past events it filtered out', async () => {
+			mockGetGitHubItemState.mockReturnValue({ lastRevision: '4000', fireCount: 0 });
+			const config = labelConfig({ watchLabels: ['nothing-matches'] });
+			setupLabelFeed({
+				1: [labelEvent({ id: 6000, label: 'wontfix' }), labelEvent({ id: 4000 })],
+			});
+
+			const cleanup = createCueGitHubPoller(config);
+			await vi.advanceTimersByTimeAsync(2100);
+
+			expect(config.onEvent).not.toHaveBeenCalled();
+			expect(mockSetGitHubItemRevision).toHaveBeenCalledWith(
+				'session-1:test-sub',
+				'__label_watermark__',
+				'6000'
+			);
 			cleanup();
 		});
 	});

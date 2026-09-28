@@ -1,5 +1,7 @@
+import { ScrollText } from 'lucide-react';
 import type { Theme } from '../../../../../types';
 import { ToggleButtonGroup } from '../../../../ToggleButtonGroup';
+import { SettingsSectionHeading } from '../../../SettingsSectionHeading';
 
 interface LogLevelSectionProps {
 	theme: Theme;
@@ -10,7 +12,7 @@ interface LogLevelSectionProps {
 export function LogLevelSection({ theme, logLevel, setLogLevel }: LogLevelSectionProps) {
 	return (
 		<div data-setting-id="general-log-level">
-			<div className="block text-xs font-bold opacity-70 uppercase mb-2">System Log Level</div>
+			<SettingsSectionHeading icon={ScrollText}>System Log Level</SettingsSectionHeading>
 			<ToggleButtonGroup
 				options={[
 					{ value: 'debug', label: 'Debug', activeColor: '#6366f1' },
@@ -22,7 +24,7 @@ export function LogLevelSection({ theme, logLevel, setLogLevel }: LogLevelSectio
 				onChange={setLogLevel}
 				theme={theme}
 			/>
-			<p className="text-xs opacity-50 mt-2">
+			<p className="text-xs opacity-70 mt-2">
 				Higher levels show fewer logs. Debug shows all logs, Error shows only errors.
 			</p>
 		</div>

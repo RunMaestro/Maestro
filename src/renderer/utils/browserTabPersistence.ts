@@ -89,12 +89,15 @@ export function resolveBrowserTabNavigationTarget(value: string): BrowserTabNavi
 	const trimmed = value.trim();
 	if (!trimmed) return { kind: 'url', url: DEFAULT_BROWSER_TAB_URL };
 	if (trimmed === DEFAULT_BROWSER_TAB_URL) return { kind: 'url', url: DEFAULT_BROWSER_TAB_URL };
-	if (looksLikeLocalAddress(trimmed)) {
-		return { kind: 'url', url: new URL(`http://${trimmed}`).toString() };
-	}
-
 	const hasScheme = /^[a-zA-Z][a-zA-Z\d+.-]*:/.test(trimmed);
 	const candidate = (() => {
+		// `looksLikeLocalAddress` only pattern-matches the shape of a loopback
+		// host, so it also accepts values the URL parser rejects outright
+		// ("localhost:99999", "127.999.999.999"). Feed the result through the
+		// shared try/catch below instead of parsing it here, or the throw escapes
+		// a function whose whole contract is to report bad input as
+		// `{ kind: 'error' }`.
+		if (looksLikeLocalAddress(trimmed)) return `http://${trimmed}`;
 		if (hasScheme) return trimmed;
 		if (looksLikeSchemeLessUrl(trimmed)) return `https://${trimmed}`;
 		if (looksLikeSearchQuery(trimmed)) return buildSearchUrl(trimmed);
@@ -141,6 +144,38 @@ export function isHttpBrowserTabUrl(url: string | null | undefined): boolean {
 		return protocol === 'http:' || protocol === 'https:';
 	} catch {
 		return false;
+	}
+}
+
+/**
+ * The value that is safe to hand an Electron `<webview>` as its `src`.
+ *
+ * Electron resolves the `src` attribute with `new URL(src, location.href)` from
+ * inside `WebViewElement.connectedCallback`, so an unparseable URL throws
+ * "Failed to construct 'URL': Invalid URL" synchronously during React's commit
+ * phase and takes the whole renderer tree down (MAESTRO-QX/QY/QZ).
+ *
+ * `tab.url` is NOT guaranteed parseable: the webview's own navigation events
+ * write it back, and `did-fail-load` reports the raw target as `validatedURL` -
+ * which for an `ERR_INVALID_URL` failure is exactly the malformed string that
+ * could not be parsed (`"http://"`, `"https://[bad"`). That value is fine to
+ * keep in state and show in the address bar so the user sees what failed, but it
+ * must never reach the element. Persistence sanitizes on save, so only remounts
+ * inside the same run (tab switch with keep-alive off, agent switch) are exposed.
+ *
+ * Parsed WITHOUT a base, unlike Electron, so a relative path also falls back to
+ * about:blank. Relative is never what a browser tab wants: the base is
+ * `app://app/index.html`, so it would load Maestro's own bundle into the tab.
+ */
+export function toWebviewSrc(url: string | null | undefined): string {
+	const trimmed = typeof url === 'string' ? url.trim() : '';
+	if (!trimmed) return DEFAULT_BROWSER_TAB_URL;
+
+	try {
+		new URL(trimmed);
+		return trimmed;
+	} catch {
+		return DEFAULT_BROWSER_TAB_URL;
 	}
 }
 

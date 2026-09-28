@@ -19,7 +19,7 @@ export function MaxLogBufferSection({
 		<div data-setting-id="display-max-log-buffer">
 			<SettingsSectionHeading icon={Database}>Maximum Log Buffer</SettingsSectionHeading>
 			<ToggleButtonGroup
-				options={[1000, 5000, 10000, 25000].map((value) => ({
+				options={[1000, 5000, 10000, 25000, 50000].map((value) => ({
 					value,
 					label: formatNumber(value),
 				}))}
@@ -27,7 +27,7 @@ export function MaxLogBufferSection({
 				onChange={setMaxLogBuffer}
 				theme={theme}
 			/>
-			<p className="text-xs opacity-50 mt-2">
+			<p className="text-xs opacity-70 mt-2">
 				Maximum number of entries to retain for history and system log viewer. Older entries are
 				automatically discarded as new ones arrive.
 			</p>

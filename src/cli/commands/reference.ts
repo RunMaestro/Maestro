@@ -97,7 +97,8 @@ function toMarkdown(root: CommandInfo): string {
 						? `\`${JSON.stringify(opt.defaultValue)}\``
 						: '-';
 				const desc = (opt.description || '-').replace(/\|/g, '\\|');
-				lines.push(`| \`${opt.flags}\` | ${desc} | ${def} |`);
+				const flags = opt.flags.replace(/\|/g, '\\|');
+				lines.push(`| \`${flags}\` | ${desc} | ${def} |`);
 			}
 			lines.push('');
 		}

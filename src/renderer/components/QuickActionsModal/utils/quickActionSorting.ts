@@ -1,4 +1,9 @@
-import type { QuickAction, QuickActionMode } from '../types';
+import {
+	AGENT_BUCKET_ORDER,
+	getAgentBucket,
+	type QuickAction,
+	type QuickActionMode,
+} from '../types';
 
 // Strip leading emojis (and the whitespace/zero-width joiners that follow them)
 // so a name like "Atlas" with a leading emoji sorts under "A".
@@ -35,22 +40,24 @@ export function filterAndSortQuickActions(
 				return a.bookmarked ? -1 : 1;
 			}
 			if (mode === 'agents') {
-				const aRunning = a.isRunningAgent ? 1 : 0;
-				const bRunning = b.isRunningAgent ? 1 : 0;
-				if (aRunning !== bRunning) return bRunning - aRunning;
+				const aBucket = AGENT_BUCKET_ORDER.indexOf(getAgentBucket(a));
+				const bBucket = AGENT_BUCKET_ORDER.indexOf(getAgentBucket(b));
+				if (aBucket !== bBucket) return aBucket - bBucket;
 				return alphabetizeKey(a.label).localeCompare(alphabetizeKey(b.label));
 			}
 			return a.label.localeCompare(b.label);
 		});
 }
 
+/**
+ * Bucket headers only earn their pixels when the list actually spans more than
+ * one bucket - a list of nothing but idle agents needs no "IDLE" label.
+ */
 export function shouldShowAgentBucketHeaders(
 	actions: QuickAction[],
 	mode: QuickActionMode
 ): boolean {
-	return (
-		mode === 'agents' &&
-		actions.some((a) => a.isRunningAgent === true) &&
-		actions.some((a) => a.isRunningAgent === false)
-	);
+	if (mode !== 'agents') return false;
+	const buckets = new Set(actions.map(getAgentBucket));
+	return buckets.size > 1;
 }

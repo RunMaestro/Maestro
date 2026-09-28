@@ -6,11 +6,13 @@
 import {
 	formatSize,
 	formatNumber,
+	formatCount,
 	formatTokens,
 	formatTokensCompact,
 	formatRelativeTime,
 	formatCacheAge,
 	formatAgeShort,
+	formatCalendarDay,
 	formatActiveTime,
 	formatElapsedTime,
 	formatElapsedTimeColon,
@@ -23,7 +25,7 @@ import {
 	getBasename,
 	joinPath,
 	formatSshTarget,
-	formatDurationLong,
+	formatTimestamp,
 } from '../../shared/formatters';
 
 describe('shared/formatters', () => {
@@ -86,6 +88,29 @@ describe('shared/formatters', () => {
 		it('should format billions with B suffix', () => {
 			expect(formatNumber(1000000000)).toBe('1.0B');
 			expect(formatNumber(2500000000)).toBe('2.5B');
+		});
+	});
+
+	// ==========================================================================
+	// formatCount tests (exact counterpart to formatNumber)
+	// ==========================================================================
+	describe('formatCount', () => {
+		it('groups digits instead of rounding to a magnitude', () => {
+			expect(formatCount(42)).toBe('42');
+			expect(formatCount(1000)).toBe('1,000');
+			expect(formatCount(1204993)).toBe('1,204,993');
+		});
+
+		it('keeps every digit where formatNumber discards them', () => {
+			// The whole reason this exists: a filtered row count is read for its
+			// digits, and `1.2M` throws away the part the user was looking at.
+			expect(formatNumber(1204993)).toBe('1.2M');
+			expect(formatCount(1204993)).toBe('1,204,993');
+		});
+
+		it('handles zero and negatives', () => {
+			expect(formatCount(0)).toBe('0');
+			expect(formatCount(-5)).toBe('-5');
 		});
 	});
 
@@ -224,6 +249,32 @@ describe('shared/formatters', () => {
 			expect(formatCacheAge(60 * 60_000)).toBe('1h ago');
 			expect(formatCacheAge(2 * 60 * 60_000)).toBe('2h ago');
 			expect(formatCacheAge(25 * 60 * 60_000)).toBe('25h ago');
+		});
+	});
+
+	// ==========================================================================
+	// formatCalendarDay tests
+	// ==========================================================================
+	describe('formatCalendarDay', () => {
+		it('formats a YYYY-MM-DD day for display', () => {
+			expect(formatCalendarDay('2026-07-10')).toBe('Jul 10, 2026');
+			expect(formatCalendarDay('2025-11-26')).toBe('Nov 26, 2025');
+		});
+
+		it('renders the day it was given, not the UTC-shifted one', () => {
+			// `new Date('2026-01-01')` is UTC midnight, which is Dec 31 anywhere
+			// west of Greenwich. The parts are read out of the string instead.
+			expect(formatCalendarDay('2026-01-01')).toBe('Jan 1, 2026');
+		});
+
+		it('tolerates surrounding whitespace', () => {
+			expect(formatCalendarDay('  2026-03-01  ')).toBe('Mar 1, 2026');
+		});
+
+		it('returns the input unchanged when it is not a calendar day', () => {
+			expect(formatCalendarDay('July 2026')).toBe('July 2026');
+			expect(formatCalendarDay('2026-7-1')).toBe('2026-7-1');
+			expect(formatCalendarDay('')).toBe('');
 		});
 	});
 
@@ -373,6 +424,83 @@ describe('shared/formatters', () => {
 			expect(formatCost(1.234)).toBe('$1.23');
 			expect(formatCost(1.235)).toBe('$1.24'); // rounds up
 			expect(formatCost(1.999)).toBe('$2.00');
+		});
+
+		it('should add thousands separators to large costs', () => {
+			expect(formatCost(1000)).toBe('$1,000.00');
+			expect(formatCost(40950.6)).toBe('$40,950.60');
+			expect(formatCost(1234567.89)).toBe('$1,234,567.89');
+		});
+
+		it('should not add a separator below 1000', () => {
+			expect(formatCost(999.99)).toBe('$999.99');
+		});
+	});
+
+	// ==========================================================================
+	// formatTimestamp tests
+	// ==========================================================================
+	// These assert against `toLocale*String` rather than literal strings on
+	// purpose. formatTimestamp is backed by cached `Intl.DateTimeFormat`
+	// singletons (constructing one per call cost 38% of renderer JS in a field
+	// trace), and the whole contract of that cache is that output stays
+	// byte-identical to the `toLocale*String` calls it replaced - in whatever
+	// locale and timezone the test machine happens to run.
+	describe('formatTimestamp', () => {
+		const sameDayMorning = new Date();
+		sameDayMorning.setHours(9, 5, 0, 0);
+		const otherDay = new Date('2023-03-05T14:30:45.123Z');
+
+		it("matches toLocaleTimeString for the 'time' style", () => {
+			const ts = otherDay.getTime();
+			expect(formatTimestamp(ts, 'time')).toBe(
+				otherDay.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+			);
+		});
+
+		it("matches toLocaleString for the 'datetime' style", () => {
+			const ts = otherDay.getTime();
+			expect(formatTimestamp(ts, 'datetime')).toBe(
+				otherDay.toLocaleString([], {
+					month: 'short',
+					day: 'numeric',
+					hour: 'numeric',
+					minute: '2-digit',
+				})
+			);
+		});
+
+		it("matches a bare toLocaleString for the 'full' style", () => {
+			const ts = otherDay.getTime();
+			expect(formatTimestamp(ts, 'full')).toBe(otherDay.toLocaleString());
+		});
+
+		it("returns time only for today in the 'smart' style", () => {
+			const ts = sameDayMorning.getTime();
+			expect(formatTimestamp(ts)).toBe(
+				sameDayMorning.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+			);
+		});
+
+		it("returns date and time for another day in the 'smart' style", () => {
+			const ts = otherDay.getTime();
+			expect(formatTimestamp(ts)).toBe(
+				otherDay.toLocaleDateString([], { month: 'short', day: 'numeric' }) +
+					' ' +
+					otherDay.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+			);
+		});
+
+		it('accepts an ISO string as well as a numeric timestamp', () => {
+			expect(formatTimestamp(otherDay.toISOString(), 'full')).toBe(
+				formatTimestamp(otherDay.getTime(), 'full')
+			);
+		});
+
+		it('returns a stable result across repeated calls (cached formatters)', () => {
+			const ts = otherDay.getTime();
+			expect(formatTimestamp(ts, 'datetime')).toBe(formatTimestamp(ts, 'datetime'));
+			expect(formatTimestamp(ts, 'time')).toBe(formatTimestamp(ts, 'time'));
 		});
 	});
 
@@ -719,42 +847,13 @@ describe('shared/formatters', () => {
 		});
 	});
 
-	// ==========================================================================
-	// formatDurationLong tests
-	// ==========================================================================
-	describe('formatDurationLong', () => {
-		it('returns 0s for sub-second, zero, negative, and non-finite inputs', () => {
-			expect(formatDurationLong(0)).toBe('0s');
-			expect(formatDurationLong(999)).toBe('0s');
-			expect(formatDurationLong(-5000)).toBe('0s');
-			expect(formatDurationLong(NaN)).toBe('0s');
-			expect(formatDurationLong(Infinity)).toBe('0s');
-		});
-
-		it('formats seconds and minutes', () => {
-			expect(formatDurationLong(45_000)).toBe('45s');
-			expect(formatDurationLong(90_000)).toBe('1m 30s');
-			expect(formatDurationLong(300_000)).toBe('5m');
-		});
-
-		it('formats hours with trailing minutes', () => {
-			expect(formatDurationLong(2 * 3_600_000 + 15 * 60_000)).toBe('2h 15m');
-			expect(formatDurationLong(3_600_000)).toBe('1h');
-		});
-
-		it('ladders into days and weeks instead of dumping raw seconds', () => {
-			// The bug this fixes: 546831.66s of time-spent used to render literally.
-			expect(formatDurationLong(546_831_660)).toBe('6d 7h');
-			expect(formatDurationLong(23 * 86_400_000)).toBe('3w 2d');
-		});
-
-		it('ladders into years and skips months (weeks feed straight into years)', () => {
-			// 420 days = 1y (365d) + 55d remainder -> 7w
-			expect(formatDurationLong(420 * 86_400_000)).toBe('1y 7w');
-		});
-
-		it('shows only the top unit when the next unit is zero', () => {
-			expect(formatDurationLong(7 * 86_400_000)).toBe('1w');
+	// Duration formatters live in shared/duration.ts and are covered by
+	// duration.test.ts. This asserts the compatibility re-export still resolves,
+	// since ~50 call sites import them from this module's path.
+	describe('duration re-exports', () => {
+		it('re-exports the duration formatters', () => {
+			expect(formatActiveTime(2 * 60 * 60 * 1000 + 30 * 60 * 1000)).toBe('2H 30M');
+			expect(formatElapsedTime(500)).toBe('500ms');
 		});
 	});
 });

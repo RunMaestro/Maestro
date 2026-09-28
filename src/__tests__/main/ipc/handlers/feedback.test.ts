@@ -16,7 +16,7 @@ vi.mock('electron', () => ({
 		isPackaged: false,
 		getAppPath: () => '/mock/app',
 		getVersion: () => '0.15.3',
-		getPath: () => '/mock/userData',
+		getPath: (name: string) => `/mock/${name}`,
 	},
 }));
 
@@ -27,6 +27,8 @@ vi.mock('fs/promises', () => {
 		unlink: vi.fn(),
 		mkdir: vi.fn(),
 		rename: vi.fn(),
+		access: vi.fn(),
+		readdir: vi.fn(),
 	};
 	// Provide both default (feedback.ts) and named (atomic-json-store) shapes,
 	// sharing the same vi.fn instances so assertions see every write.
@@ -39,7 +41,12 @@ vi.mock('../../../../main/utils/logger', () => ({
 		error: vi.fn(),
 		warn: vi.fn(),
 		debug: vi.fn(),
+		getLogFilePath: vi.fn(() => '/mock/logs/maestro-2026-08-21.log'),
 	},
+}));
+
+vi.mock('../../../../main/prompt-manager', () => ({
+	getPrompt: vi.fn(() => 'FEEDBACK TEMPLATE\n\n## Environment Context\n{{ENVIRONMENT}}\n'),
 }));
 
 vi.mock('../../../../main/utils/cliDetection', () => ({
@@ -47,6 +54,15 @@ vi.mock('../../../../main/utils/cliDetection', () => ({
 	setCachedGhStatus: vi.fn(),
 	getCachedGhStatus: vi.fn(),
 	getExpandedEnv: vi.fn(() => ({ PATH: '/usr/bin' })),
+	resolveGhPath: vi.fn(async (customPath?: string) => customPath ?? 'gh'),
+}));
+
+vi.mock('../../../../main/stores/getters', () => ({
+	getSettingsStore: vi.fn(() => ({ get: vi.fn(() => '') })),
+}));
+
+vi.mock('../../../../main/stores/instances', () => ({
+	isInitialized: vi.fn(() => true),
 }));
 
 vi.mock('../../../../main/utils/execFile', () => ({
@@ -62,12 +78,15 @@ vi.mock('../../../../main/process-manager/utils/imageUtils', () => ({
 }));
 
 import fs from 'fs/promises';
+import os from 'os';
 import {
 	getCachedGhStatus,
 	isGhInstalled,
 	setCachedGhStatus,
 } from '../../../../main/utils/cliDetection';
 import { execFileNoThrow } from '../../../../main/utils/execFile';
+import { getSettingsStore } from '../../../../main/stores/getters';
+import { isInitialized } from '../../../../main/stores/instances';
 import {
 	cleanupTempFiles,
 	saveImageToTempFile,
@@ -97,6 +116,7 @@ describe('feedback handlers', () => {
 		const result = await handler!({});
 
 		expect(result).toEqual({ authenticated: true });
+		expect(getCachedGhStatus).toHaveBeenCalledWith('gh');
 		expect(isGhInstalled).not.toHaveBeenCalled();
 	});
 
@@ -466,8 +486,206 @@ describe('feedback handlers', () => {
 		expect(execFileNoThrow).toHaveBeenCalledWith('gh', ['auth', 'status'], undefined, {
 			PATH: '/usr/bin',
 		});
-		expect(setCachedGhStatus).toHaveBeenCalledWith(true, true);
+		expect(setCachedGhStatus).toHaveBeenCalledWith('gh', true, true);
 		expect(result).toEqual({ authenticated: true });
+	});
+
+	// Regression: every gh call in the feedback handler used to hardcode the bare
+	// string 'gh', so Settings > GitHub CLI (gh) Path was silently ignored and
+	// feedback reported "not installed" on installs where gh is not on PATH.
+	it('honors a configured custom gh path when probing auth', async () => {
+		vi.mocked(getSettingsStore).mockReturnValue({
+			get: vi.fn(() => '/custom/bin/gh'),
+		} as any);
+		vi.mocked(getCachedGhStatus).mockReturnValue(null);
+		vi.mocked(execFileNoThrow).mockResolvedValue({
+			exitCode: 0,
+			stdout: '',
+			stderr: '',
+		} as any);
+
+		const handler = registeredHandlers.get('feedback:check-gh-auth');
+		const result = await handler!({});
+
+		// A configured path is authoritative, so `which`-based detection is skipped
+		// and the binary itself is probed instead.
+		expect(isGhInstalled).not.toHaveBeenCalled();
+		expect(execFileNoThrow).toHaveBeenCalledWith('/custom/bin/gh', ['--version'], undefined, {
+			PATH: '/usr/bin',
+		});
+		expect(execFileNoThrow).toHaveBeenCalledWith('/custom/bin/gh', ['auth', 'status'], undefined, {
+			PATH: '/usr/bin',
+		});
+		expect(result).toEqual({ authenticated: true });
+	});
+
+	// Regression: the cache was path-agnostic, so a verdict the renderer's
+	// checkGhCli() reached against the PATH-resolved gh answered for a configured
+	// custom path, and a failed custom-path probe answered for everyone else.
+	it('keys the cached verdict by the configured custom gh path', async () => {
+		vi.mocked(getSettingsStore).mockReturnValue({
+			get: vi.fn(() => '/custom/bin/gh'),
+		} as any);
+		vi.mocked(getCachedGhStatus).mockReturnValue(null);
+		vi.mocked(execFileNoThrow).mockResolvedValue({
+			exitCode: 1,
+			stdout: '',
+			stderr: 'no such file',
+		} as any);
+
+		const handler = registeredHandlers.get('feedback:check-gh-auth');
+		const result = await handler!({});
+
+		expect(getCachedGhStatus).toHaveBeenCalledWith('/custom/bin/gh');
+		expect(setCachedGhStatus).toHaveBeenCalledWith('/custom/bin/gh', false, false);
+		expect(result).toEqual({
+			authenticated: false,
+			message: expect.stringContaining('not installed'),
+		});
+	});
+
+	it('falls back to which-based detection when no custom path is configured', async () => {
+		vi.mocked(getSettingsStore).mockReturnValue({ get: vi.fn(() => '   ') } as any);
+		vi.mocked(getCachedGhStatus).mockReturnValue(null);
+		vi.mocked(isGhInstalled).mockResolvedValue(true);
+		vi.mocked(execFileNoThrow).mockResolvedValue({
+			exitCode: 0,
+			stdout: '',
+			stderr: '',
+		} as any);
+
+		const handler = registeredHandlers.get('feedback:check-gh-auth');
+		await handler!({});
+
+		// A whitespace-only setting means "unset", not a path.
+		expect(isGhInstalled).toHaveBeenCalled();
+		expect(execFileNoThrow).not.toHaveBeenCalledWith(
+			expect.anything(),
+			['--version'],
+			undefined,
+			expect.anything()
+		);
+	});
+
+	// The guard is a predicate rather than a try/catch so that a REAL settings
+	// failure still surfaces instead of silently running some other binary.
+	it('falls back to auto-detection when the stores are not initialised', async () => {
+		vi.mocked(isInitialized).mockReturnValue(false);
+		vi.mocked(getCachedGhStatus).mockReturnValue(null);
+		vi.mocked(isGhInstalled).mockResolvedValue(true);
+		vi.mocked(execFileNoThrow).mockResolvedValue({
+			exitCode: 0,
+			stdout: '',
+			stderr: '',
+		} as any);
+
+		const handler = registeredHandlers.get('feedback:check-gh-auth');
+		const result = await handler!({});
+
+		expect(getSettingsStore).not.toHaveBeenCalled();
+		expect(isGhInstalled).toHaveBeenCalled();
+		expect(result).toEqual({ authenticated: true });
+	});
+
+	describe('feedback:get-conversation-prompt', () => {
+		const getPrompt = () => registeredHandlers.get('feedback:get-conversation-prompt')!({});
+
+		it('runs diagnostics from the home directory, not the app cwd', async () => {
+			vi.mocked(fs.access).mockResolvedValue(undefined as any);
+
+			const result = await getPrompt();
+
+			// A Finder-launched .app has cwd '/', where no diagnostic resolves.
+			expect(result.cwd).toBe(os.homedir());
+		});
+
+		it('points the agent at today log when file logging is on', async () => {
+			vi.mocked(fs.access).mockResolvedValue(undefined as any);
+
+			const { environment, prompt } = await getPrompt();
+
+			expect(environment).toContain('/mock/logs/maestro-2026-08-21.log');
+			expect(environment).toContain('today, live');
+			expect(prompt).toContain(environment);
+			expect(prompt).not.toContain('{{ENVIRONMENT}}');
+		});
+
+		it('names the most recent log as stale when today has none', async () => {
+			vi.mocked(fs.access).mockRejectedValue(new Error('ENOENT'));
+			vi.mocked(fs.readdir).mockResolvedValue([
+				'maestro-2026-08-01.log',
+				'maestro-2026-08-19.log',
+				'notes.txt',
+			] as any);
+
+			const { environment } = await getPrompt();
+
+			expect(environment).toContain('maestro-2026-08-19.log');
+			expect(environment).toContain('stale');
+			expect(environment).not.toContain('maestro-2026-08-01.log');
+		});
+
+		it('tells the agent not to hunt for a log that does not exist', async () => {
+			vi.mocked(fs.access).mockRejectedValue(new Error('ENOENT'));
+			vi.mocked(fs.readdir).mockRejectedValue(new Error('ENOENT'));
+
+			const { environment } = await getPrompt();
+
+			expect(environment).toContain('Do not try to read one');
+		});
+
+		it('advertises maestro-cli only when it is actually installed', async () => {
+			vi.mocked(fs.access).mockResolvedValue(undefined as any);
+			registeredHandlers.clear();
+			registerFeedbackHandlers({
+				getProcessManager: () => mockProcessManager as any,
+				getMaestroCliManager: () =>
+					({
+						checkStatus: vi.fn().mockResolvedValue({
+							installed: true,
+							commandPath: '/usr/local/bin/maestro-cli',
+						}),
+					}) as any,
+			});
+
+			const { environment } = await getPrompt();
+
+			expect(environment).toContain('maestro-cli: available at /usr/local/bin/maestro-cli');
+		});
+
+		it('tells the agent to skip maestro-cli diagnostics when it is missing', async () => {
+			vi.mocked(fs.access).mockResolvedValue(undefined as any);
+			registeredHandlers.clear();
+			registerFeedbackHandlers({
+				getProcessManager: () => mockProcessManager as any,
+				getMaestroCliManager: () =>
+					({
+						checkStatus: vi.fn().mockResolvedValue({ installed: false, commandPath: null }),
+					}) as any,
+			});
+
+			const { environment } = await getPrompt();
+
+			expect(environment).toContain('maestro-cli: NOT installed');
+		});
+
+		it('still returns a prompt when the maestro-cli probe throws', async () => {
+			vi.mocked(fs.access).mockResolvedValue(undefined as any);
+			registeredHandlers.clear();
+			registerFeedbackHandlers({
+				getProcessManager: () => mockProcessManager as any,
+				getMaestroCliManager: () =>
+					({
+						checkStatus: vi.fn().mockRejectedValue(new Error('probe blew up')),
+					}) as any,
+			});
+
+			// A status probe failure must not take the whole feedback flow down.
+			const { environment } = await getPrompt();
+
+			expect(environment).toContain('Maestro version: 0.15.3');
+			expect(environment).not.toContain('maestro-cli:');
+		});
 	});
 });
 

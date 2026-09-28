@@ -14,6 +14,7 @@ import { useTemplateAutocomplete } from '../hooks';
 import { captureException } from '../utils/sentry';
 import { CollapsedCommandsNotice, ToggleSwitch } from './ui';
 import { TemplateAutocompleteDropdown } from './TemplateAutocompleteDropdown';
+import { useResizableTextarea } from '../hooks/ui/useResizableTextarea';
 import { openUrl } from '../utils/openUrl';
 
 interface BmadCommandsPanelProps {
@@ -54,6 +55,12 @@ export function BmadCommandsPanel({ theme, enabled, onEnabledChange }: BmadComma
 				setEditingCommand({ ...editingCommand, prompt: value });
 			}
 		},
+	});
+
+	const editPromptResize = useResizableTextarea({
+		sizeKey: 'bmad-command-edit-prompt',
+		minHeight: 300,
+		externalRef: editCommandTextareaRef,
 	});
 
 	useEffect(() => {
@@ -264,7 +271,8 @@ export function BmadCommandsPanel({ theme, enabled, onEnabledChange }: BmadComma
 							className="rounded-lg border overflow-hidden"
 							style={{ backgroundColor: theme.colors.bgMain, borderColor: theme.colors.border }}
 						>
-							{editingCommand?.id === cmd.id ? (
+							{/* Non-null check, not `?.` - see AICommandsPanel for why. */}
+							{editingCommand !== null && editingCommand.id === cmd.id ? (
 								<div className="p-3 space-y-3">
 									<div className="flex items-center justify-between">
 										<span
@@ -323,7 +331,11 @@ export function BmadCommandsPanel({ theme, enabled, onEnabledChange }: BmadComma
 											}}
 											rows={15}
 											className="w-full p-2 rounded border bg-transparent outline-none text-sm resize-y scrollbar-thin min-h-[300px] font-mono"
-											style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
+											style={{
+												borderColor: theme.colors.border,
+												color: theme.colors.textMain,
+												...editPromptResize.style,
+											}}
 										/>
 										<TemplateAutocompleteDropdown
 											ref={editAutocompleteRef}
@@ -359,7 +371,7 @@ export function BmadCommandsPanel({ theme, enabled, onEnabledChange }: BmadComma
 											</span>
 											{cmd.isModified && (
 												<span
-													className="px-1.5 py-0.5 rounded text-[10px] font-medium"
+													className="px-1.5 py-0.5 rounded text-2xs font-medium"
 													style={{
 														backgroundColor: `color-mix(in srgb, ${theme.colors.warning} 12.5%, transparent)`,
 														color: theme.colors.warning,

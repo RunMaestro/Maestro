@@ -8,6 +8,7 @@
  */
 
 import { memo } from 'react';
+import type { PluggableList } from 'unified';
 import type { Theme } from '../types';
 import type { FileNode } from '../types/fileTree';
 import { Markdown } from './Markdown/Markdown';
@@ -58,6 +59,12 @@ interface MarkdownRendererProps {
 	 * as a centered block formula (#622).
 	 */
 	chatMath?: boolean;
+	/**
+	 * Extra rehype plugins appended after the standard stack. Used to add
+	 * `rehype-slug` on surfaces that need heading anchors for a table of
+	 * contents (Director's Notes Plain mode).
+	 */
+	extraRehypePlugins?: PluggableList;
 }
 
 /**

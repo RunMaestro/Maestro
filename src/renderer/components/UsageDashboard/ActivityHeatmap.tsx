@@ -14,7 +14,7 @@
  * - Month labels above the grid for navigation
  */
 
-import React, { memo, useState, useMemo, useCallback } from 'react';
+import React, { memo, useState, useMemo, useCallback, useRef } from 'react';
 import { format, subDays, startOfWeek, addDays, getDay } from 'date-fns';
 import type { Theme } from '../../types';
 import type { StatsTimeRange, StatsAggregation } from '../../hooks/stats/useStats';
@@ -28,6 +28,15 @@ import {
 	TIME_BLOCK_LABELS,
 	type MetricMode,
 } from './activityHeatmapUtils';
+import { MetricModeToggle, metricModeNoun } from './MetricModeToggle';
+import { useTokenSeries } from './TokenSeriesContext';
+import { useElementWidth } from '../../hooks/ui/useElementWidth';
+
+/** Gap between day columns in the 4-hour-block grid (the `gap-[3px]` below). */
+const BLOCK_COLUMN_GAP_PX = 3;
+
+/** Width a two-digit day label needs at its 10px size, plus breathing room. */
+const MIN_DAY_LABEL_PX = 16;
 
 interface HourData {
 	date: Date;
@@ -36,6 +45,7 @@ interface HourData {
 	hourKey: string; // yyyy-MM-dd-HH
 	count: number;
 	duration: number;
+	tokens: number;
 	intensity: number; // 0-4 scale for color intensity
 }
 
@@ -53,6 +63,7 @@ interface DayCell {
 	dayOfWeek: number; // 0 = Sunday, 6 = Saturday
 	count: number;
 	duration: number;
+	tokens: number;
 	intensity: number;
 	isPlaceholder?: boolean; // For empty cells before start date
 }
@@ -76,6 +87,7 @@ interface TimeBlockCell {
 	blockLabel: string; // e.g., "12a-4a", "4a-8a"
 	count: number;
 	duration: number;
+	tokens: number;
 	intensity: number;
 	isPlaceholder?: boolean;
 }
@@ -103,19 +115,25 @@ interface ActivityHeatmapProps {
  */
 function build4HourBlockGrid(
 	numDays: number,
-	dayDataMap: Map<string, { count: number; duration: number }>,
+	dayDataMap: Map<string, { count: number; duration: number; tokens: number }>,
 	metricMode: MetricMode
-): { dayColumns: DayColumnWithBlocks[]; maxCount: number; maxDuration: number } {
+): {
+	dayColumns: DayColumnWithBlocks[];
+	maxCount: number;
+	maxDuration: number;
+	maxTokens: number;
+} {
 	const today = new Date();
 	const columns: DayColumnWithBlocks[] = [];
 	let maxCount = 0;
 	let maxDuration = 0;
+	let maxTokens = 0;
 
 	// Generate days from (numDays-1) days ago to today
 	for (let dayOffset = numDays - 1; dayOffset >= 0; dayOffset--) {
 		const date = subDays(today, dayOffset);
 		const dateString = format(date, 'yyyy-MM-dd');
-		const dayStats = dayDataMap.get(dateString) || { count: 0, duration: 0 };
+		const dayStats = dayDataMap.get(dateString) || { count: 0, duration: 0, tokens: 0 };
 
 		// Create 6 time blocks per day
 		const blocks: TimeBlockCell[] = TIME_BLOCK_LABELS.map((label, blockIndex) => {
@@ -130,9 +148,11 @@ function build4HourBlockGrid(
 			const totalWeight = 9;
 			const count = Math.round((dayStats.count * weight) / totalWeight);
 			const duration = Math.round((dayStats.duration * weight) / totalWeight);
+			const tokens = Math.round((dayStats.tokens * weight) / totalWeight);
 
 			maxCount = Math.max(maxCount, count);
 			maxDuration = Math.max(maxDuration, duration);
+			maxTokens = Math.max(maxTokens, tokens);
 
 			return {
 				date,
@@ -141,6 +161,7 @@ function build4HourBlockGrid(
 				blockLabel: label,
 				count,
 				duration,
+				tokens,
 				intensity: 0, // Calculated later
 			};
 		});
@@ -154,15 +175,20 @@ function build4HourBlockGrid(
 	}
 
 	// Calculate intensities
-	const maxVal = metricMode === 'count' ? Math.max(maxCount, 1) : Math.max(maxDuration, 1);
+	const maxVal =
+		metricMode === 'count'
+			? Math.max(maxCount, 1)
+			: metricMode === 'tokens'
+				? Math.max(maxTokens, 1)
+				: Math.max(maxDuration, 1);
 	columns.forEach((col) => {
 		col.blocks.forEach((block) => {
-			const value = metricMode === 'count' ? block.count : block.duration;
+			const value = block[metricMode];
 			block.intensity = calculateIntensity(value, maxVal);
 		});
 	});
 
-	return { dayColumns: columns, maxCount, maxDuration };
+	return { dayColumns: columns, maxCount, maxDuration, maxTokens };
 }
 
 /**
@@ -171,7 +197,7 @@ function build4HourBlockGrid(
  */
 function buildGitHubGrid(
 	numDays: number,
-	dayDataMap: Map<string, { count: number; duration: number }>,
+	dayDataMap: Map<string, { count: number; duration: number; tokens: number }>,
 	metricMode: MetricMode
 ): { weeks: WeekColumn[]; monthLabels: MonthLabel[]; maxCount: number; maxDuration: number } {
 	const today = new Date();
@@ -184,6 +210,7 @@ function buildGitHubGrid(
 	const monthLabels: MonthLabel[] = [];
 	let maxCount = 0;
 	let maxDuration = 0;
+	let maxTokens = 0;
 
 	let currentDate = gridStart;
 	let currentWeek: DayCell[] = [];
@@ -216,11 +243,12 @@ function buildGitHubGrid(
 			lastMonth = monthStr;
 		}
 
-		const dayStats = dayDataMap.get(dateString) || { count: 0, duration: 0 };
+		const dayStats = dayDataMap.get(dateString) || { count: 0, duration: 0, tokens: 0 };
 
 		if (!isBeforeStart && !isAfterEnd) {
 			maxCount = Math.max(maxCount, dayStats.count);
 			maxDuration = Math.max(maxDuration, dayStats.duration);
+			maxTokens = Math.max(maxTokens, dayStats.tokens);
 		}
 
 		currentWeek.push({
@@ -229,6 +257,7 @@ function buildGitHubGrid(
 			dayOfWeek,
 			count: isBeforeStart || isAfterEnd ? 0 : dayStats.count,
 			duration: isBeforeStart || isAfterEnd ? 0 : dayStats.duration,
+			tokens: isBeforeStart || isAfterEnd ? 0 : dayStats.tokens,
 			intensity: 0, // Calculated later
 			isPlaceholder: isBeforeStart || isAfterEnd,
 		});
@@ -262,6 +291,7 @@ function buildGitHubGrid(
 				dayOfWeek: getDay(nextDate),
 				count: 0,
 				duration: 0,
+				tokens: 0,
 				intensity: 0,
 				isPlaceholder: true,
 			});
@@ -283,7 +313,7 @@ function buildGitHubGrid(
 	weeks.forEach((week) => {
 		week.days.forEach((day) => {
 			if (!day.isPlaceholder) {
-				const value = metricMode === 'count' ? day.count : day.duration;
+				const value = day[metricMode];
 				day.intensity = calculateIntensity(value, maxVal);
 			}
 		});
@@ -299,6 +329,7 @@ export const ActivityHeatmap = memo(function ActivityHeatmap({
 	colorBlindMode = false,
 }: ActivityHeatmapProps) {
 	const [metricMode, setMetricMode] = useState<MetricMode>('count');
+	const { series: tokenSeries, loading: tokensLoading } = useTokenSeries(metricMode === 'tokens');
 	const [hoveredCell, setHoveredCell] = useState<HourData | DayCell | TimeBlockCell | null>(null);
 	const [cellRect, setCellRect] = useState<DOMRect | null>(null);
 
@@ -307,12 +338,16 @@ export const ActivityHeatmap = memo(function ActivityHeatmap({
 
 	// Convert byDay data to a lookup map
 	const dayDataMap = useMemo(() => {
-		const map = new Map<string, { count: number; duration: number }>();
+		const map = new Map<string, { count: number; duration: number; tokens: number }>();
 		for (const day of data.byDay) {
-			map.set(day.date, { count: day.count, duration: day.duration });
+			map.set(day.date, {
+				count: day.count,
+				duration: day.duration,
+				tokens: tokenSeries?.byDay?.[day.date] ?? 0,
+			});
 		}
 		return map;
-	}, [data.byDay]);
+	}, [data.byDay, tokenSeries]);
 
 	// GitHub-style grid data for year/all views
 	const gitHubGrid = useMemo(() => {
@@ -327,6 +362,45 @@ export const ActivityHeatmap = memo(function ActivityHeatmap({
 		const numDays = getDaysForRange(timeRange);
 		return build4HourBlockGrid(numDays, dayDataMap, metricMode);
 	}, [use4HourBlockLayout, timeRange, dayDataMap, metricMode]);
+
+	// How many day columns can carry a label. A 4-hour-block month is ~30
+	// columns, and on a phone the grid is ~270px wide, so each column is about
+	// 6px where a two-digit day number needs 16. Every column printed one
+	// anyway, which rendered as a solid line of overlapping digits. Stride past
+	// the ones with no room; the first of a month always keeps its label, and a
+	// label that survives may overflow into the blank columns beside it. At any
+	// width that fits a label the stride is 1 and nothing changes.
+	const blockGridRef = useRef<HTMLDivElement>(null);
+	const blockGridWidth = useElementWidth(blockGridRef);
+	const dayLabelIndices = useMemo(() => {
+		const columns = blockGrid?.dayColumns ?? [];
+		const shown = new Set<number>();
+		if (columns.length === 0) return shown;
+
+		const perColumn =
+			blockGridWidth > 0
+				? (blockGridWidth - (columns.length - 1) * BLOCK_COLUMN_GAP_PX) / columns.length
+				: MIN_DAY_LABEL_PX;
+		const stride =
+			perColumn >= MIN_DAY_LABEL_PX
+				? 1
+				: Math.max(1, Math.ceil(MIN_DAY_LABEL_PX / Math.max(perColumn, 1)));
+
+		// A month boundary is the one label worth keeping off-stride, so it is
+		// placed first and then claims `stride` columns of clearance on either
+		// side - otherwise the accent "Sep" and the strided day beside it print
+		// on top of each other.
+		const monthStarts = columns.reduce<number[]>((acc, col, index) => {
+			if (col.date.getDate() === 1) acc.push(index);
+			return acc;
+		}, []);
+		for (const index of monthStarts) shown.add(index);
+		for (let index = 0; index < columns.length; index += stride) {
+			if (monthStarts.some((start) => Math.abs(start - index) < stride)) continue;
+			shown.add(index);
+		}
+		return shown;
+	}, [blockGrid, blockGridWidth]);
 
 	// Generate hour-based data for the heatmap (day/week views)
 	const { dayColumns, hourLabels } = useMemo(() => {
@@ -370,25 +444,29 @@ export const ActivityHeatmap = memo(function ActivityHeatmap({
 		// Track max values for intensity calculation
 		let maxCount = 0;
 		let maxDuration = 0;
+		let maxTokens = 0;
 
 		// Generate days from (numDays-1) days ago to today
 		for (let dayOffset = numDays - 1; dayOffset >= 0; dayOffset--) {
 			const date = subDays(today, dayOffset);
 			const dateString = format(date, 'yyyy-MM-dd');
-			const dayStats = dayDataMap.get(dateString) || { count: 0, duration: 0 };
+			const dayStats = dayDataMap.get(dateString) || { count: 0, duration: 0, tokens: 0 };
 
 			const hourData: HourData[] = hours.map((hour) => {
 				// Distribute evenly across hours (simplified - real data would have hourly breakdown)
 				let count = Math.floor(dayStats.count / 24);
 				let duration = Math.floor(dayStats.duration / 24);
+				let tokens = Math.floor(dayStats.tokens / 24);
 				// Distribute remainder to typical work hours (9-17)
 				if (hour >= 9 && hour <= 17) {
 					count += Math.floor((dayStats.count % 24) / 9);
 					duration += Math.floor((dayStats.duration % 24) / 9);
+					tokens += Math.floor((dayStats.tokens % 24) / 9);
 				}
 
 				maxCount = Math.max(maxCount, count);
 				maxDuration = Math.max(maxDuration, duration);
+				maxTokens = Math.max(maxTokens, tokens);
 
 				return {
 					date,
@@ -397,6 +475,7 @@ export const ActivityHeatmap = memo(function ActivityHeatmap({
 					hourKey: `${dateString}-${hour.toString().padStart(2, '0')}`,
 					count,
 					duration,
+					tokens,
 					intensity: 0,
 				};
 			});
@@ -465,50 +544,20 @@ export const ActivityHeatmap = memo(function ActivityHeatmap({
 			className="p-4 rounded-lg"
 			style={{ backgroundColor: theme.colors.bgMain }}
 			role="figure"
-			aria-label={`Activity heatmap showing ${metricMode === 'count' ? 'query activity' : 'duration'} over ${getDaysForRange(timeRange)} days.`}
+			aria-label={`Activity heatmap showing ${metricModeNoun(metricMode)} over ${getDaysForRange(timeRange)} days.`}
 		>
 			{/* Header with title and metric toggle */}
 			<div className="flex items-center justify-between mb-4">
 				<h3 className="text-sm font-medium card-enter" style={{ color: theme.colors.textMain }}>
 					Activity Heatmap
 				</h3>
-				<div className="flex items-center gap-2">
-					<span className="text-xs" style={{ color: theme.colors.textDim }}>
-						Show:
-					</span>
-					<div
-						className="flex rounded overflow-hidden border"
-						style={{ borderColor: theme.colors.border }}
-					>
-						<button
-							onClick={() => setMetricMode('count')}
-							className="px-2 py-1 text-xs transition-colors"
-							style={{
-								backgroundColor:
-									metricMode === 'count' ? `${theme.colors.accent}20` : 'transparent',
-								color: metricMode === 'count' ? theme.colors.accent : theme.colors.textDim,
-							}}
-							aria-pressed={metricMode === 'count'}
-							aria-label="Show query count"
-						>
-							Count
-						</button>
-						<button
-							onClick={() => setMetricMode('duration')}
-							className="px-2 py-1 text-xs transition-colors"
-							style={{
-								backgroundColor:
-									metricMode === 'duration' ? `${theme.colors.accent}20` : 'transparent',
-								color: metricMode === 'duration' ? theme.colors.accent : theme.colors.textDim,
-								borderLeft: `1px solid ${theme.colors.border}`,
-							}}
-							aria-pressed={metricMode === 'duration'}
-							aria-label="Show total duration"
-						>
-							Duration
-						</button>
-					</div>
-				</div>
+				<MetricModeToggle
+					mode={metricMode}
+					onChange={setMetricMode}
+					theme={theme}
+					variant="subtle"
+					tokensLoading={tokensLoading}
+				/>
 			</div>
 
 			{/* GitHub-style heatmap for year/all views. Week columns stretch to
@@ -621,21 +670,27 @@ export const ActivityHeatmap = memo(function ActivityHeatmap({
 					</div>
 
 					{/* Grid of cells fills the available width */}
-					<div className="flex-1 min-w-0">
+					<div className="flex-1 min-w-0" ref={blockGridRef}>
 						<div className="flex gap-[3px]">
 							{blockGrid.dayColumns.map((col, colIdx) => {
 								// Show day number for all days, but only show month on 1st of month
 								const isFirstOfMonth = col.date.getDate() === 1;
 								const showMonthLabel = isFirstOfMonth || colIdx === 0;
+								// Narrow columns print only the labels that have room.
+								const showDayLabel = dayLabelIndices.has(colIdx);
 								return (
 									<div
 										key={col.dateString}
 										className="flex flex-col gap-[3px] min-w-0"
 										style={{ flex: '1 1 0' }}
 									>
-										{/* Day label with month indicator */}
+										{/* Day label with month indicator. The row keeps its
+										    height whether or not this column prints one, so the
+										    cells below stay on one baseline. A printed label is
+										    allowed to overflow: at a stride above 1 the columns
+										    beside it are blank. */}
 										<div
-											className="text-xs text-center truncate h-[18px] flex items-center justify-center"
+											className="text-xs text-center h-[18px] flex items-center justify-center overflow-visible whitespace-nowrap"
 											style={{
 												color: isFirstOfMonth ? theme.colors.accent : theme.colors.textDim,
 												fontSize: 10,
@@ -643,7 +698,11 @@ export const ActivityHeatmap = memo(function ActivityHeatmap({
 											}}
 											title={format(col.date, 'EEEE, MMM d')}
 										>
-											{showMonthLabel && isFirstOfMonth ? format(col.date, 'MMM') : col.dayLabel}
+											{showDayLabel
+												? showMonthLabel && isFirstOfMonth
+													? format(col.date, 'MMM')
+													: col.dayLabel
+												: ''}
 										</div>
 										{/* Time block cells */}
 										{col.blocks.map((block) => (

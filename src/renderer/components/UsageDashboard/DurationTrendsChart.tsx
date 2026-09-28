@@ -18,7 +18,10 @@ import type { Theme } from '../../types';
 import type { StatsTimeRange, StatsAggregation } from '../../hooks/stats/useStats';
 import { COLORBLIND_LINE_COLORS } from '../../constants/colorblindPalettes';
 import { formatDurationHuman as formatDuration } from '../../../shared/formatters';
+import { humanizeDuration, DURATION_LADDER_HOURS } from '../../../shared/duration';
 import { ChartTooltip } from './ChartTooltip';
+import { computeAxisLabelIndices, PHONE_AXIS_LABELS } from './chartUtils';
+import { usePhoneLayout } from '../../hooks/ui/useViewportBreakpoint';
 
 // Data point for the chart
 interface DataPoint {
@@ -61,22 +64,10 @@ function calculateMovingAverage(values: number[], windowSize: number): number[] 
 }
 
 /**
- * Format duration for Y-axis labels (shorter format)
+ * Format duration for Y-axis labels: one unit only, so tick labels stay narrow.
  */
 function formatYAxisDuration(ms: number): string {
-	if (ms === 0) return '0s';
-
-	const totalSeconds = Math.floor(ms / 1000);
-	const minutes = Math.floor(totalSeconds / 60);
-	const seconds = totalSeconds % 60;
-
-	if (minutes >= 60) {
-		return `${Math.floor(minutes / 60)}h`;
-	}
-	if (minutes > 0) {
-		return `${minutes}m`;
-	}
-	return `${seconds}s`;
+	return humanizeDuration(ms, { units: DURATION_LADDER_HOURS, maxUnits: 1 });
 }
 
 /**
@@ -162,6 +153,12 @@ export const DurationTrendsChart = memo(function DurationTrendsChart({
 			count: day.count,
 		}));
 	}, [data.byDay, timeRange, showSmoothed]);
+
+	const phone = usePhoneLayout();
+	const xLabelIndices = useMemo(
+		() => computeAxisLabelIndices(chartData.length, phone ? PHONE_AXIS_LABELS : undefined),
+		[chartData.length, phone]
+	);
 
 	// Calculate scales
 	const { xScale, yScale, yTicks } = useMemo(() => {
@@ -380,15 +377,7 @@ export const DurationTrendsChart = memo(function DurationTrendsChart({
 
 						{/* X-axis labels */}
 						{chartData.map((point, idx) => {
-							// Show fewer labels for longer time ranges
-							const labelInterval =
-								chartData.length > 14
-									? Math.ceil(chartData.length / 7)
-									: chartData.length > 7
-										? 2
-										: 1;
-
-							if (idx % labelInterval !== 0 && idx !== chartData.length - 1) {
+							if (!xLabelIndices.has(idx)) {
 								return null;
 							}
 

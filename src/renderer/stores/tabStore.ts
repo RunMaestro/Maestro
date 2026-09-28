@@ -4,7 +4,7 @@
  * Tab DATA (aiTabs, filePreviewTabs, unifiedTabOrder, etc.) lives inside Session
  * objects in sessionStore. This store provides:
  *
- * 1. Tab operation actions - wrap tabHelpers.ts pure functions + sessionStore mutations,
+ * 1. Tab operation actions - wrap tabHelpers pure functions + sessionStore mutations,
  *    replacing ~43 callbacks currently threaded through App.tsx props
  * 2. Tab-specific UI state - gist content/URLs (the only tab state still in App.tsx)
  * 3. Selectors - derived tab state (activeTab, activeFileTab, unifiedTabs)
@@ -12,7 +12,7 @@
  * Why tab data stays in sessionStore:
  * - Tab arrays are deeply embedded in the Session type (200+ call sites)
  * - Each session owns its own set of AI and file preview tabs
- * - tabHelpers.ts functions take Session → return modified Session
+ * - tabHelpers functions take Session → return modified Session
  * - Extracting tab data would be a massive, risky migration
  *
  * Instead, tabStore acts as a focused action layer over sessionStore,
@@ -25,13 +25,20 @@
  */
 
 import { create } from 'zustand';
-import type { AITab, FilePreviewTab, Session, LogEntry } from '../types';
+import { nextThinkingMode } from '../../shared/types';
+import type {
+	AITab,
+	FilePreviewTab,
+	Session,
+	LogEntry,
+	SnoozeContent,
+	SnoozedTabEntry,
+} from '../types';
 import type { GistInfo } from '../components/GistPublishModal';
 import {
 	createTab as createTabHelper,
 	closeTab as closeTabHelper,
 	closeFileTab as closeFileTabHelper,
-	reopenUnifiedClosedTab as reopenUnifiedClosedTabHelper,
 	setActiveTab as setActiveTabHelper,
 	navigateToNextUnifiedTab as navigateToNextHelper,
 	navigateToPrevUnifiedTab as navigateToPrevHelper,
@@ -61,7 +68,19 @@ import { useSessionStore, selectActiveSession, updateSessionWith } from './sessi
 import {
 	renameGroup as renameGroupHelper,
 	setGroupEmoji as setGroupEmojiHelper,
+	reopenClosedTabWithTiling as reopenUnifiedClosedTabHelper,
 } from '../utils/panelLayout';
+import {
+	snoozeTab as snoozeTabHelper,
+	snoozeTabGroup as snoozeTabGroupHelper,
+	wakeSnoozedTabGroup as wakeSnoozedTabGroupHelper,
+	isSnoozedGroup as isSnoozedGroupHelper,
+	wakeSnoozedTab as wakeSnoozedTabHelper,
+	removeSnoozedTab as removeSnoozedTabHelper,
+	updateSnoozedTab as updateSnoozedTabHelper,
+	type WakeSnoozedTabResult,
+} from '../utils/snoozeHelpers';
+import { runSnoozeWakePrompt } from '../services/snoozeWakePrompt';
 import { logger } from '../utils/logger';
 
 /**
@@ -87,6 +106,12 @@ export interface TabStoreState {
 		filename: string;
 		content: string;
 		messageId?: string;
+		/**
+		 * Absolute path of the file the content came from, when the publish
+		 * started on a file preview tab. The published URL is recorded against
+		 * it so the file reads as published afterwards.
+		 */
+		filePath?: string;
 		/**
 		 * Raw log entries that produced `content`. When present, the publish modal
 		 * can re-format the body (e.g. to opt in to reasoning/thinking blocks)
@@ -209,6 +234,50 @@ export interface TabStoreActions {
 	setGroupEmoji: (groupId: string, emoji: string) => void;
 
 	/**
+	 * Snooze a tab (or tiled group) until `wakeAt`, with an optional note
+	 * surfaced in the wake notification and an optional prompt run the moment it
+	 * returns. The tab leaves the tab bar until useSnoozeScheduler brings it
+	 * back.
+	 *
+	 * `sessionId` defaults to the active agent, which is what every click path
+	 * means - the user is snoozing the tab in front of them. It is explicit for
+	 * a caller that is not the user at the keyboard (`maestro-cli snooze`), where
+	 * "active" is whatever agent the human happens to be looking at and would
+	 * park the wrong tab.
+	 *
+	 * @returns The stored snooze entry, or null if the tab wasn't found
+	 */
+	snoozeTab: (
+		tabId: string,
+		wakeAt: number,
+		content?: SnoozeContent,
+		showUnreadOnly?: boolean,
+		sessionId?: string
+	) => SnoozedTabEntry | null;
+
+	/**
+	 * Restore a snoozed tab immediately, clearing its snooze. Works on any
+	 * session so the Snoozed Tabs list can act across agents.
+	 */
+	unsnoozeTab: (sessionId: string, snoozeId: string) => WakeSnoozedTabResult | null;
+
+	/**
+	 * Discard a snooze without restoring its tab.
+	 */
+	dismissSnoozedTab: (sessionId: string, snoozeId: string) => void;
+
+	/**
+	 * Reschedule a snooze. Each field of `content` that is present rewrites its
+	 * value (empty string clears it); an omitted field is left alone.
+	 */
+	rescheduleSnoozedTab: (
+		sessionId: string,
+		snoozeId: string,
+		wakeAt: number,
+		content?: SnoozeContent
+	) => void;
+
+	/**
 	 * Toggle read-only mode on an AI tab.
 	 */
 	toggleReadOnly: (tabId: string) => void;
@@ -232,6 +301,21 @@ export interface TabStoreActions {
 	 * Set per-tab effort/reasoning override. Pass undefined to clear and fall back to session/agent default.
 	 */
 	setTabEffort: (tabId: string, effort: string | undefined) => void;
+
+	// === AI tab transcript scroll position ===
+
+	/**
+	 * Remember how far an AI tab's transcript is scrolled, so reopening it lands
+	 * where the user left off.
+	 */
+	setAiTabScrollTop: (tabId: string, scrollTop: number) => void;
+
+	/**
+	 * Record whether an AI tab's transcript is pinned to the bottom. Reaching the
+	 * bottom also clears the tab's unread flag - the user has now seen the tail,
+	 * which is the whole thing the badge was pointing at.
+	 */
+	setAiTabAtBottom: (tabId: string, isAtBottom: boolean) => void;
 
 	// === Tab reordering ===
 
@@ -403,9 +487,6 @@ function updateFileTab(tabId: string, updates: Partial<FilePreviewTab>): void {
 	);
 }
 
-// Thinking mode cycle: off → on → sticky → off
-const THINKING_CYCLE: Array<'off' | 'on' | 'sticky'> = ['off', 'on', 'sticky'];
-
 // ============================================================================
 // Store Implementation
 // ============================================================================
@@ -559,6 +640,67 @@ export const useTabStore = create<TabStore>()((set) => ({
 		updateSessionWith(session.id, (s) => setGroupEmojiHelper(s, groupId, emoji));
 	},
 
+	// Snooze - see utils/snoozeHelpers.ts for why snoozed tabs leave aiTabs entirely
+	snoozeTab: (tabId, wakeAt, content, showUnreadOnly, sessionId) => {
+		const session = sessionId
+			? useSessionStore.getState().sessions.find((s) => s.id === sessionId)
+			: getActiveSession();
+		if (!session) return null;
+		// One id, two shapes: the tab strip hands this the id of whatever the user
+		// right-clicked, and a tiled group is not a tab. Resolve which it is here
+		// rather than making every caller (chip menu, tab menu, palette) ask.
+		const isGroup = (session.tabGroups || []).some((g) => g.id === tabId);
+		const result = isGroup
+			? snoozeTabGroupHelper(session, tabId, wakeAt, content)
+			: snoozeTabHelper(session, tabId, wakeAt, content, showUnreadOnly);
+		if (!result) return null;
+		// Written by id rather than through `updateActiveSession`, which keys on
+		// `activeSessionId`: a CLI snooze names its own agent, and that agent is
+		// usually not the one on screen.
+		updateSessionWith(session.id, () => result.session);
+		return result.entry;
+	},
+
+	unsnoozeTab: (sessionId, snoozeId) => {
+		const session = useSessionStore.getState().sessions.find((s) => s.id === sessionId);
+		if (!session) return null;
+		// A group rebuilds a layout, so it takes the group entry point. Pulled back
+		// by hand, every member is restored: the user is watching, and dropping a
+		// pane silently here would be a worse surprise than a preview that errors.
+		const entry = (session.snoozedTabs || []).find((sn) => sn.id === snoozeId);
+		if (entry && isSnoozedGroupHelper(entry)) {
+			const grouped = wakeSnoozedTabGroupHelper(session, snoozeId);
+			if (!grouped) return null;
+			updateSessionWith(sessionId, () => grouped.session);
+			// The wake prompt is written against the tab COMING BACK, so pulling it
+			// back early counts. Every member was restored on this path, so nothing
+			// has to be excluded.
+			runSnoozeWakePrompt(sessionId, entry, grouped.groupId);
+			return {
+				session: grouped.session,
+				entry,
+				tabId: grouped.groupId,
+				wasDuplicate: grouped.wasDuplicate,
+			};
+		}
+		// 'unsnoozed': the user pulled this back early rather than it coming due.
+		const result = wakeSnoozedTabHelper(session, snoozeId, 'unsnoozed');
+		if (!result) return null;
+		updateSessionWith(sessionId, () => result.session);
+		runSnoozeWakePrompt(sessionId, result.entry, result.tabId);
+		return result;
+	},
+
+	dismissSnoozedTab: (sessionId, snoozeId) => {
+		updateSessionWith(sessionId, (session) => removeSnoozedTabHelper(session, snoozeId));
+	},
+
+	rescheduleSnoozedTab: (sessionId, snoozeId, wakeAt, content) => {
+		updateSessionWith(sessionId, (session) =>
+			updateSnoozedTabHelper(session, snoozeId, wakeAt, content)
+		);
+	},
+
 	toggleReadOnly: (tabId) => {
 		const session = getActiveSession();
 		if (!session) return;
@@ -580,10 +722,7 @@ export const useTabStore = create<TabStore>()((set) => ({
 		if (!session) return;
 		const tab = session.aiTabs.find((t) => t.id === tabId);
 		if (!tab) return;
-		const currentMode = tab.showThinking ?? 'off';
-		const currentIndex = THINKING_CYCLE.indexOf(currentMode);
-		const nextMode = THINKING_CYCLE[(currentIndex + 1) % THINKING_CYCLE.length];
-		updateAiTab(tabId, { showThinking: nextMode });
+		updateAiTab(tabId, { showThinking: nextThinkingMode(tab.showThinking) });
 	},
 
 	setTabModel: (tabId, model) => {
@@ -592,6 +731,16 @@ export const useTabStore = create<TabStore>()((set) => ({
 
 	setTabEffort: (tabId, effort) => {
 		updateAiTab(tabId, { customEffort: effort || undefined });
+	},
+
+	setAiTabScrollTop: (tabId, scrollTop) => {
+		updateAiTab(tabId, { scrollTop });
+	},
+
+	setAiTabAtBottom: (tabId, isAtBottom) => {
+		// Only clear unread on the way to the bottom; scrolling away must not
+		// re-mark a tab the user already read.
+		updateAiTab(tabId, isAtBottom ? { isAtBottom, hasUnread: false } : { isAtBottom });
 	},
 
 	// Tab reordering

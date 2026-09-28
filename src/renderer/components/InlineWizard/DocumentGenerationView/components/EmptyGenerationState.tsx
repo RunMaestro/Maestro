@@ -15,7 +15,7 @@ export function EmptyGenerationState({ theme, onCancel }: EmptyGenerationStatePr
 			{onCancel && (
 				<button
 					type="button"
-					onClick={onCancel}
+					onClick={() => onCancel()}
 					className="mt-4 px-4 py-2 text-sm rounded"
 					style={{
 						backgroundColor: theme.colors.bgActivity,

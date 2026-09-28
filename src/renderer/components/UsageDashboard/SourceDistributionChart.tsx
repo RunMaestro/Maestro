@@ -27,9 +27,13 @@ import {
 	COLORBLIND_AGENT_PALETTE,
 } from '../../constants/colorblindPalettes';
 import { formatDurationHuman as formatDuration, formatNumber } from '../../../shared/formatters';
+import { MetricModeToggle, formatMetricValue, type ChartMetricMode } from './MetricModeToggle';
+import { useTokenSeries } from './TokenSeriesContext';
+import { ChartLoadingOverlay } from './ChartLoadingOverlay';
+import { DONUT_CHART, describeDonutArc } from './chartUtils';
 
 // Metric display mode
-type MetricMode = 'count' | 'duration';
+type MetricMode = ChartMetricMode;
 
 type SourceKey = 'interactive' | 'auto' | 'cue';
 
@@ -45,6 +49,8 @@ interface SourceData {
 export interface CueSourceTotals {
 	occurrences: number;
 	totalDurationMs: number;
+	/** Input + output tokens across Cue runs, for the chart's Tokens mode. */
+	tokens: number;
 }
 
 interface SourceDistributionChartProps {
@@ -108,51 +114,6 @@ function getAutoColor(theme: Theme): string {
 	}
 }
 
-/**
- * SVG arc path generator for donut chart segments
- */
-function describeArc(
-	x: number,
-	y: number,
-	outerRadius: number,
-	innerRadius: number,
-	startAngle: number,
-	endAngle: number
-): string {
-	// Handle full circle case (nearly 360 degrees)
-	if (endAngle - startAngle >= 359.99) {
-		// Draw two half arcs to create a full circle
-		const midAngle = startAngle + 180;
-		return `
-      ${describeArc(x, y, outerRadius, innerRadius, startAngle, midAngle)}
-      ${describeArc(x, y, outerRadius, innerRadius, midAngle, endAngle)}
-    `;
-	}
-
-	const startRad = (startAngle - 90) * (Math.PI / 180);
-	const endRad = (endAngle - 90) * (Math.PI / 180);
-
-	const startOuterX = x + outerRadius * Math.cos(startRad);
-	const startOuterY = y + outerRadius * Math.sin(startRad);
-	const endOuterX = x + outerRadius * Math.cos(endRad);
-	const endOuterY = y + outerRadius * Math.sin(endRad);
-
-	const startInnerX = x + innerRadius * Math.cos(startRad);
-	const startInnerY = y + innerRadius * Math.sin(startRad);
-	const endInnerX = x + innerRadius * Math.cos(endRad);
-	const endInnerY = y + innerRadius * Math.sin(endRad);
-
-	const largeArcFlag = endAngle - startAngle > 180 ? 1 : 0;
-
-	return `
-    M ${startOuterX} ${startOuterY}
-    A ${outerRadius} ${outerRadius} 0 ${largeArcFlag} 1 ${endOuterX} ${endOuterY}
-    L ${endInnerX} ${endInnerY}
-    A ${innerRadius} ${innerRadius} 0 ${largeArcFlag} 0 ${startInnerX} ${startInnerY}
-    Z
-  `;
-}
-
 export const SourceDistributionChart = memo(function SourceDistributionChart({
 	data,
 	theme,
@@ -160,6 +121,7 @@ export const SourceDistributionChart = memo(function SourceDistributionChart({
 	cueTotals = null,
 }: SourceDistributionChartProps) {
 	const [metricMode, setMetricMode] = useState<MetricMode>('count');
+	const { series: tokenSeries, loading: tokensLoading } = useTokenSeries(metricMode === 'tokens');
 	const [hoveredSource, setHoveredSource] = useState<SourceKey | null>(null);
 
 	// Calculate source data based on mode
@@ -176,9 +138,19 @@ export const SourceDistributionChart = memo(function SourceDistributionChart({
 		const autoDuration = queryCount > 0 ? (autoCount / queryCount) * data.totalDuration : 0;
 		const cueDuration = cueTotals?.totalDurationMs ?? 0;
 
-		const interactiveValue = metricMode === 'count' ? userCount : interactiveDuration;
-		const autoValue = metricMode === 'count' ? autoCount : autoDuration;
-		const cueValue = metricMode === 'count' ? cueCount : cueDuration;
+		// Token totals come from the transcript-derived series (user/auto by how the
+		// session was started) and, for Cue, from Cue's own stats - mirroring how
+		// the count and duration slices above are already sourced independently.
+		const interactiveTokens = tokenSeries?.bySource?.user ?? 0;
+		const autoTokens = tokenSeries?.bySource?.auto ?? 0;
+		const cueTokens = cueTotals?.tokens ?? 0;
+
+		const pick = (count: number, duration: number, tokens: number) =>
+			metricMode === 'count' ? count : metricMode === 'tokens' ? tokens : duration;
+
+		const interactiveValue = pick(userCount, interactiveDuration, interactiveTokens);
+		const autoValue = pick(autoCount, autoDuration, autoTokens);
+		const cueValue = pick(cueCount, cueDuration, cueTokens);
 
 		const total = interactiveValue + autoValue + cueValue;
 		const pct = (v: number) => (total > 0 ? (v / total) * 100 : 0);
@@ -223,7 +195,7 @@ export const SourceDistributionChart = memo(function SourceDistributionChart({
 		// usage (matches the original two-way behavior). The all-zero empty
 		// state is handled separately via `hasData`.
 		return candidates.filter((s) => s.value > 0);
-	}, [data, metricMode, theme, colorBlindMode, cueTotals]);
+	}, [data, metricMode, theme, colorBlindMode, cueTotals, tokenSeries]);
 
 	// Cue participates in the breakdown only when it has activity in range.
 	const hasCueSlice = useMemo(() => sourceData.some((s) => s.source === 'cue'), [sourceData]);
@@ -233,10 +205,8 @@ export const SourceDistributionChart = memo(function SourceDistributionChart({
 		return sourceData.reduce((sum, s) => sum + s.value, 0);
 	}, [sourceData]);
 
-	// Donut chart configuration
-	const size = 160;
-	const outerRadius = 70;
-	const innerRadius = 45;
+	// Donut chart configuration (shared with LocationDistributionChart)
+	const { size, outerRadius, innerRadius, hoverExpansion, centerLabelWidth } = DONUT_CHART;
 	const centerX = size / 2;
 	const centerY = size / 2;
 
@@ -282,43 +252,13 @@ export const SourceDistributionChart = memo(function SourceDistributionChart({
 				>
 					{title}
 				</h3>
-				<div className="flex items-center gap-2">
-					<span className="text-xs" style={{ color: theme.colors.textDim }}>
-						Show:
-					</span>
-					<div
-						className="flex rounded overflow-hidden border"
-						style={{ borderColor: theme.colors.border }}
-					>
-						<button
-							onClick={() => setMetricMode('count')}
-							className="px-2 py-1 text-xs transition-colors"
-							style={{
-								backgroundColor:
-									metricMode === 'count' ? `${theme.colors.accent}20` : 'transparent',
-								color: metricMode === 'count' ? theme.colors.accent : theme.colors.textDim,
-							}}
-							aria-pressed={metricMode === 'count'}
-							aria-label="Show query count"
-						>
-							Count
-						</button>
-						<button
-							onClick={() => setMetricMode('duration')}
-							className="px-2 py-1 text-xs transition-colors"
-							style={{
-								backgroundColor:
-									metricMode === 'duration' ? `${theme.colors.accent}20` : 'transparent',
-								color: metricMode === 'duration' ? theme.colors.accent : theme.colors.textDim,
-								borderLeft: `1px solid ${theme.colors.border}`,
-							}}
-							aria-pressed={metricMode === 'duration'}
-							aria-label="Show total duration"
-						>
-							Duration
-						</button>
-					</div>
-				</div>
+				<MetricModeToggle
+					mode={metricMode}
+					onChange={setMetricMode}
+					theme={theme}
+					variant="subtle"
+					tokensLoading={tokensLoading}
+				/>
 			</div>
 
 			{/* Chart container */}
@@ -334,6 +274,7 @@ export const SourceDistributionChart = memo(function SourceDistributionChart({
 					<>
 						{/* Donut chart */}
 						<div className="relative">
+							<ChartLoadingOverlay visible={tokensLoading} theme={theme} />
 							<svg
 								width={size}
 								height={size}
@@ -344,10 +285,10 @@ export const SourceDistributionChart = memo(function SourceDistributionChart({
 								{arcs.map((arc) => (
 									<path
 										key={arc.source}
-										d={describeArc(
+										d={describeDonutArc(
 											centerX,
 											centerY,
-											hoveredSource === arc.source ? outerRadius + 4 : outerRadius,
+											hoveredSource === arc.source ? outerRadius + hoverExpansion : outerRadius,
 											innerRadius,
 											arc.startAngle,
 											arc.endAngle
@@ -369,8 +310,11 @@ export const SourceDistributionChart = memo(function SourceDistributionChart({
 								className="absolute inset-0 flex flex-col items-center justify-center"
 								style={{ pointerEvents: 'none' }}
 							>
-								<span className="text-lg font-semibold" style={{ color: theme.colors.textMain }}>
-									{metricMode === 'count' ? formatNumber(total) : formatDuration(total)}
+								<span
+									className="text-lg font-semibold leading-tight text-center truncate"
+									style={{ color: theme.colors.textMain, maxWidth: centerLabelWidth }}
+								>
+									{formatMetricValue(metricMode, total)}
 								</span>
 								<span className="text-xs" style={{ color: theme.colors.textDim }}>
 									{metricMode === 'count' ? 'total' : 'time'}
@@ -409,7 +353,9 @@ export const SourceDistributionChart = memo(function SourceDistributionChart({
 											{source.percentage.toFixed(1)}% •{' '}
 											{metricMode === 'count'
 												? formatNumber(source.value)
-												: formatDuration(source.value)}
+												: metricMode === 'tokens'
+													? formatMetricValue('tokens', source.value)
+													: formatDuration(source.value)}
 										</span>
 									</div>
 								</div>

@@ -2,58 +2,61 @@
  * Batch State Collector
  *
  * Collects Auto Run / batch processing state.
- * - No document content or prompts included
+ * - No document content, filenames, paths, or prompts included
+ *
+ * The state itself is captured in the renderer and passed in: Auto Run's live
+ * state is in-memory in `batchStore` and is intentionally not persisted, so
+ * there is nothing in any main-process store for this collector to read. It
+ * previously read a `session.batchRunState` field that nothing has ever
+ * written, so every package shipped an empty section.
  */
 
-import Store from 'electron-store';
+import type { AutoRunDebugSnapshot } from '../../../shared/debugPackage';
 
 export interface BatchStateInfo {
-	activeSessions: Array<{
-		sessionId: string;
-		isRunning: boolean;
-		isStopping: boolean;
-		documentCount: number;
-		currentDocumentIndex: number;
-		loopEnabled: boolean;
-		loopIteration: number;
-		worktreeActive: boolean;
-		hasError: boolean;
-		errorType?: string;
-		startTime?: number;
-		elapsedMs?: number;
-	}>;
+	/**
+	 * False when the caller could not supply renderer state (for example a
+	 * package generated without a live window). Distinguishes "no Auto Run was
+	 * active" from "we could not tell", which is the difference that made the
+	 * previous empty section so misleading.
+	 */
+	snapshotAvailable: boolean;
+	activeSessions: Array<
+		AutoRunDebugSnapshot & {
+			/** Wall-clock time since the run started, at collection time. */
+			elapsedMs?: number;
+			/** Time since the run last reported activity, at collection time. */
+			idleMs?: number;
+		}
+	>;
 }
 
 /**
- * Collect batch/Auto Run state from sessions.
+ * Collect batch/Auto Run state from a renderer-supplied snapshot.
+ *
+ * Sessions with no Auto Run activity are filtered out: a run that never started
+ * and has no progress is noise in a support package.
  */
-export function collectBatchState(sessionsStore: Store<any>): BatchStateInfo {
-	const result: BatchStateInfo = {
-		activeSessions: [],
-	};
-
-	const sessions = sessionsStore.get('sessions', []) as any[];
-
-	for (const session of sessions) {
-		// Check if this session has batch/Auto Run state
-		const batchState = session.batchRunState;
-		if (batchState) {
-			result.activeSessions.push({
-				sessionId: session.id || 'unknown',
-				isRunning: !!batchState.isRunning,
-				isStopping: !!batchState.isStopping,
-				documentCount: batchState.documentCount || 0,
-				currentDocumentIndex: batchState.currentDocumentIndex || 0,
-				loopEnabled: !!batchState.loopEnabled,
-				loopIteration: batchState.loopIteration || 0,
-				worktreeActive: !!batchState.worktreeActive,
-				hasError: !!batchState.error,
-				errorType: batchState.error?.type,
-				startTime: batchState.startTime,
-				elapsedMs: batchState.startTime ? Date.now() - batchState.startTime : undefined,
-			});
-		}
+export function collectBatchState(snapshots?: AutoRunDebugSnapshot[]): BatchStateInfo {
+	if (!snapshots) {
+		return { snapshotAvailable: false, activeSessions: [] };
 	}
 
-	return result;
+	const now = Date.now();
+	const activeSessions = snapshots
+		.filter(
+			(s) =>
+				s.isRunning ||
+				s.isStopping ||
+				s.hasError ||
+				s.errorPaused ||
+				s.completedTasksAcrossAllDocs > 0
+		)
+		.map((s) => ({
+			...s,
+			elapsedMs: s.startTime ? now - s.startTime : undefined,
+			idleMs: s.lastActiveTimestamp ? now - s.lastActiveTimestamp : undefined,
+		}));
+
+	return { snapshotAvailable: true, activeSessions };
 }

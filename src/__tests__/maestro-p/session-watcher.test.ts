@@ -22,6 +22,7 @@ import {
 	cwdSlug,
 	discoverSessionId,
 } from '../../maestro-p/session-watcher';
+import { encodeClaudeProjectPath } from '../../shared/pathUtils';
 
 const FAST_POLL_MS = 10;
 
@@ -104,6 +105,49 @@ describe('session-watcher', () => {
 
 		it('handles an empty string', () => {
 			expect(cwdSlug('')).toBe('');
+		});
+
+		it('strips trailing separators so a cwd saved with one still resolves', () => {
+			expect(cwdSlug('/Users/test/example-proj/')).toBe('-Users-test-example-proj');
+			expect(cwdSlug('C:\\Users\\test\\repo\\')).toBe('C--Users-test-repo');
+		});
+
+		it('leaves filesystem roots intact', () => {
+			expect(cwdSlug('/')).toBe('-');
+			expect(cwdSlug('C:\\')).toBe('C--');
+		});
+
+		// cwdSlug deliberately inlines the encoding rule instead of importing
+		// src/shared/pathUtils.ts, because the maestro-p bundle stays lean and
+		// that module pulls in fs/os helpers it has no other use for. The cost
+		// of that choice is drift: if one side learns a normalization the other
+		// doesn't, maestro-p and the desktop app look in different directories
+		// for the same project and session discovery silently returns nothing.
+		// This test is what makes the duplication safe - it fails the moment
+		// the two implementations disagree on any input.
+		it('stays byte-for-byte identical to the canonical encodeClaudeProjectPath()', () => {
+			const paths = [
+				'/Users/test/example-proj',
+				'/Users/test/example-proj/',
+				'/Users/test/example-proj///',
+				'C:\\Users\\test\\repo',
+				'C:\\Users\\test\\repo\\',
+				'C:\\Users\\test\\repo\\\\',
+				'/Users/foo/.claude-mem/observer',
+				'/Users/foo/.claude-mem-observer',
+				'/path/with spaces/and_underscores',
+				'/',
+				'//',
+				'C:\\',
+				'---',
+				'',
+			];
+			for (const input of paths) {
+				expect(
+					cwdSlug(input),
+					`cwdSlug drifted from encodeClaudeProjectPath for ${JSON.stringify(input)}`
+				).toBe(encodeClaudeProjectPath(input));
+			}
 		});
 	});
 

@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import { CodexOutputParser } from '../../../main/parsers/codex-output-parser';
+import {
+	classifyRetryableError,
+	tokenExhaustionResetAt,
+} from '../../../shared/retryClassification';
 
 describe('CodexOutputParser', () => {
 	const parser = new CodexOutputParser();
@@ -60,6 +64,43 @@ describe('CodexOutputParser', () => {
 				// formatReasoningText adds \n\n before **section** markers for readability
 				expect(event?.text).toBe('\n\n**Thinking about the task**\n\nI need to analyze...');
 				expect(event?.isPartial).toBe(true);
+			});
+
+			// StdoutHandler gates Codex thinking-chunk events on isReasoning, and
+			// untagged partial text is appended to streamedText (the buffer
+			// ExitHandler emits as the final answer). An item.completed reasoning
+			// item that forgets the flag is therefore both invisible in the
+			// thinking panel and liable to be shown as the agent's response.
+			it('tags reasoning items with isReasoning', () => {
+				const line = JSON.stringify({
+					type: 'item.completed',
+					item: { id: 'item_0', type: 'reasoning', text: 'weighing the options' },
+				});
+
+				const event = parser.parseJsonLine(line);
+				expect(event?.isReasoning).toBe(true);
+			});
+
+			it('tags reasoning items with isReasoning regardless of section markers', () => {
+				const line = JSON.stringify({
+					type: 'item.completed',
+					item: { type: 'reasoning', text: 'Plain thinking text' },
+				});
+
+				const event = parser.parseJsonLine(line);
+				expect(event?.text).toBe('Plain thinking text');
+				expect(event?.isReasoning).toBe(true);
+			});
+
+			it('does not tag agent_message as reasoning', () => {
+				const line = JSON.stringify({
+					type: 'item.completed',
+					item: { type: 'agent_message', text: 'Here is the answer.' },
+				});
+
+				const event = parser.parseJsonLine(line);
+				expect(event?.type).toBe('result');
+				expect(event?.isReasoning).toBeUndefined();
 			});
 		});
 
@@ -501,6 +542,97 @@ describe('CodexOutputParser', () => {
 		});
 	});
 
+	describe('call_id correlation', () => {
+		const functionCall = (name: string, callId: string, args: string) =>
+			JSON.stringify({
+				type: 'response_item',
+				payload: { type: 'function_call', name, arguments: args, call_id: callId },
+			});
+		const functionCallOutput = (callId: string, output: string) =>
+			JSON.stringify({
+				type: 'response_item',
+				payload: { type: 'function_call_output', call_id: callId, output },
+			});
+
+		it('forwards call_id as toolCallId on both halves of a call', () => {
+			// Without an id the renderer merges a completion onto whichever
+			// same-named badge is still running (issue #1485).
+			const p = new CodexOutputParser();
+
+			const call = p.parseJsonLine(functionCall('shell', 'call_a', '{"command":"ls"}'));
+			const output = p.parseJsonLine(functionCallOutput('call_a', 'a.txt'));
+
+			expect(call?.toolCallId).toBe('call_a');
+			expect(output?.toolCallId).toBe('call_a');
+			expect(output?.toolName).toBe('shell');
+		});
+
+		it('attributes parallel calls to their own tools regardless of settle order', () => {
+			// The single lastToolName slot labeled the FIRST output to arrive with
+			// the SECOND call's tool name.
+			const p = new CodexOutputParser();
+
+			p.parseJsonLine(functionCall('read_file', 'call_a', '{"path":"one.ts"}'));
+			p.parseJsonLine(functionCall('run_tests', 'call_b', '{}'));
+
+			const settleB = p.parseJsonLine(functionCallOutput('call_b', 'ok'));
+			const settleA = p.parseJsonLine(functionCallOutput('call_a', 'contents'));
+
+			expect(settleB).toMatchObject({ toolCallId: 'call_b', toolName: 'run_tests' });
+			expect(settleA).toMatchObject({ toolCallId: 'call_a', toolName: 'read_file' });
+		});
+
+		it('still carries the name over for a payload with no call_id', () => {
+			// Legacy/id-less payloads keep the lastToolName fallback.
+			const p = new CodexOutputParser();
+
+			p.parseJsonLine(
+				JSON.stringify({
+					type: 'response_item',
+					payload: { type: 'function_call', name: 'shell', arguments: '{}' },
+				})
+			);
+			const output = p.parseJsonLine(
+				JSON.stringify({
+					type: 'response_item',
+					payload: { type: 'function_call_output', output: 'done' },
+				})
+			);
+
+			expect(output?.toolName).toBe('shell');
+			expect(output?.toolCallId).toBeUndefined();
+		});
+
+		it('correlates a command_execution across item.started and item.completed by item id', () => {
+			// Every command_execution badge is named 'shell', so the id is the only
+			// thing telling two parallel commands apart.
+			const p = new CodexOutputParser();
+
+			const started = p.parseJsonLine(
+				JSON.stringify({
+					type: 'item.started',
+					item: { id: 'item_1', type: 'command_execution', command: 'npm test' },
+				})
+			);
+			const completed = p.parseJsonLine(
+				JSON.stringify({
+					type: 'item.completed',
+					item: {
+						id: 'item_1',
+						type: 'command_execution',
+						command: 'npm test',
+						status: 'completed',
+						aggregated_output: 'ok',
+						exit_code: 0,
+					},
+				})
+			);
+
+			expect(started?.toolCallId).toBe('item_1');
+			expect(completed?.toolCallId).toBe('item_1');
+		});
+	});
+
 	describe('tool output truncation', () => {
 		it('should truncate tool output exceeding 10000 chars', () => {
 			const p = new CodexOutputParser();
@@ -539,6 +671,36 @@ describe('CodexOutputParser', () => {
 			expect(error).not.toBeNull();
 			expect(error?.type).toBe('auth_expired');
 			expect(error?.agentId).toBe('codex');
+		});
+
+		// A hard 4xx is decided by the envelope, not by the sentence. Without this
+		// the fallback emitted `recoverable: true` and the retry scheduler read
+		// "try again" out of the message and probed forever.
+		it('marks a hard client error non-recoverable', () => {
+			const line = JSON.stringify({
+				type: 'error',
+				status: 400,
+				error: {
+					type: 'invalid_request_error',
+					message:
+						"The 'gpt-6-astra' model requires a newer version of Codex. Please upgrade to the latest app or CLI and try again.",
+				},
+			});
+			const error = parser.detectErrorFromLine(line);
+			expect(error).not.toBeNull();
+			expect(error?.recoverable).toBe(false);
+			expect(error?.message).toContain('gpt-6-astra');
+		});
+
+		it('leaves a 429 recoverable', () => {
+			const line = JSON.stringify({
+				type: 'error',
+				status: 429,
+				error: { type: 'rate_limit_error', message: 'usage limit reached' },
+			});
+			const error = parser.detectErrorFromLine(line);
+			expect(error).not.toBeNull();
+			expect(error?.recoverable).toBe(true);
 		});
 
 		it('should detect rate limit errors from JSON', () => {
@@ -711,6 +873,62 @@ describe('CodexOutputParser', () => {
 				})
 			);
 			expect(usageEvent?.usage?.contextWindow).toBe(200000);
+			// The window came from Codex's own turn_context, so it is authoritative
+			// even though it happens to equal the static fallback constant.
+			expect(usageEvent?.usage?.contextWindowReported).toBe(true);
+		});
+
+		it('should not flag the config/static-table seed as provider-reported', () => {
+			const p = new CodexOutputParser();
+
+			// No turn_context and no model_context_window anywhere: the window can
+			// only be the constructor's config / lookup-table seed.
+			const usageEvent = p.parseJsonLine(
+				JSON.stringify({
+					type: 'turn.completed',
+					usage: { input_tokens: 100, output_tokens: 50 },
+				})
+			);
+			expect(usageEvent?.usage?.contextWindow).toBeGreaterThan(0);
+			expect(usageEvent?.usage?.contextWindowReported).toBe(false);
+		});
+
+		// Review of PR #1356 (item 2). `turn_context` cached the reported window on
+		// the instance but `token_count` did not, so when Codex carried
+		// `model_context_window` in `token_count` only, a single turn produced two
+		// different denominators: token_count reported the real window with the
+		// flag set (renderer rank 2), then turn.completed fell back to the
+		// constructor seed with the flag clear (rank 3, stored override wins). The
+		// gauge changed denominator mid-turn.
+		it('should cache a context window reported by token_count, not just turn_context', () => {
+			const p = new CodexOutputParser();
+
+			// No turn_context at all - the window arrives only on token_count.
+			const tokenCountEvent = p.parseJsonLine(
+				JSON.stringify({
+					type: 'event_msg',
+					payload: {
+						type: 'token_count',
+						info: {
+							model_context_window: 272000,
+							total_token_usage: { input_tokens: 100, output_tokens: 50 },
+						},
+					},
+				})
+			);
+			expect(tokenCountEvent?.usage?.contextWindow).toBe(272000);
+			expect(tokenCountEvent?.usage?.contextWindowReported).toBe(true);
+
+			// The very next event of the same turn must agree. Before the fix this
+			// returned the seed with contextWindowReported false.
+			const completedEvent = p.parseJsonLine(
+				JSON.stringify({
+					type: 'turn.completed',
+					usage: { input_tokens: 100, output_tokens: 50 },
+				})
+			);
+			expect(completedEvent?.usage?.contextWindow).toBe(272000);
+			expect(completedEvent?.usage?.contextWindowReported).toBe(true);
 		});
 
 		it('should handle turn_context without payload', () => {
@@ -811,6 +1029,7 @@ describe('CodexOutputParser', () => {
 				expect(event?.usage?.cacheReadTokens).toBe(3000);
 				expect(event?.usage?.cacheCreationTokens).toBe(0);
 				expect(event?.usage?.contextWindow).toBe(400000);
+				expect(event?.usage?.contextWindowReported).toBe(true);
 				expect(event?.usage?.reasoningTokens).toBe(200);
 			});
 
@@ -834,6 +1053,8 @@ describe('CodexOutputParser', () => {
 
 				// Should fall back to cached context window (default model)
 				expect(event?.usage?.contextWindow).toBeGreaterThan(0);
+				// ...and that fallback is NOT provider-reported.
+				expect(event?.usage?.contextWindowReported).toBe(false);
 			});
 
 			it('should handle token_count with zero values', () => {
@@ -1186,6 +1407,48 @@ describe('CodexOutputParser', () => {
 				expect(orphan?.toolName).toBeUndefined();
 			});
 
+			it('keeps an id-less call named when an id-correlated one finishes first', () => {
+				// Interleaving: a legacy id-less call is still open when a correlated
+				// call starts and completes. The id-less output must still know its own
+				// name. Two things used to break it - every function_call overwrote
+				// `lastToolName`, and every completion cleared it - so this output
+				// arrived either mislabeled with the other tool or with no name at all.
+				const p = new CodexOutputParser();
+
+				p.parseJsonLine(
+					JSON.stringify({
+						type: 'response_item',
+						payload: { type: 'function_call', name: 'legacy_tool', arguments: '{}' },
+					})
+				);
+				p.parseJsonLine(
+					JSON.stringify({
+						type: 'response_item',
+						payload: {
+							type: 'function_call',
+							name: 'correlated_tool',
+							arguments: '{}',
+							call_id: 'c9',
+						},
+					})
+				);
+				p.parseJsonLine(
+					JSON.stringify({
+						type: 'response_item',
+						payload: { type: 'function_call_output', call_id: 'c9', output: 'done' },
+					})
+				);
+
+				const idless = p.parseJsonLine(
+					JSON.stringify({
+						type: 'response_item',
+						payload: { type: 'function_call_output', output: 'legacy output' },
+					})
+				);
+
+				expect(idless?.toolName).toBe('legacy_tool');
+			});
+
 			it('should handle function_call_output with undefined output', () => {
 				const p = new CodexOutputParser();
 				const event = p.parseJsonLine(
@@ -1491,6 +1754,89 @@ describe('CodexOutputParser', () => {
 			expect(error).not.toBeNull();
 			expect(error?.message).toBe('Connection lost');
 		});
+
+		// Regression: #1378. Codex v0.111.0+ reports turn failures through an
+		// `event_msg` envelope with the text in `payload.message`. These used to
+		// be classified as benign `system` events, so the agent went silent with
+		// no error surfaced and no way for the user to tell what happened.
+		it('should detect an event_msg error payload (remote compact 404)', () => {
+			const obj = {
+				type: 'event_msg',
+				payload: {
+					type: 'error',
+					message:
+						'Error running remote compact task: unexpected status 404 Not Found: {"detail":"Not Found"}, url: https://chatgpt.com/backend-api/codex/responses/compact, cf-ray: a2a245597813f94c-DUS, request id: 83f44823-691b-4721-b52b-b7faf5e78617',
+				},
+			};
+			const error = parser.detectErrorFromParsed(obj);
+			expect(error).not.toBeNull();
+			expect(error?.type).toBe('network_error');
+			expect(error?.recoverable).toBe(true);
+			expect(error?.message).toContain('could not compact this conversation');
+		});
+
+		it('should detect a generic event_msg error payload', () => {
+			const obj = {
+				type: 'event_msg',
+				payload: { type: 'error', message: 'something went sideways' },
+			};
+			const error = parser.detectErrorFromParsed(obj);
+			expect(error).not.toBeNull();
+			expect(error?.message).toBe('something went sideways');
+		});
+
+		// Codex retries stream errors on its own. Raising one would pause a
+		// session that is about to recover, and StdoutHandler's once-only
+		// `errorEmitted` latch would then swallow the real error if the retries
+		// ran out.
+		it('should NOT treat a stream_error payload as an agent error', () => {
+			const obj = {
+				type: 'event_msg',
+				payload: { type: 'stream_error', message: 'stream error: timeout; retrying 1/5' },
+			};
+			expect(parser.detectErrorFromParsed(obj)).toBeNull();
+		});
+
+		it('should fall back to top-level message when error field is absent', () => {
+			const obj = { type: 'error', message: 'unexpected status 500 Internal Server Error' };
+			const error = parser.detectErrorFromParsed(obj);
+			expect(error).not.toBeNull();
+			expect(error?.type).toBe('network_error');
+			expect(error?.message).toContain('HTTP 500');
+		});
+
+		it('should still ignore an error event carrying no text at all', () => {
+			expect(parser.detectErrorFromParsed({ type: 'error' })).toBeNull();
+		});
+	});
+
+	describe('event_msg error events (#1378)', () => {
+		it('should parse an error payload as an error event', () => {
+			const event = parser.parseJsonObject({
+				type: 'event_msg',
+				payload: { type: 'error', message: 'Error running remote compact task: boom' },
+			});
+			expect(event?.type).toBe('error');
+			expect(event?.text).toBe('Error running remote compact task: boom');
+		});
+
+		it('should parse a stream_error payload as partial text, not an error', () => {
+			const event = parser.parseJsonObject({
+				type: 'event_msg',
+				payload: { type: 'stream_error', message: 'stream error: timeout; retrying 1/5' },
+			});
+			expect(event?.type).toBe('text');
+			expect(event?.isPartial).toBe(true);
+			expect(event?.text).toBe('stream error: timeout; retrying 1/5');
+		});
+
+		it('should leave unrelated event_msg types as system events', () => {
+			const event = parser.parseJsonObject({
+				type: 'event_msg',
+				payload: { type: 'task_started' },
+			});
+			expect(event?.type).toBe('system');
+		});
 	});
 
 	describe('tool name carryover for new format', () => {
@@ -1590,5 +1936,97 @@ describe('CodexOutputParser', () => {
 
 			expect(event?.text).toBe('Plain thinking text');
 		});
+	});
+
+	describe('stream_error stays out of the final answer', () => {
+		// streamedText is what ExitHandler emits as the result when a turn ends
+		// without a result message. Retry diagnostics must never land there.
+		it('marks a retrying stream_error as reasoning', () => {
+			const parser = new CodexOutputParser();
+			const event = parser.parseJsonLine(
+				JSON.stringify({
+					type: 'event_msg',
+					payload: { type: 'stream_error', message: 'stream error: reset; retrying 1/5' },
+				})
+			);
+
+			expect(event?.type).toBe('text');
+			expect(event?.isPartial).toBe(true);
+			expect(event?.isReasoning).toBe(true);
+		});
+
+		it('still treats a real error payload as an error', () => {
+			const parser = new CodexOutputParser();
+			const event = parser.parseJsonLine(
+				JSON.stringify({
+					type: 'event_msg',
+					payload: { type: 'error', message: 'Error running remote compact task' },
+				})
+			);
+
+			expect(event?.type).toBe('error');
+		});
+	});
+});
+
+/**
+ * A Codex quota outage has to reach the retry scheduler as a quota outage.
+ *
+ * Two things used to break that, and both are covered here: the pattern bank
+ * matched `\b429\b` / `rate.*limit` before the usage-limit pattern, and the
+ * parser then replaced Codex's own text with the bank's curated wording. The
+ * result was "Rate limited. Please wait and try again." for a multi-hour plan
+ * outage, which `classifyRetryableError` reads as a transient throttle and
+ * retries every 30 seconds.
+ */
+describe('Codex quota outages reach the retry scheduler intact', () => {
+	it('classifies a 429 that also names a usage limit as exhaustion, not availability', () => {
+		const p = new CodexOutputParser();
+		const error = p.detectErrorFromExit(1, "429 - you've hit your usage limit for this plan", '');
+
+		expect(error).not.toBeNull();
+		expect(classifyRetryableError(error!)).toBe('token-exhaustion');
+	});
+
+	it('keeps Codex own text so a reset hint survives the parser', () => {
+		const p = new CodexOutputParser();
+		const line = 'usage limit reached. try again in 4h.';
+		const error = p.detectErrorFromExit(1, line, '');
+
+		// Display still gets the curated wording.
+		expect(error!.message).toBe('Usage limit reached. Please wait or check your plan quota.');
+		// The decision gets the real line.
+		expect(error!.raw?.errorLine).toContain('4h');
+
+		const now = Date.UTC(2026, 8, 16, 12, 0, 0);
+		expect(tokenExhaustionResetAt(error!, now)).toBeGreaterThan(now + 3 * 60 * 60 * 1000);
+	});
+
+	it('leaves a genuine throttle classified as availability', () => {
+		const p = new CodexOutputParser();
+		const error = p.detectErrorFromExit(1, '429 too many requests', '');
+
+		expect(classifyRetryableError(error!)).toBe('availability');
+	});
+
+	it('types an out-of-credits wall as a limit, not unknown', () => {
+		// The exact event a walled team workspace emits once its plan window and
+		// its credit fallback are both spent. Typed `unknown`, it was invisible to
+		// every path that asks "is this a limit?" by type.
+		const p = new CodexOutputParser();
+		const error = p.detectErrorFromParsed({
+			type: 'event_msg',
+			payload: {
+				type: 'error',
+				message: 'Your workspace is out of credits. Add credits to continue.',
+			},
+		});
+
+		expect(error!.type).toBe('rate_limited');
+		expect(error!.recoverable).toBe(true);
+		expect(error!.raw?.errorLine).toBe(
+			'Your workspace is out of credits. Add credits to continue.'
+		);
+		expect(classifyRetryableError(error!)).toBe('token-exhaustion');
 	});
 });

@@ -15,7 +15,9 @@
 import { ipcMain } from 'electron';
 import { withIpcErrorLogging, type CreateHandlerOptions } from '../../utils/ipcHandler';
 import { getCueStatsAggregation } from '../../cue/stats/cue-stats-query';
+import { getHistoricalConductorCreditMs } from '../../cue/cue-db';
 import type { CueStatsAggregation, CueStatsTimeRange } from '../../../shared/cue-stats-types';
+import { resolveEncoreFeatures } from '../../../shared/encoreFeatureDefaults';
 import type { CueEngine } from '../../cue/cue-engine';
 
 const LOG_CONTEXT = '[CueStats]';
@@ -75,12 +77,13 @@ function buildSubscriptionToPipelineMap(
 
 /**
  * Returns true only when BOTH `encoreFeatures.usageStats` and
- * `encoreFeatures.maestroCue` are explicitly enabled. Reads on every call so
+ * `encoreFeatures.maestroCue` are enabled (their default, unless the user
+ * turned one off). Reads on every call so
  * the renderer sees toggle changes without an app restart.
  */
 function isCueStatsEnabled(settingsStore: { get: (key: string) => unknown }): boolean {
-	const ef = (settingsStore.get('encoreFeatures') ?? {}) as Record<string, unknown>;
-	return ef.usageStats === true && ef.maestroCue === true;
+	const ef = resolveEncoreFeatures(settingsStore.get('encoreFeatures'));
+	return ef.usageStats && ef.maestroCue;
 }
 
 /**
@@ -95,9 +98,12 @@ export function registerCueStatsHandlers(deps: CueStatsHandlerDependencies): voi
 	// recovery path. Real errors from the aggregation query stay wrapped.
 	const wrappedAggregation = withIpcErrorLogging(
 		handlerOpts('getAggregation'),
-		async (range: CueStatsTimeRange): Promise<CueStatsAggregation> => {
+		async (
+			range: CueStatsTimeRange,
+			excludeTriggerTypes: string[]
+		): Promise<CueStatsAggregation> => {
 			const subscriptionToPipeline = buildSubscriptionToPipelineMap(getCueEngine);
-			return getCueStatsAggregation(range, { subscriptionToPipeline });
+			return getCueStatsAggregation(range, { subscriptionToPipeline, excludeTriggerTypes });
 		}
 	);
 
@@ -105,12 +111,32 @@ export function registerCueStatsHandlers(deps: CueStatsHandlerDependencies): voi
 		'cue-stats:get-aggregation',
 		async (
 			event: Electron.IpcMainInvokeEvent,
-			range: CueStatsTimeRange
+			range: CueStatsTimeRange,
+			excludeTriggerTypes?: unknown
 		): Promise<CueStatsAggregation> => {
 			if (!isCueStatsEnabled(settingsStore)) {
 				throw new Error('CueStatsDisabled');
 			}
-			return wrappedAggregation(event, range);
+			// The filter arrives from the renderer, so narrow it here rather than
+			// trusting the wire shape - a stray value would otherwise reach the
+			// query's Set and silently exclude nothing (or everything).
+			const excluded = Array.isArray(excludeTriggerTypes)
+				? excludeTriggerTypes.filter((t): t is string => typeof t === 'string' && t.length > 0)
+				: [];
+			return wrappedAggregation(event, range, excluded);
 		}
+	);
+
+	// Deliberately NOT behind `isCueStatsEnabled`: this feeds the one-time
+	// `cueTimeMs` backfill, which reads durations the Cue engine already
+	// credited toward the Conductor level. That credit accrues regardless of the
+	// usageStats dashboard flag, so gating the read would leave users who never
+	// turned that flag on with a permanently blank Cue subtotal.
+	ipcMain.handle(
+		'cue-stats:get-historical-conductor-credit',
+		withIpcErrorLogging(
+			handlerOpts('getHistoricalConductorCredit'),
+			async (): Promise<number> => getHistoricalConductorCreditMs()
+		)
 	);
 }

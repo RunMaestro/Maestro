@@ -1,10 +1,13 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import {
 	accumulateCrossAgentChunk,
 	buildCrossAgentLogEntry,
 	buildConsultTabName,
 	ensureConsultTab,
+	buildConsultHistoryEntry,
+	sendCrossAgentRequest,
 } from '../../../renderer/hooks/agent/useCrossAgentDispatch';
+import { useCrossAgentInFlightStore } from '../../../renderer/stores/crossAgentInFlightStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import {
 	buildUnifiedTabs,
@@ -72,6 +75,24 @@ describe('accumulateCrossAgentChunk', () => {
 		expect(result.displayText).toContain('went silent for 10 minutes');
 		// The raw accumulation stays clean - the note is presentation, not content.
 		expect(result.accumulated).toBe('partial answer');
+	});
+
+	it('reports a stopped consult as stopped, never as the target failing', () => {
+		const result = accumulateCrossAgentChunk(
+			'partial answer',
+			chunk({ done: true, canceled: true })
+		);
+		expect(result.displayText).toContain('partial answer');
+		expect(result.displayText).toContain('was stopped');
+		// "could not respond" blames the target for a decision the user made.
+		expect(result.displayText).not.toContain('could not respond');
+		expect(result.accumulated).toBe('partial answer');
+	});
+
+	it('shows a standalone stop note when the consult said nothing before Stop', () => {
+		const result = accumulateCrossAgentChunk('', chunk({ done: true, canceled: true }));
+		expect(result.displayText).toContain('Codex');
+		expect(result.displayText).toContain('was stopped');
 	});
 });
 
@@ -332,5 +353,158 @@ describe('ensureConsultTab', () => {
 			question: 'anyone home?',
 		});
 		expect(result).toBeNull();
+	});
+});
+
+describe('buildConsultHistoryEntry', () => {
+	function entry(overrides: Partial<Parameters<typeof buildConsultHistoryEntry>[0]> = {}) {
+		return buildConsultHistoryEntry({
+			entryId: 'e1',
+			timestamp: 1_700_000_000_000,
+			sourceAgentName: 'Pedsidian',
+			subject: 'why was the export empty',
+			accumulated: 'Because the grooming agent timed out.',
+			historySessionId: 'tgt',
+			projectPath: '/repo',
+			...overrides,
+		});
+	}
+
+	it('records a consult as AGENT, not AUTO', () => {
+		// A consult is an ordinary message proxied in from another agent. Typing it
+		// AUTO made it render as an Auto Run task and inflated the Auto Run counts.
+		expect(entry().type).toBe('AGENT');
+	});
+
+	it('names who consulted and about what', () => {
+		expect(entry().summary).toBe('Consulted by Pedsidian: why was the export empty');
+		expect(entry().sessionName).toBe('↩ why was the export empty');
+	});
+
+	it('falls back to the consult tab name when there is no subject', () => {
+		const e = entry({ subject: '', consultTabName: '↩ Pedsidian', targetName: 'rc' });
+		expect(e.summary).toBe('Consulted by Pedsidian');
+		expect(e.sessionName).toBe('↩ Pedsidian');
+	});
+
+	it('falls back to the target agent name when there is no tab name either', () => {
+		expect(entry({ subject: '', targetName: 'rc' }).sessionName).toBe('rc');
+	});
+
+	it('marks a clean consult successful and keeps the response as the detail', () => {
+		const e = entry();
+		expect(e.success).toBe(true);
+		expect(e.fullResponse).toBe('Because the grooming agent timed out.');
+	});
+
+	it('persists the failure reason for a consult that never answered', () => {
+		// Regression: failures accumulate no text, so the reason (which lives only
+		// on the chunk) was dropped - leaving a red X with an empty detail view.
+		const e = entry({ accumulated: '', error: 'Codex is not available.' });
+		expect(e.success).toBe(false);
+		expect(e.fullResponse).toContain('Codex is not available.');
+	});
+
+	it('keeps BOTH the partial answer and the reason when a consult fails mid-stream', () => {
+		const e = entry({ accumulated: 'I started to look and', error: 'timed out' });
+		expect(e.fullResponse).toContain('I started to look and');
+		expect(e.fullResponse).toContain('timed out');
+	});
+
+	it('leaves the detail undefined when there is nothing to show', () => {
+		expect(entry({ accumulated: '' }).fullResponse).toBeUndefined();
+	});
+
+	it('records a stopped consult as a success with a note, not as a failure', () => {
+		// The user pressing Stop is their own decision; logging it against the
+		// target as a failed consult misattributes it.
+		const e = entry({ accumulated: '', canceled: true });
+		expect(e.success).toBe(true);
+		expect(e.fullResponse).toContain('stopped by the user');
+	});
+
+	it('keeps a stopped consult partial answer alongside the stop note', () => {
+		const e = entry({ accumulated: 'I got as far as', canceled: true });
+		expect(e.fullResponse).toContain('I got as far as');
+		expect(e.fullResponse).toContain('stopped by the user');
+	});
+
+	it('stamps the calling agent so the target remembers who consulted it', () => {
+		expect(entry().sourceAgentName).toBe('Pedsidian');
+	});
+});
+
+describe('sendCrossAgentRequest in-flight registration', () => {
+	beforeEach(() => {
+		useSessionStore.setState({ sessions: [] } as never);
+		useCrossAgentInFlightStore.setState({ requests: {} });
+	});
+
+	it('registers the consult tab so the responding-agent chip can deep-link to it', async () => {
+		useSessionStore.setState({
+			sessions: [
+				createMockSession({ id: 'target', name: 'Pedsidian', toolType: 'claude-code' }),
+				createMockSession({ id: 'src', name: 'Scratch' }),
+			],
+		} as never);
+
+		const send = vi.fn().mockResolvedValue({ requestId: 'req-1' });
+		(globalThis as unknown as { window: Record<string, unknown> }).window.maestro = {
+			crossAgent: { send },
+		} as never;
+
+		sendCrossAgentRequest({
+			sourceSessionId: 'src',
+			sourceAgentName: 'Scratch',
+			sourceTabId: 'src-tab',
+			sourceLogs: [],
+			targetSessionId: 'target',
+			userPrompt: '@Pedsidian what is the status?',
+			sourceCwd: '/tmp',
+		});
+
+		// Let the fire-and-forget .then() settle.
+		await vi.waitFor(() => {
+			expect(Object.keys(useCrossAgentInFlightStore.getState().requests)).toHaveLength(1);
+		});
+
+		const registered = useCrossAgentInFlightStore.getState().requests['req-1'];
+		expect(registered.targetSessionId).toBe('target');
+		expect(registered.targetAgentName).toBe('Pedsidian');
+		// The tab the consult actually runs in - same id handed to the main process.
+		expect(registered.targetTabId).toBe(send.mock.calls[0][0].targetTabId);
+		expect(registered.targetTabId).toBeTruthy();
+	});
+
+	it('delivers onComplete when the send itself rejects', async () => {
+		useSessionStore.setState({
+			sessions: [
+				createMockSession({ id: 'target', name: 'Pedsidian', toolType: 'claude-code' }),
+				createMockSession({ id: 'src', name: 'Scratch' }),
+			],
+		} as never);
+
+		const send = vi.fn().mockRejectedValue(new Error('bridge down'));
+		(globalThis as unknown as { window: Record<string, unknown> }).window.maestro = {
+			crossAgent: { send },
+		} as never;
+
+		const onComplete = vi.fn();
+		sendCrossAgentRequest({
+			sourceSessionId: 'src',
+			sourceAgentName: 'Scratch',
+			sourceTabId: 'src-tab',
+			sourceLogs: [],
+			targetSessionId: 'target',
+			userPrompt: 'How does the gate work?',
+			onComplete,
+		});
+
+		// A rejected send produces no chunk, so nothing else would ever settle a
+		// caller blocked on the answer (`maestro-cli ask`).
+		await vi.waitFor(() => {
+			expect(onComplete).toHaveBeenCalledTimes(1);
+		});
+		expect(onComplete.mock.calls[0][0]).toMatchObject({ text: '', error: 'bridge down' });
 	});
 });

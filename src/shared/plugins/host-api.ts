@@ -21,7 +21,16 @@
 import semver from 'semver';
 
 /**
- * The host API version this Maestro build implements. Bumped to 1.14.0 for the
+ * The host API version this Maestro build implements. Bumped to 1.16.0 for three
+ * backward-compatible additions: the metadata-only `session.activated` event
+ * topic (`{ sessionId, tabId? }`, opaque ids only, fired when the focused agent
+ * changes), the `sessions.focus` method plus its narrow `sessions:focus`
+ * capability (navigate to an existing session's AI tab; no tab create/close
+ * power), and the summonable-panel trio `ui.openPanel` / `ui.closePanel` /
+ * `ui.togglePanel` under the existing `ui:panel` capability alongside the
+ * optional panel manifest field `size?: 'default' | 'full'` (absent or invalid
+ * => `default`, so older manifests are untouched). 1.15.0 is taken by the Board
+ * + Profiles work, so this fork skips it. 1.14.0 added the
  * backward-compatible additive `tool.executed` event topic (metadata-only tool
  * lifecycle: name + timing, never arguments or results) plus the `ui.panelPost`
  * host-to-panel push method (own-panels-only, JSON-only, MAX_PANEL_POST_BYTES
@@ -43,7 +52,7 @@ import semver from 'semver';
  * `ui:contribute` / `ui:panel` / `ui:render-unsafe` UI capabilities; 1.3.0
  * added `tools` + `keybindings`; 1.2.0 added `transcripts:read`.
  */
-export const HOST_API_VERSION = '1.14.0';
+export const HOST_API_VERSION = '1.16.0';
 
 /** Result of checking a plugin's declared host-API requirement. */
 export interface HostApiCompatibility {

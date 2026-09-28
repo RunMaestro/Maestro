@@ -54,6 +54,9 @@ vi.mock('lucide-react', () => ({
 	ChevronDown: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
 		<svg data-testid="chevron-down-icon" className={className} style={style} />
 	),
+	ChevronLeft: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
+		<svg data-testid="chevron-left-icon" className={className} style={style} />
+	),
 	ChevronRight: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
 		<svg data-testid="chevron-right-icon" className={className} style={style} />
 	),
@@ -403,7 +406,7 @@ describe('Wizard Theme Styles', () => {
 	});
 
 	describe('WizardExitConfirmModal Theme Rendering', () => {
-		const sampleThemes: ThemeId[] = ['tokyo-night', 'one-light', 'inquest'];
+		const sampleThemes: ThemeId[] = ['tokyo-night', 'one-light', 'winamp'];
 
 		it.each(sampleThemes)('should render with %s theme without errors', (themeId) => {
 			const theme = THEMES[themeId];

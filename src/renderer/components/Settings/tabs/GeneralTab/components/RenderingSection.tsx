@@ -1,6 +1,7 @@
 import { Monitor, PartyPopper } from 'lucide-react';
 import type { Theme } from '../../../../../types';
 import { ToggleSwitch } from '../../../../ui/ToggleSwitch';
+import { SettingsSectionHeading } from '../../../SettingsSectionHeading';
 
 interface RenderingSectionProps {
 	theme: Theme;
@@ -19,10 +20,7 @@ export function RenderingSection({
 }: RenderingSectionProps) {
 	return (
 		<div data-setting-id="general-rendering">
-			<div className="block text-xs font-bold opacity-70 uppercase mb-2 flex items-center gap-2">
-				<Monitor className="w-3 h-3" />
-				Rendering Options
-			</div>
+			<SettingsSectionHeading icon={Monitor}>Rendering Options</SettingsSectionHeading>
 			<div
 				className="p-3 rounded border space-y-3"
 				style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgMain }}
@@ -43,7 +41,7 @@ export function RenderingSection({
 						<div className="font-medium" style={{ color: theme.colors.textMain }}>
 							Disable GPU acceleration
 						</div>
-						<div className="text-xs opacity-50 mt-0.5" style={{ color: theme.colors.textDim }}>
+						<div className="text-xs opacity-70 mt-0.5">
 							Use software rendering instead of GPU. Requires restart to take effect.
 						</div>
 					</div>
@@ -76,7 +74,7 @@ export function RenderingSection({
 							<PartyPopper className="w-4 h-4" />
 							Disable confetti animations
 						</div>
-						<div className="text-xs opacity-50 mt-0.5" style={{ color: theme.colors.textDim }}>
+						<div className="text-xs opacity-70 mt-0.5">
 							Skip celebratory confetti effects on achievements and milestones
 						</div>
 					</div>

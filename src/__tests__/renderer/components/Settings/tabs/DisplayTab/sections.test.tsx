@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, within } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
 	AccessibilitySection,
 	ContextWarningsSection,
@@ -228,6 +228,48 @@ describe('DisplayTab section components', () => {
 			);
 			expect(setFilePreviewToolbarButtonVisibility).toHaveBeenCalledWith(key, false);
 		}
+	});
+
+	// The `revealInFolder` row is the one toolbar label that is NOT the static
+	// string in TOOLBAR_BUTTON_LABELS: it is resolved per-platform at render time
+	// via getRevealLabel(). The loop above cannot catch a regression here, because
+	// the test platform is darwin and getRevealLabel('darwin') returns exactly the
+	// static label - so dropping the substitution entirely would still pass it.
+	// These two cases pin the branches that actually differ.
+	describe.each([
+		['win32', 'Reveal in Explorer'],
+		['linux', 'Reveal in File Manager'],
+	])('file preview toolbar on %s', (platform, expectedLabel) => {
+		const originalPlatform = (window as any).maestro?.platform;
+
+		afterEach(() => {
+			(window as any).maestro.platform = originalPlatform;
+		});
+
+		it(`labels the reveal toggle "${expectedLabel}"`, () => {
+			(window as any).maestro.platform = platform;
+			const setFilePreviewToolbarButtonVisibility = vi.fn();
+
+			render(
+				<FileEditPreviewSection
+					theme={mockTheme}
+					fileEditShowLineNumbers={true}
+					setFileEditShowLineNumbers={vi.fn()}
+					fileEditWordWrap={true}
+					setFileEditWordWrap={vi.fn()}
+					filePreviewToolbarVisibility={toolbarVisibility()}
+					setFilePreviewToolbarButtonVisibility={setFilePreviewToolbarButtonVisibility}
+				/>
+			);
+
+			// The macOS wording must not leak onto the other platforms.
+			expect(
+				screen.queryByRole('switch', { name: 'Show Reveal in Finder button' })
+			).not.toBeInTheDocument();
+
+			fireEvent.click(screen.getByRole('switch', { name: `Show ${expectedLabel} button` }));
+			expect(setFilePreviewToolbarButtonVisibility).toHaveBeenCalledWith('revealInFolder', false);
+		});
 	});
 
 	it('wires tab option toggles', () => {

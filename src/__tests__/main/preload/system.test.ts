@@ -5,7 +5,7 @@
  * - createDialogApi: selectFolder, saveFile
  * - createFontsApi: detect
  * - createShellsApi: detect
- * - createShellApi: openExternal, trashItem
+ * - createShellApi: openExternal, trashItem, capturePage
  * - createTunnelApi: isCloudflaredInstalled, start, stop, getStatus
  * - createSyncApi: getDefaultPath, getSettings, getCurrentStoragePath, selectSyncFolder, setCustomPath
  * - createDevtoolsApi: open, close, toggle
@@ -150,6 +150,27 @@ describe('System Preload API', () => {
 				await api.trashItem('/path/to/file');
 
 				expect(mockInvoke).toHaveBeenCalledWith('shell:trashItem', '/path/to/file');
+			});
+		});
+
+		describe('capturePage', () => {
+			it('should invoke window:capturePage with the rect', async () => {
+				mockInvoke.mockResolvedValue('data:image/png;base64,AAA');
+
+				const rect = { x: 0, y: 40, width: 800, height: 600 };
+				const result = await api.capturePage(rect);
+
+				expect(mockInvoke).toHaveBeenCalledWith('window:capturePage', rect);
+				expect(result).toBe('data:image/png;base64,AAA');
+			});
+
+			it('should invoke window:capturePage with no rect for a full-page shot', async () => {
+				mockInvoke.mockResolvedValue(null);
+
+				const result = await api.capturePage();
+
+				expect(mockInvoke).toHaveBeenCalledWith('window:capturePage', undefined);
+				expect(result).toBeNull();
 			});
 		});
 	});

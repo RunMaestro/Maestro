@@ -5,11 +5,14 @@ import {
 	type CueAction,
 	type CueCommand,
 	type CueConfig,
+	type CueGitHubLabelTarget,
 	type CueGitHubState,
 	type CueNotifyConfig,
 	type CueScheduleDay,
 	type CueSettings,
 	type CueSubscription,
+	type CueWebhookConfig,
+	CUE_GITHUB_LABEL_TARGETS,
 	CUE_GITHUB_STATES,
 	CUE_SCHEDULE_DAYS,
 	DEFAULT_CUE_SETTINGS,
@@ -50,14 +53,28 @@ function readPromptFile(projectRoot: string, promptFile: string): string | undef
 	// path for POSIX escapes, and an absolute path on Windows when `realPath`
 	// lives on a different drive or UNC share (no common base) - so we reject
 	// any absolute rel too.
+	//
+	// The project's own `.maestro` directory is a second trusted root. Two
+	// agents can share one Cue config by symlinking `.maestro` to another
+	// checkout; the YAML is read through that link, so its prompt files must be
+	// too. Without this, every prompt_file resolved outside the root, the
+	// subscriptions loaded with empty prompts, and the pipeline editor refused
+	// to save ("agent X is missing a prompt").
 	let canonicalPath: string;
 	try {
-		const realRoot = fs.realpathSync.native(normalizedRoot);
 		const realPath = fs.realpathSync.native(absPath);
-		const rel = path.relative(realRoot, realPath);
-		if (rel !== '' && (path.isAbsolute(rel) || rel.split(path.sep)[0] === '..')) {
-			return undefined;
-		}
+		const trustedRoots = [normalizedRoot, path.join(normalizedRoot, '.maestro')];
+		const contained = trustedRoots.some((root) => {
+			let realRoot: string;
+			try {
+				realRoot = fs.realpathSync.native(root);
+			} catch {
+				return false;
+			}
+			const rel = path.relative(realRoot, realPath);
+			return rel === '' || (!path.isAbsolute(rel) && rel.split(path.sep)[0] !== '..');
+		});
+		if (!contained) return undefined;
 		canonicalPath = realPath;
 	} catch {
 		return undefined;
@@ -87,6 +104,23 @@ function padScheduleTime(time: string): string {
 	return `${match[1].padStart(2, '0')}:${match[2]}`;
 }
 
+/**
+ * Normalize `gh_labels` into a trimmed, de-duplicated string array. A bare
+ * string is accepted as a one-element list so hand-written YAML can say
+ * `gh_labels: needs-review` without the sequence syntax. Returns undefined for
+ * anything that yields no usable labels, which the poller reads as "any label".
+ */
+function normalizeGhLabels(value: unknown): string[] | undefined {
+	const raw =
+		typeof value === 'string'
+			? [value]
+			: Array.isArray(value)
+				? value.filter((entry): entry is string => typeof entry === 'string')
+				: [];
+	const labels = Array.from(new Set(raw.map((entry) => entry.trim()).filter(Boolean)));
+	return labels.length > 0 ? labels : undefined;
+}
+
 function normalizeFilter(
 	filterValue: unknown
 ): Record<string, string | number | boolean> | undefined {
@@ -104,6 +138,32 @@ function normalizeFilter(
 	}
 
 	return filterObj;
+}
+
+/**
+ * Read the `webhook` block off a raw YAML subscription.
+ *
+ * Every field is optional at this layer - the validator is what rejects a
+ * `webhook.received` subscription with no secret. Returning a partially
+ * populated object keeps the two concerns separate: the normalizer only
+ * guarantees the shape, never the semantics.
+ */
+function normalizeWebhook(webhookValue: unknown): CueWebhookConfig | undefined {
+	if (!webhookValue || typeof webhookValue !== 'object' || Array.isArray(webhookValue)) {
+		return undefined;
+	}
+	const raw = webhookValue as Record<string, unknown>;
+	const readString = (key: string): string | undefined => {
+		const value = raw[key];
+		return typeof value === 'string' && value.trim().length > 0 ? value.trim() : undefined;
+	};
+
+	return {
+		path: readString('path'),
+		secret: readString('secret'),
+		secret_env: readString('secret_env'),
+		signature_header: readString('signature_header'),
+	};
 }
 
 /**
@@ -281,6 +341,13 @@ function normalizeSubscription(
 			typeof sub.gh_state === 'string' && CUE_GITHUB_STATES.includes(sub.gh_state as CueGitHubState)
 				? (sub.gh_state as CueGitHubState)
 				: undefined,
+		webhook: normalizeWebhook(sub.webhook),
+		gh_label_target:
+			typeof sub.gh_label_target === 'string' &&
+			CUE_GITHUB_LABEL_TARGETS.includes(sub.gh_label_target as CueGitHubLabelTarget)
+				? (sub.gh_label_target as CueGitHubLabelTarget)
+				: undefined,
+		gh_labels: normalizeGhLabels(sub.gh_labels),
 		agent_id:
 			typeof sub.agent_id === 'string' && sub.agent_id.trim().length > 0
 				? sub.agent_id.trim()
@@ -396,6 +463,20 @@ function normalizeSettings(rawSettings: Record<string, unknown> | undefined): Cu
 			typeof rawSettings?.owner_agent_id === 'string' && rawSettings.owner_agent_id.trim() !== ''
 				? rawSettings.owner_agent_id.trim()
 				: undefined,
+		susfactor_enabled:
+			typeof rawSettings?.susfactor_enabled === 'boolean'
+				? rawSettings.susfactor_enabled
+				: DEFAULT_CUE_SETTINGS.susfactor_enabled,
+		// Clamp defensively: `loadCueConfig` skips validation, and a threshold of
+		// 0 would block every item while 2 would block none. Out-of-range falls
+		// back to the default rather than to a silently useless check.
+		susfactor_threshold:
+			typeof rawSettings?.susfactor_threshold === 'number' &&
+			Number.isFinite(rawSettings.susfactor_threshold) &&
+			rawSettings.susfactor_threshold > 0 &&
+			rawSettings.susfactor_threshold <= 1
+				? rawSettings.susfactor_threshold
+				: DEFAULT_CUE_SETTINGS.susfactor_threshold,
 	};
 }
 

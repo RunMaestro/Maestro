@@ -640,3 +640,155 @@ describe('round-trip: trigger → command → agent shape', () => {
 		expect(commandOut[0].target).toBe(agents[0].id);
 	});
 });
+
+// ─── Shape: `action: notify` + the one-shot task pair ────────────────────────
+
+/**
+ * `maestro-cli cue schedule` with BOTH a prompt and a notify emits a matched
+ * pair of subscriptions (`<task>-prompt` / `<task>-notify`) that share one
+ * event, one instant, one agent, and one label. `triggerGroupKey` therefore
+ * collapses them onto ONE visual trigger with TWO outgoing edges to the same
+ * agent - the only shape in the editor where that happens.
+ *
+ * Three independent ways that pair used to be destroyed by a graph save:
+ *   1. `action: notify` and the `notify` block had no serializer, so the
+ *      toast came back as a prompt-less `action: prompt` sub.
+ *   2. `fire_at` had no round-trip at all, stranding the one-shot with no
+ *      instant to fire at.
+ *   3. Two edges onto one node fell into the `fan_out` path and emitted a
+ *      duplicated session name.
+ *
+ * On top of that, the notify edge carries no prompt (by design - see
+ * `cue-config-validator.ts`), which `validatePipelines` used to report as
+ * "agent is missing a prompt". That error aborted the save for EVERY
+ * pipeline in the editor, so the pair survived only because nothing could
+ * be saved at all.
+ */
+describe('round-trip: action notify and one-shot timing', () => {
+	const ONE_SHOT = '2026-11-09T15:00:00.000Z';
+
+	function scheduledTaskPair(): { pipelines: CuePipeline[]; sessions: PipelineSession[] } {
+		const t1 = trigger('t1', 'time.once', { fire_at: ONE_SHOT });
+		(t1.data as TriggerNodeData).customLabel = 'Renew the token';
+		const a1 = agent('a1', 'sess-web', 'RunMaestro.ai');
+
+		return {
+			pipelines: [
+				pipeline(
+					'Maintenance',
+					'#f97316',
+					[t1, a1],
+					[
+						edge('e1', 't1', 'a1', {
+							subscriptionName: 'renew-prompt',
+							prompt: 'Renew the origin trial token.',
+						}),
+						edge('e2', 't1', 'a1', {
+							subscriptionName: 'renew-notify',
+							notify: { message: 'Token expires Nov 17.', sticky: true },
+						}),
+					]
+				),
+			],
+			sessions: [{ id: 'sess-web', name: 'RunMaestro.ai', toolType: 'claude-code' }],
+		};
+	}
+
+	it('emits a notify sub and a prompt sub rather than a duplicated fan_out', () => {
+		const { pipelines } = scheduledTaskPair();
+		const { yaml: yamlStr } = pipelinesToYaml(pipelines);
+		const parsed = yaml.load(yamlStr) as { subscriptions: Array<Record<string, unknown>> };
+
+		expect(parsed.subscriptions).toHaveLength(2);
+		// `fan_out` cannot carry a notify target and would have listed the one
+		// agent twice; per-branch emission is the only correct shape here.
+		for (const sub of parsed.subscriptions) {
+			expect(sub.fan_out).toBeUndefined();
+		}
+
+		const notifySub = parsed.subscriptions.find((s) => s.action === 'notify')!;
+		expect(notifySub).toBeDefined();
+		expect(notifySub.notify).toEqual({ message: 'Token expires Nov 17.', sticky: true });
+		// A notify sub has no prompt to externalize - an emitted `prompt_file`
+		// would leave an orphan .md on disk that the loader never reads.
+		expect(notifySub.prompt_file).toBeUndefined();
+
+		const promptSub = parsed.subscriptions.find((s) => s.action !== 'notify')!;
+		expect(promptSub.notify).toBeUndefined();
+		expect(promptSub.prompt_file).toBeDefined();
+	});
+
+	it('preserves both subscription names so the -prompt/-notify pairing survives', () => {
+		const { pipelines } = scheduledTaskPair();
+		const { yaml: yamlStr } = pipelinesToYaml(pipelines);
+		const parsed = yaml.load(yamlStr) as { subscriptions: Array<Record<string, unknown>> };
+
+		expect(parsed.subscriptions.map((s) => s.name).sort()).toEqual([
+			'renew-notify',
+			'renew-prompt',
+		]);
+	});
+
+	it('preserves fire_at on every emitted one-shot sub', () => {
+		const { pipelines } = scheduledTaskPair();
+		const { yaml: yamlStr } = pipelinesToYaml(pipelines);
+		const parsed = yaml.load(yamlStr) as { subscriptions: Array<Record<string, unknown>> };
+
+		// Both branch subs re-arm independently with the engine, so both must
+		// carry the instant - one without it can never fire.
+		for (const sub of parsed.subscriptions) {
+			expect(sub.event).toBe('time.once');
+			expect(sub.fire_at).toBe(ONE_SHOT);
+		}
+	});
+
+	it('reconstructs one trigger with a prompt edge and a notify edge', () => {
+		const { pipelines, sessions } = scheduledTaskPair();
+		const [reconstructed] = roundTrip(pipelines, sessions);
+
+		const triggers = reconstructed.nodes.filter((n) => n.type === 'trigger');
+		const agents = reconstructed.nodes.filter((n) => n.type === 'agent');
+		expect(triggers).toHaveLength(1);
+		// Both subs point at the same agent; they must NOT read back as the
+		// user having dragged that agent onto the canvas twice.
+		expect(agents).toHaveLength(1);
+		expect((triggers[0].data as TriggerNodeData).config.fire_at).toBe(ONE_SHOT);
+
+		const outgoing = reconstructed.edges.filter((e) => e.source === triggers[0].id);
+		expect(outgoing).toHaveLength(2);
+
+		const notifyEdge = outgoing.find((e) => e.notify)!;
+		expect(notifyEdge).toBeDefined();
+		expect(notifyEdge.notify).toEqual({ message: 'Token expires Nov 17.', sticky: true });
+		// Mutually exclusive: a notify edge carries a toast, never a prompt.
+		expect(notifyEdge.prompt).toBeUndefined();
+		expect(notifyEdge.subscriptionName).toBe('renew-notify');
+
+		const promptEdge = outgoing.find((e) => !e.notify)!;
+		expect(promptEdge.prompt).toBe('Renew the origin trial token.');
+		expect(promptEdge.subscriptionName).toBe('renew-prompt');
+	});
+
+	it('survives a second save unchanged', () => {
+		const { pipelines, sessions } = scheduledTaskPair();
+		const once = roundTrip(pipelines, sessions);
+		const twice = roundTrip(once, sessions);
+
+		const edgesOf = (p: CuePipeline) => {
+			const t = p.nodes.find((n) => n.type === 'trigger')!;
+			return p.edges
+				.filter((e) => e.source === t.id)
+				.map((e) => ({
+					subscriptionName: e.subscriptionName,
+					prompt: e.prompt,
+					notify: e.notify,
+				}))
+				.sort((a, b) => (a.subscriptionName ?? '').localeCompare(b.subscriptionName ?? ''));
+		};
+
+		expect(edgesOf(twice[0])).toEqual(edgesOf(once[0]));
+		expect(
+			(twice[0].nodes.find((n) => n.type === 'trigger')!.data as TriggerNodeData).config.fire_at
+		).toBe(ONE_SHOT);
+	});
+});

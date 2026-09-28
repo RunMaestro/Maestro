@@ -1,7 +1,8 @@
 import React from 'react';
 import type { Theme } from '../../../types';
 import { getStatusColor } from '../../../utils/theme';
-import type { QuickAction } from '../types';
+import { usePhoneLayout } from '../../../hooks/ui/useViewportBreakpoint';
+import { getAgentBucket, type QuickAction } from '../types';
 import { QuickActionRow } from './QuickActionRow';
 import { SectionHeader } from './SectionHeader';
 
@@ -30,6 +31,9 @@ export function QuickActionsList({
 	onScroll,
 	onActionClick,
 }: QuickActionsListProps) {
+	// The number badges are the Cmd+1..9 hotkeys; a phone has no keyboard to
+	// press them on, so the column reads as ten unexplained digits.
+	const phone = usePhoneLayout();
 	return (
 		<div
 			className="overflow-y-auto py-2 scrollbar-thin"
@@ -40,19 +44,23 @@ export function QuickActionsList({
 				const maxFirstIndex = Math.max(0, filtered.length - 10);
 				const effectiveFirstIndex = Math.min(firstVisibleIndex, maxFirstIndex);
 				const distanceFromFirstVisible = index - effectiveFirstIndex;
-				const showNumber = distanceFromFirstVisible >= 0 && distanceFromFirstVisible < 10;
+				const showNumber = !phone && distanceFromFirstVisible >= 0 && distanceFromFirstVisible < 10;
 				const numberBadge = distanceFromFirstVisible === 9 ? 0 : distanceFromFirstVisible + 1;
 
-				const prev = index > 0 ? filtered[index - 1] : null;
-				const isFirstRunning =
-					showBucketHeaders && action.isRunningAgent === true && prev?.isRunningAgent !== true;
-				const isFirstIdle =
-					showBucketHeaders && action.isRunningAgent === false && prev?.isRunningAgent !== false;
+				// One header at each bucket boundary. Derived from the shared bucket
+				// helper so the labels cannot drift from the sort order.
+				const bucket = getAgentBucket(action);
+				const prevBucket = index > 0 ? getAgentBucket(filtered[index - 1]) : null;
+				const startsBucket = showBucketHeaders && bucket !== prevBucket;
 
 				return (
 					<React.Fragment key={action.id}>
-						{isFirstRunning && <SectionHeader label="LIVE" color={getStatusColor('busy', theme)} />}
-						{isFirstIdle && <SectionHeader label="IDLE" color={theme.colors.textDim} />}
+						{startsBucket && bucket === 'live' && (
+							<SectionHeader label="LIVE" color={getStatusColor('busy', theme)} />
+						)}
+						{startsBucket && bucket === 'idle' && (
+							<SectionHeader label="IDLE" color={theme.colors.textDim} />
+						)}
 						<QuickActionRow
 							action={action}
 							isSelected={index === selectedIndex}

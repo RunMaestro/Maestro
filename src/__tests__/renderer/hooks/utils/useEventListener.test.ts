@@ -1,7 +1,7 @@
 /**
  * Tests for useEventListener - generic event-listener hook used across the
- * renderer. Covers the original window-only behaviour plus the new
- * `target` and `enabled` options.
+ * renderer. Covers the original window-only behaviour plus the
+ * `target`, `enabled`, and `capture` options.
  */
 
 import { describe, it, expect, vi, afterEach } from 'vitest';
@@ -103,6 +103,35 @@ describe('useEventListener', () => {
 				useEventListener('keydown', handler, { target: document })
 			);
 			unmount();
+			expectAllListenersRemoved(spies.addSpy, spies.removeSpy);
+			spies.restore();
+		});
+	});
+
+	describe('capture option', () => {
+		it('runs before a bubble-phase handler that stops the event', () => {
+			const order: string[] = [];
+			const button = document.createElement('button');
+			document.body.appendChild(button);
+			button.addEventListener('keydown', (e) => {
+				order.push('target');
+				e.stopPropagation();
+			});
+			renderHook(() => useEventListener('keydown', () => order.push('window'), { capture: true }));
+
+			fireEvent.keyDown(button, { key: 'a' });
+
+			expect(order).toEqual(['window', 'target']);
+			button.remove();
+		});
+
+		it('removes the capture-phase listener on unmount', () => {
+			const handler = vi.fn();
+			const spies = spyOnListeners(window);
+			const { unmount } = renderHook(() => useEventListener('keydown', handler, { capture: true }));
+			unmount();
+			fireEvent.keyDown(window, { key: 'a' });
+			expect(handler).not.toHaveBeenCalled();
 			expectAllListenersRemoved(spies.addSpy, spies.removeSpy);
 			spies.restore();
 		});

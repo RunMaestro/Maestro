@@ -29,15 +29,33 @@ export function isLinuxPlatform(): boolean {
 }
 
 /**
+ * The platform's name for its file manager, for use inside a sentence.
+ *   darwin (and other/unknown) → "Finder"
+ *   win32               → "Explorer"
+ *   linux               → "File Manager"
+ *
+ * Every label below reads the noun from here so a new piece of copy can't
+ * hard-code "Finder" and then read wrong on Windows.
+ */
+export function getFileManagerName(platform: string): string {
+	if (platform === 'win32') return 'Explorer';
+	if (platform === 'linux') return 'File Manager';
+	return 'Finder';
+}
+
+/** Same as `getFileManagerName`, resolving the platform from the bridge. */
+export function fileManagerName(): string {
+	return getFileManagerName(getPlatform());
+}
+
+/**
  * Returns the platform-appropriate label for the "reveal in file manager" action.
  *   darwin (and other/unknown) → "Reveal in Finder" (macOS default)
  *   win32               → "Reveal in Explorer" (Windows)
  *   linux               → "Reveal in File Manager" (Linux)
  */
 export function getRevealLabel(platform: string): string {
-	if (platform === 'win32') return 'Reveal in Explorer';
-	if (platform === 'linux') return 'Reveal in File Manager';
-	return 'Reveal in Finder';
+	return `Reveal in ${getFileManagerName(platform)}`;
 }
 
 /**
@@ -47,7 +65,5 @@ export function getRevealLabel(platform: string): string {
  *   linux               → "Open in File Manager"
  */
 export function getOpenInLabel(platform: string): string {
-	if (platform === 'win32') return 'Open in Explorer';
-	if (platform === 'linux') return 'Open in File Manager';
-	return 'Open in Finder';
+	return `Open in ${getFileManagerName(platform)}`;
 }

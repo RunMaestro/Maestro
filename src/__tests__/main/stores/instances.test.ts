@@ -42,6 +42,10 @@ import {
 	getCachedPaths,
 } from '../../../main/stores/instances';
 import { getCustomSyncPath } from '../../../main/stores/utils';
+import {
+	hadRecentInternalWrite,
+	resetInternalWriteTracking,
+} from '../../../main/stores/write-tracker';
 
 const mockedGetCustomSyncPath = vi.mocked(getCustomSyncPath);
 
@@ -50,6 +54,7 @@ describe('stores/instances', () => {
 		vi.clearAllMocks();
 		mockStoreConstructorCalls.length = 0; // Clear tracked constructor calls
 		mockedGetCustomSyncPath.mockReturnValue(undefined);
+		resetInternalWriteTracking();
 	});
 
 	afterEach(() => {
@@ -142,6 +147,23 @@ describe('stores/instances', () => {
 			});
 			// Window state should NOT have cwd
 			expect(windowStateCall).not.toHaveProperty('cwd');
+		});
+
+		// Without this wiring the settings file watcher can't tell our own writes
+		// from an external edit, and every settings:set bounces back to the
+		// renderer as an "external change" that reloads over live typing.
+		it('instruments the watched stores so their writes are stamped', () => {
+			initializeStores({ productionDataPath: '/mock/production/path' });
+			const { settingsStore, agentConfigsStore } = getStoreInstances();
+
+			settingsStore!.set('fontSize', 16);
+
+			expect(hadRecentInternalWrite('maestro-settings.json')).toBe(true);
+			expect(hadRecentInternalWrite('maestro-agent-configs.json')).toBe(false);
+
+			agentConfigsStore!.set('configs', {});
+
+			expect(hadRecentInternalWrite('maestro-agent-configs.json')).toBe(true);
 		});
 
 		it('should log startup paths', () => {

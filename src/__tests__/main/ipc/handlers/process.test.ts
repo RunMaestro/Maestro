@@ -22,6 +22,16 @@ import { getDefaultShell } from '../../../../main/stores/defaults';
 import { stripThinkingFromTranscript } from '../../../../main/agents/claude-transcript-sanitizer';
 import { checkCustomPath } from '../../../../main/agents/path-prober';
 import { getChildProcesses } from '../../../../main/process-manager/utils/childProcessInfo';
+import {
+	primeOmpModelCatalog,
+	computeOmpCatalogKey,
+} from '../../../../main/agents/omp-model-catalog';
+import { runAsActingUser } from '../../../../main/web-server/auth/acting-user';
+import {
+	noteTurnActor,
+	resolveTurnActor,
+	resetTurnActors,
+} from '../../../../main/web-server/auth/turn-attribution';
 
 // Mock electron's ipcMain
 vi.mock('electron', () => ({
@@ -219,6 +229,24 @@ vi.mock('../../../../main/process-manager/utils/childProcessInfo', () => ({
 	getChildProcesses: vi.fn().mockResolvedValue([]),
 }));
 
+// Mock the omp model catalog so the spawn handler's catalog prime can be
+// asserted at the module boundary without launching a real `omp` subprocess.
+// computeOmpCatalogKey returns a stable sentinel so the prime's third arg is
+// deterministic; primeOmpModelCatalog resolves immediately so the bounded
+// Promise.race in the handler proceeds without waiting on the real cap. The
+// real buildOmpPrimeEnv is retained (it's a pure env builder) so the test can
+// assert the actual PATH the handler hands to the prime.
+vi.mock('../../../../main/agents/omp-model-catalog', async () => {
+	const actual = await vi.importActual<typeof import('../../../../main/agents/omp-model-catalog')>(
+		'../../../../main/agents/omp-model-catalog'
+	);
+	return {
+		...actual,
+		primeOmpModelCatalog: vi.fn().mockResolvedValue(undefined),
+		computeOmpCatalogKey: vi.fn(() => 'omp-catalog-key'),
+	};
+});
+
 // Mock fs/promises so the new temp-file tests can assert on writeFile/unlink
 // without touching the real filesystem. Other tests in this file don't use
 // fs/promises, so the module-level mock is safe.
@@ -378,6 +406,7 @@ describe('process IPC handlers', () => {
 				'process:spawnTerminalTab',
 				'process:runCommand',
 				'permission:respond',
+				'process:cancelCommand',
 			];
 
 			for (const channel of expectedChannels) {
@@ -503,6 +532,57 @@ describe('process IPC handlers', () => {
 			expect(mockProcessManager.spawn).toHaveBeenCalled();
 		});
 
+		it('primes the omp model catalog with an expanded env whose PATH lists the binary dir first', async () => {
+			// The bun-based `omp` binary lives next to a co-located `bun` runtime;
+			// in a packaged Electron app the shell PATH is not inherited, so the
+			// prime must run with an expanded env (buildExpandedEnv) and prepend the
+			// binary's own dir. Assert the env handed to primeOmpModelCatalog reflects
+			// both: binary dir first, then the expanded standard entries.
+			const binaryPath = '/opt/tester/.bun/bin/omp';
+			const binDir = path.dirname(binaryPath);
+
+			const mockAgent = {
+				id: 'omp',
+				requiresPty: false,
+				path: binaryPath,
+			};
+
+			mockAgentDetector.getAgent.mockResolvedValue(mockAgent);
+			mockProcessManager.spawn.mockReturnValue({ pid: 4242, success: true });
+
+			const handler = handlers.get('process:spawn');
+			await handler!({} as any, {
+				sessionId: 'session-omp',
+				toolType: 'omp',
+				cwd: '/test/project',
+				command: 'omp',
+				args: [],
+			});
+
+			expect(primeOmpModelCatalog).toHaveBeenCalledTimes(1);
+			const [passedBinaryPath, passedEnv, passedKey] =
+				vi.mocked(primeOmpModelCatalog).mock.calls[0];
+			expect(passedBinaryPath).toBe(binaryPath);
+			expect(passedKey).toBe('omp-catalog-key');
+			// The spawn stamps the caller identity into the env overrides; the key must
+			// ignore it, or it never matches the detector's no-override warm-up.
+			expect(computeOmpCatalogKey).toHaveBeenCalledWith(binaryPath, undefined);
+
+			// The prime env's PATH must lead with the binary dir (so the co-located
+			// bun runtime resolves first), followed by the expanded standard entries.
+			expect(typeof passedEnv?.PATH).toBe('string');
+			const pathEntries = (passedEnv!.PATH as string).split(path.delimiter);
+			expect(pathEntries[0]).toBe(binDir);
+			// Expansion added entries beyond just the prepended binary dir, and the
+			// process's own PATH survived the expansion (proving it is the expanded
+			// env, not a bare { PATH: binDir }).
+			expect(pathEntries.length).toBeGreaterThan(1);
+			const currentPathEntries = (process.env.PATH || '').split(path.delimiter).filter(Boolean);
+			if (currentPathEntries.length > 0) {
+				expect(pathEntries).toEqual(expect.arrayContaining([currentPathEntries[0]]));
+			}
+		});
+
 		it('should apply readOnlyEnvOverrides when readOnlyMode is true', async () => {
 			const { applyAgentConfigOverrides } = await import('../../../../main/utils/agent-args');
 			const mockApply = vi.mocked(applyAgentConfigOverrides);
@@ -549,6 +629,117 @@ describe('process IPC handlers', () => {
 					}),
 				})
 			);
+		});
+
+		it('stamps the agent and tab identity so a CLI dispatch from its shell can be attributed', async () => {
+			mockAgentDetector.getAgent.mockResolvedValue({ id: 'opencode', requiresPty: false });
+			mockProcessManager.spawn.mockReturnValue({ pid: 2001, success: true });
+
+			const handler = handlers.get('process:spawn');
+			await handler!({} as any, {
+				sessionId: 'agent-identity-ai-tab-7',
+				tabId: 'tab-7',
+				toolType: 'opencode',
+				cwd: '/test',
+				command: 'opencode',
+				args: [],
+			});
+
+			expect(mockProcessManager.spawn).toHaveBeenCalledWith(
+				expect.objectContaining({
+					customEnvVars: expect.objectContaining({
+						MAESTRO_CALLER_AGENT_ID: 'agent-identity',
+						MAESTRO_CALLER_TAB_ID: 'tab-7',
+					}),
+				})
+			);
+		});
+
+		/**
+		 * Web Login turn attribution.
+		 *
+		 * Spawn is the ONLY point where the account that asked for the turn is in
+		 * scope: the History entry and the stats row are written later by the
+		 * DESKTOP renderer's exit listener, where `getActingUser()` is undefined.
+		 * So the spawn notes the actor for the exit-time lookup and stamps the
+		 * username into the agent's environment.
+		 */
+		describe('Web Login turn attribution', () => {
+			afterEach(() => {
+				resetTurnActors();
+			});
+
+			it('notes the acting user and stamps it into the agent env', async () => {
+				mockAgentDetector.getAgent.mockResolvedValue({ id: 'opencode', requiresPty: false });
+				mockProcessManager.spawn.mockReturnValue({ pid: 2100, success: true });
+
+				const handler = handlers.get('process:spawn');
+				await runAsActingUser({ id: 'u1', username: 'pedram', displayName: 'Pedram A' }, () =>
+					handler!({} as any, {
+						sessionId: 'agent-web-ai-tab-1',
+						tabId: 'tab-1',
+						toolType: 'opencode',
+						cwd: '/test',
+						command: 'opencode',
+						args: [],
+					})
+				);
+
+				expect(resolveTurnActor('agent-web', 'tab-1')).toEqual({
+					id: 'u1',
+					username: 'pedram',
+					displayName: 'Pedram A',
+				});
+				expect(mockProcessManager.spawn).toHaveBeenCalledWith(
+					expect.objectContaining({
+						customEnvVars: expect.objectContaining({ MAESTRO_QUERY_USER: 'pedram' }),
+					})
+				);
+			});
+
+			it('adds no query-user var for a desktop spawn', async () => {
+				mockAgentDetector.getAgent.mockResolvedValue({ id: 'opencode', requiresPty: false });
+				mockProcessManager.spawn.mockReturnValue({ pid: 2101, success: true });
+
+				const handler = handlers.get('process:spawn');
+				await handler!({} as any, {
+					sessionId: 'agent-desktop-ai-tab-1',
+					tabId: 'tab-1',
+					toolType: 'opencode',
+					cwd: '/test',
+					command: 'opencode',
+					args: [],
+				});
+
+				const spawned = mockProcessManager.spawn.mock.calls[0][0] as {
+					customEnvVars?: Record<string, string>;
+				};
+				expect(spawned.customEnvVars?.MAESTRO_QUERY_USER).toBeUndefined();
+			});
+
+			it('clears a browser actor when the desktop starts the next turn', async () => {
+				// Otherwise a phone's earlier turn is credited to a later one
+				// typed at the keyboard.
+				noteTurnActor('agent-clear', 'tab-1', {
+					id: 'u1',
+					username: 'pedram',
+					displayName: 'Pedram A',
+				});
+				mockAgentDetector.getAgent.mockResolvedValue({ id: 'opencode', requiresPty: false });
+				mockProcessManager.spawn.mockReturnValue({ pid: 2102, success: true });
+
+				const handler = handlers.get('process:spawn');
+				await handler!({} as any, {
+					sessionId: 'agent-clear-ai-tab-1',
+					tabId: 'tab-1',
+					toolType: 'opencode',
+					cwd: '/test',
+					command: 'opencode',
+					args: [],
+				});
+
+				expect(resolveTurnActor('agent-clear', 'tab-1')).toBeUndefined();
+			});
 		});
 
 		it('should NOT apply readOnlyEnvOverrides when readOnlyMode is false', async () => {
@@ -1788,7 +1979,9 @@ describe('process IPC handlers', () => {
 			const lastArg = spawnCall.args[spawnCall.args.length - 1];
 			// Path must be shell-escaped (single-quoted) to prevent injection
 			expect(lastArg).toContain("cd '/remote/project'");
-			expect(lastArg).toContain('exec "$SHELL"');
+			// Must be a LOGIN shell, otherwise /etc/zprofile (path_helper on macOS) never runs
+			// and the remote terminal gets a shorter PATH than a plain `ssh host` session.
+			expect(lastArg).toContain('exec "$SHELL" -l');
 			// SSH options must be present
 			expect(spawnCall.args).toContain('StrictHostKeyChecking=accept-new');
 			expect(spawnCall.args).toContain('ConnectTimeout=10');
@@ -1840,7 +2033,7 @@ describe('process IPC handlers', () => {
 			const spawnCall = mockProcessManager.spawn.mock.calls[0][0];
 			const lastArg = spawnCall.args[spawnCall.args.length - 1];
 			// Tilde must expand via $HOME, not be single-quoted (which suppresses expansion)
-			expect(lastArg).toContain('cd "$HOME"/\'project\'');
+			expect(lastArg).toContain('cd "$HOME/project"');
 			expect(lastArg).toContain('exec "$SHELL"');
 		});
 
@@ -1997,7 +2190,9 @@ describe('process IPC handlers', () => {
 			expect(lastArg).toContain("export AGENT_VAR='from-agent'");
 			expect(lastArg).toContain("export SESSION_VAR='from-session'");
 			expect(lastArg).toContain("cd '/remote/project'");
-			expect(lastArg).toContain('exec "$SHELL"');
+			// Must be a LOGIN shell, otherwise /etc/zprofile (path_helper on macOS) never runs
+			// and the remote terminal gets a shorter PATH than a plain `ssh host` session.
+			expect(lastArg).toContain('exec "$SHELL" -l');
 		});
 
 		it('should export env vars even without workingDirOverride for SSH terminals', async () => {

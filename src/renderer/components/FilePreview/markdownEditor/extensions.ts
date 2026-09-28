@@ -5,8 +5,9 @@ import {
 	highlightActiveLineGutter,
 	keymap,
 	drawSelection,
+	placeholder as cmPlaceholder,
 } from '@codemirror/view';
-import type { Extension } from '@codemirror/state';
+import { EditorState, Prec, type Extension } from '@codemirror/state';
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
 import {
 	bracketMatching,
@@ -22,8 +23,25 @@ export interface BuildEditorExtensionsOptions {
 	wrap: boolean;
 	showLineNumbers: boolean;
 	spellCheck: boolean;
+	/** Render the document without letting the user type into it. */
+	readOnly?: boolean;
 	onGutterContextMenu?: (lineNumber: number, event: MouseEvent) => void;
-	onKeyDown?: (event: KeyboardEvent) => void;
+	/**
+	 * DOM-level keydown, run BEFORE CodeMirror's own keymap. Return `true` to
+	 * swallow the key - that is how a host-owned popup (the template-variable
+	 * autocomplete) claims Up/Down/Enter/Escape while it is open. Returning
+	 * anything else leaves the key to the editor.
+	 */
+	onKeyDown?: (event: KeyboardEvent) => boolean | void;
+	/**
+	 * DOM-level paste, run BEFORE CodeMirror's own paste handler. Return `true`
+	 * to swallow the event - that is how a host claims a paste it wants to
+	 * rewrite (trimming whitespace, turning an image on the clipboard into a
+	 * saved attachment). Anything else leaves the paste to the editor.
+	 */
+	onPaste?: (event: ClipboardEvent) => boolean | void;
+	/** Hint text painted while the document is empty. */
+	placeholder?: string;
 }
 
 /**
@@ -72,6 +90,10 @@ export function buildEditorExtensions(opts: BuildEditorExtensionsOptions): Exten
 		);
 	}
 
+	if (opts.placeholder) {
+		exts.push(cmPlaceholder(opts.placeholder));
+	}
+
 	if (opts.wrap) {
 		exts.push(EditorView.lineWrapping);
 	}
@@ -84,14 +106,40 @@ export function buildEditorExtensions(opts: BuildEditorExtensionsOptions): Exten
 		})
 	);
 
+	if (opts.readOnly) {
+		// Both halves matter: `readOnly` refuses edits, `editable` also drops the
+		// caret and the contenteditable attribute, so a read-only pane reads as a
+		// document rather than as a text box that silently ignores typing.
+		exts.push(EditorState.readOnly.of(true), EditorView.editable.of(false));
+	}
+
 	if (opts.onKeyDown) {
 		exts.push(
-			EditorView.domEventHandlers({
-				keydown(event) {
-					opts.onKeyDown?.(event);
-					return false; // never swallow - host may not preventDefault
-				},
-			})
+			// Highest precedence so the host sees the key BEFORE the editor's own
+			// keymap. Without it the arrow keys would have already moved the caret
+			// (and stopped the chain) by the time the host's popup was offered them.
+			Prec.highest(
+				EditorView.domEventHandlers({
+					keydown(event) {
+						return opts.onKeyDown?.(event) === true;
+					},
+				})
+			)
+		);
+	}
+
+	if (opts.onPaste) {
+		exts.push(
+			// Same reasoning as the keydown handler: CM6's built-in paste handler
+			// inserts the clipboard text and stops the chain, so a host that wants
+			// to rewrite the paste has to see it first.
+			Prec.highest(
+				EditorView.domEventHandlers({
+					paste(event) {
+						return opts.onPaste?.(event) === true;
+					},
+				})
+			)
 		);
 	}
 

@@ -9,16 +9,84 @@
  * Output: dist/web-desktop/
  */
 
-import { defineConfig } from 'vite';
+import { defineConfig, type PluginOption } from 'vite';
 import react from '@vitejs/plugin-react';
+import fs from 'node:fs';
 import path from 'path';
 import { readFileSync } from 'fs';
+import { execSync } from 'child_process';
 
 const packageJson = JSON.parse(readFileSync(path.join(__dirname, 'package.json'), 'utf-8'));
 const appVersion = process.env.VITE_APP_VERSION || packageJson.version;
 
+// Get the first 8 chars of the git commit hash. Honors VITE_COMMIT_HASH when set
+// (CI builds from a tarball / shallow checkout where `git rev-parse` may fail),
+// otherwise reads it from the local repo. Empty string when neither is available.
+// Mirrors vite.config.mts's getCommitHash().
+function getCommitHash(): string {
+	if (process.env.VITE_COMMIT_HASH) {
+		return process.env.VITE_COMMIT_HASH.trim().slice(0, 8);
+	}
+	try {
+		return execSync('git rev-parse HEAD', { encoding: 'utf-8' }).trim().slice(0, 8);
+	} catch {
+		return '';
+	}
+}
+
+/**
+ * Serve and emit the bundled webfonts.
+ *
+ * The renderer's stylesheet (shared with this build) references `/fonts/*.woff2`,
+ * but those live in the RENDERER's public dir and Vite allows only one
+ * `publicDir` per config - this one is already pointed at `src/web/public` for
+ * the PWA assets. Without this the web client silently falls back to whatever
+ * the OS has, which is the exact divergence between desktop and web that
+ * bundling the fonts was meant to remove.
+ */
+function bundledFontsPlugin(): PluginOption {
+	const fontsDir = path.join(__dirname, 'src/renderer/public/fonts');
+	return {
+		name: 'maestro-bundled-fonts',
+		enforce: 'post',
+		// Dev: map the request path onto the renderer's public dir.
+		configureServer(server) {
+			server.middlewares.use('/fonts', (req, res, next) => {
+				const name = path.basename(req.url ?? '');
+				const file = path.join(fontsDir, name);
+				if (!name.endsWith('.woff2') || !fs.existsSync(file)) return next();
+				res.setHeader('Content-Type', 'font/woff2');
+				res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+				fs.createReadStream(file).pipe(res);
+			});
+		},
+		// Build: emit each file so the Fastify server ships them alongside the app.
+		generateBundle(_options, bundle) {
+			if (!fs.existsSync(fontsDir)) return;
+			for (const name of fs.readdirSync(fontsDir)) {
+				if (!name.endsWith('.woff2')) continue;
+				this.emitFile({
+					type: 'asset',
+					fileName: `assets/fonts/${name}`,
+					source: fs.readFileSync(path.join(fontsDir, name)),
+				});
+			}
+
+			// The shared renderer stylesheet uses /fonts/* so Electron can serve the
+			// files from its app root. A leading slash escapes the web server's
+			// security-token prefix, however. Keep the shared source unchanged and
+			// make only this bundle's CSS resolve fonts beside the emitted assets.
+			for (const asset of Object.values(bundle)) {
+				if (asset.type !== 'asset' || !asset.fileName.endsWith('.css')) continue;
+				if (typeof asset.source !== 'string') continue;
+				asset.source = asset.source.replace(/url\((['"]?)\/fonts\//g, 'url($1./fonts/');
+			}
+		},
+	};
+}
+
 export default defineConfig(({ mode }) => ({
-	plugins: [react()],
+	plugins: [react(), bundledFontsPlugin()],
 
 	root: path.join(__dirname, 'src/web-desktop'),
 	// Copy the PWA assets (manifest.json, service worker, icons/) from the shared
@@ -30,7 +98,11 @@ export default defineConfig(({ mode }) => ({
 
 	define: {
 		__APP_VERSION__: JSON.stringify(appVersion),
-		__GIT_HASH__: JSON.stringify('web-desktop'),
+		__COMMIT_HASH__: JSON.stringify(getCommitHash()),
+		// The renderer's main.tsx reads this before initializing Sentry. The browser
+		// build shims Sentry out entirely, so it never reports crashes; defining it
+		// false keeps the reference from throwing at runtime.
+		__CRASH_REPORTING_BUILD__: 'false',
 		'process.env.NODE_ENV': JSON.stringify(mode === 'production' ? 'production' : 'development'),
 	},
 

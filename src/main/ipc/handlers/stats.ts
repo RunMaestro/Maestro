@@ -9,9 +9,10 @@
  * - Track Auto Run sessions and individual tasks
  * - Query stats with time range and filter support
  * - Aggregated statistics for dashboard display
- * - CSV export for data analysis
+ * - Usage export (JSON, or a zip of CSVs) for data analysis
  */
 
+import path from 'path';
 import { ipcMain, BrowserWindow, app } from 'electron';
 import { logger } from '../../utils/logger';
 import { captureException } from '../../utils/sentry';
@@ -20,16 +21,26 @@ import { createSafeSend, SafeSendFn } from '../../utils/safe-send';
 import { getStatsDB } from '../../stats';
 import { isStatsCollectionEnabled } from '../../stats/utils';
 import { flushTelemetry } from '../../cue/cue-telemetry';
+import { getCueRunTotals, getCueRunTotalsByDay, getRecentCueEvents } from '../../cue/cue-db';
+import { buildUsageExport, countUsageExportRows, writeUsageExport } from '../../stats/usage-export';
 import { enqueueQueryEvent, flushQueryEventsSync } from '../../stats/query-events-buffer';
+import { getActingUser } from '../../web-server/auth/acting-user';
+import { resolveTurnActor } from '../../web-server/auth/turn-attribution';
 import {
 	QueryEvent,
 	AutoRunSession,
 	AutoRunTask,
 	SessionLifecycleEvent,
+	ResilienceEvent,
+	WizardRun,
 	StatsTimeRange,
 	StatsFilters,
+	UsageExportFormat,
+	UsageExportResult,
 } from '../../../shared/stats-types';
-import type { TokenUsageQuery } from '../../../shared/tokenUsage';
+import type { DelegationDay, DelegationTotals } from '../../../shared/delegation';
+import { getTimeRangeStart } from '../../stats/utils';
+import type { TokenUsageAggregate, TokenUsageQuery } from '../../../shared/tokenUsage';
 import { getTokenUsageAggregate } from '../../stats/token-usage/token-usage-accessor';
 
 const LOG_CONTEXT = '[Stats]';
@@ -66,7 +77,7 @@ function broadcastStatsUpdate(safeSend: SafeSendFn): void {
  * - Record individual Auto Run tasks
  * - Get stats with filtering and time range
  * - Get aggregated stats for dashboard
- * - Export stats to CSV
+ * - Export every stats table for a range (JSON, or a zip of CSVs)
  */
 export function registerStatsHandlers(deps: StatsHandlerDependencies): void {
 	const { getMainWindow, settingsStore } = deps;
@@ -105,8 +116,23 @@ export function registerStatsHandlers(deps: StatsHandlerDependencies): void {
 				return null;
 			}
 
+			// Web Login attribution. Like the History entry, this row is written
+			// by the DESKTOP renderer's exit listener even when a browser sent
+			// the turn, so `getActingUser()` is undefined here and the account
+			// comes from what the spawn noted (web-server/auth/turn-attribution).
+			// A call carrying an acting user came over the bridge, and that user
+			// wins whatever the payload claims: a browser must not file its turns
+			// under another account. Only the desktop's own calls may name one.
+			const attributed = ((): Omit<QueryEvent, 'id'> => {
+				const acting = getActingUser();
+				if (!acting && event.userName) return event;
+				const username =
+					acting?.username ?? resolveTurnActor(event.sessionId, event.tabId)?.username;
+				return username ? { ...event, userName: username } : event;
+			})();
+
 			const db = getStatsDB();
-			const id = enqueueQueryEvent(db.database, event);
+			const id = enqueueQueryEvent(db.database, attributed);
 			logger.debug(`Buffered query event: ${id}`, LOG_CONTEXT, {
 				sessionId: event.sessionId,
 				agentType: event.agentType,
@@ -244,6 +270,72 @@ export function registerStatsHandlers(deps: StatsHandlerDependencies): void {
 		})
 	);
 
+	// Interactive vs autonomous (Auto Run + Cue) split for the delegation
+	// surfaces. This is the ONE place the two stats systems are joined: turn
+	// rows live in the stats DB, Cue runs in the Cue DB, and neither knows the
+	// other exists. Doing the merge here rather than in the renderer means the
+	// Overview ratio card, the delegation score, and the Activity trend chart
+	// cannot disagree about what counts as delegated.
+	//
+	// Ungated on purpose: Cue history is real work whether or not the Cue tab
+	// is currently switched on, and `getCueRunTotals` already resolves to zero
+	// when the Cue DB was never initialized.
+	ipcMain.handle(
+		'stats:get-delegation-totals',
+		withIpcErrorLogging(
+			handlerOpts('getDelegationTotals'),
+			async (range: StatsTimeRange = 'all'): Promise<DelegationTotals> => {
+				const db = getStatsDB();
+				const querySources = db.getQuerySourceTotals(range);
+				const cue = getCueRunTotals(getTimeRangeStart(range));
+				return {
+					interactive: querySources.interactive,
+					autoRun: querySources.autoRun,
+					cue,
+				};
+			}
+		)
+	);
+
+	// The same split bucketed by local-time day, for the Activity trend chart.
+	// Days with no activity in either system are omitted - the renderer
+	// zero-fills so the axis stays calendar-true.
+	ipcMain.handle(
+		'stats:get-delegation-by-day',
+		withIpcErrorLogging(
+			handlerOpts('getDelegationByDay'),
+			async (range: StatsTimeRange = 'all'): Promise<DelegationDay[]> => {
+				const db = getStatsDB();
+				const startTime = getTimeRangeStart(range);
+				const byDate = new Map<string, DelegationDay>();
+				const dayFor = (date: string): DelegationDay => {
+					let day = byDate.get(date);
+					if (!day) {
+						day = {
+							date,
+							interactive: { count: 0, durationMs: 0 },
+							autoRun: { count: 0, durationMs: 0 },
+							cue: { count: 0, durationMs: 0 },
+						};
+						byDate.set(date, day);
+					}
+					return day;
+				};
+
+				for (const row of db.getQuerySourceByDay(range)) {
+					const day = dayFor(row.date);
+					day.interactive = row.interactive;
+					day.autoRun = row.autoRun;
+				}
+				for (const row of getCueRunTotalsByDay(startTime)) {
+					dayFor(row.date).cue = { count: row.count, durationMs: row.durationMs };
+				}
+
+				return Array.from(byDate.values()).sort((a, b) => a.date.localeCompare(b.date));
+			}
+		)
+	);
+
 	// Token & cost usage aggregate for the Cost & Tokens dashboard. Reads each
 	// agent's on-disk session storage (not the stats DB), served through a
 	// per-session incremental cache. `force` bypasses the in-memory memo.
@@ -257,13 +349,62 @@ export function registerStatsHandlers(deps: StatsHandlerDependencies): void {
 		)
 	);
 
-	// Export query events to CSV
+	// Export everything the Usage Dashboard reads for a range. Main writes the
+	// file itself because the CSV form is a binary zip.
 	ipcMain.handle(
-		'stats:export-csv',
-		withIpcErrorLogging(handlerOpts('exportCsv'), async (range: StatsTimeRange) => {
-			const db = getStatsDB();
-			return db.exportToCsv(range);
-		})
+		'stats:export',
+		withIpcErrorLogging(
+			handlerOpts('export'),
+			async (
+				range: StatsTimeRange,
+				format: UsageExportFormat,
+				filePath: string
+			): Promise<UsageExportResult> => {
+				if (format !== 'json' && format !== 'csv') {
+					throw new Error(`Unsupported export format: ${String(format)}`);
+				}
+				if (typeof filePath !== 'string' || !path.isAbsolute(filePath)) {
+					throw new Error('Export path must be absolute');
+				}
+
+				const sinceMs = getTimeRangeStart(range);
+				const notes: string[] = [];
+
+				// Same gate as the Cue stats handler: the dashboard only shows Cue
+				// data when both flags are on.
+				const ef = (settingsStore?.get('encoreFeatures') ?? {}) as Record<string, unknown>;
+				const cueEnabled = ef.usageStats === true && ef.maestroCue === true;
+				const cueEvents = cueEnabled ? getRecentCueEvents(sinceMs) : null;
+				if (!cueEnabled) {
+					notes.push('Cue runs are not included because Maestro Cue is off.');
+				} else if (range !== 'day' && range !== 'week') {
+					notes.push('Cue keeps 7 days of run history, so older Cue runs are not included.');
+				}
+
+				let tokenUsage: TokenUsageAggregate | null = null;
+				try {
+					tokenUsage = await getTokenUsageAggregate(range === 'all' ? {} : { sinceMs });
+				} catch (err) {
+					notes.push(
+						`Token usage is not included: ${err instanceof Error ? err.message : String(err)}`
+					);
+					void captureException(err, { operation: 'stats.export.tokenUsage' });
+				}
+
+				const bundle = buildUsageExport({
+					db: getStatsDB(),
+					range,
+					sinceMs,
+					appVersion: app.getVersion(),
+					cueEvents,
+					tokenUsage,
+					notes,
+				});
+				await writeUsageExport(filePath, format, bundle);
+				logger.info(`Exported usage data (${format}, ${range}) to ${filePath}`, LOG_CONTEXT);
+				return { path: filePath, format, rowCounts: countUsageExportRows(bundle), notes };
+			}
+		)
 	);
 
 	// Clear old stats data (older than specified number of days)
@@ -345,6 +486,52 @@ export function registerStatsHandlers(deps: StatsHandlerDependencies): void {
 	);
 
 	// Get session lifecycle events within a time range
+	// Agent Resilience: record a RESOLVED outage (recovered or user-stopped).
+	// Called fire-and-forget from the renderer's retryStore at resolution time;
+	// live countdowns are never recorded.
+	ipcMain.handle(
+		'stats:record-resilience',
+		withIpcErrorLogging(handlerOpts('recordResilience'), async (event: ResilienceEvent) => {
+			if (!isStatsCollectionEnabled(settingsStore)) {
+				logger.debug('Stats collection disabled, skipping resilience event', LOG_CONTEXT);
+				return null;
+			}
+			const db = getStatsDB();
+			return db.recordResilienceEvent(event);
+		})
+	);
+
+	ipcMain.handle(
+		'stats:get-resilience',
+		withIpcErrorLogging(handlerOpts('getResilience'), async (range: StatsTimeRange) => {
+			const db = getStatsDB();
+			return db.getResilienceEvents(range);
+		})
+	);
+
+	// Auto Run wizard: upsert one run row. Called at every milestone of a wizard
+	// conversation (opened, exchange, documents written, closed) so a run that
+	// is never closed still leaves accurate counts behind.
+	ipcMain.handle(
+		'stats:record-wizard-run',
+		withIpcErrorLogging(handlerOpts('recordWizardRun'), async (run: WizardRun) => {
+			if (!isStatsCollectionEnabled(settingsStore)) {
+				logger.debug('Stats collection disabled, skipping wizard run', LOG_CONTEXT);
+				return null;
+			}
+			const db = getStatsDB();
+			return db.recordWizardRun(run);
+		})
+	);
+
+	ipcMain.handle(
+		'stats:get-wizard-runs',
+		withIpcErrorLogging(handlerOpts('getWizardRuns'), async (range: StatsTimeRange) => {
+			const db = getStatsDB();
+			return db.getWizardRuns(range);
+		})
+	);
+
 	ipcMain.handle(
 		'stats:get-session-lifecycle',
 		withIpcErrorLogging(handlerOpts('getSessionLifecycle'), async (range: StatsTimeRange) => {

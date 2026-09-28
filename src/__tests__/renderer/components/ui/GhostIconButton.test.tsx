@@ -21,6 +21,23 @@ describe('GhostIconButton', () => {
 		expect(screen.getByTestId('icon')).toBeInTheDocument();
 	});
 
+	it('centers its icon rather than baseline-aligning it', () => {
+		render(
+			<GhostIconButton ariaLabel="Centered">
+				<span>x</span>
+			</GhostIconButton>
+		);
+		// jsdom has no layout engine, so this guards the mechanism rather than the
+		// pixels: without these the icon becomes inline content on the line box's
+		// baseline, the button's height is driven by the inherited line-height
+		// instead of the icon, and the icon rides above the center of its own
+		// hover pill.
+		const btn = screen.getByRole('button', { name: 'Centered' });
+		expect(btn).toHaveClass('inline-flex');
+		expect(btn).toHaveClass('items-center');
+		expect(btn).toHaveClass('justify-center');
+	});
+
 	it('calls onClick when clicked', () => {
 		const onClick = vi.fn();
 		render(
@@ -52,6 +69,39 @@ describe('GhostIconButton', () => {
 			</GhostIconButton>
 		);
 		expect(screen.getByRole('button', { name: 'Pad' })).toHaveClass('p-2');
+	});
+
+	it('announces its state when used as a toggle', () => {
+		const { rerender } = render(
+			<GhostIconButton pressed ariaLabel="Show tool calls">
+				<span>x</span>
+			</GhostIconButton>
+		);
+		expect(screen.getByRole('button', { name: 'Show tool calls' })).toHaveAttribute(
+			'aria-pressed',
+			'true'
+		);
+
+		rerender(
+			<GhostIconButton pressed={false} ariaLabel="Show tool calls">
+				<span>x</span>
+			</GhostIconButton>
+		);
+		expect(screen.getByRole('button', { name: 'Show tool calls' })).toHaveAttribute(
+			'aria-pressed',
+			'false'
+		);
+	});
+
+	it('stays a plain button when `pressed` is omitted', () => {
+		// `aria-pressed="false"` on a button that does not toggle is a lie about
+		// what it does, so an ordinary action button must carry no attribute.
+		render(
+			<GhostIconButton ariaLabel="Close">
+				<span>x</span>
+			</GhostIconButton>
+		);
+		expect(screen.getByRole('button', { name: 'Close' })).not.toHaveAttribute('aria-pressed');
 	});
 
 	it('stops propagation when stopPropagation is true', () => {

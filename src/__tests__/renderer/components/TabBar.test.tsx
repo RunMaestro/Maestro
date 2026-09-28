@@ -142,6 +142,11 @@ vi.mock('lucide-react', async (importOriginal) => ({
 			🕐
 		</span>
 	),
+	Layers: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
+		<span data-testid="layers-icon" className={className} style={style}>
+			▤
+		</span>
+	),
 	MessageSquare: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
 		<span data-testid="message-square-icon" className={className} style={style}>
 			💬
@@ -294,7 +299,7 @@ describe('TabBar', () => {
 			fireEvent.click(screen.getByText('Example'));
 			expect(mockOnBrowserTabSelect).toHaveBeenCalledWith('browser-1');
 
-			fireEvent.click(screen.getByTitle('Close tab'));
+			fireEvent.click(screen.getByTitle(/^Close tab/));
 			expect(mockOnBrowserTabClose).toHaveBeenCalledWith('browser-1');
 		});
 
@@ -384,7 +389,7 @@ describe('TabBar', () => {
 			});
 
 			fireEvent.click(screen.getByText('Move to First Position'));
-			expect(mockOnTabReorder).toHaveBeenCalledWith(1, 0);
+			expect(mockOnTabReorder).toHaveBeenCalledWith('browser-1', 'tab-1');
 		});
 
 		it('shows a browser entry in the new-tab popover', async () => {
@@ -446,7 +451,7 @@ describe('TabBar', () => {
 				/>
 			);
 
-			expect(screen.getByTitle('Search…')).toBeInTheDocument();
+			expect(screen.getByTitle(/^Search…/)).toBeInTheDocument();
 		});
 
 		it('does not render search popover button when onOpenTabSearch not provided', () => {
@@ -461,7 +466,7 @@ describe('TabBar', () => {
 				/>
 			);
 
-			expect(screen.queryByTitle('Search…')).not.toBeInTheDocument();
+			expect(screen.queryByTitle(/^Search…/)).not.toBeInTheDocument();
 		});
 	});
 
@@ -643,7 +648,7 @@ describe('TabBar', () => {
 				/>
 			);
 
-			const closeButton = screen.getByTitle('Close tab');
+			const closeButton = screen.getByTitle(/^Close tab/);
 			fireEvent.click(closeButton);
 			expect(mockOnTabClose).toHaveBeenCalledWith('tab-1');
 		});
@@ -1093,13 +1098,13 @@ describe('TabBar', () => {
 			);
 
 			// Click the search button to open the popover
-			fireEvent.click(screen.getByTitle('Search…'));
+			fireEvent.click(screen.getByTitle(/^Search…/));
 			// Click "Search Tabs" in the popover
 			fireEvent.click(screen.getByText('Search Tabs'));
 			expect(mockOnOpenTabSearch).toHaveBeenCalled();
 		});
 
-		it('opens search popover and calls onOpenOutputSearch when Search Message History clicked', () => {
+		it('opens search popover and calls onOpenOutputSearch when the this-tab entry is clicked', () => {
 			const mockOnOpenOutputSearch = vi.fn();
 			render(
 				<TabBar
@@ -1115,10 +1120,47 @@ describe('TabBar', () => {
 			);
 
 			// Click the search button to open the popover
-			fireEvent.click(screen.getByTitle('Search…'));
-			// Click "Search Message History" in the popover
-			fireEvent.click(screen.getByText('Search Message History'));
+			fireEvent.click(screen.getByTitle(/^Search…/));
+			// Click the this-tab message search entry in the popover
+			fireEvent.click(screen.getByText('Search Messages (this tab)'));
 			expect(mockOnOpenOutputSearch).toHaveBeenCalled();
+		});
+
+		it('calls onOpenCrossTabSearch when the all-tabs entry is clicked', () => {
+			const mockOnOpenCrossTabSearch = vi.fn();
+			render(
+				<TabBar
+					tabs={[createTab()]}
+					activeTabId="tab-1"
+					theme={mockTheme}
+					onTabSelect={mockOnTabSelect}
+					onTabClose={mockOnTabClose}
+					onNewTab={mockOnNewTab}
+					onOpenTabSearch={mockOnOpenTabSearch}
+					onOpenCrossTabSearch={mockOnOpenCrossTabSearch}
+				/>
+			);
+
+			fireEvent.click(screen.getByTitle(/^Search…/));
+			fireEvent.click(screen.getByText('Search Messages (all agent tabs)'));
+			expect(mockOnOpenCrossTabSearch).toHaveBeenCalled();
+		});
+
+		it('hides the all-tabs entry when no handler is supplied', () => {
+			render(
+				<TabBar
+					tabs={[createTab()]}
+					activeTabId="tab-1"
+					theme={mockTheme}
+					onTabSelect={mockOnTabSelect}
+					onTabClose={mockOnTabClose}
+					onNewTab={mockOnNewTab}
+					onOpenTabSearch={mockOnOpenTabSearch}
+				/>
+			);
+
+			fireEvent.click(screen.getByTitle(/^Search…/));
+			expect(screen.queryByText('Search Messages (all agent tabs)')).not.toBeInTheDocument();
 		});
 	});
 
@@ -4152,6 +4194,143 @@ describe('FileTab overlay menu', () => {
 
 		vi.useRealTimers();
 	});
+
+	// Gist publishing from a file tab - the file need not be the active tab, so
+	// the menu is the only surface that can reach it without opening it first.
+	describe('Publish as GitHub Gist', () => {
+		const openFileTabOverlay = async () => {
+			const fileTabElement = screen.getByText('document').closest('[data-tab-id="file-tab-1"]');
+			await act(async () => {
+				fireEvent.mouseEnter(fileTabElement!);
+				vi.advanceTimersByTime(450);
+			});
+		};
+
+		it('offers the entry for a text file when the gh CLI is available', async () => {
+			vi.useFakeTimers();
+
+			render(
+				<TabBar
+					tabs={defaultTabs}
+					activeTabId="tab-1"
+					theme={mockTheme}
+					onTabSelect={vi.fn()}
+					onTabClose={vi.fn()}
+					onNewTab={vi.fn()}
+					unifiedTabs={unifiedTabs}
+					activeFileTabId={null}
+					onFileTabSelect={vi.fn()}
+					onFileTabClose={vi.fn()}
+					onPublishFileGist={vi.fn()}
+					ghCliAvailable
+				/>
+			);
+
+			await openFileTabOverlay();
+
+			expect(screen.getByText('Publish as GitHub Gist')).toBeInTheDocument();
+
+			vi.useRealTimers();
+		});
+
+		it('hides the entry when the gh CLI is unavailable', async () => {
+			vi.useFakeTimers();
+
+			render(
+				<TabBar
+					tabs={defaultTabs}
+					activeTabId="tab-1"
+					theme={mockTheme}
+					onTabSelect={vi.fn()}
+					onTabClose={vi.fn()}
+					onNewTab={vi.fn()}
+					unifiedTabs={unifiedTabs}
+					activeFileTabId={null}
+					onFileTabSelect={vi.fn()}
+					onFileTabClose={vi.fn()}
+					onPublishFileGist={vi.fn()}
+					ghCliAvailable={false}
+				/>
+			);
+
+			await openFileTabOverlay();
+
+			expect(screen.queryByText('Publish as GitHub Gist')).not.toBeInTheDocument();
+
+			vi.useRealTimers();
+		});
+
+		// A gist body is plain text, so a binary tab must not offer the action.
+		it('hides the entry for a file a gist cannot carry', async () => {
+			vi.useFakeTimers();
+
+			const binaryTab: FilePreviewTab = {
+				...fileTab,
+				path: '/path/to/document.wasm',
+				extension: '.wasm',
+			};
+
+			render(
+				<TabBar
+					tabs={defaultTabs}
+					activeTabId="tab-1"
+					theme={mockTheme}
+					onTabSelect={vi.fn()}
+					onTabClose={vi.fn()}
+					onNewTab={vi.fn()}
+					unifiedTabs={[
+						{ type: 'ai' as const, id: 'tab-1', data: aiTab },
+						{ type: 'file' as const, id: 'file-tab-1', data: binaryTab },
+					]}
+					activeFileTabId={null}
+					onFileTabSelect={vi.fn()}
+					onFileTabClose={vi.fn()}
+					onPublishFileGist={vi.fn()}
+					ghCliAvailable
+				/>
+			);
+
+			await openFileTabOverlay();
+
+			expect(screen.getByText('Copy File Path')).toBeInTheDocument();
+			expect(screen.queryByText('Publish as GitHub Gist')).not.toBeInTheDocument();
+
+			vi.useRealTimers();
+		});
+
+		it('calls onPublishFileGist with the tab id and closes the overlay', async () => {
+			vi.useFakeTimers();
+			const onPublishFileGist = vi.fn();
+
+			render(
+				<TabBar
+					tabs={defaultTabs}
+					activeTabId="tab-1"
+					theme={mockTheme}
+					onTabSelect={vi.fn()}
+					onTabClose={vi.fn()}
+					onNewTab={vi.fn()}
+					unifiedTabs={unifiedTabs}
+					activeFileTabId={null}
+					onFileTabSelect={vi.fn()}
+					onFileTabClose={vi.fn()}
+					onPublishFileGist={onPublishFileGist}
+					ghCliAvailable
+				/>
+			);
+
+			await openFileTabOverlay();
+
+			await act(async () => {
+				fireEvent.click(screen.getByText('Publish as GitHub Gist'));
+			});
+
+			expect(onPublishFileGist).toHaveBeenCalledWith('file-tab-1');
+			expect(screen.queryByText('Copy File Path')).not.toBeInTheDocument();
+
+			vi.useRealTimers();
+		});
+	});
 });
 
 describe('Unified tabs drag and drop', () => {
@@ -4247,8 +4426,8 @@ describe('Unified tabs drag and drop', () => {
 			},
 		});
 
-		// Should call onUnifiedTabReorder with indices in unified array (0 to 1)
-		expect(mockOnUnifiedTabReorder).toHaveBeenCalledWith(0, 1);
+		// Both ends are tab ids, never strip positions
+		expect(mockOnUnifiedTabReorder).toHaveBeenCalledWith('ai-tab-1', 'file-tab-1');
 		// Should NOT call legacy onTabReorder since unified is available
 		expect(mockOnTabReorder).not.toHaveBeenCalled();
 	});
@@ -4290,8 +4469,7 @@ describe('Unified tabs drag and drop', () => {
 			},
 		});
 
-		// Should call onUnifiedTabReorder (from index 1 to index 2)
-		expect(mockOnUnifiedTabReorder).toHaveBeenCalledWith(1, 2);
+		expect(mockOnUnifiedTabReorder).toHaveBeenCalledWith('file-tab-1', 'ai-tab-2');
 	});
 
 	it('drags file tab to another file tab position', () => {
@@ -4331,8 +4509,7 @@ describe('Unified tabs drag and drop', () => {
 			},
 		});
 
-		// Should call onUnifiedTabReorder (from index 1 to index 3)
-		expect(mockOnUnifiedTabReorder).toHaveBeenCalledWith(1, 3);
+		expect(mockOnUnifiedTabReorder).toHaveBeenCalledWith('file-tab-1', 'file-tab-2');
 	});
 
 	it('does not reorder when dropping on the same tab', () => {
@@ -4565,8 +4742,8 @@ describe('Unified tabs drag and drop', () => {
 		const moveButton = screen.getByText('Move to First Position');
 		fireEvent.click(moveButton);
 
-		// Should call onUnifiedTabReorder with index 1 -> 0
-		expect(mockOnUnifiedTabReorder).toHaveBeenCalledWith(1, 0);
+		// Dropped on the first chip: lands in its slot
+		expect(mockOnUnifiedTabReorder).toHaveBeenCalledWith('file-tab-1', 'ai-tab-1');
 	});
 
 	it('calls onUnifiedTabReorder when Move to Last is clicked on file tab', async () => {
@@ -4598,8 +4775,8 @@ describe('Unified tabs drag and drop', () => {
 		const moveButton = screen.getByText('Move to Last Position');
 		fireEvent.click(moveButton);
 
-		// Should call onUnifiedTabReorder with index 1 -> 3 (last index)
-		expect(mockOnUnifiedTabReorder).toHaveBeenCalledWith(1, 3);
+		// Dropped on the last chip: lands just past it
+		expect(mockOnUnifiedTabReorder).toHaveBeenCalledWith('file-tab-1', 'file-tab-2');
 	});
 
 	it('middle-click closes file tab', () => {
@@ -4764,8 +4941,7 @@ describe('Unified tabs drag and drop', () => {
 		const moveButton = screen.getByText('Move to First Position');
 		fireEvent.click(moveButton);
 
-		// Should call onUnifiedTabReorder with index 2 -> 0
-		expect(mockOnUnifiedTabReorder).toHaveBeenCalledWith(2, 0);
+		expect(mockOnUnifiedTabReorder).toHaveBeenCalledWith('term-2', 'ai-tab-1');
 	});
 
 	it('calls onUnifiedTabReorder when Move to Last is clicked on terminal tab', async () => {
@@ -4824,8 +5000,7 @@ describe('Unified tabs drag and drop', () => {
 		const moveButton = screen.getByText('Move to Last Position');
 		fireEvent.click(moveButton);
 
-		// Should call onUnifiedTabReorder with index 1 -> 2 (last index)
-		expect(mockOnUnifiedTabReorder).toHaveBeenCalledWith(1, 2);
+		expect(mockOnUnifiedTabReorder).toHaveBeenCalledWith('term-1', 'term-2');
 	});
 
 	// Regression: when the user clicks back to an AI tab and then opens a 2nd
@@ -6214,7 +6389,7 @@ describe('Performance: Many file tabs (10+)', () => {
 
 		// The close button should be visible on the active file tab
 		const fileTab5 = screen.getByText('file-5').closest('[data-tab-id]')!;
-		const closeButton = fileTab5.querySelector('button[title="Close tab"]');
+		const closeButton = fileTab5.querySelector('button[title^="Close tab"]');
 		expect(closeButton).toBeInTheDocument();
 
 		fireEvent.click(closeButton!);
@@ -6245,7 +6420,7 @@ describe('Performance: Many file tabs (10+)', () => {
 		const fileTab2 = screen.getByText('file-2').closest('[data-tab-id]')!;
 		const fileTab10 = screen.getByText('file-10').closest('[data-tab-id]')!;
 
-		// Start dragging file-tab-2 (index 3 in unified tabs: AI tab is at 0)
+		// Start dragging file-tab-2
 		fireEvent.dragStart(fileTab2, {
 			dataTransfer: {
 				effectAllowed: '',
@@ -6254,15 +6429,14 @@ describe('Performance: Many file tabs (10+)', () => {
 			},
 		});
 
-		// Drop on file-tab-10 (index 11 in unified tabs)
+		// Drop on file-tab-10
 		fireEvent.drop(fileTab10, {
 			dataTransfer: {
 				getData: vi.fn().mockReturnValue('file-tab-2'),
 			},
 		});
 
-		// Should call onUnifiedTabReorder with correct indices
-		expect(mockOnUnifiedTabReorder).toHaveBeenCalledWith(3, 11);
+		expect(mockOnUnifiedTabReorder).toHaveBeenCalledWith('file-tab-2', 'file-tab-10');
 	});
 
 	it('renders file tabs with different extensions correctly', () => {
@@ -6351,5 +6525,179 @@ describe('Performance: Many file tabs (10+)', () => {
 		// Inactive file tab should NOT have the active margin adjustment
 		const inactiveFileTab = screen.getByText('file-5').closest('[data-tab-id]')!;
 		expect(inactiveFileTab).toHaveStyle({ marginBottom: '0' });
+	});
+});
+
+// A tiled group is ONE unified tab, so its chip must drag and reorder exactly like
+// an AI / file / terminal / browser chip. It previously rendered with no drag props
+// at all, so a group was the only tab type the user could not move in the strip.
+describe('Group tab chip drag and drop', () => {
+	const mockOnUnifiedTabReorder = vi.fn();
+	const mockOnGroupSelect = vi.fn();
+	const mockOnGroupRename = vi.fn();
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		Element.prototype.scrollTo = vi.fn();
+	});
+
+	const aiTabA = createTab({ id: 'ai-tab-1', name: 'AI Tab 1' });
+	const aiTabB = createTab({ id: 'ai-tab-2', name: 'AI Tab 2' });
+
+	const group = {
+		id: 'group-1',
+		name: 'Group: Terminal 1',
+		focusedPaneId: 'leaf-1',
+		createdAt: Date.now(),
+		layout: {
+			kind: 'split' as const,
+			id: 'split-1',
+			direction: 'row' as const,
+			sizes: [0.5, 0.5],
+			children: [
+				{ kind: 'leaf' as const, id: 'leaf-1', tab: { type: 'terminal' as const, id: 'term-1' } },
+				{ kind: 'leaf' as const, id: 'leaf-2', tab: { type: 'ai' as const, id: 'ai-hidden' } },
+			],
+		},
+	};
+
+	// Order: AI Tab 1, <group>, AI Tab 2
+	const unifiedTabs = [
+		{ type: 'ai' as const, id: 'ai-tab-1', data: aiTabA },
+		{ type: 'group' as const, id: 'group-1', data: group },
+		{ type: 'ai' as const, id: 'ai-tab-2', data: aiTabB },
+	];
+
+	function renderWithGroup() {
+		return render(
+			<TabBar
+				tabs={[aiTabA, aiTabB]}
+				activeTabId="ai-tab-1"
+				theme={mockTheme}
+				onTabSelect={vi.fn()}
+				onTabClose={vi.fn()}
+				onNewTab={vi.fn()}
+				unifiedTabs={unifiedTabs as never}
+				onUnifiedTabReorder={mockOnUnifiedTabReorder}
+				onGroupSelect={mockOnGroupSelect}
+				onGroupRename={mockOnGroupRename}
+			/>
+		);
+	}
+
+	// Query by id, not by label text: the inline rename flow swaps the name span
+	// for an <input>, so a text lookup would stop resolving mid-test.
+	function groupChip() {
+		return document.querySelector('[data-tab-id="group-1"]')!;
+	}
+
+	it('marks the group chip draggable', () => {
+		renderWithGroup();
+
+		expect(groupChip()).toHaveAttribute('draggable', 'true');
+	});
+
+	it('sets the group id as the drag payload on drag start', () => {
+		renderWithGroup();
+
+		const dataTransfer = {
+			effectAllowed: '',
+			setData: vi.fn(),
+			getData: vi.fn().mockReturnValue('group-1'),
+		};
+		fireEvent.dragStart(groupChip(), { dataTransfer });
+
+		expect(dataTransfer.effectAllowed).toBe('move');
+		expect(dataTransfer.setData).toHaveBeenCalledWith('text/plain', 'group-1');
+	});
+
+	it('does NOT write a tile payload for a group (a group cannot nest in a group)', () => {
+		renderWithGroup();
+
+		const dataTransfer = {
+			effectAllowed: '',
+			setData: vi.fn(),
+			getData: vi.fn().mockReturnValue('group-1'),
+		};
+		fireEvent.dragStart(groupChip(), { dataTransfer });
+
+		// text/plain (reorder) is the ONLY format written for a group.
+		expect(dataTransfer.setData).toHaveBeenCalledTimes(1);
+		expect(dataTransfer.setData).toHaveBeenCalledWith('text/plain', 'group-1');
+	});
+
+	it('reorders the group when dropped on another tab chip', () => {
+		renderWithGroup();
+
+		const targetTab = screen.getByText('AI Tab 2').closest('[data-tab-id]')!;
+
+		fireEvent.dragStart(groupChip(), {
+			dataTransfer: {
+				effectAllowed: '',
+				setData: vi.fn(),
+				getData: vi.fn().mockReturnValue('group-1'),
+			},
+		});
+		fireEvent.drop(targetTab, {
+			dataTransfer: { getData: vi.fn().mockReturnValue('group-1') },
+		});
+
+		expect(mockOnUnifiedTabReorder).toHaveBeenCalledWith('group-1', 'ai-tab-2');
+	});
+
+	it('accepts another tab dropped onto the group chip and reorders it', () => {
+		renderWithGroup();
+
+		const sourceTab = screen.getByText('AI Tab 1').closest('[data-tab-id]')!;
+
+		fireEvent.dragStart(sourceTab, {
+			dataTransfer: {
+				effectAllowed: '',
+				setData: vi.fn(),
+				getData: vi.fn().mockReturnValue('ai-tab-1'),
+			},
+		});
+		fireEvent.drop(groupChip(), {
+			dataTransfer: { getData: vi.fn().mockReturnValue('ai-tab-1') },
+		});
+
+		// ai-tab-1 moves to the group's slot
+		expect(mockOnUnifiedTabReorder).toHaveBeenCalledWith('ai-tab-1', 'group-1');
+	});
+
+	it('sets dropEffect on drag over so the chip is a valid drop target', () => {
+		renderWithGroup();
+
+		const dataTransfer = { dropEffect: '' };
+		fireEvent.dragOver(groupChip(), { dataTransfer });
+
+		expect(dataTransfer.dropEffect).toBe('move');
+	});
+
+	it('does not reorder when the group is dropped on itself', () => {
+		renderWithGroup();
+
+		fireEvent.dragStart(groupChip(), {
+			dataTransfer: {
+				effectAllowed: '',
+				setData: vi.fn(),
+				getData: vi.fn().mockReturnValue('group-1'),
+			},
+		});
+		fireEvent.drop(groupChip(), {
+			dataTransfer: { getData: vi.fn().mockReturnValue('group-1') },
+		});
+
+		expect(mockOnUnifiedTabReorder).not.toHaveBeenCalled();
+	});
+
+	it('suppresses dragging while the chip is being renamed inline', () => {
+		renderWithGroup();
+
+		// Double-click opens the inline rename input; a native drag would otherwise
+		// hijack text selection inside it.
+		fireEvent.doubleClick(groupChip());
+
+		expect(groupChip()).toHaveAttribute('draggable', 'false');
 	});
 });

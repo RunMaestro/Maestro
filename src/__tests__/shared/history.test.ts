@@ -9,9 +9,18 @@ import {
 	HISTORY_VERSION,
 	MAX_ENTRIES_PER_SESSION,
 	ORPHANED_SESSION_ID,
+	resolveHistoryEntryLimit,
+	parseHistoryJsonl,
+	serializeHistoryEntryLine,
+	trimHistoryEntriesToLimit,
 	sanitizeSessionId,
 	paginateEntries,
 	sortEntriesByTimestamp,
+	normalizeHistoryEntryType,
+	normalizeHistoryEntries,
+	isHistoryEntryType,
+	visibleHistoryEntryTypes,
+	ALL_HISTORY_ENTRY_TYPES,
 	type HistoryFileData,
 	type MigrationMarker,
 	type PaginationOptions,
@@ -43,6 +52,121 @@ describe('shared/history', () => {
 
 		it('exports ORPHANED_SESSION_ID as _orphaned', () => {
 			expect(ORPHANED_SESSION_ID).toBe('_orphaned');
+		});
+	});
+
+	describe('resolveHistoryEntryLimit', () => {
+		it('returns the configured cap when it is a positive number', () => {
+			expect(resolveHistoryEntryLimit(25000)).toBe(25000);
+			expect(resolveHistoryEntryLimit(1)).toBe(1);
+		});
+
+		it('parses a numeric string (settings files hand-edited as text)', () => {
+			expect(resolveHistoryEntryLimit('12000')).toBe(12000);
+		});
+
+		it('floors a fractional cap so slice() gets an integer', () => {
+			expect(resolveHistoryEntryLimit(10.9)).toBe(10);
+		});
+
+		it('falls back to MAX_ENTRIES_PER_SESSION for unusable values', () => {
+			for (const value of [undefined, null, 0, -5, NaN, Infinity, 'abc', {}, []]) {
+				expect(resolveHistoryEntryLimit(value)).toBe(MAX_ENTRIES_PER_SESSION);
+			}
+		});
+	});
+
+	describe('JSONL storage format', () => {
+		describe('serializeHistoryEntryLine', () => {
+			it('emits exactly one newline-terminated line', () => {
+				const line = serializeHistoryEntryLine(createMockEntry({ id: 'x' }));
+				expect(line.endsWith('\n')).toBe(true);
+				expect(line.trimEnd().split('\n')).toHaveLength(1);
+			});
+
+			it('escapes embedded newlines so one entry stays one line', () => {
+				// The one-entry-one-line invariant is what makes torn-line recovery
+				// possible; a raw newline in a summary would break it.
+				const line = serializeHistoryEntryLine(
+					createMockEntry({ summary: 'first\nsecond\nthird' })
+				);
+				expect(line.trimEnd().split('\n')).toHaveLength(1);
+				expect(parseHistoryJsonl(line).entries[0].summary).toBe('first\nsecond\nthird');
+			});
+
+			it('round-trips through parseHistoryJsonl', () => {
+				const entries = [createMockEntry({ id: 'a' }), createMockEntry({ id: 'b' })];
+				const raw = entries.map(serializeHistoryEntryLine).join('');
+				const parsed = parseHistoryJsonl(raw);
+				expect(parsed.entries).toEqual(entries);
+				expect(parsed.malformedLines).toBe(0);
+			});
+		});
+
+		describe('parseHistoryJsonl', () => {
+			it('returns an empty result for empty input', () => {
+				expect(parseHistoryJsonl('')).toEqual({ entries: [], malformedLines: 0 });
+			});
+
+			it('ignores blank lines without counting them as malformed', () => {
+				const raw = `${serializeHistoryEntryLine(createMockEntry({ id: 'a' }))}\n\n`;
+				const parsed = parseHistoryJsonl(raw);
+				expect(parsed.entries).toHaveLength(1);
+				expect(parsed.malformedLines).toBe(0);
+			});
+
+			it('keeps every good line when the final line is torn', () => {
+				// An append interrupted by a crash leaves a partial last line. The
+				// whole point of the format is that this costs one entry, not the file.
+				const good = [createMockEntry({ id: 'a' }), createMockEntry({ id: 'b' })];
+				const raw = `${good.map(serializeHistoryEntryLine).join('')}{"id":"torn","summ`;
+				const parsed = parseHistoryJsonl(raw);
+				expect(parsed.entries.map((e) => e.id)).toEqual(['a', 'b']);
+				expect(parsed.malformedLines).toBe(1);
+			});
+
+			it('survives a torn line in the MIDDLE of the file', () => {
+				const raw = [
+					serializeHistoryEntryLine(createMockEntry({ id: 'a' })),
+					'{"id":"torn"\n',
+					serializeHistoryEntryLine(createMockEntry({ id: 'c' })),
+				].join('');
+				const parsed = parseHistoryJsonl(raw);
+				expect(parsed.entries.map((e) => e.id)).toEqual(['a', 'c']);
+				expect(parsed.malformedLines).toBe(1);
+			});
+
+			it('counts a line that parses but is not entry-shaped as malformed', () => {
+				const raw = `${serializeHistoryEntryLine(createMockEntry({ id: 'a' }))}null\n42\n`;
+				const parsed = parseHistoryJsonl(raw);
+				expect(parsed.entries).toHaveLength(1);
+				expect(parsed.malformedLines).toBe(2);
+			});
+
+			it('yields no entries for a legacy single-object file', () => {
+				// Pretty-printed legacy JSON spans many lines, none individually
+				// parseable. Callers detect this via the legacy path, not here.
+				const legacy = JSON.stringify({ version: 1, entries: [createMockEntry()] }, null, 2);
+				expect(parseHistoryJsonl(legacy).entries).toHaveLength(0);
+			});
+		});
+
+		describe('trimHistoryEntriesToLimit', () => {
+			const entries = ['a', 'b', 'c', 'd'].map((id) => createMockEntry({ id }));
+
+			it('keeps the NEWEST entries, i.e. the tail of file order', () => {
+				expect(trimHistoryEntriesToLimit(entries, 2).map((e) => e.id)).toEqual(['c', 'd']);
+			});
+
+			it('returns the input untouched when it already fits', () => {
+				expect(trimHistoryEntriesToLimit(entries, 4)).toBe(entries);
+				expect(trimHistoryEntriesToLimit(entries, 99)).toBe(entries);
+			});
+
+			it('refuses to trim on a nonsensical limit rather than emptying the file', () => {
+				expect(trimHistoryEntriesToLimit(entries, 0)).toBe(entries);
+				expect(trimHistoryEntriesToLimit(entries, -5)).toBe(entries);
+			});
 		});
 	});
 
@@ -258,6 +382,96 @@ describe('shared/history', () => {
 			const result = paginateEntries(entries, { offset: -1 });
 			// slice(-1, 99) would return the last element
 			expect(result.entries.length).toBeLessThanOrEqual(1);
+		});
+	});
+});
+
+describe('history entry type helpers', () => {
+	const base: HistoryEntry = {
+		id: 'e1',
+		type: 'AUTO',
+		timestamp: 1_700_000_000_000,
+		summary: 'Consulted by Pedsidian: why',
+		projectPath: '/repo',
+	};
+
+	describe('ALL_HISTORY_ENTRY_TYPES', () => {
+		it('is the single list of every entry type', () => {
+			expect([...ALL_HISTORY_ENTRY_TYPES].sort()).toEqual(['AGENT', 'AUTO', 'CUE', 'USER']);
+		});
+	});
+
+	describe('isHistoryEntryType', () => {
+		it('accepts every known type', () => {
+			for (const t of ALL_HISTORY_ENTRY_TYPES) expect(isHistoryEntryType(t)).toBe(true);
+		});
+
+		it('rejects unknown values without throwing', () => {
+			for (const v of ['auto', 'BOGUS', '', null, undefined, 7, {}]) {
+				expect(isHistoryEntryType(v)).toBe(false);
+			}
+		});
+	});
+
+	describe('visibleHistoryEntryTypes', () => {
+		it('drops CUE when the Cue feature is off', () => {
+			expect(visibleHistoryEntryTypes(false)).not.toContain('CUE');
+		});
+
+		it('keeps AGENT regardless of the Cue feature', () => {
+			expect(visibleHistoryEntryTypes(false)).toContain('AGENT');
+			expect(visibleHistoryEntryTypes(true)).toContain('AGENT');
+		});
+	});
+
+	describe('normalizeHistoryEntryType', () => {
+		it('re-maps a legacy consult (AUTO + sourceAgentName) to AGENT', () => {
+			// Consults were written as AUTO before the AGENT type existed, which made
+			// them render as Auto Run tasks and inflated the Auto Run counts.
+			expect(normalizeHistoryEntryType({ ...base, sourceAgentName: 'Pedsidian' })).toBe('AGENT');
+		});
+
+		it('leaves a genuine Auto Run entry alone', () => {
+			expect(normalizeHistoryEntryType(base)).toBe('AUTO');
+		});
+
+		it('leaves USER and CUE entries alone even if somehow attributed', () => {
+			expect(normalizeHistoryEntryType({ ...base, type: 'USER' })).toBe('USER');
+			expect(normalizeHistoryEntryType({ ...base, type: 'CUE', sourceAgentName: 'X' })).toBe('CUE');
+		});
+
+		it('passes through entries already written as AGENT', () => {
+			expect(
+				normalizeHistoryEntryType({ ...base, type: 'AGENT', sourceAgentName: 'Pedsidian' })
+			).toBe('AGENT');
+		});
+	});
+
+	describe('normalizeHistoryEntries', () => {
+		it('re-maps only the legacy consults in a mixed list', () => {
+			const result = normalizeHistoryEntries([
+				base,
+				{ ...base, id: 'e2', sourceAgentName: 'Pedsidian' },
+				{ ...base, id: 'e3', type: 'USER' },
+			]);
+			expect(result.map((e) => e.type)).toEqual(['AUTO', 'AGENT', 'USER']);
+		});
+
+		it('returns the same array reference when nothing needs re-mapping', () => {
+			// Hot path: every read goes through this, so it must not allocate for the
+			// overwhelmingly common case of a file with no legacy consults.
+			const entries = [base, { ...base, id: 'e2', type: 'USER' as const }];
+			expect(normalizeHistoryEntries(entries)).toBe(entries);
+		});
+
+		it('does not mutate the input entries', () => {
+			const entries = [{ ...base, sourceAgentName: 'Pedsidian' }];
+			normalizeHistoryEntries(entries);
+			expect(entries[0].type).toBe('AUTO');
+		});
+
+		it('handles an empty list', () => {
+			expect(normalizeHistoryEntries([])).toEqual([]);
 		});
 	});
 });

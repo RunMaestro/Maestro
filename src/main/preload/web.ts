@@ -55,6 +55,19 @@ export interface AiTabState {
  */
 export function createWebApi() {
 	return {
+		// Atomically reserve one agent before a renderer starts an Auto Run. Main
+		// owns the claim so simultaneous desktop/browser starts cannot both win.
+		claimAutoRunStart: (sessionId: string) =>
+			ipcRenderer.invoke('web:claimAutoRunStart', sessionId) as Promise<boolean>,
+		releaseAutoRunStartClaim: (sessionId: string) =>
+			ipcRenderer.invoke('web:releaseAutoRunStartClaim', sessionId) as Promise<boolean>,
+
+		// Create a tab in the Electron renderer, which owns canonical tab state.
+		requestNewTab: (sessionId: string, background = false) =>
+			ipcRenderer.invoke('web:requestNewTab', sessionId, background) as Promise<{
+				tabId: string;
+			} | null>,
+
 		// Broadcast user input to web clients (for keeping web interface in sync)
 		broadcastUserInput: (sessionId: string, command: string, inputMode: 'ai' | 'terminal') =>
 			ipcRenderer.invoke('web:broadcastUserInput', sessionId, command, inputMode),
@@ -64,8 +77,19 @@ export function createWebApi() {
 			ipcRenderer.invoke('web:broadcastAutoRunState', sessionId, state),
 
 		// Broadcast tab changes to web clients (for tab sync)
-		broadcastTabsChange: (sessionId: string, aiTabs: AiTabState[], activeTabId: string) =>
-			ipcRenderer.invoke('web:broadcastTabsChange', sessionId, aiTabs, activeTabId),
+		broadcastTabsChange: (
+			sessionId: string,
+			aiTabs: AiTabState[],
+			activeTabId: string,
+			activeTabChanged = false
+		) =>
+			ipcRenderer.invoke(
+				'web:broadcastTabsChange',
+				sessionId,
+				aiTabs,
+				activeTabId,
+				activeTabChanged
+			),
 
 		// Broadcast session state change to web clients (for real-time busy/idle updates)
 		broadcastSessionState: (
@@ -107,6 +131,16 @@ export function createLiveApi() {
 		startServer: () => ipcRenderer.invoke('live:startServer'),
 		stopServer: () => ipcRenderer.invoke('live:stopServer'),
 		persistCurrentToken: () => ipcRenderer.invoke('live:persistCurrentToken'),
+
+		// Fires when the machine moves between networks and the LAN address in
+		// the URL/QR code goes stale. The server stays up; only the address to
+		// display changed.
+		onUrlChanged: (handler: (data: { url: string }) => void) => {
+			const wrappedHandler = (_event: Electron.IpcRendererEvent, data: { url: string }) =>
+				handler(data);
+			ipcRenderer.on('live:urlChanged', wrappedHandler);
+			return () => ipcRenderer.removeListener('live:urlChanged', wrappedHandler);
+		},
 		clearPersistentToken: () => ipcRenderer.invoke('live:clearPersistentToken'),
 	};
 }

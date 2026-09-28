@@ -34,6 +34,7 @@ import { generateUUID } from '../../../shared/uuid';
 import { logger } from '../../utils/logger';
 import {
 	startCrossAgentRequest,
+	cancelCrossAgentRequestsForSource,
 	type CrossAgentTargetSession,
 } from '../../cross-agent/cross-agent-router';
 
@@ -88,6 +89,7 @@ export function registerCrossAgentHandlers(deps: CrossAgentHandlerDependencies):
 			name: s.name,
 			toolType: s.toolType as ToolType,
 			cwd: s.cwd || s.fullPath || os.homedir(),
+			customPath: s.customPath,
 			customArgs: s.customArgs,
 			customEnvVars: s.customEnvVars,
 			customModel: s.customModel,
@@ -180,6 +182,27 @@ export function registerCrossAgentHandlers(deps: CrossAgentHandlerDependencies):
 				});
 
 				return { requestId };
+			}
+		)
+	);
+
+	ipcMain.handle(
+		'cross-agent:cancel',
+		withIpcErrorLogging(
+			handlerOpts('cancel'),
+			async (payload: { sourceSessionId: string }): Promise<{ canceled: number }> => {
+				// Stop in the source agent must reach every agent its turn fanned out to,
+				// not just the tab process. Addressed by source agent (never by request
+				// id) because the renderer only learns a request id once `send` resolves,
+				// and a Stop pressed before that would otherwise miss a live consult.
+				const canceled = cancelCrossAgentRequestsForSource(payload.sourceSessionId);
+				if (canceled > 0) {
+					logger.info(`${LOG_CONTEXT} Stopped in-flight consults`, LOG_CONTEXT, {
+						sourceSessionId: payload.sourceSessionId,
+						canceled,
+					});
+				}
+				return { canceled };
 			}
 		)
 	);

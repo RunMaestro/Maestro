@@ -3,6 +3,7 @@ import type { Session } from '../../../types';
 import type { NotifyToastInput } from '../../../stores/notificationStore';
 import { captureException } from '../../../utils/sentry';
 import { useModalStore } from '../../../stores/modalStore';
+import { replayOnboardingSeries } from '../../../stores/onboardingSeriesStore';
 import type { QuickAction } from '../types';
 
 interface BuildDebugCommandsArgs {
@@ -17,6 +18,8 @@ interface BuildDebugCommandsArgs {
 	onDebugReleaseQueuedItem?: () => void;
 	/** Whether a performance-profiling recording is currently in flight. */
 	profilingActive: boolean;
+	/** Trace-buffer usage of the active recording, 0-1. */
+	profilingBufferPercent: number;
 	onStartProfiling: () => void;
 	onStopProfiling: () => void;
 	getInstallationId: () => Promise<string | null | undefined>;
@@ -57,6 +60,7 @@ export function buildDebugCommands({
 	setDebugAgentProbeOpen,
 	onDebugReleaseQueuedItem,
 	profilingActive,
+	profilingBufferPercent,
 	onStartProfiling,
 	onStopProfiling,
 	getInstallationId,
@@ -97,6 +101,27 @@ export function buildDebugCommands({
 						})),
 					}))
 				);
+				setQuickActionOpen(false);
+			},
+		},
+		{
+			id: 'debugOnboardingNewUser',
+			label: 'Debug: Replay First-Run Series (New User)',
+			subtext: 'Typography, theme, updates, then agent powers - with new-user copy',
+			action: () => {
+				// Forced: ignores every seen flag AND the theme gate, and skips
+				// writing the flags back, so replaying the series to look at it
+				// cannot consume a real first run.
+				replayOnboardingSeries('new');
+				setQuickActionOpen(false);
+			},
+		},
+		{
+			id: 'debugOnboardingReturningUser',
+			label: 'Debug: Replay First-Run Series (Existing User)',
+			subtext: 'Same four steps, with the copy an upgrading user sees',
+			action: () => {
+				replayOnboardingSeries('returning');
 				setQuickActionOpen(false);
 			},
 		},
@@ -216,13 +241,70 @@ export function buildDebugCommands({
 		});
 	}
 
+	// Provider re-authentication. Fires the same event a real credential failure
+	// produces, from the main process, so the whole flow runs for real: the
+	// provider-scoped outage grouping, the modal, the login PTY (including over
+	// SSH), and the resume that replays what the outage blocked. Waiting for a
+	// token to actually expire is not a workable way to test any of that.
+	//
+	// Needs the FULL process id, because a real error carries one and it is how
+	// the failing tab is identified for replay - a base agent id would open the
+	// dialog and then resume nothing.
+	if (activeSession) {
+		const activeTabId = activeSession.activeTabId ?? activeSession.aiTabs?.[0]?.id;
+		const simulate = (fromPipeline: boolean) => async () => {
+			setQuickActionOpen(false);
+			try {
+				await window.maestro.debug.simulateAuthExpiry({
+					processSessionId: fromPipeline
+						? activeSession.id
+						: `${activeSession.id}-ai-${activeTabId}`,
+					agentId: activeSession.toolType,
+					fromPipeline,
+				});
+			} catch (err) {
+				notifyToast({
+					type: 'error',
+					title: 'Error',
+					message: 'Failed to simulate a provider auth failure',
+				});
+				logger.error('[Debug] Failed to simulate auth expiry', undefined, err);
+			}
+		};
+
+		if (activeTabId) {
+			commands.push({
+				id: 'debugTriggerReauth',
+				label: 'Debug: Trigger Provider Re-auth',
+				subtext: `Fake an expired credential on ${activeSession.name}`,
+				action: simulate(false),
+			});
+		}
+
+		// The pipeline variant arrives on its own channel because Cue spawns its
+		// agents outside the ProcessManager. It is the path that failed silently
+		// in the field, and the one hardest to reproduce on purpose.
+		commands.push({
+			id: 'debugTriggerReauthPipeline',
+			label: 'Debug: Trigger Provider Re-auth (Cue pipeline)',
+			subtext: `Fake a pipeline auth failure on ${activeSession.name}`,
+			action: simulate(true),
+		});
+	}
+
 	// Performance profiling: a Start/End toggle. "End" only surfaces while a
 	// recording is in flight (main process is the source of truth for `active`).
 	if (profilingActive) {
 		commands.push({
 			id: 'debugEndProfiling',
 			label: 'Debug: End Performance Profiling',
-			subtext: 'Stop, analyze, and save the trace bundle',
+			// Surface buffer pressure here rather than a duration. Chromium drops
+			// events once the buffer fills, so this is the number that says how much
+			// capture window is left; elapsed seconds say nothing, because a busy
+			// app fills the buffer in a fraction of the time a quiet one takes.
+			subtext: `Stop and save the trace bundle - trace buffer ${Math.round(
+				profilingBufferPercent * 100
+			)}% full`,
 			action: () => {
 				onStopProfiling();
 				setQuickActionOpen(false);
@@ -232,7 +314,7 @@ export function buildDebugCommands({
 		commands.push({
 			id: 'debugStartProfiling',
 			label: 'Debug: Start Performance Profiling',
-			subtext: 'Capture a Chromium trace to diagnose UI lag',
+			subtext: 'Capture a Chromium trace to diagnose UI lag (ends itself when the buffer fills)',
 			action: () => {
 				onStartProfiling();
 				setQuickActionOpen(false);

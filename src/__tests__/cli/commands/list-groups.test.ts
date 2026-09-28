@@ -149,6 +149,24 @@ describe('list-groups command', () => {
 			expect(JSON.parse(output)[1]).toMatchObject({ parentGroupId: 'company' });
 		});
 
+		it('includes icon and color so automation can read appearance back', () => {
+			vi.mocked(readGroups).mockReturnValue([
+				{
+					id: 'group-1',
+					name: 'Test Group',
+					emoji: '🔧',
+					icon: 'rocket',
+					color: '#EF4444',
+					collapsed: false,
+				},
+			]);
+
+			listGroups({ json: true });
+
+			const output = consoleSpy.mock.calls[0][0];
+			expect(JSON.parse(output)[0]).toMatchObject({ icon: 'rocket', color: '#EF4444' });
+		});
+
 		it('should output empty JSON array for no groups', () => {
 			vi.mocked(readGroups).mockReturnValue([]);
 

@@ -4,8 +4,8 @@
  * Re-exports all service modules for the web server.
  */
 
-export {
-	BroadcastService,
+export { BroadcastService } from './broadcastService';
+export type {
 	WebClientInfo,
 	CustomAICommand,
 	AITabData,

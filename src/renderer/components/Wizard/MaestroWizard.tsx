@@ -392,7 +392,7 @@ export function MaestroWizard({
 			case 'agent-selection':
 				return <AgentSelectionScreen theme={theme} />;
 			case 'directory-selection':
-				return <DirectorySelectionScreen theme={theme} />;
+				return <DirectorySelectionScreen theme={theme} onLaunchSession={onLaunchSession} />;
 			case 'conversation':
 				return (
 					<ConversationScreen
@@ -466,6 +466,8 @@ export function MaestroWizard({
 				<ResizeHandles
 					onResizeStart={resizableModal.onResizeStart}
 					accentColor={theme.colors.accent}
+					onResetSize={resizableModal.onResetSize}
+					canReset={resizableModal.canReset}
 				/>
 
 				{/* Header */}
@@ -551,7 +553,7 @@ export function MaestroWizard({
 										goToStep(targetStep);
 									}
 								}}
-								className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors hover:bg-white/10 focus:outline-none focus:ring-2 focus:ring-offset-1"
+								className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium transition-colors hover:bg-white/10 focus:outline-none focus:ring-2 focus:ring-offset-1"
 								style={{
 									color: theme.colors.textDim,
 									['--tw-ring-color' as any]: theme.colors.accent,
@@ -560,7 +562,7 @@ export function MaestroWizard({
 								title="Go back"
 								aria-label="Go back to previous step"
 							>
-								<svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+								<svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 									<path
 										strokeLinecap="round"
 										strokeLinejoin="round"

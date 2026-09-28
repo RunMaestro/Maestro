@@ -242,6 +242,49 @@ describe('setupPluginEventListener', () => {
 			});
 		});
 
+		it('does NOT re-count a context-window correction (correctionOnly) into token/cost totals', () => {
+			const pm = makePm({ toolType: 'omp' });
+			const emit = vi.fn<(e: PluginEvent) => void>();
+			setupPluginEventListener(pm, { emitPluginEvent: emit });
+
+			// Real turn is counted once.
+			pm.emit('usage', 's1', {
+				inputTokens: 10,
+				outputTokens: 20,
+				cacheReadInputTokens: 1,
+				cacheCreationInputTokens: 2,
+				totalCostUsd: 0.1,
+				contextWindow: 200000,
+				reasoningTokens: 5,
+			});
+			// Correction replays the SAME turn purely to refresh the resolved window.
+			// pushResolvedOmpContextWindow zeroes token/cost at the source, but even a
+			// non-zero replay must never accumulate here (belt-and-braces guard).
+			pm.emit('usage', 's1', {
+				inputTokens: 10,
+				outputTokens: 20,
+				cacheReadInputTokens: 1,
+				cacheCreationInputTokens: 2,
+				totalCostUsd: 0.1,
+				contextWindow: 250000,
+				reasoningTokens: 5,
+				contextWindowResolved: true,
+				contextWindowCorrectionOnly: true,
+			});
+			pm.emit('exit', 's1', 0);
+
+			const completed = emit.mock.calls.map(([e]) => e).find((e) => e.topic === 'agent.completed');
+			expect(completed!.payload).toMatchObject({
+				inputTokens: 10,
+				outputTokens: 20,
+				cacheReadInputTokens: 1,
+				cacheCreationInputTokens: 2,
+				reasoningTokens: 5,
+				totalTokens: 10 + 20 + 1 + 2,
+				costUsd: expect.closeTo(0.1, 10),
+			});
+		});
+
 		it('uses the LAST reported cost (not the sum) for cumulative reporters', () => {
 			const pm = makePm({ toolType: 'claude-code', usageIsCumulative: true });
 			const emit = vi.fn<(e: PluginEvent) => void>();

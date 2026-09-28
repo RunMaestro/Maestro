@@ -1,5 +1,33 @@
-import type { Shortcut } from '../types';
+// Import from the shared type module rather than `../types`: the CLI reads
+// these defaults (to print a surface's hotkey in `maestro-cli open`), and
+// `../types` drags renderer-only, DOM-dependent modules into that build.
+import type { Shortcut } from '../../shared/shortcut-types';
 
+/**
+ * LABELS ARE THE SEARCH INDEX.
+ *
+ * Every surface that lists a shortcut filters it by a substring or fuzzy match
+ * on `label` and nothing else - Settings -> Shortcuts, the shortcuts help
+ * sheet, and the command palette all do. So a word missing from a label is a
+ * word that cannot find the action: "Change Branch" was invisible to anyone who
+ * typed `git`, even though it is a git command sitting in the git menu.
+ *
+ * Two rules follow, and both are about that one string:
+ *
+ * 1. **A label carries the words a user would search for.** An action about
+ *    agents says "Agent", one about tabs says "Tab", one about git says "Git".
+ *    Prefer the noun the user has in mind over the one the code uses - "Remove"
+ *    became "Remove Agent" for exactly this reason.
+ * 2. **A family of related actions shares a `Family: Action` prefix.** The help
+ *    sheet and the palette both SORT by label, so the prefix is also what draws
+ *    the family as one block instead of scattering it down the list. `Git:`,
+ *    `Media:`, `Group Chat:`, and `File Preview:` are the families today.
+ *
+ * Renaming a label is safe: the persisted binding is keyed on `id`, and the
+ * merge in `migrateShortcuts` deliberately takes the label from these defaults
+ * so a rename reaches users who already customized the chord. Renaming an `id`
+ * is NOT safe - see the `toggleMode` note below.
+ */
 export const DEFAULT_SHORTCUTS = {
 	toggleSidebar: {
 		id: 'toggleSidebar',
@@ -16,15 +44,31 @@ export const DEFAULT_SHORTCUTS = {
 	navBack: { id: 'navBack', label: 'Navigate Back', keys: ['Meta', 'Shift', ','] },
 	navForward: { id: 'navForward', label: 'Navigate Forward', keys: ['Meta', 'Shift', '.'] },
 	newInstance: { id: 'newInstance', label: 'New Agent', keys: ['Meta', 'n'] },
-	newGroupChat: { id: 'newGroupChat', label: 'New Group Chat', keys: ['Alt', 'Meta', 'c'] },
-	killInstance: { id: 'killInstance', label: 'Remove', keys: ['Meta', 'Shift', 'Backspace'] },
-	moveToGroup: { id: 'moveToGroup', label: 'Move Session to Group', keys: ['Alt', 'Meta', 'm'] },
+	// G for Group chat. Moved off Opt+Cmd+C so Concerto - a far more frequently
+	// toggled surface - can have the mnemonic C. Migrated in settingsShortcutsSlice.
+	newGroupChat: { id: 'newGroupChat', label: 'New Group Chat', keys: ['Alt', 'Meta', 'g'] },
+	// Shipped upstream on Opt+Cmd+G, which is New Group Chat here - that move off
+	// Opt+Cmd+C happened on this branch and is migrated onto existing installs, so
+	// the incumbent keeps the chord. The view toggle takes the Shift sibling of the
+	// same letter, matching how Concerto's pair is spelled (Opt+Cmd+C / +Shift+C).
+	toggleGroupChatModeratorOnly: {
+		id: 'toggleGroupChatModeratorOnly',
+		label: 'Group Chat: Team Chat / Moderator Only',
+		keys: ['Alt', 'Meta', 'Shift', 'g'],
+	},
+	killInstance: { id: 'killInstance', label: 'Remove Agent', keys: ['Meta', 'Shift', 'Backspace'] },
+	moveToGroup: { id: 'moveToGroup', label: 'Move Agent to Group', keys: ['Alt', 'Meta', 'm'] },
 	openMemoryViewer: {
 		id: 'openMemoryViewer',
 		label: 'Open Memory Viewer',
 		keys: ['Meta', 'Shift', 'm'],
 	},
-	toggleMode: { id: 'toggleMode', label: 'Switch AI/Shell Mode', keys: ['Meta', 'j'] },
+	// Id kept as `toggleMode` on purpose. It stopped toggling in afad8e7be (March
+	// 2026) and now opens a terminal tab, but the id is what persisted custom
+	// bindings key off - renaming it would orphan every saved override and
+	// silently drop the user back to the default, which is a worse bug than a
+	// stale name. Only the label moves.
+	toggleMode: { id: 'toggleMode', label: 'New Terminal Tab', keys: ['Meta', 'j'] },
 	quickAction: {
 		id: 'quickAction',
 		label: 'Quick Actions',
@@ -57,7 +101,7 @@ export const DEFAULT_SHORTCUTS = {
 	toggleAutoRunExpanded: {
 		id: 'toggleAutoRunExpanded',
 		label: 'Auto Run Expanded Preview',
-		keys: ['Meta', 'Shift', 'e'],
+		keys: ['Meta', 'Shift', '3'],
 	},
 	openBatchRunner: {
 		id: 'openBatchRunner',
@@ -66,8 +110,23 @@ export const DEFAULT_SHORTCUTS = {
 	},
 	focusInput: { id: 'focusInput', label: 'Toggle Input/Output Focus', keys: ['Meta', '.'] },
 	focusSidebar: { id: 'focusSidebar', label: 'Focus Left Panel', keys: ['Meta', 'Shift', 'a'] },
-	viewGitDiff: { id: 'viewGitDiff', label: 'View Git Diff', keys: ['Meta', 'Shift', 'd'] },
-	viewGitLog: { id: 'viewGitLog', label: 'View Git Log', keys: ['Meta', 'Shift', 'g'] },
+	viewGitDiff: { id: 'viewGitDiff', label: 'Git: View Diff', keys: ['Meta', 'Shift', 'd'] },
+	viewGitLog: { id: 'viewGitLog', label: 'Git: View Log', keys: ['Meta', 'Shift', 'g'] },
+	// The rest of the branch-pill menu. All four ship UNBOUND: they act on the
+	// active agent's repo and two of them (pull, push) write to a remote, so
+	// claiming four default chords - any of which would sit next to an existing
+	// Cmd+Shift binding - is not a cost to impose on everyone. Listing them here
+	// is what puts them in Settings -> Shortcuts, the help sheet, and Cmd+K, and
+	// lets anyone who lives in git give them chords.
+	gitPull: { id: 'gitPull', label: 'Git: Pull', keys: [] },
+	gitPush: { id: 'gitPush', label: 'Git: Push', keys: [] },
+	gitChangeBranch: { id: 'gitChangeBranch', label: 'Git: Change Branch', keys: [] },
+	gitCreatePR: { id: 'gitCreatePR', label: 'Git: Create Pull Request', keys: [] },
+	refreshGitFileState: {
+		id: 'refreshGitFileState',
+		label: 'Refresh Files, Git, History',
+		keys: ['Alt', 'Meta', 'r'],
+	},
 	agentSessions: {
 		id: 'agentSessions',
 		label: 'View Agent Sessions',
@@ -85,10 +144,27 @@ export const DEFAULT_SHORTCUTS = {
 		label: 'View Execution Queue',
 		keys: ['Meta', 'Shift', 'x'],
 	},
-	jumpToBottom: { id: 'jumpToBottom', label: 'Jump to Bottom', keys: ['Alt', 'j'] },
+	editLastQueuedMessage: {
+		id: 'editLastQueuedMessage',
+		label: 'Edit Last Queued Message',
+		keys: ['Meta', 'Shift', 'e'],
+	},
+	// Back on Cmd+Shift+J, the chord this action ORIGINALLY shipped with
+	// (b37423abf) and the one most installs never actually left - the Opt+J-era
+	// migration missed them, so they kept it through both the Opt+J and
+	// Opt+Cmd+Down eras. What made Cmd+Shift+J look unavailable was the tiling
+	// family briefly claiming it; that family now lives on Ctrl+Cmd with the rest
+	// of the pane commands, so the J key is free again. A bare Opt+letter is still
+	// off the table here: it types a character while the composer has focus.
+	jumpToBottom: { id: 'jumpToBottom', label: 'Jump to Bottom', keys: ['Meta', 'Shift', 'j'] },
 	prevTab: { id: 'prevTab', label: 'Previous Tab', keys: ['Meta', 'Shift', '['] },
 	nextTab: { id: 'nextTab', label: 'Next Tab', keys: ['Meta', 'Shift', ']'] },
 	openImageCarousel: { id: 'openImageCarousel', label: 'Open Image Carousel', keys: ['Meta', 'y'] },
+	openImageOrganizer: {
+		id: 'openImageOrganizer',
+		label: 'Open Image Organizer',
+		keys: ['Meta', 'Shift', 'y'],
+	},
 	toggleTabStar: { id: 'toggleTabStar', label: 'Toggle Tab Star', keys: ['Meta', 'Shift', 's'] },
 	openPromptComposer: {
 		id: 'openPromptComposer',
@@ -96,9 +172,14 @@ export const DEFAULT_SHORTCUTS = {
 		keys: ['Meta', 'Shift', 'p'],
 	},
 	openWizard: { id: 'openWizard', label: 'New Agent Wizard', keys: ['Meta', 'Shift', 'n'] },
+	openModelEffort: {
+		id: 'openModelEffort',
+		label: 'Change Tabs Model and Effort',
+		keys: ['Alt', 'Meta', '.'],
+	},
 	fuzzyFileSearch: { id: 'fuzzyFileSearch', label: 'Fuzzy File Search', keys: ['Meta', 'g'] },
 	toggleBookmark: { id: 'toggleBookmark', label: 'Toggle Bookmark', keys: ['Meta', 'Shift', 'b'] },
-	openSymphony: { id: 'openSymphony', label: 'Maestro Symphony', keys: ['Meta', 'Shift', 'y'] },
+	openSymphony: { id: 'openSymphony', label: 'Maestro Symphony', keys: ['Meta', 'Alt', 'y'] },
 	directorNotes: {
 		id: 'directorNotes',
 		label: "Director's Notes",
@@ -109,6 +190,24 @@ export const DEFAULT_SHORTCUTS = {
 		label: 'Maestro Cue',
 		keys: ['Alt', 'q'],
 	},
+	// Opt+Cmd, not a bare Opt: on macOS a plain Opt+letter is a TEXT-ENTRY combo
+	// (Opt+C types "ç", Opt+U starts a dead-key umlaut), so it lands as a
+	// character whenever the composer has focus - which is Maestro's usual state.
+	// Adding Cmd suppresses the character, and it matches the Opt+Cmd family the
+	// other feature surfaces already use (Usage Dashboard, System Logs).
+	// C for Concerto; newGroupChat gave up this combo for it and moved to Opt+Cmd+G.
+	toggleConcerto: {
+		id: 'toggleConcerto',
+		label: 'Show/Hide Concerto Stage',
+		keys: ['Alt', 'Meta', 'c'],
+	},
+	// Shift+ the stage key: the same surface family, the broader "put it all
+	// away" action.
+	toggleCadenzas: {
+		id: 'toggleCadenzas',
+		label: 'Show/Hide All Cadenzas',
+		keys: ['Alt', 'Meta', 'Shift', 'c'],
+	},
 	filterUnreadAgents: {
 		id: 'filterUnreadAgents',
 		label: 'Filter Unread Agents',
@@ -117,7 +216,30 @@ export const DEFAULT_SHORTCUTS = {
 	nextUnreadTab: {
 		id: 'nextUnreadTab',
 		label: 'Next Unread / Draft Tab',
+		// NOT Cmd+Shift+Down: that chord is in RESERVED_SHORTCUT_COMBOS (macOS
+		// select-to-bottom inside a text field), so the new load-time guard strips
+		// it and the action would arrive unbound. Alt+Meta+ArrowDown is free.
 		keys: ['Alt', 'Meta', 'ArrowDown'],
+	},
+	// Ships unbound because it already has a chord: Focus Active Tab
+	// (Opt+Cmd+Up) escalates to it on the second press, once the tab is
+	// centered and focused and the first press has nothing left to do. Listing
+	// it here is what puts it in the Shortcuts settings, the shortcuts help
+	// sheet, and Cmd+K next to its Opt+Cmd+Down twin, and lets anyone who wants
+	// a dedicated chord give it one.
+	previousUnreadTab: {
+		id: 'previousUnreadTab',
+		label: 'Previous Unread / Draft Tab',
+		keys: [],
+	},
+	// Ships unbound. Opt+U and Cmd+U already drive the two filters separately,
+	// so claiming a third chord by default would spend a key for a convenience
+	// most users reach from the palette. Listing it here is what makes it
+	// bindable in Settings -> Shortcuts.
+	toggleUnreadFilters: {
+		id: 'toggleUnreadFilters',
+		label: 'Unread Only (Agents + Tabs)',
+		keys: [],
 	},
 	jumpToTerminal: {
 		id: 'jumpToTerminal',
@@ -142,6 +264,11 @@ export const DEFAULT_SHORTCUTS = {
 	focusActiveTab: {
 		id: 'focusActiveTab',
 		label: 'Focus Active Tab',
+		keys: ['Alt', 'Meta', 'ArrowUp'],
+	},
+	searchAllTabs: {
+		id: 'searchAllTabs',
+		label: 'Search Messages (All Agent Tabs)',
 		keys: ['Alt', 'Meta', 'f'],
 	},
 	editClipboardImage: {
@@ -226,6 +353,77 @@ export const DEFAULT_SHORTCUTS = {
 		keys: ['Alt', ']'],
 		windowScoped: true,
 	},
+	// The "tile a NEW tab" family. All four live on Ctrl+Cmd, alongside the pane
+	// commands above, because that is literally what they do: Ctrl+Cmd+D splits
+	// the current view, and each of these splits it AND puts a new tab of one kind
+	// in the bottom half. The letter is the same mnemonic the plain "new tab"
+	// chord uses (Cmd+J terminal, Cmd+B browser), so the tiled twin is the same
+	// letter one modifier over.
+	//
+	// Ctrl+Cmd is the only modifier pair Maestro can express for a family like
+	// this. `eventMatchesShortcutKeys` folds Meta and Ctrl into ONE modifier so a
+	// single table serves macOS and Windows, which means Ctrl+Opt is not a
+	// distinct chord there - on Windows it IS Cmd+Opt, where these letters already
+	// carry Tab Switcher, Jump to Nearest Terminal and Search All Tabs. These are
+	// matched by isPaneShortcut, which requires BOTH physical modifiers, so they
+	// never fire on the plain-Cmd equivalents.
+	//
+	// The terminal one previously shipped on Cmd+Shift+J, reasoned as "one
+	// modifier away from Cmd+J". That reasoning held against the defaults table
+	// and not against real installs: Cmd+Shift+J was jumpToBottom's ORIGINAL
+	// default (b37423abf), and the migration that later moved it only covered the
+	// Opt+J era, so every install predating that still held Cmd+Shift+J for Jump
+	// to Bottom and got two live actions on one key. Jump to Bottom now owns that
+	// chord outright and the whole tiling family sits here instead.
+	tileTerminalBelow: {
+		id: 'tileTerminalBelow',
+		label: 'Tile New Terminal Below',
+		keys: ['Control', 'Meta', 'j'],
+		windowScoped: true,
+	},
+	tileAiBelow: {
+		id: 'tileAiBelow',
+		label: 'Tile New AI Chat Below',
+		keys: ['Control', 'Meta', 't'],
+		windowScoped: true,
+	},
+	tileBrowserBelow: {
+		id: 'tileBrowserBelow',
+		label: 'Tile New Browser Below',
+		keys: ['Control', 'Meta', 'b'],
+		windowScoped: true,
+	},
+	tileFileBelow: {
+		id: 'tileFileBelow',
+		label: 'Tile New File Below',
+		keys: ['Control', 'Meta', 'f'],
+		windowScoped: true,
+	},
+
+	// Registered unassigned: the snoozed-tab list is reachable by click today and
+	// there is no spare chord near Opt+Cmd+S worth spending by default. Listing
+	// it here is what makes it appear in Settings -> Shortcuts so a user can bind
+	// it, which is the whole point of allowing an empty `keys`.
+	showSnoozeList: { id: 'showSnoozeList', label: 'Show Snoozed Tabs', keys: [] },
+
+	// Media player. All four ship unbound: the player is a floating widget most
+	// users reach by opening a file, so claiming four default chords for it would
+	// spend keys nobody asked for. Listing them is what puts them in
+	// Settings -> Shortcuts for anyone who lives in the queue.
+	openMediaPlayer: { id: 'openMediaPlayer', label: 'Open Media Player', keys: [] },
+	mediaPlayPause: { id: 'mediaPlayPause', label: 'Media: Play / Pause', keys: [] },
+	mediaNext: { id: 'mediaNext', label: 'Media: Next Track', keys: [] },
+	mediaPrev: { id: 'mediaPrev', label: 'Media: Previous Track', keys: [] },
+
+	// Palette-only actions that had no keyboard route at all. Same reasoning:
+	// registered so they can be bound, unbound so nothing is claimed by default.
+	openLeaderboard: { id: 'openLeaderboard', label: 'Open Leaderboard', keys: [] },
+	clearAllNotifications: {
+		id: 'clearAllNotifications',
+		label: 'Clear All Notifications',
+		keys: [],
+	},
+	openThemeSettings: { id: 'openThemeSettings', label: 'Open Theme Settings', keys: [] },
 } satisfies Record<string, Shortcut>;
 
 // Non-editable shortcuts (displayed in help but not configurable)
@@ -238,13 +436,18 @@ export const FIXED_SHORTCUTS: Record<string, Shortcut> = {
 	filterFiles: { id: 'filterFiles', label: 'Filter Files (in Files tab)', keys: ['Meta', 'f'] },
 	filterSessions: {
 		id: 'filterSessions',
-		label: 'Filter Sessions (in Left Panel)',
+		label: 'Filter Agents (in Left Panel)',
 		keys: ['Meta', 'f'],
 	},
 	filterHistory: {
 		id: 'filterHistory',
 		label: 'Filter History (in History tab)',
 		keys: ['Meta', 'f'],
+	},
+	historyJumpToSession: {
+		id: 'historyJumpToSession',
+		label: 'Jump to Entry Session (in History tab)',
+		keys: ['Meta', 'Enter'],
 	},
 	searchLogs: { id: 'searchLogs', label: 'Search System Logs', keys: ['Meta', 'f'] },
 	searchOutput: {
@@ -267,6 +470,11 @@ export const FIXED_SHORTCUTS: Record<string, Shortcut> = {
 		label: 'File Preview: Go Forward',
 		keys: ['Meta', 'ArrowRight'],
 	},
+	renameAgentSession: {
+		id: 'renameAgentSession',
+		label: 'Rename Session (in Sessions Browser)',
+		keys: ['Meta', 'e'],
+	},
 	fontSizeIncrease: {
 		id: 'fontSizeIncrease',
 		label: 'Increase Font Size',
@@ -283,8 +491,8 @@ export const FIXED_SHORTCUTS: Record<string, Shortcut> = {
 export const TAB_SHORTCUTS = {
 	tabSwitcher: { id: 'tabSwitcher', label: 'Tab Switcher', keys: ['Alt', 'Meta', 't'] },
 	newTab: { id: 'newTab', label: 'New Tab', keys: ['Meta', 't'] },
-	newBrowserTab: { id: 'newBrowserTab', label: 'New Browser', keys: ['Meta', 'b'] },
-	newFileTab: { id: 'newFileTab', label: 'New File', keys: ['Alt', 'n'] },
+	newBrowserTab: { id: 'newBrowserTab', label: 'New Browser Tab', keys: ['Meta', 'b'] },
+	newFileTab: { id: 'newFileTab', label: 'New File Tab', keys: ['Alt', 'n'] },
 	focusBrowserAddress: {
 		id: 'focusBrowserAddress',
 		label: 'Focus Browser Address Bar',
@@ -293,6 +501,7 @@ export const TAB_SHORTCUTS = {
 	closeTab: { id: 'closeTab', label: 'Close Tab', keys: ['Meta', 'w'] },
 	closeAllTabs: { id: 'closeAllTabs', label: 'Close All Tabs', keys: ['Meta', 'Shift', 'w'] },
 	closeOtherTabs: { id: 'closeOtherTabs', label: 'Close Other Tabs', keys: ['Alt', 'Meta', 'w'] },
+	snoozeTab: { id: 'snoozeTab', label: 'Snooze Tab', keys: ['Alt', 'Meta', 's'] },
 	closeTabsLeft: {
 		id: 'closeTabsLeft',
 		label: 'Close Tabs to Left',
@@ -359,3 +568,20 @@ export const TAB_SHORTCUTS = {
  */
 export type ShortcutId = keyof typeof DEFAULT_SHORTCUTS;
 export type TabShortcutId = keyof typeof TAB_SHORTCUTS;
+
+/**
+ * Actions that ship UNBOUND but are still reachable, by pressing another
+ * action's chord twice. Maps the unbound action's id to the id of the chord
+ * that reaches it.
+ *
+ * The shortcuts help sheet reads this so it renders the real way in instead of
+ * "Unassigned", which would tell the user an action they can already fire is
+ * out of reach. Resolved through the OTHER action's live binding, so rebinding
+ * the host chord keeps the hint honest.
+ */
+export const DOUBLE_PRESS_ACCESS: Record<string, string> = {
+	// Focus Active Tab centers and focuses the current tab header; a second
+	// press has nothing left to do, so it walks backward through unread/draft
+	// tabs (the mirror of Next Unread / Draft Tab).
+	previousUnreadTab: 'focusActiveTab',
+};

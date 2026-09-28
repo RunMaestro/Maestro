@@ -58,6 +58,14 @@ export function createContextApi() {
 				customPath?: string;
 				customArgs?: string;
 				customEnvVars?: Record<string, string>;
+				// Run this turn at the bottom of the model/effort ladders.
+				//
+				// Set it for summarization, whose output a human reads once. Do NOT set
+				// it for grooming or transfer: their output BECOMES the context for
+				// every later turn, so a cheap compaction is a defect that compounds
+				// silently. The caller decides because only the caller knows which of
+				// the three it is - the handler just sees a prompt string.
+				cheapTurn?: boolean;
 			}
 		): Promise<string> =>
 			ipcRenderer.invoke('context:groomContext', projectRoot, agentType, prompt, options),

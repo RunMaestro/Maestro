@@ -4,7 +4,25 @@ import type { Components } from 'react-markdown';
 import type { PluggableList } from 'unified';
 import type { Theme } from '../../../../../types';
 import { REMARK_GFM_PLUGINS } from '../../../../../utils/markdownConfig';
+import { remarkAlert } from '../../../../Markdown/remarkAlert';
+import { remarkMaestroMarkers } from '../../../../Markdown/remarkMaestroMarkers';
+import { remarkStripHtmlComments } from '../../../../../../shared/remarkStripHtmlComments';
 import { REHYPE_PLUGINS } from '../constants';
+
+/**
+ * GFM + GitHub `[!NOTE]`-style callouts, matching the chat and file-preview
+ * stacks, plus Auto Run marker pills - this editor is where a playbook is
+ * written, so a gate or halt has to be visible while it is being authored.
+ *
+ * `remarkStripHtmlComments` runs last: there is no rehype-raw here, so without
+ * it react-markdown renders every other HTML comment as visible body text.
+ */
+const REMARK_PLUGINS: PluggableList = [
+	...REMARK_GFM_PLUGINS,
+	remarkAlert,
+	remarkMaestroMarkers,
+	remarkStripHtmlComments,
+];
 
 interface MarkdownPreviewProps {
 	content: string;
@@ -42,13 +60,13 @@ export function MarkdownPreview({
 			style={{
 				borderColor: theme.colors.border,
 				color: theme.colors.textMain,
-				fontSize: '13px',
+				fontSize: '0.8125rem',
 			}}
 		>
 			<style>{proseStyles}</style>
 			<div className="prose prose-sm max-w-none">
 				<ReactMarkdown
-					remarkPlugins={REMARK_GFM_PLUGINS}
+					remarkPlugins={REMARK_PLUGINS}
 					rehypePlugins={REHYPE_PLUGINS as PluggableList}
 					components={markdownComponents}
 				>

@@ -1,6 +1,10 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
-import { PipelineSelector } from '../../../../renderer/components/CuePipelineEditor/PipelineSelector';
+import {
+	PipelineSelector,
+	pipelineMenuDefaultSize,
+} from '../../../../renderer/components/CuePipelineEditor/PipelineSelector';
+import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
 import { PIPELINE_COLORS, type CuePipeline } from '../../../../shared/cue-pipeline-types';
 
 const mockPipelines: CuePipeline[] = [
@@ -31,6 +35,10 @@ const defaultProps = {
 };
 
 describe('PipelineSelector', () => {
+	beforeEach(() => {
+		useSettingsStore.setState({ modalSizes: {} });
+	});
+
 	it('should show "All Pipelines" when no pipeline is selected', () => {
 		render(<PipelineSelector {...defaultProps} />);
 		expect(screen.getByText('All Pipelines')).toBeInTheDocument();
@@ -175,5 +183,107 @@ describe('PipelineSelector', () => {
 		expect(button.style.color).toContain('0.9');
 		expect(button.style.border).toContain('rgba');
 		expect(button.style.border).toContain('0.12');
+	});
+	describe('resizable menu', () => {
+		// Ending a drag installs a one-shot capture-phase click suppressor (so
+		// releasing the mouse outside the menu doesn't read as a click-away) that
+		// is torn down on the next macrotask. Let that run, or it swallows the
+		// trigger click of whichever test comes next.
+		afterEach(async () => {
+			await new Promise((resolve) => setTimeout(resolve, 0));
+		});
+
+		function openMenu(pipelines: CuePipeline[] = mockPipelines) {
+			render(<PipelineSelector {...defaultProps} pipelines={pipelines} />);
+			fireEvent.click(screen.getByRole('button', { name: /All Pipelines/i }));
+			return screen.getByTestId('pipeline-selector-menu');
+		}
+
+		it('opens tall enough for ten pipelines plus the two fixed rows', () => {
+			// 11 rows of 32 (ten pipelines + All Pipelines), two 1px rules, and the
+			// 32px New Pipeline footer.
+			expect(openMenu()).toHaveStyle({ height: '386px' });
+		});
+
+		it('opens at the floor width when every name is short', () => {
+			expect(openMenu()).toHaveStyle({ width: '220px' });
+		});
+
+		it('opens wide enough for the longest pipeline name', () => {
+			const longName = 'Nightly Dependency Audit And Report';
+			const menu = openMenu([...mockPipelines, { ...mockPipelines[0], id: 'p3', name: longName }]);
+
+			expect(menu.style.width).toBe(`${pipelineMenuDefaultSize([longName]).width}px`);
+			expect(parseInt(menu.style.width, 10)).toBeGreaterThan(220);
+		});
+
+		it('tracks the cursor 1:1 while dragging and remembers the size', () => {
+			const menu = openMenu();
+
+			fireEvent.mouseDown(screen.getByTestId('modal-resize-grip'), { clientX: 0, clientY: 0 });
+			fireEvent.mouseMove(document, { clientX: 60, clientY: 40 });
+
+			// Anchored at its top-left, so the menu grows by exactly the drag delta.
+			expect(menu.style.width).toBe('280px');
+			expect(menu.style.height).toBe('426px');
+
+			fireEvent.mouseUp(document);
+
+			expect(useSettingsStore.getState().modalSizes['cue-pipeline-selector']).toEqual({
+				width: 280,
+				height: 426,
+			});
+		});
+
+		it('restores a remembered size on the next open', () => {
+			useSettingsStore.setState({
+				modalSizes: { 'cue-pipeline-selector': { width: 300, height: 400 } },
+			});
+
+			expect(openMenu()).toHaveStyle({ width: '300px', height: '400px' });
+		});
+
+		it('clamps a drag to the minimum size', () => {
+			const menu = openMenu();
+
+			fireEvent.mouseDown(screen.getByTestId('modal-resize-grip'), { clientX: 0, clientY: 0 });
+			fireEvent.mouseMove(document, { clientX: -500, clientY: -500 });
+			fireEvent.mouseUp(document);
+
+			expect(menu.style.width).toBe('180px');
+			expect(menu.style.height).toBe('140px');
+		});
+
+		it('forgets the remembered size on double-click of the grip', () => {
+			useSettingsStore.setState({
+				modalSizes: { 'cue-pipeline-selector': { width: 300, height: 400 } },
+			});
+			const menu = openMenu();
+
+			fireEvent.doubleClick(screen.getByTestId('modal-resize-grip'));
+
+			expect(useSettingsStore.getState().modalSizes['cue-pipeline-selector']).toBeUndefined();
+			expect(menu).toHaveStyle({ width: '220px', height: '386px' });
+		});
+	});
+	describe('pipelineMenuDefaultSize', () => {
+		it('always leaves room for the All Pipelines row itself', () => {
+			expect(pipelineMenuDefaultSize([]).width).toBe(220);
+		});
+
+		it('grows with the longest name, not the number of names', () => {
+			const one = pipelineMenuDefaultSize(['Nightly Dependency Audit And Report']);
+			const many = pipelineMenuDefaultSize(['a', 'b', 'Nightly Dependency Audit And Report', 'c']);
+
+			expect(many).toEqual(one);
+		});
+
+		it('caps the width so one pathological name cannot size the menu to the screen', () => {
+			expect(pipelineMenuDefaultSize(['x'.repeat(500)]).width).toBe(460);
+		});
+
+		it('is the same height regardless of how many pipelines exist', () => {
+			expect(pipelineMenuDefaultSize([]).height).toBe(pipelineMenuDefaultSize(['a', 'b']).height);
+		});
 	});
 });

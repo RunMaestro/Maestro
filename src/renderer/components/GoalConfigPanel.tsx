@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Target, Flag, Infinity as InfinityIcon, Maximize2 } from 'lucide-react';
 import type { Theme } from '../types';
+import { useResizableTextarea } from '../hooks/ui/useResizableTextarea';
 import { AgentPromptComposerModal } from './AgentPromptComposerModal';
 
 interface GoalConfigPanelProps {
@@ -19,6 +20,11 @@ interface GoalConfigPanelProps {
 // Default iteration cap applied when the user turns OFF "Infinite". Picking a
 // small bounded number keeps a first run from looping forever by accident.
 const DEFAULT_MAX_ITERATIONS = 10;
+
+// Starting heights for the two free-text boxes before the user has ever dragged
+// a grip. They also act as the floor a remembered height is clamped to.
+const GOAL_MIN_HEIGHT = 96;
+const EXIT_CRITERIA_MIN_HEIGHT = 80;
 
 /**
  * Body of the Goal-Driven tab in the Auto Run modal. Swaps the document picker
@@ -44,6 +50,22 @@ export function GoalConfigPanel({
 	// verbatim rather than substituted.
 	const [composerField, setComposerField] = useState<'goal' | 'exitCriteria' | null>(null);
 
+	// A goal and its exit criteria are prose the user writes at length, so the
+	// height they drag each box to is a preference that outlives the modal and
+	// the app. Separate size keys: a goal is usually longer than its criteria,
+	// and a height dragged for one is the wrong height for the other. The modal
+	// body scrolls, so no cap beyond the hook's viewport clamp is needed.
+	const goalResize = useResizableTextarea({
+		sizeKey: 'autorun-goal',
+		defaultHeight: GOAL_MIN_HEIGHT,
+		minHeight: GOAL_MIN_HEIGHT,
+	});
+	const exitCriteriaResize = useResizableTextarea({
+		sizeKey: 'autorun-exit-criteria',
+		defaultHeight: EXIT_CRITERIA_MIN_HEIGHT,
+		minHeight: EXIT_CRITERIA_MIN_HEIGHT,
+	});
+
 	return (
 		<div className="mb-6 flex flex-col gap-5 select-text">
 			{/* Goal */}
@@ -60,13 +82,15 @@ export function GoalConfigPanel({
 				</p>
 				<div className="relative">
 					<textarea
+						ref={goalResize.textareaRef}
 						value={goal}
 						onChange={(e) => onGoalChange(e.target.value)}
-						className="w-full p-3 pr-10 rounded border bg-transparent outline-none resize-none text-sm"
+						className="w-full p-3 pr-10 rounded border bg-transparent outline-none resize-y text-sm"
 						style={{
 							borderColor: theme.colors.border,
 							color: theme.colors.textMain,
-							minHeight: '96px',
+							minHeight: `${GOAL_MIN_HEIGHT}px`,
+							...goalResize.style,
 						}}
 						placeholder="e.g. Migrate the settings store from Redux to Zustand and keep all tests green."
 					/>
@@ -96,13 +120,15 @@ export function GoalConfigPanel({
 				</p>
 				<div className="relative">
 					<textarea
+						ref={exitCriteriaResize.textareaRef}
 						value={exitCriteria}
 						onChange={(e) => onExitCriteriaChange(e.target.value)}
-						className="w-full p-3 pr-10 rounded border bg-transparent outline-none resize-none text-sm"
+						className="w-full p-3 pr-10 rounded border bg-transparent outline-none resize-y text-sm"
 						style={{
 							borderColor: theme.colors.border,
 							color: theme.colors.textMain,
-							minHeight: '80px',
+							minHeight: `${EXIT_CRITERIA_MIN_HEIGHT}px`,
+							...exitCriteriaResize.style,
 						}}
 						placeholder="e.g. Done when no Redux imports remain and `npm test` passes. Deadlock if a test can't be made to pass after two tries."
 					/>

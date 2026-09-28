@@ -134,7 +134,7 @@ export function DocumentRow({
 
 				{doc.isMissing && (
 					<span
-						className="text-[10px] px-1.5 py-0.5 rounded shrink-0 uppercase font-bold"
+						className="text-2xs px-1.5 py-0.5 rounded shrink-0 uppercase font-bold"
 						style={{
 							backgroundColor: theme.colors.error + '20',
 							color: theme.colors.error,

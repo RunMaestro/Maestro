@@ -38,7 +38,7 @@ export function AccessibilitySection({
 	return (
 		<div>
 			<SettingsSectionHeading icon={Accessibility}>Accessibility</SettingsSectionHeading>
-			<p className="text-xs opacity-50 mb-2">
+			<p className="text-xs opacity-70 mb-2">
 				Visual options that adapt the interface for color vision deficiencies and long-form reading.
 			</p>
 
@@ -104,12 +104,7 @@ export function AccessibilitySection({
 						}}
 					>
 						<div>
-							<div
-								className="block text-xs font-bold opacity-70 uppercase mb-2"
-								style={{ color: theme.colors.textDim }}
-							>
-								Intensity
-							</div>
+							<div className="block text-xs font-bold opacity-70 uppercase mb-2">Intensity</div>
 							<ToggleButtonGroup
 								options={[
 									{ value: 0.85, label: 'Soft' },
@@ -121,7 +116,7 @@ export function AccessibilitySection({
 								theme={theme}
 								disabled={!bionifyReadingMode}
 							/>
-							<p className="text-xs opacity-50 mt-2">
+							<p className="text-xs opacity-70 mt-2">
 								Controls how hard the emphasis hits. Strong increases emphasis weight and fades the
 								remaining characters more aggressively.
 							</p>
@@ -156,7 +151,7 @@ export function AccessibilitySection({
 								spellCheck={false}
 								disabled={!bionifyReadingMode}
 							/>
-							<p className="text-xs opacity-50 mt-2">
+							<p className="text-xs opacity-70 mt-2">
 								Format: sign, four fixed word-length rules, then a fallback fraction. Example: `- 0
 								1 1 2 0.4`
 							</p>

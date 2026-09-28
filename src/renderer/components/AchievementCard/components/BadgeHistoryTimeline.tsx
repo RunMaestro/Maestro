@@ -45,7 +45,7 @@ export function BadgeHistoryTimeline({ theme, badgeHistory }: BadgeHistoryTimeli
 						>
 							<div className="flex items-center gap-2">
 								<div
-									className="w-4 h-4 rounded-full flex items-center justify-center text-[10px] font-bold"
+									className="w-4 h-4 rounded-full flex items-center justify-center text-2xs font-bold"
 									style={{
 										background: getProgressionSegmentColor(row.badge.level, true, theme),
 										color: '#000',

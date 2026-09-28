@@ -14,7 +14,7 @@
 import type { ToolType, AgentError } from '../../shared/types';
 import type { AgentOutputParser, ParsedEvent } from './agent-output-parser';
 import { aggregateModelUsage, type ModelStats } from './usage-aggregator';
-import { getErrorPatterns, matchErrorPattern } from './error-patterns';
+import { getErrorPatterns, isClaudeLimitNotice, matchErrorPattern } from './error-patterns';
 
 /**
  * Content block in Claude assistant messages
@@ -42,6 +42,20 @@ interface ClaudeContentBlock {
 }
 
 /**
+ * Token usage as Claude reports it, both per API call (on `assistant` messages)
+ * and as the turn total (on `result` messages).
+ */
+interface ClaudeCallUsage {
+	input_tokens?: number;
+	output_tokens?: number;
+	cache_read_input_tokens?: number;
+	cache_creation_input_tokens?: number;
+}
+
+/** Absolute context-occupancy snapshot, in the shape `UsageStats.absoluteUsage` expects. */
+type OccupancySnapshot = NonNullable<NonNullable<ParsedEvent['usage']>['absoluteUsage']>;
+
+/**
  * Raw message structure from Claude Code stream-json output
  */
 interface ClaudeRawMessage {
@@ -59,15 +73,16 @@ interface ClaudeRawMessage {
 		id?: string;
 		role?: string;
 		content?: string | ClaudeContentBlock[];
+		/**
+		 * Per-call token usage, present on every `assistant` message. This is the
+		 * usage of ONE internal API call, unlike the result message's `modelUsage`
+		 * which is the CLI's own sum across every call of the turn.
+		 */
+		usage?: ClaudeCallUsage;
 	};
 	slash_commands?: string[];
 	modelUsage?: Record<string, ModelStats>;
-	usage?: {
-		input_tokens?: number;
-		output_tokens?: number;
-		cache_read_input_tokens?: number;
-		cache_creation_input_tokens?: number;
-	};
+	usage?: ClaudeCallUsage;
 	total_cost_usd?: number;
 }
 
@@ -131,6 +146,24 @@ export class ClaudeOutputParser implements AgentOutputParser {
 	 * Claude runs tools in parallel.
 	 */
 	private readonly toolNamesById = new Map<string, string>();
+
+	/**
+	 * Occupancy snapshot taken from the most recent main-transcript `assistant`
+	 * message of the CURRENT turn, attached to that turn's usage event as
+	 * `absoluteUsage` and cleared at the `result` message (the turn boundary) so
+	 * a snapshot can never leak into the next turn.
+	 *
+	 * Why the LAST call and not the turn total: the result message's `modelUsage`
+	 * is the CLI's own sum across every internal API call of the turn, which is
+	 * token SPEND. A tool-heavy turn therefore reports far more than the window
+	 * holds (a captured two-call turn summed to 49,063 against a real occupancy
+	 * of 24,586), which is what pinned the context gauge at 0% (finding Q1). A
+	 * single call's input is what was physically sent to the model, so it cannot
+	 * exceed the window, and it grows across a turn as each call re-reads the
+	 * prior context from cache - making the last call the end-of-turn occupancy.
+	 * It also tracks auto-compaction correctly, which no accumulated figure can.
+	 */
+	private lastCallOccupancy: OccupancySnapshot | undefined = undefined;
 
 	/**
 	 * Parse a single JSON line from Claude Code output.
@@ -209,11 +242,17 @@ export class ClaudeOutputParser implements AgentOutputParser {
 				event.usage = usage;
 			}
 
+			// The result message ends the turn, so the next turn starts without a
+			// snapshot rather than inheriting this one.
+			this.lastCallOccupancy = undefined;
+
 			return event;
 		}
 
 		// Handle assistant messages (streaming partial responses)
 		if (msg.type === 'assistant') {
+			this.trackCallOccupancy(msg);
+
 			const text = this.extractTextFromMessage(msg);
 			const thinkingText = this.extractThinkingFromMessage(msg);
 			const toolUseBlocks = this.extractToolUseBlocks(msg);
@@ -427,6 +466,34 @@ export class ClaudeOutputParser implements AgentOutputParser {
 	}
 
 	/**
+	 * Record an `assistant` message's per-call usage as the turn's running
+	 * occupancy snapshot (see `lastCallOccupancy`). Last-wins, which is also what
+	 * makes it idempotent under stream-json's habit of emitting each assistant
+	 * message twice.
+	 *
+	 * Subagent messages are skipped: a Task subagent runs in its own context
+	 * window, so its calls say nothing about the main transcript's occupancy.
+	 */
+	private trackCallOccupancy(msg: ClaudeRawMessage): void {
+		if (normalizeParentToolUseId(msg)) {
+			return;
+		}
+
+		const usage = msg.message?.usage;
+		if (!usage) {
+			return;
+		}
+
+		this.lastCallOccupancy = {
+			inputTokens: usage.input_tokens || 0,
+			outputTokens: usage.output_tokens || 0,
+			cacheReadInputTokens: usage.cache_read_input_tokens || 0,
+			cacheCreationInputTokens: usage.cache_creation_input_tokens || 0,
+			reasoningTokens: 0,
+		};
+	}
+
+	/**
 	 * Extract usage statistics from raw Claude message
 	 */
 	private extractUsageFromRaw(msg: ClaudeRawMessage): ParsedEvent['usage'] | null {
@@ -447,7 +514,13 @@ export class ClaudeOutputParser implements AgentOutputParser {
 			cacheReadTokens: aggregated.cacheReadInputTokens,
 			cacheCreationTokens: aggregated.cacheCreationInputTokens,
 			contextWindow: aggregated.contextWindow,
+			// The aggregator flags the window as resolved only when a model actually
+			// reported one; the untouched FALLBACK_CONTEXT_WINDOW seed leaves it off.
+			...(aggregated.contextWindowResolved ? { contextWindowReported: true } : {}),
 			costUsd: aggregated.totalCostUsd,
+			// The fields above are the turn's summed SPEND and can exceed the window;
+			// this is the same turn's real occupancy, when the stream gave us one.
+			...(this.lastCallOccupancy ? { absoluteUsage: this.lastCallOccupancy } : {}),
 		};
 	}
 
@@ -546,6 +619,29 @@ export class ClaudeOutputParser implements AgentOutputParser {
 			return null;
 		}
 
+		// ── Plan-limit notice ───────────────────────────────────────────────────
+		// Claude Code does NOT report a hit plan limit as an error event. It emits
+		// a SYNTHETIC ASSISTANT MESSAGE whose text is the banner:
+		//
+		//   { type: 'assistant', error: 'rate_limit', isApiErrorMessage: true,
+		//     apiErrorStatus: 429, message: { model: '<synthetic>', content:
+		//       [{ type:'text', text: "You've hit your session limit · resets …" }] },
+		//     quotaLimits: { resetsAt: 1787416800, rateLimitType: 'five_hour', … } }
+		//
+		// Verified against a real captured transcript. Two consequences that cost
+		// us before: it is an `assistant` event (so it rendered as an ordinary
+		// reply and the turn looked successful), and the top-level `error` is the
+		// bare tag `"rate_limit"`, which matched no pattern and classified as
+		// `unknown` - so Agent Resilience never saw a retryable failure.
+		//
+		// The richer top-level fields are only present on some paths (the
+		// transcript carries them; plain `--output-format stream-json` stdout may
+		// forward just `message`), so recognizing the TEXT is what makes this work
+		// everywhere. `quotaLimits` is preserved on `parsedJson` when present so
+		// the retry lands on the exact reset second instead of an hourly poll.
+		const limitError = this.detectPlanLimitNotice(obj, parsed);
+		if (limitError) return limitError;
+
 		let errorText: string | null = null;
 		let parsedJson: unknown = null;
 
@@ -595,6 +691,96 @@ export class ClaudeOutputParser implements AgentOutputParser {
 		}
 
 		return null;
+	}
+
+	/**
+	 * Claude Code reports a failed API call INSIDE a turn as a synthetic assistant
+	 * message, and then often retries the call itself and carries on. Captured live:
+	 *
+	 *   { type: 'assistant', error: 'server_error', is_api_error_message: true,
+	 *     message: { model: '<synthetic>', content: [{ type: 'text',
+	 *       text: 'API Error: Connection lost mid-response. ...' }] } }
+	 *
+	 * followed two minutes later by more tool calls from the real model, and no
+	 * `result` for another twenty. The notice alone therefore does not end the turn.
+	 * Stdout carries the flag in snake_case and the transcript in camelCase, so
+	 * both are accepted, and the `<synthetic>` model marks it on paths that forward
+	 * neither.
+	 */
+	isProvisionalErrorNotice(parsed: unknown): boolean {
+		if (!parsed || typeof parsed !== 'object') return false;
+		const obj = parsed as Record<string, unknown>;
+		if (obj.type !== 'assistant') return false;
+		const message = obj.message as { model?: unknown } | undefined;
+		return (
+			obj.is_api_error_message === true ||
+			obj.isApiErrorMessage === true ||
+			message?.model === '<synthetic>'
+		);
+	}
+
+	/**
+	 * Recognize Claude Code's plan-limit notice on any envelope that can carry it,
+	 * or return null when this isn't one.
+	 *
+	 * Handles three shapes, in the order they occur in the wild:
+	 *  - a synthetic `assistant` message whose text is the banner (what actually
+	 *    happens on a hit limit - see the block that calls this),
+	 *  - a `result` envelope whose `result` string is the banner,
+	 *  - the legacy `Claude AI usage limit reached|<epoch>` marker in either.
+	 *
+	 * False positives are the real risk here: Maestro's own agents discuss usage
+	 * limits constantly, and mistaking a normal reply for a quota failure aborts a
+	 * good turn. So the banner must be the ENTIRE message text (anchored and
+	 * length-capped by `isClaudeLimitNotice`), not merely contained in it - a reply
+	 * that quotes or explains the banner always carries surrounding prose. An
+	 * explicit marker (`isApiErrorMessage`, `error: 'rate_limit'`, or the
+	 * `<synthetic>` model Claude stamps on generated messages) is accepted as
+	 * corroboration but never required, since not every path forwards it.
+	 */
+	private detectPlanLimitNotice(obj: Record<string, unknown>, parsed: unknown): AgentError | null {
+		const msg = obj as unknown as ClaudeRawMessage;
+		const isAssistant = obj.type === 'assistant';
+		const isResult = obj.type === 'result';
+		if (!isAssistant && !isResult) return null;
+
+		const text = isResult
+			? typeof obj.result === 'string'
+				? obj.result
+				: ''
+			: this.extractTextFromMessage(msg);
+		if (!isClaudeLimitNotice(text)) return null;
+
+		// A synthetic limit message carries no tool calls and no other content, so
+		// requiring the notice to BE the message (not just start it) is what keeps
+		// an agent explaining limits from tripping this.
+		const message = obj.message as { model?: unknown } | undefined;
+		const explicitlyFlagged =
+			obj.isApiErrorMessage === true ||
+			obj.error === 'rate_limit' ||
+			message?.model === '<synthetic>';
+		if (isAssistant && !explicitlyFlagged && this.extractToolUseBlocks(msg).length > 0) {
+			return null;
+		}
+
+		const match = matchErrorPattern(getErrorPatterns(this.agentId), text);
+		return {
+			// `rate_limited` rather than `token_exhaustion`: Maestro's
+			// `token_exhaustion` means the CONTEXT WINDOW is full, which is not
+			// retryable. Plan quota lives under `rate_limited`; the retry strategy is
+			// then chosen from the message text by `classifyRetryableError`.
+			type: match?.type ?? 'rate_limited',
+			// Keep Claude's own wording rather than the generic pattern message: it
+			// names which limit was hit and when it resets, which is both what the
+			// user wants to read and what `tokenExhaustionResetAt` falls back to
+			// parsing when no structured `quotaLimits` came through.
+			message: text.trim(),
+			recoverable: true,
+			agentId: this.agentId,
+			timestamp: Date.now(),
+			// Carries `quotaLimits.resetsAt` through to the retry scheduler.
+			parsedJson: parsed,
+		};
 	}
 
 	/**

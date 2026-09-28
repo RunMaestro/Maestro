@@ -1,6 +1,7 @@
 ---
 title: Release Notes
 description: Version history and changelog for Maestro releases
+icon: tag
 ---
 
 # Release Notes
@@ -15,34 +16,36 @@ Maestro can update itself automatically! This feature was introduced in **v0.8.7
 
 ## v0.17.x - Maestro Cue
 
-**Latest: v0.17.3** | Released July 4, 2026
+**Latest: v0.17.5** | Released September 25, 2026
 
-# Major 0.17.x Additions
+# 0.17.5 Highlights
 
-🔐 Claude Token Source control keeps Claude running on your Max/Pro subscription quota by driving Claude's interactive session instead of the headless API path. A three-way Interactive / API / Dynamic selector is available everywhere agents run (new and existing agents, Cue runs, Group Chat, and background tasks). Dynamic mode uses your subscription quota automatically and only falls back to API billing when that quota is exhausted.
+📝 **Auto Run stops eating what you type.** Saving a document, or an agent touching it while you edit, used to reload it from disk and quietly delete whatever you had typed since. Your unsaved edits now stay put (Maestro warns you when the file changed underneath you), the caret stays where you left it, one `Cmd+Z` undoes one burst of typing instead of half a sentence, and Revert throws away everything since your last save, not just some of it.
 
-🪄 Maestro Cue is a new trigger-based cross-agent orchestration capability that lets heartbeats, GitHub issues/PRs, file system monitors, and other data sources bring your agents to life and pass work between one another.
+🚦 **Human-in-the-loop gates let you through.** Pressing Resume on a gate used to pause the run again on the same gate, forever. The button now reads "Done, Resume", records that you did the step, and moves on. A run parked on a gate or an error also stops its clock, so a gate you answered the next morning no longer counts the night as run time.
 
-💻 Full-featured xterm.js terminal tabs sit alongside your AI and file preview tabs, with support for opening and renaming multiple terminals.
+📬 **Queued messages always go out.** A queue could stall with the agent sitting idle and your messages waiting behind nothing until you restarted Maestro. An idle agent now works through its queue until it is empty, and Recover Session tells you whether your click sent the prompt or queued it, so it no longer takes seven clicks to learn that it worked.
 
-🧑‍✈️ GitHub Copilot-CLI joins Maestro as a first-class agent with end-to-end integration for both local and remote (over SSH) execution.
+🛟 **Maestro opens even when something on disk is broken.** A settings or sessions file cut off mid-write (a crash, a full disk, a cloud-sync folder) used to stop every launch; the damaged file is now set aside under a clearly named copy and Maestro starts. An agent whose project folder was deleted, renamed, or sits on an unplugged drive now refuses to start and names the missing folder, rather than crashing the app (on Windows, repeatedly) or quietly running somewhere else.
 
-🛠️ A vastly expanded `maestro-cli` now drives the whole running desktop app, and your agents know how to use it. You can just talk to an agent in plain language to create and run Auto Run playbooks, change settings, set up Maestro Cue pipelines, and manage groups, agents, tabs, and themes, instead of clicking through menus yourself.
+🪟 **Windows SSH remotes explain themselves.** A remote whose OpenSSH hands commands to PowerShell or cmd.exe can never run an agent, and it used to fail with a wall of errors that looked like a key or network problem. Test Connection now names the Windows shell and gives you the one command that points OpenSSH at Git Bash.
 
-## 0.17.3 Highlights
+## Also in 0.17.5
 
-⌨️ Typing in the AI and terminal composer no longer lags, and the transcript no longer reflows on every keystroke, so the app stays smooth under heavy load.
-
-🔁 Maestro now automatically retries a prompt when an agent hits a recoverable error such as an overloaded API, a rate limit, or exhausted quota, showing an inline outage card with a live countdown instead of dropping the run.
-
-🎨 Agent replies now render rich markdown, including GitHub-style `[!NOTE]`/`[!WARNING]` callouts, LaTeX math, and sanitized inline SVG diagrams, so answers can be formatted and illustrated instead of landing as plain text.
-
-🖼️ Pasted screenshots now live in a content-addressed store outside the main sessions file, so a workspace full of images no longer bloats that file or freezes the UI.
-
-⭐ Maestro now keeps its own copy of every starred conversation's transcript, so a starred session survives even after the provider rotates or deletes its file and still resumes natively on restore.
+- 🏷️ **Named Claude sessions keep their names and stars** through every new turn, and Maestro restores the names it lost from your history on its next launch.
+- 📜 **History opens an SSH agent's sessions after a restart**, reading the transcript from the remote host instead of coming back empty.
+- 🏃 **The thinking pill counts Auto Runs on your other agents** and jumps straight to them, and a closed tab with nothing running no longer sits in it as "Thinking..." forever.
+- 💳 **A Codex workspace out of credits is treated as a usage limit**, so the agent resumes on its own when your quota resets.
+- 🔗 **Cue works across checkouts that share a symlinked `.maestro` folder**, instead of running every subscription with an empty prompt.
+- 🔀 **Deleting a project's `.git` folder clears its GIT pill** and its stale changed-file list on the next check.
+- 📎 **Right-click a file link outside your project** (a PDF in Downloads, say) for the full file menu, now with Copy File Name.
+- 🎯 **Refreshing Auto Run documents from `maestro-cli` leaves your view where it is** unless you ask it to move.
+- 🔒 **The update-check toggle spells out the anonymous install count it also controls**, and that switching it off stops both.
 
 ### Previous Releases in this Series
 
+- **v0.17.4** (September 21, 2026) - Maestro Cue
+- **v0.17.3** (July 4, 2026) - Maestro Cue
 - **v0.17.2** (June 27, 2026) - Maestro Cue
 - **v0.17.1** (June 20, 2026) - Maestro Cue
 - **v0.17.0** (June 15, 2026) - Maestro Cue

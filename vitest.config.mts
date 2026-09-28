@@ -29,6 +29,9 @@ const jsdomOnlyTs = [
 	// The web-desktop electron shim constructs a BridgeClient and reads
 	// `window`/`document` at module load, so its suites need a DOM.
 	'src/__tests__/web-desktop/**/*.{test,spec}.ts',
+	// The agent-flow overlay panel is a standalone HTML document evaluated into
+	// jsdom by its test (the plugin's sandbox test next to it stays on node).
+	'src/__tests__/plugins/agent-flow-panel.test.ts',
 ];
 
 export default defineConfig({

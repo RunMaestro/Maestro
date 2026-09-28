@@ -19,6 +19,7 @@
  *   - Worktree children skipped when parent's worktreesExpanded === false
  *   - Position tracking via cyclePosition store field
  *   - Unread filter restricts cycling to unread/busy agents only
+ *   - Pianola is skipped while its Encore flag is off, and cycled when on
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -943,7 +944,11 @@ describe('cycleSession', () => {
 			expect(useSessionStore.getState().cyclePosition).toBe(1);
 		});
 
-		it('group chats are sorted alphabetically', () => {
+		// The cycle must walk group chats in the order the SIDEBAR draws them, which
+		// is a user setting, not a constant. This used to hardcode alphabetical
+		// while `groupChatSortAlphabetical` defaults to FALSE, so out of the box the
+		// cycle and the list disagreed - that mismatch is the reported jumping.
+		it('walks group chats alphabetically when that toggle is on', () => {
 			const sessA = makeSession({ id: 'a', name: 'Alpha' });
 			const gcZ = makeGroupChat('gc-z', 'Zebra Chat');
 			const gcA = makeGroupChat('gc-a', 'Ant Chat');
@@ -961,7 +966,10 @@ describe('cycleSession', () => {
 				leftSidebarOpen: true,
 				bookmarksCollapsed: true,
 			} as any);
-			useSettingsStore.setState({ groupChatsExpanded: true } as any);
+			useSettingsStore.setState({
+				groupChatsExpanded: true,
+				groupChatSortAlphabetical: true,
+			} as any);
 
 			const handleOpenGroupChat = vi.fn();
 			const deps = makeDeps({ handleOpenGroupChat });
@@ -977,6 +985,43 @@ describe('cycleSession', () => {
 			// next from Ant Chat → Zebra Chat
 			cycleSession('next', deps);
 			expect(handleOpenGroupChat).toHaveBeenCalledWith('gc-z');
+		});
+
+		it('walks group chats most-recent-first by default, matching the rendered list', () => {
+			const sessA = makeSession({ id: 'a', name: 'Alpha' });
+			// Alphabetically Ant sorts first; by recency Zebra does. The two orders
+			// disagree on purpose, so a cycle still hardcoding alphabetical fails.
+			const gcA = { ...makeGroupChat('gc-a', 'Ant Chat'), updatedAt: 1000 };
+			const gcZ = { ...makeGroupChat('gc-z', 'Zebra Chat'), updatedAt: 2000 };
+
+			useSessionStore.setState({
+				sessions: [sessA],
+				activeSessionId: 'a',
+				cyclePosition: -1,
+			} as any);
+			useGroupChatStore.setState({
+				groupChats: [gcA, gcZ],
+				activeGroupChatId: null,
+			} as any);
+			useUIStore.setState({
+				leftSidebarOpen: true,
+				bookmarksCollapsed: true,
+			} as any);
+			useSettingsStore.setState({
+				groupChatsExpanded: true,
+				groupChatSortAlphabetical: false,
+			} as any);
+
+			const handleOpenGroupChat = vi.fn();
+			const deps = makeDeps({ handleOpenGroupChat });
+
+			// Visual order: [Alpha(0), Zebra Chat(1), Ant Chat(2)]
+			cycleSession('next', deps);
+			expect(handleOpenGroupChat).toHaveBeenCalledWith('gc-z');
+
+			useGroupChatStore.setState({ activeGroupChatId: 'gc-z' } as any);
+			cycleSession('next', deps);
+			expect(handleOpenGroupChat).toHaveBeenCalledWith('gc-a');
 		});
 
 		it('group chats are excluded when groupChatsExpanded is false', () => {
@@ -2140,6 +2185,80 @@ describe('cycleSession', () => {
 			cycleSession('next', deps);
 			expect(useSessionStore.getState().activeSessionId).toBe('b');
 			expect(useSessionStore.getState().cyclePosition).toBe(0);
+		});
+	});
+	// =========================================================================
+	// Pianola - hidden agent while its Encore flag is off
+	// =========================================================================
+	describe('pianola encore flag', () => {
+		it('skips the Pianola agent when the flag is off', () => {
+			// Pianola persists in the session store after the flag is switched off and
+			// SessionList stops rendering its row, so cycling must not land on it.
+			const pianola = makeSession({ id: 'p', name: 'Pianola', isPianola: true });
+			const sessA = makeSession({ id: 'a', name: 'Alpha' });
+			const sessB = makeSession({ id: 'b', name: 'Beta' });
+
+			useSessionStore.setState({
+				sessions: [pianola, sessA, sessB],
+				activeSessionId: 'b',
+				cyclePosition: -1,
+			} as any);
+			useUIStore.setState({ leftSidebarOpen: true, bookmarksCollapsed: true } as any);
+			useSettingsStore.setState({
+				groupChatsExpanded: false,
+				encoreFeatures: { pianola: false },
+			} as any);
+
+			// Order without Pianola: [Alpha, Beta] → next from Beta wraps to Alpha.
+			cycleSession('next', makeDeps());
+			expect(useSessionStore.getState().activeSessionId).toBe('a');
+		});
+
+		it('includes the Pianola agent when the flag is on', () => {
+			const pianola = makeSession({ id: 'p', name: 'Pianola', isPianola: true });
+			const sessA = makeSession({ id: 'a', name: 'Alpha' });
+
+			useSessionStore.setState({
+				sessions: [pianola, sessA],
+				activeSessionId: 'a',
+				cyclePosition: -1,
+			} as any);
+			useUIStore.setState({ leftSidebarOpen: true, bookmarksCollapsed: true } as any);
+			useSettingsStore.setState({
+				groupChatsExpanded: false,
+				encoreFeatures: { pianola: true },
+			} as any);
+
+			// Order: [Alpha, Pianola] → next from Alpha lands on Pianola.
+			cycleSession('next', makeDeps());
+			expect(useSessionStore.getState().activeSessionId).toBe('p');
+		});
+
+		it('skips a starred row owned by Pianola when the flag is off', () => {
+			// A starred tab inside Pianola must not resurface the hidden agent through
+			// the Starred section that shares the cycle order.
+			const pianola = makeSession({ id: 'p', name: 'Pianola', isPianola: true });
+			const sessA = makeSession({ id: 'a', name: 'Alpha' });
+
+			useSessionStore.setState({
+				sessions: [pianola, sessA],
+				activeSessionId: 'a',
+				cyclePosition: -1,
+			} as any);
+			useUIStore.setState({ leftSidebarOpen: true, bookmarksCollapsed: true } as any);
+			useSettingsStore.setState({
+				groupChatsExpanded: false,
+				starredSessionsCollapsed: false,
+				encoreFeatures: { pianola: false },
+			} as any);
+
+			// Deps carry a stale starred row for Pianola (as a fixture would); the
+			// visual order must still exclude it.
+			const deps = makeDeps({ starredItems: [makeOpenStarred('p', 't1', 'Manager chat')] });
+
+			cycleSession('next', deps);
+			expect(useSessionStore.getState().activeSessionId).toBe('a');
+			expect(deps.activateStarredItem).not.toHaveBeenCalled();
 		});
 	});
 });

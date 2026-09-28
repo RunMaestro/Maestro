@@ -70,21 +70,35 @@ function getCaptureFlag(options: unknown): boolean {
  *
  * If the same triple was added more than once (rare but legal), each add
  * needs a matching remove - this is a count-aware multiset comparison.
+ *
+ * `eventTypes` narrows the check to the events named. Reach for it when the
+ * component under test is still MOUNTED at the assertion: a long-lived
+ * subscription it legitimately still holds (a viewport hook's `resize` /
+ * `orientationchange`, say) is not a leak, and without the filter it reads as
+ * one and buries the listener the test actually cares about. Leave it off
+ * whenever the test unmounts first, which is the stronger check.
  */
 export function expectAllListenersRemoved(
 	addSpy: AddListenerSpy,
-	removeSpy: RemoveListenerSpy
+	removeSpy: RemoveListenerSpy,
+	eventTypes?: readonly string[]
 ): void {
-	const added = addSpy.mock.calls.map(([eventType, listener, options]) => ({
-		eventType: String(eventType),
-		listener,
-		capture: getCaptureFlag(options),
-	}));
-	const removed = removeSpy.mock.calls.map(([eventType, listener, options]) => ({
-		eventType: String(eventType),
-		listener,
-		capture: getCaptureFlag(options),
-	}));
+	const watched = eventTypes ? new Set(eventTypes) : null;
+	const keep = (eventType: string) => !watched || watched.has(eventType);
+	const added = addSpy.mock.calls
+		.filter(([eventType]) => keep(String(eventType)))
+		.map(([eventType, listener, options]) => ({
+			eventType: String(eventType),
+			listener,
+			capture: getCaptureFlag(options),
+		}));
+	const removed = removeSpy.mock.calls
+		.filter(([eventType]) => keep(String(eventType)))
+		.map(([eventType, listener, options]) => ({
+			eventType: String(eventType),
+			listener,
+			capture: getCaptureFlag(options),
+		}));
 
 	const remaining = [...removed];
 	const leaked: Array<{ eventType: string; capture: boolean }> = [];

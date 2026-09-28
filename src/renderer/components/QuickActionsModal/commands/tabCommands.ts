@@ -1,6 +1,10 @@
 import type { Session } from '../../../types';
 import type { ActiveTabInfo, QuickAction } from '../types';
 import { formatMetaKey } from '../../../utils/shortcutFormatter';
+import { resolveSnoozeTarget } from '../../../utils/snoozeHelpers';
+import { useModalStore } from '../../../stores/modalStore';
+import { resolveModelEffortTabId } from '../../../utils/panelLayout';
+import { visibleAiTabs } from '../../../utils/tabHelpers';
 
 interface BuildNewTabCommandsArgs {
 	activeSession: Session | undefined;
@@ -12,10 +16,17 @@ interface BuildNewTabCommandsArgs {
 	newTabShortcut?: QuickAction['shortcut'];
 	newFileTabShortcut?: QuickAction['shortcut'];
 	newBrowserTabShortcut?: QuickAction['shortcut'];
+	/**
+	 * `toggleMode` (Cmd+J). Named for what the key does today - it opens a
+	 * terminal tab - rather than for its historical id.
+	 */
+	newTerminalTabShortcut?: QuickAction['shortcut'];
 }
 
 interface BuildTabCommandsArgs {
 	activeSession: Session | undefined;
+	/** Set while a group chat owns the main panel. Suppresses tab-scoped entries a room cannot answer. */
+	activeGroupChatId?: string | null;
 	isAiMode?: boolean;
 	activeTabInfo: ActiveTabInfo;
 	enterToSendAI: boolean;
@@ -37,10 +48,11 @@ interface BuildTabCommandsArgs {
 	onClearActiveTerminal?: () => void;
 	setQuickActionOpen: (open: boolean) => void;
 	shortcuts: {
-		toggleMode?: QuickAction['shortcut'];
 		toggleMarkdownMode?: QuickAction['shortcut'];
+		showSnoozeList?: QuickAction['shortcut'];
 		focusActiveTab?: QuickAction['shortcut'];
 		clearTerminal?: QuickAction['shortcut'];
+		openModelEffort?: QuickAction['shortcut'];
 	};
 	tabShortcuts?: Record<string, QuickAction['shortcut']>;
 	toggleInputMode: () => void;
@@ -56,6 +68,7 @@ export function buildNewTabCommands({
 	newTabShortcut,
 	newFileTabShortcut,
 	newBrowserTabShortcut,
+	newTerminalTabShortcut,
 }: BuildNewTabCommandsArgs): QuickAction[] {
 	if (!activeSession) return [];
 	const commands: QuickAction[] = [];
@@ -63,7 +76,7 @@ export function buildNewTabCommands({
 	if (onNewTab) {
 		commands.push({
 			id: 'newAiChat',
-			label: 'New AI Chat',
+			label: 'New AI Chat Tab',
 			subtext: 'Open a new AI chat tab in the active agent',
 			shortcut: newTabShortcut,
 			action: () => {
@@ -76,7 +89,7 @@ export function buildNewTabCommands({
 	if (onNewFileTab) {
 		commands.push({
 			id: 'newFileTab',
-			label: 'New File',
+			label: 'New File Tab',
 			subtext: 'Open a new file tab in the active agent',
 			shortcut: newFileTabShortcut,
 			action: () => {
@@ -89,7 +102,7 @@ export function buildNewTabCommands({
 	if (onNewBrowserTab) {
 		commands.push({
 			id: 'newBrowserTab',
-			label: 'New Browser',
+			label: 'New Browser Tab',
 			subtext: 'Open a new browser tab in the active agent',
 			shortcut: newBrowserTabShortcut,
 			action: () => {
@@ -102,8 +115,9 @@ export function buildNewTabCommands({
 	if (onNewTerminalTab) {
 		commands.push({
 			id: 'newTerminalTab',
-			label: 'New Terminal',
+			label: 'New Terminal Tab',
 			subtext: 'Open a new terminal tab in the active agent',
+			shortcut: newTerminalTabShortcut,
 			action: () => {
 				onNewTerminalTab();
 				setQuickActionOpen(false);
@@ -116,6 +130,7 @@ export function buildNewTabCommands({
 
 export function buildTabCommands({
 	activeSession,
+	activeGroupChatId,
 	isAiMode,
 	activeTabInfo,
 	enterToSendAI,
@@ -141,13 +156,19 @@ export function buildTabCommands({
 	toggleInputMode,
 }: BuildTabCommandsArgs): QuickAction[] {
 	const commands: QuickAction[] = [];
-	const { isTerminalMode, hasActiveTab, activeUnifiedIndex, unifiedTabCount } = activeTabInfo;
+	const { isTerminalMode, hasActiveTab, activeUnifiedIndex, unifiedTabCount, activeTabType } =
+		activeTabInfo;
 
 	if (activeSession) {
 		commands.push({
 			id: 'switchMode',
 			label: 'Switch AI/Shell Mode',
-			shortcut: shortcuts.toggleMode,
+			// No shortcut hint. This entry really does toggle inputMode in place,
+			// but `toggleMode`'s key (Cmd+J) stopped doing that in afad8e7be and now
+			// opens a terminal tab. Advertising that chord here told the user a key
+			// would do this, and it does something else - which is exactly the
+			// "switch AI/terminal isn't valid anymore" report. The palette is now the
+			// only way to reach the in-place toggle; it has no binding of its own.
 			action: toggleInputMode,
 		});
 	}
@@ -243,12 +264,15 @@ export function buildTabCommands({
 		});
 	}
 
-	if (isAiMode && activeSession?.aiTabs && activeSession.aiTabs.length > 0 && onCloseAllTabs) {
+	// Count only what the strip draws: hidden consult tabs survive a close-all, so
+	// including them would name a number the user can neither see nor close.
+	const closableTabCount = visibleAiTabs(activeSession?.aiTabs).length;
+	if (isAiMode && closableTabCount > 0 && onCloseAllTabs) {
 		commands.push({
 			id: 'closeAllTabs',
 			label: 'Close All Tabs',
 			shortcut: tabShortcuts?.closeAllTabs,
-			subtext: `Close all ${activeSession.aiTabs.length} tabs (creates new tab)`,
+			subtext: closableTabCount === 1 ? 'Close 1 tab' : `Close all ${closableTabCount} tabs`,
 			action: () => {
 				onCloseAllTabs();
 				setQuickActionOpen(false);
@@ -309,6 +333,59 @@ export function buildTabCommands({
 			},
 		});
 	}
+
+	// Retune the active AI tab's model and reasoning effort. AI-only, and absent
+	// while a group chat owns the view: the palette is reachable from a room, and
+	// `activeSession` still points at the agent selected before the room opened,
+	// so the entry would have retuned a background tab the user is not looking
+	// at. `resolveModelEffortTabId` owns both rules, and the shortcut resolves
+	// its target through the same function.
+	const modelEffortTabId = resolveModelEffortTabId(activeSession, activeGroupChatId);
+	if (modelEffortTabId) {
+		commands.push({
+			id: 'changeModelEffort',
+			label: 'Change Tabs Model and Effort',
+			subtext: 'Pick a model and effort level with the arrow keys',
+			shortcut: shortcuts.openModelEffort,
+			action: () => {
+				setQuickActionOpen(false);
+				useModalStore.getState().openModal('modelEffort', { tabId: modelEffortTabId });
+			},
+		});
+	}
+
+	// Snooze the active AI tab. The palette acts on the active tab, and the
+	// non-AI kinds have their own snooze entry on their chip menu, so this stays
+	// AI-only. The dialog's own shape still comes from `resolveSnoozeTarget`
+	// rather than a literal here, so what it offers is derived from the tab in
+	// exactly one place.
+	if (activeSession && activeTabType === 'ai') {
+		const activeTab = activeSession.aiTabs?.find((t) => t.id === activeSession.activeTabId);
+		const snoozeTarget = activeTab ? resolveSnoozeTarget(activeSession, activeTab.id) : null;
+		if (snoozeTarget) {
+			commands.push({
+				id: 'snoozeTab',
+				label: 'Snooze Tab',
+				subtext: 'Hide this tab until later, then get a reminder',
+				shortcut: tabShortcuts?.snoozeTab,
+				action: () => {
+					setQuickActionOpen(false);
+					useModalStore.getState().openModal('snoozeTab', snoozeTarget);
+				},
+			});
+		}
+	}
+
+	commands.push({
+		id: 'showSnoozedTabs',
+		label: 'See All Snoozed Tabs',
+		subtext: 'Unsnooze, reschedule, or dismiss snoozed tabs',
+		shortcut: shortcuts.showSnoozeList,
+		action: () => {
+			setQuickActionOpen(false);
+			useModalStore.getState().openModal('snoozedTabs');
+		},
+	});
 
 	if (hasActiveTab && activeUnifiedIndex > 0 && onMoveTabToFirst) {
 		commands.push({

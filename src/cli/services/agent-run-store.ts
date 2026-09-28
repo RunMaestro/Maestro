@@ -19,13 +19,35 @@ import {
 	type Campaign,
 	type CampaignStatus,
 } from '../../shared/campaign';
+import { TERMINAL_AGENT_RUN_STATUSES } from '../../shared/agent-run/lifecycle';
+import { assertSerializedJsonIsSafe } from '../../shared/jsonUtils';
 import { getConfigDirectory } from './storage';
 import { withStoreLock } from './agent-run-lock';
 
 const AGENT_RUNS_FILE = 'maestro-agent-runs.json';
+const AGENT_RUNS_ARCHIVE_FILE = 'maestro-agent-runs.1.json';
 const AGENT_RUN_EVENTS_FILE = 'maestro-agent-run-events.jsonl';
 const AGENT_RUN_EVENTS_ARCHIVE_FILE = 'maestro-agent-run-events.1.jsonl';
 const CAMPAIGNS_FILE = 'maestro-campaigns.json';
+
+// Retention bound for the runs snapshot, mirroring the events-log bounds below.
+//
+// The runs file is rewritten IN FULL by every upsert and by every event append,
+// and it had no bound at all: a heavy user reached 7,500 runs / 20MB, where a
+// single write cost ~150ms (read 13ms, parse 41ms, re-serialize 51ms, plus the
+// write) on the Electron main thread - the same thread that answers every IPC
+// call. Capping the live file caps that per-write cost.
+//
+// Only TERMINAL runs are evictable; a queued/running/waiting/needs_review/fixing
+// run still describes work in flight and is kept regardless of age or count.
+// Evicted runs are moved to AGENT_RUNS_ARCHIVE_FILE, not deleted, and
+// readAgentRuns() merges the archive back in - so nothing disappears from the
+// dashboard, the hot write path just stops paying for the history.
+const AGENT_RUNS_MAX_TERMINAL = 2000;
+// The archive is bounded too, or it would simply become the unbounded file we
+// just fixed. Together these retain ~2x the live cap before the oldest runs
+// are finally dropped.
+const AGENT_RUNS_ARCHIVE_MAX = 2000;
 
 // Rotation bounds for the events JSONL. When either threshold is exceeded the
 // current log is archived to AGENT_RUN_EVENTS_ARCHIVE_FILE and a fresh file is
@@ -64,7 +86,10 @@ function atomicWriteJson(filename: string, value: unknown): void {
 	ensureConfigDirectory();
 	const filePath = getStorePath(filename);
 	const content = `${JSON.stringify(value, null, '\t')}\n`;
-	JSON.parse(content);
+	// Guards against writing the literal "undefined" over a good file. Skips the
+	// full round-trip parse on large payloads, where it cost more than the write
+	// itself - see assertSerializedJsonIsSafe.
+	assertSerializedJsonIsSafe(content, filePath);
 	const tempPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
 	fs.writeFileSync(tempPath, content, 'utf-8');
 	fs.renameSync(tempPath, filePath);
@@ -222,13 +247,145 @@ function runMatchesCampaign(
 	return isRecord(run.metadata) && run.metadata.campaignId === campaignId;
 }
 
+/** True when a raw (unvalidated) runs entry is in a terminal status. */
+function isTerminalRawRun(entry: unknown): boolean {
+	if (!isRecord(entry)) return false;
+	const status = entry.status;
+	return (
+		typeof status === 'string' &&
+		(TERMINAL_AGENT_RUN_STATUSES as readonly string[]).includes(status)
+	);
+}
+
+/** `updatedAt` of a raw runs entry; 0 (i.e. oldest) when missing or malformed. */
+function rawRunUpdatedAt(entry: unknown): number {
+	if (!isRecord(entry)) return 0;
+	const updatedAt = entry.updatedAt;
+	return typeof updatedAt === 'number' && Number.isFinite(updatedAt) ? updatedAt : 0;
+}
+
+/**
+ * Split a runs snapshot into the entries that stay in the live file and the
+ * terminal entries that overflow AGENT_RUNS_MAX_TERMINAL and move to the
+ * archive. Operates on the RAW entries so unknown forward-compatible fields
+ * survive the round trip, exactly as the upsert path already preserves them.
+ *
+ * Original array order is preserved for the kept entries; only recency decides
+ * which terminal entries are evicted.
+ */
+function partitionRunsForRetention(entries: unknown[]): { kept: unknown[]; archived: unknown[] } {
+	let terminalCount = 0;
+	for (const entry of entries) {
+		if (isTerminalRawRun(entry)) terminalCount += 1;
+	}
+	if (terminalCount <= AGENT_RUNS_MAX_TERMINAL) {
+		return { kept: entries, archived: [] };
+	}
+
+	const evictedIndices = new Set(
+		entries
+			.map((entry, index) => ({ entry, index }))
+			.filter(({ entry }) => isTerminalRawRun(entry))
+			.sort((left, right) => rawRunUpdatedAt(right.entry) - rawRunUpdatedAt(left.entry))
+			.slice(AGENT_RUNS_MAX_TERMINAL)
+			.map(({ index }) => index)
+	);
+
+	const kept: unknown[] = [];
+	const archived: unknown[] = [];
+	entries.forEach((entry, index) => {
+		(evictedIndices.has(index) ? archived : kept).push(entry);
+	});
+	return { kept, archived };
+}
+
+/** Raw entries currently in the runs archive, or [] when there is no archive. */
+function readRunsArchiveEntries(): unknown[] {
+	const parsed = readJsonValue(AGENT_RUNS_ARCHIVE_FILE);
+	if (parsed === undefined) return [];
+	if (Array.isArray(parsed)) return parsed;
+	return isRecord(parsed) && Array.isArray(parsed.runs) ? parsed.runs : [];
+}
+
+/** Raw run id, or undefined when the entry is malformed. */
+function rawRunId(entry: unknown): string | undefined {
+	if (!isRecord(entry)) return undefined;
+	return typeof entry.id === 'string' ? entry.id : undefined;
+}
+
+/**
+ * Fold newly evicted runs into the archive, newest first, capped at
+ * AGENT_RUNS_ARCHIVE_MAX. Callers MUST hold the store lock.
+ *
+ * Deduped by id, keeping the newest `updatedAt`. A run CAN legitimately be
+ * archived twice: evicted while terminal, reopened by an audited action (which
+ * writes a fresh copy to the live file), then evicted again. Without this the
+ * archive would hold both copies and readAgentRuns() would list the run twice,
+ * because its live-wins dedupe only guards live-vs-archive collisions.
+ */
+function archiveEvictedRuns(evicted: unknown[]): void {
+	const newestById = new Map<string, unknown>();
+	const unidentified: unknown[] = [];
+	for (const entry of [...evicted, ...readRunsArchiveEntries()]) {
+		const id = rawRunId(entry);
+		if (id === undefined) {
+			unidentified.push(entry);
+			continue;
+		}
+		const existing = newestById.get(id);
+		if (existing === undefined || rawRunUpdatedAt(entry) > rawRunUpdatedAt(existing)) {
+			newestById.set(id, entry);
+		}
+	}
+	const merged = [...newestById.values(), ...unidentified]
+		.sort((left, right) => rawRunUpdatedAt(right) - rawRunUpdatedAt(left))
+		.slice(0, AGENT_RUNS_ARCHIVE_MAX);
+	atomicWriteJson(AGENT_RUNS_ARCHIVE_FILE, { runs: merged });
+}
+
+/**
+ * Persist a runs snapshot, evicting terminal overflow to the archive first.
+ * Every write to AGENT_RUNS_FILE goes through here so the bound cannot be
+ * bypassed by a new call site. Callers MUST hold the store lock.
+ */
+function writeRunsSnapshot(entries: unknown[]): void {
+	const { kept, archived } = partitionRunsForRetention(entries);
+	if (archived.length > 0) {
+		archiveEvictedRuns(archived);
+	}
+	atomicWriteJson(AGENT_RUNS_FILE, { runs: kept });
+}
+
+/**
+ * Every run the store knows about: the live file plus the archive.
+ *
+ * Unlike readAgentRunEvents (which deliberately ignores its archive), runs ARE
+ * merged back in, because this is what the runs dashboard lists - retention is
+ * a write-cost optimization and must not silently shrink the user's history.
+ * The write path reads the live file only, so the merge is never on a hot path.
+ */
 export function readAgentRuns(): AgentRun[] {
-	return readSnapshot(AGENT_RUNS_FILE, (raw) => validateAgentRunFile(raw).runs, validateAgentRun);
+	const live = readSnapshot(
+		AGENT_RUNS_FILE,
+		(raw) => validateAgentRunFile(raw).runs,
+		validateAgentRun
+	);
+	const archived = readSnapshot(
+		AGENT_RUNS_ARCHIVE_FILE,
+		(raw) => validateAgentRunFile(raw).runs,
+		validateAgentRun
+	);
+	if (archived.length === 0) return live;
+
+	// The live file wins on id collision: an archived run that was later
+	// reopened (failed -> running) has a fresher copy in the live file.
+	const seen = new Set(live.map((run) => run.id));
+	return [...live, ...archived.filter((run) => !seen.has(run.id))];
 }
 
 export function writeAgentRuns(runs: AgentRun[]): void {
 	const validated = runs.map(assertAgentRun);
-	withStoreLock(() => atomicWriteJson(AGENT_RUNS_FILE, { runs: validated }));
+	withStoreLock(() => writeRunsSnapshot(validated));
 }
 
 export function upsertAgentRun(run: AgentRun): AgentRun {
@@ -242,7 +399,7 @@ export function upsertAgentRun(run: AgentRun): AgentRun {
 				: snapshot.entries.map((entry, index) =>
 						index === existingIndex ? { ...(isRecord(entry) ? entry : {}), ...validated } : entry
 					);
-		atomicWriteJson(AGENT_RUNS_FILE, { runs: nextRuns });
+		writeRunsSnapshot(nextRuns);
 		return validated;
 	});
 }
@@ -260,9 +417,14 @@ const NON_TERMINAL_STATUSES: readonly AgentRunStatus[] = [
 ];
 
 export function findActiveRunBySession(sessionId: string): AgentRun | undefined {
-	return readAgentRuns().find(
-		(run) => run.sessionId === sessionId && NON_TERMINAL_STATUSES.includes(run.status)
-	);
+	// Live file only: retention never evicts a non-terminal run, so an active
+	// run is by definition not in the archive. Reading it here would be pure
+	// waste on a lookup that runs whenever work is dispatched to an agent.
+	return readSnapshot(
+		AGENT_RUNS_FILE,
+		(raw) => validateAgentRunFile(raw).runs,
+		validateAgentRun
+	).find((run) => run.sessionId === sessionId && NON_TERMINAL_STATUSES.includes(run.status));
 }
 
 export function listAgentRuns(options: ListAgentRunsOptions = {}): AgentRun[] {
@@ -295,6 +457,12 @@ export function appendAgentRunEvent(event: AgentRunEvent): AgentRunEvent {
 				0
 			) + 1;
 		const stamped: AgentRunEvent = { ...validated, seq: nextSeq };
+		// Live file only, so an event for an already-archived run does not drag
+		// the archive back into the write path. Archived runs are terminal by
+		// construction, and a terminal run can only change through an audited
+		// action, which goes via upsertAgentRun - so the only thing lost here is
+		// an updatedAt bump on a run that is already finished. The event itself
+		// is still appended to the log below either way.
 		const snapshot = readSnapshotForWrite(AGENT_RUNS_FILE, 'runs', validateAgentRunStrict);
 		const existingIndex = snapshot.validatedEntries.findIndex(
 			(entry) => entry.id === stamped.runId
@@ -311,7 +479,7 @@ export function appendAgentRunEvent(event: AgentRunEvent): AgentRunEvent {
 						}
 					: entry
 			);
-			atomicWriteJson(AGENT_RUNS_FILE, { runs: nextRuns });
+			writeRunsSnapshot(nextRuns);
 		}
 		fs.appendFileSync(getStorePath(AGENT_RUN_EVENTS_FILE), `${JSON.stringify(stamped)}\n`, 'utf-8');
 		return stamped;

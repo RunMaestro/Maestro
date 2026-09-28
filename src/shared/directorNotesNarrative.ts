@@ -16,8 +16,24 @@
  * imported from both the main process and the renderer.
  */
 
-/** The three fixed narrative section kinds, matching the prompt contract. */
-export type NarrativeSectionKind = 'accomplishments' | 'challenges' | 'nextSteps';
+import {
+	bucketNarrativeItems,
+	shouldRenderBuckets,
+	type NarrativeGroupLookup,
+} from './directorNotesGrouping';
+
+/**
+ * The narrative section kinds, matching the prompt contract.
+ *
+ * `accomplishments` / `challenges` / `nextSteps` are always requested.
+ * `progress` is CONDITIONAL: the prompt only asks for it when the user has
+ * filled in the Ideal End State setting, so a report generated without one has
+ * exactly the three original sections. It is accepted unconditionally here -
+ * the parser's job is to validate shape, not to re-derive which sections the
+ * prompt asked for, and a cached report from a run that had an end state must
+ * still parse after the setting is cleared.
+ */
+export type NarrativeSectionKind = 'accomplishments' | 'challenges' | 'nextSteps' | 'progress';
 
 /** Optional per-item severity used to style bullet emphasis in Rich Mode. */
 export type NarrativeItemSeverity = 'info' | 'warn' | 'critical';
@@ -50,11 +66,42 @@ export type ParseNarrativeResult =
 	| { ok: true; narrative: DirectorNotesNarrative }
 	| { ok: false; error: string };
 
+/**
+ * Discriminated result of {@link recoverDirectorNotesNarrative}. `reason`
+ * explains what had to be salvaged so the UI can say so out loud.
+ */
+export type RecoverNarrativeResult =
+	| {
+			ok: true;
+			narrative: DirectorNotesNarrative;
+			reason: string;
+			/**
+			 * True when the repair cost the report NOTHING: every section and bullet
+			 * the agent wrote survived and only syntax was rebuilt. Callers use this
+			 * to decide whether the user needs to see a failure banner at all - a
+			 * complete report should not be presented as a damaged one.
+			 */
+			lossless: boolean;
+	  }
+	| { ok: false; error: string };
+
 const VALID_KINDS: ReadonlySet<string> = new Set<NarrativeSectionKind>([
 	'accomplishments',
 	'challenges',
 	'nextSteps',
+	'progress',
 ]);
+
+/** Human-readable kind list, kept in sync with {@link VALID_KINDS} for errors. */
+const VALID_KINDS_MESSAGE = [...VALID_KINDS].map((k) => `"${k}"`).join(', ');
+
+/** Fallback headings when a salvaged section is missing its `title`. */
+const DEFAULT_SECTION_TITLES: Record<NarrativeSectionKind, string> = {
+	accomplishments: 'Accomplishments',
+	challenges: 'Challenges',
+	nextSteps: 'Next Steps',
+	progress: 'Progress Toward Ideal End State',
+};
 
 const VALID_SEVERITIES: ReadonlySet<string> = new Set<NarrativeItemSeverity>([
 	'info',
@@ -121,7 +168,7 @@ function validateSection(
 	if (typeof raw.kind !== 'string' || !VALID_KINDS.has(raw.kind)) {
 		return {
 			ok: false,
-			error: `${where}.kind must be one of "accomplishments", "challenges", "nextSteps".`,
+			error: `${where}.kind must be one of ${VALID_KINDS_MESSAGE}.`,
 		};
 	}
 	if (typeof raw.title !== 'string') {
@@ -145,19 +192,28 @@ function validateSection(
 }
 
 /**
- * Slice out the first complete, brace-balanced JSON object in `raw`.
+ * Slice out the first complete, bracket-balanced JSON object in `raw`.
  *
  * Scanning to the matching close brace (tracking string state so a `{`/`}`
- * inside a bullet's text doesn't move the depth counter) rather than to the
- * LAST `}` in the response: agents routinely append a closing code fence or a
- * trailing "Note: ..." sentence, and a naive `lastIndexOf('}')` swallows that
- * epilogue into the slice and fails an otherwise-valid object.
+ * inside a bullet's text doesn't move the counter) rather than to the LAST `}`
+ * in the response: agents routinely append a closing code fence or a trailing
+ * "Note: ..." sentence, and a naive `lastIndexOf('}')` swallows that epilogue
+ * into the slice and fails an otherwise-valid object.
+ *
+ * The stack tracks WHICH bracket opened each frame, not just how deep we are.
+ * A depth counter that treats `}` and `]` as interchangeable balances back to
+ * zero on a response whose brackets are merely mismatched - an agent writing
+ * `}` where the `sections` array needed `]` - and reports the object as
+ * complete. That slice can never parse, and worse, it convinces the repair path
+ * in `closeTruncatedJsonObject` that there is nothing to repair.
  */
-function extractFirstJsonObject(raw: string): string | null {
+function findFirstJsonObject(
+	raw: string
+): { text: string } | { text: null; failure: 'absent' | 'unclosed' | 'mismatched' } {
 	const start = raw.indexOf('{');
-	if (start === -1) return null;
+	if (start === -1) return { text: null, failure: 'absent' };
 
-	let depth = 0;
+	const stack: string[] = [];
 	let inString = false;
 	let escaped = false;
 
@@ -172,14 +228,72 @@ function extractFirstJsonObject(raw: string): string | null {
 		}
 
 		if (char === '"') inString = true;
-		else if (char === '{') depth++;
-		else if (char === '}') {
-			depth--;
-			if (depth === 0) return raw.slice(start, i + 1);
+		else if (char === '{' || char === '[') stack.push(char);
+		else if (char === '}' || char === ']') {
+			// A closer that does not match its frame means the structure is
+			// corrupt, not complete. Bail rather than hand back a slice that
+			// only looks balanced.
+			if (stack[stack.length - 1] !== (char === '}' ? '{' : '[')) {
+				return { text: null, failure: 'mismatched' };
+			}
+			stack.pop();
+			if (stack.length === 0) return { text: raw.slice(start, i + 1) };
 		}
 	}
 
-	return null;
+	return { text: null, failure: 'unclosed' };
+}
+
+/** {@link findFirstJsonObject} for callers that only care whether it worked. */
+function extractFirstJsonObject(raw: string): string | null {
+	return findFirstJsonObject(raw).text;
+}
+
+/**
+ * Shown when the output is JSON-shaped but no narrative reached the reading
+ * surface and no specific parse error came with it - the shape of a result
+ * cached before the narrative fields existed. Generic on purpose: we know the
+ * output is not a readable report, but not why.
+ */
+export const STRUCTURED_OUTPUT_UNPARSED_MESSAGE =
+	'This report was returned as structured output that could not be read back. Regenerate it to get a fresh report.';
+
+/**
+ * Does this raw output even CLAIM to be the structured narrative?
+ *
+ * The Director's Notes prompt is a user-customizable core prompt persisted to
+ * `userData/core-prompts-customizations.json`, so a profile can easily hold a
+ * prompt that asks for markdown while the running build's parser expects JSON,
+ * or the reverse. Neither is a malformed narrative - the agent did exactly what
+ * the prompt it was given asked for. Shape is the only honest discriminator.
+ *
+ * The rule is deliberately narrow: after an optional leading code fence, the
+ * output must START with `{`. The prompt says "return a single JSON object and
+ * nothing else", so a genuine structured response always does. A markdown
+ * report starts with a heading or prose - and critically, a markdown report
+ * that merely CONTAINS a fenced JSON example still starts with prose, so it is
+ * correctly treated as markdown. `extractFirstJsonObject` is intentionally not
+ * used here: it scans anywhere in the string and would misread that example as
+ * a botched narrative.
+ *
+ * Callers use this to decide what a parse failure MEANS: JSON-shaped means the
+ * narrative really is broken and the user should see the error; anything else
+ * is prose and should simply be rendered as markdown.
+ */
+export function looksLikeStructuredOutput(raw: string): boolean {
+	if (typeof raw !== 'string') return false;
+
+	let text = raw.trim();
+	if (text.length === 0) return false;
+
+	// Agents sometimes fence the object despite being told not to.
+	if (text.startsWith('```')) {
+		const newlineIndex = text.indexOf('\n');
+		if (newlineIndex === -1) return false;
+		text = text.slice(newlineIndex + 1).trimStart();
+	}
+
+	return text.startsWith('{');
 }
 
 /**
@@ -199,14 +313,28 @@ export function parseDirectorNotesNarrative(raw: string): ParseNarrativeResult {
 		return { ok: false, error: 'Response was empty.' };
 	}
 
-	const jsonText = extractFirstJsonObject(raw);
-	if (jsonText === null) {
-		return { ok: false, error: 'No JSON object found in the response.' };
+	const found = findFirstJsonObject(raw);
+	if (found.text === null) {
+		// Each failure sends the reader somewhere different, so name the right
+		// one. An unterminated object is an agent stopping at its output limit;
+		// a mismatched bracket is an agent that finished but closed a container
+		// with the wrong character; neither is prose with no object at all.
+		// Saying "no JSON object found" about a response that visibly starts with
+		// one sends the reader hunting for the wrong problem.
+		return {
+			ok: false,
+			error:
+				found.failure === 'absent'
+					? 'No JSON object found in the response.'
+					: found.failure === 'mismatched'
+						? 'The JSON brackets do not match - a container was closed with the wrong bracket.'
+						: 'The JSON object was never closed - the response was cut off before it finished.',
+		};
 	}
 
 	let parsed: unknown;
 	try {
-		parsed = JSON.parse(jsonText);
+		parsed = JSON.parse(found.text);
 	} catch (err) {
 		const detail = err instanceof Error ? err.message : String(err);
 		return { ok: false, error: `Response is not valid JSON: ${detail}` };
@@ -232,13 +360,282 @@ export function parseDirectorNotesNarrative(raw: string): ParseNarrativeResult {
 	return { ok: true, narrative: { version: 1, sections } };
 }
 
+/**
+ * Rebuild a JSON object whose tail was cut off mid-stream or closed with the
+ * wrong bracket.
+ *
+ * A synopsis run costs minutes of agent time and emits one very long single-line
+ * object, so a response that dies partway through is the difference between a
+ * readable report and nothing at all. Scan to the last COMPLETE nested container
+ * (an item or a section object), cut there, and close the containers that are
+ * still open. Cutting at a completed `}`/`]` is what makes this safe: it drops
+ * any half-written string, dangling key, trailing comma, or wrong bracket along
+ * with it.
+ *
+ * The scan is bracket-TYPE aware, and that is the whole point. A model that
+ * writes `...}]}}` where the last `}` should have been `]` has produced a
+ * complete report behind one wrong character, but a scanner that only counts
+ * depth sees a balanced object and reports "nothing to repair" - so the strict
+ * parser's error is all the user ever gets, for a report that is entirely
+ * intact. A mismatched closer ends the scan and the last MATCHED container
+ * becomes the cut site.
+ *
+ * `lossless` distinguishes the two very different shapes of damage. An agent
+ * writing right up against its output limit, or fumbling one bracket while
+ * closing up, finishes the whole structure and loses only punctuation: every
+ * section and bullet is present, and the repair is pure syntax. That is a
+ * COMPLETE report and must not be shown to the user as a damaged one. A cut in
+ * the middle of the bullet list is the real thing - content is gone - and
+ * `lossless` is false. Two conditions decide it: the discarded tail carries no
+ * CONTENT (only whitespace and structural punctuation), and the frames left to
+ * close are shallow enough that the last section had finished. Sitting inside a
+ * section or its item list means the report stopped mid-list; sitting in
+ * `sections` counts only when the agent was visibly writing closers, since an
+ * agent that just stopped there still had sections coming.
+ *
+ * Returns `null` when the input is not damaged (the top-level object closes on
+ * its own, so the strict path already had its shot) or when nothing completed.
+ */
+function closeTruncatedJsonObject(raw: string): { text: string; lossless: boolean } | null {
+	const start = raw.indexOf('{');
+	if (start === -1) return null;
+
+	const stack: string[] = [];
+	let inString = false;
+	let escaped = false;
+	// Index of the last `}`/`]` that correctly closed a NESTED container, plus
+	// the frames still open at that point - the cut site and the closers it needs.
+	let cutIndex = -1;
+	let cutStack: string[] = [];
+
+	for (let i = start; i < raw.length; i++) {
+		const char = raw[i];
+
+		if (inString) {
+			if (escaped) escaped = false;
+			else if (char === '\\') escaped = true;
+			else if (char === '"') inString = false;
+			continue;
+		}
+
+		if (char === '"') inString = true;
+		else if (char === '{' || char === '[') stack.push(char);
+		else if (char === '}' || char === ']') {
+			// Wrong closer for this frame: everything from here is corrupt, so
+			// stop and repair from the last container that closed cleanly.
+			if (stack[stack.length - 1] !== (char === '}' ? '{' : '[')) break;
+			stack.pop();
+			// The top-level object closed: this response is not damaged.
+			if (stack.length === 0) return null;
+			cutIndex = i;
+			cutStack = [...stack];
+		}
+	}
+
+	if (cutIndex === -1) return null;
+
+	const discarded = raw.slice(cutIndex + 1);
+	const discardedContent = discarded.trim();
+	const discardedIsPunctuationOnly = /^[\s{}[\],]*$/.test(discarded);
+	const lastSectionFinished =
+		cutStack.length === 1 || (cutStack.length === 2 && discardedContent.length > 0);
+	const lossless = discardedIsPunctuationOnly && lastSectionFinished;
+
+	const closers = cutStack
+		.reverse()
+		.map((open) => (open === '{' ? '}' : ']'))
+		.join('');
+	return { text: raw.slice(start, cutIndex + 1) + closers, lossless };
+}
+
+/**
+ * Escape raw control characters that appear INSIDE strings. A literal newline in
+ * a bullet is invalid JSON (the prompt forbids it, models do it anyway) and is
+ * otherwise a total loss for an entire report.
+ */
+function escapeControlCharsInStrings(jsonText: string): string {
+	const ESCAPES: Record<string, string> = {
+		'\n': '\\n',
+		'\r': '\\r',
+		'\t': '\\t',
+		'\b': '\\b',
+		'\f': '\\f',
+	};
+
+	let out = '';
+	let inString = false;
+	let escaped = false;
+
+	for (const char of jsonText) {
+		if (inString) {
+			if (escaped) escaped = false;
+			else if (char === '\\') escaped = true;
+			else if (char === '"') inString = false;
+
+			if (!escaped && char < ' ') {
+				out += ESCAPES[char] ?? `\\u${char.charCodeAt(0).toString(16).padStart(4, '0')}`;
+				continue;
+			}
+		} else if (char === '"') {
+			inString = true;
+		}
+
+		out += char;
+	}
+
+	return out;
+}
+
+/**
+ * Validate leniently: keep every item and section that is usable and DROP the
+ * rest, rather than failing the whole document the way
+ * {@link parseDirectorNotesNarrative} does. Returns `null` only when the value
+ * is not narrative-shaped at all.
+ */
+function validateNarrativeLenient(
+	parsed: unknown
+): { narrative: DirectorNotesNarrative; dropped: number } | null {
+	if (!isPlainObject(parsed) || !Array.isArray(parsed.sections)) return null;
+
+	let dropped = 0;
+	const sections: NarrativeSection[] = [];
+
+	for (const rawSection of parsed.sections) {
+		if (!isPlainObject(rawSection) || typeof rawSection.kind !== 'string') {
+			dropped++;
+			continue;
+		}
+		if (!VALID_KINDS.has(rawSection.kind)) {
+			dropped++;
+			continue;
+		}
+		const kind = rawSection.kind as NarrativeSectionKind;
+
+		const items: NarrativeItem[] = [];
+		for (const rawItem of Array.isArray(rawSection.items) ? rawSection.items : []) {
+			if (!isPlainObject(rawItem) || typeof rawItem.text !== 'string' || !rawItem.text.trim()) {
+				dropped++;
+				continue;
+			}
+			const item: NarrativeItem = { text: rawItem.text };
+			// A bad severity/agent only costs that field, never the bullet.
+			if (typeof rawItem.severity === 'string' && VALID_SEVERITIES.has(rawItem.severity)) {
+				item.severity = rawItem.severity as NarrativeItemSeverity;
+			}
+			if (typeof rawItem.agent === 'string') item.agent = rawItem.agent;
+			items.push(item);
+		}
+
+		sections.push({
+			kind,
+			title: typeof rawSection.title === 'string' ? rawSection.title : DEFAULT_SECTION_TITLES[kind],
+			items,
+		});
+	}
+
+	if (sections.length === 0) return null;
+	return { narrative: { version: 1, sections }, dropped };
+}
+
+/**
+ * Best-effort salvage of output the strict parser rejected.
+ *
+ * Call this ONLY after {@link parseDirectorNotesNarrative} returns `{ ok: false }`.
+ * It repairs the two failures that actually cost users a report - a response cut
+ * off mid-stream and raw control characters inside strings - then validates
+ * leniently, dropping individual malformed bullets instead of the document.
+ *
+ * Recovery reports what it did: `reason` states what was repaired, and
+ * `lossless` says whether that repair cost the report any content. A lossless
+ * repair (only syntax rebuilt) yields a COMPLETE report, so callers should not
+ * dress it up as a failure; anything else should be surfaced next to the
+ * narrative. When nothing usable survives, this returns `{ ok: false }` and the
+ * caller shows the strict parse error instead.
+ */
+export function recoverDirectorNotesNarrative(raw: string): RecoverNarrativeResult {
+	if (typeof raw !== 'string' || raw.trim().length === 0) {
+		return { ok: false, error: 'Response was empty.' };
+	}
+
+	// Ordered by fidelity: the untouched object first, then each repair. Each
+	// candidate remembers which repairs produced it so the reason we report is
+	// the one that actually applied.
+	const truncationRepair = closeTruncatedJsonObject(raw);
+	const candidates: Array<{
+		text: string;
+		wasTruncated: boolean;
+		lostContent: boolean;
+		wasEscaped: boolean;
+	}> = [];
+	for (const [text, wasTruncated, lostContent] of [
+		[extractFirstJsonObject(raw), false, false],
+		[truncationRepair?.text ?? null, true, truncationRepair ? !truncationRepair.lossless : false],
+	] as const) {
+		if (text === null) continue;
+		candidates.push({ text, wasTruncated, lostContent, wasEscaped: false });
+		candidates.push({
+			text: escapeControlCharsInStrings(text),
+			wasTruncated,
+			lostContent,
+			wasEscaped: true,
+		});
+	}
+
+	for (const candidate of candidates) {
+		let parsed: unknown;
+		try {
+			parsed = JSON.parse(candidate.text);
+		} catch {
+			continue;
+		}
+
+		const lenient = validateNarrativeLenient(parsed);
+		if (!lenient) continue;
+
+		const reasons: string[] = [];
+		if (candidate.wasTruncated) {
+			reasons.push(
+				candidate.lostContent
+					? 'the response was cut off before it finished'
+					: 'the response was missing its closing punctuation'
+			);
+		}
+		if (candidate.wasEscaped) {
+			reasons.push('the response contained line breaks that are not valid inside JSON');
+		}
+		if (lenient.dropped > 0) {
+			reasons.push(
+				`${lenient.dropped} ${lenient.dropped === 1 ? 'bullet was' : 'bullets were'} malformed and dropped`
+			);
+		}
+		if (reasons.length === 0) reasons.push('the response did not match the expected shape exactly');
+
+		// Only a mid-report cut or a dropped bullet actually costs content.
+		// Rebuilding syntax - closing punctuation, escaping a stray line break -
+		// leaves every word the agent wrote intact.
+		const lossless = !candidate.lostContent && lenient.dropped === 0;
+
+		return {
+			ok: true,
+			narrative: lenient.narrative,
+			lossless,
+			reason: lossless
+				? `Repaired the response before reading it: ${reasons.join(', and ')}. No report content was lost.`
+				: `Recovered what could be read: ${reasons.join(', and ')}.`,
+		};
+	}
+
+	return { ok: false, error: 'No recoverable narrative content found in the response.' };
+}
+
 /** Render one bullet as Markdown, mirroring Rich Mode's emphasis without colors. */
-function narrativeItemToMarkdown(item: NarrativeItem): string {
+function narrativeItemToMarkdown(item: NarrativeItem, showAgent = true): string {
 	// `critical` reads as bold (Rich Mode shows it red + bold); `warn`/`info`
 	// stay plain. An item's `agent` is appended as a light italic attribution -
-	// the prose analogue of Rich Mode's agent pill.
+	// the prose analogue of Rich Mode's agent pill. It is dropped under an agent
+	// subheading, where it would only repeat the heading.
 	const text = item.severity === 'critical' ? `**${item.text}**` : item.text;
-	const attribution = item.agent ? ` _(${item.agent})_` : '';
+	const attribution = showAgent && item.agent ? ` _(${item.agent})_` : '';
 	return `- ${text}${attribution}`;
 }
 
@@ -250,20 +647,44 @@ function narrativeItemToMarkdown(item: NarrativeItem): string {
  * reading experience instead of dumping the JSON.
  *
  * Each section becomes a `##` heading followed by a bullet list. Empty sections
- * still render their heading plus a "Nothing to report." note so the three-part
- * Accomplishments / Challenges / Next Steps structure is always recognizable.
+ * still render their heading plus a "Nothing to report." note so the report's
+ * section structure is always recognizable.
+ *
+ * A section's bullets bucket the same way Rich Mode's do, under `###`
+ * subheadings: by GROUP when `groupLookup` maps the agent into one, by agent
+ * otherwise. A caller with no session state (the CLI) simply omits the lookup
+ * and gets the by-agent fallback. A section whose bullets all share one owner
+ * stays a flat list, since a lone subheading only repeats the section title.
  */
-export function narrativeToMarkdown(narrative: DirectorNotesNarrative): string {
+export function narrativeToMarkdown(
+	narrative: DirectorNotesNarrative,
+	options?: { groupLookup?: NarrativeGroupLookup | null }
+): string {
+	const groupLookup = options?.groupLookup ?? null;
+
 	const blocks = narrative.sections.map((section) => {
 		const lines = [`## ${section.title}`, ''];
 		if (section.items.length === 0) {
 			lines.push('_Nothing to report._');
-		} else {
+			return lines.join('\n');
+		}
+
+		const buckets = bucketNarrativeItems(section.items, groupLookup);
+		if (!shouldRenderBuckets(buckets)) {
 			for (const item of section.items) {
 				lines.push(narrativeItemToMarkdown(item));
 			}
+			return lines.join('\n');
 		}
-		return lines.join('\n');
+
+		for (const bucket of buckets) {
+			lines.push(`### ${bucket.emoji ? `${bucket.emoji} ` : ''}${bucket.label}`, '');
+			for (const item of bucket.items) {
+				lines.push(narrativeItemToMarkdown(item, bucket.isGroup));
+			}
+			lines.push('');
+		}
+		return lines.join('\n').trimEnd();
 	});
 	return blocks.join('\n\n').trim() + '\n';
 }

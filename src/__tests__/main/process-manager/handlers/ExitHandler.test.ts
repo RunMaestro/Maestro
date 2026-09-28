@@ -52,6 +52,16 @@ vi.mock('../../../../main/stores/getters', () => ({
 
 // For SSH-remote Copilot sessions the events file is read over SSH via
 // remote-fs. Mock the two read paths the shutdown reconciliation uses.
+// The Copilot shutdown wait is the one suspension point inside handleExit, so
+// tests that need a replacement to appear mid-flight drive it from here. Spied
+// rather than stubbed: the existing Copilot reconciliation tests exercise the
+// real implementation, and only the re-spawn tests override it.
+vi.mock('../../../../main/process-manager/CopilotShutdownWaiter', async (importOriginal) => {
+	const actual =
+		await importOriginal<typeof import('../../../../main/process-manager/CopilotShutdownWaiter')>();
+	return { ...actual, waitForCopilotShutdown: vi.fn(actual.waitForCopilotShutdown) };
+});
+
 vi.mock('../../../../main/utils/remote-fs', () => ({
 	readFileRemote: vi.fn(),
 	readFileTailRemote: vi.fn(),
@@ -60,12 +70,21 @@ vi.mock('../../../../main/utils/remote-fs', () => ({
 // ── Imports (after mocks) ──────────────────────────────────────────────────
 
 import { ExitHandler } from '../../../../main/process-manager/handlers/ExitHandler';
+import {
+	nextSpawnGeneration,
+	resetSpawnGenerationsForTest,
+} from '../../../../main/process-manager/generation';
 import { DataBufferManager } from '../../../../main/process-manager/handlers/DataBufferManager';
 import { captureException } from '../../../../main/utils/sentry';
 import { matchSshErrorPattern } from '../../../../main/parsers/error-patterns';
 import { getSshRemoteById } from '../../../../main/stores/getters';
 import { readFileRemote, readFileTailRemote } from '../../../../main/utils/remote-fs';
-import type { ManagedProcess } from '../../../../main/process-manager/types';
+import { waitForCopilotShutdown } from '../../../../main/process-manager/CopilotShutdownWaiter';
+
+const { waitForCopilotShutdown: actualWaitForCopilotShutdown } = await vi.importActual<
+	typeof import('../../../../main/process-manager/CopilotShutdownWaiter')
+>('../../../../main/process-manager/CopilotShutdownWaiter');
+import type { AgentError, ManagedProcess } from '../../../../main/process-manager/types';
 import type { AgentOutputParser, ParsedEvent } from '../../../../main/parsers';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -124,6 +143,9 @@ describe('ExitHandler', () => {
 		emitter = new EventEmitter();
 		bufferManager = new DataBufferManager(processes, emitter);
 		exitHandler = new ExitHandler({ processes, emitter, bufferManager });
+		// Generations are module state and only ever count up, so they must be
+		// reset between tests or a later test inherits a stale high-water mark.
+		resetSpawnGenerationsForTest();
 		// Default: no SSH remote resolves and no remote reads happen. Individual
 		// SSH tests override these. Reset so per-test mock values don't leak.
 		vi.mocked(getSshRemoteById)
@@ -131,6 +153,9 @@ describe('ExitHandler', () => {
 			.mockReturnValue(null as never);
 		vi.mocked(readFileRemote).mockReset();
 		vi.mocked(readFileTailRemote).mockReset();
+		// Restore the real shutdown wait; only the re-spawn tests replace it.
+		vi.mocked(waitForCopilotShutdown).mockReset();
+		vi.mocked(waitForCopilotShutdown).mockImplementation(actualWaitForCopilotShutdown);
 	});
 
 	describe('stream-json jsonBuffer processing at exit', () => {
@@ -161,6 +186,310 @@ describe('ExitHandler', () => {
 			expect(mockParser.parseJsonLine).toHaveBeenCalledWith(resultJson);
 			expect(mockParser.isResultMessage).toHaveBeenCalled();
 			expect(dataEvents).toContain('Auth Bug Fix');
+		});
+
+		it('emits an error, not data, when the trailing envelope reports a failure', async () => {
+			// A CLI that reports its failure in-band and then exits 0 used to settle
+			// the turn with nothing at all: isResultMessage rejects the error event,
+			// and detectErrorFromExit returns null on exit code 0.
+			const errorJson = '{"event":"result","result":{"error":"quota exhausted"}}';
+			const raw = JSON.parse(errorJson);
+			const agentError = {
+				type: 'rate_limited',
+				message: 'quota exhausted',
+				recoverable: true,
+				agentId: 'antigravity',
+				timestamp: 0,
+			};
+			const mockParser = createMockOutputParser({
+				parseJsonLine: vi.fn(() => ({
+					type: 'error',
+					text: 'quota exhausted',
+					raw,
+				})) as unknown as AgentOutputParser['parseJsonLine'],
+				isResultMessage: vi.fn(() => false) as unknown as AgentOutputParser['isResultMessage'],
+				detectErrorFromParsed: vi.fn(
+					() => agentError
+				) as unknown as AgentOutputParser['detectErrorFromParsed'],
+			});
+
+			const proc = createMockProcess({
+				isStreamJsonMode: true,
+				isBatchMode: true,
+				jsonBuffer: errorJson,
+				outputParser: mockParser,
+			});
+			processes.set('test-session', proc);
+
+			const dataEvents: string[] = [];
+			const errorEvents: unknown[] = [];
+			emitter.on('data', (_sid: string, data: string) => dataEvents.push(data));
+			emitter.on('agent-error', (_sid: string, err: unknown) => errorEvents.push(err));
+
+			await exitHandler.handleExit('test-session', 0);
+
+			expect(mockParser.detectErrorFromParsed).toHaveBeenCalledWith(raw);
+			expect(errorEvents).toHaveLength(1);
+			expect(errorEvents[0]).toMatchObject({
+				type: 'rate_limited',
+				sessionId: 'test-session',
+			});
+			// The failure text must never reach the user as the agent's answer.
+			expect(dataEvents).not.toContain('quota exhausted');
+			expect(proc.errorEmitted).toBe(true);
+		});
+
+		it('suppresses that trailing failure envelope when the user interrupted the turn', async () => {
+			// `interrupt()` sets `interrupted` before signalling, so anything the CLI
+			// flushes on its way out is a consequence of the Stop, not a turn failure.
+			// Raising it would show a red error and arm recovery for a turn the user
+			// deliberately abandoned.
+			const errorJson = '{"event":"result","result":{"error":"cancelled"}}';
+			const mockParser = createMockOutputParser({
+				parseJsonLine: vi.fn(() => ({
+					type: 'error',
+					text: 'cancelled',
+					raw: JSON.parse(errorJson),
+				})) as unknown as AgentOutputParser['parseJsonLine'],
+				isResultMessage: vi.fn(() => false) as unknown as AgentOutputParser['isResultMessage'],
+				detectErrorFromParsed: vi.fn(() => ({
+					type: 'unknown',
+					message: 'cancelled',
+					recoverable: true,
+					agentId: 'grok',
+					timestamp: 0,
+				})) as unknown as AgentOutputParser['detectErrorFromParsed'],
+			});
+
+			const proc = createMockProcess({
+				isStreamJsonMode: true,
+				isBatchMode: true,
+				jsonBuffer: errorJson,
+				outputParser: mockParser,
+				interrupted: true,
+			});
+			processes.set('test-session', proc);
+
+			const errorEvents: unknown[] = [];
+			emitter.on('agent-error', (_sid: string, err: unknown) => errorEvents.push(err));
+
+			await exitHandler.handleExit('test-session', 0);
+
+			expect(errorEvents).toHaveLength(0);
+			expect(proc.errorEmitted).toBe(false);
+		});
+
+		it('captures the provider session id from a failed trailing envelope', async () => {
+			// When the flushed line is the only event of the run, this is the sole
+			// chance to record the id. Losing it means a retry of a RECOVERABLE error
+			// starts a fresh conversation instead of resuming the failed one.
+			const errorJson =
+				'{"event":"result","result":{"conversation_id":"conv-42","error":"quota exhausted"}}';
+			const mockParser = createMockOutputParser({
+				parseJsonLine: vi.fn(() => ({
+					type: 'error',
+					text: 'quota exhausted',
+					raw: JSON.parse(errorJson),
+				})) as unknown as AgentOutputParser['parseJsonLine'],
+				isResultMessage: vi.fn(() => false) as unknown as AgentOutputParser['isResultMessage'],
+				extractSessionId: vi.fn(
+					() => 'conv-42'
+				) as unknown as AgentOutputParser['extractSessionId'],
+				detectErrorFromParsed: vi.fn(() => ({
+					type: 'rate_limited',
+					message: 'quota exhausted',
+					recoverable: true,
+					agentId: 'antigravity',
+					timestamp: 0,
+				})) as unknown as AgentOutputParser['detectErrorFromParsed'],
+			});
+
+			const proc = createMockProcess({
+				isStreamJsonMode: true,
+				isBatchMode: true,
+				jsonBuffer: errorJson,
+				outputParser: mockParser,
+			});
+			processes.set('test-session', proc);
+
+			const sessionIdEvents: string[] = [];
+			emitter.on('session-id', (_sid: string, agentSessionId: string) =>
+				sessionIdEvents.push(agentSessionId)
+			);
+
+			await exitHandler.handleExit('test-session', 0);
+
+			expect(sessionIdEvents).toEqual(['conv-42']);
+			expect(proc.agentSessionId).toBe('conv-42');
+		});
+
+		it('captures the provider session id from a successful trailing envelope', async () => {
+			const resultJson = '{"event":"result","result":{"conversation_id":"conv-7","response":"hi"}}';
+			const mockParser = createMockOutputParser({
+				parseJsonLine: vi.fn(() => ({
+					type: 'result',
+					text: 'hi',
+					raw: JSON.parse(resultJson),
+				})) as unknown as AgentOutputParser['parseJsonLine'],
+				isResultMessage: vi.fn(() => true) as unknown as AgentOutputParser['isResultMessage'],
+				extractSessionId: vi.fn(() => 'conv-7') as unknown as AgentOutputParser['extractSessionId'],
+			});
+
+			const proc = createMockProcess({
+				isStreamJsonMode: true,
+				isBatchMode: true,
+				jsonBuffer: resultJson,
+				outputParser: mockParser,
+			});
+			processes.set('test-session', proc);
+
+			const sessionIdEvents: string[] = [];
+			emitter.on('session-id', (_sid: string, agentSessionId: string) =>
+				sessionIdEvents.push(agentSessionId)
+			);
+
+			await exitHandler.handleExit('test-session', 0);
+
+			expect(sessionIdEvents).toEqual(['conv-7']);
+		});
+
+		it('does not re-emit a session id already reported mid-stream', async () => {
+			const errorJson =
+				'{"event":"result","result":{"conversation_id":"conv-42","error":"quota exhausted"}}';
+			const mockParser = createMockOutputParser({
+				parseJsonLine: vi.fn(() => ({
+					type: 'error',
+					text: 'quota exhausted',
+					raw: JSON.parse(errorJson),
+				})) as unknown as AgentOutputParser['parseJsonLine'],
+				isResultMessage: vi.fn(() => false) as unknown as AgentOutputParser['isResultMessage'],
+				extractSessionId: vi.fn(
+					() => 'conv-42'
+				) as unknown as AgentOutputParser['extractSessionId'],
+				detectErrorFromParsed: vi.fn(() => ({
+					type: 'rate_limited',
+					message: 'quota exhausted',
+					recoverable: true,
+					agentId: 'antigravity',
+					timestamp: 0,
+				})) as unknown as AgentOutputParser['detectErrorFromParsed'],
+			});
+
+			const proc = createMockProcess({
+				isStreamJsonMode: true,
+				isBatchMode: true,
+				jsonBuffer: errorJson,
+				outputParser: mockParser,
+			});
+			proc.sessionIdEmitted = true;
+			processes.set('test-session', proc);
+
+			const sessionIdEvents: string[] = [];
+			emitter.on('session-id', (_sid: string, agentSessionId: string) =>
+				sessionIdEvents.push(agentSessionId)
+			);
+
+			await exitHandler.handleExit('test-session', 0);
+
+			expect(sessionIdEvents).toEqual([]);
+			// Still recorded on the process, matching emitSessionIdIfNeeded.
+			expect(proc.agentSessionId).toBe('conv-42');
+		});
+
+		it('does not leak the raw envelope as data when classification throws', async () => {
+			// The catch around this flush exists for ONE expected condition - a
+			// malformed last line - and its fallback is to emit that line raw. If it
+			// also wrapped classification, a defect in detectErrorFromParsed would be
+			// swallowed and the failed envelope's JSON would be printed to the user as
+			// though it were the agent's answer.
+			const errorJson = '{"event":"result","result":{"error":"quota exhausted"}}';
+			const boom = new Error('classifier blew up');
+			const mockParser = createMockOutputParser({
+				parseJsonLine: vi.fn(() => ({
+					type: 'error',
+					text: 'quota exhausted',
+					raw: JSON.parse(errorJson),
+				})) as unknown as AgentOutputParser['parseJsonLine'],
+				isResultMessage: vi.fn(() => false) as unknown as AgentOutputParser['isResultMessage'],
+				detectErrorFromParsed: vi.fn(() => {
+					throw boom;
+				}) as unknown as AgentOutputParser['detectErrorFromParsed'],
+			});
+
+			const proc = createMockProcess({
+				isStreamJsonMode: true,
+				isBatchMode: true,
+				jsonBuffer: errorJson,
+				outputParser: mockParser,
+			});
+			processes.set('test-session', proc);
+
+			const dataEvents: string[] = [];
+			emitter.on('data', (_sid: string, data: string) => dataEvents.push(data));
+
+			await expect(exitHandler.handleExit('test-session', 0)).rejects.toThrow('classifier blew up');
+
+			expect(dataEvents).not.toContain(errorJson);
+		});
+
+		it('still emits a malformed trailing line as raw data', async () => {
+			const malformed = '{"event":"result","result":{ truncated';
+			const mockParser = createMockOutputParser({
+				parseJsonLine: vi.fn(() => {
+					throw new SyntaxError('Unexpected end of JSON input');
+				}) as unknown as AgentOutputParser['parseJsonLine'],
+			});
+
+			const proc = createMockProcess({
+				isStreamJsonMode: true,
+				isBatchMode: true,
+				jsonBuffer: malformed,
+				outputParser: mockParser,
+			});
+			processes.set('test-session', proc);
+
+			const dataEvents: string[] = [];
+			emitter.on('data', (_sid: string, data: string) => dataEvents.push(data));
+
+			await exitHandler.handleExit('test-session', 0);
+
+			expect(dataEvents).toContain(malformed);
+		});
+
+		it('does not double-report a trailing error already emitted from stdout', async () => {
+			const errorJson = '{"event":"result","result":{"error":"quota exhausted"}}';
+			const mockParser = createMockOutputParser({
+				parseJsonLine: vi.fn(() => ({
+					type: 'error',
+					text: 'quota exhausted',
+					raw: JSON.parse(errorJson),
+				})) as unknown as AgentOutputParser['parseJsonLine'],
+				isResultMessage: vi.fn(() => false) as unknown as AgentOutputParser['isResultMessage'],
+				detectErrorFromParsed: vi.fn(() => ({
+					type: 'rate_limited',
+					message: 'quota exhausted',
+					recoverable: true,
+					agentId: 'antigravity',
+					timestamp: 0,
+				})) as unknown as AgentOutputParser['detectErrorFromParsed'],
+			});
+
+			const proc = createMockProcess({
+				isStreamJsonMode: true,
+				isBatchMode: true,
+				jsonBuffer: errorJson,
+				outputParser: mockParser,
+			});
+			proc.errorEmitted = true;
+			processes.set('test-session', proc);
+
+			const errorEvents: unknown[] = [];
+			emitter.on('agent-error', (_sid: string, err: unknown) => errorEvents.push(err));
+
+			await exitHandler.handleExit('test-session', 0);
+
+			expect(mockParser.detectErrorFromParsed).not.toHaveBeenCalled();
+			expect(errorEvents).toHaveLength(0);
 		});
 
 		it('should not process jsonBuffer if already empty', async () => {
@@ -310,6 +639,73 @@ describe('ExitHandler', () => {
 		});
 	});
 
+	describe('held in-turn error notice at exit', () => {
+		const heldError: AgentError = {
+			type: 'unknown',
+			message: 'server_error',
+			recoverable: true,
+			agentId: 'claude-code',
+			sessionId: 'test-session',
+			timestamp: 1,
+		};
+
+		it('emits the held notice before the exit event', async () => {
+			const proc = createMockProcess({
+				isStreamJsonMode: true,
+				outputParser: createMockOutputParser(),
+				provisionalError: heldError,
+			});
+			processes.set('test-session', proc);
+
+			const order: string[] = [];
+			emitter.on('agent-error', (_sid: string, error: AgentError) =>
+				order.push(`agent-error:${error.message}`)
+			);
+			emitter.on('exit', () => order.push('exit'));
+
+			await exitHandler.handleExit('test-session', 0);
+
+			expect(order).toEqual(['agent-error:server_error', 'exit']);
+			expect(proc.errorEmitted).toBe(true);
+			expect(proc.provisionalError).toBeUndefined();
+		});
+
+		it('drops a held notice when the user interrupted the turn', async () => {
+			const proc = createMockProcess({
+				isStreamJsonMode: true,
+				outputParser: createMockOutputParser(),
+				interrupted: true,
+				provisionalError: heldError,
+			});
+			processes.set('test-session', proc);
+
+			const onAgentError = vi.fn();
+			emitter.on('agent-error', onAgentError);
+
+			await exitHandler.handleExit('test-session', 0);
+
+			expect(onAgentError).not.toHaveBeenCalled();
+			expect(proc.provisionalError).toBeUndefined();
+		});
+
+		it('does not emit a held notice after an error was already emitted', async () => {
+			const proc = createMockProcess({
+				isStreamJsonMode: true,
+				outputParser: createMockOutputParser(),
+				errorEmitted: true,
+				provisionalError: heldError,
+			});
+			processes.set('test-session', proc);
+
+			const onAgentError = vi.fn();
+			emitter.on('agent-error', onAgentError);
+
+			await exitHandler.handleExit('test-session', 0);
+
+			expect(onAgentError).not.toHaveBeenCalled();
+		});
+	});
+
 	describe('final data buffer flush', () => {
 		it('should flush data buffer before emitting exit event', async () => {
 			const proc = createMockProcess({
@@ -342,6 +738,129 @@ describe('ExitHandler', () => {
 			await exitHandler.handleExit('test-session', 0);
 
 			expect(exitEvents).toEqual([{ sessionId: 'test-session', code: 0 }]);
+		});
+	});
+
+	// Regression (issue #1044): handleExit can park mid-flight (Copilot's on-disk
+	// shutdown reconciliation), long enough for the session to be re-spawned under
+	// the same key. Emitting then would settle the successor's turn with the dead
+	// process's exit code, and the trailing delete would orphan a live process.
+	describe('session re-spawned while exit is being handled', () => {
+		// A replacement is simulated the way one really appears: it claims the next
+		// generation for the session id. Doing it through the counter (rather than
+		// swapping the map inside a parser callback) is what the production code
+		// actually keys on, and it stays valid no matter where the guard sits.
+		// The ONLY window in which a replacement can appear is the await inside
+		// handleExit (Copilot's on-disk shutdown reconciliation). These helpers
+		// register a predecessor that will suspend there, and swap the successor in
+		// while it is parked - which is what really happens in the field.
+		let successor: ManagedProcess | null = null;
+
+		const registerPredecessor = (overrides: Partial<ManagedProcess> = {}): ManagedProcess => {
+			const proc = createMockProcess({
+				toolType: 'copilot-cli',
+				agentSessionId: 'copilot-session-1',
+				...overrides,
+			});
+			proc.spawnGeneration = nextSpawnGeneration('test-session');
+			processes.set('test-session', proc);
+			return proc;
+		};
+
+		/** Claim the session id while handleExit is parked in the await. */
+		const supersedeDuringShutdownWait = (): void => {
+			vi.mocked(waitForCopilotShutdown).mockImplementation(async () => {
+				successor = createMockProcess({ pid: 4321 });
+				successor.spawnGeneration = nextSpawnGeneration('test-session');
+				processes.set('test-session', successor);
+				return { shutdown: false } as never;
+			});
+		};
+
+		it('suppresses the exit event and leaves the successor tracked', async () => {
+			registerPredecessor();
+			supersedeDuringShutdownWait();
+
+			const onExit = vi.fn();
+			emitter.on('exit', onExit);
+
+			await exitHandler.handleExit('test-session', 143);
+
+			expect(onExit).not.toHaveBeenCalled();
+			expect(processes.get('test-session')).toBe(successor);
+		});
+
+		// Suppressing only the final emit is not enough: everything downstream of
+		// the await writes into shared per-session state, so the predecessor's
+		// buffered bytes would surface inside the SUCCESSOR's reply and its duration
+		// would be recorded against the successor's turn.
+		it('does not flush its buffer or settle a query into the successor', async () => {
+			registerPredecessor({ isBatchMode: true, querySource: 'user' });
+			supersedeDuringShutdownWait();
+
+			const onQueryComplete = vi.fn();
+			emitter.on('query-complete', onQueryComplete);
+			const flushSpy = vi.spyOn(bufferManager, 'flushDataBuffer');
+
+			await exitHandler.handleExit('test-session', 143);
+
+			expect(onQueryComplete).not.toHaveBeenCalled();
+			// The one flush at the top of handleExit runs before the await, so no
+			// replacement can exist yet and it is harmless. The FINAL flush - the one
+			// that would push this process's bytes into the successor's stream - must
+			// not happen.
+			expect(flushSpy).toHaveBeenCalledTimes(1);
+		});
+
+		// The parser is reached only AFTER the guard, so a superseded process must
+		// never produce agent-error / usage / result text for the live session.
+		it('does not run parser side effects for a superseded process', async () => {
+			const parser = createMockOutputParser({
+				detectErrorFromExit: vi.fn(() => ({
+					type: 'unknown',
+					message: 'boom',
+				})) as unknown as AgentOutputParser['detectErrorFromExit'],
+			});
+			registerPredecessor({
+				isStreamJsonMode: true,
+				isBatchMode: true,
+				streamedText: 'predecessor output',
+				outputParser: parser,
+			});
+			supersedeDuringShutdownWait();
+
+			const onAgentError = vi.fn();
+			const dataEvents: string[] = [];
+			emitter.on('agent-error', onAgentError);
+			emitter.on('data', (_sid: string, data: string) => dataEvents.push(data));
+
+			await exitHandler.handleExit('test-session', 143);
+
+			expect(parser.detectErrorFromExit).not.toHaveBeenCalled();
+			expect(onAgentError).not.toHaveBeenCalled();
+			expect(dataEvents).not.toContain('predecessor output');
+		});
+
+		// The identity check can only answer while an entry exists. Once the
+		// successor finishes and deletes its own entry, `get()` returns undefined
+		// and a predecessor still draining would look current again - emitting a
+		// second exit for a session that already settled.
+		it('stays suppressed after the successor has finished and removed itself', async () => {
+			registerPredecessor();
+			vi.mocked(waitForCopilotShutdown).mockImplementation(async () => {
+				// Successor claims the id, runs, and untracks itself - all while this
+				// handler is parked. The map is empty again by the time we resume.
+				nextSpawnGeneration('test-session');
+				processes.delete('test-session');
+				return { shutdown: false } as never;
+			});
+
+			const onExit = vi.fn();
+			emitter.on('exit', onExit);
+
+			await exitHandler.handleExit('test-session', 143);
+
+			expect(onExit).not.toHaveBeenCalled();
 		});
 	});
 

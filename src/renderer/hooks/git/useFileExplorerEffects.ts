@@ -23,6 +23,9 @@ import { useFileExplorerStore } from '../../stores/fileExplorerStore';
 import { shouldOpenExternally, flattenTree, type FlatTreeNode } from '../../utils/fileExplorer';
 import { useLayerStack } from '../../contexts/LayerStackContext';
 import { captureException } from '../../utils/sentry';
+import { resolveFileReference } from '../../utils/fileLinks/resolve';
+import { getBasename } from '../../../shared/formatters';
+import { isTextInputTarget } from '../../utils/messageScrollNavigation';
 
 // ============================================================================
 // Dependencies interface
@@ -70,34 +73,6 @@ export interface UseFileExplorerEffectsReturn {
 		relativePath: string,
 		options?: { openInNewTab?: boolean }
 	) => Promise<void>;
-}
-
-function stripLineColumnSuffix(filePath: string): string {
-	return filePath.replace(/:(\d+)(?::\d+)?$/, '');
-}
-
-function isAbsoluteFilePath(filePath: string): boolean {
-	return (
-		filePath.startsWith('/') || /^[A-Za-z]:[\\/]/.test(filePath) || filePath.startsWith('\\\\')
-	);
-}
-
-function joinFilePath(rootPath: string, relativePath: string): string {
-	const root = rootPath.replace(/[\\/]+$/, '');
-	const child = relativePath.replace(/^[\\/]+/, '');
-	return `${root}/${child}`;
-}
-
-function resolveClickedFilePath(projectRoot: string, fileReference: string): string {
-	const normalizedReference = stripLineColumnSuffix(fileReference.trim());
-	if (isAbsoluteFilePath(normalizedReference)) {
-		return normalizedReference;
-	}
-	return joinFilePath(projectRoot, normalizedReference);
-}
-
-function getFilename(filePath: string): string {
-	return filePath.split(/[\\/]/).pop() || filePath;
 }
 
 // ============================================================================
@@ -169,8 +144,8 @@ export function useFileExplorerEffects(
 		async (relativePath: string, options?: { openInNewTab?: boolean }) => {
 			const currentSession = sessionsRef.current.find((s) => s.id === activeSessionIdRef.current);
 			if (!currentSession) return;
-			const fullPath = resolveClickedFilePath(currentSession.fullPath, relativePath);
-			const filename = getFilename(fullPath);
+			const fullPath = resolveFileReference(currentSession.fullPath, relativePath);
+			const filename = getBasename(fullPath);
 
 			// Get SSH remote ID
 			const sshRemoteId =
@@ -347,6 +322,13 @@ export function useFileExplorerEffects(
 	useEffect(() => {
 		const handleFileExplorerKeys = (e: KeyboardEvent) => {
 			if (hasOpenModal()) return;
+
+			// `activeFocus` is app state, not DOM focus, and the two can disagree:
+			// a shortcut can point the app at the Files tab while the caret is still
+			// in the markdown editor or a text field. Without this check, Enter typed
+			// into that editor also opened whatever row the tree had selected, and
+			// the arrow keys drove the tree alongside the caret. Real focus wins.
+			if (isTextInputTarget(e.target)) return;
 
 			if (activeFocus !== 'right' || activeRightTab !== 'files' || flatFileList.length === 0)
 				return;

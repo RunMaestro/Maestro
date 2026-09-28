@@ -1,23 +1,23 @@
 /**
  * Storage Collector
  *
- * Collects storage paths and sizes.
- * - All paths are sanitized
+ * Collects storage locations and sizes.
+ * - Paths are replaced with opaque descriptors (shape only, no names)
  */
 
 import { app } from 'electron';
 import * as fs from 'fs';
 import * as path from 'path';
 import Store from 'electron-store';
-import { sanitizePath } from './sanitize';
+import { redactPath } from './sanitize';
 
 export interface StorageInfo {
 	paths: {
-		userData: string; // Sanitized
-		sessions: string; // Sanitized
-		history: string; // Sanitized
-		logs: string; // Sanitized
-		groupChats: string; // Sanitized
+		userData: string; // Redacted path descriptor
+		sessions: string; // Redacted path descriptor
+		history: string; // Redacted path descriptor
+		logs: string; // Redacted path descriptor
+		groupChats: string; // Redacted path descriptor
 		customSyncPath?: string; // Just "[SET]" or not present
 	};
 	sizes: {
@@ -98,11 +98,11 @@ export async function collectStorage(bootstrapStore?: Store<any>): Promise<Stora
 
 	const result: StorageInfo = {
 		paths: {
-			userData: sanitizePath(userDataPath),
-			sessions: sanitizePath(dataPath),
-			history: sanitizePath(historyPath),
-			logs: sanitizePath(userDataPath),
-			groupChats: sanitizePath(groupChatsPath),
+			userData: redactPath(userDataPath),
+			sessions: redactPath(dataPath),
+			history: redactPath(historyPath),
+			logs: redactPath(userDataPath),
+			groupChats: redactPath(groupChatsPath),
 			customSyncPath: customSyncPath ? '[SET]' : undefined,
 		},
 		sizes: {

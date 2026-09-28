@@ -39,12 +39,18 @@ export function CadenzaHudRoot() {
 		const offFlash = window.maestro?.process?.onRemoteCadenzaFlash?.((id) => {
 			useCadenzaStore.getState().flashItem(id);
 		});
+		// The "stash all cadenzas" hotkey is pressed in the main window; the cards
+		// are here, so main mirrors the toggle into this renderer.
+		const offHidden = window.maestro?.process?.onRemoteCadenzaHidden?.((hidden) => {
+			useCadenzaStore.getState().setHidden(hidden);
+		});
 		// Tell main the subscription is live so it can flush the cadenza that
 		// triggered this (lazily created) window - otherwise the first one is lost.
 		window.maestro?.process?.notifyCadenzaHudReady?.();
 		return () => {
 			off?.();
 			offFlash?.();
+			offHidden?.();
 		};
 	}, []);
 

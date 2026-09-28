@@ -12,7 +12,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, act, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, act, waitFor, within } from '@testing-library/react';
 import { SessionList } from '../../../renderer/components/SessionList';
 import type { Session, Group, Theme } from '../../../renderer/types';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
@@ -31,7 +31,10 @@ const enableGroupsPlus = () =>
 		encoreFeatures: { ...useSettingsStore.getState().encoreFeatures, groupsPlus: true },
 	});
 import { useBatchStore } from '../../../renderer/stores/batchStore';
+import { useGroupChatStore } from '../../../renderer/stores/groupChatStore';
 import { useModalStore } from '../../../renderer/stores/modalStore';
+import { useMediaPlaybackStore } from '../../../renderer/stores/mediaPlaybackStore';
+import { requestSidebarReveal } from '../../../renderer/utils/sidebarReveal';
 import type { BatchRunState } from '../../../renderer/types';
 
 const LEGACY_WORKTREE_EMOJI = String.fromCodePoint(0x1f333);
@@ -56,6 +59,10 @@ vi.mock('lucide-react', async (importOriginal) => ({
 	X: () => <span data-testid="icon-x" />,
 	Keyboard: () => <span data-testid="icon-keyboard" />,
 	Radio: () => <span data-testid="icon-radio" />,
+	// The now-playing pill's transport, needed by the wordmark width-gate tests.
+	Play: () => <span data-testid="icon-play" />,
+	Pause: () => <span data-testid="icon-pause" />,
+	Maximize2: () => <span data-testid="icon-maximize" />,
 	Copy: () => <span data-testid="icon-copy" />,
 	ExternalLink: () => <span data-testid="icon-external-link" />,
 	PanelLeftClose: () => <span data-testid="icon-panel-left-close" />,
@@ -89,11 +96,22 @@ vi.mock('lucide-react', async (importOriginal) => ({
 	Music: () => <span data-testid="icon-music" />,
 	Command: () => <span data-testid="icon-command" />,
 	MessageSquare: () => <span data-testid="icon-message-square" />,
+	// Group chat list chrome - rendered as soon as one chat exists.
+	Archive: () => <span data-testid="icon-archive" />,
+	ArchiveRestore: () => <span data-testid="icon-archive-restore" />,
+	ArrowDownAZ: () => <span data-testid="icon-arrow-down-az" />,
 	MessageSquarePlus: () => <span data-testid="icon-message-square-plus" />,
 	Bell: () => <span data-testid="icon-bell" />,
 	Zap: ({ title, style }: { title?: string; style?: Record<string, string> }) => (
 		<span data-testid="icon-zap" title={title} style={style} />
 	),
+	// Git action icons in the session context menu
+	History: () => <span data-testid="icon-history" />,
+	FileDiff: () => <span data-testid="icon-file-diff" />,
+	ArrowDown: () => <span data-testid="icon-arrow-down" />,
+	ArrowUp: () => <span data-testid="icon-arrow-up" />,
+	ArrowDownToLine: () => <span data-testid="icon-arrow-down-to-line" />,
+	ArrowUpFromLine: () => <span data-testid="icon-arrow-up-from-line" />,
 }));
 
 vi.mock('../../../renderer/components/plugins/PluginUiItemsSlot', () => ({
@@ -111,7 +129,7 @@ vi.mock('../../../renderer/services/git', () => ({
 // Mock InlineWizardContext to avoid Provider requirement
 vi.mock('../../../renderer/contexts/InlineWizardContext', () => ({
 	useInlineWizardContext: () => ({
-		wizardActiveSessions: new Map(),
+		wizardActiveTabs: new Map(),
 	}),
 }));
 
@@ -321,6 +339,12 @@ describe('SessionList', () => {
 			bookmarksCollapsed: false,
 			sessionFilterOpen: false,
 			showUnreadAgentsOnly: false,
+			// The filter text and the archived-chat toggle live in uiStore now (the
+			// Cmd+[ / Cmd+] cycle has to see them). Reset them here or the "filters
+			// sessions by name" test leaves a query behind and every later test
+			// renders an empty sidebar.
+			sessionFilter: '',
+			showArchivedGroupChats: false,
 		});
 		useSessionStore.setState({
 			sessions: [],
@@ -336,6 +360,14 @@ describe('SessionList', () => {
 			encoreFeatures: { ...DEFAULT_ENCORE_FEATURES },
 		});
 		useBatchStore.setState({ batchRunStates: {} });
+		useGroupChatStore.setState({
+			groupChats: [],
+			activeGroupChatId: null,
+			groupChatState: 'idle',
+			participantStates: new Map(),
+			groupChatStates: new Map(),
+			allGroupChatParticipantStates: new Map(),
+		});
 		// Reset tunnel mock
 		(window.maestro as Record<string, unknown>).tunnel = {
 			isCloudflaredInstalled: vi.fn().mockResolvedValue(true),
@@ -384,9 +416,70 @@ describe('SessionList', () => {
 	// Basic Rendering Tests
 	// ============================================================================
 
+	// ============================================================================
+	// Narrow-viewport drawer
+	// ============================================================================
+
+	describe('narrow-viewport drawer', () => {
+		const originalWidth = window.innerWidth;
+		const setViewportWidth = (width: number) => {
+			Object.defineProperty(window, 'innerWidth', {
+				configurable: true,
+				writable: true,
+				value: width,
+			});
+		};
+
+		afterEach(() => {
+			setViewportWidth(originalWidth);
+		});
+
+		const renderWithSession = (activeSessionId: string) => {
+			const sessions = [createMockSession({ id: 's1', name: 'Frontend Project' })];
+			useSessionStore.setState({ sessions, activeSessionId });
+			useUIStore.setState({ leftSidebarOpen: true });
+			render(<SessionList {...createDefaultProps({ sortedSessions: sessions })} />);
+		};
+
+		it('closes the drawer when an agent row is tapped', () => {
+			setViewportWidth(390);
+			renderWithSession('');
+
+			fireEvent.click(screen.getByText('Frontend Project'));
+
+			expect(useSessionStore.getState().activeSessionId).toBe('s1');
+			expect(useUIStore.getState().leftSidebarOpen).toBe(false);
+		});
+
+		it('closes the drawer even when the tapped agent is already active', () => {
+			// The case an effect keyed on the activeSessionId transition cannot see:
+			// nothing changes, so the drawer used to stay over the agent.
+			setViewportWidth(390);
+			renderWithSession('s1');
+
+			fireEvent.click(screen.getByText('Frontend Project'));
+
+			expect(useUIStore.getState().leftSidebarOpen).toBe(false);
+		});
+
+		it('leaves the sidebar open on a wide viewport', () => {
+			setViewportWidth(1440);
+			renderWithSession('');
+
+			fireEvent.click(screen.getByText('Frontend Project'));
+
+			expect(useSessionStore.getState().activeSessionId).toBe('s1');
+			expect(useUIStore.getState().leftSidebarOpen).toBe(true);
+		});
+	});
+
 	describe('Basic Rendering', () => {
 		it('renders the MAESTRO branding header when expanded', () => {
 			useUIStore.setState({ leftSidebarOpen: true });
+			// Wide enough to clear the wordmark's width gate. The default sidebar
+			// width is the 256px minimum, where the wordmark is dropped rather than
+			// clipped, so a branding assertion has to state the width it means.
+			useSettingsStore.setState({ leftSidebarWidth: 400 });
 			const props = createDefaultProps({});
 			render(<SessionList {...props} />);
 
@@ -395,6 +488,7 @@ describe('SessionList', () => {
 
 		it('branding header has z-20 to stack menu above sidebar content', () => {
 			useUIStore.setState({ leftSidebarOpen: true });
+			useSettingsStore.setState({ leftSidebarWidth: 400 });
 			const props = createDefaultProps({});
 			render(<SessionList {...props} />);
 
@@ -568,15 +662,15 @@ describe('SessionList', () => {
 			expect(toggleGlobalLive).toHaveBeenCalled();
 		});
 
-		it('hides OFFLINE text when sidebar width is narrow (< 256px) with autoRunStats badge', () => {
-			// When autoRunStats.currentBadgeLevel > 0, threshold is 295px
-			// When no autoRunStats, threshold is 256px
+		it('still shows OFFLINE text at the minimum width with an autoRunStats badge', () => {
+			// The wordmark is already dropped at 256px, and the room it vacated is
+			// more than the badge costs - so the badge must not push the label out.
 			const autoRunStats = {
 				totalDocuments: 1,
 				currentDocument: 1,
 				completedTasks: 0,
 				totalTasks: 5,
-				currentBadgeLevel: 1, // This raises threshold to 295px
+				currentBadgeLevel: 1,
 			};
 			useUIStore.setState({ leftSidebarOpen: true });
 			useSettingsStore.setState({
@@ -588,7 +682,19 @@ describe('SessionList', () => {
 			});
 			render(<SessionList {...props} />);
 
-			// Text should be hidden when below threshold with active badge
+			expect(screen.queryByText('MAESTRO')).not.toBeInTheDocument();
+			expect(screen.getByText('OFFLINE')).toBeInTheDocument();
+			expect(screen.getByTestId('icon-radio')).toBeInTheDocument();
+		});
+
+		it('hides OFFLINE text below the label threshold', () => {
+			useUIStore.setState({ leftSidebarOpen: true });
+			useSettingsStore.setState({ leftSidebarWidth: 255 });
+			const props = createDefaultProps({
+				isLiveMode: false,
+			});
+			render(<SessionList {...props} />);
+
 			expect(screen.queryByText('OFFLINE')).not.toBeInTheDocument();
 			// But the Radio icon should still be present
 			expect(screen.getByTestId('icon-radio')).toBeInTheDocument();
@@ -619,14 +725,13 @@ describe('SessionList', () => {
 			expect(screen.getByText('OFFLINE')).toBeInTheDocument();
 		});
 
-		it('hides LIVE text when sidebar width is narrow with autoRunStats badge', () => {
-			// When autoRunStats.currentBadgeLevel > 0, threshold is 295px
+		it('still shows LIVE text at the minimum width with an autoRunStats badge', () => {
 			const autoRunStats = {
 				totalDocuments: 1,
 				currentDocument: 1,
 				completedTasks: 0,
 				totalTasks: 5,
-				currentBadgeLevel: 1, // This raises threshold to 295px
+				currentBadgeLevel: 1,
 			};
 			useUIStore.setState({ leftSidebarOpen: true });
 			useSettingsStore.setState({
@@ -639,7 +744,20 @@ describe('SessionList', () => {
 			});
 			render(<SessionList {...props} />);
 
-			// Text should be hidden when below threshold with active badge
+			expect(screen.getByText('LIVE')).toBeInTheDocument();
+			expect(screen.getByTestId('icon-radio')).toBeInTheDocument();
+		});
+
+		it('hides LIVE text below the label threshold', () => {
+			useUIStore.setState({ leftSidebarOpen: true });
+			useSettingsStore.setState({ leftSidebarWidth: 255 });
+			const props = createDefaultProps({
+				isLiveMode: true,
+				webInterfaceUrl: 'http://localhost:3000',
+			});
+			render(<SessionList {...props} />);
+
+			// Text should be hidden when below threshold
 			expect(screen.queryByText('LIVE')).not.toBeInTheDocument();
 			// But the Radio icon should still be present
 			expect(screen.getByTestId('icon-radio')).toBeInTheDocument();
@@ -1472,6 +1590,27 @@ describe('SessionList', () => {
 			expect(screen.getByText('Remove Agent')).toBeInTheDocument();
 		});
 
+		it('heads the context menu with the name of the agent it acts on', () => {
+			const sessions = [createMockSession({ id: 's1', name: 'Header Me' })];
+			useSessionStore.setState({ sessions: sessions });
+			useUIStore.setState({ leftSidebarOpen: true });
+			const props = createDefaultProps({
+				sortedSessions: sessions,
+			});
+			render(<SessionList {...props} />);
+
+			// Only the Left Bar row carries the name before the menu opens.
+			expect(screen.getAllByText('Header Me')).toHaveLength(1);
+
+			fireEvent.contextMenu(screen.getByText('Header Me'), { clientX: 100, clientY: 100 });
+
+			// The menu pops away from the row it was opened on, so it has to name
+			// the agent itself or its destructive items are unattributed.
+			const menu = screen.getByText('Remove Agent').closest('div.fixed');
+			expect(menu).not.toBeNull();
+			expect(within(menu as HTMLElement).getByText('Header Me')).toBeInTheDocument();
+		});
+
 		it('closes context menu on Escape', () => {
 			const sessions = [createMockSession({ id: 's1', name: 'Test Session' })];
 			useSessionStore.setState({ sessions: sessions });
@@ -1860,6 +1999,45 @@ describe('SessionList', () => {
 			const wandIcons = screen.getAllByTestId('icon-wand');
 			const hasSparkle = wandIcons.some((el) => el.className.includes('wand-sparkle-active'));
 			expect(hasSparkle).toBe(true);
+		});
+
+		it('activates wand sparkle when a group chat is running', () => {
+			const sessions = [createMockSession({ id: 's1', name: 'Idle Session', state: 'idle' })];
+			useSessionStore.setState({ sessions: sessions });
+			useUIStore.setState({ leftSidebarOpen: true });
+			useGroupChatStore.setState({
+				groupChats: [{ id: 'gc-1', name: 'Squad' } as never],
+				activeGroupChatId: null,
+				groupChatStates: new Map([['gc-1', 'agent-working' as const]]),
+			});
+			const props = createDefaultProps({
+				sortedSessions: sessions,
+			});
+			render(<SessionList {...props} />);
+
+			const wandIcons = screen.getAllByTestId('icon-wand');
+			const hasSparkle = wandIcons.some((el) => el.className.includes('wand-sparkle-active'));
+			expect(hasSparkle).toBe(true);
+		});
+
+		it('does not activate wand sparkle for a busy group chat that no longer exists', () => {
+			const sessions = [createMockSession({ id: 's1', name: 'Idle Session', state: 'idle' })];
+			useSessionStore.setState({ sessions: sessions });
+			useUIStore.setState({ leftSidebarOpen: true });
+			// Stale map entry left behind by a deleted room must not light the wand.
+			useGroupChatStore.setState({
+				groupChats: [],
+				activeGroupChatId: null,
+				groupChatStates: new Map([['gc-gone', 'agent-working' as const]]),
+			});
+			const props = createDefaultProps({
+				sortedSessions: sessions,
+			});
+			render(<SessionList {...props} />);
+
+			const wandIcons = screen.getAllByTestId('icon-wand');
+			const hasSparkle = wandIcons.some((el) => el.className.includes('wand-sparkle-active'));
+			expect(hasSparkle).toBe(false);
 		});
 
 		it('does not activate wand sparkle when no sessions are busy or in auto-run', () => {
@@ -2459,17 +2637,15 @@ describe('SessionList', () => {
 
 			expect(screen.getByText('Move to Group')).toBeInTheDocument();
 
-			// Hover over Move to Group - find the parent div
+			// Hover the row that owns the submenu
 			const moveToGroupButton = screen.getByText('Move to Group');
-			const parentDiv = moveToGroupButton.closest('.relative');
-			fireEvent.mouseEnter(parentDiv!);
+			fireEvent.mouseEnter(moveToGroupButton.closest('div')!);
 
-			// Submenu should show group name - there may be multiple since it appears in groups section too
-			const submenuTargets = screen.getAllByText('Submenu Target');
-			expect(submenuTargets.length).toBeGreaterThan(0);
-			// The "Ungrouped" option in the submenu should be visible (may appear multiple times)
-			const ungroupedElements = screen.getAllByText('Ungrouped');
-			expect(ungroupedElements.length).toBeGreaterThan(0);
+			// The flyout is portaled out of the menu (the menu scrolls, which would
+			// otherwise clip it away), so assert against the flyout itself.
+			const flyout = within(screen.getByTestId('session-context-flyout'));
+			expect(flyout.getByText('Submenu Target')).toBeInTheDocument();
+			expect(flyout.getByText('Ungrouped')).toBeInTheDocument();
 		});
 
 		it('moves session to group when submenu item clicked', () => {
@@ -2492,16 +2668,14 @@ describe('SessionList', () => {
 
 			expect(screen.getByText('Move to Group')).toBeInTheDocument();
 
-			// Hover and click group - find within context menu
+			// Hover the row that owns the submenu
 			const moveToGroupButton = screen.getByText('Move to Group');
-			const parentDiv = moveToGroupButton.closest('.relative');
-			fireEvent.mouseEnter(parentDiv!);
+			fireEvent.mouseEnter(moveToGroupButton.closest('div')!);
 
-			// Get all elements with the group name, click the one in the submenu (inside fixed positioned menu)
-			const groupButtons = screen.getAllByText('Click Target');
-			// The submenu item should be in a button within the fixed positioned context menu
-			const submenuButton = groupButtons.find((el) => el.closest('button')?.closest('.absolute'));
-			fireEvent.click(submenuButton || groupButtons[groupButtons.length - 1]);
+			// The group name also appears in the Left Bar, so scope the click to the
+			// portaled flyout rather than guessing which copy is the menu item.
+			const flyout = within(screen.getByTestId('session-context-flyout'));
+			fireEvent.click(flyout.getByText('Click Target'));
 
 			expect(setSessions).toHaveBeenCalled();
 		});
@@ -4008,6 +4182,369 @@ describe('SessionList', () => {
 			});
 
 			expect(screen.queryByTestId('icon-zap')).not.toBeInTheDocument();
+		});
+	});
+
+	// -----------------------------------------------------------------------
+	// Keyboard-reveal auto-scroll
+	// -----------------------------------------------------------------------
+	describe('Left Bar auto-scroll', () => {
+		let scrollSpy: ReturnType<typeof vi.fn>;
+
+		const makeChat = (overrides: Record<string, unknown> = {}) =>
+			({
+				id: 'gc-1',
+				name: 'Squad',
+				createdAt: Date.now(),
+				moderatorAgentId: 'claude-code',
+				moderatorSessionId: 'group-chat-gc-1-moderator',
+				participants: [],
+				logPath: '/tmp/gc-1.log',
+				imagesDir: '/tmp/gc-1-images',
+				...overrides,
+			}) as never;
+
+		beforeEach(() => {
+			scrollSpy = vi.fn();
+			Element.prototype.scrollIntoView = scrollSpy as unknown as () => void;
+		});
+
+		/**
+		 * The reveal defers a frame so the cursor can settle - `selectedSidebarIndex`
+		 * is synced from `activeSessionId` by a parent effect, and reading it
+		 * synchronously gives the row the cursor is leaving.
+		 */
+		const flushFrames = async () => {
+			await act(async () => {
+				await new Promise((r) => setTimeout(r, 40));
+			});
+		};
+
+		it('does not scroll the list when the active group chat is archived', () => {
+			// The group chat section only renders with at least two AI agents.
+			const sessions = [
+				createMockSession({ id: 's1', name: 'Agent One', state: 'idle' }),
+				createMockSession({ id: 's2', name: 'Agent Two', state: 'idle' }),
+			];
+			useSessionStore.setState({ sessions, activeSessionId: 's1' });
+			// Cursor sits on the first agent row, which is where the list would
+			// wrongly scroll to once the group chat stops being active.
+			useUIStore.setState({ leftSidebarOpen: true, selectedSidebarIndex: 0 });
+			useSettingsStore.setState({ groupChatsExpanded: true });
+			useGroupChatStore.setState({
+				groupChats: [makeChat()],
+				activeGroupChatId: 'gc-1',
+			});
+			const props = createDefaultProps({ sortedSessions: sessions, visibleSessions: sessions });
+			render(<SessionList {...props} />);
+			scrollSpy.mockClear();
+
+			// Archiving the open chat closes it: the row leaves the list and
+			// activeGroupChatId clears, but the cursor never moved.
+			act(() => {
+				useGroupChatStore.setState({
+					groupChats: [makeChat({ archived: true })],
+					activeGroupChatId: null,
+				});
+			});
+
+			expect(scrollSpy).not.toHaveBeenCalled();
+		});
+
+		// Every switch reveals the new active row EXCEPT one the user made by
+		// clicking the Left Bar: they are already looking at the row they clicked.
+		it('does not scroll when a group chat is opened from the Left Bar', async () => {
+			const sessions = [
+				createMockSession({ id: 's1', name: 'Agent One', state: 'idle' }),
+				createMockSession({ id: 's2', name: 'Agent Two', state: 'idle' }),
+			];
+			useSessionStore.setState({ sessions, activeSessionId: 's1' });
+			useUIStore.setState({ leftSidebarOpen: true, selectedSidebarIndex: 0 });
+			useSettingsStore.setState({ groupChatsExpanded: true });
+			useGroupChatStore.setState({ groupChats: [makeChat()], activeGroupChatId: null });
+			const props = createDefaultProps({ sortedSessions: sessions, visibleSessions: sessions });
+			render(<SessionList {...props} />);
+			scrollSpy.mockClear();
+
+			fireEvent.pointerDown(screen.getByText('Squad'));
+			act(() => {
+				useGroupChatStore.setState({ activeGroupChatId: 'gc-1' });
+			});
+			await flushFrames();
+
+			expect(scrollSpy).not.toHaveBeenCalled();
+		});
+
+		it('scrolls the group chat into view when it is opened from elsewhere', async () => {
+			const sessions = [
+				createMockSession({ id: 's1', name: 'Agent One', state: 'idle' }),
+				createMockSession({ id: 's2', name: 'Agent Two', state: 'idle' }),
+			];
+			useSessionStore.setState({ sessions, activeSessionId: 's1' });
+			useUIStore.setState({ leftSidebarOpen: true, selectedSidebarIndex: 0 });
+			useSettingsStore.setState({ groupChatsExpanded: true });
+			useGroupChatStore.setState({ groupChats: [makeChat()], activeGroupChatId: null });
+			const props = createDefaultProps({ sortedSessions: sessions, visibleSessions: sessions });
+			render(<SessionList {...props} />);
+			scrollSpy.mockClear();
+
+			// Cmd+O picking the group chat: the last input was a keystroke.
+			fireEvent.keyDown(window, { key: 'Enter' });
+			act(() => {
+				useGroupChatStore.setState({ activeGroupChatId: 'gc-1' });
+			});
+			await flushFrames();
+
+			expect(scrollSpy).toHaveBeenCalled();
+		});
+
+		it('scrolls the group chat into view when a reveal is requested', async () => {
+			const sessions = [
+				createMockSession({ id: 's1', name: 'Agent One', state: 'idle' }),
+				createMockSession({ id: 's2', name: 'Agent Two', state: 'idle' }),
+			];
+			useSessionStore.setState({ sessions, activeSessionId: 's1' });
+			useUIStore.setState({ leftSidebarOpen: true, selectedSidebarIndex: 0 });
+			useSettingsStore.setState({ groupChatsExpanded: true });
+			useGroupChatStore.setState({ groupChats: [makeChat()], activeGroupChatId: null });
+			const props = createDefaultProps({ sortedSessions: sessions, visibleSessions: sessions });
+			render(<SessionList {...props} />);
+			scrollSpy.mockClear();
+
+			act(() => {
+				useGroupChatStore.setState({ activeGroupChatId: 'gc-1' });
+				requestSidebarReveal();
+			});
+			await flushFrames();
+
+			expect(scrollSpy).toHaveBeenCalled();
+		});
+
+		it('does not scroll when an agent is clicked', async () => {
+			const sessions = [
+				createMockSession({ id: 's1', name: 'Agent One', state: 'idle' }),
+				createMockSession({ id: 's2', name: 'Agent Two', state: 'idle' }),
+			];
+			useSessionStore.setState({ sessions, activeSessionId: 's1' });
+			useUIStore.setState({ leftSidebarOpen: true, selectedSidebarIndex: 0 });
+			const props = createDefaultProps({ sortedSessions: sessions, visibleSessions: sessions });
+			render(<SessionList {...props} />);
+			scrollSpy.mockClear();
+
+			// The user is already looking at the row they clicked. Re-aiming the
+			// list they just scrolled by hand is the reported bug - and it used to
+			// scroll TWICE, first to wherever the keyboard cursor had been left.
+			fireEvent.pointerDown(screen.getByText('Agent Two'));
+			fireEvent.click(screen.getByText('Agent Two'));
+			act(() => {
+				useSessionStore.setState({ activeSessionId: 's2' });
+			});
+			await flushFrames();
+
+			expect(scrollSpy).not.toHaveBeenCalled();
+		});
+
+		// Opt+Cmd+NUMBER, Cmd+K, Cmd+O, a toast, `maestro-cli focus-agent`: none of
+		// them touch the Left Bar, and the agent they land on may be scrolled away.
+		it('scrolls the new active agent into view on a switch made elsewhere', async () => {
+			const sessions = [
+				createMockSession({ id: 's1', name: 'Agent One', state: 'idle' }),
+				createMockSession({ id: 's2', name: 'Agent Two', state: 'idle' }),
+			];
+			useSessionStore.setState({ sessions, activeSessionId: 's1' });
+			useUIStore.setState({ leftSidebarOpen: true, selectedSidebarIndex: 0 });
+			const props = createDefaultProps({ sortedSessions: sessions, visibleSessions: sessions });
+			render(<SessionList {...props} />);
+			scrollSpy.mockClear();
+
+			act(() => {
+				useSessionStore.setState({ activeSessionId: 's2' });
+				useUIStore.setState({ selectedSidebarIndex: 1 });
+			});
+			await flushFrames();
+
+			expect(scrollSpy).toHaveBeenCalledTimes(1);
+			expect(scrollSpy.mock.contexts[0]).toBe(document.querySelector('[data-nav-key="idx:1"]'));
+		});
+
+		// The click marker must not outlive the click: a shortcut pressed after it
+		// is a switch the user did not make by pointing at the list.
+		it('still reveals a keyboard switch made after a Left Bar click', async () => {
+			const sessions = [
+				createMockSession({ id: 's1', name: 'Agent One', state: 'idle' }),
+				createMockSession({ id: 's2', name: 'Agent Two', state: 'idle' }),
+			];
+			useSessionStore.setState({ sessions, activeSessionId: 's1' });
+			useUIStore.setState({ leftSidebarOpen: true, selectedSidebarIndex: 0 });
+			const props = createDefaultProps({ sortedSessions: sessions, visibleSessions: sessions });
+			render(<SessionList {...props} />);
+			scrollSpy.mockClear();
+
+			// Click the row that is already active: no switch consumes the marker.
+			fireEvent.pointerDown(screen.getByText('Agent One'));
+			fireEvent.keyDown(window, { key: '2', code: 'Digit2', altKey: true, metaKey: true });
+			act(() => {
+				useSessionStore.setState({ activeSessionId: 's2' });
+				useUIStore.setState({ selectedSidebarIndex: 1 });
+			});
+			await flushFrames();
+
+			expect(scrollSpy).toHaveBeenCalledTimes(1);
+		});
+	});
+
+	// ============================================================================
+	// Wordmark width gate
+	// ============================================================================
+
+	/**
+	 * The rule: MAESTRO is drawn IN FULL or not drawn at all. It used to
+	 * `truncate`, so a narrow sidebar rendered the brand as "MAE...", which reads
+	 * as a rendering bug rather than as a deliberate space saving.
+	 *
+	 * These drive `leftSidebarWidth` directly, the same way the LIVE and
+	 * now-playing label tests above do, so jsdom's missing layout engine is not a
+	 * problem.
+	 */
+	describe('MAESTRO wordmark', () => {
+		beforeEach(() => {
+			useUIStore.setState({ leftSidebarOpen: true });
+			useMediaPlaybackStore.setState({ dismissed: false, dormant: true, activeItemId: null });
+		});
+
+		afterEach(() => {
+			useMediaPlaybackStore.setState({ dismissed: false, dormant: true, activeItemId: null });
+		});
+
+		/** Put the now-playing pill on screen: engaged this session, then hidden. */
+		const showNowPlayingPill = () => {
+			useMediaPlaybackStore.setState({
+				dismissed: true,
+				dormant: false,
+				activeItemId: 'media-1',
+				items: [
+					{
+						id: 'media-1',
+						name: 'a-very-long-recording-name.mp3',
+						path: '/tmp/a-very-long-recording-name.mp3',
+						kind: 'audio',
+					},
+				],
+			} as never);
+		};
+
+		/**
+		 * The header is three zones: identity, indicators, menu. jsdom has no
+		 * layout engine, so these assert the structure that produces the centering
+		 * (a flex-1 band between two shrink-0 zones) rather than pixel positions.
+		 */
+		it('puts every indicator in the centered band, not beside the wordmark', () => {
+			useSettingsStore.setState({
+				leftSidebarWidth: 600,
+				autoRunStats: {
+					totalDocuments: 1,
+					currentDocument: 1,
+					completedTasks: 0,
+					totalTasks: 5,
+					currentBadgeLevel: 1,
+				},
+			});
+			showNowPlayingPill();
+			render(<SessionList {...createDefaultProps({})} />);
+
+			const band = screen.getByTestId('sidebar-header-indicators');
+			// flex-1 between two shrink-0 zones is what centers the band.
+			expect(band.className).toContain('flex-1');
+			expect(band.className).toContain('justify-center');
+
+			// The wordmark is identity, so it stays out of the band.
+			expect(band.contains(screen.getByText('MAESTRO'))).toBe(false);
+			expect(band.contains(screen.getByTitle('Switch agent'))).toBe(false);
+			expect(band.contains(screen.getByTitle('Menu'))).toBe(false);
+
+			// Every indicator lives inside it.
+			expect(band.contains(screen.getByTestId('icon-radio'))).toBe(true);
+			expect(band.contains(screen.getByTestId('now-playing-indicator'))).toBe(true);
+			expect(band.contains(screen.getByTestId('icon-trophy'))).toBe(true);
+		});
+
+		// Minimizing is a promise that the widget is parked somewhere reachable,
+		// and the pill is the only place it parks. The collapsed rail used to skip
+		// it on the grounds that a 64px strip belongs to the agents, which made
+		// minimize equal vanish there: no pill, no widget, and the only route back
+		// an unbound shortcut.
+		it('keeps the minimized player reachable on the collapsed rail', () => {
+			useUIStore.setState({ leftSidebarOpen: false, leftSidebarHidden: false });
+			showNowPlayingPill();
+			render(<SessionList {...createDefaultProps({})} />);
+
+			const pill = screen.getByTestId('now-playing-indicator');
+			expect(pill).toBeTruthy();
+			// Compact: the rail is 64px, so the filename is dropped rather than
+			// clipped, leaving the transport and the way back.
+			expect(pill.textContent).toBe('');
+			expect(screen.getByTestId('now-playing-restore')).toBeTruthy();
+		});
+
+		it('leaves the collapsed rail alone when nothing is minimized', () => {
+			// Self-gating: someone who never opened the player sees no change.
+			useUIStore.setState({ leftSidebarOpen: false, leftSidebarHidden: false });
+			render(<SessionList {...createDefaultProps({})} />);
+
+			expect(screen.queryByTestId('now-playing-indicator')).toBeNull();
+		});
+
+		it('shows the wordmark on a wide sidebar', () => {
+			useSettingsStore.setState({ leftSidebarWidth: 600 });
+			render(<SessionList {...createDefaultProps({})} />);
+
+			expect(screen.getByText('MAESTRO')).toBeInTheDocument();
+		});
+
+		it('drops the wordmark entirely on a narrow sidebar', () => {
+			useSettingsStore.setState({ leftSidebarWidth: 256 });
+			render(<SessionList {...createDefaultProps({})} />);
+
+			// Absence, not a class. Asserting that `truncate` is gone would pass on
+			// a wordmark that still renders clipped.
+			expect(screen.queryByText('MAESTRO')).not.toBeInTheDocument();
+			// The wand stays at every width, so the header keeps its identity and
+			// its switch-agent affordance.
+			expect(screen.getByTitle('Switch agent')).toBeInTheDocument();
+		});
+
+		// The regression that matters. Nothing between "MAESTRO" and nothing.
+		it('never renders a partial wordmark at any allowed width', () => {
+			for (let width = 256; width <= 600; width += 8) {
+				useSettingsStore.setState({ leftSidebarWidth: width });
+				const { unmount } = render(<SessionList {...createDefaultProps({})} />);
+
+				const heading = document.querySelector('h1');
+				if (heading) {
+					expect(heading.textContent).toBe('MAESTRO');
+					// A clipped wordmark is a full one that CSS cut off, so the class
+					// that would do the cutting must not be there either.
+					expect(heading.className).not.toContain('truncate');
+				}
+				unmount();
+			}
+		});
+
+		it('gives up the wordmark once the badge and the now-playing pill take the room', () => {
+			// One width, three states: the wordmark survives each control alone and
+			// is dropped once both are drawn.
+			const width = 330;
+
+			useSettingsStore.setState({ leftSidebarWidth: width, autoRunStats: undefined });
+			const bare = render(<SessionList {...createDefaultProps({})} />);
+			expect(screen.getByText('MAESTRO')).toBeInTheDocument();
+			bare.unmount();
+
+			useSettingsStore.setState({ leftSidebarWidth: width });
+			showNowPlayingPill();
+			const withPill = render(<SessionList {...createDefaultProps({})} />);
+			expect(screen.queryByText('MAESTRO')).not.toBeInTheDocument();
+			withPill.unmount();
 		});
 	});
 });

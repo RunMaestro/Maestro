@@ -8,6 +8,8 @@ interface DocumentGraphSectionProps {
 	theme: Theme;
 	documentGraphShowExternalLinks: boolean;
 	setDocumentGraphShowExternalLinks: (enabled: boolean) => void;
+	documentGraphConfirmClose: boolean;
+	setDocumentGraphConfirmClose: (enabled: boolean) => void;
 	documentGraphMaxNodes: number;
 	setDocumentGraphMaxNodes: (value: number) => void;
 }
@@ -16,6 +18,8 @@ export function DocumentGraphSection({
 	theme,
 	documentGraphShowExternalLinks,
 	setDocumentGraphShowExternalLinks,
+	documentGraphConfirmClose,
+	setDocumentGraphConfirmClose,
 	documentGraphMaxNodes,
 	setDocumentGraphMaxNodes,
 }: DocumentGraphSectionProps) {
@@ -32,8 +36,15 @@ export function DocumentGraphSection({
 					checked={documentGraphShowExternalLinks}
 					onChange={setDocumentGraphShowExternalLinks}
 				/>
+				<ToggleSettingRow
+					theme={theme}
+					title="Confirm before closing"
+					description="Ask before Escape discards the layout, depth, and node positions you set up. A graph opened from the Memories viewer never asks, since closing returns there."
+					checked={documentGraphConfirmClose}
+					onChange={setDocumentGraphConfirmClose}
+				/>
 				<div>
-					<label htmlFor="document-graph-max-nodes" className="block text-xs opacity-60 mb-2">
+					<label htmlFor="document-graph-max-nodes" className="block text-xs opacity-70 mb-2">
 						Maximum nodes to display
 					</label>
 					<div className="flex items-center gap-3">
@@ -57,7 +68,7 @@ export function DocumentGraphSection({
 							{documentGraphMaxNodes}
 						</span>
 					</div>
-					<p className="text-xs opacity-50 mt-1">
+					<p className="text-xs opacity-70 mt-1">
 						Limits initial graph size for performance. Use &quot;Load more&quot; to show additional
 						nodes.
 					</p>

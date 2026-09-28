@@ -2,18 +2,18 @@
  * Processes Collector
  *
  * Collects information about active processes.
- * - Working directories are sanitized
+ * - Working directories are replaced with opaque descriptors
  * - No command output included
  */
 
 import { ProcessManager } from '../../process-manager';
-import { sanitizePath } from './sanitize';
+import { redactPath } from './sanitize';
 
 export interface ProcessInfo {
 	sessionId: string;
 	toolType: string;
 	pid: number;
-	cwd: string; // Sanitized
+	cwd: string; // Redacted path descriptor
 	isTerminal: boolean;
 	isBatchMode: boolean;
 	uptimeMs: number;
@@ -40,7 +40,7 @@ export async function collectProcesses(
 			sessionId: proc.sessionId || 'unknown',
 			toolType: proc.toolType || 'unknown',
 			pid: proc.pid || 0,
-			cwd: sanitizePath(proc.cwd || ''),
+			cwd: redactPath(proc.cwd || ''),
 			isTerminal: !!proc.isTerminal,
 			isBatchMode: !!proc.isBatchMode,
 			uptimeMs: proc.startTime ? Date.now() - proc.startTime : 0,

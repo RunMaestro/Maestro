@@ -37,6 +37,12 @@ export interface UsageDashboardTab {
 }
 
 export interface UsageDashboardLayout {
+	/**
+	 * Phone-width content column (under 440px). A rung below `isNarrow`, which
+	 * still assumes two cards fit side by side: at this width they do not, and a
+	 * figure like `~$39,605.06` has nowhere to go.
+	 */
+	isTiny: boolean;
 	isNarrow: boolean;
 	isMedium: boolean;
 	isWide: boolean;

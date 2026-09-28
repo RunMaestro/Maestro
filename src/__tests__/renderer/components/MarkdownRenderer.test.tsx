@@ -33,6 +33,7 @@ vi.mock('lucide-react', () => ({
 	ImageOff: () => <span data-testid="image-off-icon">ImageOff</span>,
 	Copy: () => <span data-testid="copy-icon">Copy</span>,
 	ExternalLink: () => <span data-testid="external-link-icon">ExternalLink</span>,
+	FolderOpen: () => <span data-testid="folder-open-icon">FolderOpen</span>,
 	Globe: () => <span data-testid="globe-icon">Globe</span>,
 	FileText: () => <span data-testid="file-text-icon">FileText</span>,
 	Target: () => <span data-testid="target-icon">Target</span>,
@@ -1227,6 +1228,8 @@ describe('MarkdownRenderer', () => {
 
 			expect(screen.getByText('Preview')).toBeInTheDocument();
 			expect(screen.getByText('Copy Path')).toBeInTheDocument();
+			expect(screen.getByText('Copy File Name')).toBeInTheDocument();
+			expect(screen.getByText(/^Reveal in /)).toBeInTheDocument();
 			expect(screen.getByText('Open in Default App')).toBeInTheDocument();
 			expect(screen.queryByText('Copy Link')).toBeNull();
 			expect(screen.queryByText('Open in Maestro Browser')).toBeNull();
@@ -1264,6 +1267,29 @@ describe('MarkdownRenderer', () => {
 
 			expect(screen.queryByText('Document Graph')).toBeNull();
 			expect(screen.getByText('Copy Path')).toBeInTheDocument();
+		});
+	});
+
+	describe('file:// context menu (paths outside the project root)', () => {
+		it('shows the FILE menu, not the browser menu, for a file:// link', () => {
+			const { container } = render(
+				<MarkdownRenderer
+					{...defaultProps}
+					content="See [Ritto-DNA-Report.pdf](file:///Users/test/Documents/Ritto-DNA-Report.pdf)"
+					projectRoot="/Users/test/project"
+					onFileClick={vi.fn()}
+				/>
+			);
+			const link = container.querySelector('a[href^="file://"]');
+			expect(link).not.toBeNull();
+
+			fireEvent.contextMenu(link!, { clientX: 150, clientY: 250 });
+
+			expect(screen.getByText('Copy Path')).toBeInTheDocument();
+			expect(screen.getByText('Copy File Name')).toBeInTheDocument();
+			expect(screen.getByText(/^Reveal in /)).toBeInTheDocument();
+			expect(screen.queryByText('Copy Link')).toBeNull();
+			expect(screen.queryByText('Open in Maestro Browser')).toBeNull();
 		});
 	});
 

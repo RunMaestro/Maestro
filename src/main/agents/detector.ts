@@ -18,15 +18,26 @@ import * as os from 'os';
 import * as path from 'path';
 import { execFileNoThrow } from '../utils/execFile';
 import { logger } from '../utils/logger';
+import { fetchWithTimeout } from '../utils/fetchWithTimeout';
 import { captureException } from '../utils/sentry';
 import { getAgentCapabilities } from './capabilities';
-import { checkBinaryExists, checkCustomPath, getExpandedEnv } from './path-prober';
+import {
+	checkBinaryExists,
+	checkCustomPath,
+	findAllBinaryPaths,
+	getExpandedEnv,
+} from './path-prober';
 import { AGENT_DEFINITIONS, type AgentConfig } from './definitions';
 import { discoverModelsFromLocalConfigs } from './opencode-config';
 import { isWindows } from '../../shared/platformDetection';
 import { parseJsonWithBom } from '../../shared/jsonUtils';
 import { capabilitySnapshots } from './capability-snapshot';
-import { setOmpModelCatalog, computeOmpCatalogKey } from './omp-model-catalog';
+import {
+	setOmpModelCatalog,
+	computeOmpCatalogKey,
+	primeOmpModelCatalog,
+	buildOmpPrimeEnv,
+} from './omp-model-catalog';
 
 const LOG_CONTEXT = 'AgentDetector';
 
@@ -54,10 +65,8 @@ function readCopilotConfiguredModel(): string | null {
  * should fall back to the user-configured model in that case.
  */
 async function fetchCopilotModelsFromApi(): Promise<string[] | null> {
-	const controller = new AbortController();
-	const timeout = setTimeout(() => controller.abort(), MODELS_DEV_FETCH_TIMEOUT_MS);
 	try {
-		const response = await fetch(MODELS_DEV_API_URL, { signal: controller.signal });
+		const response = await fetchWithTimeout(MODELS_DEV_API_URL, {}, MODELS_DEV_FETCH_TIMEOUT_MS);
 		if (!response.ok) {
 			return null;
 		}
@@ -75,8 +84,6 @@ async function fetchCopilotModelsFromApi(): Promise<string[] | null> {
 			error: String(err),
 		});
 		return null;
-	} finally {
-		clearTimeout(timeout);
 	}
 }
 
@@ -192,11 +199,49 @@ export class AgentDetector {
 				}
 			}
 
+			// Enumerate every detected installation so the renderer can offer a
+			// chooser when multiple valid binaries exist (e.g. nvm-managed codex
+			// alongside a wrapper like codex-multi-auth-codex). Bash is on every
+			// system and not user-selectable, so we skip the extra probe for it.
+			let allPaths: string[] | undefined;
+			if (detection.exists && agentDef.binaryName !== 'bash') {
+				try {
+					const found = await findAllBinaryPaths(agentDef.binaryName);
+					// Always include the active path (custom or detected) so the
+					// chooser reflects what is currently in use, even if it isn't
+					// one of the auto-probed locations. Compared by canonical path, not
+					// raw string, so a symlink alias (or a Windows casing difference)
+					// that resolves to an entry already in `found` doesn't show up as a
+					// second, phantom install.
+					const active = detection.path;
+					let isActiveAlreadyFound = false;
+					if (active) {
+						const normalize = async (p: string): Promise<string> => {
+							const resolved = await fs.promises.realpath(p).catch(() => p);
+							return isWindows() ? resolved.toLowerCase() : resolved;
+						};
+						const activeKey = await normalize(active);
+						const foundKeys = await Promise.all(found.map(normalize));
+						isActiveAlreadyFound = foundKeys.includes(activeKey);
+					}
+					const merged = active && !isActiveAlreadyFound ? [active, ...found] : found;
+					if (merged.length > 1) {
+						allPaths = merged;
+					}
+				} catch (err) {
+					// Non-fatal: chooser is just a nice-to-have, single-path mode still works.
+					logger.debug(`findAllBinaryPaths failed for ${agentDef.binaryName}`, LOG_CONTEXT, {
+						err,
+					});
+				}
+			}
+
 			agents.push({
 				...agentDef,
 				available: detection.exists,
 				path: detection.path,
 				customPath: resolvedCustomPath,
+				allPaths,
 				capabilities: getAgentCapabilities(agentDef.id),
 			});
 
@@ -222,6 +267,25 @@ export class AgentDetector {
 				} else if (existing?.status !== 'not_installed') {
 					capabilitySnapshots.markNotInstalled(agentDef.id);
 				}
+			}
+
+			// Warm the default-identity omp context-window catalog the moment omp
+			// is detected, so a user's first prompt already has the real per-turn
+			// window resolved instead of losing a cold-start race against the
+			// spawn-time prime cap. Non-blocking: the catalog's own TTL/dedupe
+			// guards against repeated primes, and custom-path/env sessions still
+			// prime their own identity at spawn time.
+			if (agentDef.id === 'omp' && detection.exists && detection.path) {
+				// Prime with the same env-construction the spawn path uses
+				// (expanded PATH + the binary's own dir first) so a bun-based
+				// `omp` at ~/.bun/bin resolves its co-located runtime here too.
+				// getExpandedEnv() alone omits ~/.bun/bin, so the eager warm-up
+				// would lose the very cold-start race it exists to win.
+				primeOmpModelCatalog(
+					detection.path,
+					buildOmpPrimeEnv(detection.path),
+					computeOmpCatalogKey(detection.path, undefined)
+				);
 			}
 		}
 
@@ -482,7 +546,18 @@ export class AgentDetector {
 					// Oh My Pi: `omp models --json` returns { models: [{ id, selector, ... }] }
 					// across every configured provider. Prefer the provider-qualified `selector`
 					// (e.g. anthropic/claude-opus-4-8), which is unambiguous for --model.
-					const result = await execFileNoThrow(command, ['models', '--json'], undefined, env);
+					// Use the same env as the two prime sites (detection warm-up and spawn):
+					// `buildOmpPrimeEnv` expands the PATH with `~/.bun/bin` and prepends the
+					// binary's own directory so a co-located runtime resolves. Running this
+					// discovery with the shared `getExpandedEnv()` result instead would let
+					// it fail (or resolve differently) where the primes succeed, and it feeds
+					// `setOmpModelCatalog` below, so the catalogs must stay in lockstep.
+					const result = await execFileNoThrow(
+						command,
+						['models', '--json'],
+						undefined,
+						buildOmpPrimeEnv(command)
+					);
 					if (result.exitCode !== 0) {
 						logger.warn(
 							`CLI model discovery failed for ${agentId}: exit code ${result.exitCode}`,

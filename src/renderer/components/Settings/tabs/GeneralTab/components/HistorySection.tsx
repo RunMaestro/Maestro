@@ -1,7 +1,8 @@
-import { Clock, History } from 'lucide-react';
+import { Clock, History, Layers } from 'lucide-react';
 import type { Theme } from '../../../../../types';
 import { SettingCheckbox } from '../../../../SettingCheckbox';
 import { ToggleButtonGroup } from '../../../../ToggleButtonGroup';
+import { SettingsSectionHeading } from '../../../SettingsSectionHeading';
 
 interface HistorySectionProps {
 	theme: Theme;
@@ -9,6 +10,8 @@ interface HistorySectionProps {
 	setDefaultSaveToHistory: (enabled: boolean) => void;
 	synopsisDebounceSeconds: number;
 	setSynopsisDebounceSeconds: (seconds: number) => void;
+	groupCueEntries: boolean;
+	setGroupCueEntries: (enabled: boolean) => void;
 }
 
 export function HistorySection({
@@ -17,6 +20,8 @@ export function HistorySection({
 	setDefaultSaveToHistory,
 	synopsisDebounceSeconds,
 	setSynopsisDebounceSeconds,
+	groupCueEntries,
+	setGroupCueEntries,
 }: HistorySectionProps) {
 	return (
 		<div data-setting-id="general-history">
@@ -32,10 +37,7 @@ export function HistorySection({
 
 			{defaultSaveToHistory && (
 				<div className="mt-3" data-setting-id="general-synopsis-debounce">
-					<div className="block text-xs font-bold opacity-70 uppercase mb-2 flex items-center gap-2">
-						<Clock className="w-3 h-3" />
-						Synopsis Debounce
-					</div>
+					<SettingsSectionHeading icon={Clock}>Synopsis Debounce</SettingsSectionHeading>
 					<ToggleButtonGroup
 						options={[
 							{ value: 0, label: 'Off' },
@@ -48,7 +50,7 @@ export function HistorySection({
 						onChange={setSynopsisDebounceSeconds}
 						theme={theme}
 					/>
-					<p className="text-xs opacity-50 mt-2">
+					<p className="text-xs opacity-70 mt-2">
 						Wait for the agent to be idle this long before generating a History synopsis. Rapid
 						back-to-back completions are coalesced into a single synopsis once the conversation
 						settles, and turns that did no real work (a plain question and answer with no tool use)
@@ -56,6 +58,19 @@ export function HistorySection({
 					</p>
 				</div>
 			)}
+
+			{/* Group Cue entries in the History panel */}
+			<div className="mt-3" data-setting-id="general-group-cue-entries">
+				<SettingCheckbox
+					icon={Layers}
+					sectionLabel="Group Cue History Entries"
+					title="Collapse repeated Cue runs into one History row"
+					description="A high-frequency trigger becomes a single row with its run count, the most recent run time, and a failure count. Expand the row to see the individual runs. Turn this off to list every Cue run separately."
+					checked={groupCueEntries}
+					onChange={setGroupCueEntries}
+					theme={theme}
+				/>
+			</div>
 		</div>
 	);
 }

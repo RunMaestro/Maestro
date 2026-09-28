@@ -28,6 +28,7 @@ import { useSessionStore, selectActiveSession, updateSessionWith } from '../../s
 import { useSettingsStore, selectIsLeaderboardRegistered } from '../../stores/settingsStore';
 import { useModalStore, getModalActions } from '../../stores/modalStore';
 import { collectActiveOperations } from '../../utils/collectActiveOperations';
+import { useFeedbackDraftStore } from '../../stores/feedbackDraftStore';
 import { notifyToast } from '../../stores/notificationStore';
 import { CONDUCTOR_BADGES, getBadgeForTime } from '../../constants/conductorBadges';
 import { resolveQueuedItemTarget } from '../../utils/tabHelpers';
@@ -37,8 +38,9 @@ import { useBatchProcessor, type UseBatchProcessorProps } from './useBatchProces
 import { useBatchStore } from '../../stores/batchStore';
 import { consumeGroupChatAutoRun } from '../../utils/groupChatAutoRunRegistry';
 import type { RightPanelHandle } from '../../components/RightPanel';
-import type { AgentSpawnResult } from '../agent/useAgentExecution';
+import type { AgentSpawnResult, SpawnAgentOptions } from '../agent/useAgentExecution';
 import * as Sentry from '@sentry/electron/renderer';
+import { queueLeaderboardDelta, noteAutoRunCreditSettled } from '../../services/leaderboard';
 import { logger } from '../../utils/logger';
 
 /**
@@ -85,9 +87,7 @@ export interface UseBatchHandlersDeps {
 		sessionId: string,
 		prompt: string,
 		cwdOverride?: string,
-		options?: {
-			isAutoRun?: boolean;
-		}
+		options?: SpawnAgentOptions
 	) => Promise<AgentSpawnResult>;
 	/**
 	 * Resume an existing provider session and run a prompt (threaded to the goal
@@ -229,8 +229,15 @@ export function useBatchHandlers(deps: UseBatchHandlersDeps): UseBatchHandlersRe
 				.getState()
 				.setSessions((prev) => prev.map((s) => (s.id === sessionId ? { ...s, ...updates } : s)));
 		},
-		onSpawnAgent: (sessionId, prompt, cwdOverride) =>
-			spawnAgentForSession(sessionId, prompt, cwdOverride, { isAutoRun: true }),
+		onSpawnAgent: (sessionId, prompt, cwdOverride, turnSettings) =>
+			spawnAgentForSession(sessionId, prompt, cwdOverride, {
+				isAutoRun: true,
+				// Whatever the document processor resolved for this task: the document's
+				// MAESTRO:MODEL hint, else the run-scoped override, else the agent's own
+				// value. Must be forwarded, not dropped - this is the last hop before
+				// the spawn.
+				...turnSettings,
+			}),
 		spawnBackgroundSynopsis,
 		onAddHistoryEntry: async (entry) => {
 			await window.maestro.history.add({
@@ -353,9 +360,23 @@ export function useBatchHandlers(deps: UseBatchHandlersDeps): UseBatchHandlersRe
 							.split('T')[0];
 					}
 
+					// This run's time is already on the local badge (credited by the
+					// 60s timer), so every branch below must either ship the delta or
+					// queue it. Retire the uncommitted counter first: the delta is now
+					// this code's responsibility, not the crash-recovery counter's.
+					void noteAutoRunCreditSettled(info.elapsedTimeMs);
+
 					// Submit to leaderboard in background (only if we have an auth token)
 					if (!lbReg.authToken) {
-						logger.warn('Leaderboard submission skipped: no auth token');
+						// The token arrives when the user confirms their email. Queue
+						// rather than warn-and-drop - the server is delta-accumulated,
+						// so time that never ships a delta is lost for good.
+						logger.warn('Leaderboard submission queued: no auth token');
+						void queueLeaderboardDelta({
+							deltaMs: info.elapsedTimeMs,
+							deltaRuns: 1,
+							source: 'auto-run',
+						});
 					} else {
 						window.maestro.leaderboard
 							.submit({
@@ -379,6 +400,21 @@ export function useBatchHandlers(deps: UseBatchHandlersDeps): UseBatchHandlersRe
 								source: 'auto-run',
 							})
 							.then((result) => {
+								if (!result.success) {
+									// Rejected by the server (offline queue, bad token,
+									// rate limit). The time is on the local badge already,
+									// so hold the delta for the next flush.
+									logger.warn(
+										`Leaderboard submission failed, queued for retry: ${
+											result.error ?? result.message
+										}`
+									);
+									void queueLeaderboardDelta({
+										deltaMs: info.elapsedTimeMs,
+										deltaRuns: 1,
+										source: 'auto-run',
+									});
+								}
 								if (result.success) {
 									// Update last submission timestamp
 									setLbReg({
@@ -434,6 +470,13 @@ export function useBatchHandlers(deps: UseBatchHandlersDeps): UseBatchHandlersRe
 								}
 							})
 							.catch((error) => {
+								// Network blip. Queue so the next launch ships it - a
+								// dropped delta can never be reconstructed from the client.
+								void queueLeaderboardDelta({
+									deltaMs: info.elapsedTimeMs,
+									deltaRuns: 1,
+									source: 'auto-run',
+								});
 								Sentry.captureException(error, {
 									extra: { operation: 'leaderboard-submit', badgeLevel: updatedBadgeLevel },
 								});
@@ -650,8 +693,17 @@ export function useBatchHandlers(deps: UseBatchHandlersDeps): UseBatchHandlersRe
 					})
 				);
 
-				// Process the item after state update
-				processQueuedItemRef.current(sessionId, nextItem);
+				// Process the item after state update. `processQueuedItem` rejects on a
+				// dispatch failure (agentStore puts the prompt back), so the rejection
+				// needs an owner here - unhandled, it was a crash report instead of a
+				// logged failure, and the message looked like it had simply vanished.
+				processQueuedItemRef.current(sessionId, nextItem).catch((err) => {
+					logger.error(
+						'[useBatchHandlers] Queued dispatch failed, item returned to queue',
+						undefined,
+						err
+					);
+				});
 			}
 		},
 	});
@@ -825,11 +877,18 @@ export function useBatchHandlers(deps: UseBatchHandlersDeps): UseBatchHandlersRe
 			return;
 		}
 		const unsubscribe = window.maestro.app.onQuitConfirmationRequest(async () => {
+			// Park whatever the Feedback editor is holding before anything else.
+			// Drafts persist to disk and are resumable, so quitting is not a loss
+			// event for them - but only once the live editor has been written out,
+			// which is why this runs here rather than being surfaced as a warning
+			// the user has to act on.
+			await useFeedbackDraftStore.getState().saveActiveDraft();
+
 			// Snapshot every active-operation source (busy agents, Auto Run, terminal
-			// tasks, Maestro Cue runs, group chats) plus any unsent feedback draft.
+			// tasks, Maestro Cue runs, group chats).
 			const ops = await collectActiveOperations();
 
-			if (!ops.hasActiveOperations && !ops.hasFeedbackDraft) {
+			if (!ops.hasActiveOperations) {
 				window.maestro.app.confirmQuit();
 			} else {
 				// Tell main the modal is up so it disarms the dead-renderer safety
@@ -840,7 +899,6 @@ export function useBatchHandlers(deps: UseBatchHandlersDeps): UseBatchHandlersRe
 					activeTerminalTasks: ops.activeTerminalTasks,
 					activeCueRunCount: ops.activeCueRunCount,
 					activeGroupChatCount: ops.activeGroupChatCount,
-					hasFeedbackDraft: ops.hasFeedbackDraft,
 				});
 			}
 		});

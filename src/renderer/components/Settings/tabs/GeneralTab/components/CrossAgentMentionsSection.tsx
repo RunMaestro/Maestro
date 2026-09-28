@@ -1,6 +1,7 @@
 import { AlertTriangle, AtSign } from 'lucide-react';
 import type { Theme } from '../../../../../types';
 import { ToggleButtonGroup } from '../../../../ToggleButtonGroup';
+import { SettingsSectionHeading } from '../../../SettingsSectionHeading';
 
 interface CrossAgentMentionsSectionProps {
 	theme: Theme;
@@ -15,13 +16,11 @@ export function CrossAgentMentionsSection({
 }: CrossAgentMentionsSectionProps) {
 	return (
 		<div data-setting-id="general-cross-agent-mentions">
-			<div className="block text-xs font-bold opacity-70 uppercase mb-2 flex items-center gap-2">
-				<AtSign className="w-3 h-3" />
-				Cross-Agent Mentions
-			</div>
-			<p className="text-xs opacity-50 mb-3">
-				When you @-mention another agent, it is consulted in its own workspace. Choose whether that
-				consult can only read files or is also allowed to write.
+			<SettingsSectionHeading icon={AtSign}>Cross-Agent Mentions</SettingsSectionHeading>
+			<p className="text-xs opacity-70 mb-3">
+				When you @-mention another agent, it answers from its own workspace. Read-Only makes that a{' '}
+				<span className="font-medium">consult</span>: it reads and replies. Read/Write makes it a{' '}
+				<span className="font-medium">delegation</span>: it can also change files.
 			</p>
 
 			<div
@@ -29,12 +28,12 @@ export function CrossAgentMentionsSection({
 				style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgMain }}
 			>
 				<div className="font-medium" style={{ color: theme.colors.textMain }}>
-					Consult Permission
+					Consult or Delegate
 				</div>
-				<div className="text-xs opacity-50 mt-0.5 mb-2" style={{ color: theme.colors.textDim }}>
+				<div className="text-xs opacity-70 mt-0.5 mb-2">
 					{crossAgentMentionsWritable
-						? 'Mentioned agents may modify files in their own workspace while answering.'
-						: 'Mentioned agents can read to inform their answer but never modify files (the default and safest choice).'}
+						? 'Delegate: mentioned agents may modify files in their own workspace while answering.'
+						: 'Consult: mentioned agents read to inform their answer but never modify files (the default and safest choice).'}
 				</div>
 
 				{crossAgentMentionsWritable && (
@@ -44,8 +43,8 @@ export function CrossAgentMentionsSection({
 					>
 						<AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
 						<span>
-							A consulted agent can now change files on its own. Enable this only when you trust the
-							mentioned agent to edit its workspace unattended.
+							Every mention is now a delegation: the agent can change files on its own. Enable this
+							only when you trust the mentioned agent to edit its workspace unattended.
 						</span>
 					</div>
 				)}

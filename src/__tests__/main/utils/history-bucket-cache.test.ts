@@ -10,7 +10,12 @@
  * 2. `HistoryBucketCache` - disk-backed, fingerprint-keyed cache so the
  *    aggregate doesn't have to be recomputed on every interaction. The
  *    fingerprint is the underlying source file's `mtime+size` (single
- *    file) or a SHA over many such fingerprints (unified view).
+ *    file) or a SHA over many such fingerprints (unified view), composed by
+ *    the caller with a stamp for any other source it reads.
+ *
+ * The CUE series is the second source: Cue runs are counted in `cue_events`
+ * and handed to the builder pre-bucketed, because they are no longer written
+ * to the JSONL file the other entries come from.
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
@@ -94,6 +99,30 @@ describe('buildBucketAggregate', () => {
 		expect(middleHit).toBe(1);
 	});
 
+	it('tallies AGENT entries into their own series, not into auto', () => {
+		// Cross-agent consults used to be written as AUTO, so the regression this
+		// guards is an AGENT entry silently inflating the Auto Run counts again.
+		const start = 2_000_000;
+		const entries: HistoryEntry[] = [
+			makeEntry({ id: '1', type: 'AGENT', timestamp: start }),
+			makeEntry({ id: '2', type: 'AGENT', timestamp: start + 10_000 }),
+			makeEntry({ id: '3', type: 'AUTO', timestamp: start + 5_000 }),
+		];
+		const result = buildBucketAggregate(entries, 4);
+
+		expect(result.agentCount).toBe(2);
+		expect(result.autoCount).toBe(1);
+		expect(result.totalCount).toBe(3);
+		expect(result.buckets.reduce((acc, b) => acc + b.agent, 0)).toBe(2);
+		expect(result.buckets.reduce((acc, b) => acc + b.auto, 0)).toBe(1);
+	});
+
+	it('zero-fills the agent series when there are no entries', () => {
+		const result = buildBucketAggregate([], 3);
+		expect(result.agentCount).toBe(0);
+		expect(result.buckets.every((b) => b.agent === 0)).toBe(true);
+	});
+
 	it('survives a single-entry input (zero-width range)', () => {
 		const entries = [makeEntry({ id: '1', type: 'USER', timestamp: 5_000 })];
 		const result = buildBucketAggregate(entries, 4);
@@ -130,6 +159,89 @@ describe('buildBucketAggregate', () => {
 			expect(result.earliestTimestamp).toBe(now - lookbackMs);
 			expect(result.latestTimestamp).toBe(now);
 			expect(result.hostCounts).toEqual({});
+		});
+	});
+
+	describe('cueCounts from the Cue database', () => {
+		it('adds database Cue counts to the CUE series and the totals', () => {
+			const entries = [
+				makeEntry({ id: 'u1', type: 'USER', timestamp: 0 }),
+				makeEntry({ id: 'u2', type: 'USER', timestamp: 1000 }),
+			];
+			const result = buildBucketAggregate(entries, 2, {
+				cueCounts: [
+					{ timestamp: 0, count: 3 },
+					{ timestamp: 1000, count: 5 },
+				],
+			});
+
+			expect(result.buckets[0].cue).toBe(3);
+			expect(result.buckets[1].cue).toBe(5);
+			expect(result.cueCount).toBe(8);
+			expect(result.userCount).toBe(2);
+			expect(result.totalCount).toBe(10);
+			expect(result.hostCounts).toEqual({ [LOCAL_HOST_AGG_KEY]: 10 });
+		});
+
+		it('takes the larger of the two stores per bucket rather than summing', () => {
+			// Pre-cutover runs exist in BOTH stores: the JSONL entry and the
+			// `cue_events` row describe the same run, so summing would draw
+			// every historical bar at double height.
+			const entries = [
+				makeEntry({ id: 'c1', type: 'CUE', timestamp: 0 }),
+				makeEntry({ id: 'c2', type: 'CUE', timestamp: 10 }),
+				makeEntry({ id: 'c3', type: 'CUE', timestamp: 20 }),
+			];
+			const result = buildBucketAggregate(entries, 1, {
+				cueCounts: [{ timestamp: 0, count: 2 }],
+			});
+
+			expect(result.buckets[0].cue).toBe(3);
+			expect(result.cueCount).toBe(3);
+			expect(result.totalCount).toBe(3);
+			expect(result.hostCounts).toEqual({ [LOCAL_HOST_AGG_KEY]: 3 });
+		});
+
+		it('graphs an agent whose only activity is Cue runs', () => {
+			const result = buildBucketAggregate([], 4, {
+				cueCounts: [
+					{ timestamp: 1_000, count: 1 },
+					{ timestamp: 4_000, count: 2 },
+				],
+			});
+
+			expect(result.earliestTimestamp).toBe(1_000);
+			expect(result.latestTimestamp).toBe(4_000);
+			expect(result.buckets[0].cue).toBe(1);
+			expect(result.buckets[3].cue).toBe(2);
+			expect(result.cueCount).toBe(3);
+			expect(result.totalCount).toBe(3);
+		});
+
+		it('drops Cue counts outside the lookback window', () => {
+			const now = 10_000_000;
+			const lookbackMs = 1_000;
+			const result = buildBucketAggregate([makeEntry({ id: 'u', timestamp: now })], 4, {
+				lookbackMs,
+				endTime: now,
+				cueCounts: [
+					{ timestamp: now - 100_000, count: 9 },
+					{ timestamp: now - 500, count: 2 },
+				],
+			});
+
+			expect(result.cueCount).toBe(2);
+			expect(result.totalCount).toBe(3);
+		});
+
+		it('ignores empty buckets so they cannot widen the range', () => {
+			const result = buildBucketAggregate([makeEntry({ id: 'u', timestamp: 5_000 })], 2, {
+				cueCounts: [{ timestamp: 0, count: 0 }],
+			});
+
+			expect(result.earliestTimestamp).toBe(5_000);
+			expect(result.cueCount).toBe(0);
+			expect(result.totalCount).toBe(1);
 		});
 	});
 
@@ -262,16 +374,17 @@ describe('HistoryBucketCache', () => {
 		sourceFingerprint: 'fp-1',
 		bucketCount: 3,
 		buckets: [
-			{ auto: 1, user: 0, cue: 0 },
-			{ auto: 0, user: 2, cue: 0 },
-			{ auto: 0, user: 0, cue: 3 },
+			{ auto: 1, user: 0, cue: 0, agent: 0 },
+			{ auto: 0, user: 2, cue: 0, agent: 0 },
+			{ auto: 0, user: 0, cue: 3, agent: 4 },
 		],
 		earliestTimestamp: 100,
 		latestTimestamp: 999,
-		totalCount: 6,
+		totalCount: 10,
 		autoCount: 1,
 		userCount: 2,
 		cueCount: 3,
+		agentCount: 4,
 		hostCounts: { [LOCAL_HOST_AGG_KEY]: 6 },
 		computedAt: Date.now(),
 	});
@@ -284,8 +397,11 @@ describe('HistoryBucketCache', () => {
 		const fresh = new HistoryBucketCache(cacheDir);
 		const hit = await fresh.get('round-trip', 'fp-1');
 		expect(hit).not.toBeNull();
-		expect(hit?.totalCount).toBe(6);
+		expect(hit?.totalCount).toBe(10);
 		expect(hit?.buckets[2].cue).toBe(3);
+		// The AGENT series must survive the disk round-trip, not just the in-memory copy.
+		expect(hit?.agentCount).toBe(4);
+		expect(hit?.buckets[2].agent).toBe(4);
 		expect(hit?.hostCounts).toEqual({ [LOCAL_HOST_AGG_KEY]: 6 });
 	});
 
@@ -340,8 +456,8 @@ describe('HistoryBucketCache', () => {
 		]);
 		expect(a).not.toBeNull();
 		expect(b).not.toBeNull();
-		expect(a?.totalCount).toBe(6);
-		expect(b?.totalCount).toBe(6);
+		expect(a?.totalCount).toBe(10);
+		expect(b?.totalCount).toBe(10);
 	});
 
 	it('cold-cache miss resolves to null without throwing on missing dir', async () => {

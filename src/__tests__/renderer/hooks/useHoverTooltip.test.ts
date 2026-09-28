@@ -180,4 +180,87 @@ describe('useHoverTooltip', () => {
 		// Should still be open because we ended with enter
 		expect(result.current.isOpen).toBe(true);
 	});
+
+	describe('openDelay', () => {
+		it('opens immediately by default', () => {
+			const { result } = renderHook(() => useHoverTooltip(150));
+
+			act(() => {
+				result.current.triggerHandlers.onMouseEnter();
+			});
+
+			expect(result.current.isOpen).toBe(true);
+		});
+
+		it('waits for the open delay before opening', () => {
+			const { result } = renderHook(() => useHoverTooltip(150, 200));
+
+			act(() => {
+				result.current.triggerHandlers.onMouseEnter();
+			});
+			expect(result.current.isOpen).toBe(false);
+
+			act(() => {
+				vi.advanceTimersByTime(199);
+			});
+			expect(result.current.isOpen).toBe(false);
+
+			act(() => {
+				vi.advanceTimersByTime(1);
+			});
+			expect(result.current.isOpen).toBe(true);
+		});
+
+		it('cancels a pending open when the pointer leaves first', () => {
+			// A pass-through: entering and leaving before the delay elapses must
+			// never open, not even later.
+			const { result } = renderHook(() => useHoverTooltip(150, 200));
+
+			act(() => {
+				result.current.triggerHandlers.onMouseEnter();
+				vi.advanceTimersByTime(100);
+				result.current.triggerHandlers.onMouseLeave();
+				vi.advanceTimersByTime(1000);
+			});
+
+			expect(result.current.isOpen).toBe(false);
+		});
+
+		it('opens immediately when the pointer reaches the content', () => {
+			// The open delay is only for the trigger - once the pointer is on the
+			// content itself there is nothing left to disambiguate.
+			const { result } = renderHook(() => useHoverTooltip(150, 200));
+
+			act(() => {
+				result.current.contentHandlers.onMouseEnter();
+			});
+
+			expect(result.current.isOpen).toBe(true);
+		});
+	});
+
+	describe('open()', () => {
+		it('opens immediately, skipping the open delay', () => {
+			const { result } = renderHook(() => useHoverTooltip(150, 200));
+
+			act(() => {
+				result.current.open();
+			});
+
+			expect(result.current.isOpen).toBe(true);
+		});
+
+		it('cancels a pending close', () => {
+			const { result } = renderHook(() => useHoverTooltip(150, 200));
+
+			act(() => {
+				result.current.open();
+				result.current.triggerHandlers.onMouseLeave();
+				result.current.open();
+				vi.advanceTimersByTime(1000);
+			});
+
+			expect(result.current.isOpen).toBe(true);
+		});
+	});
 });

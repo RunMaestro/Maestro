@@ -16,7 +16,9 @@ import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { Modal, ModalFooter } from './ui/Modal';
 import { notifyToast } from '../stores/notificationStore';
 import { flashCopiedToClipboard } from '../utils/flashCopiedToClipboard';
+import { safeClipboardWrite } from '../utils/clipboard';
 import { logger } from '../utils/logger';
+import { createDebugPackage } from '../services/debugPackage';
 
 interface DebugPackageModalProps {
 	theme: Theme;
@@ -104,7 +106,7 @@ export function DebugPackageModal({ theme, isOpen, onClose }: DebugPackageModalP
 				includeBatchState: categories.find((c) => c.id === 'batchState')?.included ?? true,
 			};
 
-			const result = await window.maestro.debug.createPackage(options);
+			const result = await createDebugPackage(options);
 
 			if (result.cancelled) {
 				setGenerationState('idle');
@@ -158,12 +160,9 @@ export function DebugPackageModal({ theme, isOpen, onClose }: DebugPackageModalP
 	// Copy file path to clipboard
 	const handleCopyPath = useCallback(() => {
 		if (resultPath) {
-			navigator.clipboard
-				.writeText(resultPath)
-				.then(() => {
-					flashCopiedToClipboard(resultPath, 'File Path Copied');
-				})
-				.catch(console.error);
+			void safeClipboardWrite(resultPath).then((copied) => {
+				if (copied) flashCopiedToClipboard(resultPath, 'File Path Copied');
+			});
 		}
 	}, [resultPath]);
 
@@ -231,8 +230,9 @@ export function DebugPackageModal({ theme, isOpen, onClose }: DebugPackageModalP
 				}}
 			>
 				<p style={{ color: theme.colors.textMain }}>
-					<strong>Privacy:</strong> This package does NOT include your conversations, API keys, or
-					file contents. All paths are sanitized to remove usernames.
+					<strong>Privacy:</strong> This package is safe to attach to a public issue. It does NOT
+					include your conversations, API keys, or file contents, and it carries no username,
+					computer name, file paths, or project names.
 				</p>
 			</div>
 

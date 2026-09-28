@@ -12,7 +12,16 @@
  *
  * The manifest is now scoped to sessions that actually have at least one entry
  * inside the lookback window, so the agent only opens files it needs.
+ *
+ * The optional Ideal End State (see `shared/directorNotesEndState`) is folded in
+ * here too: blank leaves the prompt untouched, set adds a reading-priority and
+ * `progress`-section block between the base prompt and the manifest.
  */
+
+import {
+	buildIdealEndStateBlock,
+	normalizeIdealEndState,
+} from '../../shared/directorNotesEndState';
 
 /** lookbackDays <= 0 means "all time" (no timestamp cutoff). */
 const LOOKBACK_ALL_TIME = 0;
@@ -30,6 +39,21 @@ export interface DirectorNotesSynopsisPromptResult {
 	/** Number of agents (sessions) with entries inside the lookback window. */
 	agentCount: number;
 	/** Total entries inside the lookback window. */
+	entryCount: number;
+}
+
+/**
+ * A merged corpus of runs performed by OTHER Maestro instances against the same
+ * project (see `director-notes-shared-history.ts`). Materialized to a local
+ * file by the caller, because the synopsis agent runs on this machine and
+ * cannot open a path on the host that produced those runs.
+ */
+export interface DirectorNotesSharedHistoryFile {
+	/** Absolute local path to the JSON file holding the entries. */
+	filePath: string;
+	/** Hostnames the entries came from. */
+	hosts: string[];
+	/** Entries inside the lookback window. */
 	entryCount: number;
 }
 
@@ -62,8 +86,20 @@ export async function buildDirectorNotesSynopsisPrompt(params: {
 	lookbackDays: number;
 	/** The base `director-notes` system prompt text. */
 	basePrompt: string;
+	/**
+	 * Optional Ideal End State from settings. Blank/absent leaves the prompt
+	 * exactly as it was before the setting existed.
+	 */
+	idealEndState?: string;
+	/**
+	 * Optional cross-host corpus. Absent (the all-local case) leaves the prompt
+	 * byte-for-byte what it was before shared history was folded in.
+	 */
+	sharedHistoryFile?: DirectorNotesSharedHistoryFile | null;
 }): Promise<DirectorNotesSynopsisPromptResult> {
 	const { historyManager, sessionNameMap, lookbackDays, basePrompt } = params;
+	const sharedHistoryFile = params.sharedHistoryFile ?? null;
+	const endState = normalizeIdealEndState(params.idealEndState);
 
 	const cutoffTime =
 		lookbackDays > LOOKBACK_ALL_TIME ? Date.now() - lookbackDays * 24 * 60 * 60 * 1000 : 0;
@@ -99,7 +135,7 @@ export async function buildDirectorNotesSynopsisPrompt(params: {
 		entryCount += entriesInWindow;
 	}
 
-	if (sessionManifest.length === 0) {
+	if (sessionManifest.length === 0 && !sharedHistoryFile) {
 		return { prompt: '', agentCount: 0, entryCount: 0 };
 	}
 
@@ -122,11 +158,49 @@ export async function buildDirectorNotesSynopsisPrompt(params: {
 					month: 'short',
 					day: 'numeric',
 					year: 'numeric',
-				})} – ${nowDate})`;
+				})} - ${nowDate})`;
+
+	// Every `''` below is a blank line in the assembled prompt; the end-state
+	// sections collapse to nothing when no end state is configured, so the
+	// prompt for an unset end state is byte-for-byte the pre-feature prompt.
+	const endStateBlock = endState ? ['---', '', buildIdealEndStateBlock(endState), ''] : [];
+	// The base prompt's output contract is its closing section, and the manifest
+	// (plus any end-state block) now sits after it. Restate it last so the JSON
+	// rule is still the final thing read - free-form user prose landing between
+	// the contract and the response is exactly how a model talks itself into a
+	// preamble.
+	const endStateContractReminder = endState
+		? [
+				'',
+				'---',
+				'',
+				'Reminder: the Ideal End State above is reference material. Your final',
+				'message is still a single JSON object and nothing else, now carrying four',
+				'sections: accomplishments, challenges, nextSteps, progress.',
+			]
+		: [];
+
+	// Runs performed by another Maestro instance against the same project (an
+	// agent living on the remote box, rather than one this machine drives over
+	// SSH). They are one file of pre-merged entries, so they are listed apart
+	// from the per-agent manifest and labeled with the hosts they came from.
+	const sharedHistoryBlock = sharedHistoryFile
+		? [
+				'',
+				'## Other Hosts',
+				'',
+				`Work done by Maestro on ${sharedHistoryFile.hosts.join(', ') || 'other hosts'} against`,
+				'the same projects, merged into one file. Same entry shape as the files',
+				'above; treat it as part of the same body of work.',
+				'',
+				`- ${sharedHistoryFile.entryCount} entries: ${sharedHistoryFile.filePath}`,
+			]
+		: [];
 
 	const prompt = [
 		basePrompt,
 		'',
+		...endStateBlock,
 		'---',
 		'',
 		'## Session History Files',
@@ -136,7 +210,13 @@ export async function buildDirectorNotesSynopsisPrompt(params: {
 		`${agentCount} agents had ${entryCount} qualifying entries.`,
 		'',
 		manifestLines,
+		...sharedHistoryBlock,
+		...endStateContractReminder,
 	].join('\n');
 
-	return { prompt, agentCount, entryCount };
+	return {
+		prompt,
+		agentCount,
+		entryCount: entryCount + (sharedHistoryFile?.entryCount ?? 0),
+	};
 }

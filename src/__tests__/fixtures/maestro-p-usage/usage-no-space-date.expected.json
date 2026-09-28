@@ -14,7 +14,8 @@
 		},
 		"week_sonnet_only": {
 			"percent": 12,
-			"resets_at": "2027-05-14T15:00:00.000Z"
+			"resets_at": "2027-05-14T15:00:00.000Z",
+			"label": "Sonnet only"
 		}
 	}
 }

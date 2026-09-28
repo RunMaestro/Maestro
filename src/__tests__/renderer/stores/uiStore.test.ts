@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useUIStore } from '../../../renderer/stores/uiStore';
 import { resetStore } from '../../helpers';
@@ -28,6 +28,46 @@ describe('uiStore', () => {
 			expect(state.editingGroupId).toBeNull();
 			expect(state.editingSessionId).toBeNull();
 			expect(state.usageDashboardViewMode).toBe('overview');
+			expect(state.focusRequest).toBeNull();
+		});
+	});
+
+	describe('focus request', () => {
+		it('publishes a pane request for the given leaf id', () => {
+			useUIStore.getState().requestPaneFocus('leaf-1');
+			expect(useUIStore.getState().focusRequest).toEqual({ leafId: 'leaf-1' });
+		});
+
+		it('publishes a tab request for the given tab ref', () => {
+			useUIStore.getState().requestTabFocus({ type: 'browser', id: 'b-1' });
+			expect(useUIStore.getState().focusRequest).toEqual({
+				tab: { type: 'browser', id: 'b-1' },
+			});
+		});
+
+		it('clears the request once it has been consumed', () => {
+			useUIStore.getState().requestPaneFocus('leaf-1');
+			useUIStore.getState().clearFocusRequest();
+			expect(useUIStore.getState().focusRequest).toBeNull();
+		});
+
+		it('replaces an unconsumed request rather than queueing', () => {
+			useUIStore.getState().requestPaneFocus('leaf-1');
+			useUIStore.getState().requestPaneFocus('leaf-2');
+			expect(useUIStore.getState().focusRequest).toEqual({ leafId: 'leaf-2' });
+		});
+
+		it('lets a tab request supersede a pane request, so there is one focus owner', () => {
+			useUIStore.getState().requestPaneFocus('leaf-1');
+			useUIStore.getState().requestTabFocus({ type: 'file', id: 'f-1' });
+			expect(useUIStore.getState().focusRequest).toEqual({ tab: { type: 'file', id: 'f-1' } });
+		});
+
+		it('re-publishes the same leaf after a clear so a repeat press refocuses', () => {
+			useUIStore.getState().requestPaneFocus('leaf-1');
+			useUIStore.getState().clearFocusRequest();
+			useUIStore.getState().requestPaneFocus('leaf-1');
+			expect(useUIStore.getState().focusRequest).toEqual({ leafId: 'leaf-1' });
 		});
 	});
 
@@ -66,6 +106,89 @@ describe('uiStore', () => {
 			expect(useUIStore.getState().rightPanelOpen).toBe(false);
 			useUIStore.getState().toggleRightPanel();
 			expect(useUIStore.getState().rightPanelOpen).toBe(true);
+		});
+
+		describe('closeLeftSidebarForNavigation', () => {
+			const setViewportWidth = (width: number) => {
+				Object.defineProperty(window, 'innerWidth', {
+					configurable: true,
+					writable: true,
+					value: width,
+				});
+			};
+			const originalWidth = window.innerWidth;
+
+			afterEach(() => {
+				setViewportWidth(originalWidth);
+			});
+
+			it('closes the drawer on a narrow viewport', () => {
+				setViewportWidth(390);
+				useUIStore.getState().setLeftSidebarOpen(true);
+				useUIStore.getState().closeLeftSidebarForNavigation();
+				expect(useUIStore.getState().leftSidebarOpen).toBe(false);
+			});
+
+			it('leaves the sidebar alone on a wide viewport', () => {
+				setViewportWidth(1440);
+				useUIStore.getState().setLeftSidebarOpen(true);
+				useUIStore.getState().closeLeftSidebarForNavigation();
+				expect(useUIStore.getState().leftSidebarOpen).toBe(true);
+			});
+
+			it('is a no-op when the drawer is already closed', () => {
+				setViewportWidth(390);
+				useUIStore.getState().setLeftSidebarOpen(false);
+				const before = useUIStore.getState();
+				useUIStore.getState().closeLeftSidebarForNavigation();
+				expect(useUIStore.getState()).toBe(before);
+			});
+		});
+
+		describe('closeRightPanelForNavigation', () => {
+			const setViewportWidth = (width: number) => {
+				Object.defineProperty(window, 'innerWidth', {
+					configurable: true,
+					writable: true,
+					value: width,
+				});
+			};
+			const originalWidth = window.innerWidth;
+
+			afterEach(() => {
+				setViewportWidth(originalWidth);
+			});
+
+			it('closes the drawer on a narrow viewport', () => {
+				setViewportWidth(390);
+				useUIStore.getState().setRightPanelOpen(true);
+				useUIStore.getState().closeRightPanelForNavigation();
+				expect(useUIStore.getState().rightPanelOpen).toBe(false);
+			});
+
+			it('leaves the Right Bar alone on a wide viewport', () => {
+				setViewportWidth(1440);
+				useUIStore.getState().setRightPanelOpen(true);
+				useUIStore.getState().closeRightPanelForNavigation();
+				expect(useUIStore.getState().rightPanelOpen).toBe(true);
+			});
+
+			it('is a no-op when the drawer is already closed', () => {
+				setViewportWidth(390);
+				useUIStore.getState().setRightPanelOpen(false);
+				const before = useUIStore.getState();
+				useUIStore.getState().closeRightPanelForNavigation();
+				expect(useUIStore.getState()).toBe(before);
+			});
+
+			it('does not disturb the left drawer', () => {
+				setViewportWidth(390);
+				useUIStore.getState().setLeftSidebarOpen(true);
+				useUIStore.getState().setRightPanelOpen(true);
+				useUIStore.getState().closeRightPanelForNavigation();
+				expect(useUIStore.getState().rightPanelOpen).toBe(false);
+				expect(useUIStore.getState().leftSidebarOpen).toBe(true);
+			});
 		});
 	});
 
@@ -229,6 +352,38 @@ describe('uiStore', () => {
 			useUIStore.getState().setOutputSearchOpen(KEY, true);
 			useUIStore.getState().setOutputSearchOpen(KEY, false);
 			expect(useUIStore.getState().outputSearchByKey[KEY]).toBeUndefined();
+		});
+	});
+
+	describe('pending log jump (cross-tab search)', () => {
+		const JUMP = { sessionId: 'agent-1', tabId: 'tab-2', logId: 'log-9' };
+
+		it('starts empty', () => {
+			expect(useUIStore.getState().pendingLogJump).toBeNull();
+		});
+
+		it('stores a jump request', () => {
+			useUIStore.getState().setPendingLogJump(JUMP);
+			expect(useUIStore.getState().pendingLogJump).toEqual(JUMP);
+		});
+
+		it('clears the request once the target entry consumes it', () => {
+			useUIStore.getState().setPendingLogJump(JUMP);
+			useUIStore.getState().clearPendingLogJump('log-9');
+			expect(useUIStore.getState().pendingLogJump).toBeNull();
+		});
+
+		it('does not clear a newer request queued for a different entry', () => {
+			useUIStore.getState().setPendingLogJump(JUMP);
+			useUIStore.getState().clearPendingLogJump('some-older-log');
+			expect(useUIStore.getState().pendingLogJump).toEqual(JUMP);
+		});
+
+		it('replaces an unconsumed request', () => {
+			useUIStore.getState().setPendingLogJump(JUMP);
+			const next = { sessionId: 'agent-1', tabId: 'tab-3', logId: 'log-10' };
+			useUIStore.getState().setPendingLogJump(next);
+			expect(useUIStore.getState().pendingLogJump).toEqual(next);
 		});
 	});
 

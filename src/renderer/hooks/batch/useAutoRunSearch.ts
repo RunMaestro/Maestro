@@ -1,9 +1,11 @@
 import { useState, useCallback, useRef, useEffect, type RefObject } from 'react';
+import type { MarkdownEditorHandle } from '../../components/FilePreview/markdownEditor';
+import { searchMatchRanges, type MatchRange } from '../../utils/highlightMatches';
 
 export interface UseAutoRunSearchParams {
 	localContent: string;
 	mode: 'edit' | 'preview';
-	textareaRef: RefObject<HTMLTextAreaElement | null>;
+	editorRef: RefObject<MarkdownEditorHandle | null>;
 	previewRef?: RefObject<HTMLDivElement | null>;
 }
 
@@ -23,7 +25,7 @@ export interface UseAutoRunSearchReturn {
 export function useAutoRunSearch({
 	localContent,
 	mode,
-	textareaRef,
+	editorRef,
 	previewRef,
 }: UseAutoRunSearchParams): UseAutoRunSearchReturn {
 	// Search state
@@ -34,6 +36,9 @@ export function useAutoRunSearch({
 	// Track if the user manually navigated to a match (prev/next buttons or Enter key)
 	// vs just typing in the search box
 	const userNavigatedToMatchRef = useRef(false);
+	// Offsets of every hit in the source, recomputed with the debounced count so
+	// the editor's painted decorations and the counter can never disagree.
+	const matchRangesRef = useRef<MatchRange[]>([]);
 
 	// Open search function
 	const openSearch = useCallback(() => {
@@ -47,13 +52,16 @@ export function useAutoRunSearch({
 		setCurrentMatchIndex(0);
 		setTotalMatches(0);
 		userNavigatedToMatchRef.current = false;
-		// Refocus appropriate element
-		if (mode === 'edit' && textareaRef.current) {
-			textareaRef.current.focus();
+		matchRangesRef.current = [];
+		// Drop the painted decorations before the editor loses the query that
+		// justified them, then refocus the surface the user was reading.
+		editorRef.current?.setSearchMatches([], -1);
+		if (mode === 'edit' && editorRef.current) {
+			editorRef.current.focus();
 		} else if (mode === 'preview' && previewRef?.current) {
 			previewRef.current.focus();
 		}
-	}, [mode, textareaRef, previewRef]);
+	}, [mode, editorRef, previewRef]);
 
 	// Debounced search match counting - prevent expensive regex on every keystroke
 	const searchCountTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -66,15 +74,15 @@ export function useAutoRunSearch({
 		if (searchQuery.trim()) {
 			// Debounce the match counting for large documents
 			searchCountTimeoutRef.current = setTimeout(() => {
-				const escapedQuery = searchQuery.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-				const regex = new RegExp(escapedQuery, 'gi');
-				const matches = localContent.match(regex);
-				const count = matches ? matches.length : 0;
+				const ranges = searchMatchRanges(localContent, searchQuery);
+				matchRangesRef.current = ranges;
+				const count = ranges.length;
 				setTotalMatches(count);
 				// Use functional updater to avoid stale currentMatchIndex from closure
 				setCurrentMatchIndex((prev) => (count > 0 && prev >= count ? 0 : prev));
 			}, 150); // Short delay for search responsiveness
 		} else {
+			matchRangesRef.current = [];
 			setTotalMatches(0);
 			setCurrentMatchIndex(0);
 		}
@@ -113,64 +121,34 @@ export function useAutoRunSearch({
 		goToPrevMatch();
 	}, [goToPrevMatch, totalMatches]);
 
-	// Scroll to current match in edit mode
-	// Only run when user explicitly navigated to a match (not on every keystroke)
+	// Paint every hit in the source editor, with the current one in the stronger
+	// color. The old textarea could not mark its own text, so edit-mode search
+	// only ever moved the caret - CodeMirror decorations make the hits visible.
 	useEffect(() => {
-		// Only scroll when user explicitly navigated (prev/next buttons or Enter key)
+		if (mode !== 'edit') return;
+		if (!searchOpen || !searchQuery.trim()) {
+			editorRef.current?.setSearchMatches([], -1);
+			return;
+		}
+		editorRef.current?.setSearchMatches(matchRangesRef.current, currentMatchIndex);
+	}, [mode, searchOpen, searchQuery, currentMatchIndex, totalMatches, editorRef]);
+
+	// Reveal the current match in edit mode. Only when the user explicitly
+	// navigated (prev/next or Enter), not on every keystroke.
+	useEffect(() => {
 		if (!userNavigatedToMatchRef.current) return;
 		if (!searchOpen || !searchQuery.trim() || totalMatches === 0) return;
-		if (mode !== 'edit' || !textareaRef.current) return;
+		if (mode !== 'edit' || !editorRef.current) return;
 
-		// For edit mode, find the match position in the text and scroll
-		const escapedQuery = searchQuery.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-		const regex = new RegExp(escapedQuery, 'gi');
-		let matchPosition = -1;
+		const range = matchRangesRef.current[currentMatchIndex];
+		if (!range) return;
 
-		// Find the nth match position using matchAll
-		const matches = Array.from(localContent.matchAll(regex));
-		if (currentMatchIndex < matches.length) {
-			matchPosition = matches[currentMatchIndex].index!;
-		}
-
-		if (matchPosition >= 0 && textareaRef.current) {
-			const textarea = textareaRef.current;
-
-			// Create a temporary element to measure text height up to the match
-			const measureDiv = document.createElement('div');
-			const computedStyle = window.getComputedStyle(textarea);
-			measureDiv.style.font = computedStyle.font;
-			measureDiv.style.fontSize = computedStyle.fontSize;
-			measureDiv.style.lineHeight = computedStyle.lineHeight;
-			measureDiv.style.padding = computedStyle.padding;
-			measureDiv.style.border = computedStyle.border;
-			measureDiv.style.boxSizing = computedStyle.boxSizing;
-			measureDiv.style.height = 'auto';
-			measureDiv.style.position = 'absolute';
-			measureDiv.style.visibility = 'hidden';
-			measureDiv.style.whiteSpace = 'pre-wrap';
-			measureDiv.style.wordWrap = 'break-word';
-			measureDiv.style.width = `${textarea.clientWidth}px`;
-			measureDiv.style.overflow = 'hidden';
-
-			// Set content up to the match position to measure vertical offset
-			const textBeforeMatch = localContent.substring(0, matchPosition);
-			measureDiv.textContent = textBeforeMatch;
-			document.body.appendChild(measureDiv);
-
-			// The height of the measureDiv is the vertical position of the match
-			const matchVerticalPos = measureDiv.scrollHeight;
-			document.body.removeChild(measureDiv);
-
-			// Scroll to center the match in the viewport
-			const scrollTarget = Math.max(0, matchVerticalPos - textarea.clientHeight / 2);
-			textarea.scrollTop = scrollTarget;
-
-			// Focus textarea and select the match text
-			textarea.focus();
-			textarea.setSelectionRange(matchPosition, matchPosition + searchQuery.length);
-			userNavigatedToMatchRef.current = false;
-		}
-	}, [currentMatchIndex, searchOpen, searchQuery, totalMatches, mode, localContent, textareaRef]);
+		// CodeMirror scrolls the selection into view for us - no mirror-div
+		// height measurement, and it stays correct under soft wrap.
+		editorRef.current.setSelection(range.from, range.to, true);
+		editorRef.current.focus();
+		userNavigatedToMatchRef.current = false;
+	}, [currentMatchIndex, searchOpen, searchQuery, totalMatches, mode, editorRef]);
 
 	// Callback for when a search match is rendered (used for scrolling to current match in preview)
 	const handleMatchRendered = useCallback(

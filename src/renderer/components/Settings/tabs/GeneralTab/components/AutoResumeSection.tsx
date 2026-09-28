@@ -1,6 +1,7 @@
 import { RotateCcw } from 'lucide-react';
 import type { Theme } from '../../../../../types';
 import { ToggleSwitch } from '../../../../ui/ToggleSwitch';
+import { SettingsSectionHeading } from '../../../SettingsSectionHeading';
 
 interface AutoResumeSectionProps {
 	theme: Theme;
@@ -23,10 +24,7 @@ export function AutoResumeSection({
 }: AutoResumeSectionProps) {
 	return (
 		<div>
-			<div className="block text-xs font-bold opacity-70 uppercase mb-2 flex items-center gap-2">
-				<RotateCcw className="w-3 h-3" />
-				Auto-Resume on Limit
-			</div>
+			<SettingsSectionHeading icon={RotateCcw}>Auto-Resume on Limit</SettingsSectionHeading>
 			<div
 				className="p-3 rounded border space-y-3"
 				style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgMain }}
@@ -48,7 +46,7 @@ export function AutoResumeSection({
 						<div className="font-medium" style={{ color: theme.colors.textMain }}>
 							Resume paused sessions when token/API credits are available
 						</div>
-						<div className="text-xs opacity-50 mt-0.5" style={{ color: theme.colors.textDim }}>
+						<div className="text-xs opacity-70 mt-0.5">
 							Maestro probes every provider on a fixed interval and automatically resumes any queued
 							work once the limit window reopens. Probing is cheap, so the give-up window is
 							intentionally long.
@@ -69,9 +67,7 @@ export function AutoResumeSection({
 						style={{ borderColor: theme.colors.border }}
 					>
 						<div className="flex items-center gap-2">
-							<label className="text-xs opacity-60" style={{ color: theme.colors.textDim }}>
-								Check for availability every (hours)
-							</label>
+							<label className="text-xs opacity-70">Check for availability every (hours)</label>
 							<input
 								type="number"
 								min={1}
@@ -84,9 +80,7 @@ export function AutoResumeSection({
 							/>
 						</div>
 						<div className="flex items-center gap-2">
-							<label className="text-xs opacity-60" style={{ color: theme.colors.textDim }}>
-								Give up after (days)
-							</label>
+							<label className="text-xs opacity-70">Give up after (days)</label>
 							<input
 								type="number"
 								min={1}

@@ -1,5 +1,7 @@
 import { User } from 'lucide-react';
 import type { Theme } from '../../../../../types';
+import { SettingsSectionHeading } from '../../../SettingsSectionHeading';
+import { useResizableTextarea } from '../../../../../hooks/ui/useResizableTextarea';
 
 interface ConductorProfileSectionProps {
 	theme: Theme;
@@ -12,18 +14,21 @@ export function ConductorProfileSection({
 	conductorProfile,
 	setConductorProfile,
 }: ConductorProfileSectionProps) {
+	const conductorProfileResize = useResizableTextarea({
+		sizeKey: 'settings-conductor-profile',
+		minHeight: 100,
+	});
+
 	return (
 		<div data-setting-id="general-conductor-profile">
-			<div className="block text-xs font-bold opacity-70 uppercase mb-1 flex items-center gap-2">
-				<User className="w-3 h-3" />
-				Conductor Profile (aka, About Me)
-			</div>
-			<p className="text-xs opacity-50 mb-2">
+			<SettingsSectionHeading icon={User}>Conductor Profile (aka, About Me)</SettingsSectionHeading>
+			<p className="text-xs opacity-70 mb-2">
 				Tell us a little about yourself so that agents created under Maestro know how to work and
 				communicate with you. As the conductor, you orchestrate the symphony of AI agents.
 				(Optional, max 5000 characters)
 			</p>
 			<textarea
+				ref={conductorProfileResize.textareaRef}
 				aria-label="Conductor Profile"
 				value={conductorProfile}
 				onChange={(e) => setConductorProfile(e.target.value)}
@@ -33,6 +38,7 @@ export function ConductorProfileSection({
 					borderColor: theme.colors.border,
 					color: theme.colors.textMain,
 					minHeight: '100px',
+					...conductorProfileResize.style,
 				}}
 				maxLength={5000}
 			/>

@@ -1,7 +1,6 @@
 import { useState, useEffect, useLayoutEffect, useRef, useCallback, memo } from 'react';
 import {
 	X,
-	Key,
 	Keyboard,
 	Bell,
 	Cpu,
@@ -15,12 +14,13 @@ import {
 	Info,
 } from 'lucide-react';
 import { useSettings } from '../../hooks';
-import type { Theme, LLMProvider } from '../../types';
+import type { Theme } from '../../types';
 import { useModalLayer } from '../../hooks/ui/useModalLayer';
 import { useResizableModal } from '../../hooks/ui/useResizableModal';
 import { useViewportBreakpoint } from '../../hooks/ui/useViewportBreakpoint';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { ResizeHandles } from '../ui/ResizeHandles';
+import { jumpToElement } from '../../utils/jumpHighlight';
 import { AICommandsPanel } from '../AICommandsPanel';
 import { MaestroPromptsTab } from './tabs/MaestroPromptsTab';
 import { SpecKitCommandsPanel } from '../SpecKitCommandsPanel';
@@ -39,16 +39,10 @@ import { AboutTab } from './tabs/AboutTab';
 import { useSettingsSearch, SettingsSearchInput, SettingsSearchResults } from './SettingsSearch';
 import type { SearchableSetting } from './searchableSettings';
 
-// Feature flags - set to true to enable dormant features
-const FEATURE_FLAGS = {
-	LLM_SETTINGS: false, // LLM provider configuration (OpenRouter, Anthropic, Ollama)
-};
-
 type SettingsTabId =
 	| 'about'
 	| 'general'
 	| 'display'
-	| 'llm'
 	| 'shortcuts'
 	| 'theme'
 	| 'notifications'
@@ -71,7 +65,6 @@ const TAB_ITEMS: Array<{
 	{ id: 'display', label: 'Display', icon: Monitor },
 	{ id: 'environment', label: 'Environment', icon: Globe },
 	{ id: 'general', label: 'General', icon: Settings },
-	...(FEATURE_FLAGS.LLM_SETTINGS ? [{ id: 'llm' as const, label: 'LLM', icon: Key }] : []),
 	{ id: 'prompts', label: 'Maestro Prompts', icon: Wand2 },
 	{ id: 'notifications', label: 'Notifications', icon: Bell },
 	// Internal id stays 'encore' (deep links, persisted last-tab, searchable
@@ -147,7 +140,6 @@ interface SettingsModalProps {
 	initialTab?:
 		| 'general'
 		| 'display'
-		| 'llm'
 		| 'shortcuts'
 		| 'theme'
 		| 'notifications'
@@ -157,6 +149,8 @@ interface SettingsModalProps {
 		| 'encore'
 		| 'prompts';
 	initialSelectedPromptId?: string;
+	/** A `data-setting-id` to scroll to and flash on open (deep link from outside Settings). */
+	initialSettingId?: string;
 	hasNoAgents?: boolean;
 	onThemeImportError?: (message: string) => void;
 	onThemeImportSuccess?: (message: string) => void;
@@ -170,6 +164,7 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 		themes,
 		initialTab,
 		initialSelectedPromptId,
+		initialSettingId,
 		hasNoAgents,
 		onThemeImportError,
 		onThemeImportSuccess,
@@ -179,13 +174,6 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 	// General tab settings are now self-sourced by GeneralTab
 	// Display tab settings are now self-sourced by DisplayTab
 	const {
-		// LLM settings
-		llmProvider,
-		setLlmProvider,
-		modelSlug,
-		setModelSlug,
-		apiKey,
-		setApiKey,
 		// Notification settings
 		osNotificationsEnabled,
 		setOsNotificationsEnabled,
@@ -224,15 +212,11 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 	const [activeTab, setActiveTab] = useState<SettingsTabId>(
 		() => initialTab || lastOpenSettingsTab || 'general'
 	);
-	const [testingLLM, setTestingLLM] = useState(false);
-	const [testResult, setTestResult] = useState<{
-		status: 'success' | 'error' | null;
-		message: string;
-	}>({ status: null, message: '' });
 	const resizableModal = useResizableModal({
 		resizeKey: 'settings',
 		defaultSize: { width: 980, height: 900 },
 		minSize: { width: 720, height: 480 },
+		enabled: isOpen,
 	});
 	// Search state
 	const [searchActive, setSearchActive] = useState(false);
@@ -268,43 +252,36 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 		setActiveTab(tab);
 	}, []);
 
+	// Deep link from outside Settings (e.g. a disabled control explaining which
+	// setting unlocks it). Bumping the counter re-runs the jump effect below even
+	// when the target tab is already the active one.
+	const [deepLinkJump, setDeepLinkJump] = useState(0);
+	useEffect(() => {
+		if (!isOpen || !initialSettingId) return;
+		pendingScrollIdRef.current = initialSettingId;
+		setDeepLinkJump((n) => n + 1);
+	}, [isOpen, initialSettingId]);
+
 	useEffect(() => {
 		const targetId = pendingScrollIdRef.current;
 		if (!targetId || searchActive) return;
 
-		let cancelled = false;
-		let attempts = 0;
-		const MAX_ATTEMPTS = 30; // ~500ms at 60fps - enough for tab content + lazy renders
-
-		const tryScroll = () => {
-			if (cancelled) return;
-			const el = contentRef.current?.querySelector<HTMLElement>(`[data-setting-id="${targetId}"]`);
-			// offsetParent is null while any ancestor is display:none - the most
-			// common reason scroll fails right after exiting search mode.
-			if (el && el.offsetParent !== null) {
-				pendingScrollIdRef.current = null;
-				el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-				// Themed arrow indicator + outline flash; duration must match the
-				// 3s animations in .settings-search-highlight / ::before.
-				el.style.setProperty('--settings-search-jump-color', jumpAccentRef.current);
-				el.classList.add('settings-search-highlight');
-				setTimeout(() => {
-					el.classList.remove('settings-search-highlight');
-					el.style.removeProperty('--settings-search-jump-color');
-				}, 3000);
-				return;
-			}
-			if (attempts++ < MAX_ATTEMPTS) {
-				requestAnimationFrame(tryScroll);
-			} else {
-				pendingScrollIdRef.current = null;
-			}
+		// Scroll + themed arrow/outline flash. The retry loop inside jumpToElement
+		// covers the race where the target tab's content is still display:none from
+		// search mode, which would otherwise make scrollIntoView silently no-op.
+		const clearPending = () => {
+			pendingScrollIdRef.current = null;
 		};
-		requestAnimationFrame(tryScroll);
-		return () => {
-			cancelled = true;
-		};
-	}, [searchActive, activeTab]);
+		return jumpToElement(
+			() => contentRef.current?.querySelector<HTMLElement>(`[data-setting-id="${targetId}"]`),
+			{
+				color: jumpAccentRef.current,
+				arrow: true,
+				onFound: clearPending,
+				onTimeout: clearPending,
+			}
+		);
+	}, [searchActive, activeTab, deepLinkJump]);
 
 	const search = useSettingsSearch({
 		isOpen,
@@ -398,152 +375,6 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 		return () => window.removeEventListener('keydown', handleTabNavigation);
 	}, [isOpen, activeTab]);
 
-	const testLLMConnection = async () => {
-		setTestingLLM(true);
-		setTestResult({ status: null, message: '' });
-
-		try {
-			let response;
-			const testPrompt = 'Respond with exactly: "Connection successful"';
-
-			if (llmProvider === 'openrouter') {
-				if (!apiKey) {
-					throw new Error('API key is required for OpenRouter');
-				}
-
-				response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-					method: 'POST',
-					headers: {
-						Authorization: `Bearer ${apiKey}`,
-						'Content-Type': 'application/json',
-						'HTTP-Referer': 'https://maestro.local',
-					},
-					body: JSON.stringify({
-						model: modelSlug || 'anthropic/claude-3.5-sonnet',
-						messages: [{ role: 'user', content: testPrompt }],
-						max_tokens: 50,
-					}),
-				});
-
-				if (!response.ok) {
-					const error = await response.json();
-					throw new Error(error.error?.message || `OpenRouter API error: ${response.status}`);
-				}
-
-				const data = await response.json();
-				if (!data.choices?.[0]?.message?.content) {
-					throw new Error('Invalid response from OpenRouter');
-				}
-
-				setTestResult({
-					status: 'success',
-					message: 'Successfully connected to OpenRouter!',
-				});
-			} else if (llmProvider === 'requesty') {
-				if (!apiKey) {
-					throw new Error('API key is required for Requesty');
-				}
-
-				response = await fetch('https://router.requesty.ai/v1/chat/completions', {
-					method: 'POST',
-					headers: {
-						Authorization: `Bearer ${apiKey}`,
-						'Content-Type': 'application/json',
-						'HTTP-Referer': 'https://maestro.local',
-					},
-					body: JSON.stringify({
-						model: modelSlug || 'openai/gpt-4o-mini',
-						messages: [{ role: 'user', content: testPrompt }],
-						max_tokens: 50,
-					}),
-				});
-
-				if (!response.ok) {
-					const error = await response.json();
-					throw new Error(error.error?.message || `Requesty API error: ${response.status}`);
-				}
-
-				const data = await response.json();
-				if (!data.choices?.[0]?.message?.content) {
-					throw new Error('Invalid response from Requesty');
-				}
-
-				setTestResult({
-					status: 'success',
-					message: 'Successfully connected to Requesty!',
-				});
-			} else if (llmProvider === 'anthropic') {
-				if (!apiKey) {
-					throw new Error('API key is required for Anthropic');
-				}
-
-				response = await fetch('https://api.anthropic.com/v1/messages', {
-					method: 'POST',
-					headers: {
-						'x-api-key': apiKey,
-						'anthropic-version': '2023-06-01',
-						'Content-Type': 'application/json',
-					},
-					body: JSON.stringify({
-						model: modelSlug || 'claude-3-5-sonnet-20241022',
-						max_tokens: 50,
-						messages: [{ role: 'user', content: testPrompt }],
-					}),
-				});
-
-				if (!response.ok) {
-					const error = await response.json();
-					throw new Error(error.error?.message || `Anthropic API error: ${response.status}`);
-				}
-
-				const data = await response.json();
-				if (!data.content?.[0]?.text) {
-					throw new Error('Invalid response from Anthropic');
-				}
-
-				setTestResult({
-					status: 'success',
-					message: 'Successfully connected to Anthropic!',
-				});
-			} else if (llmProvider === 'ollama') {
-				response = await fetch('http://localhost:11434/api/generate', {
-					method: 'POST',
-					headers: {
-						'Content-Type': 'application/json',
-					},
-					body: JSON.stringify({
-						model: modelSlug || 'llama3:latest',
-						prompt: testPrompt,
-						stream: false,
-					}),
-				});
-
-				if (!response.ok) {
-					throw new Error(
-						`Ollama API error: ${response.status}. Make sure Ollama is running locally.`
-					);
-				}
-
-				const data = await response.json();
-				if (!data.response) {
-					throw new Error('Invalid response from Ollama');
-				}
-
-				setTestResult({
-					status: 'success',
-					message: 'Successfully connected to Ollama!',
-				});
-			}
-		} catch (error: any) {
-			setTestResult({
-				status: 'error',
-				message: error.message || 'Connection failed',
-			});
-		} finally {
-			setTestingLLM(false);
-		}
-	};
-
 	if (!isOpen) return null;
 
 	return (
@@ -566,6 +397,8 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 				<ResizeHandles
 					onResizeStart={resizableModal.onResizeStart}
 					accentColor={theme.colors.accent}
+					onResetSize={resizableModal.onResetSize}
+					canReset={resizableModal.canReset}
 				/>
 
 				{/* Search Bar + Close Button */}
@@ -649,105 +482,6 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 						{activeTab === 'general' && <GeneralTab theme={theme} isOpen={isOpen} />}
 
 						{activeTab === 'display' && <DisplayTab theme={theme} />}
-
-						{activeTab === 'llm' && FEATURE_FLAGS.LLM_SETTINGS && (
-							<div className="space-y-5">
-								<div>
-									<div className="block text-xs font-bold opacity-70 uppercase mb-2">
-										LLM Provider
-									</div>
-									<select
-										value={llmProvider}
-										onChange={(e) => setLlmProvider(e.target.value as LLMProvider)}
-										className="w-full p-2 rounded border bg-transparent outline-none"
-										style={{ borderColor: theme.colors.border }}
-									>
-										<option value="openrouter">OpenRouter</option>
-										<option value="requesty">Requesty</option>
-										<option value="anthropic">Anthropic</option>
-										<option value="ollama">Ollama (Local)</option>
-									</select>
-								</div>
-
-								<div>
-									<div className="block text-xs font-bold opacity-70 uppercase mb-2">
-										Model Slug
-									</div>
-									<input
-										value={modelSlug}
-										onChange={(e) => setModelSlug(e.target.value)}
-										className="w-full p-2 rounded border bg-transparent outline-none"
-										style={{ borderColor: theme.colors.border }}
-										placeholder={
-											llmProvider === 'ollama' ? 'llama3:latest' : 'anthropic/claude-3.5-sonnet'
-										}
-									/>
-								</div>
-
-								{llmProvider !== 'ollama' && (
-									<div>
-										<div className="block text-xs font-bold opacity-70 uppercase mb-2">API Key</div>
-										<div
-											className="flex items-center border rounded px-3 py-2"
-											style={{
-												backgroundColor: theme.colors.bgMain,
-												borderColor: theme.colors.border,
-											}}
-										>
-											<Key className="w-4 h-4 mr-2 opacity-50" />
-											<input
-												type="password"
-												value={apiKey}
-												onChange={(e) => setApiKey(e.target.value)}
-												className="bg-transparent flex-1 text-sm outline-none"
-												placeholder="sk-..."
-											/>
-										</div>
-										<p className="text-[10px] mt-2 opacity-50">
-											Keys are stored locally in ~/.maestro/settings.json
-										</p>
-									</div>
-								)}
-
-								{/* Test Connection */}
-								<div className="pt-4 border-t" style={{ borderColor: theme.colors.border }}>
-									<button
-										onClick={testLLMConnection}
-										disabled={testingLLM || (llmProvider !== 'ollama' && !apiKey)}
-										className="w-full py-3 rounded-lg font-bold text-sm transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-										style={{
-											backgroundColor: theme.colors.accent,
-											color: theme.colors.accentForeground,
-										}}
-									>
-										{testingLLM ? 'Testing Connection...' : 'Test Connection'}
-									</button>
-
-									{testResult.status && (
-										<div
-											className="mt-3 p-3 rounded-lg text-sm"
-											style={{
-												backgroundColor:
-													testResult.status === 'success'
-														? theme.colors.success + '20'
-														: theme.colors.error + '20',
-												color:
-													testResult.status === 'success'
-														? theme.colors.success
-														: theme.colors.error,
-												border: `1px solid ${testResult.status === 'success' ? theme.colors.success : theme.colors.error}`,
-											}}
-										>
-											{testResult.message}
-										</div>
-									)}
-
-									<p className="text-[10px] mt-3 opacity-50 text-center">
-										Test sends a simple prompt to verify connectivity and configuration
-									</p>
-								</div>
-							</div>
-						)}
 
 						{activeTab === 'shortcuts' && (
 							<ShortcutsTab

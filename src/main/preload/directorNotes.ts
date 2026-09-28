@@ -7,8 +7,10 @@
  */
 
 import { ipcRenderer } from 'electron';
-import type { ToolType, HistoryEntry } from '../../shared/types';
+import type { ToolType, HistoryEntry, HistoryEntryType } from '../../shared/types';
 import type { DirectorNotesNarrative } from '../../shared/directorNotesNarrative';
+import type { GraphBucket } from '../../shared/history';
+import type { SynopsisProviderChoice } from '../../shared/directorNotesProvider';
 
 /** Aggregate stats returned alongside unified history */
 export interface UnifiedHistoryStats {
@@ -18,13 +20,6 @@ export interface UnifiedHistoryStats {
 	userCount: number; // Total USER entries
 	cueCount: number; // Total CUE entries
 	totalCount: number; // Total entries (autoCount + userCount + cueCount)
-}
-
-/** Pre-computed activity graph bucket for a time slice */
-export interface GraphBucket {
-	auto: number;
-	user: number;
-	cue: number;
 }
 
 /**
@@ -47,7 +42,7 @@ export interface UnifiedHistoryOptions {
 	lookbackDays: number;
 	// A single type, an array of types to include, or null for "all".
 	// An empty array selects nothing.
-	filter?: 'AUTO' | 'USER' | 'CUE' | Array<'AUTO' | 'USER' | 'CUE'> | null;
+	filter?: HistoryEntryType | HistoryEntryType[] | null;
 	/** Number of entries to return per page (default: 100) */
 	limit?: number;
 	/** Number of entries to skip for pagination (default: 0) */
@@ -61,7 +56,7 @@ export interface UnifiedHistoryOptions {
  */
 export interface UnifiedHistoryEntry {
 	id: string;
-	type: 'AUTO' | 'USER' | 'CUE';
+	type: HistoryEntryType;
 	timestamp: number;
 	summary: string;
 	fullResponse?: string;
@@ -82,7 +77,8 @@ export interface UnifiedHistoryEntry {
  */
 export interface SynopsisOptions {
 	lookbackDays: number;
-	provider: ToolType;
+	/** The agent to spawn, or `'auto'` for the first installed supported provider. */
+	provider: SynopsisProviderChoice;
 	customPath?: string;
 	customArgs?: string;
 	customEnvVars?: Record<string, string>;
@@ -106,10 +102,14 @@ export interface SynopsisResult {
 	generatedAt?: number; // Unix ms timestamp of when the synopsis was generated
 	stats?: SynopsisStats;
 	error?: string;
-	/** Parsed structured narrative for Rich Mode (present only on clean parse). */
+	/** Parsed structured narrative, from a clean parse or a salvage. */
 	narrative?: DirectorNotesNarrative;
 	/** Set when the raw synopsis could not be parsed into a structured narrative. */
 	narrativeError?: string;
+	/** Set when `narrative` was salvaged; explains what had to be recovered. */
+	narrativeRecovery?: string;
+	/** The provider that actually ran (the resolved one under auto-selection). */
+	provider?: ToolType;
 }
 
 /**
@@ -149,6 +149,12 @@ export interface RichAgentStat {
 	entryCount: number;
 	successCount: number;
 	failureCount: number;
+	/**
+	 * True when retention capped this count rather than the lookback window, so
+	 * the real total is larger and unknown. Optional on the wire: a cached
+	 * payload from before this field existed simply reads as "not truncated".
+	 */
+	truncated?: boolean;
 }
 
 /**
@@ -202,7 +208,7 @@ export function createDirectorNotesApi() {
 			timestamp: number,
 			options?: {
 				lookbackDays?: number;
-				filter?: 'AUTO' | 'USER' | 'CUE' | Array<'AUTO' | 'USER' | 'CUE'> | null;
+				filter?: HistoryEntryType | HistoryEntryType[] | null;
 			}
 		): Promise<number> =>
 			ipcRenderer.invoke('director-notes:getOffsetForTimestamp', timestamp, options),

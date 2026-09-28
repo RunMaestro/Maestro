@@ -1,7 +1,12 @@
 import { Check, ChevronDown, Settings } from 'lucide-react';
 import { getAgentDisplayName, isBetaAgent } from '../../../../../../shared/agentMetadata';
 import type { DirectorNotesSettings, Theme, ToolType } from '../../../../../types';
+import { IDEAL_END_STATE_MAX_LENGTH } from '../../../../../../shared/directorNotesEndState';
+import { useResizableTextarea } from '../../../../../hooks/ui/useResizableTextarea';
 import { AgentConfigPanel } from '../../../../shared/AgentConfigPanel';
+import { ToggleSwitchTrack } from '../../../../ui/ToggleSwitch';
+import { pickFirstAvailableProvider } from '../../../../../../shared/directorNotesProvider';
+import type { AgentConfig } from '../../../../../types';
 import type { DirectorNotesAgentState } from '../types';
 
 interface DirectorNotesSectionProps {
@@ -19,15 +24,62 @@ export function DirectorNotesSection({
 }: DirectorNotesSectionProps) {
 	const ac = directorNotesAgentState.agentConfiguration;
 
+	// Default ON: an install that has never touched this setting should get the
+	// auto behavior rather than a silently-pinned provider.
+	const dnAutoProvider = directorNotesSettings.autoSelectProvider !== false;
+	// Which provider auto would land on right now. Shown in the helper text so the
+	// ghosted dropdown is not the only clue about what will actually run.
+	// `detectedAgents` is already filtered to available, non-hidden agents.
+	const dnAutoPick = pickFirstAvailableProvider(
+		ac.detectedAgents.map((agent: AgentConfig) => agent.id)
+	);
+	const dnAutoPickName =
+		directorNotesAgentState.availableTiles.find((t) => t.id === dnAutoPick)?.name ?? dnAutoPick;
+
+	const idealEndStateResize = useResizableTextarea({
+		sizeKey: 'settings-director-notes-ideal-end-state',
+		minHeight: 120,
+	});
+
 	return (
 		<div data-setting-id="encore-director-notes" className="space-y-6">
-			<div className="pt-4">
+			<div className="pt-4" data-setting-id="encore-director-notes-provider">
 				<div
 					className="block text-xs font-bold opacity-70 uppercase mb-2"
 					style={{ color: theme.colors.textMain }}
 				>
 					Synopsis Provider
 				</div>
+
+				{/* Auto-selection. On by default; turning it off un-ghosts the
+				    picker below and pins the synopsis to one provider. */}
+				<button
+					type="button"
+					onClick={() =>
+						setDirectorNotesSettings({
+							...directorNotesSettings,
+							autoSelectProvider: !dnAutoProvider,
+						})
+					}
+					className="w-full flex items-center justify-between gap-3 mb-3 text-left"
+					role="switch"
+					aria-checked={dnAutoProvider}
+					aria-label="Use the first available provider for Director's Notes"
+				>
+					<div>
+						<div className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
+							Use the first available provider
+						</div>
+						<div className="text-xs opacity-70 mt-0.5">
+							{dnAutoProvider
+								? dnAutoPickName
+									? `Picked at generation time. Right now that is ${dnAutoPickName}.`
+									: 'Picked at generation time. No supported provider is installed.'
+								: 'Off - the synopsis always runs on the provider selected below.'}
+						</div>
+					</div>
+					<ToggleSwitchTrack checked={dnAutoProvider} theme={theme} />
+				</button>
 
 				{ac.isDetecting ? (
 					<div className="flex items-center gap-2 py-2">
@@ -47,9 +99,14 @@ export function DirectorNotesSection({
 						No agents available. Please install Claude Code, OpenCode, Codex, or Factory Droid.
 					</div>
 				) : (
-					<div className="flex items-center gap-2">
+					<div
+						className={`flex items-center gap-2 transition-opacity ${
+							dnAutoProvider ? 'opacity-40' : ''
+						}`}
+					>
 						<div className="relative flex-1">
 							<select
+								disabled={dnAutoProvider}
 								value={directorNotesSettings.provider}
 								onChange={(event) =>
 									directorNotesAgentState.handleAgentChange(event.target.value as ToolType)
@@ -181,10 +238,7 @@ export function DirectorNotesSection({
 					}
 					className="w-full"
 				/>
-				<div
-					className="flex justify-between text-[10px] mt-1"
-					style={{ color: theme.colors.textDim }}
-				>
+				<div className="flex justify-between text-2xs mt-1" style={{ color: theme.colors.textDim }}>
 					<span>1 day</span>
 					<span>7</span>
 					<span>14</span>
@@ -195,6 +249,52 @@ export function DirectorNotesSection({
 				<p className="text-xs mt-2" style={{ color: theme.colors.textDim }}>
 					How far back to look when generating notes (can be adjusted per-report)
 				</p>
+			</div>
+
+			{/* Ideal End State - optional; drives the extra progress section */}
+			<div data-setting-id="encore-director-notes-ideal-end-state">
+				<div className="block text-xs font-bold mb-2" style={{ color: theme.colors.textMain }}>
+					Ideal End State (optional)
+				</div>
+				<p className="text-xs mb-2" style={{ color: theme.colors.textDim }}>
+					Describe where you are trying to get to: the projects in flight, which agents belong to
+					each, and what finished looks like. Leave this empty and notes are generated exactly as
+					they are today. Fill it in and the notes prioritize the projects you name, frame Next
+					Steps around them, and add a Progress Toward Ideal End State section measuring how far the
+					window moved you.
+				</p>
+				<textarea
+					ref={idealEndStateResize.textareaRef}
+					value={directorNotesSettings.idealEndState ?? ''}
+					onChange={(e) =>
+						setDirectorNotesSettings({
+							...directorNotesSettings,
+							idealEndState: e.target.value,
+						})
+					}
+					placeholder={
+						'e.g., Shipping v2 of the ingest pipeline. Agents parser-a, parser-b and schema-migration are all on it; done means the new schema is live and the legacy path is deleted.\n\nSeparately, the docs rewrite (agent docs-refresh) needs every page under /guides updated for the new CLI flags.'
+					}
+					className="w-full p-3 rounded border bg-transparent outline-none text-sm resize-y"
+					style={{
+						borderColor: theme.colors.border,
+						color: theme.colors.textMain,
+						minHeight: '120px',
+						...idealEndStateResize.style,
+					}}
+					maxLength={IDEAL_END_STATE_MAX_LENGTH}
+				/>
+				<div
+					className="text-xs mt-1 text-right"
+					style={{
+						color:
+							(directorNotesSettings.idealEndState?.length ?? 0) > IDEAL_END_STATE_MAX_LENGTH * 0.9
+								? theme.colors.warning
+								: theme.colors.textDim,
+					}}
+				>
+					{directorNotesSettings.idealEndState?.length ?? 0}/{IDEAL_END_STATE_MAX_LENGTH}
+				</div>
 			</div>
 
 			{/* Default Reading Mode (Rich widget dashboard vs Plain markdown) */}

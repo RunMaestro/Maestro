@@ -112,6 +112,7 @@ vi.mock('../renderer/utils/shortcutFormatter', () => ({
 	}),
 	formatMetaKey: vi.fn(() => 'Ctrl'),
 	formatMetaKeyName: vi.fn(() => 'Ctrl'),
+	formatAltKeyName: vi.fn(() => 'Alt'),
 	formatEnterToSend: vi.fn((enterToSend: boolean) => (enterToSend ? 'Enter' : 'Ctrl + Enter')),
 	formatEnterToSendTooltip: vi.fn((enterToSend: boolean) =>
 		enterToSend ? 'Switch to Ctrl+Enter to send' : 'Switch to Enter to send'
@@ -240,6 +241,7 @@ const mockMaestro = {
 		onOutput: vi.fn().mockReturnValue(() => {}),
 		onExit: vi.fn().mockReturnValue(() => {}),
 		onUserInput: vi.fn().mockReturnValue(() => {}),
+		sendRemoteCommandReceipt: vi.fn(),
 	},
 	debug: {
 		createPackage: vi.fn().mockResolvedValue({ success: true }),
@@ -281,9 +283,11 @@ const mockMaestro = {
 		checkGhAuth: vi.fn().mockResolvedValue({ authenticated: true }),
 		submit: vi.fn().mockResolvedValue({ success: true }),
 		composePrompt: vi.fn().mockResolvedValue({ prompt: 'composed feedback prompt' }),
-		getConversationPrompt: vi
-			.fn()
-			.mockResolvedValue({ prompt: 'system prompt', environment: '- Maestro version: test' }),
+		getConversationPrompt: vi.fn().mockResolvedValue({
+			prompt: 'system prompt',
+			environment: '- Maestro version: test',
+			cwd: '/home/test',
+		}),
 		submitConversation: vi.fn().mockResolvedValue({ success: true }),
 		searchIssues: vi.fn().mockResolvedValue({ issues: [] }),
 		subscribeIssue: vi.fn().mockResolvedValue({ success: true }),
@@ -315,6 +319,7 @@ const mockMaestro = {
 		worktreeInfo: vi.fn().mockResolvedValue({ success: true, exists: false, isWorktree: false }),
 		getRepoRoot: vi.fn().mockResolvedValue({ success: true, root: '/path/to/project' }),
 		log: vi.fn().mockResolvedValue({ entries: [], error: undefined }),
+		graph: vi.fn().mockResolvedValue({ nodes: [], error: undefined }),
 		commitCount: vi.fn().mockResolvedValue({ count: 0, error: null }),
 		show: vi.fn().mockResolvedValue({ stdout: '', stderr: '', exitCode: 0 }),
 		getRemoteUrl: vi.fn().mockResolvedValue(null),
@@ -327,8 +332,21 @@ const mockMaestro = {
 			uncommittedChanges: 0,
 		}),
 	},
+	attachments: {
+		// Mirrors userData/attachments/{sessionId}/{filename} on the host.
+		save: vi.fn((sessionId: string, _base64: string, filename: string) =>
+			Promise.resolve({ success: true, path: `/userData/attachments/${sessionId}/${filename}` })
+		),
+		load: vi.fn().mockResolvedValue({ success: true, dataUrl: '' }),
+		delete: vi.fn().mockResolvedValue({ success: true }),
+		list: vi.fn().mockResolvedValue({ success: true, files: [] }),
+		getPath: vi.fn().mockResolvedValue({ success: true, path: '/userData/attachments' }),
+	},
 	fs: {
 		readDir: vi.fn().mockResolvedValue([]),
+		readDirTree: vi
+			.fn()
+			.mockResolvedValue({ tree: [], truncated: false, filesFound: 0, directoriesScanned: 0 }),
 		readFile: vi.fn().mockResolvedValue(''),
 		// Mirrors the preload webUtils bridge: returns the dropped file's absolute
 		// path. Test fixtures set `.path` on their fake File objects.
@@ -348,6 +366,10 @@ const mockMaestro = {
 		}),
 		homeDir: vi.fn().mockResolvedValue('/home/testuser'),
 	},
+	// Tab lifecycle notifications (renderer -> main); fire-and-forget
+	tabs: {
+		notifyAiTabClosed: vi.fn(),
+	},
 	agents: {
 		detect: vi.fn().mockResolvedValue([]),
 		get: vi.fn().mockResolvedValue(null),
@@ -361,6 +383,7 @@ const mockMaestro = {
 		getCustomArgs: vi.fn().mockResolvedValue(null),
 		setCustomArgs: vi.fn().mockResolvedValue(undefined),
 		getAllCustomEnvVars: vi.fn().mockResolvedValue({}),
+		getKnownEnvVarKeys: vi.fn().mockResolvedValue({ byProvider: {}, global: [] }),
 		getCustomEnvVars: vi.fn().mockResolvedValue(null),
 		setCustomEnvVars: vi.fn().mockResolvedValue(undefined),
 		refresh: vi.fn().mockResolvedValue({ agents: [], debugInfo: null }),
@@ -389,6 +412,8 @@ const mockMaestro = {
 			supportsContextMerge: false,
 			supportsContextExport: false,
 		}),
+		// Bulk capabilities used to prime the renderer capability cache
+		getAllCapabilities: vi.fn().mockResolvedValue({}),
 		getMaestroPDetectedPath: vi.fn().mockResolvedValue(null),
 		getRemoteMaestroPAvailable: vi.fn().mockResolvedValue(null),
 		getClaudeUsageSnapshots: vi.fn().mockResolvedValue({}),
@@ -460,6 +485,9 @@ const mockMaestro = {
 		updateSessionName: vi.fn().mockResolvedValue(undefined),
 		updateSessionStarred: vi.fn().mockResolvedValue(undefined),
 		registerSessionOrigin: vi.fn().mockResolvedValue(undefined),
+		// Transcript mirror (starred + snoozed retention)
+		snapshotStarredTranscript: vi.fn().mockResolvedValue(undefined),
+		releaseSnoozedTranscript: vi.fn().mockResolvedValue(undefined),
 	},
 	autorun: {
 		readDoc: vi.fn().mockResolvedValue({ success: true, content: '' }),
@@ -555,6 +583,8 @@ const mockMaestro = {
 		disableAll: vi.fn().mockResolvedValue({ success: true, count: 0 }),
 	},
 	web: {
+		claimAutoRunStart: vi.fn().mockResolvedValue(true),
+		releaseAutoRunStartClaim: vi.fn().mockResolvedValue(true),
 		broadcastAutoRunState: vi.fn(),
 		broadcastSessionState: vi.fn(),
 		start: vi.fn().mockResolvedValue(undefined),
@@ -602,6 +632,31 @@ const mockMaestro = {
 	},
 	stats: {
 		recordQuery: vi.fn().mockResolvedValue({ success: true }),
+		getTokenUsage: vi.fn().mockResolvedValue({
+			totals: {
+				inputTokens: 0,
+				outputTokens: 0,
+				cacheReadTokens: 0,
+				cacheCreationTokens: 0,
+				costUsd: 0,
+				costEstimated: false,
+				sessionCount: 0,
+			},
+			byAgent: [],
+			byModel: [],
+			byProject: [],
+			byAccount: [],
+			timeline: [],
+			series: {
+				byDay: {},
+				byHour: {},
+				byAgentByDay: {},
+				bySessionByDay: {},
+				bySource: { user: 0, auto: 0 },
+			},
+			coverageByAgent: {},
+			generatedAtMs: 0,
+		}),
 		getAggregation: vi.fn().mockResolvedValue({
 			totalQueries: 0,
 			totalDuration: 0,
@@ -610,14 +665,27 @@ const mockMaestro = {
 			bySource: { user: 0, auto: 0 },
 			byDay: [],
 		}),
+		// Interactive vs autonomous split (delegation surfaces). Zeroed so the
+		// dashboard renders the "nothing tracked yet" state rather than throwing.
+		getDelegationTotals: vi.fn().mockResolvedValue({
+			interactive: { count: 0, durationMs: 0 },
+			autoRun: { count: 0, durationMs: 0 },
+			cue: { count: 0, durationMs: 0 },
+		}),
+		getDelegationByDay: vi.fn().mockResolvedValue([]),
 		getStats: vi.fn().mockResolvedValue([]),
 		startAutoRun: vi.fn().mockResolvedValue('auto-run-id'),
 		endAutoRun: vi.fn().mockResolvedValue(true),
 		recordAutoTask: vi.fn().mockResolvedValue('task-id'),
 		getAutoRunSessions: vi.fn().mockResolvedValue([]),
 		getAutoRunTasks: vi.fn().mockResolvedValue([]),
-		exportCsv: vi.fn().mockResolvedValue(''),
+		exportUsage: vi.fn().mockResolvedValue({ path: '', format: 'json', rowCounts: {}, notes: [] }),
 		onStatsUpdate: vi.fn().mockReturnValue(() => {}),
+		recordResilience: vi.fn().mockResolvedValue('outage-id'),
+		getResilience: vi.fn().mockResolvedValue([]),
+		// Auto Run wizard usage tracking
+		recordWizardRun: vi.fn().mockResolvedValue('wizard-run-id'),
+		getWizardRuns: vi.fn().mockResolvedValue([]),
 		getDatabaseSize: vi.fn().mockResolvedValue(1024 * 1024), // 1MB mock
 		getEarliestTimestamp: vi.fn().mockResolvedValue(null),
 		clearOldData: vi.fn().mockResolvedValue({
@@ -652,6 +720,9 @@ const mockMaestro = {
 		// mirroring the preload contract so useCrossAgentDispatch's mount effect
 		// (window.maestro.crossAgent.onChunk) doesn't throw under test.
 		send: vi.fn().mockResolvedValue({ requestId: 'test-cross-agent-request' }),
+		// Stop calls this for every interrupt in AI mode, so it has to exist or
+		// handleInterrupt throws before it ever signals a process.
+		cancel: vi.fn().mockResolvedValue({ canceled: 0 }),
 		onChunk: vi.fn().mockReturnValue(() => {}),
 	},
 	leaderboard: {
@@ -766,6 +837,12 @@ const mockMaestro = {
 		// clean up. Window tests capture the registered callback to fire broadcasts.
 		onSessionMoved: vi.fn(() => () => {}),
 		onHighlightDropZone: vi.fn(() => () => {}),
+	},
+	// Automatic tab naming (ephemeral namer spawn). Returns null by default so a
+	// test that sends a message doesn't accidentally rename tabs; tests that care
+	// override this with their own resolved value.
+	tabNaming: {
+		generateTabName: vi.fn().mockResolvedValue(null),
 	},
 	// Synchronous platform string (replaces async os.getPlatform IPC)
 	platform: 'darwin',

@@ -250,6 +250,31 @@ describe('collectContributions', () => {
 		expect(c.errors.some((e) => e.includes('relative path inside the plugin'))).toBe(true);
 	});
 
+	it('parses the optional panel size and never drops a panel over it', () => {
+		const c = collectContributions(
+			manifest(
+				'com.acme',
+				{
+					panels: [
+						{ id: 'plain', title: 'Plain', entry: 'panel.html' },
+						{ id: 'full', title: 'Full', entry: 'panel.html', placement: 'modal', size: 'full' },
+						{ id: 'explicit', title: 'Explicit', entry: 'panel.html', size: 'default' },
+						{ id: 'bogus', title: 'Bogus', entry: 'panel.html', size: 'enormous' },
+					],
+				},
+				1
+			)
+		);
+		// Absent -> 'default' with NO error, so pre-size manifests are untouched.
+		expect(c.panels.find((p) => p.localId === 'plain')?.size).toBe('default');
+		expect(c.panels.find((p) => p.localId === 'full')?.size).toBe('full');
+		expect(c.panels.find((p) => p.localId === 'explicit')?.size).toBe('default');
+		// Invalid -> error, but the panel still renders at the safe default size.
+		expect(c.panels.find((p) => p.localId === 'bogus')?.size).toBe('default');
+		expect(c.errors.some((e) => e.includes('invalid size'))).toBe(true);
+		expect(c.panels).toHaveLength(4);
+	});
+
 	it('rejects agents for tier 0 and accepts them for tier 1', () => {
 		const tier0 = collectContributions(
 			manifest('com.acme', {

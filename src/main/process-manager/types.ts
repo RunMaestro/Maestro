@@ -118,6 +118,9 @@ export interface ManagedProcess {
 	 *  (coerced to 0 by the spawner's `close` handler) must NOT be surfaced as an
 	 *  "exited without producing a response" error. */
 	interrupted?: boolean;
+	/** An in-turn error notice held until the turn shows whether the agent
+	 *  recovered from it. See `AgentOutputParser.isProvisionalErrorNotice`. */
+	provisionalError?: AgentError;
 	startTime: number;
 	outputParser?: AgentOutputParser;
 	stderrBuffer?: string;
@@ -125,6 +128,12 @@ export interface ManagedProcess {
 	streamedText?: string;
 	contextWindow?: number;
 	ompModelCatalogKey?: string;
+	/** Last omp usage payload that was emitted WITHOUT a catalog-resolved context
+	 *  window (the catalog prime had not landed yet, so the stats carry the static
+	 *  fallback). Kept so a prime that completes after the spawn cap can re-emit a
+	 *  corrected `usage` event immediately instead of the gauge staying wrong until
+	 *  the next turn. Cleared once resolved or pushed, so no double emit. */
+	pendingOmpUsagePush?: { model: string; stats: UsageStats };
 	tempImageFiles?: string[];
 	command?: string;
 	args?: string[];
@@ -141,7 +150,7 @@ export interface ManagedProcess {
 	sshRemoteCommand?: string;
 	dataBuffer?: string;
 	dataBufferTimeout?: NodeJS.Timeout;
-	/** Env vars Maestro explicitly set on this process (global + agent + session overrides),
+	/** Env vars Maestro explicitly set on this process (global, then the session's own set or else the agent-level set),
 	 *  with `~/` paths expanded and MAESTRO_SESSION_RESUMED included when applicable.
 	 *  Inherited system env is NOT included - this is the actionable set shown in the
 	 *  Process Details modal. */
@@ -154,6 +163,11 @@ export interface ManagedProcess {
 	opencodeSessionId?: string;
 	/** OpenCode SDK client bound to the shared server, for abort calls. */
 	opencodeClient?: OpencodeClient;
+	/** Monotonic spawn number for this session id, claimed at registration.
+	 *  Lets a late event from a killed process recognize that a newer spawn owns
+	 *  the session even after that newer spawn has removed its own map entry.
+	 *  See `process-manager/generation.ts`. */
+	spawnGeneration?: number;
 }
 
 export interface UsageTotals {

@@ -56,6 +56,28 @@ describe('validatePluginManifest', () => {
 		).toBeNull();
 	});
 
+	it('accepts an optional releaseDate and keeps it verbatim', () => {
+		const { manifest, errors } = validatePluginManifest(
+			validManifest({ releaseDate: ' 2026-07-10 ' })
+		);
+		expect(errors).toEqual([]);
+		expect(manifest?.releaseDate).toBe('2026-07-10');
+	});
+
+	it('omits releaseDate when the manifest does not declare one', () => {
+		const { manifest } = validatePluginManifest(validManifest());
+		expect(manifest?.releaseDate).toBeUndefined();
+	});
+
+	it('rejects a releaseDate that is not a well-formed calendar day', () => {
+		expect(validatePluginManifest(validManifest({ releaseDate: 'July 2026' })).manifest).toBeNull();
+		expect(validatePluginManifest(validManifest({ releaseDate: '2026-7-1' })).manifest).toBeNull();
+		expect(validatePluginManifest(validManifest({ releaseDate: 20260710 })).manifest).toBeNull();
+		expect(
+			validatePluginManifest(validManifest({ releaseDate: '2026-13-40' })).manifest
+		).toBeNull();
+	});
+
 	it('rejects an out-of-range tier', () => {
 		expect(validatePluginManifest(validManifest({ tier: 3 })).manifest).toBeNull();
 		expect(validatePluginManifest(validManifest({ tier: '0' })).manifest).toBeNull();
@@ -91,6 +113,25 @@ describe('validatePluginManifest', () => {
 		const badCategory = validatePluginManifest(validManifest({ category: 'nope' }));
 		expect(badCategory.manifest).toBeNull();
 		expect(badCategory.errors.some((e) => e.includes('category'))).toBe(true);
+	});
+
+	it('keeps beta only when true, omits it when false or absent, and rejects a non-boolean', () => {
+		const withBeta = validatePluginManifest(validManifest({ beta: true }));
+		expect(withBeta.errors).toEqual([]);
+		expect(withBeta.manifest?.beta).toBe(true);
+
+		const betaFalse = validatePluginManifest(validManifest({ beta: false }));
+		expect(betaFalse.errors).toEqual([]);
+		expect(betaFalse.manifest).not.toBeNull();
+		expect('beta' in (betaFalse.manifest as Record<string, unknown>)).toBe(false);
+
+		const withoutBeta = validatePluginManifest(validManifest());
+		expect(withoutBeta.manifest).not.toBeNull();
+		expect('beta' in (withoutBeta.manifest as Record<string, unknown>)).toBe(false);
+
+		const badBeta = validatePluginManifest(validManifest({ beta: 'yes' }));
+		expect(badBeta.manifest).toBeNull();
+		expect(badBeta.errors).toContain('beta, when present, must be a boolean');
 	});
 
 	it('does not treat host incompatibility as a validation error', () => {

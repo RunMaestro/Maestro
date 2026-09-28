@@ -1,11 +1,12 @@
 # Agent Flow
 
-A tier-2 Maestro plugin that visualizes what your agents are doing, live, as an
-execution graph. It listens to the host's metadata-only event stream (tool
-calls, agent status changes, completions, errors, and usage updates) and builds
-one lane per session. Each lane holds the recent tool-call nodes for that
-session, with timing and lifecycle phase, and the plugin pushes coalesced
-snapshots to its own panel for rendering.
+A tier-2 Maestro plugin that visualizes what your agents are doing, live, as a
+full-window mission-control overlay summoned with `Alt+Shift+F`. It listens to
+the host's metadata-only event stream (tool calls, agent status changes,
+completions, errors, and usage updates) and builds one lane per session. Each
+lane holds the recent tool-call nodes for that session, with timing and
+lifecycle phase, and the plugin pushes coalesced snapshots to its own panel,
+where every running agent is drawn as one node on a shared canvas.
 
 Everything the plugin sees is metadata only: tool names, timing, and lifecycle
 phase. It never receives tool arguments, tool results, prompt text, or agent
@@ -15,7 +16,8 @@ output - those never cross the plugin event boundary.
 
 - Subscribes to `tool.executed`, `agent.statusChanged`, `agent.awaiting`,
   `agent.completed`, `agent.error`, `agent.exited`, `run.completed`,
-  `usage.updated`, `session.created`, `session.updated`, and `session.removed`.
+  `usage.updated`, `session.created`, `session.updated`, `session.removed`, and
+  `session.activated` (which agent the user is looking at, ids only).
 - Maintains an in-memory model: a lane per session
   (`{ sessionId, title, agentId, status, nodes, usage }`) where each node is a
   tool call (`{ toolCallId, toolName, phase, startedAt, endedAt, durationMs }`).
@@ -23,40 +25,51 @@ output - those never cross the plugin event boundary.
   phase closes the node the `running` phase opened.
 - Caps each lane at the 300 most recent nodes and drops lanes for removed
   sessions.
-- Pushes a coalesced `{ v, at, lanes }` snapshot to the `flow` panel at most
-  once per 250 ms, guarding the host's 64 KB panel-post cap.
+- Pushes a coalesced `{ v, at, lanes, summary, focusedSessionId }` snapshot to
+  the `flow` panel at most once per 250 ms, guarding the host's 64 KB panel-post
+  cap.
+- Summons and dismisses the overlay itself: the `overlay` command (bound to
+  `Alt+Shift+F`) calls `maestro.ui.togglePanel('flow')`, and a `jump` message
+  posted back by the panel calls `maestro.sessions.focus(sessionId)` to move
+  Maestro to that agent's AI tab.
 
 ## Panel UI
 
 The `flow` panel (`panel.html`) is a single self-contained HTML file (vanilla
-JS + inline SVG/CSS, no external references) that renders each snapshot it
+JS + inline SVG/CSS, no external references) rendered as a full-window overlay
+(`{ "placement": "modal", "size": "full" }`). It renders each snapshot it
 receives as a `maestro:panelData` window message:
 
-- **Node graph** - one horizontal lane per session (lane label = title, agent
-  id, and a green/yellow/red status dot), and within each lane a left-to-right
-  sequence of tool-call nodes connected by edges in execution order. Node color
-  follows phase: pulsing yellow for `running`, green for `completed`, red for
-  `failed`, gray for unknown.
+- **Shared canvas** - every agent is ONE node, laid out on a single grid rather
+  than getting a lane row of its own, so a whole fleet is legible at a glance.
+  The node's ring follows Maestro's status language: green ready/idle, yellow
+  working, pulsing orange connecting, red error, blue waiting for input. A halo
+  pulses around the node while it is working or connecting, and the core shows
+  the count of tools currently in flight.
+- **Tool satellites** - the most recent 6 tool calls orbit each node on thin
+  edges, one card each showing the tool NAME, its phase, and its duration
+  (`Bash` / `completed · 1.5s`). Running cards pulse; finished cards do not.
+- **Cost and tokens** - a cost pill (`$0.1234`) plus a token bar under each
+  node, filled with the accumulated tokens against the reported context window
+  (amber past 70%, red past 90%). With no context window reported, the count is
+  shown without a bar rather than implying a capacity that was never sent.
+- **Click to jump** - clicking a node, or a FINISHED tool card, posts
+  `{ commandId: 'jump', args: { sessionId } }` back to the sandbox, which calls
+  `maestro.sessions.focus(...)`; Maestro switches to that agent and lands on its
+  AI tab. The agent the user is currently looking at
+  (`snapshot.focusedSessionId`) wears a dashed accent ring.
 - **Pan / zoom** - drag the canvas background to pan, wheel to zoom around the
-  cursor (0.25x to 3x), double-click to reset. The transform and the current
-  selection both survive re-renders.
-- **Inspector** - click a node to inspect its metadata (tool name, phase,
-  toolCallId, start/end time, duration formatted `1.2s` style); click a lane
-  label for session-level info (session id, agent id, status, and latest usage
-  figures - tokens, context window, cost - when present); click empty canvas to
-  close it.
-- **Timeline** - a compact bottom strip maps wall-clock time to x-position, one
-  thin row per lane, each node drawn as a duration bar (running nodes extend to
-  "now" and re-extend on every snapshot). Clicking a bar selects the same node
-  in the graph.
-- **Session tabs** - the header strip offers "All" plus one tab per lane;
-  selecting a tab filters both the graph and the timeline to that session. A
+  cursor (0.2x to 3x), double-click (or **Reset view**) to re-fit. The graph
+  auto-fits the window until the first manual pan or zoom, then stays put.
+- **Dismiss** - Escape inside the overlay invokes the plugin's own `overlay`
+  command (the guest is a separate renderer process, so its key events cannot
+  reach the host's modal layer stack), as does pressing `Alt+Shift+F` again. A
   **Clear** button posts the `clear` command back to the sandbox.
 
 ## Activity and health (issue #1231)
 
 On top of the graph, the panel answers the "what is my long-running agent
-actually doing right now" question with an activity summary and per-lane health
+actually doing right now" question with an activity summary and per-agent health
 badges. This addresses
 [issue #1231](https://github.com/RunMaestro/Maestro/issues/1231) ("Provide more
 insight to long running thinking tasks"): how many background tool calls and
@@ -68,23 +81,24 @@ run has broken on an error.
   Each segment is hidden when its count is 0 and colored with Maestro's status
   language (yellow for working and running tools, blue for waiting on input, red
   for errors). This is the count of background shell commands and agents running.
-- **Per-lane health badges** - each lane label carries a coarse status badge
+- **Per-node health badges** - each node carries a coarse status badge
   ("Working", "Waiting for input", "Idle", or the terminal "Completed" /
-  "Failed" state), a running-tool count ("3 tools") when tools are in flight,
-  and, while the lane is working, a live elapsed timer ("12s") measuring the time
-  since its last activity.
-- **Stall warning** - when a working lane sees no activity for more than 30
+  "Failed" state) and, while the agent is working, a live elapsed timer
+  ("Working · 12s") measuring the time since its last activity. The count of
+  tools in flight sits inside the node core.
+- **Stall warning** - when a working agent sees no activity for more than 30
   seconds an amber "No activity for Ns" badge appears, flagging a run that may be
   broken or never resolving.
-- **Error badge** - when the lane's last `agent.error` is set, a red badge shows
+- **Error badge** - when the agent's last `agent.error` is set, a red badge shows
   the error type plus a recoverability hint ("retrying" when recoverable, "needs
   attention" when not), so an API or network fault is visible at a glance.
 - **Live clock** - a 1-second interval re-renders only the summary strip and the
-  health badges (never the SVG graph) against the wall clock, so the elapsed
-  timer and stall warning keep advancing even when a stalled or errored lane
-  produces no further events and therefore no new snapshot.
+  health badges (never the SVG graph, whose animations would restart) against
+  the wall clock, so the elapsed timer and stall warning keep advancing even
+  when a stalled or errored agent produces no further events and therefore no
+  new snapshot.
 
-This overlay shows **metadata only**: aggregate counts, coarse per-lane status
+This overlay shows **metadata only**: aggregate counts, coarse per-agent status
 (`idle` / `busy` / `waiting_input` / `connecting` / `error`), timing since last
 activity, and an error type with a recoverable flag. It never surfaces thinking
 prose, prompt text, tool arguments, or tool output - those never cross the
@@ -95,8 +109,10 @@ once the plugin is installed and add `panel.png` here.)_
 
 ## Requirements
 
-- A Maestro host implementing host API `1.14.0` or newer (for the
-  `maestro.ui.panelPost` host-to-panel channel).
+- A Maestro host implementing host API `1.16.0` or newer (for the
+  `maestro.ui.panelPost` host-to-panel channel, the `ui.togglePanel` summon
+  verb, the panel `size` field, `maestro.sessions.focus`, and the
+  `session.activated` event).
 - The `plugins` Encore flag enabled.
 
 ## Install
@@ -108,19 +124,21 @@ Enable the `plugins` Encore flag first (Settings), then either:
 - **Settings:** open the Extensions view and install from a local folder,
   pointing at `examples/plugins/agent-flow`.
 
-At install you will be asked to grant the three requested capabilities
-(`events:subscribe`, `ui:panel`, `sessions:read`). The panel appears in the right
-bar once `ui:panel` is granted. The graph starts empty and fills in as agents
-run; the "Agent Flow: Clear Graph" command resets it, and "Agent Flow: Refresh
-Panel" re-pulls the current snapshot (the panel also does this automatically on
-open).
+At install you will be asked to grant the four requested capabilities
+(`events:subscribe`, `ui:panel`, `sessions:read`, `sessions:focus`). Once
+`ui:panel` is granted, press `Alt+Shift+F` (or run "Agent Flow: Toggle Overlay") to
+summon the overlay; Escape or the same chord dismisses it. It starts empty and
+fills in as agents run; the "Agent Flow: Clear Graph" command resets it, and
+"Agent Flow: Refresh Panel" re-pulls the current snapshot (the panel also does
+this automatically on open).
 
 ## Files
 
 - `plugin.json` - manifest (tier 2, panel + command contributions, permissions).
 - `main.js` - the sandbox entry: event handling, graph model, snapshot pushing.
-- `panel.html` - the panel UI: node graph, pan/zoom, inspector, timeline, and
-  session tabs (single self-contained file, no external references).
+- `panel.html` - the overlay UI: shared-canvas agent nodes, tool satellites,
+  cost/token readouts, pan/zoom, and click-to-jump (single self-contained file,
+  no external references).
 
 ## Security notes
 
@@ -163,8 +181,8 @@ Each item below was confirmed by reading the final host and plugin code
 ## Result
 
 Agent Flow ships as a tier-2, in-repo example plugin
-(`examples/plugins/agent-flow/`) plus the two additive host-API surfaces it
-needed, both landed at **host API `1.14.0`**:
+(`examples/plugins/agent-flow/`) plus the additive host-API surfaces it needed.
+Two landed at **host API `1.14.0`**:
 
 - **`tool.executed` plugin event topic** (`src/shared/plugins/events.ts`) -
   metadata-only tool-call lifecycle events (name + timing, never arguments or
@@ -174,10 +192,25 @@ needed, both landed at **host API `1.14.0`**:
   panels only, JSON only, 64 KB cap, one-way, delivered to the panel page as a
   `maestro:panelData` window message.
 
+Four more landed at **host API `1.16.0`** to turn the docked panel into a
+summonable full-window overlay:
+
+- **`session.activated` event topic** (`src/shared/plugins/events.ts`) - ids
+  only (`{ sessionId, tabId? }`), debounced, so the overlay can highlight the
+  agent the user is looking at.
+- **`maestro.sessions.focus(sessionId, tabId?)`** - gated by the new narrow
+  `sessions:focus` capability; jumps to a session and lands on its AI tab.
+- **`maestro.ui.openPanel / closePanel / togglePanel(panelId)`** - own panels
+  only, under the existing `ui:panel` capability, so a plugin can summon its own
+  surface from a keybinding.
+- **Panel `size: 'default' | 'full'`** (`src/shared/plugins/contributions.ts`) -
+  a `modal` panel can render edge-to-edge instead of in the fixed 720x560 chrome.
+
 The plugin's `main.js` subscribes to those events (plus agent/session/usage
 topics), maintains a per-session tool-call graph, and pushes coalesced
-snapshots to its `flow` panel; `panel.html` renders the live node graph,
-timeline, inspector, session tabs, and the issue #1231 activity/health overlay.
+snapshots to its `flow` panel; `panel.html` renders the shared-canvas overlay -
+one node per agent with tool satellites, cost/token readouts, click-to-jump, and
+the issue #1231 activity/health overlay.
 
 ### How to try it
 
@@ -186,10 +219,11 @@ timeline, inspector, session tabs, and the issue #1231 activity/health overlay.
    (or install from a local folder in the Settings Extensions view). Validate
    first with `maestro plugin validate ./examples/plugins/agent-flow`.
 3. Enable the plugin and grant its requested capabilities (`events:subscribe`,
-   `ui:panel`, `sessions:read`).
-4. Open the Agent Flow panel from the right bar and run any agent. Tool nodes
-   appear live, running nodes pulse and then close, and the overlay tracks
-   working/waiting/stalled/errored lanes.
+   `ui:panel`, `sessions:read`, `sessions:focus`).
+4. Press `Alt+Shift+F` and run any agent. Each agent appears as a node, tool
+   satellites appear live and then settle, the overlay tracks
+   working/waiting/stalled/errored agents, and clicking a node jumps to that
+   agent's AI tab.
 
 ### Known limitations
 

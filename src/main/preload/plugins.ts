@@ -155,6 +155,31 @@ export function createPluginsApi() {
 			};
 		},
 
+		/**
+		 * Subscribe to plugin-requested modal-panel show/hide (`ui.openPanel` /
+		 * `ui.closePanel` / `ui.togglePanel`). The main process broadcasts
+		 * `plugins:panel-visibility` with the already-namespaced panel id (resolved
+		 * against the calling plugin's OWN declarations) and the requested action;
+		 * the renderer's single modal-panel mount applies it. Read-only signal -
+		 * there is no reply channel and no payload data.
+		 */
+		onPanelVisibility: (
+			callback: (payload: {
+				pluginId: string;
+				panelId: string;
+				action: 'open' | 'close' | 'toggle';
+			}) => void
+		): (() => void) => {
+			const handler = (
+				_event: unknown,
+				payload: { pluginId: string; panelId: string; action: 'open' | 'close' | 'toggle' }
+			): void => callback(payload);
+			ipcRenderer.on('plugins:panel-visibility', handler);
+			return () => {
+				ipcRenderer.removeListener('plugins:panel-visibility', handler);
+			};
+		},
+
 		onGroupingsChanged: (callback: () => void): (() => void) => {
 			const handler = (): void => callback();
 			ipcRenderer.on('plugins:groupings-changed', handler);

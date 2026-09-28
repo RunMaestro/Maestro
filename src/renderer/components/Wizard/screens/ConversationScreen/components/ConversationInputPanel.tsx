@@ -10,6 +10,7 @@ import type { Theme } from '../../../../../types';
 import { READY_CONFIDENCE_THRESHOLD } from '../../../services/wizardPrompts';
 import type { WizardMessage } from '../../../WizardContext';
 import { formatShortcutKeys } from '../../../../../utils/shortcutFormatter';
+import { useAutosizeTextarea } from '../../../../../hooks/ui/useAutosizeTextarea';
 
 const MAX_TEXTAREA_HEIGHT = 120;
 
@@ -36,6 +37,15 @@ export function ConversationInputPanel({
 	setShowThinking: Dispatch<SetStateAction<boolean>>;
 	onSendMessage: () => void;
 }): JSX.Element {
+	// Grow the composer with its content and keep the caret visible once it is
+	// tall enough to scroll (a bare height='auto' toggle scrolls back to the top
+	// on every keystroke, which clips the line being typed).
+	useAutosizeTextarea({
+		textareaRef: inputRef,
+		value: inputValue,
+		maxHeight: MAX_TEXTAREA_HEIGHT,
+	});
+
 	const canSend = !!inputValue.trim() && !isConversationLoading;
 	const lastMessage = conversationHistory[conversationHistory.length - 1];
 	const shouldShowYourTurn =
@@ -89,11 +99,6 @@ export function ConversationInputPanel({
 							maxHeight: `${MAX_TEXTAREA_HEIGHT}px`,
 							lineHeight: '1.5',
 							minHeight: '48px',
-						}}
-						onInput={(e) => {
-							const target = e.target as HTMLTextAreaElement;
-							target.style.height = 'auto';
-							target.style.height = `${Math.min(target.scrollHeight, MAX_TEXTAREA_HEIGHT)}px`;
 						}}
 					/>
 				</div>

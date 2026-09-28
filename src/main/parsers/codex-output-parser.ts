@@ -35,6 +35,17 @@ import * as os from 'os';
  * Known OpenAI model context window sizes (in tokens)
  * Source: https://platform.openai.com/docs/models
  */
+/**
+ * HTTP statuses from Codex that no repetition can fix: the request itself is
+ * wrong, or the caller needs new credentials or a newer binary. 408 and 429 are
+ * deliberately absent - a timeout and a throttle are the two 4xx that do clear
+ * on their own, and a 429 has to stay retryable so a real quota outage still
+ * reaches the token-exhaustion strategy.
+ */
+const HARD_CLIENT_ERROR_STATUSES: ReadonlySet<number> = new Set([
+	400, 401, 403, 404, 405, 409, 413, 422,
+]);
+
 const MODEL_CONTEXT_WINDOWS: Record<string, number> = {
 	// GPT-4o family
 	'gpt-4o': 128000,
@@ -295,12 +306,37 @@ export class CodexOutputParser implements AgentOutputParser {
 
 	// Cached context window - read once from config
 	private contextWindow: number;
+	/**
+	 * Provenance of `contextWindow`: true only once Codex itself reported a
+	 * `model_context_window` (turn_context or token_count). The constructor seed
+	 * below is a config value or a static-table lookup, never provider truth, so
+	 * it deliberately leaves this false. Emitted as `usage.contextWindowReported`
+	 * so `StdoutHandler.buildUsageStats` can mark the window authoritative
+	 * (finding P1) without guessing from the number alone.
+	 */
+	private contextWindowReported = false;
 	private model: string;
 
 	// Track tool name from tool_call to carry over to tool_result
 	// (Codex emits tool_call and tool_result as separate item.completed events,
 	// but tool_result doesn't include the tool name)
 	private lastToolName: string | null = null;
+	/**
+	 * Tool name per open `call_id`.
+	 *
+	 * `function_call_output` carries the `call_id` but not the tool name, so the
+	 * name has to be carried forward from the matching `function_call`. The
+	 * single `lastToolName` slot below used to do that job for every call at
+	 * once, which is why two tools running in parallel mis-attributed their
+	 * completion: the second `function_call` overwrote the slot, so the first
+	 * output to arrive was labeled with the second tool's name and merged onto
+	 * its badge (issue #1485).
+	 *
+	 * `lastToolName` is kept as the fallback for legacy `tool_call`/`tool_result`
+	 * items, which carry no id at all and therefore cannot be correlated any
+	 * better than "the most recent one".
+	 */
+	private readonly toolNamesByCallId = new Map<string, string>();
 
 	constructor() {
 		// Read config once at initialization
@@ -379,6 +415,7 @@ export class CodexOutputParser implements AgentOutputParser {
 		if (msg.type === 'turn_context' && msg.payload) {
 			if (msg.payload.model_context_window) {
 				this.contextWindow = msg.payload.model_context_window;
+				this.contextWindowReported = true;
 			}
 			if (msg.payload.model) {
 				this.model = msg.payload.model;
@@ -503,6 +540,19 @@ export class CodexOutputParser implements AgentOutputParser {
 			const reasoningOutputTokens = tokenUsage.reasoning_output_tokens || 0;
 			const totalOutputTokens = outputTokens + reasoningOutputTokens;
 
+			// Cache the window the same way `turn_context` does. Without this the
+			// denominator flaps inside a single turn whenever Codex carries
+			// `model_context_window` in `token_count` but not in an earlier
+			// `turn_context`: this event reports the real window with the flag set
+			// (renderer rank 2), then `turn.completed` falls back through
+			// `extractUsageFromRaw` to the constructor's config or lookup-table seed
+			// with the flag clear (rank 3, the stored override wins). The value-level
+			// flap predates the flag, but the flag makes it cross a precedence tier.
+			if (payload.info.model_context_window) {
+				this.contextWindow = payload.info.model_context_window;
+				this.contextWindowReported = true;
+			}
+
 			return {
 				type: 'usage',
 				usage: {
@@ -511,8 +561,50 @@ export class CodexOutputParser implements AgentOutputParser {
 					cacheReadTokens: cachedInputTokens,
 					cacheCreationTokens: 0,
 					contextWindow: payload.info.model_context_window || this.contextWindow,
+					// Authoritative when this payload carried the window itself, or when an
+					// earlier turn_context reported the cached one. A config / static-table
+					// seed leaves the flag off (see `contextWindowReported`).
+					contextWindowReported: payload.info.model_context_window
+						? true
+						: this.contextWindowReported,
 					reasoningTokens: reasoningOutputTokens,
 				},
+				raw: msg,
+			};
+		}
+
+		// error: the turn failed server-side. Codex reports these through
+		// EventMsg::Error, which carries its text in `payload.message` rather
+		// than the top-level `error` field the legacy shapes use. Without this
+		// branch the event fell through to a benign `system` event and the user
+		// just watched the agent go quiet with no explanation (see #1378, where
+		// remote compaction 404'd mid-conversation).
+		if (payload.type === 'error' && payload.message) {
+			return {
+				type: 'error',
+				text: payload.message,
+				raw: msg,
+			};
+		}
+
+		// stream_error: a transient stream failure that Codex retries on its own
+		// ("stream error: ...; retrying 1/5"). Surface it as progress text, NOT
+		// as an error - flagging it would pause a session that is about to
+		// recover on its own, and the once-only `errorEmitted` latch in
+		// StdoutHandler would then swallow the real error if the retries do run
+		// out.
+		//
+		// `isReasoning` keeps it OUT of `streamedText`. That buffer is what
+		// ExitHandler emits as the final answer when a turn ends without a result
+		// message - so on a turn that retries and then dies, the user would have
+		// been handed "stream error: ...; retrying 1/5" as the agent's response.
+		// Visible as progress, never the answer.
+		if (payload.type === 'stream_error' && payload.message) {
+			return {
+				type: 'text',
+				text: payload.message,
+				isPartial: true,
+				isReasoning: true,
 				raw: msg,
 			};
 		}
@@ -586,7 +678,17 @@ export class CodexOutputParser implements AgentOutputParser {
 		// function_call: tool invocation starting
 		if (payload.type === 'function_call' || payload.type === 'custom_tool_call') {
 			const toolName = payload.name || 'unknown';
-			this.lastToolName = toolName;
+			const callId = payload.call_id;
+			if (callId) {
+				this.toolNamesByCallId.set(callId, toolName);
+			} else {
+				// `lastToolName` is the fallback for calls that carry NO correlation
+				// id, so only an id-less call may write it. Setting it here for every
+				// call let an id-correlated one overwrite an id-less call that was
+				// still open, and its output then arrived labeled with the other
+				// tool's name - the same mis-attribution the id map exists to end.
+				this.lastToolName = toolName;
+			}
 			let parsedArgs: unknown;
 			try {
 				parsedArgs = JSON.parse(payload.arguments || '{}');
@@ -596,6 +698,10 @@ export class CodexOutputParser implements AgentOutputParser {
 			return {
 				type: 'tool_use',
 				toolName,
+				// Forwarding call_id is what lets the renderer merge this badge
+				// with its own output rather than with whichever same-named badge
+				// happens to still be running.
+				...(callId ? { toolCallId: callId } : {}),
 				toolState: {
 					status: 'running',
 					input: parsedArgs,
@@ -606,11 +712,28 @@ export class CodexOutputParser implements AgentOutputParser {
 
 		// function_call_output: tool execution completed
 		if (payload.type === 'function_call_output' || payload.type === 'custom_tool_call_output') {
-			const toolName = this.lastToolName || undefined;
-			this.lastToolName = null;
+			const callId = payload.call_id;
+			// An output that names its call id is answered from the map ALONE. It
+			// must not fall back to lastToolName: an id the map does not know is an
+			// output with no call to correlate to, and borrowing the most recent
+			// name there labels an orphan with an unrelated tool. The fallback is
+			// only for a payload that omits call_id entirely, which carries no
+			// correlation information at all.
+			const toolName = callId ? this.toolNamesByCallId.get(callId) : this.lastToolName || undefined;
+			if (callId) {
+				this.toolNamesByCallId.delete(callId);
+			} else {
+				// Only an id-less output consumes `lastToolName`. Clearing it on EVERY
+				// completion was wrong the moment an id-correlated call finished while
+				// an id-less one was still open: the id-correlated branch never reads
+				// the slot, so wiping it there strands the still-open legacy call, and
+				// its own output arrives with no name at all.
+				this.lastToolName = null;
+			}
 			return {
 				type: 'tool_use',
 				toolName,
+				...(callId ? { toolCallId: callId } : {}),
 				toolState: {
 					status: 'completed',
 					output: this.decodeToolOutput(payload.output),
@@ -654,6 +777,11 @@ export class CodexOutputParser implements AgentOutputParser {
 			return {
 				type: 'tool_use',
 				toolName: 'shell',
+				// item.started and item.completed describe the SAME item, so its id
+				// correlates them. Every command_execution badge is named 'shell',
+				// so without an id two parallel commands are indistinguishable to
+				// the renderer's name-matching fallback (issue #1485).
+				...(item.id ? { toolCallId: item.id } : {}),
 				toolState: {
 					status: 'running',
 					input: { command: item.command },
@@ -675,14 +803,25 @@ export class CodexOutputParser implements AgentOutputParser {
 	private transformItemCompleted(item: CodexItem, msg: CodexRawMessage): ParsedEvent {
 		switch (item.type) {
 			case 'reasoning':
-				// Reasoning shows model's thinking process
-				// Emit as text but mark it as partial/streaming
+				// Reasoning shows model's thinking process.
 				// Format reasoning text: add line breaks before ** SECTION ** markers
-				// Codex uses this pattern to separate thinking stages
+				// Codex uses this pattern to separate thinking stages.
+				//
+				// `isReasoning` matters twice, exactly as it does on the
+				// `response_item` reasoning path in transformResponseItem():
+				//   1. StdoutHandler gates Codex thinking-chunk events on it, so
+				//      without the flag this reasoning never reaches the thinking
+				//      panel and never becomes a `source: 'thinking'` log entry -
+				//      which is what "Context: Copy with Reasoning" keys off.
+				//   2. Untagged partial text is appended to `streamedText`, the
+				//      buffer ExitHandler emits as the final answer when a turn
+				//      ends without a result message. Reasoning must never be
+				//      handed to the user as the agent's response.
 				return {
 					type: 'text',
 					text: this.formatReasoningText(item.text || ''),
 					isPartial: true,
+					isReasoning: true,
 					raw: msg,
 				};
 
@@ -702,6 +841,8 @@ export class CodexOutputParser implements AgentOutputParser {
 				return {
 					type: 'tool_use',
 					toolName: 'shell',
+					// Same id as the item.started above - see transformItemStarted.
+					...(item.id ? { toolCallId: item.id } : {}),
 					toolState: {
 						status: item.status === 'in_progress' ? 'running' : 'completed',
 						input: { command: item.command },
@@ -836,8 +977,13 @@ export class CodexOutputParser implements AgentOutputParser {
 			// Note: Codex doesn't report cache creation tokens
 			cacheCreationTokens: 0,
 			// Note: costUsd omitted - Codex doesn't provide cost and pricing varies by model
-			// Context window from Codex config (~/.codex/config.toml) or model lookup table
+			// Context window from Codex config (~/.codex/config.toml) or model lookup
+			// table, unless a turn_context or token_count already replaced it with
+			// Codex's own value. Both cache it now, so once either has reported a
+			// window this reads the real one for the rest of the session instead of
+			// dropping back to the seed mid-turn.
 			contextWindow: this.contextWindow,
+			contextWindowReported: this.contextWindowReported,
 			// Store reasoning tokens separately for UI display
 			reasoningTokens: reasoningOutputTokens,
 		};
@@ -910,15 +1056,40 @@ export class CodexOutputParser implements AgentOutputParser {
 		let errorText: string | null = null;
 		let parsedJson: unknown = null;
 
-		if (obj.type === 'error' || obj.type === 'turn.failed' || obj.error) {
+		// Current format (v0.111.0+): errors arrive wrapped in an `event_msg`
+		// envelope with the text in `payload.message`. `stream_error` is
+		// deliberately NOT treated as an error here - Codex retries those
+		// itself, and raising one would both pause a recovering session and
+		// burn StdoutHandler's once-only `errorEmitted` latch.
+		if (obj.type === 'event_msg') {
+			const payload = obj.payload as CodexPayload | undefined;
+			if (payload?.type === 'error' && typeof payload.message === 'string' && payload.message) {
+				parsedJson = parsed;
+				errorText = payload.message;
+			}
+		} else if (obj.type === 'error' || obj.type === 'turn.failed' || obj.error) {
 			parsedJson = parsed;
-			errorText = extractErrorText(obj.error as CodexRawMessage['error']);
-			if (errorText === 'Unknown error') errorText = null;
+			// Legacy shapes carry the text in `error`; the bare exec-JSON `error`
+			// event carries it in `message`. Fall back to `message` instead of
+			// discarding the event as "Unknown error".
+			errorText = extractErrorText(obj.error as CodexRawMessage['error'], '');
+			if (!errorText && typeof obj.message === 'string') {
+				errorText = obj.message;
+			}
+			if (!errorText || errorText === 'Unknown error') errorText = null;
 		}
 
 		if (!errorText) {
 			return null;
 		}
+
+		// The envelope already answered whether this can be retried, and the prose
+		// does not: a hard 400 ("requires a newer version of Codex ... and try
+		// again") reads as transient to every text matcher downstream, and was
+		// scheduled as an availability outage that probes every 30 minutes with no
+		// attempt cap. Read the status here, where the structure still exists.
+		const permanentStatus =
+			typeof obj.status === 'number' && HARD_CLIENT_ERROR_STATUSES.has(obj.status);
 
 		const patterns = getErrorPatterns(this.agentId);
 		const match = matchErrorPattern(patterns, errorText);
@@ -927,10 +1098,16 @@ export class CodexOutputParser implements AgentOutputParser {
 			return {
 				type: match.type,
 				message: match.message,
-				recoverable: match.recoverable,
+				recoverable: permanentStatus ? false : match.recoverable,
 				agentId: this.agentId,
 				timestamp: Date.now(),
 				parsedJson,
+				// `match.message` is the pattern bank's curated wording, which is what
+				// the user should read - but it is also all the retry scheduler used to
+				// get, and it carries neither the phrasing that tells a plan-quota
+				// outage from a throttle nor any "resets in 4h 12m". Codex says both of
+				// those in its own text and nowhere else, so keep the line itself here.
+				raw: { errorLine: errorText },
 			};
 		}
 
@@ -938,7 +1115,7 @@ export class CodexOutputParser implements AgentOutputParser {
 			return {
 				type: 'unknown',
 				message: errorText,
-				recoverable: true,
+				recoverable: !permanentStatus,
 				agentId: this.agentId,
 				timestamp: Date.now(),
 				parsedJson,
@@ -973,6 +1150,10 @@ export class CodexOutputParser implements AgentOutputParser {
 					exitCode,
 					stderr,
 					stdout,
+					// Same reason as the event path above: `message` is the curated bank
+					// wording, so the text that actually names the limit and its reset
+					// has to travel separately or the retry scheduler never sees it.
+					errorLine: combined,
 				},
 			};
 		}

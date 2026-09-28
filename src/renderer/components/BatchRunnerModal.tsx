@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import {
 	X,
 	RotateCcw,
@@ -17,15 +17,21 @@ import {
 	PlayCircle,
 	HelpCircle,
 	Target,
+	LogOut,
 } from 'lucide-react';
 import { Spinner } from './ui/Spinner';
-import type {
-	Theme,
-	BatchDocumentEntry,
-	BatchRunConfig,
-	TaskSelectionMode,
-	WorktreeRunTarget,
-} from '../types';
+import { ToggleSwitch } from './ui/ToggleSwitch';
+import {
+	AUTO_RESUME_DEFAULT_MINUTES,
+	AUTO_RESUME_DEFAULT_MAX_ATTEMPTS,
+	AUTO_RESUME_MIN_MINUTES,
+	AUTO_RESUME_MAX_MINUTES,
+	AUTO_RESUME_MIN_ATTEMPTS,
+	AUTO_RESUME_MAX_ATTEMPTS,
+	clampAutoResumeMinutes,
+	clampMaxAutoResumes,
+} from '../../shared/autorunAutoResume';
+import type { Theme, BatchDocumentEntry, BatchRunConfig, TaskSelectionMode } from '../types';
 import { useModalLayer } from '../hooks/ui/useModalLayer';
 import { useResizableModal } from '../hooks/ui/useResizableModal';
 import { useBracketTabCycle } from '../hooks/utils/useBracketTabCycle';
@@ -39,37 +45,26 @@ import { GoalConfigPanel } from './GoalConfigPanel';
 import { ToggleButtonGroup } from './ToggleButtonGroup';
 import { WorktreeRunSection } from './WorktreeRunSection';
 import { AutoRunnerHelpModal } from './AutoRun/AutoRunnerHelpModal';
-import { useSessionStore, selectSessionById, updateSessionWith } from '../stores/sessionStore';
-import { useDebouncedCallback } from '../hooks/utils/useThrottle';
+import { useSessionStore, selectSessionById } from '../stores/sessionStore';
 import { useBatchStore } from '../stores/batchStore';
 import { useUIStore } from '../stores/uiStore';
-import { getModalActions } from '../stores/modalStore';
 import {
 	usePlaybookManagement,
-	DEFAULT_BATCH_PROMPT,
+	useTaskSelectionRecommendation,
+	useGoalDrivenConfig,
+	usePromptComposerState,
+	useSpecDrivenConfig,
+	useWorktreeRunTarget,
+	autoPlaybookName,
 	validateAgentPromptHasTaskReference,
 } from '../hooks';
-import { generateId } from '../utils/ids';
 import { formatMetaKey } from '../utils/shortcutFormatter';
 import { logger } from '../utils/logger';
-import { resolveEffectiveContextWindow } from '../utils/contextWindowResolver';
-import { getModelContextWindowOverride } from '../../shared/agentConstants';
-import { formatTokens } from '../../shared/formatters';
+import { notifyCenterFlash } from '../stores/centerFlashStore';
 import { ResizeHandles } from './ui/ResizeHandles';
 
 // Re-export for external consumers
 export { DEFAULT_BATCH_PROMPT, validateAgentPromptHasTaskReference } from '../hooks';
-
-// Tasks-per-document threshold that flips the recommendation between
-// Document mode (below the threshold - share context) and Task mode
-// (at/above - fresh context per task). Scales linearly with the agent's
-// resolved context window so wider windows can absorb more tasks before
-// the recommendation tips over. Reference anchors: 256K → 5, 512K → 10,
-// 1M → 20. Floors at 5 so tiny windows still get a sensible default.
-function computeTasksPerDocThreshold(contextWindow: number): number {
-	if (!contextWindow || contextWindow <= 0) return 5;
-	return Math.max(5, Math.round((contextWindow / 256_000) * 5));
-}
 
 interface BatchRunnerModalProps {
 	theme: Theme;
@@ -148,192 +143,152 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 	const autoFollowEnabled = useUIStore((s) => s.autoFollowEnabled);
 	const setAutoFollowEnabled = useUIStore((s) => s.setAutoFollowEnabled);
 
-	// Worktree run target state
-	const [worktreeTarget, setWorktreeTarget] = useState<WorktreeRunTarget | null>(null);
-	const [isPreparingWorktree, setIsPreparingWorktree] = useState(false);
 	const activeSession = useSessionStore(selectSessionById(sessionId));
 	const sessions = useSessionStore((state) => state.sessions);
-	// When the current session is a worktree child, worktree config lives on its parent.
-	// Resolve the parent so the WorktreeRunSection can read basePath and list siblings.
-	const worktreeParentSession = useMemo(() => {
-		if (!activeSession) return null;
-		if (activeSession.parentSessionId) {
-			return sessions.find((s) => s.id === activeSession.parentSessionId) ?? activeSession;
+
+	// Which worktree (if any) this run dispatches to.
+	const {
+		worktreeTarget,
+		setWorktreeTarget,
+		isPreparingWorktree,
+		setIsPreparingWorktree,
+		worktreeParentSession,
+		worktreeChildren,
+		handleOpenWorktreeConfig,
+	} = useWorktreeRunTarget({ activeSession, sessions, sessionId });
+
+	// Per-run model / effort override. Empty string means "Use agent default",
+	// which is the state the modal always opens in: the override is scoped to a
+	// single run and is deliberately NOT persisted anywhere (no session field,
+	// no setting). A persisted per-run model would be indistinguishable from
+	// changing the agent's own model, which Session settings already does.
+	const [runModel, setRunModel] = useState('');
+	const [runEffort, setRunEffort] = useState('');
+	// Off on every open, like the pickers. A playbook's hints are its author's
+	// intent, so overriding them is a choice made for one run, never a default.
+	const [ignoreModelHints, setIgnoreModelHints] = useState(false);
+	// Auto-resume: ON by default, unlike the run-scoped overrides above. An
+	// unattended run that stops on a recoverable error and waits for a click is
+	// the failure this exists to prevent, so the safe default is to try again.
+	const [autoResumeOnError, setAutoResumeOnError] = useState(true);
+	const [autoResumeAfterMin, setAutoResumeAfterMin] = useState(AUTO_RESUME_DEFAULT_MINUTES);
+	const [maxAutoResumes, setMaxAutoResumes] = useState(AUTO_RESUME_DEFAULT_MAX_ATTEMPTS);
+	const [availableModels, setAvailableModels] = useState<string[]>([]);
+	const [availableEfforts, setAvailableEfforts] = useState<string[]>([]);
+
+	// Fetch the model and effort options for the agent behind this run. Uses a
+	// stale flag so a slow response (e.g. `opencode models` shelling out) for a
+	// previously selected agent can't overwrite the current agent's list. Same
+	// pattern as MainPanel's model pill.
+	useEffect(() => {
+		const agentId = activeSession?.toolType;
+		if (!agentId) {
+			setAvailableModels([]);
+			setAvailableEfforts([]);
+			return;
 		}
-		return activeSession;
-	}, [activeSession, sessions]);
-	const worktreeChildren = useMemo(
-		() =>
-			worktreeParentSession
-				? sessions.filter(
-						(s) => s.parentSessionId === worktreeParentSession.id && s.id !== sessionId
-					)
-				: [],
-		[sessions, worktreeParentSession, sessionId]
-	);
+		let stale = false;
+		window.maestro.agents
+			.getModels(agentId)
+			.then((models) => {
+				if (!stale) setAvailableModels(models);
+			})
+			.catch(() => {
+				if (!stale) setAvailableModels([]);
+			});
+		// Agents expose reasoning effort under either `effort` (Claude Code) or
+		// `reasoningEffort` (Codex, Copilot-CLI, Factory Droid) - probe both and
+		// use whichever the agent defines.
+		Promise.all([
+			window.maestro.agents.getConfigOptions(agentId, 'effort').catch(() => [] as string[]),
+			window.maestro.agents
+				.getConfigOptions(agentId, 'reasoningEffort')
+				.catch(() => [] as string[]),
+		])
+			.then(([effortOpts, reasoningOpts]) => {
+				if (stale) return;
+				setAvailableEfforts(effortOpts.length > 0 ? effortOpts : reasoningOpts);
+			})
+			.catch(() => {
+				if (!stale) setAvailableEfforts([]);
+			});
+		return () => {
+			stale = true;
+		};
+	}, [activeSession?.toolType]);
 
-	const handleOpenWorktreeConfig = useCallback(() => {
-		// Open worktree config on top of the batch runner (WORKTREE_CONFIG priority 752 > BATCH_RUNNER 720).
-		// The batch runner stays open underneath so the user returns to it after configuring.
-		getModalActions().setWorktreeConfigModalOpen(true);
-	}, []);
+	// Drop a picked value that the newly fetched option list no longer offers,
+	// so switching agents can't leave a stale model in the launched config.
+	useEffect(() => {
+		if (runModel && !availableModels.includes(runModel)) setRunModel('');
+	}, [availableModels, runModel]);
+	useEffect(() => {
+		if (runEffort && !availableEfforts.includes(runEffort)) setRunEffort('');
+	}, [availableEfforts, runEffort]);
 
-	// Document list state. Opens empty unless the inline wizard's "Start Auto
-	// Run" pre-seeded it with freshly generated docs via `presetDocuments`.
-	const [documents, setDocuments] = useState<BatchDocumentEntry[]>(() => {
-		if (presetDocuments && presetDocuments.length > 0) {
-			return presetDocuments.map((filename) => ({
-				id: generateId(),
-				filename,
-				resetOnCompletion: false,
-				isDuplicate: false,
-			}));
-		}
-		return [];
-	});
-
-	// Track initial document state for dirty checking. Mirrors the run-list
-	// initialization above so dirty detection is correct for preset opens too.
-	const initialDocumentsRef = useRef<string[]>(
-		presetDocuments && presetDocuments.length > 0 ? [...presetDocuments] : []
-	);
-
-	// Task counts per document (keyed by filename, value = unchecked task count).
-	// Seeded synchronously from the batch store, which is already populated by
-	// useAutoRunDocumentLoader. This avoids redundant per-document SSH `cat`
-	// reads in the modal - critical for SSH-remote sessions where the modal
-	// otherwise stays stuck on "..." while sequential SSH reads pile up.
-	const documentTaskCountsFromStore = useBatchStore((s) => s.documentTaskCounts);
-	const isLoadingDocumentsFromStore = useBatchStore((s) => s.isLoadingDocuments);
-	const seededTaskCounts = useMemo(() => {
-		const out: Record<string, number> = {};
-		documentTaskCountsFromStore.forEach((entry, filename) => {
-			out[filename] = Math.max(0, entry.total - entry.completed);
-		});
-		return out;
-	}, [documentTaskCountsFromStore]);
-	const [taskCounts, setTaskCounts] = useState<Record<string, number>>(seededTaskCounts);
-	const [loadingTaskCounts, setLoadingTaskCounts] = useState(
-		// Only show the loading badge if the store hasn't surfaced any counts yet
-		// AND it's still loading - otherwise we have stale-but-usable data to render.
-		() => isLoadingDocumentsFromStore && Object.keys(seededTaskCounts).length === 0
-	);
-
-	// Loop mode state
-	const [loopEnabled, setLoopEnabled] = useState(false);
-	const [maxLoops, setMaxLoops] = useState<number | null>(null); // null = infinite
-
-	// Track initial loop settings for dirty checking
-	const initialLoopEnabledRef = useRef(false);
-	const initialMaxLoopsRef = useRef<number | null>(null);
+	// Spec-Driven Auto Run: documents, task counts, loop mode.
+	const {
+		documents,
+		setDocuments,
+		initialDocumentsRef,
+		taskCounts,
+		loadingTaskCounts,
+		loopEnabled,
+		setLoopEnabled,
+		maxLoops,
+		setMaxLoops,
+		initialLoopEnabledRef,
+		initialMaxLoopsRef,
+		totalTaskCount,
+		hasNoTasks,
+		missingDocCount,
+	} = useSpecDrivenConfig({ presetDocuments, allDocuments, getDocumentTaskCount });
 
 	// Fresh-context-per mode. Default 'task' preserves legacy behavior (one
 	// agent invocation per unchecked task). 'document' makes the agent walk
 	// every task in a single invocation, sharing context across them.
+	//
+	// Declared here (not inside useTaskSelectionRecommendation) because
+	// usePlaybookManagement's config needs the current value before that hook
+	// runs, and useTaskSelectionRecommendation needs usePlaybookManagement's
+	// loadedPlaybook output - neither hook can own this state without a
+	// circular call-order problem. See useTaskSelectionRecommendation.ts.
 	const [taskSelectionMode, setTaskSelectionMode] = useState<TaskSelectionMode>('task');
 	const initialTaskSelectionModeRef = useRef<TaskSelectionMode>('task');
-	// Set true when the user explicitly clicks the toggle. Sticky: once the
-	// user has expressed a preference we stop auto-applying recommendations and
-	// instead surface a warning if the recommendation disagrees.
-	const [userOverrodeMode, setUserOverrodeMode] = useState(false);
-	// Resolved context window for the active agent. Drives the tasks/doc
-	// threshold that recommendedMode uses. Null until the resolver finishes
-	// (or there's no active session) - recommendations wait for it.
-	const [effectiveContextWindow, setEffectiveContextWindow] = useState<number | null>(null);
 
-	// Goal-Driven mode state. Seeded once from the session's persisted goal config
-	// (see Session.autoRunDriveMode / autoRunGoalConfig) so reopening the modal
-	// restores the tab and the goal inputs. Spec mode is the default.
-	const [autoRunMode, setAutoRunMode] = useState<'spec' | 'goal'>(
-		() => activeSession?.autoRunDriveMode ?? 'spec'
-	);
-	const [goal, setGoal] = useState(() => activeSession?.autoRunGoalConfig?.goal ?? '');
-	const [exitCriteria, setExitCriteria] = useState(
-		() => activeSession?.autoRunGoalConfig?.exitCriteria ?? ''
-	);
-	const [maxIterations, setMaxIterations] = useState<number | null>(
-		() => activeSession?.autoRunGoalConfig?.maxIterations ?? null
-	);
+	// Goal-Driven Auto Run: tab, goal, exit criteria, max iterations, and
+	// debounced persistence back onto the session.
+	const {
+		autoRunMode,
+		setAutoRunMode,
+		goal,
+		setGoal,
+		exitCriteria,
+		setExitCriteria,
+		maxIterations,
+		setMaxIterations,
+		flushGoalConfig,
+	} = useGoalDrivenConfig({ sessionId, activeSession });
 
 	// Auto Run help guide overlay (same content as the Auto Run panel's Help
 	// button). Renders above this modal; closing it returns here.
 	const [showHelp, setShowHelp] = useState(false);
 
-	// Prompt state
-	const [prompt, setPrompt] = useState(initialPrompt || DEFAULT_BATCH_PROMPT);
-	const [variablesExpanded, setVariablesExpanded] = useState(false);
-	const [savedPrompt, setSavedPrompt] = useState(initialPrompt || '');
-	const [promptComposerOpen, setPromptComposerOpen] = useState(false);
-	const textareaRef = useRef<HTMLTextAreaElement>(null);
-
-	// Track initial prompt for dirty checking
-	const initialPromptRef = useRef(initialPrompt || DEFAULT_BATCH_PROMPT);
-
-	// Persist the goal config + selected Auto Run tab back onto the session so the
-	// modal reopens in the same mode with the same inputs. Uses the canonical
-	// updateSessionWith helper (NOT a hand-rolled setSessions map). Debounced so
-	// typing into the goal/exit fields doesn't thrash the session store.
-	const { debouncedCallback: debouncedPersistGoalConfig, flush: flushGoalConfig } =
-		useDebouncedCallback(() => {
-			updateSessionWith(sessionId, (s) => ({
-				...s,
-				autoRunDriveMode: autoRunMode,
-				autoRunGoalConfig: { goal, exitCriteria, maxIterations },
-			}));
-		}, 500);
-
-	// Save shortly after the user stops editing or switches tabs. Skip the very
-	// first run so seeding from the session doesn't immediately write the same
-	// values straight back.
-	const didSeedGoalConfigRef = useRef(false);
-	useEffect(() => {
-		if (!didSeedGoalConfigRef.current) {
-			didSeedGoalConfigRef.current = true;
-			return;
-		}
-		debouncedPersistGoalConfig();
-	}, [autoRunMode, goal, exitCriteria, maxIterations, debouncedPersistGoalConfig]);
-
-	// Compute if there are unsaved configuration changes
-	// This checks if documents, loop settings, or prompt have changed from initial values
-	const hasUnsavedConfigChanges = useCallback(() => {
-		// Check if documents have changed (compare filenames)
-		const currentDocFilenames = documents.map((d) => d.filename).sort();
-		const initialDocFilenames = [...initialDocumentsRef.current].sort();
-		const documentsChanged =
-			currentDocFilenames.length !== initialDocFilenames.length ||
-			currentDocFilenames.some((f, i) => f !== initialDocFilenames[i]);
-
-		// Check if loop settings have changed
-		const loopChanged =
-			loopEnabled !== initialLoopEnabledRef.current || maxLoops !== initialMaxLoopsRef.current;
-
-		// Check if prompt has changed
-		const promptChanged = prompt !== initialPromptRef.current;
-
-		// Check if task-selection mode has changed
-		const taskSelectionModeChanged = taskSelectionMode !== initialTaskSelectionModeRef.current;
-
-		return documentsChanged || loopChanged || promptChanged || taskSelectionModeChanged;
-	}, [documents, loopEnabled, maxLoops, prompt, taskSelectionMode]);
-
-	// Handler for closing with unsaved changes check
-	const handleCloseWithConfirmation = useCallback(() => {
-		// Persist any pending goal edits before closing so a quick close (before the
-		// debounce fires) doesn't drop the user's last keystrokes. Goal config auto-saves,
-		// so it isn't part of the spec-mode "unsaved changes" prompt below.
-		flushGoalConfig();
-		if (hasUnsavedConfigChanges()) {
-			showConfirmation(
-				'You have unsaved changes to your Auto Run configuration. Close without saving?',
-				() => {
-					onClose();
-				}
-			);
-		} else {
-			onClose();
-		}
-	}, [flushGoalConfig, hasUnsavedConfigChanges, showConfirmation, onClose]);
+	// Agent prompt: text, saved/default flags, composer, template variables.
+	const {
+		prompt,
+		setPrompt,
+		variablesExpanded,
+		setVariablesExpanded,
+		promptComposerOpen,
+		setPromptComposerOpen,
+		textareaRef,
+		initialPromptRef,
+		handleReset,
+		handleSave,
+		isModified,
+		hasUnsavedChanges,
+	} = usePromptComposerState({ initialPrompt, showConfirmation, onSave });
 
 	// Playbook management callback to apply loaded playbook configuration
 	const handleApplyPlaybook = useCallback(
@@ -390,207 +345,75 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 		onApplyPlaybook: handleApplyPlaybook,
 	});
 
-	// Resolve the active agent's context window the first time the modal opens on
-	// a blank config (no loaded playbook). The resolved window drives the
-	// task-count recommendation's scaling threshold; the Task/Document choice
-	// itself is owned by that recommendation (see the auto-apply effect below),
-	// not a raw window-size cutoff.
-	const autoModeAppliedRef = useRef(false);
-	useEffect(() => {
-		if (autoModeAppliedRef.current) return;
-		// A playbook supplies its own mode - don't second-guess it.
-		if (loadedPlaybook) {
-			autoModeAppliedRef.current = true;
-			return;
-		}
-		if (!activeSession) return;
+	// Task/Document fresh-context recommendation engine (context window
+	// resolution, threshold, recommendation, auto-apply, override tracking).
+	const {
+		handleTaskSelectionModeChange,
+		showRecommendationWarning,
+		recommendationExplanation,
+		queueItemNoun,
+	} = useTaskSelectionRecommendation({
+		documents,
+		taskCounts,
+		activeSession,
+		loadedPlaybook,
+		taskSelectionMode,
+		setTaskSelectionMode,
+		initialTaskSelectionModeRef,
+	});
 
-		let active = true;
-		(async () => {
-			const configured = await resolveEffectiveContextWindow(activeSession);
-			// Also honor a window the agent reported at runtime (e.g. Claude's 1M
-			// beta) even when the configured value was left at the default.
-			const reported = activeSession.aiTabs.reduce(
-				(max, tab) => Math.max(max, tab.usageStats?.contextWindow ?? 0),
-				0
-			);
-			// Honor a per-tab `[1m]` model selection before any usage is reported;
-			// the resolver already covers session- and agent-level model overrides.
-			const tabModelWindow = activeSession.aiTabs.reduce(
-				(max, tab) => Math.max(max, getModelContextWindowOverride(tab.customModel) ?? 0),
-				0
-			);
-			const contextWindow = Math.max(configured, reported, tabModelWindow);
-			if (!active) return;
-			// Expose the resolved window so the task-count recommendation can
-			// scale its tasks/doc threshold (5 at 256K → 20 at 1M).
-			setEffectiveContextWindow(contextWindow);
-			autoModeAppliedRef.current = true;
-		})();
-		return () => {
-			active = false;
-		};
-	}, [activeSession, loadedPlaybook]);
+	// Compute if there are unsaved configuration changes
+	// This checks if documents, loop settings, or prompt have changed from initial values
+	// When a playbook is loaded, it is the saved baseline: comparing against the
+	// open-time snapshot flagged a just-saved playbook as unsaved.
+	const hasUnsavedConfigChanges = useCallback(() => {
+		if (loadedPlaybook) return isPlaybookModified;
 
-	// Use ref for getDocumentTaskCount to avoid dependency issues
-	const getDocumentTaskCountRef = useRef(getDocumentTaskCount);
-	getDocumentTaskCountRef.current = getDocumentTaskCount;
+		// Check if documents have changed (compare filenames)
+		const currentDocFilenames = documents.map((d) => d.filename).sort();
+		const initialDocFilenames = [...initialDocumentsRef.current].sort();
+		const documentsChanged =
+			currentDocFilenames.length !== initialDocFilenames.length ||
+			currentDocFilenames.some((f, i) => f !== initialDocFilenames[i]);
 
-	// Reflect updates from the store (e.g., when a doc's tasks get checked
-	// after the modal opened). For docs covered by the store, this is the
-	// fast path - no IPC needed.
-	useEffect(() => {
-		setTaskCounts((prev) => {
-			let changed = false;
-			const next = { ...prev };
-			for (const [filename, count] of Object.entries(seededTaskCounts)) {
-				if (next[filename] !== count) {
-					next[filename] = count;
-					changed = true;
+		// Check if loop settings have changed
+		const loopChanged =
+			loopEnabled !== initialLoopEnabledRef.current || maxLoops !== initialMaxLoopsRef.current;
+
+		// Check if prompt has changed
+		const promptChanged = prompt !== initialPromptRef.current;
+
+		// Check if task-selection mode has changed
+		const taskSelectionModeChanged = taskSelectionMode !== initialTaskSelectionModeRef.current;
+
+		return documentsChanged || loopChanged || promptChanged || taskSelectionModeChanged;
+	}, [
+		loadedPlaybook,
+		isPlaybookModified,
+		documents,
+		loopEnabled,
+		maxLoops,
+		prompt,
+		taskSelectionMode,
+	]);
+
+	// Handler for closing with unsaved changes check
+	const handleCloseWithConfirmation = useCallback(() => {
+		// Persist any pending goal edits before closing so a quick close (before the
+		// debounce fires) doesn't drop the user's last keystrokes. Goal config auto-saves,
+		// so it isn't part of the spec-mode "unsaved changes" prompt below.
+		flushGoalConfig();
+		if (hasUnsavedConfigChanges()) {
+			showConfirmation(
+				'You have unsaved changes to your Auto Run configuration. Close without saving?',
+				() => {
+					onClose();
 				}
-			}
-			return changed ? next : prev;
-		});
-	}, [seededTaskCounts]);
-
-	// IPC fallback: read counts only for documents NOT already covered by the
-	// store. On SSH-remote sessions the store is normally pre-populated by
-	// useAutoRunDocumentLoader, so this loop runs zero IPC calls in practice.
-	useEffect(() => {
-		const missing = allDocuments.filter((doc) => !(doc in seededTaskCounts));
-		if (missing.length === 0) {
-			setLoadingTaskCounts(false);
-			return;
+			);
+		} else {
+			onClose();
 		}
-
-		let cancelled = false;
-		const loadMissing = async () => {
-			setLoadingTaskCounts(true);
-			const additions: Record<string, number> = {};
-			for (const doc of missing) {
-				if (cancelled) return;
-				try {
-					additions[doc] = await getDocumentTaskCountRef.current(doc);
-				} catch {
-					additions[doc] = 0;
-				}
-			}
-			if (cancelled) return;
-			setTaskCounts((prev) => ({ ...prev, ...additions }));
-			setLoadingTaskCounts(false);
-		};
-
-		loadMissing();
-		return () => {
-			cancelled = true;
-		};
-	}, [allDocuments, seededTaskCounts]);
-
-	// Calculate total tasks across selected documents (excluding missing documents)
-	const totalTaskCount = documents.reduce((sum, doc) => {
-		// Don't count tasks from missing documents
-		if (doc.isMissing) return sum;
-		return sum + (taskCounts[doc.filename] || 0);
-	}, 0);
-	const hasNoTasks = totalTaskCount === 0;
-
-	// Count missing documents for warning display
-	const missingDocCount = documents.filter((doc) => doc.isMissing).length;
-
-	// Recommend a fresh-context mode based on average tasks per selected doc,
-	// using a threshold that scales with the agent's resolved context window.
-	// Small docs benefit from a shared agent across tasks (less spawn overhead,
-	// no repeated context priming); large docs do better with a fresh context
-	// per task so tool output from earlier tasks doesn't crowd later ones.
-	const tasksPerDocThreshold = useMemo(
-		() =>
-			effectiveContextWindow === null ? null : computeTasksPerDocThreshold(effectiveContextWindow),
-		[effectiveContextWindow]
-	);
-	const recommendation = useMemo<{
-		mode: TaskSelectionMode;
-		averageTasks: number;
-		docCount: number;
-		threshold: number;
-	} | null>(() => {
-		// Wait for the context window resolver - its value drives the threshold.
-		if (tasksPerDocThreshold === null) return null;
-		const validDocs = documents.filter((d) => !d.isMissing);
-		if (validDocs.length === 0) return null;
-		// Wait until at least one selected doc has a task count loaded -
-		// recommending against zeros would lock us into 'document' on first paint.
-		const knownCounts = validDocs
-			.map((d) => taskCounts[d.filename])
-			.filter((n): n is number => typeof n === 'number');
-		if (knownCounts.length === 0) return null;
-		const averageTasks = knownCounts.reduce((a, b) => a + b, 0) / knownCounts.length;
-		return {
-			mode: averageTasks < tasksPerDocThreshold ? 'document' : 'task',
-			averageTasks,
-			docCount: validDocs.length,
-			threshold: tasksPerDocThreshold,
-		};
-	}, [documents, taskCounts, tasksPerDocThreshold]);
-	const recommendedMode = recommendation?.mode ?? null;
-
-	// Auto-apply the task-count recommendation when documents/counts change.
-	// Skips if a playbook is loaded (it owns the mode) or the user has
-	// manually overridden - once they've picked, we respect it and warn
-	// instead of fighting them.
-	useEffect(() => {
-		if (userOverrodeMode) return;
-		if (loadedPlaybook) return;
-		if (recommendedMode === null) return;
-		if (recommendedMode === taskSelectionMode) return;
-		setTaskSelectionMode(recommendedMode);
-		// Keep the dirty check honest: an automatic mode shift shouldn't
-		// mark the form as having unsaved changes.
-		initialTaskSelectionModeRef.current = recommendedMode;
-	}, [recommendedMode, loadedPlaybook, userOverrodeMode, taskSelectionMode]);
-
-	// Wrapped setter for the toggle: any manual click flips the override flag
-	// so future doc-selection changes don't yank the mode back.
-	const handleTaskSelectionModeChange = useCallback((mode: TaskSelectionMode) => {
-		setUserOverrodeMode(true);
-		setTaskSelectionMode(mode);
-	}, []);
-
-	const showRecommendationWarning =
-		userOverrodeMode && recommendedMode !== null && recommendedMode !== taskSelectionMode;
-
-	// Noun for the "sent to the AI agent for each ___ in the queue" helper text.
-	// `taskSelectionMode` always holds a concrete value ('task' default), but a
-	// real selection only exists once the user clicks the toggle OR the
-	// auto-recommendation resolves from actual doc/task counts. Until then the
-	// value is just the un-vetted default, so show the combined "task/document".
-	const hasSelectedMode = userOverrodeMode || recommendedMode !== null;
-	const queueItemNoun = !hasSelectedMode
-		? 'task/document'
-		: taskSelectionMode === 'document'
-			? 'document'
-			: 'task';
-
-	// Human-readable explanation of the dynamic mode choice: average task count
-	// across selected docs + the resolved context window + the threshold that
-	// scales with it. Drives the copy shown above the Task/Document toggle.
-	const recommendationExplanation = useMemo<string | null>(() => {
-		if (recommendation === null || effectiveContextWindow === null) return null;
-		const { averageTasks, docCount, threshold, mode } = recommendation;
-		const avgLabel = Number.isInteger(averageTasks) ? `${averageTasks}` : averageTasks.toFixed(1);
-		const docLabel = docCount === 1 ? '1 document' : `${docCount} documents`;
-		const taskLabel = avgLabel === '1' ? '1 task' : `${avgLabel} tasks`;
-		const windowLabel = formatTokens(effectiveContextWindow);
-		const recommendedLabel = mode === 'task' ? 'Task' : 'Document';
-		const reason =
-			mode === 'task'
-				? `that's at or above the ${threshold}-task cutoff for a ${windowLabel} context window, so a clean context per task avoids crowding the window`
-				: `that's under the ${threshold}-task cutoff for a ${windowLabel} context window, so one shared session can hold the whole document`;
-		if (showRecommendationWarning) {
-			const currentLabel = taskSelectionMode === 'task' ? 'Task' : 'Document';
-			return `Heads up: your ${docLabel} average ${taskLabel} each; ${reason}, so ${recommendedLabel} is the better fit. You've chosen ${currentLabel} - if you know what you're doing, go for it.`;
-		}
-		return `Your ${docLabel} average ${taskLabel} each - ${reason}. Defaulted to ${recommendedLabel}.`;
-	}, [recommendation, effectiveContextWindow, showRecommendationWarning, taskSelectionMode]);
+	}, [flushGoalConfig, hasUnsavedConfigChanges, showConfirmation, onClose]);
 
 	// Validate agent prompt has task references
 	const hasValidPrompt = validateAgentPromptHasTaskReference(prompt);
@@ -651,22 +474,27 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 		onChange: setAutoRunMode,
 	});
 
-	// Focus textarea on mount
-	useEffect(() => {
-		setTimeout(() => textareaRef.current?.focus(), 100);
-	}, []);
-
-	const handleReset = () => {
-		showConfirmation('Reset the prompt to the default? Your customizations will be lost.', () => {
-			setPrompt(DEFAULT_BATCH_PROMPT);
-		});
-	};
-
-	const handleSave = () => {
+	// One-click save: update the loaded playbook in place, or create a new one
+	// named YYYY-MM-DD-CODENAME from the first document, then close.
+	const handleSaveAndExit = async () => {
+		if (documents.length === 0 || savingPlaybook) return;
 		onSave(prompt);
-		setSavedPrompt(prompt);
-		// Update initial ref so hasUnsavedConfigChanges doesn't flag a saved prompt as dirty
-		initialPromptRef.current = prompt;
+		let saved = loadedPlaybook;
+		if (!loadedPlaybook) {
+			const name = autoPlaybookName(
+				documents[0].filename,
+				playbooks.map((p) => p.name)
+			);
+			saved = await handleSaveAsPlaybook(name);
+		} else if (isPlaybookModified) {
+			saved = await handleSaveUpdate();
+		}
+		if (!saved) {
+			notifyCenterFlash({ message: 'Failed to save playbook', color: 'red' });
+			return;
+		}
+		notifyCenterFlash({ message: `Saved playbook "${saved.name}"`, color: 'green' });
+		onClose();
 	};
 
 	const handleGo = async () => {
@@ -680,6 +508,15 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 		// Filter out missing documents before starting batch run
 		const validDocuments = documents.filter((doc) => !doc.isMissing);
 
+		// Auto-resume travels on both run kinds. `autoResumeOnError` is written
+		// only when OFF: absence means ON everywhere else in the codebase, so
+		// writing `true` would be noise in every logged config.
+		const autoResumeFields = {
+			...(autoResumeOnError ? {} : { autoResumeOnError: false }),
+			autoResumeAfterMin: clampAutoResumeMinutes(autoResumeAfterMin),
+			maxAutoResumes: clampMaxAutoResumes(maxAutoResumes),
+		};
+
 		// Build config (worktree configuration is now managed separately via WorktreeConfigModal).
 		// The presence of `goalConfig` is the discriminator the engine uses to route to the
 		// goal runner; in goal mode there are no documents and no loop/task-selection semantics.
@@ -692,6 +529,9 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 						maxLoops: null,
 						goalConfig: { goal: goal.trim(), exitCriteria: exitCriteria.trim(), maxIterations },
 						...(worktreeTarget && { worktreeTarget }),
+						...(runModel && { model: runModel }),
+						...(runEffort && { effort: runEffort }),
+						...autoResumeFields,
 					}
 				: {
 						documents: validDocuments,
@@ -700,6 +540,10 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 						maxLoops: loopEnabled ? maxLoops : null,
 						taskSelectionMode,
 						...(worktreeTarget && { worktreeTarget }),
+						...(runModel && { model: runModel }),
+						...(runEffort && { effort: runEffort }),
+						...(ignoreModelHints && { ignoreModelHints: true }),
+						...autoResumeFields,
 					};
 
 		logger.info('[BatchRunnerModal] handleGo - calling onGo with config:', undefined, config);
@@ -728,8 +572,6 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 		}
 	};
 
-	const isModified = prompt !== DEFAULT_BATCH_PROMPT;
-	const hasUnsavedChanges = prompt !== savedPrompt && prompt !== DEFAULT_BATCH_PROMPT;
 	const resizableModal = useResizableModal({
 		resizeKey: 'batch-runner',
 		defaultSize: { width: 720, height: 720 },
@@ -757,6 +599,8 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 				<ResizeHandles
 					onResizeStart={resizableModal.onResizeStart}
 					accentColor={theme.colors.accent}
+					onResetSize={resizableModal.onResetSize}
+					canReset={resizableModal.canReset}
 				/>
 
 				{/* Header */}
@@ -784,7 +628,7 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 						    flight, explaining why Go is disabled in both modes. */}
 						{isBatchRunningForSession && (
 							<div
-								className="flex items-center gap-1 px-2 py-1 rounded-full text-[10px] font-semibold whitespace-nowrap"
+								className="flex items-center gap-1 px-2 py-1 rounded-full text-2xs font-semibold whitespace-nowrap"
 								style={{
 									backgroundColor: theme.colors.accent,
 									color: theme.colors.bgMain,
@@ -801,7 +645,7 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 						    visible without forcing the modal footer to grow. */}
 						{isAgentBusy && !isBatchRunningForSession && (
 							<div
-								className="flex items-center gap-1 px-2 py-1 rounded-full text-[10px] font-semibold whitespace-nowrap"
+								className="flex items-center gap-1 px-2 py-1 rounded-full text-2xs font-semibold whitespace-nowrap"
 								style={{
 									backgroundColor: theme.colors.warning,
 									color: theme.colors.bgMain,
@@ -885,9 +729,13 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 					{/* Playbook Section - Spec-Driven only; playbooks are checklist
 					    documents, which have no meaning in Goal-Driven mode. */}
 					{!goalMode && (
-						<div className="mb-6 flex items-center justify-between">
-							{/* Left side: Load Playbook and Playbook Exchange buttons */}
-							<div className="flex items-center gap-2">
+						<div className="mb-6 flex flex-wrap items-center justify-center gap-2">
+							{/* The two groups below are `contents`, so their buttons are direct
+							    flex items of this centered row rather than two edge-anchored
+							    clusters. The whole set stays centered and wraps as buttons
+							    appear and disappear with the playbook state. */}
+							{/* Load / Import / Playbook Exchange */}
+							<div className="contents">
 								{/* Load Playbook Dropdown - only show when playbooks exist or one is loaded */}
 								{(playbooks.length > 0 || loadedPlaybook) && (
 									<div className="relative" ref={playbackDropdownRef}>
@@ -932,7 +780,7 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 																{pb.name}
 															</span>
 															<span
-																className="text-[10px] shrink-0"
+																className="text-2xs shrink-0"
 																style={{ color: theme.colors.textDim }}
 															>
 																{pb.documents.length} doc{pb.documents.length !== 1 ? 's' : ''}
@@ -993,8 +841,8 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 								)}
 							</div>
 
-							{/* Right side: Save as Playbook OR Save Update/Discard buttons */}
-							<div className="flex items-center gap-2">
+							{/* Save as Playbook OR Save Update / Save as New / Discard */}
+							<div className="contents">
 								{/* Save as Playbook button - shown when >1 doc and no playbook loaded */}
 								{documents.length > 1 && !loadedPlaybook && (
 									<button
@@ -1091,21 +939,21 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 					    goal mode, where the agent prompt is built internally by the goal
 					    runner and "Fresh context per" has no meaning without documents. */}
 					{!goalMode && (
-						<div className="flex flex-col gap-2">
+						<div className="mb-6 flex flex-col gap-2">
 							{/* Fresh-context-per selector - drives {{TASK_SELECTION_BLOCK}}.
 							    Hidden until at least one document is selected; the mode is then
 							    auto-chosen from the docs' task counts and the agent context window. */}
 							{documents.length > 0 && (
 								<div className="mb-2">
 									<div
-										className="text-[10px] font-bold uppercase mb-1.5"
+										className="text-2xs font-bold uppercase mb-1.5"
 										style={{ color: theme.colors.textDim }}
 									>
 										Fresh context per:
 									</div>
 									{recommendationExplanation && (
 										<p
-											className="text-[10px] mb-1.5"
+											className="text-2xs mb-1.5"
 											style={{
 												color: showRecommendationWarning
 													? theme.colors.warning
@@ -1124,7 +972,7 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 										onChange={handleTaskSelectionModeChange}
 										theme={theme}
 									/>
-									<p className="text-[10px] mt-1.5" style={{ color: theme.colors.textDim }}>
+									<p className="text-2xs mt-1.5" style={{ color: theme.colors.textDim }}>
 										{taskSelectionMode === 'task'
 											? 'A new agent session is spawned for each unchecked task, clean context per work in the document.'
 											: 'A new agent session is spawned for each document, processing all tasks together.'}
@@ -1142,7 +990,7 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 									</label>
 									{isModified && (
 										<span
-											className="text-[10px] px-2 py-0.5 rounded-full"
+											className="text-2xs px-2 py-0.5 rounded-full"
 											style={{
 												backgroundColor: theme.colors.accent + '20',
 												color: theme.colors.accent,
@@ -1163,7 +1011,7 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 									Reset
 								</button>
 							</div>
-							<div className="text-[10px] mb-2" style={{ color: theme.colors.textDim }}>
+							<div className="text-2xs mb-2" style={{ color: theme.colors.textDim }}>
 								This prompt is sent to the AI agent for each {queueItemNoun} in the queue.{' '}
 								{isModified && lastModifiedAt && (
 									<span style={{ color: theme.colors.textMain }}>
@@ -1201,7 +1049,7 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 										className="px-3 pb-3 pt-1 border-t select-text"
 										style={{ borderColor: theme.colors.border }}
 									>
-										<p className="text-[10px] mb-2" style={{ color: theme.colors.textDim }}>
+										<p className="text-2xs mb-2" style={{ color: theme.colors.textDim }}>
 											Use these variables in your prompt. They will be replaced with actual values
 											at runtime.
 										</p>
@@ -1209,7 +1057,7 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 											{TEMPLATE_VARIABLES.map(({ variable, description }) => (
 												<div key={variable} className="flex items-center gap-2 py-0.5">
 													<code
-														className="text-[10px] font-mono px-1 py-0.5 rounded shrink-0"
+														className="text-2xs font-mono px-1 py-0.5 rounded shrink-0"
 														style={{
 															backgroundColor: theme.colors.bgActivity,
 															color: theme.colors.accent,
@@ -1218,7 +1066,7 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 														{variable}
 													</code>
 													<span
-														className="text-[10px] truncate"
+														className="text-2xs truncate"
 														style={{ color: theme.colors.textDim }}
 													>
 														{description}
@@ -1293,6 +1141,154 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 							)}
 						</div>
 					)}
+
+					{/* Per-run model / effort override. Applies to every agent spawn this
+					    run makes (both modes, and worktree-dispatched runs), and dies with
+					    the run - the agent's own configured model is left alone. Each
+					    picker is hidden when its provider exposes no options. Lives last in
+					    both modes so the two layouts stay consistent. */}
+					{(availableModels.length > 0 || availableEfforts.length > 0) && (
+						<div className="flex flex-col gap-2">
+							<div className="text-2xs font-bold uppercase" style={{ color: theme.colors.textDim }}>
+								Model for this run
+							</div>
+							<div className="flex items-center gap-2">
+								{availableModels.length > 0 && (
+									<select
+										value={runModel}
+										onChange={(e) => setRunModel(e.target.value)}
+										aria-label="Model for this run"
+										className="flex-1 rounded-lg border px-3 py-1.5 text-sm outline-none"
+										style={{
+											backgroundColor: theme.colors.bgMain,
+											borderColor: theme.colors.border,
+											color: theme.colors.textMain,
+										}}
+									>
+										<option value="">Use agent default</option>
+										{availableModels.map((m) => (
+											<option key={m} value={m}>
+												{m}
+											</option>
+										))}
+									</select>
+								)}
+								{availableEfforts.length > 0 && (
+									<select
+										value={runEffort}
+										onChange={(e) => setRunEffort(e.target.value)}
+										aria-label="Reasoning effort for this run"
+										className="flex-1 rounded-lg border px-3 py-1.5 text-sm outline-none"
+										style={{
+											backgroundColor: theme.colors.bgMain,
+											borderColor: theme.colors.border,
+											color: theme.colors.textMain,
+										}}
+									>
+										<option value="">Default effort</option>
+										{availableEfforts.map((e) => (
+											<option key={e} value={e}>
+												{e}
+											</option>
+										))}
+									</select>
+								)}
+							</div>
+							<p className="text-2xs" style={{ color: theme.colors.textDim }}>
+								Overrides the agent&apos;s configured model for this run only. The agent&apos;s own
+								settings and its interactive tabs are unchanged.
+							</p>
+							{/* Spec-Driven only: a Goal-Driven run has no documents, so there are
+							    no markers to ignore. */}
+							{autoRunMode !== 'goal' && (
+								<div className="flex items-start justify-between gap-3 pt-1">
+									<div className="flex flex-col gap-0.5">
+										<span className="text-xs font-medium" style={{ color: theme.colors.textMain }}>
+											Ignore model hints in documents
+										</span>
+										<span className="text-2xs" style={{ color: theme.colors.textDim }}>
+											Run every task at the model and effort above, skipping the playbook&apos;s
+											per-phase and per-task model markers. With the pickers on their defaults, that
+											means the agent&apos;s own settings.
+										</span>
+									</div>
+									<ToggleSwitch
+										checked={ignoreModelHints}
+										onChange={setIgnoreModelHints}
+										theme={theme}
+										size="sm"
+										ariaLabel="Ignore model hints in documents"
+									/>
+								</div>
+							)}
+						</div>
+					)}
+
+					{/* Auto-resume. Deliberately OUTSIDE the model block above: that block
+					    only renders when the agent reports models or efforts, and an agent
+					    that reports neither still stops on errors. Nesting it there would
+					    silently deny auto-resume to exactly the agents nobody is watching. */}
+					<div className="flex flex-col gap-2">
+						<div className="text-2xs font-bold uppercase" style={{ color: theme.colors.textDim }}>
+							If this run hits an error
+						</div>
+						<div className="flex items-start justify-between gap-3">
+							<div className="flex flex-col gap-0.5">
+								<span className="text-xs font-medium" style={{ color: theme.colors.textMain }}>
+									Auto-resume after
+								</span>
+								<span className="text-2xs" style={{ color: theme.colors.textDim }}>
+									An error pauses the run until someone clicks Resume. With this on, Maestro waits
+									and clicks it for you, then gives up after the attempts below and leaves an ERR
+									badge on the agent. Quota pauses are left to Auto-Resume on Limit, which waits for
+									the window to actually reopen.
+								</span>
+							</div>
+							<ToggleSwitch
+								checked={autoResumeOnError}
+								onChange={setAutoResumeOnError}
+								theme={theme}
+								size="sm"
+								ariaLabel="Auto-resume after an error"
+							/>
+						</div>
+						{autoResumeOnError && (
+							<div className="flex flex-wrap items-center gap-4 pt-1">
+								<label className="flex items-center gap-2">
+									<span className="text-2xs" style={{ color: theme.colors.textDim }}>
+										Wait (minutes)
+									</span>
+									<input
+										type="number"
+										min={AUTO_RESUME_MIN_MINUTES}
+										max={AUTO_RESUME_MAX_MINUTES}
+										value={autoResumeAfterMin}
+										onChange={(e) => setAutoResumeAfterMin(parseInt(e.target.value, 10))}
+										onBlur={() => setAutoResumeAfterMin(clampAutoResumeMinutes(autoResumeAfterMin))}
+										aria-label="Minutes to wait before auto-resuming"
+										className="w-20 rounded border px-2 py-1 text-xs bg-transparent outline-none"
+										style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
+									/>
+								</label>
+								<label className="flex items-center gap-2">
+									<span className="text-2xs" style={{ color: theme.colors.textDim }}>
+										Max auto-resumes
+									</span>
+									<input
+										type="number"
+										min={AUTO_RESUME_MIN_ATTEMPTS}
+										max={AUTO_RESUME_MAX_ATTEMPTS}
+										value={maxAutoResumes}
+										onChange={(e) => setMaxAutoResumes(parseInt(e.target.value, 10))}
+										onBlur={() => setMaxAutoResumes(clampMaxAutoResumes(maxAutoResumes))}
+										aria-label="Maximum automatic resumes before stopping"
+										className="w-20 rounded border px-2 py-1 text-xs bg-transparent outline-none"
+										style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
+									/>
+								</label>
+							</div>
+						)}
+					</div>
 				</div>
 
 				{/* Footer */}
@@ -1300,13 +1296,29 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 					className="p-4 border-t flex items-center justify-between shrink-0"
 					style={{ borderColor: theme.colors.border }}
 				>
-					{/* Left side: Auto-follow toggle + Hint. Both are document-centric
-					    (following the active task, drag-to-copy a document) and have no
+					{/* Left side: Save & Exit, auto-follow toggle, hint. All three are document-centric
+					    (following the active task, drag-to-copy a document, saving a checklist playbook) and have no
 					    meaning in Goal-Driven mode, so they hide there. The container
 					    stays mounted to preserve the footer's justify-between layout. */}
 					<div className="flex items-center gap-4">
 						{!goalMode && (
 							<>
+								<button
+									onClick={handleSaveAndExit}
+									disabled={documents.length === 0 || savingPlaybook}
+									className="flex items-center gap-2 px-3 py-2 rounded border hover:bg-white/5 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+									style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
+									title={
+										documents.length === 0
+											? 'No documents selected'
+											: loadedPlaybook
+												? `Save "${loadedPlaybook.name}" and close`
+												: 'Save as a dated playbook and close'
+									}
+								>
+									<LogOut className="w-4 h-4" style={{ color: theme.colors.accent }} />
+									{savingPlaybook ? 'Saving...' : 'Save & Exit'}
+								</button>
 								<label className="flex items-center gap-1.5 cursor-pointer">
 									<input
 										type="checkbox"
@@ -1324,7 +1336,7 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 									style={{ color: theme.colors.textDim }}
 								>
 									<span
-										className="px-1.5 py-0.5 rounded border text-[10px] font-mono"
+										className="px-1.5 py-0.5 rounded border text-2xs font-mono"
 										style={{
 											borderColor: theme.colors.border,
 											backgroundColor: theme.colors.bgActivity,

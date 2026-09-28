@@ -1,2 +1,2 @@
-export { CueModal } from './CueModal';
+export { CueModal, __resetLastOpenCueTabForTests } from './CueModal';
 export type { CueModalProps } from './CueModal';

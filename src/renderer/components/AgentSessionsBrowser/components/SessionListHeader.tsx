@@ -1,6 +1,7 @@
 import React from 'react';
 import { List, Plus, X } from 'lucide-react';
 import type { Theme } from '../../../types';
+import { HeaderActionButton } from '../../ui/HeaderActionButton';
 
 interface SessionListHeaderProps {
 	agentId: string;
@@ -39,14 +40,9 @@ export const SessionListHeader = React.memo(function SessionListHeader({
 				)}
 			</div>
 			<div className="flex items-center gap-2">
-				<button
-					onClick={onNewSession}
-					className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors hover:opacity-80"
-					style={{ backgroundColor: theme.colors.accent, color: theme.colors.accentForeground }}
-				>
-					<Plus className="w-4 h-4" />
+				<HeaderActionButton theme={theme} onClick={onNewSession} icon={<Plus />}>
 					New Session
-				</button>
+				</HeaderActionButton>
 				<button
 					onClick={onClose}
 					className="p-2 rounded hover:bg-white/5 transition-colors"

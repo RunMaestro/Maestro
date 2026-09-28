@@ -310,4 +310,62 @@ describe('goal-runner (runGoal)', () => {
 			sshRemoteConfig: { enabled: true, remoteId: 'remote-1' },
 		});
 	});
+
+	describe('per-run model/effort override', () => {
+		it('lets the run model/effort win over the session values', async () => {
+			const session = mockSession({ customModel: 'opus', customEffort: 'high' });
+
+			await collectEvents(runGoal(session, goalConfig(), { model: 'sonnet', effort: 'low' }));
+
+			const opts = vi.mocked(spawnAgent).mock.calls[0][4];
+			expect(opts).toMatchObject({ customModel: 'sonnet', customEffort: 'low' });
+			// The override is run-scoped: the session object itself is untouched.
+			expect(session.customModel).toBe('opus');
+			expect(session.customEffort).toBe('high');
+		});
+
+		it('falls back to the session values when no run override is given', async () => {
+			await collectEvents(
+				runGoal(mockSession({ customModel: 'opus', customEffort: 'high' }), goalConfig())
+			);
+
+			const opts = vi.mocked(spawnAgent).mock.calls[0][4];
+			expect(opts).toMatchObject({ customModel: 'opus', customEffort: 'high' });
+		});
+
+		it('falls back per field when only the model is overridden', async () => {
+			await collectEvents(
+				runGoal(mockSession({ customModel: 'opus', customEffort: 'high' }), goalConfig(), {
+					model: 'sonnet',
+				})
+			);
+
+			const opts = vi.mocked(spawnAgent).mock.calls[0][4];
+			expect(opts).toMatchObject({ customModel: 'sonnet', customEffort: 'high' });
+		});
+
+		it('applies the run override to the handoff synopsis spawn too', async () => {
+			const responses = [progressResponse(40, 'phase 1'), progressResponse(100, 'done')];
+			let iterCall = 0;
+			vi.mocked(spawnAgent).mockImplementation(async (_tool, _cwd, _prompt, agentSessionId) => {
+				if (agentSessionId) {
+					return { success: true, response: 'handoff note', agentSessionId };
+				}
+				return {
+					success: true,
+					response: responses[iterCall++],
+					agentSessionId: `agent-${iterCall}`,
+				};
+			});
+
+			await collectEvents(
+				runGoal(mockSession({ customModel: 'opus' }), goalConfig(), { model: 'sonnet' })
+			);
+
+			// Call 1 is the handoff resume - it must summarize on the same model the
+			// iteration it summarizes actually ran on.
+			const handoffOpts = vi.mocked(spawnAgent).mock.calls[1][4];
+			expect(handoffOpts).toMatchObject({ customModel: 'sonnet' });
+		});
+	});
 });

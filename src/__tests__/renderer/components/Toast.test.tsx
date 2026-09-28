@@ -14,10 +14,18 @@
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, act } from '@testing-library/react';
-import { ToastContainer } from '../../../renderer/components/Toast';
+import { ToastContainer, buildToastClipboardText } from '../../../renderer/components/Toast';
 import { useNotificationStore } from '../../../renderer/stores/notificationStore';
 import type { Toast } from '../../../renderer/stores/notificationStore';
+import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { mockTheme } from '../../helpers/mockTheme';
+import { usePhoneLayout } from '../../../renderer/hooks/ui/useViewportBreakpoint';
+import { useMediaPlaybackStore } from '../../../renderer/stores/mediaPlaybackStore';
+
+vi.mock('../../../renderer/hooks/ui/useViewportBreakpoint', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../renderer/hooks/ui/useViewportBreakpoint')>()),
+	usePhoneLayout: vi.fn(() => false),
+}));
 
 const createMockToast = (overrides = {}): Toast => ({
 	id: 'toast-1',
@@ -58,6 +66,32 @@ describe('Toast', () => {
 			render(<ToastContainer theme={mockTheme} />);
 			// Portal renders to document.body, so no toast elements should exist
 			expect(document.body.querySelector('.fixed.bottom-4')).toBeNull();
+		});
+	});
+
+	describe('interface font', () => {
+		it('restates the interface font on the portal root', () => {
+			// Toasts portal to document.body, OUTSIDE the app shell that carries
+			// the interface font, so without this they inherit the body default
+			// and a user who changed the UI font kept getting the old one.
+			useSettingsStore.setState({ fontFamily: 'Verdana' });
+			setStoreToasts([createMockToast()]);
+
+			render(<ToastContainer theme={mockTheme} />);
+
+			const root = screen.getByText('Test Toast').closest('[style*="font-family"]');
+			expect(root).not.toBeNull();
+			expect((root as HTMLElement).style.fontFamily).toContain('Verdana');
+		});
+
+		it('keeps a monospace fallback so a missing face cannot land on serif', () => {
+			useSettingsStore.setState({ fontFamily: 'Verdana' });
+			setStoreToasts([createMockToast()]);
+
+			render(<ToastContainer theme={mockTheme} />);
+
+			const root = screen.getByText('Test Toast').closest('[style*="font-family"]');
+			expect((root as HTMLElement).style.fontFamily).toContain('monospace');
 		});
 	});
 
@@ -121,6 +155,75 @@ describe('Toast', () => {
 
 			render(<ToastContainer theme={mockTheme} />);
 			expect(screen.getByText('Tab 1')).toHaveAttribute('title', 'Claude Session: abc-123');
+		});
+	});
+
+	describe('timestamp', () => {
+		// Fixed local wall-clock instant so the assertions below are locale-safe:
+		// they compare against Intl output computed the same way, and assert the
+		// today-vs-earlier behavior rather than a hard-coded string.
+		const NOW = new Date(2026, 0, 15, 14, 30, 0).getTime();
+		const DAY_MS = 24 * 60 * 60 * 1000;
+
+		const timeEl = () => document.body.querySelector('time');
+
+		beforeEach(() => {
+			vi.setSystemTime(NOW);
+		});
+
+		it('stamps every toast, even one with no group/project/tab', () => {
+			setStoreToasts([createMockToast({ timestamp: NOW })]);
+
+			render(<ToastContainer theme={mockTheme} />);
+			expect(timeEl()).not.toBeNull();
+			expect(timeEl()).toHaveAttribute('dateTime', new Date(NOW).toISOString());
+		});
+
+		it('shows only the clock time for a toast from today', () => {
+			setStoreToasts([createMockToast({ timestamp: NOW })]);
+
+			render(<ToastContainer theme={mockTheme} />);
+			const expectedTime = new Date(NOW).toLocaleTimeString([], {
+				hour: 'numeric',
+				minute: '2-digit',
+			});
+			const expectedDate = new Date(NOW).toLocaleDateString([], {
+				month: 'short',
+				day: 'numeric',
+			});
+			expect(timeEl()?.textContent).toBe(expectedTime);
+			// The point of 'smart': today needs no date, so it must not appear.
+			expect(timeEl()?.textContent).not.toContain(expectedDate);
+		});
+
+		it('adds the date once a sticky toast is older than today', () => {
+			const yesterday = NOW - DAY_MS;
+			setStoreToasts([createMockToast({ timestamp: yesterday, dismissible: true })]);
+
+			render(<ToastContainer theme={mockTheme} />);
+			const expectedDate = new Date(yesterday).toLocaleDateString([], {
+				month: 'short',
+				day: 'numeric',
+			});
+			expect(timeEl()?.textContent).toContain(expectedDate);
+		});
+
+		it('exposes the full date and time as a hover title', () => {
+			setStoreToasts([createMockToast({ timestamp: NOW })]);
+
+			render(<ToastContainer theme={mockTheme} />);
+			expect(timeEl()).toHaveAttribute('title', new Date(NOW).toLocaleString());
+		});
+
+		it('sits on the title line, not on the agent-context row', () => {
+			setStoreToasts([
+				createMockToast({ timestamp: NOW, title: 'Synopsis', group: 'OBSIDIAN', tabName: 'Tab 1' }),
+			]);
+
+			render(<ToastContainer theme={mockTheme} />);
+			const row = timeEl()?.parentElement;
+			expect(row?.textContent).toContain('Synopsis');
+			expect(row?.textContent).not.toContain('OBSIDIAN');
 		});
 	});
 
@@ -313,6 +416,43 @@ describe('Toast', () => {
 			render(<ToastContainer theme={mockTheme} />);
 			expect(document.body.querySelector('.h-1.rounded-b-lg')).not.toBeInTheDocument();
 		});
+
+		// Regression: these guards used to read `toast.duration && toast.duration > 0`.
+		// With a duration of 0 the leading truthiness check evaluates to the NUMBER
+		// 0 rather than a boolean, and React renders a bare `0` text node where the
+		// element should have been. The "never auto-dismiss" setting makes
+		// `duration` 0 without setting `dismissible`, so the combination is
+		// reachable. Asserting on whole-element text would not catch it (the stray
+		// node sits among real content, and the arrival timestamp legitimately
+		// contains digits), so look for a text node that is literally "0".
+		const strayZeroCount = (): number => {
+			const root = document.body.querySelector('.fixed.bottom-0.right-4');
+			if (!root) return 0;
+			const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+			let count = 0;
+			while (walker.nextNode()) {
+				if (walker.currentNode.textContent?.trim() === '0') count++;
+			}
+			return count;
+		};
+
+		it('renders no stray zero when duration is 0 and the toast is not dismissible', () => {
+			setStoreToasts([createMockToast({ duration: 0, dismissible: false })]);
+
+			render(<ToastContainer theme={mockTheme} />);
+			expect(document.body.querySelector('.h-1.rounded-b-lg')).not.toBeInTheDocument();
+			expect(strayZeroCount()).toBe(0);
+		});
+
+		// Same shape on the duration badge: a task that rounds to 0ms printed a
+		// bare "0" instead of rendering nothing.
+		it('renders no stray zero when taskDuration is 0', () => {
+			setStoreToasts([createMockToast({ taskDuration: 0, duration: 5000 })]);
+
+			render(<ToastContainer theme={mockTheme} />);
+			expect(screen.queryByText(/Completed in/)).not.toBeInTheDocument();
+			expect(strayZeroCount()).toBe(0);
+		});
 	});
 
 	describe('action URL link', () => {
@@ -358,9 +498,9 @@ describe('Toast', () => {
 			setStoreToasts([createMockToast()]);
 
 			render(<ToastContainer theme={mockTheme} />);
-			// No anchor/button with link behavior beyond the close button
+			// Only the two rail buttons (close + copy), no action link
 			const buttons = screen.getAllByRole('button');
-			expect(buttons).toHaveLength(1); // only the close button
+			expect(buttons).toHaveLength(2);
 		});
 	});
 
@@ -370,10 +510,7 @@ describe('Toast', () => {
 			setStoreToasts([createMockToast({ sessionId: 'session-1' })]);
 
 			render(<ToastContainer theme={mockTheme} onSessionClick={onSessionClick} />);
-			// Close button is the last button (the X icon)
-			const buttons = screen.getAllByRole('button');
-			const closeButton = buttons[buttons.length - 1];
-			fireEvent.click(closeButton);
+			fireEvent.click(screen.getByLabelText('Close'));
 
 			// onSessionClick should NOT be called from close
 			// (onSessionClick triggers from the toast body click)
@@ -381,12 +518,69 @@ describe('Toast', () => {
 		});
 	});
 
+	describe('copy button', () => {
+		const writeText = vi.fn().mockResolvedValue(undefined);
+
+		beforeEach(() => {
+			writeText.mockClear();
+			Object.defineProperty(navigator, 'clipboard', {
+				value: { writeText },
+				configurable: true,
+			});
+		});
+
+		it('copies the toast text to the clipboard', async () => {
+			setStoreToasts([
+				createMockToast({
+					group: 'Ops',
+					project: 'Maestro',
+					tabName: 'main',
+					title: 'Pipeline failing',
+					message: 'chat source broken',
+					actionUrl: 'https://example.com/run/1',
+				}),
+			]);
+
+			render(<ToastContainer theme={mockTheme} />);
+			await act(async () => {
+				fireEvent.click(screen.getByLabelText('Copy notification text'));
+			});
+
+			expect(writeText).toHaveBeenCalledWith(
+				'Ops · Maestro · main\nPipeline failing\nchat source broken\nhttps://example.com/run/1'
+			);
+		});
+
+		it('does not navigate or dismiss the toast when copying', async () => {
+			const onSessionClick = vi.fn();
+			setStoreToasts([createMockToast({ sessionId: 'session-1' })]);
+
+			render(<ToastContainer theme={mockTheme} onSessionClick={onSessionClick} />);
+			await act(async () => {
+				fireEvent.click(screen.getByLabelText('Copy notification text'));
+			});
+			act(() => {
+				vi.advanceTimersByTime(300);
+			});
+
+			expect(onSessionClick).not.toHaveBeenCalled();
+			expect(useNotificationStore.getState().toasts).toHaveLength(1);
+		});
+
+		it('builds clipboard text from only the populated fields', () => {
+			expect(buildToastClipboardText(createMockToast({ title: 'Done', message: 'All good' }))).toBe(
+				'Done\nAll good'
+			);
+		});
+	});
+
 	describe('no metadata row', () => {
-		it('does not render metadata section when no group/project/tabName', () => {
+		it('renders no context badges when no group/project/tabName', () => {
 			setStoreToasts([createMockToast()]);
 
 			render(<ToastContainer theme={mockTheme} />);
-			// The metadata row has accentDim styled spans - should not exist
+			// The accentDim styled badges for group/tab should not exist. The
+			// timestamp lives on the title line, so nothing keeps this row alive.
 			const accentSpans = document.body.querySelectorAll('.px-1\\.5.py-0\\.5.rounded');
 			expect(accentSpans).toHaveLength(0);
 		});
@@ -448,5 +642,89 @@ describe('Toast', () => {
 			expect(screen.getByText(/Completed in 1s/)).toBeInTheDocument();
 			unmount();
 		});
+	});
+});
+
+describe('Toast on a phone', () => {
+	beforeEach(() => {
+		useNotificationStore.setState({ toasts: [createMockToast()] });
+	});
+
+	afterEach(() => {
+		vi.mocked(usePhoneLayout).mockReturnValue(false);
+	});
+
+	it('pins the stack to the right and sizes toasts from the preset on desktop', () => {
+		// Pin the preset rather than leaning on whatever the store defaults to:
+		// the point of this test is that the desktop path uses the preset at all,
+		// and 'dynamic' derives its width from the live Right Bar instead.
+		useSettingsStore.setState({ toastWidth: 'small' });
+		render(<ToastContainer theme={mockTheme} />);
+		const stack = screen.getByTestId('toast-stack');
+		expect(stack).toHaveClass('right-4');
+		expect(stack).not.toHaveClass('left-3');
+		const card = screen.getByText('Test Toast').closest('.rounded-lg') as HTMLElement;
+		expect(card.style.minWidth).toBe('320px');
+		expect(card.style.maxWidth).toBe('400px');
+	});
+
+	it('spans the screen and fills the stack on a phone', () => {
+		vi.mocked(usePhoneLayout).mockReturnValue(true);
+		render(<ToastContainer theme={mockTheme} />);
+		const stack = screen.getByTestId('toast-stack');
+		expect(stack).toHaveClass('left-3');
+		expect(stack).toHaveClass('right-3');
+		const card = screen.getByText('Test Toast').closest('.rounded-lg') as HTMLElement;
+		expect(card.style.minWidth).toBe('');
+		expect(card.style.maxWidth).toBe('');
+		expect(card.style.width).toBe('100%');
+	});
+});
+
+describe('ToastContainer over the floating media player', () => {
+	beforeEach(() => {
+		useNotificationStore.setState({ toasts: [createMockToast()] });
+		useSettingsStore.setState({ toastWidth: 'small' });
+	});
+
+	afterEach(() => {
+		useMediaPlaybackStore.setState({ floatFootprint: null });
+		vi.mocked(usePhoneLayout).mockReturnValue(false);
+	});
+
+	it('sits on the bottom edge when no player is on screen', () => {
+		useMediaPlaybackStore.setState({ floatFootprint: null });
+		render(<ToastContainer theme={mockTheme} />);
+		expect(screen.getByTestId('toast-stack').style.marginBottom).toBe('');
+	});
+
+	it('steps over a player parked in the same corner', () => {
+		// Without this the toast paints over the widget (toasts are z-index
+		// 100000, the player is 60), and the player appears to close itself.
+		useMediaPlaybackStore.setState({
+			floatFootprint: { fromBottom: 156, fromRight: 24, width: 380, viewportHeight: 900 },
+		});
+		render(<ToastContainer theme={mockTheme} />);
+		expect(screen.getByTestId('toast-stack').style.marginBottom).toBe('164px');
+	});
+
+	it('stays on the bottom edge for a player in another column', () => {
+		useMediaPlaybackStore.setState({
+			floatFootprint: { fromBottom: 156, fromRight: 1100, width: 380, viewportHeight: 900 },
+		});
+		render(<ToastContainer theme={mockTheme} />);
+		expect(screen.getByTestId('toast-stack').style.marginBottom).toBe('');
+	});
+
+	it('keeps the safe-area inset while stepping over the player on a phone', () => {
+		vi.mocked(usePhoneLayout).mockReturnValue(true);
+		useMediaPlaybackStore.setState({
+			floatFootprint: { fromBottom: 156, fromRight: 12, width: 366, viewportHeight: 844 },
+		});
+		render(<ToastContainer theme={mockTheme} />);
+		// The lift is a margin and the safe-area inset is padding, so neither can
+		// eat the other. (jsdom drops the `env()` padding entirely, so only the
+		// margin is assertable here.)
+		expect(screen.getByTestId('toast-stack').style.marginBottom).toBe('164px');
 	});
 });

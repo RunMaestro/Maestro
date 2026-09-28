@@ -6,6 +6,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 
 // Mock dependencies before importing the module
@@ -38,6 +39,7 @@ import {
 	checkBinaryExists,
 	probeWindowsPaths,
 	probeUnixPaths,
+	findAllBinaryPaths,
 	type BinaryDetectionResult,
 } from '../../../main/agents';
 import { execFileNoThrow } from '../../../main/utils/execFile';
@@ -58,13 +60,23 @@ describe('path-prober', () => {
 
 		it('should include common Unix paths on non-Windows', () => {
 			const originalPlatform = process.platform;
+			const originalPath = process.env.PATH;
 			Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
+			// Pin the inherited PATH: on a dev machine the real PATH already carries
+			// these dirs, which would make the assertions pass even if getExpandedEnv
+			// stopped adding them.
+			process.env.PATH = '/inherited/only';
 
 			try {
 				const env = getExpandedEnv();
 				expect(env.PATH).toContain('/opt/homebrew/bin');
 				expect(env.PATH).toContain('/usr/local/bin');
+				// ~/.bun/bin is where the bun-based omp binary installs; without it
+				// consumers of getExpandedEnv() cannot resolve omp even though the
+				// detection probe finds it there.
+				expect(env.PATH).toContain(`${os.homedir()}/.bun/bin`);
 			} finally {
+				process.env.PATH = originalPath;
 				Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
 			}
 		});
@@ -389,6 +401,32 @@ describe('path-prober', () => {
 			expect(accessMock).toHaveBeenCalled();
 		});
 
+		it('leads with the WinGet install for copilot, over an npm shim', async () => {
+			// Regression guard for the Windows half of the key fix: this table was
+			// keyed `'copilot-cli'` (the agent id) while it is looked up with
+			// `agentDef.binaryName`, which is `copilot`, so none of its candidates
+			// were reachable. Both paths exist here, so this pins the order too,
+			// not just that the entry can be reached at all.
+			const home = os.homedir();
+			const wingetPath = path.join(
+				process.env.ProgramFiles || 'C:\\Program Files',
+				'GitHub Copilot CLI',
+				'copilot.exe'
+			);
+			const npmShim = path.join(
+				process.env.APPDATA || path.join(home, 'AppData', 'Roaming'),
+				'npm',
+				'copilot.cmd'
+			);
+			accessMock.mockImplementation(async (probePath) => {
+				const candidate = String(probePath);
+				if (candidate === wingetPath || candidate === npmShim) return undefined;
+				throw new Error('ENOENT');
+			});
+
+			expect(await probeWindowsPaths('copilot')).toBe(wingetPath);
+		});
+
 		it('should probe the current Codex Desktop executable', async () => {
 			const originalLocalAppData = process.env.LOCALAPPDATA;
 			const readdirMock = vi.spyOn(fs.promises, 'readdir');
@@ -460,22 +498,113 @@ describe('path-prober', () => {
 			// Should have tried multiple paths
 			expect(accessMock).toHaveBeenCalled();
 		});
+	});
 
-		it('should check both existence and executability', async () => {
-			const originalPlatform = process.platform;
+	/**
+	 * The known-path table is what finds an agent installed off PATH, and each
+	 * agent's order encodes where its own installer puts things. The tests above
+	 * reject every candidate and assert `null`, which passes whatever the table
+	 * says; these pin the candidates and their order, on a platform where
+	 * Homebrew has two roots and the installers do not agree on one location.
+	 *
+	 * Named for macOS because these are the macOS install locations, not because
+	 * the code branches: `getUnixKnownPaths` never reads `process.platform`. The
+	 * platform stub below only keeps the suite honest if that ever changes.
+	 */
+	describe('probeUnixPaths on macOS', () => {
+		// The real homedir, deliberately: the candidate table builds its paths
+		// with `os.homedir()`, not the `expandTilde` this file mocks to
+		// /Users/testuser (that one only serves `checkCustomPath`).
+		const home = os.homedir();
+		let accessMock: ReturnType<typeof vi.spyOn>;
+		let originalPlatform: NodeJS.Platform;
+
+		/** Resolve only for these paths, as `access(F_OK | X_OK)` would. */
+		const onlyExecutable = (...existing: string[]) => {
+			accessMock.mockImplementation(async (probePath) => {
+				if (existing.includes(String(probePath))) return undefined;
+				throw new Error('ENOENT');
+			});
+		};
+
+		beforeEach(() => {
+			originalPlatform = process.platform;
 			Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
+			accessMock = vi.spyOn(fs.promises, 'access');
+		});
 
-			try {
-				accessMock.mockRejectedValue(new Error('ENOENT'));
+		afterEach(() => {
+			accessMock.mockRestore();
+			Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
+		});
 
-				const result = await probeUnixPaths('claude');
-				expect(result).toBeNull();
+		it("prefers Claude's own install location over everything else", async () => {
+			onlyExecutable(
+				path.join(home, '.claude', 'local', 'claude'),
+				path.join(home, '.local', 'bin', 'claude'),
+				'/opt/homebrew/bin/claude',
+				'/usr/local/bin/claude'
+			);
 
-				// Verify access was called with F_OK | X_OK
-				expect(accessMock).toHaveBeenCalled();
-			} finally {
-				Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
-			}
+			expect(await probeUnixPaths('claude')).toBe(path.join(home, '.claude', 'local', 'claude'));
+		});
+
+		it('falls to ~/.local/bin when Claude has no local install', async () => {
+			onlyExecutable(
+				path.join(home, '.local', 'bin', 'claude'),
+				'/opt/homebrew/bin/claude',
+				'/usr/local/bin/claude'
+			);
+
+			expect(await probeUnixPaths('claude')).toBe(path.join(home, '.local', 'bin', 'claude'));
+		});
+
+		it('prefers the Apple Silicon Homebrew root over the Intel one', async () => {
+			onlyExecutable('/opt/homebrew/bin/claude', '/usr/local/bin/claude');
+
+			expect(await probeUnixPaths('claude')).toBe('/opt/homebrew/bin/claude');
+		});
+
+		it('still finds an Intel Homebrew install on its own', async () => {
+			onlyExecutable('/usr/local/bin/claude');
+
+			expect(await probeUnixPaths('claude')).toBe('/usr/local/bin/claude');
+		});
+
+		it('passes X_OK to access, so a non-executable candidate cannot match', async () => {
+			// Note the limit of this assertion: F_OK is 0, so `F_OK | X_OK` IS
+			// `X_OK`. It catches the probe dropping X_OK; it cannot catch X_OK
+			// being widened. A non-executable file is also indistinguishable from
+			// a missing one through a mocked `access`, so the flags are the only
+			// observable part.
+			onlyExecutable('/opt/homebrew/bin/claude');
+
+			expect(await probeUnixPaths('claude')).toBe('/opt/homebrew/bin/claude');
+			expect(accessMock).toHaveBeenCalledWith(
+				path.join(home, '.claude', 'local', 'claude'),
+				fs.constants.X_OK
+			);
+		});
+
+		it('leads with Homebrew for copilot, its primary macOS install', async () => {
+			// Regression guard: this table was keyed `'copilot-cli'` (the agent id)
+			// while it is looked up with `agentDef.binaryName`, which is `copilot`.
+			// Every candidate below was therefore unreachable on both platforms and
+			// only which/where ever found Copilot.
+			onlyExecutable('/opt/homebrew/bin/copilot', path.join(home, '.local', 'bin', 'copilot'));
+
+			expect(await probeUnixPaths('copilot')).toBe('/opt/homebrew/bin/copilot');
+		});
+
+		it("leads with OpenCode's own installer location over a Go install", async () => {
+			onlyExecutable(
+				path.join(home, '.opencode', 'bin', 'opencode'),
+				path.join(home, 'go', 'bin', 'opencode')
+			);
+
+			expect(await probeUnixPaths('opencode')).toBe(
+				path.join(home, '.opencode', 'bin', 'opencode')
+			);
 		});
 	});
 
@@ -624,6 +753,120 @@ describe('path-prober', () => {
 				expect(result.path).toBe('C:\\path\\to\\binary.exe');
 				// Path should not contain \r
 				expect(result.path).not.toContain('\r');
+			} finally {
+				Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
+			}
+		});
+	});
+
+	describe('findAllBinaryPaths', () => {
+		let accessMock: ReturnType<typeof vi.spyOn>;
+		let realpathMock: ReturnType<typeof vi.spyOn>;
+		const mockedExec = execFileNoThrow as ReturnType<typeof vi.fn>;
+
+		beforeEach(() => {
+			accessMock = vi.spyOn(fs.promises, 'access');
+			realpathMock = vi.spyOn(fs.promises, 'realpath');
+			// Default: realpath returns the input unchanged (no symlinks)
+			realpathMock.mockImplementation(async (p: any) => String(p));
+			mockedExec.mockReset();
+		});
+
+		afterEach(() => {
+			accessMock.mockRestore();
+			realpathMock.mockRestore();
+		});
+
+		it('returns every existing direct probe match in priority order', async () => {
+			const originalPlatform = process.platform;
+			Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
+
+			try {
+				// Two homebrew probe locations exist for codex (both are absolute and don't depend on $HOME)
+				accessMock.mockImplementation(async (probePath) => {
+					const s = String(probePath);
+					if (s === '/opt/homebrew/bin/codex' || s === '/usr/local/bin/codex') {
+						return undefined;
+					}
+					throw new Error('ENOENT');
+				});
+				// `which -a` reports a wrapper script as an additional alternative
+				mockedExec.mockResolvedValue({
+					exitCode: 0,
+					stdout: '/opt/homebrew/bin/codex\n/usr/local/bin/codex-multi-auth-codex\n',
+					stderr: '',
+				});
+
+				const result = await findAllBinaryPaths('codex');
+
+				expect(result).toContain('/opt/homebrew/bin/codex');
+				expect(result).toContain('/usr/local/bin/codex');
+				expect(result).toContain('/usr/local/bin/codex-multi-auth-codex');
+				// Probed paths come before which-only results
+				expect(result.indexOf('/opt/homebrew/bin/codex')).toBeLessThan(
+					result.indexOf('/usr/local/bin/codex-multi-auth-codex')
+				);
+			} finally {
+				Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
+			}
+		});
+
+		it('de-duplicates paths that resolve to the same canonical target', async () => {
+			const originalPlatform = process.platform;
+			Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
+
+			try {
+				// Probe finds homebrew copy
+				accessMock.mockImplementation(async (probePath) => {
+					if (String(probePath) === '/opt/homebrew/bin/codex') return undefined;
+					throw new Error('ENOENT');
+				});
+				// `which -a` finds a symlinked alias that resolves to the same real path
+				mockedExec.mockResolvedValue({
+					exitCode: 0,
+					stdout: '/opt/homebrew/bin/codex\n/usr/local/bin/codex\n',
+					stderr: '',
+				});
+				realpathMock.mockImplementation(async (p: any) => {
+					// Both paths resolve to the same canonical file
+					if (String(p) === '/opt/homebrew/bin/codex' || String(p) === '/usr/local/bin/codex') {
+						return '/opt/homebrew/Cellar/codex/1.0.0/bin/codex';
+					}
+					return String(p);
+				});
+
+				const result = await findAllBinaryPaths('codex');
+
+				// Symlinked duplicate is collapsed
+				expect(result).toHaveLength(1);
+				// Direct-probed path wins (it's first in priority order)
+				expect(result[0]).toBe('/opt/homebrew/bin/codex');
+			} finally {
+				Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
+			}
+		});
+
+		it('returns empty array when no installations are found', async () => {
+			accessMock.mockRejectedValue(new Error('ENOENT'));
+			mockedExec.mockResolvedValue({ exitCode: 1, stdout: '', stderr: '' });
+
+			const result = await findAllBinaryPaths('unknown-binary');
+			expect(result).toEqual([]);
+		});
+
+		it('still returns probed paths when which command throws', async () => {
+			const originalPlatform = process.platform;
+			Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
+
+			try {
+				accessMock.mockImplementation(async (probePath) => {
+					if (String(probePath) === '/opt/homebrew/bin/codex') return undefined;
+					throw new Error('ENOENT');
+				});
+				mockedExec.mockRejectedValue(new Error('spawn ENOENT'));
+
+				const result = await findAllBinaryPaths('codex');
+				expect(result).toEqual(['/opt/homebrew/bin/codex']);
 			} finally {
 				Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
 			}

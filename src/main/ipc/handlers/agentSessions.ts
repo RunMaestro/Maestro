@@ -25,6 +25,7 @@ import { createSafeSend } from '../../utils/safe-send';
 import { getSessionStorage, hasSessionStorage, getAllSessionStorages } from '../../agents';
 import { getSshRemoteById as getSshRemoteByIdFromStore } from '../../stores';
 import { calculateModelCost, computeClaudeUsageCost } from '../../utils/pricing';
+import { CodexTokenCounts } from '../../../shared/codexTokenUsage';
 import {
 	loadGlobalStatsCache,
 	saveGlobalStatsCache,
@@ -43,11 +44,14 @@ import type {
 } from '../../agents';
 import type { GlobalAgentStats, ProviderStats, SshRemoteConfig } from '../../../shared/types';
 import { captureException } from '../../utils/sentry';
+import { isExpectedSessionReadError } from '../../utils/session-read-errors';
 import {
 	snapshotStarredTranscript,
-	deleteStarredMirror,
+	releaseTranscriptMirror,
+	releaseSnoozedTranscriptMirror,
 	restoreStarredTranscript,
 	listMirroredStarredSessions,
+	type MirrorRetainReason,
 } from '../../storage/starred-transcript-mirror';
 import { getHistoryManager } from '../../history-manager';
 
@@ -55,6 +59,14 @@ import { getHistoryManager } from '../../history-manager';
 export type { GlobalAgentStats, ProviderStats };
 
 const LOG_CONTEXT = '[AgentSessions]';
+
+/**
+ * Re-exported so existing importers keep resolving from here. The definition
+ * moved to `src/main/utils/session-read-errors.ts` because the sibling read
+ * sites that hit the same boundary (`storage/claude-session-storage.ts`,
+ * `ipc/handlers/claude.ts`) can't import from this module without a cycle.
+ */
+export { isExpectedSessionReadError };
 
 /**
  * Generic agent session origins data structure
@@ -139,9 +151,7 @@ function parseCodexSessionContent(
 	const lines = content.split('\n').filter((l) => l.trim());
 
 	let messageCount = 0;
-	let inputTokens = 0;
-	let outputTokens = 0;
-	let cachedTokens = 0;
+	const tokenCounts = new CodexTokenCounts();
 
 	for (const line of lines) {
 		try {
@@ -155,15 +165,11 @@ function parseCodexSessionContent(
 				}
 			}
 
-			// Extract token usage from event_msg with token_count payload
+			// Extract token usage from event_msg with token_count payload.
+			// `total_token_usage` is cumulative, so it must never be summed - see
+			// CodexTokenCounts.
 			if (entry.type === 'event_msg' && entry.payload?.type === 'token_count') {
-				const usage = entry.payload.info?.total_token_usage;
-				if (usage) {
-					inputTokens += usage.input_tokens || 0;
-					outputTokens += usage.output_tokens || 0;
-					outputTokens += usage.reasoning_output_tokens || 0;
-					cachedTokens += usage.cached_input_tokens || 0;
-				}
+				tokenCounts.addTokenCountEvent(entry.payload.info);
 			}
 		} catch {
 			// Skip malformed lines
@@ -172,11 +178,11 @@ function parseCodexSessionContent(
 
 	return {
 		messages: messageCount,
-		inputTokens,
-		outputTokens,
+		inputTokens: tokenCounts.inputTokens,
+		outputTokens: tokenCounts.outputTokens,
 		cacheReadTokens: 0,
 		cacheCreationTokens: 0,
-		cachedInputTokens: cachedTokens,
+		cachedInputTokens: tokenCounts.cachedTokens,
 		sizeBytes,
 	};
 }
@@ -618,7 +624,12 @@ export function registerAgentSessionsHandlers(deps?: AgentSessionsHandlerDepende
 								)
 							);
 						} catch (error) {
-							void captureException(error);
+							// Walks every provider's transcript tree, so an unreadable one
+							// lands here on every call. That is environmental, not a bug -
+							// warn locally and keep aggregating the providers that do work.
+							if (!isExpectedSessionReadError(error)) {
+								void captureException(error);
+							}
 							logger.warn(
 								`Failed to get named sessions from ${storage.agentId}: ${error}`,
 								LOG_CONTEXT
@@ -873,13 +884,13 @@ export function registerAgentSessionsHandlers(deps?: AgentSessionsHandlerDepende
 					const sessionName = allOrigins[agentId]?.[projectPath]?.[sessionId]?.sessionName;
 					void snapshotStarredTranscript({ agentId, projectPath, sessionId, sessionName });
 				} else {
-					void deleteStarredMirror({ agentId, sessionId });
+					void releaseTranscriptMirror({ agentId, sessionId });
 				}
 			}
 		)
 	);
 
-	// ============ Snapshot Starred Transcript (mirror on tab close) ============
+	// ============ Snapshot Transcript (mirror on tab close / snooze) ============
 
 	ipcMain.handle(
 		'agentSessions:snapshotStarredTranscript',
@@ -889,9 +900,22 @@ export function registerAgentSessionsHandlers(deps?: AgentSessionsHandlerDepende
 				agentId: string,
 				projectPath: string,
 				sessionId: string,
-				sessionName?: string
+				sessionName?: string,
+				reason?: MirrorRetainReason
 			): Promise<void> => {
-				await snapshotStarredTranscript({ agentId, projectPath, sessionId, sessionName });
+				await snapshotStarredTranscript({ agentId, projectPath, sessionId, sessionName, reason });
+			}
+		)
+	);
+
+	// ============ Release Snoozed Transcript (mirror on wake / dismiss) ============
+
+	ipcMain.handle(
+		'agentSessions:releaseSnoozedTranscript',
+		withIpcErrorLogging(
+			handlerOpts('releaseSnoozedTranscript'),
+			async (agentId: string, projectPath: string, sessionId: string): Promise<void> => {
+				await releaseSnoozedTranscriptMirror({ agentId, projectPath, sessionId });
 			}
 		)
 	);
@@ -1072,6 +1096,12 @@ export function registerAgentSessionsHandlers(deps?: AgentSessionsHandlerDepende
 					// claude-/codex-session-storage.ts.
 					if (error instanceof RangeError) {
 						logger.warn(`Claude session file too large to parse: ${file.sessionKey}`, LOG_CONTEXT);
+					} else if (isExpectedSessionReadError(error)) {
+						// Unreadable or vanished transcript - environmental, see
+						// EXPECTED_SESSION_READ_ERROR_CODES (MAESTRO-W9).
+						logger.warn(`Claude session file not readable: ${file.sessionKey}`, LOG_CONTEXT, {
+							error,
+						});
 					} else {
 						void captureException(error);
 						logger.warn(`Failed to parse Claude session: ${file.sessionKey}`, LOG_CONTEXT, {
@@ -1106,6 +1136,11 @@ export function registerAgentSessionsHandlers(deps?: AgentSessionsHandlerDepende
 					// boundary we skip rather than report.
 					if (error instanceof RangeError) {
 						logger.warn(`Codex session file too large to parse: ${file.sessionKey}`, LOG_CONTEXT);
+					} else if (isExpectedSessionReadError(error)) {
+						// See the Claude loop above (MAESTRO-W9).
+						logger.warn(`Codex session file not readable: ${file.sessionKey}`, LOG_CONTEXT, {
+							error,
+						});
 					} else {
 						void captureException(error);
 						logger.warn(`Failed to parse Codex session: ${file.sessionKey}`, LOG_CONTEXT, {

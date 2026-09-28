@@ -11,14 +11,17 @@ import { useSettings } from '../../../hooks';
 import { useKnownAuthDirs } from '../../../hooks/agent/useKnownAuthDirs';
 import type { Theme } from '../../../types';
 import { EnvVarsEditor } from '../EnvVarsEditor';
+import { useKnownEnvVarKeys } from '../../../hooks/agent/useKnownEnvVarKeys';
 
 export interface EnvironmentTabProps {
 	theme: Theme;
 }
 
 export function EnvironmentTab({ theme }: EnvironmentTabProps) {
-	const { shellEnvVars, setShellEnvVars } = useSettings();
+	const { shellEnvVars, setShellEnvVars, shellEnvVarsDisabled, setShellEnvVarsDisabled } =
+		useSettings();
 	const knownAuthDirs = useKnownAuthDirs();
+	const knownEnvVarKeys = useKnownEnvVarKeys();
 
 	return (
 		<div className="space-y-5">
@@ -30,14 +33,19 @@ export function EnvironmentTab({ theme }: EnvironmentTabProps) {
 						Global Environment Variables
 					</span>
 				</div>
-				<p className="text-xs opacity-50 mb-2">
+				<p className="text-xs opacity-70 mb-2">
 					Variables set here apply to all terminal sessions and AI agents. Per-agent environment
 					variables (configured in each agent's settings) take precedence when both define the same
-					key. Common use cases: API keys, proxy settings, custom tool paths.
+					key. Common use cases: API keys, proxy settings, custom tool paths. Use the eye button to
+					switch a variable off: it stays in this list with its value intact, but is no longer
+					passed to anything Maestro runs.
 				</p>
 				<EnvVarsEditor
 					envVars={shellEnvVars}
 					setEnvVars={setShellEnvVars}
+					disabledEnvVars={shellEnvVarsDisabled}
+					setDisabledEnvVars={setShellEnvVarsDisabled}
+					knownEnvVarKeys={knownEnvVarKeys}
 					theme={theme}
 					label={null}
 					description={null}

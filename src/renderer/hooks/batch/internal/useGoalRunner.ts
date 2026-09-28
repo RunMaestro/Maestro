@@ -8,7 +8,7 @@ import type {
 	UsageStats,
 	Group,
 } from '../../../types';
-import type { AgentSpawnErrorKind } from '../../agent/useAgentExecution';
+import type { AgentSpawnErrorKind, SpawnAgentRunOverrides } from '../../agent/useAgentExecution';
 import type {
 	GoalIterationRecord,
 	GoalExitReason,
@@ -51,7 +51,9 @@ type UpdateBatchStateFn = (
 type SpawnAgentFn = (
 	sessionId: string,
 	prompt: string,
-	cwdOverride?: string
+	cwdOverride?: string,
+	/** Run-scoped model/effort override from the BatchRunConfig, when the run set one */
+	options?: SpawnAgentRunOverrides
 ) => Promise<{
 	success: boolean;
 	response?: string;
@@ -79,6 +81,7 @@ type SpawnBackgroundSynopsisFn = (
 		customArgs?: string;
 		customEnvVars?: Record<string, string>;
 		customModel?: string;
+		customEffort?: string;
 		customContextWindow?: number;
 		enableMaestroP?: boolean;
 		maestroPMode?: 'interactive' | 'dynamic';
@@ -231,6 +234,18 @@ export function useGoalRunner({
 				return;
 			}
 
+			// Run-scoped model/effort override, built only when the run picked one so
+			// default runs pass no spawn options at all. An absent override means the
+			// spawn uses the session's configured model, then the agent default.
+			// Nothing here is written back to the session.
+			const runOverrides: SpawnAgentRunOverrides | undefined =
+				config.model || config.effort
+					? {
+							...(config.model && { modelOverride: config.model }),
+							...(config.effort && { effortOverride: config.effort }),
+						}
+					: undefined;
+
 			const goalConfig: GoalRunConfig | undefined = config.goalConfig;
 			if (!goalConfig) {
 				// The router only delegates here when goalConfig is present; guard anyway.
@@ -302,47 +317,88 @@ export function useGoalRunner({
 			const sessionGroup = session.groupId ? groups.find((g) => g.id === session.groupId) : null;
 			const groupName = sessionGroup?.name;
 
-			// Goal mode expresses progress as a percent, so we model it as 100 "tasks".
-			// Empty documents/lockedDocuments arrays mark this as a document-less run.
-			dispatch({
-				type: 'START_BATCH',
-				sessionId,
-				payload: {
-					documents: [],
-					lockedDocuments: [],
-					totalTasksAcrossAllDocs: 100,
-					completedTasksAcrossAllDocs: 0,
-					loopEnabled: false,
-					maxLoops: goalConfig.maxIterations,
-					folderPath,
-					worktreeActive: false,
-					worktreePath: undefined,
-					worktreeBranch: undefined,
-					customPrompt: undefined,
-					startTime: goalStartTime,
-					cumulativeTaskTimeMs: 0,
-					accumulatedElapsedMs: 0,
-					lastActiveTimestamp: goalStartTime,
-				},
-			});
+			// Claim in main immediately before publishing run state so a document
+			// run and a goal run racing in different clients cannot both start.
+			let claimedStart = false;
+			try {
+				claimedStart = await window.maestro.web.claimAutoRunStart(sessionId);
+			} catch (error) {
+				window.maestro.logger.log('error', 'Failed to claim Auto Run start', 'GoalRunner', {
+					sessionId,
+					error: String(error),
+				});
+			}
+			if (!claimedStart) {
+				timeTracking.stopTracking(sessionId);
+				notifyToast({
+					type: 'warning',
+					title: 'Auto Run Already Active',
+					message: 'Another Maestro window already started Auto Run for this agent.',
+					project: session.name,
+					sessionId,
+				});
+				return;
+			}
 
-			// Flag goal mode + seed progress. immediate=true so the desktop store and
-			// web clients reflect the running goal state without waiting on the debounce.
-			updateBatchStateAndBroadcastRef.current!(
-				sessionId,
-				(prev) => ({
-					...prev,
-					[sessionId]: {
-						...prev[sessionId],
-						goalMode: true,
-						goalProgress: 0,
-						goalIteration: 0,
-						goalRationale: undefined,
-						goalExitReason: undefined,
+			let startPublished = false;
+			try {
+				// Goal mode expresses progress as a percent, so we model it as 100 "tasks".
+				// Empty documents/lockedDocuments arrays mark this as a document-less run.
+				dispatch({
+					type: 'START_BATCH',
+					sessionId,
+					payload: {
+						documents: [],
+						lockedDocuments: [],
+						totalTasksAcrossAllDocs: 100,
+						completedTasksAcrossAllDocs: 0,
+						loopEnabled: false,
+						maxLoops: goalConfig.maxIterations,
+						folderPath,
+						worktreeActive: false,
+						worktreePath: undefined,
+						worktreeBranch: undefined,
+						customPrompt: undefined,
+						startTime: goalStartTime,
+						cumulativeTaskTimeMs: 0,
+						accumulatedElapsedMs: 0,
+						lastActiveTimestamp: goalStartTime,
 					},
-				}),
-				true
-			);
+				});
+
+				// Flag goal mode + seed progress. immediate=true so the desktop store and
+				// web clients reflect the running goal state without waiting on the debounce.
+				updateBatchStateAndBroadcastRef.current!(
+					sessionId,
+					(prev) => ({
+						...prev,
+						[sessionId]: {
+							...prev[sessionId],
+							goalMode: true,
+							goalProgress: 0,
+							goalIteration: 0,
+							goalRationale: undefined,
+							goalExitReason: undefined,
+						},
+					}),
+					true
+				);
+				startPublished = true;
+			} finally {
+				if (!startPublished) {
+					try {
+						await window.maestro.web.releaseAutoRunStartClaim(sessionId);
+					} catch (error) {
+						window.maestro.logger.log(
+							'error',
+							'Failed to release Auto Run start claim',
+							'GoalRunner',
+							{ sessionId, error: String(error) }
+						);
+					}
+					timeTracking.stopTracking(sessionId);
+				}
+			}
 
 			window.maestro.logger.autorun('Goal-Driven Auto Run started', session.name, {
 				goal: goalConfig.goal,
@@ -406,7 +462,7 @@ export function useGoalRunner({
 			// Start stats tracking. Record the goal as the document path behind a
 			// `Goal: ` prefix (trimmed to a readable length) so the run is
 			// recognizable - and distinguishable from document runs - in the Usage
-			// Dashboard; progress maps onto the 0–100 task scale.
+			// Dashboard; progress maps onto the 0-100 task scale.
 			let statsAutoRunId: string | null = null;
 			try {
 				statsAutoRunId = await window.maestro.stats.startAutoRun({
@@ -488,7 +544,8 @@ export function useGoalRunner({
 					result = await onSpawnAgent(
 						sessionId,
 						prompt,
-						effectiveCwd !== session.cwd ? effectiveCwd : undefined
+						effectiveCwd !== session.cwd ? effectiveCwd : undefined,
+						runOverrides
 					);
 				} catch (error) {
 					logger.error('[GoalRunner] Agent spawn threw:', undefined, error);
@@ -726,7 +783,11 @@ export function useGoalRunner({
 								customPath: session.customPath,
 								customArgs: session.customArgs,
 								customEnvVars: session.customEnvVars,
-								customModel: session.customModel,
+								// Mirror the primary iteration's effective config: the run-scoped
+								// model/effort override wins over the session default so the handoff
+								// synopsis spawns under the same configuration as the goal run itself.
+								customModel: config.model ?? session.customModel,
+								customEffort: config.effort ?? session.customEffort,
 								customContextWindow: session.customContextWindow,
 								enableMaestroP: session.enableMaestroP,
 								maestroPMode: session.maestroPMode,

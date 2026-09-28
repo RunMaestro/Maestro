@@ -34,6 +34,33 @@ import type { MarkdownEditorHandle, MarkdownEditorProps } from './types';
  * Imperative handle (see `./types`) is the only abstraction the host uses;
  * the underlying CM6 view is intentionally not exposed.
  */
+
+/**
+ * The single change that turns `current` into `next`, trimmed to the span
+ * between their common prefix and common suffix.
+ */
+export function minimalReplacement(
+	current: string,
+	next: string
+): { from: number; to: number; insert: string } {
+	const maxPrefix = Math.min(current.length, next.length);
+	let prefix = 0;
+	while (prefix < maxPrefix && current.charCodeAt(prefix) === next.charCodeAt(prefix)) prefix++;
+	const maxSuffix = maxPrefix - prefix;
+	let suffix = 0;
+	while (
+		suffix < maxSuffix &&
+		current.charCodeAt(current.length - 1 - suffix) === next.charCodeAt(next.length - 1 - suffix)
+	) {
+		suffix++;
+	}
+	return {
+		from: prefix,
+		to: current.length - suffix,
+		insert: next.slice(prefix, next.length - suffix),
+	};
+}
+
 export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorProps>(
 	function MarkdownEditor(
 		{
@@ -42,10 +69,16 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
 			language,
 			theme,
 			spellCheck = false,
+			readOnly = false,
 			wrap = true,
 			showLineNumbers = true,
 			onLineNumberContextMenu,
 			onKeyDown,
+			onPaste,
+			placeholder,
+			fontScale = 1,
+			fontFamily,
+			baseFontPx,
 			className,
 		},
 		ref
@@ -57,6 +90,7 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
 		// fresh closures without us reconfiguring on every prop change.
 		const onChangeRef = useRef(onChange);
 		const onKeyDownRef = useRef(onKeyDown);
+		const onPasteRef = useRef(onPaste);
 		const onGutterContextRef = useRef(onLineNumberContextMenu);
 		useEffect(() => {
 			onChangeRef.current = onChange;
@@ -64,6 +98,9 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
 		useEffect(() => {
 			onKeyDownRef.current = onKeyDown;
 		}, [onKeyDown]);
+		useEffect(() => {
+			onPasteRef.current = onPaste;
+		}, [onPaste]);
 		useEffect(() => {
 			onGutterContextRef.current = onLineNumberContextMenu;
 		}, [onLineNumberContextMenu]);
@@ -95,8 +132,11 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
 				wrap,
 				showLineNumbers,
 				spellCheck,
+				readOnly,
 				onGutterContextMenu: (lineNumber, event) => onGutterContextRef.current?.(lineNumber, event),
 				onKeyDown: (event) => onKeyDownRef.current?.(event),
+				onPaste: (event) => onPasteRef.current?.(event),
+				placeholder,
 			});
 
 			const updateListener = EditorView.updateListener.of((update) => {
@@ -109,7 +149,7 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
 				doc: value,
 				extensions: [
 					compartments.base.of(baseExt),
-					compartments.theme.of(buildEditorTheme(theme)),
+					compartments.theme.of(buildEditorTheme(theme, fontScale, fontFamily, baseFontPx)),
 					compartments.language.of([]),
 					searchHighlightExtension(),
 					updateListener,
@@ -138,8 +178,9 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
 			// Mount-only: prop changes are handled by the dedicated effects below.
 		}, []);
 
-		// External `value` → editor doc. Diff so identical strings are a no-op
-		// and we preserve cursor/scroll/history. CM6 transactions are cheap.
+		// External `value` → editor doc. Replace only the span that differs:
+		// swapping the whole document maps the caret to one end of it, so an
+		// agent ticking one box would throw the user's cursor to the top.
 		useEffect(() => {
 			const view = viewRef.current;
 			if (!view) return;
@@ -147,20 +188,26 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
 			if (current === value) return;
 			applyingExternalRef.current = true;
 			try {
-				view.dispatch({
-					changes: { from: 0, to: current.length, insert: value },
-				});
+				view.dispatch({ changes: minimalReplacement(current, value) });
 			} finally {
 				applyingExternalRef.current = false;
 			}
 		}, [value]);
 
-		// Theme change → reconfigure the theme compartment.
+		// Theme, font-zoom, or surface-font change → reconfigure the theme
+		// compartment. Font size and family both ride in the theme (see
+		// themeAdapter) so either re-measures line heights the same way a theme
+		// swap does; leaving fontFamily out of the deps would apply a new face
+		// only on the next unrelated theme change.
 		useEffect(() => {
 			const view = viewRef.current;
 			if (!view) return;
-			view.dispatch({ effects: compartments.theme.reconfigure(buildEditorTheme(theme)) });
-		}, [theme, compartments.theme]);
+			view.dispatch({
+				effects: compartments.theme.reconfigure(
+					buildEditorTheme(theme, fontScale, fontFamily, baseFontPx)
+				),
+			});
+		}, [theme, fontScale, fontFamily, baseFontPx, compartments.theme]);
 
 		// Language change → reload + reconfigure. Plain-text falls through to
 		// an empty extension so the previously loaded grammar is cleared.
@@ -191,11 +238,14 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
 				wrap,
 				showLineNumbers,
 				spellCheck,
+				readOnly,
 				onGutterContextMenu: (lineNumber, event) => onGutterContextRef.current?.(lineNumber, event),
 				onKeyDown: (event) => onKeyDownRef.current?.(event),
+				onPaste: (event) => onPasteRef.current?.(event),
+				placeholder,
 			});
 			view.dispatch({ effects: compartments.base.reconfigure(baseExt) });
-		}, [wrap, showLineNumbers, spellCheck, compartments.base]);
+		}, [wrap, showLineNumbers, spellCheck, readOnly, placeholder, compartments.base]);
 
 		useImperativeHandle(
 			ref,
@@ -258,6 +308,54 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
 							? EditorView.scrollIntoView(clampedFrom, { y: 'center' })
 							: undefined,
 					});
+				},
+				getCaret() {
+					const view = viewRef.current;
+					if (!view) return 0;
+					return view.state.selection.main.head;
+				},
+				getSelectionRange() {
+					const view = viewRef.current;
+					if (!view) return { from: 0, to: 0 };
+					const { from, to } = view.state.selection.main;
+					return { from, to };
+				},
+				getScrollTop() {
+					const view = viewRef.current;
+					if (!view) return 0;
+					return view.scrollDOM.scrollTop;
+				},
+				setScrollTop(px: number) {
+					const view = viewRef.current;
+					if (!view) return;
+					view.scrollDOM.scrollTop = Math.max(0, px);
+				},
+				coordsAtPos(pos: number) {
+					const view = viewRef.current;
+					const host = hostRef.current;
+					if (!view || !host) return null;
+					const docLen = view.state.doc.length;
+					const coords = view.coordsAtPos(Math.max(0, Math.min(pos, docLen)));
+					if (!coords) return null;
+					// Viewport coordinates, rebased onto the host so a popup can be
+					// positioned with plain `absolute` inside it.
+					const hostRect = host.getBoundingClientRect();
+					return {
+						top: coords.bottom - hostRect.top + 4,
+						left: coords.left - hostRect.left,
+					};
+				},
+				replaceRange(from: number, to: number, text: string) {
+					const view = viewRef.current;
+					if (!view) return;
+					const docLen = view.state.doc.length;
+					const clampedFrom = Math.max(0, Math.min(from, docLen));
+					const clampedTo = Math.max(clampedFrom, Math.min(to, docLen));
+					view.dispatch({
+						changes: { from: clampedFrom, to: clampedTo, insert: text },
+						selection: EditorSelection.single(clampedFrom + text.length),
+					});
+					view.contentDOM.focus({ preventScroll: true });
 				},
 				setSearchMatches(matches, currentIndex) {
 					const view = viewRef.current;

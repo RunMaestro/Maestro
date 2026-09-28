@@ -30,6 +30,7 @@ const makePoll = (overrides: Partial<Parameters<typeof createProgressPoll>[0]> =
 		void
 	>();
 	const onUpdateSession = vi.fn();
+	const updateTaskCount = vi.fn();
 	const documents = [{ filename: 'a' }, { filename: 'b' }];
 	const docEntry = { filename: 'a' };
 
@@ -44,10 +45,11 @@ const makePoll = (overrides: Partial<Parameters<typeof createProgressPoll>[0]> =
 		updateBatchState,
 		getSessions: () => [] as Session[],
 		onUpdateSession,
+		updateTaskCount,
 		...overrides,
 	});
 
-	return { poll, updateBatchState, onUpdateSession };
+	return { poll, updateBatchState, onUpdateSession, updateTaskCount };
 };
 
 describe('createProgressPoll', () => {
@@ -120,6 +122,42 @@ describe('createProgressPoll', () => {
 		const next = updater(prev);
 		expect(next.sess.totalTasksAcrossAllDocs).toBeGreaterThan(0);
 		expect(next.sess.completedTasksAcrossAllDocs).toBeGreaterThan(0);
+	});
+
+	it('writes the polled document count into the task-count cache', async () => {
+		stubReadDoc.mockResolvedValue({ taskCount: 5, checkedCount: 3, content: '' });
+		const { poll, updateTaskCount } = makePoll();
+
+		await poll.start();
+		await vi.advanceTimersByTimeAsync(INTERVAL);
+
+		// completed = checkedCount, total = unchecked + checked.
+		expect(updateTaskCount).toHaveBeenCalledWith('a', 3, 8);
+	});
+
+	it('does not write the task-count cache for a tick that lost its generation', async () => {
+		let resolveRead: ((v: unknown) => void) | undefined;
+		stubReadDoc.mockImplementation(
+			() =>
+				new Promise((res) => {
+					resolveRead = res;
+				})
+		);
+		const { poll, updateTaskCount } = makePoll();
+
+		// start() awaits the baseline read of doc 'b' - settle it first.
+		const started = poll.start();
+		await vi.advanceTimersByTimeAsync(0);
+		resolveRead?.({ taskCount: 0, checkedCount: 0, content: '' });
+		await started;
+
+		// Let the tick fire and block on its read, then stop before it resolves.
+		await vi.advanceTimersByTimeAsync(INTERVAL);
+		poll.stop();
+		resolveRead?.({ taskCount: 4, checkedCount: 2, content: '' });
+		await vi.advanceTimersByTimeAsync(0);
+
+		expect(updateTaskCount).not.toHaveBeenCalled();
 	});
 
 	it('refreshes autoRunContent when the user is viewing a document and content changed', async () => {

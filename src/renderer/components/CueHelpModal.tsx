@@ -83,6 +83,8 @@ export function CueHelpModal({ theme, onClose, cueShortcutKeys }: CueHelpModalPr
 				<ResizeHandles
 					onResizeStart={resizableModal.onResizeStart}
 					accentColor={theme.colors.accent}
+					onResetSize={resizableModal.onResetSize}
+					canReset={resizableModal.canReset}
 				/>
 
 				{/* Header */}
@@ -150,7 +152,7 @@ export function CueHelpContent({ theme, cueShortcutKeys }: CueHelpContentProps) 
 				</div>
 				<div className="text-sm space-y-2 pl-7" style={{ color: theme.colors.textDim }}>
 					<p>
-						Use the <strong style={{ color: theme.colors.textMain }}>Pipeline Editor</strong> tab to
+						Use the <strong style={{ color: theme.colors.textMain }}>Pipeline Graph</strong> tab to
 						visually build your automation pipelines. Drag triggers from the left drawer and agents
 						from the right drawer onto the canvas, then connect them to define your workflow. The
 						editor automatically generates and manages the underlying{' '}
@@ -380,6 +382,49 @@ export function CueHelpContent({ theme, cueShortcutKeys }: CueHelpContentProps) 
 					</div>
 					<div>
 						<p>
+							<strong style={{ color: theme.colors.textMain }}>GitHub Label</strong>{' '}
+							<code
+								className="px-1 rounded text-xs"
+								style={{ backgroundColor: theme.colors.bgActivity }}
+							>
+								github.label
+							</code>
+						</p>
+						<p className="mt-1">
+							Fires when a label is added to a pull request or an issue. Optional:{' '}
+							<code
+								className="px-1 rounded text-xs"
+								style={{ backgroundColor: theme.colors.bgActivity }}
+							>
+								gh_label_target
+							</code>{' '}
+							(pr, issue, or both - default both),{' '}
+							<code
+								className="px-1 rounded text-xs"
+								style={{ backgroundColor: theme.colors.bgActivity }}
+							>
+								gh_labels
+							</code>{' '}
+							(list of labels to watch - omit to fire on any label),{' '}
+							<code
+								className="px-1 rounded text-xs"
+								style={{ backgroundColor: theme.colors.bgActivity }}
+							>
+								repo
+							</code>{' '}
+							(auto-detected),{' '}
+							<code
+								className="px-1 rounded text-xs"
+								style={{ backgroundColor: theme.colors.bgActivity }}
+							>
+								poll_minutes
+							</code>{' '}
+							(default 5). Labels already present when the subscription is first saved never fire -
+							only labels added afterwards do.
+						</p>
+					</div>
+					<div>
+						<p>
 							<strong style={{ color: theme.colors.textMain }}>Task Pending</strong>{' '}
 							<code
 								className="px-1 rounded text-xs"
@@ -463,6 +508,56 @@ export function CueHelpContent({ theme, cueShortcutKeys }: CueHelpContentProps) 
 							.
 						</p>
 					</div>
+					<div>
+						<p>
+							<strong style={{ color: theme.colors.textMain }}>Webhook</strong>{' '}
+							<code
+								className="px-1 rounded text-xs"
+								style={{ backgroundColor: theme.colors.bgActivity }}
+							>
+								webhook.received
+							</code>
+						</p>
+						<p className="mt-1">
+							Fires when an external service POSTs to Maestro's local webhook listener (default{' '}
+							<code
+								className="px-1 rounded text-xs"
+								style={{ backgroundColor: theme.colors.bgActivity }}
+							>
+								127.0.0.1:17997
+							</code>
+							) at{' '}
+							<code
+								className="px-1 rounded text-xs"
+								style={{ backgroundColor: theme.colors.bgActivity }}
+							>
+								/cue/&lt;path&gt;
+							</code>
+							. Works with GitHub, GitLab, Slack, CI systems, or any script that can send an HTTP
+							request. Every subscription needs a secret - set{' '}
+							<code
+								className="px-1 rounded text-xs"
+								style={{ backgroundColor: theme.colors.bgActivity }}
+							>
+								webhook.secret_env
+							</code>{' '}
+							to keep it out of the committed file, or{' '}
+							<code
+								className="px-1 rounded text-xs"
+								style={{ backgroundColor: theme.colors.bgActivity }}
+							>
+								webhook.signature_header
+							</code>{' '}
+							for senders that sign the body. The payload is exposed as{' '}
+							<code
+								className="px-1 rounded text-xs"
+								style={{ backgroundColor: theme.colors.bgActivity }}
+							>
+								{'{{CUE_WEBHOOK_BODY}}'}
+							</code>
+							.
+						</p>
+					</div>
 					<div
 						className="font-mono text-xs p-3 rounded border space-y-3"
 						style={{
@@ -523,6 +618,17 @@ export function CueHelpContent({ theme, cueShortcutKeys }: CueHelpContentProps) 
 							{'  '}event: github.issue
 							<br />
 							{'  '}poll_minutes: 10
+						</div>
+						<div>
+							# GitHub Label
+							<br />
+							- name: "Labeled PRs"
+							<br />
+							{'  '}event: github.label
+							<br />
+							{'  '}gh_label_target: pr
+							<br />
+							{'  '}gh_labels: ["ready-to-merge"]
 						</div>
 						<div>
 							# Task Pending
@@ -663,7 +769,8 @@ export function CueHelpContent({ theme, cueShortcutKeys }: CueHelpContentProps) 
 						<div>
 							<code style={{ color: theme.colors.accent }}>{'{{CUE_EVENT_TYPE}}'}</code> - Event
 							type (app.startup, time.heartbeat, time.scheduled, file.changed, agent.completed,
-							github.pull_request, github.issue, task.pending, cli.trigger)
+							github.pull_request, github.issue, github.label, task.pending, cli.trigger,
+							webhook.received)
 						</div>
 						<div>
 							<code style={{ color: theme.colors.accent }}>{'{{CUE_EVENT_TIMESTAMP}}'}</code> -
@@ -776,6 +883,18 @@ export function CueHelpContent({ theme, cueShortcutKeys }: CueHelpContentProps) 
 						<div>
 							<code style={{ color: theme.colors.accent }}>{'{{CUE_GH_LABELS}}'}</code> - Labels,
 							comma-separated (github.*)
+						</div>
+						<div>
+							<code style={{ color: theme.colors.accent }}>{'{{CUE_GH_LABEL}}'}</code> - The label
+							that was just added (github.label)
+						</div>
+						<div>
+							<code style={{ color: theme.colors.accent }}>{'{{CUE_GH_LABEL_ACTOR}}'}</code> - Who
+							added the label (github.label)
+						</div>
+						<div>
+							<code style={{ color: theme.colors.accent }}>{'{{CUE_GH_LABELED_AT}}'}</code> - When
+							the label was added (github.label)
 						</div>
 						<div>
 							<code style={{ color: theme.colors.accent }}>{'{{CUE_GH_STATE}}'}</code> - State:
@@ -1016,7 +1135,7 @@ export function CueHelpContent({ theme, cueShortcutKeys }: CueHelpContentProps) 
 					>
 						<Sparkles className="w-4 h-4 flex-shrink-0" style={{ color: theme.colors.accent }} />
 						<span>
-							Use the Pipeline Editor to visually build these patterns by dragging and connecting
+							Use the Pipeline Graph tab to visually build these patterns by dragging and connecting
 							triggers and agents.
 						</span>
 					</div>
@@ -1187,15 +1306,15 @@ export function CueHelpContent({ theme, cueShortcutKeys }: CueHelpContentProps) 
 							several were skipped during a long sleep.
 						</li>
 						<li>
-							<code>github.pull_request</code> / <code>github.issue</code> - polled immediately on
-							wake so new items are detected within seconds instead of waiting for the next
-							scheduled poll.
+							<code>github.pull_request</code> / <code>github.issue</code> /{' '}
+							<code>github.label</code> - polled immediately on wake so new items and labels are
+							detected within seconds instead of waiting for the next scheduled poll.
 						</li>
 					</ul>
 					<p>
 						Catch-up events are marked with a{' '}
 						<span
-							className="inline-block px-1.5 py-0.5 rounded text-[10px] font-bold"
+							className="inline-block px-1.5 py-0.5 rounded text-2xs font-bold"
 							style={{ backgroundColor: '#f59e0b20', color: '#f59e0b' }}
 						>
 							catch-up
@@ -1205,15 +1324,15 @@ export function CueHelpContent({ theme, cueShortcutKeys }: CueHelpContentProps) 
 				</div>
 			</section>
 
-			{/* Section 9: Visual Pipeline Editor */}
+			{/* Section 9: Pipeline Graph and Pipeline List */}
 			<section>
 				<div className="flex items-center gap-2 mb-3">
 					<Sparkles className="w-5 h-5" style={{ color: theme.colors.accent }} />
-					<h3 className="font-bold">Visual Pipeline Editor</h3>
+					<h3 className="font-bold">Pipeline Graph and Pipeline List</h3>
 				</div>
 				<div className="text-sm space-y-3 pl-7" style={{ color: theme.colors.textDim }}>
 					<p>
-						The Pipeline Editor provides a visual canvas for building automation workflows. Drag
+						The Pipeline Graph tab provides a visual canvas for building automation workflows. Drag
 						triggers and agents onto the canvas, connect them with edges, and organize them into
 						named pipelines with distinct colors.
 					</p>
@@ -1228,6 +1347,14 @@ export function CueHelpContent({ theme, cueShortcutKeys }: CueHelpContentProps) 
 						rename, and switch between pipelines. The{' '}
 						<strong style={{ color: theme.colors.textMain }}>All Pipelines</strong> view shows every
 						pipeline side-by-side and is read-only - switch back to a single pipeline to edit.
+					</p>
+					<p>
+						The <strong style={{ color: theme.colors.textMain }}>Pipeline List</strong> tab is the
+						same pipelines read as text instead of drawn as a graph. Each row states what the
+						pipeline does (its trigger and the agents it runs, in order) and how it is doing: a
+						health badge from config validation plus the recent run history, the outcome and age of
+						the last run, and any configuration problems spelled out. Filter by health, sort
+						problems to the top, run a pipeline on demand, or jump to it on the graph.
 					</p>
 
 					<div className="flex items-center gap-2 mt-4 mb-1">
@@ -1332,7 +1459,7 @@ export function CueHelpContent({ theme, cueShortcutKeys }: CueHelpContentProps) 
 										style={{ borderColor: theme.colors.border + '50' }}
 									>
 										<kbd
-											className="px-1.5 py-0.5 rounded text-[10px] font-mono font-bold"
+											className="px-1.5 py-0.5 rounded text-2xs font-mono font-bold"
 											style={{
 												backgroundColor: theme.colors.bgActivity,
 												border: `1px solid ${theme.colors.border}`,
@@ -1360,7 +1487,7 @@ export function CueHelpContent({ theme, cueShortcutKeys }: CueHelpContentProps) 
 						<span>
 							<strong style={{ color: theme.colors.textMain }}>Tip:</strong> Press{' '}
 							<kbd
-								className="px-1.5 py-0.5 rounded text-[10px] font-mono font-bold"
+								className="px-1.5 py-0.5 rounded text-2xs font-mono font-bold"
 								style={{
 									backgroundColor: theme.colors.bgActivity,
 									border: `1px solid ${theme.colors.border}`,
@@ -1368,7 +1495,7 @@ export function CueHelpContent({ theme, cueShortcutKeys }: CueHelpContentProps) 
 							>
 								{formatShortcutKeys(cueShortcutKeys ?? DEFAULT_SHORTCUTS.openCue.keys)}
 							</kbd>{' '}
-							to open the Cue dashboard. The Pipeline Editor is the default tab.
+							to open the Cue dashboard. The Pipeline Graph is the default tab.
 						</span>
 					</div>
 				</div>

@@ -34,9 +34,11 @@ import { GhostIconButton } from '../ui/GhostIconButton';
 import { Spinner } from '../ui/Spinner';
 import type { Theme } from '../../types';
 import type { SshRemoteConfig } from '../../../shared/types';
+import type { SshRemoteRemediation } from '../../../shared/sshRemoteShell';
 import { formatSshTarget } from '../../../shared/formatters';
 import { useSshRemotes } from '../../hooks';
 import { SshRemoteModal } from './SshRemoteModal';
+import { SshRemediationNotice } from './SshRemediationNotice';
 import { logger } from '../../utils/logger';
 
 export interface SshRemotesSectionProps {
@@ -63,7 +65,7 @@ export function SshRemotesSection({ theme }: SshRemotesSectionProps) {
 	const [editingConfig, setEditingConfig] = useState<SshRemoteConfig | undefined>(undefined);
 	const [deletingId, setDeletingId] = useState<string | null>(null);
 	const [testResults, setTestResults] = useState<
-		Record<string, { success: boolean; message: string }>
+		Record<string, { success: boolean; message: string; remediation?: SshRemoteRemediation }>
 	>({});
 
 	// Handle add new remote
@@ -110,6 +112,7 @@ export function SshRemotesSection({ theme }: SshRemotesSectionProps) {
 				message: result.success
 					? `Connected to ${config.name || config.host}`
 					: result.error || 'Connection failed',
+				remediation: result.result?.remediation,
 			},
 		}));
 	};
@@ -159,9 +162,9 @@ export function SshRemotesSection({ theme }: SshRemotesSectionProps) {
 
 				{/* Content */}
 				<div className="flex-1 min-w-0">
-					<p className="text-[10px] uppercase font-bold opacity-50 mb-1">Remote Execution</p>
+					<p className="text-2xs uppercase font-bold opacity-50 mb-1">Remote Execution</p>
 					<p className="font-semibold mb-1">SSH Remote Hosts</p>
-					<p className="text-xs opacity-60 mb-3">
+					<p className="text-xs opacity-70 mb-3">
 						Configure remote hosts where AI agents can be executed via SSH. This allows running
 						agents on powerful remote machines or servers with specific tools installed.
 					</p>
@@ -215,7 +218,7 @@ export function SshRemotesSection({ theme }: SshRemotesSectionProps) {
 													</span>
 													{isDefault && (
 														<span
-															className="px-1.5 py-0.5 rounded text-[10px] font-bold uppercase"
+															className="px-1.5 py-0.5 rounded text-2xs font-bold uppercase"
 															style={{
 																backgroundColor: theme.colors.accent + '30',
 																color: theme.colors.accent,
@@ -226,7 +229,7 @@ export function SshRemotesSection({ theme }: SshRemotesSectionProps) {
 													)}
 													{!config.enabled && (
 														<span
-															className="px-1.5 py-0.5 rounded text-[10px] font-bold uppercase"
+															className="px-1.5 py-0.5 rounded text-2xs font-bold uppercase"
 															style={{
 																backgroundColor: theme.colors.warning + '30',
 																color: theme.colors.warning,
@@ -243,8 +246,16 @@ export function SshRemotesSection({ theme }: SshRemotesSectionProps) {
 													{formatSshTarget(config)}
 												</div>
 
-												{/* Test Result */}
-												{testResult && (
+												{/* Test Result. A recognized, fixable cause replaces the one-liner:
+												    its detail already says what went wrong, and it adds the fix. */}
+												{testResult?.remediation && (
+													<SshRemediationNotice
+														remediation={testResult.remediation}
+														theme={theme}
+														className="mt-2"
+													/>
+												)}
+												{testResult && !testResult.remediation && (
 													<div
 														className="mt-2 text-xs flex items-start gap-1"
 														style={{
@@ -341,7 +352,7 @@ export function SshRemotesSection({ theme }: SshRemotesSectionProps) {
 							<p className="text-sm" style={{ color: theme.colors.textDim }}>
 								No SSH remotes configured
 							</p>
-							<p className="text-xs opacity-60 mt-1" style={{ color: theme.colors.textDim }}>
+							<p className="text-xs opacity-70 mt-1">
 								Add a remote host to run AI agents on external machines
 							</p>
 						</div>

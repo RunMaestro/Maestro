@@ -3,7 +3,7 @@
  *
  * Covers the in-memory Context Timeline capture lifecycle:
  * - always-on append (no capture gate) keyed by session
- * - open / minimize / restore / close semantics (close KEEPS history)
+ * - open / toggle / close semantics (close KEEPS history)
  * - clearSession wipes points but keeps the key
  * - per-session buffer cap / trimmed flag
  * - the selectPoints selector
@@ -13,6 +13,9 @@ import {
 	useContextTimelineStore,
 	selectPoints,
 	MAX_POINTS_PER_SESSION,
+	CONTEXT_SURFACE_MIN_WIDTH,
+	CONTEXT_SURFACE_WIDTH,
+	resolveContextSurfaceWidth,
 	type ContextTimelinePointInput,
 } from '../../../renderer/stores/contextTimelineStore';
 
@@ -39,8 +42,8 @@ function pt(overrides: Partial<ContextTimelinePointInput> = {}): ContextTimeline
 function reset() {
 	useContextTimelineStore.setState({
 		panelSessionId: null,
-		minimized: false,
 		anchorRect: null,
+		sourceSize: null,
 		buffers: {},
 	});
 }
@@ -51,7 +54,6 @@ describe('contextTimelineStore', () => {
 	it('starts hidden with no buffers', () => {
 		const s = useContextTimelineStore.getState();
 		expect(s.panelSessionId).toBeNull();
-		expect(s.minimized).toBe(false);
 		expect(s.buffers).toEqual({});
 	});
 
@@ -85,7 +87,6 @@ describe('contextTimelineStore', () => {
 		useContextTimelineStore.getState().openPanel(SID);
 		const s = useContextTimelineStore.getState();
 		expect(s.panelSessionId).toBe(SID);
-		expect(s.minimized).toBe(false);
 		expect(s.buffers[SID]).toEqual({ points: [], trimmed: false });
 	});
 
@@ -116,15 +117,60 @@ describe('contextTimelineStore', () => {
 		expect(useContextTimelineStore.getState().anchorRect).toBeNull();
 	});
 
-	it('minimize then restore toggles the minimized flag without touching history', () => {
+	it('togglePanel opens when hidden and closes on a second call for the same session', () => {
+		const rect = { top: 10, left: 20, bottom: 30, right: 120, width: 100, height: 20 };
 		const store = useContextTimelineStore.getState();
 		store.appendPoint(SID, pt());
-		store.openPanel(SID);
-		store.minimizePanel();
-		expect(useContextTimelineStore.getState().minimized).toBe(true);
-		store.restorePanel();
-		expect(useContextTimelineStore.getState().minimized).toBe(false);
+
+		store.togglePanel(SID, rect);
+		expect(useContextTimelineStore.getState().panelSessionId).toBe(SID);
+		expect(useContextTimelineStore.getState().anchorRect).toEqual(rect);
+
+		// The gauge is the only open/close control, so the second press must put
+		// the panel away rather than re-opening it in place.
+		store.togglePanel(SID, rect);
+		expect(useContextTimelineStore.getState().panelSessionId).toBeNull();
+		expect(useContextTimelineStore.getState().anchorRect).toBeNull();
+
+		// Closing is not clearing: the recorded history survives the round trip.
 		expect(selectPoints(SID)(useContextTimelineStore.getState())).toHaveLength(1);
+	});
+
+	it('togglePanel re-targets rather than closing when a DIFFERENT session is showing', () => {
+		const rect = { top: 10, left: 20, bottom: 30, right: 120, width: 100, height: 20 };
+		const store = useContextTimelineStore.getState();
+		store.togglePanel(SID, rect);
+		// Clicking another agent's gauge asks to see THAT agent, not to dismiss.
+		store.togglePanel('other', rect);
+		const s = useContextTimelineStore.getState();
+		expect(s.panelSessionId).toBe('other');
+		expect(s.buffers.other).toEqual({ points: [], trimmed: false });
+	});
+
+	it('togglePanel carries the measured popover size, and closing clears it', () => {
+		const rect = { top: 10, left: 20, bottom: 30, right: 120, width: 100, height: 20 };
+		const size = { width: 480, height: 512 };
+		const store = useContextTimelineStore.getState();
+
+		store.togglePanel(SID, rect, size);
+		expect(useContextTimelineStore.getState().sourceSize).toEqual(size);
+
+		store.togglePanel(SID, rect, size);
+		expect(useContextTimelineStore.getState().sourceSize).toBeNull();
+	});
+
+	it('an open with nothing measured does not inherit the previous open size', () => {
+		const store = useContextTimelineStore.getState();
+		store.openPanel(SID, null, { width: 480, height: 512 });
+		store.openPanel(SID);
+		expect(useContextTimelineStore.getState().sourceSize).toBeNull();
+	});
+
+	it('closePanel clears the measured size', () => {
+		const store = useContextTimelineStore.getState();
+		store.openPanel(SID, null, { width: 480, height: 512 });
+		store.closePanel();
+		expect(useContextTimelineStore.getState().sourceSize).toBeNull();
 	});
 
 	it('closePanel hides the panel but KEEPS the history', () => {
@@ -134,7 +180,6 @@ describe('contextTimelineStore', () => {
 		store.closePanel();
 		const s = useContextTimelineStore.getState();
 		expect(s.panelSessionId).toBeNull();
-		expect(s.minimized).toBe(false);
 		expect(selectPoints(SID)(s)).toHaveLength(1);
 	});
 
@@ -145,7 +190,9 @@ describe('contextTimelineStore', () => {
 		store.clearSession(SID);
 		const s = useContextTimelineStore.getState();
 		expect(selectPoints(SID)(s)).toHaveLength(0);
-		expect(s.buffers[SID]).toEqual({ points: [], trimmed: false });
+		// `hydrated` stays true after a clear: Clear also wipes main's capture log,
+		// so re-fetching would only restore what the user just discarded.
+		expect(s.buffers[SID]).toEqual({ points: [], trimmed: false, hydrated: true });
 	});
 
 	it('bounds the buffer at MAX_POINTS_PER_SESSION and sets trimmed', () => {
@@ -191,5 +238,72 @@ describe('contextTimelineStore', () => {
 		const s = useContextTimelineStore.getState();
 		expect(s.buffers[SID]).toBeUndefined();
 		expect(s.panelSessionId).toBe('other');
+	});
+
+	// --- hydrateSession (finding S1) ---
+
+	it('hydrateSession fills an empty buffer and marks it hydrated', () => {
+		useContextTimelineStore
+			.getState()
+			.hydrateSession(SID, [{ ...pt(), seq: 1, timestamp: 111 }], false);
+		const buffer = useContextTimelineStore.getState().buffers[SID];
+		expect(buffer.points).toHaveLength(1);
+		expect(buffer.points[0].timestamp).toBe(111);
+		expect(buffer.hydrated).toBe(true);
+	});
+
+	it('hydrateSession skips a capture whose seq already landed live', () => {
+		const store = useContextTimelineStore.getState();
+		store.appendPoint(SID, pt({ seq: 2, contextTokens: 222 }));
+		store.hydrateSession(
+			SID,
+			[
+				{ ...pt(), seq: 1, timestamp: 100, contextTokens: 111 },
+				{ ...pt(), seq: 2, timestamp: 200, contextTokens: 999 },
+			],
+			false
+		);
+		const points = useContextTimelineStore.getState().buffers[SID].points;
+		expect(points.map((p) => p.seq)).toEqual([1, 2]);
+		expect(points.map((p) => p.contextTokens)).toEqual([111, 222]);
+	});
+
+	it('hydrateSession bounds the merged buffer at MAX_POINTS_PER_SESSION', () => {
+		const incoming = Array.from({ length: MAX_POINTS_PER_SESSION + 3 }, (_, i) => ({
+			...pt({ contextTokens: i }),
+			seq: i + 1,
+			timestamp: i + 1,
+		}));
+		useContextTimelineStore.getState().hydrateSession(SID, incoming, false);
+		const buffer = useContextTimelineStore.getState().buffers[SID];
+		expect(buffer.points).toHaveLength(MAX_POINTS_PER_SESSION);
+		expect(buffer.trimmed).toBe(true);
+		expect(buffer.points[0].contextTokens).toBe(3);
+	});
+
+	it('hydrateSession marks the buffer hydrated even when nothing came back', () => {
+		useContextTimelineStore.getState().hydrateSession(SID, [], true);
+		const buffer = useContextTimelineStore.getState().buffers[SID];
+		expect(buffer.points).toHaveLength(0);
+		expect(buffer.trimmed).toBe(true);
+		expect(buffer.hydrated).toBe(true);
+	});
+});
+
+describe('resolveContextSurfaceWidth', () => {
+	it('uses the shared default when the Timeline was never resized', () => {
+		expect(resolveContextSurfaceWidth(undefined)).toBe(CONTEXT_SURFACE_WIDTH);
+	});
+
+	it('follows the width the user dragged the Timeline to', () => {
+		expect(resolveContextSurfaceWidth({ width: 430, height: 502 })).toBe(430);
+	});
+
+	it('never goes narrower than the Timeline allows', () => {
+		expect(resolveContextSurfaceWidth({ width: 200, height: 502 })).toBe(CONTEXT_SURFACE_MIN_WIDTH);
+	});
+
+	it('ignores a malformed saved size', () => {
+		expect(resolveContextSurfaceWidth({ width: 'wide', height: 502 })).toBe(CONTEXT_SURFACE_WIDTH);
 	});
 });

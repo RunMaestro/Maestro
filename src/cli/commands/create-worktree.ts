@@ -15,12 +15,15 @@
 // The desktop resolves send_command against live state, so it always sees it.
 
 import { withMaestroClient, resolveTargetSessionId } from '../services/maestro-client';
+import { resolveBackgroundFlag } from '../../shared/focusPlacement';
 
 interface CreateWorktreeOptions {
 	agent?: string;
 	branch?: string;
 	baseBranch?: string;
 	message?: string;
+	background?: boolean;
+	focus?: boolean;
 	json?: boolean;
 }
 
@@ -44,6 +47,7 @@ export async function createWorktree(options: CreateWorktreeOptions): Promise<vo
 	const parentSessionId = resolveTargetSessionId(options.agent);
 	const branchName = options.branch.trim();
 	const message = options.message?.trim();
+	const background = resolveBackgroundFlag(options, 'create-worktree');
 
 	try {
 		const { created, dispatched } = await withMaestroClient(async (client) => {
@@ -58,6 +62,7 @@ export async function createWorktree(options: CreateWorktreeOptions): Promise<vo
 					parentSessionId,
 					branchName,
 					baseBranch: options.baseBranch?.trim() || undefined,
+					background,
 				},
 				'create_worktree_session_result'
 			);
@@ -72,6 +77,11 @@ export async function createWorktree(options: CreateWorktreeOptions): Promise<vo
 						sessionId: createdResult.sessionId,
 						command: message,
 						inputMode: 'ai',
+						// Carry the placement the CALLER asked for, rather than letting
+						// send_command re-resolve it as `dispatch`. `--background` created
+						// the agent quietly and this message then selected it anyway, so
+						// the flag looked broken whenever a message was passed.
+						background,
 					},
 					'command_result'
 				);
@@ -92,11 +102,14 @@ export async function createWorktree(options: CreateWorktreeOptions): Promise<vo
 					success: true,
 					agentId: newAgentId,
 					branch: branchName,
+					background,
 					...(message ? { messageDispatched: true, tabId: dispatched?.tabId ?? null } : {}),
 				})
 			);
 		} else {
-			console.log(`Created worktree agent on branch "${branchName}"`);
+			console.log(
+				`Created worktree agent on branch "${branchName}"${background ? ' in the background' : ''}`
+			);
 			console.log(`  ID: ${newAgentId}`);
 			if (message) {
 				console.log(

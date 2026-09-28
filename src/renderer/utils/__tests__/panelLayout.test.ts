@@ -45,6 +45,12 @@ import {
 	setGroupEmoji,
 	normalizeTabGroups,
 	resolveTabRefTitle,
+	resolveTabRefRenameValue,
+	resolveSingleViewTabRef,
+	resolveActiveTabRef,
+	describeTilePlacement,
+	restoreTilePlacement,
+	reopenClosedTabWithTiling,
 	type DropRect,
 } from '../panelLayout';
 import type { PaneRects } from '../../types';
@@ -1042,6 +1048,117 @@ describe('resolveTabRefTitle', () => {
 	});
 });
 
+describe('resolveTabRefRenameValue', () => {
+	function sessionWithTabs(): Session {
+		return {
+			aiTabs: [{ id: 'a1', name: 'My Chat' }, { id: 'a2' }],
+			filePreviewTabs: [{ id: 'f1', name: 'README.md', customName: 'Notes' }, { id: 'f2' }],
+			terminalTabs: [
+				{ id: 't1', name: 'Build' },
+				{ id: 't2', name: null },
+			],
+			browserTabs: [
+				{ id: 'b1', customTitle: 'Pinned', title: 'Docs', url: 'https://x' },
+				{ id: 'b2', title: 'Docs', url: 'https://x' },
+			],
+		} as unknown as Session;
+	}
+
+	it('returns the user-assigned name for each tab kind', () => {
+		const s = sessionWithTabs();
+		expect(resolveTabRefRenameValue(s, aiRef('a1'))).toBe('My Chat');
+		expect(resolveTabRefRenameValue(s, fileRef('f1'))).toBe('Notes');
+		expect(resolveTabRefRenameValue(s, { type: 'terminal', id: 't1' })).toBe('Build');
+		expect(resolveTabRefRenameValue(s, { type: 'browser', id: 'b1' })).toBe('Pinned');
+	});
+
+	it('returns an empty string (never the auto title) when no custom name is set', () => {
+		const s = sessionWithTabs();
+		expect(resolveTabRefRenameValue(s, aiRef('a2'))).toBe('');
+		expect(resolveTabRefRenameValue(s, fileRef('f2'))).toBe('');
+		expect(resolveTabRefRenameValue(s, { type: 'terminal', id: 't2' })).toBe('');
+		expect(resolveTabRefRenameValue(s, { type: 'browser', id: 'b2' })).toBe('');
+	});
+
+	it('returns null when the ref points at a tab that no longer exists', () => {
+		const s = sessionWithTabs();
+		expect(resolveTabRefRenameValue(s, aiRef('gone'))).toBeNull();
+		expect(resolveTabRefRenameValue(s, fileRef('gone'))).toBeNull();
+		expect(resolveTabRefRenameValue(s, { type: 'terminal', id: 'gone' })).toBeNull();
+		expect(resolveTabRefRenameValue(s, { type: 'browser', id: 'gone' })).toBeNull();
+	});
+});
+
+describe('resolveSingleViewTabRef / resolveActiveTabRef', () => {
+	function baseSession(extra?: Partial<Session>): Session {
+		return {
+			id: 'sess',
+			inputMode: 'ai',
+			aiTabs: [{ id: 'a1', name: 'My Chat' }],
+			activeTabId: 'a1',
+			filePreviewTabs: [{ id: 'f1', name: 'README.md' }],
+			terminalTabs: [{ id: 't1', name: null }],
+			browserTabs: [{ id: 'b1', title: 'Docs', url: 'https://x' }],
+			tabGroups: [],
+			activeGroupId: null,
+			...extra,
+		} as unknown as Session;
+	}
+
+	it('follows the single-view render precedence: terminal, file, browser, AI', () => {
+		expect(
+			resolveSingleViewTabRef(baseSession({ inputMode: 'terminal', activeTerminalTabId: 't1' }))
+		).toEqual({ type: 'terminal', id: 't1' });
+		expect(resolveSingleViewTabRef(baseSession({ activeFileTabId: 'f1' }))).toEqual({
+			type: 'file',
+			id: 'f1',
+		});
+		expect(resolveSingleViewTabRef(baseSession({ activeBrowserTabId: 'b1' }))).toEqual({
+			type: 'browser',
+			id: 'b1',
+		});
+		expect(resolveSingleViewTabRef(baseSession())).toEqual({ type: 'ai', id: 'a1' });
+	});
+
+	it('returns null when the agent has nothing showing', () => {
+		expect(resolveSingleViewTabRef(baseSession({ aiTabs: [] }))).toBeNull();
+	});
+
+	it('targets the focused pane when a tiled group is active', () => {
+		const group = createGroupFromTabRefs(
+			[{ type: 'terminal', id: 't1' }, aiRef('a1')],
+			'Group: Terminal 1'
+		);
+		const terminalLeafId = group.layout.kind === 'split' ? group.layout.children[0].id : '';
+		const session = baseSession({
+			tabGroups: [{ ...group, focusedPaneId: terminalLeafId }],
+			activeGroupId: group.id,
+			// The hidden single-view tab must NOT win while the group is showing.
+			activeFileTabId: 'f1',
+		});
+		expect(resolveActiveTabRef(session)).toEqual({ type: 'terminal', id: 't1' });
+	});
+
+	it('falls back to the first pane when the active group has no focused pane', () => {
+		const group = createGroupFromTabRefs([aiRef('a1'), { type: 'terminal', id: 't1' }], 'Group');
+		const session = baseSession({
+			tabGroups: [{ ...group, focusedPaneId: null }],
+			activeGroupId: group.id,
+		});
+		expect(resolveActiveTabRef(session)).toEqual({ type: 'ai', id: 'a1' });
+	});
+
+	it('falls back to the single view when no group is active', () => {
+		const group = createGroupFromTabRefs([aiRef('a1'), { type: 'terminal', id: 't1' }], 'Group');
+		const session = baseSession({
+			tabGroups: [group],
+			activeGroupId: null,
+			activeBrowserTabId: 'b1',
+		});
+		expect(resolveActiveTabRef(session)).toEqual({ type: 'browser', id: 'b1' });
+	});
+});
+
 describe('renameGroup', () => {
 	function sessionWith(group: TabGroup): Session {
 		return { id: 'sess', tabGroups: [group], activeGroupId: group.id } as unknown as Session;
@@ -1457,5 +1574,380 @@ describe('normalizeTabGroups', () => {
 			{ type: 'terminal', id: 't1' },
 			{ type: 'browser', id: 'b1' },
 		]);
+	});
+});
+
+describe('describeTilePlacement', () => {
+	function sessionWith(groups: TabGroup[], live: Partial<Record<string, string[]>> = {}): Session {
+		return {
+			id: 'sess',
+			aiTabs: (live.ai ?? []).map((id) => ({ id })),
+			filePreviewTabs: (live.file ?? []).map((id) => ({ id })),
+			terminalTabs: [],
+			browserTabs: [],
+			unifiedTabOrder: [],
+			tabGroups: groups,
+			activeGroupId: groups[0]?.id ?? null,
+		} as unknown as Session;
+	}
+
+	it('anchors to the nearest left sibling, restoring after it', () => {
+		const group = groupFrom(
+			rowSplit('root', [leaf('l1', aiRef('a')), leaf('l2', aiRef('b'))]),
+			'l1'
+		);
+		const placement = describeTilePlacement(sessionWith([group], { ai: ['a', 'b'] }), aiRef('b'));
+		expect(placement).toMatchObject({
+			groupId: 'grp',
+			groupName: 'g',
+			anchorRef: aiRef('a'),
+			direction: 'row',
+			before: false,
+		});
+	});
+
+	it('falls back to the right sibling for a first pane, restoring before it', () => {
+		const group = groupFrom(
+			rowSplit('root', [leaf('l1', aiRef('a')), leaf('l2', aiRef('b'))]),
+			'l1'
+		);
+		const placement = describeTilePlacement(sessionWith([group], { ai: ['a', 'b'] }), aiRef('a'));
+		expect(placement).toMatchObject({ anchorRef: aiRef('b'), before: true });
+	});
+
+	it('carries the parent split direction (column)', () => {
+		const group = groupFrom(
+			colSplit('root', [leaf('l1', aiRef('a')), leaf('l2', aiRef('b'))]),
+			'l1'
+		);
+		const placement = describeTilePlacement(sessionWith([group], { ai: ['a', 'b'] }), aiRef('b'));
+		expect(placement).toMatchObject({ direction: 'column', anchorRef: aiRef('a') });
+	});
+
+	it('skips a dead sibling and anchors to the nearest LIVE pane', () => {
+		// 'b' was closed alongside 'c'; anchoring to it would never resolve on restore.
+		const group = groupFrom(
+			rowSplit('root', [leaf('l1', aiRef('a')), leaf('l2', aiRef('b')), leaf('l3', aiRef('c'))]),
+			'l1'
+		);
+		const placement = describeTilePlacement(sessionWith([group], { ai: ['a'] }), aiRef('c'));
+		expect(placement).toMatchObject({ anchorRef: aiRef('a'), before: false });
+	});
+
+	it('returns null for a tab that is not tiled', () => {
+		const group = groupFrom(
+			rowSplit('root', [leaf('l1', aiRef('a')), leaf('l2', aiRef('b'))]),
+			'l1'
+		);
+		expect(describeTilePlacement(sessionWith([group], { ai: ['a', 'b'] }), aiRef('zz'))).toBeNull();
+	});
+
+	it('returns null when no live sibling remains to anchor against', () => {
+		const group = groupFrom(
+			rowSplit('root', [leaf('l1', aiRef('a')), leaf('l2', aiRef('b'))]),
+			'l1'
+		);
+		expect(describeTilePlacement(sessionWith([group], { ai: [] }), aiRef('b'))).toBeNull();
+	});
+});
+
+describe('restoreTilePlacement', () => {
+	const placement = {
+		groupId: 'grp',
+		groupName: 'g',
+		anchorRef: aiRef('a'),
+		direction: 'row' as const,
+		before: false,
+	};
+
+	function sessionWith(groups: TabGroup[], aiIds: string[], order: UnifiedTabRef[]): Session {
+		return {
+			id: 'sess',
+			aiTabs: aiIds.map((id) => ({ id })),
+			filePreviewTabs: [],
+			terminalTabs: [],
+			browserTabs: [],
+			unifiedTabOrder: order,
+			tabGroups: groups,
+			activeGroupId: null,
+		} as unknown as Session;
+	}
+
+	it('re-splits the anchor pane when the group survived the close', () => {
+		const group = groupFrom(
+			rowSplit('root', [leaf('l1', aiRef('a')), leaf('l2', aiRef('x'))]),
+			'l1'
+		);
+		const next = restoreTilePlacement(
+			sessionWith([group], ['a', 'x', 'b'], [aiRef('b')]),
+			placement,
+			aiRef('b')
+		);
+		expect(next).not.toBeNull();
+		// 'b' lands directly after its anchor 'a', inside the SAME group.
+		expect(next!.tabGroups).toHaveLength(1);
+		expect(collectLeafTabRefs(next!.tabGroups[0].layout)).toEqual([
+			aiRef('a'),
+			aiRef('b'),
+			aiRef('x'),
+		]);
+		expect(next!.activeGroupId).toBe('grp');
+		// The restored pane takes focus and drops out of the standalone strip.
+		const focused = findLeafById(next!.tabGroups[0].layout, next!.tabGroups[0].focusedPaneId!);
+		expect(focused).toMatchObject({ tab: aiRef('b') });
+		expect(next!.unifiedTabOrder).toEqual([]);
+		expect(next!.activeTabId).toBe('b');
+	});
+
+	it('rebuilds a dissolved group around the anchor, reusing its id and name', () => {
+		// The two-pane case: closing one pane auto-dissolved the group, so the anchor
+		// is now a standalone full-screen tab and the group must be recreated.
+		const next = restoreTilePlacement(
+			sessionWith([], ['a', 'b'], [aiRef('a'), aiRef('b')]),
+			{ ...placement, groupEmoji: '@' },
+			aiRef('b')
+		);
+		expect(next).not.toBeNull();
+		expect(next!.tabGroups).toHaveLength(1);
+		expect(next!.tabGroups[0]).toMatchObject({ id: 'grp', name: 'g', emoji: '@' });
+		expect(collectLeafTabRefs(next!.tabGroups[0].layout)).toEqual([aiRef('a'), aiRef('b')]);
+		expect(next!.activeGroupId).toBe('grp');
+		// Both members leave the strip; the group's own ref stands in for them.
+		expect(next!.unifiedTabOrder).toEqual([{ type: 'group', id: 'grp' }]);
+	});
+
+	it('honors before=true when rebuilding (pane restores left of its anchor)', () => {
+		const next = restoreTilePlacement(
+			sessionWith([], ['a', 'b'], [aiRef('a')]),
+			{ ...placement, before: true },
+			aiRef('b')
+		);
+		expect(collectLeafTabRefs(next!.tabGroups[0].layout)).toEqual([aiRef('b'), aiRef('a')]);
+	});
+
+	it('returns null when the anchor tab is gone too (caller keeps the standalone restore)', () => {
+		const next = restoreTilePlacement(sessionWith([], ['b'], [aiRef('b')]), placement, aiRef('b'));
+		expect(next).toBeNull();
+	});
+
+	it('returns null when the anchor is already tiled in a different group', () => {
+		// Rebuilding would clone the anchor into two panes at once.
+		const other: TabGroup = {
+			id: 'other',
+			name: 'o',
+			layout: rowSplit('oroot', [leaf('o1', aiRef('a')), leaf('o2', aiRef('z'))]),
+			focusedPaneId: 'o1',
+			createdAt: 1,
+		};
+		const next = restoreTilePlacement(
+			sessionWith([other], ['a', 'z', 'b'], [aiRef('b')]),
+			placement,
+			aiRef('b')
+		);
+		expect(next).toBeNull();
+	});
+});
+
+describe('normalizeTabGroups - closed-tab tile placement stamping', () => {
+	function sessionWith(groups: TabGroup[], aiIds: string[], history: unknown[]): Session {
+		return {
+			id: 'sess',
+			aiTabs: aiIds.map((id) => ({ id })),
+			filePreviewTabs: [],
+			terminalTabs: [],
+			browserTabs: [],
+			unifiedTabOrder: [],
+			tabGroups: groups,
+			activeGroupId: groups[0]?.id ?? null,
+			unifiedClosedTabHistory: history,
+		} as unknown as Session;
+	}
+
+	it('stamps a placement onto the history entry for a pane that was just closed', () => {
+		const group = groupFrom(
+			rowSplit('root', [leaf('l1', aiRef('a')), leaf('l2', aiRef('b'))]),
+			'l2'
+		);
+		const next = normalizeTabGroups(
+			sessionWith([group], ['a'], [{ type: 'ai', tab: { id: 'b' }, unifiedIndex: 1, closedAt: 1 }])
+		);
+		expect(next.unifiedClosedTabHistory[0].tilePlacement).toMatchObject({
+			groupId: 'grp',
+			anchorRef: aiRef('a'),
+			direction: 'row',
+			before: false,
+		});
+	});
+
+	it('leaves a standalone (never tiled) closed tab without a placement', () => {
+		const group = groupFrom(
+			rowSplit('root', [leaf('l1', aiRef('a')), leaf('l2', aiRef('b'))]),
+			'l1'
+		);
+		const next = normalizeTabGroups(
+			sessionWith(
+				[group],
+				['a', 'b'],
+				[{ type: 'ai', tab: { id: 'loose' }, unifiedIndex: 0, closedAt: 1 }]
+			)
+		);
+		expect(next.unifiedClosedTabHistory[0].tilePlacement).toBeUndefined();
+	});
+
+	it('does not restamp an entry that already carries a placement', () => {
+		const existing = {
+			groupId: 'old',
+			groupName: 'x',
+			anchorRef: aiRef('q'),
+			direction: 'column',
+			before: true,
+		};
+		const group = groupFrom(
+			rowSplit('root', [leaf('l1', aiRef('a')), leaf('l2', aiRef('b'))]),
+			'l2'
+		);
+		const next = normalizeTabGroups(
+			sessionWith(
+				[group],
+				['a'],
+				[{ type: 'ai', tab: { id: 'b' }, unifiedIndex: 1, closedAt: 1, tilePlacement: existing }]
+			)
+		);
+		expect(next.unifiedClosedTabHistory[0].tilePlacement).toBe(existing);
+	});
+});
+
+describe('reopenClosedTabWithTiling (Cmd+Shift+T)', () => {
+	/**
+	 * The scenario from the field: a two-pane tile, close one pane, the group
+	 * auto-dissolves to a full-screen survivor - then Cmd+Shift+T must put the tile
+	 * back, not append a loose chip to the end of the strip.
+	 */
+	function tiledPair(): Session {
+		return {
+			id: 'sess',
+			aiTabs: [],
+			filePreviewTabs: [
+				{ id: 'f1', path: '/a', name: 'a', scrollTop: 0 },
+				{ id: 'f2', path: '/b', name: 'b', scrollTop: 0 },
+			],
+			terminalTabs: [],
+			browserTabs: [],
+			unifiedTabOrder: [{ type: 'group', id: 'grp' }],
+			tabGroups: [
+				groupFrom(rowSplit('root', [leaf('l1', fileRef('f1')), leaf('l2', fileRef('f2'))]), 'l2'),
+			],
+			activeGroupId: 'grp',
+			unifiedClosedTabHistory: [],
+		} as unknown as Session;
+	}
+
+	/** Close a file pane the way the per-kind close paths do: drop the tab, push history. */
+	function closeFilePane(session: Session, id: string): Session {
+		const tab = session.filePreviewTabs.find((t) => t.id === id)!;
+		return {
+			...session,
+			filePreviewTabs: session.filePreviewTabs.filter((t) => t.id !== id),
+			unifiedClosedTabHistory: [
+				{ type: 'file', tab, unifiedIndex: 0, closedAt: 1 },
+				...session.unifiedClosedTabHistory,
+			],
+		} as unknown as Session;
+	}
+
+	it('restores a closed pane back into its tile, rebuilding the dissolved group', () => {
+		// Close one of two tiled panes, then let the self-heal run (dissolve + stamp).
+		const healed = normalizeTabGroups(closeFilePane(tiledPair(), 'f2'));
+		expect(healed.tabGroups).toHaveLength(0);
+		expect(healed.activeFileTabId).toBe('f1'); // survivor went full-screen
+		expect(healed.unifiedClosedTabHistory[0].tilePlacement).toBeDefined();
+
+		// Undo the close: the tile comes back.
+		const result = reopenClosedTabWithTiling(healed);
+		expect(result).not.toBeNull();
+		const next = result!.session;
+		expect(next.tabGroups).toHaveLength(1);
+		expect(next.tabGroups[0].id).toBe('grp');
+		expect(next.activeGroupId).toBe('grp');
+
+		// Two panes again, restored pane on the right of its anchor (as it was).
+		const refs = collectLeafTabRefs(next.tabGroups[0].layout);
+		expect(refs).toHaveLength(2);
+		expect(refs[0]).toEqual(fileRef('f1'));
+		expect(refs[1]).toEqual({ type: 'file', id: result!.tabId });
+		// Strip shows the group chip, not the individual members.
+		expect(next.unifiedTabOrder).toEqual([{ type: 'group', id: 'grp' }]);
+		// History was consumed.
+		expect(next.unifiedClosedTabHistory).toHaveLength(0);
+	});
+
+	it('restores a pane into a group that survived the close (3 panes -> 2 -> 3)', () => {
+		const base = tiledPair();
+		const three = {
+			...base,
+			filePreviewTabs: [...base.filePreviewTabs, { id: 'f3', path: '/c', name: 'c', scrollTop: 0 }],
+			tabGroups: [
+				groupFrom(
+					rowSplit('root', [
+						leaf('l1', fileRef('f1')),
+						leaf('l2', fileRef('f2')),
+						leaf('l3', fileRef('f3')),
+					]),
+					'l2'
+				),
+			],
+		} as unknown as Session;
+
+		const healed = normalizeTabGroups(closeFilePane(three, 'f2'));
+		expect(healed.tabGroups).toHaveLength(1); // group survived with 2 panes
+
+		const next = reopenClosedTabWithTiling(healed)!.session;
+		const refs = collectLeafTabRefs(next.tabGroups[0].layout);
+		// Back to three panes, restored one in its original middle slot.
+		expect(refs.map((r) => r.id)).toEqual(['f1', next.filePreviewTabs[2].id, 'f3']);
+		expect(next.activeGroupId).toBe('grp');
+	});
+
+	it('leaves a never-tiled closed tab as a plain standalone restore', () => {
+		const session = {
+			id: 'sess',
+			aiTabs: [],
+			filePreviewTabs: [],
+			terminalTabs: [],
+			browserTabs: [],
+			unifiedTabOrder: [],
+			tabGroups: [],
+			activeGroupId: null,
+			unifiedClosedTabHistory: [
+				{
+					type: 'file',
+					tab: { id: 'f9', path: '/z', name: 'z', scrollTop: 0 },
+					unifiedIndex: 0,
+					closedAt: 1,
+				},
+			],
+		} as unknown as Session;
+
+		const next = reopenClosedTabWithTiling(session)!.session;
+		expect(next.tabGroups).toHaveLength(0);
+		expect(next.activeGroupId).toBeNull();
+		expect(next.unifiedTabOrder).toHaveLength(1);
+		expect(next.unifiedTabOrder[0].type).toBe('file');
+	});
+
+	it('returns null when there is nothing to reopen', () => {
+		const session = {
+			id: 'sess',
+			aiTabs: [],
+			filePreviewTabs: [],
+			terminalTabs: [],
+			browserTabs: [],
+			unifiedTabOrder: [],
+			tabGroups: [],
+			activeGroupId: null,
+			unifiedClosedTabHistory: [],
+			closedTabHistory: [],
+		} as unknown as Session;
+		expect(reopenClosedTabWithTiling(session)).toBeNull();
 	});
 });

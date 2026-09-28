@@ -1,44 +1,47 @@
 import { useCallback, useRef } from 'react';
-import type { Session, LogEntry, UsageStats, ThinkingMode } from '../../types';
+import type { Session, LogEntry, UsageStats, ThinkingMode, HistoryEntryType } from '../../types';
 import { useSessionStore, selectSessionById, selectActiveSession } from '../../stores/sessionStore';
-import { aiTabFocusFields, createTab, getActiveTab } from '../../utils/tabHelpers';
+import {
+	aiTabFocusFields,
+	createTab,
+	getActiveTab,
+	isSessionIdLabel,
+} from '../../utils/tabHelpers';
 import { generateId } from '../../utils/ids';
 import { buildSharedHistoryContext } from '../../utils/sessionHelpers';
+import { resolveSessionProjectPath } from '../../components/AgentSessionsBrowser/utils/sessionProjectPath';
 import type { RightPanelHandle } from '../../components/RightPanel';
 import { FALLBACK_CONTEXT_WINDOW } from '../../../shared/agentConstants';
 import { logger } from '../../utils/logger';
+import {
+	TRANSCRIPT_RESUME_READ_LIMIT,
+	isSynopsisRequest,
+	stripSynopsisTurns,
+	transcriptMessagesToLogEntries,
+	type TranscriptMessage,
+} from '../../utils/transcriptMessages';
 
-/**
- * Matches the Auto Run synopsis prompt that Maestro injects into the agent
- * session after a task ("Give/Provide a brief synopsis of what you just
- * accomplished ..."). The leading verb and trailing wording have drifted across
- * versions and the prompt is user-customizable, so we anchor on the stable core
- * phrase. A restored tab hides this request and the assistant's `**Summary:**`
- * reply since they are bookkeeping, not part of the user's conversation.
- */
-const SYNOPSIS_REQUEST_PATTERN =
-	/^\s*\S+\s+a\s+brief\s+synopsis\s+of\s+what\s+you\s+just\s+accomplished/i;
-
-export function isSynopsisRequest(msg: {
-	type?: string;
-	role?: string;
-	content?: string;
-}): boolean {
-	const isUser = msg.type === 'user' || msg.role === 'user';
-	return isUser && typeof msg.content === 'string' && SYNOPSIS_REQUEST_PATTERN.test(msg.content);
-}
+// Re-exported from its shared home so existing importers keep working; the
+// scroll-to-top history backfill needs the same filter.
+export { isSynopsisRequest };
 
 /**
  * History entry for the addHistoryEntry function.
  */
 export interface HistoryEntryInput {
-	type: 'AUTO' | 'USER' | 'CUE';
+	type: HistoryEntryType;
 	summary: string;
 	fullResponse?: string;
 	agentSessionId?: string;
 	usageStats?: UsageStats;
 	/** Optional override for background operations (prevents cross-agent bleed) */
 	sessionId?: string;
+	/**
+	 * Which AI tab the turn ran in. Carried so main can attribute the entry to
+	 * the Web Login account that STARTED the turn - the account is known only at
+	 * spawn time, and main keys what it noted by agent + tab.
+	 */
+	tabId?: string;
 	/** Optional override for background operations (prevents cross-agent bleed) */
 	projectPath?: string;
 	/** Optional override for background operations (prevents cross-agent bleed) */
@@ -223,6 +226,8 @@ export function useAgentSessionManagement(
 					fullResponse: entry.fullResponse,
 					agentSessionId: entry.agentSessionId,
 					sessionId: targetSessionId,
+					// Lets main resolve which Web Login account started this turn.
+					...(entry.tabId ? { tabId: entry.tabId } : {}),
 					sessionName: sessionName,
 					projectPath: targetProjectPath,
 					// Claude-only per-turn token source (TUI vs API); omitted otherwise
@@ -294,8 +299,13 @@ export function useAgentSessionManagement(
 				: activeSession;
 			// Need a session for tab management
 			if (!targetSession) return false;
-			// Use provided projectPath (e.g. from history entry) or fall back to the target's projectRoot
-			const resolvedProjectRoot = projectPath || targetSession.projectRoot;
+			// Resolve the host and path the transcript lives on the same way the
+			// sessions browser does. `targetSession.sshRemoteId` alone is empty until
+			// the agent spawns in this app run, so an SSH agent opened from History
+			// after a restart read the LOCAL disk and found nothing.
+			const { projectPathForSessions, sshRemoteId } = resolveSessionProjectPath(targetSession);
+			// Use provided projectPath (e.g. from history entry) or fall back to the target's path
+			const resolvedProjectRoot = projectPath || projectPathForSessions;
 			if (!resolvedProjectRoot) {
 				logger.warn('[handleResumeSession] No projectRoot on target session', undefined, {
 					sessionId: targetSession.id,
@@ -336,52 +346,17 @@ export function useAgentSessionManagement(
 						agentId,
 						resolvedProjectRoot,
 						agentSessionId,
-						{ offset: 0, limit: 500 },
-						targetSession.sshRemoteId
+						{ offset: 0, limit: TRANSCRIPT_RESUME_READ_LIMIT },
+						sshRemoteId
 					);
 
-					// Drop the Auto Run synopsis request and the assistant reply that
-					// immediately follows it. These are Maestro bookkeeping turns, not part
-					// of the user's conversation, so they shouldn't reappear on restore.
-					const withoutSynopsis = result.messages.filter(
-						(
-							msg: { type: string; role?: string; content: string },
-							i: number,
-							arr: { type: string; role?: string; content: string }[]
-						) => {
-							if (isSynopsisRequest(msg)) return false;
-							const prev = arr[i - 1];
-							const isAssistant = msg.type === 'assistant' || msg.role === 'assistant';
-							if (prev && isSynopsisRequest(prev) && isAssistant) return false;
-							return true;
-						}
+					// Strip the Auto Run synopsis turns, then convert. Shared with the
+					// scroll-to-top backfill (issue #1407), which matches what it reads
+					// against these entries to find where to splice older history in -
+					// so both paths must build entries the same way.
+					messages = transcriptMessagesToLogEntries(
+						stripSynopsisTurns(result.messages as TranscriptMessage[])
 					);
-
-					// Convert to log entries, keeping messages with actual text content or
-					// reconstructed images. Tool-use-only messages (empty text, no images)
-					// are skipped - restored tabs start with thinking off so there's nothing
-					// useful to render for those entries.
-					messages = withoutSynopsis
-						.filter(
-							(msg: { content: string; images?: string[] }) =>
-								(msg.content && msg.content.trim().length > 0) ||
-								(msg.images != null && msg.images.length > 0)
-						)
-						.map(
-							(msg: {
-								type: string;
-								content: string;
-								timestamp: string;
-								uuid: string;
-								images?: string[];
-							}) => ({
-								id: msg.uuid || generateId(),
-								timestamp: new Date(msg.timestamp).getTime(),
-								source: msg.type === 'user' ? ('user' as const) : ('stdout' as const),
-								text: msg.content,
-								...(msg.images && msg.images.length > 0 && { images: msg.images }),
-							})
-						);
 				}
 
 				if (messages.length === 0) {
@@ -395,7 +370,13 @@ export function useAgentSessionManagement(
 
 				// Look up starred status, session name, and context usage from stores if not provided
 				let isStarred = starred ?? false;
-				let name = sessionName ?? null;
+				// A caller's `sessionName` is a RECORDED display name (a history entry's
+				// pill, a starred session's label), so an unnamed tab recorded its own id
+				// fallback. Writing that back as `tab.name` would look identical while
+				// permanently opting the tab out of auto-naming, so drop it and let the
+				// tab stay genuinely unnamed.
+				let name =
+					sessionName && !isSessionIdLabel(sessionName, agentSessionId) ? sessionName : null;
 				let storedContextUsage: number | undefined;
 				let finalUsageStats = usageStats;
 

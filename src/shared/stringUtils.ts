@@ -33,6 +33,55 @@
  * // Returns: 'Hello'
  * ```
  */
+/**
+ * Escape special regex characters so a literal string can be embedded in a
+ * `RegExp` without being interpreted as a pattern.
+ *
+ * @example
+ * ```typescript
+ * new RegExp(escapeRegExp('file (1).txt'), 'g'); // matches the literal name
+ * ```
+ */
+export function escapeRegExp(text: string): string {
+	return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * Percent-decode a string, returning it unchanged when decoding would throw
+ *
+ * `decodeURIComponent` throws `URIError` on malformed percent encoding, which
+ * is easy to hit with user-supplied input: a Windows path containing `%`, a
+ * hand-typed deep link, or a markdown image src that was never encoded. Use
+ * this wherever the input is not guaranteed to be well-formed.
+ *
+ * @param value - The possibly percent-encoded string
+ * @returns The decoded string, or the original value if decoding fails
+ *
+ * @example
+ * ```typescript
+ * safeDecodeURIComponent('my%20file.md'); // 'my file.md'
+ * safeDecodeURIComponent('100%');         // '100%' (would throw URIError)
+ * ```
+ */
+export function safeDecodeURIComponent(value: string): string {
+	try {
+		return decodeURIComponent(value);
+	} catch (err) {
+		// Malformed percent encoding (a bare '%', a truncated '%E0%A4') throws
+		// URIError. Callers handle user-supplied strings that may not be encoded at
+		// all, so fall back to the original value instead of failing.
+		//
+		// ONLY URIError is swallowed. A bare catch here would also hide unexpected
+		// failures (a RangeError from a pathological input, a TypeError from a
+		// future refactor) and keep them out of Sentry, which is exactly the
+		// silent-failure pattern CLAUDE.md warns about. This also matches the
+		// implementation already on rc, so the two branches converge instead of
+		// conflicting on this function.
+		if (err instanceof URIError) return value;
+		throw err;
+	}
+}
+
 export function stripAnsiCodes(text: string): string {
 	// Matches ANSI CSI sequences, including DEC private modes like ESC[?1h.
 	let result = text.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '');
@@ -83,4 +132,34 @@ export function stripAnsiCodes(text: string): string {
 	result = result.replace(/\x07/g, '');
 
 	return result;
+}
+
+/**
+ * Process carriage returns to simulate terminal line overwrites.
+ * When a line contains \r, the text after the last \r replaces the entire line.
+ * This mimics how terminals handle carriage returns for progress indicators.
+ *
+ * Lives here rather than beside the renderer's ANSI helpers because the main
+ * process needs it too: a git run asked for `--progress` arrives with the same
+ * overwrite counters, and importing the renderer module would drag DOMPurify
+ * and `ansi-to-html` into a process with no DOM.
+ *
+ * @param text - Raw text potentially containing carriage returns
+ * @returns Processed text with carriage return overwrites applied
+ */
+export function processCarriageReturns(text: string): string {
+	const lines = text.split('\n');
+	const processedLines = lines.map((line) => {
+		if (line.includes('\r')) {
+			const segments = line.split('\r');
+			for (let i = segments.length - 1; i >= 0; i--) {
+				if (segments[i].trim()) {
+					return segments[i];
+				}
+			}
+			return '';
+		}
+		return line;
+	});
+	return processedLines.join('\n');
 }
