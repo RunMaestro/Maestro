@@ -388,7 +388,9 @@ function getWindowsKnownPaths(binaryName: string): string[] {
 			// npm (has known issues on Windows, but check anyway)
 			...npmGlobal('opencode'),
 		],
-		'copilot-cli': [
+		// Keyed by binary name, like every other entry: this table is looked up
+		// with `agentDef.binaryName`, and copilot-cli's is `copilot`.
+		copilot: [
 			// WinGet installation (primary method on Windows)
 			path.join(programFiles, 'GitHub Copilot CLI', 'copilot.exe'),
 			// npm global installation
@@ -557,11 +559,10 @@ function getUnixKnownPaths(binaryName: string): string[] {
 			// Node version managers (nvm, fnm, volta, etc.)
 			...nodeVersionManagers('opencode'),
 		],
-		'copilot-cli': [
-			// Homebrew installation (primary method on macOS)
+		// Keyed by binary name - see the Windows table above.
+		copilot: [
+			// Homebrew (primary method on macOS): Apple Silicon, then Intel.
 			...homebrew('copilot'),
-			// GitHub CLI installation
-			'/usr/local/bin/copilot',
 			path.join(home, '.local', 'bin', 'copilot'),
 			// npm global
 			...npmGlobal('copilot'),

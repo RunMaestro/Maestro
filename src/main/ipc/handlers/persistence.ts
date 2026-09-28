@@ -38,6 +38,11 @@ import { createKeyedWriteQueue } from '../../utils/atomic-json-store';
 import { clearGhCache } from '../../utils/cliDetection';
 import { mergeUsagePeaks, type UsagePeaks } from '../../../shared/usagePeaks';
 import { compactSessionToolOutputs } from '../../../shared/toolOutput';
+import {
+	mergeDeferredSessionContent,
+	projectWebSession,
+	readDeferredContent,
+} from '../../stores/deferred-session-content';
 
 /**
  * Shallow-compare cliActivity for the diff broadcast.
@@ -139,7 +144,9 @@ function broadcastSessionLifecycle(
 		if (win.webContents.id === senderWebContentsId) continue;
 		win.webContents.send(SESSION_LIFECYCLE_SYNC_CHANNEL, payload);
 	}
-	broadcastBridgeEvent(SESSION_LIFECYCLE_SYNC_CHANNEL, [payload]);
+	broadcastBridgeEvent(SESSION_LIFECYCLE_SYNC_CHANNEL, [
+		{ ...payload, added: payload.added.map(projectWebSession) },
+	]);
 }
 
 /**
@@ -239,18 +246,17 @@ export function registerPersistenceHandlers(
 	 * The sessions of a write, minus any it would resurrect.
 	 *
 	 * An id counts as a resurrection when it was closed and is NOT currently
-	 * stored - the write is re-adding it rather than updating a live agent. A
-	 * tombstoned id that IS in the store means a client legitimately owns it
-	 * again, so updates to it pass through untouched.
+	 * stored - the write is re-adding it rather than updating a live agent.
+	 * A projected browser record without a stored counterpart is stale even
+	 * after its tombstone has aged out. New agents have no deferred marker.
 	 */
 	const dropResurrections = (
 		sessions: StoredSession[],
 		storedIds: Set<string>
 	): StoredSession[] => {
-		if (removedSessionTombstones.size === 0) return sessions;
 		return sessions.filter((session) => {
 			if (storedIds.has(session.id)) return true;
-			if (!removedSessionTombstones.has(session.id)) return true;
+			if (!removedSessionTombstones.has(session.id) && !session.deferredContent) return true;
 			logger.debug('Ignored resurrection of a closed session', 'Sessions', {
 				sessionId: session.id,
 			});
@@ -444,7 +450,7 @@ export function registerPersistenceHandlers(
 	});
 
 	// Sessions persistence
-	ipcMain.handle('sessions:getAll', async () => {
+	const loadStoredSessions = async (): Promise<StoredSession[]> => {
 		const sessions = sessionsStore.get('sessions', []);
 		// Heal legacy sessions files: relocate any images still stored inline as
 		// base64 data URLs into the content-addressed image store, returning
@@ -485,7 +491,21 @@ export function registerPersistenceHandlers(
 		}
 		logger.debug(`Loaded ${sessions.length} sessions from store`, 'Sessions');
 		return sessions;
-	});
+	};
+	ipcMain.handle('sessions:getAll', loadStoredSessions);
+	ipcMain.handle('sessions:getBootstrap', async () =>
+		(await loadStoredSessions()).map(projectWebSession)
+	);
+	ipcMain.handle(
+		'sessions:getDeferredContent',
+		async (_, sessionId: string, tabId: string | null, includeCommands: boolean) =>
+			readDeferredContent(
+				sessionsStore.get('sessions', []).find((item) => item.id === sessionId),
+				sessionId,
+				tabId,
+				includeCommands
+			)
+	);
 
 	// Resolve a `maestro-image://` reference (or passthrough data URL) back to a
 	// data URL. Used by surfaces that cannot load the maestro-image protocol
@@ -558,7 +578,7 @@ export function registerPersistenceHandlers(
 				if (removeSet.has(prev.id)) continue;
 				const update = updateMap.get(prev.id);
 				if (update) {
-					merged.push(update);
+					merged.push(mergeDeferredSessionContent(update, prev));
 					updateMap.delete(prev.id);
 				} else {
 					merged.push(prev);
@@ -566,7 +586,7 @@ export function registerPersistenceHandlers(
 			}
 			for (const newSession of updateMap.values()) {
 				if (removeSet.has(newSession.id)) continue;
-				merged.push(newSession);
+				merged.push(mergeDeferredSessionContent(newSession, undefined));
 			}
 			const sessionsToPersist = merged.map((session) => compactSessionToolOutputs(session).session);
 
@@ -710,7 +730,10 @@ export function registerPersistenceHandlers(
 				}
 			}
 			const sessionsToPersist = sessions.map(
-				(session) => compactSessionToolOutputs(session).session
+				(session) =>
+					compactSessionToolOutputs(
+						mergeDeferredSessionContent(session, previousSessionMap.get(session.id))
+					).session
 			);
 
 			// Log session lifecycle events at DEBUG level

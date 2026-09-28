@@ -8,127 +8,35 @@
 
 import { ipcRenderer } from 'electron';
 
-/**
- * Feedback auth check response
- */
-export interface FeedbackAuthResponse {
-	authenticated: boolean;
-	message?: string;
-}
+import type {
+	FeedbackAttachmentPayload,
+	FeedbackAuthResponse,
+	FeedbackConversationSubmitPayload,
+	FeedbackDraft,
+	FeedbackIssueSearchResponse,
+	FeedbackSubmissionPayload,
+	FeedbackSubmitResponse,
+	SubmittedIssue,
+} from '../../shared/feedback';
 
-/**
- * Feedback submission response
- */
-export interface FeedbackSubmitResponse {
-	success: boolean;
-	error?: string;
-	issueUrl?: string;
-}
-
-export interface FeedbackAttachmentPayload {
-	name: string;
-	dataUrl: string;
-}
-
-export type FeedbackCategory =
-	| 'bug_report'
-	| 'feature_request'
-	| 'improvement'
-	| 'general_feedback';
-
-export interface FeedbackDraftAttachment {
-	id: string;
-	name: string;
-	dataUrl: string;
-	sizeBytes: number;
-}
-
-export interface FeedbackDraftMessage {
-	role: 'user' | 'assistant' | 'system';
-	content: string;
-	timestamp: number;
-	confidence?: number;
-	category?: FeedbackCategory;
-	summary?: string;
-}
-
-export interface FeedbackDraftStructured {
-	expectedBehavior: string;
-	actualBehavior: string;
-	reproductionSteps: string;
-	additionalContext: string;
-}
-
-export interface FeedbackDraftResponse {
-	confidence: number;
-	ready: boolean;
-	message: string;
-	category: FeedbackCategory;
-	summary: string;
-	structured: FeedbackDraftStructured;
-}
-
-export interface FeedbackDraft {
-	id: string;
-	suggestedName: string;
-	category: FeedbackCategory;
-	summary: string;
-	confidence: number;
-	agentType: string;
-	messages: FeedbackDraftMessage[];
-	attachments: FeedbackDraftAttachment[];
-	inputDraft: string;
-	includeDebugPackage: boolean;
-	createdAt: number;
-	updatedAt: number;
-	lastResponse?: FeedbackDraftResponse | null;
-}
-
-export interface SubmittedIssue {
-	number: number;
-	url: string;
-	title: string;
-	category: FeedbackCategory;
-	submittedAt: number;
-	state: 'open' | 'closed';
-	lastCheckedAt: number;
-}
-
-export interface FeedbackSubmissionPayload {
-	sessionId: string;
-	category: FeedbackCategory;
-	summary: string;
-	expectedBehavior: string;
-	details: string;
-	reproductionSteps?: string;
-	additionalContext?: string;
-	agentProvider?: string;
-	sshRemoteEnabled?: boolean;
-	attachments?: FeedbackAttachmentPayload[];
-}
+export type {
+	FeedbackAttachmentPayload,
+	FeedbackAuthResponse,
+	FeedbackCategory,
+	FeedbackConversationSubmitPayload,
+	FeedbackDraft,
+	FeedbackDraftAttachment,
+	FeedbackDraftMessage,
+	FeedbackDraftResponse,
+	FeedbackDraftStructured,
+	FeedbackSubmissionPayload,
+	FeedbackSubmitResponse,
+	SubmittedIssue,
+} from '../../shared/feedback';
 
 /**
  * Feedback API
  */
-export interface FeedbackConversationSubmitPayload {
-	category: FeedbackCategory;
-	summary: string;
-	expectedBehavior: string;
-	actualBehavior: string;
-	reproductionSteps?: string;
-	additionalContext?: string;
-	agentProvider?: string;
-	sshRemoteEnabled?: boolean;
-	attachments?: FeedbackAttachmentPayload[];
-	includeDebugPackage?: boolean;
-	/**
-	 * Absolute path to a temp performance-trace .zip captured via
-	 * debug:stopProfilingToFile. When present, it is uploaded and linked in the
-	 * issue body, then deleted.
-	 */
-	performanceTracePath?: string;
-}
-
 export interface FeedbackApi {
 	/**
 	 * Check whether gh CLI is available and authenticated
@@ -155,18 +63,7 @@ export interface FeedbackApi {
 	/**
 	 * Search existing GitHub issues for potential duplicates
 	 */
-	searchIssues: (query: string) => Promise<{
-		issues: Array<{
-			number: number;
-			title: string;
-			url: string;
-			state: string;
-			labels: string[];
-			createdAt: string;
-			author: string;
-			commentCount: number;
-		}>;
-	}>;
+	searchIssues: (query: string) => Promise<FeedbackIssueSearchResponse>;
 	/**
 	 * Subscribe to an existing issue (+1 reaction) and optionally comment
 	 */

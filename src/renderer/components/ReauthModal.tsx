@@ -141,10 +141,6 @@ export function ReauthModal({ theme, outage, session, onClose }: ReauthModalProp
 	// session, so they need a fetch. Null until it resolves.
 	const [providerEnv, setProviderEnv] = useState<Record<string, string> | null>(null);
 
-	const login = useMemo(
-		() => getAgentLoginCommand(session.toolType, session.customPath),
-		[session.toolType, session.customPath]
-	);
 	const agentName = getAgentDisplayName(outage.toolType);
 
 	// Names of the blocked agents, resolved live: more of them can fail while
@@ -240,6 +236,16 @@ export function ReauthModal({ theme, outage, session, onClose }: ReauthModalProp
 		}
 		return undefined;
 	}, [session.sessionSshRemoteConfig, session.sshRemoteId, session.remoteCwd]);
+
+	// A remote login cannot use a browser callback on the remote's localhost,
+	// so providers with a device-code flow switch to it over SSH.
+	const login = useMemo(
+		() =>
+			getAgentLoginCommand(session.toolType, session.customPath, {
+				remote: Boolean(sshConfig?.enabled),
+			}),
+		[session.toolType, session.customPath, sshConfig?.enabled]
+	);
 
 	const [homeDir, setHomeDir] = useState<string | undefined>(getHomeDir);
 	useEffect(() => {

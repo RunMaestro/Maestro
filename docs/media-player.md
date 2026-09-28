@@ -22,6 +22,8 @@ There is only ever **one** player. Opening a second file switches to it and keep
 
 To line a file up instead of switching to it, right-click it and choose **Add to Play Queue**. Select several files, right-click, and **Preview** plays the first and queues the rest - that is how you start a playlist in one gesture.
 
+An agent can do the same without starting anything: `maestro-cli open-file <path> --queue` puts a file in the player and leaves pressing play to you. See [Open a File](/cli#open-a-file).
+
 <Note>
 Media files never appear in the tab bar. If you want the file itself - to inspect it, move it, or open it in another app - use the Files pane, or the player's own **Open in default app** button.
 </Note>

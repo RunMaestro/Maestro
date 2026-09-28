@@ -161,6 +161,7 @@ import { wireProcessListeners } from './process-listeners-wiring';
 import { createSafeSend, isWebContentsAvailable } from './utils/safe-send';
 import { capabilitySnapshots, createSnapshotBroadcaster } from './agents/capability-snapshot';
 import { createWebServerFactory } from './web-server/web-server-factory';
+import type { DebugPackageDependencies } from './debug-package';
 // Phase 4 refactoring - app lifecycle
 import {
 	setupGlobalErrorHandlers,
@@ -615,11 +616,25 @@ store.onDidChange('encoreFeatures', (encoreFeatures) => {
 	pluginHostViews.sync();
 });
 
+// Collectors for a support (debug) package. One object shared by the debug and
+// feedback IPC handlers and the CLI bridge, so every path builds the same zip.
+// Getters resolve the live instances at package time, not whatever existed here.
+const debugPackageDeps: DebugPackageDependencies = {
+	getAgentDetector: () => agentDetector,
+	getProcessManager: () => processManager,
+	getWebServer: () => webServer,
+	settingsStore: store,
+	sessionsStore,
+	groupsStore,
+	bootstrapStore,
+};
+
 // Create web server factory with dependency injection (Phase 2 refactoring)
 const createWebServer = createWebServerFactory({
 	settingsStore: store,
 	sessionsStore,
 	groupsStore,
+	getDebugPackageDeps: () => debugPackageDeps,
 	getMainWindow: () => mainWindow,
 	getWindowForSession: (sessionId: string) => {
 		const ownerId = windowRegistry.getWindowForSession(sessionId);
@@ -2809,6 +2824,7 @@ app
 		// Set up IPC handlers
 		logger.debug('Setting up IPC handlers', 'Startup');
 		setupIpcHandlers({
+			debugPackageDeps,
 			getMainWindow: () => mainWindow,
 			getProcessManager: () => processManager,
 			getWebServer: () => webServer,

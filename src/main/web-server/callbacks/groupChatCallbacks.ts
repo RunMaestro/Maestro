@@ -50,7 +50,7 @@ export function registerGroupChatCallbacks(
 	});
 
 	// Start a group chat - uses IPC request-response pattern
-	server.setStartGroupChatCallback(async (topic: string, participantIds: string[]) => {
+	server.setStartGroupChatCallback(async (topic, participantIds, options) => {
 		const mainWindow = getMainWindow();
 		if (!mainWindow) {
 			logger.warn('mainWindow is null for startGroupChat', 'WebServer');
@@ -75,15 +75,24 @@ export function registerGroupChatCallbacks(
 				resolve(null);
 				return;
 			}
-			mainWindow.webContents.send('remote:startGroupChat', topic, participantIds, responseChannel);
+			mainWindow.webContents.send(
+				'remote:startGroupChat',
+				topic,
+				participantIds,
+				responseChannel,
+				options
+			);
 
+			// Longer than the other group chat calls: the renderer creates the chat,
+			// spawns its moderator, auto-adds every @mentioned participant, and hands
+			// the opening message over before it answers.
 			const timeoutId = setTimeout(() => {
 				if (resolved) return;
 				resolved = true;
 				ipcMain.removeListener(responseChannel, handleResponse);
 				logger.warn(`startGroupChat callback timed out`, 'WebServer');
 				resolve(null);
-			}, 15000);
+			}, 60000);
 		});
 	});
 

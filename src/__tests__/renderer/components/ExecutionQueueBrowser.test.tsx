@@ -13,6 +13,7 @@ import type { Session, Theme, QueuedItem } from '../../../renderer/types';
 import { spyOnListeners, expectAllListenersRemoved } from '../../helpers/listenerLeakAssertions';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { useRetryStore, type RetryEntry } from '../../../renderer/stores/retryStore';
+import { useModalStore } from '../../../renderer/stores/modalStore';
 
 // Mock the LayerStackContext
 const mockRegisterLayer = vi.fn().mockReturnValue('layer-1');
@@ -2172,12 +2173,33 @@ describe('ExecutionQueueBrowser', () => {
 			expect(screen.queryByText('Send Now')).not.toBeInTheDocument();
 		});
 
-		it('disables Send Now when another tab is working and forced parallel is off', () => {
+		it('dims Send Now when another tab is working and forced parallel is off', () => {
 			const onForceSendItem = vi.fn();
 			renderBrowser(forceSendSession(['idle', 'busy']), onForceSendItem);
 
-			expect(screen.getByText('Send Now').closest('button')).toBeDisabled();
+			const button = screen.getByText('Send Now').closest('button');
+			expect(button).toHaveAttribute('aria-disabled', 'true');
+			expect(button).toBeEnabled();
 			expect(onForceSendItem).not.toHaveBeenCalled();
+		});
+
+		it('explains the dimmed Send Now and deep-links to the Forced Parallel setting', () => {
+			const onForceSendItem = vi.fn();
+			renderBrowser(forceSendSession(['idle', 'busy']), onForceSendItem);
+
+			fireEvent.click(screen.getByText('Send Now'));
+			// The ghosted control is a way in, not a dead end - and it never sends.
+			expect(screen.getByText('Force Send Is Off')).toBeInTheDocument();
+			expect(onForceSendItem).not.toHaveBeenCalled();
+
+			fireEvent.click(screen.getByText('Open Setting'));
+			const settings = useModalStore.getState().modals.get('settings');
+			expect(settings?.open).toBe(true);
+			expect(settings?.data).toEqual({ tab: 'general', settingId: 'general-forced-parallel' });
+			// Settings sits below this browser in the layer stack, so it closes itself.
+			expect(mockOnClose).toHaveBeenCalled();
+			expect(screen.queryByText('Force Send Is Off')).not.toBeInTheDocument();
+			useModalStore.getState().closeModal('settings');
 		});
 
 		it('confirms before running in parallel with another working tab', () => {

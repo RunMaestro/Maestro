@@ -84,3 +84,16 @@ Once submitted, you'll see a confirmation with:
 - A direct link to the new GitHub issue
 - A copy-to-clipboard button for the issue URL
 - An option to open the issue in your browser
+
+## From the Command Line
+
+Agents and scripts can file the same issue through `maestro-cli`, with no modal:
+
+```bash
+maestro-cli feedback auth                          # gh installed and logged in?
+maestro-cli feedback search "tab closes on escape" # find duplicates first
+maestro-cli feedback submit -c bug -s "..." -e "..." -a "..." --attach shot.png --support-package
+maestro-cli feedback subscribe 1234 --comment "Same on Linux"
+```
+
+`submit` stops when it finds likely duplicates; pass `--force` to file anyway. `maestro-cli open feedback` opens the modal. Full flags are in the [CLI reference](./cli-reference#maestro-cli-feedback).

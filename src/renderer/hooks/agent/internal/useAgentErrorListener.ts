@@ -41,6 +41,7 @@ import { useOwnedSessionGate, useOwnedSideEffectGate } from './useOwnedSessionGa
 import {
 	scheduleRetryForError,
 	getRetryEntry,
+	failInFlightRetry,
 	persistDispatchSnapshotForAuth,
 } from '../../../stores/retryStore';
 import { scheduleAutoResume } from '../../../stores/autoRunResumeStore';
@@ -208,6 +209,14 @@ export function useAgentErrorListener(deps: UseAgentErrorListenerDeps): void {
 				batchOwnsError &&
 				scheduleRetryForError(actualSessionId, tabIdFromSession!, agentError, { batch: true });
 			const willAutoRetry = willAutoRetryInteractive || willAutoRetryBatch;
+
+			// A resend that comes back with an error auto-retry did not take over
+			// (session not found, auth, ...) ended the outage badly. Say so now;
+			// otherwise the exit listener reads the still-in-flight entry as a
+			// clean completion and paints the card green.
+			if (!willAutoRetry && tabIdFromSession) {
+				failInFlightRetry(actualSessionId, tabIdFromSession, agentError.message);
+			}
 
 			// Agent Resilience transcript card: the auto-retry path collapses all
 			// attempts into ONE live status bubble (RetryStatusCard) instead of a

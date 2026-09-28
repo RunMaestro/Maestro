@@ -26,12 +26,14 @@ import { flashCopiedToClipboard } from '../utils/flashCopiedToClipboard';
 import { useSettingsStore } from '../stores/settingsStore';
 import {
 	getForceSendEligibility,
+	getForceSendTitle,
 	shouldOfferForceSend,
 	resolveQueuedItemTabName,
 	type ForceSendEligibility,
 } from '../utils/executionQueue';
 import { Modal, ModalFooter } from './ui/Modal';
 import { QueuedItemEditModal } from './QueuedItemEditModal';
+import { ForcedParallelRequiredModal } from './ForcedParallelRequiredModal';
 import { TurnSettingPills } from './ui/TurnSettingPills';
 import { MiniBadge } from './ui/MiniBadge';
 import { HeldForRetryBadge } from './HeldForRetryBadge';
@@ -86,6 +88,8 @@ export function ExecutionQueueBrowser({
 		item: QueuedItem;
 	} | null>(null);
 	const forceSendConfirmButtonRef = useRef<HTMLButtonElement>(null);
+	// Explainer for a dimmed Send Now that only Forced Parallel Execution unlocks
+	const [showForcedParallelRequired, setShowForcedParallelRequired] = useState(false);
 	const forcedParallelEnabled = useSettingsStore((s) => s.forcedParallelExecution);
 	// The queued item currently being edited (with its owning session), or null.
 	// While set, this browser suspends its own Escape layer so the edit modal's
@@ -229,7 +233,10 @@ export function ExecutionQueueBrowser({
 		const id = setTimeout(() => modalRef.current?.focus(), 0);
 		return () => clearTimeout(id);
 	}, [isOpen]);
-	useFocusOnClose(modalRef, actionMenuOpen || !!editing || !!forceSendConfirm);
+	useFocusOnClose(
+		modalRef,
+		actionMenuOpen || !!editing || !!forceSendConfirm || showForcedParallelRequired
+	);
 
 	if (!isOpen) return null;
 
@@ -247,6 +254,20 @@ export function ExecutionQueueBrowser({
 			return;
 		}
 		onForceSendItem(session.id, item.id);
+	};
+
+	// What clicking Send Now does: send (or confirm) when allowed, explain the
+	// block when only Forced Parallel Execution stands in the way, else nothing.
+	const forceSendAction = (
+		session: Session,
+		item: QueuedItem,
+		eligibility: ForceSendEligibility | null
+	): (() => void) | undefined => {
+		if (!eligibility) return undefined;
+		if (eligibility.canForce) return () => requestForceSend(session, item, eligibility);
+		if (eligibility.blockedReason === 'needs-forced-parallel')
+			return () => setShowForcedParallelRequired(true);
+		return undefined;
 	};
 
 	// Recomputed at render so the confirm dialog's busy-tab list stays live while open.
@@ -267,13 +288,14 @@ export function ExecutionQueueBrowser({
 		const eligibility = onForceSendItem
 			? getForceSendEligibility(session, item, { forcedParallelEnabled })
 			: null;
-		if (onForceSendItem && eligibility?.canForce) {
+		const sendNow = forceSendAction(session, item, eligibility);
+		if (sendNow) {
 			menuActions.push({
 				id: 'send',
 				label: 'Send Now',
 				icon: <Hammer className="w-4 h-4" />,
 				color: theme.colors.warning,
-				run: () => requestForceSend(session, item, eligibility),
+				run: sendNow,
 			});
 		}
 		if (onEditItem && item.type !== 'command') {
@@ -464,11 +486,7 @@ export function ExecutionQueueBrowser({
 													onSelect={() => setSelectedIndex(flatIndex)}
 													tabLabel={resolveQueuedItemTabName(session, item)}
 													forceSend={forceSend}
-													onForceSend={
-														forceSend?.canForce
-															? () => requestForceSend(session, item, forceSend)
-															: undefined
-													}
+													onForceSend={forceSendAction(session, item, forceSend)}
 													onRemove={() => onRemoveItem(session.id, item.id)}
 													isPaused={!!item.paused}
 													onTogglePause={
@@ -582,6 +600,16 @@ export function ExecutionQueueBrowser({
 				</div>
 			)}
 
+			{showForcedParallelRequired && (
+				<div onClick={(e) => e.stopPropagation()}>
+					<ForcedParallelRequiredModal
+						theme={theme}
+						onClose={() => setShowForcedParallelRequired(false)}
+						onBeforeOpenSetting={onClose}
+					/>
+				</div>
+			)}
+
 			{/* Action menu for the keyboard cursor. Sits at CONFIRM priority, above
 			    this browser, so Escape resolves to it without suspending the
 			    browser's own layer. */}
@@ -629,7 +657,7 @@ interface QueueItemRowProps {
 	tabLabel?: string;
 	/** Null when the browser has no Force Send handler wired */
 	forceSend?: ForceSendEligibility | null;
-	/** Set only when the item can actually be sent right now */
+	/** Sends when allowed; opens the Forced Parallel explainer when that is the only block */
 	onForceSend?: () => void;
 	onRemove: () => void;
 	isPaused?: boolean;
@@ -700,15 +728,7 @@ function QueueItemRow({
 	// mid-turn hides it, because the item is simply next in line.
 	const canForceSend = !!forceSend?.canForce && !!onForceSend;
 	const showForceSend = shouldOfferForceSend(forceSend);
-	const otherBusyCount = forceSend?.otherBusyTabs.length ?? 0;
-	const forceSendTitle =
-		forceSend?.blockedReason === 'target-tab-busy'
-			? 'This tab is already working - the message runs when the current turn finishes'
-			: forceSend?.blockedReason === 'needs-forced-parallel'
-				? `Another tab in this agent is working. Turn on Forced Parallel Execution in Settings to send anyway.`
-				: forceSend?.requiresParallel
-					? `Send now, running in parallel with ${otherBusyCount} other working tab${otherBusyCount === 1 ? '' : 's'}`
-					: 'Send this message now, ahead of the rest of the queue';
+	const forceSendTitle = forceSend ? getForceSendTitle(forceSend) : undefined;
 
 	// Cleanup copy-feedback timer on unmount
 	useEffect(() => {
@@ -864,8 +884,8 @@ function QueueItemRow({
 										e.stopPropagation();
 										onForceSend?.();
 									}}
-									disabled={!canForceSend}
-									className="flex items-center gap-1 px-2 py-1 rounded text-xs font-medium whitespace-nowrap transition-opacity hover:opacity-80 disabled:cursor-default"
+									aria-disabled={!canForceSend}
+									className="flex items-center gap-1 px-2 py-1 rounded text-xs font-medium whitespace-nowrap transition-opacity hover:opacity-80"
 									style={{
 										backgroundColor: theme.colors.warning + (canForceSend ? '33' : '15'),
 										color: theme.colors.warning,

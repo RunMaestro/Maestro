@@ -86,6 +86,17 @@ describe('activeSessionPersistence', () => {
 			await expect(readPersistedActiveSessionId()).resolves.toBe('desktop-agent');
 		});
 
+		it('falls back when browser Storage refuses reads', async () => {
+			const blocked = vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+				throw new DOMException('SecurityError');
+			});
+			try {
+				await expect(readPersistedActiveSessionId()).resolves.toBe('desktop-agent');
+			} finally {
+				blocked.mockRestore();
+			}
+		});
+
 		it('survives a Storage that refuses the write', () => {
 			// Safari private mode throws on every setItem, and a full quota throws
 			// anywhere. Losing the pointer is acceptable; throwing out of the store

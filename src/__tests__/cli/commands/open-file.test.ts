@@ -129,6 +129,49 @@ describe('open-file command', () => {
 		});
 	});
 
+	describe('--queue (media player, no playback)', () => {
+		function captureMessage() {
+			vi.mocked(existsSync).mockReturnValue(true);
+			const sendCommand = vi
+				.fn()
+				.mockImplementation(() => Promise.resolve({ type: 'open_file_tab_result', success: true }));
+			vi.mocked(withMaestroClient).mockImplementation(async (action) =>
+				action({ sendCommand } as never)
+			);
+			return sendCommand;
+		}
+
+		it('sends mediaMode queue for an audio file', async () => {
+			const sendCommand = captureMessage();
+			await openFile('/home/user/project/ep1.mp3', { agent: 'session-123', queue: true });
+			expect(sendCommand.mock.calls[0][0].mediaMode).toBe('queue');
+			expect(consoleSpy).toHaveBeenCalledWith(
+				expect.stringContaining('Queued ep1.mp3 in the media player (not playing)')
+			);
+			expect(processExitSpy).not.toHaveBeenCalled();
+		});
+
+		it('sends mediaMode play when unflagged, so existing callers still autoplay', async () => {
+			const sendCommand = captureMessage();
+			await openFile('/home/user/project/ep1.mp3', { agent: 'session-123' });
+			expect(sendCommand.mock.calls[0][0].mediaMode).toBe('play');
+		});
+
+		it('rejects --queue for a file that is not audio or video', async () => {
+			const sendCommand = captureMessage();
+			processExitSpy.mockImplementation(() => {
+				throw new Error('exit');
+			});
+			await expect(
+				openFile('/home/user/project/notes.md', { agent: 'session-123', queue: true })
+			).rejects.toThrow('exit');
+			expect(consoleErrorSpy).toHaveBeenCalledWith(
+				expect.stringContaining('--queue only applies to audio and video files')
+			);
+			expect(sendCommand).not.toHaveBeenCalled();
+		});
+	});
+
 	it('should resolve relative file paths to absolute', async () => {
 		vi.mocked(existsSync).mockReturnValue(true);
 		// Relative paths are resolved against process.cwd(); pin it inside the

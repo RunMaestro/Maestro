@@ -21,6 +21,7 @@ import { useFileExplorerStore } from '../../../renderer/stores/fileExplorerStore
 import { useGroupChatStore } from '../../../renderer/stores/groupChatStore';
 import { useModalStore } from '../../../renderer/stores/modalStore';
 import { createMockSession, createMockAITab } from '../../helpers';
+import { getSidebarRevealToken } from '../../../renderer/utils/sidebarReveal';
 import type { Session } from '../../../renderer/types';
 
 const SESSION_ID = 'session-1';
@@ -131,6 +132,17 @@ describe('jumpToAgent', () => {
 		jumpToAgent(SESSION_ID);
 
 		expect(useSessionStore.getState().groups[0].collapsed).toBe(false);
+	});
+
+	it('asks the Left Bar to scroll the agent into view', () => {
+		// Explicit, because jumping to the agent that is already active changes
+		// nothing the Left Bar watches, yet its row may be scrolled out of sight.
+		seed();
+		const before = getSidebarRevealToken();
+
+		revealAgentInSidebar(useSessionStore.getState().sessions[0]);
+
+		expect(getSidebarRevealToken()).toBe(before + 1);
 	});
 
 	it('reports a miss instead of switching when the agent is gone', () => {

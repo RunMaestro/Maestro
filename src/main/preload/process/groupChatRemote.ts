@@ -24,14 +24,20 @@ export function createGroupChatRemoteApi() {
 		 * Uses request-response pattern with a unique responseChannel
 		 */
 		onRemoteStartGroupChat: (
-			callback: (topic: string, participantIds: string[], responseChannel: string) => void
+			callback: (
+				topic: string,
+				participantIds: string[],
+				responseChannel: string,
+				options?: { moderatorAgentId?: string; message?: string }
+			) => void
 		): (() => void) => {
 			const handler = (
 				_: unknown,
 				topic: string,
 				participantIds: string[],
-				responseChannel: string
-			) => callback(topic, participantIds, responseChannel);
+				responseChannel: string,
+				options?: { moderatorAgentId?: string; message?: string }
+			) => callback(topic, participantIds, responseChannel, options);
 			ipcRenderer.on('remote:startGroupChat', handler);
 			return () => ipcRenderer.removeListener('remote:startGroupChat', handler);
 		},
@@ -41,7 +47,7 @@ export function createGroupChatRemoteApi() {
 		 */
 		sendRemoteStartGroupChatResponse: (
 			responseChannel: string,
-			result: { chatId: string } | null
+			result: { chatId?: string; error?: string } | null
 		): void => {
 			ipcRenderer.send(responseChannel, result);
 		},

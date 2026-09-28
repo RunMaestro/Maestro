@@ -506,6 +506,58 @@ describe('QuickActionsModal', () => {
 			});
 		});
 
+		describe('Opt+Cmd+# jump chord', () => {
+			const chord = (digit: string) => formatShortcutKeys(['Alt', 'Meta', digit]);
+			const rowFor = (label: string) => screen.getByText(label).closest('button')!;
+
+			it('shows the chord on jump rows for agents in the first ten Left Bar slots', () => {
+				const first = createMockSession({ id: 'session-1', name: 'First' });
+				const second = createMockSession({ id: 'session-2', name: 'Second' });
+				const props = createDefaultProps({
+					sessions: [first, second],
+					visibleSessions: [second, first],
+				});
+				render(<QuickActionsModal {...props} />);
+
+				// Slot order follows the Left Bar, not the sessions array.
+				expect(rowFor('Jump to: Second').textContent).toContain(chord('1'));
+				expect(rowFor('Jump to: First').textContent).toContain(chord('2'));
+			});
+
+			it('binds the tenth slot to 0 and gives the eleventh no chord', () => {
+				const sessions = Array.from({ length: 11 }, (_, i) =>
+					createMockSession({ id: `session-${i + 1}`, name: `Agent ${i + 1}` })
+				);
+				const props = createDefaultProps({ sessions, visibleSessions: sessions });
+				render(<QuickActionsModal {...props} />);
+
+				expect(rowFor('Jump to: Agent 10').textContent).toContain(chord('0'));
+				expect(rowFor('Jump to: Agent 11').textContent).not.toContain(
+					formatShortcutKeys(['Alt', 'Meta'])
+				);
+			});
+
+			it('shows the chord in the agent switcher', () => {
+				const session = createMockSession({ id: 'session-1', name: 'Solo' });
+				const props = createDefaultProps({
+					sessions: [session],
+					visibleSessions: [session],
+					initialMode: 'agents',
+				});
+				render(<QuickActionsModal {...props} />);
+
+				expect(rowFor('Solo').textContent).toContain(chord('1'));
+			});
+
+			it('shows no chord for an agent the Left Bar is not drawing', () => {
+				const session = createMockSession({ id: 'session-1', name: 'Hidden' });
+				const props = createDefaultProps({ sessions: [session], visibleSessions: [] });
+				render(<QuickActionsModal {...props} />);
+
+				expect(rowFor('Jump to: Hidden').textContent).not.toContain(chord('1'));
+			});
+		});
+
 		it('handles Create New Agent action', () => {
 			const props = createDefaultProps();
 			render(<QuickActionsModal {...props} />);

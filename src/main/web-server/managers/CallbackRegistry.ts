@@ -24,6 +24,7 @@ import type {
 	ReorderTabCallback,
 	ToggleBookmarkCallback,
 	OpenFileTabCallback,
+	OpenFileTabOptions,
 	OpenDocumentGraphCallback,
 	OpenDocumentGraphParams,
 	OpenModalCallback,
@@ -106,6 +107,8 @@ import type {
 	ListWorktreesResult,
 	GetGroupChatsCallback,
 	StartGroupChatCallback,
+	StartGroupChatOptions,
+	StartGroupChatResult,
 	GetGroupChatStateCallback,
 	StopGroupChatCallback,
 	SendGroupChatMessageCallback,
@@ -133,6 +136,7 @@ import type {
 	GetMovementDesignerInspectionCallback,
 	InteractMovementDesignerCallback,
 	NotifyCenterFlashCallback,
+	GetDebugPackageDepsCallback,
 	NotifyToastParams,
 	NotifyCenterFlashParams,
 	GetMarketplaceManifestCallback,
@@ -251,6 +255,7 @@ export interface WebServerCallbacks {
 	getMovementDesignerInspection: GetMovementDesignerInspectionCallback | null;
 	interactMovementDesigner: InteractMovementDesignerCallback | null;
 	notifyCenterFlash: NotifyCenterFlashCallback | null;
+	getDebugPackageDeps: GetDebugPackageDepsCallback | null;
 	getMarketplaceManifest: GetMarketplaceManifestCallback | null;
 	getMarketplaceDocument: GetMarketplaceDocumentCallback | null;
 	getMarketplaceReadme: GetMarketplaceReadmeCallback | null;
@@ -354,6 +359,7 @@ export class CallbackRegistry {
 		getMovementDesignerInspection: null,
 		interactMovementDesigner: null,
 		notifyCenterFlash: null,
+		getDebugPackageDeps: null,
 		getMarketplaceManifest: null,
 		getMarketplaceDocument: null,
 		getMarketplaceReadme: null,
@@ -476,7 +482,7 @@ export class CallbackRegistry {
 	async openFileTab(
 		sessionId: string,
 		filePath: string,
-		options: { background: boolean; switchToAgent: boolean }
+		options: OpenFileTabOptions
 	): Promise<boolean> {
 		if (!this.callbacks.openFileTab) return false;
 		return this.callbacks.openFileTab(sessionId, filePath, options);
@@ -872,10 +878,11 @@ export class CallbackRegistry {
 
 	async startGroupChat(
 		topic: string,
-		participantIds: string[]
-	): Promise<{ chatId: string } | null> {
+		participantIds: string[],
+		options?: StartGroupChatOptions
+	): Promise<StartGroupChatResult | null> {
 		if (!this.callbacks.startGroupChat) return null;
-		return this.callbacks.startGroupChat(topic, participantIds);
+		return this.callbacks.startGroupChat(topic, participantIds, options);
 	}
 
 	async getGroupChatState(chatId: string): Promise<GroupChatState | null> {
@@ -1017,6 +1024,10 @@ export class CallbackRegistry {
 	async notifyCenterFlash(params: NotifyCenterFlashParams): Promise<boolean> {
 		if (!this.callbacks.notifyCenterFlash) return false;
 		return this.callbacks.notifyCenterFlash(params);
+	}
+
+	getDebugPackageDeps(): ReturnType<GetDebugPackageDepsCallback> | null {
+		return this.callbacks.getDebugPackageDeps?.() ?? null;
 	}
 
 	async getMarketplaceManifest(options?: {
@@ -1439,6 +1450,10 @@ export class CallbackRegistry {
 
 	setNotifyCenterFlashCallback(callback: NotifyCenterFlashCallback): void {
 		this.callbacks.notifyCenterFlash = callback;
+	}
+
+	setGetDebugPackageDepsCallback(callback: GetDebugPackageDepsCallback): void {
+		this.callbacks.getDebugPackageDeps = callback;
 	}
 
 	setGetMarketplaceManifestCallback(callback: GetMarketplaceManifestCallback): void {

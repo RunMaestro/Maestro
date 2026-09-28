@@ -26,6 +26,7 @@ import { notifyToast } from '../../stores/notificationStore';
 import { generateId } from '../../utils/ids';
 import { aiTabFocusFields } from '../../utils/tabHelpers';
 import { getAutoRunSessionsForGroupChat } from '../../utils/groupChatAutoRunRegistry';
+import { stopGroupChatWork } from '../../services/remoteGroupChat';
 import { logger } from '../../utils/logger';
 
 // ---------------------------------------------------------------------------
@@ -773,17 +774,7 @@ export function useGroupChatHandlers(): GroupChatHandlersReturn {
 		const { activeGroupChatId } = useGroupChatStore.getState();
 		if (!activeGroupChatId) return;
 		try {
-			// Cancel any in-flight autorun batch runs for this group chat.
-			// These run in the agent's own Maestro session (not group-chat-prefixed),
-			// so the main process's clearAllParticipantSessions won't reach them.
-			const autoRunSessionIds = getAutoRunSessionsForGroupChat(activeGroupChatId);
-			for (const sessionId of autoRunSessionIds) {
-				useBatchStore.getState().dispatchBatch({
-					type: 'COMPLETE_BATCH',
-					sessionId,
-				});
-			}
-			await window.maestro.groupChat.stopAll(activeGroupChatId);
+			await stopGroupChatWork(activeGroupChatId);
 		} catch (error) {
 			logger.error('[GroupChat] Failed to stop all:', undefined, error);
 			notifyToast({

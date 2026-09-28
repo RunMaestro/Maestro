@@ -718,6 +718,47 @@ describe('mediaPlaybackStore', () => {
 			expect(useMediaPlaybackStore.getState().history).toEqual([]);
 		});
 
+		it('un-hides a minimized player without interrupting it', () => {
+			const a = request();
+			initial.openMedia(a);
+			initial.consumeAutoplay();
+			initial.setPlaying(true);
+			initial.dismiss();
+
+			initial.enqueueMedia([request({ path: '/files/b.mp3', name: 'b.mp3' })]);
+
+			const state = useMediaPlaybackStore.getState();
+			expect(state.dismissed).toBe(false);
+			expect(state.activeItemId).toBe(idOf(a));
+			expect(state.playing).toBe(true);
+		});
+
+		it('shows the player even when every file was already queued', () => {
+			// Re-running "queue these" must still answer by showing the player,
+			// or the retry looks exactly like the command doing nothing.
+			const a = request();
+			initial.enqueueMedia([a]);
+			initial.dismiss();
+
+			expect(initial.enqueueMedia([a])).toBe(0);
+			expect(useMediaPlaybackStore.getState().dismissed).toBe(false);
+		});
+
+		it('loads the requested file paused when idle, even if it was already queued', () => {
+			const a = request();
+			const b = request({ path: '/files/b.mp3', name: 'b.mp3' });
+			initial.enqueueMedia([a, b]);
+			// Closing the loaded track releases the player; b is still queued.
+			initial.closeItem(idOf(a));
+			expect(useMediaPlaybackStore.getState().activeItemId).toBeNull();
+
+			expect(initial.enqueueMedia([b])).toBe(0);
+
+			const state = useMediaPlaybackStore.getState();
+			expect(state.activeItemId).toBe(idOf(b));
+			expect(state.pendingAutoplay).toBe(false);
+		});
+
 		it('queues nothing for an empty list', () => {
 			const before = useMediaPlaybackStore.getState();
 			expect(initial.enqueueMedia([])).toBe(0);

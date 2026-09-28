@@ -135,6 +135,8 @@ Save your Auto Run configurations as Playbooks for reuse:
 3. Load saved playbooks from the **Load Playbook** dropdown
 4. Update or discard changes to loaded playbooks
 
+**Save & Exit** saves and closes in one click. With a playbook loaded, it saves your changes to that playbook. Otherwise it creates a new playbook named `YYYY-MM-DD-CODENAME`, with the codename taken from the first document (its folder, or its file name minus the phase number). A `-2`, `-3`, ... suffix keeps the name unique.
+
 ![Playbooks](./screenshots/autorun-2.png)
 
 ### Inline Wizard

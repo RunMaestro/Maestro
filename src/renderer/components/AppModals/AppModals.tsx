@@ -198,6 +198,8 @@ export interface AppModalsProps {
 	onConfirmAndDeleteWorktreeOnDisk: () => Promise<void>;
 
 	// --- AppUtilityModals props ---
+	/** Left Bar draw order; the first ten own the Opt+Cmd+# slots */
+	visibleSessions?: Session[];
 	quickActionInitialMode: 'main' | 'move-to-group' | 'agents';
 	setQuickActionOpen: (open: boolean) => void;
 	setActiveSessionId: (id: string) => void;
@@ -690,6 +692,7 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 		onConfirmDeleteWorktree,
 		onConfirmAndDeleteWorktreeOnDisk,
 		// Utility modals
+		visibleSessions,
 		quickActionInitialMode,
 		setQuickActionOpen,
 		setActiveSessionId,
@@ -1059,6 +1062,7 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 				shortcuts={shortcuts}
 				tabShortcuts={tabShortcuts}
 				quickActionOpen={quickActionOpen}
+				visibleSessions={visibleSessions}
 				quickActionInitialMode={quickActionInitialMode}
 				setQuickActionOpen={setQuickActionOpen}
 				setActiveSessionId={setActiveSessionId}

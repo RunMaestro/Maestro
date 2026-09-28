@@ -496,6 +496,31 @@ The `groupChatEmitters` object provides real-time event broadcasting to the rend
 | `emitParticipantState`    | `groupChat:participantState`    | Participant working/idle   |
 | (queue broadcast)         | `groupChat:queueState`          | Whole pending-send queue   |
 
+## Starting and Driving a Chat Remotely
+
+`maestro-cli group-chat start|send|status|list|stop` (and the web/mobile client)
+reach group chats over the WebSocket bridge. Main does not act on these
+requests itself: it relays `remote:startGroupChat` and friends to the renderer,
+because the renderer's `groupChatStore` is what the Left Bar draws and a chat
+created behind its back would not show up until restart.
+
+| Piece                                             | Role                                                                                 |
+| ------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| `src/cli/commands/group-chat.ts`                  | CLI verbs; resolves a chat by ID, ID prefix, or exact name                           |
+| `src/renderer/hooks/remote/useRemoteGroupChat.ts` | Listeners for the five bridge requests; always answers exactly once                  |
+| `src/renderer/services/remoteGroupChat.ts`        | Creates the chat (no focus change), sends the opening message, `stopGroupChatWork()` |
+| `src/shared/groupChatRemote.ts`                   | Wire shapes, `toRemoteGroupChatState()`, `withParticipantMentions()`                 |
+
+Participants are **not** added by ID. The opening message @mentions each one
+(`withParticipantMentions()` prefixes any the brief did not already mention),
+and the router's normal auto-add brings them in with their full agent config
+(SSH remote, custom args, env). That requires each name to pick out one agent,
+so a start whose participant shares a name with another agent is refused
+rather than letting the router pick the first match.
+
+A remote `send` is refused while the chat is busy: the desktop's execution
+queue only serves the room on screen. Callers poll `status` and retry.
+
 ## Renderer Components
 
 Located in `src/renderer/components/`:

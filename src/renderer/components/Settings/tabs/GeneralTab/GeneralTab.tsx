@@ -61,6 +61,7 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 				conductorProfile={settings.conductorProfile}
 				setConductorProfile={settings.setConductorProfile}
 			/>
+			<MaestroCliSection theme={theme} appVersion={appVersion} maestroCli={maestroCli} />
 			<ShellSettingsSection
 				theme={theme}
 				defaultShell={settings.defaultShell}
@@ -76,7 +77,6 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 				setLogLevel={settings.setLogLevel}
 			/>
 			<GitHubCliSection theme={theme} ghPath={settings.ghPath} setGhPath={settings.setGhPath} />
-			<MaestroCliSection theme={theme} appVersion={appVersion} maestroCli={maestroCli} />
 			<WebInterfaceSection
 				theme={theme}
 				webInterfaceAutoStart={settings.webInterfaceAutoStart}

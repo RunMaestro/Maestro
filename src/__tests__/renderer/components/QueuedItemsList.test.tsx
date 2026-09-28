@@ -6,6 +6,7 @@ import { LayerStackProvider } from '../../../renderer/contexts/LayerStackContext
 import { useUIStore } from '../../../renderer/stores/uiStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { useRetryStore, type RetryEntry } from '../../../renderer/stores/retryStore';
+import { useModalStore } from '../../../renderer/stores/modalStore';
 import { mockTheme } from '../../helpers/mockTheme';
 import type { QueuedItem } from '../../../renderer/types';
 
@@ -451,7 +452,7 @@ describe('QueuedItemsList force send', () => {
 		expect(screen.queryByRole('button', { name: /Force Send/i })).toBeNull();
 	});
 
-	it('shows Force Send disabled when another tab is busy and forced parallel is off', () => {
+	it('shows Force Send dimmed when another tab is busy and forced parallel is off', () => {
 		withForceSend(
 			eligibility({
 				otherBusyTabs: [{ id: 'tab-2', displayName: 'Other' }],
@@ -461,8 +462,35 @@ describe('QueuedItemsList force send', () => {
 			})
 		);
 		const button = screen.getByRole('button', { name: /Force Send/i });
-		expect(button).toBeDisabled();
+		expect(button).toHaveAttribute('aria-disabled', 'true');
 		expect(button.getAttribute('title')).toMatch(/Forced Parallel Execution/i);
+	});
+
+	it('clicking the dimmed Force Send explains the block and links to the setting', () => {
+		const onForceSendQueuedItem = vi.fn();
+		withForceSend(
+			eligibility({
+				otherBusyTabs: [{ id: 'tab-2', displayName: 'Other' }],
+				requiresParallel: true,
+				canForce: false,
+				blockedReason: 'needs-forced-parallel',
+			}),
+			{ onForceSendQueuedItem }
+		);
+		fireEvent.click(screen.getByRole('button', { name: /Force Send/i }));
+		expect(screen.getByText('Force Send Is Off')).toBeInTheDocument();
+		// No send confirmation, and nothing dispatched.
+		expect(screen.queryByText('Force Send Message?')).toBeNull();
+		expect(onForceSendQueuedItem).not.toHaveBeenCalled();
+
+		fireEvent.click(
+			screen.getByRole('button', { name: /Settings > General > Forced Parallel Execution/ })
+		);
+		const settings = useModalStore.getState().modals.get('settings');
+		expect(settings?.open).toBe(true);
+		expect(settings?.data).toEqual({ tab: 'general', settingId: 'general-forced-parallel' });
+		expect(screen.queryByText('Force Send Is Off')).toBeNull();
+		useModalStore.getState().closeModal('settings');
 	});
 
 	it('hides Force Send entirely when the item has no tab left to run on', () => {

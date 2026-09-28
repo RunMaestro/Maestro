@@ -113,6 +113,7 @@ export function AppShell({
 	// App's chrome equality ignores state).
 	const titleGroupId = useSessionStore((s) => selectActiveSession(s)?.groupId);
 	const titleSessionName = useSessionStore((s) => selectActiveSession(s)?.name);
+	const sessionsReadOk = useSessionStore((s) => s.sessionsReadOk);
 	const titleTabLabel = useSessionStore((s) => {
 		const sess = selectActiveSession(s);
 		if (!sess) return null;
@@ -205,11 +206,11 @@ export function AppShell({
 			{modals}
 			{standaloneModals}
 
-			{!hasSessions && !sessionsLoaded && !isMobileLandscape ? (
-				<AgentsLoadingView theme={theme} />
+			{!hasSessions && (!sessionsLoaded || !sessionsReadOk) && !isMobileLandscape ? (
+				<AgentsLoadingView theme={theme} readFailed={sessionsLoaded && !sessionsReadOk} />
 			) : null}
 
-			{!hasSessions && sessionsLoaded && !isMobileLandscape ? (
+			{!hasSessions && sessionsLoaded && sessionsReadOk && !isMobileLandscape ? (
 				<EmptyStateView theme={theme} {...emptyStateProps} />
 			) : null}
 

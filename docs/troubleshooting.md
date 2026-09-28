@@ -105,7 +105,7 @@ An expired token is handled differently from the errors above, because it takes 
 
 Two details worth knowing:
 
-- **Agents on an SSH remote log in on that remote.** The embedded terminal is spawned exactly like a terminal tab, so the login runs on the host the agent actually runs on.
+- **Agents on an SSH remote log in on that remote.** The embedded terminal is spawned exactly like a terminal tab, so the login runs on the host the agent actually runs on. Codex switches to `codex login --device-auth` there: its default browser login waits for a callback on the remote's localhost, which your browser cannot reach.
 - **Cue pipelines raise the same dialog.** Cue spawns its agents outside the normal streaming path, so a pipeline that fails on expired credentials used to fail silently in the background. Maestro now classifies the failed run and prompts once per provider. It stays quiet after that until a run for that provider succeeds again, so a busy board cannot bury you in dialogs.
 - **You can sign in before anything breaks.** Command K -> **Re-authenticate Provider** opens the same dialog for the current agent's provider, with nothing failed. Useful when you are switching accounts, or when you know a token is about to lapse and would rather not have it expire mid-run.
 
@@ -119,6 +119,8 @@ If you encounter deep-seated issues that are difficult to diagnose, Maestro can 
 2. Search for "Create Debug Package"
 3. Choose a save location for the `.zip` file
 4. Attach the file to your [GitHub issue](https://github.com/RunMaestro/Maestro/issues)
+
+From the command line, `maestro-cli support-package -o <dir>` writes the same zip into `<dir>` with no save dialog. Flags like `--no-logs` leave a section out. See the [CLI reference](./cli-reference#maestro-cli-support-package).
 
 ### What's Included
 

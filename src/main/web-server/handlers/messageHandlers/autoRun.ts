@@ -366,17 +366,19 @@ export function handleSetAutoRunFolder(
 	);
 
 	if (!sessionId) {
-		ctx.sendError(client, 'Missing sessionId');
+		ctx.sendError(client, 'Missing sessionId', { requestId: message.requestId });
 		return;
 	}
 
 	if (typeof folderPath !== 'string' || folderPath.trim() === '') {
-		ctx.sendError(client, 'Missing or invalid folderPath');
+		ctx.sendError(client, 'Missing or invalid folderPath', { requestId: message.requestId });
 		return;
 	}
 
 	if (!ctx.callbacks.setSessionAutoRunFolder) {
-		ctx.sendError(client, 'Auto Run folder updates not configured');
+		ctx.sendError(client, 'Auto Run folder updates not configured', {
+			requestId: message.requestId,
+		});
 		return;
 	}
 
@@ -402,7 +404,9 @@ export function handleSetAutoRunFolder(
 					requestId: message.requestId,
 				},
 			});
-			ctx.sendError(client, `Failed to set Auto Run folder: ${err.message}`);
+			ctx.sendError(client, `Failed to set Auto Run folder: ${err.message}`, {
+				requestId: message.requestId,
+			});
 		});
 }
 
@@ -454,12 +458,12 @@ export function handleGetAutoRunState(
 	logger.info(`[Web] Received get_auto_run_state message: session=${sessionId}`, LOG_CONTEXT);
 
 	if (!sessionId) {
-		ctx.sendError(client, 'Missing sessionId');
+		ctx.sendError(client, 'Missing sessionId', { requestId: message.requestId });
 		return;
 	}
 
 	if (!ctx.callbacks.getSessionDetail) {
-		ctx.sendError(client, 'Session detail not configured');
+		ctx.sendError(client, 'Session detail not configured', { requestId: message.requestId });
 		return;
 	}
 

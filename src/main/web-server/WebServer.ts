@@ -85,6 +85,7 @@ import type {
 	ReorderTabCallback,
 	ToggleBookmarkCallback,
 	OpenFileTabCallback,
+	OpenFileTabOptions,
 	OpenDocumentGraphCallback,
 	OpenModalCallback,
 	RefreshFileTreeCallback,
@@ -147,6 +148,7 @@ import type {
 	GroupData,
 	GetGroupChatsCallback,
 	StartGroupChatCallback,
+	StartGroupChatOptions,
 	GetGroupChatStateCallback,
 	StopGroupChatCallback,
 	SendGroupChatMessageCallback,
@@ -172,6 +174,7 @@ import type {
 	GetMovementDesignerInspectionCallback,
 	InteractMovementDesignerCallback,
 	NotifyCenterFlashCallback,
+	GetDebugPackageDepsCallback,
 	GetMarketplaceManifestCallback,
 	GetMarketplaceDocumentCallback,
 	GetMarketplaceReadmeCallback,
@@ -835,6 +838,10 @@ export class WebServer {
 		this.callbackRegistry.setNotifyCenterFlashCallback(callback);
 	}
 
+	setGetDebugPackageDepsCallback(callback: GetDebugPackageDepsCallback): void {
+		this.callbackRegistry.setGetDebugPackageDepsCallback(callback);
+	}
+
 	setGetMarketplaceManifestCallback(callback: GetMarketplaceManifestCallback): void {
 		this.callbackRegistry.setGetMarketplaceManifestCallback(callback);
 	}
@@ -1092,11 +1099,8 @@ export class WebServer {
 			reorderTab: async (sessionId: string, fromIndex: number, toIndex: number) =>
 				this.callbackRegistry.reorderTab(sessionId, fromIndex, toIndex),
 			toggleBookmark: async (sessionId: string) => this.callbackRegistry.toggleBookmark(sessionId),
-			openFileTab: async (
-				sessionId: string,
-				filePath: string,
-				options: { background: boolean; switchToAgent: boolean }
-			) => this.callbackRegistry.openFileTab(sessionId, filePath, options),
+			openFileTab: async (sessionId: string, filePath: string, options: OpenFileTabOptions) =>
+				this.callbackRegistry.openFileTab(sessionId, filePath, options),
 			openDocumentGraph: async (params) => this.callbackRegistry.openDocumentGraph(params),
 			openModal: async (params) => this.callbackRegistry.openModal(params),
 			refreshFileTree: async (sessionId: string) =>
@@ -1228,8 +1232,11 @@ export class WebServer {
 			listWorktreesForSession: async (sessionId: string) =>
 				this.callbackRegistry.listWorktreesForSession(sessionId),
 			getGroupChats: async () => this.callbackRegistry.getGroupChats(),
-			startGroupChat: async (topic: string, participantIds: string[]) =>
-				this.callbackRegistry.startGroupChat(topic, participantIds),
+			startGroupChat: async (
+				topic: string,
+				participantIds: string[],
+				options?: StartGroupChatOptions
+			) => this.callbackRegistry.startGroupChat(topic, participantIds, options),
 			getGroupChatState: async (chatId: string) => this.callbackRegistry.getGroupChatState(chatId),
 			stopGroupChat: async (chatId: string) => this.callbackRegistry.stopGroupChat(chatId),
 			sendGroupChatMessage: async (chatId: string, message: string) =>
@@ -1306,6 +1313,7 @@ export class WebServer {
 			interactMovementDesigner: async (id, action) =>
 				this.callbackRegistry.interactMovementDesigner(id, action),
 			notifyCenterFlash: async (params) => this.callbackRegistry.notifyCenterFlash(params),
+			getDebugPackageDeps: () => this.callbackRegistry.getDebugPackageDeps(),
 			getMarketplaceManifest: async (options) =>
 				this.callbackRegistry.getMarketplaceManifest(options),
 			getMarketplaceDocument: async (playbookPath: string, filename: string) =>

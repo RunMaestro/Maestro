@@ -37,7 +37,7 @@ import { createTab, getActiveTab } from '../utils/tabHelpers';
 import { codifyQueuedTurnSettings } from '../utils/providerTabSessions';
 import { prepareMaestroSystemPrompt } from '../utils/spawnHelpers';
 import { generateId } from '../utils/ids';
-import { useSessionStore, selectSessionById } from './sessionStore';
+import { useSessionStore, selectSessionById, takePendingMergedContext } from './sessionStore';
 // Agent Resilience: snapshot dispatched prompts for auto-retry. Import cycle
 // with retryStore is safe - both sides only touch each other inside runtime
 // callbacks, never at module-eval time.
@@ -469,7 +469,11 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 
 			if (item.type === 'message' && (hasText || isImageOnlyMessage)) {
 				// Process a message - spawn agent with the message text
-				const effectivePrompt = isImageOnlyMessage ? DEFAULT_IMAGE_ONLY_PROMPT : item.text!;
+				const effectivePrompt = takePendingMergedContext(
+					sessionId,
+					targetTab.id,
+					isImageOnlyMessage ? DEFAULT_IMAGE_ONLY_PROMPT : item.text!
+				);
 
 				// NOTE: The user-visible log entry for this message is appended by the
 				// caller that dequeued the item (e.g. useAgentListeners onExit,

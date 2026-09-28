@@ -1392,6 +1392,41 @@ describe('agentStore', () => {
 			expect(dispatchCrossAgentMentionsForMessage).not.toHaveBeenCalled();
 		});
 
+		it('prepends and clears the tab pendingMergedContext (session recovery sent while queued)', async () => {
+			const session = createMockSession({
+				id: 'session-1',
+				toolType: 'claude-code',
+				aiTabs: [
+					{
+						id: 'tab-1',
+						agentSessionId: null,
+						name: null,
+						starred: false,
+						logs: [],
+						inputValue: '',
+						stagedImages: [],
+						createdAt: Date.now(),
+						state: 'idle',
+						pendingMergedContext: '# Prior Conversation',
+					},
+				],
+				activeTabId: 'tab-1',
+			});
+			useSessionStore.getState().setSessions([session]);
+
+			const item = createQueuedItem({ tabId: 'tab-1', text: 'Please do and deploy' });
+
+			await useAgentStore.getState().processQueuedItem('session-1', item, defaultDeps);
+
+			expect(mockSpawn).toHaveBeenCalledWith(
+				expect.objectContaining({
+					prompt: '# Prior Conversation\n\n---\n\nPlease do and deploy',
+				})
+			);
+			const tab = useSessionStore.getState().sessions[0].aiTabs[0];
+			expect(tab.pendingMergedContext).toBeUndefined();
+		});
+
 		it('prepends system prompt for new sessions (no agentSessionId)', async () => {
 			const session = createMockSession({
 				id: 'session-1',

@@ -195,7 +195,7 @@ describe('AgentComparisonChart', () => {
 			const { container } = render(<AgentComparisonChart data={mockData} theme={theme} />);
 
 			// Get all agent name labels
-			const agentLabels = container.querySelectorAll('.w-28.truncate');
+			const agentLabels = container.querySelectorAll('[data-testid="bar-chart-label"]');
 			const agentNames = Array.from(agentLabels).map((el) => el.textContent);
 
 			// Bars are sorted by duration: claude-code (2000000) > factory-droid
@@ -407,7 +407,7 @@ describe('AgentComparisonChart', () => {
 			const barRows = container.querySelectorAll('.flex.items-center.gap-3');
 
 			if (barRows.length > 0) {
-				const agentLabel = barRows[0].querySelector('.w-28');
+				const agentLabel = barRows[0].querySelector('[data-testid="bar-chart-label"]');
 
 				// Before hover, should have textDim color
 				expect(agentLabel).toHaveStyle({

@@ -4251,11 +4251,9 @@ describe('SessionList', () => {
 			expect(scrollSpy).not.toHaveBeenCalled();
 		});
 
-		// The list scrolls when something ASKS it to, not when state that a click
-		// and a keystroke both produce happens to change. Opening a group chat by
-		// clicking it must not move the list; the Cmd+[ / Cmd+] cycle requests a
-		// reveal explicitly and does.
-		it('does not scroll when a group chat simply becomes active', async () => {
+		// Every switch reveals the new active row EXCEPT one the user made by
+		// clicking the Left Bar: they are already looking at the row they clicked.
+		it('does not scroll when a group chat is opened from the Left Bar', async () => {
 			const sessions = [
 				createMockSession({ id: 's1', name: 'Agent One', state: 'idle' }),
 				createMockSession({ id: 's2', name: 'Agent Two', state: 'idle' }),
@@ -4268,12 +4266,36 @@ describe('SessionList', () => {
 			render(<SessionList {...props} />);
 			scrollSpy.mockClear();
 
+			fireEvent.pointerDown(screen.getByText('Squad'));
 			act(() => {
 				useGroupChatStore.setState({ activeGroupChatId: 'gc-1' });
 			});
 			await flushFrames();
 
 			expect(scrollSpy).not.toHaveBeenCalled();
+		});
+
+		it('scrolls the group chat into view when it is opened from elsewhere', async () => {
+			const sessions = [
+				createMockSession({ id: 's1', name: 'Agent One', state: 'idle' }),
+				createMockSession({ id: 's2', name: 'Agent Two', state: 'idle' }),
+			];
+			useSessionStore.setState({ sessions, activeSessionId: 's1' });
+			useUIStore.setState({ leftSidebarOpen: true, selectedSidebarIndex: 0 });
+			useSettingsStore.setState({ groupChatsExpanded: true });
+			useGroupChatStore.setState({ groupChats: [makeChat()], activeGroupChatId: null });
+			const props = createDefaultProps({ sortedSessions: sessions, visibleSessions: sessions });
+			render(<SessionList {...props} />);
+			scrollSpy.mockClear();
+
+			// Cmd+O picking the group chat: the last input was a keystroke.
+			fireEvent.keyDown(window, { key: 'Enter' });
+			act(() => {
+				useGroupChatStore.setState({ activeGroupChatId: 'gc-1' });
+			});
+			await flushFrames();
+
+			expect(scrollSpy).toHaveBeenCalled();
 		});
 
 		it('scrolls the group chat into view when a reveal is requested', async () => {
@@ -4312,6 +4334,7 @@ describe('SessionList', () => {
 			// The user is already looking at the row they clicked. Re-aiming the
 			// list they just scrolled by hand is the reported bug - and it used to
 			// scroll TWICE, first to wherever the keyboard cursor had been left.
+			fireEvent.pointerDown(screen.getByText('Agent Two'));
 			fireEvent.click(screen.getByText('Agent Two'));
 			act(() => {
 				useSessionStore.setState({ activeSessionId: 's2' });
@@ -4319,6 +4342,54 @@ describe('SessionList', () => {
 			await flushFrames();
 
 			expect(scrollSpy).not.toHaveBeenCalled();
+		});
+
+		// Opt+Cmd+NUMBER, Cmd+K, Cmd+O, a toast, `maestro-cli focus-agent`: none of
+		// them touch the Left Bar, and the agent they land on may be scrolled away.
+		it('scrolls the new active agent into view on a switch made elsewhere', async () => {
+			const sessions = [
+				createMockSession({ id: 's1', name: 'Agent One', state: 'idle' }),
+				createMockSession({ id: 's2', name: 'Agent Two', state: 'idle' }),
+			];
+			useSessionStore.setState({ sessions, activeSessionId: 's1' });
+			useUIStore.setState({ leftSidebarOpen: true, selectedSidebarIndex: 0 });
+			const props = createDefaultProps({ sortedSessions: sessions, visibleSessions: sessions });
+			render(<SessionList {...props} />);
+			scrollSpy.mockClear();
+
+			act(() => {
+				useSessionStore.setState({ activeSessionId: 's2' });
+				useUIStore.setState({ selectedSidebarIndex: 1 });
+			});
+			await flushFrames();
+
+			expect(scrollSpy).toHaveBeenCalledTimes(1);
+			expect(scrollSpy.mock.contexts[0]).toBe(document.querySelector('[data-nav-key="idx:1"]'));
+		});
+
+		// The click marker must not outlive the click: a shortcut pressed after it
+		// is a switch the user did not make by pointing at the list.
+		it('still reveals a keyboard switch made after a Left Bar click', async () => {
+			const sessions = [
+				createMockSession({ id: 's1', name: 'Agent One', state: 'idle' }),
+				createMockSession({ id: 's2', name: 'Agent Two', state: 'idle' }),
+			];
+			useSessionStore.setState({ sessions, activeSessionId: 's1' });
+			useUIStore.setState({ leftSidebarOpen: true, selectedSidebarIndex: 0 });
+			const props = createDefaultProps({ sortedSessions: sessions, visibleSessions: sessions });
+			render(<SessionList {...props} />);
+			scrollSpy.mockClear();
+
+			// Click the row that is already active: no switch consumes the marker.
+			fireEvent.pointerDown(screen.getByText('Agent One'));
+			fireEvent.keyDown(window, { key: '2', code: 'Digit2', altKey: true, metaKey: true });
+			act(() => {
+				useSessionStore.setState({ activeSessionId: 's2' });
+				useUIStore.setState({ selectedSidebarIndex: 1 });
+			});
+			await flushFrames();
+
+			expect(scrollSpy).toHaveBeenCalledTimes(1);
 		});
 	});
 

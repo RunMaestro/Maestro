@@ -41,6 +41,9 @@ export function createSettingsApi() {
 export function createSessionsApi() {
 	return {
 		getAll: () => ipcRenderer.invoke('sessions:getAll'),
+		getBootstrap: () => ipcRenderer.invoke('sessions:getBootstrap'),
+		getDeferredContent: (sessionId: string, tabId: string | null, includeCommands: boolean) =>
+			ipcRenderer.invoke('sessions:getDeferredContent', sessionId, tabId, includeCommands),
 		setAll: (sessions: StoredSession[]) => ipcRenderer.invoke('sessions:setAll', sessions),
 		/**
 		 * Incremental persistence: merge `updates` into the stored sessions and

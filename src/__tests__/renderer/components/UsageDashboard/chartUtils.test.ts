@@ -12,6 +12,7 @@ import {
 	buildNameMap,
 	computeAxisLabelIndices,
 	PHONE_AXIS_LABELS,
+	barChartLabelWidth,
 	DONUT_CHART,
 	describeDonutArc,
 } from '../../../../renderer/components/UsageDashboard/chartUtils';
@@ -356,5 +357,22 @@ describe('describeDonutArc', () => {
 	it('splits a full circle into two sub-paths so it renders at all', () => {
 		const d = describeDonutArc(100, 100, 88, 62, 0, 360);
 		expect(d.match(/M /g)).toHaveLength(2);
+	});
+});
+
+describe('barChartLabelWidth', () => {
+	it('keeps the 112px floor for short labels', () => {
+		expect(barChartLabelWidth(['Codex'])).toBe(112);
+	});
+
+	it('grows to fit the longest label, swatch included', () => {
+		const bare = barChartLabelWidth(['Claude Code (Worktree)']);
+		const withSwatch = barChartLabelWidth(['Claude Code (Worktree)'], { withSwatch: true });
+		expect(bare).toBeGreaterThan(112);
+		expect(withSwatch).toBe(bare + 18);
+	});
+
+	it('caps one pathological name so the bars keep their room', () => {
+		expect(barChartLabelWidth(['x'.repeat(500)], { withSwatch: true })).toBe(320);
 	});
 });

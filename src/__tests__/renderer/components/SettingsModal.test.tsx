@@ -61,6 +61,15 @@ vi.mock('../../../renderer/utils/shortcutFormatter', () => ({
 }));
 
 // Mock AICommandsPanel
+// Spy on the scroll-and-flash jump while keeping its real behavior. jsdom has no
+// layout, so the real call never "finds" a target - the tests assert on what it
+// was asked to resolve instead.
+vi.mock('../../../renderer/utils/jumpHighlight', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('../../../renderer/utils/jumpHighlight')>();
+	return { ...actual, jumpToElement: vi.fn(actual.jumpToElement) };
+});
+import { jumpToElement } from '../../../renderer/utils/jumpHighlight';
+
 vi.mock('../../../renderer/components/AICommandsPanel', () => ({
 	AICommandsPanel: ({ theme }: { theme: Theme }) => (
 		<div data-testid="ai-commands-panel">AI Commands Panel</div>
@@ -547,6 +556,29 @@ describe('SettingsModal', () => {
 
 			// Theme tab should show theme mode sections
 			expect(screen.getByText('dark Mode')).toBeInTheDocument();
+		});
+
+		it('should jump to the setting named by initialSettingId', async () => {
+			// Deep link from outside Settings (the Force Send explainer) lands on the
+			// exact control, the same way a search result does.
+			render(
+				<SettingsModal
+					{...createDefaultProps({
+						initialTab: 'general',
+						initialSettingId: 'general-forced-parallel',
+					})}
+				/>
+			);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(100);
+			});
+
+			const resolvers = vi.mocked(jumpToElement).mock.calls.map(([resolve]) => resolve());
+			expect(resolvers).toContainEqual(
+				document.querySelector('[data-setting-id="general-forced-parallel"]')
+			);
+			expect(document.querySelector('[data-setting-id="general-forced-parallel"]')).not.toBeNull();
 		});
 
 		it('should switch to shortcuts tab when clicked', async () => {

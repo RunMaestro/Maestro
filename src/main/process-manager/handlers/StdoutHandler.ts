@@ -507,7 +507,7 @@ export class StdoutHandler {
 					// are often generic (no CLI name) and first-match-wins ordering
 					// can shadow the ones that do name a command. A small map keeps
 					// every agent correct without depending on pattern text/order.
-					const login = getAgentLoginCommand(toolType);
+					const login = getAgentLoginCommand(toolType, undefined, { remote: true });
 					// Some agents have no login subcommand and only expose the flow
 					// as a slash command inside their TUI, so name that follow-up
 					// rather than implying the one-liner finishes the job.

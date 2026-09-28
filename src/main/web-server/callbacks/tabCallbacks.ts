@@ -5,7 +5,7 @@ import type { WebServerFactoryDependencies } from '../web-server-factory';
 import { logger } from '../../utils/logger';
 import { isWebContentsAvailable } from '../../utils/safe-send';
 import { createKeyedWriteQueue } from '../../utils/atomic-json-store';
-import { normalizeRenameTabResult, type RenameTabResult } from '../types';
+import { normalizeRenameTabResult, type OpenFileTabOptions, type RenameTabResult } from '../types';
 import { requestFromRenderer } from './remoteRequest';
 import {
 	normalizeSnoozeCommandResult,
@@ -297,11 +297,7 @@ export function registerTabCallbacks(
 	});
 
 	server.setOpenFileTabCallback(
-		async (
-			sessionId: string,
-			filePath: string,
-			options: { background: boolean; switchToAgent: boolean }
-		) => {
+		async (sessionId: string, filePath: string, options: OpenFileTabOptions) => {
 			const targetWindow = resolveSessionWindow(sessionId);
 			if (!targetWindow) {
 				logger.warn('No owning window is available for openFileTab', 'WebServer');
@@ -315,6 +311,7 @@ export function registerTabCallbacks(
 			targetWindow.webContents.send('remote:openFileTab', sessionId, filePath, {
 				background: options.background,
 				switchToAgent: options.switchToAgent,
+				mediaMode: options.mediaMode,
 			});
 			return true;
 		}

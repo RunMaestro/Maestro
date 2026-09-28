@@ -37,10 +37,10 @@ import {
 	useSessionStore,
 	selectActiveSession,
 	updateSessionWith,
-	updateAiTab,
+	takePendingMergedContext,
 } from '../../stores/sessionStore';
 import { logger } from '../../utils/logger';
-import { WEB_BRIDGE_RECONCILE_EVENT } from '../../../shared/webClientConfig';
+import { requestWebBridgeReconcile } from '../../services/webBridgeReconcile';
 
 let cachedImageOnlyPrompt: string = '';
 let inputProcessingPromptsLoaded = false;
@@ -770,7 +770,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 						syncAiInputToSession('', syncTarget);
 						if (inputRef.current) inputRef.current.style.height = 'auto';
 						if (mentionProbe.probeFailed) {
-							window.dispatchEvent(new Event(WEB_BRIDGE_RECONCILE_EVENT));
+							requestWebBridgeReconcile();
 						}
 						return;
 					}
@@ -1038,7 +1038,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 					syncAiInputToSession('', syncTarget); // Sync empty value to session state
 					if (inputRef.current) inputRef.current.style.height = 'auto';
 					if (processState.probeFailed) {
-						window.dispatchEvent(new Event(WEB_BRIDGE_RECONCILE_EVENT));
+						requestWebBridgeReconcile();
 					}
 					return;
 				}
@@ -1448,22 +1448,13 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 						}
 
 						// Check for pending merged context that needs to be injected
-						// This happens when a user merged context from another tab/session
-						const pendingMergedContext = freshActiveTab?.pendingMergedContext;
-						if (pendingMergedContext) {
-							// Prepend the merged context to the user's message
-							effectivePrompt = `${pendingMergedContext}\n\n---\n\n${effectivePrompt}`;
-
-							// Clear the pending merged context from the tab
-							updateAiTab(resolvedSessionId, freshActiveTab.id, (tab) => ({
-								...tab,
-								pendingMergedContext: undefined,
-							}));
-
-							logger.info('[InputProcessing] Injected merged context into message:', undefined, {
-								contextLength: pendingMergedContext.length,
-								promptLength: effectivePrompt.length,
-							});
+						// (merge, Send to Agent, session-not-found recovery)
+						if (freshActiveTab) {
+							effectivePrompt = takePendingMergedContext(
+								resolvedSessionId,
+								freshActiveTab.id,
+								effectivePrompt
+							);
 						}
 
 						// Prepare Maestro system prompt. Always send it; the main-process handler

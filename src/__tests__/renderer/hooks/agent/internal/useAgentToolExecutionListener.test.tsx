@@ -4,6 +4,12 @@ import { useAgentToolExecutionListener } from '../../../../../renderer/hooks/age
 import { useSessionStore } from '../../../../../renderer/stores/sessionStore';
 import { createMockSession } from '../../../../helpers/mockSession';
 import { createMockAITab } from '../../../../helpers/mockTab';
+import { noteRetryProgress } from '../../../../../renderer/stores/retryStore';
+
+vi.mock('../../../../../renderer/stores/retryStore', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../../../renderer/stores/retryStore')>()),
+	noteRetryProgress: vi.fn(),
+}));
 
 let handler: ((sessionId: string, toolEvent: any) => void) | undefined;
 const mockUnsubscribe = vi.fn();
@@ -29,6 +35,22 @@ beforeEach(() => {
 });
 
 describe('useAgentToolExecutionListener', () => {
+	it('reports a tool call to the retry engine', () => {
+		const tab = createMockAITab({ id: 'tab-1', showThinking: 'off' });
+		const session = createMockSession({ id: 'sess-1', aiTabs: [tab] });
+		useSessionStore.setState({ sessions: [session] } as any);
+
+		renderHook(() => useAgentToolExecutionListener());
+		handler!('sess-1-ai-tab-1', {
+			toolName: 'Read',
+			state: { status: 'running' },
+			timestamp: 1,
+			toolCallId: 'c1',
+		});
+
+		expect(noteRetryProgress).toHaveBeenCalledWith('sess-1', 'tab-1');
+	});
+
 	it('appends a tool log when targetTab has thinking enabled', () => {
 		const tab = createMockAITab({ id: 'tab-1', showThinking: 'on' });
 		const session = createMockSession({ id: 'sess-1', aiTabs: [tab] });

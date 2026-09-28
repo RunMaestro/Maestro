@@ -2252,13 +2252,15 @@ describe('web-server/web-server-factory', () => {
 			const server = createWebServer() as any;
 			const callback = server.setStartGroupChatCallback.mock.calls[0][0];
 
-			void callback('topic', ['agent-1', 'agent-2']);
+			const options = { moderatorAgentId: 'claude-code', message: 'kick off' };
+			void callback('topic', ['agent-1', 'agent-2'], options);
 
 			expect(mockWebContents.send).toHaveBeenCalledWith(
 				'remote:startGroupChat',
 				'topic',
 				['agent-1', 'agent-2'],
-				expect.any(String)
+				expect.any(String),
+				options
 			);
 		});
 

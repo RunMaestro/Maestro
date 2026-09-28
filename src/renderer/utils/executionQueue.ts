@@ -395,8 +395,8 @@ export function getForceSendEligibility(
  * sent, and an item whose own tab is already mid-turn is simply waiting its turn
  * - a tab runs one turn at a time, so the wait resolves itself and offering
  * "Force Send" there reads as a control that refuses to work. Only
- * `needs-forced-parallel` stays visible-but-disabled, because its tooltip names
- * a setting the user can go turn on.
+ * `needs-forced-parallel` stays visible (dimmed), because clicking it opens
+ * ForcedParallelRequiredModal, which links straight to the setting that unlocks it.
  *
  * Both Force Send surfaces (the inline QUEUED card and the Execution Queue
  * browser) call this, so they cannot drift on when the button exists.
@@ -425,7 +425,7 @@ export function getForceSendTitle(eligibility: ForceSendEligibility): string {
 		case 'target-tab-busy':
 			return 'This tab is already working - the message runs when the current turn finishes';
 		case 'needs-forced-parallel':
-			return 'Another tab in this agent is working. Turn on Forced Parallel Execution in Settings to send anyway.';
+			return 'Another tab in this agent is working. Forced Parallel Execution is off - click to turn it on in Settings.';
 		case 'no-target-tab':
 			return 'This message has no tab left to run on';
 		default:

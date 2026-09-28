@@ -1112,7 +1112,10 @@ git tag vX.Y.Z
 git push origin vX.Y.Z
 ```
 
-GitHub Actions will build for all platforms and create a release.
+GitHub Actions builds all four platforms, attaches the 16 files to the release's
+curated draft, and publishes it. Releases are normally cut by agents following
+[docs/agent-guides/RELEASE-RUNBOOK.md](docs/agent-guides/RELEASE-RUNBOOK.md) and
+`scripts/release.mjs`, which check the draft and CI before pushing a tag.
 
 ## Documentation
 

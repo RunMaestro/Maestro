@@ -273,13 +273,7 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 	// Register Debug Package handlers
 	registerDebugHandlers({
 		getMainWindow: deps.getMainWindow,
-		getAgentDetector: deps.getAgentDetector,
-		getProcessManager: deps.getProcessManager,
-		getWebServer: deps.getWebServer,
-		settingsStore: deps.settingsStore,
-		sessionsStore: deps.sessionsStore,
-		groupsStore: deps.groupsStore,
-		bootstrapStore: deps.bootstrapStore,
+		...deps.debugPackageDeps,
 	});
 
 	// Register Spec Kit handlers (no dependencies needed)
@@ -538,14 +532,6 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 	// Register feedback handlers (gh auth + feedback submission)
 	registerFeedbackHandlers({
 		getProcessManager: deps.getProcessManager,
-		debugPackageDeps: {
-			getAgentDetector: deps.getAgentDetector,
-			getProcessManager: deps.getProcessManager,
-			getWebServer: deps.getWebServer,
-			settingsStore: deps.settingsStore,
-			sessionsStore: deps.sessionsStore,
-			groupsStore: deps.groupsStore,
-			bootstrapStore: deps.bootstrapStore,
-		},
+		debugPackageDeps: deps.debugPackageDeps,
 	});
 }

@@ -70,6 +70,13 @@ import {
 } from './movement';
 import { handleProfilingStart, handleProfilingStatus, handleProfilingStop } from './profiling';
 import {
+	handleSupportPackageCreate,
+	handleFeedbackCheckAuth,
+	handleFeedbackSearch,
+	handleFeedbackSubmit,
+	handleFeedbackSubscribe,
+} from './feedback';
+import {
 	handleMarketplaceGetManifest,
 	handleMarketplaceGetDocument,
 	handleMarketplaceGetReadme,
@@ -638,6 +645,26 @@ export class WebSocketMessageHandler {
 
 			case 'profiling_status':
 				handleProfilingStatus(this.ctx, client, message);
+				break;
+
+			case 'support_package_create':
+				void handleSupportPackageCreate(this.ctx, client, message);
+				break;
+
+			case 'feedback_check_auth':
+				void handleFeedbackCheckAuth(this.ctx, client, message);
+				break;
+
+			case 'feedback_search':
+				void handleFeedbackSearch(this.ctx, client, message);
+				break;
+
+			case 'feedback_submit':
+				void handleFeedbackSubmit(this.ctx, client, message);
+				break;
+
+			case 'feedback_subscribe':
+				void handleFeedbackSubscribe(this.ctx, client, message);
 				break;
 
 			case 'marketplace_get_manifest':

@@ -1196,7 +1196,9 @@ describe('PlaygroundPanel', () => {
 
 			unmount();
 
-			expect(removeEventListenerSpy).toHaveBeenCalledWith('keydown', expect.any(Function));
+			// useEventListener always passes the capture flag, which is part of
+			// listener identity and must match the one used to add it.
+			expect(removeEventListenerSpy).toHaveBeenCalledWith('keydown', expect.any(Function), false);
 
 			removeEventListenerSpy.mockRestore();
 		});

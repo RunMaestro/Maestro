@@ -7,6 +7,7 @@ import type { AutoRunBroadcastState } from '../../shared/autoRunBroadcast';
 import type { DesktopTabEntry } from '../../shared/desktopTabs';
 import type { SnoozeCommandRequest, SnoozeCommandResult } from '../../shared/snoozeCommands';
 import type { UsageStats } from '../../shared/types';
+import type { RemoteGroupChatMessage, RemoteGroupChatState } from '../../shared/groupChatRemote';
 import type { ToastClickAction } from '../../shared/toastClickAction';
 import type { GroupAppearance, GroupUpdateRequest } from '../../shared/groupAppearance';
 import type { WebSocket } from 'ws';
@@ -21,6 +22,8 @@ import type {
 	ConcertoDesignerActionResult,
 	MovementDesignerInspection,
 } from '../../shared/concerto-html';
+import type { MediaOpenMode } from '../../shared/mediaTypes';
+import type { DebugPackageDependencies } from '../debug-package';
 
 // Re-export Theme for convenience
 export type { Theme } from '../../shared/theme-types';
@@ -260,6 +263,8 @@ export interface WebClientMessage {
 	background?: boolean;
 	/** open_file_tab only: the older, weaker `--no-switch` ask. */
 	switchToAgent?: boolean;
+	/** open_file_tab only: `'queue'` adds audio/video to the player paused. */
+	mediaMode?: MediaOpenMode;
 	[key: string]: unknown;
 }
 
@@ -387,15 +392,22 @@ export type ReorderTabCallback = (
 	toIndex: number
 ) => Promise<boolean>;
 export type ToggleBookmarkCallback = (sessionId: string) => Promise<boolean>;
+/**
+ * Placement for `open_file_tab`. `switchToAgent: false` (`--no-switch`) stays on
+ * the current agent but still activates the new tab inside the target.
+ * `background: true` changes nothing currently rendered anywhere, and wins when
+ * both are given. `mediaMode: 'queue'` (`--queue`) adds audio/video to the
+ * player's queue without starting playback.
+ */
+export interface OpenFileTabOptions {
+	background: boolean;
+	switchToAgent: boolean;
+	mediaMode: MediaOpenMode;
+}
 export type OpenFileTabCallback = (
 	sessionId: string,
 	filePath: string,
-	/**
-	 * `switchToAgent: false` (`--no-switch`) stays on the current agent but still
-	 * activates the new tab inside the target. `background: true` changes nothing
-	 * currently rendered anywhere, and wins when both are given.
-	 */
-	options: { background: boolean; switchToAgent: boolean }
+	options: OpenFileTabOptions
 ) => Promise<boolean>;
 export type RefreshFileTreeCallback = (sessionId: string) => Promise<boolean>;
 /**
@@ -798,6 +810,12 @@ export type InteractMovementDesignerCallback = (
 	action: ConcertoDesignerAction
 ) => Promise<ConcertoDesignerActionResult>;
 export type NotifyCenterFlashCallback = (params: NotifyCenterFlashParams) => Promise<boolean>;
+/**
+ * Everything a support package collects from (agent detector, process manager,
+ * stores). `maestro-cli support-package` and `feedback submit --support-package`
+ * need it to build the same zip the desktop's Create Debug Package does.
+ */
+export type GetDebugPackageDepsCallback = () => DebugPackageDependencies;
 export type ConfigureAutoRunCallback = (
 	sessionId: string,
 	config: {
@@ -1284,37 +1302,41 @@ export type ListWorktreesForSessionCallback = (sessionId: string) => Promise<Lis
 // =============================================================================
 
 /**
- * Group chat message for web interface.
+ * Group chat message and state as the web interface and maestro-cli see them.
+ * The shapes live in shared/groupChatRemote so the renderer that answers these
+ * requests and the bridge that relays them cannot drift.
  */
-export interface GroupChatMessage {
-	id: string;
-	participantId: string;
-	participantName: string;
-	content: string;
-	timestamp: number;
-	role: 'user' | 'assistant';
-}
-
-/**
- * Group chat state for web interface.
- */
-export interface GroupChatState {
-	id: string;
-	topic: string;
-	participants: Array<{ sessionId: string; name: string; toolType: string }>;
-	messages: GroupChatMessage[];
-	isActive: boolean;
-	currentTurn?: string;
-}
+export type GroupChatMessage = RemoteGroupChatMessage;
+export type GroupChatState = RemoteGroupChatState;
 
 // =============================================================================
 // Group Chat Callback Types
 // =============================================================================
 
+/**
+ * Optional knobs for starting a group chat remotely. `topic` names the chat; the
+ * opening `message` (defaulting to the topic) is what the moderator receives,
+ * with every participant @mentioned so the router adds them with their full
+ * agent config (SSH, custom args, env).
+ */
+export interface StartGroupChatOptions {
+	/** Agent type that moderates (e.g. 'claude-code'). Defaults to the first participant's type. */
+	moderatorAgentId?: string;
+	/** Opening message for the moderator. Defaults to the topic. */
+	message?: string;
+}
+
+/** `chatId` on success; `error` names why nothing (or only the empty chat) was created. */
+export interface StartGroupChatResult {
+	chatId?: string;
+	error?: string;
+}
+
 export type StartGroupChatCallback = (
 	topic: string,
-	participantIds: string[]
-) => Promise<{ chatId: string } | null>;
+	participantIds: string[],
+	options?: StartGroupChatOptions
+) => Promise<StartGroupChatResult | null>;
 export type GetGroupChatStateCallback = (chatId: string) => Promise<GroupChatState | null>;
 export type StopGroupChatCallback = (chatId: string) => Promise<boolean>;
 export type SendGroupChatMessageCallback = (chatId: string, message: string) => Promise<boolean>;

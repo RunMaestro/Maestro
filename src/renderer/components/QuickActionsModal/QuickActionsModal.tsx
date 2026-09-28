@@ -19,12 +19,14 @@ import { gitService } from '../../services/git';
 import { useWindowContextOptional } from '../../contexts/WindowContext';
 import { filterSessionsVisibleInSidebar } from '../../utils/sessionVisibility';
 import { revealAgentInSidebar } from '../../services/agentNavigation';
+import { buildSessionJumpSlotMap } from '../../utils/sessionJumpSlots';
 import { useGitAgentActions } from '../../hooks/git/useGitAgentActions';
 import { safeClipboardWrite } from '../../utils/clipboard';
 import { getOpenInLabel } from '../../utils/platformUtils';
 import { visibleAiTabs } from '../../utils/tabHelpers';
 import { useListNavigation } from '../../hooks';
 import { useUIStore } from '../../stores/uiStore';
+import { useSidebarNavStore } from '../../stores/sidebarNavStore';
 import { useSettingsStore, selectIsLeaderboardRegistered } from '../../stores/settingsStore';
 import { useBatchStore, selectActiveBatchSessionIds } from '../../stores/batchStore';
 import { useFileExplorerStore } from '../../stores/fileExplorerStore';
@@ -79,6 +81,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	const {
 		theme,
 		sessions,
+		visibleSessions: visibleSessionsProp,
 		setSessions,
 		activeSessionId,
 		groups,
@@ -486,11 +489,22 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	// with the Usage Dashboard's Jump to Agent action - see agentNavigation.
 	const revealJumpTarget = revealAgentInSidebar;
 
+	// Agents in the Left Bar's first ten slots advertise their Opt+Cmd+# chord.
+	// The Left Bar publishes its draw order to sidebarNavStore, so the modal reads
+	// it there rather than having App re-render on every sidebar change.
+	const storeVisibleSessions = useSidebarNavStore((s) => s.visibleSessions);
+	const visibleSessions = visibleSessionsProp ?? storeVisibleSessions;
+	const jumpSlots = useMemo(
+		() => buildSessionJumpSlotMap(visibleSessions ?? []),
+		[visibleSessions]
+	);
+
 	const sessionActions = buildSessionJumpCommands({
 		sessions,
 		setActiveSessionId,
 		revealJumpTarget,
 		getSessionWindow,
+		jumpSlots,
 	});
 
 	const groupChatActions = buildGroupChatJumpCommands({
@@ -912,6 +926,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			setActiveSessionId,
 			revealJumpTarget,
 			getSessionWindow,
+			jumpSlots,
 		}),
 		...buildGroupChatSwitcherCommands({
 			groupChats,

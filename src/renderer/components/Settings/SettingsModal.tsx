@@ -149,6 +149,8 @@ interface SettingsModalProps {
 		| 'encore'
 		| 'prompts';
 	initialSelectedPromptId?: string;
+	/** A `data-setting-id` to scroll to and flash on open (deep link from outside Settings). */
+	initialSettingId?: string;
 	hasNoAgents?: boolean;
 	onThemeImportError?: (message: string) => void;
 	onThemeImportSuccess?: (message: string) => void;
@@ -162,6 +164,7 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 		themes,
 		initialTab,
 		initialSelectedPromptId,
+		initialSettingId,
 		hasNoAgents,
 		onThemeImportError,
 		onThemeImportSuccess,
@@ -249,6 +252,16 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 		setActiveTab(tab);
 	}, []);
 
+	// Deep link from outside Settings (e.g. a disabled control explaining which
+	// setting unlocks it). Bumping the counter re-runs the jump effect below even
+	// when the target tab is already the active one.
+	const [deepLinkJump, setDeepLinkJump] = useState(0);
+	useEffect(() => {
+		if (!isOpen || !initialSettingId) return;
+		pendingScrollIdRef.current = initialSettingId;
+		setDeepLinkJump((n) => n + 1);
+	}, [isOpen, initialSettingId]);
+
 	useEffect(() => {
 		const targetId = pendingScrollIdRef.current;
 		if (!targetId || searchActive) return;
@@ -268,7 +281,7 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 				onTimeout: clearPending,
 			}
 		);
-	}, [searchActive, activeTab]);
+	}, [searchActive, activeTab, deepLinkJump]);
 
 	const search = useSettingsSearch({
 		isOpen,

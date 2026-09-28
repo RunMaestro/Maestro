@@ -265,6 +265,21 @@ describe('agentMetadata', () => {
 			expect(getAgentLoginCommand('codex', '   ')?.binary).toBe('codex');
 		});
 
+		it('uses the device-code flow for a codex login on an SSH remote', () => {
+			expect(getAgentLoginCommand('codex')?.args).toBe('login');
+			expect(getAgentLoginCommand('codex', undefined, { remote: true })?.args).toBe(
+				'login --device-auth'
+			);
+			expect(getAgentLoginCommand('codex', '/opt/codex', { remote: true })).toMatchObject({
+				binary: '/opt/codex',
+				args: 'login --device-auth',
+			});
+		});
+
+		it('keeps the local args on a remote for agents with no remote variant', () => {
+			expect(getAgentLoginCommand('claude-code', undefined, { remote: true })?.args).toBe('/login');
+		});
+
 		it('flags agents whose login only exists as a slash command in their TUI', () => {
 			expect(getAgentLoginCommand('factory-droid')?.followUp).toBe('/login');
 			expect(getAgentLoginCommand('claude-code')?.followUp).toBeUndefined();

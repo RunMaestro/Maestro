@@ -248,6 +248,8 @@ Transfer your context to a different AI agent:
 3. Review the token estimate and cleaning options
 4. Click **"Send to Session"**
 
+If the target agent is busy, the button reads **"Queue for Agent"**: the context opens in a new tab and runs when the agent's current turn finishes. With **Forced Parallel Execution** on (Settings → General), a **"Force Send to Agent"** button (or the Forced Parallel Send shortcut, `Cmd+Shift+Enter` / `Ctrl+Shift+Enter`) sends it now, in parallel with the running turn.
+
 ![Send to Agent Modal](./screenshots/tab-send.png)
 
 The modal shows:

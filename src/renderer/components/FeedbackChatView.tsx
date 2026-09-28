@@ -48,13 +48,15 @@ import { captureException } from '../utils/sentry';
 import { useFeedbackDraftStore, type FeedbackDraft } from '../stores/feedbackDraftStore';
 import { useAutosizeTextarea } from '../hooks/ui/useAutosizeTextarea';
 import { KEYSTROKE_TEXTAREA_MAX_HEIGHT } from '../utils/textareaSizing';
+import {
+	MAX_FEEDBACK_ATTACHMENTS as MAX_ATTACHMENTS,
+	MAX_FEEDBACK_ATTACHMENT_BYTES as MAX_ATTACHMENT_BYTES,
+	type FeedbackIssueMatch,
+} from '../../shared/feedback';
 
 // ============================================================================
 // Constants
 // ============================================================================
-
-const MAX_ATTACHMENTS = 5;
-const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
 
 interface FeedbackAttachment {
 	id: string;
@@ -122,16 +124,7 @@ interface FeedbackChatViewProps {
 // Component
 // ============================================================================
 
-interface ExistingIssue {
-	number: number;
-	title: string;
-	url: string;
-	state: string;
-	labels: string[];
-	createdAt: string;
-	author: string;
-	commentCount: number;
-}
+type ExistingIssue = FeedbackIssueMatch;
 
 export function FeedbackChatView({
 	theme,

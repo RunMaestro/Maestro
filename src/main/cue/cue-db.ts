@@ -9,7 +9,7 @@
 import Database from 'better-sqlite3';
 import * as path from 'path';
 import * as fs from 'fs';
-import { app } from 'electron';
+import { resolveUserDataDir } from '../../shared/userDataDir';
 import { captureException } from '../utils/sentry';
 
 const LOG_CONTEXT = '[CueDB]';
@@ -275,7 +275,7 @@ export function initCueDb(
 
 	if (onLog) logFn = onLog;
 
-	const dbPath = dbPathOverride ?? path.join(app.getPath('userData'), 'cue.db');
+	const dbPath = dbPathOverride ?? path.join(resolveUserDataDir(), 'cue.db');
 	const dir = path.dirname(dbPath);
 	if (!fs.existsSync(dir)) {
 		fs.mkdirSync(dir, { recursive: true });

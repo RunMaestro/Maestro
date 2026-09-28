@@ -17,7 +17,7 @@
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 import type { Session, SessionState, ToolType, LogEntry } from '../../types';
 import { isLimitError } from '../../../shared/types';
-import { useSessionStore } from '../../stores/sessionStore';
+import { updateSessionWith, useSessionStore } from '../../stores/sessionStore';
 import { useGroupChatStore } from '../../stores/groupChatStore';
 import { gitService } from '../../services/git';
 import { generateId } from '../../utils/ids';
@@ -26,7 +26,11 @@ import { applyLiveAiTurns } from '../../utils/liveTurnReattach';
 import { fetchLiveAiTurns } from '../../services/process';
 import { useOwnedSessionGate } from '../agent/internal/useOwnedSessionGate';
 import { getRepairedUnifiedTabOrder } from '../../utils/tabHelpers';
-import { collectLeafTabRefs, normalizeTabGroups } from '../../utils/panelLayout';
+import {
+	collectLeafTabRefs,
+	normalizeTabGroups,
+	resolveActiveTabRef,
+} from '../../utils/panelLayout';
 import { migrateLegacySnoozedTabs } from '../../utils/snoozeHelpers';
 import { isMediaStreamUrl } from '../../../shared/mediaTypes';
 import { PLAYBOOKS_DIR } from '../../../shared/maestro-paths';
@@ -35,7 +39,13 @@ import { readPersistedActiveSessionId } from '../../utils/activeSessionPersisten
 import { useSessionLifecycleSync } from './useSessionLifecycleSync';
 import { useEventListener } from '../utils/useEventListener';
 import { WEB_BRIDGE_RECONCILE_EVENT } from '../../../shared/webClientConfig';
+import { requestWebBridgeReconcile } from '../../services/webBridgeReconcile';
 import { releaseConnectionHeldQueueItems } from '../../utils/executionQueue';
+import { isWebDesktop } from '../../utils/runtimeContext';
+import {
+	MAX_PERSISTED_AI_COMMAND_HISTORY,
+	mergeDeferredItems,
+} from '../../../shared/deferredSessionContent';
 
 const CONNECTION_RECONCILE_RETRY_MS = 1000;
 
@@ -135,6 +145,9 @@ export function useSessionRestoration(): SessionRestorationReturn {
 	// reconcile work there at all).
 	const ownedGate = useOwnedSessionGate();
 	const reconcileRetryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+	const retrySessionLoad = useRef<() => void>(() => {});
+	const deferredLoadsInFlight = useRef(new Set<string>());
+	const deferredLoadsFailed = useRef(new Set<string>());
 
 	useEffect(
 		() => () => {
@@ -203,7 +216,7 @@ export function useSessionRestoration(): SessionRestorationReturn {
 			if (hasConnectionHold && !reconcileRetryTimer.current) {
 				reconcileRetryTimer.current = setTimeout(() => {
 					reconcileRetryTimer.current = null;
-					window.dispatchEvent(new Event(WEB_BRIDGE_RECONCILE_EVENT));
+					requestWebBridgeReconcile();
 				}, CONNECTION_RECONCILE_RETRY_MS);
 			}
 			return;
@@ -226,7 +239,117 @@ export function useSessionRestoration(): SessionRestorationReturn {
 		});
 	}, [ownedGate]);
 
+	const loadActiveDeferredContent = useCallback(() => {
+		if (!isWebDesktop() || !useSessionStore.getState().sessionsReadOk) return;
+		const { sessions, activeSessionId } = useSessionStore.getState();
+		const session = sessions.find((item) => item.id === activeSessionId);
+		const deferred = session?.deferredContent;
+		if (!session || !deferred) return;
+		const activeRef = resolveActiveTabRef(session);
+		const includeCommands = deferred.commands === true;
+		const group = session.tabGroups?.find((item) => item.id === session.activeGroupId);
+		const visibleAiTabIds = [
+			...(activeRef?.type === 'ai' ? [activeRef.id] : []),
+			...(group
+				? collectLeafTabRefs(group.layout)
+						.filter((ref) => ref.type === 'ai')
+						.map((ref) => ref.id)
+				: []),
+		];
+		const tabId =
+			visibleAiTabIds.find(
+				(id) =>
+					deferred.tabIds.includes(id) &&
+					!deferredLoadsFailed.current.has(`${session.id}:${id}:${includeCommands}`)
+			) ?? null;
+		if (!tabId && visibleAiTabIds.some((id) => deferred.tabIds.includes(id))) return;
+		if (!tabId && !includeCommands) return;
+		const key = `${session.id}:${tabId ?? ''}:${includeCommands}`;
+		if (deferredLoadsFailed.current.has(key)) return;
+		if (deferredLoadsInFlight.current.has(key)) return;
+		deferredLoadsInFlight.current.add(key);
+		void window.maestro.sessions
+			.getDeferredContent(session.id, tabId, includeCommands)
+			.then((content) => {
+				updateSessionWith(session.id, (current) => {
+					const pending = current.deferredContent;
+					if (!pending) return current;
+					let tabIds = pending.tabIds;
+					let aiTabs = current.aiTabs;
+					if (tabId && pending.tabIds.includes(tabId) && content.logs) {
+						const tab = current.aiTabs.find((item) => item.id === tabId);
+						if (tab) {
+							aiTabs = current.aiTabs.map((item) =>
+								item.id === tabId
+									? {
+											...item,
+											logs: mergeDeferredItems(content.logs, item.logs, (log) => log.id),
+										}
+									: item
+							);
+							tabIds = pending.tabIds.filter((id) => id !== tabId);
+						}
+					}
+					const commandsLoaded =
+						includeCommands &&
+						pending.commands === true &&
+						content.shellLogs &&
+						content.agentCommands &&
+						content.aiCommandHistory;
+					return {
+						...current,
+						aiTabs,
+						...(commandsLoaded
+							? {
+									shellLogs: mergeDeferredItems(
+										content.shellLogs,
+										current.shellLogs,
+										(log) => log.id
+									),
+									agentCommands: mergeDeferredItems(
+										content.agentCommands,
+										current.agentCommands,
+										(command) => command.command
+									),
+									aiCommandHistory: mergeDeferredItems(
+										content.aiCommandHistory,
+										current.aiCommandHistory,
+										(command) => command,
+										MAX_PERSISTED_AI_COMMAND_HISTORY
+									),
+								}
+							: {}),
+						deferredContent:
+							tabIds.length || (pending.commands && !commandsLoaded)
+								? {
+										tabIds,
+										...(pending.commands && !commandsLoaded ? { commands: true as const } : {}),
+									}
+								: undefined,
+					};
+				});
+			})
+			.catch((error) => {
+				deferredLoadsFailed.current.add(key);
+				logger.warn(`Failed to load conversation for agent ${session.id}:`, undefined, error);
+			})
+			.finally(() => {
+				deferredLoadsInFlight.current.delete(key);
+				if (deferredLoadsFailed.current.has(key)) loadActiveDeferredContent();
+			});
+	}, []);
+
+	useEffect(() => {
+		if (!isWebDesktop()) return;
+		const unsubscribe = useSessionStore.subscribe(loadActiveDeferredContent);
+		loadActiveDeferredContent();
+		return unsubscribe;
+	}, [loadActiveDeferredContent]);
+
 	useEventListener(WEB_BRIDGE_RECONCILE_EVENT, () => {
+		deferredLoadsFailed.current.clear();
+		if (!useSessionStore.getState().sessionsReadOk) retrySessionLoad.current();
+		loadActiveDeferredContent();
 		void reattachLiveAiTurns();
 	});
 
@@ -686,6 +809,7 @@ export function useSessionRestoration(): SessionRestorationReturn {
 	// --- Session & group loading effect ---
 	// Use a ref to prevent duplicate execution in React Strict Mode
 	const sessionLoadStarted = useRef(false);
+	const sessionLoadInFlight = useRef(false);
 	useEffect(() => {
 		if (sessionLoadStarted.current) {
 			return;
@@ -693,14 +817,14 @@ export function useSessionRestoration(): SessionRestorationReturn {
 		sessionLoadStarted.current = true;
 
 		const loadSessionsAndGroups = async () => {
+			if (sessionLoadInFlight.current) return;
+			sessionLoadInFlight.current = true;
+			setSessionsLoaded(false);
 			try {
 				window.__updateSplash?.(50, 'Seating the musicians...');
-				const savedSessions = await window.maestro.sessions.getAll();
-				// The read came back. An empty list is a real answer here (a brand
-				// new install), so persistence must stay enabled for it; only a read
-				// that never returned keeps the flush switched off. Same rule, same
-				// reason, as `groupsLoaded` below.
-				setSessionsReadOk(true);
+				const savedSessions = isWebDesktop()
+					? await window.maestro.sessions.getBootstrap()
+					: await window.maestro.sessions.getAll();
 
 				// Handle sessions
 				if (savedSessions && savedSessions.length > 0) {
@@ -711,7 +835,7 @@ export function useSessionRestoration(): SessionRestorationReturn {
 					// Read through the helper: a web-desktop client remembers its OWN
 					// focused agent, so a browser refresh returns to what the user was
 					// working in rather than to whatever the desktop has focused.
-					const savedActiveSessionId = await readPersistedActiveSessionId();
+					const savedActiveSessionId = await readPersistedActiveSessionId().catch(() => '');
 					if (savedActiveSessionId && restoredSessions.find((s) => s.id === savedActiveSessionId)) {
 						// Saved ID is valid - hydrate locally without writing back to disk
 						hydrateActiveSessionId(savedActiveSessionId);
@@ -720,6 +844,9 @@ export function useSessionRestoration(): SessionRestorationReturn {
 						// doesn't retry the invalid ID on next launch
 						setActiveSessionId(restoredSessions[0].id);
 					}
+					// A partial browser bootstrap is safe only because the main write
+					// boundary preserves every field marked deferred.
+					setSessionsReadOk(true);
 
 					// Put back the busy indicators for agents main is still running.
 					// Deliberately not awaited: it must not hold the splash, and a page
@@ -747,6 +874,7 @@ export function useSessionRestoration(): SessionRestorationReturn {
 					}
 				} else {
 					setSessions([]);
+					setSessionsReadOk(true);
 					// No sessions means no file tree to load - unblock splash immediately
 					useSessionStore.getState().setInitialFileTreeReady(true);
 				}
@@ -801,9 +929,8 @@ export function useSessionRestoration(): SessionRestorationReturn {
 					undefined,
 					e
 				);
-				// The in-memory tree is empty but `sessionsReadOk` stays false, so
-				// the flush will not write this emptiness over the file on disk.
-				setSessions([]);
+				// Keep any tree already in memory. A failed read is not evidence that
+				// the store is empty, and sessionsReadOk stays false until a retry works.
 				// Deliberately NOT setGroups([]) here. The group registry is read in
 				// its own try above; wiping it on an unrelated session failure is the
 				// same "unverified empty becomes truth" bug one level up.
@@ -815,9 +942,11 @@ export function useSessionRestoration(): SessionRestorationReturn {
 
 				// Mark sessions as loaded for splash screen coordination
 				setSessionsLoaded(true);
+				sessionLoadInFlight.current = false;
 			}
 		};
-		loadSessionsAndGroups();
+		retrySessionLoad.current = () => void loadSessionsAndGroups();
+		void loadSessionsAndGroups();
 	}, []);
 
 	// --- Peer client sync ---

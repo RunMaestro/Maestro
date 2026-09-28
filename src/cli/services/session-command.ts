@@ -27,6 +27,20 @@ export async function sendSimpleCommand(
 	return withMaestroClient((client) => client.sendCommand<SimpleResult>(payload, responseType));
 }
 
+/**
+ * Older handlers answer a failure with a generic `{ type: 'error', message }`
+ * frame instead of their typed `*_result`. When that frame carries the
+ * requestId the client resolves with it, so a caller must check for it rather
+ * than read the missing typed fields as an empty success.
+ */
+export function errorFrameMessage(reply: unknown): string | null {
+	if (reply && typeof reply === 'object' && (reply as { type?: unknown }).type === 'error') {
+		const message = (reply as { message?: unknown }).message;
+		return typeof message === 'string' && message ? message : 'Command failed';
+	}
+	return null;
+}
+
 /** Print an error (JSON-aware) and exit non-zero. Never returns. */
 export function failCommand(message: string, json?: boolean): never {
 	if (json) {
@@ -51,7 +65,7 @@ export function reportResult(
 		}
 		return;
 	}
-	failCommand(result.error || 'Command failed', options.json);
+	failCommand(result.error || errorFrameMessage(result) || 'Command failed', options.json);
 }
 
 /** Resolve an agent ID (partial match) or fail loudly. Never returns on error. */
