@@ -1057,7 +1057,7 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 													{meta.label}
 												</span>
 												<span
-													className="text-[10px] font-bold rounded-full px-1.5 py-0.5"
+													className="text-2xs font-bold rounded-full px-1.5 py-0.5"
 													style={{
 														backgroundColor: theme.colors.bgMain,
 														color: theme.colors.textDim,
@@ -1094,7 +1094,7 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 												))}
 												{cards.length === 0 && (
 													<div
-														className="text-[11px] text-center py-4"
+														className="text-xs-plus text-center py-4"
 														style={{ color: theme.colors.textDim }}
 													>
 														Drop here
@@ -1113,7 +1113,7 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 				    invisible to keyboard users otherwise. */}
 				{board && !draft && (
 					<div
-						className="shrink-0 px-4 py-2 border-t text-[11px]"
+						className="shrink-0 px-4 py-2 border-t text-xs-plus"
 						style={{ borderColor: theme.colors.border, color: theme.colors.textDim }}
 					>
 						Arrow keys move between cards · Enter opens the card · M opens its &quot;Move to&quot;
@@ -1442,7 +1442,7 @@ function BoardCardTile({
 			<div className="mt-1 flex items-center gap-1.5 flex-wrap">
 				{priorityMeta.badge && (
 					<span
-						className="text-[10px] font-semibold rounded px-1.5 py-0.5 uppercase tracking-wide"
+						className="text-2xs font-semibold rounded px-1.5 py-0.5 uppercase tracking-wide"
 						style={{
 							backgroundColor: theme.colors[priorityMeta.colorKey] + '22',
 							color: theme.colors[priorityMeta.colorKey],
@@ -1453,7 +1453,7 @@ function BoardCardTile({
 					</span>
 				)}
 				<span
-					className="text-[10px] rounded px-1.5 py-0.5 truncate max-w-full"
+					className="text-2xs rounded px-1.5 py-0.5 truncate max-w-full"
 					style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
 					title={assigneeText}
 				>
@@ -1461,7 +1461,7 @@ function BoardCardTile({
 				</span>
 				{isHeld && (
 					<span
-						className="text-[10px] rounded px-1.5 py-0.5"
+						className="text-2xs rounded px-1.5 py-0.5"
 						style={{
 							backgroundColor: theme.colors.warning + '22',
 							color: theme.colors.warning,
@@ -1473,7 +1473,7 @@ function BoardCardTile({
 				)}
 				{isRunning && latestRun && (
 					<span
-						className="text-[10px] rounded px-1.5 py-0.5"
+						className="text-2xs rounded px-1.5 py-0.5"
 						style={{
 							backgroundColor: theme.colors.warning + '22',
 							color: theme.colors.warning,
@@ -1493,7 +1493,7 @@ function BoardCardTile({
 								e.stopPropagation();
 								onJumpToAgent(workerAgentId);
 							}}
-							className="text-[10px] rounded px-1.5 py-0.5 truncate max-w-full hover:bg-white/10 transition-colors"
+							className="text-2xs rounded px-1.5 py-0.5 truncate max-w-full hover:bg-white/10 transition-colors"
 							style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
 							title={
 								isRunning
@@ -1505,7 +1505,7 @@ function BoardCardTile({
 						</button>
 					) : (
 						<span
-							className="text-[10px] rounded px-1.5 py-0.5 truncate max-w-full"
+							className="text-2xs rounded px-1.5 py-0.5 truncate max-w-full"
 							style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
 							title="This worker agent has been deleted"
 						>
@@ -1514,7 +1514,7 @@ function BoardCardTile({
 					))}
 				{card.parents.length > 0 && (
 					<span
-						className="text-[10px] rounded px-1.5 py-0.5"
+						className="text-2xs rounded px-1.5 py-0.5"
 						style={{
 							backgroundColor:
 								blockers.length > 0 ? theme.colors.warning + '22' : theme.colors.bgActivity,
@@ -1533,7 +1533,7 @@ function BoardCardTile({
 				)}
 				{runBranch && (
 					<span
-						className="text-[10px] rounded px-1.5 py-0.5 truncate max-w-full select-text"
+						className="text-2xs rounded px-1.5 py-0.5 truncate max-w-full select-text"
 						style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
 						title={`Last run used the worktree at ${runWorktreePath ?? 'an isolated checkout'} on branch ${runBranch}`}
 					>
@@ -1547,7 +1547,7 @@ function BoardCardTile({
 							e.stopPropagation();
 							openUrl(runPrUrl, { ctrlKey: e.ctrlKey || e.metaKey });
 						}}
-						className="text-[10px] rounded px-1.5 py-0.5 truncate max-w-full hover:bg-white/10 transition-colors"
+						className="text-2xs rounded px-1.5 py-0.5 truncate max-w-full hover:bg-white/10 transition-colors"
 						style={{ backgroundColor: theme.colors.success + '22', color: theme.colors.success }}
 						title={`Pull request opened for this card: ${runPrUrl}`}
 					>
@@ -1556,7 +1556,7 @@ function BoardCardTile({
 				)}
 				{!runPrUrl && runPrError && (
 					<span
-						className="text-[10px] rounded px-1.5 py-0.5 truncate max-w-full select-text"
+						className="text-2xs rounded px-1.5 py-0.5 truncate max-w-full select-text"
 						style={{ backgroundColor: theme.colors.error + '22', color: theme.colors.error }}
 						title={`PR on done failed: ${runPrError}. Move the card out of Done and back to retry.`}
 					>
@@ -1569,7 +1569,7 @@ function BoardCardTile({
 			    in the "Full run details" disclosure below. */}
 			{!isRunning && latestSummary && (
 				<div
-					className="mt-1.5 text-[10px] leading-snug line-clamp-2 select-text"
+					className="mt-1.5 text-2xs leading-snug line-clamp-2 select-text"
 					style={{ color: theme.colors.textDim }}
 				>
 					{latestSummary}
@@ -1583,14 +1583,14 @@ function BoardCardTile({
 					onClick={(e) => e.stopPropagation()}
 				>
 					<summary
-						className="text-[10px] cursor-pointer list-none opacity-70 hover:opacity-100"
+						className="text-2xs cursor-pointer list-none opacity-70 hover:opacity-100"
 						style={{ color: theme.colors.textDim }}
 					>
 						{isRunning ? 'Run details' : 'Full run details'}
 					</summary>
 					{/* Board runs are headless `executeCuePrompt` spawns with no visible
 					    tab, so this is the live view: status, elapsed, worker, branch. */}
-					<div className="mt-1 text-[10px] leading-snug" style={{ color: theme.colors.textDim }}>
+					<div className="mt-1 text-2xs leading-snug" style={{ color: theme.colors.textDim }}>
 						{isRunning ? 'Running' : (latestRun.outcome ?? 'finished')} · attempt{' '}
 						{latestRun.attempt}
 						{isRunning && (
@@ -1603,7 +1603,7 @@ function BoardCardTile({
 					</div>
 					{latestSummary && (
 						<div
-							className="mt-1 text-[10px] leading-snug whitespace-pre-wrap"
+							className="mt-1 text-2xs leading-snug whitespace-pre-wrap"
 							style={{ color: theme.colors.textDim }}
 						>
 							{latestSummary}
@@ -1611,7 +1611,7 @@ function BoardCardTile({
 					)}
 					{runBranch && (
 						<div
-							className="mt-1 text-[10px] leading-snug break-all"
+							className="mt-1 text-2xs leading-snug break-all"
 							style={{ color: theme.colors.textDim }}
 						>
 							Worktree branch <span style={{ color: theme.colors.textMain }}>{runBranch}</span>
@@ -1981,7 +1981,7 @@ function CardEditor({
 					<span className="text-xs" style={{ color: theme.colors.textMain }}>
 						Run in isolated worktree
 					</span>
-					<span className="text-[11px]" style={{ color: theme.colors.textDim }}>
+					<span className="text-xs-plus" style={{ color: theme.colors.textDim }}>
 						(branch is created on first run and never auto-merged)
 					</span>
 				</label>
@@ -2032,7 +2032,7 @@ function CardEditor({
 							<span className="text-xs" style={{ color: theme.colors.textMain }}>
 								Open PR when done
 							</span>
-							<span className="text-[11px]" style={{ color: theme.colors.textDim }}>
+							<span className="text-xs-plus" style={{ color: theme.colors.textDim }}>
 								(the branch is still not merged - a pull request is opened for review)
 							</span>
 						</label>

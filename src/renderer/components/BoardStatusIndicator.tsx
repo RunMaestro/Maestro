@@ -98,7 +98,7 @@ export const BoardStatusIndicator = memo(function BoardStatusIndicator({
 			onClick={() => getModalActions().setBoardModalOpen(true)}
 			title={`Board: ${label}. Click to open.`}
 			aria-label={`Board: ${label}`}
-			className="shrink-0 flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] transition-colors hover:bg-white/10"
+			className="shrink-0 flex items-center gap-1 px-1.5 py-0.5 rounded text-xs-plus transition-colors hover:bg-white/10"
 			style={{ color: theme.colors.textDim }}
 		>
 			<LayoutGrid className="w-3 h-3" />
