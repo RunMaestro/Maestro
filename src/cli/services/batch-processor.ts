@@ -10,7 +10,7 @@ import {
 	uncheckAllTasks,
 	writeDoc,
 } from './agent-spawner';
-import { captureCliRun } from './agent-run-capture';
+import { captureCliRun, settlementFromAgentResult } from './agent-run-capture';
 import { addHistoryEntry, readGroups, readHistory } from './storage';
 import {
 	aggregateAutoRunHistoryTotals,
@@ -667,7 +667,7 @@ export async function* runPlaybook(
 								maestroPPath: session.maestroPPath,
 								signal,
 							}),
-						(r) => (r.success ? 0 : 1)
+						settlementFromAgentResult
 					);
 
 					const elapsedMs = Date.now() - taskStartTime;
@@ -760,7 +760,7 @@ export async function* runPlaybook(
 										signal,
 									}
 								),
-							(r) => (r.success ? 0 : 1)
+							settlementFromAgentResult
 						);
 
 						if (synopsisResult.success && synopsisResult.response) {
