@@ -99,6 +99,7 @@ import { registerCliActivity, unregisterCliActivity } from '../../../shared/cli-
 import { prepareMaestroSystemPromptCli } from '../../../cli/services/system-prompt';
 import { getCliTaskSelectionBlock } from '../../../cli/services/prompt-loader';
 import { logger } from '../../../main/utils/logger';
+import { aggregateAutoRunHistoryTotals } from '../../../shared/autoRunHistoryReconciliation';
 import type { HistoryEntry } from '../../../shared/types';
 
 describe('batch-processor', () => {
@@ -1169,12 +1170,13 @@ describe('batch-processor', () => {
 			let callCount = 0;
 			vi.mocked(readDocAndCountTasks).mockImplementation(() => {
 				callCount++;
-				if (callCount <= 2) return { content: '- [ ] Task', taskCount: 1 };
+				if (callCount <= 3) return { content: '- [ ] Task', taskCount: 1 };
 				return { content: '', taskCount: 0 };
 			});
 			vi.mocked(spawnAgent).mockResolvedValue({
 				success: true,
 				response: 'Done',
+				documentContent: '- [x] Task',
 				usageStats: {
 					inputTokens: 100,
 					outputTokens: 50,
@@ -1423,6 +1425,152 @@ describe('batch-processor', () => {
 			expect(complete?.success).toBe(false);
 			// The task itself still finished, so it is reported as done, not lost.
 			expect(events.find((e) => e.type === 'task_complete')?.success).toBe(true);
+		});
+
+		it('a mid-task stop writes a summary that closes the run', async () => {
+			let calls = 0;
+			vi.mocked(readDocAndCountTasks).mockImplementation(() => {
+				calls++;
+				return calls <= 2 ? { content: '- [ ] Task', taskCount: 1 } : { content: '', taskCount: 0 };
+			});
+			vi.mocked(spawnAgent).mockResolvedValue({
+				success: false,
+				outcome: 'interrupted',
+				response: 'Stopped',
+			});
+			vi.mocked(readHistory).mockReturnValue([]);
+
+			const session = mockSession();
+			const events = await collectEvents(
+				runPlaybook(session, mockPlaybook(), '/playbooks', { skipSynopsis: true })
+			);
+
+			expect(events.find((e) => e.type === 'complete')?.stopped).toBe(true);
+			const historyCalls = vi.mocked(addHistoryEntry).mock.calls.map((c) => c[0]);
+			const stopSummary = historyCalls.find((entry) => /^Auto Run stopped:/.test(entry.summary));
+			expect(stopSummary).toBeDefined();
+
+			const nextRunTotals = aggregateAutoRunHistoryTotals([
+				...historyCalls,
+				{
+					type: 'AUTO',
+					timestamp: Date.now() + 1000,
+					summary: 'subsequent task',
+					completedTaskCount: 2,
+					elapsedTimeMs: 150,
+				},
+			]);
+			expect(nextRunTotals?.totalCompletedTasks).toBe(2);
+		});
+
+		it('a stop that lands after the last task also closes the run', async () => {
+			const controller = new AbortController();
+			let calls = 0;
+			vi.mocked(readDocAndCountTasks).mockImplementation(() => {
+				calls++;
+				return calls <= 2 ? { content: '- [ ] Task', taskCount: 1 } : { content: '', taskCount: 0 };
+			});
+			vi.mocked(spawnAgent).mockResolvedValue({
+				success: true,
+				outcome: 'completed',
+				response: 'Done',
+			});
+			vi.mocked(readHistory).mockImplementation(() => {
+				controller.abort();
+				return [];
+			});
+
+			const session = mockSession();
+			const events = await collectEvents(
+				runPlaybook(session, mockPlaybook(), '/playbooks', {
+					signal: controller.signal,
+					skipSynopsis: true,
+				})
+			);
+
+			expect(events.find((e) => e.type === 'complete')?.stopped).toBe(true);
+			const historyCalls = vi.mocked(addHistoryEntry).mock.calls.map((c) => c[0]);
+			const stopSummary = historyCalls.find((entry) => /^Auto Run stopped:/.test(entry.summary));
+			expect(stopSummary).toBeDefined();
+		});
+
+		it('a successful run after two stopped runs reports only its own tasks', async () => {
+			const persistedHistory: HistoryEntry[] = [];
+			vi.mocked(addHistoryEntry).mockImplementation((entry) => {
+				persistedHistory.push(entry);
+			});
+			vi.mocked(readHistory).mockImplementation(() => [...persistedHistory]);
+
+			try {
+				// Stopped run 1
+				let countCalls1 = 0;
+				vi.mocked(readDocAndCountTasks).mockImplementation(() => {
+					countCalls1++;
+					return countCalls1 <= 2
+						? { content: '- [ ] Task 1', taskCount: 1 }
+						: { content: '', taskCount: 0 };
+				});
+				vi.mocked(spawnAgent).mockResolvedValueOnce({
+					success: false,
+					outcome: 'interrupted',
+					response: 'Stopped 1',
+				});
+				const session = mockSession();
+				await collectEvents(
+					runPlaybook(session, mockPlaybook(), '/playbooks', { skipSynopsis: true })
+				);
+
+				// Stopped run 2
+				let countCalls2 = 0;
+				vi.mocked(readDocAndCountTasks).mockImplementation(() => {
+					countCalls2++;
+					return countCalls2 <= 2
+						? { content: '- [ ] Task 2', taskCount: 1 }
+						: { content: '', taskCount: 0 };
+				});
+				vi.mocked(spawnAgent).mockResolvedValueOnce({
+					success: false,
+					outcome: 'interrupted',
+					response: 'Stopped 2',
+				});
+				await collectEvents(
+					runPlaybook(session, mockPlaybook(), '/playbooks', { skipSynopsis: true })
+				);
+
+				// Clean 2-task run
+				let countCalls3 = 0;
+				vi.mocked(readDocAndCountTasks).mockImplementation(() => {
+					countCalls3++;
+					if (countCalls3 <= 3) return { content: '- [ ] Task 1\n- [ ] Task 2', taskCount: 2 };
+					if (countCalls3 <= 5) return { content: '- [x] Task 1\n- [ ] Task 2', taskCount: 1 };
+					return { content: '- [x] Task 1\n- [x] Task 2', taskCount: 0 };
+				});
+				vi.mocked(spawnAgent)
+					.mockResolvedValueOnce({
+						success: true,
+						outcome: 'completed',
+						response: 'Task 1 done',
+					})
+					.mockResolvedValueOnce({
+						success: true,
+						outcome: 'completed',
+						response: 'Task 2 done',
+					});
+
+				const finalEvents = await collectEvents(
+					runPlaybook(session, mockPlaybook(), '/playbooks', { skipSynopsis: true })
+				);
+
+				const finalComplete = finalEvents.find((e) => e.type === 'complete');
+				expect(finalComplete?.success).toBe(true);
+				expect(finalComplete?.totalTasksCompleted).toBe(2);
+			} finally {
+				vi.mocked(spawnAgent).mockReset();
+				vi.mocked(readDocAndCountTasks).mockReset();
+				vi.mocked(addHistoryEntry).mockReset();
+				vi.mocked(readHistory).mockReset();
+				vi.mocked(readHistory).mockReturnValue([]);
+			}
 		});
 
 		it('does not undercount the current run when history lags behind', async () => {
