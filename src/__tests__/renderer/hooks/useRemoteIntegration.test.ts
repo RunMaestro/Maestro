@@ -1750,6 +1750,50 @@ describe('useRemoteIntegration', () => {
 	});
 
 	describe('remote close tab', () => {
+		it('keeps the last-tab replacement stable across duplicate closes and browser inventory sync', () => {
+			const session = createMockSession({
+				id: 'session-1',
+				aiTabs: [createMockTab({ id: 'tab-1' })],
+				activeTabId: 'tab-1',
+			});
+			const deps = createDeps({ sessions: [session] });
+			renderHook(() => useRemoteIntegration(deps));
+
+			act(() => {
+				onRemoteCloseTabHandler?.('session-1', 'tab-1');
+				onRemoteCloseTabHandler?.('session-1', 'tab-1');
+			});
+			const desktop = useSessionStore.getState().sessions[0];
+			expect(desktop.aiTabs).toHaveLength(1);
+			expect(desktop.aiTabs[0].id).not.toBe('tab-1');
+			expect(desktop.unifiedClosedTabHistory).toEqual([
+				expect.objectContaining({ type: 'ai', tab: expect.objectContaining({ id: 'tab-1' }) }),
+			]);
+
+			// Apply the authoritative inventory to a browser still holding the old
+			// tab. Its next save and bootstrap must contain the desktop's one id.
+			act(() => {
+				useSessionStore.setState({ sessions: [session] });
+				onRemoteSelectTabHandler?.('session-1', '', desktop.aiTabs);
+			});
+			const browser = useSessionStore.getState().sessions[0];
+			expect(browser.aiTabs.map((tab) => tab.id)).toEqual(desktop.aiTabs.map((tab) => tab.id));
+			expect(browser.activeTabId).toBe(desktop.activeTabId);
+		});
+
+		it('does not put closed wizard progress in reopen history', () => {
+			const session = createMockSession({
+				id: 'session-1',
+				aiTabs: [createMockTab({ id: 'wizard', wizardState: { isActive: true } as any })],
+				activeTabId: 'wizard',
+			});
+			renderHook(() => useRemoteIntegration(createDeps({ sessions: [session] })));
+			act(() => onRemoteCloseTabHandler?.('session-1', 'wizard'));
+			const updated = useSessionStore.getState().sessions[0];
+			expect(updated.closedTabHistory ?? []).toEqual([]);
+			expect(updated.unifiedClosedTabHistory ?? []).toEqual([]);
+		});
+
 		it('closes tab in session', () => {
 			const tab1 = createMockTab({ id: 'tab-1' });
 			const tab2 = createMockTab({ id: 'tab-2' });

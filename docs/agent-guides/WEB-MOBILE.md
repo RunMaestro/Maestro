@@ -141,6 +141,13 @@ These rules keep the clients in sync:
   client already has. The broadcast can also win the race, so the adopt path
   checks for the id first and then only selects it - an inventory snapshot never
   moves a browser client's tab by itself.
+- **Closing a browser conversation also goes through the desktop.** Single-tab
+  and bulk AI-tab closes call `web.requestCloseTab`, which uses the existing
+  window-owner-aware `closeTab` callback. The browser waits for the desktop's
+  inventory snapshot instead of removing the tab locally: a local-only close
+  leaves the desktop free to save the conversation again, and closing the last
+  tab in both clients would mint two different replacement ids. Failed delivery
+  preserves the browser tab and draft and shows a retryable error.
 - **Focus the composer INSIDE the tap, never when the round trip answers.** iOS
   raises the on-screen keyboard only for a `focus()` that runs in the user
   gesture's own call stack. Deferred into a `.then()`, the caret moves and the

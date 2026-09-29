@@ -6,11 +6,13 @@ import type { MediaOpenMode } from '../../../shared/mediaTypes';
 import { cueService } from '../../services/cue';
 import { captureException } from '../../utils/sentry';
 import {
+	addAiTabToUnifiedHistory,
 	aiTabFocusFields,
 	createTab,
 	closeTab,
 	getActiveTab,
 	getRepairedUnifiedTabOrder,
+	hasActiveWizard,
 	visibleAiTabs,
 } from '../../utils/tabHelpers';
 import { logger } from '../../utils/logger';
@@ -812,9 +814,17 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 		const unsubscribeCloseTab = window.maestro.process.onRemoteCloseTab(
 			(sessionId: string, tabId: string) => {
 				updateSessionWith(sessionId, (s) => {
-					// Use closeTab helper (handles last tab by creating a fresh one)
-					const result = closeTab(s, tabId);
-					return result?.session ?? s;
+					const tab = s.aiTabs.find((t) => t.id === tabId);
+					if (!tab) return s;
+					const isWizardTab = hasActiveWizard(tab);
+					const result = closeTab(s, tabId, undefined, { skipHistory: isWizardTab });
+					if (!result) return s;
+					const unifiedIndex = s.unifiedTabOrder.findIndex(
+						(ref) => ref.type === 'ai' && ref.id === tabId
+					);
+					return isWizardTab
+						? result.session
+						: addAiTabToUnifiedHistory(result.session, tab, unifiedIndex);
 				});
 			}
 		);

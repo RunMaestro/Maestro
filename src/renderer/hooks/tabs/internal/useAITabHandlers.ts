@@ -12,6 +12,7 @@ import { clearLiveDraft } from '../../../utils/liveDraftStore';
 import { logger } from '../../../utils/logger';
 import { persistTabStarred } from '../../../utils/starredSessions';
 import { isWebDesktop } from '../../../utils/runtimeContext';
+import { requestDesktopTabClose } from '../../../services/desktopTabClose';
 import { noteDesktopAiTabSelection } from '../../../utils/desktopTabSelectionSync';
 import {
 	addAiTabToUnifiedHistory,
@@ -158,6 +159,18 @@ export function useAITabHandlers(
 					);
 			}
 
+			if (isWebDesktop()) {
+				if (!tabBeforeClose) return;
+				void requestDesktopTabClose(activeSessionId, tabId).then((sent) => {
+					if (sent && wasWizardTab) {
+						endInlineWizard(tabId).catch((error) =>
+							logger.warn('[useTabHandlers] Failed to end wizard on tab close:', undefined, error)
+						);
+					}
+				});
+				return;
+			}
+
 			clearLiveDraft(tabId);
 			updateSessionWith(activeSessionId, (s) => {
 				const tab = s.aiTabs.find((t) => t.id === tabId);
@@ -216,6 +229,10 @@ export function useAITabHandlers(
 	const performCloseAllTabs = useCallback(() => {
 		const { activeSessionId, sessions } = useSessionStore.getState();
 		const activeSession = sessions.find((s) => s.id === activeSessionId);
+		if (isWebDesktop()) {
+			visibleAiTabs(activeSession?.aiTabs).forEach((tab) => performTabClose(tab.id));
+			return;
+		}
 		visibleAiTabs(activeSession?.aiTabs).forEach((t) => clearLiveDraft(t.id));
 
 		const wizardTabIds = visibleAiTabs(activeSession?.aiTabs)
@@ -243,7 +260,7 @@ export function useAITabHandlers(
 				logger.warn('[useTabHandlers] Failed to end wizard on close-all:', undefined, error)
 			);
 		}
-	}, [endInlineWizard]);
+	}, [endInlineWizard, performTabClose]);
 
 	const handleCloseAllTabs = useCallback(() => {
 		const session = selectActiveSession(useSessionStore.getState());
