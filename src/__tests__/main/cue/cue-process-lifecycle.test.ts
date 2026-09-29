@@ -9,6 +9,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { EventEmitter } from 'events';
 import type { ChildProcess } from 'child_process';
 import type { SpawnSpec } from '../../../main/cue/cue-spawn-builder';
+import { ClaudeOutputParser } from '../../../shared/maestro-lib/parsers/claude-output-parser';
 
 // ─── Mocks ───────────────────────────────────────────────────────────────────
 
@@ -16,6 +17,7 @@ import type { SpawnSpec } from '../../../main/cue/cue-spawn-builder';
 const mockGetOutputParser = vi.fn(() => null as any);
 vi.mock('../../../main/parsers', () => ({
 	getOutputParser: (...args: unknown[]) => mockGetOutputParser(...args),
+	createOutputParser: (...args: unknown[]) => mockGetOutputParser(...args),
 }));
 
 // Mock Sentry
@@ -683,6 +685,72 @@ describe('cue-process-lifecycle', () => {
 				mockChild.emit('close', null, 'SIGKILL');
 
 				expect((await resultPromise).status).toBe('failed');
+			});
+
+			// Claude Code reports a failed turn in-band (a result flagged
+			// `is_error: true`) and then exits 0. The real parser is used so the
+			// classification under test is the one production runs.
+			it('fails a run whose provider reported the failure in-band and exited 0', async () => {
+				mockGetOutputParser.mockReturnValue(new ClaudeOutputParser());
+
+				const resultPromise = runProcess('run-1', createSpec(), createOptions());
+				await vi.advanceTimersByTimeAsync(0);
+
+				mockChild.stdout.emit(
+					'data',
+					JSON.stringify({
+						type: 'result',
+						subtype: 'error_max_turns',
+						is_error: true,
+						session_id: 'sess-1',
+					}) + '\n'
+				);
+				mockChild.emit('close', 0, null);
+				const result = await resultPromise;
+
+				expect(result.status).toBe('failed');
+				expect(result.stderr).toContain('maximum number of turns');
+			});
+
+			it('still completes a run whose provider recovered past an in-turn API error notice', async () => {
+				mockGetOutputParser.mockReturnValue(new ClaudeOutputParser());
+
+				const resultPromise = runProcess('run-1', createSpec(), createOptions());
+				await vi.advanceTimersByTimeAsync(0);
+
+				const lines = [
+					{
+						type: 'assistant',
+						error: 'server_error',
+						is_api_error_message: true,
+						message: { model: '<synthetic>', content: [{ type: 'text', text: 'API Error' }] },
+					},
+					{ type: 'assistant', message: { content: [{ type: 'text', text: 'Recovered.' }] } },
+					{ type: 'result', subtype: 'success', is_error: false, result: 'Recovered.' },
+				];
+				mockChild.stdout.emit('data', lines.map((l) => JSON.stringify(l) + '\n').join(''));
+				mockChild.emit('close', 0, null);
+				const result = await resultPromise;
+
+				expect(result.status).toBe('completed');
+				expect(result.stdout).toBe('Recovered.');
+			});
+
+			it('reports a stopped run as stopped even when the provider flushes a failed result', async () => {
+				mockGetOutputParser.mockReturnValue(new ClaudeOutputParser());
+
+				const resultPromise = runProcess('run-1', createSpec(), createOptions());
+				await vi.advanceTimersByTimeAsync(0);
+
+				expect(stopProcess('run-1')).toBe(true);
+				mockChild.stdout.emit(
+					'data',
+					JSON.stringify({ type: 'result', subtype: 'error_during_execution', is_error: true }) +
+						'\n'
+				);
+				mockChild.emit('close', 0, null);
+
+				expect((await resultPromise).status).toBe('stopped');
 			});
 		});
 

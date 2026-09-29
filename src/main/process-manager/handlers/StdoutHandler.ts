@@ -13,6 +13,7 @@ import { getOmpModelContextWindow } from '../../agents/omp-model-catalog';
 import { UsageAccumulator } from '../../../shared/maestro-lib/streaming/usage-accumulator';
 import type { ManagedProcess, UsageStats, AgentError } from '../types';
 import type { DataBufferManager } from './DataBufferManager';
+import type { ParsedEvent } from '../../parsers/agent-output-parser';
 
 interface StdoutHandlerDependencies {
 	processes: Map<string, ManagedProcess>;
@@ -414,6 +415,23 @@ export class StdoutHandler {
 			this.emitSessionIdIfNeeded(sessionId, managedProcess, extractCopilotSessionId(parsed));
 		}
 
+		// ── Held in-turn error notice ──
+		// Not after a Stop: a result the CLI flushes on its way out would otherwise
+		// raise the held notice for a turn the user abandoned. Exit drops it.
+		// Decided BEFORE the line's own error detection: the result that ends a
+		// turn on a held notice is itself a failed result (`is_error: true`), and
+		// the notice says more about the failure than the envelope does. Settling
+		// it first sets `errorEmitted`, so the envelope then renders as usual
+		// instead of replacing the notice with a vaguer error.
+		if (
+			managedProcess.provisionalError &&
+			!managedProcess.interrupted &&
+			parsed !== null &&
+			outputParser
+		) {
+			this.resolveProvisionalError(sessionId, managedProcess, parsed, outputParser);
+		}
+
 		// ── Error detection from parser ──
 		// `interrupted` means the USER pressed Stop, and `interrupt()` sets it
 		// before signalling. Anything a CLI reports after that is a consequence of
@@ -439,13 +457,17 @@ export class StdoutHandler {
 				// Losing it means recovery from a *recoverable* error silently opens a
 				// fresh conversation and drops the context the retry was supposed to
 				// continue. ExitHandler does the same for the flushed no-newline case.
+				// The same envelope can also carry the turn's usage (a failed Claude
+				// `result` reports what the turn spent before it failed), and that
+				// spend is real, so it is counted rather than dropped with the line.
+				let errorLineEvent: ParsedEvent | null = null;
 				if (parsed !== null) {
-					const event = outputParser.parseJsonObject(parsed);
-					if (event) {
+					errorLineEvent = outputParser.parseJsonObject(parsed);
+					if (errorLineEvent) {
 						this.emitSessionIdIfNeeded(
 							sessionId,
 							managedProcess,
-							outputParser.extractSessionId(event)
+							outputParser.extractSessionId(errorLineEvent)
 						);
 					}
 				}
@@ -488,6 +510,9 @@ export class StdoutHandler {
 				managedProcess.errorEmitted = true;
 				managedProcess.provisionalError = undefined;
 				this.emitter.emit('agent-error', sessionId, agentError);
+				if (errorLineEvent) {
+					this.emitUsageIfPresent(sessionId, managedProcess, errorLineEvent, outputParser);
+				}
 				return;
 			}
 		}
@@ -522,18 +547,6 @@ export class StdoutHandler {
 				this.emitter.emit('agent-error', sessionId, agentError);
 				return;
 			}
-		}
-
-		// ── Held in-turn error notice ──
-		// Not after a Stop: a result the CLI flushes on its way out would otherwise
-		// raise the held notice for a turn the user abandoned. Exit drops it.
-		if (
-			managedProcess.provisionalError &&
-			!managedProcess.interrupted &&
-			parsed !== null &&
-			outputParser
-		) {
-			this.resolveProvisionalError(sessionId, managedProcess, parsed, outputParser);
 		}
 
 		// ── Process parsed data ──
@@ -588,26 +601,13 @@ export class StdoutHandler {
 		}
 	}
 
-	/** Handle a parsed JSON event: extract usage, session IDs, tool executions, and result data. */
-	private handleParsedEvent(
+	/** Emit an event's usage, delta-normalized for the providers that report running totals. */
+	private emitUsageIfPresent(
 		sessionId: string,
 		managedProcess: ManagedProcess,
-		parsed: unknown,
+		event: ParsedEvent,
 		outputParser: NonNullable<ManagedProcess['outputParser']>
 	): void {
-		const event = outputParser.parseJsonObject(parsed);
-
-		if (!event) return;
-
-		// OpenCode emits multiple steps: step_start → text → tool_use → step_finish(tool-calls) → repeat
-		// Each step may have a text event. Only the final text (before reason:"stop") is the real result.
-		// Reset resultEmitted on each new step so the last text event wins instead of the first.
-		if (event.type === 'init' && managedProcess.toolType === 'opencode') {
-			managedProcess.resultEmitted = false;
-			managedProcess.streamedText = '';
-		}
-
-		// Extract usage
 		const usage = outputParser.extractUsage(event);
 		if (usage) {
 			const usageStats = this.buildUsageStats(managedProcess, usage);
@@ -627,6 +627,28 @@ export class StdoutHandler {
 
 			this.emitter.emit('usage', sessionId, normalizedUsageStats);
 		}
+	}
+
+	/** Handle a parsed JSON event: extract usage, session IDs, tool executions, and result data. */
+	private handleParsedEvent(
+		sessionId: string,
+		managedProcess: ManagedProcess,
+		parsed: unknown,
+		outputParser: NonNullable<ManagedProcess['outputParser']>
+	): void {
+		const event = outputParser.parseJsonObject(parsed);
+
+		if (!event) return;
+
+		// OpenCode emits multiple steps: step_start → text → tool_use → step_finish(tool-calls) → repeat
+		// Each step may have a text event. Only the final text (before reason:"stop") is the real result.
+		// Reset resultEmitted on each new step so the last text event wins instead of the first.
+		if (event.type === 'init' && managedProcess.toolType === 'opencode') {
+			managedProcess.resultEmitted = false;
+			managedProcess.streamedText = '';
+		}
+
+		this.emitUsageIfPresent(sessionId, managedProcess, event, outputParser);
 
 		// Extract session ID
 		const eventSessionId = outputParser.extractSessionId(event);

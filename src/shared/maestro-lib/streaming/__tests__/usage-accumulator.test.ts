@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { UsageAccumulator } from '../usage-accumulator';
+import { CodexOutputParser } from '../../parsers/codex-output-parser';
 import type { UsageStats } from '../../../types';
 
 function usage(overrides: Partial<UsageStats> = {}): UsageStats {
@@ -139,5 +140,82 @@ describe('UsageAccumulator', () => {
 
 			expect(acc.lastTotals?.inputTokens).toBe(500);
 		});
+	});
+});
+
+// The accumulator is scoped per PROCESS, so it can only be right about a resumed
+// Codex turn if the parser hands it totals that start at this process: Codex's
+// `total_token_usage` is a running SESSION total, and a resumed run's first
+// token_count already carries every earlier turn.
+describe('UsageAccumulator over a resumed Codex process', () => {
+	function tokenCount(total: Record<string, number>, last: Record<string, number>): string {
+		return JSON.stringify({
+			type: 'event_msg',
+			payload: {
+				type: 'token_count',
+				info: { total_token_usage: total, last_token_usage: last },
+			},
+		});
+	}
+
+	function runProcess(lines: string[]): UsageStats {
+		const parser = new CodexOutputParser();
+		const acc = new UsageAccumulator({ attachesAbsoluteUsage: true });
+		const summed = usage();
+		for (const line of lines) {
+			const parsed = parser.parseJsonLine(line)?.usage;
+			if (!parsed) continue;
+			const step = acc.normalize(
+				usage({
+					inputTokens: parsed.inputTokens,
+					outputTokens: parsed.outputTokens,
+					cacheReadInputTokens: parsed.cacheReadTokens ?? 0,
+					reasoningTokens: parsed.reasoningTokens,
+				})
+			);
+			summed.inputTokens += step.inputTokens;
+			summed.outputTokens += step.outputTokens;
+			summed.cacheReadInputTokens += step.cacheReadInputTokens;
+		}
+		return summed;
+	}
+
+	it('sums a resumed turn to what that turn spent, not the conversation so far', () => {
+		// Turn 1 (an earlier process) spent 12000 in / 550 out. This process makes
+		// two API calls: 13000 in / 120 out, then 13500 in / 60 out.
+		const turn2 = runProcess([
+			tokenCount(
+				{
+					input_tokens: 25000,
+					cached_input_tokens: 21000,
+					output_tokens: 490,
+					reasoning_output_tokens: 180,
+				},
+				{
+					input_tokens: 13000,
+					cached_input_tokens: 12000,
+					output_tokens: 90,
+					reasoning_output_tokens: 30,
+				}
+			),
+			tokenCount(
+				{
+					input_tokens: 38500,
+					cached_input_tokens: 34000,
+					output_tokens: 550,
+					reasoning_output_tokens: 180,
+				},
+				{
+					input_tokens: 13500,
+					cached_input_tokens: 13000,
+					output_tokens: 60,
+					reasoning_output_tokens: 0,
+				}
+			),
+		]);
+
+		expect(turn2.inputTokens).toBe(26500);
+		expect(turn2.outputTokens).toBe(180);
+		expect(turn2.cacheReadInputTokens).toBe(25000);
 	});
 });

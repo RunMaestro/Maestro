@@ -19,6 +19,7 @@ import {
 	type CopilotShutdownWaitResult,
 } from '../CopilotShutdownWaiter';
 import { FALLBACK_CONTEXT_WINDOW } from '../../../shared/agentConstants';
+import { getAgentDisplayName } from '../../../shared/agentMetadata';
 import { isSupersededGeneration } from '../generation';
 import {
 	resolveTurnOutcome,
@@ -57,7 +58,8 @@ export class ExitHandler {
 	async handleExit(
 		sessionId: string,
 		code: number,
-		exitingProcess?: ManagedProcess
+		exitingProcess?: ManagedProcess,
+		signal?: NodeJS.Signals | null
 	): Promise<void> {
 		const managedProcess = exitingProcess ?? this.processes.get(sessionId);
 		if (!managedProcess) {
@@ -192,9 +194,16 @@ export class ExitHandler {
 			// retry or recovery handling ever fires.
 			// `interrupted` (the user pressed Stop) suppresses this the same way it
 			// does in StdoutHandler: a terminal envelope flushed on the way out of a
-			// deliberate stop is not a turn failure.
-			if (event?.type === 'error' && !managedProcess.errorEmitted && !managedProcess.interrupted) {
-				const agentError = outputParser.detectErrorFromParsed((event.raw as unknown) ?? event);
+			// deliberate stop is not a turn failure. Detection runs on every flushed
+			// envelope, as StdoutHandler runs it on every line, because a failure is
+			// not always typed `error`: Claude Code's failed turn ends on a `result`
+			// flagged `is_error: true`, which would otherwise render as the answer.
+			const flushedError =
+				event && !managedProcess.errorEmitted && !managedProcess.interrupted
+					? outputParser.detectErrorFromParsed((event.raw as unknown) ?? event)
+					: null;
+			if (event?.type === 'error' || flushedError) {
+				const agentError = flushedError;
 				if (agentError) {
 					managedProcess.errorEmitted = true;
 					agentError.sessionId = sessionId;
@@ -322,7 +331,11 @@ export class ExitHandler {
 
 			const facts: TurnFacts = {
 				exitCode: code,
-				signal: null,
+				// The close event's signal. `code` arrives here as `code || 0`, so a
+				// process killed from outside would otherwise look like a clean exit
+				// and its partial text like a finished answer. A stop Maestro asked
+				// for never gets this far: it sets `interrupted` (see above).
+				signal: signal ?? null,
 				interrupted: false, // already gated above; resolver's rule 1 is moot here
 				stderrText: managedProcess.stderrBuffer || '',
 				stdoutText: managedProcess.stdoutBuffer || managedProcess.streamedText || '',
@@ -375,6 +388,26 @@ export class ExitHandler {
 						'ProcessManager',
 						{ sessionId, exitCode: code }
 					);
+				} else if (!agentError && signal) {
+					// Killed by a signal nobody in Maestro sent. Whatever streamed before
+					// it is a truncated answer, so the turn fails visibly instead of
+					// settling as a finished one. Recoverable: sending again starts a
+					// fresh process.
+					agentError = {
+						type: 'agent_crashed',
+						message: `${getAgentDisplayName(toolType)} was terminated by ${signal} before it finished. Please send your message again.`,
+						recoverable: true,
+						agentId: toolType,
+						sessionId,
+						sshRemoteId: managedProcess.sshRemoteId,
+						timestamp: Date.now(),
+						raw: { exitCode: code, stderr: managedProcess.stderrBuffer || undefined },
+					};
+					logger.warn('[ProcessManager] Agent killed by an unrequested signal', 'ProcessManager', {
+						sessionId,
+						signal,
+						answerCaptured: settlement.answerCaptured,
+					});
 				} else if (agentError) {
 					logger.debug('[ProcessManager] Error detected from exit', 'ProcessManager', {
 						sessionId,

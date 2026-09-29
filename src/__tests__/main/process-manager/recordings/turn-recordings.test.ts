@@ -133,8 +133,14 @@ async function runRecording(recording: TurnRecording): Promise<CapturedEvents> {
 	}
 
 	// ChildProcessSpawner hands ExitHandler `code || 0`, so a process that died on
-	// a signal (code null) reaches it as 0. Mirror that rather than the raw code.
-	await exitHandler.handleExit(sessionId, recording.exitCode || 0);
+	// a signal (code null) reaches it as 0, with the signal alongside. Mirror
+	// that rather than the raw code.
+	await exitHandler.handleExit(
+		sessionId,
+		recording.exitCode || 0,
+		undefined,
+		recording.exitSignal ?? null
+	);
 
 	return captured;
 }
@@ -274,6 +280,39 @@ describe('turn recordings', () => {
 	});
 });
 
+describe('in-band failures that exit 0', () => {
+	beforeEach(() => {
+		resetSpawnGenerationsForTest();
+	});
+
+	it('in-band-error: a result flagged is_error fails the turn, and its spend is still reported', async () => {
+		const events = await runRecording(RECORDINGS['in-band-error']);
+
+		expect(events.sessionIds).toEqual(['sess-inband-1']);
+		expect(events.agentErrors).toHaveLength(1);
+		expect(events.agentErrors[0].sessionId).toBe('in-band-error');
+		// The failure text is the error, not the agent's answer.
+		expect(events.data.join('')).not.toContain('API Error');
+		expect(events.usages).toHaveLength(1);
+		expect(events.usages[0].totalCostUsd).toBe(0.01);
+		expect(events.exits).toEqual([0]);
+		expect(events.settlements[0]?.outcome).toBe('crashed');
+	});
+
+	it('in-band-error-unterminated: the exit-time flush classifies the failed result the same way', async () => {
+		const events = await runRecording(RECORDINGS['in-band-error-unterminated']);
+
+		expect(events.sessionIds).toEqual(['sess-inband-2']);
+		expect(events.agentErrors).toHaveLength(1);
+		expect(events.agentErrors[0]).toMatchObject({
+			type: 'unknown',
+			message: 'Claude Code stopped after reaching its maximum number of turns.',
+		});
+		expect(events.exits).toEqual([0]);
+		expect(events.settlements[0]?.outcome).toBe('crashed');
+	});
+});
+
 describe('captured turn recordings (real Claude Code and OpenCode output)', () => {
 	beforeEach(() => {
 		resetSpawnGenerationsForTest();
@@ -398,17 +437,22 @@ describe('captured turn recordings (real Claude Code and OpenCode output)', () =
 		expect(events.exits).toEqual([0]);
 	});
 
-	it('OpenCode killed with SIGTERM when nobody pressed Stop: documents a real gap - desktop reports a clean finish', async () => {
-		// ChildProcessSpawner hands ExitHandler `code || 0`, so a process that
-		// died on a signal is indistinguishable from a clean exit here: the
-		// partial text is shown as if the turn completed and nothing reports the
-		// kill. The CLI reads the close signal and reports a crash for the same
-		// bytes (turn-recordings.cli.test.ts). Claude Code is not affected because
-		// it catches SIGTERM and exits 143 itself (see the killed Claude case).
+	it('OpenCode killed with SIGTERM when nobody pressed Stop: the partial text is shown, and the turn is a crash', async () => {
+		// OpenCode dies on the signal (code null), which ChildProcessSpawner hands
+		// ExitHandler as 0. The signal travels beside it, so the kill is not read
+		// as a clean finish: the partial text still flushes, and the turn fails
+		// visibly, as the CLI reports the same bytes (turn-recordings.cli.test.ts).
 		const events = await runRecording(RECORDINGS['captured-opencode-killed-sigterm']);
 
 		expect(events.data.join('')).toBe("I'll run that command.");
-		expect(events.agentErrors).toEqual([]);
+		expect(events.agentErrors).toHaveLength(1);
+		expect(events.agentErrors[0]).toMatchObject({
+			type: 'agent_crashed',
+			message:
+				'OpenCode was terminated by SIGTERM before it finished. Please send your message again.',
+			recoverable: true,
+		});
 		expect(events.exits).toEqual([0]);
+		expect(events.settlements[0]?.outcome).toBe('crashed');
 	});
 });

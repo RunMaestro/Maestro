@@ -552,7 +552,7 @@ export class ChildProcessSpawner {
 			// which causes data loss for short-lived processes where the result is
 			// emitted near the end of stdout (e.g., tab-naming, batch operations).
 			// The 'close' event guarantees all stdio streams are closed first.
-			childProcess.on('close', (code) => {
+			childProcess.on('close', (code, signal) => {
 				if (isSuperseded()) {
 					logger.warn('[ProcessManager] Ignoring exit from superseded process', 'ProcessManager', {
 						sessionId,
@@ -564,12 +564,16 @@ export class ChildProcessSpawner {
 				// Hand the exiting process in explicitly: it may already have been
 				// unregistered, and handleExit must settle THIS process rather than
 				// whatever currently owns the session id.
-				void this.exitHandler.handleExit(sessionId, code || 0, managedProcess).catch((err) => {
-					logger.error('[ProcessManager] handleExit threw', 'ProcessManager', {
-						sessionId,
-						error: String(err),
+				// `signal` is what tells a kill from a clean exit once `code || 0` has
+				// turned the killed process's null code into 0.
+				void this.exitHandler
+					.handleExit(sessionId, code || 0, managedProcess, signal)
+					.catch((err) => {
+						logger.error('[ProcessManager] handleExit threw', 'ProcessManager', {
+							sessionId,
+							error: String(err),
+						});
 					});
-				});
 			});
 
 			// Handle errors
