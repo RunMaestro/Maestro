@@ -16,7 +16,11 @@ import { getOutputParser } from '../parsers';
 import { resolveTurnOutcome } from '../../shared/maestro-lib/streaming/turn-outcome';
 import { cueStatusForTurn } from './cue-turn-status';
 import { UsageAccumulator } from '../../shared/maestro-lib/streaming/usage-accumulator';
-import { addUsageStats, parsedUsageToStats } from '../../shared/maestro-lib/streaming/usage-totals';
+import {
+	addUsageStats,
+	parsedUsageToStats,
+	replaceUsageStats,
+} from '../../shared/maestro-lib/streaming/usage-totals';
 import { captureException } from '../utils/sentry';
 import { isWindows } from '../../shared/platformDetection';
 import { stripAnsiCodes } from '../../shared/stringUtils';
@@ -154,7 +158,7 @@ function parseAgentStdout(rawStdout: string, toolType: string): ParsedStdout {
 			if (parsedUsage) {
 				const stats = parsedUsageToStats(parsedUsage);
 				usage = usageLastWriteWins
-					? stats
+					? replaceUsageStats(usage, stats)
 					: addUsageStats(usage, usageAccumulator ? usageAccumulator.normalize(stats) : stats);
 			}
 		}
