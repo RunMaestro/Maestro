@@ -21,6 +21,7 @@ import {
  */
 const RENAME_CONFIRMATION_RELEASE_MS = 60_000;
 
+/** Register remote tab operations against each session's owning desktop window. */
 export function registerTabCallbacks(
 	server: WebServer,
 	deps: Pick<WebServerFactoryDependencies, 'getMainWindow' | 'getWindowForSession'>

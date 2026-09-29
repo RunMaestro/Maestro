@@ -32,6 +32,7 @@ import {
 } from '../../../utils/tabHelpers';
 import type { AITabHandlersReturn } from './types';
 
+/** Manage AI tabs, delegating browser inventory changes to the owning desktop. */
 export function useAITabHandlers(
 	inputRef?: RefObject<HTMLTextAreaElement | null>
 ): AITabHandlersReturn {

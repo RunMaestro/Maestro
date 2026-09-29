@@ -30,6 +30,7 @@ interface UseUnifiedTabHandlersOptions {
 	handleCloseFileTab: (tabId: string) => void;
 }
 
+/** Manage mixed tab actions, confirming browser AI closes through the desktop owner. */
 export function useUnifiedTabHandlers({
 	handleCloseFileTab,
 }: UseUnifiedTabHandlersOptions): UnifiedTabHandlersReturn {
