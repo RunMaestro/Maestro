@@ -156,6 +156,19 @@ const EXPECTED: Record<string, CliExpectation> = {
 		errorIncludes: 'rate limit',
 		note: 'A SPECIFIC classification fails the turn even though partial assistant text was captured.',
 	},
+	'in-band-error': {
+		success: false,
+		outcome: 'crashed',
+		agentSessionId: 'sess-inband-1',
+		note: 'Matches desktop: a result flagged is_error fails the turn despite exit 0.',
+	},
+	'in-band-error-unterminated': {
+		success: false,
+		outcome: 'crashed',
+		agentSessionId: 'sess-inband-2',
+		errorIncludes: 'maximum number of turns',
+		note: 'Matches desktop: the failed result arrives with no trailing newline and still fails the turn.',
+	},
 
 	'captured-claude-code-normal': {
 		success: true,
@@ -215,7 +228,7 @@ const EXPECTED: Record<string, CliExpectation> = {
 		outcome: 'crashed',
 		agentSessionId: 'ses_f1670a7e6ffecQgVAvhIMMjTox',
 		errorIncludes: 'signal sigterm',
-		note: 'Differs from desktop, which is handed `code || 0` and reports a clean finish with the partial text as the answer. The CLI reads the close signal.',
+		note: 'Matches desktop: an unrequested signal kill is a crash even with partial text captured.',
 	},
 };
 

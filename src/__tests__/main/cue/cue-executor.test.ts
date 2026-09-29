@@ -110,6 +110,7 @@ const mockGetOutputParser = vi.fn(
 );
 vi.mock('../../../main/parsers', () => ({
 	getOutputParser: (...args: unknown[]) => mockGetOutputParser(...args),
+	createOutputParser: (...args: unknown[]) => mockGetOutputParser(...args),
 }));
 
 // Force the POSIX kill path (child.kill('SIGTERM')) in the underlying

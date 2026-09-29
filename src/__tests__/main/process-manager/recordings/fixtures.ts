@@ -249,5 +249,41 @@ export const RECORDINGS: Record<string, TurnRecording> = {
 		stderrBuffer: 'Error: rate limit exceeded, please try again later',
 	},
 
+	'in-band-error': {
+		name: 'in-band-error',
+		description:
+			"Claude Code gives up on a turn and reports it IN-BAND: the terminal result is flagged `is_error: true` (subtype still reads 'success', as Claude writes it for an API error it stopped retrying), carries the turn's usage, and the process exits 0. Nothing about the exit says failure, so the flag is the only signal. The turn must fail with the provider's message rather than render the failure text as the answer.",
+		toolType: 'claude-code',
+		chunks: [
+			line(SYSTEM_INIT('sess-inband-1')),
+			line(ASSISTANT_TEXT('Let me look into that.')),
+			line({
+				...RESULT('sess-inband-1', 'API Error: 500 Internal server error'),
+				subtype: 'success',
+				is_error: true,
+			}),
+		],
+		exitCode: 0,
+	},
+
+	'in-band-error-unterminated': {
+		name: 'in-band-error-unterminated',
+		description:
+			"The same in-band failure, but the failed result is the last thing written, with NO trailing newline (the cut-stream shape), and it names its cause only through `subtype: 'error_max_turns'`. Desktop recovers this line from the exit-time buffer flush, which must classify it exactly as the streaming path does.",
+		toolType: 'claude-code',
+		chunks: [
+			line(SYSTEM_INIT('sess-inband-2')),
+			line(ASSISTANT_TEXT('Still working through the list.')),
+			JSON.stringify({
+				type: 'result',
+				subtype: 'error_max_turns',
+				is_error: true,
+				session_id: 'sess-inband-2',
+				total_cost_usd: 0.02,
+			}),
+		],
+		exitCode: 0,
+	},
+
 	...CAPTURED_RECORDINGS,
 };
