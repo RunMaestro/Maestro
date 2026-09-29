@@ -521,6 +521,118 @@ describe('cue-process-lifecycle', () => {
 				expect(result.usage?.outputTokens).toBe(12);
 			});
 
+			it('keeps the Codex occupancy snapshot and reported window on the result (#1669)', async () => {
+				mockGetOutputParser.mockReturnValue({
+					...resultParser(),
+					extractUsage: (event: any) => event?.usage ?? null,
+					parseJsonLine: (line: string) => {
+						const msg = JSON.parse(line);
+						return msg.type === 'result'
+							? { type: 'result', text: msg.result || '' }
+							: { type: 'usage', raw: msg, usage: msg.usage };
+					},
+				} as any);
+
+				const resultPromise = runProcess(
+					'run-1',
+					createSpec(),
+					createOptions({ toolType: 'codex' })
+				);
+				await vi.advanceTimersByTimeAsync(0);
+
+				// Running session totals, as Codex reports them.
+				const tokenCount = (inputTokens: number, outputTokens: number) =>
+					JSON.stringify({
+						type: 'token_count',
+						usage: {
+							inputTokens,
+							outputTokens,
+							contextWindow: 272_000,
+							contextWindowReported: true,
+						},
+					}) + '\n';
+				mockChild.stdout.emit(
+					'data',
+					tokenCount(100, 10) +
+						tokenCount(300, 30) +
+						JSON.stringify({ type: 'result', result: 'done' }) +
+						'\n'
+				);
+				mockChild.emit('close', 0, null);
+
+				const result = await resultPromise;
+				expect(result.usage?.inputTokens).toBe(300);
+				expect(result.usage?.outputTokens).toBe(30);
+				expect(result.usage?.absoluteUsage).toEqual({
+					inputTokens: 300,
+					outputTokens: 30,
+					cacheReadInputTokens: 0,
+					cacheCreationInputTokens: 0,
+					reasoningTokens: 0,
+				});
+				expect(result.usage?.contextWindow).toBe(272_000);
+				expect(result.usage?.contextWindowResolved).toBe(true);
+			});
+
+			it('keeps the Claude occupancy snapshot when a later usage event carries none (#1669)', async () => {
+				mockGetOutputParser.mockReturnValue({
+					...resultParser(),
+					extractUsage: (event: any) => event?.usage ?? null,
+					parseJsonLine: (line: string) => {
+						const msg = JSON.parse(line);
+						return msg.type === 'result'
+							? { type: 'result', text: msg.result || '', usage: msg.usage }
+							: { type: 'usage', raw: msg, usage: msg.usage };
+					},
+				} as any);
+
+				const resultPromise = runProcess(
+					'run-1',
+					createSpec(),
+					createOptions({ toolType: 'claude-code' })
+				);
+				await vi.advanceTimersByTimeAsync(0);
+
+				const occupancy = {
+					inputTokens: 1000,
+					outputTokens: 20,
+					cacheReadInputTokens: 500,
+					cacheCreationInputTokens: 0,
+					reasoningTokens: 0,
+				};
+				mockChild.stdout.emit(
+					'data',
+					JSON.stringify({
+						type: 'result',
+						result: 'done',
+						usage: {
+							inputTokens: 4000,
+							outputTokens: 60,
+							costUsd: 0.1,
+							contextWindow: 1_000_000,
+							contextWindowReported: true,
+							absoluteUsage: occupancy,
+						},
+					}) +
+						'\n' +
+						JSON.stringify({
+							type: 'usage',
+							usage: { inputTokens: 4000, outputTokens: 60, costUsd: 0.1, contextWindow: 200_000 },
+						}) +
+						'\n'
+				);
+				mockChild.emit('close', 0, null);
+
+				const result = await resultPromise;
+				// Last write wins for the totals, as before...
+				expect(result.usage?.inputTokens).toBe(4000);
+				expect(result.usage?.totalCostUsd).toBe(0.1);
+				// ...but the trailing event does not erase the metadata.
+				expect(result.usage?.absoluteUsage).toEqual(occupancy);
+				expect(result.usage?.contextWindow).toBe(1_000_000);
+				expect(result.usage?.contextWindowResolved).toBe(true);
+			});
+
 			it('fails a parser-less agent that exits non-zero, whatever it printed', async () => {
 				mockGetOutputParser.mockReturnValue(null);
 
