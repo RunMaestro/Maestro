@@ -62,6 +62,14 @@ describe('Web Preload API', () => {
 			});
 		});
 
+		describe('requestCloseTab', () => {
+			it('forwards the agent and tab ids to the desktop', async () => {
+				mockInvoke.mockResolvedValue(true);
+				await expect(api.requestCloseTab('session-123', 'tab-1')).resolves.toBe(true);
+				expect(mockInvoke).toHaveBeenCalledWith('web:requestCloseTab', 'session-123', 'tab-1');
+			});
+		});
+
 		describe('broadcastUserInput', () => {
 			it('should invoke web:broadcastUserInput with correct parameters', async () => {
 				mockInvoke.mockResolvedValue(undefined);

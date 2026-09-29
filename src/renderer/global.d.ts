@@ -1261,6 +1261,7 @@ interface MaestroAPI {
 		claimAutoRunStart: (sessionId: string) => Promise<boolean>;
 		releaseAutoRunStartClaim: (sessionId: string) => Promise<boolean>;
 		requestNewTab: (sessionId: string, background?: boolean) => Promise<{ tabId: string } | null>;
+		requestCloseTab: (sessionId: string, tabId: string) => Promise<boolean>;
 		broadcastUserInput: (
 			sessionId: string,
 			command: string,

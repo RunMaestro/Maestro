@@ -1396,6 +1396,10 @@ export class WebServer {
 		return this.callbackRegistry.newTab(sessionId, background);
 	}
 
+	requestCloseTab(sessionId: string, tabId: string): Promise<boolean> {
+		return this.callbackRegistry.closeTab(sessionId, tabId);
+	}
+
 	broadcastThemeChange(theme: Theme): void {
 		this.broadcastService.broadcastThemeChange(theme);
 	}

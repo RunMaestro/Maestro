@@ -369,6 +369,9 @@ export function registerWebHandlers(deps: WebHandlerDependencies): void {
 		const webServer = getWebServer();
 		return webServer?.requestNewTab(sessionId, background) ?? null;
 	});
+	ipcMain.handle('web:requestCloseTab', async (_, sessionId: string, tabId: string) => {
+		return getWebServer()?.requestCloseTab(sessionId, tabId) ?? false;
+	});
 
 	ipcMain.handle(
 		'web:broadcastTabsChange',

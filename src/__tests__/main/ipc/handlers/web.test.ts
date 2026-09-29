@@ -101,6 +101,7 @@ describe('web handlers', () => {
 			broadcastAutoRunState: vi.fn(),
 			broadcastTabsChange: vi.fn(),
 			requestNewTab: vi.fn().mockResolvedValue({ tabId: 'tab-2' }),
+			requestCloseTab: vi.fn().mockResolvedValue(true),
 			broadcastSessionStateChange: vi.fn(),
 			getWebClientCount: vi.fn().mockReturnValue(1),
 			getSecurityToken: vi.fn().mockReturnValue('mock-security-token'),
@@ -212,6 +213,22 @@ describe('web handlers', () => {
 			const handler = registeredHandlers.get('web:requestNewTab');
 
 			expect(await handler!({}, 'session-123', false)).toBeNull();
+		});
+	});
+
+	describe('web:requestCloseTab', () => {
+		it('routes the close through the desktop callback registry', async () => {
+			const handler = registeredHandlers.get('web:requestCloseTab');
+			expect(await handler!({}, 'session-123', 'tab-1')).toBe(true);
+			expect(mockWebServer.requestCloseTab).toHaveBeenCalledWith('session-123', 'tab-1');
+		});
+
+		it('returns false when the desktop is unavailable', async () => {
+			const handler = registeredHandlers.get('web:requestCloseTab');
+			mockWebServer.requestCloseTab.mockResolvedValue(false);
+			expect(await handler!({}, 'session-123', 'tab-1')).toBe(false);
+			webServerRef.current = null;
+			expect(await handler!({}, 'session-123', 'tab-1')).toBe(false);
 		});
 	});
 
