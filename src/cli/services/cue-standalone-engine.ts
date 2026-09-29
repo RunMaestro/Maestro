@@ -75,9 +75,7 @@ function loadExecutorsUncached() {
 		executeCuePrompt: executor.executeCuePrompt,
 		stopCueRun: executor.stopCueRun,
 		executeCueShell: shell.executeCueShell,
-		stopCueShellRun: shell.stopCueShellRun,
 		executeCueCli: cli.executeCueCli,
-		stopCueCliRun: cli.stopCueCliRun,
 		executeCueNotify: notify.executeCueNotify,
 		detectCueAuthFailure: authDetector.detectCueAuthFailure,
 	}));
@@ -302,8 +300,9 @@ export function buildStandaloneCueEngineDeps(
 		onCueRun: buildOnCueRun(onLog),
 		onStopCueRun: (runId) => {
 			if (!settledExecutors) return false; // see settledExecutors' doc comment
-			const { stopCueRun, stopCueShellRun, stopCueCliRun } = settledExecutors;
-			return stopCueRun(runId) || stopCueShellRun(runId) || stopCueCliRun(runId);
+			// One registry holds every Cue spawn (agent, shell, maestro-cli), so
+			// stopCueRun reaches all three.
+			return settledExecutors.stopCueRun(runId);
 		},
 		onLog,
 		runnerMode: 'standalone',
