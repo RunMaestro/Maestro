@@ -213,6 +213,11 @@ behavior change for every existing `exit` listener, not a transparent
 refactor. Flagged for the implementation phase; this document does not
 prescribe a fix.
 
+Partly done since: `ChildProcessSpawner` now captures the close event's
+signal and passes it to `handleExit` as a fourth parameter, which feeds
+`TurnFacts.signal` (rule 3a). `code || 0` and the `exit` emit are unchanged,
+so no existing `exit` listener sees a different payload.
+
 ### The resolution function
 
 ```ts
@@ -235,6 +240,17 @@ facts.stdoutText)` flags failure -> `crashed`. (Already a pure,
    `src/shared/maestro-lib/parsers/*` since Part One - confirmed for all
    eight providers checked; no further migration needed here beyond wiring
    the correct arguments.)
+   3a. A real signal (`facts.signal` truthy) that was not requested ->
+   `crashed`, whatever was captured, a result event included. Rule 1 has
+   already taken every stop the caller asked for, so this kill came from
+   outside the turn (a shutdown, an OOM kill, a container stop) and cut it
+   short: streamed text is a truncated answer. The CLI (`turn-result.ts`) and
+   Cue (`cueStatusForTurn`) already enforced this at their call sites; desktop
+   never received the signal at all (`ChildProcessSpawner` handed
+   `ExitHandler` only `code || 0`) and reported the kill as a clean finish.
+   The resolver owns the rule now, and `handleExit` takes the close signal.
+   Pinned by the `captured-opencode-killed-sigterm` recording on both
+   surfaces.
 4. `capturedAnswerText` is empty or unset -> `crashed`, **even when
    `exitCode === 0`**, **except** for the session-id patterns already
    excluded in today's omp override (`ExitHandler.ts:331-333`: sessions
@@ -502,6 +518,14 @@ awaitCopilotShutdown`, `:438-541`) delays finality of `TurnFacts` past
    (§3): re-scoping desktop's existing per-process correction to span a
    resume boundary needs checking against every provider's first-usage-
    event shape in a fresh process, to avoid double-correcting.
+   Sidestepped for Codex's `token_count` rather than resolved: the parser now
+   reports `total_token_usage` measured from the start of the process (its
+   first event's `total - last` is what the session spent before this
+   process), so a resumed process looks like a fresh one and the per-process
+   accumulator stays correct without spanning a resume. Unverified against a
+   live resumed Codex capture, and Codex's legacy `turn.completed.usage` is
+   untouched: whether it carries the thread total on `exec resume` needs that
+   capture too.
 6. **`signal` typing across transports** (§1): PTY reports a number,
    `child_process` reports a string and isn't even captured today. Whatever
    `TurnFacts.signal` ends up typed as, the fix touches three call sites,

@@ -213,13 +213,10 @@ interface CodexPayload {
 	// event_msg payload
 	message?: string;
 	info?: {
-		total_token_usage?: {
-			input_tokens?: number;
-			cached_input_tokens?: number;
-			output_tokens?: number;
-			reasoning_output_tokens?: number;
-			total_tokens?: number;
-		};
+		/** The running SESSION total, including every earlier turn and process. */
+		total_token_usage?: CodexTokenUsage;
+		/** This event's own API call. */
+		last_token_usage?: CodexTokenUsage;
 		model_context_window?: number;
 	};
 
@@ -227,6 +224,25 @@ interface CodexPayload {
 	model?: string;
 	model_context_window?: number;
 	turn_id?: string;
+}
+
+/** The token counters on a `token_count` event's `info`. */
+interface CodexTokenUsage {
+	input_tokens?: number;
+	cached_input_tokens?: number;
+	output_tokens?: number;
+	reasoning_output_tokens?: number;
+	total_tokens?: number;
+}
+
+type CodexTokenField =
+	| 'input_tokens'
+	| 'cached_input_tokens'
+	| 'output_tokens'
+	| 'reasoning_output_tokens';
+
+function tokenCount(value: unknown): number {
+	return typeof value === 'number' && Number.isFinite(value) ? value : 0;
 }
 
 /**
@@ -316,6 +332,27 @@ export class CodexOutputParser implements AgentOutputParser {
 	 */
 	private contextWindowReported = false;
 	private model: string;
+	/**
+	 * What the session had already spent before this process's first API call,
+	 * subtracted from every `total_token_usage` this parser reports.
+	 *
+	 * `total_token_usage` is the running SESSION total, and a resumed run
+	 * (`exec resume <id>`) is a new process whose first `token_count` already
+	 * carries every earlier turn. Every consumer delta-normalizes per PROCESS
+	 * (`UsageAccumulator` returns a process's first event as-is), so that first
+	 * event reported the whole conversation again as this turn's usage, and each
+	 * resumed turn re-billed all the ones before it. Reporting totals from the
+	 * start of the process makes a resumed turn look exactly like a fresh one,
+	 * which is the shape the per-process accumulator already handles, so none of
+	 * them has to learn about resume (Open Question 5 in the turn contract).
+	 *
+	 * Derived from the first event itself: its `total - last` is precisely what
+	 * came before this call (zero in a fresh session). With no `last_token_usage`
+	 * there is nothing to derive it from, and the baseline stays zero, which is
+	 * the old behavior. Parsers are created per process, so this never spans
+	 * two runs.
+	 */
+	private usageBaseline: Record<CodexTokenField, number> | null = null;
 
 	// Track tool name from tool_call to carry over to tool_result
 	// (Codex emits tool_call and tool_result as separate item.completed events,
@@ -533,7 +570,10 @@ export class CodexOutputParser implements AgentOutputParser {
 
 		// token_count: usage statistics
 		if (payload.type === 'token_count' && payload.info?.total_token_usage) {
-			const tokenUsage = payload.info.total_token_usage;
+			const tokenUsage = this.usageSinceProcessStart(
+				payload.info.total_token_usage,
+				payload.info.last_token_usage
+			);
 			const inputTokens = tokenUsage.input_tokens || 0;
 			const outputTokens = tokenUsage.output_tokens || 0;
 			const cachedInputTokens = tokenUsage.cached_input_tokens || 0;
@@ -944,6 +984,32 @@ export class CodexOutputParser implements AgentOutputParser {
 		}
 
 		return decoded;
+	}
+
+	/** A session running total, measured from the start of this process (see `usageBaseline`). */
+	private usageSinceProcessStart(
+		total: CodexTokenUsage,
+		last: CodexTokenUsage | undefined
+	): CodexTokenUsage {
+		if (!this.usageBaseline) {
+			const before = (field: CodexTokenField) =>
+				last ? Math.max(0, tokenCount(total[field]) - tokenCount(last[field])) : 0;
+			this.usageBaseline = {
+				input_tokens: before('input_tokens'),
+				cached_input_tokens: before('cached_input_tokens'),
+				output_tokens: before('output_tokens'),
+				reasoning_output_tokens: before('reasoning_output_tokens'),
+			};
+		}
+		const baseline = this.usageBaseline;
+		const since = (field: CodexTokenField) =>
+			Math.max(0, tokenCount(total[field]) - baseline[field]);
+		return {
+			input_tokens: since('input_tokens'),
+			cached_input_tokens: since('cached_input_tokens'),
+			output_tokens: since('output_tokens'),
+			reasoning_output_tokens: since('reasoning_output_tokens'),
+		};
 	}
 
 	/**

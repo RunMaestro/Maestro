@@ -189,30 +189,74 @@ describe('resolveTurnOutcome', () => {
 		expect(result).toEqual({ outcome: 'completed' });
 	});
 
-	it('does not flag a signal-terminated exit as crashed when a result was already seen', () => {
-		const facts = baseFacts({
-			exitCode: null,
-			signal: 'SIGTERM',
-			resultMessageSeen: true,
-			capturedAnswerText: undefined,
-		});
+	// An unrequested kill is never a success, whatever the turn had produced by
+	// then: streamed text is a truncated answer, and a result event followed by
+	// a kill still ended on the kill. The CLI and Cue already refused both at
+	// their call sites; desktop reported them as finished turns.
+	it.each<[string, Partial<TurnFacts>]>([
+		['a result was already seen', { resultMessageSeen: true, capturedAnswerText: undefined }],
+		[
+			'an answer was captured',
+			{ resultMessageSeen: false, capturedAnswerText: 'partial answer before the signal' },
+		],
+		[
+			'both a result and an answer were captured',
+			{ resultMessageSeen: true, capturedAnswerText: 'the whole answer' },
+		],
+		[
+			'the exit code was coerced to 0 on the way in',
+			{ exitCode: 0, resultMessageSeen: false, capturedAnswerText: 'partial answer' },
+		],
+	])('reports an unrequested signal kill as crashed when %s', (_shape, overrides) => {
+		const facts = baseFacts({ exitCode: null, signal: 'SIGTERM', ...overrides });
 
 		const result = resolveTurnOutcome(facts, neverErrorsProvider(), CLAUDE_CTX);
 
-		expect(result).toEqual({ outcome: 'completed' });
+		expect(result).toEqual({ outcome: 'crashed' });
 	});
 
-	it('does not flag a signal-terminated exit as crashed when an answer was captured (falls through to completed-with-warning)', () => {
+	it('reads a numeric pty signal as a kill too', () => {
 		const facts = baseFacts({
-			exitCode: null,
-			signal: 'SIGTERM',
+			exitCode: 0,
+			signal: 15,
 			resultMessageSeen: false,
-			capturedAnswerText: 'partial answer before the signal',
+			capturedAnswerText: 'partial answer',
 		});
 
 		const result = resolveTurnOutcome(facts, neverErrorsProvider(), CLAUDE_CTX);
 
-		expect(result).toEqual({ outcome: 'completed-with-warning' });
+		expect(result).toEqual({ outcome: 'crashed' });
+	});
+
+	it('reports a requested stop as interrupted even when it arrived as a signal', () => {
+		const facts = baseFacts({
+			exitCode: null,
+			signal: 'SIGINT',
+			interrupted: true,
+			capturedAnswerText: 'partial answer',
+		});
+
+		const result = resolveTurnOutcome(facts, neverErrorsProvider(), CLAUDE_CTX);
+
+		expect(result).toEqual({ outcome: 'interrupted' });
+	});
+
+	it('keeps a specific exit classification over the bare signal rule', () => {
+		const provider: TurnOutcomeProvider = {
+			detectErrorFromExit: () => ({
+				type: 'agent_crashed',
+				message: 'out of memory',
+				recoverable: false,
+				agentId: 'claude-code',
+				timestamp: 0,
+			}),
+		};
+		const facts = baseFacts({ exitCode: null, signal: 'SIGKILL' });
+
+		const result = resolveTurnOutcome(facts, provider, CLAUDE_CTX);
+
+		expect(result.outcome).toBe('crashed');
+		expect(result.error?.message).toBe('out of memory');
 	});
 
 	it.each(['agent-terminal', 'session-synopsis-1', 'tab-naming-abc123'])(

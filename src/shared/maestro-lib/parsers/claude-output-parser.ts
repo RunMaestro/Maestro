@@ -642,6 +642,26 @@ export class ClaudeOutputParser implements AgentOutputParser {
 		const limitError = this.detectPlanLimitNotice(obj, parsed);
 		if (limitError) return limitError;
 
+		// ── Failed terminal result ──────────────────────────────────────────────
+		// Claude Code ends a failed turn with an ordinary `result` envelope flagged
+		// `is_error: true` and then EXITS 0 (max turns, a budget cap, an API error
+		// it gave up on, an error during execution). Nothing else on the line says
+		// failure: there is no `error` field, and `subtype` can even read
+		// "success". Read as a plain result, the failure text rendered as the
+		// agent's answer and the turn settled as a success, on every surface.
+		if (obj.type === 'result' && obj.is_error === true) {
+			const failureText = this.failedResultText(obj);
+			const match = matchErrorPattern(getErrorPatterns(this.agentId), failureText);
+			return {
+				type: match?.type ?? 'unknown',
+				message: match?.message ?? failureText,
+				recoverable: match?.recoverable ?? true,
+				agentId: this.agentId,
+				timestamp: Date.now(),
+				parsedJson: parsed,
+			};
+		}
+
 		let errorText: string | null = null;
 		let parsedJson: unknown = null;
 
@@ -691,6 +711,29 @@ export class ClaudeOutputParser implements AgentOutputParser {
 		}
 
 		return null;
+	}
+
+	/**
+	 * What a failed `result` envelope says went wrong. Its `result` string is the
+	 * provider's own message when there is one ("API Error: ..."); otherwise the
+	 * `subtype` names the cause. The `errors` array is not used: it carries
+	 * internal diagnostics (`[ede_diagnostic] result_type=user ...`), not text
+	 * meant for a person.
+	 */
+	private failedResultText(obj: Record<string, unknown>): string {
+		if (typeof obj.result === 'string' && obj.result.trim()) {
+			return obj.result;
+		}
+		switch (obj.subtype) {
+			case 'error_max_turns':
+				return 'Claude Code stopped after reaching its maximum number of turns.';
+			case 'error_max_budget_usd':
+				return 'Claude Code stopped after reaching its spending limit for this turn.';
+			case 'error_during_execution':
+				return 'Claude Code stopped with an error before finishing the turn.';
+			default:
+				return 'Claude Code reported that the turn failed.';
+		}
 	}
 
 	/**
