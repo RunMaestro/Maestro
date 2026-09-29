@@ -1,3 +1,4 @@
+import { createPatch } from 'diff';
 import { parseDiff, type FileData, type HunkData, type ChangeData } from 'react-diff-view';
 import { logger } from './logger';
 
@@ -13,6 +14,21 @@ export interface ParsedFileDiff {
 	isImage: boolean;
 	isNewFile: boolean;
 	isDeletedFile: boolean;
+}
+
+/**
+ * Build a synthetic git-style unified diff between two in-memory texts, so the
+ * existing diff renderers (which expect `diff --git a/... b/...` headers) can
+ * show a comparison that never touched git. The `diff` library's createPatch
+ * produces an `Index:` header that `parseGitDiff` doesn't understand on its own.
+ */
+export function buildSyntheticGitDiff(
+	displayPath: string,
+	oldContent: string,
+	newContent: string
+): string {
+	const patch = createPatch(displayPath, oldContent, newContent, '', '');
+	return `diff --git a/${displayPath} b/${displayPath}\n${patch}`;
 }
 
 /**
