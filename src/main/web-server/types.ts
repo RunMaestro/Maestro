@@ -349,6 +349,10 @@ export type NewTabCallback = (
 	sessionId: string,
 	background?: boolean
 ) => Promise<{ tabId: string } | null>;
+export type ReopenTabCallback = (
+	sessionId: string,
+	tabId: string
+) => Promise<{ tabId: string } | null>;
 export type CloseTabCallback = (sessionId: string, tabId: string) => Promise<boolean>;
 export interface RenameTabResult {
 	success: boolean;

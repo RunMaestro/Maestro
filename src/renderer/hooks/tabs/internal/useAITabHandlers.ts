@@ -10,9 +10,9 @@ import {
 } from '../../../stores/sessionStore';
 import { clearLiveDraft } from '../../../utils/liveDraftStore';
 import { logger } from '../../../utils/logger';
-import { persistTabStarred } from '../../../utils/starredSessions';
+import { persistTabStarred, snapshotClosedTabTranscript } from '../../../utils/starredSessions';
 import { isWebDesktop } from '../../../utils/runtimeContext';
-import { requestDesktopTabClose } from '../../../services/desktopTabClose';
+import { requestDesktopTabClose, requestDesktopTabCloses } from '../../../services/desktopTabClose';
 import { noteDesktopAiTabSelection } from '../../../utils/desktopTabSelectionSync';
 import {
 	addAiTabToUnifiedHistory,
@@ -22,7 +22,6 @@ import {
 	cycleShowThinkingFields,
 	getActiveTab,
 	getInitialRenameValue,
-	getTabDisplayName,
 	hasActiveWizard,
 	hasDraft,
 	hasWizardInteraction,
@@ -133,42 +132,12 @@ export function useAITabHandlers(
 			const tabBeforeClose = sessionBeforeClose?.aiTabs.find((t) => t.id === tabId);
 			const wasWizardTab = !!tabBeforeClose && hasActiveWizard(tabBeforeClose);
 
-			// Closing a starred tab is a context-loss boundary: capture the provider
-			// transcript into Maestro's own mirror now, so it survives even if the
-			// provider later deletes its copy. Fire-and-forget; no-op for unstarred
-			// tabs or tabs that never got a provider session id.
-			if (
-				sessionBeforeClose &&
-				tabBeforeClose?.starred &&
-				tabBeforeClose.agentSessionId &&
-				sessionBeforeClose.projectRoot
-			) {
-				window.maestro.agentSessions
-					.snapshotStarredTranscript(
-						sessionBeforeClose.toolType || 'claude-code',
-						sessionBeforeClose.projectRoot,
-						tabBeforeClose.agentSessionId,
-						getTabDisplayName(tabBeforeClose)
-					)
-					.catch((error) =>
-						logger.warn(
-							'[useTabHandlers] Failed to mirror starred transcript on close',
-							undefined,
-							error
-						)
-					);
-			}
-
 			if (isWebDesktop()) {
-				if (!tabBeforeClose) return;
-				void requestDesktopTabClose(activeSessionId, tabId).then((sent) => {
-					if (sent && wasWizardTab) {
-						endInlineWizard(tabId).catch((error) =>
-							logger.warn('[useTabHandlers] Failed to end wizard on tab close:', undefined, error)
-						);
-					}
-				});
+				void requestDesktopTabClose(activeSessionId, tabId, endInlineWizard);
 				return;
+			}
+			if (sessionBeforeClose && tabBeforeClose) {
+				snapshotClosedTabTranscript(sessionBeforeClose, tabBeforeClose);
 			}
 
 			clearLiveDraft(tabId);
@@ -230,7 +199,11 @@ export function useAITabHandlers(
 		const { activeSessionId, sessions } = useSessionStore.getState();
 		const activeSession = sessions.find((s) => s.id === activeSessionId);
 		if (isWebDesktop()) {
-			visibleAiTabs(activeSession?.aiTabs).forEach((tab) => performTabClose(tab.id));
+			void requestDesktopTabCloses(
+				activeSessionId,
+				visibleAiTabs(activeSession?.aiTabs).map((tab) => tab.id),
+				endInlineWizard
+			);
 			return;
 		}
 		visibleAiTabs(activeSession?.aiTabs).forEach((t) => clearLiveDraft(t.id));
@@ -260,7 +233,7 @@ export function useAITabHandlers(
 				logger.warn('[useTabHandlers] Failed to end wizard on close-all:', undefined, error)
 			);
 		}
-	}, [endInlineWizard, performTabClose]);
+	}, [endInlineWizard]);
 
 	const handleCloseAllTabs = useCallback(() => {
 		const session = selectActiveSession(useSessionStore.getState());

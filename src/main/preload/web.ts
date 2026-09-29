@@ -67,8 +67,15 @@ export function createWebApi() {
 			ipcRenderer.invoke('web:requestNewTab', sessionId, background) as Promise<{
 				tabId: string;
 			} | null>,
+		/** Wait for the owning renderer to close this conversation. */
 		requestCloseTab: (sessionId: string, tabId: string) =>
 			ipcRenderer.invoke('web:requestCloseTab', sessionId, tabId) as Promise<boolean>,
+
+		/** Restore the requested closed conversation on its owning desktop. */
+		requestReopenTab: (sessionId: string, tabId: string) =>
+			ipcRenderer.invoke('web:requestReopenTab', sessionId, tabId) as Promise<{
+				tabId: string;
+			} | null>,
 
 		// Broadcast user input to web clients (for keeping web interface in sync)
 		broadcastUserInput: (sessionId: string, command: string, inputMode: 'ai' | 'terminal') =>

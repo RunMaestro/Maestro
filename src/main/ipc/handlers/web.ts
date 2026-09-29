@@ -370,7 +370,15 @@ export function registerWebHandlers(deps: WebHandlerDependencies): void {
 		return webServer?.requestNewTab(sessionId, background) ?? null;
 	});
 	ipcMain.handle('web:requestCloseTab', async (_, sessionId: string, tabId: string) => {
+		if (typeof sessionId !== 'string' || !sessionId || typeof tabId !== 'string' || !tabId)
+			return false;
 		return getWebServer()?.requestCloseTab(sessionId, tabId) ?? false;
+	});
+
+	ipcMain.handle('web:requestReopenTab', async (_, sessionId: string, tabId: string) => {
+		if (typeof sessionId !== 'string' || !sessionId || typeof tabId !== 'string' || !tabId)
+			return null;
+		return getWebServer()?.requestReopenTab(sessionId, tabId) ?? null;
 	});
 
 	ipcMain.handle(

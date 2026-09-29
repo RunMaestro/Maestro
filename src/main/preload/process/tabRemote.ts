@@ -43,10 +43,33 @@ export function createTabRemoteApi() {
 		/**
 		 * Subscribe to remote close tab from web interface
 		 */
-		onRemoteCloseTab: (callback: (sessionId: string, tabId: string) => void): (() => void) => {
-			const handler = (_: unknown, sessionId: string, tabId: string) => callback(sessionId, tabId);
+		onRemoteCloseTab: (
+			callback: (sessionId: string, tabId: string, responseChannel: string) => void
+		): (() => void) => {
+			const handler = (_: unknown, sessionId: string, tabId: string, responseChannel: string) =>
+				callback(sessionId, tabId, responseChannel);
 			ipcRenderer.on('remote:closeTab', handler);
 			return () => ipcRenderer.removeListener('remote:closeTab', handler);
+		},
+		/** Reply after the owner has applied (or declined) a close. */
+		sendRemoteCloseTabResponse: (responseChannel: string, closed: boolean): void => {
+			ipcRenderer.send(responseChannel, closed);
+		},
+		/** Subscribe to a restore of a specific closed AI conversation. */
+		onRemoteReopenTab: (
+			callback: (sessionId: string, tabId: string, responseChannel: string) => void
+		): (() => void) => {
+			const handler = (_: unknown, sessionId: string, tabId: string, responseChannel: string) =>
+				callback(sessionId, tabId, responseChannel);
+			ipcRenderer.on('remote:reopenTab', handler);
+			return () => ipcRenderer.removeListener('remote:reopenTab', handler);
+		},
+		/** Reply with the restored tab's canonical id, or null if it could not be restored. */
+		sendRemoteReopenTabResponse: (
+			responseChannel: string,
+			result: { tabId: string } | null
+		): void => {
+			ipcRenderer.send(responseChannel, result);
 		},
 
 		/**

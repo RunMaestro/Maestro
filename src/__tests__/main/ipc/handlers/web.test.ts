@@ -102,6 +102,7 @@ describe('web handlers', () => {
 			broadcastTabsChange: vi.fn(),
 			requestNewTab: vi.fn().mockResolvedValue({ tabId: 'tab-2' }),
 			requestCloseTab: vi.fn().mockResolvedValue(true),
+			requestReopenTab: vi.fn().mockResolvedValue({ tabId: 'restored' }),
 			broadcastSessionStateChange: vi.fn(),
 			getWebClientCount: vi.fn().mockReturnValue(1),
 			getSecurityToken: vi.fn().mockReturnValue('mock-security-token'),
@@ -230,6 +231,24 @@ describe('web handlers', () => {
 			webServerRef.current = null;
 			expect(await handler!({}, 'session-123', 'tab-1')).toBe(false);
 		});
+	});
+
+	it.each([undefined, '', 42, {}])(
+		'rejects invalid conversation ids %j before dispatch',
+		async (id) => {
+			expect(await registeredHandlers.get('web:requestCloseTab')!({}, 'session-1', id)).toBe(false);
+			expect(await registeredHandlers.get('web:requestReopenTab')!({}, id, 'tab-1')).toBeNull();
+			expect(mockWebServer.requestCloseTab).not.toHaveBeenCalled();
+			expect(mockWebServer.requestReopenTab).not.toHaveBeenCalled();
+		}
+	);
+
+	it('restores a specific history entry through its desktop owner', async () => {
+		const handler = registeredHandlers.get('web:requestReopenTab')!;
+		expect(await handler({}, 'session-1', 'closed-tab')).toEqual({ tabId: 'restored' });
+		expect(mockWebServer.requestReopenTab).toHaveBeenCalledWith('session-1', 'closed-tab');
+		webServerRef.current = null;
+		expect(await handler({}, 'session-1', 'closed-tab')).toBeNull();
 	});
 
 	describe('web:broadcastUserInput', () => {

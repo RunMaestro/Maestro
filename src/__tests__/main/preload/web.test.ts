@@ -70,6 +70,14 @@ describe('Web Preload API', () => {
 			});
 		});
 
+		it('requests reopening by the original closed tab id', async () => {
+			mockInvoke.mockResolvedValue({ tabId: 'restored' });
+			await expect(api.requestReopenTab('session-1', 'closed-tab')).resolves.toEqual({
+				tabId: 'restored',
+			});
+			expect(mockInvoke).toHaveBeenCalledWith('web:requestReopenTab', 'session-1', 'closed-tab');
+		});
+
 		describe('broadcastUserInput', () => {
 			it('should invoke web:broadcastUserInput with correct parameters', async () => {
 				mockInvoke.mockResolvedValue(undefined);
