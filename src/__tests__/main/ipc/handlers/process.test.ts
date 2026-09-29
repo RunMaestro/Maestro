@@ -236,6 +236,14 @@ vi.mock('../../../../main/agents/claude-transcript-sanitizer', () => ({
 	})),
 }));
 
+// Mock the remote maestro-p probe. An SSH-enabled Claude spawn warms it before
+// resolving the token mode, and the real one shells out to `ssh` against the
+// fixture host: CI fails that DNS lookup fast, a local resolver can take 30s
+// and time the test out. `undefined` is the probe's own "could not determine".
+vi.mock('../../../../main/agents/probeRemoteMaestroP', () => ({
+	ensureRemoteMaestroPProbed: vi.fn().mockResolvedValue(undefined),
+}));
+
 // Mock the prompt manager so the copilot-preamble injection has deterministic
 // content without bootstrapping the real prompt cache. Per-test overrides use
 // mockReturnValueOnce / mockImplementation.
