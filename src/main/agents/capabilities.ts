@@ -278,7 +278,7 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		supportsResultMessages: false,
 		supportsModelSelection: true,
 		supportsStreamJsonInput: false,
-		supportsPromptViaStdin: false, // `hermes chat` only runs one-shot when given `-q <prompt>`; without it, it opens the interactive TUI (banner) and exits 1 on a piped stdin (#1657)
+		supportsPromptViaStdin: true, // Requires --query-file -; bare stdin opens the interactive TUI (#1657)
 		supportsThinkingDisplay: false,
 		supportsContextMerge: true,
 		supportsContextExport: false,

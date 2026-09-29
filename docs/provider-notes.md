@@ -164,6 +164,7 @@ For [SSH remote agents](/ssh-remote-execution), maestro-p must be installed on t
 **Notes**:
 
 - Hermes is [Nous Research's](https://hermes-agent.nousresearch.com/) coding agent. Set a documented model override (for example `anthropic/claude-sonnet-4-20250514`) under **Settings → Providers → Hermes**, or leave it blank for the CLI default.
+- On Windows, Maestro passes batch prompts through stdin with `hermes chat -Q --yolo --query-file -`. The explicit query source keeps Auto Run and tab naming out of the interactive TUI without exposing long prompts to the Windows command-line limit. Hermes must support `chat --query-file`; update Hermes if your installation does not list it in `hermes chat --help`.
 
 ## Pi
 

@@ -290,9 +290,6 @@ describe('agent-capabilities', () => {
 			// omp takes the prompt positionally: piping it to stdin makes the run
 			// exit 0 with no output, which is why prompt delivery is capability-gated.
 			expect(hasCapability('omp', 'supportsPromptViaStdin')).toBe(false);
-			// Hermes only runs one-shot with `-q <prompt>`; a stdin prompt drops that
-			// flag and it opens its interactive TUI instead, exiting 1 (#1657).
-			expect(hasCapability('hermes', 'supportsPromptViaStdin')).toBe(false);
 			expect(hasCapability('claude-code', 'supportsPromptViaStdin')).toBe(true);
 			expect(hasCapability('codex', 'supportsPromptViaStdin')).toBe(true);
 			expect(hasCapability('opencode', 'supportsPromptViaStdin')).toBe(true);
