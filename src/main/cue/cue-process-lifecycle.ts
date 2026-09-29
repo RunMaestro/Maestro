@@ -432,7 +432,7 @@ export function runProcess(
 		// observe EOF. `'ignore'` gives the child /dev/null for stdin so it
 		// never tries to read - Claude already behaves correctly with either,
 		// so this is safe across all agents.
-		const needsStdinWrite = sshRemoteEnabled && (Boolean(sshStdinScript) || Boolean(stdinPrompt));
+		const needsStdinWrite = (sshRemoteEnabled && Boolean(sshStdinScript)) || Boolean(stdinPrompt);
 		const stdinMode: 'pipe' | 'ignore' = needsStdinWrite ? 'pipe' : 'ignore';
 		try {
 			// maestro-p (interactive token mode) self-allocates its own PTY via
@@ -577,8 +577,9 @@ export function runProcess(
 			// SSH stdin script mode - send the full bash script via stdin
 			child.stdin?.write(sshStdinScript);
 			child.stdin?.end();
-		} else if (stdinPrompt && sshRemoteEnabled) {
-			// SSH small prompt mode - send raw prompt via stdin
+		} else if (stdinPrompt) {
+			// The prompt travels on stdin: SSH small-prompt mode, or a local run on
+			// a Windows host (see resolvePromptDelivery)
 			child.stdin?.write(stdinPrompt);
 			child.stdin?.end();
 		} else {

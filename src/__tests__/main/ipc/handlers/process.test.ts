@@ -742,6 +742,43 @@ describe('process IPC handlers', () => {
 			});
 		});
 
+		it('lets a global Settings var override a provider default, and the agent override both', async () => {
+			// The shared five-layer order: defaults < global < agent vars. Before the
+			// launch plan, provider defaults outranked Settings -> Environment, so a
+			// user could not switch CLAUDE_CODE_DISABLE_BACKGROUND_TASKS off there.
+			mockAgentDetector.getAgent.mockResolvedValue({
+				id: 'claude-code',
+				requiresPty: false,
+				defaultEnvVars: {
+					CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1',
+					OTHER_DEFAULT: 'default',
+				},
+			});
+			mockSettingsStore.get.mockImplementation((key, defaultValue) => {
+				if (key === 'shellEnvVars') {
+					return { CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '0', OTHER_DEFAULT: 'global' };
+				}
+				return defaultValue;
+			});
+			mockProcessManager.spawn.mockReturnValue({ pid: 2002, success: true });
+
+			const handler = handlers.get('process:spawn');
+			await handler!({} as any, {
+				sessionId: 'session-env-layers',
+				toolType: 'claude-code',
+				cwd: '/test',
+				command: 'claude',
+				args: [],
+				sessionCustomEnvVars: { OTHER_DEFAULT: 'agent' },
+			});
+
+			const spawnConfig = mockProcessManager.spawn.mock.calls[0][0];
+			expect(spawnConfig.customEnvVars).toMatchObject({
+				CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '0',
+				OTHER_DEFAULT: 'agent',
+			});
+		});
+
 		it('should NOT apply readOnlyEnvOverrides when readOnlyMode is false', async () => {
 			const { applyAgentConfigOverrides } = await import('../../../../main/utils/agent-args');
 			const mockApply = vi.mocked(applyAgentConfigOverrides);
@@ -756,9 +793,12 @@ describe('process IPC handlers', () => {
 				effectiveCustomEnvVars: { OPENCODE_CONFIG_CONTENT: yoloConfig },
 			});
 
+			// The env record comes from the launch plan's layers, so the YOLO value
+			// is the provider default it is in the real OpenCode definition.
 			const mockAgent = {
 				id: 'opencode',
 				requiresPty: false,
+				defaultEnvVars: { OPENCODE_CONFIG_CONTENT: yoloConfig },
 				readOnlyEnvOverrides: {
 					OPENCODE_CONFIG_CONTENT: '{"permission":{"question":"deny"},"tools":{"question":false}}',
 				},
@@ -2498,7 +2538,10 @@ describe('process IPC handlers', () => {
 			);
 		});
 
-		it('should run locally when no SSH remotes are configured', async () => {
+		it('refuses to spawn when SSH is on but its remote is not configured', async () => {
+			// This used to run the agent LOCALLY, against a cwd that belongs to the
+			// remote host. The user asked for a remote, so the spawn is refused and
+			// the tab is told why.
 			const mockAgent = {
 				id: 'claude-code',
 				requiresPty: true,
@@ -2512,7 +2555,7 @@ describe('process IPC handlers', () => {
 			mockProcessManager.spawn.mockReturnValue({ pid: 12345, success: true });
 
 			const handler = handlers.get('process:spawn');
-			await handler!({} as any, {
+			const result = await handler!({} as any, {
 				sessionId: 'session-1',
 				toolType: 'claude-code',
 				cwd: '/local/project',
@@ -2525,12 +2568,15 @@ describe('process IPC handlers', () => {
 				},
 			});
 
-			// No matching SSH remote, should run locally
-			expect(mockProcessManager.spawn).toHaveBeenCalledWith(
-				expect.objectContaining({
-					command: 'claude',
-					requiresPty: true, // Preserved when running locally
-				})
+			expect(mockProcessManager.spawn).not.toHaveBeenCalled();
+			expect(result).toMatchObject({ success: false, pid: 0 });
+			const window = deps.getMainWindow() as unknown as {
+				webContents: { send: ReturnType<typeof vi.fn> };
+			};
+			expect(window.webContents.send).toHaveBeenCalledWith(
+				'process:data',
+				'session-1',
+				expect.stringContaining('"remote-1" no longer exists')
 			);
 		});
 
@@ -3860,6 +3906,22 @@ describe('process IPC handlers', () => {
 		it('leaves stdin delivery off for SSH sessions (the SSH script owns stdin)', async () => {
 			await setHostWindows(true);
 			mockAgentDetector.getAgent.mockResolvedValue(stdinCapableAgent);
+			mockSettingsStore.get.mockImplementation((key, defaultValue) => {
+				if (key === 'sshRemotes') {
+					return [
+						{
+							id: 'remote-1',
+							name: 'Remote',
+							host: 'remote.example.com',
+							port: 22,
+							username: 'dev',
+							privateKeyPath: '~/.ssh/id_ed25519',
+							enabled: true,
+						},
+					];
+				}
+				return defaultValue;
+			});
 
 			const spawnCall = await spawnWith({
 				toolType: 'claude-code',

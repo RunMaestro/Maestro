@@ -285,6 +285,23 @@ export function readSettingValue(key: string): unknown {
 }
 
 /**
+ * Settings -> Environment: the global env vars every agent the desktop starts
+ * receives. CLI and standalone-Cue spawns apply the same layer, so an agent run
+ * from the command line gets the same environment it gets in the app. Only
+ * string values are kept; the disabled record (`shellEnvVarsDisabled`) is never
+ * read, since a parked var must not reach a process.
+ */
+export function readGlobalShellEnvVars(): Record<string, string> {
+	const value = readSettingValue('shellEnvVars');
+	if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+	const vars: Record<string, string> = {};
+	for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+		if (typeof entry === 'string') vars[key] = entry;
+	}
+	return vars;
+}
+
+/**
  * Write a single setting value, supporting dot-notation for nested keys.
  * Returns true on success.
  */
