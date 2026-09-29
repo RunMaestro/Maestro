@@ -60,7 +60,13 @@ import type { SshRemoteSettingsStore } from '../../main/utils/ssh-remote-resolve
 import { getAgentDisplayName } from '../../shared/agentMetadata';
 import type { TemplateContext } from '../../shared/templateVariables';
 import type { CueRunResult } from '../../shared/cue/contracts';
-import { readSessions, readSshRemotes, getAgentCustomPath, readAgentConfig } from './storage';
+import {
+	readSessions,
+	readSshRemotes,
+	getAgentCustomPath,
+	readAgentConfig,
+	readGlobalShellEnvVars,
+} from './storage';
 
 /** Lazily import every executor module once, cached for the process lifetime - see the module doc above for why these are dynamic rather than top-level imports. */
 let executorsPromise: ReturnType<typeof loadExecutorsUncached> | undefined;
@@ -265,6 +271,7 @@ function buildOnCueRun(onLog: StandaloneCueLog): CueEngineDeps['onCueRun'] {
 			onLog,
 			sshStore: sshStoreAdapter(),
 			agentConfigValues: readAgentConfig(storedSession.toolType),
+			globalShellEnvVars: readGlobalShellEnvVars(),
 		});
 
 		await reportStandaloneAuthFailure(result, storedSession.toolType, onLog);

@@ -66,6 +66,7 @@ vi.mock('../../../cli/services/storage', () => ({
 	getAgentCustomPath: vi.fn(() => '/custom/path/to/claude'),
 	readAgentConfig: vi.fn(() => ({})),
 	readSshRemotes: vi.fn(() => []),
+	readGlobalShellEnvVars: vi.fn(() => ({})),
 }));
 
 import { spawnAgent, type AgentResult } from '../../../cli/services/agent-spawner';

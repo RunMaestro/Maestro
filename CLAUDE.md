@@ -110,6 +110,7 @@ Grep-verified 2026-09-04 (`npm run docs:verify` re-checks every path). This is t
 - **Naming the account a login acts on:** `AccountPill`, `ghAccountLabel()` in `src/renderer/components/ui/AccountPill.tsx`; `parseGhActiveAccount()` in `src/main/utils/ghErrors.ts`
 - **Keeping a plan account on the Usage Dashboard after its agents leave:** `rememberQuotaAccounts()`, `pruneMissingQuotaAccounts()` in `src/main/stores/quotaAccountsStore.ts`; `partitionSnapshotsByAge()`, `SNAPSHOT_RETENTION_MS` in `src/main/stores/usageSnapshotRetention.ts`
 - **SSH remote lookup:** `getSshRemoteById()` in `src/main/stores/getters.ts`
+- **Launching an agent (env layers, prompt delivery, SSH target):** `buildAgentLaunchPlan()` in `src/shared/maestro-lib/launch/launch-plan.ts`, over `buildAgentEnvironment()` / `resolveAgentEnvVars()` (`launch/env.ts`), `resolvePromptDelivery()` / `resolveSystemPromptDelivery()` / `buildPromptArgv()` (`launch/prompt-delivery.ts`) and `resolveSshLaunchTarget()` (`launch/ssh-remote-resolver.ts`). One env order for desktop, Cue and the CLI: `process.env < provider defaults < global Settings < (agent's own ?? provider-level) < read-only overrides`; an unresolvable SSH remote fails the launch, never runs locally. Do NOT hand-roll another prompt-argv chain or env merge at a spawn site.
 - **Deferred main-process store persistence:** `deferStoreWrites()`, `flushPendingSessionWrites()` in `src/main/stores/deferred-writes.ts` / `src/main/stores/instances.ts`
 - **Recovering from a store file that is not JSON:** `createStoreDeserializer()`, `corruptStorePath()` in `src/main/stores/corrupt-store-recovery.ts`. conf rethrows a `SyntaxError` from the Store constructor, so one torn file bricks startup forever; the file is quarantined to a stamped `.corrupt-` sidecar and the store falls back to defaults. Never `clearInvalidConfig`.
 - **Writing a Claude session's origin record:** `setClaudeSessionOrigin()`, `mergeClaudeSessionOrigin()` in `src/main/storage/claude-session-origins.ts`
@@ -658,7 +659,10 @@ if (sshStore && session.sshRemoteConfig?.enabled) {
   `sshUnresolvedRemoteMessage(sshConfig)` from `ssh-spawn-wrapper.ts`. See
   `groomContext()` and `spawnGroupChatAgent()` for the pattern, and
   `sshUnresolvedFailure()` in `src/cli/services/agent-spawner.ts` for the CLI's
-  version of this.
+  version of this. Better still, resolve the target BEFORE any side effect:
+  `buildAgentLaunchPlan()` / `resolveSshLaunchTarget()` in
+  `src/shared/maestro-lib/launch/` return an actionable error for a missing,
+  deleted or disabled remote, which is how desktop, Cue and the CLI now fail.
 
 **CLI parity:** The CLI (`src/cli/services/agent-spawner.ts`) spawns agent
 processes for batch/playbook automation and honors the same SSH wrapping and

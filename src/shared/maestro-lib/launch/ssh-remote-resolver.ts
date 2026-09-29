@@ -143,3 +143,71 @@ export function createSshRemoteStoreAdapter<
 		getSshRemotes: () => store.get('sshRemotes', []),
 	};
 }
+
+/**
+ * Where an agent launch runs. `unresolved` means the user turned SSH on but no
+ * usable remote was found, and the launch must FAIL rather than run locally:
+ * the user opted into a remote host, and running on their own machine (against
+ * the remote's cwd, no less) is a wrong answer that looks like a working one.
+ * `getSshRemoteConfig` folds that case into `none`, which is how callers kept
+ * falling back to local.
+ */
+export type SshLaunchTarget =
+	| { kind: 'local' }
+	| { kind: 'remote'; remote: SshRemoteConfig }
+	| {
+			kind: 'unresolved';
+			reason: 'no-remote-selected' | 'remote-not-found' | 'remote-disabled' | 'no-remote-store';
+			/** Says what is wrong and what to change, for showing to the user as-is. */
+			message: string;
+	  };
+
+/**
+ * Resolve where a launch runs, before anything is spawned. SSH is session-level
+ * only (see `getSshRemoteConfig`); this adds the one thing that function cannot
+ * say: that SSH was requested and cannot be honored, and why.
+ */
+export function resolveSshLaunchTarget(
+	store: SshRemoteSettingsStore | undefined,
+	sessionSshConfig: AgentSshRemoteConfig | null | undefined
+): SshLaunchTarget {
+	if (!sessionSshConfig?.enabled) return { kind: 'local' };
+
+	const unresolved = (
+		reason: Extract<SshLaunchTarget, { kind: 'unresolved' }>['reason'],
+		detail: string
+	): SshLaunchTarget => ({
+		kind: 'unresolved',
+		reason,
+		message: `SSH remote execution is enabled for this agent, but ${detail} The agent was not started, so nothing ran on this machine instead.`,
+	});
+
+	const remoteId = sessionSshConfig.remoteId;
+	if (!remoteId) {
+		return unresolved(
+			'no-remote-selected',
+			'no remote is selected. Pick an SSH remote in the agent settings, or turn SSH off.'
+		);
+	}
+	if (!store) {
+		return unresolved(
+			'no-remote-store',
+			`the SSH remote list is not available here, so remote "${remoteId}" cannot be looked up.`
+		);
+	}
+	const remote = store.getSshRemotes().find((r) => r.id === remoteId);
+	if (!remote) {
+		return unresolved(
+			'remote-not-found',
+			`its remote "${remoteId}" no longer exists. Choose another remote in the agent settings, or turn SSH off.`
+		);
+	}
+	if (!remote.enabled) {
+		const label = remote.name ? `"${remote.name}"` : `"${remoteId}"`;
+		return unresolved(
+			'remote-disabled',
+			`its remote ${label} is disabled. Enable it in Settings -> SSH Hosts, or turn SSH off for this agent.`
+		);
+	}
+	return { kind: 'remote', remote };
+}

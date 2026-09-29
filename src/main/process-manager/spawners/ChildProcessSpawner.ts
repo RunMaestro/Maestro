@@ -13,6 +13,7 @@ import { StdoutHandler } from '../handlers/StdoutHandler';
 import { StderrHandler } from '../handlers/StderrHandler';
 import { ExitHandler } from '../handlers/ExitHandler';
 import { buildChildProcessEnv, collectMaestroEnvVars } from '../utils/envBuilder';
+import { buildPromptArgv } from '../../../shared/maestro-lib/launch/prompt-delivery';
 import { DEFAULT_QUERY_SOURCE } from '../../../shared/querySource';
 import { saveImageToTempFile, buildImagePromptPrefix } from '../utils/imageUtils';
 import { buildStreamJsonMessage } from '../utils/streamJsonBuilder';
@@ -151,13 +152,10 @@ export class ChildProcessSpawner {
 					: buildImagePromptPrefix(tempImageFiles);
 				effectivePrompt = imagePrefix + prompt;
 				if (!promptViaStdin) {
-					if (promptArgs) {
-						finalArgs = [...finalArgs, ...promptArgs(effectivePrompt)];
-					} else if (noPromptSeparator) {
-						finalArgs = [...finalArgs, effectivePrompt];
-					} else {
-						finalArgs = [...finalArgs, '--', effectivePrompt];
-					}
+					finalArgs = [
+						...finalArgs,
+						...buildPromptArgv({ promptArgs, noPromptSeparator }, effectivePrompt),
+					];
 					promptAddedToArgs = true;
 				}
 				logger.debug('[ProcessManager] Embedded image paths in prompt', 'ProcessManager', {
@@ -176,13 +174,7 @@ export class ChildProcessSpawner {
 					finalArgs = [...finalArgs, ...imageArgs(tempPath)];
 				}
 				if (!promptViaStdin) {
-					if (promptArgs) {
-						finalArgs = [...finalArgs, ...promptArgs(prompt)];
-					} else if (noPromptSeparator) {
-						finalArgs = [...finalArgs, prompt];
-					} else {
-						finalArgs = [...finalArgs, '--', prompt];
-					}
+					finalArgs = [...finalArgs, ...buildPromptArgv({ promptArgs, noPromptSeparator }, prompt)];
 					promptAddedToArgs = true;
 				}
 				logger.debug('[ProcessManager] Using file-based image args', 'ProcessManager', {
@@ -196,13 +188,7 @@ export class ChildProcessSpawner {
 			// Regular batch mode - prompt as CLI arg
 			// SKIP this when prompt is sent via stdin to avoid shell escaping issues,
 			// or when the caller already embedded the prompt in args (promptAlreadyInArgs).
-			if (promptArgs) {
-				finalArgs = [...args, ...promptArgs(prompt)];
-			} else if (noPromptSeparator) {
-				finalArgs = [...args, prompt];
-			} else {
-				finalArgs = [...args, '--', prompt];
-			}
+			finalArgs = [...args, ...buildPromptArgv({ promptArgs, noPromptSeparator }, prompt)];
 			promptAddedToArgs = true;
 		} else {
 			finalArgs = args;
