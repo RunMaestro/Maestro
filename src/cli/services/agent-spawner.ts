@@ -13,14 +13,16 @@ import type {
 } from '../../shared/types';
 import { createOutputParser } from '../../shared/maestro-lib/parsers/parser-factory';
 import { aggregateModelUsage } from '../../shared/maestro-lib/parsers/usage-aggregator';
+import { ClaudeOutputParser } from '../../shared/maestro-lib/parsers/claude-output-parser';
 import { getAgentDefinition } from '../../shared/maestro-lib/providers/definitions';
 import { hasCapability } from '../../shared/maestro-lib/providers/capabilities';
 import { checkCustomPath } from '../../shared/maestro-lib/launch/path-prober';
 import { BufferedLineReader } from '../../shared/maestro-lib/streaming/buffered-line-reader';
 import { UsageAccumulator } from '../../shared/maestro-lib/streaming/usage-accumulator';
 import {
-	mergeUsageStats,
+	addUsageStats,
 	parsedUsageToStats,
+	replaceUsageStats,
 } from '../../shared/maestro-lib/streaming/usage-totals';
 import type { TurnOutcome } from '../../shared/maestro-lib/streaming/turn-outcome';
 import { resolveCliTurnResult, interruptedResult, spawnFailureResult } from './turn-result';
@@ -752,6 +754,10 @@ async function spawnClaudeAgent(
 		let assistantText = ''; // Accumulate text from assistant messages as fallback
 		let sessionId: string | undefined;
 		let usageStats: UsageStats | undefined;
+		// Sees every message only to track the last main-transcript API call's
+		// usage, which is the turn's real context occupancy (`absoluteUsage`).
+		// The totals themselves still come from `aggregateModelUsage` below.
+		const occupancyTracker = new ClaudeOutputParser();
 		let resultEmitted = false;
 		let resultMessageSeen = false;
 		let sessionIdEmitted = false;
@@ -797,8 +803,16 @@ async function spawnClaudeAgent(
 			// `result` message carries the whole turn's totals, so the last message
 			// is already the right answer, whereas delta-normalizing it against the
 			// preceding per-call `assistant` usage would report only the difference.
+			// `replaceUsageStats` keeps an occupancy snapshot or resolved window an
+			// earlier message reported when a later one (a trailing usage-only
+			// message, say) carries none.
+			const absoluteUsage = occupancyTracker.parseJsonObject(msg)?.usage?.absoluteUsage;
 			if (msg.modelUsage || msg.usage || msg.total_cost_usd !== undefined) {
-				usageStats = aggregateModelUsage(msg.modelUsage, msg.usage || {}, msg.total_cost_usd || 0);
+				const step = aggregateModelUsage(msg.modelUsage, msg.usage || {}, msg.total_cost_usd || 0);
+				usageStats = replaceUsageStats(
+					usageStats,
+					absoluteUsage ? { ...step, absoluteUsage } : step
+				);
 			}
 		};
 
@@ -1184,15 +1198,7 @@ async function spawnJsonLineAgent(
 				const step = usageAccumulator
 					? usageAccumulator.normalize(parsedUsageToStats(usage))
 					: parsedUsageToStats(usage);
-				usageStats = mergeUsageStats(usageStats, {
-					inputTokens: step.inputTokens,
-					outputTokens: step.outputTokens,
-					cacheReadTokens: step.cacheReadInputTokens,
-					cacheCreationTokens: step.cacheCreationInputTokens,
-					costUsd: step.totalCostUsd,
-					contextWindow: step.contextWindow,
-					reasoningTokens: step.reasoningTokens,
-				});
+				usageStats = addUsageStats(usageStats, step);
 			}
 		};
 
