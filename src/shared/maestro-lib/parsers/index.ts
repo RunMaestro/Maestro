@@ -68,7 +68,7 @@ import {
 	clearParserRegistry,
 	getAllOutputParsers,
 } from './agent-output-parser';
-import { logger } from '../../../main/utils/logger';
+import { logger } from '../host';
 
 // Export parser classes for direct use if needed
 export { ClaudeOutputParser } from './claude-output-parser';

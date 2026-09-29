@@ -13,7 +13,7 @@ import {
 	FALLBACK_CONTEXT_WINDOW,
 	getContextWindowForAgent,
 } from '../../agentConstants';
-import { capabilitySnapshots } from '../../../main/agents/capability-snapshot';
+import { getCapabilitySnapshot } from '../host';
 
 // Re-export for consumers that import from this module. The local import
 // was dropped on migration to `getContextWindowForAgent` - the re-export
@@ -118,7 +118,7 @@ export function estimateContextUsage(
 		stats.contextWindow && stats.contextWindow > 0
 			? stats.contextWindow
 			: agentId && agentId !== 'terminal'
-				? getContextWindowForAgent(agentId, capabilitySnapshots.get(agentId, sshRemoteId))
+				? getContextWindowForAgent(agentId, getCapabilitySnapshot(agentId, sshRemoteId))
 				: 0;
 
 	if (!effectiveContextWindow || effectiveContextWindow <= 0) {

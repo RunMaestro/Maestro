@@ -7,11 +7,13 @@
  * the library's provider knowledge, parsers, and launch (env/binary-detection/
  * remote-wrapping) surfaces.
  *
- * This does NOT assert the library is fully free of `src/main/**` imports -
- * see Plans/maestro-lib-part-one-checklist.md for the known residual
- * dependencies on plain Node utilities (logger, sentry, execFile, etc.) that
- * still live under `src/main/utils`. It asserts the one thing that must never
- * regress: no file in the library's source tree imports `electron` itself.
+ * It also asserts that no specifier in the library resolves into `src/main/**`.
+ * Part One left 13 such edges (logger, sentry, execFile, terminalFilter, the
+ * SSH resolver and builder, capability snapshots); they were retired by moving
+ * the plain Node code into the library and routing the desktop-owned services
+ * through `../host.ts`. The `shared-boundary/no-shared-to-main-imports` lint
+ * rule enforces the same thing with no allowlist; this scan keeps the
+ * guarantee in the test suite as well, where it cannot be disabled per line.
  *
  * Earlier version of this test patched `Module._resolveFilename` and asserted
  * the patch never observed an `electron` request. That patch never fired:
@@ -84,6 +86,25 @@ function findElectronOffenders(source: string): string[] {
 	return specifiers;
 }
 
+const SRC_MAIN = path.resolve(LIB_ROOT, '..', '..', 'main') + path.sep;
+
+function findMainOffenders(file: string, source: string): string[] {
+	IMPORT_SPECIFIER_PATTERN.lastIndex = 0;
+	const specifiers: string[] = [];
+	let match: RegExpExecArray | null;
+	while ((match = IMPORT_SPECIFIER_PATTERN.exec(source)) !== null) {
+		const specifier = match[1];
+		if (!specifier.startsWith('.')) {
+			continue;
+		}
+		const resolved = path.resolve(path.dirname(file), specifier);
+		if ((resolved + path.sep).startsWith(SRC_MAIN)) {
+			specifiers.push(specifier);
+		}
+	}
+	return specifiers;
+}
+
 describe('maestro-lib: no desktop framework dependency', () => {
 	it('has no `electron` import specifier anywhere in the library source', () => {
 		const testDir = path.join(LIB_ROOT, '__tests__') + path.sep;
@@ -100,6 +121,31 @@ describe('maestro-lib: no desktop framework dependency', () => {
 		}
 
 		expect(offenders).toEqual([]);
+	});
+
+	it('has no import specifier that resolves into src/main', () => {
+		const testDir = path.join(LIB_ROOT, '__tests__') + path.sep;
+		const offenders: string[] = [];
+
+		for (const file of collectSourceFiles(LIB_ROOT)) {
+			if (file.startsWith(testDir)) {
+				continue;
+			}
+			const content = fs.readFileSync(file, 'utf-8');
+			for (const specifier of findMainOffenders(file, content)) {
+				offenders.push(`${path.relative(LIB_ROOT, file)} imports "${specifier}"`);
+			}
+		}
+
+		expect(offenders).toEqual([]);
+	});
+
+	it('the src/main scan catches a relative import into src/main', () => {
+		const file = path.join(LIB_ROOT, 'parsers', 'example.ts');
+		expect(findMainOffenders(file, "import { logger } from '../../../main/utils/logger';")).toEqual(
+			['../../../main/utils/logger']
+		);
+		expect(findMainOffenders(file, "import { logger } from '../host';")).toEqual([]);
 	});
 
 	it.each([

@@ -17,7 +17,7 @@ vi.mock('os', async () => {
 });
 
 // Mock resolveSshPath to return predictable 'ssh' path
-vi.mock('../../../main/utils/cliDetection', () => ({
+vi.mock('../../../shared/maestro-lib/launch/ssh-path', () => ({
 	resolveSshPath: vi.fn().mockResolvedValue('ssh'),
 }));
 

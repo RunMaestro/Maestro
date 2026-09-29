@@ -10,7 +10,7 @@ import * as os from 'os';
 import * as path from 'path';
 
 // Mock dependencies before importing the module
-vi.mock('../../../main/utils/execFile', () => ({
+vi.mock('../../../shared/maestro-lib/launch/exec-file', () => ({
 	execFileNoThrow: vi.fn(),
 }));
 
@@ -46,6 +46,13 @@ import {
 import { execFileNoThrow } from '../../../main/utils/execFile';
 import { logger } from '../../../main/utils/logger';
 import { captureException } from '../../../main/utils/sentry';
+import { setMaestroLibLogger, setMaestroLibErrorReporter } from '../../../shared/maestro-lib/host';
+
+// The library logs and reports through its host (shared/maestro-lib/host.ts),
+// which the real desktop modules register into on load. They are mocked here,
+// so register the mocks instead.
+setMaestroLibLogger(logger);
+setMaestroLibErrorReporter({ captureException, captureMessage: vi.fn() });
 
 describe('path-prober', () => {
 	beforeEach(() => {

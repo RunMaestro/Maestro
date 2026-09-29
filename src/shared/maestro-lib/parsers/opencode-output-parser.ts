@@ -24,7 +24,7 @@
 import type { ToolType, AgentError } from '../../types';
 import type { AgentOutputParser, ParsedEvent } from './agent-output-parser';
 import { getErrorPatterns, matchErrorPattern } from './error-patterns';
-import { stripAllAnsiCodes } from '../../../main/utils/terminalFilter';
+import { stripAllAnsiCodes } from './terminal-filter';
 
 /**
  * Error object structure from OpenCode
