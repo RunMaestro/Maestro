@@ -7,7 +7,7 @@
 import type { AgentError, ToolType } from '../../types';
 import type { AgentOutputParser, ParsedEvent } from './agent-output-parser';
 import { getErrorPatterns, matchErrorPattern } from './error-patterns';
-import { stripAllAnsiCodes } from '../../../main/utils/terminalFilter';
+import { stripAllAnsiCodes } from './terminal-filter';
 
 interface PiUsage {
 	input?: number;

@@ -12,12 +12,9 @@
 
 import * as os from 'os';
 import type { SshRemoteConfig, AgentSshRemoteConfig } from '../../types';
-import {
-	getSshRemoteConfig,
-	SshRemoteSettingsStore,
-} from '../../../main/utils/ssh-remote-resolver';
-import { buildSshCommand, buildSshCommandWithStdin } from '../../../main/utils/ssh-command-builder';
-import { logger } from '../../../main/utils/logger';
+import { getSshRemoteConfig, SshRemoteSettingsStore } from './ssh-remote-resolver';
+import { buildSshCommand, buildSshCommandWithStdin } from './ssh-command-builder';
+import { logger } from '../host';
 import { DEFAULT_QUERY_SOURCE, QUERY_SOURCE_ENV_VAR, type QuerySource } from '../../querySource';
 import { stripBlankEnvVars } from '../../agentEnvironment';
 

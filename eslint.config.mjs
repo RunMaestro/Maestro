@@ -123,8 +123,8 @@ export default tseslint.config(
 		},
 	},
 
-	// maestro-lib Part One boundary guard: src/shared/** must not import
-	// src/main/** except the 13 tracked pre-existing edges.
+	// Boundary guard: src/shared/** (maestro-lib included) must not import
+	// src/main/**. No exceptions; host services go through maestro-lib/host.ts.
 	{
 		files: ['src/shared/**/*.ts', 'src/shared/**/*.tsx'],
 		plugins: { 'shared-boundary': sharedBoundaryPlugin },
