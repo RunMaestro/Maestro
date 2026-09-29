@@ -66,23 +66,27 @@ the library, which is what makes them pass-throughs.
 
 ## Known gaps / deliberately not done in this pass
 
-- `ssh-spawn-wrapper.ts` still depends on `src/main/utils/ssh-remote-resolver.ts`
-  and `src/main/utils/ssh-command-builder.ts`, which stayed in `main/utils`
-  (the command builder alone is ~700 lines and pulls in `process-manager`
-  image-prompt helpers - out of scope for this pass). The library's remote
-  wrapping is therefore not yet fully free of `main/`; full extraction is
-  follow-up work, matching the plan's own "roughly a third of the effort will
-  go to things not written down yet" caveat.
-- The moved parsers still reach back into `src/main/utils/{logger,sentry,terminalFilter}`
-  and `src/main/agents/capability-snapshot.ts`. None of them imports Electron at
-  module scope, so they don't break the "no desktop framework" smoke test, which
-  is a source scan for import specifiers. `sentry.ts` is the one that is not
-  Electron-free: it does `await import('@sentry/electron/main')` at `:57`, `:82`
-  and `:116`, and `src/shared/maestro-lib/launch/path-prober.ts` reaches it
-  through `captureException` (`:25`, called at `:235` and `:325`). Because those
-  imports are deferred and wrapped in try/catch, a standalone program still
-  loads and still runs; it simply does not report to Sentry. These reach-backs
-  are not yet part of the library proper.
+- **Closed since Part One: the 13 `src/shared` -> `src/main` edges.** Part One
+  left `ssh-spawn-wrapper.ts` depending on `src/main/utils/ssh-remote-resolver.ts`
+  and `ssh-command-builder.ts`, and the parsers and launch helpers reaching back
+  into `src/main/utils/{logger,sentry,execFile,terminalFilter}` and
+  `src/main/agents/capability-snapshot.ts` (`sentry.ts` being the one with a
+  deferred `@sentry/electron/main` import). All 13 are retired:
+  - Plain Node code moved into the library, with `export *` shims left at the
+    old `src/main` paths so existing importers are untouched: `execFile`,
+    `processTree`, `shell-escape`, `ssh-remote-resolver`, `ssh-command-builder`,
+    `terminalFilter`, SSH binary detection (split out of `cliDetection` into
+    `launch/ssh-path.ts`), and the pure half of `imageUtils`
+    (`launch/image-refs.ts`: `parseDataUrl`, `buildImagePromptPrefix`).
+  - Services the desktop owns go through `src/shared/maestro-lib/host.ts`:
+    logging, crash reporting, capability snapshots, and `maestro-image://` ref
+    resolution. The owning desktop module registers each one when it loads, so
+    the Electron main process and the CLI keep exactly what they had; a host
+    that registers nothing gets silent defaults.
+  - `shared-boundary/no-shared-to-main-imports` no longer has an allowlist, and
+    the smoke test additionally fails on any specifier that resolves into
+    `src/main`. A headless esbuild bundle of the library's entry points pulls
+    42 source modules, none from `src/main`, with only Node built-ins external.
 - Desktop's own callers (IPC process handlers, group chat, cross-agent router)
   were left importing the old paths (now shims) rather than redirected, since
   they weren't named in the action items and desktop chat's migration is Part

@@ -18,11 +18,11 @@ import * as os from 'os';
 import * as fs from 'fs';
 import * as path from 'path';
 import { getShellPath } from './getShellPath';
-import { execFileNoThrow } from '../../../main/utils/execFile';
-import { logger } from '../../../main/utils/logger';
+import { execFileNoThrow } from './exec-file';
+import { logger } from '../host';
 import { expandTilde, detectNodeVersionManagerBinPaths } from '../../pathUtils';
 import { isWindows, getWhichCommand } from '../../platformDetection';
-import { captureException } from '../../../main/utils/sentry';
+import { captureException } from '../host';
 
 const LOG_CONTEXT = 'PathProber';
 

@@ -13,6 +13,8 @@ import {
 import { AGENT_DEFINITIONS } from '../../../main/agents/definitions';
 import type { AgentConfig } from '../../../main/agents';
 import { getAgentDefinition } from '../../../main/agents/definitions';
+import { logger as mockLogger } from '../../../main/utils/logger';
+import { setMaestroLibLogger } from '../../../shared/maestro-lib/host';
 
 vi.mock('../../../main/utils/logger', () => ({
 	logger: {
@@ -43,6 +45,11 @@ function makeAgent(overrides: Partial<AgentConfig> = {}): AgentConfig {
 // ---------------------------------------------------------------------------
 // buildAgentArgs
 // ---------------------------------------------------------------------------
+// The library logs and reports through its host (shared/maestro-lib/host.ts),
+// which the real desktop modules register into on load. They are mocked here,
+// so register the mocks instead.
+setMaestroLibLogger(mockLogger);
+
 describe('buildAgentArgs', () => {
 	it('returns baseArgs when agent is null', () => {
 		const result = buildAgentArgs(null, { baseArgs: ['--foo', '--bar'] });

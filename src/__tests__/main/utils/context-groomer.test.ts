@@ -41,7 +41,7 @@ vi.mock('uuid', () => ({
 
 // Keep the real SSH wrapping logic, but pin the resolved ssh binary so the
 // built command is deterministic (and no PATH probing happens in tests).
-vi.mock('../../../main/utils/cliDetection', () => ({
+vi.mock('../../../shared/maestro-lib/launch/ssh-path', () => ({
 	resolveSshPath: vi.fn().mockResolvedValue('ssh'),
 }));
 
