@@ -333,25 +333,10 @@ export function buildChildProcessEnv(
 	// Apply the user-editable layers: global shell vars first, then session-level
 	// overrides on top. Merged before they are applied so a blank session value
 	// can cancel a global one instead of being overwritten by it.
-	const home = os.homedir();
-	const userEnvVars: Record<string, string> = {
+	applyEnvRecord(env, {
 		...(globalShellEnvVars || {}),
 		...(customEnvVars || {}),
-	};
-	for (const [key, value] of Object.entries(userEnvVars)) {
-		// An unnamed row is a half-finished editor entry, not a variable, so it
-		// neither sets nor cancels anything.
-		if (isBlankEnvKey(key)) continue;
-		// A blank value means "do not set this variable" - so it has to remove any
-		// inherited value too, not just skip the assignment. Exporting `FOO=`
-		// instead is what made a blank CLAUDE_CONFIG_DIR crash the agent inside
-		// mkdir('') before it ever reached the provider.
-		if (isBlankEnvValue(value)) {
-			delete env[key];
-			continue;
-		}
-		env[key] = value.startsWith('~/') ? path.join(home, value.slice(2)) : value;
-	}
+	});
 
 	// Who asked for this turn. Stamped after the user-editable layers rather than
 	// before them: this is Maestro stating a fact about the spawn, not a default
@@ -360,4 +345,126 @@ export function buildChildProcessEnv(
 	env[QUERY_SOURCE_ENV_VAR] = querySource ?? DEFAULT_QUERY_SOURCE;
 
 	return env;
+}
+
+/**
+ * Write a merged env record onto a process env. `~/` values are expanded; a
+ * blank value REMOVES the variable, inherited value included, because blank
+ * means "do not set this" (exporting `FOO=` is what made a blank
+ * CLAUDE_CONFIG_DIR crash the agent inside `mkdir('')`); and an unnamed row is
+ * a half-finished editor entry, so it neither sets nor cancels anything.
+ */
+function applyEnvRecord(env: NodeJS.ProcessEnv, record: Record<string, string>): void {
+	const home = os.homedir();
+	for (const [key, value] of Object.entries(record)) {
+		if (isBlankEnvKey(key)) continue;
+		if (isBlankEnvValue(value)) {
+			delete env[key];
+			continue;
+		}
+		env[key] = value.startsWith('~/') ? path.join(home, value.slice(2)) : value;
+	}
+}
+
+/**
+ * The configurable sources of an agent's environment, each named for where it
+ * is set. `buildAgentEnvironment` puts `process.env` underneath all of them.
+ */
+export interface AgentEnvLayers {
+	/** The provider definition's `defaultEnvVars`: what Maestro needs by default. */
+	defaultEnvVars?: Record<string, string>;
+	/**
+	 * The provider definition's `batchModeEnvVars`. Only the CLI's batch spawns
+	 * pass these; they sit with the defaults, just above them.
+	 */
+	batchModeEnvVars?: Record<string, string>;
+	/** Settings -> Environment: applies to every agent and terminal. */
+	globalShellEnvVars?: Record<string, string>;
+	/** Settings -> Agents, per provider. */
+	agentCustomEnvVars?: Record<string, string>;
+	/**
+	 * This agent's own vars. When present (even empty) they REPLACE
+	 * `agentCustomEnvVars` rather than layering over them, the rule
+	 * `effectiveAgentCustomEnvVars` and `resolveAgentEnvironment` share, so usage
+	 * attribution describes the process that actually runs.
+	 */
+	sessionCustomEnvVars?: Record<string, string>;
+	/**
+	 * The provider's `readOnlyEnvOverrides`, passed only for a read-only turn.
+	 * Applied over everything the user set: read-only enforcement must not be
+	 * undone by a global or per-agent var.
+	 */
+	readOnlyEnvOverrides?: Record<string, string>;
+}
+
+/**
+ * Merge the configurable layers into the one record Maestro hands a process,
+ * lowest precedence first:
+ *
+ *   defaultEnvVars < batchModeEnvVars < globalShellEnvVars
+ *     < (sessionCustomEnvVars ?? agentCustomEnvVars) < readOnlyEnvOverrides
+ *
+ * Global sits ABOVE the provider defaults, so a user can switch a default off
+ * from Settings -> Environment (the definitions have always said they could).
+ * Blank values are KEPT: a blank at a higher layer must be able to cancel a
+ * lower one, and `applyEnvRecord` turns it into "unset" at spawn time. This is
+ * also the record that crosses to an SSH remote, where `process.env` does not
+ * exist. Returns undefined when no layer sets anything.
+ */
+export function resolveAgentEnvVars(layers: AgentEnvLayers): Record<string, string> | undefined {
+	const userEnvVars = layers.sessionCustomEnvVars ?? layers.agentCustomEnvVars;
+	const merged: Record<string, string> = {
+		...(layers.defaultEnvVars ?? {}),
+		...(layers.batchModeEnvVars ?? {}),
+		...(layers.globalShellEnvVars ?? {}),
+		...(userEnvVars ?? {}),
+		...(layers.readOnlyEnvOverrides ?? {}),
+	};
+	for (const key of Object.keys(merged)) {
+		if (isBlankEnvKey(key)) delete merged[key];
+	}
+	return Object.keys(merged).length > 0 ? merged : undefined;
+}
+
+/** Everything `buildAgentEnvironment` needs beyond the layers. */
+export interface BuildAgentEnvironmentOptions extends AgentEnvLayers {
+	/**
+	 * Vars Maestro states about this spawn (caller identity, an MCP bridge, the
+	 * acting web user). Applied over every user layer: they are facts, not
+	 * preferences.
+	 */
+	maestroEnvVars?: Record<string, string>;
+	/** Stamps MAESTRO_SESSION_RESUMED=1. */
+	isResuming?: boolean;
+	/** Who asked for this turn; stamped last. Defaults to `user`. */
+	querySource?: QuerySource;
+	/** Directories to put in front of PATH (e.g. the agent binary's own dir). */
+	extraPathDirs?: string[];
+}
+
+/**
+ * The complete environment for a LOCAL agent process, built from `process.env`
+ * and the layers in {@link resolveAgentEnvVars}:
+ *
+ *   process.env < defaultEnvVars < globalShellEnvVars
+ *     < (sessionCustomEnvVars ?? agentCustomEnvVars) < readOnlyEnvOverrides
+ *     < maestroEnvVars < MAESTRO_QUERY_SOURCE
+ *
+ * `process.env` is inherited with the Electron/IDE/caller-identity vars in
+ * `STRIPPED_ENV_VARS` removed, PATH rebuilt, and BROWSER disarmed (see
+ * `buildChildProcessEnv`). Desktop, Cue and the CLI all build agent envs here,
+ * so the same agent configuration produces the same process on every surface.
+ */
+export function buildAgentEnvironment(options: BuildAgentEnvironmentOptions): NodeJS.ProcessEnv {
+	const record = {
+		...(resolveAgentEnvVars(options) ?? {}),
+		...(options.maestroEnvVars ?? {}),
+	};
+	return buildChildProcessEnv(
+		record,
+		options.isResuming,
+		undefined,
+		options.extraPathDirs,
+		options.querySource
+	);
 }

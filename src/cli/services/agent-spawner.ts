@@ -15,7 +15,18 @@ import { createOutputParser } from '../../shared/maestro-lib/parsers/parser-fact
 import { aggregateModelUsage } from '../../shared/maestro-lib/parsers/usage-aggregator';
 import { ClaudeOutputParser } from '../../shared/maestro-lib/parsers/claude-output-parser';
 import { getAgentDefinition } from '../../shared/maestro-lib/providers/definitions';
-import { hasCapability } from '../../shared/maestro-lib/providers/capabilities';
+import {
+	getAgentCapabilities,
+	hasCapability,
+} from '../../shared/maestro-lib/providers/capabilities';
+import {
+	buildAgentLaunchPlan,
+	type AgentLaunchPlanResult,
+} from '../../shared/maestro-lib/launch/launch-plan';
+import {
+	resolveSystemPromptDelivery,
+	type SystemPromptDelivery,
+} from '../../shared/maestro-lib/launch/prompt-delivery';
 import { checkCustomPath } from '../../shared/maestro-lib/launch/path-prober';
 import { BufferedLineReader } from '../../shared/maestro-lib/streaming/buffered-line-reader';
 import { UsageAccumulator } from '../../shared/maestro-lib/streaming/usage-accumulator';
@@ -26,15 +37,16 @@ import {
 } from '../../shared/maestro-lib/streaming/usage-totals';
 import type { TurnOutcome } from '../../shared/maestro-lib/streaming/turn-outcome';
 import { resolveCliTurnResult, interruptedResult, spawnFailureResult } from './turn-result';
-import { getAgentCustomPath, readAgentConfig, readSshRemotes } from './storage';
-import { generateUUID } from '../../shared/uuid';
 import {
-	DEFAULT_QUERY_SOURCE,
-	QUERY_SOURCE_ENV_VAR,
-	type QuerySource,
-} from '../../shared/querySource';
+	getAgentCustomPath,
+	readAgentConfig,
+	readGlobalShellEnvVars,
+	readSshRemotes,
+} from './storage';
+import { generateUUID } from '../../shared/uuid';
+import type { QuerySource } from '../../shared/querySource';
 import { sanitizeSessionId } from '../../shared/history';
-import { buildExpandedPath, buildExpandedEnv } from '../../shared/pathUtils';
+import { buildExpandedPath } from '../../shared/pathUtils';
 import { isWindows, getWhichCommand } from '../../shared/platformDetection';
 import { embedSystemPromptInPrompt } from '../../shared/embeddedSystemPrompt';
 import {
@@ -129,9 +141,17 @@ async function maybeWrapSpawnWithSsh(
  * Finalize child stdin for a spawned agent. When SSH stdin passthrough is in
  * effect, write the pre-built script before closing; otherwise just close.
  */
-function finalizeAgentStdin(child: ChildProcess, sshStdinScript?: string): void {
+function finalizeAgentStdin(
+	child: ChildProcess,
+	sshStdinScript?: string,
+	stdinPrompt?: string
+): void {
 	if (sshStdinScript) {
 		child.stdin?.write(sshStdinScript);
+	} else if (stdinPrompt) {
+		// The launch plan chose stdin delivery (a Windows host, for an agent that
+		// reads its prompt from stdin): the prompt is not on the command line.
+		child.stdin?.write(stdinPrompt);
 	}
 	child.stdin?.end();
 }
@@ -176,7 +196,11 @@ function resolveAgentOverrides(
 	baseArgs: string[],
 	overrides: SpawnOverrides,
 	readOnlyMode?: boolean
-): { args: string[]; userCustomEnvVars?: Record<string, string> } {
+): {
+	args: string[];
+	userCustomEnvVars?: Record<string, string>;
+	agentCustomEnvVars?: Record<string, string>;
+} {
 	const agentConfigValues = readAgentConfig(toolType);
 	const result = applyAgentConfigOverrides(def ?? null, baseArgs, {
 		agentConfigValues,
@@ -186,59 +210,104 @@ function resolveAgentOverrides(
 		sessionCustomEnvVars: overrides.customEnvVars,
 		readOnlyMode,
 	});
-	const userCustomEnvVars =
-		overrides.customEnvVars ??
-		(agentConfigValues.customEnvVars as Record<string, string> | undefined);
-	return { args: result.args, userCustomEnvVars };
+	const agentCustomEnvVars = agentConfigValues.customEnvVars as Record<string, string> | undefined;
+	const userCustomEnvVars = overrides.customEnvVars ?? agentCustomEnvVars;
+	return { args: result.args, userCustomEnvVars, agentCustomEnvVars };
 }
 
 /**
- * Merge env vars onto an existing env record in the documented precedence
- * `defaults < batchMode < user < readOnly`. Defaults/batch-mode only fill
- * slots the shell hasn't already set, so users can still shadow built-in
- * agent defaults from the shell. User-configured vars (agent-level
- * customEnvVars + session customEnvVars) unconditionally override, because
- * the user explicitly opted into them.
+ * Plan a CLI agent launch with the shared `buildAgentLaunchPlan`, so a CLI run
+ * resolves its target, environment and prompt delivery exactly as desktop chat
+ * and Cue do. The CLI's own inputs: the global Settings env and SSH remotes read
+ * from disk, batch-mode vars always on (every CLI spawn is a batch spawn), and
+ * the binary's own directory in front of PATH for a local run so a script
+ * agent's `#!/usr/bin/env node` resolves the node installed beside it.
  */
-function applyEnvLayers(
-	env: NodeJS.ProcessEnv,
-	agentDefaults: Record<string, string> | undefined,
-	batchDefaults: Record<string, string> | undefined,
-	userEnvVars: Record<string, string> | undefined,
-	readOnlyOverrides: Record<string, string> | undefined
-): void {
-	// Merge defaults first so batch-mode takes precedence over agent-wide
-	// defaults for shared keys, then fill only slots the shell hasn't already
-	// set. Iterating the two maps sequentially (each with `!env[k]`) would
-	// invert the order: the first loop would fill the shell-unset slot and
-	// the second loop's guard would then skip the batch-mode value.
-	if (agentDefaults || batchDefaults) {
-		const mergedDefaults = { ...(agentDefaults ?? {}), ...(batchDefaults ?? {}) };
-		for (const [k, v] of Object.entries(mergedDefaults)) {
-			if (!env[k]) env[k] = v;
-		}
+function planCliLaunch(
+	toolType: ToolType,
+	def: ReturnType<typeof getAgentDefinition>,
+	input: {
+		command: string;
+		args: string[];
+		cwd: string;
+		prompt: string;
+		readOnlyMode?: boolean;
+		agentCustomEnvVars?: Record<string, string>;
+		sessionCustomEnvVars?: Record<string, string>;
+		isResuming: boolean;
+		querySource?: SpawnOverrides['querySource'];
+		sshRemoteConfig?: AgentSshRemoteConfig;
 	}
-	if (userEnvVars) Object.assign(env, userEnvVars);
-	if (readOnlyOverrides) Object.assign(env, readOnlyOverrides);
+): AgentLaunchPlanResult {
+	return buildAgentLaunchPlan({
+		agent: def ? { ...def, capabilities: getAgentCapabilities(toolType) } : null,
+		command: input.command,
+		args: input.args,
+		cwd: input.cwd,
+		prompt: input.prompt,
+		globalShellEnvVars: readGlobalShellEnvVars(),
+		agentCustomEnvVars: input.agentCustomEnvVars,
+		sessionCustomEnvVars: input.sessionCustomEnvVars,
+		readOnlyMode: input.readOnlyMode,
+		batchMode: true,
+		isResuming: input.isResuming,
+		querySource: input.querySource,
+		extraPathDirs: path.isAbsolute(input.command) ? [path.dirname(input.command)] : undefined,
+		sshRemoteConfig: input.sshRemoteConfig,
+		sshStore: { getSshRemotes: () => readSshRemotes() },
+	});
 }
 
 /**
- * Build the args needed to deliver an append-system-prompt to a Claude-style
- * agent. On Windows local execution the prompt is written to a temp file and
- * passed via `--append-system-prompt-file` to dodge CreateProcess's ~32K
- * cmdline limit; everywhere else (and on SSH, where the command runs inside a
- * shell script) we pass the content inline via `--append-system-prompt`.
- * Mirrors the equivalent branch in `src/main/ipc/handlers/process.ts`. The
- * temp-file cleanup is fire-and-forget: scheduled 30s out so the agent has
+ * Decide how this turn's system prompt travels, with the rule desktop chat
+ * uses (`resolveSystemPromptDelivery`): the flag every turn for a provider that
+ * has it (a temp file on a Windows host), otherwise embedded in the first turn
+ * and skipped on resume.
+ */
+function cliSystemPromptDelivery(
+	toolType: ToolType,
+	systemPrompt: string | undefined,
+	prompt: string,
+	isResume: boolean,
+	sshRemoteConfig: AgentSshRemoteConfig | undefined
+): SystemPromptDelivery {
+	return resolveSystemPromptDelivery({
+		systemPrompt,
+		supportsAppendSystemPrompt: hasCapability(toolType, 'supportsAppendSystemPrompt'),
+		isWindowsHost: isWindows(),
+		sshRemote: !!sshRemoteConfig?.enabled,
+		isResume,
+		hasUserPrompt: !!prompt,
+	});
+}
+
+/** The user prompt after the system prompt, when it rides in the prompt, is folded in. */
+function promptWithSystemPrompt(
+	delivery: SystemPromptDelivery,
+	systemPrompt: string | undefined,
+	prompt: string
+): string {
+	if (!systemPrompt) return prompt;
+	if (delivery.via === 'embed') return embedSystemPromptInPrompt(systemPrompt, prompt);
+	if (delivery.via === 'as-prompt') return systemPrompt;
+	return prompt;
+}
+
+/**
+ * The args that carry the system prompt for a `flag` or `file` delivery; none
+ * for any other. For `file` the prompt is written to a temp file and passed via
+ * `--append-system-prompt-file` to dodge CreateProcess's ~32K cmdline limit.
+ * The temp-file cleanup is fire-and-forget: scheduled 30s out so the agent has
  * plenty of time to read it before deletion, regardless of whether the spawn
  * succeeded.
  */
 function buildAppendSystemPromptArgs(
-	content: string,
-	sessionTag: string,
-	isSshSession: boolean
+	delivery: SystemPromptDelivery,
+	content: string | undefined,
+	sessionTag: string
 ): string[] {
-	if (isWindows() && !isSshSession) {
+	if (!content || (delivery.via !== 'flag' && delivery.via !== 'file')) return [];
+	if (delivery.via === 'file') {
 		// Sanitize the session tag before interpolating into a tmp path.
 		// `path.join('/tmp', '../etc/passwd')` normalizes upward, escaping
 		// `os.tmpdir()`, so a hostile session id could redirect the write.
@@ -557,7 +626,6 @@ async function spawnClaudeAgent(
 	overrides: SpawnOverrides = {},
 	tokenSource: ClaudeTokenSourceFields = {}
 ): Promise<AgentResult> {
-	const env = buildExpandedEnv();
 	const def = getAgentDefinition('claude-code');
 
 	// Build args WITHOUT the prompt - the prompt is appended below for local
@@ -580,13 +648,11 @@ async function spawnClaudeAgent(
 
 	// Layer agent-level + session-level overrides (model, effort, customArgs)
 	// and extract the user-configured env vars (agent + session customEnvVars).
-	const { args: resolvedArgs, userCustomEnvVars } = resolveAgentOverrides(
-		'claude-code',
-		def,
-		preOverrideArgs,
-		overrides,
-		readOnlyMode
-	);
+	const {
+		args: resolvedArgs,
+		userCustomEnvVars,
+		agentCustomEnvVars,
+	} = resolveAgentOverrides('claude-code', def, preOverrideArgs, overrides, readOnlyMode);
 
 	// Inject the Maestro system prompt via `--append-system-prompt(-file)`. The
 	// flag rides through both the local args and the SSH-wrapped args because
@@ -594,29 +660,21 @@ async function spawnClaudeAgent(
 	// Claude Code re-reads this flag every turn (not persisted in the session
 	// transcript), so include it on resume too - matches desktop behavior at
 	// `src/main/ipc/handlers/process.ts:254`.
-	const baseArgs = overrides.appendSystemPrompt
-		? [
-				...resolvedArgs,
-				...buildAppendSystemPromptArgs(
-					overrides.appendSystemPrompt,
-					agentSessionId || 'fresh',
-					!!sshRemoteConfig?.enabled
-				),
-			]
-		: resolvedArgs;
-
-	// Build local env: defaults (shell wins) + batch-mode defaults (shell wins)
-	// + user env vars (override shell) + read-only overrides (always).
-	// Pass only the user-level env (no agent defaults) so shell-provided values
-	// keep precedence over agent defaults.
-	applyEnvLayers(
-		env,
-		def?.defaultEnvVars,
-		def?.batchModeEnvVars,
-		userCustomEnvVars,
-		readOnlyMode ? def?.readOnlyEnvOverrides : undefined
+	const systemPromptDelivery = cliSystemPromptDelivery(
+		'claude-code',
+		overrides.appendSystemPrompt,
+		prompt,
+		!!agentSessionId,
+		sshRemoteConfig
 	);
-	env[QUERY_SOURCE_ENV_VAR] = overrides.querySource ?? DEFAULT_QUERY_SOURCE;
+	const baseArgs = [
+		...resolvedArgs,
+		...buildAppendSystemPromptArgs(
+			systemPromptDelivery,
+			overrides.appendSystemPrompt,
+			agentSessionId || 'fresh'
+		),
+	];
 
 	// A local spawn needs a REAL path (see resolveLocalAgentCommand). An SSH run
 	// keeps the bare name so the remote's own PATH resolves it.
@@ -624,6 +682,26 @@ async function spawnClaudeAgent(
 		? getAgentCommand('claude-code')
 		: await resolveLocalAgentCommand('claude-code');
 	const sshEnabled = !!sshRemoteConfig?.enabled;
+
+	// Target, environment and prompt delivery, decided the way desktop and Cue
+	// decide them. An SSH remote that cannot be resolved fails here, before
+	// anything is spawned.
+	const planResult = planCliLaunch('claude-code', def, {
+		command: claudeCommand,
+		args: baseArgs,
+		cwd,
+		prompt,
+		readOnlyMode,
+		agentCustomEnvVars,
+		sessionCustomEnvVars: overrides.customEnvVars,
+		isResuming: !!agentSessionId,
+		querySource: overrides.querySource,
+		sshRemoteConfig,
+	});
+	if (!planResult.ok) {
+		return spawnFailureResult(planResult.error);
+	}
+	const plan = planResult.plan;
 	const agentCustomPath = getAgentCustomPath('claude-code');
 
 	// Resolve the per-agent Claude token source through the SAME shared decision
@@ -671,15 +749,16 @@ async function spawnClaudeAgent(
 		Boolean(sshRemoteConfig?.enabled)
 	);
 
-	// SSH-wrap if a remote is configured; otherwise append prompt locally.
-	// Claude uses '-- <prompt>' positional form - the default in wrapSpawnWithSsh.
-	let spawnCommand = claudeCommand;
-	let spawnArgs: string[] = [...baseArgs, '--', prompt];
-	let spawnCwd = cwd;
-	let spawnEnv: NodeJS.ProcessEnv = env;
+	// SSH-wrap a remote plan; a local plan already carries the prompt (in argv,
+	// or for stdin delivery in `plan.stdin`). Claude uses '-- <prompt>'
+	// positional form - the default in wrapSpawnWithSsh.
+	let spawnCommand = plan.command;
+	let spawnArgs: string[] = plan.args;
+	let spawnCwd = plan.cwd;
+	let spawnEnv: NodeJS.ProcessEnv = plan.env ?? { ...process.env };
 	let sshStdinScript: string | undefined;
 
-	if (sshRemoteConfig?.enabled) {
+	if (plan.target.kind === 'remote' && sshRemoteConfig) {
 		// Remote interactive (TUI): run maestro-p on the remote host instead of
 		// `claude`, prepend its interactive flags, and point MAESTRO_CLAUDE_BIN at
 		// the remote claude when a custom path is set. Mirrors the desktop SSH
@@ -690,11 +769,11 @@ async function spawnClaudeAgent(
 			interactiveModeArgs: def?.interactiveModeArgs,
 			remoteClaudeBin: spawnDecision.claudeRealBinPath,
 		});
-		const remoteEnv = buildSshEnvForRemote(def, readOnlyMode, userCustomEnvVars);
+		const remoteEnv = plan.envVars;
 		const wrapped = await maybeWrapSpawnWithSsh(
 			{
 				command: remoteInteractive ? remoteInteractive.command : claudeCommand,
-				args: remoteInteractive ? [...remoteInteractive.prependArgs, ...baseArgs] : baseArgs,
+				args: remoteInteractive ? [...remoteInteractive.prependArgs, ...plan.args] : plan.args,
 				cwd,
 				prompt,
 				customEnvVars: remoteInteractive ? { ...remoteEnv, ...remoteInteractive.env } : remoteEnv,
@@ -716,15 +795,14 @@ async function spawnClaudeAgent(
 			decision: spawnDecision,
 			interactiveModeArgs: def?.interactiveModeArgs,
 			command: claudeCommand,
-			args: [...baseArgs, '--', prompt],
-			customEnvVars: userCustomEnvVars,
+			args: plan.args,
+			customEnvVars: {},
 		});
 		spawnCommand = applied.command;
 		spawnArgs = applied.args;
-		// Merge the maestro-p env (MAESTRO_CLAUDE_BIN, ELECTRON_RUN_AS_NODE, NODE_PATH)
-		// over the already-layered local env so the child resolves correctly.
-		Object.assign(env, applied.customEnvVars);
-		spawnEnv = env;
+		// Merge only what maestro-p adds (MAESTRO_CLAUDE_BIN, ELECTRON_RUN_AS_NODE,
+		// NODE_PATH) over the planned env, so a var the user blanked stays unset.
+		spawnEnv = { ...spawnEnv, ...(applied.customEnvVars ?? {}) };
 	}
 
 	return new Promise((resolve) => {
@@ -856,7 +934,7 @@ async function spawnClaudeAgent(
 			stderr += text;
 		});
 
-		finalizeAgentStdin(child, sshStdinScript);
+		finalizeAgentStdin(child, sshStdinScript, plan.stdin);
 
 		// Handle completion
 		child.on('close', (code, closeSignal) => {
@@ -895,27 +973,6 @@ async function spawnClaudeAgent(
 			resolve(spawnFailureResult(`Failed to spawn Claude: ${error.message}`));
 		});
 	});
-}
-
-/**
- * Build the env-vars record to forward to an SSH remote. Layers in documented
- * precedence: agent defaults < batch-mode defaults < user-configured vars <
- * read-only overrides. Takes user-only env (no agent defaults folded in) so a
- * key present in both `defaultEnvVars` and `batchModeEnvVars` keeps the
- * batch-mode value on the remote instead of being reverted to the default.
- * Local process.env is NOT forwarded - the remote host has its own environment.
- */
-function buildSshEnvForRemote(
-	def: ReturnType<typeof getAgentDefinition>,
-	readOnlyMode: boolean | undefined,
-	userCustomEnvVars: Record<string, string> | undefined
-): Record<string, string> | undefined {
-	const out: Record<string, string> = {};
-	if (def?.defaultEnvVars) Object.assign(out, def.defaultEnvVars);
-	if (def?.batchModeEnvVars) Object.assign(out, def.batchModeEnvVars);
-	if (userCustomEnvVars) Object.assign(out, userCustomEnvVars);
-	if (readOnlyMode && def?.readOnlyEnvOverrides) Object.assign(out, def.readOnlyEnvOverrides);
-	return Object.keys(out).length > 0 ? out : undefined;
 }
 
 /**
@@ -972,7 +1029,6 @@ async function spawnJsonLineAgent(
 	sshRemoteConfig?: AgentSshRemoteConfig,
 	overrides: SpawnOverrides = {}
 ): Promise<AgentResult> {
-	const env = buildExpandedEnv();
 	const def = getAgentDefinition(toolType);
 
 	// Build args from agent definition (without the prompt or model/customArgs -
@@ -1020,24 +1076,13 @@ async function spawnJsonLineAgent(
 
 	// Layer agent-level + session-level overrides (model, effort, customArgs)
 	// and extract the user-configured env vars (agent + session customEnvVars).
-	const { args: resolvedArgs, userCustomEnvVars } = resolveAgentOverrides(
+	const { args: resolvedArgs, agentCustomEnvVars } = resolveAgentOverrides(
 		toolType,
 		def,
 		preOverrideArgs,
 		overrides,
 		readOnlyMode
 	);
-
-	// Pass only the user-level env (no agent defaults) so shell-provided values
-	// keep precedence over agent defaults.
-	applyEnvLayers(
-		env,
-		def?.defaultEnvVars,
-		def?.batchModeEnvVars,
-		userCustomEnvVars,
-		readOnlyMode ? def?.readOnlyEnvOverrides : undefined
-	);
-	env[QUERY_SOURCE_ENV_VAR] = overrides.querySource ?? DEFAULT_QUERY_SOURCE;
 
 	// System prompt delivery for JSON-line agents:
 	//  - Agents declaring `supportsAppendSystemPrompt: true` get the dedicated
@@ -1046,42 +1091,56 @@ async function spawnJsonLineAgent(
 	//    turn; on resume we skip - desktop relies on the prompt being already
 	//    captured in the agent's session transcript (see
 	//    `src/main/ipc/handlers/process.ts:300-312`).
-	const supportsNativeSystemPrompt = hasCapability(toolType, 'supportsAppendSystemPrompt');
 	const isResume = !!agentSessionId;
-	const baseArgs =
-		overrides.appendSystemPrompt && supportsNativeSystemPrompt
-			? [
-					...resolvedArgs,
-					...buildAppendSystemPromptArgs(
-						overrides.appendSystemPrompt,
-						agentSessionId || 'fresh',
-						!!sshRemoteConfig?.enabled
-					),
-				]
-			: resolvedArgs;
-	const effectivePrompt =
-		overrides.appendSystemPrompt && !supportsNativeSystemPrompt && !isResume
-			? embedSystemPromptInPrompt(overrides.appendSystemPrompt, prompt)
-			: prompt;
+	const systemPromptDelivery = cliSystemPromptDelivery(
+		toolType,
+		overrides.appendSystemPrompt,
+		prompt,
+		isResume,
+		sshRemoteConfig
+	);
+	const baseArgs = [
+		...resolvedArgs,
+		...buildAppendSystemPromptArgs(
+			systemPromptDelivery,
+			overrides.appendSystemPrompt,
+			agentSessionId || 'fresh'
+		),
+	];
+	const effectivePrompt = promptWithSystemPrompt(
+		systemPromptDelivery,
+		overrides.appendSystemPrompt,
+		prompt
+	);
 
 	const noPromptSeparator = !!def?.noPromptSeparator;
-
-	// Local prompt embedding mirrors wrapSpawnWithSsh's default behavior.
-	// Mirror ChildProcessSpawner's precedence so agents like Copilot/Gemini
-	// that ship a `promptArgs` builder (e.g. ['-p', prompt]) get the prompt
-	// via their flag instead of the bare '--' separator (which Copilot CLI
-	// doesn't accept as a positional prompt).
-	const localArgs = def?.promptArgs
-		? [...baseArgs, ...def.promptArgs(effectivePrompt)]
-		: noPromptSeparator
-			? [...baseArgs, effectivePrompt]
-			: [...baseArgs, '--', effectivePrompt];
 
 	// A local spawn needs a REAL path (see resolveLocalAgentCommand). An SSH run
 	// keeps the bare name so the remote's own PATH resolves it.
 	const agentCommand = sshRemoteConfig?.enabled
 		? getAgentCommand(toolType)
 		: await resolveLocalAgentCommand(toolType);
+
+	// Target, environment and prompt delivery, decided the way desktop and Cue
+	// decide them: the provider's own prompt flag (Copilot's `-p`), a bare
+	// positional or `-- <prompt>`, or stdin on a Windows host. An SSH remote that
+	// cannot be resolved fails here, before anything is spawned.
+	const planResult = planCliLaunch(toolType, def, {
+		command: agentCommand,
+		args: baseArgs,
+		cwd,
+		prompt: effectivePrompt,
+		readOnlyMode,
+		agentCustomEnvVars,
+		sessionCustomEnvVars: overrides.customEnvVars,
+		isResuming: isResume,
+		querySource: overrides.querySource,
+		sshRemoteConfig,
+	});
+	if (!planResult.ok) {
+		return spawnFailureResult(planResult.error);
+	}
+	const plan = planResult.plan;
 
 	// See the note in spawnClaudeAgent: CLI runs are invisible to the desktop
 	// WakaTime listener, so they beat from their own output stream.
@@ -1091,13 +1150,13 @@ async function spawnJsonLineAgent(
 		Boolean(sshRemoteConfig?.enabled)
 	);
 
-	let spawnCommand = agentCommand;
-	let spawnArgs = localArgs;
-	let spawnCwd = cwd;
-	let spawnEnv: NodeJS.ProcessEnv = env;
+	let spawnCommand = plan.command;
+	let spawnArgs = plan.args;
+	let spawnCwd = plan.cwd;
+	let spawnEnv: NodeJS.ProcessEnv = plan.env ?? { ...process.env };
 	let sshStdinScript: string | undefined;
 
-	if (sshRemoteConfig?.enabled) {
+	if (plan.target.kind === 'remote' && sshRemoteConfig) {
 		// Pass `effectivePrompt` (not the raw `prompt`) so the embed-in-turn-1
 		// fallback for agents without native --append-system-prompt support
 		// also reaches the SSH remote. baseArgs already carries the native
@@ -1105,10 +1164,10 @@ async function spawnJsonLineAgent(
 		const wrapped = await maybeWrapSpawnWithSsh(
 			{
 				command: agentCommand,
-				args: baseArgs,
+				args: plan.args,
 				cwd,
 				prompt: effectivePrompt,
-				customEnvVars: buildSshEnvForRemote(def, readOnlyMode, userCustomEnvVars),
+				customEnvVars: plan.envVars,
 				agentBinaryName: def?.binaryName,
 				noPromptSeparator,
 				promptArgs: def?.promptArgs,
@@ -1231,7 +1290,7 @@ async function spawnJsonLineAgent(
 			stderr += text;
 		});
 
-		finalizeAgentStdin(child, sshStdinScript);
+		finalizeAgentStdin(child, sshStdinScript, plan.stdin);
 
 		const agentName = def?.name || toolType;
 		child.on('close', (code, closeSignal) => {

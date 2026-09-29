@@ -21,6 +21,23 @@ import type { CueEvent, CueSubscription } from '../../../main/cue/cue-types';
 import type { SessionInfo } from '../../../shared/types';
 import type { TemplateContext } from '../../../shared/templateVariables';
 
+/**
+ * An SSH store holding the remotes these tests point at. The launch plan
+ * resolves the remote before wrapping, so an empty list is now an error.
+ */
+function sshStoreWithRemotes() {
+	const remote = (id: string) => ({
+		id,
+		name: `Remote ${id}`,
+		host: `${id}.example.com`,
+		port: 22,
+		username: 'dev',
+		privateKeyPath: '',
+		enabled: true,
+	});
+	return { getSshRemotes: vi.fn(() => [remote('remote-1'), remote('r1')]) };
+}
+
 // --- Mocks ---
 
 // Mock fs - only `readFileSync` is overridden (the executor uses it for prompt
@@ -108,6 +125,11 @@ vi.mock('../../../shared/maestro-lib/launch/ssh-spawn-wrapper', () => ({
 const mockGetOutputParser = vi.fn(
 	() => null as ReturnType<typeof import('../../../main/parsers').getOutputParser>
 );
+// A resolved remote is probed for maestro-p before the token mode is chosen.
+vi.mock('../../../main/agents/probeRemoteMaestroP', () => ({
+	ensureRemoteMaestroPProbed: vi.fn(async () => true),
+}));
+
 vi.mock('../../../main/parsers', () => ({
 	getOutputParser: (...args: unknown[]) => mockGetOutputParser(...args),
 	createOutputParser: (...args: unknown[]) => mockGetOutputParser(...args),
@@ -486,7 +508,7 @@ describe('cue-executor', () => {
 			});
 
 			it('does not double-append prompt for SSH execution (wrapper handles it)', async () => {
-				const mockSshStore = { getSshRemotes: vi.fn(() => []) };
+				const mockSshStore = sshStoreWithRemotes();
 
 				mockWrapSpawnWithSsh.mockResolvedValue({
 					command: 'ssh',
@@ -689,7 +711,7 @@ describe('cue-executor', () => {
 
 		describe('SSH remote execution', () => {
 			it('should call wrapSpawnWithSsh when SSH is enabled', async () => {
-				const mockSshStore = { getSshRemotes: vi.fn(() => []) };
+				const mockSshStore = sshStoreWithRemotes();
 
 				mockWrapSpawnWithSsh.mockResolvedValue({
 					command: 'ssh',
@@ -728,7 +750,7 @@ describe('cue-executor', () => {
 			});
 
 			it('should write prompt to stdin for SSH large prompt mode', async () => {
-				const mockSshStore = { getSshRemotes: vi.fn(() => []) };
+				const mockSshStore = sshStoreWithRemotes();
 
 				mockWrapSpawnWithSsh.mockResolvedValue({
 					command: 'ssh',

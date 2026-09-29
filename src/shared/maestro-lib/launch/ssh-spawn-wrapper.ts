@@ -14,6 +14,7 @@ import * as os from 'os';
 import type { SshRemoteConfig, AgentSshRemoteConfig } from '../../types';
 import { getSshRemoteConfig, SshRemoteSettingsStore } from './ssh-remote-resolver';
 import { buildSshCommand, buildSshCommandWithStdin } from './ssh-command-builder';
+import { buildPromptArgv } from './prompt-delivery';
 import { logger } from '../host';
 import { DEFAULT_QUERY_SOURCE, QUERY_SOURCE_ENV_VAR, type QuerySource } from '../../querySource';
 import { stripBlankEnvVars } from '../../agentEnvironment';
@@ -217,16 +218,9 @@ export async function wrapSpawnWithSsh(
 	}
 
 	// Small or no prompt - embed in command line via buildSshCommand
-	let sshArgs = [...config.args];
-	if (config.prompt) {
-		if (config.promptArgs) {
-			sshArgs = [...config.args, ...config.promptArgs(config.prompt)];
-		} else if (config.noPromptSeparator) {
-			sshArgs = [...config.args, config.prompt];
-		} else {
-			sshArgs = [...config.args, '--', config.prompt];
-		}
-	}
+	const sshArgs = config.prompt
+		? [...config.args, ...buildPromptArgv(config, config.prompt)]
+		: [...config.args];
 
 	const sshCommand = await buildSshCommand(sshResult.config, {
 		command: remoteCommand,
