@@ -529,6 +529,7 @@ export async function runProcess(
 			stderrText: stderr,
 			stdoutText: stdout,
 			explicitError: capture.inBandError,
+			stdinError: exit.stdinError,
 			capturedAnswerText: answerText,
 			resultMessageSeen: capture.resultMessageSeen,
 		},

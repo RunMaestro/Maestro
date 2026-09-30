@@ -154,6 +154,12 @@ export interface TurnExit {
 	droppedOutputBytes: number;
 	/** Set when the process could not be started. */
 	spawnError?: Error;
+	/**
+	 * Set when writing the prompt to stdin failed, most often EPIPE from a
+	 * process that closed its end before reading it. The agent never got the
+	 * whole prompt, so the turn is not a success whatever its exit code says.
+	 */
+	stdinError?: Error;
 }
 
 export interface TurnHandle {
@@ -228,6 +234,7 @@ export function startTurn(
 
 	let stdoutText = '';
 	let stderrText = '';
+	let stdinError: Error | undefined;
 	let stopWasRequested = false;
 	let settled = false;
 	let stopLadder: StopHandle | undefined;
@@ -271,6 +278,7 @@ export function startTurn(
 				stderrText,
 				stdoutText,
 				droppedOutputBytes,
+				...(stdinError ? { stdinError } : {}),
 			});
 		};
 
@@ -314,7 +322,13 @@ export function startTurn(
 	// fail, and the exit that follows reports it.
 	child.stdin?.on('error', (error) => handlers.onStdinError?.(error));
 
-	if (hasStdin) child.stdin?.write(spec.stdin);
+	// Only the prompt's own write counts against the turn. A later write by a
+	// caller that keeps stdin open is that caller's to report.
+	if (hasStdin) {
+		child.stdin?.write(spec.stdin, (error) => {
+			if (error) stdinError ??= error;
+		});
+	}
 	if (!options.keepStdinOpen) child.stdin?.end();
 
 	if (options.signal) {

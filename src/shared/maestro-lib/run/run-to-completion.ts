@@ -120,6 +120,7 @@ export function runTurn(
 				stderrText: exit.stderrText,
 				stdoutText: exit.stdoutText,
 				explicitError: spawnFailure ?? capture.inBandError,
+				stdinError: exit.stdinError,
 				capturedAnswerText: capture.answerText,
 				resultMessageSeen: capture.resultMessageSeen,
 			},
