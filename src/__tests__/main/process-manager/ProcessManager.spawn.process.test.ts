@@ -211,6 +211,38 @@ describe('ProcessManager.spawn against a real process', () => {
 		expect(interactive.write(SESSION_ID, 'hello\n')).toBe(true);
 	});
 
+	it('writes an SSH script to stdin and closes it, though the turn has no local prompt', async () => {
+		// A remote turn carries its prompt inside the script, so `prompt` is
+		// empty here. The remote shell and the agent both wait for the end of
+		// input: the fake agent reads stdin to its end before it replays, so it
+		// only finishes if stdin was closed behind the script.
+		const manager = new ProcessManager();
+		managers.push(manager);
+		const heard = listen(manager);
+		const stdinOut = path.join(scratch.dir, 'desktop-ssh-stdin.txt');
+		const script = '#!/bin/bash\ncd /project || exit 1\nexec opencode run --format json\n';
+
+		manager.spawn({
+			sessionId: SESSION_ID,
+			toolType: 'opencode',
+			cwd: scratch.dir,
+			command: process.execPath,
+			args: [FAKE_AGENT_PATH],
+			sshStdinScript: script,
+			customEnvVars: {
+				FAKE_AGENT_RECORDING: writeFakeTurn(
+					scratch.dir,
+					fakeTurnFromRecording(CAPTURED_RECORDINGS['captured-opencode-normal'])
+				),
+				FAKE_AGENT_STDIN_OUT: stdinOut,
+			},
+		});
+		await untilExit(heard);
+
+		expect(fs.readFileSync(stdinOut, 'utf8')).toBe(script);
+		expect(heard.find((entry) => entry.type === 'exit')?.args[0]).toBe(0);
+	});
+
 	posixIt('Stop interrupts a running turn and settles it as interrupted', async () => {
 		const manager = new ProcessManager();
 		managers.push(manager);
