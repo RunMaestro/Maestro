@@ -429,6 +429,54 @@ describe('a second stop on the same process', () => {
 		expect(child.listenerCount('exit')).toBe(0);
 	});
 
+	it('sends nothing past a quitting host cap when an earlier Stop already reached it', () => {
+		mocks.snapshotProcessTree.mockReturnValue({ owned: true, descendants: [TOOL] });
+		const child = fakeChild();
+
+		stopProcess({ child: asChild(child) }, { from: 'terminate', graceMs: GRACE_MS });
+		const handle = stopProcess(
+			{ child: asChild(child) },
+			{
+				from: 'terminate',
+				upTo: 'terminate',
+				graceMs: GRACE_MS,
+				immediate: true,
+				includeDescendants: false,
+			}
+		);
+		vi.advanceTimersByTime(GRACE_MS * 3);
+
+		expect(child.kill.mock.calls).toEqual([['SIGTERM']]);
+		expect(mocks.killProcessTreeNow).not.toHaveBeenCalled();
+		expect(mocks.killSurvivors).not.toHaveBeenCalled();
+		expect(handle.stage()).toBe('terminate');
+		expect(child.listenerCount('exit')).toBe(0);
+		expect(vi.getTimerCount()).toBe(0);
+	});
+
+	it('leaves the tools an earlier Stop recorded alone when the host quits', () => {
+		mocks.snapshotProcessTree.mockReturnValue({ owned: true, descendants: [TOOL] });
+		const child = fakeChild();
+
+		stopProcess({ child: asChild(child) }, { from: 'interrupt', graceMs: GRACE_MS });
+		stopProcess(
+			{ child: asChild(child) },
+			{
+				from: 'terminate',
+				upTo: 'terminate',
+				graceMs: GRACE_MS,
+				immediate: true,
+				includeDescendants: false,
+			}
+		);
+		exit(child, 0);
+		vi.advanceTimersByTime(GRACE_MS * 3);
+
+		expect(child.kill.mock.calls).toEqual([['SIGINT'], ['SIGTERM']]);
+		expect(mocks.killProcessTreeNow).not.toHaveBeenCalled();
+		expect(mocks.killSurvivors).not.toHaveBeenCalled();
+	});
+
 	it('starts over for a process stopped after the last ladder finished', () => {
 		const child = fakeChild();
 		const first = stopProcess({ child: asChild(child) }, { from: 'interrupt', graceMs: GRACE_MS });

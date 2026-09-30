@@ -83,7 +83,8 @@ export interface StopOptions {
 	/**
 	 * Also stop what the process started. On by default. Turn it off for a
 	 * terminal tab's shell: a job the user deliberately left running there is
-	 * theirs to keep.
+	 * theirs to keep. The latest request decides: turning it off also leaves
+	 * alone a tree an earlier stop on the same process recorded.
 	 */
 	includeDescendants?: boolean;
 	sessionId?: string;
@@ -158,6 +159,9 @@ function createLadder(target: StopTarget, key: object): Ladder {
 	let refreshTimer: ReturnType<typeof setInterval> | undefined;
 	let refreshing = false;
 	let tree: ProcessTreeSnapshot | undefined;
+	// Set by the latest request. A quitting host opts out after an earlier Stop
+	// already recorded the tree, and that record must then be left alone too.
+	let leaveDescendants = false;
 	let removeExitListener: (() => void) | undefined;
 	let context: { sessionId?: string; label?: string } = {};
 
@@ -183,7 +187,9 @@ function createLadder(target: StopTarget, key: object): Ladder {
 	};
 
 	const sweep = (): void => {
-		if (tree && tree.descendants.length > 0) killSurvivors(tree.descendants, context);
+		if (!leaveDescendants && tree && tree.descendants.length > 0) {
+			killSurvivors(tree.descendants, context);
+		}
 		tree = undefined;
 	};
 
@@ -327,13 +333,17 @@ function createLadder(target: StopTarget, key: object): Ladder {
 		if (ptyProcess) {
 			attempt('SIGKILL on the PTY', () => killPty(ptyProcess, 'SIGKILL'));
 		}
-		if (tree?.owned && hasPid) {
+		if (!leaveDescendants && tree?.owned && hasPid) {
 			killProcessTreeNow(pid, context);
 		} else if (child) {
 			attempt('SIGKILL', () => child.kill('SIGKILL'));
 		}
 		return undefined;
 	};
+
+	/** Whether `next` is within what this request may send. */
+	const allowed = (next: StopStage, options: StopOptions): boolean =>
+		STAGE_ORDER[next] <= STAGE_ORDER[options.upTo ?? 'kill'];
 
 	const run = (next: StopStage, options: StopOptions): void => {
 		if (timer) clearTimeout(timer);
@@ -355,10 +365,7 @@ function createLadder(target: StopTarget, key: object): Ladder {
 		stage = next;
 
 		const afterSignal = signal(next, options);
-		const following =
-			afterSignal && STAGE_ORDER[afterSignal] <= STAGE_ORDER[options.upTo ?? 'kill']
-				? afterSignal
-				: undefined;
+		const following = afterSignal && allowed(afterSignal, options) ? afterSignal : undefined;
 		if (!following) {
 			// Nothing further will be sent, so there is nothing left to record for.
 			stopRefreshing();
@@ -378,6 +385,7 @@ function createLadder(target: StopTarget, key: object): Ladder {
 
 	const request = (options: StopOptions): void => {
 		context = { sessionId: options.sessionId, label: options.label };
+		leaveDescendants = options.includeDescendants === false;
 		options.onStopRequested?.();
 
 		if (!isRunning()) {
@@ -399,7 +407,17 @@ function createLadder(target: StopTarget, key: object): Ladder {
 
 		// A stage already reached is never run twice; its escalation is pending.
 		if (stage !== undefined && STAGE_ORDER[options.from] <= STAGE_ORDER[stage]) {
-			if (options.immediate) run(stage === 'kill' ? 'kill' : nextStage(stage), options);
+			if (!options.immediate) return;
+			const next = stage === 'kill' ? 'kill' : nextStage(stage);
+			if (allowed(next, options)) {
+				run(next, options);
+				return;
+			}
+			// An earlier stop already sent all this one may. Its escalation is
+			// dropped rather than left to fire: a quitting host capped at SIGTERM
+			// must not have a SIGKILL follow from a Stop the user pressed before.
+			release();
+			sweep();
 			return;
 		}
 		run(options.from, options);

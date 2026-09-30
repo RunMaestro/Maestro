@@ -2833,7 +2833,7 @@ Some text with [x] in it that's not a checkbox
 			});
 			await driveSpawnToCompletion(p, 0, CLAUDE_OK());
 
-			expect(mockStdin.write).toHaveBeenCalledWith(script);
+			expect(mockStdin.write).toHaveBeenCalledWith(script, expect.any(Function));
 			expect(mockStdin.end).toHaveBeenCalled();
 			// write() must run BEFORE end() (first call of write precedes first end)
 			expect(mockStdin.write.mock.invocationCallOrder[0]).toBeLessThan(

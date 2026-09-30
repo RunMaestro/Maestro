@@ -770,7 +770,10 @@ describe('cue-executor', () => {
 				const resultPromise = executeCuePrompt(config);
 				await vi.advanceTimersByTimeAsync(0);
 
-				expect(mockChild.stdin.write).toHaveBeenCalledWith('large prompt content');
+				expect(mockChild.stdin.write).toHaveBeenCalledWith(
+					'large prompt content',
+					expect.any(Function)
+				);
 				expect(mockChild.stdin.end).toHaveBeenCalled();
 
 				mockChild.emit('close', 0);
