@@ -809,9 +809,11 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 			title,
 			message,
 			duration: TOAST_PREVIEW_DURATION_MS,
-			// In-app preview only: no TTS command, no Notification Center entry.
+			// In-app preview only: no TTS command, no Notification Center entry,
+			// and nothing in Maestro's own notification history either.
 			skipCustomNotification: true,
 			skipOsNotification: true,
+			skipHistory: true,
 		});
 	};
 

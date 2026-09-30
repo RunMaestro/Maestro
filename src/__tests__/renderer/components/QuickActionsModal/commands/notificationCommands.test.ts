@@ -1,15 +1,18 @@
 import { describe, expect, it, vi } from 'vitest';
 import { buildNotificationCommands } from '../../../../../renderer/components/QuickActionsModal/commands/notificationCommands';
 
-function harness(visibleToastCount: number) {
+function harness(visibleToastCount: number, unreadNotificationCount = 0) {
 	const clearToasts = vi.fn();
+	const openNotificationCenter = vi.fn();
 	const setQuickActionOpen = vi.fn();
 	const actions = buildNotificationCommands({
 		visibleToastCount,
 		clearToasts,
+		unreadNotificationCount,
+		openNotificationCenter,
 		setQuickActionOpen,
 	});
-	return { actions, clearToasts, setQuickActionOpen };
+	return { actions, clearToasts, openNotificationCenter, setQuickActionOpen };
 }
 
 describe('buildNotificationCommands', () => {
@@ -18,7 +21,7 @@ describe('buildNotificationCommands', () => {
 		// applies. Hiding it at zero makes that search come back empty, which
 		// reads as "the feature does not exist".
 		const { actions } = harness(0);
-		expect(actions).toHaveLength(1);
+		expect(actions).toHaveLength(2);
 		expect(actions[0].id).toBe('clear-all-notifications');
 	});
 
@@ -28,7 +31,7 @@ describe('buildNotificationCommands', () => {
 
 	it('offers the clear command when toasts are stacked up', () => {
 		const { actions } = harness(12);
-		expect(actions).toHaveLength(1);
+		expect(actions).toHaveLength(2);
 		expect(actions[0].id).toBe('clear-all-notifications');
 		expect(actions[0].label).toBe('Clear All Notifications');
 	});
@@ -52,5 +55,21 @@ describe('buildNotificationCommands', () => {
 		// The label has to contain the word users would type; this pins it against
 		// a rename that would make the command unreachable.
 		expect(harness(1).actions[0].label.toLowerCase()).toContain('notification');
+	});
+
+	it('opens the notification center and closes the palette', () => {
+		const { actions, openNotificationCenter, setQuickActionOpen } = harness(0, 3);
+		const open = actions.find((a) => a.id === 'open-notification-center')!;
+		expect(open.subtext).toBe('3 unread notifications');
+		open.action();
+		expect(openNotificationCenter).toHaveBeenCalledTimes(1);
+		expect(setQuickActionOpen).toHaveBeenCalledWith(false);
+	});
+
+	it('says when nothing is unread, and singularizes a lone one', () => {
+		const subtext = (unread: number) =>
+			harness(0, unread).actions.find((a) => a.id === 'open-notification-center')!.subtext;
+		expect(subtext(0)).toBe('No unread notifications');
+		expect(subtext(1)).toBe('1 unread notification');
 	});
 });

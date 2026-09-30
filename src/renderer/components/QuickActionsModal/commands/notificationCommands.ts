@@ -4,6 +4,9 @@ interface BuildNotificationCommandsArgs {
 	/** Number of toasts currently on screen. */
 	visibleToastCount: number;
 	clearToasts: () => void;
+	/** Unread entries in the notification center. */
+	unreadNotificationCount: number;
+	openNotificationCenter: () => void;
 	clearAllNotificationsShortcut?: QuickAction['shortcut'];
 	setQuickActionOpen: (open: boolean) => void;
 }
@@ -25,6 +28,8 @@ interface BuildNotificationCommandsArgs {
 export function buildNotificationCommands({
 	visibleToastCount,
 	clearToasts,
+	unreadNotificationCount,
+	openNotificationCenter,
 	clearAllNotificationsShortcut,
 	setQuickActionOpen,
 }: BuildNotificationCommandsArgs): QuickAction[] {
@@ -39,6 +44,18 @@ export function buildNotificationCommands({
 					: 'No notifications on screen',
 			action: () => {
 				clearToasts();
+				setQuickActionOpen(false);
+			},
+		},
+		{
+			id: 'open-notification-center',
+			label: 'Open Notification Center',
+			subtext:
+				unreadNotificationCount > 0
+					? `${unreadNotificationCount} unread notification${unreadNotificationCount === 1 ? '' : 's'}`
+					: 'No unread notifications',
+			action: () => {
+				openNotificationCenter();
 				setQuickActionOpen(false);
 			},
 		},

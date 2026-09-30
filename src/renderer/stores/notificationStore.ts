@@ -3,6 +3,8 @@
  *
  * Consolidates state from ToastContext:
  * - Toast queue (visible toasts array)
+ * - Notification history (every toast, kept after it leaves the screen, with
+ *   read state - what the header's notification center lists)
  * - Notification config (audio feedback, OS notifications, default duration)
  *
  * Side effects (logging, audio TTS, OS notifications, auto-dismiss timers)
@@ -94,6 +96,9 @@ export interface Toast {
 	// feedback (e.g. the Settings preview of the toast width) that would be
 	// noise in Notification Center.
 	skipOsNotification?: boolean;
+	// Keep this toast out of the notification center's history. Use for UI
+	// previews that report nothing the user could want to come back to.
+	skipHistory?: boolean;
 	// Generic click handler - if set, clicking the toast invokes this callback.
 	// Renderer-only - not serializable across the CLI/web bridge.
 	onClick?: () => void;
@@ -102,6 +107,64 @@ export interface Toast {
 	// `onClick` wins (it can do anything; `clickAction` is the limited subset
 	// that survives serialization).
 	clickAction?: ToastClickAction;
+}
+
+/**
+ * A toast as the notification center remembers it. Same shape, plus whether
+ * the user has dealt with it. `onClick` survives only until the next reload
+ * (a callback cannot be serialized); `clickAction` and `sessionId` are what a
+ * restored entry can still act on.
+ */
+export interface NotificationRecord extends Toast {
+	read: boolean;
+}
+
+/** Newest entries kept. Older ones fall off the end, read or not. */
+export const NOTIFICATION_HISTORY_LIMIT = 200;
+
+export const NOTIFICATION_HISTORY_STORAGE_KEY = 'maestro.notificationHistory';
+
+/** `localStorage`, or null where there isn't one (storage-blocked renderer, tests). */
+function historyStorage(): Storage | null {
+	try {
+		return typeof localStorage === 'undefined' ? null : localStorage;
+	} catch {
+		return null;
+	}
+}
+
+function isNotificationRecord(value: unknown): value is NotificationRecord {
+	if (!value || typeof value !== 'object') return false;
+	const v = value as Record<string, unknown>;
+	return (
+		typeof v.id === 'string' &&
+		typeof v.title === 'string' &&
+		typeof v.message === 'string' &&
+		typeof v.timestamp === 'number' &&
+		typeof v.read === 'boolean'
+	);
+}
+
+/** Read the persisted history. Anything unreadable is dropped, never thrown. */
+export function loadNotificationHistory(): NotificationRecord[] {
+	try {
+		const raw = historyStorage()?.getItem(NOTIFICATION_HISTORY_STORAGE_KEY);
+		if (!raw) return [];
+		const parsed: unknown = JSON.parse(raw);
+		if (!Array.isArray(parsed)) return [];
+		return parsed.filter(isNotificationRecord).slice(0, NOTIFICATION_HISTORY_LIMIT);
+	} catch {
+		return [];
+	}
+}
+
+function saveNotificationHistory(history: NotificationRecord[]): void {
+	try {
+		// JSON.stringify drops `onClick` on its own: functions are not serialized.
+		historyStorage()?.setItem(NOTIFICATION_HISTORY_STORAGE_KEY, JSON.stringify(history));
+	} catch {
+		// Quota or a denied origin costs the user persistence, not the inbox.
+	}
 }
 
 export function resolveToastColor(opts: { color?: ToastColor; type?: ToastType }): ToastColor {
@@ -126,6 +189,10 @@ export interface NotificationConfig {
 
 export interface NotificationStoreState {
 	toasts: Toast[];
+	/** Every recorded notification, newest first, capped at NOTIFICATION_HISTORY_LIMIT. */
+	history: NotificationRecord[];
+	/** Whether the header's notification center popover is open. */
+	notificationCenterOpen: boolean;
 	config: NotificationConfig;
 }
 
@@ -136,6 +203,15 @@ export interface NotificationStoreActions {
 	removeToast: (id: string) => void;
 	/** Clear all visible toasts. */
 	clearToasts: () => void;
+	/** Add a toast to the history as unread. Internal - notifyToast() calls this. */
+	recordNotification: (toast: Toast) => void;
+	/** Mark one history entry read. */
+	markNotificationRead: (id: string) => void;
+	/** Mark every history entry read. */
+	markAllNotificationsRead: () => void;
+	/** Empty the history. Toasts still on screen are left alone. */
+	clearNotificationHistory: () => void;
+	setNotificationCenterOpen: (open: boolean) => void;
 	/** Update default duration (seconds). */
 	setDefaultDuration: (duration: number) => void;
 	/** Configure audio feedback (TTS). */
@@ -156,6 +232,14 @@ export function selectConfig(s: NotificationStoreState): NotificationConfig {
 	return s.config;
 }
 
+export function selectUnreadNotificationCount(s: NotificationStoreState): number {
+	let count = 0;
+	for (const record of s.history) {
+		if (!record.read) count++;
+	}
+	return count;
+}
+
 // ============================================================================
 // Store
 // ============================================================================
@@ -163,6 +247,8 @@ export function selectConfig(s: NotificationStoreState): NotificationConfig {
 export const useNotificationStore = create<NotificationStore>()((set) => ({
 	// --- State ---
 	toasts: [],
+	history: loadNotificationHistory(),
+	notificationCenterOpen: false,
 	config: {
 		defaultDuration: 20,
 		audioFeedbackEnabled: false,
@@ -192,6 +278,30 @@ export const useNotificationStore = create<NotificationStore>()((set) => ({
 		set({ toasts: [] });
 	},
 
+	// --- Notification history ---
+	recordNotification: (toast) =>
+		set((s) => ({
+			history: [{ ...toast, read: false }, ...s.history].slice(0, NOTIFICATION_HISTORY_LIMIT),
+		})),
+
+	markNotificationRead: (id) =>
+		set((s) => {
+			// Same array back when nothing changes, so subscribers and the
+			// persistence write below are skipped.
+			if (!s.history.some((n) => n.id === id && !n.read)) return s;
+			return { history: s.history.map((n) => (n.id === id ? { ...n, read: true } : n)) };
+		}),
+
+	markAllNotificationsRead: () =>
+		set((s) => {
+			if (!s.history.some((n) => !n.read)) return s;
+			return { history: s.history.map((n) => (n.read ? n : { ...n, read: true })) };
+		}),
+
+	clearNotificationHistory: () => set((s) => (s.history.length === 0 ? s : { history: [] })),
+
+	setNotificationCenterOpen: (open) => set({ notificationCenterOpen: open }),
+
 	// --- Configuration ---
 	setDefaultDuration: (duration) =>
 		set((s) => ({ config: { ...s.config, defaultDuration: duration } })),
@@ -209,6 +319,10 @@ export const useNotificationStore = create<NotificationStore>()((set) => ({
 			config: { ...s.config, idleNotificationEnabled: enabled, idleNotificationCommand: command },
 		})),
 }));
+
+useNotificationStore.subscribe((state, prev) => {
+	if (state.history !== prev.history) saveNotificationHistory(state.history);
+});
 
 // ============================================================================
 // notifyToast - public API for firing toasts (handles side effects)
@@ -235,7 +349,9 @@ export type NotifyToastInput = Omit<Toast, 'id' | 'timestamp' | 'color' | 'type'
  * 1. ID generation
  * 2. Color resolution (color > legacy type > 'theme')
  * 3. Duration calculation (seconds → ms; sticky when dismissible)
- * 4. Adding to visible queue (unless toasts disabled)
+ * 4. Adding to visible queue (unless toasts disabled) and to the notification
+ *    history (always, unless `skipHistory` - with toasts disabled the history is
+ *    the only place the notification shows up)
  * 5. Logging via window.maestro.logger.toast
  * 6. Audio feedback via window.maestro.notification.speak
  * 7. OS notifications via window.maestro.notification.show
@@ -286,6 +402,10 @@ export function notifyToast(toast: NotifyToastInput): string {
 	// Only add to visible toast queue if not disabled
 	if (!toastsDisabled) {
 		store.addToast(newToast);
+	}
+
+	if (!toast.skipHistory) {
+		store.recordNotification(newToast);
 	}
 
 	// --- Side effects ---
