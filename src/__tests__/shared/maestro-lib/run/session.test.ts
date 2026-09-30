@@ -75,6 +75,13 @@ describe('planSessionTurn', () => {
 
 		expect(resuming).toBe(true);
 		expect(containsRun(spec.args, resumeArgs)).toBe(true);
+		expect(spec.env.MAESTRO_SESSION_RESUMED).toBe('1');
+	});
+
+	it('does not mark a new session as resumed', async () => {
+		const { spec } = await plan();
+
+		expect(spec.env.MAESTRO_SESSION_RESUMED).toBeUndefined();
 	});
 
 	it('plans a Claude Code turn with stream-json output and full access', async () => {
