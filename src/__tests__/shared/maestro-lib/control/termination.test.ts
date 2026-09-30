@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
 	execFile: vi.fn(),
 	execFileSync: vi.fn(),
 	snapshotProcessTree: vi.fn(),
+	refreshProcessTree: vi.fn(),
 	killSurvivors: vi.fn(() => 0),
 	killProcessTreeNow: vi.fn(),
 }));
@@ -31,6 +32,7 @@ vi.mock('child_process', async (importOriginal) => ({
 
 vi.mock('../../../../shared/maestro-lib/control/process-tree', () => ({
 	snapshotProcessTree: mocks.snapshotProcessTree,
+	refreshProcessTree: mocks.refreshProcessTree,
 	killSurvivors: mocks.killSurvivors,
 	killProcessTreeNow: mocks.killProcessTreeNow,
 }));
@@ -39,11 +41,13 @@ import {
 	stopProcess,
 	INTERACTIVE_STOP_GRACE_MS,
 	BACKGROUND_STOP_GRACE_MS,
+	TREE_REFRESH_MS,
 } from '../../../../shared/maestro-lib/control/termination';
 
 const PID = 4242;
 const GRACE_MS = 1000;
 const TOOL = { pid: 5000, startedAt: 'Tue Sep 29 10:00:00 2026' };
+const LATE_TOOL = { pid: 5001, startedAt: 'Tue Sep 29 10:00:03 2026' };
 
 interface FakeChild extends EventEmitter {
 	pid: number | undefined;
@@ -110,6 +114,8 @@ beforeEach(() => {
 	vi.clearAllMocks();
 	mocks.isWindows.mockReturnValue(false);
 	mocks.snapshotProcessTree.mockReturnValue({ owned: true, descendants: [] });
+	// A refresh that finds nothing new hands the same record back.
+	mocks.refreshProcessTree.mockImplementation(async (_pid: number, snapshot: unknown) => snapshot);
 });
 
 afterEach(() => {
@@ -286,6 +292,103 @@ describe('descendants', () => {
 	});
 });
 
+describe('descendants started after the stop was requested', () => {
+	it('are recorded while the stop is pending and swept with the rest', async () => {
+		// An agent that is winding down can still start a tool. The record taken
+		// before the first signal cannot hold it; the refresh does.
+		mocks.snapshotProcessTree.mockReturnValue({ owned: true, descendants: [TOOL] });
+		mocks.refreshProcessTree.mockResolvedValue({ owned: true, descendants: [TOOL, LATE_TOOL] });
+		const child = fakeChild();
+
+		stopProcess({ child: asChild(child) }, { from: 'interrupt', graceMs: GRACE_MS });
+		await vi.advanceTimersByTimeAsync(TREE_REFRESH_MS);
+		expect(mocks.refreshProcessTree).toHaveBeenCalledWith(PID, {
+			owned: true,
+			descendants: [TOOL],
+		});
+
+		exit(child, 0);
+
+		expect(mocks.killSurvivors).toHaveBeenCalledWith([TOOL, LATE_TOOL], expect.any(Object));
+	});
+
+	it('stops being re-read once the process exits', async () => {
+		const child = fakeChild();
+
+		stopProcess({ child: asChild(child) }, { from: 'interrupt', graceMs: GRACE_MS });
+		await vi.advanceTimersByTimeAsync(TREE_REFRESH_MS);
+		const readsBeforeExit = mocks.refreshProcessTree.mock.calls.length;
+
+		exit(child, 0);
+		await vi.advanceTimersByTimeAsync(TREE_REFRESH_MS * 4);
+
+		expect(readsBeforeExit).toBe(1);
+		expect(mocks.refreshProcessTree).toHaveBeenCalledTimes(readsBeforeExit);
+		expect(vi.getTimerCount()).toBe(0);
+	});
+
+	it('stops being re-read once the last stage has run, even if the process never exits', async () => {
+		const child = fakeChild();
+
+		stopProcess({ child: asChild(child) }, { from: 'terminate', graceMs: GRACE_MS });
+		await vi.advanceTimersByTimeAsync(GRACE_MS);
+		expect(mocks.killProcessTreeNow).toHaveBeenCalledTimes(1);
+		const readsAtKill = mocks.refreshProcessTree.mock.calls.length;
+
+		await vi.advanceTimersByTimeAsync(TREE_REFRESH_MS * 4);
+
+		expect(mocks.refreshProcessTree).toHaveBeenCalledTimes(readsAtKill);
+	});
+
+	it('never overlaps two reads', async () => {
+		let finishRead: (snapshot: unknown) => void = () => {};
+		mocks.refreshProcessTree.mockImplementation(
+			() => new Promise((resolve) => (finishRead = resolve))
+		);
+		const child = fakeChild();
+
+		stopProcess({ child: asChild(child) }, { from: 'interrupt', graceMs: GRACE_MS * 10 });
+		await vi.advanceTimersByTimeAsync(TREE_REFRESH_MS * 3);
+		expect(mocks.refreshProcessTree).toHaveBeenCalledTimes(1);
+
+		finishRead({ owned: true, descendants: [] });
+		await vi.advanceTimersByTimeAsync(TREE_REFRESH_MS);
+		expect(mocks.refreshProcessTree).toHaveBeenCalledTimes(2);
+	});
+
+	it('drops a read that lands after the process exited', async () => {
+		let finishRead: (snapshot: unknown) => void = () => {};
+		mocks.snapshotProcessTree.mockReturnValue({ owned: true, descendants: [TOOL] });
+		mocks.refreshProcessTree.mockImplementation(
+			() => new Promise((resolve) => (finishRead = resolve))
+		);
+		const child = fakeChild();
+
+		stopProcess({ child: asChild(child) }, { from: 'interrupt', graceMs: GRACE_MS });
+		await vi.advanceTimersByTimeAsync(TREE_REFRESH_MS);
+		exit(child, 0);
+		finishRead({ owned: true, descendants: [TOOL, LATE_TOOL] });
+		await vi.advanceTimersByTimeAsync(0);
+
+		// Swept once, at exit, with what was known then.
+		expect(mocks.killSurvivors).toHaveBeenCalledTimes(1);
+		expect(mocks.killSurvivors).toHaveBeenCalledWith([TOOL], expect.any(Object));
+	});
+
+	it('is not re-read for a tree that is not ours, or when the caller opts out', async () => {
+		mocks.snapshotProcessTree.mockReturnValue({ owned: false, descendants: [] });
+		stopProcess({ child: asChild(fakeChild()) }, { from: 'interrupt', graceMs: GRACE_MS });
+		stopProcess(
+			{ child: asChild(fakeChild()) },
+			{ from: 'interrupt', graceMs: GRACE_MS, includeDescendants: false }
+		);
+
+		await vi.advanceTimersByTimeAsync(TREE_REFRESH_MS * 2);
+
+		expect(mocks.refreshProcessTree).not.toHaveBeenCalled();
+	});
+});
+
 describe('a second stop on the same process', () => {
 	it('advances the ladder already running instead of starting another', () => {
 		const child = fakeChild();
@@ -361,6 +464,45 @@ describe('the shutdown path', () => {
 		expect(fake.kill.mock.calls).toEqual([['SIGKILL']]);
 		expect(fake.onExit).not.toHaveBeenCalled();
 		expect(vi.getTimerCount()).toBe(0);
+	});
+
+	it('stops at the stage the caller capped it at', () => {
+		// A quitting host: SIGTERM, so the agent can write its state, and no
+		// SIGKILL right behind it.
+		const child = fakeChild();
+
+		const handle = stopProcess(
+			{ child: asChild(child) },
+			{
+				from: 'terminate',
+				upTo: 'terminate',
+				graceMs: GRACE_MS,
+				immediate: true,
+				includeDescendants: false,
+			}
+		);
+
+		expect(child.kill.mock.calls).toEqual([['SIGTERM']]);
+		expect(mocks.killProcessTreeNow).not.toHaveBeenCalled();
+		expect(mocks.snapshotProcessTree).not.toHaveBeenCalled();
+		expect(handle.stage()).toBe('terminate');
+		expect(child.listenerCount('exit')).toBe(0);
+		expect(vi.getTimerCount()).toBe(0);
+	});
+});
+
+describe('a capped stop', () => {
+	it('schedules nothing past its last stage', () => {
+		const child = fakeChild();
+
+		stopProcess(
+			{ child: asChild(child) },
+			{ from: 'interrupt', upTo: 'terminate', graceMs: GRACE_MS }
+		);
+		vi.advanceTimersByTime(GRACE_MS * 3);
+
+		expect(child.kill.mock.calls).toEqual([['SIGINT'], ['SIGTERM']]);
+		expect(mocks.killProcessTreeNow).not.toHaveBeenCalled();
 	});
 });
 
@@ -483,9 +625,9 @@ describe('stopProcess on Windows', () => {
 		expect(mocks.execFile).not.toHaveBeenCalled();
 	});
 
-	it('treats a failed blocking taskkill as a process that was already gone', () => {
+	it('ends the child through its handle when a blocking taskkill fails', () => {
 		mocks.execFileSync.mockImplementation(() => {
-			throw new Error('ERROR: The process "4242" not found.');
+			throw new Error('ERROR: Access is denied.');
 		});
 		const child = fakeChild();
 
@@ -495,6 +637,39 @@ describe('stopProcess on Windows', () => {
 				{ from: 'terminate', graceMs: GRACE_MS, immediate: true, blocking: true }
 			)
 		).not.toThrow();
+
+		expect(child.kill.mock.calls).toEqual([[]]);
+	});
+
+	it('ends a running child through its handle when taskkill fails', () => {
+		const child = fakeChild();
+
+		stopProcess({ child: asChild(child) }, { from: 'terminate', graceMs: GRACE_MS });
+		const onTaskkillDone = mocks.execFile.mock.calls[0][2] as (error: Error | null) => void;
+		onTaskkillDone(new Error('ERROR: Access is denied.'));
+
+		expect(child.kill.mock.calls).toEqual([[]]);
+	});
+
+	it('sends nothing more when taskkill fails for a child that is already gone', () => {
+		const child = fakeChild();
+
+		stopProcess({ child: asChild(child) }, { from: 'terminate', graceMs: GRACE_MS });
+		const onTaskkillDone = mocks.execFile.mock.calls[0][2] as (error: Error | null) => void;
+		exit(child, 1);
+		onTaskkillDone(new Error('ERROR: The process "4242" not found.'));
+
+		expect(child.kill).not.toHaveBeenCalled();
+	});
+
+	it('sends nothing more when taskkill succeeds', () => {
+		const child = fakeChild();
+
+		stopProcess({ child: asChild(child) }, { from: 'terminate', graceMs: GRACE_MS });
+		const onTaskkillDone = mocks.execFile.mock.calls[0][2] as (error: Error | null) => void;
+		onTaskkillDone(null);
+
+		expect(child.kill).not.toHaveBeenCalled();
 	});
 
 	it('uses taskkill for a PTY too, since node-pty ends only the shell', () => {

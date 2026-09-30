@@ -25,6 +25,8 @@ const mockSpawn = vi.fn();
 const mockStdin = {
 	end: vi.fn(),
 	write: vi.fn(),
+	// The run layer listens for stdin errors (EPIPE), as on a real stream.
+	on: vi.fn(),
 };
 // `setEncoding` is part of a real child stream: the spawner decodes there
 // rather than per chunk, so a multibyte character split across two reads
