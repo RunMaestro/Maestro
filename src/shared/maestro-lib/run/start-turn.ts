@@ -262,6 +262,10 @@ export function startTurn(
 		if (event) handlers.onEvent(event, line);
 	};
 
+	// A caller that takes only the raw stream (desktop chat, which frames it
+	// itself) has no use for lines, so none are buffered for it.
+	const framesLines = Boolean(handlers.onLine || handlers.onEvent);
+
 	const onAbort = (): void => stop('terminate');
 
 	const done = new Promise<TurnExit>((resolve) => {
@@ -291,7 +295,7 @@ export function startTurn(
 		child.stdout?.on('data', (text: string) => {
 			stdoutText = appendBoundedTail(stdoutText, text, tailLimit);
 			handlers.onStdout?.(text);
-			for (const line of lineReader.push(text)) readLine(line);
+			if (framesLines) for (const line of lineReader.push(text)) readLine(line);
 		});
 
 		child.stderr?.on('data', (text: string) => {
