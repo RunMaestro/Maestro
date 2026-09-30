@@ -54,6 +54,8 @@ import type {
 	TurnSettlement,
 } from '../../../../main/process-manager/types';
 import { RECORDINGS, type TurnRecording } from './fixtures';
+import { DOCUMENTED_ANSWER, DOCUMENTED_RECORDINGS, DOCUMENTED_SESSION_IDS } from './documented';
+import { PICKABLE_AGENT_IDS } from '../../../../shared/agentMetadata';
 import { CAPTURED_CLAUDE_CODE_SESSION_ID, CAPTURED_OPENCODE_SESSION_ID } from './captured';
 
 interface CapturedEvents {
@@ -454,5 +456,51 @@ describe('captured turn recordings (real Claude Code and OpenCode output)', () =
 		});
 		expect(events.exits).toEqual([0]);
 		expect(events.settlements[0]?.outcome).toBe('crashed');
+	});
+});
+
+describe('documented-format turns (providers with no captured turn yet)', () => {
+	beforeEach(() => {
+		resetSpawnGenerationsForTest();
+	});
+
+	// One normal turn per provider, written from its documented wire format
+	// (see documented.ts). Each travels the desktop pipeline to the same four
+	// facts: the session id, the answer shown once, no error, a completed turn.
+	it.each(Object.values(DOCUMENTED_RECORDINGS).map((recording) => [recording.toolType, recording]))(
+		'%s normal: session id, the answer once, no error, completed',
+		async (_provider, recording) => {
+			const events = await runRecording(recording);
+
+			expect(events.sessionIds).toEqual([DOCUMENTED_SESSION_IDS[recording.name]]);
+			expect(events.data.join('')).toBe(DOCUMENTED_ANSWER);
+			expect(events.agentErrors).toEqual([]);
+			expect(events.exits).toEqual([0]);
+			expect(events.settlements[0]).toEqual({ outcome: 'completed', answerCaptured: true });
+		}
+	);
+
+	it('reports usage for every provider that writes it, and none for Grok, which does not', async () => {
+		for (const recording of Object.values(DOCUMENTED_RECORDINGS)) {
+			const events = await runRecording(recording);
+
+			if (recording.toolType === 'grok') {
+				expect(events.usages).toEqual([]);
+			} else {
+				expect(events.usages).toHaveLength(1);
+				expect(events.usages[0].outputTokens).toBe(8);
+			}
+			resetSpawnGenerationsForTest();
+		}
+	});
+
+	it('covers every provider the pickers offer that has an output parser', () => {
+		// Claude Code and OpenCode have captured turns. Hermes has no parser.
+		const documented = Object.values(DOCUMENTED_RECORDINGS).map((recording) => recording.toolType);
+		const expected = PICKABLE_AGENT_IDS.filter(
+			(agentId) => agentId !== 'claude-code' && agentId !== 'opencode' && agentId !== 'hermes'
+		);
+
+		expect([...documented].sort()).toEqual([...expected].sort());
 	});
 });

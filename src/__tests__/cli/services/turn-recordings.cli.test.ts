@@ -74,6 +74,11 @@ import {
 	CAPTURED_CLAUDE_CODE_SESSION_ID,
 	CAPTURED_OPENCODE_SESSION_ID,
 } from '../../main/process-manager/recordings/captured';
+import {
+	DOCUMENTED_ANSWER,
+	DOCUMENTED_RECORDINGS,
+	DOCUMENTED_SESSION_IDS,
+} from '../../main/process-manager/recordings/documented';
 
 /** What the CLI reports for a recording. `note` records a CLI-vs-desktop difference. */
 interface CliExpectation {
@@ -230,6 +235,20 @@ const EXPECTED: Record<string, CliExpectation> = {
 		errorIncludes: 'signal sigterm',
 		note: 'Matches desktop: an unrequested signal kill is a crash even with partial text captured.',
 	},
+
+	// One documented-format turn per provider with no captured turn (see
+	// documented.ts). Each is a normal turn, so each expects the same thing.
+	...Object.fromEntries(
+		Object.keys(DOCUMENTED_RECORDINGS).map((name): [string, CliExpectation] => [
+			name,
+			{
+				success: true,
+				outcome: 'completed',
+				response: DOCUMENTED_ANSWER,
+				agentSessionId: DOCUMENTED_SESSION_IDS[name],
+			},
+		])
+	),
 };
 
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
