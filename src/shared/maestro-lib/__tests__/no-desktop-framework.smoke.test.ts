@@ -191,4 +191,18 @@ describe('maestro-lib: no desktop framework dependency', () => {
 		expect(typeof agentArgs.buildAgentArgs).toBe('function');
 		expect(typeof sshSpawnWrapper.wrapSpawnWithSsh).toBe('function');
 	});
+
+	it('loads the stop ladder and the run layer and they are usable', async () => {
+		const termination = await import('../control/termination');
+		const processTree = await import('../control/process-tree');
+		const startTurn = await import('../run/start-turn');
+		const runToCompletion = await import('../run/run-to-completion');
+		const session = await import('../run/session');
+
+		expect(typeof termination.stopProcess).toBe('function');
+		expect(typeof processTree.snapshotProcessTree).toBe('function');
+		expect(typeof startTurn.startTurn).toBe('function');
+		expect(typeof runToCompletion.runTurn).toBe('function');
+		expect(typeof session.planSessionTurn).toBe('function');
+	});
 });
