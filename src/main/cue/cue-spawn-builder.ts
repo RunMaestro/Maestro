@@ -16,6 +16,8 @@ import {
 	type SshSpawnWrapConfig,
 } from '../utils/ssh-spawn-wrapper';
 import { buildAgentLaunchPlan } from '../../shared/maestro-lib/launch/launch-plan';
+import { buildSpawnPath } from '../utils/spawnPath';
+import { QUERY_SOURCE_ENV_VAR } from '../../shared/querySource';
 import { ensureRemoteMaestroPProbed } from '../agents/probeRemoteMaestroP';
 import { sanitizeCustomEnvVars } from './cue-env-sanitizer';
 import {
@@ -138,16 +140,18 @@ export async function buildSpawnSpec(
 		vars === undefined ? undefined : sanitizeCustomEnvVars(vars, config.onLog).sanitized;
 
 	// 4. The launch plan decides where the run happens, what it execs, its
-	// environment and how the prompt reaches it, exactly as desktop chat and the
-	// CLI decide it. An SSH remote that cannot be resolved fails the run here:
-	// it never falls back to running the agent on this machine.
+	// environment and how the prompt reaches it, as the `cue` surface: the
+	// inherited environment, then the provider defaults, then the agent's own
+	// vars, with the prompt on the command line. An SSH remote that cannot be
+	// resolved fails the run here: it never falls back to running the agent on
+	// this machine.
 	const planResult = buildAgentLaunchPlan({
+		surface: 'cue',
 		agent: { ...agentDef, capabilities: agentConfig.capabilities },
 		command: customPath || agentDef.command,
 		args: finalArgs,
 		cwd: projectRoot,
 		prompt: substitutedPrompt,
-		globalShellEnvVars: sanitizeLayer(config.globalShellEnvVars),
 		agentCustomEnvVars: sanitizeLayer(
 			(agentConfigValues as Record<string, unknown> | undefined)?.customEnvVars as
 				| Record<string, string>
@@ -254,7 +258,12 @@ export async function buildSpawnSpec(
 		spawnCwd = sshResult.cwd;
 		// The local ssh client inherits this process's env (SSH_AUTH_SOCK and the
 		// like); the agent's own vars travel inside the ssh command or script.
-		spawnEnv = { ...process.env } as Record<string, string>;
+		spawnEnv = {
+			...process.env,
+			PATH: buildSpawnPath(),
+			...(sshResult.customEnvVars ?? {}),
+			[QUERY_SOURCE_ENV_VAR]: 'cue',
+		} as Record<string, string>;
 		sshStdinScript = sshResult.sshStdinScript;
 		sshRemoteCommand = sshResult.sshRemoteCommand;
 		stdinPrompt = sshResult.prompt;
@@ -264,9 +273,9 @@ export async function buildSpawnSpec(
 		// to the planned args, which already end with the prompt, so the maestro-p
 		// script + interactive flags come FIRST and the prompt stays LAST
 		// (maestro-p strips the headless-only flags, forwards the rest to the
-		// claude TUI, and reads the trailing positional as the prompt). Only the
-		// vars it adds (MAESTRO_CLAUDE_BIN and its Node settings) are merged over
-		// the planned env, so a var the user blanked stays unset.
+		// claude TUI, and reads the trailing positional as the prompt). The vars
+		// it adds (MAESTRO_CLAUDE_BIN and its Node settings) are merged over the
+		// planned env, which already holds the agent's own.
 		const applied = applyClaudeSpawnDecision({
 			decision: claudeSpawnDecision,
 			interactiveModeArgs: agentDef.interactiveModeArgs,

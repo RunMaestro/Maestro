@@ -44,8 +44,6 @@ export interface CueExecutionConfig {
 	customPath?: string;
 	customArgs?: string;
 	customEnvVars?: Record<string, string>;
-	/** Settings -> Environment: the global vars every agent receives. */
-	globalShellEnvVars?: Record<string, string>;
 	customModel?: string;
 	customEffort?: string;
 	/** Legacy Adaptive Mode opt-in (maestro-p TUI). Off/absent means pure API. */
@@ -187,8 +185,8 @@ export async function executeCuePrompt(config: CueExecutionConfig): Promise<CueR
 		timeoutMs,
 		sshRemoteEnabled: sshActuallyUsed,
 		sshStdinScript: sshActuallyUsed ? spec.sshStdinScript : undefined,
-		// Local runs use it too: on a Windows host an agent that reads stdin gets
-		// its prompt there (see resolvePromptDelivery).
+		// Set only by the SSH wrapper: a local Cue run carries its prompt on the
+		// command line, on every host.
 		stdinPrompt: spec.stdinPrompt,
 		onLog,
 		onActivity: wakaHeartbeat,

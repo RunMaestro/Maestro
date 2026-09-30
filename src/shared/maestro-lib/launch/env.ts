@@ -1,6 +1,6 @@
 import * as os from 'os';
 import * as path from 'path';
-import { detectNodeVersionManagerBinPaths } from '../../pathUtils';
+import { buildExpandedPath, detectNodeVersionManagerBinPaths } from '../../pathUtils';
 import { isWindows } from '../../platformDetection';
 import { DEFAULT_QUERY_SOURCE, QUERY_SOURCE_ENV_VAR, type QuerySource } from '../../querySource';
 import { buildSpawnPath, STANDARD_UNIX_PATHS } from './spawn-path';
@@ -367,8 +367,25 @@ function applyEnvRecord(env: NodeJS.ProcessEnv, record: Record<string, string>):
 }
 
 /**
+ * Which surface is launching the agent.
+ *
+ * Desktop chat, the CLI and Cue have each layered an agent's environment their
+ * own way since before this library existed, and they do not agree. The
+ * builders below reproduce each surface exactly as it was. A shared function is
+ * not licence to change what any of them does: making the three agree is a
+ * product change, to be proposed and accepted on its own.
+ *
+ * | Surface   | Inherited env                    | Provider defaults            | Global Settings vars       |
+ * | --------- | -------------------------------- | ---------------------------- | -------------------------- |
+ * | `desktop` | Electron and IDE vars stripped   | over the inherited value     | BELOW the provider defaults |
+ * | `cli`     | as inherited                     | only where the shell set none | not applied                |
+ * | `cue`     | as inherited                     | over the inherited value     | not applied                |
+ */
+export type AgentEnvSurface = 'desktop' | 'cli' | 'cue';
+
+/**
  * The configurable sources of an agent's environment, each named for where it
- * is set. `buildAgentEnvironment` puts `process.env` underneath all of them.
+ * is set.
  */
 export interface AgentEnvLayers {
 	/** The provider definition's `defaultEnvVars`: what Maestro needs by default. */
@@ -378,7 +395,11 @@ export interface AgentEnvLayers {
 	 * pass these; they sit with the defaults, just above them.
 	 */
 	batchModeEnvVars?: Record<string, string>;
-	/** Settings -> Environment: applies to every agent and terminal. */
+	/**
+	 * Settings -> Environment. Desktop only: it is applied to the local process
+	 * BENEATH the provider defaults, and it never crosses to an SSH remote. The
+	 * CLI and Cue do not apply it.
+	 */
 	globalShellEnvVars?: Record<string, string>;
 	/** Settings -> Agents, per provider. */
 	agentCustomEnvVars?: Record<string, string>;
@@ -392,31 +413,29 @@ export interface AgentEnvLayers {
 	/**
 	 * The provider's `readOnlyEnvOverrides`, passed only for a read-only turn.
 	 * Applied over everything the user set: read-only enforcement must not be
-	 * undone by a global or per-agent var.
+	 * undone by a per-agent var.
 	 */
 	readOnlyEnvOverrides?: Record<string, string>;
 }
 
 /**
- * Merge the configurable layers into the one record Maestro hands a process,
- * lowest precedence first:
+ * Merge the layers Maestro sets on an agent into one record, lowest precedence
+ * first:
  *
- *   defaultEnvVars < batchModeEnvVars < globalShellEnvVars
+ *   defaultEnvVars < batchModeEnvVars
  *     < (sessionCustomEnvVars ?? agentCustomEnvVars) < readOnlyEnvOverrides
  *
- * Global sits ABOVE the provider defaults, so a user can switch a default off
- * from Settings -> Environment (the definitions have always said they could).
- * Blank values are KEPT: a blank at a higher layer must be able to cancel a
- * lower one, and `applyEnvRecord` turns it into "unset" at spawn time. This is
- * also the record that crosses to an SSH remote, where `process.env` does not
- * exist. Returns undefined when no layer sets anything.
+ * The same on every surface. This is the record that crosses to an SSH remote,
+ * where `process.env` does not exist, and the one Process Details shows. The
+ * global Settings vars are NOT in it: on desktop they sit beneath this record
+ * and stay on the local machine, because a path that names a directory here
+ * names nothing on the remote. Returns undefined when no layer sets anything.
  */
 export function resolveAgentEnvVars(layers: AgentEnvLayers): Record<string, string> | undefined {
 	const userEnvVars = layers.sessionCustomEnvVars ?? layers.agentCustomEnvVars;
 	const merged: Record<string, string> = {
 		...(layers.defaultEnvVars ?? {}),
 		...(layers.batchModeEnvVars ?? {}),
-		...(layers.globalShellEnvVars ?? {}),
 		...(userEnvVars ?? {}),
 		...(layers.readOnlyEnvOverrides ?? {}),
 	};
@@ -428,34 +447,49 @@ export function resolveAgentEnvVars(layers: AgentEnvLayers): Record<string, stri
 
 /** Everything `buildAgentEnvironment` needs beyond the layers. */
 export interface BuildAgentEnvironmentOptions extends AgentEnvLayers {
+	/** Whose rules to build the environment by. */
+	surface: AgentEnvSurface;
 	/**
 	 * Vars Maestro states about this spawn (caller identity, an MCP bridge, the
 	 * acting web user). Applied over every user layer: they are facts, not
 	 * preferences.
 	 */
 	maestroEnvVars?: Record<string, string>;
-	/** Stamps MAESTRO_SESSION_RESUMED=1. */
+	/** Desktop only: stamps MAESTRO_SESSION_RESUMED=1. */
 	isResuming?: boolean;
 	/** Who asked for this turn; stamped last. Defaults to `user`. */
 	querySource?: QuerySource;
-	/** Directories to put in front of PATH (e.g. the agent binary's own dir). */
+	/** Desktop only: directories to put in front of PATH. */
 	extraPathDirs?: string[];
 }
 
 /**
- * The complete environment for a LOCAL agent process, built from `process.env`
- * and the layers in {@link resolveAgentEnvVars}:
+ * The complete environment for a LOCAL agent process, by the rules of the
+ * surface that launches it (see {@link AgentEnvSurface}).
+ */
+export function buildAgentEnvironment(options: BuildAgentEnvironmentOptions): NodeJS.ProcessEnv {
+	switch (options.surface) {
+		case 'cli':
+			return buildCliAgentEnvironment(options);
+		case 'cue':
+			return buildCueAgentEnvironment(options);
+		default:
+			return buildDesktopAgentEnvironment(options);
+	}
+}
+
+/**
+ * Desktop chat:
  *
- *   process.env < defaultEnvVars < globalShellEnvVars
+ *   process.env < globalShellEnvVars < defaultEnvVars
  *     < (sessionCustomEnvVars ?? agentCustomEnvVars) < readOnlyEnvOverrides
  *     < maestroEnvVars < MAESTRO_QUERY_SOURCE
  *
  * `process.env` is inherited with the Electron/IDE/caller-identity vars in
  * `STRIPPED_ENV_VARS` removed, PATH rebuilt, and BROWSER disarmed (see
- * `buildChildProcessEnv`). Desktop, Cue and the CLI all build agent envs here,
- * so the same agent configuration produces the same process on every surface.
+ * `buildChildProcessEnv`). A blank value unsets the variable and `~/` expands.
  */
-export function buildAgentEnvironment(options: BuildAgentEnvironmentOptions): NodeJS.ProcessEnv {
+function buildDesktopAgentEnvironment(options: BuildAgentEnvironmentOptions): NodeJS.ProcessEnv {
 	const record = {
 		...(resolveAgentEnvVars(options) ?? {}),
 		...(options.maestroEnvVars ?? {}),
@@ -463,8 +497,59 @@ export function buildAgentEnvironment(options: BuildAgentEnvironmentOptions): No
 	return buildChildProcessEnv(
 		record,
 		options.isResuming,
-		undefined,
+		options.globalShellEnvVars,
 		options.extraPathDirs,
 		options.querySource
 	);
+}
+
+/**
+ * The CLI (`maestro-cli send`, Auto Run, playbooks):
+ *
+ *   defaultEnvVars and batchModeEnvVars fill only what the shell has NOT set
+ *     < (sessionCustomEnvVars ?? agentCustomEnvVars) < readOnlyEnvOverrides
+ *     < maestroEnvVars < MAESTRO_QUERY_SOURCE
+ *
+ * The shell wins over the provider defaults, so a value exported in the shell
+ * that runs the command survives; the user's own vars override it, because the
+ * user explicitly opted into them. `process.env` is inherited as it is, with
+ * PATH expanded. Values are written as given: no `~/` expansion, and a blank
+ * value is exported blank.
+ */
+function buildCliAgentEnvironment(options: BuildAgentEnvironmentOptions): NodeJS.ProcessEnv {
+	const env: NodeJS.ProcessEnv = { ...process.env };
+	env.PATH = buildExpandedPath();
+
+	// Merged first so a batch-mode value beats a default for the same key, then
+	// applied only to slots the shell left empty.
+	const defaults = { ...(options.defaultEnvVars ?? {}), ...(options.batchModeEnvVars ?? {}) };
+	for (const [key, value] of Object.entries(defaults)) {
+		if (!env[key]) env[key] = value;
+	}
+	Object.assign(env, options.sessionCustomEnvVars ?? options.agentCustomEnvVars ?? {});
+	Object.assign(env, options.readOnlyEnvOverrides ?? {});
+	Object.assign(env, options.maestroEnvVars ?? {});
+	env[QUERY_SOURCE_ENV_VAR] = options.querySource ?? DEFAULT_QUERY_SOURCE;
+	return env;
+}
+
+/**
+ * Cue:
+ *
+ *   process.env < defaultEnvVars < (sessionCustomEnvVars ?? agentCustomEnvVars)
+ *     < readOnlyEnvOverrides < maestroEnvVars < MAESTRO_QUERY_SOURCE
+ *
+ * `process.env` is inherited as it is, with PATH rebuilt the way the desktop
+ * agent spawn rebuilds it (a Dock or Finder launch hands Maestro launchd's bare
+ * PATH, which hides Homebrew and other user installs). Values are written as
+ * given.
+ */
+function buildCueAgentEnvironment(options: BuildAgentEnvironmentOptions): NodeJS.ProcessEnv {
+	return {
+		...process.env,
+		PATH: buildSpawnPath(options.extraPathDirs),
+		...(resolveAgentEnvVars(options) ?? {}),
+		...(options.maestroEnvVars ?? {}),
+		[QUERY_SOURCE_ENV_VAR]: options.querySource ?? DEFAULT_QUERY_SOURCE,
+	};
 }

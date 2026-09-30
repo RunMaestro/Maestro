@@ -6,11 +6,14 @@
  * Claude modes, Cue's forced batch mode and the CLI's per-provider shapes are
  * genuinely different), but everything AFTER the arguments is decided here,
  * once: where the process runs, which command it execs, what environment it
- * gets, and how the prompt reaches it. Those decisions used to be restated per
- * surface and had drifted: the CLI never applied the global Settings env or
- * stripped Electron's vars, Cue did neither and inherited `ELECTRON_RUN_AS_NODE`,
- * and an SSH remote that could not be resolved ran the agent LOCALLY on desktop
- * and Cue while the CLI refused.
+ * gets, and how the prompt reaches it.
+ *
+ * One place does not mean one behavior. Desktop, the CLI and Cue layer an
+ * agent's environment differently and deliver its prompt differently, and have
+ * since before this module existed. The plan reproduces each surface as it was
+ * (`surface`); it does not make them agree. The one thing it does change is an
+ * SSH remote that cannot be resolved: that fails on every surface, where
+ * desktop and Cue used to run the agent LOCALLY against the remote's path.
  *
  * Pure apart from reading `process.env` (through `buildAgentEnvironment`): no
  * spawning, no I/O. A plan for an SSH remote describes the remote invocation;
@@ -20,7 +23,7 @@
 import { isWindows } from '../../platformDetection';
 import type { QuerySource } from '../../querySource';
 import type { AgentSshRemoteConfig, SshRemoteConfig } from '../../types';
-import { buildAgentEnvironment, resolveAgentEnvVars } from './env';
+import { buildAgentEnvironment, resolveAgentEnvVars, type AgentEnvSurface } from './env';
 import {
 	resolvePromptDelivery,
 	type PromptDelivery,
@@ -42,6 +45,12 @@ export interface LaunchPlanAgent extends PromptDeliveryAgent {
 }
 
 export interface AgentLaunchInput {
+	/**
+	 * Who is launching. Decides the environment order (see `AgentEnvSurface`)
+	 * and whether a Windows host moves the prompt to stdin: desktop does, for an
+	 * agent that reads it there; the CLI and Cue keep it on the command line.
+	 */
+	surface: AgentEnvSurface;
 	agent: LaunchPlanAgent | null | undefined;
 	/** The command to exec locally (a resolved path, ideally). */
 	command: string;
@@ -57,7 +66,7 @@ export interface AgentLaunchInput {
 	prompt?: string;
 	hasImages?: boolean;
 
-	/** Settings -> Environment. */
+	/** Settings -> Environment. Applied on desktop only. */
 	globalShellEnvVars?: Record<string, string>;
 	/** Settings -> Agents, per provider. */
 	agentCustomEnvVars?: Record<string, string>;
@@ -149,7 +158,9 @@ export function buildAgentLaunchPlan(input: AgentLaunchInput): AgentLaunchPlanRe
 	const prompt = resolvePromptDelivery({
 		agent,
 		prompt: input.prompt,
-		isWindowsHost: input.isWindowsHost ?? isWindows(),
+		// Only desktop moves a Windows prompt to stdin. The CLI and Cue have
+		// always put it on the command line, on every host.
+		isWindowsHost: input.surface === 'desktop' && (input.isWindowsHost ?? isWindows()),
 		sshRemote: target.kind === 'remote',
 		hasImages: input.hasImages,
 	});
@@ -187,6 +198,7 @@ export function buildAgentLaunchPlan(input: AgentLaunchInput): AgentLaunchPlanRe
 			envVars,
 			env: buildAgentEnvironment({
 				...layers,
+				surface: input.surface,
 				maestroEnvVars: input.maestroEnvVars,
 				isResuming: input.isResuming,
 				querySource: input.querySource,
