@@ -64,7 +64,7 @@ import {
 	resolveConfigDirKeyFromEnv,
 	defaultSelectMode,
 	type ClaudeSpawnCoreDeps,
-} from '../../main/agents/claudeSpawnCore';
+} from '../../shared/maestro-lib/launch/interactive-mode';
 
 // Types from the SSH wrapper are imported type-only so no runtime module load
 // happens for non-SSH sessions - the SSH chain pulls in execFile/which helpers
