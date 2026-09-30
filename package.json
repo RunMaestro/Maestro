@@ -151,6 +151,10 @@
 					"to": "maestro-p.js"
 				},
 				{
+					"from": "dist/cli/maestro-lib-run.js",
+					"to": "maestro-lib-run.js"
+				},
+				{
 					"from": "dist/cli/permission-relay-bridge.js",
 					"to": "permission-relay-bridge.js"
 				},
@@ -206,6 +210,10 @@
 					"to": "maestro-p.js"
 				},
 				{
+					"from": "dist/cli/maestro-lib-run.js",
+					"to": "maestro-lib-run.js"
+				},
+				{
 					"from": "dist/cli/permission-relay-bridge.js",
 					"to": "permission-relay-bridge.js"
 				},
@@ -251,6 +259,10 @@
 				{
 					"from": "dist/cli/maestro-p.js",
 					"to": "maestro-p.js"
+				},
+				{
+					"from": "dist/cli/maestro-lib-run.js",
+					"to": "maestro-lib-run.js"
 				},
 				{
 					"from": "dist/cli/permission-relay-bridge.js",

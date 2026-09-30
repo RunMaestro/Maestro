@@ -259,6 +259,53 @@ describe('resolveTurnOutcome', () => {
 		expect(result.error?.message).toBe('out of memory');
 	});
 
+	it('reports crashed for a prompt that could not be written, even on a clean exit with a result', () => {
+		const epipe = Object.assign(new Error('write EPIPE'), { code: 'EPIPE' });
+		const facts = baseFacts({
+			exitCode: 0,
+			resultMessageSeen: true,
+			capturedAnswerText: 'an answer to half a prompt',
+			stdinError: epipe,
+		});
+
+		const result = resolveTurnOutcome(facts, neverErrorsProvider(), CLAUDE_CTX);
+
+		expect(result.outcome).toBe('crashed');
+		expect(result.error).toMatchObject({
+			type: 'agent_crashed',
+			message: 'The prompt could not be delivered to the agent: write EPIPE',
+			agentId: 'claude-code',
+			sessionId: 'session-1',
+		});
+	});
+
+	it('keeps a requested stop and a specific exit classification over an undelivered prompt', () => {
+		const stdinError = new Error('write EPIPE');
+
+		expect(
+			resolveTurnOutcome(
+				baseFacts({ interrupted: true, stdinError }),
+				neverErrorsProvider(),
+				CLAUDE_CTX
+			)
+		).toEqual({ outcome: 'interrupted' });
+
+		const authError: AgentError = {
+			type: 'auth_expired',
+			message: 'log in again',
+			recoverable: true,
+			agentId: 'claude-code',
+			timestamp: 0,
+		};
+		expect(
+			resolveTurnOutcome(
+				baseFacts({ exitCode: 1, stdinError }),
+				alwaysErrorsProvider(authError),
+				CLAUDE_CTX
+			).error
+		).toBe(authError);
+	});
+
 	it.each(['agent-terminal', 'session-synopsis-1', 'tab-naming-abc123'])(
 		'does not apply the empty-answer rule to the excluded session shape %s even for omp',
 		(sessionId) => {

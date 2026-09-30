@@ -43,6 +43,8 @@ export interface CliTurnInput {
 	stdoutText: string;
 	/** An in-band error the provider reported in its stream, if any. */
 	errorText?: string;
+	/** Writing the prompt to stdin failed, so the agent never got all of it. */
+	stdinError?: Error;
 	/** The captured answer, from the result event or accumulated text. */
 	answerText?: string;
 	/** The provider sent an explicit result/done event (distinct from having text). */
@@ -170,6 +172,7 @@ export function resolveCliTurnResult(rawInput: CliTurnInput): AgentResult {
 			stderrText: input.stderrText,
 			stdoutText: input.stdoutText,
 			explicitError: input.errorText ? inBandError(input.toolType, input.errorText) : undefined,
+			stdinError: input.stdinError,
 			capturedAnswerText: input.answerText,
 			resultMessageSeen: input.resultMessageSeen,
 		},

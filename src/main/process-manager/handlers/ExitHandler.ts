@@ -59,7 +59,8 @@ export class ExitHandler {
 		sessionId: string,
 		code: number,
 		exitingProcess?: ManagedProcess,
-		signal?: NodeJS.Signals | null
+		signal?: NodeJS.Signals | null,
+		stdinError?: Error
 	): Promise<void> {
 		const managedProcess = exitingProcess ?? this.processes.get(sessionId);
 		if (!managedProcess) {
@@ -340,6 +341,7 @@ export class ExitHandler {
 				stderrText: managedProcess.stderrBuffer || '',
 				stdoutText: managedProcess.stdoutBuffer || managedProcess.streamedText || '',
 				explicitError: sshExplicitError,
+				stdinError,
 				capturedAnswerText: managedProcess.streamedText || undefined,
 				resultMessageSeen: Boolean(managedProcess.resultEmitted),
 			};

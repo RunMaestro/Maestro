@@ -162,6 +162,15 @@ describe('resolveCliTurnResult', () => {
 		});
 	});
 
+	it('fails a clean exit whose prompt never reached the agent, and says so', () => {
+		const result = resolveCliTurnResult(input({ stdinError: new Error('write EPIPE') }));
+		expect(result).toMatchObject({
+			success: false,
+			outcome: 'crashed',
+			error: 'The prompt could not be delivered to the agent: write EPIPE',
+		});
+	});
+
 	it('does not let the generic agent_crashed fallback replace the exit-code wording', () => {
 		const result = resolveCliTurnResult(
 			input({

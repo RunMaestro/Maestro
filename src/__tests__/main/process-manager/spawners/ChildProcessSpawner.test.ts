@@ -946,7 +946,10 @@ describe('ChildProcessSpawner', () => {
 			);
 			const args = mockSpawn.mock.calls[0][1] as string[];
 			expect(args).toEqual(['chat', '-Q', '--yolo', '--query-file', '-']);
-			expect(mockChildProcess.stdin.write).toHaveBeenCalledExactlyOnceWith(prompt);
+			expect(mockChildProcess.stdin.write).toHaveBeenCalledExactlyOnceWith(
+				prompt,
+				expect.any(Function)
+			);
 			expect(mockChildProcess.stdin.end).toHaveBeenCalledOnce();
 		});
 
