@@ -370,8 +370,12 @@ export class ChildProcessSpawner {
 			//   was NOT already added to the CLI args. Without that guard, agents like
 			//   Codex (whose --json flag sets isStreamJsonMode for output parsing)
 			//   would receive the prompt both as a CLI arg and as stream-json stdin.
+			// - Anything written here is the whole of what the process gets on
+			//   stdin, so stdin is closed behind it. That includes the SSH script
+			//   of a turn that carries no local prompt: the remote shell and the
+			//   agent it starts both wait for the end of input.
 			// - Batch mode with nothing to write closes stdin at once; interactive
-			//   mode leaves it open for `ProcessManager.write()`.
+			//   mode with nothing to write leaves it open for `ProcessManager.write()`.
 			let stdinText: string | undefined;
 			if (config.sshStdinScript) {
 				stdinText = config.sshStdinScript;
@@ -445,7 +449,7 @@ export class ChildProcessSpawner {
 					// which run the same ladder on this child; the turn's own stop
 					// methods are not used here.
 					stopGraceMs: INTERACTIVE_STOP_GRACE_MS,
-					keepStdinOpen: !isBatchMode,
+					keepStdinOpen: stdinText === undefined && !isBatchMode,
 					// The stdout and stderr handlers keep what the desktop needs; a
 					// second copy here would only grow for as long as the process lives.
 					stdoutTailLimit: 0,
