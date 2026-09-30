@@ -1,8 +1,11 @@
 // src/shared/maestro-lib/control/process-tree.ts
 
-import { execFileSyncNoThrow } from '../launch/exec-file';
+import { readdirSync, readFileSync } from 'fs';
+import { readdir, readFile } from 'fs/promises';
+
+import { execFileNoThrow, execFileSyncNoThrow } from '../launch/exec-file';
 import { logger } from '../host';
-import { isWindows } from '../../platformDetection';
+import { isLinux, isWindows } from '../../platformDetection';
 
 /**
  * Signal a pid, swallowing "already gone" / "not permitted".
@@ -131,22 +134,24 @@ export function killProcessTreeNow(
  */
 export interface ProcessSnapshotEntry {
 	pid: number;
-	/** `ps -o lstart=` text, compared verbatim and never parsed. */
+	/**
+	 * When the process started, as the platform's process table words it: the
+	 * `ps -o lstart=` text on macOS, the `starttime` tick count from
+	 * `/proc/<pid>/stat` on Linux. Compared verbatim and never parsed.
+	 */
 	startedAt: string;
 }
 
-interface ProcessTableRow extends ProcessSnapshotEntry {
+export interface ProcessTableRow extends ProcessSnapshotEntry {
 	ppid: number;
 }
 
-/**
- * The process table with start times. Empty when `ps` cannot report `lstart`
- * (BusyBox), which turns every caller below into a no-op rather than a guess.
- */
-function readProcessTable(): ProcessTableRow[] {
-	const table = execFileSyncNoThrow('ps', ['-eo', 'pid=,ppid=,lstart=']);
-	if (!table) return [];
+const PS_TABLE_ARGS = ['-eo', 'pid=,ppid=,lstart='];
+const PROC_DIR = '/proc';
+const PID_NAME = /^\d+$/;
 
+/** Rows from `ps -eo pid=,ppid=,lstart=` output. */
+function parsePsTable(table: string): ProcessTableRow[] {
 	const rows: ProcessTableRow[] = [];
 	for (const line of table.split('\n')) {
 		const [pidRaw, ppidRaw, ...startParts] = line.trim().split(/\s+/);
@@ -156,6 +161,91 @@ function readProcessTable(): ProcessTableRow[] {
 		rows.push({ pid, ppid, startedAt: startParts.join(' ') });
 	}
 	return rows;
+}
+
+/**
+ * One row from the text of `/proc/<pid>/stat`, or null when it is not one.
+ *
+ * The line is `pid (comm) state ppid ... starttime ...`. `comm` is the
+ * executable's name and may hold spaces and parentheses, so the fields are
+ * counted from the LAST `)`: state is the first after it, the parent pid the
+ * second, and `starttime` (field 22 of the line) the twentieth.
+ */
+export function parseProcStat(text: string): ProcessTableRow | null {
+	const open = text.indexOf('(');
+	const close = text.lastIndexOf(')');
+	if (open < 0 || close < open) return null;
+
+	const pid = Number(text.slice(0, open).trim());
+	const fields = text
+		.slice(close + 1)
+		.trim()
+		.split(/\s+/);
+	const ppid = Number(fields[1]);
+	const startedAt = fields[19];
+	if (!pid || Number.isNaN(ppid) || !startedAt) return null;
+	return { pid, ppid, startedAt };
+}
+
+/**
+ * The process table with start times, read synchronously.
+ *
+ * Linux reads `/proc` directly: it needs no `ps` (BusyBox `ps`, on Alpine and
+ * in many containers, cannot report `lstart`) and its start time is an exact
+ * tick count. macOS has no `/proc`, so it asks `ps`. Empty when the table
+ * cannot be read, which turns every caller below into a no-op rather than a
+ * guess.
+ */
+function readProcessTable(): ProcessTableRow[] {
+	if (!isLinux()) {
+		return parsePsTable(execFileSyncNoThrow('ps', PS_TABLE_ARGS));
+	}
+
+	let names: string[];
+	try {
+		names = readdirSync(PROC_DIR);
+	} catch {
+		return [];
+	}
+	const rows: ProcessTableRow[] = [];
+	for (const name of names) {
+		if (!PID_NAME.test(name)) continue;
+		try {
+			const row = parseProcStat(readFileSync(`${PROC_DIR}/${name}/stat`, 'utf8'));
+			if (row) rows.push(row);
+		} catch {
+			// The process exited between the listing and the read.
+		}
+	}
+	return rows;
+}
+
+/** {@link readProcessTable} without blocking, for a read that can wait. */
+async function readProcessTableAsync(): Promise<ProcessTableRow[]> {
+	if (!isLinux()) {
+		const result = await execFileNoThrow('ps', PS_TABLE_ARGS);
+		return result.exitCode === 0 ? parsePsTable(result.stdout) : [];
+	}
+
+	let names: string[];
+	try {
+		names = await readdir(PROC_DIR);
+	} catch {
+		return [];
+	}
+	const rows = await Promise.all(
+		names
+			.filter((name) => PID_NAME.test(name))
+			.map(async (name) => {
+				try {
+					return parseProcStat(await readFile(`${PROC_DIR}/${name}/stat`, 'utf8'));
+				} catch {
+					// The process exited between the listing and the read.
+					return null;
+				}
+			})
+	);
+	return rows.filter((row): row is ProcessTableRow => row !== null);
 }
 
 /** Descendants of every root in `roots`, nearest first, from one table read. */
@@ -221,14 +311,70 @@ export function snapshotProcessTree(pid: number): ProcessTreeSnapshot {
 }
 
 /**
+ * Add to `snapshot` what the tree has started since it was recorded.
+ *
+ * New processes are found under the agent itself, while it is still a running
+ * child of this process, and under every recorded descendant that is still
+ * the same process. A descendant whose pid now belongs to something else
+ * (its start time differs) is not followed.
+ *
+ * Returns `snapshot` itself when nothing was added.
+ */
+export function mergeProcessTree(
+	pid: number,
+	snapshot: ProcessTreeSnapshot,
+	rows: ProcessTableRow[]
+): ProcessTreeSnapshot {
+	if (!snapshot.owned || rows.length === 0) return snapshot;
+
+	const startedAtByPid = new Map(rows.map((row) => [row.pid, row.startedAt]));
+	const roots = snapshot.descendants
+		.filter((entry) => startedAtByPid.get(entry.pid) === entry.startedAt)
+		.map((entry) => entry.pid);
+	const agent = rows.find((row) => row.pid === pid);
+	if (agent && agent.ppid === process.pid) roots.unshift(pid);
+	if (roots.length === 0) return snapshot;
+
+	const recorded = new Set(snapshot.descendants.map((entry) => `${entry.pid} ${entry.startedAt}`));
+	const added = descendantsOf(rows, roots).filter(
+		(row) => !recorded.has(`${row.pid} ${row.startedAt}`)
+	);
+	if (added.length === 0) return snapshot;
+
+	return {
+		owned: true,
+		descendants: [
+			...snapshot.descendants,
+			...added.map(({ pid: descendant, startedAt }) => ({ pid: descendant, startedAt })),
+		],
+	};
+}
+
+/**
+ * Re-read the process table and {@link mergeProcessTree} it into `snapshot`.
+ *
+ * A snapshot taken when a stop is requested misses a tool the agent starts
+ * afterwards, while it is still winding down. The stop ladder calls this on an
+ * interval while a stop is pending, so such a tool is recorded too and swept
+ * with the rest. It does not block: the first snapshot had to be synchronous
+ * (nothing may die before it is taken), a refresh does not.
+ */
+export async function refreshProcessTree(
+	pid: number,
+	snapshot: ProcessTreeSnapshot
+): Promise<ProcessTreeSnapshot> {
+	if (!pid || pid <= 0 || !snapshot.owned || isWindows()) return snapshot;
+	return mergeProcessTree(pid, snapshot, await readProcessTableAsync());
+}
+
+/**
  * SIGKILL whatever in `snapshot` is still running, plus anything those
  * survivors started since.
  *
  * An agent that exits on a stop signal does not take its tools with it: a
  * stopped OpenCode turn left the `sleep` its shell tool had started running
- * after both SIGINT and SIGTERM. The survivor also holds the agent's stdout
- * pipe open, so the turn's `close` never fires and the caller waits on a run
- * that is already over.
+ * after both SIGINT and SIGTERM, still doing its work with nothing left to
+ * stop it.
  *
  * Returns how many processes were signalled.
  */

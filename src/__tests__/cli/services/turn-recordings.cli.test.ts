@@ -22,7 +22,7 @@ const mockKill = vi.fn();
 const mockStdout = Object.assign(new EventEmitter(), { setEncoding: vi.fn() });
 const mockStderr = Object.assign(new EventEmitter(), { setEncoding: vi.fn() });
 const mockChild = Object.assign(new EventEmitter(), {
-	stdin: { end: vi.fn(), write: vi.fn() },
+	stdin: { end: vi.fn(), write: vi.fn(), on: vi.fn() },
 	stdout: mockStdout,
 	stderr: mockStderr,
 	kill: mockKill,

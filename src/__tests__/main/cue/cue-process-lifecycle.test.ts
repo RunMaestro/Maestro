@@ -53,6 +53,7 @@ class MockChildProcess extends EventEmitter {
 	stdin = {
 		write: vi.fn(),
 		end: vi.fn(),
+		on: vi.fn(),
 	};
 	stdout = new EventEmitter();
 	stderr = new EventEmitter();

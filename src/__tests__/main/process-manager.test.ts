@@ -43,6 +43,8 @@ const { mockIsWindows } = vi.hoisted(() => ({
 
 vi.mock('../../shared/platformDetection', () => ({
 	isWindows: () => mockIsWindows(),
+	// Decides where the stop ladder reads the process table from.
+	isLinux: () => process.platform === 'linux',
 }));
 
 // Mock the PID liveness probe so the stale-entry reconciliation can be driven
@@ -802,12 +804,15 @@ describe('process-manager.ts', () => {
 				expect(child.kill.mock.calls).toEqual([['SIGTERM'], ['SIGKILL']]);
 			});
 
-			it('kill on shutdown leaves no timer behind', () => {
+			it('kill on shutdown sends SIGTERM only and leaves no timer behind', () => {
+				// Quitting has always sent a pipe-backed agent SIGTERM and nothing
+				// more, so it can finish writing its state. A SIGKILL right behind
+				// it would take that chance away.
 				const { child } = trackAgent();
 
 				processManager.kill('agent-session', { sync: true, shutdown: true });
 
-				expect(child.kill.mock.calls).toEqual([['SIGTERM'], ['SIGKILL']]);
+				expect(child.kill.mock.calls).toEqual([['SIGTERM']]);
 				expect(child.listenerCount('exit')).toBe(0);
 				expect(vi.getTimerCount()).toBe(0);
 			});

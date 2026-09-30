@@ -157,8 +157,23 @@ describe('planSessionTurn', () => {
 		expect(planned).toMatchObject({ ok: false, reason: 'no-resume' });
 	});
 
-	it('still plans a new turn for a provider that cannot resume', async () => {
-		expect((await planSessionTurn(request({ agentId: 'hermes' }))).ok).toBe(true);
+	it('refuses a provider whose output has no parser, since the runner could not read it', async () => {
+		expect(await planSessionTurn(request({ agentId: 'hermes' }))).toEqual({
+			ok: false,
+			reason: 'no-parser',
+			error: 'Hermes has no output parser, so its answer could not be read',
+		});
+	});
+
+	it('refuses a read-only turn for a provider that cannot enforce one', async () => {
+		// Antigravity's CLI has no flag that stops it writing in the workspace.
+		const planned = await planSessionTurn(request({ agentId: 'antigravity', readOnly: true }));
+
+		expect(planned).toMatchObject({ ok: false, reason: 'no-read-only' });
+	});
+
+	it('still plans a full-access turn for a provider that cannot enforce read-only', async () => {
+		expect((await planSessionTurn(request({ agentId: 'antigravity' }))).ok).toBe(true);
 	});
 
 	it('reports a binary that is not where the request said', async () => {
