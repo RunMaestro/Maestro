@@ -279,10 +279,15 @@ describe('buildAgentEnvironment: cli', () => {
 		expect(env.LAYER_KEY).toBe('');
 	});
 
-	it('does not mark a resumed session', () => {
-		expect(
-			buildAgentEnvironment({ surface, isResuming: true }).MAESTRO_SESSION_RESUMED
-		).toBeUndefined();
+	it('marks a resumed session, as desktop does', () => {
+		expect(buildAgentEnvironment({ surface, isResuming: true }).MAESTRO_SESSION_RESUMED).toBe('1');
+		expect(buildAgentEnvironment({ surface }).MAESTRO_SESSION_RESUMED).toBeUndefined();
+	});
+
+	it('does not pass a resume marker inherited from the shell to a fresh turn', () => {
+		process.env.MAESTRO_SESSION_RESUMED = '1';
+
+		expect(buildAgentEnvironment({ surface }).MAESTRO_SESSION_RESUMED).toBeUndefined();
 	});
 });
 
@@ -341,7 +346,7 @@ describe('resolveAgentEnvVars: the record Maestro sets (and sends over SSH)', ()
 		expect(record).not.toHaveProperty('PATH');
 	});
 
-	it('leaves the global Settings vars out: they stay on the local machine', () => {
+	it('leaves the global Settings vars out of the record', () => {
 		expect(
 			resolveAgentEnvVars({ defaultEnvVars: { A: 'default' }, globalShellEnvVars: { G: 'global' } })
 		).toEqual({ A: 'default' });
