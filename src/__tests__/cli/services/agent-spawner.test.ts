@@ -198,6 +198,8 @@ import {
 } from '../../../cli/services/agent-spawner';
 import { isolateAgentEnv } from '../../helpers/agentEnvIsolation';
 
+const hostPlatform = process.platform;
+
 describe('agent-spawner', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
@@ -223,9 +225,15 @@ describe('agent-spawner', () => {
 		mockReadGlobalShellEnvVars.mockReturnValue({});
 		mockWrapSpawnWithSsh.mockReset();
 		pathProbeResolver = DEFAULT_PATH_PROBE;
+		// The host decides how a prompt travels: on Windows an agent that reads
+		// stdin gets it there, everywhere else it goes on the command line. The
+		// tests below describe the command line, so they pin a POSIX host; the
+		// Windows cases set `win32` themselves.
+		Object.defineProperty(process, 'platform', { value: 'linux', configurable: true });
 	});
 
 	afterEach(() => {
+		Object.defineProperty(process, 'platform', { value: hostPlatform, configurable: true });
 		vi.restoreAllMocks();
 	});
 
