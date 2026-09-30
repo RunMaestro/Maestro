@@ -21,7 +21,9 @@
  *   Code exits 143 without a result; OpenCode again dies on the signal.
  *
  * Captured on macOS, 2026-09-28, Claude Code 2.1.282 and OpenCode 1.18.23,
- * with the args Maestro passes (see `command` in each file). To keep the
+ * with the args Maestro passes (see `command` in each file). New captures are
+ * made with `scripts/record-provider-turn.mjs`, which does the trimming below
+ * and refuses to write a file that still names the capturing machine. To keep the
  * capturing machine out of the repo, the Claude init event is trimmed: `cwd`
  * reads `/project`, MCP servers, skills and plugins are emptied, MCP tools and
  * plugin slash commands are dropped, and the local memory, scratchpad and
@@ -53,13 +55,35 @@ interface CapturedTurn {
 export const CAPTURED_CLAUDE_CODE_SESSION_ID = '45d40dd0-9d71-4dce-ac14-9e613684200b';
 export const CAPTURED_OPENCODE_SESSION_ID = 'ses_f16769d8cffe7rc1MP406tiARM';
 
+/**
+ * Every provider with an output parser. A capture of any of them, made with
+ * `scripts/record-provider-turn.mjs`, registers below with `fromCapture` and
+ * replaces that provider's documented-format turn in documented.ts.
+ */
+const REPLAYABLE_PROVIDERS: readonly TurnRecording['toolType'][] = [
+	'claude-code',
+	'opencode',
+	'codex',
+	'copilot-cli',
+	'factory-droid',
+	'grok',
+	'omp',
+	'pi',
+	'qwen3-coder',
+	'antigravity',
+];
+
+function isReplayable(provider: string): provider is TurnRecording['toolType'] {
+	return (REPLAYABLE_PROVIDERS as readonly string[]).includes(provider);
+}
+
 function fromCapture(
 	name: string,
 	description: string,
 	capture: CapturedTurn,
 	options: { interrupted?: boolean; agentSessionIdBeforeStart?: string } = {}
 ): TurnRecording {
-	if (capture.provider !== 'claude-code' && capture.provider !== 'opencode') {
+	if (!isReplayable(capture.provider)) {
 		throw new Error(`${name}: no replay support for provider ${capture.provider}`);
 	}
 	return {
