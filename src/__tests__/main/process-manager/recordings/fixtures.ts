@@ -25,15 +25,27 @@
  *
  * Real captured turns (Claude Code and OpenCode: normal, resumed, stopped)
  * live in captured.ts and are merged into RECORDINGS below, so both replay
- * harnesses run them alongside these.
+ * harnesses run them alongside these. So is one documented-format turn for
+ * each provider that could not be captured (documented.ts).
  */
 
 import { CAPTURED_RECORDINGS } from './captured';
+import { DOCUMENTED_RECORDINGS } from './documented';
 
 export interface TurnRecording {
 	name: string;
 	description: string;
-	toolType: 'claude-code' | 'opencode';
+	toolType:
+		| 'claude-code'
+		| 'opencode'
+		| 'codex'
+		| 'copilot-cli'
+		| 'factory-droid'
+		| 'grok'
+		| 'omp'
+		| 'pi'
+		| 'qwen3-coder'
+		| 'antigravity';
 	/** Raw stdout chunks, in arrival order. */
 	chunks: string[];
 	/** The `close` event's exit code; null when the process died on a signal. */
@@ -286,4 +298,5 @@ export const RECORDINGS: Record<string, TurnRecording> = {
 	},
 
 	...CAPTURED_RECORDINGS,
+	...DOCUMENTED_RECORDINGS,
 };
