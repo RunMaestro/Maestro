@@ -16,6 +16,7 @@ import type { ToolType } from '../../shared/types';
 import { getAgentDisplayName as getDisplayName } from '../../shared/agentMetadata';
 import type { ContextSource, MergeRequest, GroomingProgress } from '../types/contextMerge';
 import type { LogEntry } from '../types';
+import { logger } from '../utils/logger';
 import {
 	formatLogsForGrooming,
 	parseGroomedOutput,
@@ -242,7 +243,12 @@ export interface GroomingConfig {
  * );
  */
 export class ContextGroomingService {
-	private activeGroomingSessionId: string | null = null;
+	/**
+	 * How many grooming calls are waiting on the main process. A count, not a
+	 * flag: two surfaces can groom at once, and the first to finish must not
+	 * report the other as idle.
+	 */
+	private groomingInFlight = 0;
 
 	constructor(_config: GroomingConfig = {}) {
 		// Config reserved for future use (e.g., custom grooming parameters)
@@ -312,12 +318,20 @@ export class ContextGroomingService {
 				message: 'Sending contexts for consolidation...',
 			});
 
-			// Use the new single-call groomContext API (spawns batch process with prompt)
-			const groomedText = await window.maestro.context.groomContext(
-				targetProjectRoot,
-				request.targetAgent,
-				prompt
-			);
+			// One call: the main process spawns a batch turn with the prompt and
+			// returns its response. Counted while it is out, so a cancel knows
+			// there is something to stop.
+			this.groomingInFlight++;
+			let groomedText: string;
+			try {
+				groomedText = await window.maestro.context.groomContext(
+					targetProjectRoot,
+					request.targetAgent,
+					prompt
+				);
+			} finally {
+				this.groomingInFlight--;
+			}
 
 			onProgress({
 				stage: 'grooming',
@@ -422,30 +436,19 @@ Please consolidate the above contexts into a single, coherent summary following 
 	}
 
 	/**
-	 * Clean up the temporary grooming session.
-	 * Kills the process and removes any temporary resources.
-	 *
-	 * @param sessionId - The grooming session ID to clean up
-	 */
-	private async cleanupGroomingSession(sessionId: string): Promise<void> {
-		try {
-			await window.maestro.context.cleanupGroomingSession(sessionId);
-		} catch {
-			// Ignore cleanup errors - session may already be terminated
-		} finally {
-			if (this.activeGroomingSessionId === sessionId) {
-				this.activeGroomingSessionId = null;
-			}
-		}
-	}
-
-	/**
 	 * Cancel any active grooming operation.
 	 * This should be called when the user cancels the merge operation.
+	 *
+	 * The grooming turn runs in the main process, so that is where it is
+	 * stopped: `cancelGrooming` kills it, and the `groomContext` call waiting on
+	 * it rejects. The same call the summarizer's cancel makes.
 	 */
 	async cancelGrooming(): Promise<void> {
-		if (this.activeGroomingSessionId) {
-			await this.cleanupGroomingSession(this.activeGroomingSessionId);
+		if (this.groomingInFlight === 0) return;
+		try {
+			await window.maestro.context.cancelGrooming();
+		} catch (error) {
+			logger.error('[ContextGroomer] Failed to cancel grooming:', undefined, error);
 		}
 	}
 
@@ -453,7 +456,7 @@ Please consolidate the above contexts into a single, coherent summary following 
 	 * Check if a grooming operation is currently in progress.
 	 */
 	isGroomingActive(): boolean {
-		return this.activeGroomingSessionId !== null;
+		return this.groomingInFlight > 0;
 	}
 }
 
