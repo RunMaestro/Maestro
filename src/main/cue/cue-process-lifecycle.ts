@@ -434,6 +434,9 @@ export async function runProcess(
 				// never tries to read - Claude already behaves correctly with either,
 				// so this is safe across all agents.
 				emptyStdin: 'ignore',
+				// The run's own `stdout` and `stderr` above are what it reports.
+				stdoutTailLimit: 0,
+				stderrTailLimit: 0,
 				sessionId: runId,
 				label: 'cue',
 			}

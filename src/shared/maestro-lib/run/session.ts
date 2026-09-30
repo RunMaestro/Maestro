@@ -3,6 +3,7 @@
 import type { QuerySource } from '../../querySource';
 import { buildAgentArgs } from '../launch/agent-args';
 import { buildAgentLaunchPlan } from '../launch/launch-plan';
+import { createOutputParser } from '../parsers/parser-factory';
 import { checkBinaryExists, checkCustomPath } from '../launch/path-prober';
 import { getAgentCapabilities } from '../providers/capabilities';
 import { getAgentDefinition } from '../providers/definitions';
@@ -41,7 +42,14 @@ export type SessionTurnPlan =
 	| { ok: true; spec: TurnProcessSpec; resuming: boolean }
 	| {
 			ok: false;
-			reason: 'unknown-agent' | 'no-batch-mode' | 'no-resume' | 'not-installed' | 'launch';
+			reason:
+				| 'unknown-agent'
+				| 'no-batch-mode'
+				| 'no-resume'
+				| 'no-parser'
+				| 'no-read-only'
+				| 'not-installed'
+				| 'launch';
 			error: string;
 	  };
 
@@ -53,6 +61,12 @@ export type SessionTurnPlan =
  * spec `startTurn` can start, for a program that has no desktop app around it.
  * Local only: a remote turn needs an SSH remote, which belongs to a host that
  * stores one.
+ *
+ * It refuses what the runner could not deliver, before anything is started:
+ * a provider whose output has no parser (the turn would run and its answer
+ * could not be read), and a read-only turn for a provider whose CLI cannot
+ * enforce one. A program with nobody watching gets read-only or a refusal,
+ * never a turn that was asked to be read-only and was not.
  */
 export async function planSessionTurn(request: SessionTurnRequest): Promise<SessionTurnPlan> {
 	const definition = getAgentDefinition(request.agentId);
@@ -79,6 +93,22 @@ export async function planSessionTurn(request: SessionTurnRequest): Promise<Sess
 			ok: false,
 			reason: 'no-resume',
 			error: `${definition.name} cannot resume a session`,
+		};
+	}
+
+	if (!createOutputParser(request.agentId)) {
+		return {
+			ok: false,
+			reason: 'no-parser',
+			error: `${definition.name} has no output parser, so its answer could not be read`,
+		};
+	}
+
+	if (request.readOnly && definition.readOnlyCliEnforced !== true) {
+		return {
+			ok: false,
+			reason: 'no-read-only',
+			error: `${definition.name} cannot enforce a read-only turn from its command line`,
 		};
 	}
 

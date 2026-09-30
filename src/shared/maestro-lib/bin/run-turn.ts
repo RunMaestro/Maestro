@@ -20,7 +20,12 @@
 
 import type { ParsedEvent } from '../parsers/agent-output-parser';
 import { BACKGROUND_STOP_GRACE_MS } from '../control/termination';
-import { runTurn, UnknownProviderError, type CompletedTurn } from '../run/run-to-completion';
+import {
+	runTurn,
+	UnknownProviderError,
+	type CompletedTurn,
+	type RunningTurn,
+} from '../run/run-to-completion';
 import { planSessionTurn, type SessionTurnRequest } from '../run/session';
 
 const EXIT_COMPLETED = 0;
@@ -84,8 +89,9 @@ export function parseRunTurnArgs(argv: string[]): ParsedArgs {
 	};
 }
 
-function writeLine(value: unknown): void {
-	process.stdout.write(`${JSON.stringify(value)}\n`);
+/** Write one JSON line. False when stdout's buffer is full and the reader has to catch up. */
+function writeLine(value: unknown): boolean {
+	return process.stdout.write(`${JSON.stringify(value)}\n`);
 }
 
 /** The streamed form of one parsed event: what it is and what it says, nothing provider-specific. */
@@ -131,7 +137,22 @@ export async function main(argv: string[]): Promise<number> {
 		return EXIT_BAD_REQUEST;
 	}
 
-	let running;
+	// A reader slower than the agent must not grow this process without bound.
+	// When stdout's buffer fills, the agent's stdout is paused, which lets the
+	// pipe fill and the agent wait, until the reader has drained what is queued.
+	let held = false;
+	const holdAgentOutput = (): void => {
+		const agentOutput = running?.handle.child.stdout;
+		if (held || !agentOutput) return;
+		held = true;
+		agentOutput.pause();
+		process.stdout.once('drain', () => {
+			held = false;
+			agentOutput.resume();
+		});
+	};
+
+	let running: RunningTurn | undefined;
 	try {
 		running = runTurn(
 			planned.spec,
@@ -145,7 +166,7 @@ export async function main(argv: string[]): Promise<number> {
 				onStarted: (pid) => writeLine({ type: 'started', pid, resuming: planned.resuming }),
 				onEvent: (event) => {
 					const described = describeEvent(event);
-					if (described) writeLine(described);
+					if (described && !writeLine(described)) holdAgentOutput();
 				},
 			}
 		);
@@ -157,14 +178,15 @@ export async function main(argv: string[]): Promise<number> {
 
 	// The first signal stops the turn so it can end with a result. A second one
 	// means the operator will not wait: end the agent's tree now, then leave.
+	const handle = running.handle;
 	let stopping = false;
 	const onSignal = (): void => {
 		if (stopping) {
-			running.handle.terminateNow({ blocking: true });
+			handle.terminateNow({ blocking: true });
 			process.exit(EXIT_STOPPED);
 		}
 		stopping = true;
-		running.handle.interrupt();
+		handle.interrupt();
 	};
 	process.on('SIGINT', onSignal);
 	process.on('SIGTERM', onSignal);

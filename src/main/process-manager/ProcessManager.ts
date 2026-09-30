@@ -426,14 +426,19 @@ export class ProcessManager extends EventEmitter {
 	 * `sync: true` blocks on `taskkill`, so the tree is gone before the app
 	 * exits.
 	 *
-	 * `shutdown: true` runs the ladder at once, with no timer and no exit
-	 * listener, and sends a PTY SIGKILL directly. This collapses the window in
-	 * which node-pty's worker thread is still posting via
-	 * napi_threadsafe_function while Electron begins tearing down the Node
-	 * environment - that race aborts inside
-	 * `ThreadSafeFunction::~ThreadSafeFunction → uv_mutex_lock` on macOS
-	 * (Sentry MAESTRO-3B). A SIGTERM grace period serves no purpose during
-	 * shutdown anyway since the user has already confirmed quit.
+	 * `shutdown: true` is the app quitting. It sends exactly what quitting has
+	 * always sent, at once, with no timer and no exit listener, and leaves the
+	 * process's descendants alone:
+	 * - a PTY gets SIGKILL directly. This collapses the window in which
+	 *   node-pty's worker thread is still posting via napi_threadsafe_function
+	 *   while Electron begins tearing down the Node environment - that race
+	 *   aborts inside `ThreadSafeFunction::~ThreadSafeFunction → uv_mutex_lock`
+	 *   on macOS (Sentry MAESTRO-3B).
+	 * - a pipe-backed agent gets SIGTERM and nothing after it, so it can finish
+	 *   writing its state (a transcript, a session file) before it exits. No
+	 *   SIGKILL follows: there is no event loop left to wait out a grace period,
+	 *   and one sent right behind the SIGTERM would take that chance away.
+	 * - on Windows both go through a blocking `taskkill /t /f`.
 	 */
 	kill(
 		sessionId: string,
@@ -466,7 +471,7 @@ export class ProcessManager extends EventEmitter {
 						graceMs: INTERACTIVE_STOP_GRACE_MS,
 						immediate: shutdown,
 						blocking: sync,
-						includeDescendants: proc.toolType !== 'terminal',
+						includeDescendants: !shutdown && proc.toolType !== 'terminal',
 						sessionId,
 						label: 'kill',
 					}
@@ -476,9 +481,11 @@ export class ProcessManager extends EventEmitter {
 					{ child: proc.childProcess },
 					{
 						from: 'terminate',
+						upTo: shutdown ? 'terminate' : 'kill',
 						graceMs: INTERACTIVE_STOP_GRACE_MS,
 						immediate: shutdown,
 						blocking: sync,
+						includeDescendants: !shutdown,
 						sessionId,
 						label: 'kill',
 					}

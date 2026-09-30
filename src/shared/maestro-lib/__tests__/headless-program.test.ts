@@ -59,7 +59,11 @@ interface ProgramRun {
 	providerArgs: string[] | undefined;
 }
 
-function runProgram(args: string[], recording?: TurnRecording): Promise<ProgramRun> {
+function runProgram(
+	args: string[],
+	recording?: TurnRecording,
+	{ readAfterMs = 0 }: { readAfterMs?: number } = {}
+): Promise<ProgramRun> {
 	const id = ++sequence;
 	const argvOut = path.join(scratch, `argv-${id}.json`);
 	const env: NodeJS.ProcessEnv = { ...process.env, FAKE_AGENT_ARGV_OUT: argvOut };
@@ -83,7 +87,12 @@ function runProgram(args: string[], recording?: TurnRecording): Promise<ProgramR
 		});
 		let stdout = '';
 		let stderr = '';
-		child.stdout.setEncoding('utf8').on('data', (text: string) => (stdout += text));
+		// A reader that starts late leaves the program's stdout pipe to fill.
+		const read = (): void => {
+			child.stdout.setEncoding('utf8').on('data', (text: string) => (stdout += text));
+		};
+		if (readAfterMs > 0) setTimeout(read, readAfterMs);
+		else read();
 		child.stderr.setEncoding('utf8').on('data', (text: string) => (stderr += text));
 		child.once('error', reject);
 		child.once('close', (status) => {
@@ -186,6 +195,48 @@ posixOnly('the headless program', () => {
 		);
 
 		expect(run.providerArgs).not.toContain('--session');
+	});
+
+	it('loses nothing and does not stall when its reader is slower than the agent', async () => {
+		// Far more output than a pipe holds, to a reader that is not reading yet:
+		// the program's stdout fills, it pauses the agent, and picks up again
+		// once the reader drains what is queued.
+		const normal = CAPTURED_RECORDINGS['captured-opencode-normal'];
+		const textChunk = normal.chunks.find((chunk) => chunk.includes('"type":"text"'));
+		if (!textChunk) throw new Error('the recording has no text event to repeat');
+		const count = 4000;
+		const flood = Array.from({ length: count }, (_, index) =>
+			textChunk.replace('The capital of France is Paris.', `line ${index}`)
+		);
+		const recording: TurnRecording = {
+			...normal,
+			chunks: [normal.chunks[0], ...flood, ...normal.chunks.slice(1)],
+		};
+
+		const run = await runProgram(turnArgs('opencode'), recording, { readAfterMs: 400 });
+
+		const streamed = run.lines
+			.map((entry) => entry.text)
+			.filter((text): text is string => typeof text === 'string' && text.startsWith('line '));
+		expect(run.status).toBe(0);
+		expect(streamed).toEqual(Array.from({ length: count }, (_, index) => `line ${index}`));
+		expect(run.lines.at(-1)).toMatchObject({ type: 'turn', outcome: 'completed' });
+	}, 30_000);
+
+	it('exits 2 for a provider whose output it could not read', async () => {
+		const run = await runProgram(turnArgs('hermes'));
+
+		expect(run.status).toBe(2);
+		expect(run.stderr).toContain('Hermes has no output parser');
+		expect(run.providerArgs).toBeUndefined();
+	});
+
+	it('exits 2 for a read-only turn the provider cannot enforce', async () => {
+		const run = await runProgram(turnArgs('antigravity', ['--read-only']));
+
+		expect(run.status).toBe(2);
+		expect(run.stderr).toContain('cannot enforce a read-only turn');
+		expect(run.providerArgs).toBeUndefined();
 	});
 
 	it('exits 1 and names the failure when the turn crashed', async () => {

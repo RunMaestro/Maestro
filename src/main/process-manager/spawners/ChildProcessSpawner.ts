@@ -446,6 +446,10 @@ export class ChildProcessSpawner {
 					// methods are not used here.
 					stopGraceMs: INTERACTIVE_STOP_GRACE_MS,
 					keepStdinOpen: !isBatchMode,
+					// The stdout and stderr handlers keep what the desktop needs; a
+					// second copy here would only grow for as long as the process lives.
+					stdoutTailLimit: 0,
+					stderrTailLimit: 0,
 					sessionId,
 					label: toolType,
 				}
