@@ -208,8 +208,8 @@ describe('buildAgentLaunchPlan', () => {
 		expect(plan.args).toEqual(['exec', '--json']);
 		expect(plan.prompt).toEqual({ via: 'ssh' });
 		expect(plan.env).toBeUndefined();
-		// Settings -> Environment never crosses to the remote: a path that names
-		// a directory on this machine names nothing over there.
+		// Settings -> Environment is not in the plan's record. (Desktop's SSH
+		// wrapper still merges it beneath this record on the remote, as `rc` does.)
 		expect(plan.envVars).toEqual({ SESSION: 's' });
 	});
 

@@ -397,8 +397,10 @@ export interface AgentEnvLayers {
 	batchModeEnvVars?: Record<string, string>;
 	/**
 	 * Settings -> Environment. Desktop only: it is applied to the local process
-	 * BENEATH the provider defaults, and it never crosses to an SSH remote. The
-	 * CLI and Cue do not apply it.
+	 * BENEATH the provider defaults. It is not in `resolveAgentEnvVars()`, but
+	 * desktop's SSH wrapper (`wrap-spawn-for-ssh.ts`) still merges it beneath
+	 * that record into the remote environment, as `rc` does. The CLI and Cue do
+	 * not apply it.
 	 */
 	globalShellEnvVars?: Record<string, string>;
 	/** Settings -> Agents, per provider. */
@@ -427,9 +429,12 @@ export interface AgentEnvLayers {
  *
  * The same on every surface. This is the record that crosses to an SSH remote,
  * where `process.env` does not exist, and the one Process Details shows. The
- * global Settings vars are NOT in it: on desktop they sit beneath this record
- * and stay on the local machine, because a path that names a directory here
- * names nothing on the remote. Returns undefined when no layer sets anything.
+ * global Settings vars are NOT in it: on desktop they sit beneath this record.
+ * They are not kept off the remote, though: desktop's SSH wrapper
+ * (`wrap-spawn-for-ssh.ts`) merges them beneath this record into the remote
+ * environment, as `rc` does. Keeping them local, since a path that names a
+ * directory here names nothing there, would be a behavior change of its own.
+ * Returns undefined when no layer sets anything.
  */
 export function resolveAgentEnvVars(layers: AgentEnvLayers): Record<string, string> | undefined {
 	const userEnvVars = layers.sessionCustomEnvVars ?? layers.agentCustomEnvVars;
@@ -455,7 +460,7 @@ export interface BuildAgentEnvironmentOptions extends AgentEnvLayers {
 	 * preferences.
 	 */
 	maestroEnvVars?: Record<string, string>;
-	/** Desktop only: stamps MAESTRO_SESSION_RESUMED=1. */
+	/** Desktop and CLI: stamps MAESTRO_SESSION_RESUMED=1 (Cue runs are never resumed). */
 	isResuming?: boolean;
 	/** Who asked for this turn; stamped last. Defaults to `user`. */
 	querySource?: QuerySource;
@@ -514,11 +519,18 @@ function buildDesktopAgentEnvironment(options: BuildAgentEnvironmentOptions): No
  * that runs the command survives; the user's own vars override it, because the
  * user explicitly opted into them. `process.env` is inherited as it is, with
  * PATH expanded. Values are written as given: no `~/` expansion, and a blank
- * value is exported blank.
+ * value is exported blank. MAESTRO_SESSION_RESUMED is set for a resumed turn
+ * and cleared otherwise, as on desktop, so a marker inherited from the shell
+ * that ran the command never reaches a fresh turn.
  */
 function buildCliAgentEnvironment(options: BuildAgentEnvironmentOptions): NodeJS.ProcessEnv {
 	const env: NodeJS.ProcessEnv = { ...process.env };
 	env.PATH = buildExpandedPath();
+	if (options.isResuming) {
+		env.MAESTRO_SESSION_RESUMED = '1';
+	} else {
+		delete env.MAESTRO_SESSION_RESUMED;
+	}
 
 	// Merged first so a batch-mode value beats a default for the same key, then
 	// applied only to slots the shell left empty.
