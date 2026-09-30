@@ -34,12 +34,7 @@ import { TurnCapture } from '../../shared/maestro-lib/run/turn-capture';
 import { replaceUsageStats } from '../../shared/maestro-lib/streaming/usage-totals';
 import type { TurnOutcome } from '../../shared/maestro-lib/streaming/turn-outcome';
 import { resolveCliTurnResult, interruptedResult, spawnFailureResult } from './turn-result';
-import {
-	getAgentCustomPath,
-	readAgentConfig,
-	readGlobalShellEnvVars,
-	readSshRemotes,
-} from './storage';
+import { getAgentCustomPath, readAgentConfig, readSshRemotes } from './storage';
 import { generateUUID } from '../../shared/uuid';
 import type { QuerySource } from '../../shared/querySource';
 import { sanitizeSessionId } from '../../shared/history';
@@ -194,12 +189,12 @@ function resolveAgentOverrides(
 }
 
 /**
- * Plan a CLI agent launch with the shared `buildAgentLaunchPlan`, so a CLI run
- * resolves its target, environment and prompt delivery exactly as desktop chat
- * and Cue do. The CLI's own inputs: the global Settings env and SSH remotes read
- * from disk, batch-mode vars always on (every CLI spawn is a batch spawn), and
- * the binary's own directory in front of PATH for a local run so a script
- * agent's `#!/usr/bin/env node` resolves the node installed beside it.
+ * Plan a CLI agent launch with the shared `buildAgentLaunchPlan`, as the `cli`
+ * surface: provider defaults fill only what the shell has not set, so a value
+ * exported in the shell that runs the command survives; the user's own vars
+ * override it; and the prompt goes on the command line on every host. The
+ * CLI's own inputs: SSH remotes read from disk, and batch-mode vars always on
+ * (every CLI spawn is a batch spawn).
  */
 function planCliLaunch(
 	toolType: ToolType,
@@ -218,19 +213,18 @@ function planCliLaunch(
 	}
 ): AgentLaunchPlanResult {
 	return buildAgentLaunchPlan({
+		surface: 'cli',
 		agent: def ? { ...def, capabilities: getAgentCapabilities(toolType) } : null,
 		command: input.command,
 		args: input.args,
 		cwd: input.cwd,
 		prompt: input.prompt,
-		globalShellEnvVars: readGlobalShellEnvVars(),
 		agentCustomEnvVars: input.agentCustomEnvVars,
 		sessionCustomEnvVars: input.sessionCustomEnvVars,
 		readOnlyMode: input.readOnlyMode,
 		batchMode: true,
 		isResuming: input.isResuming,
 		querySource: input.querySource,
-		extraPathDirs: path.isAbsolute(input.command) ? [path.dirname(input.command)] : undefined,
 		sshRemoteConfig: input.sshRemoteConfig,
 		sshStore: { getSshRemotes: () => readSshRemotes() },
 	});
@@ -629,9 +623,9 @@ async function spawnClaudeAgent(
 		: await resolveLocalAgentCommand('claude-code');
 	const sshEnabled = !!sshRemoteConfig?.enabled;
 
-	// Target, environment and prompt delivery, decided the way desktop and Cue
-	// decide them. An SSH remote that cannot be resolved fails here, before
-	// anything is spawned.
+	// Target, environment and prompt delivery come from the shared launch plan,
+	// by the CLI's own rules (see planCliLaunch). An SSH remote that cannot be
+	// resolved fails here, before anything is spawned.
 	const planResult = planCliLaunch('claude-code', def, {
 		command: claudeCommand,
 		args: baseArgs,
@@ -746,8 +740,8 @@ async function spawnClaudeAgent(
 		});
 		spawnCommand = applied.command;
 		spawnArgs = applied.args;
-		// Merge only what maestro-p adds (MAESTRO_CLAUDE_BIN, ELECTRON_RUN_AS_NODE,
-		// NODE_PATH) over the planned env, so a var the user blanked stays unset.
+		// Merge what maestro-p adds (MAESTRO_CLAUDE_BIN, ELECTRON_RUN_AS_NODE,
+		// NODE_PATH) over the planned env, which already holds the user's vars.
 		spawnEnv = { ...spawnEnv, ...(applied.customEnvVars ?? {}) };
 	}
 
@@ -1029,10 +1023,11 @@ async function spawnJsonLineAgent(
 		? getAgentCommand(toolType)
 		: await resolveLocalAgentCommand(toolType);
 
-	// Target, environment and prompt delivery, decided the way desktop and Cue
-	// decide them: the provider's own prompt flag (Copilot's `-p`), a bare
-	// positional or `-- <prompt>`, or stdin on a Windows host. An SSH remote that
-	// cannot be resolved fails here, before anything is spawned.
+	// Target, environment and prompt delivery come from the shared launch plan,
+	// by the CLI's own rules (see planCliLaunch): the provider's own prompt flag
+	// (Copilot's `-p`), a bare positional or `-- <prompt>`, on the command line
+	// on every host. An SSH remote that cannot be resolved fails here, before
+	// anything is spawned.
 	const planResult = planCliLaunch(toolType, def, {
 		command: agentCommand,
 		args: baseArgs,

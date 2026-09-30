@@ -1422,7 +1422,6 @@ app
 					},
 					sshStore: createSshRemoteStoreAdapter(store),
 					agentConfigValues,
-					globalShellEnvVars: store.get('shellEnvVars', {}) as Record<string, string>,
 				});
 
 				// Cue spawns agents outside the ProcessManager, so a failed run is the
