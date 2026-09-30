@@ -321,9 +321,10 @@ vi.mock('../../../cli/services/agent-spawner', () => ({
 
 ### Isolating a Test From the Developer's Shell (`isolateAgentEnv`)
 
-Agent env defaults are **shell-wins by design**: `applyEnvLayers` in
-`src/cli/services/agent-spawner.ts` layers an agent's `defaultEnvVars` /
-`batchModeEnvVars` UNDER `process.env`, so a user who exported a value keeps it.
+Agent env defaults are **shell-wins by design** on the CLI: the `cli` surface
+of `buildAgentEnvironment()` (`src/shared/maestro-lib/launch/env.ts`) layers an
+agent's `defaultEnvVars` / `batchModeEnvVars` UNDER `process.env`, so a user who
+exported a value keeps it.
 That means any assertion about a DEFAULT value is really an assertion about
 whatever the test runner's shell happened to export, and it fails on that
 machine only.
