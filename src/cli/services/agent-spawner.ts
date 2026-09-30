@@ -31,6 +31,11 @@ import { checkCustomPath } from '../../shared/maestro-lib/launch/path-prober';
 import { BufferedLineReader } from '../../shared/maestro-lib/streaming/buffered-line-reader';
 import { UsageAccumulator } from '../../shared/maestro-lib/streaming/usage-accumulator';
 import {
+	stopProcess,
+	BACKGROUND_STOP_GRACE_MS,
+	type StopHandle,
+} from '../../shared/maestro-lib/control/termination';
+import {
 	addUsageStats,
 	parsedUsageToStats,
 	replaceUsageStats,
@@ -558,9 +563,6 @@ function warnOversizedLineBuffer(droppedLength: number): void {
 /** Stand-in when a provider has no registered parser to classify a bad exit. */
 const NO_EXIT_CLASSIFICATION = { detectErrorFromExit: () => null };
 
-/** How long a SIGTERM'd agent gets to exit before it is killed outright. */
-const ABORT_KILL_ESCALATION_MS = 5000;
-
 interface AbortLink {
 	/** True once the caller's signal fired for this child. */
 	interrupted: () => boolean;
@@ -569,11 +571,13 @@ interface AbortLink {
 }
 
 /**
- * Tie a child process to the caller's AbortSignal. Aborting sends SIGTERM and,
- * if the agent is still alive after `ABORT_KILL_ESCALATION_MS`, SIGKILL - some
- * agents trap SIGTERM to finish a tool call, and a stop that never lands is
- * worse than an abrupt one. The resulting `close` is reported as `interrupted`
- * by the shared resolver, never as a crash.
+ * Tie a child process to the caller's AbortSignal. Aborting runs the shared
+ * stop ladder from SIGTERM: if the agent is still alive after the grace period
+ * its whole tree is killed (some agents trap SIGTERM to finish a tool call, and
+ * a stop that never lands is worse than an abrupt one), and whatever it started
+ * is stopped with it. On Windows the tree goes through `taskkill /t /f`. The
+ * resulting `close` is reported as `interrupted` by the shared resolver, never
+ * as a crash.
  *
  * Over SSH this stops the LOCAL ssh client; without a forced TTY the remote
  * process is not guaranteed to receive the hangup, so a remote agent may
@@ -583,13 +587,20 @@ function linkAbortSignal(child: ChildProcess, signal: AbortSignal | undefined): 
 	if (!signal) return { interrupted: () => false, dispose: () => {} };
 
 	let interrupted = false;
-	let escalation: NodeJS.Timeout | undefined;
+	let stop: StopHandle | undefined;
 
 	const onAbort = () => {
-		interrupted = true;
-		child.kill('SIGTERM');
-		escalation = setTimeout(() => child.kill('SIGKILL'), ABORT_KILL_ESCALATION_MS);
-		escalation.unref?.();
+		stop = stopProcess(
+			{ child },
+			{
+				from: 'terminate',
+				graceMs: BACKGROUND_STOP_GRACE_MS,
+				onStopRequested: () => {
+					interrupted = true;
+				},
+				label: 'cli',
+			}
+		);
 	};
 
 	if (signal.aborted) {
@@ -602,7 +613,7 @@ function linkAbortSignal(child: ChildProcess, signal: AbortSignal | undefined): 
 		interrupted: () => interrupted,
 		dispose: () => {
 			signal.removeEventListener('abort', onAbort);
-			if (escalation) clearTimeout(escalation);
+			stop?.dispose();
 		},
 	};
 }

@@ -8,14 +8,13 @@
  * it receives a fully resolved SpawnSpec and executes it.
  */
 
-import { spawn, execFile, execFileSync, type ChildProcess } from 'child_process';
+import { spawn, type ChildProcess } from 'child_process';
 import type { CueRunStatus } from './cue-types';
 import type { SpawnSpec } from './cue-spawn-builder';
 import type { AgentError, ToolType, UsageStats } from '../../shared/types';
 import { createOutputParser } from '../parsers';
 import type { AgentOutputParser } from '../../shared/maestro-lib/parsers/agent-output-parser';
 import { captureException } from '../utils/sentry';
-import { isWindows } from '../../shared/platformDetection';
 import { stripAnsiCodes } from '../../shared/stringUtils';
 import { BufferedLineReader } from '../../shared/maestro-lib/streaming/buffered-line-reader';
 import { resolveTurnOutcome } from '../../shared/maestro-lib/streaming/turn-outcome';
@@ -23,8 +22,11 @@ import { cueStatusForTurn } from './cue-turn-status';
 import { UsageAccumulator } from '../../shared/maestro-lib/streaming/usage-accumulator';
 import { addUsageStats, replaceUsageStats } from '../../shared/maestro-lib/streaming/usage-totals';
 import { FALLBACK_CONTEXT_WINDOW } from '../../shared/agentConstants';
-
-const SIGKILL_DELAY_MS = 5000;
+import {
+	stopProcess as runStopLadder,
+	BACKGROUND_STOP_GRACE_MS,
+	type StopHandle,
+} from '../../shared/maestro-lib/control/termination';
 
 // ─── Types ──────���────────────────────────────────────────────────────────────
 
@@ -344,51 +346,27 @@ function extractCleanStderr(rawStderr: string, toolType: string): string {
 // ─── Public API ─────────────���─────────────────────────���──────────────────────
 
 /**
- * Kill a Cue child process, using taskkill on Windows to terminate the entire
- * process tree (POSIX signals don't work for shell-spawned processes on Windows).
+ * Stop a Cue child process through the shared stop ladder: SIGTERM, then
+ * SIGKILL for its whole tree after a grace period, or `taskkill /t /f` on
+ * Windows. Whatever the process started is stopped with it.
  *
  * The one kill path for every Cue spawn (agent prompts, shell commands,
- * maestro-cli calls). `sync` is the shutdown path: it blocks on taskkill and
- * escalates to SIGKILL at once, because the event loop may drain before a
- * deferred timer fires. Otherwise returns the pending SIGKILL escalation timer
- * so a caller that settles first can clear it.
+ * maestro-cli calls). `sync` is the shutdown path: it runs every stage at once
+ * and blocks on taskkill, because the event loop may drain before a deferred
+ * timer fires. The ladder cancels itself when the child exits; the returned
+ * handle is for a caller that settles without an exit (a spawn error).
  */
-export function killCueProcess(
-	child: ChildProcess,
-	sync = false
-): ReturnType<typeof setTimeout> | undefined {
-	if (isWindows() && child.pid) {
-		if (sync) {
-			try {
-				execFileSync('taskkill', ['/pid', String(child.pid), '/t', '/f'], { timeout: 5000 });
-			} catch {
-				// taskkill returns non-zero when the process is already dead - fine.
-			}
-		} else {
-			execFile('taskkill', ['/pid', String(child.pid), '/t', '/f'], (error) => {
-				if (!error) return;
-				// A child that exited before taskkill ran makes it fail benignly.
-				// Checking `child.exitCode` is locale-independent, unlike matching
-				// the error message text.
-				if (child.exitCode !== null || child.signalCode !== null) return;
-				captureException(error, { operation: 'cue:taskkill', pid: child.pid });
-			});
+export function killCueProcess(child: ChildProcess, sync = false): StopHandle {
+	return runStopLadder(
+		{ child },
+		{
+			from: 'terminate',
+			graceMs: BACKGROUND_STOP_GRACE_MS,
+			immediate: sync,
+			blocking: sync,
+			label: 'cue',
 		}
-		return undefined;
-	}
-	child.kill('SIGTERM');
-	if (sync) {
-		if (child.exitCode === null && child.signalCode === null) {
-			child.kill('SIGKILL');
-		}
-		return undefined;
-	}
-	// Escalate to SIGKILL after delay - only if the process hasn't actually exited.
-	return setTimeout(() => {
-		if (child.exitCode === null && child.signalCode === null) {
-			child.kill('SIGKILL');
-		}
-	}, SIGKILL_DELAY_MS);
+	);
 }
 
 /**
@@ -605,8 +583,7 @@ export function runProcess(
 }
 
 /**
- * Stop a running Cue process by runId.
- * On Windows uses taskkill /t /f; on POSIX sends SIGTERM then SIGKILL after 5s.
+ * Stop a running Cue process by runId, through the shared stop ladder.
  *
  * @returns true if the process was found and signaled, false if not found
  */

@@ -37,6 +37,10 @@ const mockChild = Object.assign(new EventEmitter(), {
 	stdout: mockStdout,
 	stderr: mockStderr,
 	kill: mockKill,
+	// A running child, as Node reports one: the stop ladder signals only a
+	// process whose exit state is still null.
+	exitCode: null as number | null,
+	signalCode: null as NodeJS.Signals | null,
 });
 
 /**
