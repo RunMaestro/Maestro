@@ -109,6 +109,9 @@ export async function planSessionTurn(request: SessionTurnRequest): Promise<Sess
 	});
 
 	const planned = buildAgentLaunchPlan({
+		// A program run from a shell: the shell's exported values stand, as they
+		// do for `maestro-cli`.
+		surface: 'cli',
 		agent,
 		command: detected.path,
 		args,

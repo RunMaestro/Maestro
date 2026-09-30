@@ -8,8 +8,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import path from 'node:path';
 
-// The host decides how a prompt travels (see resolvePromptDelivery): pinned
-// here so the same shape is asserted on every runner, with one Windows case.
+// Pinned so the same shape is asserted on every runner, with one Windows case:
+// a session turn is planned as the CLI plans one, prompt on the command line.
 const mocks = vi.hoisted(() => ({ isWindows: vi.fn(() => false) }));
 vi.mock('../../../../shared/platformDetection', async (importOriginal) => ({
 	...(await importOriginal<typeof import('../../../../shared/platformDetection')>()),
@@ -75,13 +75,6 @@ describe('planSessionTurn', () => {
 
 		expect(resuming).toBe(true);
 		expect(containsRun(spec.args, resumeArgs)).toBe(true);
-		expect(spec.env.MAESTRO_SESSION_RESUMED).toBe('1');
-	});
-
-	it('does not mark a new session as resumed', async () => {
-		const { spec } = await plan();
-
-		expect(spec.env.MAESTRO_SESSION_RESUMED).toBeUndefined();
 	});
 
 	it('plans a Claude Code turn with stream-json output and full access', async () => {
@@ -106,13 +99,13 @@ describe('planSessionTurn', () => {
 		expect(containsRun(spec.args, ['--model', 'opencode/big-pickle'])).toBe(true);
 	});
 
-	it('moves the prompt to stdin on a Windows host for a provider that reads it there', async () => {
+	it('keeps the prompt on the command line on a Windows host, as the CLI does', async () => {
 		mocks.isWindows.mockReturnValue(true);
 
 		const { spec } = await plan({ agentId: 'claude-code' });
 
-		expect(spec.stdin).toBe('fix the bug');
-		expect(spec.args).not.toContain('fix the bug');
+		expect(spec.stdin).toBeUndefined();
+		expect(spec.args.slice(-2)).toEqual(['--', 'fix the bug']);
 	});
 
 	it('stays in batch mode for an empty prompt', async () => {
