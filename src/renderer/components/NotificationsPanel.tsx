@@ -484,8 +484,9 @@ export function NotificationsPanel({
 					theme={theme}
 				/>
 				<p className="text-xs opacity-50 mt-2">
-					How long toast notifications remain on screen. "Off" disables them entirely. "Never" means
-					they stay until manually dismissed.
+					How long toast notifications remain on screen. "Off" shows no popups at all. "Never" means
+					they stay until manually dismissed. Either way, every notification is kept in the
+					notification center (the bell in the header).
 				</p>
 			</div>
 

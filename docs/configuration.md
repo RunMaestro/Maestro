@@ -403,7 +403,7 @@ In-app toast notifications appear in the corner when events occur. Configure how
 
 | Duration                 | Behavior                                  |
 | ------------------------ | ----------------------------------------- |
-| **Off**                  | Toasts are disabled entirely              |
+| **Off**                  | No popups; notifications go to the inbox  |
 | **5s / 10s / 20s / 30s** | Toast disappears after the specified time |
 | **Never**                | Toast stays until manually dismissed      |
 
@@ -431,6 +431,17 @@ Most toasts are clickable, and where the click takes you depends on what the toa
 | An external link                | Opens it in your system browser                  |
 
 If the target tab was closed since the toast appeared, the click still switches to the agent and tells you what was missing, so a click never silently does nothing. Scripts and agents choose the target with the `--open-*` flags on [`maestro-cli notify toast`](/cli#notifications). A toast can also carry a separate inline link button beneath its message (`--action-url`); that link is independent of the body click.
+
+#### Notification Center
+
+A toast is only on screen for a moment, so every one is also kept in the notification center: the bell icon at the right of the header, which shows a badge with the number of unread notifications. Click the bell (or run **Open Notification Center** from the command palette) to see them newest first.
+
+- **Unread / All** switches between what still needs attention and the full history.
+- Clicking an entry marks it read and does what clicking the toast would have done, such as jumping to the agent and tab it came from.
+- **Mark all as read** clears the badge. **Clear all** empties the history.
+- Closing or clicking a toast marks it read. One that times out on its own stays unread.
+
+The history keeps the most recent 200 notifications and survives a restart. If you find the popups intrusive, set the toast duration to **Off**: nothing floats over the app, and the notification center becomes the only place notifications appear.
 
 ### When Notifications Trigger
 

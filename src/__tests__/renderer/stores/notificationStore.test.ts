@@ -21,6 +21,10 @@ import {
 	selectToastCount,
 	selectConfig,
 	triggerCustomNotification,
+	selectUnreadNotificationCount,
+	loadNotificationHistory,
+	NOTIFICATION_HISTORY_LIMIT,
+	NOTIFICATION_HISTORY_STORAGE_KEY,
 } from '../../../renderer/stores/notificationStore';
 import type { Toast } from '../../../renderer/stores/notificationStore';
 
@@ -990,6 +994,139 @@ describe('notificationStore', () => {
 			notifyToast({ type: 'info', title: 'Explicit', message: 'msg', duration: 3000 });
 			// defaultDuration -1 disables the entire queue
 			expect(useNotificationStore.getState().toasts).toHaveLength(0);
+		});
+	});
+
+	// ==========================================================================
+	// Notification history (the notification center's backing list)
+	// ==========================================================================
+
+	describe('notification history', () => {
+		const history = () => useNotificationStore.getState().history;
+
+		beforeEach(() => {
+			const stored = new Map<string, string>();
+			vi.stubGlobal('localStorage', {
+				getItem: (key: string) => stored.get(key) ?? null,
+				setItem: (key: string, value: string) => void stored.set(key, value),
+				removeItem: (key: string) => void stored.delete(key),
+			});
+			useNotificationStore.setState({ history: [], notificationCenterOpen: false });
+		});
+
+		afterEach(() => {
+			vi.unstubAllGlobals();
+		});
+
+		it('records every toast as unread, newest first', () => {
+			notifyToast({ type: 'info', title: 'First', message: 'a' });
+			notifyToast({ type: 'error', title: 'Second', message: 'b' });
+
+			expect(history().map((n) => n.title)).toEqual(['Second', 'First']);
+			expect(history().every((n) => !n.read)).toBe(true);
+			expect(selectUnreadNotificationCount(useNotificationStore.getState())).toBe(2);
+		});
+
+		it('keeps the entry after the toast leaves the screen', () => {
+			const id = notifyToast({ type: 'info', title: 'Gone', message: 'msg', duration: 1000 });
+			vi.advanceTimersByTime(1000);
+
+			expect(useNotificationStore.getState().toasts).toHaveLength(0);
+			expect(history().map((n) => n.id)).toEqual([id]);
+			expect(history()[0].read).toBe(false);
+		});
+
+		it('still records when toasts are turned off, so the inbox is the only surface', () => {
+			useNotificationStore.getState().setDefaultDuration(-1);
+			notifyToast({ type: 'info', title: 'Inbox only', message: 'msg' });
+
+			expect(useNotificationStore.getState().toasts).toHaveLength(0);
+			expect(history()).toHaveLength(1);
+		});
+
+		it('leaves a skipHistory toast out', () => {
+			notifyToast({ type: 'info', title: 'Preview', message: 'msg', skipHistory: true });
+
+			expect(useNotificationStore.getState().toasts).toHaveLength(1);
+			expect(history()).toHaveLength(0);
+		});
+
+		it('drops the oldest entries past the limit', () => {
+			for (let i = 0; i < NOTIFICATION_HISTORY_LIMIT + 5; i++) {
+				notifyToast({ type: 'info', title: `n${i}`, message: 'msg' });
+			}
+
+			expect(history()).toHaveLength(NOTIFICATION_HISTORY_LIMIT);
+			expect(history()[0].title).toBe(`n${NOTIFICATION_HISTORY_LIMIT + 4}`);
+			expect(history().at(-1)!.title).toBe('n5');
+		});
+
+		it('marks one entry read and leaves the rest', () => {
+			const first = notifyToast({ type: 'info', title: 'First', message: 'a' });
+			notifyToast({ type: 'info', title: 'Second', message: 'b' });
+
+			useNotificationStore.getState().markNotificationRead(first);
+
+			expect(history().find((n) => n.id === first)!.read).toBe(true);
+			expect(selectUnreadNotificationCount(useNotificationStore.getState())).toBe(1);
+		});
+
+		it('keeps the same array when marking read changes nothing', () => {
+			const id = notifyToast({ type: 'info', title: 'First', message: 'a' });
+			useNotificationStore.getState().markNotificationRead(id);
+			const before = history();
+
+			useNotificationStore.getState().markNotificationRead(id);
+			useNotificationStore.getState().markNotificationRead('missing');
+			useNotificationStore.getState().markAllNotificationsRead();
+
+			expect(history()).toBe(before);
+		});
+
+		it('marks everything read and clears', () => {
+			notifyToast({ type: 'info', title: 'First', message: 'a' });
+			notifyToast({ type: 'info', title: 'Second', message: 'b' });
+
+			useNotificationStore.getState().markAllNotificationsRead();
+			expect(selectUnreadNotificationCount(useNotificationStore.getState())).toBe(0);
+			expect(history()).toHaveLength(2);
+
+			useNotificationStore.getState().clearNotificationHistory();
+			expect(history()).toHaveLength(0);
+		});
+
+		it('clearing the history leaves visible toasts alone', () => {
+			notifyToast({ type: 'info', title: 'Sticky', message: 'a', duration: 0 });
+			useNotificationStore.getState().clearNotificationHistory();
+
+			expect(useNotificationStore.getState().toasts).toHaveLength(1);
+		});
+
+		it('persists the history without its onClick callback and reads it back', () => {
+			const id = notifyToast({
+				type: 'info',
+				title: 'Saved',
+				message: 'msg',
+				sessionId: 'agent-1',
+				onClick: () => {},
+			});
+			useNotificationStore.getState().markNotificationRead(id);
+
+			const restored = loadNotificationHistory();
+			expect(restored).toHaveLength(1);
+			expect(restored[0]).toMatchObject({ id, title: 'Saved', sessionId: 'agent-1', read: true });
+			expect(restored[0].onClick).toBeUndefined();
+		});
+
+		it('ignores a stored value that is not a list of records', () => {
+			localStorage.setItem(NOTIFICATION_HISTORY_STORAGE_KEY, '{not json');
+			expect(loadNotificationHistory()).toEqual([]);
+
+			localStorage.setItem(
+				NOTIFICATION_HISTORY_STORAGE_KEY,
+				JSON.stringify([{ id: 'x' }, null, 'nope'])
+			);
+			expect(loadNotificationHistory()).toEqual([]);
 		});
 	});
 });
