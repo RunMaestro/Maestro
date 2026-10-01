@@ -9,7 +9,7 @@
  * it shows the description and an enable toggle.
  */
 
-import { useCallback, useEffect, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { Power, Settings as SettingsIcon, Trash2, KeyRound } from 'lucide-react';
 import type { Theme } from '../../../types';
 import { capabilityRisk, describeCapability } from '../../../../shared/plugins/permissions';
@@ -34,6 +34,7 @@ import {
 import { FIRST_PARTY_PLUGINS } from '../../../../shared/plugins/first-party';
 import { getModalActions } from '../../../stores/modalStore';
 import { launchFromSettings } from '../../../utils/launchFromSettings';
+import { PluginPanelFrame } from '../../plugins/PluginPanelFrame';
 
 interface ExtensionDetailsProps {
 	theme: Theme;
@@ -91,6 +92,7 @@ export function ExtensionDetails({
 		snapshot: PluginGrantsSnapshot;
 	} | null>(null);
 	const grants = grantsState?.pluginId === ext.id ? grantsState.snapshot : null;
+	const grantsLoadGeneration = useRef(0);
 	const [configureOpen, setConfigureOpen] = useState(false);
 	const [settingValues, setSettingValues] = useState<Record<string, boolean | string | number>>({});
 	const [activeSubTab, setActiveSubTab] = useState<'settings' | 'permissions'>('settings');
@@ -108,15 +110,25 @@ export function ExtensionDetails({
 			return;
 		}
 		let cancelled = false;
-		void getGrants(ext.id)
-			.then((snap) => {
-				if (!cancelled) setGrantsState({ pluginId: ext.id, snapshot: snap });
-			})
-			.catch(() => {
-				if (!cancelled) setGrantsState(null);
-			});
+		const load = () => {
+			const generation = ++grantsLoadGeneration.current;
+			setGrantsState(null);
+			void getGrants(ext.id)
+				.then((snap) => {
+					if (!cancelled && generation === grantsLoadGeneration.current)
+						setGrantsState({ pluginId: ext.id, snapshot: snap });
+				})
+				.catch(() => {
+					if (!cancelled && generation === grantsLoadGeneration.current) setGrantsState(null);
+				});
+		};
+		load();
+		// An out-of-band consent/revoke/disable can change grants while details
+		// remain open. Drop the frame as soon as the registry event arrives.
+		const unsubscribe = window.maestro.plugins.onChanged(load);
 		return () => {
 			cancelled = true;
+			unsubscribe?.();
 		};
 	}, [isPlugin, ext.id, getGrants]);
 
@@ -129,10 +141,27 @@ export function ExtensionDetails({
 		? contributions.settings.filter((s) => s.pluginId === ext.id)
 		: [];
 	const canConfigurePlugin = isPlugin && ext.state === 'enabled' && pluginSettings.length > 0;
+	// The contributed list is already capability-gated by the host. Match the
+	// selected plugin exactly, and require its freshly loaded grant as well before
+	// attaching any webview (including during a plugin switch or grant revoke).
+	const settingsPanels =
+		isPlugin && ext.state === 'enabled' && record?.enabled && ext.loadStatus === 'ok'
+			? (contributions?.panels ?? []).filter(
+					(panel) => panel.pluginId === ext.id && panel.placement === 'settings'
+				)
+			: [];
+	const canMountSettingsPanels =
+		settingsPanels.length > 0 &&
+		Boolean(grants?.granted.some((grant) => grant.capability === 'ui:panel'));
 
 	// The Settings sub-tab exists when there's something to configure: a
 	// first-party config body, a configurable plugin, or Pianola's modal entry.
-	const hasSettingsTab = Boolean(settingsBody) || canConfigurePlugin || isPianola || isWebLogin;
+	const hasSettingsTab =
+		Boolean(settingsBody) ||
+		canConfigurePlugin ||
+		settingsPanels.length > 0 ||
+		isPianola ||
+		isWebLogin;
 
 	// Reset transient editor + sub-tab when switching extensions. Default to
 	// Settings when it exists, else Permissions.
@@ -307,7 +336,12 @@ export function ExtensionDetails({
 						type="button"
 						data-testid="extension-revoke"
 						disabled={busy}
-						onClick={() => onRevoke(ext.id)}
+						onClick={() => {
+							// Detach the guest synchronously; the host revokes the grant next.
+							grantsLoadGeneration.current++;
+							setGrantsState(null);
+							onRevoke(ext.id);
+						}}
 						className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-sm transition-colors hover:bg-white/5 disabled:opacity-50"
 						style={{ borderColor: theme.colors.border, color: theme.colors.warning }}
 					>
@@ -545,6 +579,30 @@ export function ExtensionDetails({
 			    Pianola's modal entry - whichever applies to this extension. */}
 			{activeSubTab === 'settings' && (
 				<div className="mt-5" data-testid="extension-settings-panel">
+					{canMountSettingsPanels && (
+						<div className="space-y-4 mb-5" data-testid="extension-plugin-settings-panels">
+							{settingsPanels.map((panel) => (
+								<div
+									key={panel.id}
+									className="overflow-hidden rounded-lg border"
+									style={{ borderColor: theme.colors.border }}
+								>
+									<div
+										className="px-3 py-2 text-sm font-medium"
+										style={{
+											color: theme.colors.textMain,
+											borderBottom: `1px solid ${theme.colors.border}`,
+										}}
+									>
+										{panel.title}
+									</div>
+									<div className="h-[440px]">
+										<PluginPanelFrame key={`${ext.id}:${panel.id}`} theme={theme} panel={panel} />
+									</div>
+								</div>
+							))}
+						</div>
+					)}
 					{/* First-party feature with an inline config body */}
 					{!isPlugin && settingsBody ? (
 						ext.state === 'enabled' ? (

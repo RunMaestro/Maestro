@@ -289,7 +289,7 @@ Only `action: 'notify'` runs on tier 0. `action: 'dispatch'` needs `agents:dispa
 
 ### panels (tier 1)
 
-`{ id, title, entry, placement, size? }` where `entry` is a plugin-relative `.html` file and `placement` is `'modal' | 'left' | 'right' | 'main' | 'settings'` (defaults to `modal`). The `settings` placement renders only in the neutral Display settings host, never in plugin management, consent, uninstall, or grant/revoke UI.
+`{ id, title, entry, placement, size? }` where `entry` is a plugin-relative `.html` file and `placement` is `'modal' | 'left' | 'right' | 'main' | 'settings'` (defaults to `modal`). On host API 1.18.0+, `settings` renders inside the owning plugin's Settings sub-tab in Settings → Encore → Plugins, next to Permissions. The host mounts only panels whose `pluginId` exactly matches the selected enabled plugin and whose verified grants include `ui:panel`. Consent, permissions, grant/revoke, and uninstall controls remain host-owned outside the isolated panel frame. Earlier hosts mount the same placement in the global Display tab; set `maestro.minHostApi` to `1.18.0` when your plugin relies on the detail-page location. No new manifest field or capability is needed.
 
 `size` is `'default' | 'full'` and applies to `modal` panels only (defaults to `default`). As an explicit exception to the general contribution policy above (where a bad item is dropped), an unknown `size` reports a manifest error but keeps the panel, falling back to `default` rather than dropping the contribution. `default` renders the fixed modal chrome; `full` renders an edge-to-edge overlay inset a few pixels from the window edge, for mission-control-style surfaces you summon rather than browse. Requires `minHostApi: '1.16.0'`.
 

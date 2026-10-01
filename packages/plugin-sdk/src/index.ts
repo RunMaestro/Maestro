@@ -651,6 +651,7 @@ export function validatePluginManifest(input: unknown): ManifestValidationResult
 		homepage,
 		category,
 		beta,
+		releaseDate,
 		contributes,
 		entry,
 		permissions,
@@ -721,6 +722,15 @@ export function validatePluginManifest(input: unknown): ManifestValidationResult
 	if (beta !== undefined && typeof beta !== 'boolean') {
 		errors.push('beta, when present, must be a boolean');
 	}
+	if (releaseDate !== undefined) {
+		if (typeof releaseDate !== 'string') {
+			errors.push('releaseDate, when present, must be a string');
+		} else if (!/^\d{4}-\d{2}-\d{2}$/.test(releaseDate.trim())) {
+			errors.push(`releaseDate "${releaseDate}" is invalid: use YYYY-MM-DD`);
+		} else if (Number.isNaN(Date.parse(`${releaseDate.trim()}T00:00:00Z`))) {
+			errors.push(`releaseDate "${releaseDate}" is not a real calendar date`);
+		}
+	}
 	if (contributes !== undefined && !isPlainObject(contributes)) {
 		errors.push('contributes, when present, must be an object');
 	}
@@ -771,6 +781,7 @@ export function validatePluginManifest(input: unknown): ManifestValidationResult
 		...(isNonEmptyString(homepage) ? { homepage: (homepage as string).trim() } : {}),
 		...(normalizedCategory ? { category: normalizedCategory } : {}),
 		...(beta === true ? { beta: true } : {}),
+		...(isNonEmptyString(releaseDate) ? { releaseDate: (releaseDate as string).trim() } : {}),
 		...(isPlainObject(contributes) ? { contributes } : {}),
 		...(safeEntry ? { entry: safeEntry } : {}),
 		...(parsedPermissions.requests.length > 0 ? { permissions: parsedPermissions.requests } : {}),
@@ -896,7 +907,8 @@ export interface CommandContribution {
 	description?: string;
 }
 
-/** Where a contributed panel docks. `modal` (default) keeps today's behavior. */
+/** Where a panel renders. `settings` uses its owning plugin's Settings sub-tab
+ * on hosts at 1.18.0+, while earlier hosts use the global Display tab. */
 export type PanelPlacement = 'modal' | 'left' | 'right' | 'main' | 'settings';
 
 /** Chrome size for a `modal` panel. `full` renders edge-to-edge (a summonable

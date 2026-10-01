@@ -30,6 +30,7 @@ import type { PluginRecord } from '../../../../../shared/plugins/plugin-registry
 import { useModalStore } from '../../../../../renderer/stores/modalStore';
 import type {
 	AggregatedContributions,
+	PanelContribution,
 	SettingContribution,
 } from '../../../../../shared/plugins/contributions';
 
@@ -65,7 +66,7 @@ function builtinTile(flag: keyof EncoreFeatureFlags, enabled: boolean): UnifiedE
 
 const SETTINGS_BODY = <div data-testid="first-party-body">Usage config body</div>;
 
-function renderDetails(overrides: Partial<React.ComponentProps<typeof ExtensionDetails>>): void {
+function renderDetails(overrides: Partial<React.ComponentProps<typeof ExtensionDetails>>) {
 	const base: React.ComponentProps<typeof ExtensionDetails> = {
 		theme,
 		ext: builtinTile('usageStats', true),
@@ -77,7 +78,7 @@ function renderDetails(overrides: Partial<React.ComponentProps<typeof ExtensionD
 		onRevoke: vi.fn(),
 		getGrants: vi.fn(async () => ({ requested: [], granted: [] })),
 	};
-	render(<ExtensionDetails {...base} {...overrides} />);
+	return render(<ExtensionDetails {...base} {...overrides} />);
 }
 
 function pluginRecord(id: string): PluginRecord {
@@ -108,7 +109,7 @@ function pluginTile(id: string): UnifiedExtension {
 		description: 'A demo.',
 		category: 'automation',
 		state: 'enabled',
-		tier: 0,
+		tier: 1,
 		trust: 'trusted',
 		version: '1.0.0',
 		loadStatus: 'ok',
@@ -116,12 +117,12 @@ function pluginTile(id: string): UnifiedExtension {
 	} as UnifiedExtension;
 }
 
-function contributionsWith(setting: SettingContribution): AggregatedContributions {
+function contributionsWith(setting?: SettingContribution): AggregatedContributions {
 	return {
 		themes: [],
 		iconPacks: [],
 		prompts: [],
-		settings: [setting],
+		settings: setting ? [setting] : [],
 		commandMacros: [],
 		cueTriggers: [],
 		commands: [],
@@ -284,6 +285,170 @@ describe('ExtensionDetails sub-tabs - plugin Configure (grant + edit)', () => {
 			expect(screen.getByTestId('extension-setting-input')).toBeInTheDocument();
 		});
 		expect(screen.getByText('Poll automatically')).toBeInTheDocument();
+	});
+});
+
+describe('ExtensionDetails - plugin settings panels', () => {
+	const panel = (pluginId: string): PanelContribution => ({
+		id: `${pluginId}/config`,
+		localId: 'config',
+		pluginId,
+		title: `${pluginId} config`,
+		entry: 'panel.html',
+		placement: 'settings',
+		size: 'default',
+	});
+	const contributions = (panels: PanelContribution[]): AggregatedContributions => ({
+		...contributionsWith(),
+		panels,
+	});
+	const granted = { requested: [], granted: [{ capability: 'ui:panel' as const, grantedAt: 1 }] };
+
+	it('shows Settings for a panel-only plugin and mounts only its own isolated panel', async () => {
+		const { container } = renderDetails({
+			ext: pluginTile('plugin-a'),
+			contributions: contributions([panel('plugin-a'), panel('plugin-b')]),
+			getGrants: vi.fn(async () => granted),
+		});
+		expect(screen.getByTestId('extension-subtab-settings')).toHaveAttribute(
+			'aria-selected',
+			'true'
+		);
+		await waitFor(() => expect(container.querySelector('webview')).not.toBeNull());
+		expect(container.querySelectorAll('webview')).toHaveLength(1);
+		expect(container.querySelector('webview')?.getAttribute('partition')).toBe('plugin:plugin-a');
+		expect(container.querySelector('webview')?.getAttribute('src')).toBe(
+			'plugin-panel://panel/plugin-a%2Fconfig'
+		);
+		expect(screen.queryByText('plugin-b config')).not.toBeInTheDocument();
+		expect(screen.getByTestId('extension-revoke')).toBeInTheDocument();
+		expect(screen.getByTestId('extension-uninstall')).toBeInTheDocument();
+	});
+
+	it('keeps contributed setting controls beside a plugin settings panel', async () => {
+		const pluginId = 'plugin-a';
+		renderDetails({
+			ext: pluginTile(pluginId),
+			contributions: {
+				...contributions([panel(pluginId)]),
+				settings: [
+					{
+						id: `${pluginId}:enabled`,
+						localId: 'enabled',
+						pluginId,
+						key: 'enabled',
+						type: 'boolean',
+						default: false,
+					},
+				],
+			},
+			getGrants: vi.fn(async () => granted),
+		});
+		await waitFor(() =>
+			expect(screen.getByTestId('extension-plugin-settings-panels')).toBeInTheDocument()
+		);
+		expect(screen.getByTestId('extension-configure')).toBeInTheDocument();
+	});
+
+	it('detaches the panel when disabled or revoked', async () => {
+		const props = {
+			ext: pluginTile('plugin-a'),
+			contributions: contributions([panel('plugin-a')]),
+			getGrants: vi.fn(async () => granted),
+			onRevoke: vi.fn(),
+		};
+		const view = renderDetails(props);
+		await waitFor(() => expect(view.container.querySelector('webview')).not.toBeNull());
+		fireEvent.click(screen.getByTestId('extension-revoke'));
+		expect(view.container.querySelector('webview')).toBeNull();
+		expect(props.onRevoke).toHaveBeenCalledWith('plugin-a');
+
+		const disabled = { ...pluginTile('plugin-a'), state: 'installed' as const };
+		view.rerender(
+			<ExtensionDetails
+				{...{
+					theme,
+					ext: disabled,
+					contributions: props.contributions,
+					busy: false,
+					onTogglePlugin: vi.fn(),
+					onToggleBuiltin: vi.fn(),
+					onUninstall: vi.fn(),
+					onRevoke: vi.fn(),
+					getGrants: props.getGrants,
+				}}
+			/>
+		);
+		expect(view.container.querySelector('webview')).toBeNull();
+	});
+
+	it('does not mount a panel when ui:panel was never granted', async () => {
+		const { container } = renderDetails({
+			ext: pluginTile('plugin-a'),
+			contributions: contributions([panel('plugin-a')]),
+			getGrants: vi.fn(async () => ({ requested: [], granted: [] })),
+		});
+		await waitFor(() =>
+			expect(screen.getByTestId('extension-subtab-settings')).toBeInTheDocument()
+		);
+		expect(container.querySelector('webview')).toBeNull();
+	});
+
+	it('drops an open panel after an out-of-band grant change', async () => {
+		let changed: (() => void) | undefined;
+		const subscription = vi.spyOn(window.maestro.plugins, 'onChanged').mockImplementation((cb) => {
+			changed = cb;
+			return () => {};
+		});
+		let revoked = false;
+		try {
+			const { container } = renderDetails({
+				ext: pluginTile('plugin-a'),
+				contributions: contributions([panel('plugin-a')]),
+				getGrants: vi.fn(async () => (revoked ? { requested: [], granted: [] } : granted)),
+			});
+			await waitFor(() => expect(container.querySelector('webview')).not.toBeNull());
+			revoked = true;
+			await act(async () => {
+				changed?.();
+			});
+			expect(container.querySelector('webview')).toBeNull();
+		} finally {
+			subscription.mockRestore();
+		}
+	});
+
+	it('never shows the previous plugin panel while switching selections', async () => {
+		let resolveB: (value: typeof granted) => void = () => {};
+		const pendingB = new Promise<typeof granted>((resolve) => {
+			resolveB = resolve;
+		});
+		const getGrants = vi.fn((id: string) =>
+			id === 'plugin-a' ? Promise.resolve(granted) : pendingB
+		);
+		const props = {
+			theme,
+			ext: pluginTile('plugin-a'),
+			contributions: contributions([panel('plugin-a'), panel('plugin-b')]),
+			busy: false,
+			onTogglePlugin: vi.fn(),
+			onToggleBuiltin: vi.fn(),
+			onUninstall: vi.fn(),
+			onRevoke: vi.fn(),
+			getGrants,
+		};
+		const view = render(<ExtensionDetails {...props} />);
+		await waitFor(() => expect(view.container.querySelector('webview')).not.toBeNull());
+		view.rerender(<ExtensionDetails {...props} ext={pluginTile('plugin-b')} />);
+		expect(view.container.querySelector('webview')).toBeNull();
+		await act(async () => {
+			resolveB(granted);
+		});
+		await waitFor(() =>
+			expect(view.container.querySelector('webview')?.getAttribute('partition')).toBe(
+				'plugin:plugin-b'
+			)
+		);
 	});
 });
 
