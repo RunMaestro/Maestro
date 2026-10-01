@@ -21,6 +21,7 @@ import type { BatchAction } from './batchReducer';
 import { type AutoRunFlushState } from './internal/batchFlushState';
 import { useBatchSelectors } from './internal/useBatchSelectors';
 import { useBatchBroadcast } from './internal/useBatchBroadcast';
+import { useAutoRunReclaim } from './useAutoRunReclaim';
 import { useAutoRunStateMirror } from './useAutoRunStateMirror';
 import {
 	useBatchControlActions,
@@ -345,6 +346,10 @@ export function useBatchProcessor({
 		},
 		[startGoalRun, startDocumentBatchRun]
 	);
+
+	// A reload kills the run loop while main keeps its task running; this hands
+	// the run back to the reloaded page and restarts it (#1470).
+	useAutoRunReclaim(startBatchRun);
 
 	return {
 		batchRunStates,

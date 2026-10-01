@@ -585,6 +585,8 @@ const mockMaestro = {
 	web: {
 		claimAutoRunStart: vi.fn().mockResolvedValue(true),
 		releaseAutoRunStartClaim: vi.fn().mockResolvedValue(true),
+		takeOrphanedAutoRuns: vi.fn().mockResolvedValue([]),
+		abandonAutoRunReclaim: vi.fn().mockResolvedValue(true),
 		broadcastAutoRunState: vi.fn(),
 		broadcastSessionState: vi.fn(),
 		start: vi.fn().mockResolvedValue(undefined),

@@ -83,3 +83,35 @@ export interface AutoRunBroadcastState {
 	/** How many times the run has looped (0 = first pass) */
 	loopIteration?: number;
 }
+
+/**
+ * Who started an Auto Run, and what it takes to start it again.
+ *
+ * The run loop is a live async closure in the client that pressed Go, so a
+ * page reload kills it while the task it spawned keeps running in main
+ * (#1470). Main survives the reload, so main is where the run's identity has to
+ * live for the reloaded page to pick it back up. Recorded with the start claim
+ * (`window.maestro.web.claimAutoRunStart`).
+ */
+export interface AutoRunOwner<Config = unknown> {
+	/**
+	 * Reload-stable id of the client that started the run
+	 * (`getClientInstanceId()` in the renderer). It lives in sessionStorage,
+	 * which survives a reload and dies with the tab, so the same id after a
+	 * reload is the same tab, and that tab's old loop is provably gone.
+	 */
+	instanceId: string;
+	/** The run's `BatchRunConfig`. Opaque to main; handed back verbatim. */
+	config: Config;
+	/** The Auto Run folder the run reads its documents from. */
+	folderPath: string;
+}
+
+/** An orphaned run handed back to the client that started it. */
+export interface OrphanedAutoRun<State = Partial<AutoRunBroadcastState>, Config = unknown> {
+	agentId: string;
+	config: Config;
+	folderPath: string;
+	/** The last state the dead loop published, if it published any. */
+	state?: State;
+}
