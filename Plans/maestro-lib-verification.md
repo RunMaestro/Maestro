@@ -12,17 +12,18 @@ every difference from `rc`).
 
 ## Summary
 
-| Check                                                       | Result                                                           |
-| ----------------------------------------------------------- | ---------------------------------------------------------------- |
-| Automated suite at the top of the stack                     | 45,572 passed, 0 failed (local, macOS)                           |
-| CI, Linux and Windows, through the run layer                | Green on both                                                    |
-| CI, Linux and Windows, for the changes above the run layer  | Runs on the CI-only draft PR opened from the tip: see its checks |
-| Real Claude Code and OpenCode, no desktop app               | First turn, resumed turn, Stop mid-tool: pass                    |
-| Desktop app against `rc`, side by side                      | Same, except the one deliberate difference listed below          |
-| The same on Linux, plus CLI, Cue, headless and a clean quit | Same, except that difference and the CLI resume marker           |
-| The other nine providers, live                              | **Not run.** None is installed on the machine that ran this      |
-| A live SSH remote                                           | **Not run.** No remote was available                             |
-| A Windows host, by hand                                     | **Not run.** Windows is covered by CI only                       |
+| Check                                                       | Result                                                                |
+| ----------------------------------------------------------- | --------------------------------------------------------------------- |
+| Automated suite at the top of the stack                     | 45,572 passed, 0 failed (local, macOS)                                |
+| CI, Linux and Windows, through the run layer                | Green on both                                                         |
+| CI, Linux and Windows, for the changes above the run layer  | Green on both at `dc9a5219a` (CI-only draft PR #1688), detailed below |
+| Real Claude Code and OpenCode, no desktop app               | First turn, resumed turn, Stop mid-tool: pass                         |
+| Desktop app against `rc`, side by side                      | Same, except the one deliberate difference listed below               |
+| The same on Linux, plus CLI, Cue, headless and a clean quit | Same, except that difference and the CLI resume marker                |
+| The other nine providers, live                              | **Not run.** None is installed on the machine that ran this           |
+| A live SSH remote                                           | **Not run.** No remote was available                                  |
+| A Windows host, by hand                                     | **Not run.** Windows is covered by CI only                            |
+| Stop when the agent starts a tool just before exiting       | **Open.** Process-group kill on POSIX, #1689                          |
 
 ## Automated
 
@@ -40,6 +41,15 @@ Vitest suite. The suite count after each unit of work:
 | Grooming cancel, AI command mode over SSH              | 45,519       | 0      |
 | A replayed turn for every provider, the capture tool   | 45,570       | 0      |
 | Desktop SSH stdin fix                                  | 45,572       | 0      |
+
+CI on the CI-only draft PR #1688 (the whole stack, at `dc9a5219a`), all green:
+
+| Leg              | Passed | Skipped | Failed | Tests  |
+| ---------------- | ------ | ------- | ------ | ------ |
+| `ubuntu-latest`  | 45,655 | 88      | 0      | 45,743 |
+| `windows-latest` | 45,614 | 123     | 0      | 45,737 |
+
+Each leg runs in two shards; lint and format passed as well.
 
 Tests that run REAL processes, because faked ones had passed for as long as
 the behavior they described never happened:
@@ -181,11 +191,11 @@ line that differs is `rc`'s orphaned `sleep 41`.
 | `cue engine start` with no app, `cue trigger` (inbox)    | Not in `rc`                  | Answered in 0.6 s, run completed; an unknown name fails          |
 | `cue engine stop` on that runner                         | Not in `rc`                  | SIGTERM, database closed, lock released                          |
 
-**One difference not yet in `maestro-lib-decisions.md`:** a resumed
-`maestro-cli send` now carries `MAESTRO_SESSION_RESUMED=1`, where `rc` never
-set it for the CLI. It is deliberate (`255000c93`, so a hook can tell a resumed
-CLI turn apart, as it already can on desktop), but D1 says every surface keeps
-`rc`'s environment, so the decisions record should list it.
+**One other difference from `rc`:** a resumed `maestro-cli send` now carries
+`MAESTRO_SESSION_RESUMED=1`, where `rc` never set it for the CLI. It is
+deliberate (`255000c93`, so a hook can tell a resumed CLI turn apart, as it
+already can on desktop) and is listed in `maestro-lib-decisions.md` under D1
+and in its table of differences.
 
 ### Found on both builds, not caused by this work
 
@@ -233,7 +243,7 @@ dist/cli/maestro-cli.js`.
 | Codex, Copilot CLI, Factory Droid, Grok, Oh My Pi, Pi, Qwen Code, Antigravity, live | Not installed, no accounts          | A documented-format turn each, replayed through all three pipelines. `scripts/record-provider-turn.mjs` captures a real one on any machine that has the provider. Tracked in [#1690](https://github.com/RunMaestro/Maestro/issues/1690) |
 | Hermes                                                                              | Not installed, and it has no parser | Nothing. The headless program refuses it                                                                                                                                                                                                |
 | A turn, a resume and a Stop on a live SSH remote                                    | No remote available                 | Unit and real-process tests of the launch plan, the SSH wrapper and the stdin script. An unresolvable remote failing on every surface is tested                                                                                         |
-| Windows by hand (an npm-shim agent, a long prompt, Stop)                            | No Windows host                     | The `windows-latest` CI leg                                                                                                                                                                                                             |
+| Windows by hand (an npm-shim agent, a long prompt, Stop)                            | No Windows host                     | The `windows-latest` CI leg: on PR #1688 at `dc9a5219a`, 45,614 passed, 123 skipped, 0 failed (45,737 tests, 2 shards)                                                                                                                  |
 | The packaged app                                                                    | Not built here                      | `npm run build:maestro-lib-run` and the bundle test                                                                                                                                                                                     |
 
 ## How to repeat the desktop comparison
