@@ -60,6 +60,9 @@ export const AGENT_ICONS: Record<string, string> = {
 	// GitHub
 	copilot: '✈️',
 
+	// Cursor
+	'cursor-cli': '▶',
+
 	// Terminal/shell (internal)
 	terminal: '💻',
 };

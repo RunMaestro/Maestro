@@ -45,6 +45,7 @@ import {
 import { generateId } from '../../utils/ids';
 import { getSlashCommandDescription } from '../../constants/app';
 import { validateNewSession } from '../../utils/sessionValidation';
+import { readEffortFromConfig } from '../../utils/agentEffort';
 import { parseSynopsis } from '../../../shared/synopsis';
 
 let cachedAutorunSynopsisPrompt: string | null = null;
@@ -1188,6 +1189,7 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 				customPath,
 				customArgs,
 				customEnvVars,
+				agentConfigValues,
 				enableMaestroP,
 				maestroPMode,
 				maestroPPath,
@@ -1226,6 +1228,19 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 				throw new Error(`Agent not found: ${selectedAgent}`);
 			}
 			const aiPid = 0;
+			const customModel =
+				typeof agentConfigValues?.model === 'string' && agentConfigValues.model.trim()
+					? agentConfigValues.model.trim()
+					: undefined;
+			const customEffort = readEffortFromConfig(agentConfigValues);
+			const customProviderPath =
+				typeof agentConfigValues?.providerPath === 'string' && agentConfigValues.providerPath.trim()
+					? agentConfigValues.providerPath.trim()
+					: undefined;
+			const customContextWindow =
+				typeof agentConfigValues?.contextWindow === 'number' && agentConfigValues.contextWindow > 0
+					? agentConfigValues.contextWindow
+					: undefined;
 
 			const wizardSshRemoteId = sessionSshRemoteConfig?.remoteId || undefined;
 			const isGitRepo = await gitService.isRepo(directoryPath, wizardSshRemoteId);
@@ -1327,6 +1342,10 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 				customPath,
 				customArgs,
 				customEnvVars,
+				customModel,
+				customEffort,
+				customProviderPath,
+				customContextWindow,
 				sessionSshRemoteConfig,
 				enableMaestroP: resolvedEnableMaestroP,
 				maestroPMode: resolvedEnableMaestroP ? maestroPMode : undefined,

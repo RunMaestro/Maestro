@@ -17,6 +17,12 @@ describe('agentIcons', () => {
 		expect(getAgentIcon('grok')).not.toBe(DEFAULT_AGENT_ICON);
 	});
 
+	it('returns a dedicated icon for cursor-cli (not the default fallback)', () => {
+		expect(AGENT_ICONS['cursor-cli']).toBeDefined();
+		expect(getAgentIcon('cursor-cli')).toBe(AGENT_ICONS['cursor-cli']);
+		expect(getAgentIcon('cursor-cli')).not.toBe(DEFAULT_AGENT_ICON);
+	});
+
 	it('returns dedicated icons for the other active agents', () => {
 		for (const id of ['claude-code', 'codex', 'opencode', 'factory-droid', 'terminal']) {
 			expect(getAgentIcon(id)).not.toBe(DEFAULT_AGENT_ICON);

@@ -56,4 +56,8 @@ export type WizardConversationState = Pick<
 	| 'existingDocsChoice'
 	| 'plannerModel'
 	| 'sessionSshRemoteConfig'
+	| 'customPath'
+	| 'customArgs'
+	| 'customEnvVars'
+	| 'agentConfigValues'
 >;

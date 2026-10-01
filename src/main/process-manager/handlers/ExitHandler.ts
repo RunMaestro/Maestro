@@ -25,6 +25,20 @@ interface ExitHandlerDependencies {
 	processes: Map<string, ManagedProcess>;
 	emitter: EventEmitter;
 	bufferManager: DataBufferManager;
+	/**
+	 * Dispatch an event ExitHandler already parsed through the stdout pipeline, so
+	 * a record flushed without its trailing newline emits the same usage, session
+	 * id and result as one that arrived with it. ExitHandler parses the line itself
+	 * (it has to tell a parser that CHOKED, which must surface raw, from one that
+	 * cleanly declined, which is noise) and hands the event over rather than the
+	 * text, so the line is never parsed twice.
+	 */
+	dispatchParsedEvent: (
+		sessionId: string,
+		managedProcess: ManagedProcess,
+		event: ParsedEvent,
+		outputParser: NonNullable<ManagedProcess['outputParser']>
+	) => void;
 }
 
 /**
@@ -35,11 +49,13 @@ export class ExitHandler {
 	private processes: Map<string, ManagedProcess>;
 	private emitter: EventEmitter;
 	private bufferManager: DataBufferManager;
+	private dispatchParsedEvent: ExitHandlerDependencies['dispatchParsedEvent'];
 
 	constructor(deps: ExitHandlerDependencies) {
 		this.processes = deps.processes;
 		this.emitter = deps.emitter;
 		this.bufferManager = deps.bufferManager;
+		this.dispatchParsedEvent = deps.dispatchParsedEvent;
 	}
 
 	/**
@@ -62,6 +78,14 @@ export class ExitHandler {
 		}
 
 		const { isBatchMode, isStreamJsonMode, outputParser, toolType } = managedProcess;
+		if (this.isSuperseded(sessionId, managedProcess)) {
+			logger.warn(
+				'[ProcessManager] Stale process exited after session re-spawn, suppressing exit side effects',
+				'ProcessManager',
+				{ sessionId, code }
+			);
+			return;
+		}
 
 		// Flush any remaining buffered data before exit
 		this.bufferManager.flushDataBuffer(sessionId, managedProcess);
@@ -87,6 +111,42 @@ export class ExitHandler {
 				stderrBufferLength: managedProcess.stderrBuffer?.length || 0,
 				stderrPreview: managedProcess.stderrBuffer?.substring(0, 200) || '(empty)',
 			});
+		}
+
+		// Copilot may report its session ID only in an unterminated last record, and
+		// `awaitCopilotShutdown` below needs that ID to recover the authoritative
+		// disk-side final state. So peek at the remainder here WITHOUT consuming it:
+		// set the id and nothing else - no emit, no `errorEmitted`, no buffer clear.
+		// Everything this process has to say still leaves through the single
+		// remainder block further down, which sits below the supersession guard. A
+		// peek that emitted from up here would let a predecessor draining at exit
+		// push its remainder events into the successor's turn, which is exactly what
+		// that guard exists to prevent. The non-consuming half is pinned by
+		// `takes the session id from the trailing record without consuming it` in
+		// `ExitHandler.test.ts`, which observes the buffer from inside the shutdown
+		// wait - the only point between this peek and the remainder block below.
+		//
+		// Gated on Copilot because that is the only consumer: `awaitCopilotShutdown`
+		// returns immediately for every other tool type, so peeking for them would
+		// parse the trailing record twice to feed a wait that never runs. This is
+		// every agent's exit path, so the cost of the split stays on the one agent
+		// that needs it.
+		if (
+			managedProcess.toolType === 'copilot-cli' &&
+			isStreamJsonMode &&
+			managedProcess.jsonBuffer?.trim() &&
+			outputParser
+		) {
+			try {
+				const peekedEvent = outputParser.parseJsonLine(managedProcess.jsonBuffer.trim());
+				const peekedSessionId = peekedEvent ? outputParser.extractSessionId(peekedEvent) : null;
+				if (peekedSessionId) {
+					managedProcess.agentSessionId = peekedSessionId;
+				}
+			} catch {
+				// A malformed last line simply yields no id. The remainder block below
+				// owns reporting it; this peek stays silent either way.
+			}
 		}
 
 		// Copilot CLI: wait for the on-disk shutdown marker before emitting
@@ -136,10 +196,16 @@ export class ExitHandler {
 			this.handleBatchModeExit(sessionId, managedProcess);
 		}
 
-		// Handle stream-json mode: process any remaining jsonBuffer content
+		// Handle stream-json mode: process any remaining jsonBuffer content.
 		// The jsonBuffer may contain the last line if it didn't end with \n.
 		// Without this, short-lived processes (tab-naming, batch ops) can lose
 		// their result message if it's the last line without a trailing newline.
+		//
+		// This is the ONE block that consumes `jsonBuffer`, and it sits below the
+		// supersession guard because every branch of it emits. The session-ID peek
+		// above already handed `awaitCopilotShutdown` the id it needs, without
+		// consuming or emitting anything, so nothing is lost by resolving the
+		// remainder here.
 		if (isStreamJsonMode && managedProcess.jsonBuffer?.trim() && outputParser) {
 			const remainingLine = managedProcess.jsonBuffer.trim();
 			managedProcess.jsonBuffer = '';
@@ -160,25 +226,6 @@ export class ExitHandler {
 				this.bufferManager.emitDataBuffered(sessionId, remainingLine, managedProcess);
 			}
 
-			// Capture the provider's session id BEFORE dispatching, and for a failed
-			// envelope as much as a successful one. When the flushed line is the first
-			// event to carry one - a short-lived run whose whole output is this single
-			// trailing envelope - this is the only chance to record it. Without it the
-			// tab has no id to resume from, so recovery from a *recoverable* error
-			// silently opens a fresh conversation and drops the context the retry was
-			// supposed to continue. StdoutHandler does this for mid-stream lines; the
-			// flush is the same event arriving without a trailing newline.
-			if (event) {
-				const eventSessionId = outputParser.extractSessionId(event);
-				if (eventSessionId) {
-					managedProcess.agentSessionId = eventSessionId;
-					if (!managedProcess.sessionIdEmitted) {
-						managedProcess.sessionIdEmitted = true;
-						this.emitter.emit('session-id', sessionId, eventSessionId);
-					}
-				}
-			}
-
 			// A terminal envelope that reports a FAILURE has to leave through the
 			// error path, not the result path. Emitting its text as data would render
 			// a provider failure as the agent's answer, and dropping it silently is
@@ -190,6 +237,22 @@ export class ExitHandler {
 			// does in StdoutHandler: a terminal envelope flushed on the way out of a
 			// deliberate stop is not a turn failure.
 			if (event?.type === 'error' && !managedProcess.errorEmitted && !managedProcess.interrupted) {
+				// Capture the provider's session id BEFORE returning through the error
+				// path, which the dispatch below would otherwise have done. When this
+				// flushed line is the first event to carry one - a short-lived run whose
+				// whole output is this single trailing envelope - this is the only
+				// chance to record it. Without it the tab has no id to resume from, so
+				// recovery from a *recoverable* error silently opens a fresh
+				// conversation and drops the context the retry was supposed to continue.
+				const eventSessionId = outputParser.extractSessionId(event);
+				if (eventSessionId) {
+					managedProcess.agentSessionId = eventSessionId;
+					if (!managedProcess.sessionIdEmitted) {
+						managedProcess.sessionIdEmitted = true;
+						this.emitter.emit('session-id', sessionId, eventSessionId);
+					}
+				}
+
 				const agentError = outputParser.detectErrorFromParsed((event.raw as unknown) ?? event);
 				if (agentError) {
 					managedProcess.errorEmitted = true;
@@ -199,28 +262,14 @@ export class ExitHandler {
 					}
 					this.emitter.emit('agent-error', sessionId, agentError);
 				}
-			} else if (event && outputParser.isResultMessage(event) && !managedProcess.resultEmitted) {
-				managedProcess.resultEmitted = true;
-				const resultText = event.text || managedProcess.streamedText || '';
-				if (resultText) {
-					this.bufferManager.emitDataBuffered(sessionId, resultText, managedProcess);
-				}
+			} else if (event) {
+				// Everything else is an ordinary event that merely lost its newline, so
+				// it goes through the ordinary pipeline: usage, session id, slash
+				// commands and result text, in the order every other event produces
+				// them. Re-implementing a subset here is what dropped the usage and cost
+				// of a run whose entire output was this one trailing envelope.
+				this.dispatchParsedEvent(sessionId, managedProcess, event, outputParser);
 			}
-		}
-
-		// Handle stream-json mode: emit accumulated streamed text if no result was emitted
-		// Some agents (like Factory Droid) don't send explicit "done" events, they just exit
-		if (isStreamJsonMode && !managedProcess.resultEmitted && managedProcess.streamedText) {
-			managedProcess.resultEmitted = true;
-			logger.debug(
-				'[ProcessManager] Emitting streamed text at exit (no result event)',
-				'ProcessManager',
-				{
-					sessionId,
-					streamedTextLength: managedProcess.streamedText.length,
-				}
-			);
-			this.bufferManager.emitDataBuffered(sessionId, managedProcess.streamedText, managedProcess);
 		}
 
 		// Check for errors using the parser (if not already emitted)
@@ -244,6 +293,27 @@ export class ExitHandler {
 				});
 				this.emitter.emit('agent-error', sessionId, agentError);
 			}
+		}
+
+		// Some stream-json agents don't send explicit result events. Preserve their
+		// accumulated response when exit processing found no classified failure.
+		if (
+			isStreamJsonMode &&
+			!managedProcess.errorEmitted &&
+			!managedProcess.resultEmitted &&
+			!managedProcess.interrupted &&
+			managedProcess.streamedText
+		) {
+			managedProcess.resultEmitted = true;
+			logger.debug(
+				'[ProcessManager] Emitting streamed text at exit (no result event)',
+				'ProcessManager',
+				{
+					sessionId,
+					streamedTextLength: managedProcess.streamedText.length,
+				}
+			);
+			this.bufferManager.emitDataBuffered(sessionId, managedProcess.streamedText, managedProcess);
 		}
 
 		// Check for SSH-specific errors at exit (only when running via SSH remote)

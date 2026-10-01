@@ -17,6 +17,7 @@ Agent support documentation for the Maestro codebase. For the main guide, see [[
 | `hermes`        | Hermes          | **Beta**   | Nous Research's coding agent                                                                                                                       |
 | `pi`            | Pi              | **Beta**   | Bring-your-own agent harness                                                                                                                       |
 | `omp`           | Oh My Pi        | **Beta**   | Multi-model coding agent; prompt must be a positional arg, never stdin                                                                             |
+| `cursor-cli`    | Cursor CLI      | **Beta**   | Binary `agent`, `-p` headless, stream JSON partials/tool events, `--trust`/`--force`, `--mode plan`, `--resume`, thinking deltas                   |
 | `terminal`      | Terminal        | Internal   | Hidden from UI, used for shell sessions                                                                                                            |
 
 ## Agent Capabilities

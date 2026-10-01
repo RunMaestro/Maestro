@@ -40,6 +40,7 @@ export { AgentDetector } from './detector';
 // ============ Path Prober ============
 export {
 	type BinaryDetectionResult,
+	type BinaryIdentityValidator,
 	getExpandedEnv,
 	checkCustomPath,
 	probeWindowsPaths,
@@ -48,6 +49,7 @@ export {
 	probeUnixPathsAll,
 	checkBinaryExists,
 	findAllBinaryPaths,
+	validateAgentBinaryIdentity,
 } from './path-prober';
 
 // ============ OpenCode Config ============
