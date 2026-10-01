@@ -39,6 +39,11 @@ import {
 	PANEL_BRIDGE_CHANNEL,
 	PANEL_DATA_CHANNEL,
 } from '../../../shared/plugins/panel-host';
+import {
+	buildPanelThemePayload,
+	isPanelThemeColor,
+	PANEL_THEME_CHANNEL,
+} from '../../../shared/plugins/panel-theme';
 import { notifyToast } from '../../stores/notificationStore';
 import { captureException } from '../../utils/sentry';
 
@@ -75,6 +80,41 @@ interface PanelIpcMessageEvent extends Event {
 export function PluginPanelFrame({ theme, panel, frameClassName }: PluginPanelFrameProps) {
 	const [failed, setFailed] = useState(false);
 	const webviewRef = useRef<PanelWebviewElement | null>(null);
+	const readyWebviewRef = useRef<PanelWebviewElement | null>(null);
+	// dom-ready can arrive after several theme changes. Its listener reads this
+	// ref so the first frame always receives the newest palette.
+	const themePayload = buildPanelThemePayload(theme);
+	const latestThemeRef = useRef(themePayload);
+	latestThemeRef.current = themePayload;
+
+	useEffect(() => {
+		const webview = webviewRef.current;
+		if (!webview) return;
+		readyWebviewRef.current = null;
+		const onReady = (): void => {
+			readyWebviewRef.current = webview;
+			try {
+				webview.send(PANEL_THEME_CHANNEL, latestThemeRef.current);
+			} catch (error) {
+				if (!isDetachedWebviewError(error)) captureException(error);
+			}
+		};
+		webview.addEventListener('dom-ready', onReady);
+		return () => {
+			webview.removeEventListener('dom-ready', onReady);
+			if (readyWebviewRef.current === webview) readyWebviewRef.current = null;
+		};
+	}, [panel.id, panel.pluginId, failed]);
+
+	useEffect(() => {
+		const webview = webviewRef.current;
+		if (!webview || readyWebviewRef.current !== webview) return;
+		try {
+			webview.send(PANEL_THEME_CHANNEL, latestThemeRef.current);
+		} catch (error) {
+			if (!isDetachedWebviewError(error)) captureException(error);
+		}
+	}, [theme]);
 
 	// Bridge: the guest preload forwards the panel's postMessage bridge
 	// (`{ type: 'maestro:invokeCommand', commandId, args }`) as an ipc-message
@@ -167,7 +207,11 @@ export function PluginPanelFrame({ theme, panel, frameClassName }: PluginPanelFr
 						partition={pluginPanelPartition(panel.pluginId)}
 						src={pluginPanelUrl(panel.id)}
 						className={frameClassName ?? 'w-full h-full border-0'}
-						style={{ backgroundColor: '#fff' }}
+						style={{
+							backgroundColor: isPanelThemeColor(theme.colors.bgMain)
+								? theme.colors.bgMain
+								: 'transparent',
+						}}
 					/>
 				)}
 			</div>

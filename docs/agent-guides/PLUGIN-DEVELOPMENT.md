@@ -560,6 +560,8 @@ async function activate(maestro) {
 
 A panel renders in an isolated Electron `<webview>` guest with a per-plugin in-memory session (partition `plugin:<pluginId>`): no Node, contextIsolation, OS sandbox, opaque origin, and a restrictive CSP served by the host (`connect-src 'none'`, etc.). Navigation and network egress are denied in the main process - the panel lives on its initial document.
 
+On host API 1.19.0+, the host automatically sets these CSS custom properties on the panel document's root from the active theme: `--maestro-bg-main`, `--maestro-bg-sidebar`, `--maestro-bg-activity`, `--maestro-border`, `--maestro-text-main`, `--maestro-text-dim`, `--maestro-accent`, `--maestro-accent-dim`, `--maestro-accent-foreground`, `--maestro-success`, `--maestro-warning`, and `--maestro-error`. It also sets `color-scheme` to `light` or `dark` (`vibe` themes use `dark`) and updates open panels when the theme changes. Use CSS fallbacks for hosts before 1.19.0, for example `background: var(--maestro-bg-main, #fafafa)`. These visual tokens require no additional capability. A plugin that works with fallbacks can keep `minHostApi: '1.18.0'`.
+
 **A panel CANNOT make network requests directly.** No `fetch`/XHR/WebSocket. To cause any effect, post a command to the parent; the plugin's registered command handler runs in the sandbox and uses the brokered SDK from there.
 
 The ONLY channel out is:
