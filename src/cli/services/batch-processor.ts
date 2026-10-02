@@ -10,7 +10,7 @@ import {
 	uncheckAllTasks,
 	writeDoc,
 } from './agent-spawner';
-import { captureCliRun } from './agent-run-capture';
+import { captureCliRun, settlementFromAgentResult } from './agent-run-capture';
 import { addHistoryEntry, readGroups, readHistory } from './storage';
 import {
 	aggregateAutoRunHistoryTotals,
@@ -76,6 +76,11 @@ export async function* runPlaybook(
 		 * override, then the agent's settings. Same run-scoped contract.
 		 */
 		ignoreModelHints?: boolean;
+		/**
+		 * Stop the run. The agent turn in flight is aborted, the run records
+		 * "stopped" (never a failure) and ends cleanly. See `spawnAgent`'s `signal`.
+		 */
+		signal?: AbortSignal;
 	} = {}
 ): AsyncGenerator<JsonlEvent> {
 	const {
@@ -87,6 +92,7 @@ export async function* runPlaybook(
 		model: runModel,
 		effort: runEffort,
 		ignoreModelHints = false,
+		signal,
 	} = options;
 	const batchStartTime = Date.now();
 	// Bottom of both ladders for every synopsis turn in this run. Resolved once:
@@ -376,6 +382,8 @@ export async function* runPlaybook(
 			}
 		};
 
+		const OPERATOR_STOP_OUTCOME = 'stopped: by operator';
+
 		// Helper to create total Auto Run summary from reconciled totals.
 		//
 		// Written for EVERY run, including a single-pass non-looping one. Besides
@@ -658,8 +666,9 @@ export async function* runPlaybook(
 								enableMaestroP: session.enableMaestroP,
 								maestroPMode: session.maestroPMode,
 								maestroPPath: session.maestroPPath,
+								signal,
 							}),
-						(r) => (r.success ? 0 : 1)
+						settlementFromAgentResult
 					);
 
 					const elapsedMs = Date.now() - taskStartTime;
@@ -749,9 +758,10 @@ export async function* runPlaybook(
 										enableMaestroP: session.enableMaestroP,
 										maestroPMode: session.maestroPMode,
 										maestroPPath: session.maestroPPath,
+										signal,
 									}
 								),
-							(r) => (r.success ? 0 : 1)
+							settlementFromAgentResult
 						);
 
 						if (synopsisResult.success && synopsisResult.response) {
@@ -759,6 +769,9 @@ export async function* runPlaybook(
 							shortSummary = parsed.shortSummary;
 							fullSynopsis = parsed.fullSynopsis;
 						}
+					} else if (result.outcome === 'interrupted') {
+						shortSummary = `[${docEntry.filename}] Task interrupted`;
+						fullSynopsis = 'Interrupted by the operator before the task finished.';
 					} else if (!result.success) {
 						shortSummary = `[${docEntry.filename}] Task failed`;
 						fullSynopsis = result.error || shortSummary;
@@ -804,6 +817,35 @@ export async function* runPlaybook(
 								entryId: historyEntry.id,
 							};
 						}
+					}
+
+					// The operator stopped the run (Ctrl+C). The interrupted task was
+					// recorded above as "interrupted", not as a failure, and the run
+					// reconciles and closes exactly like a halt so the next run's
+					// aggregation does not absorb this one's task entries.
+					if (result.outcome === 'interrupted' || signal?.aborted) {
+						logger.autorun(`Auto Run stopped by operator`, session.name, {
+							document: docEntry.filename,
+							taskIndex,
+							loopNumber: loopIteration + 1,
+						});
+
+						createFinalLoopEntry('Stopped by operator');
+						unregisterCliActivity(session.id);
+
+						const stopReconciled = reconcileTotals();
+						createAutoRunSummary(stopReconciled, OPERATOR_STOP_OUTCOME);
+
+						yield {
+							type: 'complete',
+							timestamp: Date.now(),
+							success: false,
+							totalTasksCompleted: stopReconciled.totalCompletedTasks,
+							totalElapsedMs: stopReconciled.totalElapsedMs,
+							totalCost: stopReconciled.totalCost,
+							stopped: true,
+						};
+						return;
 					}
 
 					// Halt marker detected - agent has signaled early exit. Stop the
@@ -1102,6 +1144,27 @@ export async function* runPlaybook(
 		// spanned a restart/resume reports its full stats, not just this
 		// process's in-memory slice.
 		const reconciled = reconcileTotals();
+
+		// A stop that lands after the last task is still a stop. The only other
+		// abort check sits inside the task loop, so a Ctrl+C arriving once the
+		// loop was done fell through to the success block below and exited 0
+		// instead of 130. The loop has already written its own final entry by
+		// now ("All tasks completed" and the like), so history records why the
+		// LOOP ended while this records why the RUN did.
+		if (signal?.aborted) {
+			createAutoRunSummary(reconciled, OPERATOR_STOP_OUTCOME);
+
+			yield {
+				type: 'complete',
+				timestamp: Date.now(),
+				success: false,
+				totalTasksCompleted: reconciled.totalCompletedTasks,
+				totalElapsedMs: reconciled.totalElapsedMs,
+				totalCost: reconciled.totalCost,
+				stopped: true,
+			};
+			return;
+		}
 
 		// Add total Auto Run summary (only if looping was used)
 		createAutoRunSummary(reconciled);
