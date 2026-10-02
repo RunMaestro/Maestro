@@ -4922,6 +4922,11 @@ interface MaestroAPI {
 			resolution: import('../shared/pianola/pianola-decision-lifecycle').PianolaDecisionResolution
 		) => Promise<import('../shared/pianola/pianola-scope-cycle').PianolaScopeDeliveryResult>;
 		getPrograms: () => Promise<import('../shared/pianola/pianola-programs').PianolaProgram[]>;
+		superviseProgram: (programId: string) => Promise<void>;
+		setProgramStatus: (
+			programId: string,
+			status: import('../shared/pianola/pianola-programs').PianolaProgramStatus
+		) => Promise<void>;
 		getAsks: (
 			status?: import('../shared/pianola/pianola-programs').PianolaAskStatus
 		) => Promise<import('../shared/pianola/pianola-programs').PianolaAsk[]>;

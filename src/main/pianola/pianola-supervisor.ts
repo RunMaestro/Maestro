@@ -472,6 +472,16 @@ export class PianolaSupervisor {
 		}
 		// One worker owns all chats in the selection, including future members.
 		if (target.kind === 'watch-scope') return ['pianola', 'watch-scope', target.id];
+		if (target.kind === 'program') {
+			if (!target.programId) return null;
+			return [
+				'pianola',
+				'program-loop',
+				target.programId,
+				'--interval',
+				String(target.intervalSeconds ?? 120),
+			];
+		}
 		if (!target.planId) return null;
 		return [
 			'pianola',

@@ -25,6 +25,12 @@ export type PianolaTaskStatus =
 	| 'failed'
 	| 'blocked'
 	| 'skipped';
+export interface PianolaTaskValidation {
+	command: string[];
+	target: string;
+	artifacts?: string[];
+	timeoutSeconds?: number;
+}
 
 /** One unit of work in a plan, with its dependency edges and runtime binding. */
 export interface PianolaTask {
@@ -57,6 +63,11 @@ export interface PianolaTask {
 	requiredChecks?: string[];
 	/** Stable transcript observation after confirmed process completion. */
 	completionCursor?: string;
+	/** Transcript length when the current run (dispatch or fix) was sent, so a run that
+	 *  finishes between two polls is still recognised by the reply that follows it. */
+	dispatchedMessageCount?: number;
+	validation?: PianolaTaskValidation;
+	validationUnknownAttempts?: number;
 }
 
 /** A full plan: an ordered set of tasks forming a DAG. */
@@ -199,6 +210,33 @@ function validatePianolaTask(raw: unknown, index: number, errors: string[]): Pia
 			ok = false;
 		}
 	}
+	if (raw.validation !== undefined) {
+		const v = raw.validation;
+		if (
+			!isRecord(v) ||
+			!isStringArray(v.command) ||
+			!v.command.length ||
+			v.command.some((arg) => !arg) ||
+			typeof v.target !== 'string' ||
+			!v.target.trim() ||
+			(v.artifacts !== undefined && !isStringArray(v.artifacts)) ||
+			(v.timeoutSeconds !== undefined &&
+				(typeof v.timeoutSeconds !== 'number' ||
+					!Number.isFinite(v.timeoutSeconds) ||
+					v.timeoutSeconds <= 0))
+		) {
+			errors.push('Task ' + label + ' has invalid validation (command and target required).');
+			ok = false;
+		}
+	}
+	if (
+		raw.validationUnknownAttempts !== undefined &&
+		(!Number.isInteger(raw.validationUnknownAttempts) ||
+			(raw.validationUnknownAttempts as number) < 0)
+	) {
+		errors.push('Task ' + label + ' has invalid validationUnknownAttempts.');
+		ok = false;
+	}
 
 	if (
 		raw.requiredChecks !== undefined &&
@@ -235,7 +273,14 @@ function validatePianolaTask(raw: unknown, index: number, errors: string[]): Pia
 		if (typeof raw[field] === 'string') task[field] = raw[field] as string;
 	}
 	if (isStringArray(raw.requiredChecks)) task.requiredChecks = [...raw.requiredChecks];
-	if (typeof raw.fixAttempts === 'number') task.fixAttempts = raw.fixAttempts;
+	if (raw.validation !== undefined)
+		task.validation = raw.validation as unknown as PianolaTaskValidation;
+	if (raw.validationUnknownAttempts !== undefined)
+		task.validationUnknownAttempts = raw.validationUnknownAttempts as number;
+	if (typeof raw.runId === 'string') task.runId = raw.runId;
+	if (Number.isInteger(raw.fixAttempts)) task.fixAttempts = raw.fixAttempts as number;
+	if (Number.isInteger(raw.dispatchedMessageCount))
+		task.dispatchedMessageCount = raw.dispatchedMessageCount as number;
 	if (raw.holdReason === 'acceptance' || raw.holdReason === 'delivery_uncertain')
 		task.holdReason = raw.holdReason;
 	return task;
@@ -346,6 +391,9 @@ export function markTaskStatus(
 			| 'fixAttempts'
 			| 'completionCursor'
 			| 'holdReason'
+			| 'fixAttempts'
+			| 'dispatchedMessageCount'
+			| 'validationUnknownAttempts'
 		>
 	>
 ): PianolaPlan {
@@ -362,6 +410,10 @@ export function markTaskStatus(
 			if ('executionRunId' in patch) next.executionRunId = patch.executionRunId;
 			if (patch.fixAttempts !== undefined) next.fixAttempts = patch.fixAttempts;
 			if (patch.completionCursor !== undefined) next.completionCursor = patch.completionCursor;
+			if (patch.validationUnknownAttempts !== undefined)
+				next.validationUnknownAttempts = patch.validationUnknownAttempts;
+			if (patch.dispatchedMessageCount !== undefined)
+				next.dispatchedMessageCount = patch.dispatchedMessageCount;
 		}
 		return next;
 	});

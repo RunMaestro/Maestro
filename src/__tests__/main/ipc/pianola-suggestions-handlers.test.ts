@@ -63,6 +63,8 @@ const store = vi.hoisted(() => ({
 	readSupervisorTargets: vi.fn(() => []),
 	upsertSupervisorTarget: vi.fn(),
 	removeSupervisorTarget: vi.fn(),
+	readPrograms: vi.fn(() => [] as { id: string; status: 'active' | 'paused'; updatedAt: number }[]),
+	writePrograms: vi.fn(),
 	readSuggestions: vi.fn(() => ({
 		generatedAt: 0,
 		pairCount: 0,
@@ -760,5 +762,40 @@ describe('OW owner review', () => {
 		expect(store.writeSuggestions).toHaveBeenCalledTimes(
 			allowed ? (operation === 'reject' ? 1 : 2) : 0
 		);
+		);
+	});
+});
+describe('program controls IPC', () => {
+	it('supervises a known program through the supervisor-add path', async () => {
+		store.readPrograms.mockReturnValue([{ id: 'product', status: 'active', updatedAt: 1 }]);
+		registerPianolaHandlers({ settingsStore: settingsStore(true), supervisor });
+		await handlers.get('pianola:supervise-program')!({}, 'product');
+		expect(store.upsertSupervisorTarget).toHaveBeenCalledWith(
+			expect.objectContaining({
+				kind: 'program',
+				programId: 'product',
+				enabled: true,
+				intervalSeconds: 120,
+			})
+		);
+		expect(supervisor.reconcile).toHaveBeenCalled();
+		await expect(handlers.get('pianola:supervise-program')!({}, 'missing')).rejects.toThrow(
+			'InvalidProgramId'
+		);
+	});
+	it('pauses only the selected program and rejects invalid status', async () => {
+		store.readPrograms.mockReturnValue([
+			{ id: 'product', status: 'active', updatedAt: 1 },
+			{ id: 'other', status: 'active', updatedAt: 1 },
+		]);
+		registerPianolaHandlers({ settingsStore: settingsStore(true), supervisor });
+		await handlers.get('pianola:set-program-status')!({}, 'product', 'paused');
+		expect(store.writePrograms).toHaveBeenCalledWith([
+			expect.objectContaining({ id: 'product', status: 'paused' }),
+			{ id: 'other', status: 'active', updatedAt: 1 },
+		]);
+		await expect(
+			handlers.get('pianola:set-program-status')!({}, 'product', 'invalid')
+		).rejects.toThrow('InvalidProgramStatus');
 	});
 });
