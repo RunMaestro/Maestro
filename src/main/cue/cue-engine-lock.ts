@@ -36,11 +36,22 @@
  * refreshes (`touchCueEngineLock`, every {@link CUE_ENGINE_LOCK_HEARTBEAT_MS}):
  * a lock from an earlier boot, or one whose heartbeat has been quiet for
  * {@link CUE_ENGINE_LOCK_STALE_MS}, is stale whatever its PID says.
+ *
+ * Ownership is a per-process random TOKEN, not the PID. Two containers that
+ * share a data directory both run their engine as PID 1 under tini, so a PID
+ * comparison would let each one believe the other's lock is its own. The
+ * token is minted once per process and never leaves it except through the
+ * lock file, so "the token matches" is the only proof that THIS process wrote
+ * the lock. PID liveness still matters for a lock in our own PID namespace,
+ * but a PID from a different namespace (another container) means nothing to
+ * `kill(pid, 0)` here, so such a lock is judged by its heartbeat alone. On
+ * Linux the lock records the PID namespace inode to tell the two apart.
  */
 
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+import * as crypto from 'crypto';
 import { resolveUserDataDir } from '../../shared/userDataDir';
 
 export type CueEngineRunnerMode = 'desktop' | 'standalone';
@@ -52,8 +63,32 @@ export const CUE_ENGINE_LOCK_STALE_MS = 180_000;
 /** Two boot-time readings closer than this are the same boot: `os.uptime()` is coarse and drifts slightly. */
 const BOOT_TIME_TOLERANCE_MS = 60_000;
 
+/** Identity of THIS process as a lock owner. Minted once; never derived from the PID (see the module doc). */
+const processToken = crypto.randomUUID();
+
+/**
+ * Inode of this process's PID namespace, or `undefined` off Linux or when
+ * `/proc` cannot be read. Two processes see the same inode exactly when they
+ * share a PID namespace, i.e. when a PID one of them names means the same
+ * process to the other.
+ */
+const currentPidNsInode: number | undefined = readPidNsInode();
+
+function readPidNsInode(): number | undefined {
+	if (process.platform !== 'linux') return undefined;
+	try {
+		return fs.statSync('/proc/self/ns/pid').ino;
+	} catch {
+		return undefined;
+	}
+}
+
 export interface CueEngineLockInfo {
 	pid: number;
+	/** Random per-process owner identity. Absent on lock files written before tokens existed. */
+	token?: string;
+	/** PID namespace inode of the owner (Linux only). Absent elsewhere and on older lock files. */
+	pidNsInode?: number;
 	mode: CueEngineRunnerMode;
 	/** ISO timestamp the lock was acquired. */
 	startedAt: string;
@@ -89,11 +124,43 @@ function isProcessAlive(pid: number): boolean {
 }
 
 /**
+ * Whether the lock was written from a different PID namespace than ours, so
+ * its PID cannot be tested or signaled from here. A lock that does not record
+ * a namespace (older files, non-Linux owners) is treated as same-namespace,
+ * which is the rule every lock followed before namespaces were recorded.
+ */
+export function isCueEngineLockInForeignPidNamespace(info: CueEngineLockInfo): boolean {
+	return info.pidNsInode !== undefined && info.pidNsInode !== currentPidNsInode;
+}
+
+/**
+ * Whether THIS process wrote the lock. A tokened lock is ours exactly when the
+ * token matches. A lock from before tokens existed keeps the old rule: ours
+ * only if the PID matches and it is not from a foreign PID namespace.
+ */
+export function isCueEngineLockOwnedByThisProcess(info: CueEngineLockInfo): boolean {
+	if (info.token !== undefined) return info.token === processToken;
+	return info.pid === process.pid && !isCueEngineLockInForeignPidNamespace(info);
+}
+
+function isHeartbeatFresh(info: CueEngineLockInfo): boolean {
+	const beat = Date.parse(info.heartbeatAt ?? info.startedAt);
+	if (!Number.isFinite(beat)) return false;
+	return Date.now() - beat <= CUE_ENGINE_LOCK_STALE_MS;
+}
+
+/**
  * Whether a lock still belongs to a running engine: its PID is alive, it was
  * written during THIS boot, and its heartbeat is recent. The last two are what
  * catch a reused PID (see the module doc).
+ *
+ * A lock from a foreign PID namespace skips the PID and boot-time checks:
+ * `kill(pid, 0)` would probe an unrelated process in OUR namespace, and the
+ * owner may sit on another host whose boot time says nothing about this one.
+ * Its heartbeat is the only evidence available, so it is live while fresh.
  */
 function isLockLive(info: CueEngineLockInfo): boolean {
+	if (isCueEngineLockInForeignPidNamespace(info)) return isHeartbeatFresh(info);
 	if (!isProcessAlive(info.pid)) return false;
 	if (
 		typeof info.bootTime === 'number' &&
@@ -101,9 +168,7 @@ function isLockLive(info: CueEngineLockInfo): boolean {
 	) {
 		return false;
 	}
-	const beat = Date.parse(info.heartbeatAt ?? info.startedAt);
-	if (!Number.isFinite(beat)) return false;
-	return Date.now() - beat <= CUE_ENGINE_LOCK_STALE_MS;
+	return isHeartbeatFresh(info);
 }
 
 function parseLock(raw: string): CueEngineLockInfo | null {
@@ -117,6 +182,8 @@ function parseLock(raw: string): CueEngineLockInfo | null {
 	if (!info || typeof info.pid !== 'number' || typeof info.mode !== 'string') return null;
 	return {
 		pid: info.pid,
+		token: typeof info.token === 'string' ? info.token : undefined,
+		pidNsInode: typeof info.pidNsInode === 'number' ? info.pidNsInode : undefined,
 		mode: info.mode as CueEngineRunnerMode,
 		startedAt: typeof info.startedAt === 'string' ? info.startedAt : new Date(0).toISOString(),
 		heartbeatAt: typeof info.heartbeatAt === 'string' ? info.heartbeatAt : undefined,
@@ -148,6 +215,8 @@ function buildLockInfo(mode: CueEngineRunnerMode, startedAt?: string): CueEngine
 	const now = new Date().toISOString();
 	return {
 		pid: process.pid,
+		token: processToken,
+		...(currentPidNsInode !== undefined ? { pidNsInode: currentPidNsInode } : {}),
 		mode,
 		startedAt: startedAt ?? now,
 		heartbeatAt: now,
@@ -160,7 +229,8 @@ function buildLockInfo(mode: CueEngineRunnerMode, startedAt?: string): CueEngine
  * Attempt to acquire the lock for this process. Fails (without throwing) when
  * a live engine already holds it - the caller decides what to do with that
  * (refuse to start, in every caller today). Safe to call when this exact
- * process already holds a live lock (re-acquire is a no-op success).
+ * process already holds a live lock (re-acquire is a no-op success). "This
+ * exact process" means the token matches, not the PID.
  *
  * Creation is atomic (`wx`), so two engines starting at the same instant
  * cannot both see "no lock" and both write one. A stale lock is removed and
@@ -177,7 +247,9 @@ export function acquireCueEngineLock(
 	for (let attempt = 0; attempt < 3; attempt++) {
 		const existing = readRawLock(dataDir);
 		if (existing && isLockLive(existing)) {
-			if (existing.pid !== process.pid) return { acquired: false, heldBy: existing };
+			if (!isCueEngineLockOwnedByThisProcess(existing)) {
+				return { acquired: false, heldBy: existing };
+			}
 			fs.writeFileSync(filePath, JSON.stringify(buildLockInfo(mode), null, 2), 'utf-8');
 			return { acquired: true };
 		}
@@ -219,8 +291,11 @@ export function touchCueEngineLock(
 	dataDir?: string
 ): CueEngineLockTouchResult {
 	const existing = readRawLock(dataDir);
-	if (existing && existing.pid !== process.pid && isLockLive(existing)) return 'lost';
-	const startedAt = existing?.pid === process.pid ? existing.startedAt : undefined;
+	if (existing && !isCueEngineLockOwnedByThisProcess(existing) && isLockLive(existing)) {
+		return 'lost';
+	}
+	const startedAt =
+		existing && isCueEngineLockOwnedByThisProcess(existing) ? existing.startedAt : undefined;
 	try {
 		fs.writeFileSync(
 			lockFilePath(dataDir),
@@ -248,7 +323,7 @@ function safeHostname(): string | undefined {
  */
 export function releaseCueEngineLock(dataDir?: string): void {
 	const existing = readRawLock(dataDir);
-	if (existing && existing.pid !== process.pid && isLockLive(existing)) return;
+	if (existing && !isCueEngineLockOwnedByThisProcess(existing) && isLockLive(existing)) return;
 	try {
 		fs.unlinkSync(lockFilePath(dataDir));
 	} catch {

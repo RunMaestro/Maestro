@@ -13,11 +13,38 @@
  * is not reliably true across POSIX and Windows CI hosts.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { spawn, type ChildProcess } from 'child_process';
+
+// `cueEngineStop` lives beside the engine starter, which pulls in the whole
+// standalone engine. Stop only reads the lock, so stub the rest out.
+vi.mock('../../../cli/services/cue-standalone-engine', () => ({
+	createStandaloneCueEngine: vi.fn(),
+}));
+vi.mock('../../../cli/services/cue-trigger-inbox', () => ({
+	startCueTriggerInbox: vi.fn(),
+}));
+vi.mock('../../../cli/services/storage', () => ({
+	readSessions: vi.fn(() => []),
+}));
+
+/** This process's PID namespace inode, read the same way the module reads it. */
+function currentPidNsInode(): number | undefined {
+	if (process.platform !== 'linux') return undefined;
+	try {
+		return fs.statSync('/proc/self/ns/pid').ino;
+	} catch {
+		return undefined;
+	}
+}
+
+/** An inode guaranteed not to be ours: on a host without one, any number is foreign. */
+function foreignPidNsInode(): number {
+	return (currentPidNsInode() ?? 0) + 1;
+}
 
 describe('cue-engine-lock', () => {
 	let tmpDir: string;
@@ -49,6 +76,24 @@ describe('cue-engine-lock', () => {
 	/** Spawn a process guaranteed alive for the duration of the test and not this test runner's own PID. */
 	function spawnLiveProcess(): ChildProcess {
 		return spawn(process.execPath, ['-e', 'setTimeout(() => {}, 15000)']);
+	}
+
+	/** A PID that belonged to a process which has since exited. */
+	async function deadPid(): Promise<number> {
+		const child = spawnLiveProcess();
+		await new Promise((resolve) => child.once('spawn', resolve));
+		const pid = child.pid!;
+		child.kill();
+		await new Promise((resolve) => child.once('exit', resolve));
+		return pid;
+	}
+
+	function writeFullLock(fields: Record<string, unknown>) {
+		const now = new Date().toISOString();
+		fs.writeFileSync(
+			lockPath,
+			JSON.stringify({ mode: 'standalone', startedAt: now, heartbeatAt: now, ...fields })
+		);
 	}
 
 	it('acquires the lock when none is held', async () => {
@@ -235,6 +280,126 @@ describe('cue-engine-lock', () => {
 				const { touchCueEngineLock } = await freshModule();
 				expect(touchCueEngineLock('standalone')).toBe('lost');
 				expect(JSON.parse(fs.readFileSync(lockPath, 'utf-8')).pid).toBe(child.pid);
+			} finally {
+				child.kill();
+			}
+		});
+	});
+
+	describe('token identity', () => {
+		it('writes a token and, on Linux, the PID namespace inode', async () => {
+			const { acquireCueEngineLock } = await freshModule();
+			acquireCueEngineLock('desktop');
+			const raw = JSON.parse(fs.readFileSync(lockPath, 'utf-8'));
+			expect(typeof raw.token).toBe('string');
+			expect(raw.token.length).toBeGreaterThan(0);
+			expect(raw.pidNsInode).toBe(currentPidNsInode());
+		});
+
+		it('re-acquire keeps the same token and is recognized as ours', async () => {
+			const { acquireCueEngineLock, readCueEngineLock, isCueEngineLockOwnedByThisProcess } =
+				await freshModule();
+			expect(acquireCueEngineLock('standalone').acquired).toBe(true);
+			const firstToken = JSON.parse(fs.readFileSync(lockPath, 'utf-8')).token;
+			expect(acquireCueEngineLock('standalone').acquired).toBe(true);
+			const lock = readCueEngineLock();
+			expect(lock?.token).toBe(firstToken);
+			expect(lock && isCueEngineLockOwnedByThisProcess(lock)).toBe(true);
+		});
+
+		// Two containers sharing a data directory, each running its engine as
+		// PID 1 under tini: the PID matches ours but the lock is not ours.
+		it('reports a conflict for a foreign token even when the PID matches ours', async () => {
+			writeFullLock({ pid: process.pid, token: 'someone-else', pidNsInode: currentPidNsInode() });
+			const { acquireCueEngineLock, touchCueEngineLock, releaseCueEngineLock } =
+				await freshModule();
+
+			const result = acquireCueEngineLock('desktop');
+			expect(result.acquired).toBe(false);
+			if (!result.acquired) expect(result.heldBy.token).toBe('someone-else');
+
+			expect(touchCueEngineLock('desktop')).toBe('lost');
+			releaseCueEngineLock();
+			expect(JSON.parse(fs.readFileSync(lockPath, 'utf-8')).token).toBe('someone-else');
+		});
+	});
+
+	describe('foreign PID namespace', () => {
+		it('is live while its heartbeat is fresh, even though its PID is dead here', async () => {
+			const pid = await deadPid();
+			writeFullLock({ pid, token: 'other-container', pidNsInode: foreignPidNsInode() });
+			const { readCueEngineLock, acquireCueEngineLock } = await freshModule();
+
+			expect(readCueEngineLock()?.token).toBe('other-container');
+			expect(acquireCueEngineLock('desktop').acquired).toBe(false);
+		});
+
+		it('is stale once its heartbeat expires', async () => {
+			const pid = await deadPid();
+			const old = new Date(Date.now() - 10 * 60_000).toISOString();
+			writeFullLock({
+				pid,
+				token: 'other-container',
+				pidNsInode: foreignPidNsInode(),
+				startedAt: old,
+				heartbeatAt: old,
+			});
+			const { readCueEngineLock, acquireCueEngineLock } = await freshModule();
+
+			expect(readCueEngineLock()).toBeNull();
+			expect(acquireCueEngineLock('desktop').acquired).toBe(true);
+		});
+
+		it('cueEngineStop refuses to signal it by PID', async () => {
+			writeFullLock({ pid: 4242, token: 'other-container', pidNsInode: foreignPidNsInode() });
+			const killSpy = vi.spyOn(process, 'kill');
+			const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+			const originalExitCode = process.exitCode;
+			try {
+				const { cueEngineStop } = await import('../../../cli/commands/cue-engine');
+				await cueEngineStop({ waitMs: 0 });
+
+				expect(killSpy).not.toHaveBeenCalledWith(4242, 'SIGTERM');
+				expect(errorSpy).toHaveBeenCalledWith(
+					expect.stringContaining(
+						'The running Cue engine is in a different PID namespace. Cannot safely signal it by PID.'
+					)
+				);
+				expect(process.exitCode).toBe(1);
+			} finally {
+				process.exitCode = originalExitCode;
+				killSpy.mockRestore();
+				errorSpy.mockRestore();
+			}
+		});
+	});
+
+	describe('lock files written before tokens existed', () => {
+		it('treats a tokenless lock naming our PID as ours', async () => {
+			writeFullLock({ pid: process.pid });
+			const { acquireCueEngineLock, touchCueEngineLock, readCueEngineLock } = await freshModule();
+
+			expect(acquireCueEngineLock('standalone').acquired).toBe(true);
+			expect(touchCueEngineLock('standalone')).toBe('held');
+			expect(readCueEngineLock()?.token).toBeDefined();
+		});
+
+		it('treats a tokenless lock naming another live PID as foreign until stale', async () => {
+			const child = spawnLiveProcess();
+			try {
+				await new Promise((resolve) => child.once('spawn', resolve));
+				writeFullLock({ pid: child.pid });
+				const { acquireCueEngineLock, readCueEngineLock, isCueEngineLockOwnedByThisProcess } =
+					await freshModule();
+
+				const lock = readCueEngineLock();
+				expect(lock?.pid).toBe(child.pid);
+				expect(lock && isCueEngineLockOwnedByThisProcess(lock)).toBe(false);
+				expect(acquireCueEngineLock('desktop').acquired).toBe(false);
+
+				const old = new Date(Date.now() - 10 * 60_000).toISOString();
+				writeFullLock({ pid: child.pid, startedAt: old, heartbeatAt: old });
+				expect(acquireCueEngineLock('desktop').acquired).toBe(true);
 			} finally {
 				child.kill();
 			}
