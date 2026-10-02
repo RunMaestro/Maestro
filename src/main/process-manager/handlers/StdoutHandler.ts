@@ -10,7 +10,8 @@ import { matchSshErrorPattern } from '../../parsers/error-patterns';
 import { FALLBACK_CONTEXT_WINDOW, COMBINED_CONTEXT_AGENTS } from '../../../shared/agentConstants';
 import { formatAgentLoginCommand, getAgentLoginCommand } from '../../../shared/agentMetadata';
 import { getOmpModelContextWindow } from '../../agents/omp-model-catalog';
-import type { ManagedProcess, UsageStats, UsageTotals, AgentError } from '../types';
+import { UsageAccumulator } from '../../../shared/maestro-lib/streaming/usage-accumulator';
+import type { ManagedProcess, UsageStats, AgentError } from '../types';
 import type { DataBufferManager } from './DataBufferManager';
 
 interface StdoutHandlerDependencies {
@@ -33,6 +34,16 @@ const MAX_COPILOT_JSON_BUFFER_LENGTH = 1024 * 1024;
  * On the first usage report, it returns the values as-is.
  * On subsequent reports, it computes the delta from the previous totals.
  *
+ * Delegates the actual computation to maestro-lib's shared `UsageAccumulator`
+ * (Plans/maestro-lib-turn-contract.md, section 3) - one instance per process,
+ * lazily created and cached on `managedProcess.usageAccumulator`, matching
+ * this function's own previous per-process lifetime exactly
+ * (`managedProcess.lastUsageTotals`'s lifetime was already the process's).
+ * `lastUsageTotals`/`usageIsCumulative` are still mirrored back onto
+ * `managedProcess` after every call: `plugin-event-listener.ts` and this
+ * file's own test suite read those two fields directly, not through the
+ * accumulator, so they have to keep reflecting its internal state.
+ *
  * @see https://platform.claude.com/docs/en/build-with-claude/prompt-caching
  * @see https://codelynx.dev/posts/calculate-claude-code-context
  */
@@ -49,86 +60,31 @@ function normalizeUsageToDelta(
 		absoluteUsage?: UsageStats['absoluteUsage'];
 	}
 ): typeof usageStats & { absoluteUsage?: UsageStats['absoluteUsage'] } {
-	const totals: UsageTotals = {
-		inputTokens: usageStats.inputTokens,
-		outputTokens: usageStats.outputTokens,
-		cacheReadInputTokens: usageStats.cacheReadInputTokens,
-		cacheCreationInputTokens: usageStats.cacheCreationInputTokens,
-		reasoningTokens: usageStats.reasoningTokens || 0,
-	};
-
-	const last = managedProcess.lastUsageTotals;
-	const cumulativeFlag = managedProcess.usageIsCumulative;
-
-	if (cumulativeFlag === false) {
-		managedProcess.lastUsageTotals = totals;
-		return usageStats;
+	if (!managedProcess.usageAccumulator) {
+		// Preserve the pre-normalization cumulative totals as `absoluteUsage`, but ONLY
+		// for combined-context providers (Codex) whose cumulative total IS the current
+		// window occupancy. This function also runs for Claude Code, which can look
+		// monotonic for the first turns of a session; Claude's TURN TOTALS here are the
+		// CLI's own sum across the turn's internal API calls (token spend), so attaching
+		// them would let the timeline plot spend as context fill.
+		//
+		// Claude Code still gets an `absoluteUsage`, just not from here: its parser
+		// attaches the LAST internal call's usage, which is a genuine occupancy
+		// snapshot (a single call's input cannot exceed the window) and a different
+		// quantity from the cumulative totals COMBINED_CONTEXT_AGENTS providers get
+		// here. `UsageAccumulator` preserves an incoming `absoluteUsage` untouched
+		// whenever it isn't attaching its own, so it can never be overwritten or
+		// double-attached.
+		const attachesAbsolute = COMBINED_CONTEXT_AGENTS.has(managedProcess.toolType as never);
+		managedProcess.usageAccumulator = new UsageAccumulator({
+			attachesAbsoluteUsage: attachesAbsolute,
+		});
 	}
 
-	if (!last) {
-		managedProcess.lastUsageTotals = totals;
-		return usageStats;
-	}
-
-	const delta = {
-		inputTokens: totals.inputTokens - last.inputTokens,
-		outputTokens: totals.outputTokens - last.outputTokens,
-		cacheReadInputTokens: totals.cacheReadInputTokens - last.cacheReadInputTokens,
-		cacheCreationInputTokens: totals.cacheCreationInputTokens - last.cacheCreationInputTokens,
-		reasoningTokens: totals.reasoningTokens - last.reasoningTokens,
-	};
-
-	const isMonotonic =
-		delta.inputTokens >= 0 &&
-		delta.outputTokens >= 0 &&
-		delta.cacheReadInputTokens >= 0 &&
-		delta.cacheCreationInputTokens >= 0 &&
-		delta.reasoningTokens >= 0;
-
-	if (!isMonotonic) {
-		managedProcess.usageIsCumulative = false;
-		managedProcess.lastUsageTotals = totals;
-		return usageStats;
-	}
-
-	managedProcess.usageIsCumulative = true;
-	managedProcess.lastUsageTotals = totals;
-	// Preserve the pre-normalization cumulative totals as `absoluteUsage`, but ONLY
-	// for combined-context providers (Codex) whose cumulative total IS the current
-	// window occupancy. This function also runs for Claude Code, which can look
-	// monotonic for the first turns of a session; Claude's TURN TOTALS here are the
-	// CLI's own sum across the turn's internal API calls (token spend), so attaching
-	// them would let the timeline plot spend as context fill. The first event of a
-	// session returns raw above (no `last` yet) and is already absolute.
-	//
-	// Claude Code still gets an `absoluteUsage`, just not from here: its parser
-	// attaches the LAST internal call's usage, which is a genuine occupancy
-	// snapshot (a single call's input cannot exceed the window) and a different
-	// quantity from the cumulative totals this branch rejects. Every path in this
-	// function preserves an incoming `absoluteUsage` - the three early returns pass
-	// `usageStats` through verbatim, and the spread below re-attaches only for
-	// COMBINED_CONTEXT_AGENTS, which claude-code is not - so it can never be
-	// overwritten or double-attached.
-	const attachesAbsolute = COMBINED_CONTEXT_AGENTS.has(managedProcess.toolType as never);
-	return {
-		...usageStats,
-		inputTokens: delta.inputTokens,
-		outputTokens: delta.outputTokens,
-		cacheReadInputTokens: delta.cacheReadInputTokens,
-		cacheCreationInputTokens: delta.cacheCreationInputTokens,
-		reasoningTokens: delta.reasoningTokens,
-		...(attachesAbsolute
-			? {
-					absoluteUsage: {
-						inputTokens: totals.inputTokens,
-						outputTokens: totals.outputTokens,
-						cacheReadInputTokens: totals.cacheReadInputTokens,
-						cacheCreationInputTokens: totals.cacheCreationInputTokens,
-						reasoningTokens: totals.reasoningTokens,
-					},
-				}
-			: {}),
-	};
+	const normalized = managedProcess.usageAccumulator.normalize(usageStats);
+	managedProcess.lastUsageTotals = managedProcess.usageAccumulator.lastTotals;
+	managedProcess.usageIsCumulative = managedProcess.usageAccumulator.isCumulative;
+	return normalized;
 }
 
 /** Split a buffer of concatenated JSON objects (no newline separators) into individual complete objects and a partial remainder. */
@@ -540,7 +496,16 @@ export class StdoutHandler {
 		// Only check non-JSON lines. Valid JSON lines contain structured agent output
 		// (e.g., assistant messages) whose text content can false-positive match SSH
 		// error patterns like "command not found" when the agent quotes shell commands.
-		if (!managedProcess.errorEmitted && managedProcess.sshRemoteId && parsed === null) {
+		// `!interrupted` for the same reason as the parser branch above: a stopped
+		// turn must not surface as a crash. Whatever a torn-down remote writes on
+		// its way out, raising it here would arm recovery for a turn the user
+		// deliberately abandoned.
+		if (
+			!managedProcess.errorEmitted &&
+			!managedProcess.interrupted &&
+			managedProcess.sshRemoteId &&
+			parsed === null
+		) {
 			const sshError = matchSshErrorPattern(line);
 			if (sshError) {
 				managedProcess.errorEmitted = true;
