@@ -219,9 +219,12 @@ export async function handleProcessSpawn(
 
 	// ========================================================================
 	// Launch plan (shared with Cue and the CLI): where this agent runs and the
-	// env vars Maestro sets on it, in the five-layer order
-	//   process.env < provider defaults < global < (agent's own ?? provider-level)
-	//   < read-only overrides.
+	// env vars Maestro sets on it:
+	//   provider defaults < (agent's own ?? provider-level) < read-only overrides.
+	// The global Settings vars are not in that record. For a local process they
+	// are handed to the process manager separately (`shellEnvVars`), which
+	// applies them BENEATH it. For an SSH remote, `wrapSpawnForSsh` merges them
+	// beneath the record into the remote environment, as `rc` does.
 	// Planned BEFORE anything with a side effect (MCP temp dirs, the permission
 	// relay, system prompt files), so an SSH remote that cannot be resolved fails
 	// the spawn up front instead of silently running the agent on this machine.
@@ -232,6 +235,7 @@ export async function handleProcessSpawn(
 	let effectiveCustomEnvVars: Record<string, string> | undefined;
 	if (config.toolType !== 'terminal') {
 		const planResult = buildAgentLaunchPlan({
+			surface: 'desktop',
 			agent: agent ?? undefined,
 			command: config.sessionCustomPath || agent?.path || config.command,
 			args: finalArgs,

@@ -31,6 +31,7 @@ function codex(): AgentLaunchInput['agent'] {
 
 function input(overrides: Partial<AgentLaunchInput> = {}): AgentLaunchInput {
 	return {
+		surface: 'desktop',
 		agent: codex(),
 		command: '/usr/local/bin/codex',
 		args: ['exec', '--json'],
@@ -140,7 +141,31 @@ describe('buildAgentLaunchPlan', () => {
 		expect(plan.env?.GLOBAL).toBe('g');
 		expect(plan.env?.SESSION).toBe('s');
 		expect(plan.env?.MAESTRO_QUERY_SOURCE).toBe('auto');
-		expect(plan.envVars).toEqual({ GLOBAL: 'g', SESSION: 's' });
+		// The global Settings vars reach the local process but are not part of
+		// the record Maestro sets: that record also crosses to an SSH remote.
+		expect(plan.envVars).toEqual({ SESSION: 's' });
+	});
+
+	it('builds the environment by the rules of the launching surface', () => {
+		process.env.SHELL_SET = 'from-shell';
+		const agent = { defaultEnvVars: { SHELL_SET: 'from-default' } };
+		const planned = (surface: AgentLaunchInput['surface']) => {
+			const result = buildAgentLaunchPlan(
+				input({ surface, agent, globalShellEnvVars: { GLOBAL: 'g' } })
+			);
+			if (!result.ok) throw new Error(result.error);
+			return result.plan.env;
+		};
+
+		// Desktop and Cue put a provider default over the inherited value; the
+		// CLI lets the shell that ran the command keep its own.
+		expect(planned('desktop')?.SHELL_SET).toBe('from-default');
+		expect(planned('cue')?.SHELL_SET).toBe('from-default');
+		expect(planned('cli')?.SHELL_SET).toBe('from-shell');
+		// Settings -> Environment is a desktop layer.
+		expect(planned('desktop')?.GLOBAL).toBe('g');
+		expect(planned('cue')?.GLOBAL).toBeUndefined();
+		expect(planned('cli')?.GLOBAL).toBeUndefined();
 	});
 
 	it('plans stdin delivery on a Windows host: prompt on stdin, not in argv', () => {
@@ -152,12 +177,25 @@ describe('buildAgentLaunchPlan', () => {
 		expect(result.plan.stdin).toBe('fix the bug');
 	});
 
+	it.each(['cli', 'cue'] as const)(
+		'keeps the prompt on the command line on a Windows host for the %s surface',
+		(surface) => {
+			const result = buildAgentLaunchPlan(input({ surface, isWindowsHost: true }));
+
+			if (!result.ok) throw new Error(result.error);
+			expect(result.plan.args).toEqual(['exec', '--json', '--', 'fix the bug']);
+			expect(result.plan.prompt.via).toBe('argv');
+			expect(result.plan.stdin).toBeUndefined();
+		}
+	);
+
 	it('plans a remote launch: bare binary name, no local env, remote env record', () => {
 		const result = buildAgentLaunchPlan(
 			input({
 				sshRemoteConfig: { enabled: true, remoteId: 'remote-1' },
 				sshStore: storeWith(remote()),
 				globalShellEnvVars: { GLOBAL: 'g' },
+				sessionCustomEnvVars: { SESSION: 's' },
 				readOnlyMode: true,
 			})
 		);
@@ -170,7 +208,9 @@ describe('buildAgentLaunchPlan', () => {
 		expect(plan.args).toEqual(['exec', '--json']);
 		expect(plan.prompt).toEqual({ via: 'ssh' });
 		expect(plan.env).toBeUndefined();
-		expect(plan.envVars).toEqual({ GLOBAL: 'g' });
+		// Settings -> Environment is not in the plan's record. (Desktop's SSH
+		// wrapper still merges it beneath this record on the remote, as `rc` does.)
+		expect(plan.envVars).toEqual({ SESSION: 's' });
 	});
 
 	it('applies the provider defaults, batch vars and read-only overrides from the definition', () => {

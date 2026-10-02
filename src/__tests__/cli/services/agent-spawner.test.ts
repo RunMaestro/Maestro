@@ -170,12 +170,10 @@ vi.mock('os', async () => {
 const mockGetAgentCustomPath = vi.fn();
 const mockReadAgentConfig = vi.fn<(toolType: string) => Record<string, unknown>>(() => ({}));
 const mockReadSshRemotes = vi.fn<() => unknown[]>(() => []);
-const mockReadGlobalShellEnvVars = vi.fn((): Record<string, string> => ({}));
 vi.mock('../../../cli/services/storage', () => ({
 	getAgentCustomPath: (...args: unknown[]) => mockGetAgentCustomPath(...args),
 	readAgentConfig: (toolType: string) => mockReadAgentConfig(toolType),
 	readSshRemotes: () => mockReadSshRemotes(),
-	readGlobalShellEnvVars: () => mockReadGlobalShellEnvVars(),
 }));
 
 // Mock SSH wrapper so SSH tests don't need real ssh/bash on the test machine
@@ -222,7 +220,6 @@ describe('agent-spawner', () => {
 				enabled: true,
 			},
 		]);
-		mockReadGlobalShellEnvVars.mockReturnValue({});
 		mockWrapSpawnWithSsh.mockReset();
 		pathProbeResolver = DEFAULT_PATH_PROBE;
 		// The host decides how a prompt travels: on Windows an agent that reads
@@ -1951,13 +1948,9 @@ Some text with [x] in it that's not a checkbox
 			expect(result.agentSessionId).toBe('sess-soft');
 		});
 
-		it('lets a global Settings var turn CLAUDE_CODE_DISABLE_BACKGROUND_TASKS off', async () => {
-			// The provider default outranks whatever the shell inherited (the order
-			// desktop has always used), and the global Settings layer outranks the
-			// default, so Settings -> Environment is where a user switches it off.
+		it('should let a pre-set CLAUDE_CODE_DISABLE_BACKGROUND_TASKS from shell env win', async () => {
 			// `isolateAgentEnv` restores the real value after the test.
 			process.env.CLAUDE_CODE_DISABLE_BACKGROUND_TASKS = '0';
-			mockReadGlobalShellEnvVars.mockReturnValue({ CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '0' });
 
 			const resultPromise = spawnAgent('claude-code', '/project', 'prompt');
 			await new Promise((resolve) => setTimeout(resolve, 0));
@@ -2697,34 +2690,24 @@ Some text with [x] in it that's not a checkbox
 			expect(options.env.MAESTRO_TEST_LAYER).toBe('session');
 		});
 
-		it('agent defaultEnvVars override a value inherited from the shell', async () => {
-			// The shared five-layer order: process.env < provider defaults <
-			// global Settings < agent vars. Desktop and Cue apply the default over
-			// an inherited value, so the CLI does too; the CLI used to let the
-			// shell win, which made the same agent run differently from the
-			// command line. OpenCode's default keeps its question tool off, which a
-			// batch run needs to avoid hanging on stdin.
+		it('shell env wins over agent defaultEnvVars when user has no customEnvVars', async () => {
+			// Regression: agent.defaultEnvVars must NOT silently override a value
+			// the shell already exports. OpenCode has OPENCODE_CONFIG_CONTENT in
+			// its defaultEnvVars - if the shell sets it, that shell value should
+			// survive to the spawned process.
 			// `isolateAgentEnv` restores the real value after the test.
-			process.env.OPENCODE_CONFIG_CONTENT = 'inherited';
+			process.env.OPENCODE_CONFIG_CONTENT = 'shell-wins';
 
 			const p = spawnAgent('opencode', '/p', 'hi');
 			await driveSpawnToCompletion(p, 0);
 
 			const { options } = spawnCall();
-			expect(options.env.OPENCODE_CONFIG_CONTENT).toContain('"permission"');
+			expect(options.env.OPENCODE_CONFIG_CONTENT).toBe('shell-wins');
 		});
 
-		it('global Settings vars override agent defaultEnvVars', async () => {
-			mockReadGlobalShellEnvVars.mockReturnValue({ OPENCODE_CONFIG_CONTENT: 'from-settings' });
-
-			const p = spawnAgent('opencode', '/p', 'hi');
-			await driveSpawnToCompletion(p, 0);
-
-			const { options } = spawnCall();
-			expect(options.env.OPENCODE_CONFIG_CONTENT).toBe('from-settings');
-		});
-
-		it('strips the Electron vars a CLI spawn inherits', async () => {
+		it('passes the inherited environment through without stripping it', async () => {
+			// The CLI runs from the user's own shell, not from Electron, so what
+			// that shell exported reaches the agent as it is.
 			const saved = process.env.ELECTRON_RUN_AS_NODE;
 			process.env.ELECTRON_RUN_AS_NODE = '1';
 			try {
@@ -2732,7 +2715,7 @@ Some text with [x] in it that's not a checkbox
 				await driveSpawnToCompletion(p, 0);
 
 				const { options } = spawnCall();
-				expect(options.env.ELECTRON_RUN_AS_NODE).toBeUndefined();
+				expect(options.env.ELECTRON_RUN_AS_NODE).toBe('1');
 			} finally {
 				if (saved === undefined) delete process.env.ELECTRON_RUN_AS_NODE;
 				else process.env.ELECTRON_RUN_AS_NODE = saved;

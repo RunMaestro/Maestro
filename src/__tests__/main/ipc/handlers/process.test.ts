@@ -742,10 +742,11 @@ describe('process IPC handlers', () => {
 			});
 		});
 
-		it('lets a global Settings var override a provider default, and the agent override both', async () => {
-			// The shared five-layer order: defaults < global < agent vars. Before the
-			// launch plan, provider defaults outranked Settings -> Environment, so a
-			// user could not switch CLAUDE_CODE_DISABLE_BACKGROUND_TASKS off there.
+		it('keeps a provider default above a global Settings var, and the agent above both', async () => {
+			// Desktop order: global < provider defaults < agent vars. The record the
+			// process manager gets as `customEnvVars` holds the defaults and the
+			// agent's vars; the global vars travel beside it as `shellEnvVars`, and
+			// the spawner applies them beneath that record.
 			mockAgentDetector.getAgent.mockResolvedValue({
 				id: 'claude-code',
 				requiresPty: false,
@@ -774,8 +775,12 @@ describe('process IPC handlers', () => {
 
 			const spawnConfig = mockProcessManager.spawn.mock.calls[0][0];
 			expect(spawnConfig.customEnvVars).toMatchObject({
-				CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '0',
+				CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1',
 				OTHER_DEFAULT: 'agent',
+			});
+			expect(spawnConfig.shellEnvVars).toEqual({
+				CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '0',
+				OTHER_DEFAULT: 'global',
 			});
 		});
 
