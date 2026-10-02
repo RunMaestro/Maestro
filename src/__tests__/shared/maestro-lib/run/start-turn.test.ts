@@ -312,6 +312,28 @@ describe('startTurn', () => {
 		expect(lines).toContain('short');
 	});
 
+	it('frames no lines for a caller that takes only the raw stream', async () => {
+		// Desktop chat frames the stream itself. With nobody to hand a line to,
+		// nothing is buffered, so a stream that never ends a line costs nothing
+		// and nothing is reported as dropped.
+		let raw = '';
+		let reported = 0;
+
+		const turn = startTurn(
+			fakeAgentSpec(scratch.dir, {
+				chunks: ['y'.repeat(8192)],
+				close: { code: 0, signal: null },
+			}),
+			{ onStdout: (text) => (raw += text), onOversizedLine: (dropped) => (reported += dropped) },
+			{ ...OPTIONS, maxLineLength: 1024 }
+		);
+		const exit = await turn.done;
+
+		expect(raw).toHaveLength(8192);
+		expect(exit.droppedOutputBytes).toBe(0);
+		expect(reported).toBe(0);
+	});
+
 	it('buffers a line of any length when no limit is set', async () => {
 		const { lines, handlers } = recorder();
 		const long = 'z'.repeat(2 * 1024 * 1024);
