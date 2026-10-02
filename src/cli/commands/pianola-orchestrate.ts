@@ -223,9 +223,14 @@ async function runSandbox(task: PianolaTask): Promise<PianolaSandboxObservation>
 		translatePianolaSandboxPath(spec.target),
 		'--timeout',
 		String(spec.timeoutSeconds ?? 120),
+		// Leads name artifacts relative to the root; the runner wants absolute sandbox paths.
 		...(spec.artifacts ?? []).flatMap((artifact) => [
 			'--artifact',
-			translatePianolaSandboxPath(artifact),
+			translatePianolaSandboxPath(
+				/^[a-zA-Z]:[\\/]|^\//.test(artifact)
+					? artifact
+					: `${spec.target.replace(/[\\/]+$/, '')}/${artifact}`
+			),
 		]),
 		'--',
 		...spec.command,
@@ -564,8 +569,19 @@ export function pianolaPlanSet(options: PianolaPlanSetOptions): void {
 		return;
 	}
 
+	const existingPlans = readPianolaPlans();
+	// A plan whose tasks have run is history (its run ids and verified rows hang off it);
+	// a new handoff that reuses the id must pick a fresh one instead of overwriting it.
+	const started = existingPlans.find(
+		(p) => p.id === plan.id && p.tasks.some((task) => task.status !== 'pending')
+	);
+	if (started) {
+		return fail(
+			`Plan "${plan.id}" has already started (${started.title}); save the new plan under a new id`
+		);
+	}
 	try {
-		assertOneActivePlanPerProgram(plan, readPianolaPlans());
+		assertOneActivePlanPerProgram(plan, existingPlans);
 	} catch (error) {
 		return fail(error instanceof Error ? error.message : String(error));
 	}

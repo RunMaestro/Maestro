@@ -65,14 +65,19 @@ export class MaestroClient {
 			throw new Error('Maestro desktop app is not running');
 		}
 
-		if (!isCliServerRunning()) {
+		// The pid in the discovery file belongs to the desktop's host; from an SSH remote it
+		// is meaningless, so the authenticated WebSocket is the only reachability check there.
+		if (!process.env.MAESTRO_CLI_HOST?.trim() && !isCliServerRunning()) {
 			throw new Error('Maestro discovery file is stale (app may have crashed)');
 		}
 
 		// Use 127.0.0.1 instead of `localhost` - Node 18's default DNS resolution
 		// resolves `localhost` to IPv6 (::1) first, but the desktop app binds to
 		// 0.0.0.0 (IPv4 only), so `localhost` yields ECONNREFUSED on ::1.
-		const url = `ws://127.0.0.1:${info.port}/${info.token}/ws`;
+		// A role agent running on an SSH remote (WSL) reaches the desktop over the host's
+		// LAN address instead; MAESTRO_CLI_HOST is set only in that remote's environment.
+		const host = process.env.MAESTRO_CLI_HOST?.trim() || '127.0.0.1';
+		const url = `ws://${host}:${info.port}/${info.token}/ws`;
 
 		return new Promise<void>((resolve, reject) => {
 			let settled = false;

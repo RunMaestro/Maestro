@@ -62,3 +62,20 @@ def test_missing_claimed_artifact_is_a_candidate_failure(tmp_path):
     assert result["observed"] is True
     assert result["returncode"] == 1
     assert "answer.txt" in result["stderr"]
+
+
+def test_go_caches_are_writable_and_offline(tmp_path):
+    """`go test` must run with a scratch build cache, the host module cache read-only, and no network."""
+    result = observe(tmp_path, "sh", "-c", "printf '%s %s %s\\n' \"$GOCACHE\" \"$GOPROXY\" \"$GOTOOLCHAIN\"")
+    assert result["observed"] is True
+    assert result["stdout"].split() == ["/tmp/go-build", "off", "auto"]
+
+
+def test_bare_python_prefers_the_project_venv(tmp_path):
+    """A project's own virtualenv holds its test dependencies; the system python has none of them."""
+    venv = tmp_path / ".venv"
+    subprocess.run([sys.executable, "-m", "venv", "--without-pip", str(venv)], check=True)
+    result = observe(tmp_path, "python3", "-c", "import sys; print(sys.prefix)")
+    assert result["observed"] is True, result
+    assert result["returncode"] == 0, result
+    assert result["stdout"].strip() == "/workspace/.venv"
