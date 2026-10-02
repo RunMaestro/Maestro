@@ -75,6 +75,8 @@ export async function validateCueBundle(
 	const warnings: CueBundleValidationIssue[] = [];
 	const error = (code: string, message: string, file?: string) =>
 		errors.push(file ? { code, message, file } : { code, message });
+	const warn = (code: string, message: string, file?: string) =>
+		warnings.push(file ? { code, message, file } : { code, message });
 	const done = (manifest?: CueBundleManifest): CueBundleValidationResult => ({
 		valid: errors.length === 0,
 		errors,
@@ -259,6 +261,10 @@ export async function validateCueBundle(
 	}
 
 	// ─── Workspaces' cue.yaml ────────────────────────────────────────────────
+	// Parse every config first: a `source_sub` may name a subscription declared
+	// in another workspace, so the full set of names must exist before any
+	// subscription is checked.
+	const configs: Array<{ key: string; cuePath: string; doc: Record<string, unknown> }> = [];
 	for (const ws of manifest.workspaces) {
 		if (!isRecord(ws) || typeof ws.cueConfig !== 'string') continue;
 		const cuePath = ws.cueConfig;
@@ -279,8 +285,24 @@ export async function validateCueBundle(
 		for (const message of validateCueConfigDocument(doc).errors) {
 			error('cue-config-invalid', message, cuePath);
 		}
-		if (!isRecord(doc)) continue;
+		if (isRecord(doc)) configs.push({ key: String(ws.key), cuePath, doc });
+	}
+	const subsOf = (doc: Record<string, unknown>) =>
+		(Array.isArray(doc.subscriptions)
+			? doc.subscriptions.filter(isRecord)
+			: []) as RawSubscription[];
+	const allSubscriptionNames = new Set(
+		configs.flatMap(({ doc }) =>
+			subsOf(doc).flatMap((sub) => (typeof sub.name === 'string' ? [sub.name] : []))
+		)
+	);
 
+	// An agent bundle carries one agent, so a chain reaching outside it is
+	// expected: the importer wires it to agents it already has. A pipeline
+	// bundle claims to be the whole chain, so the same reference is a hole.
+	const externalRef = manifest.kind === 'maestro-agent' ? warn : error;
+
+	for (const { key, cuePath, doc } of configs) {
 		const owner = isRecord(doc.settings) ? doc.settings.owner_agent_id : undefined;
 		if (typeof owner === 'string' && owner && !knowsAgent(owner)) {
 			error(
@@ -290,8 +312,7 @@ export async function validateCueBundle(
 			);
 		}
 
-		const subs = Array.isArray(doc.subscriptions) ? doc.subscriptions.filter(isRecord) : [];
-		for (const sub of subs as RawSubscription[]) {
+		for (const sub of subsOf(doc)) {
 			const name = typeof sub.name === 'string' ? sub.name : '(unnamed)';
 			const label = `Subscription "${name}"`;
 
@@ -328,7 +349,7 @@ export async function validateCueBundle(
 			}
 			for (const ref of asStringList(sub.source_session)) {
 				if (!knowsAgent(ref)) {
-					error(
+					externalRef(
 						'unknown-agent',
 						`${label} waits on source_session "${ref}", which is not in this bundle`,
 						cuePath
@@ -338,12 +359,21 @@ export async function validateCueBundle(
 			for (const field of ['source_session_ids', 'fan_out_ids'] as const) {
 				for (const id of asStringList(sub[field])) {
 					if (!agentIds.has(id)) {
-						error(
+						externalRef(
 							'unknown-agent',
 							`${label} lists ${field} "${id}", which is not in this bundle`,
 							cuePath
 						);
 					}
+				}
+			}
+			for (const upstream of asStringList(sub.source_sub)) {
+				if (!allSubscriptionNames.has(upstream)) {
+					externalRef(
+						'unknown-subscription',
+						`${label} waits on source_sub "${upstream}", which no subscription in this bundle declares`,
+						cuePath
+					);
 				}
 			}
 
@@ -354,7 +384,7 @@ export async function validateCueBundle(
 			];
 			for (const ref of promptRefs) {
 				requireEntry(
-					`workspaces/${String(ws.key)}/${ref}`,
+					`workspaces/${key}/${ref}`,
 					'prompt-file-missing',
 					`${label} prompt file "${ref}"`,
 					cuePath
