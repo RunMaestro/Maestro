@@ -23,7 +23,7 @@
 /* eslint-disable @typescript-eslint/no-require-imports -- CommonJS by design, see above */
 const os = require('os');
 const path = require('path');
-const { resolveMaestroUserDataDir } = require('../shared/maestroUserDataDir');
+const { resolveUserDataDir } = require('../shared/userDataDir');
 
 const app = {
 	isPackaged: false,
@@ -31,10 +31,10 @@ const app = {
 	getVersion: () =>
 		typeof __MAESTRO_CLI_VERSION__ === 'string' ? __MAESTRO_CLI_VERSION__ : '0.0.0',
 	getPath: (name) => {
-		if (name === 'userData' || name === 'appData') return resolveMaestroUserDataDir();
+		if (name === 'userData' || name === 'appData') return resolveUserDataDir();
 		if (name === 'home') return os.homedir();
 		if (name === 'temp') return os.tmpdir();
-		return path.join(resolveMaestroUserDataDir(), name);
+		return path.join(resolveUserDataDir(), name);
 	},
 };
 
