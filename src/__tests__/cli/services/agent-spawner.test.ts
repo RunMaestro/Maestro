@@ -156,6 +156,13 @@ vi.mock('os', async () => {
 	};
 });
 
+const mockCheckBinaryExists =
+	vi.fn<(_binary: string) => Promise<{ exists: boolean; path?: string }>>();
+vi.mock('../../../main/agents/path-prober', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../main/agents/path-prober')>()),
+	checkBinaryExists: (binary: string) => mockCheckBinaryExists(binary),
+}));
+
 // Mock storage service
 const mockGetAgentCustomPath = vi.fn();
 const mockReadAgentConfig = vi.fn<(toolType: string) => Record<string, unknown>>(() => ({}));
@@ -196,6 +203,8 @@ describe('agent-spawner', () => {
 		mockGetAgentCustomPath.mockReturnValue(undefined);
 		mockReadAgentConfig.mockReturnValue({});
 		mockReadSshRemotes.mockReturnValue([]);
+		mockCheckBinaryExists.mockReset();
+		mockCheckBinaryExists.mockResolvedValue({ exists: false });
 		mockWrapSpawnWithSsh.mockReset();
 		pathProbeResolver = DEFAULT_PATH_PROBE;
 	});
@@ -867,20 +876,15 @@ Some text with [x] in it that's not a checkbox
 		it('should fall back to PATH detection when custom path is invalid', async () => {
 			mockGetAgentCustomPath.mockReturnValue('/invalid/path');
 			vi.mocked(fs.promises.stat).mockRejectedValue(new Error('ENOENT'));
-			mockSpawn.mockReturnValue(mockChild);
+			mockCheckBinaryExists.mockResolvedValue({ exists: true, path: '/usr/local/bin/codex' });
 
 			const { detectAgent: freshDetectAgent } = await import('../../../cli/services/agent-spawner');
 
-			const resultPromise = freshDetectAgent('codex');
-			await new Promise((resolve) => setTimeout(resolve, 0));
-			mockStdout.emit('data', Buffer.from('/usr/local/bin/codex\n'));
-			await new Promise((resolve) => setTimeout(resolve, 0));
-			mockChild.emit('close', 0);
-
-			const result = await resultPromise;
+			const result = await freshDetectAgent('codex');
 			expect(result.available).toBe(true);
 			expect(result.path).toBe('/usr/local/bin/codex');
 			expect(result.source).toBe('path');
+			expect(mockCheckBinaryExists).toHaveBeenCalledWith('codex');
 		});
 
 		it('should return unavailable when agent is not found', async () => {
@@ -2572,12 +2576,26 @@ Some text with [x] in it that's not a checkbox
 		});
 
 		it('resolves a JSON-line agent on a cold cache too', async () => {
-			pathProbeResolver = () => '/opt/homebrew/bin/codex';
+			mockCheckBinaryExists.mockResolvedValue({ exists: true, path: '/opt/homebrew/bin/codex' });
 
 			const { spawnAgent: freshSpawnAgent } = await freshSpawner();
 			await driveSpawnToCompletion(freshSpawnAgent('codex', '/p', 'hi'), 0, CODEX_INIT());
 
 			expect(spawnCall().command).toBe('/opt/homebrew/bin/codex');
+		});
+
+		it('selects the desktop Codex binary before the generic PATH probe', async () => {
+			mockCheckBinaryExists.mockResolvedValue({
+				exists: true,
+				path: '/home/user/.local/bin/codex',
+			});
+			pathProbeResolver = () => '/home/user/.nvm/bin/codex';
+
+			const { spawnAgent: freshSpawnAgent } = await freshSpawner();
+			await driveSpawnToCompletion(freshSpawnAgent('codex', '/p', 'hi'), 0, CODEX_INIT());
+
+			expect(spawnCall().command).toBe('/home/user/.local/bin/codex');
+			expect(mockCheckBinaryExists).toHaveBeenCalledWith('codex');
 		});
 
 		it("honors the user's configured custom path on a cold cache", async () => {
@@ -2592,6 +2610,7 @@ Some text with [x] in it that's not a checkbox
 			await driveSpawnToCompletion(freshSpawnAgent('codex', '/p', 'hi'), 0, CODEX_INIT());
 
 			expect(spawnCall().command).toBe('/custom/bin/codex');
+			expect(mockCheckBinaryExists).not.toHaveBeenCalled();
 		});
 
 		it('falls back to the bare binaryName when nothing resolves', async () => {

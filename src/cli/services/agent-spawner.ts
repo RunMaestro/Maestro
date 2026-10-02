@@ -15,7 +15,7 @@ import { createOutputParser } from '../../main/parsers/parser-factory';
 import { aggregateModelUsage } from '../../main/parsers/usage-aggregator';
 import { getAgentDefinition } from '../../main/agents/definitions';
 import { hasCapability } from '../../main/agents/capabilities';
-import { checkCustomPath } from '../../main/agents/path-prober';
+import { checkBinaryExists, checkCustomPath } from '../../main/agents/path-prober';
 import { getAgentCustomPath, readAgentConfig, readSshRemotes } from './storage';
 import { generateUUID } from '../../shared/uuid';
 import {
@@ -405,8 +405,13 @@ export async function detectAgent(toolType: ToolType): Promise<DetectResult> {
 		);
 	}
 
-	// 2. Fall back to PATH detection
-	const pathResult = await findCommandInPath(defaultCommand);
+	// 2. Match the desktop's Codex selection. Its known-path probe prefers the
+	// standalone ~/.local/bin install before an older nvm-managed npm binary;
+	// the generic expanded-PATH probe reverses that order in packaged Maestro.
+	const pathResult =
+		toolType === 'codex'
+			? (await checkBinaryExists(defaultCommand)).path
+			: await findCommandInPath(defaultCommand);
 	if (pathResult) {
 		cachedPaths.set(toolType, pathResult);
 		return { available: true, path: pathResult, source: 'path' };
