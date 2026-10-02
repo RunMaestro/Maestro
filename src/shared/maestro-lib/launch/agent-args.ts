@@ -1,6 +1,6 @@
 import type { AgentConfig, AgentDefinition } from '../providers/definitions';
 import type { AdditionalDirectory } from '../../types';
-import { logger } from '../../../main/utils/logger';
+import { logger } from '../host';
 
 /** Fields applyAgentConfigOverrides actually reads. Accepting this narrower
  * shape lets CLI callers pass AgentDefinition (no capabilities/available). */

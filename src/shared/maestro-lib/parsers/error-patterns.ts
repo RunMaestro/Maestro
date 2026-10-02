@@ -24,7 +24,7 @@
  */
 
 import { setErrorPatternLogSink } from '../../agentErrorPatterns';
-import { logger } from '../../../main/utils/logger';
+import { logger } from '../host';
 
 // Installed on import, before any consumer can call into the bank: main keeps
 // the diagnostics it has always emitted, and the renderer (which never imports

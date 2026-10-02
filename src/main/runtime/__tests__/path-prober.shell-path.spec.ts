@@ -8,7 +8,7 @@ vi.mock('../../../shared/maestro-lib/launch/getShellPath', () => ({
 	getShellPath: vi.fn(),
 }));
 
-vi.mock('../../../main/utils/execFile', () => ({
+vi.mock('../../../shared/maestro-lib/launch/exec-file', () => ({
 	execFileNoThrow: vi.fn(),
 }));
 

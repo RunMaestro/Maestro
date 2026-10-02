@@ -25,7 +25,7 @@
 
 import type { ToolType, AgentError } from '../../types';
 import type { AgentOutputParser, ParsedEvent } from './agent-output-parser';
-import { captureException } from '../../../main/utils/sentry';
+import { captureException } from '../host';
 import { getErrorPatterns, matchErrorPattern } from './error-patterns';
 import * as fs from 'fs';
 import * as path from 'path';

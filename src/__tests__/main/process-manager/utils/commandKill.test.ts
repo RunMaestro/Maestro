@@ -20,7 +20,7 @@ const { mockExecFileSync, mockExecFile, mockIsWindows } = vi.hoisted(() => ({
 	mockIsWindows: vi.fn(() => false),
 }));
 
-vi.mock('../../../../main/utils/execFile', () => ({
+vi.mock('../../../../shared/maestro-lib/launch/exec-file', () => ({
 	execFileSyncNoThrow: mockExecFileSync,
 	execFileNoThrow: mockExecFile,
 }));
