@@ -463,9 +463,14 @@ function resolveId(partialId: string, allIds: string[]): IdResolution {
 /**
  * Resolve an agent ID (partial or full)
  * Throws if ambiguous or not found
+ *
+ * `sessions` defaults to the agents in Maestro's data directory; pass a list
+ * read from somewhere else (`bundle export --data-dir`) to resolve against it.
  */
-export function resolveAgentId(partialId: string): string {
-	const sessions = readSessions();
+export function resolveAgentId(
+	partialId: string,
+	sessions: SessionInfo[] = readSessions()
+): string {
 	const allIds = sessions.map((s) => s.id);
 	const resolution = resolveId(partialId, allIds);
 

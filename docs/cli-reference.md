@@ -164,17 +164,18 @@ Show detailed information about a playbook
 
 Run a playbook
 
-| Option              | Description                                                                   | Default |
-| ------------------- | ----------------------------------------------------------------------------- | ------- |
-| `--dry-run`         | Show what would be executed without running                                   | -       |
-| `--no-history`      | Do not write history entries                                                  | -       |
-| `--json`            | Output as JSON lines (for scripting)                                          | -       |
-| `--debug`           | Show detailed debug output for troubleshooting                                | -       |
-| `--verbose`         | Show full prompt sent to agent on each iteration                              | -       |
-| `--no-synopsis`     | Skip synopsis generation after each task (reduces overhead)                   | -       |
-| `--wait`            | Wait for agent to become available if busy                                    | -       |
-| `--model <model>`   | Model to use for this run only, overriding the agent's configured default     | -       |
-| `--effort <effort>` | Reasoning effort for this run only, overriding the agent's configured default | -       |
+| Option                 | Description                                                                                                 | Default |
+| ---------------------- | ----------------------------------------------------------------------------------------------------------- | ------- |
+| `--dry-run`            | Show what would be executed without running                                                                 | -       |
+| `--no-history`         | Do not write history entries                                                                                | -       |
+| `--json`               | Output as JSON lines (for scripting)                                                                        | -       |
+| `--debug`              | Show detailed debug output for troubleshooting                                                              | -       |
+| `--verbose`            | Show full prompt sent to agent on each iteration                                                            | -       |
+| `--no-synopsis`        | Skip synopsis generation after each task (reduces overhead)                                                 | -       |
+| `--wait`               | Wait for agent to become available if busy                                                                  | -       |
+| `--model <model>`      | Model to use for this run only, overriding the agent's configured default                                   | -       |
+| `--effort <effort>`    | Reasoning effort for this run only, overriding the agent's configured default                               | -       |
+| `--ignore-model-hints` | Ignore MAESTRO:MODEL markers in the documents and run every task at --model/--effort (or the agent default) | -       |
 
 ## `maestro-cli goal-run <agent-id> <goal>`
 
@@ -196,22 +197,23 @@ Launch a Goal-Driven Auto Run: pursue a free-text goal until done
 
 Run one or more Auto Run documents headlessly (no saved playbook required)
 
-| Option                  | Description                                                                   | Default |
-| ----------------------- | ----------------------------------------------------------------------------- | ------- |
-| `-a, --agent <id>`      | Target agent by ID or name (use "maestro-cli list agents" to find agents)     | -       |
-| `-p, --prompt <text>`   | Custom prompt for the run (defaults to the Auto Run prompt)                   | -       |
-| `--loop`                | Enable looping                                                                | -       |
-| `--max-loops <n>`       | Maximum loop count (implies --loop)                                           | -       |
-| `--reset-on-completion` | Enable reset-on-completion for all documents                                  | -       |
-| `--dry-run`             | Show what would be executed without running                                   | -       |
-| `--no-history`          | Do not write history entries                                                  | -       |
-| `--json`                | Output as JSON lines (for scripting)                                          | -       |
-| `--debug`               | Show detailed debug output for troubleshooting                                | -       |
-| `--verbose`             | Show full prompt sent to agent on each iteration                              | -       |
-| `--no-synopsis`         | Skip synopsis generation after each task (reduces overhead)                   | -       |
-| `--wait`                | Wait for agent to become available if busy                                    | -       |
-| `--model <model>`       | Model to use for this run only, overriding the agent's configured default     | -       |
-| `--effort <effort>`     | Reasoning effort for this run only, overriding the agent's configured default | -       |
+| Option                  | Description                                                                                                 | Default |
+| ----------------------- | ----------------------------------------------------------------------------------------------------------- | ------- |
+| `-a, --agent <id>`      | Target agent by ID or name (use "maestro-cli list agents" to find agents)                                   | -       |
+| `-p, --prompt <text>`   | Custom prompt for the run (defaults to the Auto Run prompt)                                                 | -       |
+| `--loop`                | Enable looping                                                                                              | -       |
+| `--max-loops <n>`       | Maximum loop count (implies --loop)                                                                         | -       |
+| `--reset-on-completion` | Enable reset-on-completion for all documents                                                                | -       |
+| `--dry-run`             | Show what would be executed without running                                                                 | -       |
+| `--no-history`          | Do not write history entries                                                                                | -       |
+| `--json`                | Output as JSON lines (for scripting)                                                                        | -       |
+| `--debug`               | Show detailed debug output for troubleshooting                                                              | -       |
+| `--verbose`             | Show full prompt sent to agent on each iteration                                                            | -       |
+| `--no-synopsis`         | Skip synopsis generation after each task (reduces overhead)                                                 | -       |
+| `--wait`                | Wait for agent to become available if busy                                                                  | -       |
+| `--model <model>`       | Model to use for this run only, overriding the agent's configured default                                   | -       |
+| `--effort <effort>`     | Reasoning effort for this run only, overriding the agent's configured default                               | -       |
+| `--ignore-model-hints`  | Ignore MAESTRO:MODEL markers in the documents and run every task at --model/--effort (or the agent default) | -       |
 
 ## `maestro-cli clean`
 
@@ -237,35 +239,6 @@ Send a message to an agent and get a JSON response
 | `-t, --tab`          | Open/focus the session tab in Maestro desktop                                                                                                           | -       |
 | `--no-system-prompt` | Skip the Maestro system prompt (agent identity, git branch, history path, conductor profile). Default is to include it for parity with the desktop app. | -       |
 
-## `maestro-cli ask <agent-id> <question>`
-
-Ask another agent a question and print its answer (background consult - never touches the target's open conversation)
-
-`ask` and `dispatch` are not interchangeable. `ask` asks a QUESTION: it runs the same
-consult a typed `@mention` runs - a hidden tab on the target, a fresh context, no focus,
-no unread - and prints the answer on stdout. `dispatch` hands over WORK: the prompt lands
-in a real tab, so it appears mid-conversation in whatever the user has open with that
-agent, and you get a tab id back instead of an answer.
-
-| Option                | Description                                                                                                                                                                            | Default |
-| --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
-| `--from <agent-id>`   | Your own agent id. Names the consult on the target, keeps continuity across repeat asks, forwards your working directory so it can read your project, and lets Stop cancel the consult | -       |
-| `--with-context`      | Forward your current transcript as context. Off by default: ask sends a self-contained question in a fresh context                                                                     | -       |
-| `--timeout <seconds>` | How long to wait for the answer (min 10, max 3600)                                                                                                                                     | 600     |
-| `--json`              | Output the answer as JSON                                                                                                                                                              | -       |
-
-```bash
-# Ask another agent how it solved something, from inside your own turn
-maestro-cli ask "Substrate PedTome" "How does your /GUID + password gate work? Is the
-password compared as a hash, and is the cookie the credential or a signed token?" \
-  --from $MY_AGENT_ID
-```
-
-The question must stand on its own - the target sees no transcript unless you pass
-`--with-context`. The exchange is persisted to a hidden consult tab on the target and
-recorded in its History, attributed to `--from`, so the user can read what was asked
-without it ever interrupting them.
-
 ## `maestro-cli dispatch <agent-id> <message>`
 
 Dispatch a prompt to an agent in the Maestro desktop app and return its tab/session ID
@@ -283,6 +256,17 @@ Dispatch a prompt to an agent in the Maestro desktop app and return its tab/sess
 | `--callback-tab <id>`             | Specific tab of the --notify-on-complete agent to wake (default: its active AI tab)                                                                                                                                                                                                                            | -       |
 | `--callback-prompt <text>`        | Override the callback prompt body. \{\{DISPATCH_STATUS\}\}, \{\{DISPATCH_TAB_ID\}\}, \{\{DISPATCH_TARGET_ID\}\}, \{\{DISPATCH_OUTPUT\}\}, \{\{DISPATCH_DURATION\}\}, \{\{DISPATCH_TASKS_COMPLETED\}\}, \{\{DISPATCH_TASKS_TOTAL\}\}, \{\{DISPATCH_PROMPT\}\} and \{\{DISPATCH_CALLBACK_ID\}\} are substituted. | -       |
 | `--callback-timeout <seconds>`    | Give up and fire a timeout callback after this long (default 3600, max 86400)                                                                                                                                                                                                                                  | -       |
+
+## `maestro-cli ask <agent-id> <question>`
+
+Ask another agent a question and print its answer (background consult - never touches the target's open conversation)
+
+| Option                | Description                                                                                                                                                                                                                                  | Default |
+| --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| `--from <agent-id>`   | Your own agent id. Names the consult on the target, keeps continuity across repeat asks, forwards your working directory so it can read your project, and lets Stop cancel the consult. Defaults to the agent this runs under inside Maestro | -       |
+| `--with-context`      | Forward your current transcript as context. Off by default: ask sends a self-contained question in a fresh context                                                                                                                           | -       |
+| `--timeout <seconds>` | How long to wait for the answer (default 600, min 10, max 3600)                                                                                                                                                                              | -       |
+| `--json`              | Output the answer as JSON                                                                                                                                                                                                                    | -       |
 
 ## `maestro-cli queue`
 
@@ -310,7 +294,7 @@ Park a tab until later, and manage what is parked
 
 ## `maestro-cli snooze tab <tab-id> <when>`
 
-Snooze a tab or tiled group until &lt;when&gt; (e.g. 2h, tomorrow, "next fri 3pm")
+Snooze a tab or tiled group until &lt;when> (e.g. 2h, tomorrow, "next fri 3pm")
 
 | Option                     | Description                                                                                                     | Default |
 | -------------------------- | --------------------------------------------------------------------------------------------------------------- | ------- |
@@ -364,10 +348,10 @@ Move a snooze to a new time, optionally rewriting its note or wake prompt
 
 Snoozes that have already resolved - woken, unsnoozed, or dismissed
 
-| Option        | Description                            | Default |
-| ------------- | -------------------------------------- | ------- |
-| `--limit <n>` | Only show the newest &lt;n&gt; entries | -       |
-| `--json`      | Output as JSON                         | -       |
+| Option        | Description                         | Default |
+| ------------- | ----------------------------------- | ------- |
+| `--limit <n>` | Only show the newest &lt;n> entries | -       |
+| `--json`      | Output as JSON                      | -       |
 
 ## `maestro-cli unsnooze <snooze-id>`
 
@@ -612,6 +596,7 @@ Configure and optionally launch an auto-run with documents
 | `--pr-target-branch <branch>` | Target branch for the PR (defaults to the repo default branch)                                                          | -       |
 | `--model <model>`             | Model to use for this run only, overriding the agent's configured default                                               | -       |
 | `--effort <effort>`           | Reasoning effort for this run only, overriding the agent's configured default                                           | -       |
+| `--ignore-model-hints`        | Ignore MAESTRO:MODEL markers in the documents and run every task at --model/--effort (or the agent default)             | -       |
 
 ## `maestro-cli stop-auto-run`
 
@@ -851,6 +836,61 @@ Remove a pipeline entry by name or id
 | --------- | ------------------------------------------------------------ | ------- |
 | `--force` | Suppress the no-op error when the pipeline is already absent | -       |
 | `--json`  | Output as JSON (for scripting)                               | -       |
+
+## `maestro-cli cue engine`
+
+Run Maestro Cue unattended (no desktop app) and control that runner
+
+## `maestro-cli cue engine start`
+
+Start the Cue engine in this process and block until Ctrl+C / stopped
+
+| Option   | Description                                 | Default |
+| -------- | ------------------------------------------- | ------- |
+| `--json` | Print machine-readable start/failure status | -       |
+
+## `maestro-cli cue engine stop`
+
+Stop a running standalone engine (refuses to signal a desktop-owned one)
+
+| Option           | Description                                            | Default |
+| ---------------- | ------------------------------------------------------ | ------- |
+| `--json`         | Output as JSON (for scripting)                         | -       |
+| `--wait-ms <ms>` | How long to wait for the lock to clear after signaling | -       |
+
+## `maestro-cli cue engine status`
+
+Report whether an engine is running and its last known heartbeat
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+## `maestro-cli cue engine inspect`
+
+List every agent with a readable .maestro/cue.yaml and its subscription counts
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+## `maestro-cli bundle`
+
+Export Cue pipelines and agents as portable bundles
+
+## `maestro-cli bundle export`
+
+Export one Cue pipeline or one agent to a deterministic bundle zip
+
+| Option                     | Description                                                    | Default |
+| -------------------------- | -------------------------------------------------------------- | ------- |
+| `-a, --agent <id-or-name>` | Export this agent (exclusive with --pipeline)                  | -       |
+| `-p, --pipeline <name>`    | Export this Cue pipeline (exclusive with --agent)              | -       |
+| `-o, --output <path>`      | Zip to write (default: ./&lt;name>.maestro-bundle.zip)         | -       |
+| `--allow-inline-secrets`   | Export subscriptions that hold a literal webhook.secret        | -       |
+| `--data-dir <path>`        | Read Maestro's data from this directory instead of the default | -       |
+| `--created-at <iso>`       | Record this ISO-8601 time as the bundle creation time          | -       |
+| `--json`                   | Output as JSON (for scripting)                                 | -       |
 
 ## `maestro-cli director-notes`
 
@@ -1233,64 +1273,29 @@ Create a new SSH remote configuration
 | `--set-default`            | Set as the global default SSH remote                                         | -       |
 | `--json`                   | Output as JSON (for scripting)                                               | -       |
 
-`--ssh-option` passes an option straight to `ssh -o`, overriding Maestro's own
-defaults. It is how a host behind a tunnel is reached without a setting per
-transport - a `ProxyCommand` through tailcat, cloudflared or Teleport, a
-`ProxyJump` bastion, or simply a `ConnectTimeout` longer than the default 10
-seconds. Because a command-line `-o` outranks `~/.ssh/config`, this is also the
-only way to change one of those defaults. `RequestTTY` is reserved: Maestro
-derives it per command from whether the agent speaks stream-json, and a forced
-TTY corrupts that stream.
-
-```bash
-maestro-cli create-ssh-remote "Tunnelled box" \
-  --host tailcat-devbox \
-  --ssh-option "ProxyCommand=/opt/homebrew/bin/tailcat tcXXXX 22" \
-  --ssh-option ConnectTimeout=45
-```
-
 ## `maestro-cli update-ssh-remote <remote-id>`
 
 Update an existing SSH remote configuration
 
-| Option                       | Description                                                    | Default |
-| ---------------------------- | -------------------------------------------------------------- | ------- |
-| `-n, --name <name>`          | Display name                                                   | -       |
-| `-H, --host <host>`          | SSH hostname, IP, or SSH config Host pattern                   | -       |
-| `-p, --port <port>`          | SSH port                                                       | -       |
-| `-u, --username <user>`      | SSH username (empty string clears it)                          | -       |
-| `-k, --key <path>`           | Path to private key file (empty string clears it)              | -       |
-| `--env <KEY=VALUE>`          | Remote environment variable, merged with existing (repeatable) | `[]`    |
-| `--clear-env`                | Remove all remote environment variables before applying --env  | -       |
-| `--disable-env <KEY>`        | Switch an env var off, keeping its value (repeatable)          | `[]`    |
-| `--enable-env <KEY>`         | Switch a previously disabled env var back on (repeatable)      | `[]`    |
-| `--ssh-option <KEY=VALUE>`   | Extra ssh -o option, merged with existing (repeatable)         | `[]`    |
-| `--clear-ssh-options`        | Remove all extra ssh -o options before applying --ssh-option   | -       |
-| `--disable-ssh-option <KEY>` | Switch an ssh -o option off, keeping its value (repeatable)    | `[]`    |
-| `--enable-ssh-option <KEY>`  | Switch a disabled ssh -o option back on (repeatable)           | `[]`    |
-| `--ssh-config <bool>`        | Use ~/.ssh/config for connection settings (true/false)         | -       |
-| `--enabled <bool>`           | Enable or disable this remote (true/false)                     | -       |
-| `--set-default`              | Set as the global default SSH remote                           | -       |
-| `--json`                     | Output as JSON (for scripting)                                 | -       |
-
-Only the fields you pass are changed. `--env` and `--ssh-option` MERGE into what
-is already there, so editing one option does not silently drop the rest; pair
-them with `--clear-env` / `--clear-ssh-options` to start from empty.
-
-`--disable-*` and `--enable-*` are the CLI's spelling of the eye button in the
-SSH remote dialog: the entry keeps its value but stops being passed to `ssh`.
-Disable is applied before enable, so one command can swap which of two keys is
-live. A key that is in neither list is ignored rather than created. Both
-`--clear-*` flags wipe the disabled entries too, since "remove all" that left
-switched-off values behind would leave state a later `--enable-*` could bring
-back.
-
-With `--json`, the output carries `sshOptions` (this remote's overrides),
-`sshOptionsDisabled` / `remoteEnvDisabled` (what is switched off and available
-to turn back on), and `resolvedSshOptions` (the full set `ssh` will actually
-receive, defaults included) - the last is the one that answers "did my
-`ConnectTimeout` take effect?", and disabled entries are deliberately absent
-from it. `list ssh-remotes --json` reports the same fields.
+| Option                       | Description                                                     | Default |
+| ---------------------------- | --------------------------------------------------------------- | ------- |
+| `-n, --name <name>`          | Display name                                                    | -       |
+| `-H, --host <host>`          | SSH hostname, IP, or SSH config Host pattern                    | -       |
+| `-p, --port <port>`          | SSH port                                                        | -       |
+| `-u, --username <user>`      | SSH username (empty string clears it)                           | -       |
+| `-k, --key <path>`           | Path to private key file (empty string clears it)               | -       |
+| `--env <KEY=VALUE>`          | Remote environment variable, merged with existing (repeatable)  | `[]`    |
+| `--clear-env`                | Remove all remote environment variables before applying --env   | -       |
+| `--disable-env <KEY>`        | Switch an env var off, keeping its value (repeatable)           | `[]`    |
+| `--enable-env <KEY>`         | Switch a previously disabled env var back on (repeatable)       | `[]`    |
+| `--ssh-option <KEY=VALUE>`   | Extra ssh -o option, merged with existing (repeatable)          | `[]`    |
+| `--clear-ssh-options`        | Remove all extra ssh -o options before applying --ssh-option    | -       |
+| `--disable-ssh-option <KEY>` | Switch an ssh -o option off, keeping its value (repeatable)     | `[]`    |
+| `--enable-ssh-option <KEY>`  | Switch a previously disabled ssh -o option back on (repeatable) | `[]`    |
+| `--ssh-config <bool>`        | Use ~/.ssh/config for connection settings (true/false)          | -       |
+| `--enabled <bool>`           | Enable or disable this remote (true/false)                      | -       |
+| `--set-default`              | Set as the global default SSH remote                            | -       |
+| `--json`                     | Output as JSON (for scripting)                                  | -       |
 
 ## `maestro-cli remove-ssh-remote <remote-id>`
 
@@ -1304,14 +1309,10 @@ Remove an SSH remote configuration
 
 Test an SSH remote connection and report what the remote answered
 
-Dials the remote with the same options an agent spawn uses and prints the
-remote's hostname, so a wrong `ProxyCommand` is caught at setup rather than
-surfacing later as an agent that will not start. Works with the desktop closed.
-
 | Option                  | Description                                          | Default |
 | ----------------------- | ---------------------------------------------------- | ------- |
 | `-a, --agent <command>` | Also check whether this binary is on the remote PATH | -       |
-| `--timeout <seconds>`   | Give up after this many seconds                      | `60`    |
+| `--timeout <seconds>`   | Give up after this many seconds (default: 60)        | -       |
 | `--json`                | Output as JSON (for scripting)                       | -       |
 
 ## `maestro-cli display`

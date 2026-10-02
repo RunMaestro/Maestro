@@ -65,6 +65,7 @@ import {
 	cueEngineStatus,
 	cueEngineInspect,
 } from './commands/cue-engine';
+import { bundleExport } from './commands/bundle';
 import { createAgent } from './commands/create-agent';
 import { createGroup } from './commands/create-group';
 import { removeGroup } from './commands/remove-group';
@@ -1158,6 +1159,24 @@ cueEngine
 	.description('List every agent with a readable .maestro/cue.yaml and its subscription counts')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(cueEngineInspect);
+
+// Bundle commands - pack a Cue pipeline or one agent into a portable zip.
+// Reads the data directory directly, so these work with the app closed.
+const bundle = program
+	.command('bundle')
+	.description('Export Cue pipelines and agents as portable bundles');
+
+bundle
+	.command('export')
+	.description('Export one Cue pipeline or one agent to a deterministic bundle zip')
+	.option('-a, --agent <id-or-name>', 'Export this agent (exclusive with --pipeline)')
+	.option('-p, --pipeline <name>', 'Export this Cue pipeline (exclusive with --agent)')
+	.option('-o, --output <path>', 'Zip to write (default: ./<name>.maestro-bundle.zip)')
+	.option('--allow-inline-secrets', 'Export subscriptions that hold a literal webhook.secret')
+	.option('--data-dir <path>', "Read Maestro's data from this directory instead of the default")
+	.option('--created-at <iso>', 'Record this ISO-8601 time as the bundle creation time')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => bundleExport(cliVersion, options));
 
 // Director's Notes commands
 const directorNotes = program
