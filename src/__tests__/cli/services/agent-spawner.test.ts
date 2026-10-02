@@ -1228,6 +1228,51 @@ Some text with [x] in it that's not a checkbox
 			expect(result.usageStats?.contextWindow).toBe(300000); // Larger window
 		});
 
+		it('carries the last call occupancy snapshot and resolved window onto usageStats (#1669)', async () => {
+			const resultPromise = spawnAgent('claude-code', '/project', 'prompt');
+
+			await new Promise((resolve) => setTimeout(resolve, 0));
+
+			const lines = [
+				// The last main-transcript API call: its input is the real occupancy.
+				{
+					type: 'assistant',
+					message: {
+						content: [{ type: 'text', text: 'working' }],
+						usage: { input_tokens: 1000, output_tokens: 20, cache_read_input_tokens: 500 },
+					},
+				},
+				// The turn total, which is SPEND and reports a model-provided window.
+				{
+					type: 'result',
+					result: 'Done',
+					modelUsage: {
+						'claude-opus': { inputTokens: 4000, outputTokens: 60, contextWindow: 1_000_000 },
+					},
+					total_cost_usd: 0.1,
+				},
+				// A trailing usage-only message with neither: it must not erase them.
+				{ usage: { input_tokens: 4000, output_tokens: 60 }, total_cost_usd: 0.1 },
+			];
+			mockStdout.emit('data', Buffer.from(lines.map((l) => JSON.stringify(l)).join('\n') + '\n'));
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			mockChild.emit('close', 0);
+
+			const result = await resultPromise;
+
+			expect(result.usageStats?.inputTokens).toBe(4000);
+			expect(result.usageStats?.totalCostUsd).toBe(0.1);
+			expect(result.usageStats?.contextWindow).toBe(1_000_000);
+			expect(result.usageStats?.contextWindowResolved).toBe(true);
+			expect(result.usageStats?.absoluteUsage).toEqual({
+				inputTokens: 1000,
+				outputTokens: 20,
+				cacheReadInputTokens: 500,
+				cacheCreationInputTokens: 0,
+				reasoningTokens: 0,
+			});
+		});
+
 		it('should return error on non-zero exit code', async () => {
 			const resultPromise = spawnAgent('claude-code', '/project', 'prompt');
 
@@ -2157,6 +2202,53 @@ Some text with [x] in it that's not a checkbox
 			const result = await resultPromise;
 			expect(result.usageStats?.inputTokens).toBe(300);
 			expect(result.usageStats?.outputTokens).toBe(30);
+		});
+
+		it('carries Codex occupancy and the reported window onto usageStats (#1669)', async () => {
+			const resultPromise = spawnAgent('codex', '/project', 'prompt');
+			await tick();
+
+			const tokenCount = (input: number, output: number) =>
+				JSON.stringify({
+					type: 'event_msg',
+					payload: {
+						type: 'token_count',
+						info: {
+							total_token_usage: { input_tokens: input, output_tokens: output },
+							model_context_window: 272_000,
+						},
+					},
+				}) + '\n';
+			mockStdout.emit('data', Buffer.from(tokenCount(100, 10) + tokenCount(300, 30)));
+			mockStdout.emit(
+				'data',
+				Buffer.from(
+					JSON.stringify({
+						type: 'response_item',
+						payload: {
+							type: 'message',
+							role: 'assistant',
+							content: [{ type: 'output_text', text: 'ok' }],
+						},
+					}) + '\n'
+				)
+			);
+			mockChild.emit('close', 0, null);
+
+			const result = await resultPromise;
+			// Totals are still delta-normalized...
+			expect(result.usageStats?.inputTokens).toBe(300);
+			expect(result.usageStats?.outputTokens).toBe(30);
+			// ...and the running total the accumulator computed survives as occupancy.
+			expect(result.usageStats?.absoluteUsage).toEqual({
+				inputTokens: 300,
+				outputTokens: 30,
+				cacheReadInputTokens: 0,
+				cacheCreationInputTokens: 0,
+				reasoningTokens: 0,
+			});
+			expect(result.usageStats?.contextWindow).toBe(272_000);
+			expect(result.usageStats?.contextWindowResolved).toBe(true);
 		});
 
 		it('sums Copilot per-turn output tokens, which are deltas rather than a running total', async () => {

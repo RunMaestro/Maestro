@@ -388,6 +388,302 @@ describe('cue-process-lifecycle', () => {
 			});
 		});
 
+		describe('turn outcome', () => {
+			const resultParser = (detectErrorFromExit?: () => unknown) =>
+				({
+					parseJsonLine: (line: string) => {
+						try {
+							const msg = JSON.parse(line);
+							if (msg.type === 'result') return { type: 'result', text: msg.result || '' };
+							return { type: 'system', raw: msg };
+						} catch {
+							return null;
+						}
+					},
+					detectErrorFromExit: detectErrorFromExit ?? (() => null),
+				}) as any;
+
+			it('completes a run that answered in full and then exited non-zero', async () => {
+				mockGetOutputParser.mockReturnValue(resultParser());
+
+				const resultPromise = runProcess('run-1', createSpec(), createOptions());
+				await vi.advanceTimersByTimeAsync(0);
+
+				mockChild.stdout.emit('data', JSON.stringify({ type: 'result', result: 'all done' }));
+				mockChild.emit('close', 1, null);
+				const result = await resultPromise;
+
+				expect(result.status).toBe('completed');
+				expect(result.stdout).toBe('all done');
+				expect(result.exitCode).toBe(1);
+			});
+
+			it('fails a run whose provider classified the exit as an error', async () => {
+				mockGetOutputParser.mockReturnValue(
+					resultParser(() => ({ type: 'auth_required', message: 'token expired' }))
+				);
+
+				const resultPromise = runProcess('run-1', createSpec(), createOptions());
+				await vi.advanceTimersByTimeAsync(0);
+
+				mockChild.stdout.emit('data', JSON.stringify({ type: 'result', result: 'partial' }));
+				mockChild.emit('close', 1, null);
+
+				expect((await resultPromise).status).toBe('failed');
+			});
+
+			it('reports a stopped run as stopped, not failed', async () => {
+				mockGetOutputParser.mockReturnValue(resultParser());
+
+				const resultPromise = runProcess('run-1', createSpec(), createOptions());
+				await vi.advanceTimersByTimeAsync(0);
+
+				expect(stopProcess('run-1')).toBe(true);
+				mockChild.emit('close', null, 'SIGTERM');
+
+				expect((await resultPromise).status).toBe('stopped');
+			});
+
+			it('sums per-step usage across a run', async () => {
+				mockGetOutputParser.mockReturnValue({
+					...resultParser(),
+					extractUsage: (event: any) => event?.usage ?? null,
+					parseJsonLine: (line: string) => {
+						const msg = JSON.parse(line);
+						return msg.type === 'result'
+							? { type: 'result', text: msg.result || '', usage: msg.usage }
+							: { type: 'system', raw: msg, usage: msg.usage };
+					},
+				} as any);
+
+				const resultPromise = runProcess(
+					'run-1',
+					createSpec(),
+					createOptions({ toolType: 'copilot-cli' })
+				);
+				await vi.advanceTimersByTimeAsync(0);
+
+				mockChild.stdout.emit(
+					'data',
+					JSON.stringify({ type: 'step', usage: { inputTokens: 10, outputTokens: 5 } }) +
+						'\n' +
+						JSON.stringify({
+							type: 'result',
+							result: 'done',
+							usage: { inputTokens: 3, outputTokens: 7, costUsd: 0.5 },
+						}) +
+						'\n'
+				);
+				mockChild.emit('close', 0, null);
+
+				const result = await resultPromise;
+				expect(result.usage?.inputTokens).toBe(13);
+				expect(result.usage?.outputTokens).toBe(12);
+				expect(result.usage?.totalCostUsd).toBe(0.5);
+			});
+
+			it('takes Claude usage from the last event, which carries the turn total', async () => {
+				mockGetOutputParser.mockReturnValue({
+					...resultParser(),
+					extractUsage: (event: any) => event?.usage ?? null,
+					parseJsonLine: (line: string) => {
+						const msg = JSON.parse(line);
+						return msg.type === 'result'
+							? { type: 'result', text: msg.result || '', usage: msg.usage }
+							: { type: 'text', isPartial: true, text: '', usage: msg.usage };
+					},
+				} as any);
+
+				const resultPromise = runProcess(
+					'run-1',
+					createSpec(),
+					createOptions({ toolType: 'claude-code' })
+				);
+				await vi.advanceTimersByTimeAsync(0);
+
+				// Per-call usage, then the result's whole-turn total. Summing would
+				// report 130 input tokens instead of 100.
+				mockChild.stdout.emit(
+					'data',
+					JSON.stringify({ type: 'assistant', usage: { inputTokens: 30, outputTokens: 4 } }) +
+						'\n' +
+						JSON.stringify({
+							type: 'result',
+							result: 'done',
+							usage: { inputTokens: 100, outputTokens: 12 },
+						}) +
+						'\n'
+				);
+				mockChild.emit('close', 0, null);
+
+				const result = await resultPromise;
+				expect(result.usage?.inputTokens).toBe(100);
+				expect(result.usage?.outputTokens).toBe(12);
+			});
+
+			it('keeps the Codex occupancy snapshot and reported window on the result (#1669)', async () => {
+				mockGetOutputParser.mockReturnValue({
+					...resultParser(),
+					extractUsage: (event: any) => event?.usage ?? null,
+					parseJsonLine: (line: string) => {
+						const msg = JSON.parse(line);
+						return msg.type === 'result'
+							? { type: 'result', text: msg.result || '' }
+							: { type: 'usage', raw: msg, usage: msg.usage };
+					},
+				} as any);
+
+				const resultPromise = runProcess(
+					'run-1',
+					createSpec(),
+					createOptions({ toolType: 'codex' })
+				);
+				await vi.advanceTimersByTimeAsync(0);
+
+				// Running session totals, as Codex reports them.
+				const tokenCount = (inputTokens: number, outputTokens: number) =>
+					JSON.stringify({
+						type: 'token_count',
+						usage: {
+							inputTokens,
+							outputTokens,
+							contextWindow: 272_000,
+							contextWindowReported: true,
+						},
+					}) + '\n';
+				mockChild.stdout.emit(
+					'data',
+					tokenCount(100, 10) +
+						tokenCount(300, 30) +
+						JSON.stringify({ type: 'result', result: 'done' }) +
+						'\n'
+				);
+				mockChild.emit('close', 0, null);
+
+				const result = await resultPromise;
+				expect(result.usage?.inputTokens).toBe(300);
+				expect(result.usage?.outputTokens).toBe(30);
+				expect(result.usage?.absoluteUsage).toEqual({
+					inputTokens: 300,
+					outputTokens: 30,
+					cacheReadInputTokens: 0,
+					cacheCreationInputTokens: 0,
+					reasoningTokens: 0,
+				});
+				expect(result.usage?.contextWindow).toBe(272_000);
+				expect(result.usage?.contextWindowResolved).toBe(true);
+			});
+
+			it('keeps the Claude occupancy snapshot when a later usage event carries none (#1669)', async () => {
+				mockGetOutputParser.mockReturnValue({
+					...resultParser(),
+					extractUsage: (event: any) => event?.usage ?? null,
+					parseJsonLine: (line: string) => {
+						const msg = JSON.parse(line);
+						return msg.type === 'result'
+							? { type: 'result', text: msg.result || '', usage: msg.usage }
+							: { type: 'usage', raw: msg, usage: msg.usage };
+					},
+				} as any);
+
+				const resultPromise = runProcess(
+					'run-1',
+					createSpec(),
+					createOptions({ toolType: 'claude-code' })
+				);
+				await vi.advanceTimersByTimeAsync(0);
+
+				const occupancy = {
+					inputTokens: 1000,
+					outputTokens: 20,
+					cacheReadInputTokens: 500,
+					cacheCreationInputTokens: 0,
+					reasoningTokens: 0,
+				};
+				mockChild.stdout.emit(
+					'data',
+					JSON.stringify({
+						type: 'result',
+						result: 'done',
+						usage: {
+							inputTokens: 4000,
+							outputTokens: 60,
+							costUsd: 0.1,
+							contextWindow: 1_000_000,
+							contextWindowReported: true,
+							absoluteUsage: occupancy,
+						},
+					}) +
+						'\n' +
+						JSON.stringify({
+							type: 'usage',
+							usage: { inputTokens: 4000, outputTokens: 60, costUsd: 0.1, contextWindow: 200_000 },
+						}) +
+						'\n'
+				);
+				mockChild.emit('close', 0, null);
+
+				const result = await resultPromise;
+				// Last write wins for the totals, as before...
+				expect(result.usage?.inputTokens).toBe(4000);
+				expect(result.usage?.totalCostUsd).toBe(0.1);
+				// ...but the trailing event does not erase the metadata.
+				expect(result.usage?.absoluteUsage).toEqual(occupancy);
+				expect(result.usage?.contextWindow).toBe(1_000_000);
+				expect(result.usage?.contextWindowResolved).toBe(true);
+			});
+
+			it('fails a parser-less agent that exits non-zero, whatever it printed', async () => {
+				mockGetOutputParser.mockReturnValue(null);
+
+				const resultPromise = runProcess('run-1', createSpec(), createOptions());
+				await vi.advanceTimersByTimeAsync(0);
+
+				mockChild.stdout.emit('data', 'command not found: something\n');
+				mockChild.emit('close', 127, null);
+
+				const result = await resultPromise;
+				expect(result.status).toBe('failed');
+				expect(result.stdout).toBe('command not found: something\n');
+			});
+
+			it('leaves usage undefined when the provider reports none', async () => {
+				mockGetOutputParser.mockReturnValue(resultParser());
+
+				const resultPromise = runProcess('run-1', createSpec(), createOptions());
+				await vi.advanceTimersByTimeAsync(0);
+
+				mockChild.stdout.emit('data', JSON.stringify({ type: 'result', result: 'done' }));
+				mockChild.emit('close', 0, null);
+
+				expect((await resultPromise).usage).toBeUndefined();
+			});
+
+			it('fails a signal kill even when the agent had streamed an answer', async () => {
+				mockGetOutputParser.mockReturnValue(resultParser());
+
+				const resultPromise = runProcess('run-1', createSpec(), createOptions());
+				await vi.advanceTimersByTimeAsync(0);
+
+				// A truncated answer must not chain onward as a success.
+				mockChild.stdout.emit('data', JSON.stringify({ type: 'result', result: 'half an ans' }));
+				mockChild.emit('close', null, 'SIGKILL');
+
+				expect((await resultPromise).status).toBe('failed');
+			});
+
+			it('fails a signal kill nobody requested', async () => {
+				mockGetOutputParser.mockReturnValue(resultParser());
+
+				const resultPromise = runProcess('run-1', createSpec(), createOptions());
+				await vi.advanceTimersByTimeAsync(0);
+
+				mockChild.emit('close', null, 'SIGKILL');
+
+				expect((await resultPromise).status).toBe('failed');
+			});
+		});
+
 		describe('output parsing', () => {
 			it('returns raw stdout when no parser is registered', async () => {
 				mockGetOutputParser.mockReturnValue(null);
