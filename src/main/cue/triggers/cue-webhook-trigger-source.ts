@@ -4,14 +4,16 @@
  * Owns nothing of its own: it claims a path on the shared local webhook
  * listener (`cue-webhook-server`) and converts each authenticated delivery
  * into a `CueEvent`. The listener handles binding, routing, and auth; this
- * file only handles secret resolution, payload shaping, and the filter check.
+ * file only handles secret resolution, payload shaping, the filter check, and
+ * the SusFactor gate on GitHub text (`guardWebhookEvent` in `cue-susfactor.ts`).
  *
  * There is no `nextTriggerAt()` - like file watchers, a webhook fires on
  * demand and has no schedule to report.
  */
 
 import { normalizeWebhookPath } from '../../../shared/cue';
-import { createCueEvent } from '../cue-types';
+import { createCueEvent, DEFAULT_CUE_SETTINGS } from '../cue-types';
+import { extractWebhookScorableText, guardWebhookEvent, wouldScoreText } from '../cue-susfactor';
 import {
 	buildCueWebhookUrl,
 	registerCueWebhook,
@@ -90,8 +92,55 @@ export function createCueWebhookTriggerSource(
 		if (!passesFilter(ctx.subscription, event, ctx.onLog)) return;
 
 		const label = delivery.event ? `webhook.received: ${delivery.event}` : 'webhook.received';
-		ctx.onLog('cue', `[CUE] "${ctx.subscription.name}" triggered (${label})`);
-		ctx.emit(event);
+		const emitEvent = () => {
+			ctx.onLog('cue', `[CUE] "${ctx.subscription.name}" triggered (${label})`);
+			ctx.emit(event);
+		};
+
+		// SusFactor, read exactly as the GitHub poller reads it. A delivery with
+		// nothing to score (scoring off, no token, no GitHub text) emits at once.
+		const settings = ctx.registry.get(ctx.session.id)?.config.settings;
+		const enabled = settings?.susfactor_enabled !== false;
+		const threshold =
+			settings?.susfactor_threshold ?? DEFAULT_CUE_SETTINGS.susfactor_threshold ?? 0.95;
+		if (!wouldScoreText(enabled, extractWebhookScorableText(event.payload))) {
+			emitEvent();
+			return;
+		}
+
+		// Scoring runs AFTER the listener has answered 202: the sender has
+		// already been told the delivery was accepted, so a block is visible
+		// only in Maestro (log, toast, cue_susfactor_blocks), never to the
+		// sender. Fire-and-forget, so every failure is caught here rather than
+		// surfacing as an unhandled rejection; the guard itself fails open.
+		void (async () => {
+			try {
+				const allowed = await guardWebhookEvent({
+					event,
+					sessionId: ctx.session.id,
+					subscriptionId: `${ctx.session.id}:${ctx.subscription.name}`,
+					subscriptionName: ctx.subscription.name,
+					enabled,
+					threshold,
+					onLog: (level, message) => ctx.onLog(level as Parameters<typeof ctx.onLog>[0], message),
+				});
+				if (!allowed) {
+					ctx.onLog(
+						'error',
+						`[CUE] "${ctx.subscription.name}" webhook delivery dropped by SusFactor (${label})`
+					);
+					return;
+				}
+				// Cue may have been switched off while the score was in flight.
+				if (!ctx.enabled()) return;
+				emitEvent();
+			} catch (err) {
+				ctx.onLog(
+					'error',
+					`[CUE] "${ctx.subscription.name}" webhook delivery failed: ${err instanceof Error ? err.message : String(err)}`
+				);
+			}
+		})();
 	}
 
 	return {
