@@ -38,6 +38,7 @@ import { ensureRemoteMaestroPProbed } from '../../agents/probeRemoteMaestroP';
 import { getPrompt } from '../../prompt-manager';
 import { shellEscape } from '../../utils/shell-escape';
 import { buildSshCommandWithStdin } from '../../utils/ssh-command-builder';
+import { sshUnresolvedRemoteMessage } from '../../utils/ssh-spawn-wrapper';
 import { DEFAULT_QUERY_SOURCE, QUERY_SOURCE_ENV_VAR } from '../../../shared/querySource';
 import { buildStreamJsonMessage } from '../../process-manager/utils/streamJsonBuilder';
 import { getWindowsShellForAgentExecution } from '../../process-manager/utils/shellEscape';
@@ -253,6 +254,22 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 							}
 						: null,
 				});
+
+				// The user opted this agent into a remote host. If that remote was
+				// deleted or disabled, refuse the spawn up front: the local fallback
+				// below would run the agent on this machine against the REMOTE's cwd,
+				// and nothing (session mode, token resolution) should be persisted for
+				// a turn that never starts. Terminal tabs are always local here.
+				if (
+					config.toolType !== 'terminal' &&
+					config.sessionSshRemoteConfig?.enabled &&
+					!getSshRemoteConfig(createSshRemoteStoreAdapter(settingsStore), {
+						sessionSshConfig: config.sessionSshRemoteConfig,
+					}).config
+				) {
+					throw new Error(sshUnresolvedRemoteMessage(config.sessionSshRemoteConfig));
+				}
+
 				// Claude Code's `maestro-p` interactive wrapper is opt-in per-session via
 				// the Batch Mode toggle in AgentConfigPanel. When the toggle is on AND a
 				// maestro-p binary resolves (per-session override OR bundled auto-detect),
@@ -1085,6 +1102,12 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 							hasImages,
 							imageCount: config.images?.length,
 						});
+					} else {
+						// The early guard saw this remote, but several awaits have run
+						// since (the remote maestro-p probe can be a real SSH round
+						// trip). A remote deleted or disabled in that window must not
+						// fall through to a local spawn with the remote's cwd.
+						throw new Error(sshUnresolvedRemoteMessage(config.sessionSshRemoteConfig));
 					}
 				}
 
