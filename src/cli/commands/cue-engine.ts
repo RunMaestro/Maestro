@@ -17,7 +17,11 @@
  * scope is what the shared files already answer.
  */
 
-import { readCueEngineLock } from '../../main/cue/cue-engine-lock';
+import {
+	isCueEngineLockInForeignPidNamespace,
+	isCueEngineLockOwnedByThisProcess,
+	readCueEngineLock,
+} from '../../main/cue/cue-engine-lock';
 import { createStandaloneCueEngine } from '../services/cue-standalone-engine';
 import { startCueTriggerInbox } from '../services/cue-trigger-inbox';
 import { readSessions } from '../services/storage';
@@ -71,7 +75,7 @@ export async function cueEngineStart(options: CueEngineStartOptions = {}): Promi
 	// surface that here as a real command failure rather than exiting 0
 	// having done nothing, which the exit code below distinguishes.
 	const lock = readCueEngineLock();
-	const startedByUs = lock?.pid === process.pid;
+	const startedByUs = lock ? isCueEngineLockOwnedByThisProcess(lock) : false;
 
 	if (!startedByUs) {
 		const conflictMessage = lock
@@ -126,6 +130,21 @@ export async function cueEngineStop(options: CueEngineStopOptions = {}): Promise
 		const message = `The running Cue engine is inside the desktop app (pid ${lock.pid}). Stop it from Settings -> Maestro Cue instead - this command only stops a standalone runner.`;
 		if (options.json)
 			console.log(JSON.stringify({ stopped: false, reason: 'desktop-owned', pid: lock.pid }));
+		else console.error(`[Cue] ${message}`);
+		process.exitCode = 1;
+		return;
+	}
+
+	// A PID from another PID namespace (another container sharing this data
+	// directory) names some unrelated process here, if anything - signaling it
+	// could kill a stranger, so refuse rather than guess.
+	if (isCueEngineLockInForeignPidNamespace(lock)) {
+		const message =
+			'The running Cue engine is in a different PID namespace. Cannot safely signal it by PID.';
+		if (options.json)
+			console.log(
+				JSON.stringify({ stopped: false, reason: 'foreign-pid-namespace', pid: lock.pid })
+			);
 		else console.error(`[Cue] ${message}`);
 		process.exitCode = 1;
 		return;
