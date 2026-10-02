@@ -832,6 +832,23 @@ function mergeUsageStats(
 	return merged;
 }
 
+/** Select batch-mode args without carrying permission grants or duplicates into read-only. */
+export function resolveCliBatchModeArgs(
+	def: ReturnType<typeof getAgentDefinition>,
+	readOnlyMode?: boolean
+): string[] {
+	if (!def?.batchModeArgs) {
+		return [];
+	}
+
+	if (!readOnlyMode || def.readOnlyCliEnforced === false) {
+		return [...def.batchModeArgs];
+	}
+
+	const excludedArgs = new Set([...(def.yoloModeArgs ?? []), ...(def.readOnlyArgs ?? [])]);
+	return def.batchModeArgs.filter((arg) => !excludedArgs.has(arg));
+}
+
 /**
  * Generic spawner for agents that use JSON line output parsed via AgentOutputParser.
  * Handles Codex, OpenCode, Factory Droid, and any future agents with the same pattern.
@@ -869,18 +886,7 @@ async function spawnJsonLineAgent(
 
 	if (def?.batchModePrefix) preOverrideArgs.push(...def.batchModePrefix);
 
-	// In read-only mode, filter out YOLO/bypass args from batchModeArgs
-	// (they override read-only flags). In normal mode, apply all batchModeArgs.
-	// Skip filtering for agents without CLI-level read-only enforcement
-	// (e.g., Gemini CLI needs -y to avoid interactive prompts that hang with closed stdin).
-	if (def?.batchModeArgs) {
-		if (readOnlyMode && def.readOnlyCliEnforced !== false && def.yoloModeArgs?.length) {
-			const yoloSet = new Set(def.yoloModeArgs);
-			preOverrideArgs.push(...def.batchModeArgs.filter((a) => !yoloSet.has(a)));
-		} else {
-			preOverrideArgs.push(...def.batchModeArgs);
-		}
-	}
+	preOverrideArgs.push(...resolveCliBatchModeArgs(def, readOnlyMode));
 
 	if (def?.jsonOutputArgs) preOverrideArgs.push(...def.jsonOutputArgs);
 	if (readOnlyMode && def?.readOnlyArgs) preOverrideArgs.push(...def.readOnlyArgs);
