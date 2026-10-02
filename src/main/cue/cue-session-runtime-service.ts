@@ -102,6 +102,18 @@ export interface CueSessionRuntimeService {
 	clearAllStartupKeys(): void;
 }
 
+/**
+ * Re-check a config path that just read as missing. Network roots (UNC, 9P) can
+ * drop a stat under load; a couple of short retries separate that from a delete.
+ */
+function configReappeared(projectRoot: string): boolean {
+	for (let attempt = 0; attempt < 3; attempt++) {
+		Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 150);
+		if (resolveCueConfigPath(projectRoot)) return true;
+	}
+	return false;
+}
+
 export function createCueSessionRuntimeService(
 	deps: CueSessionRuntimeServiceDeps
 ): CueSessionRuntimeService {
@@ -448,7 +460,11 @@ export function createCueSessionRuntimeService(
 		// usually mean "user is mid-edit and will fix shortly" - keeping seen
 		// rows lets the GitHub poller skip already-seen items once the config
 		// comes back, instead of re-spamming the user on reload.
-		const configTrulyMissing = outcome.kind === 'missing';
+		// A network-mounted root (a WSL distro via \\wsl.localhost, an SMB share) can answer
+		// "not there" for an instant while the file is fine; confirm before tearing a
+		// previously-good config down. A real deletion is still seen on the re-check.
+		const configTrulyMissing =
+			outcome.kind === 'missing' && (!hadSession || !configReappeared(projectRoot));
 		if (configTrulyMissing) {
 			for (const id of oldGitHubIds) {
 				clearGitHubSeenForSubscription(id);
