@@ -111,6 +111,8 @@ vi.mock('crypto', () => ({
 const mockReadCueConfigFile =
 	vi.fn<(projectRoot: string) => { filePath: string; raw: string } | null>();
 const mockWriteCueConfigFile = vi.fn<(projectRoot: string, content: string) => string>();
+// Null means "fall through to the real resolver" (file absent in tests).
+const mockResolveCueConfigPath = vi.fn<(projectRoot: string) => string | null>(() => null);
 vi.mock('../../../main/cue/config/cue-config-repository', async () => {
 	const actual = await vi.importActual<
 		typeof import('../../../main/cue/config/cue-config-repository')
@@ -120,6 +122,8 @@ vi.mock('../../../main/cue/config/cue-config-repository', async () => {
 		readCueConfigFile: (projectRoot: string) => mockReadCueConfigFile(projectRoot),
 		writeCueConfigFile: (projectRoot: string, content: string) =>
 			mockWriteCueConfigFile(projectRoot, content),
+		resolveCueConfigPath: (projectRoot: string) =>
+			mockResolveCueConfigPath(projectRoot) ?? actual.resolveCueConfigPath(projectRoot),
 	};
 });
 
@@ -738,6 +742,82 @@ describe('CueEngine', () => {
 			);
 
 			engine.stop();
+		});
+
+		it('refreshes with the root getSessions resolves, not the root the caller passed', () => {
+			// An SSH agent's renderer-side root is a remote path; Cue reads the remote
+			// through its host mount, which getSessions() resolves. A refresh request
+			// carrying the raw remote path must not make the engine read a path that is
+			// not there and tear the config down.
+			const config = createMockConfig({
+				subscriptions: [
+					{
+						name: 'sub',
+						event: 'time.heartbeat',
+						enabled: true,
+						prompt: 'test',
+						interval_minutes: 5,
+					},
+				],
+			});
+			mockLoadCueConfig.mockImplementation((projectRoot: string) =>
+				projectRoot === '\\\\wsl.localhost\\Ubuntu\\home\\dev\\app' ? config : null
+			);
+			const session = createMockSession({
+				id: 'session-1',
+				projectRoot: '\\\\wsl.localhost\\Ubuntu\\home\\dev\\app',
+			});
+			const deps = createMockDeps({ getSessions: vi.fn(() => [session]) });
+			const engine = new CueEngine(deps);
+			engine.start();
+			try {
+				expect(engine.getStatus()).toHaveLength(1);
+				vi.clearAllMocks();
+				engine.refreshSession('session-1', '/home/dev/app');
+				expect(engine.getStatus()).toHaveLength(1);
+				expect(deps.onLog).not.toHaveBeenCalledWith(
+					'cue',
+					expect.stringContaining('Config removed'),
+					expect.anything()
+				);
+			} finally {
+				mockLoadCueConfig.mockReset();
+				engine.stop();
+			}
+		});
+
+		it('keeps a config whose file reads as missing for an instant but is still there', () => {
+			// A UNC or 9P root (a WSL distro) can drop one stat under load; the engine
+			// re-checks the path before it tears a previously-good config down.
+			const config = createMockConfig({
+				subscriptions: [
+					{
+						name: 'sub',
+						event: 'time.heartbeat',
+						enabled: true,
+						prompt: 'test',
+						interval_minutes: 5,
+					},
+				],
+			});
+			mockLoadCueConfig.mockReturnValueOnce(config).mockReturnValue(null);
+			mockResolveCueConfigPath.mockReturnValue('/projects/test/.maestro/cue.yaml');
+			const deps = createMockDeps();
+			const engine = new CueEngine(deps);
+			engine.start();
+			try {
+				vi.clearAllMocks();
+				mockResolveCueConfigPath.mockReturnValue('/projects/test/.maestro/cue.yaml');
+				engine.refreshSession('session-1', '/projects/test');
+				expect(deps.onLog).not.toHaveBeenCalledWith(
+					'cue',
+					expect.stringContaining('Config removed'),
+					expect.anything()
+				);
+			} finally {
+				mockResolveCueConfigPath.mockReturnValue(null);
+				engine.stop();
+			}
 		});
 
 		it('logs "Config removed" when YAML file is deleted', () => {

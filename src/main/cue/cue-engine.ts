@@ -749,7 +749,14 @@ export class CueEngine {
 	}
 
 	/** Re-read the YAML for a specific session, tearing down old subscriptions */
-	refreshSession(sessionId: string, projectRoot: string): void {
+	refreshSession(sessionId: string, requestedRoot: string): void {
+		// The root Cue reads is the one `getSessions()` resolves (for an SSH agent that
+		// is the remote's host mount, not the remote path the renderer knows). A caller
+		// passing the raw session root would otherwise read "missing" and tear the
+		// config down. Unknown sessions keep the caller's root.
+		const projectRoot =
+			this.deps.getSessions().find((session) => session.id === sessionId)?.projectRoot ??
+			requestedRoot;
 		// When the engine started with 'system-boot', sessions that arrive via
 		// refreshSession (the typical path at boot, since getSessions() is empty
 		// when start() fires) should still get their app.startup triggers.

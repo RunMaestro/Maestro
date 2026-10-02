@@ -73,6 +73,10 @@ vi.mock('fs/promises', () => ({
 		access: vi.fn(),
 		readdir: vi.fn(),
 		rmdir: vi.fn(),
+		// stat: resolves by default so every scanned subdirectory looks like it
+		// carries a `.git` entry and the git-based classification below runs.
+		// Tests for the precheck itself reject for specific paths.
+		stat: vi.fn().mockResolvedValue({}),
 		// realpath: identity by default so symlink-resolution paths in scanWorktreeDirectory
 		// and the chokidar discovery validator behave like a no-op in tests. Individual
 		// tests can override this via vi.mocked(fs.realpath).mockResolvedValue(...) to
@@ -4490,6 +4494,40 @@ branch refs/heads/bugfix-123
 					},
 				],
 			});
+		});
+
+		it('does not spawn git for subdirectories without a .git entry', async () => {
+			vi.mocked(mockFs.readdir).mockResolvedValue([
+				{ name: 'repo', isDirectory: () => true },
+				{ name: 'plain-folder', isDirectory: () => true },
+			] as any);
+			vi.mocked(mockFs.stat).mockImplementation(async (p) => {
+				if (String(p).replace(/\\/g, '/').endsWith('plain-folder/.git')) {
+					throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+				}
+				return {} as any;
+			});
+			vi.mocked(execFile.execFileNoThrow).mockImplementation(async (_cmd, args) => {
+				if (args?.includes('--is-inside-work-tree')) {
+					return { stdout: 'true\n', stderr: '', exitCode: 0 };
+				}
+				if (args?.includes('--show-toplevel')) {
+					return { stdout: '/parent/repo', stderr: '', exitCode: 0 };
+				}
+				if (args?.includes('--abbrev-ref')) {
+					return { stdout: 'main\n', stderr: '', exitCode: 0 };
+				}
+				return { stdout: '.git', stderr: '', exitCode: 0 };
+			});
+
+			const handler = handlers.get('git:scanWorktreeDirectory');
+			const result = await handler!({} as any, '/parent');
+
+			expect(result.gitSubdirs.map((d: { name: string }) => d.name)).toEqual(['repo']);
+			const gitCwds = vi
+				.mocked(execFile.execFileNoThrow)
+				.mock.calls.map((c) => String(c[2]).replace(/\\/g, '/'));
+			expect(gitCwds.some((cwd) => cwd.endsWith('plain-folder'))).toBe(false);
 		});
 
 		it('should exclude hidden directories', async () => {

@@ -12,6 +12,7 @@ import { WINDOWS_LOCKED_SYSTEM_FILES } from '../../../utils/watcher-ignore';
 import { readDirRemote } from '../../../utils/remote-fs';
 import { captureException } from '../../../utils/sentry';
 import { markStaleForDeletedWorktreeUsingStore } from '../../../agent-run/worktree-stale';
+import { mapWithConcurrency } from '../../../utils/concurrency';
 import { LOG_CONTEXT, handlerOpts, GitHandlerDependencies } from './shared';
 import { isWorktreeCreatedByMaestro } from './worktreeCreationMarks';
 
@@ -22,6 +23,16 @@ import { isWorktreeCreatedByMaestro } from './worktreeCreationMarks';
  * Documents and Desktop). The scan skips the directory and reports `scanFailed`;
  * none of these are worth a Sentry report.
  */
+
+/**
+ * Cap on subdirectories inspected in parallel by a worktree scan. Every
+ * inspection spawns git, and `spawn` does its process creation on the main
+ * thread: a basePath with 100+ siblings scanned through an unbounded
+ * `Promise.all` pinned the event loop for 30+ s per scan (the CLI WebSocket
+ * handshake timed out behind it). Eight keeps the loop responsive without
+ * making a normal `.worktrees/` scan noticeably slower.
+ */
+const WORKTREE_SCAN_CONCURRENCY = 8;
 const EXPECTED_SCAN_ERROR_CODES = new Set(['ENOENT', 'ENOTDIR', 'EACCES', 'EPERM']);
 
 function isExpectedScanError(code: string | undefined): boolean {
@@ -106,6 +117,22 @@ export function registerWorktreeWatchHandlers(deps: GitHandlerDependencies): voi
 						.map((e) => ({ name: e.name, isDirectory: true }));
 				};
 
+				// A local repo or worktree root always carries a `.git` entry (directory
+				// for a repo, gitfile for a worktree or submodule); a subdirectory
+				// inside one never does. Checking that first keeps the scan from
+				// spawning git for every non-repo sibling under a broad basePath.
+				// Remote scans still go through git: a per-entry remote stat would
+				// cost the same SSH round trip the git call already does.
+				const hasGitEntry = async (dir: string): Promise<boolean> => {
+					if (sshRemote) return true;
+					try {
+						await fs.stat(path.join(dir, '.git'));
+						return true;
+					} catch {
+						return false;
+					}
+				};
+
 				// Inspect a single directory: returns the worktree entry if it IS a
 				// git repo/worktree root, or null otherwise. Caller decides whether
 				// to recurse into a null result.
@@ -113,6 +140,9 @@ export function registerWorktreeWatchHandlers(deps: GitHandlerDependencies): voi
 					subdirPath: string,
 					name: string
 				): Promise<ScanEntry | null> => {
+					if (!(await hasGitEntry(subdirPath))) {
+						return null;
+					}
 					const isInsideWorkTree = await execGit(
 						['rev-parse', '--is-inside-work-tree'],
 						subdirPath,
@@ -203,8 +233,10 @@ export function registerWorktreeWatchHandlers(deps: GitHandlerDependencies): voi
 				const scanLevel = async (dir: string, depthRemaining: number): Promise<ScanEntry[]> => {
 					const subdirs = await readSubdirs(dir);
 
-					const results = await Promise.all(
-						subdirs.map(async (subdir) => {
+					const results = await mapWithConcurrency(
+						subdirs,
+						WORKTREE_SCAN_CONCURRENCY,
+						async (subdir) => {
 							const subdirPath = joinPath(dir, subdir.name);
 							const entry = await inspectSubdir(subdirPath, subdir.name);
 							if (entry) {
@@ -222,7 +254,7 @@ export function registerWorktreeWatchHandlers(deps: GitHandlerDependencies): voi
 								}
 							}
 							return [];
-						})
+						}
 					);
 
 					return results.flat();

@@ -33,6 +33,8 @@ import {
 	disposeGlobalHotkey,
 } from './global-hotkey-manager';
 import { CueEngine } from './cue/cue-engine';
+import { hostVisibleProjectRoot } from '../shared/hostVisibleProjectRoot';
+import type { SshRemoteConfig } from '../shared/types';
 import { createCueSupervisorHooks } from './cue/cue-first-party';
 import { PianolaSupervisor } from './pianola/pianola-supervisor';
 import { PianolaRelearnScheduler } from './pianola/pianola-relearn-scheduler';
@@ -1198,13 +1200,22 @@ app
 		cueEngine = new CueEngine({
 			getSessions: () => {
 				const stored = sessionsStore.get('sessions', []);
-				return stored.map((s: any) => ({
-					id: s.id,
-					name: s.name,
-					toolType: s.toolType,
-					cwd: s.cwd || s.projectRoot || s.fullPath || os.homedir(),
-					projectRoot: s.projectRoot || s.cwd || s.fullPath || os.homedir(),
-				}));
+				const remotes = (store.get('sshRemotes', []) ?? []) as SshRemoteConfig[];
+				// A remote agent's root is read through the remote's host mount when it has
+				// one; otherwise Cue has nothing to read for it and it is left out.
+				return stored.flatMap((s: any) => {
+					const projectRoot = hostVisibleProjectRoot(s, remotes, os.homedir());
+					if (!projectRoot) return [];
+					return [
+						{
+							id: s.id,
+							name: s.name,
+							toolType: s.toolType,
+							cwd: s.cwd || s.projectRoot || s.fullPath || os.homedir(),
+							projectRoot,
+						},
+					];
+				});
 			},
 			onCueRun: async ({
 				runId,
@@ -1223,6 +1234,10 @@ app
 					throw new Error(`Cue target session not found: ${sessionId}`);
 				}
 
+				// The run's cwd is where the agent actually executes. For an SSH-remote
+				// session that is the POSIX root on the remote host; the host-visible
+				// mount (see the engine's getSessions) is only for reading cue.yaml and
+				// prompt files, which are already resolved by config-load time.
 				const projectRoot =
 					storedSession.projectRoot || storedSession.cwd || storedSession.fullPath || os.homedir();
 				const templateContext: TemplateContext = {
