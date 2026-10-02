@@ -6,8 +6,12 @@
  * change every build, so this worker does NOT precache a fixed asset list
  * (which would go stale). Instead it caches conservatively at runtime:
  *
- * - network-first for navigations (the HTML document) and for the desktop
- *   bundle assets under `/<token>/desktop/assets/*` - online always serves
+ * - cache-first for content-hashed bundle files (`/<token>/desktop/assets/
+ *   <name>-<hash>.<ext>`) - the name changes whenever the bytes do, so a cached
+ *   copy can never be stale, and serving it locally keeps a reload off the
+ *   network entirely (see "Cloudflare quick tunnels" below).
+ * - network-first for navigations (the HTML document) and for the remaining
+ *   desktop bundle assets (the unhashed `assets/fonts/*`) - online always serves
  *   fresh content, identical to having no service worker; the cache is only a
  *   fallback when the network is down.
  * - cache-first for `/<token>/icons/*` and `manifest.json` - effectively
@@ -16,9 +20,28 @@
  * - network-only for `/<token>/api/*` and `/<token>/ws/*` - these require a
  *   live connection; offline they return a structured JSON error.
  * - everything else is left to the browser's default handling.
+ *
+ * Cloudflare quick tunnels cap how many requests can be in flight at once and
+ * answer the overflow with an empty 429 (`cf-int-tunnel-request-limit-hit`).
+ * Booting the bundle costs about a hundred module requests, and the bridge
+ * reloads every open tab when its WebSocket reconnects (iOS drops sockets on
+ * wake), so a phone with a few Maestro tabs overflows the tunnel and a module
+ * import fails mid-boot. The asset strategies below therefore retry a 429 with
+ * a short backoff - the burst drains in a second or two - instead of handing
+ * the failure to the page.
  */
 
 const CACHE_NAME = 'maestro-webdesktop-v1';
+
+// Content-hashed bundle files: Vite's `[name]-[hash].[ext]` directly under
+// assets/ (assets/fonts/ is copied in under stable names). Mirrors
+// isContentHashedAsset in src/main/web-server/asset-cache-policy.ts, which this
+// raw-served file cannot import; keep the two patterns in step.
+const HASHED_ASSET_PATH = /\/desktop\/assets\/[^/]+-[A-Za-z0-9_-]{8}\.[A-Za-z0-9]+(?:\.map)?$/;
+
+// Backoff between retries of a 429 from the tunnel. Bounded so a limit that
+// does not clear still reaches the page as a failure it can report.
+const RATE_LIMIT_RETRY_DELAYS_MS = [250, 750, 1500, 3000];
 
 // Install: no precache. The runtime strategy below populates the cache as the
 // app is used, so there is no fixed asset list to go stale on rebuild.
@@ -99,8 +122,15 @@ self.addEventListener('fetch', (event) => {
 		return;
 	}
 
-	// Navigations (the HTML document) and the desktop bundle assets are
-	// network-first: online serves fresh content (identical to no service
+	// Hashed bundle files never change under their name, so the cache is
+	// authoritative for them.
+	if (HASHED_ASSET_PATH.test(url.pathname)) {
+		event.respondWith(cacheFirst(request));
+		return;
+	}
+
+	// Navigations (the HTML document) and the remaining desktop bundle assets
+	// are network-first: online serves fresh content (identical to no service
 	// worker), and the cached copy is only used when the network fails.
 	if (request.mode === 'navigate' || url.pathname.includes('/desktop/assets/')) {
 		event.respondWith(networkFirst(request));
@@ -113,6 +143,20 @@ self.addEventListener('fetch', (event) => {
 });
 
 /**
+ * fetch(), retrying a 429 with a short backoff. Only used for GET asset and
+ * document requests, which are safe to repeat.
+ */
+async function fetchRetryingRateLimit(request) {
+	for (let attempt = 0; ; attempt++) {
+		const response = await fetch(request);
+		if (response.status !== 429 || attempt >= RATE_LIMIT_RETRY_DELAYS_MS.length) {
+			return response;
+		}
+		await new Promise((resolve) => setTimeout(resolve, RATE_LIMIT_RETRY_DELAYS_MS[attempt]));
+	}
+}
+
+/**
  * Cache-first: serve from cache when present, otherwise fetch and cache.
  */
 async function cacheFirst(request) {
@@ -120,7 +164,7 @@ async function cacheFirst(request) {
 	if (cached) {
 		return cached;
 	}
-	const response = await fetch(request);
+	const response = await fetchRetryingRateLimit(request);
 	if (response && response.ok) {
 		const cache = await caches.open(CACHE_NAME);
 		cache.put(request, response.clone());
@@ -134,7 +178,7 @@ async function cacheFirst(request) {
  */
 async function networkFirst(request) {
 	try {
-		const response = await fetch(request);
+		const response = await fetchRetryingRateLimit(request);
 		if (response && response.ok) {
 			const cache = await caches.open(CACHE_NAME);
 			cache.put(request, response.clone());

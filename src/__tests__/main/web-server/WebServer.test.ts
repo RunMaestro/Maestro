@@ -46,6 +46,59 @@ describe('WebServer PWA asset resolution', () => {
 	});
 });
 
+describe('WebServer desktop asset caching', () => {
+	let tempRoot: string;
+
+	beforeEach(() => {
+		tempRoot = mkdtempSync(path.join(os.tmpdir(), 'maestro-web-cache-'));
+		vi.spyOn(process, 'cwd').mockReturnValue(tempRoot);
+		const assets = path.join(tempRoot, 'dist', 'web-desktop', 'assets');
+		mkdirSync(path.join(assets, 'fonts'), { recursive: true });
+		writeFileSync(path.join(tempRoot, 'dist', 'web-desktop', 'index.html'), '<html></html>');
+		writeFileSync(path.join(assets, 'main-BOEbwE3b.js'), 'export {};');
+		writeFileSync(path.join(assets, 'fonts', 'inter-latin-400_700-1.woff2'), 'font');
+	});
+
+	afterEach(() => {
+		vi.restoreAllMocks();
+		rmSync(tempRoot, { recursive: true, force: true });
+	});
+
+	// Revalidating every module on every load is what overflowed a Cloudflare
+	// quick tunnel's in-flight request cap when several phone tabs reloaded at
+	// once, so the header has to actually reach the wire, on 304s included.
+	it('serves hashed bundle files as immutable and leaves the fonts folder revalidating', async () => {
+		const server = new WebServer(0);
+		await (server as any).setupMiddleware();
+		const fastify = server.getServer();
+		const token = server.getSecurityToken();
+
+		const hashed = await fastify.inject({
+			method: 'GET',
+			url: `/${token}/desktop/assets/main-BOEbwE3b.js`,
+		});
+		expect(hashed.statusCode).toBe(200);
+		expect(hashed.headers['cache-control']).toBe('public, max-age=31536000, immutable');
+
+		const revalidated = await fastify.inject({
+			method: 'GET',
+			url: `/${token}/desktop/assets/main-BOEbwE3b.js`,
+			headers: { 'if-none-match': String(hashed.headers.etag) },
+		});
+		expect(revalidated.statusCode).toBe(304);
+		expect(revalidated.headers['cache-control']).toBe('public, max-age=31536000, immutable');
+
+		const font = await fastify.inject({
+			method: 'GET',
+			url: `/${token}/desktop/assets/fonts/inter-latin-400_700-1.woff2`,
+		});
+		expect(font.statusCode).toBe(200);
+		expect(font.headers['cache-control']).not.toContain('immutable');
+
+		await fastify.close();
+	});
+});
+
 describe('WebServer Fastify configuration', () => {
 	it('raises maxParamLength so the media route can match a hex-encoded absolute path', () => {
 		// mediaRoutes.test.ts proves the constant is large enough on a Fastify

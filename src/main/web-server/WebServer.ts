@@ -49,6 +49,7 @@ import {
 	WsRoute,
 } from './routes';
 import { MEDIA_PATH_PARAM_MAX_LENGTH } from './routes/mediaRoutes';
+import { IMMUTABLE_ASSET_CACHE_CONTROL, isContentHashedAsset } from './asset-cache-policy';
 import { webLoginPreHandler } from './auth/web-login-hook';
 import { getWebUserStore } from './auth/web-user-store';
 import { WEB_LOGIN_WS_CLOSE_CODE } from '../../shared/webLogin';
@@ -951,6 +952,15 @@ export class WebServer {
 					root: wdAssets,
 					prefix: `/${this.securityToken}/desktop/assets/`,
 					decorateReply: false,
+					// Runs after the plugin's own headers (200, 206 and 304 alike), so
+					// this replaces its default `max-age=0` for hashed files only.
+					// See asset-cache-policy.ts for why revalidating them broke boot
+					// over a Cloudflare quick tunnel.
+					setHeaders: (reply, filePath) => {
+						if (isContentHashedAsset(wdAssets, filePath)) {
+							reply.header('Cache-Control', IMMUTABLE_ASSET_CACHE_CONTROL);
+						}
+					},
 				});
 			}
 		}
