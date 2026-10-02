@@ -189,10 +189,15 @@ export async function runOrchestratorIteration(
 				executionRunId: task.executionRunId,
 			});
 		const currentState = await deps.getRunState(task);
-		const recentMessages =
+		const transcript =
 			currentState === 'error' || currentState === 'unknown'
 				? []
 				: await deps.getRecentMessages(task);
+		// Only messages from the current dispatch may decide this task's outcome.
+		const recentMessages =
+			task.dispatchedMessageCount !== undefined
+				? transcript.slice(task.dispatchedMessageCount)
+				: transcript;
 		prevStates[task.id] = currentState;
 		const detected = detectTaskOutcome({
 			previousState: state.prevStates[task.id],
@@ -209,10 +214,7 @@ export async function runOrchestratorIteration(
 			currentState === 'idle' &&
 			detected.outcome === 'working' &&
 			task.dispatchedMessageCount !== undefined &&
-			recentMessages.length > task.dispatchedMessageCount &&
-			recentMessages
-				.slice(task.dispatchedMessageCount)
-				.some((message) => message.role === 'assistant');
+			recentMessages.some((message) => message.role === 'assistant');
 		const outcome = revalidating || repliedSinceDispatch ? 'done' : detected.outcome;
 		const reason =
 			repliedSinceDispatch && !revalidating
@@ -516,10 +518,14 @@ export async function runOrchestratorIteration(
 			continue;
 		}
 
+		const dispatchedTask = { ...task, agentId: agentResult.agentId, tabId: res.tabId };
+		const transcriptAtDispatch = await deps.getRecentMessages(dispatchedTask);
 		plan = markTaskStatus(plan, task.id, 'running', {
 			agentId: agentResult.agentId,
 			agentType: agentResult.agentType,
 			tabId: res.tabId,
+			// The prompt just sent is the last message; outcome detection starts after it.
+			dispatchedMessageCount: Math.max(0, transcriptAtDispatch.length - 1),
 		});
 		// A dispatch receipt proves delivery only; wait for a real run observation.
 		deps.persist(plan);

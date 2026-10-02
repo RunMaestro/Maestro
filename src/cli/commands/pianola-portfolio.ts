@@ -186,11 +186,18 @@ export function updateGeneratedCueYaml(raw: string, program: PianolaProgram): st
 }
 
 function writeProgramCue(program: PianolaProgram): string | null {
-	if (program.remoteId)
-		return 'Cue skipped for ' + program.id + ': CLI has no remote SSH file writer';
-	if (!path.win32.isAbsolute(program.root))
+	// A remote root the host can also see (a WSL distro as \\wsl.localhost\..., a mounted
+	// share) is written there; Cue on the agent's side reads the same file over SSH.
+	const rootOnHost = program.remoteId ? program.remoteRootOnHost : program.root;
+	if (!rootOnHost)
+		return (
+			'Cue skipped for ' +
+			program.id +
+			': remote root is not reachable from this host (set remoteRootOnHost)'
+		);
+	if (!path.win32.isAbsolute(rootOnHost))
 		return 'Cue skipped for ' + program.id + ': root is not a local Windows path';
-	const target = path.join(program.root, '.maestro', 'cue.yaml');
+	const target = path.join(rootOnHost, '.maestro', 'cue.yaml');
 	fs.mkdirSync(path.dirname(target), { recursive: true });
 	const raw = fs.existsSync(target) ? fs.readFileSync(target, 'utf8') : '';
 	const updated = updateGeneratedCueYaml(raw, program);
@@ -415,8 +422,19 @@ export function pianolaEscalate(options: EscalateOptions): void {
 	ensurePianolaEnabled(options.json);
 	if (!options.title?.trim() || !options.detail?.trim())
 		fail('Title and detail are required', options.json);
-	if (options.severity && !['low', 'medium', 'high', 'critical'].includes(options.severity))
-		fail('Invalid severity', options.json);
+	// Leads reach for the words they know; map the common synonyms onto the four levels.
+	const SEVERITY_SYNONYMS: Record<string, PianolaAsk['severity']> = {
+		blocker: 'critical',
+		urgent: 'critical',
+		critical: 'critical',
+		high: 'high',
+		medium: 'medium',
+		normal: 'medium',
+		low: 'low',
+		minor: 'low',
+	};
+	const severity = options.severity ? SEVERITY_SYNONYMS[options.severity.toLowerCase()] : 'medium';
+	if (!severity) fail('Invalid severity (use low, medium, high, or critical)', options.json);
 	const now = new Date().toISOString();
 	const ask: PianolaAsk = {
 		id: generateUUID(),
@@ -424,7 +442,7 @@ export function pianolaEscalate(options: EscalateOptions): void {
 		updatedAt: now,
 		title: options.title,
 		detail: options.detail,
-		severity: options.severity ?? 'medium',
+		severity: severity as PianolaAsk['severity'],
 		dedupeKey: `${options.agent ?? 'unknown'}:${options.program ?? 'global'}`,
 		status: 'open',
 		...(options.program ? { programId: options.program } : {}),
