@@ -477,3 +477,53 @@ describe('fix runs shorter than one poll interval', () => {
 		expect(statusOf(r.state, 'A')).toBe('fixing');
 	});
 });
+
+describe('outcome detection is scoped to the current dispatch', () => {
+	const msg = (role: PianolaMessage['role'], content: string, i: number): PianolaMessage => ({
+		id: `m${i}`,
+		role,
+		source: 'test',
+		content,
+		timestamp: new Date(1_700_000_000_000 + i).toISOString(),
+	});
+
+	it('ignores a failure marker from an earlier mission on the same agent tab', async () => {
+		// The agent's tab holds every mission it ever ran. A traceback from last week's
+		// task must not fail today's task, which replied cleanly after its dispatch.
+		const deps = makeReactiveDeps({
+			runStates: { A: 'idle' },
+			messages: {
+				A: [
+					msg('user', 'old task', 0),
+					msg('assistant', 'Traceback (most recent call last): boom', 1),
+					msg('user', 'new task', 2),
+					msg('assistant', 'Implemented on branch x; tests pass.', 3),
+				],
+			},
+		});
+		const r = await runOrchestratorIteration(
+			{
+				plan: plan([task({ id: 'A', status: 'running', dispatchedMessageCount: 3 })]),
+				prevStates: { A: 'busy' },
+			},
+			deps,
+			{ concurrencyLimit: 1 }
+		);
+		expect(statusOf(r.state, 'A')).toBe('done');
+	});
+
+	it('records where the transcript stood when a fresh task is dispatched', async () => {
+		const deps = makeReactiveDeps({
+			messages: {
+				A: [msg('user', 'old', 0), msg('assistant', 'done', 1), msg('user', 'new task', 2)],
+			},
+		});
+		const r = await runOrchestratorIteration(
+			{ plan: plan([task({ id: 'A', status: 'pending' })]), prevStates: {} },
+			deps,
+			{ concurrencyLimit: 1 }
+		);
+		expect(statusOf(r.state, 'A')).toBe('running');
+		expect(taskOf(r.state, 'A')?.dispatchedMessageCount).toBe(2);
+	});
+});

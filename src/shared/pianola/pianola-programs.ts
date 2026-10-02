@@ -24,6 +24,8 @@ export interface PianolaProgram {
 	remoteId?: string;
 	/** Env for role agents on the SSH remote (CLI wrapper path, data dir, host as seen there). */
 	remoteEnv?: Record<string, string>;
+	/** Where the remote root is visible from the desktop host, if anywhere (e.g. \\\\wsl.localhost\\Ubuntu\\home\\dev\\app). */
+	remoteRootOnHost?: string;
 	leadAgentId?: string;
 	roles: Record<string, PianolaProgramRole>;
 	charter: PianolaProgramCharter;
@@ -119,6 +121,7 @@ export function validatePianolaProgram(raw: unknown): PianolaProgram | null {
 		typeof raw.root !== 'string' ||
 		!raw.root ||
 		!optionalString(raw, 'remoteId') ||
+		!optionalString(raw, 'remoteRootOnHost') ||
 		(raw.remoteEnv !== undefined &&
 			(!isRecord(raw.remoteEnv) ||
 				Object.values(raw.remoteEnv).some((v) => typeof v !== 'string'))) ||

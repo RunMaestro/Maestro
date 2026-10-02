@@ -169,7 +169,14 @@ export async function runOrchestratorIteration(
 	);
 	for (const task of running) {
 		const currentState = await deps.getRunState(task);
-		const recentMessages = await deps.getRecentMessages(task);
+		const transcript = await deps.getRecentMessages(task);
+		// An agent's tab accumulates every mission it ever ran; only the messages since
+		// this task's dispatch may decide its outcome, or an old failure marker fails
+		// every later task on the same agent.
+		const recentMessages =
+			task.dispatchedMessageCount !== undefined
+				? transcript.slice(task.dispatchedMessageCount)
+				: transcript;
 		prevStates[task.id] = currentState;
 		const detected = detectTaskOutcome({
 			previousState: state.prevStates[task.id],
@@ -186,10 +193,7 @@ export async function runOrchestratorIteration(
 			currentState === 'idle' &&
 			detected.outcome === 'working' &&
 			task.dispatchedMessageCount !== undefined &&
-			recentMessages.length > task.dispatchedMessageCount &&
-			recentMessages
-				.slice(task.dispatchedMessageCount)
-				.some((message) => message.role === 'assistant');
+			recentMessages.some((message) => message.role === 'assistant');
 		const outcome = revalidating || repliedSinceDispatch ? 'done' : detected.outcome;
 		const reason =
 			repliedSinceDispatch && !revalidating
@@ -330,10 +334,14 @@ export async function runOrchestratorIteration(
 			continue;
 		}
 
+		const dispatchedTask = { ...task, agentId: agentResult.agentId, tabId: res.tabId };
+		const transcriptAtDispatch = await deps.getRecentMessages(dispatchedTask);
 		plan = markTaskStatus(plan, task.id, 'running', {
 			agentId: agentResult.agentId,
 			agentType: agentResult.agentType,
 			tabId: res.tabId,
+			// The prompt just sent is the last message; outcome detection starts after it.
+			dispatchedMessageCount: Math.max(0, transcriptAtDispatch.length - 1),
 		});
 		// Seed the just-dispatched task as 'connecting' (its honest just-spun-up
 		// state) so the next iteration's poll can detect the working-to-idle
