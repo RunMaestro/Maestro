@@ -134,6 +134,16 @@ export function registerCueHandlers(deps: CueHandlerDependencies): void {
 		})
 	);
 
+	// Why the engine is idle while Cue is on. An engine locked out by a peer is
+	// indistinguishable from a broken one without this.
+	ipcMain.handle(
+		'cue:getLeaseBlockedReason',
+		withIpcErrorLogging(
+			handlerOpts('getLeaseBlockedReason'),
+			async (): Promise<string | null> => requireEngine().getLeaseBlockedReason()
+		)
+	);
+
 	// Get currently active Cue runs
 	ipcMain.handle(
 		'cue:getActiveRuns',

@@ -3860,6 +3860,7 @@ interface MaestroAPI {
 		getSettings: () => Promise<CueSettings>;
 		saveSettings: (settings: CueSettings) => Promise<{ writtenRoots: string[] }>;
 		getStatus: () => Promise<CueSessionStatus[]>;
+		getLeaseBlockedReason: () => Promise<string | null>;
 		getGraphData: () => Promise<CueGraphSession[]>;
 		getActiveRuns: () => Promise<CueRunResult[]>;
 		getRunLiveOutput: (runId: string) => Promise<{ stdout: string; stderr: string } | null>;

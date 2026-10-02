@@ -63,6 +63,11 @@ export function createCueApi() {
 		// Get status of all Cue-enabled sessions
 		getStatus: (): Promise<CueSessionStatus[]> => ipcRenderer.invoke('cue:getStatus'),
 
+		// Why the engine is idle although Cue is switched on (another Maestro
+		// process holds the engine lease), or null when it is running.
+		getLeaseBlockedReason: (): Promise<string | null> =>
+			ipcRenderer.invoke('cue:getLeaseBlockedReason'),
+
 		// Get all sessions with their subscriptions (for graph visualization)
 		getGraphData: (): Promise<CueGraphSession[]> => ipcRenderer.invoke('cue:getGraphData'),
 

@@ -21,6 +21,8 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+import { atomicWriteFileSync, FileLockTimeoutError, withFileLockSync } from './crossProcessLock';
+import { currentProcessIdentity, probeProcess } from './processIdentity';
 
 interface CliActivityStatus {
 	sessionId: string;
@@ -28,6 +30,13 @@ interface CliActivityStatus {
 	playbookName: string;
 	startedAt: number;
 	pid: number;
+	/**
+	 * Start-time token of `pid` (see `processIdentity.ts`), so a reader can tell
+	 * the registering process from an unrelated one that later got the same pid.
+	 * Stamped automatically when a process registers itself; absent on entries
+	 * written by older builds and on Windows, which then fall back to pid checks.
+	 */
+	startToken?: string;
 	currentTask?: string;
 	currentDocument?: string;
 }
@@ -57,6 +66,16 @@ function getActivityFilePath(): string {
 	return path.join(getConfigDir(), ACTIVITY_FILE);
 }
 
+function getActivityLockPath(): string {
+	return `${getActivityFilePath()}.lock`;
+}
+
+function isActivityRecord(value: unknown): value is CliActivityStatus {
+	if (!value || typeof value !== 'object') return false;
+	const a = value as Partial<CliActivityStatus>;
+	return typeof a.sessionId === 'string' && typeof a.pid === 'number';
+}
+
 /**
  * Read all CLI activities
  */
@@ -65,23 +84,43 @@ function readCliActivities(): CliActivityStatus[] {
 		const filePath = getActivityFilePath();
 		const content = fs.readFileSync(filePath, 'utf-8');
 		const data = JSON.parse(content) as CliActivityFile;
-		return data.activities || [];
+		return Array.isArray(data.activities) ? data.activities.filter(isActivityRecord) : [];
 	} catch {
 		return [];
 	}
 }
 
 /**
- * Write CLI activities
+ * Read-modify-write the activity file as one step across processes.
+ *
+ * Several `maestro-cli` runs and the desktop app (which prunes dead entries)
+ * all rewrite this file. Unserialized, two writers that read the same base drop
+ * each other's entry, and a reader that caught a half-written file parsed it as
+ * "no activities" and then wrote that back, wiping everyone. The lock fixes the
+ * first; the atomic rename fixes the second.
+ *
+ * If the lock cannot be taken in time (a holder frozen mid-write), the update
+ * is applied unlocked rather than dropped: losing a registration would let the
+ * desktop dispatch into an agent the CLI is driving, and the rename still keeps
+ * the file whole.
  */
-function writeCliActivities(activities: CliActivityStatus[]): void {
+function mutateCliActivities(
+	mutate: (activities: CliActivityStatus[]) => CliActivityStatus[]
+): void {
+	const apply = () => {
+		const before = readCliActivities();
+		const after = mutate(before);
+		if (after === before) return;
+		atomicWriteFileSync(getActivityFilePath(), JSON.stringify({ activities: after }, null, 2));
+	};
 	try {
-		const filePath = getActivityFilePath();
-		const dir = path.dirname(filePath);
-		if (!fs.existsSync(dir)) {
-			fs.mkdirSync(dir, { recursive: true });
+		try {
+			withFileLockSync(getActivityLockPath(), apply);
+		} catch (error) {
+			if (!(error instanceof FileLockTimeoutError)) throw error;
+			console.warn(`[CLI Activity] ${error.message}; writing without the lock`);
+			apply();
 		}
-		fs.writeFileSync(filePath, JSON.stringify({ activities }, null, 2), 'utf-8');
 	} catch (error) {
 		console.error('[CLI Activity] Failed to write activity file:', error);
 	}
@@ -91,20 +130,41 @@ function writeCliActivities(activities: CliActivityStatus[]): void {
  * Register CLI activity for a session (called when playbook starts)
  */
 export function registerCliActivity(status: CliActivityStatus): void {
-	const activities = readCliActivities();
-	// Remove any stale entry for this session
-	const filtered = activities.filter((a) => a.sessionId !== status.sessionId);
-	filtered.push(status);
-	writeCliActivities(filtered);
+	const own = currentProcessIdentity();
+	const entry: CliActivityStatus =
+		status.startToken === undefined && status.pid === own.pid && own.startToken !== undefined
+			? { ...status, startToken: own.startToken }
+			: status;
+	mutateCliActivities((activities) => [
+		// Replace any stale entry for this session
+		...activities.filter((a) => a.sessionId !== entry.sessionId),
+		entry,
+	]);
 }
 
 /**
  * Unregister CLI activity for a session (called when playbook ends)
  */
 export function unregisterCliActivity(sessionId: string): void {
-	const activities = readCliActivities();
-	const filtered = activities.filter((a) => a.sessionId !== sessionId);
-	writeCliActivities(filtered);
+	mutateCliActivities((activities) => {
+		const filtered = activities.filter((a) => a.sessionId !== sessionId);
+		return filtered.length === activities.length ? activities : filtered;
+	});
+}
+
+/**
+ * Drop exactly the entry a liveness probe proved dead. Matching on pid and
+ * token as well as session id matters: between the probe and this write a new
+ * CLI run may have registered the same session, and that live entry must stay.
+ */
+function removeDeadActivity(dead: CliActivityStatus): void {
+	mutateCliActivities((activities) => {
+		const filtered = activities.filter(
+			(a) =>
+				!(a.sessionId === dead.sessionId && a.pid === dead.pid && a.startToken === dead.startToken)
+		);
+		return filtered.length === activities.length ? activities : filtered;
+	});
 }
 
 /**
@@ -118,27 +178,20 @@ export function getCliActivityForSession(sessionId: string): CliActivityStatus |
 /**
  * Is the process behind a recorded activity still alive?
  *
- * `process.kill(pid, 0)` sends no signal; it only reports whether the caller
- * could. The distinction between its failure modes is the whole point:
+ * Delegates to `probeProcess`, which checks the pid AND, when the entry carries
+ * a start token, that the pid still belongs to the process that registered.
+ * A crashed CLI's pid being recycled used to leave its agent "busy" forever.
  *
- * - EPERM means the pid EXISTS but belongs to another user or sits outside this
- *   caller's signal permission. That is evidence of life, not death, and it is
- *   the normal answer for a sandboxed read-only monitor.
- * - ESRCH is the only code that proves the process is gone, and therefore the
- *   only one that may erase the shared activity entry.
- * - Anything else is an unexplained probe failure. Report not-busy for this
- *   call, but do not mutate the file on a guess.
+ * - `alive` (including EPERM: the pid exists under another user) keeps the entry.
+ * - `dead` (ESRCH, or a recycled pid) is the only verdict that may erase it.
+ * - `unknown` reports not-busy for this call but does not mutate the file on a
+ *   guess.
  */
 function isActivityProcessAlive(activity: CliActivityStatus): boolean {
-	try {
-		process.kill(activity.pid, 0);
-		return true;
-	} catch (error) {
-		const code = (error as NodeJS.ErrnoException).code;
-		if (code === 'EPERM') return true;
-		if (code === 'ESRCH') unregisterCliActivity(activity.sessionId);
-		return false;
-	}
+	const liveness = probeProcess(activity);
+	if (liveness === 'alive') return true;
+	if (liveness === 'dead') removeDeadActivity(activity);
+	return false;
 }
 
 /**
