@@ -130,8 +130,6 @@ import {
 	ensureCliServer,
 	startCliDiscoveryWatchdog,
 	stopCliDiscoveryWatchdog,
-	cleanupAllGroomingSessions,
-	getActiveGroomingSessionCount,
 } from './ipc/handlers';
 import { setupIpcHandlers } from './ipc/bootstrap';
 import { stopCoworkingBridge } from './coworking/coworking-bridge';
@@ -3114,8 +3112,6 @@ quitHandler = createQuitHandler({
 	getWebServer: () => webServer,
 	getHistoryManager,
 	tunnelManager,
-	getActiveGroomingSessionCount,
-	cleanupAllGroomingSessions,
 	closeStatsDB,
 	stopCliWatcher: () => {
 		cliWatcher.stop();

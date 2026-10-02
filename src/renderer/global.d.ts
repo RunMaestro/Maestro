@@ -224,7 +224,7 @@ interface MaestroAPI {
 			projectRoot: string,
 			sessionId: string
 		) => Promise<SessionMessagesResult | null>;
-		// NEW: Single-call grooming (recommended) - spawns batch process and returns response
+		// Single-call grooming: spawns a batch process and returns its response
 		groomContext: (
 			projectRoot: string,
 			agentType: string,
@@ -249,10 +249,6 @@ interface MaestroAPI {
 		) => Promise<string>;
 		// Cancel all active grooming sessions
 		cancelGrooming: () => Promise<void>;
-		// DEPRECATED: Use groomContext instead
-		createGroomingSession: (projectRoot: string, agentType: string) => Promise<string>;
-		sendGroomingPrompt: (sessionId: string, prompt: string) => Promise<string>;
-		cleanupGroomingSession: (sessionId: string) => Promise<void>;
 	};
 	settings: {
 		get: (key: string) => Promise<unknown>;

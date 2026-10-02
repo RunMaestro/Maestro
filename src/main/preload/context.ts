@@ -72,18 +72,6 @@ export function createContextApi() {
 
 		// Cancel all active grooming sessions
 		cancelGrooming: (): Promise<void> => ipcRenderer.invoke('context:cancelGrooming'),
-
-		// DEPRECATED: Create a temporary session for context grooming
-		createGroomingSession: (projectRoot: string, agentType: string): Promise<string> =>
-			ipcRenderer.invoke('context:createGroomingSession', projectRoot, agentType),
-
-		// DEPRECATED: Send grooming prompt to a session and get response
-		sendGroomingPrompt: (sessionId: string, prompt: string): Promise<string> =>
-			ipcRenderer.invoke('context:sendGroomingPrompt', sessionId, prompt),
-
-		// Clean up a temporary grooming session
-		cleanupGroomingSession: (sessionId: string): Promise<void> =>
-			ipcRenderer.invoke('context:cleanupGroomingSession', sessionId),
 	};
 }
 
