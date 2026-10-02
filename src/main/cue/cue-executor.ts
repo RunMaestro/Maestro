@@ -57,6 +57,8 @@ export interface CueExecutionConfig {
 	sshStore?: SshRemoteSettingsStore;
 	/** Optional agent-level config values (from agent config store) */
 	agentConfigValues?: Record<string, unknown>;
+	/** Inherit only the server-mode env allowlist (see `filterServerProcessEnv`). */
+	isServerMode?: boolean;
 }
 
 /**

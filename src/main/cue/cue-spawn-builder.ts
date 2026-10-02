@@ -163,6 +163,7 @@ export async function buildSpawnSpec(
 		// Code hooks, telemetry sidecars) sees a turn indistinguishable from one
 		// the user typed, because Cue prompts ARE the user's words from cue.yaml.
 		querySource: 'cue',
+		isServerMode: config.isServerMode,
 		sshRemoteConfig,
 		sshStore,
 	});

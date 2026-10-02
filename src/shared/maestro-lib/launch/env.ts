@@ -6,6 +6,7 @@ import { DEFAULT_QUERY_SOURCE, QUERY_SOURCE_ENV_VAR, type QuerySource } from '..
 import { buildSpawnPath, STANDARD_UNIX_PATHS } from './spawn-path';
 import { isBlankEnvKey, isBlankEnvValue } from '../../agentEnvironment';
 import { CALLER_AGENT_ID_ENV_VAR, CALLER_TAB_ID_ENV_VAR } from '../../agentDelegation';
+import { PROVIDER_ENV_VAR_SUGGESTIONS } from '../../envVarCatalog';
 
 /**
  * Build the base PATH for macOS/Linux with detected Node version manager paths.
@@ -466,6 +467,11 @@ export interface BuildAgentEnvironmentOptions extends AgentEnvLayers {
 	querySource?: QuerySource;
 	/** Desktop only: directories to put in front of PATH. */
 	extraPathDirs?: string[];
+	/**
+	 * Cue only: inherit just the allowlisted part of `process.env` (see
+	 * {@link filterServerProcessEnv}). Also on when `MAESTRO_SERVER_MODE=1`.
+	 */
+	isServerMode?: boolean;
 }
 
 /**
@@ -555,13 +561,133 @@ function buildCliAgentEnvironment(options: BuildAgentEnvironmentOptions): NodeJS
  * agent spawn rebuilds it (a Dock or Finder launch hands Maestro launchd's bare
  * PATH, which hides Homebrew and other user installs). Values are written as
  * given.
+ *
+ * In server mode the inherited layer is cut down to an allowlist first (see
+ * {@link filterServerProcessEnv}); every layer above it is applied unchanged.
  */
 function buildCueAgentEnvironment(options: BuildAgentEnvironmentOptions): NodeJS.ProcessEnv {
+	const inherited = isServerModeActive(options.isServerMode)
+		? filterServerProcessEnv(process.env)
+		: process.env;
 	return {
-		...process.env,
+		...inherited,
 		PATH: buildSpawnPath(options.extraPathDirs),
 		...(resolveAgentEnvVars(options) ?? {}),
 		...(options.maestroEnvVars ?? {}),
 		[QUERY_SOURCE_ENV_VAR]: options.querySource ?? DEFAULT_QUERY_SOURCE,
 	};
+}
+
+// ─── Server mode ─────────────────────────────────────────────────────────────
+
+/** Set to `1` to run Cue with the server-mode environment allowlist. */
+export const SERVER_MODE_ENV_VAR = 'MAESTRO_SERVER_MODE';
+/** Comma-separated extra variable names an operator lets through in server mode. */
+export const SERVER_ENV_ALLOW_ENV_VAR = 'MAESTRO_SERVER_ENV_ALLOW';
+
+/**
+ * Whether server mode is on: the caller said so, or the operator set
+ * `MAESTRO_SERVER_MODE=1`. Never inferred from the runner kind - a standalone
+ * engine on a laptop is the user's own shell environment and keeps all of it.
+ */
+export function isServerModeActive(isServerMode?: boolean): boolean {
+	return isServerMode === true || process.env[SERVER_MODE_ENV_VAR] === '1';
+}
+
+/** Exact names a server-mode child inherits. Compared case-insensitively. */
+const SERVER_ENV_ALLOWED_NAMES: readonly string[] = [
+	// Essential system variables.
+	'PATH',
+	'HOME',
+	'USER',
+	'LOGNAME',
+	'SHELL',
+	'LANG',
+	'TERM',
+	'TMPDIR',
+	// Windows equivalents, without which a child cannot find its own runtime.
+	'SYSTEMROOT',
+	'COMSPEC',
+	'PATHEXT',
+	'USERPROFILE',
+	'APPDATA',
+	'LOCALAPPDATA',
+	'TEMP',
+	'TMP',
+	// Network proxy and TLS trust.
+	'HTTP_PROXY',
+	'HTTPS_PROXY',
+	'ALL_PROXY',
+	'NO_PROXY',
+	'SSL_CERT_FILE',
+	'SSL_CERT_DIR',
+	'NODE_EXTRA_CA_CERTS',
+	'REQUESTS_CA_BUNDLE',
+	// Common dev toolchains.
+	'NVM_DIR',
+	'JAVA_HOME',
+	'GOPATH',
+	'CARGO_HOME',
+	'PYTHONPATH',
+	'DENO_INSTALL_ROOT',
+];
+
+/** Name prefixes a server-mode child inherits. */
+const SERVER_ENV_ALLOWED_PREFIXES: readonly string[] = ['LC_', 'XDG_', 'SSH_', 'MAESTRO_'];
+
+/**
+ * `MAESTRO_*` names that are NOT inherited even though the prefix is: the
+ * caller identity and the query source describe whoever launched THIS
+ * process, and the Cue spawn restates both itself (see `STRIPPED_ENV_VARS`).
+ */
+const SERVER_ENV_DENIED_NAMES: readonly string[] = [
+	CALLER_AGENT_ID_ENV_VAR,
+	CALLER_TAB_ID_ENV_VAR,
+	QUERY_SOURCE_ENV_VAR,
+];
+
+/** Every provider credential and account-dir name the env catalog knows. */
+const PROVIDER_ENV_NAMES: readonly string[] = Object.values(PROVIDER_ENV_VAR_SUGGESTIONS).flatMap(
+	(entries) => entries.map((entry) => entry.key)
+);
+
+function operatorAllowedNames(): string[] {
+	const raw = process.env[SERVER_ENV_ALLOW_ENV_VAR];
+	if (!raw) return [];
+	return raw
+		.split(',')
+		.map((name) => name.trim())
+		.filter((name) => name !== '');
+}
+
+/**
+ * The part of an inherited environment a server-mode child may see.
+ *
+ * On a shared server the engine's own environment holds secrets meant for the
+ * engine alone (the 0DIN token, webhook secrets resolved through
+ * `secret_env`, deploy credentials), and an agent prompted by third-party text
+ * must not be able to read them back out. So this is an ALLOWLIST, never a
+ * blocklist: anything not named here is dropped, and an operator who needs
+ * more names them in `MAESTRO_SERVER_ENV_ALLOW`.
+ *
+ * Names are compared case-insensitively: Windows treats them that way, and
+ * the lowercase proxy spellings (`https_proxy`) are the ones curl reads.
+ */
+export function filterServerProcessEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+	const allowed = new Set(
+		[...SERVER_ENV_ALLOWED_NAMES, ...PROVIDER_ENV_NAMES, ...operatorAllowedNames()].map((name) =>
+			name.toUpperCase()
+		)
+	);
+	const denied = new Set(SERVER_ENV_DENIED_NAMES.map((name) => name.toUpperCase()));
+
+	const filtered: NodeJS.ProcessEnv = {};
+	for (const [key, value] of Object.entries(env)) {
+		const upper = key.toUpperCase();
+		if (denied.has(upper)) continue;
+		if (allowed.has(upper) || SERVER_ENV_ALLOWED_PREFIXES.some((p) => upper.startsWith(p))) {
+			filtered[key] = value;
+		}
+	}
+	return filtered;
 }

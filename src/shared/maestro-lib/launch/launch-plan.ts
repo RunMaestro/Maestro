@@ -82,6 +82,8 @@ export interface AgentLaunchInput {
 	querySource?: QuerySource;
 	/** Local only: directories to put in front of PATH. */
 	extraPathDirs?: string[];
+	/** Cue only: inherit just the server-mode allowlist (see `filterServerProcessEnv`). */
+	isServerMode?: boolean;
 
 	/** The agent's SSH setting, and where to look its remote up. */
 	sshRemoteConfig?: AgentSshRemoteConfig | null;
@@ -203,6 +205,7 @@ export function buildAgentLaunchPlan(input: AgentLaunchInput): AgentLaunchPlanRe
 				isResuming: input.isResuming,
 				querySource: input.querySource,
 				extraPathDirs: input.extraPathDirs,
+				isServerMode: input.isServerMode,
 			}),
 		},
 	};

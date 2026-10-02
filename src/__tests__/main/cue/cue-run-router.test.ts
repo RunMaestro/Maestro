@@ -168,6 +168,17 @@ describe('executeCueRunAction', () => {
 		expect(deps.reportAuthFailure).toHaveBeenCalledWith(result, 'claude-code', undefined);
 	});
 
+	it('threads isServerMode into prompt and shell runs', async () => {
+		const deps = makeDeps({ isServerMode: true });
+		await executeCueRunAction(deps, params());
+		await executeCueRunAction(
+			deps,
+			params({ action: 'command', command: { mode: 'shell', shell: 'env' } as never })
+		);
+		expect((deps.executeCuePrompt.mock.calls[0][0] as Record<string, any>).isServerMode).toBe(true);
+		expect((deps.executeCueShell.mock.calls[0][0] as Record<string, any>).isServerMode).toBe(true);
+	});
+
 	it('reads the conductor profile on every run rather than once', async () => {
 		let profile = 'first';
 		const deps = makeDeps({ getConductorProfile: vi.fn(() => profile) });
