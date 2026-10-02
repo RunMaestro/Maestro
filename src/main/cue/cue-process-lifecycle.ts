@@ -8,15 +8,17 @@
  * it receives a fully resolved SpawnSpec and executes it.
  */
 
-import { spawn, type ChildProcess } from 'child_process';
+import type { ChildProcess } from 'child_process';
 import type { CueRunStatus } from './cue-types';
 import type { SpawnSpec } from './cue-spawn-builder';
 import type { AgentError, ToolType, UsageStats } from '../../shared/types';
 import { createOutputParser } from '../parsers';
-import type { AgentOutputParser } from '../../shared/maestro-lib/parsers/agent-output-parser';
+import type {
+	AgentOutputParser,
+	ParsedEvent,
+} from '../../shared/maestro-lib/parsers/agent-output-parser';
 import { captureException } from '../utils/sentry';
 import { stripAnsiCodes } from '../../shared/stringUtils';
-import { BufferedLineReader } from '../../shared/maestro-lib/streaming/buffered-line-reader';
 import { resolveTurnOutcome } from '../../shared/maestro-lib/streaming/turn-outcome';
 import { cueStatusForTurn } from './cue-turn-status';
 import { UsageAccumulator } from '../../shared/maestro-lib/streaming/usage-accumulator';
@@ -27,6 +29,7 @@ import {
 	BACKGROUND_STOP_GRACE_MS,
 	type StopHandle,
 } from '../../shared/maestro-lib/control/termination';
+import { startTurn, type TurnHandle } from '../../shared/maestro-lib/run/start-turn';
 
 // ─── Types ──────���────────────────────────────────────────────────────────────
 
@@ -134,9 +137,9 @@ function toCueUsageStats(
  * Streaming capture for one Cue agent run: folds three things that used to be
  * three separate full-buffer passes (`extractCleanStdout`,
  * `extractProviderSessionId` in `cue-executor.ts`, and no usage capture at
- * all) into a single line-by-line pass fed by `BufferedLineReader` as stdout
- * chunks arrive, mirroring how desktop chat's `StdoutHandler` and the CLI's
- * `spawnAgent` already do this (Plans/maestro-lib-cli-migration.md, "Cue").
+ * all) into a single pass over the events the run layer (`startTurn`) parses
+ * as stdout chunks arrive, mirroring how desktop chat's `StdoutHandler` and the
+ * CLI's `spawnAgent` already do this (Plans/maestro-lib-cli-migration.md, "Cue").
  *
  * Delta-normalization is gated on `usesCombinedContextWindow` (Part Two's
  * decision, `Plans/maestro-lib-cli-migration.md` §3) rather than desktop's
@@ -149,7 +152,6 @@ function toCueUsageStats(
 class CueRunStreamCapture {
 	/** This run's own parser instance (see the constructor). */
 	readonly parser: AgentOutputParser | null;
-	private readonly reader = new BufferedLineReader();
 	private readonly usageAccumulator: UsageAccumulator | undefined;
 	private readonly usageLastWriteWins: boolean;
 	private readonly resultParts: string[] = [];
@@ -196,26 +198,15 @@ class CueRunStreamCapture {
 		this.usageLastWriteWins = toolType === 'claude-code';
 	}
 
-	push(chunk: string): void {
+	/** A raw stdout chunk, kept for agents whose output is not parsed. */
+	pushRaw(chunk: string): void {
 		this.rawFallback += chunk;
-		if (!this.parser) return;
-		for (const line of this.reader.push(chunk)) {
-			this.handleLine(line);
-		}
 	}
 
-	/** Flush whatever partial line remains unterminated at process exit. */
-	flush(): void {
-		if (!this.parser) return;
-		const remainder = this.reader.flush();
-		if (remainder) this.handleLine(remainder);
-	}
-
-	private handleLine(line: string): void {
+	/** One event from the run layer, which frames and parses the stream. */
+	handleEvent(event: ParsedEvent): void {
 		const parser = this.parser;
 		if (!parser) return;
-		const event = parser.parseJsonLine(line);
-		if (!event) return;
 
 		// The same classifier desktop chat runs on every line. An in-turn API
 		// error notice is skipped: the provider may retry past it, and when it
@@ -389,10 +380,15 @@ export function trackCueProcess(runId: string, entry: CueActiveProcess): () => v
 /**
  * Spawn a process from a SpawnSpec, capture stdio, and enforce timeout.
  *
+ * The process is started, streamed and framed by the library's run layer
+ * (`startTurn`), the same one the CLI uses. What stays here is Cue's own:
+ * its capture, its timeout, its registry entry, and how a finished turn maps
+ * onto a Cue run status.
+ *
  * Returns a promise that resolves with the process result when the child
  * exits (or is killed due to timeout).
  */
-export function runProcess(
+export async function runProcess(
 	runId: string,
 	spec: SpawnSpec,
 	options: ProcessRunOptions
@@ -400,186 +396,163 @@ export function runProcess(
 	const { toolType, timeoutMs, sshRemoteEnabled, sshStdinScript, stdinPrompt, onLog, onActivity } =
 		options;
 
-	return new Promise<ProcessRunResult>((resolve) => {
-		let child: ChildProcess;
-		// Only attach a writable stdin pipe when the SSH wrapper actually
-		// needs to write a script or prompt down it. In local mode the prompt
-		// is already passed as a CLI argument, and leaving stdin as an open
-		// pipe causes some agents (notably Codex `exec`) to emit "Reading
-		// additional input from stdin..." into the run output before they
-		// observe EOF. `'ignore'` gives the child /dev/null for stdin so it
-		// never tries to read - Claude already behaves correctly with either,
-		// so this is safe across all agents.
-		const needsStdinWrite = (sshRemoteEnabled && Boolean(sshStdinScript)) || Boolean(stdinPrompt);
-		const stdinMode: 'pipe' | 'ignore' = needsStdinWrite ? 'pipe' : 'ignore';
-		try {
-			// maestro-p (interactive token mode) self-allocates its own PTY via
-			// node-pty internally, so plain pipe stdio here is sufficient; no
-			// caller-side TTY is needed. The prompt rides as a CLI positional, so
-			// 'ignore' stdin is fine even in interactive mode.
-			child = spawn(spec.command, spec.args, {
-				cwd: spec.cwd,
-				env: spec.env,
-				stdio: [stdinMode, 'pipe', 'pipe'],
-			});
-		} catch (err) {
-			captureException(err, { operation: 'cue:spawn', runId, command: spec.command });
-			resolve({
-				stdout: '',
-				stderr: `Spawn error: ${err instanceof Error ? err.message : String(err)}`,
-				exitCode: null,
-				status: 'failed',
-				providerSessionId: null,
-				usage: null,
-			});
-			return;
-		}
+	let stdout = '';
+	let stderr = '';
+	const capture = new CueRunStreamCapture(toolType);
 
-		let stdout = '';
-		let stderr = '';
-		const capture = new CueRunStreamCapture(toolType);
+	// What travels on stdin: the full bash script for an SSH run, else a prompt
+	// the launch plan moved off the command line (SSH small-prompt mode, or a
+	// local run on a Windows host; see resolvePromptDelivery).
+	const stdin = sshStdinScript && sshRemoteEnabled ? sshStdinScript : stdinPrompt;
 
-		const untrack = trackCueProcess(runId, {
-			child,
-			command: spec.command,
-			args: spec.args,
-			cwd: spec.cwd,
-			toolType,
-			startTime: Date.now(),
-			sshRemoteCommand: spec.sshRemoteCommand,
-			getStdout: () => stdout,
-			getStderr: () => stderr,
-			requestStop: () => {
-				stopRequested = true;
+	let turn: TurnHandle;
+	try {
+		// maestro-p (interactive token mode) self-allocates its own PTY via
+		// node-pty internally, so plain pipe stdio here is sufficient; no
+		// caller-side TTY is needed.
+		turn = startTurn(
+			{ command: spec.command, args: spec.args, cwd: spec.cwd, env: spec.env, stdin },
+			{
+				onStdout: (text) => {
+					stdout += text;
+					capture.pushRaw(text);
+					onActivity?.();
+				},
+				onStderr: (text) => {
+					stderr += text;
+					onActivity?.();
+				},
+				onEvent: (event) => capture.handleEvent(event),
 			},
-		});
-		// Set by `stopProcess` / `stopAllProcesses` before the kill, so the exit
-		// that follows resolves as an interrupt rather than a crash.
-		let stopRequested = false;
-		let settled = false;
-		let timeoutTimer: ReturnType<typeof setTimeout> | undefined;
-
-		const finish = (status: CueRunStatus, exitCode: number | null) => {
-			if (settled) return;
-			settled = true;
-
-			untrack();
-			if (timeoutTimer) clearTimeout(timeoutTimer);
-			capture.flush();
-
-			resolve({
-				stdout: capture.getCleanStdout(),
-				stderr: extractCleanStderr(stderr, toolType),
-				exitCode,
-				status,
-				providerSessionId: capture.providerSessionId,
-				usage: capture.usage,
-			});
-		};
-
-		// Capture stdout
-		child.stdout?.setEncoding('utf8');
-		child.stdout?.on('data', (data: string) => {
-			stdout += data;
-			capture.push(data);
-			onActivity?.();
-		});
-
-		// Capture stderr
-		child.stderr?.setEncoding('utf8');
-		child.stderr?.on('data', (data: string) => {
-			stderr += data;
-			onActivity?.();
-		});
-
-		// Handle process exit.
-		//
-		// The shared resolver decides the outcome, so Cue agrees with desktop
-		// chat and the CLI on what finished a turn. Cue's own `'timeout'` never
-		// reaches here: the watchdog below sets it without consulting the
-		// resolver, so the four-valued `TurnOutcome` does not have to carry it.
-		child.on('close', (code, closeSignal) => {
-			capture.flush();
-			const answerText = capture.getAnswerText();
-			const parser = capture.parser;
-			const { outcome } = resolveTurnOutcome(
-				{
-					exitCode: code,
-					signal: closeSignal ?? null,
-					interrupted: stopRequested,
-					stderrText: stderr,
-					stdoutText: stdout,
-					explicitError: capture.inBandError,
-					capturedAnswerText: answerText,
-					resultMessageSeen: capture.resultMessageSeen,
-				},
-				{
-					// Plain-text agents and command runs have no exit heuristic.
-					detectErrorFromExit: (exitCode, stderrText, stdoutText) =>
-						typeof parser?.detectErrorFromExit === 'function'
-							? (parser.detectErrorFromExit(exitCode, stderrText, stdoutText) ?? null)
-							: null,
-				},
-				{ providerId: toolType, sessionId: runId }
-			);
-			// Cue's two safety rules (a silent non-zero exit, an unrequested signal
-			// kill) live in cueStatusForTurn so the desktop exit listener shares them.
-			const status = cueStatusForTurn({
-				outcome,
-				exitCode: code,
-				answerCaptured: Boolean(answerText?.trim()),
-				killedBySignal: (closeSignal ?? null) !== null,
-			});
-			// An in-band failure has no stderr of its own, so name it there: that is
-			// where a failed run's reason is read from.
-			const inBandMessage = capture.inBandError?.message;
-			if (status === 'failed' && inBandMessage && !stderr.includes(inBandMessage)) {
-				stderr += `${stderr ? '\n' : ''}${inBandMessage}`;
+			{
+				parser: capture.parser ?? undefined,
+				stopGraceMs: BACKGROUND_STOP_GRACE_MS,
+				// In local mode the prompt is already a CLI argument, and leaving
+				// stdin as an open pipe causes some agents (notably Codex `exec`) to
+				// emit "Reading additional input from stdin..." into the run output
+				// before they observe EOF. `ignore` gives the child /dev/null so it
+				// never tries to read - Claude already behaves correctly with either,
+				// so this is safe across all agents.
+				emptyStdin: 'ignore',
+				sessionId: runId,
+				label: 'cue',
 			}
-			finish(status, code);
-		});
+		);
+	} catch (err) {
+		captureException(err, { operation: 'cue:spawn', runId, command: spec.command });
+		return {
+			stdout: '',
+			stderr: `Spawn error: ${err instanceof Error ? err.message : String(err)}`,
+			exitCode: null,
+			status: 'failed',
+			providerSessionId: null,
+			usage: null,
+		};
+	}
 
-		// Handle spawn errors (async - e.g. ENOENT after spawn returns)
-		child.on('error', (error) => {
-			captureException(error, {
-				operation: 'cue:childProcess:error',
-				runId,
-				command: spec.command,
-			});
-			stderr += `\nSpawn error: ${error.message}`;
-			finish('failed', null);
-		});
+	// Set by `stopProcess` / `stopAllProcesses` before the kill, so the exit
+	// that follows resolves as an interrupt rather than a crash.
+	let stopRequested = false;
+	let settled = false;
+	// A flag rather than a swapped listener: a child that exits at nearly the
+	// same instant as the timeout would otherwise have its exit re-routed.
+	let timedOut = false;
 
-		// Write to stdin based on execution mode
-		if (sshStdinScript && sshRemoteEnabled) {
-			// SSH stdin script mode - send the full bash script via stdin
-			child.stdin?.write(sshStdinScript);
-			child.stdin?.end();
-		} else if (stdinPrompt) {
-			// The prompt travels on stdin: SSH small-prompt mode, or a local run on
-			// a Windows host (see resolvePromptDelivery)
-			child.stdin?.write(stdinPrompt);
-			child.stdin?.end();
-		} else {
-			// Local mode - prompt is already in the args
-			child.stdin?.end();
-		}
-
-		// Enforce timeout - use platform-appropriate kill
-		if (timeoutMs > 0) {
-			timeoutTimer = setTimeout(() => {
-				if (settled) return;
-				onLog('cue', `[CUE] Run ${runId} timed out after ${timeoutMs}ms, killing process`);
-				killCueProcess(child);
-
-				// If the process exits after kill, mark as timeout
-				child.removeAllListeners('close');
-				child.on('close', (code) => {
-					finish('timeout', code);
-				});
-			}, timeoutMs);
-		}
+	const untrack = trackCueProcess(runId, {
+		child: turn.child,
+		command: spec.command,
+		args: spec.args,
+		cwd: spec.cwd,
+		toolType,
+		startTime: Date.now(),
+		sshRemoteCommand: spec.sshRemoteCommand,
+		getStdout: () => stdout,
+		getStderr: () => stderr,
+		requestStop: () => {
+			stopRequested = true;
+		},
 	});
+
+	// Enforce timeout - use platform-appropriate kill
+	const timeoutTimer =
+		timeoutMs > 0
+			? setTimeout(() => {
+					if (settled) return;
+					onLog('cue', `[CUE] Run ${runId} timed out after ${timeoutMs}ms, killing process`);
+					timedOut = true;
+					killCueProcess(turn.child);
+				}, timeoutMs)
+			: undefined;
+
+	const exit = await turn.done;
+	settled = true;
+	untrack();
+	if (timeoutTimer) clearTimeout(timeoutTimer);
+
+	const finish = (status: CueRunStatus, exitCode: number | null): ProcessRunResult => ({
+		stdout: capture.getCleanStdout(),
+		stderr: extractCleanStderr(stderr, toolType),
+		exitCode,
+		status,
+		providerSessionId: capture.providerSessionId,
+		usage: capture.usage,
+	});
+
+	// Spawn errors that arrive after spawn returned (e.g. ENOENT).
+	if (exit.spawnError) {
+		if (timedOut) return finish('timeout', null);
+		captureException(exit.spawnError, {
+			operation: 'cue:childProcess:error',
+			runId,
+			command: spec.command,
+		});
+		stderr += `\nSpawn error: ${exit.spawnError.message}`;
+		return finish('failed', null);
+	}
+
+	// Cue's own `'timeout'` is set without consulting the resolver, so the
+	// four-valued `TurnOutcome` does not have to carry it.
+	if (timedOut) return finish('timeout', exit.exitCode);
+
+	// The shared resolver decides the outcome, so Cue agrees with desktop
+	// chat and the CLI on what finished a turn.
+	const answerText = capture.getAnswerText();
+	const parser = capture.parser;
+	const { outcome } = resolveTurnOutcome(
+		{
+			exitCode: exit.exitCode,
+			signal: exit.signal,
+			interrupted: stopRequested,
+			stderrText: stderr,
+			stdoutText: stdout,
+			explicitError: capture.inBandError,
+			capturedAnswerText: answerText,
+			resultMessageSeen: capture.resultMessageSeen,
+		},
+		{
+			// Plain-text agents and command runs have no exit heuristic.
+			detectErrorFromExit: (exitCode, stderrText, stdoutText) =>
+				typeof parser?.detectErrorFromExit === 'function'
+					? (parser.detectErrorFromExit(exitCode, stderrText, stdoutText) ?? null)
+					: null,
+		},
+		{ providerId: toolType, sessionId: runId }
+	);
+	// Cue's two safety rules (a silent non-zero exit, an unrequested signal
+	// kill) live in cueStatusForTurn so the desktop exit listener shares them.
+	const status = cueStatusForTurn({
+		outcome,
+		exitCode: exit.exitCode,
+		answerCaptured: Boolean(answerText?.trim()),
+		killedBySignal: exit.signal !== null,
+	});
+	// An in-band failure has no stderr of its own, so name it there: that is
+	// where a failed run's reason is read from.
+	const inBandMessage = capture.inBandError?.message;
+	if (status === 'failed' && inBandMessage && !stderr.includes(inBandMessage)) {
+		stderr += `${stderr ? '\n' : ''}${inBandMessage}`;
+	}
+	return finish(status, exit.exitCode);
 }
 
 /**
