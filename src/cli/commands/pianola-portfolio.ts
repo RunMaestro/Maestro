@@ -285,8 +285,10 @@ export async function pianolaProgramApply(options: {
 			// Local role agents run `maestro-cli pianola ...` from their own shell: hand them the
 			// same CLI script and data dir Pianola gets, so a lead can save plans and raise asks.
 			// A remote (SSH) role runs on another filesystem, where these Windows paths mean nothing.
+			// A remote (SSH) role runs on another filesystem: its env comes from the manifest's
+			// `remoteEnv` on the program (CLI wrapper path, data dir, and host as seen from there).
 			const roleEnv: Record<string, string> | undefined = program.remoteId
-				? undefined
+				? program.remoteEnv
 				: { MAESTRO_CLI_JS: process.argv[1] ?? '', MAESTRO_USER_DATA: getConfigDirectory() };
 			program = { ...program, updatedAt: existing ? Date.now() : program.updatedAt };
 			upsertPianolaProgram(program);

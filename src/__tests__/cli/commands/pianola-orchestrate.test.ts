@@ -62,11 +62,16 @@ vi.mock('../../../cli/services/agent-run-store', () => ({
 
 import {
 	pianolaOrchestrate,
+	pianolaPlanSet,
 	pianolaValidate,
 	resolveExistingPianolaAgentType,
 } from '../../../cli/commands/pianola-orchestrate';
 import { readSettingValue } from '../../../cli/services/storage';
-import { getPianolaPlan } from '../../../cli/services/pianola-store';
+import {
+	getPianolaPlan,
+	readPianolaPlans,
+	upsertPianolaPlan,
+} from '../../../cli/services/pianola-store';
 import { runDispatch } from '../../../cli/commands/dispatch';
 
 const PLAN: PianolaPlan = { id: 'plan-1', title: 'P', createdAt: 1, tasks: [] };
@@ -474,6 +479,100 @@ describe('pianola validate CLI', () => {
 			}
 		} finally {
 			process.exitCode = oldExitCode;
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it('resolves root-relative artifacts to absolute sandbox paths before calling the runner', async () => {
+		// Leads list artifacts the way they appear in a repo; the runner compares absolute paths.
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pianola-runner-'));
+		const runner = path.join(dir, 'runner.cjs');
+		const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+		const oldExitCode = process.exitCode;
+		try {
+			vi.mocked(readSettingValue).mockImplementation((key) =>
+				key === 'encoreFeatures' ? { pianola: true } : [process.execPath, runner]
+			);
+			vi.mocked(getPianolaPlan).mockReturnValue({
+				...PLAN,
+				tasks: [
+					{
+						id: 'task-1',
+						title: 'T',
+						prompt: 'p',
+						dependsOn: [],
+						status: 'running',
+						validation: {
+							command: ['go', 'test', './...'],
+							target: 'C:\\Users\\x\\forex-go',
+							artifacts: ['internal/live/service.go', '/mnt/c/Users/x/forex-go/go.mod'],
+						},
+					},
+				],
+			});
+			let run: AgentRun | undefined;
+			getAgentRunMock.mockImplementation(() => run);
+			upsertAgentRunMock.mockImplementation((next: AgentRun) => {
+				run = next;
+				return next;
+			});
+			const argvFile = path.join(dir, 'argv.txt');
+			fs.writeFileSync(
+				runner,
+				'require("fs").writeFileSync(' +
+					JSON.stringify(argvFile) +
+					', process.argv.slice(2).join(" "));' +
+					'console.log(JSON.stringify({observed:true,returncode:0,stdout:"",stderr:"",timedOut:false,error:null}))'
+			);
+			await pianolaValidate('plan-1', 'task-1', { json: true });
+			const result = JSON.parse(log.mock.lastCall![0] as string);
+			expect(result.verdict).toBe('verified');
+			const argv = fs.readFileSync(argvFile, 'utf8');
+			expect(argv).toContain('--artifact /mnt/c/Users/x/forex-go/internal/live/service.go');
+			expect(argv).toContain('--artifact /mnt/c/Users/x/forex-go/go.mod');
+		} finally {
+			process.exitCode = oldExitCode;
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
+	});
+});
+
+describe('pianola plan set', () => {
+	it('refuses to overwrite a plan whose tasks have already started', () => {
+		// A lead that reuses an earlier plan id would erase the run history and verified rows
+		// hanging off it; the new outcome has to get a new id.
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pianola-plan-'));
+		const file = path.join(dir, 'plan.json');
+		const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+		const exit = vi.spyOn(process, 'exit').mockImplementation((() => {
+			throw new Error('exit');
+		}) as never);
+		try {
+			vi.mocked(readSettingValue).mockImplementation((key) =>
+				key === 'encoreFeatures' ? { pianola: true } : undefined
+			);
+			vi.mocked(readPianolaPlans).mockReturnValue([
+				{
+					...PLAN,
+					id: 'fx-next',
+					tasks: [{ id: 'a', title: 'A', prompt: 'p', dependsOn: [], status: 'done' }],
+				},
+			]);
+			fs.writeFileSync(
+				file,
+				JSON.stringify({
+					id: 'fx-next',
+					title: 'Second outcome',
+					createdAt: 2,
+					tasks: [{ id: 'b', title: 'B', prompt: 'p', dependsOn: [], status: 'pending' }],
+				})
+			);
+			expect(() => pianolaPlanSet({ file, json: true })).toThrow('exit');
+			expect(JSON.parse(log.mock.lastCall![0] as string).error).toContain('already started');
+			expect(upsertPianolaPlan).not.toHaveBeenCalled();
+		} finally {
+			exit.mockRestore();
+			log.mockRestore();
 			fs.rmSync(dir, { recursive: true, force: true });
 		}
 	});
