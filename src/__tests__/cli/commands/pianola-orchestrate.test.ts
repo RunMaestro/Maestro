@@ -64,7 +64,9 @@ import {
 	pianolaOrchestrate,
 	pianolaPlanSet,
 	pianolaValidate,
+	quoteForPosixShell,
 	resolveExistingPianolaAgentType,
+	sandboxSpawnArgs,
 } from '../../../cli/commands/pianola-orchestrate';
 import { readSettingValue } from '../../../cli/services/storage';
 import {
@@ -575,5 +577,27 @@ describe('pianola plan set', () => {
 			log.mockRestore();
 			fs.rmSync(dir, { recursive: true, force: true });
 		}
+	});
+});
+
+describe('sandbox launcher arguments', () => {
+	it('single-quotes every argument when the runner is reached through wsl.exe', () => {
+		// wsl.exe hands its argv to bash -c; an unquoted Go -run regex breaks that shell.
+		const args = ['--', 'go', 'test', '-run', '^(A|B)$', "it's"];
+		expect(sandboxSpawnArgs('wsl.exe', args)).toEqual([
+			"'--'",
+			"'go'",
+			"'test'",
+			"'-run'",
+			"'^(A|B)$'",
+			"'it'\\''s'",
+		]);
+		expect(sandboxSpawnArgs('C:\\Windows\\System32\\wsl.exe', ['x'])).toEqual(["'x'"]);
+	});
+	it('passes arguments through untouched for a direct runner', () => {
+		expect(sandboxSpawnArgs('python3', ['-run', '^(A|B)$'])).toEqual(['-run', '^(A|B)$']);
+	});
+	it('escapes embedded single quotes for a POSIX shell', () => {
+		expect(quoteForPosixShell("a'b")).toBe("'a'\\''b'");
 	});
 });

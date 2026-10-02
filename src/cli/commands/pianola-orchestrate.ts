@@ -201,6 +201,21 @@ function auditAgentRunAction(
 	}
 }
 
+/** Single-quote one argument for a POSIX shell (`'` becomes `'\''`). */
+export function quoteForPosixShell(value: string): string {
+	return "'" + value.replace(/'/g, "'\\''") + "'";
+}
+
+/**
+ * Arguments as the runner's launcher must receive them. wsl.exe joins its argv into one
+ * `bash -c` string on the Linux side, so a Go `-run '^(A|B)$'` regex or a glob would be
+ * parsed by that shell; each argument is single-quoted there and arrives verbatim.
+ */
+export function sandboxSpawnArgs(launcher: string, args: readonly string[]): string[] {
+	const crossesWsl = /(^|[\\/])wsl(\.exe)?$/i.test(launcher);
+	return crossesWsl ? args.map(quoteForPosixShell) : [...args];
+}
+
 async function runSandbox(task: PianolaTask): Promise<PianolaSandboxObservation> {
 	const spec = task.validation!;
 	const prefix = readSettingValue('pianola.sandboxRunner') ?? DEFAULT_SANDBOX_RUNNER;
@@ -217,8 +232,7 @@ async function runSandbox(task: PianolaTask): Promise<PianolaSandboxObservation>
 			timedOut: false,
 			error: 'Invalid pianola.sandboxRunner setting',
 		};
-	const args = [
-		...prefix.slice(1),
+	const runnerArgs = [
 		'--workspace',
 		translatePianolaSandboxPath(spec.target),
 		'--timeout',
@@ -235,8 +249,14 @@ async function runSandbox(task: PianolaTask): Promise<PianolaSandboxObservation>
 		'--',
 		...spec.command,
 	];
+	// wsl.exe joins its arguments into one `bash -c` string on the Linux side, so a Go
+	// `-run '^(A|B)$'` regex or a glob would be parsed by that shell. Quote each argument
+	// for POSIX sh when the runner is reached through wsl.exe; the runner then sees exact argv.
+	// The launcher's own flags (wsl.exe -d Ubuntu -u dev --) stay as they are; only what
+	// follows them crosses into the Linux shell.
+	const spawnArgs = [...prefix.slice(1), ...sandboxSpawnArgs(prefix[0], runnerArgs)];
 	return new Promise((resolve) => {
-		const child = spawn(prefix[0], args, { windowsHide: true });
+		const child = spawn(prefix[0], spawnArgs, { windowsHide: true });
 		let stdout = '';
 		let stderr = '';
 		child.stdout.on('data', (chunk: Buffer) => {
@@ -255,8 +275,12 @@ async function runSandbox(task: PianolaTask): Promise<PianolaSandboxObservation>
 				error: error.message,
 			})
 		);
-		child.on('close', () => {
+		child.on('close', (code) => {
 			try {
+				if (!stdout.trim()) {
+					// The runner never printed an observation: wsl.exe or python refused to start.
+					throw new Error(`runner exited ${code ?? 'null'} with no output`);
+				}
 				const observation = JSON.parse(stdout.trim()) as PianolaSandboxObservation;
 				if (
 					typeof observation.observed !== 'boolean' ||
@@ -266,14 +290,15 @@ async function runSandbox(task: PianolaTask): Promise<PianolaSandboxObservation>
 				)
 					throw new Error('Invalid sandbox observation');
 				resolve(observation);
-			} catch {
+			} catch (error) {
+				const detail = stderr.trim().slice(-300);
 				resolve({
 					observed: false,
 					returncode: null,
 					stdout,
 					stderr,
 					timedOut: false,
-					error: 'Sandbox runner returned no valid JSON observation',
+					error: `Sandbox runner returned no valid JSON observation (${error instanceof Error ? error.message : String(error)})${detail ? `: ${detail}` : ''}`,
 				});
 			}
 		});
