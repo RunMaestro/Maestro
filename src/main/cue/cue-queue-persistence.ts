@@ -51,7 +51,15 @@ export interface CueQueuePersistence {
 	remove(persistId: string): void;
 	clearSession(sessionId: string): void;
 	clearAll(): void;
-	restoreAll(): Map<string, RestoredQueueEntry[]>;
+	/**
+	 * Ids of every row currently persisted. The engine snapshots this BEFORE
+	 * it initializes sessions, because initializing one can enqueue (and so
+	 * persist) an `app.startup` or initial `time.heartbeat` event behind a busy
+	 * slot - and restoring that row would run the same event a second time.
+	 */
+	persistedIds(): Set<string>;
+	/** Restore persisted rows, limited to `onlyIds` when given (see `persistedIds`). */
+	restoreAll(onlyIds?: ReadonlySet<string>): Map<string, RestoredQueueEntry[]>;
 }
 
 export interface CueQueuePersistenceDeps {
@@ -117,10 +125,21 @@ export function createCueQueuePersistence(deps: CueQueuePersistenceDeps): CueQue
 		}
 	}
 
-	function restoreAll(): Map<string, RestoredQueueEntry[]> {
+	function persistedIds(): Set<string> {
+		try {
+			return new Set(getQueuedEvents().map((row) => row.id));
+		} catch {
+			// restoreAll() reports the same read failure; an empty snapshot just
+			// defers any prior rows to the next start rather than running twice.
+			return new Set();
+		}
+	}
+
+	function restoreAll(onlyIds?: ReadonlySet<string>): Map<string, RestoredQueueEntry[]> {
 		let rows: CueQueuedEventRecord[];
 		try {
 			rows = getQueuedEvents();
+			if (onlyIds) rows = rows.filter((row) => onlyIds.has(row.id));
 		} catch (err) {
 			void captureException(err, { operation: 'cueQueuePersistence.restoreAll' });
 			deps.onLog(
@@ -277,5 +296,5 @@ export function createCueQueuePersistence(deps: CueQueuePersistenceDeps): CueQue
 		return restored;
 	}
 
-	return { persist, remove, clearSession, clearAll, restoreAll };
+	return { persist, remove, clearSession, clearAll, persistedIds, restoreAll };
 }
