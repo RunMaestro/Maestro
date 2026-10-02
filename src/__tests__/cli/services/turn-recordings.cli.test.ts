@@ -2,7 +2,8 @@
  * The desktop turn recordings, replayed through the CLI's spawn path.
  *
  * `src/__tests__/main/process-manager/recordings/` feeds the nine Part Two
- * scenarios through desktop chat's StdoutHandler/ExitHandler. This file feeds
+ * scenarios, plus the captured Claude Code and OpenCode turns, through desktop
+ * chat's StdoutHandler/ExitHandler. This file feeds
  * the SAME recordings (same bytes, same chunk boundaries, same exit code and
  * stderr) through `spawnAgent`, so the two surfaces can be compared on
  * identical input rather than by reading two implementations.
@@ -69,6 +70,10 @@ vi.mock('../../../cli/services/storage', () => ({
 
 import { spawnAgent, type AgentResult } from '../../../cli/services/agent-spawner';
 import { RECORDINGS, type TurnRecording } from '../../main/process-manager/recordings/fixtures';
+import {
+	CAPTURED_CLAUDE_CODE_SESSION_ID,
+	CAPTURED_OPENCODE_SESSION_ID,
+} from '../../main/process-manager/recordings/captured';
 
 /** What the CLI reports for a recording. `note` records a CLI-vs-desktop difference. */
 interface CliExpectation {
@@ -151,6 +156,67 @@ const EXPECTED: Record<string, CliExpectation> = {
 		errorIncludes: 'rate limit',
 		note: 'A SPECIFIC classification fails the turn even though partial assistant text was captured.',
 	},
+
+	'captured-claude-code-normal': {
+		success: true,
+		outcome: 'completed',
+		response: 'The capital of France is Paris.',
+		agentSessionId: CAPTURED_CLAUDE_CODE_SESSION_ID,
+	},
+	'captured-claude-code-resumed': {
+		success: true,
+		outcome: 'completed',
+		response: 'Paris',
+		agentSessionId: CAPTURED_CLAUDE_CODE_SESSION_ID,
+	},
+	'captured-claude-code-stopped-sigint': {
+		success: false,
+		outcome: 'interrupted',
+		agentSessionId: '6c153215-46e7-482f-b644-877267688c15',
+		note: 'Claude answers SIGINT with an error result and exit 0; the stop still reads as interrupted.',
+	},
+	'captured-claude-code-stopped-sigterm': {
+		success: false,
+		outcome: 'interrupted',
+		agentSessionId: '827735bf-54d8-4768-8e3a-c14d4016af29',
+	},
+	'captured-claude-code-killed-sigterm': {
+		success: false,
+		outcome: 'crashed',
+		agentSessionId: '827735bf-54d8-4768-8e3a-c14d4016af29',
+		errorIncludes: 'code 143',
+		note: 'The same bytes with nobody pressing Stop are a crash, as on desktop.',
+	},
+	'captured-opencode-normal': {
+		success: true,
+		outcome: 'completed',
+		response: 'The capital of France is Paris.',
+		agentSessionId: CAPTURED_OPENCODE_SESSION_ID,
+	},
+	'captured-opencode-resumed': {
+		success: true,
+		outcome: 'completed',
+		response: 'Paris',
+		agentSessionId: CAPTURED_OPENCODE_SESSION_ID,
+	},
+	'captured-opencode-stopped-sigint': {
+		success: false,
+		outcome: 'interrupted',
+		agentSessionId: 'ses_f1670fa0cffec9SBOfmQDDuvFz',
+	},
+	'captured-opencode-stopped-sigterm': {
+		success: false,
+		outcome: 'interrupted',
+		agentSessionId: 'ses_f1670a7e6ffecQgVAvhIMMjTox',
+		note: 'Desktop flushes the partial text as the answer; the CLI returns no response for a stopped turn.',
+	},
+	'captured-opencode-killed-sigterm': {
+		success: false,
+		outcome: 'crashed',
+		agentSessionId: 'ses_f1670a7e6ffecQgVAvhIMMjTox',
+		errorIncludes: 'signal sigterm',
+		note: 'Differs from desktop, which is handed `code || 0` and reports a clean finish with the partial text as the answer. The CLI reads the close signal.',
+	},
 };
 
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
@@ -169,12 +235,17 @@ async function replayThroughCli(recording: TurnRecording): Promise<AgentResult> 
 	for (const chunk of recording.chunks) mockStdout.emit('data', Buffer.from(chunk));
 	if (recording.stderrBuffer) mockStderr.emit('data', Buffer.from(recording.stderrBuffer));
 
-	if (recording.interrupted) {
-		controller.abort();
-		mockChild.emit('close', recording.exitCode, 'SIGTERM');
-	} else {
-		mockChild.emit('close', recording.exitCode, null);
-	}
+	// A captured recording carries the real close signal (null when the provider
+	// exited on its own after the stop); a synthetic one is stopped with the
+	// SIGTERM the CLI sends.
+	const closeSignal =
+		recording.exitSignal !== undefined
+			? recording.exitSignal
+			: recording.interrupted
+				? 'SIGTERM'
+				: null;
+	if (recording.interrupted) controller.abort();
+	mockChild.emit('close', recording.exitCode, closeSignal);
 	return resultPromise;
 }
 
@@ -212,6 +283,15 @@ describe('turn recordings replayed through the CLI spawner', () => {
 		const at = args.indexOf('--resume');
 		expect(at).toBeGreaterThanOrEqual(0);
 		expect(args[at + 1]).toBe('sess-continuing-conversation');
+	});
+
+	it('resumes OpenCode with --session when the recording was spawned with an existing session', async () => {
+		await replayThroughCli(RECORDINGS['captured-opencode-resumed']);
+
+		const args = mockSpawn.mock.calls[0][1] as string[];
+		const at = args.indexOf('--session');
+		expect(at).toBeGreaterThanOrEqual(0);
+		expect(args[at + 1]).toBe(CAPTURED_OPENCODE_SESSION_ID);
 	});
 
 	it('declares an expectation for every recording (and none for a recording that no longer exists)', () => {

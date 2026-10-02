@@ -8,9 +8,9 @@
  * UsageAccumulator) and the real parser/handler wiring, end to end from raw
  * stdout chunks to emitted events.
  *
- * See fixtures.ts for the recordings themselves and why they're hand-
- * authored rather than loaded from captured transcripts (there is no
- * existing recording infrastructure in this codebase to build on).
+ * See fixtures.ts for the hand-authored recordings (each pins one edge case
+ * on purpose) and captured.ts for real Claude Code and OpenCode turns (normal,
+ * resumed, stopped), which the second describe block below replays.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -54,6 +54,7 @@ import type {
 	TurnSettlement,
 } from '../../../../main/process-manager/types';
 import { RECORDINGS, type TurnRecording } from './fixtures';
+import { CAPTURED_CLAUDE_CODE_SESSION_ID, CAPTURED_OPENCODE_SESSION_ID } from './captured';
 
 interface CapturedEvents {
 	sessionIds: string[];
@@ -131,7 +132,9 @@ async function runRecording(recording: TurnRecording): Promise<CapturedEvents> {
 		stdoutHandler.handleData(sessionId, chunk);
 	}
 
-	await exitHandler.handleExit(sessionId, recording.exitCode);
+	// ChildProcessSpawner hands ExitHandler `code || 0`, so a process that died on
+	// a signal (code null) reaches it as 0. Mirror that rather than the raw code.
+	await exitHandler.handleExit(sessionId, recording.exitCode || 0);
 
 	return captured;
 }
@@ -268,5 +271,144 @@ describe('turn recordings', () => {
 		expect(crashed.agentErrors).toHaveLength(1);
 		expect(crashed.agentErrors[0].type).toBe('rate_limited');
 		expect(crashed.settlements).toEqual([{ outcome: 'crashed', answerCaptured: true }]);
+	});
+});
+
+describe('captured turn recordings (real Claude Code and OpenCode output)', () => {
+	beforeEach(() => {
+		resetSpawnGenerationsForTest();
+	});
+
+	it('Claude Code normal: session id, the answer, one usage event, no error', async () => {
+		const events = await runRecording(RECORDINGS['captured-claude-code-normal']);
+
+		expect(events.sessionIds).toEqual([CAPTURED_CLAUDE_CODE_SESSION_ID]);
+		expect(events.data.join('')).toBe('The capital of France is Paris.');
+		expect(events.usages).toHaveLength(1);
+		expect(events.usages[0]).toMatchObject({
+			inputTokens: 2,
+			outputTokens: 12,
+			totalCostUsd: 0.0840728,
+		});
+		expect(events.agentErrors).toEqual([]);
+		expect(events.exits).toEqual([0]);
+	});
+
+	it('Claude Code resumed: same session id, and the usage event carries the session running total', async () => {
+		const events = await runRecording(RECORDINGS['captured-claude-code-resumed']);
+
+		expect(events.sessionIds).toEqual([CAPTURED_CLAUDE_CODE_SESSION_ID]);
+		expect(events.data.join('')).toBe('Paris');
+		expect(events.agentErrors).toEqual([]);
+
+		// On a resumed turn Claude Code reports `modelUsage` and `total_cost_usd`
+		// for the WHOLE session, while `usage` covers this turn only. Each desktop
+		// turn is a new process started with --resume, and its fresh
+		// UsageAccumulator returns the first event as-is (see `resumed` above), so
+		// this turn's usage event is the normal turn plus this one: 2 + 2 input
+		// tokens, 12 + 5 output tokens, $0.0840728 + $0.11075. absoluteUsage,
+		// taken from the last API call, is this turn alone.
+		expect(events.usages).toHaveLength(1);
+		expect(events.usages[0]).toMatchObject({ inputTokens: 4, outputTokens: 17 });
+		expect(events.usages[0].totalCostUsd).toBeCloseTo(0.1948228, 7);
+		expect(events.usages[0].absoluteUsage).toMatchObject({ inputTokens: 2, outputTokens: 5 });
+	});
+
+	it('Claude Code stopped with SIGINT (desktop Stop): an error result and exit 0 read as a quiet stop', async () => {
+		const events = await runRecording(RECORDINGS['captured-claude-code-stopped-sigint']);
+
+		expect(events.sessionIds).toEqual(['6c153215-46e7-482f-b644-877267688c15']);
+		// Only a tool call streamed before the stop, so there is no answer to show.
+		expect(events.data).toEqual([]);
+		expect(events.agentErrors).toEqual([]);
+		// Claude still writes its result on SIGINT, so the stopped turn's spend is reported.
+		expect(events.usages).toHaveLength(1);
+		expect(events.exits).toEqual([0]);
+	});
+
+	it('Claude Code stopped with SIGTERM: exit 143 with no result is a stop, not a crash', async () => {
+		const events = await runRecording(RECORDINGS['captured-claude-code-stopped-sigterm']);
+
+		expect(events.sessionIds).toEqual(['827735bf-54d8-4768-8e3a-c14d4016af29']);
+		expect(events.data).toEqual([]);
+		expect(events.usages).toEqual([]);
+		expect(events.agentErrors).toEqual([]);
+		expect(events.exits).toEqual([143]);
+	});
+
+	it('Claude Code killed with SIGTERM when nobody pressed Stop: the same bytes are a crash', async () => {
+		const events = await runRecording(RECORDINGS['captured-claude-code-killed-sigterm']);
+
+		expect(events.agentErrors).toHaveLength(1);
+		expect(events.agentErrors[0]).toMatchObject({
+			type: 'agent_crashed',
+			message: 'Agent exited with code 143',
+		});
+		expect(events.exits).toEqual([143]);
+	});
+
+	it('OpenCode normal: session id, the answer, one usage event, no error', async () => {
+		const events = await runRecording(RECORDINGS['captured-opencode-normal']);
+
+		expect(events.sessionIds).toEqual([CAPTURED_OPENCODE_SESSION_ID]);
+		expect(events.data.join('')).toBe('The capital of France is Paris.');
+		expect(events.usages).toHaveLength(1);
+		expect(events.usages[0]).toMatchObject({
+			inputTokens: 7956,
+			outputTokens: 8,
+			cacheReadInputTokens: 1939,
+		});
+		expect(events.agentErrors).toEqual([]);
+		expect(events.exits).toEqual([0]);
+	});
+
+	it('OpenCode resumed: same session id, and the usage event covers this turn only', async () => {
+		const events = await runRecording(RECORDINGS['captured-opencode-resumed']);
+
+		expect(events.sessionIds).toEqual([CAPTURED_OPENCODE_SESSION_ID]);
+		expect(events.data.join('')).toBe('Paris');
+		expect(events.agentErrors).toEqual([]);
+		// Unlike Claude Code, OpenCode's step_finish counts this turn alone: the
+		// earlier turn arrives as cache reads, not as its own tokens.
+		expect(events.usages).toHaveLength(1);
+		expect(events.usages[0]).toMatchObject({
+			inputTokens: 27,
+			outputTokens: 2,
+			cacheReadInputTokens: 9901,
+		});
+	});
+
+	it('OpenCode stopped with SIGINT (desktop Stop): a signal death is a quiet stop', async () => {
+		const events = await runRecording(RECORDINGS['captured-opencode-stopped-sigint']);
+
+		expect(events.sessionIds).toEqual(['ses_f1670fa0cffec9SBOfmQDDuvFz']);
+		expect(events.data).toEqual([]);
+		expect(events.usages).toEqual([]);
+		expect(events.agentErrors).toEqual([]);
+		// OpenCode died on the signal (code null), which reaches ExitHandler as 0.
+		expect(events.exits).toEqual([0]);
+	});
+
+	it('OpenCode stopped with SIGTERM: no error, and the partial text flushes as the answer', async () => {
+		const events = await runRecording(RECORDINGS['captured-opencode-stopped-sigterm']);
+
+		expect(events.sessionIds).toEqual(['ses_f1670a7e6ffecQgVAvhIMMjTox']);
+		expect(events.data.join('')).toBe("I'll run that command.");
+		expect(events.agentErrors).toEqual([]);
+		expect(events.exits).toEqual([0]);
+	});
+
+	it('OpenCode killed with SIGTERM when nobody pressed Stop: documents a real gap - desktop reports a clean finish', async () => {
+		// ChildProcessSpawner hands ExitHandler `code || 0`, so a process that
+		// died on a signal is indistinguishable from a clean exit here: the
+		// partial text is shown as if the turn completed and nothing reports the
+		// kill. The CLI reads the close signal and reports a crash for the same
+		// bytes (turn-recordings.cli.test.ts). Claude Code is not affected because
+		// it catches SIGTERM and exits 143 itself (see the killed Claude case).
+		const events = await runRecording(RECORDINGS['captured-opencode-killed-sigterm']);
+
+		expect(events.data.join('')).toBe("I'll run that command.");
+		expect(events.agentErrors).toEqual([]);
+		expect(events.exits).toEqual([0]);
 	});
 });

@@ -22,15 +22,24 @@
  * fixtures deliberately split lines across chunk boundaries to exercise the
  * buffering behavior described in Plans/maestro-lib-turn-contract.md
  * section 4.
+ *
+ * Real captured turns (Claude Code and OpenCode: normal, resumed, stopped)
+ * live in captured.ts and are merged into RECORDINGS below, so both replay
+ * harnesses run them alongside these.
  */
+
+import { CAPTURED_RECORDINGS } from './captured';
 
 export interface TurnRecording {
 	name: string;
 	description: string;
-	toolType: 'claude-code';
+	toolType: 'claude-code' | 'opencode';
 	/** Raw stdout chunks, in arrival order. */
 	chunks: string[];
-	exitCode: number;
+	/** The `close` event's exit code; null when the process died on a signal. */
+	exitCode: number | null;
+	/** The `close` event's signal, when a captured process died on one. */
+	exitSignal?: NodeJS.Signals | null;
 	interrupted?: boolean;
 	/** Pre-existing state as if this process was spawned with --resume <id>. */
 	agentSessionIdBeforeStart?: string;
@@ -239,4 +248,6 @@ export const RECORDINGS: Record<string, TurnRecording> = {
 		interrupted: false,
 		stderrBuffer: 'Error: rate limit exceeded, please try again later',
 	},
+
+	...CAPTURED_RECORDINGS,
 };
