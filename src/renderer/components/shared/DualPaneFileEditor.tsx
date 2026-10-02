@@ -96,6 +96,16 @@ export interface DualPaneFileEditorProps {
 	showModifiedBadge?: boolean;
 
 	/**
+	 * Makes the "Modified" badge a button (e.g. to show what was modified).
+	 * Without it the badge is a plain label, since a badge that looks pressable
+	 * and does nothing reads as broken.
+	 */
+	onModifiedBadgeClick?: () => void;
+
+	/** Tooltip for the clickable "Modified" badge. */
+	modifiedBadgeTitle?: string;
+
+	/**
 	 * Whether to show a "Default Updated" badge below the title (alongside the
 	 * Modified badge when both apply). Indicates the bundled/upstream default
 	 * has changed since the user saved their customization.
@@ -204,6 +214,8 @@ export function DualPaneFileEditor({
 	editorTokenCount,
 	editorHeaderActions,
 	showModifiedBadge,
+	onModifiedBadgeClick,
+	modifiedBadgeTitle,
 	showDefaultDriftedBadge,
 	primaryAction,
 	secondaryAction,
@@ -525,14 +537,26 @@ export function DualPaneFileEditor({
 									</div>
 									{!isExpanded && (showModifiedBadge || showDefaultDriftedBadge) && (
 										<div className="dual-pane-badge-row">
-											{showModifiedBadge && (
-												<span
-													className="dual-pane-modified-badge"
-													style={{ backgroundColor: theme.colors.accent }}
-												>
-													Modified
-												</span>
-											)}
+											{showModifiedBadge &&
+												(onModifiedBadgeClick ? (
+													<button
+														type="button"
+														className="dual-pane-modified-badge dual-pane-modified-badge-button"
+														style={{ backgroundColor: theme.colors.accent }}
+														onClick={onModifiedBadgeClick}
+														title={modifiedBadgeTitle}
+														data-testid="dual-pane-modified-badge"
+													>
+														Modified
+													</button>
+												) : (
+													<span
+														className="dual-pane-modified-badge"
+														style={{ backgroundColor: theme.colors.accent }}
+													>
+														Modified
+													</span>
+												))}
 											{showDefaultDriftedBadge && (
 												<span
 													className="dual-pane-modified-badge"

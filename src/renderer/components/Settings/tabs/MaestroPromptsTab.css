@@ -199,3 +199,27 @@
 	padding: 12px 16px;
 	outline: none;
 }
+
+/* Diff against the bundled default. Same box as the preview so switching into
+ * it does not move the frame. */
+.prompt-diff {
+	flex: 1;
+	min-height: 0;
+	overflow: auto;
+	border: 1px solid;
+	border-radius: 4px;
+	padding: 8px 0;
+	outline: none;
+}
+
+.prompt-diff-legend {
+	display: flex;
+	gap: 16px;
+	padding: 0 12px 8px;
+	font-size: 11px;
+}
+
+.prompt-diff-empty {
+	padding: 12px 16px;
+	font-size: 12px;
+}

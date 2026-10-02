@@ -12,7 +12,6 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { createPatch } from 'diff';
 import {
 	Archive,
 	ChevronDown,
@@ -34,6 +33,7 @@ import { notifyToast } from '../../stores/notificationStore';
 import { captureException } from '../../utils/sentry';
 import { formatSize } from '../../../shared/formatters';
 import { GitDiffViewer } from '../GitDiffViewer';
+import { buildSyntheticGitDiff } from '../../utils/gitDiffParser';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 
 interface BackupTabProps {
@@ -44,21 +44,6 @@ interface DiffViewerState {
 	title: string;
 	cwd: string;
 	diffText: string;
-}
-
-/**
- * Build a synthetic git-style unified diff so the existing GitDiffViewer
- * (which expects `diff --git a/... b/...` headers) can render it. The
- * `diff` library's createPatch produces an `Index:` header that the parser
- * doesn't understand on its own.
- */
-function buildSyntheticGitDiff(
-	displayPath: string,
-	oldContent: string,
-	newContent: string
-): string {
-	const patch = createPatch(displayPath, oldContent, newContent, '', '');
-	return `diff --git a/${displayPath} b/${displayPath}\n${patch}`;
 }
 
 function formatTimestamp(iso: string): string {
