@@ -466,6 +466,11 @@ export class ProcessManager extends EventEmitter {
 		const proc = this.processes.get(sessionId);
 		if (!proc) return false;
 
+		// A kill is a stop Maestro asked for (a closed tab, the Process Monitor, a
+		// watchdog), so the exit it causes is not a crash. The resolver reads any
+		// signal it is not told about as an outside kill, which it is not here.
+		proc.interrupted = true;
+
 		try {
 			if (proc.dataBufferTimeout) {
 				clearTimeout(proc.dataBufferTimeout);

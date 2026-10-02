@@ -129,6 +129,7 @@ function createMockOutputParser(overrides: Partial<AgentOutputParser> = {}): Age
 		extractSlashCommands: vi.fn(() => null),
 		isResultMessage: vi.fn(() => false),
 		detectErrorFromLine: vi.fn(() => null),
+		detectErrorFromParsed: vi.fn(() => null),
 		detectErrorFromExit: vi.fn(() => null),
 		...overrides,
 	} as unknown as AgentOutputParser;

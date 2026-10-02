@@ -81,9 +81,10 @@ export interface TurnOutcomeResult {
 	 * Populated whenever `outcome === 'crashed'` and there is a concrete,
 	 * already-classified error to surface: `facts.explicitError` as given,
 	 * or whatever `provider.detectErrorFromExit` returned. NOT populated for
-	 * the empty-answer rule below - that failure has no upstream `AgentError`
-	 * to reuse, and its message is provider-specific (e.g. omp's "exited
-	 * without producing a response"); the caller constructs it.
+	 * an unrequested signal kill or the empty-answer rule below - neither has
+	 * an upstream `AgentError` to reuse, and the wording is the caller's
+	 * (e.g. omp's "exited without producing a response"); the caller
+	 * constructs it.
 	 */
 	error?: AgentError;
 }
@@ -98,21 +99,24 @@ export interface TurnOutcomeResult {
  *  3. The provider's own `detectErrorFromExit` -> crashed. `facts.exitCode`
  *     is coerced to `0` here when `null` (a signal-terminated process) purely
  *     because the provider callback's signature requires a `number` - this
- *     does NOT mean a signal-killed exit is treated as clean; rule 4 below
+ *     does NOT mean a signal-killed exit is treated as clean; rule 3a below
  *     independently catches the case where that coercion would otherwise let
  *     a signal kill masquerade as success.
+ * 3a. An unrequested signal kill -> crashed, whatever was captured. Rule 1
+ *     already took every stop the caller asked for, so a signal here came
+ *     from outside the turn (a shutdown, an OOM kill, a container stop) and
+ *     cut it short: streamed text is a truncated answer, and even a result
+ *     event does not make the kill a success. The CLI and Cue enforced this
+ *     at their own call sites; desktop, which never saw the signal, reported
+ *     a clean finish. It lives here now so no caller can drop it again.
  *  4. No captured answer AND no explicit done signal (`resultMessageSeen`)
- *     -> crashed, when either: the exit was signal-terminated (`facts.signal
- *     !== null`, checked for every provider - an abnormal termination with
- *     nothing to show for it is unambiguously a crash, not a provider-
- *     specific judgment call), or the empty-answer-on-clean-exit rule
- *     applies (omp today; see `generalizeEmptyAnswerRule`). Either way,
- *     the known excluded session shapes (terminal / synopsis / tab-naming
- *     runs) are exempt. Requiring `!resultMessageSeen` here (not just
- *     `!hasAnswer`) matters: a provider that already sent an explicit result
- *     event before being signal-killed or exiting empty-handed already
- *     completed its turn, and must not be reclassified as a crash just
- *     because `capturedAnswerText` happens to be empty at this call site.
+ *     -> crashed, when the empty-answer-on-clean-exit rule applies (omp
+ *     today; see `generalizeEmptyAnswerRule`), except for the known excluded
+ *     session shapes (terminal / synopsis / tab-naming runs). Requiring
+ *     `!resultMessageSeen` here (not just `!hasAnswer`) matters: a provider
+ *     that already sent an explicit result event before exiting empty-handed
+ *     already completed its turn, and must not be reclassified as a crash
+ *     just because `capturedAnswerText` happens to be empty at this call site.
  *  5. Clean exit with an explicit done signal -> completed.
  *  6. A captured answer despite a non-zero exit or a missing done signal ->
  *     completed-with-warning.
@@ -145,20 +149,22 @@ export function resolveTurnOutcome(
 		return { outcome: 'crashed', error: detected };
 	}
 
+	// A falsy signal is no signal. `null`, `undefined`, `0` and `''` all reach
+	// this field on a CLEAN exit: node-pty types its own as `signal?: number`
+	// (node-pty.d.ts:156) and `PtySpawner.ts:251` forwards it untouched, and
+	// some platforms report 0. None of them is a real kill, since no signal
+	// number is 0 and no signal name is empty. Reading any of them as a kill
+	// would report every ordinary turn as crashed. The rule lives here rather
+	// than trusting each adapter to normalize first.
+	if (facts.signal) {
+		return { outcome: 'crashed' };
+	}
+
 	const hasAnswer = Boolean(facts.capturedAnswerText?.trim());
 
 	if (!hasAnswer && !facts.resultMessageSeen) {
-		// A falsy signal is no signal. `null`, `undefined`, `0` and `''` all
-		// reach this field on a CLEAN exit: node-pty types its own as
-		// `signal?: number` (node-pty.d.ts:156) and `PtySpawner.ts:251` forwards
-		// it untouched, and some platforms report 0. None of them is a real
-		// kill, since no signal number is 0 and no signal name is empty.
-		// Reading any of them as a kill bypasses the omp gate below for EVERY
-		// provider and reports an ordinary empty turn as crashed. The rule lives
-		// here rather than trusting each adapter to normalize first.
-		const killedBySignal = Boolean(facts.signal);
 		const emptyAnswerRuleApplies =
-			killedBySignal || options.generalizeEmptyAnswerRule || context.providerId === 'omp';
+			options.generalizeEmptyAnswerRule || context.providerId === 'omp';
 		const isExcludedSession = OMP_EMPTY_ANSWER_SESSION_EXCLUSIONS.some((pattern) =>
 			pattern.test(context.sessionId)
 		);

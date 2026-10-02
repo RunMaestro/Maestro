@@ -736,10 +736,11 @@ async function spawnClaudeAgent(
 
 		const child = spawn(spawnCommand, spawnArgs, options);
 		const abortLink = linkAbortSignal(child, overrides.signal);
-		// Used only for `detectErrorFromExit`; Claude's stream is still read by
-		// `processMessage` below because its stream-json shape is richer than
-		// the AgentOutputParser event vocabulary.
-		const exitClassifier = createOutputParser('claude-code') ?? NO_EXIT_CLASSIFICATION;
+		// Used for `detectErrorFromExit` and for in-band failures; Claude's stream
+		// is still read by `processMessage` below because its stream-json shape is
+		// richer than the AgentOutputParser event vocabulary.
+		const claudeParser = createOutputParser('claude-code');
+		const exitClassifier = claudeParser ?? NO_EXIT_CLASSIFICATION;
 		let droppedOutputBytes = 0;
 		const lineReader = new BufferedLineReader({
 			maxBufferLength: MAX_LINE_BUFFER_LENGTH,
@@ -761,6 +762,7 @@ async function spawnClaudeAgent(
 		let resultEmitted = false;
 		let resultMessageSeen = false;
 		let sessionIdEmitted = false;
+		let errorText: string | undefined;
 
 		// Process a single parsed JSON message from Claude Code's stream-json output
 
@@ -768,6 +770,17 @@ async function spawnClaudeAgent(
 			// An explicit result event is the provider's "done" signal, independent
 			// of whether it carried any text.
 			if (msg.type === 'result') resultMessageSeen = true;
+
+			// A failure Claude reports in its own stream (a `result` flagged
+			// `is_error: true`, a plan-limit notice, a structured `error` event), which
+			// it follows with exit 0, so the exit code alone reads it as success. The
+			// same classifier desktop chat runs on every line. An in-turn API error
+			// notice is skipped: Claude may retry past it, and if it does not, the
+			// failed `result` that ends the turn is caught here instead.
+			if (!errorText && claudeParser && !claudeParser.isProvisionalErrorNotice?.(msg)) {
+				const inBand = claudeParser.detectErrorFromParsed(msg);
+				if (inBand) errorText = inBand.message;
+			}
 
 			// Capture result text (only once)
 			if (msg.type === 'result' && msg.result && !resultEmitted) {
@@ -865,6 +878,7 @@ async function spawnClaudeAgent(
 					// Use accumulated assistant text as fallback when result field is empty
 					answerText: result || assistantText || undefined,
 					resultMessageSeen,
+					errorText,
 					agentSessionId: sessionId,
 					usageStats,
 					// Claude's CLI path has always failed a clean exit that captured nothing,

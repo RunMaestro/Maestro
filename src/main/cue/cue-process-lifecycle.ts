@@ -11,8 +11,8 @@
 import { spawn, execFile, execFileSync, type ChildProcess } from 'child_process';
 import type { CueRunStatus } from './cue-types';
 import type { SpawnSpec } from './cue-spawn-builder';
-import type { ToolType, UsageStats } from '../../shared/types';
-import { getOutputParser } from '../parsers';
+import type { AgentError, ToolType, UsageStats } from '../../shared/types';
+import { createOutputParser } from '../parsers';
 import type { AgentOutputParser } from '../../shared/maestro-lib/parsers/agent-output-parser';
 import { captureException } from '../utils/sentry';
 import { isWindows } from '../../shared/platformDetection';
@@ -145,7 +145,8 @@ function toCueUsageStats(
  * summing/overwriting them needs no accumulator.
  */
 class CueRunStreamCapture {
-	private readonly parser: AgentOutputParser | null;
+	/** This run's own parser instance (see the constructor). */
+	readonly parser: AgentOutputParser | null;
 	private readonly reader = new BufferedLineReader();
 	private readonly usageAccumulator: UsageAccumulator | undefined;
 	private readonly usageLastWriteWins: boolean;
@@ -161,9 +162,20 @@ class CueRunStreamCapture {
 	 * turn that finished and said nothing from one that was cut off.
 	 */
 	resultMessageSeen = false;
+	/**
+	 * The first failure the provider reported in its own stream, if any. Several
+	 * providers report a failed turn in-band and then exit 0 (Claude Code's
+	 * `result` flagged `is_error: true`, a structured `error` event), so without
+	 * this the exit code alone settled those runs as completed.
+	 */
+	inBandError: AgentError | undefined;
 
 	constructor(toolType: string) {
-		this.parser = getOutputParser(toolType as ToolType);
+		// A fresh instance per run, never the shared registry parser: parsers keep
+		// per-stream state (Codex's context window and usage baseline, Claude's
+		// last-call occupancy), and concurrent Cue runs of one provider would
+		// otherwise read each other's.
+		this.parser = createOutputParser(toolType as ToolType);
 		// How each provider reports usage, matching the CLI spawner:
 		// - Codex sends a running session total on every event, so events are
 		//   delta-normalized before summing.
@@ -202,6 +214,16 @@ class CueRunStreamCapture {
 		if (!parser) return;
 		const event = parser.parseJsonLine(line);
 		if (!event) return;
+
+		// The same classifier desktop chat runs on every line. An in-turn API
+		// error notice is skipped: the provider may retry past it, and when it
+		// does not, the failed envelope that ends the turn is caught instead.
+		if (!this.inBandError) {
+			const raw = event.raw ?? event;
+			if (!parser.isProvisionalErrorNotice?.(raw)) {
+				this.inBandError = parser.detectErrorFromParsed?.(raw) ?? undefined;
+			}
+		}
 
 		if (event.type === 'result') {
 			this.resultMessageSeen = true;
@@ -501,7 +523,7 @@ export function runProcess(
 		child.on('close', (code, closeSignal) => {
 			capture.flush();
 			const answerText = capture.getAnswerText();
-			const parser = getOutputParser(toolType as ToolType);
+			const parser = capture.parser;
 			const { outcome } = resolveTurnOutcome(
 				{
 					exitCode: code,
@@ -509,7 +531,7 @@ export function runProcess(
 					interrupted: stopRequested,
 					stderrText: stderr,
 					stdoutText: stdout,
-					explicitError: undefined,
+					explicitError: capture.inBandError,
 					capturedAnswerText: answerText,
 					resultMessageSeen: capture.resultMessageSeen,
 				},
@@ -530,6 +552,12 @@ export function runProcess(
 				answerCaptured: Boolean(answerText?.trim()),
 				killedBySignal: (closeSignal ?? null) !== null,
 			});
+			// An in-band failure has no stderr of its own, so name it there: that is
+			// where a failed run's reason is read from.
+			const inBandMessage = capture.inBandError?.message;
+			if (status === 'failed' && inBandMessage && !stderr.includes(inBandMessage)) {
+				stderr += `${stderr ? '\n' : ''}${inBandMessage}`;
+			}
 			finish(status, code);
 		});
 
