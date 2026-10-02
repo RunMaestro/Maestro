@@ -16,6 +16,8 @@ import { renderHook, act, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { EncoreFeatureFlags } from '../../../../../renderer/types';
 import { FIRST_PARTY_PLUGINS } from '../../../../../shared/plugins/first-party';
+import type { PluginRecord } from '../../../../../shared/plugins/plugin-registry';
+import { notifyToast } from '../../../../../renderer/stores/notificationStore';
 
 const setEncoreFeatures = vi.fn();
 const setStatsCollectionEnabled = vi.fn();
@@ -88,6 +90,7 @@ beforeEach(() => {
 			onChanged: vi.fn(() => () => {}),
 			setFirstPartyEnabled,
 		},
+		fs: { readFile: vi.fn() },
 	};
 });
 
@@ -260,5 +263,96 @@ describe('useExtensions.toggleBuiltin - immediate commits (no modal)', () => {
 		await waitFor(() => {
 			expect(setEncoreFeatures).toHaveBeenCalledWith({ ...encoreFeatures, pianola: false });
 		});
+	});
+});
+
+describe('useExtensions.updatePlugin', () => {
+	const record = {
+		id: 'demo-plugin',
+		manifest: { id: 'demo-plugin', name: 'Demo Plugin', version: '1.0.0' },
+	} as PluginRecord;
+
+	it('updates through the host, refreshes the list, and reports the new version', async () => {
+		const list = vi.mocked(window.maestro.plugins.list);
+		const update = vi.fn().mockResolvedValue({
+			hostApiVersion: '1.0.0',
+			plugins: [{ ...record, manifest: { ...record.manifest, version: '2.0.0' } }],
+		});
+		window.maestro.plugins.update = update;
+		window.maestro.dialog = {
+			selectFolder: vi.fn().mockResolvedValue('/local/demo-v2'),
+		} as unknown as typeof window.maestro.dialog;
+		window.maestro.fs.readFile = vi.fn().mockResolvedValue(JSON.stringify({ id: record.id }));
+		const { result } = renderHook(() => useExtensions());
+		await flushMountEffects();
+
+		await act(async () => result.current.updatePlugin(record));
+
+		expect(update).toHaveBeenCalledExactlyOnceWith('/local/demo-v2');
+		expect(list).toHaveBeenCalledTimes(2);
+		expect(notifyToast).toHaveBeenCalledWith(
+			expect.objectContaining({ color: 'green', message: 'Updated Demo Plugin to v2.0.0' })
+		);
+		expect(result.current.busyId).toBeNull();
+	});
+
+	it('does nothing after folder selection is cancelled', async () => {
+		const update = vi.fn();
+		window.maestro.plugins.update = update;
+		window.maestro.dialog = {
+			selectFolder: vi.fn().mockResolvedValue(null),
+		} as unknown as typeof window.maestro.dialog;
+		window.maestro.fs.readFile = vi.fn();
+		const { result } = renderHook(() => useExtensions());
+		await flushMountEffects();
+
+		await act(async () => result.current.updatePlugin(record));
+
+		expect(update).not.toHaveBeenCalled();
+		expect(window.maestro.fs.readFile).not.toHaveBeenCalled();
+		expect(notifyToast).not.toHaveBeenCalled();
+		expect(result.current.busyId).toBeNull();
+	});
+
+	it('shows the host rejection and leaves the installed list untouched', async () => {
+		const list = vi.mocked(window.maestro.plugins.list);
+		window.maestro.plugins.update = vi
+			.fn()
+			.mockRejectedValue(new Error('update version is not newer'));
+		window.maestro.dialog = {
+			selectFolder: vi.fn().mockResolvedValue('/local/demo-old'),
+		} as unknown as typeof window.maestro.dialog;
+		window.maestro.fs.readFile = vi.fn().mockResolvedValue(JSON.stringify({ id: record.id }));
+		const { result } = renderHook(() => useExtensions());
+		await flushMountEffects();
+
+		await act(async () => result.current.updatePlugin(record));
+
+		expect(list).toHaveBeenCalledTimes(1);
+		expect(notifyToast).toHaveBeenCalledWith(
+			expect.objectContaining({ color: 'red', message: expect.stringContaining('not newer') })
+		);
+		expect(result.current.busyId).toBeNull();
+	});
+
+	it('rejects a folder for a different installed plugin before invoking update', async () => {
+		const update = vi.fn();
+		window.maestro.plugins.update = update;
+		window.maestro.dialog = {
+			selectFolder: vi.fn().mockResolvedValue('/local/other-plugin'),
+		} as unknown as typeof window.maestro.dialog;
+		window.maestro.fs.readFile = vi.fn().mockResolvedValue(JSON.stringify({ id: 'other-plugin' }));
+		const { result } = renderHook(() => useExtensions());
+		await flushMountEffects();
+
+		await act(async () => result.current.updatePlugin(record));
+
+		expect(update).not.toHaveBeenCalled();
+		expect(notifyToast).toHaveBeenCalledWith(
+			expect.objectContaining({
+				color: 'red',
+				message: expect.stringContaining('not for demo-plugin'),
+			})
+		);
 	});
 });

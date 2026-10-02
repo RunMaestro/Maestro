@@ -5,12 +5,12 @@
  * the requested permissions (risk-colored, via getGrants), a contributions
  * summary (filtered by pluginId), and the lifecycle actions: Enable/Disable,
  * Configure (consent + a live editor for the plugin's contributed settings,
- * written to `plugins.<id>.*`), Revoke, and Uninstall. For a built-in feature
+ * written to `plugins.<id>.*`), Update, Revoke, and Uninstall. For a built-in feature
  * it shows the description and an enable toggle.
  */
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
-import { Power, Settings as SettingsIcon, Trash2, KeyRound } from 'lucide-react';
+import { Power, Settings as SettingsIcon, Trash2, KeyRound, RefreshCw } from 'lucide-react';
 import type { Theme } from '../../../types';
 import { capabilityRisk, describeCapability } from '../../../../shared/plugins/permissions';
 import { formatCalendarDay } from '../../../../shared/formatters';
@@ -44,6 +44,7 @@ interface ExtensionDetailsProps {
 	onTogglePlugin: (record: PluginRecord) => void;
 	onToggleBuiltin: (flag: NonNullable<UnifiedExtension['flag']>) => void;
 	onUninstall: (record: PluginRecord) => void;
+	onUpdate?: (record: PluginRecord) => void;
 	onRevoke: (id: string) => void;
 	getGrants: (id: string) => Promise<PluginGrantsSnapshot>;
 	/** First-party feature config body rendered in the Settings sub-tab (from
@@ -78,6 +79,7 @@ export function ExtensionDetails({
 	onTogglePlugin,
 	onToggleBuiltin,
 	onUninstall,
+	onUpdate,
 	onRevoke,
 	getGrants,
 	settingsBody,
@@ -300,7 +302,7 @@ export function ExtensionDetails({
 					style={{ color: theme.colors.error }}
 				>
 					This plugin&apos;s files no longer match their signature (tampered). It is fully disabled:
-					no code runs and no contributions apply. Reinstall it from a trusted source.
+					no code runs and no contributions apply. Update it from a trusted source.
 				</p>
 			)}
 			{isPlugin && isCodeTier && ext.trust !== 'trusted' && ext.trust !== 'invalid' && (
@@ -350,16 +352,31 @@ export function ExtensionDetails({
 				)}
 
 				{isPlugin && record && (
-					<button
-						type="button"
-						data-testid="extension-uninstall"
-						disabled={busy}
-						onClick={() => onUninstall(record)}
-						className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-sm transition-colors hover:bg-white/5 disabled:opacity-50"
-						style={{ borderColor: theme.colors.border, color: theme.colors.error }}
-					>
-						<Trash2 className="w-4 h-4" /> Uninstall
-					</button>
+					<>
+						{onUpdate && (
+							<button
+								type="button"
+								data-testid="extension-update"
+								disabled={busy}
+								onClick={() => onUpdate(record)}
+								className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-sm transition-colors hover:bg-white/5 disabled:opacity-50"
+								style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
+								title="Choose a folder with a newer version of this plugin"
+							>
+								<RefreshCw className="w-4 h-4" /> Update from folder…
+							</button>
+						)}
+						<button
+							type="button"
+							data-testid="extension-uninstall"
+							disabled={busy}
+							onClick={() => onUninstall(record)}
+							className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-sm transition-colors hover:bg-white/5 disabled:opacity-50"
+							style={{ borderColor: theme.colors.border, color: theme.colors.error }}
+						>
+							<Trash2 className="w-4 h-4" /> Uninstall
+						</button>
+					</>
 				)}
 			</div>
 

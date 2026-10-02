@@ -325,6 +325,23 @@ describe('ExtensionDetails - plugin settings panels', () => {
 		expect(screen.getByTestId('extension-uninstall')).toBeInTheDocument();
 	});
 
+	it('offers a local update for plugins, including disabled ones', () => {
+		const onUpdate = vi.fn();
+		const plugin = pluginTile('plugin-a');
+		plugin.record = { ...plugin.record!, enabled: false };
+		plugin.state = 'installed';
+		renderDetails({ ext: plugin, onUpdate });
+
+		fireEvent.click(screen.getByTestId('extension-update'));
+		expect(onUpdate).toHaveBeenCalledExactlyOnceWith(plugin.record);
+		expect(screen.getByTestId('extension-uninstall')).toBeInTheDocument();
+	});
+
+	it('does not offer a local update for built-in features', () => {
+		renderDetails({ ext: builtinTile('usageStats', true), onUpdate: vi.fn() });
+		expect(screen.queryByTestId('extension-update')).not.toBeInTheDocument();
+	});
+
 	it('keeps contributed setting controls beside a plugin settings panel', async () => {
 		const pluginId = 'plugin-a';
 		renderDetails({
