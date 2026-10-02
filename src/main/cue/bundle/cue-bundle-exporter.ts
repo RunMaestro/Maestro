@@ -11,7 +11,8 @@
  * Three guarantees, each enforced here rather than trusted to the caller:
  *
  * 1. **No secret values.** Agent env vars that look secret travel by NAME only
- *    (`env.required`), parked vars (`customEnvVarsDisabled`) never travel, and a
+ *    (`env.required`), as do values shaped like a known credential (`sk-`,
+ *    `ghp_`, ...) whatever their name, parked vars (`customEnvVarsDisabled`) never travel, and a
  *    literal `webhook.secret` refuses the export unless explicitly allowed.
  * 2. **No local paths.** Every absolute path is replaced by a workspace key plus
  *    a relative path, git remotes lose their userinfo, and a final guard scans
@@ -123,10 +124,31 @@ function sortedUnique(values: Iterable<string>): string[] {
 	return [...new Set(values)].sort();
 }
 
-/** True when `child` is `parent` or sits beneath it. */
-function isWithin(parent: string, child: string): boolean {
-	const rel = path.relative(parent, child);
-	return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
+/**
+ * True when `child` is `parent` or sits beneath it. Windows paths are compared
+ * case-insensitively, since `C:\Proj` and `c:\proj` name the same folder there
+ * and a case-sensitive check would call an Auto Run folder "outside" its root.
+ */
+export function isWithin(
+	parent: string,
+	child: string,
+	platform: NodeJS.Platform = process.platform
+): boolean {
+	const p = platform === 'win32' ? path.win32 : path;
+	const fold = (s: string) => (platform === 'win32' ? s.toLowerCase() : s);
+	const rel = p.relative(fold(parent), fold(child));
+	return rel === '' || (!rel.startsWith('..') && !p.isAbsolute(rel));
+}
+
+/**
+ * Value prefixes that mark a well-known credential (OpenAI/Anthropic `sk-`,
+ * GitHub `ghp_` / `github_pat_`, Slack `xox*`). Catches a secret stored under
+ * a name `isSecretEnvKey` does not recognize.
+ */
+const SECRET_VALUE_PREFIXES = ['sk-', 'ghp_', 'github_pat_', 'xox'];
+
+function looksLikeSecretValue(value: unknown): boolean {
+	return typeof value === 'string' && SECRET_VALUE_PREFIXES.some((p) => value.startsWith(p));
 }
 
 function readJsonFile<T>(filePath: string): T | undefined {
@@ -216,19 +238,62 @@ function readGitSource(root: string): CueBundleWorkspaceSource | undefined {
 	} catch {
 		// No config, no remote.
 	}
+	let head: string | undefined;
 	try {
-		const head = fs.readFileSync(path.join(dirs.gitDir, 'HEAD'), 'utf-8');
-		const branch = /^ref:\s*refs\/heads\/(.+)$/m.exec(head);
-		if (branch) source.gitBranch = branch[1].trim();
+		head = fs.readFileSync(path.join(dirs.gitDir, 'HEAD'), 'utf-8').trim();
 	} catch {
-		// Detached or unreadable HEAD.
+		// Unreadable HEAD: no branch, no commit.
 	}
-	return source.gitRemote || source.gitBranch ? source : undefined;
+	if (head) {
+		const ref = /^ref:\s*(\S+)$/.exec(head);
+		if (ref) {
+			const branch = /^refs\/heads\/(.+)$/.exec(ref[1]);
+			if (branch) source.gitBranch = branch[1];
+			const sha = resolveGitRef(dirs, ref[1]);
+			if (sha) source.gitRef = sha;
+		} else if (GIT_SHA_RE.test(head)) {
+			source.gitRef = head.toLowerCase();
+		}
+	}
+	return source.gitRemote || source.gitBranch || source.gitRef ? source : undefined;
+}
+
+/** A full SHA-1 or SHA-256 object name. */
+const GIT_SHA_RE = /^[0-9a-f]{40}([0-9a-f]{24})?$/i;
+
+/**
+ * Resolve a symbolic ref (`refs/heads/main`) to its commit: the loose ref file
+ * first (per-worktree dir, then the shared one), then `packed-refs`. Returns
+ * undefined for an unborn branch.
+ */
+function resolveGitRef(
+	dirs: { gitDir: string; commonDir: string },
+	ref: string
+): string | undefined {
+	for (const dir of new Set([dirs.gitDir, dirs.commonDir])) {
+		try {
+			const value = fs.readFileSync(path.join(dir, ref), 'utf-8').trim();
+			if (GIT_SHA_RE.test(value)) return value.toLowerCase();
+		} catch {
+			// Not a loose ref here.
+		}
+	}
+	try {
+		const packed = fs.readFileSync(path.join(dirs.commonDir, 'packed-refs'), 'utf-8');
+		for (const line of packed.split(/\r?\n/)) {
+			const [sha, name] = line.trim().split(/\s+/);
+			if (name === ref && sha && GIT_SHA_RE.test(sha)) return sha.toLowerCase();
+		}
+	} catch {
+		// No packed-refs.
+	}
+	return undefined;
 }
 
 // ─── Data loading ────────────────────────────────────────────────────────────
 
-function readSessions(dataDir: string): SessionInfo[] {
+/** Agents from `maestro-sessions.json`, in stored order (Cue's ownership order). */
+export function readSessions(dataDir: string): SessionInfo[] {
 	const store = readJsonFile<{ sessions?: SessionInfo[] }>(
 		path.join(dataDir, 'maestro-sessions.json')
 	);
@@ -350,11 +415,49 @@ function resolveOwnerId(owner: unknown, sessions: SessionInfo[]): string | undef
 	return sessions.find((s) => s.name === owner)?.id ?? owner;
 }
 
-function referencedAgentIds(subs: RawSubscription[]): string[] {
+/**
+ * The agent an unassigned subscription runs on: `settings.owner_agent_id` when
+ * set, else the first agent in `maestro-sessions.json` whose project root is
+ * this one, which is the agent Cue picks at runtime (`computeOwnershipWarning`).
+ */
+function resolveUnownedTarget(
+	owner: unknown,
+	root: string,
+	sessions: SessionInfo[]
+): string | undefined {
+	return resolveOwnerId(owner, sessions) ?? sessions.find((s) => agentRoot(s) === root)?.id;
+}
+
+/**
+ * Resolve one `source_session` entry the way the completion service matches
+ * it (by id, else by display name). An id wins outright; a name matches every
+ * agent carrying it. Unmatched entries pass through so the caller can warn.
+ */
+function resolveSourceSession(entry: string, sessions: SessionInfo[]): string[] {
+	if (sessions.some((s) => s.id === entry)) return [entry];
+	const byName = sessions.filter((s) => s.name === entry).map((s) => s.id);
+	return byName.length > 0 ? byName : [entry];
+}
+
+/**
+ * Every agent a set of subscriptions needs: its target (or `unownedTarget` for
+ * a subscription with no `agent_id`), its fan-out targets, and the upstream
+ * agents an `agent.completed` chain waits on.
+ */
+function referencedAgentIds(
+	subs: RawSubscription[],
+	sessions: SessionInfo[],
+	unownedTarget?: string
+): string[] {
 	const ids: string[] = [];
 	for (const sub of subs) {
-		ids.push(...asStringList(sub.agent_id));
+		const targets = asStringList(sub.agent_id);
+		if (targets.length === 0 && unownedTarget) targets.push(unownedTarget);
+		ids.push(...targets);
 		ids.push(...asStringList(sub.source_session_ids));
+		for (const entry of asStringList(sub.source_session)) {
+			ids.push(...resolveSourceSession(entry, sessions));
+		}
 		ids.push(...asStringList(sub.fan_out_ids));
 	}
 	return ids;
@@ -431,12 +534,21 @@ function buildAgentSettings(
 	const values: Record<string, string> = {};
 	const required: string[] = [];
 	const machineSpecific: string[] = [];
+	const secretByValue: string[] = [];
 	for (const key of Object.keys(env).sort()) {
 		const value = env[key];
 		if (isSecretEnvKey(key)) required.push(key);
-		else if (typeof value === 'string' && (path.isAbsolute(value) || value.startsWith('~'))) {
+		else if (looksLikeSecretValue(value)) {
+			required.push(key);
+			secretByValue.push(key);
+		} else if (typeof value === 'string' && (path.isAbsolute(value) || value.startsWith('~'))) {
 			machineSpecific.push(key);
 		} else values[key] = String(value);
+	}
+	if (secretByValue.length > 0) {
+		builder.warnings.add(
+			`Agent "${session.name}" sets ${secretByValue.join(', ')} to a value that looks like a credential; ${secretByValue.length === 1 ? 'it was' : 'they were'} exported by name only. Set ${secretByValue.length === 1 ? 'it' : 'them'} again after import.`
+		);
 	}
 	if (machineSpecific.length > 0) {
 		builder.warnings.add(
@@ -604,9 +716,10 @@ export async function exportCueBundle(
 			const subs = rawSubscriptions(doc).filter((s) => s.pipeline_name === bundleName);
 			if (subs.length === 0) continue;
 			configByRoot.set(root, { subs, settings: doc?.settings });
-			for (const id of referencedAgentIds(subs)) agentIds.add(id);
 			const owner = resolveOwnerId(doc?.settings?.owner_agent_id, sessions);
 			if (owner) agentIds.add(owner);
+			const unownedTarget = resolveUnownedTarget(doc?.settings?.owner_agent_id, root, sessions);
+			for (const id of referencedAgentIds(subs, sessions, unownedTarget)) agentIds.add(id);
 		}
 		if (!pipeline && configByRoot.size === 0) {
 			throw new Error(`Pipeline not found: ${options.pipeline}`);
@@ -627,12 +740,16 @@ export async function exportCueBundle(
 		agentIds.add(agent.id);
 		const root = agentRoot(agent);
 		const doc = readCueDocument(root);
-		const owner = resolveOwnerId(doc?.settings?.owner_agent_id, sessions);
+		const unownedTarget = resolveUnownedTarget(doc?.settings?.owner_agent_id, root, sessions);
 		const subs = rawSubscriptions(doc).filter((s) =>
-			typeof s.agent_id === 'string' && s.agent_id ? s.agent_id === agent.id : owner === agent.id
+			typeof s.agent_id === 'string' && s.agent_id
+				? s.agent_id === agent.id
+				: unownedTarget === agent.id
 		);
 		if (doc) configByRoot.set(root, { subs, settings: doc.settings });
-		const foreign = sortedUnique(referencedAgentIds(subs)).filter((id) => id !== agent.id);
+		const foreign = sortedUnique(referencedAgentIds(subs, sessions, unownedTarget)).filter(
+			(id) => id !== agent.id
+		);
 		if (foreign.length > 0) {
 			builder.warnings.add(
 				`Subscriptions reference other agents that are not in this bundle: ${foreign.map((id) => sessionById.get(id)?.name ?? id).join(', ')}.`

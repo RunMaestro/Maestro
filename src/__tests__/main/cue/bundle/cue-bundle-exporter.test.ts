@@ -14,6 +14,7 @@ import * as yaml from 'js-yaml';
 import {
 	assignWorkspaceKeys,
 	exportCueBundle,
+	isWithin,
 	scrubGitRemote,
 } from '../../../../main/cue/bundle/cue-bundle-exporter';
 import { readZipArchive } from '../../../../main/utils/zip-archive';
@@ -539,7 +540,177 @@ describe('exportCueBundle - data directory', () => {
 	});
 });
 
+describe('exportCueBundle - agent resolution', () => {
+	/** Rewrite the sessions file, keeping the seeded agents in order. */
+	function setSessions(sessions: Array<Record<string, unknown>>): void {
+		writeJson(path.join(dataDir, 'maestro-sessions.json'), { sessions });
+	}
+
+	it('includes the fallback agent for an unassigned subscription with no owner_agent_id', async () => {
+		const gammaRoot = path.join(tmp, 'projects', 'gamma');
+		setSessions([
+			{
+				id: 'agent-first',
+				name: 'First',
+				toolType: 'claude-code',
+				cwd: gammaRoot,
+				projectRoot: gammaRoot,
+			},
+			{
+				id: 'agent-second',
+				name: 'Second',
+				toolType: 'codex',
+				cwd: gammaRoot,
+				projectRoot: gammaRoot,
+			},
+		]);
+		writeCueYaml(gammaRoot, {
+			subscriptions: [
+				{
+					name: 'tick',
+					event: 'time.heartbeat',
+					pipeline_name: 'Review',
+					prompt: 'tick',
+					interval_minutes: 5,
+				},
+			],
+		});
+		const out = path.join(tmp, 'fallback.zip');
+		const result = await exportCueBundle({
+			dataDir,
+			pipeline: 'Review',
+			outputPath: out,
+			env: ENV,
+		});
+		expect(result.manifest.agents.map((a) => a.id)).toEqual(['agent-first']);
+
+		// Single-agent mode: the fallback owner keeps its unassigned subscription,
+		// any other agent in the root does not get it.
+		const first = await exportCueBundle({
+			dataDir,
+			agentId: 'agent-first',
+			outputPath: path.join(tmp, 'first.zip'),
+			env: ENV,
+		});
+		const firstCue = yaml.load(
+			readZip(first.outputPath).get('workspaces/gamma/.maestro/cue.yaml')!.toString()
+		) as { subscriptions: Array<{ name: string }> };
+		expect(firstCue.subscriptions.map((s) => s.name)).toEqual(['tick']);
+
+		const second = await exportCueBundle({
+			dataDir,
+			agentId: 'agent-second',
+			outputPath: path.join(tmp, 'second.zip'),
+			env: ENV,
+		});
+		const secondCue = yaml.load(
+			readZip(second.outputPath).get('workspaces/gamma/.maestro/cue.yaml')!.toString()
+		) as { subscriptions: unknown[] };
+		expect(secondCue.subscriptions).toEqual([]);
+	});
+
+	it('includes an upstream agent named only in source_session', async () => {
+		writeCueYaml(betaRoot, {
+			subscriptions: [
+				{
+					name: 'chain',
+					event: 'agent.completed',
+					agent_id: 'agent-beta',
+					pipeline_name: 'Solo',
+					source_session: 'Unrelated',
+					prompt: 'Continue.',
+				},
+			],
+		});
+		const result = await exportCueBundle({
+			dataDir,
+			pipeline: 'Solo',
+			outputPath: path.join(tmp, 'solo.zip'),
+			env: ENV,
+		});
+		expect(result.manifest.agents.map((a) => a.id)).toEqual(['agent-beta', 'agent-unrelated']);
+		expect(result.manifest.warnings?.some((w) => w.includes('no longer exists'))).toBe(false);
+	});
+
+	it('exports a credential-shaped value under an unflagged key by name only', async () => {
+		setSessions([
+			{
+				id: 'agent-beta',
+				name: 'Beta',
+				toolType: 'claude-code',
+				cwd: betaRoot,
+				projectRoot: betaRoot,
+				customEnvVars: { HELPER_VALUE: 'sk-proj-abc123', REGION: 'eu' },
+			},
+		]);
+		const out = path.join(tmp, 'beta.zip');
+		const result = await exportCueBundle({
+			dataDir,
+			agentId: 'agent-beta',
+			outputPath: out,
+			env: ENV,
+		});
+		const entries = readZip(out);
+		const settings = JSON.parse(
+			entries.get('agents/agent-beta.json')!.toString()
+		) as CueBundleAgentSettings;
+		expect(settings.env).toEqual({ values: { REGION: 'eu' }, required: ['HELPER_VALUE'] });
+		expect(result.manifest.requirements.secrets).toContain('HELPER_VALUE');
+		expect(
+			result.manifest.warnings?.some((w) => w.includes('HELPER_VALUE') && w.includes('credential'))
+		).toBe(true);
+		for (const [name, bytes] of entries) {
+			expect(bytes.toString('utf-8'), name).not.toContain('sk-proj-abc123');
+		}
+	});
+});
+
+describe('exportCueBundle - git commit', () => {
+	const SHA = 'a'.repeat(40);
+	const PACKED_SHA = 'b'.repeat(40);
+	const DETACHED_SHA = 'c'.repeat(40);
+
+	async function alphaSource() {
+		const result = await exportCueBundle({
+			dataDir,
+			pipeline: 'Review',
+			outputPath: path.join(tmp, 'git.zip'),
+			env: ENV,
+		});
+		return result.manifest.workspaces.find((w) => w.key === 'alpha')?.source;
+	}
+
+	it('resolves a loose refs/heads ref', async () => {
+		write(path.join(alphaRoot, '.git/refs/heads/main'), `${SHA}\n`);
+		expect(await alphaSource()).toMatchObject({ gitBranch: 'main', gitRef: SHA });
+	});
+
+	it('falls back to packed-refs', async () => {
+		write(
+			path.join(alphaRoot, '.git/packed-refs'),
+			`# pack-refs with: peeled fully-peeled sorted\n${'d'.repeat(40)} refs/heads/other\n${PACKED_SHA} refs/heads/main\n`
+		);
+		expect(await alphaSource()).toMatchObject({ gitBranch: 'main', gitRef: PACKED_SHA });
+	});
+
+	it('reads a detached HEAD', async () => {
+		write(path.join(alphaRoot, '.git/HEAD'), `${DETACHED_SHA}\n`);
+		const source = await alphaSource();
+		expect(source?.gitRef).toBe(DETACHED_SHA);
+		expect(source?.gitBranch).toBeUndefined();
+	});
+});
+
 describe('helpers', () => {
+	it('compares folder containment case-insensitively on Windows only', () => {
+		expect(isWithin('C:\\Proj', 'c:\\proj\\docs', 'win32')).toBe(true);
+		expect(isWithin('C:\\Proj', 'C:\\PROJ', 'win32')).toBe(true);
+		expect(isWithin('C:\\Proj', 'D:\\proj\\docs', 'win32')).toBe(false);
+		expect(isWithin('C:\\Proj', 'C:\\Project', 'win32')).toBe(false);
+		expect(isWithin('/home/u/Proj', '/home/u/proj/docs', 'linux')).toBe(false);
+		expect(isWithin('/home/u/Proj', '/home/u/Proj/docs', 'linux')).toBe(true);
+	});
+
 	it('assigns deterministic workspace keys with collision suffixes', () => {
 		const keys = assignWorkspaceKeys(['/z/app', '/a/app', '/m/My Project', '/b/app']);
 		expect(keys.get('/a/app')).toBe('app');

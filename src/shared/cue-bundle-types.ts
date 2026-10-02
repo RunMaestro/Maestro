@@ -61,6 +61,8 @@ export interface CueBundleWorkspaceSource {
 	gitRemote?: string;
 	/** Branch checked out at export time, when HEAD named one. */
 	gitBranch?: string;
+	/** Full commit SHA HEAD resolved to at export time (branch tip or detached HEAD). */
+	gitRef?: string;
 }
 
 /**
