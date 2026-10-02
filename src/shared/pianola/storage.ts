@@ -377,6 +377,8 @@ export interface PianolaSupervisedTarget {
 	planId?: string;
 	intervalSeconds?: number;
 	concurrency?: number;
+	/** Auto-watch targets are removed when their agent session is closed. */
+	autoCreated?: boolean;
 }
 
 /** Persisted supervisor registry file: a JSON object wrapping the target array. */
@@ -425,6 +427,10 @@ export function validatePianolaSupervisedTarget(raw: unknown): PianolaSupervised
 	if (raw.concurrency !== undefined) {
 		if (typeof raw.concurrency !== 'number' || !Number.isFinite(raw.concurrency)) return null;
 		target.concurrency = raw.concurrency;
+	}
+	if (raw.autoCreated !== undefined) {
+		if (typeof raw.autoCreated !== 'boolean') return null;
+		target.autoCreated = raw.autoCreated;
 	}
 
 	// Drop targets that lack the fields their kind needs to spawn a valid command.

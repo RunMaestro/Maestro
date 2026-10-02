@@ -470,6 +470,7 @@ export interface SettingsStoreState
 	bmadEnabled: boolean;
 	lastSelectedPromptId: string | null;
 	spellCheck: boolean;
+	pianolaAutoWatchNewAgents: boolean;
 }
 
 export interface SettingsStoreActions
@@ -581,6 +582,7 @@ export interface SettingsStoreActions
 	setBmadEnabled: (value: boolean) => void;
 	setLastSelectedPromptId: (value: string | null) => void;
 	setSpellCheck: (value: boolean) => void;
+	setPianolaAutoWatchNewAgents: (value: boolean) => Promise<void>;
 
 	// Async setters
 	setLogLevel: (value: string) => Promise<void>;
@@ -827,6 +829,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		bmadEnabled: true,
 		lastSelectedPromptId: null,
 		spellCheck: false,
+		pianolaAutoWatchNewAgents: false,
 
 		...createAnnotatorSlice(set, get, api),
 		...createWakatimeSlice(set, get, api),
@@ -1439,6 +1442,21 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		setSpellCheck: (value) => {
 			set({ spellCheck: value });
 			window.maestro.settings.set('spellCheck', value);
+		},
+
+		setPianolaAutoWatchNewAgents: async (value) => {
+			set({ pianolaAutoWatchNewAgents: value });
+			try {
+				const saved = await window.maestro.settings.set('pianolaAutoWatchNewAgents', value);
+				if (saved === false) throw new Error('Setting was not saved');
+				// External hydration may already have applied a newer value. The save
+				// acknowledgement must not overwrite it.
+			} catch (error) {
+				// Re-read the persisted value rather than reverting to a possibly stale
+				// pre-save snapshot (including the default before initial hydration).
+				await loadAllSettings();
+				throw error;
+			}
 		},
 
 		// ============================================================================
@@ -2603,6 +2621,8 @@ export async function loadAllSettings(): Promise<void> {
 		if (allSettings['spellCheck'] !== undefined)
 			patch.spellCheck = allSettings['spellCheck'] as boolean;
 
+		patch.pianolaAutoWatchNewAgents = allSettings['pianolaAutoWatchNewAgents'] === true;
+
 		hydrateAnnotatorSettings(allSettings, patch);
 
 		// On a RELOAD (system resume, another window's write), drop any key the user
@@ -2849,6 +2869,7 @@ export function getSettingsActions() {
 		setFilePreviewToolbarButtonVisibility: state.setFilePreviewToolbarButtonVisibility,
 		setModeratorStandingInstructions: state.setModeratorStandingInstructions,
 		setSpellCheck: state.setSpellCheck,
+		setPianolaAutoWatchNewAgents: state.setPianolaAutoWatchNewAgents,
 		setAutoRunDisabled: state.setAutoRunDisabled,
 		setDotfilesToggleHidden: state.setDotfilesToggleHidden,
 		setAutoRunInactivityTimeoutMin: state.setAutoRunInactivityTimeoutMin,

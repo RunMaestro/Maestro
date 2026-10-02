@@ -1430,6 +1430,24 @@ describe('persistence IPC handlers', () => {
 			toolType: 'claude-code',
 		};
 
+		it('notifies Pianola of added and removed agents only after a durable write', async () => {
+			const onSessionsPersisted = vi.fn(() => {
+				expect(mockFlushSessionWrites).toHaveBeenCalledOnce();
+			});
+			registerPersistenceHandlers({
+				settingsStore: mockSettingsStore as unknown as Store<MaestroSettings>,
+				sessionsStore: mockSessionsStore as unknown as Store<SessionsData>,
+				groupsStore: mockGroupsStore as unknown as Store<GroupsData>,
+				getWebServer: getWebServerFn,
+				flushSessionWrites: mockFlushSessionWrites,
+				onSessionsPersisted,
+			});
+			mockSessionsStore.get.mockReturnValue([{ ...baseSession }]);
+			const newcomer = { ...baseSession, id: 's2' };
+			await handlers.get('sessions:setMany')!({} as any, [newcomer], ['s1']);
+			expect(onSessionsPersisted).toHaveBeenCalledWith([newcomer], [newcomer], ['s1']);
+		});
+
 		it('writes the merged sessions array to the store', async () => {
 			mockSessionsStore.get.mockReturnValue([{ ...baseSession }]);
 

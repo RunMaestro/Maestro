@@ -33,7 +33,7 @@ import {
 } from './global-hotkey-manager';
 import { CueEngine } from './cue/cue-engine';
 import { createCueSupervisorHooks } from './cue/cue-first-party';
-import { PianolaSupervisor } from './pianola/pianola-supervisor';
+import { PianolaSupervisor, type AutoWatchSession } from './pianola/pianola-supervisor';
 import { PianolaRelearnScheduler } from './pianola/pianola-relearn-scheduler';
 import { createPianolaLifecycle } from './pianola/pianola-lifecycle';
 import { execFile } from 'child_process';
@@ -2107,7 +2107,20 @@ app
 				unifiedTabOrder: [{ type: 'ai', id: tabId }],
 				unifiedClosedTabHistory: [],
 			};
-			setPluginSessionsRaw([...pluginSessionsRaw(), session]);
+			const previousSessions = pluginSessionsRaw();
+			setPluginSessionsRaw([...previousSessions, session]);
+			if (!previousSessions.some((existing) => existing.id === sessionId)) {
+				try {
+					pianolaSupervisor?.autoWatchNewSessions(
+						[session],
+						[...previousSessions, session] as AutoWatchSession[],
+						store.get('pianolaAutoWatchNewAgents', false) === true
+					);
+				} catch (error) {
+					logger.error('Could not register new Pianola watch', '[Pianola]', error);
+					void captureException(error, { operation: 'pianola:autoWatchPluginSession' });
+				}
+			}
 			sessionsStore.set('activeSessionId', sessionId);
 			return {
 				id: sessionId,
@@ -2142,7 +2155,19 @@ app
 		const pluginSessionsDelete = async (sessionId: string): Promise<boolean> => {
 			const sessions = pluginSessionsRaw();
 			if (!sessions.some((s) => s.id === sessionId)) return false;
-			setPluginSessionsRaw(sessions.filter((s) => s.id !== sessionId));
+			const remaining = sessions.filter((s) => s.id !== sessionId);
+			setPluginSessionsRaw(remaining);
+			try {
+				pianolaSupervisor?.autoWatchNewSessions(
+					[],
+					remaining as unknown as AutoWatchSession[],
+					store.get('pianolaAutoWatchNewAgents', false) === true,
+					[sessionId]
+				);
+			} catch (error) {
+				logger.error('Could not retire Pianola watch', '[Pianola]', error);
+				void captureException(error, { operation: 'pianola:retireAutoWatch' });
+			}
 			if (sessionsStore.get('activeSessionId', '') === sessionId) {
 				const nextActive = pluginSessionsRaw()[0]?.id;
 				sessionsStore.set('activeSessionId', typeof nextActive === 'string' ? nextActive : '');

@@ -78,6 +78,10 @@ export interface UseSettingsReturn {
 	shellEnvVarsDisabled: Record<string, string>;
 	setShellEnvVarsDisabled: (value: Record<string, string>) => void;
 
+	// Pianola auto-watch
+	pianolaAutoWatchNewAgents: boolean;
+	setPianolaAutoWatchNewAgents: (value: boolean) => Promise<void>;
+
 	// GitHub CLI settings
 	ghPath: string;
 	setGhPath: (value: string) => void;
