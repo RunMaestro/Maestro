@@ -47,7 +47,7 @@ import {
 	formatCost,
 	formatTokensCompact,
 } from '../../../shared/formatters';
-import { aggregateUsage } from '../../../shared/usageStats';
+import { aggregateRangeUsage } from '../../../shared/usageStats';
 import { visibleAiTabs } from '../../utils/tabHelpers';
 import { resolveModelPricing, TOKENS_PER_MILLION } from '../../../shared/modelPricing';
 import { countActiveAgents } from '../../../shared/statsActiveAgents';
@@ -811,14 +811,22 @@ export const SummaryCards = memo(function SummaryCards({
 		return data.totalSessions;
 	}, [sessions, data.totalSessions]);
 
-	// Token & cost usage summed across the loaded agents' persisted usageStats.
-	const usageAgg = useMemo(
-		() =>
-			aggregateUsage(
-				(sessions ?? []).map((s) => ({ usageStats: s.usageStats, model: s.customModel }))
-			),
-		[sessions]
-	);
+	// Token & cost usage for the SELECTED RANGE, read from the aggregation's
+	// per-session totals.
+	//
+	// These cards used to sum each agent's persisted `usageStats`, which is a
+	// LIFETIME counter: it cannot move when the range selector does, so Tokens
+	// and Cost reported the same number on This Week as on This Year while every
+	// other card on the tab changed (issue #1399). `bySessionTokens` is already
+	// scoped to the range main filtered on, so the fix is to read it instead.
+	//
+	// The model lookup is what keeps the Cost card populated: the stats DB stores
+	// provider-REPORTED cost only, so agents on a provider that prices nothing
+	// itself fall back to the same rate-table estimate the lifetime path used.
+	const usageAgg = useMemo(() => {
+		const modelBySession = new Map((sessions ?? []).map((s) => [s.id, s.customModel]));
+		return aggregateRangeUsage(data.bySessionTokens, (id) => modelBySession.get(id));
+	}, [data.bySessionTokens, sessions]);
 
 	// Count open tabs across all sessions (AI + file preview)
 	const openTabCount = useMemo(() => {
