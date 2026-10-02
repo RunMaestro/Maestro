@@ -1,7 +1,6 @@
 // src/main/process-manager/ProcessManager.ts
 
 import { EventEmitter } from 'events';
-import { execFile, execFileSync } from 'child_process';
 import type {
 	ProcessConfig,
 	ManagedProcess,
@@ -20,7 +19,6 @@ import { SshCommandRunner } from './runners/SshCommandRunner';
 import { opencodeServerManager } from '../opencode-server/OpencodeServerManager';
 import { logger } from '../utils/logger';
 import { isPidAlive } from './utils/childProcessInfo';
-import { isWindows } from '../../shared/platformDetection';
 import { expandTilde } from '../../shared/pathUtils';
 import { agentAlreadyRunningMessage } from '../../shared/processErrors';
 import type { AgentError, SshRemoteConfig } from '../../shared/types';
@@ -33,10 +31,10 @@ import {
 } from '../coworking/coworking-types';
 import { resolveOwningMaestroSessionId } from '../coworking/coworking-session-id';
 import { getBridgeSocketPath } from '../coworking/coworking-socket-path';
-import { killPty } from './utils/commandKill';
-
-/** Time (ms) to wait for a PTY process to exit after SIGTERM before sending SIGKILL. */
-const PTY_KILL_ESCALATION_MS = 2000;
+import {
+	stopProcess,
+	INTERACTIVE_STOP_GRACE_MS,
+} from '../../shared/maestro-lib/control/termination';
 
 /**
  * ProcessManager orchestrates spawning and managing processes for sessions.
@@ -357,13 +355,17 @@ export class ProcessManager extends EventEmitter {
 	}
 
 	/**
-	 * Send interrupt signal (SIGINT/Ctrl+C) to a process.
-	 * For child processes, escalates to kill() if the process doesn't exit
-	 * within a short timeout (Claude Code may not immediately exit on SIGINT).
+	 * Interrupt a process, the way the Stop button does.
 	 *
-	 * On Windows, POSIX signals are not supported for shell-spawned processes,
-	 * so we write Ctrl+C (\x03) to stdin instead. If that doesn't work, the
-	 * escalation timer falls through to kill() which uses taskkill /t /f.
+	 * A pipe-backed agent goes through the shared stop ladder: SIGINT (Ctrl+C on
+	 * stdin on Windows, where a signal does not reach a shell-spawned process),
+	 * then SIGTERM or `taskkill /t /f` if it is still running after the grace
+	 * period, then SIGKILL for its tree. Whatever the agent started is stopped
+	 * with it.
+	 *
+	 * A PTY gets Ctrl+C and nothing more. A PTY process that survives Ctrl+C is
+	 * the normal case, not a stuck one: a shell that cancelled a command, or a
+	 * TUI that cancelled its turn and is waiting for the next prompt.
 	 */
 	interrupt(sessionId: string): boolean {
 		const process = this.processes.get(sessionId);
@@ -385,51 +387,15 @@ export class ProcessManager extends EventEmitter {
 				process.ptyProcess.write('\x03');
 				return true;
 			} else if (process.childProcess) {
-				const child = process.childProcess;
-
-				if (isWindows()) {
-					// On Windows, child.kill('SIGINT') is unreliable for shell-spawned
-					// processes. Write Ctrl+C to stdin as a gentle interrupt instead.
-					if (child.stdin && !child.stdin.destroyed && !child.stdin.writableEnded) {
-						child.stdin.write('\x03');
-						logger.debug(
-							'[ProcessManager] Wrote Ctrl+C to stdin for Windows interrupt',
-							'ProcessManager',
-							{ sessionId }
-						);
-					} else {
-						logger.warn(
-							'[ProcessManager] stdin unavailable for Windows interrupt, will escalate to kill',
-							'ProcessManager',
-							{ sessionId }
-						);
+				stopProcess(
+					{ child: process.childProcess },
+					{
+						from: 'interrupt',
+						graceMs: INTERACTIVE_STOP_GRACE_MS,
+						sessionId,
+						label: 'interrupt',
 					}
-				} else {
-					child.kill('SIGINT');
-				}
-
-				// Escalate to forceful kill if the process doesn't exit promptly.
-				// Some agents (e.g., Claude Code --print) may not exit on SIGINT alone.
-				// On Windows, we don't call child.kill('SIGINT') because it's unreliable
-				// for shell-spawned processes. The .killed flag remains false, which
-				// correctly allows the escalation timer to fire.
-				const escalationTimer = setTimeout(() => {
-					const stillRunning = this.processes.get(sessionId);
-					if (stillRunning?.childProcess && !stillRunning.childProcess.killed) {
-						logger.warn(
-							'[ProcessManager] Process did not exit after interrupt, escalating to kill',
-							'ProcessManager',
-							{ sessionId, pid: stillRunning.pid }
-						);
-						this.kill(sessionId);
-					}
-				}, 2000);
-
-				// Clear the timer if the process exits on its own
-				child.once('exit', () => {
-					clearTimeout(escalationTimer);
-				});
-
+				);
 				return true;
 			}
 			return false;
@@ -444,17 +410,27 @@ export class ProcessManager extends EventEmitter {
 	}
 
 	/**
-	 * Kill a specific process.
+	 * Kill a specific process, through the shared stop ladder.
 	 *
-	 * PTY processes receive SIGTERM first; if the process hasn't exited after
-	 * PTY_KILL_ESCALATION_MS, it is sent SIGKILL. The process is removed from
-	 * the tracking map immediately so that a replacement can be spawned, but the
-	 * escalation timer keeps a reference to ensure the OS-level process dies.
+	 * The ladder starts at SIGTERM and, if the process has not exited after the
+	 * grace period, kills it with SIGKILL. On Windows the whole tree goes through
+	 * `taskkill /t /f`, because node-pty and `child.kill()` end only the direct
+	 * child. The process is removed from the tracking map immediately so that a
+	 * replacement can be spawned; the ladder keeps its own reference to make sure
+	 * the OS-level process dies.
 	 *
-	 * `shutdown: true` switches PTYs to SIGKILL with no escalation timer or
-	 * onExit listener. This collapses the window in which node-pty's worker
-	 * thread is still posting via napi_threadsafe_function while Electron
-	 * begins tearing down the Node environment - that race aborts inside
+	 * An agent's descendants are stopped with it. A terminal tab's are not: a
+	 * job the user left running in their shell is theirs to keep, so only the
+	 * shell is signalled, as before.
+	 *
+	 * `sync: true` blocks on `taskkill`, so the tree is gone before the app
+	 * exits.
+	 *
+	 * `shutdown: true` runs the ladder at once, with no timer and no exit
+	 * listener, and sends a PTY SIGKILL directly. This collapses the window in
+	 * which node-pty's worker thread is still posting via
+	 * napi_threadsafe_function while Electron begins tearing down the Node
+	 * environment - that race aborts inside
 	 * `ThreadSafeFunction::~ThreadSafeFunction → uv_mutex_lock` on macOS
 	 * (Sentry MAESTRO-3B). A SIGTERM grace period serves no purpose during
 	 * shutdown anyway since the user has already confirmed quit.
@@ -483,64 +459,30 @@ export class ProcessManager extends EventEmitter {
 				// the exit event. Fall through to the map deletion below.
 				proc.sdkController.kill();
 			} else if (proc.isTerminal && proc.ptyProcess) {
-				if (isWindows() && proc.pid) {
-					// On Windows, node-pty's kill() only terminates the direct ConPTY
-					// child (the shell), not grandchild processes it spawned (e.g., dev
-					// servers, watchers). Use taskkill /t /f to kill the entire tree.
-					this.killWindowsProcessTree(proc.pid, sessionId, sync);
-				} else if (shutdown) {
-					// Shutdown path: SIGKILL the pty child immediately so the master fd
-					// reaches EOF, node-pty's worker thread exits, and its TSFN releases
-					// before Electron's environment teardown runs CleanupHandles.
-					try {
-						killPty(proc.ptyProcess, 'SIGKILL');
-					} catch {
-						// Process may already be dead
+				stopProcess(
+					{ pty: proc.ptyProcess, pid: proc.pid },
+					{
+						from: shutdown ? 'kill' : 'terminate',
+						graceMs: INTERACTIVE_STOP_GRACE_MS,
+						immediate: shutdown,
+						blocking: sync,
+						includeDescendants: proc.toolType !== 'terminal',
+						sessionId,
+						label: 'kill',
 					}
-				} else {
-					const ptyProc = proc.ptyProcess;
-					const pid = proc.pid;
-
-					// Use SIGTERM (not the default SIGHUP which shells may survive on macOS)
-					try {
-						killPty(ptyProc, 'SIGTERM');
-					} catch {
-						// Process may already be dead
-					}
-
-					// Escalate to SIGKILL if the process doesn't exit promptly.
-					const escalationTimer = setTimeout(() => {
-						try {
-							killPty(ptyProc, 'SIGKILL');
-							logger.warn(
-								'[ProcessManager] PTY did not exit after SIGTERM, escalated to SIGKILL',
-								'ProcessManager',
-								{ sessionId, pid }
-							);
-						} catch {
-							// Process already exited - expected after normal SIGTERM
-						}
-					}, PTY_KILL_ESCALATION_MS);
-
-					// Cancel escalation if the PTY exits on its own
-					ptyProc.onExit(() => {
-						clearTimeout(escalationTimer);
-					});
-				}
+				);
 			} else if (proc.childProcess) {
-				const pid = proc.childProcess.pid;
-				if (isWindows() && pid) {
-					this.killWindowsProcessTree(pid, sessionId, sync);
-				} else if (isWindows()) {
-					logger.warn(
-						'[ProcessManager] pid unavailable for Windows taskkill, falling back to SIGTERM',
-						'ProcessManager',
-						{ sessionId }
-					);
-					proc.childProcess.kill('SIGTERM');
-				} else {
-					proc.childProcess.kill('SIGTERM');
-				}
+				stopProcess(
+					{ child: proc.childProcess },
+					{
+						from: 'terminate',
+						graceMs: INTERACTIVE_STOP_GRACE_MS,
+						immediate: shutdown,
+						blocking: sync,
+						sessionId,
+						label: 'kill',
+					}
+				);
 			}
 			this.processes.delete(sessionId);
 			return true;
@@ -551,41 +493,6 @@ export class ProcessManager extends EventEmitter {
 				error: String(error),
 			});
 			return false;
-		}
-	}
-
-	/**
-	 * Kill a process and its entire child tree on Windows using taskkill.
-	 * This is necessary because POSIX signals (SIGINT/SIGTERM) don't reliably
-	 * terminate shell-spawned processes on Windows.
-	 */
-	private killWindowsProcessTree(pid: number, sessionId: string, sync = false): void {
-		logger.info(
-			'[ProcessManager] Using taskkill to terminate process tree on Windows',
-			'ProcessManager',
-			{ sessionId, pid, sync }
-		);
-		if (sync) {
-			// During shutdown, block until taskkill completes so the process tree
-			// is actually dead before Electron exits.
-			try {
-				execFileSync('taskkill', ['/pid', String(pid), '/t', '/f'], {
-					timeout: 5000,
-				});
-			} catch {
-				// taskkill returns non-zero if the process is already dead, which is fine
-			}
-		} else {
-			execFile('taskkill', ['/pid', String(pid), '/t', '/f'], (error) => {
-				if (error) {
-					// taskkill returns non-zero if the process is already dead, which is fine
-					logger.debug(
-						'[ProcessManager] taskkill exited with error (process may already be terminated)',
-						'ProcessManager',
-						{ sessionId, pid, error: String(error) }
-					);
-				}
-			});
 		}
 	}
 

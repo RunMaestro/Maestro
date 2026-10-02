@@ -4,7 +4,7 @@ import * as path from 'path';
 import { isWindows } from '../../platformDetection';
 // Cycle-safe: processTree only reaches back into this module from inside its
 // own function bodies, so neither module's top level depends on the other.
-import { killProcessTreeNow } from './process-tree';
+import { killProcessTreeNow } from '../control/process-tree';
 
 const execFileAsync = promisify(execFile);
 
