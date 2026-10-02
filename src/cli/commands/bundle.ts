@@ -7,8 +7,6 @@
 // command's startup path.
 
 import * as fs from 'fs';
-import * as path from 'path';
-import type { SessionInfo } from '../../shared/types';
 import { resolveUserDataDir } from '../../shared/userDataDir';
 import { resolveAgentId } from '../services/storage';
 import { resolveCliPath } from '../utils/parse';
@@ -31,18 +29,6 @@ function fail(message: string, options: BundleExportOptions, code = ExitCode.Gen
 		console.error(`Error: ${message}`);
 	}
 	process.exit(code);
-}
-
-function readSessionsFrom(dataDir: string): SessionInfo[] {
-	try {
-		const store = JSON.parse(
-			fs.readFileSync(path.join(dataDir, 'maestro-sessions.json'), 'utf-8')
-		) as { sessions?: SessionInfo[] };
-		return Array.isArray(store.sessions) ? store.sessions : [];
-	} catch (error) {
-		if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
-		throw error;
-	}
 }
 
 function defaultOutputName(name: string): string {
@@ -68,10 +54,13 @@ export async function bundleExport(
 			fail(`Maestro data directory not found: ${dataDir}`, options);
 		}
 
+		const { exportCueBundle, readSessions } =
+			await import('../../main/cue/bundle/cue-bundle-exporter');
+
 		let agentId: string | undefined;
 		let agentName: string | undefined;
 		if (options.agent) {
-			const sessions = readSessionsFrom(dataDir);
+			const sessions = readSessions(dataDir);
 			agentId = resolveAgentId(options.agent, sessions);
 			agentName = sessions.find((s) => s.id === agentId)?.name;
 		}
@@ -80,7 +69,6 @@ export async function bundleExport(
 			options.output ?? defaultOutputName(options.pipeline ?? agentName ?? 'bundle')
 		);
 
-		const { exportCueBundle } = await import('../../main/cue/bundle/cue-bundle-exporter');
 		const result = await exportCueBundle({
 			dataDir,
 			agentId,
