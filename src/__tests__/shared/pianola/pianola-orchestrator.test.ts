@@ -406,3 +406,90 @@ describe('runOrchestratorIteration - dispatch failure does not leak agents', () 
 		expect(created).toBe(1);
 	});
 });
+
+describe('independent oracle settlement', () => {
+	const validation = { command: ['sh', '-c', 'true'], target: '/tmp/work' };
+	it('validates before reading the ledger and completes only on green', async () => {
+		let checked = false;
+		const deps = makeDeps({ runStates: { t1: 'idle' } });
+		deps.validate = vi.fn(async () => {
+			checked = true;
+			return { verdict: 'verified', reason: 'passed' };
+		});
+		deps.getRunLedger = vi.fn(async () => ({ runId: 'run-1', checksPassed: checked }));
+		const result = await runOrchestratorIteration(
+			{ plan: plan([task({ status: 'running', validation })]), prevStates: { t1: 'busy' } },
+			deps,
+			{ concurrencyLimit: 1 }
+		);
+		expect(statusOf(result.state, 't1')).toBe('done');
+		expect(deps.validate).toHaveBeenCalledTimes(1);
+	});
+	it('routes failed checks into a bounded fix cycle', async () => {
+		let green = false;
+		const deps = makeDeps({ runStates: { t1: 'idle' } });
+		deps.validate = vi.fn(async () => {
+			green = !green;
+			return { verdict: green ? 'failed' : 'verified', reason: 'oracle result' };
+		});
+		deps.getRunLedger = vi.fn(async () => ({ runId: 'run-1', checksPassed: !green }));
+		deps.reactiveEnabled = () => true;
+		deps.dispatchFix = vi.fn(async () => ({ success: true }));
+		const initial = {
+			plan: plan([task({ status: 'running', validation })]),
+			prevStates: { t1: 'busy' as const },
+		};
+		const first = await runOrchestratorIteration(initial, deps, { concurrencyLimit: 1 });
+		expect(statusOf(first.state, 't1')).toBe('fixing');
+		expect(deps.dispatchFix).toHaveBeenCalledTimes(1);
+		const second = await runOrchestratorIteration(
+			{ ...first.state, prevStates: { t1: 'busy' } },
+			deps,
+			{ concurrencyLimit: 1 }
+		);
+		expect(statusOf(second.state, 't1')).toBe('done');
+	});
+	it('retries unknown once while idle then requests review with its reason', async () => {
+		const deps = makeDeps({ runStates: { t1: 'idle' } });
+		deps.validate = vi.fn(async () => ({ verdict: 'unknown', reason: 'bubblewrap unavailable' }));
+		deps.getRunLedger = vi.fn(async () => ({ runId: 'run-1', checksPassed: false }));
+		const first = await runOrchestratorIteration(
+			{ plan: plan([task({ status: 'running', validation })]), prevStates: { t1: 'busy' } },
+			deps,
+			{ concurrencyLimit: 1 }
+		);
+		expect(statusOf(first.state, 't1')).toBe('running');
+		const second = await runOrchestratorIteration(first.state, deps, { concurrencyLimit: 1 });
+		expect(statusOf(second.state, 't1')).toBe('needs_review');
+		expect(second.state.plan.tasks[0].error).toBe('bubblewrap unavailable');
+		expect(deps.getRunLedger).not.toHaveBeenCalled();
+	});
+	it('does not re-settle a fixing task on an idle tick after an unknown validation', async () => {
+		// The fix agent has been dispatched but not started yet: idle must not count as done,
+		// or every tick would burn a fix attempt without any fix run being observed.
+		const deps = makeDeps({ runStates: { t1: 'idle' } });
+		deps.validate = vi.fn(async () => ({ verdict: 'failed', reason: 'exit 1' }));
+		const result = await runOrchestratorIteration(
+			{
+				plan: plan([
+					task({ status: 'fixing', validation, validationUnknownAttempts: 1, fixAttempts: 1 }),
+				]),
+				prevStates: {},
+			},
+			deps,
+			{ concurrencyLimit: 1 }
+		);
+		expect(statusOf(result.state, 't1')).toBe('fixing');
+		expect(deps.validate).not.toHaveBeenCalled();
+	});
+	it('never invokes validation for a task without a spec', async () => {
+		const deps = makeDeps({ runStates: { t1: 'idle' } });
+		deps.validate = vi.fn(async () => ({ verdict: 'verified', reason: 'ok' }));
+		await runOrchestratorIteration(
+			{ plan: plan([task({ status: 'running' })]), prevStates: { t1: 'busy' } },
+			deps,
+			{ concurrencyLimit: 1 }
+		);
+		expect(deps.validate).not.toHaveBeenCalled();
+	});
+});

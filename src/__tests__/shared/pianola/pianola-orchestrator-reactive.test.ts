@@ -386,3 +386,94 @@ describe('ledger-driven settle of a running task (ISC-8.4)', () => {
 		expect(r.completedTaskIds).toEqual(['A']);
 	});
 });
+
+describe('fix runs shorter than one poll interval', () => {
+	const msg = (role: PianolaMessage['role'], content: string, i: number): PianolaMessage => ({
+		id: `m${i}`,
+		role,
+		source: 'test',
+		content,
+		timestamp: new Date(1_700_000_000_000 + i).toISOString(),
+	});
+
+	it('records the transcript length when a fix is dispatched', async () => {
+		const deps = makeReactiveDeps({
+			runStates: { A: 'idle' },
+			messages: { A: [msg('user', 'task', 0), msg('assistant', 'done', 1)] },
+			reactiveEnabled: () => true,
+			getRunLedger: vi.fn(async () => ({ runId: 'r-A', checksPassed: false, openFindings: 0 })),
+			dispatchFix: vi.fn(async () => ({ success: true })),
+		});
+		const r = await runOrchestratorIteration(
+			{ plan: plan([task({ id: 'A', status: 'needs_review', runId: 'r-A' })]), prevStates: {} },
+			deps,
+			{ concurrencyLimit: 1 }
+		);
+		expect(statusOf(r.state, 'A')).toBe('fixing');
+		expect(taskOf(r.state, 'A')?.dispatchedMessageCount).toBe(2);
+	});
+
+	it('settles a fixing task that replied and went idle without ever being seen busy', async () => {
+		// The fix agent started and finished between two polls. Rule 6 of the
+		// detector sees only "idle, no transition"; the new reply is the completion.
+		const validate = vi.fn(async () => ({ verdict: 'verified' as const, reason: 'ok' }));
+		const deps = makeReactiveDeps({
+			runStates: { A: 'idle' },
+			messages: {
+				A: [
+					msg('user', 'task', 0),
+					msg('assistant', 'done', 1),
+					msg('user', 'fix', 2),
+					msg('assistant', 'fixed', 3),
+				],
+			},
+			reactiveEnabled: () => true,
+			getRunLedger: vi.fn(async () => ({ runId: 'r-A', checksPassed: true, openFindings: 0 })),
+		});
+		deps.validate = validate;
+		const r = await runOrchestratorIteration(
+			{
+				plan: plan([
+					task({
+						id: 'A',
+						status: 'fixing',
+						runId: 'r-A',
+						fixAttempts: 1,
+						dispatchedMessageCount: 2,
+						validation: { command: ['true'], target: '/w' },
+					}),
+				]),
+				prevStates: {},
+			},
+			deps,
+			{ concurrencyLimit: 1 }
+		);
+		expect(validate).toHaveBeenCalledOnce();
+		expect(statusOf(r.state, 'A')).toBe('done');
+	});
+
+	it('keeps waiting while no reply has arrived since the fix was sent', async () => {
+		const deps = makeReactiveDeps({
+			runStates: { A: 'idle' },
+			messages: { A: [msg('user', 'task', 0), msg('assistant', 'done', 1), msg('user', 'fix', 2)] },
+			reactiveEnabled: () => true,
+		});
+		const r = await runOrchestratorIteration(
+			{
+				plan: plan([
+					task({
+						id: 'A',
+						status: 'fixing',
+						runId: 'r-A',
+						fixAttempts: 1,
+						dispatchedMessageCount: 2,
+					}),
+				]),
+				prevStates: {},
+			},
+			deps,
+			{ concurrencyLimit: 1 }
+		);
+		expect(statusOf(r.state, 'A')).toBe('fixing');
+	});
+});

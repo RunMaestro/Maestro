@@ -1,5 +1,7 @@
 import { planProgress, type PianolaPlan } from './pianola-tasks';
 import type { PianolaDecisionRecord } from './storage';
+import type { PianolaSupervisedTarget } from './storage';
+import type { ProgramLoopMemo } from './pianola-program-loop';
 import type { AgentRun } from '../agent-run/types';
 
 export type PianolaProgramStatus = 'active' | 'paused';
@@ -89,6 +91,7 @@ export interface PianolaBriefProgram {
 	openAsks: number;
 	running: number;
 	verifiedLast7d: number;
+	loop: { supervised: boolean; lastWakeReason?: string; lastWakeAt?: string };
 }
 export interface PianolaBrief {
 	generatedAt: string;
@@ -248,7 +251,9 @@ export function derivePianolaBrief(
 	asks: readonly PianolaAsk[],
 	decisions: readonly PianolaDecisionRecord[],
 	runs: Readonly<Record<string, PianolaBriefRun | undefined>>,
-	generatedAt: string = new Date().toISOString()
+	generatedAt: string = new Date().toISOString(),
+	targets: readonly PianolaSupervisedTarget[] = [],
+	memo: ProgramLoopMemo = {}
 ): PianolaBrief {
 	const since = Date.parse(generatedAt) - 7 * 86400_000;
 	const byId = new Map(programs.map((p) => [p.id, p]));
@@ -328,6 +333,14 @@ export function derivePianolaBrief(
 				id: program.id,
 				title: program.title,
 				status: program.status,
+				loop: {
+					supervised: targets.some(
+						(target) =>
+							target.kind === 'program' && target.programId === program.id && target.enabled
+					),
+					lastWakeReason: memo[program.id]?.lastWakeReason,
+					lastWakeAt: memo[program.id]?.lastWakeAt,
+				},
 				activePlanId: active?.id,
 				activePlanTitle: active?.title,
 				openAsks: asks.filter((ask) => ask.status === 'open' && ask.programId === program.id)

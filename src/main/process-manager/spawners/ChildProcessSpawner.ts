@@ -14,7 +14,11 @@ import { ExitHandler } from '../handlers/ExitHandler';
 import { buildChildProcessEnv, collectMaestroEnvVars } from '../utils/envBuilder';
 import { buildPromptArgv } from '../../../shared/maestro-lib/launch/prompt-delivery';
 import { DEFAULT_QUERY_SOURCE } from '../../../shared/querySource';
-import { saveImageToTempFile, buildImagePromptPrefix } from '../utils/imageUtils';
+import {
+	saveImageToTempFile,
+	savePromptToTempFile,
+	buildImagePromptPrefix,
+} from '../utils/imageUtils';
 import { buildStreamJsonMessage } from '../utils/streamJsonBuilder';
 import { escapeArgsForShell, isPowerShellShell } from '../utils/shellEscape';
 import { isWindows } from '../../../shared/platformDetection';
@@ -35,6 +39,9 @@ const WINDOWS_SHELL_LOG_MESSAGES: Record<WindowsShellReason, string> = {
 	'batch-file': '[ProcessManager] Auto-enabling shell for Windows to spawn batch-file command',
 	'shebang-script': '[ProcessManager] Auto-enabling shell for Windows to execute shell script',
 };
+
+/** Prompts longer than this go through a file on Windows; well under PowerShell's ~32K argv cap. */
+const PROMPT_FILE_THRESHOLD_CHARS = 24_000;
 
 /**
  * Handles spawning of child processes (non-PTY).
@@ -81,6 +88,7 @@ export class ChildProcessSpawner {
 			imageArgs,
 			imagePromptBuilder,
 			promptArgs,
+			promptFileArgs,
 			contextWindow,
 			ompModelCatalogKey,
 			customEnvVars,
@@ -189,7 +197,28 @@ export class ChildProcessSpawner {
 			// Regular batch mode - prompt as CLI arg
 			// SKIP this when prompt is sent via stdin to avoid shell escaping issues,
 			// or when the caller already embedded the prompt in args (promptAlreadyInArgs).
-			finalArgs = [...args, ...buildPromptArgv({ promptArgs, noPromptSeparator }, prompt)];
+			// On Windows the agent is spawned through PowerShell, whose command line caps at
+			// ~32K; a prompt carrying the embedded system prompt exceeds it and spawn fails
+			// with ENAMETOOLONG. CLIs that read a prompt from a file get it that way instead.
+			const promptFilePath =
+				isWindows() && promptFileArgs && prompt.length > PROMPT_FILE_THRESHOLD_CHARS
+					? savePromptToTempFile(prompt)
+					: null;
+			if (promptFilePath && promptFileArgs) {
+				tempImageFiles.push(promptFilePath);
+				finalArgs = [...args, ...promptFileArgs(promptFilePath)];
+				logger.info(
+					'[ProcessManager] Delivering long prompt through a temp file',
+					'ProcessManager',
+					{
+						sessionId,
+						toolType,
+						promptLength: prompt.length,
+					}
+				);
+			} else {
+				finalArgs = [...args, ...buildPromptArgv({ promptArgs, noPromptSeparator }, prompt)];
+			}
 			promptAddedToArgs = true;
 		} else {
 			finalArgs = args;

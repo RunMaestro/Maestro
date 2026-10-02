@@ -963,6 +963,7 @@ export async function handleProcessSpawn(
 		imageArgs: agent?.imageArgs, // Function to build image CLI args (for Codex, OpenCode)
 		imagePromptBuilder: agent?.imagePromptBuilder, // Function to embed image refs into prompts (for Copilot)
 		promptArgs: agent?.promptArgs, // Function to build prompt args (e.g., ['-p', prompt] for OpenCode)
+		promptFileArgs: agent?.promptFileArgs, // Prompt-in-a-file delivery for CLIs that accept it (omp @path)
 		noPromptSeparator: agent?.noPromptSeparator, // Some agents don't support '--' before prompt
 		// Stats tracking: use cwd as projectPath if not explicitly provided
 		projectPath: config.cwd,

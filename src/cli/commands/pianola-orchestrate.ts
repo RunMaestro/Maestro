@@ -18,8 +18,14 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import { spawn } from 'child_process';
 import { readSettingValue } from '../services/storage';
-import { readPianolaPlans, getPianolaPlan, upsertPianolaPlan } from '../services/pianola-store';
+import {
+	readPianolaPlans,
+	getPianolaPlan,
+	upsertPianolaPlan,
+	readPianolaPrograms,
+} from '../services/pianola-store';
 import {
 	appendAgentRunEvent,
 	getAgentRun,
@@ -43,6 +49,12 @@ import {
 	type PianolaTask,
 } from '../../shared/pianola/pianola-tasks';
 import { assertOneActivePlanPerProgram } from '../../shared/pianola/pianola-programs';
+import {
+	checkFromVerdict,
+	translatePianolaSandboxPath,
+	validatePianolaVerdict,
+	type PianolaSandboxObservation,
+} from '../../shared/pianola/pianola-validation';
 import type { PianolaMessage, PianolaMessageRole } from '../../shared/pianola/types';
 import { selectAgentForTask, type AgentCandidate } from '../../shared/pianola/pianola-agent-select';
 import { DEFAULT_CAPABILITIES } from '../../shared/types';
@@ -50,7 +62,12 @@ import { enrichWithAwaitingInput } from '../../shared/pianola/pianola-awaiting-d
 import { classifyMessages } from '../../shared/pianola/pianola-classifier';
 import { rateRisk } from '../../shared/pianola/pianola-risk';
 import { AgentRunSignals } from '../../main/agent-run/signals';
-import { pianolaTaskAgentRunId, type AgentRun, type AgentRunStatus } from '../../shared/agent-run';
+import {
+	pianolaTaskAgentRunId,
+	type AgentRun,
+	type AgentRunCheck,
+	type AgentRunStatus,
+} from '../../shared/agent-run';
 
 const DEFAULT_INTERVAL_SECONDS = 5;
 const DEFAULT_CONCURRENCY = 3;
@@ -58,6 +75,16 @@ const HISTORY_TAIL = 12;
 // Memoize the desktop session list for this long so the many getRunState calls
 // in one orchestration iteration reuse a single round-trip.
 const SESSION_LIST_TTL_MS = 2000;
+const DEFAULT_SANDBOX_RUNNER = [
+	'wsl.exe',
+	'-d',
+	'Ubuntu',
+	'-u',
+	'dev',
+	'--',
+	'python3',
+	'/mnt/c/Users/Administrator/Software/Maestro/.worktrees/pianola-portfolio/scripts/pianola-sandbox/sandbox_runner.py',
+];
 
 interface CreateSessionResult {
 	success?: boolean;
@@ -132,7 +159,7 @@ function ledgerForTask(planId: string, task: PianolaTask): PianolaTaskLedger | u
 	const openCriticalOrHigh = openFindings.filter(
 		(r) => r.severity === 'critical' || r.severity === 'high'
 	).length;
-	const checks = run.checks ?? [];
+	const checks = (run.checks ?? []).filter((check) => check.status !== 'error');
 	const checksPassed = checks.length === 0 ? undefined : checks.every((c) => c.status === 'passed');
 	return {
 		runId: run.id,
@@ -142,6 +169,12 @@ function ledgerForTask(planId: string, task: PianolaTask): PianolaTaskLedger | u
 		pullRequestUrl: run.pullRequest?.url,
 		merged: run.merge?.status === 'merged',
 	};
+}
+
+/** The checks recorded on a task's run, for telling a fix agent what actually failed. */
+async function readAgentRunChecks(runId: string | undefined): Promise<AgentRunCheck[]> {
+	if (!runId) return [];
+	return getAgentRun(runId)?.checks ?? [];
 }
 
 /** Append an audit-before-action ledger event for an autonomous F8 action
@@ -166,6 +199,146 @@ function auditAgentRunAction(
 	} catch {
 		// Audit is best-effort; never break the orchestration loop on a log failure.
 	}
+}
+
+async function runSandbox(task: PianolaTask): Promise<PianolaSandboxObservation> {
+	const spec = task.validation!;
+	const prefix = readSettingValue('pianola.sandboxRunner') ?? DEFAULT_SANDBOX_RUNNER;
+	if (
+		!Array.isArray(prefix) ||
+		!prefix.length ||
+		prefix.some((part) => typeof part !== 'string' || !part)
+	)
+		return {
+			observed: false,
+			returncode: null,
+			stdout: '',
+			stderr: '',
+			timedOut: false,
+			error: 'Invalid pianola.sandboxRunner setting',
+		};
+	const args = [
+		...prefix.slice(1),
+		'--workspace',
+		translatePianolaSandboxPath(spec.target),
+		'--timeout',
+		String(spec.timeoutSeconds ?? 120),
+		...(spec.artifacts ?? []).flatMap((artifact) => [
+			'--artifact',
+			translatePianolaSandboxPath(artifact),
+		]),
+		'--',
+		...spec.command,
+	];
+	return new Promise((resolve) => {
+		const child = spawn(prefix[0], args, { windowsHide: true });
+		let stdout = '';
+		let stderr = '';
+		child.stdout.on('data', (chunk: Buffer) => {
+			stdout += chunk.toString();
+		});
+		child.stderr.on('data', (chunk: Buffer) => {
+			stderr += chunk.toString();
+		});
+		child.on('error', (error) =>
+			resolve({
+				observed: false,
+				returncode: null,
+				stdout: '',
+				stderr,
+				timedOut: false,
+				error: error.message,
+			})
+		);
+		child.on('close', () => {
+			try {
+				const observation = JSON.parse(stdout.trim()) as PianolaSandboxObservation;
+				if (
+					typeof observation.observed !== 'boolean' ||
+					typeof observation.stderr !== 'string' ||
+					typeof observation.timedOut !== 'boolean' ||
+					(observation.returncode !== null && typeof observation.returncode !== 'number')
+				)
+					throw new Error('Invalid sandbox observation');
+				resolve(observation);
+			} catch {
+				resolve({
+					observed: false,
+					returncode: null,
+					stdout,
+					stderr,
+					timedOut: false,
+					error: 'Sandbox runner returned no valid JSON observation',
+				});
+			}
+		});
+	});
+}
+
+async function validateTask(planId: string, task: PianolaTask) {
+	const spec = task.validation!;
+	const runId = resolvePianolaRunId(planId, task);
+	const startedAt = Date.now();
+	const preflight = validatePianolaVerdict(spec, {
+		observed: false,
+		returncode: null,
+		stdout: '',
+		stderr: '',
+		timedOut: false,
+		error: null,
+	});
+	const observation = preflight.verdict === 'failed' ? null : await runSandbox(task);
+	const { verdict, reason } = observation ? validatePianolaVerdict(spec, observation) : preflight;
+	const check = checkFromVerdict(verdict, reason, spec.command, startedAt, Date.now());
+	let run = getAgentRun(runId);
+	if (!run) {
+		upsertPianolaTaskRun(planId, task, taskRunStatus(task, 'running'), 'pianola.validation');
+		run = getAgentRun(runId);
+	}
+	if (!run) throw new Error('Could not create Agent Run for validation');
+	upsertAgentRun({
+		...run,
+		updatedAt: Date.now(),
+		checks: [...run.checks.filter((entry) => entry.name !== check.name), check],
+	});
+	appendAgentRunEvent({
+		id: `evt_${runId}_check_${Date.now()}`,
+		runId,
+		timestamp: Date.now(),
+		type: 'check',
+		message: reason,
+		data: { verdict, check },
+	});
+	auditAgentRunAction(runId, 'validate', {
+		verdict,
+		reason,
+		attempt: (task.validationUnknownAttempts ?? 0) + 1,
+	});
+	return { verdict, reason, check, runId };
+}
+
+export async function pianolaValidate(
+	planId: string,
+	taskId: string,
+	options: { json?: boolean }
+): Promise<void> {
+	ensurePianolaEnabled(options.json);
+	const plan = getPianolaPlan(planId);
+	const task = plan?.tasks.find((entry) => entry.id === taskId);
+	if (!task?.validation) {
+		const error = !plan
+			? 'Plan not found: ' + planId
+			: !task
+				? 'Task not found: ' + taskId
+				: 'Task has no validation spec: ' + taskId;
+		if (options.json) console.log(JSON.stringify({ success: false, error }));
+		else console.error(error);
+		process.exitCode = 1;
+		return;
+	}
+	const result = await validateTask(planId, task);
+	console.log(options.json ? JSON.stringify(result) : JSON.stringify(result, null, 2));
+	process.exitCode = result.verdict === 'verified' ? 0 : result.verdict === 'failed' ? 2 : 3;
 }
 
 /** Parse `--interval` as seconds ("5" or "5s"); defaults to 5, minimum 1. */
@@ -584,8 +757,13 @@ export async function pianolaOrchestrate(
 			return 'idle';
 		},
 		getRecentMessages: async (task) => {
-			if (!task.tabId) return [];
-			return getHistory(task.tabId);
+			const tabId =
+				task.tabId ??
+				(task.agentId
+					? (await listDesktopSessions()).find((entry) => entry.agentId === task.agentId)?.tabId
+					: undefined);
+			if (!tabId) return [];
+			return getHistory(tabId);
 		},
 		ensureAgent: async (task) => {
 			if (task.agentId) {
@@ -665,7 +843,15 @@ export async function pianolaOrchestrate(
 		},
 		dispatch: async (task, agentId) => {
 			const res = await runDispatch(agentId, task.prompt, {});
-			return { success: !!res.success, tabId: res.sessionId ?? undefined, error: res.error };
+			// A plain send_command dispatch may be acknowledged without a tab id; the
+			// transcript the engine polls lives on the agent's active tab, so resolve
+			// it from the live session list rather than tracking an empty history.
+			let tabId = res.sessionId ?? undefined;
+			if (res.success && !tabId) {
+				sessionsCache = null;
+				tabId = (await listDesktopSessions()).find((entry) => entry.agentId === agentId)?.tabId;
+			}
+			return { success: !!res.success, tabId, error: res.error };
 		},
 		persist: (p) => {
 			upsertPianolaPlan(p);
@@ -680,10 +866,35 @@ export async function pianolaOrchestrate(
 		},
 		reactiveEnabled: () => autopilotEnabledNow(),
 		getRunLedger: async (task) => ledgerForTask(plan.id, task),
+		validate: async (task) => {
+			const program = plan.programId
+				? readPianolaPrograms().find((entry) => entry.id === plan.programId)
+				: undefined;
+			if (program?.charter.validationRequired === false)
+				return { verdict: 'verified', reason: 'Validation not required by program charter' };
+			const { verdict, reason } = await validateTask(plan.id, task);
+			return { verdict, reason };
+		},
 		dispatchFix: async (task, ledger) => {
 			// Gated + audited: only auto-fix when autopilot is on this iteration.
 			if (!autopilotEnabledNow()) return { success: false, error: 'autopilot off' };
-			const fixPrompt = `The previous run left ${ledger.openFindings ?? 0} open review finding(s) and/or failing checks. Address them, then stop.`;
+			const failing = (await readAgentRunChecks(ledger.runId)).filter(
+				(check) => check.status !== 'passed'
+			);
+			const checkLines = failing.length
+				? failing
+						.map(
+							(check) =>
+								`- ${check.name}: ${check.status}${check.summary ? ` (${check.summary})` : ''}${check.command ? `\n  command: ${check.command}` : ''}`
+						)
+						.join('\n')
+				: '- (no check details recorded)';
+			const fixPrompt = [
+				`Your previous work for the task "${task.title}" did not pass independent validation.`,
+				`Open review findings: ${ledger.openFindings ?? 0}. Failing or errored checks:`,
+				checkLines,
+				'Make the validation command pass by fixing the work (not the check), then stop.',
+			].join('\n');
 			const agentId = task.agentId;
 			if (!agentId) return { success: false, error: 'no agent bound' };
 			auditAgentRunAction(ledger.runId, 'auto-fix', {

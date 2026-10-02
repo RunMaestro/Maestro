@@ -76,6 +76,7 @@ vi.mock('../../../../main/process-manager/utils/envBuilder', () => ({
 
 vi.mock('../../../../main/process-manager/utils/imageUtils', () => ({
 	saveImageToTempFile: vi.fn(),
+	savePromptToTempFile: vi.fn(() => 'C:\\tmp\\maestro-prompt-1.md'),
 	buildImagePromptPrefix: vi.fn((paths: string[]) => {
 		if (paths.length === 0) return '';
 		return `[Attached images: ${paths.join(', ')}]\n\n`;
@@ -926,6 +927,42 @@ describe('ChildProcessSpawner', () => {
 		});
 		afterEach(() => {
 			vi.mocked(isWindows).mockReturnValue(false);
+		});
+
+		it('delivers a long omp prompt through a temp file instead of argv (ENAMETOOLONG)', () => {
+			// PowerShell caps the command line near 32K; the embedded system prompt alone
+			// pushes a one-line task past it. omp reads an @file message, so use that.
+			const { spawner } = createTestContext();
+			const omp = getAgentDefinition('omp')!;
+			const prompt = 'x'.repeat(30_000);
+			spawner.spawn(
+				createBaseConfig({
+					toolType: 'omp',
+					command: 'omp.exe',
+					args: [...omp.batchModePrefix!, ...omp.jsonOutputArgs!],
+					promptFileArgs: omp.promptFileArgs,
+					prompt,
+				})
+			);
+			const args = mockSpawn.mock.calls[0][1] as string[];
+			expect(args).toEqual(['-p', '--mode', 'json', '--', '@C:\\tmp\\maestro-prompt-1.md']);
+			expect(args.join(' ')).not.toContain('xxxx');
+		});
+
+		it('keeps a short omp prompt on argv', () => {
+			const { spawner } = createTestContext();
+			const omp = getAgentDefinition('omp')!;
+			spawner.spawn(
+				createBaseConfig({
+					toolType: 'omp',
+					command: 'omp.exe',
+					args: [...omp.batchModePrefix!],
+					promptFileArgs: omp.promptFileArgs,
+					prompt: 'short task',
+				})
+			);
+			const args = mockSpawn.mock.calls[0][1] as string[];
+			expect(args).toEqual(['-p', '--', 'short task']);
 		});
 
 		it('delivers a long Hermes query through stdin with explicit one-shot query selection', () => {

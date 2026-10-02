@@ -127,6 +127,29 @@ export function pianolaSuperviseOrchestrate(
 	}
 }
 
+export function pianolaSuperviseProgram(
+	programId: string,
+	options: { interval?: string; json?: boolean }
+): void {
+	ensurePianolaEnabled(options.json);
+	const existing = readPianolaSupervisorTargets().find(
+		(target) => target.kind === 'program' && target.programId === programId
+	);
+	const target: PianolaSupervisedTarget = {
+		id: existing?.id ?? generateUUID(),
+		kind: 'program',
+		enabled: true,
+		createdAt: existing?.createdAt ?? Date.now(),
+		programId,
+		intervalSeconds: parsePositiveInt(options.interval, 1) ?? 120,
+	};
+	const written = upsertPianolaSupervisorTarget(target);
+	if (!written.some((entry) => entry.id === target.id))
+		fail('Target failed validation and was not saved', options.json);
+	if (options.json)
+		console.log(JSON.stringify({ success: true, target, targetCount: written.length }));
+	else console.log('Supervising program ' + programId + '. Target: ' + target.id);
+}
 /** Describe one target's spawn args in a human-readable form. */
 function describeTarget(target: PianolaSupervisedTarget): string {
 	if (target.kind === 'watch') {
@@ -134,6 +157,8 @@ function describeTarget(target: PianolaSupervisedTarget): string {
 			target.intervalSeconds ?? DEFAULT_INTERVAL_SECONDS
 		}s)`;
 	}
+	if (target.kind === 'program')
+		return 'program ' + target.programId + ' (interval ' + (target.intervalSeconds ?? 120) + 's)';
 	return `orchestrate plan ${target.planId} (concurrency ${
 		target.concurrency ?? DEFAULT_CONCURRENCY
 	}, interval ${target.intervalSeconds ?? DEFAULT_INTERVAL_SECONDS}s)`;

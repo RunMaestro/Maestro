@@ -315,3 +315,31 @@ describe('PianolaSupervisor health log buffer', () => {
 		expect(logs[49]).toBe('line 119');
 	});
 });
+describe('program target', () => {
+	it('spawns the program-loop command and relaunches a cleanly stopped loop', () => {
+		const spawnChild = vi.fn((_command: string, _args: readonly string[]) => {
+			const child = new FakeChild(++pidSeq);
+			spawned.push(child);
+			return child as unknown as ChildProcess;
+		});
+		sup = new PianolaSupervisor({
+			isEnabled: () => enabled,
+			getPianolaAgentId: () => 'pianola-agent',
+			spawnChild,
+		});
+		setTargets([
+			{ id: 'program', kind: 'program', enabled: true, createdAt: 0, programId: 'product' },
+		]);
+		sup.reconcile();
+		expect(spawnChild.mock.calls[0][1]).toEqual([
+			'/fake/maestro-cli.js',
+			'pianola',
+			'program-loop',
+			'product',
+			'--interval',
+			'120',
+		]);
+		spawned[0].exit(0);
+		expect(sup.relaunchStale()).toBe(1);
+	});
+});

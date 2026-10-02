@@ -110,6 +110,20 @@ maestro-cli pianola dismiss <ask-id> --json
 
 An open ask from the same agent and program is updated, preserving the higher severity; pass --distinct to record a separate ask. Founder asks can be resolved or dismissed in the dashboard too. Pianola still asks before creating agents or dispatching plans on the founder's behalf.
 
+## Program loop
+
+Supervise a product program to wake its lead only for a new bounded outcome, a newly blocked or failed task, or the completion of the last plan. A busy lead is never interrupted. The loop supervises the active plan's orchestrator and watches the lead's tab after a successful wake; the lead writes plans with pianola plan set --file but does not dispatch tasks. Idle handoffs are at least 60 minutes apart. Pause a program to stop further loop actions without deleting its charter.
+
+```bash
+maestro-cli pianola supervise program <program-id> --interval 120
+maestro-cli pianola program-loop <program-id> --once --json
+maestro-cli pianola program pause <program-id>
+```
+
+Loop memo state is stored in maestro-pianola-program-loop.json in the Maestro data directory. Program-loop actions appear in Recent decisions without creating a Needs you escalation; repeated unchanged no-ops are omitted. The brief reports whether each program is supervised and its last wake reason and time.
+
+Applying a program also writes Cue routines into a local Windows root's .maestro/cue.yaml. Product programs get a weekday 08:30 standup and an engineer-completion-to-marketing draft subscription. The portfolio program gets Monday CTO and CMO reviews and a Wednesday social draft sweep. These write drafts and reviews only, never publish. Re-apply replaces only the marked generated block and preserves hand-written subscriptions. Remote roots are skipped by the CLI if an SSH file writer is unavailable; manage that Cue file through the app's remote filesystem instead.
+
 ## Task plans
 
 Beyond watching, Pianola can run a saved task plan, dispatching each task as its dependencies finish:
@@ -121,6 +135,14 @@ maestro-cli pianola orchestrate <plan-id>
 ```
 
 Orchestrations are recorded in the agent run ledger alongside everything else, so a plan that ran overnight has the same audit trail as a prompt that was answered by a rule.
+
+## Validation
+
+An engineer task can include a validation oracle with command (argv), target (workspace), optional artifacts, and timeoutSeconds. After the agent settles, Pianola runs the command inside a Linux sandbox, with the target mounted read-only and temporary tool output redirected to /tmp. Artifacts must be inside the target. A passing oracle appends an independent-validation Agent Run check and lets the task finish; a failed oracle routes it to review and the bounded fix cycle. Sandbox startup, timeout, and read-only write errors are unknown, not candidate failures; two unknown observations request review.
+
+Run an oracle manually with maestro-cli pianola validate <planId> <taskId> --json.
+
+The optional pianola.sandboxRunner setting is an argv prefix. Its default is ["wsl.exe", "-d", "Ubuntu", "-u", "dev", "--", "python3", "/mnt/c/Users/Administrator/Software/Maestro/.worktrees/pianola-portfolio/scripts/pianola-sandbox/sandbox_runner.py"]. Windows target and artifact paths are translated to WSL /mnt paths. A program charter with validationRequired: false disables automatic validation for that program; manual validation remains available. The verb exits 0 when verified, 2 when failed, and 3 when unknown.
 
 ## Learning from how you already work
 

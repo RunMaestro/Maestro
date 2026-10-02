@@ -4560,6 +4560,11 @@ interface MaestroAPI {
 		saveRules: (rules: PianolaRule[]) => Promise<PianolaRule[]>;
 		getDecisions: (limit?: number) => Promise<PianolaDecisionRecord[]>;
 		getPrograms: () => Promise<import('../shared/pianola/pianola-programs').PianolaProgram[]>;
+		superviseProgram: (programId: string) => Promise<void>;
+		setProgramStatus: (
+			programId: string,
+			status: import('../shared/pianola/pianola-programs').PianolaProgramStatus
+		) => Promise<void>;
 		getAsks: (
 			status?: import('../shared/pianola/pianola-programs').PianolaAskStatus
 		) => Promise<import('../shared/pianola/pianola-programs').PianolaAsk[]>;

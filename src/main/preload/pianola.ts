@@ -46,6 +46,10 @@ export function createPianolaApi() {
 		getDecisions: (limit?: number): Promise<PianolaDecisionRecord[]> =>
 			ipcRenderer.invoke('pianola:get-decisions', limit),
 		getPrograms: (): Promise<PianolaProgram[]> => ipcRenderer.invoke('pianola:get-programs'),
+		superviseProgram: (programId: string): Promise<void> =>
+			ipcRenderer.invoke('pianola:supervise-program', programId),
+		setProgramStatus: (programId: string, status: 'active' | 'paused'): Promise<void> =>
+			ipcRenderer.invoke('pianola:set-program-status', programId, status),
 		getAsks: (status?: PianolaAskStatus): Promise<PianolaAsk[]> =>
 			ipcRenderer.invoke('pianola:get-asks', status),
 		resolveAsk: (id: string, option: string, note?: string): Promise<PianolaAsk> =>

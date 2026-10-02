@@ -9,7 +9,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import type { Theme } from '../../../../renderer/types';
 import type {
 	DashboardData,
@@ -178,6 +178,7 @@ describe('PianolaDashboard portfolio', () => {
 					openAsks: 1,
 					running: 2,
 					verifiedLast7d: 3,
+					loop: { supervised: true },
 				},
 			],
 			asks: [
@@ -245,5 +246,123 @@ describe('PianolaDashboard portfolio', () => {
 
 		await waitFor(() => expect(refresh).toHaveBeenCalledTimes(1));
 		expect(window.maestro.pianola.resolveAsk).toHaveBeenCalledWith('ask-1', 'Stripe', 'lower fees');
+	});
+});
+
+describe('PianolaDashboard program loop', () => {
+	function programsPortfolio(): PortfolioData {
+		const base = { openAsks: 0, running: 0, verifiedLast7d: 0 };
+		return {
+			...emptyPortfolio(),
+			programs: [
+				{
+					...base,
+					id: 'p1',
+					title: 'Checkout',
+					status: 'active',
+					loop: {
+						supervised: true,
+						lastWakeReason: 'plan-finished',
+						lastWakeAt: new Date(now).toISOString(),
+					},
+				},
+				{
+					...base,
+					id: 'p2',
+					title: 'Search',
+					status: 'paused',
+					loop: { supervised: false },
+				},
+			],
+		};
+	}
+
+	it('shows each program loop state with Supervise only on an unsupervised program', () => {
+		mockHook(emptyData(), programsPortfolio());
+		render(<PianolaDashboard theme={theme} onJumpToAgent={vi.fn()} />);
+
+		const supervised = screen.getByTestId('pianola-program-p1');
+		expect(screen.getByTestId('pianola-program-loop-p1')).toHaveTextContent(
+			'Supervised · woke lead: plan finished'
+		);
+		expect(within(supervised).queryByText('Supervise')).not.toBeInTheDocument();
+		expect(within(supervised).getByText('Pause')).toBeInTheDocument();
+
+		const unsupervised = screen.getByTestId('pianola-program-p2');
+		expect(screen.getByTestId('pianola-program-loop-p2')).toHaveTextContent('Not supervised');
+		expect(within(unsupervised).getByText('Supervise')).toBeInTheDocument();
+		expect(within(unsupervised).getByText('Resume')).toBeInTheDocument();
+	});
+
+	it('supervises a program by id, then refreshes', async () => {
+		mockHook(emptyData(), programsPortfolio());
+		render(<PianolaDashboard theme={theme} onJumpToAgent={vi.fn()} />);
+
+		fireEvent.click(within(screen.getByTestId('pianola-program-p2')).getByText('Supervise'));
+
+		await waitFor(() => expect(refresh).toHaveBeenCalledTimes(1));
+		expect(window.maestro.pianola.superviseProgram).toHaveBeenCalledWith('p2');
+	});
+
+	it('pauses an active program and resumes a paused one, refreshing after each', async () => {
+		mockHook(emptyData(), programsPortfolio());
+		render(<PianolaDashboard theme={theme} onJumpToAgent={vi.fn()} />);
+
+		fireEvent.click(within(screen.getByTestId('pianola-program-p1')).getByText('Pause'));
+		await waitFor(() => expect(refresh).toHaveBeenCalledTimes(1));
+		expect(window.maestro.pianola.setProgramStatus).toHaveBeenCalledWith('p1', 'paused');
+
+		fireEvent.click(within(screen.getByTestId('pianola-program-p2')).getByText('Resume'));
+		await waitFor(() => expect(refresh).toHaveBeenCalledTimes(2));
+		expect(window.maestro.pianola.setProgramStatus).toHaveBeenCalledWith('p2', 'active');
+	});
+
+	it('shows a failed status change inline and does not refresh', async () => {
+		vi.mocked(window.maestro.pianola.setProgramStatus).mockRejectedValueOnce(
+			new Error('PianolaDisabled')
+		);
+		mockHook(emptyData(), programsPortfolio());
+		render(<PianolaDashboard theme={theme} onJumpToAgent={vi.fn()} />);
+
+		fireEvent.click(within(screen.getByTestId('pianola-program-p1')).getByText('Pause'));
+
+		expect(await screen.findByText('PianolaDisabled')).toBeInTheDocument();
+		expect(refresh).not.toHaveBeenCalled();
+	});
+
+	it('renders a program-loop decision as a compact loop line beside a regular decision', () => {
+		mockHook({
+			...emptyData(),
+			activity: [
+				{
+					id: 'loop1:intent',
+					sessionId: 'lead',
+					agentName: 'Lead',
+					action: 'ignore',
+					topic: '',
+					timestamp: now,
+					dispatched: false,
+					loop: { programTitle: 'Checkout', action: 'woke lead (idle)' },
+				},
+				{
+					id: 'd1:done',
+					sessionId: 'a',
+					agentName: 'Alpha',
+					action: 'auto_answer',
+					topic: 'use tabs',
+					timestamp: now,
+					dispatched: true,
+				},
+			],
+		});
+		render(<PianolaDashboard theme={theme} onJumpToAgent={vi.fn()} />);
+
+		const loopRow = screen.getByTestId('pianola-loop-row-loop1:intent');
+		expect(loopRow).toHaveTextContent('Checkout');
+		expect(loopRow).toHaveTextContent('woke lead (idle)');
+		expect(screen.queryByText('Ignored')).not.toBeInTheDocument();
+		expect(screen.queryByText('Lead')).not.toBeInTheDocument();
+		expect(screen.getByText('Auto-answered')).toBeInTheDocument();
+		expect(screen.getByText('use tabs')).toBeInTheDocument();
 	});
 });

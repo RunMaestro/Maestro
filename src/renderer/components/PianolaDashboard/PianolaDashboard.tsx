@@ -2,12 +2,14 @@
  * Pianola Dashboard - the pinned status view in Pianola's workspace.
  *
  * Glanceable board of Pianola's portfolio and the other agents: the program
- * strip, what needs the user (founder asks first, then escalations, waiting
- * agents, tasks to review, failures), what is working and recently finished
- * (grouped by program), what is verified, who Pianola watches, and a feed of
- * Pianola's recent autonomous decisions. Agent rows jump to the owning agent on
- * click. Data comes from `usePianolaDashboardData` (live session state, the
- * polled decision log, and the polled portfolio brief).
+ * strip (with each program loop's state and its Supervise / Pause controls),
+ * what needs the user (founder asks first, then escalations, waiting agents,
+ * tasks to review, failures), what is working and recently finished (grouped by
+ * program), what is verified, who Pianola watches, and a feed of Pianola's
+ * recent decisions, where program-loop ticks show as compact loop lines. Agent
+ * rows jump to the owning agent on click. Data comes from
+ * `usePianolaDashboardData` (live session state, the polled decision log, and
+ * the polled portfolio brief).
  */
 
 import React from 'react';
@@ -26,6 +28,7 @@ import {
 	Eye,
 	Plus,
 	X,
+	Repeat,
 } from 'lucide-react';
 import type { Theme } from '../../types';
 import { formatRelativeTime } from '../../../shared/formatters';
@@ -39,6 +42,7 @@ import {
 	usePianolaDashboardData,
 	type DashboardAgentRow,
 	type DashboardActivityRow,
+	type DashboardLoopActivity,
 	type DashboardAskRow,
 	type DashboardNeedsRow,
 	type DashboardProgramGroup,
@@ -195,15 +199,51 @@ function ProgramGroups<T>({
 const groupedCount = <T,>(groups: DashboardProgramGroup<T>[]): number =>
 	groups.reduce((n, g) => n + g.rows.length, 0);
 
-/** One program in the strip: status, active plan, and its three live counts. */
+/**
+ * Run a `window.maestro.pianola` mutation, then `onSettled` (a dashboard
+ * refresh). A failure is kept as an inline error message instead of rejecting.
+ */
+function usePianolaAction(onSettled: () => void): {
+	busy: boolean;
+	error: string | null;
+	settle: (action: () => Promise<unknown>) => Promise<void>;
+} {
+	const [busy, setBusy] = React.useState(false);
+	const [error, setError] = React.useState<string | null>(null);
+	const settle = async (action: () => Promise<unknown>): Promise<void> => {
+		setBusy(true);
+		setError(null);
+		try {
+			await action();
+			onSettled();
+		} catch (err) {
+			setError(err instanceof Error ? err.message : String(err));
+		} finally {
+			setBusy(false);
+		}
+	};
+	return { busy, error, settle };
+}
+
+/**
+ * One program in the strip: status, active plan, its three live counts, and the
+ * program loop's state (supervised or not, the last time it woke the lead and
+ * why). Pause/Resume sets the program status; Supervise starts the loop. Both
+ * call `window.maestro.pianola` and then refresh the dashboard.
+ */
 function ProgramCard({
 	theme,
 	program,
+	onChanged,
 }: {
 	theme: Theme;
 	program: PianolaBriefProgram;
+	onChanged: () => void;
 }): React.ReactElement {
+	const { busy, error, settle } = usePianolaAction(onChanged);
 	const activePlan = program.activePlanTitle ?? program.activePlanId;
+	const active = program.status === 'active';
+	const { loop } = program;
 	return (
 		<div
 			className="rounded px-3 py-2 flex flex-col gap-1 min-w-[12rem] flex-1"
@@ -216,9 +256,23 @@ function ProgramCard({
 				</span>
 				<MiniBadge
 					theme={theme}
-					label={program.status === 'active' ? 'Active' : 'Paused'}
-					color={program.status === 'active' ? theme.colors.success : theme.colors.warning}
+					label={active ? 'Active' : 'Paused'}
+					color={active ? theme.colors.success : theme.colors.warning}
 				/>
+				<button
+					type="button"
+					onClick={() =>
+						void settle(() =>
+							window.maestro.pianola.setProgramStatus(program.id, active ? 'paused' : 'active')
+						)
+					}
+					disabled={busy}
+					className="ml-auto text-xs px-2 py-0.5 rounded hover:bg-white/5 transition-colors shrink-0 disabled:opacity-40 disabled:cursor-default"
+					style={{ color: theme.colors.textDim }}
+					title={active ? 'Pause this program' : 'Resume this program'}
+				>
+					{active ? 'Pause' : 'Resume'}
+				</button>
 			</div>
 			<div className="text-xs truncate" style={{ color: theme.colors.textDim }}>
 				{activePlan ? `Plan: ${activePlan}` : 'No active plan'}
@@ -230,6 +284,40 @@ function ProgramCard({
 				{' · '}
 				{program.running} running · {program.verifiedLast7d} verified (7d)
 			</div>
+			<div
+				className="flex items-center gap-2 text-xs"
+				style={{ color: theme.colors.textDim }}
+				data-testid={`pianola-program-loop-${program.id}`}
+			>
+				<span
+					className="w-2 h-2 rounded-full shrink-0"
+					style={{
+						backgroundColor: loop.supervised ? theme.colors.success : theme.colors.textDim,
+					}}
+				/>
+				<span className="truncate flex-1">
+					{loop.supervised ? 'Supervised' : 'Not supervised'}
+					{loop.lastWakeReason && ` · woke lead: ${loop.lastWakeReason.replace(/-/g, ' ')}`}
+					{loop.lastWakeAt && ` · ${formatRelativeTime(loop.lastWakeAt)}`}
+				</span>
+				{!loop.supervised && (
+					<button
+						type="button"
+						onClick={() => void settle(() => window.maestro.pianola.superviseProgram(program.id))}
+						disabled={busy}
+						className="text-xs px-2 py-0.5 rounded font-medium hover:bg-white/5 transition-colors shrink-0 disabled:opacity-40 disabled:cursor-default"
+						style={{ color: theme.colors.accent, border: `1px solid ${theme.colors.border}` }}
+						title="Run the program loop: wake the lead only when there is work for it"
+					>
+						Supervise
+					</button>
+				)}
+			</div>
+			{error && (
+				<div className="text-xs" style={{ color: theme.colors.error }}>
+					{error}
+				</div>
+			)}
 		</div>
 	);
 }
@@ -263,22 +351,9 @@ function AskRow({
 	const [resolving, setResolving] = React.useState(false);
 	const [option, setOption] = React.useState('');
 	const [note, setNote] = React.useState('');
-	const [busy, setBusy] = React.useState(false);
-	const [error, setError] = React.useState<string | null>(null);
+	const { busy, error, settle } = usePianolaAction(onSettled);
 	const color = severityColor(theme, ask.severity);
 
-	const settle = async (action: () => Promise<unknown>): Promise<void> => {
-		setBusy(true);
-		setError(null);
-		try {
-			await action();
-			onSettled();
-		} catch (err) {
-			setError(err instanceof Error ? err.message : String(err));
-		} finally {
-			setBusy(false);
-		}
-	};
 	const submitResolve = (): void => {
 		const chosen = option.trim();
 		if (!chosen || busy) return;
@@ -524,6 +599,38 @@ function ActivityRow({
 	);
 }
 
+/** A program-loop tick in the activity feed: one compact line naming the
+ * program and what the loop did. Jumps to the program's lead when it is loaded. */
+function LoopActivityRow({
+	theme,
+	row,
+	loop,
+	onJump,
+}: {
+	theme: Theme;
+	row: DashboardActivityRow;
+	loop: DashboardLoopActivity;
+	onJump: (sessionId: string) => void;
+}): React.ReactElement {
+	const clickable = !!row.sessionId;
+	return (
+		<button
+			type="button"
+			disabled={!clickable}
+			onClick={() => row.sessionId && onJump(row.sessionId)}
+			className="w-full text-left rounded px-3 py-1 flex items-center gap-2 text-xs transition-colors hover:bg-white/5 disabled:cursor-default"
+			style={{ backgroundColor: theme.colors.bgSidebar, color: theme.colors.textDim }}
+			title={clickable ? `Jump to ${row.agentName}` : `${loop.programTitle} loop`}
+			data-testid={`pianola-loop-row-${row.id}`}
+		>
+			<Repeat className="w-3.5 h-3.5 shrink-0" />
+			<span className="font-medium shrink-0 max-w-[28%] truncate">{loop.programTitle}</span>
+			<span className="truncate flex-1">{loop.action}</span>
+			<span className="shrink-0">{formatRelativeTime(row.timestamp)}</span>
+		</button>
+	);
+}
+
 /** Status-dot color for a watched target's live daemon state. */
 function watchStateColor(theme: Theme, state?: PianolaSupervisedState): string {
 	switch (state) {
@@ -715,7 +822,7 @@ export function PianolaDashboard({
 			{portfolio.programs.length > 0 && (
 				<div className="flex flex-wrap gap-2 mb-5" data-testid="pianola-program-strip">
 					{portfolio.programs.map((program) => (
-						<ProgramCard key={program.id} theme={theme} program={program} />
+						<ProgramCard key={program.id} theme={theme} program={program} onChanged={refresh} />
 					))}
 				</div>
 			)}
@@ -800,9 +907,19 @@ export function PianolaDashboard({
 				count={data.activity.length}
 				emptyLabel="No decisions recorded yet."
 			>
-				{data.activity.map((row) => (
-					<ActivityRow key={row.id} theme={theme} row={row} onJump={onJumpToAgent} />
-				))}
+				{data.activity.map((row) =>
+					row.loop ? (
+						<LoopActivityRow
+							key={row.id}
+							theme={theme}
+							row={row}
+							loop={row.loop}
+							onJump={onJumpToAgent}
+						/>
+					) : (
+						<ActivityRow key={row.id} theme={theme} row={row} onJump={onJumpToAgent} />
+					)
+				)}
 			</Section>
 		</div>
 	);

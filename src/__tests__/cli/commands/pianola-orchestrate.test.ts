@@ -8,6 +8,10 @@
  */
 
 import { describe, it, expect, vi, beforeEach, type MockInstance } from 'vitest';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
+import type { AgentRun } from '../../../shared/agent-run';
 import type { OrchestratorState } from '../../../shared/pianola/pianola-orchestrator';
 import type { PianolaPlan, PianolaPlanProgress } from '../../../shared/pianola/pianola-tasks';
 
@@ -58,6 +62,7 @@ vi.mock('../../../cli/services/agent-run-store', () => ({
 
 import {
 	pianolaOrchestrate,
+	pianolaValidate,
 	resolveExistingPianolaAgentType,
 } from '../../../cli/commands/pianola-orchestrate';
 import { readSettingValue } from '../../../cli/services/storage';
@@ -411,5 +416,65 @@ describe('resolveExistingPianolaAgentType', () => {
 				},
 			])
 		).toBe('codex');
+	});
+});
+
+describe('pianola validate CLI', () => {
+	it('executes a configured runner, replaces its check and sets verdict exit codes', async () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pianola-runner-'));
+		const runner = path.join(dir, 'runner.cjs');
+		let run: AgentRun | undefined;
+		const oldExitCode = process.exitCode;
+		const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+		try {
+			vi.mocked(readSettingValue).mockImplementation((key) =>
+				key === 'encoreFeatures' ? { pianola: true } : [process.execPath, runner]
+			);
+			vi.mocked(getPianolaPlan).mockReturnValue({
+				...PLAN,
+				tasks: [
+					{
+						id: 'task-1',
+						title: 'T',
+						prompt: 'p',
+						dependsOn: [],
+						status: 'running',
+						validation: { command: ['sh', '-c', 'true'], target: 'C:\\work', artifacts: [] },
+					},
+				],
+			});
+			getAgentRunMock.mockImplementation(() => run);
+			upsertAgentRunMock.mockImplementation((next: AgentRun) => {
+				run = next;
+				return next;
+			});
+			for (const [rc, verdict, exitCode] of [
+				[0, 'verified', 0],
+				[1, 'failed', 2],
+				[127, 'unknown', 3],
+			] as const) {
+				fs.writeFileSync(
+					runner,
+					'console.log(JSON.stringify({observed:true,returncode:' +
+						rc +
+						',stdout:process.argv.slice(2).join(" "),stderr:' +
+						(rc === 127 ? '"not found"' : '""') +
+						',timedOut:false,error:null}))'
+				);
+				await pianolaValidate('plan-1', 'task-1', { json: true });
+				const result = JSON.parse(log.mock.lastCall![0] as string);
+				expect(result.verdict).toBe(verdict);
+				expect(result.runId).toBeDefined();
+				expect(result.check.name).toBe('independent-validation');
+				expect(result.check.status).toBe(
+					verdict === 'unknown' ? 'error' : verdict === 'failed' ? 'failed' : 'passed'
+				);
+				expect(run?.checks).toHaveLength(1);
+				expect(process.exitCode).toBe(exitCode);
+			}
+		} finally {
+			process.exitCode = oldExitCode;
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
 	});
 });

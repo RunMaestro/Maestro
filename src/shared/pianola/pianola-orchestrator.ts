@@ -96,6 +96,10 @@ export interface OrchestratorDeps {
 	 * Optional: when absent the engine falls back to busy-to-idle detection.
 	 */
 	getRunLedger?: (task: PianolaTask) => Promise<PianolaTaskLedger | undefined>;
+	/** Run the independent oracle and append its Agent Run check before ledger settlement. */
+	validate?: (
+		task: PianolaTask
+	) => Promise<{ verdict: 'verified' | 'failed' | 'unknown'; reason: string }>;
 	/**
 	 * F8 reactive loop (optional, gated by the CLI on encore/autopilot): dispatch
 	 * a bounded fix agent for a task whose run needs review. Returns success.
@@ -167,12 +171,42 @@ export async function runOrchestratorIteration(
 		const currentState = await deps.getRunState(task);
 		const recentMessages = await deps.getRecentMessages(task);
 		prevStates[task.id] = currentState;
-		const { outcome, reason } = detectTaskOutcome({
+		const detected = detectTaskOutcome({
 			previousState: state.prevStates[task.id],
 			currentState,
 			recentMessages,
 		});
+		// An 'unknown' validation leaves the task running so the next tick re-validates
+		// the same finished run; a 'fixing' task must still wait for its fix run.
+		const revalidating =
+			task.status === 'running' && !!task.validationUnknownAttempts && currentState === 'idle';
+		// A run short enough to start and finish between two polls never shows a
+		// busy state; the reply that arrived after the dispatch is its completion.
+		const repliedSinceDispatch =
+			currentState === 'idle' &&
+			detected.outcome === 'working' &&
+			task.dispatchedMessageCount !== undefined &&
+			recentMessages.length > task.dispatchedMessageCount &&
+			recentMessages
+				.slice(task.dispatchedMessageCount)
+				.some((message) => message.role === 'assistant');
+		const outcome = revalidating || repliedSinceDispatch ? 'done' : detected.outcome;
+		const reason =
+			repliedSinceDispatch && !revalidating
+				? 'agent replied after dispatch and is idle'
+				: detected.reason;
 		if (outcome === 'done') {
+			if (task.validation && deps.validate) {
+				const validation = await deps.validate(task);
+				if (validation.verdict === 'unknown') {
+					const attempts = (task.validationUnknownAttempts ?? 0) + 1;
+					plan = markTaskStatus(plan, task.id, attempts >= 2 ? 'needs_review' : 'running', {
+						validationUnknownAttempts: attempts,
+						...(attempts >= 2 ? { error: validation.reason } : {}),
+					});
+					continue;
+				}
+			}
 			// F8 (ISC-8.4): settle on the ledger, not busy-to-idle alone. Open
 			// critical/high findings route the task to needs_review instead of done.
 			const ledger = deps.getRunLedger ? await deps.getRunLedger(task) : undefined;
@@ -246,9 +280,11 @@ export async function runOrchestratorIteration(
 			if (deps.dispatchFix && ledger) {
 				const fix = await deps.dispatchFix(task, ledger);
 				if (fix.success) {
+					const transcript = await deps.getRecentMessages(task);
 					plan = markTaskStatus(plan, task.id, 'fixing', {
 						runId: ledger.runId,
 						fixAttempts: attempts + 1,
+						dispatchedMessageCount: transcript.length,
 					});
 					deps.log(`[orchestrator] task "${task.id}" fixing (attempt ${attempts + 1})`);
 				} else {

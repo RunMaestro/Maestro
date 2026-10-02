@@ -805,15 +805,15 @@ const mockMaestro = {
 		getAsks: vi.fn().mockResolvedValue([]),
 		resolveAsk: vi.fn().mockResolvedValue(undefined),
 		dismissAsk: vi.fn().mockResolvedValue(undefined),
-		getBrief: vi
-			.fn()
-			.mockResolvedValue({
-				generatedAt: '',
-				needsMe: [],
-				inFlight: [],
-				verified: [],
-				programs: [],
-			}),
+		getBrief: vi.fn().mockResolvedValue({
+			generatedAt: '',
+			needsMe: [],
+			inFlight: [],
+			verified: [],
+			programs: [],
+		}),
+		superviseProgram: vi.fn().mockResolvedValue(undefined),
+		setProgramStatus: vi.fn().mockResolvedValue(undefined),
 		getSuggestions: vi.fn().mockResolvedValue({
 			generatedAt: 0,
 			pairCount: 0,
