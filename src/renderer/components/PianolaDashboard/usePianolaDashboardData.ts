@@ -55,6 +55,14 @@ export interface DashboardActivityRow {
 	topic: string;
 	timestamp: number;
 	dispatched: boolean;
+	/** Set when the record is a program-loop tick, rendered as a compact loop line. */
+	loop?: DashboardLoopActivity;
+}
+
+/** A program-loop tick: which program, and what the loop did. */
+export interface DashboardLoopActivity {
+	programTitle: string;
+	action: string;
 }
 
 export interface DashboardData {
@@ -87,13 +95,45 @@ function isHandoff(record: PianolaDecisionRecord): boolean {
 	return record.decision.action === 'escalate' && /handed off/i.test(record.decision.reason);
 }
 
+/** Reason prefix of the program loop's per-tick decision records. */
+const PROGRAM_LOOP_PREFIX = 'program-loop:';
+
+/**
+ * The program and action of a program-loop record. Its reason reads
+ * `program-loop: <programId> <action>`; the program is matched by the record's
+ * `projectPath` (the program root) first, then by that id token, and falls back
+ * to the token itself when no program record is loaded.
+ */
+function describeProgramLoop(
+	record: PianolaDecisionRecord,
+	programs: readonly PianolaProgram[]
+): DashboardLoopActivity {
+	const text = record.decision.reason.slice(PROGRAM_LOOP_PREFIX.length).trim();
+	const token = text.split(/\s/, 1)[0] ?? '';
+	const afterToken = text.slice(token.length).trim();
+	const program =
+		(record.projectPath ? programs.find((p) => p.root === record.projectPath) : undefined) ??
+		programs.find((p) => p.id === token);
+	if (program) {
+		return {
+			programTitle: program.title,
+			action: token === program.id && afterToken ? afterToken : text,
+		};
+	}
+	return afterToken
+		? { programTitle: token, action: afterToken }
+		: { programTitle: 'Program loop', action: text };
+}
+
 /**
  * Pure derivation of the four dashboard buckets from sessions + decisions. Kept
- * separate from the hook so it is trivially testable.
+ * separate from the hook so it is trivially testable. `programs` names the
+ * program of each program-loop record in the activity feed.
  */
 export function deriveDashboard(
 	sessions: readonly Session[],
-	decisions: readonly PianolaDecisionRecord[]
+	decisions: readonly PianolaDecisionRecord[],
+	programs: readonly PianolaProgram[] = []
 ): DashboardData {
 	// Top-level agents only (never the Pianola agent itself). Worktree children get
 	// no row of their own here; busy ones are nested under their parent in the
@@ -105,9 +145,11 @@ export function deriveDashboard(
 	// Newest first. The audit log is stored oldest-last, so reverse a shallow copy.
 	const newestFirst = [...decisions].sort((a, b) => ms(b.timestamp) - ms(a.timestamp));
 
-	// Latest decision topic per agent, for enriching the agent rows.
+	// Latest decision topic per agent, for enriching the agent rows. Program-loop
+	// ticks are not about the agent's own work, so they never set its topic.
 	const latestTopicByAgent = new Map<string, { topic: string; timestamp: number }>();
 	for (const d of newestFirst) {
+		if (d.decision.reason.startsWith(PROGRAM_LOOP_PREFIX)) continue;
 		if (!latestTopicByAgent.has(d.agentId)) {
 			latestTopicByAgent.set(d.agentId, {
 				topic: d.classification.topic,
@@ -197,9 +239,20 @@ export function deriveDashboard(
 		})
 		.sort((a, b) => (b.timestamp ?? 0) - (a.timestamp ?? 0));
 
-	const activity: DashboardActivityRow[] = newestFirst
-		.filter((d) => !pianolaIds.has(d.agentId))
-		.map((d) => ({
+	// Program-loop ticks become compact loop lines. The loop logs every tick, so a
+	// run of the same action for one program collapses to its newest line.
+	const lastLoopAction = new Map<string, string>();
+	const activity: DashboardActivityRow[] = [];
+	for (const d of newestFirst) {
+		if (pianolaIds.has(d.agentId)) continue;
+		const loop = d.decision.reason.startsWith(PROGRAM_LOOP_PREFIX)
+			? describeProgramLoop(d, programs)
+			: undefined;
+		if (loop) {
+			if (lastLoopAction.get(loop.programTitle) === loop.action) continue;
+			lastLoopAction.set(loop.programTitle, loop.action);
+		}
+		activity.push({
 			id: d.id + (d.dispatched ? ':done' : ':intent'),
 			sessionId: nameById.has(d.agentId) ? d.agentId : undefined,
 			agentName: agentNameFor(d.agentId, nameById),
@@ -207,7 +260,9 @@ export function deriveDashboard(
 			topic: d.classification.topic,
 			timestamp: ms(d.timestamp),
 			dispatched: d.dispatched,
-		}));
+			...(loop ? { loop } : {}),
+		});
+	}
 
 	return { needsInput, working, recentlyDone, activity };
 }
@@ -499,7 +554,10 @@ export function usePianolaDashboardData(): {
 		};
 	}, [nonce]);
 
-	const data = useMemo(() => deriveDashboard(sessions, decisions), [sessions, decisions]);
+	const data = useMemo(
+		() => deriveDashboard(sessions, decisions, snapshot.programs),
+		[sessions, decisions, snapshot.programs]
+	);
 	const portfolio = useMemo(
 		() => derivePortfolio(data, snapshot, sessions),
 		[data, snapshot, sessions]

@@ -189,7 +189,9 @@ import {
 	pianolaPlanList,
 	pianolaPlanShow,
 	pianolaOrchestrate,
+	pianolaValidate,
 } from './commands/pianola-orchestrate';
+import { pianolaProgramLoop } from './commands/pianola-program-loop';
 import {
 	pianolaProgramApply,
 	pianolaProgramList,
@@ -204,6 +206,7 @@ import {
 import {
 	pianolaSuperviseWatch,
 	pianolaSuperviseOrchestrate,
+	pianolaSuperviseProgram,
 	pianolaSuperviseList,
 	pianolaSuperviseRemove,
 	pianolaSuperviseSetEnabled,
@@ -2300,6 +2303,18 @@ pianola
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((planId, options) => pianolaOrchestrate(planId, options));
 
+pianola
+	.command('validate <planId> <taskId>')
+	.description('Run the task validation oracle in the sandbox and append its Agent Run check')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((planId, taskId, options) => pianolaValidate(planId, taskId, options));
+
+pianola
+	.command('program-loop <programId>')
+	.option('--interval <seconds>', 'Polling interval (default 120)')
+	.option('--once', 'Perform one tick and exit')
+	.option('--json', 'Output as JSON')
+	.action((programId, options) => pianolaProgramLoop(programId, options));
 // Pianola supervise - register background targets the desktop keeps alive
 // (restart on crash, relaunch on app start, visible health). These write the
 // shared supervisor store; the running app reconciles within ~1s.
@@ -2325,6 +2340,11 @@ pianolaSupervise
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((planId, options) => pianolaSuperviseOrchestrate(planId, options));
 
+pianolaSupervise
+	.command('program <programId>')
+	.option('--interval <seconds>', 'Polling interval (default 120)')
+	.option('--json', 'Output as JSON')
+	.action((programId, options) => pianolaSuperviseProgram(programId, options));
 pianolaSupervise
 	.command('list')
 	.description('List registered supervised targets')

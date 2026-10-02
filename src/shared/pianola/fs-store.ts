@@ -21,6 +21,7 @@ import {
 	PIANOLA_PROGRAMS_FILENAME,
 	PIANOLA_ASKS_FILENAME,
 	PIANOLA_SUPERVISOR_FILENAME,
+	PIANOLA_PROGRAM_LOOP_FILENAME,
 	PIANOLA_PROFILES_FILENAME,
 	PIANOLA_SUGGESTIONS_FILENAME,
 	PIANOLA_DECISIONS_MAX_RECORDS,
@@ -46,6 +47,7 @@ import {
 import { appendDecisionLine, compactDecisionLog } from './decision-log';
 import type { PianolaRule } from './types';
 import type { PianolaProgram, PianolaAsk } from './pianola-programs';
+import { validateProgramLoopMemo, type ProgramLoopMemo } from './pianola-program-loop';
 
 export interface PianolaFsStoreConfig {
 	/** Resolve the data dir (Electron userData for main, config dir for CLI). Re-read per op. */
@@ -72,6 +74,8 @@ export interface PianolaFsStore {
 	upsertProgram(program: PianolaProgram): PianolaProgram[];
 	readAsks(): PianolaAsk[];
 	writeAsks(asks: PianolaAsk[]): PianolaAsk[];
+	readProgramLoopMemo(): ProgramLoopMemo;
+	writeProgramLoopMemo(memo: ProgramLoopMemo): void;
 	readSuggestions(): PianolaSuggestionsFile;
 	writeSuggestions(file: PianolaSuggestionsFile): PianolaSuggestionsFile;
 	readProfiles(): PianolaProfiles;
@@ -312,6 +316,12 @@ export function createPianolaFsStore(config: PianolaFsStoreConfig): PianolaFsSto
 		return writeSupervisorTargets(next);
 	}
 
+	function readProgramLoopMemo(): ProgramLoopMemo {
+		return readFileOr(PIANOLA_PROGRAM_LOOP_FILENAME, () => ({}), validateProgramLoopMemo);
+	}
+	function writeProgramLoopMemo(memo: ProgramLoopMemo): void {
+		writeJsonAtomic(PIANOLA_PROGRAM_LOOP_FILENAME, validateProgramLoopMemo(memo));
+	}
 	return {
 		readRulesResult,
 		readRules: () => readRulesResult().rules,
@@ -332,6 +342,8 @@ export function createPianolaFsStore(config: PianolaFsStoreConfig): PianolaFsSto
 		readAsks,
 		writeAsks,
 		readSuggestions,
+		readProgramLoopMemo,
+		writeProgramLoopMemo,
 		writeSuggestions,
 		readProfiles,
 		writeProfiles,

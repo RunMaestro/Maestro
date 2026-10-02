@@ -28,7 +28,14 @@ import {
 	setProfile,
 	type RulesLoadResult,
 } from '../../pianola/pianola-store-main';
-import { readPrograms, readAsks, writeAsks, readPlans } from '../../pianola/pianola-store-main';
+import {
+	readPrograms,
+	writePrograms,
+	readAsks,
+	writeAsks,
+	readPlans,
+	readProgramLoopMemo,
+} from '../../pianola/pianola-store-main';
 import { readAgentRuns } from '../../../cli/services/agent-run-store';
 import { pianolaTaskAgentRunId } from '../../../shared/agent-run';
 import {
@@ -261,6 +268,41 @@ export function registerPianolaHandlers(deps: PianolaHandlerDependencies): void 
 			return wrappedSupervisorRemove(event, id);
 		}
 	);
+	ipcMain.handle('pianola:supervise-program', async (event, programId: unknown): Promise<void> => {
+		if (!isPianolaEnabled(settingsStore)) throw new Error('PianolaDisabled');
+		if (
+			typeof programId !== 'string' ||
+			!readPrograms().some((program) => program.id === programId)
+		)
+			throw new Error('InvalidProgramId');
+		const existing = readSupervisorTargets().find(
+			(target) => target.kind === 'program' && target.programId === programId
+		);
+		await wrappedSupervisorAdd(event, {
+			id: existing?.id,
+			createdAt: existing?.createdAt,
+			kind: 'program',
+			programId,
+			enabled: true,
+			intervalSeconds: existing?.intervalSeconds ?? 120,
+		});
+	});
+	ipcMain.handle(
+		'pianola:set-program-status',
+		async (_event, programId: unknown, status: unknown): Promise<void> => {
+			if (!isPianolaEnabled(settingsStore)) throw new Error('PianolaDisabled');
+			if (typeof programId !== 'string' || (status !== 'active' && status !== 'paused'))
+				throw new Error('InvalidProgramStatus');
+			const programs = readPrograms();
+			if (!programs.some((program) => program.id === programId))
+				throw new Error('InvalidProgramId');
+			writePrograms(
+				programs.map((program) =>
+					program.id === programId ? { ...program, status, updatedAt: Date.now() } : program
+				)
+			);
+		}
+	);
 	ipcMain.handle('pianola:get-programs', async (): Promise<PianolaProgram[]> => {
 		if (!isPianolaEnabled(settingsStore)) throw new Error('PianolaDisabled');
 		return readPrograms();
@@ -320,6 +362,15 @@ export function registerPianolaHandlers(deps: PianolaHandlerDependencies): void 
 		if (!isPianolaEnabled(settingsStore)) throw new Error('PianolaDisabled');
 		const plans = readPlans();
 		const runs = briefRunsForPlans(plans, readAgentRuns(), pianolaTaskAgentRunId);
-		return derivePianolaBrief(readPrograms(), plans, readAsks(), readDecisions(), runs);
+		return derivePianolaBrief(
+			readPrograms(),
+			plans,
+			readAsks(),
+			readDecisions(),
+			runs,
+			new Date().toISOString(),
+			readSupervisorTargets(),
+			readProgramLoopMemo()
+		);
 	});
 }

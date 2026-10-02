@@ -48,6 +48,25 @@ export function saveImageToTempFile(dataUrl: string, index: number): string | nu
  * Clean up temp image files asynchronously.
  * Fire-and-forget to avoid blocking the main thread.
  */
+/**
+ * Write a prompt to a temp file for CLIs that accept a file-backed message
+ * (see `promptFileArgs`). Returns null when the write fails so the caller can
+ * fall back to argv delivery. Cleaned up with the process's other temp files.
+ */
+export function savePromptToTempFile(prompt: string): string | null {
+	const tempPath = path.join(os.tmpdir(), `maestro-prompt-${Date.now()}-${process.pid}.md`);
+	try {
+		fs.writeFileSync(tempPath, prompt, { encoding: 'utf8', mode: 0o600 });
+		return tempPath;
+	} catch (error) {
+		void captureException(error);
+		logger.error('[ProcessManager] Failed to save prompt to temp file', 'ProcessManager', {
+			error: String(error),
+		});
+		return null;
+	}
+}
+
 export function cleanupTempFiles(files: string[]): void {
 	for (const file of files) {
 		fsPromises

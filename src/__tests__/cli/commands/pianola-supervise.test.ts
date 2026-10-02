@@ -9,7 +9,10 @@ import { describe, it, expect, beforeEach, afterEach, vi, type MockInstance } fr
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { pianolaSuperviseWatch } from '../../../cli/commands/pianola-supervise';
+import {
+	pianolaSuperviseWatch,
+	pianolaSuperviseProgram,
+} from '../../../cli/commands/pianola-supervise';
 import { readPianolaSupervisorTargets } from '../../../cli/services/pianola-store';
 
 let tmpDir: string;
@@ -69,5 +72,22 @@ describe('pianolaSuperviseWatch dedupe', () => {
 
 		const targets = readPianolaSupervisorTargets();
 		expect(targets).toHaveLength(3);
+	});
+});
+describe('pianolaSuperviseProgram', () => {
+	it('reuses a program target while updating the interval', () => {
+		pianolaSuperviseProgram('product', { json: true });
+		const firstId = lastTargetId();
+		pianolaSuperviseProgram('product', { interval: '180', json: true });
+		expect(readPianolaSupervisorTargets()).toEqual([
+			expect.objectContaining({
+				id: firstId,
+				kind: 'program',
+				programId: 'product',
+				intervalSeconds: 180,
+			}),
+		]);
+		pianolaSuperviseProgram('other', { json: true });
+		expect(readPianolaSupervisorTargets()).toHaveLength(2);
 	});
 });

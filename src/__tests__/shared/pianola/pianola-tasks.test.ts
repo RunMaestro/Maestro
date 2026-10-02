@@ -385,3 +385,22 @@ describe('planProgress', () => {
 		expect(planProgress(plan([])).complete).toBe(true);
 	});
 });
+
+describe('task validation specs', () => {
+	it('preserves a valid oracle through plan validation and rejects missing commands', () => {
+		const validation = {
+			command: ['pytest', '-q'],
+			target: '/workspace',
+			artifacts: ['result.txt'],
+		};
+		expect(validatePlan(rawPlan([rawTask({ validation })])).plan?.tasks[0].validation).toEqual(
+			validation
+		);
+		const absent = validatePlan(rawPlan([rawTask()]));
+		expect(absent.errors).toEqual([]);
+		expect(absent.plan?.tasks[0].validation).toBeUndefined();
+		const invalid = validatePlan(rawPlan([rawTask({ validation: { target: '/workspace' } })]));
+		expect(invalid.plan).toBeNull();
+		expect(invalid.errors.some((error) => error.includes('validation'))).toBe(true);
+	});
+});
