@@ -8,11 +8,13 @@
  * "one decision, honored across every surface" guarantee can't silently drift.
  */
 
+import * as path from 'path';
 import { describe, it, expect } from 'vitest';
 import {
 	resolveClaudeSpawnModeCore,
 	isMaestroPBinaryPath,
 	resolveConfigDirKeyFromEnv,
+	mergeClaudeSpawnEnvLayers,
 	defaultSelectMode,
 	type ClaudeSpawnCoreDeps,
 } from '../../../main/agents/claudeSpawnCore';
@@ -66,6 +68,67 @@ describe('resolveConfigDirKeyFromEnv', () => {
 	it('falls back to ~/.claude when unset', () => {
 		const key = resolveConfigDirKeyFromEnv({});
 		expect(key.endsWith('/.claude') || key.endsWith('\\.claude')).toBe(true);
+	});
+});
+
+// The CLAUDE_CONFIG_DIR key must be built from every env layer the spawned
+// claude receives, in the order the spawn applies them. Leaving a layer out
+// sends the API-resume sanitizer to the wrong transcript.
+describe('mergeClaudeSpawnEnvLayers', () => {
+	const dir = (name: string) => path.resolve('/accounts', name);
+
+	it('orders the layers process env < global < agent defaults < user set', () => {
+		const env = mergeClaudeSpawnEnvLayers(
+			{
+				globalShellEnvVars: { A: 'global', B: 'global', C: 'global' },
+				agentDefaultEnvVars: { B: 'default', C: 'default' },
+				agentCustomEnvVars: { C: 'agent-level' },
+			},
+			{ A: 'process', P: 'process' }
+		);
+		expect(env).toMatchObject({ P: 'process', A: 'global', B: 'default', C: 'agent-level' });
+	});
+
+	it("uses the agent's own vars INSTEAD of the provider-level set, never both", () => {
+		const env = mergeClaudeSpawnEnvLayers(
+			{
+				agentCustomEnvVars: { CLAUDE_CONFIG_DIR: dir('team'), TEAM_ONLY: '1' },
+				sessionCustomEnvVars: { MINE: '1' },
+			},
+			{}
+		);
+		expect(env.MINE).toBe('1');
+		expect(env.CLAUDE_CONFIG_DIR).toBeUndefined();
+		expect(env.TEAM_ONLY).toBeUndefined();
+	});
+
+	it('feeds the resolver key from the global and provider-level layers', () => {
+		const NOW = new Date('2026-07-05T00:00:00.000Z');
+		const decide = (layers: {
+			globalShellEnvVars?: Record<string, string>;
+			agentCustomEnvVars?: Record<string, string>;
+		}) =>
+			resolveClaudeSpawnModeCore(
+				{
+					agent: CLAUDE_AGENT,
+					tokenMode: 'api',
+					sshEnabled: false,
+					command: 'claude',
+					// Stale interactive state makes the resolver compute the key itself.
+					persisted: { mode: 'interactive' },
+					now: NOW,
+					...layers,
+				},
+				cliShapedDeps()
+			).configDirKey;
+
+		expect(decide({ globalShellEnvVars: { CLAUDE_CONFIG_DIR: dir('work') } })).toBe(dir('work'));
+		expect(
+			decide({
+				globalShellEnvVars: { CLAUDE_CONFIG_DIR: dir('work') },
+				agentCustomEnvVars: { CLAUDE_CONFIG_DIR: dir('team') },
+			})
+		).toBe(dir('team'));
 	});
 });
 
