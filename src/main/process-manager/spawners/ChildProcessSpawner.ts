@@ -446,6 +446,10 @@ export class ChildProcessSpawner {
 					// methods are not used here.
 					stopGraceMs: INTERACTIVE_STOP_GRACE_MS,
 					keepStdinOpen: !isBatchMode,
+					// The stdout and stderr handlers keep what the desktop needs; a
+					// second copy here would only grow for as long as the process lives.
+					stdoutTailLimit: 0,
+					stderrTailLimit: 0,
 					sessionId,
 					label: toolType,
 				}
@@ -590,9 +594,10 @@ export class ChildProcessSpawner {
 				// unregistered, and handleExit must settle THIS process rather than
 				// whatever currently owns the session id.
 				// `signal` is what tells a kill from a clean exit once `code || 0` has
-				// turned the killed process's null code into 0.
+				// turned the killed process's null code into 0. `stdinError` says the
+				// prompt never fully reached the agent.
 				return this.exitHandler
-					.handleExit(sessionId, exit.exitCode || 0, managedProcess, exit.signal)
+					.handleExit(sessionId, exit.exitCode || 0, managedProcess, exit.signal, exit.stdinError)
 					.catch((err) => {
 						logger.error('[ProcessManager] handleExit threw', 'ProcessManager', {
 							sessionId,

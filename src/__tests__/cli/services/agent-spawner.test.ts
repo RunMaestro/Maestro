@@ -25,6 +25,8 @@ const mockSpawn = vi.fn();
 const mockStdin = {
 	end: vi.fn(),
 	write: vi.fn(),
+	// The run layer listens for stdin errors (EPIPE), as on a real stream.
+	on: vi.fn(),
 };
 // `setEncoding` is part of a real child stream: the spawner decodes there
 // rather than per chunk, so a multibyte character split across two reads
@@ -2831,7 +2833,7 @@ Some text with [x] in it that's not a checkbox
 			});
 			await driveSpawnToCompletion(p, 0, CLAUDE_OK());
 
-			expect(mockStdin.write).toHaveBeenCalledWith(script);
+			expect(mockStdin.write).toHaveBeenCalledWith(script, expect.any(Function));
 			expect(mockStdin.end).toHaveBeenCalled();
 			// write() must run BEFORE end() (first call of write precedes first end)
 			expect(mockStdin.write.mock.invocationCallOrder[0]).toBeLessThan(

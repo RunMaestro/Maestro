@@ -9,7 +9,9 @@
  *
  * POSIX only; Windows ends a tree with a single `taskkill /t /f`.
  */
+import * as fs from 'fs';
 import * as os from 'os';
+import * as path from 'path';
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { spawn, type ChildProcess } from 'child_process';
 
@@ -154,14 +156,28 @@ posixOnly('ProcessManager stop against real processes', () => {
 		await agent.close;
 	});
 
-	it('quitting the app leaves nothing running', async () => {
-		const agent = await runAgent(
-			`process.on('SIGINT', () => {}); process.on('SIGTERM', () => {}); ${START_TOOL}`
+	it('quitting the app sends SIGTERM and lets the agent finish writing its state', async () => {
+		// An agent saves its session when it is told to terminate. Quitting must
+		// give it the time to: a SIGKILL right behind the SIGTERM would not.
+		const stateFile = path.join(
+			fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-quit-')),
+			'state.json'
 		);
+		const agent = await runAgent(`
+			process.on('SIGTERM', () => {
+				setTimeout(() => {
+					require('fs').writeFileSync(${JSON.stringify(stateFile)}, '{"saved":true}');
+					process.exit(0);
+				}, 300);
+			});
+			${START_TOOL}
+		`);
 
 		agent.manager.killAll({ shutdown: true });
 
-		expect(await agent.exit).toEqual({ code: null, signal: 'SIGKILL' });
-		expect(await waitUntilGone(agent.toolPid, 2000)).toBe(true);
+		expect(agent.manager.get(SESSION_ID)).toBeUndefined();
+		expect(await agent.exit).toEqual({ code: 0, signal: null });
+		expect(fs.readFileSync(stateFile, 'utf8')).toBe('{"saved":true}');
+		fs.rmSync(path.dirname(stateFile), { recursive: true, force: true });
 	});
 });

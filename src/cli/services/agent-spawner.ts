@@ -863,6 +863,7 @@ async function spawnClaudeAgent(
 		interrupted: exit.interrupted,
 		stderrText: exit.stderrText,
 		stdoutText: exit.stdoutText,
+		stdinError: exit.stdinError,
 		// Use accumulated assistant text as fallback when result field is empty
 		answerText: result || assistantText || undefined,
 		resultMessageSeen,
@@ -1133,6 +1134,7 @@ async function spawnJsonLineAgent(
 		interrupted: exit.interrupted,
 		stderrText: exit.stderrText,
 		stdoutText: exit.stdoutText,
+		stdinError: exit.stdinError,
 		errorText: capture.errorText,
 		answerText: capture.answerText,
 		resultMessageSeen: capture.resultMessageSeen,

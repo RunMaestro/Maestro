@@ -193,6 +193,106 @@ describe('startTurn', () => {
 		expect(exit.stdoutText.endsWith('the end\n')).toBe(true);
 	});
 
+	it('keeps all of stderr unless the caller sets a limit', async () => {
+		const noisy = `${'w'.repeat(500)}\nError: not logged in\n`;
+		const spec = () =>
+			fakeAgentSpec(scratch.dir, { chunks: [], stderr: noisy, close: { code: 7, signal: null } });
+
+		const whole = await startTurn(spec(), {}, OPTIONS).done;
+		const tail = await startTurn(spec(), {}, { ...OPTIONS, stderrTailLimit: 21 }).done;
+
+		expect(whole.stderrText).toBe(noisy);
+		expect(tail.stderrText).toBe('Error: not logged in\n');
+	});
+
+	it('keeps no copy of either stream for a caller that holds its own', async () => {
+		let heardStdout = '';
+		let heardStderr = '';
+
+		const turn = startTurn(
+			fakeAgentSpec(scratch.dir, {
+				chunks: ['the answer\n'],
+				stderr: 'a warning\n',
+				close: { code: 0, signal: null },
+			}),
+			{
+				onStdout: (text) => (heardStdout += text),
+				onStderr: (text) => (heardStderr += text),
+			},
+			{ ...OPTIONS, stdoutTailLimit: 0, stderrTailLimit: 0 }
+		);
+		const exit = await turn.done;
+
+		expect(exit.stdoutText).toBe('');
+		expect(exit.stderrText).toBe('');
+		// The handlers still receive every chunk.
+		expect(heardStdout).toBe('the answer\n');
+		expect(heardStderr).toBe('a warning\n');
+	});
+
+	it('reports a stdin error to its handler instead of throwing it at the host', async () => {
+		// With no listener on the stream, this error is an uncaught exception.
+		const errors: Error[] = [];
+		const turn = startTurn(
+			fakeAgentSpec(scratch.dir, OPENCODE_TURN),
+			{ onStdinError: (error) => errors.push(error) },
+			OPTIONS
+		);
+		const epipe = Object.assign(new Error('write EPIPE'), { code: 'EPIPE' });
+
+		expect(() => turn.child.stdin!.emit('error', epipe)).not.toThrow();
+		const exit = await turn.done;
+
+		expect(errors).toEqual([epipe]);
+		expect(exit.exitCode).toBe(0);
+	});
+
+	it('survives a stdin error when the caller passes no handler for it', async () => {
+		const turn = startTurn(fakeAgentSpec(scratch.dir, OPENCODE_TURN), {}, OPTIONS);
+
+		expect(() => turn.child.stdin!.emit('error', new Error('write EPIPE'))).not.toThrow();
+		const exit = await turn.done;
+		expect(exit.exitCode).toBe(0);
+		// Not a failure of the prompt's own write, so the turn is not charged with it.
+		expect(exit.stdinError).toBeUndefined();
+	});
+
+	posixIt(
+		'keeps the error of a prompt the process closed stdin on, even on a clean exit',
+		async () => {
+			// A prompt larger than the pipe's buffer is still being written when the
+			// process closes its end, so the write fails with EPIPE. The process then
+			// exits 0, which alone would read as a finished turn.
+			const errors: Error[] = [];
+			const turn = startTurn(
+				{
+					command: process.execPath,
+					args: ['-e', 'require("fs").closeSync(0); setTimeout(() => process.exit(0), 200);'],
+					cwd: scratch.dir,
+					env: process.env,
+					stdin: 'p'.repeat(4 * 1024 * 1024),
+				},
+				{ onStdinError: (error) => errors.push(error) },
+				OPTIONS
+			);
+			const exit = await turn.done;
+
+			expect(exit.exitCode).toBe(0);
+			expect((exit.stdinError as NodeJS.ErrnoException | undefined)?.code).toBe('EPIPE');
+			expect(errors).toContain(exit.stdinError);
+		}
+	);
+
+	it('has no stdin error for a prompt the process read', async () => {
+		const turn = startTurn(
+			fakeAgentSpec(scratch.dir, OPENCODE_TURN, { stdin: 'the prompt' }),
+			{},
+			OPTIONS
+		);
+
+		expect((await turn.done).stdinError).toBeUndefined();
+	});
+
 	it('counts and reports the bytes of a line too long to buffer', async () => {
 		const { lines, handlers } = recorder();
 		let reported = 0;

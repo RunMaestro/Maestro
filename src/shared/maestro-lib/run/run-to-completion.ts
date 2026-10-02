@@ -10,6 +10,7 @@ import {
 import {
 	startTurn,
 	DEFAULT_MAX_LINE_LENGTH,
+	DEFAULT_STDERR_TAIL_LIMIT,
 	type StartTurnOptions,
 	type TurnExit,
 	type TurnHandle,
@@ -90,7 +91,14 @@ export function runTurn(
 				handlers.onEvent?.(event, line);
 			},
 		},
-		{ maxLineLength: DEFAULT_MAX_LINE_LENGTH, ...startOptions, parser }
+		{
+			// A buffered turn bounds what it holds: one line, and the stderr it
+			// keeps for classifying the exit. A caller can lift either.
+			maxLineLength: DEFAULT_MAX_LINE_LENGTH,
+			stderrTailLimit: DEFAULT_STDERR_TAIL_LIMIT,
+			...startOptions,
+			parser,
+		}
 	);
 
 	const completed = handle.done.then((exit): CompletedTurn => {
@@ -112,6 +120,7 @@ export function runTurn(
 				stderrText: exit.stderrText,
 				stdoutText: exit.stdoutText,
 				explicitError: spawnFailure ?? capture.inBandError,
+				stdinError: exit.stdinError,
 				capturedAnswerText: capture.answerText,
 				resultMessageSeen: capture.resultMessageSeen,
 			},

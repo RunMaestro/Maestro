@@ -53,6 +53,7 @@ class MockChildProcess extends EventEmitter {
 	stdin = {
 		write: vi.fn(),
 		end: vi.fn(),
+		on: vi.fn(),
 	};
 	stdout = new EventEmitter();
 	stderr = new EventEmitter();
@@ -297,7 +298,10 @@ describe('cue-process-lifecycle', () => {
 				);
 				await vi.advanceTimersByTimeAsync(0);
 
-				expect(mockChild.stdin.write).toHaveBeenCalledWith('#!/bin/bash\nclaude "prompt"');
+				expect(mockChild.stdin.write).toHaveBeenCalledWith(
+					'#!/bin/bash\nclaude "prompt"',
+					expect.any(Function)
+				);
 				expect(mockChild.stdin.end).toHaveBeenCalled();
 
 				mockChild.emit('close', 0);
@@ -316,7 +320,7 @@ describe('cue-process-lifecycle', () => {
 				);
 				await vi.advanceTimersByTimeAsync(0);
 
-				expect(mockChild.stdin.write).toHaveBeenCalledWith('large prompt');
+				expect(mockChild.stdin.write).toHaveBeenCalledWith('large prompt', expect.any(Function));
 				expect(mockChild.stdin.end).toHaveBeenCalled();
 
 				mockChild.emit('close', 0);

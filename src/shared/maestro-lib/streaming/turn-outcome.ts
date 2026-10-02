@@ -47,6 +47,11 @@ export interface TurnFacts {
 	stdoutText: string;
 	/** A resolved (non-provisional) error, if one was already raised. */
 	explicitError: AgentError | undefined;
+	/**
+	 * Writing the prompt to the process's stdin failed (EPIPE: it closed its end
+	 * first), so the agent never got all of what it was asked.
+	 */
+	stdinError?: Error;
 	capturedAnswerText: string | undefined;
 	/** The provider sent an explicit "done"/result event (distinct from
 	 * merely having produced text - see the contract's `resultMessageSeen`
@@ -80,7 +85,8 @@ export interface TurnOutcomeResult {
 	/**
 	 * Populated whenever `outcome === 'crashed'` and there is a concrete,
 	 * already-classified error to surface: `facts.explicitError` as given,
-	 * or whatever `provider.detectErrorFromExit` returned. NOT populated for
+	 * whatever `provider.detectErrorFromExit` returned, or the undelivered
+	 * prompt of rule 3b. NOT populated for
 	 * an unrequested signal kill or the empty-answer rule below - neither has
 	 * an upstream `AgentError` to reuse, and the wording is the caller's
 	 * (e.g. omp's "exited without producing a response"); the caller
@@ -109,6 +115,11 @@ export interface TurnOutcomeResult {
  *     event does not make the kill a success. The CLI and Cue enforced this
  *     at their own call sites; desktop, which never saw the signal, reported
  *     a clean finish. It lives here now so no caller can drop it again.
+ * 3b. The prompt could not be written to stdin -> crashed, whatever the exit
+ *     code and whatever was captured: the agent answered, if at all, something
+ *     other than what it was asked. It comes after the provider's own
+ *     classification and an outside kill, either of which says better why
+ *     the process went away.
  *  4. No captured answer AND no explicit done signal (`resultMessageSeen`)
  *     -> crashed, when the empty-answer-on-clean-exit rule applies (omp
  *     today; see `generalizeEmptyAnswerRule`), except for the known excluded
@@ -158,6 +169,20 @@ export function resolveTurnOutcome(
 	// than trusting each adapter to normalize first.
 	if (facts.signal) {
 		return { outcome: 'crashed' };
+	}
+
+	if (facts.stdinError) {
+		return {
+			outcome: 'crashed',
+			error: {
+				type: 'agent_crashed',
+				message: `The prompt could not be delivered to the agent: ${facts.stdinError.message}`,
+				recoverable: true,
+				agentId: context.providerId,
+				sessionId: context.sessionId,
+				timestamp: Date.now(),
+			},
+		};
 	}
 
 	const hasAnswer = Boolean(facts.capturedAnswerText?.trim());

@@ -17,6 +17,12 @@ export const DEFAULT_MAX_LINE_LENGTH = 1024 * 1024;
 /** How much stdout is kept for exit classification; providers only pattern-match it. */
 export const DEFAULT_STDOUT_TAIL_LIMIT = 256 * 1024;
 
+/**
+ * A sensible cap on the stderr kept for exit classification, for a caller that
+ * wants one. `startTurn` itself keeps all of it unless told otherwise.
+ */
+export const DEFAULT_STDERR_TAIL_LIMIT = 256 * 1024;
+
 /** Exactly what to start: the last word after planning and any SSH or wrapper step. */
 export interface TurnProcessSpec {
 	command: string;
@@ -74,6 +80,12 @@ export interface TurnHandlers {
 	 * `maxLineLength`. Dropping is silent data loss otherwise.
 	 */
 	onOversizedLine?(droppedBytes: number): void;
+	/**
+	 * The child's stdin failed. EPIPE is the common one: a prompt written to a
+	 * process that has already gone. It is reported here and never thrown; the
+	 * exit that follows says what happened to the turn.
+	 */
+	onStdinError?(error: Error): void;
 }
 
 export interface StartTurnOptions {
@@ -110,8 +122,18 @@ export interface StartTurnOptions {
 	 * a stream that never ends a line. No limit when omitted.
 	 */
 	maxLineLength?: number;
-	/** How much of stdout `TurnExit.stdoutText` keeps. */
+	/**
+	 * How much of stdout `TurnExit.stdoutText` keeps: the most recent
+	 * characters. `0` keeps none, for a caller that reads the stream through
+	 * its handlers and holds its own copy.
+	 */
 	stdoutTailLimit?: number;
+	/**
+	 * How much of stderr `TurnExit.stderrText` keeps: the most recent
+	 * characters. No limit when omitted, because a caller may show the text as
+	 * its error message. `0` keeps none.
+	 */
+	stderrTailLimit?: number;
 	sessionId?: string;
 	label?: string;
 }
@@ -124,6 +146,7 @@ export interface TurnExit {
 	signal: NodeJS.Signals | null;
 	/** A stop was requested through the handle or the abort signal. */
 	interrupted: boolean;
+	/** All of stderr, or its tail when `stderrTailLimit` is set. */
 	stderrText: string;
 	/** A bounded tail of stdout. */
 	stdoutText: string;
@@ -131,6 +154,12 @@ export interface TurnExit {
 	droppedOutputBytes: number;
 	/** Set when the process could not be started. */
 	spawnError?: Error;
+	/**
+	 * Set when writing the prompt to stdin failed, most often EPIPE from a
+	 * process that closed its end before reading it. The agent never got the
+	 * whole prompt, so the turn is not a success whatever its exit code says.
+	 */
+	stdinError?: Error;
 }
 
 export interface TurnHandle {
@@ -155,9 +184,12 @@ export interface TurnHandle {
 	readonly done: Promise<TurnExit>;
 }
 
-function appendBoundedTail(current: string, chunk: string, limit: number): string {
+/** `current + chunk`, cut to its last `limit` characters. No cut when `limit` is undefined. */
+function appendBoundedTail(current: string, chunk: string, limit: number | undefined): string {
+	if (limit === 0) return '';
 	const combined = current + chunk;
-	return combined.length > limit ? combined.slice(combined.length - limit) : combined;
+	if (limit === undefined || combined.length <= limit) return combined;
+	return combined.slice(combined.length - limit);
 }
 
 /**
@@ -202,6 +234,7 @@ export function startTurn(
 
 	let stdoutText = '';
 	let stderrText = '';
+	let stdinError: Error | undefined;
 	let stopWasRequested = false;
 	let settled = false;
 	let stopLadder: StopHandle | undefined;
@@ -245,6 +278,7 @@ export function startTurn(
 				stderrText,
 				stdoutText,
 				droppedOutputBytes,
+				...(stdinError ? { stdinError } : {}),
 			});
 		};
 
@@ -261,7 +295,7 @@ export function startTurn(
 		});
 
 		child.stderr?.on('data', (text: string) => {
-			stderrText += text;
+			stderrText = appendBoundedTail(stderrText, text, options.stderrTailLimit);
 			handlers.onStderr?.(text);
 		});
 
@@ -282,7 +316,19 @@ export function startTurn(
 
 	handlers.onStarted?.(child.pid);
 
-	if (hasStdin) child.stdin?.write(spec.stdin);
+	// A stream error with no listener is an uncaught exception, and it would
+	// take the host down with it. The process closing its end of the pipe
+	// before the prompt is written (EPIPE) is an ordinary way for a turn to
+	// fail, and the exit that follows reports it.
+	child.stdin?.on('error', (error) => handlers.onStdinError?.(error));
+
+	// Only the prompt's own write counts against the turn. A later write by a
+	// caller that keeps stdin open is that caller's to report.
+	if (hasStdin) {
+		child.stdin?.write(spec.stdin, (error) => {
+			if (error) stdinError ??= error;
+		});
+	}
 	if (!options.keepStdinOpen) child.stdin?.end();
 
 	if (options.signal) {

@@ -9,6 +9,7 @@ import { killPty } from './pty-kill';
 import {
 	killProcessTreeNow,
 	killSurvivors,
+	refreshProcessTree,
 	snapshotProcessTree,
 	type ProcessTreeSnapshot,
 } from './process-tree';
@@ -20,6 +21,12 @@ export const INTERACTIVE_STOP_GRACE_MS = 2000;
 export const BACKGROUND_STOP_GRACE_MS = 5000;
 
 const TASKKILL_TIMEOUT_MS = 5000;
+
+/**
+ * How often the descendant record is re-read while a stop is pending, so a
+ * tool the agent starts AFTER the stop was requested is recorded too.
+ */
+export const TREE_REFRESH_MS = 250;
 const LOG_CONTEXT = 'Termination';
 
 /**
@@ -54,6 +61,12 @@ export interface StopOptions {
 	/** How long a stage gets before the next one runs. */
 	graceMs: number;
 	/**
+	 * The last stage this request may run; `kill` when omitted. A host that is
+	 * quitting passes `terminate` for an agent that should get SIGTERM and the
+	 * chance to write its state, with no SIGKILL sent right behind it.
+	 */
+	upTo?: StopStage;
+	/**
 	 * Called before the first signal. The caller records here that the stop was
 	 * asked for, so the exit that follows resolves as `interrupted` rather than
 	 * as a crash caused by a signal nobody requested.
@@ -70,7 +83,8 @@ export interface StopOptions {
 	/**
 	 * Also stop what the process started. On by default. Turn it off for a
 	 * terminal tab's shell: a job the user deliberately left running there is
-	 * theirs to keep.
+	 * theirs to keep. The latest request decides: turning it off also leaves
+	 * alone a tree an earlier stop on the same process recorded.
 	 */
 	includeDescendants?: boolean;
 	sessionId?: string;
@@ -112,9 +126,9 @@ const ladders = new WeakMap<object, Ladder>();
  * - A process is running while `exitCode` and `signalCode` are both null.
  *   `child.killed` says a signal was sent, not that anything died.
  * - Every stage schedules the next, for pipes and PTYs alike.
- * - Descendants are recorded before the first signal and swept once the
- *   process exits, because an agent that exits on a signal leaves its tools
- *   running.
+ * - Descendants are recorded before the first signal, re-read while the stop
+ *   is pending, and swept once the process exits, because an agent that exits
+ *   on a signal leaves its tools running.
  * - A tree is only killed when the pid is provably a running child of this
  *   process. Anything else gets the signal through its own handle and no more.
  */
@@ -142,7 +156,12 @@ function createLadder(target: StopTarget, key: object): Ladder {
 	let done = false;
 	let exited = false;
 	let timer: ReturnType<typeof setTimeout> | undefined;
+	let refreshTimer: ReturnType<typeof setInterval> | undefined;
+	let refreshing = false;
 	let tree: ProcessTreeSnapshot | undefined;
+	// Set by the latest request. A quitting host opts out after an earlier Stop
+	// already recorded the tree, and that record must then be left alone too.
+	let leaveDescendants = false;
 	let removeExitListener: (() => void) | undefined;
 	let context: { sessionId?: string; label?: string } = {};
 
@@ -152,9 +171,15 @@ function createLadder(target: StopTarget, key: object): Ladder {
 		return true;
 	};
 
+	const stopRefreshing = (): void => {
+		if (refreshTimer) clearInterval(refreshTimer);
+		refreshTimer = undefined;
+	};
+
 	const release = (): void => {
 		if (timer) clearTimeout(timer);
 		timer = undefined;
+		stopRefreshing();
 		removeExitListener?.();
 		removeExitListener = undefined;
 		done = true;
@@ -162,7 +187,9 @@ function createLadder(target: StopTarget, key: object): Ladder {
 	};
 
 	const sweep = (): void => {
-		if (tree && tree.descendants.length > 0) killSurvivors(tree.descendants, context);
+		if (!leaveDescendants && tree && tree.descendants.length > 0) {
+			killSurvivors(tree.descendants, context);
+		}
 		tree = undefined;
 	};
 
@@ -170,6 +197,31 @@ function createLadder(target: StopTarget, key: object): Ladder {
 		exited = true;
 		release();
 		sweep();
+	};
+
+	// The first record is taken before anything is signalled. An agent that is
+	// winding down can still start a tool after that, so the record is re-read
+	// until the process exits or the last stage has run.
+	const refreshTree = (): void => {
+		const current = tree;
+		if (refreshing || !current?.owned || !hasPid) return;
+		refreshing = true;
+		void refreshProcessTree(pid, current).then(
+			(next) => {
+				refreshing = false;
+				// An exit or a sweep in the meantime owns the record; leave it.
+				if (tree === current) tree = next;
+			},
+			() => {
+				refreshing = false;
+			}
+		);
+	};
+
+	const keepTreeFresh = (): void => {
+		if (refreshTimer || !tree?.owned) return;
+		refreshTimer = setInterval(refreshTree, TREE_REFRESH_MS);
+		refreshTimer.unref?.();
 	};
 
 	const listenForExit = (): void => {
@@ -201,11 +253,20 @@ function createLadder(target: StopTarget, key: object): Ladder {
 	// cmd.exe would only add a process to a tree that is being torn down.
 	const taskkill = (blocking: boolean): void => {
 		const args = ['/pid', String(pid), '/t', '/f'];
+		// taskkill could not end the tree. End the process itself through its own
+		// handle, so a stop never leaves it running. A child that is already gone
+		// makes this a no-op.
+		const killThroughHandle = (): void => {
+			const child = target.child;
+			if (child && isRunning()) attempt('kill after a failed taskkill', () => child.kill());
+		};
+
 		if (blocking) {
 			try {
 				execFileSync('taskkill', args, { timeout: TASKKILL_TIMEOUT_MS });
 			} catch {
 				// taskkill exits non-zero for a process that is already gone.
+				killThroughHandle();
 			}
 			return;
 		}
@@ -229,6 +290,7 @@ function createLadder(target: StopTarget, key: object): Ladder {
 				error: String(error),
 			});
 			void captureException(error, { operation: 'termination:taskkill', pid });
+			killThroughHandle();
 		});
 	};
 
@@ -271,13 +333,17 @@ function createLadder(target: StopTarget, key: object): Ladder {
 		if (ptyProcess) {
 			attempt('SIGKILL on the PTY', () => killPty(ptyProcess, 'SIGKILL'));
 		}
-		if (tree?.owned && hasPid) {
+		if (!leaveDescendants && tree?.owned && hasPid) {
 			killProcessTreeNow(pid, context);
 		} else if (child) {
 			attempt('SIGKILL', () => child.kill('SIGKILL'));
 		}
 		return undefined;
 	};
+
+	/** Whether `next` is within what this request may send. */
+	const allowed = (next: StopStage, options: StopOptions): boolean =>
+		STAGE_ORDER[next] <= STAGE_ORDER[options.upTo ?? 'kill'];
 
 	const run = (next: StopStage, options: StopOptions): void => {
 		if (timer) clearTimeout(timer);
@@ -298,8 +364,11 @@ function createLadder(target: StopTarget, key: object): Ladder {
 		}
 		stage = next;
 
-		const following = signal(next, options);
+		const afterSignal = signal(next, options);
+		const following = afterSignal && allowed(afterSignal, options) ? afterSignal : undefined;
 		if (!following) {
+			// Nothing further will be sent, so there is nothing left to record for.
+			stopRefreshing();
 			if (options.immediate) {
 				release();
 				sweep();
@@ -316,6 +385,7 @@ function createLadder(target: StopTarget, key: object): Ladder {
 
 	const request = (options: StopOptions): void => {
 		context = { sessionId: options.sessionId, label: options.label };
+		leaveDescendants = options.includeDescendants === false;
 		options.onStopRequested?.();
 
 		if (!isRunning()) {
@@ -327,15 +397,27 @@ function createLadder(target: StopTarget, key: object): Ladder {
 			tree = snapshotProcessTree(pid);
 		}
 		if (options.immediate) {
+			stopRefreshing();
 			removeExitListener?.();
 			removeExitListener = undefined;
 		} else {
 			listenForExit();
+			keepTreeFresh();
 		}
 
 		// A stage already reached is never run twice; its escalation is pending.
 		if (stage !== undefined && STAGE_ORDER[options.from] <= STAGE_ORDER[stage]) {
-			if (options.immediate) run(stage === 'kill' ? 'kill' : nextStage(stage), options);
+			if (!options.immediate) return;
+			const next = stage === 'kill' ? 'kill' : nextStage(stage);
+			if (allowed(next, options)) {
+				run(next, options);
+				return;
+			}
+			// An earlier stop already sent all this one may. Its escalation is
+			// dropped rather than left to fire: a quitting host capped at SIGTERM
+			// must not have a SIGKILL follow from a Stop the user pressed before.
+			release();
+			sweep();
 			return;
 		}
 		run(options.from, options);
