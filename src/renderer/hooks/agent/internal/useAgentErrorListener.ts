@@ -37,7 +37,7 @@ import { logger } from '../../../utils/logger';
 import { removeHiddenProgressLog } from './helpers/exitTabCleanup';
 import { getErrorTitleForType } from './helpers/errorTitles';
 import { isLimitError } from '../../../../shared/types';
-import { useOwnedSessionGate, useOwnedSideEffectGate } from './useOwnedSessionGate';
+import { useOwnedSideEffectGate } from './useOwnedSessionGate';
 import {
 	scheduleRetryForError,
 	getRetryEntry,
@@ -60,7 +60,7 @@ export interface UseAgentErrorListenerDeps {
 }
 
 export function useAgentErrorListener(deps: UseAgentErrorListenerDeps): void {
-	const ownedGate = useOwnedSessionGate();
+	const ownedGate = useOwnedSideEffectGate();
 	const sideEffectGate = useOwnedSideEffectGate();
 	useEffect(() => {
 		const getSessions = () => useSessionStore.getState().sessions;

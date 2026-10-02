@@ -38,6 +38,8 @@ export interface StoredSession {
 
 export interface BootstrapSettings {
 	customSyncPath?: string;
+	/** Stable identity for this local host, deliberately excluded from synchronized settings. */
+	maestroRemoteInstanceId?: string;
 	iCloudSyncEnabled?: boolean; // Legacy - kept for backwards compatibility during migration
 }
 

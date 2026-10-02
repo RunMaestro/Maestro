@@ -1,10 +1,10 @@
 import type React from 'react';
+import type { BrowserTab } from '../../../shared/browserPage';
 import type {
 	Theme,
 	BatchRunState,
 	UnifiedTab,
 	FilePreviewTab,
-	BrowserTab,
 	AgentError,
 	QueuedItem,
 	QueuedItemEditPatch,
@@ -144,6 +144,7 @@ export interface MainPanelProps {
 	handleInputKeyDown: (e: React.KeyboardEvent<HTMLTextAreaElement>) => void;
 	handlePaste: (e: React.ClipboardEvent<HTMLTextAreaElement>) => void;
 	handleDrop: (e: React.DragEvent<HTMLElement>) => void;
+	onUploadFiles?: (files: File[]) => void;
 	getContextColor: (usage: number, theme: Theme) => string;
 	setActiveSessionId: (id: string) => void;
 	onDeleteLog?: (logId: string) => number | null;

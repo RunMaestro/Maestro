@@ -1,10 +1,5 @@
-import type {
-	AITab,
-	BrowserTab,
-	FilePreviewHistoryEntry,
-	FilePreviewTab,
-	UnifiedTab,
-} from '../../../types';
+import type { AITab, FilePreviewHistoryEntry, FilePreviewTab, UnifiedTab } from '../../../types';
+import type { BrowserTab } from '../../../../shared/browserPage';
 import type { MediaOpenMode } from '../../../../shared/mediaTypes';
 
 export interface CloseCurrentTabResult {

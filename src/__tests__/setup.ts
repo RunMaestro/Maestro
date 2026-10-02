@@ -583,6 +583,7 @@ const mockMaestro = {
 		disableAll: vi.fn().mockResolvedValue({ success: true, count: 0 }),
 	},
 	web: {
+		onLiteReady: vi.fn(() => () => {}),
 		claimAutoRunStart: vi.fn().mockResolvedValue(true),
 		releaseAutoRunStartClaim: vi.fn().mockResolvedValue(true),
 		broadcastAutoRunState: vi.fn(),

@@ -15,7 +15,7 @@ import { useModalLayer } from '../hooks/ui/useModalLayer';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { KEYBOARD_MASTERY_LEVELS } from '../constants/keyboardMastery';
 import { DEFAULT_SHORTCUTS } from '../constants/shortcuts';
-import { isMacOSPlatform } from '../utils/platformUtils';
+import { isMacOSKeyboard } from '../utils/platformUtils';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { Z_LAYERS } from '../constants/zLayers';
 
@@ -68,7 +68,7 @@ export function KeyboardMasteryCelebration({
 
 	// Get help shortcut for display. macOS symbols read fine unseparated (⌘/);
 	// the spelled-out Windows/Linux names need the '+' joiner (Ctrl+/).
-	const isMac = isMacOSPlatform();
+	const isMac = isMacOSKeyboard();
 	const helpShortcut = useMemo(() => {
 		const activeShortcuts = shortcuts || DEFAULT_SHORTCUTS;
 		const helpKeys = activeShortcuts.help?.keys || ['Meta', '/'];

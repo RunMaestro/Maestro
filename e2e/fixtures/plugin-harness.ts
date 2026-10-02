@@ -76,7 +76,7 @@ export const REQUESTED_CAPS = [...PROBED_CAPS, ...UI_ONLY_CAPS] as const;
 const FIXTURE_PLUGIN_DIR = path.join(__dirname, 'plugins', 'maestro-e2e-selftest');
 const FIXTURE_FILES = ['plugin.json', 'entry.js', 'panel.html'];
 const TEMPLATED_FILES: Record<string, true> = { 'plugin.json': true, 'entry.js': true };
-const MAIN_ENTRY = path.join(__dirname, '../../dist/main/index.js');
+const MAIN_ENTRY = path.join(__dirname, '../../dist/main/bootstrap.js');
 
 export interface SeededEnv {
 	demoDir: string;

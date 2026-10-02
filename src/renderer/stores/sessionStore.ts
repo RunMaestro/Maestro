@@ -14,7 +14,8 @@
  */
 
 import { create } from 'zustand';
-import type { Session, Group, LogEntry, AITab, FilePreviewTab, BrowserTab } from '../types';
+import type { Session, Group, LogEntry, AITab, FilePreviewTab } from '../types';
+import type { BrowserTab } from '../../shared/browserPage';
 import { generateId } from '../utils/ids';
 import { getActiveTab } from '../utils/tabHelpers';
 import { hasRunnableQueueItem } from '../utils/executionQueue';

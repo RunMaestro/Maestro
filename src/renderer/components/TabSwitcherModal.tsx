@@ -1,14 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { Search, Star, FileText, Terminal, Globe, MessageSquare } from 'lucide-react';
-import type {
-	AITab,
-	FilePreviewTab,
-	TerminalTab,
-	BrowserTab,
-	Theme,
-	Shortcut,
-	ToolType,
-} from '../types';
+import type { AITab, FilePreviewTab, TerminalTab, Theme, Shortcut, ToolType } from '../types';
+import type { BrowserTab } from '../../shared/browserPage';
 import { fuzzyMatchWithScore } from '../utils/search';
 import { useModalLayer } from '../hooks/ui/useModalLayer';
 import { useFocusOnMount } from '../hooks/utils/useFocusAfterRender';

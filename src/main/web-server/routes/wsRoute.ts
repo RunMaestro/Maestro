@@ -19,6 +19,7 @@ import { FastifyInstance } from 'fastify';
 import { logger } from '../../utils/logger';
 import { WEB_LOGIN_WS_CLOSE_CODE } from '../../../shared/webLogin';
 import { isWebRequestAuthorized, resolveWebRequestAuth } from '../auth/web-login-policy';
+import { isRemoteOriginAllowed } from '../auth/remote-origin';
 import type {
 	Theme,
 	WebClient,
@@ -104,6 +105,10 @@ export class WsRoute {
 		const token = this.securityToken;
 
 		server.get(`/${token}/ws`, { websocket: true }, (socket, request) => {
+			if (!isRemoteOriginAllowed(request)) {
+				socket.close(1008, 'Cross-origin remote access is not allowed');
+				return;
+			}
 			const clientId = `web-client-${++this.clientIdCounter}`;
 
 			// The Web Login gate. The bridge is the whole app, so this is the
@@ -151,6 +156,15 @@ export class WsRoute {
 				// Resolved once, here: the cookie is only on the upgrade request, so
 				// there is no later point at which a frame can say who sent it.
 				...(auth.user ? { user: auth.user, sessionId: auth.sessionId } : {}),
+				isAuthorized: () => {
+					const currentAuth = resolveWebRequestAuth(request);
+					if (!isWebRequestAuthorized(currentAuth)) {
+						socket.close(WEB_LOGIN_WS_CLOSE_CODE, 'Login required');
+						return false;
+					}
+					client.user = currentAuth.user;
+					return true;
+				},
 			};
 
 			// Notify parent about connection
@@ -264,6 +278,7 @@ export class WsRoute {
 
 			// Handle incoming messages
 			socket.on('message', (message) => {
+				if (!client.isAuthorized?.()) return;
 				try {
 					const data = JSON.parse(message.toString()) as WebClientMessage;
 					this.callbacks.handleMessage?.(clientId, data);

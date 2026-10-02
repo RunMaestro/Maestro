@@ -43,6 +43,8 @@ import {
 	projectWebSession,
 	readDeferredContent,
 } from '../../stores/deferred-session-content';
+import type { SessionTranscriptPatch } from '../../../shared/sessionTranscript';
+import { mergeSessionPersistenceChanges } from '../../../shared/sessionPersistenceMerge';
 
 /**
  * Shallow-compare cliActivity for the diff broadcast.
@@ -103,6 +105,8 @@ export interface SessionLifecycleSyncPayload {
 	added: StoredSession[];
 	/** Agents that left the store. Peers drop them from their own list. */
 	removedIds: string[];
+	updated?: StoredSession[];
+	baselines?: StoredSession[];
 }
 
 /** Channel name for {@link SessionLifecycleSyncPayload} pushes. */
@@ -138,14 +142,22 @@ function broadcastSessionLifecycle(
 	senderWebContentsId: number | undefined,
 	payload: SessionLifecycleSyncPayload
 ): void {
-	if (payload.added.length === 0 && payload.removedIds.length === 0) return;
+	if (payload.added.length === 0 && payload.removedIds.length === 0 && !payload.updated?.length)
+		return;
 	for (const win of BrowserWindow.getAllWindows()) {
 		if (!isWebContentsAvailable(win)) continue;
 		if (win.webContents.id === senderWebContentsId) continue;
 		win.webContents.send(SESSION_LIFECYCLE_SYNC_CHANNEL, payload);
 	}
 	broadcastBridgeEvent(SESSION_LIFECYCLE_SYNC_CHANNEL, [
-		{ ...payload, added: payload.added.map(projectWebSession) },
+		{
+			...payload,
+			added: payload.added.map(projectWebSession),
+			...(payload.updated?.length && {
+				updated: payload.updated.map(projectWebSession),
+				baselines: payload.baselines?.map(projectWebSession),
+			}),
+		},
 	]);
 }
 
@@ -493,18 +505,99 @@ export function registerPersistenceHandlers(
 		return sessions;
 	};
 	ipcMain.handle('sessions:getAll', loadStoredSessions);
-	ipcMain.handle('sessions:getBootstrap', async () =>
-		(await loadStoredSessions()).map(projectWebSession)
+	const transcriptRequests = new Map<
+		string,
+		{ sessionId: string; tabId: string; resolve: (patch: SessionTranscriptPatch) => void }
+	>();
+	let nextTranscriptRequestId = 0;
+	const readOwningTranscript = (
+		sessionId: string,
+		tabId: string
+	): Promise<SessionTranscriptPatch> =>
+		new Promise((resolve, reject) => {
+			const requestId = `transcript-${++nextTranscriptRequestId}`;
+			const timeout = setTimeout(() => {
+				transcriptRequests.delete(requestId);
+				reject(new Error('Owning host renderer did not provide the current transcript'));
+			}, 5000);
+			transcriptRequests.set(requestId, {
+				sessionId,
+				tabId,
+				resolve: (logs) => {
+					clearTimeout(timeout);
+					transcriptRequests.delete(requestId);
+					resolve(logs);
+				},
+			});
+			for (const win of BrowserWindow.getAllWindows()) {
+				if (isWebContentsAvailable(win))
+					win.webContents.send('sessions:transcriptRequest', { sessionId, tabId, requestId });
+			}
+		});
+	ipcMain.handle(
+		'sessions:publishTranscript',
+		(event, patch: SessionTranscriptPatch, requestId?: string) => {
+			if (
+				(event as { type?: string })?.type === 'bridge' ||
+				senderWebContentsIdOf(event) === undefined
+			) {
+				throw new Error('Only the owning host renderer can publish transcript identities');
+			}
+			if (requestId) {
+				const request = transcriptRequests.get(requestId);
+				if (
+					request &&
+					request.sessionId === patch.sessionId &&
+					request.tabId === (patch.tabId ?? '') &&
+					patch.snapshot
+				)
+					request.resolve(patch);
+			}
+			for (const win of BrowserWindow.getAllWindows()) {
+				if (isWebContentsAvailable(win) && win.webContents.id !== senderWebContentsIdOf(event)) {
+					win.webContents.send('sessions:transcriptSync', patch);
+				}
+			}
+			broadcastBridgeEvent('sessions:transcriptSync', [patch]);
+			return true;
+		}
 	);
+	ipcMain.handle('sessions:getBootstrap', async (event) => {
+		const sessions = (await loadStoredSessions()).map(projectWebSession);
+		if ((event as { type?: string })?.type !== 'bridge') return sessions;
+		return Promise.all(
+			sessions.map(async (session) => {
+				const live = await readOwningTranscript(session.id, '');
+				return {
+					...session,
+					browserTabs: live.runtime?.browserTabs,
+					terminalTabs: live.runtime?.terminalTabs,
+				};
+			})
+		);
+	});
 	ipcMain.handle(
 		'sessions:getDeferredContent',
-		async (_, sessionId: string, tabId: string | null, includeCommands: boolean) =>
-			readDeferredContent(
+		async (event, sessionId: string, tabId: string | null, includeCommands: boolean) => {
+			const content = readDeferredContent(
 				sessionsStore.get('sessions', []).find((item) => item.id === sessionId),
 				sessionId,
 				tabId,
 				includeCommands
-			)
+			);
+			if ((event as { type?: string })?.type === 'bridge') {
+				const [tab, shell] = await Promise.all([
+					tabId ? readOwningTranscript(sessionId, tabId) : undefined,
+					includeCommands ? readOwningTranscript(sessionId, '') : undefined,
+				]);
+				return {
+					...content,
+					...(tab && { logs: tab.upserts }),
+					...(shell && { shellLogs: shell.upserts }),
+				};
+			}
+			return content;
+		}
 	);
 
 	// Resolve a `maestro-image://` reference (or passthrough data URL) back to a
@@ -522,7 +615,9 @@ export function registerPersistenceHandlers(
 		return sessionsStore.get('activeSessionId', '');
 	});
 
-	ipcMain.handle('sessions:setActiveSessionId', async (_, id: string) => {
+	ipcMain.handle('sessions:setActiveSessionId', async (event, id: string) => {
+		// Browser navigation is client-local, never the host's persisted focus.
+		if ((event as { type?: string })?.type === 'bridge') return;
 		// Coalesce rapid navigation into one disk write (see flushActiveSessionId).
 		pendingActiveSessionId = id;
 		if (activeSessionIdTimer) clearTimeout(activeSessionIdTimer);
@@ -557,160 +652,195 @@ export function registerPersistenceHandlers(
 	 */
 	ipcMain.handle(
 		'sessions:setMany',
-		queueWrite(async (event, input: StoredSession[] = [], removeIds: string[] = []) => {
-			// Relocate any freshly-pasted inline images (data URLs) in the dirty
-			// sessions to the image store before they hit disk, so the sessions
-			// JSON only ever grows by lightweight refs.
-			const { sessions: relocatedUpdates } = await relocateSessionImages(input);
-			const previousSessions = sessionsStore.get('sessions', []);
-			const previousMap = new Map(previousSessions.map((s) => [s.id, s]));
-			// Drop any agent this write would resurrect: another client closed it
-			// moments ago and this flush was already in flight with a stale copy.
-			const updates = dropResurrections(relocatedUpdates, new Set(previousMap.keys()));
-			const removeSet = new Set(removeIds);
-			const updateMap = new Map(updates.map((s) => [s.id, s]));
+		queueWrite(
+			async (
+				event,
+				input: StoredSession[] = [],
+				removeIds: string[] = [],
+				baselines: StoredSession[] = []
+			) => {
+				const baselineMap = new Map(baselines.map((session) => [session.id, session]));
+				const remote = (event as { type?: string })?.type === 'bridge';
+				// Relocate any freshly-pasted inline images (data URLs) in the dirty
+				// sessions to the image store before they hit disk, so the sessions
+				// JSON only ever grows by lightweight refs.
+				const { sessions: relocatedUpdates } = await relocateSessionImages(input);
+				const previousSessions = sessionsStore.get('sessions', []);
+				const previousMap = new Map(previousSessions.map((s) => [s.id, s]));
+				// Drop any agent this write would resurrect: another client closed it
+				// moments ago and this flush was already in flight with a stale copy.
+				const updates = dropResurrections(relocatedUpdates, new Set(previousMap.keys()));
+				const removeSet = new Set(removeIds);
+				const updateMap = new Map(updates.map((s) => [s.id, s]));
 
-			// Build merged array preserving the existing order. Apply updates and
-			// skip removals in a single pass, then append any new sessions whose
-			// ids weren't seen in the existing array.
-			const merged: StoredSession[] = [];
-			for (const prev of previousSessions) {
-				if (removeSet.has(prev.id)) continue;
-				const update = updateMap.get(prev.id);
-				if (update) {
-					merged.push(mergeDeferredSessionContent(update, prev));
-					updateMap.delete(prev.id);
-				} else {
-					merged.push(prev);
-				}
-			}
-			for (const newSession of updateMap.values()) {
-				if (removeSet.has(newSession.id)) continue;
-				merged.push(mergeDeferredSessionContent(newSession, undefined));
-			}
-			const sessionsToPersist = merged.map((session) => compactSessionToolOutputs(session).session);
-
-			// Lifecycle logging (parallel to setAll's debug logs)
-			for (const session of updates) {
-				if (!previousMap.has(session.id) && !removeSet.has(session.id)) {
-					logger.debug('Session created', 'Sessions', {
-						sessionId: session.id,
-						name: session.name,
-						toolType: session.toolType,
-						cwd: session.cwd,
-					});
-				}
-			}
-			for (const id of removeIds) {
-				const prev = previousMap.get(id);
-				if (prev) {
-					logger.debug('Session destroyed', 'Sessions', {
-						sessionId: prev.id,
-						name: prev.name,
-					});
-				}
-			}
-
-			const webServer = getWebServer();
-			if (webServer && webServer.getWebClientCount() > 0) {
-				for (const session of updates) {
-					if (removeSet.has(session.id)) continue;
-					const prev = previousMap.get(session.id);
-					if (prev) {
-						if (
-							prev.state !== session.state ||
-							prev.inputMode !== session.inputMode ||
-							prev.name !== session.name ||
-							prev.cwd !== session.cwd ||
-							cliActivityChanged(prev.cliActivity, session.cliActivity)
-						) {
-							webServer.broadcastSessionStateChange(session.id, session.state, {
-								name: session.name,
-								toolType: session.toolType,
-								inputMode: session.inputMode,
-								cwd: session.cwd,
-								cliActivity: session.cliActivity,
-							});
-						}
+				// Build merged array preserving the existing order. Apply updates and
+				// skip removals in a single pass, then append any new sessions whose
+				// ids weren't seen in the existing array.
+				const merged: StoredSession[] = [];
+				for (const prev of previousSessions) {
+					if (removeSet.has(prev.id)) continue;
+					const update = updateMap.get(prev.id);
+					if (update) {
+						if (remote && !baselineMap.has(prev.id))
+							throw new Error(
+								'Session save rejected: missing observed baseline. Reload the host view before saving.'
+							);
+						merged.push(
+							mergeSessionPersistenceChanges(
+								mergeDeferredSessionContent(update, prev),
+								prev,
+								baselineMap.get(prev.id),
+								remote
+							)
+						);
+						updateMap.delete(prev.id);
 					} else {
-						webServer.broadcastSessionAdded({
-							id: session.id,
+						merged.push(prev);
+					}
+				}
+				for (const newSession of updateMap.values()) {
+					if (removeSet.has(newSession.id)) continue;
+					merged.push(mergeDeferredSessionContent(newSession, undefined));
+				}
+				const sessionsToPersist = merged.map(
+					(session) => compactSessionToolOutputs(session).session
+				);
+
+				// Lifecycle logging (parallel to setAll's debug logs)
+				for (const session of updates) {
+					if (!previousMap.has(session.id) && !removeSet.has(session.id)) {
+						logger.debug('Session created', 'Sessions', {
+							sessionId: session.id,
 							name: session.name,
 							toolType: session.toolType,
-							state: session.state,
-							inputMode: session.inputMode,
 							cwd: session.cwd,
-							groupId: session.groupId || null,
-							groupName: session.groupName || null,
-							groupEmoji: session.groupEmoji || null,
-							parentSessionId: session.parentSessionId || null,
-							worktreeBranch: session.worktreeBranch || null,
 						});
 					}
 				}
 				for (const id of removeIds) {
-					if (previousMap.has(id)) {
-						webServer.broadcastSessionRemoved(id);
+					const prev = previousMap.get(id);
+					if (prev) {
+						logger.debug('Session destroyed', 'Sessions', {
+							sessionId: prev.id,
+							name: prev.name,
+						});
 					}
 				}
-			}
 
-			try {
-				await backupSessionsBeforeWipe(previousSessions, sessionsToPersist, sessionsStore.path);
-				sessionsStore.set('sessions', sessionsToPersist);
-				// Preserve the renderer acknowledgement contract: true means this
-				// revision reached disk, not merely the in-memory cache.
-				await flushSessionWrites();
-			} catch (err) {
-				const code = (err as NodeJS.ErrnoException).code;
-				// Recoverable filesystem errors - the next debounced flush will
-				// retry when conditions improve. Log warn and return false so
-				// the renderer's flush path can mark the write as unconfirmed.
-				if (code === 'ENOSPC' || code === 'ENFILE' || code === 'EMFILE') {
-					logger.warn(`Failed to persist sessions (setMany): ${code}`, 'Sessions');
-					return false;
+				const webServer = getWebServer();
+				if (webServer && webServer.getWebClientCount() > 0) {
+					for (const session of updates) {
+						if (removeSet.has(session.id)) continue;
+						const prev = previousMap.get(session.id);
+						if (prev) {
+							if (
+								prev.state !== session.state ||
+								prev.inputMode !== session.inputMode ||
+								prev.name !== session.name ||
+								prev.cwd !== session.cwd ||
+								cliActivityChanged(prev.cliActivity, session.cliActivity)
+							) {
+								webServer.broadcastSessionStateChange(session.id, session.state, {
+									name: session.name,
+									toolType: session.toolType,
+									inputMode: session.inputMode,
+									cwd: session.cwd,
+									cliActivity: session.cliActivity,
+								});
+							}
+						} else {
+							webServer.broadcastSessionAdded({
+								id: session.id,
+								name: session.name,
+								toolType: session.toolType,
+								state: session.state,
+								inputMode: session.inputMode,
+								cwd: session.cwd,
+								groupId: session.groupId || null,
+								groupName: session.groupName || null,
+								groupEmoji: session.groupEmoji || null,
+								parentSessionId: session.parentSessionId || null,
+								worktreeBranch: session.worktreeBranch || null,
+							});
+						}
+					}
+					for (const id of removeIds) {
+						if (previousMap.has(id)) {
+							webServer.broadcastSessionRemoved(id);
+						}
+					}
 				}
-				// Anything else is unexpected - log error and rethrow so
-				// withIpcErrorLogging surfaces it to Sentry. Per CLAUDE.md
-				// §"Error Handling & Sentry", silent swallows hide bugs from
-				// production telemetry.
-				logger.error(
-					`Unexpected error persisting sessions (setMany): ${(err as Error).message}`,
-					'Sessions',
-					err
+
+				try {
+					await backupSessionsBeforeWipe(previousSessions, sessionsToPersist, sessionsStore.path);
+					sessionsStore.set('sessions', sessionsToPersist);
+					// Preserve the renderer acknowledgement contract: true means this
+					// revision reached disk, not merely the in-memory cache.
+					await flushSessionWrites();
+				} catch (err) {
+					const code = (err as NodeJS.ErrnoException).code;
+					// Recoverable filesystem errors - the next debounced flush will
+					// retry when conditions improve. Log warn and return false so
+					// the renderer's flush path can mark the write as unconfirmed.
+					if (code === 'ENOSPC' || code === 'ENFILE' || code === 'EMFILE') {
+						logger.warn(`Failed to persist sessions (setMany): ${code}`, 'Sessions');
+						return false;
+					}
+					// Anything else is unexpected - log error and rethrow so
+					// withIpcErrorLogging surfaces it to Sentry. Per CLAUDE.md
+					// §"Error Handling & Sentry", silent swallows hide bugs from
+					// production telemetry.
+					logger.error(
+						`Unexpected error persisting sessions (setMany): ${(err as Error).message}`,
+						'Sessions',
+						err
+					);
+					throw err;
+				}
+
+				// Tell the other clients (desktop windows + web-desktop) what entered and
+				// left, so an agent created or closed in one of them stops being
+				// invisible to - and resurrectable by - the rest.
+				const removedIds = removeIds.filter((id) => previousMap.has(id));
+				rememberRemovedSessions(removedIds);
+				// A closed agent can never produce another turn, so drop whatever the
+				// spawn path noted about who was driving its tabs.
+				for (const id of removedIds) forgetAgentActors(id);
+				const updatedSessions = sessionsToPersist.filter(
+					(session) =>
+						previousMap.has(session.id) &&
+						JSON.stringify(session) !== JSON.stringify(previousMap.get(session.id))
 				);
-				throw err;
-			}
+				broadcastSessionLifecycle(senderWebContentsIdOf(event), {
+					added: sessionsToPersist.filter((s) => !previousMap.has(s.id) && !removeSet.has(s.id)),
+					removedIds,
+					...(updatedSessions.length > 0 && {
+						updated: updatedSessions,
+						baselines: previousSessions.filter((session) =>
+							updatedSessions.some((update) => update.id === session.id)
+						),
+					}),
+				});
 
-			// Tell the other clients (desktop windows + web-desktop) what entered and
-			// left, so an agent created or closed in one of them stops being
-			// invisible to - and resurrectable by - the rest.
-			const removedIds = removeIds.filter((id) => previousMap.has(id));
-			rememberRemovedSessions(removedIds);
-			// A closed agent can never produce another turn, so drop whatever the
-			// spawn path noted about who was driving its tabs.
-			for (const id of removedIds) forgetAgentActors(id);
-			broadcastSessionLifecycle(senderWebContentsIdOf(event), {
-				added: sessionsToPersist.filter((s) => !previousMap.has(s.id) && !removeSet.has(s.id)),
-				removedIds,
-			});
-
-			// Surface metadata-only lifecycle events to subscribed plugins
-			// (events:subscribe). Re-authorized per delivery against live grants.
-			if (emitPluginEvent) {
-				const at = new Date().toISOString();
-				for (const event of buildSessionLifecycleEvents(previousMap, sessionsToPersist, at)) {
-					emitPluginEvent(event);
+				// Surface metadata-only lifecycle events to subscribed plugins
+				// (events:subscribe). Re-authorized per delivery against live grants.
+				if (emitPluginEvent) {
+					const at = new Date().toISOString();
+					for (const event of buildSessionLifecycleEvents(previousMap, sessionsToPersist, at)) {
+						emitPluginEvent(event);
+					}
 				}
-			}
 
-			return true;
-		})
+				return true;
+			}
+		)
 	);
 
 	ipcMain.handle(
 		'sessions:setAll',
-		queueWrite(async (event, input: StoredSession[]) => {
+		queueWrite(async (event, input: StoredSession[], baselines: StoredSession[] = []) => {
+			const baselineMap = new Map(baselines.map((session) => [session.id, session]));
+			const remote = (event as { type?: string })?.type === 'bridge';
 			// Relocate inline images (data URLs) out of the sessions before they hit
 			// disk. setAll is the bootstrap/first-flush path, so this also migrates a
 			// legacy in-memory sessions tree the first time it is persisted.
@@ -721,6 +851,16 @@ export function registerPersistenceHandlers(
 			// Same resurrection guard as setMany: a client that loaded before another
 			// closed an agent still carries it, and this path would write it back.
 			const sessions = dropResurrections(relocatedSessions, new Set(previousSessionMap.keys()));
+			if (
+				remote &&
+				sessions.some(
+					(session) => previousSessionMap.has(session.id) && !baselineMap.has(session.id)
+				)
+			) {
+				throw new Error(
+					'Session save rejected: missing observed baseline. Reload the host view before saving.'
+				);
+			}
 			const incomingIds = new Set(sessions.map((s) => s.id));
 			// setAll is a client's opening snapshot, so an omitted id means the client
 			// never saw that agent. Only setMany's explicit removeIds may delete one.
@@ -732,7 +872,12 @@ export function registerPersistenceHandlers(
 			const sessionsToPersist = sessions.map(
 				(session) =>
 					compactSessionToolOutputs(
-						mergeDeferredSessionContent(session, previousSessionMap.get(session.id))
+						mergeSessionPersistenceChanges(
+							mergeDeferredSessionContent(session, previousSessionMap.get(session.id)),
+							previousSessionMap.get(session.id),
+							baselineMap.get(session.id),
+							remote
+						)
 					).session
 			);
 
@@ -804,15 +949,22 @@ export function registerPersistenceHandlers(
 				return false;
 			}
 
-			// Tell the other clients about agents this bootstrap flush introduced.
-			// Only ADDITIONS travel from here: setAll is a client's opening statement
-			// of its own tree, made before it can have heard about anything a peer
-			// created since it loaded, so treating an absent id as a close would let
-			// one client's stale snapshot delete another's live agents. Real closes
-			// arrive as explicit `removeIds` through setMany.
+			// Opening snapshots may add/update observed agents but never infer a
+			// deletion from an omitted id. Explicit removes arrive through setMany.
+			const updatedSessions = sessionsToPersist.filter(
+				(session) =>
+					previousSessionMap.has(session.id) &&
+					JSON.stringify(session) !== JSON.stringify(previousSessionMap.get(session.id))
+			);
 			broadcastSessionLifecycle(senderWebContentsIdOf(event), {
 				added: sessionsToPersist.filter((s) => !previousSessionMap.has(s.id)),
 				removedIds: [],
+				...(updatedSessions.length > 0 && {
+					updated: updatedSessions,
+					baselines: previousSessions.filter((session) =>
+						updatedSessions.some((update) => update.id === session.id)
+					),
+				}),
 			});
 
 			// Surface metadata-only lifecycle events to subscribed plugins

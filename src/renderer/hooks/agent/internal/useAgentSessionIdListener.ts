@@ -19,7 +19,7 @@ import { getActiveTab } from '../../../utils/tabHelpers';
 import { resolveTurnProvider, updateProviderSlot } from '../../../utils/providerTabSessions';
 import { generateId } from '../../../utils/ids';
 import { logger } from '../../../utils/logger';
-import { useOwnedSessionGate } from './useOwnedSessionGate';
+import { useOwnedSideEffectGate } from './useOwnedSessionGate';
 import type { LogEntry } from '../../../types';
 import type { BatchedUpdater } from './types';
 
@@ -28,7 +28,7 @@ export interface UseAgentSessionIdListenerDeps {
 }
 
 export function useAgentSessionIdListener(deps: UseAgentSessionIdListenerDeps): void {
-	const ownedGate = useOwnedSessionGate();
+	const ownedGate = useOwnedSideEffectGate();
 	useEffect(() => {
 		const unsubscribe = window.maestro.process.onSessionId(
 			async (sessionId: string, agentSessionId: string) => {

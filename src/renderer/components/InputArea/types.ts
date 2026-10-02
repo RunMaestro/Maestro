@@ -52,6 +52,7 @@ export interface InputAreaProps {
 	handleInputKeyDown: (e: React.KeyboardEvent<HTMLTextAreaElement>) => void;
 	handlePaste: (e: React.ClipboardEvent<HTMLTextAreaElement>) => void;
 	handleDrop: (e: React.DragEvent<HTMLElement>) => void;
+	onUploadFiles?: (files: File[]) => void;
 	toggleInputMode: () => void;
 	processInput: () => void;
 	handleInterrupt: () => void;

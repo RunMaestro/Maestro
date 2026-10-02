@@ -185,6 +185,7 @@ export class StaticRoutes {
 			const configScript = `<script>
         window.__MAESTRO_CONFIG__ = {
           securityToken: ${JSON.stringify(token)},
+          hostPlatform: ${JSON.stringify(process.platform)},
           sessionId: null,
           tabId: null,
           apiBase: "/${token}/api",

@@ -5,7 +5,7 @@ import {
 	BrowserTabView,
 	type BrowserTabViewHandle,
 } from '../../../renderer/components/MainPanel/BrowserTabView';
-import type { BrowserTab } from '../../../renderer/types';
+import type { BrowserTab } from '../../../shared/browserPage';
 import { mockTheme } from '../../helpers/mockTheme';
 
 // lucide-react icons, ResizeObserver, and window.maestro are all mocked globally

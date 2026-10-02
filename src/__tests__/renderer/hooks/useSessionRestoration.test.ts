@@ -37,7 +37,8 @@ import {
 } from '../../../renderer/stores/sessionStore';
 import { useGroupChatStore } from '../../../renderer/stores/groupChatStore';
 import { gitService } from '../../../renderer/services/git';
-import type { BrowserTab, Session } from '../../../renderer/types';
+import type { Session } from '../../../renderer/types';
+import type { BrowserTab } from '../../../shared/browserPage';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 import { WEB_BRIDGE_RECONCILE_EVENT } from '../../../shared/webClientConfig';
 

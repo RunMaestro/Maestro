@@ -1,9 +1,10 @@
 import { ipcMain, BrowserWindow, App } from 'electron';
 import chokidar, { FSWatcher } from 'chokidar';
 import { logger } from '../../utils/logger';
-import { createIpcHandler, CreateHandlerOptions } from '../../utils/ipcHandler';
+import { createHandler, CreateHandlerOptions } from '../../utils/ipcHandler';
 import { createSafeSend } from '../../utils/safe-send';
 import { WINDOWS_LOCKED_SYSTEM_FILES } from '../../utils/watcher-ignore';
+import { WatcherLeases } from '../../utils/watcher-leases';
 
 const LOG_CONTEXT = '[DocumentGraph]';
 
@@ -20,6 +21,21 @@ const documentGraphWatchers = new Map<string, FSWatcher>();
 // Debounce state per root path to prevent rapid event flooding
 const debounceTimers = new Map<string, NodeJS.Timeout>();
 const pendingEvents = new Map<string, Map<string, 'add' | 'change' | 'unlink'>>();
+
+const folderLeases = new WatcherLeases(async (rootPath) => {
+	const watcher = documentGraphWatchers.get(rootPath);
+	documentGraphWatchers.delete(rootPath);
+	const timer = debounceTimers.get(rootPath);
+	if (timer) clearTimeout(timer);
+	debounceTimers.delete(rootPath);
+	pendingEvents.delete(rootPath);
+	await watcher?.close();
+});
+
+/** Release only the disconnected remote client's document graph subscriptions. */
+export function releaseDocumentGraphClientWatchers(clientId: string): Promise<void> {
+	return folderLeases.releaseClient(clientId);
+}
 
 /** Debounce delay for markdown file changes (ms) */
 const DEBOUNCE_DELAY = 500;
@@ -124,59 +140,48 @@ export function registerDocumentGraphHandlers(deps: DocumentGraphHandlerDependen
 	// Start watching a directory for markdown file changes
 	ipcMain.handle(
 		'documentGraph:watchFolder',
-		createIpcHandler(handlerOpts('watchFolder'), async (rootPath: string) => {
-			// Stop any existing watcher for this path
-			if (documentGraphWatchers.has(rootPath)) {
-				const existingWatcher = documentGraphWatchers.get(rootPath);
-				await existingWatcher?.close();
-				documentGraphWatchers.delete(rootPath);
-				logger.info(`Closed existing document graph watcher for: ${rootPath}`, LOG_CONTEXT);
+		createHandler(handlerOpts('watchFolder'), async (event: unknown, rootPath: string) => {
+			folderLeases.acquire(rootPath, event);
+			if (documentGraphWatchers.has(rootPath)) return {};
+			try {
+				const watcher = chokidar.watch(rootPath, {
+					ignored: [
+						/(^|[/\\])\../, // Ignore dotfiles
+						/node_modules/,
+						/dist/,
+						/build/,
+						/\.git/,
+						WINDOWS_LOCKED_SYSTEM_FILES,
+					],
+					persistent: true,
+					ignoreInitial: true, // Don't emit events for existing files on startup
+					depth: 99, // Recursive watching
+				});
+
+				// Handler for file changes - only care about .md files
+				const handleFileChange = (eventType: 'add' | 'change' | 'unlink') => (filePath: string) => {
+					// Only care about markdown files
+					if (!filePath.toLowerCase().endsWith('.md')) {
+						return;
+					}
+
+					queueEvent(rootPath, filePath, eventType);
+				};
+
+				watcher.on('add', handleFileChange('add'));
+				watcher.on('change', handleFileChange('change'));
+				watcher.on('unlink', handleFileChange('unlink'));
+
+				watcher.on('error', (error) => {
+					logger.error(`Document graph watcher error for ${rootPath}`, LOG_CONTEXT, error);
+				});
+
+				documentGraphWatchers.set(rootPath, watcher);
+				logger.info(`Started watching document graph folder: ${rootPath}`, LOG_CONTEXT);
+			} catch (error) {
+				await folderLeases.release(rootPath, event);
+				throw error;
 			}
-
-			// Clear any pending debounce timers
-			const existingTimer = debounceTimers.get(rootPath);
-			if (existingTimer) {
-				clearTimeout(existingTimer);
-				debounceTimers.delete(rootPath);
-			}
-			pendingEvents.delete(rootPath);
-
-			// Create file watcher using chokidar (cross-platform)
-			const watcher = chokidar.watch(rootPath, {
-				ignored: [
-					/(^|[/\\])\../, // Ignore dotfiles
-					/node_modules/,
-					/dist/,
-					/build/,
-					/\.git/,
-					WINDOWS_LOCKED_SYSTEM_FILES,
-				],
-				persistent: true,
-				ignoreInitial: true, // Don't emit events for existing files on startup
-				depth: 99, // Recursive watching
-			});
-
-			// Handler for file changes - only care about .md files
-			const handleFileChange = (eventType: 'add' | 'change' | 'unlink') => (filePath: string) => {
-				// Only care about markdown files
-				if (!filePath.toLowerCase().endsWith('.md')) {
-					return;
-				}
-
-				queueEvent(rootPath, filePath, eventType);
-			};
-
-			watcher.on('add', handleFileChange('add'));
-			watcher.on('change', handleFileChange('change'));
-			watcher.on('unlink', handleFileChange('unlink'));
-
-			watcher.on('error', (error) => {
-				logger.error(`Document graph watcher error for ${rootPath}`, LOG_CONTEXT, error);
-			});
-
-			documentGraphWatchers.set(rootPath, watcher);
-			logger.info(`Started watching document graph folder: ${rootPath}`, LOG_CONTEXT);
-
 			return {};
 		})
 	);
@@ -184,22 +189,8 @@ export function registerDocumentGraphHandlers(deps: DocumentGraphHandlerDependen
 	// Stop watching a directory
 	ipcMain.handle(
 		'documentGraph:unwatchFolder',
-		createIpcHandler(handlerOpts('unwatchFolder', false), async (rootPath: string) => {
-			if (documentGraphWatchers.has(rootPath)) {
-				const watcher = documentGraphWatchers.get(rootPath);
-				await watcher?.close();
-				documentGraphWatchers.delete(rootPath);
-
-				// Clear any pending debounce timers
-				const existingTimer = debounceTimers.get(rootPath);
-				if (existingTimer) {
-					clearTimeout(existingTimer);
-					debounceTimers.delete(rootPath);
-				}
-				pendingEvents.delete(rootPath);
-
-				logger.info(`Stopped watching document graph folder: ${rootPath}`, LOG_CONTEXT);
-			}
+		createHandler(handlerOpts('unwatchFolder', false), async (event: unknown, rootPath: string) => {
+			await folderLeases.release(rootPath, event);
 			return {};
 		})
 	);
@@ -213,6 +204,7 @@ export function registerDocumentGraphHandlers(deps: DocumentGraphHandlerDependen
 		documentGraphWatchers.clear();
 
 		// Clear all debounce timers
+		folderLeases.clear();
 		for (const timer of debounceTimers.values()) {
 			clearTimeout(timer);
 		}

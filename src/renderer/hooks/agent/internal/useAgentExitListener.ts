@@ -233,10 +233,8 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 					isRetryPending
 				);
 
-			// A client that does not own the side effects never dequeues either:
-			// the desktop renderer drains its own copy of the queue, and a web
-			// client's copy must survive so its own idle-time drain (useQueueProcessing)
-			// can send what was queued from that browser.
+			// Only the full owning renderer consumes the shared queue. Attached
+			// clients mirror its persisted decisions and never execute a second turn.
 			if (isFromAi && ownsSideEffects) {
 				const currentSession = getSessions().find((s) => s.id === actualSessionId);
 				if (currentSession) {
@@ -761,7 +759,8 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 					state: anyAiTabBusy ? s.state : ('idle' as SessionState),
 					busySource: anyAiTabBusy ? s.busySource : undefined,
 					// TODO: Remove shellLogs once terminal tabs migration is complete
-					...(!s.terminalTabs?.length && { shellLogs: [...s.shellLogs, exitLog] }),
+					...(ownsSideEffects &&
+						!s.terminalTabs?.length && { shellLogs: [...s.shellLogs, exitLog] }),
 				};
 			});
 

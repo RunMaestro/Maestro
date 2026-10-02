@@ -1,15 +1,148 @@
 ---
 title: Remote Control
-description: Control Maestro from your phone via the built-in web server and Cloudflare tunnels.
+description: Attach Maestro Lite or a browser to an existing Maestro host over SSH or authenticated HTTPS.
 icon: tower-broadcast
 ---
 
-Maestro includes a built-in web server for mobile remote control:
+Maestro's built-in web server supports its browser interface and Maestro Lite:
 
 1. **Automatic Security** - Web server runs on a random port with an auto-generated security token (UUID) embedded in the URL
 2. **QR Code Access** - Scan a QR code to connect instantly from your phone
 3. **Live Sessions** - Sessions marked as "live" become accessible through the web interface (protected by the security token)
 4. **Remote Tunneling** - Access Maestro from anywhere via Cloudflare tunnel (requires `cloudflared` CLI)
+
+## Maestro Lite
+
+Lite is an attachment client for an existing full Maestro, not a theme or a
+separate agent installation. It shows the host's agents, AI chats, History, files,
+terminals, and running work. The host supplies the interface and executes the
+work; Lite does not initialize a local agent detector, process manager, chat
+database, automation engine, or host server.
+
+### Prepare the host
+
+1. Start ordinary Maestro on the machine with your workspaces and agent CLIs.
+2. Enable the web interface with **OFFLINE** in the Left Bar, then copy its URL.
+3. Enable **Custom Port** and retain the current link if you want a saved Lite
+   profile to keep working after a host restart. Otherwise update the profile
+   when the port or URL token changes.
+4. For direct HTTPS, enable **Web Login** and create an account on the host.
+   Put the web server behind an HTTPS reverse proxy or the Remote Control tunnel.
+   The certificate must be valid for the hostname you enter.
+5. Keep the full host and its owning desktop window running. Lite does not start
+   the host, install agents, or turn Maestro into a headless daemon.
+
+Provider logins and agent configuration belong on the host. An agent's existing
+SSH execution configuration still applies: its downstream SSH connection starts
+from the Maestro host, not from Lite.
+
+### Launch Lite
+
+Launch the installed Maestro executable with `--lite`. From a built checkout:
+
+```bash
+npm run build
+npm run start:lite
+```
+
+The regular launch still opens full Maestro. For a separate client profile:
+
+```bash
+npm run start:lite -- --lite-user-data /absolute/path/to/lite-data
+```
+
+The explicit directory is the final Lite data directory, not a host workspace.
+The default is the normal Maestro configuration directory's `Lite` subdirectory.
+Connection preferences, cookies and client view state are separate from full
+Maestro's local chats. Protect this directory: saved connection profiles contain
+the host's access URL. SSH private keys remain in their original files; Lite does
+not store SSH or Web Login passwords. Use a secure OS keyring for Chromium's
+persistent cookie storage where available.
+
+### Connect over SSH
+
+1. Choose **Add connection**, name it, and select **SSH tunnel**.
+2. Enter the host's complete Remote Control URL, including its token. For a
+   server on the SSH machine, use its loopback address and configured port.
+3. Enter the SSH hostname or an existing SSH config alias. Use **Use SSH config
+   host alias** for aliases; leave the user/key unset to use SSH config or your
+   SSH agent. The port setting preserves a config alias's default.
+4. Verify a new SSH host key with your normal SSH client first, then save and
+   connect. Lite uses strict host-key checking and binds its forward only to
+   local loopback. It does not collect an SSH password.
+5. If Web Login is enabled, sign in using the host's login page.
+
+The application URL token is still required through SSH. SSH keys remain on the
+client. Closing or disconnecting Lite closes its tunnel, not accepted host work.
+
+### Connect over HTTPS
+
+Choose **Direct HTTPS**, enter the complete HTTPS Remote Control URL, and sign
+in with a host Web Login account. Direct HTTP and hosts without Web Login are
+rejected. Do not bypass certificate errors or expose the raw HTTP server to
+the public internet.
+
+Lite pins the authenticated host's persistent instance identity. A changed
+identity is an error, not permission to reuse the previous host's cookies or
+drafts. Verify the replacement out of band before using **Forget previous host
+identity and authenticate again**. That action does not bypass TLS or SSH trust.
+
+### Controls and CLI
+
+The **Connection** menu, top bar and **Commands** palette share the same actions:
+
+| Action              | Windows/Linux              | macOS                      | CLI                            |
+| ------------------- | -------------------------- | -------------------------- | ------------------------------ |
+| Connections         | Ctrl+Shift+L               | Cmd+Shift+L                | `maestro-cli lite connections` |
+| Connection commands | Ctrl+Shift+P               | Cmd+Shift+P                | `maestro-cli lite commands`    |
+| Reconnect           | Ctrl+Shift+R               | Cmd+Shift+R                | `maestro-cli lite reconnect`   |
+| Disconnect          | Top bar or Connection menu | Top bar or Connection menu | `maestro-cli lite disconnect`  |
+| Close Lite          | Ctrl+W                     | Cmd+W                      | `maestro-cli lite close --yes` |
+
+Escape and visible close controls leave the connection UI. Escape returns to
+the host view when connected; without a host view it closes Lite. Closing Lite
+never acts as a request to kill an agent or stop the host.
+
+```bash
+maestro-cli lite status --user-data /absolute/path/to/lite-data
+maestro-cli lite profile list --user-data /absolute/path/to/lite-data
+maestro-cli lite connect PROFILE_ID --user-data /absolute/path/to/lite-data
+```
+
+The CLI talks to the running Lite instance through authenticated local IPC,
+not through the remote host. It uses the same profile and connection actions as
+the UI. `--user-data` selects the same final directory as `--lite-user-data`.
+See the [CLI reference](/cli-reference) for profile save/read/remove and identity
+reset commands. Profile output may contain the access token in a URL; do not
+publish it.
+
+### Execution and lifetime
+
+| Operation or state                                     | Location                                            |
+| ------------------------------------------------------ | --------------------------------------------------- |
+| Agent CLIs, provider authentication, chats and History | Host                                                |
+| Terminal processes, workspace files, Git and Auto Run  | Host                                                |
+| Browser pages and host-local previews                  | Host; Lite receives rendered frames and sends input |
+| SSH credentials and connection profiles                | Client                                              |
+| Navigation and unsent drafts                           | Client, separated by host/connection identity       |
+
+Workspace pickers browse the host filesystem. Uploading a local attachment and
+downloading a host file are explicit transfers, not workspace synchronization.
+A localhost preview is opened by the host's browser, not by a local Lite webview.
+Host administration, account management and native application updates remain
+host-only; remote operator access is not multi-tenant isolation.
+
+Accepted agents, queues, terminals and automation stay on the host when a client
+disconnects. Keep the host window alive, including when backgrounded or minimized.
+Quitting the host or closing its owning windows ends availability. A host restart
+requires current state to be loaded again; reconnecting does not resubmit a task.
+If the first agent read races host startup, use the visible **Retry** control.
+The failed read leaves saved agents untouched and keeps persistence disabled
+until loading succeeds. An uncertain submission must be checked on the host
+before it is submitted again.
+
+Lite is a runtime mode in the existing Electron distribution. It is not a separate
+small installer and has no offline execution fallback.
 
 ## Mobile Web Interface
 
@@ -50,7 +183,7 @@ The Remote tab automatically activates when the tunnel connects successfully.
 
 ## Custom Port Configuration
 
-By default, Maestro assigns a **random port** each time the web server starts. This is a security-by-obscurity measure - attackers can't easily guess which port to target.
+By default, Maestro assigns a **random port** each time the web server starts. The URL token and optional Web Login provide authentication; an unpredictable port is not a substitute for access control.
 
 However, if you need a **fixed port** (e.g., for firewall rules, reverse proxies, or persistent tunnel configurations), you can enable custom port mode:
 
@@ -67,13 +200,7 @@ However, if you need a **fixed port** (e.g., for firewall rules, reverse proxies
 - Integration with home automation systems
 
 <Warning>
-**Security Trade-off**: Using a custom port removes one layer of security-by-obscurity. The randomized port and auto-generated auth token in the URL work together to protect access. With a custom port, you're relying solely on the auth token for security.
-
-**Recommendations when using custom ports:**
-
-- Use Cloudflare tunnel for remote access instead of exposing ports directly
-- Ensure your network firewall is properly configured
-- Consider additional authentication at the network level
+**Security:** A fixed port does not remove authentication requirements. Keep the URL token private, use Web Login for direct HTTPS, and restrict network access. Prefer managed SSH or HTTPS through a trusted reverse proxy or Remote Control tunnel rather than exposing the raw HTTP server.
 
 </Warning>
 
@@ -103,7 +230,7 @@ On your own network the web interface is served over plain HTTP, so a password t
 
 ## Connection Handling
 
-The browser talks to the desktop app over a WebSocket. If the connection drops (the phone sleeps, you switch apps, the network changes), the page reconnects and then reloads itself so it picks up everything that happened while it was away; the desktop app is the single source of truth. Anything you typed during the gap but had not yet sent needs to be sent again.
+The browser talks to the host over a WebSocket. It reconnects with bounded event replay when possible and reloads current host state after a host restart or replay gap. Commands are never automatically resent merely because the connection dropped. If a submission's acknowledgement is lost, its outcome is shown as uncertain: check the host's chat, running work and History before deciding whether to submit again. Unsent drafts and navigation remain client-local. Native Lite does not register the browser PWA's offline service worker; the ordinary browser/PWA path is unchanged.
 
 ## Screenshots
 

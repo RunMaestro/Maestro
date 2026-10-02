@@ -2,7 +2,8 @@ import type { WebServer } from '../WebServer';
 import type { WebServerFactoryDependencies } from '../web-server-factory';
 import { logger } from '../../utils/logger';
 import { isWebContentsAvailable } from '../../utils/safe-send';
-import { createRemoteRequest } from './remoteRequest';
+import { createRemoteRequest, requestFromRenderer } from './remoteRequest';
+import type { AutoRunRemoteResult } from '../../../shared/autoRunRemote';
 
 export function registerAutoRunControlCallbacks(
 	server: WebServer,
@@ -10,6 +11,28 @@ export function registerAutoRunControlCallbacks(
 ): void {
 	const { getMainWindow } = deps;
 	const remoteRequest = createRemoteRequest(getMainWindow);
+	const unavailable: AutoRunRemoteResult = {
+		success: false,
+		error: 'Host Auto Run owner did not acknowledge the command. Check host state before retrying.',
+	};
+	server.setStartAutoRunCallback(async (sessionId, config, folderPath) => {
+		const win = getMainWindow();
+		if (!win || !isWebContentsAvailable(win)) return unavailable;
+		return requestFromRenderer<AutoRunRemoteResult>(win, 'remote:startAutoRun', {
+			fallback: unavailable,
+			timeoutMs: 60000,
+			args: [sessionId, config, folderPath],
+		});
+	});
+	server.setControlAutoRunCallback(async (sessionId, control) => {
+		const win = getMainWindow();
+		if (!win || !isWebContentsAvailable(win)) return unavailable;
+		return requestFromRenderer<AutoRunRemoteResult>(win, 'remote:controlAutoRun', {
+			fallback: unavailable,
+			timeoutMs: 10000,
+			args: [sessionId, control],
+		});
+	});
 
 	// Set up callback for web server to stop Auto Run
 	// Fire-and-forget pattern (like interrupt)

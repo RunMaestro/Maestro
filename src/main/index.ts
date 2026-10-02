@@ -161,6 +161,8 @@ import { wireProcessListeners } from './process-listeners-wiring';
 import { createSafeSend, isWebContentsAvailable } from './utils/safe-send';
 import { capabilitySnapshots, createSnapshotBroadcaster } from './agents/capability-snapshot';
 import { createWebServerFactory } from './web-server/web-server-factory';
+import { registerBrowserRelayHandlers } from './browser/browser-relay';
+import { isHostBrowserPageWindow } from './browser/browser-pages';
 import type { DebugPackageDependencies } from './debug-package';
 // Phase 4 refactoring - app lifecycle
 import {
@@ -548,6 +550,11 @@ let quitHandler: QuitHandler | null = null;
 // the primary window registers itself as `isMain` when createWindow() runs on
 // app-ready, and secondary windows register via createSecondaryWindow.
 const windowRegistry = new WindowRegistry();
+const getWindowForSession = (sessionId: string): BrowserWindow | null => {
+	const ownerId = windowRegistry.getWindowForSession(sessionId);
+	const owner = ownerId ? windowRegistry.get(ownerId) : windowRegistry.getPrimary();
+	return owner?.browserWindow ?? mainWindow;
+};
 
 // Shared by the main window and the cadenza HUD window (which reuses the same
 // preload + renderer bundle, loaded with `?cadenzaHud`).
@@ -636,11 +643,7 @@ const createWebServer = createWebServerFactory({
 	groupsStore,
 	getDebugPackageDeps: () => debugPackageDeps,
 	getMainWindow: () => mainWindow,
-	getWindowForSession: (sessionId: string) => {
-		const ownerId = windowRegistry.getWindowForSession(sessionId);
-		const owner = ownerId ? windowRegistry.get(ownerId) : windowRegistry.getPrimary();
-		return owner?.browserWindow ?? mainWindow;
-	},
+	getWindowForSession,
 	deliverCadenza,
 	getProcessManager: () => processManager,
 	triggerCueSubscription: (subscriptionName, prompt, sourceAgentId) => {
@@ -688,7 +691,10 @@ function createWindow(options?: { sessionIds?: string[]; bounds?: Partial<Shared
 		// flow. When the primary is the LAST window, we defer to
 		// 'window-all-closed' instead (macOS stays alive for dock relaunch), and
 		// we skip if a quit is already in flight to avoid re-entrancy.
-		const otherWindowsOpen = BrowserWindow.getAllWindows().length > 0;
+		// Offscreen browser pages are workloads, not secondary application windows.
+		const otherWindowsOpen = BrowserWindow.getAllWindows().some(
+			(window) => !isHostBrowserPageWindow(window)
+		);
 		if (otherWindowsOpen && !quitHandler?.isQuitConfirmed()) {
 			logger.info('Primary window closed with secondary windows open, quitting app', 'Window');
 			app.quit();
@@ -773,6 +779,8 @@ if (!gotSingleInstanceLock) {
 app
 	.whenReady()
 	.then(async () => {
+		registerBrowserRelayHandlers({ getMainWindow: () => mainWindow, getWindowForSession });
+
 		// Serve agent-authored Concerto mockups as real documents with their own
 		// CSP. A srcdoc frame would inherit Maestro's renderer CSP and block the
 		// inline scripts that make mockups interactive.

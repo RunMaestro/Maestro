@@ -35,7 +35,7 @@ export interface CliServerInfo {
 }
 
 // Get the Maestro config directory path (lowercase "maestro")
-function getConfigDir(): string {
+export function getConfigDir(): string {
 	// Allow overriding the data directory (e.g. for dev mode: maestro-dev).
 	// Matches the override honored by src/cli/services/storage.ts so the CLI's
 	// discovery file lookup tracks the same data directory as its session reads.

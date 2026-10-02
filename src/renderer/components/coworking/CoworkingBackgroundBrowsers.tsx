@@ -1,10 +1,7 @@
 /**
- * Hidden host that keeps background <webview>s alive for cross-session coworking
- * browser access. Renders the tabs requested in coworkingBackgroundBrowserStore
- * off-screen (fixed, far off the left edge, pointer-events:none, aria-hidden) so
- * their guest WebContents run (DOM reads + interaction work) without disturbing
- * the user. Each tab mounts with its own `partition`, so per-session browser
- * data is preserved. Mounts are capped + LRU-evicted by the store.
+ * Hidden presentations provide coworking handles for tabs in another session.
+ * Every presentation talks to the same canonical main-owned browser page and
+ * preserves that tab's partition and native imperative contracts.
  *
  * onUpdateTab routes to the OWNING session (not the active session) so a
  * background navigation keeps that agent's tab metadata fresh.
@@ -12,7 +9,8 @@
 
 import { useCallback, useEffect } from 'react';
 import { BrowserTabView } from '../MainPanel/BrowserTabView';
-import type { BrowserTab, Theme } from '../../types';
+import type { Theme } from '../../types';
+import type { BrowserTab } from '../../../shared/browserPage';
 import { useCoworkingBackgroundBrowserStore } from '../../stores/coworkingBackgroundBrowserStore';
 import { useSessionStore, updateSessionWith, selectActiveSession } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';

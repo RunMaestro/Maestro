@@ -14,6 +14,7 @@ import { ChevronDown, Monitor, Cloud, History } from 'lucide-react';
 import type { Theme } from '../../types';
 import type { SshRemoteConfig, AgentSshRemoteConfig } from '../../../shared/types';
 import { formatSshTarget } from '../../../shared/formatters';
+import { isWebDesktop } from '../../utils/runtimeContext';
 
 export interface SshRemoteSelectorProps {
 	theme: Theme;
@@ -89,6 +90,7 @@ function SshRemoteDropdown({
 	sshRemoteConfig?: AgentSshRemoteConfig;
 	onSshRemoteConfigChange: (config: AgentSshRemoteConfig) => void;
 }): JSX.Element {
+	const webDesktop = isWebDesktop();
 	// Get the currently selected remote (if any)
 	const selectedRemoteId =
 		sshRemoteConfig?.enabled && sshRemoteConfig?.remoteId ? sshRemoteConfig.remoteId : null;
@@ -133,7 +135,7 @@ function SshRemoteDropdown({
 						color: theme.colors.textMain,
 					}}
 				>
-					<option value="local">Local Execution</option>
+					<option value="local">{webDesktop ? 'Connected Maestro host' : 'Local Execution'}</option>
 					{sshRemotes
 						.filter((r) => r.enabled)
 						.map((remote) => (
@@ -167,7 +169,11 @@ function SshRemoteDropdown({
 				) : (
 					<>
 						<Monitor className="w-3 h-3" style={{ color: theme.colors.textDim }} />
-						<span style={{ color: theme.colors.textDim }}>Agent will run locally</span>
+						<span style={{ color: theme.colors.textDim }}>
+							{webDesktop
+								? 'Agent will run on the connected Maestro host'
+								: 'Agent will run locally'}
+						</span>
 					</>
 				)}
 			</div>

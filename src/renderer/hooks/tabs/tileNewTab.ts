@@ -27,6 +27,7 @@
 
 import type { ThinkingMode } from '../../../shared/types';
 import type { Session, UnifiedTabRef } from '../../types';
+import type { BrowserTab } from '../../../shared/browserPage';
 import {
 	createGroupFromDrop,
 	findLeafById,
@@ -74,7 +75,8 @@ export interface TileNewTabResult {
 function createInactiveTab(
 	session: Session,
 	kind: TileableTabKind,
-	defaults: TileNewTabDefaults
+	defaults: TileNewTabDefaults,
+	registeredBrowserTab?: BrowserTab
 ): TileNewTabResult | null {
 	switch (kind) {
 		case 'ai': {
@@ -107,16 +109,24 @@ function createInactiveTab(
 		}
 		case 'browser': {
 			const homeUrl = defaults.browserHomeUrl || DEFAULT_BROWSER_TAB_URL;
-			const tab = createBrowserTab(session.id, homeUrl, {
-				title: homeUrl === DEFAULT_BROWSER_TAB_URL ? undefined : homeUrl,
-				isLoading: homeUrl !== DEFAULT_BROWSER_TAB_URL,
-			});
+			const tab =
+				registeredBrowserTab ??
+				createBrowserTab(session.id, homeUrl, {
+					title: homeUrl === DEFAULT_BROWSER_TAB_URL ? undefined : homeUrl,
+					isLoading: homeUrl !== DEFAULT_BROWSER_TAB_URL,
+				});
 			const ref: UnifiedTabRef = { type: 'browser', id: tab.id };
 			return {
 				session: {
 					...session,
-					browserTabs: [...(session.browserTabs || []), tab],
-					unifiedTabOrder: insertAfterActiveInUnifiedTabOrder(session, ref),
+					browserTabs: session.browserTabs?.some((candidate) => candidate.id === tab.id)
+						? session.browserTabs
+						: [...(session.browserTabs || []), tab],
+					unifiedTabOrder: session.unifiedTabOrder?.some(
+						(existing) => existing.type === 'browser' && existing.id === tab.id
+					)
+						? session.unifiedTabOrder
+						: insertAfterActiveInUnifiedTabOrder(session, ref),
 				},
 				ref,
 			};
@@ -145,7 +155,8 @@ export function tileNewTab(
 	session: Session,
 	kind: TileableTabKind,
 	defaults: TileNewTabDefaults,
-	zone: DropZone = 'bottom'
+	zone: DropZone = 'bottom',
+	registeredBrowserTab?: BrowserTab
 ): TileNewTabResult | null {
 	// Resolve the target BEFORE minting anything: creating a tab shifts
 	// unifiedTabOrder, and resolveActiveTabRef reads the active-tab ids that a
@@ -166,7 +177,7 @@ export function tileNewTab(
 			firstLeafId(group.layout))
 		: null;
 
-	const created = createInactiveTab(session, kind, defaults);
+	const created = createInactiveTab(session, kind, defaults, registeredBrowserTab);
 	if (!created) return null;
 
 	if (group && targetLeafId) {

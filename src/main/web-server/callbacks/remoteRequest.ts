@@ -32,14 +32,21 @@ export function requestFromRenderer<T>(
 			ipcMain.removeListener(responseChannel, onReply);
 			resolve(value);
 		};
-		const onReply = (_event: Electron.IpcMainEvent, raw: unknown) => finish(parse(raw));
+		const onReply = (event: Electron.IpcMainEvent, raw: unknown) => {
+			if (event.sender !== win.webContents) return;
+			finish(parse(raw));
+		};
 		// Arm the timeout BEFORE listening/sending: a renderer that replies
 		// synchronously to `webContents.send` would otherwise run `finish()`
 		// while `timeoutId` is still in its temporal dead zone, and the
 		// `clearTimeout(timeoutId)` inside it would throw a ReferenceError.
 		const timeoutId = setTimeout(() => finish(fallback), timeoutMs);
-		ipcMain.once(responseChannel, onReply);
-		win.webContents.send(requestChannel, ...args, responseChannel);
+		ipcMain.on(responseChannel, onReply);
+		try {
+			win.webContents.send(requestChannel, ...args, responseChannel);
+		} catch {
+			finish(fallback);
+		}
 	});
 }
 

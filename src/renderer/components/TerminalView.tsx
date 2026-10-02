@@ -311,12 +311,12 @@ export const TerminalView = memo(
 		//     `npm run dev` would sit dormant after an app restart until the user
 		//     clicked it, defeating the point of a persistent startup command.
 		//
-		// spawnPtyForTab's in-flight guard plus the pid===0 check make this safe to
-		// re-evaluate on every render.
+		// Initialization is independent of PID availability (ConPTY can report 0).
+		// The host also deduplicates attachments across renderer clients.
 		useEffect(() => {
 			const terminalTabs = session.terminalTabs || [];
 			for (const tab of terminalTabs) {
-				if (tab.pid !== 0 || tab.state === 'exited') continue;
+				if (tab.ptyInitialized || tab.pid !== 0 || tab.state === 'exited') continue;
 				const onScreen = tab.id === activeTab?.id || paneRects?.has(tab.id) === true;
 				if (onScreen || tab.startupCommand) {
 					spawnPtyForTab(tab);
@@ -396,15 +396,19 @@ export const TerminalView = memo(
 		// no argument returns the *last command's* status, so `false; exit` legitimately
 		// yields code 1 and should still close the tab.
 		//
-		// pid === 0 means the PTY never spawned, i.e. this 'exited' transition came from
-		// a spawn failure already handled at the spawn site - skip it here to avoid a
-		// duplicate toast/notice.
+		// A tab that never initialized exited at the spawn-failure site; skip its
+		// duplicate notice. PID 0 alone is not evidence of a failed ConPTY spawn.
 		useEffect(() => {
 			const terminalTabs = session.terminalTabs || [];
 			const isRemoteSession = !!(session.sessionSshRemoteConfig?.enabled || session.sshRemoteId);
 			for (const tab of terminalTabs) {
 				const prev = prevTabStatesRef.current.get(tab.id);
-				if (prev !== undefined && prev !== 'exited' && tab.state === 'exited' && tab.pid !== 0) {
+				if (
+					prev !== undefined &&
+					prev !== 'exited' &&
+					tab.state === 'exited' &&
+					(tab.ptyInitialized || tab.pid !== 0)
+				) {
 					const age = Date.now() - tab.createdAt;
 					const tabId = tab.id;
 					const signal = exitSignalsRef.current.get(tabId);
@@ -558,6 +562,7 @@ export const TerminalView = memo(
 											// Write loading indicator once per idle cycle - guard prevents duplicate writes on re-renders
 											if (
 												tab.pid === 0 &&
+												!tab.ptyInitialized &&
 												tab.state === 'idle' &&
 												!loadingWrittenRef.current.has(tab.id)
 											) {

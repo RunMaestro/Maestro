@@ -11,11 +11,9 @@
  * went dirty and was merged in again (issues #1398 / #1492).
  *
  * The main process now reports what entered and left the store
- * (`sessions:lifecycleSync`); this hook applies that delta locally. It is
- * deliberately LIFECYCLE ONLY - agents appearing and disappearing - and does not
- * try to merge a peer's edits into an agent both clients already hold. Tab
- * contents, read-state and queued messages still belong to whichever client
- * wrote last; syncing those needs a per-field model this delta can't express.
+ * (sessions:lifecycleSync); this hook applies shared persistence changes against
+ * their pre-write snapshot, retaining locally newer changes and each client's
+ * navigation, drafts and live state.
  *
  * No feedback loop: applying a removal makes this client's next flush report the
  * same id in `removeIds`, but by then the store no longer has it, so main sends
@@ -28,10 +26,15 @@ import type { Session } from '../../types';
 import { useSessionStore } from '../../stores/sessionStore';
 import { logger } from '../../utils/logger';
 import { captureException } from '../../utils/sentry';
+import { mergeSessionPersistenceChanges } from '../../../shared/sessionPersistenceMerge';
+import { isWebDesktop } from '../../utils/runtimeContext';
+import { useSessionTranscriptSync } from './useSessionTranscriptSync';
 
 export interface SessionLifecycleSyncPayload {
 	added?: Session[];
 	removedIds?: string[];
+	updated?: Session[];
+	baselines?: Session[];
 }
 
 /**
@@ -69,6 +72,7 @@ export function useSessionLifecycleSync(
 	restoreSession: (session: Session) => Promise<Session>,
 	reattachLiveTurns?: () => void | Promise<void>
 ): void {
+	useSessionTranscriptSync(whenSessionsLoaded);
 	useEffect(() => {
 		const api = window.maestro?.sessions;
 		if (!api?.onLifecycleSync) return;
@@ -92,7 +96,7 @@ export function useSessionLifecycleSync(
 			// per-client identity), and re-adding or re-removing would be churn.
 			const removedIds = (payload.removedIds ?? []).filter((id) => known.has(id));
 			const incoming = (payload.added ?? []).filter((s) => s?.id && !known.has(s.id));
-			if (removedIds.length === 0 && incoming.length === 0) return;
+			if (removedIds.length === 0 && incoming.length === 0 && !payload.updated?.length) return;
 
 			const restored = await Promise.all(incoming.map((s) => restoreSession(s)));
 			if (disposed) return;
@@ -104,8 +108,38 @@ export function useSessionLifecycleSync(
 				// room to have created or closed something in the meantime.
 				const present = new Set(kept.map((s) => s.id));
 				const additions = restored.filter((s) => !present.has(s.id));
-				if (kept.length === prev.length && additions.length === 0) return prev;
-				return [...kept, ...additions];
+				const baselineMap = new Map(
+					(payload.baselines ?? []).map((session) => [session.id, session])
+				);
+				const updateMap = new Map((payload.updated ?? []).map((session) => [session.id, session]));
+				let changed = kept.length !== prev.length || additions.length > 0;
+				const updated = kept.map((session) => {
+					const update = updateMap.get(session.id);
+					const baseline = baselineMap.get(session.id);
+					if (!update || !baseline) return session;
+					let merged = mergeSessionPersistenceChanges(update, session, baseline, true, true);
+					if (isWebDesktop()) {
+						const previousIds = new Set(session.aiTabs.map((tab) => tab.id));
+						const tabIds = [
+							...new Set([
+								...(session.deferredContent?.tabIds ?? []),
+								...merged.aiTabs.filter((tab) => !previousIds.has(tab.id)).map((tab) => tab.id),
+							]),
+						].filter((id) => merged.aiTabs.some((tab) => tab.id === id));
+						if (tabIds.length || session.deferredContent?.commands)
+							merged = {
+								...merged,
+								deferredContent: {
+									tabIds,
+									...(session.deferredContent?.commands && { commands: true }),
+								},
+							};
+					}
+					if (JSON.stringify(merged) === JSON.stringify(session)) return session;
+					changed = true;
+					return merged;
+				});
+				return changed ? [...updated, ...additions] : prev;
 			});
 
 			// The agent this client was looking at may be the one that closed.

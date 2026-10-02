@@ -1,4 +1,4 @@
-import type { BrowserTab } from '../types';
+import type { BrowserTab } from '../../shared/browserPage';
 import { PERSISTENT_BROWSER_TAB_PARTITION_PATTERN } from '../../shared/browserTabPartition';
 
 const BROWSER_TAB_PARTITION_PREFIX = 'persist:maestro-browser-session-';

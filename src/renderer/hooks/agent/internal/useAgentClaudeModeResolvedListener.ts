@@ -26,7 +26,7 @@ import { notifyToast } from '../../../stores/notificationStore';
 import { REGEX_AI_TAB } from '../../../utils/sessionIdParser';
 import { generateId } from '../../../utils/ids';
 import { getClaudeTokenMode } from '../../../../shared/claudeTokenMode';
-import { useOwnedSessionGate } from './useOwnedSessionGate';
+import { useOwnedSideEffectGate } from './useOwnedSessionGate';
 import type { LogEntry } from '../../../types';
 
 /**
@@ -82,7 +82,7 @@ function buildBatchModeBanner(
 }
 
 export function useAgentClaudeModeResolvedListener(): void {
-	const ownedGate = useOwnedSessionGate();
+	const ownedGate = useOwnedSideEffectGate();
 	useEffect(() => {
 		const setSessions = useSessionStore.getState().setSessions;
 

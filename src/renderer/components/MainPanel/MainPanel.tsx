@@ -53,6 +53,7 @@ import { PianolaDashboard } from '../PianolaDashboard';
 import { PianolaDashboardTab } from '../PianolaDashboard/PianolaTabControls';
 import { CoworkingApprovalHost } from '../coworking/CoworkingApprovalHost';
 import { CoworkingBackgroundBrowsers } from '../coworking/CoworkingBackgroundBrowsers';
+import { useHostBrowserRelayResponder } from '../../hooks/browser/useHostBrowserRelayResponder';
 import { useWindowOwnsSession } from '../../contexts/WindowContext';
 import type { PaneFileActions, PaneTabActions } from './TiledLayout';
 import type { Theme, UnifiedTabRef } from '../../types';
@@ -143,6 +144,7 @@ export const MainPanel = React.memo(
 			handleInputKeyDown,
 			handlePaste,
 			handleDrop,
+			onUploadFiles,
 			getContextColor,
 			setActiveSessionId,
 			currentSessionBatchState,
@@ -362,6 +364,7 @@ export const MainPanel = React.memo(
 		// switches the user's visible tab. No-ops when the `coworking` Encore flag
 		// is off.
 		useCoworkingBrowserResponder(browserViewRefs);
+		useHostBrowserRelayResponder();
 
 		// Get the active tab for header display
 		// Prefer local derivation from the full session (includes live usage/cost).
@@ -1433,6 +1436,7 @@ export const MainPanel = React.memo(
 									handleInputKeyDown={handleInputKeyDown}
 									handlePaste={handlePaste}
 									handleDrop={handleDrop}
+									onUploadFiles={onUploadFiles}
 									onStopBatchRun={onStopBatchRun}
 									onRemoveQueuedItem={onRemoveQueuedItem}
 									onTogglePauseQueuedItem={onTogglePauseQueuedItem}

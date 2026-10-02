@@ -155,6 +155,13 @@ import type { SnoozeCommandRequest, SnoozeCommandResult } from '../../../shared/
 import type { GroupAppearance, GroupUpdateRequest } from '../../../shared/groupAppearance';
 import type { CadenzaPayload } from '../../../shared/cadenza-types';
 import type { MovementPayload, MovementStateSnapshot } from '../../../shared/movement-types';
+import type {
+	AutoRunRemoteControl,
+	AutoRunRemoteResult,
+	StartAutoRunCallback,
+	ControlAutoRunCallback,
+} from '../../../shared/autoRunRemote';
+import type { BatchRunConfig } from '../../../shared/types';
 
 const LOG_CONTEXT = 'CallbackRegistry';
 
@@ -205,6 +212,8 @@ export interface WebServerCallbacks {
 	getAutoRunDocContent: GetAutoRunDocContentCallback | null;
 	saveAutoRunDoc: SaveAutoRunDocCallback | null;
 	stopAutoRun: StopAutoRunCallback | null;
+	startAutoRun: StartAutoRunCallback | null;
+	controlAutoRun: ControlAutoRunCallback | null;
 	resetAutoRunDocTasks: ResetAutoRunDocTasksCallback | null;
 	resumeAutoRunError: ResumeAutoRunErrorCallback | null;
 	skipAutoRunDocument: SkipAutoRunDocumentCallback | null;
@@ -309,6 +318,8 @@ export class CallbackRegistry {
 		getAutoRunDocContent: null,
 		saveAutoRunDoc: null,
 		stopAutoRun: null,
+		startAutoRun: null,
+		controlAutoRun: null,
 		resetAutoRunDocTasks: null,
 		resumeAutoRunError: null,
 		skipAutoRunDocument: null,
@@ -667,6 +678,25 @@ export class CallbackRegistry {
 	async stopAutoRun(sessionId: string): Promise<boolean> {
 		if (!this.callbacks.stopAutoRun) return false;
 		return this.callbacks.stopAutoRun(sessionId);
+	}
+
+	async startAutoRun(
+		sessionId: string,
+		config: BatchRunConfig,
+		folderPath: string
+	): Promise<AutoRunRemoteResult> {
+		if (!this.callbacks.startAutoRun)
+			return { success: false, error: 'Host Auto Run is unavailable' };
+		return this.callbacks.startAutoRun(sessionId, config, folderPath);
+	}
+
+	async controlAutoRun(
+		sessionId: string,
+		control: AutoRunRemoteControl
+	): Promise<AutoRunRemoteResult> {
+		if (!this.callbacks.controlAutoRun)
+			return { success: false, error: 'Host Auto Run is unavailable' };
+		return this.callbacks.controlAutoRun(sessionId, control);
 	}
 
 	async resetAutoRunDocTasks(sessionId: string, filename: string): Promise<boolean> {
@@ -1250,6 +1280,14 @@ export class CallbackRegistry {
 
 	setStopAutoRunCallback(callback: StopAutoRunCallback): void {
 		this.callbacks.stopAutoRun = callback;
+	}
+
+	setStartAutoRunCallback(callback: StartAutoRunCallback): void {
+		this.callbacks.startAutoRun = callback;
+	}
+
+	setControlAutoRunCallback(callback: ControlAutoRunCallback): void {
+		this.callbacks.controlAutoRun = callback;
 	}
 
 	setResetAutoRunDocTasksCallback(callback: ResetAutoRunDocTasksCallback): void {

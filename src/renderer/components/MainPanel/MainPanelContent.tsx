@@ -37,12 +37,12 @@ import { useSurfaceTypography } from '../../hooks/ui/useSurfaceTypography';
 import { useTabStore } from '../../stores/tabStore';
 import { useLayerStack } from '../../contexts/LayerStackContext';
 import { outputSearchKeyFor } from '../../utils/outputSearch';
+import type { BrowserTab } from '../../../shared/browserPage';
 import type {
 	Session,
 	Theme,
 	AITab,
 	BatchRunState,
-	BrowserTab,
 	FilePreviewTab,
 	QueuedItem,
 	UnifiedTabRef,
@@ -194,6 +194,7 @@ export interface MainPanelContentProps {
 	handleInputKeyDown: (e: React.KeyboardEvent<HTMLTextAreaElement>) => void;
 	handlePaste: (e: React.ClipboardEvent<HTMLTextAreaElement>) => void;
 	handleDrop: (e: React.DragEvent<HTMLElement>) => void;
+	onUploadFiles?: (files: File[]) => void;
 	onStopBatchRun?: (sessionId?: string) => void;
 	onRemoveQueuedItem?: (itemId: string) => void;
 	onTogglePauseQueuedItem?: (itemId: string) => void;
@@ -391,6 +392,7 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 		handleInputKeyDown,
 		handlePaste,
 		handleDrop,
+		onUploadFiles,
 		onStopBatchRun,
 		onRemoveQueuedItem,
 		onTogglePauseQueuedItem,
@@ -1101,6 +1103,7 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 						handleInputKeyDown={handleInputKeyDown}
 						handlePaste={handlePaste}
 						handleDrop={handleDrop}
+						onUploadFiles={onUploadFiles}
 						toggleInputMode={toggleInputMode}
 						processInput={processInput}
 						handleInterrupt={handleInterrupt}

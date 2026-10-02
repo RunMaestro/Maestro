@@ -4,7 +4,7 @@ import path from 'path';
 import chokidar, { FSWatcher } from 'chokidar';
 import Store from 'electron-store';
 import { logger } from '../../utils/logger';
-import { createIpcHandler, CreateHandlerOptions } from '../../utils/ipcHandler';
+import { createIpcHandler, createHandler, CreateHandlerOptions } from '../../utils/ipcHandler';
 import { resolveDirentType } from '../../utils/dirent-utils';
 import { WINDOWS_LOCKED_SYSTEM_FILES } from '../../utils/watcher-ignore';
 import { SshRemoteConfig, PlaybookStatus } from '../../../shared/types';
@@ -22,6 +22,7 @@ import {
 	listTreeRemote,
 } from '../../utils/remote-fs';
 import { PLAYBOOKS_DIR, LEGACY_PLAYBOOKS_DIR, STATUS_PATH } from '../../../shared/maestro-paths';
+import { WatcherLeases } from '../../utils/watcher-leases';
 
 const LOG_CONTEXT = '[AutoRun]';
 
@@ -88,14 +89,30 @@ const clearPendingChangesForFolder = (folderPath: string) => {
 // write .maestro/STATUS.json to surface live progress; we watch the file and
 // push each parsed update to the renderer. Cleaned up on unwatch, and on quit.
 //
-// Reference-counted by subscriber, because several agents can run Auto Run
-// against the SAME project at once. With one watcher per path and no count, the
-// second agent's watch closed and replaced the first agent's watcher, and then
-// the first agent finishing unwatched the path out from under the second - which
-// kept running with a silently dead status panel.
-const statusWatchers = new Map<string, { watcher: FSWatcher; subscribers: Set<string> }>();
+// Leases distinguish both renderer/client owners and per-agent subscriptions.
+const statusWatchers = new Map<string, FSWatcher>();
 // Per-project debounce timer so a burst of writes coalesces into one read.
 const statusWatchDebounceTimers = new Map<string, NodeJS.Timeout>();
+
+const folderLeases = new WatcherLeases(async (folderPath) => {
+	const watcher = autoRunWatchers.get(folderPath);
+	autoRunWatchers.delete(folderPath);
+	clearPendingChangesForFolder(folderPath);
+	await watcher?.close();
+});
+const statusLeases = new WatcherLeases(async (projectPath) => {
+	const watcher = statusWatchers.get(projectPath);
+	statusWatchers.delete(projectPath);
+	const timer = statusWatchDebounceTimers.get(projectPath);
+	if (timer) clearTimeout(timer);
+	statusWatchDebounceTimers.delete(projectPath);
+	await watcher?.close();
+});
+
+/** Release only the disconnected remote client's watcher subscriptions. */
+export async function releaseAutorunClientWatchers(clientId: string): Promise<void> {
+	await Promise.all([folderLeases.releaseClient(clientId), statusLeases.releaseClient(clientId)]);
+}
 
 /**
  * Tree node interface for autorun directory scanning.
@@ -973,9 +990,9 @@ export function registerAutorunHandlers(
 	// Returns isRemote: true to indicate the UI should poll using listDocs instead
 	ipcMain.handle(
 		'autorun:watchFolder',
-		createIpcHandler(
+		createHandler(
 			handlerOpts('watchFolder'),
-			async (folderPath: string, sshRemoteId?: string) => {
+			async (event: unknown, folderPath: string, sshRemoteId?: string) => {
 				// SSH remote: Cannot use chokidar for remote directories
 				// Return success with isRemote flag so UI can fall back to polling
 				if (sshRemoteId) {
@@ -1001,86 +1018,88 @@ export function registerAutorunHandlers(
 					};
 				}
 
-				// Local: Stop any existing watcher for this folder
-				if (autoRunWatchers.has(folderPath)) {
-					autoRunWatchers.get(folderPath)?.close();
-					autoRunWatchers.delete(folderPath);
-					clearPendingChangesForFolder(folderPath);
-				}
-
-				// Create folder if it doesn't exist (agent will create files in it)
+				folderLeases.acquire(folderPath, event);
+				if (autoRunWatchers.has(folderPath)) return {};
 				try {
-					await fs.stat(folderPath);
-				} catch {
-					// Folder doesn't exist, create it
-					await fs.mkdir(folderPath, { recursive: true });
-					logger.info(`Created Auto Run folder for watching: ${folderPath}`, LOG_CONTEXT);
-				}
-
-				// Validate folder exists
-				const folderStat = await fs.stat(folderPath);
-				if (!folderStat.isDirectory()) {
-					throw new Error('Path is not a directory');
-				}
-
-				// Start watching the folder recursively using chokidar (cross-platform)
-				const watcher = chokidar.watch(folderPath, {
-					ignored: [
-						/(^|[/\\])\../, // Ignore dotfiles
-						WINDOWS_LOCKED_SYSTEM_FILES,
-					],
-					persistent: true,
-					ignoreInitial: true, // Don't emit events for existing files on startup
-					depth: 99, // Recursive watching
-				});
-
-				// Handler for file changes - coalesces all pending changes for this folder
-				// into a single debounced flush so a burst of writes produces one tick of work.
-				const handleFileChange = (eventType: string) => (filePath: string) => {
-					// Only care about .md files
-					if (!filePath.toLowerCase().endsWith('.md')) {
-						return;
+					// Create folder if it doesn't exist (agent will create files in it)
+					try {
+						await fs.stat(folderPath);
+					} catch {
+						// Folder doesn't exist, create it
+						await fs.mkdir(folderPath, { recursive: true });
+						logger.info(`Created Auto Run folder for watching: ${folderPath}`, LOG_CONTEXT);
 					}
 
-					const filename = path.relative(folderPath, filePath);
-					const existing = autoRunWatchPending.get(folderPath);
-					if (existing) {
-						clearTimeout(existing.timer);
+					// Validate folder exists
+					const folderStat = await fs.stat(folderPath);
+					if (!folderStat.isDirectory()) {
+						throw new Error('Path is not a directory');
 					}
-					const changes = existing?.changes ?? new Map<string, string>();
-					// 'rename' (add/unlink) takes precedence over 'change' for the same file.
-					const prior = changes.get(filename);
-					changes.set(filename, prior === 'rename' ? 'rename' : eventType);
+					if (!folderLeases.has(folderPath, event)) return {};
+					if (autoRunWatchers.has(folderPath)) return {};
 
-					const timer = setTimeout(() => {
-						autoRunWatchPending.delete(folderPath);
-						for (const [name, evt] of changes) {
-							const filenameWithoutExt = name.replace(/\.md$/i, '');
-							safeSend('autorun:fileChanged', {
-								folderPath,
-								filename: filenameWithoutExt,
-								eventType: evt,
-							});
+					// Start watching the folder recursively using chokidar (cross-platform)
+					const watcher = chokidar.watch(folderPath, {
+						ignored: [
+							/(^|[/\\])\../, // Ignore dotfiles
+							WINDOWS_LOCKED_SYSTEM_FILES,
+						],
+						persistent: true,
+						ignoreInitial: true, // Don't emit events for existing files on startup
+						depth: 99, // Recursive watching
+					});
+
+					// Handler for file changes - coalesces all pending changes for this folder
+					// into a single debounced flush so a burst of writes produces one tick of work.
+					const handleFileChange = (eventType: string) => (filePath: string) => {
+						// Only care about .md files
+						if (!filePath.toLowerCase().endsWith('.md')) {
+							return;
 						}
-						logger.info(
-							`Auto Run flushed ${changes.size} change(s) for ${folderPath}`,
-							LOG_CONTEXT
-						);
-					}, 300);
-					autoRunWatchPending.set(folderPath, { timer, changes });
-				};
 
-				watcher.on('add', handleFileChange('rename'));
-				watcher.on('change', handleFileChange('change'));
-				watcher.on('unlink', handleFileChange('rename'));
+						const filename = path.relative(folderPath, filePath);
+						const existing = autoRunWatchPending.get(folderPath);
+						if (existing) {
+							clearTimeout(existing.timer);
+						}
+						const changes = existing?.changes ?? new Map<string, string>();
+						// 'rename' (add/unlink) takes precedence over 'change' for the same file.
+						const prior = changes.get(filename);
+						changes.set(filename, prior === 'rename' ? 'rename' : eventType);
 
-				autoRunWatchers.set(folderPath, watcher);
+						const timer = setTimeout(() => {
+							autoRunWatchPending.delete(folderPath);
+							for (const [name, evt] of changes) {
+								const filenameWithoutExt = name.replace(/\.md$/i, '');
+								safeSend('autorun:fileChanged', {
+									folderPath,
+									filename: filenameWithoutExt,
+									eventType: evt,
+								});
+							}
+							logger.info(
+								`Auto Run flushed ${changes.size} change(s) for ${folderPath}`,
+								LOG_CONTEXT
+							);
+						}, 300);
+						autoRunWatchPending.set(folderPath, { timer, changes });
+					};
 
-				watcher.on('error', (error) => {
-					logger.error(`Auto Run watcher error for ${folderPath}`, LOG_CONTEXT, error);
-				});
+					watcher.on('add', handleFileChange('rename'));
+					watcher.on('change', handleFileChange('change'));
+					watcher.on('unlink', handleFileChange('rename'));
 
-				logger.info(`Started watching Auto Run folder: ${folderPath}`, LOG_CONTEXT);
+					autoRunWatchers.set(folderPath, watcher);
+
+					watcher.on('error', (error) => {
+						logger.error(`Auto Run watcher error for ${folderPath}`, LOG_CONTEXT, error);
+					});
+
+					logger.info(`Started watching Auto Run folder: ${folderPath}`, LOG_CONTEXT);
+				} catch (error) {
+					await folderLeases.release(folderPath, event);
+					throw error;
+				}
 				return {};
 			}
 		)
@@ -1089,15 +1108,13 @@ export function registerAutorunHandlers(
 	// Stop watching an Auto Run folder
 	ipcMain.handle(
 		'autorun:unwatchFolder',
-		createIpcHandler(handlerOpts('unwatchFolder', false), async (folderPath: string) => {
-			if (autoRunWatchers.has(folderPath)) {
-				autoRunWatchers.get(folderPath)?.close();
-				autoRunWatchers.delete(folderPath);
-				logger.info(`Stopped watching Auto Run folder: ${folderPath}`, LOG_CONTEXT);
+		createHandler(
+			handlerOpts('unwatchFolder', false),
+			async (event: unknown, folderPath: string) => {
+				await folderLeases.release(folderPath, event);
+				return {};
 			}
-			clearPendingChangesForFolder(folderPath);
-			return {};
-		})
+		)
 	);
 
 	// Create a backup copy of a document (for reset-on-completion)
@@ -1505,9 +1522,9 @@ export function registerAutorunHandlers(
 	// the path even if it does not exist yet and fires once the playbook writes it.
 	ipcMain.handle(
 		'autorun:watchStatus',
-		createIpcHandler(
+		createHandler(
 			handlerOpts('watchStatus'),
-			async (projectPath: string, subscriberId: string, isRemote?: boolean) => {
+			async (event: unknown, projectPath: string, subscriberId: string, isRemote?: boolean) => {
 				// An SSH agent writes STATUS.json on the REMOTE host. chokidar only
 				// sees the local filesystem, so watching here would either report
 				// nothing forever or - worse - report a same-named local file from an
@@ -1526,69 +1543,68 @@ export function registerAutorunHandlers(
 					};
 				}
 
-				// Join an existing watcher rather than replacing it: a sibling agent
-				// running Auto Run on the same project is relying on it.
-				const existing = statusWatchers.get(projectPath);
-				const statusFilePath = path.join(projectPath, STATUS_PATH);
-
-				// Read the current status once so the panel populates immediately.
-				let initialStatus: PlaybookStatus | null = null;
+				statusLeases.acquire(projectPath, event, subscriberId);
 				try {
-					const content = await fs.readFile(statusFilePath, 'utf-8');
-					initialStatus = JSON.parse(content) as PlaybookStatus;
-				} catch {
-					// Missing or malformed on first read: start blank, the watcher will catch up.
-				}
+					const statusFilePath = path.join(projectPath, STATUS_PATH);
 
-				if (existing) {
-					existing.subscribers.add(subscriberId);
-					return { status: initialStatus, watching: true };
-				}
-
-				const watcher = chokidar.watch(statusFilePath, {
-					persistent: true,
-					ignoreInitial: true,
-				});
-
-				const scheduleRead = () => {
-					const pending = statusWatchDebounceTimers.get(projectPath);
-					if (pending) clearTimeout(pending);
-					statusWatchDebounceTimers.set(
-						projectPath,
-						setTimeout(() => {
-							statusWatchDebounceTimers.delete(projectPath);
-							// Let unexpected read errors bubble to Sentry; parse errors are handled inside.
-							void readAndBroadcastStatus(projectPath, statusFilePath);
-						}, 300)
-					);
-				};
-
-				watcher.on('add', scheduleRead);
-				watcher.on('change', scheduleRead);
-				watcher.on('unlink', () => {
-					// File deleted: clear the status in the renderer.
-					const pending = statusWatchDebounceTimers.get(projectPath);
-					if (pending) {
-						clearTimeout(pending);
-						statusWatchDebounceTimers.delete(projectPath);
+					// Read the current status once so the panel populates immediately.
+					let initialStatus: PlaybookStatus | null = null;
+					try {
+						const content = await fs.readFile(statusFilePath, 'utf-8');
+						initialStatus = JSON.parse(content) as PlaybookStatus;
+					} catch {
+						// Missing or malformed on first read: start blank, the watcher will catch up.
 					}
-					safeSend('autorun:statusChanged', { projectPath, status: null });
-				});
-				watcher.on('error', (error) => {
-					logger.error(
-						`${LOG_CONTEXT} STATUS.json watcher error for ${projectPath}`,
-						LOG_CONTEXT,
-						error
-					);
-				});
 
-				statusWatchers.set(projectPath, {
-					watcher,
-					subscribers: new Set([subscriberId]),
-				});
-				logger.info(`Started watching STATUS.json in: ${projectPath}`, LOG_CONTEXT);
+					if (!statusLeases.has(projectPath, event, subscriberId))
+						return { status: initialStatus, watching: false };
+					if (statusWatchers.has(projectPath)) return { status: initialStatus, watching: true };
 
-				return { status: initialStatus, watching: true };
+					const watcher = chokidar.watch(statusFilePath, {
+						persistent: true,
+						ignoreInitial: true,
+					});
+
+					const scheduleRead = () => {
+						const pending = statusWatchDebounceTimers.get(projectPath);
+						if (pending) clearTimeout(pending);
+						statusWatchDebounceTimers.set(
+							projectPath,
+							setTimeout(() => {
+								statusWatchDebounceTimers.delete(projectPath);
+								// Let unexpected read errors bubble to Sentry; parse errors are handled inside.
+								void readAndBroadcastStatus(projectPath, statusFilePath);
+							}, 300)
+						);
+					};
+
+					watcher.on('add', scheduleRead);
+					watcher.on('change', scheduleRead);
+					watcher.on('unlink', () => {
+						// File deleted: clear the status in the renderer.
+						const pending = statusWatchDebounceTimers.get(projectPath);
+						if (pending) {
+							clearTimeout(pending);
+							statusWatchDebounceTimers.delete(projectPath);
+						}
+						safeSend('autorun:statusChanged', { projectPath, status: null });
+					});
+					watcher.on('error', (error) => {
+						logger.error(
+							`${LOG_CONTEXT} STATUS.json watcher error for ${projectPath}`,
+							LOG_CONTEXT,
+							error
+						);
+					});
+
+					statusWatchers.set(projectPath, watcher);
+					logger.info(`Started watching STATUS.json in: ${projectPath}`, LOG_CONTEXT);
+
+					return { status: initialStatus, watching: true };
+				} catch (error) {
+					await statusLeases.release(projectPath, event, subscriberId);
+					throw error;
+				}
 			}
 		)
 	);
@@ -1598,29 +1614,10 @@ export function registerAutorunHandlers(
 	// agent still running Auto Run against the same project.
 	ipcMain.handle(
 		'autorun:unwatchStatus',
-		createIpcHandler(
+		createHandler(
 			handlerOpts('unwatchStatus', false),
-			async (projectPath: string, subscriberId: string) => {
-				const entry = statusWatchers.get(projectPath);
-				if (!entry) return {};
-
-				entry.subscribers.delete(subscriberId);
-				if (entry.subscribers.size > 0) {
-					logger.debug(
-						`Released STATUS.json watch for ${projectPath} (${entry.subscribers.size} subscriber(s) remain)`,
-						LOG_CONTEXT
-					);
-					return {};
-				}
-
-				await entry.watcher.close();
-				statusWatchers.delete(projectPath);
-				const pending = statusWatchDebounceTimers.get(projectPath);
-				if (pending) {
-					clearTimeout(pending);
-					statusWatchDebounceTimers.delete(projectPath);
-				}
-				logger.info(`Stopped watching STATUS.json in: ${projectPath}`, LOG_CONTEXT);
+			async (event: unknown, projectPath: string, subscriberId: string) => {
+				await statusLeases.release(projectPath, event, subscriberId);
 				return {};
 			}
 		)
@@ -1633,12 +1630,15 @@ export function registerAutorunHandlers(
 			logger.info(`Cleaned up Auto Run watcher for: ${folderPath}`, LOG_CONTEXT);
 		}
 		autoRunWatchers.clear();
+		folderLeases.clear();
+		for (const folderPath of autoRunWatchPending.keys()) clearPendingChangesForFolder(folderPath);
 
-		for (const [projectPath, entry] of statusWatchers) {
-			entry.watcher.close();
+		for (const [projectPath, watcher] of statusWatchers) {
+			watcher.close();
 			logger.info(`Cleaned up STATUS.json watcher for: ${projectPath}`, LOG_CONTEXT);
 		}
 		statusWatchers.clear();
+		statusLeases.clear();
 		for (const timer of statusWatchDebounceTimers.values()) {
 			clearTimeout(timer);
 		}

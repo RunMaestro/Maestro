@@ -29,6 +29,8 @@ export interface MaestroWebClientConfig {
 	apiBase: string;
 	/** WebSocket path, e.g. `/$TOKEN/ws`. */
 	wsUrl: string;
+	/** Execution host OS, not the browser client OS. Older pages may omit it. */
+	hostPlatform?: string;
 	/**
 	 * Read-only token for the Concerto HTML document route. Optional so a page
 	 * served by an older build still satisfies this type.

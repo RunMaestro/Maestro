@@ -10,7 +10,7 @@
 
 import { useEffect } from 'react';
 import { REGEX_AI_TAB } from '../../../utils/sessionIdParser';
-import { useOwnedSessionGate } from './useOwnedSessionGate';
+import { useOwnedSideEffectGate } from './useOwnedSessionGate';
 import type { BatchedUpdater } from './types';
 
 export interface UseAgentStderrListenerDeps {
@@ -18,7 +18,7 @@ export interface UseAgentStderrListenerDeps {
 }
 
 export function useAgentStderrListener(deps: UseAgentStderrListenerDeps): void {
-	const ownedGate = useOwnedSessionGate();
+	const ownedGate = useOwnedSideEffectGate();
 	useEffect(() => {
 		const unsubscribe = window.maestro.process.onStderr((sessionId: string, data: string) => {
 			// Window scoping: ignore agents this window doesn't own (broadcast events).

@@ -352,9 +352,9 @@ export class ExitHandler {
 			this.emitter.emit('agent-error', sessionId, agentError);
 		}
 
-		// Clean up temp image files if any
-		if (managedProcess.tempImageFiles && managedProcess.tempImageFiles.length > 0) {
-			cleanupTempFiles(managedProcess.tempImageFiles);
+		// Remove temporary CLI attachments, including Windows prompt files.
+		if (managedProcess.tempFiles && managedProcess.tempFiles.length > 0) {
+			cleanupTempFiles(managedProcess.tempFiles);
 		}
 
 		// Emit query-complete for batch mode processes. Listeners flush buffered data
@@ -621,9 +621,9 @@ export class ExitHandler {
 			this.emitter.emit('agent-error', sessionId, agentError);
 		}
 
-		// Clean up temp image files if any
-		if (managedProcess?.tempImageFiles && managedProcess.tempImageFiles.length > 0) {
-			cleanupTempFiles(managedProcess.tempImageFiles);
+		// Remove temporary CLI attachments on process errors as well.
+		if (managedProcess?.tempFiles && managedProcess.tempFiles.length > 0) {
+			cleanupTempFiles(managedProcess.tempFiles);
 		}
 
 		this.emitter.emit('data', sessionId, `[error] ${error.message}`);

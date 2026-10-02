@@ -1,12 +1,12 @@
 // Tab helper functions for AI multi-tab support
 // These helpers manage AITab state within Maestro sessions
 
+import type { BrowserTab } from '../../../shared/browserPage';
 import {
 	Session,
 	AITab,
 	ClosedTab,
 	ClosedTabEntry,
-	BrowserTab,
 	FilePreviewTab,
 	UnifiedTab,
 	UnifiedTabRef,

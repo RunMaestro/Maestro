@@ -9,11 +9,9 @@ import {
 /**
  * Decides which of the active agent's browser tabs stay mounted.
  *
- * Each in-app browser tab is an Electron <webview>; unmounting it destroys the
- * guest webContents, so the page cold-reloads (and loses all in-memory JS state)
- * when the tab is shown again. To preserve background-tab state we keep extra
- * webviews mounted but hidden, mirroring the terminal keep-alive overlay pattern
- * in MainPanelContent.
+ * Browser workloads live in main-owned pages. This hook retains presentations
+ * and coworking handles according to the existing keep-alive policy; unmounting
+ * a presentation never destroys a remotely retained host workload.
  *
  * Policy comes from the `browserTabKeepAlive` setting:
  *  - 'off'    - only the active browser tab is mounted (lowest memory; page
@@ -138,6 +136,7 @@ export function useBrowserTabMounting(activeSession: Session | null): string[] {
 		activeBrowserTabId,
 		recency,
 		pins,
+		sessionId,
 		groupBrowserLeafKey,
 	]);
 }

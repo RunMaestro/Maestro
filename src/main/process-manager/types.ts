@@ -25,6 +25,8 @@ export interface ProcessConfig {
 	cwd: string;
 	command: string;
 	args: string[];
+	/** Attach to an existing terminal handle instead of replacing it. */
+	reuseTerminal?: boolean;
 	requiresPty?: boolean;
 	prompt?: string;
 	shell?: string;
@@ -134,7 +136,8 @@ export interface ManagedProcess {
 	 *  corrected `usage` event immediately instead of the gauge staying wrong until
 	 *  the next turn. Cleared once resolved or pushed, so no double emit. */
 	pendingOmpUsagePush?: { model: string; stats: UsageStats };
-	tempImageFiles?: string[];
+	/** Temporary CLI attachments (images and prompt files), owned until process termination. */
+	tempFiles?: string[];
 	command?: string;
 	args?: string[];
 	lastUsageTotals?: UsageTotals;
@@ -185,6 +188,9 @@ export type { UsageStats } from '../../shared/types';
 export interface SpawnResult {
 	pid: number;
 	success: boolean;
+	error?: string;
+	/** True when the existing terminal was reused; startup commands must not run again. */
+	attached?: boolean;
 }
 
 export interface CommandResult {

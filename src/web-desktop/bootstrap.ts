@@ -31,19 +31,23 @@ declare global {
 }
 
 export function ensureWebProcess(target: Window): void {
+	const hostPlatform = target.__MAESTRO_CONFIG__?.hostPlatform;
 	if (!target.process) {
 		target.process = {
 			env: { NODE_ENV: 'production' },
 			versions: { electron: '0.0.0-web', chrome: '0.0.0', node: '0.0.0' },
-			platform: navigator.userAgent.includes('Mac')
-				? 'darwin'
-				: navigator.userAgent.includes('Win')
-					? 'win32'
-					: 'linux',
+			platform:
+				hostPlatform ??
+				(navigator.userAgent.includes('Mac')
+					? 'darwin'
+					: navigator.userAgent.includes('Win')
+						? 'win32'
+						: 'linux'),
 			argv: [],
 		};
 		return;
 	}
+	if (hostPlatform) target.process.platform = hostPlatform;
 
 	// The shared preload reads process.argv to resolve Electron-only launch
 	// arguments. Browser builds have no argv, so provide the empty Node shape
@@ -97,12 +101,11 @@ void bootWebDesktop(window, {
 		// #root - React's error boundary reports app-level errors in context,
 		// and a stale-chunk failure recovers by reloading instead.
 		markBooted();
-		// Register the PWA service worker once the app is mounted. The server
-		// injects window.__MAESTRO_CONFIG__ inline before any module runs, so the
-		// security token is already available; registerServiceWorker() reads it to
-		// register /<token>/sw.js at scope /<token>/. It swallows its own failures
-		// (unsupported browser, registration error), so this never affects boot.
-		void registerServiceWorker();
+		// Native Lite owns connection state and has no offline execution mode.
+		// Keep PWA caching out of its authenticated WebContentsView navigations.
+		if (new URLSearchParams(window.location.search).get('lite') !== '1') {
+			void registerServiceWorker();
+		}
 	})
 	.catch((err) => {
 		const detail = (err && (err.stack || err.message)) || String(err);

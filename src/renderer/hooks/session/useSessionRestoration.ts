@@ -35,9 +35,13 @@ import { migrateLegacySnoozedTabs } from '../../utils/snoozeHelpers';
 import { isMediaStreamUrl } from '../../../shared/mediaTypes';
 import { PLAYBOOKS_DIR } from '../../../shared/maestro-paths';
 import { logger } from '../../utils/logger';
-import { readPersistedActiveSessionId } from '../../utils/activeSessionPersistence';
+import {
+	readPersistedActiveSessionId,
+	restoreClientSessionView,
+} from '../../utils/activeSessionPersistence';
 import { useSessionLifecycleSync } from './useSessionLifecycleSync';
 import { useEventListener } from '../utils/useEventListener';
+import { SESSION_PERSISTENCE_BASELINE_EVENT } from '../utils/useDebouncedPersistence';
 import { WEB_BRIDGE_RECONCILE_EVENT } from '../../../shared/webClientConfig';
 import { requestWebBridgeReconcile } from '../../services/webBridgeReconcile';
 import { releaseConnectionHeldQueueItems } from '../../utils/executionQueue';
@@ -401,6 +405,7 @@ export function useSessionRestoration(): SessionRestorationReturn {
 	// --- restoreSession ---
 	const restoreSession = useCallback(async (session: Session): Promise<Session> => {
 		try {
+			session = restoreClientSessionView(session);
 			// Migration: tag snoozes parked before SnoozedTabEntry carried a kind.
 			// An untagged entry falls through every per-kind switch, and the wake
 			// path would clear the snooze without restoring the tab.
@@ -673,20 +678,24 @@ export function useSessionRestoration(): SessionRestorationReturn {
 			// also stops normalizeTabGroups from pruning its now-dangling leaf and
 			// dissolving the group. Collect the group-tiled terminal ids first.
 			const groupedTerminalIds = collectGroupedTerminalIds(correctedSession);
-			const resetTerminalTabs = (correctedSession.terminalTabs || [])
-				.filter((tab) => terminalTabSurvivesRestart(tab, groupedTerminalIds))
-				.map((tab) => ({
-					...tab,
-					pid: 0,
-					state: 'idle' as const,
-					exitCode: undefined,
-				}));
-			// Ephemeral (incognito) tabs are never persisted, but drop any that leak
-			// through anyway (older snapshots): their in-memory partition did not
-			// survive the restart, so rehydrating them would produce a blank tab.
-			const resetBrowserTabs = (correctedSession.browserTabs || [])
-				.filter((tab) => !isEphemeralBrowserTab(tab))
-				.map((tab) => rehydrateBrowserTab(tab, correctedSession.id));
+			const resetTerminalTabs = isWebDesktop()
+				? correctedSession.terminalTabs || []
+				: (correctedSession.terminalTabs || [])
+						.filter((tab) => terminalTabSurvivesRestart(tab, groupedTerminalIds))
+						.map((tab) => ({
+							...tab,
+							pid: 0,
+							ptyInitialized: false,
+							state: 'idle' as const,
+							exitCode: undefined,
+						}));
+			// A remote reload is not a host restart: preserve its live partitions.
+			// Native restart still discards ephemeral partitions and rehydrates durable tabs.
+			const resetBrowserTabs = isWebDesktop()
+				? correctedSession.browserTabs || []
+				: (correctedSession.browserTabs || [])
+						.filter((tab) => !isEphemeralBrowserTab(tab))
+						.map((tab) => rehydrateBrowserTab(tab, correctedSession.id));
 			const validAiTabIds = new Set(resetAiTabs.map((tab) => tab.id));
 			const validBrowserTabIds = new Set(resetBrowserTabs.map((tab) => tab.id));
 			const validTerminalTabIds = new Set(resetTerminalTabs.map((tab) => tab.id));
@@ -826,6 +835,9 @@ export function useSessionRestoration(): SessionRestorationReturn {
 					? await window.maestro.sessions.getBootstrap()
 					: await window.maestro.sessions.getAll();
 
+				window.dispatchEvent(
+					new CustomEvent(SESSION_PERSISTENCE_BASELINE_EVENT, { detail: savedSessions ?? [] })
+				);
 				// Handle sessions
 				if (savedSessions && savedSessions.length > 0) {
 					const restoredSessions = await Promise.all(savedSessions.map((s) => restoreSession(s)));

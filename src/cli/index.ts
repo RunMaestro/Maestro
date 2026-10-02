@@ -182,6 +182,7 @@ import {
 } from './commands/agent-run';
 import { mcpServe } from './commands/mcp';
 
+import { registerLiteCommands } from './commands/lite';
 // Injected at build time by scripts/build-cli.mjs via esbuild `define`.
 // The typeof guard keeps non-esbuild execution paths (ts-node, plain tsc output) from
 // throwing a ReferenceError; in those paths the constant is never substituted.
@@ -200,6 +201,8 @@ program.name('maestro-cli').description('Command-line interface for Maestro').ve
 program
 	.option('-q, --quiet', 'Suppress incidental success output (errors still print)')
 	.option('--verbose', 'Print extra detail where available');
+
+registerLiteCommands(program);
 
 program.hook('preAction', (thisCommand) => {
 	const opts = thisCommand.opts();

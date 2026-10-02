@@ -51,6 +51,7 @@ import {
 } from '../../utils/desktopTabSelectionSync';
 import { loadAllSettings } from '../../stores/settingsStore';
 import { useRemoteGroupChat } from './useRemoteGroupChat';
+import { isWebDesktop } from '../../utils/runtimeContext';
 
 /**
  * Dependencies for the useRemoteIntegration hook.
@@ -563,6 +564,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 					let updatedSession = s;
 					if (isInventorySync) {
 						const existingById = new Map(s.aiTabs.map((tab) => [tab.id, tab]));
+						const deferredTabIds = new Set(s.deferredContent?.tabIds ?? []);
 						const aiTabs = remoteTabs.map((remoteTab) => {
 							const existing = existingById.get(remoteTab.id);
 							const syncedFields = {
@@ -581,16 +583,27 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 							// change signature. Preserve the browser's current draft for tabs it
 							// already knows so unrelated updates cannot replace newer input.
 							if (existing) return { ...existing, ...syncedFields };
+							deferredTabIds.add(remoteTab.id);
 							return {
 								...syncedFields,
-								inputValue: remoteTab.inputValue,
+								inputValue: '',
 								logs: [],
 								stagedImages: [],
 								saveToHistory: defaultSaveToHistory,
 								showThinking: defaultShowThinking,
 							};
 						});
-						updatedSession = { ...s, aiTabs };
+						const pendingTabIds = aiTabs
+							.filter((tab) => deferredTabIds.has(tab.id))
+							.map((tab) => tab.id);
+						updatedSession = {
+							...s,
+							aiTabs,
+							deferredContent:
+								pendingTabIds.length > 0 || s.deferredContent?.commands
+									? { ...s.deferredContent, tabIds: pendingTabIds }
+									: undefined,
+						};
 						updatedSession = {
 							...updatedSession,
 							unifiedTabOrder: getRepairedUnifiedTabOrder(updatedSession),
@@ -2411,6 +2424,16 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 
 	// Group chat requests from the CLI / web client
 	useRemoteGroupChat();
+
+	// Register after the remote-operation hooks. Read current initialization
+	// state at probe time so a failed session read cannot look like an empty host.
+	useEffect(() => {
+		if (isWebDesktop()) return;
+		return window.maestro.web.onLiteReady(() => {
+			const state = useSessionStore.getState();
+			return state.initialLoadComplete && state.sessionsReadOk;
+		});
+	}, []);
 
 	return {};
 }

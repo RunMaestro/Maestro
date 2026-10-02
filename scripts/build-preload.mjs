@@ -52,6 +52,11 @@ async function build() {
 			...sharedOptions,
 		});
 		logBuilt(preloadOutfile);
+		await esbuild.build({
+			entryPoints: [path.join(rootDir, 'src/main/lite/preload.ts')],
+			outfile: path.join(distMainDir, 'lite/preload.js'),
+			...sharedOptions,
+		});
 
 		// Isolated plugin-consent preload (window.pluginConsent) for the dedicated,
 		// host-owned consent window. Same options as the main preload.

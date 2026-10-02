@@ -9,6 +9,7 @@
 
 import { ipcRenderer } from 'electron';
 import type { Group } from '../../shared/types';
+import type { SessionTranscriptPatch } from '../../shared/sessionTranscript';
 
 /**
  * Stored session data for persistence.
@@ -44,17 +45,35 @@ export function createSessionsApi() {
 		getBootstrap: () => ipcRenderer.invoke('sessions:getBootstrap'),
 		getDeferredContent: (sessionId: string, tabId: string | null, includeCommands: boolean) =>
 			ipcRenderer.invoke('sessions:getDeferredContent', sessionId, tabId, includeCommands),
-		setAll: (sessions: StoredSession[]) => ipcRenderer.invoke('sessions:setAll', sessions),
+		setAll: (sessions: StoredSession[], baselines?: StoredSession[]) =>
+			ipcRenderer.invoke('sessions:setAll', sessions, baselines),
 		/**
 		 * Incremental persistence: merge `updates` into the stored sessions and
 		 * remove any whose id is in `removeIds`. Preferred over `setAll` for
 		 * debounced flushes - avoids cloning + serializing the entire sessions
 		 * tree on every change.
 		 */
-		setMany: (updates: StoredSession[], removeIds: string[] = []) =>
-			ipcRenderer.invoke('sessions:setMany', updates, removeIds),
+		setMany: (updates: StoredSession[], removeIds: string[] = [], baselines?: StoredSession[]) =>
+			ipcRenderer.invoke('sessions:setMany', updates, removeIds, baselines),
 		getActiveSessionId: () => ipcRenderer.invoke('sessions:getActiveSessionId') as Promise<string>,
 		setActiveSessionId: (id: string) => ipcRenderer.invoke('sessions:setActiveSessionId', id),
+		publishTranscript: (patch: SessionTranscriptPatch, requestId?: string) =>
+			ipcRenderer.invoke('sessions:publishTranscript', patch, requestId),
+		onTranscriptSync: (handler: (patch: SessionTranscriptPatch) => void) => {
+			const listener = (_: unknown, patch: SessionTranscriptPatch) => handler(patch);
+			ipcRenderer.on('sessions:transcriptSync', listener);
+			return () => ipcRenderer.removeListener('sessions:transcriptSync', listener);
+		},
+		onTranscriptRequest: (
+			handler: (request: { sessionId: string; tabId: string; requestId: string }) => void
+		) => {
+			const listener = (
+				_: unknown,
+				request: { sessionId: string; tabId: string; requestId: string }
+			) => handler(request);
+			ipcRenderer.on('sessions:transcriptRequest', listener);
+			return () => ipcRenderer.removeListener('sessions:transcriptRequest', listener);
+		},
 		/**
 		 * Listen for main-side focus requests (plugin `sessions.focus` verb). The
 		 * main store write alone is invisible to the live renderer store, so the
@@ -73,11 +92,21 @@ export function createSessionsApi() {
 		 * by reloading - and its stale copy resurrects agents they closed.
 		 */
 		onLifecycleSync: (
-			handler: (payload: { added: StoredSession[]; removedIds: string[] }) => void
+			handler: (payload: {
+				added: StoredSession[];
+				removedIds: string[];
+				updated?: StoredSession[];
+				baselines?: StoredSession[];
+			}) => void
 		) => {
 			const wrappedHandler = (
 				_: unknown,
-				payload: { added: StoredSession[]; removedIds: string[] }
+				payload: {
+					added: StoredSession[];
+					removedIds: string[];
+					updated?: StoredSession[];
+					baselines?: StoredSession[];
+				}
 			) => handler(payload);
 			ipcRenderer.on('sessions:lifecycleSync', wrappedHandler);
 			return () => ipcRenderer.removeListener('sessions:lifecycleSync', wrappedHandler);

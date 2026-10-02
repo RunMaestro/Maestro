@@ -25,5 +25,5 @@
 		"noFallthroughCasesInSwitch": true
 	},
 	"include": ["src/main/**/*", "src/shared/**/*", "src/types/**/*"],
-	"exclude": ["node_modules", "dist", "release"]
+	"exclude": ["node_modules", "dist", "release", "src/main/lite/preload.ts"]
 }

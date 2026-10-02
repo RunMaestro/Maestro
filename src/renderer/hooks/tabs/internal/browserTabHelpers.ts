@@ -1,4 +1,4 @@
-import type { BrowserTab } from '../../../types';
+import type { BrowserTab } from '../../../../shared/browserPage';
 import {
 	DEFAULT_BROWSER_TAB_TITLE,
 	DEFAULT_BROWSER_TAB_URL,

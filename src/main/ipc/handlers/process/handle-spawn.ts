@@ -972,6 +972,11 @@ export async function handleProcessSpawn(
 			}),
 		}
 	);
+	if (!result.success) {
+		throw new Error(
+			result.error || `Failed to spawn ${config.toolType}: agent process did not start`
+		);
+	}
 
 	// Arm the interactive-mode replay controller when this turn ran
 	// through maestro-p. If the wrapper exits with code 2 (Max-plan

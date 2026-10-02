@@ -4,8 +4,8 @@
  * Extracted from messageHandlers.ts.
  */
 
-import { WebSocket } from 'ws';
 import type {
+	WebClient,
 	AutoRunDocument,
 	WebSettings,
 	SettingValue,
@@ -75,15 +75,7 @@ export interface WebClientMessage {
 	[key: string]: unknown;
 }
 
-/**
- * Web client connection info
- */
-export interface WebClient {
-	socket: WebSocket;
-	id: string;
-	connectedAt: number;
-	subscribedSessionId?: string;
-}
+export type { WebClient } from '../../types';
 
 /**
  * Session detail for command validation

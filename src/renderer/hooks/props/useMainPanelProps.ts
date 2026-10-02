@@ -143,6 +143,7 @@ export interface UseMainPanelPropsDeps {
 	handleInputKeyDown: (e: React.KeyboardEvent<HTMLTextAreaElement>) => void;
 	handlePaste: (e: React.ClipboardEvent<HTMLTextAreaElement>) => void;
 	handleDrop: (e: React.DragEvent<HTMLElement>) => void;
+	handleUploadFiles?: (files: File[]) => void;
 	getContextColor: (usage: number, theme: Theme) => string;
 	setActiveSessionId: (id: string) => void;
 	handleStopBatchRun: (sessionId?: string) => void;
@@ -196,7 +197,7 @@ export interface UseMainPanelPropsDeps {
 	handleBrowserTabUpdate: (
 		sessionId: string,
 		tabId: string,
-		updates: Partial<import('../../types').BrowserTab>
+		updates: Partial<import('../../../shared/browserPage').BrowserTab>
 	) => void;
 
 	// Terminal tab callbacks (Phase 8)
@@ -385,6 +386,7 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			handleInputKeyDown: deps.handleInputKeyDown,
 			handlePaste: deps.handlePaste,
 			handleDrop: deps.handleDrop,
+			onUploadFiles: deps.handleUploadFiles,
 			getContextColor: deps.getContextColor,
 			setActiveSessionId: deps.setActiveSessionId,
 			currentSessionBatchState: deps.currentSessionBatchState,
@@ -636,6 +638,7 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			deps.handleInputKeyDown,
 			deps.handlePaste,
 			deps.handleDrop,
+			deps.handleUploadFiles,
 			deps.getContextColor,
 			deps.setActiveSessionId,
 			deps.handleStopBatchRun,

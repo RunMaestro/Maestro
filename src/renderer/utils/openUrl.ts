@@ -10,12 +10,14 @@
  * other protocols always fall through to the system browser.
  */
 
-import type { BrowserTab } from '../types';
+import type { BrowserTab } from '../../shared/browserPage';
 import { useSettingsStore } from '../stores/settingsStore';
 import { useSessionStore, selectActiveSession } from '../stores/sessionStore';
 import { generateId } from './ids';
 import { getBrowserTabPartition } from './browserTabPersistence';
 import { insertAfterActiveInUnifiedTabOrder } from './unifiedTabOrderUtils';
+import { isWebDesktop } from './runtimeContext';
+import { isHostLocalPreviewUrl } from '../../shared/hostLocalPreview';
 
 /**
  * Open a URL, respecting the user's default browser setting.
@@ -25,6 +27,11 @@ import { insertAfterActiveInUnifiedTabOrder } from './unifiedTabOrderUtils';
  *                         held - inverts the default browser choice
  */
 export function openUrl(url: string, options?: { ctrlKey?: boolean }): void {
+	// Never send a host localhost URL to a browser executing on the client.
+	if (isWebDesktop() && isHostLocalPreviewUrl(url)) {
+		openInMaestroBrowser(url);
+		return;
+	}
 	// mailto: always goes to system browser
 	if (/^mailto:/i.test(url)) {
 		window.maestro.shell.openExternal(url);
@@ -57,6 +64,10 @@ export function openUrl(url: string, options?: { ctrlKey?: boolean }): void {
  * Open a URL directly in the system browser, bypassing settings.
  */
 export function openInSystemBrowser(url: string): void {
+	if (isWebDesktop() && isHostLocalPreviewUrl(url)) {
+		openInMaestroBrowser(url);
+		return;
+	}
 	window.maestro.shell.openExternal(url);
 }
 

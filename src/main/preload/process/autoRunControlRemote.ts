@@ -1,22 +1,46 @@
 import { ipcRenderer } from 'electron';
 import type { AutoRunBroadcastState } from '../../../shared/autoRunBroadcast';
+import type { BatchRunConfig } from '../../../shared/types';
+import type { AutoRunRemoteControl, AutoRunRemoteResult } from '../../../shared/autoRunRemote';
 
 export function createAutoRunControlRemoteApi() {
 	return {
-		/**
-		 * Subscribe to Auto Run state belonging to a DIFFERENT Maestro client.
-		 *
-		 * Two producers feed this one channel. In the web-desktop (browser) build
-		 * the WebSocket shim maps the server's `autorun_state` packet onto it. In
-		 * the Electron desktop app main sends it directly, for a run owned by a
-		 * browser tab - the desktop is not a WebSocket client, so without that
-		 * forward a web-started run was invisible here for its whole duration
-		 * (issue #1519).
-		 *
-		 * A window is never sent its own run back, so the owner keeps its
-		 * controls; see `forwardAutoRunStateToDesktopWindows` in
-		 * `main/ipc/handlers/web.ts`.
-		 */
+		onRemoteStartAutoRun: (
+			callback: (
+				sessionId: string,
+				config: BatchRunConfig,
+				folderPath: string,
+				responseChannel: string
+			) => void
+		): (() => void) => {
+			const handler = (
+				_: unknown,
+				sessionId: string,
+				config: BatchRunConfig,
+				folderPath: string,
+				responseChannel: string
+			) => callback(sessionId, config, folderPath, responseChannel);
+			ipcRenderer.on('remote:startAutoRun', handler);
+			return () => ipcRenderer.removeListener('remote:startAutoRun', handler);
+		},
+		onRemoteControlAutoRun: (
+			callback: (sessionId: string, control: AutoRunRemoteControl, responseChannel: string) => void
+		): (() => void) => {
+			const handler = (
+				_: unknown,
+				sessionId: string,
+				control: AutoRunRemoteControl,
+				responseChannel: string
+			) => callback(sessionId, control, responseChannel);
+			ipcRenderer.on('remote:controlAutoRun', handler);
+			return () => ipcRenderer.removeListener('remote:controlAutoRun', handler);
+		},
+		sendRemoteAutoRunResponse: (responseChannel: string, result: AutoRunRemoteResult): void => {
+			if (/^remote:(startAutoRun|controlAutoRun):response:[a-f0-9-]+$/i.test(responseChannel)) {
+				ipcRenderer.send(responseChannel, result);
+			}
+		},
+		/** Host Auto Run broadcasts mapped by the web-desktop bridge. */
 		onRemoteAutoRunStateMirror: (
 			callback: (sessionId: string, state: AutoRunBroadcastState | null) => void
 		): (() => void) => {

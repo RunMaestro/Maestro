@@ -192,6 +192,7 @@ export class WebSocketMessageHandler {
 	 * Helper to send a JSON message to a client with timestamp
 	 */
 	private send(client: WebClient, data: Record<string, unknown>): void {
+		if (client.isAuthorized?.() === false) return;
 		client.socket.send(JSON.stringify({ ...data, timestamp: Date.now() }));
 	}
 

@@ -3,7 +3,7 @@
  *
  * These six channels are the ONLY way an account is created, renamed, reset,
  * disabled or deleted. They are DESKTOP-ONLY by construction: the web-desktop
- * bridge refuses every `webLogin:*` channel (`BRIDGE_DENIED_CHANNELS`), so a
+ * bridge refuses every `webLogin:*` channel through its explicit remote policy, so a
  * logged-in browser can never mint itself another account, hand itself a new
  * password, or remove the account it is signed in as. The desktop is the
  * administrator and there is no second administrator.
