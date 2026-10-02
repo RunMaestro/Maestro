@@ -65,7 +65,7 @@ import {
 	cueEngineStatus,
 	cueEngineInspect,
 } from './commands/cue-engine';
-import { bundleExport } from './commands/bundle';
+import { bundleExport, bundleInspect, bundleValidate } from './commands/bundle';
 import { createAgent } from './commands/create-agent';
 import { createGroup } from './commands/create-group';
 import { removeGroup } from './commands/remove-group';
@@ -1164,7 +1164,7 @@ cueEngine
 // Reads the data directory directly, so these work with the app closed.
 const bundle = program
 	.command('bundle')
-	.description('Export Cue pipelines and agents as portable bundles');
+	.description('Export, validate, and inspect portable Cue pipeline and agent bundles');
 
 bundle
 	.command('export')
@@ -1177,6 +1177,21 @@ bundle
 	.option('--created-at <iso>', 'Record this ISO-8601 time as the bundle creation time')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((options) => bundleExport(cliVersion, options));
+
+bundle
+	.command('validate <bundle>')
+	.description(
+		'Check a bundle zip: file hashes both ways, cue.yaml, references, secrets, and engine version'
+	)
+	.option('--check-env', 'Also warn about required secrets that are unset in this environment')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((bundlePath, options) => bundleValidate(cliVersion, bundlePath, options));
+
+bundle
+	.command('inspect <bundle>')
+	.description('Describe a bundle from its manifest and README without unpacking the rest')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(bundleInspect);
 
 // Director's Notes commands
 const directorNotes = program

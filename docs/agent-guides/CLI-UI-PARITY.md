@@ -270,6 +270,8 @@ of taking a second round trip or trusting a value the caller guessed.
 | Auto Run panel: Change folder                                             | `auto-run-folder <path> -a <agent>`                                                              |
 | Playbook Exchange: browse, README, install                                | `marketplace list`, `marketplace show <id>`, `marketplace import`                                |
 | Export a Cue pipeline or agent as a bundle (CLI first; no UI surface yet) | `bundle export --pipeline <name>` / `bundle export --agent <name>`                               |
+| Check a Cue bundle before import (CLI first; no UI surface yet)           | `bundle validate <zip> [--check-env] [--json]`                                                   |
+| Preview a Cue bundle's contents (CLI first; no UI surface yet)            | `bundle inspect <zip> [--json]`                                                                  |
 
 ## Open gaps
 

@@ -876,7 +876,7 @@ List every agent with a readable .maestro/cue.yaml and its subscription counts
 
 ## `maestro-cli bundle`
 
-Export Cue pipelines and agents as portable bundles
+Export, validate, and inspect portable Cue pipeline and agent bundles
 
 ## `maestro-cli bundle export`
 
@@ -891,6 +891,23 @@ Export one Cue pipeline or one agent to a deterministic bundle zip
 | `--data-dir <path>`        | Read Maestro's data from this directory instead of the default | -       |
 | `--created-at <iso>`       | Record this ISO-8601 time as the bundle creation time          | -       |
 | `--json`                   | Output as JSON (for scripting)                                 | -       |
+
+## `maestro-cli bundle validate <bundle>`
+
+Check a bundle zip: file hashes both ways, cue.yaml, references, secrets, and engine version
+
+| Option        | Description                                                         | Default |
+| ------------- | ------------------------------------------------------------------- | ------- |
+| `--check-env` | Also warn about required secrets that are unset in this environment | -       |
+| `--json`      | Output as JSON (for scripting)                                      | -       |
+
+## `maestro-cli bundle inspect <bundle>`
+
+Describe a bundle from its manifest and README without unpacking the rest
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
 
 ## `maestro-cli director-notes`
 
