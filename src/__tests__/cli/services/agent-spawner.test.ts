@@ -166,10 +166,12 @@ vi.mock('os', async () => {
 const mockGetAgentCustomPath = vi.fn();
 const mockReadAgentConfig = vi.fn<(toolType: string) => Record<string, unknown>>(() => ({}));
 const mockReadSshRemotes = vi.fn<() => unknown[]>(() => []);
+const mockReadGlobalShellEnvVars = vi.fn((): Record<string, string> => ({}));
 vi.mock('../../../cli/services/storage', () => ({
 	getAgentCustomPath: (...args: unknown[]) => mockGetAgentCustomPath(...args),
 	readAgentConfig: (toolType: string) => mockReadAgentConfig(toolType),
 	readSshRemotes: () => mockReadSshRemotes(),
+	readGlobalShellEnvVars: () => mockReadGlobalShellEnvVars(),
 }));
 
 // Mock SSH wrapper so SSH tests don't need real ssh/bash on the test machine
@@ -201,7 +203,20 @@ describe('agent-spawner', () => {
 		(mockChild as EventEmitter).removeAllListeners();
 		mockGetAgentCustomPath.mockReturnValue(undefined);
 		mockReadAgentConfig.mockReturnValue({});
-		mockReadSshRemotes.mockReturnValue([]);
+		// The remote the SSH tests point at. The launch plan resolves it before
+		// the wrapper runs, so a remote missing from this list is an error.
+		mockReadSshRemotes.mockReturnValue([
+			{
+				id: 'r1',
+				name: 'r1',
+				host: 'remotehost',
+				port: 22,
+				username: 'dev',
+				privateKeyPath: '',
+				enabled: true,
+			},
+		]);
+		mockReadGlobalShellEnvVars.mockReturnValue({});
 		mockWrapSpawnWithSsh.mockReset();
 		pathProbeResolver = DEFAULT_PATH_PROBE;
 	});
@@ -1924,9 +1939,13 @@ Some text with [x] in it that's not a checkbox
 			expect(result.agentSessionId).toBe('sess-soft');
 		});
 
-		it('should let a pre-set CLAUDE_CODE_DISABLE_BACKGROUND_TASKS from shell env win', async () => {
+		it('lets a global Settings var turn CLAUDE_CODE_DISABLE_BACKGROUND_TASKS off', async () => {
+			// The provider default outranks whatever the shell inherited (the order
+			// desktop has always used), and the global Settings layer outranks the
+			// default, so Settings -> Environment is where a user switches it off.
 			// `isolateAgentEnv` restores the real value after the test.
 			process.env.CLAUDE_CODE_DISABLE_BACKGROUND_TASKS = '0';
+			mockReadGlobalShellEnvVars.mockReturnValue({ CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '0' });
 
 			const resultPromise = spawnAgent('claude-code', '/project', 'prompt');
 			await new Promise((resolve) => setTimeout(resolve, 0));
@@ -2151,19 +2170,13 @@ Some text with [x] in it that's not a checkbox
 		});
 
 		it('reports an unresolved SSH remote as crashed before anything is spawned', async () => {
-			mockWrapSpawnWithSsh.mockResolvedValue({
-				command: 'codex',
-				args: [],
-				cwd: '/project',
-				sshRemoteUsed: null,
-			});
-
 			const result = await spawnAgent('codex', '/project', 'prompt', undefined, {
 				sshRemoteConfig: { enabled: true, remoteId: 'gone' },
 			});
 
 			expect(result).toMatchObject({ success: false, outcome: 'crashed' });
-			expect(result.error).toContain('could not be resolved');
+			expect(result.error).toContain('"gone" no longer exists');
+			expect(mockWrapSpawnWithSsh).not.toHaveBeenCalled();
 			expect(mockSpawn).not.toHaveBeenCalled();
 		});
 
@@ -2672,19 +2685,46 @@ Some text with [x] in it that's not a checkbox
 			expect(options.env.MAESTRO_TEST_LAYER).toBe('session');
 		});
 
-		it('shell env wins over agent defaultEnvVars when user has no customEnvVars', async () => {
-			// Regression: agent.defaultEnvVars must NOT silently override a value
-			// the shell already exports. OpenCode has OPENCODE_CONFIG_CONTENT in
-			// its defaultEnvVars - if the shell sets it, that shell value should
-			// survive to the spawned process.
+		it('agent defaultEnvVars override a value inherited from the shell', async () => {
+			// The shared five-layer order: process.env < provider defaults <
+			// global Settings < agent vars. Desktop and Cue apply the default over
+			// an inherited value, so the CLI does too; the CLI used to let the
+			// shell win, which made the same agent run differently from the
+			// command line. OpenCode's default keeps its question tool off, which a
+			// batch run needs to avoid hanging on stdin.
 			// `isolateAgentEnv` restores the real value after the test.
-			process.env.OPENCODE_CONFIG_CONTENT = 'shell-wins';
+			process.env.OPENCODE_CONFIG_CONTENT = 'inherited';
 
 			const p = spawnAgent('opencode', '/p', 'hi');
 			await driveSpawnToCompletion(p, 0);
 
 			const { options } = spawnCall();
-			expect(options.env.OPENCODE_CONFIG_CONTENT).toBe('shell-wins');
+			expect(options.env.OPENCODE_CONFIG_CONTENT).toContain('"permission"');
+		});
+
+		it('global Settings vars override agent defaultEnvVars', async () => {
+			mockReadGlobalShellEnvVars.mockReturnValue({ OPENCODE_CONFIG_CONTENT: 'from-settings' });
+
+			const p = spawnAgent('opencode', '/p', 'hi');
+			await driveSpawnToCompletion(p, 0);
+
+			const { options } = spawnCall();
+			expect(options.env.OPENCODE_CONFIG_CONTENT).toBe('from-settings');
+		});
+
+		it('strips the Electron vars a CLI spawn inherits', async () => {
+			const saved = process.env.ELECTRON_RUN_AS_NODE;
+			process.env.ELECTRON_RUN_AS_NODE = '1';
+			try {
+				const p = spawnAgent('opencode', '/p', 'hi');
+				await driveSpawnToCompletion(p, 0);
+
+				const { options } = spawnCall();
+				expect(options.env.ELECTRON_RUN_AS_NODE).toBeUndefined();
+			} finally {
+				if (saved === undefined) delete process.env.ELECTRON_RUN_AS_NODE;
+				else process.env.ELECTRON_RUN_AS_NODE = saved;
+			}
 		});
 
 		it('agent defaultEnvVars is applied when the shell has not set it', async () => {
@@ -2813,33 +2853,53 @@ Some text with [x] in it that's not a checkbox
 		});
 
 		it('returns a clear error when SSH is enabled but the remote is unresolvable', async () => {
-			mockWrapSpawnWithSsh.mockResolvedValue(
-				sshWrapResult({ command: 'claude', args: [], cwd: '/p', sshRemoteUsed: null })
-			);
-
 			const result = await spawnAgent('claude-code', '/p', 'hi', undefined, {
 				sshRemoteConfig: { enabled: true, remoteId: 'missing-remote' },
 			});
 
 			expect(result.success).toBe(false);
 			expect(result.error).toMatch(/SSH remote execution is enabled/i);
-			expect(result.error).toMatch(/could not be resolved/i);
-			expect(result.error).toContain('missing-remote');
+			expect(result.error).toContain('"missing-remote" no longer exists');
 			// Must not fall through to a local spawn - user explicitly opted into SSH
+			expect(mockWrapSpawnWithSsh).not.toHaveBeenCalled();
+			expect(mockSpawn).not.toHaveBeenCalled();
+		});
+
+		it('names a disabled remote instead of calling it missing', async () => {
+			mockReadSshRemotes.mockReturnValue([
+				{ id: 'r1', name: 'Build Box', host: 'remotehost', enabled: false },
+			]);
+
+			const result = await spawnAgent('claude-code', '/p', 'hi', undefined, {
+				sshRemoteConfig: { enabled: true, remoteId: 'r1' },
+			});
+
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('"Build Box" is disabled');
+			expect(mockSpawn).not.toHaveBeenCalled();
+		});
+
+		it('still fails if the wrapper cannot resolve a remote the plan found', async () => {
+			mockWrapSpawnWithSsh.mockResolvedValue(
+				sshWrapResult({ command: 'claude', args: [], cwd: '/p', sshRemoteUsed: null })
+			);
+
+			const result = await spawnAgent('claude-code', '/p', 'hi', undefined, {
+				sshRemoteConfig: { enabled: true, remoteId: 'r1' },
+			});
+
+			expect(result.success).toBe(false);
+			expect(result.error).toMatch(/could not be resolved/i);
 			expect(mockSpawn).not.toHaveBeenCalled();
 		});
 
 		it('hard-fails for JSON-line agents (Codex) when SSH remote is unresolvable', async () => {
-			mockWrapSpawnWithSsh.mockResolvedValue(
-				sshWrapResult({ command: 'codex', args: [], cwd: '/p', sshRemoteUsed: null })
-			);
-
 			const result = await spawnAgent('codex', '/p', 'hi', undefined, {
 				sshRemoteConfig: { enabled: true, remoteId: 'gone' },
 			});
 
 			expect(result.success).toBe(false);
-			expect(result.error).toMatch(/could not be resolved/);
+			expect(result.error).toContain('"gone" no longer exists');
 			expect(mockSpawn).not.toHaveBeenCalled();
 		});
 
