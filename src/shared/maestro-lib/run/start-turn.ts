@@ -28,6 +28,12 @@ export interface TurnProcessSpec {
 	 * plan chose to deliver over stdin, or the script an SSH remote runs.
 	 */
 	stdin?: string;
+	/**
+	 * Run the command through a shell: `true` for the platform default, or the
+	 * shell's path. Needed on Windows for a bare `.exe` name (PATH resolution),
+	 * a `.cmd` / `.bat` shim, or a shebang script.
+	 */
+	shell?: boolean | string;
 }
 
 /** A launch plan for this machine: the one kind that carries a full environment. */
@@ -93,6 +99,12 @@ export interface StartTurnOptions {
 	 * CLI that announces it is waiting on stdin before it notices the close.
 	 */
 	emptyStdin?: 'pipe' | 'ignore';
+	/**
+	 * Leave stdin open after writing (or with nothing written), for a process
+	 * the caller keeps talking to through `TurnHandle.child.stdin`: an
+	 * interactive agent that reads its prompts as they come.
+	 */
+	keepStdinOpen?: boolean;
 	/**
 	 * Longest partial line held before it is dropped, to bound memory against
 	 * a stream that never ends a line. No limit when omitted.
@@ -172,6 +184,7 @@ export function startTurn(
 	const child = spawn(spec.command, spec.args, {
 		cwd: spec.cwd,
 		env: spec.env,
+		shell: spec.shell ?? false,
 		stdio: [stdinMode, 'pipe', 'pipe'],
 	});
 
@@ -270,7 +283,7 @@ export function startTurn(
 	handlers.onStarted?.(child.pid);
 
 	if (hasStdin) child.stdin?.write(spec.stdin);
-	child.stdin?.end();
+	if (!options.keepStdinOpen) child.stdin?.end();
 
 	if (options.signal) {
 		if (options.signal.aborted) onAbort();
