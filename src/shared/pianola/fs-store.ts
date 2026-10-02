@@ -20,6 +20,8 @@ import {
 	PIANOLA_RULES_FILENAME,
 	PIANOLA_DECISIONS_FILENAME,
 	PIANOLA_PLANS_FILENAME,
+	PIANOLA_PROGRAMS_FILENAME,
+	PIANOLA_ASKS_FILENAME,
 	PIANOLA_SUPERVISOR_FILENAME,
 	PIANOLA_PROFILES_FILENAME,
 	PIANOLA_SUGGESTIONS_FILENAME,
@@ -29,6 +31,8 @@ import {
 	validatePianolaRules,
 	validatePianolaDecisionRecord,
 	validatePianolaPlansFile,
+	validatePianolaProgramsFile,
+	validatePianolaAsksFile,
 	validatePianolaSupervisorFile,
 	validatePianolaSuggestionsFile,
 	validatePianolaProfiles,
@@ -50,6 +54,7 @@ import {
 } from './pianola-scope-checkpoint';
 import { isPianolaScopeId } from './pianola-scope';
 import { canonicalJson } from '../canonicalJson';
+import type { PianolaProgram, PianolaAsk } from './pianola-programs';
 
 export interface PianolaFsStoreConfig {
 	/** Resolve the data dir (Electron userData for main, config dir for CLI). Re-read per op. */
@@ -71,6 +76,11 @@ export interface PianolaFsStore {
 	writePlans(plans: PianolaPlan[]): PianolaPlan[];
 	getPlan(planId: string): PianolaPlan | null;
 	upsertPlan(plan: PianolaPlan): PianolaPlan[];
+	readPrograms(): PianolaProgram[];
+	writePrograms(programs: PianolaProgram[]): PianolaProgram[];
+	upsertProgram(program: PianolaProgram): PianolaProgram[];
+	readAsks(): PianolaAsk[];
+	writeAsks(asks: PianolaAsk[]): PianolaAsk[];
 	readSuggestions(): PianolaSuggestionsFile;
 	writeSuggestions(file: PianolaSuggestionsFile): PianolaSuggestionsFile;
 	readProfiles(): PianolaProfiles;
@@ -214,6 +224,38 @@ export function createPianolaFsStore(config: PianolaFsStoreConfig): PianolaFsSto
 		const index = current.findIndex((p) => p.id === plan.id);
 		const next = index >= 0 ? current.map((p, i) => (i === index ? plan : p)) : [...current, plan];
 		return writePlans(next);
+	}
+
+	function readPrograms(): PianolaProgram[] {
+		return readFileOr(
+			PIANOLA_PROGRAMS_FILENAME,
+			() => [],
+			(raw) => validatePianolaProgramsFile(raw).programs
+		);
+	}
+	function writePrograms(programs: PianolaProgram[]): PianolaProgram[] {
+		const validated = validatePianolaProgramsFile({ programs }).programs;
+		writeJsonAtomic(PIANOLA_PROGRAMS_FILENAME, { programs: validated });
+		return validated;
+	}
+	function upsertProgram(program: PianolaProgram): PianolaProgram[] {
+		const current = readPrograms();
+		const index = current.findIndex((p) => p.id === program.id);
+		return writePrograms(
+			index < 0 ? [...current, program] : current.map((p, i) => (i === index ? program : p))
+		);
+	}
+	function readAsks(): PianolaAsk[] {
+		return readFileOr(
+			PIANOLA_ASKS_FILENAME,
+			() => [],
+			(raw) => validatePianolaAsksFile(raw).asks
+		);
+	}
+	function writeAsks(asks: PianolaAsk[]): PianolaAsk[] {
+		const validated = validatePianolaAsksFile({ asks }).asks;
+		writeJsonAtomic(PIANOLA_ASKS_FILENAME, { asks: validated });
+		return validated;
 	}
 
 	function readSuggestions(): PianolaSuggestionsFile {
@@ -439,6 +481,11 @@ export function createPianolaFsStore(config: PianolaFsStoreConfig): PianolaFsSto
 		writePlans,
 		getPlan,
 		upsertPlan,
+		readPrograms,
+		writePrograms,
+		upsertProgram,
+		readAsks,
+		writeAsks,
 		readSuggestions,
 		writeSuggestions,
 		readProfiles,
