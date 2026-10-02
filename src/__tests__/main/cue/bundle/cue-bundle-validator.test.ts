@@ -247,3 +247,53 @@ describe('validateCueBundle', () => {
 		await expect(validateCueBundle(notZip, { runningVersion: RUNNING })).rejects.toThrow();
 	});
 });
+
+describe('validateCueBundle - chain references', () => {
+	/** An `agent.completed` chain on Alpha, waiting on `source` / `sourceSub`. */
+	function chain(source: string, sourceSub: string) {
+		return (doc: { subscriptions: Array<Record<string, unknown>> }) =>
+			doc.subscriptions.push({
+				name: 'after-tick',
+				event: 'agent.completed',
+				agent_id: 'agent-a',
+				source_session: source,
+				source_sub: sourceSub,
+				prompt: 'Continue',
+			});
+	}
+
+	it('fails a pipeline bundle whose source_sub names no subscription', async () => {
+		const result = await validate({ cue: chain('Alpha', 'never-declared') });
+		expect(result.valid).toBe(false);
+		expect(result.errors).toEqual([
+			expect.objectContaining({ code: 'unknown-subscription', file: FIXTURE_CUE_PATH }),
+		]);
+		expect(result.errors[0].message).toContain('"never-declared"');
+	});
+
+	it('passes a pipeline bundle whose source_sub names a bundled subscription', async () => {
+		const result = await validate({ cue: chain('Alpha', 'tick') });
+		expect(result.errors).toEqual([]);
+		expect(result.warnings).toEqual([]);
+		expect(result.valid).toBe(true);
+	});
+
+	it('warns, rather than fails, on an agent bundle chained to an outside agent', async () => {
+		const result = await validate({
+			cue: chain('Upstream', 'upstream-build'),
+			manifest: (m) => (m.kind = 'maestro-agent'),
+		});
+		expect(result.errors).toEqual([]);
+		expect(result.valid).toBe(true);
+		expect(codes(result.warnings).sort()).toEqual(['unknown-agent', 'unknown-subscription']);
+		expect(result.warnings.every((w) => w.file === FIXTURE_CUE_PATH)).toBe(true);
+	});
+
+	it('still fails an agent bundle whose subscription targets an outside agent', async () => {
+		const result = await validate({
+			cue: (doc) => (doc.subscriptions[0].agent_id = 'agent-ghost'),
+			manifest: (m) => (m.kind = 'maestro-agent'),
+		});
+		expect(codes(result.errors)).toEqual(['unknown-agent']);
+	});
+});
