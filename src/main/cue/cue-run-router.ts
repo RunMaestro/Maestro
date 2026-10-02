@@ -81,6 +81,11 @@ export interface CueRunActionDeps {
 	/** Read on EVERY run, never cached at boot, so a profile edit applies to the next run. */
 	getConductorProfile?: () => string | undefined;
 	onNotify: (params: CueNotifyParams) => Promise<CueRunResult>;
+	/**
+	 * Hand prompt and shell runs only the server-mode env allowlist. Omit to
+	 * leave it to `MAESTRO_SERVER_MODE` (see `isServerModeActive`).
+	 */
+	isServerMode?: boolean;
 	reportAuthFailure?: (
 		result: CueRunResult,
 		toolType: string,
@@ -200,6 +205,7 @@ export async function executeCueRunAction(
 					// host when the owning session is SSH-remote-enabled.
 					sshRemoteConfig: storedSession.sessionSshRemoteConfig,
 					sshStore: deps.sshStore,
+					isServerMode: deps.isServerMode,
 				})
 			: deps.executeCueCli({
 					runId,
@@ -261,6 +267,7 @@ export async function executeCueRunAction(
 		onLog: deps.onLog,
 		sshStore: deps.sshStore,
 		agentConfigValues,
+		isServerMode: deps.isServerMode,
 	});
 
 	// Cue spawns agents outside the ProcessManager, so a failed run is the

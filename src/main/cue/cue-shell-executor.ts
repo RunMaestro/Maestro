@@ -19,6 +19,7 @@ import { wrapSpawnWithSsh } from '../utils/ssh-spawn-wrapper';
 import type { SshRemoteSettingsStore } from '../utils/ssh-remote-resolver';
 import { getShellPath } from '../runtime/getShellPath';
 import { buildSpawnPath } from '../utils/spawnPath';
+import { filterServerProcessEnv, isServerModeActive } from '../../shared/maestro-lib/launch/env';
 import { killCueProcess, trackCueProcess } from './cue-process-lifecycle';
 import type { StopHandle } from '../../shared/maestro-lib/control/termination';
 
@@ -41,6 +42,8 @@ export interface CueShellExecutionConfig {
 	sshRemoteConfig?: AgentSshRemoteConfig;
 	/** Store adapter used by {@link wrapSpawnWithSsh}. Required for SSH mode. */
 	sshStore?: SshRemoteSettingsStore;
+	/** Inherit only the server-mode env allowlist (see `filterServerProcessEnv`). */
+	isServerMode?: boolean;
 }
 
 /**
@@ -61,6 +64,7 @@ export async function executeCueShell(config: CueShellExecutionConfig): Promise<
 		onLog,
 		sshRemoteConfig,
 		sshStore,
+		isServerMode,
 	} = config;
 
 	const startedAt = new Date().toISOString();
@@ -104,7 +108,12 @@ export async function executeCueShell(config: CueShellExecutionConfig): Promise<
 	let spawnCommand = substitutedCommand;
 	let spawnArgs: string[] = [];
 	let spawnCwd = projectRoot;
-	let spawnEnv: Record<string, string> = { ...process.env } as Record<string, string>;
+	// In server mode the command sees only the allowlisted part of the engine's
+	// environment, the same cut the Cue agent spawn makes.
+	const inheritedEnv = isServerModeActive(isServerMode)
+		? filterServerProcessEnv(process.env)
+		: process.env;
+	let spawnEnv: Record<string, string> = { ...inheritedEnv } as Record<string, string>;
 	let useLocalShell = true;
 
 	if (sshRemoteConfig?.enabled && sshStore) {
@@ -122,7 +131,7 @@ export async function executeCueShell(config: CueShellExecutionConfig): Promise<
 				spawnCommand = wrapped.command;
 				spawnArgs = wrapped.args;
 				spawnCwd = wrapped.cwd;
-				spawnEnv = { ...process.env, ...(wrapped.customEnvVars || {}) } as Record<string, string>;
+				spawnEnv = { ...inheritedEnv, ...(wrapped.customEnvVars || {}) } as Record<string, string>;
 				useLocalShell = false;
 				onLog(
 					'cue',
