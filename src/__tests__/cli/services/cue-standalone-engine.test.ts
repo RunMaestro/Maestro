@@ -31,6 +31,7 @@ vi.mock('../../../cli/services/storage', () => ({
 	readSshRemotes: () => [],
 	getAgentCustomPath: () => undefined,
 	readAgentConfig: () => ({}),
+	readSettings: () => ({}),
 }));
 
 import { buildStandaloneCueEngineDeps } from '../../../cli/services/cue-standalone-engine';

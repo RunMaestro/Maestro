@@ -42,7 +42,6 @@
  *    later (see that command).
  */
 
-import * as os from 'os';
 // Only TYPE imports from the main-process Cue graph at the top level. Every
 // VALUE import below is dynamic (see `loadExecutors()`), because this module
 // is reachable from `src/cli/commands/cue-engine.ts`, which `src/cli/index.ts`
@@ -57,10 +56,22 @@ import * as os from 'os';
 // imports defer that whole graph to the moment a subscription actually fires.
 import type { CueEngine, CueEngineDeps } from '../../main/cue/cue-engine';
 import type { SshRemoteSettingsStore } from '../../main/utils/ssh-remote-resolver';
-import { getAgentDisplayName } from '../../shared/agentMetadata';
-import type { TemplateContext } from '../../shared/templateVariables';
+// The one static VALUE import from that graph, and safe: the router takes
+// every executor through its deps and imports them as types only, so it
+// pulls in nothing beyond `os` and agent metadata.
+import {
+	executeCueRunAction,
+	type CueRunActionDeps,
+	type CueRunSessionRecord,
+} from '../../main/cue/cue-run-router';
 import type { CueRunResult } from '../../shared/cue/contracts';
-import { readSessions, readSshRemotes, getAgentCustomPath, readAgentConfig } from './storage';
+import {
+	readSessions,
+	readSshRemotes,
+	getAgentCustomPath,
+	readAgentConfig,
+	readSettings,
+} from './storage';
 
 /** Lazily import every executor module once, cached for the process lifetime - see the module doc above for why these are dynamic rather than top-level imports. */
 let executorsPromise: ReturnType<typeof loadExecutorsUncached> | undefined;
@@ -129,146 +140,35 @@ function sshStoreAdapter(): SshRemoteSettingsStore {
 }
 
 /**
- * Build the `onCueRun` dependency: dispatches a fired subscription to the
- * right executor (prompt / shell / cli / notify), exactly as
- * `src/main/index.ts`'s inline closure does, minus the three narrowings
- * documented above.
+ * Build the `onCueRun` dependency: dispatches a fired subscription through the
+ * same router the desktop uses (`cue-run-router.ts`), minus the three
+ * narrowings documented above. Executors arrive from `loadExecutors()` so the
+ * router itself never imports them as values.
  */
 function buildOnCueRun(onLog: StandaloneCueLog): CueEngineDeps['onCueRun'] {
-	return async ({
-		runId,
-		sessionId,
-		prompt,
-		subscriptionName,
-		event,
-		timeoutMs,
-		action,
-		command,
-		notify,
-	}) => {
-		const { executeCuePrompt, executeCueShell, executeCueCli, executeCueNotify } =
-			await loadExecutors();
-		const sessions = readSessions();
-		const storedSession = sessions.find((s) => s.id === sessionId);
-		if (!storedSession) {
-			throw new Error(`Cue target session not found: ${sessionId}`);
-		}
-
-		const projectRoot =
-			storedSession.projectRoot || storedSession.cwd || storedSession.fullPath || os.homedir();
-		const templateContext: TemplateContext = {
-			session: {
-				id: storedSession.id,
-				name: storedSession.name,
-				toolType: storedSession.toolType,
-				cwd: projectRoot,
-				projectRoot,
-				fullPath: storedSession.fullPath,
-				autoRunFolderPath: storedSession.autoRunFolderPath,
-			},
-		};
-		const sessionInfo = {
-			id: storedSession.id,
-			name: storedSession.name,
-			toolType: storedSession.toolType,
-			cwd: projectRoot,
-			projectRoot,
-			autoRunFolderPath: storedSession.autoRunFolderPath,
-		};
-
-		if (action === 'notify') {
-			const message = notify?.message?.trim() || prompt;
-			return executeCueNotify({
-				runId,
-				session: sessionInfo,
-				subscription: {
-					name: subscriptionName,
-					event: event.type,
-					enabled: true,
-					prompt,
-					action,
-					notify,
-				},
-				event,
-				agentId: storedSession.id,
-				message,
-				sticky: notify?.sticky === true,
-				title: storedSession.name || getAgentDisplayName(storedSession.toolType),
-				// No window in a headless runner - executeCueNotify already
-				// degrades gracefully for this (see module doc, point 2).
-				mainWindow: null,
-				onLog,
-			});
-		}
-
-		if (action === 'command') {
-			if (!command) {
-				throw new Error(
-					`Cue subscription "${subscriptionName}" has action='command' but no command payload`
-				);
-			}
-			const subscription = {
-				name: subscriptionName,
-				event: event.type,
-				enabled: true,
-				prompt,
-				action,
-				command,
-			};
-			return command.mode === 'shell'
-				? executeCueShell({
-						runId,
-						session: sessionInfo,
-						subscription,
-						event,
-						shellCommand: command.shell,
-						projectRoot,
-						templateContext,
-						timeoutMs,
-						onLog,
-						sshRemoteConfig: storedSession.sessionSshRemoteConfig,
-						sshStore: sshStoreAdapter(),
-					})
-				: executeCueCli({
-						runId,
-						session: sessionInfo,
-						subscription,
-						event,
-						cli: command.cli,
-						templateContext,
-						timeoutMs,
-						onLog,
-					});
-		}
-
-		const result = await executeCuePrompt({
-			runId,
-			session: sessionInfo,
-			subscription: { name: subscriptionName, event: event.type, enabled: true, prompt },
-			event,
-			promptPath: prompt,
-			toolType: storedSession.toolType,
-			projectRoot,
-			templateContext,
-			timeoutMs,
-			sshRemoteConfig: storedSession.sessionSshRemoteConfig,
+	return async (params) => {
+		const executors = await loadExecutors();
+		const deps: CueRunActionDeps = {
+			executeCuePrompt: executors.executeCuePrompt,
+			executeCueShell: executors.executeCueShell,
+			executeCueCli: executors.executeCueCli,
+			stopCueRun: executors.stopCueRun,
+			findSession: (sessionId) =>
+				readSessions().find((s) => s.id === sessionId) as CueRunSessionRecord | undefined,
 			// Point 1 (module doc): an explicit override if the user set one,
 			// else leave it to spawn()'s own PATH search.
-			customPath: getAgentCustomPath(storedSession.toolType),
-			customArgs: storedSession.customArgs,
-			customEnvVars: storedSession.customEnvVars,
-			customModel: storedSession.customModel,
-			customEffort: storedSession.customEffort,
-			enableMaestroP: storedSession.enableMaestroP,
-			maestroPMode: storedSession.maestroPMode,
-			maestroPPath: storedSession.maestroPPath,
-			onLog,
+			resolveAgentPath: (toolType) => getAgentCustomPath(toolType),
 			sshStore: sshStoreAdapter(),
-			agentConfigValues: readAgentConfig(storedSession.toolType),
-		});
-
-		await reportStandaloneAuthFailure(result, storedSession.toolType, onLog);
-		return result;
+			getAgentConfigValues: (toolType) => readAgentConfig(toolType),
+			onLog,
+			getConductorProfile: () =>
+				(readSettings() as { conductorProfile?: string }).conductorProfile || undefined,
+			// No window in a headless runner - executeCueNotify already
+			// degrades gracefully for this (see module doc, point 2).
+			onNotify: (notifyParams) => executors.executeCueNotify({ ...notifyParams, mainWindow: null }),
+			reportAuthFailure: (result, toolType) => reportStandaloneAuthFailure(result, toolType, onLog),
+		};
+		return executeCueRunAction(deps, params);
 	};
 }
 
