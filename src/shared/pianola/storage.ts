@@ -17,6 +17,12 @@ import type {
 // Runtime enum arrays are single-sourced from types.ts; the union types derive from them.
 import { RULE_SCOPES, ACTION_KINDS, RISKS, SIGNAL_KINDS } from './types';
 import { validatePlan, type PianolaPlan, type PianolaTask } from './pianola-tasks';
+import {
+	validatePianolaProgram,
+	validatePianolaAsk,
+	type PianolaProgram,
+	type PianolaAsk,
+} from './pianola-programs';
 import { matchHasNarrowingPredicate } from './pianola-policy';
 
 /** Editable rules file (JSON array of PianolaRule), in the Maestro config dir. */
@@ -24,6 +30,8 @@ export const PIANOLA_RULES_FILENAME = 'maestro-pianola-rules.json';
 
 /** Persisted orchestrator plans (JSON), in the Maestro config dir. */
 export const PIANOLA_PLANS_FILENAME = 'maestro-pianola-plans.json';
+export const PIANOLA_PROGRAMS_FILENAME = 'maestro-pianola-programs.json';
+export const PIANOLA_ASKS_FILENAME = 'maestro-pianola-asks.json';
 
 /** Append-only decision audit log (JSON Lines), in the Maestro config dir. */
 export const PIANOLA_DECISIONS_FILENAME = 'pianola-decisions.jsonl';
@@ -336,6 +344,28 @@ export function resolveProfile(
 /** Persisted plans file: a JSON object wrapping the plan array. */
 export interface PianolaPlansFile {
 	plans: PianolaPlan[];
+}
+export interface PianolaProgramsFile {
+	programs: PianolaProgram[];
+}
+export interface PianolaAsksFile {
+	asks: PianolaAsk[];
+}
+export function validatePianolaProgramsFile(raw: unknown): PianolaProgramsFile {
+	const entries = raw && typeof raw === 'object' && 'programs' in raw ? raw.programs : undefined;
+	return {
+		programs: Array.isArray(entries)
+			? entries.map(validatePianolaProgram).filter((p): p is PianolaProgram => p !== null)
+			: [],
+	};
+}
+export function validatePianolaAsksFile(raw: unknown): PianolaAsksFile {
+	const entries = raw && typeof raw === 'object' && 'asks' in raw ? raw.asks : undefined;
+	return {
+		asks: Array.isArray(entries)
+			? entries.map(validatePianolaAsk).filter((a): a is PianolaAsk => a !== null)
+			: [],
+	};
 }
 
 /**

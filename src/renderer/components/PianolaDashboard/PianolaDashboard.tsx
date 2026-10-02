@@ -1,15 +1,19 @@
 /**
  * Pianola Dashboard - the pinned status view in Pianola's workspace.
  *
- * Glanceable board of the other agents: who needs the user, who is working, who
- * recently finished, and a feed of Pianola's recent autonomous decisions. Rows
- * jump to the owning agent on click. Data comes from `usePianolaDashboardData`
- * (live session state + the polled decision log).
+ * Glanceable board of Pianola's portfolio and the other agents: the program
+ * strip, what needs the user (founder asks first, then escalations, waiting
+ * agents, tasks to review, failures), what is working and recently finished
+ * (grouped by program), what is verified, who Pianola watches, and a feed of
+ * Pianola's recent autonomous decisions. Agent rows jump to the owning agent on
+ * click. Data comes from `usePianolaDashboardData` (live session state, the
+ * polled decision log, and the polled portfolio brief).
  */
 
 import React from 'react';
 import {
 	AlertCircle,
+	BadgeCheck,
 	Loader2,
 	CheckCircle2,
 	ListChecks,
@@ -25,10 +29,20 @@ import {
 } from 'lucide-react';
 import type { Theme } from '../../types';
 import { formatRelativeTime } from '../../../shared/formatters';
+import type {
+	PianolaAskSeverity,
+	PianolaBriefProgram,
+} from '../../../shared/pianola/pianola-programs';
+import { FormInput } from '../ui/FormInput';
+import { MiniBadge } from '../ui/MiniBadge';
 import {
 	usePianolaDashboardData,
 	type DashboardAgentRow,
 	type DashboardActivityRow,
+	type DashboardAskRow,
+	type DashboardNeedsRow,
+	type DashboardProgramGroup,
+	type DashboardResultRow,
 } from './usePianolaDashboardData';
 import { usePianolaSupervisor, type PianolaSupervisorState } from './usePianolaSupervisor';
 import type { PianolaSupervisedState } from '../../../main/pianola/pianola-supervisor';
@@ -53,7 +67,7 @@ function Section({
 	icon: React.ReactNode;
 	title: string;
 	count: number;
-	emptyLabel: string;
+	emptyLabel: React.ReactNode;
 	headerAction?: React.ReactNode;
 	children: React.ReactNode;
 }): React.ReactElement {
@@ -144,6 +158,300 @@ function AgentRow({
 					))}
 				</div>
 			)}
+		</div>
+	);
+}
+
+/** Rows split under a small program-title subheader per program; rows outside
+ * any program come last with no subheader. */
+function ProgramGroups<T>({
+	theme,
+	groups,
+	renderRow,
+}: {
+	theme: Theme;
+	groups: DashboardProgramGroup<T>[];
+	renderRow: (row: T) => React.ReactNode;
+}): React.ReactElement {
+	return (
+		<>
+			{groups.map((group) => (
+				<div key={group.key} className="flex flex-col gap-1.5">
+					{group.programTitle && (
+						<div
+							className="text-xs font-medium px-1 pt-1 truncate"
+							style={{ color: theme.colors.textDim }}
+						>
+							{group.programTitle}
+						</div>
+					)}
+					{group.rows.map(renderRow)}
+				</div>
+			))}
+		</>
+	);
+}
+
+const groupedCount = <T,>(groups: DashboardProgramGroup<T>[]): number =>
+	groups.reduce((n, g) => n + g.rows.length, 0);
+
+/** One program in the strip: status, active plan, and its three live counts. */
+function ProgramCard({
+	theme,
+	program,
+}: {
+	theme: Theme;
+	program: PianolaBriefProgram;
+}): React.ReactElement {
+	const activePlan = program.activePlanTitle ?? program.activePlanId;
+	return (
+		<div
+			className="rounded px-3 py-2 flex flex-col gap-1 min-w-[12rem] flex-1"
+			style={{ backgroundColor: theme.colors.bgSidebar }}
+			data-testid={`pianola-program-${program.id}`}
+		>
+			<div className="flex items-center gap-2">
+				<span className="text-sm font-medium truncate" style={{ color: theme.colors.textMain }}>
+					{program.title}
+				</span>
+				<MiniBadge
+					theme={theme}
+					label={program.status === 'active' ? 'Active' : 'Paused'}
+					color={program.status === 'active' ? theme.colors.success : theme.colors.warning}
+				/>
+			</div>
+			<div className="text-xs truncate" style={{ color: theme.colors.textDim }}>
+				{activePlan ? `Plan: ${activePlan}` : 'No active plan'}
+			</div>
+			<div className="text-xs" style={{ color: theme.colors.textDim }}>
+				<span style={{ color: program.openAsks > 0 ? theme.colors.warning : undefined }}>
+					{program.openAsks} open {program.openAsks === 1 ? 'ask' : 'asks'}
+				</span>
+				{' · '}
+				{program.running} running · {program.verifiedLast7d} verified (7d)
+			</div>
+		</div>
+	);
+}
+
+function severityColor(theme: Theme, severity: PianolaAskSeverity): string {
+	switch (severity) {
+		case 'critical':
+		case 'high':
+			return theme.colors.error;
+		case 'medium':
+			return theme.colors.warning;
+		default:
+			return theme.colors.textDim;
+	}
+}
+
+/**
+ * An open founder ask: severity, program, title, and the requested action, with
+ * inline Resolve (the chosen option plus an optional note) and Dismiss. Both
+ * call `window.maestro.pianola` and then refresh the dashboard.
+ */
+function AskRow({
+	theme,
+	ask,
+	onSettled,
+}: {
+	theme: Theme;
+	ask: DashboardAskRow;
+	onSettled: () => void;
+}): React.ReactElement {
+	const [resolving, setResolving] = React.useState(false);
+	const [option, setOption] = React.useState('');
+	const [note, setNote] = React.useState('');
+	const [busy, setBusy] = React.useState(false);
+	const [error, setError] = React.useState<string | null>(null);
+	const color = severityColor(theme, ask.severity);
+
+	const settle = async (action: () => Promise<unknown>): Promise<void> => {
+		setBusy(true);
+		setError(null);
+		try {
+			await action();
+			onSettled();
+		} catch (err) {
+			setError(err instanceof Error ? err.message : String(err));
+		} finally {
+			setBusy(false);
+		}
+	};
+	const submitResolve = (): void => {
+		const chosen = option.trim();
+		if (!chosen || busy) return;
+		void settle(() => window.maestro.pianola.resolveAsk(ask.id, chosen, note.trim() || undefined));
+	};
+
+	return (
+		<div
+			className="rounded px-3 py-2 flex flex-col gap-1.5"
+			style={{ backgroundColor: theme.colors.bgSidebar, borderLeft: `2px solid ${color}` }}
+			data-testid={`pianola-ask-${ask.id}`}
+		>
+			<div className="flex items-center gap-2" title={ask.detail}>
+				<MiniBadge theme={theme} label={ask.severity} color={color} />
+				{ask.programTitle && (
+					<span
+						className="text-xs shrink-0 max-w-[30%] truncate"
+						style={{ color: theme.colors.textDim }}
+					>
+						{ask.programTitle}
+					</span>
+				)}
+				<span
+					className="text-sm font-medium truncate flex-1"
+					style={{ color: theme.colors.textMain }}
+				>
+					{ask.title}
+				</span>
+				<span className="text-xs shrink-0" style={{ color: theme.colors.textDim }}>
+					{formatRelativeTime(ask.since)}
+				</span>
+			</div>
+			{ask.requestedAction && (
+				<div className="text-xs" style={{ color: theme.colors.textMain }}>
+					{ask.requestedAction}
+				</div>
+			)}
+			{resolving ? (
+				<div className="flex flex-col gap-1.5">
+					<FormInput
+						theme={theme}
+						value={option}
+						onChange={setOption}
+						onSubmit={submitResolve}
+						submitEnabled={option.trim().length > 0 && !busy}
+						placeholder="Your decision"
+						disabled={busy}
+						autoFocus
+						testId={`pianola-ask-option-${ask.id}`}
+					/>
+					<FormInput
+						theme={theme}
+						value={note}
+						onChange={setNote}
+						onSubmit={submitResolve}
+						submitEnabled={option.trim().length > 0 && !busy}
+						placeholder="Note (optional)"
+						disabled={busy}
+						testId={`pianola-ask-note-${ask.id}`}
+					/>
+					<div className="flex items-center gap-2">
+						<button
+							type="button"
+							onClick={submitResolve}
+							disabled={busy || option.trim().length === 0}
+							className="text-xs px-2 py-1 rounded font-medium transition-opacity disabled:opacity-40 disabled:cursor-default"
+							style={{ backgroundColor: theme.colors.accent, color: theme.colors.accentForeground }}
+						>
+							Submit
+						</button>
+						<button
+							type="button"
+							onClick={() => setResolving(false)}
+							disabled={busy}
+							className="text-xs px-2 py-1 rounded hover:bg-white/5 transition-colors"
+							style={{ color: theme.colors.textDim }}
+						>
+							Cancel
+						</button>
+					</div>
+				</div>
+			) : (
+				<div className="flex items-center gap-2">
+					<button
+						type="button"
+						onClick={() => setResolving(true)}
+						disabled={busy}
+						className="text-xs px-2 py-1 rounded font-medium hover:bg-white/5 transition-colors"
+						style={{ color: theme.colors.accent, border: `1px solid ${theme.colors.border}` }}
+					>
+						Resolve
+					</button>
+					<button
+						type="button"
+						onClick={() => void settle(() => window.maestro.pianola.dismissAsk(ask.id))}
+						disabled={busy}
+						className="text-xs px-2 py-1 rounded hover:bg-white/5 transition-colors"
+						style={{ color: theme.colors.textDim }}
+					>
+						Dismiss
+					</button>
+				</div>
+			)}
+			{error && (
+				<div className="text-xs" style={{ color: theme.colors.error }}>
+					{error}
+				</div>
+			)}
+		</div>
+	);
+}
+
+const NEEDS_META: Record<
+	DashboardNeedsRow['kind'],
+	{ label: string; color: (t: Theme) => string }
+> = {
+	escalation: { label: 'Escalated', color: (t) => t.colors.warning },
+	needs_review: { label: 'Needs review', color: (t) => t.colors.accent },
+	failed: { label: 'Failed', color: (t) => t.colors.error },
+};
+
+/** An escalation, a task awaiting review, or a failed task from the brief. */
+function NeedsRow({ theme, row }: { theme: Theme; row: DashboardNeedsRow }): React.ReactElement {
+	const meta = NEEDS_META[row.kind];
+	const color = meta.color(theme);
+	return (
+		<div
+			className="rounded px-3 py-2 flex items-center gap-2"
+			style={{ backgroundColor: theme.colors.bgSidebar, borderLeft: `2px solid ${color}` }}
+			title={row.detail}
+		>
+			<MiniBadge theme={theme} label={meta.label} color={color} />
+			{row.programTitle && (
+				<span
+					className="text-xs shrink-0 max-w-[30%] truncate"
+					style={{ color: theme.colors.textDim }}
+				>
+					{row.programTitle}
+				</span>
+			)}
+			<span className="text-sm truncate flex-1" style={{ color: theme.colors.textMain }}>
+				{row.title}
+			</span>
+			<span className="text-xs shrink-0" style={{ color: theme.colors.textDim }}>
+				{formatRelativeTime(row.since)}
+			</span>
+		</div>
+	);
+}
+
+/** A verified task: what was done, in which plan, and the check that proved it. */
+function ResultRow({ theme, row }: { theme: Theme; row: DashboardResultRow }): React.ReactElement {
+	return (
+		<div
+			className="rounded px-3 py-2 flex items-center gap-2"
+			style={{
+				backgroundColor: theme.colors.bgSidebar,
+				borderLeft: `2px solid ${theme.colors.success}`,
+			}}
+		>
+			<span
+				className="text-sm font-medium truncate shrink-0 max-w-[40%]"
+				style={{ color: theme.colors.textMain }}
+			>
+				{row.taskTitle}
+			</span>
+			<span className="text-sm truncate flex-1" style={{ color: theme.colors.textDim }}>
+				{row.planTitle}
+			</span>
+			<MiniBadge theme={theme} label={row.checkName} color={theme.colors.success} />
+			<span className="text-xs shrink-0" style={{ color: theme.colors.textDim }}>
+				{formatRelativeTime(row.completedAt)}
+			</span>
 		</div>
 	);
 }
@@ -368,8 +676,17 @@ export function PianolaDashboard({
 	theme,
 	onJumpToAgent,
 }: PianolaDashboardProps): React.ReactElement {
-	const { data, refresh } = usePianolaDashboardData();
+	const { data, portfolio, refresh } = usePianolaDashboardData();
 	const supervisor = usePianolaSupervisor();
+	const needsCount =
+		portfolio.asks.length +
+		portfolio.escalations.length +
+		data.needsInput.length +
+		portfolio.needsReview.length +
+		portfolio.failed.length;
+	const renderAgentRow = (accent: string) => (row: DashboardAgentRow) => (
+		<AgentRow key={row.key} theme={theme} row={row} accent={accent} onJump={onJumpToAgent} />
+	);
 
 	return (
 		<div
@@ -395,23 +712,33 @@ export function PianolaDashboard({
 				</button>
 			</div>
 
-			<WatchedSection theme={theme} onJumpToAgent={onJumpToAgent} supervisor={supervisor} />
+			{portfolio.programs.length > 0 && (
+				<div className="flex flex-wrap gap-2 mb-5" data-testid="pianola-program-strip">
+					{portfolio.programs.map((program) => (
+						<ProgramCard key={program.id} theme={theme} program={program} />
+					))}
+				</div>
+			)}
 
 			<Section
 				theme={theme}
 				icon={<AlertCircle className="w-3.5 h-3.5" style={{ color: theme.colors.warning }} />}
 				title="Needs your input"
-				count={data.needsInput.length}
+				count={needsCount}
 				emptyLabel="No agents are waiting on you."
 			>
-				{data.needsInput.map((row) => (
-					<AgentRow
-						key={row.key}
-						theme={theme}
-						row={row}
-						accent={theme.colors.warning}
-						onJump={onJumpToAgent}
-					/>
+				{portfolio.asks.map((ask) => (
+					<AskRow key={ask.id} theme={theme} ask={ask} onSettled={refresh} />
+				))}
+				{portfolio.escalations.map((row) => (
+					<NeedsRow key={row.key} theme={theme} row={row} />
+				))}
+				{data.needsInput.map(renderAgentRow(theme.colors.warning))}
+				{portfolio.needsReview.map((row) => (
+					<NeedsRow key={row.key} theme={theme} row={row} />
+				))}
+				{portfolio.failed.map((row) => (
+					<NeedsRow key={row.key} theme={theme} row={row} />
 				))}
 			</Section>
 
@@ -419,37 +746,52 @@ export function PianolaDashboard({
 				theme={theme}
 				icon={<Loader2 className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />}
 				title="Working now"
-				count={data.working.length}
+				count={groupedCount(portfolio.working)}
 				emptyLabel="No agents are working right now."
 			>
-				{data.working.map((row) => (
-					<AgentRow
-						key={row.key}
-						theme={theme}
-						row={row}
-						accent={theme.colors.accent}
-						onJump={onJumpToAgent}
-					/>
-				))}
+				<ProgramGroups
+					theme={theme}
+					groups={portfolio.working}
+					renderRow={renderAgentRow(theme.colors.accent)}
+				/>
 			</Section>
 
 			<Section
 				theme={theme}
 				icon={<CheckCircle2 className="w-3.5 h-3.5" style={{ color: theme.colors.success }} />}
 				title="Recently done"
-				count={data.recentlyDone.length}
+				count={groupedCount(portfolio.finished)}
 				emptyLabel="Nothing finished recently."
 			>
-				{data.recentlyDone.map((row) => (
-					<AgentRow
-						key={row.key}
-						theme={theme}
-						row={row}
-						accent={theme.colors.success}
-						onJump={onJumpToAgent}
-					/>
-				))}
+				<ProgramGroups
+					theme={theme}
+					groups={portfolio.finished}
+					renderRow={renderAgentRow(theme.colors.success)}
+				/>
 			</Section>
+
+			<Section
+				theme={theme}
+				icon={<BadgeCheck className="w-3.5 h-3.5" style={{ color: theme.colors.success }} />}
+				title="Results"
+				count={groupedCount(portfolio.results)}
+				emptyLabel={
+					<>
+						<div>Nothing verified yet.</div>
+						<div className="not-italic text-xs">
+							A task counts once it is done and its independent-validation check passed.
+						</div>
+					</>
+				}
+			>
+				<ProgramGroups
+					theme={theme}
+					groups={portfolio.results}
+					renderRow={(row) => <ResultRow key={row.key} theme={theme} row={row} />}
+				/>
+			</Section>
+
+			<WatchedSection theme={theme} onJumpToAgent={onJumpToAgent} supervisor={supervisor} />
 
 			<Section
 				theme={theme}

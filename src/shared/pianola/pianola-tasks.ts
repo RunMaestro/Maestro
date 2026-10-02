@@ -55,6 +55,7 @@ export interface PianolaTask {
 export interface PianolaPlan {
 	id: string;
 	title: string;
+	programId?: string;
 	/** Epoch ms the plan was created. */
 	createdAt: number;
 	tasks: PianolaTask[];
@@ -218,6 +219,9 @@ export function validatePlan(raw: unknown): { plan: PianolaPlan | null; errors: 
 	if (typeof raw.createdAt !== 'number' || !Number.isFinite(raw.createdAt)) {
 		errors.push('Plan createdAt must be a finite number.');
 	}
+	if (raw.programId !== undefined && (typeof raw.programId !== 'string' || !raw.programId)) {
+		errors.push('Plan programId must be a non-empty string when provided.');
+	}
 	if (!Array.isArray(raw.tasks)) {
 		errors.push('Plan tasks must be an array.');
 		return { plan: null, errors };
@@ -257,6 +261,7 @@ export function validatePlan(raw: unknown): { plan: PianolaPlan | null; errors: 
 	const plan: PianolaPlan = {
 		id: raw.id as string,
 		title: raw.title as string,
+		...(raw.programId !== undefined ? { programId: raw.programId as string } : {}),
 		createdAt: raw.createdAt as number,
 		tasks,
 	};

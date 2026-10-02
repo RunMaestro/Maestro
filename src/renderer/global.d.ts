@@ -4559,6 +4559,17 @@ interface MaestroAPI {
 		getRules: () => Promise<RulesLoadResult>;
 		saveRules: (rules: PianolaRule[]) => Promise<PianolaRule[]>;
 		getDecisions: (limit?: number) => Promise<PianolaDecisionRecord[]>;
+		getPrograms: () => Promise<import('../shared/pianola/pianola-programs').PianolaProgram[]>;
+		getAsks: (
+			status?: import('../shared/pianola/pianola-programs').PianolaAskStatus
+		) => Promise<import('../shared/pianola/pianola-programs').PianolaAsk[]>;
+		resolveAsk: (
+			id: string,
+			option: string,
+			note?: string
+		) => Promise<import('../shared/pianola/pianola-programs').PianolaAsk>;
+		dismissAsk: (id: string) => Promise<import('../shared/pianola/pianola-programs').PianolaAsk>;
+		getBrief: () => Promise<import('../shared/pianola/pianola-programs').PianolaBrief>;
 		getSuggestions: () => Promise<PianolaSuggestionsFile>;
 		applySuggestion: (payload: {
 			rule?: PianolaRule;

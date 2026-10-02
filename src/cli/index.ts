@@ -172,6 +172,17 @@ import {
 	pianolaOrchestrate,
 } from './commands/pianola-orchestrate';
 import {
+	pianolaProgramApply,
+	pianolaProgramList,
+	pianolaProgramShow,
+	pianolaProgramStatus,
+	pianolaEscalate,
+	pianolaNeedsMe,
+	pianolaResolve,
+	pianolaDismiss,
+	pianolaBrief,
+} from './commands/pianola-portfolio';
+import {
 	pianolaSuperviseWatch,
 	pianolaSuperviseOrchestrate,
 	pianolaSuperviseList,
@@ -1928,6 +1939,59 @@ pianola
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((options) => pianolaLog(options));
 
+const pianolaProgram = pianola.command('program').description('Manage product programs');
+pianolaProgram
+	.command('apply')
+	.requiredOption('--file <path>', 'YAML or JSON program manifest')
+	.option('--json', 'Output as JSON')
+	.action((options) => pianolaProgramApply(options));
+pianolaProgram
+	.command('list')
+	.option('--json', 'Output as JSON')
+	.action((options) => pianolaProgramList(options));
+pianolaProgram
+	.command('show <id>')
+	.option('--json', 'Output as JSON')
+	.action((id, options) => pianolaProgramShow(id, options));
+pianolaProgram
+	.command('pause <id>')
+	.option('--json', 'Output as JSON')
+	.action((id, options) => pianolaProgramStatus(id, 'paused', options));
+pianolaProgram
+	.command('resume <id>')
+	.option('--json', 'Output as JSON')
+	.action((id, options) => pianolaProgramStatus(id, 'active', options));
+
+pianola
+	.command('escalate')
+	.requiredOption('--title <text>')
+	.requiredOption('--detail <text>')
+	.option('--program <id>')
+	.option('--agent <id>')
+	.option('--tab <id>')
+	.option('--severity <level>')
+	.option('--requested-action <text>')
+	.option('--distinct')
+	.option('--json')
+	.action((options) => pianolaEscalate(options));
+pianola
+	.command('needs-me')
+	.option('--json')
+	.action((options) => pianolaNeedsMe(options));
+pianola
+	.command('resolve <askId>')
+	.requiredOption('--option <text>')
+	.option('--note <text>')
+	.option('--json')
+	.action((askId, options) => pianolaResolve(askId, options));
+pianola
+	.command('dismiss <askId>')
+	.option('--json')
+	.action((askId, options) => pianolaDismiss(askId, options));
+pianola
+	.command('brief')
+	.option('--json')
+	.action((options) => pianolaBrief(options));
 // Pianola plan - author and inspect task DAGs the orchestrator runs.
 const pianolaPlan = pianola
 	.command('plan')

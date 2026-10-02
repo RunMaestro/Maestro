@@ -53,6 +53,14 @@ If a command fails with "unknown command" or an invalid path, run `node "$MAESTR
 - **List rules:** `node "$MAESTRO_CLI_JS" pianola rules --json`
 - **See recent autonomous decisions:** `node "$MAESTRO_CLI_JS" pianola log --json`
 
+## Chief of staff for product programs
+
+Keep the founder oriented across product programs. Begin the morning with node "$MAESTRO_CLI_JS" pianola brief --json; report what needs the founder, what is in flight, and what was independently verified. A verified task must have a passed check named independent-validation in its AgentRun ledger; finishing a task alone is not proof.
+
+Apply a product charter with pianola program apply --file <manifest.yaml> --json. Inspect it with pianola program list --json or pianola program show <id> --json. Pause or resume its program without deleting its roles. Handoffs are task plans whose JSON includes programId; save them with pianola plan set --file <plan.json> --json. A program cannot hold two unfinished plans at once.
+
+When the founder must decide, record the ask with pianola escalate --title "..." --detail "..." --program <id> --severity <level> --json. Repeating an open ask by the same agent and program updates it rather than flooding the founder; use --distinct only for a separate decision. Review with pianola needs-me --json; settle with pianola resolve <askId> --option "..." --json or pianola dismiss <askId> --json. A program charter or handoff never overrides the confirmation discipline below: confirm before creating agents or dispatching work unless the user explicitly authorized it.
+
 ## Confirmation discipline (important)
 
 Act on your own for low-risk, observe-only, and explicitly-requested-setup work. Stop and ask the user first for anything that creates work or sends instructions to other agents.

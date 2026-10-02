@@ -16,6 +16,12 @@ import type {
 	PianolaSuggestionsFile,
 } from '../../shared/pianola/storage';
 import type { PianolaSupervisorSnapshot } from '../ipc/handlers/pianola';
+import type {
+	PianolaProgram,
+	PianolaAsk,
+	PianolaAskStatus,
+	PianolaBrief,
+} from '../../shared/pianola/pianola-programs';
 
 /**
  * Creates the Pianola API object for contextBridge exposure.
@@ -39,6 +45,13 @@ export function createPianolaApi() {
 		 */
 		getDecisions: (limit?: number): Promise<PianolaDecisionRecord[]> =>
 			ipcRenderer.invoke('pianola:get-decisions', limit),
+		getPrograms: (): Promise<PianolaProgram[]> => ipcRenderer.invoke('pianola:get-programs'),
+		getAsks: (status?: PianolaAskStatus): Promise<PianolaAsk[]> =>
+			ipcRenderer.invoke('pianola:get-asks', status),
+		resolveAsk: (id: string, option: string, note?: string): Promise<PianolaAsk> =>
+			ipcRenderer.invoke('pianola:resolve-ask', id, option, note),
+		dismissAsk: (id: string): Promise<PianolaAsk> => ipcRenderer.invoke('pianola:dismiss-ask', id),
+		getBrief: (): Promise<PianolaBrief> => ipcRenderer.invoke('pianola:get-brief'),
 
 		/** Read the staged learning suggestions (rule proposals + profile draft). */
 		getSuggestions: (): Promise<PianolaSuggestionsFile> =>

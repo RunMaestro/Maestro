@@ -84,6 +84,32 @@ These are not configurable, and that is the point.
 - **A low-confidence read escalates.** It does not guess.
 - **Only the agents you added a watch for are touched.** Everything else is left alone.
 
+## Product programs and the founder brief
+
+Pianola can keep a standing charter for each product. Apply a YAML or JSON manifest containing a programs: array with each program's id, title, root, charter, and named roles. Missing role agents are created once; repeat applies retain their agent ids. A role may specify an agent provider and model. Pause or resume a program without deleting its charter:
+
+```bash
+maestro-cli pianola program apply --file maestro-programs.yaml --json
+maestro-cli pianola program list --json
+maestro-cli pianola program show <id> --json
+maestro-cli pianola program pause <id> --json
+maestro-cli pianola program resume <id> --json
+```
+
+An optional programId on a task plan ties it to a product. A program accepts only one unfinished plan at a time. Plans without a program retain their existing behavior.
+
+The founder brief combines programs, plans, open founder asks, recent watcher escalations, and the AgentRun ledger. It reports tasks as verified only when a completed task has a passed independent-validation check; ordinary completion does not count.
+
+```bash
+maestro-cli pianola escalate --title "Need a decision" --detail "Choose the launch date" --program <id> --severity high --json
+maestro-cli pianola needs-me --json
+maestro-cli pianola brief --json
+maestro-cli pianola resolve <ask-id> --option "Next Tuesday" --json
+maestro-cli pianola dismiss <ask-id> --json
+```
+
+An open ask from the same agent and program is updated, preserving the higher severity; pass --distinct to record a separate ask. Founder asks can be resolved or dismissed in the dashboard too. Pianola still asks before creating agents or dispatching plans on the founder's behalf.
+
 ## Task plans
 
 Beyond watching, Pianola can run a saved task plan, dispatching each task as its dependencies finish:
