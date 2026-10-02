@@ -6,6 +6,10 @@ moves every CLI entry point onto the same library and the same turn contract,
 records what was decided where the contract left a choice, and states what
 happens to the callers that were deliberately not migrated.
 
+macOS and OpenCode validation landed separately in PR #1648
+(`test/macos-resume-agents`). Results are recorded under the verification
+section.
+
 ## Which CLI entry points spawn an agent
 
 Exactly one module spawns agents: `src/cli/services/agent-spawner.ts`
@@ -231,6 +235,68 @@ was not squeezed in at the end of this one.
   | claude-code, pre-aborted signal      | `interrupted` in 0 ms, nothing spawned                                 |
   | copilot-cli, fresh turn              | not runnable on this machine, see below                                |
 
+- **Real provider runs (macOS), from PR #1648 (`test/macos-resume-agents`):**
+  macOS coverage was added in a follow-on branch that also fixed the API-resume
+  transcript sanitizer. These runs drive `spawnAgent` directly against
+  claude-code and OpenCode on macOS:
+
+  | Provider, flow          | Result                                               |
+  | ----------------------- | ---------------------------------------------------- |
+  | claude-code, fresh turn | `completed`, session id and usage captured           |
+  | claude-code, resume     | `completed`, same session id, prior context recalled |
+  | claude-code, interrupt  | `interrupted`, session id kept, no orphaned process  |
+  | opencode, fresh turn    | `completed`, token usage captured                    |
+  | opencode, resume        | `completed`, same session context                    |
+  | opencode, interrupt     | `interrupted`, clean exit, no orphaned process       |
+
+### End-to-end runner validation (Linux, 2026-09-25)
+
+The Windows runs above drive `spawnAgent` directly. This pass drives the two
+runners through the real commands, against a live claude-code 2.1.282, from
+the bundled `dist/cli/maestro-cli.js` built off this branch (`d259a6b0c`).
+
+- **Machine:** Linux x86_64 (kernel 7.0), Node 22.22.1.
+- **macOS:** covered separately in PR #1648 (see above).
+- **OpenCode:** covered on macOS in PR #1648 (see above); not installed on this Linux machine.
+- **Isolation:** `MAESTRO_USER_DATA` pointed at a scratch data dir holding one
+  claude-code agent whose working directory was a scratch git repo. See the
+  `cli-activity` finding below for the one file that ignores it.
+- **Two ways to deliver Ctrl+C.** A terminal Ctrl+C signals the whole
+  foreground process group, so the agent gets SIGINT directly at the same time
+  the CLI does. `kill -INT <cli pid>` reaches only the CLI, which must pass the
+  stop on. Each interrupt case ran both ways (the CLI under `setsid`, then
+  `kill -INT -- -<pgid>` versus `kill -INT <pid>`). The signal was sent only
+  once the agent's own `sleep 60` tool call was running, so every interrupt
+  landed mid-tool-call, with a grandchild process alive.
+
+| Command, scenario                                    | Result                                                                                                                                   |
+| ---------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `run-doc`, 2 tasks to completion                     | exit 0 in 26.7s, both tasks checked off and their files written                                                                          |
+| `run-doc`, one Ctrl+C mid-task (group and pid)       | "Stopping..." at once, task `interrupted` about 0.7s later, run `stopped`, exit 130; document left unchecked                             |
+| `goal-run`, reachable goal, `--max-iterations 3`     | exit 0 in 12s, `completed` at 100% after 1 iteration                                                                                     |
+| `goal-run`, one Ctrl+C mid-iteration (group and pid) | `stopped-by-user`, 0%, 1 iteration, exit 130 about 0.7s after the signal                                                                 |
+| `run-doc`, two Ctrl+C 0.2s apart (group and pid)     | exit 130 about 60ms after the second signal                                                                                              |
+| `run-doc --json` / `goal-run --json`, one Ctrl+C     | one terminal event (`complete` with `stopped: true` / `goal_complete` with `stopped-by-user`), exit 130; no "Stopping..." line on stdout |
+
+- **No orphans in any case.** Before each signal the process tree was
+  `node` -> `claude` -> `bash -c` -> `sleep 60`. Claude runs its tool shell in
+  a **session of its own** (`sleep` had its own pgid and sid), so a terminal
+  Ctrl+C never reaches that shell directly. It still went away every time:
+  8 seconds after the CLI exited, none of the captured pids was alive, the
+  double-Ctrl+C cases included. Claude cleans up its tool shell when it gets
+  SIGTERM (from the abort) or SIGINT (from the terminal). That is
+  claude-code's behavior, not something the runner enforces. A provider
+  that leaves its tool processes behind would leak them, and the SIGKILL
+  escalation would not help: it targets the agent pid only.
+- **No lock left behind.** No `.git/*.lock` remained in the project after any
+  interrupt, and the next run on the same agent started straight away every
+  time.
+- **Streaming is per event, not per token.** Run events reached a pipe as
+  they happened (timestamped on arrival: the task-start line at +0.4s, the
+  interrupt lines within 0.7s of the signal), with no buffering until exit.
+  Neither runner streams agent output as it arrives. A task or iteration
+  prints nothing between its start and end lines.
+
 ## Findings, deliberately not fixed here
 
 - **A split multibyte character has no home in the turn recordings.** Both spawn
@@ -258,18 +324,70 @@ was not squeezed in at the end of this one.
   the CLI-activity registration and agent-run ledger are not finalized, and a
   child that trapped SIGTERM survives because the SIGKILL escalation timer dies
   with the process. That is the point of the escape hatch, but it is a real
-  cost.
+  cost. Measured on Linux: after a double Ctrl+C the `cli-activity.json`
+  entry stays behind, which is harmless because its pid is dead and the next
+  run replaces it. The ledger row in `maestro-agent-runs.json` stays
+  `running` for good (4 such rows after 4 double-Ctrl+C runs). Desktop's
+  `recoverNonTerminalRuns` would move them to `failed` at app start, but only
+  in the data dir the desktop app uses; that was not exercised here.
+- **The CLI's stop summary does not end a run for history reconciliation,
+  so the next run's totals are wrong.** A stopped run writes
+  `Auto Run stopped by operator`. `FINAL_AUTORUN_SUMMARY_RE` in
+  `src/shared/autoRunHistoryReconciliation.ts` only matches
+  `Auto Run stopped:` (with a colon, the desktop's wording). So the stop
+  summary is not treated as the end of a run, and it is counted as a task
+  (no `completedTaskCount`, so the `?? 1` floor applies). The totals of every
+  later run on that agent include the stopped runs' rows, until a
+  `Auto Run completed:` row ends the run. Observed: two successive
+  interrupted runs of about 11s each reported "1 tasks in 42.4s" and
+  "2 tasks in 95.8s". The next **successful** 2-task, 28s run reported
+  "Playbook complete (7 tasks in 241.9s)". The same wrong totals go into the
+  final history entry. Desktop Auto Run reads the same rows through the
+  same aggregator, so it is likely affected too (not verified). The fix is
+  one side or the other: write `Auto Run stopped: ...` from the CLI, or
+  widen the regex. Choosing between them is the next change's decision.
+- **An operator stop is recorded as `failed` in the agent-run ledger.**
+  `settleRun` in `src/cli/services/agent-run-capture.ts` maps any non-zero
+  exit to `failed`, although the ledger has a `cancelled` status. Every
+  single-Ctrl+C run above (`run-doc` and `goal-run`) settled `failed`.
+- **`--json` stdout is not pure JSON lines.** `logger.autorun` in
+  `src/main/utils/logger.ts` prints to stdout, and its data objects are
+  pretty-printed across several lines. A 2-task `run-doc --json` produced 8
+  JSON events and 12 non-JSON lines interleaved with them. A consumer that
+  parses every line fails; one that skips non-JSON lines works. The behavior
+  predates this branch (`rc` has the same `logger.autorun` calls).
+- **`cli-activity.json` ignores `MAESTRO_USER_DATA`.** `getConfigDir` in
+  `src/shared/cli-activity.ts` always resolves the platform default
+  (lowercase `maestro`), so an isolated CLI run still registers itself in
+  the real user's file, and a test run can be seen as "busy" by a real
+  desktop app. Every other store the runners wrote went to the isolated dir.
+  The stale entry left by a double-Ctrl+C is not completely harmless: an OS
+  may recycle the dead process's pid for an unrelated process, and any code
+  that only checks "is pid alive" to decide whether the registration is valid
+  would falsely report the CLI as busy. PR #1647
+  (`fix/cross-process-engine-lock`) introduced the cross-process engine lease,
+  which guards against exactly this class of PID reuse: it compares the
+  recorded instance identity token (not just the pid) before trusting a lease
+  file, so a recycled pid cannot be mistaken for a running Cue engine. The
+  `cli-activity.json` stale-entry path does not yet have the same
+  identity-token guard; it relies on pid liveness only.
+- **`run-doc` prints an empty task label** (`⏳ Task 1: `) with
+  `--no-synopsis`. Cosmetic. Not investigated whether the label is filled
+  without that flag.
 - **`interrupted` outranks a finished turn.** If the abort lands after the agent
   finished but before `close`, the full answer is discarded and the turn is
   reported `interrupted` (in `send`, `response: null`). The resolver checks the
   interrupt first by contract; no path reports `interrupted` when no abort
   fired.
-- **Not run at all:** macOS, and CI's `test (ubuntu-latest)` and
+- **Not run at all (this branch):** CI's `test (ubuntu-latest)` and
   `test (windows-latest)` legs. Local validation on one OS cannot stand in for
-  them; the branch is not mergeable until both are green.
+  them; the branch is not mergeable until both are green. The end-to-end runner
+  pass ran on Linux. macOS coverage landed in PR #1648 (see verification above).
 - **Real providers not installed on this machine** (codex, opencode, droid,
   grok, gemini, qwen, omp, pi, antigravity, hermes) were covered by the
-  recorded-scenario and real-classifier tests only.
+  recorded-scenario and real-classifier tests only. OpenCode was not installed
+  on the Linux machine; live OpenCode runs on macOS are recorded in PR #1648
+  (see verification above).
 
 ## Open questions after this stage
 
