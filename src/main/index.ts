@@ -60,6 +60,8 @@ import {
 	disposeGlobalHotkey,
 } from './global-hotkey-manager';
 import { CueEngine } from './cue/cue-engine';
+import { hostVisibleProjectRoot } from '../shared/hostVisibleProjectRoot';
+import type { SshRemoteConfig } from '../shared/types';
 import { createCueSupervisorHooks } from './cue/cue-first-party';
 import { PianolaSupervisor, type AutoWatchSession } from './pianola/pianola-supervisor';
 import { PianolaRelearnScheduler } from './pianola/pianola-relearn-scheduler';
@@ -1565,13 +1567,22 @@ app
 			getSessions: () => {
 				// Live agents only: a dormant Pianola (flag off) is never watched.
 				const stored = getLiveSessions();
-				return stored.map((s: any) => ({
-					id: s.id,
-					name: s.name,
-					toolType: s.toolType,
-					cwd: s.cwd || s.projectRoot || s.fullPath || os.homedir(),
-					projectRoot: s.projectRoot || s.cwd || s.fullPath || os.homedir(),
-				}));
+				const remotes = (store.get('sshRemotes', []) ?? []) as SshRemoteConfig[];
+				// A remote agent's root is read through the remote's host mount when it has
+				// one; otherwise Cue has nothing to read for it and it is left out.
+				return stored.flatMap((s: any) => {
+					const projectRoot = hostVisibleProjectRoot(s, remotes, os.homedir());
+					if (!projectRoot) return [];
+					return [
+						{
+							id: s.id,
+							name: s.name,
+							toolType: s.toolType,
+							cwd: s.cwd || s.projectRoot || s.fullPath || os.homedir(),
+							projectRoot,
+						},
+					];
+				});
 			},
 			onCueRun: (params) => executeCueRunAction(cueRunDeps, params),
 			onStopCueRun: (runId) => cueRunDeps.stopCueRun(runId),

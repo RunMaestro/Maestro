@@ -1,0 +1,425 @@
+{
+	"generatedAt": "2026-10-02T13:47:35.005Z",
+	"needsMe": [
+		{
+			"kind": "ask",
+			"id": "9443ad3c-a69f-415d-acc4-e2e26a7218de",
+			"programId": "ef-video",
+			"programTitle": "EF Video Editing",
+			"title": "Founder decision required: EF Video pilot-readiness proposal",
+			"detail": "Accepted recovery commit 98d7b1e98fc67ef25efd41ae6d296f37f6ef48f0 is the proposal under decision. Evidence packet: docs/PILOT_READINESS.md and docs/pilot-readiness.json. Independent QA accepted the proposal. Validator success proves internal consistency only. The current contract remains fail-closed at pending/unapproved; no deployment, release, pilot execution, customer outreach, or public claims are authorized.",
+			"severity": "critical",
+			"since": "2026-10-02T09:33:48.446Z"
+		},
+		{
+			"kind": "failed",
+			"id": "ef-video-pilot-readiness-contract:implement-pilot-readiness-contract",
+			"programId": "ef-video",
+			"programTitle": "EF Video Editing",
+			"planId": "ef-video-pilot-readiness-contract",
+			"planTitle": "Define the founder-decision pilot readiness contract",
+			"taskId": "implement-pilot-readiness-contract",
+			"taskTitle": "Implement a fail-closed pilot readiness proposal",
+			"title": "Implement a fail-closed pilot readiness proposal",
+			"detail": "fix loop exhausted after 3 attempts; escalated to user",
+			"since": "2026-10-02T08:31:53.186Z"
+		},
+		{
+			"kind": "failed",
+			"id": "ai-ventures-blinded-pilot-review-bundle-20261002:build-review-bundle",
+			"programId": "ai-ventures",
+			"programTitle": "AI Ventures",
+			"planId": "ai-ventures-blinded-pilot-review-bundle-20261002",
+			"planTitle": "Generate a blinded local pilot-review bundle",
+			"taskId": "build-review-bundle",
+			"taskTitle": "Build the deterministic blinded review bundle",
+			"title": "Build the deterministic blinded review bundle",
+			"detail": "fix loop exhausted after 3 attempts; escalated to user",
+			"since": "2026-10-02T08:54:07.000Z"
+		},
+		{
+			"kind": "failed",
+			"id": "forex-go-cotv4-status-no-store:implement",
+			"programId": "forex-go",
+			"programTitle": "Forex Go",
+			"planId": "forex-go-cotv4-status-no-store",
+			"planTitle": "Prevent cached COT-v4 status responses",
+			"taskId": "implement",
+			"taskTitle": "Mark every COT-v4 status response private and no-store",
+			"title": "Mark every COT-v4 status response private and no-store",
+			"detail": "failure marker found in recent output",
+			"since": "2026-10-02T08:58:34.770Z"
+		},
+		{
+			"kind": "failed",
+			"id": "forex-go-cotv4-openapi-cache-policy:implement",
+			"programId": "forex-go",
+			"programTitle": "Forex Go",
+			"planId": "forex-go-cotv4-openapi-cache-policy",
+			"planTitle": "Publish COT-v4 cache policy in OpenAPI",
+			"taskId": "implement",
+			"taskTitle": "Declare endpoint cache headers in the generated OpenAPI document",
+			"title": "Declare endpoint cache headers in the generated OpenAPI document",
+			"detail": "failure marker found in recent output",
+			"since": "2026-10-02T09:05:05.904Z"
+		},
+		{
+			"kind": "failed",
+			"id": "ai-ventures-pilot-review-acceptance-20261002:finalize-root-safe-bundle",
+			"programId": "ai-ventures",
+			"programTitle": "AI Ventures",
+			"planId": "ai-ventures-pilot-review-acceptance-20261002",
+			"planTitle": "Recover and accept the blinded pilot-review bundle",
+			"taskId": "finalize-root-safe-bundle",
+			"taskTitle": "Finalize the bundle under root-safe validation",
+			"title": "Finalize the bundle under root-safe validation",
+			"detail": "fix loop exhausted after 3 attempts; escalated to user",
+			"since": "2026-10-02T09:10:24.287Z"
+		},
+		{
+			"kind": "failed",
+			"id": "forex-go-cotv4-api-method-cache-policy:implement",
+			"programId": "forex-go",
+			"programTitle": "Forex Go",
+			"planId": "forex-go-cotv4-api-method-cache-policy",
+			"planTitle": "Align COT-v4 API method errors with cache policy",
+			"taskId": "implement",
+			"taskTitle": "Apply API cache policy before method rejection",
+			"title": "Apply API cache policy before method rejection",
+			"detail": "fix loop exhausted after 3 attempts; escalated to user",
+			"since": "2026-10-02T09:12:21.755Z"
+		},
+		{
+			"kind": "failed",
+			"id": "ai-ventures-reviewer-safe-packet-20261002:build-reviewer-safe-packet",
+			"programId": "ai-ventures",
+			"programTitle": "AI Ventures",
+			"planId": "ai-ventures-reviewer-safe-packet-20261002",
+			"planTitle": "Build and independently accept a reviewer-safe local pilot packet",
+			"taskId": "build-reviewer-safe-packet",
+			"taskTitle": "Build the deterministic reviewer-safe pilot packet",
+			"title": "Build the deterministic reviewer-safe pilot packet",
+			"detail": "fix loop exhausted after 3 attempts; escalated to user",
+			"since": "2026-10-02T10:23:25.000Z"
+		},
+		{
+			"kind": "failed",
+			"id": "ai-ventures-founder-review-decision-20261002:draft-founder-review-decision",
+			"programId": "ai-ventures",
+			"programTitle": "AI Ventures",
+			"planId": "ai-ventures-founder-review-decision-20261002",
+			"planTitle": "Prepare and independently accept the founder review decision request",
+			"taskId": "draft-founder-review-decision",
+			"taskTitle": "Draft the bounded founder decision request",
+			"title": "Draft the bounded founder decision request",
+			"detail": "fix loop exhausted after 3 attempts; escalated to user",
+			"since": "2026-10-02T10:57:06.000Z"
+		},
+		{
+			"kind": "failed",
+			"id": "ai-ventures-founder-review-contract-recovery-20261002:recover-founder-review-contract",
+			"programId": "ai-ventures",
+			"programTitle": "AI Ventures",
+			"planId": "ai-ventures-founder-review-contract-recovery-20261002",
+			"planTitle": "Recover and independently accept the founder review decision request",
+			"taskId": "recover-founder-review-contract",
+			"taskTitle": "Separate the founder request from the generated review bundle",
+			"title": "Separate the founder request from the generated review bundle",
+			"detail": "fix loop exhausted after 3 attempts; escalated to user",
+			"since": "2026-10-02T11:09:07.560Z"
+		}
+	],
+	"inFlight": [
+		{
+			"programId": "ef-video",
+			"programTitle": "EF Video Editing",
+			"planId": "ef-video-founder-decision-recording-qa-review-20261002",
+			"planTitle": "Independently adjudicate the claimed founder decision recording",
+			"taskId": "qa-review-founder-decision-recording",
+			"taskTitle": "Independently adjudicate the claimed founder decision recording",
+			"status": "running",
+			"agentId": "ab5d9324-f9d0-43e6-9b59-6c404afb5d8e",
+			"tabId": "5a57c1e3-da3a-45bb-b0f7-8051f705b8c8"
+		},
+		{
+			"programId": "ai-ventures",
+			"programTitle": "AI Ventures",
+			"planId": "ai-ventures-founder-review-qa-acceptance-20261002T112226Z",
+			"planTitle": "Independently accept the recovered founder review request",
+			"taskId": "accept-recovered-founder-review-request",
+			"taskTitle": "Accept the recovered founder review request",
+			"status": "fixing",
+			"agentId": "5b36a0eb-736c-4942-a6e5-380a2b6b6ccb",
+			"tabId": "a18e8851-0dab-4151-be30-666fcc7746cd"
+		},
+		{
+			"programId": "forex-go",
+			"programTitle": "Forex Go",
+			"planId": "forex-go-cotv4-referrer-policy",
+			"planTitle": "Prevent referrer leakage from COT-v4 responses",
+			"taskId": "implement",
+			"taskTitle": "Set a no-referrer policy on every COT-v4 HTTP response",
+			"status": "running",
+			"agentId": "aab4c5b5-e1db-4ccc-ba0f-41080734893b",
+			"tabId": "73de074f-465c-4f9d-a4ab-ca53c9e73b09"
+		}
+	],
+	"verified": [
+		{
+			"programId": "forex-go",
+			"programTitle": "Forex Go",
+			"planId": "forex-go-next-outcome",
+			"planTitle": "Fail stale COT-v4 health checks",
+			"taskId": "implement",
+			"taskTitle": "Make stale COT-v4 services unhealthy",
+			"runId": "pianola:forex-go-next-outcome:implement",
+			"checkName": "independent-validation",
+			"completedAt": "2026-10-02T08:40:46.418Z"
+		},
+		{
+			"programId": "forex-go",
+			"programTitle": "Forex Go",
+			"planId": "forex-go-healthz-no-store",
+			"planTitle": "Prevent cached COT-v4 health responses",
+			"taskId": "implement",
+			"taskTitle": "Mark every COT-v4 health response no-store",
+			"runId": "pianola:forex-go-healthz-no-store:implement",
+			"checkName": "independent-validation",
+			"completedAt": "2026-10-02T08:53:47.373Z"
+		},
+		{
+			"programId": "ai-ventures",
+			"programTitle": "AI Ventures",
+			"planId": "ai-ventures-next-outcome",
+			"planTitle": "Validate a fixture-only 10-lead pilot pack",
+			"taskId": "implement",
+			"taskTitle": "Build and validate the 10-lead pilot fixture",
+			"runId": "pianola:ai-ventures-next-outcome:implement",
+			"checkName": "independent-validation",
+			"completedAt": "2026-10-02T08:50:34.198Z"
+		},
+		{
+			"programId": "ef-video",
+			"programTitle": "EF Video Editing",
+			"planId": "ef-video-pilot-readiness-recovery",
+			"planTitle": "Recover and land the pilot readiness contract",
+			"taskId": "recover-pilot-readiness-contract",
+			"taskTitle": "Recover the pilot readiness contract on a dedicated branch",
+			"runId": "pianola:ef-video-pilot-readiness-recovery:recover-pilot-readiness-contract",
+			"checkName": "independent-validation",
+			"completedAt": "2026-10-02T09:05:23.894Z"
+		},
+		{
+			"programId": "ai-ventures",
+			"programTitle": "AI Ventures",
+			"planId": "ai-ventures-pilot-review-sandbox-acceptance-20261002",
+			"planTitle": "Recover and accept the blinded pilot-review bundle with direct sandbox validation",
+			"taskId": "recover-review-bundle",
+			"taskTitle": "Recover the existing bundle under direct read-only validation",
+			"runId": "pianola:ai-ventures-pilot-review-sandbox-acceptance-20261002:recover-review-bundle",
+			"checkName": "independent-validation",
+			"completedAt": "2026-10-02T09:21:57.691Z"
+		},
+		{
+			"programId": "ai-ventures",
+			"programTitle": "AI Ventures",
+			"planId": "ai-ventures-pilot-review-sandbox-acceptance-20261002",
+			"planTitle": "Recover and accept the blinded pilot-review bundle with direct sandbox validation",
+			"taskId": "accept-review-bundle",
+			"taskTitle": "Independently accept the recovered blinded bundle",
+			"runId": "pianola:ai-ventures-pilot-review-sandbox-acceptance-20261002:accept-review-bundle",
+			"checkName": "independent-validation",
+			"completedAt": "2026-10-02T09:25:00.308Z"
+		},
+		{
+			"programId": "forex-go",
+			"programTitle": "Forex Go",
+			"planId": "forex-go-cotv4-runbook-cache-policy",
+			"planTitle": "Document COT-v4 endpoint cache policy",
+			"taskId": "document",
+			"taskTitle": "Document cache semantics for every COT-v4 endpoint family",
+			"runId": "pianola:forex-go-cotv4-runbook-cache-policy:document",
+			"checkName": "independent-validation",
+			"completedAt": "2026-10-02T09:30:47.568Z"
+		},
+		{
+			"programId": "ai-ventures",
+			"programTitle": "AI Ventures",
+			"planId": "ai-ventures-pilot-review-scorecard-validation-20261002",
+			"planTitle": "Validate and summarize blinded pilot-review scorecards locally",
+			"taskId": "build-scorecard-evaluator",
+			"taskTitle": "Build the deterministic local scorecard evaluator",
+			"runId": "pianola:ai-ventures-pilot-review-scorecard-validation-20261002:build-scorecard-evaluator",
+			"checkName": "independent-validation",
+			"completedAt": "2026-10-02T09:41:59.246Z"
+		},
+		{
+			"programId": "ai-ventures",
+			"programTitle": "AI Ventures",
+			"planId": "ai-ventures-pilot-review-scorecard-validation-20261002",
+			"planTitle": "Validate and summarize blinded pilot-review scorecards locally",
+			"taskId": "accept-scorecard-evaluator",
+			"taskTitle": "Independently accept the local scorecard evaluator",
+			"runId": "pianola:ai-ventures-pilot-review-scorecard-validation-20261002:accept-scorecard-evaluator",
+			"checkName": "independent-validation",
+			"completedAt": "2026-10-02T10:09:36.125Z"
+		},
+		{
+			"programId": "forex-go",
+			"programTitle": "Forex Go",
+			"planId": "forex-go-cotv4-nosniff-responses",
+			"planTitle": "Harden COT-v4 responses against MIME sniffing",
+			"taskId": "implement",
+			"taskTitle": "Set nosniff on every COT-v4 HTTP response",
+			"runId": "pianola:forex-go-cotv4-nosniff-responses:implement",
+			"checkName": "independent-validation",
+			"completedAt": "2026-10-02T10:10:24.573Z"
+		},
+		{
+			"programId": "ef-video",
+			"programTitle": "EF Video Editing",
+			"planId": "ef-video-founder-decision-receipt-20261002",
+			"planTitle": "Create a fail-closed founder decision receipt",
+			"taskId": "implement-decision-receipt",
+			"taskTitle": "Implement the founder decision receipt contract",
+			"runId": "pianola:ef-video-founder-decision-receipt-20261002:implement-decision-receipt",
+			"checkName": "independent-validation",
+			"completedAt": "2026-10-02T10:42:01.522Z"
+		},
+		{
+			"programId": "ai-ventures",
+			"programTitle": "AI Ventures",
+			"planId": "ai-ventures-reviewer-packet-zip-recovery-20261002",
+			"planTitle": "Recover and independently accept the reviewer-safe ZIP packet",
+			"taskId": "recover-reviewer-packet-zip",
+			"taskTitle": "Recover the exact reviewer-safe ZIP artifact",
+			"runId": "pianola:ai-ventures-reviewer-packet-zip-recovery-20261002:recover-reviewer-packet-zip",
+			"checkName": "independent-validation",
+			"completedAt": "2026-10-02T10:49:12.463Z"
+		},
+		{
+			"programId": "ai-ventures",
+			"programTitle": "AI Ventures",
+			"planId": "ai-ventures-reviewer-packet-zip-recovery-20261002",
+			"planTitle": "Recover and independently accept the reviewer-safe ZIP packet",
+			"taskId": "accept-reviewer-packet-zip",
+			"taskTitle": "Independently accept the recovered reviewer ZIP",
+			"runId": "pianola:ai-ventures-reviewer-packet-zip-recovery-20261002:accept-reviewer-packet-zip",
+			"checkName": "independent-validation",
+			"completedAt": "2026-10-02T10:52:45.194Z"
+		},
+		{
+			"programId": "ef-video",
+			"programTitle": "EF Video Editing",
+			"planId": "ef-video-founder-decision-receipt-hardening-20261002",
+			"planTitle": "Harden and land the founder decision receipt",
+			"taskId": "harden-and-land-decision-receipt",
+			"taskTitle": "Make the verified receipt reviewable as an immutable commit",
+			"runId": "pianola:ef-video-founder-decision-receipt-hardening-20261002:harden-and-land-decision-receipt",
+			"checkName": "independent-validation",
+			"completedAt": "2026-10-02T10:50:32.294Z"
+		},
+		{
+			"programId": "ef-video",
+			"programTitle": "EF Video Editing",
+			"planId": "ef-video-founder-decision-receipt-qa-acceptance-20261002",
+			"planTitle": "Independently accept the immutable founder decision receipt",
+			"taskId": "qa-founder-decision-receipt-commit",
+			"taskTitle": "Verify the exact hardened receipt commit",
+			"runId": "pianola:ef-video-founder-decision-receipt-qa-acceptance-20261002:qa-founder-decision-receipt-commit",
+			"checkName": "independent-validation",
+			"completedAt": "2026-10-02T10:58:46.205Z"
+		},
+		{
+			"programId": "ef-video",
+			"programTitle": "EF Video Editing",
+			"planId": "ef-video-founder-decision-recording-20261002",
+			"planTitle": "Record the authoritative founder pilot decision",
+			"taskId": "record-authoritative-founder-decision",
+			"taskTitle": "Record the resolved founder decision without operational authorization",
+			"runId": "pianola:ef-video-founder-decision-recording-20261002:record-authoritative-founder-decision",
+			"checkName": "independent-validation",
+			"completedAt": "2026-10-02T11:08:42.924Z"
+		},
+		{
+			"programId": "forex-go",
+			"programTitle": "Forex Go",
+			"planId": "forex-go-cotv4-unmatched-route-no-store",
+			"planTitle": "Prevent caching of unmatched COT-v4 routes",
+			"taskId": "implement",
+			"taskTitle": "Set no-store on unmatched COT-v4 route responses",
+			"runId": "pianola:forex-go-cotv4-unmatched-route-no-store:implement",
+			"checkName": "independent-validation",
+			"completedAt": "2026-10-02T11:22:01.690Z"
+		},
+		{
+			"programId": "forex-go",
+			"programTitle": "Forex Go",
+			"planId": "forex-go-cotv4-nosniff",
+			"planTitle": "Prevent MIME sniffing on COT-v4 responses",
+			"taskId": "implement",
+			"taskTitle": "Set nosniff on every COT-v4 HTTP response",
+			"runId": "pianola:forex-go-cotv4-nosniff:implement",
+			"checkName": "independent-validation",
+			"completedAt": "2026-10-02T11:47:23.038Z"
+		}
+	],
+	"programs": [
+		{
+			"id": "ai-ventures",
+			"title": "AI Ventures",
+			"status": "paused",
+			"loop": {
+				"supervised": false,
+				"lastWakeReason": "plan-finished",
+				"lastWakeAt": "2026-10-02T11:19:04.348Z"
+			},
+			"activePlanId": "ai-ventures-founder-review-qa-acceptance-20261002T112226Z",
+			"activePlanTitle": "Independently accept the recovered founder review request",
+			"openAsks": 0,
+			"running": 1,
+			"verifiedLast7d": 7
+		},
+		{
+			"id": "ef-video",
+			"title": "EF Video Editing",
+			"status": "active",
+			"loop": {
+				"supervised": true,
+				"lastWakeReason": "plan-finished",
+				"lastWakeAt": "2026-10-02T11:10:09.406Z"
+			},
+			"activePlanId": "ef-video-founder-decision-recording-qa-review-20261002",
+			"activePlanTitle": "Independently adjudicate the claimed founder decision recording",
+			"openAsks": 1,
+			"running": 1,
+			"verifiedLast7d": 5
+		},
+		{
+			"id": "forex-go",
+			"title": "Forex Go",
+			"status": "active",
+			"loop": {
+				"supervised": true,
+				"lastWakeReason": "plan-finished",
+				"lastWakeAt": "2026-10-02T13:07:08.133Z"
+			},
+			"activePlanId": "forex-go-cotv4-referrer-policy",
+			"activePlanTitle": "Prevent referrer leakage from COT-v4 responses",
+			"openAsks": 0,
+			"running": 1,
+			"verifiedLast7d": 6
+		},
+		{
+			"id": "portfolio",
+			"title": "Portfolio (shared team)",
+			"status": "active",
+			"loop": {
+				"supervised": false
+			},
+			"openAsks": 0,
+			"running": 0,
+			"verifiedLast7d": 0
+		}
+	]
+}
