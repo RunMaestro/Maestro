@@ -80,6 +80,7 @@ import type {
 	SelectTabCallback,
 	NewTabCallback,
 	CloseTabCallback,
+	ReopenTabCallback,
 	RenameTabCallback,
 	StarTabCallback,
 	SnoozeCommandCallback,
@@ -494,6 +495,11 @@ export class WebServer {
 
 	setCloseTabCallback(callback: CloseTabCallback): void {
 		this.callbackRegistry.setCloseTabCallback(callback);
+	}
+
+	/** Register the owner-side conversation restore callback. */
+	setReopenTabCallback(callback: ReopenTabCallback): void {
+		this.callbackRegistry.setReopenTabCallback(callback);
 	}
 
 	setRenameTabCallback(callback: RenameTabCallback): void {
@@ -1404,6 +1410,16 @@ export class WebServer {
 
 	requestNewTab(sessionId: string, background?: boolean): Promise<{ tabId: string } | null> {
 		return this.callbackRegistry.newTab(sessionId, background);
+	}
+
+	/** Resolve true only after the owning renderer confirms closure. */
+	requestCloseTab(sessionId: string, tabId: string): Promise<boolean> {
+		return this.callbackRegistry.closeTab(sessionId, tabId);
+	}
+
+	/** Reopen a browser-selected history entry using the desktop's tab identity. */
+	requestReopenTab(sessionId: string, tabId: string): Promise<{ tabId: string } | null> {
+		return this.callbackRegistry.reopenTab(sessionId, tabId);
 	}
 
 	broadcastThemeChange(theme: Theme): void {

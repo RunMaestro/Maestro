@@ -43,6 +43,7 @@ vi.mock('../../../main/web-server/WebServer', () => {
 			setSelectTabCallback = vi.fn();
 			setNewTabCallback = vi.fn();
 			setCloseTabCallback = vi.fn();
+			setReopenTabCallback = vi.fn();
 			setRenameTabCallback = vi.fn();
 			setStarTabCallback = vi.fn();
 			setSnoozeCommandCallback = vi.fn();
@@ -2539,11 +2540,20 @@ describe('web-server/web-server-factory', () => {
 			await expect(resultPromise).resolves.toEqual({ tabId: 'new-tab' });
 
 			const closeCallback = server.setCloseTabCallback.mock.calls[0][0];
-			await expect(closeCallback('session-in-secondary-window', 'new-tab')).resolves.toBe(true);
+			const closePromise = closeCallback('session-in-secondary-window', 'new-tab');
+			const closeChannel = vi
+				.mocked(secondaryWebContents.send)
+				.mock.calls.find((call) => call[0] === 'remote:closeTab')?.[3] as string;
+			const closeReply = vi
+				.mocked(ipcMain.once)
+				.mock.calls.find((call) => call[0] === closeChannel)?.[1];
+			closeReply?.({} as never, true);
+			await expect(closePromise).resolves.toBe(true);
 			expect(secondaryWebContents.send).toHaveBeenCalledWith(
 				'remote:closeTab',
 				'session-in-secondary-window',
-				'new-tab'
+				'new-tab',
+				expect.any(String)
 			);
 			expect(mockWebContents.send).not.toHaveBeenCalledWith(
 				'remote:closeTab',

@@ -476,7 +476,17 @@ interface MaestroAPI {
 			callback: (sessionId: string, responseChannel: string, background?: boolean) => void
 		) => () => void;
 		sendRemoteNewTabResponse: (responseChannel: string, result: { tabId: string } | null) => void;
-		onRemoteCloseTab: (callback: (sessionId: string, tabId: string) => void) => () => void;
+		onRemoteCloseTab: (
+			callback: (sessionId: string, tabId: string, responseChannel: string) => void
+		) => () => void;
+		sendRemoteCloseTabResponse: (responseChannel: string, closed: boolean) => void;
+		onRemoteReopenTab: (
+			callback: (sessionId: string, tabId: string, responseChannel: string) => void
+		) => () => void;
+		sendRemoteReopenTabResponse: (
+			responseChannel: string,
+			result: { tabId: string } | null
+		) => void;
 		onRemoteRenameTab: (
 			callback: (sessionId: string, tabId: string, newName: string, responseChannel: string) => void
 		) => () => void;
@@ -1261,6 +1271,8 @@ interface MaestroAPI {
 		claimAutoRunStart: (sessionId: string) => Promise<boolean>;
 		releaseAutoRunStartClaim: (sessionId: string) => Promise<boolean>;
 		requestNewTab: (sessionId: string, background?: boolean) => Promise<{ tabId: string } | null>;
+		requestCloseTab: (sessionId: string, tabId: string) => Promise<boolean>;
+		requestReopenTab: (sessionId: string, tabId: string) => Promise<{ tabId: string } | null>;
 		broadcastUserInput: (
 			sessionId: string,
 			command: string,
