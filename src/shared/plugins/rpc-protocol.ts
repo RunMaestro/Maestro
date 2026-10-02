@@ -15,6 +15,12 @@
 
 import type { PluginCapability } from './permissions';
 
+/** Public, invocation-scoped progress from a headless agents.send turn. */
+export type AgentSendProgressEvent =
+	| { type: 'activity'; text: string; at: string }
+	| { type: 'commentary'; text: string; at: string }
+	| { type: 'tool'; tool: string; status: 'started' | 'completed' | 'failed'; at: string };
+
 /**
  * The host API surface as ONE data-driven table: method -> { capability }. The
  * method-name union, the runtime method list, and the method->capability map are
@@ -136,6 +142,7 @@ export type HostControlMessage =
 			context: PluginToolCallerContext;
 	  }
 	| { kind: 'event'; topic: string; at: string; payload: unknown }
+	| { kind: 'progress'; id: number; event: AgentSendProgressEvent }
 	| { kind: 'shutdown' };
 
 /**

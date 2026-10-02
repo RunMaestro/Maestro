@@ -2658,6 +2658,42 @@ Some text with [x] in it that's not a checkbox
 			mockSpawn.mockReturnValue(mockChild);
 		});
 
+		it('streams Codex public commentary and tool status without raw arguments or reasoning', async () => {
+			const onProgress = vi.fn();
+			const p = spawnAgent('codex', '/p', 'hi', undefined, { onProgress });
+			const lines =
+				[
+					{
+						type: 'event_msg',
+						payload: { type: 'agent_message', phase: 'commentary', message: 'Checking files' },
+					},
+					{
+						type: 'response_item',
+						payload: {
+							type: 'function_call',
+							name: 'functions.exec_command',
+							call_id: 'c1',
+							arguments: '{"cmd":"SECRET_ARGUMENT"}',
+						},
+					},
+					{
+						type: 'response_item',
+						payload: { type: 'function_call_output', call_id: 'c1', output: 'SECRET_OUTPUT' },
+					},
+					{ type: 'response_item', payload: { type: 'reasoning', summary: ['SECRET_REASONING'] } },
+					{ type: 'item.completed', item: { type: 'agent_message', text: 'final answer' } },
+				]
+					.map((line) => JSON.stringify(line))
+					.join('\n') + '\n';
+			await driveSpawnToCompletion(p, 0, lines);
+			expect(onProgress.mock.calls.map(([event]) => ({ ...event, at: undefined }))).toEqual([
+				{ type: 'commentary', text: 'Checking files', at: undefined },
+				{ type: 'tool', tool: 'functions.exec_command', status: 'started', at: undefined },
+				{ type: 'tool', tool: 'functions.exec_command', status: 'completed', at: undefined },
+			]);
+			expect(JSON.stringify(onProgress.mock.calls)).not.toMatch(/SECRET_/);
+		});
+
 		it('Claude spawn without any options still includes base stream-json flags', async () => {
 			const p = spawnAgent('claude-code', '/p', 'hi');
 			await driveSpawnToCompletion(p, 0, CLAUDE_OK());

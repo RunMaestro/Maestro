@@ -1,4 +1,4 @@
-# Relay host contract (Host API 1.17.0)
+# Relay host contract (Host API 1.20.0)
 
 This is the Maestro host half of the Relay Discord integration. The Discord gateway, token UI, channel ownership, per-thread session mapping, and Pianola exceptions belong to the Relay plugin, not the host. The host never receives the bot token as a setting or agent environment variable.
 
@@ -7,10 +7,38 @@ This is the Maestro host half of the Relay Discord integration. The Discord gate
 An enabled, trusted plugin may call:
 
 ```ts
-maestro.agents.send(agentId, prompt, { sessionId?: providerSessionId })
-  -> Promise<{ success: boolean; response: string | null;
-                sessionId: string | null; error?: string }>
+const result = await maestro.agents.send(agentId, prompt, {
+	sessionId: providerSessionId, // optional
+	onProgress: (event) => updateProgressCard(event), // optional
+});
+// result: { success: boolean; response: string | null;
+//           sessionId: string | null; error?: string }
 ```
+
+`onProgress` receives only events from **this invocation** before the promise
+settles. The callback is optional and is never serialized into the broker
+request. Its event union is:
+
+```ts
+type AgentSendProgressEvent =
+	| { type: 'activity'; text: string; at: string }
+	| { type: 'commentary'; text: string; at: string }
+	| { type: 'tool'; tool: string; status: 'started' | 'completed' | 'failed'; at: string };
+```
+
+`at` is an ISO 8601 UTC timestamp. `activity` is a host-owned generic status;
+`commentary` is provider-designated public commentary, never raw reasoning;
+`tool` carries only a tool name and lifecycle status, never arguments, output,
+command text, or raw logs. A provider may emit fewer kinds, or none. The host
+posts each event to the calling plugin's sandbox with that RPC request's private
+correlation ID; no global event subscription or `events:subscribe` grant is
+needed. Events stop on completion, cancellation, timeout, plugin stop, or grant
+revocation. The result remains the only authoritative final response.
+
+The current host emits `activity` when the headless run starts. Codex's explicit
+commentary phase emits `commentary`; Claude and JSON-line providers emit tool
+lifecycle events when their stream exposes them. Providers with no usable stream
+still complete normally and may emit only the initial `activity` event.
 
 With no `sessionId`, the host starts a fresh headless provider session. With one, it passes that opaque provider session ID to the provider's resume path. `sessionId` in the result is a **provider session ID**, not a desktop tab ID or Maestro agent ID. The plugin stores one ID per Discord thread and only saves a new ID after `success: true`. A failed run has `response: null`, may carry a provider ID for diagnostics, and must not be posted as a successful answer. The host runs different threads independently. The `agents:dispatch` ActionGuard limits one plugin to two concurrent high-risk actions; additional calls fail clearly and may be queued by the plugin. The provider process has a 20-minute timeout. Disabling, crashing, or uninstalling the plugin aborts its outstanding `agents.send` processes.
 
@@ -40,4 +68,4 @@ The proof is scoped to the local same-user process boundary. A model with full s
 
 `maestro.storage.set` writes the plugin's private KV data to `<userData>/plugin-data/<pluginId>/store.json`. On POSIX, the base/plugin directories are owner-only (`0700`), new temporary and replacement files are owner-only (`0600`), and old stores are hardened before reading. Unsafe symlinks are rejected. Windows applies the platform's file ACL behavior; POSIX mode bits are not an access-control mechanism there. The token remains plaintext for the local user and should never be copied into global `shellEnvVars`, prompts, logs, or the plugin panel response.
 
-The Relay plugin must set `minHostApi: "1.17.0"` and declare `agents:dispatch` plus its existing network, storage, and tool contributions. This host change does not enable plugins, grant permission, install Relay, or configure a Discord bot.
+The Relay plugin must set `minHostApi: "1.20.0"` to rely on `onProgress` and declare `agents:dispatch` plus its existing network, storage, and tool contributions. This host change does not enable plugins, grant permission, install Relay, or configure a Discord bot.

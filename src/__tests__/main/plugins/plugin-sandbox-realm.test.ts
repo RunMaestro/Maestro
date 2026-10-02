@@ -194,6 +194,49 @@ describe('plugin sandbox realm - escape regression (FC1)', () => {
 });
 
 describe('plugin sandbox realm - behavioral parity', () => {
+	it('routes agents.send progress only to its pending call and drops late events', async () => {
+		const sent: Array<{ id: number; method: string; params: unknown }> = [];
+		const bridge = makeBridge({ send: vi.fn((json: string) => sent.push(JSON.parse(json))) });
+		const realm = bootRealm(bridge);
+		realm.runScript(
+			String.raw`
+			globalThis.progress = [];
+			globalThis.calls = [
+				maestro.agents.send('a', 'one', { onProgress: function (e) { progress.push(['one', e.text]); } }),
+				maestro.agents.send('a', 'two', { sessionId: 'owned', onProgress: function (e) { progress.push(['two', e.text]); } })
+			];
+		`,
+			'send-progress'
+		);
+		expect(sent).toHaveLength(2);
+		expect(sent[0].params).toEqual({ agentId: 'a', prompt: 'one', opts: {} });
+		expect(sent[1].params).toEqual({ agentId: 'a', prompt: 'two', opts: { sessionId: 'owned' } });
+		realm.deliverProgress(
+			JSON.stringify({ id: sent[1].id, event: { type: 'commentary', text: 'second', at: 'now' } })
+		);
+		realm.deliverProgress(
+			JSON.stringify({ id: sent[0].id, event: { type: 'activity', text: 'first', at: 'now' } })
+		);
+		realm.deliverResponse(
+			JSON.stringify({ id: sent[0].id, ok: true, result: { success: true, response: 'done' } })
+		);
+		realm.deliverProgress(
+			JSON.stringify({ id: sent[0].id, event: { type: 'activity', text: 'late', at: 'now' } })
+		);
+		realm.deliverResponse(
+			JSON.stringify({ id: sent[1].id, ok: true, result: { success: true, response: 'done' } })
+		);
+		await Promise.all([Promise.resolve(), Promise.resolve()]);
+		realm.runScript('console.log(JSON.stringify(progress));', 'progress-result');
+		const infos = (bridge.log as ReturnType<typeof vi.fn>).mock.calls.filter(
+			([level]) => level === 'info'
+		);
+		expect(JSON.parse(String(infos.at(-1)?.[1]))).toEqual([
+			['two', 'second'],
+			['one', 'first'],
+		]);
+	});
+
 	it('SDK calls round-trip through the bridge as JSON and resolve in-realm', async () => {
 		const sent: string[] = [];
 		const bridge = makeBridge({ send: vi.fn((json: string) => sent.push(json)) });

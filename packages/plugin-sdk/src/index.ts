@@ -419,8 +419,10 @@ export function describeCapability(capability: PluginCapability): string {
 // --- Host API version (from shared/plugins/host-api.ts) ---------------------
 
 /**
- * The host API version this Maestro build implements. Bumped to 1.17.0 for
- * `agents.send` and the verified plugin-tool caller context. 1.16.0 added three
+ * The host API version this Maestro build implements. 1.20.0 adds an optional
+ * per-call public progress callback to agents.send. 1.18.0 and 1.19.0 are
+ * reserved by separate panel work on this fork. 1.17.0 added `agents.send` and verified plugin-tool caller context.
+ * 1.16.0 added three
  * backward-compatible additions: the metadata-only `session.activated` event
  * topic (`{ sessionId, tabId? }`, opaque ids only, fired when the focused agent
  * changes), the `sessions.focus` method plus its narrow `sessions:focus`
@@ -451,7 +453,7 @@ export function describeCapability(capability: PluginCapability): string {
  * `ui:contribute` / `ui:panel` / `ui:render-unsafe`; 1.3.0 added `tools` +
  * `keybindings`; 1.2.0 added `transcripts:read`.
  */
-export const HOST_API_VERSION = '1.17.0';
+export const HOST_API_VERSION = '1.20.0';
 
 /** Result of checking a plugin's declared host-API requirement. */
 export interface HostApiCompatibility {
@@ -1463,6 +1465,11 @@ export interface MaestroNetApi {
 }
 
 /** List/read agents (`agents:read`) and dispatch prompts (`agents:dispatch`). */
+export type AgentSendProgressEvent =
+	| { type: 'activity'; text: string; at: string }
+	| { type: 'commentary'; text: string; at: string }
+	| { type: 'tool'; tool: string; status: 'started' | 'completed' | 'failed'; at: string };
+
 export interface MaestroAgentsApi {
 	list(): Promise<unknown>;
 	get(agentId: string): Promise<unknown>;
@@ -1471,7 +1478,7 @@ export interface MaestroAgentsApi {
 	send(
 		agentId: string,
 		prompt: string,
-		opts?: { sessionId?: string }
+		opts?: { sessionId?: string; onProgress?: (event: AgentSendProgressEvent) => void }
 	): Promise<{
 		success: boolean;
 		response: string | null;

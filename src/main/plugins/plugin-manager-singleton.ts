@@ -13,6 +13,7 @@
  * stale relative to a freshly-toggled flag), matching the IPC handlers' gate.
  */
 import type { PluginManager } from './plugin-manager';
+import type { AgentSendProgressEvent } from '../../shared/plugins/rpc-protocol';
 
 export interface HeadlessAgentReply {
 	success: boolean;
@@ -26,7 +27,8 @@ export type HeadlessAgentRunner = (
 	prompt: string,
 	sessionId?: string,
 	signal?: AbortSignal,
-	origin?: 'user' | 'auto'
+	origin?: 'user' | 'auto',
+	onProgress?: (event: AgentSendProgressEvent) => void
 ) => Promise<HeadlessAgentReply>;
 let headlessAgentRunner: HeadlessAgentRunner | null = null;
 

@@ -27,7 +27,7 @@ export interface PluginHeadlessRunnerDeps {
 export function createPluginHeadlessAgentRunner(
 	deps: PluginHeadlessRunnerDeps
 ): HeadlessAgentRunner {
-	return async (agentId, prompt, providerSessionId, signal, origin = 'auto') => {
+	return async (agentId, prompt, providerSessionId, signal, origin = 'auto', onProgress) => {
 		const agent = deps.getAgent(agentId);
 		if (!agent) throw new Error(`agents.send: no agent "${agentId}"`);
 		const local = !agent.sessionSshRemoteConfig?.enabled;
@@ -49,6 +49,25 @@ export function createPluginHeadlessAgentRunner(
 				? createPluginRunProofFile(runToken, HEADLESS_RUN_TIMEOUT_MS + 60_000)
 				: undefined;
 			deps.audit(agent.id, !!providerSessionId);
+			if (!signal?.aborted) {
+				try {
+					onProgress?.({
+						type: 'activity',
+						text: 'Agent run started',
+						at: new Date().toISOString(),
+					});
+				} catch {
+					// Progress delivery cannot change the agent result.
+				}
+			}
+			if (signal?.aborted) {
+				return {
+					success: false,
+					response: null,
+					sessionId: null,
+					error: 'Agent run timed out or was cancelled',
+				};
+			}
 			const result = await deps.spawn(agent.toolType, agent.cwd, prompt, providerSessionId, {
 				customModel: agent.customModel,
 				customEffort: agent.customEffort,
@@ -65,13 +84,19 @@ export function createPluginHeadlessAgentRunner(
 				mcpCliScriptPath: deps.cliScriptPath(),
 				timeoutMs: HEADLESS_RUN_TIMEOUT_MS,
 				signal,
+				onProgress,
 			});
+			const success =
+				result.success &&
+				typeof result.response === 'string' &&
+				result.response.trim().length > 0 &&
+				!signal?.aborted;
 			return {
-				success: result.success,
-				response: result.success ? (result.response ?? null) : null,
+				success,
+				response: success ? result.response! : null,
 				sessionId: result.agentSessionId ?? null,
 				usageStats: result.usageStats,
-				...(result.success ? {} : { error: result.error ?? 'Agent run failed' }),
+				...(success ? {} : { error: result.error ?? 'Agent run failed or returned no final text' }),
 			};
 		} finally {
 			if (pluginRunProofFile) removePluginRunProofFile(pluginRunProofFile);

@@ -12,6 +12,28 @@ const agent = {
 } as SessionInfo;
 
 describe('plugin headless agent runner', () => {
+	it('reports no successful response when a provider exits without final text', async () => {
+		const onProgress = vi.fn();
+		const run = createPluginHeadlessAgentRunner({
+			getAgent: () => agent,
+			detectAgent: async () => ({ available: true }),
+			hasPluginTools: () => false,
+			spawn: async () => ({ success: true, response: '   ', agentSessionId: 'provider-empty' }),
+			prepareSystemPrompt: async () => undefined,
+			issueRunToken: vi.fn(),
+			revokeRunToken: vi.fn(),
+			cliScriptPath: () => '/cli.js',
+			audit: vi.fn(),
+		});
+		expect(await run('agent-a', 'hello', undefined, undefined, 'auto', onProgress)).toMatchObject({
+			success: false,
+			response: null,
+		});
+		expect(onProgress).toHaveBeenCalledWith(
+			expect.objectContaining({ type: 'activity', text: 'Agent run started' })
+		);
+	});
+
 	it('keeps two concurrent threads separate, resumes the requested provider session and revokes proofs', async () => {
 		const issueRunToken = vi.fn((_id: string) => `proof-${issueRunToken.mock.calls.length}`);
 		const revokeRunToken = vi.fn();

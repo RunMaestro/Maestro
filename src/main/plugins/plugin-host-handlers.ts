@@ -20,7 +20,7 @@ import { logger } from '../utils/logger';
 import { fetchWithTimeout } from '../utils/fetchWithTimeout';
 import type { HostCallHandler, HostCallHandlers } from './plugin-sandbox-host';
 import type { PermissionBroker } from './permission-broker';
-import type { HostMethod } from '../../shared/plugins/rpc-protocol';
+import type { AgentSendProgressEvent, HostMethod } from '../../shared/plugins/rpc-protocol';
 import type { ActionGuard } from './action-guard';
 import type { PluginKvStore } from './plugin-kv-store';
 import type { PluginAgentSessionBindings } from './plugin-agent-session-bindings';
@@ -294,7 +294,9 @@ export interface HostHandlerDeps {
 		agentId: string,
 		prompt: string,
 		sessionId?: string,
-		signal?: AbortSignal
+		signal?: AbortSignal,
+		origin?: 'user' | 'auto',
+		onProgress?: (event: AgentSendProgressEvent) => void
 	) => Promise<{
 		success: boolean;
 		response: string | null;
@@ -1475,7 +1477,7 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 		// Joined into the existing resource cleanup below; a disabled/crashed
 		// plugin cannot leave its unattended provider run editing for 20 minutes.
 		pluginRunControllers = activeRuns;
-		handlers['agents.send'] = async (pluginId, params) => {
+		handlers['agents.send'] = async (pluginId, params, context) => {
 			const p = asObject(params);
 			assertClosedSchema('agents.send', p, { agentId: true, prompt: true, opts: true });
 			if (
@@ -1532,11 +1534,24 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 					runs.add(controller);
 					activeRuns.set(pluginId, runs);
 					try {
+						const onProgress = (event: AgentSendProgressEvent): void => {
+							if (controller.signal.aborted) return;
+							if (
+								!deps.broker.authorize(pluginId, 'agents.send', p).allowed ||
+								!deps.dispatchUnattendedAllowed?.(pluginId, agentId)
+							) {
+								controller.abort();
+								return;
+							}
+							context?.onProgress(event);
+						};
 						const { success, response, sessionId, error } = await sendAgent(
 							agentId,
 							prompt,
 							opts.sessionId as string | undefined,
-							controller.signal
+							controller.signal,
+							'auto',
+							onProgress
 						);
 						// Stop/uninstall may have purged this plugin's bindings while the
 						// provider was closing. A late successful result must not restore them.

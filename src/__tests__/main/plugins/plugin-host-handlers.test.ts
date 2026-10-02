@@ -24,6 +24,7 @@ import { PermissionBroker } from '../../../main/plugins/permission-broker';
 import { PluginBackgroundSupervisor } from '../../../main/plugins/plugin-background-supervisor';
 import { PluginGroupingRegistry } from '../../../main/plugins/plugin-grouping-registry';
 import type { PermissionGrant } from '../../../shared/plugins/permissions';
+import type { AgentSendProgressEvent } from '../../../shared/plugins/rpc-protocol';
 
 let kvBase: string;
 let kv: PluginKvStore;
@@ -795,9 +796,59 @@ describe('high-power act verbs (agents.dispatch / process.spawn)', () => {
 			'a',
 			'next',
 			'provider_thread-one',
-			expect.any(AbortSignal)
+			expect.any(AbortSignal),
+			'auto',
+			expect.any(Function)
 		);
 		expect(audits).toEqual(['agent:a', 'agent:a', 'agent:a']);
+	});
+
+	it('stops a running send when its dispatch grant is revoked during progress', async () => {
+		let grants: PermissionGrant[] = [scopedGrant('agents:dispatch', 'a')];
+		let report: ((event: AgentSendProgressEvent) => void) | undefined;
+		let runSignal: AbortSignal | undefined;
+		const sendAgent = vi.fn(
+			(
+				_agentId: string,
+				_prompt: string,
+				_sessionId?: string,
+				signal?: AbortSignal,
+				_origin?: 'user' | 'auto',
+				onProgress?: (event: AgentSendProgressEvent) => void
+			) => {
+				runSignal = signal;
+				report = onProgress;
+				return new Promise<{ success: boolean; response: null; sessionId: null }>((resolve) => {
+					signal?.addEventListener(
+						'abort',
+						() => resolve({ success: false, response: null, sessionId: null }),
+						{ once: true }
+					);
+				});
+			}
+		);
+		const h = buildHostCallHandlers(
+			makeDeps({
+				broker: brokerFor(() => grants),
+				dispatchUnattendedAllowed: () => true,
+				sendAgent,
+			})
+		);
+		const delivered = vi.fn();
+		const pending = h['agents.send']!(
+			'p',
+			{ agentId: 'a', prompt: 'hello' },
+			{ onProgress: delivered }
+		);
+		await vi.waitFor(() => expect(report).toBeTypeOf('function'));
+		const event = { type: 'activity' as const, text: 'Working', at: '2026-10-02T00:00:00.000Z' };
+		report?.(event);
+		expect(delivered).toHaveBeenCalledWith(event);
+		grants = [];
+		report?.(event);
+		expect(runSignal?.aborted).toBe(true);
+		expect(delivered).toHaveBeenCalledTimes(1);
+		await expect(pending).resolves.toMatchObject({ success: false, response: null });
 	});
 
 	it('rejects a provider session bound to another agent or plugin before spawning', async () => {

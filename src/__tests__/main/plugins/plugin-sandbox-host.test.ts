@@ -71,6 +71,49 @@ describe('PluginSandboxHost.invokeCommand payload cap', () => {
 	});
 });
 
+describe('PluginSandboxHost agents.send progress', () => {
+	it('delivers progress under the original request id and stops after the response', async () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-sbx-progress-'));
+		try {
+			fs.writeFileSync(path.join(dir, 'entry.js'), '// entry', 'utf-8');
+			let report: ((event: { type: 'activity'; text: string; at: string }) => void) | undefined;
+			let finish: ((value: string) => void) | undefined;
+			const authorize = vi.fn(() => ({ allowed: true, capability: 'agents:dispatch' }));
+			const host = new PluginSandboxHost({
+				broker: { authorize } as unknown as PermissionBroker,
+				handlers: {
+					'agents.send': async (_pluginId, _params, context) => {
+						report = context?.onProgress;
+						return new Promise<string>((resolve) => {
+							finish = resolve;
+						});
+					},
+				},
+			});
+			host.start('p', dir, 'entry.js');
+			const proc = forkMock.mock.results.at(-1)?.value as { on: ReturnType<typeof vi.fn> };
+			const listener = proc.on.mock.calls.findLast(([name]) => name === 'message')?.[1] as (
+				data: unknown
+			) => void;
+			postMessage.mockClear();
+			listener({ id: 41, method: 'agents.send', params: { agentId: 'a', prompt: 'hi' } });
+			await vi.waitFor(() => expect(report).toBeTypeOf('function'));
+			const event = { type: 'activity' as const, text: 'Working', at: '2026-10-02T00:00:00.000Z' };
+			report?.(event);
+			expect(postMessage).toHaveBeenCalledWith({ kind: 'progress', id: 41, event });
+			finish?.('done');
+			await vi.waitFor(() =>
+				expect(postMessage).toHaveBeenCalledWith({ id: 41, ok: true, result: 'done' })
+			);
+			postMessage.mockClear();
+			report?.(event);
+			expect(postMessage).not.toHaveBeenCalled();
+		} finally {
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
+	});
+});
+
 describe('PluginSandboxHost.stop onStop hook', () => {
 	let dir: string;
 
