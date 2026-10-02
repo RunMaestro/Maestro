@@ -42,6 +42,7 @@ import {
 	type PianolaPlan,
 	type PianolaTask,
 } from '../../shared/pianola/pianola-tasks';
+import { assertOneActivePlanPerProgram } from '../../shared/pianola/pianola-programs';
 import type { PianolaMessage, PianolaMessageRole } from '../../shared/pianola/types';
 import { selectAgentForTask, type AgentCandidate } from '../../shared/pianola/pianola-agent-select';
 import { DEFAULT_CAPABILITIES } from '../../shared/types';
@@ -390,6 +391,11 @@ export function pianolaPlanSet(options: PianolaPlanSetOptions): void {
 		return;
 	}
 
+	try {
+		assertOneActivePlanPerProgram(plan, readPianolaPlans());
+	} catch (error) {
+		return fail(error instanceof Error ? error.message : String(error));
+	}
 	upsertPianolaPlan(plan);
 	if (options.json) {
 		console.log(JSON.stringify({ success: true, planId: plan.id, taskCount: plan.tasks.length }));
