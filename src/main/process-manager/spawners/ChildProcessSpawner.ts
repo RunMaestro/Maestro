@@ -1,9 +1,7 @@
 // src/main/process-manager/spawners/ChildProcessSpawner.ts
 
-import { spawn } from 'child_process';
 import { EventEmitter } from 'events';
 import * as path from 'path';
-import * as fs from 'fs';
 import { logger } from '../../utils/logger';
 import { createOutputParser } from '../../parsers';
 import { getAgentCapabilities } from '../../agents';
@@ -14,13 +12,29 @@ import { StdoutHandler } from '../handlers/StdoutHandler';
 import { StderrHandler } from '../handlers/StderrHandler';
 import { ExitHandler } from '../handlers/ExitHandler';
 import { buildChildProcessEnv, collectMaestroEnvVars } from '../utils/envBuilder';
+import { buildPromptArgv } from '../../../shared/maestro-lib/launch/prompt-delivery';
 import { DEFAULT_QUERY_SOURCE } from '../../../shared/querySource';
 import { saveImageToTempFile, buildImagePromptPrefix } from '../utils/imageUtils';
 import { buildStreamJsonMessage } from '../utils/streamJsonBuilder';
 import { escapeArgsForShell, isPowerShellShell } from '../utils/shellEscape';
 import { isWindows } from '../../../shared/platformDetection';
+import {
+	quoteCommandForCmdShell,
+	windowsShellReason,
+	type WindowsShellReason,
+} from '../../../shared/maestro-lib/launch/windows-command';
 import { captureException } from '../../utils/sentry';
 import { nextSpawnGeneration, isSupersededGeneration } from '../generation';
+import { startTurn } from '../../../shared/maestro-lib/run/start-turn';
+import { INTERACTIVE_STOP_GRACE_MS } from '../../../shared/maestro-lib/control/termination';
+
+// The log line each Windows shell promotion writes (see windowsShellReason).
+const WINDOWS_SHELL_LOG_MESSAGES: Record<WindowsShellReason, string> = {
+	'bare-exe':
+		'[ProcessManager] Auto-enabling shell for Windows to allow PATH resolution of basename exe',
+	'batch-file': '[ProcessManager] Auto-enabling shell for Windows to spawn batch-file command',
+	'shebang-script': '[ProcessManager] Auto-enabling shell for Windows to execute shell script',
+};
 
 /**
  * Handles spawning of child processes (non-PTY).
@@ -139,13 +153,10 @@ export class ChildProcessSpawner {
 					: buildImagePromptPrefix(tempImageFiles);
 				effectivePrompt = imagePrefix + prompt;
 				if (!promptViaStdin) {
-					if (promptArgs) {
-						finalArgs = [...finalArgs, ...promptArgs(effectivePrompt)];
-					} else if (noPromptSeparator) {
-						finalArgs = [...finalArgs, effectivePrompt];
-					} else {
-						finalArgs = [...finalArgs, '--', effectivePrompt];
-					}
+					finalArgs = [
+						...finalArgs,
+						...buildPromptArgv({ promptArgs, noPromptSeparator }, effectivePrompt),
+					];
 					promptAddedToArgs = true;
 				}
 				logger.debug('[ProcessManager] Embedded image paths in prompt', 'ProcessManager', {
@@ -164,13 +175,7 @@ export class ChildProcessSpawner {
 					finalArgs = [...finalArgs, ...imageArgs(tempPath)];
 				}
 				if (!promptViaStdin) {
-					if (promptArgs) {
-						finalArgs = [...finalArgs, ...promptArgs(prompt)];
-					} else if (noPromptSeparator) {
-						finalArgs = [...finalArgs, prompt];
-					} else {
-						finalArgs = [...finalArgs, '--', prompt];
-					}
+					finalArgs = [...finalArgs, ...buildPromptArgv({ promptArgs, noPromptSeparator }, prompt)];
 					promptAddedToArgs = true;
 				}
 				logger.debug('[ProcessManager] Using file-based image args', 'ProcessManager', {
@@ -184,13 +189,7 @@ export class ChildProcessSpawner {
 			// Regular batch mode - prompt as CLI arg
 			// SKIP this when prompt is sent via stdin to avoid shell escaping issues,
 			// or when the caller already embedded the prompt in args (promptAlreadyInArgs).
-			if (promptArgs) {
-				finalArgs = [...args, ...promptArgs(prompt)];
-			} else if (noPromptSeparator) {
-				finalArgs = [...args, prompt];
-			} else {
-				finalArgs = [...args, '--', prompt];
-			}
+			finalArgs = [...args, ...buildPromptArgv({ promptArgs, noPromptSeparator }, prompt)];
 			promptAddedToArgs = true;
 		} else {
 			finalArgs = args;
@@ -268,47 +267,19 @@ export class ChildProcessSpawner {
 			// the runInShell flag.
 			let useShell = !!config.runInShell;
 
-			// Auto-enable shell for Windows when command is a bare .exe (no path)
-			const commandHasPath = /\\|\//.test(spawnCommand);
-			const commandExt = path.extname(spawnCommand).toLowerCase();
-			if (isWindows() && !useShell && !commandHasPath && commandExt === '.exe') {
-				useShell = true;
-				logger.info(
-					'[ProcessManager] Auto-enabling shell for Windows to allow PATH resolution of basename exe',
-					'ProcessManager',
-					{ command: spawnCommand }
-				);
-			}
-
-			// Auto-enable shell for Windows when command is a batch file (.cmd/.bat).
-			// Node.js refuses to spawn .cmd/.bat directly (throws "spawn EINVAL") after
-			// the CVE-2024-27980 fix - they must be launched through a shell. npm-installed
-			// agent CLIs resolve to shims like claude.cmd / codex.cmd / opencode.cmd, which
-			// is exactly what tab naming spawns on Windows. Fixes MAESTRO-Q8.
-			if (isWindows() && !useShell && (commandExt === '.cmd' || commandExt === '.bat')) {
-				useShell = true;
-				logger.info(
-					'[ProcessManager] Auto-enabling shell for Windows to spawn batch-file command',
-					'ProcessManager',
-					{ command: spawnCommand }
-				);
-			}
-
-			// Auto-enable shell for Windows when command is a shell script (extensionless with shebang)
-			// This handles tools like OpenCode installed via npm with shell scripts
-			if (isWindows() && !useShell && !commandExt && commandHasPath) {
-				try {
-					const fileContent = fs.readFileSync(spawnCommand, 'utf8');
-					if (fileContent.startsWith('#!')) {
-						useShell = true;
-						logger.info(
-							'[ProcessManager] Auto-enabling shell for Windows to execute shell script',
-							'ProcessManager',
-							{ command: spawnCommand, shebang: fileContent.split('\n')[0] }
-						);
-					}
-				} catch {
-					// If we can't read the file, just continue without special handling
+			// Auto-enable shell for Windows when the command cannot be spawned directly:
+			// a bare .exe (PATH resolution), a .cmd/.bat shim (spawn EINVAL since the
+			// CVE-2024-27980 fix, MAESTRO-Q8), or an extensionless shebang script. The
+			// rules live in maestro-lib's windowsShellReason(); the logging stays here.
+			if (isWindows() && !useShell) {
+				const { reason, shebang } = windowsShellReason(spawnCommand);
+				if (reason) {
+					useShell = true;
+					logger.info(
+						WINDOWS_SHELL_LOG_MESSAGES[reason],
+						'ProcessManager',
+						shebang !== undefined ? { command: spawnCommand, shebang } : { command: spawnCommand }
+					);
 				}
 			}
 
@@ -340,20 +311,11 @@ export class ChildProcessSpawner {
 				spawnShell = config.shell.trim();
 			}
 
-			// When spawning through the default Windows shell (cmd.exe via ComSpec),
-			// Node concatenates the command and args into a single command line without
-			// quoting the command itself. A command path that contains spaces - e.g. an
-			// npm shim under "C:\Users\First Last\AppData\Roaming\npm\claude.cmd" - would
-			// be split by cmd.exe and fail. Quote it defensively. We only do this for the
-			// boolean (cmd.exe) shell path; an explicit shell string carries its own
-			// quoting rules and is the caller's responsibility.
-			if (
-				isWindows() &&
-				spawnShell === true &&
-				/\s/.test(spawnCommand) &&
-				!spawnCommand.startsWith('"')
-			) {
-				spawnCommand = `"${spawnCommand}"`;
+			// cmd.exe splits an unquoted command path that contains spaces; see
+			// quoteCommandForCmdShell() in maestro-lib. Only for the boolean (cmd.exe)
+			// shell - an explicit shell string carries its own quoting rules.
+			if (isWindows() && spawnShell === true) {
+				spawnCommand = quoteCommandForCmdShell(spawnCommand);
 			}
 
 			// Log spawn details
@@ -366,23 +328,6 @@ export class ChildProcessSpawner {
 				isWindows: isWindows(),
 				argsCount: spawnArgs.length,
 				promptArgLength: prompt ? spawnArgs[spawnArgs.length - 1]?.length : undefined,
-			});
-
-			const childProcess = spawn(spawnCommand, spawnArgs, {
-				cwd,
-				env,
-				shell: spawnShell,
-				stdio: ['pipe', 'pipe', 'pipe'],
-			});
-
-			logger.debug('[ProcessManager] Child process spawned', 'ProcessManager', {
-				sessionId,
-				pid: childProcess.pid,
-				hasStdout: !!childProcess.stdout,
-				hasStderr: !!childProcess.stderr,
-				hasStdin: !!childProcess.stdin,
-				killed: childProcess.killed,
-				exitCode: childProcess.exitCode,
 			});
 
 			const isBatchMode = !!prompt;
@@ -414,6 +359,148 @@ export class ChildProcessSpawner {
 				!!config.sendPromptViaStdin ||
 				!!config.sshStdinScript ||
 				!!outputParser; // Agents with output parsers use streaming JSONL, not batch JSON
+
+			// What travels on stdin, decided before the process exists:
+			// - SSH stdin script mode sends the entire script to /bin/bash on the
+			//   remote, which bypasses all shell escaping issues.
+			// - Raw stdin mode sends the prompt as literal text (non-stream-json
+			//   agents on Windows). PowerShell treats the input as literal text, NOT
+			//   as code to parse, so no escaping is needed.
+			// - Stream-json mode sends the message as JSON, but only when the prompt
+			//   was NOT already added to the CLI args. Without that guard, agents like
+			//   Codex (whose --json flag sets isStreamJsonMode for output parsing)
+			//   would receive the prompt both as a CLI arg and as stream-json stdin.
+			// - Anything written here is the whole of what the process gets on
+			//   stdin, so stdin is closed behind it. That includes the SSH script
+			//   of a turn that carries no local prompt: the remote shell and the
+			//   agent it starts both wait for the end of input.
+			// - Batch mode with nothing to write closes stdin at once; interactive
+			//   mode with nothing to write leaves it open for `ProcessManager.write()`.
+			let stdinText: string | undefined;
+			if (config.sshStdinScript) {
+				stdinText = config.sshStdinScript;
+				logger.debug('[ProcessManager] Sending SSH stdin script', 'ProcessManager', {
+					sessionId,
+					scriptLength: config.sshStdinScript.length,
+				});
+			} else if (config.sendPromptViaStdinRaw && effectivePrompt) {
+				stdinText = effectivePrompt;
+				logger.debug('[ProcessManager] Sending raw prompt via stdin', 'ProcessManager', {
+					sessionId,
+					promptLength: effectivePrompt.length,
+				});
+			} else if (isStreamJsonMode && effectivePrompt && !promptAddedToArgs) {
+				const streamJsonMessage = buildStreamJsonMessage(effectivePrompt, images || []);
+				stdinText = streamJsonMessage + '\n';
+				logger.debug('[ProcessManager] Sending stream-json message via stdin', 'ProcessManager', {
+					sessionId,
+					messageLength: streamJsonMessage.length,
+					imageCount: (images || []).length,
+					hasImages: !!(images && images.length > 0),
+				});
+			} else if (isBatchMode) {
+				logger.debug('[ProcessManager] Closing stdin for batch mode', 'ProcessManager', {
+					sessionId,
+				});
+			}
+
+			// The process is started, streamed and settled by the library's run
+			// layer, the same one the CLI and Cue use. Everything the renderer
+			// hears is still produced here, from the run layer's callbacks, in the
+			// same order as before: raw stdout, then the stdout handler; stderr;
+			// then exit. A killed predecessor's late events are dropped by the
+			// generation check below. `managedProcess` is built once the process
+			// exists; every callback that reads it runs later, from the event loop.
+			const isSuperseded = (): boolean =>
+				isSupersededGeneration(sessionId, managedProcess.spawnGeneration);
+
+			const turn = startTurn(
+				{
+					command: spawnCommand,
+					args: spawnArgs,
+					cwd,
+					env,
+					stdin: stdinText,
+					shell: spawnShell,
+				},
+				{
+					onStdout: (output) => {
+						if (isSuperseded()) return;
+						// Emit raw stdout before processing for live-streaming consumers (e.g., group chat peek).
+						// Wrapped in try/catch so a failing listener cannot prevent stdoutHandler from running.
+						try {
+							this.emitter.emit('raw-stdout', sessionId, output);
+						} catch (err) {
+							void captureException(err);
+							logger.error('[ProcessManager] raw-stdout listener error', 'ProcessManager', {
+								sessionId,
+								error: String(err),
+							});
+						}
+						this.stdoutHandler.handleData(sessionId, output);
+					},
+					onStderr: (stderrData) => {
+						if (isSuperseded()) return;
+						this.stderrHandler.handleData(sessionId, stderrData);
+					},
+				},
+				{
+					// The desktop stops through ProcessManager.interrupt() / kill(),
+					// which run the same ladder on this child; the turn's own stop
+					// methods are not used here.
+					stopGraceMs: INTERACTIVE_STOP_GRACE_MS,
+					keepStdinOpen: stdinText === undefined && !isBatchMode,
+					// The stdout and stderr handlers keep what the desktop needs; a
+					// second copy here would only grow for as long as the process lives.
+					stdoutTailLimit: 0,
+					stderrTailLimit: 0,
+					sessionId,
+					label: toolType,
+				}
+			);
+			const childProcess = turn.child;
+
+			// A stream error with no listener is an uncaught exception. stdin's is
+			// the common one: EPIPE, from a prompt written to a process that has
+			// already gone; the exit that follows reports what happened.
+			childProcess.stdin?.on('error', (err) => {
+				const errorCode = (err as NodeJS.ErrnoException).code;
+				if (errorCode === 'EPIPE') {
+					logger.debug(
+						'[ProcessManager] stdin EPIPE - process closed before write completed',
+						'ProcessManager',
+						{ sessionId }
+					);
+				} else {
+					logger.error('[ProcessManager] stdin error', 'ProcessManager', {
+						sessionId,
+						error: String(err),
+						code: errorCode,
+					});
+				}
+			});
+			childProcess.stdout?.on('error', (err) => {
+				logger.error('[ProcessManager] stdout error', 'ProcessManager', {
+					sessionId,
+					error: String(err),
+				});
+			});
+			childProcess.stderr?.on('error', (err) => {
+				logger.error('[ProcessManager] stderr error', 'ProcessManager', {
+					sessionId,
+					error: String(err),
+				});
+			});
+
+			logger.debug('[ProcessManager] Child process spawned', 'ProcessManager', {
+				sessionId,
+				pid: childProcess.pid,
+				hasStdout: !!childProcess.stdout,
+				hasStderr: !!childProcess.stderr,
+				hasStdin: !!childProcess.stdin,
+				killed: childProcess.killed,
+				exitCode: childProcess.exitCode,
+			});
 
 			logger.debug('[ProcessManager] Output parser lookup', 'ProcessManager', {
 				sessionId,
@@ -490,167 +577,38 @@ export class ChildProcessSpawner {
 			managedProcess.spawnGeneration = nextSpawnGeneration(sessionId);
 			this.processes.set(sessionId, managedProcess);
 
-			const isSuperseded = (): boolean =>
-				isSupersededGeneration(sessionId, managedProcess.spawnGeneration);
-
-			logger.debug('[ProcessManager] Setting up stdout/stderr/exit handlers', 'ProcessManager', {
-				sessionId,
-				hasStdout: childProcess.stdout ? 'exists' : 'null',
-				hasStderr: childProcess.stderr ? 'exists' : 'null',
-			});
-
-			// Handle stdin errors
-			if (childProcess.stdin) {
-				childProcess.stdin.on('error', (err) => {
-					const errorCode = (err as NodeJS.ErrnoException).code;
-					if (errorCode === 'EPIPE') {
-						logger.debug(
-							'[ProcessManager] stdin EPIPE - process closed before write completed',
-							'ProcessManager',
-							{ sessionId }
-						);
-					} else {
-						logger.error('[ProcessManager] stdin error', 'ProcessManager', {
-							sessionId,
-							error: String(err),
-							code: errorCode,
-						});
-					}
-				});
-			}
-
-			// Handle stdout
-			if (childProcess.stdout) {
-				logger.debug('[ProcessManager] Attaching stdout data listener', 'ProcessManager', {
-					sessionId,
-				});
-				childProcess.stdout.setEncoding('utf8');
-				childProcess.stdout.on('error', (err) => {
-					logger.error('[ProcessManager] stdout error', 'ProcessManager', {
-						sessionId,
-						error: String(err),
-					});
-				});
-				childProcess.stdout.on('data', (data: Buffer | string) => {
-					if (isSuperseded()) return;
-					const output = data.toString();
-					// Emit raw stdout before processing for live-streaming consumers (e.g., group chat peek).
-					// Wrapped in try/catch so a failing listener cannot prevent stdoutHandler from running.
-					try {
-						this.emitter.emit('raw-stdout', sessionId, output);
-					} catch (err) {
-						void captureException(err);
-						logger.error('[ProcessManager] raw-stdout listener error', 'ProcessManager', {
-							sessionId,
-							error: String(err),
-						});
-					}
-					this.stdoutHandler.handleData(sessionId, output);
-				});
-			} else {
-				logger.warn('[ProcessManager] childProcess.stdout is null', 'ProcessManager', {
-					sessionId,
-				});
-			}
-
-			// Handle stderr
-			if (childProcess.stderr) {
-				logger.debug('[ProcessManager] Attaching stderr data listener', 'ProcessManager', {
-					sessionId,
-				});
-				childProcess.stderr.setEncoding('utf8');
-				childProcess.stderr.on('error', (err) => {
-					logger.error('[ProcessManager] stderr error', 'ProcessManager', {
-						sessionId,
-						error: String(err),
-					});
-				});
-				childProcess.stderr.on('data', (data: Buffer | string) => {
-					if (isSuperseded()) return;
-					const stderrData = data.toString();
-					this.stderrHandler.handleData(sessionId, stderrData);
-				});
-			}
-
-			// Handle close (NOT exit) to ensure all stdout/stderr data is fully consumed.
-			// The 'exit' event can fire before the stdio streams have been drained,
-			// which causes data loss for short-lived processes where the result is
-			// emitted near the end of stdout (e.g., tab-naming, batch operations).
-			// The 'close' event guarantees all stdio streams are closed first.
-			childProcess.on('close', (code) => {
+			// The run layer settles once the streams have ended, so every line the
+			// process wrote has been read by then. A process that never started is
+			// reported once, as an error, rather than as an error and then a close.
+			void turn.done.then((exit) => {
 				if (isSuperseded()) {
 					logger.warn('[ProcessManager] Ignoring exit from superseded process', 'ProcessManager', {
 						sessionId,
 						pid: childProcess.pid,
-						exitCode: code,
+						exitCode: exit.exitCode,
+						error: exit.spawnError ? String(exit.spawnError) : undefined,
 					});
+					return;
+				}
+				if (exit.spawnError) {
+					this.exitHandler.handleError(sessionId, exit.spawnError);
 					return;
 				}
 				// Hand the exiting process in explicitly: it may already have been
 				// unregistered, and handleExit must settle THIS process rather than
 				// whatever currently owns the session id.
-				void this.exitHandler.handleExit(sessionId, code || 0, managedProcess).catch((err) => {
-					logger.error('[ProcessManager] handleExit threw', 'ProcessManager', {
-						sessionId,
-						error: String(err),
+				// `signal` is what tells a kill from a clean exit once `code || 0` has
+				// turned the killed process's null code into 0. `stdinError` says the
+				// prompt never fully reached the agent.
+				return this.exitHandler
+					.handleExit(sessionId, exit.exitCode || 0, managedProcess, exit.signal, exit.stdinError)
+					.catch((err) => {
+						logger.error('[ProcessManager] handleExit threw', 'ProcessManager', {
+							sessionId,
+							error: String(err),
+						});
 					});
-				});
 			});
-
-			// Handle errors
-			childProcess.on('error', (error) => {
-				if (isSuperseded()) {
-					logger.warn('[ProcessManager] Ignoring error from superseded process', 'ProcessManager', {
-						sessionId,
-						pid: childProcess.pid,
-						error: String(error),
-					});
-					return;
-				}
-				this.exitHandler.handleError(sessionId, error);
-			});
-
-			if (config.sshStdinScript) {
-				// SSH stdin script mode: send the entire script to /bin/bash on remote
-				// This bypasses all shell escaping issues by piping the script via stdin
-				logger.debug('[ProcessManager] Sending SSH stdin script', 'ProcessManager', {
-					sessionId,
-					scriptLength: config.sshStdinScript.length,
-				});
-				childProcess.stdin?.write(config.sshStdinScript);
-				childProcess.stdin?.end();
-			} else if (config.sendPromptViaStdinRaw && effectivePrompt) {
-				// Raw stdin mode: send prompt as literal text (non-stream-json agents on Windows)
-				// Note: When sending via stdin, PowerShell treats the input as literal text,
-				// NOT as code to parse. No escaping is needed for special characters.
-				logger.debug('[ProcessManager] Sending raw prompt via stdin', 'ProcessManager', {
-					sessionId,
-					promptLength: effectivePrompt.length,
-				});
-				childProcess.stdin?.write(effectivePrompt);
-				childProcess.stdin?.end();
-			} else if (isStreamJsonMode && effectivePrompt && !promptAddedToArgs) {
-				// Stream-json mode: send the message via stdin as JSON.
-				// Only write when prompt was NOT already added to CLI args.
-				// Without this guard, agents like Codex (whose --json flag sets isStreamJsonMode
-				// for output parsing) would receive the prompt both as a CLI arg and as stream-json
-				// stdin, causing unexpected behavior.
-				const streamJsonMessage = buildStreamJsonMessage(effectivePrompt, images || []);
-				logger.debug('[ProcessManager] Sending stream-json message via stdin', 'ProcessManager', {
-					sessionId,
-					messageLength: streamJsonMessage.length,
-					imageCount: (images || []).length,
-					hasImages: !!(images && images.length > 0),
-				});
-				childProcess.stdin?.write(streamJsonMessage + '\n');
-				childProcess.stdin?.end();
-			} else if (isBatchMode) {
-				// Regular batch mode: close stdin immediately
-				logger.debug('[ProcessManager] Closing stdin for batch mode', 'ProcessManager', {
-					sessionId,
-				});
-				childProcess.stdin?.end();
-			}
 
 			return { pid: childProcess.pid || -1, success: true };
 		} catch (error) {

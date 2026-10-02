@@ -18,19 +18,31 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { EventEmitter } from 'events';
+import { StringDecoder } from 'string_decoder';
 
 // Create mock spawn function at module level
 const mockSpawn = vi.fn();
 const mockStdin = {
 	end: vi.fn(),
 	write: vi.fn(),
+	// The run layer listens for stdin errors (EPIPE), as on a real stream.
+	on: vi.fn(),
 };
-const mockStdout = new EventEmitter();
-const mockStderr = new EventEmitter();
+// `setEncoding` is part of a real child stream: the spawner decodes there
+// rather than per chunk, so a multibyte character split across two reads
+// survives. Emitting strings from these fakes mirrors that.
+const mockStdout = Object.assign(new EventEmitter(), { setEncoding: vi.fn() });
+const mockStderr = Object.assign(new EventEmitter(), { setEncoding: vi.fn() });
+const mockKill = vi.fn();
 const mockChild = Object.assign(new EventEmitter(), {
 	stdin: mockStdin,
 	stdout: mockStdout,
 	stderr: mockStderr,
+	kill: mockKill,
+	// A running child, as Node reports one: the stop ladder signals only a
+	// process whose exit state is still null.
+	exitCode: null as number | null,
+	signalCode: null as NodeJS.Signals | null,
 });
 
 /**
@@ -58,11 +70,11 @@ const PATH_PROBE_COMMANDS = new Set(['which', 'where']);
  * cannot be emitted inline.
  */
 function makePathProbeChild(binary: string) {
-	const stdout = new EventEmitter();
+	const stdout = Object.assign(new EventEmitter(), { setEncoding: vi.fn() });
 	const child = Object.assign(new EventEmitter(), {
 		stdin: { end: vi.fn(), write: vi.fn() },
 		stdout,
-		stderr: new EventEmitter(),
+		stderr: Object.assign(new EventEmitter(), { setEncoding: vi.fn() }),
 	});
 	const resolved = pathProbeResolver?.(binary);
 	setTimeout(() => {
@@ -168,7 +180,7 @@ vi.mock('../../../cli/services/storage', () => ({
 
 // Mock SSH wrapper so SSH tests don't need real ssh/bash on the test machine
 const mockWrapSpawnWithSsh = vi.fn();
-vi.mock('../../../main/utils/ssh-spawn-wrapper', () => ({
+vi.mock('../../../shared/maestro-lib/launch/ssh-spawn-wrapper', () => ({
 	wrapSpawnWithSsh: (...args: unknown[]) => mockWrapSpawnWithSsh(...args),
 }));
 
@@ -186,6 +198,8 @@ import {
 } from '../../../cli/services/agent-spawner';
 import { isolateAgentEnv } from '../../helpers/agentEnvIsolation';
 
+const hostPlatform = process.platform;
+
 describe('agent-spawner', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
@@ -195,12 +209,30 @@ describe('agent-spawner', () => {
 		(mockChild as EventEmitter).removeAllListeners();
 		mockGetAgentCustomPath.mockReturnValue(undefined);
 		mockReadAgentConfig.mockReturnValue({});
-		mockReadSshRemotes.mockReturnValue([]);
+		// The remote the SSH tests point at. The launch plan resolves it before
+		// the wrapper runs, so a remote missing from this list is an error.
+		mockReadSshRemotes.mockReturnValue([
+			{
+				id: 'r1',
+				name: 'r1',
+				host: 'remotehost',
+				port: 22,
+				username: 'dev',
+				privateKeyPath: '',
+				enabled: true,
+			},
+		]);
 		mockWrapSpawnWithSsh.mockReset();
 		pathProbeResolver = DEFAULT_PATH_PROBE;
+		// The host decides how a prompt travels: on Windows an agent that reads
+		// stdin gets it there, everywhere else it goes on the command line. The
+		// tests below describe the command line, so they pin a POSIX host; the
+		// Windows cases set `win32` themselves.
+		Object.defineProperty(process, 'platform', { value: 'linux', configurable: true });
 	});
 
 	afterEach(() => {
+		Object.defineProperty(process, 'platform', { value: hostPlatform, configurable: true });
 		vi.restoreAllMocks();
 	});
 
@@ -655,6 +687,28 @@ Some text with [x] in it that's not a checkbox
 			expect(result.available).toBe(true);
 			expect(result.path).toBe('/usr/local/bin/claude');
 			expect(result.source).toBe('path');
+		});
+
+		it('should not leave a carriage return on the path when Windows `where` prints several matches', async () => {
+			// `where.exe` separates results with CRLF. Taking the first line by
+			// splitting on '\n' alone left a trailing '\r' on it, so the spawn then
+			// failed with `spawn C:\...\copilot\r ENOENT` (seen against a real
+			// Copilot install, which matches both `copilot` and `copilot.exe`).
+			mockGetAgentCustomPath.mockReturnValue(undefined);
+			vi.mocked(fs.promises.stat).mockRejectedValue(new Error('ENOENT'));
+			mockSpawn.mockReturnValue(mockChild);
+
+			const { detectClaude: freshDetectClaude } =
+				await import('../../../cli/services/agent-spawner');
+			const resultPromise = freshDetectClaude();
+
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			mockStdout.emit('data', Buffer.from('C:\\bin\\claude\r\nC:\\bin\\claude.exe\r\n'));
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			mockChild.emit('close', 0);
+
+			const result = await resultPromise;
+			expect(result.path).toBe('C:\\bin\\claude');
 		});
 
 		it('should return unavailable when Claude is not found', async () => {
@@ -1198,6 +1252,51 @@ Some text with [x] in it that's not a checkbox
 			expect(result.usageStats?.inputTokens).toBe(200); // MAX(100, 200)
 			expect(result.usageStats?.outputTokens).toBe(100); // MAX(50, 100)
 			expect(result.usageStats?.contextWindow).toBe(300000); // Larger window
+		});
+
+		it('carries the last call occupancy snapshot and resolved window onto usageStats (#1669)', async () => {
+			const resultPromise = spawnAgent('claude-code', '/project', 'prompt');
+
+			await new Promise((resolve) => setTimeout(resolve, 0));
+
+			const lines = [
+				// The last main-transcript API call: its input is the real occupancy.
+				{
+					type: 'assistant',
+					message: {
+						content: [{ type: 'text', text: 'working' }],
+						usage: { input_tokens: 1000, output_tokens: 20, cache_read_input_tokens: 500 },
+					},
+				},
+				// The turn total, which is SPEND and reports a model-provided window.
+				{
+					type: 'result',
+					result: 'Done',
+					modelUsage: {
+						'claude-opus': { inputTokens: 4000, outputTokens: 60, contextWindow: 1_000_000 },
+					},
+					total_cost_usd: 0.1,
+				},
+				// A trailing usage-only message with neither: it must not erase them.
+				{ usage: { input_tokens: 4000, output_tokens: 60 }, total_cost_usd: 0.1 },
+			];
+			mockStdout.emit('data', Buffer.from(lines.map((l) => JSON.stringify(l)).join('\n') + '\n'));
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			mockChild.emit('close', 0);
+
+			const result = await resultPromise;
+
+			expect(result.usageStats?.inputTokens).toBe(4000);
+			expect(result.usageStats?.totalCostUsd).toBe(0.1);
+			expect(result.usageStats?.contextWindow).toBe(1_000_000);
+			expect(result.usageStats?.contextWindowResolved).toBe(true);
+			expect(result.usageStats?.absoluteUsage).toEqual({
+				inputTokens: 1000,
+				outputTokens: 20,
+				cacheReadInputTokens: 500,
+				cacheCreationInputTokens: 0,
+				reasoningTokens: 0,
+			});
 		});
 
 		it('should return error on non-zero exit code', async () => {
@@ -1867,6 +1966,405 @@ Some text with [x] in it that's not a checkbox
 		});
 	});
 
+	describe('turn contract (shared resolveTurnOutcome)', () => {
+		const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+		// A local spawn first resolves the agent binary (`resolveLocalAgentCommand`).
+		// With a cold detection cache that would spawn a `which`/`where` lookup
+		// through the same fake `spawn` these tests drive, so resolve through a
+		// configured custom path instead. Without this the block only passes when an
+		// earlier test happens to have warmed the module-level cache.
+		beforeEach(() => {
+			mockGetAgentCustomPath.mockReturnValue('/custom/path/to/agent');
+			vi.mocked(fs.promises.stat).mockResolvedValue({ isFile: () => true } as fs.Stats);
+			vi.mocked(fs.promises.access).mockResolvedValue(undefined);
+			mockSpawn.mockReturnValue(mockChild);
+		});
+
+		const claudeResult = (text: string) =>
+			`{"type":"system","subtype":"init","session_id":"sess-t"}\n` +
+			`{"type":"assistant","message":{"content":[{"type":"text","text":"${text}"}]}}\n` +
+			`{"type":"result","result":"${text}","session_id":"sess-t"}\n`;
+
+		it('does not spawn anything when the signal is already aborted', async () => {
+			const controller = new AbortController();
+			controller.abort();
+
+			const result = await spawnAgent('claude-code', '/project', 'prompt', undefined, {
+				signal: controller.signal,
+			});
+
+			expect(result).toMatchObject({ success: false, outcome: 'interrupted' });
+			expect(mockSpawn).not.toHaveBeenCalled();
+		});
+
+		it('reports an aborted Claude turn as interrupted, keeping what it captured', async () => {
+			const controller = new AbortController();
+			const resultPromise = spawnAgent('claude-code', '/project', 'prompt', undefined, {
+				signal: controller.signal,
+			});
+			await tick();
+
+			mockStdout.emit('data', Buffer.from(claudeResult('partial answer')));
+			controller.abort();
+			expect(mockKill).toHaveBeenCalledWith('SIGTERM');
+			mockChild.emit('close', null, 'SIGTERM');
+
+			const result = await resultPromise;
+			expect(result).toMatchObject({
+				success: false,
+				outcome: 'interrupted',
+				agentSessionId: 'sess-t',
+			});
+		});
+
+		it('reports an aborted JSON-line turn as interrupted even when stderr looks like an error', async () => {
+			const controller = new AbortController();
+			const resultPromise = spawnAgent('codex', '/project', 'prompt', undefined, {
+				signal: controller.signal,
+			});
+			await tick();
+
+			controller.abort();
+			mockStderr.emit('data', Buffer.from('Error: something the stop triggered\n'));
+			mockChild.emit('close', 143, null);
+
+			expect(await resultPromise).toMatchObject({ success: false, outcome: 'interrupted' });
+		});
+
+		it('escalates to SIGKILL when the agent ignores SIGTERM, and stops the timer once it exits', async () => {
+			vi.useFakeTimers();
+			try {
+				const controller = new AbortController();
+				const resultPromise = spawnAgent('claude-code', '/project', 'prompt', undefined, {
+					signal: controller.signal,
+				});
+				await vi.advanceTimersByTimeAsync(0);
+
+				controller.abort();
+				expect(mockKill).toHaveBeenCalledTimes(1);
+				await vi.advanceTimersByTimeAsync(5000);
+				expect(mockKill).toHaveBeenLastCalledWith('SIGKILL');
+
+				mockChild.emit('close', null, 'SIGKILL');
+				expect((await resultPromise).outcome).toBe('interrupted');
+
+				mockKill.mockClear();
+				await vi.advanceTimersByTimeAsync(10000);
+				expect(mockKill).not.toHaveBeenCalled();
+			} finally {
+				vi.useRealTimers();
+			}
+		});
+
+		it('never signals the child when the turn finishes before an abort', async () => {
+			const controller = new AbortController();
+			const resultPromise = spawnAgent('claude-code', '/project', 'prompt', undefined, {
+				signal: controller.signal,
+			});
+			await tick();
+
+			mockStdout.emit('data', Buffer.from(claudeResult('done')));
+			mockChild.emit('close', 0, null);
+			expect((await resultPromise).outcome).toBe('completed');
+
+			controller.abort();
+			expect(mockKill).not.toHaveBeenCalled();
+		});
+
+		it('reports a signal-killed Claude turn with nothing captured as a crash, not an interrupt', async () => {
+			const resultPromise = spawnAgent('claude-code', '/project', 'prompt');
+			await tick();
+
+			mockChild.emit('close', null, 'SIGKILL');
+
+			const result = await resultPromise;
+			expect(result).toMatchObject({ success: false, outcome: 'crashed' });
+			expect(result.error).toContain('SIGKILL');
+		});
+
+		it('keeps failing a Claude turn that exits non-zero, even with text streamed (the old strict rule)', async () => {
+			const resultPromise = spawnAgent('claude-code', '/project', 'prompt');
+			await tick();
+
+			mockStdout.emit('data', Buffer.from(claudeResult('the answer')));
+			mockStderr.emit('data', Buffer.from('npm warn deprecated some-package@1.0.0\n'));
+			mockChild.emit('close', 1, null);
+
+			expect(await resultPromise).toMatchObject({ success: false, outcome: 'crashed' });
+		});
+
+		it('never reports a Claude turn killed by an unrequested signal as a success, even with partial text', async () => {
+			const resultPromise = spawnAgent('claude-code', '/project', 'prompt');
+			await tick();
+
+			// Assistant text arrived, but no result event: the process was killed mid-turn.
+			mockStdout.emit(
+				'data',
+				Buffer.from(
+					'{"type":"assistant","message":{"content":[{"type":"text","text":"half an answ"}]}}\n'
+				)
+			);
+			mockChild.emit('close', null, 'SIGKILL');
+
+			const result = await resultPromise;
+			expect(result).toMatchObject({ success: false, outcome: 'crashed' });
+			expect(result.error).toContain('SIGKILL');
+		});
+
+		it('fails a clean Claude exit whose result event is empty and produced no assistant text', async () => {
+			const resultPromise = spawnAgent('claude-code', '/project', 'prompt');
+			await tick();
+
+			mockStdout.emit('data', Buffer.from('{"type":"result","result":"","session_id":"s"}\n'));
+			mockChild.emit('close', 0, null);
+
+			expect(await resultPromise).toMatchObject({ success: false, outcome: 'crashed' });
+		});
+
+		it('keeps a generic-path answer produced before a bare bad exit (Grok with --max-turns)', async () => {
+			const resultPromise = spawnAgent('grok', '/project', 'brief task');
+			await tick();
+
+			mockStdout.emit(
+				'data',
+				Buffer.from(
+					'{"type":"text","data":"The service hit a rate limit, so I added retries."}\n' +
+						'{"type":"end","stopReason":"EndTurn","sessionId":"sess-g"}\n'
+				)
+			);
+			mockStderr.emit('data', Buffer.from('max turns reached\n'));
+			mockChild.emit('close', 1, null);
+
+			// The answer merely MENTIONS a rate limit; it must not become a crash.
+			expect(await resultPromise).toMatchObject({
+				success: true,
+				outcome: 'completed-with-warning',
+			});
+		});
+
+		it('fails a Claude turn whose stderr carries a specific classified error, answer or not', async () => {
+			const resultPromise = spawnAgent('claude-code', '/project', 'prompt');
+			await tick();
+
+			mockStdout.emit('data', Buffer.from(claudeResult('the answer')));
+			mockStderr.emit('data', Buffer.from('Invalid API key - Please run /login\n'));
+			mockChild.emit('close', 1, null);
+
+			expect(await resultPromise).toMatchObject({ success: false, outcome: 'crashed' });
+		});
+
+		it('still fails a clean Claude exit that captured nothing', async () => {
+			const resultPromise = spawnAgent('claude-code', '/project', 'prompt');
+			await tick();
+
+			mockChild.emit('close', 0, null);
+
+			expect(await resultPromise).toMatchObject({ success: false, outcome: 'crashed' });
+		});
+
+		it('reports a failure to start as crashed', async () => {
+			const resultPromise = spawnAgent('codex', '/project', 'prompt');
+			await tick();
+
+			mockChild.emit('error', new Error('spawn codex ENOENT'));
+
+			expect(await resultPromise).toMatchObject({
+				success: false,
+				outcome: 'crashed',
+				error: expect.stringContaining('ENOENT'),
+			});
+		});
+
+		it('reports an unresolved SSH remote as crashed before anything is spawned', async () => {
+			const result = await spawnAgent('codex', '/project', 'prompt', undefined, {
+				sshRemoteConfig: { enabled: true, remoteId: 'gone' },
+			});
+
+			expect(result).toMatchObject({ success: false, outcome: 'crashed' });
+			expect(result.error).toContain('"gone" no longer exists');
+			expect(mockWrapSpawnWithSsh).not.toHaveBeenCalled();
+			expect(mockSpawn).not.toHaveBeenCalled();
+		});
+
+		it('does not overcount Codex usage, which reports a running session total on every event', async () => {
+			const resultPromise = spawnAgent('codex', '/project', 'prompt');
+			await tick();
+
+			const tokenCount = (input: number, output: number) =>
+				JSON.stringify({
+					type: 'event_msg',
+					payload: {
+						type: 'token_count',
+						info: { total_token_usage: { input_tokens: input, output_tokens: output } },
+					},
+				}) + '\n';
+			// Running totals 100 -> 200 -> 300. Summing them (the old behavior) gives 600.
+			mockStdout.emit(
+				'data',
+				Buffer.from(tokenCount(100, 10) + tokenCount(200, 20) + tokenCount(300, 30))
+			);
+			mockStdout.emit(
+				'data',
+				Buffer.from(
+					JSON.stringify({
+						type: 'response_item',
+						payload: {
+							type: 'message',
+							role: 'assistant',
+							content: [{ type: 'output_text', text: 'ok' }],
+						},
+					}) + '\n'
+				)
+			);
+			mockChild.emit('close', 0, null);
+
+			const result = await resultPromise;
+			expect(result.usageStats?.inputTokens).toBe(300);
+			expect(result.usageStats?.outputTokens).toBe(30);
+		});
+
+		it('carries Codex occupancy and the reported window onto usageStats (#1669)', async () => {
+			const resultPromise = spawnAgent('codex', '/project', 'prompt');
+			await tick();
+
+			const tokenCount = (input: number, output: number) =>
+				JSON.stringify({
+					type: 'event_msg',
+					payload: {
+						type: 'token_count',
+						info: {
+							total_token_usage: { input_tokens: input, output_tokens: output },
+							model_context_window: 272_000,
+						},
+					},
+				}) + '\n';
+			mockStdout.emit('data', Buffer.from(tokenCount(100, 10) + tokenCount(300, 30)));
+			mockStdout.emit(
+				'data',
+				Buffer.from(
+					JSON.stringify({
+						type: 'response_item',
+						payload: {
+							type: 'message',
+							role: 'assistant',
+							content: [{ type: 'output_text', text: 'ok' }],
+						},
+					}) + '\n'
+				)
+			);
+			mockChild.emit('close', 0, null);
+
+			const result = await resultPromise;
+			// Totals are still delta-normalized...
+			expect(result.usageStats?.inputTokens).toBe(300);
+			expect(result.usageStats?.outputTokens).toBe(30);
+			// ...and the running total the accumulator computed survives as occupancy.
+			expect(result.usageStats?.absoluteUsage).toEqual({
+				inputTokens: 300,
+				outputTokens: 30,
+				cacheReadInputTokens: 0,
+				cacheCreationInputTokens: 0,
+				reasoningTokens: 0,
+			});
+			expect(result.usageStats?.contextWindow).toBe(272_000);
+			expect(result.usageStats?.contextWindowResolved).toBe(true);
+		});
+
+		it('sums Copilot per-turn output tokens, which are deltas rather than a running total', async () => {
+			// copilot-cli sets `usesCombinedContextWindow`, which is about how the
+			// context gauge adds input and output, NOT about how usage arrives. Its
+			// parser emits each turn's `outputTokens` as a delta, so routing them
+			// through the accumulator would read this rising sequence as a running
+			// total and keep only the differences: 50 + 10 + 15 = 75 instead of 185.
+			const resultPromise = spawnAgent('copilot-cli', '/project', 'prompt');
+			await tick();
+
+			const turn = (outputTokens: number) =>
+				JSON.stringify({
+					type: 'assistant.message',
+					data: { content: 'part', toolRequests: [], outputTokens },
+				}) + '\n';
+
+			mockStdout.emit('data', Buffer.from(turn(50) + turn(60) + turn(75)));
+			mockStdout.emit(
+				'data',
+				Buffer.from(JSON.stringify({ type: 'result', sessionId: 'cop-1', exitCode: 0 }) + '\n')
+			);
+			await tick();
+			mockChild.emit('close', 0);
+
+			const result = await resultPromise;
+			expect(result.usageStats?.outputTokens).toBe(185);
+		});
+
+		it('drops a stuck line buffer, says so, and keeps framing the lines after it', async () => {
+			const warn = vi.spyOn(console, 'error').mockImplementation(() => {});
+			try {
+				const resultPromise = spawnAgent('claude-code', '/project', 'prompt');
+				await tick();
+
+				// A provider that never terminates a line would otherwise grow this
+				// buffer for the life of the process.
+				mockStdout.emit('data', 'x'.repeat(1024 * 1024 + 1));
+				mockStdout.emit('data', claudeResult('after the drop'));
+				mockChild.emit('close', 0, null);
+
+				expect(await resultPromise).toMatchObject({
+					success: true,
+					response: 'after the drop',
+				});
+				expect(warn).toHaveBeenCalledWith(expect.stringContaining('Dropped'));
+			} finally {
+				warn.mockRestore();
+			}
+		});
+
+		it('decodes on the stream, so a multibyte character split across reads survives', async () => {
+			const resultPromise = spawnAgent('claude-code', '/project', 'prompt');
+			await tick();
+
+			// The spawner must ask the stream to decode. Without this it decoded
+			// each Buffer on its own, and a character straddling two reads became
+			// replacement characters on both sides.
+			expect(mockStdout.setEncoding).toHaveBeenCalledWith('utf8');
+			expect(mockStderr.setEncoding).toHaveBeenCalledWith('utf8');
+
+			// What follows demonstrates the case rather than reproducing it: an
+			// EventEmitter fake cannot decode, so the split is done here with the
+			// same StringDecoder a real stream uses. The assertions above are what
+			// would actually catch a regression. A byte-level split belongs with
+			// the other hostile scenarios in the turn recordings, whose fixtures
+			// are string chunks today - see the plan doc's deferred list.
+			const whole = claudeResult('décor 🎼');
+			const bytes = Buffer.from(whole, 'utf8');
+			const decoder = new StringDecoder('utf8');
+			const cut = bytes.indexOf(Buffer.from('🎼', 'utf8')) + 2;
+			mockStdout.emit('data', decoder.write(bytes.subarray(0, cut)));
+			mockStdout.emit('data', decoder.write(bytes.subarray(cut)));
+			mockChild.emit('close', 0, null);
+
+			expect(await resultPromise).toMatchObject({ response: 'décor 🎼' });
+		});
+
+		it('reassembles a JSON line split across chunks', async () => {
+			const resultPromise = spawnAgent('claude-code', '/project', 'prompt');
+			await tick();
+
+			const whole = claudeResult('chunked answer');
+			const cut = Math.floor(whole.length / 2);
+			mockStdout.emit('data', Buffer.from(whole.slice(0, cut)));
+			mockStdout.emit('data', Buffer.from(whole.slice(cut)));
+			mockChild.emit('close', 0, null);
+
+			expect(await resultPromise).toMatchObject({
+				success: true,
+				outcome: 'completed',
+				response: 'chunked answer',
+			});
+		});
+	});
+
 	describe('PATH expansion (via spawnAgent)', () => {
 		let originalPlatform: string;
 
@@ -2209,6 +2707,23 @@ Some text with [x] in it that's not a checkbox
 			expect(options.env.OPENCODE_CONFIG_CONTENT).toBe('shell-wins');
 		});
 
+		it('passes the inherited environment through without stripping it', async () => {
+			// The CLI runs from the user's own shell, not from Electron, so what
+			// that shell exported reaches the agent as it is.
+			const saved = process.env.ELECTRON_RUN_AS_NODE;
+			process.env.ELECTRON_RUN_AS_NODE = '1';
+			try {
+				const p = spawnAgent('opencode', '/p', 'hi');
+				await driveSpawnToCompletion(p, 0);
+
+				const { options } = spawnCall();
+				expect(options.env.ELECTRON_RUN_AS_NODE).toBe('1');
+			} finally {
+				if (saved === undefined) delete process.env.ELECTRON_RUN_AS_NODE;
+				else process.env.ELECTRON_RUN_AS_NODE = saved;
+			}
+		});
+
 		it('agent defaultEnvVars is applied when the shell has not set it', async () => {
 			// Complements the "shell wins" test: when the shell does NOT export
 			// the key, the agent default must still reach the spawned process.
@@ -2318,7 +2833,7 @@ Some text with [x] in it that's not a checkbox
 			});
 			await driveSpawnToCompletion(p, 0, CLAUDE_OK());
 
-			expect(mockStdin.write).toHaveBeenCalledWith(script);
+			expect(mockStdin.write).toHaveBeenCalledWith(script, expect.any(Function));
 			expect(mockStdin.end).toHaveBeenCalled();
 			// write() must run BEFORE end() (first call of write precedes first end)
 			expect(mockStdin.write.mock.invocationCallOrder[0]).toBeLessThan(
@@ -2335,33 +2850,53 @@ Some text with [x] in it that's not a checkbox
 		});
 
 		it('returns a clear error when SSH is enabled but the remote is unresolvable', async () => {
-			mockWrapSpawnWithSsh.mockResolvedValue(
-				sshWrapResult({ command: 'claude', args: [], cwd: '/p', sshRemoteUsed: null })
-			);
-
 			const result = await spawnAgent('claude-code', '/p', 'hi', undefined, {
 				sshRemoteConfig: { enabled: true, remoteId: 'missing-remote' },
 			});
 
 			expect(result.success).toBe(false);
 			expect(result.error).toMatch(/SSH remote execution is enabled/i);
-			expect(result.error).toMatch(/could not be resolved/i);
-			expect(result.error).toContain('missing-remote');
+			expect(result.error).toContain('"missing-remote" no longer exists');
 			// Must not fall through to a local spawn - user explicitly opted into SSH
+			expect(mockWrapSpawnWithSsh).not.toHaveBeenCalled();
+			expect(mockSpawn).not.toHaveBeenCalled();
+		});
+
+		it('names a disabled remote instead of calling it missing', async () => {
+			mockReadSshRemotes.mockReturnValue([
+				{ id: 'r1', name: 'Build Box', host: 'remotehost', enabled: false },
+			]);
+
+			const result = await spawnAgent('claude-code', '/p', 'hi', undefined, {
+				sshRemoteConfig: { enabled: true, remoteId: 'r1' },
+			});
+
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('"Build Box" is disabled');
+			expect(mockSpawn).not.toHaveBeenCalled();
+		});
+
+		it('still fails if the wrapper cannot resolve a remote the plan found', async () => {
+			mockWrapSpawnWithSsh.mockResolvedValue(
+				sshWrapResult({ command: 'claude', args: [], cwd: '/p', sshRemoteUsed: null })
+			);
+
+			const result = await spawnAgent('claude-code', '/p', 'hi', undefined, {
+				sshRemoteConfig: { enabled: true, remoteId: 'r1' },
+			});
+
+			expect(result.success).toBe(false);
+			expect(result.error).toMatch(/could not be resolved/i);
 			expect(mockSpawn).not.toHaveBeenCalled();
 		});
 
 		it('hard-fails for JSON-line agents (Codex) when SSH remote is unresolvable', async () => {
-			mockWrapSpawnWithSsh.mockResolvedValue(
-				sshWrapResult({ command: 'codex', args: [], cwd: '/p', sshRemoteUsed: null })
-			);
-
 			const result = await spawnAgent('codex', '/p', 'hi', undefined, {
 				sshRemoteConfig: { enabled: true, remoteId: 'gone' },
 			});
 
 			expect(result.success).toBe(false);
-			expect(result.error).toMatch(/could not be resolved/);
+			expect(result.error).toContain('"gone" no longer exists');
 			expect(mockSpawn).not.toHaveBeenCalled();
 		});
 

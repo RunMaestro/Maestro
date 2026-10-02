@@ -30,7 +30,7 @@ vi.mock('../../../../main/process-manager/utils/bufferUtils', () => ({
 	appendToBuffer: vi.fn((buf: string, data: string) => buf + data),
 }));
 
-vi.mock('../../../../main/parsers/usage-aggregator', () => ({
+vi.mock('../../../../shared/maestro-lib/parsers/usage-aggregator', () => ({
 	aggregateModelUsage: vi.fn(() => ({
 		inputTokens: 100,
 		outputTokens: 50,
@@ -41,7 +41,7 @@ vi.mock('../../../../main/parsers/usage-aggregator', () => ({
 	})),
 }));
 
-vi.mock('../../../../main/parsers/error-patterns', () => ({
+vi.mock('../../../../shared/maestro-lib/parsers/error-patterns', () => ({
 	getErrorPatterns: vi.fn(() => ({})),
 	matchErrorPattern: vi.fn(() => null),
 	matchSshErrorPattern: vi.fn(() => null),
@@ -57,7 +57,7 @@ import {
 	StdoutHandler,
 	pushResolvedOmpContextWindow,
 } from '../../../../main/process-manager/handlers/StdoutHandler';
-import { matchSshErrorPattern } from '../../../../main/parsers/error-patterns';
+import { matchSshErrorPattern } from '../../../../shared/maestro-lib/parsers/error-patterns';
 import { ClaudeOutputParser } from '../../../../main/parsers/claude-output-parser';
 import { CopilotOutputParser } from '../../../../main/parsers/copilot-output-parser';
 import { OmpOutputParser } from '../../../../main/parsers/omp-output-parser';
@@ -2689,6 +2689,58 @@ describe('StdoutHandler - single JSON parse per line', () => {
 
 			expect(errorSpy).not.toHaveBeenCalled();
 			expect(proc.errorEmitted).toBe(false);
+		});
+
+		// The SSH branch is a separate emit 70 lines below the parser one, and it
+		// was outside this rule: tearing down a remote process is exactly what
+		// writes an SSH pattern to stdout, so a stopped turn surfaced as a crash
+		// and armed recovery. `matchSshErrorPattern` is mocked in this file, so
+		// each case sets its own return value and resets it, per the SSH tests
+		// further down - `clearAllMocks` in `beforeEach` clears calls, not
+		// implementations.
+		const SSH_LINE = 'ssh: connect to host build-box port 22: Connection refused\n';
+		const sshFailure = {
+			type: 'agent_crashed' as const,
+			message: 'SSH connection refused.',
+			recoverable: false,
+		};
+
+		it('does not emit agent-error for an SSH pattern on stdout after interrupt', () => {
+			const mockedMatchSsh = vi.mocked(matchSshErrorPattern);
+			mockedMatchSsh.mockReturnValue(sshFailure);
+
+			const { handler, emitter, sessionId, proc } = createTestContext({
+				isStreamJsonMode: true,
+				sshRemoteId: 'remote-1',
+				interrupted: true,
+			});
+			const errorSpy = vi.fn();
+			emitter.on('agent-error', errorSpy);
+
+			handler.handleData(sessionId, SSH_LINE);
+
+			expect(errorSpy).not.toHaveBeenCalled();
+			expect(proc.errorEmitted).toBe(false);
+
+			mockedMatchSsh.mockReset();
+		});
+
+		it('still emits agent-error for an SSH pattern on stdout when the user did not stop it', () => {
+			const mockedMatchSsh = vi.mocked(matchSshErrorPattern);
+			mockedMatchSsh.mockReturnValue(sshFailure);
+
+			const { handler, emitter, sessionId } = createTestContext({
+				isStreamJsonMode: true,
+				sshRemoteId: 'remote-1',
+			});
+			const errorSpy = vi.fn();
+			emitter.on('agent-error', errorSpy);
+
+			handler.handleData(sessionId, SSH_LINE);
+
+			expect(errorSpy).toHaveBeenCalledTimes(1);
+
+			mockedMatchSsh.mockReset();
 		});
 
 		it('still emits agent-error for a cancelled grok end when the user did not stop it', async () => {

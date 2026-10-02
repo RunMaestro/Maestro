@@ -124,17 +124,67 @@ function classifyStatus(status: string): { isSuccess: boolean; isFailure: boolea
 }
 
 /**
+ * Build a token summary straight from the event's own `stream_usage_json`
+ * (parsed live from stdout by `cue-process-lifecycle.ts` as the run
+ * executed - see `CueRunResult.usage`). This is the fallback path for
+ * exactly the case `cue-token-accessor.ts` cannot resolve at all: an
+ * SSH-remote run, whose on-disk session file lives on the remote host. Marked
+ * `partial` (not `full`) since it lacks the on-disk lookup's precise
+ * message-window timestamps and per-agent cost coverage guarantees, and its
+ * `agentType` is unknown here (this bypasses the `session_lifecycle` join
+ * `getSessionTokenSummaries` uses) - harmless, since this result is used only
+ * for its numeric fields and never inserted into the map `buildCoverageWarnings`
+ * iterates.
+ */
+function streamUsageFallback(event: CueEventRecord): SessionTokenSummary | null {
+	if (!event.streamUsageJson) return null;
+	let usage: {
+		inputTokens?: number;
+		outputTokens?: number;
+		cacheReadInputTokens?: number;
+		cacheCreationInputTokens?: number;
+		totalCostUsd?: number;
+	} | null = null;
+	try {
+		usage = JSON.parse(event.streamUsageJson);
+	} catch {
+		return null;
+	}
+	if (!usage) return null;
+	return {
+		sessionId: event.providerSessionId ?? event.id,
+		agentType: 'unknown',
+		inputTokens: usage.inputTokens || 0,
+		outputTokens: usage.outputTokens || 0,
+		cacheReadTokens: usage.cacheReadInputTokens || 0,
+		cacheCreationTokens: usage.cacheCreationInputTokens || 0,
+		costUsd: typeof usage.totalCostUsd === 'number' ? usage.totalCostUsd : null,
+		windowStartMs: event.createdAt,
+		windowEndMs: event.completedAt ?? event.createdAt,
+		coverage: 'partial',
+	};
+}
+
+/**
  * Token totals for an event, looked up by the run's provider session id (the
  * key the on-disk session files use). Events with no recorded provider session
  * id - command/shell runs, or rows written before provider-id capture landed -
  * contribute no tokens.
+ *
+ * Falls back to the run's own stream-parsed usage when the on-disk lookup has
+ * nothing (most commonly an SSH-remote run - see {@link streamUsageFallback}).
+ * A non-zero on-disk summary always wins: it is the more complete source
+ * (precise windows, cost coverage guarantees) for every run it can resolve.
  */
 function tokensForEvent(
 	event: CueEventRecord,
 	tokensByProvider: Map<string, SessionTokenSummary>
 ): SessionTokenSummary | null {
-	if (!event.providerSessionId) return null;
-	return tokensByProvider.get(event.providerSessionId) ?? null;
+	const onDisk = event.providerSessionId
+		? (tokensByProvider.get(event.providerSessionId) ?? null)
+		: null;
+	if (onDisk && (onDisk.inputTokens > 0 || onDisk.outputTokens > 0)) return onDisk;
+	return streamUsageFallback(event) ?? onDisk;
 }
 
 function computeDuration(event: CueEventRecord): number | null {

@@ -39,6 +39,7 @@ import {
 	isSessionImageRef,
 	sessionImageRefBasename,
 } from '../../shared/sessionImageRefs';
+import { setMaestroLibImageRefResolver } from '../../shared/maestro-lib/host';
 
 const IMAGE_DIR_NAME = 'session-images';
 // The reference grammar is shared with the renderer (which rewrites refs to
@@ -371,3 +372,7 @@ export function __resetImageStoreCacheForTests(): void {
 	baseDir = null;
 	cachedDir = null;
 }
+
+// maestro-lib resolves `maestro-image://` refs through its host
+// (src/shared/maestro-lib/host.ts); this store is where those bytes live.
+setMaestroLibImageRefResolver(resolveToBytesSync);

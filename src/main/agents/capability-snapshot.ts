@@ -24,6 +24,7 @@ import {
 } from '../../shared/agentCapabilities';
 import { logger } from '../utils/logger';
 import { captureMessage } from '../utils/sentry';
+import { setMaestroLibCapabilitySnapshotLookup } from '../../shared/maestro-lib/host';
 
 const LOG_CONTEXT = 'CapabilitySnapshot';
 
@@ -241,3 +242,9 @@ export type {
 export function asSnapshotStore(store: Store<AgentCapabilitiesData>): SnapshotStoreLike {
 	return store;
 }
+
+// maestro-lib reads context windows from the live snapshots through its host
+// (src/shared/maestro-lib/host.ts) rather than importing this singleton.
+setMaestroLibCapabilitySnapshotLookup((agentId, remoteId) =>
+	capabilitySnapshots.get(agentId, remoteId)
+);
