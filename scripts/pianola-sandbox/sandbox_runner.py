@@ -34,7 +34,7 @@ class CandidateError(RuntimeError):
 
 @dataclass(frozen=True, slots=True)
 class CliIsolationLimits:
-    timeout_seconds: float = 120
+    timeout_seconds: float = 600
     output_bytes: int = 100_000
     artifact_bytes: int = 64 * 1024 * 1024
     artifact_count: int = 256
@@ -79,7 +79,7 @@ def _snapshot(
     remaining = limits.artifact_bytes
     for path in paths:
         if not path.is_relative_to(workspace):
-            raise IsolationError(f"Candidate artifact {path} is outside the validation target {workspace}; "
+            raise CandidateError(f"Candidate artifact {path} is outside the validation target {workspace}; "
                 "artifacts must be files inside the folder the oracle command runs in")
         relative = path.relative_to(workspace)
         if not relative.parts or ".." in relative.parts or relative in seen:
@@ -229,13 +229,19 @@ def _program_index(command: Sequence[str]) -> int:
     return 0
 
 
-def _resolve_command(command: Sequence[str]) -> list[str]:
+def _resolve_command(command: Sequence[str], workspace: Path | None = None) -> list[str]:
     """Make a bare program absolute at its real location when that lies outside /usr (a user install, or a
-    /usr/local/bin symlink into one), so its install can be mounted read-only. System tools stay bare."""
+    /usr/local/bin symlink into one), so its install can be mounted read-only. System tools stay bare.
+    A bare `python`/`python3` prefers the project's own virtualenv when the workspace has one, since that
+    is where the project's test dependencies live and the system interpreter has none of them."""
     index = _program_index(command)
     program = command[index]
     if "/" in program:
         return list(command)
+    if workspace is not None and program in ("python", "python3"):
+        venv_python = workspace / ".venv" / "bin" / "python"
+        if venv_python.is_file():
+            return [*command[:index], str(venv_python), *command[index + 1:]]
     search = os.pathsep.join([_SYSTEM_PATH, os.environ.get("PATH", ""), *(str(Path.home() / tool) for tool in _USER_TOOL_DIRS)])
     found = shutil.which(program, path=search)
     if not found:
@@ -248,11 +254,13 @@ def _toolchain_mounts(command: Sequence[str], workspace: Path) -> list[str]:
     """Read-only project interpreter: an absolute program outside the workspace (after any env prefix), its
     virtualenv, and the base Python that virtualenv names, at their host paths (symlink aliases included)."""
     first = Path(command[_program_index(command)])
-    if not first.is_absolute() or first.is_relative_to(workspace) or first.is_relative_to("/usr"):
+    if not first.is_absolute() or first.is_relative_to("/usr"):
+        return []
+    venv = next((parent for parent in first.parents if (parent / "pyvenv.cfg").is_file()), None)
+    if first.is_relative_to(workspace) and venv is None:
         return []
     roots: list[Path] = []
-    aliases: list[Path] = [first]
-    venv = next((parent for parent in first.parents if (parent / "pyvenv.cfg").is_file()), None)
+    aliases: list[Path] = [] if first.is_relative_to(workspace) else [first]
     if venv is not None:
         roots.append(venv)
         for line in (venv / "pyvenv.cfg").read_text(encoding="utf-8").splitlines():
@@ -326,9 +334,16 @@ def run_isolated_cli(
             # The project is read-only: send common test-tool state to the writable scratch instead.
             "COVERAGE_FILE": "/tmp/.coverage", "PYTEST_ADDOPTS": "-p no:cacheprovider",
             "BUN_INSTALL_CACHE_DIR": "/tmp/bun-cache", "npm_config_cache": "/tmp/npm-cache",
+            # Go: build cache in scratch; the module cache (deps and downloaded toolchains) is the
+            # host's, mounted read-only below, so `go test` resolves everything offline.
+            "GOCACHE": "/tmp/go-build", "GOPATH": "/tmp/gopath", "GOMODCACHE": "/home/validator/go/pkg/mod",
+            "GOFLAGS": "-mod=mod", "GOTOOLCHAIN": "auto", "GOPROXY": "off", "GONOSUMDB": "*",
         }.items():
             args.extend(["--setenv", name, value])
-        command = _resolve_command(command)
+        host_modcache = Path.home() / "go" / "pkg" / "mod"
+        if host_modcache.is_dir():
+            args.extend(["--ro-bind", str(host_modcache), "/home/validator/go/pkg/mod"])
+        command = _resolve_command(command, workspace)
         argv = []
         for value in command:
             path = Path(value)
