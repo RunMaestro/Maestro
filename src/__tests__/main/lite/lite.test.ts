@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import { mkdtemp, rm } from 'fs/promises';
+import { mkdtemp, rm, writeFile } from 'fs/promises';
 import os from 'os';
 import path from 'path';
 import { spawn, execFile } from 'child_process';
@@ -156,6 +156,10 @@ describe('Lite SSH ownership and argument safety', () => {
 		).toThrow(/manages/);
 	});
 	it('real ssh config resolves one strict loopback forward and preserves alias/config port', async () => {
+		const directory = await mkdtemp(path.join(os.tmpdir(), 'maestro-lite-ssh-config-'));
+		directories.push(directory);
+		const config = path.join(directory, 'config');
+		await writeFile(config, '');
 		const args = tunnelArgs(
 			{
 				...profile.ssh!,
@@ -164,11 +168,9 @@ describe('Lite SSH ownership and argument safety', () => {
 			normalizeRemoteUrl(profile.url, 'ssh'),
 			54321
 		);
-		const { stdout } = await promisify(execFile)(
-			'ssh',
-			['-G', '-F', process.platform === 'win32' ? 'NUL' : '/dev/null', ...args],
-			{ windowsHide: true }
-		);
+		const { stdout } = await promisify(execFile)('ssh', ['-G', '-F', config, ...args], {
+			windowsHide: true,
+		});
 		expect(stdout).toMatch(/^stricthostkeychecking true$/m);
 		expect(stdout).toMatch(/^exitonforwardfailure yes$/m);
 		expect(stdout).toMatch(/^nohostauthenticationforlocalhost no$/m);

@@ -26,8 +26,9 @@ current usage is documented in [Remote Control](../docs/remote-control.md).
   UI builds used source maps disabled for the constrained verification disk.
 - Native macOS verification is deferred at the user's explicit request and does
   not block this delivery. It has not been represented as passing.
-- Installer packaging and the entire repository test suite were not exercised.
-  This is a launch-ready worktree, not an all-platform release certification.
+- Installer packaging was not exercised. Repository-wide formatting, type, lint,
+  and test validation is enforced by the pre-push hook. This is a launch-ready
+  worktree, not an all-platform release certification.
 
 ### Observed startup comparison
 

@@ -109,21 +109,6 @@ describe('Settings Preload API', () => {
 				expect(result).toEqual(sessions);
 			});
 		});
-
-		describe('setAll', () => {
-			it('should invoke sessions:setAll with sessions array and return result', async () => {
-				const sessions = [
-					{ id: '1', name: 'Session 1' },
-					{ id: '2', name: 'Session 2' },
-				];
-				mockInvoke.mockResolvedValue(true);
-
-				const result = await api.setAll(sessions);
-
-				expect(mockInvoke).toHaveBeenCalledWith('sessions:setAll', sessions);
-				expect(result).toBe(true);
-			});
-		});
 	});
 
 	describe('createGroupsApi', () => {

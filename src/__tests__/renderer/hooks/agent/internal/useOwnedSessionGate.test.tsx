@@ -11,7 +11,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { renderHook } from '@testing-library/react';
+import { act, renderHook } from '@testing-library/react';
 
 // Controlled WindowContext: `null` => no window scoping (permit all); an object
 // with `ownsSession` => scope to that predicate. Mutated per-test.
@@ -33,7 +33,7 @@ import { useAgentDataListener } from '../../../../../renderer/hooks/agent/intern
 import { useSessionStore } from '../../../../../renderer/stores/sessionStore';
 import { createMockSession } from '../../../../helpers/mockSession';
 import { createMockAITab } from '../../../../helpers/mockTab';
-import type { BatchedUpdater } from '../../../../../renderer/hooks/agent/internal/types';
+import { useBatchedSessionUpdates } from '../../../../../renderer/hooks/session/useBatchedSessionUpdates';
 
 describe('agentIdFromProcessSessionId', () => {
 	it('strips the -ai-{tabId} suffix', () => {
@@ -132,76 +132,46 @@ describe('useOwnedSideEffectGate', () => {
 
 describe('useAgentDataListener window scoping', () => {
 	let handler: ((sessionId: string, data: string) => void) | undefined;
-	const mockUnsubscribe = vi.fn();
-
-	function makeBatched(): BatchedUpdater {
-		return {
-			appendLog: vi.fn(),
-			markDelivered: vi.fn(),
-			markUnread: vi.fn(),
-			updateUsage: vi.fn(),
-			updateContextUsage: vi.fn(),
-			updateCycleBytes: vi.fn(),
-			updateCycleTokens: vi.fn(),
-			flushNow: vi.fn(),
-		};
-	}
 
 	beforeEach(() => {
 		vi.clearAllMocks();
 		handler = undefined;
-		mockOwnsSession = undefined;
-		useSessionStore.setState({
-			sessions: [],
-			groups: [],
-			activeSessionId: '',
-			initialLoadComplete: false,
-			removedWorktreePaths: new Set(),
-		} as never);
-		(window as unknown as { maestro: unknown }).maestro = {
-			...((window as unknown as { maestro?: Record<string, unknown> }).maestro || {}),
-			process: {
-				onData: vi.fn((h: (sessionId: string, data: string) => void) => {
-					handler = h;
-					return mockUnsubscribe;
-				}),
-			},
-			agentError: { clearError: vi.fn().mockResolvedValue(undefined) },
-		};
+		mockIsWebDesktop = false;
+		mockOwnsSession = (id) => id === 'sess-1';
+		useSessionStore.setState({ sessions: [], activeSessionId: '', initialLoadComplete: false });
+		window.maestro.process.onData = vi.fn((callback) => {
+			handler = callback;
+			return () => {};
+		});
 	});
 
-	it('processes data for an agent THIS window owns', () => {
-		mockOwnsSession = (id: string) => id === 'sess-1';
-		const tab = createMockAITab({ id: 'tab-1' });
-		const session = createMockSession({ id: 'sess-1', aiTabs: [tab], activeTabId: 'tab-1' });
-		useSessionStore.setState({ sessions: [session] } as never);
+	it.each([
+		{ sessionId: 'sess-1', expected: [{ source: 'stdout', text: 'hello' }] },
+		{ sessionId: 'sess-2', expected: [] },
+	])(
+		'keeps transcript output scoped to the owning window ($sessionId)',
+		({ sessionId, expected }) => {
+			const tab = createMockAITab({ id: 'tab-1', logs: [] });
+			const session = createMockSession({ id: sessionId, aiTabs: [tab], activeTabId: 'tab-1' });
+			useSessionStore.setState({ sessions: [session] });
+			const { result } = renderHook(() => {
+				const batched = useBatchedSessionUpdates();
+				useAgentDataListener({
+					batchedUpdater: batched,
+					activeHiddenToolRef: { current: new Map() },
+				});
+				return batched;
+			});
 
-		const batched = makeBatched();
-		renderHook(() =>
-			useAgentDataListener({ batchedUpdater: batched, activeHiddenToolRef: { current: new Map() } })
-		);
-
-		handler!('sess-1-ai-tab-1', 'hello\n');
-
-		expect(batched.appendLog).toHaveBeenCalledWith('sess-1', 'tab-1', true, 'hello\n');
-	});
-
-	it('drops data for an agent owned by ANOTHER window', () => {
-		mockOwnsSession = (id: string) => id === 'sess-1';
-		const tab = createMockAITab({ id: 'tab-9' });
-		// sess-2 exists in this window's store (Left Bar shows all agents) but is
-		// owned by another window, so its output must NOT be appended here.
-		const otherSession = createMockSession({ id: 'sess-2', aiTabs: [tab], activeTabId: 'tab-9' });
-		useSessionStore.setState({ sessions: [otherSession] } as never);
-
-		const batched = makeBatched();
-		renderHook(() =>
-			useAgentDataListener({ batchedUpdater: batched, activeHiddenToolRef: { current: new Map() } })
-		);
-
-		handler!('sess-2-ai-tab-9', 'hidden\n');
-
-		expect(batched.appendLog).not.toHaveBeenCalled();
-		expect(batched.markDelivered).not.toHaveBeenCalled();
-	});
+			act(() => {
+				handler!(sessionId + '-ai-tab-1', 'hello');
+				result.current.flushNow();
+			});
+			expect(
+				useSessionStore
+					.getState()
+					.sessions[0].aiTabs[0].logs.map(({ source, text }) => ({ source, text }))
+			).toEqual(expected);
+		}
+	);
 });
