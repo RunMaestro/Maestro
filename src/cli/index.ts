@@ -440,6 +440,11 @@ program
 		'--no-system-prompt',
 		'Skip the Maestro system prompt (agent identity, git branch, history path, conductor profile). Default is to include it for parity with the desktop app.'
 	)
+	.option(
+		'--no-history',
+		'Do not write a History entry for this turn (written by default, desktop app running or not)'
+	)
+	.option('--no-synopsis', 'Skip the synopsis turn; the History entry carries the response instead')
 	.action(send);
 
 // Dispatch command - hand a prompt to the desktop and return tab/session ID.
