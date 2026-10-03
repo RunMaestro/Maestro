@@ -10,6 +10,7 @@ import {
 	applyAgentConfigOverrides,
 	getContextWindowValue,
 } from '../../../main/utils/agent-args';
+import { getAgentDefinition } from '../../../main/agents/definitions';
 import type { AgentConfig } from '../../../main/agents';
 
 vi.mock('../../../main/utils/logger', () => ({
@@ -592,6 +593,18 @@ describe('buildAgentArgs', () => {
 // applyAgentConfigOverrides
 // ---------------------------------------------------------------------------
 describe('applyAgentConfigOverrides', () => {
+	it('requests Codex reasoning summaries only after the provider opts in', () => {
+		const codex = getAgentDefinition('codex');
+		const baseArgs = ['exec', '--json'];
+
+		expect(applyAgentConfigOverrides(codex, baseArgs, {}).args).toEqual(baseArgs);
+		expect(
+			applyAgentConfigOverrides(codex, baseArgs, {
+				agentConfigValues: { reasoningSummary: 'auto' },
+			}).args
+		).toEqual([...baseArgs, '-c', 'model_reasoning_summary="auto"']);
+	});
+
 	it('processes configOptions with argBuilder', () => {
 		const agent = makeAgent({
 			configOptions: [
