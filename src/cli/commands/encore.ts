@@ -15,6 +15,7 @@ const FEATURES: Record<string, string> = {
 	symphony: 'Symphony (Group Chat)',
 	maestroCue: 'Maestro Cue',
 	pianola: 'Pianola (Manager Agent)',
+	quickChat: 'Quick Chat',
 };
 
 const ALIASES: Record<string, string> = {
@@ -35,6 +36,8 @@ const ALIASES: Record<string, string> = {
 	pilot: 'pianola',
 	manager: 'pianola',
 	'manager-agent': 'pianola',
+	'quick-chat': 'quickChat',
+	quickchat: 'quickChat',
 };
 
 interface EncoreOptions {

@@ -68,13 +68,15 @@ describe('encore commands', () => {
 		vi.mocked(readSettingValue).mockReturnValue(undefined);
 		encoreList({ json: true });
 		const parsed = JSON.parse(consoleSpy.mock.calls[0][0]);
-		// rc's CLI also exposes Pianola, which has not graduated and ships off.
+		// rc's CLI also exposes Pianola, which has not graduated and ships off,
+		// and Quick Chat, which ships on.
 		expect(parsed.features).toEqual({
 			directorNotes: true,
 			usageStats: true,
 			symphony: true,
 			maestroCue: true,
 			pianola: false,
+			quickChat: true,
 		});
 	});
 

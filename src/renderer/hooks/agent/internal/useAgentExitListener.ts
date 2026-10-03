@@ -25,6 +25,7 @@ import { clearRetryIfSettled, hasPendingRetry } from '../../../stores/retryStore
 import { useSettingsStore } from '../../../stores/settingsStore';
 import { notifyToast, triggerCustomNotification } from '../../../stores/notificationStore';
 import { REGEX_AI_TAB } from '../../../utils/sessionIdParser';
+import { isQuickChatTab } from '../../../services/quickChatEngine';
 import {
 	formatSessionId,
 	getActiveTab,
@@ -857,9 +858,17 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 					});
 
 					const currentActiveSession = getSessions().find((s) => s.id === getActiveSessionId());
+					// A Quick Chat reply is read in the Quick Chat window (and an
+					// ephemeral one sits in a hidden tab a toast could not open), so it
+					// counts as watched: no visual toast, the audio cue still fires.
+					const completedSession = getSessions().find((s) => s.id === actualSessionId);
+					const isQuickChatReply = isQuickChatTab(
+						completedSession?.aiTabs?.find((t) => t.id === tabIdFromSession)
+					);
 					const isViewingCompletedTab =
-						currentActiveSession?.id === actualSessionId &&
-						(!tabIdFromSession || currentActiveSession.activeTabId === tabIdFromSession);
+						isQuickChatReply ||
+						(currentActiveSession?.id === actualSessionId &&
+							(!tabIdFromSession || currentActiveSession.activeTabId === tabIdFromSession));
 
 					if (!isViewingCompletedTab) {
 						notifyToast({

@@ -1118,9 +1118,24 @@ maestro-cli encore enable symphony
 maestro-cli encore disable maestroCue
 ```
 
-Encore feature IDs: `directorNotes`, `usageStats`, `symphony`, `maestroCue`. Friendly aliases are accepted (for example `group-chat` for `symphony`, `cue` for `maestroCue`).
+Encore feature IDs: `directorNotes`, `usageStats`, `symphony`, `maestroCue`, `pianola`, `quickChat`. Friendly aliases are accepted (for example `group-chat` for `symphony`, `cue` for `maestroCue`, `quick-chat` for `quickChat`).
 
 Gloss levels, least to most: `off` (the shipped flat look), `sheen`, `strong`, `max`. Gloss only adds highlights and shadows to the sidebars, headers, tab bar and composer, so it changes no theme color and leaves text exactly as legible. It has no effect on light themes.
+
+### Quick Chat
+
+Drive the [Quick Chat](./quick-chat) window, the floating chat summoned by a system-wide hotkey. Each verb takes the same path as the matching button in the window. The app must be running.
+
+```bash
+maestro-cli quick-chat toggle                # what the hotkey does: open, focus, or close
+maestro-cli quick-chat send "summarize the last commit"
+maestro-cli quick-chat status --json         # window state, agent, mode, and the conversation
+maestro-cli quick-chat keep                  # keep the current chat as a visible tab ("keep off" undoes it)
+maestro-cli quick-chat new                   # start over; an ephemeral chat's hidden tab is deleted
+maestro-cli quick-chat agent <agent-id>      # switch agents (starts a new chat)
+maestro-cli quick-chat reveal                # open the chat as a tab in the main window
+maestro-cli quick-chat stop                  # stop the reply
+```
 
 ### Custom Theme Palette
 

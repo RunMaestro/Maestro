@@ -98,6 +98,7 @@ import { gistCreate } from './commands/gist';
 import { notifyToast } from './commands/notify-toast';
 import { notifyFlash } from './commands/notify-flash';
 import { profilingStart, profilingStop, profilingStatus } from './commands/profiling';
+import { quickChat } from './commands/quick-chat';
 import { cadenzaOpen, cadenzaUpdate, cadenzaClose } from './commands/cadenza';
 import {
 	movementBegin,
@@ -1784,7 +1785,7 @@ encore
 encore
 	.command('enable <feature>')
 	.description(
-		'Enable an Encore feature (directorNotes, usageStats, symphony, maestroCue, pianola)'
+		'Enable an Encore feature (directorNotes, usageStats, symphony, maestroCue, pianola, quickChat)'
 	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((feature, options) => encoreSet(feature, true, options));
@@ -2083,6 +2084,74 @@ profiling
 	.description('Report whether a capture is currently recording')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(profilingStatus);
+
+// Quick Chat commands - the hotkey-summoned floating chat window. Each verb is
+// the same action as the matching button in the window.
+const quickChatCmd = program
+	.command('quick-chat')
+	.description('Drive the Quick Chat window: a floating chat with one agent, summoned by a hotkey');
+
+quickChatCmd
+	.command('show')
+	.description('Open the Quick Chat window (same as the hotkey when it is closed)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => quickChat('show', {}, options));
+
+quickChatCmd
+	.command('hide')
+	.description('Close the Quick Chat window; the conversation is kept')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => quickChat('hide', {}, options));
+
+quickChatCmd
+	.command('toggle')
+	.description('Open the window, focus it, or close it (exactly what the hotkey does)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => quickChat('toggle', {}, options));
+
+quickChatCmd
+	.command('status')
+	.description('Show the window state, the agent, the mode, and the current conversation')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => quickChat('status', {}, options));
+
+quickChatCmd
+	.command('send <message...>')
+	.description('Send a message in the current Quick Chat (starts a chat if none is open)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((words: string[], options) => quickChat('send', { text: words.join(' ') }, options));
+
+quickChatCmd
+	.command('new')
+	.description('Start a new chat (an ephemeral previous chat is deleted)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => quickChat('new', {}, options));
+
+quickChatCmd
+	.command('keep [state]')
+	.description('Keep the current chat as a visible tab on its agent ("off" makes it ephemeral)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((state: string | undefined, options) =>
+		quickChat('keep', { persistent: state !== 'off' }, options)
+	);
+
+quickChatCmd
+	.command('agent <agent-id>')
+	.description('Switch Quick Chat to another agent and start a new chat there')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((agent: string, options) => quickChat('agent', { agent }, options));
+
+quickChatCmd
+	.command('reveal')
+	.description('Open the current chat as a tab in the main Maestro window')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => quickChat('reveal', {}, options));
+
+quickChatCmd
+	.command('stop')
+	.description('Stop the reply the agent is writing')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => quickChat('stop', {}, options));
 
 // Cadenza commands - open small cadenza panels that display or track work.
 const cadenza = program

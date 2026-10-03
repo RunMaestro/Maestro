@@ -12,7 +12,7 @@ The command palette is your gateway to nearly every action in Maestro. Press `Cm
 
 ## System-Wide Hotkey (Summon Maestro)
 
-Configure a single OS-level hotkey that summons Maestro - bringing the window to the foreground and focusing it - from any application on macOS, Windows, or Linux. This is the only shortcut in Maestro that fires while the app is in the background; every other shortcut on this page is in-app.
+Configure a single OS-level hotkey that summons Maestro - bringing the window to the foreground and focusing it - from any application on macOS, Windows, or Linux. It and the [Quick Chat](#quick-chat-hotkey) hotkey are the only shortcuts in Maestro that fire while the app is in the background; every other shortcut on this page is in-app.
 
 **To configure:**
 
@@ -27,6 +27,14 @@ Tips and gotchas:
 - If the OS or another app already owns the combo, Maestro will surface a registration failure - pick a different binding.
 - `Meta` maps to **Cmd** on macOS and **Win** (Super) on Windows/Linux automatically.
 - The hotkey works even when Maestro is hidden, minimized, or behind other windows.
+
+## Quick Chat Hotkey
+
+[Quick Chat](./quick-chat) has its own system-wide hotkey, `Opt+Space` on macOS and `Alt+Space` on Windows and Linux by default. It opens a small floating chat window from any app, brings it to the front if it is behind another window, and closes it if it is in front. Change or clear it in **Settings -> Plugins -> Quick Chat -> Settings**.
+
+Inside the Quick Chat window: `Enter` sends, `Shift+Enter` adds a line, `Cmd+N` / `Ctrl+N` starts a new chat, and `Esc` closes the window.
+
+The two system-wide hotkeys cannot share a combo. If you set one to the other's combo, the second registration fails and Maestro tells you.
 
 ## Global Shortcuts
 

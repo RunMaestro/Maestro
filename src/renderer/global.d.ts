@@ -211,6 +211,7 @@ import type { AggregatedContributions as PluginContributions } from '../shared/p
 import type { FirstPartyBridgeState } from '../main/plugins/first-party-bridge';
 import type { FirstPartyEncoreFlag } from '../shared/plugins/first-party';
 import type { AgentRunApi } from '../main/preload/agentRun';
+import type { QuickChatApi } from '../main/preload/quickChat';
 import type { BrowserOp } from '../shared/coworkingBrowser';
 import type { HistoryEntry } from '../shared/types';
 import type { SnoozeCommandRequest, SnoozeCommandResult } from '../shared/snoozeCommands';
@@ -4897,6 +4898,8 @@ interface MaestroAPI {
 	images: {
 		resolve: (ref: string) => Promise<string | null>;
 	};
+	/** Quick Chat: the floating chat window and the engine that runs it. */
+	quickChat: QuickChatApi;
 }
 
 declare global {

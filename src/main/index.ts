@@ -174,6 +174,7 @@ import {
 } from './app-lifecycle';
 // Multi-window registry (single source of truth for window<->session ownership)
 import { WindowRegistry } from './window-registry';
+import { createQuickChatController, closeQuickChatWindow } from './quick-chat';
 // Multi-window startup restore: turn the persisted MultiWindowState back into
 // window-creation specs (pruning agents that no longer exist).
 import { planWindowRestore, pickFocusWindowSpec } from './window-state-persistence';
@@ -629,6 +630,28 @@ const debugPackageDeps: DebugPackageDependencies = {
 	bootstrapStore,
 };
 
+// The app window that owns an agent, falling back to the primary window.
+function resolveWindowForSession(sessionId: string): BrowserWindow | null {
+	const ownerId = windowRegistry.getWindowForSession(sessionId);
+	const owner = ownerId ? windowRegistry.get(ownerId) : windowRegistry.getPrimary();
+	return owner?.browserWindow ?? mainWindow;
+}
+
+// Quick Chat: the hotkey-summoned floating chat window. Its IPC handlers and
+// hotkey register at app-ready (see quickChatController.init below).
+const quickChatController = createQuickChatController({
+	settingsStore: store,
+	windowDeps: {
+		isDevelopment,
+		preloadPath,
+		rendererProductionUrl,
+		devServerUrl,
+		windowRegistry,
+	},
+	getMainWindow: () => mainWindow,
+	getWindowForSession: resolveWindowForSession,
+});
+
 // Create web server factory with dependency injection (Phase 2 refactoring)
 const createWebServer = createWebServerFactory({
 	settingsStore: store,
@@ -636,11 +659,7 @@ const createWebServer = createWebServerFactory({
 	groupsStore,
 	getDebugPackageDeps: () => debugPackageDeps,
 	getMainWindow: () => mainWindow,
-	getWindowForSession: (sessionId: string) => {
-		const ownerId = windowRegistry.getWindowForSession(sessionId);
-		const owner = ownerId ? windowRegistry.get(ownerId) : windowRegistry.getPrimary();
-		return owner?.browserWindow ?? mainWindow;
-	},
+	getWindowForSession: resolveWindowForSession,
 	deliverCadenza,
 	getProcessManager: () => processManager,
 	triggerCueSubscription: (subscriptionName, prompt, sourceAgentId) => {
@@ -679,6 +698,8 @@ function createWindow(options?: { sessionIds?: string[]; bounds?: Partial<Shared
 		// It deliberately stays visible while Maestro is merely minimized - the
 		// whole point of a HUD is to watch things while working in other apps.
 		closeCadenzaHudWindow();
+		// Same for Quick Chat: it is a feature window, not a reason to keep running.
+		closeQuickChatWindow();
 
 		// The primary window is the app's anchor: it owns the auto-updater, the
 		// global hotkey, the deep-link target, and the quit-confirmation surface.
@@ -2995,6 +3016,8 @@ app
 				mainWindow.webContents.send('globalHotkey:registrationFailed', keys);
 			}
 		});
+		// Quick Chat registers its own hotkey through the same manager.
+		quickChatController.init();
 		// Electron auto-unregisters globalShortcuts on quit, but be explicit so the
 		// behavior survives any future change to that policy.
 		app.on('will-quit', disposeGlobalHotkey);
