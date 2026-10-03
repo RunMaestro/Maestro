@@ -6,7 +6,8 @@
  * and when understanding reaches 80%, submits a well-structured GitHub issue.
  *
  * Features:
- * - Auto-picks the first available supported provider - no selection step
+ * - Auto-picks the provider the user's own agents run - no selection step, but
+ *   a provider that cannot answer (not signed in, crashed) offers a switch
  * - Chat interface with progress bar
  * - Screenshot drag-and-drop
  * - Support package opt-in
@@ -26,6 +27,7 @@ import {
 	Check,
 	Copy,
 	Terminal,
+	RefreshCw,
 } from 'lucide-react';
 import { Spinner } from './ui/Spinner';
 import { safeClipboardWrite } from '../utils/clipboard';
@@ -33,8 +35,11 @@ import { MarkdownRenderer } from './MarkdownRenderer';
 import { generateTerminalProseStyles } from '../utils/markdownConfig';
 import type { Theme, Session, ToolType } from '../types';
 import {
+	FEEDBACK_PROVIDERS,
 	FeedbackConversationManager,
 	getConfidenceColor,
+	pickFeedbackProvider,
+	type FeedbackAgentFailure,
 	type FeedbackDiagnostic,
 	type FeedbackMessage,
 	type FeedbackParsedResponse,
@@ -43,6 +48,7 @@ import { openUrl } from '../utils/openUrl';
 import { captureException } from '../utils/sentry';
 import { useFeedbackDraftStore } from '../stores/feedbackDraftStore';
 import { useAutosizeTextarea } from '../hooks/ui/useAutosizeTextarea';
+import { getAgentDisplayName } from '../../shared/agentMetadata';
 import { KEYSTROKE_TEXTAREA_MAX_HEIGHT } from '../utils/textareaSizing';
 import {
 	MAX_FEEDBACK_ATTACHMENTS as MAX_ATTACHMENTS,
@@ -81,22 +87,6 @@ function readFileAsDataUrl(file: File): Promise<string> {
 }
 
 // ============================================================================
-// Agent Tile Data
-// ============================================================================
-
-interface AgentTile {
-	id: ToolType;
-	name: string;
-	supported: boolean;
-}
-
-const AGENT_TILES: AgentTile[] = [
-	{ id: 'claude-code', name: 'Claude Code', supported: true },
-	{ id: 'codex', name: 'OpenAI Codex', supported: true },
-	{ id: 'opencode', name: 'OpenCode', supported: true },
-];
-
-// ============================================================================
 // Component Props
 // ============================================================================
 
@@ -115,7 +105,12 @@ interface FeedbackChatViewProps {
 
 type ExistingIssue = FeedbackIssueMatch;
 
-export function FeedbackChatView({ theme, onCancel, onWidthChange }: FeedbackChatViewProps) {
+export function FeedbackChatView({
+	theme,
+	sessions,
+	onCancel,
+	onWidthChange,
+}: FeedbackChatViewProps) {
 	// --- State ---
 	const [step, setStep] = useState<'gh-check' | 'chat' | 'matching' | 'submitting' | 'done'>(
 		'gh-check'
@@ -138,6 +133,13 @@ export function FeedbackChatView({ theme, onCancel, onWidthChange }: FeedbackCha
 	const [isDragging, setIsDragging] = useState(false);
 	const [includeDebugPackage, setIncludeDebugPackage] = useState(false);
 	const [submitError, setSubmitError] = useState('');
+	// A prefilled github.com URL for the issue gh could not file, so the report
+	// is never lost to a gh login problem.
+	const [fallbackIssueUrl, setFallbackIssueUrl] = useState<string | null>(null);
+	// Parts the filed issue is missing (a screenshot gh refused to host).
+	const [submitWarnings, setSubmitWarnings] = useState<string[]>([]);
+	// The interview provider could not answer the last turn.
+	const [providerFailure, setProviderFailure] = useState<FeedbackAgentFailure | null>(null);
 	const [matchingIssues, setMatchingIssues] = useState<ExistingIssue[]>([]);
 	const [searchingIssues, setSearchingIssues] = useState(false);
 	const [subscribingTo, setSubscribingTo] = useState<number | null>(null);
@@ -190,9 +192,11 @@ export function FeedbackChatView({ theme, onCancel, onWidthChange }: FeedbackCha
 				if (mounted) {
 					const available = new Set<string>(agents.filter((a) => a.available).map((a) => a.id));
 					setDetectedAgents(available);
-					// Auto-select first available
-					const firstAvailable = AGENT_TILES.find((t) => t.supported && available.has(t.id));
-					if (firstAvailable) setSelectedAgent(firstAvailable.id);
+					const preferred = pickFeedbackProvider(
+						sessions.map((s) => s.toolType),
+						available
+					);
+					if (preferred) setSelectedAgent(preferred);
 					setAgentsLoaded(true);
 				}
 			} catch (error) {
@@ -210,6 +214,8 @@ export function FeedbackChatView({ theme, onCancel, onWidthChange }: FeedbackCha
 		return () => {
 			mounted = false;
 		};
+		// Detection runs once per open; the provider is picked from the agents that
+		// existed when feedback was opened, not re-picked mid-conversation.
 	}, []);
 
 	// --- Auto-resize textarea as content changes, keeping the caret visible ---
@@ -277,9 +283,9 @@ export function FeedbackChatView({ theme, onCancel, onWidthChange }: FeedbackCha
 		}
 	}, [lastResponse, runIssueSearch]);
 
-	// Available agent tiles
-	const availableTiles = useMemo(
-		() => AGENT_TILES.filter((t) => t.supported && detectedAgents.has(t.id)),
+	// Installed providers the interview can run on
+	const availableProviders = useMemo(
+		() => FEEDBACK_PROVIDERS.filter((id) => detectedAgents.has(id)),
 		[detectedAgents]
 	);
 
@@ -321,10 +327,63 @@ export function FeedbackChatView({ theme, onCancel, onWidthChange }: FeedbackCha
 		if (startedRef.current) return;
 		if (ghAuth.checking || !ghAuth.ok) return;
 		if (!agentsLoaded || agentsDetectError) return;
-		if (availableTiles.length === 0) return;
+		if (availableProviders.length === 0) return;
 		startedRef.current = true;
 		void startConversation();
-	}, [ghAuth, agentsLoaded, agentsDetectError, availableTiles, startConversation]);
+	}, [ghAuth, agentsLoaded, agentsDetectError, availableProviders, startConversation]);
+
+	// --- Run one turn: `history` already ends with the user's message ---
+	const runTurn = useCallback(async (text: string, history: FeedbackMessage[]) => {
+		setIsLoading(true);
+		setDiagnostics([]);
+		setProviderFailure(null);
+		let failed = false;
+
+		try {
+			const response = await managerRef.current.sendMessage(text, history, {
+				onDiagnostic: (diagnostic) => {
+					setDiagnostics((prev) => [...prev, diagnostic]);
+				},
+				onComplete: (r) => {
+					setConfidence(r.confidence);
+					setIsReady(r.ready);
+					setLastResponse(r);
+				},
+				onAgentFailure: (failure) => {
+					failed = true;
+					setProviderFailure(failure);
+				},
+			});
+
+			setMessages((prev) => [
+				...prev,
+				failed
+					? { role: 'assistant', content: response.message, timestamp: Date.now(), failed: true }
+					: {
+							role: 'assistant',
+							content: response.message,
+							timestamp: Date.now(),
+							confidence: response.confidence,
+							category: response.category,
+							summary: response.summary,
+						},
+			]);
+		} catch (error) {
+			captureException(error, { extra: { source: 'FeedbackChatView.runTurn' } });
+			setMessages((prev) => [
+				...prev,
+				{
+					role: 'assistant',
+					content: 'Something went wrong. Please try again.',
+					timestamp: Date.now(),
+					failed: true,
+				},
+			]);
+		} finally {
+			setIsLoading(false);
+			inputRef.current?.focus();
+		}
+	}, []);
 
 	// --- Send message ---
 	const sendMessage = useCallback(async () => {
@@ -335,52 +394,43 @@ export function FeedbackChatView({ theme, onCancel, onWidthChange }: FeedbackCha
 		const updatedMessages = [...messages, userMessage];
 		setMessages(updatedMessages);
 		setInputValue('');
-		setIsLoading(true);
-		setDiagnostics([]);
+		await runTurn(text, updatedMessages);
+	}, [inputValue, isLoading, messages, runTurn]);
 
-		try {
-			const response = await managerRef.current.sendMessage(text, updatedMessages, {
-				onDiagnostic: (diagnostic) => {
-					setDiagnostics((prev) => [...prev, diagnostic]);
-				},
-				onComplete: (r) => {
-					setConfidence(r.confidence);
-					setIsReady(r.ready);
-					setLastResponse(r);
-				},
-			});
+	// --- Switch the interview to another installed provider and retry ---
+	//     The turn that failed is re-asked on the new provider, so the user
+	//     does not have to retype it; the failure bubble is dropped because it
+	//     described the old provider, not the conversation.
+	const switchProvider = useCallback(
+		async (agentId: ToolType) => {
+			if (isLoading) return;
+			managerRef.current.switchAgent(agentId);
+			setSelectedAgent(agentId);
+			setProviderFailure(null);
 
-			setMessages((prev) => [
-				...prev,
-				{
-					role: 'assistant',
-					content: response.message,
-					timestamp: Date.now(),
-					confidence: response.confidence,
-					category: response.category,
-					summary: response.summary,
-				},
-			]);
-		} catch {
-			setMessages((prev) => [
-				...prev,
-				{
-					role: 'assistant',
-					content: 'Something went wrong. Please try again.',
-					timestamp: Date.now(),
-				},
-			]);
-		} finally {
-			setIsLoading(false);
-			inputRef.current?.focus();
-		}
-	}, [inputValue, isLoading, messages]);
+			const lastUserIndex = messages.map((m) => m.role).lastIndexOf('user');
+			const unanswered =
+				lastUserIndex !== -1 && messages.slice(lastUserIndex + 1).every((m) => m.failed);
+			if (!unanswered) return;
+			const history = messages.slice(0, lastUserIndex + 1);
+			setMessages(history);
+			await runTurn(messages[lastUserIndex].content, history);
+		},
+		[isLoading, messages, runTurn]
+	);
+
+	const otherProviders = useMemo(
+		() => availableProviders.filter((id) => id !== selectedAgent),
+		[availableProviders, selectedAgent]
+	);
 
 	// --- Create new issue (skipping or after matching) ---
 	const createNewIssue = useCallback(async () => {
 		if (!lastResponse) return;
 		setStep('submitting');
 		setSubmitError('');
+		setFallbackIssueUrl(null);
+		setSubmitWarnings([]);
 
 		try {
 			const result = await window.maestro.feedback.submitConversation({
@@ -394,11 +444,13 @@ export function FeedbackChatView({ theme, onCancel, onWidthChange }: FeedbackCha
 				includeDebugPackage,
 			});
 
+			setSubmitWarnings(result.warnings ?? []);
 			if (result.success) {
 				setCreatedIssueUrl(result.issueUrl ?? null);
 				setStep('done');
 			} else {
 				setSubmitError(result.error || 'Failed to submit feedback.');
+				setFallbackIssueUrl(result.fallbackIssueUrl ?? null);
 				setStep('chat');
 			}
 		} catch (error) {
@@ -411,6 +463,7 @@ export function FeedbackChatView({ theme, onCancel, onWidthChange }: FeedbackCha
 	const searchAndSubmit = useCallback(async () => {
 		if (!lastResponse || !isReady) return;
 		setSubmitError('');
+		setFallbackIssueUrl(null);
 		setStep('matching');
 
 		// If search already completed with results, just show them
@@ -597,7 +650,7 @@ export function FeedbackChatView({ theme, onCancel, onWidthChange }: FeedbackCha
 	}
 
 	// --- No supported AI provider detected ---
-	if (agentsLoaded && availableTiles.length === 0) {
+	if (agentsLoaded && availableProviders.length === 0) {
 		return (
 			<div className="flex flex-col items-center gap-4 py-8 px-6 text-center">
 				<AlertCircle className="w-10 h-10" style={{ color: theme.colors.warning }} />
@@ -671,6 +724,21 @@ export function FeedbackChatView({ theme, onCancel, onWidthChange }: FeedbackCha
 							: 'Your feedback has been recorded. Thank you!'}
 					</p>
 				</div>
+
+				{submitWarnings.length > 0 && (
+					<ul
+						className="flex flex-col gap-1 text-left text-xs leading-relaxed max-w-md"
+						style={{ color: theme.colors.warning }}
+						data-testid="feedback-submit-warnings"
+					>
+						{submitWarnings.map((warning) => (
+							<li key={warning} className="flex items-start gap-1.5">
+								<AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+								<span>{warning}</span>
+							</li>
+						))}
+					</ul>
+				)}
 
 				{/* Issue link + copy */}
 				{createdIssueUrl && (
@@ -1067,6 +1135,36 @@ export function FeedbackChatView({ theme, onCancel, onWidthChange }: FeedbackCha
 					</div>
 				)}
 
+				{providerFailure && !isLoading && otherProviders.length > 0 && (
+					<div
+						className="rounded-lg border px-3 py-2.5 flex flex-wrap items-center gap-2"
+						style={{
+							backgroundColor: `${theme.colors.warning}08`,
+							borderColor: `${theme.colors.warning}40`,
+						}}
+						data-testid="feedback-provider-failure"
+					>
+						<span className="text-xs flex-1 min-w-0" style={{ color: theme.colors.textMain }}>
+							Try a different provider:
+						</span>
+						{otherProviders.map((id) => (
+							<button
+								key={id}
+								type="button"
+								onClick={() => void switchProvider(id)}
+								className="flex items-center gap-1 px-2 py-1 rounded text-2xs font-bold transition-colors hover:opacity-90 shrink-0"
+								style={{
+									backgroundColor: theme.colors.accent,
+									color: theme.colors.accentForeground,
+								}}
+							>
+								<RefreshCw className="w-3 h-3" />
+								Switch to {getAgentDisplayName(id)}
+							</button>
+						))}
+					</div>
+				)}
+
 				<div ref={messagesEndRef} />
 			</div>
 
@@ -1152,7 +1250,7 @@ export function FeedbackChatView({ theme, onCancel, onWidthChange }: FeedbackCha
 					/>
 				</div>
 
-				{/* Support package + error */}
+				{/* Support package */}
 				<div className="pb-2 flex items-center gap-3">
 					<label
 						className="flex items-center gap-1.5 cursor-pointer select-none shrink-0"
@@ -1170,16 +1268,37 @@ export function FeedbackChatView({ theme, onCancel, onWidthChange }: FeedbackCha
 							Include support package
 						</span>
 					</label>
-					{submitError && (
+				</div>
+				{submitError && (
+					<div className="pb-2 flex flex-col gap-1.5" data-testid="feedback-submit-error">
 						<p
-							className="text-2xs truncate"
+							className="text-2xs leading-relaxed whitespace-pre-wrap break-words select-text"
 							style={{ color: theme.colors.error }}
-							title={submitError}
 						>
 							{submitError}
 						</p>
-					)}
-				</div>
+						{fallbackIssueUrl && (
+							<div className="flex items-center gap-2 flex-wrap">
+								<span className="text-2xs" style={{ color: theme.colors.textDim }}>
+									Your report is not lost: open it on GitHub, prefilled, and submit it from your
+									browser.
+								</span>
+								<button
+									type="button"
+									onClick={() => openUrl(fallbackIssueUrl)}
+									className="flex items-center gap-1 px-2 py-1 rounded text-2xs font-bold transition-colors hover:opacity-90 shrink-0"
+									style={{
+										backgroundColor: theme.colors.accent,
+										color: theme.colors.accentForeground,
+									}}
+								>
+									<ExternalLink className="w-3 h-3" />
+									Open prefilled issue on GitHub
+								</button>
+							</div>
+						)}
+					</div>
+				)}
 
 				{/* Text input + send + submit */}
 				<div>

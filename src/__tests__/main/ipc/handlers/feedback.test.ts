@@ -204,7 +204,10 @@ describe('feedback handlers', () => {
 			{ PATH: '/usr/bin' }
 		);
 		expect(mockProcessManager.write).not.toHaveBeenCalled();
-		expect(result).toEqual({ success: true });
+		expect(result).toEqual({
+			success: true,
+			issueUrl: 'https://github.com/RunMaestro/Maestro/issues/999',
+		});
 	});
 
 	it('creates a structured feature request issue without screenshots', async () => {
@@ -255,7 +258,10 @@ describe('feedback handlers', () => {
 			undefined,
 			{ PATH: '/usr/bin' }
 		);
-		expect(result).toEqual({ success: true });
+		expect(result).toEqual({
+			success: true,
+			issueUrl: 'https://github.com/RunMaestro/Maestro/issues/1000',
+		});
 	});
 
 	it('tells the user to re-run gh auth login when gh rejects an expired token', async () => {
@@ -285,6 +291,110 @@ describe('feedback handlers', () => {
 		expect(result.success).toBe(false);
 		expect(result.error).toContain('Run "gh auth login"');
 		expect(result.error).not.toContain('HTTP 401');
+	});
+
+	describe('feedback:submit-conversation degrades instead of losing the report', () => {
+		const conversationPayload = {
+			category: 'bug_report',
+			summary: 'Auto Run stalls on SSH remotes',
+			expectedBehavior: 'The run continues.',
+			actualBehavior: 'The run stops after the first task.',
+		};
+		const ok = (stdout = '') => ({ exitCode: 0, stdout, stderr: '' }) as any;
+		const failed = (stderr: string) => ({ exitCode: 1, stdout: '', stderr }) as any;
+		const issueCreateCalls = () =>
+			vi
+				.mocked(execFileNoThrow)
+				.mock.calls.filter(([, args]) => args[0] === 'issue' && args[1] === 'create');
+
+		beforeEach(() => {
+			vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+			vi.mocked(fs.unlink).mockResolvedValue(undefined);
+		});
+
+		it('files without screenshots when gh refuses to host them, and says so', async () => {
+			vi.mocked(execFileNoThrow)
+				// gh api user - the token cannot read the user, so no upload is possible
+				.mockResolvedValueOnce(failed('HTTP 401: Bad credentials (https://api.github.com/user)'))
+				// label check
+				.mockResolvedValueOnce(ok())
+				// issue create
+				.mockResolvedValueOnce(ok('https://github.com/RunMaestro/Maestro/issues/42'));
+
+			const handler = registeredHandlers.get('feedback:submit-conversation');
+			const result = await handler!(
+				{},
+				{
+					...conversationPayload,
+					attachments: [{ name: 'shot.png', dataUrl: 'data:image/png;base64,abc123' }],
+				}
+			);
+
+			expect(result.success).toBe(true);
+			expect(result.issueUrl).toBe('https://github.com/RunMaestro/Maestro/issues/42');
+			expect(result.warnings).toHaveLength(1);
+			expect(result.warnings[0]).toContain('1 screenshot could not be uploaded');
+			expect(result.warnings[0]).toContain('gh auth login');
+			const body = String(
+				vi
+					.mocked(fs.writeFile)
+					.mock.calls.find(([target]) => String(target).includes('maestro-feedback-body-'))?.[1]
+			);
+			expect(body).toContain('1 screenshot was attached in Maestro but could not be uploaded.');
+		});
+
+		it('files without the label when the label cannot be ensured', async () => {
+			vi.mocked(execFileNoThrow)
+				.mockResolvedValueOnce(failed('HTTP 404: Not Found'))
+				.mockResolvedValueOnce(failed('HTTP 403: Resource not accessible by integration'))
+				.mockResolvedValueOnce(ok('https://github.com/RunMaestro/Maestro/issues/43'));
+
+			const handler = registeredHandlers.get('feedback:submit-conversation');
+			const result = await handler!({}, conversationPayload);
+
+			expect(result).toEqual({
+				success: true,
+				issueUrl: 'https://github.com/RunMaestro/Maestro/issues/43',
+			});
+			expect(issueCreateCalls()).toHaveLength(1);
+			expect(issueCreateCalls()[0][1]).not.toContain('--label');
+		});
+
+		it('retries without the label when gh refuses the create over it', async () => {
+			vi.mocked(execFileNoThrow)
+				.mockResolvedValueOnce(ok())
+				.mockResolvedValueOnce(failed("could not add label: 'Maestro-feedback' not found"))
+				.mockResolvedValueOnce(ok('https://github.com/RunMaestro/Maestro/issues/44'));
+
+			const handler = registeredHandlers.get('feedback:submit-conversation');
+			const result = await handler!({}, conversationPayload);
+
+			expect(result.success).toBe(true);
+			expect(issueCreateCalls()).toHaveLength(2);
+			expect(issueCreateCalls()[0][1]).toContain('--label');
+			expect(issueCreateCalls()[1][1]).not.toContain('--label');
+		});
+
+		it('offers a prefilled github.com issue when gh cannot file at all', async () => {
+			vi.mocked(execFileNoThrow)
+				.mockResolvedValueOnce(ok())
+				.mockResolvedValueOnce(
+					failed(
+						'GraphQL: Although you appear to have the correct authorization credentials, the `RunMaestro` organization has enabled OAuth App access restrictions'
+					)
+				);
+
+			const handler = registeredHandlers.get('feedback:submit-conversation');
+			const result = await handler!({}, conversationPayload);
+
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('restricts third-party apps');
+			const url = new URL(result.fallbackIssueUrl);
+			expect(url.origin + url.pathname).toBe('https://github.com/RunMaestro/Maestro/issues/new');
+			expect(url.searchParams.get('title')).toBe('Bug: Auto Run stalls on SSH remotes');
+			expect(url.searchParams.get('body')).toContain('The run stops after the first task.');
+			expect(url.searchParams.get('labels')).toBe('Maestro-feedback');
+		});
 	});
 
 	it('composes feedback prompts with uploaded screenshot markdown', async () => {

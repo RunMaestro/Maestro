@@ -764,7 +764,7 @@ interface MaestroAPI {
 			agentProvider?: string;
 			sshRemoteEnabled?: boolean;
 			attachments?: Array<{ name: string; dataUrl: string }>;
-		}) => Promise<{ success: boolean; error?: string }>;
+		}) => Promise<import('../shared/feedback').FeedbackSubmitResponse>;
 		composePrompt: (
 			feedbackText: string,
 			attachments?: Array<{ name: string; dataUrl: string }>
@@ -781,7 +781,7 @@ interface MaestroAPI {
 			sshRemoteEnabled?: boolean;
 			attachments?: Array<{ name: string; dataUrl: string }>;
 			includeDebugPackage?: boolean;
-		}) => Promise<{ success: boolean; error?: string; issueUrl?: string }>;
+		}) => Promise<import('../shared/feedback').FeedbackSubmitResponse>;
 		searchIssues: (query: string) => Promise<{
 			issues: Array<{
 				number: number;

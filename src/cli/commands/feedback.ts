@@ -28,6 +28,7 @@ import {
 	type FeedbackAttachmentPayload,
 	type FeedbackConversationSubmitPayload,
 	type FeedbackIssueMatch,
+	type FeedbackSubmitResponse,
 } from '../../shared/feedback';
 
 /**
@@ -234,10 +235,10 @@ export async function feedbackSubmit(options: SubmitOptions): Promise<void> {
 		includeDebugPackage: options.supportPackage === true,
 	};
 
-	let result: { success: boolean; issueUrl?: string; error?: string };
+	let result: FeedbackSubmitResponse;
 	try {
 		result = await withMaestroClient((client) =>
-			client.sendCommand(
+			client.sendCommand<FeedbackSubmitResponse>(
 				{ type: 'feedback_submit', payload },
 				'feedback_submit_result',
 				SUBMIT_TIMEOUT_MS
@@ -246,14 +247,33 @@ export async function feedbackSubmit(options: SubmitOptions): Promise<void> {
 	} catch (error) {
 		failFromError(error, options);
 	}
+	const warnings = result.warnings ?? [];
 	if (!result.success) {
-		fail(result.error || 'Failed to file feedback', options, ExitCode.GeneralError);
+		const message = result.error || 'Failed to file feedback';
+		if (options.json) {
+			fail(message, options, ExitCode.GeneralError, {
+				fallbackIssueUrl: result.fallbackIssueUrl ?? null,
+				warnings,
+			});
+		}
+		console.error(`Error: ${message}`);
+		// gh could not file it, but the report is not lost: the same issue,
+		// prefilled, can be filed from a browser signed in to GitHub.
+		if (result.fallbackIssueUrl) {
+			console.error('');
+			console.error('Nothing was lost. File the same report from your browser instead:');
+			console.error(`  ${result.fallbackIssueUrl}`);
+		}
+		exitWith(ExitCode.GeneralError);
 	}
 
 	if (options.json) {
-		console.log(JSON.stringify({ success: true, issueUrl: result.issueUrl ?? null }));
+		console.log(JSON.stringify({ success: true, issueUrl: result.issueUrl ?? null, warnings }));
 	} else {
 		console.log(`Feedback filed: ${result.issueUrl ?? '(GitHub did not return a URL)'}`);
+		for (const warning of warnings) {
+			console.log(`Warning: ${warning}`);
+		}
 	}
 }
 

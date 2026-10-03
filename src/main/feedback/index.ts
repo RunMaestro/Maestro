@@ -36,6 +36,9 @@ import { generateDebugPackage, type DebugPackageDependencies } from '../debug-pa
 import { captureException } from '../utils/sentry';
 import type { MaestroCliManager } from '../maestro-cli-manager';
 import {
+	buildPrefilledIssueUrl,
+	FEEDBACK_LABEL,
+	FEEDBACK_REPO,
 	isFeedbackCategory,
 	MAX_FEEDBACK_FIELD_LENGTH,
 	MAX_FEEDBACK_SUMMARY_LENGTH as MAX_SUMMARY_LENGTH,
@@ -352,6 +355,33 @@ async function uploadAttachments(
 	return { markdown: uploadedMarkdown.join('\n\n') };
 }
 
+/**
+ * Upload screenshots for an issue that is about to be filed, degrading instead
+ * of failing. Hosting them takes more of `gh` than filing does (it creates a
+ * public repo on the user's account), so a token that can file an issue can
+ * still be refused here, and losing the whole report over a picture is worse
+ * than filing it without one. A failure is recorded in `warnings` and noted in
+ * the issue body, so the reader knows screenshots existed.
+ */
+async function uploadAttachmentsOrWarn(
+	attachments: FeedbackAttachmentInput[],
+	warnings: string[]
+): Promise<string> {
+	try {
+		return (await uploadAttachments(attachments)).markdown;
+	} catch (error) {
+		const reason = error instanceof Error ? error.message : String(error);
+		logger.warn('Feedback screenshots could not be uploaded; filing without them', LOG_CONTEXT, {
+			error: reason,
+		});
+		const count = attachments.length;
+		warnings.push(
+			`${count} screenshot${count === 1 ? '' : 's'} could not be uploaded, so the issue was filed without ${count === 1 ? 'it' : 'them'}. Drag ${count === 1 ? 'it' : 'them'} into a comment on the issue to add ${count === 1 ? 'it' : 'them'}. (${reason})`
+		);
+		return `${count} screenshot${count === 1 ? ' was' : 's were'} attached in Maestro but could not be uploaded.`;
+	}
+}
+
 async function composeFeedbackPrompt(
 	feedbackText: string,
 	attachments: FeedbackAttachmentInput[]
@@ -364,15 +394,22 @@ async function composeFeedbackPrompt(
 	return { prompt };
 }
 
-async function ensureFeedbackLabel(): Promise<void> {
+/**
+ * Whether the `Maestro-feedback` label exists (creating it when it does not).
+ *
+ * Never throws: the label is for triage, not for the reporter, and a user who
+ * cannot create labels on RunMaestro/Maestro (nearly everyone) must still be
+ * able to file. `false` means "file without `--label`".
+ */
+async function ensureFeedbackLabel(): Promise<boolean> {
 	const labelCheck = await execFileNoThrow(
 		await resolveFeedbackGhCommand(),
-		['api', 'repos/RunMaestro/Maestro/labels/Maestro-feedback'],
+		['api', `repos/${FEEDBACK_REPO}/labels/${FEEDBACK_LABEL}`],
 		undefined,
 		getExpandedEnv()
 	);
 	if (labelCheck.exitCode === 0) {
-		return;
+		return true;
 	}
 
 	const labelCreate = await execFileNoThrow(
@@ -380,9 +417,9 @@ async function ensureFeedbackLabel(): Promise<void> {
 		[
 			'label',
 			'create',
-			'Maestro-feedback',
+			FEEDBACK_LABEL,
 			'-R',
-			'RunMaestro/Maestro',
+			FEEDBACK_REPO,
 			'--color',
 			'663579',
 			'--description',
@@ -391,10 +428,78 @@ async function ensureFeedbackLabel(): Promise<void> {
 		undefined,
 		getExpandedEnv()
 	);
-	if (labelCreate.exitCode !== 0 && !labelCreate.stderr.includes('already exists')) {
-		throw new Error(
-			describeGhFailure(labelCreate.stderr, 'Failed to ensure Maestro-feedback label exists.')
+	if (labelCreate.exitCode === 0 || labelCreate.stderr.includes('already exists')) {
+		return true;
+	}
+	logger.warn('Maestro-feedback label unavailable; filing without it', LOG_CONTEXT, {
+		error: labelCreate.stderr.trim(),
+	});
+	return false;
+}
+
+/**
+ * File the issue with `gh issue create`, so that nothing short of gh refusing
+ * the issue itself loses the report.
+ *
+ * The label is attached when it could be ensured, and dropped on a retry when
+ * gh refuses the create over the label alone. When the create still fails, the
+ * response carries the translated gh error AND a prefilled github.com URL, so
+ * the user can file the identical issue from their browser.
+ */
+async function fileFeedbackIssue(
+	title: string,
+	body: string,
+	warnings: string[]
+): Promise<FeedbackSubmitResponse> {
+	const labelled = await ensureFeedbackLabel();
+	const bodyFile = path.join(os.tmpdir(), `maestro-feedback-body-${Date.now()}.md`);
+	await fs.writeFile(bodyFile, body, 'utf-8');
+
+	const create = async (withLabel: boolean) =>
+		execFileNoThrow(
+			await resolveFeedbackGhCommand(),
+			[
+				'issue',
+				'create',
+				'-R',
+				FEEDBACK_REPO,
+				'--title',
+				title,
+				'--body-file',
+				bodyFile,
+				...(withLabel ? ['--label', FEEDBACK_LABEL] : []),
+			],
+			undefined,
+			getExpandedEnv()
 		);
+
+	try {
+		let issueCreate = await create(labelled);
+		if (issueCreate.exitCode !== 0 && labelled && /label/i.test(issueCreate.stderr)) {
+			logger.warn('gh refused the feedback label; retrying without it', LOG_CONTEXT, {
+				error: issueCreate.stderr.trim(),
+			});
+			issueCreate = await create(false);
+		}
+
+		if (issueCreate.exitCode !== 0) {
+			return {
+				success: false,
+				error: describeGhFailure(issueCreate.stderr, 'Failed to create GitHub issue.'),
+				fallbackIssueUrl: buildPrefilledIssueUrl(title, body),
+				warnings: warnings.length > 0 ? warnings : undefined,
+			};
+		}
+
+		// gh issue create prints the issue URL to stdout
+		const issueUrl = issueCreate.stdout.trim();
+		return {
+			success: true,
+			issueUrl: issueUrl || undefined,
+			warnings: warnings.length > 0 ? warnings : undefined,
+		};
+	} finally {
+		await fs.unlink(bodyFile).catch(() => {});
 	}
 }
 
@@ -704,7 +809,7 @@ export async function subscribeFeedbackIssue(payload: {
 /** Legacy one-shot submit: create a structured GitHub issue directly. */
 export async function submitFeedback(
 	rawPayload: FeedbackSubmitPayload
-): Promise<{ success: boolean; error?: string }> {
+): Promise<FeedbackSubmitResponse> {
 	if (!rawPayload || typeof rawPayload !== 'object') {
 		return { success: false, error: 'Feedback payload is missing.' };
 	}
@@ -787,38 +892,15 @@ export async function submitFeedback(
 		sshRemoteEnabled: typeof sshRemoteEnabled === 'boolean' ? sshRemoteEnabled : undefined,
 		attachments: normalizedAttachments,
 	};
-	const { markdown } = await uploadAttachments(normalizedAttachments);
-	await ensureFeedbackLabel();
+	const warnings: string[] = [];
+	const markdown = await uploadAttachmentsOrWarn(normalizedAttachments, warnings);
 	const environment = buildEnvironmentSummary(normalizedPayload);
 
-	const bodyPath = path.join(os.tmpdir(), `maestro-feedback-body-${Date.now()}.md`);
-	await fs.writeFile(bodyPath, buildIssueBody(normalizedPayload, environment, markdown), 'utf8');
-	const issueCreate = await execFileNoThrow(
-		await resolveFeedbackGhCommand(),
-		[
-			'issue',
-			'create',
-			'-R',
-			'RunMaestro/Maestro',
-			'--title',
-			buildIssueTitle(normalizedPayload.category, normalizedPayload.summary),
-			'--body-file',
-			bodyPath,
-			'--label',
-			'Maestro-feedback',
-		],
-		undefined,
-		getExpandedEnv()
+	return fileFeedbackIssue(
+		buildIssueTitle(normalizedPayload.category, normalizedPayload.summary),
+		buildIssueBody(normalizedPayload, environment, markdown),
+		warnings
 	);
-	await fs.unlink(bodyPath).catch(() => {});
-	if (issueCreate.exitCode !== 0) {
-		return {
-			success: false,
-			error: describeGhFailure(issueCreate.stderr, 'Failed to create GitHub issue.'),
-		};
-	}
-
-	return { success: true };
 }
 
 /**
@@ -938,17 +1020,10 @@ export async function submitFeedbackConversation(
 					a.dataUrl.startsWith('data:image/')
 			)
 		: [];
-	// An upload failure is reported as a result, not thrown: a throw crosses IPC
-	// as "Error invoking remote method ...", burying the gh guidance it carries.
-	let attachmentMarkdown: string;
-	try {
-		({ markdown: attachmentMarkdown } = await uploadAttachments(normalizedAttachments));
-	} catch (error) {
-		return {
-			success: false,
-			error: error instanceof Error ? error.message : 'Failed to upload screenshots.',
-		};
-	}
+	// A screenshot or support-package failure drops that part and files the
+	// rest; `warnings` tells the user what is missing from the issue.
+	const warnings: string[] = [];
+	const attachmentMarkdown = await uploadAttachmentsOrWarn(normalizedAttachments, warnings);
 
 	// Generate and upload debug package if requested
 	let debugPackageMarkdown = '';
@@ -999,6 +1074,11 @@ export async function submitFeedbackConversation(
 			void captureException(e);
 			logger.warn(`Failed to generate/upload debug package: ${e}`, LOG_CONTEXT);
 		}
+		if (!debugPackageMarkdown) {
+			warnings.push(
+				'The support package could not be generated or uploaded, so the issue was filed without it.'
+			);
+		}
 	}
 
 	// Build issue body
@@ -1017,48 +1097,7 @@ export async function submitFeedbackConversation(
 		.filter(Boolean)
 		.join('\n\n');
 
-	// Ensure label and create issue
-	try {
-		await ensureFeedbackLabel();
-	} catch {
-		// Continue without label
-	}
-
-	const bodyFile = path.join(os.tmpdir(), `maestro-feedback-${Date.now()}.md`);
-	await fs.writeFile(bodyFile, sections, 'utf-8');
-
-	try {
-		const issueCreate = await execFileNoThrow(
-			await resolveFeedbackGhCommand(),
-			[
-				'issue',
-				'create',
-				'-R',
-				'RunMaestro/Maestro',
-				'--title',
-				title,
-				'--body-file',
-				bodyFile,
-				'--label',
-				'Maestro-feedback',
-			],
-			undefined,
-			getExpandedEnv()
-		);
-
-		if (issueCreate.exitCode !== 0) {
-			return {
-				success: false,
-				error: describeGhFailure(issueCreate.stderr, 'Failed to create GitHub issue.'),
-			};
-		}
-
-		// gh issue create prints the issue URL to stdout
-		const issueUrl = issueCreate.stdout.trim();
-		return { success: true, issueUrl: issueUrl || undefined };
-	} finally {
-		await fs.unlink(bodyFile).catch(() => {});
-	}
+	return fileFeedbackIssue(title, sections, warnings);
 }
 
 /** Compose the one-shot feedback prompt, uploading any screenshots first. */

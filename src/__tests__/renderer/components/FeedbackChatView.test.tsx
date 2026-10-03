@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { FeedbackChatView } from '../../../renderer/components/FeedbackChatView';
 import type { Theme, Session } from '../../../renderer/types';
 
@@ -201,5 +201,158 @@ describe('FeedbackChatView', () => {
 		expect(closeButton).toBeTruthy();
 		closeButton.click();
 		expect(onCancel).toHaveBeenCalledOnce();
+	});
+
+	describe('provider choice and recovery', () => {
+		type ExitCb = (sid: string, code: number) => void;
+		type DataCb = (sid: string, data: string) => void;
+		type ErrorCb = (sid: string, error: { type: string; message: string }) => void;
+		let exitCb: ExitCb | undefined;
+		let dataCb: DataCb | undefined;
+		let errorCb: ErrorCb | undefined;
+
+		const agentFor = (id: string) => ({
+			id,
+			command: id,
+			available: true,
+			args: [],
+			capabilities: {},
+		});
+
+		beforeEach(() => {
+			exitCb = dataCb = errorCb = undefined;
+			window.maestro.feedback.checkGhAuth.mockResolvedValue({ authenticated: true });
+			window.maestro.agents.detect.mockResolvedValue([
+				{ id: 'claude-code', name: 'Claude Code', available: true },
+				{ id: 'codex', name: 'Codex', available: true },
+			]);
+			window.maestro.agents.get.mockImplementation(async (id: string) => agentFor(id));
+			// Earlier tests leave rejecting implementations behind.
+			window.maestro.feedback.getConversationPrompt.mockResolvedValue({
+				prompt: 'system prompt',
+				environment: '- Maestro version: test',
+				cwd: '/home/test',
+			});
+			window.maestro.feedback.searchIssues.mockResolvedValue({ issues: [] });
+			Object.assign(window.maestro.process, {
+				onData: vi.fn((cb: DataCb) => {
+					dataCb = cb;
+					return () => {};
+				}),
+				onExit: vi.fn((cb: ExitCb) => {
+					exitCb = cb;
+					return () => {};
+				}),
+				onAgentError: vi.fn((cb: ErrorCb) => {
+					errorCb = cb;
+					return () => {};
+				}),
+				onToolExecution: vi.fn(() => () => {}),
+				onThinkingChunk: vi.fn(() => () => {}),
+			});
+		});
+
+		const sendText = async (text: string) => {
+			const input = await screen.findByPlaceholderText('Describe your issue or idea...');
+			fireEvent.change(input, { target: { value: text } });
+			fireEvent.keyDown(input, { key: 'Enter' });
+		};
+		const lastSpawn = () => {
+			const calls = vi.mocked(window.maestro.process.spawn).mock.calls;
+			return calls[calls.length - 1][0] as { sessionId: string; toolType: string };
+		};
+
+		it('runs the interview on the provider the user agents run', async () => {
+			const codexSessions = [
+				{ ...sessions[0], id: 'a', toolType: 'codex' },
+				{ ...sessions[0], id: 'b', toolType: 'codex' },
+			] as Session[];
+			render(
+				<FeedbackChatView
+					theme={theme}
+					sessions={codexSessions}
+					onCancel={vi.fn()}
+					onSubmitSuccess={vi.fn()}
+				/>
+			);
+
+			await sendText('it broke');
+			await waitFor(() => expect(window.maestro.process.spawn).toHaveBeenCalled());
+			expect(lastSpawn().toolType).toBe('codex');
+		});
+
+		it('names the provider on an auth failure and retries the turn on another one', async () => {
+			render(
+				<FeedbackChatView
+					theme={theme}
+					sessions={sessions}
+					onCancel={vi.fn()}
+					onSubmitSuccess={vi.fn()}
+				/>
+			);
+
+			await sendText('it broke');
+			await waitFor(() => expect(window.maestro.process.spawn).toHaveBeenCalled());
+			const first = lastSpawn();
+			expect(first.toolType).toBe('claude-code');
+
+			errorCb?.(first.sessionId, { type: 'auth_expired', message: 'OAuth token expired' });
+			exitCb?.(first.sessionId, 1);
+
+			expect(await screen.findByText(/Claude Code is not signed in/)).toBeTruthy();
+			const switchButton = await screen.findByRole('button', { name: /Switch to Codex/ });
+			fireEvent.click(switchButton);
+
+			await waitFor(() => expect(window.maestro.process.spawn).toHaveBeenCalledTimes(2));
+			const retry = lastSpawn();
+			expect(retry.toolType).toBe('codex');
+			expect((retry as { prompt?: string }).prompt).toContain('it broke');
+			expect(screen.queryByText(/Claude Code is not signed in/)).toBeNull();
+		});
+
+		it('offers a prefilled GitHub issue when filing fails', async () => {
+			window.maestro.feedback.submitConversation.mockResolvedValue({
+				success: false,
+				error: 'Your GitHub CLI login has expired or was revoked.',
+				fallbackIssueUrl: 'https://github.com/RunMaestro/Maestro/issues/new?title=x',
+			});
+			render(
+				<FeedbackChatView
+					theme={theme}
+					sessions={sessions}
+					onCancel={vi.fn()}
+					onSubmitSuccess={vi.fn()}
+				/>
+			);
+
+			await sendText('it broke');
+			await waitFor(() => expect(window.maestro.process.spawn).toHaveBeenCalled());
+			const { sessionId } = lastSpawn();
+			dataCb?.(
+				sessionId,
+				JSON.stringify({
+					confidence: 90,
+					ready: true,
+					message: 'Got it.',
+					category: 'bug_report',
+					summary: 'Something broke',
+					structured: {
+						expectedBehavior: 'works',
+						actualBehavior: 'broken',
+						reproductionSteps: '',
+						additionalContext: '',
+					},
+				})
+			);
+			exitCb?.(sessionId, 0);
+
+			const [submit] = await screen.findAllByRole('button', { name: /Submit/ });
+			fireEvent.click(submit);
+
+			expect(await screen.findByText(/login has expired or was revoked/)).toBeTruthy();
+			expect(
+				await screen.findByRole('button', { name: /Open prefilled issue on GitHub/ })
+			).toBeTruthy();
+		});
 	});
 });

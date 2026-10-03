@@ -21,13 +21,11 @@ Click the **Feedback** button in the bottom-left corner of the sidebar, next to 
 
 You can also open it via **Quick Actions** (`Cmd+K` / `Ctrl+K`) → "Send Feedback".
 
-### 2. Choose an AI Agent
+### 2. Which AI Runs the Conversation
 
-Select which installed AI provider will conduct the feedback conversation. Maestro auto-detects available agents (Claude Code, Codex, OpenCode) and pre-selects the first one found.
+There is no provider to pick. Maestro runs the conversation on the provider your own agents use (Claude Code, Codex, or OpenCode), since that is the one most likely to be signed in on this machine. With no agents yet, it uses the first of those that is installed.
 
-![Agent selection](./screenshots/feedback-1.png)
-
-Click **Start** to begin.
+If that provider cannot answer, for example because it is installed but not signed in, the conversation says which provider failed and offers to **Switch to** another installed one. Switching re-asks your last message on the new provider, so nothing has to be retyped.
 
 ### 3. Describe Your Issue
 
@@ -61,6 +59,12 @@ The agent is told to stay inside Maestro's own logs and configuration. Your sour
 Once understanding reaches **80%**, a green **Submit Feedback** button appears. The AI presents a structured summary of what it will submit. Review the summary, tweak anything by continuing the conversation, then click **Submit**.
 
 ![Submit feedback](./screenshots/feedback-3.png)
+
+### If Filing Fails
+
+Filing goes through your `gh` login, which can be refused even when `gh auth status` looks fine: an expired token, a token missing a scope, or an organization that has not approved the GitHub CLI. When that happens, Maestro tells you what to run (`gh auth login`, `gh auth refresh -h github.com -s repo`, or approving the GitHub CLI for the organization) and offers **Open prefilled issue on GitHub**, which opens the same issue, already filled in, so you can submit it from your browser. The report is never lost.
+
+Screenshots and the support package are uploaded to a public `maestro-feedback-attachments` repository on your GitHub account. If `gh` cannot create or write to it, the issue is still filed, without them, and Maestro says which parts are missing so you can drag them into a comment.
 
 ### Closing Without Losing Anything
 

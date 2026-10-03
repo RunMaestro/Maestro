@@ -166,6 +166,45 @@ describe('feedback commands', () => {
 			await expect(feedbackSubmit({ ...baseSubmit, force: true })).rejects.toThrow('__exit__');
 			expect(exitSpy).toHaveBeenCalledWith(ExitCode.GeneralError);
 		});
+
+		it('prints the prefilled github.com URL when gh cannot file, so nothing is lost', async () => {
+			const fallbackIssueUrl = 'https://github.com/RunMaestro/Maestro/issues/new?title=x';
+			mockBridge({
+				feedback_submit: { success: false, error: 'login expired', fallbackIssueUrl },
+			});
+			await expect(feedbackSubmit({ ...baseSubmit, force: true })).rejects.toThrow('__exit__');
+			const errors = vi.mocked(console.error).mock.calls.map((c) => String(c[0]));
+			expect(errors).toContain('Error: login expired');
+			expect(errors.some((line) => line.includes(fallbackIssueUrl))).toBe(true);
+		});
+
+		it('includes the fallback URL and warnings in --json output', async () => {
+			mockBridge({
+				feedback_submit: { success: false, error: 'login expired', fallbackIssueUrl: 'u' },
+			});
+			await expect(feedbackSubmit({ ...baseSubmit, force: true, json: true })).rejects.toThrow(
+				'__exit__'
+			);
+			expect(JSON.parse(String(logSpy.mock.calls[0][0]))).toEqual({
+				success: false,
+				error: 'login expired',
+				fallbackIssueUrl: 'u',
+				warnings: [],
+			});
+		});
+
+		it('prints warnings for parts of the report that were dropped', async () => {
+			mockBridge({
+				feedback_submit: {
+					success: true,
+					issueUrl: 'https://github.com/x/1',
+					warnings: ['1 screenshot could not be uploaded'],
+				},
+			});
+			await feedbackSubmit({ ...baseSubmit, force: true });
+			const lines = logSpy.mock.calls.map((c) => String(c[0]));
+			expect(lines).toContain('Warning: 1 screenshot could not be uploaded');
+		});
 	});
 
 	describe('subscribe', () => {
