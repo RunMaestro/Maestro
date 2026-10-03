@@ -156,6 +156,13 @@ vi.mock('os', async () => {
 	};
 });
 
+const mockCheckBinaryExists =
+	vi.fn<(_binary: string) => Promise<{ exists: boolean; path?: string }>>();
+vi.mock('../../../main/agents/path-prober', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../main/agents/path-prober')>()),
+	checkBinaryExists: (binary: string) => mockCheckBinaryExists(binary),
+}));
+
 // Mock storage service
 const mockGetAgentCustomPath = vi.fn();
 const mockReadAgentConfig = vi.fn<(toolType: string) => Record<string, unknown>>(() => ({}));
@@ -196,6 +203,8 @@ describe('agent-spawner', () => {
 		mockGetAgentCustomPath.mockReturnValue(undefined);
 		mockReadAgentConfig.mockReturnValue({});
 		mockReadSshRemotes.mockReturnValue([]);
+		mockCheckBinaryExists.mockReset();
+		mockCheckBinaryExists.mockResolvedValue({ exists: false });
 		mockWrapSpawnWithSsh.mockReset();
 		pathProbeResolver = DEFAULT_PATH_PROBE;
 	});
@@ -867,20 +876,15 @@ Some text with [x] in it that's not a checkbox
 		it('should fall back to PATH detection when custom path is invalid', async () => {
 			mockGetAgentCustomPath.mockReturnValue('/invalid/path');
 			vi.mocked(fs.promises.stat).mockRejectedValue(new Error('ENOENT'));
-			mockSpawn.mockReturnValue(mockChild);
+			mockCheckBinaryExists.mockResolvedValue({ exists: true, path: '/usr/local/bin/codex' });
 
 			const { detectAgent: freshDetectAgent } = await import('../../../cli/services/agent-spawner');
 
-			const resultPromise = freshDetectAgent('codex');
-			await new Promise((resolve) => setTimeout(resolve, 0));
-			mockStdout.emit('data', Buffer.from('/usr/local/bin/codex\n'));
-			await new Promise((resolve) => setTimeout(resolve, 0));
-			mockChild.emit('close', 0);
-
-			const result = await resultPromise;
+			const result = await freshDetectAgent('codex');
 			expect(result.available).toBe(true);
 			expect(result.path).toBe('/usr/local/bin/codex');
 			expect(result.source).toBe('path');
+			expect(mockCheckBinaryExists).toHaveBeenCalledWith('codex');
 		});
 
 		it('should return unavailable when agent is not found', async () => {
@@ -941,6 +945,23 @@ Some text with [x] in it that's not a checkbox
 			mockSpawn.mockReturnValue(mockChild);
 		});
 
+		it('injects a local Codex MCP bridge with only the proof-file path in argv', async () => {
+			const proofFile = '/private/run/proof';
+			const pending = spawnAgent('codex', '/project', 'post summary', undefined, {
+				pluginRunProofFile: proofFile,
+				mcpCliScriptPath: '/bundled/maestro-cli.js',
+			});
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			const [, args, options] = mockSpawn.mock.calls[0];
+			expect(args).toContain('-c');
+			expect(args.join(' ')).toContain('mcp_servers.maestro.command');
+			expect(args.join(' ')).toContain(proofFile);
+			expect(args.join(' ')).not.toContain('secret-run-proof');
+			expect(options.env.MAESTRO_PLUGIN_RUN_TOKEN).toBeUndefined();
+			mockChild.emit('close', 1);
+			await pending;
+		});
+
 		it('should spawn Claude with correct arguments', async () => {
 			const resultPromise = spawnAgent('claude-code', '/project/path', 'Test prompt');
 
@@ -975,6 +996,27 @@ Some text with [x] in it that's not a checkbox
 
 			const result = await resultPromise;
 			expect(result.success).toBe(true);
+		});
+
+		it('reports a cancelled Claude run as failed even if it closes with code zero', async () => {
+			const controller = new AbortController();
+			const pending = spawnAgent('claude-code', '/project', 'prompt', undefined, {
+				signal: controller.signal,
+			});
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			const [, , options] = mockSpawn.mock.calls[0];
+			expect(options.signal).toBe(controller.signal);
+			mockStdout.emit(
+				'data',
+				Buffer.from('{"type":"result","result":"late answer","session_id":"provider-late"}\n')
+			);
+			controller.abort();
+			mockChild.emit('close', 0);
+			expect(await pending).toMatchObject({
+				success: false,
+				error: 'Agent run timed out or was cancelled',
+				agentSessionId: 'provider-late',
+			});
 		});
 
 		it('runs the local maestro-p TUI when the agent selected the interactive token source', async () => {
@@ -1672,6 +1714,28 @@ Some text with [x] in it that's not a checkbox
 			expect(result.success).toBe(true);
 			expect(result.response).toBe('Final answer from copilot');
 			expect(result.agentSessionId).toBe('cop-1');
+		});
+
+		it('does not report a partial JSON-line answer as success after timeout or cancellation', async () => {
+			const controller = new AbortController();
+			const pending = spawnAgent('codex', '/project', 'prompt', undefined, {
+				timeoutMs: 1_000,
+				signal: controller.signal,
+			});
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			const [, , options] = mockSpawn.mock.calls[0];
+			expect(options.timeout).toBe(1_000);
+			expect(options.signal).toBe(controller.signal);
+			mockStdout.emit(
+				'data',
+				Buffer.from('{"type":"item.completed","item":{"type":"agent_message","text":"partial"}}\n')
+			);
+			controller.abort();
+			mockChild.emit('close', null, 'SIGTERM');
+			expect(await pending).toMatchObject({
+				success: false,
+				error: 'Agent run timed out or was cancelled',
+			});
 		});
 
 		it('should pass through --resume=<sessionId> when resuming a copilot-cli session', async () => {
@@ -2512,12 +2576,26 @@ Some text with [x] in it that's not a checkbox
 		});
 
 		it('resolves a JSON-line agent on a cold cache too', async () => {
-			pathProbeResolver = () => '/opt/homebrew/bin/codex';
+			mockCheckBinaryExists.mockResolvedValue({ exists: true, path: '/opt/homebrew/bin/codex' });
 
 			const { spawnAgent: freshSpawnAgent } = await freshSpawner();
 			await driveSpawnToCompletion(freshSpawnAgent('codex', '/p', 'hi'), 0, CODEX_INIT());
 
 			expect(spawnCall().command).toBe('/opt/homebrew/bin/codex');
+		});
+
+		it('selects the desktop Codex binary before the generic PATH probe', async () => {
+			mockCheckBinaryExists.mockResolvedValue({
+				exists: true,
+				path: '/home/user/.local/bin/codex',
+			});
+			pathProbeResolver = () => '/home/user/.nvm/bin/codex';
+
+			const { spawnAgent: freshSpawnAgent } = await freshSpawner();
+			await driveSpawnToCompletion(freshSpawnAgent('codex', '/p', 'hi'), 0, CODEX_INIT());
+
+			expect(spawnCall().command).toBe('/home/user/.local/bin/codex');
+			expect(mockCheckBinaryExists).toHaveBeenCalledWith('codex');
 		});
 
 		it("honors the user's configured custom path on a cold cache", async () => {
@@ -2532,6 +2610,7 @@ Some text with [x] in it that's not a checkbox
 			await driveSpawnToCompletion(freshSpawnAgent('codex', '/p', 'hi'), 0, CODEX_INIT());
 
 			expect(spawnCall().command).toBe('/custom/bin/codex');
+			expect(mockCheckBinaryExists).not.toHaveBeenCalled();
 		});
 
 		it('falls back to the bare binaryName when nothing resolves', async () => {
@@ -2577,6 +2656,42 @@ Some text with [x] in it that's not a checkbox
 	describe('spawnAgent: regression', () => {
 		beforeEach(() => {
 			mockSpawn.mockReturnValue(mockChild);
+		});
+
+		it('streams Codex public commentary and tool status without raw arguments or reasoning', async () => {
+			const onProgress = vi.fn();
+			const p = spawnAgent('codex', '/p', 'hi', undefined, { onProgress });
+			const lines =
+				[
+					{
+						type: 'event_msg',
+						payload: { type: 'agent_message', phase: 'commentary', message: 'Checking files' },
+					},
+					{
+						type: 'response_item',
+						payload: {
+							type: 'function_call',
+							name: 'functions.exec_command',
+							call_id: 'c1',
+							arguments: '{"cmd":"SECRET_ARGUMENT"}',
+						},
+					},
+					{
+						type: 'response_item',
+						payload: { type: 'function_call_output', call_id: 'c1', output: 'SECRET_OUTPUT' },
+					},
+					{ type: 'response_item', payload: { type: 'reasoning', summary: ['SECRET_REASONING'] } },
+					{ type: 'item.completed', item: { type: 'agent_message', text: 'final answer' } },
+				]
+					.map((line) => JSON.stringify(line))
+					.join('\n') + '\n';
+			await driveSpawnToCompletion(p, 0, lines);
+			expect(onProgress.mock.calls.map(([event]) => ({ ...event, at: undefined }))).toEqual([
+				{ type: 'commentary', text: 'Checking files', at: undefined },
+				{ type: 'tool', tool: 'functions.exec_command', status: 'started', at: undefined },
+				{ type: 'tool', tool: 'functions.exec_command', status: 'completed', at: undefined },
+			]);
+			expect(JSON.stringify(onProgress.mock.calls)).not.toMatch(/SECRET_/);
 		});
 
 		it('Claude spawn without any options still includes base stream-json flags', async () => {

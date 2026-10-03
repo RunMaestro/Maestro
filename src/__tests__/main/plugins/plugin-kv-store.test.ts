@@ -75,6 +75,27 @@ describe('PluginKvStore', () => {
 		expect(fs.readdirSync(path.join(base, 'p'))).toEqual(['store.json']);
 	});
 
+	it('keeps credential storage owner-only across atomic replacements and hardens an old store', () => {
+		store.set('relay', 'botToken', 'test-token');
+		const dir = path.join(base, 'relay');
+		const file = path.join(dir, 'store.json');
+		if (process.platform !== 'win32') {
+			expect(fs.statSync(base).mode & 0o777).toBe(0o700);
+			expect(fs.statSync(dir).mode & 0o777).toBe(0o700);
+			expect(fs.statSync(file).mode & 0o777).toBe(0o600);
+			fs.chmodSync(base, 0o755);
+			fs.chmodSync(dir, 0o755);
+			fs.chmodSync(file, 0o644);
+			const reloaded = new PluginKvStore({ baseDir: base });
+			expect(reloaded.get('relay', 'botToken')).toBe('test-token');
+			expect(fs.statSync(file).mode & 0o777).toBe(0o600);
+			expect(fs.statSync(dir).mode & 0o777).toBe(0o700);
+			expect(fs.statSync(base).mode & 0o777).toBe(0o700);
+		}
+		store.set('relay', 'botToken', 'rotated');
+		if (process.platform !== 'win32') expect(fs.statSync(file).mode & 0o777).toBe(0o600);
+	});
+
 	it('purge removes the plugin store entirely', () => {
 		store.set('p', 'a', 'v');
 		store.purge('p');

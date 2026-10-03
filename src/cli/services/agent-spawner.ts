@@ -15,7 +15,7 @@ import { createOutputParser } from '../../main/parsers/parser-factory';
 import { aggregateModelUsage } from '../../main/parsers/usage-aggregator';
 import { getAgentDefinition } from '../../main/agents/definitions';
 import { hasCapability } from '../../main/agents/capabilities';
-import { checkCustomPath } from '../../main/agents/path-prober';
+import { checkBinaryExists, checkCustomPath } from '../../main/agents/path-prober';
 import { getAgentCustomPath, readAgentConfig, readSshRemotes } from './storage';
 import { generateUUID } from '../../shared/uuid';
 import {
@@ -28,6 +28,8 @@ import { buildExpandedPath, buildExpandedEnv } from '../../shared/pathUtils';
 import { isWindows, getWhichCommand } from '../../shared/platformDetection';
 import { embedSystemPromptInPrompt } from '../../shared/embeddedSystemPrompt';
 import { applyAgentConfigOverrides, buildAdditionalDirArgs } from '../../main/utils/agent-args';
+import { buildMcpInjection, MCP_CONFIG_BY_AGENT } from '../../shared/plugins/mcp-agent-config';
+import type { AgentSendProgressEvent } from '../../shared/plugins/rpc-protocol';
 import { buildCliWakaTimeHeartbeat } from './wakatime';
 import {
 	getClaudeTokenMode,
@@ -59,13 +61,21 @@ type SshSpawnWrapResult = import('../../main/utils/ssh-spawn-wrapper').SshSpawnW
  * failing, so a CLI without maestro-p degrades safely.
  */
 function getCliMaestroPBinPath(): string | null {
-	const candidate = path.join(__dirname, 'maestro-p.js');
-	try {
-		fs.accessSync(candidate, fs.constants.R_OK);
-		return candidate;
-	} catch {
-		return null;
+	// Bundled CLI: dist/cli/maestro-cli.js has __dirname=dist/cli.
+	// Main-process import: tsc emits this module at dist/cli/services/, one
+	// level deeper, while the bundled maestro-p script stays at dist/cli/.
+	for (const candidate of [
+		path.join(__dirname, 'maestro-p.js'),
+		path.resolve(__dirname, '..', 'maestro-p.js'),
+	]) {
+		try {
+			fs.accessSync(candidate, fs.constants.R_OK);
+			return candidate;
+		} catch {
+			// Check the next compiled layout.
+		}
 	}
+	return null;
 }
 
 /**
@@ -132,7 +142,54 @@ type SpawnOverrides = Pick<
 	| 'appendSystemPrompt'
 	| 'additionalDirectories'
 	| 'querySource'
+	| 'pluginRunProofFile'
+	| 'mcpCliScriptPath'
+	| 'timeoutMs'
+	| 'signal'
+	| 'onProgress'
 >;
+
+/** Emit only public, bounded fields; never pass parser raw/tool state downstream. */
+function emitAgentProgress(
+	callback: SpawnAgentOptions['onProgress'],
+	event: AgentSendProgressEvent
+): void {
+	if (!callback) return;
+	try {
+		callback(event);
+	} catch {
+		// A consumer callback cannot change the provider run's result.
+	}
+}
+
+/** Verified local MCP strategies need no config files. The server spec carries
+ * only a path to the owner-only run proof, never the proof bytes. */
+function localPluginMcp(
+	toolType: ToolType,
+	overrides: SpawnOverrides
+): { args: string[]; env: Record<string, string> } {
+	const cap = MCP_CONFIG_BY_AGENT[toolType];
+	if (!cap?.verified || !overrides.pluginRunProofFile || !overrides.mcpCliScriptPath)
+		return { args: [], env: {} };
+	const injection = buildMcpInjection(
+		cap,
+		{
+			command: process.execPath,
+			args: [overrides.mcpCliScriptPath, 'mcp', 'serve'],
+			env: {
+				ELECTRON_RUN_AS_NODE: '1',
+				MAESTRO_PLUGIN_RUN_TOKEN_FILE: overrides.pluginRunProofFile,
+				...(process.env.MAESTRO_USER_DATA
+					? { MAESTRO_USER_DATA: process.env.MAESTRO_USER_DATA }
+					: {}),
+				...(process.env.XDG_CONFIG_HOME ? { XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME } : {}),
+			},
+		},
+		{ tmpDir: os.tmpdir(), join: path.join }
+	);
+	if (injection.files.length) return { args: [], env: {} };
+	return { args: injection.globalArgs, env: injection.env };
+}
 
 /**
  * Maximum command-line length we'll accept before falling back to
@@ -363,8 +420,13 @@ export async function detectAgent(toolType: ToolType): Promise<DetectResult> {
 		);
 	}
 
-	// 2. Fall back to PATH detection
-	const pathResult = await findCommandInPath(defaultCommand);
+	// 2. Match the desktop's Codex selection. Its known-path probe prefers the
+	// standalone ~/.local/bin install before an older nvm-managed npm binary;
+	// the generic expanded-PATH probe reverses that order in packaged Maestro.
+	const pathResult =
+		toolType === 'codex'
+			? (await checkBinaryExists(defaultCommand)).path
+			: await findCommandInPath(defaultCommand);
 	if (pathResult) {
 		cachedPaths.set(toolType, pathResult);
 		return { available: true, path: pathResult, source: 'path' };
@@ -483,7 +545,7 @@ async function spawnClaudeAgent(
 	// Claude Code re-reads this flag every turn (not persisted in the session
 	// transcript), so include it on resume too - matches desktop behavior at
 	// `src/main/ipc/handlers/process.ts:254`.
-	const baseArgs = overrides.appendSystemPrompt
+	let baseArgs = overrides.appendSystemPrompt
 		? [
 				...resolvedArgs,
 				...buildAppendSystemPromptArgs(
@@ -550,6 +612,10 @@ async function spawnClaudeAgent(
 		},
 		cliSpawnCoreDeps
 	);
+	if (!sshEnabled && spawnDecision.mode !== 'interactive') {
+		const mcp = localPluginMcp('claude-code', overrides);
+		baseArgs = [...mcp.args, ...baseArgs];
+	}
 
 	// Beat WakaTime for the life of the run. CLI-spawned agents never reach the
 	// desktop's ProcessManager listener, so without this their time goes
@@ -621,6 +687,8 @@ async function spawnClaudeAgent(
 			cwd: spawnCwd,
 			env: spawnEnv,
 			stdio: ['pipe', 'pipe', 'pipe'],
+			...(overrides.timeoutMs ? { timeout: overrides.timeoutMs } : {}),
+			...(overrides.signal ? { signal: overrides.signal } : {}),
 		};
 
 		const child = spawn(spawnCommand, spawnArgs, options);
@@ -632,10 +700,49 @@ async function spawnClaudeAgent(
 		let usageStats: UsageStats | undefined;
 		let resultEmitted = false;
 		let sessionIdEmitted = false;
+		const progressToolNames = new Map<string, string>();
 
 		// Process a single parsed JSON message from Claude Code's stream-json output
 
 		const processMessage = (msg: any) => {
+			if (msg.type === 'assistant' && Array.isArray(msg.message?.content)) {
+				for (const block of msg.message.content) {
+					if (block?.type !== 'tool_use') continue;
+					const tool =
+						typeof block.name === 'string' && /^[A-Za-z][A-Za-z0-9_.:-]{0,79}$/.test(block.name)
+							? block.name
+							: 'Tool';
+					if (typeof block.id === 'string' && block.id.length <= 128) {
+						progressToolNames.set(block.id, tool);
+						if (progressToolNames.size > 128) {
+							const oldest = progressToolNames.keys().next().value;
+							if (oldest) progressToolNames.delete(oldest);
+						}
+					}
+					emitAgentProgress(overrides.onProgress, {
+						type: 'tool',
+						tool,
+						status: 'started',
+						at: new Date().toISOString(),
+					});
+				}
+			}
+			if (msg.type === 'user' && Array.isArray(msg.message?.content)) {
+				for (const block of msg.message.content) {
+					if (block?.type !== 'tool_result') continue;
+					const tool =
+						typeof block.tool_use_id === 'string'
+							? (progressToolNames.get(block.tool_use_id) ?? 'Tool')
+							: 'Tool';
+					if (typeof block.tool_use_id === 'string') progressToolNames.delete(block.tool_use_id);
+					emitAgentProgress(overrides.onProgress, {
+						type: 'tool',
+						tool,
+						status: block.is_error ? 'failed' : 'completed',
+						at: new Date().toISOString(),
+					});
+				}
+			}
 			// Capture result text (only once)
 			if (msg.type === 'result' && msg.result && !resultEmitted) {
 				resultEmitted = true;
@@ -700,7 +807,7 @@ async function spawnClaudeAgent(
 		finalizeAgentStdin(child, sshStdinScript);
 
 		// Handle completion
-		child.on('close', (code) => {
+		child.on('close', (code, signal) => {
 			// Flush any remaining data in the JSON buffer (last line may lack trailing \n)
 			if (jsonBuffer.trim()) {
 				let parsed;
@@ -717,7 +824,7 @@ async function spawnClaudeAgent(
 			// Use accumulated assistant text as fallback when result field is empty
 			const finalResult = result || assistantText || undefined;
 
-			if (code === 0 && finalResult) {
+			if (!signal && !overrides.signal?.aborted && code === 0 && finalResult) {
 				resolve({
 					success: true,
 					response: finalResult,
@@ -727,7 +834,10 @@ async function spawnClaudeAgent(
 			} else {
 				resolve({
 					success: false,
-					error: stderr || `Process exited with code ${code}`,
+					error:
+						signal || overrides.signal?.aborted
+							? 'Agent run timed out or was cancelled'
+							: stderr || `Process exited with code ${code}`,
 					agentSessionId: sessionId,
 					usageStats,
 				});
@@ -925,7 +1035,7 @@ async function spawnJsonLineAgent(
 	//    `src/main/ipc/handlers/process.ts:300-312`).
 	const supportsNativeSystemPrompt = hasCapability(toolType, 'supportsAppendSystemPrompt');
 	const isResume = !!agentSessionId;
-	const baseArgs =
+	let baseArgs =
 		overrides.appendSystemPrompt && supportsNativeSystemPrompt
 			? [
 					...resolvedArgs,
@@ -936,6 +1046,10 @@ async function spawnJsonLineAgent(
 					),
 				]
 			: resolvedArgs;
+	if (!sshRemoteConfig?.enabled) {
+		const mcp = localPluginMcp(toolType, overrides);
+		baseArgs = [...mcp.args, ...baseArgs];
+	}
 	const effectivePrompt =
 		overrides.appendSystemPrompt && !supportsNativeSystemPrompt && !isResume
 			? embedSystemPromptInPrompt(overrides.appendSystemPrompt, prompt)
@@ -1012,6 +1126,8 @@ async function spawnJsonLineAgent(
 			cwd: spawnCwd,
 			env: spawnEnv,
 			stdio: ['pipe', 'pipe', 'pipe'],
+			...(overrides.timeoutMs ? { timeout: overrides.timeoutMs } : {}),
+			...(overrides.signal ? { signal: overrides.signal } : {}),
 		};
 
 		const child = spawn(spawnCommand, spawnArgs, options);
@@ -1032,6 +1148,47 @@ async function spawnJsonLineAgent(
 		// Process a single parsed event from an agent's JSON line output
 		const processEvent = (event: ReturnType<typeof parser.parseJsonLine>) => {
 			if (!event) return;
+			if (event.type === 'tool_use') {
+				const tool =
+					typeof event.toolName === 'string' &&
+					/^[A-Za-z][A-Za-z0-9_.:-]{0,79}$/.test(event.toolName)
+						? event.toolName
+						: 'Tool';
+				const state =
+					event.toolState && typeof event.toolState === 'object' && 'status' in event.toolState
+						? (event.toolState as { status?: unknown }).status
+						: undefined;
+				const status =
+					state === 'failed' || state === 'error'
+						? 'failed'
+						: state === 'completed' || state === 'success'
+							? 'completed'
+							: 'started';
+				emitAgentProgress(overrides.onProgress, {
+					type: 'tool',
+					tool,
+					status,
+					at: new Date().toISOString(),
+				});
+			}
+			// Only Codex's explicit commentary phase is public prose. Other
+			// partial text may be answer deltas or private reasoning.
+			if (
+				toolType === 'codex' &&
+				event.type === 'text' &&
+				event.isPartial &&
+				!event.isReasoning &&
+				event.text
+			) {
+				const raw = event.raw as { payload?: { phase?: unknown } } | undefined;
+				if (raw?.payload?.phase === 'commentary') {
+					emitAgentProgress(overrides.onProgress, {
+						type: 'commentary',
+						text: event.text.slice(0, 2000),
+						at: new Date().toISOString(),
+					});
+				}
+			}
 
 			// Route through parser.extractSessionId() rather than only checking
 			// init events. Some agents (e.g. copilot-cli batch mode) never emit
@@ -1090,7 +1247,7 @@ async function spawnJsonLineAgent(
 		finalizeAgentStdin(child, sshStdinScript);
 
 		const agentName = def?.name || toolType;
-		child.on('close', (code) => {
+		child.on('close', (code, signal) => {
 			// Flush any remaining data in the JSON buffer (last line may lack trailing \n)
 			if (jsonBuffer.trim()) {
 				processEvent(parser.parseJsonLine(jsonBuffer));
@@ -1101,7 +1258,7 @@ async function spawnJsonLineAgent(
 			// the streamed answer over raw stderr when there is no errorText.
 			const responseText = result || streamedText || undefined;
 			const hasAnswer = Boolean(responseText?.trim());
-			if (!errorText && (code === 0 || hasAnswer)) {
+			if (!signal && !overrides.signal?.aborted && !errorText && (code === 0 || hasAnswer)) {
 				resolve({
 					success: true,
 					response: responseText,
@@ -1111,7 +1268,10 @@ async function spawnJsonLineAgent(
 			} else {
 				resolve({
 					success: false,
-					error: errorText || stderr || `Process exited with code ${code}`,
+					error:
+						signal || overrides.signal?.aborted
+							? 'Agent run timed out or was cancelled'
+							: errorText || stderr || `Process exited with code ${code}`,
 					agentSessionId: sessionId,
 					usageStats,
 				});
@@ -1184,6 +1344,16 @@ export interface SpawnAgentOptions {
 	 * the processes are otherwise identical. Defaults to 'user'.
 	 */
 	querySource?: QuerySource;
+	/** Owner-only file holding the main-issued proof for a local plugin MCP bridge. */
+	pluginRunProofFile?: string;
+	/** Exact bundled CLI path used by the MCP child. */
+	mcpCliScriptPath?: string;
+	/** Kill a hung provider process after this interval. */
+	timeoutMs?: number;
+	/** Abort a provider process when its plugin is disabled or crashes. */
+	signal?: AbortSignal;
+	/** Invocation-scoped public progress; no raw parser output is forwarded. */
+	onProgress?: (event: AgentSendProgressEvent) => void;
 }
 
 /**
@@ -1206,6 +1376,11 @@ export async function spawnAgent(
 		appendSystemPrompt: options?.appendSystemPrompt,
 		additionalDirectories: options?.additionalDirectories,
 		querySource: options?.querySource,
+		pluginRunProofFile: options?.pluginRunProofFile,
+		mcpCliScriptPath: options?.mcpCliScriptPath,
+		timeoutMs: options?.timeoutMs,
+		signal: options?.signal,
+		onProgress: options?.onProgress,
 	};
 	// Single source of truth for the token-source triple (never a partial forward).
 	const tokenSource = getClaudeTokenSourceFields(options);

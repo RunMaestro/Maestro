@@ -419,7 +419,10 @@ export function describeCapability(capability: PluginCapability): string {
 // --- Host API version (from shared/plugins/host-api.ts) ---------------------
 
 /**
- * The host API version this Maestro build implements. Bumped to 1.16.0 for three
+ * The host API version this Maestro build implements. 1.20.0 adds an optional
+ * per-call public progress callback to agents.send. 1.18.0 and 1.19.0 are
+ * reserved by separate panel work on this fork. 1.17.0 added `agents.send` and verified plugin-tool caller context.
+ * 1.16.0 added three
  * backward-compatible additions: the metadata-only `session.activated` event
  * topic (`{ sessionId, tabId? }`, opaque ids only, fired when the focused agent
  * changes), the `sessions.focus` method plus its narrow `sessions:focus`
@@ -450,7 +453,7 @@ export function describeCapability(capability: PluginCapability): string {
  * `ui:contribute` / `ui:panel` / `ui:render-unsafe`; 1.3.0 added `tools` +
  * `keybindings`; 1.2.0 added `transcripts:read`.
  */
-export const HOST_API_VERSION = '1.16.0';
+export const HOST_API_VERSION = '1.20.0';
 
 /** Result of checking a plugin's declared host-API requirement. */
 export interface HostApiCompatibility {
@@ -605,6 +608,8 @@ export interface PluginManifest {
 	 * requires no minHostApi bump.
 	 */
 	beta?: boolean;
+	/** Optional publication day as YYYY-MM-DD, used for marketplace sorting. */
+	releaseDate?: string;
 	/** Declarative contributions. Structurally validated; semantics land later. */
 	contributes?: Record<string, unknown>;
 	/** Relative path to the sandboxed code entrypoint. Required tier >= 1; forbidden tier 0. */
@@ -1310,6 +1315,7 @@ export const HOST_API = {
 	'agents.list': { capability: 'agents:read' },
 	'agents.get': { capability: 'agents:read' },
 	'agents.dispatch': { capability: 'agents:dispatch' },
+	'agents.send': { capability: 'agents:dispatch' },
 	'notifications.toast': { capability: 'notifications:toast' },
 	'settings.get': { capability: 'settings:read' },
 	'settings.set': { capability: 'settings:write' },
@@ -1461,10 +1467,26 @@ export interface MaestroNetApi {
 }
 
 /** List/read agents (`agents:read`) and dispatch prompts (`agents:dispatch`). */
+export type AgentSendProgressEvent =
+	| { type: 'activity'; text: string; at: string }
+	| { type: 'commentary'; text: string; at: string }
+	| { type: 'tool'; tool: string; status: 'started' | 'completed' | 'failed'; at: string };
+
 export interface MaestroAgentsApi {
 	list(): Promise<unknown>;
 	get(agentId: string): Promise<unknown>;
 	dispatch(agentId: string, prompt: string, opts?: unknown): Promise<unknown>;
+	/** Fresh provider session unless sessionId is supplied; never a desktop tab id. */
+	send(
+		agentId: string,
+		prompt: string,
+		opts?: { sessionId?: string; onProgress?: (event: AgentSendProgressEvent) => void }
+	): Promise<{
+		success: boolean;
+		response: string | null;
+		sessionId: string | null;
+		error?: string;
+	}>;
 }
 
 /** Read metadata-only history entries (`history:read`). */
@@ -1621,7 +1643,10 @@ export interface MaestroCommandsApi {
 
 /** Register handlers for agent tools the host invokes on this plugin. */
 export interface MaestroToolsApi {
-	register(localId: string, handler: (args: unknown) => unknown): void;
+	register(
+		localId: string,
+		handler: (args: unknown, context: { readonly callerAgentId: string | null }) => unknown
+	): void;
 }
 
 /** Ask the OS to open an external URL (`shell:openExternal`). */

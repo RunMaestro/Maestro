@@ -13,8 +13,21 @@
 import { describe, it, expect, vi, beforeEach, type MockInstance } from 'vitest';
 import type { SessionInfo } from '../../../shared/types';
 
-// Mock maestro-client
+const desktop = vi.hoisted(() => ({
+	connect: vi.fn(),
+	sendCommand: vi.fn(),
+	disconnect: vi.fn(),
+}));
+
+// Most cases exercise standalone CLI spawning. Individual cases enable the
+// desktop connection to cover host-backed send and older desktop fallback.
 vi.mock('../../../cli/services/maestro-client', () => ({
+	MaestroClient: class {
+		connect = desktop.connect;
+		sendCommand = desktop.sendCommand;
+		disconnect = desktop.disconnect;
+	},
+	UnsupportedCommandError: class UnsupportedCommandError extends Error {},
 	withMaestroClient: vi.fn(),
 }));
 
@@ -55,6 +68,7 @@ vi.mock('../../../main/agents/definitions', () => ({
 
 import { send } from '../../../cli/commands/send';
 import { withMaestroClient } from '../../../cli/services/maestro-client';
+import { UnsupportedCommandError } from '../../../cli/services/maestro-client';
 import { spawnAgent, detectAgent } from '../../../cli/services/agent-spawner';
 import { resolveAgentId, getSessionById } from '../../../cli/services/storage';
 import { estimateContextUsage } from '../../../main/parsers/usage-aggregator';
@@ -75,12 +89,50 @@ describe('send command', () => {
 
 	beforeEach(() => {
 		vi.clearAllMocks();
+		desktop.connect.mockRejectedValue(new Error('desktop unavailable'));
 		consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 		processExitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
 		// Default: system-prompt builder returns undefined so existing assertions
 		// that don't include `appendSystemPrompt` keep passing (vitest treats
 		// undefined-valued object keys as absent in `toHaveBeenCalledWith`).
 		vi.mocked(prepareMaestroSystemPromptCli).mockResolvedValue(undefined);
+	});
+
+	it('falls back to standalone spawning when an older desktop rejects the host verb', async () => {
+		vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
+		vi.mocked(getSessionById).mockReturnValue(mockAgent());
+		vi.mocked(detectAgent).mockResolvedValue({ available: true, path: '/usr/bin/claude' });
+		desktop.connect.mockResolvedValue(undefined);
+		desktop.sendCommand.mockRejectedValue(new UnsupportedCommandError('plugins_send_agent'));
+		vi.mocked(spawnAgent).mockResolvedValue({
+			success: true,
+			response: 'standalone answer',
+			agentSessionId: 'provider-1',
+		});
+
+		await send('agent-abc', 'hello', {});
+
+		expect(spawnAgent).toHaveBeenCalledOnce();
+		expect(JSON.parse(consoleSpy.mock.calls[0][0])).toMatchObject({
+			success: true,
+			response: 'standalone answer',
+		});
+	});
+
+	it('reports an ambiguous desktop disconnect without starting a duplicate run', async () => {
+		vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
+		vi.mocked(getSessionById).mockReturnValue(mockAgent());
+		vi.mocked(detectAgent).mockResolvedValue({ available: true, path: '/usr/bin/claude' });
+		desktop.connect.mockResolvedValue(undefined);
+		desktop.sendCommand.mockRejectedValue(new Error('Connection closed'));
+
+		await send('agent-abc', 'hello', {});
+
+		expect(spawnAgent).not.toHaveBeenCalled();
+		expect(JSON.parse(consoleSpy.mock.calls[0][0])).toMatchObject({
+			success: false,
+			error: 'Connection closed',
+		});
 	});
 
 	it('should query an agent and return JSON response for new session', async () => {

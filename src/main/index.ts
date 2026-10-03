@@ -47,7 +47,11 @@ import { PermissionBroker } from './plugins/permission-broker';
 import { PluginSandboxHost } from './plugins/plugin-sandbox-host';
 import { PluginBackgroundSupervisor } from './plugins/plugin-background-supervisor';
 import { PluginGroupingRegistry } from './plugins/plugin-grouping-registry';
-import { setActivePluginManager } from './plugins/plugin-manager-singleton';
+import {
+	setActivePluginManager,
+	setHeadlessAgentRunner,
+	type HeadlessAgentRunner,
+} from './plugins/plugin-manager-singleton';
 import { PluginSchedulerHost } from './plugins/plugin-scheduler-host';
 import {
 	buildHostCallHandlers,
@@ -59,6 +63,7 @@ import { createCadenzaDelivery, registerCadenzaIpcHandlers } from './cadenza-bri
 import { createPluginHostViewBridge } from './plugin-host-view-bridge';
 import { ActionGuard } from './plugins/action-guard';
 import { PluginKvStore } from './plugins/plugin-kv-store';
+import { PluginAgentSessionBindings } from './plugins/plugin-agent-session-bindings';
 import { PluginEventBusImpl } from './plugins/plugin-event-bus';
 import { createEgressGuard } from './plugins/net-egress-guard';
 // [UiCommandeer] WS-ui-command host bridge (see runUiCommand wiring below).
@@ -98,7 +103,12 @@ import {
 import { configureCueTelemetry } from './cue/cue-telemetry';
 import { executeCuePrompt, stopCueRun } from './cue/cue-executor';
 import { executeCueShell } from './cue/cue-shell-executor';
-import { executeCueCli } from './cue/cue-cli-executor';
+import { executeCueCli, resolveMaestroCliScriptPath } from './cue/cue-cli-executor';
+import { spawnAgent, detectAgent } from '../cli/services/agent-spawner';
+import { prepareMaestroSystemPromptCli } from '../cli/services/system-prompt';
+import { pluginToolRunIdentity } from './plugins/plugin-tool-run-identity';
+import { createPluginHeadlessAgentRunner } from './plugins/plugin-headless-agent-runner';
+import type { SessionInfo } from '../shared/types';
 import { executeCueNotify } from './cue/cue-notify-executor';
 import { reportCueAuthFailure } from './cue/cue-auth-detector';
 import { setSusFactorNotifier } from './cue/cue-susfactor';
@@ -1631,6 +1641,9 @@ app
 		const pluginKvStore = new PluginKvStore({
 			baseDir: path.join(app.getPath('userData'), 'plugin-data'),
 		});
+		const pluginProviderSessions = new PluginAgentSessionBindings(
+			path.join(app.getPath('userData'), 'plugin-agent-sessions')
+		);
 		const pluginEgressGuard = createEgressGuard({
 			// The app's own web/CLI server. Loopback + RFC1918 are already blocked by
 			// IP classification; this is belt-and-suspenders for a public-bind setup.
@@ -2258,6 +2271,25 @@ app
 			}
 		});
 		pluginGroupingRegistry = groupingRegistry;
+		const runHeadlessAgent: HeadlessAgentRunner = createPluginHeadlessAgentRunner({
+			getAgent: (agentId) =>
+				(sessionsStore.get('sessions', []) as SessionInfo[]).find(
+					(session) => session.id === agentId
+				),
+			detectAgent,
+			hasPluginTools: () => (pluginManager?.getContributions().tools.length ?? 0) > 0,
+			spawn: spawnAgent,
+			prepareSystemPrompt: prepareMaestroSystemPromptCli,
+			issueRunToken: (agentId, ttlMs) => pluginToolRunIdentity.issue(agentId, ttlMs),
+			revokeRunToken: (token) => pluginToolRunIdentity.revoke(token),
+			cliScriptPath: resolveMaestroCliScriptPath,
+			audit: (agentId, resumed) =>
+				logger.info(
+					`agents.send -> agent ${agentId} providerSession=${resumed ? 'resume' : 'fresh'}`,
+					'[PluginAudit]'
+				),
+		});
+		setHeadlessAgentRunner(runHeadlessAgent);
 		const sandboxHost = new PluginSandboxHost({
 			broker: pluginBroker,
 			handlers: buildHostCallHandlers({
@@ -2396,6 +2428,8 @@ app
 					pluginManager?.getRegistry().records.find((r) => r.id === pluginId)?.signature?.status ===
 					'trusted',
 				dispatch: async (agentId, prompt) => dispatchPromptToSession(agentId, prompt),
+				sendAgent: runHeadlessAgent,
+				providerSessions: pluginProviderSessions,
 				// Direct plugin dispatch is never user-present, so it requires the
 				// separate unattended consent on TOP of the interactive allowlist grant
 				// - the same grant source and check the time-based scheduler uses.
@@ -2491,6 +2525,7 @@ app
 			// Complete uninstall (invariant #8): purge the plugin's KV store, its
 			// plugins.<id>.* settings, and its event subscriptions.
 			purgePluginData: (id) => {
+				pluginProviderSessions.purge(id);
 				purgePluginData(id, {
 					kvStore: pluginKvStore,
 					settingsDeleteNamespace: pluginSettingsDeleteNamespace,
@@ -2530,9 +2565,8 @@ app
 				const record = pluginManager?.getRegistry().records.find((r) => r.id === pluginId);
 				return record ? pluginIdentity(record.source, trustedKeysFor()) : null;
 			},
-			openPrompt: async ({ pluginId, offered, nonce }) => {
+			openPrompt: async ({ pluginId, offered, requested, nonce }) => {
 				const record = pluginManager?.getRegistry().records.find((r) => r.id === pluginId);
-				const requested = pluginManager?.getRequestedPermissions(pluginId) ?? [];
 				// [FC1Finish] Full-trust banner for a CODE plugin (tier >= 1 with an
 				// entry file): under Option-B trusted-to-run there is no OS sandbox,
 				// so consent must say what enabling actually does.

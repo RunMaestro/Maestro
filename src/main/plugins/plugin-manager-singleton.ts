@@ -13,6 +13,32 @@
  * stale relative to a freshly-toggled flag), matching the IPC handlers' gate.
  */
 import type { PluginManager } from './plugin-manager';
+import type { AgentSendProgressEvent } from '../../shared/plugins/rpc-protocol';
+
+export interface HeadlessAgentReply {
+	success: boolean;
+	response: string | null;
+	sessionId: string | null;
+	error?: string;
+	usageStats?: import('../../shared/types').UsageStats;
+}
+export type HeadlessAgentRunner = (
+	agentId: string,
+	prompt: string,
+	sessionId?: string,
+	signal?: AbortSignal,
+	origin?: 'user' | 'auto',
+	onProgress?: (event: AgentSendProgressEvent) => void
+) => Promise<HeadlessAgentReply>;
+let headlessAgentRunner: HeadlessAgentRunner | null = null;
+
+export function setHeadlessAgentRunner(runner: HeadlessAgentRunner | null): void {
+	headlessAgentRunner = runner;
+}
+
+export function getHeadlessAgentRunner(): HeadlessAgentRunner | null {
+	return headlessAgentRunner;
+}
 
 let activePluginManager: PluginManager | null = null;
 let pluginsEnabledCheck: (() => boolean) | null = null;

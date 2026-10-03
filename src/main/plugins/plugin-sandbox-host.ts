@@ -23,6 +23,7 @@ import {
 	type HostRequest,
 	type HostResponse,
 	type ToolResult,
+	type AgentSendProgressEvent,
 } from '../../shared/plugins/rpc-protocol';
 import type { PluginEvent } from '../../shared/plugins/events';
 
@@ -34,7 +35,11 @@ export interface SandboxControlEvent {
 
 /** An injected implementation of one host method. Receives the calling plugin
  * id (for per-plugin scoping) and the validated params. */
-export type HostCallHandler = (pluginId: string, params: unknown) => Promise<unknown>;
+export type HostCallHandler = (
+	pluginId: string,
+	params: unknown,
+	context?: { onProgress: (event: AgentSendProgressEvent) => void }
+) => Promise<unknown>;
 export type HostCallHandlers = Partial<Record<HostMethod, HostCallHandler>>;
 
 export interface PluginSandboxHostDeps {
@@ -112,6 +117,7 @@ interface RunningPlugin {
 	pendingTools: Map<number, PendingTool>;
 	/** Monotonic correlation id for the next tool invocation. */
 	nextToolId: number;
+	inFlightIds: Set<number>;
 }
 
 /** Mutable per-plugin observability accumulator. Kept separate from `running`
@@ -228,6 +234,7 @@ export class PluginSandboxHost {
 			windowCount: 0,
 			pendingTools: new Map(),
 			nextToolId: 1,
+			inFlightIds: new Set(),
 		};
 		this.running.set(pluginId, record);
 		// Ensure an observability record exists so a freshly started plugin shows
@@ -239,6 +246,7 @@ export class PluginSandboxHost {
 		});
 		proc.on('exit', (code: number) => {
 			const existing = this.running.get(pluginId);
+			if (existing !== record) return;
 			if (existing?.shutdownTimer) clearTimeout(existing.shutdownTimer);
 			// Fail every outstanding tool round-trip: the child that owed a reply
 			// is gone, so the awaiting caller must reject rather than hang.
@@ -292,7 +300,12 @@ export class PluginSandboxHost {
 	 * too many tool calls are already in flight, the round-trip exceeds
 	 * {@link TOOL_INVOKE_TIMEOUT_MS}, or the child exits before replying.
 	 */
-	invokeTool(pluginId: string, commandId: string, args?: unknown): Promise<unknown> {
+	invokeTool(
+		pluginId: string,
+		commandId: string,
+		args?: unknown,
+		context: { callerAgentId: string | null } = { callerAgentId: null }
+	): Promise<unknown> {
 		const record = this.running.get(pluginId);
 		if (!record) return Promise.reject(new Error(`plugin "${pluginId}" is not running`));
 		// Bound the host->child payload exactly like invokeCommand / HostRequest.
@@ -318,7 +331,7 @@ export class PluginSandboxHost {
 			if (typeof timer.unref === 'function') timer.unref();
 			record.pendingTools.set(id, { resolve, reject, timer });
 			try {
-				record.proc.postMessage({ kind: 'invokeTool', id, commandId, args });
+				record.proc.postMessage({ kind: 'invokeTool', id, commandId, args, context });
 			} catch (err) {
 				record.pendingTools.delete(id);
 				clearTimeout(timer);
@@ -428,6 +441,10 @@ export class PluginSandboxHost {
 
 		// Backpressure + rate limiting against a flooding child.
 		const record = this.running.get(pluginId);
+		if (!record || record.proc !== proc || record.inFlightIds.has(request.id)) {
+			respond({ ok: false, error: 'duplicate or stale host request' });
+			return;
+		}
 		if (record) {
 			const now = Date.now();
 			if (now - record.windowStart > RATE_WINDOW_MS) {
@@ -471,18 +488,31 @@ export class PluginSandboxHost {
 			return;
 		}
 
-		if (record) record.inFlight += 1;
+		record.inFlightIds.add(request.id);
+		record.inFlight += 1;
+		let active = true;
+		const onProgress = (event: AgentSendProgressEvent): void => {
+			if (!active || this.running.get(pluginId) !== record) return;
+			if (!this.deps.broker.authorize(pluginId, method, request.params).allowed) return;
+			try {
+				proc.postMessage({ kind: 'progress', id: request.id, event });
+			} catch {
+				// The owning sandbox exited; the provider run is aborted by onCrash.
+			}
+		};
 		const act = this.activityFor(pluginId);
 		act.totalCalls += 1;
 		act.inFlight += 1;
 		act.lastActivity = Date.now();
 		if (act.inFlight > act.peakInFlight) act.peakInFlight = act.inFlight;
 		try {
-			const result = await handler(pluginId, request.params);
+			const result = await handler(pluginId, request.params, { onProgress });
 			respond({ ok: true, result });
 		} catch (err) {
 			respond({ ok: false, error: err instanceof Error ? err.message : String(err) });
 		} finally {
+			active = false;
+			record.inFlightIds.delete(request.id);
 			if (record) record.inFlight = Math.max(0, record.inFlight - 1);
 			act.inFlight = Math.max(0, act.inFlight - 1);
 		}

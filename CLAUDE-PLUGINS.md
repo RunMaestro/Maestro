@@ -11,7 +11,7 @@ A plugin is one folder under `<userData>/plugins/` containing a `plugin.json` ma
 - Entire system is gated on `encoreFeatures.plugins === true` (off by default), re-read per call.
 - Every `plugins:*` IPC channel throws the sentinel `'PluginsDisabled'` when the flag is off, so the renderer can distinguish "feature off" from "no plugins installed". The gate runs OUTSIDE `withIpcErrorLogging` so the sentinel is not logged as a real failure.
 - `PluginManager.getActiveRecords()`, `getContributions()`, and `getAgentRegistry()` all return empty when the flag is off, regardless of what is on disk.
-- `HOST_API_VERSION = '1.16.0'` (`src/shared/plugins/host-api.ts`) is the single source of truth for the host surface version.
+- `HOST_API_VERSION = '1.20.0'` (`src/shared/plugins/host-api.ts`) is the single source of truth for the host surface version.
 
 ## File map
 
@@ -170,6 +170,7 @@ Channels (all gated on `encoreFeatures.plugins`):
 - **Pure-reads invariant.** `plugins:list` and `plugins:contributions` MUST NOT call `refresh()`. `refresh()` reconciles sandboxes and fires `onChange` -> `plugins:changed` -> renderer re-fetch -> read again, an infinite IPC loop that freezes the app. Discovery happens at startup and on mutations only.
 - **Consent (`plugins:set-grants`).** The user approves a SUBSET of the plugin's REQUESTED permissions. The handler intersects approved capabilities with the manifest's requests, so an over-broad grant can never be smuggled in via the renderer, and only known capabilities survive. `plugins:revoke-grants` calls `forgetGrants`.
 - **Host-managed dispatch allow list (`plugins:set-agent-allowlist`, issue #1250).** `agents:dispatch` uses an allowlist scope naming the exact agent ids a plugin may target. The manifest declares the CAPABILITY; the USER owns the SCOPE. This channel is registered in `index.ts` (gated on the trusted main renderer + Encore flag, NOT this module, like `plugins:request-consent`) and re-mints the grant's scope through `AuthorizationStore.setAllowlistScope` - the same sealed-ledger path as consent/revoke, so the epoch bump, anti-rollback, tombstones, and session-only fallback are all preserved. It edits ONLY the scope of an ALREADY-CONSENTED capability: it never adds a capability, never touches the `unattended` flag, and never changes identity (the plugin's files are unchanged, so `verify()` still matches), so adding an agent needs no plugin re-pack/re-sign. The plugin can never reach it (a different principal), and submitted ids are intersected with live sessions and filtered through `isValidAllowlistMember`. Edited from Settings -> Plugins (the `AgentDispatchAllowlist` editor in a plugin's Permissions tab). A denied `agents.dispatch` (an out-of-date allow list) also raises a throttled operator toast, so it no longer fails invisibly.
+- **Dispatch scope on renewed consent.** When updated code requires renewed consent, `ConsentMinter` shows and re-mints the existing exact-agent selection only while the sealed ledger still holds a Dispatch grant and both identities have the same trusted signer. An empty selection stays deny-all. Dispatch must be approved again in the separate high-risk section, and Unattended must be approved again with its own checkbox. Revocation, uninstall, signer changes, and removed manifest capabilities never inherit old access. If the saved selection changes while the prompt is open, confirmation is rejected so the user can review the new offer.
 
 ## Renderer panel render host + consent
 
@@ -194,7 +195,7 @@ Integrity ("files match what was signed") and trust ("key is recognized") are la
 
 `HOST_API_VERSION` is a permanent public contract once plugins ship. PATCH = host bug fix; MINOR = additive (new contribution point / manifest field / capability, older plugins keep working); MAJOR = remove or change the meaning of an existing one. A plugin pins `maestro.minHostApi`; the host loads it only when same-major and `host >= min`.
 
-The current host is `1.16.0`; it added the metadata-only `session.activated`
+The current host is `1.20.0`; `agents.send` now accepts an optional invocation-scoped public progress callback (see `docs/relay-host-contract.md`). 1.18.0 and 1.19.0 are reserved by separate panel work on this fork. 1.17.0 added resumable `agents.send` and verified plugin-tool caller context. 1.16.0 added the metadata-only `session.activated`
 event topic, the `sessions.focus` method plus its narrow `sessions:focus`
 capability, and the `ui.openPanel` / `ui.closePanel` / `ui.togglePanel` methods
 plus the optional panel manifest field `size?: 'default' | 'full'`. (`1.15.0` is
