@@ -31,6 +31,20 @@ describe('Notification Preload API', () => {
 	});
 
 	describe('show', () => {
+		it('forwards a terminal click action to the main process', async () => {
+			const action = { kind: 'open-terminal' as const, sessionId: 'agent-1', tabRef: 'term-1' };
+			mockInvoke.mockResolvedValue({ success: true });
+			await api.show('Input needed', 'Sudo', 'agent-1', undefined, action);
+			expect(mockInvoke).toHaveBeenCalledWith(
+				'notification:show',
+				'Input needed',
+				'Sudo',
+				'agent-1',
+				undefined,
+				action
+			);
+		});
+
 		it('should invoke notification:show with title and body', async () => {
 			mockInvoke.mockResolvedValue({ success: true });
 
@@ -54,6 +68,17 @@ describe('Notification Preload API', () => {
 			expect(result.success).toBe(false);
 			expect(result.error).toBe('Failed to show notification');
 		});
+	});
+
+	it('delivers a native notification click action to the renderer', () => {
+		const handler = vi.fn();
+		const unsubscribe = api.onClickAction(handler);
+		const listener = mockOn.mock.calls.find((call) => call[0] === 'notification:clickAction')?.[1];
+		const action = { kind: 'open-terminal' as const, sessionId: 'agent-1', tabRef: 'term-1' };
+		listener({}, action);
+		expect(handler).toHaveBeenCalledWith(action);
+		unsubscribe();
+		expect(mockRemoveListener).toHaveBeenCalledWith('notification:clickAction', listener);
 	});
 
 	/**

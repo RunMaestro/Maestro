@@ -8,6 +8,7 @@
  */
 
 import { ipcRenderer } from 'electron';
+import type { ToastClickAction } from '../../shared/toastClickAction';
 
 /**
  * Response from showing a notification
@@ -60,9 +61,19 @@ export function createNotificationApi() {
 			title: string,
 			body: string,
 			sessionId?: string,
-			tabId?: string
+			tabId?: string,
+			clickAction?: ToastClickAction
 		): Promise<NotificationShowResponse> =>
-			ipcRenderer.invoke('notification:show', title, body, sessionId, tabId),
+			clickAction === undefined
+				? ipcRenderer.invoke('notification:show', title, body, sessionId, tabId)
+				: ipcRenderer.invoke('notification:show', title, body, sessionId, tabId, clickAction),
+
+		onClickAction: (handler: (action: ToastClickAction) => void): (() => void) => {
+			const listener = (_event: Electron.IpcRendererEvent, action: ToastClickAction) =>
+				handler(action);
+			ipcRenderer.on('notification:clickAction', listener);
+			return () => ipcRenderer.removeListener('notification:clickAction', listener);
+		},
 
 		/**
 		 * Execute a custom notification command (e.g., TTS, logging)

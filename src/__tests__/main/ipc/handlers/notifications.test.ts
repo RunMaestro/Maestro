@@ -117,6 +117,7 @@ describe('Notification IPC Handlers', () => {
 
 	beforeEach(() => {
 		vi.clearAllMocks();
+		mockGetMainWindow.mockReturnValue(null);
 		resetNotificationState();
 		handlers = new Map();
 
@@ -204,6 +205,35 @@ describe('Notification IPC Handlers', () => {
 	});
 
 	describe('notification:show click-to-navigate', () => {
+		it('opens the named terminal only after a native notification click', async () => {
+			const send = vi.fn();
+			const focus = vi.fn();
+			const show = vi.fn();
+			const target = {
+				isDestroyed: () => false,
+				isMinimized: () => false,
+				show,
+				focus,
+				webContents: { send },
+			} as unknown as Electron.BrowserWindow;
+			mockGetMainWindow.mockReturnValue(target);
+			const action = { kind: 'open-terminal' as const, sessionId: 'session-123', tabRef: 'term-1' };
+			await handlers.get('notification:show')!(
+				{},
+				'Input needed',
+				'Sudo',
+				'session-123',
+				undefined,
+				action
+			);
+			expect(focus).not.toHaveBeenCalled();
+			const click = mocks.mockNotificationOn.mock.calls.find((call: any[]) => call[0] === 'click');
+			click![1]();
+			expect(focus).toHaveBeenCalledOnce();
+			expect(show).toHaveBeenCalledOnce();
+			expect(send).toHaveBeenCalledWith('notification:clickAction', action);
+		});
+
 		it('should register close handler to prevent GC on all notifications', async () => {
 			const handler = handlers.get('notification:show')!;
 			await handler({}, 'Title', 'Body');

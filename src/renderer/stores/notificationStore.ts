@@ -369,11 +369,19 @@ export function notifyToast(toast: NotifyToastInput): string {
 			const prefix = bodyParts.length > 0 ? `${bodyParts.join(' > ')}: ` : '';
 			const notifBody = prefix + firstSentence;
 
-			window.maestro.notification
-				.show(notifTitle, notifBody, toast.sessionId, toast.tabId)
-				.catch((err) => {
-					logger.error('[notificationStore] Failed to show OS notification:', undefined, err);
-				});
+			const clickAction = toast.onClick ? undefined : toast.clickAction;
+			const result = clickAction
+				? window.maestro.notification.show(
+						notifTitle,
+						notifBody,
+						toast.sessionId,
+						toast.tabId,
+						clickAction
+					)
+				: window.maestro.notification.show(notifTitle, notifBody, toast.sessionId, toast.tabId);
+			result.catch((err) => {
+				logger.error('[notificationStore] Failed to show OS notification:', undefined, err);
+			});
 		}
 	}
 

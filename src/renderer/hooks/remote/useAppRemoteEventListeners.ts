@@ -314,7 +314,13 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 	useEventListener('maestro:openTerminalTab', (e: Event) => {
 		const { sessionId, config, responseChannel, background } = (e as CustomEvent).detail as {
 			sessionId: string;
-			config: { cwd?: string; shell?: string; name?: string | null; command?: string };
+			config: {
+				cwd?: string;
+				shell?: string;
+				name?: string | null;
+				command?: string;
+				inputRequired?: boolean;
+			};
 			responseChannel?: string;
 			background?: boolean;
 		};
@@ -371,7 +377,21 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 			void spawnPtyForTab({
 				session: sessionForSpawn,
 				tab,
-				onPid: createTabPidChangeHandler(sessionId),
+				onPid: (tabId, pid) => {
+					createTabPidChangeHandler(sessionId)(tabId, pid);
+					if (config?.inputRequired) {
+						const tabName = getTerminalTabDisplayName(tab, (session.terminalTabs || []).length);
+						notifyToast({
+							color: 'yellow',
+							title: 'Terminal needs your input',
+							message: 'Your input is needed.',
+							project: session.name,
+							tabName,
+							sessionId,
+							clickAction: { kind: 'open-terminal', sessionId, tabRef: tab.id },
+						});
+					}
+				},
 				onSpawnFailure: (tabId, isPersistent, message) => {
 					// No xterm to write into from here, so report through the store and a
 					// toast. Persistent tabs stay as restartable husks exactly as they do

@@ -816,6 +816,29 @@ describe('notificationStore', () => {
 	// ==========================================================================
 
 	describe('notifyToast OS notification body variants', () => {
+		it('passes terminal navigation to the native notification without navigating yet', () => {
+			const clickAction = {
+				kind: 'open-terminal' as const,
+				sessionId: 'agent-1',
+				tabRef: 'term-1',
+			};
+			notifyToast({
+				title: 'Terminal needs your input',
+				message: 'Waiting for a password.',
+				project: 'MyAgent',
+				tabName: 'Sudo',
+				sessionId: 'agent-1',
+				clickAction,
+			});
+			expect(mockShow).toHaveBeenCalledWith(
+				'MyAgent',
+				'Sudo: Waiting for a password.',
+				'agent-1',
+				undefined,
+				clickAction
+			);
+		});
+
 		it('builds body with group + project + tabName', () => {
 			notifyToast({
 				type: 'success',

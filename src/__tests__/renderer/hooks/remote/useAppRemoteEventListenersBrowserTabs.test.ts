@@ -10,6 +10,9 @@ import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest';
 import { useAppRemoteEventListeners } from '../../../../renderer/hooks/remote/useAppRemoteEventListeners';
 import { createMockSession } from '../../../helpers/mockSession';
 import type { Session } from '../../../../renderer/types';
+import { selectSessionById } from '../../../../renderer/stores/sessionStore';
+import { spawnPtyForTab } from '../../../../renderer/services/terminalSpawn';
+import { notifyToast } from '../../../../renderer/stores/notificationStore';
 
 vi.mock('../../../../renderer/stores/sessionStore', () => ({
 	useSessionStore: Object.assign(vi.fn(), { getState: vi.fn(() => ({})) }),
@@ -24,6 +27,11 @@ vi.mock('../../../../renderer/utils/worktreeSpawn', () => ({
 	spawnWorktreeAgentAndDispatch: vi.fn(),
 }));
 vi.mock('../../../../renderer/stores/notificationStore', () => ({ notifyToast: vi.fn() }));
+vi.mock('../../../../renderer/services/terminalSpawn', () => ({ spawnPtyForTab: vi.fn() }));
+vi.mock('../../../../renderer/components/TerminalView', () => ({
+	createTabPidChangeHandler: () => vi.fn(),
+	createTabStateChangeHandler: () => vi.fn(),
+}));
 vi.mock('../../../../renderer/utils/browserTabPersistence', () => ({
 	getBrowserTabPartition: () => 'persist:test',
 }));
@@ -31,6 +39,7 @@ vi.mock('../../../../renderer/utils/ids', () => ({ generateId: () => 'new-tab-id
 
 const openAck = vi.fn();
 const closeAck = vi.fn();
+const terminalAck = vi.fn();
 
 function setup(sessions: Session[]) {
 	const sessionsRef = { current: sessions };
@@ -77,8 +86,39 @@ beforeEach(() => {
 		process: {
 			sendRemoteOpenBrowserTabResponse: openAck,
 			sendRemoteCloseBrowserTabResponse: closeAck,
+			sendRemoteOpenTerminalTabResponse: terminalAck,
 		},
 	};
+});
+
+describe('maestro:openTerminalTab human input', () => {
+	it('notifies only after the terminal shell starts, without moving the view', () => {
+		const sessions = [createMockSession({ id: 'session-1', name: 'Maestro Codex' })];
+		vi.mocked(selectSessionById).mockReturnValue(() => sessions[0]);
+		const { setActiveSessionId } = setup(sessions);
+		window.dispatchEvent(
+			new CustomEvent('maestro:openTerminalTab', {
+				detail: {
+					sessionId: 'session-1',
+					config: { name: 'Sudo', inputRequired: true },
+					background: true,
+					responseChannel: 'ch',
+				},
+			})
+		);
+		expect(setActiveSessionId).not.toHaveBeenCalled();
+		expect(terminalAck).toHaveBeenCalledWith('ch', true, 'new-tab-id');
+		expect(notifyToast).not.toHaveBeenCalled();
+		const spawnOptions = vi.mocked(spawnPtyForTab).mock.calls[0][0];
+		spawnOptions.onPid('new-tab-id', 123);
+		expect(notifyToast).toHaveBeenCalledWith(
+			expect.objectContaining({
+				project: 'Maestro Codex',
+				tabName: 'Sudo',
+				clickAction: { kind: 'open-terminal', sessionId: 'session-1', tabRef: 'new-tab-id' },
+			})
+		);
+	});
 });
 
 describe('maestro:openBrowserTab', () => {
