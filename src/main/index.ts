@@ -2565,9 +2565,8 @@ app
 				const record = pluginManager?.getRegistry().records.find((r) => r.id === pluginId);
 				return record ? pluginIdentity(record.source, trustedKeysFor()) : null;
 			},
-			openPrompt: async ({ pluginId, offered, nonce }) => {
+			openPrompt: async ({ pluginId, offered, requested, nonce }) => {
 				const record = pluginManager?.getRegistry().records.find((r) => r.id === pluginId);
-				const requested = pluginManager?.getRequestedPermissions(pluginId) ?? [];
 				// [FC1Finish] Full-trust banner for a CODE plugin (tier >= 1 with an
 				// entry file): under Option-B trusted-to-run there is no OS sandbox,
 				// so consent must say what enabling actually does.
