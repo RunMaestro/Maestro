@@ -39,6 +39,11 @@ import {
 } from '../../shared/typography';
 import { parseTypographySnapshot } from '../../shared/typographySnapshot';
 import {
+	QUICK_CHAT_SETTINGS_KEY,
+	resolveQuickChatSettings,
+	type QuickChatSettings,
+} from '../../shared/quickChat';
+import {
 	DEFAULT_CUE_HISTORY_RETENTION_DAYS,
 	resolveCueHistoryRetentionDays,
 } from '../../shared/cue/retention';
@@ -452,6 +457,7 @@ export interface SettingsStoreState
 	coworkingBackgroundBrowsers: boolean;
 	coworkingBackgroundBrowsersLimit: number;
 	directorNotesSettings: DirectorNotesSettings;
+	quickChatSettings: QuickChatSettings;
 	cueHistoryRetentionDays: number;
 	groupCueEntries: boolean;
 	useNativeTitleBar: boolean;
@@ -564,6 +570,7 @@ export interface SettingsStoreActions
 	setCoworkingBackgroundBrowsers: (value: boolean) => void;
 	setCoworkingBackgroundBrowsersLimit: (value: number) => void;
 	setDirectorNotesSettings: (value: DirectorNotesSettings) => void;
+	setQuickChatSettings: (value: QuickChatSettings) => void;
 	setCueHistoryRetentionDays: (value: number) => void;
 	setGroupCueEntries: (value: boolean) => void;
 	setUseNativeTitleBar: (value: boolean) => void;
@@ -810,6 +817,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		coworkingBackgroundBrowsers: false,
 		coworkingBackgroundBrowsersLimit: 2,
 		directorNotesSettings: DEFAULT_DIRECTOR_NOTES_SETTINGS,
+		quickChatSettings: resolveQuickChatSettings(undefined),
 		cueHistoryRetentionDays: DEFAULT_CUE_HISTORY_RETENTION_DAYS,
 		groupCueEntries: true,
 		useNativeTitleBar: isWindowsPlatform(),
@@ -1344,6 +1352,11 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		setDirectorNotesSettings: (value) => {
 			set({ directorNotesSettings: value });
 			window.maestro.settings.set('directorNotesSettings', value);
+		},
+
+		setQuickChatSettings: (value) => {
+			set({ quickChatSettings: value });
+			window.maestro.settings.set(QUICK_CHAT_SETTINGS_KEY, value);
 		},
 
 		setCueHistoryRetentionDays: (value) => {
@@ -2517,6 +2530,11 @@ export async function loadAllSettings(): Promise<void> {
 			};
 		}
 
+		// Quick Chat settings (field-by-field merge so a partial object keeps defaults)
+		if (allSettings[QUICK_CHAT_SETTINGS_KEY] !== undefined) {
+			patch.quickChatSettings = resolveQuickChatSettings(allSettings[QUICK_CHAT_SETTINGS_KEY]);
+		}
+
 		hydrateWakatimeSettings(allSettings, patch);
 		// Cue history retention. A stored value that isn't a usable day count
 		// falls back to the default rather than being shown as-is: the number in
@@ -2825,6 +2843,7 @@ export function getSettingsActions() {
 		setUtilityModelId: state.setUtilityModelId,
 		setEncoreFeatures: state.setEncoreFeatures,
 		setDirectorNotesSettings: state.setDirectorNotesSettings,
+		setQuickChatSettings: state.setQuickChatSettings,
 		setWakatimeApiKey: state.setWakatimeApiKey,
 		setWakatimeEnabled: state.setWakatimeEnabled,
 		setWakatimeDetailedTracking: state.setWakatimeDetailedTracking,

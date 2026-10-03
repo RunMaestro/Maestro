@@ -838,6 +838,19 @@ const mockMaestro = {
 		onSessionMoved: vi.fn(() => () => {}),
 		onHighlightDropZone: vi.fn(() => () => {}),
 	},
+	// Quick Chat (floating window + its engine). Subscriptions return a no-op
+	// unsubscribe so App's engine hook mounts and cleans up in every render test.
+	quickChat: {
+		command: vi.fn().mockResolvedValue({ ok: true, snapshot: null }),
+		window: vi.fn().mockResolvedValue(null),
+		getSnapshot: vi.fn().mockResolvedValue(null),
+		setLayout: vi.fn(),
+		onSnapshot: vi.fn(() => () => {}),
+		onFocusInput: vi.fn(() => () => {}),
+		onCommand: vi.fn(() => () => {}),
+		pushSnapshot: vi.fn(),
+		onHotkeyFailed: vi.fn(() => () => {}),
+	},
 	// Automatic tab naming (ephemeral namer spawn). Returns null by default so a
 	// test that sends a message doesn't accidentally rename tabs; tests that care
 	// override this with their own resolved value.

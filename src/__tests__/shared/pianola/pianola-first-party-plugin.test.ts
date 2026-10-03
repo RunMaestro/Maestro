@@ -148,6 +148,7 @@ describe('first-party plugin registry', () => {
 			['concerto', 'com.maestro.concerto'],
 			['groupsPlus', 'com.maestro.groups-plus'],
 			['webLogin', 'com.maestro.web-login'],
+			['quickChat', 'com.maestro.quick-chat'],
 		]);
 	});
 

@@ -13,6 +13,7 @@ describe('ENCORE_FEATURE_DEFAULTS', () => {
 			usageStats: true,
 			symphony: true,
 			maestroCue: true,
+			quickChat: true,
 		});
 	});
 });

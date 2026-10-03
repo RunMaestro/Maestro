@@ -9,6 +9,7 @@
 import type { SettingMetadata } from './settingsMetadata';
 import { ENCORE_FEATURE_DEFAULTS } from './encoreFeatureDefaults';
 import { DEFAULT_CUE_HISTORY_RETENTION_DAYS } from './cue/retention';
+import { DEFAULT_QUICK_CHAT_SETTINGS } from './quickChat';
 
 export const FEATURES_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 	// --- Integrations ---
@@ -86,6 +87,13 @@ export const FEATURES_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 			defaultLookbackDays: 7,
 			defaultMode: 'rich',
 		},
+		category: 'advanced',
+	},
+	quickChatSettings: {
+		description:
+			'Quick Chat settings: system-wide hotkey (key array, empty disables it), agent id (empty = the active agent), whether new chats are kept as visible tabs, and whether ephemeral chats write History entries.',
+		type: 'object',
+		default: { ...DEFAULT_QUICK_CHAT_SETTINGS, hotkey: [...DEFAULT_QUICK_CHAT_SETTINGS.hotkey] },
 		category: 'advanced',
 	},
 	cueHistoryRetentionDays: {

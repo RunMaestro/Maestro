@@ -40,7 +40,8 @@ export type FirstPartyEncoreFlag =
 	| 'opencodeServer'
 	| 'concerto'
 	| 'groupsPlus'
-	| 'webLogin';
+	| 'webLogin'
+	| 'quickChat';
 
 /** A supervised background service a first-party plugin runs. */
 export interface FirstPartyBackgroundService {
@@ -832,6 +833,62 @@ export const WEB_LOGIN_FIRST_PARTY_PLUGIN: FirstPartyPluginDefinition = {
 	},
 };
 
+/** Quick Chat runs host-side: a system-wide hotkey and a floating window owned
+ * by the main process, with the conversation in an ordinary AI tab driven by
+ * the app renderer. Nothing goes through the broker, so the tile only re-reads
+ * its own flag and settings. */
+export const QUICK_CHAT_FIRST_PARTY_PLUGIN_ID = 'com.maestro.quick-chat';
+
+export const QUICK_CHAT_FIRST_PARTY_PLUGIN: FirstPartyPluginDefinition = {
+	id: QUICK_CHAT_FIRST_PARTY_PLUGIN_ID,
+	name: 'Quick Chat',
+	description:
+		'Press a system-wide hotkey from any app to open a small floating chat with your chosen agent. Keep the chat as a tab on that agent, or let it vanish when you start the next one.',
+	firstParty: true,
+	category: 'ui',
+	permissions: [
+		{
+			capability: 'agents:read',
+			reason: 'List your agents so you can pick the one Quick Chat talks to.',
+		},
+		{
+			capability: 'settings:read',
+			reason: 'Read the Quick Chat hotkey, agent, and mode settings.',
+		},
+	],
+	settingsNamespace: 'quickChat',
+	encoreFlag: 'quickChat',
+	releaseDate: '2026-10-03',
+	// The hotkey and window are app-scoped and main-process owned. Disable = flag
+	// off: the hotkey is released and the window closes. Chats kept as tabs stay.
+	backgroundServices: [],
+	usage: {
+		overview: [
+			'Press the Quick Chat hotkey (Option+Space on macOS, Alt+Space on Windows and Linux, by default) anywhere on your computer. A small window opens on top of whatever you are doing, ready to type. Press the hotkey again, or Escape, to put it away. Your conversation is still there the next time you open it.',
+			"Every chat runs as a real AI tab on the agent you choose, so it uses that agent's provider, model, working directory, and history rules. Pick the agent below, or switch it from the window itself.",
+			'An ephemeral chat lives in a hidden tab and is deleted when you start a new chat. A kept chat is an ordinary tab on the agent that stays after you move on. Flip between the two with the pin in the window; the setting below picks the default.',
+		],
+		access: [
+			{ label: 'Open or close Quick Chat', menu: 'the Quick Chat hotkey, from any app' },
+			{ label: 'Start a new chat', menu: 'the pencil in the Quick Chat window' },
+			{ label: 'Open the chat as a tab in Maestro', menu: 'the arrow in the Quick Chat window' },
+		],
+		agentCommands: [
+			{ label: 'Open, close, or toggle the window', command: 'maestro-cli quick-chat toggle' },
+			{ label: 'Send a message', command: 'maestro-cli quick-chat send "<message>"' },
+			{
+				label: 'Read the current chat (--json for scripting)',
+				command: 'maestro-cli quick-chat status',
+			},
+		],
+		notes: [
+			'The hotkey is system-wide. If another app already holds it, Maestro shows a warning; record a different one below.',
+			'Turning Quick Chat off releases the hotkey and closes the window. Chats you kept as tabs stay on their agents.',
+		],
+		docsSlug: 'quick-chat',
+	},
+};
+
 /**
  * Every first-party plugin definition, in marketplace display order (matches
  * the pre-lift BUILTIN_FEATURES tile order).
@@ -847,6 +904,7 @@ export const FIRST_PARTY_PLUGIN_DEFINITIONS: readonly FirstPartyPluginDefinition
 	CONCERTO_FIRST_PARTY_PLUGIN,
 	GROUPS_PLUS_FIRST_PARTY_PLUGIN,
 	WEB_LOGIN_FIRST_PARTY_PLUGIN,
+	QUICK_CHAT_FIRST_PARTY_PLUGIN,
 ];
 
 /**
@@ -868,4 +926,5 @@ export const FIRST_PARTY_PLUGINS: Readonly<
 	concerto: CONCERTO_FIRST_PARTY_PLUGIN,
 	groupsPlus: GROUPS_PLUS_FIRST_PARTY_PLUGIN,
 	webLogin: WEB_LOGIN_FIRST_PARTY_PLUGIN,
+	quickChat: QUICK_CHAT_FIRST_PARTY_PLUGIN,
 };
