@@ -3,12 +3,21 @@
 
 import { spawnAgent, detectAgent, type AgentResult } from '../services/agent-spawner';
 import { captureCliRun } from '../services/agent-run-capture';
-import { resolveAgentId, getSessionById } from '../services/storage';
+import { resolveAgentId, getSessionById, addHistoryEntry } from '../services/storage';
 import { prepareMaestroSystemPromptCli } from '../services/system-prompt';
+import { getCliPrompt } from '../services/prompt-loader';
 import { estimateContextUsage } from '../../main/parsers/usage-aggregator';
 import { getAgentDefinition } from '../../main/agents/definitions';
 import { withMaestroClient } from '../services/maestro-client';
-import type { ToolType } from '../../shared/types';
+import { parseSynopsis } from '../../shared/synopsis';
+import { cheapTurnSettings } from '../../shared/modelTiers';
+import {
+	FALLBACK_CONTEXT_WINDOW,
+	getModelContextWindowOverride,
+} from '../../shared/agentConstants';
+import { PROMPT_IDS } from '../../shared/promptDefinitions';
+import { generateUUID } from '../../shared/uuid';
+import type { HistoryEntry, SessionInfo, ToolType } from '../../shared/types';
 
 interface SendOptions {
 	session?: string;
@@ -19,6 +28,127 @@ interface SendOptions {
 	// `maestro-cli send` get the Maestro system context by default - parity
 	// with desktop spawn sites that all pass `appendSystemPrompt`.
 	systemPrompt?: boolean;
+	// `--no-history` -> `history: false`. A send is a real turn on the agent, so
+	// by default it lands in the agent's History panel like a desktop tab turn
+	// does, whether or not the desktop app is running.
+	history?: boolean;
+	// `--no-synopsis` -> `synopsis: false`. Skips the extra summarization turn;
+	// the History entry then carries the response itself.
+	synopsis?: boolean;
+}
+
+/** Longest summary line kept when the response stands in for a synopsis. */
+const FALLBACK_SUMMARY_MAX = 200;
+
+function fallbackSummary(text: string): string {
+	const firstLine =
+		text
+			.split('\n')
+			.map((l) => l.trim())
+			.find(Boolean) ?? '';
+	return firstLine.length > FALLBACK_SUMMARY_MAX
+		? `${firstLine.slice(0, FALLBACK_SUMMARY_MAX - 1)}…`
+		: firstLine;
+}
+
+/**
+ * Record a `send` turn in the agent's History, the same file the desktop's
+ * History panel reads (and watches, so an open app shows it live).
+ *
+ * A successful turn is summarized like a desktop tab turn: a cheap synopsis
+ * turn resumed on the same provider session. Unlike the desktop, a
+ * NOTHING_TO_REPORT synopsis does not drop the entry: a send is a deliberate
+ * hand-off, and the cheap tier judges read-only research as nothing, so the
+ * response stands in instead. Opt out with `--no-history`. Failures here never
+ * fail the send: the caller already has its response on stdout.
+ */
+async function recordSendHistory(
+	agent: SessionInfo,
+	message: string,
+	result: AgentResult,
+	elapsedTimeMs: number,
+	options: SendOptions
+): Promise<void> {
+	try {
+		let summary: string;
+		let fullResponse: string;
+
+		if (!result.success) {
+			summary = `Send failed: ${fallbackSummary(result.error ?? 'unknown error')}`;
+			fullResponse = result.error ?? summary;
+		} else {
+			const response = result.response ?? '';
+			summary = fallbackSummary(response) || fallbackSummary(message);
+			fullResponse = response;
+
+			if (options.synopsis !== false && result.agentSessionId) {
+				const cheap = cheapTurnSettings(agent.toolType);
+				// Same guard as the desktop synopsis (useAgentExecution): resuming
+				// replays the transcript, so never downgrade onto a smaller context
+				// window than the agent's own model, or a long session fails with
+				// "Prompt is too long". Effort still drops to the bottom rung.
+				const shrinksWindow =
+					(getModelContextWindowOverride(agent.customModel) ?? FALLBACK_CONTEXT_WINDOW) >
+					(getModelContextWindowOverride(cheap.model) ?? FALLBACK_CONTEXT_WINDOW);
+				const synopsisModel = shrinksWindow
+					? agent.customModel
+					: (cheap.model ?? agent.customModel);
+				const synopsisResult = await captureCliRun(
+					{
+						sessionId: result.agentSessionId,
+						toolType: agent.toolType,
+						cwd: agent.cwd,
+						source: 'cli:send-synopsis',
+					},
+					async () =>
+						spawnAgent(
+							agent.toolType,
+							agent.cwd,
+							await getCliPrompt(PROMPT_IDS.AUTORUN_SYNOPSIS),
+							result.agentSessionId,
+							{
+								customModel: synopsisModel,
+								customEffort: cheap.effort ?? agent.customEffort,
+								customArgs: agent.customArgs,
+								additionalDirectories: agent.additionalDirectories,
+								customEnvVars: agent.customEnvVars,
+								sshRemoteConfig: agent.sessionSshRemoteConfig,
+								querySource: 'auto',
+								enableMaestroP: agent.enableMaestroP,
+								maestroPMode: agent.maestroPMode,
+								maestroPPath: agent.maestroPPath,
+							}
+						),
+					(r) => (r.success ? 0 : 1)
+				);
+				if (synopsisResult.success && synopsisResult.response) {
+					const parsed = parseSynopsis(synopsisResult.response);
+					if (!parsed.nothingToReport) {
+						summary = parsed.shortSummary;
+						fullResponse = parsed.fullSynopsis;
+					}
+				}
+			}
+		}
+
+		const entry: HistoryEntry = {
+			id: generateUUID(),
+			type: 'USER',
+			timestamp: Date.now(),
+			summary,
+			fullResponse,
+			agentSessionId: result.agentSessionId,
+			projectPath: agent.cwd,
+			sessionId: agent.id,
+			success: result.success,
+			usageStats: result.usageStats,
+			elapsedTimeMs,
+		};
+		addHistoryEntry(entry);
+	} catch (error) {
+		const msg = error instanceof Error ? error.message : String(error);
+		console.error(`Warning: Could not write history entry: ${msg}`);
+	}
 }
 
 interface SendResponse {
@@ -133,6 +263,7 @@ export async function send(
 
 	// Spawn agent - spawnAgent handles --resume vs fresh session internally.
 	// Wrapped in captureCliRun so the send lands in the agent-run ledger.
+	const startedAt = Date.now();
 	const result = await captureCliRun(
 		{
 			sessionId: agentSessionId ?? agentId,
@@ -161,6 +292,10 @@ export async function send(
 	const response = buildResponse(agentId, agent.name, result, agent.toolType);
 
 	console.log(JSON.stringify(response, null, 2));
+
+	if (options.history !== false) {
+		await recordSendHistory(agent, message, result, Date.now() - startedAt, options);
+	}
 
 	if (!result.success) {
 		process.exit(1);
