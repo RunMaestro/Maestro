@@ -434,7 +434,13 @@ interface MaestroAPI {
 		onRemoteOpenTerminalTab: (
 			callback: (
 				sessionId: string,
-				config: { cwd?: string; shell?: string; name?: string | null; command?: string },
+				config: {
+					cwd?: string;
+					shell?: string;
+					name?: string | null;
+					command?: string;
+					inputRequired?: boolean;
+				},
 				responseChannel: string,
 				options: { background?: boolean }
 			) => void
@@ -2083,8 +2089,12 @@ interface MaestroAPI {
 			title: string,
 			body: string,
 			sessionId?: string,
-			tabId?: string
+			tabId?: string,
+			clickAction?: import('../shared/toastClickAction').ToastClickAction
 		) => Promise<{ success: boolean; error?: string }>;
+		onClickAction: (
+			handler: (action: import('../shared/toastClickAction').ToastClickAction) => void
+		) => () => void;
 		speak: (
 			text: string,
 			command?: string,

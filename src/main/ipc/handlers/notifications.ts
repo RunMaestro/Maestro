@@ -17,6 +17,7 @@ import { isWebContentsAvailable } from '../../utils/safe-send';
 import { parseDeepLink, dispatchDeepLink } from '../../deep-links';
 import { buildSessionDeepLink } from '../../../shared/deep-link-urls';
 import { captureException } from '../../utils/sentry';
+import { parseToastClickAction, type ToastClickAction } from '../../../shared/toastClickAction';
 
 // ==========================================================================
 // Constants
@@ -417,9 +418,12 @@ export function registerNotificationsHandlers(deps?: NotificationsHandlerDepende
 			title: string,
 			body: string,
 			sessionId?: string,
-			tabId?: string
+			tabId?: string,
+			clickAction?: ToastClickAction
 		): Promise<NotificationShowResponse> => {
 			try {
+				const parsedAction = parseToastClickAction(clickAction);
+				if (parsedAction.error) return { success: false, error: parsedAction.error };
 				if (Notification.isSupported()) {
 					const notification = new Notification({
 						title,
@@ -435,7 +439,19 @@ export function registerNotificationsHandlers(deps?: NotificationsHandlerDepende
 					notification.on('close', releaseNotification);
 
 					// Wire click handler for navigation if session context is provided
-					if (sessionId && deps?.getMainWindow) {
+					const action = parsedAction.action;
+					if (action && deps?.getMainWindow) {
+						notification.on('click', () => {
+							const target = deps.getMainWindow();
+							if (target && !target.isDestroyed()) {
+								if (target.isMinimized()) target.restore();
+								target.show();
+								target.focus();
+								target.webContents.send('notification:clickAction', action);
+							}
+							releaseNotification();
+						});
+					} else if (sessionId && deps?.getMainWindow) {
 						const deepLinkUrl = buildSessionDeepLink(sessionId, tabId);
 
 						notification.on('click', () => {
