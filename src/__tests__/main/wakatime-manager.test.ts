@@ -177,6 +177,22 @@ describe('WakaTimeManager', () => {
 			expect(execFileNoThrow).toHaveBeenCalledTimes(1);
 		});
 
+		it('should share one probe between concurrent callers', async () => {
+			let resolveProbe!: (value: { exitCode: number; stdout: string; stderr: string }) => void;
+			vi.mocked(execFileNoThrow).mockImplementationOnce(
+				() => new Promise((resolve) => (resolveProbe = resolve))
+			);
+
+			const first = manager.detectCli();
+			const second = manager.detectCli();
+			resolveProbe({ exitCode: 0, stdout: 'wakatime-cli 1.73.1\n', stderr: '' });
+
+			expect(await first).toBe(true);
+			// Answering early from the unset path reported "not installed" here.
+			expect(await second).toBe(true);
+			expect(execFileNoThrow).toHaveBeenCalledTimes(1);
+		});
+
 		it('should cache negative CLI detection result', async () => {
 			vi.mocked(execFileNoThrow)
 				.mockResolvedValueOnce({ exitCode: 1, stdout: '', stderr: '' })
@@ -238,6 +254,25 @@ describe('WakaTimeManager', () => {
 			);
 			expect(logger.warn).toHaveBeenCalledWith(
 				expect.stringContaining('Failed to auto-install WakaTime CLI'),
+				'[WakaTime]'
+			);
+		});
+
+		it('should not download when concurrent callers race an installed CLI', async () => {
+			let resolveProbe!: (value: { exitCode: number; stdout: string; stderr: string }) => void;
+			vi.mocked(execFileNoThrow).mockImplementationOnce(
+				() => new Promise((resolve) => (resolveProbe = resolve))
+			);
+
+			const pending = Promise.all([manager.ensureCliInstalled(), manager.ensureCliInstalled()]);
+			resolveProbe({ exitCode: 0, stdout: 'wakatime-cli 1.73.1\n', stderr: '' });
+
+			expect(await pending).toEqual([true, true]);
+			// The daily update check may hit the releases API; the zip must not be fetched.
+			const fetched = vi.mocked(https.get).mock.calls.map((call) => String(call[0]));
+			expect(fetched.some((url) => url.endsWith('.zip'))).toBe(false);
+			expect(logger.info).not.toHaveBeenCalledWith(
+				expect.stringContaining('Downloading WakaTime CLI'),
 				'[WakaTime]'
 			);
 		});
