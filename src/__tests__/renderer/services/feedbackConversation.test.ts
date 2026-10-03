@@ -1,11 +1,14 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import {
 	FeedbackConversationManager,
+	pickFeedbackProvider,
+	type FeedbackAgentFailure,
 	type FeedbackDiagnostic,
 } from '../../../renderer/services/feedbackConversation';
 
 type ExitCallback = (sessionId: string, code: number) => void;
 type DataCallback = (sessionId: string, data: string) => void;
+type AgentErrorCallback = (sessionId: string, error: { type: string; message: string }) => void;
 type ToolCallback = (
 	sessionId: string,
 	toolEvent: { toolName: string; state?: unknown; timestamp: number; toolCallId?: string }
@@ -44,6 +47,7 @@ function installProcessMocks(agent: unknown) {
 		exit?: ExitCallback;
 		data?: DataCallback;
 		tool?: ToolCallback;
+		agentError?: AgentErrorCallback;
 	} = {};
 	const spawn = vi.fn();
 
@@ -65,6 +69,10 @@ function installProcessMocks(agent: unknown) {
 				return () => {};
 			}),
 			onThinkingChunk: vi.fn(() => () => {}),
+			onAgentError: vi.fn((cb: AgentErrorCallback) => {
+				listeners.agentError = cb;
+				return () => {};
+			}),
 		},
 	};
 
@@ -288,5 +296,108 @@ describe('FeedbackConversationManager', () => {
 		await pending;
 
 		expect(seen).toHaveLength(0);
+	});
+
+	it('names the provider when its login is rejected, and reports it as a failure', async () => {
+		const { spawn, listeners } = installProcessMocks(CLAUDE_AGENT);
+		const manager = new FeedbackConversationManager();
+		const sessionId = manager.start({ agentType: 'claude-code', systemPrompt: 'prompt' });
+
+		const failures: FeedbackAgentFailure[] = [];
+		const onComplete = vi.fn();
+		const pending = manager.sendMessage('it broke', [], {
+			onAgentFailure: (failure) => failures.push(failure),
+			onComplete,
+		});
+		await vi.waitFor(() => expect(spawn).toHaveBeenCalled());
+
+		listeners.agentError?.(sessionId, {
+			type: 'auth_expired',
+			message: 'OAuth token has expired',
+		});
+		listeners.exit?.(sessionId, 1);
+		const response = await pending;
+
+		expect(onComplete).not.toHaveBeenCalled();
+		expect(failures).toEqual([
+			expect.objectContaining({ agentId: 'claude-code', type: 'auth_expired' }),
+		]);
+		expect(response.message).toContain('Claude Code is not signed in');
+		expect(response.message).not.toContain('Something went wrong');
+	});
+
+	it('treats a non-zero exit with no classified error as a provider failure', async () => {
+		const { spawn, listeners } = installProcessMocks(CODEX_AGENT);
+		const manager = new FeedbackConversationManager();
+		const sessionId = manager.start({ agentType: 'codex', systemPrompt: 'prompt' });
+
+		const failures: FeedbackAgentFailure[] = [];
+		const pending = manager.sendMessage('it broke', [], {
+			onAgentFailure: (failure) => failures.push(failure),
+		});
+		await vi.waitFor(() => expect(spawn).toHaveBeenCalled());
+		listeners.exit?.(sessionId, 2);
+		const response = await pending;
+
+		expect(failures).toHaveLength(1);
+		expect(response.message).toContain('Codex stopped before answering (exit code 2)');
+	});
+
+	it('reports an uninstalled provider as a failure instead of throwing', async () => {
+		installProcessMocks({ ...CODEX_AGENT, available: false });
+		const manager = new FeedbackConversationManager();
+		manager.start({ agentType: 'codex', systemPrompt: 'prompt' });
+
+		const onAgentFailure = vi.fn();
+		const response = await manager.sendMessage('it broke', [], { onAgentFailure });
+
+		expect(onAgentFailure).toHaveBeenCalledWith(expect.objectContaining({ agentId: 'codex' }));
+		expect(response.message).toContain('Codex is not installed');
+	});
+
+	it('switches provider without losing the prompt, and keeps failures out of the transcript', async () => {
+		const { spawn, listeners } = installProcessMocks(CODEX_AGENT);
+		const manager = new FeedbackConversationManager();
+		manager.start({ agentType: 'claude-code', systemPrompt: 'SYSTEM PROMPT', cwd: '/home/t' });
+		manager.switchAgent('codex');
+		expect(manager.currentAgent).toBe('codex');
+
+		const pending = manager.sendMessage('it broke', [
+			{ role: 'user', content: 'it broke', timestamp: 1 },
+			{
+				role: 'assistant',
+				content: 'Claude Code is not signed in on this machine',
+				timestamp: 2,
+				failed: true,
+			},
+		]);
+		await vi.waitFor(() => expect(spawn).toHaveBeenCalled());
+		const config = spawn.mock.calls[0][0];
+		completeTurn(listeners, config.sessionId, VALID_RESPONSE);
+		await pending;
+
+		expect(config).toMatchObject({ toolType: 'codex', cwd: '/home/t' });
+		expect(config.prompt).toContain('SYSTEM PROMPT');
+		expect(config.prompt).not.toContain('not signed in');
+	});
+});
+
+describe('pickFeedbackProvider', () => {
+	const all = new Set(['claude-code', 'codex', 'opencode']);
+
+	it('prefers the provider the user agents run over the fixed order', () => {
+		expect(pickFeedbackProvider(['codex', 'codex', 'terminal'], all)).toBe('codex');
+		expect(pickFeedbackProvider(['opencode', 'claude-code', 'opencode'], all)).toBe('opencode');
+	});
+
+	it('ignores a provider the agents use that is not installed', () => {
+		expect(pickFeedbackProvider(['codex'], new Set(['claude-code', 'opencode']))).toBe(
+			'claude-code'
+		);
+	});
+
+	it('falls back to the fixed order with no agents, and to null with nothing installed', () => {
+		expect(pickFeedbackProvider([], new Set(['opencode', 'codex']))).toBe('codex');
+		expect(pickFeedbackProvider(['codex'], new Set())).toBeNull();
 	});
 });

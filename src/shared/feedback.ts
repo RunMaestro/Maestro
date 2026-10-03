@@ -56,6 +56,63 @@ export interface FeedbackSubmitResponse {
 	success: boolean;
 	error?: string;
 	issueUrl?: string;
+	/**
+	 * When filing failed: a github.com "new issue" URL prefilled with the same
+	 * title and body, so the report survives a `gh` that cannot file it (expired
+	 * login, missing scope, an org OAuth restriction). Opening it in a browser
+	 * uses the browser's GitHub session instead of gh's.
+	 */
+	fallbackIssueUrl?: string;
+	/**
+	 * Parts of the report that were dropped so the rest could be filed - a
+	 * screenshot upload or the label that `gh` refused. The issue exists; these
+	 * say what is missing from it.
+	 */
+	warnings?: string[];
+}
+
+export const FEEDBACK_REPO = 'RunMaestro/Maestro';
+export const FEEDBACK_LABEL = 'Maestro-feedback';
+
+/**
+ * GitHub answers a request line much longer than this with a 414, and browsers
+ * start truncating not far past it, so the body is cut to keep the whole URL
+ * under the limit.
+ */
+export const MAX_PREFILLED_ISSUE_URL_LENGTH = 8000;
+
+const PREFILL_TRUNCATION_NOTE =
+	'\n\n_(Truncated to fit in a URL. Paste the rest of the details as a comment.)_';
+
+/**
+ * Build a github.com "new issue" URL prefilled with `title` and `body`.
+ *
+ * The body is shortened (never the title) until the encoded URL fits under
+ * {@link MAX_PREFILLED_ISSUE_URL_LENGTH}. Cutting is done on the raw text and
+ * re-encoded each time, because a cut taken from the encoded string can split
+ * a percent escape and produce a URL GitHub rejects.
+ */
+export function buildPrefilledIssueUrl(title: string, body: string): string {
+	const build = (text: string) =>
+		`https://github.com/${FEEDBACK_REPO}/issues/new?${new URLSearchParams({
+			title,
+			body: text,
+			labels: FEEDBACK_LABEL,
+		}).toString()}`;
+
+	let url = build(body);
+	if (url.length <= MAX_PREFILLED_ISSUE_URL_LENGTH) return url;
+
+	let keep = body.length;
+	while (keep > 0) {
+		// Shrink proportionally to the overshoot; encoding expands text unevenly,
+		// so this converges in a few passes rather than landing in one.
+		const overshoot = url.length - MAX_PREFILLED_ISSUE_URL_LENGTH;
+		keep = Math.max(0, keep - Math.max(overshoot, 64));
+		url = build(body.slice(0, keep).trimEnd() + PREFILL_TRUNCATION_NOTE);
+		if (url.length <= MAX_PREFILLED_ISSUE_URL_LENGTH) return url;
+	}
+	return build(PREFILL_TRUNCATION_NOTE.trim());
 }
 
 export interface FeedbackAttachmentPayload {

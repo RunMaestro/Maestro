@@ -8,6 +8,8 @@
  */
 
 import type { ToolType } from '../types';
+import type { AgentError, AgentErrorType } from '../../shared/types';
+import { getAgentDisplayName } from '../../shared/agentMetadata';
 import { getStdinFlags } from '../utils/spawnHelpers';
 
 // ============================================================================
@@ -21,6 +23,13 @@ export interface FeedbackMessage {
 	confidence?: number;
 	category?: FeedbackCategory;
 	summary?: string;
+	/**
+	 * An assistant bubble reporting that the provider could not answer. Shown to
+	 * the user but kept out of the transcript sent to the agent: it is not
+	 * something the agent said, and after a provider switch it would only tell
+	 * the new provider about the old one's login.
+	 */
+	failed?: boolean;
 }
 
 export type FeedbackCategory =
@@ -70,6 +79,19 @@ export interface FeedbackDiagnostic {
 	timestamp: number;
 }
 
+/**
+ * The interview agent could not answer at all: its provider is not signed in,
+ * crashed, or is not installed. Distinct from a reply the parser could not
+ * read - this one means "try a different provider", so the UI offers that.
+ */
+export interface FeedbackAgentFailure {
+	agentId: ToolType;
+	/** The classified agent error, when the provider's output matched one. */
+	type?: AgentErrorType;
+	/** User-facing text that names the provider and what went wrong. */
+	message: string;
+}
+
 export interface FeedbackSendCallbacks {
 	onChunk?: (chunk: string) => void;
 	onThinkingChunk?: (content: string) => void;
@@ -77,6 +99,59 @@ export interface FeedbackSendCallbacks {
 	onDiagnostic?: (diagnostic: FeedbackDiagnostic) => void;
 	onComplete?: (response: FeedbackParsedResponse) => void;
 	onError?: (error: string) => void;
+	/** Fired instead of `onComplete` when the provider could not answer. */
+	onAgentFailure?: (failure: FeedbackAgentFailure) => void;
+}
+
+/**
+ * Providers the feedback interview can run on, in fallback order. Each one
+ * needs output-format handling in `buildArgsForAgent`, so this is not the full
+ * provider registry.
+ */
+export const FEEDBACK_PROVIDERS: readonly ToolType[] = ['claude-code', 'codex', 'opencode'];
+
+/**
+ * Pick the provider the feedback interview runs on.
+ *
+ * Detection only proves a binary exists, not that it is signed in, so a fixed
+ * "first installed" order hands a Codex-only user a Claude Code interview the
+ * moment a stale `claude` binary is on their PATH. The provider the user's own
+ * agents run is the one most likely to be logged in, so the most-used
+ * supported provider among their agents wins, and the fixed order only breaks
+ * ties or covers an install with no agents yet.
+ */
+export function pickFeedbackProvider(
+	agentToolTypes: readonly string[],
+	available: ReadonlySet<string>
+): ToolType | null {
+	const candidates = FEEDBACK_PROVIDERS.filter((id) => available.has(id));
+	if (candidates.length === 0) return null;
+
+	const usage = new Map<string, number>();
+	for (const toolType of agentToolTypes) {
+		usage.set(toolType, (usage.get(toolType) ?? 0) + 1);
+	}
+	let best = candidates[0];
+	for (const id of candidates) {
+		if ((usage.get(id) ?? 0) > (usage.get(best) ?? 0)) best = id;
+	}
+	return best;
+}
+
+/** Turn an agent error into text that says which provider failed and why. */
+export function describeFeedbackAgentFailure(
+	agentId: ToolType,
+	error: Pick<AgentError, 'type' | 'message'> | null,
+	exitCode?: number
+): string {
+	const name = getAgentDisplayName(agentId);
+	if (error?.type === 'auth_expired') {
+		return `${name} is not signed in on this machine, or its login has expired, so it could not answer. Switch to another provider below, or sign in to ${name} and send your message again.`;
+	}
+	if (error) {
+		return `${name} could not answer: ${error.message}`;
+	}
+	return `${name} stopped before answering${exitCode !== undefined ? ` (exit code ${exitCode})` : ''}. Send your message again, or switch to another provider below.`;
 }
 
 // ============================================================================
@@ -283,6 +358,7 @@ export class FeedbackConversationManager {
 	private exitCleanup?: () => void;
 	private thinkingCleanup?: () => void;
 	private toolCleanup?: () => void;
+	private agentErrorCleanup?: () => void;
 	private timeoutId?: ReturnType<typeof setTimeout>;
 	private sshRemoteConfig?: FeedbackConversationConfig['sshRemoteConfig'];
 	private cwd = '.';
@@ -303,6 +379,24 @@ export class FeedbackConversationManager {
 	}
 
 	/**
+	 * Move the conversation to another provider, keeping its prompt and working
+	 * directory. History travels with each `sendMessage`, so nothing the user
+	 * already said is lost.
+	 */
+	switchAgent(agentType: ToolType): void {
+		if (!this.sessionId) {
+			throw new Error('No active feedback conversation. Call start() first.');
+		}
+		const { systemPrompt, sshRemoteConfig, cwd } = this;
+		this.start({ agentType, systemPrompt, sshRemoteConfig, cwd });
+	}
+
+	/** The provider the conversation is currently running on. */
+	get currentAgent(): ToolType | null {
+		return this.agentType;
+	}
+
+	/**
 	 * Send a user message and get the AI response
 	 */
 	async sendMessage(
@@ -315,15 +409,21 @@ export class FeedbackConversationManager {
 		}
 
 		this.outputBuffer = '';
+		const agentType = this.agentType;
 
-		const agent = await window.maestro.agents.get(this.agentType);
-		if (!agent) {
-			throw new Error(`Agent ${this.agentType} not found`);
-		}
+		const fail = (failure: FeedbackAgentFailure): FeedbackParsedResponse => {
+			callbacks?.onAgentFailure?.(failure);
+			callbacks?.onError?.(failure.message);
+			return { ...DEFAULT_FEEDBACK_RESPONSE, message: failure.message };
+		};
 
+		const agent = await window.maestro.agents.get(agentType);
 		const isRemote = this.sshRemoteConfig?.enabled && this.sshRemoteConfig?.remoteId;
-		if (!isRemote && !agent.available) {
-			throw new Error(`Agent ${this.agentType} is not available`);
+		if (!agent || (!isRemote && !agent.available)) {
+			return fail({
+				agentId: agentType,
+				message: `${getAgentDisplayName(agentType)} is not installed or could not be found on this machine. Switch to another provider below.`,
+			});
 		}
 
 		const prompt = this.buildPrompt(userMessage, history);
@@ -396,24 +496,40 @@ export class FeedbackConversationManager {
 				);
 			}
 
+			// Agent error listener - an auth rejection, quota, or crash classified
+			// from the provider's output. Recorded rather than resolved on: the
+			// process still exits after it, and the exit decides the turn.
+			let agentError: Pick<AgentError, 'type' | 'message'> | null = null;
+			this.agentErrorCleanup = window.maestro.process.onAgentError?.(
+				(sid: string, error: { type: string; message: string }) => {
+					if (sid !== this.sessionId) return;
+					agentError = { type: error.type as AgentErrorType, message: error.message };
+				}
+			);
+
 			// Exit listener
 			this.exitCleanup = window.maestro.process.onExit((sid: string, code: number) => {
 				if (sid !== this.sessionId) return;
 				this.cleanupListeners();
 
-				if (code === 0) {
-					const parsed = extractJsonFromOutput(this.outputBuffer);
-					const response = parsed ?? DEFAULT_FEEDBACK_RESPONSE;
-					callbacks?.onComplete?.(response);
-					resolve(response);
-				} else {
-					const errorResponse = {
-						...DEFAULT_FEEDBACK_RESPONSE,
-						message: 'Something went wrong processing your message. Please try again.',
-					};
-					callbacks?.onError?.(`Agent exited with code ${code}`);
-					resolve(errorResponse);
+				const parsed = code === 0 ? extractJsonFromOutput(this.outputBuffer) : null;
+				if (parsed) {
+					callbacks?.onComplete?.(parsed);
+					resolve(parsed);
+					return;
 				}
+				if (code !== 0 || agentError) {
+					resolve(
+						fail({
+							agentId: agentType,
+							type: agentError?.type,
+							message: describeFeedbackAgentFailure(agentType, agentError, code),
+						})
+					);
+					return;
+				}
+				callbacks?.onComplete?.(DEFAULT_FEEDBACK_RESPONSE);
+				resolve(DEFAULT_FEEDBACK_RESPONSE);
 			});
 
 			// Build args based on agent type
@@ -438,7 +554,7 @@ export class FeedbackConversationManager {
 			// install, or change a setting in the app it is filing a bug about.
 			window.maestro.process.spawn({
 				sessionId: currentSessionId,
-				toolType: this.agentType!,
+				toolType: agentType,
 				cwd: this.cwd,
 				command: commandToUse,
 				args: argsForSpawn,
@@ -503,7 +619,7 @@ export class FeedbackConversationManager {
 			for (const msg of history) {
 				if (msg.role === 'user') {
 					prompt += `User: ${msg.content}\n\n`;
-				} else if (msg.role === 'assistant') {
+				} else if (msg.role === 'assistant' && !msg.failed) {
 					prompt += `Assistant: ${msg.content}\n\n`;
 				}
 			}
@@ -532,6 +648,8 @@ export class FeedbackConversationManager {
 		this.thinkingCleanup = undefined;
 		this.toolCleanup?.();
 		this.toolCleanup = undefined;
+		this.agentErrorCleanup?.();
+		this.agentErrorCleanup = undefined;
 	}
 
 	/**
