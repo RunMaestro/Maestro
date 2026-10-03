@@ -68,6 +68,7 @@ class Logger extends EventEmitter {
 	private logFilePath: string;
 	private logFileStream: fs.WriteStream | null = null;
 	private currentLogDate: string = '';
+	private consoleToStderr = false;
 
 	private levelPriority = LOG_LEVEL_PRIORITY;
 
@@ -306,6 +307,18 @@ class Logger extends EventEmitter {
 		return this.maxLogs;
 	}
 
+	/**
+	 * Send every console echo to stderr, whatever its level.
+	 *
+	 * For processes whose stdout is a data channel rather than a diagnostics
+	 * stream: `maestro-cli` reuses main-process modules (the WakaTime manager,
+	 * agent spawning) and prints JSON on stdout, so an `info` line echoed there
+	 * by `console.info` corrupts output that scripts parse.
+	 */
+	routeConsoleToStderr(): void {
+		this.consoleToStderr = true;
+	}
+
 	private shouldLog(level: MainLogLevel): boolean {
 		return this.levelPriority[level] >= this.levelPriority[this.minLevel];
 	}
@@ -346,6 +359,10 @@ class Logger extends EventEmitter {
 		// (e.g., when a parent process consuming output dies unexpectedly)
 		// Fixes MAESTRO-5C
 		try {
+			if (this.consoleToStderr) {
+				console.error(message, entry.data || '');
+				return;
+			}
 			switch (entry.level) {
 				case 'error':
 					console.error(message, entry.data || '');
