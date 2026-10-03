@@ -40,6 +40,7 @@ import {
 import { createProgressPoll } from './batchProgressPoll';
 import { claimFlushState, type AutoRunFlushStateRefs } from './batchFlushState';
 import { beginSleepAwareSpan } from '../../../services/systemSleep';
+import { getClientInstanceId } from '../../../utils/clientInstance';
 import {
 	clearSteeringNotes,
 	takeSteeringNotesForDispatch,
@@ -243,7 +244,13 @@ export function useBatchRunner({
 			// and browser clients, but every renderer shares this main-process claim.
 			let claimedStart = false;
 			try {
-				claimedStart = await window.maestro.web.claimAutoRunStart(sessionId);
+				// The owner record is what lets this tab pick the run back up if the
+				// page reloads mid-run (#1470).
+				claimedStart = await window.maestro.web.claimAutoRunStart(sessionId, {
+					instanceId: getClientInstanceId(),
+					config,
+					folderPath,
+				});
 			} catch (error) {
 				window.maestro.logger.log('error', 'Failed to claim Auto Run start', 'BatchProcessor', {
 					sessionId,

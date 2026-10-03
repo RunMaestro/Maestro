@@ -1632,7 +1632,14 @@ describe('useBatchProcessor hook', () => {
 
 			// Should not have spawned agent due to worktree failure
 			expect(mockOnSpawnAgent).not.toHaveBeenCalled();
-			expect(window.maestro.web.claimAutoRunStart).toHaveBeenCalledWith('test-session-id');
+			expect(window.maestro.web.claimAutoRunStart).toHaveBeenCalledWith(
+				'test-session-id',
+				expect.objectContaining({
+					instanceId: expect.any(String),
+					folderPath: '/test/folder',
+					config: expect.objectContaining({ prompt: expect.any(String) }),
+				})
+			);
 			expect(window.maestro.web.releaseAutoRunStartClaim).toHaveBeenCalledWith('test-session-id');
 		});
 
