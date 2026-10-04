@@ -458,6 +458,7 @@ export const TerminalView = memo(
 									}
 								}}
 								sessionId={terminalSessionId}
+								persistScrollback
 								theme={theme}
 								fontFamily={fontFamily}
 								fontSize={fontSize}

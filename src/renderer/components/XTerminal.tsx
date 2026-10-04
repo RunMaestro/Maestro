@@ -3,6 +3,7 @@ import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { SearchAddon } from '@xterm/addon-search';
 import { Unicode11Addon } from '@xterm/addon-unicode11';
+import { SerializeAddon } from '@xterm/addon-serialize';
 import type { ISearchOptions } from '@xterm/addon-search';
 import type { ILink } from '@xterm/xterm';
 import '@xterm/xterm/css/xterm.css';
@@ -17,6 +18,12 @@ import { openUrl } from '../utils/openUrl';
 import { safeClipboardWrite } from '../utils/clipboard';
 import { readLogicalLine } from '../utils/terminalBuffer';
 import { logger } from '../utils/logger';
+import { useEventListener } from '../hooks/utils/useEventListener';
+import {
+	TERMINAL_SCROLLBACK_MAX_SAVE_WAIT_MS,
+	TERMINAL_SCROLLBACK_SAVE_DELAY_MS,
+	serializeScrollbackWithinCap,
+} from '../../shared/terminalScrollback';
 import {
 	createCanvasMeasureAdvance,
 	resolveTerminalFontFamily,
@@ -237,7 +244,15 @@ export interface XTerminalProps {
 	onCopySelection?: (text: string) => void;
 	/** Called when the user chooses "Send to Agent" on the selection right-click menu. */
 	onSendSelectionToAgent?: (text: string) => void;
+	/** Save the scrollback to disk (keyed by `sessionId`) as output arrives, and
+	 *  write the saved copy back in on mount, so history survives an app restart.
+	 *  Read once at mount. Defaults to false. */
+	persistScrollback?: boolean;
 }
+
+/** Drawn under restored history so it reads as the past, not as fresh output. */
+const RESTORED_SCROLLBACK_MARKER =
+	'\x1b[0m\r\n\x1b[2m--- restored from previous session ---\x1b[0m\r\n';
 
 // ============================================================================
 // Component
@@ -255,6 +270,7 @@ export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XT
 		isActive = true,
 		onCopySelection,
 		onSendSelectionToAgent,
+		persistScrollback = false,
 	},
 	ref
 ) {
@@ -301,6 +317,15 @@ export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XT
 	// failures we stop re-initialising and let xterm's DOM renderer take over. Reset
 	// to 0 when the tab becomes active again so a healthy visit gets WebGL back.
 	const webglContextLossCountRef = useRef(0);
+	const serializeAddonRef = useRef<SerializeAddon | null>(null);
+	// Writes held back while the saved scrollback loads, so the restored history
+	// lands ABOVE the new shell's output and the "Starting terminal..." line
+	// rather than after them. null = not restoring (or not persisting at all).
+	const pendingWritesRef = useRef<string[] | null>(persistScrollback ? [] : null);
+	const scrollbackSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+	// When the oldest unsaved output arrived, so streaming output that never goes
+	// quiet still gets saved every TERMINAL_SCROLLBACK_MAX_SAVE_WAIT_MS.
+	const scrollbackDirtySinceRef = useRef<number | null>(null);
 
 	// Link context menu state
 	const [linkMenu, setLinkMenu] = useState<LinkContextMenuState | null>(null);
@@ -317,12 +342,54 @@ export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XT
 	const onSendSelectionToAgentRef = useRef(onSendSelectionToAgent);
 	onSendSelectionToAgentRef.current = onSendSelectionToAgent;
 
+	const writeToTerminal = useCallback((data: string) => {
+		const pending = pendingWritesRef.current;
+		if (pending) {
+			pending.push(data);
+			return;
+		}
+		terminalRef.current?.write(data);
+	}, []);
+
+	const saveScrollbackNow = useCallback(() => {
+		if (scrollbackSaveTimerRef.current) clearTimeout(scrollbackSaveTimerRef.current);
+		scrollbackSaveTimerRef.current = null;
+		scrollbackDirtySinceRef.current = null;
+		const addon = serializeAddonRef.current;
+		// Saving mid-restore would overwrite the snapshot with a near-empty buffer.
+		if (!addon || pendingWritesRef.current) return;
+		const snapshot = serializeScrollbackWithinCap((rows) =>
+			addon.serialize({ scrollback: rows, excludeAltBuffer: true, excludeModes: true })
+		);
+		window.maestro.terminalScrollback.save(sessionId, snapshot).catch((err) => {
+			logger.warn('[XTerminal] Failed to save scrollback:', undefined, err);
+		});
+	}, [sessionId]);
+
+	// Debounced on output: written after a quiet period, or after the max wait
+	// when output never stops, never once per chunk.
+	const scheduleScrollbackSave = useCallback(() => {
+		if (!serializeAddonRef.current) return;
+		const now = Date.now();
+		const dirtySince = scrollbackDirtySinceRef.current ?? now;
+		scrollbackDirtySinceRef.current = dirtySince;
+		if (scrollbackSaveTimerRef.current) clearTimeout(scrollbackSaveTimerRef.current);
+		const delay = Math.max(
+			0,
+			Math.min(
+				TERMINAL_SCROLLBACK_SAVE_DELAY_MS,
+				dirtySince + TERMINAL_SCROLLBACK_MAX_SAVE_WAIT_MS - now
+			)
+		);
+		scrollbackSaveTimerRef.current = setTimeout(saveScrollbackNow, delay);
+	}, [saveScrollbackNow]);
+
 	// Expose handle to parent
 	useImperativeHandle(
 		ref,
 		(): XTerminalHandle => ({
 			write(data: string) {
-				terminalRef.current?.write(data);
+				writeToTerminal(data);
 			},
 			focus() {
 				terminalRef.current?.focus();
@@ -405,7 +472,7 @@ export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XT
 				pushPtySizeRef.current();
 			},
 		}),
-		[]
+		[writeToTerminal]
 	);
 
 	// Tell the PTY what the visible grid is. Cheap to call as often as you like: a
@@ -556,6 +623,11 @@ export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XT
 		term.loadAddon(fitAddon);
 		term.loadAddon(searchAddon);
 		term.loadAddon(unicode11Addon);
+		if (persistScrollback) {
+			const serializeAddon = new SerializeAddon();
+			term.loadAddon(serializeAddon);
+			serializeAddonRef.current = serializeAddon;
+		}
 		term.unicode.activeVersion = '11';
 
 		// Custom link provider: detects URLs, tracks hover for right-click context menu
@@ -780,6 +852,9 @@ export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XT
 			resizeObserver.disconnect();
 			if (resizeTimerRef.current) clearTimeout(resizeTimerRef.current);
 			if (selectionCopyTimerRef.current) clearTimeout(selectionCopyTimerRef.current);
+			if (scrollbackSaveTimerRef.current) clearTimeout(scrollbackSaveTimerRef.current);
+			scrollbackSaveTimerRef.current = null;
+			serializeAddonRef.current = null;
 			webglCtxLossDisposableRef.current?.dispose();
 			webglCtxLossDisposableRef.current = null;
 			webglAddonRef.current?.dispose();
@@ -791,15 +866,53 @@ export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XT
 		};
 	}, []); // Mount once - other effects handle dynamic prop changes
 
+	// Restore saved scrollback once, then release whatever was written meanwhile.
+	// The history goes straight into xterm rather than through the PTY data path,
+	// so nothing that reacts to new output (activity, unread) sees it.
+	useEffect(() => {
+		if (!persistScrollback) return;
+		let cancelled = false;
+		const finish = (snapshot: string | null) => {
+			if (cancelled) return;
+			const pending = pendingWritesRef.current ?? [];
+			pendingWritesRef.current = null;
+			const term = terminalRef.current;
+			if (!term) return;
+			if (snapshot) term.write(snapshot + RESTORED_SCROLLBACK_MARKER);
+			for (const data of pending) term.write(data);
+			// A save that came due mid-restore was skipped; cover what was held back.
+			if (pending.length > 0) scheduleScrollbackSave();
+		};
+		window.maestro.terminalScrollback.load(sessionId).then(finish, (err) => {
+			logger.warn('[XTerminal] Failed to load saved scrollback:', undefined, err);
+			finish(null);
+		});
+		return () => {
+			cancelled = true;
+		};
+		// Mount-only: the snapshot belongs to the tab this instance was created for.
+	}, []);
+
 	// IPC: receive data from PTY → write to terminal
 	useEffect(() => {
 		const cleanup = window.maestro.process.onData((sid: string, data: string) => {
-			if (sid === sessionId && terminalRef.current) {
-				terminalRef.current.write(data);
+			if (sid === sessionId) {
+				writeToTerminal(data);
+				scheduleScrollbackSave();
 			}
 		});
 		return cleanup;
-	}, [sessionId]);
+	}, [sessionId, writeToTerminal, scheduleScrollbackSave]);
+
+	// Quitting skips React cleanup, so a save still waiting on its quiet period
+	// is written now (same last chance the session store takes).
+	useEventListener(
+		'beforeunload',
+		() => {
+			if (scrollbackSaveTimerRef.current) saveScrollbackNow();
+		},
+		{ enabled: persistScrollback }
+	);
 
 	// IPC: send terminal input → PTY
 	useEffect(() => {
