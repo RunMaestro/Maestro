@@ -95,7 +95,7 @@ export class PluginKvStore {
 		pluginId: string,
 		key: string,
 		value: string,
-		options?: { evictOldestOnLimit?: boolean }
+		options?: { evictOldestOnLimit?: boolean; touch?: boolean }
 	): void {
 		this.assertKey(key);
 		if (typeof value !== 'string') throw new Error('storage value must be a string');
@@ -114,6 +114,9 @@ export class PluginKvStore {
 				}
 				delete store[keys[0]];
 			}
+		} else if (options?.touch) {
+			// Object key order is the eviction order; move a resumed binding to the end.
+			delete store[key];
 		}
 		store[key] = value;
 		this.persist(pluginId, store);

@@ -40,4 +40,16 @@ describe('plugin provider session bindings', () => {
 		expect(() => bindings.assertOwned('relay', 'agent-a', 'provider-3')).not.toThrow();
 		expect(() => bindings.assertOwned('relay', 'agent-b', 'provider-3')).toThrow(/not owned/);
 	});
+
+	it('keeps a resumed binding among the newest across host restarts', () => {
+		const bindings = new PluginAgentSessionBindings(baseDir, 2);
+		bindings.remember('relay', 'agent-a', 'provider-1');
+		bindings.remember('relay', 'agent-b', 'provider-2');
+		bindings.remember('relay', 'agent-a', 'provider-1');
+		bindings.remember('relay', 'agent-c', 'provider-3');
+		const restarted = new PluginAgentSessionBindings(baseDir, 2);
+		expect(() => restarted.assertOwned('relay', 'agent-a', 'provider-1')).not.toThrow();
+		expect(() => restarted.assertOwned('relay', 'agent-b', 'provider-2')).toThrow(/not owned/);
+		expect(() => restarted.assertOwned('relay', 'agent-c', 'provider-3')).not.toThrow();
+	});
 });

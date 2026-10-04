@@ -32,7 +32,7 @@ export class PluginAgentSessionBindings {
 		}
 		// Keep the newest sessions resumable with one atomic replacement at the
 		// limit. Evicted sessions fail closed in assertOwned.
-		if (!currentOwner) this.store.set(pluginId, key, agentId, { evictOldestOnLimit: true });
+		this.store.set(pluginId, key, agentId, { evictOldestOnLimit: true, touch: true });
 	}
 
 	purge(pluginId: string): void {

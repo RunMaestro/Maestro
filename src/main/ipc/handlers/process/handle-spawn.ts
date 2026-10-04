@@ -345,7 +345,15 @@ async function handleProcessSpawnImpl(
 		pluginRunProofFile = undefined;
 		if (exitListener.current) processManager.off('exit', exitListener.current);
 		if (token) pluginToolRunIdentity.revoke(token);
-		if (file) removePluginRunProofFile(file);
+		if (file) {
+			try {
+				removePluginRunProofFile(file);
+			} catch (error) {
+				logger.warn('Could not remove plugin run proof file', LOG_CONTEXT, {
+					error: String(error),
+				});
+			}
+		}
 	};
 	proofCleanup.release = cleanupPluginRunProof;
 	const mcpCap = MCP_CONFIG_BY_AGENT[config.toolType];

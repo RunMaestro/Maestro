@@ -1600,7 +1600,7 @@ program
 	.command('test-ssh-remote <remote-id>')
 	.description('Test an SSH remote connection and report what the remote answered')
 	.option('-a, --agent <command>', 'Also check whether this binary is on the remote PATH')
-	.option('--timeout <seconds>', 'Give up after this many seconds (default: 60)')
+	.option('--timeout <seconds>', 'Give up after this many seconds', Number, 60)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(testSshRemote);
 

@@ -107,6 +107,18 @@ describe('PluginKvStore', () => {
 		expect(store.keys('p')).toEqual(['b', 'c', 'd']);
 	});
 
+	it('moves a touched key to the end only after its replacement succeeds', () => {
+		store.set('p', 'a', '1');
+		store.set('p', 'b', '2');
+		failRename.current = true;
+		expect(() => store.set('p', 'a', '1', { touch: true })).toThrow(/simulated rename failure/);
+		failRename.current = false;
+		expect(store.keys('p')).toEqual(['a', 'b']);
+		store.set('p', 'a', '1', { touch: true });
+		expect(store.keys('p')).toEqual(['b', 'a']);
+		expect(new PluginKvStore({ baseDir: base }).keys('p')).toEqual(['b', 'a']);
+	});
+
 	it('keeps cache aligned with disk if final hardening fails after rename', () => {
 		store.set('p', 'a', '1');
 		store.set('p', 'b', '2');

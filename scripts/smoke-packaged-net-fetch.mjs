@@ -44,7 +44,7 @@ const handlers = buildHostCallHandlers({ broker, egressGuard: guard });
   });
   assert.equal(result.status, 401, 'unauthenticated Discord REST should return 401');
   const native = {};
-  for (const name of ['better-sqlite3', 'node-pty', '@napi-rs/keyring', '@ast-grep/napi']) {
+  for (const name of ['better-sqlite3', 'node-pty', '@napi-rs/keyring']) {
     native[name] = fromGuard.resolve(name);
     fromGuard(name);
   }

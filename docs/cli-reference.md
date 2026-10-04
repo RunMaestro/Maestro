@@ -268,6 +268,12 @@ Ask another agent a question and print its answer (background consult - never to
 | `--timeout <seconds>` | How long to wait for the answer (default 600, min 10, max 3600)                                                                                                                                                                              | -       |
 | `--json`              | Output the answer as JSON                                                                                                                                                                                                                    | -       |
 
+`ask` is a background consult: it prints an answer without touching the target agent's open conversation. `dispatch` hands over work in a visible tab and returns a tab ID. Ask a self-contained question, or pass `--with-context` to include your transcript. The consult is recorded in the target's history.
+
+```bash
+maestro-cli ask "Substrate PedTome" "How does your authentication gate work?" --from "$MY_AGENT_ID"
+```
+
 ## `maestro-cli queue`
 
 Inspect and manage the desktop execution queue (from dispatch --queue)
@@ -1218,6 +1224,15 @@ Create a new SSH remote configuration
 | `--set-default`            | Set as the global default SSH remote                                         | -       |
 | `--json`                   | Output as JSON (for scripting)                                               | -       |
 
+`--ssh-option` passes an option to `ssh -o`, overriding Maestro defaults and `~/.ssh/config`. Use it for a tunnel `ProxyCommand`, a `ProxyJump` bastion, or a longer `ConnectTimeout`. `RequestTTY` is reserved because Maestro derives it per command; forcing a TTY can corrupt an agent's stream-json output.
+
+```bash
+maestro-cli create-ssh-remote "Tunnelled box" \
+  --host tailcat-devbox \
+  --ssh-option "ProxyCommand=/opt/homebrew/bin/tailcat tcXXXX 22" \
+  --ssh-option ConnectTimeout=45
+```
+
 ## `maestro-cli update-ssh-remote <remote-id>`
 
 Update an existing SSH remote configuration
@@ -1242,6 +1257,8 @@ Update an existing SSH remote configuration
 | `--set-default`              | Set as the global default SSH remote                            | -       |
 | `--json`                     | Output as JSON (for scripting)                                  | -       |
 
+Only supplied fields change. `--env` and `--ssh-option` merge with existing values; use `--clear-env` or `--clear-ssh-options` to start from empty. `--disable-*` keeps a value but stops passing it to SSH; `--enable-*` restores it. Clearing also removes disabled entries. JSON output includes `sshOptions`, disabled entries, and `resolvedSshOptions` (the effective options including defaults).
+
 ## `maestro-cli remove-ssh-remote <remote-id>`
 
 Remove an SSH remote configuration
@@ -1257,8 +1274,10 @@ Test an SSH remote connection and report what the remote answered
 | Option                  | Description                                          | Default |
 | ----------------------- | ---------------------------------------------------- | ------- |
 | `-a, --agent <command>` | Also check whether this binary is on the remote PATH | -       |
-| `--timeout <seconds>`   | Give up after this many seconds (default: 60)        | -       |
+| `--timeout <seconds>`   | Give up after this many seconds                      | `60`    |
 | `--json`                | Output as JSON (for scripting)                       | -       |
+
+`test-ssh-remote` uses the same connection options as agent spawning and prints the remote hostname, so tunnel and `ProxyCommand` errors can be caught during setup. It also works while the desktop is closed.
 
 ## `maestro-cli display`
 
