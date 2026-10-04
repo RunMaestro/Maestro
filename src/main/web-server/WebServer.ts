@@ -18,6 +18,8 @@
  * - Token regenerated on each app restart (unless Persistent Web Link is enabled)
  * - Invalid/missing token redirects to website
  * - No access without knowing the token
+ * - Requests from a foreign page (Origin not this server) are refused, HTTP and
+ *   WebSocket alike, so learning the URL does not let any website drive it
  */
 
 import Fastify from 'fastify';
@@ -39,6 +41,7 @@ import { captureException } from '../utils/sentry';
 import { WebSocketMessageHandler } from './handlers';
 import { BroadcastService } from './services';
 import { ApiRoutes, StaticRoutes, WsRoute } from './routes';
+import { registerOriginGuard } from './originGuard';
 import { LiveSessionManager, CallbackRegistry } from './managers';
 
 // Import shared types from canonical location
@@ -777,13 +780,23 @@ export class WebServer {
 	// ============ Server Setup ============
 
 	private async setupMiddleware(): Promise<void> {
-		// Enable CORS for web access
-		await this.server.register(cors, {
-			origin: true,
-		});
-
-		// Enable WebSocket support
+		// Enable WebSocket support. Registered before the Origin guard on
+		// purpose: its own onRequest hook is what marks an upgrade request so
+		// its onResponse hook destroys the socket, and a guard that replied
+		// first would leave every refused handshake's socket open.
 		await this.server.register(websocket);
+
+		// Refuse foreign pages before any route sees them. This is the only
+		// check the WebSocket handshake gets, since CORS never governs a
+		// WebSocket (issue #1710).
+		registerOriginGuard(this.server);
+
+		// The web interface is always served by this server, so it never needs
+		// a cross-origin grant. Never reflect the request's Origin: that hands
+		// every response body to whichever page learned the URL.
+		await this.server.register(cors, {
+			origin: false,
+		});
 
 		// Enable rate limiting for web interface endpoints to prevent abuse
 		await this.server.register(rateLimit, {
