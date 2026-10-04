@@ -1,9 +1,16 @@
 {
-	"extends": "./tsconfig.json",
+	"extends": "./tsconfig.cli.json",
 	"compilerOptions": {
 		"jsx": "react-jsx",
-		"types": ["node"]
+		"module": "ESNext",
+		// Ink 5 ships ESM-only types behind an "exports" map, which node10
+		// resolution (the CLI default) cannot read.
+		"moduleResolution": "bundler",
+		// Only for `process.resourcesPath`, which the library reads behind a
+		// `typeof` guard; the CLI config gets the same declaration transitively.
+		"types": ["node", "electron"],
+		"noEmit": true
 	},
-	"include": ["src/tui/**/*", "src/shared/**/*"],
-	"exclude": ["**/*.test.ts", "**/*.test.tsx", "**/__tests__/**/*"]
+	"include": ["src/tui/**/*", "src/shared/**/*", "src/types/**/*"],
+	"exclude": ["node_modules", "dist", "release", "**/__tests__/**", "**/*.test.ts", "**/*.test.tsx"]
 }
