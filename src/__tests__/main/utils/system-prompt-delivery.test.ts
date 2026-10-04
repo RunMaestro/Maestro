@@ -29,6 +29,7 @@ import { isWindows } from '../../../shared/platformDetection';
 import {
 	applySystemPromptDelivery,
 	redactSystemPromptArg,
+	systemPromptTempFileName,
 	SYSTEM_PROMPT_TEMP_FILE_TTL_MS,
 	type SystemPromptDeliveryInput,
 } from '../../../main/utils/system-prompt-delivery';
@@ -85,13 +86,45 @@ describe('applySystemPromptDelivery', () => {
 		const result = await applySystemPromptDelivery(base());
 
 		expect(result.delivery).toBe('file');
-		expect(result.tempFile).toMatch(/maestro-sysprompt-sess-1-\d+\.txt$/);
+		expect(result.tempFile).toMatch(/maestro-sysprompt-sess-1-\d+-[0-9a-f]{8}\.txt$/);
 		expect(result.args).toEqual(['--print', '--append-system-prompt-file', result.tempFile]);
-		expect(fsp.writeFile).toHaveBeenCalledWith(result.tempFile, 'SYSTEM', 'utf-8');
+		expect(fsp.writeFile).toHaveBeenCalledWith(result.tempFile, 'SYSTEM', {
+			encoding: 'utf-8',
+			mode: 0o600,
+		});
 
 		expect(fsp.unlink).not.toHaveBeenCalled();
 		await vi.advanceTimersByTimeAsync(SYSTEM_PROMPT_TEMP_FILE_TTL_MS + 1);
 		expect(fsp.unlink).toHaveBeenCalledWith(result.tempFile);
+	});
+
+	it('builds a Windows-safe temp file name from a user-typed session id', async () => {
+		vi.mocked(isWindows).mockReturnValue(true);
+		const result = await applySystemPromptDelivery(
+			base({ sessionId: 'group-chat-1-participant-feature/auth a|b what?:*"<>\\' })
+		);
+		const name = result.tempFile!.split(/[\\/]/).pop()!;
+		expect(name).toMatch(/^maestro-sysprompt-[A-Za-z0-9_-]+-\d+-[0-9a-f]{8}\.txt$/);
+		expect(name).toContain('participant-feature_auth_a_b_what_');
+	});
+
+	it('caps the slug and keeps same-millisecond names apart', () => {
+		const a = systemPromptTempFileName('x'.repeat(500));
+		const b = systemPromptTempFileName('x'.repeat(500));
+		expect(a).not.toBe(b);
+		expect(a.match(/^maestro-sysprompt-(x+)-/)![1]).toHaveLength(64);
+	});
+
+	it('falls back to the inline flag (no throw) when the temp file write fails', async () => {
+		vi.mocked(isWindows).mockReturnValue(true);
+		vi.mocked(fsp.writeFile).mockRejectedValueOnce(new Error('EINVAL'));
+
+		const result = await applySystemPromptDelivery(base());
+
+		expect(result.delivery).toBe('cli-arg');
+		expect(result.tempFile).toBeUndefined();
+		expect(result.args).toEqual(['--print', '--append-system-prompt', 'SYSTEM']);
+		expect(fsp.unlink).not.toHaveBeenCalled();
 	});
 
 	it('passes inline over SSH even on Windows (no CreateProcess limit in a stdin script)', async () => {

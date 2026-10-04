@@ -28,6 +28,7 @@
 import * as os from 'os';
 import * as fsp from 'fs/promises';
 import * as path from 'path';
+import { randomUUID } from 'crypto';
 import { isWindows } from '../../shared/platformDetection';
 import { embedSystemPromptInPrompt } from '../../shared/embeddedSystemPrompt';
 import { logger } from './logger';
@@ -82,6 +83,18 @@ export interface SystemPromptDeliveryResult {
 }
 
 /**
+ * Temp file name for a Windows system prompt. The session id can carry a
+ * user-typed agent name (Group Chat participant ids do: `feature/auth`, `a|b`,
+ * `what?`), which Windows rejects in a file name, so it is reduced to a safe,
+ * capped slug. The random suffix keeps two spawns in the same millisecond apart.
+ */
+export function systemPromptTempFileName(sessionId: string): string {
+	const slug = sessionId.replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 64);
+	const suffix = randomUUID().replace(/-/g, '').slice(0, 8);
+	return `maestro-sysprompt-${slug}-${Date.now()}-${suffix}.txt`;
+}
+
+/**
  * Apply the system prompt to a spawn's args/prompt. Returns new values; the
  * inputs are not mutated.
  */
@@ -95,8 +108,28 @@ export async function applySystemPromptDelivery(
 	if (input.supportsAppendSystemPrompt) {
 		if (isWindows() && !input.isSshSession) {
 			// Windows local: write to temp file to avoid CLI length limits
-			const tempFile = path.join(os.tmpdir(), `maestro-sysprompt-${sessionId}-${Date.now()}.txt`);
-			await fsp.writeFile(tempFile, systemPrompt, 'utf-8');
+			const tempFile = path.join(os.tmpdir(), systemPromptTempFileName(sessionId));
+			try {
+				// Owner-only: the prompt carries the user's own context.
+				await fsp.writeFile(tempFile, systemPrompt, { encoding: 'utf-8', mode: 0o600 });
+			} catch (writeErr) {
+				// A failed write must not cost the agent its spawn. Inline is what every
+				// non-Windows spawn does; only a very long prompt risks the CLI limit.
+				logger.warn(
+					'System prompt temp file write failed; falling back to inline --append-system-prompt',
+					logContext,
+					{
+						agentId,
+						tempFile,
+						error: writeErr instanceof Error ? writeErr.message : String(writeErr),
+					}
+				);
+				return {
+					args: [...args, '--append-system-prompt', systemPrompt],
+					prompt,
+					delivery: 'cli-arg',
+				};
+			}
 			// Schedule cleanup early so the file is removed even if spawn fails.
 			// Fire-and-forget unlink mirrors process-manager/utils/imageUtils.cleanupTempFiles:
 			// silence ENOENT (file already gone), capture other codes via Sentry.

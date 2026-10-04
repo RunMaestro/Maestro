@@ -573,11 +573,7 @@ export async function handleProcessSpawn(
 			prompt: config.prompt.length > 500 ? config.prompt.substring(0, 500) + '...' : config.prompt,
 		}),
 		...(config.appendSystemPrompt && {
-			systemPromptDelivery: agent?.capabilities?.supportsAppendSystemPrompt
-				? systemPromptTempFile
-					? 'file'
-					: 'cli-arg'
-				: 'embedded',
+			systemPromptDelivery: delivered.delivery,
 			...(systemPromptTempFile && { systemPromptFile: systemPromptTempFile }),
 			effectivePromptLength: effectivePrompt?.length ?? 0,
 		}),
