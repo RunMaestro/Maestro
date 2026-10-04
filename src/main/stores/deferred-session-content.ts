@@ -15,6 +15,7 @@
  */
 
 import type { StoredSession } from './types';
+import { pruneAiTabRefs } from './session-ai-tabs';
 import {
 	MAX_PERSISTED_AI_COMMAND_HISTORY,
 	MAX_PERSISTED_SESSION_LOGS,
@@ -183,15 +184,8 @@ export function mergeDeferredSessionContent(
 			),
 		};
 	});
-	const { deferredContent: _deferredContent, ...complete } = merged;
-	if (removedTabIds.size) {
-		complete.unifiedTabOrder = complete.unifiedTabOrder?.filter(
-			(ref: { type: string; id: string }) => ref.type !== 'ai' || !removedTabIds.has(ref.id)
-		);
-		if (removedTabIds.has(complete.activeTabId)) {
-			complete.activeTabId = complete.aiTabs?.[0]?.id ?? '';
-		}
-	}
+	const { deferredContent: _deferredContent, ...rest } = merged;
+	const complete = pruneAiTabRefs(rest as StoredSession, removedTabIds);
 	if (deferred.commands) {
 		// This marker also protects legacy session-level logs omitted from the bootstrap.
 		complete.aiLogs = mergeDeferredItems(

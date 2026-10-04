@@ -42,6 +42,8 @@ import { useSessionStore } from '../../stores/sessionStore';
 import { logger } from '../../utils/logger';
 import { captureException } from '../../utils/sentry';
 import { compactSessionToolOutputs } from '../../../shared/toolOutput';
+import type { SessionTabChanges, SessionTabChangesById } from '../../../shared/sessionTabChanges';
+import { collectSnoozedAiTabs } from '../../utils/snoozeHelpers';
 import { MAX_PERSISTED_SESSION_LOGS } from '../../../shared/deferredSessionContent';
 
 /**
@@ -325,12 +327,39 @@ export interface UseDebouncedPersistenceReturn {
 export const DEFAULT_DEBOUNCE_DELAY = 2000;
 
 /**
+ * Which AI tabs THIS client closed and opened in one agent since its last flush.
+ *
+ * Main needs this to tell a deliberate close from a stale copy: every client
+ * writes the whole agent, so a tab missing from one write and present in the
+ * next proves nothing on its own (issue #1492). A snoozed tab leaves `aiTabs`
+ * too, but it is parked rather than closed - it moves into `snoozedTabs` in the
+ * same update - so it is not reported, or main would refuse it on the way back.
+ */
+function diffAiTabs(prev: Session, curr: Session): SessionTabChanges | null {
+	if (prev.aiTabs === curr.aiTabs) return null;
+	const prevIds = new Set((prev.aiTabs ?? []).map((tab) => tab.id));
+	const currIds = new Set((curr.aiTabs ?? []).map((tab) => tab.id));
+	const opened = [...currIds].filter((id) => !prevIds.has(id));
+	let closed = [...prevIds].filter((id) => !currIds.has(id));
+	if (closed.length > 0 && curr.snoozedTabs?.length) {
+		const snoozed = new Set(curr.snoozedTabs.flatMap(collectSnoozedAiTabs).map((tab) => tab.id));
+		closed = closed.filter((id) => !snoozed.has(id));
+	}
+	if (opened.length === 0 && closed.length === 0) return null;
+	return {
+		...(closed.length > 0 ? { closed } : {}),
+		...(opened.length > 0 ? { opened } : {}),
+	};
+}
+
+/**
  * Diff two sessions arrays by reference identity per element.
  *
  * Returns the subset of `curr` whose session reference differs from the
  * matching id in `prev` (these are the sessions that need to be shipped),
- * plus the ids of any sessions that existed in `prev` but not in `curr`
- * (tombstones).
+ * the ids of any sessions that existed in `prev` but not in `curr`
+ * (tombstones), and the AI tabs opened or closed inside the agents present in
+ * both (see {@link diffAiTabs}).
  *
  * Reference equality works because mutators always create new session
  * objects via spread (`{ ...session, ...updates }`) - that's the React/Zustand
@@ -339,17 +368,22 @@ export const DEFAULT_DEBOUNCE_DELAY = 2000;
 function diffSessions(
 	prev: Session[],
 	curr: Session[]
-): { dirty: Session[]; tombstones: string[] } {
+): { dirty: Session[]; tombstones: string[]; tabChanges: SessionTabChangesById } {
 	const prevById = new Map<string, Session>();
 	for (const session of prev) prevById.set(session.id, session);
 
 	const dirty: Session[] = [];
 	const currIds = new Set<string>();
+	const tabChanges: SessionTabChangesById = {};
 	for (const session of curr) {
 		currIds.add(session.id);
 		const prevSession = prevById.get(session.id);
 		if (!prevSession || prevSession !== session) {
 			dirty.push(session);
+		}
+		if (prevSession && prevSession !== session) {
+			const changes = diffAiTabs(prevSession, session);
+			if (changes) tabChanges[session.id] = changes;
 		}
 	}
 
@@ -358,7 +392,7 @@ function diffSessions(
 		if (!currIds.has(id)) tombstones.push(id);
 	}
 
-	return { dirty, tombstones };
+	return { dirty, tombstones, tabChanges };
 }
 
 /**
@@ -444,12 +478,12 @@ export function useDebouncedPersistence(
 		const current = sessionsRef.current;
 		if (previouslyPersistedRef.current === null) {
 			const sessionsForPersistence = current.map(prepareSessionForPersistence);
-			const tombstones = mountedSessionsRef.current
-				? diffSessions(mountedSessionsRef.current, current).tombstones
-				: [];
+			const { tombstones, tabChanges } = mountedSessionsRef.current
+				? diffSessions(mountedSessionsRef.current, current)
+				: { tombstones: [], tabChanges: {} };
 			const ok =
-				tombstones.length > 0
-					? await window.maestro.sessions.setMany(sessionsForPersistence, tombstones)
+				tombstones.length > 0 || Object.keys(tabChanges).length > 0
+					? await window.maestro.sessions.setMany(sessionsForPersistence, tombstones, tabChanges)
 					: await window.maestro.sessions.setAll(sessionsForPersistence);
 			if (ok === false) {
 				throw new Error('Session persistence returned false (recoverable disk error)');
@@ -458,7 +492,7 @@ export function useDebouncedPersistence(
 			startupBaselineNeedsFullFlushRef.current = false;
 			return;
 		}
-		const { dirty, tombstones } = diffSessions(previouslyPersistedRef.current, current);
+		const { dirty, tombstones, tabChanges } = diffSessions(previouslyPersistedRef.current, current);
 		const sessionsToPersist = startupBaselineNeedsFullFlushRef.current ? current : dirty;
 		if (sessionsToPersist.length === 0 && tombstones.length === 0) {
 			// Nothing changed - safe to advance the baseline (it would be
@@ -468,7 +502,7 @@ export function useDebouncedPersistence(
 			return;
 		}
 		const dirtyForPersistence = sessionsToPersist.map(prepareSessionForPersistence);
-		const ok = await window.maestro.sessions.setMany(dirtyForPersistence, tombstones);
+		const ok = await window.maestro.sessions.setMany(dirtyForPersistence, tombstones, tabChanges);
 		if (ok === false) {
 			throw new Error('sessions:setMany returned false (recoverable disk error)');
 		}

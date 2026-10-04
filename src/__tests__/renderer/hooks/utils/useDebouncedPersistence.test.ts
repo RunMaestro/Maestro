@@ -1477,7 +1477,8 @@ describe('useDebouncedPersistence', () => {
 				expect(window.maestro.sessions.setAll).not.toHaveBeenCalled();
 				expect(window.maestro.sessions.setMany).toHaveBeenCalledWith(
 					[expect.objectContaining({ id: session.id, name: 'Updated' })],
-					['second-session']
+					['second-session'],
+					{}
 				);
 			});
 
@@ -1511,7 +1512,8 @@ describe('useDebouncedPersistence', () => {
 						expect.objectContaining({ id: 'first', name: 'Repaired First' }),
 						expect.objectContaining({ id: 'second', name: 'Repaired Second' }),
 					],
-					[]
+					[],
+					{}
 				);
 			});
 
@@ -1531,8 +1533,80 @@ describe('useDebouncedPersistence', () => {
 				expect(window.maestro.sessions.setAll).not.toHaveBeenCalled();
 				expect(window.maestro.sessions.setMany).toHaveBeenCalledWith(
 					[expect.objectContaining({ id: 'first' })],
-					['second']
+					['second'],
+					{}
 				);
+			});
+		});
+
+		// Main can only tell a deliberate tab close from a stale copy if the writer
+		// says which tabs IT closed and opened (#1492).
+		describe('AI tab changes', () => {
+			const t1 = makeTab({ id: 't1' });
+			const t2 = makeTab({ id: 't2' });
+
+			/** Load `session`, mount the hook, apply `next`, and flush. */
+			const flushAfter = (session: Session, next: Session) => {
+				seedSessions([session]);
+				renderPersistence(makeInitialLoadRef(true));
+				act(() => {
+					seedSessions([next]);
+				});
+				act(() => {
+					vi.advanceTimersByTime(2000);
+				});
+			};
+
+			it('reports a tab closed since the last flush', () => {
+				const session = makeSession({ id: 's1', aiTabs: [t1, t2] });
+				flushAfter(session, { ...session, aiTabs: [t1] });
+
+				expect(window.maestro.sessions.setAll).not.toHaveBeenCalled();
+				expect(window.maestro.sessions.setMany).toHaveBeenCalledWith(
+					[expect.objectContaining({ id: 's1' })],
+					[],
+					{ s1: { closed: ['t2'] } }
+				);
+			});
+
+			it('reports a tab opened since the last flush', async () => {
+				const session = makeSession({ id: 's1', aiTabs: [t1] });
+				const seeded = { ...session, aiTabs: [t1] };
+				seedSessions([seeded]);
+				renderPersistence(makeInitialLoadRef(true));
+				// First flush establishes the baseline; let its IPC settle.
+				act(() => {
+					seedSessions([{ ...seeded, name: 'Renamed' }]);
+				});
+				await act(async () => {
+					await vi.advanceTimersByTimeAsync(2000);
+				});
+				vi.mocked(window.maestro.sessions.setMany).mockClear();
+
+				act(() => {
+					seedSessions([{ ...seeded, name: 'Renamed', aiTabs: [t1, t2] }]);
+				});
+				act(() => {
+					vi.advanceTimersByTime(2000);
+				});
+
+				expect(window.maestro.sessions.setMany).toHaveBeenCalledWith(
+					[expect.objectContaining({ id: 's1' })],
+					[],
+					{ s1: { opened: ['t2'] } }
+				);
+			});
+
+			it('does not report a snoozed tab as closed', () => {
+				const session = makeSession({ id: 's1', aiTabs: [t1, t2], snoozedTabs: [] });
+				flushAfter(session, {
+					...session,
+					aiTabs: [t1],
+					snoozedTabs: [{ type: 'ai', tab: t2, snoozedAt: 1, wakeAt: 2 } as any],
+				});
+
+				expect(window.maestro.sessions.setMany).not.toHaveBeenCalled();
+				expect(window.maestro.sessions.setAll).toHaveBeenCalled();
 			});
 		});
 

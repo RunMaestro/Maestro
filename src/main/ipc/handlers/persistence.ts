@@ -43,6 +43,8 @@ import {
 	projectWebSession,
 	readDeferredContent,
 } from '../../stores/deferred-session-content';
+import { withoutAiTabs } from '../../stores/session-ai-tabs';
+import type { ClosedSessionTab, SessionTabChangesById } from '../../../shared/sessionTabChanges';
 
 /**
  * Shallow-compare cliActivity for the diff broadcast.
@@ -103,6 +105,11 @@ export interface SessionLifecycleSyncPayload {
 	added: StoredSession[];
 	/** Agents that left the store. Peers drop them from their own list. */
 	removedIds: string[];
+	/**
+	 * AI tabs a client closed inside an agent the others still hold. Peers close
+	 * them in their own tree, so their next flush stops carrying the tab back.
+	 */
+	closedTabs: ClosedSessionTab[];
 }
 
 /** Channel name for {@link SessionLifecycleSyncPayload} pushes. */
@@ -126,6 +133,64 @@ export const SESSION_LIFECYCLE_SYNC_CHANNEL = 'sessions:lifecycleSync';
 const REMOVED_SESSION_TOMBSTONE_LIMIT = 1000;
 
 /**
+ * How many closed AI tabs are remembered as tombstones. Same reasoning, and the
+ * same count-not-age bound, as {@link REMOVED_SESSION_TOMBSTONE_LIMIT}: a peer
+ * holding a stale copy of the agent carries the tab back on its next flush of
+ * that agent, however long that takes. Tabs are closed far more often than
+ * agents, hence the larger cap.
+ */
+const CLOSED_TAB_TOMBSTONE_LIMIT = 5000;
+
+/**
+ * An insertion-ordered set that forgets its oldest entries past `limit`.
+ * Re-adding an entry makes it the newest, so something closed repeatedly stays
+ * young rather than ageing out on its first close.
+ */
+function createTombstoneSet(limit: number) {
+	const entries = new Set<string>();
+	return {
+		get size() {
+			return entries.size;
+		},
+		has: (key: string) => entries.has(key),
+		delete: (key: string) => entries.delete(key),
+		add(key: string) {
+			entries.delete(key);
+			entries.add(key);
+			while (entries.size > limit) {
+				const oldest = entries.values().next().value;
+				if (oldest === undefined) break;
+				entries.delete(oldest);
+			}
+		},
+	};
+}
+
+/**
+ * The AI tab ids a writer listed under `key` for each agent, as `[agentId, tabIds]`
+ * pairs. The argument crosses IPC and the web bridge, so anything that is not
+ * an object of string arrays is read as "no changes" rather than trusted.
+ */
+function reportedTabIds(
+	tabChanges: SessionTabChangesById | null | undefined,
+	key: 'closed' | 'opened'
+): [string, string[]][] {
+	if (!tabChanges || typeof tabChanges !== 'object') return [];
+	const pairs: [string, string[]][] = [];
+	for (const [sessionId, changes] of Object.entries(tabChanges)) {
+		const ids = changes?.[key];
+		if (!Array.isArray(ids)) continue;
+		pairs.push([sessionId, ids.filter((id): id is string => typeof id === 'string' && !!id)]);
+	}
+	return pairs;
+}
+
+/** Tombstone key for one AI tab of one agent. */
+function closedTabKey(sessionId: string, tabId: string): string {
+	return `${sessionId}\u0000${tabId}`;
+}
+
+/**
  * Send an agent lifecycle delta to every client except the one that wrote it.
  *
  * Electron windows are addressed individually so the sender can be skipped by
@@ -138,7 +203,13 @@ function broadcastSessionLifecycle(
 	senderWebContentsId: number | undefined,
 	payload: SessionLifecycleSyncPayload
 ): void {
-	if (payload.added.length === 0 && payload.removedIds.length === 0) return;
+	if (
+		payload.added.length === 0 &&
+		payload.removedIds.length === 0 &&
+		payload.closedTabs.length === 0
+	) {
+		return;
+	}
 	for (const win of BrowserWindow.getAllWindows()) {
 		if (!isWebContentsAvailable(win)) continue;
 		if (win.webContents.id === senderWebContentsId) continue;
@@ -224,22 +295,67 @@ export function registerPersistenceHandlers(
 
 	// Ids closed by a client, newest last. Read by every write path to refuse a
 	// stale peer flush that would resurrect a closed agent (see
-	// REMOVED_SESSION_TOMBSTONE_LIMIT). A Set preserves insertion order, which is
-	// what makes eviction oldest-first.
-	const removedSessionTombstones = new Set<string>();
+	// REMOVED_SESSION_TOMBSTONE_LIMIT).
+	const removedSessionTombstones = createTombstoneSet(REMOVED_SESSION_TOMBSTONE_LIMIT);
 
 	const rememberRemovedSessions = (ids: Iterable<string>): void => {
-		for (const id of ids) {
-			// Re-adding moves the id to the end, so a repeatedly closed agent stays
-			// young rather than ageing out on its first close.
-			removedSessionTombstones.delete(id);
-			removedSessionTombstones.add(id);
+		for (const id of ids) removedSessionTombstones.add(id);
+	};
+
+	// AI tabs closed by a client, keyed by closedTabKey(). Same job one level
+	// down: refuse a stale peer flush that carries a closed tab back into an
+	// agent both clients hold (see CLOSED_TAB_TOMBSTONE_LIMIT).
+	const closedTabTombstones = createTombstoneSet(CLOSED_TAB_TOMBSTONE_LIMIT);
+
+	/**
+	 * A tab the writer (re)opened is the writer's to keep, so it stops being a
+	 * tombstone BEFORE the write is filtered. That is what lets Reopen Closed Tab
+	 * or a snooze wake bring back a tab some client closed.
+	 */
+	const forgetReopenedTabs = (tabChanges: SessionTabChangesById | undefined): void => {
+		for (const [sessionId, tabIds] of reportedTabIds(tabChanges, 'opened')) {
+			for (const tabId of tabIds) closedTabTombstones.delete(closedTabKey(sessionId, tabId));
 		}
-		while (removedSessionTombstones.size > REMOVED_SESSION_TOMBSTONE_LIMIT) {
-			const oldest = removedSessionTombstones.values().next().value;
-			if (oldest === undefined) break;
-			removedSessionTombstones.delete(oldest);
+	};
+
+	/**
+	 * The closes a writer reported, minus agents the same write removed (closing
+	 * the agent already says everything about its tabs).
+	 */
+	const collectClosedTabs = (
+		tabChanges: SessionTabChangesById | undefined,
+		removedIds: Set<string>
+	): ClosedSessionTab[] =>
+		reportedTabIds(tabChanges, 'closed').flatMap(([sessionId, tabIds]) =>
+			removedIds.has(sessionId) ? [] : tabIds.map((tabId) => ({ sessionId, tabId }))
+		);
+
+	/**
+	 * A session of a write, minus any AI tab it would resurrect.
+	 *
+	 * Mirrors {@link dropResurrections}: a tab counts as a resurrection when a
+	 * client closed it and the stored copy of the agent no longer has it. A
+	 * tombstoned tab that IS stored means a client legitimately holds it again.
+	 */
+	const dropClosedTabResurrections = (
+		session: StoredSession,
+		stored: StoredSession | undefined
+	): StoredSession => {
+		if (closedTabTombstones.size === 0 || !Array.isArray(session.aiTabs)) return session;
+		const storedTabIds = new Set<string>(
+			(stored?.aiTabs ?? []).map((tab: { id: string }) => tab.id)
+		);
+		const resurrected = new Set<string>();
+		for (const tab of session.aiTabs as { id: string }[]) {
+			if (storedTabIds.has(tab.id)) continue;
+			if (closedTabTombstones.has(closedTabKey(session.id, tab.id))) resurrected.add(tab.id);
 		}
+		if (resurrected.size === 0) return session;
+		logger.debug('Ignored resurrection of closed AI tabs', 'Sessions', {
+			sessionId: session.id,
+			tabIds: [...resurrected],
+		});
+		return withoutAiTabs(session, resurrected);
 	};
 
 	/**
@@ -557,155 +673,173 @@ export function registerPersistenceHandlers(
 	 */
 	ipcMain.handle(
 		'sessions:setMany',
-		queueWrite(async (event, input: StoredSession[] = [], removeIds: string[] = []) => {
-			// Relocate any freshly-pasted inline images (data URLs) in the dirty
-			// sessions to the image store before they hit disk, so the sessions
-			// JSON only ever grows by lightweight refs.
-			const { sessions: relocatedUpdates } = await relocateSessionImages(input);
-			const previousSessions = sessionsStore.get('sessions', []);
-			const previousMap = new Map(previousSessions.map((s) => [s.id, s]));
-			// Drop any agent this write would resurrect: another client closed it
-			// moments ago and this flush was already in flight with a stale copy.
-			const updates = dropResurrections(relocatedUpdates, new Set(previousMap.keys()));
-			const removeSet = new Set(removeIds);
-			const updateMap = new Map(updates.map((s) => [s.id, s]));
+		queueWrite(
+			async (
+				event,
+				input: StoredSession[] = [],
+				removeIds: string[] = [],
+				tabChanges?: SessionTabChangesById
+			) => {
+				// Relocate any freshly-pasted inline images (data URLs) in the dirty
+				// sessions to the image store before they hit disk, so the sessions
+				// JSON only ever grows by lightweight refs.
+				const { sessions: relocatedUpdates } = await relocateSessionImages(input);
+				const previousSessions = sessionsStore.get('sessions', []);
+				const previousMap = new Map(previousSessions.map((s) => [s.id, s]));
+				// Drop any agent this write would resurrect: another client closed it
+				// moments ago and this flush was already in flight with a stale copy.
+				// Then the same for AI tabs inside the agents that survive.
+				forgetReopenedTabs(tabChanges);
+				const updates = dropResurrections(relocatedUpdates, new Set(previousMap.keys())).map(
+					(session) => dropClosedTabResurrections(session, previousMap.get(session.id))
+				);
+				const removeSet = new Set(removeIds);
+				const updateMap = new Map(updates.map((s) => [s.id, s]));
 
-			// Build merged array preserving the existing order. Apply updates and
-			// skip removals in a single pass, then append any new sessions whose
-			// ids weren't seen in the existing array.
-			const merged: StoredSession[] = [];
-			for (const prev of previousSessions) {
-				if (removeSet.has(prev.id)) continue;
-				const update = updateMap.get(prev.id);
-				if (update) {
-					merged.push(mergeDeferredSessionContent(update, prev));
-					updateMap.delete(prev.id);
-				} else {
-					merged.push(prev);
-				}
-			}
-			for (const newSession of updateMap.values()) {
-				if (removeSet.has(newSession.id)) continue;
-				merged.push(mergeDeferredSessionContent(newSession, undefined));
-			}
-			const sessionsToPersist = merged.map((session) => compactSessionToolOutputs(session).session);
-
-			// Lifecycle logging (parallel to setAll's debug logs)
-			for (const session of updates) {
-				if (!previousMap.has(session.id) && !removeSet.has(session.id)) {
-					logger.debug('Session created', 'Sessions', {
-						sessionId: session.id,
-						name: session.name,
-						toolType: session.toolType,
-						cwd: session.cwd,
-					});
-				}
-			}
-			for (const id of removeIds) {
-				const prev = previousMap.get(id);
-				if (prev) {
-					logger.debug('Session destroyed', 'Sessions', {
-						sessionId: prev.id,
-						name: prev.name,
-					});
-				}
-			}
-
-			const webServer = getWebServer();
-			if (webServer && webServer.getWebClientCount() > 0) {
-				for (const session of updates) {
-					if (removeSet.has(session.id)) continue;
-					const prev = previousMap.get(session.id);
-					if (prev) {
-						if (
-							prev.state !== session.state ||
-							prev.inputMode !== session.inputMode ||
-							prev.name !== session.name ||
-							prev.cwd !== session.cwd ||
-							cliActivityChanged(prev.cliActivity, session.cliActivity)
-						) {
-							webServer.broadcastSessionStateChange(session.id, session.state, {
-								name: session.name,
-								toolType: session.toolType,
-								inputMode: session.inputMode,
-								cwd: session.cwd,
-								cliActivity: session.cliActivity,
-							});
-						}
+				// Build merged array preserving the existing order. Apply updates and
+				// skip removals in a single pass, then append any new sessions whose
+				// ids weren't seen in the existing array.
+				const merged: StoredSession[] = [];
+				for (const prev of previousSessions) {
+					if (removeSet.has(prev.id)) continue;
+					const update = updateMap.get(prev.id);
+					if (update) {
+						merged.push(mergeDeferredSessionContent(update, prev));
+						updateMap.delete(prev.id);
 					} else {
-						webServer.broadcastSessionAdded({
-							id: session.id,
+						merged.push(prev);
+					}
+				}
+				for (const newSession of updateMap.values()) {
+					if (removeSet.has(newSession.id)) continue;
+					merged.push(mergeDeferredSessionContent(newSession, undefined));
+				}
+				const sessionsToPersist = merged.map(
+					(session) => compactSessionToolOutputs(session).session
+				);
+
+				// Lifecycle logging (parallel to setAll's debug logs)
+				for (const session of updates) {
+					if (!previousMap.has(session.id) && !removeSet.has(session.id)) {
+						logger.debug('Session created', 'Sessions', {
+							sessionId: session.id,
 							name: session.name,
 							toolType: session.toolType,
-							state: session.state,
-							inputMode: session.inputMode,
 							cwd: session.cwd,
-							groupId: session.groupId || null,
-							groupName: session.groupName || null,
-							groupEmoji: session.groupEmoji || null,
-							parentSessionId: session.parentSessionId || null,
-							worktreeBranch: session.worktreeBranch || null,
 						});
 					}
 				}
 				for (const id of removeIds) {
-					if (previousMap.has(id)) {
-						webServer.broadcastSessionRemoved(id);
+					const prev = previousMap.get(id);
+					if (prev) {
+						logger.debug('Session destroyed', 'Sessions', {
+							sessionId: prev.id,
+							name: prev.name,
+						});
 					}
 				}
-			}
 
-			try {
-				await backupSessionsBeforeWipe(previousSessions, sessionsToPersist, sessionsStore.path);
-				sessionsStore.set('sessions', sessionsToPersist);
-				// Preserve the renderer acknowledgement contract: true means this
-				// revision reached disk, not merely the in-memory cache.
-				await flushSessionWrites();
-			} catch (err) {
-				const code = (err as NodeJS.ErrnoException).code;
-				// Recoverable filesystem errors - the next debounced flush will
-				// retry when conditions improve. Log warn and return false so
-				// the renderer's flush path can mark the write as unconfirmed.
-				if (code === 'ENOSPC' || code === 'ENFILE' || code === 'EMFILE') {
-					logger.warn(`Failed to persist sessions (setMany): ${code}`, 'Sessions');
-					return false;
+				const webServer = getWebServer();
+				if (webServer && webServer.getWebClientCount() > 0) {
+					for (const session of updates) {
+						if (removeSet.has(session.id)) continue;
+						const prev = previousMap.get(session.id);
+						if (prev) {
+							if (
+								prev.state !== session.state ||
+								prev.inputMode !== session.inputMode ||
+								prev.name !== session.name ||
+								prev.cwd !== session.cwd ||
+								cliActivityChanged(prev.cliActivity, session.cliActivity)
+							) {
+								webServer.broadcastSessionStateChange(session.id, session.state, {
+									name: session.name,
+									toolType: session.toolType,
+									inputMode: session.inputMode,
+									cwd: session.cwd,
+									cliActivity: session.cliActivity,
+								});
+							}
+						} else {
+							webServer.broadcastSessionAdded({
+								id: session.id,
+								name: session.name,
+								toolType: session.toolType,
+								state: session.state,
+								inputMode: session.inputMode,
+								cwd: session.cwd,
+								groupId: session.groupId || null,
+								groupName: session.groupName || null,
+								groupEmoji: session.groupEmoji || null,
+								parentSessionId: session.parentSessionId || null,
+								worktreeBranch: session.worktreeBranch || null,
+							});
+						}
+					}
+					for (const id of removeIds) {
+						if (previousMap.has(id)) {
+							webServer.broadcastSessionRemoved(id);
+						}
+					}
 				}
-				// Anything else is unexpected - log error and rethrow so
-				// withIpcErrorLogging surfaces it to Sentry. Per CLAUDE.md
-				// §"Error Handling & Sentry", silent swallows hide bugs from
-				// production telemetry.
-				logger.error(
-					`Unexpected error persisting sessions (setMany): ${(err as Error).message}`,
-					'Sessions',
-					err
-				);
-				throw err;
-			}
 
-			// Tell the other clients (desktop windows + web-desktop) what entered and
-			// left, so an agent created or closed in one of them stops being
-			// invisible to - and resurrectable by - the rest.
-			const removedIds = removeIds.filter((id) => previousMap.has(id));
-			rememberRemovedSessions(removedIds);
-			// A closed agent can never produce another turn, so drop whatever the
-			// spawn path noted about who was driving its tabs.
-			for (const id of removedIds) forgetAgentActors(id);
-			broadcastSessionLifecycle(senderWebContentsIdOf(event), {
-				added: sessionsToPersist.filter((s) => !previousMap.has(s.id) && !removeSet.has(s.id)),
-				removedIds,
-			});
-
-			// Surface metadata-only lifecycle events to subscribed plugins
-			// (events:subscribe). Re-authorized per delivery against live grants.
-			if (emitPluginEvent) {
-				const at = new Date().toISOString();
-				for (const event of buildSessionLifecycleEvents(previousMap, sessionsToPersist, at)) {
-					emitPluginEvent(event);
+				try {
+					await backupSessionsBeforeWipe(previousSessions, sessionsToPersist, sessionsStore.path);
+					sessionsStore.set('sessions', sessionsToPersist);
+					// Preserve the renderer acknowledgement contract: true means this
+					// revision reached disk, not merely the in-memory cache.
+					await flushSessionWrites();
+				} catch (err) {
+					const code = (err as NodeJS.ErrnoException).code;
+					// Recoverable filesystem errors - the next debounced flush will
+					// retry when conditions improve. Log warn and return false so
+					// the renderer's flush path can mark the write as unconfirmed.
+					if (code === 'ENOSPC' || code === 'ENFILE' || code === 'EMFILE') {
+						logger.warn(`Failed to persist sessions (setMany): ${code}`, 'Sessions');
+						return false;
+					}
+					// Anything else is unexpected - log error and rethrow so
+					// withIpcErrorLogging surfaces it to Sentry. Per CLAUDE.md
+					// §"Error Handling & Sentry", silent swallows hide bugs from
+					// production telemetry.
+					logger.error(
+						`Unexpected error persisting sessions (setMany): ${(err as Error).message}`,
+						'Sessions',
+						err
+					);
+					throw err;
 				}
-			}
 
-			return true;
-		})
+				// Tell the other clients (desktop windows + web-desktop) what entered and
+				// left, so an agent created or closed in one of them stops being
+				// invisible to - and resurrectable by - the rest.
+				const removedIds = removeIds.filter((id) => previousMap.has(id));
+				rememberRemovedSessions(removedIds);
+				const closedTabs = collectClosedTabs(tabChanges, removeSet);
+				for (const { sessionId, tabId } of closedTabs) {
+					closedTabTombstones.add(closedTabKey(sessionId, tabId));
+				}
+				// A closed agent can never produce another turn, so drop whatever the
+				// spawn path noted about who was driving its tabs.
+				for (const id of removedIds) forgetAgentActors(id);
+				broadcastSessionLifecycle(senderWebContentsIdOf(event), {
+					added: sessionsToPersist.filter((s) => !previousMap.has(s.id) && !removeSet.has(s.id)),
+					removedIds,
+					closedTabs,
+				});
+
+				// Surface metadata-only lifecycle events to subscribed plugins
+				// (events:subscribe). Re-authorized per delivery against live grants.
+				if (emitPluginEvent) {
+					const at = new Date().toISOString();
+					for (const event of buildSessionLifecycleEvents(previousMap, sessionsToPersist, at)) {
+						emitPluginEvent(event);
+					}
+				}
+
+				return true;
+			}
+		)
 	);
 
 	ipcMain.handle(
@@ -720,7 +854,9 @@ export function registerPersistenceHandlers(
 			const previousSessionMap = new Map(previousSessions.map((s) => [s.id, s]));
 			// Same resurrection guard as setMany: a client that loaded before another
 			// closed an agent still carries it, and this path would write it back.
-			const sessions = dropResurrections(relocatedSessions, new Set(previousSessionMap.keys()));
+			const sessions = dropResurrections(relocatedSessions, new Set(previousSessionMap.keys())).map(
+				(session) => dropClosedTabResurrections(session, previousSessionMap.get(session.id))
+			);
 			const incomingIds = new Set(sessions.map((s) => s.id));
 			// setAll is a client's opening snapshot, so an omitted id means the client
 			// never saw that agent. Only setMany's explicit removeIds may delete one.
@@ -813,6 +949,7 @@ export function registerPersistenceHandlers(
 			broadcastSessionLifecycle(senderWebContentsIdOf(event), {
 				added: sessionsToPersist.filter((s) => !previousSessionMap.has(s.id)),
 				removedIds: [],
+				closedTabs: [],
 			});
 
 			// Surface metadata-only lifecycle events to subscribed plugins
