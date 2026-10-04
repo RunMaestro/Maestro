@@ -41,6 +41,11 @@ const AGENT_CONFIG_METADATA: Record<string, { description: string; type: string 
 		description: 'Maximum context window size in tokens. Used for context usage display.',
 		type: 'number',
 	},
+	reasoningSummary: {
+		description:
+			'Codex reasoning summary mode (auto, concise, detailed, none); empty inherits the provider default.',
+		type: 'string',
+	},
 	reasoningEffort: {
 		description: 'Reasoning effort level for agents that support it (low, medium, high).',
 		type: 'string',
