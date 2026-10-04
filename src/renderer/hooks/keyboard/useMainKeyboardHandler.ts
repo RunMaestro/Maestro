@@ -1319,6 +1319,16 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 					ctx.mainPanelRef?.current?.focusBrowserAddressBar();
 					trackShortcut('focusBrowserAddress');
 				}
+				// Cmd+Shift+C: Design Mode in the active browser tab (Chrome's inspect chord)
+				if (
+					ctx.isTabShortcut(e, 'toggleBrowserDesignMode') &&
+					activeSession?.activeBrowserTabId &&
+					activeSession.inputMode === 'ai'
+				) {
+					e.preventDefault();
+					ctx.mainPanelRef?.current?.toggleBrowserDesignMode();
+					trackShortcut('toggleBrowserDesignMode');
+				}
 				// Cmd+Left / Cmd+Right: Browser history back/forward when a browser
 				// tab is active. We deliberately skip when focus is inside an
 				// editable element (URL bar, find bar, any other text input) so
@@ -1750,6 +1760,17 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				});
 				if (ctx?.isTabShortcut(probe, 'focusBrowserAddress')) {
 					ctx.mainPanelRef?.current?.focusBrowserAddressBar();
+					return;
+				}
+				// Design Mode toggled while the page has focus. Routed directly, like
+				// Cmd+L, so the overlay guard and the re-dispatch never see it.
+				if (ctx?.isTabShortcut(probe, 'toggleBrowserDesignMode')) {
+					ctx.mainPanelRef?.current?.toggleBrowserDesignMode();
+					// Count it for keyboard mastery, as the window path does.
+					const mastery = ctx.recordShortcutUsage?.('toggleBrowserDesignMode');
+					if (mastery && mastery.newLevel !== null) {
+						ctx.onKeyboardMasteryLevelUp?.(mastery.newLevel);
+					}
 					return;
 				}
 				// Cmd+F arrives here when forwarded from the webview guest. Open the

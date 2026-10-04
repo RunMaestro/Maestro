@@ -3991,6 +3991,77 @@ describe('useMainKeyboardHandler', () => {
 			expect(dispatched.find((e) => e.key === 'l' && e.metaKey)).toBeUndefined();
 		});
 
+		it('routes forwarded Cmd+Shift+C to Design Mode and counts it for mastery', () => {
+			let ipcCallback: ((input: Record<string, unknown>) => void) | null = null;
+			(window as any).maestro = {
+				...(window as any).maestro,
+				app: {
+					...((window as any).maestro?.app ?? {}),
+					onBrowserTabShortcutKey: (cb: (input: Record<string, unknown>) => void) => {
+						ipcCallback = cb;
+						return () => {
+							ipcCallback = null;
+						};
+					},
+				},
+			};
+
+			const { result } = renderHook(() => useMainKeyboardHandler());
+			const toggleBrowserDesignMode = vi.fn();
+			const recordShortcutUsage = vi.fn().mockReturnValue({ newLevel: null });
+			result.current.keyboardHandlerRef.current = createMockContext({
+				activeSession: { id: 's1', activeBrowserTabId: 'b1' },
+				isTabShortcut: (_e: unknown, id: string) => id === 'toggleBrowserDesignMode',
+				mainPanelRef: { current: { toggleBrowserDesignMode } },
+				recordShortcutUsage,
+			});
+
+			act(() => {
+				ipcCallback!({
+					key: 'C',
+					code: 'KeyC',
+					meta: true,
+					control: false,
+					alt: false,
+					shift: true,
+				});
+			});
+
+			expect(toggleBrowserDesignMode).toHaveBeenCalledTimes(1);
+			expect(recordShortcutUsage).toHaveBeenCalledWith('toggleBrowserDesignMode');
+		});
+
+		it('Cmd+Shift+C toggles Design Mode only while a browser tab is showing', () => {
+			const { result } = renderHook(() => useMainKeyboardHandler());
+			const toggleBrowserDesignMode = vi.fn();
+			const recordShortcutUsage = vi.fn().mockReturnValue({ newLevel: null });
+			const press = () =>
+				act(() => {
+					window.dispatchEvent(
+						new KeyboardEvent('keydown', { key: 'C', metaKey: true, shiftKey: true, bubbles: true })
+					);
+				});
+
+			result.current.keyboardHandlerRef.current = createMockContext({
+				activeSession: { id: 's1', activeBrowserTabId: 'b1', inputMode: 'ai' },
+				isTabShortcut: (_e: unknown, id: string) => id === 'toggleBrowserDesignMode',
+				mainPanelRef: { current: { toggleBrowserDesignMode } },
+				recordShortcutUsage,
+			});
+			press();
+			expect(toggleBrowserDesignMode).toHaveBeenCalledTimes(1);
+			expect(recordShortcutUsage).toHaveBeenCalledWith('toggleBrowserDesignMode');
+
+			result.current.keyboardHandlerRef.current = createMockContext({
+				activeSession: { id: 's1', activeBrowserTabId: null, inputMode: 'ai' },
+				isTabShortcut: (_e: unknown, id: string) => id === 'toggleBrowserDesignMode',
+				mainPanelRef: { current: { toggleBrowserDesignMode } },
+				recordShortcutUsage,
+			});
+			press();
+			expect(toggleBrowserDesignMode).toHaveBeenCalledTimes(1);
+		});
+
 		it('routes forwarded Cmd+Left and Cmd+Right to browserBack/browserForward', () => {
 			let ipcCallback: ((input: Record<string, unknown>) => void) | null = null;
 			(window as any).maestro = {

@@ -149,3 +149,102 @@ export async function closeBrowser(tabId: string, options: CloseBrowserOptions):
 		process.exit(1);
 	}
 }
+
+interface BrowserPickOptions {
+	selector?: string;
+	note?: string;
+	agent?: string;
+	background?: boolean;
+	focus?: boolean;
+	json?: boolean;
+}
+
+interface BrowserPickResult {
+	type: string;
+	success: boolean;
+	error?: string;
+	tabId?: string;
+	browserId?: string;
+	text?: string;
+	screenshot?: boolean;
+	aiTabId?: string;
+	background?: boolean;
+}
+
+/** Mounting a kept-alive tab and cropping its screenshot can outlast the 10s default. */
+const BROWSER_PICK_TIMEOUT_MS = 30_000;
+
+/**
+ * Design Mode by selector: describe the first element matching `--selector`
+ * in a browser tab (selector path, trimmed HTML, computed styles, cropped
+ * screenshot) and add it to the owning agent's composer, as a click in Design
+ * Mode does. `<tab>` is the tab id `open-browser` printed, or the tab's
+ * Coworking id (`browser:N`, which needs Coworking on).
+ */
+export async function browserPick(tab: string, options: BrowserPickOptions): Promise<void> {
+	const fail = (error: string): never => {
+		if (options.json) console.log(JSON.stringify({ success: false, error }));
+		else console.error(`Error: ${error}`);
+		process.exit(1);
+	};
+
+	const tabRef = tab.trim();
+	if (!tabRef) return fail('Tab cannot be empty');
+	const selector = (options.selector ?? '').trim();
+	if (!selector) return fail('--selector is required');
+
+	let sessionId = '';
+	try {
+		sessionId = options.agent ? resolveAgentId(options.agent) : resolveSessionId({});
+	} catch (error) {
+		return fail(error instanceof Error ? error.message : String(error));
+	}
+
+	const background = resolveBackgroundFlag(options, 'browser-pick');
+
+	let result: BrowserPickResult;
+	try {
+		result = await withMaestroClient((client) =>
+			client.sendCommand<BrowserPickResult>(
+				{
+					type: 'pick_browser_element',
+					sessionId,
+					tab: tabRef,
+					selector,
+					...(options.note ? { note: options.note } : {}),
+					background,
+				},
+				'pick_browser_element_result',
+				BROWSER_PICK_TIMEOUT_MS
+			)
+		);
+	} catch (error) {
+		return fail(error instanceof Error ? error.message : String(error));
+	}
+
+	if (!result.success) return fail(result.error || 'Failed to pick element');
+
+	if (options.json) {
+		console.log(
+			JSON.stringify({
+				success: true,
+				sessionId,
+				tabId: result.tabId ?? null,
+				browserId: result.browserId ?? null,
+				aiTabId: result.aiTabId ?? null,
+				selector,
+				screenshot: result.screenshot === true,
+				background,
+				text: result.text ?? '',
+			})
+		);
+		return;
+	}
+	console.log(
+		`Added ${selector} from ${tabRef} to the composer of tab ${result.aiTabId ?? 'unknown'}${
+			background ? ' (background)' : ''
+		}`
+	);
+	if (result.browserId) console.log(`  Coworking id: ${result.browserId}`);
+	console.log(`  Screenshot: ${result.screenshot ? 'attached' : 'none'}`);
+}

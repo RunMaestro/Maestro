@@ -50,6 +50,7 @@ field still gets the old behaviour, and `--focus` restores it from the CLI.
 | `open-file`                                       | `open_file_tab`                                       | focuses                                 |
 | `open-terminal`                                   | `open_terminal_tab`                                   | focuses                                 |
 | `open-browser`                                    | `open_browser_tab`                                    | focuses                                 |
+| `browser-pick`                                    | `pick_browser_element`                                | focuses (switches to the AI tab)        |
 | `tab new`                                         | `new_tab` / `new_ai_tab_with_prompt`                  | focuses                                 |
 | `dispatch --new-tab`                              | `new_ai_tab_with_prompt`                              | **background** (as it always was)       |
 | `dispatch` (no `--new-tab`)                       | `send_command`                                        | selects the target agent                |
@@ -301,6 +302,7 @@ Notification center history uses the live desktop `notificationStore` over a req
 | Usage Dashboard: Export button (JSON, or a zip of CSVs)                                                                   | `stats-export -o <path> [-f csv\|json] [-r <range>] [--json]`                                    |
 | Left Bar: Archive / Unarchive a group chat                                                                                | `group-chat archive <chat>` / `--restore` (read back with `group-chat list --all`)               |
 | Group chat: add an agent by @mention in a message                                                                         | `group-chat add <chat> <agent>` (ID, ID prefix or name; read back with `group-chat status`)      |
+| Browser Design Mode: add a picked element to the message (Cmd+Shift+C)                                                    | `browser-pick <tab> -s <css> [--note]`; read: its `--json` text, `image list`                    |
 
 ## Open gaps
 

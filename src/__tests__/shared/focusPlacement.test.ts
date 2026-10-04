@@ -27,6 +27,8 @@ const FOCUSING_TODAY: BackgroundCapableVerb[] = [
 	'open-file',
 	'open-terminal',
 	'open-browser',
+	// A Design Mode click switches to the AI tab it lands in; so does the verb.
+	'browser-pick',
 	'tab-new',
 	// Cmd+Shift+T makes the reopened tab the visible one; so does the verb.
 	'tab-reopen',

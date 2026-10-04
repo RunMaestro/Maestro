@@ -552,6 +552,12 @@ export const TAB_SHORTCUTS = {
 		label: 'Focus Browser Address Bar',
 		keys: ['Meta', 'l'],
 	},
+	// Chrome's own "inspect element" chord, so the hand already knows it.
+	toggleBrowserDesignMode: {
+		id: 'toggleBrowserDesignMode',
+		label: 'Toggle Browser Design Mode',
+		keys: ['Meta', 'Shift', 'c'],
+	},
 	closeTab: { id: 'closeTab', label: 'Close Tab', keys: ['Meta', 'w'] },
 	closeAllTabs: { id: 'closeAllTabs', label: 'Close All Tabs', keys: ['Meta', 'Shift', 'w'] },
 	closeOtherTabs: { id: 'closeOtherTabs', label: 'Close Other Tabs', keys: ['Alt', 'Meta', 'w'] },

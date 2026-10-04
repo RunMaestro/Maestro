@@ -153,6 +153,14 @@ function createMockCallbacks(): MessageHandlerCallbacks {
 		refreshFileTree: vi.fn().mockResolvedValue(true),
 		openBrowserTab: vi.fn().mockResolvedValue({ success: true, tabId: 'browser-tab-1' }),
 		closeBrowserTab: vi.fn().mockResolvedValue(true),
+		pickBrowserElement: vi.fn().mockResolvedValue({
+			success: true,
+			tabId: 'browser-tab-1',
+			browserId: 'browser:1',
+			text: 'Element `h1` ...',
+			screenshot: true,
+			aiTabId: 'ai-1',
+		}),
 		openTerminalTab: vi.fn().mockResolvedValue({ success: true, tabId: 'terminal-tab-1' }),
 		writeTerminalTab: vi
 			.fn()
@@ -1723,6 +1731,106 @@ describe('WebSocketMessageHandler', () => {
 				const calls = (client.socket.send as any).mock.calls;
 				const lastResponse = JSON.parse(calls[calls.length - 1][0]);
 				expect(lastResponse.type).toBe('close_browser_tab_result');
+				expect(lastResponse.success).toBe(false);
+				expect(lastResponse.error).toContain('boom');
+			});
+		});
+	});
+
+	describe('Pick Browser Element (Web → Desktop)', () => {
+		it('should forward the pick with selector, note, and placement', async () => {
+			handler.handleMessage(client, {
+				type: 'pick_browser_element',
+				sessionId: 'session-1',
+				tab: 'browser:1',
+				selector: ' h1 ',
+				note: 'bigger',
+				background: true,
+				requestId: 'r1',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.pickBrowserElement).toHaveBeenCalledWith({
+					sessionId: 'session-1',
+					tab: 'browser:1',
+					selector: 'h1',
+					note: 'bigger',
+					background: true,
+				});
+			});
+			await vi.waitFor(() => {
+				expect((client.socket.send as any).mock.calls.length).toBeGreaterThan(0);
+			});
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response).toMatchObject({
+				type: 'pick_browser_element_result',
+				success: true,
+				tabId: 'browser-tab-1',
+				browserId: 'browser:1',
+				screenshot: true,
+				aiTabId: 'ai-1',
+				sessionId: 'session-1',
+				background: true,
+				requestId: 'r1',
+			});
+		});
+
+		it('should default to foreground when no placement is sent', async () => {
+			handler.handleMessage(client, {
+				type: 'pick_browser_element',
+				sessionId: 'session-1',
+				tab: 'tab-uuid',
+				selector: 'button',
+			});
+			await vi.waitFor(() => {
+				expect(callbacks.pickBrowserElement).toHaveBeenCalledWith({
+					sessionId: 'session-1',
+					tab: 'tab-uuid',
+					selector: 'button',
+					note: undefined,
+					background: false,
+				});
+			});
+		});
+
+		it('should reject a missing selector without calling the desktop', () => {
+			handler.handleMessage(client, {
+				type: 'pick_browser_element',
+				sessionId: 'session-1',
+				tab: 'tab-uuid',
+				selector: '   ',
+			});
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('pick_browser_element_result');
+			expect(response.success).toBe(false);
+			expect(response.error).toContain('Missing selector');
+			expect(response.screenshot).toBe(false);
+			expect(callbacks.pickBrowserElement).not.toHaveBeenCalled();
+		});
+
+		it('should reject a missing tab', () => {
+			handler.handleMessage(client, {
+				type: 'pick_browser_element',
+				sessionId: 'session-1',
+				selector: 'h1',
+			});
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.success).toBe(false);
+			expect(response.error).toContain('Missing sessionId or tab');
+		});
+
+		it('should handle callback failure', async () => {
+			(callbacks.pickBrowserElement as any).mockRejectedValue(new Error('boom'));
+			handler.handleMessage(client, {
+				type: 'pick_browser_element',
+				sessionId: 'session-1',
+				tab: 'tab-uuid',
+				selector: 'h1',
+			});
+			await vi.waitFor(() => {
+				const calls = (client.socket.send as any).mock.calls;
+				const lastResponse = JSON.parse(calls[calls.length - 1][0]);
+				expect(lastResponse.type).toBe('pick_browser_element_result');
 				expect(lastResponse.success).toBe(false);
 				expect(lastResponse.error).toContain('boom');
 			});

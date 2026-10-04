@@ -121,6 +121,17 @@ export function registerCoworkingHandlers(deps: CoworkingHandlerDependencies): v
 		)
 	);
 
+	// The renderer names a browser tab by its Coworking id in a Design Mode pick,
+	// so the agent can address the same tab with read_browser / browser_screenshot.
+	ipcMain.handle(
+		'coworking:getBrowserId',
+		withIpcErrorLogging(
+			handlerOpts('getBrowserId'),
+			async (sessionId: string, tabUuid: string): Promise<string | null> =>
+				coworkingRegistry.getBrowserIdForTab(sessionId, tabUuid)
+		)
+	);
+
 	// ---- Buffer-request resolver (main → renderer → main) ----
 	//
 	// The MCP server bridge calls into `readTerminal(sessionId, ...)`, which calls this

@@ -105,6 +105,7 @@ import type {
 	RefreshFileTreeCallback,
 	OpenBrowserTabCallback,
 	CloseBrowserTabCallback,
+	PickBrowserElementCallback,
 	OpenTerminalTabCallback,
 	WriteTerminalTabCallback,
 	WriteTerminalTabPayload,
@@ -611,6 +612,10 @@ export class WebServer {
 
 	setCloseBrowserTabCallback(callback: CloseBrowserTabCallback): void {
 		this.callbackRegistry.setCloseBrowserTabCallback(callback);
+	}
+
+	setPickBrowserElementCallback(callback: PickBrowserElementCallback): void {
+		this.callbackRegistry.setPickBrowserElementCallback(callback);
 	}
 
 	setOpenTerminalTabCallback(callback: OpenTerminalTabCallback): void {
@@ -1222,6 +1227,7 @@ export class WebServer {
 			openBrowserTab: async (sessionId: string, url: string, options?: { background?: boolean }) =>
 				this.callbackRegistry.openBrowserTab(sessionId, url, options),
 			closeBrowserTab: async (tabId: string) => this.callbackRegistry.closeBrowserTab(tabId),
+			pickBrowserElement: async (request) => this.callbackRegistry.pickBrowserElement(request),
 			openTerminalTab: async (
 				sessionId: string,
 				config: { cwd?: string; shell?: string; name?: string | null; command?: string },

@@ -4831,6 +4831,8 @@ interface MaestroAPI {
 			agentType?: string,
 			confirmPolicy?: 'off' | 'dangerous' | 'all'
 		) => Promise<void>;
+		/** Coworking `browser:N` id of a browser tab, or null (unknown or hidden from agents). */
+		getBrowserId: (sessionId: string, tabUuid: string) => Promise<string | null>;
 		onRequestBrowserOp: (
 			callback: (
 				tabUuid: string,
