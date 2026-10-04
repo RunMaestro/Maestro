@@ -28,6 +28,7 @@ import { CrossTabSearchModal } from '../CrossTabSearchModal';
 import type { CrossTabSearchJumpTarget } from '../CrossTabSearchModal';
 import { SnoozeTabModal } from '../SnoozeTabModal';
 import { SnoozedTabsModal } from '../SnoozedTabsModal';
+import { AccountSwitcherModal } from '../AccountSwitcherModal';
 import { useTabStore } from '../../stores/tabStore';
 import { useSessionStore, selectActiveSession } from '../../stores/sessionStore';
 import { notifyCenterFlash } from '../../stores/centerFlashStore';
@@ -529,6 +530,21 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 	const snoozeTabOpen = useModalStore(selectModalOpen('snoozeTab'));
 	const snoozeTabData = useModalStore(selectModalData('snoozeTab'));
 	const snoozedTabsOpen = useModalStore(selectModalOpen('snoozedTabs'));
+	const accountSwitcherOpen = useModalStore(selectModalOpen('accountSwitcher'));
+	const accountSwitcherData = useModalStore(selectModalData('accountSwitcher'));
+	// Named agent when the opener passed one (a quota outage card names the agent
+	// it belongs to), otherwise whichever agent is in front of the user.
+	const accountSwitcherSession = useSessionStore((s) =>
+		accountSwitcherOpen
+			? accountSwitcherData?.sessionId
+				? s.sessions.find((session) => session.id === accountSwitcherData.sessionId)
+				: selectActiveSession(s)
+			: undefined
+	);
+	const closeAccountSwitcher = useCallback(
+		() => useModalStore.getState().closeModal('accountSwitcher'),
+		[]
+	);
 	const closeSnoozeTab = useCallback(() => useModalStore.getState().closeModal('snoozeTab'), []);
 	const closeSnoozedTabs = useCallback(
 		() => useModalStore.getState().closeModal('snoozedTabs'),
@@ -874,6 +890,15 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 					theme={theme}
 					onClose={closeSnoozedTabs}
 					onJumpToTab={onSwitchQueueSession}
+				/>
+			)}
+
+			{/* --- SWITCH ACCOUNT (provider account for one agent) --- */}
+			{accountSwitcherOpen && accountSwitcherSession && (
+				<AccountSwitcherModal
+					theme={theme}
+					session={accountSwitcherSession}
+					onClose={closeAccountSwitcher}
 				/>
 			)}
 		</>

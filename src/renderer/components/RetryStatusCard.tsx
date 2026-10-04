@@ -16,9 +16,12 @@
  */
 
 import React, { useEffect, useState } from 'react';
-import { AlertTriangle, Check, RefreshCw, X, Zap } from 'lucide-react';
+import { AlertTriangle, Check, RefreshCw, UserRoundCog, X, Zap } from 'lucide-react';
 
 import { useRetryStore, useRetryStatus, retryNow, cancelRetry } from '../stores/retryStore';
+import { useModalStore } from '../stores/modalStore';
+import { useSessionStore } from '../stores/sessionStore';
+import { getProviderProfileConfig } from '../../shared/providerProfiles';
 import { formatDurationHuman } from '../../shared/formatters';
 import { describeQuotaWindow } from '../../shared/quotaLimitDetail';
 import { getConnectingColor } from '../utils/theme';
@@ -69,6 +72,14 @@ export function RetryStatusCard({
 	// useRetryStatus: `nextRetryAt` is untouched by an early fire, so the
 	// arithmetic below keeps counting down over a resend that is already running.
 	const retryStatus = useRetryStatus(outage?.sessionId ?? '', outage?.tabId ?? '');
+
+	// A spent quota is the moment another account is worth reaching for, so the
+	// card offers the switcher for providers that have accounts at all. Whether
+	// THIS agent can switch (an API key cannot) is the modal's call - it says why.
+	const offersAccountSwitch = useSessionStore((s) => {
+		const toolType = s.sessions.find((session) => session.id === outage?.sessionId)?.toolType;
+		return !!toolType && !!getProviderProfileConfig(toolType);
+	});
 
 	// Constitutional "stuck / backing off" hue - pulsing orange, distinct from
 	// thinking-yellow. Theme-derived so it tracks the palette (see getConnectingColor).
@@ -276,6 +287,20 @@ export function RetryStatusCard({
 					<X className="w-3.5 h-3.5" />
 					Stop
 				</button>
+				{outage.strategy !== 'availability' && offersAccountSwitch && (
+					<button
+						type="button"
+						onClick={() =>
+							useModalStore.getState().openModal('accountSwitcher', { sessionId: outage.sessionId })
+						}
+						className="flex items-center gap-1.5 px-3 py-1.5 rounded text-xs transition-colors hover:bg-white/10"
+						style={{ color: theme.colors.textDim }}
+						title="Keep working on another signed-in account instead of waiting"
+					>
+						<UserRoundCog className="w-3.5 h-3.5" />
+						Switch account
+					</button>
+				)}
 			</div>
 		</div>
 	);

@@ -2,6 +2,8 @@ import type { Session } from '../../../types';
 import type { ActiveTabInfo, QuickAction } from '../types';
 import { editClipboardImage } from '../../ImageAnnotator/editClipboardImage';
 import { requestEditLastQueuedMessage } from '../../../services/editQueuedMessage';
+import { useModalStore } from '../../../stores/modalStore';
+import { getProviderProfileConfig } from '../../../../shared/providerProfiles';
 
 interface BuildFeatureCommandsArgs {
 	activeSession: Session | undefined;
@@ -52,6 +54,7 @@ interface BuildFeatureCommandsArgs {
 		usageDashboard?: QuickAction['shortcut'];
 		agentSessions?: QuickAction['shortcut'];
 		openMemoryViewer?: QuickAction['shortcut'];
+		switchAccount?: QuickAction['shortcut'];
 		executionQueue?: QuickAction['shortcut'];
 		editLastQueuedMessage?: QuickAction['shortcut'];
 		openSymphony?: QuickAction['shortcut'];
@@ -254,6 +257,19 @@ export function buildFeatureCommands({
 			action: () => {
 				setMemoryViewerOpen(true);
 				setQuickActionOpen(false);
+			},
+		});
+	}
+
+	if (activeSession && getProviderProfileConfig(activeSession.toolType)) {
+		commands.push({
+			id: 'switchAccount',
+			label: 'Switch Provider Account',
+			subtext: `Move ${activeSession.name} onto another signed-in account`,
+			shortcut: shortcuts.switchAccount,
+			action: () => {
+				setQuickActionOpen(false);
+				useModalStore.getState().openModal('accountSwitcher', { sessionId: activeSession.id });
 			},
 		});
 	}

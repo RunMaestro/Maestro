@@ -189,6 +189,11 @@ import type {
 	WorktreeSetupScriptContext,
 } from '../main/preload/git';
 import type { HistoryEntry } from '../shared/types';
+import type {
+	CarryProviderSessionRequest,
+	CarryProviderSessionResult,
+	ProviderAccountIdentity,
+} from '../shared/providerAccountSwitch';
 
 interface MaestroAPI {
 	// Context merging API (for session context transfer and grooming)
@@ -1385,6 +1390,8 @@ interface MaestroAPI {
 		getCodexUsageAccountKeys: () => Promise<string[]>;
 		refreshClaudeUsageSnapshots: () => Promise<{ refreshed: number }>;
 		refreshCodexUsageSnapshots: () => Promise<{ refreshed: number }>;
+		getProviderAccounts: (toolType: string) => Promise<ProviderAccountIdentity[]>;
+		carryProviderSession: (req: CarryProviderSessionRequest) => Promise<CarryProviderSessionResult>;
 	};
 	// Agent Sessions API - all methods accept optional sshRemoteId for SSH remote session storage access
 	agentSessions: {

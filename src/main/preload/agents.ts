@@ -19,6 +19,11 @@ import {
 import type { UsageSnapshot } from '../agents/claude-mode-selector';
 import type { CodexUsageSnapshot } from '../stores/codexUsageStore';
 import type { KnownEnvVarKeys } from '../../shared/envVarCatalog';
+import type {
+	CarryProviderSessionRequest,
+	CarryProviderSessionResult,
+	ProviderAccountIdentity,
+} from '../../shared/providerAccountSwitch';
 
 // Re-export for consumers that import from preload. `AgentStatus` is
 // re-exported only (no local usage in this file); TypeScript's
@@ -286,6 +291,21 @@ export function createAgentsApi() {
 		 */
 		refreshCodexUsageSnapshots: (): Promise<{ refreshed: number }> =>
 			ipcRenderer.invoke('codex:usage:refresh-all'),
+
+		/**
+		 * Every account dir for a provider with who is signed into it, for the
+		 * Switch Account modal. Empty for a provider with no account split.
+		 */
+		getProviderAccounts: (toolType: string): Promise<ProviderAccountIdentity[]> =>
+			ipcRenderer.invoke('agents:getProviderAccounts', toolType),
+
+		/**
+		 * Make a tab's provider session resumable from the account an agent is
+		 * switching to, copying the transcript when the two accounts do not share
+		 * a transcript folder.
+		 */
+		carryProviderSession: (req: CarryProviderSessionRequest): Promise<CarryProviderSessionResult> =>
+			ipcRenderer.invoke('agents:carryProviderSession', req),
 	};
 }
 

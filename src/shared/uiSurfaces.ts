@@ -198,6 +198,17 @@ export const UI_SURFACES: UiSurface[] = [
 		commandPalette: 'Process Monitor',
 	},
 	{
+		id: 'switch-account',
+		label: 'Switch Account',
+		aliases: ['account-switcher', 'accounts'],
+		modal: 'accountSwitcher',
+		description:
+			'Move the active agent onto another signed-in provider account, with live quota per account.',
+		shortcutId: 'switchAccount',
+		commandPalette: 'Switch Provider Account',
+		click: 'the hamburger menu -> Switch Account, or "Switch account" on a quota outage card',
+	},
+	{
 		id: 'logs',
 		label: 'System Log Viewer',
 		aliases: ['log-viewer', 'system-logs'],

@@ -123,6 +123,10 @@ export const DEFAULT_SHORTCUTS: Record<string, Shortcut> = {
 		keys: ['Alt', 'Meta', 'p'],
 	},
 	usageDashboard: { id: 'usageDashboard', label: 'Usage Dashboard', keys: ['Alt', 'Meta', 'u'] },
+	// Unbound by default: every free Alt+Meta / Meta+Shift letter near it is a
+	// chord someone already uses. Listing it here is what puts it in Settings ->
+	// Shortcuts, the help sheet, and Cmd+K, so it can be bound.
+	switchAccount: { id: 'switchAccount', label: 'Switch Provider Account', keys: [] },
 	executionQueue: {
 		id: 'executionQueue',
 		label: 'View Execution Queue',
