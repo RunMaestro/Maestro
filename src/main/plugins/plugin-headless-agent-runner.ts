@@ -99,8 +99,9 @@ export function createPluginHeadlessAgentRunner(
 				...(success ? {} : { error: result.error ?? 'Agent run failed or returned no final text' }),
 			};
 		} finally {
-			if (pluginRunProofFile) removePluginRunProofFile(pluginRunProofFile);
+			// Revoke authority even if removing the on-disk proof fails.
 			if (runToken) deps.revokeRunToken(runToken);
+			if (pluginRunProofFile) removePluginRunProofFile(pluginRunProofFile);
 		}
 	};
 }

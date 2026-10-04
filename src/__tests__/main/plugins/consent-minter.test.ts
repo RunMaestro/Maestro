@@ -422,6 +422,7 @@ describe('sameConsentSender', () => {
 });
 
 describe('Dispatch allowlist during renewed consent', () => {
+	const obsidianCodexId = '76fd8ebe-7346-4db0-8799-edcd03071bb2';
 	const previousIdentity: AuthIdentity = { ...TRUSTED, contentHash: 'old-code' };
 	const requested: PermissionRequest[] = [
 		{ capability: 'agents:dispatch', scope: 'CONFIGURE_IN_MAESTRO' },
@@ -496,6 +497,39 @@ describe('Dispatch allowlist during renewed consent', () => {
 			expect(out.grants[0].scope).toBe('agent-a,agent-b');
 			expect(out.grants[0].unattended).toBeUndefined();
 		}
+	});
+
+	it('offers the existing Obsidian Codex selection but requires fresh Dispatch and Unattended approval', async () => {
+		const previousGrant: PermissionGrant = {
+			capability: 'agents:dispatch',
+			scope: obsidianCodexId,
+			grantedAt: 1,
+			unattended: true,
+		};
+		const withoutDispatch = renewed({ grants: [previousGrant] });
+		await withoutDispatch.minter.requestConsent('p');
+		expect(withoutDispatch.offer().requested[0].scope).toBe(obsidianCodexId);
+		expect(withoutDispatch.confirm([])).toEqual({ ok: true, grants: [] });
+
+		const withoutUnattended = renewed({ grants: [previousGrant] });
+		await withoutUnattended.minter.requestConsent('p');
+		const dispatchOnly = withoutUnattended.confirm(['agents:dispatch']);
+		if (!dispatchOnly.ok) throw new Error(dispatchOnly.reason);
+		expect(dispatchOnly.grants[0]).toMatchObject({
+			capability: 'agents:dispatch',
+			scope: obsidianCodexId,
+		});
+		expect(dispatchOnly.grants[0].unattended).toBeUndefined();
+
+		const fullyApproved = renewed({ grants: [previousGrant] });
+		await fullyApproved.minter.requestConsent('p');
+		const result = fullyApproved.confirm(['agents:dispatch'], ['agents:dispatch']);
+		if (!result.ok) throw new Error(result.reason);
+		expect(result.grants[0]).toMatchObject({
+			capability: 'agents:dispatch',
+			scope: obsidianCodexId,
+			unattended: true,
+		});
 	});
 
 	it('keeps an empty deny-all selection instead of restoring the package placeholder', async () => {

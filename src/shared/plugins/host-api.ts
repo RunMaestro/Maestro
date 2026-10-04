@@ -23,7 +23,7 @@ import semver from 'semver';
 /**
  * The host API version this Maestro build implements. 1.20.0 adds invocation-
  * scoped public progress callbacks to `agents.send`, without a new grant.
- * 1.18.0 and 1.19.0 are reserved by separate panel work on this fork.
+ * 1.18.0 places settings panels in plugin details; 1.19.0 adds the isolated panel theme bridge.
  * 1.17.0 added
  * `agents.send` and the verified second argument to plugin tool handlers.
  * 1.16.0 added three

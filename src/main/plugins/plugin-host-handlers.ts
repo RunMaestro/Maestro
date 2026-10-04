@@ -1563,6 +1563,13 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 								error: 'Agent run timed out or was cancelled',
 							};
 						}
+						// Quiet providers may finish without any progress callbacks. Check
+						// current grants again before releasing text or recording ownership.
+						assertBrokerAllowed(deps, pluginId, 'agents.send', p);
+						if (!deps.dispatchUnattendedAllowed?.(pluginId, agentId)) {
+							throw new Error('agents.send requires separate unattended consent');
+						}
+						assertTrustedActVerb(deps, pluginId);
 						if (success && sessionId) {
 							providerSessions.remember(pluginId, agentId, sessionId);
 						}

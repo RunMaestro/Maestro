@@ -170,7 +170,13 @@ import {
 	pianolaSuperviseRemove,
 	pianolaSuperviseSetEnabled,
 } from './commands/pianola-supervise';
-import { pluginInit, pluginValidate, pluginSign, pluginPack } from './commands/plugin';
+import {
+	pluginInit,
+	pluginValidate,
+	pluginSign,
+	pluginPack,
+	pluginRuntime,
+} from './commands/plugin';
 import {
 	agentRunAppendEvent,
 	agentRunList,
@@ -2348,6 +2354,18 @@ program
 const plugin = program
 	.command('plugin')
 	.description('Author, validate, sign, and package Maestro plugins');
+
+plugin
+	.command('list')
+	.description('Read installed plugin versions, load status, and enable state from the desktop')
+	.option('--json', 'Output as JSON')
+	.action((options) => pluginRuntime('list', undefined, options));
+
+plugin
+	.command('update <dir>')
+	.description('Update an installed plugin from a local package directory, preserving data')
+	.option('--json', 'Output the resulting plugin registry as JSON')
+	.action((dir, options) => pluginRuntime('update', dir, options));
 
 plugin
 	.command('init [dir]')

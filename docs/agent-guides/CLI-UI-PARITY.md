@@ -353,3 +353,14 @@ still missing. Grouped, highest value first:
 - **Agents/groups:** worktree folder + scan, group emoji, `remove-agent --erase`.
 - **Symphony** contributions; **low value:** devtools, tour, leaderboard,
   `notify clear`, clear terminal, `gist --file`, deep link, reveal in Finder.
+
+### Backstage plugin updates
+
+| UI action                                                     | CLI path                                       | Shared implementation / read-back                                                    |
+| ------------------------------------------------------------- | ---------------------------------------------- | ------------------------------------------------------------------------------------ |
+| Extensions: update an installed plugin from a local directory | `maestro-cli plugin update <directory> --json` | `plugins:update` → `PluginManager.update`; preserves data and rechecks authorization |
+| Inspect installed plugin state                                | `maestro-cli plugin list --json`               | `plugins:list`; versions, enabled state, signature and load status                   |
+
+Plugin-defined settings inside isolated panels have no universal CLI schema. Those
+remain plugin-specific API operations; host consent cannot be auto-approved from a
+CLI call and still requires the protected consent window.

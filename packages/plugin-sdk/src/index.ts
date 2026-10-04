@@ -420,8 +420,8 @@ export function describeCapability(capability: PluginCapability): string {
 
 /**
  * The host API version this Maestro build implements. 1.20.0 adds an optional
- * per-call public progress callback to agents.send. 1.18.0 and 1.19.0 are
- * reserved by separate panel work on this fork. 1.17.0 added `agents.send` and verified plugin-tool caller context.
+ * per-call public progress callback to agents.send. 1.18.0 places settings panels in plugin details;
+ * 1.19.0 adds the isolated panel theme bridge. 1.17.0 added `agents.send` and verified plugin-tool caller context.
  * 1.16.0 added three
  * backward-compatible additions: the metadata-only `session.activated` event
  * topic (`{ sessionId, tabId? }`, opaque ids only, fired when the focused agent

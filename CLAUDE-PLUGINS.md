@@ -196,7 +196,7 @@ Integrity ("files match what was signed") and trust ("key is recognized") are la
 
 `HOST_API_VERSION` is a permanent public contract once plugins ship. PATCH = host bug fix; MINOR = additive (new contribution point / manifest field / capability, older plugins keep working); MAJOR = remove or change the meaning of an existing one. A plugin pins `maestro.minHostApi`; the host loads it only when same-major and `host >= min`.
 
-The current host is `1.20.0`; `agents.send` now accepts an optional invocation-scoped public progress callback (see `docs/relay-host-contract.md`). 1.18.0 and 1.19.0 are reserved by separate panel work on this fork. 1.17.0 added resumable `agents.send` and verified plugin-tool caller context. 1.16.0 added the metadata-only `session.activated`
+The current host is `1.20.0`; `agents.send` now accepts an optional invocation-scoped public progress callback (see `docs/relay-host-contract.md`). 1.18.0 places settings panels in plugin details; 1.19.0 adds the isolated panel theme bridge. 1.17.0 added resumable `agents.send` and verified plugin-tool caller context. 1.16.0 added the metadata-only `session.activated`
 event topic, the `sessions.focus` method plus its narrow `sessions:focus`
 capability, and the `ui.openPanel` / `ui.closePanel` / `ui.togglePanel` methods
 plus the optional panel manifest field `size?: 'default' | 'full'`. (`1.15.0` is

@@ -69,3 +69,21 @@ The proof is scoped to the local same-user process boundary. A model with full s
 `maestro.storage.set` writes the plugin's private KV data to `<userData>/plugin-data/<pluginId>/store.json`. On POSIX, the base/plugin directories are owner-only (`0700`), new temporary and replacement files are owner-only (`0600`), and old stores are hardened before reading. Unsafe symlinks are rejected. Windows applies the platform's file ACL behavior; POSIX mode bits are not an access-control mechanism there. The token remains plaintext for the local user and should never be copied into global `shellEnvVars`, prompts, logs, or the plugin panel response.
 
 The Relay plugin must set `minHostApi: "1.20.0"` to rely on `onProgress` and declare `agents:dispatch` plus its existing network, storage, and tool contributions. This host change does not enable plugins, grant permission, install Relay, or configure a Discord bot.
+
+## Backstage setup and update surfaces
+
+This host package includes the Backstage prerequisites: settings panels inside each
+extension's Settings tab, the isolated theme bridge, and the packaged `undici`
+runtime used by pinned network requests. Relay's plugin implementation and Discord
+credentials remain in Backstage and the user's private plugin store.
+
+The Extensions update action and `maestro-cli plugin update <directory>` use the
+same `plugins:update` handler and PluginManager. Updating preserves plugin data;
+it never approves new permissions. `maestro-cli plugin list --json` reads the
+resulting versions, enable state, signature and load status. A same-signer update
+retains the exact Dispatch selection, but Dispatch and Unattended require renewed
+consent for the new code identity. Enabling before that consent fails.
+
+The host re-authorizes a completed send before returning text or storing a provider
+session, including providers that emitted no progress. Run tokens are revoked
+before proof-file removal, so a filesystem cleanup error cannot retain authority.

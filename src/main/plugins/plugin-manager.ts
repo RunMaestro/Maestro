@@ -281,9 +281,20 @@ export class PluginManager {
 	}
 
 	/** Toggle a plugin on/off, persist, rebuild the registry, and reconcile the
-	 * sandbox (start a newly-enabled tier-1 plugin, stop a disabled one). */
+	 * sandbox. Code-tier activation must verify the current on-disk identity
+	 * against its consented authorization before persisting or starting code;
+	 * refresh() applies the same gate to previously enabled plugins. */
 	setEnabled(id: string, enabled: boolean): PluginRegistry {
 		if (!this.deps.isEnabled()) return this.registry;
+		const record = this.registry.records.find((item) => item.id === id);
+		if (
+			enabled &&
+			record?.manifest &&
+			record.manifest.tier >= 1 &&
+			this.deps.verifyRecord?.(record).disable
+		) {
+			throw new Error('PluginNotAuthorized');
+		}
 		setPluginEnabled(id, enabled);
 		this.registry = setEnabled(this.registry, id, enabled);
 		this.reconcileSandboxes(this.pluginFingerprints, this.pluginFingerprints);

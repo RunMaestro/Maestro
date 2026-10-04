@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import * as fs from 'fs';
+import * as runIdentity from '../../../main/plugins/plugin-tool-run-identity';
 import type { SessionInfo } from '../../../shared/types';
 import { createPluginHeadlessAgentRunner } from '../../../main/plugins/plugin-headless-agent-runner';
 
@@ -104,6 +105,33 @@ describe('plugin headless agent runner', () => {
 		});
 		expect(spawn.mock.calls[0][4].timeoutMs).toBe(20 * 60_000);
 		expect(revokeRunToken).toHaveBeenCalledWith('proof');
+	});
+
+	it('revokes the token even when proof-file cleanup fails', async () => {
+		const revokeRunToken = vi.fn();
+		const createProof = vi.spyOn(runIdentity, 'createPluginRunProofFile').mockReturnValue('/proof');
+		const removeProof = vi.spyOn(runIdentity, 'removePluginRunProofFile').mockImplementation(() => {
+			expect(revokeRunToken).toHaveBeenCalledWith('proof');
+			throw new Error('cleanup denied');
+		});
+		try {
+			const run = createPluginHeadlessAgentRunner({
+				getAgent: () => agent,
+				detectAgent: async () => ({ available: true }),
+				hasPluginTools: () => true,
+				spawn: async () => ({ success: true, response: 'answer' }),
+				prepareSystemPrompt: async () => undefined,
+				issueRunToken: () => 'proof',
+				revokeRunToken,
+				cliScriptPath: () => '/cli.js',
+				audit: vi.fn(),
+			});
+			await expect(run('agent-a', 'hello')).rejects.toThrow('cleanup denied');
+			expect(revokeRunToken).toHaveBeenCalledOnce();
+		} finally {
+			createProof.mockRestore();
+			removeProof.mockRestore();
+		}
 	});
 
 	it('fails clearly before minting a proof when the configured provider is absent', async () => {
