@@ -1,7 +1,27 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useApp, useInput } from 'ink';
-import type { MaestroClient, MaestroPaths } from '../shared/maestro-lib';
+import type { AgentRecord, MaestroClient, MaestroPaths } from '../shared/maestro-lib';
 import { visibleAiTabsOf } from '../shared/maestro-lib';
+import { AgentForm } from './agents/AgentForm';
+import {
+	acceptCompletion,
+	backspace as formBackspace,
+	cwdCandidates,
+	cycleChoice,
+	defaultProviderId,
+	effectiveName,
+	emptyFormContext,
+	groupsFromSections,
+	initialFormState,
+	liveAgentState,
+	moveFocus,
+	pressEnter,
+	submitAgentForm,
+	typeText,
+	type FormContext,
+	type FormState,
+} from './agents/form';
+import { useFormLookups } from './agents/useFormLookups';
 import { HelpOverlay } from './app/HelpOverlay';
 import { HistoryView } from './app/HistoryView';
 import { moveHistoryCursor, openHistory, type HistoryViewState } from './app/history';
@@ -34,6 +54,7 @@ import {
 	typeIntoPalette,
 	type PaletteState,
 } from './palette/state';
+import { isBackspaceKey, typedTextFor } from './app/textInput';
 import { tuiStateFilePath } from './store/view-state';
 
 export interface AppProps {
@@ -60,7 +81,15 @@ type OverlayState =
 	| { kind: 'tabs'; agentId: string; cursor: number }
 	| { kind: 'history'; history: HistoryViewState }
 	| { kind: 'palette'; palette: PaletteState }
-	| { kind: 'menu'; cursor: number };
+	| { kind: 'menu'; cursor: number }
+	| {
+			kind: 'form';
+			mode: 'create' | 'edit';
+			/** The agent as the host held it when the form opened; edits are measured against it. */
+			baseline?: AgentRecord;
+			form: FormState;
+			submitting: boolean;
+	  };
 
 export function App({ paths, client }: AppProps): React.ReactElement {
 	const { exit } = useApp();
@@ -68,6 +97,8 @@ export function App({ paths, client }: AppProps): React.ReactElement {
 
 	const source = useAgentSource(paths, client);
 	const data = source.data;
+	const dataRef = useRef(data);
+	dataRef.current = data;
 	const [view, setView] = useViewState(tuiStateFilePath(paths.userDataDir));
 	// The user's toggle for the Agents pane. Not persisted: whether it fits depends on the window.
 	const [agentsPaneOverride, setAgentsPaneOverride] = useState<boolean | undefined>(undefined);
@@ -87,6 +118,8 @@ export function App({ paths, client }: AppProps): React.ReactElement {
 		overlayRef.current = next;
 		setOverlayState(next);
 	};
+	// One line of news for the status bar (read-only refusals, a saved agent). The next key clears it.
+	const [notice, setNotice] = useState<string | undefined>(undefined);
 	const agentsPaneOverrideRef = useRef(agentsPaneOverride);
 	agentsPaneOverrideRef.current = agentsPaneOverride;
 	const columnsRef = useRef(size.columns);
@@ -150,6 +183,57 @@ export function App({ paths, client }: AppProps): React.ReactElement {
 	paletteEntriesRef.current = paletteEntries;
 	const menuEntries = useMemo(() => agentMenuEntries(), []);
 
+	// The agent form: what the host reports while it is open, and the context the form rules read.
+	const formOverlay = overlay?.kind === 'form' ? overlay : undefined;
+	const lookups = useFormLookups(
+		source.client,
+		formOverlay !== undefined,
+		formOverlay?.form.values.provider ?? '',
+		formOverlay?.form.values.ssh ?? ''
+	);
+	const formContext: FormContext | undefined = formOverlay
+		? {
+				mode: formOverlay.mode,
+				// Values come from the snapshot the form opened on; only the live state decides whether a move is blocked.
+				agent: formOverlay.baseline
+					? {
+							...formOverlay.baseline,
+							...liveAgentState(data.agents.find((a) => a.id === formOverlay.baseline?.id)),
+						}
+					: undefined,
+				agents: data.agents,
+				groups: groupsFromSections(data.sections),
+				providers: lookups.providers,
+				sshRemotes: lookups.sshRemotes,
+				models: lookups.models,
+			}
+		: undefined;
+	const formContextRef = useRef(formContext);
+	formContextRef.current = formContext;
+
+	const updateForm = (change: (form: FormState) => FormState) => {
+		const current = overlayRef.current;
+		if (current?.kind === 'form') setOverlay({ ...current, form: change(current.form) });
+	};
+
+	// A new agent starts on the best installed provider, once the host has said which are installed.
+	const formProvider = formOverlay?.form.values.provider;
+	const formMode = formOverlay?.mode;
+	useEffect(() => {
+		if (formMode !== 'create' || formProvider !== '') return;
+		const id = defaultProviderId({ providers: lookups.providers });
+		if (id) {
+			updateForm((form) => ({ ...form, values: { ...form.values, provider: id } }));
+		}
+	}, [formMode, formProvider, lookups.providers]);
+
+	// After a create, the Agents cursor goes to the new agent once the host's event brings it in.
+	const pendingRevealRef = useRef<string | undefined>(undefined);
+	useEffect(() => {
+		const agentId = pendingRevealRef.current;
+		if (agentId && revealAgent(agentId)) pendingRevealRef.current = undefined;
+	}, [data.sections]);
+
 	/** Puts the Agents cursor on an agent, unfolding the section it hides in. */
 	const revealAgent = (agentId: string): boolean => {
 		const found = locateAgent(data.sections, rowsRef.current, agentId);
@@ -190,6 +274,64 @@ export function App({ paths, client }: AppProps): React.ReactElement {
 		}
 	};
 
+	/** The form is a client feature: without a desktop attached the TUI is read-only. */
+	const openForm = async (mode: 'create' | 'edit', agentId?: string) => {
+		const client = source.client;
+		if (!client) {
+			setNotice('No desktop attached: the TUI is read-only until one is running.');
+			return;
+		}
+		if (mode === 'create') {
+			setOverlay({
+				kind: 'form',
+				mode,
+				form: initialFormState(emptyFormContext('create')),
+				submitting: false,
+			});
+			return;
+		}
+		if (!agentId) return;
+		// Read fresh: the form opens on the host's values, not on a copy that may be a poll old.
+		const fresh = await client.agents.get(agentId);
+		const baseline = fresh.ok ? fresh.value : dataRef.current.agents.find((a) => a.id === agentId);
+		if (!baseline) {
+			setNotice(fresh.ok ? 'That agent is gone.' : fresh.error.message);
+			return;
+		}
+		setOverlay({
+			kind: 'form',
+			mode,
+			baseline,
+			form: initialFormState({ ...emptyFormContext('edit'), agent: baseline }),
+			submitting: false,
+		});
+	};
+
+	const submitForm = async () => {
+		const current = overlayRef.current;
+		const ctx = formContextRef.current;
+		const client = source.client;
+		if (current?.kind !== 'form' || current.submitting || !ctx || !client) return;
+		// Named before the save: afterwards the new agent is in the list, and a folder default would collide with it.
+		const name = effectiveName(ctx, current.form);
+		setOverlay({ ...current, submitting: true });
+		const result = await submitAgentForm(client, ctx, current.form);
+		const latest = overlayRef.current;
+		// Esc while the save was in flight: the host still got it, but there is no form to report to.
+		if (latest?.kind !== 'form') return;
+		if (!result.ok) {
+			setOverlay({
+				...latest,
+				submitting: false,
+				form: { ...latest.form, error: result.error.message },
+			});
+			return;
+		}
+		if (ctx.mode === 'create') pendingRevealRef.current = result.value.agentId;
+		setOverlay(undefined);
+		setNotice(`${ctx.mode === 'create' ? 'Created' : 'Saved'} ${name}.`);
+	};
+
 	const runAction = (action: KeyAction, current: OverlayState | undefined) => {
 		const visible = isAgentsPaneVisible(columnsRef.current, agentsPaneOverrideRef.current);
 		const focus: PaneId = visible ? focusRef.current : 'conversation';
@@ -210,6 +352,30 @@ export function App({ paths, client }: AppProps): React.ReactElement {
 			case 'agentMenu':
 				if (agent) setOverlay({ kind: 'menu', cursor: 0 });
 				return;
+			case 'newAgent':
+				openForm('create');
+				return;
+			case 'editAgent':
+				if (agent) void openForm('edit', agent.id);
+				return;
+			case 'submitForm':
+				void submitForm();
+				return;
+			case 'choicePrev':
+			case 'choiceNext': {
+				const ctx = formContextRef.current;
+				if (current?.kind !== 'form' || !ctx) return;
+				const delta = action === 'choiceNext' ? 1 : -1;
+				// Right on Directory takes the top completion; every other choice field steps.
+				updateForm((state) =>
+					state.focus === 'cwd'
+						? delta > 0
+							? acceptCompletion(state, cwdCandidates(state.values.cwd, state.values.ssh !== ''))
+							: state
+						: cycleChoice(ctx, state, delta)
+				);
+				return;
+			}
 			case 'closeOverlay':
 				setOverlay(undefined);
 				return;
@@ -263,6 +429,9 @@ export function App({ paths, client }: AppProps): React.ReactElement {
 						kind: 'palette',
 						palette: movePaletteCursor(current.palette, delta, count),
 					});
+				} else if (current?.kind === 'form') {
+					const ctx = formContextRef.current;
+					if (ctx) updateForm((form) => moveFocus(ctx, form, delta));
 				} else if (current?.kind === 'menu') {
 					setOverlay({
 						kind: 'menu',
@@ -277,6 +446,14 @@ export function App({ paths, client }: AppProps): React.ReactElement {
 				return;
 			}
 			case 'open': {
+				if (current?.kind === 'form') {
+					const ctx = formContextRef.current;
+					if (!ctx) return;
+					const result = pressEnter(ctx, current.form);
+					setOverlay({ ...current, form: result.state });
+					if (result.submit) void submitForm();
+					return;
+				}
 				if (current?.kind === 'palette') {
 					const results = rankPaletteEntries(paletteEntriesRef.current, current.palette.query);
 					const picked = results[current.palette.cursor];
@@ -322,6 +499,7 @@ export function App({ paths, client }: AppProps): React.ReactElement {
 	};
 
 	useInput((input, key) => {
+		setNotice(undefined);
 		const current = overlayRef.current;
 		const context: KeyContext = current ? current.kind : 'main';
 		const action = resolveAction(context, input, key);
@@ -329,7 +507,17 @@ export function App({ paths, client }: AppProps): React.ReactElement {
 			runAction(action, current);
 			return;
 		}
-		// The palette is the one overlay with a text box: what no binding claims is typing.
+		// The palette and the agent form are the overlays with text boxes: what no binding claims is typing.
+		if (current?.kind === 'form') {
+			const ctx = formContextRef.current;
+			if (!ctx) return;
+			if (isBackspaceKey(key)) updateForm((form) => formBackspace(ctx, form));
+			else {
+				const text = typedTextFor(input, key);
+				if (text) updateForm((form) => typeText(ctx, form, text));
+			}
+			return;
+		}
 		if (current?.kind === 'palette') {
 			if (isPaletteBackspace(key)) {
 				setOverlay({ kind: 'palette', palette: backspacePalette(current.palette) });
@@ -355,6 +543,17 @@ export function App({ paths, client }: AppProps): React.ReactElement {
 								height={height}
 							/>
 						);
+					case 'form':
+						return formContext ? (
+							<AgentForm
+								context={formContext}
+								state={overlay.form}
+								submitting={overlay.submitting}
+								loading={lookups.loading}
+								width={width}
+								height={height}
+							/>
+						) : null;
 					case 'menu':
 						return cursorAgent ? (
 							<AgentMenuOverlay
@@ -405,6 +604,7 @@ export function App({ paths, client }: AppProps): React.ReactElement {
 			agentsPaneOverride={agentsPaneOverride}
 			agentsPaneWidth={view.agentsPaneWidth}
 			problems={data.problems}
+			notice={notice}
 		/>
 	);
 }

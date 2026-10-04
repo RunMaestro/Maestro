@@ -12,6 +12,7 @@ export * from './paths/userDataDir';
 export * from './paths/resolve';
 export * from './paths/syncPath';
 export * from './paths/doctor';
+export * from './paths/complete';
 
 // Desktop bridge: find the running desktop (cli-server.json) and talk to it
 export * from './client/discovery';
@@ -31,7 +32,24 @@ export * from './store/agent-tree';
 export * from './store/tab-display';
 
 // Provider display names (a provider this build does not know still gets a label)
-export { getAgentDisplayName } from '../agentMetadata';
+export { getAgentDisplayName, AGENT_AUTOSELECT_ORDER } from '../agentMetadata';
+
+export type { SshRemoteConfig } from '../types';
+
+// Agent form rules, shared with the desktop so a TUI form and the Edit dialog cannot disagree
+export { defaultAgentNameForPath, projectNameFromPath } from '../projectIdentity';
+export {
+	isSameDirectory,
+	rebasePathOntoRoot,
+	workingDirectoryChangeBlocker,
+} from '../agentWorkingDirectory';
+export {
+	isBlankEnvKey,
+	isBlankEnvValue,
+	isSecretEnvKey,
+	maskEnvValue,
+	stripBlankEnvVars,
+} from '../agentEnvironment';
 
 // One-line tool call descriptions ("Read src/App.tsx"), shared with the desktop activity feed
 export * from '../toolActivityLabel';

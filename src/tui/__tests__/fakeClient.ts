@@ -11,6 +11,8 @@ import type {
 	MaestroClient,
 	MaestroEvent,
 	EventFilter,
+	ProviderInfo,
+	SshRemoteConfig,
 } from '../../shared/maestro-lib';
 
 export interface FakeClientOptions {
@@ -22,6 +24,12 @@ export interface FakeClientOptions {
 	/** Make `discover` or `connect` fail with this code. */
 	discoverError?: ClientError['code'];
 	connectError?: ClientError['code'];
+	providers?: ProviderInfo[];
+	sshRemotes?: SshRemoteConfig[];
+	/** Model ids by provider id. */
+	models?: Record<string, string[]>;
+	/** Make these methods fail with this code, so a test can see how a refusal is shown. */
+	failures?: Partial<Record<ClientMethod, ClientError['code']>>;
 }
 
 export interface FakeClient {
@@ -34,6 +42,8 @@ export interface FakeClient {
 	transcriptReads: string[];
 	/** What the connection did, in order. */
 	calls: string[];
+	/** Every call that changes or asks something, with the arguments the TUI passed, in order. */
+	requests: Array<{ method: ClientMethod; args: unknown[] }>;
 	setState(state: ConnectionState): void;
 }
 
@@ -65,8 +75,15 @@ export function createFakeClient(options: FakeClientOptions = {}): FakeClient {
 	}>();
 	const transcriptReads: string[] = [];
 	const calls: string[] = [];
+	const requests: FakeClient['requests'] = [];
+	let createdCount = 0;
 	let state: ConnectionState = 'idle';
 
+	const record = (method: ClientMethod, ...args: unknown[]): ClientResult<never> | undefined => {
+		requests.push({ method, args });
+		const code = options.failures?.[method];
+		return code ? fail(method, code) : undefined;
+	};
 	const unsupported = async (method: ClientMethod) => fail(method, 'unsupported');
 	const push = (event: MaestroEvent) => {
 		for (const entry of [...listeners]) {
@@ -101,11 +118,32 @@ export function createFakeClient(options: FakeClientOptions = {}): FakeClient {
 		agents: {
 			list: async () => ({ ok: true, value: agents }),
 			get: async (agentId) => {
+				const refused = record('agents.get', agentId);
+				if (refused) return refused;
 				const found = agents.find((agent) => agent.id === agentId);
 				return found ? { ok: true, value: found } : fail('agents.get', 'not-found');
 			},
-			create: () => unsupported('agents.create'),
-			update: () => unsupported('agents.update'),
+			create: async (input) => {
+				const refused = record('agents.create', input);
+				if (refused) return refused;
+				createdCount += 1;
+				const agentId = `new-agent-${createdCount}`;
+				const created: AgentRecord = {
+					id: agentId,
+					name: input.name,
+					toolType: input.provider,
+					cwd: input.cwd,
+					...(input.groupId ? { groupId: input.groupId } : {}),
+				};
+				agents.push(created);
+				push({ type: 'agent.added', agent: created });
+				return { ok: true, value: { agentId } };
+			},
+			update: async (agentId, patch) => {
+				const refused = record('agents.update', agentId, patch);
+				if (refused) return refused;
+				return { ok: true, value: { applied: Object.keys(patch) as never[] } };
+			},
 			rename: () => unsupported('agents.rename'),
 			remove: () => unsupported('agents.remove'),
 		},
@@ -154,11 +192,14 @@ export function createFakeClient(options: FakeClientOptions = {}): FakeClient {
 		settings: {
 			get: async () => ({ ok: true, value: {} }),
 			subscribe: () => () => undefined,
-			sshRemotes: async () => ({ ok: true, value: [] }),
+			sshRemotes: async () => ({ ok: true, value: options.sshRemotes ?? [] }),
 		},
 		providers: {
-			list: async () => ({ ok: true, value: [] }),
-			models: async () => ({ ok: true, value: [] }),
+			list: async (listOptions) => {
+				requests.push({ method: 'providers.list', args: [listOptions] });
+				return { ok: true, value: options.providers ?? [] };
+			},
+			models: async (providerId) => ({ ok: true, value: options.models?.[providerId] ?? [] }),
 		},
 		events: {
 			subscribe: (listener, filter) => {
@@ -177,6 +218,7 @@ export function createFakeClient(options: FakeClientOptions = {}): FakeClient {
 		},
 		transcriptReads,
 		calls,
+		requests,
 		setState: (next) => {
 			state = next;
 		},

@@ -10,7 +10,7 @@
 import type { Key } from 'ink';
 
 /** Where a binding is live: the main view, or one of the overlays. */
-export type KeyContext = 'main' | 'help' | 'tabs' | 'history' | 'palette' | 'menu';
+export type KeyContext = 'main' | 'help' | 'tabs' | 'history' | 'palette' | 'menu' | 'form';
 
 export type KeyAction =
 	| 'quit'
@@ -26,10 +26,15 @@ export type KeyAction =
 	| 'toggleAgentsPane'
 	| 'palette'
 	| 'agentMenu'
+	| 'newAgent'
+	| 'editAgent'
+	| 'submitForm'
+	| 'choicePrev'
+	| 'choiceNext'
 	| 'closeOverlay';
 
 /** Keys that arrive as a flag on Ink's `Key` rather than as text. */
-export type NamedKey = 'tab' | 'return' | 'escape' | 'up' | 'down';
+export type NamedKey = 'tab' | 'return' | 'escape' | 'up' | 'down' | 'left' | 'right';
 
 export interface KeyChord {
 	/** A printable key, as Ink reports it (`j`, `T`, `?`). */
@@ -76,22 +81,29 @@ export const KEYMAP: readonly Binding[] = [
 	{
 		action: 'moveDown',
 		chords: [{ input: 'j' }, { named: 'down' }],
-		contexts: ['main', 'tabs', 'history', 'palette', 'menu'],
-		chordsByContext: { palette: [{ named: 'down' }, { input: 'n', ctrl: true }] },
+		contexts: ['main', 'tabs', 'history', 'palette', 'menu', 'form'],
+		chordsByContext: {
+			palette: [{ named: 'down' }, { input: 'n', ctrl: true }],
+			// A form is a text box: letters type, so the cursor moves on arrows, Tab, and Ctrl-N.
+			form: [{ named: 'down' }, { named: 'tab' }, { input: 'n', ctrl: true }],
+		},
 		description: 'Move down',
 	},
 	{
 		action: 'moveUp',
 		chords: [{ input: 'k' }, { named: 'up' }],
-		contexts: ['main', 'tabs', 'history', 'palette', 'menu'],
-		chordsByContext: { palette: [{ named: 'up' }, { input: 'p', ctrl: true }] },
+		contexts: ['main', 'tabs', 'history', 'palette', 'menu', 'form'],
+		chordsByContext: {
+			palette: [{ named: 'up' }, { input: 'p', ctrl: true }],
+			form: [{ named: 'up' }, { named: 'tab', shift: true }, { input: 'p', ctrl: true }],
+		},
 		description: 'Move up',
 	},
 	{
 		action: 'open',
 		chords: [{ named: 'return' }],
-		contexts: ['main', 'tabs', 'palette', 'menu'],
-		description: 'Open agent, fold group, pick tab',
+		contexts: ['main', 'tabs', 'palette', 'menu', 'form'],
+		description: 'Open agent, fold group, pick tab, next form field',
 		agentMenu: 'Open conversation',
 	},
 	{
@@ -107,6 +119,37 @@ export const KEYMAP: readonly Binding[] = [
 		contexts: ['main'],
 		description: 'History of the selected agent',
 		agentMenu: 'History',
+	},
+	{
+		action: 'newAgent',
+		chords: [{ input: 'n' }],
+		contexts: ['main'],
+		description: 'New agent',
+	},
+	{
+		action: 'editAgent',
+		chords: [{ input: 'E' }],
+		contexts: ['main'],
+		description: 'Edit the selected agent',
+		agentMenu: 'Edit agent',
+	},
+	{
+		action: 'submitForm',
+		chords: [{ input: 's', ctrl: true }],
+		contexts: ['form'],
+		description: 'Save the agent form',
+	},
+	{
+		action: 'choicePrev',
+		chords: [{ named: 'left' }],
+		contexts: ['form'],
+		description: 'Previous choice in a form field',
+	},
+	{
+		action: 'choiceNext',
+		chords: [{ named: 'right' }],
+		contexts: ['form'],
+		description: 'Next choice, or accept the path completion',
 	},
 	{
 		action: 'toggleToolCalls',
@@ -147,7 +190,7 @@ export const KEYMAP: readonly Binding[] = [
 	{
 		action: 'closeOverlay',
 		chords: [{ named: 'escape' }],
-		contexts: ['help', 'tabs', 'history', 'palette', 'menu'],
+		contexts: ['help', 'tabs', 'history', 'palette', 'menu', 'form'],
 		description: 'Close the overlay',
 	},
 ];
@@ -164,6 +207,10 @@ function namedKeyPressed(named: NamedKey, key: Key): boolean {
 			return key.upArrow;
 		case 'down':
 			return key.downArrow;
+		case 'left':
+			return key.leftArrow;
+		case 'right':
+			return key.rightArrow;
 	}
 }
 
@@ -204,6 +251,8 @@ const NAMED_KEY_LABELS: Record<NamedKey, string> = {
 	escape: 'Esc',
 	up: '↑',
 	down: '↓',
+	left: '←',
+	right: '→',
 };
 
 export function formatChord(chord: KeyChord): string {

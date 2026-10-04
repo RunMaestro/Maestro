@@ -1,5 +1,3 @@
-import type { Key } from 'ink';
-
 /** What the palette has typed and where its cursor is in the ranked results. */
 export interface PaletteState {
 	query: string;
@@ -22,18 +20,8 @@ export function movePaletteCursor(state: PaletteState, delta: number, count: num
 	return cursor === state.cursor ? state : { ...state, cursor };
 }
 
-/**
- * The text a keypress adds to the query, with control characters dropped (a
- * pasted block arrives as one `input`; Tab and a stray Esc must not land in the
- * box). Ctrl and Meta chords add nothing.
- */
-export function paletteTextFor(input: string, key: Key): string {
-	if (key.ctrl || key.meta) return '';
-	 
-	return input.replace(/[\u0000-\u001f\u007f]/g, '');
-}
-
-/** Whether the key deletes the last typed character. Terminals disagree on which flag Backspace sets. */
-export function isPaletteBackspace(key: Key): boolean {
-	return key.backspace || key.delete;
-}
+/** The palette's names for the shared text-box rules. */
+export {
+	typedTextFor as paletteTextFor,
+	isBackspaceKey as isPaletteBackspace,
+} from '../app/textInput';

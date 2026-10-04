@@ -40,6 +40,8 @@ function press(chord: KeyChord): { input: string; key: Key } {
 		escape: chord.named === 'escape',
 		upArrow: chord.named === 'up',
 		downArrow: chord.named === 'down',
+		leftArrow: chord.named === 'left',
+		rightArrow: chord.named === 'right',
 	};
 	return { input: chord.input ?? '', key };
 }
@@ -115,6 +117,39 @@ describe('keymap', () => {
 		expect(resolveAction('menu', '', { ...NO_KEY, return: true })).toBe('open');
 		expect(resolveAction('menu', '', { ...NO_KEY, escape: true })).toBe('closeOverlay');
 		expect(resolveAction('menu', 'm', NO_KEY)).toBeUndefined();
+	});
+
+	it('opens the agent form with n and E, and puts E in the agent menu', () => {
+		expect(resolveAction('main', 'n', NO_KEY)).toBe('newAgent');
+		expect(resolveAction('main', 'E', NO_KEY)).toBe('editAgent');
+		expect(bindingFor('editAgent').agentMenu).toBe('Edit agent');
+		// A new agent belongs to no agent, so it is not in the agent menu.
+		expect(bindingFor('newAgent').agentMenu).toBeUndefined();
+	});
+
+	it('keeps every letter for typing in the form and moves with arrows, Tab, and Ctrl chords', () => {
+		for (const letter of ['j', 'k', 'q', 'm', 'n', 'E', 's', '?']) {
+			expect(resolveAction('form', letter, NO_KEY), letter).toBeUndefined();
+		}
+		expect(resolveAction('form', '', { ...NO_KEY, downArrow: true })).toBe('moveDown');
+		expect(resolveAction('form', '', { ...NO_KEY, tab: true })).toBe('moveDown');
+		expect(resolveAction('form', 'n', { ...NO_KEY, ctrl: true })).toBe('moveDown');
+		expect(resolveAction('form', '', { ...NO_KEY, upArrow: true })).toBe('moveUp');
+		expect(resolveAction('form', '', { ...NO_KEY, tab: true, shift: true })).toBe('moveUp');
+		expect(resolveAction('form', 'p', { ...NO_KEY, ctrl: true })).toBe('moveUp');
+		expect(resolveAction('form', '', { ...NO_KEY, leftArrow: true })).toBe('choicePrev');
+		expect(resolveAction('form', '', { ...NO_KEY, rightArrow: true })).toBe('choiceNext');
+		expect(resolveAction('form', 's', { ...NO_KEY, ctrl: true })).toBe('submitForm');
+		expect(resolveAction('form', '', { ...NO_KEY, return: true })).toBe('open');
+		expect(resolveAction('form', '', { ...NO_KEY, escape: true })).toBe('closeOverlay');
+		// Tab walks panes in the main view, fields in the form.
+		expect(resolveAction('main', '', { ...NO_KEY, tab: true })).toBe('nextPane');
+	});
+
+	it('writes the arrow keys the way a person reads them', () => {
+		expect(keysFor('choicePrev')).toBe('←');
+		expect(keysFor('choiceNext')).toBe('→');
+		expect(keysFor('submitForm')).toBe('Ctrl-S');
 	});
 
 	it('does not take Ctrl-or-Meta chords for the plain letter', () => {

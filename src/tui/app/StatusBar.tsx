@@ -7,6 +7,8 @@ export interface StatusBarProps {
 	/** Who owns the data directory right now. `read-only` until the TUI can write. */
 	hostLabel: string;
 	width: number;
+	/** News that replaces the data path: a refusal, a saved agent. */
+	notice?: string;
 }
 
 /** Replaces the user's home directory with `~`, so a long path leaves room for the label. */
@@ -15,14 +17,25 @@ export function abbreviateHome(dir: string, home: string | undefined): string {
 	return dir;
 }
 
-export function StatusBar({ userDataDir, hostLabel, width }: StatusBarProps): React.ReactElement {
+export function StatusBar({
+	userDataDir,
+	hostLabel,
+	width,
+	notice,
+}: StatusBarProps): React.ReactElement {
 	return (
 		<Box width={width} height={1} paddingX={1}>
 			{/* The path gives way first: the host label is the part that must stay readable. */}
 			<Box flexShrink={1} flexGrow={1}>
-				<Text wrap="truncate-start" dimColor>
-					data: {abbreviateHome(userDataDir, process.env.HOME)}
-				</Text>
+				{notice ? (
+					<Text wrap="truncate-end" color="yellow">
+						{notice}
+					</Text>
+				) : (
+					<Text wrap="truncate-start" dimColor>
+						data: {abbreviateHome(userDataDir, process.env.HOME)}
+					</Text>
+				)}
 			</Box>
 			<Box flexShrink={0} marginLeft={2}>
 				<Text dimColor>

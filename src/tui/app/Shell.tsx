@@ -42,6 +42,8 @@ export interface ShellProps {
 	agentsPaneWidth: number;
 	/** Store files that could not be read, one line each. */
 	problems: readonly string[];
+	/** One line of news for the status bar; it replaces the key hints until the next key. */
+	notice?: string;
 }
 
 /** Lines the Agents pane spends on its border (2) and its title (1). */
@@ -67,6 +69,7 @@ export function Shell({
 	agentsPaneOverride,
 	agentsPaneWidth,
 	problems,
+	notice,
 }: ShellProps): React.ReactElement {
 	const scrollStart = useRef(0);
 
@@ -116,7 +119,12 @@ export function Shell({
 					/>
 				)}
 			</Box>
-			<StatusBar userDataDir={userDataDir} hostLabel={hostLabel} width={size.columns} />
+			<StatusBar
+				userDataDir={userDataDir}
+				hostLabel={hostLabel}
+				width={size.columns}
+				notice={notice}
+			/>
 		</Box>
 	);
 }
