@@ -14,14 +14,19 @@
 # the package: it inspects the actual packaged binaries and fails loudly if the
 # floor was exceeded.
 #
-# Usage: ./verify-glibc-floor.sh <max-glibc> <search-dir>
-#   max-glibc:  highest allowed glibc version, e.g. 2.35 (Ubuntu 22.04)
-#   search-dir: directory scanned recursively for *.node files
+# Usage: ./verify-glibc-floor.sh <max-glibc> <search-dir> [extra-binary ...]
+#   max-glibc:    highest allowed glibc version, e.g. 2.35 (Ubuntu 22.04)
+#   search-dir:   directory scanned recursively for *.node files
+#   extra-binary: other shipped ELF executables to hold to the same floor
+#                 (e.g. the Computer History helper, resources/native/maestro-observer).
+#                 Each must exist; a missing one fails the check.
 
 set -euo pipefail
 
-MAX_GLIBC="${1:?Usage: $0 <max-glibc> <search-dir>}"
-SEARCH_DIR="${2:?Usage: $0 <max-glibc> <search-dir>}"
+MAX_GLIBC="${1:?Usage: $0 <max-glibc> <search-dir> [extra-binary ...]}"
+SEARCH_DIR="${2:?Usage: $0 <max-glibc> <search-dir> [extra-binary ...]}"
+shift 2
+EXTRA_BINS=("$@")
 
 if ! command -v readelf >/dev/null 2>&1; then
 	echo "✗ ERROR: readelf not found (install binutils)" >&2
@@ -54,6 +59,13 @@ if [ "${#NODES[@]}" -eq 0 ]; then
 	echo "✗ ERROR: no .node files found under $SEARCH_DIR" >&2
 	exit 1
 fi
+for extra in "${EXTRA_BINS[@]}"; do
+	if [ ! -f "$extra" ]; then
+		echo "✗ ERROR: extra binary not found: $extra" >&2
+		exit 1
+	fi
+	NODES+=("$extra")
+done
 
 echo "Checking glibc floor (max allowed: GLIBC_${MAX_GLIBC}) across ${#NODES[@]} native module(s)..."
 FAIL=0

@@ -1,0 +1,36 @@
+[package]
+name = "maestro-observer"
+version = "0.1.0"
+edition = "2021"
+description = "Maestro Computer History accessibility observer (macOS AX, Windows UIA, Linux AT-SPI2)"
+license = "AGPL-3.0-only"
+publish = false
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+accessibility-sys = "0.2"
+core-foundation = "0.10"
+core-foundation-sys = "0.8"
+objc2 = "0.6"
+objc2-foundation = "0.3"
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "libc", "NSWorkspace", "NSRunningApplication"] }
+
+[target.'cfg(windows)'.dependencies]
+uiautomation = { version = "0.25", default-features = false, features = ["input", "pattern"] }
+windows = { version = "0.62", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_System_Threading", "Win32_Storage_Packaging_Appx"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+atspi = "0.30"
+async-io = "2"
+zbus = { version = "5", default-features = false, features = ["async-io"] }
+futures-lite = "2"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"

@@ -25,6 +25,7 @@ node_modules
 # Build outputs
 dist/
 release/
+native/maestro-observer/target/
 *.log
 # Showcase Mode's seeded group-chat transcript is source data, not a log file.
 # Without this the blanket *.log above swallows it and the demo chat ships empty.

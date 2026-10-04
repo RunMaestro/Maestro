@@ -147,6 +147,19 @@ jobs:
         with:
           python-version: '3.11'
 
+      # Rust for the Computer History helper (native/maestro-observer). macOS
+      # builds both arches on the one runner; every other runner builds for its
+      # own arch, so the host target is enough there.
+      - name: Setup Rust (macOS, both arches)
+        if: matrix.platform == 'mac'
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-apple-darwin,aarch64-apple-darwin
+
+      - name: Setup Rust
+        if: matrix.platform != 'mac'
+        uses: dtolnay/rust-toolchain@stable
+
       # Extract version from git tag for use in build steps
       - name: Set version from tag
         id: version
@@ -257,6 +270,32 @@ jobs:
         run: npm run verify:provenance
         env:
           MAESTRO_SENTRY_DSN: ${{ secrets.MAESTRO_SENTRY_DSN }}
+
+      # Computer History helper. Not part of `npm run build` (contributors
+      # without Rust must still be able to build), so it is built here, after
+      # the vite steps that empty their own dist/ subfolders. electron-builder
+      # copies dist/native/<platform>-${arch}/ into resources/native/.
+      # macOS packages x64 and arm64 separately below, so it needs both.
+      - name: Build Computer History helper
+        shell: bash
+        env:
+          PLATFORM: ${{ matrix.platform }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          if [ "$PLATFORM" = "mac" ]; then
+            node scripts/build-maestro-observer.mjs --arch x64
+            node scripts/build-maestro-observer.mjs --arch arm64
+            file dist/native/darwin-x64/maestro-observer | grep 'x86_64' >/dev/null
+            file dist/native/darwin-arm64/maestro-observer | grep 'arm64' >/dev/null
+            dist/native/darwin-arm64/maestro-observer --version
+          else
+            node scripts/build-maestro-observer.mjs --arch "$ARCH"
+            case "$PLATFORM" in
+              win) BIN=dist/native/win32-x64/maestro-observer.exe ;;
+              *) BIN="dist/native/linux-$ARCH/maestro-observer" ;;
+            esac
+            "$BIN" --version
+          fi
 
       # List release directory before packaging for debugging
       - name: Create release directory
@@ -442,7 +481,10 @@ jobs:
       # and runs regardless of which image built the package.
       - name: Verify GLIBC floor (Linux x64)
         if: matrix.platform == 'linux'
-        run: .github/scripts/verify-glibc-floor.sh 2.35 release/linux-unpacked/resources/app.asar.unpacked
+        run: |
+          .github/scripts/verify-glibc-floor.sh 2.35 \
+            release/linux-unpacked/resources/app.asar.unpacked \
+            release/linux-unpacked/resources/native/maestro-observer
 
       # Verify native modules are correctly included in unpacked resources (Linux ARM64)
       - name: Verify native modules in package (Linux ARM64)
@@ -484,6 +526,44 @@ jobs:
             find "$UNPACKED_DIR" -name "*.node" 2>/dev/null || echo "Directory not found"
             exit 1
           fi
+
+      # The Computer History helper must land in resources/native/ of every
+      # package: the main process spawns it from process.resourcesPath/native/.
+      - name: Verify Computer History helper in package
+        shell: bash
+        env:
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          check() {
+            local bin="$1" arch_pattern="$2"
+            if [ ! -f "$bin" ]; then
+              echo "ERROR: $bin not found in the package"
+              exit 1
+            fi
+            file "$bin"
+            file "$bin" | grep -E "$arch_pattern" >/dev/null || { echo "ERROR: wrong architecture: $bin"; exit 1; }
+          }
+          case "$PLATFORM" in
+            mac)
+              check release/mac/Maestro.app/Contents/Resources/native/maestro-observer 'x86_64'
+              check release/mac-arm64/Maestro.app/Contents/Resources/native/maestro-observer 'arm64'
+              release/mac-arm64/Maestro.app/Contents/Resources/native/maestro-observer --version
+              ;;
+            win)
+              # Running it is the architecture check (`file` is not on every
+              # Windows image).
+              test -f release/win-unpacked/resources/native/maestro-observer.exe
+              release/win-unpacked/resources/native/maestro-observer.exe --version
+              ;;
+            linux)
+              check release/linux-unpacked/resources/native/maestro-observer 'x86-64'
+              release/linux-unpacked/resources/native/maestro-observer --version
+              ;;
+            linux-arm64)
+              check release/linux-arm64-unpacked/resources/native/maestro-observer 'aarch64|ARM aarch64'
+              release/linux-arm64-unpacked/resources/native/maestro-observer --version
+              ;;
+          esac
 
       # List what was built for debugging
       - name: List release artifacts
