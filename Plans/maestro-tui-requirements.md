@@ -6,7 +6,7 @@
 | Date      | 2026-09-25                                                                                                                                          |
 | Purpose   | Define a terminal UI for Maestro that runs on `maestro-lib` alone, and use it to prove the library can host Maestro with no Electron                |
 | Builds on | `Plans/maestro-lib-decisions.md`, `Plans/maestro-lib-verification.md`, `Plans/maestro-lib-turn-contract.md`, `Plans/maestro-lib-migration-audit.md` |
-| Base      | `feat/maestro-lib-integration`                                                                                                                      |
+| Base      | feat/maestro-lib-integration                                                                                                                        |
 
 ---
 
@@ -134,30 +134,6 @@ supervision, event bus, and lock, with no network in it. Three things wrap it:
 
 Until M3, a long run over SSH needs `tmux`. That is an acceptable v1 limit.
 
-### How this squares with the launch-and-control RFC
-
-That RFC (section 7, Q1) declines a central "runner kernel" every surface must
-spawn through, and keeps completion policy with each caller. The host does not
-reopen that. It owns **writes, process lifetime, and events**; how a caller
-decides a turn ended stays with the caller, via the turn contract.
-
-### Options considered
-
-| Option                                                         | Verdict                                                                                                                                    |
-| -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| O1. TUI is only a client of a running desktop                  | Fails the headless goal. Kept as the first milestone (M1) because it costs little                                                          |
-| O2. TUI writes the store files itself, with a lock             | Rejected. The desktop renderer overwrites sessions and groups; a lock does not stop that                                                   |
-| O3. One host per data dir, all surfaces are clients (D1 to D4) | **Chosen.** Headless needs a library-side repository (L1a). The desktop keeps its renderer ownership until M5, which retires the duplicate |
-| O4. Detached daemon from day one                               | Rejected for v1. The in-process host (D4.2) proves the library sooner; the daemon is the same object behind a socket, added in M3          |
-
-> [!NOTE]
-> The desktop does **not** have to change for the TUI to run headless. Its
-> renderer stays the owner of agent state while it runs, and the TUI reaches it
-> over the bridge (M1). Headless, the library repository (L1a) owns the files.
-> The two never run against one data dir at once (CO-5, Q1). Moving the desktop
-> onto the library repository (L1b, M5) is what removes the duplicate CRUD, and
-> it is the riskiest change here, but it is cleanup, not the critical path.
-
 ---
 
 ## 4. Functional requirements
@@ -282,20 +258,20 @@ meaningless without it. Treated as P0.
 
 ### 5.1 Layout
 
-```text
+\`\`\`text
 ┌ Agents ─────────────┬ Maestro · claude-code · opus · tab: lib-audit ─────────────┐
-│ ▾ 🎼 Core            │                                                            │
-│   ● Maestro      2  │  transcript (markdown, streaming)                          │
-│   ● Cue             │                                                            │
-│   ◐ Pedsidian       │                                                            │
-│ ▸ 🌐 Web (3)         │                                                            │
-│ ─ Group Chats ─     │                                                            │
-│   💬 lib review      ├────────────────────────────────────────────────────────────┤
-│                     │ > @Cue does the engine lock survive a PID namespace?_      │
+│ ▾ 🎼 Core │ │
+│ ● Maestro 2 │ transcript (markdown, streaming) │
+│ ● Cue │ │
+│ ◐ Pedsidian │ │
+│ ▸ 🌐 Web (3) │ │
+│ ─ Group Chats ─ │ │
+│ 💬 lib review ├────────────────────────────────────────────────────────────┤
+│ │ > @Cue does the engine lock survive a PID namespace?\_ │
 ├─────────────────────┴────────────────────────────────────────────────────────────┤
 │ host: desktop pid 4121 · data: ~/Library/Application Support/Maestro · ctx 38% $1.12 │
 └──────────────────────────────────────────────────────────────────────────────────┘
-```
+\`\`\`
 
 Views: **Agents** (left), **Conversation** (center: AI tab or group chat),
 **Auto Run** (replaces center: document list, run config, live progress),
@@ -305,42 +281,42 @@ Views: **Agents** (left), **Conversation** (center: AI tab or group chat),
 ### 5.2 Reaching things
 
 Every view has three ways in, adapted from the desktop rule: a **key**, a
-**command palette** entry (`Ctrl-K`), and a place in the **agent menu** (`m` on
-an agent). Every overlay leaves with `Esc` and shows that hint on screen.
+**command palette** entry (\`Ctrl-K\`), and a place in the **agent menu** (\`m\` on
+an agent). Every overlay leaves with \`Esc\` and shows that hint on screen.
 
-| Key              | Action                         |
-| ---------------- | ------------------------------ |
-| `Ctrl-K`         | Command palette                |
-| `Tab` / `S-Tab`  | Cycle panes                    |
-| `j` `k` / arrows | Move in lists                  |
-| `Enter`          | Open agent / send message      |
-| `n` / `e` / `d`  | New / edit / delete agent      |
-| `g`              | Group actions                  |
-| `t` / `T`        | New tab / tab switcher         |
-| `a`              | Auto Run view                  |
-| `c`              | Group chats                    |
-| `p`              | Swap provider                  |
-| `Ctrl-C`         | Interrupt turn (twice to quit) |
-| `?`              | Key help                       |
+| Key                   | Action                         |
+| --------------------- | ------------------------------ |
+| \`Ctrl-K\`            | Command palette                |
+| \`Tab\` / \`S-Tab\`   | Cycle panes                    |
+| \`j\` \`k\` / arrows  | Move in lists                  |
+| \`Enter\`             | Open agent / send message      |
+| \`n\` / \`e\` / \`d\` | New / edit / delete agent      |
+| \`g\`                 | Group actions                  |
+| \`t\` / \`T\`         | New tab / tab switcher         |
+| \`a\`                 | Auto Run view                  |
+| \`c\`                 | Group chats                    |
+| \`p\`                 | Swap provider                  |
+| \`Ctrl-C\`            | Interrupt turn (twice to quit) |
+| \`?\`                 | Key help                       |
 
-Bindings match the desktop's where a terminal can carry them (no `Cmd`), and
-are rebindable in `maestro-tui.json`.
+Bindings match the desktop's where a terminal can carry them (no \`Cmd\`), and
+are rebindable in \`maestro-tui.json\`.
 
 ---
 
 ## 6. Non-functional requirements
 
-| ID   | Requirement                                                                                                                                           |
-| ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| NF-1 | Runs on a Linux server over SSH with no Electron and no display installed                                                                             |
-| NF-2 | Node version and native modules match `maestro-cli`. The headless host also needs `better-sqlite3` and `node-pty` (maestro-p); ship prebuilt binaries |
-| NF-3 | First paint under 500 ms on attach to a running host                                                                                                  |
-| NF-4 | Streaming a long turn does not flicker or re-render finished transcript entries                                                                       |
-| NF-5 | macOS and Linux at v1. Windows (Windows Terminal) at P2, and the host inherits the Windows spawn rules from the launch-and-control RFC                |
-| NF-6 | Keyboard-only operation. Mouse is optional                                                                                                            |
-| NF-7 | A TUI crash leaves no orphan agent process and no torn file: the host owns processes and writes                                                       |
-| NF-8 | Library tests carry the domain logic. TUI tests cover rendering and key handling (`ink-testing-library` or equivalent)                                |
-| NF-9 | No em or en dashes in UI copy, per repo rule                                                                                                          |
+| ID   | Requirement                                                                                                                                                 |
+| ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| NF-1 | Runs on a Linux server over SSH with no Electron and no display installed                                                                                   |
+| NF-2 | Node version and native modules match \`maestro-cli\`. The headless host also needs \`better-sqlite3\` and \`node-pty\` (maestro-p); ship prebuilt binaries |
+| NF-3 | First paint under 500 ms on attach to a running host                                                                                                        |
+| NF-4 | Streaming a long turn does not flicker or re-render finished transcript entries                                                                             |
+| NF-5 | macOS and Linux at v1. Windows (Windows Terminal) at P2, and the host inherits the Windows spawn rules from the library turn contract                       |
+| NF-6 | Keyboard-only operation. Mouse is optional                                                                                                                  |
+| NF-7 | A TUI crash leaves no orphan agent process and no torn file: the host owns processes and writes                                                             |
+| NF-8 | Library tests carry the domain logic. TUI tests cover rendering and key handling (\`ink-testing-library\` or equivalent)                                    |
+| NF-9 | No em or en dashes in UI copy, per repo rule                                                                                                                |
 
 ---
 
@@ -348,49 +324,49 @@ are rebindable in `maestro-tui.json`.
 
 This is the real backlog. Each gap blocks the TUI requirements listed.
 
-| ID  | Gap                                                                                                                                                                                                                                                                               | Blocks             |
-| --- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------ |
-| L0  | **A public entry point and a client in the library.** `src/shared/maestro-lib/index.ts` does not exist; consumers import module paths. `MaestroClient` lives in `src/cli/services/maestro-client.ts`, outside the library. Both move before the TUI boundary rule can be enforced | Section 1, D2      |
-| L1a | **Agent, group, and tab repository with domain commands** (create, edit, delete, move, rename tab, close tab) in the library, with the same rules the renderer hooks apply today. Required for any headless host                                                                  | AG, GR, CH-1, CO-1 |
-| L1b | **Desktop moves onto L1a.** The renderer becomes a subscriber; `useSessionCrud`, `useGroupManagement`, and the duplicate in `useAppRemoteEventListeners` are deleted. Cleanup, gated to M5                                                                                        | M5, R1             |
-| L2  | **Host runtime** `createMaestroRuntime(dataDir)`: owns the repository, process supervision, event bus, and data-dir lock. Electron main, the TUI (in-process), and `maestro host` (detached, publishes `cli-server.json`) wrap it                                                 | D1 to D4, CO       |
-| L3  | **Streaming turn API** for clients: event stream per turn (text, tool, usage, outcome). `ProcessManager` streams but imports `@sentry/electron` through `utils/sentry`; the CLI `spawnAgent` does not stream                                                                      | CH-3, AR-6, GC-2   |
-| L4  | **Paths provider**: `resolveUserDataDir()` plus `customSyncPath`, replacing `app.getPath` in group chat storage, `spec-command-manager`, `prompt-manager`, `history-manager`                                                                                                      | DD, GC, AR-3       |
-| L5  | **Store I/O without `electron-store`**: same tab-indented JSON, atomic write, unknown keys preserved, corrupt-store quarantine (`createStoreDeserializer`)                                                                                                                        | DD-5, L2           |
-| L6  | **One Auto Run engine**: CLI `batch-processor` and `goal-runner` as the base; port error pause, HITL, worktrees, and steering from the renderer engine; desktop moves onto it                                                                                                     | AR                 |
-| L7  | **Group chat off Electron**: turn progression out of `exit-listener.ts`, `groupChatEmitters` behind the event bus                                                                                                                                                                 | GC                 |
-| L8  | **Consults without the renderer**: `maestro-cli ask` currently goes main, renderer, main                                                                                                                                                                                          | XM                 |
-| L9  | **Provider swap in the library** (`switchTabProvider` plus per-provider override parking); CLI path fixed to use it                                                                                                                                                               | PS                 |
-| L10 | **Execution queue** semantics in the library, including dispatch-failure recovery                                                                                                                                                                                                 | CH-4               |
-| L11 | **Transcript entry model** shared, so each surface renders what the other wrote                                                                                                                                                                                                   | CH-5               |
-| L12 | **Prompt assembly**: system prompt, conductor profile, nudge, new-session message, template variables. In the renderer today; without it a TUI turn is a different agent than a desktop turn                                                                                      | CH-2, XM, AR       |
-| L13 | **History and stats writes** through the host, so TUI work appears in History, Usage Dashboard, and the agent-run ledger                                                                                                                                                          | AR-8, CH           |
+| ID  | Gap                                                                                                                                                                                                                                                                                     | Blocks             |
+| --- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------ |
+| L0  | **A public entry point and a client in the library.** \`src/shared/maestro-lib/index.ts\` does not exist; consumers import module paths. \`MaestroClient\` lives in \`src/cli/services/maestro-client.ts\`, outside the library. Both move before the TUI boundary rule can be enforced | Section 1, D2      |
+| L1a | **Agent, group, and tab repository with domain commands** (create, edit, delete, move, rename tab, close tab) in the library, with the same rules the renderer hooks apply today. Required for any headless host                                                                        | AG, GR, CH-1, CO-1 |
+| L1b | **Desktop moves onto L1a.** The renderer becomes a subscriber; \`useSessionCrud\`, \`useGroupManagement\`, and the duplicate in \`useAppRemoteEventListeners\` are deleted. Cleanup, gated to M5                                                                                        | M5, R1             |
+| L2  | **Host runtime** \`createMaestroRuntime(dataDir)\`: owns the repository, process supervision, event bus, and data-dir lock. Electron main, the TUI (in-process), and \`maestro host\` (detached, publishes \`cli-server.json\`) wrap it                                                 | D1 to D4, CO       |
+| L3  | **Streaming turn API** for clients: event stream per turn (text, tool, usage, outcome). Provided by \`src/shared/maestro-lib/run/\`                                                                                                                                                     | CH-3, AR-6, GC-2   |
+| L4  | **Paths provider**: \`resolveUserDataDir()\` plus \`customSyncPath\`, replacing \`app.getPath\` in group chat storage, \`spec-command-manager\`, \`prompt-manager\`, \`history-manager\`                                                                                                | DD, GC, AR-3       |
+| L5  | **Store I/O without \`electron-store\`**: same tab-indented JSON, atomic write, unknown keys preserved, corrupt-store quarantine (\`createStoreDeserializer\`)                                                                                                                          | DD-5, L2           |
+| L6  | **One Auto Run engine**: CLI \`batch-processor\` and \`goal-runner\` as the base; port error pause, HITL, worktrees, and steering from the renderer engine; desktop moves onto it                                                                                                       | AR                 |
+| L7  | **Group chat off Electron**: turn progression out of \`exit-listener.ts\`, \`groupChatEmitters\` behind the event bus                                                                                                                                                                   | GC                 |
+| L8  | **Consults without the renderer**: \`maestro-cli ask\` currently goes main, renderer, main                                                                                                                                                                                              | XM                 |
+| L9  | **Provider swap in the library** (\`switchTabProvider\` plus per-provider override parking); CLI path fixed to use it                                                                                                                                                                   | PS                 |
+| L10 | **Execution queue** semantics in the library, including dispatch-failure recovery                                                                                                                                                                                                       | CH-4               |
+| L11 | **Transcript entry model** shared, so each surface renders what the other wrote                                                                                                                                                                                                         | CH-5               |
+| L12 | **Prompt assembly**: system prompt, conductor profile, nudge, new-session message, template variables. In the renderer today; without it a TUI turn is a different agent than a desktop turn                                                                                            | CH-2, XM, AR       |
+| L13 | **History and stats writes** through the host, so TUI work appears in History, Usage Dashboard, and the agent-run ledger                                                                                                                                                                | AR-8, CH           |
 
 ---
 
 ## 8. Milestones
 
-```mermaid
+\`\`\`mermaid
 flowchart LR
-	M0["M0 Read-only\nDD, AG-1, GR view,\ntranscripts, history"] --> M1["M1 Client of desktop\nall P0 via WS bridge"]
-	M1 --> M2["M2 Headless, in-process host\nL0, L1a, L2-L5, L12, L13\nagents, groups, chat, swap"]
-	M2 --> M3["M3 Detached host + Auto Run\nL6, maestro host"]
-	M2 --> M4["M4 Group chat + consults\nheadless, L7, L8"]
-	M3 --> M5["M5 Desktop on the host\nrenderer subscribes, handoff"]
-	M4 --> M5
-```
+M0["M0 Read-only\nDD, AG-1, GR view,\ntranscripts, history"] --> M1["M1 Client of desktop\nall P0 via WS bridge"]
+M1 --> M2["M2 Headless, in-process host\nL0, L1a, L2-L5, L12, L13\nagents, groups, chat, swap"]
+M2 --> M3["M3 Detached host + Auto Run\nL6, maestro host"]
+M2 --> M4["M4 Group chat + consults\nheadless, L7, L8"]
+M3 --> M5["M5 Desktop on the host\nrenderer subscribes, handoff"]
+M4 --> M5
+\`\`\`
 
 | Milestone | Exit test                                                                                                                                                               |
 | --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | M0        | TUI opens the same data dir as the installed app, on macOS and Linux, and lists agents, groups, tabs, and transcripts identical to the desktop                          |
-| M1        | With the desktop running, every P0 requirement works from the TUI, and every change shows in the desktop live. Nothing in `src/tui/` imports outside the library        |
+| M1        | With the desktop running, every P0 requirement works from the TUI, and every change shows in the desktop live. Nothing in \`src/tui/\` imports outside the library      |
 | M2        | Desktop not installed, TUI hosting in-process. Create an agent, chat, swap provider and back with all tabs intact, then open the data dir in the desktop and see it all |
-| M3        | `maestro host` detached. A spec-driven and a goal-driven run complete headless, survive an SSH disconnect, and show in desktop History                                  |
-| M4        | A group chat started in the TUI finishes headless and reads correctly in the desktop; an `@mention` consult returns inline                                              |
+| M3        | \`maestro host\` detached. A spec-driven and a goal-driven run complete headless, survive an SSH disconnect, and show in desktop History                                |
+| M4        | A group chat started in the TUI finishes headless and reads correctly in the desktop; an \`@mention\` consult returns inline                                            |
 | M5        | The desktop renderer holds no authoritative agent state; desktop start with a headless host running follows the Q1 decision                                             |
 
-M1 is not throwaway: the WebSocket `MaestroClient` it builds is the same client
-M2 onward uses. The rc bridge's generic `bridge.invoke` reaches any IPC handler,
+M1 is not throwaway: the WebSocket \`MaestroClient\` it builds is the same client
+M2 onward uses. The rc bridge's generic \`bridge.invoke\` reaches any IPC handler,
 which makes M1 cheap, but the TUI must call named library client methods, not
 raw IPC channel names, or M2 breaks it.
 
@@ -407,15 +383,15 @@ annotation, mobile, live sync between two machines.
 
 ## 10. Risks
 
-| ID  | Risk                                                                                                                 | Mitigation                                                                                  |
-| --- | -------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
-| R1  | L1b moves the desktop's source of truth. Regressions land in the main product, not the TUI                           | Library repository first, renderer mirrors it behind a flag, then flip (M5)                 |
-| R2  | main and rc store different shapes; a surface on one drops the other's fields                                        | DD-5 round-trip tests with rc-shaped fixtures                                               |
-| R3  | `customSyncPath` on iCloud or Dropbox: two machines share one data dir, and a PID lock means nothing across machines | Detect a cloud-synced path and refuse a headless host there unless `--force`                |
-| R4  | Terminal rendering cost on long streamed turns                                                                       | Finished entries render once (Ink `<Static>` or equivalent); only the live entry re-renders |
-| R5  | Native modules (`node-pty`, `better-sqlite3`) in a headless install                                                  | Same prebuilt set the CLI and standalone Cue engine ship                                    |
-| R6  | Parity pull: every desktop feature asks to be in the TUI                                                             | Section 9 is the gate; new TUI scope needs a library gap to justify it                      |
-| R7  | The library stack is off `rc` and unmerged; building the TUI on `main` would fork it                                 | Base the TUI branch on the top of the maestro-lib stack                                     |
+| ID  | Risk                                                                                                                   | Mitigation                                                                                    |
+| --- | ---------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| R1  | L1b moves the desktop's source of truth. Regressions land in the main product, not the TUI                             | Library repository first, renderer mirrors it behind a flag, then flip (M5)                   |
+| R2  | main and rc store different shapes; a surface on one drops the other's fields                                          | DD-5 round-trip tests with rc-shaped fixtures                                                 |
+| R3  | \`customSyncPath\` on iCloud or Dropbox: two machines share one data dir, and a PID lock means nothing across machines | Detect a cloud-synced path and refuse a headless host there unless \`--force\`                |
+| R4  | Terminal rendering cost on long streamed turns                                                                         | Finished entries render once (Ink \`<Static>\` or equivalent); only the live entry re-renders |
+| R5  | Native modules (\`node-pty\`, \`better-sqlite3\`) in a headless install                                                | Same prebuilt set the CLI and standalone Cue engine ship                                      |
+| R6  | Parity pull: every desktop feature asks to be in the TUI                                                               | Section 9 is the gate; new TUI scope needs a library gap to justify it                        |
+| R7  | The library stack is off \`rc\` and unmerged; building the TUI on \`main\` would fork it                               | Base the TUI branch on the top of the maestro-lib stack                                       |
 
 ---
 
@@ -424,7 +400,7 @@ annotation, mobile, live sync between two machines.
 | ID  | Question                                                                             | Recommendation                                                                                                                                                                     |
 | --- | ------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Q1  | Desktop launched while a headless host owns the data dir                             | Desktop offers **Take over**: host waits for or stops in-flight work with consent, flushes, releases; TUIs reconnect to the desktop. Desktop-as-client is the end state but not v1 |
-| Q2  | Distribution: `maestro-cli tui` subcommand or a separate `maestro` binary            | Separate bundle (`maestro-tui.js`) in app Resources, launched by `maestro-cli tui`, so the CLI does not load React on every call                                                   |
+| Q2  | Distribution: \`maestro-cli tui\` subcommand or a separate \`maestro\` binary        | Separate bundle (\`maestro-tui.js\`) in app Resources, launched by \`maestro-cli tui\`, so the CLI does not load React on every call                                               |
 | Q3  | Framework: Ink (React 18, same idiom as the renderer) or OpenTUI (faster, Bun-first) | Ink. The team knows React, and R4 has a known fix                                                                                                                                  |
 | Q4  | Is 1:1 chat (section 4.5) in v1 scope                                                | Yes. Three of the four requested areas depend on it                                                                                                                                |
 | Q5  | Does the headless host run Cue by default                                            | Yes, if Cue is enabled in Encore settings, since it is the same process (D3)                                                                                                       |
