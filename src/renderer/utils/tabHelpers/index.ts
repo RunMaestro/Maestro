@@ -18,6 +18,10 @@ import {
 	ThinkingMode,
 	QueuedItem,
 } from '../../types';
+import {
+	formatSessionId,
+	getTabDisplayName as libGetTabDisplayName,
+} from '../../../shared/maestro-lib/store/tab-display';
 import { generateId } from '../ids';
 import { getAutoRunFolderPath } from '../existingDocsDetector';
 import { createTerminalTab, nextTerminalCoworkingId } from '../terminalTabHelpers';
@@ -399,13 +403,9 @@ export function moveUnifiedTabToTarget(
  * @returns The name to pre-fill in the rename input (empty for auto-generated names)
  */
 /**
- * Get the display name for a tab. Strictly per-tab - the title only reflects
- * THIS tab's own state, never another tab's id from the session level.
- *
- * Resolution order:
- *   1. `tab.name` if set (auto-rename or manual rename)
- *   2. `tab.agentSessionId` formatted (e.g. `SES_4BCD`, `THR_ABC1`, first UUID octet)
- *   3. "New Session"
+ * Get the display name for a tab: its name, else its formatted provider session
+ * id, else "New Session". The rule lives in `maestro-lib` so the TUI's tab
+ * switcher labels an unnamed tab the same way.
  *
  * The `sessionAgentSessionId` parameter is accepted for signature compatibility
  * but intentionally ignored: borrowing it caused freshly-created sibling tabs
@@ -413,34 +413,10 @@ export function moveUnifiedTabToTarget(
  * displaying the same `SES_XXXX`).
  */
 export function getTabDisplayName(tab: AITab, _sessionAgentSessionId?: string | null): string {
-	if (tab.name) {
-		return tab.name;
-	}
-	if (tab.agentSessionId) {
-		return formatSessionId(tab.agentSessionId);
-	}
-	return 'New Session';
+	return libGetTabDisplayName(tab);
 }
 
-/**
- * Format a session/tab ID into a short display label.
- */
-export function formatSessionId(id: string): string {
-	// OpenCode format: ses_XXXX... or SES_XXXX...
-	if (id.toLowerCase().startsWith('ses_')) {
-		return `SES_${id.slice(4, 8).toUpperCase()}`;
-	}
-	// Codex format: thread_XXXX...
-	if (id.toLowerCase().startsWith('thread_')) {
-		return `THR_${id.slice(7, 11).toUpperCase()}`;
-	}
-	// UUID format: has dashes, return first octet
-	if (id.includes('-')) {
-		return id.split('-')[0].toUpperCase();
-	}
-	// Generic fallback: first 8 chars uppercase
-	return id.slice(0, 8).toUpperCase();
-}
+export { formatSessionId };
 
 /**
  * Whether a name is really just the id label {@link getTabDisplayName} falls back

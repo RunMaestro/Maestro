@@ -21,4 +21,4 @@ const paths = resolveMaestroPaths(pathOptions);
 // reporter stays the default no-op.
 setMaestroLibLogger(createFileLogger(tuiLogFilePath(paths.userDataDir)));
 
-render(<App userDataDir={paths.userDataDir} />);
+render(<App paths={paths} />);

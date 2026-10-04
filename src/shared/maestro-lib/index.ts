@@ -20,6 +20,11 @@ export * from './store/records';
 export * from './store/read-stores';
 export * from './store/read-history';
 export * from './store/transcript';
+export * from './store/agent-tree';
+export * from './store/tab-display';
+
+// Provider display names (a provider this build does not know still gets a label)
+export { getAgentDisplayName } from '../agentMetadata';
 
 // Launch and argument building
 export * from './launch/launch-plan';
