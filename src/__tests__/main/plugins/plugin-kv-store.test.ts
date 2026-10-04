@@ -10,7 +10,10 @@ import * as os from 'os';
 import * as path from 'path';
 import { PluginKvStore } from '../../../main/plugins/plugin-kv-store';
 
-const { failRename } = vi.hoisted(() => ({ failRename: { current: false } }));
+const { failRename, failFinalStat } = vi.hoisted(() => ({
+	failRename: { current: false },
+	failFinalStat: { current: false },
+}));
 vi.mock('fs', async (importOriginal) => {
 	const actual = await importOriginal<typeof import('fs')>();
 	return {
@@ -18,6 +21,12 @@ vi.mock('fs', async (importOriginal) => {
 		renameSync: (...args: Parameters<typeof actual.renameSync>) => {
 			if (failRename.current) throw new Error('simulated rename failure');
 			return actual.renameSync(...args);
+		},
+		lstatSync: (...args: Parameters<typeof actual.lstatSync>) => {
+			if (failFinalStat.current && String(args[0]).endsWith('store.json')) {
+				throw new Error('simulated post-rename stat failure');
+			}
+			return actual.lstatSync(...args);
 		},
 	};
 });
@@ -28,6 +37,7 @@ describe('PluginKvStore', () => {
 
 	beforeEach(() => {
 		failRename.current = false;
+		failFinalStat.current = false;
 		base = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-kv-'));
 		store = new PluginKvStore({
 			baseDir: base,
@@ -95,6 +105,21 @@ describe('PluginKvStore', () => {
 		expect(new PluginKvStore({ baseDir: base }).keys('p')).toEqual(['a', 'b', 'c']);
 		store.set('p', 'd', '4', { evictOldestOnLimit: true });
 		expect(store.keys('p')).toEqual(['b', 'c', 'd']);
+	});
+
+	it('keeps cache aligned with disk if final hardening fails after rename', () => {
+		store.set('p', 'a', '1');
+		store.set('p', 'b', '2');
+		store.set('p', 'c', '3');
+		failFinalStat.current = true;
+		expect(() => store.set('p', 'd', '4', { evictOldestOnLimit: true })).toThrow(
+			/simulated post-rename stat failure/
+		);
+		failFinalStat.current = false;
+		expect(store.keys('p')).toEqual(['b', 'c', 'd']);
+		expect(new PluginKvStore({ baseDir: base }).keys('p')).toEqual(['b', 'c', 'd']);
+		store.set('p', 'e', '5', { evictOldestOnLimit: true });
+		expect(new PluginKvStore({ baseDir: base }).keys('p')).toEqual(['c', 'd', 'e']);
 	});
 
 	it('persists across instances and leaves no temp file behind', () => {

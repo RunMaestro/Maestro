@@ -205,11 +205,13 @@ export class PluginKvStore {
 			fs.writeFileSync(tmp, JSON.stringify(store), { encoding: 'utf8', mode: 0o600, flag: 'wx' });
 			this.hardenPath(tmp, false);
 			fs.renameSync(tmp, file);
+			// Rename is the commit point. Even if the final path check fails,
+			// subsequent reads must reflect the bytes already committed to disk.
+			this.cache.set(pluginId, store);
 			this.hardenPath(file, false);
 		} finally {
 			if (fs.existsSync(tmp)) fs.unlinkSync(tmp);
 		}
-		this.cache.set(pluginId, store);
 	}
 
 	private hardenPath(target: string, directory: boolean): void {
