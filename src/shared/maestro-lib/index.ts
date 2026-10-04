@@ -37,6 +37,9 @@ export { getAgentDisplayName, AGENT_AUTOSELECT_ORDER } from '../agentMetadata';
 export type { AgentError, SshRemoteConfig, ThinkingMode, ToolType, UsageStats } from '../types';
 export { asThinkingMode } from '../types';
 
+// Provider swap: park and restore provider-specific tab and agent state (PS-5)
+export * from './agents/providerSwap';
+
 // Agent form rules, shared with the desktop so a TUI form and the Edit dialog cannot disagree
 export { defaultAgentNameForPath, projectNameFromPath } from '../projectIdentity';
 export {
