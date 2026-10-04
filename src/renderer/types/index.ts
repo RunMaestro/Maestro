@@ -772,7 +772,8 @@ export interface FilePreviewTab {
 /**
  * Terminal Tab - represents a PTY shell session with full terminal emulation via xterm.js.
  * Unlike AITab (which stores logs), TerminalTab relies on xterm.js to manage its own scrollback
- * buffer. The PTY process is identified by pid (0 = not yet spawned / lazy init).
+ * buffer; XTerminal snapshots it to disk outside the sessions JSON (terminalScrollback IPC) so
+ * it survives a restart. The PTY process is identified by pid (0 = not yet spawned / lazy init).
  */
 export interface TerminalTab {
 	id: string; // Unique tab ID (UUID)

@@ -650,6 +650,12 @@ const mockMaestro = {
 	tabNaming: {
 		generateTabName: vi.fn().mockResolvedValue(null),
 	},
+	// Terminal scrollback persistence. No saved snapshot by default.
+	terminalScrollback: {
+		save: vi.fn().mockResolvedValue(true),
+		load: vi.fn().mockResolvedValue(null),
+		prune: vi.fn().mockResolvedValue(0),
+	},
 	// Synchronous platform string (replaces async os.getPlatform IPC)
 	platform: 'darwin',
 };

@@ -103,6 +103,7 @@ import {
 	registerMaestroCliHandlers,
 	registerPromptsHandlers,
 	registerMemoryHandlers,
+	registerTerminalScrollbackHandlers,
 	setupLoggerEventForwarding,
 	cleanupAllGroomingSessions,
 	getActiveGroomingSessionCount,
@@ -1686,6 +1687,9 @@ function setupIpcHandlers() {
 
 	// Register project Memory handlers (Claude Code per-project memory viewer)
 	registerMemoryHandlers();
+
+	// Register terminal scrollback persistence (survives app restart)
+	registerTerminalScrollbackHandlers();
 
 	// Register Context Merge handlers for session context transfer and grooming
 	registerContextHandlers({

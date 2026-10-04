@@ -691,6 +691,14 @@ The command interpreter can be focused for a clean, terminal-only experience whe
 
 Each agent has a Command Terminal alongside its AI Terminal - a real PTY shell scoped to the agent's working directory. Switch between them with `Cmd+J` / `Ctrl+J`. Open a new terminal tab with `Ctrl+Shift+` + `` ` ``; close, rename, and reorder it just like an AI tab. Right-click (or hover) a terminal tab to open its action menu.
 
+### Scrollback Across Restarts
+
+Terminal tabs survive quitting and reopening Maestro, history included. Each tab's scrollback (colors intact) is saved to disk a few seconds after output settles, and when Maestro relaunches it is written back into the tab above a dim `--- restored from previous session ---` line, with a fresh shell starting underneath at the same working directory. The shell process itself does not survive a quit, so anything that was running needs to be started again (or configured as a startup command, below).
+
+- Up to the most recent 5,000 rows are kept per tab; a very colorful buffer keeps fewer to stay under a 1 MB cap.
+- Full-screen programs (`vim`, `less`, `htop`) are not captured - only the normal scrollback is.
+- Saved history for closed tabs and removed agents is cleaned up on the next launch.
+
 ### Startup Command
 
 Configure a command to run automatically every time a terminal tab's shell is started - including after you quit and reopen Maestro. This is the simplest way to keep something like `npm run dev`, a watcher, or a long-running log tail attached to a specific tab.

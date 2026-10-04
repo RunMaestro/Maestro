@@ -133,6 +133,24 @@ export function getTerminalSessionId(sessionId: string, tabId: string): string {
 }
 
 /**
+ * Every terminal session ID whose saved scrollback is still wanted: open
+ * terminal tabs plus snoozed ones, which come back with their history on wake.
+ * Snapshots for anything else (closed tabs, deleted agents) can be pruned.
+ */
+export function collectTerminalScrollbackKeys(sessions: readonly Session[]): string[] {
+	const keys: string[] = [];
+	for (const session of sessions) {
+		for (const tab of session.terminalTabs ?? []) {
+			keys.push(getTerminalSessionId(session.id, tab.id));
+		}
+		for (const entry of session.snoozedTabs ?? []) {
+			if (entry.type === 'terminal') keys.push(getTerminalSessionId(session.id, entry.tab.id));
+		}
+	}
+	return keys;
+}
+
+/**
  * Parse a composite terminal session ID back into its component parts.
  * Returns null if the string doesn't match the expected "-terminal-" format.
  */

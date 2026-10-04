@@ -495,10 +495,9 @@ describe('restoreSession — Corruption recovery', () => {
 		expect(restored!.state).toBe('error');
 	});
 
-	// Zero AI tabs is only survivable if some other tab actually comes back.
-	// A terminal with no startup command is dropped during restoration, so
-	// counting the raw array here would skip recovery and leave no tabs at all.
-	it('recovers when the only remaining tab is a non-persistent terminal', async () => {
+	// Every terminal tab survives a restart (its scrollback is restored), so a
+	// plain terminal is enough to keep a zero-AI-tab agent out of recovery.
+	it('leaves zero AI tabs alone when a plain terminal persists', async () => {
 		const session = createMockSession({
 			aiTabs: [],
 			activeTabId: null,
@@ -511,8 +510,9 @@ describe('restoreSession — Corruption recovery', () => {
 			restored = await result.current.restoreSession(session);
 		});
 
-		expect(restored!.aiTabs).toHaveLength(1);
-		expect(restored!.state).toBe('error');
+		expect(restored!.aiTabs).toHaveLength(0);
+		expect(restored!.terminalTabs).toHaveLength(1);
+		expect(restored!.state).not.toBe('error');
 	});
 
 	it('leaves zero AI tabs alone when a terminal with a startup command persists', async () => {
@@ -1625,6 +1625,64 @@ describe('Session & Group loading effect', () => {
 		expect(sessions[0].state).toBe('idle');
 		expect(sessions[1].state).toBe('idle');
 	});
+
+	it('prunes saved terminal scrollback down to open and snoozed terminal tabs', async () => {
+		const session = createMockSession({
+			id: 'agent-1',
+			terminalTabs: [
+				{
+					id: 'tt-open',
+					name: null,
+					shellType: 'zsh',
+					pid: 0,
+					cwd: '/a',
+					createdAt: 1,
+					state: 'idle' as const,
+				},
+			],
+			snoozedTabs: [
+				{
+					type: 'terminal' as const,
+					tab: {
+						id: 'tt-snoozed',
+						name: null,
+						shellType: 'zsh',
+						pid: 0,
+						cwd: '/a',
+						createdAt: 2,
+						state: 'idle' as const,
+					},
+					unifiedIndex: 1,
+					snoozedAt: 3,
+					wakeAt: 4,
+				},
+			] as any,
+		});
+		mockGetAll.mockResolvedValueOnce([session]);
+
+		renderHook(() => useSessionRestoration());
+
+		await act(async () => {
+			await new Promise((r) => setTimeout(r, 50));
+		});
+
+		expect(window.maestro.terminalScrollback.prune).toHaveBeenCalledWith([
+			'agent-1-terminal-tt-open',
+			'agent-1-terminal-tt-snoozed',
+		]);
+	});
+
+	it('does not prune terminal scrollback when no sessions loaded', async () => {
+		mockGetAll.mockResolvedValueOnce([]);
+
+		renderHook(() => useSessionRestoration());
+
+		await act(async () => {
+			await new Promise((r) => setTimeout(r, 50));
+		});
+
+		expect(window.maestro.terminalScrollback.prune).not.toHaveBeenCalled();
+	});
 });
 
 // ============================================================================
@@ -1917,61 +1975,41 @@ describe('restoreSession — Terminal tab persistence', () => {
 		expect(termTab.searchQuery).toBe('webpack');
 	});
 
-	it('drops terminal tabs without a startup command on restart', async () => {
+	it('keeps terminal tabs without a startup command on restart', async () => {
 		const session = createMockSession({
 			terminalTabs: [
 				{
 					id: 'tt-plain',
 					name: 'Scratch',
 					shellType: 'zsh',
-					pid: 0,
+					pid: 4242,
 					cwd: '/home/user',
 					createdAt: Date.now(),
-					state: 'idle' as const,
+					state: 'exited' as const,
+					exitCode: 1,
 				},
 			],
 			activeTerminalTabId: 'tt-plain',
 		});
 		const { result } = renderHook(() => useSessionRestoration());
 
-		let dropRestored: Session;
+		let plainRestored: Session;
 		await act(async () => {
-			dropRestored = await result.current.restoreSession(session);
+			plainRestored = await result.current.restoreSession(session);
 		});
 
-		// No startup command => the terminal does not survive an app restart.
-		expect(dropRestored!.terminalTabs).toHaveLength(0);
-		expect(dropRestored!.activeTerminalTabId).toBeNull();
+		// The tab comes back (XTerminal restores its scrollback) with a fresh PTY.
+		expect(plainRestored!.terminalTabs).toHaveLength(1);
+		expect(plainRestored!.terminalTabs[0]).toMatchObject({
+			id: 'tt-plain',
+			pid: 0,
+			state: 'idle',
+			exitCode: undefined,
+		});
+		expect(plainRestored!.activeTerminalTabId).toBe('tt-plain');
 	});
 
-	it('treats a whitespace-only startup command as no command and drops the tab', async () => {
-		const session = createMockSession({
-			terminalTabs: [
-				{
-					id: 'tt-blank',
-					name: 'Scratch',
-					shellType: 'zsh',
-					pid: 0,
-					cwd: '/home/user',
-					createdAt: Date.now(),
-					state: 'idle' as const,
-					startupCommand: '   ',
-				},
-			],
-			activeTerminalTabId: 'tt-blank',
-		});
-		const { result } = renderHook(() => useSessionRestoration());
-
-		let blankRestored: Session;
-		await act(async () => {
-			blankRestored = await result.current.restoreSession(session);
-		});
-
-		expect(blankRestored!.terminalTabs).toHaveLength(0);
-		expect(blankRestored!.activeTerminalTabId).toBeNull();
-	});
-
-	it('keeps startup-command terminals, drops plain ones, and prunes the unified order', async () => {
+	it('keeps both startup-command and plain terminals in the unified order', async () => {
 		const session = createMockSession({
 			terminalTabs: [
 				{
@@ -1985,7 +2023,7 @@ describe('restoreSession — Terminal tab persistence', () => {
 					startupCommand: 'npm run dev',
 				},
 				{
-					id: 'tt-drop',
+					id: 'tt-plain',
 					name: 'Scratch',
 					shellType: 'zsh',
 					pid: 0,
@@ -1994,12 +2032,12 @@ describe('restoreSession — Terminal tab persistence', () => {
 					state: 'idle' as const,
 				},
 			],
-			activeTerminalTabId: 'tt-drop',
+			activeTerminalTabId: 'tt-plain',
 			inputMode: 'terminal',
 			unifiedTabOrder: [
 				{ type: 'ai' as const, id: 'tab-1' },
 				{ type: 'terminal' as const, id: 'tt-keep' },
-				{ type: 'terminal' as const, id: 'tt-drop' },
+				{ type: 'terminal' as const, id: 'tt-plain' },
 			],
 		});
 		const { result } = renderHook(() => useSessionRestoration());
@@ -2009,16 +2047,13 @@ describe('restoreSession — Terminal tab persistence', () => {
 			mixedRestored = await result.current.restoreSession(session);
 		});
 
-		expect(mixedRestored!.terminalTabs).toHaveLength(1);
-		expect(mixedRestored!.terminalTabs[0].id).toBe('tt-keep');
-
-		// The dropped tab's ref is pruned from the unified order; the kept one remains.
+		expect(mixedRestored!.terminalTabs.map((t) => t.id)).toEqual(['tt-keep', 'tt-plain']);
 		const termRefs = mixedRestored!.unifiedTabOrder.filter((r) => r.type === 'terminal');
-		expect(termRefs).toEqual([{ type: 'terminal', id: 'tt-keep' }]);
-
-		// Active terminal pointed at the dropped tab, so it clears and the input
-		// mode falls back to AI rather than stranding the user in terminal mode.
-		expect(mixedRestored!.activeTerminalTabId).toBeNull();
-		expect(mixedRestored!.inputMode).toBe('ai');
+		expect(termRefs).toEqual([
+			{ type: 'terminal', id: 'tt-keep' },
+			{ type: 'terminal', id: 'tt-plain' },
+		]);
+		expect(mixedRestored!.activeTerminalTabId).toBe('tt-plain');
+		expect(mixedRestored!.inputMode).toBe('terminal');
 	});
 });

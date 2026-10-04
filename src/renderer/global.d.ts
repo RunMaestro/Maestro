@@ -4070,6 +4070,11 @@ interface MaestroAPI {
 	images: {
 		resolve: (ref: string) => Promise<string | null>;
 	};
+	terminalScrollback: {
+		save: (key: string, data: string) => Promise<boolean>;
+		load: (key: string) => Promise<string | null>;
+		prune: (keepKeys: string[]) => Promise<number>;
+	};
 }
 
 declare global {
