@@ -17,6 +17,7 @@ import {
 	composerHeight,
 } from '../composer/Composer';
 import { layoutComposer, type ComposerState } from '../composer/draft';
+import { StatusLine, STATUS_LINE_HEIGHT } from '../status/StatusLine';
 
 /** The tab the pane shows: the TUI's pick, else the desktop's active tab, else the first. */
 export function resolveActiveTab(
@@ -89,7 +90,9 @@ export function ConversationPane({
 		composer && activeTab
 			? layoutComposer(composer.state, innerWidth - COMPOSER_PREFIX_WIDTH, COMPOSER_MAX_ROWS)
 			: undefined;
-	const reserved = composerLayout ? composerHeight(composerLayout) : 0;
+	// The status line shows for any tab on screen, with or without a desktop to send through.
+	const reserved =
+		(composerLayout ? composerHeight(composerLayout) : 0) + (activeTab ? STATUS_LINE_HEIGHT : 0);
 
 	return (
 		<Box
@@ -120,6 +123,7 @@ export function ConversationPane({
 					) : (
 						<Text dimColor>This agent has no tabs.</Text>
 					)}
+					{activeTab ? <StatusLine agent={agent} tab={activeTab} width={innerWidth} /> : null}
 					{composer && composerLayout ? (
 						<Composer
 							layout={composerLayout}

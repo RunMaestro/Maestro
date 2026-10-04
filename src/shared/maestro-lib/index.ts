@@ -34,7 +34,7 @@ export * from './store/tab-display';
 // Provider display names (a provider this build does not know still gets a label)
 export { getAgentDisplayName, AGENT_AUTOSELECT_ORDER } from '../agentMetadata';
 
-export type { AgentError, SshRemoteConfig, ThinkingMode, UsageStats } from '../types';
+export type { AgentError, SshRemoteConfig, ThinkingMode, ToolType, UsageStats } from '../types';
 export { asThinkingMode } from '../types';
 
 // Agent form rules, shared with the desktop so a TUI form and the Edit dialog cannot disagree
@@ -55,8 +55,11 @@ export {
 // One-line tool call descriptions ("Read src/App.tsx"), shared with the desktop activity feed
 export * from '../toolActivityLabel';
 
-// Timestamp display, shared so every surface shows a time the same way
-export { formatTimestamp } from '../formatters';
+// Timestamp, token, and cost display, shared so every surface shows a figure the same way
+export { formatTimestamp, formatTokensCompact, formatCost } from '../formatters';
+
+// Context window sizing, shared so a status line and the desktop gauge size the same window
+export { getContextWindowForAgent } from '../agentConstants';
 
 // Fuzzy matching, shared with the desktop renderer (its utils/search.ts re-exports the same module)
 export * from '../fuzzyMatch';
