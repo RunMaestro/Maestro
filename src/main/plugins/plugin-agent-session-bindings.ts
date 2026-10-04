@@ -1,5 +1,6 @@
 /** Host-owned provider-session ownership for resumable plugin agent runs. */
 import { createHash } from 'crypto';
+import { logger } from '../utils/logger';
 import { PluginKvStore } from './plugin-kv-store';
 
 /**
@@ -32,7 +33,20 @@ export class PluginAgentSessionBindings {
 		}
 		// Keep the newest sessions resumable with one atomic replacement at the
 		// limit. Evicted sessions fail closed in assertOwned.
-		this.store.set(pluginId, key, agentId, { evictOldestOnLimit: true, touch: true });
+		if (!currentOwner) {
+			this.store.set(pluginId, key, agentId, { evictOldestOnLimit: true });
+			return;
+		}
+		// Ownership was already persisted. A failed recency refresh must not
+		// discard the provider's completed answer; the old binding remains valid.
+		try {
+			this.store.set(pluginId, key, agentId, { touch: true });
+		} catch (error) {
+			logger.warn('Could not refresh plugin provider session binding', '[Plugins]', {
+				pluginId,
+				error: String(error),
+			});
+		}
 	}
 
 	purge(pluginId: string): void {
