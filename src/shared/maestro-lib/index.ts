@@ -17,6 +17,10 @@ export * from './paths/doctor';
 export * from './client/discovery';
 export * from './client/bridge-connection';
 
+// The client interface the TUI programs against, and its WebSocket implementation
+export * from './client/types';
+export { createWsMaestroClient } from './client/ws-client';
+
 // Store files (read-only)
 export * from './store/corrupt-store';
 export * from './store/records';

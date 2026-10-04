@@ -151,3 +151,26 @@ export function aiTabsOf(agent: AgentRecord): AITabRecord[] {
 	if (!Array.isArray(agent.aiTabs)) return [];
 	return agent.aiTabs.filter((entry): entry is AITabRecord => hasStringFields(entry, ['id']));
 }
+
+/**
+ * The AI tabs a person sees, in tab-strip order. Hidden consult tabs are left
+ * out (they have no chip), and the order follows the `ai` entries of
+ * `unifiedTabOrder` when the agent has one, with any visible tab the order does
+ * not name after them in stored order. This is what `MaestroClient.tabs.list`
+ * returns.
+ */
+export function visibleAiTabsOf(agent: AgentRecord): AITabRecord[] {
+	const visible = aiTabsOf(agent).filter((tab) => tab.hidden !== true);
+	if (!Array.isArray(agent.unifiedTabOrder)) return visible;
+	const byId = new Map(visible.map((tab) => [tab.id, tab]));
+	const ordered: AITabRecord[] = [];
+	for (const ref of agent.unifiedTabOrder) {
+		if (ref?.type !== 'ai') continue;
+		const tab = byId.get(ref.id);
+		if (tab) {
+			ordered.push(tab);
+			byId.delete(ref.id);
+		}
+	}
+	return [...ordered, ...visible.filter((tab) => byId.has(tab.id))];
+}

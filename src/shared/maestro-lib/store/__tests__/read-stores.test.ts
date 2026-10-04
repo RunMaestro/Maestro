@@ -11,6 +11,7 @@ import {
 	readMaestroStores,
 	readSessionsStore,
 	readSettingsStore,
+	visibleAiTabsOf,
 } from '../read-stores';
 
 /** electron-store's on-disk format: tab-indented JSON, no trailing newline. */
@@ -191,5 +192,40 @@ describe('store readers', () => {
 		if (stores.agentConfigs.status === 'ok') {
 			expect(stores.agentConfigs.data.configs?.codex.customPath).toBe('/opt/codex');
 		}
+	});
+
+	describe('visibleAiTabsOf', () => {
+		const agent = (extra: Record<string, unknown>) => ({
+			id: 'a',
+			name: 'A',
+			toolType: 'codex',
+			...extra,
+		});
+
+		it('leaves hidden consult tabs out and keeps stored order without a tab order', () => {
+			const tabs = visibleAiTabsOf(
+				agent({ aiTabs: [{ id: 't1' }, { id: 'consult', hidden: true }, { id: 't2' }] })
+			);
+			expect(tabs.map((t) => t.id)).toEqual(['t1', 't2']);
+		});
+
+		it('follows the ai entries of unifiedTabOrder and appends tabs the order omits', () => {
+			const tabs = visibleAiTabsOf(
+				agent({
+					aiTabs: [{ id: 't1' }, { id: 't2' }, { id: 't3' }],
+					unifiedTabOrder: [
+						{ type: 'file', id: 'f1' },
+						{ type: 'ai', id: 't3' },
+						{ type: 'ai', id: 'gone' },
+						{ type: 'ai', id: 't1' },
+					],
+				})
+			);
+			expect(tabs.map((t) => t.id)).toEqual(['t3', 't1', 't2']);
+		});
+
+		it('returns no tabs for an agent without any', () => {
+			expect(visibleAiTabsOf(agent({}))).toEqual([]);
+		});
 	});
 });

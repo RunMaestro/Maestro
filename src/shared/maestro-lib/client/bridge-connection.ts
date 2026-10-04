@@ -9,7 +9,13 @@
 // and `withMaestroClient` as aliases, so maestro-cli does not change.
 
 import WebSocket from 'ws';
-import { readCliServerInfo, isCliServerRunning } from './discovery';
+import {
+	readCliServerInfo,
+	readCliServerInfoFrom,
+	isCliServerRunning,
+	isPidAlive,
+	type CliServerInfo,
+} from './discovery';
 import { CLI_SECRET_HEADER } from '../../webLogin';
 
 const CONNECT_TIMEOUT_MS = 5000;
@@ -48,6 +54,60 @@ export class CommandTimeoutError extends Error {
 	}
 }
 
+/**
+ * Thrown when the socket ended with a call in flight (`closedByCaller: false`),
+ * or when the caller disconnected first (`closedByCaller: true`). The messages
+ * are the ones the CLI has always printed.
+ */
+export class ConnectionClosedError extends Error {
+	readonly closedByCaller: boolean;
+	readonly code?: number;
+	readonly reason?: string;
+	constructor(options: { closedByCaller: boolean; code?: number; reason?: string }) {
+		super(
+			options.closedByCaller
+				? 'Client disconnected'
+				: `Connection closed${options.code ? ` (code=${options.code})` : ''}${
+						options.reason ? `: ${options.reason}` : ''
+					}`
+		);
+		this.name = 'ConnectionClosedError';
+		this.closedByCaller = options.closedByCaller;
+		this.code = options.code;
+		this.reason = options.reason;
+	}
+}
+
+/**
+ * Options that keep the CLI's behavior as the default: a bare
+ * `new BridgeConnection()` reads the no-argument discovery, matches a reply by
+ * type when its request id is unknown, and reports nothing but replies.
+ */
+export interface BridgeConnectionOptions {
+	/** Read discovery from this data dir instead of the CLI's own derivation. */
+	userDataDir?: string;
+	/** Extra query parameters on the upgrade URL (`since`, `epoch` for resume). */
+	query?: Record<string, string | number>;
+	/**
+	 * Match a reply by `requestId` only. With several calls in flight, a late
+	 * reply to a timed-out call would otherwise resolve the wrong call. A call
+	 * opts back into type matching with `matchByType` for the replies the host
+	 * sends without a request id.
+	 */
+	strictReplies?: boolean;
+	/** Every parsed frame that is not the reply to a pending call. */
+	onFrame?: (frame: Record<string, unknown>) => void;
+	/** The socket closed (not called for `disconnect()`). */
+	onClose?: (code: number | undefined, reason: string | undefined) => void;
+	/** Test seam. */
+	WebSocketImpl?: typeof WebSocket;
+}
+
+export interface SendCommandOptions {
+	/** Accept a reply of the expected type that carries no (or an unknown) request id. */
+	matchByType?: boolean;
+}
+
 interface PendingRequest {
 	resolve: (value: unknown) => void;
 	reject: (reason: Error) => void;
@@ -55,37 +115,55 @@ interface PendingRequest {
 	expectedType: string;
 	/** The `type` of the message that was sent, used to match unhandled echoes. */
 	sentType: string;
+	/** May this call be resolved by a reply of its expected type with no request id? */
+	matchByType: boolean;
 }
 
 export class BridgeConnection {
 	private ws: WebSocket | null = null;
 	private pendingRequests: Map<string, PendingRequest> = new Map();
 
+	constructor(private readonly options: BridgeConnectionOptions = {}) {}
+
 	/**
 	 * Connect to the running Maestro app.
 	 * Throws if the app is not running or connection fails.
 	 */
 	async connect(): Promise<void> {
-		const info = readCliServerInfo();
+		const info: CliServerInfo | null = this.options.userDataDir
+			? readCliServerInfoFrom(this.options.userDataDir)
+			: readCliServerInfo();
 		if (!info) {
 			throw new Error('Maestro desktop app is not running');
 		}
 
-		if (!isCliServerRunning()) {
+		// The authenticated WebSocket connection remains the authoritative
+		// reachability check; this only says the recorded process still exists.
+		const alive = this.options.userDataDir ? isPidAlive(info.pid) : isCliServerRunning();
+		if (!alive) {
 			throw new Error('Maestro discovery file is stale (app may have crashed)');
 		}
 
 		// Use 127.0.0.1 instead of `localhost` - Node 18's default DNS resolution
 		// resolves `localhost` to IPv6 (::1) first, but the desktop app binds to
 		// 0.0.0.0 (IPv4 only), so `localhost` yields ECONNREFUSED on ::1.
-		const url = `ws://127.0.0.1:${info.port}/${info.token}/ws`;
+		const query = this.options.query
+			? `?${new URLSearchParams(
+					Object.entries(this.options.query).map(([key, value]): [string, string] => [
+						key,
+						String(value),
+					])
+				).toString()}`
+			: '';
+		const url = `ws://127.0.0.1:${info.port}/${info.token}/ws${query}`;
+		const WebSocketCtor = this.options.WebSocketImpl ?? WebSocket;
 
 		return new Promise<void>((resolve, reject) => {
 			let settled = false;
 
 			// The per-boot secret is what admits the CLI when Web Login is on; the
 			// server never exempts a caller by address (the tunnel is loopback too).
-			const ws = new WebSocket(
+			const ws = new WebSocketCtor(
 				url,
 				info.cliSecret ? { headers: { [CLI_SECRET_HEADER]: info.cliSecret } } : undefined
 			);
@@ -125,7 +203,8 @@ export class BridgeConnection {
 	async sendCommand<T>(
 		message: Record<string, unknown>,
 		responseType: string,
-		timeoutMs: number = DEFAULT_COMMAND_TIMEOUT_MS
+		timeoutMs: number = DEFAULT_COMMAND_TIMEOUT_MS,
+		commandOptions: SendCommandOptions = {}
 	): Promise<T> {
 		if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
 			throw new Error('Not connected to Maestro');
@@ -146,10 +225,23 @@ export class BridgeConnection {
 				timeout,
 				expectedType: responseType,
 				sentType,
+				matchByType: !this.options.strictReplies || commandOptions.matchByType === true,
 			});
 
 			this.ws!.send(JSON.stringify({ ...message, requestId }));
 		});
+	}
+
+	/** Send a message that expects no reply (a heartbeat `ping`). */
+	send(message: Record<string, unknown>): boolean {
+		if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return false;
+		this.ws.send(JSON.stringify(message));
+		return true;
+	}
+
+	/** Whether the socket is open. */
+	get isOpen(): boolean {
+		return this.ws !== null && this.ws.readyState === WebSocket.OPEN;
 	}
 
 	/**
@@ -158,11 +250,13 @@ export class BridgeConnection {
 	disconnect(): void {
 		for (const [, pending] of this.pendingRequests) {
 			clearTimeout(pending.timeout);
-			pending.reject(new Error('Client disconnected'));
+			pending.reject(new ConnectionClosedError({ closedByCaller: true }));
 		}
 		this.pendingRequests.clear();
 
 		if (this.ws) {
+			// Detach first so a caller-initiated close is not reported as a drop.
+			this.ws.removeAllListeners('close');
 			this.ws.close();
 			this.ws = null;
 		}
@@ -176,77 +270,84 @@ export class BridgeConnection {
 			for (const [, pending] of this.pendingRequests) {
 				clearTimeout(pending.timeout);
 				pending.reject(
-					new Error(
-						`Connection closed${code ? ` (code=${code})` : ''}${reasonStr ? `: ${reasonStr}` : ''}`
-					)
+					new ConnectionClosedError({ closedByCaller: false, code, reason: reasonStr })
 				);
 			}
 			this.pendingRequests.clear();
 			this.ws = null;
+			this.options.onClose?.(code, reasonStr || undefined);
 		});
 
 		this.ws.on('message', (data) => {
+			let msg: Record<string, unknown>;
 			try {
-				const msg = JSON.parse(data.toString()) as Record<string, unknown>;
-				const msgType = msg.type as string;
-				const msgRequestId = msg.requestId as string | undefined;
-
-				// An `echo` reply means the app didn't recognize the message type
-				// (handleUnknown). Reject the matching request immediately with a
-				// clear "unsupported command" error instead of waiting for the
-				// full timeout - this is the signal that the running app is an
-				// older build than this CLI. The original message (with its
-				// requestId) is echoed back under `data`.
-				if (msgType === 'echo') {
-					const original = msg.data as Record<string, unknown> | undefined;
-					const originalReqId =
-						(original?.requestId as string | undefined) ??
-						(msg.originalRequestId as string | undefined);
-					const originalType =
-						(msg.originalType as string | undefined) ??
-						(original?.type as string | undefined) ??
-						'unknown';
-					if (originalReqId && this.pendingRequests.has(originalReqId)) {
-						const pending = this.pendingRequests.get(originalReqId)!;
-						clearTimeout(pending.timeout);
-						this.pendingRequests.delete(originalReqId);
-						pending.reject(new UnsupportedCommandError(originalType));
-						return;
-					}
-					// Fall back to matching by the echoed command type.
-					for (const [reqId, pending] of this.pendingRequests) {
-						if (pending.sentType === originalType) {
-							clearTimeout(pending.timeout);
-							this.pendingRequests.delete(reqId);
-							pending.reject(new UnsupportedCommandError(originalType));
-							return;
-						}
-					}
-					return;
-				}
-
-				// Try matching by requestId first (exact match)
-				if (msgRequestId && this.pendingRequests.has(msgRequestId)) {
-					const pending = this.pendingRequests.get(msgRequestId)!;
-					clearTimeout(pending.timeout);
-					this.pendingRequests.delete(msgRequestId);
-					pending.resolve(msg);
-					return;
-				}
-
-				// Fall back to matching by response type
-				for (const [requestId, pending] of this.pendingRequests) {
-					if (pending.expectedType === msgType) {
-						clearTimeout(pending.timeout);
-						this.pendingRequests.delete(requestId);
-						pending.resolve(msg);
-						return;
-					}
-				}
+				msg = JSON.parse(data.toString()) as Record<string, unknown>;
 			} catch {
 				// Ignore non-JSON messages
+				return;
 			}
+			if (!this.resolvePending(msg)) this.options.onFrame?.(msg);
 		});
+	}
+
+	/** Settle the pending call a frame answers. Returns false when it answers none. */
+	private resolvePending(msg: Record<string, unknown>): boolean {
+		const msgType = msg.type as string;
+		const msgRequestId = msg.requestId as string | undefined;
+
+		// An `echo` reply means the app didn't recognize the message type
+		// (handleUnknown). Reject the matching request immediately with a
+		// clear "unsupported command" error instead of waiting for the
+		// full timeout - this is the signal that the running app is an
+		// older build than this CLI. The original message (with its
+		// requestId) is echoed back under `data`.
+		if (msgType === 'echo') {
+			const original = msg.data as Record<string, unknown> | undefined;
+			const originalReqId =
+				(original?.requestId as string | undefined) ??
+				(msg.originalRequestId as string | undefined);
+			const originalType =
+				(msg.originalType as string | undefined) ??
+				(original?.type as string | undefined) ??
+				'unknown';
+			if (originalReqId && this.pendingRequests.has(originalReqId)) {
+				const pending = this.pendingRequests.get(originalReqId)!;
+				clearTimeout(pending.timeout);
+				this.pendingRequests.delete(originalReqId);
+				pending.reject(new UnsupportedCommandError(originalType));
+				return true;
+			}
+			// Fall back to matching by the echoed command type.
+			for (const [reqId, pending] of this.pendingRequests) {
+				if (pending.matchByType && pending.sentType === originalType) {
+					clearTimeout(pending.timeout);
+					this.pendingRequests.delete(reqId);
+					pending.reject(new UnsupportedCommandError(originalType));
+					return true;
+				}
+			}
+			return true;
+		}
+
+		// Try matching by requestId first (exact match)
+		if (msgRequestId && this.pendingRequests.has(msgRequestId)) {
+			const pending = this.pendingRequests.get(msgRequestId)!;
+			clearTimeout(pending.timeout);
+			this.pendingRequests.delete(msgRequestId);
+			pending.resolve(msg);
+			return true;
+		}
+
+		// Fall back to matching by response type
+		for (const [requestId, pending] of this.pendingRequests) {
+			if (pending.matchByType && pending.expectedType === msgType) {
+				clearTimeout(pending.timeout);
+				this.pendingRequests.delete(requestId);
+				pending.resolve(msg);
+				return true;
+			}
+		}
+		return false;
 	}
 }
 
