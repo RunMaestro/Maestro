@@ -39,7 +39,10 @@ export interface AITabRecord extends UnknownFields {
 	/** User-assigned name; null or absent means "show the session id octet". */
 	name?: string | null;
 	starred?: boolean;
-	/** The tab's transcript. Entry shape is defined by the transcript accessor. */
+	/**
+	 * The tab's transcript. Left `unknown[]` because an entry is not validated
+	 * until it is read: use `transcriptOf` (`transcript.ts`) for typed entries.
+	 */
 	logs?: unknown[];
 	createdAt?: number;
 	state?: 'idle' | 'busy';

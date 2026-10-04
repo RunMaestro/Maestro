@@ -35,6 +35,7 @@ export type {
 export type { SymphonySessionMetadata } from '../../shared/symphony-types';
 // Import Symphony types for use in this file
 import type { SymphonySessionMetadata } from '../../shared/symphony-types';
+import type { LogEntrySource } from '../../shared/maestro-lib/store/transcript';
 
 // Import for extension in this file
 import type {
@@ -222,7 +223,8 @@ export interface FileArtifact {
 export interface LogEntry {
 	id: string;
 	timestamp: number;
-	source: 'stdout' | 'stderr' | 'system' | 'user' | 'ai' | 'error' | 'thinking' | 'tool';
+	// One union shared with the on-disk record (`LogEntryRecord`) every client reads.
+	source: LogEntrySource;
 	text: string;
 	interactive?: boolean;
 	options?: string[];

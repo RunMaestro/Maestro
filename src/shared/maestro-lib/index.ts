@@ -18,6 +18,8 @@ export * from '../cli-server-discovery';
 export * from './store/corrupt-store';
 export * from './store/records';
 export * from './store/read-stores';
+export * from './store/read-history';
+export * from './store/transcript';
 
 // Launch and argument building
 export * from './launch/launch-plan';

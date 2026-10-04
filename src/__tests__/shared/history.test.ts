@@ -11,6 +11,7 @@ import {
 	ORPHANED_SESSION_ID,
 	resolveHistoryEntryLimit,
 	parseHistoryJsonl,
+	parseHistoryFileData,
 	serializeHistoryEntryLine,
 	trimHistoryEntriesToLimit,
 	sanitizeSessionId,
@@ -473,5 +474,33 @@ describe('history entry type helpers', () => {
 		it('handles an empty list', () => {
 			expect(normalizeHistoryEntries([])).toEqual([]);
 		});
+	});
+});
+
+describe('parseHistoryFileData (legacy single-object format)', () => {
+	const doc = { version: 1, sessionId: 's', projectPath: '/p', entries: [{ id: 'a' }] };
+
+	it('parses a well-formed file without marking it recovered', () => {
+		expect(parseHistoryFileData(JSON.stringify(doc))).toEqual({ data: doc, recovered: false });
+	});
+
+	it('strips a leading BOM', () => {
+		expect(parseHistoryFileData(`\uFEFF${JSON.stringify(doc)}`).data).toEqual(doc);
+	});
+
+	it('recovers the first object when a torn write left trailing bytes', () => {
+		const raw = `${JSON.stringify(doc)}{"version":1,"entr`;
+		expect(parseHistoryFileData(raw)).toEqual({ data: doc, recovered: true });
+	});
+
+	it('does not mistake a brace inside a string for the end of the object', () => {
+		const tricky = { ...doc, projectPath: '/p/{weird}"' };
+		const raw = `${JSON.stringify(tricky)}garbage`;
+		expect(parseHistoryFileData(raw).data).toEqual(tricky);
+	});
+
+	it('throws the SyntaxError for bytes it cannot recover', () => {
+		expect(() => parseHistoryFileData('{"version":1,"entr')).toThrow(SyntaxError);
+		expect(() => parseHistoryFileData('not json')).toThrow(SyntaxError);
 	});
 });

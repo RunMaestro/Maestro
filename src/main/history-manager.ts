@@ -34,7 +34,6 @@ import {
 	parseHistoryJsonl,
 	serializeHistoryEntryLine,
 	trimHistoryEntriesToLimit,
-	HistoryFileData,
 	MigrationMarker,
 	PaginationOptions,
 	PaginatedResult,
@@ -42,6 +41,7 @@ import {
 	paginateEntries,
 	sortEntriesByTimestamp,
 	normalizeHistoryEntries,
+	parseHistoryFileData,
 } from '../shared/history';
 
 /**
@@ -99,64 +99,6 @@ async function pathExists(p: string): Promise<boolean> {
 		const code = (err as NodeJS.ErrnoException).code;
 		if (code === 'ENOENT') return false;
 		throw err;
-	}
-}
-
-function findFirstJsonObjectEnd(raw: string): number | null {
-	const start = raw.search(/\S/);
-	if (start === -1 || raw[start] !== '{') return null;
-
-	let depth = 0;
-	let inString = false;
-	let escaped = false;
-
-	for (let i = start; i < raw.length; i++) {
-		const char = raw[i];
-
-		if (inString) {
-			if (escaped) {
-				escaped = false;
-			} else if (char === '\\') {
-				escaped = true;
-			} else if (char === '"') {
-				inString = false;
-			}
-			continue;
-		}
-
-		if (char === '"') {
-			inString = true;
-			continue;
-		}
-
-		if (char === '{') {
-			depth++;
-		} else if (char === '}') {
-			depth--;
-			if (depth === 0) {
-				return i + 1;
-			}
-		}
-	}
-
-	return null;
-}
-
-function parseHistoryFileData(raw: string): { data: HistoryFileData; recovered: boolean } {
-	const normalized = stripJsonBom(raw);
-	try {
-		return { data: JSON.parse(normalized) as HistoryFileData, recovered: false };
-	} catch (error) {
-		if (!(error instanceof SyntaxError)) throw error;
-
-		const firstObjectEnd = findFirstJsonObjectEnd(normalized);
-		if (firstObjectEnd === null) throw error;
-
-		const trailing = normalized.slice(firstObjectEnd).trim();
-		if (trailing.length === 0) throw error;
-
-		const data = JSON.parse(normalized.slice(0, firstObjectEnd)) as HistoryFileData;
-		return { data, recovered: true };
 	}
 }
 
