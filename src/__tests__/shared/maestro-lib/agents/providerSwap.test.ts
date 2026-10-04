@@ -14,6 +14,7 @@
 import { describe, it, expect } from 'vitest';
 import {
 	PROVIDER_OVERRIDE_KEYS,
+	providerOverridesFor,
 	resolveTurnProvider,
 	switchAgentProvider,
 	switchTabProvider,
@@ -591,5 +592,52 @@ describe('switchAgentProvider', () => {
 
 		expect(result.agent).toBe(agent);
 		expect(result.unparked).toEqual([]);
+	});
+});
+
+describe('providerOverridesFor', () => {
+	it('reads the live overrides for the provider the agent is on', () => {
+		const agent = makeAgent('claude-code', { ...CLAUDE_OVERRIDES });
+
+		expect(providerOverridesFor(agent, 'claude-code')).toStrictEqual(CLAUDE_OVERRIDES);
+	});
+
+	it('leaves out the overrides the agent has not set', () => {
+		const agent = makeAgent('claude-code', { customModel: 'opus', customPath: undefined });
+
+		expect(providerOverridesFor(agent, 'claude-code')).toStrictEqual({ customModel: 'opus' });
+	});
+
+	it('reads what another provider parked, which is exactly what a switch to it restores', () => {
+		// An edit form seeds its fields from this. If it showed anything else, an
+		// untouched save would write it over the values the switch restores.
+		const onCodex = switchAgentProvider(
+			makeAgent('claude-code', { ...CLAUDE_OVERRIDES }),
+			'codex'
+		).agent;
+
+		const preview = providerOverridesFor(onCodex, 'claude-code');
+		const restored = switchAgentProvider(onCodex, 'claude-code').agent;
+
+		expect(preview).toStrictEqual(CLAUDE_OVERRIDES);
+		expect(preview).toStrictEqual(providerOverridesFor(restored, 'claude-code'));
+	});
+
+	it('is empty for a provider the agent never ran on', () => {
+		const agent = makeAgent('claude-code', { customModel: 'opus' });
+
+		expect(providerOverridesFor(agent, 'codex')).toStrictEqual({});
+	});
+
+	it('hands back a copy, so editing it cannot change what is parked', () => {
+		const onCodex = switchAgentProvider(
+			makeAgent('claude-code', { customModel: 'opus' }),
+			'codex'
+		).agent;
+
+		const preview = providerOverridesFor(onCodex, 'claude-code');
+		preview.customModel = 'edited';
+
+		expect(onCodex.providerOverrides?.['claude-code']?.customModel).toBe('opus');
 	});
 });

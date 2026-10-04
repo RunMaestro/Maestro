@@ -744,6 +744,8 @@ Agents are the core of Maestro - each agent represents an AI coding assistant ru
 
 Right-click any agent in the left panel and select **Edit Agent...** to modify its configuration. You can change the name, new session message, nudge message, custom paths, arguments, environment variables, additional directories, model, and effort. Model and effort set here apply as the default to new tabs; existing tabs that haven't been overridden also follow this default. To override on a single tab without changing the agent-wide default, use the model/effort pill in that tab's input bar.
 
+Changing the **Agent Provider** here keeps every tab and its transcript. Each provider keeps its own session per tab and its own settings (custom path, arguments, environment variables, model, effort, context window), so switching back restores them. A turn that is already running finishes on the provider that started it. If something could not be kept, such as the model a queued message was set to run with, a notice says so.
+
 ### Deleting Agents
 
 Right-click an agent and select **Remove Agent** to delete it. This removes the agent from Maestro but does not delete any files or AI session data.

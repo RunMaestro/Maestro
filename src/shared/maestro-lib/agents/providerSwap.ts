@@ -274,6 +274,24 @@ function liveProviderOverrides(agent: ProviderSwitchAgent): ProviderAgentOverrid
 	return live as ProviderAgentOverrides;
 }
 
+/**
+ * The agent-level overrides `agent` runs with on `provider`: its live fields
+ * when `provider` is the current one, otherwise whatever `provider` parked
+ * when the agent last switched away from it (empty if it never ran there).
+ *
+ * This is exactly what {@link switchAgentProvider} restores, so a surface that
+ * previews or edits a switch reads it rather than the live fields. An edit form
+ * that showed blanks for the incoming provider would save those blanks over the
+ * restored values and clear them. Overrides that are unset are left out.
+ */
+export function providerOverridesFor(
+	agent: ProviderSwitchAgent,
+	provider: ToolType
+): ProviderAgentOverrides {
+	if (provider === agent.toolType) return liveProviderOverrides(agent);
+	return { ...agent.providerOverrides?.[provider] };
+}
+
 function describeClearedQueuedSettings(
 	model: string | undefined,
 	effort: string | undefined,

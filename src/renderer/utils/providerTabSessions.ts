@@ -14,6 +14,7 @@
 import type { AITab, QueuedItem, QueuedTurnSettings, Session } from '../types';
 
 export {
+	providerOverridesFor,
 	resolveTurnProvider,
 	switchAgentProvider,
 	switchTabProvider,

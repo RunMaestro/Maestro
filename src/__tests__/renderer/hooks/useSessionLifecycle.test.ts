@@ -24,6 +24,12 @@ import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useModalStore } from '../../../renderer/stores/modalStore';
 import { useUIStore } from '../../../renderer/stores/uiStore';
 import type { Session, AITab } from '../../../renderer/types';
+import type { ToolType } from '../../../shared/types';
+import {
+	PROVIDER_OVERRIDE_KEYS,
+	providerOverridesFor,
+	type ProviderAgentOverrides,
+} from '../../../shared/maestro-lib/agents/providerSwap';
 import { createMockFileTab, createMockAITab } from '../../helpers/mockTab';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 import { createGroupFromTabRefs } from '../../../renderer/utils/panelLayout';
@@ -415,7 +421,19 @@ describe('useSessionLifecycle', () => {
 			// The live provider must never hold a parked entry of its own.
 			expect(updated.aiTabs[0].providerSessions?.['opencode']).toBeUndefined();
 
-			// Agent-level provider-specific config is still cleared.
+			// The outgoing provider's overrides are parked, not cleared (PS-3)...
+			expect(updated.providerOverrides).toStrictEqual({
+				'claude-code': {
+					customPath: '/old/claude/path',
+					customArgs: '--old-args',
+					customEnvVars: { OLD_KEY: 'old' },
+					customEnvVarsDisabled: { OLD_PARKED: 'old' },
+					customModel: 'sonnet',
+					customEffort: 'high',
+					customContextWindow: 200000,
+				},
+			});
+			// ...and none of them leak into OpenCode, which the dialog left blank.
 			expect(updated.customPath).toBeUndefined();
 			expect(updated.customArgs).toBeUndefined();
 			expect(updated.customEnvVars).toBeUndefined();
@@ -425,6 +443,206 @@ describe('useSessionLifecycle', () => {
 			expect(updated.customContextWindow).toBeUndefined();
 
 			// A running turn is codified at send, so nothing is killed.
+			expect((window as any).maestro.process.kill).not.toHaveBeenCalled();
+			// Nothing was cleared, so there is nothing to tell the user.
+			expect(notifyToast).not.toHaveBeenCalled();
+		});
+
+		/**
+		 * Save the way the Edit Agent dialog does. On a provider change the dialog
+		 * seeds its override fields from what the incoming provider parked
+		 * (`providerOverridesFor`), so an untouched form sends exactly those
+		 * values; `edits` are what the user typed after switching.
+		 */
+		const saveAsDialog = (
+			save: ReturnType<typeof useSessionLifecycle>['handleSaveEditAgent'],
+			toolType: ToolType,
+			edits: ProviderAgentOverrides = {}
+		) => {
+			const s = useSessionStore.getState().sessions.find((x) => x.id === 'session-1')!;
+			const form = { ...providerOverridesFor(s, toolType), ...edits };
+			save(
+				s.id,
+				s.name,
+				toolType,
+				s.nudgeMessage,
+				s.newSessionMessage,
+				form.customPath,
+				form.customArgs,
+				form.customEnvVars,
+				form.customModel,
+				form.customEffort,
+				form.customContextWindow,
+				s.sessionSshRemoteConfig,
+				form.enableMaestroP,
+				form.maestroPPath,
+				form.maestroPMode,
+				s.retryOnAvailabilityErrors,
+				s.retryOnTokenExhaustion,
+				s.additionalDirectories,
+				form.contextWindowSource,
+				form.customEnvVarsDisabled,
+				undefined, // workingDirectory unchanged
+				s.codexAutoResetOnExhaustion
+			);
+		};
+
+		/** The override fields in canonical key order, for a byte-level comparison. */
+		const overridesJson = (s: Session) =>
+			JSON.stringify(PROVIDER_OVERRIDE_KEYS.map((key) => [key, s[key] ?? null]));
+
+		it('switch A to B to A through the dialog restores every tab and every override byte for byte', () => {
+			const session = createMockSession({
+				id: 'session-1',
+				name: 'My Agent',
+				toolType: 'claude-code' as any,
+				aiTabs: [
+					createMockAITab({
+						id: 'tab-1',
+						agentSessionId: 'claude-session-1',
+						usageStats: { inputTokens: 10 } as any,
+						customModel: 'sonnet',
+						logs: [{ id: 'log-1', timestamp: 1, source: 'user', text: 'hello' }] as any,
+					}),
+					createMockAITab({ id: 'tab-2', agentSessionId: 'claude-session-2' }),
+				],
+				activeTabId: 'tab-2',
+				customPath: '/opt/claude/bin/claude',
+				customArgs: '--verbose --add-dir "/a b"',
+				customEnvVars: { CLAUDE_CONFIG_DIR: '/Users/me/.claude-work' },
+				customEnvVarsDisabled: { ANTHROPIC_API_KEY: 'sk-parked' },
+				customModel: 'opus',
+				customEffort: 'high',
+				// Not on the dialog at all: only the switch itself carries it.
+				customProviderPath: '/opt/claude/provider',
+				customContextWindow: 1000000,
+				contextWindowSource: 'user-edited',
+				enableMaestroP: true,
+				maestroPMode: 'interactive',
+				maestroPPath: '/opt/maestro-p.js',
+				retryOnAvailabilityErrors: false,
+				codexAutoResetOnExhaustion: true,
+			});
+			const before = overridesJson(session);
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+
+			const { result } = renderHook(() => useSessionLifecycle(createDeps()));
+
+			// To Codex, configuring it in the dialog after picking it.
+			act(() => {
+				saveAsDialog(result.current.handleSaveEditAgent, 'codex' as ToolType, {
+					customModel: 'gpt-5-codex',
+					customArgs: '--search',
+				});
+			});
+
+			const onCodex = useSessionStore.getState().sessions[0];
+			expect(onCodex.toolType).toBe('codex');
+			// What the user entered for Codex is what Codex runs with...
+			expect(onCodex.customModel).toBe('gpt-5-codex');
+			expect(onCodex.customArgs).toBe('--search');
+			// ...and nothing of Claude's is live.
+			expect(onCodex.customPath).toBeUndefined();
+			expect(onCodex.customProviderPath).toBeUndefined();
+			expect(onCodex.enableMaestroP).toBeUndefined();
+			expect(onCodex.aiTabs.map((tab) => tab.agentSessionId)).toEqual([null, null]);
+
+			// And back to Claude, leaving the dialog alone.
+			act(() => {
+				saveAsDialog(result.current.handleSaveEditAgent, 'claude-code' as ToolType);
+			});
+
+			const restored = useSessionStore.getState().sessions[0];
+			expect(restored.toolType).toBe('claude-code');
+			expect(overridesJson(restored)).toBe(before);
+			for (const key of PROVIDER_OVERRIDE_KEYS) {
+				expect(restored[key]).toStrictEqual(session[key]);
+			}
+			// Codex's configuration waits for the next switch.
+			expect(restored.providerOverrides).toStrictEqual({
+				codex: { customModel: 'gpt-5-codex', customArgs: '--search' },
+			});
+			// Every tab, its transcript, and its Claude session came back.
+			expect(restored.aiTabs.map((tab) => tab.id)).toEqual(['tab-1', 'tab-2']);
+			expect(restored.aiTabs.map((tab) => tab.agentSessionId)).toEqual([
+				'claude-session-1',
+				'claude-session-2',
+			]);
+			expect(restored.aiTabs[0].usageStats).toEqual({ inputTokens: 10 });
+			expect(restored.aiTabs[0].customModel).toBe('sonnet');
+			expect(restored.aiTabs[0].logs).toBe(session.aiTabs[0].logs);
+			expect(restored.activeTabId).toBe('tab-2');
+			// Provider-agnostic settings were never part of the switch.
+			expect(restored.retryOnAvailabilityErrors).toBe(false);
+			expect(restored.codexAutoResetOnExhaustion).toBe(true);
+			expect(notifyToast).not.toHaveBeenCalled();
+		});
+
+		it('lists what the switch could not park in a notice (PS-3)', () => {
+			const session = createMockSession({
+				id: 'session-1',
+				toolType: 'claude-code' as any,
+				executionQueue: [
+					{
+						id: 'q1',
+						tabId: 'tab-1',
+						type: 'message',
+						text: 'later',
+						turnSettings: { model: 'opus' },
+					},
+				] as any,
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+
+			const { result } = renderHook(() => useSessionLifecycle(createDeps()));
+
+			act(() => {
+				result.current.handleSaveEditAgent('session-1', 'Agent', 'codex' as any);
+			});
+
+			// The queued message survives, on Codex's settings...
+			const updated = useSessionStore.getState().sessions[0];
+			expect(updated.executionQueue.map((item) => item.id)).toEqual(['q1']);
+			expect(updated.executionQueue[0].turnSettings).toBeUndefined();
+			// ...and the model it was frozen with is reported rather than dropped silently.
+			expect(notifyToast).toHaveBeenCalledTimes(1);
+			expect(notifyToast).toHaveBeenCalledWith({
+				color: 'yellow',
+				title: 'Switched to Codex',
+				message:
+					'A queued message was set to run with model "opus" on Claude Code. ' +
+					"It will run with the agent's Codex settings instead.",
+			});
+		});
+
+		it('leaves a turn in flight running on the provider that started it (PS-2)', () => {
+			const session = createMockSession({
+				id: 'session-1',
+				toolType: 'claude-code' as any,
+				state: 'busy',
+				aiTabs: [
+					createMockAITab({
+						id: 'tab-1',
+						state: 'busy',
+						agentSessionId: 'claude-session',
+						turnProvider: 'claude-code' as any,
+					}),
+				],
+				activeTabId: 'tab-1',
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+
+			const { result } = renderHook(() => useSessionLifecycle(createDeps()));
+
+			act(() => {
+				result.current.handleSaveEditAgent('session-1', 'Agent', 'codex' as any);
+			});
+
+			const updated = useSessionStore.getState().sessions[0];
+			expect(updated.state).toBe('busy');
+			expect(updated.aiTabs[0].state).toBe('busy');
+			// Its late events still belong to Claude.
+			expect(updated.aiTabs[0].turnProvider).toBe('claude-code');
 			expect((window as any).maestro.process.kill).not.toHaveBeenCalled();
 		});
 

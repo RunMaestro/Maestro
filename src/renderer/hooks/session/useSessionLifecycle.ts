@@ -24,7 +24,8 @@ import {
 	updateSessionWith,
 	updateAiTab,
 } from '../../stores/sessionStore';
-import { switchTabProvider } from '../../utils/providerTabSessions';
+import { switchAgentProvider } from '../../utils/providerTabSessions';
+import { getAgentDisplayName } from '../../../shared/agentMetadata';
 import { useGroupChatStore } from '../../stores/groupChatStore';
 import { useModalStore } from '../../stores/modalStore';
 import { notifyToast } from '../../stores/notificationStore';
@@ -206,6 +207,9 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 				notifyToast({ color: 'yellow', title: 'Working directory not changed', message: blocker });
 			}
 
+			// What a provider switch could not park, for the notice below (PS-3).
+			let switchNotices: string[] = [];
+
 			updateSessionWith(sessionId, (s) => {
 				const updatedFields: Partial<Session> = {
 					name,
@@ -226,8 +230,9 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 					enableMaestroP,
 					maestroPPath,
 					maestroPMode,
-					// Agent Resilience: resilience is provider-agnostic, so it is NOT
-					// cleared on a provider switch below (unlike maestroP fields).
+					// Agent Resilience: resilience is provider-agnostic, so the provider
+					// switch below never touches it (unlike the maestro-p fields, which
+					// it parks with the outgoing provider).
 					retryOnAvailabilityErrors,
 					retryOnTokenExhaustion,
 					// Codex automatic usage resets. Like resilience above, this is left
@@ -237,44 +242,40 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 					codexAutoResetOnExhaustion,
 				};
 
-				// If the provider changed, park each tab's provider-specific state and
-				// restore whatever the incoming provider left behind. Tabs, transcripts,
-				// closed-tab history, and file preview tabs are all preserved: none of
-				// them are provider-specific, and switching back has to land the user on
-				// the same conversation they left.
+				// A provider change goes through the library's one implementation of a
+				// switch (`switchAgentProvider`, requirement PS-5), the same one
+				// `maestro-cli update-agent --provider` reaches. Every tab and its
+				// transcript survives, each tab's provider session is parked under the
+				// outgoing provider, and so are the outgoing provider's overrides (PS-3),
+				// so switching back restores both. The dialog's override fields are then
+				// applied on top of the switched agent: on a provider change the dialog
+				// seeds them from what the incoming provider parked
+				// (`providerOverridesFor`), so they ARE the incoming provider's
+				// configuration, including anything the user edited after switching.
+				//
+				// Any turn already in flight keeps running under the provider it was
+				// sent with: settings are codified at send, and this change applies from
+				// the next message. So the agent process is deliberately left alone, and
+				// the session's busy state with it. `turnProvider` on each tab is what
+				// keeps that turn's late events attributed to the old provider (PS-2).
+				let base = s;
 				if (toolType && toolType !== s.toolType) {
-					Object.assign(updatedFields, {
-						toolType,
-						aiTabs: s.aiTabs.map((tab) => switchTabProvider(tab, s.toolType, toolType)),
-						// Clear provider-specific overrides. These are agent-level config,
-						// not per-tab conversation state, so they are not parked - the edit
-						// modal already resets its own fields on a provider switch.
-						customPath: undefined,
-						customArgs: undefined,
-						customEnvVars: undefined,
-						customEnvVarsDisabled: undefined,
-						customModel: undefined,
-						customEffort: undefined,
-						customContextWindow: undefined,
-						// Provenance describes the value cleared above, so it must not
-						// outlive it: a stale 'user-edited' would make the new
-						// provider's window look deliberate (finding AD1).
-						contextWindowSource: undefined,
-						enableMaestroP: undefined,
-						maestroPPath: undefined,
-						maestroPMode: undefined,
-					});
-
-					// Any turn already in flight keeps running under the provider it was
-					// sent with: settings are codified at send, and this change applies from
-					// the next message. So the agent process is deliberately left alone, and
-					// the session's busy state with it. `turnProvider` on each tab is what
-					// keeps that turn's late events attributed to the old provider.
+					const switched = switchAgentProvider(s, toolType);
+					base = switched.agent;
+					switchNotices = switched.unparked.map((item) => item.message);
 				}
 
-				const next = { ...s, ...updatedFields };
+				const next = { ...base, ...updatedFields };
 				return relocateTo ? withWorkingDirectory(next, relocateTo) : next;
 			});
+
+			if (toolType && switchNotices.length > 0) {
+				notifyToast({
+					color: 'yellow',
+					title: `Switched to ${getAgentDisplayName(toolType)}`,
+					message: switchNotices.join(' '),
+				});
+			}
 		},
 		[]
 	);
