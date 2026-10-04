@@ -218,42 +218,56 @@ describe('filePreviewUtils', () => {
 - [X] Done 2
 			`;
 			const result = countMarkdownTasks(content);
-			expect(result.open).toBe(2);
-			expect(result.closed).toBe(2);
+			expect(result.unchecked).toBe(2);
+			expect(result.checked).toBe(2);
 		});
 
 		it('returns 0 for no tasks', () => {
 			const result = countMarkdownTasks('Just plain text');
-			expect(result.open).toBe(0);
-			expect(result.closed).toBe(0);
+			expect(result.unchecked).toBe(0);
+			expect(result.checked).toBe(0);
 		});
 
 		it('handles asterisk-style tasks', () => {
 			const content = '* [ ] open\n* [x] closed';
 			const result = countMarkdownTasks(content);
-			expect(result.open).toBe(1);
-			expect(result.closed).toBe(1);
+			expect(result.unchecked).toBe(1);
+			expect(result.checked).toBe(1);
+		});
+
+		it('handles plus-style tasks and checkmark completions', () => {
+			const content = '+ [ ] open\n+ [✓] closed\n+ [✔] also closed';
+			const result = countMarkdownTasks(content);
+			expect(result.unchecked).toBe(1);
+			expect(result.checked).toBe(2);
 		});
 
 		it('handles indented tasks', () => {
 			const content = '  - [ ] indented open\n  - [x] indented closed';
 			const result = countMarkdownTasks(content);
-			expect(result.open).toBe(1);
-			expect(result.closed).toBe(1);
+			expect(result.unchecked).toBe(1);
+			expect(result.checked).toBe(1);
 		});
 
 		it('ignores tasks inside backtick code fences', () => {
 			const content = '- [ ] real\n```\n- [ ] fake\n- [x] also fake\n```\n- [x] also real';
 			const result = countMarkdownTasks(content);
-			expect(result.open).toBe(1);
-			expect(result.closed).toBe(1);
+			expect(result.unchecked).toBe(1);
+			expect(result.checked).toBe(1);
 		});
 
 		it('ignores tasks inside tilde code fences', () => {
 			const content = '~~~\n- [ ] inside fence\n~~~\n- [ ] outside';
 			const result = countMarkdownTasks(content);
-			expect(result.open).toBe(1);
-			expect(result.closed).toBe(0);
+			expect(result.unchecked).toBe(1);
+			expect(result.checked).toBe(0);
+		});
+
+		it('does not close a longer fence with a shorter delimiter', () => {
+			const content = '````markdown\n```\n- [ ] inside fence\n````\n- [ ] outside';
+			const result = countMarkdownTasks(content);
+			expect(result.unchecked).toBe(1);
+			expect(result.checked).toBe(0);
 		});
 	});
 

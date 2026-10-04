@@ -6,10 +6,10 @@
 import { describeSegmentLimit } from '../../../shared/autorunModelHints';
 import type { TaskSelectionMode } from '../../types';
 import {
-	CHECKED_TASK_REGEX,
 	UNCHECKED_TASK_REGEX,
 	countMarkdownTasks,
 	forEachMarkdownLine,
+	uncheckAllMarkdownTasks,
 } from '../../../shared/markdownTaskScan';
 
 // Task counting moved to `shared/markdownTaskScan` so the CLI engine counts a
@@ -104,7 +104,7 @@ export function countCheckedTasks(content: string): number {
  * Converts all - [x] to - [ ] (case insensitive)
  */
 export function uncheckAllTasks(content: string): string {
-	return content.replace(CHECKED_TASK_REGEX, '$1[ ]');
+	return uncheckAllMarkdownTasks(content);
 }
 
 /**

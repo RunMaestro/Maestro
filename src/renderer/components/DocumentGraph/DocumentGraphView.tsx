@@ -118,9 +118,9 @@ import { notifyToast } from '../../stores/notificationStore';
 import { notifyCenterFlash } from '../../stores/centerFlashStore';
 import { fileTimestampSlug, getBasename } from '../../../shared/formatters';
 import { buildFileTreeFromPaths } from '../../utils/fileTree';
-import { countMarkdownTasks } from '../FilePreview/filePreviewUtils';
 import { logger } from '../../utils/logger';
 import { useSettingsStore } from '../../stores/settingsStore';
+import { countMarkdownTasks } from '../../../shared/markdownTaskScan';
 
 /** Debounce delay for graph rebuilds when settings change (ms) */
 const GRAPH_REBUILD_DEBOUNCE_DELAY = 300;
@@ -987,9 +987,8 @@ export function DocumentGraphView({
 			.readFile(fullPath, sshRemoteId)
 			.then((content) => {
 				if (!content) return;
-				const { open, closed } = countMarkdownTasks(content);
-				const total = open + closed;
-				setSelectedNodeTasks(total > 0 ? { completed: closed, total } : null);
+				const { checked, total } = countMarkdownTasks(content);
+				setSelectedNodeTasks(total > 0 ? { completed: checked, total } : null);
 			})
 			.catch(() => {
 				setSelectedNodeTasks(null);
