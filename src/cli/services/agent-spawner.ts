@@ -762,12 +762,15 @@ async function spawnClaudeAgent(
 		let sessionId: string | undefined;
 		let usageStats: UsageStats | undefined;
 		let resultEmitted = false;
+		let resultError = false;
 		let sessionIdEmitted = false;
+		let settled = false;
 		const progressTools = new Map<string, { tool: string; summary?: string }>();
 
 		// Process a single parsed JSON message from Claude Code's stream-json output
 
 		const processMessage = (msg: any) => {
+			if (settled || overrides.signal?.aborted) return;
 			if (msg.type === 'assistant' && Array.isArray(msg.message?.content)) {
 				for (const block of msg.message.content) {
 					if (block?.type !== 'tool_use') continue;
@@ -810,9 +813,12 @@ async function spawnClaudeAgent(
 				}
 			}
 			// Capture result text (only once)
-			if (msg.type === 'result' && msg.result && !resultEmitted) {
-				resultEmitted = true;
-				result = msg.result;
+			if (msg.type === 'result') {
+				if (msg.is_error === true) resultError = true;
+				if (msg.result && !resultEmitted) {
+					resultEmitted = true;
+					result = msg.result;
+				}
 			}
 
 			// Accumulate text from assistant messages - Claude Code may emit
@@ -874,6 +880,7 @@ async function spawnClaudeAgent(
 
 		// Handle completion
 		child.on('close', (code, signal) => {
+			if (settled) return;
 			// Flush any remaining data in the JSON buffer (last line may lack trailing \n)
 			if (jsonBuffer.trim()) {
 				let parsed;
@@ -886,11 +893,18 @@ async function spawnClaudeAgent(
 					processMessage(parsed);
 				}
 			}
+			settled = true;
 
 			// Use accumulated assistant text as fallback when result field is empty
 			const finalResult = result || assistantText || undefined;
 
-			if (!signal && !overrides.signal?.aborted && code === 0 && finalResult) {
+			if (
+				!signal &&
+				!overrides.signal?.aborted &&
+				!resultError &&
+				code === 0 &&
+				finalResult?.trim()
+			) {
 				resolve({
 					success: true,
 					response: finalResult,
@@ -903,7 +917,12 @@ async function spawnClaudeAgent(
 					error:
 						signal || overrides.signal?.aborted
 							? 'Agent run timed out or was cancelled'
-							: stderr || `Process exited with code ${code}`,
+							: stderr ||
+								(resultError
+									? 'Agent reported an error'
+									: code === 0
+										? 'Agent returned no final text'
+										: `Process exited with code ${code}`),
 					agentSessionId: sessionId,
 					usageStats,
 				});
@@ -911,6 +930,8 @@ async function spawnClaudeAgent(
 		});
 
 		child.on('error', (error) => {
+			if (settled) return;
+			settled = true;
 			resolve({
 				success: false,
 				error: `Failed to spawn Claude: ${error.message}`,
@@ -1211,10 +1232,23 @@ async function spawnJsonLineAgent(
 		let stderr = '';
 		let errorText: string | undefined;
 		const progressSummaries = new Map<string, string>();
+		let settled = false;
+		let codexCandidate: string | undefined;
+		let codexFinal: string | undefined;
+		const codexProgressTexts = new Set<string>();
+		const emitCodexInterim = (text: string): void => {
+			if (codexProgressTexts.has(text)) return;
+			codexProgressTexts.add(text);
+			emitAgentProgress(overrides.onProgress, {
+				type: 'commentary',
+				text: text.slice(0, 2000),
+				at: new Date().toISOString(),
+			});
+		};
 
 		// Process a single parsed event from an agent's JSON line output
 		const processEvent = (event: ReturnType<typeof parser.parseJsonLine>) => {
-			if (!event) return;
+			if (!event || settled || overrides.signal?.aborted) return;
 			if (event.type === 'tool_use') {
 				const tool =
 					typeof event.toolName === 'string' &&
@@ -1256,23 +1290,10 @@ async function spawnJsonLineAgent(
 					at: new Date().toISOString(),
 				});
 			}
-			// Only Codex's explicit commentary phase is public prose. Other
-			// partial text may be answer deltas or private reasoning.
-			if (
-				toolType === 'codex' &&
-				event.type === 'text' &&
-				event.isPartial &&
-				!event.isReasoning &&
-				event.text
-			) {
-				const raw = event.raw as { payload?: { phase?: unknown } } | undefined;
-				if (raw?.payload?.phase === 'commentary') {
-					emitAgentProgress(overrides.onProgress, {
-						type: 'commentary',
-						text: event.text.slice(0, 2000),
-						at: new Date().toISOString(),
-					});
-				}
+			// Phase-less Codex messages remain buffered until a distinct answer
+			// follows. Only then can we safely release one as public progress.
+			if (toolType === 'codex' && event.responsePhase === 'commentary' && event.text) {
+				emitCodexInterim(event.text);
 			}
 
 			// Route through parser.extractSessionId() rather than only checking
@@ -1288,10 +1309,29 @@ async function spawnJsonLineAgent(
 			}
 
 			if (event.type === 'result' && event.text) {
-				result = result ? `${result}\n${event.text}` : event.text;
+				if (toolType === 'codex') {
+					if (event.responsePhase === 'final') {
+						if (codexCandidate && codexCandidate !== event.text) {
+							emitCodexInterim(codexCandidate);
+						}
+						codexCandidate = undefined;
+						codexFinal = event.text;
+					} else if (!codexFinal && event.text !== codexCandidate) {
+						if (codexCandidate) emitCodexInterim(codexCandidate);
+						codexCandidate = event.text;
+					}
+				} else if (event.text !== result) {
+					result = result ? `${result}\n${event.text}` : event.text;
+				}
 			}
 
-			if (event.type === 'text' && event.isPartial && !event.isReasoning && event.text) {
+			if (
+				toolType !== 'codex' &&
+				event.type === 'text' &&
+				event.isPartial &&
+				!event.isReasoning &&
+				event.text
+			) {
 				streamedText += event.text;
 			}
 
@@ -1333,17 +1373,26 @@ async function spawnJsonLineAgent(
 
 		const agentName = def?.name || toolType;
 		child.on('close', (code, signal) => {
+			if (settled) return;
 			// Flush any remaining data in the JSON buffer (last line may lack trailing \n)
 			if (jsonBuffer.trim()) {
 				processEvent(parser.parseJsonLine(jsonBuffer));
 			}
+			settled = true;
 
 			// Soft success: agents like Grok may exit non-zero after a full
-			// answer (e.g. --max-turns) with no structured error event. Prefer
-			// the streamed answer over raw stderr when there is no errorText.
-			const responseText = result || streamedText || undefined;
+			// answer (e.g. --max-turns) with no structured error event. Codex's
+			// phase-less messages are complete candidates, never concatenated.
+			const responseText =
+				toolType === 'codex' ? codexFinal || codexCandidate : result || streamedText || undefined;
 			const hasAnswer = Boolean(responseText?.trim());
-			if (!signal && !overrides.signal?.aborted && !errorText && (code === 0 || hasAnswer)) {
+			if (
+				!signal &&
+				!overrides.signal?.aborted &&
+				!errorText &&
+				hasAnswer &&
+				(code === 0 || (toolType === 'grok' && code !== null))
+			) {
 				resolve({
 					success: true,
 					response: responseText,
@@ -1356,7 +1405,9 @@ async function spawnJsonLineAgent(
 					error:
 						signal || overrides.signal?.aborted
 							? 'Agent run timed out or was cancelled'
-							: errorText || stderr || `Process exited with code ${code}`,
+							: errorText ||
+								stderr ||
+								(code === 0 ? 'Agent returned no final text' : `Process exited with code ${code}`),
 					agentSessionId: sessionId,
 					usageStats,
 				});
@@ -1364,6 +1415,8 @@ async function spawnJsonLineAgent(
 		});
 
 		child.on('error', (error) => {
+			if (settled) return;
+			settled = true;
 			resolve({ success: false, error: `Failed to spawn ${agentName}: ${error.message}` });
 		});
 	});

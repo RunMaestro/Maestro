@@ -537,6 +537,8 @@ Because the gateway must survive a crash, pair `net:connect` with `maestro.backg
 
 `agents.send` can report invocation-scoped progress through `onProgress(event)`. A tool event has `type: 'tool'`, `tool`, `status`, `at`, and optional `summary`. The summary is an English public action of at most 120 characters (for example, `Reading file notes.md` or `Running shell command`) derived from allowlisted provider metadata. It may be absent when the host cannot identify a safe action. Do not treat it as a raw command, full path, tool arguments, output, or agent reasoning. Older callers can omit `onProgress` and older consumers can ignore `summary`.
 
+`agents.send(...).response` contains only the selected final answer. A run with no final text fails with `response: null`; commentary and reasoning never become a successful fallback answer. Codex commentary with an explicit phase reaches `onProgress` immediately. Codex's phase-less `agent_message` is buffered because it could be the final answer: the host reports it as commentary only after a later distinct answer confirms it was interim. The latest phase-less candidate becomes the answer at turn completion unless an explicit final phase was supplied. Progress is scoped to that one send and stops when it settles or is cancelled. Other providers' answer token deltas are retained only as a response fallback where their stream format requires it; they are not progress events. Consumers should render the returned response unchanged and use progress only for a live status display.
+
 ```js
 /** @import { MaestroSdk } from '@maestro/plugin-sdk' */
 

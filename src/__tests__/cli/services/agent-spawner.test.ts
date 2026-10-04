@@ -2658,6 +2658,224 @@ Some text with [x] in it that's not a checkbox
 			mockSpawn.mockReturnValue(mockChild);
 		});
 
+		it('returns only the latest phase-less Codex answer after interim text and a tool', async () => {
+			const onProgress = vi.fn();
+			const pending = spawnAgent('codex', '/p', 'hi', undefined, { onProgress });
+			const output =
+				[
+					{ type: 'item.completed', item: { type: 'agent_message', text: 'I will check.' } },
+					{
+						type: 'item.started',
+						item: { type: 'command_execution', id: 'tool-1', command: 'secret' },
+					},
+					{
+						type: 'item.completed',
+						item: { type: 'command_execution', id: 'tool-1', status: 'completed' },
+					},
+					{ type: 'item.completed', item: { type: 'agent_message', text: 'The answer is 42.' } },
+				]
+					.map(JSON.stringify)
+					.join('\n') + '\n';
+			const result = await driveSpawnToCompletion(pending, 0, output);
+			expect(result.response).toBe('The answer is 42.');
+			expect(
+				onProgress.mock.calls.map(([event]) =>
+					event.type === 'commentary' ? event.text : event.type
+				)
+			).toEqual(['tool', 'tool', 'I will check.']);
+			expect(JSON.stringify(onProgress.mock.calls)).not.toContain('The answer is 42.');
+		});
+
+		it('honors explicit Codex commentary and final phases across duplicate representations', async () => {
+			const onProgress = vi.fn();
+			const pending = spawnAgent('codex', '/p', 'hi', undefined, { onProgress });
+			const output =
+				[
+					{
+						type: 'event_msg',
+						payload: { type: 'agent_message', phase: 'commentary', message: 'Checking files' },
+					},
+					{
+						type: 'response_item',
+						payload: {
+							type: 'message',
+							role: 'assistant',
+							phase: 'commentary',
+							content: [{ type: 'output_text', text: 'Checking files' }],
+						},
+					},
+					{ type: 'response_item', payload: { type: 'reasoning', summary: ['PRIVATE'] } },
+					{
+						type: 'item.completed',
+						item: { type: 'agent_message', phase: 'final', text: 'Done.' },
+					},
+					{
+						type: 'event_msg',
+						payload: { type: 'agent_message', phase: 'final', message: 'Done.' },
+					},
+				]
+					.map(JSON.stringify)
+					.join('\n') + '\n';
+			const result = await driveSpawnToCompletion(pending, 0, output);
+			expect(result.response).toBe('Done.');
+			expect(onProgress.mock.calls.map(([event]) => event.text)).toEqual(['Checking files']);
+			expect(JSON.stringify(onProgress.mock.calls)).not.toContain('PRIVATE');
+		});
+
+		it('keeps only the last distinct phase-less candidate and confirms earlier ones as progress', async () => {
+			const onProgress = vi.fn();
+			const pending = spawnAgent('codex', '/p', 'hi', undefined, { onProgress });
+			const output =
+				[
+					{ type: 'item.completed', item: { type: 'agent_message', text: 'First' } },
+					{ type: 'event_msg', payload: { type: 'agent_message', message: 'First' } },
+					{ type: 'item.completed', item: { type: 'agent_message', text: 'Second' } },
+					{ type: 'item.completed', item: { type: 'agent_message', text: 'Third' } },
+				]
+					.map(JSON.stringify)
+					.join('\n') + '\n';
+			const result = await driveSpawnToCompletion(pending, 0, output);
+			expect(result.response).toBe('Third');
+			expect(onProgress.mock.calls.map(([event]) => event.text)).toEqual(['First', 'Second']);
+		});
+
+		it('does not report a phase-less duplicate of the explicit final as progress', async () => {
+			const onProgress = vi.fn();
+			const pending = spawnAgent('codex', '/p', 'hi', undefined, { onProgress });
+			const output =
+				[
+					{ type: 'item.completed', item: { type: 'agent_message', text: 'Done' } },
+					{
+						type: 'event_msg',
+						payload: { type: 'agent_message', phase: 'final', message: 'Done' },
+					},
+				]
+					.map(JSON.stringify)
+					.join('\n') + '\n';
+			const result = await driveSpawnToCompletion(pending, 0, output);
+			expect(result.response).toBe('Done');
+			expect(onProgress).not.toHaveBeenCalled();
+		});
+
+		it('fails a Codex turn containing only commentary or reasoning', async () => {
+			const pending = spawnAgent('codex', '/p', 'hi');
+			const output =
+				[
+					{
+						type: 'event_msg',
+						payload: { type: 'agent_message', phase: 'commentary', message: 'Working' },
+					},
+					{ type: 'item.completed', item: { type: 'reasoning', text: 'PRIVATE' } },
+				]
+					.map(JSON.stringify)
+					.join('\n') + '\n';
+			const result = await driveSpawnToCompletion(pending, 0, output);
+			expect(result).toMatchObject({ success: false, error: 'Agent returned no final text' });
+			expect(result.response).toBeUndefined();
+		});
+
+		it('uses the same Codex answer and progress contract over SSH', async () => {
+			mockWrapSpawnWithSsh.mockResolvedValue({
+				command: 'ssh',
+				args: ['remote'],
+				cwd: '/p',
+				customEnvVars: undefined,
+				prompt: undefined,
+				sshStdinScript: undefined,
+				sshRemoteUsed: { id: 'remote', name: 'remote', host: 'remotehost' },
+			});
+			const onProgress = vi.fn();
+			const pending = spawnAgent('codex', '/p', 'hi', undefined, {
+				sshRemoteConfig: { enabled: true, remoteId: 'remote' },
+				onProgress,
+			});
+			const output =
+				[
+					{ type: 'item.completed', item: { type: 'agent_message', text: 'Looking' } },
+					{ type: 'item.completed', item: { type: 'agent_message', text: 'Found it' } },
+				]
+					.map(JSON.stringify)
+					.join('\n') + '\n';
+			const result = await driveSpawnToCompletion(pending, 0, output);
+			expect(result.response).toBe('Found it');
+			expect(onProgress.mock.calls.map(([event]) => event.text)).toEqual(['Looking']);
+		});
+
+		it('keeps concurrent Codex sends isolated and stops progress after close', async () => {
+			const createChild = () =>
+				Object.assign(new EventEmitter(), {
+					stdin: { end: vi.fn(), write: vi.fn() },
+					stdout: new EventEmitter(),
+					stderr: new EventEmitter(),
+				});
+			const first = createChild();
+			const second = createChild();
+			mockSpawn.mockReturnValueOnce(first).mockReturnValueOnce(second);
+			const firstProgress = vi.fn();
+			const secondProgress = vi.fn();
+			const firstPending = spawnAgent('codex', '/p', 'one', undefined, {
+				onProgress: firstProgress,
+			});
+			const secondPending = spawnAgent('codex', '/p', 'two', undefined, {
+				onProgress: secondProgress,
+			});
+			await waitForSpawnCall(2);
+			first.stdout.emit(
+				'data',
+				Buffer.from(
+					'{"type":"item.completed","item":{"type":"agent_message","text":"First interim"}}\n'
+				)
+			);
+			second.stdout.emit(
+				'data',
+				Buffer.from(
+					'{"type":"item.completed","item":{"type":"agent_message","text":"Second final"}}\n'
+				)
+			);
+			first.stdout.emit(
+				'data',
+				Buffer.from(
+					'{"type":"item.completed","item":{"type":"agent_message","text":"First final"}}\n'
+				)
+			);
+			second.emit('close', 0);
+			first.emit('close', 0);
+			expect((await firstPending).response).toBe('First final');
+			expect((await secondPending).response).toBe('Second final');
+			expect(firstProgress.mock.calls.map(([event]) => event.text)).toEqual(['First interim']);
+			expect(secondProgress).not.toHaveBeenCalled();
+			first.stdout.emit(
+				'data',
+				Buffer.from(
+					'{"type":"event_msg","payload":{"type":"agent_message","phase":"commentary","message":"late"}}\n'
+				)
+			);
+			expect(firstProgress).toHaveBeenCalledTimes(1);
+		});
+
+		it('does not emit late progress or return a candidate after cancellation', async () => {
+			const controller = new AbortController();
+			const onProgress = vi.fn();
+			const pending = spawnAgent('codex', '/p', 'hi', undefined, {
+				signal: controller.signal,
+				onProgress,
+			});
+			await waitForSpawnCall();
+			controller.abort();
+			mockStdout.emit(
+				'data',
+				Buffer.from(
+					'{"type":"event_msg","payload":{"type":"agent_message","phase":"commentary","message":"late"}}\n'
+				)
+			);
+			mockChild.emit('close', null, 'SIGTERM');
+			expect(await pending).toMatchObject({
+				success: false,
+				error: 'Agent run timed out or was cancelled',
+			});
+			expect(onProgress).not.toHaveBeenCalled();
+		});
+
 		it('streams Codex public commentary and tool status without raw arguments or reasoning', async () => {
 			const onProgress = vi.fn();
 			const p = spawnAgent('codex', '/p', 'hi', undefined, { onProgress });
