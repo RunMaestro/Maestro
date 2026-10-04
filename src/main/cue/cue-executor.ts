@@ -58,6 +58,12 @@ export interface CueExecutionConfig {
 	sshStore?: SshRemoteSettingsStore;
 	/** Optional agent-level config values (from agent config store) */
 	agentConfigValues?: Record<string, unknown>;
+	/**
+	 * The Maestro system prompt for the target agent (built in main from the
+	 * stored session). Delivered by `applySystemPromptDelivery`: the native flag
+	 * for agents that support it, embedded into the prompt otherwise.
+	 */
+	appendSystemPrompt?: string;
 }
 
 /**

@@ -5,7 +5,7 @@
  * Changes are saved to customizations file AND applied immediately in memory.
  */
 
-import { ipcMain } from 'electron';
+import { app, ipcMain } from 'electron';
 import {
 	getPrompt,
 	getAllPrompts,
@@ -18,6 +18,7 @@ import {
 	getBundledDefault,
 } from '../../prompt-manager';
 import { logger } from '../../utils/logger';
+import { computerHistoryDir } from '../../../shared/computer-history/paths';
 
 const LOG_CONTEXT = '[IPC:Prompts]';
 
@@ -98,6 +99,20 @@ export function registerPromptsHandlers(): void {
 			return { success: true, path: getPromptsPath() };
 		} catch (error) {
 			logger.error(`Failed to get prompts path: ${error}`, LOG_CONTEXT);
+			return { success: false, error: String(error) };
+		}
+	});
+
+	// Paths the renderer's system-prompt builder needs but cannot derive itself
+	// (it has no userData path). Feeds {{COMPUTER_HISTORY_DIR}}.
+	ipcMain.handle('prompts:getSystemPromptPaths', async () => {
+		try {
+			return {
+				success: true,
+				computerHistoryDir: computerHistoryDir(app.getPath('userData')),
+			};
+		} catch (error) {
+			logger.error(`Failed to get system prompt paths: ${error}`, LOG_CONTEXT);
 			return { success: false, error: String(error) };
 		}
 	});

@@ -42,6 +42,7 @@ import type {
 } from '../../shared/crossAgentTypes';
 import { CROSS_AGENT_SESSION_PREFIX } from '../../shared/crossAgentTypes';
 import { spawnGroupChatAgent } from '../group-chat/spawnGroupChatAgent';
+import { buildMaestroSystemPromptForSession } from '../utils/maestro-system-prompt';
 import { extractTextFromStreamJson } from '../group-chat/output-parser';
 import { buildAgentArgs, applyAgentConfigOverrides } from '../utils/agent-args';
 import { getClaudeTokenMode } from '../../shared/claudeTokenMode';
@@ -607,6 +608,11 @@ export async function startCrossAgentRequest(
 			// idle default and kills a still-working consult long before our budget.
 			maxWaitSeconds: Math.ceil(CROSS_AGENT_IDLE_TIMEOUT_MS / 1000),
 			debugLabel: `cross-agent:${target.name}`,
+			// The consulted agent is a real Maestro agent: it answers with the same
+			// system prompt its own tabs carry. A resumed consult skips re-embedding
+			// for agents without the native flag (already in that transcript).
+			appendSystemPrompt: await buildMaestroSystemPromptForSession(target.id),
+			isResume: !!request.resumeAgentSessionId && !!agent.resumeArgs,
 		});
 		// The spawners CATCH their own failures and return `{ pid: -1, success: false }`
 		// rather than throwing (see ChildProcessSpawner). Such a process emits no

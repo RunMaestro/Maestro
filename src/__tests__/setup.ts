@@ -816,6 +816,9 @@ const mockMaestro = {
 		save: vi.fn().mockResolvedValue({ success: true }),
 		reset: vi.fn().mockResolvedValue({ success: true, content: '' }),
 		getPath: vi.fn().mockResolvedValue({ success: true, path: '/mock/prompts/core' }),
+		getSystemPromptPaths: vi
+			.fn()
+			.mockResolvedValue({ success: true, computerHistoryDir: '/mock/userData/computer-history' }),
 		listFiles: vi.fn().mockResolvedValue({ success: true, files: [] }),
 	},
 	// Multi-window API (window<->session ownership). Defaults model a single

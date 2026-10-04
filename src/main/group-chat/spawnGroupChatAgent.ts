@@ -16,6 +16,7 @@ import { getSshRemoteConfig, type SshRemoteSettingsStore } from '../utils/ssh-re
 import { ensureRemoteMaestroPProbed } from '../agents/probeRemoteMaestroP';
 import { getWindowsSpawnConfig } from './group-chat-config';
 import { beginGroupChatTurn } from './group-chat-turn-metrics';
+import { applySystemPromptDelivery } from '../utils/system-prompt-delivery';
 import type { AgentConfig } from '../agents/definitions';
 import type { AgentSshRemoteConfig } from '../../shared/types';
 import {
@@ -72,6 +73,15 @@ export interface SpawnGroupChatAgentConfig {
 	 * full 10 minutes. Same contract Cue follows. Ignored on the API path.
 	 */
 	maxWaitSeconds?: number;
+	/**
+	 * Maestro system prompt for this agent. Delivered by
+	 * `applySystemPromptDelivery`, exactly like a tab spawn: the native flag
+	 * (temp file on Windows local) when the agent supports it, otherwise embedded
+	 * into `prompt`, and not re-embedded when `isResume`.
+	 */
+	appendSystemPrompt?: string;
+	/** True when `args` resume an existing provider session. */
+	isResume?: boolean;
 }
 
 export interface SpawnGroupChatAgentResult {
@@ -98,9 +108,9 @@ export async function spawnGroupChatAgent(
 		sessionId,
 		agentId,
 		agent,
-		args,
+		args: rawArgs,
 		cwd,
-		prompt,
+		prompt: rawPrompt,
 		customEnvVars,
 		agentConfigValues,
 		sshRemoteConfig,
@@ -111,6 +121,22 @@ export async function spawnGroupChatAgent(
 	} = config;
 
 	const baseCommand = config.command ?? agent.path ?? agent.command;
+
+	// System prompt first, so every later step (maestro-p rewrite, SSH wrap,
+	// Windows stdin) sees the final args and prompt.
+	const delivered = await applySystemPromptDelivery({
+		args: rawArgs,
+		prompt: rawPrompt,
+		systemPrompt: config.appendSystemPrompt,
+		supportsAppendSystemPrompt: !!agent.capabilities?.supportsAppendSystemPrompt,
+		isResume: !!config.isResume,
+		isSshSession: !!sshRemoteConfig?.enabled,
+		sessionId,
+		agentId,
+		logContext: '[GroupChat:Spawn]',
+	});
+	const args = delivered.args;
+	const prompt = delivered.prompt;
 
 	let spawnCommand = baseCommand;
 	let spawnArgs = args;

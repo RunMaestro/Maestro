@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { prepareMaestroSystemPrompt } from '../../../renderer/utils/spawnHelpers';
+import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 
 vi.mock('../../../renderer/utils/templateVariables', () => ({
 	substituteTemplateVariables: vi.fn((content: string, vars: Record<string, any>) => {
@@ -132,5 +133,74 @@ describe('prepareMaestroSystemPrompt', () => {
 		expect(first).toBeDefined();
 		expect(second).toBeDefined();
 		expect((window as any).maestro.prompts.get).toHaveBeenCalledTimes(2);
+	});
+
+	describe('role and plugin sections (shared assembler)', () => {
+		const prompts: Record<string, string> = {
+			'maestro-system-prompt': 'BASE',
+			'pianola-system': 'PIANOLA',
+			'computer-history-system': 'HISTORY {{COMPUTER_HISTORY_DIR}}',
+		};
+		let savedEncore: unknown;
+
+		beforeEach(() => {
+			savedEncore = useSettingsStore.getState().encoreFeatures;
+			(window as any).maestro.prompts.get = vi.fn(async (id: string) =>
+				id in prompts ? { success: true, content: prompts[id] } : { success: false }
+			);
+			(window as any).maestro.prompts.getSystemPromptPaths = vi
+				.fn()
+				.mockResolvedValue({ success: true, computerHistoryDir: '/ud/computer-history' });
+		});
+
+		afterEach(() => {
+			useSettingsStore.setState({ encoreFeatures: savedEncore as any });
+		});
+
+		const enableComputerHistory = () =>
+			useSettingsStore.setState({
+				encoreFeatures: { ...(savedEncore as any), computerHistory: true },
+			});
+
+		it('returns only the base prompt while no section applies', async () => {
+			useSettingsStore.setState({
+				encoreFeatures: { ...(savedEncore as any), computerHistory: false },
+			});
+			const result = await prepareMaestroSystemPrompt({ session: baseSession });
+			expect(result).toBe('BASE');
+		});
+
+		it('appends the Pianola role section for the Pianola agent', async () => {
+			const result = await prepareMaestroSystemPrompt({
+				session: { ...baseSession, isPianola: true },
+			});
+			expect(result).toBe('BASE\n\n---\n\nPIANOLA');
+		});
+
+		it('appends the Computer History section with the local store path when enabled', async () => {
+			enableComputerHistory();
+			const result = await prepareMaestroSystemPrompt({ session: baseSession });
+			expect(result).toBe('BASE\n\n---\n\nHISTORY /ud/computer-history');
+			expect((window as any).maestro.prompts.get).toHaveBeenCalledWith('computer-history-system');
+		});
+
+		it('skips the localOnly section and the store path for SSH agents', async () => {
+			enableComputerHistory();
+			const result = await prepareMaestroSystemPrompt({
+				session: { ...baseSession, sessionSshRemoteConfig: { enabled: true } },
+			});
+			expect(result).toBe('BASE');
+			expect((window as any).maestro.prompts.get).not.toHaveBeenCalledWith(
+				'computer-history-system'
+			);
+		});
+
+		it('skips a section whose prompt fails to load', async () => {
+			enableComputerHistory();
+			delete prompts['computer-history-system'];
+			const result = await prepareMaestroSystemPrompt({ session: baseSession });
+			expect(result).toBe('BASE');
+			prompts['computer-history-system'] = 'HISTORY {{COMPUTER_HISTORY_DIR}}';
+		});
 	});
 });

@@ -429,6 +429,50 @@ describe('cue-executor', () => {
 			await resultPromise;
 		});
 
+		describe('Maestro system prompt', () => {
+			it('delivers appendSystemPrompt with the native flag for supporting agents', async () => {
+				mockGetAgentCapabilities.mockReturnValueOnce({
+					...mockGetAgentCapabilities(),
+					supportsAppendSystemPrompt: true,
+				} as any);
+				const config = createExecutionConfig({
+					promptPath: 'Hello world',
+					appendSystemPrompt: 'MAESTRO SYS',
+				});
+
+				const resultPromise = executeCuePrompt(config);
+				await vi.advanceTimersByTimeAsync(0);
+
+				const [, spawnedArgs] = mockSpawn.mock.calls[0] as [string, string[], unknown];
+				const idx = spawnedArgs.indexOf('--append-system-prompt');
+				expect(idx).toBeGreaterThan(-1);
+				expect(spawnedArgs[idx + 1]).toBe('MAESTRO SYS');
+				expect(spawnedArgs[spawnedArgs.length - 1]).toContain('Hello world');
+
+				mockChild.emit('close', 0);
+				await resultPromise;
+			});
+
+			it('embeds appendSystemPrompt into the prompt for agents without the flag', async () => {
+				const config = createExecutionConfig({
+					promptPath: 'Hello world',
+					appendSystemPrompt: 'MAESTRO SYS',
+				});
+
+				const resultPromise = executeCuePrompt(config);
+				await vi.advanceTimersByTimeAsync(0);
+
+				const [, spawnedArgs] = mockSpawn.mock.calls[0] as [string, string[], unknown];
+				expect(spawnedArgs).not.toContain('--append-system-prompt');
+				const last = spawnedArgs[spawnedArgs.length - 1];
+				expect(last).toContain('MAESTRO SYS');
+				expect(last).toContain('Hello world');
+
+				mockChild.emit('close', 0);
+				await resultPromise;
+			});
+		});
+
 		describe('prompt appended as CLI positional arg', () => {
 			it('appends -- then prompt for agents with no promptArgs/noPromptSeparator (default)', async () => {
 				// defaultAgentDef has neither promptArgs nor noPromptSeparator

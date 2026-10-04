@@ -20,7 +20,10 @@ import type { ProcessConfig as ProcessSpawnConfig } from '../../../process-manag
 import type { AgentConfigsData } from '../../../stores/types';
 import { logger } from '../../../utils/logger';
 import { isWindows } from '../../../../shared/platformDetection';
-import { embedSystemPromptInPrompt } from '../../../../shared/embeddedSystemPrompt';
+import {
+	applySystemPromptDelivery,
+	redactSystemPromptArg,
+} from '../../../utils/system-prompt-delivery';
 import {
 	buildCallerIdentityEnv,
 	withoutCallerIdentityEnv,
@@ -437,108 +440,24 @@ export async function handleProcessSpawn(
 	}
 
 	// ========================================================================
-	// System prompt delivery: use --append-system-prompt for supported agents,
-	// otherwise embed in the user prompt as fallback.
-	// On Windows local execution, use --append-system-prompt-file with a temp
-	// file to avoid exceeding the ~32K CreateProcess command-line length limit.
-	// SSH sessions are exempt (the command runs inside a stdin script, not the
-	// OS command line) and always use inline --append-system-prompt.
-	//
-	// Resume behavior: for agents WITHOUT native --append-system-prompt support,
-	// the fallback path embeds the system prompt into the first user turn. That
-	// turn is preserved in the agent's session transcript, so on resume we skip
-	// re-embedding to avoid polluting every subsequent user message with the
-	// full system prompt (which would be redundant context and waste tokens).
-	// Agents with native support re-send per invocation - that flag is metadata,
-	// not conversation content, and some agents (e.g. Claude Code) require it
-	// every turn because it isn't persisted into the session transcript.
+	// System prompt delivery (flag / Windows temp file / embed / resume skip).
+	// The rules live in applySystemPromptDelivery so Cue and Group Chat spawns
+	// deliver the prompt exactly the way an interactive tab does.
 	// ========================================================================
-	let effectivePrompt = config.prompt;
-	let systemPromptTempFile: string | undefined;
-	const isSshSession = config.sessionSshRemoteConfig?.enabled;
-	const isResume = !!config.agentSessionId;
-	if (config.appendSystemPrompt) {
-		if (agent?.capabilities?.supportsAppendSystemPrompt) {
-			if (isWindows() && !isSshSession) {
-				// Windows local: write to temp file to avoid CLI length limits
-				const tmpDir = os.tmpdir();
-				systemPromptTempFile = path.join(
-					tmpDir,
-					`maestro-sysprompt-${config.sessionId}-${Date.now()}.txt`
-				);
-				await fsp.writeFile(systemPromptTempFile, config.appendSystemPrompt, 'utf-8');
-				// Schedule cleanup early so the file is removed even if spawn fails.
-				// 30s gives the agent plenty of time to read it after spawning.
-				// Fire-and-forget unlink mirrors process-manager/utils/imageUtils.cleanupTempFiles:
-				// silence ENOENT (file already gone), capture other codes via Sentry.
-				const tempFileToClean = systemPromptTempFile;
-				setTimeout(() => {
-					fsp.unlink(tempFileToClean).catch((cleanupErr: unknown) => {
-						if ((cleanupErr as NodeJS.ErrnoException).code !== 'ENOENT') {
-							captureException(
-								cleanupErr instanceof Error ? cleanupErr : new Error(String(cleanupErr)),
-								{
-									context: 'systemPromptTempFile cleanup (safety)',
-									file: tempFileToClean,
-								}
-							);
-						}
-					});
-				}, 30_000);
-				finalArgs = [...finalArgs, '--append-system-prompt-file', systemPromptTempFile];
-				logger.debug(
-					'Using --append-system-prompt-file for system prompt delivery (Windows)',
-					LOG_CONTEXT,
-					{
-						agentId: agent?.id,
-						systemPromptLength: config.appendSystemPrompt.length,
-						tempFile: systemPromptTempFile,
-					}
-				);
-			} else {
-				// Non-Windows or SSH: pass inline (no command-line length concern)
-				finalArgs = [...finalArgs, '--append-system-prompt', config.appendSystemPrompt];
-				logger.debug('Using --append-system-prompt for system prompt delivery', LOG_CONTEXT, {
-					agentId: agent?.id,
-					systemPromptLength: config.appendSystemPrompt.length,
-				});
-			}
-		} else if (isResume) {
-			// Resume path for agents without native --append-system-prompt:
-			// the system prompt was embedded in the first user turn at initial
-			// spawn and is preserved in the agent's session transcript. Skip
-			// re-embedding to avoid polluting every subsequent user message.
-			logger.debug(
-				'Skipping system prompt re-injection on resume (already in transcript)',
-				LOG_CONTEXT,
-				{
-					agentId: agent?.id,
-					systemPromptLength: config.appendSystemPrompt.length,
-				}
-			);
-		} else if (effectivePrompt) {
-			// Fallback: embed system prompt in user message. The envelope is
-			// built by the shared helper because the transcript renderer has
-			// to take it back apart again when a tab is hydrated from disk
-			// (see src/shared/embeddedSystemPrompt.ts).
-			effectivePrompt = embedSystemPromptInPrompt(config.appendSystemPrompt, effectivePrompt);
-			logger.debug('Embedding system prompt in user message (fallback)', LOG_CONTEXT, {
-				agentId: agent?.id,
-				systemPromptLength: config.appendSystemPrompt.length,
-			});
-		} else {
-			// No user message to embed into - send system prompt as sole content
-			effectivePrompt = config.appendSystemPrompt;
-			logger.warn(
-				'appendSystemPrompt provided without a user prompt; using as sole prompt',
-				LOG_CONTEXT,
-				{
-					agentId: agent?.id,
-					systemPromptLength: config.appendSystemPrompt.length,
-				}
-			);
-		}
-	}
+	const delivered = await applySystemPromptDelivery({
+		args: finalArgs,
+		prompt: config.prompt,
+		systemPrompt: config.appendSystemPrompt,
+		supportsAppendSystemPrompt: !!agent?.capabilities?.supportsAppendSystemPrompt,
+		isResume: !!config.agentSessionId,
+		isSshSession: !!config.sessionSshRemoteConfig?.enabled,
+		sessionId: config.sessionId,
+		agentId: agent?.id,
+		logContext: LOG_CONTEXT,
+	});
+	finalArgs = delivered.args;
+	let effectivePrompt = delivered.prompt;
+	const systemPromptTempFile = delivered.tempFile;
 
 	// Copilot-CLI batch-mode preamble.
 	//
@@ -634,15 +553,7 @@ export async function handleProcessSpawn(
 				: config.agentSessionId;
 
 	// Redact system prompt content from logged args (can be large and sensitive)
-	const appendPromptIdx = finalArgs.indexOf('--append-system-prompt');
-	const argsToLog =
-		appendPromptIdx !== -1
-			? [
-					...finalArgs.slice(0, appendPromptIdx + 1),
-					`<${finalArgs[appendPromptIdx + 1]?.length ?? 0} chars>`,
-					...finalArgs.slice(appendPromptIdx + 2),
-				]
-			: finalArgs;
+	const argsToLog = redactSystemPromptArg(finalArgs);
 
 	logger.info(`Spawning process: ${config.command}`, LOG_CONTEXT, {
 		sessionId: config.sessionId,

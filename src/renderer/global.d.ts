@@ -4645,6 +4645,11 @@ interface MaestroAPI {
 			id: string
 		) => Promise<{ success: boolean; content?: string; error?: string }>;
 		getPath: () => Promise<{ success: boolean; path?: string; error?: string }>;
+		getSystemPromptPaths: () => Promise<{
+			success: boolean;
+			computerHistoryDir?: string;
+			error?: string;
+		}>;
 		listFiles: () => Promise<{
 			success: boolean;
 			files?: Array<{ name: string; filename: string; isCatalog: boolean }>;

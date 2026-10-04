@@ -17,6 +17,7 @@ vi.mock('../../../cli/services/prompt-loader', () => ({
 vi.mock('../../../cli/services/storage', () => ({
 	getConfigDirectory: vi.fn(() => '/mock/config'),
 	readSettingValue: vi.fn(),
+	resolveSessionHistoryFilePath: vi.fn(),
 }));
 
 vi.mock('../../../cli/services/git-utils', () => ({
@@ -24,24 +25,9 @@ vi.mock('../../../cli/services/git-utils', () => ({
 	isGitRepo: vi.fn(),
 }));
 
-vi.mock('fs', async () => {
-	const actual = await vi.importActual<typeof import('fs')>('fs');
-	// `actual.constants` is a getter on the fs module - spreading `actual`
-	// drops it (only own enumerable data properties carry through), and
-	// production code reads `fs.constants.R_OK`. Inline the literal so the
-	// mock surface still exposes a usable constants object.
-	const mocked = {
-		...actual,
-		accessSync: vi.fn(),
-		constants: { ...actual.constants, R_OK: 4 },
-	};
-	return { ...mocked, default: mocked };
-});
-
-import fs from 'fs';
 import { prepareMaestroSystemPromptCli } from '../../../cli/services/system-prompt';
 import { getCliPrompt } from '../../../cli/services/prompt-loader';
-import { readSettingValue } from '../../../cli/services/storage';
+import { readSettingValue, resolveSessionHistoryFilePath } from '../../../cli/services/storage';
 import { getGitBranch, isGitRepo } from '../../../cli/services/git-utils';
 
 const mockSession = (overrides: Partial<SessionInfo> = {}): SessionInfo => ({
@@ -63,10 +49,8 @@ describe('prepareMaestroSystemPromptCli', () => {
 		vi.mocked(isGitRepo).mockReturnValue(true);
 		vi.mocked(getGitBranch).mockReturnValue('main');
 		vi.mocked(readSettingValue).mockReturnValue('');
-		vi.mocked(fs.accessSync).mockImplementation(() => {
-			// Default: history file does NOT exist (fresh session)
-			throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
-		});
+		// Default: history file does NOT exist (fresh session)
+		vi.mocked(resolveSessionHistoryFilePath).mockReturnValue(undefined);
 	});
 
 	it('substitutes agent identity, branch, and conductor profile into the template', async () => {
@@ -130,7 +114,6 @@ describe('prepareMaestroSystemPromptCli', () => {
 
 	it('omits the history file path when one is not yet written (fresh session)', async () => {
 		vi.mocked(getCliPrompt).mockResolvedValue('history=[{{AGENT_HISTORY_PATH}}]');
-		// fs.accessSync is already mocked to throw ENOENT in beforeEach
 
 		const result = await prepareMaestroSystemPromptCli(mockSession());
 
@@ -139,18 +122,17 @@ describe('prepareMaestroSystemPromptCli', () => {
 
 	it('includes the history file path when the file exists locally', async () => {
 		vi.mocked(getCliPrompt).mockResolvedValue('history=[{{AGENT_HISTORY_PATH}}]');
-		// Override the throw-by-default beforeEach with a no-op success.
-		vi.mocked(fs.accessSync).mockImplementation(() => undefined);
+		vi.mocked(resolveSessionHistoryFilePath).mockReturnValue('/mock/config/history/sess-1.jsonl');
 
 		const result = await prepareMaestroSystemPromptCli(mockSession({ id: 'sess-1' }));
 
-		// Sanitized session id forms the filename
-		expect(result).toMatch(/history=\[.*sess-1\.json\]/);
+		expect(resolveSessionHistoryFilePath).toHaveBeenCalledWith('sess-1');
+		expect(result).toBe('history=[/mock/config/history/sess-1.jsonl]');
 	});
 
 	it('skips the history file pointer for SSH sessions (path is local-only)', async () => {
 		vi.mocked(getCliPrompt).mockResolvedValue('history=[{{AGENT_HISTORY_PATH}}]');
-		vi.mocked(fs.accessSync).mockImplementation(() => undefined);
+		vi.mocked(resolveSessionHistoryFilePath).mockReturnValue('/mock/config/history/x.jsonl');
 
 		const result = await prepareMaestroSystemPromptCli(
 			mockSession({
@@ -169,5 +151,65 @@ describe('prepareMaestroSystemPromptCli', () => {
 		const result = await prepareMaestroSystemPromptCli(mockSession());
 
 		expect(result).toBe('cond=[]');
+	});
+
+	describe('role and plugin sections', () => {
+		const prompts: Record<string, string> = {
+			'maestro-system-prompt': 'BASE {{AGENT_NAME}}',
+			'pianola-system': 'PIANOLA',
+			'computer-history-system': 'HISTORY at {{COMPUTER_HISTORY_DIR}}',
+		};
+		const settings = (encoreFeatures: unknown) => (key: string) =>
+			key === 'encoreFeatures' ? encoreFeatures : '';
+
+		beforeEach(() => {
+			vi.mocked(getCliPrompt).mockImplementation(async (id: string) => {
+				if (id in prompts) return prompts[id];
+				throw new Error(`Failed to load prompt "${id}" (${id}.md)`);
+			});
+		});
+
+		it('appends nothing extra while every section flag is off (default)', async () => {
+			const result = await prepareMaestroSystemPromptCli(mockSession({ name: 'A' }));
+			expect(result).toBe('BASE A');
+		});
+
+		it('appends the Pianola role section for the Pianola agent', async () => {
+			const result = await prepareMaestroSystemPromptCli(
+				mockSession({ name: 'A', isPianola: true })
+			);
+			expect(result).toBe('BASE A\n\n---\n\nPIANOLA');
+		});
+
+		it('appends the Computer History section with the local store path when enabled', async () => {
+			vi.mocked(readSettingValue).mockImplementation(settings({ computerHistory: true }));
+
+			const result = await prepareMaestroSystemPromptCli(mockSession({ name: 'A' }));
+
+			expect(result).toBe('BASE A\n\n---\n\nHISTORY at /mock/config/computer-history');
+		});
+
+		it('skips the localOnly Computer History section for SSH agents', async () => {
+			vi.mocked(readSettingValue).mockImplementation(settings({ computerHistory: true }));
+
+			const result = await prepareMaestroSystemPromptCli(
+				mockSession({ name: 'A', sessionSshRemoteConfig: { enabled: true, remoteId: 'r1' } })
+			);
+
+			expect(result).toBe('BASE A');
+		});
+
+		it('skips a section whose prompt file is missing instead of dropping the whole prompt', async () => {
+			vi.mocked(readSettingValue).mockImplementation(settings({ computerHistory: true }));
+			delete prompts['computer-history-system'];
+			const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+			const result = await prepareMaestroSystemPromptCli(mockSession({ name: 'A' }));
+
+			expect(result).toBe('BASE A');
+			expect(errSpy).toHaveBeenCalled();
+			errSpy.mockRestore();
+			prompts['computer-history-system'] = 'HISTORY at {{COMPUTER_HISTORY_DIR}}';
+		});
 	});
 });

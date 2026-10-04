@@ -7,34 +7,41 @@
 // receives. Without this, CLI-spawned agents are missing the entire "what is
 // Maestro and what can I do with it" preamble.
 
-import path from 'path';
-import fs from 'fs';
 import type { SessionInfo } from '../../shared/types';
-import { substituteTemplateVariables } from '../../shared/templateVariables';
 import { PROMPT_IDS } from '../../shared/promptDefinitions';
-import { sanitizeSessionId } from '../../shared/history';
+import { computerHistoryDir } from '../../shared/computer-history/paths';
+import {
+	assembleMaestroSystemPrompt,
+	systemPromptSectionsFor,
+} from '../../shared/maestroSystemPrompt';
 import { getCliPrompt } from './prompt-loader';
-import { getConfigDirectory, readSettingValue } from './storage';
+import { getConfigDirectory, readSettingValue, resolveSessionHistoryFilePath } from './storage';
 import { getGitBranch, isGitRepo } from './git-utils';
 
+/** True for the known "no readable prompt file" failure from `getCliPrompt`. */
+function isPromptMissingError(err: unknown): err is Error {
+	return err instanceof Error && err.message.startsWith('Failed to load prompt');
+}
+
 /**
- * Resolve the absolute path of an existing per-session history file, mirroring
- * `HistoryManager.getHistoryFilePath` in `src/main/history-manager.ts`. Returns
- * undefined when the file does not yet exist (e.g. a brand-new session) so the
- * `{{AGENT_HISTORY_PATH}}` placeholder renders as an empty string - matching
- * the renderer-side helper, which also returns undefined in that case.
+ * A role or plugin section, or undefined when its prompt file is missing (a
+ * section that does not exist yet must not cost the agent its whole system
+ * prompt). Other errors propagate, same as the base template.
  */
-function getHistoryFilePath(sessionId: string): string | undefined {
-	const filePath = path.join(
-		getConfigDirectory(),
-		'history',
-		`${sanitizeSessionId(sessionId)}.json`
-	);
+async function loadSection(promptId: string): Promise<string | undefined> {
 	try {
-		fs.accessSync(filePath, fs.constants.R_OK);
-		return filePath;
-	} catch {
-		return undefined;
+		return await getCliPrompt(promptId);
+	} catch (err) {
+		// "Unknown prompt ID" covers a section whose prompt this CLI build does
+		// not know about (an older bundle than the app that enabled it).
+		if (
+			isPromptMissingError(err) ||
+			(err instanceof Error && err.message.startsWith('Unknown prompt ID'))
+		) {
+			console.error(`[maestro-cli] ${err.message}; skipping that system prompt section`);
+			return undefined;
+		}
+		throw err;
 	}
 }
 
@@ -61,7 +68,7 @@ export async function prepareMaestroSystemPromptCli(
 		// real defect and should bubble up to the caller's error handler rather
 		// than masquerade as "prompt missing". Log the swallow so the user has
 		// a breadcrumb when their relay bot suddenly loses Maestro context.
-		if (err instanceof Error && err.message.startsWith('Failed to load prompt')) {
+		if (isPromptMissingError(err)) {
 			console.error(`[maestro-cli] ${err.message}; spawning without Maestro system prompt`);
 			return undefined;
 		}
@@ -73,28 +80,42 @@ export async function prepareMaestroSystemPromptCli(
 
 	// Skip the history-file pointer for SSH sessions - the path is local to the
 	// Maestro app's machine, not the remote where the agent will actually run.
+	// The Computer History store is local for the same reason.
 	const isSsh = !!session.sessionSshRemoteConfig?.enabled;
-	const historyFilePath = isSsh ? undefined : getHistoryFilePath(session.id);
+	const historyFilePath = isSsh ? undefined : resolveSessionHistoryFilePath(session.id);
 
 	const conductorProfileSetting = readSettingValue('conductorProfile');
 	const conductorProfile =
 		typeof conductorProfileSetting === 'string' ? conductorProfileSetting : undefined;
 
-	return substituteTemplateVariables(template, {
-		session: {
-			id: session.id,
-			name: session.name,
-			toolType: session.toolType,
-			cwd: session.cwd,
-			projectRoot: session.projectRoot,
-			autoRunFolderPath: session.autoRunFolderPath,
-			additionalDirectories: session.additionalDirectories,
-			worktreeConfig: session.worktreeConfig,
-			isGitRepo: sessionIsGitRepo,
+	// Same role and plugin sections the desktop appends (see spawnHelpers.ts).
+	const roleSections = session.isPianola ? [await loadSection(PROMPT_IDS.PIANOLA_SYSTEM)] : [];
+	const pluginSections: Array<string | undefined> = [];
+	for (const ref of systemPromptSectionsFor(readSettingValue('encoreFeatures'), { isSsh })) {
+		pluginSections.push(await loadSection(ref.promptId));
+	}
+
+	return assembleMaestroSystemPrompt({
+		template,
+		context: {
+			session: {
+				id: session.id,
+				name: session.name,
+				toolType: session.toolType,
+				cwd: session.cwd,
+				projectRoot: session.projectRoot,
+				autoRunFolderPath: session.autoRunFolderPath,
+				additionalDirectories: session.additionalDirectories,
+				worktreeConfig: session.worktreeConfig,
+				isGitRepo: sessionIsGitRepo,
+			},
+			gitBranch,
+			groupId: session.groupId,
+			historyFilePath,
+			conductorProfile,
+			computerHistoryDir: isSsh ? undefined : computerHistoryDir(getConfigDirectory()),
 		},
-		gitBranch,
-		groupId: session.groupId,
-		historyFilePath,
-		conductorProfile,
+		roleSections,
+		pluginSections,
 	});
 }

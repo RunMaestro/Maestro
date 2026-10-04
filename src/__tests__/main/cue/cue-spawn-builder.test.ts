@@ -80,8 +80,17 @@ vi.mock('fs', async (importOriginal) => {
 	return { ...actual, existsSync: () => true };
 });
 
+// Real platform detection, but `isWindows` is a spy so the system-prompt tests
+// can pin the non-Windows (inline flag) branch on every CI host.
+vi.mock('../../../shared/platformDetection', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('../../../shared/platformDetection')>();
+	return { ...actual, isWindows: vi.fn(actual.isWindows) };
+});
+
 // Must import after mocks
 import { buildSpawnSpec } from '../../../main/cue/cue-spawn-builder';
+import { embedSystemPromptInPrompt } from '../../../shared/embeddedSystemPrompt';
+import * as platformDetection from '../../../shared/platformDetection';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -551,6 +560,113 @@ describe('cue-spawn-builder', () => {
 					expect(result.spec.command).not.toBe(process.execPath);
 				}
 			});
+		});
+	});
+
+	describe('Maestro system prompt (appendSystemPrompt)', () => {
+		beforeEach(() => {
+			vi.mocked(platformDetection.isWindows).mockReturnValue(false);
+		});
+
+		afterEach(async () => {
+			const actual = await vi.importActual<typeof import('../../../shared/platformDetection')>(
+				'../../../shared/platformDetection'
+			);
+			vi.mocked(platformDetection.isWindows).mockImplementation(actual.isWindows);
+		});
+
+		const nativeCaps = () => ({
+			...(mockGetAgentCapabilities() as Record<string, unknown>),
+			supportsAppendSystemPrompt: true,
+		});
+
+		it('passes the native flag for agents that support it, before the prompt positional', async () => {
+			mockGetAgentCapabilities.mockReturnValueOnce(nativeCaps() as any);
+
+			const result = await buildSpawnSpec(createConfig({ appendSystemPrompt: 'SYS' }), 'Do it');
+
+			expect(result.ok).toBe(true);
+			if (!result.ok) return;
+			const args = result.spec.args;
+			const flagIdx = args.indexOf('--append-system-prompt');
+			expect(flagIdx).toBeGreaterThan(-1);
+			expect(args[flagIdx + 1]).toBe('SYS');
+			// The user prompt is untouched and still last.
+			expect(args.slice(-2)).toEqual(['--', 'Do it']);
+		});
+
+		it('embeds into the positional prompt for agents without the native flag', async () => {
+			const result = await buildSpawnSpec(createConfig({ appendSystemPrompt: 'SYS' }), 'Do it');
+
+			expect(result.ok).toBe(true);
+			if (!result.ok) return;
+			expect(result.spec.args).not.toContain('--append-system-prompt');
+			expect(result.spec.args.slice(-2)).toEqual(['--', embedSystemPromptInPrompt('SYS', 'Do it')]);
+		});
+
+		it('hands the embedded prompt to the SSH wrapper (stdin path)', async () => {
+			const mockSshStore = { getSshRemotes: vi.fn(() => []) };
+			mockWrapSpawnWithSsh.mockResolvedValue({
+				command: 'ssh',
+				args: ['user@host'],
+				cwd: '/Users/test',
+				customEnvVars: undefined,
+				prompt: undefined,
+				sshStdinScript: '#!/bin/bash\nclaude',
+				sshRemoteUsed: { id: 'r1', name: 'S', host: 'h' },
+			});
+
+			await buildSpawnSpec(
+				createConfig({
+					appendSystemPrompt: 'SYS',
+					sshRemoteConfig: { enabled: true, remoteId: 'r1' },
+					sshStore: mockSshStore as any,
+				}),
+				'Do it'
+			);
+
+			const wrapConfig = mockWrapSpawnWithSsh.mock.calls[0][0] as {
+				prompt: string;
+				args: string[];
+			};
+			expect(wrapConfig.prompt).toBe(embedSystemPromptInPrompt('SYS', 'Do it'));
+		});
+
+		it('hands the native flag to the SSH wrapper inline', async () => {
+			mockGetAgentCapabilities.mockReturnValueOnce(nativeCaps() as any);
+			const mockSshStore = { getSshRemotes: vi.fn(() => []) };
+			mockWrapSpawnWithSsh.mockResolvedValue({
+				command: 'ssh',
+				args: ['user@host'],
+				cwd: '/Users/test',
+				customEnvVars: undefined,
+				prompt: undefined,
+				sshRemoteUsed: { id: 'r1', name: 'S', host: 'h' },
+			});
+
+			await buildSpawnSpec(
+				createConfig({
+					appendSystemPrompt: 'SYS',
+					sshRemoteConfig: { enabled: true, remoteId: 'r1' },
+					sshStore: mockSshStore as any,
+				}),
+				'Do it'
+			);
+
+			const wrapConfig = mockWrapSpawnWithSsh.mock.calls[0][0] as {
+				prompt: string;
+				args: string[];
+			};
+			expect(wrapConfig.prompt).toBe('Do it');
+			expect(wrapConfig.args).toEqual(expect.arrayContaining(['--append-system-prompt', 'SYS']));
+		});
+
+		it('changes nothing when no system prompt is supplied', async () => {
+			const result = await buildSpawnSpec(createConfig(), 'Do it');
+			expect(result.ok).toBe(true);
+			if (!result.ok) return;
+			expect(result.spec.args.slice(-2)).toEqual(['--', 'Do it']);
+			expect(result.spec.args).not.toContain('--append-system-prompt');
 		});
 	});
 });

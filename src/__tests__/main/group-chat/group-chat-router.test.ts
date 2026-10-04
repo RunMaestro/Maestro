@@ -51,6 +51,28 @@ vi.mock('../../../main/utils/sentry', () => ({
 	captureException: (...args: unknown[]) => mockCaptureException(...args),
 }));
 
+// The main-process system prompt builders read the persisted stores; stub them
+// so the router tests can assert which spawn gets which prompt.
+const mockBuildMaestroSystemPromptForSession = vi.fn(
+	async (_sessionId: string): Promise<string | undefined> => undefined
+);
+const mockBuildPluginSystemPromptSections = vi.fn(
+	(_opts: { isSsh: boolean }): string | undefined => undefined
+);
+vi.mock('../../../main/utils/maestro-system-prompt', () => ({
+	buildMaestroSystemPromptForSession: (sessionId: string) =>
+		mockBuildMaestroSystemPromptForSession(sessionId),
+	buildPluginSystemPromptSections: (opts: { isSsh: boolean }) =>
+		mockBuildPluginSystemPromptSections(opts),
+}));
+
+// Real platform detection; `isWindows` is a spy so the system-prompt tests can
+// pin the inline-flag branch on a Windows CI host too.
+vi.mock('../../../shared/platformDetection', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('../../../shared/platformDetection')>();
+	return { ...actual, isWindows: vi.fn(actual.isWindows) };
+});
+
 vi.mock('../../../main/prompt-manager', () => ({
 	getPrompt: vi.fn((id: string) => {
 		const fs = require('fs');
@@ -110,6 +132,7 @@ import { readLog } from '../../../main/group-chat/group-chat-log';
 import { AgentDetector } from '../../../main/agents';
 import { groupChatEmitters } from '../../../main/ipc/handlers/groupChat';
 import { getPrompt } from '../../../main/prompt-manager';
+import * as platformDetection from '../../../shared/platformDetection';
 
 describe('group-chat-router', () => {
 	let mockProcessManager: IProcessManager;
@@ -1891,6 +1914,107 @@ describe('group-chat-router', () => {
 	// ===========================================================================
 	// Test 5.7: SSH remote execution for group chat participants
 	// ===========================================================================
+	describe('Maestro system prompt', () => {
+		const nativeAgent = () =>
+			vi.mocked(mockAgentDetector.getAgent).mockResolvedValue({
+				id: 'claude-code',
+				name: 'Claude Code',
+				binaryName: 'claude',
+				command: 'claude',
+				args: ['--print'],
+				available: true,
+				path: '/usr/local/bin/claude',
+				capabilities: { supportsAppendSystemPrompt: true },
+			} as any);
+
+		beforeEach(() => {
+			vi.mocked(platformDetection.isWindows).mockReturnValue(false);
+		});
+
+		afterEach(async () => {
+			const actual = await vi.importActual<typeof import('../../../shared/platformDetection')>(
+				'../../../shared/platformDetection'
+			);
+			vi.mocked(platformDetection.isWindows).mockImplementation(actual.isWindows);
+			mockBuildMaestroSystemPromptForSession.mockReset();
+			mockBuildMaestroSystemPromptForSession.mockResolvedValue(undefined);
+			mockBuildPluginSystemPromptSections.mockReset();
+			mockBuildPluginSystemPromptSections.mockReturnValue(undefined);
+		});
+
+		it('gives the moderator only the plugin sections (no Maestro agent behind it)', async () => {
+			const chat = await createTestChatWithModerator('Moderator Sections Test');
+			nativeAgent();
+			mockBuildPluginSystemPromptSections.mockReturnValue('PLUGIN SECTIONS');
+
+			await routeUserMessage(chat.id, 'Hello', mockProcessManager, mockAgentDetector);
+
+			expect(mockBuildPluginSystemPromptSections).toHaveBeenCalledWith({ isSsh: false });
+			expect(mockBuildMaestroSystemPromptForSession).not.toHaveBeenCalled();
+			const moderatorSpawn = vi
+				.mocked(mockProcessManager.spawn)
+				.mock.calls.find((call) => call[0]?.sessionId?.includes('-moderator-'));
+			const args = moderatorSpawn?.[0].args as string[];
+			expect(args[args.indexOf('--append-system-prompt') + 1]).toBe('PLUGIN SECTIONS');
+		});
+
+		it('passes nothing to the moderator when no plugin section applies', async () => {
+			const chat = await createTestChatWithModerator('Moderator No Sections Test');
+			nativeAgent();
+
+			await routeUserMessage(chat.id, 'Hello', mockProcessManager, mockAgentDetector);
+
+			const moderatorSpawn = vi
+				.mocked(mockProcessManager.spawn)
+				.mock.calls.find((call) => call[0]?.sessionId?.includes('-moderator-'));
+			expect(moderatorSpawn?.[0].args).not.toContain('--append-system-prompt');
+		});
+
+		it("gives a participant its own agent's full Maestro system prompt", async () => {
+			const chat = await createTestChatWithModerator('Participant Prompt Test');
+			setGetSessionsCallback(() => [
+				{ id: 'agent-client', name: 'Client', toolType: 'claude-code', cwd: '/tmp/client' },
+			]);
+			await addParticipant(chat.id, 'Client', 'claude-code', mockProcessManager);
+			nativeAgent();
+			mockBuildMaestroSystemPromptForSession.mockResolvedValue('FULL PROMPT FOR CLIENT');
+
+			await routeModeratorResponse(
+				chat.id,
+				'@Client: Please implement the login form',
+				mockProcessManager,
+				mockAgentDetector
+			);
+
+			expect(mockBuildMaestroSystemPromptForSession).toHaveBeenCalledWith('agent-client');
+			const participantSpawn = vi
+				.mocked(mockProcessManager.spawn)
+				.mock.calls.find((call) => call[0]?.prompt?.includes('login form'));
+			const args = participantSpawn?.[0].args as string[];
+			expect(args[args.indexOf('--append-system-prompt') + 1]).toBe('FULL PROMPT FOR CLIENT');
+		});
+
+		it('falls back to plugin sections for a participant with no matching agent', async () => {
+			const chat = await createTestChatWithModerator('Participant Fallback Test');
+			await addParticipant(chat.id, 'Client', 'claude-code', mockProcessManager);
+			nativeAgent();
+			mockBuildPluginSystemPromptSections.mockReturnValue('PLUGIN ONLY');
+
+			await routeModeratorResponse(
+				chat.id,
+				'@Client: Please implement the login form',
+				mockProcessManager,
+				mockAgentDetector
+			);
+
+			const participantSpawn = vi
+				.mocked(mockProcessManager.spawn)
+				.mock.calls.find((call) => call[0]?.prompt?.includes('login form'));
+			const args = participantSpawn?.[0].args as string[];
+			expect(args[args.indexOf('--append-system-prompt') + 1]).toBe('PLUGIN ONLY');
+		});
+	});
+
 	describe('SSH remote participant support', () => {
 		const sshRemoteConfig = {
 			enabled: true,

@@ -70,6 +70,13 @@ export function createPromptsApi() {
 		getPath: (): Promise<{ success: boolean; path?: string; error?: string }> =>
 			ipcRenderer.invoke('prompts:getPath'),
 
+		// Paths for system-prompt template variables ({{COMPUTER_HISTORY_DIR}})
+		getSystemPromptPaths: (): Promise<{
+			success: boolean;
+			computerHistoryDir?: string;
+			error?: string;
+		}> => ipcRenderer.invoke('prompts:getSystemPromptPaths'),
+
 		// List all .md files in the prompts directory (includes user-added files)
 		listFiles: (): Promise<{
 			success: boolean;

@@ -22,6 +22,7 @@ import {
 import { getClaudeTokenMode } from '../../shared/claudeTokenMode';
 import { QUERY_SOURCE_ENV_VAR } from '../../shared/querySource';
 import { buildSpawnPath } from '../utils/spawnPath';
+import { applySystemPromptDelivery } from '../utils/system-prompt-delivery';
 
 // ─── Types ──────���────────────────────────────────────────────────────────────
 
@@ -127,6 +128,27 @@ export async function buildSpawnSpec(
 	});
 	finalArgs = configResolution.args;
 
+	// 3a. Deliver the Maestro system prompt the way `process:spawn` does: the
+	// native flag (a temp file on Windows local) for agents that support it,
+	// otherwise embedded into the prompt. Done before SSH wrapping and the
+	// positional append so both the SSH stdin path and the local argv carry it,
+	// and before the maestro-p rewrite, which forwards the flag to the TUI. A Cue
+	// run never resumes a provider session, so the embed is never skipped.
+	const delivered = await applySystemPromptDelivery({
+		args: finalArgs,
+		prompt: substitutedPrompt,
+		systemPrompt: config.appendSystemPrompt,
+		supportsAppendSystemPrompt: !!agentConfig.capabilities?.supportsAppendSystemPrompt,
+		isResume: false,
+		// Mirrors the wrap condition below: without a store the run stays local.
+		isSshSession: !!sshRemoteConfig?.enabled && !!sshStore,
+		sessionId: `cue-${config.runId}`,
+		agentId: agentDef.id,
+		logContext: '[CueSpawnBuilder]',
+	});
+	finalArgs = delivered.args;
+	const promptToSend = delivered.prompt ?? substitutedPrompt;
+
 	// Sanitize custom env vars BEFORE they reach the spawn environment. This
 	// drops blocklisted names (PATH, HOME, USER, SHELL, LD_PRELOAD,
 	// DYLD_INSERT_LIBRARIES, NODE_OPTIONS) and any name that does not match the
@@ -216,7 +238,7 @@ export async function buildSpawnSpec(
 			command,
 			args: remoteInteractive ? [...remoteInteractive.prependArgs, ...finalArgs] : finalArgs,
 			cwd: projectRoot,
-			prompt: substitutedPrompt,
+			prompt: promptToSend,
 			customEnvVars: remoteInteractive
 				? { ...effectiveEnvVars, ...remoteInteractive.env }
 				: effectiveEnvVars,
@@ -245,11 +267,11 @@ export async function buildSpawnSpec(
 	// was missing, SSH wrapping was skipped so we still need to append.
 	if (!sshRemoteUsed) {
 		if (agentDef.promptArgs) {
-			spawnArgs = [...spawnArgs, ...agentDef.promptArgs(substitutedPrompt)];
+			spawnArgs = [...spawnArgs, ...agentDef.promptArgs(promptToSend)];
 		} else if (agentDef.noPromptSeparator) {
-			spawnArgs = [...spawnArgs, substitutedPrompt];
+			spawnArgs = [...spawnArgs, promptToSend];
 		} else {
-			spawnArgs = [...spawnArgs, '--', substitutedPrompt];
+			spawnArgs = [...spawnArgs, '--', promptToSend];
 		}
 	}
 

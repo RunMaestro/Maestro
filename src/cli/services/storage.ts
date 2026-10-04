@@ -582,6 +582,27 @@ export function getSessionHistoryMtimeMs(sessionId: string): number {
 }
 
 /**
+ * Absolute path of a session's existing history file, for the system prompt's
+ * `{{AGENT_HISTORY_PATH}}`. Prefers the JSONL file and falls back to a legacy
+ * `.json` one the desktop app has not migrated yet (the CLI never migrates; see
+ * `readSessionHistory`). Undefined when neither exists, e.g. a brand-new agent.
+ */
+export function resolveSessionHistoryFilePath(sessionId: string): string | undefined {
+	for (const filePath of [
+		getSessionHistoryPath(sessionId),
+		getLegacySessionHistoryPath(sessionId),
+	]) {
+		try {
+			fs.accessSync(filePath, fs.constants.R_OK);
+			return filePath;
+		} catch {
+			// Not there (or unreadable); try the next format.
+		}
+	}
+	return undefined;
+}
+
+/**
  * Get a session by ID (supports partial IDs)
  */
 export function getSessionById(sessionId: string): SessionInfo | undefined {

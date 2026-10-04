@@ -26,6 +26,7 @@ import type { AdditionalDirectory } from './types';
  *   {{AUTORUN_FOLDER}}    - Auto Run documents folder path
  *   {{ADDITIONAL_DIRECTORIES}} - Markdown block of extra granted directories (empty when none)
  *   {{WORKTREE_BASE_PATH}} - Directory where this agent's git worktrees are created (empty when none is configured)
+ *   {{COMPUTER_HISTORY_DIR}} - Computer History store on this machine (empty for SSH-remote agents)
  *
  * Auto Run Variables:
  *   {{DOCUMENT_NAME}}     - Current Auto Run document name (without .md)
@@ -213,6 +214,12 @@ export interface TemplateContext {
 	predecessorHandoff?: string;
 	// History file path for task recall
 	historyFilePath?: string;
+	/**
+	 * `<userData>/computer-history` on the Maestro machine, for the Computer
+	 * History system-prompt section. Builders leave it unset for SSH-remote
+	 * agents, whose shell cannot reach that path.
+	 */
+	computerHistoryDir?: string;
 	// Conductor profile (user's About Me from settings)
 	conductorProfile?: string;
 	// Cue event context (for Cue automation prompts)
@@ -304,6 +311,10 @@ export const TEMPLATE_VARIABLES = [
 	{ variable: '{{AGENT_GROUP}}', description: 'Agent group name' },
 	{ variable: '{{AGENT_ID}}', description: 'Agent UUID (for CLI targeting)' },
 	{ variable: '{{CONDUCTOR_PROFILE}}', description: "Conductor's About Me profile" },
+	{
+		variable: '{{COMPUTER_HISTORY_DIR}}',
+		description: 'Computer History store path (empty for SSH agents)',
+	},
 	{ variable: '{{AGENT_HISTORY_PATH}}', description: 'History file path (task recall)' },
 	{ variable: '{{AGENT_NAME}}', description: 'Agent name' },
 	{ variable: '{{AGENT_PATH}}', description: 'Agent home directory path' },
@@ -528,6 +539,7 @@ export function substituteTemplateVariables(template: string, context: TemplateC
 		goalExitCriteria,
 		predecessorHandoff,
 		historyFilePath,
+		computerHistoryDir,
 		conductorProfile,
 	} = context;
 	const now = new Date();
@@ -544,6 +556,7 @@ export function substituteTemplateVariables(template: string, context: TemplateC
 		AGENT_GROUP: groupName || '',
 		AGENT_SESSION_ID: session.agentSessionId || '',
 		AGENT_HISTORY_PATH: historyFilePath || '',
+		COMPUTER_HISTORY_DIR: computerHistoryDir || '',
 		// The AI tab this spawn belongs to. Empty for headless spawns (CLI send,
 		// playbooks, Cue) that have no desktop tab of their own.
 		TAB_ID: activeTabId || '',

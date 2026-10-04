@@ -263,6 +263,8 @@ export interface SessionInfo {
 	worktreeConfig?: SessionWorktreeConfig;
 	/** Left Bar bookmark - pins the agent to the Bookmarks section at the top. */
 	bookmarked?: boolean;
+	/** The pinned Pianola manager agent; its system prompt gets the Pianola role section. */
+	isPianola?: boolean;
 	/** Per-session model override (wins over agent-level `model` config option). */
 	customModel?: string;
 	/** Per-session effort/reasoning override (wins over agent-level config). */
