@@ -67,7 +67,7 @@ const matches = (filter: EventFilter | undefined, event: MaestroEvent): boolean 
 export function createFakeClient(options: FakeClientOptions = {}): FakeClient {
 	const host = options.host ?? DESKTOP_HOST;
 	const agents = options.agents ?? [];
-	const groups = options.groups ?? [];
+	const groups = (options.groups ?? []).map((group) => ({ ...group }));
 	const transcripts = { ...options.transcripts };
 	const listeners = new Set<{
 		listener: (event: MaestroEvent) => void;
@@ -77,6 +77,7 @@ export function createFakeClient(options: FakeClientOptions = {}): FakeClient {
 	const calls: string[] = [];
 	const requests: FakeClient['requests'] = [];
 	let createdCount = 0;
+	let groupCount = 0;
 	let state: ConnectionState = 'idle';
 
 	const record = (method: ClientMethod, ...args: unknown[]): ClientResult<never> | undefined => {
@@ -104,7 +105,8 @@ export function createFakeClient(options: FakeClientOptions = {}): FakeClient {
 				if (options.connectError) return fail('connection.connect', options.connectError);
 				state = 'connected';
 				push({ type: 'host.connected', host, resumed: false });
-				push({ type: 'snapshot', agents, groups });
+				// Copies: the fake edits its own arrays in place, and a shared reference would hide the change from the TUI's reducer.
+				push({ type: 'snapshot', agents: [...agents], groups: [...groups] });
 				return { ok: true, value: host };
 			},
 			reconnect: async () => ({ ok: true, value: host }),
@@ -116,7 +118,7 @@ export function createFakeClient(options: FakeClientOptions = {}): FakeClient {
 			host: () => (state === 'connected' ? host : undefined),
 		},
 		agents: {
-			list: async () => ({ ok: true, value: agents }),
+			list: async () => ({ ok: true, value: [...agents] }),
 			get: async (agentId) => {
 				const refused = record('agents.get', agentId);
 				if (refused) return refused;
@@ -144,15 +146,74 @@ export function createFakeClient(options: FakeClientOptions = {}): FakeClient {
 				if (refused) return refused;
 				return { ok: true, value: { applied: Object.keys(patch) as never[] } };
 			},
-			rename: () => unsupported('agents.rename'),
-			remove: () => unsupported('agents.remove'),
+			rename: async (agentId, name) => {
+				const refused = record('agents.rename', agentId, name);
+				if (refused) return refused;
+				const found = agents.find((agent) => agent.id === agentId);
+				if (!found) return fail('agents.rename', 'not-found');
+				found.name = name;
+				push({ type: 'agent.updated', agent: { ...found } });
+				return { ok: true, value: undefined };
+			},
+			remove: async (agentId) => {
+				const refused = record('agents.remove', agentId);
+				if (refused) return refused;
+				const at = agents.findIndex((agent) => agent.id === agentId);
+				if (at < 0) return fail('agents.remove', 'not-found');
+				agents.splice(at, 1);
+				push({ type: 'agent.removed', agentId });
+				return { ok: true, value: undefined };
+			},
 		},
 		groups: {
-			list: async () => ({ ok: true, value: groups }),
-			create: () => unsupported('groups.create'),
-			rename: () => unsupported('groups.rename'),
-			remove: () => unsupported('groups.remove'),
-			moveAgent: () => unsupported('groups.moveAgent'),
+			list: async () => ({ ok: true, value: [...groups] }),
+			create: async (input) => {
+				const refused = record('groups.create', input);
+				if (refused) return refused;
+				groupCount += 1;
+				const groupId = `new-group-${groupCount}`;
+				groups.push({
+					id: groupId,
+					name: input.name,
+					...(input.emoji ? { emoji: input.emoji } : {}),
+				});
+				push({ type: 'groups.changed', groups: [...groups] });
+				return { ok: true, value: { groupId } };
+			},
+			rename: async (groupId, name) => {
+				const refused = record('groups.rename', groupId, name);
+				if (refused) return refused;
+				const found = groups.find((group) => group.id === groupId);
+				if (!found) return fail('groups.rename', 'not-found');
+				found.name = name;
+				push({ type: 'groups.changed', groups: groups.map((group) => ({ ...group })) });
+				return { ok: true, value: undefined };
+			},
+			remove: async (groupId) => {
+				const refused = record('groups.remove', groupId);
+				if (refused) return refused;
+				const at = groups.findIndex((group) => group.id === groupId);
+				if (at < 0) return fail('groups.remove', 'not-found');
+				groups.splice(at, 1);
+				push({ type: 'groups.changed', groups: [...groups] });
+				// Members become ungrouped, as the desktop does it; none is deleted.
+				for (const agent of agents) {
+					if (agent.groupId !== groupId) continue;
+					delete agent.groupId;
+					push({ type: 'agent.updated', agent: { ...agent } });
+				}
+				return { ok: true, value: undefined };
+			},
+			moveAgent: async (agentId, groupId) => {
+				const refused = record('groups.moveAgent', agentId, groupId);
+				if (refused) return refused;
+				const found = agents.find((agent) => agent.id === agentId);
+				if (!found) return fail('groups.moveAgent', 'not-found');
+				if (groupId === null) delete found.groupId;
+				else found.groupId = groupId;
+				push({ type: 'agent.updated', agent: { ...found } });
+				return { ok: true, value: undefined };
+			},
 		},
 		tabs: {
 			list: async (agentId) => {

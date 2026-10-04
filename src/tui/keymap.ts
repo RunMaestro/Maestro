@@ -10,7 +10,17 @@
 import type { Key } from 'ink';
 
 /** Where a binding is live: the main view, or one of the overlays. */
-export type KeyContext = 'main' | 'help' | 'tabs' | 'history' | 'palette' | 'menu' | 'form';
+export type KeyContext =
+	| 'main'
+	| 'help'
+	| 'tabs'
+	| 'history'
+	| 'palette'
+	| 'menu'
+	| 'form'
+	| 'prompt'
+	| 'confirm'
+	| 'groupPicker';
 
 export type KeyAction =
 	| 'quit'
@@ -31,6 +41,11 @@ export type KeyAction =
 	| 'submitForm'
 	| 'choicePrev'
 	| 'choiceNext'
+	| 'rename'
+	| 'deleteItem'
+	| 'moveToGroup'
+	| 'newGroup'
+	| 'confirm'
 	| 'closeOverlay';
 
 /** Keys that arrive as a flag on Ink's `Key` rather than as text. */
@@ -81,29 +96,51 @@ export const KEYMAP: readonly Binding[] = [
 	{
 		action: 'moveDown',
 		chords: [{ input: 'j' }, { named: 'down' }],
-		contexts: ['main', 'tabs', 'history', 'palette', 'menu', 'form'],
+		contexts: [
+			'main',
+			'help',
+			'tabs',
+			'history',
+			'palette',
+			'menu',
+			'form',
+			'prompt',
+			'groupPicker',
+		],
 		chordsByContext: {
 			palette: [{ named: 'down' }, { input: 'n', ctrl: true }],
 			// A form is a text box: letters type, so the cursor moves on arrows, Tab, and Ctrl-N.
 			form: [{ named: 'down' }, { named: 'tab' }, { input: 'n', ctrl: true }],
+			prompt: [{ named: 'down' }, { named: 'tab' }, { input: 'n', ctrl: true }],
 		},
 		description: 'Move down',
 	},
 	{
 		action: 'moveUp',
 		chords: [{ input: 'k' }, { named: 'up' }],
-		contexts: ['main', 'tabs', 'history', 'palette', 'menu', 'form'],
+		contexts: [
+			'main',
+			'help',
+			'tabs',
+			'history',
+			'palette',
+			'menu',
+			'form',
+			'prompt',
+			'groupPicker',
+		],
 		chordsByContext: {
 			palette: [{ named: 'up' }, { input: 'p', ctrl: true }],
 			form: [{ named: 'up' }, { named: 'tab', shift: true }, { input: 'p', ctrl: true }],
+			prompt: [{ named: 'up' }, { named: 'tab', shift: true }, { input: 'p', ctrl: true }],
 		},
 		description: 'Move up',
 	},
 	{
 		action: 'open',
 		chords: [{ named: 'return' }],
-		contexts: ['main', 'tabs', 'palette', 'menu', 'form'],
-		description: 'Open agent, fold group, pick tab, next form field',
+		contexts: ['main', 'tabs', 'palette', 'menu', 'form', 'prompt', 'groupPicker'],
+		description: 'Open agent, fold group, pick, next field, save a prompt',
 		agentMenu: 'Open conversation',
 	},
 	{
@@ -132,6 +169,39 @@ export const KEYMAP: readonly Binding[] = [
 		contexts: ['main'],
 		description: 'Edit the selected agent',
 		agentMenu: 'Edit agent',
+	},
+	{
+		action: 'rename',
+		chords: [{ input: 'R' }],
+		contexts: ['main'],
+		description: 'Rename the selected agent or group',
+		agentMenu: 'Rename agent',
+	},
+	{
+		action: 'deleteItem',
+		chords: [{ input: 'X' }],
+		contexts: ['main'],
+		description: 'Delete the selected agent or group',
+		agentMenu: 'Delete agent',
+	},
+	{
+		action: 'moveToGroup',
+		chords: [{ input: 'g' }],
+		contexts: ['main'],
+		description: 'Move the selected agent to a group',
+		agentMenu: 'Move to group',
+	},
+	{
+		action: 'newGroup',
+		chords: [{ input: 'N' }],
+		contexts: ['main'],
+		description: 'New group',
+	},
+	{
+		action: 'confirm',
+		chords: [{ input: 'y' }, { named: 'return' }],
+		contexts: ['confirm'],
+		description: 'Confirm a delete',
 	},
 	{
 		action: 'submitForm',
@@ -190,7 +260,19 @@ export const KEYMAP: readonly Binding[] = [
 	{
 		action: 'closeOverlay',
 		chords: [{ named: 'escape' }],
-		contexts: ['help', 'tabs', 'history', 'palette', 'menu', 'form'],
+		contexts: [
+			'help',
+			'tabs',
+			'history',
+			'palette',
+			'menu',
+			'form',
+			'prompt',
+			'confirm',
+			'groupPicker',
+		],
+		// A confirmation also takes `n`: "no" is the answer a hand reaches for next to `y`.
+		chordsByContext: { confirm: [{ named: 'escape' }, { input: 'n' }] },
 		description: 'Close the overlay',
 	},
 ];

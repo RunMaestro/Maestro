@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useApp, useInput } from 'ink';
-import type { AgentRecord, MaestroClient, MaestroPaths } from '../shared/maestro-lib';
+import type { AgentRecord, ClientResult, MaestroClient, MaestroPaths } from '../shared/maestro-lib';
 import { visibleAiTabsOf } from '../shared/maestro-lib';
 import { AgentForm } from './agents/AgentForm';
 import {
@@ -22,6 +22,26 @@ import {
 	type FormState,
 } from './agents/form';
 import { useFormLookups } from './agents/useFormLookups';
+import { ConfirmOverlay, GroupPickerOverlay, PromptOverlay } from './agents/ManageOverlays';
+import {
+	backspacePrompt,
+	deleteAgentConfirm,
+	deleteGroupConfirm,
+	groupChoices,
+	manageTargetOf,
+	moveGroupCursor,
+	movePromptFocus,
+	newGroupPrompt,
+	pickerStartIndex,
+	renameAgentPrompt,
+	renameGroupPrompt,
+	submitConfirm,
+	submitMoveToGroup,
+	submitPrompt,
+	typeIntoPrompt,
+	type ConfirmState,
+	type PromptState,
+} from './agents/manage';
 import { HelpOverlay } from './app/HelpOverlay';
 import { HistoryView } from './app/HistoryView';
 import { moveHistoryCursor, openHistory, type HistoryViewState } from './app/history';
@@ -39,7 +59,7 @@ import { useAgentSource, useTabEntries } from './app/useAgentSource';
 import { useTerminalSize } from './app/useTerminalSize';
 import { useViewState } from './app/useViewState';
 import { cyclePane, isAgentsPaneVisible, visiblePanes, type PaneId } from './app/layout';
-import { resolveAction, type KeyAction, type KeyContext } from './keymap';
+import { KEYMAP, resolveAction, type KeyAction, type KeyContext } from './keymap';
 import { agentMenuEntries } from './palette/agentMenu';
 import { AgentMenuOverlay } from './palette/AgentMenuOverlay';
 import { buildPaletteEntries, type PaletteEntry } from './palette/entries';
@@ -77,11 +97,14 @@ export interface AppProps {
 
 /** The overlay on screen, if any. Only one at a time, and Esc closes it. */
 type OverlayState =
-	| { kind: 'help' }
+	| { kind: 'help'; cursor: number }
 	| { kind: 'tabs'; agentId: string; cursor: number }
 	| { kind: 'history'; history: HistoryViewState }
 	| { kind: 'palette'; palette: PaletteState }
 	| { kind: 'menu'; cursor: number }
+	| { kind: 'prompt'; prompt: PromptState; submitting: boolean; error?: string }
+	| { kind: 'confirm'; confirm: ConfirmState; submitting: boolean; error?: string }
+	| { kind: 'groupPicker'; agentId: string; cursor: number }
 	| {
 			kind: 'form';
 			mode: 'create' | 'edit';
@@ -228,10 +251,19 @@ export function App({ paths, client }: AppProps): React.ReactElement {
 	}, [formMode, formProvider, lookups.providers]);
 
 	// After a create, the Agents cursor goes to the new agent once the host's event brings it in.
-	const pendingRevealRef = useRef<string | undefined>(undefined);
+	// A move waits for the host to show the agent in its new group (`groupId`, null for ungrouped),
+	// or the cursor would land on the old row a moment before it disappears.
+	const pendingRevealRef = useRef<{ agentId: string; groupId?: string | null } | undefined>(
+		undefined
+	);
 	useEffect(() => {
-		const agentId = pendingRevealRef.current;
-		if (agentId && revealAgent(agentId)) pendingRevealRef.current = undefined;
+		const pending = pendingRevealRef.current;
+		if (!pending) return;
+		if (pending.groupId !== undefined) {
+			const landed = data.agents.find((a) => a.id === pending.agentId);
+			if (!landed || (landed.groupId ?? null) !== pending.groupId) return;
+		}
+		if (revealAgent(pending.agentId)) pendingRevealRef.current = undefined;
 	}, [data.sections]);
 
 	/** Puts the Agents cursor on an agent, unfolding the section it hides in. */
@@ -327,9 +359,76 @@ export function App({ paths, client }: AppProps): React.ReactElement {
 			});
 			return;
 		}
-		if (ctx.mode === 'create') pendingRevealRef.current = result.value.agentId;
+		if (ctx.mode === 'create') pendingRevealRef.current = { agentId: result.value.agentId };
 		setOverlay(undefined);
 		setNotice(`${ctx.mode === 'create' ? 'Created' : 'Saved'} ${name}.`);
+	};
+
+	/** Agent and group changes go through the client: without a desktop attached the TUI is read-only. */
+	const requireClient = (): MaestroClient | undefined => {
+		if (!source.client)
+			setNotice('No desktop attached: the TUI is read-only until one is running.');
+		return source.client;
+	};
+
+	const cursorTarget = () =>
+		manageTargetOf(rowsRef.current.find((row) => row.key === cursorRef.current));
+
+	/**
+	 * Sends what a prompt or a confirmation holds. A refusal stays on the overlay
+	 * with its reason; success closes it and leaves one line for the status bar.
+	 */
+	const settleOverlay = async (
+		kind: 'prompt' | 'confirm',
+		send: (client: MaestroClient) => Promise<ClientResult<string>>
+	) => {
+		const current = overlayRef.current;
+		const client = source.client;
+		if (current?.kind !== kind || current.submitting || !client) return;
+		setOverlay({ ...current, submitting: true, error: undefined } as OverlayState);
+		const result = await send(client);
+		const latest = overlayRef.current;
+		const stillOpen = latest?.kind === kind;
+		if (!result.ok) {
+			// Esc while the call was in flight: the host still got it, but there is no overlay to report to.
+			if (stillOpen) {
+				setOverlay({ ...latest, submitting: false, error: result.error.message } as OverlayState);
+			} else {
+				setNotice(result.error.message);
+			}
+			return;
+		}
+		if (stillOpen) setOverlay(undefined);
+		setNotice(result.value);
+	};
+
+	const submitPromptOverlay = () => {
+		const current = overlayRef.current;
+		if (current?.kind === 'prompt') {
+			void settleOverlay('prompt', (client) => submitPrompt(client, current.prompt));
+		}
+	};
+
+	const submitConfirmOverlay = () => {
+		const current = overlayRef.current;
+		if (current?.kind === 'confirm') {
+			void settleOverlay('confirm', (client) => submitConfirm(client, current.confirm));
+		}
+	};
+
+	const submitGroupPicker = async (current: Extract<OverlayState, { kind: 'groupPicker' }>) => {
+		const client = source.client;
+		const agent = dataRef.current.agents.find((candidate) => candidate.id === current.agentId);
+		setOverlay(undefined);
+		if (!client || !agent) return;
+		const choices = groupChoices(groupsFromSections(dataRef.current.sections));
+		const target = choices[current.cursor];
+		if (target && target.groupId !== (agent.groupId ?? null)) {
+			pendingRevealRef.current = { agentId: agent.id, groupId: target.groupId };
+		}
+		const result = await submitMoveToGroup(client, agent, choices, current.cursor);
+		if (!result.ok) pendingRevealRef.current = undefined;
+		setNotice(result.ok ? result.value : result.error.message);
 	};
 
 	const runAction = (action: KeyAction, current: OverlayState | undefined) => {
@@ -342,7 +441,7 @@ export function App({ paths, client }: AppProps): React.ReactElement {
 				exit();
 				return;
 			case 'help':
-				setOverlay(current?.kind === 'help' ? undefined : { kind: 'help' });
+				setOverlay(current?.kind === 'help' ? undefined : { kind: 'help', cursor: 0 });
 				return;
 			case 'palette':
 				setOverlay(
@@ -360,6 +459,59 @@ export function App({ paths, client }: AppProps): React.ReactElement {
 				return;
 			case 'submitForm':
 				void submitForm();
+				return;
+			case 'newGroup':
+				if (requireClient()) {
+					setOverlay({ kind: 'prompt', prompt: newGroupPrompt(), submitting: false });
+				}
+				return;
+			case 'rename': {
+				if (!requireClient()) return;
+				const target = cursorTarget();
+				if (target.kind === 'none') {
+					setNotice(target.reason);
+					return;
+				}
+				setOverlay({
+					kind: 'prompt',
+					prompt:
+						target.kind === 'agent' ? renameAgentPrompt(target.agent) : renameGroupPrompt(target),
+					submitting: false,
+				});
+				return;
+			}
+			case 'deleteItem': {
+				if (!requireClient()) return;
+				const target = cursorTarget();
+				if (target.kind === 'none') {
+					setNotice(target.reason);
+					return;
+				}
+				setOverlay({
+					kind: 'confirm',
+					confirm:
+						target.kind === 'agent' ? deleteAgentConfirm(target.agent) : deleteGroupConfirm(target),
+					submitting: false,
+				});
+				return;
+			}
+			case 'moveToGroup': {
+				if (!requireClient()) return;
+				const target = cursorTarget();
+				if (target.kind !== 'agent') {
+					setNotice('Select an agent to move.');
+					return;
+				}
+				const choices = groupChoices(groupsFromSections(data.sections));
+				setOverlay({
+					kind: 'groupPicker',
+					agentId: target.agent.id,
+					cursor: pickerStartIndex(choices, target.agent),
+				});
+				return;
+			}
+			case 'confirm':
+				submitConfirmOverlay();
 				return;
 			case 'choicePrev':
 			case 'choiceNext': {
@@ -412,7 +564,9 @@ export function App({ paths, client }: AppProps): React.ReactElement {
 			case 'moveDown':
 			case 'moveUp': {
 				const delta = action === 'moveDown' ? 1 : -1;
-				if (current?.kind === 'history') {
+				if (current?.kind === 'help') {
+					setOverlay({ ...current, cursor: moveGroupCursor(current.cursor, delta, KEYMAP.length) });
+				} else if (current?.kind === 'history') {
 					setOverlay({
 						kind: 'history',
 						history: moveHistoryCursor(paths, current.history, delta),
@@ -432,6 +586,11 @@ export function App({ paths, client }: AppProps): React.ReactElement {
 				} else if (current?.kind === 'form') {
 					const ctx = formContextRef.current;
 					if (ctx) updateForm((form) => moveFocus(ctx, form, delta));
+				} else if (current?.kind === 'prompt') {
+					setOverlay({ ...current, prompt: movePromptFocus(current.prompt, delta) });
+				} else if (current?.kind === 'groupPicker') {
+					const count = groupChoices(groupsFromSections(data.sections)).length;
+					setOverlay({ ...current, cursor: moveGroupCursor(current.cursor, delta, count) });
 				} else if (current?.kind === 'menu') {
 					setOverlay({
 						kind: 'menu',
@@ -452,6 +611,14 @@ export function App({ paths, client }: AppProps): React.ReactElement {
 					const result = pressEnter(ctx, current.form);
 					setOverlay({ ...current, form: result.state });
 					if (result.submit) void submitForm();
+					return;
+				}
+				if (current?.kind === 'prompt') {
+					submitPromptOverlay();
+					return;
+				}
+				if (current?.kind === 'groupPicker') {
+					void submitGroupPicker(current);
 					return;
 				}
 				if (current?.kind === 'palette') {
@@ -507,7 +674,7 @@ export function App({ paths, client }: AppProps): React.ReactElement {
 			runAction(action, current);
 			return;
 		}
-		// The palette and the agent form are the overlays with text boxes: what no binding claims is typing.
+		// The palette, the agent form, and the prompts are the overlays with text boxes: what no binding claims is typing.
 		if (current?.kind === 'form') {
 			const ctx = formContextRef.current;
 			if (!ctx) return;
@@ -516,6 +683,15 @@ export function App({ paths, client }: AppProps): React.ReactElement {
 				const text = typedTextFor(input, key);
 				if (text) updateForm((form) => typeText(ctx, form, text));
 			}
+			return;
+		}
+		if (current?.kind === 'prompt') {
+			if (isBackspaceKey(key)) {
+				setOverlay({ ...current, prompt: backspacePrompt(current.prompt) });
+				return;
+			}
+			const text = typedTextFor(input, key);
+			if (text) setOverlay({ ...current, prompt: typeIntoPrompt(current.prompt, text) });
 			return;
 		}
 		if (current?.kind === 'palette') {
@@ -532,7 +708,7 @@ export function App({ paths, client }: AppProps): React.ReactElement {
 		? ({ width, height }: { width: number; height: number }) => {
 				switch (overlay.kind) {
 					case 'help':
-						return <HelpOverlay width={width} height={height} />;
+						return <HelpOverlay cursor={overlay.cursor} width={width} height={height} />;
 					case 'palette':
 						return (
 							<PaletteOverlay
@@ -564,6 +740,41 @@ export function App({ paths, client }: AppProps): React.ReactElement {
 								height={height}
 							/>
 						) : null;
+					case 'prompt':
+						return (
+							<PromptOverlay
+								prompt={overlay.prompt}
+								submitting={overlay.submitting}
+								error={overlay.error}
+								width={width}
+								height={height}
+							/>
+						);
+					case 'confirm':
+						return (
+							<ConfirmOverlay
+								confirm={overlay.confirm}
+								submitting={overlay.submitting}
+								error={overlay.error}
+								width={width}
+								height={height}
+							/>
+						);
+					case 'groupPicker': {
+						const picked = data.agents.find((a) => a.id === overlay.agentId);
+						if (!picked) return null;
+						const choices = groupChoices(groupsFromSections(data.sections));
+						return (
+							<GroupPickerOverlay
+								agentName={picked.name}
+								choices={choices}
+								cursor={overlay.cursor}
+								currentIndex={pickerStartIndex(choices, picked)}
+								width={width}
+								height={height}
+							/>
+						);
+					}
 					case 'history':
 						return cursorAgent ? (
 							<HistoryView

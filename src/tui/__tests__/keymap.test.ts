@@ -90,8 +90,8 @@ describe('keymap', () => {
 			expect(resolveAction(context, 'q', NO_KEY)).toBeUndefined();
 		}
 		expect(resolveAction('main', '', { ...NO_KEY, escape: true })).toBeUndefined();
-		// Only the overlays with a list move a cursor.
-		expect(resolveAction('help', 'j', NO_KEY)).toBeUndefined();
+		// Only the overlays with a list move a cursor; help is one now that it scrolls.
+		expect(resolveAction('help', 'j', NO_KEY)).toBe('moveDown');
 		expect(resolveAction('tabs', 'j', NO_KEY)).toBe('moveDown');
 	});
 

@@ -389,15 +389,21 @@ describe('App shell', () => {
 			unmount();
 		});
 
-		it('fits the help overlay in the smallest terminal', async () => {
+		it('fits the help overlay in the smallest terminal and scrolls to every binding', async () => {
 			const { stdin, lastFrame, unmount } = await renderAt(80, 24);
 			stdin.write('?');
 			await tick();
-			const frame = lastFrame() ?? '';
-			for (const binding of KEYMAP) {
-				expect(frame, binding.action).toContain(binding.description);
+			const seen = new Set<string>();
+			for (let step = 0; step <= KEYMAP.length; step++) {
+				const frame = lastFrame() ?? '';
+				expect(frame.split('\n').length).toBeLessThanOrEqual(24);
+				for (const binding of KEYMAP) {
+					if (frame.includes(binding.description)) seen.add(binding.action);
+				}
+				stdin.write('j');
+				await tick();
 			}
-			expect(frame.split('\n').length).toBeLessThanOrEqual(24);
+			expect([...seen].sort()).toEqual(KEYMAP.map((binding) => binding.action).sort());
 			unmount();
 		});
 
