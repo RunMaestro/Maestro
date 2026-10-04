@@ -14,6 +14,11 @@ export * from './paths/syncPath';
 export * from './paths/doctor';
 export * from '../cli-server-discovery';
 
+// Store files (read-only)
+export * from './store/corrupt-store';
+export * from './store/records';
+export * from './store/read-stores';
+
 // Launch and argument building
 export * from './launch/launch-plan';
 export * from './launch/prompt-delivery';
