@@ -1,5 +1,6 @@
 import React from 'react';
 import { Box, Text } from 'ink';
+import { keysFor } from '../keymap';
 
 export interface StatusBarProps {
 	userDataDir: string;
@@ -24,6 +25,7 @@ export function StatusBar({ userDataDir, hostLabel, width }: StatusBarProps): Re
 				</Text>
 			</Box>
 			<Box flexShrink={0} marginLeft={2}>
+				<Text dimColor>{keysFor('help')} help </Text>
 				<Text color="#9146FF">host: {hostLabel}</Text>
 			</Box>
 		</Box>

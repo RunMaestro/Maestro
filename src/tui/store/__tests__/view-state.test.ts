@@ -6,6 +6,7 @@ import {
 	AGENTS_PANE_DEFAULT_WIDTH,
 	AGENTS_PANE_MAX_WIDTH,
 	AGENTS_PANE_MIN_WIDTH,
+	defaultViewState,
 	loadTuiState,
 	normalizeViewState,
 	saveTuiViewState,
@@ -42,6 +43,7 @@ describe('TUI view state store', () => {
 		expect(
 			saveTuiViewState(file, loaded.document, {
 				collapsedSections: { a: true },
+				activeTabByAgent: { agent: 'tab-2' },
 				agentsPaneWidth: 30,
 			})
 		).toBe(true);
@@ -49,9 +51,14 @@ describe('TUI view state store', () => {
 		expect(saved).toEqual({
 			keymap: { quit: 'x' },
 			futureKey: [1, 2],
-			view: { collapsedSections: { a: true }, agentsPaneWidth: 30 },
+			view: {
+				collapsedSections: { a: true },
+				activeTabByAgent: { agent: 'tab-2' },
+				agentsPaneWidth: 30,
+			},
 		});
 		expect(loadTuiState(file).view.collapsedSections).toEqual({ a: true });
+		expect(loadTuiState(file).view.activeTabByAgent).toEqual({ agent: 'tab-2' });
 		expect(fs.readdirSync(dir)).toEqual(['maestro-tui.json']);
 	});
 
@@ -64,7 +71,7 @@ describe('TUI view state store', () => {
 
 	it('returns false, not a throw, when the directory is gone', () => {
 		fs.rmSync(dir, { recursive: true, force: true });
-		expect(saveTuiViewState(file, {}, { collapsedSections: {}, agentsPaneWidth: 28 })).toBe(false);
+		expect(saveTuiViewState(file, {}, defaultViewState())).toBe(false);
 		expect(fs.existsSync(dir)).toBe(false);
 	});
 
@@ -73,10 +80,26 @@ describe('TUI view state store', () => {
 			normalizeViewState({
 				selectedAgentId: 7,
 				collapsedSections: { ok: true, bad: 'yes' },
+				activeTabByAgent: { a: 't1', b: 4 },
 				agentsPaneWidth: 500,
 			})
-		).toEqual({ collapsedSections: { ok: true }, agentsPaneWidth: AGENTS_PANE_MAX_WIDTH });
+		).toEqual({
+			collapsedSections: { ok: true },
+			activeTabByAgent: { a: 't1' },
+			agentsPaneWidth: AGENTS_PANE_MAX_WIDTH,
+		});
 		expect(normalizeViewState({ agentsPaneWidth: 2 }).agentsPaneWidth).toBe(AGENTS_PANE_MIN_WIDTH);
 		expect(normalizeViewState('nonsense').agentsPaneWidth).toBe(AGENTS_PANE_DEFAULT_WIDTH);
+	});
+
+	it("hands out a fresh default each time, so one caller cannot edit another's", () => {
+		const first = defaultViewState();
+		first.collapsedSections.x = true;
+		first.activeTabByAgent.y = 'z';
+		expect(defaultViewState()).toEqual({
+			collapsedSections: {},
+			activeTabByAgent: {},
+			agentsPaneWidth: AGENTS_PANE_DEFAULT_WIDTH,
+		});
 	});
 });

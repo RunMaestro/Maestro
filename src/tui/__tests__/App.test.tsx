@@ -5,10 +5,16 @@ import * as path from 'path';
 import { render } from 'ink-testing-library';
 import { App } from '../App';
 import { TUI_STATE_FILE_NAME } from '../store/view-state';
+import { KEYMAP, formatBindingKeys } from '../keymap';
 
 const tick = () => new Promise((resolve) => setTimeout(resolve, 20));
 const CTRL_B = '\u0002';
 const ENTER = '\r';
+const TAB = '\t';
+const SHIFT_TAB = '\u001B[Z';
+const ESC = '\u001B';
+const DOWN = '\u001B[B';
+const UP = '\u001B[A';
 
 const SESSIONS = {
 	sessions: [
@@ -231,5 +237,173 @@ describe('App shell', () => {
 		// Ink leaves the last frame on screen after exit.
 		expect(lastFrame()).toBe(before);
 		unmount();
+	});
+
+	describe('keyboard', () => {
+		it('moves the selection with j, k, and the arrow keys', async () => {
+			const { stdin, lastFrame, unmount } = await renderAt(140, 30);
+			// Core, Cue, Maestro, Web, Ungrouped, Scratch.
+			stdin.write(DOWN);
+			await tick();
+			expect(lastFrame()).toMatch(/›\s+● Cue/);
+			stdin.write('j');
+			await tick();
+			expect(lastFrame()).toMatch(/›\s+● Maestro/);
+			stdin.write(UP);
+			await tick();
+			expect(lastFrame()).toMatch(/›\s+● Cue/);
+			stdin.write('k');
+			await tick();
+			expect(lastFrame()).toMatch(/›▾ 🎼 Core/);
+			unmount();
+		});
+
+		it('cycles pane focus with Tab and Shift-Tab, and only the focused pane moves', async () => {
+			const { stdin, lastFrame, unmount } = await renderAt(140, 30);
+			stdin.write(TAB);
+			await tick();
+			// Focus is in the Conversation pane now: j no longer walks the agent list.
+			stdin.write('j');
+			await tick();
+			expect(lastFrame()).toMatch(/›▾ 🎼 Core/);
+
+			stdin.write(SHIFT_TAB);
+			await tick();
+			stdin.write('j');
+			await tick();
+			expect(lastFrame()).toMatch(/›\s+● Cue/);
+			unmount();
+		});
+
+		it('moves focus into the Conversation pane when Enter opens an agent', async () => {
+			const { stdin, lastFrame, unmount } = await renderAt(140, 30);
+			stdin.write('j');
+			await tick();
+			stdin.write('j');
+			await tick();
+			stdin.write(ENTER);
+			await tick();
+			expect(lastFrame()).toContain('Maestro · Claude Code · opus');
+			// Enter did not fold anything, and focus left the list.
+			stdin.write('j');
+			await tick();
+			expect(lastFrame()).toMatch(/›\s+● Maestro/);
+			unmount();
+		});
+
+		it('opens a tab switcher on T, picks a tab with Enter, and remembers it in the TUI file only', async () => {
+			const before = fs.readFileSync(path.join(dir, 'maestro-sessions.json'), 'utf-8');
+			const { stdin, lastFrame, unmount } = await renderAt(140, 30);
+			stdin.write('j');
+			await tick();
+			stdin.write('j');
+			await tick();
+
+			stdin.write('T');
+			await tick();
+			let frame = lastFrame() ?? '';
+			expect(frame).toContain('Tabs: Maestro');
+			expect(frame).toContain('Esc close');
+			expect(frame).toContain('lib-audit');
+			expect(frame).toContain('8535E0E3');
+			// The open tab is marked and the cursor starts on it.
+			expect(frame).toMatch(/›● lib-audit/);
+
+			stdin.write('j');
+			await tick();
+			stdin.write(ENTER);
+			await tick();
+			frame = lastFrame() ?? '';
+			expect(frame).not.toContain('Tabs: Maestro');
+			expect(frame).toContain('tab: 8535E0E3');
+
+			const saved = JSON.parse(fs.readFileSync(stateFile(), 'utf-8'));
+			expect(saved.view.activeTabByAgent).toEqual({ 'a-maestro': 't2' });
+			expect(fs.readFileSync(path.join(dir, 'maestro-sessions.json'), 'utf-8')).toBe(before);
+			unmount();
+		});
+
+		it('closes the tab switcher with Esc without changing the tab', async () => {
+			const { stdin, lastFrame, unmount } = await renderAt(140, 30);
+			stdin.write('j');
+			await tick();
+			stdin.write('j');
+			await tick();
+			stdin.write('T');
+			await tick();
+			stdin.write('j');
+			await tick();
+			stdin.write(ESC);
+			await tick();
+			expect(lastFrame()).not.toContain('Tabs: Maestro');
+			expect(lastFrame()).toContain('tab: lib-audit');
+			expect(fs.existsSync(stateFile())).toBe(true);
+			expect(JSON.parse(fs.readFileSync(stateFile(), 'utf-8')).view.activeTabByAgent).toEqual({});
+			unmount();
+		});
+
+		it('ignores T on a group header or an agent with no tabs', async () => {
+			const { stdin, lastFrame, unmount } = await renderAt(140, 30);
+			stdin.write('T');
+			await tick();
+			expect(lastFrame()).not.toContain('Tabs:');
+			// Cue has no tabs.
+			stdin.write('j');
+			await tick();
+			stdin.write('T');
+			await tick();
+			expect(lastFrame()).not.toContain('Tabs:');
+			unmount();
+		});
+
+		it('lists every binding in the help overlay and closes it with Esc', async () => {
+			const { stdin, lastFrame, unmount } = await renderAt(140, 30);
+			stdin.write('?');
+			await tick();
+			const frame = lastFrame() ?? '';
+			expect(frame).toContain('Key help');
+			expect(frame).toContain('Esc close');
+			for (const binding of KEYMAP) {
+				expect(frame, binding.action).toContain(formatBindingKeys(binding));
+				expect(frame, binding.action).toContain(binding.description);
+			}
+
+			stdin.write(ESC);
+			await tick();
+			expect(lastFrame()).not.toContain('Key help');
+			expect(lastFrame()).toContain('Select an agent');
+			unmount();
+		});
+
+		it('toggles help off with ? and keeps q from quitting under an overlay', async () => {
+			const { stdin, lastFrame, unmount } = await renderAt(140, 30);
+			stdin.write('?');
+			await tick();
+			stdin.write('q');
+			await tick();
+			expect(lastFrame()).toContain('Key help');
+			stdin.write('?');
+			await tick();
+			expect(lastFrame()).not.toContain('Key help');
+			unmount();
+		});
+
+		it('fits the help overlay in the smallest terminal', async () => {
+			const { stdin, lastFrame, unmount } = await renderAt(80, 24);
+			stdin.write('?');
+			await tick();
+			const frame = lastFrame() ?? '';
+			for (const binding of KEYMAP) {
+				expect(frame, binding.action).toContain(binding.description);
+			}
+			expect(frame.split('\n').length).toBeLessThanOrEqual(24);
+			unmount();
+		});
+
+		it('advertises help in the status bar', async () => {
+			const { lastFrame, unmount } = await renderAt(140, 30);
+			expect(lastFrame()).toContain('? help');
+			unmount();
+		});
 	});
 });

@@ -28,3 +28,19 @@ export function isAgentsPaneVisible(columns: number, override: boolean | undefin
 export function effectiveAgentsPaneWidth(columns: number, preferred: number): number {
 	return Math.max(0, Math.min(preferred, columns - MIN_CONVERSATION_COLUMNS));
 }
+
+export type PaneId = 'agents' | 'conversation';
+
+/** The panes on screen, left to right. Tab cycles through exactly these. */
+export function visiblePanes(agentsPaneVisible: boolean): PaneId[] {
+	return agentsPaneVisible ? ['agents', 'conversation'] : ['conversation'];
+}
+
+/**
+ * The pane `delta` steps from `current`, wrapping. A pane that is not on screen
+ * cannot hold focus, so focus on a hidden pane counts as the first visible one.
+ */
+export function cyclePane(panes: readonly PaneId[], current: PaneId, delta: number): PaneId {
+	const index = Math.max(0, panes.indexOf(current));
+	return panes[(index + delta + panes.length) % panes.length];
+}

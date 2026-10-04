@@ -27,13 +27,24 @@ export interface TuiViewState {
 	selectedAgentId?: string;
 	/** Group-section key to collapsed. Absent means "the desktop's saved default". */
 	collapsedSections: Record<string, boolean>;
+	/**
+	 * Agent id to the tab its Conversation pane shows. Chosen in the tab switcher.
+	 * The desktop's own active tab (`activeTabId` in the sessions file) is never written.
+	 */
+	activeTabByAgent: Record<string, string>;
 	agentsPaneWidth: number;
 }
 
 export const DEFAULT_VIEW_STATE: TuiViewState = {
 	collapsedSections: {},
+	activeTabByAgent: {},
 	agentsPaneWidth: AGENTS_PANE_DEFAULT_WIDTH,
 };
+
+/** A fresh default, so no caller shares (and mutates) the nested records. */
+export function defaultViewState(): TuiViewState {
+	return { ...DEFAULT_VIEW_STATE, collapsedSections: {}, activeTabByAgent: {} };
+}
 
 export function tuiStateFilePath(userDataDir: string): string {
 	return path.join(userDataDir, TUI_STATE_FILE_NAME);
@@ -60,7 +71,7 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 
 /** Pulls the fields it recognizes out of whatever `view` holds; the rest is ignored. */
 export function normalizeViewState(raw: unknown): TuiViewState {
-	if (!isPlainObject(raw)) return { ...DEFAULT_VIEW_STATE, collapsedSections: {} };
+	if (!isPlainObject(raw)) return defaultViewState();
 
 	const collapsedSections: Record<string, boolean> = {};
 	if (isPlainObject(raw.collapsedSections)) {
@@ -69,9 +80,17 @@ export function normalizeViewState(raw: unknown): TuiViewState {
 		}
 	}
 
+	const activeTabByAgent: Record<string, string> = {};
+	if (isPlainObject(raw.activeTabByAgent)) {
+		for (const [key, value] of Object.entries(raw.activeTabByAgent)) {
+			if (typeof value === 'string') activeTabByAgent[key] = value;
+		}
+	}
+
 	return {
 		...(typeof raw.selectedAgentId === 'string' ? { selectedAgentId: raw.selectedAgentId } : {}),
 		collapsedSections,
+		activeTabByAgent,
 		agentsPaneWidth:
 			typeof raw.agentsPaneWidth === 'number' && Number.isFinite(raw.agentsPaneWidth)
 				? clampAgentsPaneWidth(raw.agentsPaneWidth)
@@ -81,7 +100,7 @@ export function normalizeViewState(raw: unknown): TuiViewState {
 
 /** Reads the TUI state file. Never throws and never creates anything. */
 export function loadTuiState(file: string): TuiStateLoad {
-	const defaults = (): TuiViewState => ({ ...DEFAULT_VIEW_STATE, collapsedSections: {} });
+	const defaults = defaultViewState;
 
 	let content: string;
 	try {

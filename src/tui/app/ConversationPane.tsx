@@ -4,11 +4,27 @@ import {
 	aiTabsOf,
 	getAgentDisplayName,
 	getTabDisplayName,
+	type AITabRecord,
 	type AgentRecord,
 } from '../../shared/maestro-lib';
 
+/** The tab the pane shows: the TUI's pick, else the desktop's active tab, else the first. */
+export function resolveActiveTab(
+	tabs: readonly AITabRecord[],
+	picked: string | undefined,
+	agent: AgentRecord | undefined
+): AITabRecord | undefined {
+	return (
+		tabs.find((tab) => tab.id === picked) ??
+		tabs.find((tab) => tab.id === agent?.activeTabId) ??
+		tabs[0]
+	);
+}
+
 export interface ConversationPaneProps {
 	agent: AgentRecord | undefined;
+	/** The tab picked in the TUI's tab switcher; unset or unknown falls back to the agent's own. */
+	activeTabId?: string;
 	width: number;
 	height: number;
 	focused: boolean;
@@ -20,12 +36,13 @@ export interface ConversationPaneProps {
  */
 export function ConversationPane({
 	agent,
+	activeTabId,
 	width,
 	height,
 	focused,
 }: ConversationPaneProps): React.ReactElement {
 	const tabs = agent ? aiTabsOf(agent) : [];
-	const activeTab = tabs.find((tab) => tab.id === agent?.activeTabId) ?? tabs[0];
+	const activeTab = resolveActiveTab(tabs, activeTabId, agent);
 	const title = agent
 		? [
 				agent.name,

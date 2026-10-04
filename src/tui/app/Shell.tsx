@@ -11,6 +11,7 @@ import {
 	effectiveAgentsPaneWidth,
 	isAgentsPaneVisible,
 	isTerminalTooSmall,
+	type PaneId,
 	type TerminalSize,
 } from './layout';
 
@@ -23,6 +24,15 @@ export interface ShellProps {
 	cursorKey: string | undefined;
 	/** The agent shown in the Conversation pane. */
 	agent: AgentRecord | undefined;
+	/** The tab the Conversation pane shows for `agent`; see `resolveActiveTab`. */
+	activeTabId?: string;
+	/** The pane that has keyboard focus. Ignored for a pane that is hidden. */
+	focusedPane: PaneId;
+	/**
+	 * An overlay, drawn in place of the Conversation pane. Called with the room
+	 * that pane would have had, so the overlay fills it exactly.
+	 */
+	overlay?: (room: { width: number; height: number }) => React.ReactNode;
 	/** The user's toggle for the Agents pane; unset means "by terminal width". */
 	agentsPaneOverride: boolean | undefined;
 	agentsPaneWidth: number;
@@ -45,6 +55,9 @@ export function Shell({
 	rows,
 	cursorKey,
 	agent,
+	activeTabId,
+	focusedPane,
+	overlay,
 	agentsPaneOverride,
 	agentsPaneWidth,
 	problems,
@@ -79,16 +92,21 @@ export function Shell({
 						cursorKey={cursorKey}
 						width={agentsWidth}
 						height={paneHeight}
-						focused
+						focused={focusedPane === 'agents'}
 						problems={problems}
 					/>
 				) : null}
-				<ConversationPane
-					agent={agent}
-					width={size.columns - agentsWidth}
-					height={paneHeight}
-					focused={false}
-				/>
+				{overlay ? (
+					overlay({ width: size.columns - agentsWidth, height: paneHeight })
+				) : (
+					<ConversationPane
+						agent={agent}
+						activeTabId={activeTabId}
+						width={size.columns - agentsWidth}
+						height={paneHeight}
+						focused={focusedPane === 'conversation' || !showAgents}
+					/>
+				)}
 			</Box>
 			<StatusBar userDataDir={userDataDir} hostLabel={hostLabel} width={size.columns} />
 		</Box>
