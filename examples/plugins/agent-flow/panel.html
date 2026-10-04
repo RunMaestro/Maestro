@@ -93,6 +93,15 @@
 				font-size: 11px;
 				white-space: nowrap;
 			}
+			#filterHint {
+				color: var(--amber);
+				font-size: 11px;
+				white-space: nowrap;
+				flex: 0 0 auto;
+			}
+			#filterHint.hidden {
+				display: none;
+			}
 			.btn {
 				border: 1px solid var(--border);
 				background: var(--panel2);
@@ -110,6 +119,13 @@
 			#clear:hover {
 				border-color: var(--red);
 				color: var(--red);
+			}
+			/* The filter toggle stays visibly ON so its default-OFF state is never
+			   mistaken for "this fleet only has one agent". */
+			.btn.on {
+				border-color: var(--accent);
+				color: var(--accent);
+				background: rgba(88, 166, 255, 0.15);
 			}
 			#graphWrap {
 				position: relative;
@@ -240,6 +256,16 @@
 				<div id="title">Agent Flow</div>
 				<div id="summary"></div>
 				<div id="hint">Click an agent to jump · wheel to zoom · double-click to reset</div>
+				<div id="filterHint" class="hidden"></div>
+				<button
+					id="focusOnly"
+					class="btn"
+					type="button"
+					aria-pressed="false"
+					title="Show only the agent you are currently looking at"
+				>
+					Current agent only
+				</button>
 				<button id="reset" class="btn" title="Reset the view">Reset view</button>
 				<button id="clear" class="btn" title="Clear the graph">Clear</button>
 			</header>
@@ -270,6 +296,10 @@
 
 			// ---- state -----------------------------------------------------------
 			var latest = null; // most recent snapshot { v, at, lanes, summary, focusedSessionId }
+			// "Current agent only" filter. Default OFF: the fleet view is the headline
+			// feature, and lazy lane seeding already keeps idle agents off the canvas.
+			// Panel-lifetime state only - a plain var, no storage API in the guest.
+			var focusOnly = false;
 			var view = { tx: 0, ty: 0, scale: 1 }; // pan/zoom, preserved across renders
 			var userMoved = false; // once the user pans/zooms, stop auto-fitting
 			var contentBox = null; // { w, h } of the laid-out graph, for fitView
@@ -284,6 +314,8 @@
 			var emptyEl = document.getElementById('empty');
 			var summaryEl = document.getElementById('summary');
 			var graphWrap = document.getElementById('graphWrap');
+			var filterHintEl = document.getElementById('filterHint');
+			var focusOnlyBtn = document.getElementById('focusOnly');
 
 			// ---- helpers ---------------------------------------------------------
 			function el(tag, attrs, text) {
@@ -512,8 +544,23 @@
 				}
 			}
 
+			// Resolve which lanes to draw. With the filter ON we keep only the lane
+			// whose sessionId matches the snapshot's focusedSessionId; when there is no
+			// focused agent (or it has no lane yet) we fall back to the whole fleet and
+			// say so in the header, because a blank canvas reads as a broken panel.
+			function resolveLanes() {
+				var all = latest && Array.isArray(latest.lanes) ? latest.lanes : [];
+				if (!focusOnly || !all.length) return { lanes: all, fellBack: false };
+				var focusedId = latest && latest.focusedSessionId ? latest.focusedSessionId : '';
+				var only = [];
+				for (var i = 0; i < all.length; i++) {
+					if (all[i].sessionId === focusedId) only.push(all[i]);
+				}
+				return only.length ? { lanes: only, fellBack: false } : { lanes: all, fellBack: true };
+			}
+
 			function lanesOf() {
-				return latest && Array.isArray(latest.lanes) ? latest.lanes : [];
+				return resolveLanes().lanes;
 			}
 
 			// ---- jump ------------------------------------------------------------
@@ -780,11 +827,18 @@
 				return g;
 			}
 
+			function renderFilterHint(fellBack) {
+				filterHintEl.textContent = fellBack ? 'No current agent yet · showing all' : '';
+				filterHintEl.classList.toggle('hidden', !fellBack);
+			}
+
 			// ---- graph -----------------------------------------------------------
 			function renderGraph() {
 				clear(viewport);
 				healthGroups = Object.create(null);
-				var lanes = lanesOf();
+				var resolved = resolveLanes();
+				var lanes = resolved.lanes;
+				renderFilterHint(resolved.fellBack);
 				emptyEl.classList.toggle('hidden', lanes.length > 0);
 				if (!lanes.length) {
 					contentBox = null;
@@ -910,6 +964,14 @@
 				invoke('clear');
 			});
 			document.getElementById('reset').addEventListener('click', resetView);
+			focusOnlyBtn.addEventListener('click', function () {
+				focusOnly = !focusOnly;
+				focusOnlyBtn.classList.toggle('on', focusOnly);
+				focusOnlyBtn.setAttribute('aria-pressed', focusOnly ? 'true' : 'false');
+				// The lane count changes, so let the next paint refit unless the user has
+				// already framed the view themselves.
+				render();
+			});
 
 			// Escape inside the guest cannot reach the host's modal layer stack (this is
 			// a separate renderer process), so dismiss the overlay through the plugin's
