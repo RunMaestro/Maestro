@@ -2688,8 +2688,139 @@ Some text with [x] in it that's not a checkbox
 			await driveSpawnToCompletion(p, 0, lines);
 			expect(onProgress.mock.calls.map(([event]) => ({ ...event, at: undefined }))).toEqual([
 				{ type: 'commentary', text: 'Checking files', at: undefined },
-				{ type: 'tool', tool: 'functions.exec_command', status: 'started', at: undefined },
-				{ type: 'tool', tool: 'functions.exec_command', status: 'completed', at: undefined },
+				{
+					type: 'tool',
+					tool: 'functions.exec_command',
+					status: 'started',
+					summary: 'Running shell command',
+					at: undefined,
+				},
+				{
+					type: 'tool',
+					tool: 'functions.exec_command',
+					status: 'completed',
+					summary: 'Running shell command',
+					at: undefined,
+				},
+			]);
+			expect(JSON.stringify(onProgress.mock.calls)).not.toMatch(/SECRET_/);
+		});
+
+		it('labels Codex exec wrappers and file actions without exposing nested arguments', async () => {
+			const onProgress = vi.fn();
+			const p = spawnAgent('codex', '/p', 'hi', undefined, { onProgress });
+			const lines =
+				[
+					{
+						type: 'response_item',
+						payload: {
+							type: 'function_call',
+							name: 'functions.exec',
+							call_id: 'wrapper',
+							arguments: 'const r = await tools.exec_command({cmd: "SECRET_COMMAND"});',
+						},
+					},
+					{
+						type: 'response_item',
+						payload: {
+							type: 'function_call',
+							name: 'Read',
+							call_id: 'file',
+							arguments: JSON.stringify({
+								file_path: '/SECRET_DIRECTORY/src/main.ts',
+								content: 'SECRET_CONTENT',
+							}),
+						},
+					},
+					{
+						type: 'response_item',
+						payload: {
+							type: 'function_call',
+							name: 'functions.collaboration.spawn_agent',
+							call_id: 'dispatch',
+							arguments: JSON.stringify({ task_name: 'reviewer', message: 'SECRET_PROMPT' }),
+						},
+					},
+					{
+						type: 'response_item',
+						payload: { type: 'function_call_output', call_id: 'file', output: 'SECRET_OUTPUT' },
+					},
+					{
+						type: 'response_item',
+						payload: { type: 'function_call_output', call_id: 'wrapper', output: 'SECRET_OUTPUT' },
+					},
+					{
+						type: 'response_item',
+						payload: { type: 'function_call_output', call_id: 'dispatch', output: 'SECRET_OUTPUT' },
+					},
+					{ type: 'item.completed', item: { type: 'agent_message', text: 'done' } },
+				]
+					.map(JSON.stringify)
+					.join('\n') + '\n';
+			await driveSpawnToCompletion(p, 0, lines);
+			expect(onProgress.mock.calls.map(([event]) => [event.status, event.summary])).toEqual([
+				['started', 'Running shell command'],
+				['started', 'Reading file main.ts'],
+				['started', 'Dispatching to agent reviewer'],
+				['completed', 'Reading file main.ts'],
+				['completed', 'Running shell command'],
+				['completed', 'Dispatching to agent reviewer'],
+			]);
+			expect(JSON.stringify(onProgress.mock.calls)).not.toMatch(/SECRET_/);
+		});
+
+		it('labels Claude file, shell, and Task actions with invocation scoped completions', async () => {
+			const onProgress = vi.fn();
+			const p = spawnAgent('claude-code', '/p', 'hi', undefined, { onProgress });
+			const lines =
+				[
+					{
+						type: 'assistant',
+						message: {
+							content: [
+								{
+									type: 'tool_use',
+									id: 'read',
+									name: 'Read',
+									input: { file_path: '/SECRET_DIRECTORY/notes.md' },
+								},
+								{
+									type: 'tool_use',
+									id: 'bash',
+									name: 'Bash',
+									input: { command: 'SECRET_COMMAND' },
+								},
+								{
+									type: 'tool_use',
+									id: 'task',
+									name: 'Task',
+									input: { subagent_type: 'Explore', prompt: 'SECRET_PROMPT' },
+								},
+							],
+						},
+					},
+					{
+						type: 'user',
+						message: {
+							content: [
+								{ type: 'tool_result', tool_use_id: 'bash', content: 'SECRET_OUTPUT' },
+								{ type: 'tool_result', tool_use_id: 'read', content: 'SECRET_OUTPUT' },
+								{ type: 'tool_result', tool_use_id: 'task', content: 'SECRET_OUTPUT' },
+							],
+						},
+					},
+					{ type: 'result', result: 'done' },
+				]
+					.map(JSON.stringify)
+					.join('\n') + '\n';
+			await driveSpawnToCompletion(p, 0, lines);
+			expect(onProgress.mock.calls.map(([event]) => [event.status, event.summary])).toEqual([
+				['started', 'Reading file notes.md'],
+				['started', 'Running shell command'],
+				['started', 'Dispatching to agent Explore'],
+				['completed', 'Running shell command'],
+				['completed', 'Reading file notes.md'],
+				['completed', 'Dispatching to agent Explore'],
 			]);
 			expect(JSON.stringify(onProgress.mock.calls)).not.toMatch(/SECRET_/);
 		});

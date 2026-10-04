@@ -30,9 +30,7 @@ describe('plugin headless agent runner', () => {
 			success: false,
 			response: null,
 		});
-		expect(onProgress).toHaveBeenCalledWith(
-			expect.objectContaining({ type: 'activity', text: 'Agent run started' })
-		);
+		expect(onProgress).not.toHaveBeenCalled();
 	});
 
 	it('keeps two concurrent threads separate, resumes the requested provider session and revokes proofs', async () => {

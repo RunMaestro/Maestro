@@ -202,8 +202,8 @@ describe('plugin sandbox realm - behavioral parity', () => {
 			String.raw`
 			globalThis.progress = [];
 			globalThis.calls = [
-				maestro.agents.send('a', 'one', { onProgress: function (e) { progress.push(['one', e.text]); } }),
-				maestro.agents.send('a', 'two', { sessionId: 'owned', onProgress: function (e) { progress.push(['two', e.text]); } })
+				maestro.agents.send('a', 'one', { onProgress: function (e) { progress.push(['one', e.summary || e.text]); } }),
+				maestro.agents.send('a', 'two', { sessionId: 'owned', onProgress: function (e) { progress.push(['two', e.summary || e.text]); } })
 			];
 		`,
 			'send-progress'
@@ -215,7 +215,16 @@ describe('plugin sandbox realm - behavioral parity', () => {
 			JSON.stringify({ id: sent[1].id, event: { type: 'commentary', text: 'second', at: 'now' } })
 		);
 		realm.deliverProgress(
-			JSON.stringify({ id: sent[0].id, event: { type: 'activity', text: 'first', at: 'now' } })
+			JSON.stringify({
+				id: sent[0].id,
+				event: {
+					type: 'tool',
+					tool: 'Read',
+					status: 'started',
+					summary: 'Reading file first.md',
+					at: 'now',
+				},
+			})
 		);
 		realm.deliverResponse(
 			JSON.stringify({ id: sent[0].id, ok: true, result: { success: true, response: 'done' } })
@@ -233,7 +242,7 @@ describe('plugin sandbox realm - behavioral parity', () => {
 		);
 		expect(JSON.parse(String(infos.at(-1)?.[1]))).toEqual([
 			['two', 'second'],
-			['one', 'first'],
+			['one', 'Reading file first.md'],
 		]);
 	});
 

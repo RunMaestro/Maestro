@@ -15,11 +15,21 @@
 
 import type { PluginCapability } from './permissions';
 
+/** Maximum length of a public tool action sent to a plugin. */
+export const MAX_AGENT_SEND_TOOL_SUMMARY_CHARS = 120;
+
 /** Public, invocation-scoped progress from a headless agents.send turn. */
 export type AgentSendProgressEvent =
 	| { type: 'activity'; text: string; at: string }
 	| { type: 'commentary'; text: string; at: string }
-	| { type: 'tool'; tool: string; status: 'started' | 'completed' | 'failed'; at: string };
+	| {
+			type: 'tool';
+			tool: string;
+			status: 'started' | 'completed' | 'failed';
+			at: string;
+			/** English public action, at most 120 chars, from allowlisted tool metadata. */
+			summary?: string;
+	  };
 
 /**
  * The host API surface as ONE data-driven table: method -> { capability }. The

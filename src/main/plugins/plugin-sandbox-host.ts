@@ -19,6 +19,7 @@ import { logger } from '../utils/logger';
 import { PermissionBroker } from './permission-broker';
 import {
 	isHostMethod,
+	MAX_AGENT_SEND_TOOL_SUMMARY_CHARS,
 	type HostMethod,
 	type HostRequest,
 	type HostResponse,
@@ -494,8 +495,21 @@ export class PluginSandboxHost {
 		const onProgress = (event: AgentSendProgressEvent): void => {
 			if (!active || this.running.get(pluginId) !== record) return;
 			if (!this.deps.broker.authorize(pluginId, method, request.params).allowed) return;
+			// Keep the optional public action bounded at the final host -> sandbox
+			// boundary as well. Older callers and events without a summary pass through.
+			const publicEvent =
+				event.type === 'tool' && event.summary !== undefined
+					? {
+							...event,
+							...(typeof event.summary === 'string' &&
+							event.summary.length <= MAX_AGENT_SEND_TOOL_SUMMARY_CHARS &&
+							!/[\x00-\x1f\x7f]/.test(event.summary)
+								? { summary: event.summary }
+								: { summary: undefined }),
+						}
+					: event;
 			try {
-				proc.postMessage({ kind: 'progress', id: request.id, event });
+				proc.postMessage({ kind: 'progress', id: request.id, event: publicEvent });
 			} catch {
 				// The owning sandbox exited; the provider run is aborted by onCrash.
 			}

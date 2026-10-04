@@ -49,17 +49,6 @@ export function createPluginHeadlessAgentRunner(
 				? createPluginRunProofFile(runToken, HEADLESS_RUN_TIMEOUT_MS + 60_000)
 				: undefined;
 			deps.audit(agent.id, !!providerSessionId);
-			if (!signal?.aborted) {
-				try {
-					onProgress?.({
-						type: 'activity',
-						text: 'Agent run started',
-						at: new Date().toISOString(),
-					});
-				} catch {
-					// Progress delivery cannot change the agent result.
-				}
-			}
 			if (signal?.aborted) {
 				return {
 					success: false,

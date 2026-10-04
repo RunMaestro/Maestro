@@ -25,6 +25,7 @@ vi.mock('electron', () => ({
 
 import { PluginSandboxHost } from '../../../main/plugins/plugin-sandbox-host';
 import type { PermissionBroker } from '../../../main/plugins/permission-broker';
+import type { AgentSendProgressEvent } from '../../../shared/plugins/rpc-protocol';
 
 describe('PluginSandboxHost.invokeCommand payload cap', () => {
 	let dir: string;
@@ -76,7 +77,7 @@ describe('PluginSandboxHost agents.send progress', () => {
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-sbx-progress-'));
 		try {
 			fs.writeFileSync(path.join(dir, 'entry.js'), '// entry', 'utf-8');
-			let report: ((event: { type: 'activity'; text: string; at: string }) => void) | undefined;
+			let report: ((event: AgentSendProgressEvent) => void) | undefined;
 			let finish: ((value: string) => void) | undefined;
 			const authorize = vi.fn(() => ({ allowed: true, capability: 'agents:dispatch' }));
 			const host = new PluginSandboxHost({
@@ -101,6 +102,21 @@ describe('PluginSandboxHost agents.send progress', () => {
 			const event = { type: 'activity' as const, text: 'Working', at: '2026-10-02T00:00:00.000Z' };
 			report?.(event);
 			expect(postMessage).toHaveBeenCalledWith({ kind: 'progress', id: 41, event });
+			const action: AgentSendProgressEvent = {
+				type: 'tool',
+				tool: 'Read',
+				status: 'started',
+				summary: 'Reading file notes.md',
+				at: event.at,
+			};
+			report?.(action);
+			expect(postMessage).toHaveBeenCalledWith({ kind: 'progress', id: 41, event: action });
+			report?.({ ...action, summary: 'x'.repeat(121) });
+			expect(postMessage).toHaveBeenLastCalledWith({
+				kind: 'progress',
+				id: 41,
+				event: { ...action, summary: undefined },
+			});
 			finish?.('done');
 			await vi.waitFor(() =>
 				expect(postMessage).toHaveBeenCalledWith({ id: 41, ok: true, result: 'done' })

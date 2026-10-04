@@ -149,6 +149,69 @@ type SpawnOverrides = Pick<
 	| 'onProgress'
 >;
 
+/** Derive an action only from known tool names and narrow public metadata fields. */
+function publicToolSummary(tool: string, input: unknown): string | undefined {
+	const data =
+		input && typeof input === 'object' && !Array.isArray(input)
+			? (input as Record<string, unknown>)
+			: undefined;
+	const fileName = (value: unknown): string | undefined => {
+		if (typeof value !== 'string' || value.length > 512 || /[\x00-\x1f\x7f]/.test(value)) return;
+		const name = value.replace(/\\/g, '/').split('/').pop();
+		return name &&
+			name !== '.' &&
+			name !== '..' &&
+			name.length <= 80 &&
+			/^[\p{L}\p{N}._ -]+$/u.test(name)
+			? name
+			: undefined;
+	};
+	const targetName = (value: unknown): string | undefined =>
+		typeof value === 'string' && /^[A-Za-z][A-Za-z0-9_.-]{0,47}$/.test(value) ? value : undefined;
+
+	if (tool === 'functions.exec') {
+		// The wrapper's JavaScript is untrusted. Recognize only a tool identifier;
+		// never copy the code, nested arguments, or shell text into progress.
+		const code = typeof input === 'string' ? input : data?.code;
+		if (typeof code !== 'string' || code.length > 64_000) return;
+		const shellCalls = (code.match(/\btools\.exec_command\s*\(/g) ?? []).length;
+		if (shellCalls) return shellCalls === 1 ? 'Running shell command' : 'Running shell commands';
+		return;
+	}
+	if (
+		[
+			'Bash',
+			'bash',
+			'Shell',
+			'shell',
+			'shell_command',
+			'functions.shell_command',
+			'functions.exec_command',
+			'exec_command',
+		].includes(tool)
+	) {
+		return 'Running shell command';
+	}
+	if (['Read', 'read_file', 'functions.read_file', 'fs.read'].includes(tool)) {
+		const name = fileName(data?.file_path ?? data?.path);
+		return name ? `Reading file ${name}` : 'Reading file';
+	}
+	if (
+		['Write', 'Edit', 'MultiEdit', 'write_file', 'functions.apply_patch', 'fs.write'].includes(tool)
+	) {
+		const name = fileName(data?.file_path ?? data?.path);
+		return name ? `Editing file ${name}` : 'Editing files';
+	}
+	if (
+		['Task', 'functions.collaboration.spawn_agent', 'agents.dispatch', 'agents.send'].includes(tool)
+	) {
+		const name = targetName(data?.subagent_type ?? data?.task_name ?? data?.agentId);
+		return name ? `Dispatching to agent ${name}` : 'Dispatching to agent';
+	}
+	if (['Grep', 'Glob', 'functions.web__run'].includes(tool)) return 'Searching';
+	return;
+}
+
 /** Emit only public, bounded fields; never pass parser raw/tool state downstream. */
 function emitAgentProgress(
 	callback: SpawnAgentOptions['onProgress'],
@@ -700,7 +763,7 @@ async function spawnClaudeAgent(
 		let usageStats: UsageStats | undefined;
 		let resultEmitted = false;
 		let sessionIdEmitted = false;
-		const progressToolNames = new Map<string, string>();
+		const progressTools = new Map<string, { tool: string; summary?: string }>();
 
 		// Process a single parsed JSON message from Claude Code's stream-json output
 
@@ -712,17 +775,19 @@ async function spawnClaudeAgent(
 						typeof block.name === 'string' && /^[A-Za-z][A-Za-z0-9_.:-]{0,79}$/.test(block.name)
 							? block.name
 							: 'Tool';
+					const summary = publicToolSummary(tool, block.input);
 					if (typeof block.id === 'string' && block.id.length <= 128) {
-						progressToolNames.set(block.id, tool);
-						if (progressToolNames.size > 128) {
-							const oldest = progressToolNames.keys().next().value;
-							if (oldest) progressToolNames.delete(oldest);
+						progressTools.set(block.id, { tool, summary });
+						if (progressTools.size > 128) {
+							const oldest = progressTools.keys().next().value;
+							if (oldest) progressTools.delete(oldest);
 						}
 					}
 					emitAgentProgress(overrides.onProgress, {
 						type: 'tool',
 						tool,
 						status: 'started',
+						...(summary ? { summary } : {}),
 						at: new Date().toISOString(),
 					});
 				}
@@ -730,15 +795,16 @@ async function spawnClaudeAgent(
 			if (msg.type === 'user' && Array.isArray(msg.message?.content)) {
 				for (const block of msg.message.content) {
 					if (block?.type !== 'tool_result') continue;
-					const tool =
+					const invocation =
 						typeof block.tool_use_id === 'string'
-							? (progressToolNames.get(block.tool_use_id) ?? 'Tool')
-							: 'Tool';
-					if (typeof block.tool_use_id === 'string') progressToolNames.delete(block.tool_use_id);
+							? progressTools.get(block.tool_use_id)
+							: undefined;
+					if (typeof block.tool_use_id === 'string') progressTools.delete(block.tool_use_id);
 					emitAgentProgress(overrides.onProgress, {
 						type: 'tool',
-						tool,
+						tool: invocation?.tool ?? 'Tool',
 						status: block.is_error ? 'failed' : 'completed',
+						...(invocation?.summary ? { summary: invocation.summary } : {}),
 						at: new Date().toISOString(),
 					});
 				}
@@ -1144,6 +1210,7 @@ async function spawnJsonLineAgent(
 		let usageStats: UsageStats | undefined;
 		let stderr = '';
 		let errorText: string | undefined;
+		const progressSummaries = new Map<string, string>();
 
 		// Process a single parsed event from an agent's JSON line output
 		const processEvent = (event: ReturnType<typeof parser.parseJsonLine>) => {
@@ -1164,10 +1231,28 @@ async function spawnJsonLineAgent(
 						: state === 'completed' || state === 'success'
 							? 'completed'
 							: 'started';
+				const input =
+					event.toolState && typeof event.toolState === 'object' && 'input' in event.toolState
+						? (event.toolState as { input?: unknown }).input
+						: undefined;
+				let summary = status === 'started' ? publicToolSummary(tool, input) : undefined;
+				if (event.toolCallId && event.toolCallId.length <= 128) {
+					if (status === 'started' && summary) {
+						progressSummaries.set(event.toolCallId, summary);
+						if (progressSummaries.size > 128) {
+							const oldest = progressSummaries.keys().next().value;
+							if (oldest) progressSummaries.delete(oldest);
+						}
+					} else if (status !== 'started') {
+						summary = progressSummaries.get(event.toolCallId);
+						progressSummaries.delete(event.toolCallId);
+					}
+				}
 				emitAgentProgress(overrides.onProgress, {
 					type: 'tool',
 					tool,
 					status,
+					...(summary ? { summary } : {}),
 					at: new Date().toISOString(),
 				});
 			}

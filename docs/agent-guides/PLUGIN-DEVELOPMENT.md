@@ -534,6 +534,8 @@ Caps and guarantees: at most **4 open sockets** per plugin; **64 KB** per frame 
 
 Because the gateway must survive a crash, pair `net:connect` with `maestro.background.register(...)` (`background:service`) so the supervisor restarts your plugin and you reopen the socket in `activate`. For a reply and resumable provider session, call `maestro.agents.send(...)`. The host records successful provider sessions and only resumes one for the same plugin and agent; persist the returned ID per external thread. Both `send` and `dispatch` need the allowlist `agents:dispatch` grant and separate **unattended consent**.
 
+`agents.send` can report invocation-scoped progress through `onProgress(event)`. A tool event has `type: 'tool'`, `tool`, `status`, `at`, and optional `summary`. The summary is an English public action of at most 120 characters (for example, `Reading file notes.md` or `Running shell command`) derived from allowlisted provider metadata. It may be absent when the host cannot identify a safe action. Do not treat it as a raw command, full path, tool arguments, output, or agent reasoning. Older callers can omit `onProgress` and older consumers can ignore `summary`.
+
 ```js
 /** @import { MaestroSdk } from '@maestro/plugin-sdk' */
 
