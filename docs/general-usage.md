@@ -50,6 +50,12 @@ The header pill and the command palette act on the agent you're looking at. The 
 
 Pull and push stream their output as it happens, so you can watch the transfer and read git's error message if it fails. Dismissing the modal leaves the command running; **Cancel** stops it. When a push fails because the branch has no upstream, the modal offers a one-click **Push and Set Upstream** retry.
 
+### Reviewing a diff with annotations
+
+You can review an agent's changes the way you would review a colleague's pull request. In the diff viewer, click any line number to leave an **annotation** on that line (markdown allowed, `Cmd+Enter` / `Ctrl+Enter` to save). Saved annotations appear under their line and collect in a **Review** tray at the bottom of the viewer, where you can edit or remove each one.
+
+When you're done, **Send review to** sends every annotation to the agent as a single message. Each comment names its file and line and quotes the code it refers to, so the agent can find it without guessing. The review is queued, so a busy agent picks it up when its current turn finishes. Opened from the Left Bar's right-click menu, the review goes to the agent you right-clicked; otherwise it goes to the agent you're looking at. Closing the viewer before sending keeps your annotations for the next time you open that repository's diff.
+
 Working-tree changes are shown by the **git status widget** beside the pill (`+` additions, `−` deletions, `~` modified). Hover it for a list of changed files with diff bars, plus shortcuts to the full diff and the log.
 
 ## File Explorer and Preview

@@ -277,6 +277,8 @@ describe('useGitAgentActions', () => {
 			expect(mockOpenModal).toHaveBeenCalledWith('gitDiff', {
 				diff: 'diff --git a/x b/x',
 				cwd: '/other/repo',
+				// The agent id routes a review annotated in the viewer back to it.
+				sessionId: 'session-1',
 			});
 		});
 

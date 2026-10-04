@@ -1,6 +1,8 @@
-import { useState, useMemo, useEffect, useRef, memo } from 'react';
+import { useState, useMemo, useEffect, useRef, useCallback, memo } from 'react';
+import type { ReactNode } from 'react';
 import { Diff, Hunk } from 'react-diff-view';
-import { Plus, Minus, ImageIcon, Columns2, AlignJustify } from 'lucide-react';
+import type { EventMap, RenderGutter } from 'react-diff-view';
+import { Plus, Minus, ImageIcon, Columns2, AlignJustify, MessageSquarePlus } from 'lucide-react';
 import type { Theme } from '../types';
 import { parseGitDiff, getFileName, getDiffStats } from '../utils/gitDiffParser';
 import { getBasename } from '../../shared/formatters';
@@ -12,6 +14,15 @@ import { GitFilePathHeader } from './GitFilePathHeader';
 import { generateDiffViewStyles } from '../utils/markdownConfig';
 import { useSettingsStore } from '../stores/settingsStore';
 import { ResizeHandles } from './ui/ResizeHandles';
+import { DiffAnnotationCard, DiffAnnotationEditor, DiffReviewTray } from './DiffAnnotations';
+import {
+	anchorForChange,
+	formatDiffReviewPrompt,
+	type DiffAnnotation,
+	type DiffAnnotationAnchor,
+} from '../utils/diffAnnotations';
+import { getPendingDiffAnnotations, setPendingDiffAnnotations } from '../services/diffReview';
+import { generateId } from '../utils/ids';
 import 'react-diff-view/style/index.css';
 
 export type GitDiffViewType = 'unified' | 'split';
@@ -77,6 +88,22 @@ interface GitDiffViewerProps {
 	 * modal so it captures Escape and focus correctly.
 	 */
 	priority?: number;
+	/**
+	 * Send a formatted review to the agent that produced the diff. When
+	 * provided, clicking a line number annotates that line, and the batch of
+	 * annotations is handed back through this as one prompt. Return `false` if
+	 * the review could not be delivered, so the annotations are kept.
+	 */
+	onSendReview?: (prompt: string) => boolean;
+	/** Name of the agent `onSendReview` delivers to, shown on the send button. */
+	reviewTargetName?: string;
+}
+
+/** The annotation editor currently open, if any. `id` is set when editing a saved one. */
+interface AnnotationEditState {
+	anchor: DiffAnnotationAnchor;
+	id?: string;
+	initialBody: string;
 }
 
 export const GitDiffViewer = memo(function GitDiffViewer({
@@ -88,6 +115,8 @@ export const GitDiffViewer = memo(function GitDiffViewer({
 	title = 'Git Diff',
 	priority,
 	onOpenFile,
+	onSendReview,
+	reviewTargetName,
 }: GitDiffViewerProps) {
 	const [activeTab, setActiveTab] = useState(0);
 	const [viewType, setViewType] = useState<GitDiffViewType>(
@@ -109,6 +138,176 @@ export const GitDiffViewer = memo(function GitDiffViewer({
 	// Parse the diff into separate files
 	const parsedFiles = useMemo(() => parseGitDiff(diffText), [diffText]);
 
+	// Review annotations. Parked per repo, so closing the viewer before sending
+	// does not throw a half-written review away.
+	const canAnnotate = !!onSendReview;
+	const [annotations, setAnnotations] = useState<DiffAnnotation[]>(() =>
+		canAnnotate ? getPendingDiffAnnotations(cwd) : []
+	);
+	const [editing, setEditing] = useState<AnnotationEditState | null>(null);
+	const editingRef = useRef(editing);
+	editingRef.current = editing;
+
+	useEffect(() => {
+		if (canAnnotate) setPendingDiffAnnotations(cwd, annotations);
+	}, [canAnnotate, cwd, annotations]);
+
+	const activeFilePath = (() => {
+		const file = parsedFiles[activeTab];
+		if (!file) return '';
+		return file.isDeletedFile ? file.oldPath : file.newPath;
+	})();
+
+	const saveAnnotation = useCallback((body: string) => {
+		const current = editingRef.current;
+		const trimmed = body.trim();
+		if (!current || !trimmed) return;
+		if (current.id) {
+			const id = current.id;
+			setAnnotations((prev) => prev.map((a) => (a.id === id ? { ...a, body: trimmed } : a)));
+		} else {
+			const { anchor } = current;
+			setAnnotations((prev) => [
+				...prev,
+				{
+					id: generateId(),
+					file: anchor.file,
+					line: anchor.line,
+					side: anchor.side,
+					kind: anchor.kind,
+					lineText: anchor.lineText,
+					changeKey: anchor.changeKey,
+					body: trimmed,
+				},
+			]);
+		}
+		setEditing(null);
+	}, []);
+
+	const cancelEditing = useCallback(() => setEditing(null), []);
+
+	const removeAnnotation = useCallback((id: string) => {
+		setAnnotations((prev) => prev.filter((a) => a.id !== id));
+		setEditing((prev) => (prev?.id === id ? null : prev));
+	}, []);
+
+	const editAnnotation = useCallback(
+		(annotation: DiffAnnotation) => {
+			const fileIndex = parsedFiles.findIndex(
+				(f) => (f.isDeletedFile ? f.oldPath : f.newPath) === annotation.file
+			);
+			if (fileIndex >= 0) setActiveTab(fileIndex);
+			setEditing({ anchor: annotation, id: annotation.id, initialBody: annotation.body });
+		},
+		[parsedFiles]
+	);
+
+	const sendReview = () => {
+		if (!onSendReview) return;
+		const prompt = formatDiffReviewPrompt(annotations);
+		if (!prompt) return;
+		if (!onSendReview(prompt)) return;
+		setPendingDiffAnnotations(cwd, []);
+		setAnnotations([]);
+		setEditing(null);
+		onClose();
+	};
+
+	// Clicking a line number opens the annotation editor under that line.
+	const gutterEvents = useMemo<EventMap>(
+		() =>
+			canAnnotate && activeFilePath
+				? {
+						onClick: ({ change, side }) => {
+							if (!change) return;
+							setEditing({
+								anchor: anchorForChange(activeFilePath, change, side),
+								initialBody: '',
+							});
+						},
+					}
+				: {},
+		[canAnnotate, activeFilePath]
+	);
+
+	const renderGutter = useCallback<RenderGutter>(
+		({ inHoverState, renderDefault }) =>
+			inHoverState ? (
+				<span className="inline-flex justify-end w-full" title="Annotate this line">
+					<MessageSquarePlus className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
+				</span>
+			) : (
+				renderDefault()
+			),
+		[theme.colors.accent]
+	);
+
+	// Saved annotations and the open editor render as widget rows under their line.
+	const widgets = useMemo(() => {
+		const result: Record<string, ReactNode> = {};
+		if (!canAnnotate || !activeFilePath) return result;
+		const byKey = new Map<string, DiffAnnotation[]>();
+		for (const annotation of annotations) {
+			if (annotation.file !== activeFilePath) continue;
+			const list = byKey.get(annotation.changeKey) ?? [];
+			list.push(annotation);
+			byKey.set(annotation.changeKey, list);
+		}
+		const newDraftKey =
+			editing && !editing.id && editing.anchor.file === activeFilePath
+				? editing.anchor.changeKey
+				: null;
+		if (newDraftKey && !byKey.has(newDraftKey)) byKey.set(newDraftKey, []);
+
+		for (const [key, list] of byKey) {
+			result[key] = (
+				<div className="flex flex-col">
+					{list.map((annotation) =>
+						editing?.id === annotation.id ? (
+							<DiffAnnotationEditor
+								key={annotation.id}
+								theme={theme}
+								initialBody={editing.initialBody}
+								isNew={false}
+								onSave={saveAnnotation}
+								onCancel={cancelEditing}
+							/>
+						) : (
+							<DiffAnnotationCard
+								key={annotation.id}
+								theme={theme}
+								annotation={annotation}
+								onEdit={() => editAnnotation(annotation)}
+								onRemove={() => removeAnnotation(annotation.id)}
+							/>
+						)
+					)}
+					{key === newDraftKey && (
+						<DiffAnnotationEditor
+							key={`new-${editing?.anchor.side}-${editing?.anchor.line}`}
+							theme={theme}
+							initialBody=""
+							isNew
+							onSave={saveAnnotation}
+							onCancel={cancelEditing}
+						/>
+					)}
+				</div>
+			);
+		}
+		return result;
+	}, [
+		canAnnotate,
+		activeFilePath,
+		annotations,
+		editing,
+		theme,
+		saveAnnotation,
+		cancelEditing,
+		editAnnotation,
+		removeAnnotation,
+	]);
+
 	// Dismiss the viewer and open the given repo-relative file as a preview tab.
 	const openFileInPreview = (relPath: string) => {
 		if (!onOpenFile) return;
@@ -119,10 +318,17 @@ export const GitDiffViewer = memo(function GitDiffViewer({
 	// Register layer on mount
 	// Note: Using 'modal' type so App.tsx blocks all shortcuts and lets this component
 	// handle its own Cmd+Shift+[] for tab navigation
+	// Escape inside an open annotation editor dismisses the editor, not the viewer.
 	useModalLayer(
 		priority ?? MODAL_PRIORITIES.GIT_DIFF,
 		'Git Diff Preview',
-		() => onCloseRef.current(),
+		() => {
+			if (editingRef.current) {
+				setEditing(null);
+				return;
+			}
+			onCloseRef.current();
+		},
 		{
 			focusTrap: 'lenient',
 		}
@@ -401,6 +607,9 @@ export const GitDiffViewer = memo(function GitDiffViewer({
 					) : activeFile && activeFile.parsedDiff.length > 0 ? (
 						<div className="font-mono text-sm">
 							<style>{generateDiffViewStyles(theme, colorBlindMode)}</style>
+							{canAnnotate && (
+								<style>{`.diff-gutter:not(.diff-gutter-omit) { cursor: pointer; } .diff-widget-content { padding: 0; }`}</style>
+							)}
 							{activeFile.parsedDiff.map((file, fileIndex) => (
 								<div key={fileIndex}>
 									{/* File header (click to open the file as a preview tab) */}
@@ -422,7 +631,14 @@ export const GitDiffViewer = memo(function GitDiffViewer({
 									</GitFilePathHeader>
 
 									{/* Render each hunk */}
-									<Diff viewType={viewType} diffType={file.type} hunks={file.hunks}>
+									<Diff
+										viewType={viewType}
+										diffType={file.type}
+										hunks={file.hunks}
+										widgets={widgets}
+										gutterEvents={gutterEvents}
+										renderGutter={canAnnotate ? renderGutter : undefined}
+									>
 										{(hunks) => hunks.map((hunk) => <Hunk key={hunk.content} hunk={hunk} />)}
 									</Diff>
 								</div>
@@ -436,6 +652,21 @@ export const GitDiffViewer = memo(function GitDiffViewer({
 						</div>
 					)}
 				</div>
+
+				{canAnnotate && annotations.length > 0 && (
+					<DiffReviewTray
+						theme={theme}
+						annotations={annotations}
+						targetName={reviewTargetName}
+						onEdit={editAnnotation}
+						onRemove={removeAnnotation}
+						onClear={() => {
+							setAnnotations([]);
+							setEditing(null);
+						}}
+						onSend={sendReview}
+					/>
+				)}
 
 				{/* Footer with stats */}
 				<div
@@ -485,6 +716,7 @@ export const GitDiffViewer = memo(function GitDiffViewer({
 							Enter
 						</kbd>{' '}
 						to toggle {viewType === 'unified' ? 'side-by-side' : 'unified'} view
+						{canAnnotate && ' · click a line number to annotate it'}
 					</span>
 				</div>
 			</div>
