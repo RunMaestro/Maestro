@@ -50,10 +50,12 @@ import {
 import { generateDebugPackage, type DebugPackageDependencies } from '../../debug-package';
 import {
 	checkFeedbackGhAuth,
+	getFeedbackGhLoginCommand,
 	searchFeedbackIssues,
 	submitFeedbackConversation,
 	subscribeFeedbackIssue,
 } from '../../feedback';
+import { listFeedbackAccounts, rememberFeedbackAccount } from '../../feedback/accounts';
 import {
 	MAX_FEEDBACK_ATTACHMENTS,
 	type FeedbackConversationSubmitPayload,
@@ -897,12 +899,22 @@ export class WebSocketMessageHandler {
 				void this.handleFeedbackSearch(client, message);
 				break;
 
+			case 'feedback_gh_login_command':
+				void this.answerFeedback(client, message, async () => ({
+					...(await getFeedbackGhLoginCommand()),
+				}));
+				break;
+
 			case 'feedback_submit':
 				void this.handleFeedbackSubmit(client, message);
 				break;
 
 			case 'feedback_subscribe':
 				void this.handleFeedbackSubscribe(client, message);
+				break;
+
+			case 'feedback_accounts':
+				void this.handleFeedbackAccounts(client, message);
 				break;
 
 			case 'marketplace_get_manifest':
@@ -5322,7 +5334,9 @@ export class WebSocketMessageHandler {
 
 	/** Handle feedback_check_auth - is `gh` installed and logged in. */
 	private handleFeedbackCheckAuth(client: WebClient, message: WebClientMessage): Promise<void> {
-		return this.answerFeedback(client, message, async () => ({ ...(await checkFeedbackGhAuth()) }));
+		return this.answerFeedback(client, message, async () => ({
+			...(await checkFeedbackGhAuth({ fresh: message.fresh === true })),
+		}));
 	}
 
 	/** Handle feedback_search - possible duplicate issues for a query. */
@@ -5366,6 +5380,30 @@ export class WebSocketMessageHandler {
 		return this.answerFeedback(client, message, async () => ({
 			...(await subscribeFeedbackIssue({ issueNumber, comment })),
 		}));
+	}
+
+	/**
+	 * Handle feedback_accounts - the accounts the Feedback chat can run as, in the
+	 * order it tries them. `use` (a profile key, or null to forget) records the
+	 * account the next conversation tries first, as a pick in the chat does.
+	 */
+	private handleFeedbackAccounts(client: WebClient, message: WebClientMessage): Promise<void> {
+		return this.answerFeedback(client, message, async () => {
+			const getAgentDetector = () =>
+				this.callbacks.getDebugPackageDeps?.()?.getAgentDetector() ?? null;
+			if (message.use === null) {
+				rememberFeedbackAccount(null);
+			} else if (typeof message.use === 'string') {
+				const { accounts } = await listFeedbackAccounts(getAgentDetector);
+				if (!accounts.some((account) => account.key === message.use)) {
+					throw new Error(
+						`No feedback account with key "${message.use}". Run "maestro-cli feedback accounts" to list them.`
+					);
+				}
+				rememberFeedbackAccount(message.use);
+			}
+			return { ...(await listFeedbackAccounts(getAgentDetector)) };
+		});
 	}
 
 	/**

@@ -152,6 +152,7 @@ export const RightPanel = memo(
 		const shortcuts = useSettingsStore((s) => s.shortcuts);
 		const showHiddenFiles = useSettingsStore((s) => s.showHiddenFiles);
 		const fileExplorerIconTheme = useSettingsStore((s) => s.fileExplorerIconTheme);
+		const fileTreeBranchConnectors = useSettingsStore((s) => s.fileTreeBranchConnectors);
 		const setRightPanelWidth = useSettingsStore((s) => s.setRightPanelWidth);
 		const setShowHiddenFiles = useSettingsStore((s) => s.setShowHiddenFiles);
 		const autoRunDisabled = useSettingsStore((s) => s.autoRunDisabled);
@@ -632,6 +633,7 @@ export const RightPanel = memo(
 							onShowFlash={onShowFlash}
 							showHiddenFiles={showHiddenFiles}
 							fileExplorerIconTheme={fileExplorerIconTheme}
+							fileTreeBranchConnectors={fileTreeBranchConnectors}
 							setShowHiddenFiles={setShowHiddenFiles}
 							onFocusFileInGraph={onFocusFileInGraph}
 							onOpenBrowserTabAt={onOpenBrowserTabAt}

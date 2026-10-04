@@ -237,6 +237,8 @@ of taking a second round trip or trusting a value the caller guessed.
 | Cue subscriptions and scheduled tasks        | `cue trigger`, `cue schedule`, `cue pipeline`                     |
 | Send Feedback modal (open / file / +1)       | `open feedback`, `feedback auth\|search\|submit\|subscribe`       |
 | Feedback: screenshots, support package box   | `feedback submit --attach <png...> --support-package`             |
+| Feedback: Running as (account picker)        | `feedback accounts [--use <key> \| --clear]`                      |
+| Feedback: Log in to GitHub / Check Again     | `feedback login`, `feedback auth --fresh`                         |
 | Create Debug Package (support package)       | `support-package -o <dir> [--no-logs ...]`                        |
 | Start / End Performance Profiling            | `profiling start`, `profiling status`, `profiling stop -o <zip>`  |
 | Cue dashboard: subscription on/off switch    | `cue enable <sub>`, `cue disable <sub>` (any event type)          |

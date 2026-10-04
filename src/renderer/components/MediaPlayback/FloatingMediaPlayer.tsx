@@ -5,6 +5,8 @@ import { GhostIconButton } from '../ui/GhostIconButton';
 import { ModalResizeGrip } from '../ui/ModalResizeGrip';
 import { MediaListMenu } from './MediaListMenu';
 import { useEventListener } from '../../hooks/utils/useEventListener';
+import { useMobileLandscape } from '../../hooks/remote/useMobileLandscape';
+import { useSettingsStore } from '../../stores/settingsStore';
 import { useMediaPlaybackStore } from '../../stores/mediaPlaybackStore';
 import {
 	DEFAULT_MEDIA_ASPECT,
@@ -67,8 +69,19 @@ const DRAG_SLOP_PX = 4;
  */
 const FLOAT_Z_INDEX = 60;
 
+/**
+ * Height of the custom title strip App.tsx draws (its `h-10`) when the native
+ * title bar is off. That strip is `-webkit-app-region: drag`, so the widget is
+ * kept below it.
+ */
+const APP_TITLE_STRIP_HEIGHT = 40;
+
 /** Current viewport, read at call time so a resize is always measured fresh. */
-const viewport = () => ({ width: window.innerWidth, height: window.innerHeight });
+const measureViewport = (top: number) => ({
+	width: window.innerWidth,
+	height: window.innerHeight,
+	top,
+});
 
 /**
  * The media player: a draggable, resizable now-playing widget.
@@ -117,6 +130,14 @@ export const FloatingMediaPlayer = memo(function FloatingMediaPlayer({
 	const resumeTimes = useMediaPlaybackStore((s) => s.resumeTimes);
 	const setActiveItem = useMediaPlaybackStore((s) => s.setActiveItem);
 	const closeItem = useMediaPlaybackStore((s) => s.closeItem);
+
+	// Same condition App.tsx uses to draw the custom title strip.
+	const useNativeTitleBar = useSettingsStore((s) => s.useNativeTitleBar);
+	const isMobileLandscape = useMobileLandscape();
+	const topInset = useNativeTitleBar || isMobileLandscape ? 0 : APP_TITLE_STRIP_HEIGHT;
+	const topInsetRef = useRef(topInset);
+	topInsetRef.current = topInset;
+	const viewport = useCallback(() => measureViewport(topInsetRef.current), []);
 
 	// The queue menu lists what is coming NEXT, so the loaded track is filtered
 	// out of it. It stays in `items` because that is how prev/next find their
@@ -281,7 +302,9 @@ export const FloatingMediaPlayer = memo(function FloatingMediaPlayer({
 				viewport()
 			)
 		);
-	}, [fit, kind, storedWidths]);
+		// topInset: toggling the native title bar moves the strip the widget
+		// has to clear.
+	}, [fit, kind, storedWidths, topInset, viewport]);
 
 	const KindIcon = kind === 'video' ? FileVideo : FileAudio;
 
@@ -295,17 +318,23 @@ export const FloatingMediaPlayer = memo(function FloatingMediaPlayer({
 			// accessibility tree while the header pill stands in for them.
 			aria-hidden={hidden || undefined}
 			className="fixed flex flex-col rounded-lg shadow-2xl border overflow-hidden select-none"
-			style={{
-				top: rect.top,
-				left: rect.left,
-				width: rect.width,
-				height: rect.height,
-				zIndex: hidden ? -1 : FLOAT_Z_INDEX,
-				backgroundColor: theme.colors.bgSidebar,
-				borderColor: theme.colors.border,
-				visibility: hidden ? 'hidden' : undefined,
-				pointerEvents: hidden ? 'none' : undefined,
-			}}
+			style={
+				{
+					top: rect.top,
+					left: rect.left,
+					width: rect.width,
+					height: rect.height,
+					zIndex: hidden ? -1 : FLOAT_Z_INDEX,
+					backgroundColor: theme.colors.bgSidebar,
+					borderColor: theme.colors.border,
+					visibility: hidden ? 'hidden' : undefined,
+					pointerEvents: hidden ? 'none' : undefined,
+					// Belt and braces with the top clamp: if the widget ever overlaps the
+					// title strip's drag region, the OS would swallow clicks on its
+					// header (move, minimize, close). Opt the whole frame out.
+					WebkitAppRegion: hidden ? undefined : 'no-drag',
+				} as React.CSSProperties
+			}
 		>
 			{/* Title bar doubles as the drag handle */}
 			<div

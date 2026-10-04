@@ -758,7 +758,10 @@ interface MaestroAPI {
 		) => () => void;
 	};
 	feedback: {
-		checkGhAuth: () => Promise<{ authenticated: boolean; message?: string }>;
+		checkGhAuth: (options?: {
+			fresh?: boolean;
+		}) => Promise<import('../shared/feedback').FeedbackAuthResponse>;
+		getGhLoginCommand: () => Promise<import('../shared/feedback').FeedbackGhLoginCommand>;
 		submit: (payload: {
 			sessionId: string;
 			category: 'bug_report' | 'feature_request' | 'improvement' | 'general_feedback';
@@ -787,7 +790,7 @@ interface MaestroAPI {
 			sshRemoteEnabled?: boolean;
 			attachments?: Array<{ name: string; dataUrl: string }>;
 			includeDebugPackage?: boolean;
-		}) => Promise<{ success: boolean; error?: string; issueUrl?: string }>;
+		}) => Promise<import('../shared/feedback').FeedbackSubmitResponse>;
 		searchIssues: (query: string) => Promise<{
 			issues: Array<{
 				number: number;
@@ -803,7 +806,9 @@ interface MaestroAPI {
 		subscribeIssue: (
 			issueNumber: number,
 			comment?: string
-		) => Promise<{ success: boolean; error?: string }>;
+		) => Promise<import('../shared/feedback').FeedbackSubmitResponse>;
+		listAccounts: () => Promise<import('../shared/feedbackAccounts').FeedbackAccountsResponse>;
+		rememberAccount: (key: string | null) => Promise<void>;
 	};
 	agentError: {
 		clearError: (sessionId: string) => Promise<{ success: boolean }>;

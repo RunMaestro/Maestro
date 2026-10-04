@@ -1254,11 +1254,14 @@ describe('FileExplorerPanel', () => {
 			});
 			const props = {
 				...defaultProps,
-				activeSession: sessionWithFileTab,
+				session: sessionWithFileTab,
 			};
 			const { container } = render(<FileExplorerPanel {...props} />);
-			const selectedItem = container.querySelector('[class*="bg-white/10"]');
-			expect(selectedItem).toBeInTheDocument();
+			const row = Array.from(container.querySelectorAll<HTMLElement>('[data-file-index]')).find(
+				(el) => el.textContent?.includes('package.json')
+			);
+			const highlight = row!.querySelector('[data-testid="file-tree-row-highlight"]');
+			expect(highlight).toHaveStyle({ backgroundColor: 'rgba(255,255,255,0.1)' });
 		});
 
 		it('applies keyboard selected style when focused', () => {
@@ -1269,7 +1272,9 @@ describe('FileExplorerPanel', () => {
 				selectedFileIndex: 0,
 			};
 			const { container } = render(<FileExplorerPanel {...props} />);
-			const keyboardSelectedItem = container.querySelector('[data-file-index="0"]');
+			const keyboardSelectedItem = container.querySelector(
+				'[data-file-index="0"] [data-testid="file-tree-row-highlight"]'
+			);
 			expect(keyboardSelectedItem).toHaveStyle({
 				borderLeftColor: mockTheme.colors.accent,
 				backgroundColor: mockTheme.colors.bgActivity,
@@ -1284,7 +1289,9 @@ describe('FileExplorerPanel', () => {
 				selectedFileIndex: 0,
 			};
 			const { container } = render(<FileExplorerPanel {...props} />);
-			const item = container.querySelector('[data-file-index="0"]');
+			const item = container.querySelector(
+				'[data-file-index="0"] [data-testid="file-tree-row-highlight"]'
+			);
 			// When not focused, should not have accent color (uses transparent which may not be in computed style)
 			expect(item).not.toHaveStyle({ borderLeftColor: mockTheme.colors.accent });
 		});
@@ -1297,7 +1304,9 @@ describe('FileExplorerPanel', () => {
 				selectedFileIndex: 0,
 			};
 			const { container } = render(<FileExplorerPanel {...props} />);
-			const item = container.querySelector('[data-file-index="0"]');
+			const item = container.querySelector(
+				'[data-file-index="0"] [data-testid="file-tree-row-highlight"]'
+			);
 			// When on different tab, should not have accent color
 			expect(item).not.toHaveStyle({ borderLeftColor: mockTheme.colors.accent });
 		});
@@ -1677,15 +1686,23 @@ describe('FileExplorerPanel', () => {
 	});
 
 	// LOCKED VISUAL INVARIANTS - DO NOT RELAX WITHOUT EXPLICIT REQUEST.
-	// Alignment rules (see FileExplorerPanel.tsx TreeRow):
-	//   BASE_PAD = 8, INDENT_STEP = 20 (= chevron width 12 + flex gap 8)
+	// Alignment rules (see FileExplorerPanel/components/FileTreeRow.tsx):
+	//   BASE_PAD = 8, INDENT_STEP = 20 (= chevron slot 12 + flex gap 8)
 	//   Row padding-left:  BASE_PAD + depth * INDENT_STEP
 	//   Indent guide left: 12 + i * INDENT_STEP   for i in [0, depth)
+	//   Every row opens with a 12px chevron slot: a folder draws its chevron
+	//   there, a file reserves it empty.
+	//   Row highlight left: depth * INDENT_STEP
 	// Derived alignment guarantees:
-	//   1. Root files (depth 0) align with root folder chevrons at X = 8.
-	//   2. File icon at depth N+1 aligns with parent folder icon at depth N,
-	//      because folder_icon_X(N) = pad(N) + chevron(12) + gap(8) = pad(N+1).
+	//   1. Files and folders at the same depth share one icon column,
+	//      icon_X(N) = pad(N) + chevron slot(12) + gap(8).
+	//   2. A child's icon sits exactly one INDENT_STEP right of its parent
+	//      folder's icon, so a file reads as a child of its folder. (Before #1585
+	//      files had no slot, so a file's icon lined up under its PARENT folder's
+	//      icon and a nested tree read as a diagonal staircase.)
 	//   3. Sibling rows at the same depth share identical padding-left.
+	//   4. A row's highlight starts right of its nearest ancestor guide, so a
+	//      selected row never paints across the guides of the folders above it.
 	describe('Indent Alignment (locked invariants)', () => {
 		const BASE_PAD = 8;
 		const INDENT_STEP = 20;
@@ -1704,7 +1721,7 @@ describe('FileExplorerPanel', () => {
 			expect(row).toHaveStyle({ paddingLeft: '8px' });
 		});
 
-		it('root file row has padding-left = 8px (aligned with root folder chevron)', () => {
+		it('root file row has padding-left = 8px (same as a root folder row)', () => {
 			const { container } = render(<FileExplorerPanel {...defaultProps} />);
 			const row = getRowByText(container, 'package.json');
 			expect(row).toHaveStyle({ paddingLeft: expectedPad(0) });
@@ -1735,11 +1752,22 @@ describe('FileExplorerPanel', () => {
 			expect(row).toHaveStyle({ paddingLeft: '48px' });
 		});
 
-		it('file icon at depth N+1 aligns with parent folder icon at depth N', () => {
-			// Core parent-child alignment invariant.
-			// folder_icon_X(N) = pad(N) + chevron_width + gap
-			//                 = 8 + 20N + 20 = 28 + 20N
-			// file_pad(N+1)   = 8 + 20(N+1) = 28 + 20N  ✓
+		it('file and folder siblings share one icon column', () => {
+			// Sibling invariant: a file reserves the chevron slot a folder draws its
+			// chevron in, so both icons land at pad(N) + slot + gap.
+			const session = createMockSession({ fileExplorerExpanded: ['src'] });
+			const { container } = render(<FileExplorerPanel {...defaultProps} session={session} />);
+
+			const folder = getRowByText(container, 'utils'); // depth 1 folder
+			const file = getRowByText(container, 'index.ts'); // depth 1 file
+
+			expect(file!.querySelector('[data-testid="file-tree-chevron-spacer"]')).toHaveClass('w-3');
+			expect(folder!.querySelector('[data-testid="file-tree-chevron-spacer"]')).toBeNull();
+		});
+
+		it('child icon sits one INDENT_STEP right of its parent folder icon', () => {
+			// Parent-child invariant. Both rows put the same chevron slot ahead of
+			// the icon, so the icon offset is exactly the padding delta.
 			const session = createMockSession({ fileExplorerExpanded: ['src', 'src/utils'] });
 			const { container } = render(<FileExplorerPanel {...defaultProps} session={session} />);
 
@@ -1749,14 +1777,11 @@ describe('FileExplorerPanel', () => {
 			const parentPad = parseFloat(parentFolder!.style.paddingLeft);
 			const childPad = parseFloat(childFile!.style.paddingLeft);
 
-			// Parent folder's icon column == parent pad + chevron + gap
-			// Child file's icon column == child pad
-			// These must be equal.
-			expect(childPad).toBe(parentPad + CHEVRON_PLUS_GAP);
+			expect(childFile!.querySelector('[data-testid="file-tree-chevron-spacer"]')).not.toBeNull();
+			expect(childPad - parentPad).toBe(INDENT_STEP);
 		});
 
-		it('indent step equals chevron width + gap (required for parent-child alignment)', () => {
-			// If this fails, the parent-child alignment invariant above breaks.
+		it('indent step equals chevron slot + gap (one icon column per level)', () => {
 			expect(INDENT_STEP).toBe(CHEVRON_PLUS_GAP);
 		});
 
@@ -1778,6 +1803,16 @@ describe('FileExplorerPanel', () => {
 			const row = getRowByText(container, 'package.json');
 			const guides = row!.querySelectorAll('div.absolute.w-px');
 			expect(guides).toHaveLength(0);
+		});
+
+		it('row highlight starts right of its nearest ancestor guide', () => {
+			const session = createMockSession({ fileExplorerExpanded: ['src', 'src/utils'] });
+			const { container } = render(<FileExplorerPanel {...defaultProps} session={session} />);
+			const row = getRowByText(container, 'helpers.ts'); // depth 2
+			const guides = row!.querySelectorAll<HTMLElement>('div.absolute.w-px');
+			const highlight = row!.querySelector<HTMLElement>('[data-testid="file-tree-row-highlight"]');
+			const lastGuideRight = parseFloat(guides[guides.length - 1].style.left) + 1;
+			expect(parseFloat(highlight!.style.left)).toBeGreaterThan(lastGuideRight);
 		});
 
 		it('sibling folder and file at same depth share identical padding-left', () => {

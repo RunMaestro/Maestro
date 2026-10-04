@@ -1312,11 +1312,30 @@ Send Feedback from the CLI: check gh, find duplicates, +1 an issue, or file a ne
 
 ## `maestro-cli feedback auth`
 
-Check that the GitHub CLI (gh) is installed and logged in (required to file)
+Check that the GitHub CLI (gh) is installed, logged in, and allowed to file on the feedback repo (required to file); names the gh account, and prints the login command when signing in can fix it
 
-| Option   | Description                    | Default |
-| -------- | ------------------------------ | ------- |
-| `--json` | Output as JSON (for scripting) | -       |
+| Option    | Description                                          | Default |
+| --------- | ---------------------------------------------------- | ------- |
+| `--fresh` | Skip the cached verdict (after logging in elsewhere) | -       |
+| `--json`  | Output as JSON (for scripting)                       | -       |
+
+## `maestro-cli feedback login`
+
+Sign the GitHub CLI in for feedback (gh auth login, device code + browser), as the modal's "Log in to GitHub" does
+
+| Option   | Description                               | Default |
+| -------- | ----------------------------------------- | ------- |
+| `--json` | Output the result as JSON (for scripting) | -       |
+
+## `maestro-cli feedback accounts`
+
+List the provider accounts the Feedback chat can run as, in the order it tries them (first usable one wins)
+
+| Option        | Description                                                               | Default |
+| ------------- | ------------------------------------------------------------------------- | ------- |
+| `--use <key>` | Make this account (a key from the list) the one the next chat tries first | -       |
+| `--clear`     | Forget the remembered account and pick automatically again                | -       |
+| `--json`      | Output as JSON (for scripting)                                            | -       |
 
 ## `maestro-cli feedback search <query>`
 

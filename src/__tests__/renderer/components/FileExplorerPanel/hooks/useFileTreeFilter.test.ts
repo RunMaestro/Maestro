@@ -25,6 +25,8 @@ const makeFlattened = (paths: string[]): FlattenedNode[] =>
 		path,
 		depth: 0,
 		globalIndex: i,
+		isLastChild: i === paths.length - 1,
+		ancestorGuideMask: 0,
 	}));
 
 const defaultArgs = {

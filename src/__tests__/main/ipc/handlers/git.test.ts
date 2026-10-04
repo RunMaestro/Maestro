@@ -94,6 +94,17 @@ vi.mock('../../../../main/utils/remote-git', () => ({
 	execGit: vi.fn(),
 }));
 
+// The branch-switch guard has its own suite (branch-switch-guard.test.ts). Its
+// rev-parse calls would shift every ordered execFileNoThrow mock here.
+const { mockBranchSwitchBlocker, mockBeginRemoteSync } = vi.hoisted(() => ({
+	mockBranchSwitchBlocker: vi.fn(),
+	mockBeginRemoteSync: vi.fn(),
+}));
+vi.mock('../../../../main/utils/branch-switch-guard', () => ({
+	branchSwitchBlocker: mockBranchSwitchBlocker,
+	beginRemoteSync: mockBeginRemoteSync,
+}));
+
 // Mock remote-fs (used by scanWorktreeDirectory's SSH branch)
 vi.mock('../../../../main/utils/remote-fs', () => ({
 	readDirRemote: vi.fn(),
@@ -145,6 +156,8 @@ describe('Git IPC handlers', () => {
 
 		// Reset hoisted settings store mock to a clean state for each test
 		mockSettingsStore.get.mockReturnValue([]);
+		mockBranchSwitchBlocker.mockResolvedValue(null);
+		mockBeginRemoteSync.mockResolvedValue(() => {});
 
 		// Capture all registered handlers
 		handlers = new Map();
@@ -1299,6 +1312,21 @@ COMMIT_STARTdef987654321|Jane Smith|2024-01-14T09:00:00+00:00||Add feature
 			});
 		});
 
+		it('holds branch switches for a push, releases on failure, and skips fetch', async () => {
+			const release = vi.fn();
+			mockBeginRemoteSync.mockResolvedValue(release);
+			mockStreaming([], { stderr: 'pre-push hook failed\n', exitCode: 1 });
+			const handler = handlers.get('git:runCommand');
+
+			await handler!(mockEvent(), { runId: 'run-h', operation: 'push', cwd: '/test/repo' });
+			expect(mockBeginRemoteSync).toHaveBeenCalledWith('push', '/test/repo', undefined, undefined);
+			expect(release).toHaveBeenCalledTimes(1);
+
+			mockBeginRemoteSync.mockClear();
+			await handler!(mockEvent(), { runId: 'run-f', operation: 'fetch', cwd: '/test/repo' });
+			expect(mockBeginRemoteSync).not.toHaveBeenCalled();
+		});
+
 		it('surfaces stderr as the error on failure', async () => {
 			mockStreaming([], { stderr: 'fatal: could not read from remote\n', exitCode: 128 });
 
@@ -1478,6 +1506,19 @@ COMMIT_STARTdef987654321|Jane Smith|2024-01-14T09:00:00+00:00||Add feature
 	});
 
 	describe('git:checkoutBranch', () => {
+		it('refuses without running git while the guard reports a blocker', async () => {
+			mockBranchSwitchBlocker.mockResolvedValue('A git push is running in this working tree.');
+
+			const handler = handlers.get('git:checkoutBranch');
+			const result = await handler!({} as any, '/test/repo', 'main');
+
+			expect(result).toEqual({
+				success: false,
+				error: 'A git push is running in this working tree.',
+			});
+			expect(execFile.execFileNoThrow).not.toHaveBeenCalled();
+		});
+
 		it('checks out an existing branch', async () => {
 			vi.mocked(execFile.execFileNoThrow).mockResolvedValue({
 				stdout: '',
@@ -2965,6 +3006,20 @@ export function Component() {
 	});
 
 	describe('git:worktreeCheckout', () => {
+		it('refuses without running git while the guard reports a blocker', async () => {
+			mockBranchSwitchBlocker.mockResolvedValue('Maestro has a turn running in this working tree.');
+
+			const handler = handlers.get('git:worktreeCheckout');
+			const result = await handler!({} as any, '/worktree/path', 'feature/x', false);
+
+			expect(result).toEqual({
+				success: false,
+				hasUncommittedChanges: false,
+				error: 'Maestro has a turn running in this working tree.',
+			});
+			expect(execFile.execFileNoThrow).not.toHaveBeenCalled();
+		});
+
 		it('should switch branch successfully in worktree', async () => {
 			vi.mocked(execFile.execFileNoThrow)
 				.mockResolvedValueOnce({
