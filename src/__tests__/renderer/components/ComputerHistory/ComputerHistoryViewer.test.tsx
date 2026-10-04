@@ -2,6 +2,7 @@ import React from 'react';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ComputerHistoryViewer } from '../../../../renderer/components/ComputerHistory';
+import { LayerStackProvider } from '../../../../renderer/contexts/LayerStackContext';
 import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
 import { defaultComputerHistoryConfig } from '../../../../shared/computer-history/config';
 import { mockTheme } from '../../../helpers/mockTheme';
@@ -78,9 +79,17 @@ afterEach(() => {
 	(window.maestro as unknown as Record<string, unknown>).computerHistory = original;
 });
 
+function renderViewer(onClose = vi.fn()) {
+	return render(
+		<LayerStackProvider>
+			<ComputerHistoryViewer theme={mockTheme} onClose={onClose} />
+		</LayerStackProvider>
+	);
+}
+
 describe('ComputerHistoryViewer', () => {
 	it('renders visits with what was typed, and the recorder state', async () => {
-		render(<ComputerHistoryViewer theme={mockTheme} onClose={vi.fn()} />);
+		renderViewer();
 		expect(await screen.findByText('ship the viewer')).toBeTruthy();
 		expect(screen.getByText('general - Acme')).toBeTruthy();
 		expect((await screen.findByTestId('computer-history-state')).textContent).toContain(
@@ -89,7 +98,7 @@ describe('ComputerHistoryViewer', () => {
 	});
 
 	it('clicking an app filters the event query to it', async () => {
-		render(<ComputerHistoryViewer theme={mockTheme} onClose={vi.fn()} />);
+		renderViewer();
 		const apps = await screen.findByTestId('computer-history-apps');
 		fireEvent.click(await within(apps).findByText('Slack'));
 		await waitFor(() =>
@@ -99,7 +108,7 @@ describe('ComputerHistoryViewer', () => {
 
 	it('the ESC pill clears an active search before it closes', async () => {
 		const onClose = vi.fn();
-		render(<ComputerHistoryViewer theme={mockTheme} onClose={onClose} />);
+		renderViewer(onClose);
 		const search = await screen.findByPlaceholderText('Search text, titles, URLs');
 		fireEvent.change(search, { target: { value: 'viewer' } });
 		fireEvent.click(screen.getByTestId('computer-history-esc'));
@@ -110,7 +119,7 @@ describe('ComputerHistoryViewer', () => {
 	});
 
 	it('pauses from the header', async () => {
-		render(<ComputerHistoryViewer theme={mockTheme} onClose={vi.fn()} />);
+		renderViewer();
 		fireEvent.click(await screen.findByTestId('computer-history-pause'));
 		await waitFor(() => expect(api.pause).toHaveBeenCalledWith(null));
 	});
