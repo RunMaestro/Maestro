@@ -64,6 +64,7 @@ import {
 	WebHandlerDependencies,
 } from './web';
 import { registerWebLoginHandlers } from './webLogin';
+import { registerComputerHistoryHandlers } from './computerHistory';
 import { registerLeaderboardHandlers, LeaderboardHandlerDependencies } from './leaderboard';
 import { registerNotificationsHandlers } from './notifications';
 import { registerSymphonyHandlers, SymphonyHandlerDependencies } from './symphony';
@@ -142,6 +143,7 @@ export {
 };
 export type { WebHandlerDependencies };
 export { registerWebLoginHandlers };
+export { registerComputerHistoryHandlers };
 export { registerLeaderboardHandlers };
 export type { LeaderboardHandlerDependencies };
 export { registerNotificationsHandlers };

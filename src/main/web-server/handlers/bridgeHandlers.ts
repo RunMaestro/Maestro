@@ -94,9 +94,12 @@ export function uninstallWebContentsBridgeHook(): void {
  *
  * No-op when the Encore Feature is off (`broadcastSink === null`) or when
  * no web-desktop clients are connected (handled inside the sink itself).
+ * A channel under a denied prefix is never fanned out either: a browser that
+ * may not invoke `computerHistory:*` must not receive its pushes.
  */
 export function broadcastBridgeEvent(channel: string, args: unknown[]): void {
 	if (!broadcastSink) return;
+	if (isBridgeDeniedChannel(channel)) return;
 	try {
 		broadcastSink(channel, args);
 	} catch (err) {

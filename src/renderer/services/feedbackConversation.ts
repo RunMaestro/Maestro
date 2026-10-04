@@ -9,6 +9,7 @@
 
 import type { ToolType } from '../types';
 import { stripAnsiCodes } from '../../shared/stringUtils';
+import { redactSecrets } from '../../shared/redactSecrets';
 
 // ============================================================================
 // Types
@@ -255,16 +256,19 @@ function normalizeResponse(raw: any): FeedbackParsedResponse {
 	};
 }
 
+/**
+ * Failure output is shown to the user and may be filed in a GitHub issue, so
+ * scrub it through the canonical redactor. The labels keep this surface's
+ * historical wording (`OPENAI_API_KEY=[REDACTED]`, `[REDACTED_GITHUB_TOKEN]`).
+ */
 function redactProviderSecrets(output: string): string {
-	return output
-		.replace(
-			/\b((?:[A-Z][A-Z0-9_]*_)?(?:API_KEY|TOKEN|ACCESS_TOKEN|SECRET)\b\s*[:=]\s*)(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s\r\n]+)/gi,
-			'$1[REDACTED]'
-		)
-		.replace(/\b(Authorization\s*:\s*Bearer\s+)[A-Za-z0-9._~+/=-]+/gi, '$1[REDACTED]')
-		.replace(/\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9_]{20,}\b/g, '[REDACTED_GITHUB_TOKEN]')
-		.replace(/\bgithub_pat_[A-Za-z0-9_]{20,}\b/g, '[REDACTED_GITHUB_TOKEN]')
-		.replace(/\bsk-[A-Za-z0-9][A-Za-z0-9_-]{8,}\b/g, '[REDACTED_API_KEY]');
+	return redactSecrets(output, {
+		labels: {
+			secret: '[REDACTED]',
+			bearer: '[REDACTED]',
+			github_token: '[REDACTED_GITHUB_TOKEN]',
+		},
+	}).text;
 }
 
 function summarizeProcessFailure(output: string): string {

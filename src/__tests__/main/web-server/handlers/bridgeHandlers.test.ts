@@ -273,6 +273,18 @@ describe('broadcastBridgeEvent', () => {
 		uninstallWebContentsBridgeHook();
 	});
 
+	it('never fans out a denied channel (Computer History status push)', () => {
+		const broadcastToAll = vi.fn();
+		installWebContentsBridgeHook({
+			broadcastToAll,
+		} as unknown as Parameters<typeof installWebContentsBridgeHook>[0]);
+
+		broadcastBridgeEvent('computerHistory:statusChanged', [{ state: 'recording' }]);
+		expect(broadcastToAll).not.toHaveBeenCalled();
+
+		uninstallWebContentsBridgeHook();
+	});
+
 	it('stops broadcasting after uninstall', () => {
 		const broadcastToAll = vi.fn();
 		installWebContentsBridgeHook({
@@ -406,6 +418,26 @@ describe('handleBridgeInvoke denied channels', () => {
 			const send = vi.fn();
 			await handleBridgeInvoke(
 				makeClient(),
+				{ type: 'bridge.invoke', requestId: channel, channel },
+				send
+			);
+			expect(handler).not.toHaveBeenCalled();
+			expect((send.mock.calls[0][1] as Record<string, unknown>).ok).toBe(false);
+		}
+	});
+
+	it('refuses every computerHistory channel (D15: a browser must not read screen history)', async () => {
+		for (const channel of [
+			'computerHistory:query',
+			'computerHistory:status',
+			'computerHistory:clear',
+			'computerHistory:somethingNew',
+		]) {
+			const handler = vi.fn(async () => 'leaked');
+			invokeHandlers.set(channel, handler);
+			const send = vi.fn();
+			await handleBridgeInvoke(
+				makeClient({ id: 'u1', username: 'ada', displayName: 'Ada' }),
 				{ type: 'bridge.invoke', requestId: channel, channel },
 				send
 			);

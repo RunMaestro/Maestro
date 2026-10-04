@@ -10,13 +10,23 @@
  * was meant to constrain. The `webLogin:*` channels also read and write
  * `web-users.json`, which holds every password hash.
  *
+ * The same rule covers `computerHistory:*` (see the list below).
+ *
  * Matching is by PREFIX rather than by exact channel name on purpose: a
  * channel added to the namespace later is denied the moment it is registered,
  * instead of being exposed until somebody remembers to extend a list.
  */
 
 /** Channel prefixes refused before dispatch. */
-export const BRIDGE_DENIED_CHANNELS: ReadonlySet<string> = new Set(['webLogin:']);
+export const BRIDGE_DENIED_CHANNELS: ReadonlySet<string> = new Set([
+	'webLogin:',
+	// Computer History is the user's screen and typing history. A signed-in
+	// browser (possibly remote, through the tunnel) must not be able to read
+	// it, clear it, or change what is recorded. maestro-cli reaches the same
+	// service through its own `computer_history_command` WS message, which
+	// refuses any socket that did not present the CLI secret.
+	'computerHistory:',
+]);
 
 /** Whether `channel` falls under a denied prefix. */
 export function isBridgeDeniedChannel(channel: string): boolean {

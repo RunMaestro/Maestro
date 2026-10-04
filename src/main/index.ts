@@ -36,6 +36,11 @@ import { createCueSupervisorHooks } from './cue/cue-first-party';
 import { PianolaSupervisor } from './pianola/pianola-supervisor';
 import { PianolaRelearnScheduler } from './pianola/pianola-relearn-scheduler';
 import { createPianolaLifecycle } from './pianola/pianola-lifecycle';
+import {
+	getComputerHistoryService,
+	createComputerHistorySupervisorHooks,
+} from './computer-history';
+import { createComputerHistoryForApp } from './computer-history/bootstrap';
 import { execFile } from 'child_process';
 import { PluginManager } from './plugins/plugin-manager';
 import { resolveTrustedKeys } from '../shared/plugins/publisher-keys';
@@ -614,6 +619,16 @@ store.onDidChange('encoreFeatures', (encoreFeatures) => {
 		return;
 	}
 	pluginHostViews.sync();
+});
+
+// Computer History follows its Encore flag live. `maestro-cli encore enable`
+// writes through set_setting rather than the first-party bridge, so this store
+// change is the one signal every enable/disable path produces. reconcile() is
+// idempotent and a no-op before the service exists.
+store.onDidChange('encoreFeatures', () => {
+	void getComputerHistoryService()
+		?.reconcile()
+		.catch((err) => void captureException(err, { operation: 'computerHistory:flagChange' }));
 });
 
 // Collectors for a support (debug) package. One object shared by the debug and
@@ -1501,6 +1516,19 @@ app
 		pianolaSupervisor = pianolaLifecycle.supervisor;
 		pianolaRelearnScheduler = pianolaLifecycle.relearnScheduler;
 
+		// Computer History: construct the one service (IPC, the CLI's WS writes,
+		// and the first-party hooks all reach it). Started below at boot when its
+		// Encore flag is on; see src/main/computer-history/.
+		createComputerHistoryForApp({
+			settingsStore: store as unknown as { get: (key: string) => unknown },
+			safeSend,
+			getWindowForSession: (sessionId: string) => {
+				const ownerId = windowRegistry.getWindowForSession(sessionId);
+				const owner = ownerId ? windowRegistry.get(ownerId) : windowRegistry.getPrimary();
+				return owner?.browserWindow ?? mainWindow;
+			},
+		});
+
 		// Plugin manager: discovers installed community plugins, tracks their
 		// enable state, verifies signatures, and (tier 1) runs their sandboxed
 		// code. Self-gates on encoreFeatures.plugins. The permission broker is the
@@ -1564,6 +1592,9 @@ app
 					reconcile: () => usageRefreshScheduler?.start(),
 					stopAll: () => usageRefreshScheduler?.stop(),
 				},
+				// Computer History: `computerHistory.observer` - the accessibility
+				// helper plus the segment writer. Disable/revoke stops both.
+				computerHistory: createComputerHistorySupervisorHooks(() => getComputerHistoryService()),
 			};
 		const firstPartyBridges: Partial<Record<FirstPartyEncoreFlag, FirstPartyPluginBridge>> = {};
 		for (const flag of Object.keys(FIRST_PARTY_PLUGINS) as FirstPartyEncoreFlag[]) {
@@ -2928,6 +2959,15 @@ app
 			}
 		}
 
+		// Start Computer History when its Encore flag is on. start() re-checks the
+		// flag itself; a missing helper binary is reported in status, not thrown.
+		void getComputerHistoryService()
+			?.start()
+			.catch((err) => {
+				void captureException(err, { operation: 'computerHistory:boot' });
+				logger.error(`Computer History failed to start at boot: ${err}`, 'Startup');
+			});
+
 		// Start the Pianola supervisor unconditionally: it self-gates on the
 		// pianola Encore flag (reconcile kills everything and spawns nothing when
 		// off), and starting it always means its file-watch reconcile picks up
@@ -3138,6 +3178,13 @@ quitHandler = createQuitHandler({
 		pianolaSupervisor?.stopAll();
 		// Stop the Pianola re-learn cadence.
 		pianolaRelearnScheduler?.stop();
+		// Stop the Computer History helper (it also exits on stdin EOF) and close
+		// the open segment. If quit outruns the close, the next start indexes it.
+		void getComputerHistoryService()
+			?.stop()
+			.catch((error) => {
+				void captureException(error, { operation: 'shutdown:computerHistory' });
+			});
 		// Tear down plugin hot-reload watching and running sandboxes.
 		pluginManager?.stopWatching();
 		pluginManager?.stopAllSandboxes();

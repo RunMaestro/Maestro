@@ -1,3 +1,4 @@
+export { ComputerHistorySection } from './ComputerHistorySection';
 export { CueSettingsSection } from './CueSettingsSection';
 export { DirectorNotesSection } from './DirectorNotesSection';
 export { SymphonyRegistrySection } from './SymphonyRegistrySection';

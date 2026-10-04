@@ -24,6 +24,7 @@
  * - set_setting: Modify a single setting (allowlisted keys only)
  * - list_desktop_sessions: Enumerate open AI tabs across all agents (CLI: `session list`)
  * - get_session_history: Return tab conversation history with --since/--tail filters (CLI: `session show`)
+ * - computer_history_command: Computer History writes, CLI clients only (CLI: `computer-history`)
  *
  * Auto Run message types (refresh_auto_run_docs, configure_auto_run, get_auto_run_docs,
  * get_auto_run_state, get_auto_run_document, save_auto_run_document, stop_auto_run, etc.)
@@ -99,6 +100,7 @@ import {
 	handleAbortAutoRunError,
 } from './autoRun';
 import { handleSnoozeCommand } from './snooze';
+import { handleComputerHistoryCommand } from './computerHistory';
 import {
 	handleSelectTab,
 	handleNewTab,
@@ -301,6 +303,10 @@ export class WebSocketMessageHandler {
 
 			case 'snooze_command':
 				handleSnoozeCommand(this.ctx, client, message);
+				break;
+
+			case 'computer_history_command':
+				void handleComputerHistoryCommand(this.ctx, client, message);
 				break;
 
 			case 'reorder_tab':

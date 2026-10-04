@@ -1512,7 +1512,7 @@ List Encore features and whether each is enabled
 
 ## `maestro-cli encore enable <feature>`
 
-Enable an Encore feature (directorNotes, usageStats, symphony, maestroCue, pianola)
+Enable an Encore feature (directorNotes, usageStats, symphony, maestroCue, pianola, computerHistory)
 
 | Option   | Description                    | Default |
 | -------- | ------------------------------ | ------- |
@@ -1525,6 +1525,131 @@ Disable an Encore feature
 | Option   | Description                    | Default |
 | -------- | ------------------------------ | ------- |
 | `--json` | Output as JSON (for scripting) | -       |
+
+## `maestro-cli computer-history`
+
+Computer History: query what the user saw and typed across apps (local, untrusted content)
+
+## `maestro-cli computer-history status`
+
+Show whether recording is on, permission state, and store size
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+## `maestro-cli computer-history list`
+
+List recorded 10-minute segments in a time range
+
+| Option           | Description                                             | Default |
+| ---------------- | ------------------------------------------------------- | ------- |
+| `--since <time>` | Start: 30m, 2h, 1d, 1w, ISO-8601, or epoch (default 2h) | -       |
+| `--until <time>` | End (default now)                                       | -       |
+| `--app <id>`     | Only segments that include this app id                  | -       |
+| `--json`         | Output as JSON (for scripting)                          | -       |
+
+## `maestro-cli computer-history query`
+
+Search recorded events (text, selections, snapshots, app and window changes)
+
+| Option           | Description                                                           | Default |
+| ---------------- | --------------------------------------------------------------------- | ------- |
+| `--since <time>` | Start: 30m, 2h, 1d, 1w, ISO-8601, or epoch (default 1h)               | -       |
+| `--until <time>` | End (default now)                                                     | -       |
+| `--app <id>`     | App id or name (comma list or repeat)                                 | -       |
+| `--kind <kind>`  | text \| selection \| snapshot \| app \| window (comma list or repeat) | -       |
+| `--grep <regex>` | Case-insensitive regex over text, titles, URLs, and labels            | -       |
+| `--limit <n>`    | Most recent N matches (default 200)                                   | -       |
+| `--json`         | Output as JSON (for scripting)                                        | -       |
+
+## `maestro-cli computer-history apps`
+
+Apps used in a time range, by foreground time and event count
+
+| Option           | Description                    | Default |
+| ---------------- | ------------------------------ | ------- |
+| `--since <time>` | Start (default 1d)             | -       |
+| `--until <time>` | End (default now)              | -       |
+| `--json`         | Output as JSON (for scripting) | -       |
+
+## `maestro-cli computer-history pause`
+
+Pause recording (until resumed, or for a duration)
+
+| Option             | Description                                        | Default |
+| ------------------ | -------------------------------------------------- | ------- |
+| `--for <duration>` | Pause for 30m, 2h, 1d, 1w (default: until resumed) | -       |
+| `--json`           | Output as JSON (for scripting)                     | -       |
+
+## `maestro-cli computer-history resume`
+
+Resume recording
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+## `maestro-cli computer-history rules`
+
+Apps and domains that are never recorded
+
+## `maestro-cli computer-history rules list`
+
+List user rules (built-in exclusions always apply)
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+## `maestro-cli computer-history rules add`
+
+Never record an app (by app id) or a domain (and its subdomains)
+
+| Option              | Description                                                 | Default |
+| ------------------- | ----------------------------------------------------------- | ------- |
+| `--app <id>`        | App id: macOS bundle id, Windows exe name, Linux desktop id | -       |
+| `--domain <domain>` | Domain, e.g. bank.example.com                               | -       |
+| `--json`            | Output as JSON (for scripting)                              | -       |
+
+## `maestro-cli computer-history rules remove <id>`
+
+Remove a rule by id (or by its app id / domain)
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+## `maestro-cli computer-history clear`
+
+Delete recorded history: everything since a time, or all of it
+
+| Option           | Description                                               | Default |
+| ---------------- | --------------------------------------------------------- | ------- |
+| `--since <time>` | Delete what was recorded since: 30m, 2h, 1d, 1w, ISO-8601 | -       |
+| `--all`          | Delete all recorded history (settings and rules stay)     | -       |
+| `--json`         | Output as JSON (for scripting)                            | -       |
+
+## `maestro-cli computer-history enable-accessibility`
+
+macOS: show the Accessibility prompt. Linux: turn on the desktop accessibility bus. Windows: not needed
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+## `maestro-cli computer-history config`
+
+Show settings, or change them with the flags below
+
+| Option                  | Description                                            | Default |
+| ----------------------- | ------------------------------------------------------ | ------- |
+| `--retention-days <n>`  | Keep this many days (default 90)                       | -       |
+| `--max-gb <n>`          | Keep at most this many GB (default 25)                 | -       |
+| `--snapshots <on\|off>` | Record visible window text snapshots                   | -       |
+| `--digests <on\|off>`   | Have an agent write 10-minute digests (off by default) | -       |
+| `--digest-agent <id>`   | Agent that writes digests (empty string clears it)     | -       |
+| `--json`                | Output as JSON (for scripting)                         | -       |
 
 ## `maestro-cli pianola`
 

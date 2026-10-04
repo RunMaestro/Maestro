@@ -19,6 +19,7 @@ import {
 import { createContextApi } from './context';
 import { createWebApi, createWebserverApi, createLiveApi } from './web';
 import { createWebLoginApi } from './webLogin';
+import { createComputerHistoryApi } from './computerHistory';
 import {
 	createDialogApi,
 	createFontsApi,
@@ -124,6 +125,9 @@ contextBridge.exposeInMainWorld('maestro', {
 
 	// Web Login API (accounts for the web interface - desktop-only)
 	webLogin: createWebLoginApi(),
+
+	// Computer History API (desktop-only; the web bridge refuses these channels)
+	computerHistory: createComputerHistoryApi(),
 
 	// Agent API
 	agents: createAgentsApi(),
@@ -297,6 +301,8 @@ export {
 	createLiveApi,
 	// Web Login accounts
 	createWebLoginApi,
+	// Computer History
+	createComputerHistoryApi,
 	// System utilities
 	createDialogApi,
 	createFontsApi,

@@ -4,6 +4,7 @@ import type { EncoreFeatureFlags } from '../../../../types';
 import { ExtensionsView } from '../../Extensions/ExtensionsView';
 import { CoworkingSetup } from '../../CoworkingSetup';
 import {
+	ComputerHistorySection,
 	CueSettingsSection,
 	DirectorNotesSection,
 	SymphonyRegistrySection,
@@ -89,6 +90,7 @@ export function EncoreTab({ theme, isOpen }: EncoreTabProps) {
 				<CoworkingSetup theme={theme} />
 			</div>
 		),
+		computerHistory: <ComputerHistorySection theme={theme} />,
 	};
 
 	return (

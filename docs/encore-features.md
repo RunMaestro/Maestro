@@ -37,17 +37,18 @@ Built-in features work with the community plugin subsystem switched off - that i
 
 ## Available features
 
-| Feature                              | Category   | Shortcut                       | Description                                                                                                                           |
-| ------------------------------------ | ---------- | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------- |
-| [Usage & Stats](./usage-dashboard)   | Insights   | `Opt+Cmd+U` / `Alt+Ctrl+U`     | Records query and Auto Run activity, and unlocks the Usage Dashboard that reports on it                                               |
-| [Director's Notes](./director-notes) | Insights   | `Cmd+Shift+O` / `Ctrl+Shift+O` | Unified timeline of all agent activity with AI-generated synopses                                                                     |
-| [Maestro Cue](./maestro-cue)         | Automation | `Opt+Q` / `Alt+Q`              | Event-driven automation: file changes, timers, agent chaining, GitHub polling, and task tracking                                      |
-| [Concerto](./concerto)               | UI         | `Opt+Cmd+C` / `Alt+Ctrl+C`     | Agents answer with something you can look at and click: interactive views on the Concerto stage, plus always-on-top Cadenza HUD cards |
-| [Maestro Symphony](./symphony)       | Agents     | `Opt+Cmd+Y` / `Alt+Ctrl+Y`     | Contribute to open source by donating AI tokens                                                                                       |
-| [Groups+](./general-usage#groups)    | UI         | -                              | Organize agent groups into folders, and personalize them with icons and label colors                                                  |
-| Pianola                              | Agents     | -                              | An autonomous manager agent that watches your other agents and answers or escalates their prompts                                     |
-| Coworking                            | Agents     | -                              | Lets an agent read terminal scrollback and inspect or drive browser tabs, through a per-agent MCP server                              |
-| OpenCode Server                      | Agents     | -                              | Runs local OpenCode through a shared `opencode serve` process instead of spawning the CLI per prompt                                  |
+| Feature                                | Category   | Shortcut                       | Description                                                                                                                           |
+| -------------------------------------- | ---------- | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------- |
+| [Usage & Stats](./usage-dashboard)     | Insights   | `Opt+Cmd+U` / `Alt+Ctrl+U`     | Records query and Auto Run activity, and unlocks the Usage Dashboard that reports on it                                               |
+| [Director's Notes](./director-notes)   | Insights   | `Cmd+Shift+O` / `Ctrl+Shift+O` | Unified timeline of all agent activity with AI-generated synopses                                                                     |
+| [Maestro Cue](./maestro-cue)           | Automation | `Opt+Q` / `Alt+Q`              | Event-driven automation: file changes, timers, agent chaining, GitHub polling, and task tracking                                      |
+| [Concerto](./concerto)                 | UI         | `Opt+Cmd+C` / `Alt+Ctrl+C`     | Agents answer with something you can look at and click: interactive views on the Concerto stage, plus always-on-top Cadenza HUD cards |
+| [Maestro Symphony](./symphony)         | Agents     | `Opt+Cmd+Y` / `Alt+Ctrl+Y`     | Contribute to open source by donating AI tokens                                                                                       |
+| [Groups+](./general-usage#groups)      | UI         | -                              | Organize agent groups into folders, and personalize them with icons and label colors                                                  |
+| Pianola                                | Agents     | -                              | An autonomous manager agent that watches your other agents and answers or escalates their prompts                                     |
+| Coworking                              | Agents     | -                              | Lets an agent read terminal scrollback and inspect or drive browser tabs, through a per-agent MCP server                              |
+| OpenCode Server                        | Agents     | -                              | Runs local OpenCode through a shared `opencode serve` process instead of spawning the CLI per prompt                                  |
+| [Computer History](./computer-history) | Data       | -                              | Records what you read and type across your apps, locally, so any agent can recall it                                                  |
 
 Features without a shortcut are not opened from the keyboard: they change how something you already use behaves, rather than putting a new surface on screen.
 

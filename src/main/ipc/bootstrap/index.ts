@@ -38,6 +38,7 @@ import {
 	registerAttachmentsHandlers,
 	registerWebHandlers,
 	registerWebLoginHandlers,
+	registerComputerHistoryHandlers,
 	registerLeaderboardHandlers,
 	registerNotificationsHandlers,
 	registerSymphonyHandlers,
@@ -106,6 +107,10 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 	// Web Login account management - desktop-only, the bridge refuses every
 	// `webLogin:*` channel. See src/main/ipc/handlers/webLogin.ts.
 	registerWebLoginHandlers();
+
+	// Computer History - desktop-only, the bridge refuses every
+	// `computerHistory:*` channel (D15). See src/main/ipc/handlers/computerHistory.ts.
+	registerComputerHistoryHandlers();
 
 	// Git operations - extracted to src/main/ipc/handlers/git.ts
 	registerGitHandlers({

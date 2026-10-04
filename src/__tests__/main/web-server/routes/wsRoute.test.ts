@@ -652,6 +652,19 @@ describe('WsRoute Web Login gate', () => {
 		expect(callbacks.onClientConnect).toHaveBeenCalledTimes(1);
 		// Admitted is not the same as signed in: a CLI caller acts as the desktop.
 		expect((callbacks.onClientConnect as any).mock.calls[0][0].user).toBeUndefined();
+		// ...but it is marked as the CLI, which CLI-only handlers (Computer
+		// History writes) check to refuse browser sockets.
+		expect((callbacks.onClientConnect as any).mock.calls[0][0].cli).toBe(true);
+	});
+
+	it('does not mark a socket without the CLI secret as the CLI', () => {
+		webLogin.enabled = false;
+		const { route, callbacks } = setup();
+		route.handler(
+			createMockConnection(),
+			createMockRequest(undefined, { ip: '127.0.0.1', headers: { host: 'localhost:3000' } })
+		);
+		expect((callbacks.onClientConnect as any).mock.calls[0][0].cli).toBeUndefined();
 	});
 
 	it('closes a bare loopback upgrade: the tunnel arrives over loopback too', () => {

@@ -151,6 +151,8 @@ export class WsRoute {
 				// Resolved once, here: the cookie is only on the upgrade request, so
 				// there is no later point at which a frame can say who sent it.
 				...(auth.user ? { user: auth.user, sessionId: auth.sessionId } : {}),
+				// Same moment, same reason: only the upgrade carries the CLI secret.
+				...(auth.cli ? { cli: true } : {}),
 			};
 
 			// Notify parent about connection

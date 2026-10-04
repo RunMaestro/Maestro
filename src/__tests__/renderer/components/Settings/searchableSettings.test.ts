@@ -228,6 +228,8 @@ describe('searchableSettings', () => {
 			['global cue settings', 'encore-cue'],
 			['playbook registry', 'encore-symphony'],
 			['synopsis provider', 'encore-director-notes'],
+			['computer history', 'encore-computer-history'],
+			['digest agent', 'encore-computer-history'],
 
 			// Prompts tab
 			['wizard prompt', 'prompts-editor'],
