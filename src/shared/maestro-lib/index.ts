@@ -7,6 +7,9 @@
  * Internal modules (bin/, test utilities) are not exported.
  */
 
+// Paths and configuration
+export * from './paths/userDataDir';
+
 // Launch and argument building
 export * from './launch/launch-plan';
 export * from './launch/prompt-delivery';
