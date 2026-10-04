@@ -294,9 +294,10 @@ export interface GitDiffModalData {
 	 */
 	cwd?: string;
 	/**
-	 * Agent the diff was taken for, used to name it in the header. Optional for
-	 * the same reason as `cwd`: the keyboard shortcut and command palette follow
-	 * the active agent, so there is nothing to disambiguate.
+	 * Agent the diff was taken for: names it in the header and receives a review
+	 * annotated in the viewer. Optional for the same reason as `cwd`: the
+	 * keyboard shortcut and command palette follow the active agent, so there is
+	 * nothing to disambiguate, and the review goes to the active agent.
 	 */
 	sessionId?: string;
 }

@@ -1,6 +1,8 @@
-import { useState, useMemo, useEffect, useRef, memo } from 'react';
-import { Diff, Hunk } from 'react-diff-view';
-import { Plus, Minus, ImageIcon, Columns2, AlignJustify } from 'lucide-react';
+import { useState, useMemo, useEffect, useRef, useCallback, memo } from 'react';
+import type { ReactNode } from 'react';
+import { Diff, Hunk, getChangeKey } from 'react-diff-view';
+import type { EventMap, RenderGutter } from 'react-diff-view';
+import { Plus, Minus, ImageIcon, Columns2, AlignJustify, MessageSquarePlus } from 'lucide-react';
 import type { Theme } from '../types';
 import { parseGitDiff, getFileName, getDiffStats } from '../utils/gitDiffParser';
 import { getBasename } from '../../shared/formatters';
@@ -16,6 +18,22 @@ import { safeStorageGet, safeStorageSet } from '../utils/safeLocalStorage';
 import { ResizeHandles } from './ui/ResizeHandles';
 import { ModalSubtitle } from './ui/Modal';
 import { useSessionStore } from '../stores/sessionStore';
+import { DiffCommentCard, DiffCommentEditor, DiffReviewTray } from './DiffReviewComments';
+import {
+	anchorForSelection,
+	buildReviewRows,
+	clampToAnchorHunk,
+	formatDiffReviewPrompt,
+	type DiffComment,
+	type DiffCommentAnchor,
+	type DiffSide,
+} from '../utils/diffReviewComments';
+import { useDiffReviewStore, selectRepoComments } from '../stores/diffReviewStore';
+import { editDiffReviewInComposer, sendDiffReview } from '../services/diffReview';
+import { generateId } from '../utils/ids';
+import { isEditingTextTarget } from '../utils/editableTarget';
+import { trackShortcutUsage } from '../utils/shortcutTracking';
+import { notifyCenterFlash } from '../stores/centerFlashStore';
 import 'react-diff-view/style/index.css';
 
 export type GitDiffViewType = 'unified' | 'split';
@@ -46,6 +64,28 @@ function isFormControl(target: EventTarget | null): boolean {
 	return target.isContentEditable;
 }
 
+/**
+ * Review affordances on top of `generateDiffViewStyles`: a pointer over line
+ * numbers, widget rows without the library's padding, and the selected-lines
+ * highlight in the theme's accent (react-diff-view ships a fixed pale yellow
+ * that is unreadable on dark themes).
+ */
+function generateDiffReviewStyles(theme: Theme): string {
+	const accent = theme.colors.accent;
+	return `
+    .diff-gutter:not(.diff-gutter-omit) { cursor: pointer; user-select: none; }
+    .diff-widget-content { padding: 0; }
+    .diff-gutter.diff-gutter-selected {
+      background-color: color-mix(in srgb, ${accent} 35%, transparent) !important;
+      color: ${theme.colors.textMain} !important;
+    }
+    .diff-code.diff-code-selected {
+      background-color: color-mix(in srgb, ${accent} 18%, transparent) !important;
+      color: ${theme.colors.textMain} !important;
+    }
+  `;
+}
+
 interface GitDiffViewerProps {
 	diffText: string;
 	cwd: string;
@@ -53,9 +93,16 @@ interface GitDiffViewerProps {
 	onClose: () => void;
 	/**
 	 * Agent whose diff is shown, named in the header. See GitLogViewer: the cwd
-	 * pill alone does not identify the agent.
+	 * pill alone does not identify the agent. With `enableReview`, it is also
+	 * the agent a review left in the viewer is sent to.
 	 */
 	sessionId?: string;
+	/**
+	 * Let the user pin comments to diff lines and send them to `sessionId` as
+	 * one review. Off for viewers that show a diff no agent produced (Cue
+	 * backups) and for terminal-only agents.
+	 */
+	enableReview?: boolean;
 	/**
 	 * Default view type when the user has no persisted preference yet. Once the
 	 * user toggles the header button, the chosen value is saved to localStorage
@@ -78,6 +125,24 @@ interface GitDiffViewerProps {
 	priority?: number;
 }
 
+/** The comment box currently open, if any. `id` is set when editing a saved comment. */
+interface CommentEditState {
+	anchor: DiffCommentAnchor;
+	id?: string;
+	initialBody: string;
+}
+
+/**
+ * Lines picked in the active file, as indexes into its review rows. `anchor`
+ * is where the selection started, `focus` where it ends now (the keyboard
+ * cursor). `side` is the split-view column it was picked in.
+ */
+interface LineSelection {
+	anchor: number;
+	focus: number;
+	side?: DiffSide;
+}
+
 export const GitDiffViewer = memo(function GitDiffViewer({
 	diffText,
 	cwd,
@@ -87,6 +152,7 @@ export const GitDiffViewer = memo(function GitDiffViewer({
 	title = 'Git Diff',
 	priority,
 	sessionId,
+	enableReview = false,
 	onOpenFile,
 }: GitDiffViewerProps) {
 	// Name the agent whose repo this is. Subscribe to the name alone, never the
@@ -115,6 +181,330 @@ export const GitDiffViewer = memo(function GitDiffViewer({
 	// Parse the diff into separate files
 	const parsedFiles = useMemo(() => parseGitDiff(diffText), [diffText]);
 
+	// Review comments (issue #1475). Pending comments live in diffReviewStore,
+	// keyed by repo, so they survive switching file tabs here and even closing
+	// the viewer, until the review is sent or discarded.
+	const canReview = enableReview && !!sessionId;
+	const comments = useDiffReviewStore(selectRepoComments(cwd));
+	const [selection, setSelection] = useState<LineSelection | null>(null);
+	const [editing, setEditing] = useState<CommentEditState | null>(null);
+	const editingRef = useRef(editing);
+	editingRef.current = editing;
+	const selectionRef = useRef(selection);
+	selectionRef.current = selection;
+	// Text typed into the open comment box. Kept outside React state so a
+	// keystroke does not re-render every hunk; read back when the box remounts
+	// (switching file tabs and back) so a draft is not lost.
+	const draftBodyRef = useRef('');
+	const draggingRef = useRef(false);
+	const contentRef = useRef<HTMLDivElement>(null);
+
+	const activeFilePath = (() => {
+		const file = parsedFiles[activeTab];
+		if (!file) return '';
+		return file.isDeletedFile ? file.oldPath : file.newPath;
+	})();
+	const activeHunks = useMemo(
+		() => parsedFiles[activeTab]?.parsedDiff.flatMap((f) => f.hunks) ?? [],
+		[parsedFiles, activeTab]
+	);
+	// Rows exist only for a reviewable diff: a read-only viewer (Cue backups)
+	// never pays for them.
+	const rows = useMemo(
+		() => (canReview ? buildReviewRows(activeHunks) : []),
+		[canReview, activeHunks]
+	);
+	const rowIndexByKey = useMemo(() => new Map(rows.map((r, i) => [r.key, i])), [rows]);
+	const rowsRef = useRef(rows);
+	rowsRef.current = rows;
+	const activeFilePathRef = useRef(activeFilePath);
+	activeFilePathRef.current = activeFilePath;
+
+	// A line selection belongs to the file it was made in.
+	useEffect(() => {
+		setSelection(null);
+	}, [activeTab]);
+
+	const openEditor = useCallback((next: CommentEditState, draft: string = next.initialBody) => {
+		draftBodyRef.current = draft;
+		setEditing(next);
+	}, []);
+
+	/**
+	 * An edit to a SAVED comment that has not been saved yet. Opening another
+	 * comment box would throw it away, so that waits until the user saves or
+	 * cancels. (Text typed into a NEW comment box is never at risk: picking
+	 * other lines moves the box, text and all.)
+	 */
+	const blockedByUnsavedEdit = useCallback((): boolean => {
+		const current = editingRef.current;
+		if (!current?.id || draftBodyRef.current.trim() === current.initialBody.trim()) return false;
+		notifyCenterFlash({
+			message: 'Save or cancel the comment you are editing first',
+			color: 'yellow',
+		});
+		return true;
+	}, []);
+
+	/**
+	 * Open a new comment box on the current line selection. A new comment box
+	 * already open moves to the new lines and keeps what was typed in it.
+	 */
+	const commentOnSelection = useCallback(() => {
+		const sel = selectionRef.current;
+		if (!sel || !activeFilePath) return;
+		const anchor = anchorForSelection(
+			activeFilePath,
+			activeHunks,
+			rowsRef.current,
+			sel.anchor,
+			sel.focus,
+			sel.side
+		);
+		if (!anchor || blockedByUnsavedEdit()) return;
+		const carried = editingRef.current && !editingRef.current.id ? draftBodyRef.current : '';
+		setSelection(null);
+		openEditor({ anchor, initialBody: '' }, carried);
+	}, [activeFilePath, activeHunks, openEditor, blockedByUnsavedEdit]);
+
+	const closeEditor = useCallback(() => {
+		setEditing(null);
+		// Hand the keyboard back to the viewer so the line cursor keeps working.
+		dialogRef.current?.focus();
+	}, []);
+
+	const saveComment = useCallback(
+		(body: string) => {
+			const current = editingRef.current;
+			const trimmed = body.trim();
+			if (!current || !trimmed) return;
+			const store = useDiffReviewStore.getState();
+			if (current.id) {
+				store.updateComment(cwd, current.id, trimmed);
+			} else {
+				store.addComment(cwd, { ...current.anchor, id: generateId(), body: trimmed });
+			}
+			closeEditor();
+		},
+		[cwd, closeEditor]
+	);
+
+	const removeComment = useCallback(
+		(id: string) => {
+			useDiffReviewStore.getState().removeComment(cwd, id);
+			setEditing((prev) => (prev?.id === id ? null : prev));
+		},
+		[cwd]
+	);
+
+	const editComment = useCallback(
+		(comment: DiffComment) => {
+			if (editingRef.current?.id === comment.id) return;
+			if (blockedByUnsavedEdit()) return;
+			if (editingRef.current && !editingRef.current.id && draftBodyRef.current.trim()) {
+				notifyCenterFlash({
+					message: 'Add or cancel the new comment first',
+					color: 'yellow',
+				});
+				return;
+			}
+			const fileIndex = parsedFiles.findIndex(
+				(f) => (f.isDeletedFile ? f.oldPath : f.newPath) === comment.file
+			);
+			if (fileIndex >= 0) setActiveTab(fileIndex);
+			openEditor({ anchor: comment, id: comment.id, initialBody: comment.body });
+		},
+		[parsedFiles, openEditor, blockedByUnsavedEdit]
+	);
+
+	const discardReview = useCallback(() => {
+		useDiffReviewStore.getState().clearComments(cwd);
+		setEditing(null);
+		setSelection(null);
+		dialogRef.current?.focus();
+	}, [cwd]);
+
+	// Both ways out clear the review only once it has landed somewhere: a
+	// failed delivery (agent gone, no AI tab) keeps every comment. A comment
+	// still open in its box is saved first, so sending never drops what the
+	// user just typed.
+	const deliverReview = useCallback(
+		(deliver: (sessionId: string, prompt: string) => boolean) => {
+			if (!canReview || !sessionId) return;
+			if (editingRef.current && draftBodyRef.current.trim()) saveComment(draftBodyRef.current);
+			const prompt = formatDiffReviewPrompt(
+				useDiffReviewStore.getState().commentsByRepo[cwd] ?? []
+			);
+			if (!prompt || !deliver(sessionId, prompt)) return;
+			useDiffReviewStore.getState().clearComments(cwd);
+			setEditing(null);
+			onCloseRef.current();
+		},
+		[canReview, sessionId, cwd, saveComment]
+	);
+	const sendReview = useCallback(() => deliverReview(sendDiffReview), [deliverReview]);
+	const editReviewInComposer = useCallback(
+		() => deliverReview(editDiffReviewInComposer),
+		[deliverReview]
+	);
+
+	// Mouse: press on a line number to start a selection, drag over more line
+	// numbers (or Shift+click one) to extend it within the hunk, release to
+	// open the comment box on the lines picked.
+	const gutterEvents = useMemo<EventMap>(() => {
+		if (!canReview) return {};
+		return {
+			onMouseDown: ({ change, side }, event) => {
+				if (!change || event.button !== 0) return;
+				const index = rowIndexByKey.get(getChangeKey(change));
+				if (index === undefined) return;
+				// Keep the drag from selecting the code text as it goes.
+				event.preventDefault();
+				draggingRef.current = true;
+				// Shift+click extends the selection, or the lines a new comment box
+				// is already open on (a plain click opens the box at once).
+				const open = editingRef.current;
+				const openStart =
+					event.shiftKey && open && !open.id && open.anchor.file === activeFilePathRef.current
+						? rowIndexByKey.get(open.anchor.changeKeys[0])
+						: undefined;
+				setSelection((prev) => {
+					const start = prev?.anchor ?? openStart;
+					if (!event.shiftKey || start === undefined) return { anchor: index, focus: index, side };
+					return {
+						anchor: start,
+						focus: clampToAnchorHunk(rowsRef.current, start, index),
+						side: prev?.side ?? open?.anchor.side,
+					};
+				});
+			},
+			onMouseEnter: ({ change }) => {
+				if (!draggingRef.current || !change) return;
+				const index = rowIndexByKey.get(getChangeKey(change));
+				if (index === undefined) return;
+				setSelection((prev) =>
+					prev ? { ...prev, focus: clampToAnchorHunk(rowsRef.current, prev.anchor, index) } : prev
+				);
+			},
+		};
+	}, [canReview, rowIndexByKey]);
+
+	useEffect(() => {
+		if (!canReview) return;
+		const handleMouseUp = () => {
+			if (!draggingRef.current) return;
+			draggingRef.current = false;
+			commentOnSelection();
+		};
+		window.addEventListener('mouseup', handleMouseUp);
+		return () => window.removeEventListener('mouseup', handleMouseUp);
+	}, [canReview, commentOnSelection]);
+
+	// Keep the keyboard cursor on screen as it moves.
+	const cursorKey = selection ? rows[selection.focus]?.key : undefined;
+	useEffect(() => {
+		if (!cursorKey) return;
+		const cell = contentRef.current?.querySelector(`[data-change-key="${cursorKey}"]`);
+		cell?.scrollIntoView?.({ block: 'nearest' });
+	}, [cursorKey]);
+
+	const renderGutter = useCallback<RenderGutter>(
+		({ inHoverState, renderDefault }) =>
+			inHoverState ? (
+				<span className="inline-flex justify-end w-full" title="Comment on this line">
+					<MessageSquarePlus className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
+				</span>
+			) : (
+				renderDefault()
+			),
+		[theme.colors.accent]
+	);
+
+	// Lines the selection or the open comment box covers, highlighted.
+	const selectedChanges = useMemo(() => {
+		if (selection) {
+			const first = Math.min(selection.anchor, selection.focus);
+			const last = Math.max(selection.anchor, selection.focus);
+			return rows.slice(first, last + 1).map((r) => r.key);
+		}
+		if (editing && editing.anchor.file === activeFilePath) return editing.anchor.changeKeys;
+		return [];
+	}, [selection, editing, rows, activeFilePath]);
+
+	// Saved comments and the open comment box render as widget rows under the
+	// last line they cover.
+	const widgets = useMemo(() => {
+		const result: Record<string, ReactNode> = {};
+		if (!canReview || !activeFilePath) return result;
+		const lastKey = (anchor: DiffCommentAnchor) => anchor.changeKeys[anchor.changeKeys.length - 1];
+		const byKey = new Map<string, DiffComment[]>();
+		for (const comment of comments) {
+			if (comment.file !== activeFilePath) continue;
+			const key = lastKey(comment);
+			byKey.set(key, [...(byKey.get(key) ?? []), comment]);
+		}
+		const newDraftKey =
+			editing && !editing.id && editing.anchor.file === activeFilePath
+				? lastKey(editing.anchor)
+				: null;
+		if (newDraftKey && !byKey.has(newDraftKey)) byKey.set(newDraftKey, []);
+		const onDraftChange = (body: string) => {
+			draftBodyRef.current = body;
+		};
+
+		for (const [key, list] of byKey) {
+			result[key] = (
+				<div className="flex flex-col">
+					{list.map((comment) =>
+						editing?.id === comment.id ? (
+							<DiffCommentEditor
+								key={comment.id}
+								theme={theme}
+								anchor={comment}
+								initialBody={draftBodyRef.current}
+								isNew={false}
+								onDraftChange={onDraftChange}
+								onSave={saveComment}
+								onCancel={closeEditor}
+							/>
+						) : (
+							<DiffCommentCard
+								key={comment.id}
+								theme={theme}
+								comment={comment}
+								onEdit={() => editComment(comment)}
+								onRemove={() => removeComment(comment.id)}
+							/>
+						)
+					)}
+					{key === newDraftKey && editing && (
+						<DiffCommentEditor
+							key={`new-${editing.anchor.changeKeys.join(',')}`}
+							theme={theme}
+							anchor={editing.anchor}
+							initialBody={draftBodyRef.current}
+							isNew
+							onDraftChange={onDraftChange}
+							onSave={saveComment}
+							onCancel={closeEditor}
+						/>
+					)}
+				</div>
+			);
+		}
+		return result;
+	}, [
+		canReview,
+		activeFilePath,
+		comments,
+		editing,
+		theme,
+		saveComment,
+		closeEditor,
+		editComment,
+		removeComment,
+	]);
+
 	// Dismiss the viewer and open the given repo-relative file as a preview tab.
 	const openFileInPreview = (relPath: string) => {
 		if (!onOpenFile) return;
@@ -125,18 +515,81 @@ export const GitDiffViewer = memo(function GitDiffViewer({
 	// Register layer on mount
 	// Note: Using 'modal' type so App.tsx blocks all shortcuts and lets this component
 	// handle its own Cmd+Shift+[] for tab navigation
+	// Escape peels one review layer at a time: an open comment box first, then
+	// a line selection, then the viewer itself.
 	useModalLayer(
 		priority ?? MODAL_PRIORITIES.GIT_DIFF,
 		'Git Diff Preview',
-		() => onCloseRef.current(),
+		() => {
+			if (editingRef.current) {
+				closeEditor();
+				return;
+			}
+			if (selectionRef.current) {
+				setSelection(null);
+				return;
+			}
+			onCloseRef.current();
+		},
 		{
 			focusTrap: 'lenient',
 		}
 	);
 
+	// Review keys. Returns true when the key was handled. Arrows move a line
+	// cursor through the active file (Shift extends it into a range within the
+	// hunk), C opens a comment box on it, Shift+Cmd+Enter sends the review.
+	// Typing in the comment box is never intercepted.
+	const handleReviewKey = useCallback(
+		(e: KeyboardEvent): boolean => {
+			const mod = e.metaKey || e.ctrlKey;
+			if (e.key === 'Enter' && mod && e.shiftKey && !e.altKey) {
+				const hasDraft = !!editingRef.current && draftBodyRef.current.trim() !== '';
+				const saved = useDiffReviewStore.getState().commentsByRepo[cwd] ?? [];
+				if (!hasDraft && saved.length === 0) return false;
+				e.preventDefault();
+				sendReview();
+				trackShortcutUsage('gitDiffSendReview');
+				return true;
+			}
+			if (isEditingTextTarget(e.target) || mod || e.altKey) return false;
+
+			if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+				const count = rowsRef.current.length;
+				if (count === 0) return false;
+				e.preventDefault();
+				const step = e.key === 'ArrowDown' ? 1 : -1;
+				const extend = e.shiftKey;
+				setSelection((prev) => {
+					if (!prev) {
+						// First press: land on the first changed line, not hunk context.
+						const first = rowsRef.current.findIndex((r) => r.change.type !== 'normal');
+						const start = step === 1 ? Math.max(0, first) : count - 1;
+						return { anchor: start, focus: start };
+					}
+					const next = Math.max(0, Math.min(count - 1, prev.focus + step));
+					return e.shiftKey
+						? { ...prev, focus: clampToAnchorHunk(rowsRef.current, prev.anchor, next) }
+						: { anchor: next, focus: next };
+				});
+				trackShortcutUsage(extend ? 'gitDiffExtendLineSelection' : 'gitDiffMoveLineCursor');
+				return true;
+			}
+			if ((e.key === 'c' || e.key === 'C') && !e.shiftKey && selectionRef.current) {
+				e.preventDefault();
+				commentOnSelection();
+				trackShortcutUsage('gitDiffCommentOnLines');
+				return true;
+			}
+			return false;
+		},
+		[cwd, sendReview, commentOnSelection]
+	);
+
 	// Handle keyboard shortcuts (tab navigation + view toggle)
 	useEffect(() => {
 		const handleKeyDown = (e: KeyboardEvent) => {
+			if (canReview && handleReviewKey(e)) return;
 			// Cmd+[ or Cmd+Shift+[ - Previous tab
 			if ((e.metaKey || e.ctrlKey) && e.key === '[') {
 				e.preventDefault();
@@ -165,7 +618,7 @@ export const GitDiffViewer = memo(function GitDiffViewer({
 
 		window.addEventListener('keydown', handleKeyDown);
 		return () => window.removeEventListener('keydown', handleKeyDown);
-	}, [parsedFiles.length]);
+	}, [parsedFiles.length, canReview, handleReviewKey]);
 	const resizableModal = useResizableModal({
 		resizeKey: 'git-diff',
 		defaultSize: { width: 1200, height: 760 },
@@ -185,7 +638,7 @@ export const GitDiffViewer = memo(function GitDiffViewer({
 			>
 				<div
 					ref={dialogRef}
-					className="relative rounded-lg shadow-2xl flex flex-col overflow-hidden"
+					className="relative rounded-lg shadow-2xl flex flex-col overflow-hidden outline-none"
 					style={{
 						...resizableModal.style,
 						backgroundColor: theme.colors.bgMain,
@@ -248,7 +701,7 @@ export const GitDiffViewer = memo(function GitDiffViewer({
 		>
 			<div
 				ref={dialogRef}
-				className="relative rounded-lg shadow-2xl flex flex-col overflow-hidden"
+				className="relative rounded-lg shadow-2xl flex flex-col overflow-hidden outline-none"
 				style={{
 					...resizableModal.style,
 					backgroundColor: theme.colors.bgMain,
@@ -393,7 +846,7 @@ export const GitDiffViewer = memo(function GitDiffViewer({
 				</div>
 
 				{/* Diff Content */}
-				<div className="flex-1 overflow-auto p-6">
+				<div ref={contentRef} className="flex-1 overflow-auto p-6">
 					{activeFile && activeFile.isImage ? (
 						// Image diff view - side-by-side comparison
 						<ImageDiffViewer
@@ -417,6 +870,7 @@ export const GitDiffViewer = memo(function GitDiffViewer({
 					) : activeFile && activeFile.parsedDiff.length > 0 ? (
 						<div className="font-mono text-sm">
 							<style>{generateDiffViewStyles(theme, colorBlindMode)}</style>
+							{canReview && <style>{generateDiffReviewStyles(theme)}</style>}
 							{activeFile.parsedDiff.map((file, fileIndex) => (
 								<div key={fileIndex}>
 									{/* File header (click to open the file as a preview tab) */}
@@ -438,7 +892,15 @@ export const GitDiffViewer = memo(function GitDiffViewer({
 									</GitFilePathHeader>
 
 									{/* Render each hunk */}
-									<Diff viewType={viewType} diffType={file.type} hunks={file.hunks}>
+									<Diff
+										viewType={viewType}
+										diffType={file.type}
+										hunks={file.hunks}
+										widgets={widgets}
+										selectedChanges={selectedChanges}
+										gutterEvents={gutterEvents}
+										renderGutter={canReview ? renderGutter : undefined}
+									>
 										{(hunks) => hunks.map((hunk) => <Hunk key={hunk.content} hunk={hunk} />)}
 									</Diff>
 								</div>
@@ -453,13 +915,26 @@ export const GitDiffViewer = memo(function GitDiffViewer({
 					)}
 				</div>
 
+				{canReview && comments.length > 0 && (
+					<DiffReviewTray
+						theme={theme}
+						comments={comments}
+						targetName={agentName}
+						onEdit={editComment}
+						onRemove={removeComment}
+						onDiscard={discardReview}
+						onSend={sendReview}
+						onEditInComposer={editReviewInComposer}
+					/>
+				)}
+
 				{/* Footer with stats */}
 				<div
-					className="flex items-center justify-between px-6 py-3 border-t text-xs"
+					className="flex items-center justify-between gap-4 px-6 py-3 border-t text-xs"
 					style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgSidebar }}
 				>
-					<div className="flex items-center gap-4">
-						<span style={{ color: theme.colors.textDim }}>
+					<div className="flex items-center gap-4 shrink-0">
+						<span className="whitespace-nowrap" style={{ color: theme.colors.textDim }}>
 							Current file:{' '}
 							<span className="font-mono" style={{ color: theme.colors.textMain }}>
 								{getFileName(activeFile.newPath)}
@@ -472,14 +947,14 @@ export const GitDiffViewer = memo(function GitDiffViewer({
 						) : (
 							<div className="flex items-center gap-2">
 								<span
-									className="flex items-center gap-1"
+									className="flex items-center gap-1 whitespace-nowrap"
 									style={{ color: colorBlindMode ? '#009988' : '#22c55e' }}
 								>
 									<Plus className="w-3 h-3" />
 									{stats.additions} additions
 								</span>
 								<span
-									className="flex items-center gap-1"
+									className="flex items-center gap-1 whitespace-nowrap"
 									style={{ color: colorBlindMode ? '#CC3311' : '#ef4444' }}
 								>
 									<Minus className="w-3 h-3" />
@@ -488,7 +963,7 @@ export const GitDiffViewer = memo(function GitDiffViewer({
 							</div>
 						)}
 					</div>
-					<span style={{ color: theme.colors.textDim }}>
+					<span className="text-right" style={{ color: theme.colors.textDim }}>
 						Press{' '}
 						<kbd
 							className="px-1.5 py-0.5 rounded font-mono text-2xs mx-0.5"
@@ -501,6 +976,22 @@ export const GitDiffViewer = memo(function GitDiffViewer({
 							Enter
 						</kbd>{' '}
 						to toggle {viewType === 'unified' ? 'side-by-side' : 'unified'} view
+						{canReview && (
+							<>
+								{' · '}
+								<kbd
+									className="px-1.5 py-0.5 rounded font-mono text-2xs mx-0.5"
+									style={{
+										backgroundColor: theme.colors.bgActivity,
+										color: theme.colors.textMain,
+										border: `1px solid ${theme.colors.border}`,
+									}}
+								>
+									↑↓ C
+								</kbd>{' '}
+								or drag line numbers to comment
+							</>
+						)}
 					</span>
 				</div>
 			</div>

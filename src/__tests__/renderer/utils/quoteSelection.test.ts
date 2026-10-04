@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+	appendBlockToDraft,
 	appendQuoteToDraft,
 	formatFileLineReference,
 	formatFileSelection,
@@ -19,6 +20,18 @@ describe('formatMarkdownQuote', () => {
 
 	it('returns an empty string for a whitespace-only selection', () => {
 		expect(formatMarkdownQuote(' \n\t\n')).toBe('');
+	});
+});
+
+describe('appendBlockToDraft', () => {
+	it('appends a formatted block as-is with one blank line before and after', () => {
+		expect(appendBlockToDraft('', '## Review\n\n- fix')).toBe('## Review\n\n- fix\n\n');
+		expect(appendBlockToDraft('my note  \n', '## Review')).toBe('my note\n\n## Review\n\n');
+	});
+
+	it('normalizes CRLF, trims blank edges, and leaves the draft alone for a blank block', () => {
+		expect(appendBlockToDraft('', '\r\n\r\nline\r\nnext\r\n')).toBe('line\nnext\n\n');
+		expect(appendBlockToDraft('keep', '  \n ')).toBe('keep');
 	});
 });
 

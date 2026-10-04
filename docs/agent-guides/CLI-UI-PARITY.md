@@ -375,6 +375,15 @@ pipeline` reaches the graph but cannot name what it shows. Pure view state
     reachable without it: an agent reads the file, quotes `path:lines` itself,
     and hands the text over with `dispatch` / `send`; replacing text is an edit
     to the file on disk, which an agent makes directly and `open-file` shows.
+14. **Git Diff review comments** (pin a comment to diff lines, Edit in
+    Composer, Send Review, Discard). They live in the Git Diff viewer, whose
+    opening is itself not mirrored (gap 4), and the pending comments are
+    renderer memory (`diffReviewStore`). The capability is reachable without
+    them: an agent runs `git diff` in the target's directory, writes each
+    comment with its `path:lines` and hunk, and queues the result into the
+    agent's tab with `dispatch <agent> "<review>" --queue`, which is the same
+    `enqueuePromptForTab` path Send Review uses. Closing it means a WS round
+    trip to read and send the renderer's pending comments.
 
 ### Audit backlog (2026-09-27)
 

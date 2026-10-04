@@ -31,11 +31,24 @@ export function formatMarkdownQuote(text: string): string {
  * selection.
  */
 export function appendQuoteToDraft(draft: string, selection: string): string {
-	const quote = formatMarkdownQuote(selection);
-	if (!quote) return draft;
+	return appendBlockToDraft(draft, formatMarkdownQuote(selection));
+}
+
+/**
+ * Append an already-formatted Markdown block (a diff review, a fenced file
+ * passage) to a draft with the same spacing `appendQuoteToDraft` uses: one
+ * blank line before it, one after, so the caret lands on a fresh paragraph.
+ * Returns the draft unchanged for a blank block.
+ */
+export function appendBlockToDraft(draft: string, block: string): string {
+	const body = block
+		.replace(/\r\n?/g, '\n')
+		.replace(/^\s*\n/, '')
+		.replace(/\s+$/, '');
+	if (!body) return draft;
 	const trimmed = draft.replace(/\s+$/, '');
 	const prefix = trimmed ? `${trimmed}\n\n` : '';
-	return `${prefix}${quote}\n\n`;
+	return `${prefix}${body}\n\n`;
 }
 
 /** A passage of a file, as the File Preview editor hands it to an agent. */

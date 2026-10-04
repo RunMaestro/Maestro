@@ -148,6 +148,19 @@ comment. `Cmd+[` and `Cmd+]` keep switching agents, so indent with `Tab` and
 `Shift+Tab` instead. With **Vim keybindings** on, `Esc` returns to Vim's normal
 mode, and `Cmd+E` leaves the editor.
 
+## Git Diff Review
+
+These work while the Git Diff viewer is open over an agent that can take a
+review. See [Reviewing Diffs](./diff-review).
+
+| Action                        | macOS                     | Windows/Linux             |
+| ----------------------------- | ------------------------- | ------------------------- |
+| Move the line cursor          | `Down` / `Up`             | `Down` / `Up`             |
+| Extend the line selection     | `Shift+Down` / `Shift+Up` | `Shift+Down` / `Shift+Up` |
+| Comment on the selected lines | `C`                       | `C`                       |
+| Save the comment              | `Cmd+Enter`               | `Ctrl+Enter`              |
+| Send the review               | `Cmd+Shift+Enter`         | `Ctrl+Shift+Enter`        |
+
 ## Group Chat
 
 A group chat has no tab strip, so the tab-cycle chord switches the right panel instead.

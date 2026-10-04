@@ -8,7 +8,7 @@
  * tab, and asks the panel to put the caret in the composer.
  */
 
-import { appendQuoteToDraft } from '../utils/quoteSelection';
+import { appendBlockToDraft, appendQuoteToDraft } from '../utils/quoteSelection';
 import { useComposerInputStore } from '../stores/composerInputStore';
 import { useSessionStore, updateSessionWith } from '../stores/sessionStore';
 import { useUIStore } from '../stores/uiStore';
@@ -24,7 +24,9 @@ import type { Session } from '../types';
  * the group to show a standalone tab would undo the split the user built to
  * read the file beside the chat.
  */
-function resolveQuoteTarget(session: Session): { tabId: string; inGroup: boolean } | null {
+export function resolveComposerTarget(
+	session: Session
+): { tabId: string; inGroup: boolean } | null {
 	const group = session.activeGroupId
 		? session.tabGroups?.find((g) => g.id === session.activeGroupId)
 		: undefined;
@@ -46,15 +48,36 @@ function resolveQuoteTarget(session: Session): { tabId: string; inGroup: boolean
  * tab, rather than leave the user wondering where the quote went.
  */
 export function quoteIntoAgentComposer(sessionId: string, text: string): boolean {
+	return appendToAgentComposer(sessionId, text, appendQuoteToDraft, {
+		title: 'Nothing to Quote Into',
+		message: 'This agent has no AI tab. Open one, then quote the selection again.',
+	});
+}
+
+/**
+ * Append an already-formatted Markdown block (a diff review) to the draft of
+ * `sessionId`'s active AI tab as-is, then land the user in that composer so
+ * they can edit it before sending. Same target and draft rules as
+ * `quoteIntoAgentComposer`.
+ */
+export function insertIntoAgentComposer(sessionId: string, block: string): boolean {
+	return appendToAgentComposer(sessionId, block, appendBlockToDraft, {
+		title: 'No Composer to Fill',
+		message: 'This agent has no AI tab. Open one, then try again.',
+	});
+}
+
+function appendToAgentComposer(
+	sessionId: string,
+	text: string,
+	append: (draft: string, text: string) => string,
+	missing: { title: string; message: string }
+): boolean {
 	const session = useSessionStore.getState().sessions.find((s) => s.id === sessionId);
-	const target = session ? resolveQuoteTarget(session) : null;
+	const target = session ? resolveComposerTarget(session) : null;
 	const tab = target ? session?.aiTabs.find((t) => t.id === target.tabId) : undefined;
 	if (!session || !target || !tab) {
-		notifyToast({
-			color: 'yellow',
-			title: 'Nothing to Quote Into',
-			message: 'This agent has no AI tab. Open one, then quote the selection again.',
-		});
+		notifyToast({ color: 'yellow', ...missing });
 		return false;
 	}
 	const { tabId, inGroup } = target;
@@ -63,15 +86,15 @@ export function quoteIntoAgentComposer(sessionId: string, text: string): boolean
 	if (composer.aiValueTabId === tabId || composer.aiValueTabId === null) {
 		// The live slot holds this tab's draft (or unowned text it will adopt):
 		// append to what is on screen, which may be newer than tab.inputValue.
-		// A quote is prose for the agent, never a shell command line.
+		// A quote or a review is prose for the agent, never a shell command line.
 		if (composer.aiCommandMode !== 'off') composer.setAiCommandMode('off');
-		composer.setAiValue((prev) => appendQuoteToDraft(prev, text));
+		composer.setAiValue((prev) => append(prev, text));
 		composer.adoptAiDraft(tabId);
 	} else {
 		// The live slot belongs to another tab; its text is flushed to that tab
 		// on its own timer. Build from this tab's saved draft and load the
 		// result into the composer stamped with this tab as owner.
-		const next = appendQuoteToDraft(tab.inputValue ?? '', text);
+		const next = append(tab.inputValue ?? '', text);
 		updateSessionWith(sessionId, (s) => ({
 			...s,
 			aiTabs: s.aiTabs.map((t) =>

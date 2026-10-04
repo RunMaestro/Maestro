@@ -1,0 +1,76 @@
+/**
+ * diffReviewStore - review comments left in the Git Diff viewer and not yet
+ * sent (issue #1475).
+ *
+ * The viewer is a VIEW over this store, not the owner of the review. Comments
+ * are keyed by repo path, so switching file tabs inside the viewer, or closing
+ * it with an Escape pressed out of habit, does not throw away a half-written
+ * review: reopening the diff for the same repo shows them again. They leave the
+ * store only when the review is sent or the user discards it.
+ *
+ * Memory only. A review is a few minutes of work against a diff that will not
+ * look the same after a restart, so there is nothing worth persisting.
+ */
+
+import { create } from 'zustand';
+import type { DiffComment } from '../utils/diffReviewComments';
+
+interface DiffReviewState {
+	commentsByRepo: Record<string, DiffComment[]>;
+}
+
+interface DiffReviewActions {
+	addComment: (repo: string, comment: DiffComment) => void;
+	updateComment: (repo: string, id: string, body: string) => void;
+	removeComment: (repo: string, id: string) => void;
+	/** Forget every comment for this repo (sent, or discarded). */
+	clearComments: (repo: string) => void;
+}
+
+export type DiffReviewStore = DiffReviewState & DiffReviewActions;
+
+const NO_COMMENTS: DiffComment[] = [];
+
+function withRepo(
+	state: DiffReviewState,
+	repo: string,
+	next: DiffComment[]
+): Pick<DiffReviewState, 'commentsByRepo'> {
+	const commentsByRepo = { ...state.commentsByRepo };
+	if (next.length === 0) delete commentsByRepo[repo];
+	else commentsByRepo[repo] = next;
+	return { commentsByRepo };
+}
+
+export const useDiffReviewStore = create<DiffReviewStore>()((set) => ({
+	commentsByRepo: {},
+
+	addComment: (repo, comment) =>
+		set((state) => withRepo(state, repo, [...(state.commentsByRepo[repo] ?? []), comment])),
+
+	updateComment: (repo, id, body) =>
+		set((state) =>
+			withRepo(
+				state,
+				repo,
+				(state.commentsByRepo[repo] ?? []).map((c) => (c.id === id ? { ...c, body } : c))
+			)
+		),
+
+	removeComment: (repo, id) =>
+		set((state) =>
+			withRepo(
+				state,
+				repo,
+				(state.commentsByRepo[repo] ?? []).filter((c) => c.id !== id)
+			)
+		),
+
+	clearComments: (repo) => set((state) => withRepo(state, repo, [])),
+}));
+
+/** The pending comments for one repo. Stable empty array when there are none. */
+export const selectRepoComments =
+	(repo: string) =>
+	(state: DiffReviewStore): DiffComment[] =>
+		state.commentsByRepo[repo] ?? NO_COMMENTS;
