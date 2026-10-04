@@ -93,16 +93,26 @@ vi.mock('../../../../renderer/hooks', () => ({
 }));
 
 vi.mock('../../../../renderer/components/DirectorNotes/OverviewTab', () => ({
-	OverviewTab: React.forwardRef(({ theme }: { theme: Theme }, _ref: any) => (
-		<div data-testid="overview-tab" tabIndex={0}>
-			Overview Content
-		</div>
-	)),
+	OverviewTab: React.forwardRef(
+		(
+			{ onOpenSetting }: { theme: Theme; onOpenSetting?: (settingId: string) => void },
+			_ref: any
+		) => (
+			<div data-testid="overview-tab" tabIndex={0}>
+				Overview Content
+				<button
+					data-testid="overview-open-setting"
+					onClick={() => onOpenSetting?.('encore-director-notes-ideal-end-state')}
+				/>
+			</div>
+		)
+	),
 	TabFocusHandle: {},
 }));
 
 // Import after mocks
 import { DirectorNotesModal } from '../../../../renderer/components/DirectorNotes/DirectorNotesModal';
+import { useModalStore, selectModalData } from '../../../../renderer/stores/modalStore';
 
 import { mockTheme } from '../../../helpers/mockTheme';
 describe('DirectorNotesModal', () => {
@@ -158,6 +168,21 @@ describe('DirectorNotesModal', () => {
 			// Overview tab should be hidden since history is default
 			const overviewContainer = screen.getByTestId('overview-tab').closest('.h-full');
 			expect(overviewContainer).toHaveClass('hidden');
+		});
+
+		// Settings sits below Director's Notes in the layer stack, so the Help
+		// tab's deep-link has to close this modal or Settings opens hidden.
+		it('closes and deep-links to the setting the Help tab asks for', async () => {
+			renderModal();
+
+			fireEvent.click(await screen.findByTestId('overview-open-setting'));
+
+			expect(onClose).toHaveBeenCalledTimes(1);
+			expect(selectModalData('settings')(useModalStore.getState())).toEqual({
+				tab: 'encore',
+				settingId: 'encore-director-notes-ideal-end-state',
+			});
+			useModalStore.getState().closeModal('settings');
 		});
 
 		it('renders AI Overview tab content (hidden initially)', async () => {

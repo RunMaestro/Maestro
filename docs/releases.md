@@ -16,34 +16,39 @@ Maestro can update itself automatically! This feature was introduced in **v0.8.7
 
 ## v0.17.x - Maestro Cue
 
-**Latest: v0.17.5** | Released September 25, 2026
+**Latest: v0.17.6** | Released October 2, 2026
 
-# 0.17.5 Highlights
+# 0.17.6 Highlights
 
-📝 **Auto Run stops eating what you type.** Saving a document, or an agent touching it while you edit, used to reload it from disk and quietly delete whatever you had typed since. Your unsaved edits now stay put (Maestro warns you when the file changed underneath you), the caret stays where you left it, one `Cmd+Z` undoes one burst of typing instead of half a sentence, and Revert throws away everything since your last save, not just some of it.
+🔍 **Pan and zoom any diagram or image, full window.** Mermaid diagrams and markdown images get an expand button, chat images open with a click, and anything else opens from its right-click menu with Expand (Pan and Zoom). Zoom at the cursor with the wheel or a pinch, drag or arrow-key to pan, double-click to fit, and diagrams stay vector-sharp however far you go in. Pinching an image in the file preview no longer zooms the whole window either.
 
-🚦 **Human-in-the-loop gates let you through.** Pressing Resume on a gate used to pause the run again on the same gate, forever. The button now reads "Done, Resume", records that you did the step, and moves on. A run parked on a gate or an error also stops its clock, so a gate you answered the next morning no longer counts the night as run time.
+📨 **Send to Agent waits its turn.** Handing context to a busy agent used to start it right on top of the running turn. It now opens a new tab and queues the context for when the current turn finishes, and with Forced Parallel Execution on, Force Send to Agent still runs it alongside. A dimmed Force Send also tells you why it is dimmed and takes you straight to the setting that unlocks it.
 
-📬 **Queued messages always go out.** A queue could stall with the agent sitting idle and your messages waiting behind nothing until you restarted Maestro. An idle agent now works through its queue until it is empty, and Recover Session tells you whether your click sent the prompt or queued it, so it no longer takes seven clicks to learn that it worked.
+🍞 **Toasts go where you want them and stay out of your way.** Pick any corner in Settings > Notifications, or search Move Toast Notifications in Quick Actions. In a bottom corner they now lift above the message input, group chat included, instead of covering what you are typing.
 
-🛟 **Maestro opens even when something on disk is broken.** A settings or sessions file cut off mid-write (a crash, a full disk, a cloud-sync folder) used to stop every launch; the damaged file is now set aside under a clearly named copy and Maestro starts. An agent whose project folder was deleted, renamed, or sits on an unplugged drive now refuses to start and names the missing folder, rather than crashing the app (on Windows, repeatedly) or quietly running somewhere else.
+🩹 **The outage card tells the truth.** It clears the moment a resend gets through, counts the retry that worked, and says "Quota restored." when it was your quota that came back. When a resend fails for a different reason, like an expired login, the card says auto-retry ended and names the real error instead of showing a green "Connection recovered." above it.
 
-🪟 **Windows SSH remotes explain themselves.** A remote whose OpenSSH hands commands to PowerShell or cmd.exe can never run an agent, and it used to fail with a wall of errors that looked like a key or network problem. Test Connection now names the Windows shell and gives you the one command that points OpenSSH at Git Bash.
+🗣️ **Your agents can do more of Maestro for you.** `maestro-cli` now starts and drives group chats, files feedback (searching for duplicates and adding a +1 first), writes a support package, flips any Cue subscription on or off, lists recent Cue runs, reads and redirects an agent's Auto Run, browses and installs from the Playbook Exchange, and queues audio or video in the player without starting it. A failing call now reports back right away instead of hanging until it times out.
 
-## Also in 0.17.5
+## Also in 0.17.6
 
-- 🏷️ **Named Claude sessions keep their names and stars** through every new turn, and Maestro restores the names it lost from your history on its next launch.
-- 📜 **History opens an SSH agent's sessions after a restart**, reading the transcript from the remote host instead of coming back empty.
-- 🏃 **The thinking pill counts Auto Runs on your other agents** and jumps straight to them, and a closed tab with nothing running no longer sits in it as "Thinking..." forever.
-- 💳 **A Codex workspace out of credits is treated as a usage limit**, so the agent resumes on its own when your quota resets.
-- 🔗 **Cue works across checkouts that share a symlinked `.maestro` folder**, instead of running every subscription with an empty prompt.
-- 🔀 **Deleting a project's `.git` folder clears its GIT pill** and its stale changed-file list on the next check.
-- 📎 **Right-click a file link outside your project** (a PDF in Downloads, say) for the full file menu, now with Copy File Name.
-- 🎯 **Refreshing Auto Run documents from `maestro-cli` leaves your view where it is** unless you ask it to move.
-- 🔒 **The update-check toggle spells out the anonymous install count it also controls**, and that switching it off stops both.
+- 💾 **Auto Run gets Save & Exit**, which saves to the loaded playbook and closes, or creates a dated, codenamed playbook when none is loaded.
+- ↕️ **Drag the Auto Run document list taller** by its bottom edge; it remembers the height, never runs off the bottom of a smaller screen, and a double-click resets it.
+- 📋 **Every code block has a working copy button**, in documents, release notes, and wizard replies as well as chat.
+- 🧭 **The Left Bar scrolls to the agent you jump to**, whether you got there by shortcut, Cmd+K, Cmd+O, a toast, or the CLI.
+- ⌨️ **Quick Actions shows each agent's Opt+Cmd+number chord** next to its name, so you pick up the shortcut while you search.
+- 📎 **@-mentions search every file in a big repo**, so the file you meant no longer loses to loose matches from deep folders.
+- 🔁 **Cue GitHub triggers fire on new comments again**, and `max_notifications` is honored, for subscriptions that set `retrigger_on_comments`.
+- ⏹️ **Cue shell commands and CLI runs appear in the Process Monitor**, badged with their trigger, and Stop ends them.
+- ⏱️ **"Time in the Wizard" counts the time you spent working**, so a wizard tab left open overnight no longer logs the whole night.
+- 🔑 **Codex sign-in works on SSH remotes** through device-code login, and the remote login hint names your provider's own command.
+- 🧰 **Install/Update CLI no longer breaks an existing `maestro-cli` link**, and its Settings section now sits right below your Conductor Profile.
+- ⏳ **Loading a big file tree shows a spinner** while Load more or Load all is scanning.
+- 📊 **Usage Dashboard agent names stop clipping**, since the name column now fits the longest one.
 
 ### Previous Releases in this Series
 
+- **v0.17.5** (September 25, 2026) - Maestro Cue
 - **v0.17.4** (September 21, 2026) - Maestro Cue
 - **v0.17.3** (July 4, 2026) - Maestro Cue
 - **v0.17.2** (June 27, 2026) - Maestro Cue

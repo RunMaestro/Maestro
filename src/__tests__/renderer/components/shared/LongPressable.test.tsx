@@ -6,6 +6,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import type { ComponentProps } from 'react';
 import { render, fireEvent, act } from '@testing-library/react';
 import {
 	LongPressable,
@@ -125,6 +126,59 @@ describe('LongPressable', () => {
 			</LongPressable>
 		);
 		expect(innerRef).toHaveBeenCalledWith(getByText('row'));
+	});
+
+	// A long-press is how iPadOS, Android and touchscreen Chrome start an HTML5
+	// drag, so a finger held on a draggable chip lifted it instead of opening
+	// the menu. Decided per press, so a trackpad or mouse still drags.
+	describe('native drag on a draggable host', () => {
+		const renderDraggable = (props: Partial<ComponentProps<typeof LongPressable>> = {}) =>
+			render(
+				<LongPressable onLongPress={vi.fn()} draggable {...props}>
+					row
+				</LongPressable>
+			).getByText('row');
+
+		it('switches drag off for a finger press', () => {
+			const el = renderDraggable();
+			fireEvent.pointerDown(el, { pointerType: 'touch' });
+			expect(el).toHaveAttribute('draggable', 'false');
+		});
+
+		it('switches drag off for a pen press', () => {
+			const el = renderDraggable();
+			fireEvent.pointerDown(el, { pointerType: 'pen' });
+			expect(el).toHaveAttribute('draggable', 'false');
+		});
+
+		it('keeps drag off for the rest of the touch, even through a pointercancel', () => {
+			// iOS fires pointercancel mid-press; re-arming there would let the lift happen.
+			const el = renderDraggable();
+			fireEvent.pointerDown(el, { pointerType: 'touch' });
+			fireEvent.pointerCancel(el, { pointerType: 'touch' });
+			fireEvent.pointerUp(el, { pointerType: 'touch' });
+			expect(el).toHaveAttribute('draggable', 'false');
+		});
+
+		it('turns drag back on at the next mouse press, so a trackpad still reorders', () => {
+			const el = renderDraggable();
+			fireEvent.pointerDown(el, { pointerType: 'touch' });
+			fireEvent.pointerDown(el, { pointerType: 'mouse' });
+			expect(el).toHaveAttribute('draggable', 'true');
+		});
+
+		it('leaves a host that is not draggable alone', () => {
+			const el = renderDraggable({ draggable: false });
+			fireEvent.pointerDown(el, { pointerType: 'mouse' });
+			expect(el).toHaveAttribute('draggable', 'false');
+		});
+
+		it('still calls the host onPointerDown', () => {
+			const onPointerDown = vi.fn();
+			const el = renderDraggable({ onPointerDown });
+			fireEvent.pointerDown(el, { pointerType: 'touch' });
+			expect(onPointerDown).toHaveBeenCalledTimes(1);
+		});
 	});
 
 	it('longPressMouseEvent anchors near the rect and no-ops preventDefault', () => {
