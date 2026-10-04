@@ -3,6 +3,8 @@ import { useApp, useInput } from 'ink';
 import type { MaestroPaths } from '../shared/maestro-lib';
 import { aiTabsOf } from '../shared/maestro-lib';
 import { HelpOverlay } from './app/HelpOverlay';
+import { HistoryView } from './app/HistoryView';
+import { moveHistoryCursor, openHistory, type HistoryViewState } from './app/history';
 import { Shell } from './app/Shell';
 import { TabSwitcher } from './app/TabSwitcher';
 import { resolveActiveTab } from './app/ConversationPane';
@@ -17,7 +19,12 @@ import { tuiStateFilePath } from './store/view-state';
 export interface AppProps {
 	paths: Pick<
 		MaestroPaths,
-		'userDataDir' | 'sessionsFile' | 'groupsFile' | 'settingsFile' | 'agentConfigsFile'
+		| 'userDataDir'
+		| 'sessionsFile'
+		| 'groupsFile'
+		| 'settingsFile'
+		| 'agentConfigsFile'
+		| 'historyDir'
 	>;
 }
 
@@ -25,7 +32,10 @@ export interface AppProps {
 const HOST_LABEL = 'read-only';
 
 /** The overlay on screen, if any. Only one at a time, and Esc closes it. */
-type OverlayState = { kind: 'help' } | { kind: 'tabs'; agentId: string; cursor: number };
+type OverlayState =
+	| { kind: 'help' }
+	| { kind: 'tabs'; agentId: string; cursor: number }
+	| { kind: 'history'; history: HistoryViewState };
 
 export function App({ paths }: AppProps): React.ReactElement {
 	const { exit } = useApp();
@@ -147,10 +157,18 @@ export function App({ paths }: AppProps): React.ReactElement {
 				});
 				return;
 			}
+			case 'history':
+				if (agent) setOverlay({ kind: 'history', history: openHistory(paths, agent.id) });
+				return;
 			case 'moveDown':
 			case 'moveUp': {
 				const delta = action === 'moveDown' ? 1 : -1;
-				if (current?.kind === 'tabs') {
+				if (current?.kind === 'history') {
+					setOverlay({
+						kind: 'history',
+						history: moveHistoryCursor(paths, current.history, delta),
+					});
+				} else if (current?.kind === 'tabs') {
 					const count = agent ? aiTabsOf(agent).length : 0;
 					setOverlay({
 						...current,
@@ -198,6 +216,15 @@ export function App({ paths }: AppProps): React.ReactElement {
 		? ({ width, height }: { width: number; height: number }) =>
 				overlay.kind === 'help' ? (
 					<HelpOverlay width={width} height={height} />
+				) : overlay.kind === 'history' ? (
+					cursorAgent ? (
+						<HistoryView
+							agent={cursorAgent}
+							state={overlay.history}
+							width={width}
+							height={height}
+						/>
+					) : null
 				) : cursorAgent ? (
 					<TabSwitcher
 						agent={cursorAgent}

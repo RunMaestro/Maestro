@@ -67,6 +67,7 @@ describe('App shell', () => {
 		groupsFile: path.join(dir, 'maestro-groups.json'),
 		settingsFile: path.join(dir, 'maestro-settings.json'),
 		agentConfigsFile: path.join(dir, 'maestro-agent-configs.json'),
+		historyDir: path.join(dir, 'history'),
 	});
 	const writeStore = (name: string, value: unknown) =>
 		fs.writeFileSync(path.join(dir, name), JSON.stringify(value, undefined, '\t'));
@@ -404,6 +405,94 @@ describe('App shell', () => {
 			const { lastFrame, unmount } = await renderAt(140, 30);
 			expect(lastFrame()).toContain('? help');
 			unmount();
+		});
+
+		describe('history', () => {
+			const entry = (id: string, type: string, timestamp: number, summary: string) =>
+				JSON.stringify({ id, type, timestamp, summary, projectPath: '/p' });
+			const writeHistory = (agentId: string, lines: string[]) => {
+				fs.mkdirSync(path.join(dir, 'history'), { recursive: true });
+				fs.writeFileSync(path.join(dir, 'history', `${agentId}.jsonl`), lines.join('\n'));
+			};
+			const openMaestro = async (columns = 140, rows = 30) => {
+				const instance = await renderAt(columns, rows);
+				// Rows sort by name: Core, Cue, Maestro.
+				instance.stdin.write('j');
+				await tick();
+				instance.stdin.write('j');
+				await tick();
+				return instance;
+			};
+
+			it('lists type, time, and summary newest first, and closes with Esc', async () => {
+				writeHistory('a-maestro', [
+					entry('h1', 'USER', 1_700_000_000_000, 'Fixed the build'),
+					entry('h2', 'AUTO', 1_700_000_100_000, 'Ran the playbook\nsecond line'),
+					entry('h3', 'CUE', 1_700_000_200_000, 'Nightly sweep'),
+					'{"id":"h4","type":"USER","timest',
+				]);
+				const { stdin, lastFrame, unmount } = await openMaestro();
+				stdin.write('H');
+				await tick();
+				const frame = lastFrame() ?? '';
+				expect(frame).toContain('History: Maestro');
+				expect(frame).toContain('Esc close');
+				expect(frame).toMatch(/›CUE\s+.*Nightly sweep/);
+				expect(frame).toMatch(/AUTO\s+.*Ran the playbook second line/);
+				expect(frame).toMatch(/USER\s+.*Fixed the build/);
+				expect(frame.indexOf('Nightly sweep')).toBeLessThan(frame.indexOf('Fixed the build'));
+				expect(frame).toContain('1 of 3');
+
+				stdin.write('j');
+				await tick();
+				expect(lastFrame()).toMatch(/›AUTO/);
+
+				stdin.write(ESC);
+				await tick();
+				expect(lastFrame()).not.toContain('History: Maestro');
+				unmount();
+			});
+
+			it('reads older pages as the cursor reaches the last loaded row', async () => {
+				const lines = Array.from({ length: 250 }, (_, i) =>
+					entry(`h${i}`, 'USER', 1_700_000_000_000 + i * 1000, `Entry number ${i}`)
+				);
+				writeHistory('a-maestro', lines);
+				const { stdin, lastFrame, unmount } = await openMaestro(140, 30);
+				stdin.write('H');
+				await tick();
+				expect(lastFrame()).toContain('1 of 250');
+				expect(lastFrame()).toContain('Entry number 249');
+				expect(lastFrame()).toContain('older load as you scroll');
+
+				for (let i = 0; i < 205; i++) stdin.write('j');
+				await tick();
+				// Past the first page of 200, so the second page was read and appended.
+				expect(lastFrame()).toContain('206 of 250');
+				expect(lastFrame()).toContain('Entry number 44');
+				expect(lastFrame()).not.toContain('older load as you scroll');
+				unmount();
+			});
+
+			it('says so when the agent has no history, and does not create the file', async () => {
+				const { stdin, lastFrame, unmount } = await openMaestro();
+				stdin.write('H');
+				await tick();
+				expect(lastFrame()).toContain('No history yet for this agent.');
+				expect(fs.existsSync(path.join(dir, 'history'))).toBe(false);
+				unmount();
+			});
+
+			it('does nothing on a group header, and lists the key in help', async () => {
+				const { stdin, lastFrame, unmount } = await renderAt(140, 30);
+				stdin.write('H');
+				await tick();
+				expect(lastFrame()).not.toContain('History:');
+				stdin.write('?');
+				await tick();
+				expect(lastFrame()).toContain('History of the selected agent');
+				unmount();
+			});
 		});
 
 		describe('transcript', () => {

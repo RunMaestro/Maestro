@@ -10,7 +10,7 @@
 import type { Key } from 'ink';
 
 /** Where a binding is live: the main view, or one of the overlays. */
-export type KeyContext = 'main' | 'help' | 'tabs';
+export type KeyContext = 'main' | 'help' | 'tabs' | 'history';
 
 export type KeyAction =
 	| 'quit'
@@ -21,6 +21,7 @@ export type KeyAction =
 	| 'moveDown'
 	| 'open'
 	| 'tabSwitcher'
+	| 'history'
 	| 'toggleToolCalls'
 	| 'toggleAgentsPane'
 	| 'closeOverlay';
@@ -61,13 +62,13 @@ export const KEYMAP: readonly Binding[] = [
 	{
 		action: 'moveDown',
 		chords: [{ input: 'j' }, { named: 'down' }],
-		contexts: ['main', 'tabs'],
+		contexts: ['main', 'tabs', 'history'],
 		description: 'Move down',
 	},
 	{
 		action: 'moveUp',
 		chords: [{ input: 'k' }, { named: 'up' }],
-		contexts: ['main', 'tabs'],
+		contexts: ['main', 'tabs', 'history'],
 		description: 'Move up',
 	},
 	{
@@ -81,6 +82,12 @@ export const KEYMAP: readonly Binding[] = [
 		chords: [{ input: 'T' }],
 		contexts: ['main'],
 		description: 'Tab switcher for the selected agent',
+	},
+	{
+		action: 'history',
+		chords: [{ input: 'H' }],
+		contexts: ['main'],
+		description: 'History of the selected agent',
 	},
 	{
 		action: 'toggleToolCalls',
@@ -109,7 +116,7 @@ export const KEYMAP: readonly Binding[] = [
 	{
 		action: 'closeOverlay',
 		chords: [{ named: 'escape' }],
-		contexts: ['help', 'tabs'],
+		contexts: ['help', 'tabs', 'history'],
 		description: 'Close the overlay',
 	},
 ];
