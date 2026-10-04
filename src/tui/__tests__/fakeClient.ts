@@ -40,6 +40,8 @@ export interface FakeClient {
 	setTranscript(agentId: string, tabId: string, entries: LogEntryRecord[]): void;
 	/** Every `tabs.transcript` call, as `agentId:tabId`. */
 	transcriptReads: string[];
+	/** Tabs closed through `tabs.close`, as the host's closed-tab history holds them. */
+	closedTabs: Array<{ agentId: string; tab: AITabRecord }>;
 	/** What the connection did, in order. */
 	calls: string[];
 	/** Every call that changes or asks something, with the arguments the TUI passed, in order. */
@@ -76,6 +78,8 @@ export function createFakeClient(options: FakeClientOptions = {}): FakeClient {
 	const transcriptReads: string[] = [];
 	const calls: string[] = [];
 	const requests: FakeClient['requests'] = [];
+	const closedTabs: FakeClient['closedTabs'] = [];
+	let tabCount = 0;
 	let createdCount = 0;
 	let groupCount = 0;
 	let state: ConnectionState = 'idle';
@@ -222,9 +226,42 @@ export function createFakeClient(options: FakeClientOptions = {}): FakeClient {
 					? { ok: true, value: (found.aiTabs ?? []) as AITabRecord[] }
 					: fail('tabs.list', 'not-found');
 			},
-			create: () => unsupported('tabs.create'),
-			rename: () => unsupported('tabs.rename'),
-			close: () => unsupported('tabs.close'),
+			create: async (agentId) => {
+				const refused = record('tabs.create', agentId);
+				if (refused) return refused;
+				const found = agents.find((agent) => agent.id === agentId);
+				if (!found) return fail('tabs.create', 'not-found');
+				tabCount += 1;
+				const tabId = `new-tab-${tabCount}`;
+				found.aiTabs = [...(found.aiTabs ?? []), { id: tabId }];
+				push({ type: 'agent.updated', agent: { ...found } });
+				return { ok: true, value: { tabId } };
+			},
+			rename: async (agentId, tabId, name) => {
+				const refused = record('tabs.rename', agentId, tabId, name);
+				if (refused) return refused;
+				const found = agents.find((agent) => agent.id === agentId);
+				const tab = found?.aiTabs?.find((candidate) => candidate.id === tabId);
+				if (!found || !tab) return fail('tabs.rename', 'not-found');
+				if (name) tab.name = name;
+				else delete tab.name;
+				push({ type: 'agent.updated', agent: { ...found, aiTabs: [...(found.aiTabs ?? [])] } });
+				return { ok: true, value: undefined };
+			},
+			close: async (agentId, tabId) => {
+				const refused = record('tabs.close', agentId, tabId);
+				if (refused) return refused;
+				const found = agents.find((agent) => agent.id === agentId);
+				const tab = found?.aiTabs?.find((candidate) => candidate.id === tabId);
+				if (!found || !tab) return fail('tabs.close', 'not-found');
+				// Like the desktop: the tab moves to closed-tab history with its transcript, and closing the last one leaves a fresh empty tab.
+				closedTabs.push({ agentId, tab });
+				const rest = (found.aiTabs ?? []).filter((candidate) => candidate.id !== tabId);
+				tabCount += 1;
+				found.aiTabs = rest.length > 0 ? rest : [{ id: `new-tab-${tabCount}` }];
+				push({ type: 'agent.updated', agent: { ...found } });
+				return { ok: true, value: undefined };
+			},
 			star: () => unsupported('tabs.star'),
 			update: () => unsupported('tabs.update'),
 			transcript: async (agentId, tabId) => {
@@ -278,6 +315,7 @@ export function createFakeClient(options: FakeClientOptions = {}): FakeClient {
 			transcripts[`${agentId}:${tabId}`] = entries;
 		},
 		transcriptReads,
+		closedTabs,
 		calls,
 		requests,
 		setState: (next) => {

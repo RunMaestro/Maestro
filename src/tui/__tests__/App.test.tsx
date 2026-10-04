@@ -358,7 +358,8 @@ describe('App shell', () => {
 		});
 
 		it('lists every binding in the help overlay and closes it with Esc', async () => {
-			const { stdin, lastFrame, unmount } = await renderAt(140, 30);
+			// Tall enough for the whole table on one screen; the list scrolls in smaller windows.
+			const { stdin, lastFrame, unmount } = await renderAt(140, 44);
 			stdin.write('?');
 			await tick();
 			const frame = lastFrame() ?? '';

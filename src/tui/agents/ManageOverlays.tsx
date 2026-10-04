@@ -55,7 +55,10 @@ export function PromptOverlay({
 			})}
 			<Box flexGrow={1} />
 			<Text wrap="truncate-end" color={error ? 'red' : undefined} dimColor={!error}>
-				{error ?? (submitting ? 'Saving...' : (problem ?? ' '))}
+				{error ??
+					(submitting
+						? 'Saving...'
+						: (problem ?? (prompt.kind === 'renameTab' ? 'An empty name clears it.' : ' ')))}
 			</Text>
 			<Text wrap="truncate-end" dimColor>
 				{keysFor('open')} {prompt.kind === 'newGroup' ? 'create' : 'save'}

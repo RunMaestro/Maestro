@@ -35,6 +35,7 @@ import {
 	pickerStartIndex,
 	renameAgentPrompt,
 	renameGroupPrompt,
+	renameTabPrompt,
 	submitConfirm,
 	submitMoveToGroup,
 	submitPrompt,
@@ -42,6 +43,7 @@ import {
 	type ConfirmState,
 	type PromptState,
 } from './agents/manage';
+import { submitCloseTab, submitNewTab, tabAfterClose } from './agents/tabs';
 import { HelpOverlay } from './app/HelpOverlay';
 import { HistoryView } from './app/HistoryView';
 import { moveHistoryCursor, openHistory, type HistoryViewState } from './app/history';
@@ -431,6 +433,57 @@ export function App({ paths, client }: AppProps): React.ReactElement {
 		setNotice(result.ok ? result.value : result.error.message);
 	};
 
+	/** The tab a tab action means: the highlighted one in the tab switcher, else the one on screen. */
+	const tabTarget = (current: OverlayState | undefined) => {
+		const owner = cursorAgentRef.current;
+		if (!owner) return undefined;
+		const tabs = visibleAiTabsOf(owner);
+		const tab =
+			current?.kind === 'tabs'
+				? tabs[current.cursor]
+				: resolveActiveTab(tabs, view.activeTabByAgent[owner.id], owner);
+		return tab ? { agent: owner, tab, tabs } : undefined;
+	};
+
+	/** Shows a tab in the Conversation pane. TUI-local: the desktop's own active tab stays put (CO-4). */
+	const showTab = (agentId: string, tabId: string) =>
+		setView((state) => ({
+			...state,
+			activeTabByAgent: { ...state.activeTabByAgent, [agentId]: tabId },
+		}));
+
+	const createTab = async (client: MaestroClient, owner: AgentRecord) => {
+		const result = await submitNewTab(client, owner);
+		if (!result.ok) {
+			setNotice(result.error.message);
+			return;
+		}
+		showTab(owner.id, result.value.tabId);
+		setNotice(result.value.notice);
+	};
+
+	const closeTab = async (
+		client: MaestroClient,
+		target: NonNullable<ReturnType<typeof tabTarget>>,
+		switcherCursor: number | undefined
+	) => {
+		const { agent: owner, tab, tabs } = target;
+		const wasShown = tab.id === activeTabIdFor(owner);
+		const next = tabAfterClose(tabs, tab.id);
+		const result = await submitCloseTab(client, owner, tab);
+		if (!result.ok) {
+			setNotice(result.error.message);
+			return;
+		}
+		if (wasShown && next) showTab(owner.id, next.id);
+		// The switcher stays open for more closes; keep its cursor on a row that exists.
+		const latest = overlayRef.current;
+		if (switcherCursor !== undefined && latest?.kind === 'tabs') {
+			setOverlay({ ...latest, cursor: Math.max(0, Math.min(switcherCursor, tabs.length - 2)) });
+		}
+		setNotice(result.value);
+	};
+
 	const runAction = (action: KeyAction, current: OverlayState | undefined) => {
 		const visible = isAgentsPaneVisible(columnsRef.current, agentsPaneOverrideRef.current);
 		const focus: PaneId = visible ? focusRef.current : 'conversation';
@@ -460,6 +513,38 @@ export function App({ paths, client }: AppProps): React.ReactElement {
 			case 'submitForm':
 				void submitForm();
 				return;
+			case 'newTab': {
+				const client = requireClient();
+				if (!client || !agent) return;
+				if (current?.kind === 'tabs') setOverlay(undefined);
+				void createTab(client, agent);
+				return;
+			}
+			case 'renameTab': {
+				if (!requireClient()) return;
+				const target = tabTarget(current);
+				if (!target) {
+					setNotice('This agent has no tab to rename.');
+					return;
+				}
+				setOverlay({
+					kind: 'prompt',
+					prompt: renameTabPrompt(target.agent, target.tab),
+					submitting: false,
+				});
+				return;
+			}
+			case 'closeTab': {
+				const client = requireClient();
+				if (!client) return;
+				const target = tabTarget(current);
+				if (!target) {
+					setNotice('This agent has no tab to close.');
+					return;
+				}
+				void closeTab(client, target, current?.kind === 'tabs' ? current.cursor : undefined);
+				return;
+			}
 			case 'newGroup':
 				if (requireClient()) {
 					setOverlay({ kind: 'prompt', prompt: newGroupPrompt(), submitting: false });

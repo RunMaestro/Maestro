@@ -9,6 +9,7 @@
  */
 
 import type {
+	AITabRecord,
 	AgentRecord,
 	ClientResult,
 	GroupRecord,
@@ -45,13 +46,15 @@ export function manageTargetOf(row: PaneRow | undefined): ManageTarget {
 // Text prompts: rename an agent, rename a group, create a group
 // ---------------------------------------------------------------------------
 
-export type PromptKind = 'renameAgent' | 'renameGroup' | 'newGroup';
+export type PromptKind = 'renameAgent' | 'renameGroup' | 'newGroup' | 'renameTab';
 export type PromptField = 'name' | 'emoji';
 
 export interface PromptState {
 	kind: PromptKind;
-	/** The agent or group being renamed. Absent when creating. */
+	/** The agent, group, or tab being renamed. Absent when creating. */
 	targetId?: string;
+	/** The agent a renamed tab belongs to. */
+	agentId?: string;
 	/** The name before the edit, so an unchanged name sends nothing. */
 	original: string;
 	name: string;
@@ -79,6 +82,17 @@ export const renameGroupPrompt = (
 	focus: 'name',
 });
 
+/** A tab's own name, not its fallback label: an empty box clears the name (CH-1). */
+export const renameTabPrompt = (agent: AgentRecord, tab: AITabRecord): PromptState => ({
+	kind: 'renameTab',
+	agentId: agent.id,
+	targetId: tab.id,
+	original: tab.name ?? '',
+	name: tab.name ?? '',
+	emoji: '',
+	focus: 'name',
+});
+
 export const newGroupPrompt = (): PromptState => ({
 	kind: 'newGroup',
 	original: '',
@@ -95,6 +109,8 @@ export function promptTitle(state: PromptState): string {
 			return `Rename group: ${state.original}`;
 		case 'newGroup':
 			return 'New group';
+		case 'renameTab':
+			return `Rename tab: ${state.original || 'unnamed'}`;
 	}
 }
 
@@ -139,6 +155,8 @@ export function movePromptFocus(state: PromptState, delta: number): PromptState 
 
 /** Why the prompt cannot be sent yet, or null. */
 export function promptProblem(state: PromptState): string | null {
+	// A tab with no name shows its session id label, so clearing it is allowed.
+	if (state.kind === 'renameTab') return null;
 	return state.name.trim() ? null : 'The name cannot be empty.';
 }
 
@@ -173,6 +191,12 @@ export async function submitPrompt(
 			return result.ok
 				? { ok: true, value: `Renamed group ${state.original} to ${name}.` }
 				: result;
+		}
+		case 'renameTab': {
+			if (name === state.original.trim()) return { ok: true, value: 'Name unchanged.' };
+			const result = await client.tabs.rename(state.agentId ?? '', state.targetId ?? '', name);
+			if (!result.ok) return result;
+			return { ok: true, value: name ? `Renamed the tab to ${name}.` : 'Cleared the tab name.' };
 		}
 		case 'newGroup': {
 			const emoji = state.emoji.trim();

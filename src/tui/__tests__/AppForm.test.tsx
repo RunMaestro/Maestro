@@ -5,6 +5,7 @@ import * as path from 'path';
 import { render } from 'ink-testing-library';
 import type { AgentRecord, GroupRecord, ProviderInfo } from '../../shared/maestro-lib';
 import { App } from '../App';
+import { agentMenuEntries } from '../palette/agentMenu';
 import { createFakeClient, type FakeClientOptions } from './fakeClient';
 
 const tick = (ms = 30) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -256,8 +257,8 @@ describe('the agent form in the App', () => {
 		const second = await mount();
 		await second.press('j', 'm');
 		expect(second.frame()).toContain('Edit agent');
-		// Open conversation, Switch tab, History, Edit agent.
-		await second.press('j', 'j', 'j', ENTER);
+		const editAt = agentMenuEntries().findIndex((entry) => entry.label === 'Edit agent');
+		await second.press(...Array(editAt).fill('j'), ENTER);
 		expect(second.frame()).toContain('Edit agent: Deskbound');
 		second.unmount();
 	});

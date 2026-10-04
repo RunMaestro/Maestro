@@ -31,6 +31,9 @@ export type KeyAction =
 	| 'moveDown'
 	| 'open'
 	| 'tabSwitcher'
+	| 'newTab'
+	| 'renameTab'
+	| 'closeTab'
 	| 'history'
 	| 'toggleToolCalls'
 	| 'toggleAgentsPane'
@@ -149,6 +152,27 @@ export const KEYMAP: readonly Binding[] = [
 		contexts: ['main'],
 		description: 'Tab switcher for the selected agent',
 		agentMenu: 'Switch tab',
+	},
+	{
+		action: 'newTab',
+		chords: [{ input: 't' }],
+		contexts: ['main', 'tabs'],
+		description: 'New tab for the selected agent',
+		agentMenu: 'New tab',
+	},
+	{
+		action: 'renameTab',
+		chords: [{ input: 'r' }],
+		contexts: ['main', 'tabs'],
+		description: 'Rename the open tab (the highlighted one in the tab switcher)',
+		agentMenu: 'Rename tab',
+	},
+	{
+		action: 'closeTab',
+		chords: [{ input: 'x' }],
+		contexts: ['main', 'tabs'],
+		description: 'Close the open tab into closed-tab history',
+		agentMenu: 'Close tab',
 	},
 	{
 		action: 'history',
