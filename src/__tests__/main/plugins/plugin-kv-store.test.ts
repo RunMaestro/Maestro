@@ -4,17 +4,30 @@
  * bounds value bytes / key bytes / key count, persists atomically, and purges.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { PluginKvStore } from '../../../main/plugins/plugin-kv-store';
+
+const { failRename } = vi.hoisted(() => ({ failRename: { current: false } }));
+vi.mock('fs', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('fs')>();
+	return {
+		...actual,
+		renameSync: (...args: Parameters<typeof actual.renameSync>) => {
+			if (failRename.current) throw new Error('simulated rename failure');
+			return actual.renameSync(...args);
+		},
+	};
+});
 
 describe('PluginKvStore', () => {
 	let base: string;
 	let store: PluginKvStore;
 
 	beforeEach(() => {
+		failRename.current = false;
 		base = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-kv-'));
 		store = new PluginKvStore({
 			baseDir: base,
@@ -66,6 +79,22 @@ describe('PluginKvStore', () => {
 		expect(() => store.set('p', 'd', '4')).toThrow(/key limit/);
 		store.set('p', 'a', '11'); // overwrite at the cap is fine
 		expect(store.get('p', 'a')).toBe('11');
+	});
+
+	it('atomically evicts the oldest key and retains it if replacement fails', () => {
+		store.set('p', 'a', '1');
+		store.set('p', 'b', '2');
+		store.set('p', 'c', '3');
+		failRename.current = true;
+		expect(() => store.set('p', 'd', '4', { evictOldestOnLimit: true })).toThrow(
+			/simulated rename failure/
+		);
+		failRename.current = false;
+		expect(store.keys('p')).toEqual(['a', 'b', 'c']);
+		expect(store.get('p', 'd')).toBeNull();
+		expect(new PluginKvStore({ baseDir: base }).keys('p')).toEqual(['a', 'b', 'c']);
+		store.set('p', 'd', '4', { evictOldestOnLimit: true });
+		expect(store.keys('p')).toEqual(['b', 'c', 'd']);
 	});
 
 	it('persists across instances and leaves no temp file behind', () => {

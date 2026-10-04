@@ -91,16 +91,29 @@ export class PluginKvStore {
 	 * key count for a NEW key) so a permitted-but-hostile plugin cannot exhaust
 	 * disk. Persisted atomically.
 	 */
-	set(pluginId: string, key: string, value: string): void {
+	set(
+		pluginId: string,
+		key: string,
+		value: string,
+		options?: { evictOldestOnLimit?: boolean }
+	): void {
 		this.assertKey(key);
 		if (typeof value !== 'string') throw new Error('storage value must be a string');
 		if (Buffer.byteLength(value, 'utf8') > this.limits.maxValueBytes) {
 			throw new Error(`storage value exceeds ${this.limits.maxValueBytes} bytes`);
 		}
-		const store = this.load(pluginId);
+		// Work on a copy so a failed atomic replacement leaves the cached state
+		// identical to the on-disk store.
+		const store = Object.assign(Object.create(null) as Record<string, string>, this.load(pluginId));
 		const isNew = !Object.prototype.hasOwnProperty.call(store, key);
-		if (isNew && Object.keys(store).length >= this.limits.maxKeys) {
-			throw new Error(`storage key limit reached (${this.limits.maxKeys})`);
+		if (isNew) {
+			const keys = Object.keys(store);
+			if (keys.length >= this.limits.maxKeys) {
+				if (!options?.evictOldestOnLimit || keys.length === 0) {
+					throw new Error(`storage key limit reached (${this.limits.maxKeys})`);
+				}
+				delete store[keys[0]];
+			}
 		}
 		store[key] = value;
 		this.persist(pluginId, store);
@@ -109,7 +122,7 @@ export class PluginKvStore {
 	/** Delete one key. Returns whether it existed. */
 	delete(pluginId: string, key: string): boolean {
 		this.assertKey(key);
-		const store = this.load(pluginId);
+		const store = Object.assign(Object.create(null) as Record<string, string>, this.load(pluginId));
 		if (!Object.prototype.hasOwnProperty.call(store, key)) return false;
 		delete store[key];
 		this.persist(pluginId, store);
