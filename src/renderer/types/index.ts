@@ -1774,6 +1774,10 @@ export interface EncoreFeatureFlags {
 	// per-account attribution on History and stats. Off by default. Optional so
 	// older fixtures and persisted settings remain valid.
 	webLogin?: boolean;
+	// Computer History - local accessibility-based record of what the user reads
+	// and types, exposed to every agent. Off by default. Optional so older
+	// fixtures and persisted settings remain valid.
+	computerHistory?: boolean;
 }
 
 // Director's Notes settings for synopsis generation
