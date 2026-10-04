@@ -43,6 +43,15 @@ import {
 	resolveCodexHomeKey,
 } from '../../stores/codexUsageStore';
 import { pruneMissingQuotaAccounts } from '../../stores/quotaAccountsStore';
+import {
+	carryProviderSession,
+	readProviderAccountIdentities,
+} from '../../agents/provider-account-switch';
+import type {
+	CarryProviderSessionRequest,
+	CarryProviderSessionResult,
+	ProviderAccountIdentity,
+} from '../../../shared/providerAccountSwitch';
 import type { UsageSnapshot } from '../../agents/claude-mode-selector';
 import type { CodexUsageSnapshot } from '../../stores/codexUsageStore';
 import {
@@ -66,6 +75,36 @@ const handlerOpts = (
 });
 
 /** One env-var record off a config or session, active or parked. */
+/**
+ * Every Claude account this machine has: the `~/.claude-*` dirs on disk plus
+ * the ones Maestro has actually sampled (`quotaAccountsStore`). The second
+ * source is what keeps an account the discovery sweep cannot see - symlinked,
+ * outside $HOME, or named like a backup - listed once its agents move away.
+ * Remembered accounts whose dir is gone are forgotten here.
+ */
+async function listClaudeAccountKeys(): Promise<string[]> {
+	const configDirs = await discoverClaudeConfigDirs();
+	const keys = new Set(
+		configDirs.map((configDir) => resolveConfigDirKey({ CLAUDE_CONFIG_DIR: configDir }))
+	);
+	for (const key of await pruneMissingQuotaAccounts('claude-code')) {
+		keys.add(key);
+	}
+	return Array.from(keys);
+}
+
+/** Discovered `~/.codex-*` homes plus the ones Maestro has sampled before. */
+async function listCodexAccountKeys(): Promise<string[]> {
+	const codexHomes = await discoverCodexHomes();
+	const keys = new Set(
+		codexHomes.map((codexHome) => resolveCodexHomeKey({ CODEX_HOME: codexHome }))
+	);
+	for (const key of await pruneMissingQuotaAccounts('codex')) {
+		keys.add(key);
+	}
+	return Array.from(keys);
+}
+
 function envVarRecord(value: unknown, field: string): Record<string, unknown> {
 	if (!value || typeof value !== 'object' || !(field in value)) return {};
 	const record = (value as Record<string, unknown>)[field];
@@ -1851,23 +1890,10 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 		)
 	);
 
-	// Every Claude account this machine has: the `~/.claude-*` dirs on disk plus
-	// the ones Maestro has actually sampled (`quotaAccountsStore`). The second
-	// source is what keeps an account the discovery sweep cannot see - symlinked,
-	// outside $HOME, or named like a backup - on the dashboard once its agents
-	// move away. Remembered accounts whose dir is gone are forgotten here.
+	// Every Claude account this machine has (see listClaudeAccountKeys).
 	ipcMain.handle(
 		'agents:getClaudeUsageAccountKeys',
-		withIpcErrorLogging(handlerOpts('getClaudeUsageAccountKeys'), async (): Promise<string[]> => {
-			const configDirs = await discoverClaudeConfigDirs();
-			const keys = new Set(
-				configDirs.map((configDir) => resolveConfigDirKey({ CLAUDE_CONFIG_DIR: configDir }))
-			);
-			for (const key of await pruneMissingQuotaAccounts('claude-code')) {
-				keys.add(key);
-			}
-			return Array.from(keys);
-		})
+		withIpcErrorLogging(handlerOpts('getClaudeUsageAccountKeys'), listClaudeAccountKeys)
 	);
 
 	// On-demand re-sampler. Delegates to the same `runStartupUsageSampling()`
@@ -1932,16 +1958,37 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 	// an account keeps its dashboard row after its last agent moves off it.
 	ipcMain.handle(
 		'agents:getCodexUsageAccountKeys',
-		withIpcErrorLogging(handlerOpts('getCodexUsageAccountKeys'), async (): Promise<string[]> => {
-			const codexHomes = await discoverCodexHomes();
-			const keys = new Set(
-				codexHomes.map((codexHome) => resolveCodexHomeKey({ CODEX_HOME: codexHome }))
-			);
-			for (const key of await pruneMissingQuotaAccounts('codex')) {
-				keys.add(key);
+		withIpcErrorLogging(handlerOpts('getCodexUsageAccountKeys'), listCodexAccountKeys)
+	);
+
+	// Account switcher: every account dir for a provider (the same list the Usage
+	// Dashboard samples), with who is signed into each one. Identity is read
+	// here rather than taken from the usage snapshots, because a dir that has
+	// never been sampled still has to show an email, not just its name.
+	ipcMain.handle(
+		'agents:getProviderAccounts',
+		withIpcErrorLogging(
+			handlerOpts('getProviderAccounts'),
+			async (_event, toolType: string): Promise<ProviderAccountIdentity[]> => {
+				const keys =
+					toolType === 'claude-code'
+						? await listClaudeAccountKeys()
+						: toolType === 'codex'
+							? await listCodexAccountKeys()
+							: [];
+				return readProviderAccountIdentities(toolType, keys, os.homedir());
 			}
-			return Array.from(keys);
-		})
+		)
+	);
+
+	// Make a tab's provider session resumable from the account it is switching to.
+	ipcMain.handle(
+		'agents:carryProviderSession',
+		withIpcErrorLogging(
+			handlerOpts('carryProviderSession'),
+			async (_event, req: CarryProviderSessionRequest): Promise<CarryProviderSessionResult> =>
+				carryProviderSession(req)
+		)
 	);
 
 	ipcMain.handle(

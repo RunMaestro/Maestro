@@ -65,6 +65,7 @@ vi.mock('lucide-react', () => ({
 	Clock: () => <span data-testid="icon-clock" />,
 	ScrollText: () => <span data-testid="icon-scroll-text" />,
 	Cpu: () => <span data-testid="icon-cpu" />,
+	UserRoundCog: () => <span data-testid="icon-user-round-cog" />,
 	Menu: () => <span data-testid="icon-menu" />,
 	Bookmark: ({ fill }: { fill?: string }) => <span data-testid="icon-bookmark" data-fill={fill} />,
 	Trophy: () => <span data-testid="icon-trophy" />,

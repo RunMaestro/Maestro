@@ -196,6 +196,8 @@ describe('agents IPC handlers', () => {
 				'agents:getCodexUsageSnapshots',
 				'agents:getCodexUsageAccountKeys',
 				'codex:usage:refresh-all',
+				'agents:getProviderAccounts',
+				'agents:carryProviderSession',
 			];
 
 			for (const channel of expectedChannels) {

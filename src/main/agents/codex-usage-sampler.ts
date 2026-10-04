@@ -335,7 +335,7 @@ function parseResetAt(value: unknown): string | null {
 	return Number.isNaN(date.getTime()) ? null : date.toISOString();
 }
 
-function extractEmailFromJwt(idToken: string | undefined): string | undefined {
+export function extractEmailFromJwt(idToken: string | undefined): string | undefined {
 	if (!idToken) return undefined;
 	try {
 		const payload = idToken.split('.')[1];

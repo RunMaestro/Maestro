@@ -11,6 +11,9 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { RetryStatusCard } from '../../../renderer/components/RetryStatusCard';
 import { useRetryStore } from '../../../renderer/stores/retryStore';
+import { useModalStore } from '../../../renderer/stores/modalStore';
+import { useSessionStore } from '../../../renderer/stores/sessionStore';
+import type { Session } from '../../../renderer/types';
 import { mockTheme } from '../../helpers/mockTheme';
 import type { OutageRecord } from '../../../renderer/stores/retryStore';
 
@@ -230,6 +233,42 @@ describe('RetryStatusCard', () => {
 
 			expect(screen.getByText('Plan quota exhausted')).toBeInTheDocument();
 			expect(screen.queryByTestId('quota-limit-evidence')).not.toBeInTheDocument();
+		});
+	});
+	// A spent quota is when another account is worth reaching for; an overloaded
+	// service is not, and a provider with no accounts has nowhere to switch to.
+	describe('Switch account', () => {
+		function setAgent(toolType: string) {
+			useSessionStore.setState({ sessions: [{ id: 's1', toolType } as unknown as Session] });
+		}
+
+		afterEach(() => {
+			useSessionStore.setState({ sessions: [] });
+			useModalStore.getState().closeModal('accountSwitcher');
+		});
+
+		it('offers the switcher on a quota outage and opens it for that agent', () => {
+			setAgent('claude-code');
+			setOutage({ strategy: 'token-exhaustion' });
+			render(<RetryStatusCard outageId="o1" theme={mockTheme} />);
+
+			fireEvent.click(screen.getByRole('button', { name: /Switch account/ }));
+			const entry = useModalStore.getState().modals.get('accountSwitcher');
+			expect(entry?.open).toBe(true);
+			expect(entry?.data).toEqual({ sessionId: 's1' });
+		});
+
+		it('is absent for an availability outage and for a provider with no accounts', () => {
+			setAgent('claude-code');
+			setOutage({ strategy: 'availability' });
+			const { unmount } = render(<RetryStatusCard outageId="o1" theme={mockTheme} />);
+			expect(screen.queryByRole('button', { name: /Switch account/ })).not.toBeInTheDocument();
+			unmount();
+
+			setAgent('opencode');
+			setOutage({ strategy: 'token-exhaustion' });
+			render(<RetryStatusCard outageId="o1" theme={mockTheme} />);
+			expect(screen.queryByRole('button', { name: /Switch account/ })).not.toBeInTheDocument();
 		});
 	});
 });

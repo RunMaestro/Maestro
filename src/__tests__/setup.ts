@@ -353,6 +353,8 @@ const mockMaestro = {
 		getClaudeUsageAccountKeys: vi.fn().mockResolvedValue([]),
 		getCodexUsageSnapshots: vi.fn().mockResolvedValue({}),
 		getCodexUsageAccountKeys: vi.fn().mockResolvedValue([]),
+		getProviderAccounts: vi.fn().mockResolvedValue([]),
+		carryProviderSession: vi.fn().mockResolvedValue('shared'),
 		refreshClaudeUsageSnapshots: vi.fn().mockResolvedValue({ refreshed: 0 }),
 		refreshCodexUsageSnapshots: vi.fn().mockResolvedValue({ refreshed: 0 }),
 	},
