@@ -13,7 +13,7 @@ import type {
 import { createOutputParser } from '../../shared/maestro-lib/parsers/parser-factory';
 import { aggregateModelUsage } from '../../shared/maestro-lib/parsers/usage-aggregator';
 import { ClaudeOutputParser } from '../../shared/maestro-lib/parsers/claude-output-parser';
-import { getAgentDefinition } from '../../shared/maestro-lib/providers/definitions';
+import { getAgentDefinition, type AgentDefinition } from '../../shared/maestro-lib/providers/definitions';
 import {
 	getAgentCapabilities,
 	hasCapability,
@@ -161,6 +161,51 @@ type SpawnOverrides = Pick<
  * cmdline. The 30s cleanup mirrors the desktop handler's safety window.
  */
 const SYSTEM_PROMPT_TMPFILE_CLEANUP_MS = 30_000;
+
+/**
+ * Prompts longer than this go through a file on Windows for agents that
+ * declare `promptFileArgs` (omp's `@path`). Same threshold as the desktop's
+ * `ChildProcessSpawner`: agents without a native system-prompt flag get the
+ * instructions embedded in the user message, which alone can exceed
+ * CreateProcess's ~32K argv cap and fail the spawn with ENAMETOOLONG.
+ */
+const PROMPT_FILE_THRESHOLD_CHARS = 24_000;
+
+/**
+ * Write a long prompt to a temp file and return the agent's file-delivery
+ * args, or null when the agent cannot take a file, the platform does not
+ * need it, or the write fails (the caller then delivers inline as before).
+ * Cleanup mirrors the system-prompt tempfile above.
+ */
+function buildPromptFileArgs(
+	def: AgentDefinition | undefined,
+	prompt: string,
+	isSshSession: boolean
+): string[] | null {
+	if (!isWindows() || isSshSession || !def?.promptFileArgs) return null;
+	if (prompt.length <= PROMPT_FILE_THRESHOLD_CHARS) return null;
+	const tempFile = path.join(os.tmpdir(), `maestro-prompt-${Date.now()}-${process.pid}.md`);
+	try {
+		fs.writeFileSync(tempFile, prompt, { encoding: 'utf-8', mode: 0o600 });
+	} catch (writeErr) {
+		const reason = writeErr instanceof Error ? writeErr.message : String(writeErr);
+		console.error(
+			`[maestro-cli] prompt tempfile write failed (${reason}); delivering the prompt inline`
+		);
+		return null;
+	}
+	const cleanupTimer = setTimeout(() => {
+		fs.promises.unlink(tempFile).catch((unlinkErr: NodeJS.ErrnoException) => {
+			if (unlinkErr.code !== 'ENOENT') {
+				console.error(
+					`[maestro-cli] prompt tempfile cleanup failed (${unlinkErr.message}) at ${tempFile}`
+				);
+			}
+		});
+	}, SYSTEM_PROMPT_TMPFILE_CLEANUP_MS);
+	cleanupTimer.unref?.();
+	return def.promptFileArgs(tempFile);
+}
 
 /**
  * Resolve agent-level + session-level overrides and produce final args plus
@@ -1005,9 +1050,9 @@ async function spawnJsonLineAgent(
 
 	// Target, environment and prompt delivery come from the shared launch plan,
 	// by the CLI's own rules (see planCliLaunch): the provider's own prompt flag
-	// (Copilot's `-p`), a bare positional or `-- <prompt>`, on the command line
-	// on every host. An SSH remote that cannot be resolved fails here, before
-	// anything is spawned.
+	// (Copilot's `-p`), a bare positional or `-- <prompt>`. Local Windows
+	// providers that accept a prompt file use that transport below. An SSH
+	// remote that cannot be resolved fails here, before anything is spawned.
 	const planResult = planCliLaunch(toolType, def, {
 		command: agentCommand,
 		args: baseArgs,
@@ -1033,8 +1078,9 @@ async function spawnJsonLineAgent(
 		Boolean(sshRemoteConfig?.enabled)
 	);
 
+	const promptFileArgs = buildPromptFileArgs(def, effectivePrompt, plan.target.kind === 'remote');
 	let spawnCommand = plan.command;
-	let spawnArgs = plan.args;
+	let spawnArgs = promptFileArgs ? [...baseArgs, ...promptFileArgs] : plan.args;
 	let spawnCwd = plan.cwd;
 	let spawnEnv: NodeJS.ProcessEnv = plan.env ?? { ...process.env };
 	let sshStdinScript: string | undefined;

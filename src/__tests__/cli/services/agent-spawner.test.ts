@@ -3319,4 +3319,73 @@ Some text with [x] in it that's not a checkbox
 			expect(args[sepIdx + 1]).toBe('just the user message');
 		});
 	});
+
+	describe('spawnAgent: long prompt file delivery (Windows, omp)', () => {
+		const withPlatform = async (platform: string, fn: () => Promise<void>) => {
+			const originalPlatform = process.platform;
+			Object.defineProperty(process, 'platform', { value: platform, configurable: true });
+			const writeSpy = vi.spyOn(fs, 'writeFileSync').mockImplementation(() => undefined);
+			try {
+				await fn();
+			} finally {
+				writeSpy.mockRestore();
+				Object.defineProperty(process, 'platform', {
+					value: originalPlatform,
+					configurable: true,
+				});
+			}
+		};
+		// omp has no native system-prompt flag, so the embedded instructions
+		// ride in the user message; a Pianola-sized instruction block alone
+		// exceeded CreateProcess's argv cap and failed the spawn (ENAMETOOLONG).
+		const longSystemPrompt = 'x'.repeat(30_000);
+
+		beforeEach(() => {
+			mockSpawn.mockReturnValue(mockChild);
+		});
+
+		it('delivers an over-limit prompt through a temp file via omp @path on Windows', async () => {
+			await withPlatform('win32', async () => {
+				const p = spawnAgent('omp', 'C:\\proj', 'user msg', undefined, {
+					appendSystemPrompt: longSystemPrompt,
+				});
+				await driveSpawnToCompletion(p, 0);
+
+				const { args } = spawnCall();
+				const fileArg = args.find((a) => /^@.*maestro-prompt-/.test(a));
+				expect(fileArg).toBeDefined();
+				expect(args[args.indexOf(fileArg!) - 1]).toBe('--');
+				expect(args.some((a) => a.includes('user msg'))).toBe(false);
+				expect(fs.writeFileSync).toHaveBeenCalledWith(
+					expect.stringMatching(/maestro-prompt-/),
+					expect.stringContaining('user msg'),
+					expect.objectContaining({ encoding: 'utf-8' })
+				);
+			});
+		});
+
+		it('keeps a short prompt inline on Windows', async () => {
+			await withPlatform('win32', async () => {
+				const p = spawnAgent('omp', 'C:\\proj', 'short task');
+				await driveSpawnToCompletion(p, 0);
+
+				const { args } = spawnCall();
+				expect(args[args.length - 1]).toBe('short task');
+				expect(fs.writeFileSync).not.toHaveBeenCalled();
+			});
+		});
+
+		it('keeps an over-limit prompt inline off Windows', async () => {
+			await withPlatform('linux', async () => {
+				const p = spawnAgent('omp', '/proj', 'user msg', undefined, {
+					appendSystemPrompt: longSystemPrompt,
+				});
+				await driveSpawnToCompletion(p, 0);
+
+				const { args } = spawnCall();
+				expect(args[args.length - 1]).toContain('user msg');
+				expect(fs.writeFileSync).not.toHaveBeenCalled();
+			});
+		});
+	});
 });
