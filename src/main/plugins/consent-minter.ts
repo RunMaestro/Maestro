@@ -217,6 +217,9 @@ export class ConsentMinter {
 		if (!dispatch) return requested;
 		const members = parseAllowlistScope(dispatch.scope);
 		const scope = members && members.every(isValidAllowlistMember) ? members.join(',') : undefined;
+		// An absent scope is an intentional deny-all selection. A malformed saved
+		// scope must not replace the manifest request with an unusable grant.
+		if (dispatch.scope !== undefined && scope === undefined) return requested;
 		return requested.map((request) =>
 			request.capability === 'agents:dispatch' ? { ...request, scope } : request
 		);

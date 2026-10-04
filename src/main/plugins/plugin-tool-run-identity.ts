@@ -3,6 +3,7 @@ import { randomBytes } from 'crypto';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { logger } from '../utils/logger';
 
 const DEFAULT_TTL_MS = 60 * 60 * 1000;
 const MAX_TTL_MS = 4 * DEFAULT_TTL_MS;
@@ -60,7 +61,18 @@ export function createPluginRunProofFile(token: string, ttlMs = DEFAULT_TTL_MS):
 		fs.rmSync(dir, { recursive: true, force: true });
 		throw error;
 	}
-	const cleanup = setTimeout(() => removePluginRunProofFile(file), Math.min(ttlMs, MAX_TTL_MS));
+	const cleanup = setTimeout(
+		() => {
+			try {
+				removePluginRunProofFile(file);
+			} catch (error) {
+				logger.warn('Could not remove expired plugin run proof file', '[PluginRunIdentity]', {
+					error: String(error),
+				});
+			}
+		},
+		Math.min(ttlMs, MAX_TTL_MS)
+	);
 	cleanup.unref?.();
 	return file;
 }

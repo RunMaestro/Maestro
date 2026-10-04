@@ -124,7 +124,10 @@ describe('plugin headless agent runner', () => {
 				cliScriptPath: () => '/cli.js',
 				audit: vi.fn(),
 			});
-			await expect(run('agent-a', 'hello')).rejects.toThrow('cleanup denied');
+			await expect(run('agent-a', 'hello')).resolves.toMatchObject({
+				success: true,
+				response: 'answer',
+			});
 			expect(revokeRunToken).toHaveBeenCalledOnce();
 		} finally {
 			createProof.mockRestore();

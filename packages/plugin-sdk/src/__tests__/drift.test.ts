@@ -170,6 +170,26 @@ describe('@maestro/plugin-sdk vendored-contract drift guard', () => {
 		expect(validatePluginManifest(malformed)).toEqual(srcValidatePluginManifest(malformed));
 	});
 
+	it('rejects impossible release dates in both vendored and host validators', () => {
+		const base = {
+			id: 'com.example.dated',
+			name: 'Dated',
+			version: '1.0.0',
+			tier: 0,
+			maestro: { minHostApi: HOST_API_VERSION },
+		};
+		for (const releaseDate of ['2026-02-30', '2026-04-31', '2025-02-29']) {
+			const manifest = { ...base, releaseDate };
+			expect(validatePluginManifest(manifest)).toEqual(srcValidatePluginManifest(manifest));
+			expect(validatePluginManifest(manifest).manifest).toBeNull();
+		}
+		for (const releaseDate of ['2024-02-29', '0000-01-01']) {
+			const manifest = { ...base, releaseDate };
+			expect(validatePluginManifest(manifest)).toEqual(srcValidatePluginManifest(manifest));
+			expect(validatePluginManifest(manifest).manifest).not.toBeNull();
+		}
+	});
+
 	it('validatePluginManifest agrees with the source on a well-formed manifest with category', () => {
 		const wellFormed = {
 			id: 'com.example.transcript-reader',

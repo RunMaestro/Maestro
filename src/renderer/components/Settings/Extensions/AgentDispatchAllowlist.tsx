@@ -59,6 +59,10 @@ export function AgentDispatchAllowlist({
 			),
 		[sessions, normalizedQuery]
 	);
+	const visibleSessionIds = useMemo(
+		() => new Set(visibleSessions.map((session) => session.id)),
+		[visibleSessions]
+	);
 
 	// Seed the editable set from the persisted scope. Reset on pluginId too, so a
 	// switch between plugins whose grants happen to share the same scope string
@@ -77,6 +81,9 @@ export function AgentDispatchAllowlist({
 		[checked, sessionIds]
 	);
 	const liveCheckedCount = checked.size - staleChecked.length;
+	const hiddenCheckedCount = normalizedQuery
+		? [...checked].filter((id) => sessionIds.has(id) && !visibleSessionIds.has(id)).length
+		: 0;
 
 	// A save is meaningful when the live selection diverges from the persisted
 	// scope, OR there are stale ids to prune.
@@ -225,6 +232,7 @@ export function AgentDispatchAllowlist({
 				</button>
 				<span className="text-xs-plus" style={{ color: theme.colors.textDim }}>
 					{liveCheckedCount} of {sessions.length} agent{sessions.length === 1 ? '' : 's'} allowed
+					{hiddenCheckedCount > 0 ? ` (${hiddenCheckedCount} hidden by search)` : ''}
 				</span>
 			</div>
 		</div>

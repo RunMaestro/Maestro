@@ -728,8 +728,18 @@ export function validatePluginManifest(input: unknown): ManifestValidationResult
 			errors.push('releaseDate, when present, must be a string');
 		} else if (!/^\d{4}-\d{2}-\d{2}$/.test(releaseDate.trim())) {
 			errors.push(`releaseDate "${releaseDate}" is invalid: use YYYY-MM-DD`);
-		} else if (Number.isNaN(Date.parse(`${releaseDate.trim()}T00:00:00Z`))) {
-			errors.push(`releaseDate "${releaseDate}" is not a real calendar date`);
+		} else {
+			const date = releaseDate.trim();
+			const [year, month, day] = date.split('-').map(Number);
+			const parsed = new Date(`${date}T00:00:00Z`);
+			if (
+				Number.isNaN(parsed.getTime()) ||
+				parsed.getUTCFullYear() !== year ||
+				parsed.getUTCMonth() !== month - 1 ||
+				parsed.getUTCDate() !== day
+			) {
+				errors.push(`releaseDate "${releaseDate}" is not a real calendar date`);
+			}
 		}
 	}
 	if (contributes !== undefined && !isPlainObject(contributes)) {

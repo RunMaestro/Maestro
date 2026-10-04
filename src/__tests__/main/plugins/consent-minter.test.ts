@@ -541,6 +541,17 @@ describe('Dispatch allowlist during renewed consent', () => {
 		expect(out.grants[0].scope).toBeUndefined();
 	});
 
+	it('falls back to the requested dispatch scope when a saved scope is malformed', async () => {
+		const f = renewed({
+			grants: [{ capability: 'agents:dispatch', scope: 'agent-*', grantedAt: 1 }],
+		});
+		await f.minter.requestConsent('p');
+		expect(f.offer().requested[0].scope).toBe('CONFIGURE_IN_MAESTRO');
+		const out = f.confirm();
+		if (!out.ok) throw new Error(out.reason);
+		expect(out.grants[0].scope).toBe('CONFIGURE_IN_MAESTRO');
+	});
+
 	it.each([
 		{ identity: { ...TRUSTED, signerKey: 'different-publisher' } },
 		{ identity: UNTRUSTED },

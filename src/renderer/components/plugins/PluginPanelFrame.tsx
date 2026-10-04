@@ -29,7 +29,7 @@
  * lives in exactly one place.
  */
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { Puzzle } from 'lucide-react';
 import type { Theme } from '../../types';
 import type { PanelContribution } from '../../../shared/plugins/contributions';
@@ -83,9 +83,11 @@ export function PluginPanelFrame({ theme, panel, frameClassName }: PluginPanelFr
 	const readyWebviewRef = useRef<PanelWebviewElement | null>(null);
 	// dom-ready can arrive after several theme changes. Its listener reads this
 	// ref so the first frame always receives the newest palette.
-	const themePayload = buildPanelThemePayload(theme);
+	const themePayload = useMemo(() => buildPanelThemePayload(theme), [theme]);
 	const latestThemeRef = useRef(themePayload);
-	latestThemeRef.current = themePayload;
+	useEffect(() => {
+		latestThemeRef.current = themePayload;
+	}, [themePayload]);
 
 	useEffect(() => {
 		const webview = webviewRef.current;
@@ -114,7 +116,7 @@ export function PluginPanelFrame({ theme, panel, frameClassName }: PluginPanelFr
 		} catch (error) {
 			if (!isDetachedWebviewError(error)) captureException(error);
 		}
-	}, [theme]);
+	}, [themePayload]);
 
 	// Bridge: the guest preload forwards the panel's postMessage bridge
 	// (`{ type: 'maestro:invokeCommand', commandId, args }`) as an ipc-message

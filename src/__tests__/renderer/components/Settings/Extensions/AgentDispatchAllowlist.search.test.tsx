@@ -68,7 +68,7 @@ describe('AgentDispatchAllowlist search', () => {
 			target: { value: 'gamma' },
 		});
 		fireEvent.click(screen.getByTestId('agent-dispatch-allowlist-checkbox'));
-		expect(screen.getByText('3 of 3 agents allowed')).toBeInTheDocument();
+		expect(screen.getByText('3 of 3 agents allowed (2 hidden by search)')).toBeInTheDocument();
 		expect(screen.getByTestId('agent-dispatch-allowlist-stale')).toBeInTheDocument();
 		fireEvent.click(screen.getByTestId('agent-dispatch-allowlist-save'));
 		await waitFor(() =>

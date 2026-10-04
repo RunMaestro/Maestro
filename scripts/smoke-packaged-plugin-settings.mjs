@@ -7,8 +7,14 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { _electron as electron } from '@playwright/test';
 
-const packageRoot = path.resolve(process.argv[2] ?? '');
-const relaySource = path.resolve(process.argv[3] ?? '');
+if (!process.argv[2] || !process.argv[3]) {
+	console.error(
+		'Usage: node scripts/smoke-packaged-plugin-settings.mjs <package-root> <relay-install-dir>'
+	);
+	process.exit(2);
+}
+const packageRoot = path.resolve(process.argv[2]);
+const relaySource = path.resolve(process.argv[3]);
 const executablePath = path.join(packageRoot, 'maestro');
 if (
 	!fs.existsSync(executablePath) ||

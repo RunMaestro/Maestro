@@ -46,4 +46,5 @@ describe('PluginToolRunIdentity', () => {
 		}
 		expect(fs.existsSync(file)).toBe(false);
 	});
+
 });

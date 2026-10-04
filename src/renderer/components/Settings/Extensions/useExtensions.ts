@@ -257,9 +257,19 @@ export function useExtensions(): UseExtensionsResult {
 			try {
 				const dir = await window.maestro.dialog.selectFolder();
 				if (!dir) return;
-				const manifestText = await window.maestro.fs.readFile(joinPath(dir, 'plugin.json'));
+				let manifestText: string | null;
+				try {
+					manifestText = await window.maestro.fs.readFile(joinPath(dir, 'plugin.json'));
+				} catch {
+					throw new Error('Could not read plugin.json in the selected folder');
+				}
 				if (!manifestText) throw new Error('Selected folder has no plugin.json');
-				const manifest = JSON.parse(manifestText) as { id?: unknown };
+				let manifest: { id?: unknown };
+				try {
+					manifest = JSON.parse(manifestText) as { id?: unknown };
+				} catch {
+					throw new Error('Selected folder has an invalid plugin.json');
+				}
 				if (manifest.id !== record.id) {
 					throw new Error(`Selected folder is not for ${record.id}`);
 				}

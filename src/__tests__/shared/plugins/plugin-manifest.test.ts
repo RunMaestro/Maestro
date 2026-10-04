@@ -76,6 +76,15 @@ describe('validatePluginManifest', () => {
 		expect(
 			validatePluginManifest(validManifest({ releaseDate: '2026-13-40' })).manifest
 		).toBeNull();
+		for (const releaseDate of ['2026-02-30', '2026-04-31', '2025-02-29']) {
+			expect(validatePluginManifest(validManifest({ releaseDate })).manifest).toBeNull();
+		}
+		expect(
+			validatePluginManifest(validManifest({ releaseDate: '2024-02-29' })).manifest
+		).not.toBeNull();
+		expect(
+			validatePluginManifest(validManifest({ releaseDate: '0000-01-01' })).manifest
+		).not.toBeNull();
 	});
 
 	it('rejects an out-of-range tier', () => {

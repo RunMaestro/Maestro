@@ -378,4 +378,33 @@ describe('useExtensions.updatePlugin', () => {
 			})
 		);
 	});
+
+	it.each([
+		{
+			name: 'unreadable',
+			readFile: () => Promise.reject(new Error('IPC failure')),
+			message: 'Could not read plugin.json',
+		},
+		{
+			name: 'invalid JSON',
+			readFile: () => Promise.resolve('{invalid'),
+			message: 'invalid plugin.json',
+		},
+	])('explains an $name plugin.json before invoking update', async ({ readFile, message }) => {
+		const update = vi.fn();
+		window.maestro.plugins.update = update;
+		window.maestro.dialog = {
+			selectFolder: vi.fn().mockResolvedValue('/local/bad-plugin'),
+		} as unknown as typeof window.maestro.dialog;
+		window.maestro.fs.readFile = vi.fn(readFile);
+		const { result } = renderHook(() => useExtensions());
+		await flushMountEffects();
+
+		await act(async () => result.current.updatePlugin(record));
+
+		expect(update).not.toHaveBeenCalled();
+		expect(notifyToast).toHaveBeenCalledWith(
+			expect.objectContaining({ color: 'red', message: expect.stringContaining(message) })
+		);
+	});
 });

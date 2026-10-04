@@ -3,6 +3,7 @@ import type { SessionInfo } from '../../shared/types';
 import type { AgentResult, SpawnAgentOptions } from '../../cli/services/agent-spawner';
 import type { HeadlessAgentRunner } from './plugin-manager-singleton';
 import { createPluginRunProofFile, removePluginRunProofFile } from './plugin-tool-run-identity';
+import { logger } from '../utils/logger';
 
 const HEADLESS_RUN_TIMEOUT_MS = 20 * 60_000;
 
@@ -90,7 +91,15 @@ export function createPluginHeadlessAgentRunner(
 		} finally {
 			// Revoke authority even if removing the on-disk proof fails.
 			if (runToken) deps.revokeRunToken(runToken);
-			if (pluginRunProofFile) removePluginRunProofFile(pluginRunProofFile);
+			if (pluginRunProofFile) {
+				try {
+					removePluginRunProofFile(pluginRunProofFile);
+				} catch (error) {
+					logger.warn('Could not remove plugin run proof file', '[PluginRunIdentity]', {
+						error: String(error),
+					});
+				}
+			}
 		}
 	};
 }
