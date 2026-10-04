@@ -6,7 +6,8 @@ import { COMPUTER_HISTORY_FIRST_PARTY_PLUGIN } from '../../../shared/plugins/fir
 import { buildSchemaDoc } from '../../../shared/computer-history/schemaDoc';
 
 const PROMPTS_DIR = path.resolve(__dirname, '../../../prompts');
-const DASHES = /[–—]/;
+// Built from code points so no formatter can turn the escapes into the characters.
+const DASHES = new RegExp(`[${String.fromCharCode(0x2013)}${String.fromCharCode(0x2014)}]`);
 
 describe('Computer History prompts', () => {
 	it('registers the section the first-party definition points at, and the full guide', () => {

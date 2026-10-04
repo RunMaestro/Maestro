@@ -258,4 +258,25 @@ describe('writes (over WS)', () => {
 		await expect(computerHistoryPause({ json: true })).rejects.toThrow('__exit__');
 		expect(lastJson()).toEqual({ success: false, error: 'boom' });
 	});
+
+	it('rules add --app reports which recently seen apps it matches, and warns on none', async () => {
+		vi.mocked(sendSimpleCommand).mockResolvedValue({
+			success: true,
+			rule: { id: 'app-1', match: 'app', value: 'slack' },
+			matches: [{ id: 'com.tinyspeck.slackmacgap', name: 'Slack' }],
+		});
+		await computerHistoryRulesAdd({ app: 'Slack' });
+		expect(output()).toContain('Matches: Slack (com.tinyspeck.slackmacgap)');
+		vi.mocked(sendSimpleCommand).mockResolvedValue({
+			success: true,
+			rule: { id: 'app-2', match: 'app', value: 'nosuchapp' },
+			matches: [],
+		});
+		await computerHistoryRulesAdd({ app: 'NoSuchApp', json: true });
+		expect(lastJson()).toMatchObject({ matchesNothingSeen: true, matches: [] });
+		await computerHistoryRulesAdd({ app: 'NoSuchApp' });
+		expect(errSpy.mock.calls.map((c) => String(c[0])).join('\n')).toMatch(
+			/matches no app seen recently/
+		);
+	});
 });

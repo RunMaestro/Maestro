@@ -29,6 +29,8 @@ import {
 	resolveStorePath,
 } from '../../shared/computer-history/paths';
 import type { ComputerHistoryConfig, SegmentIndexEntry } from '../../shared/computer-history/types';
+import { redactSecrets } from '../../shared/redactSecrets';
+import { STORE_DIR_MODE, STORE_FILE_MODE } from './segment-writer';
 
 /** Mirrors ConsultAgentParams / ConsultAgentResult from the web-server types. */
 export type DigestConsult = (params: {
@@ -79,19 +81,30 @@ export class DigestScheduler {
 	private readonly deps: DigestSchedulerDeps;
 	private readonly queue: Array<{ entry: SegmentIndexEntry; startMs: number }> = [];
 	private running = false;
-	private stopped = false;
+	private stopped = true;
 	private lastDigestFile: string | null = null;
 	private lastError: string | null = null;
+	private cancelSeq = 0;
+	private cancellations: Array<{ seq: number; sinceMs: number }> = [];
 
 	constructor(deps: DigestSchedulerDeps) {
 		this.deps = deps;
 	}
 
-	/** Called when a segment closes. No-op unless digests are on with an agent. */
+	/** Accept segment closes again (service start). Scheduler starts stopped. */
+	start(): void {
+		this.stopped = false;
+	}
+
+	/**
+	 * Called when a segment closes. No-op unless digests are on with an agent,
+	 * and ignored after stop(): a close produced BY shutting down (or a late
+	 * close racing a disable) must not ask an agent about history.
+	 */
 	onSegmentClosed(entry: SegmentIndexEntry, startMs: number): void {
+		if (this.stopped) return;
 		const { digests } = this.deps.getConfig();
 		if (!digests.enabled || !digests.agentId || entry.events === 0) return;
-		this.stopped = false;
 		this.queue.push({ entry, startMs });
 		while (this.queue.length > MAX_PENDING) this.queue.shift();
 		void this.drain();
@@ -100,6 +113,24 @@ export class DigestScheduler {
 	stop(): void {
 		this.stopped = true;
 		this.queue.length = 0;
+	}
+
+	/**
+	 * History was cleared: drop queued digests for the cleared range, and make
+	 * an in-flight digest for it discard its answer instead of writing it.
+	 */
+	cancel(range: { sinceMs: number } | { all: true }): void {
+		const sinceMs = 'all' in range ? -Infinity : range.sinceMs;
+		this.cancellations.push({ seq: ++this.cancelSeq, sinceMs });
+		if (this.cancellations.length > 32) this.cancellations.shift();
+		for (let i = this.queue.length - 1; i >= 0; i--) {
+			if (this.queue[i].startMs + SEGMENT_MS > sinceMs) this.queue.splice(i, 1);
+		}
+	}
+
+	/** Whether a cancel issued after `sinceSeq` covers the window at `startMs`. */
+	private cancelledSince(sinceSeq: number, startMs: number): boolean {
+		return this.cancellations.some((c) => c.seq > sinceSeq && startMs + SEGMENT_MS > c.sinceMs);
 	}
 
 	status(): DigestStatus {
@@ -126,6 +157,7 @@ export class DigestScheduler {
 	private async digestOne(entry: SegmentIndexEntry, startMs: number): Promise<void> {
 		const { digests } = this.deps.getConfig();
 		if (!digests.enabled || !digests.agentId) return;
+		const startedAtSeq = this.cancelSeq;
 		const consult = this.deps.getConsult();
 		if (!consult) {
 			this.lastError = 'No Maestro window is available to route the digest';
@@ -155,18 +187,29 @@ export class DigestScheduler {
 			this.deps.log?.('warn', `Computer History digest failed: ${this.lastError}`);
 			return;
 		}
+		// The consult can take minutes. Re-check right before writing: the user
+		// may have stopped the feature, cleared this window, or the segment may
+		// be gone (retention, clear --all). A digest must never outlive it.
+		if (this.stopped || this.cancelledSince(startedAtSeq, startMs)) return;
+		try {
+			await fs.access(resolveStorePath(this.deps.storeDir, entry.file));
+		} catch {
+			return;
+		}
 		const rel = digestRelativePath(startMs);
 		const abs = resolveStorePath(this.deps.storeDir, rel);
-		await fs.mkdir(path.dirname(abs), { recursive: true });
+		await fs.mkdir(path.dirname(abs), { recursive: true, mode: STORE_DIR_MODE });
+		// The agent read untrusted, possibly secret-bearing text: scrub its answer.
+		const answer = redactSecrets(result.answer.trim()).text;
 		const body = [
 			`# Digest ${windowStartIso} - ${windowEndIso}`,
 			'',
 			`Segment: \`${entry.file}\` (${entry.events} events). Written by agent \`${digests.agentId}\`.`,
 			'',
-			result.answer.trim(),
+			answer,
 			'',
 		].join('\n');
-		await fs.writeFile(abs, body, 'utf-8');
+		await fs.writeFile(abs, body, { encoding: 'utf-8', mode: STORE_FILE_MODE });
 		this.lastDigestFile = rel;
 		this.lastError = null;
 	}

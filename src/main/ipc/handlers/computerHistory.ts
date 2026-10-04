@@ -3,8 +3,11 @@
  *
  * Thin pass-throughs to the one ComputerHistoryService (the CLI's WS writes
  * reach the same instance). DESKTOP-ONLY: every `computerHistory:` channel is
- * on BRIDGE_DENIED_CHANNELS (D15), so a signed-in browser can never read the
- * user's screen history through `bridge.invoke`.
+ * on BRIDGE_DENIED_CHANNELS (D15), so a browser cannot call these verbs
+ * through `bridge.invoke`. The store FILES are guarded separately: for web
+ * clients, bridgePathGuard.ts refuses any bridge call whose arguments point
+ * inside the store or at the CLI discovery file, and any write that would
+ * flip the Computer History flag.
  */
 
 import { ipcMain } from 'electron';

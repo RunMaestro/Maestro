@@ -38,6 +38,7 @@ export function createComputerHistoryForApp(deps: ComputerHistoryAppDeps): Compu
 	const digestConsult = createDigestConsult(deps.getWindowForSession);
 	return initComputerHistoryService({
 		userDataDir: app.getPath('userData'),
+		isPackaged: app.isPackaged,
 		isEnabled: () =>
 			resolveEncoreFeatures(deps.settingsStore.get('encoreFeatures')).computerHistory,
 		isMacAccessibilityTrusted:

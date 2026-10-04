@@ -3,7 +3,7 @@
  * the CLI (pure, bundle-safe).
  */
 
-import type { HelperStatus, ObservedPlatform, StoredEventKind } from './types';
+import type { CaptureRule, HelperStatus, ObservedPlatform, StoredEventKind } from './types';
 
 /** Supervisor-level state of the `maestro-observer` child process. */
 export type ObserverProcessState =
@@ -74,6 +74,19 @@ export interface AccessibilityRequestResult {
 		| 'not_required' // Windows
 		| 'helper-not-running'; // Linux: the helper must be running to flip the bus
 	detail?: string;
+}
+
+/** An app seen recently, for showing what an app rule will match. */
+export interface SeenApp {
+	id: string;
+	name?: string;
+}
+
+/** What `addRule` returns: the rule, plus the recently seen apps it matches. */
+export interface RuleAddResult {
+	rule: CaptureRule;
+	/** App rules only: recently seen apps the rule matches (empty = matches nothing seen). */
+	matches: SeenApp[];
 }
 
 /** Actions the CLI sends over WS (`computer_history_command`). */

@@ -89,8 +89,8 @@ export async function handleComputerHistoryCommand(
 					reply({ success: false, error: 'A rule needs --app or --domain' });
 					return;
 				}
-				const rule = await service.addRule(match, typeof m.value === 'string' ? m.value : '');
-				reply({ success: true, rule });
+				const added = await service.addRule(match, typeof m.value === 'string' ? m.value : '');
+				reply({ success: true, rule: added.rule, matches: added.matches });
 				return;
 			}
 			case 'rules-remove': {

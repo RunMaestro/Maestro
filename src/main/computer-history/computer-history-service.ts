@@ -41,11 +41,12 @@ import {
 	type ComputerHistoryConfigPatch,
 } from '../../shared/computer-history/config';
 import { builtInBlockedApps, observedPlatformFor } from '../../shared/computer-history/exclusions';
-import { dropReason, validateRuleInput } from '../../shared/computer-history/rules';
+import { appRuleMatches, dropReason, validateRuleInput } from '../../shared/computer-history/rules';
 import { redactObservedEvent, validateObservedEvent } from '../../shared/computer-history/sanitize';
 import { buildSchemaDoc } from '../../shared/computer-history/schemaDoc';
 import {
 	queryEvents,
+	readIndex,
 	summarizeApps,
 	type AppUsage,
 	type QueryOptions,
@@ -57,6 +58,8 @@ import type {
 	ComputerHistoryStatus,
 	ObserverProcessStatus,
 	RecorderState,
+	RuleAddResult,
+	SeenApp,
 } from '../../shared/computer-history/status';
 import type {
 	CaptureRule,
@@ -69,7 +72,7 @@ import type {
 } from '../../shared/computer-history/types';
 import { atomicWriteFile, createKeyedWriteQueue } from '../utils/atomic-json-store';
 import { captureException } from '../utils/sentry';
-import { SegmentWriter, INDEX_QUEUE_KEY } from './segment-writer';
+import { SegmentWriter, INDEX_QUEUE_KEY, STORE_DIR_MODE, STORE_FILE_MODE } from './segment-writer';
 import { deleteSegments, listSegmentFiles, runRetention } from './retention';
 import { DigestScheduler, type DigestConsult, type DigestStatus } from './digests';
 import type { ObserverSupervisorDeps } from './observer-supervisor';
@@ -117,6 +120,9 @@ const RETENTION_INTERVAL_MS = 60 * 60_000;
 const MAX_TIMER_MS = 2_147_000_000;
 /** UI recent-activity queries are capped so one IPC call stays small. */
 const MAX_QUERY_LIMIT = 2000;
+const CONFIG_QUEUE_KEY = 'computer-history:config';
+const MAX_SEEN_APPS = 500;
+const RULE_PREVIEW_DAYS = 14;
 
 export class ComputerHistoryService {
 	readonly storeDir: string;
@@ -137,6 +143,8 @@ export class ComputerHistoryService {
 	private retentionTimer: ReturnType<typeof setInterval> | undefined;
 	private pauseTimer: ReturnType<typeof setTimeout> | undefined;
 	private lastNotifiedState: RecorderState | null = null;
+	/** Recently seen app id -> name (insertion order = recency), bounded. */
+	private readonly seenApps = new Map<string, string>();
 
 	constructor(deps: ComputerHistoryServiceDeps) {
 		this.deps = deps;
@@ -179,7 +187,10 @@ export class ComputerHistoryService {
 		if (this.running || !this.deps.isEnabled()) return;
 		this.running = true;
 		try {
-			await fsp.mkdir(this.storeDir, { recursive: true });
+			await fsp.mkdir(this.storeDir, { recursive: true, mode: STORE_DIR_MODE });
+			// mkdir's mode only applies to a directory it creates; tighten an
+			// existing store too (POSIX only: Windows relies on the profile ACL).
+			if (this.platform !== 'windows') await fsp.chmod(this.storeDir, STORE_DIR_MODE);
 			const config = this.getConfig();
 			if (config.pausedUntil !== null && !isPausedAt(config.pausedUntil, this.now())) {
 				config.pausedUntil = null;
@@ -187,9 +198,11 @@ export class ComputerHistoryService {
 			await this.saveConfig(config);
 			await atomicWriteFile(
 				resolveStorePath(this.storeDir, SCHEMA_FILE),
-				buildSchemaDoc({ storeDir: this.storeDir })
+				buildSchemaDoc({ storeDir: this.storeDir }),
+				{ mode: STORE_FILE_MODE }
 			);
 			await this.writer.start();
+			this.digests.start();
 		} catch (err) {
 			// Nothing was started yet; leave the service cleanly off so a retry works.
 			this.running = false;
@@ -249,6 +262,7 @@ export class ComputerHistoryService {
 			this.deps.log?.('warn', `maestro-observer: ${event.text ?? ''}`);
 			return false;
 		}
+		this.noteSeenApp(event.app);
 		const config = this.getConfig();
 		if (isPausedAt(config.pausedUntil, this.now())) {
 			this.eventsDropped += 1;
@@ -266,7 +280,12 @@ export class ComputerHistoryService {
 			maxTextBytes: MAX_TEXT_BYTES,
 			maxSnapshotBytes: MAX_SNAPSHOT_BYTES,
 		});
-		await this.writer.append({ ...clean, kind: clean.kind as StoredEventKind });
+		const stored = await this.writer.append({ ...clean, kind: clean.kind as StoredEventKind });
+		if (!stored) {
+			// Per-segment byte guard (runaway helper); counted in the index line.
+			this.eventsDropped += 1;
+			return false;
+		}
 		this.eventsStored += 1;
 		this.lastEventAt = clean.ts;
 		return true;
@@ -353,13 +372,22 @@ export class ComputerHistoryService {
 		}
 	}
 
+	/**
+	 * Update the in-memory config now and persist it through the keyed queue:
+	 * `atomicWriteFile` uses a fixed `.tmp` name, so two unserialized saves
+	 * (a pause racing a rule add) could rename the same temp file twice and
+	 * fail with ENOENT. Each queued write persists the latest config.
+	 */
 	private async saveConfig(config: ComputerHistoryConfig): Promise<void> {
 		this.config = normalizeConfig(config);
-		await fsp.mkdir(this.storeDir, { recursive: true });
-		await atomicWriteFile(
-			resolveStorePath(this.storeDir, CONFIG_FILE),
-			JSON.stringify(this.config, null, 2) + '\n'
-		);
+		await this.queue.enqueue(CONFIG_QUEUE_KEY, async () => {
+			await fsp.mkdir(this.storeDir, { recursive: true, mode: STORE_DIR_MODE });
+			await atomicWriteFile(
+				resolveStorePath(this.storeDir, CONFIG_FILE),
+				JSON.stringify(this.config, null, 2) + '\n',
+				{ mode: STORE_FILE_MODE }
+			);
+		});
 	}
 
 	// ------------------------------------------------------------------
@@ -418,15 +446,19 @@ export class ComputerHistoryService {
 		return { rules: [...this.getConfig().rules], builtIn: builtInBlockedApps(this.platform) };
 	}
 
-	/** Add an ignore rule. Returns the rule (the existing one when already present). */
-	async addRule(match: CaptureRuleMatch, value: string): Promise<CaptureRule> {
+	/**
+	 * Add an ignore rule. Returns the rule (the existing one when already
+	 * present) and, for app rules, the recently seen apps it matches by id or
+	 * name, so a rule that matches nothing can be flagged to the user.
+	 */
+	async addRule(match: CaptureRuleMatch, value: string): Promise<RuleAddResult> {
 		if (match !== 'app' && match !== 'domain') throw new Error(`Unknown rule type "${match}"`);
 		const error = validateRuleInput(match, value);
 		if (error) throw new Error(error);
 		const normalized = normalizeRuleValue(match, value);
 		const config = this.getConfig();
 		const existing = config.rules.find((r) => r.match === match && r.value === normalized);
-		if (existing) return existing;
+		if (existing) return { rule: existing, matches: await this.appsMatching(existing) };
 		const rule: CaptureRule = {
 			id: ruleIdFor(match, normalized),
 			match,
@@ -436,7 +468,41 @@ export class ComputerHistoryService {
 		config.rules = [...config.rules, rule];
 		await this.saveConfig(config);
 		this.configureHelper();
-		return rule;
+		return { rule, matches: await this.appsMatching(rule) };
+	}
+
+	/** Remember an app the helper reported (bounded), for rule match previews. */
+	private noteSeenApp(app: { id: string; name: string } | undefined): void {
+		if (!app) return;
+		this.seenApps.delete(app.id);
+		this.seenApps.set(app.id, app.name);
+		if (this.seenApps.size > MAX_SEEN_APPS) {
+			const oldest = this.seenApps.keys().next().value;
+			if (oldest !== undefined) this.seenApps.delete(oldest);
+		}
+	}
+
+	/**
+	 * Apps seen recently (this session's helper events plus the app ids in the
+	 * last RULE_PREVIEW_DAYS of index lines) that an app rule matches.
+	 */
+	private async appsMatching(rule: CaptureRule): Promise<SeenApp[]> {
+		if (rule.match !== 'app') return [];
+		const seen = new Map<string, string | undefined>(this.seenApps);
+		try {
+			const since = this.now() - RULE_PREVIEW_DAYS * 86_400_000;
+			for (const entry of await readIndex(this.storeDir)) {
+				if (Date.parse(entry.end) < since) continue;
+				for (const id of Object.keys(entry.apps ?? {})) if (!seen.has(id)) seen.set(id, undefined);
+			}
+		} catch {
+			// An unreadable index only narrows the preview.
+		}
+		const out: SeenApp[] = [];
+		for (const [id, name] of seen) {
+			if (appRuleMatches(rule.value, { id, name })) out.push(name ? { id, name } : { id });
+		}
+		return out;
 	}
 
 	/** Remove a rule by id or by value. Returns the removed rule, or null. */
@@ -467,6 +533,9 @@ export class ComputerHistoryService {
 		if (!options.all && options.sinceMs === undefined) {
 			throw new Error('Specify a start time or clear everything');
 		}
+		// Digests first: a consult in flight for a cleared window must discard
+		// its answer rather than write it after the delete.
+		this.digests.cancel(options.all ? { all: true } : { sinceMs: options.sinceMs! });
 		const result = await this.writer.exclusive(async () => {
 			if (options.all) {
 				const files = await listSegmentFiles(this.storeDir);

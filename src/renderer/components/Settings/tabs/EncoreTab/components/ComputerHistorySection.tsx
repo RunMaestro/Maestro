@@ -98,6 +98,7 @@ export function ComputerHistorySection({ theme }: ComputerHistorySectionProps) {
 	const [ruleMatch, setRuleMatch] = useState<CaptureRuleMatch>('app');
 	const [ruleValue, setRuleValue] = useState('');
 	const [ruleError, setRuleError] = useState<string | null>(null);
+	const [ruleNote, setRuleNote] = useState<string | null>(null);
 	const [retentionDraft, setRetentionDraft] = useState('');
 	const [maxGbDraft, setMaxGbDraft] = useState('');
 	const sessions = useSessionStore((s) => s.sessions);
@@ -204,8 +205,20 @@ export function ComputerHistorySection({ theme }: ComputerHistorySectionProps) {
 
 	const addRule = async () => {
 		setRuleError(null);
+		setRuleNote(null);
 		try {
-			await api.addRule(ruleMatch, ruleValue);
+			const added = await api.addRule(ruleMatch, ruleValue);
+			if (added.rule.match === 'app') {
+				if (added.matches.length === 0) {
+					setRuleError(
+						`"${added.rule.value}" matches no app seen recently. App rules match an app id or its exact name; check the ids in recorded history.`
+					);
+				} else {
+					setRuleNote(
+						`Matches ${added.matches.map((a) => (a.name ? `${a.name} (${a.id})` : a.id)).join(', ')}.`
+					);
+				}
+			}
 			setRuleValue('');
 			applyConfig(await api.getConfig());
 		} catch (err) {
@@ -467,10 +480,11 @@ export function ComputerHistorySection({ theme }: ComputerHistorySectionProps) {
 								/>
 							</div>
 							{ruleError && (
-								<p className="text-xs" style={{ color: theme.colors.error }}>
+								<p className="text-xs" style={{ color: theme.colors.warning }}>
 									{ruleError}
 								</p>
 							)}
+							{ruleNote && <p className="text-xs opacity-70">{ruleNote}</p>}
 						</div>
 					</SectionCard>
 				</div>

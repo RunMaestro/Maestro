@@ -25,15 +25,22 @@ export type ComputerHistoryInitDeps = Omit<
 	ComputerHistoryServiceDeps,
 	'createSupervisor' | 'resolveBinary'
 > &
-	Partial<Pick<ComputerHistoryServiceDeps, 'createSupervisor' | 'resolveBinary'>>;
+	Partial<Pick<ComputerHistoryServiceDeps, 'createSupervisor' | 'resolveBinary'>> & {
+		/** `app.isPackaged`: packaged builds run only the bundled helper. */
+		isPackaged: boolean;
+	};
 
 /** Construct the singleton (does not start it). */
-export function initComputerHistoryService(deps: ComputerHistoryInitDeps): ComputerHistoryService {
+export function initComputerHistoryService({
+	isPackaged,
+	...deps
+}: ComputerHistoryInitDeps): ComputerHistoryService {
 	service = new ComputerHistoryService({
 		createSupervisor: (supervisorDeps) => new ObserverSupervisor(supervisorDeps),
 		resolveBinary: () =>
 			resolveObserverBinary(
 				observerBinaryCandidates({
+					packaged: isPackaged,
 					resourcesPath:
 						typeof process.resourcesPath === 'string' && process.resourcesPath.length > 0
 							? process.resourcesPath

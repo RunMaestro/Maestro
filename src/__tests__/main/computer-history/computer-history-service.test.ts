@@ -276,9 +276,10 @@ describe('rules', () => {
 	it('adds (deduped), lists with built-ins, removes by id or value, and reconfigures the helper', async () => {
 		const service = makeService();
 		await service.start();
-		const rule = await service.addRule('app', 'com.apple.MobileSMS');
+		const { rule, matches } = await service.addRule('app', 'com.apple.MobileSMS');
 		expect(rule).toMatchObject({ match: 'app', value: 'com.apple.mobilesms' });
-		expect((await service.addRule('app', 'COM.APPLE.MOBILESMS')).id).toBe(rule.id);
+		expect(matches).toEqual([]);
+		expect((await service.addRule('app', 'COM.APPLE.MOBILESMS')).rule.id).toBe(rule.id);
 		const configure = sent.filter((c) => c.cmd === 'configure').at(-1) as { blockApps: string[] };
 		expect(configure.blockApps).toContain('com.apple.mobilesms');
 		const listing = service.listRules();
@@ -348,6 +349,58 @@ describe('wiring', () => {
 		await vi.waitFor(() => expect(segmentEvents()).toHaveLength(1));
 		const q = await service.query({ grep: /supervisor/i });
 		expect(q.events).toHaveLength(1);
+		await service.stop();
+	});
+});
+
+describe('security hardening', () => {
+	it('an app rule by NAME drops the app, and the add result shows what it matches', async () => {
+		const service = makeService();
+		await service.start();
+		await service.ingest(textEvent('before the rule'));
+		const added = await service.addRule('app', 'Slack');
+		expect(added.matches).toEqual([{ id: 'com.tinyspeck.slackmacgap', name: 'Slack' }]);
+		expect(await service.ingest(textEvent('after the rule'))).toBe(false);
+		expect((await service.addRule('app', 'NoSuchApp')).matches).toEqual([]);
+		await service.stop();
+	});
+
+	it('serializes concurrent config writes (fixed .tmp name) without ENOENT', async () => {
+		const service = makeService();
+		await service.start();
+		await Promise.all([
+			service.pause(60_000),
+			service.addRule('domain', 'a.example.com'),
+			service.addRule('domain', 'b.example.com'),
+			service.setConfig({ retentionDays: 7 }),
+			service.resume(),
+		]);
+		const onDisk = JSON.parse(fs.readFileSync(storeFile('config.json'), 'utf-8'));
+		expect(onDisk.rules).toHaveLength(2);
+		expect(onDisk.retentionDays).toBe(7);
+		await service.stop();
+	});
+
+	it('creates and tightens the store owner-only (POSIX)', async () => {
+		if (process.platform === 'win32') return;
+		fs.mkdirSync(storeFile(), { recursive: true, mode: 0o755 });
+		fs.chmodSync(storeFile(), 0o755);
+		const service = makeService();
+		await service.start();
+		const mode = (p: string) => fs.statSync(p).mode & 0o777;
+		expect(mode(storeFile())).toBe(0o700);
+		expect(mode(storeFile('config.json'))).toBe(0o600);
+		expect(mode(storeFile('SCHEMA.md'))).toBe(0o600);
+		await service.stop();
+	});
+
+	it('pre-truncates text before redaction and still marks it truncated', async () => {
+		const service = makeService();
+		await service.start();
+		await service.ingest(textEvent('a-'.repeat(200_000)));
+		const [e] = segmentEvents();
+		expect(e.text!.length).toBeLessThanOrEqual(8192);
+		expect(e.truncated).toBe(true);
 		await service.stop();
 	});
 });

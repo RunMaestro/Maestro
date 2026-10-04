@@ -27,7 +27,7 @@ import {
 	parseIndexText,
 } from '../../shared/computer-history/reader';
 import { atomicWriteFile, type KeyedWriteQueue } from '../utils/atomic-json-store';
-import { INDEX_QUEUE_KEY } from './segment-writer';
+import { INDEX_QUEUE_KEY, STORE_FILE_MODE } from './segment-writer';
 
 const DAY_MS = 86_400_000;
 
@@ -131,7 +131,8 @@ export async function deleteSegments(
 		const kept = parseIndexText(text).filter((e) => !deleted.has(e.file));
 		await atomicWriteFile(
 			indexAbs,
-			kept.length > 0 ? kept.map((e) => JSON.stringify(e)).join('\n') + '\n' : ''
+			kept.length > 0 ? kept.map((e) => JSON.stringify(e)).join('\n') + '\n' : '',
+			{ mode: STORE_FILE_MODE }
 		);
 	});
 	await removeEmptyDayFolders(storeDir);

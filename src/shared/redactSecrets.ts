@@ -115,12 +115,17 @@ const RULES: readonly Rule[] = [
 	{
 		kind: 'secret',
 		pattern:
-			/-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----[\s\S]*?(?:-----END (?:[A-Z0-9]+ )*PRIVATE KEY-----|$)/g,
+			/-----BEGIN (?:[A-Z0-9]{1,16} ){0,4}PRIVATE KEY-----[\s\S]*?(?:-----END (?:[A-Z0-9]{1,16} ){0,4}PRIVATE KEY-----|$)/g,
 	},
 	// JSON Web Tokens: three base64url segments, the first a JSON header.
+	// Each segment is matched ATOMICALLY (`(?=(x+))\1`: a lookahead never gives
+	// characters back) and bounded, because the segment class contains `-`,
+	// which is also a word boundary: on `eyJ-eyJ-eyJ-...` a backtracking
+	// `[...]{8,}\.` restarted at every `eyJ` and rescanned to the end (O(n^2)).
 	{
 		kind: 'secret',
-		pattern: /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/g,
+		pattern:
+			/\beyJ(?=([A-Za-z0-9_-]{8,512}))\1\.(?=([A-Za-z0-9_-]{8,16384}))\2\.(?=([A-Za-z0-9_-]{8,4096}))\3/g,
 	},
 	// `Bearer <token>`, with or without an `Authorization:` header in front.
 	{
@@ -131,10 +136,13 @@ const RULES: readonly Rule[] = [
 	// key=value / key: value secrets, including prefixed env names
 	// (OPENAI_API_KEY, access_token, aws_secret_access_key) and quoted values.
 	// An unquoted value stops at `&` so a query string keeps its other params.
+	// The name prefix is BOUNDED (4 parts of up to 32 chars): unbounded, it
+	// matched the whole of `a-a-a-...` from every word boundary and then
+	// backtracked, which is quadratic on a 64 KB snapshot.
 	{
 		kind: 'secret',
 		pattern:
-			/\b((?:[A-Za-z][A-Za-z0-9]*[_-])*(?:api[_-]?key|secret(?:[_-]?(?:access[_-]?)?key)?|token|password|passwd|pwd)["']?\s*[:=]\s*)("[^"\r\n]*"|'[^'\r\n]*'|[^\s"',;&]+)/gi,
+			/\b((?:[A-Za-z][A-Za-z0-9]{0,31}[_-]){0,4}(?:api[_-]?key|secret(?:[_-]?(?:access[_-]?)?key)?|token|password|passwd|pwd)["']?\s*[:=]\s*)("[^"\r\n]*"|'[^'\r\n]*'|[^\s"',;&]+)/gi,
 		keepGroup: 1,
 	},
 	// Provider key prefixes.
@@ -153,6 +161,11 @@ const RULES: readonly Rule[] = [
 ];
 
 const HEX_BLOB_RULE: Rule = { kind: 'secret', pattern: /\b[A-Fa-f0-9]{40,}\b/g };
+
+// ReDoS audit (every rule is exercised on 64 KB adversarial inputs in
+// redactSecrets.test.ts): the remaining unbounded quantifiers either start at
+// a fixed literal and succeed by consuming their run (`sk-`, `ghp_`, `xox*-`,
+// `Bearer`, hex), or are bounded (`{12,18}` card digits, PEM name parts).
 
 /**
  * Replace secret-shaped spans in `text`. Pure; never throws on any string.

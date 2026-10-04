@@ -103,3 +103,30 @@ describe('passesLuhn', () => {
 		expect(passesLuhn('41x1')).toBe(false);
 	});
 });
+
+describe('redactSecrets - adversarial input stays linear (ReDoS)', () => {
+	const K = 64 * 1024;
+	const adversarial: Record<string, string> = {
+		'hyphen chain': 'a-'.repeat(K / 2),
+		'hyphen chain ending in a key name': `${'a-'.repeat(K / 2)}password`,
+		'underscore chain': 'a_'.repeat(K / 2),
+		'repeated eyJ- (JWT starts)': 'eyJ-'.repeat(K / 4),
+		'JWT-like dotted runs': 'eyJaaaaaaaaaa.'.repeat(Math.floor(K / 14)),
+		'repeated sk-': 'sk-'.repeat(Math.floor(K / 3)),
+		'repeated xoxb-': 'xoxb-'.repeat(Math.floor(K / 5)),
+		'repeated Bearer': 'Bearer '.repeat(Math.floor(K / 7)),
+		'PEM header parts': '-----BEGIN A '.repeat(Math.floor(K / 13)),
+		'unterminated PEM headers': '-----BEGIN PRIVATE KEY-----'.repeat(Math.floor(K / 27)),
+		'spaced digits': '1 '.repeat(K / 2),
+		'dashed digits': '1-'.repeat(K / 2),
+		'repeated token=': 'token='.repeat(K / 6),
+		'hex-ish hyphen chain': 'ab-'.repeat(Math.floor(K / 3)),
+		'one long word': 'a'.repeat(K),
+	};
+
+	it.each(Object.entries(adversarial))('%s redacts in under 50 ms', (_name, input) => {
+		const start = performance.now();
+		redactSecrets(input, { hexBlobs: true });
+		expect(performance.now() - start).toBeLessThan(50);
+	});
+});

@@ -47,6 +47,21 @@ export const INDEX_QUEUE_KEY = 'computer-history:index';
 /** A window is closed this long after it ends, so late events still land in it. */
 const CLOSE_GRACE_MS = 2_000;
 
+/**
+ * The store holds the user's screen and typing history: owner-only. Modes
+ * apply when a directory or file is CREATED (and are ignored on Windows,
+ * where the per-user profile ACL is what protects it).
+ */
+export const STORE_DIR_MODE = 0o700;
+export const STORE_FILE_MODE = 0o600;
+
+/**
+ * Defense against a runaway helper: past this many bytes in one 10-minute
+ * segment, `content.snapshot` events are dropped; past twice this, every
+ * event is. Drops are counted in the segment's index line (`dropped`).
+ */
+export const DEFAULT_MAX_SEGMENT_BYTES = 64 * 1024 * 1024;
+
 interface OpenSegment {
 	startMs: number;
 	rel: string;
@@ -57,6 +72,10 @@ interface OpenSegment {
 	apps: Record<string, number>;
 	firstTs: string | null;
 	lastTs: string | null;
+	/** The file ends in a torn line (a crash mid-append): start the next one on a new line. */
+	needsNewline: boolean;
+	/** Events refused by the per-segment byte guard. */
+	dropped: number;
 }
 
 export type StoredEventInput = Omit<StoredEvent, 'seq'>;
@@ -67,6 +86,7 @@ export interface SegmentWriterOptions {
 	now?: () => number;
 	/** Fires after a non-empty segment's index line is written. */
 	onSegmentClosed?: (entry: SegmentIndexEntry, startMs: number) => void;
+	maxSegmentBytes?: number;
 }
 
 function summarize(seg: OpenSegment): SegmentIndexEntry {
@@ -77,7 +97,26 @@ function summarize(seg: OpenSegment): SegmentIndexEntry {
 		events: seg.events,
 		bytes: seg.bytes,
 		apps: { ...seg.apps },
+		...(seg.dropped > 0 ? { dropped: seg.dropped } : {}),
 	};
+}
+
+/** Whether a non-empty file's last byte is not a newline (a torn final line). */
+async function endsTorn(abs: string): Promise<boolean> {
+	let handle: fs.FileHandle | null = null;
+	try {
+		handle = await fs.open(abs, 'r');
+		const { size } = await handle.stat();
+		if (size === 0) return false;
+		const buf = Buffer.alloc(1);
+		await handle.read(buf, 0, 1, size - 1);
+		return buf[0] !== 0x0a;
+	} catch (err) {
+		if ((err as NodeJS.ErrnoException).code === 'ENOENT') return false;
+		throw err;
+	} finally {
+		await handle?.close();
+	}
 }
 
 /** Count what an existing segment file already holds. */
@@ -88,6 +127,7 @@ async function scanExisting(abs: string): Promise<{
 	apps: Record<string, number>;
 	firstTs: string | null;
 	lastTs: string | null;
+	needsNewline: boolean;
 } | null> {
 	let text: string;
 	try {
@@ -110,6 +150,7 @@ async function scanExisting(abs: string): Promise<{
 		apps,
 		firstTs: events[0]?.ts ?? null,
 		lastTs: events[events.length - 1]?.ts ?? null,
+		needsNewline: text.length > 0 && !text.endsWith('\n'),
 	};
 }
 
@@ -118,9 +159,11 @@ export class SegmentWriter {
 	private readonly queue: KeyedWriteQueue;
 	private readonly now: () => number;
 	private readonly onSegmentClosed?: SegmentWriterOptions['onSegmentClosed'];
+	private readonly maxSegmentBytes: number;
 	private current: OpenSegment | null = null;
 
 	constructor(options: SegmentWriterOptions) {
+		this.maxSegmentBytes = options.maxSegmentBytes ?? DEFAULT_MAX_SEGMENT_BYTES;
 		this.storeDir = options.storeDir;
 		this.queue = options.queue;
 		this.now = options.now ?? Date.now;
@@ -154,8 +197,11 @@ export class SegmentWriter {
 		});
 	}
 
-	/** Append one event; assigns `seq` and rolls the segment over by window. */
-	append(event: StoredEventInput): Promise<StoredEvent> {
+	/**
+	 * Append one event; assigns `seq` and rolls the segment over by window.
+	 * Resolves null when the per-segment byte guard refused it.
+	 */
+	append(event: StoredEventInput): Promise<StoredEvent | null> {
 		return this.queue.enqueue(SEGMENT_QUEUE_KEY, async () => {
 			const parsed = Date.parse(event.ts);
 			const window = segmentStartMs(Number.isNaN(parsed) ? this.now() : parsed);
@@ -167,8 +213,19 @@ export class SegmentWriter {
 			if (!this.current) this.current = await this.open(window);
 			const seg = this.current;
 			const stored = { ...event, seq: seg.nextSeq } as StoredEvent;
-			const line = `${JSON.stringify(stored)}\n`;
-			await fs.appendFile(seg.abs, line, 'utf-8');
+			const body = `${JSON.stringify(stored)}\n`;
+			const size = Buffer.byteLength(body, 'utf-8');
+			const overSoft = seg.bytes + size > this.maxSegmentBytes;
+			const overHard = seg.bytes + size > this.maxSegmentBytes * 2;
+			if (overHard || (overSoft && stored.kind === 'content.snapshot')) {
+				seg.dropped += 1;
+				return null;
+			}
+			// A torn last line from a crash would swallow this event into one
+			// unparseable line; terminate it first.
+			const line = seg.needsNewline ? `\n${body}` : body;
+			await fs.appendFile(seg.abs, line, { encoding: 'utf-8', mode: STORE_FILE_MODE });
+			seg.needsNewline = false;
 			seg.nextSeq += 1;
 			seg.events += 1;
 			seg.bytes += Buffer.byteLength(line, 'utf-8');
@@ -216,7 +273,7 @@ export class SegmentWriter {
 	private async open(startMs: number): Promise<OpenSegment> {
 		const rel = segmentRelativePath(startMs);
 		const abs = resolveStorePath(this.storeDir, rel);
-		await fs.mkdir(path.dirname(abs), { recursive: true });
+		await fs.mkdir(path.dirname(abs), { recursive: true, mode: STORE_DIR_MODE });
 		const scan = await scanExisting(abs);
 		return {
 			startMs,
@@ -228,13 +285,15 @@ export class SegmentWriter {
 			apps: scan?.apps ?? {},
 			firstTs: scan?.firstTs ?? null,
 			lastTs: scan?.lastTs ?? null,
+			needsNewline: scan?.needsNewline ?? false,
+			dropped: 0,
 		};
 	}
 
 	private async closeCurrent(): Promise<void> {
 		const seg = this.current;
 		this.current = null;
-		if (!seg || seg.events === 0) return;
+		if (!seg || (seg.events === 0 && seg.dropped === 0)) return;
 		const entry = summarize(seg);
 		await this.appendIndexLines([entry]);
 		this.onSegmentClosed?.(entry, seg.startMs);
@@ -242,9 +301,12 @@ export class SegmentWriter {
 
 	private appendIndexLines(entries: SegmentIndexEntry[]): Promise<void> {
 		return this.queue.enqueue(INDEX_QUEUE_KEY, async () => {
-			await fs.mkdir(this.storeDir, { recursive: true });
+			await fs.mkdir(this.storeDir, { recursive: true, mode: STORE_DIR_MODE });
+			const indexAbs = resolveStorePath(this.storeDir, INDEX_FILE);
 			const text = entries.map((e) => JSON.stringify(e)).join('\n') + '\n';
-			await fs.appendFile(resolveStorePath(this.storeDir, INDEX_FILE), text, 'utf-8');
+			// Same torn-tail rule as segments: never glue a line onto a partial one.
+			const prefix = (await endsTorn(indexAbs)) ? '\n' : '';
+			await fs.appendFile(indexAbs, prefix + text, { encoding: 'utf-8', mode: STORE_FILE_MODE });
 		});
 	}
 }

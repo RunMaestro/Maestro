@@ -147,6 +147,7 @@ describe('ObserverSupervisor', () => {
 describe('observerBinaryCandidates', () => {
 	it('lists packaged resources first, then the dev build output', () => {
 		const list = observerBinaryCandidates({
+			packaged: false,
 			resourcesPath: '/App/Resources',
 			moduleDir: '/repo/dist/main/computer-history',
 			cwd: '/repo',
@@ -156,5 +157,13 @@ describe('observerBinaryCandidates', () => {
 		expect(list[0]).toBe(path.join('/App/Resources', 'native', 'maestro-observer.exe'));
 		expect(list[1]).toBe(path.resolve('/repo/dist/native/win32-x64/maestro-observer.exe'));
 		expect(list).toContain(path.resolve('/repo/dist/native/win32-x64/maestro-observer.exe'));
+	});
+
+	it('a packaged app uses ONLY the bundled helper (no cwd or dist fallbacks)', () => {
+		const opts = { moduleDir: '/x', cwd: '/evil/cwd', platform: 'darwin' as const, arch: 'arm64' };
+		expect(
+			observerBinaryCandidates({ ...opts, packaged: true, resourcesPath: '/App/Resources' })
+		).toEqual([path.join('/App/Resources', 'native', 'maestro-observer')]);
+		expect(observerBinaryCandidates({ ...opts, packaged: true })).toEqual([]);
 	});
 });

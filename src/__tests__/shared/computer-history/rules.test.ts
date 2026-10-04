@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+	appRuleMatches,
 	dropReason,
 	hostMatchesDomain,
 	isPrivateWindowTitle,
@@ -51,6 +52,13 @@ describe('dropReason', () => {
 		expect(
 			dropReason(ev({ app: { id: 'com.apple.keychainaccess', name: 'K', pid: 1 } }), { rules: [] })
 		).toBe('built-in-app');
+	});
+
+	it('an app rule matches the app NAME too, case-insensitively', () => {
+		const byName: CaptureRule[] = [{ id: 'n', match: 'app', value: 'slack', action: 'ignore' }];
+		expect(dropReason(ev({}), { rules: byName })).toBe('app-rule');
+		expect(appRuleMatches('slack', { id: 'com.tinyspeck.slackmacgap', name: 'Slack' })).toBe(true);
+		expect(appRuleMatches('sla', { id: 'com.tinyspeck.slackmacgap', name: 'Slack' })).toBe(false);
 	});
 
 	it('drops app rules (case-insensitive) and blocked pids', () => {

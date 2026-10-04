@@ -144,4 +144,62 @@ describe('SegmentWriter', () => {
 		await writer.close();
 		expect(fs.existsSync(path.join(dir, 'index.jsonl'))).toBe(false);
 	});
+
+	it('terminates a torn tail line (crash mid-append) before appending, in segments and the index', async () => {
+		const q = createKeyedWriteQueue();
+		const first = new SegmentWriter({ storeDir: dir, queue: q, now: () => T0 });
+		await first.append(input(T0 + 1));
+		await first.close();
+		const seg = path.join(dir, 'segments', '2026-10-03', '1410Z.jsonl');
+		fs.appendFileSync(seg, '{"v":1,"seq":1,"ts":"2026-10-03T14:1');
+		fs.appendFileSync(path.join(dir, 'index.jsonl'), '{"file":"segm');
+		const second = new SegmentWriter({ storeDir: dir, queue: q, now: () => T0 });
+		const e = await second.append(input(T0 + 2));
+		expect(e?.seq).toBe(1);
+		expect(readSeg('segments/2026-10-03/1410Z.jsonl').map((x) => x.seq)).toEqual([0, 1]);
+		await second.close();
+		// Both closes survive: the torn index fragment did not swallow the new line.
+		expect(readIndex().map((x) => x.events)).toEqual([2]);
+		expect(
+			fs.readFileSync(path.join(dir, 'index.jsonl'), 'utf-8').split('\n').filter(Boolean)
+		).toHaveLength(3);
+	});
+
+	it('drops snapshots past the per-segment byte cap, everything past twice it, and counts drops in the index', async () => {
+		const writer = new SegmentWriter({
+			storeDir: dir,
+			queue: createKeyedWriteQueue(),
+			now: () => T0,
+			maxSegmentBytes: 1000,
+		});
+		const snapshot = (n: number) => ({
+			...input(T0 + n),
+			kind: 'content.snapshot' as const,
+			text: 'x'.repeat(200),
+		});
+		expect(await writer.append(snapshot(1))).not.toBeNull();
+		expect(await writer.append(snapshot(2))).not.toBeNull();
+		expect(await writer.append(snapshot(3))).toBeNull();
+		// Text events still land until twice the cap.
+		expect(await writer.append({ ...input(T0 + 4), text: 'y'.repeat(200) })).not.toBeNull();
+		expect(await writer.append({ ...input(T0 + 5), text: 'y'.repeat(1500) })).toBeNull();
+		await writer.close();
+		expect(readIndex()[0]).toMatchObject({ events: 3, dropped: 2 });
+	});
+
+	it('creates the store owner-only (POSIX)', async () => {
+		if (process.platform === 'win32') return;
+		const writer = new SegmentWriter({
+			storeDir: dir,
+			queue: createKeyedWriteQueue(),
+			now: () => T0,
+		});
+		await writer.append(input(T0 + 1));
+		await writer.close();
+		const mode = (p: string) => fs.statSync(path.join(dir, p)).mode & 0o777;
+		expect(mode('segments')).toBe(0o700);
+		expect(mode('segments/2026-10-03')).toBe(0o700);
+		expect(mode('segments/2026-10-03/1410Z.jsonl')).toBe(0o600);
+		expect(mode('index.jsonl')).toBe(0o600);
+	});
 });

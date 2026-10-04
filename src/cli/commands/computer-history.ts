@@ -30,6 +30,7 @@ import {
 	resolveKindInput,
 	type ComputerHistoryCommandAction,
 	type ComputerHistoryStatus,
+	type SeenApp,
 } from '../../shared/computer-history/status';
 import type { StoredEvent, StoredEventKind } from '../../shared/computer-history/types';
 import { isCliServerRunning } from '../../shared/cli-server-discovery';
@@ -446,11 +447,25 @@ export async function computerHistoryRulesAdd(
 		options.json
 	);
 	const rule = result.rule as { id: string; match: string; value: string };
+	const matches = (Array.isArray(result.matches) ? result.matches : []) as SeenApp[];
+	const matchesNothing = rule.match === 'app' && matches.length === 0;
 	if (options.json) {
-		console.log(JSON.stringify({ success: true, rule }));
+		console.log(
+			JSON.stringify({ success: true, rule, matches, matchesNothingSeen: matchesNothing })
+		);
 		return;
 	}
 	console.log(formatSuccess(`Ignoring ${rule.match} ${rule.value} (rule ${rule.id}).`));
+	if (rule.match !== 'app') return;
+	if (matchesNothing) {
+		console.error(
+			formatWarning(
+				`"${rule.value}" matches no app seen recently. App rules match an app id or its exact name; run "maestro-cli computer-history apps --since 1w" for the ids.`
+			)
+		);
+		return;
+	}
+	console.log(`Matches: ${matches.map((a) => (a.name ? `${a.name} (${a.id})` : a.id)).join(', ')}`);
 }
 
 export async function computerHistoryRulesRemove(id: string, options: JsonOption): Promise<void> {

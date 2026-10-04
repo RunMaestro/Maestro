@@ -63,6 +63,14 @@ function getDiscoveryFilePath(): string {
 }
 
 /**
+ * Absolute path of the discovery file. Exported so the web bridge can refuse
+ * to hand it (and the CLI secret inside) to a browser.
+ */
+export function cliServerInfoPath(): string {
+	return getDiscoveryFilePath();
+}
+
+/**
  * Write CLI server info atomically (write to .tmp then rename)
  */
 export function writeCliServerInfo(info: CliServerInfo): void {

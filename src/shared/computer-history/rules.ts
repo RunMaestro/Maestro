@@ -24,6 +24,16 @@ export interface RuleContext {
 	blockPids?: readonly number[];
 }
 
+/**
+ * An app rule matches the app id OR the display name, case-insensitively, so
+ * `rules add --app Slack` does what it says. The helper applies the same rule
+ * to `blockApps`. Rule values are stored lowercase (normalizeRuleValue).
+ */
+export function appRuleMatches(ruleValue: string, app: { id?: string; name?: string }): boolean {
+	const v = ruleValue.toLowerCase();
+	return (app.id ?? '').toLowerCase() === v || (app.name ?? '').toLowerCase() === v;
+}
+
 /** True when a window title carries a private / incognito marker. */
 export function isPrivateWindowTitle(title: string | undefined): boolean {
 	if (!title) return false;
@@ -54,7 +64,12 @@ export function dropReason(event: ObservedEvent, ctx: RuleContext): DropReason |
 	const appId = event.app?.id?.toLowerCase();
 	if (appId && ALL_BUILT_IN_BLOCKED_APPS.has(appId)) return 'built-in-app';
 	if (event.app && ctx.blockPids?.includes(event.app.pid)) return 'blocked-pid';
-	if (appId && ctx.rules.some((r) => r.match === 'app' && r.value === appId)) return 'app-rule';
+	if (
+		event.app &&
+		ctx.rules.some((r) => r.match === 'app' && appRuleMatches(r.value, event.app!))
+	) {
+		return 'app-rule';
+	}
 	if (isPrivateWindowTitle(event.window?.title)) return 'private-window';
 	const host = urlHost(event.window?.url);
 	if (host && ctx.rules.some((r) => r.match === 'domain' && hostMatchesDomain(host, r.value))) {

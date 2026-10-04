@@ -32,7 +32,10 @@ function makeApi(
 		pause: vi.fn(async () => ({})),
 		resume: vi.fn(async () => ({})),
 		listRules: vi.fn(async () => ({ rules: [], builtIn: ['com.maestro.app'] })),
-		addRule: vi.fn(async () => ({ id: 'r', match: 'app', value: 'x' })),
+		addRule: vi.fn(async () => ({
+			rule: { id: 'r', match: 'app', value: 'com.apple.mobilesms' },
+			matches: [] as Array<{ id: string; name?: string }>,
+		})),
 		removeRule: vi.fn(async () => null),
 		clear: vi.fn(async () => ({ deletedSegments: 0, freedBytes: 0 })),
 		requestAccessibility: vi.fn(async () => ({ platform, outcome: 'enabled' })),
@@ -115,6 +118,8 @@ describe('ComputerHistorySection', () => {
 		fireEvent.change(input, { target: { value: 'com.apple.MobileSMS' } });
 		fireEvent.click(screen.getByText('Exclude'));
 		await waitFor(() => expect(api.addRule).toHaveBeenCalledWith('app', 'com.apple.MobileSMS'));
+		// An app rule that matches nothing seen recently is flagged.
+		expect(await screen.findByText(/matches no app seen recently/)).toBeTruthy();
 	});
 
 	it('clearing all history goes through a destructive confirm', async () => {

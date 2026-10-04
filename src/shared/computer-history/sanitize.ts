@@ -31,6 +31,9 @@ const ROLES = new Set<ObservedElementRole>([
 ]);
 const REASONS = new Set<TextCommitReason>(['idle', 'blur', 'cleared']);
 
+/** Extra text kept past the cap for redaction to see a straddling secret. */
+export const REDACTION_SLACK_BYTES = 4096;
+
 /** Labels and titles are short by nature; cap them so a hostile app cannot bloat lines. */
 const MAX_LABEL_CHARS = 1024;
 const MAX_URL_CHARS = 4096;
@@ -200,7 +203,9 @@ export function truncateUtf8(text: string, maxBytes: number): { text: string; tr
 	if (Buffer.byteLength(text, 'utf-8') <= maxBytes) return { text, truncated: false };
 	let bytes = 0;
 	let end = 0;
-	for (const ch of text) {
+	// Every UTF-16 unit is at least one byte, so the result fits in the first
+	// maxBytes units; never walk past them on a huge input.
+	for (const ch of text.slice(0, maxBytes + 1)) {
 		const size = Buffer.byteLength(ch, 'utf-8');
 		if (bytes + size > maxBytes) break;
 		bytes += size;
@@ -228,9 +233,14 @@ export function redactObservedEvent(
 			event.kind === 'content.snapshot'
 				? (caps.maxSnapshotBytes ?? MAX_SNAPSHOT_BYTES)
 				: (caps.maxTextBytes ?? MAX_TEXT_BYTES);
-		const cut = truncateUtf8(redactSecrets(event.text).text, cap);
+		// Pre-cut to the cap plus slack BEFORE redacting, so a hostile or runaway
+		// helper line costs at most cap + 4 KB of regex work; the slack keeps a
+		// secret that straddles the cap whole for the patterns to see. Then cut
+		// to the cap (placeholders can change the length).
+		const pre = truncateUtf8(event.text, cap + REDACTION_SLACK_BYTES);
+		const cut = truncateUtf8(redactSecrets(pre.text).text, cap);
 		out.text = cut.text;
-		if (cut.truncated) out.truncated = true;
+		if (cut.truncated || pre.truncated) out.truncated = true;
 	}
 	return out;
 }

@@ -20,6 +20,7 @@ import type { WebClient } from '../types';
 import type { BroadcastService } from '../services';
 import { runAsActingUser } from '../auth/acting-user';
 import { bridgeDeniedChannelError, isBridgeDeniedChannel } from './bridgeDenyList';
+import { bridgeGuardViolation } from './bridgePathGuard';
 
 const LOG_CONTEXT = 'WebServer:Bridge';
 
@@ -142,6 +143,20 @@ export async function handleBridgeInvoke(
 			error: bridgeDeniedChannelError(channel),
 		});
 		return;
+	}
+
+	// Argument guard for web clients, before EITHER dispatch path (invoke or
+	// the ipcMain.emit fallback below): no Computer History files or CLI
+	// secret through generic handlers like `fs:readFile`, and no toggling the
+	// Computer History flag. maestro-cli (`client.cli`) is exempt. See
+	// bridgePathGuard.ts.
+	if (!client.cli) {
+		const violation = bridgeGuardViolation(channel, args);
+		if (violation) {
+			logger.warn(`Refused bridge call "${channel}" from ${client.id}: ${violation}`, LOG_CONTEXT);
+			send(client, { type: 'bridge.response', requestId, ok: false, error: violation });
+			return;
+		}
 	}
 
 	const handlers = (ipcMain as unknown as IpcMainInternal)._invokeHandlers;

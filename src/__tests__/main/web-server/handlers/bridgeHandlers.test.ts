@@ -48,6 +48,7 @@ import {
 	uninstallWebContentsBridgeHook,
 } from '../../../../main/web-server/handlers/bridgeHandlers';
 import { getActingUser } from '../../../../main/web-server/auth/acting-user';
+import { setBridgeGuardContextProvider } from '../../../../main/web-server/handlers/bridgePathGuard';
 
 function makeClient(user?: { id: string; username: string; displayName: string }) {
 	return {
@@ -472,5 +473,91 @@ describe('handleBridgeInvoke denied channels', () => {
 		);
 
 		expect(send.mock.calls[0][1]).toMatchObject({ ok: true, result: 'dracula' });
+	});
+});
+
+/**
+ * Computer History behind the generic handlers: a browser must not reach the
+ * store or the CLI secret through `fs:*`, nor flip the flag through
+ * `settings:set`. maestro-cli (client.cli) is exempt.
+ */
+describe('handleBridgeInvoke argument guard', () => {
+	const userData = '/guard-test-user-data';
+	const storeFile = `${userData}/computer-history/index.jsonl`;
+
+	beforeEach(() => {
+		setBridgeGuardContextProvider(() => ({
+			userDataDir: userData,
+			encoreFeatures: { computerHistory: true },
+			platform: 'linux',
+		}));
+	});
+
+	it('refuses a browser reading the store through fs:readFile', async () => {
+		const handler = vi.fn(async () => 'leaked');
+		invokeHandlers.set('fs:readFile', handler);
+		const send = vi.fn();
+		await handleBridgeInvoke(
+			makeClient(),
+			{ type: 'bridge.invoke', requestId: 'g1', channel: 'fs:readFile', args: [storeFile] },
+			send
+		);
+		expect(handler).not.toHaveBeenCalled();
+		expect(send.mock.calls[0][1]).toMatchObject({ requestId: 'g1', ok: false });
+	});
+
+	it('refuses the same on the ipcMain.emit fallback path', async () => {
+		const listener = vi.fn();
+		sendListeners.set('fs:sendStyleWrite', listener);
+		const send = vi.fn();
+		await handleBridgeInvoke(
+			makeClient(),
+			{
+				type: 'bridge.invoke',
+				requestId: 'g2',
+				channel: 'fs:sendStyleWrite',
+				args: [{ target: `${userData}/cli-server.json` }],
+			},
+			send
+		);
+		expect(listener).not.toHaveBeenCalled();
+		expect((send.mock.calls[0][1] as Record<string, unknown>).ok).toBe(false);
+	});
+
+	it('refuses a browser turning Computer History off through settings:set', async () => {
+		const handler = vi.fn(async () => true);
+		invokeHandlers.set('settings:set', handler);
+		const send = vi.fn();
+		await handleBridgeInvoke(
+			makeClient(),
+			{
+				type: 'bridge.invoke',
+				requestId: 'g3',
+				channel: 'settings:set',
+				args: ['encoreFeatures', { computerHistory: false }],
+			},
+			send
+		);
+		expect(handler).not.toHaveBeenCalled();
+		expect((send.mock.calls[0][1] as Record<string, unknown>).ok).toBe(false);
+	});
+
+	it('lets maestro-cli through and leaves unrelated calls alone', async () => {
+		const handler = vi.fn(async () => 'contents');
+		invokeHandlers.set('fs:readFile', handler);
+		const send = vi.fn();
+		await handleBridgeInvoke(
+			{ ...makeClient(), cli: true },
+			{ type: 'bridge.invoke', requestId: 'g4', channel: 'fs:readFile', args: [storeFile] },
+			send
+		);
+		expect(handler).toHaveBeenCalledTimes(1);
+		await handleBridgeInvoke(
+			makeClient(),
+			{ type: 'bridge.invoke', requestId: 'g5', channel: 'fs:readFile', args: ['/tmp/notes.md'] },
+			send
+		);
+		expect(handler).toHaveBeenCalledTimes(2);
+		setBridgeGuardContextProvider(null);
 	});
 });

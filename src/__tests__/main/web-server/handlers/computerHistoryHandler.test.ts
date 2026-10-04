@@ -23,7 +23,10 @@ const service = {
 		pausedUntil: forMs ? 'x' : 'forever',
 	})),
 	resume: vi.fn(async () => ({ state: 'recording' })),
-	addRule: vi.fn(async (match: string, value: string) => ({ id: 'r1', match, value })),
+	addRule: vi.fn(async (match: string, value: string) => ({
+		rule: { id: 'r1', match, value },
+		matches: [{ id: 'com.tinyspeck.slackmacgap', name: 'Slack' }],
+	})),
 	removeRule: vi.fn(async (id: string) => (id === 'r1' ? { id } : null)),
 	clear: vi.fn(async () => ({ deletedSegments: 2, freedBytes: 10 })),
 	requestAccessibility: vi.fn(async () => ({ platform: 'linux', outcome: 'enabled' })),
@@ -34,6 +37,7 @@ vi.mock('../../../../main/computer-history', () => ({
 }));
 
 import { WebSocketMessageHandler } from '../../../../main/web-server/handlers/messageHandlers';
+import { setBridgeGuardContextProvider } from '../../../../main/web-server/handlers/bridgePathGuard';
 import type { WebClient } from '../../../../main/web-server/handlers/messageHandlers';
 
 function client(cli: boolean): WebClient {
@@ -134,5 +138,47 @@ describe('computer_history_command handler', () => {
 			error: '"x y" is not a domain',
 			requestId: 'e',
 		});
+	});
+});
+
+describe('set_setting cannot flip Computer History from a browser', () => {
+	it('refuses a browser, allows maestro-cli, and leaves other keys alone', async () => {
+		setBridgeGuardContextProvider(() => ({
+			userDataDir: null,
+			encoreFeatures: { computerHistory: true },
+			platform: 'linux',
+		}));
+		const setSetting = vi.fn(async () => true);
+		const handler = new WebSocketMessageHandler();
+		handler.setCallbacks({ setSetting } as never);
+		const browser = client(false);
+		handler.handleMessage(browser, {
+			type: 'set_setting',
+			key: 'encoreFeatures',
+			value: { computerHistory: false },
+			requestId: 's1',
+		} as never);
+		await flush();
+		expect(setSetting).not.toHaveBeenCalled();
+		expect(lastResponse(browser).type).toBe('error');
+
+		handler.handleMessage(browser, {
+			type: 'set_setting',
+			key: 'encoreFeatures',
+			value: { computerHistory: true, maestroCue: false },
+			requestId: 's2',
+		} as never);
+		await flush();
+		expect(setSetting).toHaveBeenCalledTimes(1);
+
+		handler.handleMessage(client(true), {
+			type: 'set_setting',
+			key: 'encoreFeatures',
+			value: { computerHistory: false },
+			requestId: 's3',
+		} as never);
+		await flush();
+		expect(setSetting).toHaveBeenCalledTimes(2);
+		setBridgeGuardContextProvider(null);
 	});
 });

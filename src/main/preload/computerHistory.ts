@@ -3,7 +3,8 @@
  *
  * Mirrors the `computerHistory:*` channels in
  * `src/main/ipc/handlers/computerHistory.ts`. Desktop-only by construction:
- * the web-desktop bridge refuses every one of these channels (D15) and never
+ * the web-desktop bridge refuses every one of these channels (D15; the store
+ * files themselves are guarded by bridgePathGuard.ts) and never
  * forwards the status push.
  */
 
@@ -13,6 +14,7 @@ import type { QueryResult } from '../../shared/computer-history/reader';
 import type {
 	AccessibilityRequestResult,
 	ComputerHistoryStatus,
+	RuleAddResult,
 } from '../../shared/computer-history/status';
 import type {
 	CaptureRule,
@@ -43,7 +45,7 @@ export function createComputerHistoryApi() {
 		resume: (): Promise<ComputerHistoryStatus> => ipcRenderer.invoke('computerHistory:resume'),
 		listRules: (): Promise<{ rules: CaptureRule[]; builtIn: string[] }> =>
 			ipcRenderer.invoke('computerHistory:listRules'),
-		addRule: (match: CaptureRuleMatch, value: string): Promise<CaptureRule> =>
+		addRule: (match: CaptureRuleMatch, value: string): Promise<RuleAddResult> =>
 			ipcRenderer.invoke('computerHistory:addRule', match, value),
 		removeRule: (idOrValue: string): Promise<CaptureRule | null> =>
 			ipcRenderer.invoke('computerHistory:removeRule', idOrValue),

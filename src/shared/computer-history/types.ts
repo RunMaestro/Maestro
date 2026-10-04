@@ -117,6 +117,11 @@ export interface SegmentIndexEntry {
 	bytes: number;
 	/** Event count per `app.id`. */
 	apps: Record<string, number>;
+	/**
+	 * Events refused by the per-segment byte guard (a runaway helper). Absent
+	 * when nothing was dropped.
+	 */
+	dropped?: number;
 }
 
 /** Commands the main process writes to the helper's stdin. */

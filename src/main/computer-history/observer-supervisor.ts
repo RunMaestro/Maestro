@@ -70,12 +70,15 @@ export function observerBinaryName(platform: NodeJS.Platform = process.platform)
 }
 
 /**
- * Candidate helper locations, most specific first:
- * packaged `resources/native/`, then the dev build output
+ * Candidate helper locations. A PACKAGED app uses only the signed copy in
+ * `resources/native/`: falling back to a cwd- or module-relative path there
+ * would let whatever sits in the launch directory run with Maestro's
+ * Accessibility grant. Unpackaged (dev) builds try the build output
  * `dist/native/<platform>-<arch>/` (relative to this module and to cwd), then
  * a local cargo release build.
  */
 export function observerBinaryCandidates(opts: {
+	packaged: boolean;
 	resourcesPath?: string;
 	moduleDir: string;
 	cwd: string;
@@ -84,6 +87,9 @@ export function observerBinaryCandidates(opts: {
 }): string[] {
 	const name = observerBinaryName(opts.platform);
 	const dir = observerPlatformDir(opts.platform, opts.arch);
+	if (opts.packaged) {
+		return opts.resourcesPath ? [path.join(opts.resourcesPath, 'native', name)] : [];
+	}
 	const out: string[] = [];
 	if (opts.resourcesPath) out.push(path.join(opts.resourcesPath, 'native', name));
 	// dist/main/computer-history/*.js -> dist/native/<platform>-<arch>/
