@@ -29,4 +29,15 @@ describe('plugin provider session bindings', () => {
 		bindings.purge('relay');
 		expect(() => bindings.assertOwned('relay', 'agent-a', 'provider-1')).toThrow(/not owned/);
 	});
+
+	it('evicts the oldest binding when full and keeps the completed session resumable', () => {
+		const bindings = new PluginAgentSessionBindings(baseDir, 2);
+		bindings.remember('relay', 'agent-a', 'provider-1');
+		bindings.remember('relay', 'agent-b', 'provider-2');
+		bindings.remember('relay', 'agent-a', 'provider-3');
+		expect(() => bindings.assertOwned('relay', 'agent-a', 'provider-1')).toThrow(/not owned/);
+		expect(() => bindings.assertOwned('relay', 'agent-b', 'provider-2')).not.toThrow();
+		expect(() => bindings.assertOwned('relay', 'agent-a', 'provider-3')).not.toThrow();
+		expect(() => bindings.assertOwned('relay', 'agent-b', 'provider-3')).toThrow(/not owned/);
+	});
 });

@@ -162,4 +162,28 @@ describe('PluginSandboxHost.stop onStop hook', () => {
 		host.stop('ghost');
 		expect(onStop).toHaveBeenCalledTimes(1);
 	});
+
+	it('rejects host calls as soon as shutdown begins', async () => {
+		const handler = vi.fn(async () => 'unexpected');
+		const host = new PluginSandboxHost({
+			broker: { authorize: vi.fn(() => ({ allowed: true })) } as unknown as PermissionBroker,
+			handlers: { 'agents.send': handler },
+		});
+		host.start('p', dir, 'entry.js');
+		const proc = forkMock.mock.results.at(-1)?.value as { on: ReturnType<typeof vi.fn> };
+		const listener = proc.on.mock.calls.findLast(([name]) => name === 'message')?.[1] as (
+			data: unknown
+		) => void;
+		postMessage.mockClear();
+		host.stop('p');
+		listener({ id: 42, method: 'agents.send', params: { agentId: 'a', prompt: 'hi' } });
+		await vi.waitFor(() =>
+			expect(postMessage).toHaveBeenCalledWith({
+				id: 42,
+				ok: false,
+				error: 'plugin is stopping',
+			})
+		);
+		expect(handler).not.toHaveBeenCalled();
+	});
 });

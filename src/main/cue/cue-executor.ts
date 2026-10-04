@@ -26,6 +26,7 @@ import {
 } from './cue-process-lifecycle';
 import { getOutputParser } from '../parsers';
 import { beginSleepAwareSpan, sleepAwareElapsedMs } from '../utils/sleep-tracker';
+import { logger } from '../utils/logger';
 import {
 	pluginToolRunIdentity,
 	removePluginRunProofFile,
@@ -275,7 +276,15 @@ export async function executeCuePrompt(config: CueExecutionConfig): Promise<CueR
 		});
 	} finally {
 		if (spec.pluginRunToken) pluginToolRunIdentity.revoke(spec.pluginRunToken);
-		if (spec.pluginRunProofFile) removePluginRunProofFile(spec.pluginRunProofFile);
+		if (spec.pluginRunProofFile) {
+			try {
+				removePluginRunProofFile(spec.pluginRunProofFile);
+			} catch (error) {
+				logger.warn('Could not remove plugin run proof file', '[PluginRunIdentity]', {
+					error: String(error),
+				});
+			}
+		}
 	}
 
 	// 5. Assemble final result

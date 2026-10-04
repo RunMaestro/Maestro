@@ -9,9 +9,11 @@ import { PluginKvStore } from './plugin-kv-store';
  */
 export class PluginAgentSessionBindings {
 	private readonly store: PluginKvStore;
+	private readonly maxBindings: number;
 
-	constructor(baseDir: string) {
-		this.store = new PluginKvStore({ baseDir, limits: { maxKeys: 10_000 } });
+	constructor(baseDir: string, maxBindings = 10_000) {
+		this.maxBindings = maxBindings;
+		this.store = new PluginKvStore({ baseDir, limits: { maxKeys: maxBindings } });
 	}
 
 	private key(sessionId: string): string {
@@ -30,7 +32,14 @@ export class PluginAgentSessionBindings {
 		if (currentOwner && currentOwner !== agentId) {
 			throw new Error('agents.send: provider session belongs to another agent');
 		}
-		if (!currentOwner) this.store.set(pluginId, key, agentId);
+		if (!currentOwner) {
+			// Keep the newest sessions resumable without failing a completed turn
+			// when a long-lived plugin reaches its bounded storage limit. Evicted
+			// sessions fail closed in assertOwned rather than crossing agent scopes.
+			const keys = this.store.keys(pluginId);
+			if (keys.length >= this.maxBindings) this.store.delete(pluginId, keys[0]);
+			this.store.set(pluginId, key, agentId);
+		}
 	}
 
 	purge(pluginId: string): void {

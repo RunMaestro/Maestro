@@ -110,6 +110,7 @@ interface PendingTool {
 
 interface RunningPlugin {
 	proc: UtilityProcess;
+	stopping?: boolean;
 	shutdownTimer?: NodeJS.Timeout;
 	inFlight: number;
 	windowStart: number;
@@ -273,7 +274,7 @@ export class PluginSandboxHost {
 	 */
 	invokeCommand(pluginId: string, commandId: string, args?: unknown): boolean {
 		const record = this.running.get(pluginId);
-		if (!record) return false;
+		if (!record || record.stopping) return false;
 		// Cap the host->child payload the same way HostRequest params are bounded:
 		// a non-serializable or oversized args object is dropped, never posted.
 		let serialized: string;
@@ -308,7 +309,8 @@ export class PluginSandboxHost {
 		context: { callerAgentId: string | null } = { callerAgentId: null }
 	): Promise<unknown> {
 		const record = this.running.get(pluginId);
-		if (!record) return Promise.reject(new Error(`plugin "${pluginId}" is not running`));
+		if (!record || record.stopping)
+			return Promise.reject(new Error(`plugin "${pluginId}" is not running`));
 		// Bound the host->child payload exactly like invokeCommand / HostRequest.
 		let serialized: string;
 		try {
@@ -366,7 +368,7 @@ export class PluginSandboxHost {
 	 */
 	pushEvent(pluginId: string, event: PluginEvent | SandboxControlEvent): boolean {
 		const record = this.running.get(pluginId);
-		if (!record) return false;
+		if (!record || record.stopping) return false;
 		try {
 			record.proc.postMessage({
 				kind: 'event',
@@ -383,7 +385,9 @@ export class PluginSandboxHost {
 	/** Stop a plugin: ask it to shut down, then hard-kill after a grace period. */
 	stop(pluginId: string): void {
 		const record = this.running.get(pluginId);
-		if (!record) return;
+		if (!record || record.stopping) return;
+		// Close admission before notifying observers or asking the child to exit.
+		record.stopping = true;
 		this.deps.onStop?.(pluginId);
 		try {
 			record.proc.postMessage({ kind: 'shutdown' });
@@ -442,6 +446,10 @@ export class PluginSandboxHost {
 
 		// Backpressure + rate limiting against a flooding child.
 		const record = this.running.get(pluginId);
+		if (record?.stopping) {
+			respond({ ok: false, error: 'plugin is stopping' });
+			return;
+		}
 		if (!record || record.proc !== proc || record.inFlightIds.has(request.id)) {
 			respond({ ok: false, error: 'duplicate or stale host request' });
 			return;
@@ -493,7 +501,7 @@ export class PluginSandboxHost {
 		record.inFlight += 1;
 		let active = true;
 		const onProgress = (event: AgentSendProgressEvent): void => {
-			if (!active || this.running.get(pluginId) !== record) return;
+			if (!active || record.stopping || this.running.get(pluginId) !== record) return;
 			if (!this.deps.broker.authorize(pluginId, method, request.params).allowed) return;
 			// Keep the optional public action bounded at the final host -> sandbox
 			// boundary as well. Older callers and events without a summary pass through.

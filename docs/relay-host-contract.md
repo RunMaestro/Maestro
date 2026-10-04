@@ -23,13 +23,20 @@ request. Its event union is:
 type AgentSendProgressEvent =
 	| { type: 'activity'; text: string; at: string }
 	| { type: 'commentary'; text: string; at: string }
-	| { type: 'tool'; tool: string; status: 'started' | 'completed' | 'failed'; at: string };
+	| {
+			type: 'tool';
+			tool: string;
+			status: 'started' | 'completed' | 'failed';
+			at: string;
+			summary?: string;
+	  };
 ```
 
 `at` is an ISO 8601 UTC timestamp. `activity` is a host-owned generic status;
 `commentary` is provider-designated public commentary, never raw reasoning;
-`tool` carries only a tool name and lifecycle status, never arguments, output,
-command text, or raw logs. A provider may emit fewer kinds, or none. The host
+`tool` carries a tool name, lifecycle status, and optional host-derived public
+action summary of at most 120 characters, never arguments, output, command text,
+or raw logs. A provider may emit fewer kinds, or none. The host
 posts each event to the calling plugin's sandbox with that RPC request's private
 correlation ID; no global event subscription or `events:subscribe` grant is
 needed. Events stop on completion, cancellation, timeout, plugin stop, or grant
@@ -42,9 +49,9 @@ still complete normally and may emit only the initial `activity` event.
 
 With no `sessionId`, the host starts a fresh headless provider session. With one, it passes that opaque provider session ID to the provider's resume path. `sessionId` in the result is a **provider session ID**, not a desktop tab ID or Maestro agent ID. The plugin stores one ID per Discord thread and only saves a new ID after `success: true`. A failed run has `response: null`, may carry a provider ID for diagnostics, and must not be posted as a successful answer. The host runs different threads independently. The `agents:dispatch` ActionGuard limits one plugin to two concurrent high-risk actions; additional calls fail clearly and may be queued by the plugin. The provider process has a 20-minute timeout. Disabling, crashing, or uninstalling the plugin aborts its outstanding `agents.send` processes.
 
-The host also records every successful provider session ID in a private persistent binding store under `<userData>/plugin-agent-sessions/`. A resume is allowed only for the same plugin and Maestro agent that received the ID; knowing another agent's provider ID is insufficient. These bindings survive a desktop restart and are deleted when the plugin is uninstalled.
+The host also records successful provider session IDs in a private persistent binding store under `<userData>/plugin-agent-sessions/`. A resume is allowed only for the same plugin and Maestro agent that received the ID; knowing another agent's provider ID is insufficient. The newest 10,000 bindings per plugin survive a desktop restart. Older bindings are evicted as new sessions arrive and then fail closed on resume; bindings are deleted when the plugin is uninstalled.
 
-A plugin stop or uninstall aborts outstanding sends. A provider result that arrives after cancellation is reported as failed and cannot recreate a purged session binding.
+A plugin stop or uninstall aborts outstanding sends and closes admission for new host calls during sandbox shutdown. A provider result that arrives after cancellation is reported as failed and cannot recreate a purged session binding.
 
 Before spawning, the host checks the live `agents:dispatch` allowlist for the exact agent ID, separate unattended consent, trusted plugin signature, low/medium Pianola risk verdict, closed parameter schema, and the ActionGuard rate/concurrency/audit gate. The target is resolved against stored agents at execution time. `agents.dispatch` remains an asynchronous desktop dispatch acknowledgment.
 
