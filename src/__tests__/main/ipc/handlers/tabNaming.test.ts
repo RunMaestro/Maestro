@@ -345,6 +345,42 @@ describe('Tab Naming IPC Handlers', () => {
 			await resultPromise;
 		});
 
+		it('pins plugin title generation to the authorized agent despite a utility agent setting', async () => {
+			mockSettingsStore.get.mockImplementation((key: string, defaultValue?: unknown) => {
+				if (key === 'utilityAgentId') return 'codex';
+				if (key === 'utilityModelId') return 'gpt-4o-mini';
+				return defaultValue ?? {};
+			});
+			const controller = new AbortController();
+			const pending = generateTabName(
+				{
+					getProcessManager: () => mockProcessManager as unknown as ProcessManager,
+					getAgentDetector: () => mockAgentDetector as unknown as AgentDetector,
+					agentConfigsStore: mockAgentConfigsStore as unknown as Parameters<
+						typeof generateTabName
+					>[0]['agentConfigsStore'],
+					settingsStore: mockSettingsStore as unknown as Parameters<
+						typeof generateTabName
+					>[0]['settingsStore'],
+				},
+				{
+					userMessage: 'Build a login form',
+					agentType: 'claude-code',
+					cwd: '/test/project',
+					useUtilityAgent: false,
+				},
+				controller.signal
+			);
+			await vi.waitFor(() => expect(mockProcessManager.spawn).toHaveBeenCalledOnce());
+			expect(mockAgentDetector.getAgent).toHaveBeenCalledWith('claude-code');
+			expect(mockProcessManager.spawn).toHaveBeenCalledWith(
+				expect.objectContaining({ toolType: 'claude-code' })
+			);
+			expect(mockSettingsStore.get).not.toHaveBeenCalledWith('utilityAgentId', null);
+			controller.abort();
+			await expect(pending).resolves.toBeNull();
+		});
+
 		it('uses the session agent when no utility agent is configured (backward compatible)', async () => {
 			// Default settings (utilityAgentId = null) must leave the session agent untouched.
 			let onDataCallback: ((sessionId: string, data: string) => void) | undefined;

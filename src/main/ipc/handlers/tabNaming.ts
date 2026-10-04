@@ -113,6 +113,8 @@ export interface TabNamingConfig {
 	enableMaestroP?: boolean;
 	maestroPMode?: 'interactive' | 'dynamic';
 	maestroPPath?: string;
+	/** Plugin calls pin the authorized agent; ordinary tab naming may use the utility agent. */
+	useUtilityAgent?: boolean;
 }
 
 /** Shared isolated naming turn for UI tabs and brokered plugin titles. */
@@ -138,8 +140,13 @@ export async function generateTabName(
 	try {
 		// Resolve the agent: use the utility agent if configured, otherwise the
 		// session agent. Null/empty leaves behavior unchanged (session agent).
-		const utilityAgentId = settingsStore.get('utilityAgentId', null) as string | null;
-		const utilityModelId = settingsStore.get('utilityModelId', null) as string | null;
+		const utilityAgentId =
+			config.useUtilityAgent === false
+				? null
+				: (settingsStore.get('utilityAgentId', null) as string | null);
+		const utilityModelId = utilityAgentId
+			? (settingsStore.get('utilityModelId', null) as string | null)
+			: null;
 		const effectiveAgentType = utilityAgentId || config.agentType;
 
 		// Get the agent configuration

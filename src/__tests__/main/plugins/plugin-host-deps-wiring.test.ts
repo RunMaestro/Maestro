@@ -107,6 +107,7 @@ describe('production host-handler deps wiring (FC2 - wired and gated)', () => {
 		expect(keys).toContain('dispatchUnattendedAllowed');
 		expect(source).toMatch(/generateTitle: async \(agentId, firstMessage, signal\) =>/);
 		expect(source).toMatch(/return generateTabName\(/);
+		expect(source).toMatch(/useUtilityAgent: false/);
 	});
 
 	it('still wires the safe read-only deps (guard targets the right call)', () => {
