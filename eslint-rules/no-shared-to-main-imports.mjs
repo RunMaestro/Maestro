@@ -19,6 +19,7 @@
  */
 
 import path from 'node:path';
+import { visitModuleSpecifiers } from './import-specifiers.mjs';
 
 const SHARED_ROOT_MARKER = 'src/shared/';
 
@@ -55,7 +56,7 @@ const noSharedToMainImports = {
 		const relativeToShared = filename.slice(sharedIndex + SHARED_ROOT_MARKER.length);
 		const fromFilePosix = filename.slice(sharedIndex); // starts at "src/shared/..."
 
-		function checkSpecifier(reportNode, specifier) {
+		return visitModuleSpecifiers((reportNode, specifier) => {
 			if (typeof specifier !== 'string' || !specifier.startsWith('.')) {
 				return;
 			}
@@ -67,43 +68,7 @@ const noSharedToMainImports = {
 				messageId: 'newEdge',
 				data: { from: relativeToShared, specifier },
 			});
-		}
-
-		return {
-			ImportDeclaration(node) {
-				checkSpecifier(node.source, node.source.value);
-			},
-			// `export * from '../../../main/x'` and `export { y } from '...'` are
-			// dependencies too, and re-exporting is how a shim is normally written,
-			// so leaving them unvisited left the widest hole in the rule.
-			ExportAllDeclaration(node) {
-				// `export *` has no sourceless form, so `source` is always set here.
-				checkSpecifier(node.source, node.source.value);
-			},
-			ExportNamedDeclaration(node) {
-				// Null for a local `export { y }` / `export const y`, which names
-				// nothing outside this file.
-				if (node.source) {
-					checkSpecifier(node.source, node.source.value);
-				}
-			},
-			ImportExpression(node) {
-				if (node.source.type === 'Literal' && typeof node.source.value === 'string') {
-					checkSpecifier(node.source, node.source.value);
-				}
-			},
-			CallExpression(node) {
-				if (
-					node.callee.type === 'Identifier' &&
-					node.callee.name === 'require' &&
-					node.arguments.length === 1 &&
-					node.arguments[0].type === 'Literal' &&
-					typeof node.arguments[0].value === 'string'
-				) {
-					checkSpecifier(node.arguments[0], node.arguments[0].value);
-				}
-			},
-		};
+		});
 	},
 };
 

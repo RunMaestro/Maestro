@@ -8,6 +8,7 @@ import globals from 'globals';
 import maestroPlugin from './eslint-rules/no-em-dash-in-comments.mjs';
 import fontSizesPlugin from './eslint-rules/no-arbitrary-font-sizes.mjs';
 import sharedBoundaryPlugin from './eslint-rules/no-shared-to-main-imports.mjs';
+import tuiBoundaryPlugin from './eslint-rules/no-tui-outside-lib.mjs';
 
 export default tseslint.config(
 	// Ignore patterns
@@ -130,6 +131,17 @@ export default tseslint.config(
 		plugins: { 'shared-boundary': sharedBoundaryPlugin },
 		rules: {
 			'shared-boundary/no-shared-to-main-imports': 'error',
+		},
+	},
+
+	// Boundary guard: src/tui/** may import only itself and the maestro-lib
+	// public entry, and never electron. The TUI is the proof the library runs
+	// without the desktop.
+	{
+		files: ['src/tui/**/*.ts', 'src/tui/**/*.tsx'],
+		plugins: { 'tui-boundary': tuiBoundaryPlugin },
+		rules: {
+			'tui-boundary/no-tui-outside-lib': 'error',
 		},
 	}
 );
