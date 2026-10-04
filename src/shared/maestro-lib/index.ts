@@ -9,6 +9,7 @@
 
 // Paths and configuration
 export * from './paths/userDataDir';
+export * from './paths/resolve';
 
 // Launch and argument building
 export * from './launch/launch-plan';
