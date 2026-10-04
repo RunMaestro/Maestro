@@ -214,9 +214,10 @@ describe('Notification IPC Handlers', () => {
 				isMinimized: () => false,
 				show,
 				focus,
-				webContents: { send },
+				webContents: { send, isDestroyed: () => false, once: vi.fn() },
 			} as unknown as Electron.BrowserWindow;
 			mockGetMainWindow.mockReturnValue(target);
+			handlers.get('notification:ready')!({ sender: target.webContents });
 			const action = { kind: 'open-terminal' as const, sessionId: 'session-123', tabRef: 'term-1' };
 			await handlers.get('notification:show')!(
 				{},
@@ -233,6 +234,53 @@ describe('Notification IPC Handlers', () => {
 			expect(show).toHaveBeenCalledOnce();
 			expect(send).toHaveBeenCalledWith('notification:clickAction', action);
 		});
+
+		it.each(['absent', 'destroyed'] as const)(
+			'replays a clicked action only after the replacement renderer is ready (%s window)',
+			async (state) => {
+				const ensureMainWindow = vi.fn();
+				registerNotificationsHandlers({ getMainWindow: mockGetMainWindow, ensureMainWindow });
+				mockGetMainWindow.mockReturnValue(state === 'absent' ? null : { isDestroyed: () => true });
+				const action = {
+					kind: 'open-terminal' as const,
+					sessionId: 'session-123',
+					tabRef: 'term-1',
+				};
+				await handlers.get('notification:show')!(
+					{},
+					'Input needed',
+					'Sudo',
+					'session-123',
+					undefined,
+					action
+				);
+				mocks.mockNotificationOn.mock.calls.find((call: any[]) => call[0] === 'click')![1]();
+				expect(ensureMainWindow).toHaveBeenCalledOnce();
+				const send = vi.fn();
+				const once = vi.fn();
+				const target = {
+					isDestroyed: () => false,
+					isMinimized: () => false,
+					show: vi.fn(),
+					focus: vi.fn(),
+					webContents: { send, once, isDestroyed: () => false },
+				};
+				mockGetMainWindow.mockReturnValue(target);
+				expect(send).not.toHaveBeenCalled();
+				handlers.get('notification:ready')!({ sender: {} });
+				expect(send).not.toHaveBeenCalled();
+				handlers.get('notification:ready')!({ sender: target.webContents });
+				expect(send).toHaveBeenCalledExactlyOnceWith('notification:clickAction', action);
+				handlers.get('notification:ready')!({ sender: target.webContents });
+				expect(send).toHaveBeenCalledOnce();
+				// A renderer reload must queue another click until the new listener exists.
+				once.mock.calls[0][1]();
+				mocks.mockNotificationOn.mock.calls.find((call: any[]) => call[0] === 'click')![1]();
+				expect(send).toHaveBeenCalledOnce();
+				handlers.get('notification:ready')!({ sender: target.webContents });
+				expect(send).toHaveBeenCalledTimes(2);
+			}
+		);
 
 		it('should register close handler to prevent GC on all notifications', async () => {
 			const handler = handlers.get('notification:show')!;

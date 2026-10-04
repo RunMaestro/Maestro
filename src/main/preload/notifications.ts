@@ -72,6 +72,7 @@ export function createNotificationApi() {
 			const listener = (_event: Electron.IpcRendererEvent, action: ToastClickAction) =>
 				handler(action);
 			ipcRenderer.on('notification:clickAction', listener);
+			void ipcRenderer.invoke('notification:ready').catch(() => {});
 			return () => ipcRenderer.removeListener('notification:clickAction', listener);
 		},
 

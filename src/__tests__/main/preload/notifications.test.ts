@@ -27,6 +27,7 @@ describe('Notification Preload API', () => {
 
 	beforeEach(() => {
 		vi.clearAllMocks();
+		mockInvoke.mockResolvedValue(undefined);
 		api = createNotificationApi();
 	});
 
@@ -73,6 +74,7 @@ describe('Notification Preload API', () => {
 	it('delivers a native notification click action to the renderer', () => {
 		const handler = vi.fn();
 		const unsubscribe = api.onClickAction(handler);
+		expect(mockInvoke).toHaveBeenCalledWith('notification:ready');
 		const listener = mockOn.mock.calls.find((call) => call[0] === 'notification:clickAction')?.[1];
 		const action = { kind: 'open-terminal' as const, sessionId: 'agent-1', tabRef: 'term-1' };
 		listener({}, action);

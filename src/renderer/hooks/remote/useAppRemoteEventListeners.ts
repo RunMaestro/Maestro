@@ -380,12 +380,17 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 				onPid: (tabId, pid) => {
 					createTabPidChangeHandler(sessionId)(tabId, pid);
 					if (config?.inputRequired) {
-						const tabName = getTerminalTabDisplayName(tab, (session.terminalTabs || []).length);
+						const currentSession = selectSessionById(sessionId)(useSessionStore.getState());
+						const currentIndex =
+							currentSession?.terminalTabs?.findIndex((item) => item.id === tabId) ?? -1;
+						if (!currentSession || currentIndex < 0) return;
+						const currentTab = currentSession.terminalTabs![currentIndex];
+						const tabName = getTerminalTabDisplayName(currentTab, currentIndex);
 						notifyToast({
 							color: 'yellow',
 							title: 'Terminal needs your input',
 							message: 'Your input is needed.',
-							project: session.name,
+							project: currentSession.name,
 							tabName,
 							sessionId,
 							clickAction: { kind: 'open-terminal', sessionId, tabRef: tab.id },

@@ -110,6 +110,7 @@ describe('maestro:openTerminalTab human input', () => {
 		expect(terminalAck).toHaveBeenCalledWith('ch', true, 'new-tab-id');
 		expect(notifyToast).not.toHaveBeenCalled();
 		const spawnOptions = vi.mocked(spawnPtyForTab).mock.calls[0][0];
+		sessions[0].terminalTabs = [spawnOptions.tab];
 		spawnOptions.onPid('new-tab-id', 123);
 		expect(notifyToast).toHaveBeenCalledWith(
 			expect.objectContaining({
@@ -117,6 +118,37 @@ describe('maestro:openTerminalTab human input', () => {
 				tabName: 'Sudo',
 				clickAction: { kind: 'open-terminal', sessionId: 'session-1', tabRef: 'new-tab-id' },
 			})
+		);
+	});
+});
+
+describe('terminal notification names', () => {
+	it('uses the current tab position and agent name after shell startup', () => {
+		const sessions = [
+			createMockSession({
+				id: 'session-1',
+				name: 'Before',
+				terminalTabs: [{ id: 'old-tab' } as any],
+			}),
+		];
+		vi.mocked(selectSessionById).mockReturnValue(() => sessions[0]);
+		setup(sessions);
+		window.dispatchEvent(
+			new CustomEvent('maestro:openTerminalTab', {
+				detail: {
+					sessionId: 'session-1',
+					config: { inputRequired: true },
+					background: true,
+				},
+			})
+		);
+		const options = vi.mocked(spawnPtyForTab).mock.calls[0][0];
+		// The first tab closed while the new shell was starting.
+		sessions[0].terminalTabs = [options.tab];
+		sessions[0].name = 'After';
+		options.onPid('new-tab-id', 123);
+		expect(notifyToast).toHaveBeenCalledWith(
+			expect.objectContaining({ project: 'After', tabName: 'Terminal 1' })
 		);
 	});
 });

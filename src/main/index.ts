@@ -1796,7 +1796,12 @@ function setupIpcHandlers() {
 	registerAgentErrorHandlers();
 
 	// Register notification handlers (extracted to handlers/notifications.ts)
-	registerNotificationsHandlers({ getMainWindow: () => mainWindow });
+	registerNotificationsHandlers({
+		getMainWindow: () => mainWindow,
+		ensureMainWindow: () => {
+			if (!mainWindow || mainWindow.isDestroyed()) createWindow();
+		},
+	});
 
 	// Register attachments handlers (extracted to handlers/attachments.ts)
 	registerAttachmentsHandlers({ app });
