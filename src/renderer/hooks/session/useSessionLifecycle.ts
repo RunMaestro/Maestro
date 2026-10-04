@@ -97,7 +97,8 @@ export interface SessionLifecycleReturn {
 		/** New working directory; `undefined` when the user left it unchanged. */
 		workingDirectory?: string,
 		/** Codex only: spend a reset credit automatically on quota exhaustion. Defaults off. */
-		codexAutoResetOnExhaustion?: boolean
+		codexAutoResetOnExhaustion?: boolean,
+		boardWorker?: boolean
 	) => void;
 	/** Rename the currently-selected tab (persists to agent session storage + history) */
 	handleRenameTab: (newName: string) => void;
@@ -188,7 +189,8 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 			/** New working directory; `undefined` when the user left it unchanged. */
 			workingDirectory?: string,
 			/** Codex only: spend a reset credit automatically on quota exhaustion. Defaults off. */
-			codexAutoResetOnExhaustion?: boolean
+			codexAutoResetOnExhaustion?: boolean,
+			boardWorker?: boolean
 		) => {
 			// The dialog disables the field while the agent runs, but the agent can
 			// start between opening the dialog and saving. Say so rather than
@@ -235,6 +237,7 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 					// the preference so moving back does not silently lose it, and the
 					// flag is inert for any provider without reset credits.
 					codexAutoResetOnExhaustion,
+					...(boardWorker === undefined ? {} : { boardWorker }),
 				};
 
 				// If the provider changed, park each tab's provider-specific state and

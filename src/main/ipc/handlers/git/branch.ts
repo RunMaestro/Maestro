@@ -1,9 +1,9 @@
 import { ipcMain } from 'electron';
-import { execFileNoThrow } from '../../../utils/execFile';
 import { execGit } from '../../../utils/remote-git';
 import { getSshRemoteById } from '../../../stores';
 import { withIpcErrorLogging, createIpcHandler } from '../../../utils/ipcHandler';
 import { parseGitBranches, parseGitTags } from '../../../../shared/gitUtils';
+import { resolveDefaultBranch } from '../../../utils/pr-creator';
 import { handlerOpts } from './shared';
 
 /**
@@ -247,28 +247,13 @@ export function registerBranchHandlers(): void {
 	ipcMain.handle(
 		'git:getDefaultBranch',
 		createIpcHandler(handlerOpts('getDefaultBranch'), async (cwd: string) => {
-			// First try to get the default branch from remote
-			const remoteResult = await execFileNoThrow('git', ['remote', 'show', 'origin'], cwd);
-			if (remoteResult.exitCode === 0) {
-				// Parse "HEAD branch: main" from the output
-				const match = remoteResult.stdout.match(/HEAD branch:\s*(\S+)/);
-				if (match) {
-					return { branch: match[1] };
-				}
+			// Shared with pr-creator.ts, which needs the same resolution when a
+			// caller opens a PR without an explicit base branch.
+			const branch = await resolveDefaultBranch(cwd);
+			if (!branch) {
+				throw new Error('Could not determine default branch');
 			}
-
-			// Fallback: check if main or master exists locally
-			const mainResult = await execFileNoThrow('git', ['rev-parse', '--verify', 'main'], cwd);
-			if (mainResult.exitCode === 0) {
-				return { branch: 'main' };
-			}
-
-			const masterResult = await execFileNoThrow('git', ['rev-parse', '--verify', 'master'], cwd);
-			if (masterResult.exitCode === 0) {
-				return { branch: 'master' };
-			}
-
-			throw new Error('Could not determine default branch');
+			return { branch };
 		})
 	);
 }

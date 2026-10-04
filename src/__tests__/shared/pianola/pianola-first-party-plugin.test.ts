@@ -146,6 +146,7 @@ describe('first-party plugin registry', () => {
 			['coworking', 'com.maestro.coworking'],
 			['opencodeServer', 'com.maestro.opencode-server'],
 			['concerto', 'com.maestro.concerto'],
+			['board', 'com.maestro.board'],
 			['groupsPlus', 'com.maestro.groups-plus'],
 			['webLogin', 'com.maestro.web-login'],
 		]);

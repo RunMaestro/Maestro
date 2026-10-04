@@ -90,7 +90,8 @@ export interface AppSessionModalsProps {
 		customEnvVarsDisabled?: Record<string, string>,
 		workingDirectory?: string,
 		/** Codex only: spend a reset credit automatically on quota exhaustion. Defaults off. */
-		codexAutoResetOnExhaustion?: boolean
+		codexAutoResetOnExhaustion?: boolean,
+		boardWorker?: boolean
 	) => void;
 	editAgentSession: Session | null;
 

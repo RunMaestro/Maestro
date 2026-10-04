@@ -20,6 +20,9 @@ playwright-report/
 test-results/
 
 # Dependencies
+# Bare, with no trailing slash on purpose: a trailing-slash rule matches only
+# directories, so a dev/worktree symlink named node_modules would not be
+# covered, and it must not be committed either.
 node_modules
 
 # Build outputs

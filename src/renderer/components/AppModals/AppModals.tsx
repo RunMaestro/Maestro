@@ -150,7 +150,11 @@ export interface AppModalsProps {
 		retryOnTokenExhaustion?: boolean,
 		additionalDirectories?: AdditionalDirectory[],
 		/** Provenance of `customContextWindow` (finding AD1). */
-		contextWindowSource?: 'user-edited'
+		contextWindowSource?: 'user-edited',
+		customEnvVarsDisabled?: Record<string, string>,
+		workingDirectory?: string,
+		codexAutoResetOnExhaustion?: boolean,
+		boardWorker?: boolean
 	) => void;
 	editAgentSession: Session | null;
 	renameSessionValue: string;
@@ -334,6 +338,9 @@ export interface AppModalsProps {
 	onOpenDirectorNotes?: () => void;
 	// Maestro Cue
 	onOpenMaestroCue?: () => void;
+	// Board (task DAG kanban; depends on Maestro Cue)
+	onOpenBoard?: () => void;
+	onOpenProfiles?: () => void;
 	// Pianola
 	onOpenPianola?: () => void;
 	onConfigureCue?: (session: Session) => void;
@@ -813,6 +820,9 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 		onOpenDirectorNotes,
 		// Maestro Cue
 		onOpenMaestroCue,
+		// Board (task DAG kanban; depends on Maestro Cue)
+		onOpenBoard,
+		onOpenProfiles,
 		// Pianola
 		onOpenPianola,
 		onConfigureCue,
@@ -1154,6 +1164,8 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 				onOpenSymphony={onOpenSymphony}
 				onOpenDirectorNotes={onOpenDirectorNotes}
 				onOpenMaestroCue={onOpenMaestroCue}
+				onOpenBoard={onOpenBoard}
+				onOpenProfiles={onOpenProfiles}
 				onOpenPianola={onOpenPianola}
 				onConfigureCue={onConfigureCue}
 				lightboxImage={lightboxImage}
