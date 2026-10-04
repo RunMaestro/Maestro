@@ -1,24 +1,53 @@
 /**
- * Resolve all Maestro data paths, including sync path support.
+ * Every Maestro data path, resolved without Electron.
  *
- * The desktop stores sessions, groups, settings, group chats, and session
- * images under `customSyncPath` from `<userData>/maestro-bootstrap.json`
- * when set, while history, stats.db, cue.db, and agent configs stay under
- * userData (or productionDataPath for agent configs in dev mode).
+ * Mirrors `initializeStores()` in `src/main/stores/instances.ts` and the
+ * storage modules that hang off it:
+ *   - sessions, groups, settings, group chats, and session images live under
+ *     the SYNC directory: `customSyncPath` from `<userData>/maestro-bootstrap.json`
+ *     when it is set and valid, otherwise userData;
+ *   - history and `cli-server.json` stay under userData;
+ *   - agent configs live under the PRODUCTION data directory, which a dev run
+ *     keeps pointed at the non-dev directory so dev and prod share them.
+ *
+ * Read-only: nothing here creates a directory. The desktop creates a missing
+ * sync directory on startup, so a valid `customSyncPath` is reported even when
+ * it does not exist yet - that is still where the desktop will write.
  */
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { resolveUserDataDir, type UserDataDirOptions } from './userDataDir';
+import { parseJsonWithBom } from '../../jsonUtils';
+import {
+	resolveProductionDataDir,
+	resolveUserDataDir,
+	type UserDataDirOptions,
+} from './userDataDir';
+import { syncPathRejection } from './syncPath';
 
 export interface ResolveMaestroPathsOptions extends UserDataDirOptions {
-	/** The production userData path (used for agent configs). Defaults to resolved userData. */
+	/**
+	 * The production data directory (agent configs). Defaults to the directory a
+	 * dev run's redirect came from, see `resolveProductionDataDir`.
+	 */
 	productionDataPath?: string;
 }
 
+/** Which rule chose `syncDir`. */
+export type SyncDirSource = 'userData' | 'customSyncPath';
+
 export interface MaestroPaths {
 	userDataDir: string;
+	/** Where agent configs live; differs from `userDataDir` only in a dev run. */
+	productionDataDir: string;
+	bootstrapFile: string;
 	syncDir: string;
+	syncDirSource: SyncDirSource;
+	/**
+	 * Set when the bootstrap file names a `customSyncPath` the desktop refuses,
+	 * so it falls back to userData. The text says why.
+	 */
+	customSyncPathRejection?: string;
 	sessionsFile: string;
 	groupsFile: string;
 	settingsFile: string;
@@ -30,43 +59,64 @@ export interface MaestroPaths {
 }
 
 /**
- * Resolve all Maestro paths, including custom sync path if configured.
+ * The bootstrap file's `customSyncPath`, or undefined when there is none.
  *
- * @param options Configuration options, including overrides for testing
- * @returns Object with all path locations
+ * A missing or malformed file means "no custom path", matching the desktop:
+ * its store treats both as defaults. Any other read error is real and thrown.
+ */
+function readCustomSyncPath(bootstrapFile: string): string | undefined {
+	let content: string;
+	try {
+		content = fs.readFileSync(bootstrapFile, 'utf-8');
+	} catch (error) {
+		const code = (error as NodeJS.ErrnoException).code;
+		if (code === 'ENOENT' || code === 'ENOTDIR') return undefined;
+		throw error;
+	}
+
+	let bootstrap: unknown;
+	try {
+		bootstrap = parseJsonWithBom(content);
+	} catch {
+		return undefined;
+	}
+
+	const customSyncPath = (bootstrap as { customSyncPath?: unknown } | null)?.customSyncPath;
+	return typeof customSyncPath === 'string' && customSyncPath ? customSyncPath : undefined;
+}
+
+/**
+ * Resolve every Maestro data path, honoring `customSyncPath`.
  */
 export function resolveMaestroPaths(options: ResolveMaestroPathsOptions = {}): MaestroPaths {
 	const userDataDir = resolveUserDataDir(options);
-	const productionDataPath = options.productionDataPath ?? userDataDir;
+	const productionDataDir = options.productionDataPath ?? resolveProductionDataDir(userDataDir);
+	const bootstrapFile = path.join(userDataDir, 'maestro-bootstrap.json');
 
-	// Read bootstrap settings to determine sync path
 	let syncDir = userDataDir;
-	const bootstrapPath = path.join(userDataDir, 'maestro-bootstrap.json');
+	let syncDirSource: SyncDirSource = 'userData';
+	let customSyncPathRejection: string | undefined;
 
-	try {
-		const bootstrapContent = fs.readFileSync(bootstrapPath, 'utf-8');
-		const bootstrap = JSON.parse(bootstrapContent) as { customSyncPath?: string };
-		if (bootstrap.customSyncPath && fs.existsSync(bootstrap.customSyncPath)) {
-			const stats = fs.statSync(bootstrap.customSyncPath);
-			if (stats.isDirectory()) {
-				syncDir = bootstrap.customSyncPath;
-			}
+	const customSyncPath = readCustomSyncPath(bootstrapFile);
+	if (customSyncPath) {
+		customSyncPathRejection = syncPathRejection(customSyncPath, options.platform) ?? undefined;
+		if (!customSyncPathRejection) {
+			syncDir = customSyncPath;
+			syncDirSource = 'customSyncPath';
 		}
-	} catch {
-		// Bootstrap file missing or invalid - use default userData
-		syncDir = userDataDir;
 	}
 
 	return {
 		userDataDir,
+		productionDataDir,
+		bootstrapFile,
 		syncDir,
-		// Files under sync path (sessions, settings, groups)
+		syncDirSource,
+		...(customSyncPathRejection ? { customSyncPathRejection } : {}),
 		sessionsFile: path.join(syncDir, 'maestro-sessions.json'),
 		groupsFile: path.join(syncDir, 'maestro-groups.json'),
 		settingsFile: path.join(syncDir, 'maestro-settings.json'),
-		// Agent configs ALWAYS under production path (even in dev mode)
-		agentConfigsFile: path.join(productionDataPath, 'maestro-agent-configs.json'),
-		// Directories
+		agentConfigsFile: path.join(productionDataDir, 'maestro-agent-configs.json'),
 		historyDir: path.join(userDataDir, 'history'),
 		groupChatsDir: path.join(syncDir, 'group-chats'),
 		sessionImagesDir: path.join(syncDir, 'session-images'),

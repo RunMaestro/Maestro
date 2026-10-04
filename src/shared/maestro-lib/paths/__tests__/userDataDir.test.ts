@@ -7,7 +7,11 @@ import { describe, it, expect, afterEach } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { assertUserDataDirExists, resolveUserDataDir } from '../userDataDir';
+import {
+	assertUserDataDirExists,
+	resolveProductionDataDir,
+	resolveUserDataDir,
+} from '../userDataDir';
 
 const home = '/home/tester';
 
@@ -186,5 +190,19 @@ describe('assertUserDataDirExists', () => {
 				homedir: root,
 			})
 		).toThrow(/maestro-dev.*MAESTRO_USER_DATA/s);
+	});
+});
+
+describe('resolveProductionDataDir', () => {
+	it('maps the dev redirect back to the unpackaged directory it came from', () => {
+		const root = path.join(os.tmpdir(), 'app-support');
+		expect(resolveProductionDataDir(path.join(root, 'maestro-dev'))).toBe(
+			path.join(root, 'maestro')
+		);
+	});
+
+	it('returns any other directory unchanged', () => {
+		const installed = path.join(os.tmpdir(), 'app-support', 'Maestro');
+		expect(resolveProductionDataDir(installed)).toBe(installed);
 	});
 });

@@ -110,6 +110,23 @@ export function resolveUserDataDir(options: UserDataDirOptions = {}): string {
 }
 
 /**
+ * The data directory a dev run's `productionDataPath` points at.
+ *
+ * The app captures `app.getPath('userData')` BEFORE its development redirect
+ * (`src/main/index.ts`) and keeps agent configs there, so dev and prod share
+ * agent paths, custom args, and env vars. That redirect is always
+ * `<root>/maestro` -> `<root>/maestro-dev` (a dev run is unpackaged), so a
+ * `maestro-dev` directory maps back to its `maestro` sibling and anything else
+ * is already the production directory.
+ */
+export function resolveProductionDataDir(userDataDir: string): string {
+	if (path.basename(userDataDir) === DEV_APP_NAME) {
+		return path.join(path.dirname(userDataDir), UNPACKAGED_APP_NAME);
+	}
+	return userDataDir;
+}
+
+/**
  * Refuse to proceed when the resolved directory is not Maestro's.
  *
  * For a process that starts with no app running, an absent directory means the
