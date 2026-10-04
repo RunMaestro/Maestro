@@ -1,13 +1,21 @@
 import React from 'react';
 import { Box, Text } from 'ink';
-import { formatTimestamp, type AgentRecord, type AutoRunIssue } from '../../shared/maestro-lib';
+import {
+	formatTimestamp,
+	type AgentRecord,
+	type AutoRunIssue,
+	type AutoRunRun,
+} from '../../shared/maestro-lib';
 import { OverlayFrame } from '../app/OverlayFrame';
 import { keysFor } from '../keymap';
+import { describeRun, runStatusOf } from './progress';
 import { highlightedDocument, type AutoRunViewState } from './state';
 
 const ACCENT = '#9146FF';
 /** `12/12` plus a gap. */
 const COUNT_COLUMN = 8;
+/** `12.` for the run order of a picked document. */
+const ORDER_COLUMN = 4;
 /** Most problem lines shown at once; the rest are counted. */
 const MAX_ISSUE_LINES = 5;
 
@@ -20,6 +28,8 @@ const SEVERITY_COLORS: Record<AutoRunIssue['severity'], string> = {
 export interface AutoRunViewProps {
 	agent: AgentRecord;
 	state: AutoRunViewState;
+	/** The agent's run on the host, when this client has seen one. */
+	run?: AutoRunRun;
 	width: number;
 	height: number;
 }
@@ -36,14 +46,21 @@ function issueLabel(issue: AutoRunIssue): string {
 }
 
 /** The agent's Auto Run documents, with how many tasks are done, and what is wrong with the highlighted one. */
-export function AutoRunView({ agent, state, width, height }: AutoRunViewProps): React.ReactElement {
+export function AutoRunView({
+	agent,
+	state,
+	run,
+	width,
+	height,
+}: AutoRunViewProps): React.ReactElement {
 	const { documents, cursor, issues } = state;
 	const shownIssues = issues.slice(0, MAX_ISSUE_LINES);
 	const issueRows = state.problem
 		? 0
 		: 1 + Math.max(1, shownIssues.length) + (issues.length > shownIssues.length ? 1 : 0);
-	// Title row and border take three lines; the folder, last run, message, and footer take four more.
-	const room = Math.max(1, height - 3 - 4 - issueRows);
+	const runStatus = runStatusOf(run);
+	// Title row and border take three lines; the folder, last run, message, and footer take four more, and a run's status one.
+	const room = Math.max(1, height - 3 - 4 - issueRows - (runStatus === 'none' ? 0 : 1));
 	const start = Math.min(Math.max(0, cursor - room + 1), Math.max(0, documents.length - room));
 	const document = highlightedDocument(state);
 	return (
@@ -54,6 +71,11 @@ export function AutoRunView({ agent, state, width, height }: AutoRunViewProps): 
 			<Text dimColor wrap="truncate-end">
 				{lastRunLine(state)}
 			</Text>
+			{runStatus !== 'none' ? (
+				<Text color={runStatus === 'finished' ? undefined : 'green'} wrap="truncate-end">
+					{describeRun(run, Date.now()).headline}: {keysFor('watchRun')} to watch
+				</Text>
+			) : null}
 			{state.problem ? (
 				<Text color="yellow" wrap="wrap">
 					{state.problem}
@@ -74,6 +96,13 @@ export function AutoRunView({ agent, state, width, height }: AutoRunViewProps): 
 						return (
 							<Box key={entry.file}>
 								<Text color={ACCENT}>{index === cursor ? '›' : ' '}</Text>
+								<Box width={ORDER_COLUMN} flexShrink={0}>
+									<Text color={ACCENT}>
+										{state.selected.includes(entry.name)
+											? `${state.selected.indexOf(entry.name) + 1}.`
+											: ''}
+									</Text>
+								</Box>
 								<Box flexGrow={1} flexShrink={1}>
 									<Text wrap="truncate-end" bold={index === cursor}>
 										{entry.name}
@@ -130,7 +159,9 @@ export function AutoRunView({ agent, state, width, height }: AutoRunViewProps): 
 				</Box>
 			) : (
 				<Text wrap="truncate-end" dimColor>
-					{keysFor('open')} edit {keysFor('newDocument')} new {keysFor('reloadDocuments')} reload
+					{keysFor('open')} edit {keysFor('toggleDocument')} pick {keysFor('startRun')} start{' '}
+					{keysFor('startGoalRun')} goal {keysFor('watchRun')} watch {keysFor('newDocument')} new{' '}
+					{keysFor('reloadDocuments')} reload
 				</Text>
 			)}
 		</OverlayFrame>

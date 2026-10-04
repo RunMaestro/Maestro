@@ -38,6 +38,8 @@ export interface FakeClientOptions {
 	interruptStopped?: boolean;
 	/** What `agents.update` reports as `notices`: what a provider swap could not park. */
 	updateNotices?: string[];
+	/** What `autoRun.launchGoal` reports as `tabId`. */
+	goalRunTabId?: string;
 	/** Make these methods fail with this code, so a test can see how a refusal is shown. */
 	failures?: Partial<Record<ClientMethod, ClientError['code']>>;
 }
@@ -315,6 +317,23 @@ export function createFakeClient(options: FakeClientOptions = {}): FakeClient {
 				listeners.add(entry);
 				return () => listeners.delete(entry);
 			},
+		},
+		autoRun: {
+			launch: async (agentId, input) => {
+				const refused = record('autoRun.launch', agentId, input);
+				if (refused) return refused;
+				return { ok: true, value: undefined };
+			},
+			launchGoal: async (agentId, input) => {
+				const refused = record('autoRun.launchGoal', agentId, input);
+				if (refused) return refused;
+				return { ok: true, value: options.goalRunTabId ? { tabId: options.goalRunTabId } : {} };
+			},
+			stop: async (agentId) => record('autoRun.stop', agentId) ?? { ok: true, value: undefined },
+			resume: async (agentId) =>
+				record('autoRun.resume', agentId) ?? { ok: true, value: undefined },
+			skip: async (agentId) => record('autoRun.skip', agentId) ?? { ok: true, value: undefined },
+			abort: async (agentId) => record('autoRun.abort', agentId) ?? { ok: true, value: undefined },
 		},
 		settings: {
 			get: async () => ({ ok: true, value: {} }),

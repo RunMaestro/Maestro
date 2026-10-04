@@ -17,6 +17,8 @@ import type { AgentRecord, AITabRecord, GroupRecord } from '../store/records';
 import type { LogEntryRecord } from '../store/transcript';
 import type { TurnOutcome } from '../streaming/turn-outcome';
 import type { AgentError, SshRemoteConfig, ThinkingMode, UsageStats } from '../../types';
+import type { AutoRunLaunchInput, GoalRunLaunchInput } from '../autorun/launch';
+import type { AutoRunRunEvent } from '../autorun/run-tracker';
 
 // ---------------------------------------------------------------------------
 // Results and errors
@@ -81,6 +83,12 @@ export type ClientMethod =
 	| 'turns.interrupt'
 	| 'turns.queue.list'
 	| 'turns.queue.remove'
+	| 'autoRun.launch'
+	| 'autoRun.launchGoal'
+	| 'autoRun.stop'
+	| 'autoRun.resume'
+	| 'autoRun.skip'
+	| 'autoRun.abort'
 	| 'settings.get'
 	| 'settings.sshRemotes'
 	| 'providers.list'
@@ -365,6 +373,42 @@ export interface TurnsApi {
 }
 
 // ---------------------------------------------------------------------------
+// Auto Run
+// ---------------------------------------------------------------------------
+
+/**
+ * AR-4 to AR-7. The run is owned by one desktop window: a launch asks that
+ * window to start it, and the controls ask it to act. Nothing here drives the
+ * run from this client, and none of it moves the desktop's view (CO-4).
+ *
+ * There is no `state()` read: the host's `get_auto_run_state` always answers
+ * `null` (gap G14), so a run is known only from the `autorun` events, which
+ * the host also replays for every live run when a client connects.
+ */
+export interface AutoRunApi {
+	/**
+	 * AR-4. Start a spec-driven run over `input.documents`, in that order. Answers
+	 * once the desktop has accepted the launch, not when the run ends: watch the
+	 * `autorun` events. A busy agent or a missing Auto Run folder is `rejected`.
+	 */
+	launch(agentId: string, input: AutoRunLaunchInput): Promise<ClientResult<void>>;
+	/** AR-5. Start a goal-driven run. `tabId` is the tab the desktop shows it on, when it says. */
+	launchGoal(agentId: string, input: GoalRunLaunchInput): Promise<ClientResult<{ tabId?: string }>>;
+	/**
+	 * AR-7. Ask the owning window to stop after the current task. `ok` means the
+	 * request was delivered, as for a tab close: watch the `autorun` events to
+	 * see it land.
+	 */
+	stop(agentId: string): Promise<ClientResult<void>>;
+	/** AR-7. Continue a run parked on an error, or pass a HITL gate (the desktop writes the acknowledgement). */
+	resume(agentId: string): Promise<ClientResult<void>>;
+	/** AR-7. Leave the failing document and go on to the next. */
+	skip(agentId: string): Promise<ClientResult<void>>;
+	/** AR-7. End a run parked on an error. */
+	abort(agentId: string): Promise<ClientResult<void>>;
+}
+
+// ---------------------------------------------------------------------------
 // Settings
 // ---------------------------------------------------------------------------
 
@@ -434,7 +478,12 @@ export type MaestroEvent =
 	| { type: 'tab.updated'; agentId: string; tab: AITabRecord }
 	| { type: 'tab.removed'; agentId: string; tabId: string }
 	| { type: 'settings.changed'; keys: string[] | 'unknown' }
-	| { type: 'turn'; agentId: string; tabId: string; event: TurnEvent };
+	| { type: 'turn'; agentId: string; tabId: string; event: TurnEvent }
+	/**
+	 * A run's progress, from the host's `autorun_state` and the run's own
+	 * process stream (its output and usage). Fold them with `reduceAutoRun`.
+	 */
+	| { type: 'autorun'; agentId: string; event: AutoRunRunEvent };
 
 export type MaestroEventType = MaestroEvent['type'];
 
@@ -455,6 +504,7 @@ export interface MaestroClient {
 	readonly groups: GroupsApi;
 	readonly tabs: TabsApi;
 	readonly turns: TurnsApi;
+	readonly autoRun: AutoRunApi;
 	readonly settings: SettingsApi;
 	readonly providers: ProvidersApi;
 	readonly events: EventsApi;

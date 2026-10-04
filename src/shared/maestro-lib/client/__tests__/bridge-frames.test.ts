@@ -2,6 +2,8 @@ import { describe, it, expect } from 'vitest';
 import {
 	changedWebSettingKeys,
 	classifyFailure,
+	parseBatchFrame,
+	parseBatchProcessId,
 	parseProcessFrame,
 	parseProcessId,
 	parseUserInputFrame,
@@ -233,5 +235,63 @@ describe('classifyFailure', () => {
 		expect(classifyFailure('A live process blocks it', { stateRefusal: true })).toBe('rejected');
 		expect(classifyFailure('boom')).toBe('failed');
 		expect(classifyFailure(undefined)).toBe('failed');
+	});
+});
+
+describe('parseBatchProcessId', () => {
+	it('names the agent an Auto Run process belongs to', () => {
+		expect(parseBatchProcessId(`${AGENT}-batch-1712345678`)).toBe(AGENT);
+	});
+
+	it.each([
+		['a tab', `${AGENT}-ai-${TAB}`],
+		['synopsis', `${AGENT}-synopsis-1712345678`],
+		['a batch id with no timestamp', `${AGENT}-batch-`],
+		['group chat', 'group-chat-abc-moderator-1'],
+	])('is null for %s', (_label, id) => {
+		expect(parseBatchProcessId(id)).toBeNull();
+	});
+});
+
+describe('parseBatchFrame', () => {
+	const PROCESS = `${AGENT}-batch-1712345678`;
+
+	it('reads the answer text as output', () => {
+		expect(parseBatchFrame('process:data', [PROCESS, 'Finished the task'])).toEqual({
+			agentId: AGENT,
+			processId: PROCESS,
+			frame: { kind: 'output', text: 'Finished the task' },
+		});
+	});
+
+	it('reads a usage report as usage', () => {
+		const usage = { inputTokens: 1, outputTokens: 2, totalCostUsd: 0.5 };
+		expect(parseBatchFrame('process:usage', [PROCESS, usage])).toMatchObject({
+			frame: { kind: 'usage', usage },
+		});
+	});
+
+	it('turns a tool call that starts into one line, and ignores its finish', () => {
+		const running = parseBatchFrame('process:tool-execution', [
+			PROCESS,
+			{ toolName: 'Read', state: { status: 'running', input: { file_path: '/p/src/a.ts' } } },
+		]);
+		expect(running?.frame.kind).toBe('output');
+		expect(running?.frame.kind === 'output' && running.frame.text).toMatch(/^Read .*a\.ts$/);
+		expect(
+			parseBatchFrame('process:tool-execution', [
+				PROCESS,
+				{ toolName: 'Read', state: { status: 'completed' } },
+			])
+		).toBeNull();
+	});
+
+	it('leaves out thinking, exits, tab processes, and malformed frames', () => {
+		expect(parseBatchFrame('process:thinking-chunk', [PROCESS, 'hmm'])).toBeNull();
+		expect(parseBatchFrame('process:exit', [PROCESS, 0])).toBeNull();
+		expect(parseBatchFrame('process:data', [`${AGENT}-ai-${TAB}`, 'x'])).toBeNull();
+		expect(parseBatchFrame('process:data', [PROCESS, 7])).toBeNull();
+		expect(parseBatchFrame('process:usage', [PROCESS, 'nope'])).toBeNull();
+		expect(parseBatchFrame('process:data', [])).toBeNull();
 	});
 });

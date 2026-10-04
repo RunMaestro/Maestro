@@ -22,6 +22,7 @@ import {
 } from '../../shared/maestro-lib';
 import { agentSshRemoteId } from '../agents/form';
 import type { EditorResult } from './editor';
+import type { LaunchDocument } from './launchForm';
 
 export interface AutoRunViewState {
 	agentId: string;
@@ -29,6 +30,8 @@ export interface AutoRunViewState {
 	folder?: string;
 	documents: readonly AutoRunDocument[];
 	cursor: number;
+	/** Names of the documents picked for a run, in the order they were picked: that is the run order (AR-4). */
+	selected: readonly string[];
 	lastRun?: LastAutoRun;
 	/** Why there is nothing to list (remote agent, unreadable folder), in a line or two. */
 	problem?: string;
@@ -74,6 +77,7 @@ function load(view: AutoRunViewState, keep?: string): AutoRunViewState {
 			...view,
 			documents: [],
 			cursor: 0,
+			selected: [],
 			canCreate: false,
 			problem: `The folder could not be read: ${listing.reason}`,
 			note: undefined,
@@ -83,9 +87,12 @@ function load(view: AutoRunViewState, keep?: string): AutoRunViewState {
 	}
 	const documents = listing.status === 'ok' ? listing.documents : [];
 	const found = stay ? documents.findIndex((document) => document.name === stay) : -1;
+	const names = new Set(documents.map((document) => document.name));
 	return checkHighlighted({
 		...view,
 		documents,
+		// A document renamed or deleted since it was picked is no longer in the run.
+		selected: view.selected.filter((name) => names.has(name)),
 		cursor: found >= 0 ? found : Math.min(view.cursor, Math.max(0, documents.length - 1)),
 		canCreate: true,
 		problem: undefined,
@@ -105,6 +112,7 @@ export function openAutoRunView(
 		agentId: agent.id,
 		documents: [],
 		cursor: 0,
+		selected: [],
 		canCreate: false,
 		issues: [],
 		lastRun: findLastAutoRun(paths, agent.id),
@@ -134,6 +142,31 @@ export function moveAutoRunCursor(view: AutoRunViewState, delta: number): AutoRu
 	const cursor = Math.min(Math.max(0, view.cursor + delta), Math.max(0, view.documents.length - 1));
 	if (cursor === view.cursor) return view;
 	return checkHighlighted({ ...view, cursor, message: undefined });
+}
+
+/** Picks the highlighted document, or unpicks it. A picked document goes last in the run order. */
+export function toggleDocumentSelection(view: AutoRunViewState): AutoRunViewState {
+	const document = highlightedDocument(view);
+	if (!document) return view;
+	const selected = view.selected.includes(document.name)
+		? view.selected.filter((name) => name !== document.name)
+		: [...view.selected, document.name];
+	return { ...view, selected, message: undefined };
+}
+
+/**
+ * The documents a run would take, in run order: the ones picked, or the
+ * highlighted one when nothing is picked (so `s` on a single document just runs it).
+ */
+export function documentsToRun(view: AutoRunViewState): LaunchDocument[] {
+	const byName = new Map(view.documents.map((document) => [document.name, document]));
+	const picked = view.selected.flatMap((name) => {
+		const document = byName.get(name);
+		return document ? [{ name: document.name, file: document.file }] : [];
+	});
+	if (picked.length > 0) return picked;
+	const highlighted = highlightedDocument(view);
+	return highlighted ? [{ name: highlighted.name, file: highlighted.file }] : [];
 }
 
 export function beginNaming(view: AutoRunViewState): AutoRunViewState {

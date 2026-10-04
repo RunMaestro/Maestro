@@ -27,7 +27,6 @@ export function useFormLookups(
 ): FormLookups {
 	const [providers, setProviders] = useState<ProviderInfo[] | undefined>(undefined);
 	const [sshRemotes, setSshRemotes] = useState<SshRemoteConfig[]>([]);
-	const [models, setModels] = useState<{ key: string; list: string[] }>({ key: '', list: [] });
 	const active = open && client !== undefined;
 
 	useEffect(() => {
@@ -52,6 +51,30 @@ export function useFormLookups(
 		};
 	}, [active, client, sshRemoteId]);
 
+	const models = useProviderModels(client, active, providerId, sshRemoteId);
+
+	if (!active) return EMPTY;
+	return {
+		providers: providers ?? [],
+		sshRemotes,
+		models,
+		loading: providers === undefined,
+	};
+}
+
+/**
+ * One provider's model ids, asked while `active`. A list for a provider the
+ * person has since left would be wrong under the new one, so an answer only
+ * counts for the provider and remote it was asked about. A failed read leaves
+ * the last answer in place, and a provider that reports none gives `[]`.
+ */
+export function useProviderModels(
+	client: MaestroClient | undefined,
+	active: boolean,
+	providerId: string,
+	sshRemoteId: string
+): string[] {
+	const [models, setModels] = useState<{ key: string; list: string[] }>({ key: '', list: [] });
 	useEffect(() => {
 		if (!active || !client || !providerId) return;
 		let cancelled = false;
@@ -65,13 +88,5 @@ export function useFormLookups(
 			cancelled = true;
 		};
 	}, [active, client, providerId, sshRemoteId]);
-
-	if (!active) return EMPTY;
-	return {
-		providers: providers ?? [],
-		sshRemotes,
-		// Models for a provider the person has since left would be a wrong list under the new one.
-		models: models.key === `${providerId}@${sshRemoteId}` ? models.list : [],
-		loading: providers === undefined,
-	};
+	return active && models.key === `${providerId}@${sshRemoteId}` ? models.list : [];
 }

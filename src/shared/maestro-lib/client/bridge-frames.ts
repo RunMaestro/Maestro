@@ -9,6 +9,7 @@
  */
 
 import type { AgentError, UsageStats } from '../../types';
+import { describeToolActivity } from '../../toolActivityLabel';
 import { createOutputParser } from '../parsers/parser-factory';
 import { resolveTurnOutcome, type TurnOutcome } from '../streaming/turn-outcome';
 import type { ClientErrorCode, TurnToolCall } from './types';
@@ -165,6 +166,63 @@ export function parseProcessFrame(channel: string, args: unknown[]): ParsedProce
 
 	const target = parseProcessId(processId);
 	return target ? { target, frame: build } : null;
+}
+
+// ---------------------------------------------------------------------------
+// Auto Run processes (AR-6)
+// ---------------------------------------------------------------------------
+
+const BATCH_PROCESS = /^(.+)-batch-\d+$/;
+
+/** What a run's own process says: a line of output, or a usage report. */
+export type BatchFrame = { kind: 'output'; text: string } | { kind: 'usage'; usage: UsageStats };
+
+export interface ParsedBatchFrame {
+	agentId: string;
+	/** The run's process id: one per task, so usage is kept per id. */
+	processId: string;
+	frame: BatchFrame;
+}
+
+/** The agent an Auto Run process (`<agentId>-batch-<ts>`) belongs to, or null for any other id. */
+export function parseBatchProcessId(processId: string): string | null {
+	return BATCH_PROCESS.exec(processId)?.[1] ?? null;
+}
+
+/**
+ * Interpret a `bridge.event` from an Auto Run process. A task's answer arrives
+ * on `process:data`, which a `--print` run emits once at the end, so a tool
+ * call that starts is turned into a line too: it is what shows the run moving
+ * between answers. Thinking text and tool results are left out of the tail.
+ */
+export function parseBatchFrame(channel: string, args: unknown[]): ParsedBatchFrame | null {
+	const processId = args[0];
+	if (typeof processId !== 'string') return null;
+	const agentId = parseBatchProcessId(processId);
+	if (!agentId) return null;
+
+	let frame: BatchFrame | null = null;
+	switch (channel) {
+		case 'process:data':
+			if (typeof args[1] === 'string') frame = { kind: 'output', text: args[1] };
+			break;
+		case 'process:usage':
+			if (isObject(args[1])) frame = { kind: 'usage', usage: args[1] as unknown as UsageStats };
+			break;
+		case 'process:tool-execution': {
+			const payload = args[1];
+			if (!isObject(payload) || typeof payload.toolName !== 'string') break;
+			const state = isObject(payload.state) ? payload.state : undefined;
+			// A call's finish repeats its start; one line per call is enough.
+			if (toolStatus(state) !== 'running') break;
+			const label = describeToolActivity(payload.toolName, state?.input);
+			frame = { kind: 'output', text: `${label.verb} ${label.target}`.trim() };
+			break;
+		}
+		default:
+			break;
+	}
+	return frame ? { agentId, processId, frame } : null;
 }
 
 /** A message the desktop accepted for a tab, from any surface (`process:user-input`). */

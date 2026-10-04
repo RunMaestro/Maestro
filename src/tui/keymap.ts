@@ -27,7 +27,11 @@ export type KeyContext =
 	/** The Auto Run documents of an agent. */
 	| 'autoRun'
 	/** The box a new Auto Run document is named in: letters type. */
-	| 'autoRunName';
+	| 'autoRunName'
+	/** The form that configures an Auto Run: letters type into its text boxes. */
+	| 'autoRunLaunch'
+	/** The live progress of an Auto Run, with its controls. */
+	| 'autoRunProgress';
 
 export type KeyAction =
 	| 'quit'
@@ -58,6 +62,14 @@ export type KeyAction =
 	| 'autoRun'
 	| 'newDocument'
 	| 'reloadDocuments'
+	| 'toggleDocument'
+	| 'startRun'
+	| 'startGoalRun'
+	| 'watchRun'
+	| 'stopRun'
+	| 'resumeRun'
+	| 'skipDocument'
+	| 'abortRun'
 	| 'newGroup'
 	| 'confirm'
 	| 'send'
@@ -131,11 +143,13 @@ export const KEYMAP: readonly Binding[] = [
 			'groupPicker',
 			'providerPicker',
 			'autoRun',
+			'autoRunLaunch',
 		],
 		chordsByContext: {
 			palette: [{ named: 'down' }, { input: 'n', ctrl: true }],
 			// A form is a text box: letters type, so the cursor moves on arrows, Tab, and Ctrl-N.
 			form: [{ named: 'down' }, { named: 'tab' }, { input: 'n', ctrl: true }],
+			autoRunLaunch: [{ named: 'down' }, { named: 'tab' }, { input: 'n', ctrl: true }],
 			prompt: [{ named: 'down' }, { named: 'tab' }, { input: 'n', ctrl: true }],
 		},
 		description: 'Move down',
@@ -155,10 +169,12 @@ export const KEYMAP: readonly Binding[] = [
 			'groupPicker',
 			'providerPicker',
 			'autoRun',
+			'autoRunLaunch',
 		],
 		chordsByContext: {
 			palette: [{ named: 'up' }, { input: 'p', ctrl: true }],
 			form: [{ named: 'up' }, { named: 'tab', shift: true }, { input: 'p', ctrl: true }],
+			autoRunLaunch: [{ named: 'up' }, { named: 'tab', shift: true }, { input: 'p', ctrl: true }],
 			prompt: [{ named: 'up' }, { named: 'tab', shift: true }, { input: 'p', ctrl: true }],
 		},
 		description: 'Move up',
@@ -177,6 +193,7 @@ export const KEYMAP: readonly Binding[] = [
 			'providerPicker',
 			'autoRun',
 			'autoRunName',
+			'autoRunLaunch',
 		],
 		description: 'Open agent, fold group, pick, next field, save, edit',
 		agentMenu: 'Open conversation',
@@ -277,6 +294,57 @@ export const KEYMAP: readonly Binding[] = [
 		description: 'Reload the Auto Run documents',
 	},
 	{
+		action: 'toggleDocument',
+		chords: [{ input: ' ', label: 'Space' }],
+		contexts: ['autoRun'],
+		description: 'Pick a document; pick order is run order',
+	},
+	{
+		action: 'startRun',
+		chords: [{ input: 's' }],
+		contexts: ['autoRun'],
+		description: 'Start an Auto Run over the picked documents',
+		agentMenu: 'Start Auto Run',
+	},
+	{
+		action: 'startGoalRun',
+		chords: [{ input: 'g' }],
+		contexts: ['autoRun'],
+		description: 'Start a goal-driven Auto Run',
+		agentMenu: 'Start goal run',
+	},
+	{
+		action: 'watchRun',
+		chords: [{ input: 'w' }],
+		contexts: ['autoRun'],
+		description: 'Watch the Auto Run: progress, output, controls',
+		agentMenu: 'Auto Run progress',
+	},
+	{
+		action: 'stopRun',
+		chords: [{ input: 's' }],
+		contexts: ['autoRunProgress'],
+		description: 'Stop the Auto Run after the current task',
+	},
+	{
+		action: 'resumeRun',
+		chords: [{ input: 'r' }],
+		contexts: ['autoRunProgress'],
+		description: 'Resume a paused run, or approve its gate',
+	},
+	{
+		action: 'skipDocument',
+		chords: [{ input: 'n' }],
+		contexts: ['autoRunProgress'],
+		description: 'Skip the failing document and go on',
+	},
+	{
+		action: 'abortRun',
+		chords: [{ input: 'a' }],
+		contexts: ['autoRunProgress'],
+		description: 'Abort a paused Auto Run',
+	},
+	{
 		action: 'newGroup',
 		chords: [{ input: 'N' }],
 		contexts: ['main'],
@@ -317,6 +385,8 @@ export const KEYMAP: readonly Binding[] = [
 			'providerPicker',
 			'autoRun',
 			'autoRunName',
+			'autoRunLaunch',
+			'autoRunProgress',
 		],
 		description: 'Interrupt the turn; twice in 1s quits',
 		agentMenu: 'Interrupt turn',
@@ -342,13 +412,13 @@ export const KEYMAP: readonly Binding[] = [
 	{
 		action: 'choicePrev',
 		chords: [{ named: 'left' }],
-		contexts: ['form'],
+		contexts: ['form', 'autoRunLaunch'],
 		description: 'Previous choice in a form field',
 	},
 	{
 		action: 'choiceNext',
 		chords: [{ named: 'right' }],
-		contexts: ['form'],
+		contexts: ['form', 'autoRunLaunch'],
 		description: 'Next choice, or accept the path completion',
 	},
 	{
@@ -403,6 +473,8 @@ export const KEYMAP: readonly Binding[] = [
 			'providerPicker',
 			'autoRun',
 			'autoRunName',
+			'autoRunLaunch',
+			'autoRunProgress',
 		],
 		// A confirmation also takes `n`: "no" is the answer a hand reaches for next to `y`.
 		chordsByContext: { confirm: [{ named: 'escape' }, { input: 'n' }] },

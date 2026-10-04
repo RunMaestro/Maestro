@@ -24,6 +24,13 @@ import { agentsOf, groupsOf } from '../store/read-stores';
 import { transcriptOf, type LogEntryRecord } from '../store/transcript';
 import { logger } from '../host';
 import { getAgentDisplayName } from '../../agentMetadata';
+import {
+	validateAutoRunLaunch,
+	validateGoalRunLaunch,
+	type AutoRunLaunchInput,
+	type GoalRunLaunchInput,
+} from '../autorun/launch';
+import { parseAutoRunProgress } from '../autorun/progress';
 import { isValidAgentId } from '../../agentIds';
 import { buildSnapshotKey, type AgentCapabilitiesSnapshotMap } from '../../agentCapabilities';
 import { stripBlankEnvVars } from '../../agentEnvironment';
@@ -43,6 +50,7 @@ import {
 	changedWebSettingKeys,
 	classifyFailure,
 	isUnsupportedInvokeError,
+	parseBatchFrame,
 	parseProcessFrame,
 	parseUserInputFrame,
 	resolveBridgeOutcome,
@@ -263,6 +271,35 @@ class WsMaestroClient implements MaestroClient {
 					if (event.type === 'turn' && event.tabId === tabId) listener(event.event);
 				},
 				{ types: ['turn'], agentId }
+			),
+	};
+
+	readonly autoRun = {
+		launch: (agentId: string, input: AutoRunLaunchInput) => this.autoRunLaunch(agentId, input),
+		launchGoal: (agentId: string, input: GoalRunLaunchInput) =>
+			this.autoRunLaunchGoal(agentId, input),
+		stop: (agentId: string) =>
+			this.autoRunControl('autoRun.stop', agentId, 'stop_auto_run', 'stop_auto_run_result'),
+		resume: (agentId: string) =>
+			this.autoRunControl(
+				'autoRun.resume',
+				agentId,
+				'resume_auto_run_error',
+				'resume_auto_run_error_result'
+			),
+		skip: (agentId: string) =>
+			this.autoRunControl(
+				'autoRun.skip',
+				agentId,
+				'skip_auto_run_document',
+				'skip_auto_run_document_result'
+			),
+		abort: (agentId: string) =>
+			this.autoRunControl(
+				'autoRun.abort',
+				agentId,
+				'abort_auto_run_error',
+				'abort_auto_run_error_result'
 			),
 	};
 
@@ -769,6 +806,16 @@ class WsMaestroClient implements MaestroClient {
 				if (merged.unknownTab) void this.refreshAgents();
 				break;
 			}
+			case 'autorun_state': {
+				const agentId = asString(frame.sessionId);
+				if (!agentId) break;
+				this.emit({
+					type: 'autorun',
+					agentId,
+					event: { kind: 'state', at: this.now(), state: parseAutoRunProgress(frame.state) },
+				});
+				break;
+			}
 			case 'settings_changed': {
 				const next = isObject(frame.settings) ? frame.settings : undefined;
 				if (!next) break;
@@ -786,7 +833,7 @@ class WsMaestroClient implements MaestroClient {
 				break;
 			default:
 				// active_session_changed must stay ignored (CO-4), and the rest
-				// (session_output, autorun_*, group_chat_*, cue_*, ...) is Phase 4.
+				// (session_output, group_chat_*, cue_*, ...) is Phase 4.
 				break;
 		}
 	}
@@ -823,6 +870,15 @@ class WsMaestroClient implements MaestroClient {
 				return;
 			}
 			default: {
+				const batch = parseBatchFrame(channel, args);
+				if (batch) {
+					this.emit({
+						type: 'autorun',
+						agentId: batch.agentId,
+						event: { ...batch.frame, at: this.now(), processId: batch.processId },
+					});
+					return;
+				}
 				const parsed = parseProcessFrame(channel, args);
 				if (!parsed) return;
 				const resolved = this.resolveTarget(parsed.target);
@@ -1657,6 +1713,97 @@ class WsMaestroClient implements MaestroClient {
 	}
 
 	// =======================================================================
+	// Auto Run
+	// =======================================================================
+
+	/** The checks every launch makes before a message is sent: attached, and the agent exists. */
+	private autoRunTarget(method: ClientMethod, agentId: string): ClientResult<never> | undefined {
+		const gate = this.requireConnected(method);
+		if (gate) return gate;
+		if (!this.mirror.getAgent(agentId))
+			return this.fail(method, 'not-found', `No agent ${agentId}`);
+		return undefined;
+	}
+
+	private async autoRunLaunch(
+		agentId: string,
+		input: AutoRunLaunchInput
+	): Promise<ClientResult<void>> {
+		const method: ClientMethod = 'autoRun.launch';
+		const refused = this.autoRunTarget(method, agentId);
+		if (refused) return refused;
+		const checked = validateAutoRunLaunch(input);
+		if (!checked.ok) return this.fail(method, 'invalid', checked.reason);
+		const { documents, loop, maxLoops, model, effort } = checked.value;
+		const sent = await this.send(
+			method,
+			{
+				type: 'configure_auto_run',
+				sessionId: agentId,
+				launch: true,
+				// Absolute paths: the desktop works out each name under the agent's Auto Run folder.
+				documents: documents.map((document) => ({
+					filename: document.file,
+					...(document.resetOnCompletion ? { resetOnCompletion: true } : {}),
+				})),
+				...(loop ? { loopEnabled: true } : {}),
+				...(loop && typeof maxLoops === 'number' ? { maxLoops } : {}),
+				...(model ? { model } : {}),
+				...(effort ? { effort } : {}),
+			},
+			'configure_auto_run_result'
+		);
+		if (!sent.ok) return sent;
+		const result = this.checkResult(method, sent.value, { stateRefusal: true });
+		return result.ok ? ok(undefined) : result;
+	}
+
+	private async autoRunLaunchGoal(
+		agentId: string,
+		input: GoalRunLaunchInput
+	): Promise<ClientResult<{ tabId?: string }>> {
+		const method: ClientMethod = 'autoRun.launchGoal';
+		const refused = this.autoRunTarget(method, agentId);
+		if (refused) return refused;
+		const checked = validateGoalRunLaunch(input);
+		if (!checked.ok) return this.fail(method, 'invalid', checked.reason);
+		const { goal, exitCriteria, maxIterations, model, effort } = checked.value;
+		const sent = await this.send(
+			method,
+			{
+				type: 'launch_goal_run',
+				sessionId: agentId,
+				goal,
+				...(exitCriteria ? { exitCriteria } : {}),
+				...(maxIterations !== undefined ? { maxIterations } : {}),
+				...(model ? { model } : {}),
+				...(effort ? { effort } : {}),
+			},
+			'launch_goal_run_result'
+		);
+		if (!sent.ok) return sent;
+		const result = this.checkResult(method, sent.value, { stateRefusal: true });
+		if (!result.ok) return result;
+		const tabId = asString(result.value.tabId);
+		return ok(tabId ? { tabId } : {});
+	}
+
+	/** Stop, resume, skip, and abort differ only in the message: each answers on delivery (G7). */
+	private async autoRunControl(
+		method: ClientMethod,
+		agentId: string,
+		type: string,
+		replyType: string
+	): Promise<ClientResult<void>> {
+		const gate = this.requireConnected(method);
+		if (gate) return gate;
+		const sent = await this.send(method, { type, sessionId: agentId }, replyType);
+		if (!sent.ok) return sent;
+		const result = this.checkResult(method, sent.value, { stateRefusal: true });
+		return result.ok ? ok(undefined) : result;
+	}
+
+	// =======================================================================
 	// Settings and providers
 	// =======================================================================
 
@@ -1769,6 +1916,7 @@ function matchesFilter(event: MaestroEvent, filter: EventFilter | undefined): bo
 		case 'tab.updated':
 		case 'tab.removed':
 		case 'turn':
+		case 'autorun':
 			return event.agentId === filter.agentId;
 		default:
 			return true;

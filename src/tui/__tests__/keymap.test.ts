@@ -217,10 +217,59 @@ describe('keymap', () => {
 			'prompt',
 			'confirm',
 			'groupPicker',
+			'autoRun',
+			'autoRunName',
+			'autoRunLaunch',
+			'autoRunProgress',
 		];
 		for (const context of contexts) {
 			expect(resolveAction(context, 'c', { ...NO_KEY, ctrl: true }), context).toBe('interrupt');
 		}
+	});
+
+	describe('the Auto Run screens', () => {
+		const type = (context: KeyContext, input: string) => resolveAction(context, input, NO_KEY);
+
+		it('gives one letter a meaning per screen: s starts a run on the list and stops one on the progress screen', () => {
+			expect(type('autoRun', 's')).toBe('startRun');
+			expect(type('autoRunProgress', 's')).toBe('stopRun');
+			expect(type('autoRun', 'g')).toBe('startGoalRun');
+			expect(type('autoRun', 'w')).toBe('watchRun');
+			expect(type('autoRun', ' ')).toBe('toggleDocument');
+			expect(type('autoRunProgress', 'r')).toBe('resumeRun');
+			expect(type('autoRunProgress', 'n')).toBe('skipDocument');
+			expect(type('autoRunProgress', 'a')).toBe('abortRun');
+		});
+
+		it('keeps every letter for typing in the launch form and moves on arrows, Tab, and Ctrl chords', () => {
+			for (const letter of ['j', 'k', 's', 'g', 'w', 'n', 'p', ' ']) {
+				expect(type('autoRunLaunch', letter), letter).toBeUndefined();
+			}
+			const form = (key: Partial<Key>, input = '') =>
+				resolveAction('autoRunLaunch', input, { ...NO_KEY, ...key });
+			expect(form({ downArrow: true })).toBe('moveDown');
+			expect(form({ tab: true })).toBe('moveDown');
+			expect(form({ tab: true, shift: true })).toBe('moveUp');
+			expect(form({ ctrl: true }, 'n')).toBe('moveDown');
+			expect(form({ leftArrow: true })).toBe('choicePrev');
+			expect(form({ rightArrow: true })).toBe('choiceNext');
+			expect(form({ return: true })).toBe('open');
+		});
+
+		it('leaves the progress screen to its controls, and every screen leaves on Esc', () => {
+			expect(type('autoRunProgress', 'j')).toBeUndefined();
+			for (const context of ['autoRun', 'autoRunLaunch', 'autoRunProgress'] as const) {
+				expect(resolveAction(context, '', { ...NO_KEY, escape: true }), context).toBe(
+					'closeOverlay'
+				);
+			}
+		});
+
+		it('puts the run actions in the agent menu', () => {
+			for (const action of ['startRun', 'startGoalRun', 'watchRun'] as const) {
+				expect(bindingFor(action).agentMenu, action).toBeTruthy();
+			}
+		});
 	});
 
 	it('throws for an action nobody bound, so a typo cannot print an empty hint', () => {

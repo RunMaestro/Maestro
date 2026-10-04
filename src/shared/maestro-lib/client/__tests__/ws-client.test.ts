@@ -1110,7 +1110,6 @@ describe('createWsMaestroClient', () => {
 		it('ignores frames that must not move or fill the client (CO-4)', async () => {
 			bridge.push({ type: 'active_session_changed', sessionId: 'a2' });
 			bridge.push({ type: 'session_output', sessionId: A1, data: 'x' });
-			bridge.push({ type: 'autorun_state', sessionId: A1 });
 			bridge.push({ type: 'session_state_change', sessionId: 'sentinel-missing', state: 'busy' });
 			await new Promise((resolve) => setTimeout(resolve, 50));
 			expect(events).toEqual([]);
@@ -1266,6 +1265,207 @@ describe('createWsMaestroClient', () => {
 
 	// -----------------------------------------------------------------------
 
+	describe('auto run (AR-4 to AR-7)', () => {
+		const autoRunEvents = () =>
+			events.flatMap((event) => (event.type === 'autorun' ? [event.event] : []));
+		const batchId = `${A1}-batch-1712345678`;
+
+		it('launches a spec-driven run over absolute paths, in order, with the per-run overrides', async () => {
+			await connect();
+			bridge.typed.set('configure_auto_run', reply('configure_auto_run_result'));
+			const result = await client.autoRun.launch(A1, {
+				documents: [
+					{ file: '/work/a1/.maestro/playbooks/sub/second.md', resetOnCompletion: true },
+					{ file: '/work/a1/.maestro/playbooks/first.md' },
+				],
+				loop: true,
+				maxLoops: 3,
+				model: 'opus',
+				effort: 'high',
+			});
+			expect(result).toEqual({ ok: true, value: undefined });
+			expect(bridge.sent('configure_auto_run')).toEqual([
+				expect.objectContaining({
+					sessionId: A1,
+					launch: true,
+					documents: [
+						{ filename: '/work/a1/.maestro/playbooks/sub/second.md', resetOnCompletion: true },
+						{ filename: '/work/a1/.maestro/playbooks/first.md' },
+					],
+					loopEnabled: true,
+					maxLoops: 3,
+					model: 'opus',
+					effort: 'high',
+				}),
+			]);
+		});
+
+		it('sends only what was chosen', async () => {
+			await connect();
+			bridge.typed.set('configure_auto_run', reply('configure_auto_run_result'));
+			await client.autoRun.launch(A1, { documents: [{ file: '/p/a.md' }] });
+			const message = bridge.sent('configure_auto_run')[0];
+			expect(message).not.toHaveProperty('loopEnabled');
+			expect(message).not.toHaveProperty('maxLoops');
+			expect(message).not.toHaveProperty('model');
+			expect(message).not.toHaveProperty('effort');
+		});
+
+		it('refuses a bad launch before sending, and an unknown agent', async () => {
+			await connect();
+			expect(await client.autoRun.launch(A1, { documents: [] })).toMatchObject({
+				ok: false,
+				error: { code: 'invalid', method: 'autoRun.launch' },
+			});
+			expect(await client.autoRun.launchGoal(A1, { goal: ' ', maxIterations: 3 })).toMatchObject({
+				ok: false,
+				error: { code: 'invalid', method: 'autoRun.launchGoal' },
+			});
+			expect(
+				await client.autoRun.launch('nobody', { documents: [{ file: '/p/a.md' }] })
+			).toMatchObject({ ok: false, error: { code: 'not-found' } });
+			expect(bridge.sent('configure_auto_run')).toEqual([]);
+			expect(bridge.sent('launch_goal_run')).toEqual([]);
+		});
+
+		it('reports a refusal on state as rejected, with the desktop words', async () => {
+			await connect();
+			bridge.typed.set('configure_auto_run', () => ({
+				type: 'configure_auto_run_result',
+				success: false,
+				error: 'No Auto Run folder configured for this session',
+			}));
+			expect(await client.autoRun.launch(A1, { documents: [{ file: '/p/a.md' }] })).toMatchObject({
+				ok: false,
+				error: { code: 'rejected', message: 'No Auto Run folder configured for this session' },
+			});
+		});
+
+		it('launches a goal run, keeping a null iteration cap and returning the tab', async () => {
+			await connect();
+			bridge.typed.set('launch_goal_run', () => ({
+				type: 'launch_goal_run_result',
+				success: true,
+				tabId: A1_TAB,
+			}));
+			const result = await client.autoRun.launchGoal(A1, {
+				goal: ' Make the build green ',
+				exitCriteria: 'CI passes',
+				maxIterations: null,
+				effort: 'low',
+			});
+			expect(result).toEqual({ ok: true, value: { tabId: A1_TAB } });
+			const message = bridge.sent('launch_goal_run')[0];
+			expect(message).toMatchObject({
+				sessionId: A1,
+				goal: 'Make the build green',
+				exitCriteria: 'CI passes',
+				maxIterations: null,
+				effort: 'low',
+			});
+			expect(message).not.toHaveProperty('model');
+		});
+
+		it('says a busy agent is rejected', async () => {
+			await connect();
+			bridge.typed.set('launch_goal_run', () => ({
+				type: 'launch_goal_run_result',
+				success: false,
+				code: 'AGENT_BUSY',
+				error: 'Agent "Alpha" already has an Auto Run in progress',
+			}));
+			expect(await client.autoRun.launchGoal(A1, { goal: 'g' })).toMatchObject({
+				ok: false,
+				error: { code: 'rejected', message: expect.stringContaining('already has an Auto Run') },
+			});
+		});
+
+		it.each([
+			['stop', 'stop_auto_run'],
+			['resume', 'resume_auto_run_error'],
+			['skip', 'skip_auto_run_document'],
+			['abort', 'abort_auto_run_error'],
+		] as const)('%s asks the desktop with %s and answers on delivery', async (verb, type) => {
+			await connect();
+			bridge.typed.set(type, reply(`${type}_result`));
+			expect(await client.autoRun[verb](A1)).toEqual({ ok: true, value: undefined });
+			expect(bridge.sent(type)).toEqual([expect.objectContaining({ sessionId: A1 })]);
+
+			bridge.typed.set(type, () => ({ type: `${type}_result`, success: false }));
+			expect(await client.autoRun[verb](A1)).toMatchObject({
+				ok: false,
+				error: { code: 'rejected', method: `autoRun.${verb}` },
+			});
+		});
+
+		it('turns the host state frames into autorun events, with the null that clears them', async () => {
+			await connect();
+			bridge.push({
+				type: 'autorun_state',
+				sessionId: A1,
+				state: {
+					isRunning: true,
+					totalTasks: 2,
+					completedTasks: 0,
+					currentTaskIndex: 0,
+					documents: ['one'],
+				},
+				timestamp: 1,
+			});
+			bridge.push({ type: 'autorun_state', sessionId: A1, state: null, timestamp: 2 });
+			await vi.waitFor(() => expect(autoRunEvents()).toHaveLength(2));
+			expect(autoRunEvents()[0]).toMatchObject({
+				kind: 'state',
+				state: { isRunning: true, documents: ['one'], tasksTotal: 2 },
+			});
+			expect(autoRunEvents()[1]).toMatchObject({ kind: 'state', state: null });
+			expect(events.every((event) => event.type !== 'turn')).toBe(true);
+		});
+
+		it('turns the run process stream into output and usage, and none of it into a turn', async () => {
+			await connect();
+			bridge.pushBridgeEvent('process:data', batchId, '\u001b[1mTask one done\u001b[0m');
+			bridge.pushBridgeEvent('process:tool-execution', batchId, {
+				toolName: 'Read',
+				state: { status: 'running', input: { file_path: '/work/a1/src/index.ts' } },
+			});
+			bridge.pushBridgeEvent('process:tool-execution', batchId, {
+				toolName: 'Read',
+				state: { status: 'completed', input: { file_path: '/work/a1/src/index.ts' } },
+			});
+			bridge.pushBridgeEvent('process:usage', batchId, {
+				inputTokens: 10,
+				outputTokens: 2,
+				cacheReadInputTokens: 0,
+				cacheCreationInputTokens: 0,
+				totalCostUsd: 0.01,
+				contextWindow: 200000,
+			});
+			bridge.pushBridgeEvent('process:thinking-chunk', batchId, 'hmm');
+			await vi.waitFor(() => expect(autoRunEvents()).toHaveLength(3));
+			const [data, tool, used] = autoRunEvents();
+			expect(data).toMatchObject({ kind: 'output', processId: batchId });
+			expect(tool).toMatchObject({ kind: 'output', processId: batchId });
+			expect(tool.kind === 'output' && tool.text).toMatch(/^Read .*index\.ts$/);
+			expect(used).toMatchObject({ kind: 'usage', processId: batchId });
+			expect(types()).not.toContain('turn');
+			// The batch process is not a tab's turn, so no tab was marked busy.
+			expect(events.filter((event) => event.type === 'tab.updated')).toEqual([]);
+		});
+
+		it('filters autorun events by agent', async () => {
+			const forA2: MaestroEvent[] = [];
+			client.events.subscribe((event) => forA2.push(event), { types: ['autorun'], agentId: 'a2' });
+			await connect();
+			bridge.push({ type: 'autorun_state', sessionId: A1, state: null });
+			bridge.push({ type: 'autorun_state', sessionId: 'a2', state: null });
+			await vi.waitFor(() => expect(forA2).toHaveLength(1));
+			expect(forA2[0]).toMatchObject({ type: 'autorun', agentId: 'a2' });
+		});
+	});
+
+	// -----------------------------------------------------------------------
+
 	describe('never moves the desktop (CO-4)', () => {
 		it('sends no view-moving message, and background:true on every one that accepts it', async () => {
 			await connect();
@@ -1302,6 +1502,10 @@ describe('createWsMaestroClient', () => {
 			await client.tabs.close('a2', 'a2-t1');
 			await client.turns.send('a2', 'a2-t1', { text: 'hi' });
 			await client.turns.interrupt('a2', 'a2-t1');
+			bridge.typed.set('configure_auto_run', reply('configure_auto_run_result'));
+			bridge.typed.set('launch_goal_run', reply('launch_goal_run_result'));
+			await client.autoRun.launch('a2', { documents: [{ file: '/p/a.md' }] });
+			await client.autoRun.launchGoal('a2', { goal: 'g' });
 			bridge.push({ type: 'active_session_changed', sessionId: 'a2' });
 			await new Promise((resolve) => setTimeout(resolve, 20));
 

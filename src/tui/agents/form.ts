@@ -160,7 +160,7 @@ export function agentSshRemoteId(agent: AgentRecord | undefined): string {
 }
 
 /** The provider's own effort words, when its definition lists them. */
-function providerEffortOptions(providerId: string): string[] {
+export function providerEffortOptions(providerId: string): string[] {
 	const option = getAgentDefinition(providerId)?.configOptions?.find(
 		(candidate) => candidate.key === 'effort'
 	);

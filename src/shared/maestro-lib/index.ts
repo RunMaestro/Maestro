@@ -46,6 +46,9 @@ export * from '../autorunMarkers';
 export { PLAYBOOKS_DIR } from '../maestro-paths';
 export * from './autorun/documents';
 export * from './autorun/last-run';
+export * from './autorun/launch';
+export * from './autorun/progress';
+export * from './autorun/run-tracker';
 export * from './autorun/templates';
 export * from './autorun/validate';
 
@@ -68,7 +71,12 @@ export {
 export * from '../toolActivityLabel';
 
 // Timestamp, token, and cost display, shared so every surface shows a figure the same way
-export { formatTimestamp, formatTokensCompact, formatCost } from '../formatters';
+export {
+	formatTimestamp,
+	formatTokensCompact,
+	formatCost,
+	formatElapsedTimeColon,
+} from '../formatters';
 
 // Context window sizing, shared so a status line and the desktop gauge size the same window
 export { getContextWindowForAgent } from '../agentConstants';

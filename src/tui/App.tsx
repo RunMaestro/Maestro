@@ -1,10 +1,11 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Text, useApp, useInput, type Key } from 'ink';
 import type { AgentRecord, ClientResult, MaestroClient, MaestroPaths } from '../shared/maestro-lib';
-import { asThinkingMode, visibleAiTabsOf } from '../shared/maestro-lib';
+import { asThinkingMode, isAutoRunActive, visibleAiTabsOf } from '../shared/maestro-lib';
 import { AgentForm } from './agents/AgentForm';
 import {
 	acceptCompletion,
+	agentSshRemoteId,
 	backspace as formBackspace,
 	cwdCandidates,
 	cycleChoice,
@@ -21,7 +22,7 @@ import {
 	type FormContext,
 	type FormState,
 } from './agents/form';
-import { useFormLookups } from './agents/useFormLookups';
+import { useFormLookups, useProviderModels } from './agents/useFormLookups';
 import {
 	ConfirmOverlay,
 	GroupPickerOverlay,
@@ -58,16 +59,33 @@ import {
 import { submitCloseTab, submitNewTab, tabAfterClose } from './agents/tabs';
 import { AutoRunView } from './autorun/AutoRunView';
 import { resolveEditorCommand, runEditor, type EditorResult } from './autorun/editor';
+import { LaunchView } from './autorun/LaunchView';
+import {
+	backspaceLaunch,
+	cycleLaunchField,
+	initialLaunchForm,
+	launchFields,
+	moveLaunchFocus,
+	submitLaunch,
+	typeIntoLaunch,
+	type LaunchFormState,
+} from './autorun/launchForm';
+import { controlRefusal, submitRunControl, type RunControl } from './autorun/progress';
+import { ProgressView } from './autorun/ProgressView';
+import type { RunScreen } from './autorun/screen';
+import { useAutoRunRuns, useClockNow } from './autorun/useAutoRunRuns';
 import {
 	backspaceName,
 	beginNaming,
 	cancelNaming,
+	documentsToRun,
 	finishAutoRunEdit,
 	highlightedDocument,
 	moveAutoRunCursor,
 	openAutoRunView,
 	reloadAutoRunView,
 	submitNewDocument,
+	toggleDocumentSelection,
 	typeIntoName,
 	type AutoRunViewState,
 } from './autorun/state';
@@ -157,7 +175,7 @@ type OverlayState =
 	| { kind: 'history'; history: HistoryViewState }
 	| { kind: 'palette'; palette: PaletteState }
 	| { kind: 'menu'; cursor: number }
-	| { kind: 'autoRun'; view: AutoRunViewState }
+	| { kind: 'autoRun'; view: AutoRunViewState; screen?: RunScreen }
 	| { kind: 'prompt'; prompt: PromptState; submitting: boolean; error?: string }
 	| { kind: 'confirm'; confirm: ConfirmState; submitting: boolean; error?: string }
 	| { kind: 'groupPicker'; agentId: string; cursor: number }
@@ -207,6 +225,30 @@ export function App({ paths, client, editFile = runEditor }: AppProps): React.Re
 		overlayRef.current = next;
 		setOverlayState(next);
 	};
+	// Every run on the host, folded as it goes, so a screen opened halfway through a run is whole.
+	const autoRunsByAgent = useAutoRunRuns(source.client);
+	const runsRef = useRef(autoRunsByAgent);
+	runsRef.current = autoRunsByAgent;
+	// What the launch form reads off the host while it is open: the agent's provider's models.
+	const launchScreen =
+		overlay?.kind === 'autoRun' && overlay.screen?.kind === 'launch' ? overlay.screen : undefined;
+	const launchAgent = launchScreen
+		? data.agents.find((candidate) => candidate.id === launchScreen.form.agentId)
+		: undefined;
+	const launchModels = useProviderModels(
+		source.client,
+		launchAgent !== undefined,
+		launchAgent?.toolType ?? '',
+		agentSshRemoteId(launchAgent)
+	);
+	const launchContextRef = useRef<{ agent: AgentRecord; models: string[] } | undefined>(undefined);
+	launchContextRef.current = launchAgent ? { agent: launchAgent, models: launchModels } : undefined;
+	// The run clock moves only while the progress screen shows a run that is going.
+	const progressScreen =
+		overlay?.kind === 'autoRun' && overlay.screen?.kind === 'progress' ? overlay.screen : undefined;
+	const clockNow = useClockNow(
+		progressScreen !== undefined && isAutoRunActive(autoRunsByAgent[progressScreen.agentId])
+	);
 	// One line of news for the status bar (read-only refusals, a saved agent). The next key clears it.
 	const [notice, setNotice] = useState<string | undefined>(undefined);
 	// The file open in the person's editor. While set, the App draws one fixed line and reads no keys.
@@ -590,8 +632,132 @@ export function App({ paths, client, editFile = runEditor }: AppProps): React.Re
 		else setNotice(result.value.summary);
 	};
 
+	const agentById = (id: string) => dataRef.current.agents.find((candidate) => candidate.id === id);
+
 	const openAutoRun = (agent: AgentRecord, naming = false) =>
 		setOverlay({ kind: 'autoRun', view: openAutoRunView(paths, agent, { naming }) });
+
+	/** The list the Auto Run screens sit over: the one already open for this agent, else a fresh read. */
+	const autoRunListFor = (agent: AgentRecord, current: OverlayState | undefined) =>
+		current?.kind === 'autoRun' && current.view.agentId === agent.id
+			? current.view
+			: openAutoRunView(paths, agent);
+
+	/** Opens the form that configures a run: the picked documents, or a goal. */
+	const openLaunch = (
+		agent: AgentRecord,
+		mode: 'spec' | 'goal',
+		current: OverlayState | undefined
+	) => {
+		if (!requireClient()) return;
+		const view = autoRunListFor(agent, current);
+		const documents = mode === 'spec' ? documentsToRun(view) : [];
+		if (mode === 'spec' && documents.length === 0) {
+			setOverlay({ kind: 'autoRun', view });
+			setNotice(view.problem ?? 'No document to run. Press n to create one.');
+			return;
+		}
+		setOverlay({
+			kind: 'autoRun',
+			view,
+			screen: {
+				kind: 'launch',
+				form: initialLaunchForm(mode, agent, documents),
+				submitting: false,
+			},
+		});
+	};
+
+	/** Opens the progress of the agent's run. */
+	const openProgress = (agent: AgentRecord, current: OverlayState | undefined) => {
+		if (!requireClient()) return;
+		setOverlay({
+			kind: 'autoRun',
+			view: autoRunListFor(agent, current),
+			screen: { kind: 'progress', agentId: agent.id },
+		});
+	};
+
+	const updateLaunch = (change: (form: LaunchFormState) => LaunchFormState) => {
+		const latest = overlayRef.current;
+		if (latest?.kind !== 'autoRun' || latest.screen?.kind !== 'launch') return;
+		setOverlay({
+			...latest,
+			screen: { ...latest.screen, form: change(latest.screen.form), error: undefined },
+		});
+	};
+
+	/** The fields of the open launch form, which depend on the agent's provider and its models. */
+	const launchFieldsNow = (form: LaunchFormState) => {
+		const context = launchContextRef.current;
+		return context ? launchFields(form, context.agent, { models: context.models }) : [];
+	};
+
+	const submitLaunchScreen = async () => {
+		const client = source.client;
+		const current = overlayRef.current;
+		if (!client || current?.kind !== 'autoRun' || current.screen?.kind !== 'launch') return;
+		const { screen } = current;
+		const agent = dataRef.current.agents.find((candidate) => candidate.id === screen.form.agentId);
+		if (!agent || screen.submitting) return;
+		setOverlay({ ...current, screen: { ...screen, submitting: true, error: undefined } });
+		const result = await submitLaunch(client, agent, screen.form);
+		const latest = overlayRef.current;
+		// Esc while the host was answering: the run may still have started, so say so where the person will see it.
+		const form =
+			latest?.kind === 'autoRun' && latest.screen?.kind === 'launch' ? latest : undefined;
+		if (!result.ok) {
+			if (form?.screen?.kind === 'launch') {
+				setOverlay({
+					...form,
+					screen: { ...form.screen, submitting: false, error: result.error.message },
+				});
+			} else setNotice(result.error.message);
+			return;
+		}
+		if (form) {
+			setOverlay({
+				...form,
+				screen: { kind: 'progress', agentId: agent.id, message: result.value.message },
+			});
+		} else setNotice(result.value.message);
+	};
+
+	/** Sends one control to the window that owns the run, and shows the answer on the progress screen. */
+	const runProgressControl = async (control: RunControl) => {
+		const client = source.client;
+		const current = overlayRef.current;
+		if (!client || current?.kind !== 'autoRun' || current.screen?.kind !== 'progress') return;
+		const { screen } = current;
+		const agent = dataRef.current.agents.find((candidate) => candidate.id === screen.agentId);
+		if (!agent || screen.busy) return;
+		const refusal = controlRefusal(runsRef.current[agent.id], control);
+		if (refusal) {
+			setOverlay({ ...current, screen: { ...screen, message: undefined, error: refusal } });
+			return;
+		}
+		setOverlay({
+			...current,
+			screen: { ...screen, busy: `Sending ${control}`, message: undefined, error: undefined },
+		});
+		const result = await submitRunControl(client, agent, control);
+		const latest = overlayRef.current;
+		const progress =
+			latest?.kind === 'autoRun' && latest.screen?.kind === 'progress' ? latest : undefined;
+		if (!progress || progress.screen?.kind !== 'progress') {
+			setNotice(result.ok ? result.value : result.error.message);
+			return;
+		}
+		setOverlay({
+			...progress,
+			screen: {
+				...progress.screen,
+				busy: undefined,
+				message: result.ok ? result.value : undefined,
+				error: result.ok ? undefined : result.error.message,
+			},
+		});
+	};
 
 	/** Enter in the name box writes the template and opens it; Enter on a row opens that document. */
 	const openAutoRunDocument = (current: Extract<OverlayState, { kind: 'autoRun' }>) => {
@@ -880,14 +1046,51 @@ export function App({ paths, client, editFile = runEditor }: AppProps): React.Re
 					setOverlay({ ...current, view: reloadAutoRunView(current.view) });
 				} else if (agent) openAutoRun(agent);
 				return;
+			case 'toggleDocument':
+				if (current?.kind === 'autoRun') {
+					setOverlay({ ...current, view: toggleDocumentSelection(current.view) });
+				} else if (agent) openAutoRun(agent);
+				return;
+			case 'startRun':
+			case 'startGoalRun': {
+				const owner = current?.kind === 'autoRun' ? agentById(current.view.agentId) : agent;
+				if (!owner) {
+					setNotice('Select an agent to start an Auto Run.');
+					return;
+				}
+				openLaunch(owner, action === 'startRun' ? 'spec' : 'goal', current);
+				return;
+			}
+			case 'watchRun':
+			case 'stopRun':
+			case 'resumeRun':
+			case 'skipDocument':
+			case 'abortRun': {
+				// A control means something only on the progress screen; from anywhere else it opens that screen.
+				if (current?.kind === 'autoRun' && current.screen?.kind === 'progress') {
+					if (action === 'stopRun') void runProgressControl('stop');
+					else if (action === 'resumeRun') void runProgressControl('resume');
+					else if (action === 'skipDocument') void runProgressControl('skip');
+					else if (action === 'abortRun') void runProgressControl('abort');
+					return;
+				}
+				const owner = current?.kind === 'autoRun' ? agentById(current.view.agentId) : agent;
+				if (owner) openProgress(owner, current);
+				else setNotice('Select an agent to watch its Auto Run.');
+				return;
+			}
 			case 'confirm':
 				submitConfirmOverlay();
 				return;
 			case 'choicePrev':
 			case 'choiceNext': {
+				const delta = action === 'choiceNext' ? 1 : -1;
+				if (current?.kind === 'autoRun' && current.screen?.kind === 'launch') {
+					updateLaunch((form) => cycleLaunchField(form, launchFieldsNow(form), delta));
+					return;
+				}
 				const ctx = formContextRef.current;
 				if (current?.kind !== 'form' || !ctx) return;
-				const delta = action === 'choiceNext' ? 1 : -1;
 				// Right on Directory takes the top completion; every other choice field steps.
 				updateForm((state) =>
 					state.focus === 'cwd'
@@ -902,6 +1105,11 @@ export function App({ paths, client, editFile = runEditor }: AppProps): React.Re
 				// Esc in the name box puts the box away and keeps the list.
 				if (current?.kind === 'autoRun' && current.view.naming) {
 					setOverlay({ ...current, view: cancelNaming(current.view) });
+					return;
+				}
+				// Esc on a run screen goes back to the document list under it.
+				if (current?.kind === 'autoRun' && current.screen) {
+					setOverlay({ kind: 'autoRun', view: current.view });
 					return;
 				}
 				setOverlay(undefined);
@@ -966,6 +1174,10 @@ export function App({ paths, client, editFile = runEditor }: AppProps): React.Re
 				} else if (current?.kind === 'groupPicker') {
 					const count = groupChoices(groupsFromSections(data.sections)).length;
 					setOverlay({ ...current, cursor: moveGroupCursor(current.cursor, delta, count) });
+				} else if (current?.kind === 'autoRun' && current.screen?.kind === 'launch') {
+					updateLaunch((form) => moveLaunchFocus(form, launchFieldsNow(form), delta));
+				} else if (current?.kind === 'autoRun' && current.screen) {
+					// The progress screen has no cursor: its keys are its controls.
 				} else if (current?.kind === 'autoRun') {
 					setOverlay({ ...current, view: moveAutoRunCursor(current.view, delta) });
 				} else if (current?.kind === 'providerPicker') {
@@ -1007,6 +1219,10 @@ export function App({ paths, client, editFile = runEditor }: AppProps): React.Re
 				}
 				if (current?.kind === 'providerPicker') {
 					void submitProviderPicker(current);
+					return;
+				}
+				if (current?.kind === 'autoRun' && current.screen?.kind === 'launch') {
+					void submitLaunchScreen();
 					return;
 				}
 				if (current?.kind === 'autoRun') {
@@ -1062,8 +1278,14 @@ export function App({ paths, client, editFile = runEditor }: AppProps): React.Re
 			setNotice(undefined);
 			const current = overlayRef.current;
 			const context: KeyContext = current
-				? current.kind === 'autoRun' && current.view.naming
-					? 'autoRunName'
+				? current.kind === 'autoRun'
+					? current.screen?.kind === 'launch'
+						? 'autoRunLaunch'
+						: current.screen?.kind === 'progress'
+							? 'autoRunProgress'
+							: current.view.naming
+								? 'autoRunName'
+								: 'autoRun'
 					: current.kind
 				: composerHasKeys()
 					? 'composer'
@@ -1097,7 +1319,16 @@ export function App({ paths, client, editFile = runEditor }: AppProps): React.Re
 				if (text) setOverlay({ ...current, prompt: typeIntoPrompt(current.prompt, text) });
 				return;
 			}
-			if (current?.kind === 'autoRun' && current.view.naming) {
+			if (current?.kind === 'autoRun' && current.screen?.kind === 'launch') {
+				if (isBackspaceKey(key)) {
+					updateLaunch((form) => backspaceLaunch(form, launchFieldsNow(form)));
+					return;
+				}
+				const text = typedTextFor(input, key);
+				if (text) updateLaunch((form) => typeIntoLaunch(form, launchFieldsNow(form), text));
+				return;
+			}
+			if (current?.kind === 'autoRun' && !current.screen && current.view.naming) {
 				if (isBackspaceKey(key)) {
 					setOverlay({ ...current, view: backspaceName(current.view) });
 					return;
@@ -1230,8 +1461,41 @@ export function App({ paths, client, editFile = runEditor }: AppProps): React.Re
 					case 'autoRun': {
 						const picked = data.agents.find((a) => a.id === overlay.view.agentId);
 						if (!picked) return null;
+						if (overlay.screen?.kind === 'launch') {
+							return (
+								<LaunchView
+									agent={picked}
+									form={overlay.screen.form}
+									lookups={{ models: launchModels }}
+									submitting={overlay.screen.submitting}
+									error={overlay.screen.error}
+									width={width}
+									height={height}
+								/>
+							);
+						}
+						if (overlay.screen?.kind === 'progress') {
+							return (
+								<ProgressView
+									agent={picked}
+									run={autoRunsByAgent[picked.id]}
+									now={clockNow}
+									busy={overlay.screen.busy}
+									message={overlay.screen.message}
+									error={overlay.screen.error}
+									width={width}
+									height={height}
+								/>
+							);
+						}
 						return (
-							<AutoRunView agent={picked} state={overlay.view} width={width} height={height} />
+							<AutoRunView
+								agent={picked}
+								state={overlay.view}
+								run={autoRunsByAgent[picked.id]}
+								width={width}
+								height={height}
+							/>
 						);
 					}
 					case 'history':
