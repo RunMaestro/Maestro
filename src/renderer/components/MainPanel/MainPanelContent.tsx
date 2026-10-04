@@ -19,6 +19,7 @@ import { useToastAvoidZone } from '../../hooks/ui/useToastAvoidZone';
 import { useTabStore } from '../../stores/tabStore';
 import { useLayerStack } from '../../contexts/LayerStackContext';
 import { outputSearchKeyFor } from '../../utils/outputSearch';
+import { sendDesignPickToComposer } from '../../services/designModePick';
 import type {
 	Session,
 	Theme,
@@ -908,6 +909,9 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 							isActive={isBrowserFocusActive}
 							onUpdateTab={(tid, updates) =>
 								handleBrowserTabUpdate?.(activeSession.id, tid, updates)
+							}
+							onDesignPick={(pick, screenshot) =>
+								sendDesignPickToComposer(activeSession.id, pick, screenshot)
 							}
 						/>
 					</div>
