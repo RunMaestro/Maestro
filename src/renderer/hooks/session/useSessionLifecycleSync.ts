@@ -12,26 +12,74 @@
  *
  * The main process now reports what entered and left the store
  * (`sessions:lifecycleSync`); this hook applies that delta locally. It is
- * deliberately LIFECYCLE ONLY - agents appearing and disappearing - and does not
- * try to merge a peer's edits into an agent both clients already hold. Tab
- * contents, read-state and queued messages still belong to whichever client
- * wrote last; syncing those needs a per-field model this delta can't express.
+ * deliberately LIFECYCLE ONLY - agents appearing and disappearing, and AI tabs
+ * closed inside an agent both clients hold - and does not try to merge a peer's
+ * edits into an agent. Tab contents, read-state and queued messages still belong
+ * to whichever client wrote last; syncing those needs a per-field model this
+ * delta can't express.
  *
  * No feedback loop: applying a removal makes this client's next flush report the
  * same id in `removeIds`, but by then the store no longer has it, so main sends
  * nothing back. Applying an addition likewise re-persists an agent the store
- * already holds, which is an update rather than an add.
+ * already holds, which is an update rather than an add. A peer's tab close is
+ * reported again by this client's next flush, and every other client already
+ * closed that tab, so applying it there is a no-op.
  */
 
 import { useEffect } from 'react';
 import type { Session } from '../../types';
 import { useSessionStore } from '../../stores/sessionStore';
+import { closeTab } from '../../utils/tabHelpers';
+import type { ClosedSessionTab } from '../../../shared/sessionTabChanges';
 import { logger } from '../../utils/logger';
 import { captureException } from '../../utils/sentry';
 
 export interface SessionLifecycleSyncPayload {
 	added?: Session[];
 	removedIds?: string[];
+	closedTabs?: ClosedSessionTab[];
+}
+
+/**
+ * Close the AI tabs a peer closed, in the agents this client still holds.
+ *
+ * Without this the tab stays on screen here, and this client's next flush of
+ * the agent would carry it straight back to disk (main now refuses that, but the
+ * user would still be looking at a tab that no longer exists anywhere else).
+ * Goes through the same `closeTab` the remote close path uses, so the active
+ * tab, unified order and a still-running turn are handled exactly as for a
+ * local close. `preserveTabScopedWork`: the client that closed the tab already
+ * told main it was gone, so main has nothing left to retire on our behalf.
+ */
+function applyClosedTabs(closedTabs: ClosedSessionTab[] | undefined): number {
+	if (!closedTabs?.length) return 0;
+	const bySession = new Map<string, string[]>();
+	for (const { sessionId, tabId } of closedTabs) {
+		if (!sessionId || !tabId) continue;
+		bySession.set(sessionId, [...(bySession.get(sessionId) ?? []), tabId]);
+	}
+	let closedCount = 0;
+	useSessionStore.getState().setSessions((prev) => {
+		let changed = false;
+		const next = prev.map((session) => {
+			const tabIds = bySession.get(session.id);
+			if (!tabIds) return session;
+			let updated = session;
+			for (const tabId of tabIds) {
+				// Filtered against this client's own tree: the push also reaches the
+				// client that closed the tab, which no longer has it.
+				if (!updated.aiTabs?.some((tab) => tab.id === tabId)) continue;
+				const result = closeTab(updated, tabId, undefined, { preserveTabScopedWork: true });
+				if (!result) continue;
+				updated = result.session;
+				closedCount += 1;
+			}
+			if (updated !== session) changed = true;
+			return updated;
+		});
+		return changed ? next : prev;
+	});
+	return closedCount;
 }
 
 /**
@@ -92,6 +140,10 @@ export function useSessionLifecycleSync(
 			// per-client identity), and re-adding or re-removing would be churn.
 			const removedIds = (payload.removedIds ?? []).filter((id) => known.has(id));
 			const incoming = (payload.added ?? []).filter((s) => s?.id && !known.has(s.id));
+			const closedTabCount = applyClosedTabs(payload.closedTabs);
+			if (closedTabCount > 0) {
+				logger.debug(`Applied ${closedTabCount} AI tab close(s) from a peer`, 'Sessions');
+			}
 			if (removedIds.length === 0 && incoming.length === 0) return;
 
 			const restored = await Promise.all(incoming.map((s) => restoreSession(s)));

@@ -99,8 +99,19 @@ These rules keep the clients in sync:
   absent id is preserved rather than treated as a close. Real closes arrive as
   explicit `removeIds` through `setMany`. Both handlers share one main-process
   write queue, so a final-agent backup cannot overlap a peer addition and later
-  overwrite it. The delta is deliberately lifecycle-only - tab contents, read-state and
-  queued messages are still last-writer-wins.
+  overwrite it.
+- **AI tab closes ride the same delta.** Every client writes the WHOLE agent, so
+  a tab missing from one write proves nothing on its own; the writer has to say
+  what it did. `useDebouncedPersistence` diffs each agent against its own last
+  flush and passes `setMany` a third argument (`SessionTabChangesById`,
+  `src/shared/sessionTabChanges.ts`): the AI tab ids it `closed` and `opened`.
+  A tab parked by snooze is not a close. Main tombstones each close per
+  agent + tab (newest 5000), strips a tombstoned tab from any later write whose
+  stored copy no longer has it, and pushes the close as `closedTabs` so peers
+  run it through `closeTab` live. An `opened` report clears the tombstone, which
+  is what lets Reopen Closed Tab or a snooze wake bring the same id back. The
+  delta is still lifecycle-only otherwise - a tab OPENED elsewhere, tab
+  contents, read-state and queued messages are last-writer-wins.
 - **Which agent a client is looking at is per-client.** Write and read it through
   `src/renderer/utils/activeSessionPersistence.ts`, never
   `window.maestro.sessions.getActiveSessionId()` directly. A browser tab reloads
