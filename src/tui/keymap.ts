@@ -10,7 +10,7 @@
 import type { Key } from 'ink';
 
 /** Where a binding is live: the main view, or one of the overlays. */
-export type KeyContext = 'main' | 'help' | 'tabs' | 'history';
+export type KeyContext = 'main' | 'help' | 'tabs' | 'history' | 'palette' | 'menu';
 
 export type KeyAction =
 	| 'quit'
@@ -24,6 +24,8 @@ export type KeyAction =
 	| 'history'
 	| 'toggleToolCalls'
 	| 'toggleAgentsPane'
+	| 'palette'
+	| 'agentMenu'
 	| 'closeOverlay';
 
 /** Keys that arrive as a flag on Ink's `Key` rather than as text. */
@@ -42,8 +44,20 @@ export interface Binding {
 	action: KeyAction;
 	chords: readonly KeyChord[];
 	contexts: readonly KeyContext[];
+	/**
+	 * Chords that replace `chords` in a context. The palette types into a text
+	 * box, so there a letter like `j` must stay a letter and only arrows and
+	 * Ctrl chords may move the cursor.
+	 */
+	chordsByContext?: Partial<Record<KeyContext, readonly KeyChord[]>>;
 	/** One short line. Help draws it beside the keys. */
 	description: string;
+	/**
+	 * Set on an action that acts on the selected agent: this is its row in the
+	 * agent menu (`m`). A later phase's agent actions add their own bindings with
+	 * a label and show up there by themselves.
+	 */
+	agentMenu?: string;
 }
 
 export const KEYMAP: readonly Binding[] = [
@@ -62,32 +76,37 @@ export const KEYMAP: readonly Binding[] = [
 	{
 		action: 'moveDown',
 		chords: [{ input: 'j' }, { named: 'down' }],
-		contexts: ['main', 'tabs', 'history'],
+		contexts: ['main', 'tabs', 'history', 'palette', 'menu'],
+		chordsByContext: { palette: [{ named: 'down' }, { input: 'n', ctrl: true }] },
 		description: 'Move down',
 	},
 	{
 		action: 'moveUp',
 		chords: [{ input: 'k' }, { named: 'up' }],
-		contexts: ['main', 'tabs', 'history'],
+		contexts: ['main', 'tabs', 'history', 'palette', 'menu'],
+		chordsByContext: { palette: [{ named: 'up' }, { input: 'p', ctrl: true }] },
 		description: 'Move up',
 	},
 	{
 		action: 'open',
 		chords: [{ named: 'return' }],
-		contexts: ['main', 'tabs'],
+		contexts: ['main', 'tabs', 'palette', 'menu'],
 		description: 'Open agent, fold group, pick tab',
+		agentMenu: 'Open conversation',
 	},
 	{
 		action: 'tabSwitcher',
 		chords: [{ input: 'T' }],
 		contexts: ['main'],
 		description: 'Tab switcher for the selected agent',
+		agentMenu: 'Switch tab',
 	},
 	{
 		action: 'history',
 		chords: [{ input: 'H' }],
 		contexts: ['main'],
 		description: 'History of the selected agent',
+		agentMenu: 'History',
 	},
 	{
 		action: 'toggleToolCalls',
@@ -100,6 +119,18 @@ export const KEYMAP: readonly Binding[] = [
 		chords: [{ input: 'b', ctrl: true }],
 		contexts: ['main'],
 		description: 'Show or hide the Agents pane',
+	},
+	{
+		action: 'palette',
+		chords: [{ input: 'k', ctrl: true }],
+		contexts: ['main', 'palette'],
+		description: 'Command palette',
+	},
+	{
+		action: 'agentMenu',
+		chords: [{ input: 'm' }],
+		contexts: ['main'],
+		description: 'Menu for the selected agent',
 	},
 	{
 		action: 'help',
@@ -116,7 +147,7 @@ export const KEYMAP: readonly Binding[] = [
 	{
 		action: 'closeOverlay',
 		chords: [{ named: 'escape' }],
-		contexts: ['help', 'tabs', 'history'],
+		contexts: ['help', 'tabs', 'history', 'palette', 'menu'],
 		description: 'Close the overlay',
 	},
 ];
@@ -134,6 +165,11 @@ function namedKeyPressed(named: NamedKey, key: Key): boolean {
 		case 'down':
 			return key.downArrow;
 	}
+}
+
+/** The chords that mean `binding` in `context`: its override there, else its usual keys. */
+export function chordsIn(binding: Binding, context: KeyContext): readonly KeyChord[] {
+	return binding.chordsByContext?.[context] ?? binding.chords;
 }
 
 export function chordMatches(chord: KeyChord, input: string, key: Key): boolean {
@@ -156,7 +192,8 @@ export function resolveAction(
 ): KeyAction | undefined {
 	for (const binding of keymap) {
 		if (!binding.contexts.includes(context)) continue;
-		if (binding.chords.some((chord) => chordMatches(chord, input, key))) return binding.action;
+		if (chordsIn(binding, context).some((chord) => chordMatches(chord, input, key)))
+			return binding.action;
 	}
 	return undefined;
 }

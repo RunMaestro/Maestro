@@ -8,12 +8,32 @@ import { moveHistoryCursor, openHistory, type HistoryViewState } from './app/his
 import { Shell } from './app/Shell';
 import { TabSwitcher } from './app/TabSwitcher';
 import { resolveActiveTab } from './app/ConversationPane';
-import { buildPaneRows, initialCursorKey, moveCursor, isSectionCollapsed } from './app/agentRows';
+import {
+	buildPaneRows,
+	initialCursorKey,
+	isSectionCollapsed,
+	locateAgent,
+	moveCursor,
+} from './app/agentRows';
 import { useAgentSource, useTabEntries } from './app/useAgentSource';
 import { useTerminalSize } from './app/useTerminalSize';
 import { useViewState } from './app/useViewState';
 import { cyclePane, isAgentsPaneVisible, visiblePanes, type PaneId } from './app/layout';
-import { resolveAction, type KeyContext } from './keymap';
+import { resolveAction, type KeyAction, type KeyContext } from './keymap';
+import { agentMenuEntries } from './palette/agentMenu';
+import { AgentMenuOverlay } from './palette/AgentMenuOverlay';
+import { buildPaletteEntries, type PaletteEntry } from './palette/entries';
+import { PaletteOverlay } from './palette/PaletteOverlay';
+import { rankPaletteEntries } from './palette/rank';
+import {
+	EMPTY_PALETTE,
+	backspacePalette,
+	isPaletteBackspace,
+	movePaletteCursor,
+	paletteTextFor,
+	typeIntoPalette,
+	type PaletteState,
+} from './palette/state';
 import { tuiStateFilePath } from './store/view-state';
 
 export interface AppProps {
@@ -38,7 +58,9 @@ export interface AppProps {
 type OverlayState =
 	| { kind: 'help' }
 	| { kind: 'tabs'; agentId: string; cursor: number }
-	| { kind: 'history'; history: HistoryViewState };
+	| { kind: 'history'; history: HistoryViewState }
+	| { kind: 'palette'; palette: PaletteState }
+	| { kind: 'menu'; cursor: number };
 
 export function App({ paths, client }: AppProps): React.ReactElement {
 	const { exit } = useApp();
@@ -123,12 +145,52 @@ export function App({ paths, client }: AppProps): React.ReactElement {
 		: undefined;
 	const activeEntries = useTabEntries(source, cursorAgent?.id, activeTab);
 
-	useInput((input, key) => {
-		const current = overlayRef.current;
-		const context: KeyContext = current ? current.kind : 'main';
-		const action = resolveAction(context, input, key);
-		if (!action) return;
+	const paletteEntries = useMemo(() => buildPaletteEntries(data.agents), [data.agents]);
+	const paletteEntriesRef = useRef(paletteEntries);
+	paletteEntriesRef.current = paletteEntries;
+	const menuEntries = useMemo(() => agentMenuEntries(), []);
 
+	/** Puts the Agents cursor on an agent, unfolding the section it hides in. */
+	const revealAgent = (agentId: string): boolean => {
+		const found = locateAgent(data.sections, rowsRef.current, agentId);
+		if (!found) return false;
+		const { unfoldSectionKey } = found;
+		if (unfoldSectionKey !== undefined) {
+			setView((state) => ({
+				...state,
+				collapsedSections: { ...state.collapsedSections, [unfoldSectionKey]: false },
+			}));
+		}
+		cursorRef.current = found.cursorKey;
+		setCursorKey(found.cursorKey);
+		return true;
+	};
+
+	const runPaletteEntry = (entry: PaletteEntry) => {
+		setOverlay(undefined);
+		const { target } = entry;
+		switch (target.kind) {
+			case 'action':
+				// The overlay is gone, so the action runs as it would from the main view.
+				runAction(target.action, undefined);
+				return;
+			case 'agent':
+				// Like Enter on the row: the conversation follows the cursor and takes focus.
+				if (revealAgent(target.agentId)) setFocusedPane('conversation');
+				return;
+			case 'tab': {
+				if (!revealAgent(target.agentId)) return;
+				setView((state) => ({
+					...state,
+					activeTabByAgent: { ...state.activeTabByAgent, [target.agentId]: target.tabId },
+				}));
+				setFocusedPane('conversation');
+				return;
+			}
+		}
+	};
+
+	const runAction = (action: KeyAction, current: OverlayState | undefined) => {
 		const visible = isAgentsPaneVisible(columnsRef.current, agentsPaneOverrideRef.current);
 		const focus: PaneId = visible ? focusRef.current : 'conversation';
 		const agent = cursorAgentRef.current;
@@ -139,6 +201,14 @@ export function App({ paths, client }: AppProps): React.ReactElement {
 				return;
 			case 'help':
 				setOverlay(current?.kind === 'help' ? undefined : { kind: 'help' });
+				return;
+			case 'palette':
+				setOverlay(
+					current?.kind === 'palette' ? undefined : { kind: 'palette', palette: EMPTY_PALETTE }
+				);
+				return;
+			case 'agentMenu':
+				if (agent) setOverlay({ kind: 'menu', cursor: 0 });
 				return;
 			case 'closeOverlay':
 				setOverlay(undefined);
@@ -187,12 +257,38 @@ export function App({ paths, client }: AppProps): React.ReactElement {
 						...current,
 						cursor: Math.min(Math.max(0, count - 1), Math.max(0, current.cursor + delta)),
 					});
+				} else if (current?.kind === 'palette') {
+					const count = rankPaletteEntries(paletteEntriesRef.current, current.palette.query).length;
+					setOverlay({
+						kind: 'palette',
+						palette: movePaletteCursor(current.palette, delta, count),
+					});
+				} else if (current?.kind === 'menu') {
+					setOverlay({
+						kind: 'menu',
+						cursor: Math.min(
+							Math.max(0, menuEntries.length - 1),
+							Math.max(0, current.cursor + delta)
+						),
+					});
 				} else if (focus === 'agents') {
 					moveBy(delta);
 				}
 				return;
 			}
 			case 'open': {
+				if (current?.kind === 'palette') {
+					const results = rankPaletteEntries(paletteEntriesRef.current, current.palette.query);
+					const picked = results[current.palette.cursor];
+					if (picked) runPaletteEntry(picked.entry);
+					return;
+				}
+				if (current?.kind === 'menu') {
+					const picked = menuEntries[current.cursor];
+					setOverlay(undefined);
+					if (picked) runAction(picked.action, undefined);
+					return;
+				}
 				if (current?.kind === 'tabs') {
 					const tab = agent ? visibleAiTabsOf(agent)[current.cursor] : undefined;
 					if (agent && tab) {
@@ -223,31 +319,74 @@ export function App({ paths, client }: AppProps): React.ReactElement {
 				return;
 			}
 		}
+	};
+
+	useInput((input, key) => {
+		const current = overlayRef.current;
+		const context: KeyContext = current ? current.kind : 'main';
+		const action = resolveAction(context, input, key);
+		if (action) {
+			runAction(action, current);
+			return;
+		}
+		// The palette is the one overlay with a text box: what no binding claims is typing.
+		if (current?.kind === 'palette') {
+			if (isPaletteBackspace(key)) {
+				setOverlay({ kind: 'palette', palette: backspacePalette(current.palette) });
+				return;
+			}
+			const text = paletteTextFor(input, key);
+			if (text) setOverlay({ kind: 'palette', palette: typeIntoPalette(current.palette, text) });
+		}
 	});
 
 	const renderOverlay = overlay
-		? ({ width, height }: { width: number; height: number }) =>
-				overlay.kind === 'help' ? (
-					<HelpOverlay width={width} height={height} />
-				) : overlay.kind === 'history' ? (
-					cursorAgent ? (
-						<HistoryView
-							agent={cursorAgent}
-							state={overlay.history}
-							width={width}
-							height={height}
-						/>
-					) : null
-				) : cursorAgent ? (
-					<TabSwitcher
-						agent={cursorAgent}
-						tabs={visibleAiTabsOf(cursorAgent)}
-						cursor={overlay.cursor}
-						activeTabId={activeTabIdFor(cursorAgent)}
-						width={width}
-						height={height}
-					/>
-				) : null
+		? ({ width, height }: { width: number; height: number }) => {
+				switch (overlay.kind) {
+					case 'help':
+						return <HelpOverlay width={width} height={height} />;
+					case 'palette':
+						return (
+							<PaletteOverlay
+								query={overlay.palette.query}
+								results={rankPaletteEntries(paletteEntries, overlay.palette.query)}
+								cursor={overlay.palette.cursor}
+								width={width}
+								height={height}
+							/>
+						);
+					case 'menu':
+						return cursorAgent ? (
+							<AgentMenuOverlay
+								agent={cursorAgent}
+								entries={menuEntries}
+								cursor={overlay.cursor}
+								width={width}
+								height={height}
+							/>
+						) : null;
+					case 'history':
+						return cursorAgent ? (
+							<HistoryView
+								agent={cursorAgent}
+								state={overlay.history}
+								width={width}
+								height={height}
+							/>
+						) : null;
+					case 'tabs':
+						return cursorAgent ? (
+							<TabSwitcher
+								agent={cursorAgent}
+								tabs={visibleAiTabsOf(cursorAgent)}
+								cursor={overlay.cursor}
+								activeTabId={activeTabIdFor(cursorAgent)}
+								width={width}
+								height={height}
+							/>
+						) : null;
+				}
+			}
 		: undefined;
 
 	return (

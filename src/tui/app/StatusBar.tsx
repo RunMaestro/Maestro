@@ -25,7 +25,9 @@ export function StatusBar({ userDataDir, hostLabel, width }: StatusBarProps): Re
 				</Text>
 			</Box>
 			<Box flexShrink={0} marginLeft={2}>
-				<Text dimColor>{keysFor('help')} help </Text>
+				<Text dimColor>
+					{keysFor('palette')} palette {keysFor('help')} help{' '}
+				</Text>
 				<Text color="#9146FF">host: {hostLabel}</Text>
 			</Box>
 		</Box>

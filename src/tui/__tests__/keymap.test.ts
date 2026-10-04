@@ -3,6 +3,7 @@ import type { Key } from 'ink';
 import {
 	KEYMAP,
 	bindingFor,
+	chordsIn,
 	formatBindingKeys,
 	formatChord,
 	keysFor,
@@ -47,7 +48,7 @@ describe('keymap', () => {
 	it('resolves every chord of every binding to that binding in each of its contexts', () => {
 		for (const binding of KEYMAP) {
 			for (const context of binding.contexts) {
-				for (const chord of binding.chords) {
+				for (const chord of chordsIn(binding, context)) {
 					const { input, key } = press(chord);
 					expect(
 						resolveAction(context, input, key),
@@ -62,7 +63,7 @@ describe('keymap', () => {
 		const seen = new Map<string, string>();
 		for (const binding of KEYMAP) {
 			for (const context of binding.contexts) {
-				for (const chord of binding.chords) {
+				for (const chord of chordsIn(binding, context)) {
 					const id = `${context}:${formatChord(chord)}`;
 					expect(seen.get(id), `${id} is bound twice`).toBeUndefined();
 					seen.set(id, binding.action);
@@ -87,9 +88,33 @@ describe('keymap', () => {
 			expect(resolveAction(context, 'q', NO_KEY)).toBeUndefined();
 		}
 		expect(resolveAction('main', '', { ...NO_KEY, escape: true })).toBeUndefined();
-		// Only the tab switcher moves a cursor.
+		// Only the overlays with a list move a cursor.
 		expect(resolveAction('help', 'j', NO_KEY)).toBeUndefined();
 		expect(resolveAction('tabs', 'j', NO_KEY)).toBe('moveDown');
+	});
+
+	it('keeps letters for typing in the palette and moves its cursor with arrows and Ctrl chords', () => {
+		for (const letter of ['j', 'k', 'q', 'm', '?', 'T']) {
+			expect(resolveAction('palette', letter, NO_KEY), letter).toBeUndefined();
+		}
+		expect(resolveAction('palette', '', { ...NO_KEY, downArrow: true })).toBe('moveDown');
+		expect(resolveAction('palette', '', { ...NO_KEY, upArrow: true })).toBe('moveUp');
+		expect(resolveAction('palette', 'n', { ...NO_KEY, ctrl: true })).toBe('moveDown');
+		expect(resolveAction('palette', 'p', { ...NO_KEY, ctrl: true })).toBe('moveUp');
+		expect(resolveAction('palette', '', { ...NO_KEY, return: true })).toBe('open');
+		expect(resolveAction('palette', '', { ...NO_KEY, escape: true })).toBe('closeOverlay');
+		// The same chord that opens the palette closes it.
+		expect(resolveAction('main', 'k', { ...NO_KEY, ctrl: true })).toBe('palette');
+		expect(resolveAction('palette', 'k', { ...NO_KEY, ctrl: true })).toBe('palette');
+		expect(resolveAction('tabs', 'k', { ...NO_KEY, ctrl: true })).toBeUndefined();
+	});
+
+	it('opens the agent menu with m and lets the menu use the list keys', () => {
+		expect(resolveAction('main', 'm', NO_KEY)).toBe('agentMenu');
+		expect(resolveAction('menu', 'j', NO_KEY)).toBe('moveDown');
+		expect(resolveAction('menu', '', { ...NO_KEY, return: true })).toBe('open');
+		expect(resolveAction('menu', '', { ...NO_KEY, escape: true })).toBe('closeOverlay');
+		expect(resolveAction('menu', 'm', NO_KEY)).toBeUndefined();
 	});
 
 	it('does not take Ctrl-or-Meta chords for the plain letter', () => {
@@ -109,6 +134,7 @@ describe('keymap', () => {
 		expect(keysFor('toggleAgentsPane')).toBe('Ctrl-B');
 		expect(keysFor('closeOverlay')).toBe('Esc');
 		expect(keysFor('open')).toBe('Enter');
+		expect(keysFor('palette')).toBe('Ctrl-K');
 	});
 
 	it('throws for an action nobody bound, so a typo cannot print an empty hint', () => {

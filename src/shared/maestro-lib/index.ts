@@ -39,6 +39,9 @@ export * from '../toolActivityLabel';
 // Timestamp display, shared so every surface shows a time the same way
 export { formatTimestamp } from '../formatters';
 
+// Fuzzy matching, shared with the desktop renderer (its utils/search.ts re-exports the same module)
+export * from '../fuzzyMatch';
+
 // Launch and argument building
 export * from './launch/launch-plan';
 export * from './launch/prompt-delivery';

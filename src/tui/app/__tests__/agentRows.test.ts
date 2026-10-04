@@ -4,6 +4,7 @@ import {
 	buildPaneRows,
 	initialCursorKey,
 	isSectionCollapsed,
+	locateAgent,
 	moveCursor,
 	providerBadge,
 	stateColor,
@@ -114,5 +115,26 @@ describe('row styling', () => {
 		expect(providerBadge('codex')).toBe('COD');
 		expect(providerBadge('omp')).toBe('OMP');
 		expect(providerBadge('provider-from-the-future')).toBe('PFT');
+	});
+});
+
+describe('locateAgent', () => {
+	it('uses the row already drawn, and prefers it over another section listing the agent', () => {
+		const rows = buildPaneRows(sections, {});
+		expect(locateAgent(sections, rows, 'a')).toEqual({ cursorKey: 'bookmarks/a' });
+		expect(locateAgent(sections, rows, 'w')).toEqual({ cursorKey: 'bookmarks/w' });
+	});
+
+	it('names the folded section to unfold when the agent is hidden', () => {
+		const rows = buildPaneRows(sections, {});
+		expect(rows.some((row) => row.key === 'group:g2/b')).toBe(false);
+		expect(locateAgent(sections, rows, 'b')).toEqual({
+			cursorKey: 'group:g2/b',
+			unfoldSectionKey: 'group:g2',
+		});
+	});
+
+	it('returns undefined for an agent no section lists', () => {
+		expect(locateAgent(sections, buildPaneRows(sections, {}), 'nope')).toBeUndefined();
 	});
 });

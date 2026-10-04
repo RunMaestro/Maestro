@@ -93,6 +93,29 @@ export function initialCursorKey(
 	return rows[0]?.key;
 }
 
+/**
+ * Where the cursor goes to land on an agent from outside the list (the palette).
+ * An agent already drawn gets its row; one inside a folded section gets that
+ * section's key too, so the caller can unfold it. A bookmarked agent sits in two
+ * sections, and the one drawn wins. Undefined when no section lists the agent.
+ */
+export function locateAgent(
+	sections: readonly AgentTreeSection[],
+	rows: readonly PaneRow[],
+	agentId: string
+): { cursorKey: string; unfoldSectionKey?: string } | undefined {
+	const drawn = rows.find((row) => row.kind === 'agent' && row.agent.id === agentId);
+	if (drawn) return { cursorKey: drawn.key };
+	const section = sections.find((candidate) =>
+		candidate.nodes.some(
+			(node) => node.agent.id === agentId || node.children.some((child) => child.id === agentId)
+		)
+	);
+	return section
+		? { cursorKey: `${section.key}/${agentId}`, unfoldSectionKey: section.key }
+		: undefined;
+}
+
 /** Moves the cursor by `delta` rows, stopping at either end. */
 export function moveCursor(
 	rows: readonly PaneRow[],
