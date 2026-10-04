@@ -1,5 +1,6 @@
 /**
- * Tests for src/shared/cli-server-discovery.ts
+ * Tests for src/shared/maestro-lib/client/discovery.ts
+ * (re-exported at its old path, src/shared/cli-server-discovery.ts)
  *
  * This module provides functions for managing the CLI server discovery file,
  * used by the Electron main process and CLI to locate the running server.
@@ -32,15 +33,13 @@ import * as path from 'path';
 import {
 	writeCliServerInfo,
 	readCliServerInfo,
+	readCliServerInfoFrom,
 	deleteCliServerInfo,
 	isCliServerRunning,
 	parseCliServerInfo,
 	isPidAlive,
-} from '../../shared/cli-server-discovery';
-
-// Local type alias mirroring the (now-internal) CliServerInfo shape
-// expected by writeCliServerInfo. Kept in sync with shared/cli-server-discovery.ts.
-type CliServerInfo = Parameters<typeof writeCliServerInfo>[0];
+	type CliServerInfo,
+} from '../discovery';
 
 // Type assertions for mocked modules
 const mockFs = {
@@ -388,6 +387,59 @@ describe('cli-server-discovery', () => {
 
 			const result = readCliServerInfo();
 			expect(result).toBeNull();
+		});
+	});
+
+	describe('readCliServerInfoFrom', () => {
+		const dataDir = path.join('/Users/testuser', 'Library', 'Application Support', 'maestro-dev');
+
+		it('reads cli-server.json inside the data directory it is given', () => {
+			const result = readCliServerInfoFrom(dataDir);
+
+			expect(mockFs.readFileSync).toHaveBeenCalledWith(
+				path.join(dataDir, 'cli-server.json'),
+				'utf-8'
+			);
+			expect(result).toEqual(sampleInfo);
+		});
+
+		it('ignores MAESTRO_USER_DATA and the platform default', () => {
+			process.env.MAESTRO_USER_DATA = '/somewhere/else';
+			mockOs.platform.mockReturnValue('linux');
+
+			readCliServerInfoFrom(dataDir);
+
+			expect(mockFs.readFileSync).toHaveBeenCalledTimes(1);
+			expect(mockFs.readFileSync).toHaveBeenCalledWith(
+				path.join(dataDir, 'cli-server.json'),
+				'utf-8'
+			);
+		});
+
+		it('keeps the optional version and cliSecret fields', () => {
+			mockFs.readFileSync.mockReturnValue(
+				JSON.stringify({ ...sampleInfo, version: '0.17.7', cliSecret: 'per-boot-secret' })
+			);
+
+			expect(readCliServerInfoFrom(dataDir)).toEqual({
+				...sampleInfo,
+				version: '0.17.7',
+				cliSecret: 'per-boot-secret',
+			});
+		});
+
+		it('returns null for a missing file', () => {
+			mockFs.readFileSync.mockImplementation(() => {
+				throw Object.assign(new Error('ENOENT: no such file or directory'), { code: 'ENOENT' });
+			});
+
+			expect(readCliServerInfoFrom(dataDir)).toBeNull();
+		});
+
+		it('returns null for a record that fails the validity rule', () => {
+			mockFs.readFileSync.mockReturnValue(JSON.stringify({ port: 3456, token: 'abc' }));
+
+			expect(readCliServerInfoFrom(dataDir)).toBeNull();
 		});
 	});
 

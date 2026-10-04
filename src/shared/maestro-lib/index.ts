@@ -12,7 +12,10 @@ export * from './paths/userDataDir';
 export * from './paths/resolve';
 export * from './paths/syncPath';
 export * from './paths/doctor';
-export * from '../cli-server-discovery';
+
+// Desktop bridge: find the running desktop (cli-server.json) and talk to it
+export * from './client/discovery';
+export * from './client/bridge-connection';
 
 // Store files (read-only)
 export * from './store/corrupt-store';

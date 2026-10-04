@@ -769,7 +769,7 @@ Machine-parseable output format. Each line is a complete JSON object. Used when 
 | Batch processor     | `src/cli/services/batch-processor.ts`                                                                          |
 | Playbook management | `src/cli/services/playbooks.ts`                                                                                |
 | Agent sessions      | `src/cli/services/agent-sessions.ts`                                                                           |
-| Desktop IPC client  | `src/cli/services/maestro-client.ts`                                                                           |
+| Desktop IPC client  | `src/cli/services/maestro-client.ts` over `src/shared/maestro-lib/client/bridge-connection.ts`                 |
 | Human output        | `src/cli/output/formatter.ts`                                                                                  |
 | JSONL output        | `src/cli/output/jsonl.ts`                                                                                      |
 | Send command        | `src/cli/commands/send.ts`                                                                                     |

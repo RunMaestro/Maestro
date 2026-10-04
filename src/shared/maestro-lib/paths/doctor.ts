@@ -16,7 +16,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import { isPidAlive, parseCliServerInfo } from '../../cli-server-discovery';
+import { isPidAlive, parseCliServerInfo } from '../client/discovery';
 import type { MaestroPaths, SyncDirSource } from './resolve';
 import type { UserDataDirRule } from './userDataDir';
 
