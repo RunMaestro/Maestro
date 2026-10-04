@@ -177,7 +177,7 @@ export interface AgentPatch {
 	cwd?: string;
 	/** null moves the agent to ungrouped. */
 	groupId?: string | null;
-	/** Phase 4 (PS-1). `unsupported` until the host swaps providers without dropping tabs. */
+	/** PS-1. The host parks every tab's provider session and the agent's overrides; nothing is dropped. */
 	provider?: string;
 	model?: string | null;
 	effort?: string | null;
@@ -198,7 +198,7 @@ export type AgentPatchField = keyof AgentPatch;
 export interface AgentUpdateReceipt {
 	/** The fields applied, in the order they were applied. */
 	applied: AgentPatchField[];
-	/** Provider swap (Phase 4): what could not be parked and was cleared, for a notice. */
+	/** Provider swap: what the host could not park and cleared, one line each, for a notice. */
 	notices?: string[];
 }
 

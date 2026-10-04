@@ -415,10 +415,61 @@ describe('createWsMaestroClient', () => {
 				});
 			});
 
-			it('refuses a provider change whole, before sending anything', async () => {
-				const result = await client.agents.update(A1, { provider: 'codex', name: 'X' });
-				expect(result).toMatchObject({ ok: false, error: { code: 'unsupported' } });
+			it('swaps the provider in a message of its own, before the other config fields', async () => {
+				bridge.typed.set(
+					'update_session_config',
+					reply('update_session_config', { notices: ['Queued turns lost their model.', 7] })
+				);
+				const result = await client.agents.update(A1, { provider: 'codex', model: 'm', name: 'X' });
+				expect(result).toEqual({
+					ok: true,
+					value: {
+						applied: ['provider', 'model', 'name'],
+						notices: ['Queued turns lost their model.'],
+					},
+				});
+				const configs = bridge.sent('update_session_config');
+				expect(configs).toHaveLength(2);
+				expect(configs[0]).toMatchObject({ sessionId: A1, configPatch: { toolType: 'codex' } });
+				expect(Object.keys((configs[0] as { configPatch: object }).configPatch)).toEqual([
+					'toolType',
+				]);
+				expect(configs[1]).toMatchObject({ configPatch: { customModel: 'm' } });
+				expect(
+					(configs[1] as { configPatch: Record<string, unknown> }).configPatch.toolType
+				).toBeUndefined();
+			});
+
+			it('omits notices when the host reports nothing to park', async () => {
+				const result = await client.agents.update(A1, { provider: 'codex' });
+				expect(result).toEqual({ ok: true, value: { applied: ['provider'] } });
+			});
+
+			it('sends nothing for the provider the agent is already on', async () => {
+				const result = await client.agents.update(A1, { provider: 'claude-code' });
+				expect(result).toEqual({ ok: true, value: { applied: [] } });
+				expect(bridge.sent('update_session_config')).toHaveLength(0);
+			});
+
+			it.each([
+				['the terminal provider', 'terminal'],
+				['an unknown id', 'nope'],
+			])('refuses %s before sending anything', async (_label, provider) => {
+				const result = await client.agents.update(A1, { provider, name: 'X' });
+				expect(result).toMatchObject({ ok: false, error: { code: 'invalid' } });
 				expect(bridge.received).toHaveLength(0);
+			});
+
+			it('reports a refused swap with nothing applied', async () => {
+				bridge.typed.set('update_session_config', () => ({
+					type: 'update_session_config_result',
+					success: false,
+					error: "Unknown provider 'codex'",
+				}));
+				const result = await client.agents.update(A1, { provider: 'codex', name: 'X' });
+				expect(result).toMatchObject({ ok: false });
+				expect(!result.ok && result.error.appliedFields).toBeUndefined();
+				expect(bridge.sent('rename_session')).toHaveLength(0);
 			});
 
 			it('stops at a cwd refusal as rejected, with nothing else applied', async () => {

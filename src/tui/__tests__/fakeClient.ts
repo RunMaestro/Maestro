@@ -36,6 +36,8 @@ export interface FakeClientOptions {
 	queue?: QueuedTurn[];
 	/** What `turns.interrupt` reports as `stopped`. Default true. */
 	interruptStopped?: boolean;
+	/** What `agents.update` reports as `notices`: what a provider swap could not park. */
+	updateNotices?: string[];
 	/** Make these methods fail with this code, so a test can see how a refusal is shown. */
 	failures?: Partial<Record<ClientMethod, ClientError['code']>>;
 }
@@ -160,7 +162,13 @@ export function createFakeClient(options: FakeClientOptions = {}): FakeClient {
 			update: async (agentId, patch) => {
 				const refused = record('agents.update', agentId, patch);
 				if (refused) return refused;
-				return { ok: true, value: { applied: Object.keys(patch) as never[] } };
+				return {
+					ok: true,
+					value: {
+						applied: Object.keys(patch) as never[],
+						...(options.updateNotices ? { notices: options.updateNotices } : {}),
+					},
+				};
 			},
 			rename: async (agentId, name) => {
 				const refused = record('agents.rename', agentId, name);
@@ -315,7 +323,8 @@ export function createFakeClient(options: FakeClientOptions = {}): FakeClient {
 		},
 		providers: {
 			list: async (listOptions) => {
-				requests.push({ method: 'providers.list', args: [listOptions] });
+				const refused = record('providers.list', listOptions);
+				if (refused) return refused;
 				return { ok: true, value: options.providers ?? [] };
 			},
 			models: async (providerId) => ({ ok: true, value: options.models?.[providerId] ?? [] }),

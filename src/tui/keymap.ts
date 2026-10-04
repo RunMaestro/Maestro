@@ -22,7 +22,8 @@ export type KeyContext =
 	| 'form'
 	| 'prompt'
 	| 'confirm'
-	| 'groupPicker';
+	| 'groupPicker'
+	| 'providerPicker';
 
 export type KeyAction =
 	| 'quit'
@@ -49,6 +50,7 @@ export type KeyAction =
 	| 'rename'
 	| 'deleteItem'
 	| 'moveToGroup'
+	| 'switchProvider'
 	| 'newGroup'
 	| 'confirm'
 	| 'send'
@@ -120,6 +122,7 @@ export const KEYMAP: readonly Binding[] = [
 			'form',
 			'prompt',
 			'groupPicker',
+			'providerPicker',
 		],
 		chordsByContext: {
 			palette: [{ named: 'down' }, { input: 'n', ctrl: true }],
@@ -142,6 +145,7 @@ export const KEYMAP: readonly Binding[] = [
 			'form',
 			'prompt',
 			'groupPicker',
+			'providerPicker',
 		],
 		chordsByContext: {
 			palette: [{ named: 'up' }, { input: 'p', ctrl: true }],
@@ -153,7 +157,16 @@ export const KEYMAP: readonly Binding[] = [
 	{
 		action: 'open',
 		chords: [{ named: 'return' }],
-		contexts: ['main', 'tabs', 'palette', 'menu', 'form', 'prompt', 'groupPicker'],
+		contexts: [
+			'main',
+			'tabs',
+			'palette',
+			'menu',
+			'form',
+			'prompt',
+			'groupPicker',
+			'providerPicker',
+		],
 		description: 'Open agent, fold group, pick, next field, save a prompt',
 		agentMenu: 'Open conversation',
 	},
@@ -227,6 +240,13 @@ export const KEYMAP: readonly Binding[] = [
 		agentMenu: 'Move to group',
 	},
 	{
+		action: 'switchProvider',
+		chords: [{ input: 'p' }],
+		contexts: ['main'],
+		description: "Change the selected agent's provider",
+		agentMenu: 'Change provider',
+	},
+	{
 		action: 'newGroup',
 		chords: [{ input: 'N' }],
 		contexts: ['main'],
@@ -264,6 +284,7 @@ export const KEYMAP: readonly Binding[] = [
 			'prompt',
 			'confirm',
 			'groupPicker',
+			'providerPicker',
 		],
 		description: 'Interrupt the turn; twice in 1s quits',
 		agentMenu: 'Interrupt turn',
@@ -347,6 +368,7 @@ export const KEYMAP: readonly Binding[] = [
 			'prompt',
 			'confirm',
 			'groupPicker',
+			'providerPicker',
 		],
 		// A confirmation also takes `n`: "no" is the answer a hand reaches for next to `y`.
 		chordsByContext: { confirm: [{ named: 'escape' }, { input: 'n' }] },

@@ -38,6 +38,7 @@ import {
 	type ProviderInfo,
 	type SshRemoteConfig,
 } from '../../shared/maestro-lib';
+import { keysFor } from '../keymap';
 
 export type FieldId =
 	| 'name'
@@ -151,7 +152,7 @@ function agentEnv(agent: AgentRecord | undefined): Record<string, string> {
 }
 
 /** The SSH remote an agent runs on, or `''` for the local machine. */
-function agentSshRemoteId(agent: AgentRecord | undefined): string {
+export function agentSshRemoteId(agent: AgentRecord | undefined): string {
 	const ssh = agent?.sessionSshRemoteConfig as
 		| { enabled?: boolean; remoteId?: string | null }
 		| undefined;
@@ -287,10 +288,10 @@ export function formFields(context: FormContext, state: Pick<FormState, 'values'
 		{
 			id: 'provider',
 			label: 'Provider',
-			// Swapping providers on a live agent is a later phase (PS-1).
+			// A live agent swaps providers from its own picker (`p`), which parks each tab's session.
 			kind: edit ? 'readonly' : 'choice',
 			advanced: false,
-			note: edit ? 'fixed once the agent exists' : undefined,
+			note: edit ? `change it with ${keysFor('switchProvider')} in the Agents pane` : undefined,
 		},
 		{
 			id: 'cwd',

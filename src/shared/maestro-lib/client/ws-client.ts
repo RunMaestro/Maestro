@@ -1200,12 +1200,11 @@ class WsMaestroClient implements MaestroClient {
 		const gate = this.requireConnected(method);
 		if (gate) return gate;
 
-		if (patch.provider !== undefined) {
-			return this.fail(
-				method,
-				'unsupported',
-				"Changing an agent's provider is not supported by the desktop bridge yet."
-			);
+		if (
+			patch.provider !== undefined &&
+			(patch.provider === 'terminal' || !isValidAgentId(patch.provider))
+		) {
+			return this.fail(method, 'invalid', `Unknown provider "${patch.provider}".`);
 		}
 		if (patch.name !== undefined) {
 			const trimmed = patch.name.trim();
@@ -1260,6 +1259,36 @@ class WsMaestroClient implements MaestroClient {
 			applied.push('ssh');
 		}
 
+		// The host swaps on a `toolType` key alone and ignores the rest of that
+		// patch, so the swap is its own message, sent before the config fields: a
+		// model or path in the same update then lands on the new provider's slot.
+		// Naming the provider the agent is already on sends nothing (the host
+		// would read it as an empty config patch).
+		let notices: string[] | undefined;
+		if (
+			patch.provider !== undefined &&
+			patch.provider !== this.mirror.getAgent(agentId)?.toolType
+		) {
+			const sent = await this.send(
+				method,
+				{
+					type: 'update_session_config',
+					sessionId: agentId,
+					configPatch: { toolType: patch.provider },
+				},
+				'update_session_config_result'
+			);
+			if (!sent.ok) return stop(sent);
+			const checked = this.checkResult(method, sent.value);
+			if (!checked.ok) return stop(checked);
+			applied.push('provider');
+			const reported = sent.value.notices;
+			if (Array.isArray(reported)) {
+				const lines = reported.filter((line): line is string => typeof line === 'string');
+				if (lines.length > 0) notices = lines;
+			}
+		}
+
 		const config = buildConfigPatch(patch);
 		if (config.fields.length > 0) {
 			const sent = await this.send(
@@ -1311,7 +1340,7 @@ class WsMaestroClient implements MaestroClient {
 
 		// Config fields are in no push (G2): one full read refreshes the mirror.
 		await this.refreshAgents();
-		return ok({ applied });
+		return ok({ applied, ...(notices ? { notices } : {}) });
 	}
 
 	// =======================================================================

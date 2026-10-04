@@ -22,7 +22,12 @@ import {
 	type FormState,
 } from './agents/form';
 import { useFormLookups } from './agents/useFormLookups';
-import { ConfirmOverlay, GroupPickerOverlay, PromptOverlay } from './agents/ManageOverlays';
+import {
+	ConfirmOverlay,
+	GroupPickerOverlay,
+	PromptOverlay,
+	ProviderPickerOverlay,
+} from './agents/ManageOverlays';
 import {
 	backspacePrompt,
 	deleteAgentConfirm,
@@ -43,6 +48,13 @@ import {
 	type ConfirmState,
 	type PromptState,
 } from './agents/manage';
+import {
+	loadProviderChoices,
+	providerPickerStart,
+	submitProviderSwap,
+	type ProviderChoice,
+	type ProviderSwapDone,
+} from './agents/providerSwap';
 import { submitCloseTab, submitNewTab, tabAfterClose } from './agents/tabs';
 import {
 	EMPTY_COMPOSER,
@@ -125,6 +137,16 @@ type OverlayState =
 	| { kind: 'prompt'; prompt: PromptState; submitting: boolean; error?: string }
 	| { kind: 'confirm'; confirm: ConfirmState; submitting: boolean; error?: string }
 	| { kind: 'groupPicker'; agentId: string; cursor: number }
+	| {
+			kind: 'providerPicker';
+			agentId: string;
+			choices: ProviderChoice[];
+			cursor: number;
+			submitting: boolean;
+			error?: string;
+			/** Set once the swap went through: the result stays up until the person closes it. */
+			done?: ProviderSwapDone;
+	  }
 	| {
 			kind: 'form';
 			mode: 'create' | 'edit';
@@ -498,6 +520,48 @@ export function App({ paths, client }: AppProps): React.ReactElement {
 		setNotice(result.ok ? result.value : result.error.message);
 	};
 
+	/** Asks the host which providers are installed where the agent runs, then opens the picker on them. */
+	const openProviderPicker = async (agent: AgentRecord) => {
+		const client = requireClient();
+		if (!client) return;
+		const loaded = await loadProviderChoices(client, agent);
+		if (!loaded.ok) {
+			setNotice(loaded.error.message);
+			return;
+		}
+		setOverlay({
+			kind: 'providerPicker',
+			agentId: agent.id,
+			choices: loaded.value,
+			cursor: providerPickerStart(loaded.value),
+			submitting: false,
+		});
+	};
+
+	const submitProviderPicker = async (
+		current: Extract<OverlayState, { kind: 'providerPicker' }>
+	) => {
+		const client = source.client;
+		const agent = dataRef.current.agents.find((candidate) => candidate.id === current.agentId);
+		if (current.done) {
+			setOverlay(undefined);
+			return;
+		}
+		if (!client || !agent || current.submitting || current.choices.length === 0) return;
+		setOverlay({ ...current, submitting: true, error: undefined });
+		const result = await submitProviderSwap(client, agent, current.choices, current.cursor);
+		const latest = overlayRef.current;
+		// Esc while the swap was in flight: the host still got it, so say so where the person will see it.
+		const stillOpen = latest?.kind === 'providerPicker';
+		if (!result.ok) {
+			if (stillOpen) setOverlay({ ...latest, submitting: false, error: result.error.message });
+			else setNotice(result.error.message);
+			return;
+		}
+		if (stillOpen) setOverlay({ ...latest, submitting: false, done: result.value });
+		else setNotice(result.value.summary);
+	};
+
 	/** The tab a tab action means: the highlighted one in the tab switcher, else the one on screen. */
 	const tabTarget = (current: OverlayState | undefined) => {
 		const owner = cursorAgentRef.current;
@@ -745,6 +809,16 @@ export function App({ paths, client }: AppProps): React.ReactElement {
 				});
 				return;
 			}
+			case 'switchProvider': {
+				if (!requireClient()) return;
+				const target = cursorTarget();
+				if (target.kind !== 'agent') {
+					setNotice('Select an agent to change its provider.');
+					return;
+				}
+				void openProviderPicker(target.agent);
+				return;
+			}
 			case 'confirm':
 				submitConfirmOverlay();
 				return;
@@ -826,6 +900,13 @@ export function App({ paths, client }: AppProps): React.ReactElement {
 				} else if (current?.kind === 'groupPicker') {
 					const count = groupChoices(groupsFromSections(data.sections)).length;
 					setOverlay({ ...current, cursor: moveGroupCursor(current.cursor, delta, count) });
+				} else if (current?.kind === 'providerPicker') {
+					if (!current.done) {
+						setOverlay({
+							...current,
+							cursor: moveGroupCursor(current.cursor, delta, current.choices.length),
+						});
+					}
 				} else if (current?.kind === 'menu') {
 					setOverlay({
 						kind: 'menu',
@@ -854,6 +935,10 @@ export function App({ paths, client }: AppProps): React.ReactElement {
 				}
 				if (current?.kind === 'groupPicker') {
 					void submitGroupPicker(current);
+					return;
+				}
+				if (current?.kind === 'providerPicker') {
+					void submitProviderPicker(current);
 					return;
 				}
 				if (current?.kind === 'palette') {
@@ -1009,6 +1094,22 @@ export function App({ paths, client }: AppProps): React.ReactElement {
 								choices={choices}
 								cursor={overlay.cursor}
 								currentIndex={pickerStartIndex(choices, picked)}
+								width={width}
+								height={height}
+							/>
+						);
+					}
+					case 'providerPicker': {
+						const picked = data.agents.find((a) => a.id === overlay.agentId);
+						if (!picked) return null;
+						return (
+							<ProviderPickerOverlay
+								agentName={picked.name}
+								choices={overlay.choices}
+								cursor={overlay.cursor}
+								submitting={overlay.submitting}
+								error={overlay.error}
+								done={overlay.done}
 								width={width}
 								height={height}
 							/>
