@@ -35,6 +35,8 @@ export function App({ paths }: AppProps): React.ReactElement {
 	const [view, setView] = useViewState(tuiStateFilePath(paths.userDataDir));
 	// The user's toggle for the Agents pane. Not persisted: whether it fits depends on the window.
 	const [agentsPaneOverride, setAgentsPaneOverride] = useState<boolean | undefined>(undefined);
+	// Tool calls are one line each until the user asks for the detail. Not persisted.
+	const [expandTools, setExpandTools] = useState(false);
 
 	// Focus and the overlay live in refs as well as state, for the reason the cursor does.
 	const [focusedPane, setFocusedPaneState] = useState<PaneId>('agents');
@@ -121,6 +123,9 @@ export function App({ paths }: AppProps): React.ReactElement {
 			case 'nextPane':
 			case 'prevPane':
 				setFocusedPane(cyclePane(visiblePanes(visible), focus, action === 'nextPane' ? 1 : -1));
+				return;
+			case 'toggleToolCalls':
+				setExpandTools((expanded) => !expanded);
 				return;
 			case 'toggleAgentsPane':
 				setAgentsPaneOverride(!visible);
@@ -215,6 +220,7 @@ export function App({ paths }: AppProps): React.ReactElement {
 			agent={cursorAgent}
 			activeTabId={activeTabIdFor(cursorAgent)}
 			focusedPane={effectiveFocus}
+			expandTools={expandTools}
 			overlay={renderOverlay}
 			agentsPaneOverride={agentsPaneOverride}
 			agentsPaneWidth={view.agentsPaneWidth}

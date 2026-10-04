@@ -405,5 +405,83 @@ describe('App shell', () => {
 			expect(lastFrame()).toContain('? help');
 			unmount();
 		});
+
+		describe('transcript', () => {
+			const withLogs = () => {
+				const sessions = JSON.parse(JSON.stringify(SESSIONS));
+				sessions.sessions[0].aiTabs[0].logs = [
+					{
+						id: 'l1',
+						timestamp: 1_700_000_000_000,
+						source: 'user',
+						text: 'Please **fix** the build',
+					},
+					{
+						id: 'l2',
+						timestamp: 1_700_000_001_000,
+						source: 'tool',
+						text: 'Bash',
+						metadata: {
+							toolState: {
+								status: 'completed',
+								input: { command: 'npm run build' },
+								output: 'BUILDOUTPUT',
+							},
+						},
+					},
+					{ id: 'l3', timestamp: 1_700_000_002_000, source: 'ai', text: '# Fixed\n\n- one\n- two' },
+				];
+				writeStore('maestro-sessions.json', sessions);
+			};
+
+			it('draws the selected tab as markdown, with tool calls collapsed to one line', async () => {
+				withLogs();
+				const { stdin, lastFrame, unmount } = await renderAt(140, 30);
+				stdin.write('j');
+				await tick();
+				stdin.write('j');
+				await tick();
+				const frame = lastFrame() ?? '';
+				expect(frame).toContain('Please fix the build');
+				expect(frame).not.toContain('**fix**');
+				expect(frame).toContain('# Fixed');
+				expect(frame).toContain('• one');
+				expect(frame).toContain('▸ ✓ Ran npm run build');
+				expect(frame).not.toContain('BUILDOUTPUT');
+				unmount();
+			});
+
+			it('expands and collapses tool calls with e', async () => {
+				withLogs();
+				const { stdin, lastFrame, unmount } = await renderAt(140, 40);
+				stdin.write('j');
+				await tick();
+				stdin.write('j');
+				await tick();
+				stdin.write('e');
+				await tick();
+				expect(lastFrame()).toContain('▾ ✓ Ran npm run build');
+				expect(lastFrame()).toContain('BUILDOUTPUT');
+				stdin.write('e');
+				await tick();
+				expect(lastFrame()).not.toContain('BUILDOUTPUT');
+				unmount();
+			});
+
+			it('keeps the newest entries on screen in a short pane', async () => {
+				withLogs();
+				const { stdin, lastFrame, unmount } = await renderAt(100, 24);
+				stdin.write('j');
+				await tick();
+				stdin.write('j');
+				await tick();
+				stdin.write('e');
+				await tick();
+				const frame = lastFrame() ?? '';
+				expect(frame).toContain('# Fixed');
+				expect(frame.split('\n').length).toBeLessThanOrEqual(24);
+				unmount();
+			});
+		});
 	});
 });

@@ -26,6 +26,8 @@ export interface ShellProps {
 	agent: AgentRecord | undefined;
 	/** The tab the Conversation pane shows for `agent`; see `resolveActiveTab`. */
 	activeTabId?: string;
+	/** Show tool calls expanded in the Conversation pane. */
+	expandTools?: boolean;
 	/** The pane that has keyboard focus. Ignored for a pane that is hidden. */
 	focusedPane: PaneId;
 	/**
@@ -57,6 +59,7 @@ export function Shell({
 	agent,
 	activeTabId,
 	focusedPane,
+	expandTools,
 	overlay,
 	agentsPaneOverride,
 	agentsPaneWidth,
@@ -105,6 +108,7 @@ export function Shell({
 						width={size.columns - agentsWidth}
 						height={paneHeight}
 						focused={focusedPane === 'conversation' || !showAgents}
+						expandTools={expandTools}
 					/>
 				)}
 			</Box>

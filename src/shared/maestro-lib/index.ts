@@ -26,6 +26,12 @@ export * from './store/tab-display';
 // Provider display names (a provider this build does not know still gets a label)
 export { getAgentDisplayName } from '../agentMetadata';
 
+// One-line tool call descriptions ("Read src/App.tsx"), shared with the desktop activity feed
+export * from '../toolActivityLabel';
+
+// Timestamp display, shared so every surface shows a time the same way
+export { formatTimestamp } from '../formatters';
+
 // Launch and argument building
 export * from './launch/launch-plan';
 export * from './launch/prompt-delivery';

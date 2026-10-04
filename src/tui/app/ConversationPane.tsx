@@ -4,9 +4,11 @@ import {
 	aiTabsOf,
 	getAgentDisplayName,
 	getTabDisplayName,
+	transcriptOf,
 	type AITabRecord,
 	type AgentRecord,
 } from '../../shared/maestro-lib';
+import { TranscriptViewport } from '../transcript';
 
 /** The tab the pane shows: the TUI's pick, else the desktop's active tab, else the first. */
 export function resolveActiveTab(
@@ -28,18 +30,21 @@ export interface ConversationPaneProps {
 	width: number;
 	height: number;
 	focused: boolean;
+	/** Show tool calls with their input and output instead of one line each. */
+	expandTools?: boolean;
 }
 
-/**
- * The center pane. This task lays the pane out and titles it; the transcript
- * itself is drawn by the transcript renderer (`src/tui/transcript/`).
- */
+/** Lines the pane spends on its border (2), its title (1), and its subtitle (1). */
+const CONVERSATION_CHROME_LINES = 4;
+
+/** The center pane: a title, then the active tab's transcript as terminal markdown. */
 export function ConversationPane({
 	agent,
 	activeTabId,
 	width,
 	height,
 	focused,
+	expandTools = false,
 }: ConversationPaneProps): React.ReactElement {
 	const tabs = agent ? aiTabsOf(agent) : [];
 	const activeTab = resolveActiveTab(tabs, activeTabId, agent);
@@ -66,10 +71,24 @@ export function ConversationPane({
 				{title}
 			</Text>
 			{agent ? (
-				<Text dimColor>
-					{tabs.length} {tabs.length === 1 ? 'tab' : 'tabs'}
-					{agent.cwd ? ` · ${agent.cwd}` : ''}
-				</Text>
+				<>
+					<Text dimColor wrap="truncate-end">
+						{tabs.length} {tabs.length === 1 ? 'tab' : 'tabs'}
+						{agent.cwd ? ` · ${agent.cwd}` : ''}
+					</Text>
+					{activeTab ? (
+						<TranscriptViewport
+							// A new tab starts with a fresh window, not the previous tab's mounted entries.
+							key={activeTab.id}
+							entries={transcriptOf(activeTab)}
+							width={Math.max(1, width - 2)}
+							height={Math.max(1, height - CONVERSATION_CHROME_LINES)}
+							expandTools={expandTools}
+						/>
+					) : (
+						<Text dimColor>This agent has no tabs.</Text>
+					)}
+				</>
 			) : (
 				<Text dimColor>Select an agent to see its conversation.</Text>
 			)}

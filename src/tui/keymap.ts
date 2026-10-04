@@ -21,6 +21,7 @@ export type KeyAction =
 	| 'moveDown'
 	| 'open'
 	| 'tabSwitcher'
+	| 'toggleToolCalls'
 	| 'toggleAgentsPane'
 	| 'closeOverlay';
 
@@ -80,6 +81,12 @@ export const KEYMAP: readonly Binding[] = [
 		chords: [{ input: 'T' }],
 		contexts: ['main'],
 		description: 'Tab switcher for the selected agent',
+	},
+	{
+		action: 'toggleToolCalls',
+		chords: [{ input: 'e' }],
+		contexts: ['main'],
+		description: 'Expand or collapse tool calls',
 	},
 	{
 		action: 'toggleAgentsPane',
