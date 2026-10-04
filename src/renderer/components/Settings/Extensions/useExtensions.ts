@@ -267,13 +267,17 @@ export function useExtensions(): UseExtensionsResult {
 				// existing consent. Updating must never run uninstall/install.
 				const snap = await window.maestro.plugins.update(dir);
 				const updated = snap.plugins.find((plugin) => plugin.id === record.id);
+				const updateMessage =
+					updated?.manifest && updated.manifest.version !== record.manifest?.version
+						? `Updated ${updated.manifest.name} to v${updated.manifest.version}`
+						: 'Plugin updated from folder';
 				notifyToast({
-					color: 'green',
+					color: updated?.enabled === false ? 'orange' : 'green',
 					title: 'Extensions',
 					message:
-						updated?.manifest && updated.manifest.version !== record.manifest?.version
-							? `Updated ${updated.manifest.name} to v${updated.manifest.version}`
-							: 'Plugin updated from folder',
+						updated?.enabled === false
+							? `${updateMessage}. Plugin is disabled. Select Enable to review permissions for this version.`
+							: updateMessage,
 				});
 				await reload();
 			} catch (err) {

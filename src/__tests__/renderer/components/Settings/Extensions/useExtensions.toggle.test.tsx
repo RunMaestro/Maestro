@@ -296,6 +296,29 @@ describe('useExtensions.updatePlugin', () => {
 		expect(result.current.busyId).toBeNull();
 	});
 
+	it('explains how to renew consent when an update leaves the plugin disabled', async () => {
+		window.maestro.plugins.update = vi.fn().mockResolvedValue({
+			hostApiVersion: '1.0.0',
+			plugins: [{ ...record, enabled: false, manifest: { ...record.manifest, version: '2.0.0' } }],
+		});
+		window.maestro.dialog = {
+			selectFolder: vi.fn().mockResolvedValue('/local/demo-v2'),
+		} as unknown as typeof window.maestro.dialog;
+		window.maestro.fs.readFile = vi.fn().mockResolvedValue(JSON.stringify({ id: record.id }));
+		const { result } = renderHook(() => useExtensions());
+		await flushMountEffects();
+
+		await act(async () => result.current.updatePlugin(record));
+
+		expect(notifyToast).toHaveBeenCalledWith(
+			expect.objectContaining({
+				color: 'orange',
+				message:
+					'Updated Demo Plugin to v2.0.0. Plugin is disabled. Select Enable to review permissions for this version.',
+			})
+		);
+	});
+
 	it('does nothing after folder selection is cancelled', async () => {
 		const update = vi.fn();
 		window.maestro.plugins.update = update;

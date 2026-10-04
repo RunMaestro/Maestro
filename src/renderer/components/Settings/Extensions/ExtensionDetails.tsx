@@ -23,6 +23,7 @@ import type {
 	AggregatedContributions,
 	SettingContribution,
 } from '../../../../shared/plugins/contributions';
+import { collectContributions } from '../../../../shared/plugins/contributions';
 import type { PluginRecord } from '../../../../shared/plugins/plugin-registry';
 import {
 	CATEGORY_LABELS,
@@ -139,6 +140,18 @@ export function ExtensionDetails({
 	// pane are desktop-only, so there is nowhere else they could be offered.
 	const isWebLogin = !isPlugin && ext.flag === 'webLogin';
 
+	// A validated installed manifest describes what the Settings tab offers even
+	// while the plugin is disabled. This is discovery data only: active, verified
+	// contributions below remain the sole source of panel webviews and controls.
+	const declared =
+		isPlugin &&
+		record?.manifest &&
+		record.loadStatus === 'ok' &&
+		record.signature?.status !== 'invalid'
+			? collectContributions(record.manifest)
+			: null;
+	const declaredSettingsPanels =
+		declared?.panels.filter((panel) => panel.placement === 'settings') ?? [];
 	const pluginSettings: SettingContribution[] = contributions
 		? contributions.settings.filter((s) => s.pluginId === ext.id)
 		: [];
@@ -149,7 +162,13 @@ export function ExtensionDetails({
 	const settingsPanels =
 		isPlugin && ext.state === 'enabled' && record?.enabled && ext.loadStatus === 'ok'
 			? (contributions?.panels ?? []).filter(
-					(panel) => panel.pluginId === ext.id && panel.placement === 'settings'
+					(panel) =>
+						panel.pluginId === ext.id &&
+						panel.placement === 'settings' &&
+						declaredSettingsPanels.some(
+							(declaredPanel) =>
+								declaredPanel.id === panel.id && declaredPanel.entry === panel.entry
+						)
 				)
 			: [];
 	const canMountSettingsPanels =
@@ -161,7 +180,8 @@ export function ExtensionDetails({
 	const hasSettingsTab =
 		Boolean(settingsBody) ||
 		canConfigurePlugin ||
-		settingsPanels.length > 0 ||
+		Boolean(declared?.settings.length) ||
+		declaredSettingsPanels.length > 0 ||
 		isPianola ||
 		isWebLogin;
 
@@ -596,6 +616,30 @@ export function ExtensionDetails({
 			    Pianola's modal entry - whichever applies to this extension. */}
 			{activeSubTab === 'settings' && (
 				<div className="mt-5" data-testid="extension-settings-panel">
+					{isPlugin && declared && ext.state !== 'enabled' && (
+						<div
+							data-testid="extension-plugin-settings-status"
+							className="text-xs rounded-lg border p-3 mb-4"
+							style={{ borderColor: theme.colors.border, color: theme.colors.textDim }}
+						>
+							This plugin is installed but disabled. Select Enable to review permissions for this
+							version. Its settings will be available after approval.
+						</div>
+					)}
+					{isPlugin &&
+						declaredSettingsPanels.length > 0 &&
+						ext.state === 'enabled' &&
+						grants &&
+						!canMountSettingsPanels && (
+							<div
+								data-testid="extension-plugin-settings-status"
+								className="text-xs rounded-lg border p-3 mb-4"
+								style={{ borderColor: theme.colors.border, color: theme.colors.textDim }}
+							>
+								The settings panel is unavailable without current ui:panel permission. Disable and
+								then Enable this plugin to review its permissions.
+							</div>
+						)}
 					{canMountSettingsPanels && (
 						<div className="space-y-4 mb-5" data-testid="extension-plugin-settings-panels">
 							{settingsPanels.map((panel) => (

@@ -81,7 +81,7 @@ function renderDetails(overrides: Partial<React.ComponentProps<typeof ExtensionD
 	return render(<ExtensionDetails {...base} {...overrides} />);
 }
 
-function pluginRecord(id: string): PluginRecord {
+function pluginRecord(id: string, declaresPanel = false): PluginRecord {
 	return {
 		id,
 		source: `/plugins/${id}`,
@@ -96,11 +96,25 @@ function pluginRecord(id: string): PluginRecord {
 			tier: 1,
 			maestro: { minHostApi: '1.0.0' },
 			entry: 'main.js',
+			...(declaresPanel
+				? {
+						contributes: {
+							panels: [
+								{
+									id: 'config',
+									title: `${id} config`,
+									entry: 'panel.html',
+									placement: 'settings' as const,
+								},
+							],
+						},
+					}
+				: {}),
 		},
 	};
 }
 
-function pluginTile(id: string): UnifiedExtension {
+function pluginTile(id: string, declaresPanel = false): UnifiedExtension {
 	return {
 		key: `plugin:${id}`,
 		kind: 'plugin',
@@ -113,7 +127,7 @@ function pluginTile(id: string): UnifiedExtension {
 		trust: 'trusted',
 		version: '1.0.0',
 		loadStatus: 'ok',
-		record: pluginRecord(id),
+		record: pluginRecord(id, declaresPanel),
 	} as UnifiedExtension;
 }
 
@@ -306,7 +320,7 @@ describe('ExtensionDetails - plugin settings panels', () => {
 
 	it('shows Settings for a panel-only plugin and mounts only its own isolated panel', async () => {
 		const { container } = renderDetails({
-			ext: pluginTile('plugin-a'),
+			ext: pluginTile('plugin-a', true),
 			contributions: contributions([panel('plugin-a'), panel('plugin-b')]),
 			getGrants: vi.fn(async () => granted),
 		});
@@ -337,6 +351,80 @@ describe('ExtensionDetails - plugin settings panels', () => {
 		expect(screen.getByTestId('extension-uninstall')).toBeInTheDocument();
 	});
 
+	it('keeps a disabled installed panel discoverable without mounting plugin content', async () => {
+		const plugin = pluginTile('plugin-a', true);
+		plugin.state = 'installed';
+		plugin.record = { ...plugin.record!, enabled: false };
+		const onTogglePlugin = vi.fn();
+		const { container } = renderDetails({
+			ext: plugin,
+			contributions: contributions([]),
+			getGrants: vi.fn(async () => granted),
+			onTogglePlugin,
+		});
+		await waitFor(() =>
+			expect(screen.getByTestId('extension-subtab-settings')).toBeInTheDocument()
+		);
+		expect(screen.getByTestId('extension-plugin-settings-status')).toHaveTextContent(
+			'Select Enable to review permissions for this version'
+		);
+		expect(container.querySelector('webview')).toBeNull();
+		fireEvent.click(screen.getByTestId('extension-enable-toggle'));
+		expect(onTogglePlugin).toHaveBeenCalledExactlyOnceWith(plugin.record);
+	});
+
+	it('discovers a disabled declarative setting, but not an unrelated settings-less plugin', () => {
+		const plugin = pluginTile('plugin-a');
+		plugin.state = 'installed';
+		plugin.record = {
+			...plugin.record!,
+			enabled: false,
+			manifest: {
+				...plugin.record!.manifest!,
+				contributes: {
+					settings: [{ id: 'enabled', key: 'enabled', type: 'boolean', default: false }],
+				},
+			},
+		};
+		const view = renderDetails({ ext: plugin, contributions: contributions([]) });
+		expect(screen.getByTestId('extension-subtab-settings')).toBeInTheDocument();
+		expect(screen.getByTestId('extension-plugin-settings-status')).toBeInTheDocument();
+		view.rerender(
+			<ExtensionDetails
+				{...{
+					theme,
+					ext: pluginTile('plugin-b'),
+					contributions: contributions([]),
+					busy: false,
+					onTogglePlugin: vi.fn(),
+					onToggleBuiltin: vi.fn(),
+					onUninstall: vi.fn(),
+					onRevoke: vi.fn(),
+					getGrants: vi.fn(async () => ({ requested: [], granted: [] })),
+				}}
+			/>
+		);
+		expect(screen.queryByTestId('extension-subtab-settings')).not.toBeInTheDocument();
+	});
+
+	it('does not discover or mount panels from unloadable or invalid packages', () => {
+		for (const change of [
+			{ loadStatus: 'incompatible' as const },
+			{ loadStatus: 'invalid' as const, manifest: null },
+			{ signature: { status: 'invalid' as const } },
+		]) {
+			const plugin = pluginTile('plugin-a', true);
+			plugin.state = 'installed';
+			plugin.record = { ...plugin.record!, enabled: false, ...change };
+			plugin.loadStatus = plugin.record.loadStatus;
+			plugin.trust = plugin.record.signature?.status;
+			const view = renderDetails({ ext: plugin, contributions: contributions([]) });
+			expect(screen.queryByTestId('extension-subtab-settings')).not.toBeInTheDocument();
+			expect(view.container.querySelector('webview')).toBeNull();
+			view.unmount();
+		}
+	});
+
 	it('does not offer a local update for built-in features', () => {
 		renderDetails({ ext: builtinTile('usageStats', true), onUpdate: vi.fn() });
 		expect(screen.queryByTestId('extension-update')).not.toBeInTheDocument();
@@ -345,7 +433,7 @@ describe('ExtensionDetails - plugin settings panels', () => {
 	it('keeps contributed setting controls beside a plugin settings panel', async () => {
 		const pluginId = 'plugin-a';
 		renderDetails({
-			ext: pluginTile(pluginId),
+			ext: pluginTile(pluginId, true),
 			contributions: {
 				...contributions([panel(pluginId)]),
 				settings: [
@@ -369,7 +457,7 @@ describe('ExtensionDetails - plugin settings panels', () => {
 
 	it('detaches the panel when disabled or revoked', async () => {
 		const props = {
-			ext: pluginTile('plugin-a'),
+			ext: pluginTile('plugin-a', true),
 			contributions: contributions([panel('plugin-a')]),
 			getGrants: vi.fn(async () => granted),
 			onRevoke: vi.fn(),
@@ -380,7 +468,7 @@ describe('ExtensionDetails - plugin settings panels', () => {
 		expect(view.container.querySelector('webview')).toBeNull();
 		expect(props.onRevoke).toHaveBeenCalledWith('plugin-a');
 
-		const disabled = { ...pluginTile('plugin-a'), state: 'installed' as const };
+		const disabled = { ...pluginTile('plugin-a', true), state: 'installed' as const };
 		view.rerender(
 			<ExtensionDetails
 				{...{
@@ -401,7 +489,7 @@ describe('ExtensionDetails - plugin settings panels', () => {
 
 	it('does not mount a panel when ui:panel was never granted', async () => {
 		const { container } = renderDetails({
-			ext: pluginTile('plugin-a'),
+			ext: pluginTile('plugin-a', true),
 			contributions: contributions([panel('plugin-a')]),
 			getGrants: vi.fn(async () => ({ requested: [], granted: [] })),
 		});
@@ -409,6 +497,9 @@ describe('ExtensionDetails - plugin settings panels', () => {
 			expect(screen.getByTestId('extension-subtab-settings')).toBeInTheDocument()
 		);
 		expect(container.querySelector('webview')).toBeNull();
+		expect(screen.getByTestId('extension-plugin-settings-status')).toHaveTextContent(
+			'without current ui:panel permission'
+		);
 	});
 
 	it('drops an open panel after an out-of-band grant change', async () => {
@@ -420,7 +511,7 @@ describe('ExtensionDetails - plugin settings panels', () => {
 		let revoked = false;
 		try {
 			const { container } = renderDetails({
-				ext: pluginTile('plugin-a'),
+				ext: pluginTile('plugin-a', true),
 				contributions: contributions([panel('plugin-a')]),
 				getGrants: vi.fn(async () => (revoked ? { requested: [], granted: [] } : granted)),
 			});
@@ -445,7 +536,7 @@ describe('ExtensionDetails - plugin settings panels', () => {
 		);
 		const props = {
 			theme,
-			ext: pluginTile('plugin-a'),
+			ext: pluginTile('plugin-a', true),
 			contributions: contributions([panel('plugin-a'), panel('plugin-b')]),
 			busy: false,
 			onTogglePlugin: vi.fn(),
@@ -456,7 +547,7 @@ describe('ExtensionDetails - plugin settings panels', () => {
 		};
 		const view = render(<ExtensionDetails {...props} />);
 		await waitFor(() => expect(view.container.querySelector('webview')).not.toBeNull());
-		view.rerender(<ExtensionDetails {...props} ext={pluginTile('plugin-b')} />);
+		view.rerender(<ExtensionDetails {...props} ext={pluginTile('plugin-b', true)} />);
 		expect(view.container.querySelector('webview')).toBeNull();
 		await act(async () => {
 			resolveB(granted);
