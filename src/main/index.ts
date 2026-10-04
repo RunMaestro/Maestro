@@ -108,6 +108,7 @@ import { spawnAgent, detectAgent } from '../cli/services/agent-spawner';
 import { prepareMaestroSystemPromptCli } from '../cli/services/system-prompt';
 import { pluginToolRunIdentity } from './plugins/plugin-tool-run-identity';
 import { createPluginHeadlessAgentRunner } from './plugins/plugin-headless-agent-runner';
+import { generateTabName } from './ipc/handlers/tabNaming';
 import type { SessionInfo } from '../shared/types';
 import { executeCueNotify } from './cue/cue-notify-executor';
 import { reportCueAuthFailure } from './cue/cue-auth-detector';
@@ -2429,6 +2430,31 @@ app
 					'trusted',
 				dispatch: async (agentId, prompt) => dispatchPromptToSession(agentId, prompt),
 				sendAgent: runHeadlessAgent,
+				generateTitle: async (agentId, firstMessage, signal) => {
+					const session = (sessionsStore.get('sessions', []) as SessionInfo[]).find(
+						(candidate) => candidate.id === agentId
+					);
+					if (!session) throw new Error(`agents.generateTitle: no agent "${agentId}"`);
+					return generateTabName(
+						{
+							getProcessManager: () => processManager,
+							getAgentDetector: () => agentDetector,
+							agentConfigsStore,
+							settingsStore: store,
+						},
+						{
+							userMessage: firstMessage,
+							agentType: session.toolType,
+							cwd: session.cwd,
+							sessionSshRemoteConfig: session.sessionSshRemoteConfig,
+							sessionCustomEnvVars: session.customEnvVars,
+							enableMaestroP: session.enableMaestroP,
+							maestroPMode: session.maestroPMode,
+							maestroPPath: session.maestroPPath,
+						},
+						signal
+					);
+				},
 				providerSessions: pluginProviderSessions,
 				// Direct plugin dispatch is never user-present, so it requires the
 				// separate unattended consent on TOP of the interactive allowlist grant

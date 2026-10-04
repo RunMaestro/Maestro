@@ -1,4 +1,4 @@
-# Relay host contract (Host API 1.20.0)
+# Relay host contract (Host API 1.21.0)
 
 This is the Maestro host half of the Relay Discord integration. The Discord gateway, token UI, channel ownership, per-thread session mapping, and Pianola exceptions belong to the Relay plugin, not the host. The host never receives the bot token as a setting or agent environment variable.
 
@@ -47,6 +47,14 @@ The host also records every successful provider session ID in a private persiste
 A plugin stop or uninstall aborts outstanding sends. A provider result that arrives after cancellation is reported as failed and cannot recreate a purged session binding.
 
 Before spawning, the host checks the live `agents:dispatch` allowlist for the exact agent ID, separate unattended consent, trusted plugin signature, low/medium Pianola risk verdict, closed parameter schema, and the ActionGuard rate/concurrency/audit gate. The target is resolved against stored agents at execution time. `agents.dispatch` remains an asynchronous desktop dispatch acknowledgment.
+
+## First-message thread title (Host API 1.21.0)
+
+```ts
+maestro.agents.generateTitle(agentId, firstMessage): Promise<string | null>
+```
+
+This optional call runs Maestro's tab naming prompt, cheap turn settings, and title parser once on a bounded first message (maximum 4,096 characters). It uses a fresh ephemeral provider process without resuming or recording a conversation, and returns `null` if generation fails. The host resolves the provider, working directory, and active authentication configuration from the permitted Maestro agent ID. It applies the same `agents:dispatch` allowlist, unattended consent, trust, risk, and ActionGuard checks as `agents.send`. Plugin shutdown cancels the naming process. Relay can feature-detect this method while retaining `minHostApi: "1.20.0"` for its base progress integration.
 
 ## Outgoing plugin tools
 

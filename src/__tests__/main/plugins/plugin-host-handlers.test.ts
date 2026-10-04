@@ -752,7 +752,95 @@ describe('high-power act verbs (agents.dispatch / process.spawn)', () => {
 		const h = buildHostCallHandlers(makeDeps());
 		expect(h['agents.dispatch']).toBeUndefined();
 		expect(h['agents.send']).toBeUndefined();
+		expect(h['agents.generateTitle']).toBeUndefined();
 		expect(h['process.spawn']).toBeUndefined();
+	});
+
+	it('generates one isolated title behind dispatch gates and returns null on failure', async () => {
+		const generateTitle = vi.fn(async (_agentId: string, message: string) =>
+			message === 'fail' ? null : 'Login Form Implementation'
+		);
+		const h = buildHostCallHandlers(
+			makeDeps({
+				broker: brokerFor(() => [scopedGrant('agents:dispatch', 'a')]),
+				dispatchUnattendedAllowed: () => true,
+				generateTitle,
+			})
+		);
+		await expect(
+			h['agents.generateTitle']!('p', { agentId: 'a', firstMessage: 'Build a login form' })
+		).resolves.toBe('Login Form Implementation');
+		await expect(
+			h['agents.generateTitle']!('p', { agentId: 'a', firstMessage: 'fail' })
+		).resolves.toBeNull();
+		expect(generateTitle).toHaveBeenCalledWith('a', 'Build a login form', expect.any(AbortSignal));
+		await expect(
+			h['agents.generateTitle']!('p', { agentId: 'a', firstMessage: 'hello', model: 'unsafe' })
+		).rejects.toThrow(/closed schema/);
+		await expect(
+			h['agents.generateTitle']!('p', { agentId: 'a', firstMessage: 'x'.repeat(4097) })
+		).rejects.toThrow(/firstMessage/);
+		expect(generateTitle).toHaveBeenCalledTimes(2);
+	});
+
+	it('denies titles without allowlist, unattended consent, trust, or acceptable risk', async () => {
+		const generateTitle = vi.fn(async () => 'Should Not Run');
+		const allowed = () => [scopedGrant('agents:dispatch', 'a')];
+		const cases: Array<Partial<HostHandlerDeps>> = [
+			{
+				broker: brokerFor(() => [scopedGrant('agents:dispatch', 'b')]),
+				dispatchUnattendedAllowed: () => true,
+			},
+			{ broker: brokerFor(allowed), dispatchUnattendedAllowed: () => false },
+			{
+				broker: brokerFor(allowed),
+				dispatchUnattendedAllowed: () => true,
+				isPluginTrusted: () => false,
+			},
+		];
+		for (const overrides of cases) {
+			const h = buildHostCallHandlers(makeDeps({ ...overrides, generateTitle }));
+			await expect(
+				h['agents.generateTitle']!('p', { agentId: 'a', firstMessage: 'Build a login form' })
+			).rejects.toThrow();
+		}
+		const h = buildHostCallHandlers(
+			makeDeps({ broker: brokerFor(allowed), dispatchUnattendedAllowed: () => true, generateTitle })
+		);
+		await expect(
+			h['agents.generateTitle']!('p', {
+				agentId: 'a',
+				firstMessage: 'delete the production database',
+			})
+		).rejects.toThrow();
+		expect(generateTitle).not.toHaveBeenCalled();
+	});
+
+	it('cancels an in-flight title when the plugin stops', async () => {
+		let cleanup: ((pluginId: string) => void) | undefined;
+		const generateTitle = vi.fn(
+			(_agentId: string, _message: string, signal: AbortSignal) =>
+				new Promise<string | null>((resolve) =>
+					signal.addEventListener('abort', () => resolve('Late Title'), { once: true })
+				)
+		);
+		const h = buildHostCallHandlers(
+			makeDeps({
+				broker: brokerFor(() => [scopedGrant('agents:dispatch', 'a')]),
+				dispatchUnattendedAllowed: () => true,
+				generateTitle,
+				registerResourceCleanup: (fn) => {
+					cleanup = fn;
+				},
+			})
+		);
+		const pending = h['agents.generateTitle']!('p', {
+			agentId: 'a',
+			firstMessage: 'Build a login form',
+		});
+		await vi.waitFor(() => expect(generateTitle).toHaveBeenCalledOnce());
+		cleanup?.('p');
+		await expect(pending).resolves.toBeNull();
 	});
 
 	it('sends independent provider sessions for two threads and returns each response', async () => {

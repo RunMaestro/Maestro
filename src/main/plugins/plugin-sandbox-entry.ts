@@ -278,7 +278,8 @@ const BOOTSTRAP_SOURCE = String.raw`(function bootstrap(bridge) {
 						Object.keys(opts).forEach(function (key) { if (key !== 'onProgress') wireOpts[key] = opts[key]; });
 					}
 					return hostCall('agents.send', { agentId: agentId, prompt: prompt, opts: wireOpts }, opts && opts.onProgress);
-				}
+				},
+				generateTitle: function (agentId, firstMessage) { return hostCall('agents.generateTitle', { agentId: agentId, firstMessage: firstMessage }); }
 			}),
 			history: Object.freeze({
 				list: function (params) { return hostCall('history.list', params || {}); },

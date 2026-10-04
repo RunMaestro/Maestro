@@ -21,7 +21,8 @@
 import semver from 'semver';
 
 /**
- * The host API version this Maestro build implements. 1.20.0 adds invocation-
+ * The host API version this Maestro build implements. 1.21.0 adds isolated
+ * `agents.generateTitle` using Maestro's tab naming path. 1.20.0 adds invocation-
  * scoped public progress callbacks to `agents.send`, without a new grant.
  * 1.18.0 places settings panels in plugin details; 1.19.0 adds the isolated panel theme bridge.
  * 1.17.0 added
@@ -57,7 +58,7 @@ import semver from 'semver';
  * `ui:contribute` / `ui:panel` / `ui:render-unsafe` UI capabilities; 1.3.0
  * added `tools` + `keybindings`; 1.2.0 added `transcripts:read`.
  */
-export const HOST_API_VERSION = '1.20.0';
+export const HOST_API_VERSION = '1.21.0';
 
 /** Result of checking a plugin's declared host-API requirement. */
 export interface HostApiCompatibility {

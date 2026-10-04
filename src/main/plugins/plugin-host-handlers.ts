@@ -68,6 +68,7 @@ const MAX_BACKGROUND_SERVICES_PER_PLUGIN = 16;
 /** Closed-schema caps for the Phase-4 act verbs (agents.dispatch / process.spawn). */
 const MAX_DISPATCH_AGENT_ID_CHARS = 256;
 const MAX_DISPATCH_PROMPT_CHARS = 64 * 1024;
+const MAX_TITLE_MESSAGE_CHARS = 4 * 1024;
 const MAX_SPAWN_ARGS = 32;
 const MAX_SPAWN_ARG_CHARS = 4 * 1024;
 /** At most this many concurrently-open host sockets per plugin (net:connect).
@@ -303,6 +304,12 @@ export interface HostHandlerDeps {
 		sessionId: string | null;
 		error?: string;
 	}>;
+	/** Host-owned tab naming turn; resolves provider, cwd and auth by agent id. */
+	generateTitle?: (
+		agentId: string,
+		firstMessage: string,
+		signal: AbortSignal
+	) => Promise<string | null>;
 	/** Host-only persistent ownership ledger for resumable provider sessions. */
 	providerSessions?: PluginAgentSessionBindings;
 	/** Whether the plugin holds the separate, revocable UNATTENDED consent for
@@ -697,7 +704,7 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 	// net.send / net.close can re-authorize the still-held grant on every call, and
 	// we count entries per plugin to enforce MAX_SOCKETS_PER_PLUGIN.
 	const netSockets = new Map<string, { pluginId: string; url: string }>();
-	let pluginRunControllers: Map<string, Set<AbortController>> | undefined;
+	const pluginRunControllers = new Map<string, Set<AbortController>>();
 
 	/**
 	 * Re-authorize the symlink-resolved real path against the plugin's grant.
@@ -1473,10 +1480,9 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 	}
 	if (deps.sendAgent) {
 		const sendAgent = deps.sendAgent;
-		const activeRuns = new Map<string, Set<AbortController>>();
+		const activeRuns = pluginRunControllers;
 		// Joined into the existing resource cleanup below; a disabled/crashed
 		// plugin cannot leave its unattended provider run editing for 20 minutes.
-		pluginRunControllers = activeRuns;
 		handlers['agents.send'] = async (pluginId, params, context) => {
 			const p = asObject(params);
 			assertClosedSchema('agents.send', p, { agentId: true, prompt: true, opts: true });
@@ -1578,6 +1584,70 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 						runs.delete(controller);
 						if (runs.size === 0 && activeRuns.get(pluginId) === runs) {
 							activeRuns.delete(pluginId);
+						}
+					}
+				}
+			);
+		};
+	}
+	if (deps.generateTitle) {
+		const generateTitle = deps.generateTitle;
+		handlers['agents.generateTitle'] = async (pluginId, params) => {
+			const p = asObject(params);
+			assertClosedSchema('agents.generateTitle', p, { agentId: true, firstMessage: true });
+			const agentId = p.agentId;
+			const firstMessage = p.firstMessage;
+			if (
+				typeof agentId !== 'string' ||
+				!agentId.trim() ||
+				agentId.length > MAX_DISPATCH_AGENT_ID_CHARS
+			) {
+				throw new Error('agents.generateTitle: invalid agentId');
+			}
+			if (
+				typeof firstMessage !== 'string' ||
+				!firstMessage.trim() ||
+				firstMessage.length > MAX_TITLE_MESSAGE_CHARS
+			) {
+				throw new Error(
+					`agents.generateTitle: firstMessage must be 1-${MAX_TITLE_MESSAGE_CHARS} characters`
+				);
+			}
+			assertBrokerAllowed(deps, pluginId, 'agents.generateTitle', p);
+			if (!deps.dispatchUnattendedAllowed?.(pluginId, agentId)) {
+				throw new Error('agents.generateTitle requires separate unattended consent');
+			}
+			assertTrustedActVerb(deps, pluginId);
+			assertLowOrMediumRisk(firstMessage);
+			return underGuard(
+				deps.actionGuard,
+				pluginId,
+				'agents:dispatch',
+				`agent:${agentId}`,
+				async () => {
+					const controller = new AbortController();
+					const runs = pluginRunControllers.get(pluginId) ?? new Set<AbortController>();
+					runs.add(controller);
+					pluginRunControllers.set(pluginId, runs);
+					try {
+						const title = await generateTitle(agentId, firstMessage, controller.signal);
+						if (controller.signal.aborted) return null;
+						assertBrokerAllowed(deps, pluginId, 'agents.generateTitle', p);
+						if (!deps.dispatchUnattendedAllowed?.(pluginId, agentId)) {
+							throw new Error('agents.generateTitle requires separate unattended consent');
+						}
+						assertTrustedActVerb(deps, pluginId);
+						return title;
+					} catch (error) {
+						logger.warn(
+							`agents.generateTitle failed for agent ${agentId}: ${String(error)}`,
+							'[PluginAudit]'
+						);
+						return null;
+					} finally {
+						runs.delete(controller);
+						if (runs.size === 0 && pluginRunControllers.get(pluginId) === runs) {
+							pluginRunControllers.delete(pluginId);
 						}
 					}
 				}
@@ -1777,8 +1847,8 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 	// active powerSaveBlocker and an open fs.watch handle. Idempotent: a second
 	// call for the same plugin finds nothing left to release.
 	const cleanupPluginResources = (pluginId: string): void => {
-		for (const controller of pluginRunControllers?.get(pluginId) ?? []) controller.abort();
-		pluginRunControllers?.delete(pluginId);
+		for (const controller of pluginRunControllers.get(pluginId) ?? []) controller.abort();
+		pluginRunControllers.delete(pluginId);
 		for (const [watchId, entry] of fsWatchers) {
 			if (entry.pluginId !== pluginId) continue;
 			try {

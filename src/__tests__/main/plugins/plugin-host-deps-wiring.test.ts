@@ -102,6 +102,13 @@ describe('production host-handler deps wiring (FC2 - wired and gated)', () => {
 		}
 	});
 
+	it('wires title generation with the same unattended and host-owned naming path', () => {
+		expect(keys).toContain('generateTitle');
+		expect(keys).toContain('dispatchUnattendedAllowed');
+		expect(source).toMatch(/generateTitle: async \(agentId, firstMessage, signal\) =>/);
+		expect(source).toMatch(/return generateTabName\(/);
+	});
+
 	it('still wires the safe read-only deps (guard targets the right call)', () => {
 		expect(keys).toContain('listAgents');
 		expect(keys).toContain('broker');

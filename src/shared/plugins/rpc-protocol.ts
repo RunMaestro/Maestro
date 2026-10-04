@@ -50,6 +50,7 @@ export const HOST_API = {
 	'agents.get': { capability: 'agents:read' },
 	'agents.dispatch': { capability: 'agents:dispatch' },
 	'agents.send': { capability: 'agents:dispatch' },
+	'agents.generateTitle': { capability: 'agents:dispatch' },
 	'notifications.toast': { capability: 'notifications:toast' },
 	'settings.get': { capability: 'settings:read' },
 	'settings.set': { capability: 'settings:write' },
@@ -221,6 +222,7 @@ export function extractTarget(method: HostMethod, params: unknown): string | und
 			return typeof p.projectPath === 'string' ? p.projectPath : undefined;
 		case 'agents.dispatch':
 		case 'agents.send':
+		case 'agents.generateTitle':
 			// Allowlist scope target: the exact agent id the plugin wants to run.
 			// A missing/malformed id yields undefined, which an allowlist grant
 			// treats as deny (act verbs never match a target-less call).

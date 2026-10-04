@@ -93,6 +93,17 @@ const WALKER_SOURCE = String.raw`
 `;
 
 describe('plugin sandbox realm - escape regression (FC1)', () => {
+	it('routes generateTitle through the brokered host method', () => {
+		const bridge = makeBridge();
+		const realm = bootRealm(bridge);
+		realm.runScript("maestro.agents.generateTitle('agent-a', 'Build a login form');", 'title-call');
+		const request = JSON.parse((bridge.send as ReturnType<typeof vi.fn>).mock.calls[0][0]);
+		expect(request).toMatchObject({
+			method: 'agents.generateTitle',
+			params: { agentId: 'agent-a', firstMessage: 'Build a login form' },
+		});
+	});
+
 	it('constructor-chain escape throws for every value reachable from plugin code', () => {
 		const bridge = makeBridge();
 		const realm = bootRealm(bridge);

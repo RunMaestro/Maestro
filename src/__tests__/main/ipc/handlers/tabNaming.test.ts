@@ -7,7 +7,10 @@
 
 import { describe, it, expect, beforeEach, vi, Mock } from 'vitest';
 import { ipcMain } from 'electron';
-import { registerTabNamingHandlers } from '../../../../main/ipc/handlers/tabNaming';
+import {
+	generateTabName,
+	registerTabNamingHandlers,
+} from '../../../../main/ipc/handlers/tabNaming';
 import type { ProcessManager } from '../../../../main/process-manager';
 import type { AgentDetector, AgentConfig } from '../../../../main/agents';
 
@@ -214,6 +217,30 @@ describe('Tab Naming IPC Handlers', () => {
 				expect.any(Function)
 			);
 		});
+	});
+
+	it('cancels the shared naming turn and releases its process listeners', async () => {
+		const controller = new AbortController();
+		const pending = generateTabName(
+			{
+				getProcessManager: () => mockProcessManager as unknown as ProcessManager,
+				getAgentDetector: () => mockAgentDetector as unknown as AgentDetector,
+				agentConfigsStore: mockAgentConfigsStore as unknown as Parameters<
+					typeof generateTabName
+				>[0]['agentConfigsStore'],
+				settingsStore: mockSettingsStore as unknown as Parameters<
+					typeof generateTabName
+				>[0]['settingsStore'],
+			},
+			{ userMessage: 'Build a login form', agentType: 'claude-code', cwd: '/test/project' },
+			controller.signal
+		);
+		await vi.waitFor(() => expect(mockProcessManager.spawn).toHaveBeenCalledOnce());
+		controller.abort();
+		await expect(pending).resolves.toBeNull();
+		expect(mockProcessManager.kill).toHaveBeenCalledWith('tab-naming-mock-uuid-1234');
+		expect(mockProcessManager.off).toHaveBeenCalledWith('data', expect.any(Function));
+		expect(mockProcessManager.off).toHaveBeenCalledWith('exit', expect.any(Function));
 	});
 
 	describe('tabNaming:generateTabName', () => {
