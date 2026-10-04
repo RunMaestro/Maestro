@@ -40,6 +40,7 @@ function makeApi(
 		clear: vi.fn(async () => ({ deletedSegments: 0, freedBytes: 0 })),
 		requestAccessibility: vi.fn(async () => ({ platform, outcome: 'enabled' })),
 		query: vi.fn(),
+		knownApps: vi.fn(async () => [] as unknown[]),
 		onStatusChanged: vi.fn(() => () => {}),
 	};
 }
@@ -110,16 +111,17 @@ describe('ComputerHistorySection', () => {
 		await waitFor(() => expect(api.requestAccessibility).toHaveBeenCalled());
 	});
 
-	it('adds an exclusion rule', async () => {
+	it('hosts the shared capture editor: adding an app by id writes an ignore rule', async () => {
 		const api = makeApi('windows', null);
 		install(api);
 		render(<ComputerHistorySection theme={mockTheme} />);
-		const input = await screen.findByPlaceholderText('com.apple.MobileSMS');
+		expect(await screen.findByTestId('computer-history-capture-editor')).toBeTruthy();
+		const input = await screen.findByPlaceholderText(/Exclude an app by id or name/);
 		fireEvent.change(input, { target: { value: 'com.apple.MobileSMS' } });
-		fireEvent.click(screen.getByText('Exclude'));
-		await waitFor(() => expect(api.addRule).toHaveBeenCalledWith('app', 'com.apple.MobileSMS'));
-		// An app rule that matches nothing seen recently is flagged.
-		expect(await screen.findByText(/matches no app seen recently/)).toBeTruthy();
+		fireEvent.keyDown(input, { key: 'Enter' });
+		await waitFor(() =>
+			expect(api.addRule).toHaveBeenCalledWith('app', 'com.apple.MobileSMS', 'ignore')
+		);
 	});
 
 	it('clearing all history goes through a destructive confirm', async () => {

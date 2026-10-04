@@ -903,8 +903,12 @@ export const COMPUTER_HISTORY_FIRST_PARTY_PLUGIN: FirstPartyPluginDefinition = {
 				body: 'macOS asks once for Accessibility access for Maestro. On Linux, Maestro offers to turn on the desktop accessibility bus. Windows needs nothing.',
 			},
 			{
-				title: 'Exclude what you never want recorded',
-				body: 'Password managers, private browser windows, and Maestro itself are always excluded. Add your own app and domain rules from this tile or with `maestro-cli computer-history rules add`.',
+				title: 'Choose which apps are recorded',
+				body: "Record every app except the ones you switch off, or only the apps you switch on. Password managers, private browser windows, and Maestro itself are always excluded. Set it from this tile, the viewer's Capture tab, or `maestro-cli computer-history rules`.",
+			},
+			{
+				title: 'Explore your history',
+				body: 'Open the viewer from the command palette, the hamburger menu, or its keyboard shortcut: an activity timeline by app, everything you typed and selected, search, and digests.',
 			},
 		],
 		notes: [

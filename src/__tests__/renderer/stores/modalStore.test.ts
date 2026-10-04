@@ -1280,6 +1280,16 @@ describe('modalStore', () => {
 			expect(useModalStore.getState().isOpen('usageDashboard')).toBe(true);
 		});
 
+		it('the Computer History viewer is a destination', () => {
+			const store = useModalStore.getState();
+			store.openModal('directorNotes');
+			getModalActions().setComputerHistoryOpen(true);
+			expect(useModalStore.getState().isOpen('computerHistory')).toBe(true);
+			expect(useModalStore.getState().isOpen('directorNotes')).toBe(false);
+			getModalActions().setComputerHistoryOpen(false);
+			expect(useModalStore.getState().isOpen('computerHistory')).toBe(false);
+		});
+
 		it('toggleModal into a destination evicts the other destination', () => {
 			const store = useModalStore.getState();
 			store.openModal('settings');
@@ -1341,6 +1351,7 @@ describe('modalStore', () => {
 			expect([...DESTINATION_SHORTCUT_IDS].sort()).toEqual(
 				[
 					'agentSessions',
+					'computerHistory',
 					'directorNotes',
 					'openCue',
 					'openMemoryViewer',

@@ -424,6 +424,8 @@ export type ModalId =
 	| 'cueYamlEditor'
 	// Pianola (autonomous manager)
 	| 'pianolaModal'
+	// Computer History viewer
+	| 'computerHistory'
 	// Concerto (agent-composed views)
 	| 'concertoStage';
 
@@ -464,6 +466,7 @@ export const DESTINATION_MODALS: ReadonlySet<ModalId> = new Set<ModalId>([
 	'cueModal',
 	'marketplace',
 	'processMonitor',
+	'computerHistory',
 	// Main-panel destinations - these replace the whole center workspace, so an
 	// overlay left open on top of one hides it completely.
 	'logViewer',
@@ -1217,6 +1220,10 @@ export function getModalActions() {
 		setPianolaModalOpen: (open: boolean) =>
 			open ? openModal('pianolaModal') : closeModal('pianolaModal'),
 
+		// Computer History viewer (Encore: computerHistory, desktop only)
+		setComputerHistoryOpen: (open: boolean) =>
+			open ? openModal('computerHistory') : closeModal('computerHistory'),
+
 		// Concerto stage. This one flag is the whole truth about whether the stage
 		// is up: the movement store reads it back rather than keeping its own
 		// `hidden` copy, so the hotkey, the palette, the CLI and an agent adding a
@@ -1328,6 +1335,7 @@ export function useModalActions() {
 	const cueYamlEditorOpen = useModalStore(selectModalOpen('cueYamlEditor'));
 	const cueYamlEditorData = useModalStore(selectModalData('cueYamlEditor'));
 	const pianolaModalOpen = useModalStore(selectModalOpen('pianolaModal'));
+	const computerHistoryOpen = useModalStore(selectModalOpen('computerHistory'));
 
 	// Get stable actions
 	const actions = getModalActions();
@@ -1542,6 +1550,7 @@ export function useModalActions() {
 
 		// Pianola Modal (autonomous manager)
 		pianolaModalOpen,
+		computerHistoryOpen,
 
 		// Lightbox ref replacements (now stored as data)
 		lightboxIsGroupChat: lightboxData?.isGroupChat ?? false,

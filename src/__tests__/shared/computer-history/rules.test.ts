@@ -88,6 +88,31 @@ describe('dropReason', () => {
 		expect(dropReason(at('not a url'), { rules })).toBeNull();
 	});
 
+	it('include mode records only apps with a record rule; ignore still wins; no app fails closed', () => {
+		const include: CaptureRule[] = [
+			{ id: 'r', match: 'app', value: 'slack', action: 'record' },
+			{ id: 'n', match: 'app', value: 'com.apple.notes', action: 'record' },
+			{ id: 'i', match: 'app', value: 'com.apple.notes', action: 'ignore' },
+		];
+		const ctx = { rules: include, appMode: 'include' as const };
+		expect(dropReason(ev({}), ctx)).toBeNull();
+		expect(dropReason(ev({ app: { id: 'com.apple.Safari', name: 'Safari', pid: 1 } }), ctx)).toBe(
+			'not-included'
+		);
+		expect(dropReason(ev({ app: { id: 'com.apple.Notes', name: 'Notes', pid: 1 } }), ctx)).toBe(
+			'app-rule'
+		);
+		expect(dropReason(ev({ app: undefined }), ctx)).toBe('not-included');
+		expect(dropReason(ev({}), { rules: [], appMode: 'include' })).toBe('not-included');
+		// Exclude mode ignores record rules entirely.
+		expect(
+			dropReason(ev({ app: { id: 'com.apple.Safari', name: 'Safari', pid: 1 } }), {
+				rules: include,
+				appMode: 'exclude',
+			})
+		).toBeNull();
+	});
+
 	it('hostMatchesDomain', () => {
 		expect(hostMatchesDomain('a.b.c', 'b.c')).toBe(true);
 		expect(hostMatchesDomain('ab.c', 'b.c')).toBe(false);
@@ -113,6 +138,11 @@ describe('rule input', () => {
 	it('rule ids are deterministic', () => {
 		expect(ruleIdFor('app', 'x')).toBe(ruleIdFor('app', 'x'));
 		expect(ruleIdFor('app', 'x')).not.toBe(ruleIdFor('domain', 'x'));
+		// Ignore ids keep their original shape; record ids differ so one app can
+		// sit on both lists.
+		expect(ruleIdFor('app', 'x', 'ignore')).toBe(ruleIdFor('app', 'x'));
+		expect(ruleIdFor('app', 'x', 'record')).toMatch(/^record-app-/);
+		expect(ruleIdFor('app', 'x', 'record')).not.toBe(ruleIdFor('app', 'x'));
 	});
 });
 
@@ -124,6 +154,28 @@ describe('config', () => {
 		expect(d.snapshots).toBe(true);
 		expect(d.digests).toEqual({ enabled: false, agentId: null, rollup: true });
 		expect(d.pausedUntil).toBeNull();
+		expect(d.appMode).toBe('exclude');
+	});
+
+	it('normalizes the app mode and record rules (app-only), deduping per action', () => {
+		const c = normalizeConfig({
+			appMode: 'include',
+			rules: [
+				{ match: 'app', value: 'Slack', action: 'record' },
+				{ match: 'app', value: 'slack', action: 'record' },
+				{ match: 'app', value: 'Slack', action: 'ignore' },
+				{ match: 'domain', value: 'x.example.com', action: 'record' },
+			],
+		});
+		expect(c.appMode).toBe('include');
+		expect(c.rules.map((r) => `${r.action}:${r.match}:${r.value}`)).toEqual([
+			'record:app:slack',
+			'ignore:app:slack',
+			// A domain cannot be on the record-only list; it degrades to ignore.
+			'ignore:domain:x.example.com',
+		]);
+		expect(normalizeConfig({ appMode: 'whatever' }).appMode).toBe('exclude');
+		expect(applyConfigPatch(c, { appMode: 'exclude' }).appMode).toBe('exclude');
 	});
 
 	it('normalizes junk field by field', () => {

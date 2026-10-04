@@ -42,15 +42,25 @@ import {
 	type ComputerHistoryConfigPatch,
 } from '../../shared/computer-history/config';
 import { builtInBlockedApps, observedPlatformFor } from '../../shared/computer-history/exclusions';
-import { appRuleMatches, dropReason, validateRuleInput } from '../../shared/computer-history/rules';
+import {
+	appRuleMatches,
+	appRuleValues,
+	dropReason,
+	validateRuleInput,
+} from '../../shared/computer-history/rules';
 import { redactObservedEvent, validateObservedEvent } from '../../shared/computer-history/sanitize';
 import { buildSchemaDoc } from '../../shared/computer-history/schemaDoc';
 import {
 	listDigests,
 	queryEvents,
+	readActivity,
 	readIndex,
+	readRecentDigests,
 	summarizeApps,
+	type ActivitySummary,
+	type AppActivity,
 	type AppUsage,
+	type DigestWithBody,
 	type QueryOptions,
 	type QueryResult,
 	type TimeRange,
@@ -63,8 +73,10 @@ import type {
 	RuleAddResult,
 	SeenApp,
 } from '../../shared/computer-history/status';
+import type { DigestKind } from '../../shared/computer-history/paths';
 import type {
 	CaptureRule,
+	CaptureRuleAction,
 	CaptureRuleMatch,
 	ComputerHistoryConfig,
 	HelperCommand,
@@ -125,6 +137,9 @@ const MAX_QUERY_LIMIT = 2000;
 const CONFIG_QUEUE_KEY = 'computer-history:config';
 const MAX_SEEN_APPS = 500;
 const RULE_PREVIEW_DAYS = 14;
+/** How far back the capture app list looks for apps to offer. */
+const KNOWN_APPS_DAYS = 30;
+const MAX_DIGEST_LIMIT = 200;
 
 export class ComputerHistoryService {
 	readonly storeDir: string;
@@ -281,7 +296,13 @@ export class ComputerHistoryService {
 			this.eventsDropped += 1;
 			return false;
 		}
-		if (dropReason(event, { rules: config.rules, blockPids: this.blockPids() })) {
+		if (
+			dropReason(event, {
+				rules: config.rules,
+				appMode: config.appMode,
+				blockPids: this.blockPids(),
+			})
+		) {
 			this.eventsDropped += 1;
 			return false;
 		}
@@ -365,7 +386,9 @@ export class ComputerHistoryService {
 		const before = this.getConfig();
 		const next = applyConfigPatch(before, patch);
 		await this.saveConfig(next);
-		if (next.snapshots !== before.snapshots) this.configureHelper();
+		if (next.snapshots !== before.snapshots || next.appMode !== before.appMode) {
+			this.configureHelper();
+		}
 		if (
 			this.running &&
 			(next.retentionDays < before.retentionDays || next.maxBytes < before.maxBytes)
@@ -461,23 +484,34 @@ export class ComputerHistoryService {
 	}
 
 	/**
-	 * Add an ignore rule. Returns the rule (the existing one when already
-	 * present) and, for app rules, the recently seen apps it matches by id or
-	 * name, so a rule that matches nothing can be flagged to the user.
+	 * Add a rule: `ignore` (never record this app/domain) or `record` (apps
+	 * only: the include-mode allow list). Returns the rule (the existing one
+	 * when already present) and, for app rules, the recently seen apps it
+	 * matches by id or name, so a rule that matches nothing can be flagged.
 	 */
-	async addRule(match: CaptureRuleMatch, value: string): Promise<RuleAddResult> {
+	async addRule(
+		match: CaptureRuleMatch,
+		value: string,
+		action: CaptureRuleAction = 'ignore'
+	): Promise<RuleAddResult> {
 		if (match !== 'app' && match !== 'domain') throw new Error(`Unknown rule type "${match}"`);
+		if (action !== 'ignore' && action !== 'record') throw new Error(`Unknown action "${action}"`);
+		if (action === 'record' && match !== 'app') {
+			throw new Error('Only apps can be on the record-only list');
+		}
 		const error = validateRuleInput(match, value);
 		if (error) throw new Error(error);
 		const normalized = normalizeRuleValue(match, value);
 		const config = this.getConfig();
-		const existing = config.rules.find((r) => r.match === match && r.value === normalized);
+		const existing = config.rules.find(
+			(r) => r.action === action && r.match === match && r.value === normalized
+		);
 		if (existing) return { rule: existing, matches: await this.appsMatching(existing) };
 		const rule: CaptureRule = {
-			id: ruleIdFor(match, normalized),
+			id: ruleIdFor(match, normalized, action),
 			match,
 			value: normalized,
-			action: 'ignore',
+			action,
 		};
 		config.rules = [...config.rules, rule];
 		await this.saveConfig(config);
@@ -507,7 +541,9 @@ export class ComputerHistoryService {
 			const since = this.now() - RULE_PREVIEW_DAYS * 86_400_000;
 			for (const entry of await readIndex(this.storeDir)) {
 				if (Date.parse(entry.end) < since) continue;
-				for (const id of Object.keys(entry.apps ?? {})) if (!seen.has(id)) seen.set(id, undefined);
+				for (const id of Object.keys(entry.apps ?? {})) {
+					if (!seen.get(id)) seen.set(id, entry.names?.[id]);
+				}
 			}
 		} catch {
 			// An unreadable index only narrows the preview.
@@ -519,14 +555,20 @@ export class ComputerHistoryService {
 		return out;
 	}
 
-	/** Remove a rule by id or by value. Returns the removed rule, or null. */
-	async removeRule(idOrValue: string): Promise<CaptureRule | null> {
+	/**
+	 * Remove a rule by id or by value. A value can sit on both lists, so
+	 * `action` narrows a by-value removal (ignore rules first otherwise).
+	 * Returns the removed rule, or null.
+	 */
+	async removeRule(idOrValue: string, action?: CaptureRuleAction): Promise<CaptureRule | null> {
 		const config = this.getConfig();
 		const q = idOrValue.trim();
 		const lower = q.toLowerCase();
+		const byValue = (want: CaptureRuleAction) =>
+			config.rules.find((r) => r.action === want && r.value === normalizeRuleValue(r.match, lower));
 		const rule =
 			config.rules.find((r) => r.id === q) ??
-			config.rules.find((r) => r.value === normalizeRuleValue(r.match, lower));
+			(action ? byValue(action) : (byValue('ignore') ?? byValue('record')));
 		if (!rule) return null;
 		config.rules = config.rules.filter((r) => r !== rule);
 		await this.saveConfig(config);
@@ -642,6 +684,41 @@ export class ComputerHistoryService {
 		return summarizeApps(this.storeDir, range);
 	}
 
+	/** Per-window and per-app activity (index-backed; cheap at any range). */
+	async activity(range: TimeRange): Promise<ActivitySummary> {
+		const summary = await readActivity(this.storeDir, range);
+		// Index lines written before names were indexed carry only ids.
+		for (const app of summary.apps) {
+			if (app.name === app.id) app.name = this.seenApps.get(app.id) || app.id;
+		}
+		return summary;
+	}
+
+	/**
+	 * Apps to offer in the capture app list: everything recorded in the last
+	 * KNOWN_APPS_DAYS plus apps seen this session (including ones rules kept
+	 * off disk, which is exactly the app an include list needs to name).
+	 */
+	async knownApps(): Promise<AppActivity[]> {
+		const since = this.now() - KNOWN_APPS_DAYS * 86_400_000;
+		const { apps } = await this.activity({ sinceMs: since });
+		const ids = new Set(apps.map((a) => a.id));
+		const blocked = new Set(builtInBlockedApps(this.platform));
+		for (const [id, name] of this.seenApps) {
+			if (ids.has(id) || blocked.has(id.toLowerCase())) continue;
+			apps.push({ id, name: name || id, events: 0, activeMs: 0, lastWindowMs: 0 });
+		}
+		return apps;
+	}
+
+	/** Newest digests (with bodies) overlapping `range`. */
+	async digestsWithBodies(
+		options: TimeRange & { kind?: DigestKind; limit?: number }
+	): Promise<DigestWithBody[]> {
+		const limit = Math.min(options.limit ?? 50, MAX_DIGEST_LIMIT);
+		return readRecentDigests(this.storeDir, { ...options, limit });
+	}
+
 	// ------------------------------------------------------------------
 	// Internals
 	// ------------------------------------------------------------------
@@ -653,12 +730,15 @@ export class ComputerHistoryService {
 	/** Send the helper its exclusions and caps (and re-assert pause). */
 	private configureHelper(): void {
 		const config = this.getConfig();
-		const appRules = config.rules.filter((r) => r.match === 'app').map((r) => r.value);
+		const ignored = appRuleValues(config.rules, 'ignore');
 		this.supervisor.send({
 			cmd: 'configure',
-			blockApps: [...new Set([...builtInBlockedApps(this.platform), ...appRules])],
+			blockApps: [...new Set([...builtInBlockedApps(this.platform), ...ignored])],
 			blockPids: this.blockPids(),
-			blockDomains: config.rules.filter((r) => r.match === 'domain').map((r) => r.value),
+			blockDomains: config.rules
+				.filter((r) => r.match === 'domain' && r.action === 'ignore')
+				.map((r) => r.value),
+			...(config.appMode === 'include' ? { allowApps: appRuleValues(config.rules, 'record') } : {}),
 			snapshots: config.snapshots,
 			maxTextBytes: MAX_TEXT_BYTES,
 			maxSnapshotBytes: MAX_SNAPSHOT_BYTES,

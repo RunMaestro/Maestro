@@ -76,6 +76,13 @@ describe('SegmentWriter', () => {
 			apps: { 'com.tinyspeck.slackmacgap': 1, 'com.google.chrome': 1 },
 		});
 		expect(idx[0].bytes).toBeGreaterThan(0);
+		// Names and foreground time ride the index line, so the viewer never
+		// has to open closed segments to list apps.
+		expect(idx[0].names).toEqual({
+			'com.tinyspeck.slackmacgap': 'App',
+			'com.google.chrome': 'App',
+		});
+		expect(idx[0].activeMs).toEqual({ 'com.tinyspeck.slackmacgap': 1000, 'com.google.chrome': 0 });
 		expect(closed).toHaveBeenCalledWith(expect.objectContaining({ events: 2 }), T0);
 		expect(writer.currentInfo()?.file).toBe('segments/2026-10-03/1430Z.jsonl');
 	});

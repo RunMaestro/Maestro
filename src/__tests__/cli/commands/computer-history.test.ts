@@ -33,6 +33,9 @@ import {
 	computerHistoryPause,
 	computerHistoryQuery,
 	computerHistoryRulesAdd,
+	computerHistoryRulesList,
+	computerHistoryRulesMode,
+	computerHistoryRulesRemove,
 	computerHistoryStatus,
 } from '../../../cli/commands/computer-history';
 import { sendSimpleCommand } from '../../../cli/services/session-command';
@@ -211,9 +214,79 @@ describe('writes (over WS)', () => {
 				action: 'rules-add',
 				match: 'domain',
 				value: 'bank.example.com',
+				ruleAction: 'ignore',
 			},
 			'computer_history_command_result'
 		);
+	});
+
+	it('rules add --include puts an app on the record-only list; domains cannot be included', async () => {
+		await expect(
+			computerHistoryRulesAdd({ domain: 'bank.example.com', include: true, json: true })
+		).rejects.toThrow('__exit__');
+		vi.mocked(sendSimpleCommand).mockResolvedValue({
+			success: true,
+			rule: { id: 'record-app-1', match: 'app', value: 'com.apple.notes', action: 'record' },
+			matches: [{ id: 'com.apple.Notes', name: 'Notes' }],
+		});
+		await computerHistoryRulesAdd({ app: 'com.apple.Notes', include: true, json: true });
+		expect(sendSimpleCommand).toHaveBeenLastCalledWith(
+			{
+				type: 'computer_history_command',
+				action: 'rules-add',
+				match: 'app',
+				value: 'com.apple.Notes',
+				ruleAction: 'record',
+			},
+			'computer_history_command_result'
+		);
+		vi.mocked(sendSimpleCommand).mockResolvedValue({
+			success: true,
+			rule: { id: 'record-app-1', match: 'app', value: 'com.apple.notes', action: 'record' },
+		});
+		await computerHistoryRulesRemove('com.apple.notes', { include: true, json: true });
+		expect(sendSimpleCommand).toHaveBeenLastCalledWith(
+			{
+				type: 'computer_history_command',
+				action: 'rules-remove',
+				id: 'com.apple.notes',
+				ruleAction: 'record',
+			},
+			'computer_history_command_result'
+		);
+	});
+
+	it('rules mode reads the mode from disk, validates, and sets it through config-set', async () => {
+		await computerHistoryRulesMode(undefined, { json: true });
+		expect(lastJson()).toEqual({ success: true, appMode: 'exclude' });
+		await expect(computerHistoryRulesMode('sometimes', { json: true })).rejects.toThrow('__exit__');
+		vi.mocked(sendSimpleCommand).mockResolvedValue({
+			success: true,
+			config: { appMode: 'include', rules: [] },
+		});
+		await computerHistoryRulesMode('Include', { json: true });
+		expect(sendSimpleCommand).toHaveBeenLastCalledWith(
+			{ type: 'computer_history_command', action: 'config-set', patch: { appMode: 'include' } },
+			'computer_history_command_result'
+		);
+		expect(lastJson()).toEqual({ success: true, appMode: 'include' });
+	});
+
+	it('rules list reports the app mode alongside the rules', async () => {
+		fs.mkdirSync(store(), { recursive: true });
+		fs.writeFileSync(
+			store('config.json'),
+			JSON.stringify({
+				appMode: 'include',
+				rules: [{ match: 'app', value: 'Slack', action: 'record' }],
+			})
+		);
+		await computerHistoryRulesList({ json: true });
+		expect(lastJson()).toMatchObject({
+			success: true,
+			appMode: 'include',
+			rules: [expect.objectContaining({ action: 'record', value: 'slack' })],
+		});
 	});
 
 	it('clear needs --since or --all, and resolves --since to an instant', async () => {

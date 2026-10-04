@@ -45,6 +45,7 @@ import { openUrl } from '../utils/openUrl';
 import { logger } from '../utils/logger';
 import { resolveFileReference } from '../utils/fileLinks/resolve';
 import { getBasename } from '../../shared/formatters';
+import { canOpenComputerHistory } from '../utils/computerHistoryAvailability';
 
 // Lazy-loaded components (rarely-used heavy modals)
 const SettingsModal = lazy(() =>
@@ -70,6 +71,9 @@ const CueYamlEditor = lazy(() =>
 );
 const PianolaModal = lazy(() =>
 	import('./PianolaModal').then((m) => ({ default: m.PianolaModal }))
+);
+const ComputerHistoryViewer = lazy(() =>
+	import('./ComputerHistory').then((m) => ({ default: m.ComputerHistoryViewer }))
 );
 
 /**
@@ -263,6 +267,8 @@ function AppStandaloneModalsInner({
 		setCueModalOpen,
 		pianolaModalOpen,
 		setPianolaModalOpen,
+		computerHistoryOpen,
+		setComputerHistoryOpen,
 		cueYamlEditorOpen,
 		cueYamlEditorSessionId,
 		cueYamlEditorProjectRoot,
@@ -462,6 +468,13 @@ function AppStandaloneModalsInner({
 			{encoreFeatures.pianola && pianolaModalOpen && (
 				<Suspense fallback={null}>
 					<PianolaModal theme={theme} onClose={() => setPianolaModalOpen(false)} />
+				</Suspense>
+			)}
+
+			{/* --- COMPUTER HISTORY VIEWER (lazy-loaded, Encore Feature, desktop only) --- */}
+			{canOpenComputerHistory(encoreFeatures) && computerHistoryOpen && (
+				<Suspense fallback={null}>
+					<ComputerHistoryViewer theme={theme} onClose={() => setComputerHistoryOpen(false)} />
 				</Suspense>
 			)}
 

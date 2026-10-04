@@ -7,7 +7,14 @@
  * field by field instead of breaking the recorder.
  */
 
-import type { CaptureRule, CaptureRuleMatch, ComputerHistoryConfig } from './types';
+import { APP_CAPTURE_MODES } from './types';
+import type {
+	AppCaptureMode,
+	CaptureRule,
+	CaptureRuleAction,
+	CaptureRuleMatch,
+	ComputerHistoryConfig,
+} from './types';
 
 export const DEFAULT_RETENTION_DAYS = 90;
 export const GIB = 1024 * 1024 * 1024;
@@ -29,6 +36,7 @@ export function defaultComputerHistoryConfig(): ComputerHistoryConfig {
 		retentionDays: DEFAULT_RETENTION_DAYS,
 		maxBytes: DEFAULT_MAX_BYTES,
 		snapshots: true,
+		appMode: 'exclude',
 		rules: [],
 		pausedUntil: null,
 		digests: { enabled: false, agentId: null, rollup: true },
@@ -63,22 +71,43 @@ function normalizeRule(raw: unknown): CaptureRule | null {
 	if (typeof r.value !== 'string') return null;
 	const value = normalizeRuleValue(match as CaptureRuleMatch, r.value);
 	if (!value) return null;
-	const id = typeof r.id === 'string' && r.id.trim() ? r.id.trim() : ruleIdFor(match, value);
-	return { id, match: match as CaptureRuleMatch, value, action: 'ignore' };
+	// `record` exists only for apps (a domain allow list would be meaningless:
+	// the app is what decides whether anything is read at all).
+	const action: CaptureRuleAction = r.action === 'record' && match === 'app' ? 'record' : 'ignore';
+	const id =
+		typeof r.id === 'string' && r.id.trim() ? r.id.trim() : ruleIdFor(match, value, action);
+	return { id, match: match as CaptureRuleMatch, value, action };
 }
 
 /**
  * Deterministic id for a rule, so the same rule added twice (or written by
  * hand without an id) gets the same id and `rules remove <id>` is stable.
+ * Ignore rules keep the original `<match>-<hash>` shape; record rules hash a
+ * different key and read `record-app-<hash>`, so an app can sit on both lists.
  */
-export function ruleIdFor(match: string, value: string): string {
+export function ruleIdFor(
+	match: string,
+	value: string,
+	action: CaptureRuleAction = 'ignore'
+): string {
 	let h = 0x811c9dc5;
-	const s = `${match}:${value}`;
+	const s = action === 'record' ? `record:${match}:${value}` : `${match}:${value}`;
 	for (let i = 0; i < s.length; i++) {
 		h ^= s.charCodeAt(i);
 		h = Math.imul(h, 0x01000193) >>> 0;
 	}
-	return `${match}-${h.toString(36)}`;
+	return action === 'record' ? `record-${match}-${h.toString(36)}` : `${match}-${h.toString(36)}`;
+}
+
+/** Same rule identity everywhere: action, match, and normalized value. */
+export function ruleKey(rule: Pick<CaptureRule, 'action' | 'match' | 'value'>): string {
+	return `${rule.action}:${rule.match}:${rule.value}`;
+}
+
+export function normalizeAppMode(value: unknown): AppCaptureMode {
+	return APP_CAPTURE_MODES.includes(value as AppCaptureMode)
+		? (value as AppCaptureMode)
+		: 'exclude';
 }
 
 function normalizePausedUntil(value: unknown): string | null {
@@ -99,7 +128,7 @@ export function normalizeConfig(raw: unknown): ComputerHistoryConfig {
 		for (const item of r.rules) {
 			const rule = normalizeRule(item);
 			if (!rule) continue;
-			const key = `${rule.match}:${rule.value}`;
+			const key = ruleKey(rule);
 			if (seen.has(key)) continue;
 			seen.add(key);
 			rules.push(rule);
@@ -121,6 +150,7 @@ export function normalizeConfig(raw: unknown): ComputerHistoryConfig {
 		),
 		maxBytes: clampInt(r.maxBytes, MIN_MAX_BYTES, MAX_MAX_BYTES, d.maxBytes),
 		snapshots: typeof r.snapshots === 'boolean' ? r.snapshots : d.snapshots,
+		appMode: normalizeAppMode(r.appMode),
 		rules,
 		pausedUntil: normalizePausedUntil(r.pausedUntil),
 		// The 6-hour roll-up rides along with digests unless explicitly off.
@@ -133,6 +163,7 @@ export interface ComputerHistoryConfigPatch {
 	retentionDays?: number;
 	maxBytes?: number;
 	snapshots?: boolean;
+	appMode?: AppCaptureMode;
 	digests?: { enabled?: boolean; agentId?: string | null; rollup?: boolean };
 }
 
@@ -146,6 +177,7 @@ export function applyConfigPatch(
 		...(patch.retentionDays !== undefined ? { retentionDays: patch.retentionDays } : {}),
 		...(patch.maxBytes !== undefined ? { maxBytes: patch.maxBytes } : {}),
 		...(patch.snapshots !== undefined ? { snapshots: patch.snapshots } : {}),
+		...(patch.appMode !== undefined ? { appMode: patch.appMode } : {}),
 		digests: {
 			...config.digests,
 			...(patch.digests?.enabled !== undefined ? { enabled: patch.digests.enabled } : {}),

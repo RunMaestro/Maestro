@@ -104,7 +104,13 @@ describe('computer_history_command handler', () => {
 			success: true,
 			rule: { id: 'r1' },
 		});
+		expect(service.addRule).toHaveBeenLastCalledWith('domain', 'bank.example.com', 'ignore');
+		await send({ action: 'rules-add', match: 'app', value: 'Notes', ruleAction: 'record' });
+		expect(service.addRule).toHaveBeenLastCalledWith('app', 'Notes', 'record');
 		expect(await send({ action: 'rules-remove', id: 'zzz' })).toMatchObject({ success: false });
+		expect(service.removeRule).toHaveBeenLastCalledWith('zzz', undefined);
+		await send({ action: 'rules-remove', id: 'Notes', ruleAction: 'record' });
+		expect(service.removeRule).toHaveBeenLastCalledWith('Notes', 'record');
 		expect(await send({ action: 'clear', sinceMs: 5 })).toMatchObject({
 			success: true,
 			deletedSegments: 2,

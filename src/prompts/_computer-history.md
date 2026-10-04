@@ -69,13 +69,15 @@ maestro-cli computer-history pause --for 1h       # or no --for: until resumed
 maestro-cli computer-history resume
 maestro-cli computer-history rules add --app com.apple.MobileSMS
 maestro-cli computer-history rules add --domain bank.example.com
+maestro-cli computer-history rules mode include       # record ONLY the record-only list (or: exclude)
+maestro-cli computer-history rules add --app com.apple.Notes --include
 maestro-cli computer-history rules list
 maestro-cli computer-history rules remove <id>
 maestro-cli computer-history clear --since 1h     # or --all
 maestro-cli computer-history config --retention-days 30 --max-gb 10 --snapshots off
 ```
 
-These need the Maestro app running and Computer History enabled. Password managers, private browser windows, password fields, and Maestro itself are always excluded and cannot be re-enabled.
+These need the Maestro app running and Computer History enabled. Password managers, private browser windows, password fields, and Maestro itself are always excluded and cannot be re-enabled. In include mode (`rules list` shows the mode), apps off the record-only list are never recorded, so missing activity is not evidence the user was idle. To show the user their history, `maestro-cli open computer-history` opens the viewer.
 
 ## Permissions
 

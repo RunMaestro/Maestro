@@ -1603,11 +1603,19 @@ Resume recording
 
 ## `maestro-cli computer-history rules`
 
-Apps and domains that are never recorded
+Which apps are recorded (exclude or include mode) and domains never recorded
 
 ## `maestro-cli computer-history rules list`
 
-List user rules (built-in exclusions always apply)
+Show the app mode and user rules (built-in exclusions always apply)
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+## `maestro-cli computer-history rules mode [mode]`
+
+Show or set the app mode: exclude (record every app except ignored ones) or include (record only the record-only list)
 
 | Option   | Description                    | Default |
 | -------- | ------------------------------ | ------- |
@@ -1615,21 +1623,23 @@ List user rules (built-in exclusions always apply)
 
 ## `maestro-cli computer-history rules add`
 
-Never record an app (by app id) or a domain (and its subdomains)
+Never record an app or a domain (and its subdomains); with --include, add an app to the record-only list
 
-| Option              | Description                                                 | Default |
-| ------------------- | ----------------------------------------------------------- | ------- |
-| `--app <id>`        | App id: macOS bundle id, Windows exe name, Linux desktop id | -       |
-| `--domain <domain>` | Domain, e.g. bank.example.com                               | -       |
-| `--json`            | Output as JSON (for scripting)                              | -       |
+| Option              | Description                                                               | Default |
+| ------------------- | ------------------------------------------------------------------------- | ------- |
+| `--app <id>`        | App id or exact name: macOS bundle id, Windows exe name, Linux desktop id | -       |
+| `--domain <domain>` | Domain, e.g. bank.example.com                                             | -       |
+| `--include`         | Add the app to the record-only list used in include mode                  | -       |
+| `--json`            | Output as JSON (for scripting)                                            | -       |
 
 ## `maestro-cli computer-history rules remove <id>`
 
 Remove a rule by id (or by its app id / domain)
 
-| Option   | Description                    | Default |
-| -------- | ------------------------------ | ------- |
-| `--json` | Output as JSON (for scripting) | -       |
+| Option      | Description                                                 | Default |
+| ----------- | ----------------------------------------------------------- | ------- |
+| `--include` | When removing by value, remove it from the record-only list | -       |
+| `--json`    | Output as JSON (for scripting)                              | -       |
 
 ## `maestro-cli computer-history clear`
 

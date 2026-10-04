@@ -330,27 +330,47 @@ pub struct AppFilter {
     apps: HashSet<String>,
     pids: HashSet<u32>,
     domains: Vec<String>,
+    /// "Record only these apps" (include mode). None = every app not blocked.
+    allow: Option<HashSet<String>>,
+}
+
+fn normalize_app_set(apps: &[String]) -> HashSet<String> {
+    apps.iter()
+        .map(|a| a.trim().to_lowercase())
+        .filter(|a| !a.is_empty())
+        .collect()
 }
 
 impl AppFilter {
     pub fn new(apps: &[String], pids: &[u32], domains: &[String]) -> Self {
         AppFilter {
-            apps: apps
-                .iter()
-                .map(|a| a.trim().to_lowercase())
-                .filter(|a| !a.is_empty())
-                .collect(),
+            apps: normalize_app_set(apps),
             pids: pids.iter().copied().collect(),
             domains: domains.iter().filter_map(|d| normalize_domain(d)).collect(),
+            allow: None,
         }
     }
 
+    /// Switch to include mode: only apps on `allow` (by id or display name,
+    /// case-insensitive) may be observed. Blocks still win over the list.
+    pub fn with_allow(mut self, allow: Option<&[String]>) -> Self {
+        self.allow = allow.map(normalize_app_set);
+        self
+    }
+
     /// Blocked by pid, or by a rule equal (case-insensitive) to the app's id
-    /// or its display name, so `--app Slack` works as well as a bundle id.
+    /// or its display name, so `--app Slack` works as well as a bundle id. In
+    /// include mode, every app missing from the allow list is blocked too.
     pub fn is_blocked(&self, app: &ObservedApp) -> bool {
+        let id = app.id.trim().to_lowercase();
+        let name = app.name.trim().to_lowercase();
         self.pids.contains(&app.pid)
-            || self.apps.contains(&app.id.trim().to_lowercase())
-            || self.apps.contains(&app.name.trim().to_lowercase())
+            || self.apps.contains(&id)
+            || self.apps.contains(&name)
+            || self
+                .allow
+                .as_ref()
+                .is_some_and(|allow| !allow.contains(&id) && !allow.contains(&name))
     }
 
     pub fn has_domain_rules(&self) -> bool {
@@ -512,7 +532,8 @@ struct Config {
 impl From<ConfigureCommand> for Config {
     fn from(c: ConfigureCommand) -> Self {
         Config {
-            filter: AppFilter::new(&c.block_apps, &c.block_pids, &c.block_domains),
+            filter: AppFilter::new(&c.block_apps, &c.block_pids, &c.block_domains)
+                .with_allow(c.allow_apps.as_deref()),
             snapshots: c.snapshots,
             max_text_bytes: c.max_text_bytes.max(MIN_TEXT_CAP),
             max_snapshot_bytes: c.max_snapshot_bytes.max(MIN_TEXT_CAP),
@@ -1565,6 +1586,48 @@ mod tests {
     }
 
     #[test]
+    fn include_mode_blocks_every_app_not_on_the_allow_list() {
+        let allow = vec!["Slack".to_string(), "com.apple.Notes".to_string()];
+        let filter = AppFilter::new(&["slack".into()], &[], &[]).with_allow(Some(&allow));
+        let notes = ObservedApp {
+            id: "com.apple.Notes".into(),
+            name: "Notes".into(),
+            pid: 1,
+            aumid: None,
+        };
+        let slack = ObservedApp {
+            id: "com.tinyspeck.slackmacgap".into(),
+            name: "Slack".into(),
+            pid: 2,
+            aumid: None,
+        };
+        let safari = ObservedApp {
+            id: "com.apple.Safari".into(),
+            name: "Safari".into(),
+            pid: 3,
+            aumid: None,
+        };
+        assert!(!filter.is_blocked(&notes));
+        // A block wins over the allow list.
+        assert!(filter.is_blocked(&slack));
+        assert!(filter.is_blocked(&safari));
+        // An empty allow list records nothing.
+        let empty = AppFilter::new(&[], &[], &[]).with_allow(Some(&[]));
+        assert!(empty.is_blocked(&notes));
+
+        let cfg = parse_command(r#"{"cmd":"configure","allowApps":["com.apple.Notes"]}"#).unwrap();
+        let Command::Configure(c) = cfg else {
+            panic!("expected configure")
+        };
+        assert_eq!(c.allow_apps, Some(vec!["com.apple.Notes".to_string()]));
+        let (mut engine, _obs) = configured(c);
+        activate(&mut engine, "com.apple.Safari", 4, "News", 0);
+        assert!(engine.drain().is_empty());
+        activate(&mut engine, "com.apple.Notes", 5, "Groceries", 100);
+        assert_eq!(kinds(&engine.drain()), vec![EventKind::AppActivated]);
+    }
+
+    #[test]
     fn parses_every_command() {
         let cfg = parse_command(
             r#"{"cmd":"configure","blockApps":["com.1password.1password"],"blockPids":[1234],
@@ -1578,6 +1641,7 @@ mod tests {
                 block_apps: vec!["com.1password.1password".into()],
                 block_pids: vec![1234],
                 block_domains: vec!["bank.example.com".into()],
+                allow_apps: None,
                 snapshots: false,
                 max_text_bytes: 100,
                 max_snapshot_bytes: 200,

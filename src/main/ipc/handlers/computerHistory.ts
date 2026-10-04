@@ -16,7 +16,12 @@ import { getComputerHistoryService } from '../../computer-history';
 import type { ComputerHistoryService } from '../../computer-history';
 import { compileGrep } from '../../../shared/computer-history/reader';
 import type { ComputerHistoryConfigPatch } from '../../../shared/computer-history/config';
-import type { CaptureRuleMatch, StoredEventKind } from '../../../shared/computer-history/types';
+import type { DigestKind } from '../../../shared/computer-history/paths';
+import type {
+	CaptureRuleAction,
+	CaptureRuleMatch,
+	StoredEventKind,
+} from '../../../shared/computer-history/types';
 
 const LOG_CONTEXT = '[ComputerHistory]';
 
@@ -28,6 +33,12 @@ export interface ComputerHistoryQueryRequest {
 	kinds?: StoredEventKind[];
 	grep?: string;
 	limit?: number;
+}
+
+/** A time range over IPC (ms since epoch; either end open). */
+export interface ComputerHistoryRangeRequest {
+	sinceMs?: number;
+	untilMs?: number;
 }
 
 function requireService(): ComputerHistoryService {
@@ -71,14 +82,16 @@ export function registerComputerHistoryHandlers(): void {
 	);
 	ipcMain.handle(
 		'computerHistory:addRule',
-		withIpcErrorLogging(opts('addRule'), async (match: CaptureRuleMatch, value: string) =>
-			requireService().addRule(match, value)
+		withIpcErrorLogging(
+			opts('addRule'),
+			async (match: CaptureRuleMatch, value: string, action?: CaptureRuleAction) =>
+				requireService().addRule(match, value, action ?? 'ignore')
 		)
 	);
 	ipcMain.handle(
 		'computerHistory:removeRule',
-		withIpcErrorLogging(opts('removeRule'), async (idOrValue: string) =>
-			requireService().removeRule(idOrValue)
+		withIpcErrorLogging(opts('removeRule'), async (idOrValue: string, action?: CaptureRuleAction) =>
+			requireService().removeRule(idOrValue, action)
 		)
 	);
 	ipcMain.handle(
@@ -106,5 +119,30 @@ export function registerComputerHistoryHandlers(): void {
 				limit: r.limit,
 			});
 		})
+	);
+	ipcMain.handle(
+		'computerHistory:activity',
+		withIpcErrorLogging(opts('activity'), async (range: ComputerHistoryRangeRequest) =>
+			requireService().activity({ sinceMs: range?.sinceMs, untilMs: range?.untilMs })
+		)
+	);
+	ipcMain.handle(
+		'computerHistory:knownApps',
+		withIpcErrorLogging(opts('knownApps'), async () => requireService().knownApps())
+	);
+	ipcMain.handle(
+		'computerHistory:digests',
+		withIpcErrorLogging(
+			opts('digests'),
+			async (request: ComputerHistoryRangeRequest & { kind?: DigestKind; limit?: number }) => {
+				const r = request ?? {};
+				return requireService().digestsWithBodies({
+					sinceMs: r.sinceMs,
+					untilMs: r.untilMs,
+					kind: r.kind === '15m' || r.kind === '6h' ? r.kind : undefined,
+					limit: r.limit,
+				});
+			}
+		)
 	);
 }

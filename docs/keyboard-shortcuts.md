@@ -65,6 +65,7 @@ Tips and gotchas:
 | Maestro Symphony              | `Opt+Cmd+Y`             | `Alt+Ctrl+Y`              |
 | Director's Notes              | `Cmd+Shift+O`           | `Ctrl+Shift+O`            |
 | Maestro Cue                   | `Opt+Q`                 | `Alt+Q`                   |
+| Computer History              | `Ctrl+Cmd+H`            | `Ctrl+Win+H`              |
 | Show/Hide Concerto Stage      | `Opt+Cmd+C`             | `Alt+Ctrl+C`              |
 | Show/Hide All Cadenzas        | `Opt+Cmd+Shift+C`       | `Alt+Ctrl+Shift+C`        |
 | Edit Image from Clipboard     | `Opt+Cmd+E`             | `Alt+Ctrl+E`              |

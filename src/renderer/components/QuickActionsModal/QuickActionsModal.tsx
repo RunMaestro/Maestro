@@ -28,6 +28,7 @@ import { useListNavigation } from '../../hooks';
 import { useUIStore } from '../../stores/uiStore';
 import { useSidebarNavStore } from '../../stores/sidebarNavStore';
 import { useSettingsStore, selectIsLeaderboardRegistered } from '../../stores/settingsStore';
+import { canOpenComputerHistory } from '../../utils/computerHistoryAvailability';
 import { useBatchStore, selectActiveBatchSessionIds } from '../../stores/batchStore';
 import { useFileExplorerStore } from '../../stores/fileExplorerStore';
 import { useFeedbackDraftStore } from '../../stores/feedbackDraftStore';
@@ -255,6 +256,10 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	const concertoStageFloating = useSettingsStore((s) => s.concertoStageFloating);
 	const setConcertoStageFloating = useSettingsStore((s) => s.setConcertoStageFloating);
 	const toggleConcertoStage = useCallback(() => getModalActions().toggleConcertoStage(), []);
+	const computerHistoryAvailable = useSettingsStore((s) =>
+		canOpenComputerHistory(s.encoreFeatures)
+	);
+	const openComputerHistory = useCallback(() => getModalActions().setComputerHistoryOpen(true), []);
 	const toggleConcertoStageFloating = useCallback(
 		() => setConcertoStageFloating(!concertoStageFloating),
 		[concertoStageFloating, setConcertoStageFloating]
@@ -730,6 +735,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			onOpenDirectorNotes,
 			onOpenMaestroCue,
 			onOpenPianola,
+			onOpenComputerHistory: computerHistoryAvailable ? openComputerHistory : undefined,
 			onConfigureCue,
 			onOpenLastDocumentGraph,
 			onOpenCurrentFileInGraph,
@@ -751,6 +757,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 				openSymphony: shortcuts.openSymphony,
 				directorNotes: shortcuts.directorNotes,
 				openCue: shortcuts.openCue,
+				computerHistory: shortcuts.computerHistory,
 				fuzzyFileSearch: shortcuts.fuzzyFileSearch,
 				editClipboardImage: shortcuts.editClipboardImage,
 			},

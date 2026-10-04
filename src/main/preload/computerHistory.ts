@@ -10,7 +10,13 @@
 
 import { ipcRenderer } from 'electron';
 import type { ComputerHistoryConfigPatch } from '../../shared/computer-history/config';
-import type { QueryResult } from '../../shared/computer-history/reader';
+import type { DigestKind } from '../../shared/computer-history/paths';
+import type {
+	ActivitySummary,
+	AppActivity,
+	DigestWithBody,
+	QueryResult,
+} from '../../shared/computer-history/reader';
 import type {
 	AccessibilityRequestResult,
 	ComputerHistoryStatus,
@@ -18,6 +24,7 @@ import type {
 } from '../../shared/computer-history/status';
 import type {
 	CaptureRule,
+	CaptureRuleAction,
 	CaptureRuleMatch,
 	ComputerHistoryConfig,
 	StoredEventKind,
@@ -30,6 +37,11 @@ export interface ComputerHistoryQueryRequest {
 	kinds?: StoredEventKind[];
 	grep?: string;
 	limit?: number;
+}
+
+export interface ComputerHistoryRangeRequest {
+	sinceMs?: number;
+	untilMs?: number;
 }
 
 /** Creates the Computer History API object for contextBridge exposure. */
@@ -45,10 +57,14 @@ export function createComputerHistoryApi() {
 		resume: (): Promise<ComputerHistoryStatus> => ipcRenderer.invoke('computerHistory:resume'),
 		listRules: (): Promise<{ rules: CaptureRule[]; builtIn: string[] }> =>
 			ipcRenderer.invoke('computerHistory:listRules'),
-		addRule: (match: CaptureRuleMatch, value: string): Promise<RuleAddResult> =>
-			ipcRenderer.invoke('computerHistory:addRule', match, value),
-		removeRule: (idOrValue: string): Promise<CaptureRule | null> =>
-			ipcRenderer.invoke('computerHistory:removeRule', idOrValue),
+		addRule: (
+			match: CaptureRuleMatch,
+			value: string,
+			action: CaptureRuleAction = 'ignore'
+		): Promise<RuleAddResult> =>
+			ipcRenderer.invoke('computerHistory:addRule', match, value, action),
+		removeRule: (idOrValue: string, action?: CaptureRuleAction): Promise<CaptureRule | null> =>
+			ipcRenderer.invoke('computerHistory:removeRule', idOrValue, action),
 		clear: (options: {
 			sinceMs?: number;
 			all?: boolean;
@@ -58,6 +74,15 @@ export function createComputerHistoryApi() {
 			ipcRenderer.invoke('computerHistory:requestAccessibility'),
 		query: (request: ComputerHistoryQueryRequest): Promise<QueryResult> =>
 			ipcRenderer.invoke('computerHistory:query', request),
+		/** Per-15-minute-window and per-app activity (index-backed). */
+		activity: (range: ComputerHistoryRangeRequest): Promise<ActivitySummary> =>
+			ipcRenderer.invoke('computerHistory:activity', range),
+		/** Apps recorded in the last 30 days plus apps seen this session. */
+		knownApps: (): Promise<AppActivity[]> => ipcRenderer.invoke('computerHistory:knownApps'),
+		/** Newest digests (agent-written, untrusted) with their markdown bodies. */
+		digests: (
+			request: ComputerHistoryRangeRequest & { kind?: DigestKind; limit?: number }
+		): Promise<DigestWithBody[]> => ipcRenderer.invoke('computerHistory:digests', request),
 		/** Fires on every recorder state change (start, stop, pause, helper status). */
 		onStatusChanged: (handler: (status: ComputerHistoryStatus) => void): (() => void) => {
 			const wrapped = (_event: Electron.IpcRendererEvent, status: ComputerHistoryStatus) =>

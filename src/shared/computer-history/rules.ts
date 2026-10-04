@@ -9,19 +9,33 @@
 
 import { ALL_BUILT_IN_BLOCKED_APPS, PRIVATE_WINDOW_MARKERS } from './exclusions';
 import { normalizeRuleValue } from './config';
-import type { CaptureRule, CaptureRuleMatch, ObservedEvent } from './types';
+import type {
+	AppCaptureMode,
+	CaptureRule,
+	CaptureRuleAction,
+	CaptureRuleMatch,
+	ObservedEvent,
+} from './types';
 
 export type DropReason =
 	| 'built-in-app'
 	| 'app-rule'
+	| 'not-included'
 	| 'blocked-pid'
 	| 'private-window'
 	| 'domain-rule';
 
 export interface RuleContext {
 	rules: readonly CaptureRule[];
+	/** Defaults to `exclude` (record everything not ignored). */
+	appMode?: AppCaptureMode;
 	/** Process ids that are never recorded (Maestro's own processes). */
 	blockPids?: readonly number[];
+}
+
+/** Values of the app rules carrying `action`, in rule order. */
+export function appRuleValues(rules: readonly CaptureRule[], action: CaptureRuleAction): string[] {
+	return rules.filter((r) => r.match === 'app' && r.action === action).map((r) => r.value);
 }
 
 /**
@@ -66,13 +80,33 @@ export function dropReason(event: ObservedEvent, ctx: RuleContext): DropReason |
 	if (event.app && ctx.blockPids?.includes(event.app.pid)) return 'blocked-pid';
 	if (
 		event.app &&
-		ctx.rules.some((r) => r.match === 'app' && appRuleMatches(r.value, event.app!))
+		ctx.rules.some(
+			(r) => r.match === 'app' && r.action === 'ignore' && appRuleMatches(r.value, event.app!)
+		)
 	) {
 		return 'app-rule';
 	}
+	// Include mode fails closed: an event with no app, or an app off the
+	// list, is dropped. An empty list records nothing.
+	if (
+		ctx.appMode === 'include' &&
+		!(
+			event.app &&
+			ctx.rules.some(
+				(r) => r.match === 'app' && r.action === 'record' && appRuleMatches(r.value, event.app!)
+			)
+		)
+	) {
+		return 'not-included';
+	}
 	if (isPrivateWindowTitle(event.window?.title)) return 'private-window';
 	const host = urlHost(event.window?.url);
-	if (host && ctx.rules.some((r) => r.match === 'domain' && hostMatchesDomain(host, r.value))) {
+	if (
+		host &&
+		ctx.rules.some(
+			(r) => r.match === 'domain' && r.action === 'ignore' && hostMatchesDomain(host, r.value)
+		)
+	) {
 		return 'domain-rule';
 	}
 	return null;

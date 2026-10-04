@@ -60,11 +60,14 @@ digests/YYYY-MM-DD/${ROLLUP_HOURS}h-HHMMZ.md  ${ROLLUP_HOURS}-hour roll-up of th
 One JSON object per line, written when a segment closes:
 
 \`\`\`json
-{"file":"segments/2026-10-03/1415Z.jsonl","start":"2026-10-03T14:15:02.118Z","end":"2026-10-03T14:29:58.007Z","events":312,"bytes":81234,"apps":{"com.tinyspeck.slackmacgap":120}}
+{"file":"segments/2026-10-03/1415Z.jsonl","start":"2026-10-03T14:15:02.118Z","end":"2026-10-03T14:29:58.007Z","events":312,"bytes":81234,"apps":{"com.tinyspeck.slackmacgap":120},"names":{"com.tinyspeck.slackmacgap":"Slack"},"activeMs":{"com.tinyspeck.slackmacgap":540000}}
 \`\`\`
 
 \`start\`/\`end\` are the first and last event timestamps. \`apps\` counts events
-per app id. If a file appears twice, the last line wins.
+per app id, \`names\` gives each app's display name, and \`activeMs\` is the
+foreground time per app inside the window (each event's app owns the gap to
+the next event, capped at 5 minutes). \`names\` and \`activeMs\` are absent on
+older lines. If a file appears twice, the last line wins.
 
 ## Event lines
 
@@ -121,7 +124,10 @@ applies to them.
 - Private / incognito browser windows.
 - Password managers (1Password, Bitwarden, Dashlane, LastPass, KeePassXC,
   Keychain Access, Windows Credential Manager, Seahorse, KWallet) and Maestro.
-- Apps and domains the user excluded with rules (see \`config.json\`).
+- Apps and domains the user excluded with rules (see \`config.json\`). With
+  \`appMode: "include"\`, every app NOT on the user's record-only list
+  (\`rules\` with \`action: "record"\`) is excluded too, so a gap in the
+  record is not evidence the user was idle.
 - Screenshots. There is no OCR.
 
 ## Querying

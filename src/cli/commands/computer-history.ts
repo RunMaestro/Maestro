@@ -35,7 +35,13 @@ import {
 	type ComputerHistoryStatus,
 	type SeenApp,
 } from '../../shared/computer-history/status';
-import type { StoredEvent, StoredEventKind } from '../../shared/computer-history/types';
+import { APP_CAPTURE_MODES } from '../../shared/computer-history/types';
+import type {
+	AppCaptureMode,
+	CaptureRule,
+	StoredEvent,
+	StoredEventKind,
+} from '../../shared/computer-history/types';
 import { isCliServerRunning } from '../../shared/cli-server-discovery';
 import { formatDurationCompact } from '../../shared/duration';
 import { formatSize } from '../../shared/formatters';
@@ -506,33 +512,62 @@ export async function computerHistoryRulesList(options: JsonOption): Promise<voi
 	const config = await readStoreConfig(storeDir());
 	const builtIn = builtInBlockedApps(observedPlatformFor(process.platform));
 	if (options.json) {
-		console.log(JSON.stringify({ success: true, rules: config.rules, builtIn }));
+		console.log(
+			JSON.stringify({ success: true, appMode: config.appMode, rules: config.rules, builtIn })
+		);
 		return;
+	}
+	console.log(`App mode: ${describeAppMode(config.appMode)}`);
+	const recordRules = config.rules.filter((r) => r.action === 'record');
+	if (config.appMode === 'include' && recordRules.length === 0) {
+		console.error(
+			formatWarning(
+				'The record-only list is empty, so nothing is recorded. Add apps with "rules add --app <id> --include".'
+			)
+		);
 	}
 	if (config.rules.length === 0) {
 		console.log('No user rules.');
 	} else {
-		for (const r of config.rules) console.log(`${r.id}  ignore ${r.match} ${r.value}`);
+		for (const r of config.rules) {
+			const inactive = r.action === 'record' && config.appMode !== 'include';
+			console.log(
+				`${r.id}  ${r.action} ${r.match} ${r.value}${inactive ? '  (inactive: app mode is exclude)' : ''}`
+			);
+		}
 	}
 	console.log(
 		`Always excluded on this platform: ${builtIn.length} password-manager and Maestro app ids, private browser windows, and password fields.`
 	);
 }
 
+function describeAppMode(mode: AppCaptureMode): string {
+	return mode === 'include'
+		? 'include (record ONLY apps on the record-only list)'
+		: 'exclude (record every app except ignored ones)';
+}
+
 export async function computerHistoryRulesAdd(
-	options: JsonOption & { app?: string; domain?: string }
+	options: JsonOption & { app?: string; domain?: string; include?: boolean }
 ): Promise<void> {
 	ensureComputerHistoryEnabled(options.json);
 	if (!!options.app === !!options.domain) {
 		failCommand('Specify exactly one of --app <id> or --domain <domain>', options.json);
 	}
+	if (options.include && !options.app) {
+		failCommand('--include takes an --app; domains can only be ignored', options.json);
+	}
 	const match = options.app ? 'app' : 'domain';
 	const result = await writeCommand(
 		'rules-add',
-		{ match, value: options.app ?? options.domain },
+		{
+			match,
+			value: options.app ?? options.domain,
+			ruleAction: options.include ? 'record' : 'ignore',
+		},
 		options.json
 	);
-	const rule = result.rule as { id: string; match: string; value: string };
+	const rule = result.rule as CaptureRule;
 	const matches = (Array.isArray(result.matches) ? result.matches : []) as SeenApp[];
 	const matchesNothing = rule.match === 'app' && matches.length === 0;
 	if (options.json) {
@@ -541,7 +576,23 @@ export async function computerHistoryRulesAdd(
 		);
 		return;
 	}
-	console.log(formatSuccess(`Ignoring ${rule.match} ${rule.value} (rule ${rule.id}).`));
+	console.log(
+		formatSuccess(
+			rule.action === 'record'
+				? `Added ${rule.value} to the record-only list (rule ${rule.id}).`
+				: `Ignoring ${rule.match} ${rule.value} (rule ${rule.id}).`
+		)
+	);
+	if (rule.action === 'record') {
+		const config = await readStoreConfig(storeDir());
+		if (config.appMode !== 'include') {
+			console.error(
+				formatWarning(
+					'App mode is exclude, so the record-only list has no effect until "rules mode include".'
+				)
+			);
+		}
+	}
 	if (rule.match !== 'app') return;
 	if (matchesNothing) {
 		console.error(
@@ -554,15 +605,62 @@ export async function computerHistoryRulesAdd(
 	console.log(`Matches: ${matches.map((a) => (a.name ? `${a.name} (${a.id})` : a.id)).join(', ')}`);
 }
 
-export async function computerHistoryRulesRemove(id: string, options: JsonOption): Promise<void> {
+export async function computerHistoryRulesRemove(
+	id: string,
+	options: JsonOption & { include?: boolean }
+): Promise<void> {
 	ensureComputerHistoryEnabled(options.json);
-	const result = await writeCommand('rules-remove', { id }, options.json);
-	const rule = result.rule as { id: string; match: string; value: string };
+	const result = await writeCommand(
+		'rules-remove',
+		{ id, ...(options.include ? { ruleAction: 'record' } : {}) },
+		options.json
+	);
+	const rule = result.rule as CaptureRule;
 	if (options.json) {
 		console.log(JSON.stringify({ success: true, rule }));
 		return;
 	}
-	console.log(formatSuccess(`Removed rule ${rule.id} (${rule.match} ${rule.value}).`));
+	console.log(
+		formatSuccess(`Removed rule ${rule.id} (${rule.action} ${rule.match} ${rule.value}).`)
+	);
+}
+
+/** Show the app mode, or switch it (the same `config-set` the UI's toggle sends). */
+export async function computerHistoryRulesMode(
+	mode: string | undefined,
+	options: JsonOption
+): Promise<void> {
+	if (mode === undefined) {
+		const config = await readStoreConfig(storeDir());
+		if (options.json) {
+			console.log(JSON.stringify({ success: true, appMode: config.appMode }));
+			return;
+		}
+		console.log(`App mode: ${describeAppMode(config.appMode)}`);
+		return;
+	}
+	const next = mode.trim().toLowerCase();
+	if (!APP_CAPTURE_MODES.includes(next as AppCaptureMode)) {
+		failCommand(
+			`Invalid mode "${mode}". Use one of: ${APP_CAPTURE_MODES.join(', ')}`,
+			options.json
+		);
+	}
+	ensureComputerHistoryEnabled(options.json);
+	const result = await writeCommand('config-set', { patch: { appMode: next } }, options.json);
+	const config = result.config as { appMode: AppCaptureMode; rules: CaptureRule[] };
+	if (options.json) {
+		console.log(JSON.stringify({ success: true, appMode: config.appMode }));
+		return;
+	}
+	console.log(formatSuccess(`App mode: ${describeAppMode(config.appMode)}`));
+	if (config.appMode === 'include' && !config.rules.some((r) => r.action === 'record')) {
+		console.error(
+			formatWarning(
+				'The record-only list is empty, so nothing is recorded until you add apps with "rules add --app <id> --include".'
+			)
+		);
+	}
 }
 
 // ----------------------------------------------------------------------------
@@ -666,6 +764,7 @@ export async function computerHistoryConfig(options: ConfigCliOptions): Promise<
 				`Retention:   ${config.retentionDays} days`,
 				`Max size:    ${formatSize(config.maxBytes)}`,
 				`Snapshots:   ${config.snapshots ? 'on' : 'off'}`,
+				`App mode:    ${describeAppMode(config.appMode)}`,
 				`Paused:      ${config.pausedUntil ?? 'no'}`,
 				`Digests:     ${config.digests.enabled ? 'on' : 'off'} (agent ${config.digests.agentId ?? 'not set'}), 6-hour roll-up ${config.digests.rollup ? 'on' : 'off'}`,
 				`Rules:       ${config.rules.length}`,

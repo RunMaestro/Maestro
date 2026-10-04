@@ -33,6 +33,7 @@ import {
 	parseSegmentRelativePath,
 	resolveStorePath,
 } from './paths';
+import { APP_TIME_IDLE_CAP_MS, addEventToAppStats, createAppStats } from './appStats';
 import { STORED_EVENT_KINDS } from './types';
 import type {
 	ComputerHistoryConfig,
@@ -53,6 +54,8 @@ export interface SegmentInfo {
 	events?: number;
 	bytes?: number;
 	apps?: Record<string, number>;
+	names?: Record<string, string>;
+	activeMs?: Record<string, number>;
 }
 
 export interface TimeRange {
@@ -90,8 +93,7 @@ export interface AppUsage {
 	lastSeen: string;
 }
 
-/** Gaps longer than this between events are counted as idle, not app time. */
-export const APP_TIME_IDLE_CAP_MS = 5 * 60_000;
+export { APP_TIME_IDLE_CAP_MS };
 
 const STORED_KINDS = new Set<string>(STORED_EVENT_KINDS);
 
@@ -223,6 +225,8 @@ export async function listSegments(
 			events: entry.events,
 			bytes: entry.bytes,
 			apps: entry.apps,
+			names: entry.names,
+			activeMs: entry.activeMs,
 		});
 	}
 	// The open segment (and a crash leftover) has no index line yet. They can
@@ -487,4 +491,108 @@ export async function listDigests(
 /** A digest body, or null when the file is gone. */
 export async function readDigest(storeDir: string, rel: string): Promise<string | null> {
 	return readTextIfExists(resolveStorePath(storeDir, rel));
+}
+
+/** One 15-minute window's activity. */
+export interface ActivityBucket {
+	startMs: number;
+	events: number;
+	/** Event count per `app.id`. */
+	apps: Record<string, number>;
+	/** Foreground ms per `app.id` (0 for index lines written before it was tracked). */
+	activeMs: Record<string, number>;
+}
+
+/** One app's totals over a range. */
+export interface AppActivity {
+	id: string;
+	/** Display name, or the id when no recorded line carried one. */
+	name: string;
+	events: number;
+	activeMs: number;
+	/** Start of the newest window the app appears in. */
+	lastWindowMs: number;
+}
+
+export interface ActivitySummary {
+	/** Windows with activity, ascending. */
+	buckets: ActivityBucket[];
+	/** Apps by foreground time, then event count. */
+	apps: AppActivity[];
+	totalEvents: number;
+}
+
+/**
+ * Per-window and per-app activity over `range`, from the index (closed
+ * windows) plus the open segment, read and folded the same way the writer
+ * folds it. Granularity is the 15-minute window: a window the range only
+ * partly covers counts whole. Cheap at any range, since closed windows cost
+ * one index line each.
+ */
+export async function readActivity(
+	storeDir: string,
+	range: TimeRange = {}
+): Promise<ActivitySummary> {
+	const buckets: ActivityBucket[] = [];
+	const byId = new Map<string, AppActivity>();
+	let totalEvents = 0;
+	for (const seg of await listSegments(storeDir, range)) {
+		let apps = seg.apps;
+		let names = seg.names;
+		let activeMs = seg.activeMs;
+		if (!seg.indexed) {
+			const stats = createAppStats();
+			for (const e of (await readSegment(storeDir, seg.file)).sort(compareEvents)) {
+				addEventToAppStats(stats, e);
+			}
+			({ apps, names, activeMs } = stats);
+		}
+		const counts = apps ?? {};
+		const events = Object.values(counts).reduce((sum, n) => sum + n, 0);
+		if (events === 0) continue;
+		totalEvents += events;
+		const active: Record<string, number> = {};
+		for (const [id, n] of Object.entries(counts)) {
+			const ms = activeMs?.[id] ?? 0;
+			active[id] = ms;
+			let usage = byId.get(id);
+			if (!usage) {
+				usage = { id, name: id, events: 0, activeMs: 0, lastWindowMs: seg.startMs };
+				byId.set(id, usage);
+			}
+			usage.events += n;
+			usage.activeMs += ms;
+			usage.lastWindowMs = Math.max(usage.lastWindowMs, seg.startMs);
+			const name = names?.[id];
+			if (name) usage.name = name;
+		}
+		buckets.push({ startMs: seg.startMs, events, apps: { ...counts }, activeMs: active });
+	}
+	const appsOut = [...byId.values()].sort(
+		(a, b) => b.activeMs - a.activeMs || b.events - a.events || a.name.localeCompare(b.name)
+	);
+	return { buckets, apps: appsOut, totalEvents };
+}
+
+/** A digest with its body (agent-written, untrusted). */
+export interface DigestWithBody extends DigestInfo {
+	body: string;
+}
+
+/**
+ * The newest `limit` digests overlapping `range` with their bodies, newest
+ * first. Bodies are read only for the digests returned.
+ */
+export async function readRecentDigests(
+	storeDir: string,
+	options: TimeRange & { kind?: DigestKind; limit?: number } = {}
+): Promise<DigestWithBody[]> {
+	const limit = options.limit && options.limit > 0 ? options.limit : 50;
+	const infos = (await listDigests(storeDir, options)).reverse().slice(0, limit);
+	const out: DigestWithBody[] = [];
+	for (const info of infos) {
+		const body = await readDigest(storeDir, info.file);
+		if (body !== null) out.push({ ...info, body });
+	}
+	return out;
 }

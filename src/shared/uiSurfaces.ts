@@ -27,7 +27,8 @@ export type UiSurfaceEncoreFlag =
 	| 'usageStats'
 	| 'symphony'
 	| 'maestroCue'
-	| 'concerto';
+	| 'concerto'
+	| 'computerHistory';
 
 export interface UiSurface {
 	/** CLI name (kebab-case), and the wire value on the `open_modal` message. */
@@ -132,6 +133,18 @@ export const UI_SURFACES: UiSurface[] = [
 		shortcutId: 'directorNotes',
 		commandPalette: "Director's Notes",
 		encore: 'directorNotes',
+	},
+	{
+		id: 'computer-history',
+		label: 'Computer History',
+		aliases: ['history-viewer', 'screen-history'],
+		modal: 'computerHistory',
+		description:
+			'Browse and search what Computer History recorded: app timeline, typed text, selections, digests, and which apps are recorded.',
+		shortcutId: 'computerHistory',
+		commandPalette: 'Computer History',
+		click: 'the hamburger menu > Computer History',
+		encore: 'computerHistory',
 	},
 	{
 		id: 'symphony',

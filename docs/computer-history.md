@@ -27,7 +27,7 @@ A small helper program, `maestro-observer`, reads the operating system accessibi
 - **Private and incognito browser windows** (Incognito, Private Browsing, InPrivate, Private Window).
 - **Password managers:** 1Password (including its browser helpers), Bitwarden, Dashlane, LastPass, KeePassXC, Keychain Access and the Passwords app, Windows Credential Manager, GNOME Passwords and Keys (Seahorse), and KDE Wallet.
 - **Maestro itself.**
-- **Apps and domains you exclude** (see [Exclusions](#exclusions)).
+- **Apps and domains you exclude**, or every app you did not include (see [Choosing which apps are recorded](#choosing-which-apps-are-recorded)).
 - **Screenshots.** There is no screen capture and no OCR.
 
 Before anything is written, text is scrubbed for secrets: API keys, AWS access keys, bearer tokens, card numbers, private keys, JWTs, and `password=...` style values are replaced with placeholders such as `[REDACTED_API_KEY]`. Credential-looking parameters in URLs (`access_token`, `code`, `sig`, and similar) are redacted too.
@@ -63,22 +63,43 @@ Everything below is in the tile's Settings tab, and each control has a `maestro-
 - **Pause** for an hour, or until you resume. A pause survives restarts. While paused nothing is read or written.
 - **Storage:** how many days to keep (default 90) and the maximum size (default 25 GB). When either limit is reached the oldest history is deleted first, checked at start and every hour.
 - **Record visible window text:** turn snapshots off to keep only app switches, typed text, and selections. Snapshots make recall much better and use most of the space.
-- **Clear history:** the last hour, or everything. Settings and exclusions are kept.
+- **Clear history:** the last hour, or everything. Settings and app rules are kept.
 
 A small dot on the Left Bar menu button shows while Computer History is recording (red) or is on but waiting for a permission (amber).
 
-### Exclusions
+### Choosing which apps are recorded
 
-Add an app (by its app id) or a domain (which also covers its subdomains) and it is never recorded:
+Pick one of two modes, in the viewer's **Capture** tab or the tile's Settings tab:
+
+| Mode                                          | What is recorded                                                                                                 |
+| --------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| **All apps except...** (exclude, the default) | Every app, except the ones you switch off.                                                                       |
+| **Only these apps** (include)                 | Nothing, except the apps you switch on. An app that is not on the list is never read, not even its window title. |
+
+Both show the same app list: every app recorded in the last 30 days plus the apps seen since Maestro started, each with one switch. Flip a switch and Maestro writes the matching rule. Both lists are kept when you change mode, so you can try include mode and switch back without losing anything. Password managers, private browser windows, password fields, and Maestro itself are excluded in both modes.
+
+Domains (which also cover their subdomains) are excluded in both modes. A browser window on an excluded domain records nothing, not even its title.
 
 ```bash
+maestro-cli computer-history rules mode include             # or: exclude
+maestro-cli computer-history rules add --app com.apple.Notes --include
 maestro-cli computer-history rules add --app com.apple.MobileSMS
 maestro-cli computer-history rules add --domain bank.example.com
 maestro-cli computer-history rules list
 maestro-cli computer-history rules remove <id>
 ```
 
-App ids are the macOS bundle id (`com.tinyspeck.slackmacgap`), the Windows executable name (`slack.exe`), or the Linux desktop id or executable name (`org.gnome.Nautilus`). `maestro-cli computer-history apps --since 1d` lists the ids of apps you used.
+App rules match the app id or its exact name. App ids are the macOS bundle id (`com.tinyspeck.slackmacgap`), the Windows executable name (`slack.exe`), or the Linux desktop id or executable name (`org.gnome.Nautilus`). `maestro-cli computer-history apps --since 1d` lists the ids of apps you used.
+
+## Viewing your history
+
+Open the viewer with <kbd>Ctrl</kbd>+<kbd>Cmd</kbd>+<kbd>H</kbd> (<kbd>Ctrl</kbd>+<kbd>Win</kbd>+<kbd>H</kbd> elsewhere), **Computer History** in the command palette or the hamburger menu, or `maestro-cli open computer-history`. It is available while Computer History is on, in the desktop app only.
+
+- **Timeline:** an activity strip across the range (1 hour to 30 days), stacked by app. Click a bar to see only that slice; click it again to widen back out. The app list on the left shows foreground time per app; click apps to filter to them. Below, every visit (a run of time in one app and window) lists what you typed, what you selected, window changes, and the screen text it captured (collapsed). Search matches text, window titles, URLs, and field labels, and accepts regular expressions.
+- **Digests:** the 15-minute digests and 6-hour roll-ups an agent wrote, newest first, when digests are on.
+- **Capture:** which apps and domains are recorded (see above).
+
+The header shows whether the recorder is running and pauses or resumes it.
 
 ## Storage
 
@@ -86,7 +107,7 @@ Everything lives under the Maestro data folder, in `computer-history/`:
 
 ```
 SCHEMA.md                       format reference for agents, rewritten on every start
-config.json                     your settings and exclusions
+config.json                     your settings, app mode, and app and domain rules
 index.jsonl                     one summary line per closed 15-minute segment
 segments/YYYY-MM-DD/HHMMZ.jsonl one 15-minute window of events (UTC)
 digests/YYYY-MM-DD/HHMMZ.md     15-minute digest of that window, only when digests are on

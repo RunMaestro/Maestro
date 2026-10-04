@@ -9,6 +9,8 @@ import {
 	readDigest,
 	parseIndexText,
 	queryEvents,
+	readActivity,
+	readRecentDigests,
 	readStoreStats,
 	summarizeApps,
 } from '../../../shared/computer-history/reader';
@@ -184,5 +186,54 @@ describe('reader', () => {
 		const late = await listDigests(dir, { sinceMs: Date.parse('2026-10-03T17:00:00Z') });
 		expect(late.map((d) => d.file.split('/').pop())).toEqual(['6h-1200Z.md', '1815Z.md']);
 		expect(await readDigest(dir, 'digests/2026-10-03/1215Z.md')).toBe('# 1215Z.md');
+	});
+
+	it('readActivity folds indexed windows and the open segment into buckets and app totals', async () => {
+		const closed = segmentRelativePath(T0);
+		writeSegment(T0, [event(0, T0)]);
+		fs.appendFileSync(
+			path.join(dir, 'index.jsonl'),
+			JSON.stringify({
+				file: closed,
+				start: '',
+				end: '',
+				events: 3,
+				bytes: 10,
+				apps: { 'com.tinyspeck.slackmacgap': 2, 'com.google.chrome': 1 },
+				names: { 'com.google.chrome': 'Chrome' },
+				activeMs: { 'com.tinyspeck.slackmacgap': 120_000, 'com.google.chrome': 30_000 },
+			}) + '\n'
+		);
+		// The open segment has no index line: read and folded the same way.
+		const open = T0 + 900_000;
+		writeSegment(open, [
+			event(0, open),
+			event(1, open + 90_000, { app: { id: 'com.google.chrome', name: 'Chrome', pid: 2 } }),
+		]);
+		const summary = await readActivity(dir, { sinceMs: T0 });
+		expect(summary.totalEvents).toBe(5);
+		expect(summary.buckets.map((b) => b.startMs)).toEqual([T0, open]);
+		expect(summary.buckets[1].activeMs).toEqual({
+			'com.tinyspeck.slackmacgap': 90_000,
+			'com.google.chrome': 0,
+		});
+		expect(summary.apps[0]).toMatchObject({
+			id: 'com.tinyspeck.slackmacgap',
+			name: 'Slack',
+			events: 3,
+			activeMs: 210_000,
+			lastWindowMs: open,
+		});
+		expect(summary.apps[1]).toMatchObject({ id: 'com.google.chrome', name: 'Chrome', events: 2 });
+	});
+
+	it('readRecentDigests returns the newest bodies first, capped by limit', async () => {
+		const day = path.join(dir, 'digests', '2026-10-03');
+		fs.mkdirSync(day, { recursive: true });
+		for (const name of ['1200Z.md', '1215Z.md', '1230Z.md']) {
+			fs.writeFileSync(path.join(day, name), `# ${name}`);
+		}
+		const recent = await readRecentDigests(dir, { limit: 2 });
+		expect(recent.map((d) => d.body)).toEqual(['# 1230Z.md', '# 1215Z.md']);
 	});
 });

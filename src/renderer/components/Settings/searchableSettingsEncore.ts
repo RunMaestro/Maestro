@@ -110,7 +110,7 @@ export const ENCORE_SETTINGS: SearchableSetting[] = [
 		tabLabel: 'Plugins',
 		label: 'Computer History',
 		description:
-			'Record what you read and type across your apps, locally, so agents can recall it. Pause, exclusions, retention, permission, clear history, and digests.',
+			'Record what you read and type across your apps, locally, so agents can recall it. Pause, which apps are recorded (all except, or only these), retention, permission, clear history, and digests.',
 		keywords: [
 			'computer history',
 			'screen history',
@@ -122,6 +122,9 @@ export const ENCORE_SETTINGS: SearchableSetting[] = [
 			'resume',
 			'exclusions',
 			'exclude app',
+			'include app',
+			'only these apps',
+			'app list',
 			'domain',
 			'retention',
 			'keep days',

@@ -89,12 +89,18 @@ export async function handleComputerHistoryCommand(
 					reply({ success: false, error: 'A rule needs --app or --domain' });
 					return;
 				}
-				const added = await service.addRule(match, typeof m.value === 'string' ? m.value : '');
+				const added = await service.addRule(
+					match,
+					typeof m.value === 'string' ? m.value : '',
+					m.ruleAction === 'record' ? 'record' : 'ignore'
+				);
 				reply({ success: true, rule: added.rule, matches: added.matches });
 				return;
 			}
 			case 'rules-remove': {
-				const removed = await service.removeRule(typeof m.id === 'string' ? m.id : '');
+				const ruleAction =
+					m.ruleAction === 'record' || m.ruleAction === 'ignore' ? m.ruleAction : undefined;
+				const removed = await service.removeRule(typeof m.id === 'string' ? m.id : '', ruleAction);
 				if (!removed) {
 					reply({ success: false, error: `No rule matches "${String(m.id)}"` });
 					return;

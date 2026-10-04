@@ -207,6 +207,11 @@ pub struct ConfigureCommand {
     pub block_pids: Vec<u32>,
     #[serde(default)]
     pub block_domains: Vec<String>,
+    /// "Record only these apps": when present, every app NOT on this list is
+    /// treated exactly like a blocked app (nothing read, nothing emitted). An
+    /// empty list records nothing. Absent = record every app not blocked.
+    #[serde(default)]
+    pub allow_apps: Option<Vec<String>>,
     #[serde(default = "default_true")]
     pub snapshots: bool,
     #[serde(default = "default_max_text")]
@@ -221,6 +226,7 @@ impl Default for ConfigureCommand {
             block_apps: Vec::new(),
             block_pids: Vec::new(),
             block_domains: Vec::new(),
+            allow_apps: None,
             snapshots: true,
             max_text_bytes: DEFAULT_MAX_TEXT_BYTES,
             max_snapshot_bytes: DEFAULT_MAX_SNAPSHOT_BYTES,

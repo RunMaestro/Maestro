@@ -117,6 +117,13 @@ export interface SegmentIndexEntry {
 	bytes: number;
 	/** Event count per `app.id`. */
 	apps: Record<string, number>;
+	/** Display name per `app.id` (absent on lines written before names were indexed). */
+	names?: Record<string, string>;
+	/**
+	 * Foreground ms per `app.id` inside this segment: each event's app owns the
+	 * gap to the next event, capped at APP_TIME_IDLE_CAP_MS (see appStats.ts).
+	 */
+	activeMs?: Record<string, number>;
 	/**
 	 * Events refused by the per-segment byte guard (a runaway helper). Absent
 	 * when nothing was dropped.
@@ -131,6 +138,8 @@ export type HelperCommand =
 			blockApps: string[];
 			blockPids: number[];
 			blockDomains: string[];
+			/** Include mode only: record nothing but these apps (empty = nothing). */
+			allowApps?: string[];
 			snapshots: boolean;
 			maxTextBytes: number;
 			maxSnapshotBytes: number;
@@ -143,13 +152,28 @@ export type HelperCommand =
 
 export type CaptureRuleMatch = 'app' | 'domain';
 
+/**
+ * `ignore`: never record this app or domain (honored in both modes).
+ * `record`: app rules only; the allow list consulted in `include` mode.
+ */
+export type CaptureRuleAction = 'ignore' | 'record';
+
+/**
+ * `exclude`: record every app except the ignore rules (the default).
+ * `include`: record ONLY apps with a `record` rule; ignore rules still win.
+ * Built-in exclusions, private windows, and domain rules apply in both.
+ */
+export type AppCaptureMode = 'exclude' | 'include';
+
+export const APP_CAPTURE_MODES: readonly AppCaptureMode[] = ['exclude', 'include'];
+
 export interface CaptureRule {
 	/** Stable id so `rules remove <id>` is unambiguous. */
 	id: string;
 	match: CaptureRuleMatch;
 	/** App id (exact, case-insensitive) or domain (matches subdomains). */
 	value: string;
-	action: 'ignore';
+	action: CaptureRuleAction;
 }
 
 export interface ComputerHistoryConfig {
@@ -157,6 +181,8 @@ export interface ComputerHistoryConfig {
 	retentionDays: number;
 	maxBytes: number;
 	snapshots: boolean;
+	/** Which app rules decide what is recorded (see AppCaptureMode). */
+	appMode: AppCaptureMode;
 	rules: CaptureRule[];
 	/** ISO timestamp, `'forever'`, or null when recording. */
 	pausedUntil: string | null;

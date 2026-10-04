@@ -38,6 +38,8 @@ interface BuildFeatureCommandsArgs {
 	onOpenDirectorNotes?: () => void;
 	onOpenMaestroCue?: () => void;
 	onOpenPianola?: () => void;
+	/** Present only when Computer History can be opened here (Encore on, desktop). */
+	onOpenComputerHistory?: () => void;
 	onConfigureCue?: (session: Session) => void;
 	onOpenLastDocumentGraph?: () => void;
 	onOpenCurrentFileInGraph?: () => void;
@@ -59,6 +61,7 @@ interface BuildFeatureCommandsArgs {
 		openSymphony?: QuickAction['shortcut'];
 		directorNotes?: QuickAction['shortcut'];
 		openCue?: QuickAction['shortcut'];
+		computerHistory?: QuickAction['shortcut'];
 		fuzzyFileSearch?: QuickAction['shortcut'];
 		editClipboardImage?: QuickAction['shortcut'];
 	};
@@ -99,6 +102,7 @@ export function buildFeatureCommands({
 	onOpenDirectorNotes,
 	onOpenMaestroCue,
 	onOpenPianola,
+	onOpenComputerHistory,
 	onConfigureCue,
 	onOpenLastDocumentGraph,
 	onOpenCurrentFileInGraph,
@@ -378,6 +382,19 @@ export function buildFeatureCommands({
 			subtext: 'Autonomous manager: rules and decision log',
 			action: () => {
 				onOpenPianola();
+				setQuickActionOpen(false);
+			},
+		});
+	}
+
+	if (onOpenComputerHistory) {
+		commands.push({
+			id: 'computer-history',
+			label: 'Computer History',
+			shortcut: shortcuts.computerHistory,
+			subtext: 'Browse and search what you saw and typed across apps',
+			action: () => {
+				onOpenComputerHistory();
 				setQuickActionOpen(false);
 			},
 		});

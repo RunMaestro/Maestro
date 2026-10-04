@@ -165,6 +165,7 @@ import {
 	computerHistoryResume,
 	computerHistoryRulesAdd,
 	computerHistoryRulesList,
+	computerHistoryRulesMode,
 	computerHistoryRulesRemove,
 	computerHistoryStatus,
 } from './commands/computer-history';
@@ -1888,25 +1889,37 @@ computerHistory
 
 const computerHistoryRules = computerHistory
 	.command('rules')
-	.description('Apps and domains that are never recorded');
+	.description('Which apps are recorded (exclude or include mode) and domains never recorded');
 
 computerHistoryRules
 	.command('list')
-	.description('List user rules (built-in exclusions always apply)')
+	.description('Show the app mode and user rules (built-in exclusions always apply)')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((options) => computerHistoryRulesList(options));
 
 computerHistoryRules
+	.command('mode [mode]')
+	.description(
+		'Show or set the app mode: exclude (record every app except ignored ones) or include (record only the record-only list)'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((mode, options) => computerHistoryRulesMode(mode, options));
+
+computerHistoryRules
 	.command('add')
-	.description('Never record an app (by app id) or a domain (and its subdomains)')
-	.option('--app <id>', 'App id: macOS bundle id, Windows exe name, Linux desktop id')
+	.description(
+		'Never record an app or a domain (and its subdomains); with --include, add an app to the record-only list'
+	)
+	.option('--app <id>', 'App id or exact name: macOS bundle id, Windows exe name, Linux desktop id')
 	.option('--domain <domain>', 'Domain, e.g. bank.example.com')
+	.option('--include', 'Add the app to the record-only list used in include mode')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((options) => computerHistoryRulesAdd(options));
 
 computerHistoryRules
 	.command('remove <id>')
 	.description('Remove a rule by id (or by its app id / domain)')
+	.option('--include', 'When removing by value, remove it from the record-only list')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((id, options) => computerHistoryRulesRemove(id, options));
 

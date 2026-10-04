@@ -23,7 +23,7 @@ import type { Theme } from '../../../../../types';
 import { SettingsSectionHeading } from '../../../SettingsSectionHeading';
 import { SectionCard } from '../../DisplayTab/components/SectionCard';
 import { ToggleSettingRow } from '../../DisplayTab/components/ToggleSettingRow';
-import { ToggleButtonGroup } from '../../../../ToggleButtonGroup';
+import { CaptureRulesEditor } from '../../../../ComputerHistory/CaptureRulesEditor';
 import { useComputerHistoryStatus } from '../../../../../hooks/computerHistory/useComputerHistoryStatus';
 import { useSessionStore } from '../../../../../stores/sessionStore';
 import { useModalStore } from '../../../../../stores/modalStore';
@@ -31,11 +31,7 @@ import { notifyToast } from '../../../../../stores/notificationStore';
 import { formatSize } from '../../../../../../shared/formatters';
 import { GIB } from '../../../../../../shared/computer-history/config';
 import type { RecorderState } from '../../../../../../shared/computer-history/status';
-import type {
-	CaptureRule,
-	CaptureRuleMatch,
-	ComputerHistoryConfig,
-} from '../../../../../../shared/computer-history/types';
+import type { ComputerHistoryConfig } from '../../../../../../shared/computer-history/types';
 
 interface ComputerHistorySectionProps {
 	theme: Theme;
@@ -94,11 +90,6 @@ function ActionButton({
 export function ComputerHistorySection({ theme }: ComputerHistorySectionProps) {
 	const { enabled, status, refresh } = useComputerHistoryStatus();
 	const [config, setConfig] = useState<ComputerHistoryConfig | null>(null);
-	const [builtIn, setBuiltIn] = useState<string[]>([]);
-	const [ruleMatch, setRuleMatch] = useState<CaptureRuleMatch>('app');
-	const [ruleValue, setRuleValue] = useState('');
-	const [ruleError, setRuleError] = useState<string | null>(null);
-	const [ruleNote, setRuleNote] = useState<string | null>(null);
 	const [retentionDraft, setRetentionDraft] = useState('');
 	const [maxGbDraft, setMaxGbDraft] = useState('');
 	const sessions = useSessionStore((s) => s.sessions);
@@ -118,11 +109,10 @@ export function ComputerHistorySection({ theme }: ComputerHistorySectionProps) {
 	useEffect(() => {
 		if (!api) return;
 		let cancelled = false;
-		Promise.all([api.getConfig(), api.listRules()])
-			.then(([cfg, rules]) => {
-				if (cancelled) return;
-				applyConfig(cfg);
-				setBuiltIn(rules.builtIn);
+		api
+			.getConfig()
+			.then((cfg) => {
+				if (!cancelled) applyConfig(cfg);
 			})
 			.catch(() => {
 				// Not available (web bridge): the body renders its read-only notice.
@@ -201,35 +191,6 @@ export function ComputerHistorySection({ theme }: ComputerHistorySectionProps) {
 				});
 			},
 		});
-	};
-
-	const addRule = async () => {
-		setRuleError(null);
-		setRuleNote(null);
-		try {
-			const added = await api.addRule(ruleMatch, ruleValue);
-			if (added.rule.match === 'app') {
-				if (added.matches.length === 0) {
-					setRuleError(
-						`"${added.rule.value}" matches no app seen recently. App rules match an app id or its exact name; check the ids in recorded history.`
-					);
-				} else {
-					setRuleNote(
-						`Matches ${added.matches.map((a) => (a.name ? `${a.name} (${a.id})` : a.id)).join(', ')}.`
-					);
-				}
-			}
-			setRuleValue('');
-			applyConfig(await api.getConfig());
-		} catch (err) {
-			setRuleError(errorText(err));
-		}
-	};
-
-	const removeRule = async (rule: CaptureRule) => {
-		await run(() => api.removeRule(rule.id), 'Could not remove the rule');
-		const next = await run(() => api.getConfig(), 'Could not reload settings');
-		if (next) applyConfig(next);
 	};
 
 	const inputStyle = {
@@ -424,68 +385,12 @@ export function ComputerHistorySection({ theme }: ComputerHistorySectionProps) {
 				<div>
 					<SettingsSectionHeading
 						icon={Ban}
-						description={`Never recorded: password managers, private browser windows, password fields, and Maestro itself (${builtIn.length} built-in app ids). Add your own below.`}
+						description="Record every app except the ones you switch off, or only the apps you switch on. Same rules as maestro-cli computer-history rules."
 					>
-						Exclusions
+						Apps and domains
 					</SettingsSectionHeading>
 					<SectionCard theme={theme}>
-						{config.rules.length === 0 ? (
-							<p className="text-xs opacity-70">No exclusions of your own yet.</p>
-						) : (
-							<ul className="space-y-1">
-								{config.rules.map((rule) => (
-									<li key={rule.id} className="flex items-center justify-between text-sm">
-										<span style={{ color: theme.colors.textMain }}>
-											{rule.match === 'app' ? 'App' : 'Domain'}: <code>{rule.value}</code>
-										</span>
-										<button
-											type="button"
-											onClick={() => void removeRule(rule)}
-											className="p-1 rounded hover:bg-white/5"
-											title={`Stop excluding ${rule.value}`}
-											aria-label={`Remove exclusion ${rule.value}`}
-											style={{ color: theme.colors.textDim }}
-										>
-											<Trash2 className="w-3.5 h-3.5" />
-										</button>
-									</li>
-								))}
-							</ul>
-						)}
-						<div className="space-y-2 pt-3 border-t" style={{ borderColor: theme.colors.border }}>
-							<ToggleButtonGroup
-								theme={theme}
-								options={['app', 'domain'] as CaptureRuleMatch[]}
-								labels={{ app: 'App id', domain: 'Domain' }}
-								value={ruleMatch}
-								onChange={setRuleMatch}
-							/>
-							<div className="flex gap-2">
-								<input
-									type="text"
-									value={ruleValue}
-									onChange={(e) => setRuleValue(e.target.value)}
-									onKeyDown={(e) => {
-										if (e.key === 'Enter' && ruleValue.trim()) void addRule();
-									}}
-									placeholder={ruleMatch === 'app' ? 'com.apple.MobileSMS' : 'bank.example.com'}
-									className="flex-1 px-2 py-1 rounded border text-sm outline-none"
-									style={inputStyle}
-								/>
-								<ActionButton
-									theme={theme}
-									label="Exclude"
-									disabled={!ruleValue.trim()}
-									onClick={() => void addRule()}
-								/>
-							</div>
-							{ruleError && (
-								<p className="text-xs" style={{ color: theme.colors.warning }}>
-									{ruleError}
-								</p>
-							)}
-							{ruleNote && <p className="text-xs opacity-70">{ruleNote}</p>}
-						</div>
+						<CaptureRulesEditor theme={theme} onConfigChange={applyConfig} />
 					</SectionCard>
 				</div>
 			)}

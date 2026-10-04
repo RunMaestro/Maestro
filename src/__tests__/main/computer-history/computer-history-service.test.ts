@@ -294,6 +294,86 @@ describe('rules', () => {
 	});
 });
 
+describe('app mode (exclude / include)', () => {
+	const notes = { id: 'com.apple.Notes', name: 'Notes', pid: 7 };
+
+	it('include mode records only the record-only list; ignore rules still win', async () => {
+		const service = makeService();
+		await service.start();
+		const added = await service.addRule('app', 'com.apple.Notes', 'record');
+		expect(added.rule).toMatchObject({ action: 'record', value: 'com.apple.notes' });
+		expect(added.rule.id).toMatch(/^record-app-/);
+		// Exclude mode: a record rule changes nothing, Slack is still recorded.
+		expect(await service.ingest(textEvent('slack while excluding'))).toBe(true);
+		let configure = sent.filter((c) => c.cmd === 'configure').at(-1) as Record<string, unknown>;
+		expect(configure.allowApps).toBeUndefined();
+
+		await service.setConfig({ appMode: 'include' });
+		configure = sent.filter((c) => c.cmd === 'configure').at(-1) as Record<string, unknown>;
+		expect(configure.allowApps).toEqual(['com.apple.notes']);
+		expect(await service.ingest(textEvent('slack while including'))).toBe(false);
+		expect(await service.ingest(textEvent('notes', { app: notes }))).toBe(true);
+
+		// An ignore rule for the same app wins over the record-only list.
+		await service.addRule('app', 'Notes', 'ignore');
+		expect(await service.ingest(textEvent('notes again', { app: notes }))).toBe(false);
+		expect(service.listRules().rules.map((r) => r.action)).toEqual(['record', 'ignore']);
+		await service.stop();
+	});
+
+	it('an empty include list records nothing, and record rules are app-only', async () => {
+		const service = makeService();
+		await service.start();
+		await service.setConfig({ appMode: 'include' });
+		expect(await service.ingest(textEvent('anything'))).toBe(false);
+		const configure = sent.filter((c) => c.cmd === 'configure').at(-1) as Record<string, unknown>;
+		expect(configure.allowApps).toEqual([]);
+		await expect(service.addRule('domain', 'bank.example.com', 'record')).rejects.toThrow(
+			/Only apps/
+		);
+		await service.stop();
+	});
+
+	it('removing by value can target one list when an app sits on both', async () => {
+		const service = makeService();
+		await service.start();
+		await service.addRule('app', 'Slack', 'ignore');
+		await service.addRule('app', 'Slack', 'record');
+		expect(await service.removeRule('Slack', 'record')).toMatchObject({ action: 'record' });
+		expect(service.listRules().rules).toEqual([expect.objectContaining({ action: 'ignore' })]);
+		expect(await service.removeRule('Slack')).toMatchObject({ action: 'ignore' });
+		await service.stop();
+	});
+});
+
+describe('activity and known apps', () => {
+	it('summarizes the open segment by app and offers apps seen this session', async () => {
+		const service = makeService();
+		await service.start();
+		await service.ingest(textEvent('one'));
+		now += 60_000;
+		await service.ingest(
+			textEvent('two', { app: { id: 'com.apple.Notes', name: 'Notes', pid: 7 } })
+		);
+		// Seen but kept off disk by a rule: still offered in the app list.
+		await service.addRule('app', 'Zoom', 'ignore');
+		await service.ingest(textEvent('z', { app: { id: 'us.zoom.xos', name: 'Zoom', pid: 8 } }));
+
+		const activity = await service.activity({ sinceMs: T0 });
+		expect(activity.totalEvents).toBe(2);
+		expect(activity.buckets).toHaveLength(1);
+		const slack = activity.apps.find((a) => a.id === 'com.tinyspeck.slackmacgap')!;
+		expect(slack).toMatchObject({ name: 'Slack', events: 1, activeMs: 60_000 });
+
+		const known = await service.knownApps();
+		expect(known.map((a) => a.id)).toEqual(
+			expect.arrayContaining(['com.tinyspeck.slackmacgap', 'com.apple.Notes', 'us.zoom.xos'])
+		);
+		expect(known.find((a) => a.id === 'us.zoom.xos')).toMatchObject({ events: 0 });
+		await service.stop();
+	});
+});
+
 describe('clear', () => {
 	it('clears since a time (including the open segment) and clears all', async () => {
 		const service = makeService();

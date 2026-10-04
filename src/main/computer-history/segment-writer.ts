@@ -37,6 +37,12 @@ import {
 	parseSegmentText,
 	readIndex,
 } from '../../shared/computer-history/reader';
+import {
+	addEventToAppStats,
+	appStatsIndexFields,
+	createAppStats,
+	type AppStats,
+} from '../../shared/computer-history/appStats';
 import type { SegmentIndexEntry, StoredEvent } from '../../shared/computer-history/types';
 import type { KeyedWriteQueue } from '../utils/atomic-json-store';
 
@@ -69,7 +75,8 @@ interface OpenSegment {
 	nextSeq: number;
 	events: number;
 	bytes: number;
-	apps: Record<string, number>;
+	/** Per-app counts, names, and foreground time for the index line. */
+	stats: AppStats;
 	firstTs: string | null;
 	lastTs: string | null;
 	/** The file ends in a torn line (a crash mid-append): start the next one on a new line. */
@@ -96,7 +103,7 @@ function summarize(seg: OpenSegment): SegmentIndexEntry {
 		end: seg.lastTs ?? new Date(seg.startMs).toISOString(),
 		events: seg.events,
 		bytes: seg.bytes,
-		apps: { ...seg.apps },
+		...appStatsIndexFields(seg.stats),
 		...(seg.dropped > 0 ? { dropped: seg.dropped } : {}),
 	};
 }
@@ -124,7 +131,7 @@ async function scanExisting(abs: string): Promise<{
 	nextSeq: number;
 	events: number;
 	bytes: number;
-	apps: Record<string, number>;
+	stats: AppStats;
 	firstTs: string | null;
 	lastTs: string | null;
 	needsNewline: boolean;
@@ -137,17 +144,17 @@ async function scanExisting(abs: string): Promise<{
 		throw err;
 	}
 	const events = parseSegmentText(text);
-	const apps: Record<string, number> = {};
+	const stats = createAppStats();
 	let maxSeq = -1;
 	for (const e of events) {
-		if (e.app?.id) apps[e.app.id] = (apps[e.app.id] ?? 0) + 1;
+		addEventToAppStats(stats, e);
 		if (typeof e.seq === 'number' && e.seq > maxSeq) maxSeq = e.seq;
 	}
 	return {
 		nextSeq: maxSeq + 1,
 		events: events.length,
 		bytes: Buffer.byteLength(text, 'utf-8'),
-		apps,
+		stats,
 		firstTs: events[0]?.ts ?? null,
 		lastTs: events[events.length - 1]?.ts ?? null,
 		needsNewline: text.length > 0 && !text.endsWith('\n'),
@@ -189,7 +196,7 @@ export class SegmentWriter {
 					end: scan.lastTs ?? new Date(startMs).toISOString(),
 					events: scan.events,
 					bytes: scan.bytes,
-					apps: scan.apps,
+					...appStatsIndexFields(scan.stats),
 				});
 			}
 			if (recovered.length > 0) await this.appendIndexLines(recovered);
@@ -229,7 +236,7 @@ export class SegmentWriter {
 			seg.nextSeq += 1;
 			seg.events += 1;
 			seg.bytes += Buffer.byteLength(line, 'utf-8');
-			if (stored.app?.id) seg.apps[stored.app.id] = (seg.apps[stored.app.id] ?? 0) + 1;
+			addEventToAppStats(seg.stats, stored);
 			if (!seg.firstTs) seg.firstTs = stored.ts;
 			seg.lastTs = stored.ts;
 			return stored;
@@ -282,7 +289,7 @@ export class SegmentWriter {
 			nextSeq: scan?.nextSeq ?? 0,
 			events: scan?.events ?? 0,
 			bytes: scan?.bytes ?? 0,
-			apps: scan?.apps ?? {},
+			stats: scan?.stats ?? createAppStats(),
 			firstTs: scan?.firstTs ?? null,
 			lastTs: scan?.lastTs ?? null,
 			needsNewline: scan?.needsNewline ?? false,

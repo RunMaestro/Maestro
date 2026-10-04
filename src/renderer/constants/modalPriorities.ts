@@ -281,6 +281,9 @@ export const MODAL_PRIORITIES = {
 	/** Document Graph modal */
 	DOCUMENT_GRAPH: 545,
 
+	/** Computer History viewer (destination surface) */
+	COMPUTER_HISTORY: 547,
+
 	/** Usage Dashboard modal */
 	USAGE_DASHBOARD: 540,
 
