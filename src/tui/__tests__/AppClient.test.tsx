@@ -235,16 +235,24 @@ describe('App attached to a desktop through a client', () => {
 				entry('l1', 'user', 'First question'),
 				entry('l2', 'ai', 'Second answer', 1_700_000_001_000),
 			]);
-			fake.push({ type: 'turn', agentId: 'd1', tabId: 't1', event: { kind: 'started', at: 2 } });
+			const at = 1_700_000_000_500;
+			fake.push({ type: 'turn', agentId: 'd1', tabId: 't1', event: { kind: 'started', at } });
 			fake.push({
 				type: 'turn',
 				agentId: 'd1',
 				tabId: 't1',
-				event: { kind: 'text', at: 3, text: 'Second' },
+				event: { kind: 'text', at: at + 100, text: 'Second' },
+			});
+			fake.push({
+				type: 'turn',
+				agentId: 'd1',
+				tabId: 't1',
+				event: { kind: 'outcome', at: at + 1000, outcome: 'completed', exitCode: 0 },
 			});
 			await tick(300);
+			// The stored transcript holds the turn now, so it replaces the streamed copy.
 			expect(lastFrame()).toContain('Second answer');
-			// The burst of two events cost one read.
+			// The burst of three events cost one read.
 			expect(fake.transcriptReads.length).toBe(readsBefore + 1);
 			unmount();
 		});

@@ -172,6 +172,57 @@ describe('keymap', () => {
 		expect(keysFor('palette')).toBe('Ctrl-K');
 	});
 
+	describe('the composer context', () => {
+		it("sends on Enter, and tells Ink's Enter (which also reports the character \\r) from Alt-Enter", () => {
+			// Ink reports a plain Enter as input '\r' with `return` set; ESC then CR arrives as '\r' without it.
+			expect(resolveAction('composer', '\r', { ...NO_KEY, return: true })).toBe('send');
+			expect(resolveAction('composer', '\r', NO_KEY)).toBe('newline');
+			// A bare line feed (Ctrl-J) reaches the handler as '\n' with no flag set.
+			expect(resolveAction('composer', '\n', NO_KEY)).toBe('newline');
+		});
+
+		it('leaves letters and the editing keys to the text box', () => {
+			for (const letter of ['j', 'k', 'q', 't', 'x', 'e', '?', 'T']) {
+				expect(resolveAction('composer', letter, NO_KEY), letter).toBeUndefined();
+			}
+			expect(resolveAction('composer', '', { ...NO_KEY, leftArrow: true })).toBeUndefined();
+			expect(resolveAction('composer', 'a', { ...NO_KEY, ctrl: true })).toBeUndefined();
+		});
+
+		it('keeps the keys that leave it: Esc, Tab, Ctrl-K, Ctrl-B', () => {
+			expect(resolveAction('composer', '', { ...NO_KEY, escape: true })).toBe('blurComposer');
+			expect(resolveAction('composer', '', { ...NO_KEY, tab: true })).toBe('nextPane');
+			expect(resolveAction('composer', 'k', { ...NO_KEY, ctrl: true })).toBe('palette');
+			expect(resolveAction('composer', 'b', { ...NO_KEY, ctrl: true })).toBe('toggleAgentsPane');
+		});
+
+		it('writes its keys the way a person reads them', () => {
+			expect(keysFor('send')).toBe('Enter');
+			expect(keysFor('newline')).toBe('Ctrl-J / Alt-Enter');
+			expect(keysFor('interrupt')).toBe('Ctrl-C');
+			expect(keysFor('blurComposer')).toBe('Esc');
+		});
+	});
+
+	it('answers Ctrl-C in every context, so it can always interrupt or quit', () => {
+		const contexts: KeyContext[] = [
+			'main',
+			'composer',
+			'help',
+			'tabs',
+			'history',
+			'palette',
+			'menu',
+			'form',
+			'prompt',
+			'confirm',
+			'groupPicker',
+		];
+		for (const context of contexts) {
+			expect(resolveAction(context, 'c', { ...NO_KEY, ctrl: true }), context).toBe('interrupt');
+		}
+	});
+
 	it('throws for an action nobody bound, so a typo cannot print an empty hint', () => {
 		expect(() => bindingFor('nope' as never)).toThrow('no binding');
 	});

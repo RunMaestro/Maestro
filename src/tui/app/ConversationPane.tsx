@@ -10,6 +10,13 @@ import {
 	type LogEntryRecord,
 } from '../../shared/maestro-lib';
 import { TranscriptViewport } from '../transcript';
+import {
+	Composer,
+	COMPOSER_MAX_ROWS,
+	COMPOSER_PREFIX_WIDTH,
+	composerHeight,
+} from '../composer/Composer';
+import { layoutComposer, type ComposerState } from '../composer/draft';
 
 /** The tab the pane shows: the TUI's pick, else the desktop's active tab, else the first. */
 export function resolveActiveTab(
@@ -22,6 +29,14 @@ export function resolveActiveTab(
 		tabs.find((tab) => tab.id === agent?.activeTabId) ??
 		tabs[0]
 	);
+}
+
+/** What the pane needs to draw the composer under the transcript. */
+export interface ConversationComposer {
+	state: ComposerState;
+	running: boolean;
+	/** Messages waiting in the host's execution queue for this tab. */
+	queued: number;
 }
 
 export interface ConversationPaneProps {
@@ -38,6 +53,8 @@ export interface ConversationPaneProps {
 	focused: boolean;
 	/** Show tool calls with their input and output instead of one line each. */
 	expandTools?: boolean;
+	/** The composer, when messages can be sent: a desktop is attached and the agent has a tab. */
+	composer?: ConversationComposer;
 }
 
 /** Lines the pane spends on its border (2), its title (1), and its subtitle (1). */
@@ -52,6 +69,7 @@ export function ConversationPane({
 	height,
 	focused,
 	expandTools = false,
+	composer,
 }: ConversationPaneProps): React.ReactElement {
 	const tabs = agent ? visibleAiTabsOf(agent) : [];
 	const activeTab = resolveActiveTab(tabs, activeTabId, agent);
@@ -65,6 +83,13 @@ export function ConversationPane({
 				.filter(Boolean)
 				.join(' · ')
 		: 'Conversation';
+
+	const innerWidth = Math.max(1, width - 2);
+	const composerLayout =
+		composer && activeTab
+			? layoutComposer(composer.state, innerWidth - COMPOSER_PREFIX_WIDTH, COMPOSER_MAX_ROWS)
+			: undefined;
+	const reserved = composerLayout ? composerHeight(composerLayout) : 0;
 
 	return (
 		<Box
@@ -88,13 +113,23 @@ export function ConversationPane({
 							// A new tab starts with a fresh window, not the previous tab's mounted entries.
 							key={activeTab.id}
 							entries={entries ?? transcriptOf(activeTab)}
-							width={Math.max(1, width - 2)}
-							height={Math.max(1, height - CONVERSATION_CHROME_LINES)}
+							width={innerWidth}
+							height={Math.max(1, height - CONVERSATION_CHROME_LINES - reserved)}
 							expandTools={expandTools}
 						/>
 					) : (
 						<Text dimColor>This agent has no tabs.</Text>
 					)}
+					{composer && composerLayout ? (
+						<Composer
+							layout={composerLayout}
+							empty={composer.state.text === ''}
+							width={innerWidth}
+							focused={focused}
+							running={composer.running}
+							queued={composer.queued}
+						/>
+					) : null}
 				</>
 			) : (
 				<Text dimColor>Select an agent to see its conversation.</Text>

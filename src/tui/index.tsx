@@ -29,6 +29,7 @@ setMaestroLibLogger(createFileLogger(tuiLogFilePath(paths.userDataDir)));
 // files when there is none. It keeps the connection until the TUI quits.
 const client = createWsMaestroClient({ userDataDir: paths.userDataDir });
 
-const instance = render(<App paths={paths} client={client} />);
+// Ctrl-C is a key the App answers (it interrupts a running turn; twice within a second quits), so Ink must not exit on it.
+const instance = render(<App paths={paths} client={client} />, { exitOnCtrlC: false });
 await instance.waitUntilExit();
 await client.connection.close();

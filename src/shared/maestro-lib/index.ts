@@ -34,7 +34,8 @@ export * from './store/tab-display';
 // Provider display names (a provider this build does not know still gets a label)
 export { getAgentDisplayName, AGENT_AUTOSELECT_ORDER } from '../agentMetadata';
 
-export type { SshRemoteConfig } from '../types';
+export type { AgentError, SshRemoteConfig, ThinkingMode, UsageStats } from '../types';
+export { asThinkingMode } from '../types';
 
 // Agent form rules, shared with the desktop so a TUI form and the Edit dialog cannot disagree
 export { defaultAgentNameForPath, projectNameFromPath } from '../projectIdentity';

@@ -12,7 +12,9 @@ import type {
 	MaestroEvent,
 	EventFilter,
 	ProviderInfo,
+	QueuedTurn,
 	SshRemoteConfig,
+	TurnSendReceipt,
 } from '../../shared/maestro-lib';
 
 export interface FakeClientOptions {
@@ -28,6 +30,12 @@ export interface FakeClientOptions {
 	sshRemotes?: SshRemoteConfig[];
 	/** Model ids by provider id. */
 	models?: Record<string, string[]>;
+	/** What `turns.send` answers, one per call in order; once used up it answers `started`. */
+	sendReceipts?: TurnSendReceipt[];
+	/** The host's execution queue, as `turns.queue.list` reports it. */
+	queue?: QueuedTurn[];
+	/** What `turns.interrupt` reports as `stopped`. Default true. */
+	interruptStopped?: boolean;
 	/** Make these methods fail with this code, so a test can see how a refusal is shown. */
 	failures?: Partial<Record<ClientMethod, ClientError['code']>>;
 }
@@ -38,6 +46,8 @@ export interface FakeClient {
 	push(event: MaestroEvent): void;
 	/** Replace a transcript; the next `tabs.transcript` read returns it. */
 	setTranscript(agentId: string, tabId: string, entries: LogEntryRecord[]): void;
+	/** Replace the execution queue the next `turns.queue.list` reports. */
+	setQueue(items: QueuedTurn[]): void;
 	/** Every `tabs.transcript` call, as `agentId:tabId`. */
 	transcriptReads: string[];
 	/** Tabs closed through `tabs.close`, as the host's closed-tab history holds them. */
@@ -71,6 +81,8 @@ export function createFakeClient(options: FakeClientOptions = {}): FakeClient {
 	const agents = options.agents ?? [];
 	const groups = (options.groups ?? []).map((group) => ({ ...group }));
 	const transcripts = { ...options.transcripts };
+	const sendReceipts = [...(options.sendReceipts ?? [])];
+	let queue = [...(options.queue ?? [])];
 	const listeners = new Set<{
 		listener: (event: MaestroEvent) => void;
 		filter?: EventFilter;
@@ -270,10 +282,19 @@ export function createFakeClient(options: FakeClientOptions = {}): FakeClient {
 			},
 		},
 		turns: {
-			send: () => unsupported('turns.send'),
-			interrupt: () => unsupported('turns.interrupt'),
+			send: async (agentId, tabId, input) => {
+				const refused = record('turns.send', agentId, tabId, input);
+				if (refused) return refused;
+				return { ok: true, value: sendReceipts.shift() ?? { status: 'started' } };
+			},
+			interrupt: async (agentId, tabId) => {
+				const refused = record('turns.interrupt', agentId, tabId);
+				if (refused) return refused;
+				return { ok: true, value: { stopped: options.interruptStopped ?? true } };
+			},
 			queue: {
-				list: () => unsupported('turns.queue.list'),
+				// Reads are not recorded: the TUI re-reads the queue on turn events, and tests assert the writes.
+				list: async () => ({ ok: true, value: [...queue] }),
 				remove: () => unsupported('turns.queue.remove'),
 			},
 			subscribe: (agentId, tabId, listener) => {
@@ -311,6 +332,9 @@ export function createFakeClient(options: FakeClientOptions = {}): FakeClient {
 	return {
 		client,
 		push,
+		setQueue: (items) => {
+			queue = [...items];
+		},
 		setTranscript: (agentId, tabId, entries) => {
 			transcripts[`${agentId}:${tabId}`] = entries;
 		},

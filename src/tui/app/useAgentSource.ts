@@ -111,6 +111,9 @@ export function useAgentSource(paths: StorePaths, client: MaestroClient | undefi
 /** How long a burst of turn events waits before the transcript is read again. */
 const TRANSCRIPT_REFRESH_MS = 200;
 
+/** The turn events after which the host's stored transcript may have changed. */
+const TRANSCRIPT_EVENTS: ReadonlySet<string> = new Set(['user', 'started', 'outcome', 'gap']);
+
 const NO_ENTRIES: readonly LogEntryRecord[] = [];
 
 /**
@@ -152,6 +155,10 @@ export function useTabEntries(
 				if (event.type === 'turn' || event.type === 'tab.updated') {
 					if (event.agentId !== agentId) return;
 					if (event.type === 'turn' ? event.tabId !== tabId : event.tab.id !== tabId) return;
+					// A chunk of text, a tool call, or a usage report changes nothing the host has
+					// stored yet, and the live turn draws it; reading on each would cost a bridge
+					// call per chunk. The edges of a turn are when the stored copy moves.
+					if (event.type === 'turn' && !TRANSCRIPT_EVENTS.has(event.event.kind)) return;
 				}
 				schedule();
 			},

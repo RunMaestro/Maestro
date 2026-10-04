@@ -12,6 +12,8 @@ import type { Key } from 'ink';
 /** Where a binding is live: the main view, or one of the overlays. */
 export type KeyContext =
 	| 'main'
+	/** The Conversation pane has focus and a desktop is attached: letters type into the composer. */
+	| 'composer'
 	| 'help'
 	| 'tabs'
 	| 'history'
@@ -49,6 +51,10 @@ export type KeyAction =
 	| 'moveToGroup'
 	| 'newGroup'
 	| 'confirm'
+	| 'send'
+	| 'newline'
+	| 'interrupt'
+	| 'blurComposer'
 	| 'closeOverlay';
 
 /** Keys that arrive as a flag on Ink's `Key` rather than as text. */
@@ -57,6 +63,11 @@ export type NamedKey = 'tab' | 'return' | 'escape' | 'up' | 'down' | 'left' | 'r
 export interface KeyChord {
 	/** A printable key, as Ink reports it (`j`, `T`, `?`). */
 	input?: string;
+	/**
+	 * How the chord reads in help, for a key Ink reports as a raw character (a
+	 * line feed is Ctrl-J, and ESC then CR is Alt-Enter).
+	 */
+	label?: string;
 	named?: NamedKey;
 	ctrl?: boolean;
 	/** Only meaningful for `Tab`: letters carry their shift in the character itself. */
@@ -87,13 +98,13 @@ export const KEYMAP: readonly Binding[] = [
 	{
 		action: 'nextPane',
 		chords: [{ named: 'tab' }],
-		contexts: ['main'],
+		contexts: ['main', 'composer'],
 		description: 'Next pane',
 	},
 	{
 		action: 'prevPane',
 		chords: [{ named: 'tab', shift: true }],
-		contexts: ['main'],
+		contexts: ['main', 'composer'],
 		description: 'Previous pane',
 	},
 	{
@@ -164,7 +175,7 @@ export const KEYMAP: readonly Binding[] = [
 		action: 'renameTab',
 		chords: [{ input: 'r' }],
 		contexts: ['main', 'tabs'],
-		description: 'Rename the open tab (the highlighted one in the tab switcher)',
+		description: 'Rename the open or highlighted tab',
 		agentMenu: 'Rename tab',
 	},
 	{
@@ -222,6 +233,48 @@ export const KEYMAP: readonly Binding[] = [
 		description: 'New group',
 	},
 	{
+		action: 'send',
+		chords: [{ named: 'return' }],
+		contexts: ['composer'],
+		description: 'Send the message (queued while busy)',
+	},
+	{
+		action: 'newline',
+		// Terminals send a plain Enter for Shift-Enter, so the line feed (Ctrl-J) is the reliable key;
+		// ESC then CR is what most terminals send for Alt-Enter, or for Shift-Enter when mapped.
+		chords: [
+			{ input: '\n', label: 'Ctrl-J' },
+			{ input: '\r', label: 'Alt-Enter' },
+		],
+		contexts: ['composer'],
+		description: 'New line in the message',
+	},
+	{
+		action: 'interrupt',
+		chords: [{ input: 'c', ctrl: true }],
+		contexts: [
+			'main',
+			'composer',
+			'help',
+			'tabs',
+			'history',
+			'palette',
+			'menu',
+			'form',
+			'prompt',
+			'confirm',
+			'groupPicker',
+		],
+		description: 'Interrupt the turn; twice in 1s quits',
+		agentMenu: 'Interrupt turn',
+	},
+	{
+		action: 'blurComposer',
+		chords: [{ named: 'escape' }],
+		contexts: ['composer'],
+		description: 'Leave the composer',
+	},
+	{
 		action: 'confirm',
 		chords: [{ input: 'y' }, { named: 'return' }],
 		contexts: ['confirm'],
@@ -254,13 +307,13 @@ export const KEYMAP: readonly Binding[] = [
 	{
 		action: 'toggleAgentsPane',
 		chords: [{ input: 'b', ctrl: true }],
-		contexts: ['main'],
+		contexts: ['main', 'composer'],
 		description: 'Show or hide the Agents pane',
 	},
 	{
 		action: 'palette',
 		chords: [{ input: 'k', ctrl: true }],
-		contexts: ['main', 'palette'],
+		contexts: ['main', 'composer', 'palette'],
 		description: 'Command palette',
 	},
 	{
@@ -362,6 +415,7 @@ const NAMED_KEY_LABELS: Record<NamedKey, string> = {
 };
 
 export function formatChord(chord: KeyChord): string {
+	if (chord.label) return chord.label;
 	if (chord.named) {
 		const label = NAMED_KEY_LABELS[chord.named];
 		return chord.shift ? `Shift-${label}` : label;

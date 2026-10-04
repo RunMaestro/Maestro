@@ -11,8 +11,8 @@ export interface HelpOverlayProps {
 	height: number;
 }
 
-/** Width of the key column; the longest binding (`Ctrl-B`, `j / ↓`) fits with room to spare. */
-const KEYS_COLUMN = 14;
+/** Width of the key column; the longest binding (`Ctrl-J / Alt-Enter`) fits with room to spare. */
+const KEYS_COLUMN = 20;
 
 /** Lines the frame spends on its border (2) and title (1), plus the scroll hint below the list (1). */
 const CHROME_LINES = 4;

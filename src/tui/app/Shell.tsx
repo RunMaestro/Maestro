@@ -2,7 +2,7 @@ import React, { useRef } from 'react';
 import { Box, Text } from 'ink';
 import type { AgentRecord, LogEntryRecord } from '../../shared/maestro-lib';
 import { AgentsPane } from './AgentsPane';
-import { ConversationPane } from './ConversationPane';
+import { ConversationPane, type ConversationComposer } from './ConversationPane';
 import { StatusBar } from './StatusBar';
 import { windowRows, type PaneRow } from './agentRows';
 import {
@@ -30,6 +30,8 @@ export interface ShellProps {
 	entries?: readonly LogEntryRecord[];
 	/** Show tool calls expanded in the Conversation pane. */
 	expandTools?: boolean;
+	/** The composer under the transcript; unset while the TUI cannot send (no desktop attached). */
+	composer?: ConversationComposer;
 	/** The pane that has keyboard focus. Ignored for a pane that is hidden. */
 	focusedPane: PaneId;
 	/**
@@ -65,6 +67,7 @@ export function Shell({
 	entries,
 	focusedPane,
 	expandTools,
+	composer,
 	overlay,
 	agentsPaneOverride,
 	agentsPaneWidth,
@@ -116,6 +119,7 @@ export function Shell({
 						height={paneHeight}
 						focused={focusedPane === 'conversation' || !showAgents}
 						expandTools={expandTools}
+						composer={composer}
 					/>
 				)}
 			</Box>

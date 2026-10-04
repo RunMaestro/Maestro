@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { useApp, useInput } from 'ink';
+import { useApp, useInput, type Key } from 'ink';
 import type { AgentRecord, ClientResult, MaestroClient, MaestroPaths } from '../shared/maestro-lib';
-import { visibleAiTabsOf } from '../shared/maestro-lib';
+import { asThinkingMode, visibleAiTabsOf } from '../shared/maestro-lib';
 import { AgentForm } from './agents/AgentForm';
 import {
 	acceptCompletion,
@@ -44,6 +44,24 @@ import {
 	type PromptState,
 } from './agents/manage';
 import { submitCloseTab, submitNewTab, tabAfterClose } from './agents/tabs';
+import {
+	EMPTY_COMPOSER,
+	backspace as composerBackspace,
+	composerTextFor,
+	deleteToLineStart,
+	insertNewline,
+	insertText,
+	isBlankComposer,
+	moveLeft,
+	moveRight,
+	moveToLineEnd,
+	moveToLineStart,
+	moveVertical,
+	type ComposerState,
+} from './composer/draft';
+import { mergeLiveTurn } from './composer/liveTurn';
+import { ARM_QUIT_NOTICE, decideCtrlC, interruptTurn, submitDraft } from './composer/turns';
+import { useTurnStream } from './composer/useTurnStream';
 import { HelpOverlay } from './app/HelpOverlay';
 import { HistoryView } from './app/HistoryView';
 import { moveHistoryCursor, openHistory, type HistoryViewState } from './app/history';
@@ -201,7 +219,54 @@ export function App({ paths, client }: AppProps): React.ReactElement {
 				cursorAgent
 			)
 		: undefined;
-	const activeEntries = useTabEntries(source, cursorAgent?.id, activeTab);
+	const storedEntries = useTabEntries(source, cursorAgent?.id, activeTab);
+	const stream = useTurnStream(source.client, cursorAgent?.id, activeTab?.id);
+	const thinkingMode = asThinkingMode(activeTab?.showThinking) ?? 'off';
+	// The turn on screen is the one the stream is following; before it has seen one, the tab's own state.
+	const turnRunning = stream.turn ? stream.turn.running : activeTab?.state === 'busy';
+	const activeEntries = useMemo(
+		() => mergeLiveTurn(storedEntries, stream.turn, thinkingMode),
+		[storedEntries, stream.turn, thinkingMode]
+	);
+
+	// Drafts are per tab, so switching away from a half-written message does not lose it. Held in a
+	// ref as well as state for the reason the cursor is: a paste or a held key outruns React.
+	const draftsRef = useRef<Record<string, ComposerState>>({});
+	const [, setDraftVersion] = useState(0);
+	const composerTargetRef = useRef<
+		{ client: MaestroClient; agentId: string; tabId: string; key: string } | undefined
+	>(undefined);
+	composerTargetRef.current =
+		source.client && cursorAgent && activeTab
+			? {
+					client: source.client,
+					agentId: cursorAgent.id,
+					tabId: activeTab.id,
+					key: `${cursorAgent.id}:${activeTab.id}`,
+				}
+			: undefined;
+	const turnRunningRef = useRef(turnRunning);
+	turnRunningRef.current = turnRunning;
+	const refreshQueueRef = useRef(stream.refreshQueue);
+	refreshQueueRef.current = stream.refreshQueue;
+	const lastCtrlCRef = useRef<number | undefined>(undefined);
+	const composerKey = composerTargetRef.current?.key;
+	const draft = composerKey ? (draftsRef.current[composerKey] ?? EMPTY_COMPOSER) : EMPTY_COMPOSER;
+
+	const setDraft = (key: string, change: (state: ComposerState) => ComposerState) => {
+		draftsRef.current = {
+			...draftsRef.current,
+			[key]: change(draftsRef.current[key] ?? EMPTY_COMPOSER),
+		};
+		setDraftVersion((version) => version + 1);
+	};
+
+	/** The composer owns the keyboard while the Conversation pane has focus and messages can be sent. */
+	const composerHasKeys = (): boolean => {
+		if (!composerTargetRef.current) return false;
+		const visible = isAgentsPaneVisible(columnsRef.current, agentsPaneOverrideRef.current);
+		return !visible || focusRef.current === 'conversation';
+	};
 
 	const paletteEntries = useMemo(() => buildPaletteEntries(data.agents), [data.agents]);
 	const paletteEntriesRef = useRef(paletteEntries);
@@ -484,7 +549,77 @@ export function App({ paths, client }: AppProps): React.ReactElement {
 		setNotice(result.value);
 	};
 
-	const runAction = (action: KeyAction, current: OverlayState | undefined) => {
+	/** Sends the open tab's draft. Cleared at once so a second Enter cannot send it twice; a refusal puts it back. */
+	const sendDraft = async () => {
+		const target = composerTargetRef.current;
+		if (!target) {
+			if (requireClient()) setNotice('Select an agent with a tab to send a message.');
+			return;
+		}
+		const text = draftsRef.current[target.key] ?? EMPTY_COMPOSER;
+		if (isBlankComposer(text)) return;
+		setDraft(target.key, () => EMPTY_COMPOSER);
+		const outcome = await submitDraft(target.client, target.agentId, target.tabId, text);
+		if (outcome.status === 'failed') {
+			// Back in the box, unless the person has started something new in the meantime.
+			setDraft(target.key, (now) => (now.text === '' ? text : now));
+			setNotice(outcome.message);
+			return;
+		}
+		if (outcome.status === 'sent' && outcome.queued) {
+			setNotice(outcome.notice);
+			refreshQueueRef.current();
+		}
+	};
+
+	/**
+	 * Stops the shown tab's running turn. From the `Ctrl-C` key it also arms the
+	 * quit window: a second press within a second quits, running turn or not.
+	 */
+	const interrupt = async (viaKey: boolean) => {
+		const now = Date.now();
+		const decision = viaKey
+			? decideCtrlC({ now, lastAt: lastCtrlCRef.current, running: turnRunningRef.current })
+			: 'interrupt';
+		if (decision === 'quit') {
+			exit();
+			return;
+		}
+		if (viaKey) lastCtrlCRef.current = now;
+		if (decision === 'arm-quit') {
+			setNotice(ARM_QUIT_NOTICE);
+			return;
+		}
+		const target = composerTargetRef.current;
+		if (!target) {
+			requireClient();
+			return;
+		}
+		const result = await interruptTurn(target.client, target.agentId, target.tabId);
+		setNotice(result.ok ? result.value : result.error.message);
+	};
+
+	/** Keys no binding claimed, while the composer owns the keyboard: editing the draft. */
+	const editComposer = (input: string, key: Key) => {
+		const target = composerTargetRef.current;
+		if (!target) return;
+		const edit = (change: (state: ComposerState) => ComposerState) => setDraft(target.key, change);
+		if (isBackspaceKey(key)) edit(composerBackspace);
+		else if (key.leftArrow) edit(moveLeft);
+		else if (key.rightArrow) edit(moveRight);
+		else if (key.upArrow) edit((state) => moveVertical(state, -1));
+		else if (key.downArrow) edit((state) => moveVertical(state, 1));
+		else if (key.ctrl) {
+			if (input === 'a') edit(moveToLineStart);
+			else if (input === 'e') edit(moveToLineEnd);
+			else if (input === 'u') edit(deleteToLineStart);
+		} else {
+			const text = composerTextFor(input, key);
+			if (text) edit((state) => insertText(state, text));
+		}
+	};
+
+	const runAction = (action: KeyAction, current: OverlayState | undefined, viaKey = false) => {
 		const visible = isAgentsPaneVisible(columnsRef.current, agentsPaneOverrideRef.current);
 		const focus: PaneId = visible ? focusRef.current : 'conversation';
 		const agent = cursorAgentRef.current;
@@ -492,6 +627,21 @@ export function App({ paths, client }: AppProps): React.ReactElement {
 		switch (action) {
 			case 'quit':
 				exit();
+				return;
+			case 'send':
+				void sendDraft();
+				return;
+			case 'newline': {
+				const target = composerTargetRef.current;
+				if (target) setDraft(target.key, insertNewline);
+				return;
+			}
+			case 'interrupt':
+				void interrupt(viaKey);
+				return;
+			case 'blurComposer':
+				// With the Agents pane hidden there is nowhere else for focus to go.
+				if (visible) setFocusedPane('agents');
 				return;
 			case 'help':
 				setOverlay(current?.kind === 'help' ? undefined : { kind: 'help', cursor: 0 });
@@ -753,10 +903,14 @@ export function App({ paths, client }: AppProps): React.ReactElement {
 	useInput((input, key) => {
 		setNotice(undefined);
 		const current = overlayRef.current;
-		const context: KeyContext = current ? current.kind : 'main';
+		const context: KeyContext = current ? current.kind : composerHasKeys() ? 'composer' : 'main';
 		const action = resolveAction(context, input, key);
 		if (action) {
-			runAction(action, current);
+			runAction(action, current, true);
+			return;
+		}
+		if (context === 'composer') {
+			editComposer(input, key);
 			return;
 		}
 		// The palette, the agent form, and the prompts are the overlays with text boxes: what no binding claims is typing.
@@ -896,6 +1050,9 @@ export function App({ paths, client }: AppProps): React.ReactElement {
 			entries={activeEntries}
 			focusedPane={effectiveFocus}
 			expandTools={expandTools}
+			composer={
+				composerKey ? { state: draft, running: turnRunning, queued: stream.queued } : undefined
+			}
 			overlay={renderOverlay}
 			agentsPaneOverride={agentsPaneOverride}
 			agentsPaneWidth={view.agentsPaneWidth}
