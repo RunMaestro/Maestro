@@ -20,7 +20,7 @@ objc2-app-kit = { version = "0.3", default-features = false, features = ["std", 
 
 [target.'cfg(windows)'.dependencies]
 uiautomation = { version = "0.25", default-features = false, features = ["input", "pattern"] }
-windows = { version = "0.62", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_System_Threading", "Win32_Storage_Packaging_Appx"] }
+windows = { version = "0.62", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_System_Threading", "Win32_Storage_Packaging_Appx", "Win32_UI_Accessibility", "Win32_System_Com"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 atspi = "0.30"

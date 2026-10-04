@@ -225,16 +225,115 @@ pub fn flatten_lines(lines: &[String]) -> String {
 // Adapter contract
 // ---------------------------------------------------------------------------
 
-/// Apps the helper must never read from. Adapters consult this before any
-/// tree walk or value read; the engine re-checks before emitting.
+/// Bundle ids, executable names, and desktop ids of browsers. A browser whose
+/// URL cannot be resolved is treated as possibly on a blocked domain.
+const BROWSER_IDS: [&str; 37] = [
+    // macOS bundle ids
+    "com.google.chrome",
+    "org.chromium.chromium",
+    "com.microsoft.edgemac",
+    "com.brave.browser",
+    "company.thebrowser.browser",
+    "org.mozilla.firefox",
+    "org.mozilla.firefoxdeveloperedition",
+    "org.mozilla.nightly",
+    "com.apple.safari",
+    "com.apple.safaritechnologypreview",
+    "com.vivaldi.vivaldi",
+    "com.operasoftware.opera",
+    "com.operasoftware.operagx",
+    // Windows executables (".exe" stripped before matching)
+    "chrome",
+    "chromium",
+    "msedge",
+    "brave",
+    "arc",
+    "firefox",
+    "vivaldi",
+    "opera",
+    // Linux executables and desktop ids
+    "chromium-browser",
+    "google-chrome",
+    "google-chrome-stable",
+    "google-chrome-beta",
+    "brave-browser",
+    "microsoft-edge",
+    "microsoft-edge-stable",
+    "firefox-esr",
+    "firefox-bin",
+    "vivaldi-bin",
+    "vivaldi-stable",
+    "opera-stable",
+    "com.google.chrome",
+    "com.microsoft.edge",
+    "com.opera.opera",
+    "librewolf",
+];
+
+/// Id prefixes covering channel variants (`com.google.Chrome.canary`, ...).
+const BROWSER_ID_PREFIXES: [&str; 6] = [
+    "com.google.chrome.",
+    "com.microsoft.edgemac.",
+    "com.brave.browser.",
+    "org.mozilla.firefox",
+    "org.chromium.",
+    "com.vivaldi.",
+];
+
+const BROWSER_NAMES: [&str; 10] = [
+    "google chrome",
+    "chromium",
+    "microsoft edge",
+    "brave browser",
+    "arc",
+    "firefox",
+    "safari",
+    "vivaldi",
+    "opera",
+    "opera gx",
+];
+
+/// True for Chrome, Chromium, Edge, Brave, Arc, Firefox, Safari, Vivaldi,
+/// and Opera, matched by id (bundle id, exe, desktop id) or display name.
+pub fn is_known_browser(app: &ObservedApp) -> bool {
+    let id = app.id.trim().to_lowercase();
+    let id = id.strip_suffix(".exe").unwrap_or(&id);
+    let name = app.name.trim().to_lowercase();
+    BROWSER_IDS.contains(&id)
+        || BROWSER_ID_PREFIXES.iter().any(|p| id.starts_with(p))
+        || BROWSER_NAMES.contains(&name.as_str())
+}
+
+/// A window as an adapter read it: raw OS strings plus an identity key (AX
+/// element hash, HWND, AT-SPI object hash). Policy decisions use the raw
+/// strings; they are capped only when an event is emitted.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct WindowInfo {
+    pub key: u64,
+    pub title: Option<String>,
+    pub url: Option<String>,
+}
+
+impl WindowInfo {
+    fn observed(&self) -> ObservedWindow {
+        ObservedWindow {
+            title: cap(self.title.clone(), MAX_TITLE_BYTES),
+            url: cap(self.url.clone(), MAX_URL_BYTES),
+        }
+    }
+}
+
+/// What the helper must never read from or emit. Adapters consult this
+/// before any tree walk or value read; the engine re-checks before emitting.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct AppFilter {
     apps: HashSet<String>,
     pids: HashSet<u32>,
+    domains: Vec<String>,
 }
 
 impl AppFilter {
-    pub fn new(apps: &[String], pids: &[u32]) -> Self {
+    pub fn new(apps: &[String], pids: &[u32], domains: &[String]) -> Self {
         AppFilter {
             apps: apps
                 .iter()
@@ -242,11 +341,41 @@ impl AppFilter {
                 .filter(|a| !a.is_empty())
                 .collect(),
             pids: pids.iter().copied().collect(),
+            domains: domains.iter().filter_map(|d| normalize_domain(d)).collect(),
         }
     }
 
-    pub fn is_blocked(&self, app_id: &str, pid: u32) -> bool {
-        self.pids.contains(&pid) || self.apps.contains(&app_id.to_lowercase())
+    /// Blocked by pid, or by a rule equal (case-insensitive) to the app's id
+    /// or its display name, so `--app Slack` works as well as a bundle id.
+    pub fn is_blocked(&self, app: &ObservedApp) -> bool {
+        self.pids.contains(&app.pid)
+            || self.apps.contains(&app.id.trim().to_lowercase())
+            || self.apps.contains(&app.name.trim().to_lowercase())
+    }
+
+    pub fn has_domain_rules(&self) -> bool {
+        !self.domains.is_empty()
+    }
+
+    /// Private window or blocked domain: emit nothing for this window, not
+    /// even its title.
+    pub fn window_hidden(&self, window: Option<&WindowInfo>) -> bool {
+        let Some(w) = window else { return false };
+        w.title.as_deref().is_some_and(is_private_title)
+            || w.url
+                .as_deref()
+                .is_some_and(|u| domain_blocked(u, &self.domains))
+    }
+
+    /// The window's content (field values, selections, snapshots) must not be
+    /// read: hidden windows, plus browsers whose URL could not be resolved
+    /// while domain rules exist (fail closed). Titles may still be reported.
+    pub fn content_blocked(&self, app: &ObservedApp, window: Option<&WindowInfo>) -> bool {
+        if self.window_hidden(window) {
+            return true;
+        }
+        let url_known = window.is_some_and(|w| w.url.is_some());
+        self.has_domain_rules() && !url_known && is_known_browser(app)
     }
 }
 
@@ -283,10 +412,10 @@ pub enum Signal {
     /// adapter must not read their windows).
     AppActivated {
         app: ObservedApp,
-        window: Option<ObservedWindow>,
+        window: Option<WindowInfo>,
     },
     /// The frontmost app's focused window, or its title / URL, changed.
-    WindowChanged { window: ObservedWindow },
+    WindowChanged { window: WindowInfo },
     /// Keyboard focus moved to `element` (or to nothing readable).
     FocusChanged { element: Option<ElementInfo> },
     /// The focused element's value changed.
@@ -328,6 +457,18 @@ impl Default for SnapshotLimits {
     }
 }
 
+/// Result of a snapshot query.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Snapshot {
+    /// Visible text of the focused window, as lines.
+    Lines(Vec<String>),
+    /// The focused window (key, title, or URL) is not the one the adapter last
+    /// reported. Nothing was walked; the engine re-runs suppression first.
+    WindowChanged(WindowInfo),
+    /// Nothing readable (blocked app, content blocked, no window).
+    Unavailable,
+}
+
 /// A platform accessibility adapter. All methods are called from the engine
 /// thread.
 pub trait Observer {
@@ -345,19 +486,24 @@ pub trait Observer {
     /// Wait up to `timeout` for OS callbacks and return the signals they
     /// produced.
     fn poll(&mut self, timeout: Duration) -> Vec<Signal>;
-    /// Visible text of the focused window as lines, bounded by `limits`.
-    /// Must return `None` for a blocked app.
-    fn snapshot_focused_window_text(&mut self, limits: &SnapshotLimits) -> Option<Vec<String>>;
+    /// Visible text of the focused window, bounded by `limits`. Must first
+    /// re-read the focused window and return [`Snapshot::WindowChanged`] when
+    /// it differs from the last reported one, and must return
+    /// [`Snapshot::Unavailable`] for blocked apps and blocked content.
+    fn snapshot_focused_window_text(&mut self, limits: &SnapshotLimits) -> Snapshot;
 }
 
 // ---------------------------------------------------------------------------
 // Engine
 // ---------------------------------------------------------------------------
 
+/// Minimum spacing between `window.changed` events for one app; changes in
+/// between are coalesced to the latest window.
+pub const WINDOW_EVENT_MIN_MS: u64 = 1000;
+
 #[derive(Debug, Clone)]
 struct Config {
     filter: AppFilter,
-    block_domains: Vec<String>,
     snapshots: bool,
     max_text_bytes: usize,
     max_snapshot_bytes: usize,
@@ -366,12 +512,7 @@ struct Config {
 impl From<ConfigureCommand> for Config {
     fn from(c: ConfigureCommand) -> Self {
         Config {
-            filter: AppFilter::new(&c.block_apps, &c.block_pids),
-            block_domains: c
-                .block_domains
-                .iter()
-                .filter_map(|d| normalize_domain(d))
-                .collect(),
+            filter: AppFilter::new(&c.block_apps, &c.block_pids, &c.block_domains),
             snapshots: c.snapshots,
             max_text_bytes: c.max_text_bytes.max(MIN_TEXT_CAP),
             max_snapshot_bytes: c.max_snapshot_bytes.max(MIN_TEXT_CAP),
@@ -407,10 +548,18 @@ pub struct Engine {
 
     app: Option<ObservedApp>,
     app_blocked: bool,
-    window: Option<ObservedWindow>,
-    window_suppressed: bool,
+    /// Raw, as the adapter read it; capped only on emission.
+    window: Option<WindowInfo>,
+    /// Private window or blocked domain: nothing is emitted.
+    window_hidden: bool,
+    /// Content must not be emitted (hidden, or a browser with unknown URL).
+    content_hidden: bool,
     /// pid of the app whose `app.activated` was last emitted.
     announced_pid: Option<u32>,
+    /// Window carried by the last `app.activated` / `window.changed`.
+    announced_window: Option<WindowInfo>,
+    last_window_event: Option<u64>,
+    window_event_pending: bool,
     field: Option<Field>,
     selection: Option<PendingSelection>,
     last_selection: Option<String>,
@@ -433,8 +582,12 @@ impl Engine {
             app: None,
             app_blocked: false,
             window: None,
-            window_suppressed: false,
+            window_hidden: false,
+            content_hidden: false,
             announced_pid: None,
+            announced_window: None,
+            last_window_event: None,
+            window_event_pending: false,
             field: None,
             selection: None,
             last_selection: None,
@@ -594,8 +747,12 @@ impl Engine {
         self.app = None;
         self.app_blocked = false;
         self.window = None;
-        self.window_suppressed = false;
+        self.window_hidden = false;
+        self.content_hidden = false;
         self.announced_pid = None;
+        self.announced_window = None;
+        self.last_window_event = None;
+        self.window_event_pending = false;
         self.field = None;
         self.selection = None;
         self.last_selection = None;
@@ -604,32 +761,33 @@ impl Engine {
 
     // -- signals -----------------------------------------------------------
 
+    /// Nothing at all may be emitted for the current context.
     fn suppressed(&self) -> bool {
-        self.app.is_none() || self.app_blocked || self.window_suppressed
+        self.app.is_none() || self.app_blocked || self.window_hidden
     }
 
-    fn window_is_suppressed(&self, window: Option<&ObservedWindow>) -> bool {
-        let Some(w) = window else { return false };
-        if w.title.as_deref().is_some_and(is_private_title) {
-            return true;
-        }
-        match (&w.url, &self.config) {
-            (Some(url), Some(cfg)) => domain_blocked(url, &cfg.block_domains),
-            _ => false,
-        }
+    /// Window content (text, selections, snapshots) may not be emitted.
+    fn content_suppressed(&self) -> bool {
+        self.suppressed() || self.content_hidden
     }
 
-    fn sanitize_window(window: ObservedWindow) -> ObservedWindow {
-        ObservedWindow {
-            title: cap(window.title, MAX_TITLE_BYTES),
-            url: cap(window.url, MAX_URL_BYTES),
-        }
+    /// Re-evaluates suppression on the raw (untruncated) window strings.
+    fn evaluate_window(&mut self) {
+        let (hidden, content) = match (&self.config, &self.app) {
+            (Some(cfg), Some(app)) => (
+                cfg.filter.window_hidden(self.window.as_ref()),
+                cfg.filter.content_blocked(app, self.window.as_ref()),
+            ),
+            _ => (false, false),
+        };
+        self.window_hidden = hidden;
+        self.content_hidden = content;
     }
 
     fn base_event(&self, kind: EventKind, now: Now) -> ObservedEvent {
         let mut ev = ObservedEvent::new(kind, iso_utc_ms(now.wall_ms));
         ev.app = self.app.clone();
-        ev.window = self.window.clone();
+        ev.window = self.window.as_ref().map(WindowInfo::observed);
         ev
     }
 
@@ -647,7 +805,7 @@ impl Engine {
         }
     }
 
-    fn on_app(&mut self, app: ObservedApp, window: Option<ObservedWindow>, now: Now) {
+    fn on_app(&mut self, app: ObservedApp, window: Option<WindowInfo>, now: Now) {
         if self.app.as_ref().is_some_and(|a| a.pid == app.pid) && !self.app_blocked {
             if let Some(w) = window {
                 self.on_window(w, now);
@@ -660,27 +818,30 @@ impl Engine {
         let blocked = self
             .config
             .as_ref()
-            .is_some_and(|c| c.filter.is_blocked(&app.id, app.pid));
+            .is_some_and(|c| c.filter.is_blocked(&app));
         self.app = Some(app);
         self.app_blocked = blocked;
         self.field = None;
         self.announced_pid = None;
+        self.announced_window = None;
+        self.last_window_event = None;
+        self.window_event_pending = false;
         self.next_snapshot_at = None;
         if blocked {
             self.window = None;
-            self.window_suppressed = false;
+            self.window_hidden = false;
+            self.content_hidden = false;
             return;
         }
-        self.window = window.map(Self::sanitize_window);
-        self.window_suppressed = self.window_is_suppressed(self.window.as_ref());
+        self.window = window;
+        self.evaluate_window();
         self.announce(now);
     }
 
-    fn on_window(&mut self, window: ObservedWindow, now: Now) {
+    fn on_window(&mut self, window: WindowInfo, now: Now) {
         if self.app.is_none() || self.app_blocked {
             return;
         }
-        let window = Self::sanitize_window(window);
         if self.window.as_ref() == Some(&window) {
             return;
         }
@@ -688,14 +849,17 @@ impl Engine {
         self.selection = None;
         self.field = None;
         self.window = Some(window);
-        self.window_suppressed = self.window_is_suppressed(self.window.as_ref());
+        self.evaluate_window();
         self.announce(now);
     }
 
-    /// Emits `app.activated` (first event for this app) or `window.changed`,
-    /// and schedules a snapshot. Silent while suppressed.
+    /// Emits `app.activated` (first event for this app) or `window.changed`
+    /// (at most once per second per app; later changes are coalesced), and
+    /// schedules a snapshot. Silent while suppressed.
     fn announce(&mut self, now: Now) {
         if self.suppressed() {
+            self.window_event_pending = false;
+            self.next_snapshot_at = None;
             return;
         }
         let pid = self.app.as_ref().map(|a| a.pid);
@@ -710,15 +874,35 @@ impl Engine {
             }
             self.out.push(ev);
             self.announced_pid = pid;
+            self.mark_window_announced(now);
         } else if self.window.is_some() {
-            let ev = self.base_event(EventKind::WindowChanged, now);
-            self.out.push(ev);
+            let recent = self
+                .last_window_event
+                .is_some_and(|t| now.mono_ms.saturating_sub(t) < WINDOW_EVENT_MIN_MS);
+            if recent {
+                self.window_event_pending = true;
+                self.next_snapshot_at = None;
+                return;
+            }
+            self.emit_window_changed(now);
         }
+    }
+
+    fn emit_window_changed(&mut self, now: Now) {
+        let ev = self.base_event(EventKind::WindowChanged, now);
+        self.out.push(ev);
+        self.mark_window_announced(now);
+    }
+
+    fn mark_window_announced(&mut self, now: Now) {
+        self.announced_window = self.window.clone();
+        self.last_window_event = Some(now.mono_ms);
+        self.window_event_pending = false;
         self.next_snapshot_at = Some(now.mono_ms + SNAPSHOT_SETTLE_MS);
     }
 
     fn on_focus(&mut self, element: Option<ElementInfo>, now: Now) {
-        if self.suppressed() {
+        if self.content_suppressed() {
             self.field = None;
             return;
         }
@@ -741,7 +925,7 @@ impl Engine {
     }
 
     fn on_value(&mut self, element: ElementInfo, now: Now) {
-        if self.suppressed() {
+        if self.content_suppressed() {
             return;
         }
         if !element.is_capturable_field() {
@@ -791,7 +975,7 @@ impl Engine {
     }
 
     fn on_selection(&mut self, element: Option<ElementInfo>, text: String, now: Now) {
-        if self.suppressed() || element.as_ref().is_some_and(|e| e.secure) {
+        if self.content_suppressed() || element.as_ref().is_some_and(|e| e.secure) {
             return;
         }
         if is_blank(&text) {
@@ -813,7 +997,7 @@ impl Engine {
         let Some(field) = self.field.as_ref() else {
             return;
         };
-        if self.suppressed() || !field.dirty || is_blank(&field.value) {
+        if self.content_suppressed() || !field.dirty || is_blank(&field.value) {
             return;
         }
         if field.committed.as_deref() == Some(field.value.as_str()) {
@@ -846,13 +1030,14 @@ impl Engine {
 
     // -- timers ------------------------------------------------------------
 
-    /// Fires idle commits, stable selections, due snapshots, and the periodic
-    /// access re-check.
+    /// Fires coalesced window events, idle commits, stable selections, due
+    /// snapshots, and the periodic access re-check.
     pub fn tick(&mut self, obs: &mut dyn Observer, now: Now) {
         self.poll_access(obs, now);
         if !self.observing {
             return;
         }
+        self.tick_window(now);
         self.tick_field(now);
         self.tick_selection(now);
         self.tick_snapshot(obs, now);
@@ -874,12 +1059,35 @@ impl Engine {
         }
     }
 
+    fn tick_window(&mut self, now: Now) {
+        if !self.window_event_pending {
+            return;
+        }
+        if self.suppressed() {
+            self.window_event_pending = false;
+            return;
+        }
+        let due = self
+            .last_window_event
+            .is_none_or(|t| now.mono_ms.saturating_sub(t) >= WINDOW_EVENT_MIN_MS);
+        if !due {
+            return;
+        }
+        if self.window == self.announced_window {
+            // Changed and changed back within the window: nothing to report.
+            self.window_event_pending = false;
+            self.next_snapshot_at = Some(now.mono_ms + SNAPSHOT_SETTLE_MS);
+            return;
+        }
+        self.emit_window_changed(now);
+    }
+
     fn tick_field(&mut self, now: Now) {
         let due = self
             .field
             .as_ref()
             .is_some_and(|f| f.dirty && now.mono_ms.saturating_sub(f.last_change) >= TEXT_IDLE_MS);
-        if !due || self.suppressed() {
+        if !due || self.content_suppressed() {
             return;
         }
         let Some(field) = self.field.as_mut() else {
@@ -899,7 +1107,7 @@ impl Engine {
             .selection
             .as_ref()
             .is_some_and(|p| now.mono_ms.saturating_sub(p.since) >= SELECTION_STABLE_MS);
-        if !due || self.suppressed() {
+        if !due || self.content_suppressed() {
             return;
         }
         let Some(pending) = self.selection.take() else {
@@ -924,36 +1132,40 @@ impl Engine {
     fn tick_snapshot(&mut self, obs: &mut dyn Observer, now: Now) {
         let enabled = self.config.as_ref().is_some_and(|c| c.snapshots);
         let due = self.next_snapshot_at.is_some_and(|t| now.mono_ms >= t);
-        if !enabled || !due || self.suppressed() {
+        if !enabled || !due || self.content_suppressed() {
             return;
         }
         self.next_snapshot_at = Some(now.mono_ms + SNAPSHOT_INTERVAL_MS);
-        let lines = obs.snapshot_focused_window_text(&SnapshotLimits::default());
-        self.on_snapshot(lines, now);
+        match obs.snapshot_focused_window_text(&SnapshotLimits::default()) {
+            Snapshot::Lines(lines) => self.on_snapshot(lines, now),
+            // Skip this snapshot; the window event re-runs suppression and
+            // schedules a fresh one.
+            Snapshot::WindowChanged(window) => self.on_window(window, now),
+            Snapshot::Unavailable => {}
+        }
     }
 
-    fn window_key(&self) -> String {
+    /// Dedupe key: app plus URL, or the window identity when there is no URL.
+    /// Titles are left out so a ticking title does not defeat the dedupe.
+    fn snapshot_key(&self) -> String {
         let pid = self.app.as_ref().map_or(0, |a| a.pid);
-        let (title, url) = self.window.as_ref().map_or(("", ""), |w| {
-            (
-                w.title.as_deref().unwrap_or(""),
-                w.url.as_deref().unwrap_or(""),
-            )
-        });
-        format!("{pid}\u{1f}{title}\u{1f}{url}")
+        match &self.window {
+            Some(WindowInfo { url: Some(url), .. }) => format!("{pid}\u{1f}u\u{1f}{url}"),
+            Some(w) => format!("{pid}\u{1f}w\u{1f}{}", w.key),
+            None => format!("{pid}\u{1f}none"),
+        }
     }
 
-    fn on_snapshot(&mut self, lines: Option<Vec<String>>, now: Now) {
-        if self.suppressed() {
+    fn on_snapshot(&mut self, lines: Vec<String>, now: Now) {
+        if self.content_suppressed() {
             return;
         }
-        let Some(lines) = lines else { return };
         let text = flatten_lines(&lines);
         if text.is_empty() {
             return;
         }
         let hash = fnv1a(text.as_bytes());
-        let key = self.window_key();
+        let key = self.snapshot_key();
         if self.snapshot_hashes.get(&key) == Some(&hash) {
             return;
         }
@@ -1076,6 +1288,8 @@ mod tests {
         stopped: usize,
         last_filter: Option<AppFilter>,
         snapshot: Option<Vec<String>>,
+        /// Returned once, instead of lines, to simulate a window that moved.
+        snapshot_window: Option<WindowInfo>,
         snapshot_calls: usize,
         requested: usize,
     }
@@ -1128,9 +1342,15 @@ mod tests {
         fn poll(&mut self, _timeout: Duration) -> Vec<Signal> {
             Vec::new()
         }
-        fn snapshot_focused_window_text(&mut self, _l: &SnapshotLimits) -> Option<Vec<String>> {
+        fn snapshot_focused_window_text(&mut self, _l: &SnapshotLimits) -> Snapshot {
             self.snapshot_calls += 1;
-            self.snapshot.clone()
+            if let Some(window) = self.snapshot_window.take() {
+                return Snapshot::WindowChanged(window);
+            }
+            match &self.snapshot {
+                Some(lines) => Snapshot::Lines(lines.clone()),
+                None => Snapshot::Unavailable,
+            }
         }
     }
 
@@ -1150,8 +1370,15 @@ mod tests {
         }
     }
 
-    fn win(title: &str, url: Option<&str>) -> ObservedWindow {
-        ObservedWindow {
+    /// A window whose identity follows its title (distinct titles are
+    /// distinct windows).
+    fn win(title: &str, url: Option<&str>) -> WindowInfo {
+        win_k(fnv1a(title.as_bytes()), title, url)
+    }
+
+    fn win_k(key: u64, title: &str, url: Option<&str>) -> WindowInfo {
+        WindowInfo {
+            key,
             title: Some(title.into()),
             url: url.map(String::from),
         }
@@ -1448,7 +1675,7 @@ mod tests {
             .last_filter
             .as_ref()
             .unwrap()
-            .is_blocked("COM.1PASSWORD.1PASSWORD", 1));
+            .is_blocked(&app("COM.1PASSWORD.1PASSWORD", 1)));
         activate(&mut engine, "com.1password.1password", 5, "Vault", 0);
         engine.handle_signal(
             Signal::FocusChanged {
@@ -1505,6 +1732,305 @@ mod tests {
             vec![EventKind::AppActivated, EventKind::AppActivated]
         );
         assert!(out.iter().all(|e| e.app.as_ref().unwrap().pid == 4));
+    }
+
+    #[test]
+    fn app_rules_match_display_name_case_insensitively() {
+        let filter = AppFilter::new(&["Slack".into(), " zoom.US ".into()], &[], &[]);
+        let slack = ObservedApp {
+            id: "com.tinyspeck.slackmacgap".into(),
+            name: "Slack".into(),
+            pid: 1,
+            aumid: None,
+        };
+        let slack_win = ObservedApp {
+            id: "slack.exe".into(),
+            name: "slack".into(),
+            pid: 2,
+            aumid: None,
+        };
+        let zoom = ObservedApp {
+            id: "us.zoom.xos".into(),
+            name: "zoom.us".into(),
+            pid: 3,
+            aumid: None,
+        };
+        let notes = ObservedApp {
+            id: "com.apple.Notes".into(),
+            name: "Notes".into(),
+            pid: 4,
+            aumid: None,
+        };
+        assert!(filter.is_blocked(&slack));
+        assert!(filter.is_blocked(&slack_win));
+        assert!(filter.is_blocked(&zoom));
+        assert!(!filter.is_blocked(&notes));
+
+        let (mut engine, _obs) = configured(ConfigureCommand {
+            block_apps: vec!["SLACK".into()],
+            ..Default::default()
+        });
+        engine.handle_signal(
+            Signal::AppActivated {
+                app: slack,
+                window: Some(win("general", None)),
+            },
+            at(0),
+        );
+        assert!(engine.drain().is_empty());
+    }
+
+    #[test]
+    fn known_browsers_are_recognized() {
+        for (id, name) in [
+            ("com.google.Chrome", "Google Chrome"),
+            ("com.google.Chrome.canary", "Google Chrome Canary"),
+            ("com.microsoft.edgemac", "Microsoft Edge"),
+            ("company.thebrowser.Browser", "Arc"),
+            ("org.mozilla.firefox", "Firefox"),
+            ("com.apple.Safari", "Safari"),
+            ("msedge.exe", "msedge"),
+            ("firefox.exe", "firefox"),
+            ("google-chrome", "Google Chrome"),
+            ("org.chromium.Chromium", "Chromium"),
+            ("vivaldi-bin", "Vivaldi"),
+            ("x.y", "Opera"),
+        ] {
+            let a = ObservedApp {
+                id: id.into(),
+                name: name.into(),
+                pid: 1,
+                aumid: None,
+            };
+            assert!(is_known_browser(&a), "{id}");
+        }
+        assert!(!is_known_browser(&app("com.apple.TextEdit", 1)));
+        assert!(!is_known_browser(&app("slack.exe", 1)));
+    }
+
+    #[test]
+    fn browser_without_url_fails_closed_only_with_domain_rules() {
+        let (mut engine, mut obs) = configured(ConfigureCommand {
+            block_domains: vec!["bank.example.com".into()],
+            ..Default::default()
+        });
+        obs.snapshot = Some(vec!["page".into()]);
+        engine.handle_signal(
+            Signal::AppActivated {
+                app: app("com.google.Chrome", 3),
+                window: Some(win("Sign in", None)),
+            },
+            at(0),
+        );
+        // The title is still reported.
+        let out = engine.drain();
+        assert_eq!(kinds(&out), vec![EventKind::AppActivated]);
+        assert_eq!(
+            out[0].window.as_ref().unwrap().title.as_deref(),
+            Some("Sign in")
+        );
+        engine.handle_signal(
+            Signal::FocusChanged {
+                element: Some(field(1, "")),
+            },
+            at(10),
+        );
+        engine.handle_signal(
+            Signal::ValueChanged {
+                element: field(1, "user@example.com"),
+            },
+            at(20),
+        );
+        engine.handle_signal(
+            Signal::SelectionChanged {
+                element: None,
+                text: "balance".into(),
+            },
+            at(30),
+        );
+        engine.tick(&mut obs, at(5000));
+        assert!(engine.drain().is_empty());
+        assert_eq!(obs.snapshot_calls, 0);
+
+        // Once the URL resolves to an allowed host, content flows again.
+        engine.handle_signal(
+            Signal::WindowChanged {
+                window: win("Sign in", Some("https://news.example.com/")),
+            },
+            at(6000),
+        );
+        assert_eq!(kinds(&engine.drain()), vec![EventKind::WindowChanged]);
+        engine.tick(&mut obs, at(6000 + SNAPSHOT_SETTLE_MS));
+        assert_eq!(kinds(&engine.drain()), vec![EventKind::ContentSnapshot]);
+
+        // Without domain rules an unknown URL is not a reason to hide content.
+        let (mut engine, mut obs) = configured(ConfigureCommand::default());
+        obs.snapshot = Some(vec!["page".into()]);
+        activate(&mut engine, "com.google.Chrome", 3, "Sign in", 0);
+        engine.drain();
+        engine.tick(&mut obs, at(SNAPSHOT_SETTLE_MS));
+        assert_eq!(kinds(&engine.drain()), vec![EventKind::ContentSnapshot]);
+    }
+
+    #[test]
+    fn suppression_uses_raw_strings_before_truncation() {
+        let (mut engine, _obs) = configured(ConfigureCommand {
+            block_domains: vec!["bank.example.com".into()],
+            ..Default::default()
+        });
+        // The marker sits past the 2048-byte title cap.
+        let title = format!("{} - Incognito", "x".repeat(MAX_TITLE_BYTES + 10));
+        activate(&mut engine, "com.google.Chrome", 3, &title, 0);
+        assert!(engine.drain().is_empty());
+
+        // A long title is capped on emission.
+        let long = "y".repeat(MAX_TITLE_BYTES + 10);
+        engine.handle_signal(
+            Signal::WindowChanged {
+                window: win(&long, Some("https://news.example.com/")),
+            },
+            at(100),
+        );
+        let out = engine.drain();
+        assert_eq!(kinds(&out), vec![EventKind::AppActivated]);
+        assert_eq!(
+            out[0]
+                .window
+                .as_ref()
+                .unwrap()
+                .title
+                .as_deref()
+                .unwrap()
+                .len(),
+            MAX_TITLE_BYTES
+        );
+    }
+
+    #[test]
+    fn window_changes_are_rate_limited_and_coalesced() {
+        let (mut engine, mut obs) = configured(ConfigureCommand::default());
+        activate(&mut engine, "com.apple.Terminal", 9, "build 1%", 0);
+        assert_eq!(kinds(&engine.drain()), vec![EventKind::AppActivated]);
+        for (i, t) in [100u64, 300, 600, 900].iter().enumerate() {
+            engine.handle_signal(
+                Signal::WindowChanged {
+                    window: win_k(7, &format!("build {}%", (i + 2) * 10), None),
+                },
+                at(*t),
+            );
+        }
+        engine.tick(&mut obs, at(950));
+        assert!(engine.drain().is_empty(), "within 1 s of app.activated");
+        engine.tick(&mut obs, at(1000));
+        let out = engine.drain();
+        assert_eq!(kinds(&out), vec![EventKind::WindowChanged]);
+        assert_eq!(
+            out[0].window.as_ref().unwrap().title.as_deref(),
+            Some("build 50%"),
+            "coalesced to the latest"
+        );
+        // A change more than 1 s later goes out at once.
+        engine.handle_signal(
+            Signal::WindowChanged {
+                window: win_k(7, "build 60%", None),
+            },
+            at(2100),
+        );
+        assert_eq!(kinds(&engine.drain()), vec![EventKind::WindowChanged]);
+        // Changed and changed back within the second: nothing to report.
+        engine.handle_signal(
+            Signal::WindowChanged {
+                window: win_k(7, "build 70%", None),
+            },
+            at(2200),
+        );
+        engine.handle_signal(
+            Signal::WindowChanged {
+                window: win_k(7, "build 60%", None),
+            },
+            at(2300),
+        );
+        engine.tick(&mut obs, at(3200));
+        assert!(engine
+            .drain()
+            .iter()
+            .all(|e| e.kind != EventKind::WindowChanged));
+    }
+
+    #[test]
+    fn snapshot_dedupe_ignores_title_churn() {
+        let (mut engine, mut obs) = configured(ConfigureCommand::default());
+        obs.snapshot = Some(vec!["same content".into()]);
+        engine.handle_signal(
+            Signal::AppActivated {
+                app: app("com.apple.Terminal", 9),
+                window: Some(win_k(7, "1 job", None)),
+            },
+            at(0),
+        );
+        engine.tick(&mut obs, at(SNAPSHOT_SETTLE_MS));
+        assert_eq!(
+            kinds(&engine.drain()),
+            vec![EventKind::AppActivated, EventKind::ContentSnapshot]
+        );
+        engine.handle_signal(
+            Signal::WindowChanged {
+                window: win_k(7, "2 jobs", None),
+            },
+            at(5000),
+        );
+        engine.tick(&mut obs, at(5000 + SNAPSHOT_SETTLE_MS));
+        let out = engine.drain();
+        assert_eq!(kinds(&out), vec![EventKind::WindowChanged]);
+        assert_eq!(obs.snapshot_calls, 2, "walked again but deduped");
+
+        // Same title, different URL: a different page, so not deduped.
+        let (mut engine, mut obs) = configured(ConfigureCommand::default());
+        obs.snapshot = Some(vec!["same content".into()]);
+        engine.handle_signal(
+            Signal::AppActivated {
+                app: app("com.apple.Safari", 4),
+                window: Some(win_k(1, "Home", Some("https://a.example/"))),
+            },
+            at(0),
+        );
+        engine.tick(&mut obs, at(SNAPSHOT_SETTLE_MS));
+        engine.drain();
+        engine.handle_signal(
+            Signal::WindowChanged {
+                window: win_k(1, "Home", Some("https://b.example/")),
+            },
+            at(5000),
+        );
+        engine.tick(&mut obs, at(5000 + SNAPSHOT_SETTLE_MS));
+        assert_eq!(
+            kinds(&engine.drain()),
+            vec![EventKind::WindowChanged, EventKind::ContentSnapshot]
+        );
+    }
+
+    #[test]
+    fn snapshot_detects_moved_window_and_resuppresses() {
+        let (mut engine, mut obs) = configured(ConfigureCommand {
+            block_domains: vec!["bank.example.com".into()],
+            ..Default::default()
+        });
+        obs.snapshot = Some(vec!["account 123".into()]);
+        engine.handle_signal(
+            Signal::AppActivated {
+                app: app("com.apple.Safari", 4),
+                window: Some(win_k(1, "Sign in", Some("https://news.example.com/"))),
+            },
+            at(0),
+        );
+        engine.drain();
+        // Navigated to a blocked domain without a title change.
+        obs.snapshot_window = Some(win_k(1, "Sign in", Some("https://bank.example.com/")));
+        engine.tick(&mut obs, at(5000));
+        assert_eq!(obs.snapshot_calls, 1);
+        assert!(engine.drain().is_empty(), "no snapshot, no window event");
+        engine.tick(&mut obs, at(60_000));
+        assert_eq!(obs.snapshot_calls, 1, "hidden window is never walked");
     }
 
     #[test]

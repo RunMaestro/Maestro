@@ -33,9 +33,11 @@ use futures_lite::future::{self, block_on};
 use futures_lite::StreamExt;
 
 use super::{clamp_os_text, MAX_OS_TEXT_BYTES};
-use crate::engine::{Access, AppFilter, ElementInfo, Observer, Signal, SnapshotLimits};
+use crate::engine::{
+    Access, AppFilter, ElementInfo, Observer, Signal, Snapshot, SnapshotLimits, WindowInfo,
+};
 use crate::protocol::{
-    AccessibilityBus, ElementRole, ObservedApp, ObservedWindow, Permission, Platform, SessionType,
+    AccessibilityBus, ElementRole, ObservedApp, Permission, Platform, SessionType,
 };
 
 const RECONNECT_DELAY: Duration = Duration::from_secs(5);
@@ -60,7 +62,7 @@ struct Shared {
 
 struct SnapshotRequest {
     limits: SnapshotLimits,
-    reply: Sender<Option<Vec<String>>>,
+    reply: Sender<Snapshot>,
 }
 
 pub struct LinuxObserver {
@@ -187,19 +189,23 @@ impl Observer for LinuxObserver {
         out
     }
 
-    fn snapshot_focused_window_text(&mut self, limits: &SnapshotLimits) -> Option<Vec<String>> {
-        let requests = self.requests.as_ref()?;
+    fn snapshot_focused_window_text(&mut self, limits: &SnapshotLimits) -> Snapshot {
+        let Some(requests) = self.requests.as_ref() else {
+            return Snapshot::Unavailable;
+        };
         let (reply_tx, reply_rx) = mpsc::channel();
-        requests
+        if requests
             .send(SnapshotRequest {
                 limits: *limits,
                 reply: reply_tx,
             })
-            .ok()?;
+            .is_err()
+        {
+            return Snapshot::Unavailable;
+        }
         reply_rx
             .recv_timeout(limits.budget + SNAPSHOT_REPLY_GRACE)
-            .ok()
-            .flatten()
+            .unwrap_or(Snapshot::Unavailable)
     }
 }
 
@@ -211,11 +217,11 @@ impl Observer for LinuxObserver {
 struct Session {
     /// Unique bus name of the frontmost app's connection.
     app_bus: Option<String>,
-    app_pid: u32,
-    app_id: String,
+    app: Option<ObservedApp>,
     app_blocked: bool,
     frame: Option<ObjectRefOwned>,
-    frame_title: Option<String>,
+    /// The window last reported to the engine.
+    window: Option<WindowInfo>,
     focused: Option<ObjectRefOwned>,
     apps: HashMap<String, ObservedApp>,
 }
@@ -223,11 +229,10 @@ struct Session {
 impl Session {
     fn forget_context(&mut self) {
         self.app_bus = None;
-        self.app_pid = 0;
-        self.app_id.clear();
+        self.app = None;
         self.app_blocked = false;
         self.frame = None;
-        self.frame_title = None;
+        self.window = None;
         self.focused = None;
     }
 }
@@ -276,7 +281,7 @@ async fn worker(
         let until = Instant::now() + RECONNECT_DELAY;
         while Instant::now() < until {
             for request in requests.try_iter() {
-                let _ = request.reply.send(None);
+                let _ = request.reply.send(Snapshot::Unavailable);
             }
             async_io::Timer::after(WORKER_TICK).await;
         }
@@ -315,12 +320,12 @@ async fn run_session(
             worker.announce_active().await;
         }
         for request in requests.try_iter() {
-            let lines = if running {
+            let result = if running {
                 worker.snapshot(&request.limits).await
             } else {
-                None
+                Snapshot::Unavailable
             };
-            let _ = request.reply.send(lines);
+            let _ = request.reply.send(result);
         }
         let next = future::or(async { Some(events.next().await) }, async {
             async_io::Timer::after(WORKER_TICK).await;
@@ -354,6 +359,19 @@ impl Worker {
     fn send(&mut self, signal: Signal) {
         if self.signals.send(signal).is_err() {
             self.closed = true;
+        }
+    }
+
+    /// Content of the current window may be read.
+    fn content_allowed(&self) -> bool {
+        match &self.session.app {
+            Some(app) => {
+                !self.session.app_blocked
+                    && !self
+                        .filter
+                        .content_blocked(app, self.session.window.as_ref())
+            }
+            None => false,
         }
     }
 
@@ -391,7 +409,9 @@ impl Worker {
         ))
     }
 
-    /// App identity for a bus connection, cached per unique name.
+    /// App identity for a bus connection, cached per unique name. Reads only
+    /// the pid (from the bus) and the application root's name, which is what
+    /// the block list is checked against.
     async fn app_for(&mut self, obj: &ObjectRefOwned) -> Option<ObservedApp> {
         let bus = bus_name(obj)?;
         if let Some(app) = self.session.apps.get(&bus) {
@@ -405,11 +425,9 @@ impl Worker {
             Err(_) => 0,
         };
         let mut app_name = String::new();
-        if let Some(proxy) = self.proxy(obj).await {
-            if let Ok(app_ref) = proxy.get_application().await {
-                if let Some(app_proxy) = self.proxy(&app_ref).await {
-                    app_name = app_proxy.name().await.unwrap_or_default();
-                }
+        if let Some(root) = self.app_root(obj).await {
+            if let Some(app_proxy) = self.proxy(&root).await {
+                app_name = app_proxy.name().await.unwrap_or_default();
             }
         }
         let id = app_identity(pid, &app_name);
@@ -430,25 +448,38 @@ impl Worker {
         Some(app)
     }
 
+    async fn app_root(&self, obj: &ObjectRefOwned) -> Option<ObjectRefOwned> {
+        let proxy = self.proxy(obj).await?;
+        proxy.get_application().await.ok()
+    }
+
     /// Switches the session to the app owning `obj`, emitting
-    /// `AppActivated`. Returns false when the app is blocked.
+    /// `AppActivated`. Without a `frame`, the app's active frame is resolved
+    /// first so private-window and domain suppression apply before anything
+    /// content-bearing is emitted. Returns false when the app is blocked.
     async fn enter_app(&mut self, obj: &ObjectRefOwned, frame: Option<&ObjectRefOwned>) -> bool {
         let Some(app) = self.app_for(obj).await else {
             return false;
         };
         self.session.forget_context();
         self.session.app_bus = bus_name(obj);
-        self.session.app_pid = app.pid;
-        self.session.app_id = app.id.clone();
-        if self.filter.is_blocked(&app.id, app.pid) {
+        self.session.app = Some(app.clone());
+        if self.filter.is_blocked(&app) {
             self.session.app_blocked = true;
             self.send(Signal::AppActivated { app, window: None });
             return false;
         }
+        let frame = match frame {
+            Some(frame) => Some(frame.clone()),
+            None => match self.app_root(obj).await {
+                Some(root) => self.active_frame_in(&root).await,
+                None => None,
+            },
+        };
         let window = match frame {
             Some(frame) => {
                 self.session.frame = Some(frame.clone());
-                Some(self.read_frame(frame).await)
+                Some(self.read_frame(&frame).await)
             }
             None => None,
         };
@@ -456,17 +487,34 @@ impl Worker {
         true
     }
 
-    async fn read_frame(&mut self, frame: &ObjectRefOwned) -> ObservedWindow {
+    /// Reads the frame's title and URL and records it as the reported window.
+    async fn read_frame(&mut self, frame: &ObjectRefOwned) -> WindowInfo {
         let title = match self.proxy(frame).await {
             Some(p) => p.name().await.ok().filter(|t| !t.trim().is_empty()),
             None => None,
         };
-        self.session.frame_title = title.clone();
         let url = self.find_document_url(frame).await;
-        ObservedWindow { title, url }
+        let window = WindowInfo {
+            key: object_key(frame),
+            title,
+            url,
+        };
+        self.session.window = Some(window.clone());
+        window
+    }
+
+    /// Re-reads the current frame (title and URL); returns it when it differs
+    /// from the last report.
+    async fn refresh_window(&mut self) -> Option<WindowInfo> {
+        let frame = self.session.frame.clone()?;
+        let previous = self.session.window.clone();
+        let window = self.read_frame(&frame).await;
+        (previous.as_ref() != Some(&window)).then_some(window)
     }
 
     /// Firefox exposes `DocURL` on its DocumentWeb; Chromium uses `URI`.
+    /// `None` when the budget runs out first; for browsers the engine then
+    /// treats the content as blocked while domain rules exist.
     async fn find_document_url(&self, frame: &ObjectRefOwned) -> Option<String> {
         let deadline = Instant::now() + URL_SEARCH_BUDGET;
         let mut queue = VecDeque::from([(frame.clone(), 0usize)]);
@@ -510,7 +558,9 @@ impl Worker {
             .filter(|u| !u.is_empty())
     }
 
-    async fn read_element(&self, obj: &ObjectRefOwned) -> Option<ElementInfo> {
+    /// Reads role and label, and, when `read_value` is set and the element is
+    /// an editable, non-password text, its value.
+    async fn read_element(&self, obj: &ObjectRefOwned, read_value: bool) -> Option<ElementInfo> {
         let proxy = self.proxy(obj).await?;
         let role = proxy.get_role().await.ok()?;
         let editable = proxy
@@ -539,12 +589,13 @@ impl Worker {
             Some(name)
         };
         let mut value = None;
-        if mapped.is_text_entry() && !secure {
+        if read_value && mapped.is_text_entry() && !secure {
             value = self.full_text(obj, MAX_TRACKED_CHARS).await;
-            if value.is_none() {
-                // Unreadable or huge: not tracked, so it cannot look "cleared".
-                mapped = ElementRole::Other;
-            }
+        }
+        if mapped.is_text_entry() && value.is_none() && !secure {
+            // Not read (unreadable, huge, or not wanted): untracked, so it
+            // cannot look "cleared".
+            mapped = ElementRole::Other;
         }
         Some(ElementInfo {
             key: object_key(obj),
@@ -565,7 +616,9 @@ impl Worker {
         }
     }
 
-    async fn find_active_frame(&self) -> Option<ObjectRefOwned> {
+    /// The active frame among all apps. Each app is checked against the block
+    /// list (by name and pid) before its children or states are read.
+    async fn find_active_frame(&mut self) -> Option<ObjectRefOwned> {
         let root = AccessibleProxy::builder(&self.conn)
             .destination("org.a11y.atspi.Registry")
             .ok()?
@@ -575,21 +628,29 @@ impl Worker {
             .build()
             .await
             .ok()?;
-        for app in root.get_children().await.ok()? {
-            let Some(app_proxy) = self.proxy(&app).await else {
+        let apps = root.get_children().await.ok()?;
+        for app_ref in apps {
+            match self.app_for(&app_ref).await {
+                Some(app) if !self.filter.is_blocked(&app) => {}
+                _ => continue,
+            }
+            if let Some(frame) = self.active_frame_in(&app_ref).await {
+                return Some(frame);
+            }
+        }
+        None
+    }
+
+    /// The child frame of an application root that has the Active state.
+    async fn active_frame_in(&self, app_root: &ObjectRefOwned) -> Option<ObjectRefOwned> {
+        let app_proxy = self.proxy(app_root).await?;
+        for frame in app_proxy.get_children().await.ok()? {
+            let Some(frame_proxy) = self.proxy(&frame).await else {
                 continue;
             };
-            let Ok(frames) = app_proxy.get_children().await else {
-                continue;
-            };
-            for frame in frames {
-                let Some(frame_proxy) = self.proxy(&frame).await else {
-                    continue;
-                };
-                if let Ok(state) = frame_proxy.get_state().await {
-                    if state.contains(State::Active) {
-                        return Some(frame);
-                    }
+            if let Ok(state) = frame_proxy.get_state().await {
+                if state.contains(State::Active) {
+                    return Some(frame);
                 }
             }
         }
@@ -621,36 +682,31 @@ impl Worker {
         if self.session.app_blocked {
             return;
         }
-        // Tab switches in browsers rename the frame without a window event;
-        // a focus change is a cheap moment to notice.
-        if let Some(frame) = self.session.frame.clone() {
-            if let Some(proxy) = self.proxy(&frame).await {
-                let title = proxy.name().await.ok().filter(|t| !t.trim().is_empty());
-                if title != self.session.frame_title {
-                    let window = self.read_frame(&frame).await;
-                    self.send(Signal::WindowChanged { window });
-                }
-            }
+        // Navigation and tab switches change the URL or title without a
+        // window event, so both are re-read on every focus move.
+        if let Some(window) = self.refresh_window().await {
+            self.send(Signal::WindowChanged { window });
         }
-        let element = self.read_element(&obj).await;
+        let element = self.read_element(&obj, self.content_allowed()).await;
         self.session.focused = Some(obj);
         self.send(Signal::FocusChanged { element });
     }
 
     async fn on_text_changed(&mut self, obj: ObjectRefOwned) {
-        if self.session.app_blocked || self.session.focused.as_ref() != Some(&obj) {
+        if !self.content_allowed() || self.session.focused.as_ref() != Some(&obj) {
             return;
         }
-        if let Some(element) = self.read_element(&obj).await {
+        if let Some(element) = self.read_element(&obj, true).await {
             self.send(Signal::ValueChanged { element });
         }
     }
 
     async fn on_selection_changed(&mut self, obj: ObjectRefOwned) {
-        if self.session.app_blocked || self.session.app_bus != bus_name(&obj) {
+        if !self.content_allowed() || self.session.app_bus != bus_name(&obj) {
             return;
         }
-        let Some(element) = self.read_element(&obj).await else {
+        // Role and label only: the full value is not needed for a selection.
+        let Some(element) = self.read_element(&obj, false).await else {
             return;
         };
         if element.secure {
@@ -703,15 +759,24 @@ impl Worker {
         }
     }
 
-    async fn snapshot(&self, limits: &SnapshotLimits) -> Option<Vec<String>> {
-        if self.session.app_blocked
-            || self
-                .filter
-                .is_blocked(&self.session.app_id, self.session.app_pid)
-        {
-            return None;
+    async fn snapshot(&mut self, limits: &SnapshotLimits) -> Snapshot {
+        let Some(app) = self.session.app.clone() else {
+            return Snapshot::Unavailable;
+        };
+        if self.session.app_blocked || self.filter.is_blocked(&app) {
+            return Snapshot::Unavailable;
         }
-        let frame = self.session.frame.clone()?;
+        let Some(frame) = self.session.frame.clone() else {
+            return Snapshot::Unavailable;
+        };
+        // The URL may have changed without a title change; never walk a
+        // window the engine has not vetted.
+        if let Some(window) = self.refresh_window().await {
+            return Snapshot::WindowChanged(window);
+        }
+        if !self.content_allowed() {
+            return Snapshot::Unavailable;
+        }
         let deadline = Instant::now() + limits.budget;
         let mut lines = Vec::new();
         let mut stack = vec![(frame, 0usize)];
@@ -759,7 +824,7 @@ impl Worker {
                 }
             }
         }
-        Some(lines)
+        Snapshot::Lines(lines)
     }
 }
 

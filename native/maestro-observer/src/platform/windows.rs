@@ -11,12 +11,13 @@ use std::collections::{HashSet, VecDeque};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use ::windows::core::PWSTR;
+use ::windows::core::{Interface, PWSTR};
 use ::windows::Win32::Foundation::{CloseHandle, ERROR_INSUFFICIENT_BUFFER, HANDLE, HWND};
 use ::windows::Win32::Storage::Packaging::Appx::GetApplicationUserModelId;
 use ::windows::Win32::System::Threading::{
     OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
 };
+use ::windows::Win32::UI::Accessibility::{IUIAutomation, IUIAutomation2};
 use ::windows::Win32::UI::WindowsAndMessaging::{
     GetForegroundWindow, GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId,
 };
@@ -25,8 +26,10 @@ use uiautomation::types::{ControlType, Handle};
 use uiautomation::{UIAutomation, UIElement};
 
 use super::{clamp_os_text, MAX_OS_TEXT_BYTES};
-use crate::engine::{Access, AppFilter, ElementInfo, Observer, Signal, SnapshotLimits};
-use crate::protocol::{ElementRole, ObservedApp, ObservedWindow, Permission, Platform};
+use crate::engine::{
+    Access, AppFilter, ElementInfo, Observer, Signal, Snapshot, SnapshotLimits, WindowInfo,
+};
+use crate::protocol::{ElementRole, ObservedApp, Permission, Platform};
 
 const TICK: Duration = Duration::from_millis(250);
 const E_ACCESSDENIED: i32 = 0x8007_0005_u32 as i32;
@@ -34,6 +37,11 @@ const MAX_TRACKED_CHARS: i32 = 200_000;
 const URL_SEARCH_NODES: usize = 300;
 const URL_SEARCH_DEPTH: usize = 25;
 const URL_SEARCH_BUDGET: Duration = Duration::from_millis(60);
+/// Caps on how long one UIA call may wait for a provider (the macOS
+/// equivalent is AXUIElementSetMessagingTimeout); the defaults are much
+/// longer, so one hung app could stall the helper.
+const UIA_CONNECTION_TIMEOUT_MS: u32 = 1500;
+const UIA_TRANSACTION_TIMEOUT_MS: u32 = 1500;
 
 pub struct WindowsObserver {
     uia: Option<UIAutomation>,
@@ -42,21 +50,35 @@ pub struct WindowsObserver {
     running: bool,
     refresh: bool,
     next_tick: Instant,
-    hwnd: isize,
-    pid: u32,
-    app_id: String,
+    app: Option<ObservedApp>,
     blocked: bool,
-    title: Option<String>,
+    /// The window last reported to the engine (key = HWND).
+    window: Option<WindowInfo>,
     focus_key: Option<u64>,
     focus_value: Option<String>,
     last_selection: String,
     uipi_pids: HashSet<u32>,
 }
 
+/// Lowers the UIA connection and transaction timeouts (IUIAutomation2,
+/// Windows 8+). Older systems keep the defaults.
+fn set_uia_timeouts(uia: &UIAutomation) {
+    let raw: &IUIAutomation = uia.as_ref();
+    if let Ok(uia2) = raw.cast::<IUIAutomation2>() {
+        unsafe {
+            let _ = uia2.SetConnectionTimeout(UIA_CONNECTION_TIMEOUT_MS);
+            let _ = uia2.SetTransactionTimeout(UIA_TRANSACTION_TIMEOUT_MS);
+        }
+    }
+}
+
 impl WindowsObserver {
     pub fn new() -> Self {
         let (uia, init_error) = match UIAutomation::new() {
-            Ok(uia) => (Some(uia), None),
+            Ok(uia) => {
+                set_uia_timeouts(&uia);
+                (Some(uia), None)
+            }
             Err(e) => (None, Some(format!("UI Automation is unavailable: {e}"))),
         };
         WindowsObserver {
@@ -66,11 +88,9 @@ impl WindowsObserver {
             running: false,
             refresh: false,
             next_tick: Instant::now(),
-            hwnd: 0,
-            pid: 0,
-            app_id: String::new(),
+            app: None,
             blocked: false,
-            title: None,
+            window: None,
             focus_key: None,
             focus_value: None,
             last_selection: String::new(),
@@ -79,14 +99,35 @@ impl WindowsObserver {
     }
 
     fn reset_app(&mut self) {
-        self.hwnd = 0;
-        self.pid = 0;
-        self.app_id.clear();
+        self.app = None;
         self.blocked = false;
-        self.title = None;
+        self.window = None;
         self.focus_key = None;
         self.focus_value = None;
         self.last_selection.clear();
+    }
+
+    fn pid(&self) -> u32 {
+        self.app.as_ref().map_or(0, |a| a.pid)
+    }
+
+    fn hwnd(&self) -> Option<HWND> {
+        self.window
+            .as_ref()
+            .filter(|w| w.key != 0)
+            .map(|w| HWND(w.key as usize as *mut core::ffi::c_void))
+    }
+
+    /// Content of the current window may be read.
+    fn content_allowed(&self) -> bool {
+        match &self.app {
+            Some(app) => {
+                !self.blocked
+                    && !self.uipi_pids.contains(&app.pid)
+                    && !self.filter.content_blocked(app, self.window.as_ref())
+            }
+            None => false,
+        }
     }
 
     fn tick(&mut self, out: &mut Vec<Signal>) {
@@ -100,49 +141,64 @@ impl WindowsObserver {
             return;
         }
         let force = std::mem::take(&mut self.refresh);
-        if force || pid != self.pid {
+        if force || pid != self.pid() {
             self.reset_app();
-            self.pid = pid;
-            self.hwnd = hwnd.0 as isize;
             let app = process_app(pid);
-            self.app_id = app.id.clone();
-            if self.filter.is_blocked(&app.id, pid) {
+            self.app = Some(app.clone());
+            if self.filter.is_blocked(&app) {
                 // Nothing is read from a blocked app, not even its title.
                 self.blocked = true;
                 out.push(Signal::AppActivated { app, window: None });
                 return;
             }
-            let window = self.read_window(hwnd);
+            let window = self.read_window(hwnd, true);
+            self.window = Some(window.clone());
             out.push(Signal::AppActivated {
                 app,
                 window: Some(window),
             });
         } else if self.blocked {
             return;
-        } else {
-            let title = window_title(hwnd);
-            if hwnd.0 as isize != self.hwnd || title != self.title {
-                self.hwnd = hwnd.0 as isize;
-                let window = self.read_window(hwnd);
-                out.push(Signal::WindowChanged { window });
-            }
+        } else if let Some(window) = self.refresh_window(hwnd, false) {
+            out.push(Signal::WindowChanged { window });
         }
-        self.poll_focus(out);
+        self.poll_focus(hwnd, out);
     }
 
-    fn read_window(&mut self, hwnd: HWND) -> ObservedWindow {
+    /// Reads the foreground window. The URL is resolved again when
+    /// `force_url` is set or the HWND / title differ from the last report.
+    fn read_window(&self, hwnd: HWND, force_url: bool) -> WindowInfo {
+        let key = hwnd.0 as usize as u64;
         let title = window_title(hwnd);
-        self.title = title.clone();
-        let url = if self.uipi_pids.contains(&self.pid) {
+        let reuse = !force_url
+            && self
+                .window
+                .as_ref()
+                .is_some_and(|w| w.key == key && w.title == title);
+        let url = if reuse {
+            self.window.as_ref().and_then(|w| w.url.clone())
+        } else if self.uipi_pids.contains(&self.pid()) {
             None
         } else {
             self.find_document_url(hwnd)
         };
-        ObservedWindow { title, url }
+        WindowInfo { key, title, url }
+    }
+
+    /// Re-reads the window; returns it when it differs from the last report.
+    fn refresh_window(&mut self, hwnd: HWND, force_url: bool) -> Option<WindowInfo> {
+        let window = self.read_window(hwnd, force_url);
+        if self.window.as_ref() == Some(&window) {
+            return None;
+        }
+        self.window = Some(window.clone());
+        Some(window)
     }
 
     /// Chromium and Firefox expose the page URL as the ValuePattern value of
-    /// the top Document control.
+    /// the top Document control. `None` when the budget runs out first; for
+    /// browsers the engine then treats the content as blocked while domain
+    /// rules exist.
     fn find_document_url(&self, hwnd: HWND) -> Option<String> {
         let uia = self.uia.as_ref()?;
         let root = uia.element_from_handle(Handle::from(hwnd)).ok()?;
@@ -178,8 +234,9 @@ impl WindowsObserver {
         None
     }
 
-    fn poll_focus(&mut self, out: &mut Vec<Signal>) {
-        if self.uipi_pids.contains(&self.pid) {
+    fn poll_focus(&mut self, hwnd: HWND, out: &mut Vec<Signal>) {
+        let pid = self.pid();
+        if self.uipi_pids.contains(&pid) {
             return;
         }
         let Some(uia) = self.uia.as_ref() else {
@@ -196,7 +253,7 @@ impl WindowsObserver {
         };
         // Focus can sit in another process (a tooltip, the shell) for a tick.
         match el.get_process_id() {
-            Ok(pid) if pid == self.pid => {}
+            Ok(p) if p == pid => {}
             Ok(_) => return,
             Err(e) => {
                 if e.code() == E_ACCESSDENIED {
@@ -205,15 +262,27 @@ impl WindowsObserver {
                 return;
             }
         }
-        let info = read_element(&el);
-        if Some(info.key) != self.focus_key {
-            self.focus_key = Some(info.key);
+        let key = element_key(&el);
+        if Some(key) != self.focus_key {
+            // Navigation can change the URL without changing the title, so
+            // the URL is re-resolved on every focus move.
+            if let Some(window) = self.refresh_window(hwnd, true) {
+                out.push(Signal::WindowChanged { window });
+            }
+            let info = read_element(&el, self.content_allowed());
+            self.focus_key = Some(key);
             self.focus_value = info.value.clone();
             self.last_selection.clear();
             out.push(Signal::FocusChanged {
-                element: Some(info.clone()),
+                element: Some(info),
             });
-        } else if info.role.is_text_entry() && !info.secure && info.value != self.focus_value {
+            return;
+        }
+        if !self.content_allowed() {
+            return;
+        }
+        let info = read_element(&el, true);
+        if info.role.is_text_entry() && !info.secure && info.value != self.focus_value {
             self.focus_value = info.value.clone();
             out.push(Signal::ValueChanged {
                 element: info.clone(),
@@ -234,10 +303,10 @@ impl WindowsObserver {
     }
 
     fn mark_uipi(&mut self, out: &mut Vec<Signal>) {
-        if self.uipi_pids.insert(self.pid) {
+        if self.uipi_pids.insert(self.pid()) {
+            let id = self.app.as_ref().map_or("app", |a| a.id.as_str());
             out.push(Signal::Error(format!(
-                "{} runs elevated; its contents cannot be read (recording app and window title only)",
-                self.app_id
+                "{id} runs elevated; its contents cannot be read (recording app and window title only)"
             )));
         }
     }
@@ -328,9 +397,12 @@ fn element_key(el: &UIElement) -> u64 {
     hash
 }
 
-fn read_element(el: &UIElement) -> ElementInfo {
+/// Reads role and label, and, when `read_value` is set and the element is a
+/// non-secure edit, its value. `IsPassword` fails closed: an unreadable flag
+/// counts as a password field.
+fn read_element(el: &UIElement, read_value: bool) -> ElementInfo {
     let control = el.get_control_type().unwrap_or(ControlType::Custom);
-    let secure = el.is_password().unwrap_or(false);
+    let secure = el.is_password().unwrap_or(true);
     let mut role = match control {
         ControlType::Edit => ElementRole::TextField,
         ControlType::ComboBox => ElementRole::ComboBox,
@@ -339,12 +411,12 @@ fn read_element(el: &UIElement) -> ElementInfo {
     };
     let label = el.get_name().ok().filter(|n| !n.trim().is_empty());
     let mut value = None;
-    if role.is_text_entry() && !secure {
+    if read_value && role.is_text_entry() && !secure {
         value = field_value(el);
-        if value.is_none() {
-            // No readable value: not trackable, so it cannot look "cleared".
-            role = ElementRole::Other;
-        }
+    }
+    if role.is_text_entry() && value.is_none() {
+        // No value read: not trackable, so it cannot look "cleared".
+        role = ElementRole::Other;
     }
     ElementInfo {
         key: element_key(el),
@@ -430,17 +502,40 @@ impl Observer for WindowsObserver {
         out
     }
 
-    fn snapshot_focused_window_text(&mut self, limits: &SnapshotLimits) -> Option<Vec<String>> {
-        if !self.running || self.blocked || self.hwnd == 0 {
-            return None;
+    fn snapshot_focused_window_text(&mut self, limits: &SnapshotLimits) -> Snapshot {
+        if !self.running || self.blocked {
+            return Snapshot::Unavailable;
         }
-        if self.filter.is_blocked(&self.app_id, self.pid) || self.uipi_pids.contains(&self.pid) {
-            return None;
+        let Some(app) = self.app.clone() else {
+            return Snapshot::Unavailable;
+        };
+        if self.filter.is_blocked(&app) || self.uipi_pids.contains(&app.pid) {
+            return Snapshot::Unavailable;
         }
-        let uia = self.uia.as_ref()?;
-        let hwnd = HWND(self.hwnd as *mut core::ffi::c_void);
-        let root = uia.element_from_handle(Handle::from(hwnd)).ok()?;
-        let walker = uia.get_control_view_walker().ok()?;
+        let Some(hwnd) = self.hwnd() else {
+            return Snapshot::Unavailable;
+        };
+        // The foreground window or its URL may have changed since the last
+        // report; never walk a window the engine has not vetted.
+        let foreground = unsafe { GetForegroundWindow() };
+        if foreground != hwnd {
+            return Snapshot::Unavailable;
+        }
+        if let Some(window) = self.refresh_window(hwnd, true) {
+            return Snapshot::WindowChanged(window);
+        }
+        if !self.content_allowed() {
+            return Snapshot::Unavailable;
+        }
+        let Some(uia) = self.uia.as_ref() else {
+            return Snapshot::Unavailable;
+        };
+        let Ok(root) = uia.element_from_handle(Handle::from(hwnd)) else {
+            return Snapshot::Unavailable;
+        };
+        let Ok(walker) = uia.get_control_view_walker() else {
+            return Snapshot::Unavailable;
+        };
         let deadline = Instant::now() + limits.budget;
         let mut lines = Vec::new();
         let mut stack = vec![(root, 0usize)];
@@ -496,6 +591,6 @@ impl Observer for WindowsObserver {
                 }
             }
         }
-        Some(lines)
+        Snapshot::Lines(lines)
     }
 }
