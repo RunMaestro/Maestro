@@ -336,47 +336,126 @@ describe('update-agent command', () => {
 		expect(processExitSpy).toHaveBeenCalledWith(1);
 	});
 
-	it('refuses --provider without --force', async () => {
-		vi.mocked(resolveAgentId).mockReturnValue('full-session-id');
-		vi.mocked(getSessionById).mockReturnValue({
-			id: 'full-session-id',
-			toolType: 'claude-code',
-		} as never);
-		const sendCommand = vi.fn();
-		vi.mocked(withMaestroClient).mockImplementation(async (action) =>
-			action({ sendCommand } as never)
-		);
+	describe('--provider', () => {
+		/** A Claude agent, and a client whose switch reply is `reply`. */
+		function switchable(reply: Record<string, unknown> = {}) {
+			vi.mocked(resolveAgentId).mockReturnValue('full-session-id');
+			vi.mocked(getSessionById).mockReturnValue({
+				id: 'full-session-id',
+				toolType: 'claude-code',
+			} as never);
+			const sendCommand = vi.fn().mockResolvedValue({
+				type: 'update_session_config_result',
+				success: true,
+				...reply,
+			});
+			vi.mocked(withMaestroClient).mockImplementation(async (action) =>
+				action({ sendCommand } as never)
+			);
+			return sendCommand;
+		}
 
-		await updateAgent('agent-1', { provider: 'codex' });
+		it('switches without --force, now that the switch keeps every tab', async () => {
+			const sendCommand = switchable();
 
-		expect(formatError).toHaveBeenCalledWith(expect.stringContaining('--force to confirm'));
-		expect(processExitSpy).toHaveBeenCalledWith(1);
-	});
+			await updateAgent('agent-1', { provider: 'codex' });
 
-	it('sends a toolType patch for --provider with --force', async () => {
-		vi.mocked(resolveAgentId).mockReturnValue('full-session-id');
-		vi.mocked(getSessionById).mockReturnValue({
-			id: 'full-session-id',
-			toolType: 'claude-code',
-		} as never);
-		const sendCommand = vi.fn().mockResolvedValue({
-			type: 'update_session_config_result',
-			success: true,
+			expect(formatError).not.toHaveBeenCalled();
+			expect(processExitSpy).not.toHaveBeenCalled();
+			expect(sendCommand).toHaveBeenCalledWith(
+				expect.objectContaining({
+					type: 'update_session_config',
+					sessionId: 'full-session-id',
+					configPatch: { toolType: 'codex' },
+				}),
+				'update_session_config_result'
+			);
 		});
-		vi.mocked(withMaestroClient).mockImplementation(async (action) =>
-			action({ sendCommand } as never)
-		);
 
-		await updateAgent('agent-1', { provider: 'codex', force: true });
+		it('still accepts --force from scripts written for the old destructive switch', async () => {
+			const sendCommand = switchable();
 
-		expect(sendCommand).toHaveBeenCalledWith(
-			expect.objectContaining({
-				type: 'update_session_config',
-				sessionId: 'full-session-id',
-				configPatch: { toolType: 'codex' },
-			}),
-			'update_session_config_result'
-		);
+			await updateAgent('agent-1', { provider: 'codex', force: true } as never);
+
+			expect(processExitSpy).not.toHaveBeenCalled();
+			expect(sendCommand).toHaveBeenCalledTimes(1);
+		});
+
+		it('says the tabs were kept rather than reset', async () => {
+			switchable();
+
+			await updateAgent('agent-1', { provider: 'codex' });
+
+			const lines = consoleSpy.mock.calls.map((call) => String(call[0]));
+			expect(lines).toContainEqual(expect.stringContaining('Provider: codex (tabs kept'));
+			expect(lines.join('\n')).not.toContain('tabs reset');
+		});
+
+		it('prints each notice for state the switch could not park', async () => {
+			const notice =
+				'A queued message was set to run with model "opus" on Claude Code. It will run with the agent\'s Codex settings instead.';
+			switchable({ notices: [notice] });
+
+			await updateAgent('agent-1', { provider: 'codex' });
+
+			const lines = consoleSpy.mock.calls.map((call) => String(call[0]));
+			expect(lines).toContain(`  Notice: ${notice}`);
+		});
+
+		it('returns the notices in --json output', async () => {
+			switchable({ notices: ['cleared something'] });
+
+			await updateAgent('agent-1', { provider: 'codex', json: true });
+
+			expect(JSON.parse(consoleSpy.mock.calls[0][0])).toMatchObject({
+				success: true,
+				agentId: 'full-session-id',
+				provider: 'codex',
+				notices: ['cleared something'],
+			});
+		});
+
+		it('leaves notices out of --json output when there are none', async () => {
+			switchable();
+
+			await updateAgent('agent-1', { provider: 'codex', json: true });
+
+			expect(JSON.parse(consoleSpy.mock.calls[0][0])).not.toHaveProperty('notices');
+		});
+
+		// The guards below stop the command the way production does: exit throws
+		// here, so nothing after the guard can run and contact the app.
+		it('refuses to combine a switch with settings edits, before contacting the app', async () => {
+			const sendCommand = switchable();
+			processExitSpy.mockImplementation(() => {
+				throw new Error('process.exit');
+			});
+
+			await expect(
+				updateAgent('agent-1', { provider: 'codex', model: 'gpt-5-codex' })
+			).rejects.toThrow('process.exit');
+
+			expect(formatError).toHaveBeenCalledWith(
+				expect.stringContaining('--provider cannot be combined with other settings edits')
+			);
+			expect(sendCommand).not.toHaveBeenCalled();
+		});
+
+		it('refuses a switch to the provider the agent already uses', async () => {
+			const sendCommand = switchable();
+			processExitSpy.mockImplementation(() => {
+				throw new Error('process.exit');
+			});
+
+			await expect(updateAgent('agent-1', { provider: 'claude-code' })).rejects.toThrow(
+				'process.exit'
+			);
+
+			expect(formatError).toHaveBeenCalledWith(
+				expect.stringContaining('is already a claude-code agent')
+			);
+			expect(sendCommand).not.toHaveBeenCalled();
+		});
 	});
 
 	it('rejects a non-boolean --sync-history-to-remote value', async () => {

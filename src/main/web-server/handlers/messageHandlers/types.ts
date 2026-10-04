@@ -334,7 +334,7 @@ export interface MessageHandlerCallbacks {
 	updateSessionConfig: (
 		sessionId: string,
 		configPatch: Record<string, unknown>
-	) => Promise<{ success: boolean; error?: string }>;
+	) => Promise<{ success: boolean; error?: string; notices?: string[] }>;
 	getGitStatus: (sessionId: string) => Promise<GitStatusResult>;
 	getGitDiff: (sessionId: string, filePath?: string) => Promise<GitDiffResult>;
 	getGitBranchesForSession: (sessionId: string) => Promise<GitBranchesResult>;

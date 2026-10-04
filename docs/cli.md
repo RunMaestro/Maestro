@@ -535,6 +535,9 @@ maestro-cli update-agent <agent-id> --clear-env
 # Set the Claude token source (Claude Code agents only): api | tui | dynamic
 maestro-cli update-agent <agent-id> --token-source tui
 
+# Switch the provider; tabs survive and the old provider's settings are parked
+maestro-cli update-agent <agent-id> --provider codex
+
 # Update SSH execution config (use "none" to revert to local)
 maestro-cli update-agent <agent-id> --ssh-remote <remote-id> --ssh-cwd /remote/workdir
 maestro-cli update-agent <agent-id> --ssh-remote none
@@ -546,6 +549,8 @@ maestro-cli update-agent <agent-id> --sync-history-to-remote true
 The group update reuses the same write path as drag-and-drop in the Left Bar. The cwd update moves the agent as a whole: the working directory, the project root the Files panel and Edit dialog read, and an Auto Run folder that lives inside the old directory all follow the new path (an Auto Run folder elsewhere is left where you put it). Provider conversations stored under the old path may not resume from the new one. Stop the agent before changing its cwd or SSH config; the underlying PTY's working directory and spawn target are fixed at launch time, so the renderer refuses those updates while the agent is busy or its process is alive and surfaces the reason on stderr. The remaining settings (nudge, messages, model, effort, env, token source, etc.) are spawn-time values and apply on the next launch, so they are accepted even while the agent is running.
 
 For text fields, passing an empty string (for example `--nudge ""`) clears the field. `--env` replaces the environment map with the provided pairs; `--clear-env` empties it. `--context-window 0` (or `none`) clears the context-window override. `--token-source` only carries meaning for Claude Code agents: `api` uses `claude --print` (per-token API credit), `tui` drives the maestro-p TUI (Max-plan quota), and `dynamic` starts on the TUI and falls back to API when a usage window hits its limit. The `tui` and `dynamic` modes need the [maestro-p helper](https://runmaestro.ai/maestro-p/) on PATH; it is bundled locally, but for SSH remotes it must be installed on the remote host. See [Provider Notes](/provider-notes#token-source-max-plan-vs-api).
+
+`--provider` switches the agent to another provider without losing anything. Every tab keeps its transcript. Each tab's provider session and the agent's provider-specific settings (custom path, args, env, model, effort, context window, token source) are parked under the old provider and come back when you switch back. A turn that is already running finishes on the provider that started it. Anything the switch could not keep, such as the model a queued message was set to run with, is printed as a notice (`notices` in `--json` output). Run the switch on its own, then adjust settings for the new provider.
 
 | Flag                              | Description                                                                                                                                        | Default |
 | --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
@@ -565,8 +570,8 @@ For text fields, passing an empty string (for example `--nudge ""`) clears the f
 | `--context-window <size>`         | Context window size in tokens. `0` or `none` clears                                                                                                | -       |
 | `--token-source <mode>`           | Claude Code token source: `api`, `tui`, or `dynamic` (Claude Code agents only)                                                                     | -       |
 | `--maestro-p-path <path>`         | Override the maestro-p binary path. Empty string clears                                                                                            | -       |
-| `--provider <type>`               | Switch the agent's provider. Destructive: resets tabs and clears provider config. Requires `--force`. Cannot be combined with other settings edits | -       |
-| `--force`                         | Confirm a destructive change (required for `--provider`)                                                                                           | -       |
+| `--provider <type>`               | Switch the agent's provider. Tabs are kept; the old provider's settings are parked for a switch back. Cannot be combined with other settings edits | -       |
+| `--force`                         | No longer needed for `--provider`; accepted so older scripts keep working                                                                          | -       |
 | `--json`                          | Machine-readable JSON output                                                                                                                       | -       |
 
 The flag table below covers `create-agent`:

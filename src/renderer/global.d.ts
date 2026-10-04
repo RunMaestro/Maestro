@@ -970,7 +970,7 @@ interface MaestroAPI {
 		) => () => void;
 		sendRemoteUpdateSessionConfigResponse: (
 			responseChannel: string,
-			result: { success: boolean; error?: string }
+			result: { success: boolean; error?: string; notices?: string[] }
 		) => void;
 		onRemoteCreateGroup: (
 			callback: (

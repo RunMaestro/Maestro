@@ -30,7 +30,6 @@ interface UpdateAgentOptions {
 	sshCwd?: string;
 	syncHistoryToRemote?: string;
 	provider?: string;
-	force?: boolean;
 	// Editable per-session config (the Edit Agent modal fields, plus the Left Bar
 	// bookmark). Empty-string values clear the field; see buildConfigPatch.
 	nudge?: string;
@@ -194,9 +193,12 @@ export async function updateAgent(agentId: string, options: UpdateAgentOptions):
 		);
 	}
 
-	// Provider switch is destructive (resets tabs, clears provider config, kills
-	// the running process), so it is gated and handled exclusively from the
-	// settings patch.
+	// A provider switch is not destructive: the desktop runs it through
+	// `switchAgentProvider`, so every tab and transcript survives, the outgoing
+	// provider's settings are parked for a switch back, and a turn in flight
+	// finishes on the provider that started it. It is still sent on its own,
+	// because settings edits in the same call would land on the outgoing
+	// provider and be parked with it rather than apply to the new one.
 	let providerType: string | undefined;
 	if (options.provider !== undefined) {
 		const requested = options.provider.trim().toLowerCase();
@@ -209,17 +211,9 @@ export async function updateAgent(agentId: string, options: UpdateAgentOptions):
 		if (currentToolType !== undefined && requested === currentToolType) {
 			emitError(`Agent "${sessionId}" is already a ${requested} agent.`, options);
 		}
-		if (!options.force) {
-			emitError(
-				'Switching provider resets the agent tabs, clears provider-specific config, and kills the running process. Re-run with --force to confirm.',
-				options
-			);
-		}
-		// A provider switch wipes provider-specific config anyway, so refuse to
-		// combine it with those edits in the same call to avoid confusing order.
 		if (configPatch !== undefined) {
 			emitError(
-				'--provider cannot be combined with other settings edits (it resets provider config). Run it on its own, then adjust settings.',
+				'--provider cannot be combined with other settings edits. Switch the provider on its own first, then adjust settings for the new provider.',
 				options
 			);
 		}
@@ -279,6 +273,8 @@ export async function updateAgent(agentId: string, options: UpdateAgentOptions):
 		ssh?: Record<string, unknown>;
 		config?: Record<string, unknown>;
 		provider?: string;
+		/** What the provider switch could not park and cleared, one line each. */
+		notices?: string[];
 	} = {};
 
 	try {
@@ -360,14 +356,15 @@ export async function updateAgent(agentId: string, options: UpdateAgentOptions):
 			}
 
 			// Provider switch routes through the same message but with a `toolType`
-			// key, which the renderer special-cases (reset tabs, clear config, kill
-			// process). Sent exclusively (guarded above), so it never mixes with a
-			// settings patch in the same call.
+			// key, which the renderer hands to `switchAgentProvider`. Sent
+			// exclusively (guarded above), so it never mixes with a settings patch
+			// in the same call. `notices` lists what the switch could not park.
 			if (providerType !== undefined) {
 				const result = await client.sendCommand<{
 					type: string;
 					success: boolean;
 					error?: string;
+					notices?: string[];
 				}>(
 					{
 						type: 'update_session_config',
@@ -380,6 +377,9 @@ export async function updateAgent(agentId: string, options: UpdateAgentOptions):
 					throw new Error(result.error || 'Failed to switch agent provider');
 				}
 				applied.provider = providerType;
+				if (result.notices && result.notices.length > 0) {
+					applied.notices = result.notices;
+				}
 			}
 		});
 	} catch (error) {
@@ -399,7 +399,12 @@ export async function updateAgent(agentId: string, options: UpdateAgentOptions):
 
 	console.log(formatSuccess(`Updated agent ${sessionId}`));
 	if (applied.provider !== undefined) {
-		console.log(`  Provider: ${applied.provider} (tabs reset, provider config cleared)`);
+		console.log(
+			`  Provider: ${applied.provider} (tabs kept; the previous provider's settings are parked for a switch back)`
+		);
+		for (const notice of applied.notices ?? []) {
+			console.log(`  Notice: ${notice}`);
+		}
 	}
 	if (applied.group !== undefined) {
 		console.log(`  Group: ${applied.group ?? '(ungrouped)'}`);

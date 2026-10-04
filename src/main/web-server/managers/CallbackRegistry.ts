@@ -844,7 +844,7 @@ export class CallbackRegistry {
 	async updateSessionConfig(
 		sessionId: string,
 		configPatch: Record<string, unknown>
-	): Promise<{ success: boolean; error?: string }> {
+	): Promise<{ success: boolean; error?: string; notices?: string[] }> {
 		if (!this.callbacks.updateSessionConfig) {
 			return { success: false, error: 'Session config updates not configured' };
 		}

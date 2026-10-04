@@ -2170,6 +2170,37 @@ describe('web-server/web-server-factory', () => {
 				expect.any(String)
 			);
 		});
+
+		/** Send a config patch, answer it as the renderer would, and return the result. */
+		async function answerUpdateSessionConfig(reply: unknown) {
+			const createWebServer = createWebServerFactory(deps);
+			const server = createWebServer() as any;
+			const callback = server.setUpdateSessionConfigCallback.mock.calls[0][0];
+
+			const resultPromise = callback('session-1', { toolType: 'codex' });
+			const request = (mockWebContents.send as ReturnType<typeof vi.fn>).mock.calls.find(
+				(call) => call[0] === 'remote:updateSessionConfig'
+			);
+			const responseChannel = request?.[3] as string;
+			vi.mocked(ipcMain.once).mock.calls.find((call) => call[0] === responseChannel)?.[1]?.(
+				{} as never,
+				reply
+			);
+			return resultPromise;
+		}
+
+		it('setUpdateSessionConfigCallback relays what a provider switch could not park', async () => {
+			await expect(
+				answerUpdateSessionConfig({ success: true, notices: ['cleared a queued model'] })
+			).resolves.toEqual({ success: true, error: undefined, notices: ['cleared a queued model'] });
+		});
+
+		it('setUpdateSessionConfigCallback leaves notices off when the switch cleared nothing', async () => {
+			const result = await answerUpdateSessionConfig({ success: true, notices: [] });
+
+			expect(result).toEqual({ success: true, error: undefined });
+			expect(result).not.toHaveProperty('notices');
+		});
 	});
 
 	describe('groupCrudCallbacks smoke', () => {

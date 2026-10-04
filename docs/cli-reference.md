@@ -1027,8 +1027,8 @@ Update an existing agent's group, working directory, and per-agent settings
 | `--token-source <mode>`           | Claude token source: api \| tui \| dynamic (Claude Code agents only)                           | -       |
 | `--maestro-p-path <path>`         | Override the maestro-p binary path (empty string clears)                                       | -       |
 | `--bookmark <bool>`               | Bookmark the agent in the Left Bar (true/false)                                                | -       |
-| `--provider <type>`               | Switch the agent provider (resets tabs + clears provider config; requires --force)             | -       |
-| `--force`                         | Confirm a destructive change (required for --provider)                                         | -       |
+| `--provider <type>`               | Switch the agent provider (tabs kept; old provider settings parked for a switch back)          | -       |
+| `--force`                         | No longer needed for --provider; accepted for older scripts                                    | -       |
 | `--json`                          | Output as JSON (for scripting)                                                                 | -       |
 
 ## `maestro-cli rename-agent <agent-id> <new-name>`

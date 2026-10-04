@@ -14,6 +14,8 @@ import { useSessionStore, selectSessionById } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { PLAYBOOKS_DIR } from '../../../shared/maestro-paths';
 import { asThinkingMode } from '../../../shared/types';
+import { isValidAgentId } from '../../../shared/agentIds';
+import { switchAgentProvider } from '../../utils/providerTabSessions';
 import type { MediaOpenMode } from '../../../shared/mediaTypes';
 import { getBrowserTabPartition } from '../../utils/browserTabPersistence';
 import { insertAfterActiveInUnifiedTabOrder } from '../../utils/unifiedTabOrderUtils';
@@ -1759,69 +1761,45 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 
 		const patchObj = configPatch as Record<string, unknown>;
 
-		// Provider switch (toolType change) is destructive and handled separately
-		// from plain settings edits: it resets tabs, clears provider-specific
-		// config, and kills the running agent process - mirroring the Edit Agent
-		// modal's toolType-change branch. The CLI gates this behind --force. When a
-		// toolType is present and actually differs, do the switch and ignore any
-		// other keys in the same patch (the CLI sends it exclusively).
+		// A `toolType` key switches the agent's provider through the library's one
+		// implementation (`switchAgentProvider`, requirement PS-5). Nothing is
+		// destroyed: every tab keeps its transcript, and each tab's provider
+		// session plus the agent's provider-specific overrides are parked under
+		// the outgoing provider and restored when the agent switches back. The
+		// agent process is left alone on purpose, and the busy state with it: a
+		// turn in flight finishes under the provider that started it, and the
+		// tab's `turnProvider` keeps that turn's late events attributed to it
+		// (PS-2). Whatever the switch could not park comes back in `notices` so
+		// the caller can show it (PS-3). The CLI sends the switch on its own, so
+		// other keys in the same patch are ignored.
 		const requestedToolType =
 			typeof patchObj.toolType === 'string' ? (patchObj.toolType as ToolType) : undefined;
 		if (requestedToolType && requestedToolType !== session.toolType) {
-			const newTabId = generateId();
-			const freshTab: AITab = {
-				id: newTabId,
-				agentSessionId: null,
-				name: null,
-				starred: false,
-				logs: [],
-				inputValue: '',
-				stagedImages: [],
-				createdAt: Date.now(),
-				state: 'idle',
-				saveToHistory: true,
-			};
-			const providerSwitch: Partial<Session> = {
-				toolType: requestedToolType,
-				aiTabs: [freshTab],
-				activeTabId: newTabId,
-				closedTabHistory: [],
-				// Clear provider-specific overrides - they don't carry across providers.
-				customPath: undefined,
-				customArgs: undefined,
-				customEnvVars: undefined,
-				customModel: undefined,
-				customContextWindow: undefined,
-				// Provenance describes the value cleared above and must not outlive
-				// it (finding AD1); mirrors the Edit Agent modal's switch branch.
-				contextWindowSource: undefined,
-				enableMaestroP: undefined,
-				maestroPPath: undefined,
-				maestroPMode: undefined,
-				// Reset file preview tabs and unified tab order to just the new AI tab.
-				filePreviewTabs: [],
-				activeFileTabId: null,
-				unifiedTabOrder: [{ type: 'ai' as const, id: newTabId }],
-				unifiedClosedTabHistory: [],
-				// Reset runtime state.
-				state: 'idle' as const,
-				aiPid: 0,
-				executionQueue: [],
-			};
+			// Checked here rather than trusted from the wire: the value lands in the
+			// persisted agent and decides which binary every later turn spawns.
+			if (!isValidAgentId(requestedToolType) || requestedToolType === 'terminal') {
+				window.maestro.process.sendRemoteUpdateSessionConfigResponse(responseChannel, {
+					success: false,
+					error: `Unknown provider '${requestedToolType}'`,
+				});
+				return;
+			}
 
-			// Kill the existing AI process for the old provider (no-op if none).
-			window.maestro.process.kill(`${sessionId}-ai`).catch(() => {});
-
+			const { agent: switched, unparked } = switchAgentProvider(session, requestedToolType);
+			// The store gets the switch re-applied to its live entry instead of the
+			// snapshot written back over it: a busy tab may have streamed output
+			// since `sessionsRef` was read, and a stale `aiTabs` would drop it.
 			setSessions((prev: Session[]) =>
-				prev.map((s) => (s.id === sessionId ? { ...s, ...providerSwitch } : s))
+				prev.map((s) => (s.id === sessionId ? switchAgentProvider(s, requestedToolType).agent : s))
 			);
 			try {
-				await window.maestro.sessions.setMany([{ ...session, ...providerSwitch } as any], []);
+				await window.maestro.sessions.setMany([switched as any], []);
 			} catch (persistErr) {
 				logger.error('[Remote] Failed to persist provider switch:', undefined, persistErr);
 			}
 			window.maestro.process.sendRemoteUpdateSessionConfigResponse(responseChannel, {
 				success: true,
+				...(unparked.length > 0 && { notices: unparked.map((item) => item.message) }),
 			});
 			return;
 		}

@@ -214,6 +214,7 @@ function createMockCallbacks(): MessageHandlerCallbacks {
 		deleteSession: vi.fn().mockResolvedValue(true),
 		renameSession: vi.fn().mockResolvedValue(true),
 		updateSessionCwd: vi.fn().mockResolvedValue({ success: true }),
+		updateSessionConfig: vi.fn().mockResolvedValue({ success: true }),
 		getGitStatus: vi.fn().mockResolvedValue({ files: [], branch: 'main' }),
 		getGitDiff: vi.fn().mockResolvedValue({ diff: '' }),
 		getGitBranchesForSession: vi
@@ -4529,6 +4530,54 @@ describe('WebSocketMessageHandler', () => {
 			const payload = JSON.parse((client.socket.send as any).mock.calls[0][0]);
 			expect(payload.type).toBe('error');
 			expect(payload.message).toContain('newCwd');
+		});
+	});
+
+	describe('Update Session Config (CLI → Desktop)', () => {
+		it('passes a provider switch notices back to the caller', async () => {
+			const notice =
+				'A queued message was set to run with model "opus" on Claude Code. It will run with the agent\'s Codex settings instead.';
+			(callbacks.updateSessionConfig as any).mockResolvedValue({
+				success: true,
+				notices: [notice],
+			});
+
+			handler.handleMessage(client, {
+				type: 'update_session_config',
+				sessionId: 'session-1',
+				configPatch: { toolType: 'codex' },
+				requestId: 'req-1',
+			});
+
+			await new Promise((resolve) => setImmediate(resolve));
+
+			expect(callbacks.updateSessionConfig).toHaveBeenCalledWith('session-1', {
+				toolType: 'codex',
+			});
+			const payload = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(payload).toMatchObject({
+				type: 'update_session_config_result',
+				success: true,
+				notices: [notice],
+				sessionId: 'session-1',
+				requestId: 'req-1',
+			});
+		});
+
+		it('leaves notices off the result when there are none', async () => {
+			(callbacks.updateSessionConfig as any).mockResolvedValue({ success: true });
+
+			handler.handleMessage(client, {
+				type: 'update_session_config',
+				sessionId: 'session-1',
+				configPatch: { bookmarked: true },
+			});
+
+			await new Promise((resolve) => setImmediate(resolve));
+
+			const payload = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(payload).toMatchObject({ type: 'update_session_config_result', success: true });
+			expect(payload).not.toHaveProperty('notices');
 		});
 	});
 

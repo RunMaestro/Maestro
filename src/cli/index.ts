@@ -1404,9 +1404,12 @@ program
 	.option('--bookmark <bool>', 'Bookmark the agent in the Left Bar (true/false)')
 	.option(
 		'--provider <type>',
-		'Switch the agent provider (resets tabs + clears provider config; requires --force)'
+		'Switch the agent provider (tabs kept; old provider settings parked for a switch back)'
 	)
-	.option('--force', 'Confirm a destructive change (required for --provider)')
+	// A provider switch used to destroy tabs and demanded --force. It no longer
+	// does, so the flag has no effect; it is still accepted so scripts written
+	// against the old switch keep working instead of failing on an unknown flag.
+	.option('--force', 'No longer needed for --provider; accepted for older scripts')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(updateAgent);
 

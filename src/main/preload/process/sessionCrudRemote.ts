@@ -185,8 +185,9 @@ export function createSessionCrudRemoteApi() {
 		/**
 		 * Subscribe to remote requests to update an agent's editable per-session
 		 * config (nudge/new-session message, custom path/args/env vars, model,
-		 * effort, context window, Claude token source). The renderer merges the
-		 * partial patch and responds with { success, error? }.
+		 * effort, context window, Claude token source), or to switch its provider
+		 * (a `toolType` key). The renderer merges the partial patch and responds
+		 * with { success, error?, notices? }.
 		 */
 		onRemoteUpdateSessionConfig: (
 			callback: (
@@ -206,11 +207,13 @@ export function createSessionCrudRemoteApi() {
 		},
 
 		/**
-		 * Send response for remote update session config
+		 * Send response for remote update session config. `notices` lists what a
+		 * provider switch could not park and cleared, one line each, for the caller
+		 * to show.
 		 */
 		sendRemoteUpdateSessionConfigResponse: (
 			responseChannel: string,
-			result: { success: boolean; error?: string }
+			result: { success: boolean; error?: string; notices?: string[] }
 		): void => {
 			ipcRenderer.send(responseChannel, result);
 		},

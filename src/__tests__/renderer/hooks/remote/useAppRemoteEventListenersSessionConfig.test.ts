@@ -6,11 +6,18 @@
  * before the ack (so a CLI read straight after the write is not racing the
  * renderer's debounced persistence), and anything outside the allowlist is
  * dropped rather than written into Session internals.
+ *
+ * A `toolType` key switches the provider (`maestro-cli update-agent
+ * --provider`). That path used to replace every tab with one fresh tab and
+ * kill the agent process; it now runs `switchAgentProvider`, so the tests below
+ * pin that tabs, transcripts, and a turn in flight all survive the switch.
  */
 import { renderHook } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest';
 import { useAppRemoteEventListeners } from '../../../../renderer/hooks/remote/useAppRemoteEventListeners';
 import { createMockSession } from '../../../helpers/mockSession';
+import { createMockAITab, createMockFileTab } from '../../../helpers/mockTab';
+import { PROVIDER_OVERRIDE_KEYS } from '../../../../shared/maestro-lib/agents/providerSwap';
 import type { Session } from '../../../../renderer/types';
 
 vi.mock('../../../../renderer/stores/sessionStore', () => ({
@@ -33,6 +40,7 @@ vi.mock('../../../../renderer/utils/ids', () => ({ generateId: () => 'new-tab-id
 
 const ack = vi.fn();
 const setMany = vi.fn().mockResolvedValue(undefined);
+const kill = vi.fn().mockResolvedValue(undefined);
 
 function setup(sessions: Session[]) {
 	const sessionsRef = { current: sessions };
@@ -55,7 +63,7 @@ function setup(sessions: Session[]) {
 		} as any)
 	);
 
-	return { setSessions };
+	return { setSessions, sessionsRef };
 }
 
 /** Run the reducer that setSessions was called with against the given state. */
@@ -80,7 +88,7 @@ beforeEach(() => {
 	(window as any).maestro = {
 		process: {
 			sendRemoteUpdateSessionConfigResponse: ack,
-			kill: vi.fn().mockResolvedValue(undefined),
+			kill,
 		},
 		sessions: { setMany },
 	};
@@ -291,4 +299,212 @@ describe('maestro:remoteUpdateSessionConfig with a tabId', () => {
 			error: 'No editable tab fields in patch',
 		});
 	});
+});
+
+describe('maestro:remoteUpdateSessionConfig with a toolType (provider switch)', () => {
+	/**
+	 * A Claude agent mid-turn on its second tab, with a file tab, a queued
+	 * message, and provider-specific overrides set: everything the old
+	 * destructive switch wiped.
+	 */
+	function claudeAgent(): Session {
+		return createMockSession({
+			id: 'session-1',
+			toolType: 'claude-code',
+			state: 'busy',
+			aiPid: 4242,
+			customPath: '/opt/claude',
+			customArgs: '--verbose',
+			customEnvVars: { CLAUDE_CONFIG_DIR: '/Users/me/.claude-work' },
+			customModel: 'opus',
+			customContextWindow: 500000,
+			contextWindowSource: 'user-edited',
+			enableMaestroP: true,
+			maestroPMode: 'dynamic',
+			aiTabs: [
+				createMockAITab({
+					id: 'tab-1',
+					agentSessionId: 'claude-session-1',
+					customEffort: 'high',
+					logs: [{ id: 'log-1', timestamp: 1, source: 'user', text: 'first question' }],
+				}),
+				createMockAITab({
+					id: 'tab-2',
+					agentSessionId: 'claude-session-2',
+					customModel: 'sonnet',
+					state: 'busy',
+					turnProvider: 'claude-code',
+					logs: [{ id: 'log-2', timestamp: 2, source: 'stdout', text: 'still working' }],
+				}),
+			],
+			activeTabId: 'tab-2',
+			filePreviewTabs: [createMockFileTab({ id: 'file-1' })],
+			unifiedTabOrder: [
+				{ type: 'ai', id: 'tab-1' },
+				{ type: 'file', id: 'file-1' },
+				{ type: 'ai', id: 'tab-2' },
+			],
+			executionQueue: [
+				{ id: 'queued-1', timestamp: 3, tabId: 'tab-1', type: 'message', text: 'and then this' },
+			],
+		});
+	}
+
+	it('keeps every tab, its transcript, and the tab layout', async () => {
+		const sessions = [claudeAgent()];
+		const { setSessions } = setup(sessions);
+
+		dispatchPatch('session-1', { toolType: 'codex' });
+		await flush();
+
+		const [updated] = applyUpdate(setSessions, sessions);
+		expect(updated.toolType).toBe('codex');
+		expect(updated.aiTabs.map((tab) => tab.id)).toEqual(['tab-1', 'tab-2']);
+		updated.aiTabs.forEach((tab, index) => {
+			expect(tab.logs).toBe(sessions[0].aiTabs[index].logs);
+		});
+		expect(updated.activeTabId).toBe('tab-2');
+		expect(updated.filePreviewTabs).toBe(sessions[0].filePreviewTabs);
+		expect(updated.unifiedTabOrder).toBe(sessions[0].unifiedTabOrder);
+		// Claude's resume token is parked for the way back, not discarded.
+		expect(updated.aiTabs[0].agentSessionId).toBeNull();
+		expect(updated.aiTabs[0].providerSessions?.['claude-code']?.agentSessionId).toBe(
+			'claude-session-1'
+		);
+		expect(ack).toHaveBeenCalledWith('ch', { success: true });
+	});
+
+	it('leaves a turn in flight running under the provider that started it', async () => {
+		const sessions = [claudeAgent()];
+		const { setSessions } = setup(sessions);
+
+		dispatchPatch('session-1', { toolType: 'codex' });
+		await flush();
+
+		// Nothing is killed and no busy state is reset: the turn finishes, and
+		// `turnProvider` keeps its late events attributed to Claude.
+		expect(kill).not.toHaveBeenCalled();
+		const [updated] = applyUpdate(setSessions, sessions);
+		expect(updated.state).toBe('busy');
+		expect(updated.aiPid).toBe(4242);
+		expect(updated.aiTabs[1].state).toBe('busy');
+		expect(updated.aiTabs[1].turnProvider).toBe('claude-code');
+		expect(updated.executionQueue.map((item) => item.id)).toEqual(['queued-1']);
+	});
+
+	it('parks the overrides and restores tabs and overrides exactly on the way back', async () => {
+		const original = claudeAgent();
+		const { setSessions, sessionsRef } = setup([original]);
+
+		dispatchPatch('session-1', { toolType: 'codex' });
+		await flush();
+		const [onCodex] = applyUpdate(setSessions, [original]);
+		for (const key of PROVIDER_OVERRIDE_KEYS) {
+			expect(onCodex[key]).toBeUndefined();
+		}
+		expect(onCodex.providerOverrides?.['claude-code']).toEqual({
+			customPath: '/opt/claude',
+			customArgs: '--verbose',
+			customEnvVars: { CLAUDE_CONFIG_DIR: '/Users/me/.claude-work' },
+			customModel: 'opus',
+			customContextWindow: 500000,
+			contextWindowSource: 'user-edited',
+			enableMaestroP: true,
+			maestroPMode: 'dynamic',
+		});
+
+		sessionsRef.current = [onCodex];
+		setSessions.mockClear();
+		dispatchPatch('session-1', { toolType: 'claude-code' });
+		await flush();
+		const [back] = applyUpdate(setSessions, [onCodex]);
+
+		expect(back.toolType).toBe('claude-code');
+		for (const key of PROVIDER_OVERRIDE_KEYS) {
+			expect(back[key]).toStrictEqual(original[key]);
+		}
+		back.aiTabs.forEach((tab, index) => {
+			const before = original.aiTabs[index];
+			expect(tab.id).toBe(before.id);
+			expect(tab.agentSessionId).toBe(before.agentSessionId);
+			expect(tab.usageStats).toStrictEqual(before.usageStats);
+			expect(tab.customModel).toBe(before.customModel);
+			expect(tab.customEffort).toBe(before.customEffort);
+			expect(tab.logs).toBe(before.logs);
+		});
+	});
+
+	it('flushes the switched agent to disk before acking', async () => {
+		setup([claudeAgent()]);
+
+		dispatchPatch('session-1', { toolType: 'codex' });
+		await flush();
+
+		const [[persisted]] = setMany.mock.calls.at(-1) as [Session[]];
+		expect(persisted.toolType).toBe('codex');
+		expect(persisted.aiTabs.map((tab) => tab.id)).toEqual(['tab-1', 'tab-2']);
+		expect(persisted.providerOverrides?.['claude-code']?.customModel).toBe('opus');
+		expect(setMany.mock.invocationCallOrder[0]).toBeLessThan(ack.mock.invocationCallOrder[0]);
+	});
+
+	it('switches the live store entry, so output streamed since the snapshot survives', async () => {
+		const snapshot = claudeAgent();
+		const { setSessions } = setup([snapshot]);
+
+		dispatchPatch('session-1', { toolType: 'codex' });
+		await flush();
+
+		// The busy tab streamed another chunk after the listener read sessionsRef.
+		const live: Session = {
+			...snapshot,
+			aiTabs: snapshot.aiTabs.map((tab) =>
+				tab.id === 'tab-2'
+					? {
+							...tab,
+							logs: [...tab.logs, { id: 'log-3', timestamp: 4, source: 'stdout', text: 'more' }],
+						}
+					: tab
+			),
+		};
+		const [updated] = applyUpdate(setSessions, [live]);
+		expect(updated.toolType).toBe('codex');
+		expect(updated.aiTabs[1].logs.map((entry) => entry.id)).toEqual(['log-2', 'log-3']);
+	});
+
+	it('reports what it could not park in the ack, and keeps the queued message', async () => {
+		const agent = claudeAgent();
+		agent.executionQueue = [
+			{ ...agent.executionQueue[0], turnSettings: { model: 'opus', effort: 'high' } },
+		];
+		const sessions = [agent];
+		const { setSessions } = setup(sessions);
+
+		dispatchPatch('session-1', { toolType: 'codex' });
+		await flush();
+
+		const [updated] = applyUpdate(setSessions, sessions);
+		expect(updated.executionQueue.map((item) => item.text)).toEqual(['and then this']);
+		expect(updated.executionQueue[0].turnSettings).toBeUndefined();
+		expect(ack).toHaveBeenCalledWith('ch', {
+			success: true,
+			notices: [expect.stringContaining('model "opus" and effort "high" on Claude Code')],
+		});
+	});
+
+	it.each(['not-a-provider', 'terminal'])(
+		'rejects %s instead of writing it into the agent',
+		async (toolType) => {
+			const { setSessions } = setup([claudeAgent()]);
+
+			dispatchPatch('session-1', { toolType });
+			await flush();
+
+			expect(setSessions).not.toHaveBeenCalled();
+			expect(setMany).not.toHaveBeenCalled();
+			expect(ack).toHaveBeenCalledWith('ch', {
+				success: false,
+				error: `Unknown provider '${toolType}'`,
+			});
+		}
+	);
 });

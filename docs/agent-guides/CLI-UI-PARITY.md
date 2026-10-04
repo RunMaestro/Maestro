@@ -230,7 +230,7 @@ of taking a second round trip or trusting a value the caller guessed.
 | Bookmark / unbookmark an agent (Cmd+Shift+B)       | `bookmark` / `unbookmark`, or `update-agent --bookmark`                                          |
 | Create / rename / remove an agent                  | `create-agent`, `rename-agent`, `remove-agent`                                                   |
 | Edit Agent modal fields                            | `update-agent`, `settings agent set`                                                             |
-| Switch an agent's provider                         | `update-agent --provider --force`                                                                |
+| Switch an agent's provider                         | `update-agent --provider`                                                                        |
 | Move an agent to a group                           | `update-agent --group`                                                                           |
 | Change working directory                           | `update-agent --cwd`                                                                             |
 | SSH remote execution config                        | `update-agent --ssh-remote / --ssh-cwd`, `create-ssh-remote`                                     |

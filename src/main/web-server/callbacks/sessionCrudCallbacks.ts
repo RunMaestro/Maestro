@@ -274,9 +274,11 @@ export function registerSessionCrudCallbacks(
 
 	// Set up callback for web server to update an agent's editable per-session
 	// config (nudge/new-session message, custom path/args/env, model, effort,
-	// context window, Claude token source). Same IPC request-response shape as
-	// updateSessionSsh; the renderer merges the partial patch and flushes to
-	// disk. Applied even while the agent runs (these are spawn-time settings).
+	// context window, Claude token source) or switch its provider (`toolType`).
+	// Same IPC request-response shape as updateSessionSsh; the renderer merges
+	// the partial patch and flushes to disk. Applied even while the agent runs
+	// (these are spawn-time settings, and a switch leaves a turn in flight on
+	// the provider that started it).
 	server.setUpdateSessionConfigCallback(
 		async (sessionId: string, configPatch: Record<string, unknown>) => {
 			const mainWindow = getMainWindow();
@@ -291,7 +293,7 @@ export function registerSessionCrudCallbacks(
 
 				const handleResponse = (
 					_event: Electron.IpcMainEvent,
-					result: { success?: boolean; error?: string } | undefined
+					result: { success?: boolean; error?: string; notices?: string[] } | undefined
 				) => {
 					if (resolved) return;
 					resolved = true;
@@ -299,6 +301,8 @@ export function registerSessionCrudCallbacks(
 					resolve({
 						success: Boolean(result?.success),
 						error: result?.error,
+						// A provider switch reports what it could not park (PS-3).
+						...(result?.notices?.length ? { notices: result.notices } : {}),
 					});
 				};
 
