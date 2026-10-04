@@ -16,8 +16,6 @@ import type { HistoryManager } from '../history-manager';
 import { isWebContentsAvailable } from '../utils/safe-send';
 import { deleteCliServerInfo } from '../../shared/cli-server-discovery';
 import { stopAllCueRuns } from '../cue/cue-executor';
-import { stopAllCueShellRuns } from '../cue/cue-shell-executor';
-import { stopAllCueCliRuns } from '../cue/cue-cli-executor';
 import { flushTelemetry } from '../cue/cue-telemetry';
 import { captureException } from '../utils/sentry';
 import { powerManager as powerManagerInstance } from '../power-manager';
@@ -413,8 +411,6 @@ export function createQuitHandler(deps: QuitHandlerDependencies): QuitHandler {
 		// Kill all active Cue processes (tracked separately from ProcessManager)
 		logger.info('Killing active Cue processes', 'Shutdown');
 		stopAllCueRuns();
-		stopAllCueShellRuns();
-		stopAllCueCliRuns();
 
 		// Flush Cue telemetry outbox before quit so events captured between the
 		// last autorun and shutdown aren't deferred to the next launch (or lost

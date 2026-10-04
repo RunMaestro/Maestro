@@ -240,7 +240,8 @@ export const CREATE_WIZARD_RUNS_SQL = `
     exchanges INTEGER NOT NULL,
     documents INTEGER NOT NULL,
     tasks INTEGER NOT NULL,
-    project_path TEXT
+    project_path TEXT,
+    active_ms INTEGER
   )
 `;
 

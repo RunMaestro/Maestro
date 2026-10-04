@@ -312,6 +312,18 @@ a design constraint; they are simply not built yet.
     legacy `${sessionId}-ai` process id, which misses per-tab processes
     (`${sessionId}-ai-${tabId}`). Fix the renderer handler to take a tab id,
     then add `interrupt <agent> [--tab]`.
+11. **Expand a diagram or image to the pan/zoom viewer.** The viewer opens on
+    an element already rendered in a transcript or document
+    (`openZoomViewer(element)`), and a transcript element has no address the
+    CLI can name. The capability is still reachable: `open-file <image>` opens
+    the file preview's `ImageViewer`, which shares the same `usePanZoom`, and
+    an agent can write a diagram to a `.mmd` file and `open-file` it. Pure
+    viewing; there is no result for an agent to read back.
+12. **Drag-resized pane sizes kept in renderer localStorage** (the Auto Run
+    document dropdown's height via `useResizableDropdownHeight`, the Document
+    Graph preview width via `usePersistedPanelWidth`). Pure view preferences
+    with nothing for an agent to act on; the values never reach main, so a
+    verb needs a renderer round trip. Double-click on the grip resets them.
 
 ### Audit backlog (2026-09-27)
 

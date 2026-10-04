@@ -147,6 +147,19 @@ describe('RichOverview', () => {
 		expect(screen.getByTestId('markdown-renderer')).toHaveTextContent('Narrative body.');
 	});
 
+	// Empty-state copy while the first fetch is pending read as "you did nothing
+	// this week" on a fleet with a thousand entries.
+	it('shows one spinner, not empty widgets, until the first stats arrive', async () => {
+		mockGetRichOverviewStats.mockReturnValue(new Promise(() => {}));
+		render(<RichOverview theme={mockTheme} stats={STATS} synopsis={SYNOPSIS} lookbackDays={7} />);
+
+		expect(screen.getByText('Loading activity…')).toBeInTheDocument();
+		expect(screen.queryByText('Activity Timeline')).not.toBeInTheDocument();
+		expect(screen.queryByText('No activity in this window')).not.toBeInTheDocument();
+		// The narrative does not depend on the stats, so it still renders.
+		expect(screen.getByTestId('markdown-renderer')).toHaveTextContent('Narrative body.');
+	});
+
 	it('omits the generation-time card when no stats are provided', async () => {
 		render(<RichOverview theme={mockTheme} stats={null} synopsis={SYNOPSIS} lookbackDays={7} />);
 

@@ -397,7 +397,7 @@ them, so setting one option cannot silently drop the others; `--clear-env` and
 `--clear-ssh-options` empty the respective map first. An empty string to `-u` or
 `-k` clears that field.
 
-`--json` (and `list-ssh-remotes --json`) reports `resolvedSshOptions` alongside
+`--json` (and `list ssh-remotes --json`) reports `resolvedSshOptions` alongside
 the stored `sshOptions`: the full merged set `ssh` receives once
 `resolveSshOptions()` has folded the overrides over Maestro's defaults. That is
 the field that answers "did my override take effect?" - the stored map alone

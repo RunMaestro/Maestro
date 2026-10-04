@@ -1,6 +1,6 @@
 import React from 'react';
-import { describe, it, expect, vi } from 'vitest';
-import { render, fireEvent } from '@testing-library/react';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { render, fireEvent, waitFor } from '@testing-library/react';
 import { Markdown } from '../../../../renderer/components/Markdown/Markdown';
 import { mockTheme } from '../../../helpers/mockTheme';
 
@@ -24,6 +24,14 @@ vi.mock('highlight.js', () => ({
 vi.mock('../../../../renderer/components/MermaidRenderer', () => ({
 	MermaidRenderer: ({ chart }: { chart: string }) =>
 		React.createElement('div', { 'data-testid': 'mermaid-diagram' }, chart),
+}));
+
+// Every fence's copy button routes through safeClipboardWrite by default.
+const { mockSafeClipboardWrite } = vi.hoisted(() => ({
+	mockSafeClipboardWrite: vi.fn().mockResolvedValue(true),
+}));
+vi.mock('../../../../renderer/utils/clipboard', () => ({
+	safeClipboardWrite: (...args: unknown[]) => mockSafeClipboardWrite(...args),
 }));
 
 const noop = () => {};
@@ -200,6 +208,46 @@ describe('Markdown presets', () => {
 			);
 			const p = container.querySelector('p')!;
 			expect(p.className).toContain('mb-2');
+		});
+	});
+
+	describe('code fence copy button', () => {
+		const fence = '```ts\nconst x = 1;\n```';
+
+		beforeEach(() => mockSafeClipboardWrite.mockClear());
+
+		it.each(['chat', 'document', 'release-notes', 'wizard-bubble'] as const)(
+			'%s preset copies the fence content to the clipboard',
+			async (preset) => {
+				const { getByTestId } = render(
+					<Markdown preset={preset} content={fence} theme={mockTheme} />
+				);
+				fireEvent.click(getByTestId('code-copy-button'));
+				await waitFor(() => expect(mockSafeClipboardWrite).toHaveBeenCalledWith('const x = 1;'));
+			}
+		);
+
+		it('chat preset routes the copy through a caller-supplied onCopy', () => {
+			const onCopy = vi.fn();
+			const { getByTestId } = render(
+				<Markdown preset="chat" content={fence} theme={mockTheme} onCopy={onCopy} />
+			);
+			fireEvent.click(getByTestId('code-copy-button'));
+			expect(onCopy).toHaveBeenCalledWith('const x = 1;');
+			expect(mockSafeClipboardWrite).not.toHaveBeenCalled();
+		});
+
+		it('document preset leaves custom language renderers without a copy button', () => {
+			const Mermaid = ({ code }: { code: string }) => <div data-testid="mermaid">{code}</div>;
+			const { queryByTestId } = render(
+				<Markdown
+					preset="document"
+					content={'```mermaid\ngraph TD; A-->B;\n```'}
+					theme={mockTheme}
+					customLanguageRenderers={{ mermaid: Mermaid }}
+				/>
+			);
+			expect(queryByTestId('code-copy-button')).not.toBeInTheDocument();
 		});
 	});
 });

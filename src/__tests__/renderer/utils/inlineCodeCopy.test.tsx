@@ -26,6 +26,7 @@ vi.mock('../../../renderer/stores/centerFlashStore', () => ({
 
 import {
 	buildInlineCodeHandlers,
+	copyTextWithFlash,
 	extractInlineCodeText,
 } from '../../../renderer/utils/inlineCodeCopy';
 
@@ -166,6 +167,27 @@ describe('inlineCodeCopy', () => {
 
 			expect(e.preventDefault).not.toHaveBeenCalled();
 			expect(e.stopPropagation).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('copyTextWithFlash', () => {
+		it('writes the text and flashes on success', async () => {
+			await copyTextWithFlash('npm test');
+			expect(mockSafeClipboardWrite).toHaveBeenCalledWith('npm test');
+			expect(mockNotifyCenterFlash).toHaveBeenCalledWith(
+				expect.objectContaining({ detail: 'npm test' })
+			);
+		});
+
+		it('does not flash when the clipboard write fails', async () => {
+			mockSafeClipboardWrite.mockResolvedValueOnce(false);
+			await copyTextWithFlash('npm test');
+			expect(mockNotifyCenterFlash).not.toHaveBeenCalled();
+		});
+
+		it('is a no-op for empty text', async () => {
+			await copyTextWithFlash('');
+			expect(mockSafeClipboardWrite).not.toHaveBeenCalled();
 		});
 	});
 });

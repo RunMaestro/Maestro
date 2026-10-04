@@ -57,6 +57,11 @@ export const MODAL_PRIORITIES = {
 	/** Confirmation dialogs - highest priority, always on top */
 	CONFIRM: 1000,
 
+	/** Full-screen pan/zoom viewer for a diagram or image. Opens from inside other
+	 * modals (Auto Run expanded, Director's Notes, file preview), so it sits
+	 * above all of them and Escape closes it first. */
+	ZOOM_VIEWER: 990,
+
 	/** Gist publish confirmation modal - high priority */
 	GIST_PUBLISH: 980,
 

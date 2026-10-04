@@ -7,6 +7,7 @@ import * as fs from 'fs';
 import { logger } from '../../utils/logger';
 import { createOutputParser } from '../../parsers';
 import { getAgentCapabilities } from '../../agents';
+import { getAgentDefinition } from '../../agents/definitions';
 import type { ProcessConfig, ManagedProcess, SpawnResult, ParsedEventObserver } from '../types';
 import type { DataBufferManager } from '../handlers/DataBufferManager';
 import { StdoutHandler } from '../handlers/StdoutHandler';
@@ -200,7 +201,19 @@ export class ChildProcessSpawner {
 			finalArgs = args;
 		}
 
-		// Log spawn config
+		// Some CLIs need an explicit query source to avoid opening their interactive UI.
+		// SSH scripts own their remote arguments and must not receive local stdin flags.
+		if (
+			sendPromptViaStdinRaw &&
+			effectivePrompt &&
+			!config.sshStdinScript &&
+			!config.promptAlreadyInArgs
+		) {
+			const stdinPromptArgs = getAgentDefinition(toolType)?.stdinPromptArgs;
+			if (stdinPromptArgs) finalArgs = [...finalArgs, ...stdinPromptArgs];
+		}
+
+		// Log metadata only: prompts and argv can contain private user or playbook text.
 		const spawnConfigLogFn = isWindows() ? logger.info.bind(logger) : logger.debug.bind(logger);
 		spawnConfigLogFn('[ProcessManager] spawn() config', 'ProcessManager', {
 			sessionId,
@@ -208,13 +221,6 @@ export class ChildProcessSpawner {
 			platform: process.platform,
 			hasPrompt: !!prompt,
 			promptLength: prompt?.length,
-			promptPreview:
-				prompt && isWindows()
-					? {
-							first100: prompt.substring(0, 100),
-							last100: prompt.substring(Math.max(0, prompt.length - 100)),
-						}
-					: undefined,
 			hasImages,
 			hasImageArgs: !!imageArgs,
 			tempImageFilesCount: tempImageFiles.length,
@@ -251,7 +257,7 @@ export class ChildProcessSpawner {
 
 			logger.debug('[ProcessManager] About to spawn child process', 'ProcessManager', {
 				command,
-				finalArgs,
+				argsCount: finalArgs.length,
 				cwd,
 				PATH: env.PATH?.substring(0, 150),
 				hasStdio: 'default (pipe)',
@@ -327,7 +333,6 @@ export class ChildProcessSpawner {
 					originalArgsCount: finalArgs.length,
 					escapedArgsCount: spawnArgs.length,
 					escapedPromptArgLength: spawnArgs[spawnArgs.length - 1]?.length,
-					escapedPromptArgPreview: spawnArgs[spawnArgs.length - 1]?.substring(0, 200),
 					argsModified: finalArgs.some((arg, i) => arg !== spawnArgs[i]),
 				});
 			}
@@ -366,7 +371,6 @@ export class ChildProcessSpawner {
 				isWindows: isWindows(),
 				argsCount: spawnArgs.length,
 				promptArgLength: prompt ? spawnArgs[spawnArgs.length - 1]?.length : undefined,
-				fullCommandPreview: `${spawnCommand} ${spawnArgs.join(' ')}`,
 			});
 
 			const childProcess = spawn(spawnCommand, spawnArgs, {
@@ -426,8 +430,6 @@ export class ChildProcessSpawner {
 				hasSshStdinScript: !!config.sshStdinScript,
 				command: config.command,
 				argsCount: finalArgs.length,
-				argsPreview:
-					finalArgs.length > 0 ? finalArgs[finalArgs.length - 1]?.substring(0, 500) : undefined,
 			});
 
 			const managedProcess: ManagedProcess = {

@@ -10,21 +10,21 @@ Open a file by clicking it in the Files pane (Right Panel), through Fuzzy File S
 
 ## What opens as what
 
-| Format              | Extensions                                                       | Opens as                                                                         | How you filter it                                       |
-| ------------------- | ---------------------------------------------------------------- | -------------------------------------------------------------------------------- | ------------------------------------------------------- |
-| **Parquet**         | `.parquet`, `.parq`, `.pq`                                       | Virtualized data grid with a schema rail                                         | [Typed query language](#parquet-a-typed-query-language) |
-| **JSON**            | `.json`                                                          | Syntax-highlighted source, switching to a tree in jq mode                        | [jq](#json-and-jsonl-jq), or find in file               |
-| **JSON Lines**      | `.jsonl`, `.ndjson`                                              | Per-record tree or table                                                         | [jq](#json-and-jsonl-jq), or text search                |
-| **CSV / TSV**       | `.csv`, `.tsv`                                                   | Sortable table                                                                   | [Row filter](#csv-and-tsv-row-filtering)                |
-| **Markdown**        | `.md`, `.mdx`                                                    | Rendered document with clickable task checkboxes                                 | Find in file                                            |
-| **Mermaid**         | `.mmd`, `.mermaid`                                               | Rendered diagram                                                                 | Find in source (`Cmd+E` for source)                     |
-| **HTML**            | `.html`, `.htm`                                                  | Source, with a toggle to render it                                               | Find in file                                            |
-| **Images**          | `png`, `jpg`, `jpeg`, `gif`, `bmp`, `webp`, `svg`, `ico`         | Image viewer, with annotation                                                    | n/a                                                     |
-| **Audio**           | `mp3`, `wav`, `m4a`, `aac`, `flac`, `ogg`, `oga`, `opus`, `weba` | [Floating player](/media-player)                                                 | n/a                                                     |
-| **Video**           | `mp4`, `m4v`, `webm`, `mov`, `ogv`                               | [Floating player](/media-player)                                                 | n/a                                                     |
-| **Code**            | `.ts`, `.py`, `.go`, `.rs`, and the usual suspects               | Syntax-highlighted source                                                        | Find in file (text, regex, or line)                     |
-| **Plain text**      | `.txt`, `.rst`, `.adoc`, `README`, `LICENSE`, ...                | Readable prose                                                                   | Find in file                                            |
-| **Everything else** | including `.sqlite`, `.db`, `.zip`, fonts, binaries              | ["Binary File" card](#sqlite-and-other-databases) with an Open Externally button | n/a                                                     |
+| Format              | Extensions                                                       | Opens as                                                                          | How you filter it                                       |
+| ------------------- | ---------------------------------------------------------------- | --------------------------------------------------------------------------------- | ------------------------------------------------------- |
+| **Parquet**         | `.parquet`, `.parq`, `.pq`                                       | Virtualized data grid with a schema rail                                          | [Typed query language](#parquet-a-typed-query-language) |
+| **JSON**            | `.json`                                                          | Syntax-highlighted source, switching to a tree in jq mode                         | [jq](#json-and-jsonl-jq), or find in file               |
+| **JSON Lines**      | `.jsonl`, `.ndjson`                                              | Per-record tree or table                                                          | [jq](#json-and-jsonl-jq), or text search                |
+| **CSV / TSV**       | `.csv`, `.tsv`                                                   | Sortable table                                                                    | [Row filter](#csv-and-tsv-row-filtering)                |
+| **Markdown**        | `.md`, `.mdx`                                                    | Rendered document with clickable task checkboxes                                  | Find in file                                            |
+| **Mermaid**         | `.mmd`, `.mermaid`                                               | Rendered diagram, [expandable to pan and zoom](#diagrams-and-images-pan-and-zoom) | Find in source (`Cmd+E` for source)                     |
+| **HTML**            | `.html`, `.htm`                                                  | Source, with a toggle to render it                                                | Find in file                                            |
+| **Images**          | `png`, `jpg`, `jpeg`, `gif`, `bmp`, `webp`, `svg`, `ico`         | Image viewer, with annotation                                                     | n/a                                                     |
+| **Audio**           | `mp3`, `wav`, `m4a`, `aac`, `flac`, `ogg`, `oga`, `opus`, `weba` | [Floating player](/media-player)                                                  | n/a                                                     |
+| **Video**           | `mp4`, `m4v`, `webm`, `mov`, `ogv`                               | [Floating player](/media-player)                                                  | n/a                                                     |
+| **Code**            | `.ts`, `.py`, `.go`, `.rs`, and the usual suspects               | Syntax-highlighted source                                                         | Find in file (text, regex, or line)                     |
+| **Plain text**      | `.txt`, `.rst`, `.adoc`, `README`, `LICENSE`, ...                | Readable prose                                                                    | Find in file                                            |
+| **Everything else** | including `.sqlite`, `.db`, `.zip`, fonts, binaries              | ["Binary File" card](#sqlite-and-other-databases) with an Open Externally button  | n/a                                                     |
 
 Three of these give you a real query language rather than a search box. They are worth knowing individually.
 
@@ -142,6 +142,26 @@ Parquet is not part of this system. It never loads the file at all, so its size 
 The same is true of any other database file, archive (`.zip`, `.tar`, `.gz`), font, or compiled binary.
 
 If you want to query a SQLite database inside Maestro today, the practical path is your agent: ask it to run `sqlite3 yourfile.db "select ..."` in [command mode](/general-usage#command-mode) or as a tool call, which works now and needs no viewer.
+
+## Diagrams and images: pan and zoom
+
+Any Mermaid diagram or image can open full-window, where you can zoom and pan it. This works in chat, Auto Run documents, file previews, and Director's Notes.
+
+- **Mermaid block in chat:** click the expand icon in the block header, next to the copy icon.
+- **Other diagrams and markdown images:** hover and click the expand icon in the corner. You can also click a chat image directly.
+- **Anything else:** right-click the image or diagram and pick **Expand (Pan and Zoom)**.
+
+In the expanded view:
+
+| Action        | Input                                            |
+| ------------- | ------------------------------------------------ |
+| Zoom          | Scroll wheel or trackpad pinch (zooms at cursor) |
+| Zoom step     | `+` / `-`, or the toolbar buttons                |
+| Pan           | Drag, or the arrow keys (`Shift` for big steps)  |
+| Fit to window | `0` or double-click                              |
+| Close         | `Esc`                                            |
+
+Diagrams stay sharp at every zoom level because they stay vector. Right-click still gives Copy Image and Save.
 
 ## What no viewer does
 

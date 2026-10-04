@@ -1,11 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, waitFor } from '@testing-library/react';
+import { render, waitFor, fireEvent, act } from '@testing-library/react';
 import mermaid from 'mermaid';
 import { MermaidRenderer } from '../../../renderer/components/MermaidRenderer';
 import { createMockTheme, mockTheme } from '../../helpers/mockTheme';
 import { AA_CONTRAST, contrastRatio } from '../../../shared/colorContrast';
 import type { ThemeColors } from '../../../shared/theme-types';
 import { THEMES } from '../../../shared/themes';
+import { useZoomViewerStore } from '../../../renderer/components/ZoomViewer/zoomViewerStore';
 
 // Mermaid is a static default import in MermaidRenderer. We stub parse (always
 // valid) and render (returns a caller-supplied SVG) so each test controls the
@@ -282,5 +283,43 @@ describe('MermaidRenderer', () => {
 			expect(contrastRatio(vars.taskTextColor, '#bd93f9')).toBeGreaterThanOrEqual(AA_CONTRAST);
 			expect(vars.sequenceNumberColor).toBe(vars.taskTextColor);
 		});
+	});
+});
+
+describe('MermaidRenderer expand to the pan/zoom viewer', () => {
+	beforeEach(() => {
+		act(() => useZoomViewerStore.getState().close());
+		renderMock.mockResolvedValue({
+			svg: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><g/></svg>',
+		});
+	});
+
+	it('opens the rendered SVG itself in the viewer', async () => {
+		const { container, findByTestId } = render(
+			<MermaidRenderer chart="flowchart LR\nA-->B" theme={mockTheme} />
+		);
+		fireEvent.click(await findByTestId('expand-to-viewer'));
+		const request = useZoomViewerStore.getState().request;
+		expect(request?.element).toBe(container.querySelector('.mermaid-container svg'));
+		expect(request?.title).toBe('Diagram');
+	});
+
+	it('survives the SVG being re-injected (the button is outside the container)', async () => {
+		const { container, findByTestId } = render(
+			<MermaidRenderer chart="flowchart LR\nA-->B" theme={mockTheme} />
+		);
+		await findByTestId('expand-to-viewer');
+		const mermaidContainer = container.querySelector('.mermaid-container')!;
+		expect(mermaidContainer.querySelector('[data-testid="expand-to-viewer"]')).toBeNull();
+	});
+
+	it('omits the button when the host owns its own toolbar', async () => {
+		const { container, queryByTestId } = render(
+			<MermaidRenderer chart="flowchart LR\nA-->B" theme={mockTheme} expandable={false} />
+		);
+		await waitFor(() => {
+			expect(container.querySelector('.mermaid-container svg')).not.toBeNull();
+		});
+		expect(queryByTestId('expand-to-viewer')).toBeNull();
 	});
 });

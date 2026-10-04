@@ -18,7 +18,6 @@ import { getExtensionColor } from '../../utils/extensionColors';
 import { getRevealLabel } from '../../utils/platformUtils';
 import { safeClipboardWrite } from '../../utils/clipboard';
 import { useTabHoverOverlay } from '../../hooks/tabs/useTabHoverOverlay';
-import { isCoarsePointer } from '../../utils/touch';
 import { LongPressable } from '../shared/LongPressable';
 import { TabOverlayPortal } from './TabOverlayPortal';
 import { getTabKindColor } from './tabBarUtils';
@@ -310,9 +309,6 @@ export const FileTab = memo(function FileTab({
 	const handleTabSelect = useCallback(() => {
 		onSelect(tab.id);
 	}, [onSelect, tab.id]);
-	// Coarse pointer: long-press owns the gesture, so native drag is off.
-	const coarse = isCoarsePointer();
-
 	const handleTabDragStart = useCallback(
 		(e: React.DragEvent) => {
 			onDragStart(tab.id, e);
@@ -414,7 +410,7 @@ export const FileTab = memo(function FileTab({
 					handleTabSelect();
 				}
 			}}
-			draggable={!coarse}
+			draggable
 			onDragStart={handleTabDragStart}
 			onDragOver={handleTabDragOver}
 			onDragEnd={onDragEnd}

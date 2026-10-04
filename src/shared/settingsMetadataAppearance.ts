@@ -361,9 +361,16 @@ export const APPEARANCE_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 	},
 	toastWidth: {
 		description:
-			'Width of toast notifications. Options: small, medium, large, dynamic (default, matches the Right Bar width).',
+			"Width of toast notifications. Options: small, medium, large, dynamic (default, matches the width of the side bar on the toast's side).",
 		type: 'string',
 		default: 'dynamic',
+		category: 'appearance',
+	},
+	toastPosition: {
+		description:
+			'Window corner toast notifications appear in. Options: top-left, top-right, bottom-left, bottom-right (default). Bottom corners stack upward, top corners stack downward.',
+		type: 'string',
+		default: 'bottom-right',
 		category: 'appearance',
 	},
 	disableConfetti: {

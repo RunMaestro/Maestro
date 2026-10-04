@@ -11,7 +11,7 @@
  */
 
 import { registerServiceWorker } from '../web/utils/serviceWorker';
-import { installLoadFailureHandler, markBooted } from './loadFailure';
+import { detailOf, installLoadFailureHandler, markBooted } from './loadFailure';
 import { installStandaloneStatusBarInset } from '../renderer/utils/standaloneStatusBar';
 
 // Take over the failure policy from index.html's inline listeners as early as
@@ -88,6 +88,43 @@ export async function bootWebDesktop(
 	await dependencies.renderer();
 }
 
+interface BootFailureWindow {
+	__maestroHandleLoadFailure?: (reason: unknown) => void;
+	__maestroShowBootError?: (title: string, detail: string) => void;
+}
+
+/**
+ * Report a boot that never mounted the renderer.
+ *
+ * It goes through the load-failure policy rather than straight to the error
+ * surface, because the commonest cause is a module fetch that failed for a
+ * moment rather than for good: a Cloudflare quick tunnel answering 429 while
+ * several tabs reload at once, or a stale hashed chunk. The policy reloads once
+ * for those (guarded against looping) - exactly what the user otherwise had to
+ * do by hand - and shows the error for everything else.
+ */
+export function reportBootFailure(target: Window, err: unknown): void {
+	console.error('[bootstrap] boot failed', err);
+	const bootWindow = target as unknown as BootFailureWindow;
+	if (bootWindow.__maestroHandleLoadFailure) {
+		bootWindow.__maestroHandleLoadFailure(err);
+		return;
+	}
+
+	const detail = detailOf(err);
+	// Prefer the shared error surface from index.html (HTML-escaped, styled, and
+	// includes the same-network hint). Fall back to a minimal inline render if
+	// the inline script somehow didn't run.
+	if (bootWindow.__maestroShowBootError) {
+		bootWindow.__maestroShowBootError('Maestro web-desktop failed to load', detail);
+		return;
+	}
+	const root = target.document.getElementById('root');
+	if (root) {
+		root.textContent = `Maestro web-desktop failed to load: ${detail}`;
+	}
+}
+
 void bootWebDesktop(window, {
 	preload: () => import('../main/preload/index'),
 	renderer: () => import('../renderer/main'),
@@ -104,23 +141,4 @@ void bootWebDesktop(window, {
 		// (unsupported browser, registration error), so this never affects boot.
 		void registerServiceWorker();
 	})
-	.catch((err) => {
-		const detail = (err && (err.stack || err.message)) || String(err);
-		// Prefer the shared error surface from index.html (HTML-escaped, styled, and
-		// includes the same-network hint). Fall back to a minimal inline render if
-		// the inline script somehow didn't run.
-		const showBootError = (
-			window as unknown as {
-				__maestroShowBootError?: (title: string, detail: string) => void;
-			}
-		).__maestroShowBootError;
-		if (showBootError) {
-			showBootError('Maestro web-desktop failed to load', detail);
-		} else {
-			const root = document.getElementById('root');
-			if (root) {
-				root.textContent = `Maestro web-desktop failed to load: ${detail}`;
-			}
-		}
-		console.error('[bootstrap] boot failed', err);
-	});
+	.catch((err) => reportBootFailure(window, err));

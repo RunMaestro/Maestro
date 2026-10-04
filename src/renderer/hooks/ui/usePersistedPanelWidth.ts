@@ -1,14 +1,19 @@
 /**
- * One panel width in pixels, remembered across mounts under a localStorage key.
+ * One panel dimension in pixels, remembered across mounts (and app restarts)
+ * under a localStorage key.
  *
- * The numeric counterpart to `usePersistedToggle`, for a width the user sets by
+ * The numeric counterpart to `usePersistedToggle`, for a size the user sets by
  * dragging a surface that lives INSIDE another surface - a preview pane in a
- * modal, a split inside a panel - where the value must survive the surface
- * unmounting but is not worth a Settings row or a store slice. Pairs with
- * `useResizablePanel`: pass `setWidth` from here and omit its `settingsKey`.
+ * modal, a split inside a panel, a dropdown's height - where the value must
+ * survive the surface unmounting but is not worth a Settings row or a store
+ * slice. `usePersistedPanelSize` is axis-agnostic; `usePersistedPanelWidth`
+ * names it for the width case and pairs with `useResizablePanel` (pass
+ * `setWidth` from here and omit its `settingsKey`).
  *
  * The stored value is clamped on read, so bounds that tighten in a later build
- * can't restore a pane wider than its own container.
+ * can't restore a pane larger than its own container. Bounds that depend on the
+ * live viewport do NOT belong here: clamp at render instead, so a size picked on
+ * a big monitor comes back when the window returns to one.
  *
  * A missing or hostile Storage (private mode, storage-blocked renderer, jsdom
  * under test) costs the user their persistence, not their pane.
@@ -25,21 +30,63 @@ function storage(): Storage | null {
 	}
 }
 
-function clampWidth(value: number, minWidth: number, maxWidth: number): number {
-	return Math.round(Math.max(minWidth, Math.min(maxWidth, value)));
+function clampSize(value: number, minSize: number, maxSize: number): number {
+	return Math.round(Math.max(minSize, Math.min(maxSize, value)));
 }
 
-function load(
-	storageKey: string,
-	defaultWidth: number,
-	minWidth: number,
-	maxWidth: number
-): number {
+/** The stored size, or null when nothing usable is stored. */
+function readStored(storageKey: string): number | null {
 	const raw = storage()?.getItem(storageKey) ?? null;
-	if (raw === null) return clampWidth(defaultWidth, minWidth, maxWidth);
+	if (raw === null) return null;
 	const parsed = Number.parseFloat(raw);
-	if (!Number.isFinite(parsed) || parsed <= 0) return clampWidth(defaultWidth, minWidth, maxWidth);
-	return clampWidth(parsed, minWidth, maxWidth);
+	return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+export interface UsePersistedPanelSizeOptions {
+	/** Size used when nothing is stored. */
+	defaultSize: number;
+	/** Smallest size the pane may be restored or set to. */
+	minSize: number;
+	/** Largest size the pane may be restored or set to. */
+	maxSize: number;
+}
+
+export interface UsePersistedPanelSizeReturn {
+	size: number;
+	/** Commit a new size - clamped, stored, and returned on the next render. */
+	setSize: (next: number) => void;
+	/** Forget the stored size and snap back to the default. */
+	reset: () => void;
+	/** True when a user-picked size is stored (so a reset would change something). */
+	isCustomized: boolean;
+}
+
+export function usePersistedPanelSize(
+	storageKey: string,
+	{ defaultSize, minSize, maxSize }: UsePersistedPanelSizeOptions
+): UsePersistedPanelSizeReturn {
+	const [stored, setStored] = useState<number | null>(() => readStored(storageKey));
+
+	const setSize = useCallback(
+		(next: number) => {
+			const clamped = clampSize(next, minSize, maxSize);
+			storage()?.setItem(storageKey, String(clamped));
+			setStored(clamped);
+		},
+		[storageKey, minSize, maxSize]
+	);
+
+	const reset = useCallback(() => {
+		storage()?.removeItem(storageKey);
+		setStored(null);
+	}, [storageKey]);
+
+	return {
+		size: clampSize(stored ?? defaultSize, minSize, maxSize),
+		setSize,
+		reset,
+		isCustomized: stored !== null,
+	};
 }
 
 export interface UsePersistedPanelWidthOptions {
@@ -63,23 +110,10 @@ export function usePersistedPanelWidth(
 	storageKey: string,
 	{ defaultWidth, minWidth, maxWidth }: UsePersistedPanelWidthOptions
 ): UsePersistedPanelWidthReturn {
-	const [width, setStateWidth] = useState<number>(() =>
-		load(storageKey, defaultWidth, minWidth, maxWidth)
-	);
-
-	const setWidth = useCallback(
-		(next: number) => {
-			const clamped = clampWidth(next, minWidth, maxWidth);
-			storage()?.setItem(storageKey, String(clamped));
-			setStateWidth(clamped);
-		},
-		[storageKey, minWidth, maxWidth]
-	);
-
-	const reset = useCallback(() => {
-		storage()?.removeItem(storageKey);
-		setStateWidth(clampWidth(defaultWidth, minWidth, maxWidth));
-	}, [storageKey, defaultWidth, minWidth, maxWidth]);
-
-	return { width, setWidth, reset };
+	const { size, setSize, reset } = usePersistedPanelSize(storageKey, {
+		defaultSize: defaultWidth,
+		minSize: minWidth,
+		maxSize: maxWidth,
+	});
+	return { width: size, setWidth: setSize, reset };
 }

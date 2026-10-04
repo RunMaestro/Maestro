@@ -1274,7 +1274,7 @@ replace the set outright. Passing an empty string to `-u` or `-k` clears it.
 
 A command-line `-o` outranks `~/.ssh/config`, so `--ssh-option` is the only way
 to change one of Maestro's connection defaults (`ConnectTimeout`, `BatchMode`,
-and friends). `list-ssh-remotes --json` and `update-ssh-remote --json` both
+and friends). `list ssh-remotes --json` and `update-ssh-remote --json` both
 report `resolvedSshOptions`, the full merged set `ssh` actually receives, which
 is what answers "did my `ConnectTimeout` take effect?". See
 [SSH Remote Execution](/ssh-remote-execution) for the reserved keys and the

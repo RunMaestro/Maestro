@@ -128,6 +128,10 @@ describe('toastWidth', () => {
 			expect(describeToastWidth('dynamic', 500)).toContain(`${500 - 2 * TOAST_VIEWPORT_GUTTER}px`);
 		});
 
+		it('names the Left Bar when a left-corner toast tracks it', () => {
+			expect(describeToastWidth('dynamic', 300, 'Left Bar')).toContain('Left Bar width (268px)');
+		});
+
 		it('describes every preset without an empty string', () => {
 			for (const preset of TOAST_WIDTHS) {
 				expect(describeToastWidth(preset, 384).length).toBeGreaterThan(0);

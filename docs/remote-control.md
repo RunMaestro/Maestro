@@ -74,7 +74,8 @@ However, if you need a **fixed port** (e.g., for firewall rules, reverse proxies
 - Use Cloudflare tunnel for remote access instead of exposing ports directly
 - Ensure your network firewall is properly configured
 - Consider additional authentication at the network level
-  </Warning>
+
+</Warning>
 
 ## Requiring a Login
 

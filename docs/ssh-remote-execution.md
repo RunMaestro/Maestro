@@ -154,6 +154,7 @@ remote for you:
 maestro-cli create-ssh-remote "Tunnelled box" \
   --host tailcat-devbox \
   --ssh-option "ProxyCommand=/opt/homebrew/bin/tailcat tcXXXX 22" \
+  --ssh-option HostKeyAlias=tailcat-devbox \
   --ssh-option ConnectTimeout=45
 
 # Adjust one option later without disturbing the rest
@@ -164,8 +165,40 @@ maestro-cli update-ssh-remote tunnelled --disable-ssh-option ProxyCommand
 maestro-cli update-ssh-remote tunnelled --enable-ssh-option ProxyCommand
 
 # See the full option set ssh will actually receive
-maestro-cli list-ssh-remotes --json
+maestro-cli list ssh-remotes --json
 ```
+
+#### Example: a tailcat tunnel
+
+The `create-ssh-remote` call above is a working tailcat
+setup. Two of its options are there on purpose:
+
+- **`HostKeyAlias`**. With a `ProxyCommand`, `ssh` files the host key in
+  `known_hosts` under whatever `--host` says. If that is the machine's LAN name
+  or address, the tunnelled entry collides with the direct one and `ssh`
+  refuses the connection as a changed host key. A stable alias gives the tunnel
+  its own entry.
+- **`ConnectTimeout=45`**. tailcat has to bootstrap a relay before it can
+  connect, which regularly takes longer than Maestro's default 10 seconds.
+
+On the server, generate a key once, then keep `tailcat serve` running under
+launchd or systemd with `KeepAlive` (or `Restart=always`). It proxies into the
+real `sshd`, so `authorized_keys` still does the authentication:
+
+```bash
+# Once: create the key and print the tcXXXX address
+tailcat genkey --key=devbox --embed-derp-map
+
+# Always running (launchd KeepAlive / systemd Restart=always)
+tailcat serve --key=devbox 22
+```
+
+<Warning>
+Since tailcat v0.6 the `tcXXXX` address includes a WireGuard pre-shared key by
+default, so treat it as a secret, not a hostname. Maestro stores it in plaintext
+in its settings as part of the `ProxyCommand`. Never publish it in a DNS TXT
+record (or anywhere else public) for a server that relies on the PSK.
+</Warning>
 
 ### Connection Testing
 
@@ -333,6 +366,31 @@ To use a WSL distribution instead, point at `bash.exe` in System32:
 ```powershell
 New-ItemProperty -Path "HKLM:\SOFTWARE\OpenSSH" -Name DefaultShell -Value "C:\Windows\System32\bash.exe" -PropertyType String -Force
 ```
+
+`bash.exe` opens the **default** WSL distribution. `DefaultShell` cannot carry
+arguments, so a value like `wsl.exe -d Ubuntu` does not work. To use a
+specific distribution, make it the default instead:
+
+```powershell
+wsl --set-default Ubuntu
+```
+
+WSL distributions are registered per Windows account. Install the distribution
+and run `wsl --set-default` while signed in as the user Maestro connects as,
+not as a different admin account. The agent runs as that distribution's
+default Linux user. To change that user, set `default=<name>` under `[user]`
+in the distribution's `/etc/wsl.conf`, then run `wsl --terminate Ubuntu`.
+
+<Warning>
+Do not launch WSL through `ForceCommand` in `sshd_config` (for example, a
+`Match User` block that runs a `.bat` file calling `wsl.exe -d Ubuntu`). This
+gives you a per-user shell, but it replaces every command Maestro sends.
+Starting an agent still works because that script arrives on stdin. The file
+tree, git status, and **Test Connection** send their commands as arguments, so
+they get an empty shell and come back with nothing. `DefaultShell` is a
+machine-wide registry value and cannot be set in `sshd_config` or inside a
+`Match` block, so use `wsl --set-default` to choose the distribution.
+</Warning>
 
 Restart the SSH service so new connections pick up the change:
 

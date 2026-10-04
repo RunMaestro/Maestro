@@ -1,9 +1,21 @@
 import { useState, useEffect } from 'react';
-import { Bell, Volume2, Clock, Square, Check, AlertCircle, Loader2, Coffee } from 'lucide-react';
+import {
+	Bell,
+	Volume2,
+	Clock,
+	Square,
+	Check,
+	AlertCircle,
+	Loader2,
+	Coffee,
+	LayoutGrid,
+} from 'lucide-react';
 import { Spinner } from './ui/Spinner';
 import type { Theme } from '../types';
 import type { ToastWidth } from '../../shared/toastWidth';
 import { TOAST_WIDTHS, TOAST_WIDTH_LABELS } from '../../shared/toastWidth';
+import type { ToastPosition } from '../../shared/toastPosition';
+import { TOAST_POSITIONS, TOAST_POSITION_LABELS } from '../../shared/toastPosition';
 import { SettingCheckbox } from './SettingCheckbox';
 import { ToggleButtonGroup } from './ToggleButtonGroup';
 import { logger } from '../utils/logger';
@@ -20,6 +32,8 @@ interface NotificationsPanelProps {
 	setToastDuration: (value: number) => void;
 	toastWidth: ToastWidth;
 	setToastWidth: (value: ToastWidth) => void;
+	toastPosition: ToastPosition;
+	setToastPosition: (value: ToastPosition) => void;
 	idleNotificationEnabled: boolean;
 	setIdleNotificationEnabled: (value: boolean) => void;
 	idleNotificationCommand: string;
@@ -40,6 +54,8 @@ export function NotificationsPanel({
 	setToastDuration,
 	toastWidth,
 	setToastWidth,
+	toastPosition,
+	setToastPosition,
 	idleNotificationEnabled,
 	setIdleNotificationEnabled,
 	idleNotificationCommand,
@@ -471,6 +487,26 @@ export function NotificationsPanel({
 				</p>
 			</div>
 
+			<div data-setting-id="notifications-toast-position">
+				<label className="block text-xs font-bold opacity-70 uppercase mb-2 flex items-center gap-2">
+					<LayoutGrid className="w-3 h-3" />
+					Toast Notification Position
+				</label>
+				<ToggleButtonGroup
+					options={TOAST_POSITIONS.map((position) => ({
+						value: position,
+						label: TOAST_POSITION_LABELS[position],
+					}))}
+					value={toastPosition}
+					onChange={setToastPosition}
+					theme={theme}
+				/>
+				<p className="text-xs opacity-50 mt-2">
+					Which corner toast notifications appear in. Bottom corners stack upward; top corners stack
+					downward. In a bottom corner, toasts rise above the message input instead of covering it.
+				</p>
+			</div>
+
 			<div data-setting-id="notifications-toast-width">
 				<label className="block text-xs font-bold opacity-70 uppercase mb-2 flex items-center gap-2">
 					<Bell className="w-3 h-3" />
@@ -487,8 +523,8 @@ export function NotificationsPanel({
 				/>
 				<p className="text-xs opacity-50 mt-2">
 					How wide toast notifications render in the corner. Small is the default compact size;
-					Large is roughly 1.8&times; wider. Dynamic matches the Right Bar width and tracks it as
-					you resize the panel.
+					Large is roughly 1.8&times; wider. Dynamic matches the width of the side bar on the
+					toast&apos;s side (Right Bar or Left Bar) and tracks it as you resize the panel.
 				</p>
 			</div>
 
