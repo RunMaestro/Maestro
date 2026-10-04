@@ -91,6 +91,19 @@ import { buildSessionDeepLink, buildGroupDeepLink } from './deep-link-urls';
  *   {{CUE_GH_BASE_BRANCH}}  - Base branch (github.pull_request events)
  *   {{CUE_GH_ASSIGNEES}}    - Comma-separated assignees (github.issue events)
  *
+ *   {{CUE_TICKET_PROVIDER}} - Tracker the ticket came from: "linear" or "jira" (ticket.* events)
+ *   {{CUE_TICKET_ID}}       - Ticket identifier, e.g. ENG-123 (ticket.* events)
+ *   {{CUE_TICKET_TITLE}}    - Ticket title (ticket.* events)
+ *   {{CUE_TICKET_BODY}}     - Ticket description, truncated (ticket.* events)
+ *   {{CUE_TICKET_URL}}      - Ticket URL (ticket.* events)
+ *   {{CUE_TICKET_STATE}}    - Workflow state name (ticket.* events)
+ *   {{CUE_TICKET_PRIORITY}} - Priority label (ticket.* events)
+ *   {{CUE_TICKET_ASSIGNEE}} - Assignee display name (ticket.* events)
+ *   {{CUE_TICKET_REPORTER}} - Who filed the ticket (ticket.* events)
+ *   {{CUE_TICKET_LABELS}}   - Comma-separated labels (ticket.* events)
+ *   {{CUE_TICKET_PROJECT}}  - Linear team key or Jira project key (ticket.* events)
+ *   {{CUE_TICKET_CREATED_AT}} - When the ticket was filed (ticket.* events)
+ *
  *   {{CUE_CLI_PROMPT}}      - Prompt text passed via --prompt flag (cli.trigger events)
  *   {{CUE_SOURCE_AGENT_ID}} - Source agent ID passed via --source-agent-id (cli.trigger events)
  *   {{CUE_FROM_AGENT}}      - Triggering upstream agent ID or session ID - populated from sourceSessionId (agent.completed) or sourceAgentId (cli.trigger)
@@ -221,6 +234,19 @@ export interface TemplateContext {
 		ghIsRetrigger?: string;
 		/** Re-trigger fire count for this PR/issue (1-based; 0 on initial). */
 		ghRetriggerCount?: string;
+		// Ticket fields (ticket.created, ticket.assigned)
+		ticketProvider?: string;
+		ticketId?: string;
+		ticketTitle?: string;
+		ticketBody?: string;
+		ticketUrl?: string;
+		ticketState?: string;
+		ticketPriority?: string;
+		ticketAssignee?: string;
+		ticketReporter?: string;
+		ticketLabels?: string;
+		ticketProject?: string;
+		ticketCreatedAt?: string;
 		// CLI trigger fields (cli.trigger)
 		cliPrompt?: string;
 		sourceAgentId?: string;
@@ -364,6 +390,62 @@ export const TEMPLATE_VARIABLES = [
 		description: 'Subscription that triggered the source',
 		cueOnly: true,
 	},
+	{
+		variable: '{{CUE_TICKET_ASSIGNEE}}',
+		description: 'Ticket assignee (ticket.* events)',
+		cueOnly: true,
+	},
+	{
+		variable: '{{CUE_TICKET_BODY}}',
+		description: 'Ticket description, truncated (ticket.* events)',
+		cueOnly: true,
+	},
+	{
+		variable: '{{CUE_TICKET_CREATED_AT}}',
+		description: 'When the ticket was filed (ticket.* events)',
+		cueOnly: true,
+	},
+	{
+		variable: '{{CUE_TICKET_ID}}',
+		description: 'Ticket identifier, e.g. ENG-123 (ticket.* events)',
+		cueOnly: true,
+	},
+	{
+		variable: '{{CUE_TICKET_LABELS}}',
+		description: 'Ticket labels, comma-separated (ticket.* events)',
+		cueOnly: true,
+	},
+	{
+		variable: '{{CUE_TICKET_PRIORITY}}',
+		description: 'Ticket priority (ticket.* events)',
+		cueOnly: true,
+	},
+	{
+		variable: '{{CUE_TICKET_PROJECT}}',
+		description: 'Linear team key or Jira project key (ticket.* events)',
+		cueOnly: true,
+	},
+	{
+		variable: '{{CUE_TICKET_PROVIDER}}',
+		description: 'Tracker: linear or jira (ticket.* events)',
+		cueOnly: true,
+	},
+	{
+		variable: '{{CUE_TICKET_REPORTER}}',
+		description: 'Who filed the ticket (ticket.* events)',
+		cueOnly: true,
+	},
+	{
+		variable: '{{CUE_TICKET_STATE}}',
+		description: 'Ticket workflow state (ticket.* events)',
+		cueOnly: true,
+	},
+	{
+		variable: '{{CUE_TICKET_TITLE}}',
+		description: 'Ticket title (ticket.* events)',
+		cueOnly: true,
+	},
+	{ variable: '{{CUE_TICKET_URL}}', description: 'Ticket URL (ticket.* events)', cueOnly: true },
 	{ variable: '{{CUE_TRIGGER_NAME}}', description: 'Cue trigger name', cueOnly: true },
 	{ variable: '{{CWD}}', description: 'Working directory' },
 	{ variable: '{{DATE}}', description: 'Date (YYYY-MM-DD)' },
@@ -527,6 +609,18 @@ export function substituteTemplateVariables(template: string, context: TemplateC
 		CUE_NEW_COMMENTS: context.cue?.ghNewComments || '',
 		CUE_GH_IS_RETRIGGER: context.cue?.ghIsRetrigger || '',
 		CUE_GH_RETRIGGER_COUNT: context.cue?.ghRetriggerCount || '',
+		CUE_TICKET_PROVIDER: context.cue?.ticketProvider || '',
+		CUE_TICKET_ID: context.cue?.ticketId || '',
+		CUE_TICKET_TITLE: context.cue?.ticketTitle || '',
+		CUE_TICKET_BODY: context.cue?.ticketBody || '',
+		CUE_TICKET_URL: context.cue?.ticketUrl || '',
+		CUE_TICKET_STATE: context.cue?.ticketState || '',
+		CUE_TICKET_PRIORITY: context.cue?.ticketPriority || '',
+		CUE_TICKET_ASSIGNEE: context.cue?.ticketAssignee || '',
+		CUE_TICKET_REPORTER: context.cue?.ticketReporter || '',
+		CUE_TICKET_LABELS: context.cue?.ticketLabels || '',
+		CUE_TICKET_PROJECT: context.cue?.ticketProject || '',
+		CUE_TICKET_CREATED_AT: context.cue?.ticketCreatedAt || '',
 		CUE_CLI_PROMPT: context.cue?.cliPrompt || '',
 		CUE_SOURCE_AGENT_ID: context.cue?.sourceAgentId || '',
 		CUE_FROM_AGENT: context.cue?.fromAgent || '',

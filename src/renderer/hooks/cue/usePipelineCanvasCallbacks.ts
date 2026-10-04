@@ -577,7 +577,12 @@ export function usePipelineCanvasCallbacks({
 						eventType: dropData.eventType,
 						label:
 							dropData.label ?? DEFAULT_TRIGGER_LABELS[dropData.eventType] ?? dropData.eventType,
-						config: {},
+						// A ticket trigger cannot run without a tracker, so it lands
+						// with the one its config panel already shows selected.
+						config:
+							dropData.eventType === 'ticket.created' || dropData.eventType === 'ticket.assigned'
+								? { ticket_provider: 'linear' }
+								: {},
 					};
 					newNode = {
 						id: `trigger-${Date.now()}`,

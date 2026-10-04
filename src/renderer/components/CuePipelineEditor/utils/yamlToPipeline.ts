@@ -314,6 +314,12 @@ function extractTriggerConfig(sub: CueSubscription): TriggerNodeData['config'] {
 			if (sub.gh_label_target != null) config.gh_label_target = sub.gh_label_target;
 			if (sub.gh_labels != null) config.gh_labels = sub.gh_labels;
 			break;
+		case 'ticket.created':
+		case 'ticket.assigned':
+			if (sub.ticket_provider != null) config.ticket_provider = sub.ticket_provider;
+			if (sub.ticket_project != null) config.ticket_project = sub.ticket_project;
+			if (sub.poll_minutes != null) config.poll_minutes = sub.poll_minutes;
+			break;
 		case 'task.pending':
 			if (sub.watch != null) config.watch = sub.watch;
 			break;
@@ -341,6 +347,10 @@ function triggerLabel(eventType: CueEventType): string {
 			return 'Issue';
 		case 'github.label':
 			return 'Label Added';
+		case 'ticket.created':
+			return 'Ticket Created';
+		case 'ticket.assigned':
+			return 'Ticket Assigned';
 		case 'task.pending':
 			return 'Task Pending';
 		case 'agent.completed':

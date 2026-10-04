@@ -72,6 +72,13 @@ export interface TriggerNodeData {
 		/** `github.label` only: labels that fire the trigger. Empty = any label.
 		 *  See `CueSubscription.gh_labels`. */
 		gh_labels?: string[];
+		/** `ticket.*` only: which tracker to poll. See
+		 *  `CueSubscription.ticket_provider`. */
+		ticket_provider?: 'linear' | 'jira';
+		/** `ticket.*` only: Linear team key or Jira project key. Empty = every
+		 *  team/project the credential can see. See
+		 *  `CueSubscription.ticket_project`. */
+		ticket_project?: string;
 		/** GitHub re-trigger toggle. See `CueSubscription.retrigger_on_comments`. */
 		retrigger_on_comments?: boolean;
 		/** Per-item re-trigger cap. See `CueSubscription.max_notifications`.

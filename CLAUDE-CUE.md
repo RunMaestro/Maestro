@@ -170,16 +170,17 @@ System sleep / app suspension can leave the engine paused mid-day. Handled in fo
 
 Every source implements the interface in `triggers/cue-trigger-source.ts`. They share a registry (`cue-trigger-source-registry.ts`) and a filter helper (`cue-trigger-filter.ts`). Quick reference:
 
-| Event                 | Source file                            | Cadence             | First-run seeds?       | Reconciled on wake?                             |
-| --------------------- | -------------------------------------- | ------------------- | ---------------------- | ----------------------------------------------- |
-| `app.startup`         | (runtime service, not a source)        | once per boot       | n/a                    | no                                              |
-| `time.heartbeat`      | `cue-heartbeat-trigger-source.ts`      | `interval_minutes`  | n/a                    | **yes** (one catch-up, `missedCount`)           |
-| `time.scheduled`      | `cue-scheduled-trigger-source.ts`      | wall-clock          | n/a                    | **yes** (one catch-up, most recent slot)        |
-| `file.changed`        | `cue-file-watcher-trigger-source.ts`   | chokidar + debounce | no                     | no                                              |
-| `agent.completed`     | `cue-completion-service.ts` (reactive) | on completion       | n/a                    | n/a                                             |
-| `github.pull_request` | `cue-github-poller-trigger-source.ts`  | `poll_minutes`      | **yes**                | **yes** (`pollNow()` on resume; SQLite-deduped) |
-| `github.issue`        | same                                   | same                | **yes**                | **yes** (`pollNow()` on resume; SQLite-deduped) |
-| `task.pending`        | `cue-task-scanner-trigger-source.ts`   | 1m default          | **yes** (content hash) | no                                              |
+| Event                                | Source file                            | Cadence             | First-run seeds?                | Reconciled on wake?                             |
+| ------------------------------------ | -------------------------------------- | ------------------- | ------------------------------- | ----------------------------------------------- |
+| `app.startup`                        | (runtime service, not a source)        | once per boot       | n/a                             | no                                              |
+| `time.heartbeat`                     | `cue-heartbeat-trigger-source.ts`      | `interval_minutes`  | n/a                             | **yes** (one catch-up, `missedCount`)           |
+| `time.scheduled`                     | `cue-scheduled-trigger-source.ts`      | wall-clock          | n/a                             | **yes** (one catch-up, most recent slot)        |
+| `file.changed`                       | `cue-file-watcher-trigger-source.ts`   | chokidar + debounce | no                              | no                                              |
+| `agent.completed`                    | `cue-completion-service.ts` (reactive) | on completion       | n/a                             | n/a                                             |
+| `github.pull_request`                | `cue-github-poller-trigger-source.ts`  | `poll_minutes`      | **yes**                         | **yes** (`pollNow()` on resume; SQLite-deduped) |
+| `github.issue`                       | same                                   | same                | **yes**                         | **yes** (`pollNow()` on resume; SQLite-deduped) |
+| `ticket.created` / `ticket.assigned` | `cue-ticket-poller-trigger-source.ts`  | `poll_minutes`      | **yes** (first successful poll) | **yes** (`pollNow()` on resume; SQLite-deduped) |
+| `task.pending`                       | `cue-task-scanner-trigger-source.ts`   | 1m default          | **yes** (content hash)          | no                                              |
 
 "Seeds on first run" means the source records existing items as already-seen on its first poll so users don't get a flood when adding a new subscription.
 

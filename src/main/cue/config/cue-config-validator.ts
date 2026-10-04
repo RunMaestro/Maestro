@@ -4,6 +4,8 @@ import {
 	CUE_GITHUB_LABEL_TARGETS,
 	CUE_GITHUB_STATES,
 	CUE_SCHEDULE_DAYS,
+	CUE_TICKET_PROJECT_KEY_RE,
+	CUE_TICKET_PROVIDERS,
 	type CueGitHubLabelTarget,
 	type CueGitHubState,
 	type CueScheduleDay,
@@ -579,6 +581,34 @@ function validateEventSpecificFields(
 				errors.push(
 					`${prefix}: "max_notifications" must be a non-negative integer (0 = unlimited, omitted = default 10)`
 				);
+			}
+		}
+	} else if (event === 'ticket.created' || event === 'ticket.assigned') {
+		if (
+			typeof sub.ticket_provider !== 'string' ||
+			!CUE_TICKET_PROVIDERS.includes(sub.ticket_provider as (typeof CUE_TICKET_PROVIDERS)[number])
+		) {
+			errors.push(
+				`${prefix}: "ticket_provider" is required for ${event} events and must be one of: ${CUE_TICKET_PROVIDERS.join(', ')}`
+			);
+		}
+		if (sub.ticket_project !== undefined) {
+			if (
+				typeof sub.ticket_project !== 'string' ||
+				!CUE_TICKET_PROJECT_KEY_RE.test(sub.ticket_project.trim())
+			) {
+				errors.push(
+					`${prefix}: "ticket_project" must be a Linear team key or Jira project key (letters, digits, underscores - e.g. "ENG")`
+				);
+			}
+		}
+		if (sub.poll_minutes !== undefined) {
+			if (
+				typeof sub.poll_minutes !== 'number' ||
+				!Number.isFinite(sub.poll_minutes) ||
+				sub.poll_minutes < 1
+			) {
+				errors.push(`${prefix}: "poll_minutes" must be a number >= 1 for ${event} events`);
 			}
 		}
 	} else if (event === 'app.startup') {

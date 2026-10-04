@@ -316,6 +316,11 @@ export function ActivityLog({
 									eventType === 'github.label' && entry.event.payload?.label
 										? ` [${String(entry.event.payload.label)}]`
 										: '';
+								const ticketPayload =
+									(eventType === 'ticket.created' || eventType === 'ticket.assigned') &&
+									entry.event.payload?.ticket_id
+										? ` (${String(entry.event.payload.ticket_id)} ${String(entry.event.payload.title ?? '')})`
+										: '';
 								const isReconciled = entry.event.payload?.reconciled === true;
 								const isExpanded = expandedRunIds.has(entry.runId);
 								const hasStderr =
@@ -383,6 +388,7 @@ export function ActivityLog({
 													{taskPayload}
 													{githubPayload}
 													{githubLabelPayload}
+													{ticketPayload}
 												</div>
 											</td>
 											<td className="py-1.5 pr-2 whitespace-nowrap text-right">

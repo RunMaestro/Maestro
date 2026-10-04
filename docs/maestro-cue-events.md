@@ -570,6 +570,82 @@ The branch variables (`{{CUE_GH_BRANCH}}`, `{{CUE_GH_BASE_BRANCH}}`) are empty f
 
 ---
 
+## ticket.created / ticket.assigned
+
+Polls Linear or Jira so a ticket can start an agent the moment it exists. `ticket.created` fires once for each newly filed ticket; `ticket.assigned` fires once for each open ticket that lands in the queue of the person whose credentials Cue is using.
+
+**Required fields:**
+
+| Field             | Type   | Description                       |
+| ----------------- | ------ | --------------------------------- |
+| `ticket_provider` | string | Which tracker: `linear` or `jira` |
+
+**Optional fields:**
+
+| Field            | Type   | Default | Description                                                                                                  |
+| ---------------- | ------ | ------- | ------------------------------------------------------------------------------------------------------------ |
+| `ticket_project` | string | all     | A Linear team key (`ENG`) or Jira project key (`OPS`). Omit for every team or project the credential can see |
+| `poll_minutes`   | number | 5       | Minutes between polls (minimum 1)                                                                            |
+
+**Credentials:**
+
+Cue reads these from the owning agent's environment, so set them in **Settings -> Environment** (every agent) or in the agent's own environment variables (that agent only). Values are masked in the environment panels.
+
+| Tracker    | Variables                                                                               |
+| ---------- | --------------------------------------------------------------------------------------- |
+| Linear     | `LINEAR_API_KEY` - a personal API key from Linear's Settings -> Security & access       |
+| Jira Cloud | `JIRA_BASE_URL` (`https://your-site.atlassian.net`), `JIRA_EMAIL`, and `JIRA_API_TOKEN` |
+
+**Behavior:**
+
+- Seeds on first run: tickets already there when the subscription is first saved never fire, only new ones
+- Fires once per ticket, oldest first. A ticket unassigned and reassigned to you does not fire again
+- `ticket.created` looks back seven days; `ticket.assigned` skips tickets in a done or canceled state
+- Ticket bodies are third-party text and pass the same SusFactor prompt-injection check as GitHub issue bodies
+- Polls immediately on system wake
+- A missing or rejected credential is logged once (not on every poll) and the subscription keeps trying, so it starts working as soon as the key is set
+- Jira support targets Jira Cloud (`/rest/api/3/search/jql`)
+
+**Example:**
+
+```yaml
+subscriptions:
+  - name: fix-assigned-tickets
+    event: ticket.assigned
+    ticket_provider: linear
+    ticket_project: ENG
+    filter:
+      priority: 'Urgent'
+    prompt: |
+      {{CUE_TICKET_ID}} was just assigned to me: {{CUE_TICKET_TITLE}}
+      {{CUE_TICKET_URL}}
+
+      {{CUE_TICKET_BODY}}
+
+      Reproduce it, fix it, and open a PR that references {{CUE_TICKET_ID}}.
+```
+
+**Payload fields:**
+
+| Variable                    | Description                               | Example                    |
+| --------------------------- | ----------------------------------------- | -------------------------- |
+| `{{CUE_TICKET_PROVIDER}}`   | `linear` or `jira`                        | `linear`                   |
+| `{{CUE_TICKET_ID}}`         | The ticket's identifier                   | `ENG-123`                  |
+| `{{CUE_TICKET_TITLE}}`      | Title                                     | `Login fails on Safari`    |
+| `{{CUE_TICKET_BODY}}`       | Description, truncated to 5000 characters | (text)                     |
+| `{{CUE_TICKET_URL}}`        | Link to the ticket                        | `https://linear.app/...`   |
+| `{{CUE_TICKET_STATE}}`      | Workflow state name                       | `Todo`                     |
+| `{{CUE_TICKET_PRIORITY}}`   | Priority label                            | `Urgent`                   |
+| `{{CUE_TICKET_ASSIGNEE}}`   | Assignee display name                     | `Pedram`                   |
+| `{{CUE_TICKET_REPORTER}}`   | Who filed it                              | `Dana`                     |
+| `{{CUE_TICKET_LABELS}}`     | Comma-separated labels                    | `bug,frontend`             |
+| `{{CUE_TICKET_PROJECT}}`    | Linear team key or Jira project key       | `ENG`                      |
+| `{{CUE_TICKET_CREATED_AT}}` | When it was filed (ISO 8601)              | `2026-10-03T15:28:54.000Z` |
+
+The same names (`provider`, `ticket_id`, `title`, `state`, `priority`, `assignee`, `reporter`, `labels`, `project`) are what a `filter` block matches against.
+
+---
+
 ## cli.trigger
 
 Fires only when explicitly triggered from the command line via `maestro-cli cue trigger <name>`. Unlike other event types, `cli.trigger` has no background watcher or poller - it waits for a manual invocation.
