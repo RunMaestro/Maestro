@@ -136,4 +136,16 @@ describe('ComputerHistorySection', () => {
 		await act(async () => modal.onConfirm());
 		await waitFor(() => expect(api.clear).toHaveBeenCalledWith({ all: true }));
 	});
+
+	it('the 6-hour roll-up toggle saves through the service', async () => {
+		const api = makeApi('windows', null);
+		api.getConfig.mockResolvedValue({
+			...defaultComputerHistoryConfig(),
+			digests: { enabled: true, agentId: null, rollup: true },
+		});
+		install(api);
+		render(<ComputerHistorySection theme={mockTheme} />);
+		fireEvent.click(await screen.findByText('6-hour roll-up'));
+		await waitFor(() => expect(api.setConfig).toHaveBeenCalledWith({ digests: { rollup: false } }));
+	});
 });

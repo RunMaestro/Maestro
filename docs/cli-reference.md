@@ -1540,7 +1540,7 @@ Show whether recording is on, permission state, and store size
 
 ## `maestro-cli computer-history list`
 
-List recorded 10-minute segments in a time range
+List recorded 15-minute segments in a time range
 
 | Option           | Description                                             | Default |
 | ---------------- | ------------------------------------------------------- | ------- |
@@ -1572,6 +1572,17 @@ Apps used in a time range, by foreground time and event count
 | `--since <time>` | Start (default 1d)             | -       |
 | `--until <time>` | End (default now)              | -       |
 | `--json`         | Output as JSON (for scripting) | -       |
+
+## `maestro-cli computer-history digests`
+
+List 15-minute digests and 6-hour roll-ups (agent-written, untrusted content)
+
+| Option           | Description                                             | Default |
+| ---------------- | ------------------------------------------------------- | ------- |
+| `--since <time>` | Start: 30m, 2h, 1d, 1w, ISO-8601, or epoch (default 1d) | -       |
+| `--until <time>` | End (default now)                                       | -       |
+| `--kind <kind>`  | 15m \| 6h (default both)                                | -       |
+| `--json`         | Output as JSON (for scripting)                          | -       |
 
 ## `maestro-cli computer-history pause`
 
@@ -1642,14 +1653,15 @@ macOS: show the Accessibility prompt. Linux: turn on the desktop accessibility b
 
 Show settings, or change them with the flags below
 
-| Option                  | Description                                            | Default |
-| ----------------------- | ------------------------------------------------------ | ------- |
-| `--retention-days <n>`  | Keep this many days (default 90)                       | -       |
-| `--max-gb <n>`          | Keep at most this many GB (default 25)                 | -       |
-| `--snapshots <on\|off>` | Record visible window text snapshots                   | -       |
-| `--digests <on\|off>`   | Have an agent write 10-minute digests (off by default) | -       |
-| `--digest-agent <id>`   | Agent that writes digests (empty string clears it)     | -       |
-| `--json`                | Output as JSON (for scripting)                         | -       |
+| Option                      | Description                                                        | Default |
+| --------------------------- | ------------------------------------------------------------------ | ------- |
+| `--retention-days <n>`      | Keep this many days (default 90)                                   | -       |
+| `--max-gb <n>`              | Keep at most this many GB (default 25)                             | -       |
+| `--snapshots <on\|off>`     | Record visible window text snapshots                               | -       |
+| `--digests <on\|off>`       | Have an agent write 15-minute digests (off by default)             | -       |
+| `--digest-agent <id>`       | Agent that writes digests (empty string clears it)                 | -       |
+| `--digest-rollup <on\|off>` | Also write 6-hour roll-ups from the 15-minute digests (default on) | -       |
+| `--json`                    | Output as JSON (for scripting)                                     | -       |
 
 ## `maestro-cli pianola`
 

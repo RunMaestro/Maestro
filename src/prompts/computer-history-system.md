@@ -8,6 +8,7 @@ Use it when the user refers to something they did or saw outside this conversati
 {{MAESTRO_CLI_PATH}} computer-history query --since 1h --grep "<text>" --json
 {{MAESTRO_CLI_PATH}} computer-history query --since 30m --app <name> --kind text
 {{MAESTRO_CLI_PATH}} computer-history apps --since 1d
+{{MAESTRO_CLI_PATH}} computer-history digests --since 1d    # summaries, if digests are on
 {{MAESTRO_CLI_PATH}} computer-history status
 ```
 

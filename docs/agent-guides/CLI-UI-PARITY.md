@@ -273,6 +273,8 @@ of taking a second round trip or trusting a value the caller guessed.
 | Computer History tile: keep days, max size, snapshots, digests + digest agent               | `computer-history config [--retention-days N] [--max-gb N] [--snapshots on\|off] [--digests on\|off] [--digest-agent <id>]` |
 | Computer History tile: exclusions add / remove                                              | `computer-history rules add --app <id>\|--domain <d>`, `computer-history rules remove <id>`, `computer-history rules list`  |
 | Computer History tile: Clear the last hour / Clear all history                              | `computer-history clear --since 1h`, `computer-history clear --all`                                                         |
+| Computer History tile: 6-hour roll-up toggle                                                | `computer-history config --digest-rollup on\|off`                                                                           |
+| Computer History tile: last 15-minute digest / last roll-up / last digest error             | `computer-history status` (and `computer-history digests` to read them)                                                     |
 
 ## Open gaps
 

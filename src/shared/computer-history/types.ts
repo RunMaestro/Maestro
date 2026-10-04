@@ -3,7 +3,7 @@
  *
  * One schema for three hops: the `maestro-observer` helper writes these as
  * NDJSON on stdout, the main-process service stores them (after rules and
- * redaction, plus `seq`) in 10-minute segment files, and the CLI and agents
+ * redaction, plus `seq`) in 15-minute segment files, and the CLI and agents
  * read them back. Keeping the stored line identical to the wire line means a
  * reader never has to know which hop it is looking at.
  *
@@ -109,7 +109,7 @@ export interface StoredEvent extends ObservedEvent {
 
 /** One line of `index.jsonl`, written when a segment closes. */
 export interface SegmentIndexEntry {
-	/** Store-relative path, forward slashes: `segments/2026-10-03/1410Z.jsonl`. */
+	/** Store-relative path, forward slashes: `segments/2026-10-03/1415Z.jsonl`. */
 	file: string;
 	start: string;
 	end: string;
@@ -160,5 +160,10 @@ export interface ComputerHistoryConfig {
 	rules: CaptureRule[];
 	/** ISO timestamp, `'forever'`, or null when recording. */
 	pausedUntil: string | null;
-	digests: { enabled: boolean; agentId: string | null };
+	/**
+	 * Agent-written digests: one per closed 15-minute segment, plus (when
+	 * `rollup`) one per 6-hour UTC block, written from that block's 15-minute
+	 * digests.
+	 */
+	digests: { enabled: boolean; agentId: string | null; rollup: boolean };
 }

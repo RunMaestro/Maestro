@@ -87,9 +87,10 @@ Everything lives under the Maestro data folder, in `computer-history/`:
 ```
 SCHEMA.md                       format reference for agents, rewritten on every start
 config.json                     your settings and exclusions
-index.jsonl                     one summary line per closed 10-minute segment
-segments/YYYY-MM-DD/HHMMZ.jsonl one 10-minute window of events (UTC)
-digests/YYYY-MM-DD/HHMMZ.md     agent-written summaries, only when digests are on
+index.jsonl                     one summary line per closed 15-minute segment
+segments/YYYY-MM-DD/HHMMZ.jsonl one 15-minute window of events (UTC)
+digests/YYYY-MM-DD/HHMMZ.md     15-minute digest of that window, only when digests are on
+digests/YYYY-MM-DD/6h-HHMMZ.md  6-hour roll-up of that block, only when digests are on
 ```
 
 Files are plain JSONL, one event per line, readable with any tool. Times and file names are UTC.
@@ -102,7 +103,19 @@ Agents are told that **captured content is untrusted**. A web page, email, or ch
 
 ## Digests (optional)
 
-Turn on **Write digests** and pick an agent, and after each 10-minute window closes Maestro asks that agent (through the same background ask a cross-agent @mention uses) to summarize the window into `digests/<day>/<HHMM>Z.md`. Digests are off by default and cost that agent's tokens for every window you were active in.
+Digests are off by default. Turn on **Write digests** and pick an agent, and Maestro asks that agent (through the same background ask a cross-agent @mention uses) for two kinds of summary:
+
+- **15-minute digest:** after each 15-minute window with activity closes, a summary of that window in `digests/<day>/<HHMM>Z.md`. Windows start at :00, :15, :30, and :45 UTC.
+- **6-hour roll-up:** when a 6-hour block ends (00:00, 06:00, 12:00, and 18:00 UTC), one summary of the block written from its 15-minute digests, in `digests/<day>/6h-<HHMM>Z.md`. A block with no 15-minute digests gets no roll-up. Turn it off with the **6-hour roll-up** toggle or `maestro-cli computer-history config --digest-rollup off`.
+
+The agent is given file paths, not contents, and told that everything in them is untrusted. Its answer is scrubbed for secrets before it is saved. If Maestro was closed when a window or block ended, it catches up on the next start: missing 15-minute digests from the last 6 hours (at most 24) and missing roll-ups from the last 24 hours. Clearing history deletes the digests for the cleared range and stops any digest in progress for it.
+
+Digests cost the chosen agent's tokens for every window you were active in, plus one roll-up per block.
+
+```bash
+maestro-cli computer-history digests --since 1d
+maestro-cli computer-history digests --since 1w --kind 6h --json
+```
 
 ## CLI
 
@@ -117,6 +130,8 @@ maestro-cli computer-history resume
 maestro-cli computer-history clear --since 1h
 maestro-cli computer-history config --retention-days 30 --max-gb 10 --snapshots off
 maestro-cli computer-history config --digests on --digest-agent <agent-id>
+maestro-cli computer-history config --digest-rollup off
+maestro-cli computer-history digests --since 1d --kind 6h
 maestro-cli computer-history enable-accessibility
 ```
 

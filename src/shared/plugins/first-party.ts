@@ -910,6 +910,7 @@ export const COMPUTER_HISTORY_FIRST_PARTY_PLUGIN: FirstPartyPluginDefinition = {
 		notes: [
 			'Captured text is plaintext on disk, including messages from chat apps you have open. Exclude those apps if that matters to you.',
 			'History older than 90 days, or past 25 GB, is deleted oldest first. Both limits are configurable.',
+			'Optional digests: an agent you choose writes a summary of every 15-minute window with activity and a 6-hour roll-up of each block. Off by default.',
 			'Agents treat captured content as untrusted: a page you read can contain instructions aimed at an agent.',
 		],
 		docsSlug: 'computer-history',

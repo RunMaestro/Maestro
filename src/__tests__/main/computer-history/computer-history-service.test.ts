@@ -20,7 +20,7 @@ let sent: HelperCommand[];
 let supervisorDeps: ObserverSupervisorDeps | null;
 let running: boolean;
 
-const T0 = Date.parse('2026-10-03T14:10:00.000Z');
+const T0 = Date.parse('2026-10-03T14:15:00.000Z');
 
 function fakeSupervisor(deps: ObserverSupervisorDeps): ObserverSupervisorLike {
 	supervisorDeps = deps;
@@ -65,7 +65,7 @@ function storeFile(...parts: string[]) {
 }
 
 function segmentEvents() {
-	const p = storeFile('segments', '2026-10-03', '1410Z.jsonl');
+	const p = storeFile('segments', '2026-10-03', '1415Z.jsonl');
 	return fs.existsSync(p) ? parseSegmentText(fs.readFileSync(p, 'utf-8')) : [];
 }
 
@@ -299,13 +299,13 @@ describe('clear', () => {
 		const service = makeService();
 		await service.start();
 		await service.ingest(textEvent('one'));
-		now = T0 + 600_000 + 5;
+		now = T0 + 900_000 + 5;
 		await service.ingest(textEvent('two'));
-		const recent = await service.clear({ sinceMs: T0 + 600_000 });
+		const recent = await service.clear({ sinceMs: T0 + 900_000 });
 		expect(recent.deletedSegments).toBe(1);
 		expect(service.status().currentSegment).toBeNull();
-		expect(fs.existsSync(storeFile('segments', '2026-10-03', '1410Z.jsonl'))).toBe(true);
-		expect(fs.existsSync(storeFile('segments', '2026-10-03', '1420Z.jsonl'))).toBe(false);
+		expect(fs.existsSync(storeFile('segments', '2026-10-03', '1415Z.jsonl'))).toBe(true);
+		expect(fs.existsSync(storeFile('segments', '2026-10-03', '1430Z.jsonl'))).toBe(false);
 		await service.ingest(textEvent('three'));
 		const all = await service.clear({ all: true });
 		expect(all.deletedSegments).toBe(2);
@@ -401,6 +401,26 @@ describe('security hardening', () => {
 		const [e] = segmentEvents();
 		expect(e.text!.length).toBeLessThanOrEqual(8192);
 		expect(e.truncated).toBe(true);
+		await service.stop();
+	});
+});
+
+describe('digests and clear', () => {
+	it('clear --since removes roll-ups whose block overlaps the range and reports digest status', async () => {
+		const service = makeService();
+		await service.start();
+		const day = storeFile('digests', '2026-10-03');
+		fs.mkdirSync(day, { recursive: true });
+		fs.writeFileSync(path.join(day, '6h-0600Z.md'), '# keep');
+		fs.writeFileSync(path.join(day, '6h-1200Z.md'), '# goes');
+		await service.clear({ sinceMs: T0 });
+		expect(fs.existsSync(path.join(day, '6h-0600Z.md'))).toBe(true);
+		expect(fs.existsSync(path.join(day, '6h-1200Z.md'))).toBe(false);
+		expect(service.status().digests).toMatchObject({
+			pending: 0,
+			last15mAt: null,
+			lastRollupAt: null,
+		});
 		await service.stop();
 	});
 });

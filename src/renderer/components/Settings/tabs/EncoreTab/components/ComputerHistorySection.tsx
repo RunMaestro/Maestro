@@ -494,7 +494,7 @@ export function ComputerHistorySection({ theme }: ComputerHistorySectionProps) {
 				<div>
 					<SettingsSectionHeading
 						icon={ScrollText}
-						description="An agent of your choice summarizes each 10-minute window into a markdown digest next to the history. Off by default."
+						description="An agent of your choice summarizes each 15-minute window into a markdown digest next to the history, and can roll each 6-hour block up into one summary. Off by default."
 					>
 						Digests
 					</SettingsSectionHeading>
@@ -504,7 +504,7 @@ export function ComputerHistorySection({ theme }: ComputerHistorySectionProps) {
 							title="Write digests"
 							description={
 								config.digests.enabled
-									? 'A digest is requested from the chosen agent after each window closes.'
+									? 'A 15-minute digest is requested from the chosen agent after each window with activity closes.'
 									: 'No digests are written.'
 							}
 							checked={config.digests.enabled}
@@ -529,6 +529,26 @@ export function ComputerHistorySection({ theme }: ComputerHistorySectionProps) {
 								))}
 							</select>
 						</label>
+						<ToggleSettingRow
+							theme={theme}
+							title="6-hour roll-up"
+							description={
+								config.digests.rollup
+									? 'At 00:00, 06:00, 12:00, and 18:00 UTC the same agent summarizes the block from its 15-minute digests.'
+									: 'Only 15-minute digests are written.'
+							}
+							checked={config.digests.rollup}
+							onChange={(checked) => void saveConfig({ digests: { rollup: checked } })}
+							disabled={!config.digests.enabled}
+							clickableRow
+							borderTop
+						/>
+						{config.digests.enabled && status?.digests && (
+							<p className="text-xs-plus opacity-55">
+								{`Last 15-minute digest: ${status.digests.last15mAt ? new Date(status.digests.last15mAt).toLocaleString() : 'none yet'}. Last roll-up: ${status.digests.lastRollupAt ? new Date(status.digests.lastRollupAt).toLocaleString() : 'none yet'}.`}
+								{status.digests.lastError ? ` Last error: ${status.digests.lastError}` : ''}
+							</p>
+						)}
 					</SectionCard>
 				</div>
 			)}

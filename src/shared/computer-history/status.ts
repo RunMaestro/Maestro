@@ -43,6 +43,18 @@ export interface ObserverProcessStatus {
 	recentStderr: string[];
 }
 
+/** Digest scheduler state (15-minute digests and 6-hour roll-ups). */
+export interface DigestStatus {
+	pending: number;
+	/** Store-relative path and ISO write time of the last 15-minute digest. */
+	last15mFile: string | null;
+	last15mAt: string | null;
+	/** Store-relative path and ISO write time of the last 6-hour roll-up. */
+	lastRollupFile: string | null;
+	lastRollupAt: string | null;
+	lastError: string | null;
+}
+
 export interface ComputerHistoryStatus {
 	/** The `computerHistory` Encore flag. */
 	enabled: boolean;
@@ -62,6 +74,8 @@ export interface ComputerHistoryStatus {
 	lastEventAt: string | null;
 	/** The segment currently being written, if any. */
 	currentSegment: { file: string; events: number } | null;
+	/** Digest scheduler state (this session). */
+	digests: DigestStatus;
 }
 
 /** What `requestAccessibility()` did. */

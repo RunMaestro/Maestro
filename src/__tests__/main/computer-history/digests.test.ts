@@ -8,9 +8,9 @@ import type { ComputerHistoryConfig } from '../../../shared/computer-history/typ
 
 let dir: string;
 let config: ComputerHistoryConfig;
-const T0 = Date.parse('2026-10-03T14:10:00.000Z');
+const T0 = Date.parse('2026-10-03T14:15:00.000Z');
 const entry = {
-	file: 'segments/2026-10-03/1410Z.jsonl',
+	file: 'segments/2026-10-03/1415Z.jsonl',
 	start: '',
 	end: '',
 	events: 12,
@@ -23,7 +23,7 @@ beforeEach(() => {
 	config = defaultComputerHistoryConfig();
 	// The segment a digest describes must still exist when it is written.
 	fs.mkdirSync(path.join(dir, 'segments', '2026-10-03'), { recursive: true });
-	fs.writeFileSync(path.join(dir, 'segments', '2026-10-03', '1410Z.jsonl'), '{}\n');
+	fs.writeFileSync(path.join(dir, 'segments', '2026-10-03', '1415Z.jsonl'), '{}\n');
 });
 
 function scheduler(consult: ReturnType<typeof vi.fn>) {
@@ -56,14 +56,14 @@ describe('DigestScheduler', () => {
 		}));
 		const s = scheduler(consult);
 		s.onSegmentClosed(entry, T0);
-		const out = path.join(dir, 'digests', '2026-10-03', '1410Z.md');
+		const out = path.join(dir, 'digests', '2026-10-03', '1415Z.md');
 		await vi.waitFor(() => expect(fs.existsSync(out)).toBe(true));
 		const call = (consult.mock.calls[0] as unknown[])[0] as {
 			targetSessionId: string;
 			question: string;
 		};
 		expect(call.targetSessionId).toBe('agent-1');
-		expect(call.question).toContain(path.join(dir, 'segments', '2026-10-03', '1410Z.jsonl'));
+		expect(call.question).toContain(path.join(dir, 'segments', '2026-10-03', '1415Z.jsonl'));
 		expect(call.question).toMatch(/UNTRUSTED/);
 		const written = fs.readFileSync(out, 'utf-8');
 		expect(written).toContain('- worked on invoices');
@@ -71,7 +71,8 @@ describe('DigestScheduler', () => {
 		expect(written).toContain('[REDACTED_API_KEY]');
 		expect(written).not.toContain('sk-ABCDEFGHIJKLMNOP1234');
 		if (process.platform !== 'win32') expect(fs.statSync(out).mode & 0o777).toBe(0o600);
-		expect(s.status().lastDigestFile).toBe('digests/2026-10-03/1410Z.md');
+		expect(s.status().last15mFile).toBe('digests/2026-10-03/1415Z.md');
+		expect(s.status().last15mAt).not.toBeNull();
 	});
 
 	it('records a failed consult without writing a file', async () => {
@@ -130,7 +131,7 @@ describe('DigestScheduler', () => {
 		);
 		const s = scheduler(consult);
 		s.onSegmentClosed(entry, T0);
-		s.onSegmentClosed({ ...entry, file: 'segments/2026-10-03/1420Z.jsonl' }, T0 + 600_000);
+		s.onSegmentClosed({ ...entry, file: 'segments/2026-10-03/1430Z.jsonl' }, T0 + 900_000);
 		expect(s.status().pending).toBe(1);
 		s.cancel({ all: true });
 		expect(s.status().pending).toBe(0);

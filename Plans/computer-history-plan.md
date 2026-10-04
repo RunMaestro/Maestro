@@ -15,14 +15,14 @@ Target branch: `rc` (the plugin system exists only there). Work branch:
 | D1  | First-party plugin `com.maestro.computer-history`, Encore flag `computerHistory`, default off. Host code, not a sandboxed community plugin: the sandbox has no path to OS permissions or native code.                                                                                                                                   |
 | D2  | One Rust helper binary, `maestro-observer`, with three platform adapters behind one event schema: macOS AX, Windows UI Automation, Linux AT-SPI2. All three platforms ship together. Parity is required.                                                                                                                                |
 | D3  | No keystroke logging. Typed text comes from the field's committed value through the accessibility API (value-changed events, debounced, plus focus-out). No CGEventTap, no low-level keyboard hook, no Input Monitoring permission. A password typed into a remote-desktop viewer is never captured because the viewer exposes no text. |
-| D4  | Store at `<userData>/computer-history/`. 10-minute UTC segments, an `index.jsonl` manifest, and a `SCHEMA.md` the app writes on start.                                                                                                                                                                                                  |
+| D4  | Store at `<userData>/computer-history/`. 15-minute UTC segments (:00/:15/:30/:45), an `index.jsonl` manifest, and a `SCHEMA.md` the app writes on start.                                                                                                                                                                                |
 | D5  | System-prompt injection through a generic `systemPromptSection` on `FirstPartyPluginDefinition`. One shared assembler for desktop, CLI, and main-process spawns. Community plugins can NOT inject system-prompt text (every agent would carry it; prompt-injection surface).                                                            |
 | D6  | The injected section is short; the full guide is a `{{REF:_computer-history}}` include.                                                                                                                                                                                                                                                 |
 | D7  | CLI reads go straight to disk (work with the app closed). CLI writes go over the WS bridge to the same main-process service the UI calls.                                                                                                                                                                                               |
 | D8  | Cue runs and group-chat agents receive the Maestro system prompt (and so the section). Today they receive none.                                                                                                                                                                                                                         |
 | D9  | Maestro's own windows are excluded by default.                                                                                                                                                                                                                                                                                          |
 | D10 | Retention defaults: 90 days, 25 GB. Oldest segments are deleted first when either limit is hit.                                                                                                                                                                                                                                         |
-| D11 | Digests (agent-written 10-min / 6-hour markdown summaries) are an option, disabled by default. The user picks which agent writes them.                                                                                                                                                                                                  |
+| D11 | Digests (agent-written 15-minute digests and 6-hour roll-ups, UTC blocks at 00/06/12/18) are an option, disabled by default. The user picks which agent writes them.                                                                                                                                                                    |
 | D12 | Linux: when the accessibility bus is off, Maestro offers to turn it on (with consent) instead of only printing the fix.                                                                                                                                                                                                                 |
 | D13 | SSH-remote agents do not get the section: the store path is local to the Maestro machine.                                                                                                                                                                                                                                               |
 | D14 | No OCR, no screenshots, no cloud upload by Maestro itself.                                                                                                                                                                                                                                                                              |
@@ -166,14 +166,15 @@ The helper starts paused-until-configured: it emits `helper.status` and observes
   SCHEMA.md                 # written by the app on every start; the agent-facing format doc
   config.json               # retention, rules, digests (written by the service only)
   index.jsonl               # one line per closed segment
-  segments/2026-10-03/1410Z.jsonl
-  digests/2026-10-03/1410Z.md   # only when digests are on
+  segments/2026-10-03/1415Z.jsonl
+  digests/2026-10-03/1415Z.md   # 15-minute digest, only when digests are on
+  digests/2026-10-03/6h-1200Z.md  # 6-hour roll-up of 12:00-18:00, only when digests are on
 ```
 
-- Segment file name = UTC start of its 10-minute window (`HHMM` + `Z`), folder = UTC date.
+- Segment file name = UTC start of its 15-minute window (`HHMM` + `Z`), folder = UTC date.
 - Each line is an `ObservedEvent` after rules and redaction, plus `"seq"` (monotonic per segment).
 - `helper.*` events are not stored.
-- `index.jsonl` line: `{ "file": "segments/2026-10-03/1410Z.jsonl", "start": "...", "end": "...", "events": 312, "bytes": 81234, "apps": { "com.tinyspeck.slackmacgap": 120 } }`. The open segment has no index line until it closes; readers also scan the newest folder.
+- `index.jsonl` line: `{ "file": "segments/2026-10-03/1415Z.jsonl", "start": "...", "end": "...", "events": 312, "bytes": 81234, "apps": { "com.tinyspeck.slackmacgap": 120 } }`. The open segment has no index line until it closes; readers also scan the newest folder.
 - Writes are append-only with a keyed write queue (pattern: `src/main/history-manager.ts`). `config.json` and `index.jsonl` rewrites go through `atomicWriteText`.
 
 ### config.json
@@ -189,7 +190,7 @@ The helper starts paused-until-configured: it emits `helper.status` and observes
 		{ "match": "domain", "value": "bank.example.com", "action": "ignore" },
 	],
 	"pausedUntil": null, // ISO timestamp, "forever", or null
-	"digests": { "enabled": false, "agentId": null },
+	"digests": { "enabled": false, "agentId": null, "rollup": true },
 }
 ```
 
@@ -213,7 +214,7 @@ Built-in exclusions (always on, not editable): password managers (1Password, Bit
 | A3    | Service: supervisor, ingest, rules, redaction, segments, retention, first-party definition, Extensions tile, boot/quit/flag-change wiring |
 | A4    | CLI read verbs, prompts, SCHEMA.md, docs                                                                                                  |
 | A5    | Control verbs + UI: pause/resume, rules, clear, permission flow (macOS prompt, Linux enable), recording indicator, CLI-UI-PARITY rows     |
-| A6    | Digests (opt-in)                                                                                                                          |
+| A6    | Digests (opt-in): 15-minute digest per closed segment, 6-hour roll-up per UTC block from those digests, catch-up on start                 |
 
 ## CLI surface
 
@@ -226,7 +227,8 @@ maestro-cli computer-history pause [--for 1h] | resume
 maestro-cli computer-history rules list | add --app <id>|--domain <d> | remove <id>
 maestro-cli computer-history clear (--since 1d | --all)
 maestro-cli computer-history enable-accessibility
-maestro-cli computer-history config [--retention-days N] [--max-gb N] [--snapshots on|off] [--digests on|off] [--digest-agent <id>]
+maestro-cli computer-history config [--retention-days N] [--max-gb N] [--snapshots on|off] [--digests on|off] [--digest-agent <id>] [--digest-rollup on|off]
+maestro-cli computer-history digests [--since 1d] [--kind 15m|6h]
 ```
 
 Text output fences captured content as `UNTRUSTED OBSERVED INPUT`.

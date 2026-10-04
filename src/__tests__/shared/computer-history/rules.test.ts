@@ -122,7 +122,7 @@ describe('config', () => {
 		expect(d.retentionDays).toBe(90);
 		expect(d.maxBytes).toBe(25 * 1024 ** 3);
 		expect(d.snapshots).toBe(true);
-		expect(d.digests).toEqual({ enabled: false, agentId: null });
+		expect(d.digests).toEqual({ enabled: false, agentId: null, rollup: true });
 		expect(d.pausedUntil).toBeNull();
 	});
 
@@ -146,7 +146,7 @@ describe('config', () => {
 		expect(c.rules).toHaveLength(1);
 		expect(c.rules[0]).toMatchObject({ match: 'app', value: 'a', action: 'ignore' });
 		expect(c.pausedUntil).toBeNull();
-		expect(c.digests).toEqual({ enabled: true, agentId: null });
+		expect(c.digests).toEqual({ enabled: true, agentId: null, rollup: true });
 		expect(normalizeConfig('garbage')).toEqual(defaultComputerHistoryConfig());
 	});
 
@@ -156,7 +156,18 @@ describe('config', () => {
 			digests: { agentId: 'agent-1' },
 		});
 		expect(next.retentionDays).toBe(30);
-		expect(next.digests).toEqual({ enabled: false, agentId: 'agent-1' });
+		expect(next.digests).toEqual({ enabled: false, agentId: 'agent-1', rollup: true });
+	});
+
+	it('digests.rollup defaults on, stays off when set off, and patches', () => {
+		expect(normalizeConfig({ digests: { enabled: true, rollup: false } }).digests.rollup).toBe(
+			false
+		);
+		expect(normalizeConfig({ digests: { enabled: true, rollup: 'yes' } }).digests.rollup).toBe(
+			true
+		);
+		const off = applyConfigPatch(defaultComputerHistoryConfig(), { digests: { rollup: false } });
+		expect(off.digests).toEqual({ enabled: false, agentId: null, rollup: false });
 	});
 
 	it('isPausedAt', () => {

@@ -28,6 +28,7 @@ import {
 	SEGMENTS_DIR,
 	SEGMENT_MS,
 	computerHistoryDir,
+	parseSegmentRelativePath,
 	resolveStorePath,
 } from '../../shared/computer-history/paths';
 import {
@@ -45,6 +46,7 @@ import { appRuleMatches, dropReason, validateRuleInput } from '../../shared/comp
 import { redactObservedEvent, validateObservedEvent } from '../../shared/computer-history/sanitize';
 import { buildSchemaDoc } from '../../shared/computer-history/schemaDoc';
 import {
+	listDigests,
 	queryEvents,
 	readIndex,
 	summarizeApps,
@@ -155,6 +157,7 @@ export class ComputerHistoryService {
 			storeDir: this.storeDir,
 			getConfig: () => this.getConfig(),
 			getConsult: () => deps.getConsult?.() ?? null,
+			now: this.now,
 			log: (level, message) => deps.log?.(level, message),
 		});
 		this.writer = new SegmentWriter({
@@ -211,8 +214,18 @@ export class ComputerHistoryService {
 		await this.runRetentionSafely();
 		// A stop() that raced the awaits above wins: arm nothing.
 		if (!this.running) return;
+		// Queue digests a previous run missed (bounded; no-op when digests are off).
+		void this.digests.catchUp().catch((err) => this.logError('digestCatchUp', err));
 		this.rolloverTimer = setInterval(() => {
-			void this.writer.closeIfExpired().catch((err) => this.logError('rollover', err));
+			void this.writer
+				.closeIfExpired()
+				.then(() => {
+					// After the close (which queues the last window's digest), so a
+					// block's roll-up is queued behind it. See digests.ts.
+					const open = this.writer.currentInfo();
+					this.digests.tick(open ? parseSegmentRelativePath(open.file) : null);
+				})
+				.catch((err) => this.logError('rollover', err));
 		}, ROLLOVER_CHECK_MS);
 		this.retentionTimer = setInterval(() => void this.runRetentionSafely(), RETENTION_INTERVAL_MS);
 		this.armPauseTimer();
@@ -310,6 +323,7 @@ export class ComputerHistoryService {
 			eventsDropped: this.eventsDropped,
 			lastEventAt: this.lastEventAt,
 			currentSegment: this.writer.currentInfo(),
+			digests: this.digests.status(),
 		};
 	}
 
@@ -563,6 +577,12 @@ export class ComputerHistoryService {
 			const current = this.writer.currentInfo();
 			if (current && doomed.some((f) => f.file === current.file)) this.writer.dropCurrentUnsafe();
 			const freedBytes = await deleteSegments(this.storeDir, doomed, this.queue);
+			// Digests covering the cleared range go too: 15-minute digests whose
+			// window overlaps it (deleteSegments got those with a segment) and every
+			// 6-hour roll-up whose block overlaps it.
+			for (const d of await listDigests(this.storeDir, { sinceMs })) {
+				await fsp.rm(resolveStorePath(this.storeDir, d.file), { force: true });
+			}
 			return { deletedSegments: doomed.length, freedBytes };
 		});
 		this.notify(true);

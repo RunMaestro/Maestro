@@ -111,4 +111,23 @@ describe('runRetention', () => {
 		fs.rmSync(path.join(dir, 'index.jsonl'));
 		await expect(deleteSegments(dir, [], createKeyedWriteQueue())).resolves.toBe(0);
 	});
+
+	it('prunes 6-hour roll-ups with their day under the same retention rule', async () => {
+		seg(NOW - 2 * DAY, 10);
+		const oldDay = new Date(NOW - 40 * DAY).toISOString().slice(0, 10);
+		const newDay = new Date(NOW - 2 * DAY).toISOString().slice(0, 10);
+		for (const day of [oldDay, newDay]) {
+			fs.mkdirSync(path.join(dir, 'digests', day), { recursive: true });
+			fs.writeFileSync(path.join(dir, 'digests', day, '6h-0600Z.md'), '# r');
+		}
+		await runRetention({
+			storeDir: dir,
+			retentionDays: 30,
+			maxBytes: 1e12,
+			nowMs: NOW,
+			queue: createKeyedWriteQueue(),
+		});
+		expect(fs.existsSync(path.join(dir, 'digests', oldDay, '6h-0600Z.md'))).toBe(false);
+		expect(fs.existsSync(path.join(dir, 'digests', newDay, '6h-0600Z.md'))).toBe(true);
+	});
 });

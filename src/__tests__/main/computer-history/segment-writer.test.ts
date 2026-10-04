@@ -8,7 +8,7 @@ import { parseIndexText, parseSegmentText } from '../../../shared/computer-histo
 import type { SegmentIndexEntry } from '../../../shared/computer-history/types';
 
 let dir: string;
-const T0 = Date.parse('2026-10-03T14:10:00.000Z');
+const T0 = Date.parse('2026-10-03T14:15:00.000Z');
 
 function input(ts: number, appId = 'com.tinyspeck.slackmacgap') {
 	return {
@@ -37,7 +37,7 @@ afterEach(() => {
 });
 
 describe('SegmentWriter', () => {
-	it('assigns seq per segment and writes to the 10-minute UTC window file', async () => {
+	it('assigns seq per segment and writes to the 15-minute UTC window file', async () => {
 		let now = T0;
 		const writer = new SegmentWriter({
 			storeDir: dir,
@@ -47,8 +47,8 @@ describe('SegmentWriter', () => {
 		const a = await writer.append(input(T0 + 1000));
 		const b = await writer.append(input(T0 + 2000));
 		expect([a.seq, b.seq]).toEqual([0, 1]);
-		expect(writer.currentInfo()).toEqual({ file: 'segments/2026-10-03/1410Z.jsonl', events: 2 });
-		expect(readSeg('segments/2026-10-03/1410Z.jsonl').map((e) => e.seq)).toEqual([0, 1]);
+		expect(writer.currentInfo()).toEqual({ file: 'segments/2026-10-03/1415Z.jsonl', events: 2 });
+		expect(readSeg('segments/2026-10-03/1415Z.jsonl').map((e) => e.seq)).toEqual([0, 1]);
 		// Not closed yet: no index line.
 		expect(readIndex()).toEqual([]);
 		now = T0 + 5000;
@@ -64,12 +64,12 @@ describe('SegmentWriter', () => {
 		});
 		await writer.append(input(T0 + 1000));
 		await writer.append(input(T0 + 2000, 'com.google.chrome'));
-		const next = await writer.append(input(T0 + 600_500));
+		const next = await writer.append(input(T0 + 900_500));
 		expect(next.seq).toBe(0);
 		const idx = readIndex();
 		expect(idx).toHaveLength(1);
 		expect(idx[0]).toMatchObject({
-			file: 'segments/2026-10-03/1410Z.jsonl',
+			file: 'segments/2026-10-03/1415Z.jsonl',
 			events: 2,
 			start: new Date(T0 + 1000).toISOString(),
 			end: new Date(T0 + 2000).toISOString(),
@@ -77,7 +77,7 @@ describe('SegmentWriter', () => {
 		});
 		expect(idx[0].bytes).toBeGreaterThan(0);
 		expect(closed).toHaveBeenCalledWith(expect.objectContaining({ events: 2 }), T0);
-		expect(writer.currentInfo()?.file).toBe('segments/2026-10-03/1420Z.jsonl');
+		expect(writer.currentInfo()?.file).toBe('segments/2026-10-03/1430Z.jsonl');
 	});
 
 	it('closes an expired window on the timer check, and on close()', async () => {
@@ -89,7 +89,7 @@ describe('SegmentWriter', () => {
 		});
 		await writer.append(input(T0 + 1000));
 		expect(await writer.closeIfExpired()).toBe(false);
-		now = T0 + 600_000 + 5000;
+		now = T0 + 900_000 + 5000;
 		expect(await writer.closeIfExpired()).toBe(true);
 		expect(readIndex()).toHaveLength(1);
 		await writer.append(input(now));
@@ -104,10 +104,10 @@ describe('SegmentWriter', () => {
 			queue: createKeyedWriteQueue(),
 			now: () => T0,
 		});
-		await writer.append(input(T0 + 600_100));
+		await writer.append(input(T0 + 900_100));
 		const late = await writer.append(input(T0 + 5));
 		expect(late.seq).toBe(1);
-		expect(writer.currentInfo()?.file).toBe('segments/2026-10-03/1420Z.jsonl');
+		expect(writer.currentInfo()?.file).toBe('segments/2026-10-03/1430Z.jsonl');
 	});
 
 	it('continues seq when reopening an existing file after a restart', async () => {
@@ -131,7 +131,7 @@ describe('SegmentWriter', () => {
 		await current.append(input(later + 1));
 		const restarted = new SegmentWriter({ storeDir: dir, queue: q, now: () => later });
 		expect(await restarted.start()).toBe(1);
-		expect(readIndex().map((e) => e.file)).toEqual(['segments/2026-10-03/1410Z.jsonl']);
+		expect(readIndex().map((e) => e.file)).toEqual(['segments/2026-10-03/1415Z.jsonl']);
 		expect(await restarted.start()).toBe(0);
 	});
 
@@ -150,13 +150,13 @@ describe('SegmentWriter', () => {
 		const first = new SegmentWriter({ storeDir: dir, queue: q, now: () => T0 });
 		await first.append(input(T0 + 1));
 		await first.close();
-		const seg = path.join(dir, 'segments', '2026-10-03', '1410Z.jsonl');
+		const seg = path.join(dir, 'segments', '2026-10-03', '1415Z.jsonl');
 		fs.appendFileSync(seg, '{"v":1,"seq":1,"ts":"2026-10-03T14:1');
 		fs.appendFileSync(path.join(dir, 'index.jsonl'), '{"file":"segm');
 		const second = new SegmentWriter({ storeDir: dir, queue: q, now: () => T0 });
 		const e = await second.append(input(T0 + 2));
 		expect(e?.seq).toBe(1);
-		expect(readSeg('segments/2026-10-03/1410Z.jsonl').map((x) => x.seq)).toEqual([0, 1]);
+		expect(readSeg('segments/2026-10-03/1415Z.jsonl').map((x) => x.seq)).toEqual([0, 1]);
 		await second.close();
 		// Both closes survive: the torn index fragment did not swallow the new line.
 		expect(readIndex().map((x) => x.events)).toEqual([2]);
@@ -199,7 +199,7 @@ describe('SegmentWriter', () => {
 		const mode = (p: string) => fs.statSync(path.join(dir, p)).mode & 0o777;
 		expect(mode('segments')).toBe(0o700);
 		expect(mode('segments/2026-10-03')).toBe(0o700);
-		expect(mode('segments/2026-10-03/1410Z.jsonl')).toBe(0o600);
+		expect(mode('segments/2026-10-03/1415Z.jsonl')).toBe(0o600);
 		expect(mode('index.jsonl')).toBe(0o600);
 	});
 });

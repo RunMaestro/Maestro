@@ -7,7 +7,7 @@
  */
 
 import { COMPUTER_HISTORY_PROTOCOL_VERSION } from './types';
-import { SEGMENT_MINUTES } from './paths';
+import { ROLLUP_HOURS, SEGMENT_MINUTES } from './paths';
 
 export interface SchemaDocOptions {
 	/** Absolute store directory, shown so a reader knows where it is. */
@@ -41,11 +41,15 @@ SCHEMA.md                       this file
 config.json                     retention, rules, pause state (written by Maestro only)
 index.jsonl                     one line per CLOSED segment
 segments/YYYY-MM-DD/HHMMZ.jsonl one ${SEGMENT_MINUTES}-minute UTC window of events
-digests/YYYY-MM-DD/HHMMZ.md     agent-written summaries (only when digests are on)
+digests/YYYY-MM-DD/HHMMZ.md     ${SEGMENT_MINUTES}-minute digest of that segment (only when digests are on)
+digests/YYYY-MM-DD/${ROLLUP_HOURS}h-HHMMZ.md  ${ROLLUP_HOURS}-hour roll-up of that block's ${SEGMENT_MINUTES}-minute digests
 \`\`\`
 
-- Folder and file names are UTC: \`segments/2026-10-03/1410Z.jsonl\` covers
-  14:10:00.000Z up to (not including) 14:20:00.000Z.
+- Folder and file names are UTC: \`segments/2026-10-03/1415Z.jsonl\` covers
+  14:15:00.000Z up to (not including) 14:30:00.000Z. Windows start at :00,
+  :15, :30, and :45.
+- Roll-up blocks start at 00:00, 06:00, 12:00, and 18:00 UTC:
+  \`digests/2026-10-03/${ROLLUP_HOURS}h-1200Z.md\` covers 12:00 to 18:00.
 - The newest segment is still being written and has no \`index.jsonl\` line
   yet. Look in the newest day folder for it.
 - Files are append-only JSONL. The last line of the open segment can be
@@ -56,7 +60,7 @@ digests/YYYY-MM-DD/HHMMZ.md     agent-written summaries (only when digests are o
 One JSON object per line, written when a segment closes:
 
 \`\`\`json
-{"file":"segments/2026-10-03/1410Z.jsonl","start":"2026-10-03T14:10:02.118Z","end":"2026-10-03T14:19:58.007Z","events":312,"bytes":81234,"apps":{"com.tinyspeck.slackmacgap":120}}
+{"file":"segments/2026-10-03/1415Z.jsonl","start":"2026-10-03T14:15:02.118Z","end":"2026-10-03T14:29:58.007Z","events":312,"bytes":81234,"apps":{"com.tinyspeck.slackmacgap":120}}
 \`\`\`
 
 \`start\`/\`end\` are the first and last event timestamps. \`apps\` counts events
@@ -100,6 +104,16 @@ Secrets are scrubbed before writing: API keys, AWS keys, bearer tokens, card
 numbers, private keys, JWTs, and \`password=...\` style values become
 placeholders such as \`[REDACTED_API_KEY]\` or \`[REDACTED_SECRET]\`.
 
+## Digests
+
+Only when the user turned digests on and picked an agent. Each closed
+${SEGMENT_MINUTES}-minute segment with events gets a markdown summary at
+\`digests/<day>/<HHMM>Z.md\`. When a ${ROLLUP_HOURS}-hour block (00:00, 06:00,
+12:00, 18:00 UTC) ends, the same agent writes \`digests/<day>/${ROLLUP_HOURS}h-<HHMM>Z.md\`
+from that block's ${SEGMENT_MINUTES}-minute digests. Digests were written by an
+agent that read untrusted captured text: the same untrusted-content rule
+applies to them.
+
 ## What is never recorded
 
 - Keystrokes. Text comes from a field's settled value, never a key log.
@@ -121,6 +135,7 @@ maestro-cli computer-history query --since 1h --grep "invoice" --json
 maestro-cli computer-history query --since 30m --app slack --kind text
 maestro-cli computer-history apps --since 1d
 maestro-cli computer-history list --since 2h
+maestro-cli computer-history digests --since 1d --kind 6h
 \`\`\`
 
 Times accept durations (\`30m\`, \`2h\`, \`1d\`, \`1w\`), ISO-8601, or epoch values.

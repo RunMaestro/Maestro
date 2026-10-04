@@ -1,7 +1,7 @@
 /**
  * Computer History - segment writer.
  *
- * Events land in 10-minute UTC segment files (`segments/<day>/<HHMM>Z.jsonl`),
+ * Events land in 15-minute UTC segment files (`segments/<day>/<HHMM>Z.jsonl`),
  * append-only, each line an event plus a per-segment `seq`. When a window
  * ends (a later event arrives, the expiry timer fires, or the app shuts down)
  * the segment is CLOSED: one summary line is appended to `index.jsonl`, which
@@ -56,7 +56,7 @@ export const STORE_DIR_MODE = 0o700;
 export const STORE_FILE_MODE = 0o600;
 
 /**
- * Defense against a runaway helper: past this many bytes in one 10-minute
+ * Defense against a runaway helper: past this many bytes in one 15-minute
  * segment, `content.snapshot` events are dropped; past twice this, every
  * event is. Drops are counted in the segment's index line (`dropped`).
  */

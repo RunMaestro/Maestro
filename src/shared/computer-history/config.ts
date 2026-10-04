@@ -31,7 +31,7 @@ export function defaultComputerHistoryConfig(): ComputerHistoryConfig {
 		snapshots: true,
 		rules: [],
 		pausedUntil: null,
-		digests: { enabled: false, agentId: null },
+		digests: { enabled: false, agentId: null, rollup: true },
 	};
 }
 
@@ -123,7 +123,8 @@ export function normalizeConfig(raw: unknown): ComputerHistoryConfig {
 		snapshots: typeof r.snapshots === 'boolean' ? r.snapshots : d.snapshots,
 		rules,
 		pausedUntil: normalizePausedUntil(r.pausedUntil),
-		digests: { enabled: digestsRaw.enabled === true, agentId },
+		// The 6-hour roll-up rides along with digests unless explicitly off.
+		digests: { enabled: digestsRaw.enabled === true, agentId, rollup: digestsRaw.rollup !== false },
 	};
 }
 
@@ -132,7 +133,7 @@ export interface ComputerHistoryConfigPatch {
 	retentionDays?: number;
 	maxBytes?: number;
 	snapshots?: boolean;
-	digests?: { enabled?: boolean; agentId?: string | null };
+	digests?: { enabled?: boolean; agentId?: string | null; rollup?: boolean };
 }
 
 /** Apply a patch and re-normalize (out-of-range values clamp, junk is ignored). */
@@ -149,6 +150,7 @@ export function applyConfigPatch(
 			...config.digests,
 			...(patch.digests?.enabled !== undefined ? { enabled: patch.digests.enabled } : {}),
 			...(patch.digests?.agentId !== undefined ? { agentId: patch.digests.agentId } : {}),
+			...(patch.digests?.rollup !== undefined ? { rollup: patch.digests.rollup } : {}),
 		},
 	});
 }

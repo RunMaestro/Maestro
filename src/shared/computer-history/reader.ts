@@ -7,7 +7,7 @@
  *
  * Scale: the store can reach 25 GB. Nothing here walks every file. Segment
  * selection uses `index.jsonl` (one line per closed segment, keyed by its
- * 10-minute window) plus a scan of the newest two day folders for segments
+ * 15-minute window) plus a scan of the newest two day folders for segments
  * that have no index line yet (the open segment, or one a crash left
  * unclosed). Only files whose window overlaps the requested range are opened,
  * and `limit` queries walk newest-first and stop early.
@@ -23,7 +23,11 @@ import * as fs from 'fs/promises';
 import { normalizeConfig } from './config';
 import {
 	CONFIG_FILE,
+	DIGESTS_DIR,
 	INDEX_FILE,
+	ROLLUP_MS,
+	parseDigestRelativePath,
+	type DigestKind,
 	SEGMENTS_DIR,
 	SEGMENT_MS,
 	parseSegmentRelativePath,
@@ -108,7 +112,7 @@ function isIndexEntry(v: unknown): v is SegmentIndexEntry {
 
 /**
  * Parse `index.jsonl`. Torn lines are skipped. A file closed twice (an app
- * restart inside the same 10-minute window reopens and re-closes it) has
+ * restart inside the same 15-minute window reopens and re-closes it) has
  * more than one line; the LAST one wins because it counts every event.
  */
 export function parseIndexText(text: string): SegmentIndexEntry[] {
@@ -200,7 +204,7 @@ function overlaps(startMs: number, range: TimeRange): boolean {
 }
 
 /**
- * Segments whose 10-minute window overlaps `range`, ascending by start. Index
+ * Segments whose 15-minute window overlaps `range`, ascending by start. Index
  * entries whose file no longer exists are dropped only when actually read.
  */
 export async function listSegments(
@@ -432,4 +436,55 @@ export async function readStoreConfig(storeDir: string): Promise<ComputerHistory
 	} catch {
 		return normalizeConfig(null);
 	}
+}
+
+/** A digest file on disk. */
+export interface DigestInfo {
+	kind: DigestKind;
+	/** Store-relative path, forward slashes. */
+	file: string;
+	/** Window (15m) or block (6h) start / end, ms. */
+	startMs: number;
+	endMs: number;
+}
+
+/**
+ * Digest files whose window overlaps `range`, ascending by start (a block's
+ * roll-up sorts after the 15-minute digests that start with it). Reads only
+ * directory listings; bodies are read on demand with `readDigest`.
+ */
+export async function listDigests(
+	storeDir: string,
+	options: TimeRange & { kind?: DigestKind } = {}
+): Promise<DigestInfo[]> {
+	const days = (await listDir(resolveStorePath(storeDir, DIGESTS_DIR)))
+		.filter((n) => DAY_DIR_RE.test(n))
+		.sort();
+	const out: DigestInfo[] = [];
+	for (const day of days) {
+		// A day folder can hold digests for blocks that end the next day; skip
+		// only folders that start after the range ends.
+		const dayStart = Date.parse(`${day}T00:00:00.000Z`);
+		if (options.untilMs !== undefined && dayStart > options.untilMs) continue;
+		if (options.sinceMs !== undefined && dayStart + 86_400_000 + ROLLUP_MS <= options.sinceMs)
+			continue;
+		for (const name of await listDir(resolveStorePath(storeDir, `${DIGESTS_DIR}/${day}`))) {
+			const file = `${DIGESTS_DIR}/${day}/${name}`;
+			const parsed = parseDigestRelativePath(file);
+			if (!parsed) continue;
+			if (options.kind && parsed.kind !== options.kind) continue;
+			const endMs = parsed.startMs + (parsed.kind === '6h' ? ROLLUP_MS : SEGMENT_MS);
+			if (options.sinceMs !== undefined && endMs <= options.sinceMs) continue;
+			if (options.untilMs !== undefined && parsed.startMs > options.untilMs) continue;
+			out.push({ kind: parsed.kind, file, startMs: parsed.startMs, endMs });
+		}
+	}
+	return out.sort(
+		(a, b) => a.startMs - b.startMs || (a.kind === '6h' ? 1 : 0) - (b.kind === '6h' ? 1 : 0)
+	);
+}
+
+/** A digest body, or null when the file is gone. */
+export async function readDigest(storeDir: string, rel: string): Promise<string | null> {
+	return readTextIfExists(resolveStorePath(storeDir, rel));
 }

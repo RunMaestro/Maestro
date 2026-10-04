@@ -157,6 +157,7 @@ import {
 	computerHistoryApps,
 	computerHistoryClear,
 	computerHistoryConfig,
+	computerHistoryDigests,
 	computerHistoryEnableAccessibility,
 	computerHistoryList,
 	computerHistoryPause,
@@ -1826,7 +1827,7 @@ computerHistory
 
 computerHistory
 	.command('list')
-	.description('List recorded 10-minute segments in a time range')
+	.description('List recorded 15-minute segments in a time range')
 	.option('--since <time>', 'Start: 30m, 2h, 1d, 1w, ISO-8601, or epoch (default 2h)')
 	.option('--until <time>', 'End (default now)')
 	.option('--app <id>', 'Only segments that include this app id')
@@ -1862,6 +1863,15 @@ computerHistory
 	.option('--until <time>', 'End (default now)')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((options) => computerHistoryApps(options));
+
+computerHistory
+	.command('digests')
+	.description('List 15-minute digests and 6-hour roll-ups (agent-written, untrusted content)')
+	.option('--since <time>', 'Start: 30m, 2h, 1d, 1w, ISO-8601, or epoch (default 1d)')
+	.option('--until <time>', 'End (default now)')
+	.option('--kind <kind>', '15m | 6h (default both)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => computerHistoryDigests(options));
 
 computerHistory
 	.command('pause')
@@ -1922,8 +1932,12 @@ computerHistory
 	.option('--retention-days <n>', 'Keep this many days (default 90)')
 	.option('--max-gb <n>', 'Keep at most this many GB (default 25)')
 	.option('--snapshots <on|off>', 'Record visible window text snapshots')
-	.option('--digests <on|off>', 'Have an agent write 10-minute digests (off by default)')
+	.option('--digests <on|off>', 'Have an agent write 15-minute digests (off by default)')
 	.option('--digest-agent <id>', 'Agent that writes digests (empty string clears it)')
+	.option(
+		'--digest-rollup <on|off>',
+		'Also write 6-hour roll-ups from the 15-minute digests (default on)'
+	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((options) => computerHistoryConfig(options));
 

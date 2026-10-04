@@ -12,9 +12,12 @@
 // JSON output marks it with `untrusted: true`.
 
 import { resolveEncoreFeatures } from '../../shared/encoreFeatureDefaults';
-import { computerHistoryDir } from '../../shared/computer-history/paths';
+import { computerHistoryDir, resolveStorePath } from '../../shared/computer-history/paths';
 import {
 	compileGrep,
+	listDigests,
+	readDigest,
+	type DigestInfo,
 	listSegments,
 	queryEvents,
 	readStoreConfig,
@@ -67,6 +70,7 @@ export interface ConfigCliOptions extends JsonOption {
 	snapshots?: string;
 	digests?: string;
 	digestAgent?: string;
+	digestRollup?: string;
 }
 
 const UNTRUSTED_NOTICE =
@@ -196,7 +200,15 @@ async function writeCommand(
 
 export async function computerHistoryStatus(options: JsonOption): Promise<void> {
 	const dir = storeDir();
-	const [config, stats] = await Promise.all([readStoreConfig(dir), readStoreStats(dir)]);
+	const [config, stats, digestFiles] = await Promise.all([
+		readStoreConfig(dir),
+		readStoreStats(dir),
+		listDigests(dir, { sinceMs: Date.now() - 7 * 86_400_000 }),
+	]);
+	const latest = (kind: '15m' | '6h') =>
+		[...digestFiles].reverse().find((d) => d.kind === kind) ?? null;
+	const latest15m = latest('15m');
+	const latest6h = latest('6h');
 	const enabled = isEnabled();
 	let live: ComputerHistoryStatus | null = null;
 	let appReachable = false;
@@ -227,6 +239,10 @@ export async function computerHistoryStatus(options: JsonOption): Promise<void> 
 				snapshots: config.snapshots,
 				rules: config.rules.length,
 				digests: config.digests,
+				latestDigests: {
+					'15m': latest15m ? describeDigest(latest15m) : null,
+					'6h': latest6h ? describeDigest(latest6h) : null,
+				},
 				store: stats,
 				live,
 			})
@@ -261,9 +277,79 @@ export async function computerHistoryStatus(options: JsonOption): Promise<void> 
 	);
 	lines.push(`Rules:            ${config.rules.length} user rule(s) plus built-in exclusions`);
 	lines.push(
-		`Digests:          ${config.digests.enabled ? `on (agent ${config.digests.agentId ?? 'not set'})` : 'off'}`
+		`Digests:          ${config.digests.enabled ? `on (agent ${config.digests.agentId ?? 'not set'}), 6-hour roll-up ${config.digests.rollup ? 'on' : 'off'}` : 'off'}`
 	);
+	if (latest15m || latest6h) {
+		lines.push(
+			`Latest digests:   15m ${latest15m ? windowLabel(latest15m) : 'none'}; 6h ${latest6h ? windowLabel(latest6h) : 'none'}`
+		);
+	}
+	if (live?.digests?.lastError) lines.push(`Digest error:     ${live.digests.lastError}`);
 	console.log(lines.join('\n'));
+}
+
+function windowLabel(d: DigestInfo): string {
+	return `${shortTime(new Date(d.startMs).toISOString())} to ${shortTime(new Date(d.endMs).toISOString())}`;
+}
+
+function describeDigest(d: DigestInfo) {
+	return {
+		kind: d.kind,
+		windowStart: new Date(d.startMs).toISOString(),
+		windowEnd: new Date(d.endMs).toISOString(),
+		file: d.file,
+		path: resolveStorePath(storeDir(), d.file),
+	};
+}
+
+// ----------------------------------------------------------------------------
+// digests
+// ----------------------------------------------------------------------------
+
+/**
+ * List digest files (15-minute digests and 6-hour roll-ups) in a range. Text
+ * output prints each body inside the untrusted fence: digests were written by
+ * an agent that read captured screen text.
+ */
+export async function computerHistoryDigests(
+	options: RangeOptions & { kind?: string }
+): Promise<void> {
+	noteIfDisabled(options.json);
+	const range = parseRange(options, '1d');
+	let kind: '15m' | '6h' | undefined;
+	if (options.kind !== undefined) {
+		const k = options.kind.trim().toLowerCase();
+		if (k !== '15m' && k !== '6h')
+			failCommand(`Unknown --kind "${options.kind}" (use 15m or 6h)`, options.json);
+		kind = k;
+	}
+	const digests = await listDigests(storeDir(), { ...range, kind });
+	const withBodies = await Promise.all(
+		digests.map(async (d) => ({ ...describeDigest(d), text: await readDigest(storeDir(), d.file) }))
+	);
+	if (options.json) {
+		console.log(
+			JSON.stringify({
+				success: true,
+				untrusted: true,
+				notice: UNTRUSTED_NOTICE,
+				count: withBodies.length,
+				digests: withBodies,
+			})
+		);
+		return;
+	}
+	if (withBodies.length === 0) {
+		console.log('No digests in that range.');
+		return;
+	}
+	for (const d of withBodies) {
+		console.log(
+			`${d.kind === '6h' ? '6-hour roll-up' : '15-minute digest'}  ${shortTime(d.windowStart)} to ${shortTime(d.windowEnd)}  ${d.path}`
+		);
+		console.log(fenceUntrusted((d.text ?? '').trimEnd()));
+		console.log('');
+	}
 }
 
 // ----------------------------------------------------------------------------
@@ -563,6 +649,9 @@ export async function computerHistoryConfig(options: ConfigCliOptions): Promise<
 		const raw = options.digestAgent.trim();
 		digests.agentId = raw ? resolveAgentOrFail(raw, options.json) : null;
 	}
+	if (options.digestRollup !== undefined) {
+		digests.rollup = parseOnOff(options.digestRollup, '--digest-rollup', options.json);
+	}
 	if (Object.keys(digests).length > 0) patch.digests = digests;
 
 	// No flags: show the config from disk (works with the app closed).
@@ -578,7 +667,7 @@ export async function computerHistoryConfig(options: ConfigCliOptions): Promise<
 				`Max size:    ${formatSize(config.maxBytes)}`,
 				`Snapshots:   ${config.snapshots ? 'on' : 'off'}`,
 				`Paused:      ${config.pausedUntil ?? 'no'}`,
-				`Digests:     ${config.digests.enabled ? 'on' : 'off'} (agent ${config.digests.agentId ?? 'not set'})`,
+				`Digests:     ${config.digests.enabled ? 'on' : 'off'} (agent ${config.digests.agentId ?? 'not set'}), 6-hour roll-up ${config.digests.rollup ? 'on' : 'off'}`,
 				`Rules:       ${config.rules.length}`,
 			].join('\n')
 		);
