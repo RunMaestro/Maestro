@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { useApp, useInput, type Key } from 'ink';
+import { Text, useApp, useInput, type Key } from 'ink';
 import type { AgentRecord, ClientResult, MaestroClient, MaestroPaths } from '../shared/maestro-lib';
 import { asThinkingMode, visibleAiTabsOf } from '../shared/maestro-lib';
 import { AgentForm } from './agents/AgentForm';
@@ -56,6 +56,21 @@ import {
 	type ProviderSwapDone,
 } from './agents/providerSwap';
 import { submitCloseTab, submitNewTab, tabAfterClose } from './agents/tabs';
+import { AutoRunView } from './autorun/AutoRunView';
+import { resolveEditorCommand, runEditor, type EditorResult } from './autorun/editor';
+import {
+	backspaceName,
+	beginNaming,
+	cancelNaming,
+	finishAutoRunEdit,
+	highlightedDocument,
+	moveAutoRunCursor,
+	openAutoRunView,
+	reloadAutoRunView,
+	submitNewDocument,
+	typeIntoName,
+	type AutoRunViewState,
+} from './autorun/state';
 import {
 	EMPTY_COMPOSER,
 	backspace as composerBackspace,
@@ -125,7 +140,15 @@ export interface AppProps {
 	 * files and stays read-only.
 	 */
 	client?: MaestroClient;
+	/** Opens a file in the person's editor and resolves when it closes. Tests pass a stand-in. */
+	editFile?: (file: string) => Promise<EditorResult>;
 }
+
+/**
+ * Time between drawing the "editing" frame and starting the editor. Ink throttles
+ * its writes, so a frame still queued would otherwise paint over the editor.
+ */
+const EDITOR_SETTLE_MS = 100;
 
 /** The overlay on screen, if any. Only one at a time, and Esc closes it. */
 type OverlayState =
@@ -134,6 +157,7 @@ type OverlayState =
 	| { kind: 'history'; history: HistoryViewState }
 	| { kind: 'palette'; palette: PaletteState }
 	| { kind: 'menu'; cursor: number }
+	| { kind: 'autoRun'; view: AutoRunViewState }
 	| { kind: 'prompt'; prompt: PromptState; submitting: boolean; error?: string }
 	| { kind: 'confirm'; confirm: ConfirmState; submitting: boolean; error?: string }
 	| { kind: 'groupPicker'; agentId: string; cursor: number }
@@ -156,7 +180,7 @@ type OverlayState =
 			submitting: boolean;
 	  };
 
-export function App({ paths, client }: AppProps): React.ReactElement {
+export function App({ paths, client, editFile = runEditor }: AppProps): React.ReactElement {
 	const { exit } = useApp();
 	const size = useTerminalSize();
 
@@ -185,6 +209,10 @@ export function App({ paths, client }: AppProps): React.ReactElement {
 	};
 	// One line of news for the status bar (read-only refusals, a saved agent). The next key clears it.
 	const [notice, setNotice] = useState<string | undefined>(undefined);
+	// The file open in the person's editor. While set, the App draws one fixed line and reads no keys.
+	const [editing, setEditing] = useState<string | undefined>(undefined);
+	const editFileRef = useRef(editFile);
+	editFileRef.current = editFile;
 	const agentsPaneOverrideRef = useRef(agentsPaneOverride);
 	agentsPaneOverrideRef.current = agentsPaneOverride;
 	const columnsRef = useRef(size.columns);
@@ -562,6 +590,22 @@ export function App({ paths, client }: AppProps): React.ReactElement {
 		else setNotice(result.value.summary);
 	};
 
+	const openAutoRun = (agent: AgentRecord, naming = false) =>
+		setOverlay({ kind: 'autoRun', view: openAutoRunView(paths, agent, { naming }) });
+
+	/** Enter in the name box writes the template and opens it; Enter on a row opens that document. */
+	const openAutoRunDocument = (current: Extract<OverlayState, { kind: 'autoRun' }>) => {
+		if (current.view.naming) {
+			const outcome = submitNewDocument(current.view);
+			setOverlay({ ...current, view: outcome.view });
+			if (outcome.edit) setEditing(outcome.edit);
+			return;
+		}
+		const document = highlightedDocument(current.view);
+		if (document) setEditing(document.file);
+		else setNotice('No document to edit. Press n to create one.');
+	};
+
 	/** The tab a tab action means: the highlighted one in the tab switcher, else the one on screen. */
 	const tabTarget = (current: OverlayState | undefined) => {
 		const owner = cursorAgentRef.current;
@@ -819,6 +863,23 @@ export function App({ paths, client }: AppProps): React.ReactElement {
 				void openProviderPicker(target.agent);
 				return;
 			}
+			case 'autoRun':
+				if (agent) openAutoRun(agent);
+				else setNotice('Select an agent to see its Auto Run documents.');
+				return;
+			case 'newDocument':
+				// From the palette or the menu there is no list yet: open it, with the name box up.
+				if (current?.kind === 'autoRun') {
+					if (current.view.canCreate) setOverlay({ ...current, view: beginNaming(current.view) });
+					else setNotice('A document cannot be created for this agent here.');
+				} else if (agent) openAutoRun(agent, true);
+				else setNotice('Select an agent to create an Auto Run document.');
+				return;
+			case 'reloadDocuments':
+				if (current?.kind === 'autoRun') {
+					setOverlay({ ...current, view: reloadAutoRunView(current.view) });
+				} else if (agent) openAutoRun(agent);
+				return;
 			case 'confirm':
 				submitConfirmOverlay();
 				return;
@@ -838,6 +899,11 @@ export function App({ paths, client }: AppProps): React.ReactElement {
 				return;
 			}
 			case 'closeOverlay':
+				// Esc in the name box puts the box away and keeps the list.
+				if (current?.kind === 'autoRun' && current.view.naming) {
+					setOverlay({ ...current, view: cancelNaming(current.view) });
+					return;
+				}
 				setOverlay(undefined);
 				return;
 			case 'nextPane':
@@ -900,6 +966,8 @@ export function App({ paths, client }: AppProps): React.ReactElement {
 				} else if (current?.kind === 'groupPicker') {
 					const count = groupChoices(groupsFromSections(data.sections)).length;
 					setOverlay({ ...current, cursor: moveGroupCursor(current.cursor, delta, count) });
+				} else if (current?.kind === 'autoRun') {
+					setOverlay({ ...current, view: moveAutoRunCursor(current.view, delta) });
 				} else if (current?.kind === 'providerPicker') {
 					if (!current.done) {
 						setOverlay({
@@ -939,6 +1007,10 @@ export function App({ paths, client }: AppProps): React.ReactElement {
 				}
 				if (current?.kind === 'providerPicker') {
 					void submitProviderPicker(current);
+					return;
+				}
+				if (current?.kind === 'autoRun') {
+					openAutoRunDocument(current);
 					return;
 				}
 				if (current?.kind === 'palette') {
@@ -985,48 +1057,88 @@ export function App({ paths, client }: AppProps): React.ReactElement {
 		}
 	};
 
-	useInput((input, key) => {
-		setNotice(undefined);
-		const current = overlayRef.current;
-		const context: KeyContext = current ? current.kind : composerHasKeys() ? 'composer' : 'main';
-		const action = resolveAction(context, input, key);
-		if (action) {
-			runAction(action, current, true);
-			return;
-		}
-		if (context === 'composer') {
-			editComposer(input, key);
-			return;
-		}
-		// The palette, the agent form, and the prompts are the overlays with text boxes: what no binding claims is typing.
-		if (current?.kind === 'form') {
-			const ctx = formContextRef.current;
-			if (!ctx) return;
-			if (isBackspaceKey(key)) updateForm((form) => formBackspace(ctx, form));
-			else {
+	useInput(
+		(input, key) => {
+			setNotice(undefined);
+			const current = overlayRef.current;
+			const context: KeyContext = current
+				? current.kind === 'autoRun' && current.view.naming
+					? 'autoRunName'
+					: current.kind
+				: composerHasKeys()
+					? 'composer'
+					: 'main';
+			const action = resolveAction(context, input, key);
+			if (action) {
+				runAction(action, current, true);
+				return;
+			}
+			if (context === 'composer') {
+				editComposer(input, key);
+				return;
+			}
+			// The palette, the agent form, and the prompts are the overlays with text boxes: what no binding claims is typing.
+			if (current?.kind === 'form') {
+				const ctx = formContextRef.current;
+				if (!ctx) return;
+				if (isBackspaceKey(key)) updateForm((form) => formBackspace(ctx, form));
+				else {
+					const text = typedTextFor(input, key);
+					if (text) updateForm((form) => typeText(ctx, form, text));
+				}
+				return;
+			}
+			if (current?.kind === 'prompt') {
+				if (isBackspaceKey(key)) {
+					setOverlay({ ...current, prompt: backspacePrompt(current.prompt) });
+					return;
+				}
 				const text = typedTextFor(input, key);
-				if (text) updateForm((form) => typeText(ctx, form, text));
-			}
-			return;
-		}
-		if (current?.kind === 'prompt') {
-			if (isBackspaceKey(key)) {
-				setOverlay({ ...current, prompt: backspacePrompt(current.prompt) });
+				if (text) setOverlay({ ...current, prompt: typeIntoPrompt(current.prompt, text) });
 				return;
 			}
-			const text = typedTextFor(input, key);
-			if (text) setOverlay({ ...current, prompt: typeIntoPrompt(current.prompt, text) });
-			return;
-		}
-		if (current?.kind === 'palette') {
-			if (isPaletteBackspace(key)) {
-				setOverlay({ kind: 'palette', palette: backspacePalette(current.palette) });
+			if (current?.kind === 'autoRun' && current.view.naming) {
+				if (isBackspaceKey(key)) {
+					setOverlay({ ...current, view: backspaceName(current.view) });
+					return;
+				}
+				const text = typedTextFor(input, key);
+				if (text) setOverlay({ ...current, view: typeIntoName(current.view, text) });
 				return;
 			}
-			const text = paletteTextFor(input, key);
-			if (text) setOverlay({ kind: 'palette', palette: typeIntoPalette(current.palette, text) });
-		}
-	});
+			if (current?.kind === 'palette') {
+				if (isPaletteBackspace(key)) {
+					setOverlay({ kind: 'palette', palette: backspacePalette(current.palette) });
+					return;
+				}
+				const text = paletteTextFor(input, key);
+				if (text) setOverlay({ kind: 'palette', palette: typeIntoPalette(current.palette, text) });
+			}
+			// Off while the editor owns the terminal: Ink then stops reading stdin and leaves raw mode.
+		},
+		{ isActive: editing === undefined }
+	);
+
+	// Runs after Ink has let go of the keyboard (this effect is declared after `useInput`'s).
+	useEffect(() => {
+		if (editing === undefined) return;
+		let live = true;
+		const timer = setTimeout(async () => {
+			const result = await editFileRef.current(editing);
+			if (!live) return;
+			const latest = overlayRef.current;
+			if (latest?.kind === 'autoRun') {
+				setOverlay({ ...latest, view: finishAutoRunEdit(latest.view, editing, result) });
+			} else if (!result.ok) {
+				setNotice(result.message);
+			}
+			setEditing(undefined);
+		}, EDITOR_SETTLE_MS);
+		return () => {
+			live = false;
+			clearTimeout(timer);
+		};
+	}, [editing]);
 
 	const renderOverlay = overlay
 		? ({ width, height }: { width: number; height: number }) => {
@@ -1115,6 +1227,13 @@ export function App({ paths, client }: AppProps): React.ReactElement {
 							/>
 						);
 					}
+					case 'autoRun': {
+						const picked = data.agents.find((a) => a.id === overlay.view.agentId);
+						if (!picked) return null;
+						return (
+							<AutoRunView agent={picked} state={overlay.view} width={width} height={height} />
+						);
+					}
 					case 'history':
 						return cursorAgent ? (
 							<HistoryView
@@ -1138,6 +1257,14 @@ export function App({ paths, client }: AppProps): React.ReactElement {
 				}
 			}
 		: undefined;
+
+	if (editing !== undefined) {
+		return (
+			<Text>
+				Editing {editing} in {resolveEditorCommand()}. Save and quit to come back.
+			</Text>
+		);
+	}
 
 	return (
 		<Shell

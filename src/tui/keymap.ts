@@ -23,7 +23,11 @@ export type KeyContext =
 	| 'prompt'
 	| 'confirm'
 	| 'groupPicker'
-	| 'providerPicker';
+	| 'providerPicker'
+	/** The Auto Run documents of an agent. */
+	| 'autoRun'
+	/** The box a new Auto Run document is named in: letters type. */
+	| 'autoRunName';
 
 export type KeyAction =
 	| 'quit'
@@ -51,6 +55,9 @@ export type KeyAction =
 	| 'deleteItem'
 	| 'moveToGroup'
 	| 'switchProvider'
+	| 'autoRun'
+	| 'newDocument'
+	| 'reloadDocuments'
 	| 'newGroup'
 	| 'confirm'
 	| 'send'
@@ -123,6 +130,7 @@ export const KEYMAP: readonly Binding[] = [
 			'prompt',
 			'groupPicker',
 			'providerPicker',
+			'autoRun',
 		],
 		chordsByContext: {
 			palette: [{ named: 'down' }, { input: 'n', ctrl: true }],
@@ -146,6 +154,7 @@ export const KEYMAP: readonly Binding[] = [
 			'prompt',
 			'groupPicker',
 			'providerPicker',
+			'autoRun',
 		],
 		chordsByContext: {
 			palette: [{ named: 'up' }, { input: 'p', ctrl: true }],
@@ -166,8 +175,10 @@ export const KEYMAP: readonly Binding[] = [
 			'prompt',
 			'groupPicker',
 			'providerPicker',
+			'autoRun',
+			'autoRunName',
 		],
-		description: 'Open agent, fold group, pick, next field, save a prompt',
+		description: 'Open agent, fold group, pick, next field, save, edit',
 		agentMenu: 'Open conversation',
 	},
 	{
@@ -247,6 +258,25 @@ export const KEYMAP: readonly Binding[] = [
 		agentMenu: 'Change provider',
 	},
 	{
+		action: 'autoRun',
+		chords: [{ input: 'a' }],
+		contexts: ['main'],
+		description: 'Auto Run documents of the selected agent',
+		agentMenu: 'Auto Run documents',
+	},
+	{
+		action: 'newDocument',
+		chords: [{ input: 'n' }],
+		contexts: ['autoRun'],
+		description: 'New Auto Run document, opened in $EDITOR',
+	},
+	{
+		action: 'reloadDocuments',
+		chords: [{ input: 'r' }],
+		contexts: ['autoRun'],
+		description: 'Reload the Auto Run documents',
+	},
+	{
 		action: 'newGroup',
 		chords: [{ input: 'N' }],
 		contexts: ['main'],
@@ -285,6 +315,8 @@ export const KEYMAP: readonly Binding[] = [
 			'confirm',
 			'groupPicker',
 			'providerPicker',
+			'autoRun',
+			'autoRunName',
 		],
 		description: 'Interrupt the turn; twice in 1s quits',
 		agentMenu: 'Interrupt turn',
@@ -369,6 +401,8 @@ export const KEYMAP: readonly Binding[] = [
 			'confirm',
 			'groupPicker',
 			'providerPicker',
+			'autoRun',
+			'autoRunName',
 		],
 		// A confirmation also takes `n`: "no" is the answer a hand reaches for next to `y`.
 		chordsByContext: { confirm: [{ named: 'escape' }, { input: 'n' }] },

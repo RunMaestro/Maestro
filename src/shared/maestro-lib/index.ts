@@ -40,6 +40,15 @@ export { asThinkingMode } from '../types';
 // Provider swap: park and restore provider-specific tab and agent state (PS-5)
 export * from './agents/providerSwap';
 
+// Auto Run: the folder, document scanners, and validation both engines and the TUI read alike
+export * from '../markdownTaskScan';
+export * from '../autorunMarkers';
+export { PLAYBOOKS_DIR } from '../maestro-paths';
+export * from './autorun/documents';
+export * from './autorun/last-run';
+export * from './autorun/templates';
+export * from './autorun/validate';
+
 // Agent form rules, shared with the desktop so a TUI form and the Edit dialog cannot disagree
 export { defaultAgentNameForPath, projectNameFromPath } from '../projectIdentity';
 export {
