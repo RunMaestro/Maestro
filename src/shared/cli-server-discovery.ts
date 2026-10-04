@@ -95,9 +95,21 @@ export function writeCliServerInfo(info: CliServerInfo): void {
  */
 export function readCliServerInfo(): CliServerInfo | null {
 	try {
-		const filePath = getDiscoveryFilePath();
-		const content = fs.readFileSync(filePath, 'utf-8');
-		const data = JSON.parse(content) as CliServerInfo;
+		return parseCliServerInfo(fs.readFileSync(getDiscoveryFilePath(), 'utf-8'));
+	} catch {
+		return null;
+	}
+}
+
+/**
+ * Parse the contents of a discovery file. Returns null for anything that is
+ * not valid JSON or lacks the four required fields. Separate from the read so
+ * a caller with its own path (the TUI's `--doctor`) applies the same validity
+ * rule as the CLI.
+ */
+export function parseCliServerInfo(raw: string): CliServerInfo | null {
+	try {
+		const data = JSON.parse(raw) as CliServerInfo;
 		if (
 			typeof data.port === 'number' &&
 			typeof data.token === 'string' &&
@@ -109,6 +121,20 @@ export function readCliServerInfo(): CliServerInfo | null {
 		return null;
 	} catch {
 		return null;
+	}
+}
+
+/**
+ * Whether a process with this pid exists. `process.kill(pid, 0)` sends no
+ * signal. EPERM means it exists but this caller cannot signal it: common for
+ * sandboxed read-only monitors, and not a stale result.
+ */
+export function isPidAlive(pid: number): boolean {
+	try {
+		process.kill(pid, 0);
+		return true;
+	} catch (error) {
+		return (error as NodeJS.ErrnoException).code === 'EPERM';
 	}
 }
 
@@ -130,17 +156,7 @@ export function deleteCliServerInfo(): void {
  */
 export function isCliServerRunning(): boolean {
 	const info = readCliServerInfo();
-	if (!info) return false;
-
-	try {
-		process.kill(info.pid, 0); // Doesn't kill, just checks if process exists
-		return true;
-	} catch (error) {
-		// EPERM means the process exists but this caller cannot signal it. This is
-		// common for sandboxed read-only monitors and must not turn a reachable
-		// desktop into a stale discovery result. The authenticated WebSocket
-		// connection remains the authoritative reachability check.
-		if ((error as NodeJS.ErrnoException).code === 'EPERM') return true;
-		return false;
-	}
+	// The authenticated WebSocket connection remains the authoritative
+	// reachability check; this only says the recorded process still exists.
+	return info !== null && isPidAlive(info.pid);
 }

@@ -91,11 +91,24 @@ function probeIsPackaged(): boolean {
  * at the computed path.
  */
 export function resolveUserDataDir(options: UserDataDirOptions = {}): string {
+	return decideUserDataDir(options).dir;
+}
+
+/** Which rule of the module doc chose the data directory. */
+export type UserDataDirRule =
+	| 'MAESTRO_USER_DATA'
+	| 'development redirect'
+	| 'packaged default'
+	| 'unpackaged default';
+
+function decideUserDataDir(options: UserDataDirOptions): { dir: string; rule: UserDataDirRule } {
 	const env = options.env ?? process.env;
 	// Taken as given, with no `~/` expansion: every other reader of this
 	// variable resolves it the same plain way, and expanding it only here would
 	// make them disagree about the directory.
-	if (env.MAESTRO_USER_DATA) return path.resolve(env.MAESTRO_USER_DATA);
+	if (env.MAESTRO_USER_DATA) {
+		return { dir: path.resolve(env.MAESTRO_USER_DATA), rule: 'MAESTRO_USER_DATA' };
+	}
 
 	const platform = options.platform ?? os.platform();
 	const home = options.homedir ?? os.homedir();
@@ -104,9 +117,37 @@ export function resolveUserDataDir(options: UserDataDirOptions = {}): string {
 
 	const root = platformRoot(platform, home, env);
 	if (!isPackaged && isDevelopment && !env.USE_PROD_DATA) {
-		return path.join(root, DEV_APP_NAME);
+		return { dir: path.join(root, DEV_APP_NAME), rule: 'development redirect' };
 	}
-	return path.join(root, isPackaged ? PACKAGED_APP_NAME : UNPACKAGED_APP_NAME);
+	return isPackaged
+		? { dir: path.join(root, PACKAGED_APP_NAME), rule: 'packaged default' }
+		: { dir: path.join(root, UNPACKAGED_APP_NAME), rule: 'unpackaged default' };
+}
+
+/** The rule that chose the directory `resolveUserDataDir` returns, for diagnostics. */
+export function resolveUserDataDirRule(options: UserDataDirOptions = {}): UserDataDirRule {
+	return decideUserDataDir(options).rule;
+}
+
+/**
+ * Every directory a run could have meant, in the order they are tried: the one
+ * `resolveUserDataDir` chose, then the other spellings under the same platform
+ * root. An explicit `MAESTRO_USER_DATA` is the only candidate, since nothing
+ * else is consulted when it is set.
+ */
+export function userDataDirCandidates(options: UserDataDirOptions = {}): string[] {
+	const { dir, rule } = decideUserDataDir(options);
+	if (rule === 'MAESTRO_USER_DATA') return [dir];
+	const env = options.env ?? process.env;
+	const root = platformRoot(
+		options.platform ?? os.platform(),
+		options.homedir ?? os.homedir(),
+		env
+	);
+	const others = [PACKAGED_APP_NAME, UNPACKAGED_APP_NAME, DEV_APP_NAME].map((name) =>
+		path.join(root, name)
+	);
+	return [dir, ...others.filter((candidate) => candidate !== dir)];
 }
 
 /**

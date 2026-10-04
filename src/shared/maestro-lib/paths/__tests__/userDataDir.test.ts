@@ -11,6 +11,8 @@ import {
 	assertUserDataDirExists,
 	resolveProductionDataDir,
 	resolveUserDataDir,
+	resolveUserDataDirRule,
+	userDataDirCandidates,
 } from '../userDataDir';
 
 const home = '/home/tester';
@@ -204,5 +206,35 @@ describe('resolveProductionDataDir', () => {
 	it('returns any other directory unchanged', () => {
 		const installed = path.join(os.tmpdir(), 'app-support', 'Maestro');
 		expect(resolveProductionDataDir(installed)).toBe(installed);
+	});
+});
+
+describe('resolveUserDataDirRule and userDataDirCandidates', () => {
+	const linux = { platform: 'linux', homedir: '/home/u', env: {} } as const;
+
+	it('names the rule that chose the directory', () => {
+		expect(resolveUserDataDirRule({ ...linux, env: { MAESTRO_USER_DATA: '/x' } })).toBe(
+			'MAESTRO_USER_DATA'
+		);
+		expect(resolveUserDataDirRule({ ...linux, isPackaged: true })).toBe('packaged default');
+		expect(resolveUserDataDirRule({ ...linux, isPackaged: false })).toBe('unpackaged default');
+		expect(resolveUserDataDirRule({ ...linux, isPackaged: false, isDevelopment: true })).toBe(
+			'development redirect'
+		);
+	});
+
+	it('lists the chosen directory first, then the other spellings', () => {
+		const candidates = userDataDirCandidates({ ...linux, isPackaged: true });
+		expect(candidates).toEqual([
+			path.join('/home/u', '.config', 'Maestro'),
+			path.join('/home/u', '.config', 'maestro'),
+			path.join('/home/u', '.config', 'maestro-dev'),
+		]);
+	});
+
+	it('lists only MAESTRO_USER_DATA when it is set', () => {
+		expect(userDataDirCandidates({ ...linux, env: { MAESTRO_USER_DATA: '/x' } })).toEqual([
+			path.resolve('/x'),
+		]);
 	});
 });

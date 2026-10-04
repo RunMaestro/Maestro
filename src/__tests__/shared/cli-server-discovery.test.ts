@@ -34,6 +34,8 @@ import {
 	readCliServerInfo,
 	deleteCliServerInfo,
 	isCliServerRunning,
+	parseCliServerInfo,
+	isPidAlive,
 } from '../../shared/cli-server-discovery';
 
 // Local type alias mirroring the (now-internal) CliServerInfo shape
@@ -479,5 +481,24 @@ describe('cli-server-discovery', () => {
 
 			expect(result).toBe(false);
 		});
+	});
+});
+
+describe('parseCliServerInfo', () => {
+	it('accepts a complete record', () => {
+		const raw = JSON.stringify({ port: 1, token: 't', pid: 2, startedAt: 3 });
+		expect(parseCliServerInfo(raw)).toMatchObject({ port: 1, pid: 2 });
+	});
+
+	it('rejects invalid JSON and records missing a required field', () => {
+		expect(parseCliServerInfo('{nope')).toBeNull();
+		expect(parseCliServerInfo(JSON.stringify({ port: 1, token: 't', pid: 2 }))).toBeNull();
+	});
+});
+
+describe('isPidAlive', () => {
+	it('is true for this process and false for a pid that cannot exist', () => {
+		expect(isPidAlive(process.pid)).toBe(true);
+		expect(isPidAlive(2 ** 31 - 2)).toBe(false);
 	});
 });

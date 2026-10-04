@@ -11,6 +11,8 @@
 export * from './paths/userDataDir';
 export * from './paths/resolve';
 export * from './paths/syncPath';
+export * from './paths/doctor';
+export * from '../cli-server-discovery';
 
 // Launch and argument building
 export * from './launch/launch-plan';
