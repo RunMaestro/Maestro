@@ -373,6 +373,40 @@ describe('ExtensionDetails - plugin settings panels', () => {
 		expect(onTogglePlugin).toHaveBeenCalledExactlyOnceWith(plugin.record);
 	});
 
+	it('mounts the declared panel only after consent enables it and active contributions arrive', async () => {
+		const disabled = pluginTile('plugin-a', true);
+		disabled.state = 'installed';
+		disabled.record = { ...disabled.record!, enabled: false };
+		let grantedNow = false;
+		const getGrants = vi.fn(async () => (grantedNow ? granted : { requested: [], granted: [] }));
+		const props = {
+			theme,
+			ext: disabled,
+			contributions: contributions([]),
+			busy: false,
+			onTogglePlugin: vi.fn(),
+			onToggleBuiltin: vi.fn(),
+			onUninstall: vi.fn(),
+			onRevoke: vi.fn(),
+			getGrants,
+		};
+		const view = render(<ExtensionDetails {...props} />);
+		expect(view.container.querySelector('webview')).toBeNull();
+		const enabled = pluginTile('plugin-a', true);
+		view.rerender(<ExtensionDetails {...props} ext={enabled} />);
+		expect(view.container.querySelector('webview')).toBeNull();
+		grantedNow = true;
+		view.rerender(
+			<ExtensionDetails
+				{...props}
+				ext={enabled}
+				contributions={contributions([panel('plugin-a')])}
+				getGrants={vi.fn(async () => granted)}
+			/>
+		);
+		await waitFor(() => expect(view.container.querySelectorAll('webview')).toHaveLength(1));
+	});
+
 	it('discovers a disabled declarative setting, but not an unrelated settings-less plugin', () => {
 		const plugin = pluginTile('plugin-a');
 		plugin.state = 'installed';
