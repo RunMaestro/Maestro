@@ -43,6 +43,7 @@ import {
 	groupChatStop,
 } from './commands/group-chat';
 import { doctor } from './commands/doctor';
+import { tui } from './commands/tui';
 import { completions } from './commands/completions';
 import { reference } from './commands/reference';
 import { autoRun } from './commands/auto-run';
@@ -1202,6 +1203,16 @@ program
 	.description('Diagnose CLI connectivity, version skew, and configuration')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((options) => doctor(cliVersion, options));
+
+// TUI command - launch the Maestro terminal UI (a separate ESM bundle, so plain
+// CLI calls never load React)
+program
+	.command('tui')
+	.description('Launch the Maestro terminal UI')
+	.option('--data-dir <path>', 'Maestro data directory (default: resolved like the desktop app)')
+	.option('--dev', 'Use the development data directory')
+	.option('--doctor', 'Print the resolved paths and runtime state, then exit')
+	.action((options) => tui(options));
 
 // Completions command - emit a shell completion script (introspects the program)
 program
