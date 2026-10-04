@@ -299,3 +299,48 @@ describe('validateSubscription - github.label', () => {
 		).toBe(true);
 	});
 });
+
+describe('validateSubscription - ticket.created / ticket.assigned', () => {
+	const base = {
+		name: 'fix-tickets',
+		event: 'ticket.assigned',
+		prompt: 'Fix {{CUE_TICKET_ID}}',
+		agent_id: 'agent-xyz',
+	};
+
+	it('requires ticket_provider', () => {
+		expect(errs(base).some((e) => /"ticket_provider" is required/.test(e))).toBe(true);
+		expect(errs({ ...base, ticket_provider: 'asana' }).some((e) => /ticket_provider/.test(e))).toBe(
+			true
+		);
+	});
+
+	it('accepts linear and jira with an optional key and poll interval', () => {
+		expect(errs({ ...base, ticket_provider: 'linear' })).toEqual([]);
+		expect(
+			errs({
+				...base,
+				event: 'ticket.created',
+				ticket_provider: 'jira',
+				ticket_project: 'OPS',
+				poll_minutes: 2,
+			})
+		).toEqual([]);
+	});
+
+	it('rejects a ticket_project that is not a plain key', () => {
+		const found = errs({
+			...base,
+			ticket_provider: 'jira',
+			ticket_project: 'OPS" OR project = "X',
+		});
+		expect(
+			found.some((e) => /"ticket_project" must be a Linear team key or Jira project key/.test(e))
+		).toBe(true);
+	});
+
+	it('rejects a poll_minutes below 1', () => {
+		const found = errs({ ...base, ticket_provider: 'linear', poll_minutes: 0 });
+		expect(found.some((e) => /"poll_minutes" must be a number >= 1/.test(e))).toBe(true);
+	});
+});

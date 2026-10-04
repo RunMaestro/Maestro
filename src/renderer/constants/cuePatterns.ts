@@ -222,6 +222,22 @@ subscriptions:
 `,
 	},
 	{
+		id: 'ticket-to-fix',
+		name: 'Ticket to Fix',
+		description: 'Start an agent the moment a Linear or Jira ticket lands on you',
+		explanation:
+			'Polls Linear or Jira and fires when a ticket is filed (ticket.created) or when an open ticket is assigned to you (ticket.assigned), so the agent starts on the fix the moment the work exists. Narrow it with ticket_project (a Linear team key or Jira project key) and filter on fields like priority or labels. Set LINEAR_API_KEY, or JIRA_BASE_URL + JIRA_EMAIL + JIRA_API_TOKEN, in Settings -> Environment or on the agent. {{CUE_TICKET_ID}}, {{CUE_TICKET_TITLE}}, and {{CUE_TICKET_BODY}} carry the ticket. Tickets already there when the subscription is first saved never fire.',
+		yaml: `subscriptions:
+  - name: "Fix Assigned Tickets"
+    event: ticket.assigned       # or ticket.created
+    ticket_provider: linear      # linear | jira
+    ticket_project: ENG          # optional team/project key
+    poll_minutes: 5
+    prompt_file: prompts/fix-ticket.md
+    enabled: true
+`,
+	},
+	{
 		id: 'task-queue',
 		name: 'Task Queue',
 		description: 'Process pending markdown tasks from a directory',

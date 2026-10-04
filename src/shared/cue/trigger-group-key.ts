@@ -48,6 +48,8 @@ export function triggerGroupKey(sub: CueSubscription): string {
 		gh_state: sub.gh_state ?? null,
 		gh_label_target: sub.gh_label_target ?? null,
 		gh_labels: sub.gh_labels ?? null,
+		ticket_provider: sub.ticket_provider ?? null,
+		ticket_project: sub.ticket_project ?? null,
 		retrigger_on_comments: sub.retrigger_on_comments ?? null,
 		max_notifications: sub.max_notifications ?? null,
 		label: sub.label ?? null,

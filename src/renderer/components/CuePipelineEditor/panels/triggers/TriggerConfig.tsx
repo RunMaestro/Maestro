@@ -416,6 +416,60 @@ export function TriggerConfig({ node, theme, onUpdateNode }: TriggerConfigProps)
 				</div>
 			);
 		}
+		case 'ticket.created':
+		case 'ticket.assigned': {
+			const provider = localConfig.ticket_provider ?? 'linear';
+			return (
+				<div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+					{nameField}
+					<label style={themedLabelStyle} htmlFor="cue-ticket-provider-select">
+						Tracker
+					</label>
+					<CueSelect
+						id="cue-ticket-provider-select"
+						value={provider}
+						options={[
+							{ value: 'linear', label: 'Linear' },
+							{ value: 'jira', label: 'Jira' },
+						]}
+						onChange={(v) => updateConfig('ticket_provider', v)}
+						theme={theme}
+					/>
+					<label style={themedLabelStyle}>
+						{provider === 'jira' ? 'Project key' : 'Team key'} (blank = all)
+						<input
+							type="text"
+							value={localConfig.ticket_project ?? ''}
+							onChange={(e) => updateConfig('ticket_project', e.target.value)}
+							placeholder={provider === 'jira' ? 'OPS' : 'ENG'}
+							style={themedInputStyle}
+						/>
+					</label>
+					<label style={themedLabelStyle}>
+						Poll every N minutes
+						<input
+							type="number"
+							min={1}
+							value={localConfig.poll_minutes ?? ''}
+							onChange={(e) => updateNumericConfig('poll_minutes', e.target.value)}
+							placeholder="5"
+							style={themedInputStyle}
+						/>
+					</label>
+					<div style={{ color: theme.colors.textDim, fontSize: 12, fontStyle: 'italic' }}>
+						{data.eventType === 'ticket.assigned'
+							? 'Fires once per open ticket that lands in your queue.'
+							: 'Fires once per newly filed ticket.'}{' '}
+						Tickets already there when the trigger is first saved do not fire. Credentials come from
+						the agent's environment:{' '}
+						{provider === 'jira'
+							? 'JIRA_BASE_URL, JIRA_EMAIL, and JIRA_API_TOKEN'
+							: 'LINEAR_API_KEY'}{' '}
+						(Settings, Environment, or the agent's own variables).
+					</div>
+				</div>
+			);
+		}
 		case 'task.pending':
 			return (
 				<div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>

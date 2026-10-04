@@ -426,3 +426,30 @@ describe('normalizer - github.label field passthrough', () => {
 		).toBeUndefined();
 	});
 });
+
+describe('normalizer - ticket field passthrough', () => {
+	function normalizeSub(sub: Record<string, unknown>) {
+		const raw = yaml.dump({ subscriptions: [sub] });
+		const doc = parseCueConfigDocument(raw, projectRoot);
+		return materializeCueConfig(doc!).config.subscriptions[0];
+	}
+
+	const base = {
+		name: 'fix-tickets',
+		event: 'ticket.created',
+		prompt: 'Fix it',
+		enabled: true,
+	};
+
+	it('passes through ticket_provider and a trimmed ticket_project', () => {
+		const sub = normalizeSub({ ...base, ticket_provider: 'jira', ticket_project: ' OPS ' });
+		expect(sub.ticket_provider).toBe('jira');
+		expect(sub.ticket_project).toBe('OPS');
+	});
+
+	it('drops an unknown provider and a blank project', () => {
+		const sub = normalizeSub({ ...base, ticket_provider: 'asana', ticket_project: '  ' });
+		expect(sub.ticket_provider).toBeUndefined();
+		expect(sub.ticket_project).toBeUndefined();
+	});
+});

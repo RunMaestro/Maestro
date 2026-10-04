@@ -295,20 +295,22 @@ Cue is configured via a `.maestro/cue.yaml` file placed inside the `.maestro/` d
 
 ## Event Types
 
-Cue supports eleven event types that trigger subscriptions:
+Cue supports these event types:
 
-| Event Type            | Trigger                             | Key Fields                        |
-| --------------------- | ----------------------------------- | --------------------------------- |
-| `app.startup`         | Maestro launches                    | -                                 |
-| `time.heartbeat`      | Periodic timer ("every N minutes")  | `interval_minutes`                |
-| `time.scheduled`      | Specific times and days of the week | `schedule_times`, `schedule_days` |
-| `file.changed`        | File created, modified, or deleted  | `watch` (glob pattern)            |
-| `agent.completed`     | Another agent finishes a task       | `source_session`                  |
-| `task.pending`        | Unchecked markdown tasks found      | `watch` (glob pattern)            |
-| `github.pull_request` | New PR opened on GitHub             | `repo` (optional)                 |
-| `github.issue`        | New issue opened on GitHub          | `repo` (optional)                 |
-| `github.label`        | A label lands on a PR or issue      | `gh_label_target`, `gh_labels`    |
-| `cli.trigger`         | Manual trigger via `maestro-cli`    | -                                 |
+| Event Type            | Trigger                               | Key Fields                          |
+| --------------------- | ------------------------------------- | ----------------------------------- |
+| `app.startup`         | Maestro launches                      | -                                   |
+| `time.heartbeat`      | Periodic timer ("every N minutes")    | `interval_minutes`                  |
+| `time.scheduled`      | Specific times and days of the week   | `schedule_times`, `schedule_days`   |
+| `file.changed`        | File created, modified, or deleted    | `watch` (glob pattern)              |
+| `agent.completed`     | Another agent finishes a task         | `source_session`                    |
+| `task.pending`        | Unchecked markdown tasks found        | `watch` (glob pattern)              |
+| `github.pull_request` | New PR opened on GitHub               | `repo` (optional)                   |
+| `github.issue`        | New issue opened on GitHub            | `repo` (optional)                   |
+| `github.label`        | A label lands on a PR or issue        | `gh_label_target`, `gh_labels`      |
+| `ticket.created`      | Linear or Jira ticket filed           | `ticket_provider`, `ticket_project` |
+| `ticket.assigned`     | Linear or Jira ticket assigned to you | `ticket_provider`, `ticket_project` |
+| `cli.trigger`         | Manual trigger via `maestro-cli`      | -                                   |
 
 See [Event Types](./maestro-cue-events) for detailed documentation and examples for each type.
 

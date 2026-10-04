@@ -213,6 +213,16 @@ function applyTriggerEventConfig(sub: CueSubscription, triggerData: TriggerNodeD
 				sub.gh_labels = triggerData.config.gh_labels;
 			}
 			break;
+		case 'ticket.created':
+		case 'ticket.assigned':
+			if (triggerData.config.ticket_provider) {
+				sub.ticket_provider = triggerData.config.ticket_provider;
+			}
+			if (triggerData.config.ticket_project?.trim()) {
+				sub.ticket_project = triggerData.config.ticket_project.trim();
+			}
+			if (triggerData.config.poll_minutes) sub.poll_minutes = triggerData.config.poll_minutes;
+			break;
 		case 'task.pending':
 			sub.watch = triggerData.config.watch ?? '**/*.md';
 			break;
@@ -949,6 +959,8 @@ export function pipelinesToSubscriptionRecords(
 			if (sub.max_notifications != null) record.max_notifications = sub.max_notifications;
 			if (sub.gh_label_target != null) record.gh_label_target = sub.gh_label_target;
 			if (sub.gh_labels != null) record.gh_labels = sub.gh_labels;
+			if (sub.ticket_provider != null) record.ticket_provider = sub.ticket_provider;
+			if (sub.ticket_project != null) record.ticket_project = sub.ticket_project;
 			if (sub.source_session != null) record.source_session = sub.source_session;
 			if (sub.source_session_ids != null) record.source_session_ids = sub.source_session_ids;
 			if (sub.source_sub != null) record.source_sub = sub.source_sub;

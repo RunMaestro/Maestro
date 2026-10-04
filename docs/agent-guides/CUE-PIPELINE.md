@@ -24,6 +24,8 @@ Cue is an event-driven automation system that triggers AI agent prompts in respo
 | `github.pull_request` | New PRs detected via `gh` CLI polling                     | `triggers/cue-github-poller-trigger-source.ts` |
 | `github.issue`        | New issues detected via `gh` CLI polling                  | `triggers/cue-github-poller-trigger-source.ts` |
 | `github.label`        | A label added to a PR or issue (repo issue-event feed)    | `triggers/cue-github-poller-trigger-source.ts` |
+| `ticket.created`      | New Linear/Jira ticket (`cue-ticket-poller.ts`)           | `triggers/cue-ticket-poller-trigger-source.ts` |
+| `ticket.assigned`     | Open Linear/Jira ticket assigned to the credential owner  | `triggers/cue-ticket-poller-trigger-source.ts` |
 | `task.pending`        | Unchecked markdown tasks (`- [ ]`) found in watched files | `triggers/cue-task-scanner-trigger-source.ts`  |
 
 ### Execution Patterns
@@ -124,17 +126,18 @@ Thin facade over `config/` modules. Provides `loadCueConfig()`, `resolveCueConfi
 
 The `cue-subscription-setup.ts` module was deleted on rc. Each event source is now its own trigger source implementing a common interface in `triggers/cue-trigger-source.ts`:
 
-| File                                  | Purpose                                                             |
-| ------------------------------------- | ------------------------------------------------------------------- |
-| `cue-trigger-source.ts`               | Common trigger source interface                                     |
-| `cue-trigger-source-registry.ts`      | Registry and lookup of trigger sources                              |
-| `cue-trigger-filter.ts`               | Shared filter-matching helpers                                      |
-| `cue-heartbeat-trigger-source.ts`     | `time.heartbeat` interval timer                                     |
-| `cue-scheduled-trigger-source.ts`     | `time.scheduled` cron-like firing                                   |
-| `cue-schedule-utils.ts`               | Next-occurrence calculation (replaces `calculateNextScheduledTime`) |
-| `cue-file-watcher-trigger-source.ts`  | `file.changed` chokidar wrapper                                     |
-| `cue-github-poller-trigger-source.ts` | `github.pull_request` / `github.issue` / `github.label` poller      |
-| `cue-task-scanner-trigger-source.ts`  | `task.pending` markdown scanner                                     |
+| File                                  | Purpose                                                                                                        |
+| ------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `cue-trigger-source.ts`               | Common trigger source interface                                                                                |
+| `cue-trigger-source-registry.ts`      | Registry and lookup of trigger sources                                                                         |
+| `cue-trigger-filter.ts`               | Shared filter-matching helpers                                                                                 |
+| `cue-heartbeat-trigger-source.ts`     | `time.heartbeat` interval timer                                                                                |
+| `cue-scheduled-trigger-source.ts`     | `time.scheduled` cron-like firing                                                                              |
+| `cue-schedule-utils.ts`               | Next-occurrence calculation (replaces `calculateNextScheduledTime`)                                            |
+| `cue-file-watcher-trigger-source.ts`  | `file.changed` chokidar wrapper                                                                                |
+| `cue-github-poller-trigger-source.ts` | `github.pull_request` / `github.issue` / `github.label` poller                                                 |
+| `cue-task-scanner-trigger-source.ts`  | `task.pending` markdown scanner                                                                                |
+| `cue-ticket-poller-trigger-source.ts` | `ticket.created` / `ticket.assigned` Linear and Jira poller; resolves credentials from the agent's environment |
 
 ### cue-run-manager.ts (~452 lines)
 

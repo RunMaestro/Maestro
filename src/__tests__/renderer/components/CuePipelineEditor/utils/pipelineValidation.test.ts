@@ -78,8 +78,8 @@ function pipeline(
 
 describe('pipelineValidation', () => {
 	describe('DEFAULT_TRIGGER_LABELS', () => {
-		it('covers all 11 CueEventType values', () => {
-			expect(Object.keys(DEFAULT_TRIGGER_LABELS)).toHaveLength(11);
+		it('covers all 13 CueEventType values', () => {
+			expect(Object.keys(DEFAULT_TRIGGER_LABELS)).toHaveLength(13);
 			expect(DEFAULT_TRIGGER_LABELS['app.startup']).toBe('Startup');
 			expect(DEFAULT_TRIGGER_LABELS['time.heartbeat']).toBe('Heartbeat');
 			expect(DEFAULT_TRIGGER_LABELS['time.scheduled']).toBe('Scheduled');
@@ -89,6 +89,8 @@ describe('pipelineValidation', () => {
 			expect(DEFAULT_TRIGGER_LABELS['github.pull_request']).toBe('Pull Request');
 			expect(DEFAULT_TRIGGER_LABELS['github.issue']).toBe('Issue');
 			expect(DEFAULT_TRIGGER_LABELS['github.label']).toBe('Label Added');
+			expect(DEFAULT_TRIGGER_LABELS['ticket.created']).toBe('Ticket Created');
+			expect(DEFAULT_TRIGGER_LABELS['ticket.assigned']).toBe('Ticket Assigned');
 			expect(DEFAULT_TRIGGER_LABELS['task.pending']).toBe('Pending Task');
 			expect(DEFAULT_TRIGGER_LABELS['cli.trigger']).toBe('CLI Trigger');
 		});
@@ -299,6 +301,32 @@ describe('pipelineValidation', () => {
 				const a = agentNode('a1', { inputPrompt: 'p' });
 				const errors = validatePipelines([pipeline('Issue', [t, a], [edge('e1', 't1', 'a1')])]);
 				expect(errors.some((e) => /empty "repo"/.test(e))).toBe(true);
+			});
+
+			it('ticket triggers need a tracker', () => {
+				const t = triggerNode('t1', 'ticket.assigned', {});
+				const a = agentNode('a1', { inputPrompt: 'p' });
+				const errors = validatePipelines([pipeline('Tix', [t, a], [edge('e1', 't1', 'a1')])]);
+				expect(errors.some((e) => /needs a tracker/.test(e))).toBe(true);
+			});
+
+			it('ticket triggers accept a provider and a plain team key', () => {
+				const t = triggerNode('t1', 'ticket.created', {
+					ticket_provider: 'jira',
+					ticket_project: 'OPS',
+				});
+				const a = agentNode('a1', { inputPrompt: 'p' });
+				expect(validatePipelines([pipeline('Tix', [t, a], [edge('e1', 't1', 'a1')])])).toEqual([]);
+			});
+
+			it('ticket triggers flag a team key that is not a key', () => {
+				const t = triggerNode('t1', 'ticket.created', {
+					ticket_provider: 'linear',
+					ticket_project: 'ENG OR 1=1',
+				});
+				const a = agentNode('a1', { inputPrompt: 'p' });
+				const errors = validatePipelines([pipeline('Tix', [t, a], [edge('e1', 't1', 'a1')])]);
+				expect(errors.some((e) => /invalid team\/project key/.test(e))).toBe(true);
 			});
 
 			it('includes customLabel in trigger error messages', () => {

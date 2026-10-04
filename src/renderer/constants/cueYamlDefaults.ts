@@ -50,6 +50,13 @@ export const CUE_YAML_TEMPLATE = `# .maestro/cue.yaml
 #     prompt: prompts/labeled-pr.md  # {{CUE_GH_LABEL}} is the label that landed
 #     enabled: true
 #
+#   - name: "fix assigned tickets"
+#     event: ticket.assigned       # or ticket.created
+#     ticket_provider: linear      # linear | jira
+#     ticket_project: ENG          # optional team/project key
+#     prompt: prompts/fix-ticket.md  # {{CUE_TICKET_BODY}} is the ticket text
+#     enabled: true
+#
 #   - name: "process task queue"
 #     event: task.pending
 #     watch: "tasks/**/*.md"

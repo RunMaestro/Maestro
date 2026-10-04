@@ -122,6 +122,27 @@ enricherRegistry.set('github.pull_request', (event) => buildGitHubContext(event)
 enricherRegistry.set('github.issue', (event) => buildGitHubContext(event));
 enricherRegistry.set('github.label', (event) => buildGitHubContext(event));
 
+/** Shared enricher for ticket.created and ticket.assigned events. */
+function buildTicketContext(event: CueEvent): Record<string, string> {
+	return {
+		ticketProvider: String(event.payload.provider ?? ''),
+		ticketId: String(event.payload.ticket_id ?? ''),
+		ticketTitle: String(event.payload.title ?? ''),
+		ticketBody: String(event.payload.body ?? ''),
+		ticketUrl: String(event.payload.url ?? ''),
+		ticketState: String(event.payload.state ?? ''),
+		ticketPriority: String(event.payload.priority ?? ''),
+		ticketAssignee: String(event.payload.assignee ?? ''),
+		ticketReporter: String(event.payload.reporter ?? ''),
+		ticketLabels: String(event.payload.labels ?? ''),
+		ticketProject: String(event.payload.project ?? ''),
+		ticketCreatedAt: String(event.payload.created_at ?? ''),
+	};
+}
+
+enricherRegistry.set('ticket.created', (event) => buildTicketContext(event));
+enricherRegistry.set('ticket.assigned', (event) => buildTicketContext(event));
+
 /** cli.trigger enricher - adds CLI-specific fields. */
 enricherRegistry.set('cli.trigger', (event) => ({
 	cliPrompt: String(event.payload.cliPrompt ?? ''),

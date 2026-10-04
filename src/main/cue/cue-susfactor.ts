@@ -1,9 +1,9 @@
 /**
  * 0DIN.ai SusFactor pre-flight check for attacker-controllable Cue input.
  *
- * Cue ingests GitHub issue/PR bodies and comments and hands them to an agent.
- * Those are the only Cue inputs a third party can write, so they are the only
- * ones scored here - task files, CLI prompts, and watched files are the user's
+ * Cue ingests GitHub issue/PR bodies and comments, and Linear/Jira ticket
+ * bodies, and hands them to an agent. Those are the only Cue inputs a third
+ * party can write, so they are the only ones scored here - task files, CLI prompts, and watched files are the user's
  * own text and scoring them only produced false positives (Maestro's own test
  * fixtures contain injection strings) and fan-out cost.
  *
@@ -318,6 +318,11 @@ export function extractGitHubScorableText(payload: Record<string, unknown>): str
 }
 
 function describeItem(payload: Record<string, unknown>): string {
+	// ticket.* events name the ticket by its own identifier (ENG-123).
+	if (typeof payload.ticket_id === 'string' && payload.ticket_id !== '') {
+		const provider = typeof payload.provider === 'string' ? payload.provider : 'ticket';
+		return `${provider}:${payload.ticket_id}`;
+	}
 	const repo = typeof payload.repo === 'string' ? payload.repo : 'unknown-repo';
 	const number = payload.number ?? '?';
 	return `${repo}#${number}`;

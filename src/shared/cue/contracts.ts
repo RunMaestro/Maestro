@@ -29,6 +29,8 @@ export type CueEventType =
 	| 'github.pull_request'
 	| 'github.issue'
 	| 'github.label'
+	| 'ticket.created'
+	| 'ticket.assigned'
 	| 'task.pending'
 	| 'cli.trigger';
 
@@ -43,6 +45,8 @@ export const CUE_EVENT_TYPES: CueEventType[] = [
 	'github.pull_request',
 	'github.issue',
 	'github.label',
+	'ticket.created',
+	'ticket.assigned',
 	'task.pending',
 	'cli.trigger',
 ];
@@ -58,6 +62,20 @@ export type CueGitHubLabelTarget = 'pr' | 'issue' | 'both';
 
 /** All valid `gh_label_target` values */
 export const CUE_GITHUB_LABEL_TARGETS: CueGitHubLabelTarget[] = ['pr', 'issue', 'both'];
+
+/** Issue trackers a `ticket.*` subscription can poll. */
+export type CueTicketProvider = 'linear' | 'jira';
+
+/** All valid `ticket_provider` values */
+export const CUE_TICKET_PROVIDERS: CueTicketProvider[] = ['linear', 'jira'];
+
+/**
+ * Shape of a `ticket_project` value: a Linear team key (`ENG`) or a Jira
+ * project key (`OPS`). The key is interpolated into JQL, so this doubles as
+ * the injection guard and is checked by the YAML validator, the pipeline
+ * editor, and the poller itself.
+ */
+export const CUE_TICKET_PROJECT_KEY_RE = /^[A-Za-z][A-Za-z0-9_]*$/;
 
 /** What a subscription does when it fires. */
 export type CueAction = 'prompt' | 'command' | 'notify';
@@ -209,6 +227,13 @@ export interface CueSubscription {
 	 *  against the label that was just added. Empty / omitted = fire on ANY
 	 *  label being added. Ignored by every other event type. */
 	gh_labels?: string[];
+	/** Which tracker a `ticket.created` / `ticket.assigned` subscription polls.
+	 *  Required for those events, ignored by every other event type. */
+	ticket_provider?: CueTicketProvider;
+	/** Narrows a `ticket.*` subscription to one Linear team key (`ENG`) or one
+	 *  Jira project key (`OPS`). Omitted = every team/project the credential
+	 *  can see. Ignored by every other event type. */
+	ticket_project?: string;
 	/** Re-fire this subscription when a tracked PR/issue receives new activity
 	 *  (comments, edits, reviews, label changes) after its initial discovery.
 	 *  Default `false` (legacy behavior: fire once per item on creation).

@@ -55,6 +55,17 @@ export function getTriggerConfigSummary(data: TriggerNodeData): string {
 			const what = labels.length > 0 ? labels.join(', ') : 'any label';
 			return `${what} on ${kind}`;
 		}
+		case 'ticket.created':
+		case 'ticket.assigned': {
+			const provider =
+				config.ticket_provider === 'jira'
+					? 'Jira'
+					: config.ticket_provider === 'linear'
+						? 'Linear'
+						: 'no tracker';
+			const scope = config.ticket_project?.trim();
+			return scope ? `${provider} ${scope}` : provider;
+		}
 		case 'task.pending':
 			return config.watch ?? 'tasks';
 		case 'agent.completed':

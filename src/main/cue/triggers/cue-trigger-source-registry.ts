@@ -24,6 +24,7 @@ import { createCueHeartbeatTriggerSource } from './cue-heartbeat-trigger-source'
 import { createCueOnceTriggerSource } from './cue-once-trigger-source';
 import { createCueScheduledTriggerSource } from './cue-scheduled-trigger-source';
 import { createCueTaskScannerTriggerSource } from './cue-task-scanner-trigger-source';
+import { createCueTicketPollerTriggerSource } from './cue-ticket-poller-trigger-source';
 import type { CueTriggerSource, CueTriggerSourceContext } from './cue-trigger-source';
 
 export function createTriggerSource(
@@ -45,6 +46,9 @@ export function createTriggerSource(
 		case 'github.issue':
 		case 'github.label':
 			return createCueGitHubPollerTriggerSource(ctx);
+		case 'ticket.created':
+		case 'ticket.assigned':
+			return createCueTicketPollerTriggerSource(ctx);
 		case 'agent.completed':
 		case 'app.startup':
 		case 'cli.trigger':
