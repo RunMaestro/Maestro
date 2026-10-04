@@ -1,0 +1,9 @@
+{
+	"extends": "./tsconfig.json",
+	"compilerOptions": {
+		"jsx": "react-jsx",
+		"types": ["node"]
+	},
+	"include": ["src/tui/**/*", "src/shared/**/*"],
+	"exclude": ["**/*.test.ts", "**/*.test.tsx", "**/__tests__/**/*"]
+}
