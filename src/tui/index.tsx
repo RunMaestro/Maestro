@@ -1,5 +1,9 @@
 import { render } from 'ink';
-import { resolveMaestroPaths, setMaestroLibLogger } from '../shared/maestro-lib';
+import {
+	createWsMaestroClient,
+	resolveMaestroPaths,
+	setMaestroLibLogger,
+} from '../shared/maestro-lib';
 import { App } from './App';
 import { parseTuiArgs } from './args';
 import { runDoctor } from './doctor';
@@ -21,4 +25,10 @@ const paths = resolveMaestroPaths(pathOptions);
 // reporter stays the default no-op.
 setMaestroLibLogger(createFileLogger(tuiLogFilePath(paths.userDataDir)));
 
-render(<App paths={paths} />);
+// The App attaches to a running desktop through this client, and reads the store
+// files when there is none. It keeps the connection until the TUI quits.
+const client = createWsMaestroClient({ userDataDir: paths.userDataDir });
+
+const instance = render(<App paths={paths} client={client} />);
+await instance.waitUntilExit();
+await client.connection.close();

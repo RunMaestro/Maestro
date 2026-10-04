@@ -1,12 +1,13 @@
 import React from 'react';
 import { Box, Text } from 'ink';
 import {
-	aiTabsOf,
+	visibleAiTabsOf,
 	getAgentDisplayName,
 	getTabDisplayName,
 	transcriptOf,
 	type AITabRecord,
 	type AgentRecord,
+	type LogEntryRecord,
 } from '../../shared/maestro-lib';
 import { TranscriptViewport } from '../transcript';
 
@@ -27,6 +28,11 @@ export interface ConversationPaneProps {
 	agent: AgentRecord | undefined;
 	/** The tab picked in the TUI's tab switcher; unset or unknown falls back to the agent's own. */
 	activeTabId?: string;
+	/**
+	 * The active tab's entries. A tab record from the desktop carries none, so the
+	 * caller reads them; unset falls back to the entries on the record.
+	 */
+	entries?: readonly LogEntryRecord[];
 	width: number;
 	height: number;
 	focused: boolean;
@@ -41,12 +47,13 @@ const CONVERSATION_CHROME_LINES = 4;
 export function ConversationPane({
 	agent,
 	activeTabId,
+	entries,
 	width,
 	height,
 	focused,
 	expandTools = false,
 }: ConversationPaneProps): React.ReactElement {
-	const tabs = agent ? aiTabsOf(agent) : [];
+	const tabs = agent ? visibleAiTabsOf(agent) : [];
 	const activeTab = resolveActiveTab(tabs, activeTabId, agent);
 	const title = agent
 		? [
@@ -80,7 +87,7 @@ export function ConversationPane({
 						<TranscriptViewport
 							// A new tab starts with a fresh window, not the previous tab's mounted entries.
 							key={activeTab.id}
-							entries={transcriptOf(activeTab)}
+							entries={entries ?? transcriptOf(activeTab)}
 							width={Math.max(1, width - 2)}
 							height={Math.max(1, height - CONVERSATION_CHROME_LINES)}
 							expandTools={expandTools}

@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useApp, useInput } from 'ink';
-import type { MaestroPaths } from '../shared/maestro-lib';
-import { aiTabsOf } from '../shared/maestro-lib';
+import type { MaestroClient, MaestroPaths } from '../shared/maestro-lib';
+import { visibleAiTabsOf } from '../shared/maestro-lib';
 import { HelpOverlay } from './app/HelpOverlay';
 import { HistoryView } from './app/HistoryView';
 import { moveHistoryCursor, openHistory, type HistoryViewState } from './app/history';
@@ -9,7 +9,7 @@ import { Shell } from './app/Shell';
 import { TabSwitcher } from './app/TabSwitcher';
 import { resolveActiveTab } from './app/ConversationPane';
 import { buildPaneRows, initialCursorKey, moveCursor, isSectionCollapsed } from './app/agentRows';
-import { loadAgentData } from './app/loadAgentData';
+import { useAgentSource, useTabEntries } from './app/useAgentSource';
 import { useTerminalSize } from './app/useTerminalSize';
 import { useViewState } from './app/useViewState';
 import { cyclePane, isAgentsPaneVisible, visiblePanes, type PaneId } from './app/layout';
@@ -26,10 +26,13 @@ export interface AppProps {
 		| 'agentConfigsFile'
 		| 'historyDir'
 	>;
+	/**
+	 * The client for the running desktop. With one, the TUI attaches to the host
+	 * and follows it live; without, or when no desktop answers, it reads the store
+	 * files and stays read-only.
+	 */
+	client?: MaestroClient;
 }
-
-/** Who owns the data directory. This phase only ever reads. */
-const HOST_LABEL = 'read-only';
 
 /** The overlay on screen, if any. Only one at a time, and Esc closes it. */
 type OverlayState =
@@ -37,11 +40,12 @@ type OverlayState =
 	| { kind: 'tabs'; agentId: string; cursor: number }
 	| { kind: 'history'; history: HistoryViewState };
 
-export function App({ paths }: AppProps): React.ReactElement {
+export function App({ paths, client }: AppProps): React.ReactElement {
 	const { exit } = useApp();
 	const size = useTerminalSize();
 
-	const data = useMemo(() => loadAgentData(paths), [paths]);
+	const source = useAgentSource(paths, client);
+	const data = source.data;
 	const [view, setView] = useViewState(tuiStateFilePath(paths.userDataDir));
 	// The user's toggle for the Agents pane. Not persisted: whether it fits depends on the window.
 	const [agentsPaneOverride, setAgentsPaneOverride] = useState<boolean | undefined>(undefined);
@@ -107,8 +111,17 @@ export function App({ paths }: AppProps): React.ReactElement {
 
 	const activeTabIdFor = (agent: typeof cursorAgent) =>
 		agent
-			? resolveActiveTab(aiTabsOf(agent), view.activeTabByAgent[agent.id], agent)?.id
+			? resolveActiveTab(visibleAiTabsOf(agent), view.activeTabByAgent[agent.id], agent)?.id
 			: undefined;
+
+	const activeTab = cursorAgent
+		? resolveActiveTab(
+				visibleAiTabsOf(cursorAgent),
+				view.activeTabByAgent[cursorAgent.id],
+				cursorAgent
+			)
+		: undefined;
+	const activeEntries = useTabEntries(source, cursorAgent?.id, activeTab);
 
 	useInput((input, key) => {
 		const current = overlayRef.current;
@@ -144,7 +157,7 @@ export function App({ paths }: AppProps): React.ReactElement {
 				return;
 			case 'tabSwitcher': {
 				if (!agent) return;
-				const tabs = aiTabsOf(agent);
+				const tabs = visibleAiTabsOf(agent);
 				if (tabs.length === 0) return;
 				const activeId = resolveActiveTab(tabs, view.activeTabByAgent[agent.id], agent)?.id;
 				setOverlay({
@@ -169,7 +182,7 @@ export function App({ paths }: AppProps): React.ReactElement {
 						history: moveHistoryCursor(paths, current.history, delta),
 					});
 				} else if (current?.kind === 'tabs') {
-					const count = agent ? aiTabsOf(agent).length : 0;
+					const count = agent ? visibleAiTabsOf(agent).length : 0;
 					setOverlay({
 						...current,
 						cursor: Math.min(Math.max(0, count - 1), Math.max(0, current.cursor + delta)),
@@ -181,7 +194,7 @@ export function App({ paths }: AppProps): React.ReactElement {
 			}
 			case 'open': {
 				if (current?.kind === 'tabs') {
-					const tab = agent ? aiTabsOf(agent)[current.cursor] : undefined;
+					const tab = agent ? visibleAiTabsOf(agent)[current.cursor] : undefined;
 					if (agent && tab) {
 						setView((state) => ({
 							...state,
@@ -228,7 +241,7 @@ export function App({ paths }: AppProps): React.ReactElement {
 				) : cursorAgent ? (
 					<TabSwitcher
 						agent={cursorAgent}
-						tabs={aiTabsOf(cursorAgent)}
+						tabs={visibleAiTabsOf(cursorAgent)}
 						cursor={overlay.cursor}
 						activeTabId={activeTabIdFor(cursorAgent)}
 						width={width}
@@ -241,11 +254,12 @@ export function App({ paths }: AppProps): React.ReactElement {
 		<Shell
 			size={size}
 			userDataDir={paths.userDataDir}
-			hostLabel={HOST_LABEL}
+			hostLabel={source.hostLabel}
 			rows={rows}
 			cursorKey={cursorRow?.key}
 			agent={cursorAgent}
 			activeTabId={activeTabIdFor(cursorAgent)}
+			entries={activeEntries}
 			focusedPane={effectiveFocus}
 			expandTools={expandTools}
 			overlay={renderOverlay}

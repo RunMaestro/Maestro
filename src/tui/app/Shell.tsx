@@ -1,6 +1,6 @@
 import React, { useRef } from 'react';
 import { Box, Text } from 'ink';
-import type { AgentRecord } from '../../shared/maestro-lib';
+import type { AgentRecord, LogEntryRecord } from '../../shared/maestro-lib';
 import { AgentsPane } from './AgentsPane';
 import { ConversationPane } from './ConversationPane';
 import { StatusBar } from './StatusBar';
@@ -26,6 +26,8 @@ export interface ShellProps {
 	agent: AgentRecord | undefined;
 	/** The tab the Conversation pane shows for `agent`; see `resolveActiveTab`. */
 	activeTabId?: string;
+	/** The tab's transcript, when the caller read it from somewhere other than the record. */
+	entries?: readonly LogEntryRecord[];
 	/** Show tool calls expanded in the Conversation pane. */
 	expandTools?: boolean;
 	/** The pane that has keyboard focus. Ignored for a pane that is hidden. */
@@ -58,6 +60,7 @@ export function Shell({
 	cursorKey,
 	agent,
 	activeTabId,
+	entries,
 	focusedPane,
 	expandTools,
 	overlay,
@@ -105,6 +108,7 @@ export function Shell({
 					<ConversationPane
 						agent={agent}
 						activeTabId={activeTabId}
+						entries={entries}
 						width={size.columns - agentsWidth}
 						height={paneHeight}
 						focused={focusedPane === 'conversation' || !showAgents}
