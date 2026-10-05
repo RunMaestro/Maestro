@@ -1,18 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { prepareMaestroSystemPrompt } from '../../../renderer/utils/spawnHelpers';
 
-vi.mock('../../../renderer/utils/templateVariables', () => ({
-	substituteTemplateVariables: vi.fn((content: string, vars: Record<string, any>) => {
-		let result = content;
-		for (const [key, value] of Object.entries(vars)) {
-			if (typeof value === 'string') {
-				result = result.replace(`{{${key}}}`, value);
-			}
-		}
-		return result;
-	}),
-}));
-
 vi.mock('../../../renderer/services/git', () => ({
 	gitService: {
 		getStatus: vi.fn().mockResolvedValue({ branch: 'main' }),
@@ -120,6 +108,42 @@ describe('prepareMaestroSystemPrompt', () => {
 		(window as any).maestro.history.getFilePath.mockRejectedValueOnce(new Error('history failed'));
 		const result = await prepareMaestroSystemPrompt({ session: baseSession });
 		expect(result).toBeDefined();
+	});
+
+	it('substitutes template variables through the library assembly', async () => {
+		(window as any).maestro.prompts.get.mockResolvedValue({
+			success: true,
+			content: 'Agent {{AGENT_ID}} tab {{TAB_ID}} in {{CWD}}',
+		});
+		const result = await prepareMaestroSystemPrompt({
+			session: { ...baseSession, name: 'Agent One', toolType: 'claude-code' },
+			activeTabId: 'tab-42',
+		});
+		expect(result).toBe('Agent session-1 tab tab-42 in /test/project');
+	});
+
+	it('appends the Pianola manager prompt for the pinned manager agent', async () => {
+		(window as any).maestro.prompts.get.mockImplementation(async (id: string) =>
+			id === 'pianola-system'
+				? { success: true, content: 'PIANOLA' }
+				: { success: true, content: 'BASE' }
+		);
+		const result = await prepareMaestroSystemPrompt({
+			session: { ...baseSession, name: 'Pianola', toolType: 'claude-code', isPianola: true },
+		});
+		expect(result).toBe('BASE\n\n---\n\nPIANOLA');
+	});
+
+	it('returns the base prompt when the Pianola prompt cannot load', async () => {
+		(window as any).maestro.prompts.get.mockImplementation(async (id: string) =>
+			id === 'pianola-system'
+				? { success: false, error: 'gone' }
+				: { success: true, content: 'BASE' }
+		);
+		const result = await prepareMaestroSystemPrompt({
+			session: { ...baseSession, name: 'Pianola', toolType: 'claude-code', isPianola: true },
+		});
+		expect(result).toBe('BASE');
 	});
 
 	it('re-injects prompt on every call (no resume-based skip)', async () => {

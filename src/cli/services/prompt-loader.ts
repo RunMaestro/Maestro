@@ -10,6 +10,7 @@ import { CORE_PROMPTS, getPromptFilename } from '../../shared/promptDefinitions'
 import { getConfigDirectory } from './storage';
 import { describeSegmentLimit } from '../../shared/autorunModelHints';
 import { PROMPT_IDS } from '../../shared/promptDefinitions';
+import { bundledPromptCandidates } from '../../shared/maestro-lib/prompts/load';
 
 const cliPromptCache = new Map<string, string>();
 let bundledPromptsDir: string | null = null;
@@ -18,29 +19,10 @@ export function _getBundledPromptCandidatesForTests(
 	filename: string,
 	moduleDirectory = __dirname
 ): string[] {
-	// The CLI runs in three contexts: dev (ts-node from src), packaged Electron
-	// (process.resourcesPath), and standalone bundled CLI (Resources/maestro-cli.js).
-	// Source modules live at src/cli/services, while the development bundle lives
-	// at dist/cli. Probe both possible project-root depths so each can find the
-	// checkout's src/prompts directory.
-	const projectRoots = [
-		path.resolve(moduleDirectory, '..', '..', '..'),
-		path.resolve(moduleDirectory, '..', '..'),
-	];
-	const candidates = projectRoots.map((root) => path.join(root, 'src', 'prompts', filename));
-
-	if (typeof process !== 'undefined' && (process as { resourcesPath?: string }).resourcesPath) {
-		candidates.push(
-			path.join((process as { resourcesPath?: string }).resourcesPath!, 'prompts', 'core', filename)
-		);
-	}
-
-	candidates.push(
-		path.join(path.dirname(process.argv[1] || __dirname), 'prompts', 'core', filename)
-	);
-	candidates.push(path.join(moduleDirectory, '..', 'prompts', 'core', filename));
-
-	return [...new Set(candidates)];
+	// The candidate chain (dev checkout, packaged Electron, standalone bundle) lives in
+	// the library so the TUI probes the same places. `__dirname` stays HERE: it is this
+	// bundle's own directory, which is what the probe is relative to.
+	return bundledPromptCandidates(filename, moduleDirectory);
 }
 
 const getBundledPromptCandidates = _getBundledPromptCandidatesForTests;

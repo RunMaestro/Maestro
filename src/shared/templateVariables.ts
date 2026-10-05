@@ -215,6 +215,15 @@ export interface TemplateContext {
 	historyFilePath?: string;
 	// Conductor profile (user's About Me from settings)
 	conductorProfile?: string;
+	/**
+	 * The `maestro-cli.js` script `{{MAESTRO_CLI_PATH}}` points at, as a bare path:
+	 * it is formatted as `node "<path>"` exactly as the preload bridge's path is. A
+	 * host with no preload bridge (the TUI) states it here. Absent:
+	 * `getMaestroCLIPath()` decides, as it always did.
+	 */
+	maestroCliPath?: string;
+	/** The clock for the date and time variables. Absent: the real time. */
+	now?: Date;
 	// Cue event context (for Cue automation prompts)
 	cue?: {
 		eventType?: string;
@@ -530,7 +539,7 @@ export function substituteTemplateVariables(template: string, context: TemplateC
 		historyFilePath,
 		conductorProfile,
 	} = context;
-	const now = new Date();
+	const now = context.now ?? new Date();
 
 	// Build replacements map
 	const replacements: Record<string, string> = {
@@ -616,7 +625,9 @@ export function substituteTemplateVariables(template: string, context: TemplateC
 		CONTEXT_USAGE: String(session.contextUsage || 0),
 
 		// Maestro variables
-		MAESTRO_CLI_PATH: getMaestroCLIPath(),
+		MAESTRO_CLI_PATH: context.maestroCliPath
+			? `node "${context.maestroCliPath}"`
+			: getMaestroCLIPath(),
 
 		// Cue variables
 		CUE_EVENT_TYPE: context.cue?.eventType || '',

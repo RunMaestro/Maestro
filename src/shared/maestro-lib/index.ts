@@ -169,6 +169,14 @@ export * from './run/turn-capture';
 export * from './run/session';
 export * from './run/run-to-completion';
 
+// Headless turns: the prompt a desktop turn would send (L12), assembled with no desktop
+export * from './prompts/load';
+export * from './turns/prompt';
+export * from './turns/args';
+export * from './turns/assemble';
+export * from './turns/context';
+export * from './turns/records';
+
 // Process control
 export * from './control/termination';
 export * from './control/process-tree';

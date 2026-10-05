@@ -20,7 +20,6 @@ import type { ProcessConfig as ProcessSpawnConfig } from '../../../process-manag
 import type { AgentConfigsData } from '../../../stores/types';
 import { logger } from '../../../utils/logger';
 import { isWindows } from '../../../../shared/platformDetection';
-import { embedSystemPromptInPrompt } from '../../../../shared/embeddedSystemPrompt';
 import {
 	buildCallerIdentityEnv,
 	withoutCallerIdentityEnv,
@@ -31,11 +30,7 @@ import { noteTurnActor } from '../../../web-server/auth/turn-attribution';
 import { REGEX_AI_SUFFIX } from '../../../constants';
 import { addBreadcrumb, captureException } from '../../../utils/sentry';
 import { isWebContentsAvailable } from '../../../utils/safe-send';
-import {
-	buildAgentArgs,
-	applyAgentConfigOverrides,
-	getContextWindowValue,
-} from '../../../utils/agent-args';
+import { buildAgentArgs, getContextWindowValue } from '../../../utils/agent-args';
 import { requireProcessManager, requireDependency } from '../../../utils/ipcHandler';
 import { getPrompt } from '../../../prompt-manager';
 import { getWindowsShellForAgentExecution } from '../../../process-manager/utils/shellEscape';
@@ -52,6 +47,11 @@ import { wrapSpawnForSsh } from './wrap-spawn-for-ssh';
 import { createSshRemoteStoreAdapter } from '../../../utils/ssh-remote-resolver';
 import { sshUnresolvedRemoteMessage } from '../../../utils/ssh-spawn-wrapper';
 import { buildAgentLaunchPlan } from '../../../../shared/maestro-lib/launch/launch-plan';
+import {
+	applyCopilotPreamble,
+	applySystemPromptDelivery,
+	buildTurnArgs,
+} from '../../../../shared/maestro-lib/turns/args';
 import { resolvePromptDelivery } from '../../../../shared/maestro-lib/launch/prompt-delivery';
 import { preparePermissionRelayArgs } from '../../../permission-relay';
 import {
@@ -166,32 +166,30 @@ export async function handleProcessSpawn(
 		isSshEnabled,
 	} = claudeContext;
 
-	let finalArgs = buildAgentArgs(agent, {
+	// Argument core (shared with the TUI): the provider's own arguments and resume flags,
+	// then every config option and the custom args. Session-level overrides take
+	// precedence over agent-level config.
+	const allConfigs = agentConfigsStore.get('configs', {});
+	const agentConfigValues = allConfigs[config.toolType] || {};
+	const turnArgs = buildTurnArgs({
+		provider: agent,
 		baseArgs: config.args,
 		prompt: config.prompt,
 		cwd: config.cwd,
-		readOnlyMode: config.readOnlyMode,
+		readOnly: config.readOnlyMode,
 		modelId: config.modelId,
 		yoloMode: config.yoloMode,
 		permissionMode: config.permissionMode,
-		agentSessionId: config.agentSessionId,
+		resumeSessionId: config.agentSessionId,
 		additionalDirectories: config.sessionAdditionalDirectories,
-	});
-
-	// ========================================================================
-	// Apply agent config options and session overrides
-	// Session-level overrides take precedence over agent-level config
-	// ========================================================================
-	const allConfigs = agentConfigsStore.get('configs', {});
-	const agentConfigValues = allConfigs[config.toolType] || {};
-	const configResolution = applyAgentConfigOverrides(agent, finalArgs, {
-		agentConfigValues,
+		providerConfig: agentConfigValues,
 		sessionCustomModel: config.sessionCustomModel,
 		sessionCustomEffort: config.sessionCustomEffort,
 		sessionCustomArgs: config.sessionCustomArgs,
 		sessionCustomEnvVars: config.sessionCustomEnvVars,
 	});
-	finalArgs = configResolution.args;
+	const configResolution = turnArgs.resolution;
+	let finalArgs = turnArgs.args;
 
 	if (configResolution.modelSource === 'session' && config.sessionCustomModel) {
 		logger.debug(`Using session-level model for ${config.toolType}`, LOG_CONTEXT, {
@@ -465,13 +463,27 @@ export async function handleProcessSpawn(
 	// not conversation content, and some agents (e.g. Claude Code) require it
 	// every turn because it isn't persisted into the session transcript.
 	// ========================================================================
-	let effectivePrompt = config.prompt;
 	let systemPromptTempFile: string | undefined;
 	const isSshSession = config.sessionSshRemoteConfig?.enabled;
 	const isResume = !!config.agentSessionId;
+	// Where the system prompt goes is one library rule (shared with the TUI): an inline
+	// flag, an embed in the first user turn, nothing on a resume of an embedding
+	// provider, or the temp file a Windows host needs. Only the file write is ours.
+	const systemPromptPlacement = applySystemPromptDelivery({
+		systemPrompt: config.appendSystemPrompt,
+		args: finalArgs,
+		prompt: config.prompt,
+		supportsAppendSystemPrompt: !!agent?.capabilities?.supportsAppendSystemPrompt,
+		isResume,
+		isWindowsHost: isWindows(),
+		sshRemote: !!isSshSession,
+	});
+	finalArgs = systemPromptPlacement.args;
+	let effectivePrompt = systemPromptPlacement.prompt;
 	if (config.appendSystemPrompt) {
-		if (agent?.capabilities?.supportsAppendSystemPrompt) {
-			if (isWindows() && !isSshSession) {
+		const systemPromptLength = config.appendSystemPrompt.length;
+		switch (systemPromptPlacement.delivery.via) {
+			case 'file': {
 				// Windows local: write to temp file to avoid CLI length limits
 				const tmpDir = os.tmpdir();
 				systemPromptTempFile = path.join(
@@ -503,77 +515,63 @@ export async function handleProcessSpawn(
 					LOG_CONTEXT,
 					{
 						agentId: agent?.id,
-						systemPromptLength: config.appendSystemPrompt.length,
+						systemPromptLength,
 						tempFile: systemPromptTempFile,
 					}
 				);
-			} else {
-				// Non-Windows or SSH: pass inline (no command-line length concern)
-				finalArgs = [...finalArgs, '--append-system-prompt', config.appendSystemPrompt];
+				break;
+			}
+			case 'flag':
+				// Non-Windows or SSH: passed inline (no command-line length concern)
 				logger.debug('Using --append-system-prompt for system prompt delivery', LOG_CONTEXT, {
 					agentId: agent?.id,
-					systemPromptLength: config.appendSystemPrompt.length,
+					systemPromptLength,
 				});
-			}
-		} else if (isResume) {
-			// Resume path for agents without native --append-system-prompt:
-			// the system prompt was embedded in the first user turn at initial
-			// spawn and is preserved in the agent's session transcript. Skip
-			// re-embedding to avoid polluting every subsequent user message.
-			logger.debug(
-				'Skipping system prompt re-injection on resume (already in transcript)',
-				LOG_CONTEXT,
-				{
+				break;
+			case 'skip-on-resume':
+				// The system prompt was embedded in the first user turn at initial spawn and
+				// is preserved in the agent's session transcript. Re-embedding would pollute
+				// every subsequent user message with it.
+				logger.debug(
+					'Skipping system prompt re-injection on resume (already in transcript)',
+					LOG_CONTEXT,
+					{
+						agentId: agent?.id,
+						systemPromptLength,
+					}
+				);
+				break;
+			case 'embed':
+				// The envelope is built by the shared helper because the transcript renderer
+				// has to take it back apart again when a tab is hydrated from disk
+				// (see src/shared/embeddedSystemPrompt.ts).
+				logger.debug('Embedding system prompt in user message (fallback)', LOG_CONTEXT, {
 					agentId: agent?.id,
-					systemPromptLength: config.appendSystemPrompt.length,
-				}
-			);
-		} else if (effectivePrompt) {
-			// Fallback: embed system prompt in user message. The envelope is
-			// built by the shared helper because the transcript renderer has
-			// to take it back apart again when a tab is hydrated from disk
-			// (see src/shared/embeddedSystemPrompt.ts).
-			effectivePrompt = embedSystemPromptInPrompt(config.appendSystemPrompt, effectivePrompt);
-			logger.debug('Embedding system prompt in user message (fallback)', LOG_CONTEXT, {
-				agentId: agent?.id,
-				systemPromptLength: config.appendSystemPrompt.length,
-			});
-		} else {
-			// No user message to embed into - send system prompt as sole content
-			effectivePrompt = config.appendSystemPrompt;
-			logger.warn(
-				'appendSystemPrompt provided without a user prompt; using as sole prompt',
-				LOG_CONTEXT,
-				{
-					agentId: agent?.id,
-					systemPromptLength: config.appendSystemPrompt.length,
-				}
-			);
+					systemPromptLength,
+				});
+				break;
+			case 'as-prompt':
+				// No user message to embed into - the system prompt is the sole content
+				logger.warn(
+					'appendSystemPrompt provided without a user prompt; using as sole prompt',
+					LOG_CONTEXT,
+					{
+						agentId: agent?.id,
+						systemPromptLength,
+					}
+				);
+				break;
 		}
 	}
 
-	// Copilot-CLI batch-mode preamble.
-	//
-	// Copilot's `-p` mode auto-flips into autopilot, where the model ends
-	// each run by calling the `task_complete` tool. The built-in autopilot
-	// system prompt biases the model toward calling that tool *early*,
-	// which manifests in Maestro as "the turn came back to me but the
-	// task wasn't actually done". The remedy isn't a CLI flag - it's a
-	// user-message preamble injected on every batch invocation that
-	// pushes back on premature completion and instructs the model to
-	// put its real conclusion in `task_complete.summary` (which is what
-	// CopilotShutdownWaiter.readCopilotFinalAnswer surfaces to the user).
-	//
-	// Repeated every turn intentionally: each batch spawn is a fresh
-	// Copilot process with its own system prompt reload, and the
-	// preamble has to ride in the user prompt to be in-context for
-	// that turn's reasoning. The text is user-editable via Maestro
+	// Copilot-CLI batch-mode preamble (see `applyCopilotPreamble` for why it exists).
+	// Repeated every turn intentionally. The text is user-editable via Maestro
 	// Prompts (`copilot-preamble`); an empty customization disables it.
 	if (agent?.id === 'copilot-cli' && effectivePrompt) {
 		try {
 			const preamble = getPrompt('copilot-preamble').trim();
+			effectivePrompt = applyCopilotPreamble(agent.id, effectivePrompt, preamble);
 			if (preamble) {
-				effectivePrompt = `${preamble}\n\n${effectivePrompt}`;
 				logger.debug('Prepended copilot-preamble to user prompt', LOG_CONTEXT, {
 					preambleLength: preamble.length,
 				});

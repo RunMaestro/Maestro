@@ -27,6 +27,7 @@ import {
 	setGroupParent as updateGroupParent,
 } from '../../shared/groupHierarchy';
 import { useContextTimelineStore } from './contextTimelineStore';
+import { prependMergedContext } from '../../shared/maestro-lib/turns/prompt';
 import { forgetContextTimelineCaptures } from '../services/contextTimelineHydration';
 
 // ============================================================================
@@ -558,5 +559,5 @@ export function takePendingMergedContext(sessionId: string, tabId: string, promp
 	const context = session?.aiTabs.find((t) => t.id === tabId)?.pendingMergedContext;
 	if (!context) return prompt;
 	updateAiTab(sessionId, tabId, (tab) => ({ ...tab, pendingMergedContext: undefined }));
-	return `${context}\n\n---\n\n${prompt}`;
+	return prependMergedContext(prompt, context);
 }

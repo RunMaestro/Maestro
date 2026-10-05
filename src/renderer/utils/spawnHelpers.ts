@@ -1,4 +1,4 @@
-import { substituteTemplateVariables } from './templateVariables';
+import { buildMaestroSystemPrompt } from '../../shared/maestro-lib/turns/prompt';
 import { gitService } from '../services/git';
 import { useSettingsStore } from '../stores/settingsStore';
 
@@ -56,26 +56,25 @@ export async function prepareMaestroSystemPrompt(opts: {
 
 	const conductorProfile = useSettingsStore.getState().conductorProfile;
 
-	const base = substituteTemplateVariables(result.content, {
+	// The pinned Pianola manager agent gets its manager instructions appended on
+	// top of the standard Maestro system context. This is what turns a plain
+	// Claude Code chat into Maestro's orchestrator. The CLI path and the agent's
+	// own id are supplied to the spawn as env vars (see process.ts), so the
+	// prompt references them as shell variables, not template variables.
+	let pianolaPrompt: string | undefined;
+	if (opts.session.isPianola) {
+		const pianola = await window.maestro.prompts.get('pianola-system');
+		if (pianola.success && pianola.content) pianolaPrompt = pianola.content;
+	}
+
+	return buildMaestroSystemPrompt({
+		template: result.content,
 		session: opts.session as any,
 		gitBranch,
 		groupId: opts.session.groupId,
 		activeTabId: opts.activeTabId,
 		historyFilePath,
 		conductorProfile,
+		pianolaPrompt,
 	});
-
-	// The pinned Pianola manager agent gets its manager instructions appended on
-	// top of the standard Maestro system context. This is what turns a plain
-	// Claude Code chat into Maestro's orchestrator. The CLI path and the agent's
-	// own id are supplied to the spawn as env vars (see process.ts), so the
-	// prompt references them as shell variables, not template variables.
-	if (opts.session.isPianola) {
-		const pianola = await window.maestro.prompts.get('pianola-system');
-		if (pianola.success && pianola.content) {
-			return `${base}\n\n---\n\n${pianola.content}`;
-		}
-	}
-
-	return base;
 }

@@ -30,6 +30,7 @@ import fsSync from 'fs';
 import path from 'path';
 import { logger } from './utils/logger';
 import { CORE_PROMPTS } from '../shared/promptDefinitions';
+import { resolvePromptDirectives } from '../shared/maestro-lib/prompts/load';
 
 const LOG_CONTEXT = '[PromptManager]';
 
@@ -234,8 +235,7 @@ export function getPrompt(id: string): string {
 		throw new Error(`Unknown prompt ID: ${id}`);
 	}
 
-	const withRefs = resolveRefs(cached.content);
-	return resolveIncludes(withRefs, new Set([id]), 0);
+	return resolveDirectives(id, cached.content);
 }
 
 /**
@@ -402,70 +402,24 @@ export async function listPromptFiles(): Promise<
 // Directive Resolution
 // ============================================================================
 
-const INCLUDE_PATTERN = /\{\{INCLUDE:([a-zA-Z0-9_-]+)\}\}/g;
-const REF_PATTERN = /\{\{REF:([a-zA-Z0-9_-]+)\}\}/g;
-const MAX_INCLUDE_DEPTH = 3;
-
 /**
- * Expand {{REF:name}} into the absolute on-disk path of the bundled `.md`.
- * `path.resolve` guarantees an absolute path on every OS and emits native
- * separators (`/` on macOS/Linux, `\` on Windows). Nothing else is emitted -
- * authors supply their own surrounding prose. Refs are resolved before
- * includes and are not recursive: a ref produces literal text, not a fetch
- * the resolver follows.
+ * Resolve `{{REF:}}` and `{{INCLUDE:}}` in a prompt. The rules live in the
+ * library (`resolvePromptDirectives`) so the CLI and the TUI resolve a prompt
+ * exactly as the desktop does; this supplies the cache-aware reads. An include
+ * reads the in-memory cache first (customization-aware), then the bundled file.
  */
-function resolveRefs(content: string): string {
-	if (!REF_PATTERN.test(content)) return content;
-	REF_PATTERN.lastIndex = 0;
-
-	const promptsPath = getBundledPromptsPath();
-
-	return content.replace(REF_PATTERN, (match, name: string) => {
-		const def = CORE_PROMPTS.find((p) => p.id === name);
-		if (!def) {
-			logger.warn(`REF target not found in registry: ${name}`, LOG_CONTEXT);
-			return match;
-		}
-		return path.resolve(promptsPath, def.filename);
+function resolveDirectives(id: string, content: string): string {
+	return resolvePromptDirectives(id, content, {
+		bundledPromptsDir: getBundledPromptsPath(),
+		readPrompt: (name) => {
+			const cached = promptCache.get(name);
+			if (cached) return cached.content;
+			try {
+				return fsSync.readFileSync(path.join(getBundledPromptsPath(), `${name}.md`), 'utf-8');
+			} catch {
+				return null;
+			}
+		},
+		warn: (message) => logger.warn(message, LOG_CONTEXT),
 	});
-}
-
-function resolveIncludes(content: string, visited: Set<string>, depth: number): string {
-	if (depth >= MAX_INCLUDE_DEPTH) return content;
-	if (!INCLUDE_PATTERN.test(content)) return content;
-
-	INCLUDE_PATTERN.lastIndex = 0;
-
-	return content.replace(INCLUDE_PATTERN, (match, name: string) => {
-		if (visited.has(name)) {
-			logger.warn(
-				`Circular include detected: ${name} (visited: ${[...visited].join(' → ')})`,
-				LOG_CONTEXT
-			);
-			return match;
-		}
-
-		const resolved = resolveIncludeContent(name);
-		if (resolved === null) {
-			logger.warn(`Include not found: ${name}`, LOG_CONTEXT);
-			return match;
-		}
-
-		const nextVisited = new Set(visited);
-		nextVisited.add(name);
-		return resolveIncludes(resolved, nextVisited, depth + 1);
-	});
-}
-
-function resolveIncludeContent(name: string): string | null {
-	const cached = promptCache.get(name);
-	if (cached) return cached.content;
-
-	const promptsPath = getBundledPromptsPath();
-	const filePath = path.join(promptsPath, `${name}.md`);
-	try {
-		return fsSync.readFileSync(filePath, 'utf-8');
-	} catch {
-		return null;
-	}
 }

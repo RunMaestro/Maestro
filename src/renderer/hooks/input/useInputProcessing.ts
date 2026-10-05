@@ -13,7 +13,7 @@ import { prepareMaestroSystemPrompt } from '../../utils/spawnHelpers';
 import { generateId, getInputBroadcastOriginId } from '../../utils/ids';
 import { captureQueuedTurnSettings, codifyTurnSettings } from '../../utils/providerTabSessions';
 import { substituteTemplateVariables } from '../../utils/templateVariables';
-import { prependNewSessionMessage } from '../../../shared/newSessionMessage';
+import { appendNudgeMessage, buildMessagePrompt } from '../../../shared/maestro-lib/turns/prompt';
 import { resolveTabPermissionMode } from '../../../shared/agentMetadata';
 import { filterYoloArgs } from '../../utils/agentArgs';
 import { hasCapabilityCached } from '../agent/useAgentCapabilities';
@@ -1294,10 +1294,9 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 			// Capture input value and images before clearing (needed for async batch mode spawn)
 			// Append nudge message if present (only for interactive AI messages, not Auto Run)
 			// The nudge is invisible in the UI - only sent to the agent
-			const nudgeMessage = activeSession.nudgeMessage;
 			const capturedInputValue =
-				nudgeMessage && currentMode === 'ai'
-					? `${effectiveInputValue}\n\n---\n\n${nudgeMessage}`
+				currentMode === 'ai'
+					? appendNudgeMessage(effectiveInputValue, activeSession.nudgeMessage)
 					: effectiveInputValue;
 			const capturedImages = [...effectiveImages];
 
@@ -1427,25 +1426,17 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 							throw new Error(`${activeSession.toolType} agent has no command configured`);
 						}
 
-						// If user sends only an image without text, inject the default image-only prompt
+						// The message's layers (image-only default, new session message, read-only
+						// instruction) are one library function, shared with the TUI.
 						const hasImages = capturedImages.length > 0;
-						const hasNoText = !capturedInputValue.trim();
-						let effectivePrompt =
-							hasImages && hasNoText ? DEFAULT_IMAGE_ONLY_PROMPT : capturedInputValue;
-
-						// Prefix new session message if present (only for the first message in a new session)
-						if (!tabAgentSessionId) {
-							effectivePrompt = prependNewSessionMessage(
-								effectivePrompt,
-								freshSession.newSessionMessage
-							);
-						}
-
-						// For read-only mode, append instruction to return plan in response instead of writing files
-						if (isReadOnly) {
-							effectivePrompt +=
-								'\n\n---\n\nIMPORTANT: You are in read-only/plan mode. Do NOT write a plan file. Instead, return your plan directly to the user in beautiful markdown formatting.';
-						}
+						let effectivePrompt = buildMessagePrompt({
+							text: capturedInputValue,
+							hasImages,
+							imageOnlyDefault: DEFAULT_IMAGE_ONLY_PROMPT,
+							hasProviderSession: !!tabAgentSessionId,
+							newSessionMessage: freshSession.newSessionMessage,
+							readOnly: isReadOnly,
+						});
 
 						// Check for pending merged context that needs to be injected
 						// (merge, Send to Agent, session-not-found recovery)
