@@ -2944,15 +2944,15 @@ app
 		const encoreFeatures = store.get('encoreFeatures', {}) as Record<string, boolean>;
 		if (encoreFeatures.maestroCue && cueEngine) {
 			logger.info('Maestro Cue Encore Feature enabled - starting Cue engine', 'Startup');
-			try {
-				cueEngine.start('system-boot');
-			} catch (err) {
+			// start() is async; a failure must reach the same log/Sentry path as
+			// before instead of surfacing as an unhandled rejection.
+			cueEngine.start('system-boot').catch((err: unknown) => {
 				void captureException(err);
 				logger.error(
 					`Cue engine failed to start at boot - will remain available for retry via Settings: ${err}`,
 					'Startup'
 				);
-			}
+			});
 		}
 
 		// Start the Pianola supervisor unconditionally: it self-gates on the
