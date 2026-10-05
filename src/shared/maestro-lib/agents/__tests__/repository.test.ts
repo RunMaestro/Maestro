@@ -27,6 +27,7 @@ function makePaths(dir: string): MaestroPaths {
 		settingsFile: path.join(dir, 'maestro-settings.json'),
 		agentConfigsFile: path.join(dir, 'maestro-agent-configs.json'),
 		historyDir: path.join(dir, 'history'),
+		statsFile: path.join(dir, 'stats.db'),
 		groupChatsDir: path.join(dir, 'group-chats'),
 		sessionImagesDir: path.join(dir, 'session-images'),
 		cliServerFile: path.join(dir, 'cli-server.json'),
@@ -762,6 +763,71 @@ describe('agent repository', () => {
 			expect(errorOf(await repo.starTab('a1', 'nope', true)).code).toBe('not-found');
 			expect(errorOf(await repo.updateTab('nope', 't1', {})).code).toBe('not-found');
 			expect(errorOf(await repo.closeTab('a1', 'hid')).code).toBe('not-found');
+		});
+
+		describe('appendTranscript', () => {
+			const entry = (id: string, text: string) => ({
+				id,
+				timestamp: 10,
+				source: 'user',
+				text,
+			});
+
+			it('adds entries after the ones the tab holds, in order, and keeps every other field', async () => {
+				const repo = await setup({ sessions: twoAgents() });
+				events.length = 0;
+				value(await repo.appendTranscript('a1', 'a1-t1', [entry('n1', 'one'), entry('n2', 'two')]));
+				const stored = readSessions().sessions[0].aiTabs[0];
+				expect(stored.logs.map((l: { id: string }) => l.id)).toEqual(['a1-t1-l1', 'n1', 'n2']);
+				expect(readSessions().sessions[0].rcOnlyAgentField).toEqual({ keep: [1, 2, 3] });
+				expect(repo.getTab('a1', 'a1-t1')?.logs).toHaveLength(3);
+				expect(events.map((event) => event.type)).toEqual(['tab.updated', 'agent.updated']);
+				const updated = events[0] as Extract<MaestroEvent, { type: 'tab.updated' }>;
+				expect(updated.tab).not.toHaveProperty('logs');
+			});
+
+			it('writes a hidden consult tab and raises no tab event for it', async () => {
+				const repo = await setup({
+					sessions: {
+						sessions: [
+							seedAgent('a1', 'Alpha', { aiTabs: [tab('t1'), tab('hid', { hidden: true })] }),
+						],
+					},
+				});
+				events.length = 0;
+				value(await repo.appendTranscript('a1', 'hid', [entry('n1', 'answer')]));
+				expect(repo.getTab('a1', 'hid')?.logs).toHaveLength(2);
+				expect(events.map((event) => event.type)).toEqual(['agent.updated']);
+			});
+
+			it('starts a transcript on a tab that has none, and writes nothing for no entries', async () => {
+				const repo = await setup({
+					sessions: { sessions: [seedAgent('a1', 'Alpha', { aiTabs: [{ id: 't1' }] })] },
+				});
+				value(await repo.appendTranscript('a1', 't1', []));
+				expect(readSessions().sessions[0].aiTabs[0]).not.toHaveProperty('logs');
+				value(await repo.appendTranscript('a1', 't1', [entry('n1', 'first')]));
+				expect(readSessions().sessions[0].aiTabs[0].logs).toHaveLength(1);
+			});
+
+			it('answers not-found for an agent or a tab that is not there', async () => {
+				const repo = await setup({ sessions: twoAgents() });
+				expect(errorOf(await repo.appendTranscript('nope', 'a1-t1', [entry('n', 'x')])).code).toBe(
+					'not-found'
+				);
+				expect(errorOf(await repo.appendTranscript('a1', 'nope', [entry('n', 'x')])).code).toBe(
+					'not-found'
+				);
+			});
+
+			it('answers host-lost and writes nothing once fenced', async () => {
+				const repo = await setup({ sessions: twoAgents() });
+				repo.fence('lost');
+				expect(errorOf(await repo.appendTranscript('a1', 'a1-t1', [entry('n', 'x')])).code).toBe(
+					'host-lost'
+				);
+				expect(readSessions().sessions[0].aiTabs[0].logs).toHaveLength(1);
+			});
 		});
 
 		describe('closeTab', () => {

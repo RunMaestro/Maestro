@@ -31,6 +31,7 @@ import {
 	markTabRunningQueuedItem,
 	resolveQueuedItemTarget,
 } from '../../../utils/tabHelpers';
+import { summarizeAnswer } from '../../../../shared/maestro-lib/turns/summary';
 import { generateId } from '../../../utils/ids';
 import { logger } from '../../../utils/logger';
 import { cleanupExitedTabLogs } from './helpers/exitTabCleanup';
@@ -294,24 +295,7 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 						title = userText.length > 50 ? userText.substring(0, 47) + '...' : userText;
 					}
 
-					let summary = '';
-					if (lastAiLog?.text) {
-						const text = lastAiLog.text.trim();
-						if (text.length > 10) {
-							const sentences = text.match(/[^.!?\n]+[.!?]+/g) || [];
-							const fillerPattern =
-								/^(excellent|perfect|great|awesome|wonderful|fantastic|good|nice|cool|done|ok|okay|alright|sure|yes|yeah|absolutely|certainly|definitely|looks?\s+good|all\s+(set|done|ready)|got\s+it|understood|will\s+do|on\s+it|no\s+problem|no\s+worries|happy\s+to\s+help)[!.\s]*$/i;
-							const meaningfulSentence = sentences.find((s) => !fillerPattern.test(s.trim()));
-							const firstSentence = meaningfulSentence?.trim() || text.substring(0, 120);
-							summary =
-								firstSentence.length < text.length
-									? firstSentence
-									: text.substring(0, 120) + (text.length > 120 ? '...' : '');
-						}
-					}
-					if (!summary) {
-						summary = 'Completed successfully';
-					}
+					const summary = summarizeAnswer(lastAiLog?.text) || 'Completed successfully';
 
 					const agentSessionId = completedTab?.agentSessionId || currentSession.agentSessionId;
 					// Same label the tab strip draws, via the one formatter. A hand-rolled

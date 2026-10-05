@@ -16,6 +16,7 @@ const paths: MaestroPaths = {
 	settingsFile: '/data/Maestro/maestro-settings.json',
 	agentConfigsFile: '/data/Maestro/maestro-agent-configs.json',
 	historyDir: '/data/Maestro/history',
+	statsFile: '/data/Maestro/stats.db',
 	groupChatsDir: '/data/Maestro/group-chats',
 	sessionImagesDir: '/data/Maestro/session-images',
 	cliServerFile: '/data/Maestro/cli-server.json',

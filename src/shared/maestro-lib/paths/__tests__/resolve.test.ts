@@ -53,6 +53,7 @@ describe('resolveMaestroPaths', () => {
 			settingsFile: path.join(expectedUserData, 'maestro-settings.json'),
 			agentConfigsFile: path.join(expectedUserData, 'maestro-agent-configs.json'),
 			historyDir: path.join(expectedUserData, 'history'),
+			statsFile: path.join(expectedUserData, 'stats.db'),
 			groupChatsDir: path.join(expectedUserData, 'group-chats'),
 			sessionImagesDir: path.join(expectedUserData, 'session-images'),
 			cliServerFile: path.join(expectedUserData, 'cli-server.json'),
@@ -75,6 +76,7 @@ describe('resolveMaestroPaths', () => {
 
 		expect(paths.agentConfigsFile).toBe(path.join(userDataDir, 'maestro-agent-configs.json'));
 		expect(paths.historyDir).toBe(path.join(userDataDir, 'history'));
+		expect(paths.statsFile).toBe(path.join(userDataDir, 'stats.db'));
 		expect(paths.cliServerFile).toBe(path.join(userDataDir, 'cli-server.json'));
 	});
 

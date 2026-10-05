@@ -53,6 +53,8 @@ export interface MaestroPaths {
 	settingsFile: string;
 	agentConfigsFile: string;
 	historyDir: string;
+	/** The desktop's usage database (`app.getPath('userData')/stats.db`). Local to this machine, never synced. */
+	statsFile: string;
 	groupChatsDir: string;
 	sessionImagesDir: string;
 	cliServerFile: string;
@@ -118,6 +120,7 @@ export function resolveMaestroPaths(options: ResolveMaestroPathsOptions = {}): M
 		settingsFile: path.join(syncDir, 'maestro-settings.json'),
 		agentConfigsFile: path.join(productionDataDir, 'maestro-agent-configs.json'),
 		historyDir: path.join(userDataDir, 'history'),
+		statsFile: path.join(userDataDir, 'stats.db'),
 		groupChatsDir: path.join(syncDir, 'group-chats'),
 		sessionImagesDir: path.join(syncDir, 'session-images'),
 		cliServerFile: path.join(userDataDir, 'cli-server.json'),

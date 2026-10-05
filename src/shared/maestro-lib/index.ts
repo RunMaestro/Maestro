@@ -178,6 +178,14 @@ export * from './turns/context';
 export * from './turns/records';
 export * from './turns/run-agent-turn';
 export * from './turns/queue';
+export * from './turns/summary';
+export * from './turns/history';
+export * from './turns/stats';
+export * from './turns/record-turn';
+
+// The usage row a turn writes, defined once for the desktop's stats module and the runtime
+export * from './stats/query-event-insert';
+export * from './stats/utils';
 
 // Process control
 export * from './control/termination';

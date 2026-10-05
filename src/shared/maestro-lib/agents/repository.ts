@@ -67,6 +67,7 @@ import type {
 	SessionsDocument,
 } from '../store/records';
 import { agentsOf, groupsOf, optionalArrayShape, visibleAiTabsOf } from '../store/read-stores';
+import type { LogEntryRecord } from '../store/transcript';
 import { archiveClosedTab, removeClosedTabArchive } from './closed-tabs';
 import {
 	activeAgentAfterRemoval,
@@ -174,6 +175,16 @@ export interface AgentRepository {
 	closeTab(agentId: string, tabId: string): Promise<ClientResult<void>>;
 	starTab(agentId: string, tabId: string, starred: boolean): Promise<ClientResult<void>>;
 	updateTab(agentId: string, tabId: string, patch: TabPatch): Promise<ClientResult<void>>;
+	/**
+	 * Add entries to the end of a tab's transcript (CH-5). Append only: what the tab already
+	 * holds is never rewritten, so a turn recorded here cannot cost the person an entry. A
+	 * hidden consult tab takes entries like any other.
+	 */
+	appendTranscript(
+		agentId: string,
+		tabId: string,
+		entries: readonly LogEntryRecord[]
+	): Promise<ClientResult<void>>;
 }
 
 // ---------------------------------------------------------------------------
@@ -887,6 +898,40 @@ export function createAgentRepository(options: AgentRepositoryOptions): AgentRep
 		);
 	};
 
+	function appendTranscript(
+		agentId: string,
+		tabId: string,
+		entries: readonly LogEntryRecord[]
+	): Promise<ClientResult<void>> {
+		// An internal write, not a client method: it reports under the tab update it amounts to.
+		const method: ClientMethod = 'tabs.update';
+		return run(method, () => {
+			const agent = findAgent(agentId);
+			if (!agent) return noAgent(method, agentId);
+			const tab = agent.aiTabs?.find((candidate) => candidate.id === tabId);
+			if (!tab) return noTab(method, tabId);
+			if (entries.length === 0) return { ok: true, plan: { value: undefined, events: [] } };
+			const changed: AITabRecord = {
+				...tab,
+				logs: [...(Array.isArray(tab.logs) ? tab.logs : []), ...entries],
+			};
+			const next: AgentRecord = {
+				...agent,
+				aiTabs: (agent.aiTabs ?? []).map((entry) => (entry.id === tabId ? changed : entry)),
+			};
+			// Not `updateEvents`: it compares the old and new tab deeply, and a transcript is the
+			// one field that is large and known to have changed.
+			const events: MaestroEvent[] = visibleTab(agent, tabId)
+				? [{ type: 'tab.updated', agentId, tab: projectTab(changed) }]
+				: [];
+			events.push({ type: 'agent.updated', agent: project(next) });
+			return {
+				ok: true,
+				plan: { value: undefined, sessions: withAgents(new Map([[agentId, next]])), events },
+			};
+		});
+	}
+
 	/**
 	 * Close a tab into the closed-tab archive (RT6), never deleting its transcript.
 	 * The archive is written first: a failure between the two writes leaves the tab
@@ -960,5 +1005,6 @@ export function createAgentRepository(options: AgentRepositoryOptions): AgentRep
 		closeTab,
 		starTab,
 		updateTab,
+		appendTranscript,
 	};
 }
