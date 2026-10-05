@@ -876,7 +876,7 @@ List every agent with a readable .maestro/cue.yaml and its subscription counts
 
 ## `maestro-cli bundle`
 
-Export, validate, and inspect portable Cue pipeline and agent bundles
+Export, validate, inspect, and import portable Cue pipeline and agent bundles
 
 ## `maestro-cli bundle export`
 
@@ -908,6 +908,20 @@ Describe a bundle from its manifest and README without unpacking the rest
 | Option   | Description                    | Default |
 | -------- | ------------------------------ | ------- |
 | `--json` | Output as JSON (for scripting) | -       |
+
+## `maestro-cli bundle import <bundle>`
+
+Import a bundle into a data directory and local workspace folders (desktop and Cue engine must be stopped)
+
+| Option                       | Description                                                                         | Default |
+| ---------------------------- | ----------------------------------------------------------------------------------- | ------- |
+| `-w, --workspace <key=path>` | Map a bundle workspace to a local folder (repeatable, one per workspace)            | `[]`    |
+| `--agent-path <tool=path>`   | Set the binary a provider runs, e.g. claude-code=/usr/local/bin/claude (repeatable) | `[]`    |
+| `--data-dir <path>`          | Import into this Maestro data directory instead of the default                      | -       |
+| `--dry-run`                  | Report everything the import would do, including conflicts; write nothing           | -       |
+| `--force`                    | Overwrite conflicting agents, subscriptions, playbooks, files, and paths            | -       |
+| `--reject-shell-commands`    | Refuse the import if any subscription runs a shell command                          | -       |
+| `--json`                     | Output as JSON (for scripting)                                                      | -       |
 
 ## `maestro-cli director-notes`
 
