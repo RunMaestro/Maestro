@@ -87,6 +87,30 @@ export function transcriptOf(tab: AITabRecord): LogEntryRecord[] {
 	return tab.logs.filter(isLogEntryRecord);
 }
 
+/** What `MaestroClient.tabs.transcript` accepts: both the WebSocket client and the runtime slice the same way. */
+export interface TranscriptWindow {
+	/** Only entries with a timestamp after this, epoch ms. */
+	sinceMs?: number;
+	/** At most this many of the newest entries. 0 returns none. */
+	tail?: number;
+}
+
+/** `entries` narrowed to the window: `sinceMs` first, then the newest `tail` of what is left. */
+export function sliceTranscript(
+	entries: LogEntryRecord[],
+	window: TranscriptWindow = {}
+): LogEntryRecord[] {
+	let sliced = entries;
+	if (window.sinceMs !== undefined) {
+		const since = window.sinceMs;
+		sliced = sliced.filter((entry) => entry.timestamp > since);
+	}
+	if (window.tail !== undefined) {
+		sliced = window.tail <= 0 ? [] : sliced.slice(-window.tail);
+	}
+	return sliced;
+}
+
 /** The outcome of looking up one tab's transcript. */
 export type TabTranscriptResult =
 	| { status: 'ok'; agent: AgentRecord; tab: AITabRecord; entries: LogEntryRecord[] }

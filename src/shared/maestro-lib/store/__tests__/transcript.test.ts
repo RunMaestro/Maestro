@@ -1,6 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import type { SessionsDocument } from '../records';
-import { findTabTranscript, LOG_ENTRY_SOURCES, transcriptOf } from '../transcript';
+import {
+	findTabTranscript,
+	LOG_ENTRY_SOURCES,
+	sliceTranscript,
+	transcriptOf,
+	type LogEntryRecord,
+} from '../transcript';
 
 const userEntry = {
 	id: 'log-1',
@@ -82,5 +88,33 @@ describe('transcript accessor', () => {
 		expect([...LOG_ENTRY_SOURCES].sort()).toEqual(
 			['ai', 'error', 'stderr', 'stdout', 'system', 'thinking', 'tool', 'user'].sort()
 		);
+	});
+});
+
+describe('sliceTranscript', () => {
+	const entries: LogEntryRecord[] = [10, 20, 30, 40].map((timestamp) => ({
+		id: `e${timestamp}`,
+		timestamp,
+		source: 'ai',
+		text: `t${timestamp}`,
+	}));
+	const ids = (list: LogEntryRecord[]) => list.map((entry) => entry.id);
+
+	it('returns everything with no window', () => {
+		expect(ids(sliceTranscript(entries))).toEqual(['e10', 'e20', 'e30', 'e40']);
+	});
+
+	it('keeps only entries after sinceMs, exclusive', () => {
+		expect(ids(sliceTranscript(entries, { sinceMs: 20 }))).toEqual(['e30', 'e40']);
+	});
+
+	it('keeps the newest tail entries, and none for tail 0', () => {
+		expect(ids(sliceTranscript(entries, { tail: 2 }))).toEqual(['e30', 'e40']);
+		expect(sliceTranscript(entries, { tail: 0 })).toEqual([]);
+	});
+
+	it('applies sinceMs before tail', () => {
+		expect(ids(sliceTranscript(entries, { sinceMs: 10, tail: 2 }))).toEqual(['e30', 'e40']);
+		expect(ids(sliceTranscript(entries, { sinceMs: 30, tail: 5 }))).toEqual(['e40']);
 	});
 });

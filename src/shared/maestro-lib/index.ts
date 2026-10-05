@@ -18,6 +18,13 @@ export * from './paths/complete';
 export * from './runtime/lock';
 export * from './runtime/data-dir-lock';
 
+// The runtime: the in-process MaestroClient that owns writes to a data directory (L1a, L2, L4, L5)
+export * from './runtime/index';
+export * from './runtime/client';
+export * from './runtime/processes';
+export * from './runtime/providers';
+export * from './runtime/settings-watch';
+
 // Desktop bridge: find the running desktop (cli-server.json) and talk to it
 export * from './client/discovery';
 export * from './client/bridge-connection';

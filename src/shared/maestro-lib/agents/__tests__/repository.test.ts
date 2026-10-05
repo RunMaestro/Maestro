@@ -917,6 +917,15 @@ describe('agent repository', () => {
 		});
 	});
 
+	it('drain resolves only after every accepted command has been written', async () => {
+		const repo = await setup({ sessions: twoAgents() });
+		const pending = [repo.renameAgent('a1', 'Gamma'), repo.createGroup({ name: 'late' })];
+		await repo.drain();
+		expect(readSessions().sessions[0].name).toBe('Gamma');
+		expect(readGroups().groups).toHaveLength(1);
+		await Promise.all(pending);
+	});
+
 	it('hands out projections, never the stored objects', async () => {
 		const repo = await setup({ sessions: twoAgents() });
 		const first = repo.getAgent('a1')!;

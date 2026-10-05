@@ -156,6 +156,8 @@ export interface AgentRepository {
 	getTab(agentId: string, tabId: string): AITabRecord | undefined;
 	/** After this, every command answers `host-lost` with `reason`. Reads still work. */
 	fence(reason: string): void;
+	/** Resolves once every command accepted so far has finished, written or failed. Shutdown awaits it before releasing the lock. */
+	drain(): Promise<void>;
 
 	createAgent(input: AgentCreateInput): Promise<ClientResult<{ agentId: string }>>;
 	updateAgent(agentId: string, patch: AgentPatch): Promise<ClientResult<AgentUpdateReceipt>>;
@@ -941,6 +943,9 @@ export function createAgentRepository(options: AgentRepositoryOptions): AgentRep
 		},
 		fence: (reason) => {
 			fencedReason ??= reason;
+		},
+		drain: async () => {
+			await chain;
 		},
 		createAgent,
 		updateAgent,

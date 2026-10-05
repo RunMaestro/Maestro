@@ -470,6 +470,8 @@ All under `src/shared/maestro-lib/`, imports limited to the library, `src/shared
 | `agents/repository.ts`                            | The executor: queue, effects, writes, events                                             | 4    |
 | `client/event-bus.ts`                             | The bus, moved out of `ws-client.ts`                                                     | 5    |
 | `runtime/processes.ts`                            | The registry (6.6)                                                                       | 5    |
+| `runtime/settings-watch.ts`                       | Debounced directory watch that diffs `maestro-settings.json` into `settings.changed`     | 5    |
+| `runtime/providers.ts`                            | Local `providers.list`: binary or custom-path probe, cached 60 s                         | 5    |
 | `runtime/client.ts`                               | The in-process `MaestroClient`                                                           | 5    |
 | `runtime/index.ts`                                | `createMaestroRuntime`                                                                   | 5    |
 | `src/main/app-lifecycle/data-dir-guard.ts`        | `claimDataDirForDesktop` (4.4), called from `src/main/index.ts`                          | 6    |

@@ -21,7 +21,7 @@
 
 import type { AgentRecord, AITabRecord, GroupRecord } from '../store/records';
 import { agentsOf, groupsOf } from '../store/read-stores';
-import { transcriptOf, type LogEntryRecord } from '../store/transcript';
+import { sliceTranscript, transcriptOf, type LogEntryRecord } from '../store/transcript';
 import {
 	buildAgentConfigPatch,
 	buildTabConfigPatch,
@@ -1619,15 +1619,7 @@ class WsMaestroClient implements MaestroClient {
 			[agentId, tabId, false]
 		);
 		if (!read.ok) return read;
-		let entries = transcriptOf({ id: tabId, logs: read.value?.logs ?? [] });
-		if (options.sinceMs !== undefined) {
-			const since = options.sinceMs;
-			entries = entries.filter((entry) => entry.timestamp > since);
-		}
-		if (options.tail !== undefined) {
-			entries = options.tail <= 0 ? [] : entries.slice(-options.tail);
-		}
-		return ok(entries);
+		return ok(sliceTranscript(transcriptOf({ id: tabId, logs: read.value?.logs ?? [] }), options));
 	}
 
 	// =======================================================================
