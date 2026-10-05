@@ -22,6 +22,7 @@ import { buildExpandedPath, buildExpandedEnv } from '../../shared/pathUtils';
 import { isWindows, getWhichCommand } from '../../shared/platformDetection';
 import { embedSystemPromptInPrompt } from '../../shared/embeddedSystemPrompt';
 import { applyAgentConfigOverrides } from '../../main/utils/agent-args';
+import { escapeArgsForShell } from '../../main/process-manager/utils/shellEscape';
 import { buildCliWakaTimeHeartbeat } from './wakatime';
 import {
 	getClaudeTokenMode,
@@ -107,14 +108,49 @@ async function maybeWrapSpawnWithSsh(
 }
 
 /**
- * Finalize child stdin for a spawned agent. When SSH stdin passthrough is in
- * effect, write the pre-built script before closing; otherwise just close.
+ * Finalize child stdin for a spawned agent. When there is a payload (the SSH
+ * stdin script, or the prompt for a Windows batch shim), write it before
+ * closing; otherwise just close.
  */
-function finalizeAgentStdin(child: ChildProcess, sshStdinScript?: string): void {
-	if (sshStdinScript) {
-		child.stdin?.write(sshStdinScript);
+function finalizeAgentStdin(child: ChildProcess, stdinPayload?: string): void {
+	if (stdinPayload) {
+		child.stdin?.write(stdinPayload);
 	}
 	child.stdin?.end();
+}
+
+/** How to launch a LOCAL agent whose resolved command is a Windows batch shim. */
+interface WindowsBatchShimSpawn {
+	command: string;
+	args: string[];
+	stdinPrompt: string;
+}
+
+/**
+ * Plan a local spawn of an npm `.cmd` / `.bat` shim on Windows, or return
+ * undefined when the command is not one.
+ *
+ * Node refuses to exec a batch file without a shell (`spawn EINVAL`, the
+ * CVE-2024-27980 fix), so it has to go through cmd.exe. cmd.exe then caps the
+ * command line near 8 KB and mangles a multi-line prompt, so the prompt goes
+ * over stdin instead of argv. Both mirror what the desktop does for the same
+ * shims: ChildProcessSpawner's batch-file shell switch, and `getStdinFlags()`
+ * raw-stdin prompts on Windows.
+ */
+function planWindowsBatchShimSpawn(
+	command: string,
+	argsWithoutPrompt: string[],
+	prompt: string
+): WindowsBatchShimSpawn | undefined {
+	if (!isWindows()) return undefined;
+	const ext = path.win32.extname(command).toLowerCase();
+	if (ext !== '.cmd' && ext !== '.bat') return undefined;
+	return {
+		// cmd.exe splits an unquoted command on spaces ("C:\Users\First Last\...").
+		command: /\s/.test(command) && !command.startsWith('"') ? `"${command}"` : command,
+		args: escapeArgsForShell(argsWithoutPrompt),
+		stdinPrompt: prompt,
+	};
 }
 
 type SpawnOverrides = Pick<
@@ -331,17 +367,34 @@ async function findCommandInPath(commandName: string): Promise<string | undefine
 		});
 
 		proc.on('close', (code) => {
-			if (code === 0 && stdout.trim()) {
-				resolve(stdout.trim().split('\n')[0]);
-			} else {
-				resolve(undefined);
-			}
+			resolve(code === 0 ? pickPathMatch(stdout) : undefined);
 		});
 
 		proc.on('error', () => {
 			resolve(undefined);
 		});
 	});
+}
+
+/**
+ * Pick the binary to exec from `which` / `where` output.
+ *
+ * `where` answers in CRLF and lists every match. Splitting on '\n' alone left
+ * the '\r' on the first line, so CreateProcess looked for a file literally
+ * named `opencode\r` and failed with ENOENT (#1718). On Windows the first
+ * match is also usually the extensionless sh shim npm writes beside the
+ * `.cmd`, which CreateProcess cannot run, so prefer a real executable, then
+ * the batch shim, and only then whatever came first.
+ */
+function pickPathMatch(stdout: string): string | undefined {
+	const matches = stdout
+		.split(/\r?\n/)
+		.map((line) => line.trim())
+		.filter(Boolean);
+	if (!isWindows()) return matches[0];
+	const withExt = (...exts: string[]) =>
+		matches.find((m) => exts.includes(path.win32.extname(m).toLowerCase()));
+	return withExt('.exe', '.com') ?? withExt('.cmd', '.bat') ?? matches[0];
 }
 
 /**
@@ -573,6 +626,7 @@ async function spawnClaudeAgent(
 	let spawnCwd = cwd;
 	let spawnEnv: NodeJS.ProcessEnv = env;
 	let sshStdinScript: string | undefined;
+	let batchShim: WindowsBatchShimSpawn | undefined;
 
 	if (sshRemoteConfig?.enabled) {
 		// Remote interactive (TUI): run maestro-p on the remote host instead of
@@ -620,6 +674,9 @@ async function spawnClaudeAgent(
 		// over the already-layered local env so the child resolves correctly.
 		Object.assign(env, applied.customEnvVars);
 		spawnEnv = env;
+	} else {
+		batchShim = planWindowsBatchShimSpawn(claudeCommand, baseArgs, prompt);
+		if (batchShim) ({ command: spawnCommand, args: spawnArgs } = batchShim);
 	}
 
 	return new Promise((resolve) => {
@@ -627,6 +684,7 @@ async function spawnClaudeAgent(
 			cwd: spawnCwd,
 			env: spawnEnv,
 			stdio: ['pipe', 'pipe', 'pipe'],
+			shell: !!batchShim,
 		};
 
 		const child = spawn(spawnCommand, spawnArgs, options);
@@ -703,7 +761,7 @@ async function spawnClaudeAgent(
 			stderr += data.toString();
 		});
 
-		finalizeAgentStdin(child, sshStdinScript);
+		finalizeAgentStdin(child, sshStdinScript ?? batchShim?.stdinPrompt);
 
 		// Handle completion
 		child.on('close', (code) => {
@@ -966,6 +1024,7 @@ async function spawnJsonLineAgent(
 	let spawnCwd = cwd;
 	let spawnEnv: NodeJS.ProcessEnv = env;
 	let sshStdinScript: string | undefined;
+	let batchShim: WindowsBatchShimSpawn | undefined;
 
 	if (sshRemoteConfig?.enabled) {
 		// Pass `effectivePrompt` (not the raw `prompt`) so the embed-in-turn-1
@@ -990,6 +1049,9 @@ async function spawnJsonLineAgent(
 			return sshUnresolvedFailure(sshRemoteConfig);
 		}
 		({ spawnCommand, spawnArgs, spawnCwd, spawnEnv, sshStdinScript } = applySshWrapResult(wrapped));
+	} else {
+		batchShim = planWindowsBatchShimSpawn(agentCommand, baseArgs, effectivePrompt);
+		if (batchShim) ({ command: spawnCommand, args: spawnArgs } = batchShim);
 	}
 
 	// Resolve the output parser before spawning so a misconfigured agent type
@@ -1005,6 +1067,7 @@ async function spawnJsonLineAgent(
 			cwd: spawnCwd,
 			env: spawnEnv,
 			stdio: ['pipe', 'pipe', 'pipe'],
+			shell: !!batchShim,
 		};
 
 		const child = spawn(spawnCommand, spawnArgs, options);
@@ -1070,7 +1133,7 @@ async function spawnJsonLineAgent(
 			stderr += data.toString();
 		});
 
-		finalizeAgentStdin(child, sshStdinScript);
+		finalizeAgentStdin(child, sshStdinScript ?? batchShim?.stdinPrompt);
 
 		const agentName = def?.name || toolType;
 		child.on('close', (code) => {

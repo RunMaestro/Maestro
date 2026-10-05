@@ -2369,6 +2369,65 @@ Some text with [x] in it that's not a checkbox
 			const wrapConfig = mockWrapSpawnWithSsh.mock.calls[0][0];
 			expect(wrapConfig.command).toBe('claude');
 		});
+
+		describe('on Windows (#1718)', () => {
+			// No Windows CI leg runs this path, so the platform is mocked.
+			let originalPlatform: NodeJS.Platform;
+			beforeEach(() => {
+				originalPlatform = process.platform;
+				Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+			});
+			afterEach(() => {
+				Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
+			});
+
+			it('reads CRLF `where` output and launches the .cmd shim through cmd.exe', async () => {
+				// What `where opencode` prints for an npm install: the extensionless sh
+				// shim first, every line CRLF-terminated (the harness adds the last \n).
+				pathProbeResolver = () =>
+					'C:\\node\\opencode\r\nC:\\node\\opencode.cmd\r\nC:\\node\\opencode.ps1\r';
+
+				const { spawnAgent: freshSpawnAgent } = await freshSpawner();
+				await driveSpawnToCompletion(freshSpawnAgent('opencode', 'C:\\p', 'ping'), 0);
+
+				const { command, args, options } = spawnCall();
+				expect(command).toBe('C:\\node\\opencode.cmd');
+				// Node refuses a batch file without a shell (spawn EINVAL).
+				expect((options as { shell?: boolean }).shell).toBe(true);
+				// cmd.exe mangles a multi-line prompt, so it goes over stdin instead.
+				expect(args).not.toContain('ping');
+				expect(mockStdin.write).toHaveBeenCalledWith('ping');
+				expect(mockStdin.end).toHaveBeenCalled();
+			});
+
+			it('execs an .exe directly with the prompt in argv', async () => {
+				pathProbeResolver = () => 'C:\\node\\opencode.cmd\r\nC:\\bin\\opencode.exe\r';
+
+				const { spawnAgent: freshSpawnAgent } = await freshSpawner();
+				await driveSpawnToCompletion(freshSpawnAgent('opencode', 'C:\\p', 'ping'), 0);
+
+				const { command, args, options } = spawnCall();
+				expect(command).toBe('C:\\bin\\opencode.exe');
+				expect((options as { shell?: boolean }).shell).toBe(false);
+				expect(args).toContain('ping');
+				expect(mockStdin.write).not.toHaveBeenCalled();
+			});
+
+			it('quotes a Claude batch shim under a path with spaces', async () => {
+				const shim = 'C:\\Users\\First Last\\AppData\\Roaming\\npm\\claude.cmd';
+				pathProbeResolver = () => shim;
+
+				const { spawnAgent: freshSpawnAgent } = await freshSpawner();
+				await driveSpawnToCompletion(freshSpawnAgent('claude-code', 'C:\\p', 'hi'), 0, CLAUDE_OK());
+
+				const { command, args, options } = spawnCall();
+				expect(command).toBe(`"${shim}"`);
+				expect((options as { shell?: boolean }).shell).toBe(true);
+				expect(args).not.toContain('hi');
+				expect(args).not.toContain('--');
+				expect(mockStdin.write).toHaveBeenCalledWith('hi');
+			});
+		});
 	});
 
 	describe('spawnAgent: regression', () => {
