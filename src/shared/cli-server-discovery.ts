@@ -4,14 +4,16 @@
  * Shared module for the CLI server discovery file, used by both the Electron
  * main process (writes) and the CLI (reads) to locate the running server.
  *
- * NOTE: This file has its own `getConfigDir()` implementation (lowercase "maestro")
- * which matches the electron-store default from package.json `"name": "maestro"`.
- * See cli-activity.ts for the same pattern and rationale.
+ * The directory comes from `resolveUserDataDir()`, the same resolver the CLI's
+ * agent store uses. A private lowercase `maestro` fallback used to live here, so
+ * on a case-sensitive Linux install the CLI read agents from `~/.config/Maestro`
+ * while looking for the app in `~/.config/maestro`, and reported the desktop as
+ * not running while it was.
  */
 
 import * as fs from 'fs';
 import * as path from 'path';
-import * as os from 'os';
+import { resolveUserDataDir } from './userDataDir';
 
 export interface CliServerInfo {
 	port: number;
@@ -34,37 +36,15 @@ export interface CliServerInfo {
 	cliSecret?: string;
 }
 
-// Get the Maestro config directory path (lowercase "maestro")
-function getConfigDir(): string {
-	// Allow overriding the data directory (e.g. for dev mode: maestro-dev).
-	// Matches the override honored by src/cli/services/storage.ts so the CLI's
-	// discovery file lookup tracks the same data directory as its session reads.
-	if (process.env.MAESTRO_USER_DATA) {
-		return path.resolve(process.env.MAESTRO_USER_DATA);
-	}
-
-	const platform = os.platform();
-	const home = os.homedir();
-
-	if (platform === 'darwin') {
-		return path.join(home, 'Library', 'Application Support', 'maestro');
-	} else if (platform === 'win32') {
-		return path.join(process.env.APPDATA || path.join(home, 'AppData', 'Roaming'), 'maestro');
-	} else {
-		// Linux and others
-		return path.join(process.env.XDG_CONFIG_HOME || path.join(home, '.config'), 'maestro');
-	}
-}
-
 const DISCOVERY_FILE = 'cli-server.json';
 
 /**
  * Discovery file location. `dataDir` names a specific data directory (the
  * bundle importer asks whether a desktop runs against ITS target); without it
- * the directory resolves as above.
+ * it is Maestro's data directory as `resolveUserDataDir()` resolves it.
  */
 function getDiscoveryFilePath(dataDir?: string): string {
-	return path.join(dataDir ?? getConfigDir(), DISCOVERY_FILE);
+	return path.join(dataDir ?? resolveUserDataDir(), DISCOVERY_FILE);
 }
 
 /**

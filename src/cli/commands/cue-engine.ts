@@ -26,6 +26,7 @@ import { createStandaloneCueEngine } from '../services/cue-standalone-engine';
 import { startCueTriggerInbox } from '../services/cue-trigger-inbox';
 import { readSessions } from '../services/storage';
 import { SqliteUnavailableError } from '../utils/native-sqlite';
+import { assertUserDataDirExists, resolveUserDataDir } from '../../shared/userDataDir';
 import { getAgentDisplayName } from '../../shared/agentMetadata';
 import { humanizeDuration } from '../../shared/duration';
 
@@ -44,6 +45,34 @@ export interface CueEngineStatusOptions {
 }
 
 /**
+ * Refuse to run against a data directory that does not exist.
+ *
+ * With no `MAESTRO_USER_DATA` the directory is a GUESS (an install writes
+ * `Maestro`, a dev checkout `maestro` or `maestro-dev`). Every verb here would
+ * otherwise answer from the wrong folder without complaint: `start` creates it
+ * and runs a healthy-looking engine over zero agents, `stop` and `status` find no
+ * lock and report nothing running, `inspect` lists no agents. The error names
+ * the folders that do exist and points at `MAESTRO_USER_DATA`.
+ *
+ * Only a missing directory is reported here; a permission or I/O error is a
+ * different problem and propagates as itself.
+ */
+function requireDataDir(options: { json?: boolean }): void {
+	try {
+		assertUserDataDirExists(resolveUserDataDir());
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code) throw error;
+		const message = error instanceof Error ? error.message : String(error);
+		if (options.json) {
+			console.log(JSON.stringify({ success: false, error: message, code: 'DATA_DIR_NOT_FOUND' }));
+		} else {
+			console.error(`[Cue] ${message}`);
+		}
+		process.exit(1);
+	}
+}
+
+/**
  * Start the standalone engine in THIS process and block until interrupted.
  * `CueEngine.start()` acquires the cross-process lock itself
  * (`cue-engine-lock.ts`) and simply no-ops (with a logged error) if another
@@ -51,6 +80,9 @@ export interface CueEngineStatusOptions {
  * here is safe by construction, not by this command's own checking.
  */
 export async function cueEngineStart(options: CueEngineStartOptions = {}): Promise<void> {
+	// Before anything touches disk: the lock, cue.db and the trigger inbox all
+	// create the directory they are handed.
+	requireDataDir(options);
 	const engine = await createStandaloneCueEngine();
 
 	let shuttingDown = false;
@@ -120,6 +152,7 @@ export async function cueEngineStart(options: CueEngineStartOptions = {}): Promi
  * user asked for; use the desktop app's own Settings toggle instead).
  */
 export async function cueEngineStop(options: CueEngineStopOptions = {}): Promise<void> {
+	requireDataDir(options);
 	const lock = readCueEngineLock();
 	if (!lock) {
 		const message = 'No Cue engine is currently running (lock file absent or stale).';
@@ -216,6 +249,7 @@ async function buildStatusPayload(): Promise<CueEngineStatusPayload> {
 }
 
 export async function cueEngineStatus(options: CueEngineStatusOptions = {}): Promise<void> {
+	requireDataDir(options);
 	let payload: CueEngineStatusPayload;
 	try {
 		payload = await buildStatusPayload();
@@ -275,6 +309,7 @@ export interface CueEngineInspectOptions {
  * this runner watch" answers, complementing `status`'s "is it running".
  */
 export async function cueEngineInspect(options: CueEngineInspectOptions = {}): Promise<void> {
+	requireDataDir(options);
 	const { loadCueConfigDetailed } = await import('../../main/cue/cue-yaml-loader');
 	const sessions = readSessions();
 	const agents: CueEngineInspectAgentPayload[] = [];

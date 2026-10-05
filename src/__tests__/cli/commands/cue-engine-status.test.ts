@@ -9,6 +9,9 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 
 vi.mock('../../../main/cue/cue-engine-lock', () => ({
 	readCueEngineLock: vi.fn(() => ({
@@ -47,8 +50,14 @@ const UNAVAILABLE = new SqliteUnavailableError(
 
 let logSpy: ReturnType<typeof vi.spyOn>;
 let errorSpy: ReturnType<typeof vi.spyOn>;
+// `status` refuses a data directory that does not exist, so give it one.
+let dataDir: string;
+let savedUserData: string | undefined;
 
 beforeEach(() => {
+	dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cli-cue-status-'));
+	savedUserData = process.env.MAESTRO_USER_DATA;
+	process.env.MAESTRO_USER_DATA = dataDir;
 	vi.mocked(initCueDb).mockReset();
 	logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 	errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -59,6 +68,9 @@ afterEach(() => {
 	logSpy.mockRestore();
 	errorSpy.mockRestore();
 	process.exitCode = undefined;
+	if (savedUserData === undefined) delete process.env.MAESTRO_USER_DATA;
+	else process.env.MAESTRO_USER_DATA = savedUserData;
+	fs.rmSync(dataDir, { recursive: true, force: true });
 });
 
 describe('cue engine status', () => {

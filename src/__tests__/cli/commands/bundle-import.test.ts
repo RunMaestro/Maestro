@@ -81,6 +81,23 @@ describe('bundle import', () => {
 		expect(readSessionsStoreFile(dataDir).sessions.map((s) => s.id)).toEqual(['agent-a']);
 	});
 
+	// The deliberate exception to the data-dir guard: export and the Cue engine
+	// verbs refuse a directory that does not exist, while import is how a fresh
+	// server gets one. With no --data-dir it provisions the resolved directory.
+	it('provisions a missing data dir resolved from MAESTRO_USER_DATA', async () => {
+		const saved = process.env.MAESTRO_USER_DATA;
+		const fresh = path.join(tmp, 'fresh-server');
+		process.env.MAESTRO_USER_DATA = fresh;
+		try {
+			await bundleImport(VERSION, bundle, { workspace: [`proj=${projRoot}`] });
+			expect(exitSpy).not.toHaveBeenCalled();
+			expect(readSessionsStoreFile(fresh).sessions.map((s) => s.id)).toEqual(['agent-a']);
+		} finally {
+			if (saved === undefined) delete process.env.MAESTRO_USER_DATA;
+			else process.env.MAESTRO_USER_DATA = saved;
+		}
+	});
+
 	it('emits the plan as JSON', async () => {
 		await run({ json: true });
 		const payload = JSON.parse(stdout());
