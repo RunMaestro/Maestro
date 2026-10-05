@@ -134,10 +134,11 @@ export function ExtensionDetails({
 		};
 		load(true);
 		// Keep the frame across unrelated registry changes. Detach it immediately
-		// when this plugin is disabled, removed, or replaced, then re-read grants.
+		// when this plugin is disabled, removed, or replaced. The parent will
+		// refresh its record before grants are read for the changed identity.
 		const unsubscribe = window.maestro.plugins.onChanged((registry?: PluginRegistry) => {
 			const current = registry?.records.find((item) => item.id === ext.id);
-			if (
+			const selectedChanged =
 				!current ||
 				recordEnabled === undefined ||
 				current.enabled !== recordEnabled ||
@@ -145,11 +146,13 @@ export function ExtensionDetails({
 				current.manifest?.version !== recordVersion ||
 				current.source !== recordSource ||
 				current.signature?.status !== recordSignatureStatus ||
-				current.signature?.signerKey !== recordSignerKey
-			) {
+				current.signature?.signerKey !== recordSignerKey;
+			if (selectedChanged) {
+				++grantsLoadGeneration.current;
 				setGrantsState(null);
+			} else {
+				load();
 			}
-			load();
 		});
 		return () => {
 			cancelled = true;

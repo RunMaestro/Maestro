@@ -537,28 +537,31 @@ describe('ExtensionDetails - plugin settings panels', () => {
 		);
 	});
 
-	it('drops an open panel after an out-of-band grant change', async () => {
+	it('keeps a disabled plugin panel detached when a stale grants request resolves', async () => {
 		let changed: ((registry?: PluginRegistry) => void) | undefined;
 		const subscription = vi.spyOn(window.maestro.plugins, 'onChanged').mockImplementation((cb) => {
 			changed = cb;
 			return () => {};
 		});
-		let resolveRevoked!: (value: { requested: never[]; granted: never[] }) => void;
-		const revoked = new Promise<{ requested: never[]; granted: never[] }>((resolve) => {
-			resolveRevoked = resolve;
+		let resolveRefresh!: (value: typeof granted) => void;
+		const refresh = new Promise<typeof granted>((resolve) => {
+			resolveRefresh = resolve;
 		});
+		const getGrants = vi.fn().mockResolvedValueOnce(granted).mockReturnValueOnce(refresh);
 		try {
 			const { container } = renderDetails({
 				ext: pluginTile('plugin-a', true),
 				contributions: contributions([panel('plugin-a')]),
-				getGrants: vi.fn().mockResolvedValueOnce(granted).mockReturnValueOnce(revoked),
+				getGrants,
 			});
 			await waitFor(() => expect(container.querySelector('webview')).not.toBeNull());
+			act(() => changed?.({ records: [pluginRecord('plugin-a', true)] }));
+			expect(getGrants).toHaveBeenCalledTimes(2);
 			act(() => {
 				changed?.({ records: [{ ...pluginRecord('plugin-a', true), enabled: false }] });
 			});
 			expect(container.querySelector('webview')).toBeNull();
-			await act(async () => resolveRevoked({ requested: [], granted: [] }));
+			await act(async () => resolveRefresh(granted));
 			expect(container.querySelector('webview')).toBeNull();
 		} finally {
 			subscription.mockRestore();
