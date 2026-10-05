@@ -19,6 +19,7 @@ let grant: boolean;
 let children: { kill: ReturnType<typeof vi.fn> }[];
 let hold: boolean;
 let probeDuration: number;
+let decodedDuration: number;
 let probeCodec: string;
 let whisperJson: string;
 let diagnostics: Error | null;
@@ -29,6 +30,7 @@ beforeEach(async () => {
 	grant = true;
 	hold = false;
 	probeDuration = 1;
+	decodedDuration = 1;
 	probeCodec = 'opus';
 	whisperJson = JSON.stringify({
 		model: { multilingual: true },
@@ -88,7 +90,10 @@ beforeEach(async () => {
 				const wav = args.includes('wav');
 				const stdout = binary.endsWith('ffprobe')
 					? JSON.stringify({
-							format: { format_name: wav ? 'wav' : 'ogg', duration: String(probeDuration) },
+							format: {
+								format_name: wav ? 'wav' : 'ogg',
+								duration: String(wav ? decodedDuration : probeDuration),
+							},
 							streams: [
 								{
 									codec_type: 'audio',
@@ -280,6 +285,19 @@ describe('media tools boundary', () => {
 			expect(native.execFile.mock.calls.every((c) => c[0].endsWith('ffprobe'))).toBe(true);
 		}
 	);
+
+	it('rejects overlong decoded audio even when the source metadata is short', async () => {
+		const jobId = await open();
+		const audioId = await download(jobId);
+		probeDuration = 1;
+		decodedDuration = 120.0001;
+		await expect(tools.call('p', 'media.decode', { jobId, audioId })).rejects.toMatchObject({
+			code: 'MediaTooLong',
+		});
+		expect(native.execFile.mock.calls.some((call) => call[0].endsWith('ffmpeg'))).toBe(true);
+		expect(native.execFile.mock.calls.some((call) => call[0].endsWith('whisper-cli'))).toBe(false);
+		expect(await fs.readdir(root)).toEqual([]);
+	});
 
 	it('requires Opus and rejects foreign handles/free arguments/English-only models', async () => {
 		const jobId = await open();
