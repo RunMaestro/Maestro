@@ -512,7 +512,7 @@ function pushSnapshot() {
 		// panelPost is a brokered async call; swallow denial (ui:panel not yet
 		// granted) so we simply retry on the next mutation.
 		if (p && typeof p.then === 'function') p.then(undefined, function () {});
-	} catch (e) {
+	} catch (_) {
 		/* denial or bridge gone; retry next mutation */
 	}
 }
@@ -552,7 +552,7 @@ function seedFromSessions() {
 				/* grant missing; tolerate */
 			}
 		);
-	} catch (e) {
+	} catch (_) {
 		/* tolerate */
 	}
 }
@@ -572,7 +572,7 @@ function activate(maestro) {
 	try {
 		var sub = maestro.events.subscribe(TOPICS);
 		if (sub && typeof sub.then === 'function') sub.then(undefined, function () {});
-	} catch (e) {
+	} catch (_) {
 		/* subscription denial is tolerated; handlers simply never fire */
 	}
 

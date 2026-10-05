@@ -143,5 +143,41 @@ export default tseslint.config(
 		rules: {
 			'tui-boundary/no-tui-outside-lib': 'error',
 		},
+	},
+
+	// Plugin sandbox: examples/plugins/**/*.js runs in a restricted vm.Script
+	// sandbox with only specific globals available (maestro SDK, setTimeout,
+	// console, clearTimeout, module, and standard JS intrinsics).
+	{
+		files: ['examples/plugins/**/*.js'],
+		languageOptions: {
+			ecmaVersion: 2020,
+			sourceType: 'script',
+			globals: {
+				maestro: 'readonly',
+				setTimeout: 'readonly',
+				console: 'readonly',
+				clearTimeout: 'readonly',
+				module: 'readonly',
+				JSON: 'readonly',
+				Date: 'readonly',
+				Map: 'readonly',
+				Set: 'readonly',
+				Math: 'readonly',
+				Object: 'readonly',
+				Array: 'readonly',
+				String: 'readonly',
+				Number: 'readonly',
+				Boolean: 'readonly',
+				Error: 'readonly',
+				RegExp: 'readonly',
+				Symbol: 'readonly',
+			},
+		},
+		rules: {
+			'no-undef': 'error',
+			'@typescript-eslint/no-unused-vars': 'off',
+			'no-unused-vars': 'off',
+		},
 	}
 );
