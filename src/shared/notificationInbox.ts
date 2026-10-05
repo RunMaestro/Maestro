@@ -1,3 +1,7 @@
+/** Shared warning for failed history writes, including a clear that could not be saved. */
+export const NOTIFICATION_HISTORY_PERSISTENCE_ERROR =
+	'Notification history could not be saved. Changes may be lost after restart.';
+
 /** Operations on the desktop client's notification history, shared across the CLI bridge. */
 export const NOTIFICATION_INBOX_ACTIONS = [
 	'list',
@@ -34,5 +38,6 @@ export interface NotificationInboxResult {
 	error?: string;
 	open?: boolean;
 	unreadCount?: number;
+	historyPersistenceFailed?: boolean;
 	notifications?: NotificationInboxEntry[];
 }

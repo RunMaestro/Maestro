@@ -50,6 +50,22 @@ describe('notification inbox operations', () => {
 		performNotificationInboxAction({ action: 'activate', id });
 		expect(onClick).toHaveBeenCalledOnce();
 	});
+	it('reports a persistence failure to CLI callers while retaining the resulting snapshot', () => {
+		notifyToast({ title: 'Stored', message: '' });
+		const setItem = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+			throw new Error('Storage denied');
+		});
+		try {
+			expect(performNotificationInboxAction({ action: 'clear' })).toMatchObject({
+				success: false,
+				historyPersistenceFailed: true,
+				notifications: [],
+			});
+		} finally {
+			setItem.mockRestore();
+		}
+	});
+
 	it('reports stale IDs and entries without a link', () => {
 		expect(performNotificationInboxAction({ action: 'read', id: 'gone' })).toMatchObject({
 			success: false,

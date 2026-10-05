@@ -1,4 +1,5 @@
 /** Shared entry activation and CLI history operations over the live notification store. */
+import { NOTIFICATION_HISTORY_PERSISTENCE_ERROR } from '../../shared/notificationInbox';
 import type {
 	NotificationInboxRequest,
 	NotificationInboxResult,
@@ -79,8 +80,13 @@ export function performNotificationInboxAction(
 			return { success: false, error: 'Unknown notification action' };
 	}
 	const current = useNotificationStore.getState();
+	const persistenceFailed =
+		current.historyPersistenceFailed &&
+		['read', 'read-all', 'clear', 'dismiss'].includes(request.action);
 	return {
-		success: true,
+		success: !persistenceFailed,
+		error: persistenceFailed ? NOTIFICATION_HISTORY_PERSISTENCE_ERROR : undefined,
+		historyPersistenceFailed: current.historyPersistenceFailed,
 		open: current.notificationCenterOpen,
 		unreadCount: selectUnreadNotificationCount(current),
 		notifications: current.history

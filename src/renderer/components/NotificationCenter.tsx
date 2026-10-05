@@ -12,6 +12,7 @@
  * inside the header.
  */
 
+import { NOTIFICATION_HISTORY_PERSISTENCE_ERROR } from '../../shared/notificationInbox';
 import { shortcutSuffix } from './ui/ShortcutHint';
 import { useSettingsStore } from '../stores/settingsStore';
 import { memo, useCallback, useRef, useState } from 'react';
@@ -140,6 +141,7 @@ function NotificationCenterPopover({ theme, anchorRef, onClose }: NotificationCe
 	});
 
 	const history = useNotificationStore((s) => s.history);
+	const historyPersistenceFailed = useNotificationStore((s) => s.historyPersistenceFailed);
 	const markAllNotificationsRead = useNotificationStore((s) => s.markAllNotificationsRead);
 	const clearNotificationHistory = useNotificationStore((s) => s.clearNotificationHistory);
 	const unreadCount = useNotificationStore(selectUnreadNotificationCount);
@@ -150,6 +152,7 @@ function NotificationCenterPopover({ theme, anchorRef, onClose }: NotificationCe
 		unreadCount > 0 ? 'unread' : 'all'
 	);
 	const visible = filter === 'unread' ? history.filter((n) => !n.read) : history;
+	const canClearHistory = history.length > 0 || historyPersistenceFailed;
 
 	const actionStyle = (enabled: boolean) => ({
 		color: enabled ? theme.colors.accent : theme.colors.textDim,
@@ -198,6 +201,15 @@ function NotificationCenterPopover({ theme, anchorRef, onClose }: NotificationCe
 				/>
 			</div>
 
+			{historyPersistenceFailed && (
+				<p
+					role="alert"
+					className="px-3 py-2 text-xs border-b"
+					style={{ color: theme.colors.warning, borderColor: theme.colors.border }}
+				>
+					{NOTIFICATION_HISTORY_PERSISTENCE_ERROR}
+				</p>
+			)}
 			{visible.length === 0 ? (
 				<div
 					className="px-3 py-8 text-center text-xs"
@@ -298,9 +310,9 @@ function NotificationCenterPopover({ theme, anchorRef, onClose }: NotificationCe
 				<button
 					type="button"
 					onClick={clearNotificationHistory}
-					disabled={history.length === 0}
+					disabled={!canClearHistory}
 					className="hover:underline disabled:no-underline disabled:cursor-default"
-					style={actionStyle(history.length > 0)}
+					style={actionStyle(canClearHistory)}
 					data-testid="notification-center-clear-all"
 				>
 					Clear all

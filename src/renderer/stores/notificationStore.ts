@@ -161,19 +161,29 @@ export function loadNotificationHistory(): NotificationRecord[] {
 		if (!raw) return [];
 		const parsed: unknown = JSON.parse(raw);
 		if (!Array.isArray(parsed)) return [];
-		return parsed.filter(isNotificationRecord).slice(0, NOTIFICATION_HISTORY_LIMIT);
+		return parsed
+			.filter(isNotificationRecord)
+			.slice(0, NOTIFICATION_HISTORY_LIMIT)
+			.map((record) => ({
+				...record,
+				clickAction: parseToastClickAction(record.clickAction).action,
+			}));
 	} catch {
 		return [];
 	}
 }
 
 /** Persist history without allowing storage failures to break notification delivery. */
-function saveNotificationHistory(history: NotificationRecord[]): void {
+function saveNotificationHistory(history: NotificationRecord[]): boolean {
 	try {
 		// JSON.stringify drops `onClick` on its own: functions are not serialized.
-		historyStorage()?.setItem(NOTIFICATION_HISTORY_STORAGE_KEY, JSON.stringify(history));
+		const storage = historyStorage();
+		if (!storage) return false;
+		storage.setItem(NOTIFICATION_HISTORY_STORAGE_KEY, JSON.stringify(history));
+		return true;
 	} catch {
-		// Quota or a denied origin costs the user persistence, not the inbox.
+		// Keep the inbox available, but report that its changes are not durable.
+		return false;
 	}
 }
 
@@ -204,6 +214,8 @@ export interface NotificationStoreState {
 	history: NotificationRecord[];
 	/** Whether the header's notification center popover is open. */
 	notificationCenterOpen: boolean;
+	/** True when the latest history change could not be persisted. */
+	historyPersistenceFailed: boolean;
 	config: NotificationConfig;
 }
 
@@ -261,6 +273,7 @@ export const useNotificationStore = create<NotificationStore>()((set) => ({
 	toasts: [],
 	history: loadNotificationHistory(),
 	notificationCenterOpen: false,
+	historyPersistenceFailed: false,
 	config: {
 		defaultDuration: 20,
 		audioFeedbackEnabled: false,
@@ -316,7 +329,8 @@ export const useNotificationStore = create<NotificationStore>()((set) => ({
 			return { history: s.history.map((n) => (n.read ? n : { ...n, read: true })) };
 		}),
 
-	clearNotificationHistory: () => set((s) => (s.history.length === 0 ? s : { history: [] })),
+	// A fresh array retries persistence even after a failed clear already emptied the inbox.
+	clearNotificationHistory: () => set({ history: [] }),
 
 	setNotificationCenterOpen: (open) => set({ notificationCenterOpen: open }),
 
@@ -339,7 +353,12 @@ export const useNotificationStore = create<NotificationStore>()((set) => ({
 }));
 
 useNotificationStore.subscribe((state, prev) => {
-	if (state.history !== prev.history) saveNotificationHistory(state.history);
+	if (state.history !== prev.history) {
+		const historyPersistenceFailed = !saveNotificationHistory(state.history);
+		if (historyPersistenceFailed !== state.historyPersistenceFailed) {
+			useNotificationStore.setState({ historyPersistenceFailed });
+		}
+	}
 });
 
 // ============================================================================

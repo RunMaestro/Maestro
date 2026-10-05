@@ -56,6 +56,7 @@ describe('NotificationCenter', () => {
 		vi.clearAllMocks();
 		mockJumpToAgent.mockReturnValue(true);
 		seed([]);
+		useNotificationStore.setState({ historyPersistenceFailed: false });
 		useNotificationStore.getState().setDefaultDuration(20);
 	});
 
@@ -282,6 +283,16 @@ describe('NotificationCenter', () => {
 			'No unread notifications'
 		);
 		expect(screen.getByTestId('notification-center-mark-all-read')).toBeDisabled();
+	});
+
+	it('makes failed persistence visible even when the history is empty', () => {
+		seed([], true);
+		useNotificationStore.setState({ historyPersistenceFailed: true });
+		render(<NotificationCenterHost theme={mockTheme} />);
+		expect(screen.getByRole('alert')).toHaveTextContent('Changes may be lost after restart');
+		expect(screen.getByTestId('notification-center-clear-all')).toBeEnabled();
+		fireEvent.click(screen.getByTestId('notification-center-clear-all'));
+		expect(screen.queryByRole('alert')).not.toBeInTheDocument();
 	});
 
 	it('clears the history', () => {

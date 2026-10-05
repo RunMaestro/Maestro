@@ -1147,6 +1147,44 @@ describe('notificationStore', () => {
 			expect(restored[0].onClick).toBeUndefined();
 		});
 
+		it('normalizes optional click-action fields with the canonical parser', () => {
+			notifyToast({ title: 'Source', message: '' });
+			localStorage.setItem(
+				NOTIFICATION_HISTORY_STORAGE_KEY,
+				JSON.stringify([
+					{
+						...history()[0],
+						clickAction: {
+							kind: 'jump-session',
+							sessionId: 'agent-1',
+							tabId: {},
+							unexpected: true,
+						},
+					},
+				])
+			);
+			expect(loadNotificationHistory()[0].clickAction).toEqual({
+				kind: 'jump-session',
+				sessionId: 'agent-1',
+				tabId: undefined,
+			});
+		});
+
+		it('reports failed durable clearing and recovers after a successful write', () => {
+			notifyToast({ title: 'Saved', message: '' });
+			const setItem = vi.spyOn(localStorage, 'setItem').mockImplementation(() => {
+				throw new Error('Storage denied');
+			});
+			useNotificationStore.getState().clearNotificationHistory();
+			expect(history()).toEqual([]);
+			expect(useNotificationStore.getState().historyPersistenceFailed).toBe(true);
+			expect(loadNotificationHistory()).toHaveLength(1);
+			setItem.mockRestore();
+			useNotificationStore.getState().clearNotificationHistory();
+			expect(useNotificationStore.getState().historyPersistenceFailed).toBe(false);
+			expect(loadNotificationHistory()).toEqual([]);
+		});
+
 		it('ignores a stored value that is not a list of records', () => {
 			localStorage.setItem(NOTIFICATION_HISTORY_STORAGE_KEY, '{not json');
 			expect(loadNotificationHistory()).toEqual([]);
