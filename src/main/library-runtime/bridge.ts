@@ -12,7 +12,14 @@
  * Design: `Plans/maestro-tui-desktop-migration.md` section 4.6.
  */
 
-import type { MaestroClient, MaestroEvent } from '../../shared/maestro-lib/client/types';
+import type { DesktopRuntimeApi } from '../../shared/maestro-lib/agents/desktop-fold-types';
+import type {
+	GroupPatch,
+	MaestroClient,
+	MaestroEvent,
+} from '../../shared/maestro-lib/client/types';
+import type { GroupUpdateRequest } from '../../shared/groupAppearance';
+import { DEFAULT_GROUP_EMOJI } from '../../shared/maestro-lib/agents/rules';
 import { createFrameState, framesForEvent } from '../../shared/maestro-lib/runtime/server-frames';
 import { createRequestHandler } from '../../shared/maestro-lib/runtime/server-requests';
 
@@ -60,7 +67,71 @@ export interface RuntimeBroadcastTarget {
 	broadcastToAll(message: object): void;
 }
 
+/**
+ * The three desktop messages the library's request handler has no case for, because the operation
+ * lives on `runtime.desktop` (a group's appearance, a tab's place in the strip) or reads the stored
+ * record (a bookmark toggle). The web server's own handlers still parse and validate the message and
+ * shape the reply; what these replace is the round trip through a renderer window. Each answers the
+ * `Promise<boolean>` its callback type promises, `false` for a refusal.
+ */
+export interface RuntimeDesktopCallbacks {
+	updateGroup(groupId: string, update: GroupUpdateRequest): Promise<boolean>;
+	/** Indices count the agent's `aiTabs`, as the web client sees them. */
+	reorderTab(sessionId: string, fromIndex: number, toIndex: number): Promise<boolean>;
+	toggleBookmark(sessionId: string): Promise<boolean>;
+}
+
+/**
+ * A validated `update_group` as a runtime patch. `clear` is the wire's way to say "remove it"; the
+ * runtime's is `null`, except the emoji, which cannot be absent on a stored group and so goes back to
+ * the default folder (the renderer's rule, kept).
+ */
+export function groupPatchFromUpdate(update: GroupUpdateRequest): GroupPatch {
+	const clear = new Set<string>(update.clear ?? []);
+	const patch: GroupPatch = {};
+	if (update.name) patch.name = update.name;
+	if (update.emoji) patch.emoji = update.emoji;
+	else if (clear.has('emoji')) patch.emoji = DEFAULT_GROUP_EMOJI;
+	if (update.icon) patch.icon = update.icon;
+	else if (clear.has('icon')) patch.icon = null;
+	if (update.color) patch.color = update.color;
+	else if (clear.has('color')) patch.color = null;
+	if (update.parentGroupId) patch.parentGroupId = update.parentGroupId;
+	else if (clear.has('parent')) patch.parentGroupId = null;
+	return patch;
+}
+
+function createDesktopCallbacks(desktop: DesktopRuntimeApi, client: MaestroClient) {
+	const callbacks: RuntimeDesktopCallbacks = {
+		async updateGroup(groupId, update) {
+			return (await desktop.updateGroup(groupId, groupPatchFromUpdate(update))).ok;
+		},
+		async reorderTab(sessionId, fromIndex, toIndex) {
+			const agent = desktop.snapshot().agents.find((candidate) => candidate.id === sessionId);
+			const tabs = Array.isArray(agent?.aiTabs) ? agent.aiTabs : [];
+			const moved = tabs[fromIndex];
+			const anchor = tabs[toIndex];
+			if (!agent || !moved || !anchor) return false;
+			if (moved.id === anchor.id) return true;
+			// The strip is `unifiedTabOrder`, which also holds file, terminal, and browser tabs, so a
+			// position among AI tabs is the position of the AI tab that holds it.
+			const order = Array.isArray(agent.unifiedTabOrder) ? agent.unifiedTabOrder : [];
+			const slot = order.findIndex((ref) => ref.type === 'ai' && ref.id === anchor.id);
+			if (slot < 0) return false;
+			return (await desktop.reorderTab(sessionId, { type: 'ai', id: moved.id }, slot)).ok;
+		},
+		async toggleBookmark(sessionId) {
+			const agent = await client.agents.get(sessionId);
+			if (!agent.ok) return false;
+			return (await client.agents.update(sessionId, { bookmarked: !agent.value.bookmarked })).ok;
+		},
+	};
+	return callbacks;
+}
+
 export interface RuntimeBridge extends RuntimeMessageRouter {
+	/** Present when the runtime runs in mode `desktop`; see {@link RuntimeDesktopCallbacks}. */
+	readonly desktopCallbacks?: RuntimeDesktopCallbacks;
 	/**
 	 * Push the runtime's agent, group, and tab changes to this server's clients. A second `attach`
 	 * (the web interface was stopped and started again) replaces the first. Returns the detach function.
@@ -70,7 +141,9 @@ export interface RuntimeBridge extends RuntimeMessageRouter {
 	dispose(): void;
 }
 
-export function createRuntimeBridge(runtime: MaestroClient): RuntimeBridge {
+export function createRuntimeBridge(
+	runtime: MaestroClient & { readonly desktop?: DesktopRuntimeApi }
+): RuntimeBridge {
 	const handle = createRequestHandler(runtime);
 	const frameState = createFrameState();
 	let target: RuntimeBroadcastTarget | undefined;
@@ -84,6 +157,9 @@ export function createRuntimeBridge(runtime: MaestroClient): RuntimeBridge {
 	);
 
 	return {
+		...(runtime.desktop
+			? { desktopCallbacks: createDesktopCallbacks(runtime.desktop, runtime) }
+			: {}),
 		handles: (type) => typeof type === 'string' && RUNTIME_BRIDGE_MESSAGE_TYPES.has(type),
 		handle: (message) => handle(message),
 		attach(next) {

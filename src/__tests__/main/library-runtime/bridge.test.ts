@@ -10,8 +10,10 @@ import * as os from 'os';
 import * as path from 'path';
 import {
 	createRuntimeBridge,
+	groupPatchFromUpdate,
 	RUNTIME_BRIDGE_MESSAGE_TYPES,
 	type RuntimeBridge,
+	type RuntimeDesktopCallbacks,
 } from '../../../main/library-runtime/bridge';
 import { DEFAULT_TAB_DEFAULTS } from '../../../shared/maestro-lib/agents/rules';
 import { createMaestroRuntime, type MaestroRuntime } from '../../../shared/maestro-lib/runtime';
@@ -194,6 +196,148 @@ describe('createRuntimeBridge', () => {
 
 		it('returns undefined for a message the runtime does not know, so the caller can say so', async () => {
 			expect(await bridge.handle({ type: 'select_session', sessionId: 'a1' })).toBeUndefined();
+		});
+	});
+
+	describe('desktop callbacks', () => {
+		const groupsOnDisk = () =>
+			JSON.parse(fs.readFileSync(path.join(dir, 'maestro-groups.json'), 'utf-8')).groups;
+		const strip = () =>
+			sessionsOnDisk()[0].unifiedTabOrder.map((ref: { id: string }) => ref.id) as string[];
+		let callbacks: RuntimeDesktopCallbacks;
+
+		beforeEach(() => {
+			if (!bridge.desktopCallbacks) throw new Error('a desktop runtime has callbacks');
+			callbacks = bridge.desktopCallbacks;
+		});
+
+		it('exists only for a runtime that has the desktop API', () => {
+			const bare = createRuntimeBridge({ ...runtime, desktop: undefined });
+			expect(bare.desktopCallbacks).toBeUndefined();
+			bare.dispose();
+		});
+
+		it('updates a group: look and parent, through the runtime', async () => {
+			const parent = (await runtime.groups.create({ name: 'top' })) as {
+				value: { groupId: string };
+			};
+			const child = (await runtime.groups.create({ name: 'inner' })) as {
+				value: { groupId: string };
+			};
+
+			const ok = await callbacks.updateGroup(child.value.groupId, {
+				name: 'Renamed',
+				color: '#EF4444',
+				parentGroupId: parent.value.groupId,
+			});
+
+			expect(ok).toBe(true);
+			expect(
+				groupsOnDisk().find((g: { id: string }) => g.id === child.value.groupId)
+			).toMatchObject({
+				name: 'RENAMED',
+				color: '#EF4444',
+				parentGroupId: parent.value.groupId,
+			});
+		});
+
+		it('refuses a group update the runtime refuses, and a group that is gone', async () => {
+			const only = (await runtime.groups.create({ name: 'solo' })) as {
+				value: { groupId: string };
+			};
+			expect(await callbacks.updateGroup('nobody', { name: 'x' })).toBe(false);
+			// Nesting a group inside itself breaks the one-level rule.
+			expect(
+				await callbacks.updateGroup(only.value.groupId, { parentGroupId: only.value.groupId })
+			).toBe(false);
+		});
+
+		it('reorders by position among the AI tabs, moving the tab in the strip', async () => {
+			const second = (await runtime.tabs.create('a1')) as { value: { tabId: string } };
+			const third = (await runtime.tabs.create('a1')) as { value: { tabId: string } };
+			const [first, ...rest] = strip();
+			expect(rest).toEqual([second.value.tabId, third.value.tabId]);
+
+			expect(await callbacks.reorderTab('a1', 0, 2)).toBe(true);
+
+			expect(strip()).toEqual([second.value.tabId, third.value.tabId, first]);
+		});
+
+		it('lands among file tabs: the AI tab takes the slot of the AI tab it moves onto', async () => {
+			const second = (await runtime.tabs.create('a1')) as { value: { tabId: string } };
+			const id = second.value.tabId;
+			// The strip as a window holds it: a file tab sits between the two AI tabs.
+			await runtime.desktop!.fold({
+				agents: [
+					{
+						id: 'a1',
+						baseRev: runtime.desktop!.revisionOf('a1'),
+						provider: 'claude-code',
+						fields: {},
+						tabs: {},
+						order: [
+							{ type: 'ai', id: 't1' },
+							{ type: 'file', id: 'f1' },
+							{ type: 'ai', id },
+						],
+					},
+				],
+			});
+			await runtime.desktop!.flush();
+			expect(strip()).toEqual(['t1', 'f1', id]);
+
+			expect(await callbacks.reorderTab('a1', 1, 0)).toBe(true);
+
+			expect(strip()).toEqual([id, 't1', 'f1']);
+		});
+
+		it('treats a move onto itself as done and a bad position as refused', async () => {
+			await runtime.tabs.create('a1');
+			expect(await callbacks.reorderTab('a1', 1, 1)).toBe(true);
+			expect(await callbacks.reorderTab('a1', 0, 9)).toBe(false);
+			expect(await callbacks.reorderTab('a1', 9, 0)).toBe(false);
+			expect(await callbacks.reorderTab('nobody', 0, 1)).toBe(false);
+		});
+
+		it('toggles a bookmark both ways and refuses an agent that is gone', async () => {
+			expect(await callbacks.toggleBookmark('a1')).toBe(true);
+			expect(sessionsOnDisk()[0].bookmarked).toBe(true);
+			expect(await callbacks.toggleBookmark('a1')).toBe(true);
+			expect(sessionsOnDisk()[0].bookmarked).toBe(false);
+			expect(await callbacks.toggleBookmark('nobody')).toBe(false);
+		});
+	});
+
+	describe('groupPatchFromUpdate', () => {
+		it('carries the set fields over', () => {
+			expect(
+				groupPatchFromUpdate({
+					name: 'Team',
+					emoji: '\u{1F680}',
+					icon: 'rocket',
+					color: '#EF4444',
+					parentGroupId: 'p1',
+				})
+			).toEqual({
+				name: 'Team',
+				emoji: '\u{1F680}',
+				icon: 'rocket',
+				color: '#EF4444',
+				parentGroupId: 'p1',
+			});
+		});
+
+		it('says null for a cleared icon, color, and parent, and the default folder for the emoji', () => {
+			expect(groupPatchFromUpdate({ clear: ['emoji', 'icon', 'color', 'parent'] })).toEqual({
+				emoji: '\u{1F4C2}',
+				icon: null,
+				color: null,
+				parentGroupId: null,
+			});
+		});
+
+		it('leaves what it was not told about out of the patch', () => {
+			expect(groupPatchFromUpdate({ name: 'Only' })).toEqual({ name: 'Only' });
 		});
 	});
 

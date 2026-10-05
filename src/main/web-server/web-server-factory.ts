@@ -226,6 +226,15 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 		if (runtimeBridge) {
 			server.setRuntimeRouter(runtimeBridge);
 			runtimeBridge.attach(server);
+			// The three messages the request handler has no case for (a group's look, a tab's place in
+			// the strip, a bookmark) still arrive as web handlers calling a callback, which asked a
+			// renderer window. Answered by the runtime instead, so no window holds a copy of the rule.
+			const desktop = runtimeBridge.desktopCallbacks;
+			if (desktop) {
+				server.setUpdateGroupCallback(desktop.updateGroup);
+				server.setReorderTabCallback(desktop.reorderTab);
+				server.setToggleBookmarkCallback(desktop.toggleBookmark);
+			}
 		}
 
 		return server;

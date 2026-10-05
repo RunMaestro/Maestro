@@ -9,6 +9,7 @@
 
 import React from 'react';
 import { useEventListener } from '../utils/useEventListener';
+import { useLibraryRuntimeStatus } from '../session/useLibraryRuntimeStatus';
 import { generateId } from '../../utils/ids';
 import { useSessionStore, selectSessionById } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
@@ -179,6 +180,15 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 		skipCurrentDocument,
 		abortBatchOnError,
 	} = deps;
+
+	// With the library runtime hosted, main answers the agent, group, and tab messages itself (the
+	// bridge, plus the three callbacks it overrides), so no `maestro:remote*` CRUD event ever reaches
+	// this hook. The listeners registered through `useRendererOwnedListener` are the renderer's copy
+	// of rules the runtime now holds, and they are not registered then. `null` (main has not
+	// answered yet) reads as OFF, which is today's code and inert if no event comes.
+	const runtimeOwnsAgentState = useLibraryRuntimeStatus()?.hosting === true;
+	const useRendererOwnedListener = (eventType: string, handler: (event: Event) => void) =>
+		useEventListener(eventType, handler, { enabled: !runtimeOwnsAgentState });
 
 	/**
 	 * Switch the active agent and say who asked.
@@ -619,7 +629,7 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 	// from the new path via the autorun preload API and writes the new folder
 	// + first doc + content into the session atomically; the session storage
 	// layer persists `autoRunFolderPath` on the next save tick.
-	useEventListener('maestro:setAutoRunFolder', async (e: Event) => {
+	useRendererOwnedListener('maestro:setAutoRunFolder', async (e: Event) => {
 		const { sessionId, folderPath, responseChannel } = (e as CustomEvent).detail as {
 			sessionId: string;
 			folderPath: string;
@@ -1440,7 +1450,7 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 	// --- Session CRUD ---
 
 	// Handle remote create session from web interface
-	useEventListener('maestro:remoteCreateSession', async (e: Event) => {
+	useRendererOwnedListener('maestro:remoteCreateSession', async (e: Event) => {
 		const { name, toolType, cwd, groupId, config, responseChannel, background } = (e as CustomEvent)
 			.detail;
 		try {
@@ -1611,7 +1621,7 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 	});
 
 	// Handle remote delete session from web interface (skip confirmation dialog)
-	useEventListener('maestro:remoteDeleteSession', async (e: Event) => {
+	useRendererOwnedListener('maestro:remoteDeleteSession', async (e: Event) => {
 		const { sessionId } = (e as CustomEvent).detail;
 		const session = sessionsRef.current.find((s) => s.id === sessionId);
 		if (!session) return;
@@ -1663,7 +1673,7 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 	// spawned process keeps the cwd it launched with, so the update is refused
 	// while the agent is busy or its process is alive
 	// (workingDirectoryChangeBlocker).
-	useEventListener('maestro:remoteUpdateSessionCwd', (e: Event) => {
+	useRendererOwnedListener('maestro:remoteUpdateSessionCwd', (e: Event) => {
 		const { sessionId, newCwd, responseChannel } = (e as CustomEvent).detail;
 		const session = sessionsRef.current.find((s) => s.id === sessionId);
 		if (!session) {
@@ -1692,7 +1702,7 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 	// so a follow-up CLI read sees the new config (the renderer owns the
 	// authoritative in-memory state; offline JSON edits get clobbered). Refused
 	// while the agent process is alive because the spawn target is fixed at launch.
-	useEventListener('maestro:remoteUpdateSessionSsh', async (e: Event) => {
+	useRendererOwnedListener('maestro:remoteUpdateSessionSsh', async (e: Event) => {
 		const { sessionId, sshPatch, responseChannel } = (e as CustomEvent).detail;
 		const session = sessionsRef.current.find((s) => s.id === sessionId);
 		if (!session) {
@@ -1748,7 +1758,7 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 	// launch), so unlike cwd/SSH they are applied even while the agent runs. The
 	// new config is flushed to disk before signaling success so a follow-up CLI
 	// read sees it rather than the 2s-debounced stale value.
-	useEventListener('maestro:remoteUpdateSessionConfig', async (e: Event) => {
+	useRendererOwnedListener('maestro:remoteUpdateSessionConfig', async (e: Event) => {
 		const { sessionId, configPatch, responseChannel } = (e as CustomEvent).detail;
 		const session = sessionsRef.current.find((s) => s.id === sessionId);
 		if (!session) {
@@ -1964,7 +1974,7 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 	});
 
 	// Handle remote rename session from web interface
-	useEventListener('maestro:remoteRenameSession', async (e: Event) => {
+	useRendererOwnedListener('maestro:remoteRenameSession', async (e: Event) => {
 		const { sessionId, newName, responseChannel } = (e as CustomEvent).detail;
 		const session = sessionsRef.current.find((s) => s.id === sessionId);
 		if (!session) {
@@ -2011,7 +2021,7 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 	// --- Group CRUD ---
 
 	// Handle remote create group from web interface
-	useEventListener('maestro:remoteCreateGroup', async (e: Event) => {
+	useRendererOwnedListener('maestro:remoteCreateGroup', async (e: Event) => {
 		const {
 			name,
 			emoji,
@@ -2061,7 +2071,7 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 	});
 
 	// Handle remote rename group from web interface
-	useEventListener('maestro:remoteRenameGroup', (e: Event) => {
+	useRendererOwnedListener('maestro:remoteRenameGroup', (e: Event) => {
 		const { groupId, name, responseChannel } = (e as CustomEvent).detail;
 		const trimmed = name.trim();
 		if (!trimmed) {
@@ -2078,7 +2088,7 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 	// already validated by the WS handler; what only the renderer can decide is
 	// whether the group exists and whether the requested reparent is legal, so
 	// both are checked before any state is written.
-	useEventListener('maestro:remoteUpdateGroup', async (e: Event) => {
+	useRendererOwnedListener('maestro:remoteUpdateGroup', async (e: Event) => {
 		const { groupId, update, responseChannel } = (e as CustomEvent).detail as {
 			groupId: string;
 			update: GroupUpdateRequest;
@@ -2115,7 +2125,7 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 	});
 
 	// Handle remote delete group from web interface (fire-and-forget)
-	useEventListener('maestro:remoteDeleteGroup', (e: Event) => {
+	useRendererOwnedListener('maestro:remoteDeleteGroup', (e: Event) => {
 		const { groupId } = (e as CustomEvent).detail;
 		// Ungroup sessions in this group
 		setSessions((prev: Session[]) =>
@@ -2126,7 +2136,7 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 	});
 
 	// Handle remote move session to group from web interface
-	useEventListener('maestro:remoteMoveSessionToGroup', (e: Event) => {
+	useRendererOwnedListener('maestro:remoteMoveSessionToGroup', (e: Event) => {
 		const { sessionId, groupId, responseChannel } = (e as CustomEvent).detail;
 		const session = sessionsRef.current.find((s) => s.id === sessionId);
 		if (!session) {

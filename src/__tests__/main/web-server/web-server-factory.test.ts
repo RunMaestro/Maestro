@@ -340,6 +340,34 @@ describe('web-server/web-server-factory', () => {
 			expect(runtimeBridge.attach).toHaveBeenCalledWith(server);
 		});
 
+		it('answers update_group, reorder_tab, and toggle_bookmark from the runtime when it has them', () => {
+			const desktopCallbacks = {
+				updateGroup: vi.fn(),
+				reorderTab: vi.fn(),
+				toggleBookmark: vi.fn(),
+			};
+			const createWebServer = createWebServerFactory({
+				...deps,
+				getRuntimeBridge: () => ({ ...bridge(), desktopCallbacks }),
+			});
+			const server = createWebServer() as any;
+
+			expect(server.setUpdateGroupCallback).toHaveBeenLastCalledWith(desktopCallbacks.updateGroup);
+			expect(server.setReorderTabCallback).toHaveBeenLastCalledWith(desktopCallbacks.reorderTab);
+			expect(server.setToggleBookmarkCallback).toHaveBeenLastCalledWith(
+				desktopCallbacks.toggleBookmark
+			);
+		});
+
+		it('keeps the renderer callbacks for those three when the runtime has no desktop API', () => {
+			const server = createWebServerFactory({ ...deps, getRuntimeBridge: () => bridge() })() as any;
+
+			// Registered once, by the renderer-backed registrars, and not replaced.
+			expect(server.setUpdateGroupCallback).toHaveBeenCalledTimes(1);
+			expect(server.setReorderTabCallback).toHaveBeenCalledTimes(1);
+			expect(server.setToggleBookmarkCallback).toHaveBeenCalledTimes(1);
+		});
+
 		it('leaves the renderer in charge when no runtime is hosted', () => {
 			const withNull = createWebServerFactory({ ...deps, getRuntimeBridge: () => null });
 			const without = createWebServerFactory(deps);
