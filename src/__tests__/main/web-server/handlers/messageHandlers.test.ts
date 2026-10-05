@@ -4870,6 +4870,67 @@ describe('WebSocketMessageHandler - plugin MCP tool bridge', () => {
 		}
 	});
 
+	it('records a receipt only after a successful active tool call for the armed run', async () => {
+		const token = pluginToolRunIdentity.issue('agent-a', 60_000, 'acme/dostuff');
+		try {
+			invokeTool.mockResolvedValue({ messageIds: ['123'], privateBody: 'do not retain' });
+			handler.handleMessage(client, {
+				type: 'plugins_call_tool',
+				toolId: 'acme/dostuff',
+				args: { agentId: 'agent-b' },
+				runToken: token,
+			});
+			await vi.waitFor(() => expect(client.socket.send).toHaveBeenCalled());
+			expect(lastResult().ok).toBe(true);
+			expect(pluginToolRunIdentity.getReceipts(token)).toEqual([
+				{
+					runId: expect.stringMatching(/^[0-9a-f]{32}$/),
+					agentId: 'agent-a',
+					toolId: 'acme/dostuff',
+					messageIds: ['123'],
+				},
+			]);
+		} finally {
+			pluginToolRunIdentity.revoke(token);
+		}
+	});
+
+	it('records no receipt when the tool fails or its plugin deactivates', async () => {
+		const token = pluginToolRunIdentity.issue('agent-a', 60_000, 'acme/dostuff');
+		try {
+			handler.handleMessage(client, {
+				type: 'plugins_call_tool',
+				toolId: 'acme/dostuff',
+				args: { cmd: 'delete the production database and drop all tables' },
+				runToken: token,
+			});
+			await vi.waitFor(() => expect(client.socket.send).toHaveBeenCalledTimes(1));
+			expect(lastResult().blocked).toBe(true);
+			expect(pluginToolRunIdentity.getReceipts(token)).toEqual([]);
+			invokeTool.mockRejectedValueOnce(new Error('Discord rejected the send'));
+			handler.handleMessage(client, {
+				type: 'plugins_call_tool',
+				toolId: 'acme/dostuff',
+				runToken: token,
+			});
+			await vi.waitFor(() => expect(client.socket.send).toHaveBeenCalledTimes(2));
+			expect(pluginToolRunIdentity.getReceipts(token)).toEqual([]);
+			invokeTool.mockImplementationOnce(async () => {
+				vi.mocked(isPluginsFeatureEnabled).mockReturnValue(false);
+				return { messageIds: ['124'] };
+			});
+			handler.handleMessage(client, {
+				type: 'plugins_call_tool',
+				toolId: 'acme/dostuff',
+				runToken: token,
+			});
+			await vi.waitFor(() => expect(client.socket.send).toHaveBeenCalledTimes(3));
+			expect(pluginToolRunIdentity.getReceipts(token)).toEqual([]);
+		} finally {
+			pluginToolRunIdentity.revoke(token);
+		}
+	});
+
 	it('runs a local CLI request through the host runner and returns its provider session', async () => {
 		const run = vi.fn(async () => ({ success: true, response: 'hello', sessionId: 'provider-1' }));
 		vi.mocked(getHeadlessAgentRunner).mockReturnValue(run);

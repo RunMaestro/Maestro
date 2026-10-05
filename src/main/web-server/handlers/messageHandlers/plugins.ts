@@ -244,6 +244,13 @@ export async function handlePluginsCallTool(
 			LOG_CONTEXT
 		);
 		const result = await manager.invokeTool(toolId, args, context);
+		if (
+			isPluginsFeatureEnabled() &&
+			getActivePluginManager() === manager &&
+			manager.getContributions().tools.some((tool) => tool.id === toolId)
+		) {
+			pluginToolRunIdentity.recordReceipt(message.runToken, toolId, result);
+		}
 		respond({ ok: true, result });
 	} catch (error) {
 		respond({ ok: false, error: error instanceof Error ? error.message : String(error) });
