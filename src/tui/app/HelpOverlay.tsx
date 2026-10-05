@@ -1,10 +1,12 @@
 import React from 'react';
 import { Box, Text } from 'ink';
-import { KEYMAP, formatBindingKeys } from '../keymap';
+import { formatBindingKeys, type Binding } from '../keymap';
 import { windowRows } from './agentRows';
 import { OverlayFrame } from './OverlayFrame';
 
 export interface HelpOverlayProps {
+	/** The bindings that exist right now: the keymap less anything an Encore flag has switched off. */
+	keymap: readonly Binding[];
 	/** The row at the top of the list the person has scrolled to. */
 	cursor: number;
 	width: number;
@@ -18,12 +20,17 @@ const KEYS_COLUMN = 20;
 const CHROME_LINES = 4;
 
 /**
- * Key help. Every row comes from `KEYMAP`, the table the input handler reads.
+ * Key help. Every row comes from the keymap, the table the input handler reads.
  * The table outgrew the smallest terminal, so the list scrolls on the same
  * move keys every other list uses, and the hint line says where the window is.
  */
-export function HelpOverlay({ cursor, width, height }: HelpOverlayProps): React.ReactElement {
-	const rows = KEYMAP.map((binding) => ({ ...binding, key: binding.action }));
+export function HelpOverlay({
+	keymap,
+	cursor,
+	width,
+	height,
+}: HelpOverlayProps): React.ReactElement {
+	const rows = keymap.map((binding) => ({ ...binding, key: binding.action }));
 	const capacity = Math.max(1, height - CHROME_LINES);
 	const { start, rows: visible } = windowRows(rows, rows[cursor]?.key, capacity);
 	return (

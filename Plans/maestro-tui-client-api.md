@@ -544,6 +544,23 @@ export interface SettingsApi {
 }
 ```
 
+#### 4.7.1 What the TUI reads, and the Encore gate (ST-1, ST-2)
+
+The TUI's settings view (`S`) is read-only and shows `SettingsSnapshot` (`src/shared/maestro-lib/settings/snapshot.ts`, behind `index.ts`). `loadSettingsSnapshot(paths, client?)` builds it:
+
+| Part                                                                                                           | Source                                                                                |
+| -------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| Provider defaults (shell, save to history, thinking mode, global environment), conductor profile, Encore flags | `settings.get(SETTINGS_SNAPSHOT_KEYS)` when attached, else `maestro-settings.json`    |
+| SSH remotes                                                                                                    | `settings.sshRemotes()` when attached, else the `sshRemotes` key of the settings file |
+| Per-provider agent configs                                                                                     | `maestro-agent-configs.json`, always (the bridge has no read for them)                |
+| Prompt customizations                                                                                          | `core-prompts-customizations.json` in the data dir, always (same reason)              |
+
+- **Secrets never reach the screen.** Environment values, in the global environment and in a provider config, go through `isSecretEnvKey` and `maskEnvValue`.
+- **A host that refuses falls back to the files** and the view says so in a note. A corrupt file is named in the view and the other files are still used.
+- **Encore flags go through `resolveEncoreFeatures` and nothing else**, so a flag the user never saved reads as its default, as on the desktop. `isEncoreEnabled(flags, flag)` answers one flag.
+- **The gate is on the binding.** `Binding.encore` names the flag a TUI action sits behind. `gatedKeymap(flags, keymap)` drops every binding whose flag is off, and the App reads that table for key resolution, the palette, the agent menu, and help, so a switched-off feature has a dead key and no listing anywhere. A feature behind a flag sets `encore` on its binding and nothing else. No shipped binding is gated yet (group chats, Auto Run, mentions, and provider swap have no Encore flag on the desktop), so the gate is tested on a table that has some (`AppSettings.test.tsx`, `keymap.test.ts`).
+- **The first frame is answered from the files**, so the gate is known before a desktop attaches; the host's values replace it on connect. Because of G11, a flag the user flips on the desktop is not pushed: the TUI picks it up on `r` in the settings view, on a reconnect, or on a `settings.changed` with `'unknown'`.
+
 ### 4.8 Providers
 
 Not in the task's list, added because AG-2 and PS-4 need the installed providers with their versions, and the agent form is in this phase (decision C11).

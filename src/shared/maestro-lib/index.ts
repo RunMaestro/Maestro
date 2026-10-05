@@ -60,6 +60,9 @@ export * from './mentions/roster';
 export * from './mentions/trigger';
 export { stripMentionQuotes } from '../mentionPatterns';
 
+// Shared settings (ST-1) and the Encore gate (ST-2): one read of what the desktop holds
+export * from './settings/snapshot';
+
 // Agent form rules, shared with the desktop so a TUI form and the Edit dialog cannot disagree
 export { defaultAgentNameForPath, projectNameFromPath } from '../projectIdentity';
 export {

@@ -6,11 +6,15 @@ import {
 	chordsIn,
 	formatBindingKeys,
 	formatChord,
+	gatedKeymap,
 	keysFor,
 	resolveAction,
+	type Binding,
 	type KeyChord,
 	type KeyContext,
 } from '../keymap';
+import { agentMenuEntries } from '../palette/agentMenu';
+import { buildPaletteEntries } from '../palette/entries';
 
 const NO_KEY: Key = {
 	upArrow: false,
@@ -351,6 +355,51 @@ describe('keymap', () => {
 					'closeOverlay'
 				);
 			}
+		});
+	});
+
+	describe('the Encore gate (ST-2)', () => {
+		// No shipped binding sits behind a flag yet, so the gate is exercised on a table that has some.
+		const gated: readonly Binding[] = KEYMAP.map((binding) =>
+			binding.action === 'groupChats' || binding.action === 'startRun'
+				? { ...binding, encore: binding.action === 'groupChats' ? 'maestroCue' : 'pianola' }
+				: binding
+		);
+
+		it('opens the settings view on S, reloads on r, and leaves on Esc', () => {
+			expect(resolveAction('main', 'S', NO_KEY)).toBe('settings');
+			expect(resolveAction('settings', 'r', NO_KEY)).toBe('reloadSettings');
+			expect(resolveAction('settings', 'j', NO_KEY)).toBe('moveDown');
+			expect(resolveAction('settings', '', { ...NO_KEY, upArrow: true })).toBe('moveUp');
+			expect(resolveAction('settings', '', { ...NO_KEY, escape: true })).toBe('closeOverlay');
+		});
+
+		it('drops a binding whose flag is off from key resolution, the palette, help, and the agent menu', () => {
+			const live = gatedKeymap({ maestroCue: false, pianola: true }, gated);
+			expect(live.some((binding) => binding.action === 'groupChats')).toBe(false);
+			expect(live.some((binding) => binding.action === 'startRun')).toBe(true);
+			// A dead key: `c` means nothing once its feature is off.
+			expect(resolveAction('main', 'c', NO_KEY, live)).toBeUndefined();
+			expect(resolveAction('main', 'c', NO_KEY, gated)).toBe('groupChats');
+			expect(buildPaletteEntries([], live).some((entry) => entry.label === 'Group chats')).toBe(
+				false
+			);
+			expect(agentMenuEntries(live).some((entry) => entry.action === 'startRun')).toBe(true);
+			const both = gatedKeymap({ maestroCue: false, pianola: false }, gated);
+			expect(agentMenuEntries(both).some((entry) => entry.action === 'startRun')).toBe(false);
+		});
+
+		it('reads a flag the host never held as its default', () => {
+			// Cue is on and Pianola is off by default, so a fresh install gates exactly Pianola.
+			const live = gatedKeymap(undefined, gated);
+			expect(live.some((binding) => binding.action === 'groupChats')).toBe(true);
+			expect(live.some((binding) => binding.action === 'startRun')).toBe(false);
+		});
+
+		it('hands back the same table when nothing is gated off, so memos on it hold', () => {
+			expect(gatedKeymap({}, KEYMAP)).toBe(KEYMAP);
+			expect(gatedKeymap(undefined, KEYMAP)).toBe(KEYMAP);
+			expect(gatedKeymap({ maestroCue: true, pianola: true }, gated)).toBe(gated);
 		});
 	});
 

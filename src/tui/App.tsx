@@ -158,6 +158,9 @@ import { mergeLiveTurn } from './composer/liveTurn';
 import { ARM_QUIT_NOTICE, decideCtrlC, interruptTurn, submitDraft } from './composer/turns';
 import { useTurnStream } from './composer/useTurnStream';
 import { HelpOverlay } from './app/HelpOverlay';
+import { settingsLines } from './settings/lines';
+import { SettingsView } from './settings/SettingsView';
+import { useSettingsSnapshot } from './settings/useSettingsSnapshot';
 import { HistoryView } from './app/HistoryView';
 import { moveHistoryCursor, openHistory, type HistoryViewState } from './app/history';
 import { Shell } from './app/Shell';
@@ -174,7 +177,14 @@ import { useAgentSource, useTabEntries } from './app/useAgentSource';
 import { useTerminalSize } from './app/useTerminalSize';
 import { useViewState } from './app/useViewState';
 import { cyclePane, isAgentsPaneVisible, visiblePanes, type PaneId } from './app/layout';
-import { KEYMAP, resolveAction, type KeyAction, type KeyContext } from './keymap';
+import {
+	gatedKeymap,
+	KEYMAP,
+	resolveAction,
+	type Binding,
+	type KeyAction,
+	type KeyContext,
+} from './keymap';
 import { getAtMentionTrigger, type AgentMentionSuggestion } from '../shared/maestro-lib';
 import { agentMenuEntries } from './palette/agentMenu';
 import { AgentMenuOverlay } from './palette/AgentMenuOverlay';
@@ -211,6 +221,8 @@ export interface AppProps {
 	client?: MaestroClient;
 	/** Opens a file in the person's editor and resolves when it closes. Tests pass a stand-in. */
 	editFile?: (file: string) => Promise<EditorResult>;
+	/** The bindings before the Encore gate. Tests pass a table with a gated binding in it. */
+	keymap?: readonly Binding[];
 }
 
 /**
@@ -226,6 +238,7 @@ type OverlayState =
 	| { kind: 'history'; history: HistoryViewState }
 	| { kind: 'palette'; palette: PaletteState }
 	| { kind: 'menu'; cursor: number }
+	| { kind: 'settings'; cursor: number }
 	| { kind: 'autoRun'; view: AutoRunViewState; screen?: RunScreen }
 	| { kind: 'groupChats'; list: GroupChatListState; screen?: GroupChatScreen }
 	| {
@@ -263,7 +276,12 @@ type OverlayState =
 			submitting: boolean;
 	  };
 
-export function App({ paths, client, editFile = runEditor }: AppProps): React.ReactElement {
+export function App({
+	paths,
+	client,
+	editFile = runEditor,
+	keymap: baseKeymap = KEYMAP,
+}: AppProps): React.ReactElement {
 	const { exit } = useApp();
 	const size = useTerminalSize();
 
@@ -509,10 +527,25 @@ export function App({ paths, client, editFile = runEditor }: AppProps): React.Re
 			? delegationArmRef.current.warning
 			: undefined;
 
-	const paletteEntries = useMemo(() => buildPaletteEntries(data.agents), [data.agents]);
+	// The settings the desktop holds. Its Encore flags decide which bindings exist at all (ST-2),
+	// so every surface below reads `keymap`, never the full table.
+	const { snapshot: settingsSnapshot, reload: reloadSettings } = useSettingsSnapshot(
+		paths,
+		source.client,
+		source.live
+	);
+	const keymap = useMemo(
+		() => gatedKeymap(settingsSnapshot.encore, baseKeymap),
+		[settingsSnapshot.encore, baseKeymap]
+	);
+
+	const paletteEntries = useMemo(
+		() => buildPaletteEntries(data.agents, keymap),
+		[data.agents, keymap]
+	);
 	const paletteEntriesRef = useRef(paletteEntries);
 	paletteEntriesRef.current = paletteEntries;
-	const menuEntries = useMemo(() => agentMenuEntries(), []);
+	const menuEntries = useMemo(() => agentMenuEntries(keymap), [keymap]);
 
 	// The agent form: what the host reports while it is open, and the context the form rules read.
 	const formOverlay = overlay?.kind === 'form' ? overlay : undefined;
@@ -1566,6 +1599,13 @@ export function App({ paths, client, editFile = runEditor }: AppProps): React.Re
 			case 'groupChats':
 				void openGroupChats();
 				return;
+			case 'settings':
+				reloadSettings();
+				setOverlay({ kind: 'settings', cursor: 0 });
+				return;
+			case 'reloadSettings':
+				reloadSettings();
+				return;
 			case 'newGroupChat':
 				// From the palette there is no list yet: open it, with the form up.
 				if (current?.kind === 'groupChats') {
@@ -1707,8 +1747,11 @@ export function App({ paths, client, editFile = runEditor }: AppProps): React.Re
 					setMentionUi(stepMentionCursor(mentionUiFor(composerTarget.key), picker, delta));
 					return;
 				}
-				if (current?.kind === 'help') {
-					setOverlay({ ...current, cursor: moveGroupCursor(current.cursor, delta, KEYMAP.length) });
+				if (current?.kind === 'settings') {
+					const count = settingsLines(settingsSnapshot).length;
+					setOverlay({ ...current, cursor: moveGroupCursor(current.cursor, delta, count) });
+				} else if (current?.kind === 'help') {
+					setOverlay({ ...current, cursor: moveGroupCursor(current.cursor, delta, keymap.length) });
 				} else if (current?.kind === 'history') {
 					setOverlay({
 						kind: 'history',
@@ -1874,7 +1917,7 @@ export function App({ paths, client, editFile = runEditor }: AppProps): React.Re
 						? 'composerMention'
 						: 'composer'
 					: 'main';
-			const action = resolveAction(context, input, key);
+			const action = resolveAction(context, input, key, keymap);
 			// A delegation is armed by one press of its key and sent by the next; anything else disarms it.
 			if (action !== 'delegate' && delegationArmRef.current) {
 				delegationArmRef.current = undefined;
@@ -1980,7 +2023,18 @@ export function App({ paths, client, editFile = runEditor }: AppProps): React.Re
 		? ({ width, height }: { width: number; height: number }) => {
 				switch (overlay.kind) {
 					case 'help':
-						return <HelpOverlay cursor={overlay.cursor} width={width} height={height} />;
+						return (
+							<HelpOverlay keymap={keymap} cursor={overlay.cursor} width={width} height={height} />
+						);
+					case 'settings':
+						return (
+							<SettingsView
+								snapshot={settingsSnapshot}
+								cursor={overlay.cursor}
+								width={width}
+								height={height}
+							/>
+						);
 					case 'palette':
 						return (
 							<PaletteOverlay

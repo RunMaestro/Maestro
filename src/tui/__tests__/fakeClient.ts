@@ -48,6 +48,8 @@ export interface FakeClientOptions {
 		string,
 		{ answer?: string; code?: ClientError['code']; agentName?: string }
 	>;
+	/** What `settings.get` holds, by store key (`encoreFeatures`, `conductorProfile`, ...). */
+	settings?: Record<string, unknown>;
 	/** Hold every `consults.ask` until `releaseConsults()`, so a test can see the asking state. */
 	holdConsults?: boolean;
 	/** Make these methods fail with this code, so a test can see how a refusal is shown. */
@@ -68,6 +70,10 @@ export interface FakeClient {
 	groupChats: GroupChatRecord[];
 	/** Every `groupChats.get` call, as the chat id. */
 	chatReads: string[];
+	/** Change what `settings.get` holds and tell every `settings.subscribe` listener, as the host does. */
+	changeSettings(patch: Record<string, unknown>): void;
+	/** Every `settings.get` call, as the keys it asked for. */
+	settingsReads: string[][];
 	/** Answer every `consults.ask` held by `holdConsults`. */
 	releaseConsults(): void;
 	/** Tabs closed through `tabs.close`, as the host's closed-tab history holds them. */
@@ -119,6 +125,12 @@ export function createFakeClient(options: FakeClientOptions = {}): FakeClient {
 	const chatReads: string[] = [];
 	let state: ConnectionState = 'idle';
 	const heldConsults: Array<() => void> = [];
+	const settings: Record<string, unknown> = { ...options.settings };
+	const settingsReads: string[][] = [];
+	const settingsListeners = new Set<{
+		keys: readonly string[];
+		listener: (change: { keys: string[] | 'unknown' }) => void;
+	}>();
 
 	const record = (method: ClientMethod, ...args: unknown[]): ClientResult<never> | undefined => {
 		requests.push({ method, args });
@@ -424,8 +436,24 @@ export function createFakeClient(options: FakeClientOptions = {}): FakeClient {
 			},
 		},
 		settings: {
-			get: async () => ({ ok: true, value: {} }),
-			subscribe: () => () => undefined,
+			get: async (keys) => {
+				settingsReads.push([...keys]);
+				// Not recorded in `requests`: the TUI reads settings on its own schedule, and a test of a
+				// feature should not have to step over those reads. `settingsReads` is the record.
+				const code = options.failures?.['settings.get'];
+				if (code) return fail('settings.get', code);
+				return {
+					ok: true,
+					value: Object.fromEntries(
+						keys.filter((key) => key in settings).map((key) => [key, settings[key]])
+					),
+				};
+			},
+			subscribe: (keys, listener) => {
+				const entry = { keys, listener };
+				settingsListeners.add(entry);
+				return () => settingsListeners.delete(entry);
+			},
 			sshRemotes: async () => ({ ok: true, value: options.sshRemotes ?? [] }),
 		},
 		providers: {
@@ -455,6 +483,15 @@ export function createFakeClient(options: FakeClientOptions = {}): FakeClient {
 			transcripts[`${agentId}:${tabId}`] = entries;
 		},
 		transcriptReads,
+		changeSettings: (patch) => {
+			Object.assign(settings, patch);
+			for (const entry of [...settingsListeners]) {
+				if (Object.keys(patch).some((key) => entry.keys.includes(key))) {
+					entry.listener({ keys: Object.keys(patch) });
+				}
+			}
+		},
+		settingsReads,
 		releaseConsults: () => {
 			for (const release of heldConsults.splice(0)) release();
 		},

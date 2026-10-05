@@ -8,6 +8,11 @@
  */
 
 import type { Key } from 'ink';
+import {
+	isEncoreEnabled,
+	type EncoreFeatureDefaults,
+	type EncoreFlag,
+} from '../shared/maestro-lib';
 
 /** Where a binding is live: the main view, or one of the overlays. */
 export type KeyContext =
@@ -39,7 +44,9 @@ export type KeyContext =
 	/** The form that creates a group chat: letters type into its text boxes. */
 	| 'groupChatForm'
 	/** One open group chat: letters type into its message box. */
-	| 'groupChat';
+	| 'groupChat'
+	/** The read-only settings view. */
+	| 'settings';
 
 export type KeyAction =
 	| 'quit'
@@ -85,6 +92,8 @@ export type KeyAction =
 	| 'reloadGroupChats'
 	| 'stopGroupChat'
 	| 'sendGroupChat'
+	| 'settings'
+	| 'reloadSettings'
 	| 'newGroup'
 	| 'confirm'
 	| 'send'
@@ -126,6 +135,12 @@ export interface Binding {
 	/** One short line. Help draws it beside the keys. */
 	description: string;
 	/**
+	 * The Encore flag this action sits behind (ST-2). While the flag is off in the
+	 * desktop the binding is absent from `gatedKeymap`, so the key does nothing and
+	 * the help, palette, and agent menu stop listing it. Unset: always on.
+	 */
+	encore?: EncoreFlag;
+	/**
 	 * Set on an action that acts on the selected agent: this is its row in the
 	 * agent menu (`m`). A later phase's agent actions add their own bindings with
 	 * a label and show up there by themselves.
@@ -165,6 +180,7 @@ export const KEYMAP: readonly Binding[] = [
 			'groupChats',
 			'groupChatForm',
 			'composerMention',
+			'settings',
 		],
 		chordsByContext: {
 			palette: [{ named: 'down' }, { input: 'n', ctrl: true }],
@@ -196,6 +212,7 @@ export const KEYMAP: readonly Binding[] = [
 			'groupChats',
 			'groupChatForm',
 			'composerMention',
+			'settings',
 		],
 		chordsByContext: {
 			palette: [{ named: 'up' }, { input: 'p', ctrl: true }],
@@ -417,6 +434,18 @@ export const KEYMAP: readonly Binding[] = [
 		description: 'Stop the round: moderator and participants',
 	},
 	{
+		action: 'settings',
+		chords: [{ input: 'S' }],
+		contexts: ['main'],
+		description: 'Settings the desktop holds (read-only)',
+	},
+	{
+		action: 'reloadSettings',
+		chords: [{ input: 'r' }],
+		contexts: ['settings'],
+		description: 'Reload the settings',
+	},
+	{
 		action: 'newGroup',
 		chords: [{ input: 'N' }],
 		contexts: ['main'],
@@ -481,6 +510,7 @@ export const KEYMAP: readonly Binding[] = [
 			'groupChats',
 			'groupChatForm',
 			'groupChat',
+			'settings',
 		],
 		description: 'Interrupt the turn; twice in 1s quits',
 		agentMenu: 'Interrupt turn',
@@ -572,12 +602,30 @@ export const KEYMAP: readonly Binding[] = [
 			'groupChats',
 			'groupChatForm',
 			'groupChat',
+			'settings',
 		],
 		// A confirmation also takes `n`: "no" is the answer a hand reaches for next to `y`.
 		chordsByContext: { confirm: [{ named: 'escape' }, { input: 'n' }] },
 		description: 'Close the overlay',
 	},
 ];
+
+/**
+ * The keymap with every binding whose Encore flag is off taken out (ST-2). Every
+ * surface that lists or resolves keys reads this, never `KEYMAP` directly, so a
+ * feature the user switched off in the desktop is off in the TUI: its key is
+ * dead and it is gone from help, the palette, and the agent menu. Returns
+ * `keymap` itself when nothing is gated off, so a memo keyed on it holds.
+ */
+export function gatedKeymap(
+	flags: Partial<EncoreFeatureDefaults> | undefined,
+	keymap: readonly Binding[] = KEYMAP
+): readonly Binding[] {
+	const live = keymap.filter(
+		(binding) => !binding.encore || isEncoreEnabled(flags, binding.encore)
+	);
+	return live.length === keymap.length ? keymap : live;
+}
 
 function namedKeyPressed(named: NamedKey, key: Key): boolean {
 	switch (named) {
