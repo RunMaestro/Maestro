@@ -21,6 +21,8 @@ If you discover a vulnerability that could cause significant harm if disclosed p
 
 This allows us to develop and release a patch before public disclosure.
 
+Maintainers handle every report with the same procedure, from triage to advisory, CVE, patched releases, and credit: [docs/agent-guides/SECURITY-RUNBOOK.md](docs/agent-guides/SECURITY-RUNBOOK.md).
+
 ## Scope
 
 ### In Scope

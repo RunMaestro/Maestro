@@ -9,6 +9,10 @@ The process was worked out live during the v0.17.5 / v0.18.6-RC release on
 2026-09-24. Every rule below exists because something went wrong that night or
 in an earlier release.
 
+A security release follows this runbook with the changes in
+[SECURITY-RUNBOOK.md](SECURITY-RUNBOOK.md) (release order, notes that lead with
+the fix, and an advisory published before the announcement).
+
 ## Standing rules
 
 - **No human approval gate.** Draft, dedup, tag, verify, bump, announce. Ask the
