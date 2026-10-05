@@ -245,6 +245,30 @@ describe('Cue IPC Handlers', () => {
 			await handler(null);
 			expect(mockEngine.start).toHaveBeenCalledWith('system-boot');
 		});
+		it('does not acknowledge enable before async start settles and propagates its rejection', async () => {
+			let rejectStart!: (error: Error) => void;
+			mockEngine.start.mockReturnValueOnce(
+				new Promise<void>((_resolve, reject) => {
+					rejectStart = reject;
+				}) as any
+			);
+			const handler = registerAndGetHandler('cue:enable');
+			let settled = false;
+			const result = handler(null) as Promise<void>;
+			void result.then(
+				() => {
+					settled = true;
+				},
+				() => {
+					settled = true;
+				}
+			);
+			await Promise.resolve();
+			expect(settled).toBe(false);
+			const assertion = expect(result).rejects.toThrow('startup failed');
+			rejectStart(new Error('startup failed'));
+			await assertion;
+		});
 	});
 
 	describe('cue:disable', () => {

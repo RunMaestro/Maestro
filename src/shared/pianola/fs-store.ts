@@ -48,7 +48,11 @@ import {
 import { appendDecisionLine, compactDecisionLog } from './decision-log';
 import type { PianolaRule } from './types';
 import type { PianolaProgram, PianolaAsk } from './pianola-programs';
-import { validateProgramLoopMemo, type ProgramLoopMemo } from './pianola-program-loop';
+import {
+	validateProgramLoopMemo,
+	type ProgramLoopMemo,
+	type ProgramLoopMemoEntry,
+} from './pianola-program-loop';
 
 const ASKS_LOCK_TIMEOUT_MS = 5_000;
 const ASKS_LOCK_STALE_MS = 30_000;
@@ -81,6 +85,7 @@ export interface PianolaFsStore {
 	updateAsks(update: (asks: PianolaAsk[]) => PianolaAsk[]): PianolaAsk[];
 	readProgramLoopMemo(): ProgramLoopMemo;
 	writeProgramLoopMemo(memo: ProgramLoopMemo): void;
+	updateProgramLoopMemo(programId: string, entry: ProgramLoopMemoEntry): void;
 	readSuggestions(): PianolaSuggestionsFile;
 	writeSuggestions(file: PianolaSuggestionsFile): PianolaSuggestionsFile;
 	readProfiles(): PianolaProfiles;
@@ -92,6 +97,9 @@ export interface PianolaFsStore {
 	setProfile(entry: PianolaProfileEntry, projectPath?: string): PianolaProfiles;
 	readSupervisorTargets(): PianolaSupervisedTarget[];
 	writeSupervisorTargets(targets: PianolaSupervisedTarget[]): PianolaSupervisedTarget[];
+	updateSupervisorTargets(
+		update: (targets: PianolaSupervisedTarget[]) => PianolaSupervisedTarget[]
+	): PianolaSupervisedTarget[];
 	upsertSupervisorTarget(target: PianolaSupervisedTarget): PianolaSupervisedTarget[];
 	removeSupervisorTarget(id: string): PianolaSupervisedTarget[];
 	/** Absolute path to the supervised-target registry the desktop supervisor watches. */
@@ -256,13 +264,13 @@ export function createPianolaFsStore(config: PianolaFsStoreConfig): PianolaFsSto
 			(raw) => validatePianolaAsksFile(raw).asks
 		);
 	}
-	function withAsksLock<T>(operation: () => T): T {
-		const lock = filePath(PIANOLA_ASKS_FILENAME) + '.lock';
+	function withFileLock<T>(name: string, label: string, operation: () => T): T {
+		const lock = filePath(name) + '.lock';
 		fs.mkdirSync(path.dirname(lock), { recursive: true });
 		const token = process.pid + '.' + Date.now() + '.' + Math.random().toString(36).slice(2);
 		const deadline = Date.now() + ASKS_LOCK_TIMEOUT_MS;
 		while (true) {
-			if (Date.now() >= deadline) throw new Error('Timed out waiting for Pianola asks lock');
+			if (Date.now() >= deadline) throw new Error(`Timed out waiting for Pianola ${label} lock`);
 			try {
 				fs.writeFileSync(lock, token, { flag: 'wx' });
 				break;
@@ -271,18 +279,33 @@ export function createPianolaFsStore(config: PianolaFsStoreConfig): PianolaFsSto
 			}
 			try {
 				if (Date.now() - fs.statSync(lock).mtimeMs > ASKS_LOCK_STALE_MS) {
-					const owner = Number(fs.readFileSync(lock, 'utf8').split('.')[0]);
-					let alive = Number.isInteger(owner) && owner > 0;
-					if (alive) {
+					const observedToken = fs.readFileSync(lock, 'utf8');
+					const ownerAlive = (value: string): boolean => {
+						const owner = Number(value.split('.')[0]);
+						if (!Number.isInteger(owner) || owner <= 0) return false;
 						try {
 							process.kill(owner, 0);
+							return true;
 						} catch (error) {
-							if ((error as NodeJS.ErrnoException).code === 'ESRCH') alive = false;
+							return (error as NodeJS.ErrnoException).code !== 'ESRCH';
 						}
-					}
+					};
+					const alive = ownerAlive(observedToken);
 					if (!alive) {
 						const stale = lock + '.' + token + '.stale';
 						fs.renameSync(lock, stale);
+						const movedToken = fs.readFileSync(stale, 'utf8');
+						if (movedToken !== observedToken || ownerAlive(movedToken)) {
+							try {
+								fs.linkSync(stale, lock);
+							} catch (error) {
+								if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+							} finally {
+								fs.rmSync(stale, { force: true });
+							}
+							Atomics.wait(lockWait, 0, 0, 10);
+							continue;
+						}
 						fs.rmSync(stale, { force: true });
 						continue;
 					}
@@ -305,10 +328,10 @@ export function createPianolaFsStore(config: PianolaFsStoreConfig): PianolaFsSto
 		return validated;
 	}
 	function writeAsks(asks: PianolaAsk[]): PianolaAsk[] {
-		return withAsksLock(() => persistAsks(asks));
+		return withFileLock(PIANOLA_ASKS_FILENAME, 'asks', () => persistAsks(asks));
 	}
 	function updateAsks(update: (asks: PianolaAsk[]) => PianolaAsk[]): PianolaAsk[] {
-		return withAsksLock(() => persistAsks(update(readAsks())));
+		return withFileLock(PIANOLA_ASKS_FILENAME, 'asks', () => persistAsks(update(readAsks())));
 	}
 	function readSuggestions(): PianolaSuggestionsFile {
 		return readFileOr(
@@ -365,31 +388,57 @@ export function createPianolaFsStore(config: PianolaFsStoreConfig): PianolaFsSto
 		);
 	}
 
-	function writeSupervisorTargets(targets: PianolaSupervisedTarget[]): PianolaSupervisedTarget[] {
+	function persistSupervisorTargets(targets: PianolaSupervisedTarget[]): PianolaSupervisedTarget[] {
 		const validated = validatePianolaSupervisorFile({ targets }).targets;
 		writeJsonAtomic(PIANOLA_SUPERVISOR_FILENAME, { targets: validated });
 		return validated;
 	}
+	function updateSupervisorTargets(
+		update: (targets: PianolaSupervisedTarget[]) => PianolaSupervisedTarget[]
+	): PianolaSupervisedTarget[] {
+		return withFileLock(PIANOLA_SUPERVISOR_FILENAME, 'supervisor targets', () => {
+			const current = readSupervisorTargets();
+			const next = update(current);
+			return next === current ? current : persistSupervisorTargets(next);
+		});
+	}
+	function writeSupervisorTargets(targets: PianolaSupervisedTarget[]): PianolaSupervisedTarget[] {
+		return updateSupervisorTargets(() => targets);
+	}
 
 	function upsertSupervisorTarget(target: PianolaSupervisedTarget): PianolaSupervisedTarget[] {
-		const current = readSupervisorTargets();
-		const index = current.findIndex((t) => t.id === target.id);
-		const next =
-			index >= 0 ? current.map((t, i) => (i === index ? target : t)) : [...current, target];
-		return writeSupervisorTargets(next);
+		return updateSupervisorTargets((current) => {
+			const index = current.findIndex((t) => t.id === target.id);
+			return index >= 0 ? current.map((t, i) => (i === index ? target : t)) : [...current, target];
+		});
 	}
 
 	function removeSupervisorTarget(id: string): PianolaSupervisedTarget[] {
-		const current = readSupervisorTargets();
-		const next = current.filter((t) => t.id !== id);
-		return writeSupervisorTargets(next);
+		return updateSupervisorTargets((current) => current.filter((target) => target.id !== id));
 	}
 
 	function readProgramLoopMemo(): ProgramLoopMemo {
-		return readFileOr(PIANOLA_PROGRAM_LOOP_FILENAME, () => ({}), validateProgramLoopMemo);
+		return readFileOr(
+			PIANOLA_PROGRAM_LOOP_FILENAME,
+			() => validateProgramLoopMemo(undefined),
+			validateProgramLoopMemo
+		);
 	}
 	function writeProgramLoopMemo(memo: ProgramLoopMemo): void {
-		writeJsonAtomic(PIANOLA_PROGRAM_LOOP_FILENAME, validateProgramLoopMemo(memo));
+		withFileLock(PIANOLA_PROGRAM_LOOP_FILENAME, 'program loop memo', () =>
+			writeJsonAtomic(PIANOLA_PROGRAM_LOOP_FILENAME, validateProgramLoopMemo(memo))
+		);
+	}
+	function updateProgramLoopMemo(programId: string, entry: ProgramLoopMemoEntry): void {
+		withFileLock(PIANOLA_PROGRAM_LOOP_FILENAME, 'program loop memo', () =>
+			writeJsonAtomic(
+				PIANOLA_PROGRAM_LOOP_FILENAME,
+				validateProgramLoopMemo({
+					...readProgramLoopMemo(),
+					[programId]: entry,
+				})
+			)
+		);
 	}
 	return {
 		readRulesResult,
@@ -414,6 +463,7 @@ export function createPianolaFsStore(config: PianolaFsStoreConfig): PianolaFsSto
 		readSuggestions,
 		readProgramLoopMemo,
 		writeProgramLoopMemo,
+		updateProgramLoopMemo,
 		writeSuggestions,
 		readProfiles,
 		writeProfiles,
@@ -421,6 +471,7 @@ export function createPianolaFsStore(config: PianolaFsStoreConfig): PianolaFsSto
 		setProfile,
 		readSupervisorTargets,
 		writeSupervisorTargets,
+		updateSupervisorTargets,
 		upsertSupervisorTarget,
 		removeSupervisorTarget,
 		supervisorFilePath,

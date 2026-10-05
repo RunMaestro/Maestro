@@ -5,6 +5,7 @@ import { createCueSessionRegistry } from '../../../main/cue/cue-session-registry
 import { loadCueConfigDetailed, watchCueYaml } from '../../../main/cue/cue-yaml-loader';
 import { resolveCueConfigPath } from '../../../main/cue/config/cue-config-repository';
 import { createMockConfig, createMockSession } from './cue-test-helpers';
+import { clearGitHubSeenForSubscription } from '../../../main/cue/cue-db';
 
 vi.mock('../../../main/cue/cue-yaml-loader', () => ({
 	loadCueConfigDetailed: vi.fn(),
@@ -88,6 +89,14 @@ describe('CueSessionRuntimeService missing-config retry', () => {
 	});
 
 	it('confirms a persistent deletion before stopping its trigger sources', async () => {
+		const githubConfig = createMockConfig({
+			subscriptions: [{ name: 'pulls', event: 'github.pull_request', prompt: 'Review' }],
+		});
+		vi.mocked(loadCueConfigDetailed).mockReturnValue({
+			ok: true,
+			config: githubConfig,
+			warnings: [],
+		});
 		const { session, registry, runtime } = createRuntime();
 		await runtime.initSession(session, { reason: 'user-toggle' });
 		const stop = registry.get(session.id)!.triggerSources[0].stop;
@@ -100,6 +109,7 @@ describe('CueSessionRuntimeService missing-config retry', () => {
 		expect(stop).toHaveBeenCalledOnce();
 		expect(registry.has(session.id)).toBe(false);
 		expect(watchCueYaml).toHaveBeenCalledTimes(2);
+		expect(clearGitHubSeenForSubscription).toHaveBeenCalledExactlyOnceWith(`${session.id}:pulls`);
 		runtime.clearAll();
 	});
 
@@ -125,6 +135,36 @@ describe('CueSessionRuntimeService missing-config retry', () => {
 		await vi.advanceTimersByTimeAsync(150);
 		expect(await init).toEqual({ kind: 'loaded' });
 		expect(registry.get(session.id)).toBe(state);
+		runtime.clearAll();
+	});
+	it('leaves a pending watcher untouched when refresh targets an unknown session', async () => {
+		const { session, deps, runtime } = createRuntime();
+		const cleanup = vi.fn();
+		vi.mocked(watchCueYaml).mockReturnValue(cleanup);
+		vi.mocked(loadCueConfigDetailed).mockReturnValue({ ok: false, reason: 'missing' });
+		await runtime.initSession(session, { reason: 'user-toggle' });
+		deps.getSessions = () => [];
+		vi.mocked(loadCueConfigDetailed).mockClear();
+		expect(await runtime.refreshSession(session.id, session.projectRoot)).toEqual({
+			reloaded: false,
+			configRemoved: false,
+		});
+		expect(cleanup).not.toHaveBeenCalled();
+		expect(loadCueConfigDetailed).not.toHaveBeenCalled();
+		runtime.clearAll();
+	});
+
+	it('does not reload a session removed from the store during a retry', async () => {
+		const { session, registry, deps, runtime } = createRuntime();
+		await runtime.initSession(session, { reason: 'user-toggle' });
+		const stop = registry.get(session.id)!.triggerSources[0].stop;
+		vi.mocked(loadCueConfigDetailed).mockReturnValueOnce({ ok: false, reason: 'missing' });
+		const refresh = runtime.refreshSession(session.id, session.projectRoot);
+		deps.getSessions = () => [];
+		await vi.advanceTimersByTimeAsync(150);
+		expect(await refresh).toEqual({ reloaded: false, configRemoved: false });
+		expect(registry.has(session.id)).toBe(false);
+		expect(stop).toHaveBeenCalledOnce();
 		runtime.clearAll();
 	});
 });

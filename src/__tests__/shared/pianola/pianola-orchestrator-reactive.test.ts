@@ -566,6 +566,76 @@ describe('rolling transcript history', () => {
 		content: 'work completed',
 		timestamp: new Date(id).toISOString(),
 	});
+	describe('pre-dispatch boundaries', () => {
+		it.each(['initial', 'fix'] as const)(
+			'does not consume old failure output when the %s prompt has not appeared yet',
+			async (kind) => {
+				const history = [
+					message(0, 'user'),
+					{ ...message(1), content: 'Traceback (most recent call last): old failure' },
+				];
+				const deps = makeReactiveDeps({
+					reactiveEnabled: () => true,
+					getRunLedger: vi.fn(async () => ({ checksPassed: false })),
+					dispatchFix: vi.fn(async () => ({ success: true })),
+				});
+				deps.getRecentMessages = vi.fn(async () => [...history]);
+				const first = await runOrchestratorIteration(
+					{
+						plan: plan([task({ id: 'A', status: kind === 'fix' ? 'needs_review' : 'pending' })]),
+						prevStates: {},
+					},
+					deps,
+					{ concurrencyLimit: 1 }
+				);
+				expect(taskOf(first.state, 'A')?.dispatchedMessageId).toBe('m1');
+				const second = await runOrchestratorIteration(first.state, deps, { concurrencyLimit: 1 });
+				expect(statusOf(second.state, 'A')).toBe(kind === 'fix' ? 'fixing' : 'running');
+			}
+		);
+		it('clears unknown attempts and stale working state when dispatching a fix', async () => {
+			const deps = makeReactiveDeps({
+				reactiveEnabled: () => true,
+				getRunLedger: vi.fn(async () => ({ checksPassed: false })),
+				dispatchFix: vi.fn(async () => ({ success: true })),
+			});
+			const first = await runOrchestratorIteration(
+				{
+					plan: plan([task({ id: 'A', status: 'needs_review', validationUnknownAttempts: 1 })]),
+					prevStates: { A: 'busy' },
+				},
+				deps,
+				{ concurrencyLimit: 1 }
+			);
+			expect(taskOf(first.state, 'A')?.validationUnknownAttempts).toBe(0);
+			const second = await runOrchestratorIteration(first.state, deps, { concurrencyLimit: 1 });
+			expect(taskOf(second.state, 'A')?.fixAttempts).toBe(1);
+			expect(deps.dispatchFix).toHaveBeenCalledOnce();
+		});
+		it('reads the exact ensured tab before dispatch, not a post-dispatch snapshot', async () => {
+			const history = [message(0, 'user'), message(1)];
+			const deps = makeReactiveDeps();
+			deps.ensureAgent = vi.fn(async () => ({ agentId: 'agent-A', tabId: 'tab-A' }));
+			deps.getRecentMessages = vi.fn(async (task) => {
+				expect(task.tabId).toBe('tab-A');
+				return [...history];
+			});
+			deps.dispatch = vi.fn(async (task) => {
+				expect(task.tabId).toBe('tab-A');
+				expect(deps.getRecentMessages).toHaveBeenCalledOnce();
+				history.push(message(2, 'user'), message(3));
+				return { success: true, tabId: 'tab-A' };
+			});
+			const first = await runOrchestratorIteration(
+				initialOrchestratorState(plan([task({ id: 'A' })])),
+				deps,
+				{ concurrencyLimit: 1 }
+			);
+			expect(taskOf(first.state, 'A')?.dispatchedMessageId).toBe('m1');
+			const second = await runOrchestratorIteration(first.state, deps, { concurrencyLimit: 1 });
+			expect(statusOf(second.state, 'A')).toBe('done');
+		});
+	});
 	it('detects a fix reply after twenty old messages even when the history tail stays at twelve', async () => {
 		const history = Array.from({ length: 20 }, (_, i) => message(i));
 		const deps = makeReactiveDeps({

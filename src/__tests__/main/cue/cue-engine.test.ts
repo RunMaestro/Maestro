@@ -170,6 +170,36 @@ describe('CueEngine', () => {
 	});
 
 	describe('lifecycle', () => {
+		it('does not finish an obsolete start after stop and restart', async () => {
+			mockLoadCueConfig.mockReturnValue(createMockConfig());
+			const engine = new CueEngine(createMockDeps());
+			const restore = vi.spyOn((engine as any).queuePersistence, 'restoreAll');
+			const heartbeat = vi.spyOn((engine as any).heartbeat, 'start');
+			const reconcile = vi.spyOn((engine as any).recoveryService, 'detectSleepAndReconcile');
+			const firstStart = engine.start();
+			engine.stop();
+			const secondStart = engine.start();
+			await Promise.all([firstStart, secondStart]);
+			expect(restore).toHaveBeenCalledTimes(1);
+			expect(reconcile).toHaveBeenCalledTimes(1);
+			expect(heartbeat).toHaveBeenCalledTimes(1);
+			engine.stop();
+		});
+
+		it('rolls back a rejected session initialization and allows a retry', async () => {
+			mockLoadCueConfig.mockReturnValue(createMockConfig());
+			mockWatchCueYaml.mockImplementationOnce(() => {
+				throw new Error('watch failed');
+			});
+			const engine = new CueEngine(createMockDeps());
+			await expect(engine.start()).rejects.toThrow('watch failed');
+			expect(engine.isEnabled()).toBe(false);
+			expect((engine as any).registry.size()).toBe(0);
+			await engine.start();
+			expect(engine.getStatus()).toHaveLength(1);
+			engine.stop();
+		});
+
 		it('starts as disabled', async () => {
 			const engine = new CueEngine(createMockDeps());
 			expect(engine.isEnabled()).toBe(false);
@@ -2765,6 +2795,37 @@ describe('CueEngine', () => {
 			vi.advanceTimersByTime(60_000);
 			expect(deps.onCueRun).toHaveBeenCalledTimes(1);
 
+			engine.stop();
+		});
+
+		it('fires the next-minute schedule after refresh and prunes older dedup keys', async () => {
+			vi.setSystemTime(new Date('2026-03-09T09:00:00'));
+			mockLoadCueConfig.mockReturnValue(
+				createMockConfig({
+					subscriptions: [
+						{
+							name: 'two-minutes',
+							event: 'time.scheduled',
+							prompt: 'Run',
+							schedule_times: ['09:00', '09:01'],
+						},
+					],
+				})
+			);
+			const session = createMockSession();
+			const deps = createMockDeps();
+			const engine = new CueEngine(deps);
+			await engine.start();
+			expect(deps.onCueRun).toHaveBeenCalledTimes(1);
+			await engine.refreshSession(session.id, session.projectRoot);
+			expect(deps.onCueRun).toHaveBeenCalledTimes(1);
+			await vi.advanceTimersByTimeAsync(60_000);
+			expect(deps.onCueRun).toHaveBeenCalledTimes(2);
+			await vi.advanceTimersByTimeAsync(60_000);
+			// If 09:00 survived the non-matching 09:02 tick, this would return false.
+			expect((engine as any).registry.markScheduledFired(session.id, 'two-minutes', '09:00')).toBe(
+				true
+			);
 			engine.stop();
 		});
 

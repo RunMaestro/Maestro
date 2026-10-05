@@ -1201,8 +1201,8 @@ app
 			getSessions: () => {
 				const stored = sessionsStore.get('sessions', []);
 				const remotes = (store.get('sshRemotes', []) ?? []) as SshRemoteConfig[];
-				// A remote agent's root is read through the remote's host mount when it has
-				// one; otherwise Cue has nothing to read for it and it is left out.
+				// Translate explicitly mounted remotes; sessions without a host mount keep
+				// the exact project root Cue used before host-mount support.
 				return stored.flatMap((s: any) => {
 					const projectRoot = hostVisibleProjectRoot(s, remotes, os.homedir());
 					if (!projectRoot) return [];

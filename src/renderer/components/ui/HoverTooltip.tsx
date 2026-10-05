@@ -152,7 +152,9 @@ export function HoverTooltip({
 					<div
 						ref={tooltipRef}
 						role="tooltip"
-						className="fixed px-2 py-1 rounded text-xs-plus pointer-events-none shadow-lg flex gap-2 items-start leading-snug"
+						className={`fixed px-2 py-1 rounded text-xs-plus pointer-events-none shadow-lg flex gap-2 ${
+							maxWidth ? 'items-start leading-snug' : 'items-center'
+						}`}
 						style={{
 							left: pos?.left ?? -9999,
 							top: pos?.top ?? -9999,

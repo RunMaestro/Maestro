@@ -4530,6 +4530,108 @@ branch refs/heads/bugfix-123
 			expect(gitCwds.some((cwd) => cwd.endsWith('plain-folder'))).toBe(false);
 		});
 
+		it.each(['worktree gitfile', 'submodule gitfile', 'symlinked .git'])(
+			'discovers a root with a real %s entry',
+			async (kind) => {
+				const actualFs = await vi.importActual<typeof import('fs/promises')>('fs/promises');
+				const os = await vi.importActual<typeof import('os')>('os');
+				const parent = await actualFs.mkdtemp(path.join(os.tmpdir(), 'maestro-git-entry-'));
+				const checkout = path.join(parent, 'checkout');
+				try {
+					await actualFs.mkdir(checkout);
+					const gitDir = path.join(parent, 'git-dir');
+					await actualFs.mkdir(gitDir);
+					if (kind === 'symlinked .git') {
+						await actualFs.symlink(
+							gitDir,
+							path.join(checkout, '.git'),
+							process.platform === 'win32' ? 'junction' : 'dir'
+						);
+					} else {
+						await actualFs.writeFile(path.join(checkout, '.git'), 'gitdir: ' + gitDir + '\n');
+					}
+					vi.mocked(mockFs.readdir).mockResolvedValue([
+						{ name: 'checkout', isDirectory: () => true },
+					] as any);
+					vi.mocked(mockFs.stat).mockImplementation((p) => actualFs.stat(p) as any);
+					vi.mocked(execFile.execFileNoThrow).mockImplementation(async (_cmd, args, cwd) => ({
+						stdout: args?.includes('--show-toplevel')
+							? String(cwd)
+							: args?.includes('--is-inside-work-tree')
+								? 'true'
+								: gitDir,
+						stderr: '',
+						exitCode: 0,
+					}));
+					const result = await handlers.get('git:scanWorktreeDirectory')!({} as any, parent);
+					expect(result.gitSubdirs).toHaveLength(1);
+					expect(mockFs.stat).toHaveBeenCalledWith(path.join(checkout, '.git'));
+				} finally {
+					vi.mocked(mockFs.stat).mockResolvedValue({} as any);
+					await actualFs.rm(parent, { recursive: true, force: true });
+				}
+			}
+		);
+
+		it('preserves readdir ordering when later inspections finish first', async () => {
+			vi.mocked(mockFs.readdir).mockResolvedValue(
+				['slow', 'fast'].map((name) => ({ name, isDirectory: () => true })) as any
+			);
+			vi.mocked(mockFs.stat).mockResolvedValue({} as any);
+			let releaseSlow!: () => void;
+			const gate = new Promise<void>((resolve) => {
+				releaseSlow = resolve;
+			});
+			vi.mocked(execFile.execFileNoThrow).mockImplementation(async (_cmd, args, cwd) => {
+				if (args?.includes('--is-inside-work-tree')) {
+					if (String(cwd).endsWith('slow')) await gate;
+					else releaseSlow();
+				}
+				return {
+					stdout: args?.includes('--show-toplevel')
+						? String(cwd)
+						: args?.includes('--is-inside-work-tree')
+							? 'true'
+							: '.git',
+					stderr: '',
+					exitCode: 0,
+				};
+			});
+			const result = await handlers.get('git:scanWorktreeDirectory')!({} as any, '/parent');
+			expect(result.gitSubdirs.map((entry: { name: string }) => entry.name)).toEqual([
+				'slow',
+				'fast',
+			]);
+		});
+
+		it('does not stat the host filesystem for a remote scan', async () => {
+			const remote = { id: 'ssh-1', host: 'box', user: 'me' };
+			mockSettingsStore.get.mockReturnValue([remote]);
+			const remoteFs = await import('../../../../main/utils/remote-fs');
+			vi.mocked(remoteFs.readDirRemote).mockResolvedValue({
+				success: true,
+				data: [{ name: 'checkout', isDirectory: true }],
+			} as any);
+			const remoteGit = await import('../../../../main/utils/remote-git');
+			vi.mocked(remoteGit.execGitRemote).mockImplementation(async (args) => ({
+				stdout: args.includes('--show-toplevel')
+					? '/remote/checkout'
+					: args.includes('--is-inside-work-tree')
+						? 'true'
+						: '.git',
+				stderr: '',
+				exitCode: 0,
+			}));
+			const result = await handlers.get('git:scanWorktreeDirectory')!(
+				{} as any,
+				'/remote',
+				'ssh-1'
+			);
+			expect(result.gitSubdirs).toHaveLength(1);
+			expect(mockFs.stat).not.toHaveBeenCalled();
+			expect(mockFs.readdir).not.toHaveBeenCalled();
+		});
+
 		it('should exclude hidden directories', async () => {
 			vi.mocked(mockFs.readdir).mockResolvedValue([
 				{ name: '.git', isDirectory: () => true },

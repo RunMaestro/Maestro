@@ -198,6 +198,7 @@ export class ProcessManager extends EventEmitter {
 				// kill() here: there is no process left to signal, and kill() would
 				// emit a spurious exit for a turn that ended long ago.
 				cleanupTempFiles(existing.tempImageFiles ?? []);
+				existing.tempImageFiles = undefined;
 				this.processes.delete(config.sessionId);
 			} else if (existingProcessRunning) {
 				logger.warn('[ProcessManager] Restarting existing terminal process', 'ProcessManager', {

@@ -176,13 +176,13 @@ const PROMPT_FILE_THRESHOLD_CHARS = 24_000;
  * Write a long prompt to a unique, exclusive temp file and return its file-delivery
  * args, or null when the agent cannot take a file, the platform does not
  * need it, or the write fails (the caller then delivers inline as before).
- * Cleanup mirrors the system-prompt tempfile above.
+ * The child lifecycle removes the file; an unref'd timer is a fallback.
  */
 function buildPromptFileArgs(
 	def: AgentDefinition | undefined,
 	prompt: string,
 	isSshSession: boolean
-): string[] | null {
+): { args: string[]; cleanup: () => void } | null {
 	if (!isWindows() || isSshSession || !def?.promptFileArgs) return null;
 	if (prompt.length <= PROMPT_FILE_THRESHOLD_CHARS) return null;
 	let tempFile: string;
@@ -203,17 +203,24 @@ function buildPromptFileArgs(
 			return null;
 		}
 	}
-	const cleanupTimer = setTimeout(() => {
-		fs.promises.unlink(tempFile).catch((unlinkErr: NodeJS.ErrnoException) => {
-			if (unlinkErr.code !== 'ENOENT') {
+	let cleaned = false;
+	const cleanup = () => {
+		if (cleaned) return;
+		cleaned = true;
+		clearTimeout(cleanupTimer);
+		try {
+			fs.unlinkSync(tempFile);
+		} catch (unlinkErr) {
+			if ((unlinkErr as NodeJS.ErrnoException).code !== 'ENOENT') {
 				console.error(
-					`[maestro-cli] prompt tempfile cleanup failed (${unlinkErr.message}) at ${tempFile}`
+					`[maestro-cli] prompt temp file cleanup failed (${String(unlinkErr)}): ${tempFile}`
 				);
 			}
-		});
-	}, SYSTEM_PROMPT_TMPFILE_CLEANUP_MS);
+		}
+	};
+	const cleanupTimer = setTimeout(cleanup, SYSTEM_PROMPT_TMPFILE_CLEANUP_MS);
 	cleanupTimer.unref?.();
-	return def.promptFileArgs(tempFile);
+	return { args: def.promptFileArgs(tempFile), cleanup };
 }
 
 /**
@@ -1051,11 +1058,15 @@ async function spawnJsonLineAgent(
 
 	const noPromptSeparator = !!def?.noPromptSeparator;
 
+
 	// A local spawn needs a REAL path (see resolveLocalAgentCommand). An SSH run
 	// keeps the bare name so the remote's own PATH resolves it.
 	const agentCommand = sshRemoteConfig?.enabled
 		? getAgentCommand(toolType)
-		: await resolveLocalAgentCommand(toolType);
+		: await resolveLocalAgentCommand(toolType).catch((error) => {
+				promptFileArgs?.cleanup();
+				throw error;
+			});
 
 	// Target, environment and prompt delivery come from the shared launch plan,
 	// by the CLI's own rules (see planCliLaunch): the provider's own prompt flag
@@ -1089,7 +1100,7 @@ async function spawnJsonLineAgent(
 
 	const promptFileArgs = buildPromptFileArgs(def, effectivePrompt, plan.target.kind === 'remote');
 	let spawnCommand = plan.command;
-	let spawnArgs = promptFileArgs ? [...baseArgs, ...promptFileArgs] : plan.args;
+	let spawnArgs = promptFileArgs ? [...baseArgs, ...promptFileArgs.args] : plan.args;
 	let spawnCwd = plan.cwd;
 	let spawnEnv: NodeJS.ProcessEnv = plan.env ?? { ...process.env };
 	let sshStdinScript: string | undefined;
@@ -1124,6 +1135,7 @@ async function spawnJsonLineAgent(
 	// the previous post-spawn null-check as a process leak (greptile P1).
 	const parser = createOutputParser(toolType);
 	if (!parser) {
+		promptFileArgs?.cleanup();
 		return spawnFailureResult(`No parser available for agent type: ${toolType}`);
 	}
 
@@ -1150,7 +1162,7 @@ async function spawnJsonLineAgent(
 		},
 		{ ...cliTurnOptions(overrides.signal), parser }
 	);
-	const exit = await turn.done;
+	const exit = await turn.done.finally(() => promptFileArgs?.cleanup());
 	if (exit.spawnError) {
 		const agentName = def?.name || toolType;
 		return spawnFailureResult(`Failed to spawn ${agentName}: ${exit.spawnError.message}`);

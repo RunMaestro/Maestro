@@ -22,7 +22,7 @@ import {
 	readDecisions,
 	readSupervisorTargets,
 	upsertSupervisorTarget,
-	writeSupervisorTargets,
+	updateSupervisorTargets,
 	removeSupervisorTarget,
 	readSuggestions,
 	writeSuggestions,
@@ -193,9 +193,11 @@ export function registerPianolaHandlers(deps: PianolaHandlerDependencies): void 
 		async (id: unknown, enabled: unknown): Promise<PianolaSupervisorSnapshot> => {
 			if (typeof id !== 'string' || id.length === 0) throw new Error('InvalidTargetId');
 			if (typeof enabled !== 'boolean') throw new Error('InvalidEnabledFlag');
-			const current = readSupervisorTargets().find((t) => t.id === id);
-			if (!current) throw new Error('SupervisedTargetNotFound');
-			upsertSupervisorTarget({ ...current, enabled });
+			updateSupervisorTargets((targets) => {
+				if (!targets.some((target) => target.id === id))
+					throw new Error('SupervisedTargetNotFound');
+				return targets.map((target) => (target.id === id ? { ...target, enabled } : target));
+			});
 			supervisor.reconcile();
 			return snapshot();
 		}
@@ -269,24 +271,30 @@ export function registerPianolaHandlers(deps: PianolaHandlerDependencies): void 
 			return wrappedSupervisorRemove(event, id);
 		}
 	);
-	ipcMain.handle('pianola:supervise-program', async (event, programId: unknown): Promise<void> => {
+	ipcMain.handle('pianola:supervise-program', async (_event, programId: unknown): Promise<void> => {
 		if (!isPianolaEnabled(settingsStore)) throw new Error('PianolaDisabled');
 		if (
 			typeof programId !== 'string' ||
 			!readPrograms().some((program) => program.id === programId)
 		)
 			throw new Error('InvalidProgramId');
-		const existing = readSupervisorTargets().find(
-			(target) => target.kind === 'program' && target.programId === programId
-		);
-		await wrappedSupervisorAdd(event, {
-			id: existing?.id,
-			createdAt: existing?.createdAt,
-			kind: 'program',
-			programId,
-			enabled: true,
-			intervalSeconds: existing?.intervalSeconds ?? 120,
+		updateSupervisorTargets((current) => {
+			const existing = current.find(
+				(target) => target.kind === 'program' && target.programId === programId
+			);
+			const target: PianolaSupervisedTarget = {
+				id: existing?.id ?? generateUUID(),
+				createdAt: existing?.createdAt ?? Date.now(),
+				kind: 'program',
+				programId,
+				enabled: true,
+				intervalSeconds: existing?.intervalSeconds ?? 120,
+			};
+			return existing
+				? current.map((entry) => (entry.id === existing.id ? target : entry))
+				: [...current, target];
 		});
+		supervisor.reconcile();
 	});
 	ipcMain.handle(
 		'pianola:set-program-status',
@@ -297,28 +305,12 @@ export function registerPianolaHandlers(deps: PianolaHandlerDependencies): void 
 			const programs = readPrograms();
 			if (!programs.some((program) => program.id === programId))
 				throw new Error('InvalidProgramId');
-			writePrograms(
-				programs.map((program) =>
-					program.id === programId ? { ...program, status, updatedAt: Date.now() } : program
-				)
-			);
-			const current = programs.find((program) => program.id === programId)!;
-			const planIds = new Set(
-				readPlans()
-					.filter((plan) => plan.programId === programId)
-					.map((plan) => plan.id)
-			);
-			const targets = readSupervisorTargets();
-			writeSupervisorTargets(
-				targets.map((target) =>
-					(target.kind === 'orchestrate' && planIds.has(target.planId ?? '')) ||
-					(target.kind === 'watch' &&
-						!!current.leadAgentId &&
-						target.agentId === current.leadAgentId)
-						? { ...target, enabled: status === 'active' }
-						: target
-				)
-			);
+			if (programs.find((program) => program.id === programId)!.status !== status)
+				writePrograms(
+					programs.map((program) =>
+						program.id === programId ? { ...program, status, updatedAt: Date.now() } : program
+					)
+				);
 			supervisor.reconcile();
 		}
 	);

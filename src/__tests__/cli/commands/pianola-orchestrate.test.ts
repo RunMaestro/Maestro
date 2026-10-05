@@ -126,6 +126,156 @@ describe('pianolaOrchestrate - iteration error resilience', () => {
 		appendAgentRunEventMock.mockImplementation((event) => event);
 	});
 
+	it('does not start direct orchestration for a paused program', async () => {
+		vi.mocked(getPianolaPlan).mockReturnValue({ ...PLAN, programId: 'p' });
+		runIterationMock.mockImplementation(async (state: OrchestratorState) => doneResult(state));
+		vi.mocked(readPianolaPrograms).mockReturnValue([
+			{ id: 'p', status: 'paused', charter: { validationRequired: false, maxAttempts: 3 } },
+		] as never);
+		await pianolaOrchestrate('plan-1', { once: true });
+		expect(connectMock).not.toHaveBeenCalled();
+		expect(runIterationMock).not.toHaveBeenCalled();
+	});
+	it('honors a program pause before side effects inside an already-started tick', async () => {
+		let paused = false;
+		vi.mocked(readSettingValue).mockReturnValue({ pianola: true, autopilot: true });
+		vi.mocked(getPianolaPlan).mockReturnValue({ ...PLAN, programId: 'p' });
+		vi.mocked(readPianolaPrograms).mockImplementation(
+			() =>
+				[
+					{
+						id: 'p',
+						status: paused ? 'paused' : 'active',
+						charter: { validationRequired: false, maxAttempts: 3 },
+					},
+				] as never
+		);
+		runIterationMock.mockImplementation(
+			async (state: OrchestratorState, deps: OrchestratorDeps) => {
+				paused = true;
+				const task = {
+					id: 't',
+					title: 'T',
+					prompt: 'p',
+					dependsOn: [],
+					status: 'pending' as const,
+					agentId: 'agent-1',
+					tabId: 'tab-1',
+				};
+				expect(await deps.ensureAgent(task)).toHaveProperty('error');
+				expect((await deps.dispatch(task, 'agent-1')).success).toBe(false);
+				expect((await deps.dispatchFix!(task, { checksPassed: false })).success).toBe(false);
+				return doneResult(state);
+			}
+		);
+		await pianolaOrchestrate('plan-1', { once: true });
+		expect(errorSpy).not.toHaveBeenCalled();
+		expect(runDispatch).not.toHaveBeenCalled();
+	});
+	it('pins boundary reads, initial dispatch, and fix dispatch to the same active tab', async () => {
+		vi.mocked(readSettingValue).mockReturnValue({ pianola: true, autopilot: true });
+		sendCommandMock.mockImplementation(async (command) =>
+			command.type === 'list_desktop_sessions'
+				? {
+						sessions: [
+							{
+								agentId: 'agent-1',
+								sessionId: 'other-tab',
+								tabId: 'other-tab',
+								toolType: 'codex',
+								state: 'idle',
+								active: false,
+							},
+							{
+								agentId: 'agent-1',
+								sessionId: 'target-tab',
+								tabId: 'target-tab',
+								toolType: 'claude-code',
+								state: 'idle',
+								active: true,
+							},
+						],
+					}
+				: { success: true, messages: [] }
+		);
+		vi.mocked(runDispatch).mockResolvedValue({ success: true, sessionId: 'target-tab' });
+		runIterationMock.mockImplementation(
+			async (state: OrchestratorState, deps: OrchestratorDeps) => {
+				const task = {
+					id: 't',
+					title: 'T',
+					prompt: 'p',
+					dependsOn: [],
+					status: 'pending' as const,
+					agentId: 'agent-1',
+				};
+				const agent = await deps.ensureAgent(task);
+				expect(agent).toMatchObject({
+					agentId: 'agent-1',
+					tabId: 'target-tab',
+					agentType: 'claude-code',
+				});
+				if ('error' in agent) throw new Error(agent.error);
+				const bound = { ...task, tabId: agent.tabId };
+				await deps.getRecentMessages(bound, { fresh: true });
+				await deps.dispatch(bound, 'agent-1');
+				await deps.dispatchFix!(bound, { runId: 'run-1', checksPassed: false });
+				expect(runDispatch).toHaveBeenNthCalledWith(1, 'agent-1', 'p', { tab: 'target-tab' });
+				expect(runDispatch).toHaveBeenNthCalledWith(2, 'agent-1', expect.any(String), {
+					tab: 'target-tab',
+				});
+				return doneResult(state);
+			}
+		);
+		await pianolaOrchestrate('plan-1', { once: true });
+		expect(errorSpy).not.toHaveBeenCalled();
+	});
+	it('surfaces runner configuration changes during an iteration instead of swallowing them', async () => {
+		const oldExitCode = process.exitCode;
+		try {
+			vi.mocked(readSettingValue).mockImplementation((key) =>
+				key === 'encoreFeatures' ? { pianola: true } : []
+			);
+			runIterationMock.mockImplementation(
+				async (_state: OrchestratorState, deps: OrchestratorDeps) => {
+					await deps.validate!({
+						id: 't',
+						title: 'T',
+						prompt: 'p',
+						dependsOn: [],
+						status: 'running',
+						cwd: '/work',
+						validation: { command: ['true'], target: '/work' },
+					});
+					throw new Error('unreachable');
+				}
+			);
+			const log = vi.spyOn(console, 'log');
+			await pianolaOrchestrate('plan-1', { once: true, json: true });
+			expect(
+				log.mock.calls.some(([line]) => String(line).includes('PIANOLA_SANDBOX_CONFIGURATION'))
+			).toBe(true);
+			expect(process.exitCode).toBe(1);
+		} finally {
+			process.exitCode = oldExitCode;
+		}
+	});
+	it('does not treat a failed history response as an empty pre-dispatch transcript', async () => {
+		sendCommandMock.mockResolvedValue({ success: false, error: 'history unavailable' });
+		runIterationMock.mockImplementation(
+			async (state: OrchestratorState, deps: OrchestratorDeps) => {
+				await expect(
+					deps.getRecentMessages(
+						{ id: 't', title: 'T', prompt: 'p', dependsOn: [], status: 'running', tabId: 'tab-1' },
+						{ fresh: true }
+					)
+				).rejects.toThrow('history unavailable');
+				return doneResult(state);
+			}
+		);
+		await pianolaOrchestrate('plan-1', { once: true });
+		expect(errorSpy).not.toHaveBeenCalled();
+	});
 	it('logs a thrown iteration and keeps running until the plan completes', async () => {
 		let calls = 0;
 		runIterationMock.mockImplementation(async (state: OrchestratorState) => {
@@ -349,6 +499,7 @@ describe('pianolaOrchestrate - iteration error resilience', () => {
 				dependsOn: [],
 				status: 'needs_review',
 				agentId: 'agent-1',
+				tabId: 'tab-1',
 				fixAttempts: 0,
 			},
 			{ runId: 'run-fx', openFindings: 1, checksPassed: false }
@@ -387,6 +538,7 @@ describe('pianolaOrchestrate - iteration error resilience', () => {
 			{
 				id: 'task-1',
 				title: 'Build',
+				tabId: 'tab-1',
 				prompt: 'p',
 				dependsOn: [],
 				status: 'needs_review',
@@ -473,6 +625,7 @@ describe('pianolaOrchestrate - iteration error resilience', () => {
 					prompt: 'p',
 					dependsOn: [],
 					status: 'running',
+					cwd: '/work',
 					validation: { command: ['true'], target: '/work' },
 				},
 			],
@@ -517,6 +670,97 @@ describe('resolveExistingPianolaAgentType', () => {
 });
 
 describe('pianola validate CLI', () => {
+	it.each([true, false])(
+		'passes the declared trusted root to the runner (program=%s)',
+		async (withProgram) => {
+			const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pianola-root-'));
+			const runner = path.join(dir, 'runner.cjs');
+			const argvFile = path.join(dir, 'argv.txt');
+			const oldExitCode = process.exitCode;
+			let run: AgentRun | undefined;
+			const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+			try {
+				fs.writeFileSync(
+					runner,
+					'require("fs").writeFileSync(' +
+						JSON.stringify(argvFile) +
+						', JSON.stringify(process.argv.slice(2))); console.log(JSON.stringify({observed:true,returncode:0,stdout:"",stderr:"",timedOut:false,error:null}));'
+				);
+				vi.mocked(readSettingValue).mockImplementation((key) =>
+					key === 'encoreFeatures' ? { pianola: true } : [process.execPath, runner]
+				);
+				vi.mocked(readPianolaPrograms).mockReturnValue([
+					{ id: 'product', root: 'C:/approved' },
+				] as never);
+				vi.mocked(getPianolaPlan).mockReturnValue({
+					...PLAN,
+					...(withProgram ? { programId: 'product' } : {}),
+					tasks: [
+						{
+							id: 't',
+							title: 'T',
+							prompt: 'p',
+							dependsOn: [],
+							status: 'running',
+							cwd: '/standalone-root',
+							validation: { command: ['true'], target: '/standalone-root/project' },
+						},
+					],
+				});
+				getAgentRunMock.mockImplementation(() => run);
+				upsertAgentRunMock.mockImplementation((next: AgentRun) => {
+					run = next;
+					return next;
+				});
+				await pianolaValidate('plan-1', 't', { json: true });
+				const argv = JSON.parse(fs.readFileSync(argvFile, 'utf8')) as string[];
+				expect(argv[argv.indexOf('--trusted-root') + 1]).toBe(
+					withProgram ? '/mnt/c/approved' : '/standalone-root'
+				);
+				expect(JSON.parse(log.mock.calls.at(-1)![0]).verdict).toBe('verified');
+			} finally {
+				process.exitCode = oldExitCode;
+				log.mockRestore();
+				fs.rmSync(dir, { recursive: true, force: true });
+			}
+		}
+	);
+	it('fails closed without a standalone cwd instead of using validation.target as its authority', async () => {
+		const oldExitCode = process.exitCode;
+		const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+		let run: AgentRun | undefined;
+		try {
+			vi.mocked(readSettingValue).mockImplementation((key) =>
+				key === 'encoreFeatures' ? { pianola: true } : []
+			);
+			vi.mocked(getPianolaPlan).mockReturnValue({
+				...PLAN,
+				tasks: [
+					{
+						id: 't',
+						title: 'T',
+						prompt: 'p',
+						dependsOn: [],
+						status: 'running',
+						validation: { command: ['true'], target: '/home/dev' },
+					},
+				],
+			});
+			getAgentRunMock.mockImplementation(() => run);
+			upsertAgentRunMock.mockImplementation((next: AgentRun) => {
+				run = next;
+				return next;
+			});
+			await pianolaValidate('plan-1', 't', { json: true });
+			const result = JSON.parse(log.mock.calls.at(-1)![0]);
+			expect(result.verdict).toBe('failed');
+			expect(result.reason).toContain('trusted-root policy');
+			expect(process.exitCode).toBe(2);
+		} finally {
+			process.exitCode = oldExitCode;
+			log.mockRestore();
+		}
+	});
 	it('executes a configured runner, replaces its check and sets verdict exit codes', async () => {
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pianola-runner-'));
 		const runner = path.join(dir, 'runner.cjs');
@@ -536,6 +780,7 @@ describe('pianola validate CLI', () => {
 						prompt: 'p',
 						dependsOn: [],
 						status: 'running',
+						cwd: 'C:/work',
 						validation: { command: ['sh', '-c', 'true'], target: 'C:\\work', artifacts: [] },
 					},
 				],
@@ -594,6 +839,7 @@ describe('pianola validate CLI', () => {
 						prompt: 'p',
 						dependsOn: [],
 						status: 'running',
+						cwd: 'C:/Users/x/forex-go',
 						validation: {
 							command: ['go', 'test', './...'],
 							target: 'C:\\Users\\x\\forex-go',
@@ -757,6 +1003,7 @@ describe('portable default sandbox runner', () => {
 						prompt: 'p',
 						dependsOn: [],
 						status: 'running',
+						cwd: '/work',
 						validation: { command: ['true'], target: '/work' },
 					},
 				],
@@ -801,6 +1048,7 @@ describe('sandbox launcher wall-clock ceiling', () => {
 						prompt: 'p',
 						dependsOn: [],
 						status: 'running',
+						cwd: '/work',
 						validation: { command: ['true'], target: '/work', timeoutSeconds: 1 },
 					},
 				],

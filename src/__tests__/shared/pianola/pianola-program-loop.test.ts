@@ -41,10 +41,77 @@ const deps = () => ({
 	wake: vi.fn(async (_agentId: string, _prompt: string) => ({ success: true, tabId: 'fresh-tab' })),
 	ensureOrchestrate: vi.fn(),
 	ensureWatch: vi.fn(),
+	persistMemo: vi.fn((_memo: ProgramLoopState['memo']) => {}),
 	prompt: (kind: string, vars: Record<string, string>) => kind + ': ' + JSON.stringify(vars),
 });
 
 describe('program loop', () => {
+	it('persists a task wake and watch intent before a failed watch registration', async () => {
+		const state = blank();
+		state.plans = [{ ...plan, tasks: [{ ...plan.tasks[0], status: 'needs_review' }] }];
+		state.targets = [{ id: 'o', kind: 'orchestrate', planId: 'plan', enabled: true, createdAt: 1 }];
+		const io = deps();
+		io.persistMemo.mockImplementation((memo) => {
+			state.memo = JSON.parse(JSON.stringify(memo));
+		});
+		io.wake.mockImplementationOnce(async () => {
+			expect(state.memo.notifiedTaskIds).toEqual(['plan:task']);
+			return { success: true, tabId: 'fresh-tab' };
+		});
+		io.ensureWatch.mockImplementationOnce(() => {
+			throw new Error('Watch write failed');
+		});
+		await expect(runProgramLoopTick(state, io)).rejects.toThrow('Watch write failed');
+		expect(state.memo.notifiedTaskIds).toEqual(['plan:task']);
+		await runProgramLoopTick(state, io);
+		expect(io.wake).toHaveBeenCalledTimes(1);
+		expect(io.ensureWatch).toHaveBeenCalledTimes(2);
+	});
+	it('rolls back a persisted task reservation when wake throws or reports failure', async () => {
+		const state = blank();
+		state.plans = [{ ...plan, tasks: [{ ...plan.tasks[0], status: 'needs_review' }] }];
+		state.targets = [{ id: 'o', kind: 'orchestrate', planId: 'plan', enabled: true, createdAt: 1 }];
+		const io = deps();
+		io.persistMemo.mockImplementation((memo) => {
+			state.memo = JSON.parse(JSON.stringify(memo));
+		});
+		io.wake.mockImplementationOnce(async () => {
+			expect(state.memo.notifiedTaskIds).toEqual(['plan:task']);
+			throw new Error('Dispatch failed');
+		});
+		await expect(runProgramLoopTick(state, io)).rejects.toThrow('Dispatch failed');
+		expect(state.memo.notifiedTaskIds).toEqual([]);
+		io.wake.mockResolvedValueOnce({ success: false, tabId: '' });
+		await runProgramLoopTick(state, io);
+		expect(state.memo.notifiedTaskIds).toEqual([]);
+		await runProgramLoopTick(state, io);
+		expect(io.wake).toHaveBeenCalledTimes(3);
+	});
+	it('notifies terminal failed tasks before handing off their completed plan', async () => {
+		const state = blank();
+		state.plans = [{ ...plan, tasks: [{ ...plan.tasks[0], status: 'failed' }] }];
+		const io = deps();
+		const first = await runProgramLoopTick(state, io);
+		expect(first.memo.notifiedTaskIds).toEqual(['plan:task']);
+		expect(io.wake).toHaveBeenCalledWith('lead', expect.stringContaining('task-needs-attention'));
+		state.memo = JSON.parse(JSON.stringify(first.memo));
+		await runProgramLoopTick(state, io);
+		expect(
+			io.wake.mock.calls.filter(([, prompt]) => prompt.includes('task-needs-attention'))
+		).toHaveLength(1);
+	});
+	it('does not resurrect manually disabled plan or lead-watch targets', async () => {
+		const state = blank();
+		state.plans = [{ ...plan, tasks: [{ ...plan.tasks[0], status: 'needs_review' }] }];
+		state.targets = [
+			{ id: 'o', kind: 'orchestrate', planId: 'plan', enabled: false, createdAt: 1 },
+			{ id: 'w', kind: 'watch', agentId: 'lead', tabId: 'old', enabled: false, createdAt: 1 },
+		];
+		const io = deps();
+		await runProgramLoopTick(state, io);
+		expect(io.ensureOrchestrate).not.toHaveBeenCalled();
+		expect(io.ensureWatch).not.toHaveBeenCalled();
+	});
 	it('ensures an active plan is supervised and notifies a review task once', async () => {
 		const state = blank();
 		state.plans = [
@@ -146,7 +213,7 @@ describe('program loop', () => {
 		expect(shouldLogProgramLoopDecision(undefined, registered)).toBe(true);
 		state.targets = [{ id: 'o', kind: 'orchestrate', planId: 'plan', enabled: true, createdAt: 1 }];
 		const firstNoOp = await runProgramLoopTick(state, io);
-		expect(shouldLogProgramLoopDecision(registered.memo, firstNoOp)).toBe(true);
+		expect(shouldLogProgramLoopDecision(registered.memo, firstNoOp)).toBe(false);
 		state.memo = { ...firstNoOp.memo, lastLoggedReason: firstNoOp.reason };
 		const repeat = await runProgramLoopTick(state, io);
 		const wake = await runProgramLoopTick(blank(), deps());

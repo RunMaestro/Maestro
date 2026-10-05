@@ -164,6 +164,7 @@ function deriveCueTaskKind(
 
 export class CueEngine {
 	private enabled = false;
+	private startGeneration = 0;
 	/** Set to 'system-boot' while the engine is running after a system-boot or
 	 * user-toggle-on start. Drives refreshSession() to fire app.startup for
 	 * sessions that arrive after start() (the common case at boot). */
@@ -632,17 +633,20 @@ export class CueEngine {
 			type: 'engineStarted',
 		} satisfies CueLogPayload);
 
-		// Snapshot what a PREVIOUS run left in the queue before any session
-		// initializes: initSession can enqueue this boot's own app.startup or
-		// initial heartbeat behind a busy slot, and that enqueue persists a row
-		// the restore below would otherwise run a second time.
+		// Restore only rows left by a previous boot, not work queued by this initialization.
 		const persistedBeforeBoot = this.queuePersistence.persistedIds();
-
-		const sessions = this.deps.getSessions();
-		await Promise.all(
-			sessions.map((session) => this.sessionRuntimeService.initSession(session, { reason }))
-		);
-		if (!this.enabled) return;
+		const generation = this.startGeneration;
+		try {
+			const sessions = this.deps.getSessions();
+			await Promise.all(
+				sessions.map((session) => this.sessionRuntimeService.initSession(session, { reason }))
+			);
+		} catch (error) {
+			// A failed old start must not stop a newer engine cycle.
+			if (generation === this.startGeneration) this.stop();
+			throw error;
+		}
+		if (!this.enabled || generation !== this.startGeneration) return;
 
 		// Phase 12A - restore persisted queue entries AFTER sessions are
 		// initialized (so registry.get(...) has their configs / timeout). Each
@@ -699,6 +703,7 @@ export class CueEngine {
 	stop(): void {
 		if (!this.enabled) return;
 
+		this.startGeneration++;
 		this.enabled = false;
 		this.startReason = null;
 		if (this.lockHeartbeat) {
