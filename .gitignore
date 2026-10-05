@@ -69,3 +69,8 @@ yarn-error.log*
 
 # Bundled-plugin signing artifact (release-time build output; dev signs locally)
 examples/plugins/*/signature.json
+
+# Local scratch files and Python test caches
+.tmp-*
+__pycache__/
+.pytest_cache/
