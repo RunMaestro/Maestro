@@ -131,6 +131,8 @@ export interface TurnUserEntry {
 }
 
 export interface AssembledTurn {
+	/** The provider the turn runs on, with its capabilities: what `runAgentTurn` reads about it. */
+	provider: AgentConfig;
 	entry: TurnUserEntry;
 	/**
 	 * The prompt before the system prompt and the Copilot preamble are folded in: every
@@ -320,6 +322,7 @@ export function assembleTurn(
 	return {
 		ok: true,
 		turn: {
+			provider,
 			entry,
 			userPrompt,
 			prompt: finalPrompt,

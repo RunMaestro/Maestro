@@ -55,9 +55,7 @@ import {
 	resolveClaudeSpawnModeCore,
 	applyClaudeSpawnDecision,
 	buildRemoteInteractiveSpawn,
-	isMaestroPBinaryPath,
-	resolveConfigDirKeyFromEnv,
-	defaultSelectMode,
+	createStandaloneClaudeSpawnCoreDeps,
 	type ClaudeSpawnCoreDeps,
 } from '../../shared/maestro-lib/launch/interactive-mode';
 
@@ -93,33 +91,14 @@ function getCliMaestroPBinPath(): string | null {
  * makes the per-agent Claude token source honored for CLI Auto Run / playbooks /
  * `send` exactly as it is for the desktop chat.
  */
-const cliSpawnCoreDeps: ClaudeSpawnCoreDeps = {
+const cliSpawnCoreDeps: ClaudeSpawnCoreDeps = createStandaloneClaudeSpawnCoreDeps({
 	getMaestroPBinPath: getCliMaestroPBinPath,
-	isMaestroPBinaryPath,
-	resolveConfigDirKey: resolveConfigDirKeyFromEnv,
-	// The standalone CLI has no SQLite usage store, so no dynamic usage snapshot
-	// exists. selectMode(null) resolves to interactive - i.e. Dynamic prefers the
-	// TUI (it can't observe quota exhaustion to fall back), which honors the
-	// user's "start on TUI" intent rather than silently downgrading to API.
-	getUsageSnapshot: () => null,
-	fileExists: (p) => {
-		try {
-			return fs.existsSync(p);
-		} catch {
-			return false;
-		}
-	},
-	// The CLI can't probe SSH remotes for maestro-p, so stay optimistic (undefined),
-	// matching the desktop cold-cache behavior. An absent remote maestro-p exits
-	// 127 on that turn; the user fixes it by installing maestro-p on the remote.
-	getRemoteMaestroPAvailable: () => undefined,
-	selectMode: defaultSelectMode,
 	logger: {
 		warn: (message, context, meta) =>
 			console.error(`[${context ?? 'ClaudeSpawn'}] ${message}`, meta ?? ''),
 		debug: () => {},
 	},
-};
+});
 
 async function maybeWrapSpawnWithSsh(
 	config: SshSpawnWrapConfig,

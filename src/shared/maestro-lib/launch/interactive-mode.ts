@@ -25,6 +25,7 @@
  * `claude` (stdin / CLI arg per agent capability).
  */
 
+import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { selectMode as builtinSelectMode } from './claude-mode-selector';
@@ -325,6 +326,44 @@ export function resolveClaudeSpawnModeCore(
 
 /** Convenience: the built-in selectMode, re-exported so surfaces share one impl. */
 export const defaultSelectMode = builtinSelectMode;
+
+export interface StandaloneClaudeSpawnCoreDepsOptions {
+	/** Where the maestro-p script is, or null when this install has none (the decision falls back to API). */
+	getMaestroPBinPath: () => string | null;
+	logger?: CoreLogger;
+}
+
+/**
+ * The collaborators for a host with no SQLite usage store and no SSH probe: the standalone
+ * `maestro-cli` and the headless runtime. Mirrors the desktop's `defaultDeps` with native-free
+ * implementations, so every host runs the SAME decision (`resolveClaudeSpawnModeCore`).
+ *
+ * - No usage snapshot exists, so `selectMode(null)` resolves to interactive: Dynamic prefers the
+ *   TUI (this host cannot observe quota exhaustion to fall back), which honors the user's
+ *   "start on TUI" intent rather than silently downgrading to API.
+ * - SSH remotes are not probed for maestro-p: stay optimistic (undefined), matching the desktop's
+ *   cold cache. An absent remote maestro-p exits 127 on that turn.
+ */
+export function createStandaloneClaudeSpawnCoreDeps(
+	options: StandaloneClaudeSpawnCoreDepsOptions
+): ClaudeSpawnCoreDeps {
+	return {
+		getMaestroPBinPath: options.getMaestroPBinPath,
+		isMaestroPBinaryPath,
+		resolveConfigDirKey: resolveConfigDirKeyFromEnv,
+		getUsageSnapshot: () => null,
+		fileExists: (p) => {
+			try {
+				return fs.existsSync(p);
+			} catch {
+				return false;
+			}
+		},
+		getRemoteMaestroPAvailable: () => undefined,
+		selectMode: builtinSelectMode,
+		logger: options.logger,
+	};
+}
 
 export interface ApplyClaudeSpawnInput {
 	decision: ClaudeSpawnDecision;
