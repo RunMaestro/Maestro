@@ -105,6 +105,10 @@ export * from './autorun/task-selection';
 
 // Group chats: the record, its events and reducer, and the create rules (GC-1 to GC-4)
 export * from './groupchat/chat';
+export { createGroupChatStore, extractFirstSentence } from './groupchat/storage';
+export type { GroupChatStore, GroupChatStoreOptions } from './groupchat/storage';
+export { appendToLog, readLog, saveImage, escapeContent, unescapeContent } from './groupchat/log';
+export type { GroupChatMessage } from './groupchat/log';
 
 // Cross-agent mentions: who a message can mention, what it resolves to, the `@` picker's rules (XM-1 to XM-3)
 export * from './mentions/roster';

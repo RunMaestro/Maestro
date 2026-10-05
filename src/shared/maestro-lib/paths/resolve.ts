@@ -25,6 +25,9 @@ import {
 } from './userDataDir';
 import { syncPathRejection } from './syncPath';
 
+/** The directory under the sync directory that holds one sub-directory per group chat. */
+export const GROUP_CHATS_DIR_NAME = 'group-chats';
+
 export interface ResolveMaestroPathsOptions extends UserDataDirOptions {
 	/**
 	 * The production data directory (agent configs). Defaults to the directory a
@@ -121,7 +124,7 @@ export function resolveMaestroPaths(options: ResolveMaestroPathsOptions = {}): M
 		agentConfigsFile: path.join(productionDataDir, 'maestro-agent-configs.json'),
 		historyDir: path.join(userDataDir, 'history'),
 		statsFile: path.join(userDataDir, 'stats.db'),
-		groupChatsDir: path.join(syncDir, 'group-chats'),
+		groupChatsDir: path.join(syncDir, GROUP_CHATS_DIR_NAME),
 		sessionImagesDir: path.join(syncDir, 'session-images'),
 		cliServerFile: path.join(userDataDir, 'cli-server.json'),
 	};
