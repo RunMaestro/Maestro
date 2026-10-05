@@ -62,7 +62,7 @@ We appreciate security researchers who help improve Maestro. Contributors who re
 
 **Security Contributors:**
 
-- [CopperKoi](https://github.com/CopperKoi) - web control server exposure and cross-origin access (October 2026)
+- [CopperKoi](https://github.com/CopperKoi) - web control server exposure and cross-origin access (October 2026), with thanks to their mentor [notwo1f](https://github.com/notwo1f), who guided the audit
 - [YoAm](https://github.com/YoAm) - web control server exposure and token file permissions (August 2026)
 
 ## Bug Bounty
