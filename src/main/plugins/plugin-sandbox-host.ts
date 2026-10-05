@@ -12,7 +12,7 @@
  * children down (graceful shutdown message, then hard kill after a grace).
  */
 
-import { MEDIA_ERROR_CODES } from '../../shared/plugins/media-tools';
+import { MEDIA_ERROR_CODES, MEDIA_LIMITS } from '../../shared/plugins/media-tools';
 import { utilityProcess, type UtilityProcess } from 'electron';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -104,6 +104,8 @@ interface PendingTool {
 }
 
 interface RunningPlugin {
+	/** Separate bounded release slots so saturated ordinary calls cannot block cancellation. */
+	mediaClosesInFlight: number;
 	proc: UtilityProcess;
 	shutdownTimer?: NodeJS.Timeout;
 	inFlight: number;
@@ -227,6 +229,7 @@ export class PluginSandboxHost {
 			inFlight: 0,
 			windowStart: Date.now(),
 			windowCount: 0,
+			mediaClosesInFlight: 0,
 			pendingTools: new Map(),
 			nextToolId: 1,
 		};
@@ -444,6 +447,13 @@ export class PluginSandboxHost {
 		// Backpressure + rate limiting against a flooding child.
 		const record = this.running.get(pluginId);
 		if (record) {
+			if (
+				request.method === 'media.close' &&
+				record.mediaClosesInFlight >= MEDIA_LIMITS.maxJobsPerPlugin
+			) {
+				respond({ ok: false, error: 'MediaBusy' });
+				return;
+			}
 			const now = Date.now();
 			if (now - record.windowStart > RATE_WINDOW_MS) {
 				record.windowStart = now;
@@ -486,7 +496,10 @@ export class PluginSandboxHost {
 			return;
 		}
 
-		if (record) record.inFlight += 1;
+		if (record) {
+			record.inFlight += 1;
+			if (method === 'media.close') record.mediaClosesInFlight += 1;
+		}
 		const act = this.activityFor(pluginId);
 		act.totalCalls += 1;
 		act.inFlight += 1;
@@ -498,7 +511,11 @@ export class PluginSandboxHost {
 		} catch (err) {
 			respond({ ok: false, error: err instanceof Error ? err.message : String(err) });
 		} finally {
-			if (record) record.inFlight = Math.max(0, record.inFlight - 1);
+			if (record) {
+				record.inFlight = Math.max(0, record.inFlight - 1);
+				if (method === 'media.close')
+					record.mediaClosesInFlight = Math.max(0, record.mediaClosesInFlight - 1);
+			}
 			act.inFlight = Math.max(0, act.inFlight - 1);
 		}
 	}

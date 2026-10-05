@@ -52,7 +52,9 @@ All operations re-read grants and signature; a job polls them every 250 ms as an
 additional revocation backstop. Disable, plugin crash and uninstall invoke host
 resource cleanup immediately. `media.close` is release-only and is allowed after
 revocation; its ownership check cannot close another plugin's resource. Close
-also bypasses RPC/action backpressure so a busy plugin can cancel.
+also uses two separate bounded RPC cancellation slots and bypasses ordinary
+action backpressure so a busy plugin can cancel without creating an unbounded
+release-call channel.
 
 Two jobs per plugin and four globally bound memory, native concurrency and disk
 use. One operation may run per job. Every job has one download, one decode and one

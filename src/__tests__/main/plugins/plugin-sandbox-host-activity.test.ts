@@ -102,6 +102,44 @@ describe('PluginSandboxHost per-plugin observability', () => {
 		});
 	});
 
+	it('reserves only two cancellation slots independently of ordinary RPC saturation', async () => {
+		const gate = Promise.withResolvers<void>();
+		const close = vi.fn(() => gate.promise);
+		const bounded = new PluginSandboxHost({ broker: allowAll, handlers: { 'media.close': close } });
+		bounded.start('bounded', dir, 'entry.js');
+		const running = (
+			bounded as unknown as { running: Map<string, { inFlight: number; windowCount: number }> }
+		).running.get('bounded')!;
+		running.inFlight = 32;
+		running.windowCount = 201;
+		const dispatch = bounded as unknown as HostInternals;
+		const first = dispatch.handleChildMessage('bounded', proc, {
+			id: 1,
+			method: 'media.close',
+			params: { jobId: 'a' },
+		});
+		const second = dispatch.handleChildMessage('bounded', proc, {
+			id: 2,
+			method: 'media.close',
+			params: { jobId: 'b' },
+		});
+		await dispatch.handleChildMessage('bounded', proc, {
+			id: 3,
+			method: 'media.close',
+			params: { jobId: 'c' },
+		});
+		expect(close).toHaveBeenCalledTimes(2);
+		expect(proc.postMessage).toHaveBeenLastCalledWith({
+			id: 3,
+			ok: false,
+			error: 'MediaBusy',
+			errorCode: 'MediaBusy',
+		});
+		gate.resolve();
+		await Promise.all([first, second]);
+		expect(running.inFlight).toBe(32);
+	});
+
 	it('lists a started plugin with zeroed counters', () => {
 		const map = host.getActivity();
 		expect(Object.keys(map)).toEqual(['p']);
