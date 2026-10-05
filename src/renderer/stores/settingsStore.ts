@@ -441,6 +441,7 @@ export interface SettingsStoreState
 	preventDisplaySleepEnabled: boolean;
 	disableGpuAcceleration: boolean;
 	disableConfetti: boolean;
+	libraryRuntime: boolean;
 	suppressWindowsWarning: boolean;
 	userMessageAlignment: 'left' | 'right';
 	utilityAgentId: string | null;
@@ -553,6 +554,7 @@ export interface SettingsStoreActions
 	setDefaultStatsTimeRange: (value: 'day' | 'week' | 'month' | 'quarter' | 'year' | 'all') => void;
 	setDisableGpuAcceleration: (value: boolean) => void;
 	setDisableConfetti: (value: boolean) => void;
+	setLibraryRuntime: (value: boolean) => void;
 	setSuppressWindowsWarning: (value: boolean) => void;
 	setUserMessageAlignment: (value: 'left' | 'right') => void;
 	setUtilityAgentId: (value: string | null) => void;
@@ -799,6 +801,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		preventDisplaySleepEnabled: false,
 		disableGpuAcceleration: false,
 		disableConfetti: false,
+		libraryRuntime: false,
 		suppressWindowsWarning: false,
 		userMessageAlignment: 'right',
 		utilityAgentId: null,
@@ -1289,6 +1292,11 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		setDisableConfetti: (value) => {
 			set({ disableConfetti: value });
 			window.maestro.settings.set('disableConfetti', value);
+		},
+
+		setLibraryRuntime: (value) => {
+			set({ libraryRuntime: value });
+			window.maestro.settings.set('libraryRuntime', value);
 		},
 
 		setSuppressWindowsWarning: (value) => {
@@ -2450,6 +2458,9 @@ export async function loadAllSettings(): Promise<void> {
 		if (allSettings['disableConfetti'] !== undefined)
 			patch.disableConfetti = allSettings['disableConfetti'] as boolean;
 
+		if (allSettings['libraryRuntime'] !== undefined)
+			patch.libraryRuntime = allSettings['libraryRuntime'] as boolean;
+
 		hydrateBrowserTabsSettings(allSettings, patch);
 
 		if (allSettings['suppressWindowsWarning'] !== undefined)
@@ -2811,6 +2822,7 @@ export function getSettingsActions() {
 		setPreventDisplaySleepEnabled: state.setPreventDisplaySleepEnabled,
 		setDisableGpuAcceleration: state.setDisableGpuAcceleration,
 		setDisableConfetti: state.setDisableConfetti,
+		setLibraryRuntime: state.setLibraryRuntime,
 		setLocalIgnorePatterns: state.setLocalIgnorePatterns,
 		setLocalHonorGitignore: state.setLocalHonorGitignore,
 		setSshRemoteIgnorePatterns: state.setSshRemoteIgnorePatterns,

@@ -23,8 +23,20 @@ import {
 import { resolveMaestroPaths } from '../../shared/maestro-lib/paths/resolve';
 
 export type DataDirClaim =
-	/** This process holds the lock. Call `release` on quit. */
-	| { outcome: 'claimed'; release: () => void }
+	| {
+			/** This process holds the lock. Call `release` on quit. */
+			outcome: 'claimed';
+			release: () => void;
+			/**
+			 * The held lock, for the library runtime to adopt (DG1) so a desktop that hosts one has a single
+			 * lock, a single heartbeat, and a single release.
+			 */
+			lock: DataDirLock;
+			/** Stop the guard's own heartbeat, because the adopting runtime beats the lock instead. Idempotent. */
+			pauseHeartbeat: () => void;
+			/** Beat again: the runtime refused to start and the guard is the lock's only keeper. Idempotent. */
+			resumeHeartbeat: () => void;
+	  }
 	/** A headless runtime holds the directory. The desktop must not load. */
 	| { outcome: 'blocked'; title: string; message: string }
 	/**
@@ -90,12 +102,23 @@ export function claimDataDirForDesktop(
 	}
 
 	const lock: DataDirLock = result.lock;
-	const stopHeartbeat = lock.startHeartbeat((reason) => deps.onLost?.(reason));
+	let stopHeartbeat: (() => void) | undefined;
+	const startBeating = (): void => {
+		stopHeartbeat ??= lock.startHeartbeat((reason) => deps.onLost?.(reason));
+	};
+	const stopBeating = (): void => {
+		stopHeartbeat?.();
+		stopHeartbeat = undefined;
+	};
+	startBeating();
 	return {
 		outcome: 'claimed',
 		release: () => {
-			stopHeartbeat();
+			stopBeating();
 			lock.release();
 		},
+		lock,
+		pauseHeartbeat: stopBeating,
+		resumeHeartbeat: startBeating,
 	};
 }

@@ -14,6 +14,7 @@ import type { SettingsStoreInterface as SettingsStore } from '../stores/types';
 import type { DebugPackageDependencies } from '../debug-package';
 import type { CueGraphSession, CueRunResult } from '../../shared/cue/contracts';
 import type { CadenzaPayload } from '../../shared/cadenza-types';
+import type { RuntimeBridge } from '../library-runtime/bridge';
 import { registerSessionCallbacks } from './callbacks/sessionCallbacks';
 import { registerThemeCallbacks } from './callbacks/themeCallbacks';
 import { registerNotificationCallbacks } from './callbacks/notificationCallbacks';
@@ -102,6 +103,8 @@ export interface WebServerFactoryDependencies {
 	 *  `feedback submit --support-package`). Absent = the CLI reports the
 	 *  feature as unconfigured instead of shipping a hollow zip. */
 	getDebugPackageDeps?: () => DebugPackageDependencies;
+	/** The library runtime's bridge when main hosts one (Phase 9). Null or absent: the renderer answers. */
+	getRuntimeBridge?: () => RuntimeBridge | null;
 }
 
 /**
@@ -215,6 +218,14 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 
 		if (deps.getDebugPackageDeps) {
 			server.setGetDebugPackageDepsCallback(deps.getDebugPackageDeps);
+		}
+
+		// Last, so the runtime answers the agent, group, and tab messages whatever the callbacks above
+		// would have done. Without a hosted runtime nothing here changes.
+		const runtimeBridge = deps.getRuntimeBridge?.();
+		if (runtimeBridge) {
+			server.setRuntimeRouter(runtimeBridge);
+			runtimeBridge.attach(server);
 		}
 
 		return server;

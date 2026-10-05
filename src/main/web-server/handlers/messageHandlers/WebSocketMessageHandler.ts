@@ -35,6 +35,7 @@ import { logger } from '../../../utils/logger';
 import { captureException } from '../../../utils/sentry';
 import { getCommitHash } from '../../../utils/build-info';
 import { LOG_CONTEXT } from './shared';
+import type { RuntimeMessageRouter } from '../../../library-runtime/bridge';
 import type {
 	WebClientMessage,
 	WebClient,
@@ -182,6 +183,18 @@ import {
  */
 export class WebSocketMessageHandler {
 	private callbacks: Partial<MessageHandlerCallbacks> = {};
+	/** When the library runtime is hosted, it answers its messages before any callback is asked (DM15). */
+	private runtimeRouter: RuntimeMessageRouter | null = null;
+
+	/** Route the runtime's messages to it, or stop (null). Set once per web server. */
+	setRuntimeRouter(router: RuntimeMessageRouter | null): void {
+		this.runtimeRouter = router;
+	}
+
+	/** Does the hosted library runtime answer agent, group, and tab messages? (DG14) */
+	isRuntimeHosting(): boolean {
+		return this.runtimeRouter !== null;
+	}
 
 	/**
 	 * Set the callbacks for message handling
@@ -236,6 +249,38 @@ export class WebSocketMessageHandler {
 	}
 
 	/**
+	 * Run one message against the hosted runtime and send its reply, tagged with the caller's request
+	 * id the way every desktop handler tags its own.
+	 */
+	private answerFromRuntime(
+		router: RuntimeMessageRouter,
+		client: WebClient,
+		message: WebClientMessage
+	): void {
+		router
+			.handle(message as Record<string, unknown>)
+			.then((reply) => {
+				if (!reply) {
+					this.sendError(client, `The runtime does not handle ${message.type}`);
+					return;
+				}
+				this.send(client, {
+					...reply,
+					...(message.requestId !== undefined ? { requestId: message.requestId } : {}),
+				});
+			})
+			.catch((error) => {
+				this.reportHandlerError(
+					client,
+					error,
+					String(message.type),
+					{ sessionId: message.sessionId },
+					`Failed to handle ${message.type}`
+				);
+			});
+	}
+
+	/**
 	 * Handle incoming WebSocket message from a web client
 	 *
 	 * @param client - The web client connection info
@@ -247,6 +292,12 @@ export class WebSocketMessageHandler {
 			`[Web] handleWebClientMessage: type=${message.type}, clientId=${client.id}`,
 			LOG_CONTEXT
 		);
+
+		const router = this.runtimeRouter;
+		if (router?.handles(message.type)) {
+			this.answerFromRuntime(router, client, message);
+			return;
+		}
 
 		switch (message.type) {
 			case 'ping':
@@ -768,6 +819,7 @@ export class WebSocketMessageHandler {
 			version: app.getVersion(),
 			commitHash: getCommitHash(),
 			platform: process.platform,
+			runtimeHosting: this.runtimeRouter !== null,
 		});
 	}
 

@@ -156,6 +156,7 @@ function resetStore() {
 		preventDisplaySleepEnabled: false,
 		disableGpuAcceleration: false,
 		disableConfetti: false,
+		libraryRuntime: false,
 		sshRemoteIgnorePatterns: ['.git', '*cache*'],
 		sshRemoteHonorGitignore: true,
 		automaticTabNamingEnabled: true,
@@ -286,6 +287,7 @@ describe('settingsStore', () => {
 			expect(state.preventSleepEnabled).toBe(false);
 			expect(state.disableGpuAcceleration).toBe(false);
 			expect(state.disableConfetti).toBe(false);
+			expect(state.libraryRuntime).toBe(false);
 			expect(state.sshRemoteIgnorePatterns).toEqual(['.git', '*cache*']);
 			expect(state.sshRemoteHonorGitignore).toBe(true);
 			expect(state.automaticTabNamingEnabled).toBe(true);
@@ -882,6 +884,12 @@ describe('settingsStore', () => {
 				useSettingsStore.getState().setDisableConfetti(true);
 				expect(useSettingsStore.getState().disableConfetti).toBe(true);
 				expect(window.maestro.settings.set).toHaveBeenCalledWith('disableConfetti', true);
+			});
+
+			it('setLibraryRuntime updates state and persists', () => {
+				useSettingsStore.getState().setLibraryRuntime(true);
+				expect(useSettingsStore.getState().libraryRuntime).toBe(true);
+				expect(window.maestro.settings.set).toHaveBeenCalledWith('libraryRuntime', true);
 			});
 		});
 
@@ -1924,6 +1932,17 @@ describe('settingsStore', () => {
 			expect(state.fontSize).toBe(16);
 			expect(state.activeThemeId).toBe('nord');
 			expect(state.enterToSendAI).toBe(true);
+		});
+
+		it('loads libraryRuntime, and leaves it OFF when the file never named it', async () => {
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({ libraryRuntime: true });
+			await loadAllSettings();
+			expect(useSettingsStore.getState().libraryRuntime).toBe(true);
+
+			useSettingsStore.setState({ libraryRuntime: false });
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({});
+			await loadAllSettings();
+			expect(useSettingsStore.getState().libraryRuntime).toBe(false);
 		});
 
 		it('restores a saved typography snapshot across a restart', async () => {

@@ -423,6 +423,24 @@ export const GENERAL_SETTINGS: SearchableSetting[] = [
 		],
 	},
 	{
+		id: 'general-library-runtime',
+		tab: 'general',
+		tabLabel: 'General',
+		label: 'Library Runtime (experimental)',
+		description:
+			'Let the main process own agents, groups, and tabs through the maestro-lib runtime (experimental, restart required)',
+		keywords: [
+			'runtime',
+			'library',
+			'maestro-lib',
+			'experimental',
+			'agent state',
+			'tui',
+			'headless',
+			'restart',
+		],
+	},
+	{
 		id: 'general-rendering',
 		tab: 'general',
 		tabLabel: 'General',

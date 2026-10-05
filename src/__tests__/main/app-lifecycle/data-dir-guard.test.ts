@@ -40,6 +40,39 @@ const holder = (mode: RuntimeLockInfo['mode'], pid = 4242): RuntimeLockInfo => (
 });
 
 describe('claimDataDirForDesktop (mocked lock)', () => {
+	it('hands the held lock to the caller so a runtime can adopt it (DG1)', () => {
+		const { lock } = fakeLock();
+		const claim = claimDataDirForDesktop('/data', { acquire: () => ({ ok: true, lock }) });
+		if (claim.outcome !== 'claimed') throw new Error('expected a claim');
+		expect(claim.lock).toBe(lock);
+	});
+
+	it('pauses its heartbeat for the adopting runtime and resumes it if the runtime refuses', () => {
+		const { lock, stop } = fakeLock();
+		const claim = claimDataDirForDesktop('/data', { acquire: () => ({ ok: true, lock }) });
+		if (claim.outcome !== 'claimed') throw new Error('expected a claim');
+		const startHeartbeat = lock.startHeartbeat as ReturnType<typeof vi.fn>;
+		expect(startHeartbeat).toHaveBeenCalledTimes(1);
+
+		claim.pauseHeartbeat();
+		claim.pauseHeartbeat();
+		expect(stop).toHaveBeenCalledTimes(1);
+
+		claim.resumeHeartbeat();
+		claim.resumeHeartbeat();
+		expect(startHeartbeat).toHaveBeenCalledTimes(2);
+	});
+
+	it('release after a pause releases the lock without stopping a beat that is already stopped', () => {
+		const { lock, release, stop } = fakeLock();
+		const claim = claimDataDirForDesktop('/data', { acquire: () => ({ ok: true, lock }) });
+		if (claim.outcome !== 'claimed') throw new Error('expected a claim');
+		claim.pauseHeartbeat();
+		claim.release();
+		expect(stop).toHaveBeenCalledTimes(1);
+		expect(release).toHaveBeenCalledTimes(1);
+	});
+
 	it('acquires the lock in mode desktop for the given data dir', () => {
 		const { lock } = fakeLock();
 		const acquire = vi.fn((): DataDirLockResult => ({ ok: true, lock }));

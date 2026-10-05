@@ -5,7 +5,9 @@ import * as path from 'path';
 import type { ClientResult, MaestroEvent } from '../../client/types';
 import { DEFAULT_TAB_DEFAULTS } from '../../agents/rules';
 import { STORE_SCHEMA_KEY } from '../../store/io';
-import { RUNTIME_LOCK_FILE_NAME } from '../data-dir-lock';
+import { acquireDataDirLock, RUNTIME_LOCK_FILE_NAME, type DataDirLock } from '../data-dir-lock';
+import { resolveMaestroPaths } from '../../paths/resolve';
+import type { RepositoryProcesses } from '../../agents/repository';
 import {
 	createMaestroRuntime,
 	type MaestroRuntime,
@@ -294,6 +296,106 @@ describe('createMaestroRuntime', () => {
 			const refused = await refusal(100);
 			expect(refused).toMatchObject({ reason: 'store-too-new', version: 99 });
 			expect(fs.existsSync(lockFile())).toBe(false);
+		});
+	});
+
+	// -----------------------------------------------------------------------
+
+	describe('an adopted lock (DG1)', () => {
+		/** The desktop's guard takes the lock first, in mode desktop. */
+		function takeLock(pid: number): DataDirLock {
+			const taken = acquireDataDirLock(
+				resolveMaestroPaths({ env: { MAESTRO_USER_DATA: dir } }),
+				'desktop',
+				deps(pid)
+			);
+			if (!taken.ok) throw new Error(taken.refusal.message);
+			return taken.lock;
+		}
+
+		it('starts on the lock it was handed and does not acquire a second one', async () => {
+			const lock = takeLock(100);
+			const startHeartbeat = vi.spyOn(lock, 'startHeartbeat');
+			const runtime = await start(100, { mode: 'desktop', lock });
+			expect(runtime.lock).toEqual(lock.info);
+			expect(runtime.lock.mode).toBe('desktop');
+			// One beat, the runtime's: the holder stopped its own before handing the lock over.
+			expect(startHeartbeat).toHaveBeenCalledTimes(1);
+		});
+
+		it('is the reason a lock option exists: a second acquire is refused and told who holds it', async () => {
+			takeLock(100);
+			expect((await refusal(200, { mode: 'desktop' })).reason).toBe('host-running');
+		});
+
+		it('releases the adopted lock on shutdown', async () => {
+			const lock = takeLock(100);
+			const runtime = await start(100, { mode: 'desktop', lock });
+			await runtime.connection.close();
+			expect(fs.existsSync(lockFile())).toBe(false);
+		});
+
+		it('leaves the lock held when the runtime does not start, for its holder to keep', async () => {
+			const lock = takeLock(100);
+			fs.writeFileSync(sessionsFile(), '{ not json');
+			const release = vi.spyOn(lock, 'release');
+			const refused = await refusal(100, { mode: 'desktop', lock });
+			expect(refused.reason).toBe('store-corrupt');
+			expect(release).not.toHaveBeenCalled();
+			expect(fs.existsSync(lockFile())).toBe(true);
+		});
+
+		it('still applies the synced-dir rule, and leaves the lock with its holder', async () => {
+			const lock = takeLock(100);
+			fs.writeFileSync(
+				path.join(dir, 'maestro-bootstrap.json'),
+				JSON.stringify({ customSyncPath: '/Users/someone/Dropbox/maestro' })
+			);
+			expect((await refusal(100, { mode: 'desktop', lock })).reason).toBe('synced-data-dir');
+			expect(fs.existsSync(lockFile())).toBe(true);
+		});
+	});
+
+	// -----------------------------------------------------------------------
+
+	describe('processes the caller supplies (DG2)', () => {
+		const processes = (busyAgents: string[]): RepositoryProcesses & { stopped: string[] } => {
+			const stopped: string[] = [];
+			return {
+				stopped,
+				isBusy: (agentId) => busyAgents.includes(agentId),
+				stopAgent: async (agentId) => {
+					stopped.push(agentId);
+				},
+			};
+		};
+
+		it('refuses a working-directory move while the caller says the agent is busy', async () => {
+			seed();
+			const runtime = await start(100, {}, { processes: processes(['a1']) });
+			const error = errorOf(await runtime.agents.update('a1', { cwd: dir }));
+			expect(error.code).toBe('rejected');
+		});
+
+		it('moves the directory once the caller says the agent is idle', async () => {
+			seed();
+			const runtime = await start(100, {}, { processes: processes([]) });
+			expect(value(await runtime.agents.update('a1', { cwd: dir })).applied).toContain('cwd');
+		});
+
+		it("stops the caller's processes when an agent is removed", async () => {
+			seed();
+			const external = processes([]);
+			const runtime = await start(100, {}, { processes: external });
+			value(await runtime.agents.remove('a1'));
+			expect(external.stopped).toEqual(['a1']);
+		});
+
+		it('behaves as before when the caller supplies none', async () => {
+			seed();
+			const runtime = await start();
+			value(await runtime.agents.remove('a1'));
+			expect(value(await runtime.agents.list())).toEqual([]);
 		});
 	});
 

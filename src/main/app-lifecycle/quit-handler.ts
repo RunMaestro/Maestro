@@ -104,6 +104,13 @@ export interface QuitHandlerDependencies {
 	stopSettingsWatcher?: () => void;
 	/** Releases the data-dir lock the desktop took at startup (see data-dir-guard.ts). */
 	releaseDataDirLock?: () => void;
+	/**
+	 * Drains the hosted library runtime's writes and stops what it started (Phase 9, `libraryRuntime`).
+	 * Returns null when this run hosts none, and the lock is released at once as it always was. Otherwise
+	 * the lock is released only after the promise settles, so a TUI waiting to host never sees the
+	 * directory free while a write is still queued.
+	 */
+	closeLibraryRuntime?: () => Promise<void> | null;
 	/** Power manager instance for clearing sleep prevention on shutdown */
 	powerManager: typeof powerManagerInstance;
 	/** Function to stop group chat moderator cleanup interval */
@@ -178,6 +185,7 @@ export function createQuitHandler(deps: QuitHandlerDependencies): QuitHandler {
 		stopCliWatcher,
 		stopSettingsWatcher,
 		releaseDataDirLock,
+		closeLibraryRuntime,
 		powerManager,
 		stopSessionCleanup,
 		getPersistedSessions,
@@ -446,8 +454,19 @@ export function createQuitHandler(deps: QuitHandlerDependencies): QuitHandler {
 		logger.info('Closing stats database', 'Shutdown');
 		closeStatsDB();
 
-		// Last: the stores are flushed, so a TUI waiting to host may now take the directory.
-		releaseDataDirLock?.();
+		// Last: the stores are flushed, so a TUI waiting to host may now take the directory. A hosted
+		// runtime drains its write queue first; its commands are write-through, so the drain is short.
+		const closingRuntime = closeLibraryRuntime?.() ?? null;
+		if (closingRuntime) {
+			logger.info('Closing the library runtime', 'Shutdown');
+			closingRuntime
+				.catch((err: unknown) => {
+					logger.error(`Error closing the library runtime: ${err}`, 'Shutdown');
+				})
+				.finally(() => releaseDataDirLock?.());
+		} else {
+			releaseDataDirLock?.();
+		}
 
 		logger.info('Shutdown complete', 'Shutdown');
 	}

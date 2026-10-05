@@ -105,6 +105,7 @@ export const SETTINGS_DEFAULTS: MaestroSettings = {
 	mediaPlayerQueue: null,
 	feedbackAccountKey: null,
 	logLevel: 'info',
+	libraryRuntime: false,
 	defaultShell: getDefaultShell(),
 	webAuthEnabled: false,
 	webAuthToken: null,

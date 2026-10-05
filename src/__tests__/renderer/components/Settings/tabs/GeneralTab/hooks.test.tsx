@@ -2,11 +2,13 @@ import { act, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
 	useForcedParallelWarningState,
+	useLibraryRuntimeStatus,
 	useMaestroCliState,
 	useShellSettingsState,
 	useSyncStorageState,
 } from '../../../../../../renderer/components/Settings/tabs/GeneralTab/hooks';
 import { captureException } from '../../../../../../renderer/utils/sentry';
+import { resetLibraryRuntimeStatus } from '../../../../../../renderer/services/libraryRuntime';
 import type { ShellInfo } from '../../../../../../renderer/types';
 import type { MaestroCliStatus } from '../../../../../../shared/maestro-cli';
 
@@ -364,6 +366,32 @@ describe('GeneralTab hooks', () => {
 				result.current.handleToggle();
 			});
 			expect(setForcedParallelExecution).toHaveBeenCalledWith(false);
+		});
+	});
+
+	describe('useLibraryRuntimeStatus', () => {
+		beforeEach(() => {
+			resetLibraryRuntimeStatus();
+		});
+		afterEach(() => {
+			resetLibraryRuntimeStatus();
+			delete (window.maestro as { libraryRuntime?: unknown }).libraryRuntime;
+		});
+
+		it('is null until main answers, then what main said', async () => {
+			window.maestro.libraryRuntime = {
+				status: vi.fn().mockResolvedValue({ hosting: true }),
+				onEvent: vi.fn(),
+			};
+			const { result } = renderHook(() => useLibraryRuntimeStatus());
+			expect(result.current).toBeNull();
+			await waitFor(() => expect(result.current).toEqual({ hosting: true }));
+		});
+
+		it('reads as not hosting when the preload namespace is missing', async () => {
+			delete (window.maestro as { libraryRuntime?: unknown }).libraryRuntime;
+			const { result } = renderHook(() => useLibraryRuntimeStatus());
+			await waitFor(() => expect(result.current?.hosting).toBe(false));
 		});
 	});
 });

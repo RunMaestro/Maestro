@@ -1830,7 +1830,7 @@ Check if the Maestro desktop app is running and reachable:
 maestro-cli status
 ```
 
-Returns the app version, uptime, and connection status.
+Returns the app version, uptime, and connection status. When the desktop runs its agent state through the maestro-lib runtime (Settings, General, Library Runtime, experimental), a second line says so.
 
 ### Diagnosing Problems (`doctor`)
 

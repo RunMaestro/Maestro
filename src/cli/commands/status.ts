@@ -31,6 +31,18 @@ export async function status(): Promise<void> {
 			console.log(
 				`Maestro is running on port ${info.port} with ${sessionCount} agent${sessionCount !== 1 ? 's' : ''}`
 			);
+
+			// Which mode the desktop runs in (DG14). An older app answers `echo`, which reads as the
+			// standard mode, so a failed ask prints nothing rather than failing a healthy status.
+			try {
+				const app = await client.sendCommand<{ type: string; runtimeHosting?: boolean }>(
+					{ type: 'get_app_info' },
+					'app_info'
+				);
+				if (app.runtimeHosting === true) console.log('Agent state: library runtime (main)');
+			} catch {
+				// Not worth failing `status` over.
+			}
 		});
 	} catch (error) {
 		console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);

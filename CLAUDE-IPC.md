@@ -181,3 +181,4 @@ Engine internals (pruning, projection, resumable scans) are documented in [REMAI
 - `notification` - Desktop notifications, text-to-speech
 - `devtools` - Developer tools: open, close, toggle
 - `attachments` - Image attachment management
+- `libraryRuntime` - Whether main hosts the maestro-lib runtime this run (Phase 9, `libraryRuntime` setting): status, onEvent (the runtime's events, forwarded to every window)

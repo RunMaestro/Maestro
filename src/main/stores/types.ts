@@ -87,6 +87,8 @@ export interface MaestroSettings {
 	/** Provider profile key of the account that last carried a Send Feedback chat. */
 	feedbackAccountKey: string | null;
 	logLevel: 'debug' | 'info' | 'warn' | 'error';
+	/** Main hosts the maestro-lib runtime and owns agent state (Phase 9). Read once at startup. */
+	libraryRuntime: boolean;
 	defaultShell: string;
 	// Web interface authentication
 	webAuthEnabled: boolean;

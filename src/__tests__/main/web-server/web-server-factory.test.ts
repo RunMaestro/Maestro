@@ -92,6 +92,8 @@ vi.mock('../../../main/web-server/WebServer', () => {
 			// Network-roam handling: the factory subscribes so it can push the new
 			// LAN URL to every window when the machine changes networks.
 			setOnLocalAddressChanged = vi.fn();
+			// Phase 9: the hosted library runtime answers agent, group, and tab messages.
+			setRuntimeRouter = vi.fn();
 			setOpenDocumentGraphCallback = vi.fn();
 			setGetGroupsCallback = vi.fn();
 			broadcastSettingsChanged = vi.fn();
@@ -316,6 +318,47 @@ describe('web-server/web-server-factory', () => {
 			getMainWindow: vi.fn().mockReturnValue(mockMainWindow as BrowserWindow),
 			getProcessManager: vi.fn().mockReturnValue(mockProcessManager),
 		};
+	});
+
+	describe('library runtime bridge (Phase 9)', () => {
+		const bridge = () => ({
+			handles: vi.fn(),
+			handle: vi.fn(),
+			attach: vi.fn(() => () => undefined),
+			dispose: vi.fn(),
+		});
+
+		it('routes agent, group, and tab messages to the runtime and pushes its events to this server', () => {
+			const runtimeBridge = bridge();
+			const createWebServer = createWebServerFactory({
+				...deps,
+				getRuntimeBridge: () => runtimeBridge,
+			});
+			const server = createWebServer() as any;
+
+			expect(server.setRuntimeRouter).toHaveBeenCalledWith(runtimeBridge);
+			expect(runtimeBridge.attach).toHaveBeenCalledWith(server);
+		});
+
+		it('leaves the renderer in charge when no runtime is hosted', () => {
+			const withNull = createWebServerFactory({ ...deps, getRuntimeBridge: () => null });
+			const without = createWebServerFactory(deps);
+
+			expect((withNull() as any).setRuntimeRouter).not.toHaveBeenCalled();
+			expect((without() as any).setRuntimeRouter).not.toHaveBeenCalled();
+		});
+
+		it('asks for the bridge on every build, so a restarted web interface re-attaches', () => {
+			const runtimeBridge = bridge();
+			const getRuntimeBridge = vi.fn(() => runtimeBridge);
+			const createWebServer = createWebServerFactory({ ...deps, getRuntimeBridge });
+
+			createWebServer();
+			createWebServer();
+
+			expect(getRuntimeBridge).toHaveBeenCalledTimes(2);
+			expect(runtimeBridge.attach).toHaveBeenCalledTimes(2);
+		});
 	});
 
 	describe('createWebServerFactory', () => {

@@ -9,6 +9,7 @@ import {
 	GlobalHotkeySection,
 	HistorySection,
 	InputBehaviorSection,
+	LibraryRuntimeSection,
 	LogLevelSection,
 	MaestroCliSection,
 	PowerSection,
@@ -25,6 +26,7 @@ import {
 } from './components';
 import {
 	useForcedParallelWarningState,
+	useLibraryRuntimeStatus,
 	useMaestroCliState,
 	useShellSettingsState,
 	useSyncStorageState,
@@ -41,6 +43,7 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 		setDefaultShell: settings.setDefaultShell,
 	});
 	const maestroCli = useMaestroCliState({ isOpen });
+	const libraryRuntimeStatus = useLibraryRuntimeStatus();
 	const syncStorage = useSyncStorageState({ isOpen });
 	const forcedParallelWarning = useForcedParallelWarningState({
 		forcedParallelExecution: settings.forcedParallelExecution,
@@ -62,6 +65,12 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 				setConductorProfile={settings.setConductorProfile}
 			/>
 			<MaestroCliSection theme={theme} appVersion={appVersion} maestroCli={maestroCli} />
+			<LibraryRuntimeSection
+				theme={theme}
+				libraryRuntime={settings.libraryRuntime}
+				setLibraryRuntime={settings.setLibraryRuntime}
+				status={libraryRuntimeStatus}
+			/>
 			<ShellSettingsSection
 				theme={theme}
 				defaultShell={settings.defaultShell}

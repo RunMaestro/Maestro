@@ -124,6 +124,7 @@ import {
 	getWindowStateStore,
 	getClaudeSessionOriginsStore,
 	getAgentSessionOriginsStore,
+	flushPendingSessionWrites,
 } from './stores';
 import { runSettingsMigrations } from './stores/migrations';
 import { migrateClaudeSessionNamesFromHistory } from './stores/migrations/claude-session-names-backfill';
@@ -160,6 +161,14 @@ import { wireProcessListeners } from './process-listeners-wiring';
 import { createSafeSend, isWebContentsAvailable } from './utils/safe-send';
 import { capabilitySnapshots, createSnapshotBroadcaster } from './agents/capability-snapshot';
 import { createWebServerFactory } from './web-server/web-server-factory';
+import {
+	startLibraryRuntimeHost,
+	buildDesktopRuntimeDeps,
+	createRuntimeBridge,
+	type LibraryRuntimeHost,
+	type RuntimeBridge,
+} from './library-runtime';
+import { registerLibraryRuntimeHandlers } from './ipc/handlers/libraryRuntime';
 import type { DebugPackageDependencies } from './debug-package';
 // Phase 4 refactoring - app lifecycle
 import {
@@ -466,6 +475,13 @@ const { getAgentConfigForAgent, getCustomEnvVarsForAgent } =
 let mainWindow: BrowserWindow | null = null;
 let processManager: ProcessManager | null = null;
 let webServer: WebServer | null = null;
+// Phase 9: main hosts the maestro-lib runtime when the `libraryRuntime` setting is on and it started.
+// `libraryRuntimeBridge` answers the web server's agent, group, and tab messages from it.
+let libraryRuntimeHost: LibraryRuntimeHost | null = null;
+let libraryRuntimeBridge: RuntimeBridge | null = null;
+// Why a requested runtime did not start, shown once as a toast when the first window has loaded (DM4).
+let pendingLibraryRuntimeNotice: string | null = null;
+let stopForwardingRuntimeEvents: (() => void) | null = null;
 let agentDetector: AgentDetector | null = null;
 let cueEngine: CueEngine | null = null;
 let pianolaSupervisor: PianolaSupervisor | null = null;
@@ -653,6 +669,7 @@ const createWebServer = createWebServerFactory({
 	sessionsStore,
 	groupsStore,
 	getDebugPackageDeps: () => debugPackageDeps,
+	getRuntimeBridge: () => libraryRuntimeBridge,
 	getMainWindow: () => mainWindow,
 	getWindowForSession: (sessionId: string) => {
 		const ownerId = windowRegistry.getWindowForSession(sessionId);
@@ -689,6 +706,17 @@ function createWindow(options?: { sessionIds?: string[]; bounds?: Partial<Shared
 	// The plugin registry may have discovered static views before the renderer
 	// existed. Re-forward host-owned data after every renderer load/reload.
 	mainWindow.webContents.on('did-finish-load', () => pluginHostViews.replay());
+	// A runtime that was asked for and refused to start: this run is on the old path, and the person
+	// should hear that once rather than discover it from a Settings line.
+	mainWindow.webContents.on('did-finish-load', () => {
+		if (!pendingLibraryRuntimeNotice || !mainWindow || !isWebContentsAvailable(mainWindow)) return;
+		mainWindow.webContents.send('remote:notifyToast', {
+			title: 'Library runtime is not running',
+			message: `${pendingLibraryRuntimeNotice} This run uses the standard agent state.`,
+			color: 'orange' as const,
+		});
+		pendingLibraryRuntimeNotice = null;
+	});
 	// Handle closed event to clear the reference
 	mainWindow.on('closed', () => {
 		mainWindow = null;
@@ -2839,6 +2867,36 @@ app
 			logger.warn('Continuing without stats - usage tracking will be unavailable', 'Startup');
 		}
 
+		// Host the maestro-lib runtime when the setting is on (Phase 9). Read once, here: the mode is
+		// fixed for the run (DM2). Before the IPC handlers, so nothing asks for its status early, and
+		// after the deferred sessions write lands so the runtime loads the file the stores last wrote.
+		const libraryRuntimeRequested = store.get('libraryRuntime', false) === true;
+		if (libraryRuntimeRequested) await flushPendingSessionWrites();
+		libraryRuntimeHost = await startLibraryRuntimeHost({
+			enabled: libraryRuntimeRequested,
+			claim: dataDirClaim,
+			dataDir: app.getPath('userData'),
+			productionDataDir: productionDataPath,
+			deps: buildDesktopRuntimeDeps({
+				settingsStore: store,
+				getProcessManager: () => processManager,
+			}),
+			onRefused: (message) => {
+				pendingLibraryRuntimeNotice = message;
+			},
+		});
+		stopForwardingRuntimeEvents = registerLibraryRuntimeHandlers(libraryRuntimeHost);
+		const hostedRuntime = libraryRuntimeHost.runtime();
+		if (hostedRuntime) {
+			libraryRuntimeBridge = createRuntimeBridge(hostedRuntime);
+			// Until the renderer is a subscriber (Phase 9, task 3) a window shows a remote change only
+			// after a restart, and its own flush still writes the stores.
+			logger.warn(
+				'The library runtime is hosted, but the renderer does not mirror it yet. Windows show remote agent changes only after a restart.',
+				'Startup'
+			);
+		}
+
 		// Set up IPC handlers
 		logger.debug('Setting up IPC handlers', 'Startup');
 		setupIpcHandlers({
@@ -3172,6 +3230,12 @@ quitHandler = createQuitHandler({
 		timeZoneWatcher.stop();
 	},
 	releaseDataDirLock,
+	closeLibraryRuntime: () => {
+		if (!libraryRuntimeHost?.runtime()) return null;
+		stopForwardingRuntimeEvents?.();
+		libraryRuntimeBridge?.dispose();
+		return libraryRuntimeHost.close();
+	},
 	powerManager,
 	stopSessionCleanup,
 	getPersistedSessions: () => sessionsStore.get('sessions', []) as Array<Record<string, unknown>>,

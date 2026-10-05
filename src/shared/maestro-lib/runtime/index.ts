@@ -19,7 +19,7 @@ import * as fs from 'fs/promises';
 
 import { createSleepTracker } from '../../sleepTracking';
 import { createAgentRepository } from '../agents/repository';
-import type { RepositoryLoadFailure } from '../agents/repository';
+import type { RepositoryLoadFailure, RepositoryProcesses } from '../agents/repository';
 import type { RuleContext, TabDefaults } from '../agents/rules';
 import { createEventBus } from '../client/event-bus';
 import type { HostInfo, MaestroClient } from '../client/types';
@@ -32,6 +32,7 @@ import { readAgentConfigsStore } from '../store/read-stores';
 import { createRuntimeClient, type RuntimePhase } from './client';
 import {
 	acquireDataDirLock,
+	type DataDirLock,
 	type DataDirLockDeps,
 	type DataDirRefusal,
 	type RuntimeLockInfo,
@@ -66,6 +67,12 @@ export type RuntimeDeps = DataDirLockDeps & {
 	background: Partial<BackgroundTurnDeps>;
 	/** The seams of the consult service: the shortest wait a caller may ask for. */
 	consults: { minTimeoutMs?: number };
+	/**
+	 * Processes the runtime's own registry does not hold, which the repository must still ask about
+	 * and stop (DG2). The desktop's turns run under ProcessManager, so its answers come from there.
+	 * Busy if either says busy; an agent delete stops both.
+	 */
+	processes: RepositoryProcesses;
 };
 
 export interface MaestroRuntimeOptions {
@@ -75,6 +82,13 @@ export interface MaestroRuntimeOptions {
 	productionDataDir?: string;
 	/** Who hosts, written into the lock: `tui` (Phase 5), `host` (Phase 7), `desktop` (Phase 9). */
 	mode: RuntimeLockMode;
+	/**
+	 * A lock the caller already holds (DG1): the desktop takes `maestro-runtime.lock` at module load,
+	 * before any store is written, and hands that lock to the runtime instead of a second acquire. The
+	 * runtime then beats it (the caller must have stopped its own beat), fences on it, and releases it
+	 * on shutdown. A refusal after this point leaves it held and its beat to the caller to restart.
+	 */
+	lock?: DataDirLock;
 	/** Create `dataDir` when it does not exist. Default false: a guessed directory must not become an empty database. */
 	createDataDir?: boolean;
 	/** Host on a `customSyncPath` anyway (a pid lock cannot see another machine). Default false. */
@@ -140,6 +154,19 @@ function missingDataDir(userDataDir: string, env: UserDataDirOptions['env']): Ru
 	return { reason: 'data-dir-missing', tried: [userDataDir], message };
 }
 
+/** The registry's answers joined with a caller's (DG2): busy if either says so, and a delete stops both. */
+function composeProcesses(
+	own: RepositoryProcesses,
+	external: RepositoryProcesses
+): RepositoryProcesses {
+	return {
+		isBusy: (agentId, tabId) => own.isBusy(agentId, tabId) || external.isBusy(agentId, tabId),
+		stopAgent: async (agentId) => {
+			await Promise.all([own.stopAgent(agentId), external.stopAgent(agentId)]);
+		},
+	};
+}
+
 async function isDirectory(dir: string): Promise<boolean> {
 	try {
 		return (await fs.stat(dir)).isDirectory();
@@ -194,10 +221,21 @@ export async function createMaestroRuntime(options: MaestroRuntimeOptions): Prom
 		};
 	}
 
-	// D, E, F: a live desktop or host, then the lock, then a second look for a desktop.
-	const locked = acquireDataDirLock(paths, options.mode, deps);
-	if (!locked.ok) return { ok: false, refusal: locked.refusal };
-	const lock = locked.lock;
+	// D, E, F: a live desktop or host, then the lock, then a second look for a desktop. An adopted
+	// lock went through the same steps in its holder.
+	const adopted = options.lock !== undefined;
+	let lock: DataDirLock;
+	if (options.lock) {
+		lock = options.lock;
+	} else {
+		const locked = acquireDataDirLock(paths, options.mode, deps);
+		if (!locked.ok) return { ok: false, refusal: locked.refusal };
+		lock = locked.lock;
+	}
+	/** A lock the caller holds stays held when the runtime does not start: it is theirs to release. */
+	const releaseOnRefusal = (): void => {
+		if (!adopted) lock.release();
+	};
 
 	const bus = createEventBus(LOG_CONTEXT);
 	const registry = createProcessRegistry();
@@ -246,7 +284,7 @@ export async function createMaestroRuntime(options: MaestroRuntimeOptions): Prom
 	const repository = createAgentRepository({
 		paths,
 		bus,
-		processes: registry,
+		processes: deps.processes ? composeProcesses(registry, deps.processes) : registry,
 		fence,
 		quarantineCorruptStores: options.quarantineCorruptStores,
 		context: deps.rules,
@@ -258,11 +296,11 @@ export async function createMaestroRuntime(options: MaestroRuntimeOptions): Prom
 		if (paths.syncDir !== paths.userDataDir) await fs.mkdir(paths.syncDir, { recursive: true });
 		const loaded = await repository.load();
 		if (!loaded.ok) {
-			lock.release();
+			releaseOnRefusal();
 			return { ok: false, refusal: loaded.failure };
 		}
 	} catch (error) {
-		lock.release();
+		releaseOnRefusal();
 		return {
 			ok: false,
 			refusal: {

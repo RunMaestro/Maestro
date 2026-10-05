@@ -62,6 +62,7 @@ import { createPianolaApi } from './pianola';
 import { createPluginsApi } from './plugins';
 import { createWakatimeApi } from './wakatime';
 import { createMaestroCliApi } from './maestroCli';
+import { createLibraryRuntimeApi } from './libraryRuntime';
 import { createPromptsApi } from './prompts';
 import { createMemoryApi } from './memory';
 import { createContextTimelineApi } from './contextTimeline';
@@ -262,6 +263,8 @@ contextBridge.exposeInMainWorld('maestro', {
 
 	// Maestro CLI API (status + install/update)
 	maestroCli: createMaestroCliApi(),
+	// Library runtime hosting (status + runtime events; Phase 9)
+	libraryRuntime: createLibraryRuntimeApi(),
 	// Core Prompts API (view, edit, reset system prompts)
 	prompts: createPromptsApi(),
 	// Per-project Memory API (Claude Code memory viewer)
@@ -373,6 +376,8 @@ export {
 	createWakatimeApi,
 	// Maestro CLI
 	createMaestroCliApi,
+	// Library runtime
+	createLibraryRuntimeApi,
 	// Core Prompts
 	createPromptsApi,
 	// Memory Viewer
@@ -635,6 +640,11 @@ export type {
 	// From maestroCli
 	MaestroCliApi,
 } from './maestroCli';
+export type {
+	// From libraryRuntime
+	LibraryRuntimeApi,
+	LibraryRuntimeEventMessage,
+} from './libraryRuntime';
 export type {
 	// From prompts
 	PromptsApi,

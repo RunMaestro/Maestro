@@ -178,6 +178,8 @@ import type { CueLogPayload } from '../shared/cue-log-types';
 import type { CueStatsAggregation, CueStatsTimeRange } from '../shared/cue-stats-types';
 import type { QueryEvent, StatsAggregation } from '../shared/stats-types';
 import type { MaestroCliStatus, MaestroCliInstallResult } from '../shared/maestro-cli';
+import type { LibraryRuntimeStatus } from '../shared/libraryRuntime';
+import type { MaestroEvent } from '../shared/maestro-lib/client/types';
 import type { DebugPackageOptions } from '../shared/debugPackage';
 import type {
 	ParquetFetchProgress,
@@ -4622,6 +4624,12 @@ interface MaestroAPI {
 	maestroCli: {
 		checkStatus: () => Promise<MaestroCliStatus>;
 		installOrUpdate: () => Promise<MaestroCliInstallResult>;
+	};
+
+	// Library runtime hosting (Phase 9): whether main owns agent state this run, and its events
+	libraryRuntime: {
+		status: () => Promise<LibraryRuntimeStatus>;
+		onEvent: (listener: (message: { event: MaestroEvent }) => void) => () => void;
 	};
 
 	prompts: {

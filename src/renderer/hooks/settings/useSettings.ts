@@ -366,6 +366,8 @@ export interface UseSettingsReturn {
 	setDisableGpuAcceleration: (value: boolean) => void;
 	disableConfetti: boolean;
 	setDisableConfetti: (value: boolean) => void;
+	libraryRuntime: boolean;
+	setLibraryRuntime: (value: boolean) => void;
 
 	// Local file indexing ignore patterns
 	localIgnorePatterns: string[];

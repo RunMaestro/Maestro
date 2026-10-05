@@ -49,6 +49,14 @@ export const CORE_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		category: 'advanced',
 	},
 
+	libraryRuntime: {
+		description:
+			'Experimental. The main process owns agents, groups, and tabs through the maestro-lib runtime, and every window applies its changes instead of keeping its own copy. Work in progress: leave it off until the desktop migration lands. Takes effect after a restart.',
+		type: 'boolean',
+		default: false,
+		category: 'advanced',
+	},
+
 	// --- Shell ---
 	defaultShell: {
 		description:

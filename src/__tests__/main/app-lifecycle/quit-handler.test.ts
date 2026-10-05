@@ -401,6 +401,70 @@ describe('app-lifecycle/quit-handler', () => {
 			).toBeLessThan(releaseDataDirLock.mock.invocationCallOrder[0]);
 		});
 
+		describe('a hosted library runtime (Phase 9)', () => {
+			const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+			it('releases the lock at once when this run hosts none', async () => {
+				mockIsMacOS = false;
+				const { createQuitHandler } = await import('../../../main/app-lifecycle/quit-handler');
+				const releaseDataDirLock = vi.fn();
+				const closeLibraryRuntime = vi.fn(() => null);
+				const quitHandler = createQuitHandler({
+					...deps,
+					releaseDataDirLock,
+					closeLibraryRuntime,
+				} as unknown as Parameters<typeof createQuitHandler>[0]);
+				quitHandler.setup();
+				quitHandler.confirmQuit();
+				beforeQuitHandler!({ preventDefault: vi.fn() });
+
+				expect(closeLibraryRuntime).toHaveBeenCalledTimes(1);
+				expect(releaseDataDirLock).toHaveBeenCalledTimes(1);
+			});
+
+			it('drains the runtime first and releases the lock only after it settles', async () => {
+				mockIsMacOS = false;
+				const { createQuitHandler } = await import('../../../main/app-lifecycle/quit-handler');
+				const releaseDataDirLock = vi.fn();
+				let finish!: () => void;
+				const closing = new Promise<void>((resolve) => {
+					finish = resolve;
+				});
+				const quitHandler = createQuitHandler({
+					...deps,
+					releaseDataDirLock,
+					closeLibraryRuntime: () => closing,
+				} as unknown as Parameters<typeof createQuitHandler>[0]);
+				quitHandler.setup();
+				quitHandler.confirmQuit();
+				beforeQuitHandler!({ preventDefault: vi.fn() });
+
+				await flush();
+				expect(releaseDataDirLock).not.toHaveBeenCalled();
+
+				finish();
+				await flush();
+				expect(releaseDataDirLock).toHaveBeenCalledTimes(1);
+			});
+
+			it('still releases the lock when the runtime fails to close', async () => {
+				mockIsMacOS = false;
+				const { createQuitHandler } = await import('../../../main/app-lifecycle/quit-handler');
+				const releaseDataDirLock = vi.fn();
+				const quitHandler = createQuitHandler({
+					...deps,
+					releaseDataDirLock,
+					closeLibraryRuntime: () => Promise.reject(new Error('drain failed')),
+				} as unknown as Parameters<typeof createQuitHandler>[0]);
+				quitHandler.setup();
+				quitHandler.confirmQuit();
+				beforeQuitHandler!({ preventDefault: vi.fn() });
+
+				await flush();
+				expect(releaseDataDirLock).toHaveBeenCalledTimes(1);
+			});
+		});
+
 		it('saves the multi-window layout during cleanup, before processes are torn down', async () => {
 			const { createQuitHandler } = await import('../../../main/app-lifecycle/quit-handler');
 

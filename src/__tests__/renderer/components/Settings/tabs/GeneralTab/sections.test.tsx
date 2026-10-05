@@ -5,6 +5,7 @@ import {
 	BrowserSection,
 	HistorySection,
 	InputBehaviorSection,
+	LibraryRuntimeSection,
 	MaestroCliSection,
 	PowerSection,
 	RenderingSection,
@@ -491,5 +492,100 @@ describe('GeneralTab section components', () => {
 		expect(
 			screen.queryByText('Restart Maestro for changes to take effect')
 		).not.toBeInTheDocument();
+	});
+	describe('LibraryRuntimeSection', () => {
+		it('renders the toggle under a stable setting id and flips it on click', () => {
+			const setLibraryRuntime = vi.fn();
+			const { container } = render(
+				<LibraryRuntimeSection
+					theme={mockTheme}
+					libraryRuntime={false}
+					setLibraryRuntime={setLibraryRuntime}
+					status={{ hosting: false, reason: 'The libraryRuntime setting is off.' }}
+				/>
+			);
+
+			expect(container.querySelector('[data-setting-id="general-library-runtime"]')).toBeTruthy();
+			expect(screen.getByText('Library Runtime (experimental)')).toBeTruthy();
+			fireEvent.click(screen.getByRole('switch', { name: /maestro-lib runtime/i }));
+			expect(setLibraryRuntime).toHaveBeenCalledWith(true);
+		});
+
+		it('flips on Enter and Space from the row', () => {
+			const setLibraryRuntime = vi.fn();
+			render(
+				<LibraryRuntimeSection
+					theme={mockTheme}
+					libraryRuntime={true}
+					setLibraryRuntime={setLibraryRuntime}
+					status={{ hosting: true }}
+				/>
+			);
+			const row = screen
+				.getByText('Run agent state through the maestro-lib runtime')
+				.closest('[role="button"]') as HTMLElement;
+			fireEvent.keyDown(row, { key: 'Enter' });
+			fireEvent.keyDown(row, { key: ' ' });
+			expect(setLibraryRuntime).toHaveBeenCalledTimes(2);
+			expect(setLibraryRuntime).toHaveBeenCalledWith(false);
+		});
+
+		it('asks for a restart while the stored value differs from what this run does', () => {
+			const { rerender } = render(
+				<LibraryRuntimeSection
+					theme={mockTheme}
+					libraryRuntime={true}
+					setLibraryRuntime={vi.fn()}
+					status={{ hosting: false, reason: 'The libraryRuntime setting is off.' }}
+				/>
+			);
+			expect(screen.getByText('Restart Maestro to apply.')).toBeTruthy();
+
+			rerender(
+				<LibraryRuntimeSection
+					theme={mockTheme}
+					libraryRuntime={false}
+					setLibraryRuntime={vi.fn()}
+					status={{ hosting: true }}
+				/>
+			);
+			expect(screen.getByText('Restart Maestro to apply.')).toBeTruthy();
+
+			rerender(
+				<LibraryRuntimeSection
+					theme={mockTheme}
+					libraryRuntime={true}
+					setLibraryRuntime={vi.fn()}
+					status={{ hosting: true }}
+				/>
+			);
+			expect(screen.queryByText('Restart Maestro to apply.')).toBeNull();
+		});
+
+		it('says nothing about a restart until main has answered', () => {
+			render(
+				<LibraryRuntimeSection
+					theme={mockTheme}
+					libraryRuntime={true}
+					setLibraryRuntime={vi.fn()}
+					status={null}
+				/>
+			);
+			expect(screen.queryByText('Restart Maestro to apply.')).toBeNull();
+		});
+
+		it('tells the person why a requested runtime is not running this run', () => {
+			render(
+				<LibraryRuntimeSection
+					theme={mockTheme}
+					libraryRuntime={true}
+					setLibraryRuntime={vi.fn()}
+					status={{ hosting: false, reason: 'Corrupt store at /data/maestro-sessions.json' }}
+				/>
+			);
+			expect(
+				screen.getByText(/not using it: Corrupt store at \/data\/maestro-sessions\.json/)
+			).toBeTruthy();
+		});
 	});
 });

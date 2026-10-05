@@ -42,6 +42,7 @@ import {
 } from '../utils/network-address-watcher';
 import { captureException } from '../utils/sentry';
 import { WebSocketMessageHandler } from './handlers';
+import type { RuntimeMessageRouter } from '../library-runtime/bridge';
 import { BroadcastService } from './services';
 import {
 	ApiRoutes,
@@ -529,6 +530,14 @@ export class WebServer {
 
 	setSelectTabCallback(callback: SelectTabCallback): void {
 		this.callbackRegistry.setSelectTabCallback(callback);
+	}
+
+	/**
+	 * Answer the agent, group, and tab messages from the hosted library runtime instead of a renderer
+	 * round trip (Phase 9, `libraryRuntime` setting). Null restores the callbacks.
+	 */
+	setRuntimeRouter(router: RuntimeMessageRouter | null): void {
+		this.messageHandler.setRuntimeRouter(router);
 	}
 
 	setNewTabCallback(callback: NewTabCallback): void {
@@ -1118,6 +1127,7 @@ export class WebServer {
 				this.handleWebClientMessage(clientId, message);
 			},
 			getBridgeEpoch: () => this.broadcastService.bridgeEpoch,
+			getRuntimeHosting: () => this.messageHandler.isRuntimeHosting(),
 			getBridgeSeq: () => this.broadcastService.getBridgeSeq(),
 			resumeBridgeClient: (epoch, lastSeq, subscribedSessionId) =>
 				this.broadcastService.resumeBridgeClient(epoch, lastSeq, subscribedSessionId),
