@@ -58,6 +58,10 @@ export interface PianolaTask {
 	/** Transcript length when the current run (dispatch or fix) was sent, so a run that
 	 *  finishes between two polls is still recognised by the reply that follows it. */
 	dispatchedMessageCount?: number;
+	/** Id of the last transcript message when the current run (dispatch or fix) was
+	 *  sent; `null` when the transcript was empty. Replies are detected by id, so a
+	 *  capped history tail cannot hide them the way a length offset could. */
+	dispatchedMessageId?: string | null;
 	validation?: PianolaTaskValidation;
 	validationUnknownAttempts?: number;
 }
@@ -220,6 +224,14 @@ function validatePianolaTask(raw: unknown, index: number, errors: string[]): Pia
 		errors.push('Task ' + label + ' has invalid validationUnknownAttempts.');
 		ok = false;
 	}
+	if (
+		raw.dispatchedMessageId !== undefined &&
+		raw.dispatchedMessageId !== null &&
+		typeof raw.dispatchedMessageId !== 'string'
+	) {
+		errors.push('Task ' + label + ' has invalid dispatchedMessageId.');
+		ok = false;
+	}
 
 	if (!ok) return null;
 
@@ -241,6 +253,8 @@ function validatePianolaTask(raw: unknown, index: number, errors: string[]): Pia
 	if (Number.isInteger(raw.fixAttempts)) task.fixAttempts = raw.fixAttempts as number;
 	if (Number.isInteger(raw.dispatchedMessageCount))
 		task.dispatchedMessageCount = raw.dispatchedMessageCount as number;
+	if (raw.dispatchedMessageId === null || typeof raw.dispatchedMessageId === 'string')
+		task.dispatchedMessageId = raw.dispatchedMessageId;
 	return task;
 }
 
@@ -347,6 +361,7 @@ export function markTaskStatus(
 			| 'runId'
 			| 'fixAttempts'
 			| 'dispatchedMessageCount'
+			| 'dispatchedMessageId'
 			| 'validationUnknownAttempts'
 		>
 	>
@@ -365,6 +380,8 @@ export function markTaskStatus(
 				next.validationUnknownAttempts = patch.validationUnknownAttempts;
 			if (patch.dispatchedMessageCount !== undefined)
 				next.dispatchedMessageCount = patch.dispatchedMessageCount;
+			if (patch.dispatchedMessageId !== undefined)
+				next.dispatchedMessageId = patch.dispatchedMessageId;
 		}
 		return next;
 	});

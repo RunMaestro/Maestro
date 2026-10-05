@@ -646,11 +646,11 @@ describe('CueEngine session lifecycle', () => {
 			const session = createMockSession();
 
 			// First initSession - normal registration
-			service.initSession(session, { reason: 'system-boot' });
+			await service.initSession(session, { reason: 'system-boot' });
 			expect(registry.has(session.id)).toBe(true);
 
 			// Second initSession - should trigger idempotency guard
-			service.initSession(session, { reason: 'user-toggle' });
+			await service.initSession(session, { reason: 'user-toggle' });
 
 			// Guard must have logged a warning
 			expect(onLog).toHaveBeenCalledWith(
@@ -792,7 +792,7 @@ describe('CueEngine session lifecycle', () => {
 			expect(cleared).toEqual(['session-1:watch-issues', 'session-1:watch-prs']);
 		});
 
-		it('refreshSession clears cue_github_seen rows only for subs that were removed', () => {
+		it('refreshSession clears cue_github_seen rows only for subs that were removed', async () => {
 			mockClearGitHubSeenForSubscription.mockClear();
 
 			// Initial config has two GitHub subs.
@@ -819,7 +819,7 @@ describe('CueEngine session lifecycle', () => {
 			mockLoadCueConfig.mockReturnValue(initialConfig);
 			const deps = createMockDeps();
 			const engine = new CueEngine(deps);
-			engine.start();
+			await engine.start();
 
 			// User edits YAML, removes the `drop-me` subscription.
 			const updatedConfig = createMockConfig({
@@ -839,7 +839,7 @@ describe('CueEngine session lifecycle', () => {
 			// refreshSession fires on YAML hot-reload. The `keep-me` sub is
 			// still present so its seen rows must stay; only `drop-me`'s
 			// subscription_id is cleared.
-			engine.refreshSession('session-1', '/projects/test');
+			await engine.refreshSession('session-1', '/projects/test');
 
 			const cleared = mockClearGitHubSeenForSubscription.mock.calls.map(([id]) => id);
 			expect(cleared).toEqual(['session-1:drop-me']);
@@ -919,7 +919,7 @@ describe('CueEngine session lifecycle', () => {
 			expect(mockClearGitHubSeenForSubscription).not.toHaveBeenCalled();
 		});
 
-		it('refreshSession CLEARS cue_github_seen rows when the config file is truly gone', () => {
+		it('refreshSession CLEARS cue_github_seen rows when the config file is truly gone', async () => {
 			// Positive-path counterpart to the parse-error/invalid tests above.
 			// When the config is actually missing from disk (user deleted
 			// cue.yaml, or the session moved away from its project root), we
@@ -949,12 +949,15 @@ describe('CueEngine session lifecycle', () => {
 			mockLoadCueConfig.mockReturnValue(initialConfig);
 			const deps = createMockDeps();
 			const engine = new CueEngine(deps);
-			engine.start();
+			await engine.start();
 
 			// Config is gone. Both loader paths return the 'missing' shape.
 			mockLoadCueConfig.mockReturnValue(null);
 			mockDetailedResult = { ok: false, reason: 'missing' };
-			engine.refreshSession('session-1', '/projects/test');
+			const refresh = engine.refreshSession('session-1', '/projects/test');
+			// Confirm deletion through the three delayed missing-config rechecks.
+			await vi.advanceTimersByTimeAsync(3 * 150);
+			await refresh;
 
 			const cleared = mockClearGitHubSeenForSubscription.mock.calls.map(([id]) => id).sort();
 			// BOTH GitHub subs' seen rows cleared; no heartbeat/non-github

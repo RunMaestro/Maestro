@@ -493,3 +493,33 @@ describe('independent oracle settlement', () => {
 		expect(deps.validate).not.toHaveBeenCalled();
 	});
 });
+
+describe('program charter validation requirement', () => {
+	it.each([true, false, undefined])(
+		'respects validationRequired=%s for a task without an oracle',
+		async (validationRequired) => {
+			const deps = makeDeps({ runStates: { t1: 'idle' } });
+			deps.getProgramCharter = vi.fn(() =>
+				validationRequired === undefined ? undefined : { validationRequired, maxAttempts: 3 }
+			);
+			deps.reactiveEnabled = () => true;
+			deps.getRunLedger = vi.fn(async () => ({ checksPassed: true, openFindings: 0 }));
+			deps.requestMerge = vi.fn(async () => ({ merged: true }));
+			const result = await runOrchestratorIteration(
+				{
+					plan: plan([task({ status: 'running' })], { programId: 'program-1' }),
+					prevStates: { t1: 'busy' },
+				},
+				deps,
+				{ concurrencyLimit: 1 }
+			);
+			expect(statusOf(result.state, 't1')).toBe(validationRequired ? 'needs_review' : 'done');
+			if (validationRequired) {
+				expect(result.state.plan.tasks[0].error).toBe(
+					'validation required by program charter but task declares none'
+				);
+				expect(deps.requestMerge).not.toHaveBeenCalled();
+			}
+		}
+	);
+});

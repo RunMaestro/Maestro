@@ -13,7 +13,29 @@ import {
 	pianolaSuperviseWatch,
 	pianolaSuperviseProgram,
 } from '../../../cli/commands/pianola-supervise';
-import { readPianolaSupervisorTargets } from '../../../cli/services/pianola-store';
+import { pianolaProgramLoop } from '../../../cli/commands/pianola-program-loop';
+import { pianolaProgramStatus } from '../../../cli/commands/pianola-portfolio';
+import {
+	readPianolaSupervisorTargets,
+	upsertPianolaProgram,
+	upsertPianolaPlan,
+	writePianolaProgramLoopMemo,
+} from '../../../cli/services/pianola-store';
+
+const { sendCommand, dispatch } = vi.hoisted(() => ({ sendCommand: vi.fn(), dispatch: vi.fn() }));
+vi.mock('../../../cli/services/maestro-client', () => ({
+	MaestroClient: class {
+		connect = vi.fn();
+		disconnect = vi.fn();
+		sendCommand = sendCommand;
+	},
+}));
+vi.mock('../../../cli/commands/dispatch', () => ({ runDispatch: dispatch }));
+vi.mock('../../../cli/services/prompt-loader', () => ({
+	_getBundledPromptCandidatesForTests: (relative: string) => [
+		path.resolve(__dirname, '../../../prompts', relative),
+	],
+}));
 
 let tmpDir: string;
 let prevEnv: string | undefined;
@@ -89,5 +111,71 @@ describe('pianolaSuperviseProgram', () => {
 		]);
 		pianolaSuperviseProgram('other', { json: true });
 		expect(readPianolaSupervisorTargets()).toHaveLength(2);
+	});
+});
+
+describe('program-loop target registration', () => {
+	const program = {
+		id: 'product',
+		title: 'Product',
+		root: 'C:\\product',
+		leadAgentId: 'lead',
+		roles: { lead: { name: 'Lead', agentId: 'lead' } },
+		charter: { maxConcurrent: 1, maxAttempts: 2, validationRequired: true },
+		status: 'active' as const,
+		createdAt: 1,
+		updatedAt: 1,
+	};
+	it('updates the same watch target to the second wake tab', async () => {
+		upsertPianolaProgram(program);
+		sendCommand.mockResolvedValue({
+			sessions: [{ agentId: 'lead', tabId: 'old-tab', state: 'idle' }],
+		});
+		dispatch.mockResolvedValueOnce({ success: true, tabId: 'first-tab' });
+		await pianolaProgramLoop('product', { once: true, json: true });
+		const first = readPianolaSupervisorTargets()[0];
+		expect(first).toMatchObject({
+			kind: 'watch',
+			agentId: 'lead',
+			tabId: 'first-tab',
+			enabled: true,
+		});
+		writePianolaProgramLoopMemo({
+			product: { notifiedTaskIds: [], lastWakeAt: '2026-01-01T00:00:00.000Z' },
+		});
+		dispatch.mockResolvedValueOnce({ success: true, tabId: 'second-tab' });
+		await pianolaProgramLoop('product', { once: true, json: true });
+		expect(readPianolaSupervisorTargets()).toEqual([{ ...first, tabId: 'second-tab' }]);
+	});
+	it('does not register orchestration when the program is paused during session lookup', async () => {
+		upsertPianolaProgram(program);
+		upsertPianolaPlan({
+			id: 'plan',
+			programId: 'product',
+			title: 'Plan',
+			createdAt: 1,
+			tasks: [{ id: 'task', title: 'Task', prompt: 'Work', dependsOn: [], status: 'pending' }],
+		});
+		sendCommand.mockImplementationOnce(async () => {
+			pianolaProgramStatus('product', 'paused', { json: true });
+			return { sessions: [{ agentId: 'lead', tabId: 'tab', state: 'idle' }] };
+		});
+		await pianolaProgramLoop('product', { once: true, json: true });
+		expect(readPianolaSupervisorTargets()).toEqual([]);
+	});
+	it('does not re-enable a lead watch when paused during a wake', async () => {
+		upsertPianolaProgram(program);
+		pianolaSuperviseWatch('old-tab', { agent: 'lead', json: true });
+		sendCommand.mockResolvedValue({
+			sessions: [{ agentId: 'lead', tabId: 'old-tab', state: 'idle' }],
+		});
+		dispatch.mockImplementationOnce(async () => {
+			pianolaProgramStatus('product', 'paused', { json: true });
+			return { success: true, tabId: 'new-tab' };
+		});
+		await pianolaProgramLoop('product', { once: true, json: true });
+		expect(readPianolaSupervisorTargets()).toEqual([
+			expect.objectContaining({ tabId: 'old-tab', enabled: false }),
+		]);
 	});
 });

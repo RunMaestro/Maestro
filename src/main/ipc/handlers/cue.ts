@@ -178,7 +178,7 @@ export function registerCueHandlers(deps: CueHandlerDependencies): void {
 	ipcMain.handle(
 		'cue:enable',
 		withIpcErrorLogging(handlerOpts('enable'), async (): Promise<void> => {
-			requireEngine().start('system-boot');
+			await requireEngine().start('system-boot');
 		})
 	);
 
@@ -287,7 +287,7 @@ export function registerCueHandlers(deps: CueHandlerDependencies): void {
 		withIpcErrorLogging(
 			handlerOpts('refreshSession'),
 			async (options: { sessionId: string; projectRoot: string }): Promise<void> => {
-				requireEngine().refreshSession(options.sessionId, options.projectRoot);
+				await requireEngine().refreshSession(options.sessionId, options.projectRoot);
 			}
 		)
 	);

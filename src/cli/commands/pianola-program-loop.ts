@@ -75,6 +75,10 @@ export async function pianolaProgramLoop(
 					},
 					{
 						ensureOrchestrate: (plan, concurrency) => {
+							if (
+								readPianolaPrograms().find((entry) => entry.id === programId)?.status !== 'active'
+							)
+								return;
 							const existing = readPianolaSupervisorTargets().find(
 								(target) => target.kind === 'orchestrate' && target.planId === plan.id
 							);
@@ -89,6 +93,10 @@ export async function pianolaProgramLoop(
 							});
 						},
 						wake: async (agentId, prompt) => {
+							if (
+								readPianolaPrograms().find((entry) => entry.id === programId)?.status !== 'active'
+							)
+								return { success: false, error: 'Program paused' };
 							const response = await runDispatch(agentId, prompt, { newTab: true });
 							let tabId = response.tabId ?? response.sessionId ?? undefined;
 							if (response.success && !tabId) {
@@ -100,6 +108,10 @@ export async function pianolaProgramLoop(
 							return { success: response.success, tabId, error: response.error };
 						},
 						ensureWatch: (agentId, tabId) => {
+							if (
+								readPianolaPrograms().find((entry) => entry.id === programId)?.status !== 'active'
+							)
+								return;
 							const existing = readPianolaSupervisorTargets().find(
 								(target) => target.kind === 'watch' && target.agentId === agentId
 							);

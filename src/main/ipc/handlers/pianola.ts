@@ -22,6 +22,7 @@ import {
 	readDecisions,
 	readSupervisorTargets,
 	upsertSupervisorTarget,
+	writeSupervisorTargets,
 	removeSupervisorTarget,
 	readSuggestions,
 	writeSuggestions,
@@ -32,7 +33,7 @@ import {
 	readPrograms,
 	writePrograms,
 	readAsks,
-	writeAsks,
+	updateAsks,
 	readPlans,
 	readProgramLoopMemo,
 } from '../../pianola/pianola-store-main';
@@ -301,6 +302,24 @@ export function registerPianolaHandlers(deps: PianolaHandlerDependencies): void 
 					program.id === programId ? { ...program, status, updatedAt: Date.now() } : program
 				)
 			);
+			const current = programs.find((program) => program.id === programId)!;
+			const planIds = new Set(
+				readPlans()
+					.filter((plan) => plan.programId === programId)
+					.map((plan) => plan.id)
+			);
+			const targets = readSupervisorTargets();
+			writeSupervisorTargets(
+				targets.map((target) =>
+					(target.kind === 'orchestrate' && planIds.has(target.planId ?? '')) ||
+					(target.kind === 'watch' &&
+						!!current.leadAgentId &&
+						target.agentId === current.leadAgentId)
+						? { ...target, enabled: status === 'active' }
+						: target
+				)
+			);
+			supervisor.reconcile();
 		}
 	);
 	ipcMain.handle('pianola:get-programs', async (): Promise<PianolaProgram[]> => {
@@ -327,35 +346,40 @@ export function registerPianolaHandlers(deps: PianolaHandlerDependencies): void 
 				(note !== undefined && typeof note !== 'string')
 			)
 				throw new Error('InvalidAskResolution');
-			const asks = readAsks();
-			const ask = asks.find((a) => a.id === id && a.status === 'open');
-			if (!ask) throw new Error('OpenAskNotFound');
-			const updated: PianolaAsk = {
-				...ask,
-				status: 'resolved',
-				updatedAt: new Date().toISOString(),
-				resolution: {
-					option,
-					...(note === undefined ? {} : { note }),
-					resolvedAt: new Date().toISOString(),
-				},
-			};
-			writeAsks(asks.map((a) => (a.id === id ? updated : a)));
+			let updated: PianolaAsk | undefined;
+			updateAsks((asks) => {
+				const ask = asks.find((a) => a.id === id && a.status === 'open');
+				if (!ask) throw new Error('OpenAskNotFound');
+				const now = new Date().toISOString();
+				const resolved: PianolaAsk = {
+					...ask,
+					status: 'resolved',
+					updatedAt: now,
+					resolution: { option, ...(note === undefined ? {} : { note }), resolvedAt: now },
+				};
+				updated = resolved;
+				return asks.map((a) => (a.id === id ? resolved : a));
+			});
+			if (!updated) throw new Error('OpenAskNotFound');
 			return updated;
 		}
 	);
 	ipcMain.handle('pianola:dismiss-ask', async (_event, id: unknown): Promise<PianolaAsk> => {
 		if (!isPianolaEnabled(settingsStore)) throw new Error('PianolaDisabled');
 		if (typeof id !== 'string') throw new Error('InvalidAskId');
-		const asks = readAsks();
-		const ask = asks.find((a) => a.id === id && a.status === 'open');
-		if (!ask) throw new Error('OpenAskNotFound');
-		const updated: PianolaAsk = {
-			...ask,
-			status: 'dismissed',
-			updatedAt: new Date().toISOString(),
-		};
-		writeAsks(asks.map((a) => (a.id === id ? updated : a)));
+		let updated: PianolaAsk | undefined;
+		updateAsks((asks) => {
+			const ask = asks.find((a) => a.id === id && a.status === 'open');
+			if (!ask) throw new Error('OpenAskNotFound');
+			const dismissed: PianolaAsk = {
+				...ask,
+				status: 'dismissed',
+				updatedAt: new Date().toISOString(),
+			};
+			updated = dismissed;
+			return asks.map((a) => (a.id === id ? dismissed : a));
+		});
+		if (!updated) throw new Error('OpenAskNotFound');
 		return updated;
 	});
 	ipcMain.handle('pianola:get-brief', async (): Promise<PianolaBrief> => {

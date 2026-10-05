@@ -44,6 +44,7 @@ export const writePrograms = store.writePrograms;
 export const upsertProgram = store.upsertProgram;
 export const readAsks = store.readAsks;
 export const writeAsks = store.writeAsks;
+export const updateAsks = store.updateAsks;
 export const readProgramLoopMemo = store.readProgramLoopMemo;
 export const writeProgramLoopMemo = store.writeProgramLoopMemo;
 export const readSuggestions = store.readSuggestions;

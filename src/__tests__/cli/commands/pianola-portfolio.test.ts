@@ -3,11 +3,19 @@ import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
 import yaml from 'js-yaml';
+import { spawn } from 'child_process';
+import { buildSync } from 'esbuild';
+import type { PianolaSupervisedTarget } from '../../../shared/pianola/storage';
 import type { PianolaProgram, PianolaAsk } from '../../../shared/pianola/pianola-programs';
 import type { PianolaPlan } from '../../../shared/pianola/pianola-tasks';
 
 const { state, connect, sendCommand, disconnect } = vi.hoisted(() => ({
-	state: { programs: [] as PianolaProgram[], asks: [] as PianolaAsk[], plans: [] as PianolaPlan[] },
+	state: {
+		programs: [] as PianolaProgram[],
+		asks: [] as PianolaAsk[],
+		plans: [] as PianolaPlan[],
+		targets: [] as PianolaSupervisedTarget[],
+	},
 	connect: vi.fn(),
 	sendCommand: vi.fn(),
 	disconnect: vi.fn(),
@@ -32,19 +40,24 @@ vi.mock('../../../cli/services/pianola-store', () => ({
 		return state.programs;
 	},
 	readPianolaAsks: () => state.asks,
-	writePianolaAsks: (asks: PianolaAsk[]) => {
-		state.asks = asks;
-		return asks;
+	updatePianolaAsks: (update: (asks: PianolaAsk[]) => PianolaAsk[]) => {
+		state.asks = update(state.asks);
+		return state.asks;
 	},
 	readPianolaPlans: () => state.plans,
 	readPianolaDecisions: () => [],
-	readPianolaSupervisorTargets: () => [],
+	readPianolaSupervisorTargets: () => state.targets,
+	writePianolaSupervisorTargets: (targets: PianolaSupervisedTarget[]) => {
+		state.targets = targets;
+		return targets;
+	},
 	readPianolaProgramLoopMemo: () => ({}),
 }));
 
 import {
 	pianolaProgramApply,
 	updateGeneratedCueYaml,
+	pianolaProgramStatus,
 	pianolaEscalate,
 	pianolaResolve,
 	pianolaDismiss,
@@ -56,6 +69,7 @@ beforeEach(() => {
 	state.programs = [];
 	state.asks = [];
 	state.plans = [];
+	state.targets = [];
 	vi.clearAllMocks();
 	vi.spyOn(console, 'log').mockImplementation(() => {});
 	connect.mockResolvedValue(undefined);
@@ -63,6 +77,112 @@ beforeEach(() => {
 });
 
 describe('portfolio CLI commands', () => {
+	it('persists both asks when independent agents escalate concurrently', async () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pianola-concurrent-escalate-'));
+		const entry = path.join(dir, 'portfolio.cjs');
+		buildSync({
+			entryPoints: [path.resolve(__dirname, '../../../cli/commands/pianola-portfolio.ts')],
+			outfile: entry,
+			bundle: true,
+			platform: 'node',
+			format: 'cjs',
+			external: ['electron'],
+		});
+		fs.writeFileSync(
+			path.join(dir, 'maestro-settings.json'),
+			JSON.stringify({ encoreFeatures: { pianola: true } })
+		);
+		fs.writeFileSync(path.join(dir, 'maestro-pianola-asks.json'), JSON.stringify({ asks: [] }));
+		const workers = ['agent-one', 'agent-two'].map((agent) => {
+			const script = [
+				'const fs = require("fs");',
+				'const escalate = require(' + JSON.stringify(entry) + ').pianolaEscalate;',
+				'const read = fs.readFileSync;',
+				'fs.readFileSync = function(file, ...args) { const result = read.call(this, file, ...args); if (String(file).endsWith("maestro-pianola-asks.json")) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 150); return result; };',
+				'console.log("ready");',
+				'process.stdin.once("data", () => { escalate(' +
+					JSON.stringify({ title: agent, detail: 'Needs approval', agent, json: true }) +
+					'); process.stdin.destroy(); });',
+			].join('\n');
+			const child = spawn(process.execPath, ['-e', script], {
+				env: { ...process.env, MAESTRO_USER_DATA: dir },
+				stdio: ['pipe', 'pipe', 'pipe'],
+			});
+			let errors = '';
+			child.stderr.on('data', (chunk) => {
+				errors += String(chunk);
+			});
+			const ready = new Promise<void>((resolve, reject) => {
+				child.stdout.on('data', (chunk) => {
+					if (String(chunk).includes('ready')) resolve();
+				});
+				child.once('error', reject);
+				child.once('close', (code) => {
+					if (code !== 0) reject(new Error(errors));
+				});
+			});
+			const done = new Promise<void>((resolve, reject) => {
+				child.once('error', reject);
+				child.once('close', (code) => (code === 0 ? resolve() : reject(new Error(errors))));
+			});
+			return { child, ready, done };
+		});
+		try {
+			const complete = Promise.all(workers.map((worker) => worker.done));
+			await Promise.all(workers.map((worker) => worker.ready));
+			for (const worker of workers) worker.child.stdin.end('go\n');
+			await complete;
+			const saved = JSON.parse(
+				fs.readFileSync(path.join(dir, 'maestro-pianola-asks.json'), 'utf8')
+			) as { asks: PianolaAsk[] };
+			expect(saved.asks.map((ask) => ask.agentId).sort()).toEqual(['agent-one', 'agent-two']);
+		} finally {
+			for (const worker of workers) if (worker.child.exitCode === null) worker.child.kill();
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
+	}, 15_000);
+	it('pauses and resumes only the program plans and its lead watch', () => {
+		state.programs = [
+			{
+				id: 'product',
+				title: 'Product',
+				root: 'C:\\product',
+				leadAgentId: 'lead',
+				roles: { lead: { name: 'Lead', agentId: 'lead' } },
+				charter: { maxConcurrent: 1, maxAttempts: 2, validationRequired: true },
+				status: 'active',
+				createdAt: 1,
+				updatedAt: 1,
+			},
+		];
+		state.plans = [{ id: 'plan', programId: 'product', title: 'Plan', createdAt: 1, tasks: [] }];
+		state.targets = [
+			{
+				id: 'plan-target',
+				kind: 'orchestrate',
+				planId: 'plan',
+				enabled: true,
+				createdAt: 1,
+				concurrency: 2,
+			},
+			{ id: 'watch', kind: 'watch', agentId: 'lead', tabId: 'tab', enabled: true, createdAt: 1 },
+			{ id: 'unrelated', kind: 'orchestrate', planId: 'other', enabled: true, createdAt: 1 },
+			{
+				id: 'other-watch',
+				kind: 'watch',
+				agentId: 'other',
+				tabId: 'other-tab',
+				enabled: false,
+				createdAt: 1,
+			},
+		];
+		const original = state.targets;
+		pianolaProgramStatus('product', 'paused', { json: true });
+		expect(state.programs[0].status).toBe('paused');
+		expect(state.targets.map((target) => target.enabled)).toEqual([false, false, true, false]);
+		pianolaProgramStatus('product', 'active', { json: true });
+		expect(state.targets).toEqual(original);
+	});
 	it('applies a real-manifest-shaped YAML program once, with its role model and remote root', async () => {
 		const file = path.resolve(__dirname, 'fixtures/maestro-programs.yaml');
 		await pianolaProgramApply({ file, json: true });
@@ -269,7 +389,62 @@ describe('portfolio CLI commands', () => {
 			fs.rmSync(dir, { recursive: true, force: true });
 		}
 	});
-	it('replaces an empty inline subscriptions list with parseable generated entries', () => {
+	it.each([
+		'subscriptions: []\nsettings:\n  max_concurrent: 2\n',
+		'subscriptions: [{name: manual, event: time.heartbeat}]\nsettings:\n  max_concurrent: 2\n',
+		'subscriptions:\n- name: manual\n  event: time.heartbeat\nsettings:\n  max_concurrent: 2\n',
+	])('preserves subscriptions and list indentation in %s', (raw) => {
+		const program: PianolaProgram = {
+			id: 'product',
+			title: 'Product',
+			root: 'C:\\product',
+			roles: { lead: { name: 'Lead', agentId: 'lead' } },
+			charter: { maxConcurrent: 1, maxAttempts: 2, validationRequired: true },
+			status: 'active',
+			createdAt: 1,
+			updatedAt: 1,
+		};
+		const content = updateGeneratedCueYaml(raw, program);
+		const parsed = yaml.load(content) as { subscriptions: { name: string }[]; settings: unknown };
+		expect(parsed.subscriptions.map((sub) => sub.name)).toEqual(
+			raw.includes('manual') ? ['manual', 'product-standup'] : ['product-standup']
+		);
+		expect(parsed.settings).toEqual({ max_concurrent: 2 });
+		expect(updateGeneratedCueYaml(content, program)).toBe(content);
+	});
+	it.each(['subscriptions: not-an-array\n', 'subscriptions: []\nsettings: [invalid\n'])(
+		'leaves invalid Cue unchanged and surfaces an apply warning: %s',
+		async (raw) => {
+			const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pianola-invalid-cue-'));
+			const file = path.join(dir, 'manifest.json');
+			const cue = path.join(dir, '.maestro', 'cue.yaml');
+			fs.mkdirSync(path.dirname(cue));
+			fs.writeFileSync(cue, raw);
+			fs.writeFileSync(
+				file,
+				JSON.stringify({
+					programs: [
+						{
+							id: 'product',
+							title: 'Product',
+							root: dir,
+							roles: { lead: { name: 'Lead', agentId: 'lead' } },
+							charter: { maxConcurrent: 1, maxAttempts: 2, validationRequired: true },
+						},
+					],
+				})
+			);
+			const warning = vi.spyOn(console, 'error').mockImplementation(() => {});
+			try {
+				await pianolaProgramApply({ file, json: true });
+				expect(fs.readFileSync(cue, 'utf8')).toBe(raw);
+				expect(warning).toHaveBeenCalledWith(expect.stringContaining('Cue skipped for product:'));
+			} finally {
+				fs.rmSync(dir, { recursive: true, force: true });
+			}
+		}
+	);
+	it('replaces an empty inline subscription list with parseable generated entries', () => {
 		const program: PianolaProgram = {
 			id: 'product',
 			title: 'Product',

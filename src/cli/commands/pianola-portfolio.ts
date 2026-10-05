@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import yaml from 'js-yaml';
+import { isScalar, isSeq, parseDocument } from 'yaml';
 import { writeCueYamlAtomicSync } from '../../main/cue/cue-yaml-write';
 import { MaestroClient } from '../services/maestro-client';
 import { readAgentRuns } from '../services/agent-run-store';
@@ -12,10 +13,11 @@ import {
 	readPianolaPrograms,
 	upsertPianolaProgram,
 	readPianolaAsks,
-	writePianolaAsks,
+	updatePianolaAsks,
 	readPianolaPlans,
 	readPianolaDecisions,
 	readPianolaSupervisorTargets,
+	writePianolaSupervisorTargets,
 	readPianolaProgramLoopMemo,
 } from '../services/pianola-store';
 import {
@@ -139,17 +141,45 @@ function generatedCueSubscriptions(
 }
 
 export function updateGeneratedCueYaml(raw: string, program: PianolaProgram): string {
+	const document = parseDocument(raw);
+	if (document.errors.length) throw document.errors[0];
+	const subscriptions = document.get('subscriptions', true);
+	if (
+		subscriptions != null &&
+		!isSeq(subscriptions) &&
+		!(isScalar(subscriptions) && subscriptions.value === null)
+	)
+		throw new Error('Cue subscriptions must be an array');
+	if (isSeq(subscriptions) && subscriptions.flow && subscriptions.range) {
+		const entries = subscriptions.toJSON();
+		const list = entries.length
+			? '\n' +
+				yaml
+					.dump(entries, { lineWidth: -1, noRefs: true })
+					.trimEnd()
+					.split('\n')
+					.map((line) => '  ' + line)
+					.join('\n')
+			: '';
+		raw = raw.slice(0, subscriptions.range[0]) + list + raw.slice(subscriptions.range[1]);
+	}
 	const generated = generatedCueSubscriptions(program);
+	const match = /^subscriptions:[ \t]*(?:#.*)?$/m.exec(raw);
+	const after = match ? match.index + match[0].length : raw.length;
+	const tail = raw.slice(after);
+	const boundary = /^(?!-\s)[^\s#][^\n]*:/m.exec(tail);
+	const position = boundary ? after + boundary.index : raw.length;
+	const indent = /^([ \t]*)-(?:[ \t]|$)/m.exec(raw.slice(after, position))?.[1] ?? '  ';
 	const block =
 		[
 			GENERATED_BEGIN,
 			...generated.flatMap(({ pipeline, subscription }) => [
-				'  # Pipeline: ' + pipeline,
+				indent + '# Pipeline: ' + pipeline,
 				...yaml
 					.dump([subscription], { lineWidth: -1, noRefs: true })
 					.trimEnd()
 					.split('\n')
-					.map((line) => '  ' + line),
+					.map((line) => indent + line),
 			]),
 			GENERATED_END,
 		].join('\n') + '\n';
@@ -157,10 +187,9 @@ export function updateGeneratedCueYaml(raw: string, program: PianolaProgram): st
 	const end = raw.indexOf(GENERATED_END);
 	if (start >= 0 || end >= 0) {
 		if (start < 0 || end < start) throw new Error('Unmatched generated Cue block marker');
-		const replacement = generated.length ? block : '';
 		const updated =
 			raw.slice(0, start) +
-			replacement +
+			(generated.length ? block : '') +
 			raw.slice(end + GENERATED_END.length).replace(/^\r?\n/, '');
 		if (
 			!generated.length &&
@@ -169,19 +198,11 @@ export function updateGeneratedCueYaml(raw: string, program: PianolaProgram): st
 			return updated.replace(/^subscriptions:[ \t]*$/m, 'subscriptions: []');
 		return updated;
 	}
-	if (generated.length === 0) return raw;
-	if (/^subscriptions:[ \t]*\[\][ \t]*$/m.test(raw))
-		raw = raw.replace(/^subscriptions:[ \t]*\[\][ \t]*$/m, 'subscriptions:');
-	const match = /^subscriptions:[ \t]*(?:#.*)?$/m.exec(raw);
+	if (!generated.length) return raw;
 	if (!match) {
 		if (raw.trim() && !raw.endsWith('\n')) raw += '\n';
 		return raw + 'subscriptions:\n' + block;
 	}
-	const after = match.index + match[0].length;
-	const tail = raw.slice(after);
-	const next = /^\S[^\n]*:/gm;
-	const boundary = next.exec(tail);
-	const position = boundary ? after + boundary.index : raw.length;
 	return raw.slice(0, position).replace(/([^\n])$/, '$1\n') + block + raw.slice(position);
 }
 
@@ -200,8 +221,21 @@ function writeProgramCue(program: PianolaProgram): string | null {
 	const target = path.join(rootOnHost, '.maestro', 'cue.yaml');
 	fs.mkdirSync(path.dirname(target), { recursive: true });
 	const raw = fs.existsSync(target) ? fs.readFileSync(target, 'utf8') : '';
-	const updated = updateGeneratedCueYaml(raw, program);
-	if (updated !== raw) writeCueYamlAtomicSync(target, updated);
+	try {
+		const updated = updateGeneratedCueYaml(raw, program);
+		const document = parseDocument(updated);
+		if (document.errors.length) throw document.errors[0];
+		if (!Array.isArray((document.toJS() as { subscriptions?: unknown } | null)?.subscriptions))
+			throw new Error('Cue subscriptions must be an array');
+		if (updated !== raw) writeCueYamlAtomicSync(target, updated);
+	} catch (error) {
+		return (
+			'Cue skipped for ' +
+			program.id +
+			': ' +
+			(error instanceof Error ? error.message : String(error))
+		);
+	}
 	return null;
 }
 
@@ -404,6 +438,21 @@ export function pianolaProgramStatus(
 	const updated =
 		current.status === status ? current : { ...current, status, updatedAt: Date.now() };
 	if (updated !== current) upsertPianolaProgram(updated);
+	const planIds = new Set(
+		readPianolaPlans()
+			.filter((plan) => plan.programId === id)
+			.map((plan) => plan.id)
+	);
+	const targets = readPianolaSupervisorTargets();
+	const enabled = status === 'active';
+	const next = targets.map((target) =>
+		(target.kind === 'orchestrate' && planIds.has(target.planId ?? '')) ||
+		(target.kind === 'watch' && !!current.leadAgentId && target.agentId === current.leadAgentId)
+			? { ...target, enabled }
+			: target
+	);
+	if (next.some((target, index) => target.enabled !== targets[index].enabled))
+		writePianolaSupervisorTargets(next);
 	print(updated, options.json);
 }
 
@@ -450,9 +499,13 @@ export function pianolaEscalate(options: EscalateOptions): void {
 		...(options.tab ? { tabId: options.tab } : {}),
 		...(options.requestedAction ? { requestedAction: options.requestedAction } : {}),
 	};
-	const result = dedupeAsk(readPianolaAsks(), ask, options.distinct);
-	writePianolaAsks(result.asks);
-	print(result.ask, options.json);
+	let raised = ask;
+	updatePianolaAsks((asks) => {
+		const result = dedupeAsk(asks, ask, options.distinct);
+		raised = result.ask;
+		return result.asks;
+	});
+	print(raised, options.json);
 }
 export function pianolaResolve(
 	id: string,
@@ -460,30 +513,52 @@ export function pianolaResolve(
 ): void {
 	ensurePianolaEnabled(options.json);
 	if (!options.option?.trim()) fail('Resolution option is required', options.json);
-	const asks = readPianolaAsks();
-	const ask = asks.find((a) => a.id === id && a.status === 'open');
-	if (!ask) return fail('Open ask not found: ' + id, options.json);
-	const now = new Date().toISOString();
-	const updated: PianolaAsk = {
-		...ask,
-		status: 'resolved',
-		updatedAt: now,
-		resolution: {
-			option: options.option,
-			...(options.note === undefined ? {} : { note: options.note }),
-			resolvedAt: now,
-		},
-	};
-	writePianolaAsks(asks.map((a) => (a.id === id ? updated : a)));
+	let updated: PianolaAsk | undefined;
+	try {
+		updatePianolaAsks((asks) => {
+			const ask = asks.find((a) => a.id === id && a.status === 'open');
+			if (!ask) throw new Error('Open ask not found: ' + id);
+			const now = new Date().toISOString();
+			const resolved: PianolaAsk = {
+				...ask,
+				status: 'resolved',
+				updatedAt: now,
+				resolution: {
+					option: options.option,
+					...(options.note === undefined ? {} : { note: options.note }),
+					resolvedAt: now,
+				},
+			};
+			updated = resolved;
+			return asks.map((a) => (a.id === id ? resolved : a));
+		});
+	} catch (error) {
+		if (error instanceof Error && error.message === 'Open ask not found: ' + id)
+			return fail(error.message, options.json);
+		throw error;
+	}
 	print(updated, options.json);
 }
 export function pianolaDismiss(id: string, options: { json?: boolean }): void {
 	ensurePianolaEnabled(options.json);
-	const asks = readPianolaAsks();
-	const ask = asks.find((a) => a.id === id && a.status === 'open');
-	if (!ask) return fail('Open ask not found: ' + id, options.json);
-	const updated: PianolaAsk = { ...ask, status: 'dismissed', updatedAt: new Date().toISOString() };
-	writePianolaAsks(asks.map((a) => (a.id === id ? updated : a)));
+	let updated: PianolaAsk | undefined;
+	try {
+		updatePianolaAsks((asks) => {
+			const ask = asks.find((a) => a.id === id && a.status === 'open');
+			if (!ask) throw new Error('Open ask not found: ' + id);
+			const dismissed: PianolaAsk = {
+				...ask,
+				status: 'dismissed',
+				updatedAt: new Date().toISOString(),
+			};
+			updated = dismissed;
+			return asks.map((a) => (a.id === id ? dismissed : a));
+		});
+	} catch (error) {
+		if (error instanceof Error && error.message === 'Open ask not found: ' + id)
+			return fail(error.message, options.json);
+		throw error;
+	}
 	print(updated, options.json);
 }
 function brief() {

@@ -396,7 +396,7 @@ describe('fix runs shorter than one poll interval', () => {
 		timestamp: new Date(1_700_000_000_000 + i).toISOString(),
 	});
 
-	it('records the transcript length when a fix is dispatched', async () => {
+	it('records the last message id when a fix is dispatched', async () => {
 		const deps = makeReactiveDeps({
 			runStates: { A: 'idle' },
 			messages: { A: [msg('user', 'task', 0), msg('assistant', 'done', 1)] },
@@ -410,7 +410,7 @@ describe('fix runs shorter than one poll interval', () => {
 			{ concurrencyLimit: 1 }
 		);
 		expect(statusOf(r.state, 'A')).toBe('fixing');
-		expect(taskOf(r.state, 'A')?.dispatchedMessageCount).toBe(2);
+		expect(taskOf(r.state, 'A')?.dispatchedMessageId).toBe('m1');
 	});
 
 	it('settles a fixing task that replied and went idle without ever being seen busy', async () => {
@@ -439,7 +439,7 @@ describe('fix runs shorter than one poll interval', () => {
 						status: 'fixing',
 						runId: 'r-A',
 						fixAttempts: 1,
-						dispatchedMessageCount: 2,
+						dispatchedMessageId: 'm2',
 						validation: { command: ['true'], target: '/w' },
 					}),
 				]),
@@ -466,7 +466,7 @@ describe('fix runs shorter than one poll interval', () => {
 						status: 'fixing',
 						runId: 'r-A',
 						fixAttempts: 1,
-						dispatchedMessageCount: 2,
+						dispatchedMessageId: 'm2',
 					}),
 				]),
 				prevStates: {},
@@ -503,7 +503,7 @@ describe('outcome detection is scoped to the current dispatch', () => {
 		});
 		const r = await runOrchestratorIteration(
 			{
-				plan: plan([task({ id: 'A', status: 'running', dispatchedMessageCount: 3 })]),
+				plan: plan([task({ id: 'A', status: 'running', dispatchedMessageId: 'm2' })]),
 				prevStates: { A: 'busy' },
 			},
 			deps,
@@ -524,6 +524,120 @@ describe('outcome detection is scoped to the current dispatch', () => {
 			{ concurrencyLimit: 1 }
 		);
 		expect(statusOf(r.state, 'A')).toBe('running');
-		expect(taskOf(r.state, 'A')?.dispatchedMessageCount).toBe(2);
+		expect(taskOf(r.state, 'A')?.dispatchedMessageId).toBe('m2');
+	});
+});
+
+describe('program charter fix attempts', () => {
+	it.each([
+		[1, 1, 'failed', 1],
+		[5, 3, 'fixing', 4],
+	] as const)(
+		'uses maxAttempts=%s after %s fixes',
+		async (maxAttempts, attempts, status, nextAttempts) => {
+			const deps = makeReactiveDeps({
+				reactiveEnabled: () => true,
+				getRunLedger: vi.fn(async () => ({ checksPassed: false, runId: 'r-A' })),
+				dispatchFix: vi.fn(async () => ({ success: true })),
+			});
+			deps.getProgramCharter = vi.fn(() => ({ validationRequired: false, maxAttempts }));
+			const result = await runOrchestratorIteration(
+				{
+					plan: plan([task({ id: 'A', status: 'fixing', fixAttempts: attempts })], {
+						programId: 'program-1',
+					}),
+					prevStates: { A: 'busy' },
+				},
+				deps,
+				{ concurrencyLimit: 1 }
+			);
+			expect(statusOf(result.state, 'A')).toBe(status);
+			expect(taskOf(result.state, 'A')?.fixAttempts).toBe(nextAttempts);
+			expect(deps.dispatchFix).toHaveBeenCalledTimes(status === 'failed' ? 0 : 1);
+		}
+	);
+});
+
+describe('rolling transcript history', () => {
+	const message = (id: number, role: PianolaMessage['role'] = 'assistant'): PianolaMessage => ({
+		id: `m${id}`,
+		role,
+		source: 'test',
+		content: 'work completed',
+		timestamp: new Date(id).toISOString(),
+	});
+	it('detects a fix reply after twenty old messages even when the history tail stays at twelve', async () => {
+		const history = Array.from({ length: 20 }, (_, i) => message(i));
+		const deps = makeReactiveDeps({
+			reactiveEnabled: () => true,
+			getRunLedger: vi.fn(async () => ({ runId: 'r-A', checksPassed: false })),
+			dispatchFix: vi.fn(async () => {
+				history.push(message(20, 'user'));
+				return { success: true };
+			}),
+		});
+		deps.getRecentMessages = vi.fn(async () => history.slice(-12));
+		const first = await runOrchestratorIteration(
+			{
+				plan: plan([task({ id: 'A', status: 'needs_review' })]),
+				prevStates: {},
+			},
+			deps,
+			{ concurrencyLimit: 1 }
+		);
+		history.push(message(21));
+		deps.getRunLedger = vi.fn(async () => ({ runId: 'r-A', checksPassed: true }));
+		const second = await runOrchestratorIteration(first.state, deps, { concurrencyLimit: 1 });
+		expect(statusOf(second.state, 'A')).toBe('done');
+	});
+
+	it('refreshes the dispatch boundary instead of counting a cached old reply as a fix reply', async () => {
+		let history = [message(0, 'user'), message(1)];
+		const cached = history;
+		const deps = makeReactiveDeps({
+			reactiveEnabled: () => true,
+			getRunLedger: vi.fn(async () => ({ checksPassed: false })),
+			dispatchFix: vi.fn(async () => {
+				history = [...history, message(2, 'user')];
+				return { success: true };
+			}),
+		});
+		deps.getRecentMessages = vi.fn(async (_task, options) => (options?.fresh ? history : cached));
+		const first = await runOrchestratorIteration(
+			{
+				plan: plan([task({ id: 'A', status: 'needs_review' })]),
+				prevStates: {},
+			},
+			deps,
+			{ concurrencyLimit: 1 }
+		);
+		// Ordinary polling now returns the refreshed cache, still with no fix reply.
+		deps.getRecentMessages = vi.fn(async () => history);
+		const second = await runOrchestratorIteration(first.state, deps, { concurrencyLimit: 1 });
+		expect(statusOf(second.state, 'A')).toBe('fixing');
+	});
+
+	it('does not swallow a fix reply that arrives before the fresh boundary read', async () => {
+		const history = [message(0, 'user'), message(1)];
+		const deps = makeReactiveDeps({
+			reactiveEnabled: () => true,
+			getRunLedger: vi.fn(async () => ({ checksPassed: false })),
+			dispatchFix: vi.fn(async () => {
+				history.push(message(2, 'user'), message(3));
+				return { success: true };
+			}),
+		});
+		deps.getRecentMessages = vi.fn(async () => [...history]);
+		const first = await runOrchestratorIteration(
+			{
+				plan: plan([task({ id: 'A', status: 'needs_review' })]),
+				prevStates: {},
+			},
+			deps,
+			{ concurrencyLimit: 1 }
+		);
+		deps.getRunLedger = vi.fn(async () => ({ checksPassed: true }));
+		const second = await runOrchestratorIteration(first.state, deps, { concurrencyLimit: 1 });
+		expect(statusOf(second.state, 'A')).toBe('done');
 	});
 });

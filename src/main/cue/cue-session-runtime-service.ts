@@ -84,17 +84,17 @@ export type InitSessionOutcome =
 	| { kind: 'invalid' };
 
 export interface CueSessionRuntimeService {
-	initSession(session: SessionInfo, opts: InitSessionOptions): InitSessionOutcome;
+	initSession(session: SessionInfo, opts: InitSessionOptions): Promise<InitSessionOutcome>;
 	refreshSession(
 		sessionId: string,
 		projectRoot: string,
 		reason?: SessionInitReason
-	): {
+	): Promise<{
 		reloaded: boolean;
 		configRemoved: boolean;
 		sessionName?: string;
 		activeCount?: number;
-	};
+	}>;
 	removeSession(sessionId: string): void;
 	teardownSession(sessionId: string): void;
 	clearAll(): void;
@@ -106,9 +106,9 @@ export interface CueSessionRuntimeService {
  * Re-check a config path that just read as missing. Network roots (UNC, 9P) can
  * drop a stat under load; a couple of short retries separate that from a delete.
  */
-function configReappeared(projectRoot: string): boolean {
+async function configReappeared(projectRoot: string): Promise<boolean> {
 	for (let attempt = 0; attempt < 3; attempt++) {
-		Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 150);
+		await new Promise<void>((resolve) => setTimeout(resolve, 150));
 		if (resolveCueConfigPath(projectRoot)) return true;
 	}
 	return false;
@@ -125,32 +125,14 @@ export function createCueSessionRuntimeService(
 		return deps.getSessions().find((session) => session.id === sessionId);
 	}
 
-	function initSession(session: SessionInfo, opts: InitSessionOptions): InitSessionOutcome {
+	async function initSession(
+		session: SessionInfo,
+		opts: InitSessionOptions
+	): Promise<InitSessionOutcome> {
 		if (!deps.enabled()) return { kind: 'disabled' };
 
-		// Idempotency guard: tear down any pre-existing registration to prevent
-		// duplicate trigger sources if initSession is called twice for the same
-		// session (race between auto-discovery and manual refresh).
-		if (registry.has(session.id)) {
-			deps.onLog(
-				'warn',
-				`[CUE] initSession called for already-initialized session "${session.name}" - tearing down first`
-			);
-			teardownSession(session.id, true);
-			registry.unregister(session.id);
-		}
-
-		// Per-agent-cwd model: each session reads ONLY its own
-		// `<cwd>/.maestro/cue.yaml`. There is no ancestor walk and no
-		// cross-cwd merge - every subscription that targets this agent
-		// lives in this agent's own yaml file (writer enforces this via
-		// `pipelinesToYamlByOwnerCwd`). Worktrees, sub-agents, and any
-		// other shared-parent topology each get their own cue.yaml; they
-		// do not inherit from a parent dir.
-		// Observe before reading: another process can atomically replace YAML
-		// between the engine's read and chokidar's initial scan. Keep this same
-		// watcher for both pending and loaded configs, so ready reconciliation
-		// covers that entire window.
+		// Confirm a missing read while the previous triggers and subscriptions remain live.
+		// Observe before reading, retaining the watcher across YAML replacement and refresh.
 		const existingWatcher = yamlWatchers.get(session.id);
 		if (existingWatcher && existingWatcher.projectRoot !== session.projectRoot) {
 			existingWatcher.cleanup();
@@ -173,9 +155,38 @@ export function createCueSessionRuntimeService(
 			);
 			yamlWatchers.set(session.id, { projectRoot: session.projectRoot, cleanup });
 		}
+		const previousState = registry.get(session.id);
 		const loadResult = loadCueConfigDetailed(session.projectRoot);
-		if (loadResult.file !== undefined) loadedYamlFiles.set(session.id, loadResult.file);
+		if (!loadResult.ok && loadResult.reason === 'missing' && previousState) {
+			const reappeared = await configReappeared(session.projectRoot);
+			if (!deps.enabled()) return { kind: 'disabled' };
+			// A stop, removal, or newer refresh may have settled this session during the wait.
+			if (registry.get(session.id) !== previousState) {
+				return { kind: registry.has(session.id) ? 'loaded' : 'disabled' };
+			}
+			if (reappeared) return { kind: 'loaded' };
+		}
 
+		// Idempotency guard: tear down any pre-existing registration to prevent
+		// duplicate trigger sources if initSession is called twice for the same
+		// session (race between auto-discovery and manual refresh).
+		if (registry.has(session.id)) {
+			deps.onLog(
+				'warn',
+				`[CUE] initSession called for already-initialized session "${session.name}" - tearing down first`
+			);
+			teardownSession(session.id, true);
+			registry.unregister(session.id);
+		}
+
+		// Per-agent-cwd model: each session reads ONLY its own
+		// `<cwd>/.maestro/cue.yaml`. There is no ancestor walk and no
+		// cross-cwd merge - every subscription that targets this agent
+		// lives in this agent's own yaml file (writer enforces this via
+		// `pipelinesToYamlByOwnerCwd`). Worktrees, sub-agents, and any
+		// other shared-parent topology each get their own cue.yaml; they
+		// do not inherit from a parent dir.
+		if (loadResult.file !== undefined) loadedYamlFiles.set(session.id, loadResult.file);
 		if (!loadResult.ok) {
 			// Distinguish missing (silent) from parse / validation failures (loud).
 			if (loadResult.reason === 'parse-error') {
@@ -363,8 +374,8 @@ export function createCueSessionRuntimeService(
 		return { kind: 'loaded' };
 	}
 
-	function teardownSession(sessionId: string, preserveYamlWatcher = false): void {
-		if (!preserveYamlWatcher) {
+	function teardownSession(sessionId: string, preserveRuntime = false): void {
+		if (!preserveRuntime) {
 			yamlWatchers.get(sessionId)?.cleanup();
 			yamlWatchers.delete(sessionId);
 		}
@@ -384,10 +395,9 @@ export function createCueSessionRuntimeService(
 		deps.clearFanInState(sessionId);
 		deps.clearQueue(sessionId, true);
 
-		// Drop time.scheduled dedup keys for this session - they only matter while
-		// the session is initialized. Startup keys are NOT cleared here so that a
-		// refresh inside the same process lifecycle does not re-fire app.startup.
-		registry.clearScheduledForSession(sessionId);
+		// A refresh in the same minute must not re-fire a scheduled trigger.
+		// Only a full teardown drops its keys; startup keys likewise survive refresh.
+		if (!preserveRuntime) registry.clearScheduledForSession(sessionId);
 	}
 
 	/**
@@ -409,17 +419,20 @@ export function createCueSessionRuntimeService(
 		return ids;
 	}
 
-	function refreshSession(
+	async function refreshSession(
 		sessionId: string,
 		projectRoot: string,
 		reason: SessionInitReason = 'refresh'
-	): { reloaded: boolean; configRemoved: boolean; sessionName?: string; activeCount?: number } {
+	): Promise<{
+		reloaded: boolean;
+		configRemoved: boolean;
+		sessionName?: string;
+		activeCount?: number;
+	}> {
 		const hadSession = registry.has(sessionId);
 		// Snapshot GitHub-seen IDs BEFORE teardown so we can diff against the
 		// post-reload set and clear seen rows for removed GitHub subscriptions.
 		const oldGitHubIds = collectGitHubSubIds(sessionId);
-		teardownSession(sessionId, true);
-		registry.unregister(sessionId);
 
 		const session = getSession(sessionId);
 		if (!session) {
@@ -427,7 +440,8 @@ export function createCueSessionRuntimeService(
 			return { reloaded: false, configRemoved: false };
 		}
 
-		const outcome = initSession({ ...session, projectRoot }, { reason });
+		const outcome = await initSession({ ...session, projectRoot }, { reason });
+		if (outcome.kind === 'disabled') return { reloaded: false, configRemoved: false };
 		const newState = registry.get(sessionId);
 		if (newState) {
 			// Diff old vs. new GitHub subscription IDs and clear `cue_github_seen`
@@ -463,8 +477,7 @@ export function createCueSessionRuntimeService(
 		// A network-mounted root (a WSL distro via \\wsl.localhost, an SMB share) can answer
 		// "not there" for an instant while the file is fine; confirm before tearing a
 		// previously-good config down. A real deletion is still seen on the re-check.
-		const configTrulyMissing =
-			outcome.kind === 'missing' && (!hadSession || !configReappeared(projectRoot));
+		const configTrulyMissing = outcome.kind === 'missing';
 		if (configTrulyMissing) {
 			for (const id of oldGitHubIds) {
 				clearGitHubSeenForSubscription(id);
