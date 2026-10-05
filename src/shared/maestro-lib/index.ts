@@ -177,6 +177,7 @@ export * from './turns/assemble';
 export * from './turns/context';
 export * from './turns/records';
 export * from './turns/run-agent-turn';
+export * from './turns/queue';
 
 // Process control
 export * from './control/termination';
