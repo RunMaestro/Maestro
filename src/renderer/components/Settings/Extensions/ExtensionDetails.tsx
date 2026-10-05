@@ -25,6 +25,7 @@ import type {
 } from '../../../../shared/plugins/contributions';
 import { collectContributions } from '../../../../shared/plugins/contributions';
 import type { PluginRecord } from '../../../../shared/plugins/plugin-registry';
+import type { PluginRegistry } from '../../../../shared/plugins/plugin-registry';
 import {
 	CATEGORY_LABELS,
 	STATE_LABELS,
@@ -102,6 +103,12 @@ export function ExtensionDetails({
 
 	const isPlugin = ext.kind === 'plugin';
 	const record = ext.record;
+	const recordEnabled = record?.enabled;
+	const recordLoadStatus = record?.loadStatus;
+	const recordVersion = record?.manifest?.version;
+	const recordSource = record?.source;
+	const recordSignatureStatus = record?.signature?.status;
+	const recordSignerKey = record?.signature?.signerKey;
 	const isCodeTier = (ext.tier ?? 0) >= 1;
 
 	// Load the plugin's requested/granted permissions whenever the selection
@@ -113,9 +120,9 @@ export function ExtensionDetails({
 			return;
 		}
 		let cancelled = false;
-		const load = () => {
+		const load = (initial = false) => {
 			const generation = ++grantsLoadGeneration.current;
-			setGrantsState(null);
+			if (initial) setGrantsState(null);
 			void getGrants(ext.id)
 				.then((snap) => {
 					if (!cancelled && generation === grantsLoadGeneration.current)
@@ -125,15 +132,40 @@ export function ExtensionDetails({
 					if (!cancelled && generation === grantsLoadGeneration.current) setGrantsState(null);
 				});
 		};
-		load();
-		// An out-of-band consent/revoke/disable can change grants while details
-		// remain open. Drop the frame as soon as the registry event arrives.
-		const unsubscribe = window.maestro.plugins.onChanged(load);
+		load(true);
+		// Keep the frame across unrelated registry changes. Detach it immediately
+		// when this plugin is disabled, removed, or replaced, then re-read grants.
+		const unsubscribe = window.maestro.plugins.onChanged((registry?: PluginRegistry) => {
+			const current = registry?.records.find((item) => item.id === ext.id);
+			if (
+				!current ||
+				recordEnabled === undefined ||
+				current.enabled !== recordEnabled ||
+				current.loadStatus !== recordLoadStatus ||
+				current.manifest?.version !== recordVersion ||
+				current.source !== recordSource ||
+				current.signature?.status !== recordSignatureStatus ||
+				current.signature?.signerKey !== recordSignerKey
+			) {
+				setGrantsState(null);
+			}
+			load();
+		});
 		return () => {
 			cancelled = true;
 			unsubscribe?.();
 		};
-	}, [isPlugin, ext.id, getGrants]);
+	}, [
+		isPlugin,
+		ext.id,
+		getGrants,
+		recordEnabled,
+		recordLoadStatus,
+		recordVersion,
+		recordSource,
+		recordSignatureStatus,
+		recordSignerKey,
+	]);
 
 	const isPianola = !isPlugin && ext.flag === 'pianola';
 	// Web Login manages its accounts in its own tile: the channels behind that

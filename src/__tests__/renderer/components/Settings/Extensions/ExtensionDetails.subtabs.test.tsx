@@ -27,6 +27,7 @@ import {
 } from '../../../../../renderer/components/Settings/Extensions/extensionModel';
 import type { EncoreFeatureFlags, Theme } from '../../../../../renderer/types';
 import type { PluginRecord } from '../../../../../shared/plugins/plugin-registry';
+import type { PluginRegistry } from '../../../../../shared/plugins/plugin-registry';
 import { useModalStore } from '../../../../../renderer/stores/modalStore';
 import type {
 	AggregatedContributions,
@@ -537,24 +538,57 @@ describe('ExtensionDetails - plugin settings panels', () => {
 	});
 
 	it('drops an open panel after an out-of-band grant change', async () => {
-		let changed: (() => void) | undefined;
+		let changed: ((registry?: PluginRegistry) => void) | undefined;
 		const subscription = vi.spyOn(window.maestro.plugins, 'onChanged').mockImplementation((cb) => {
 			changed = cb;
 			return () => {};
 		});
-		let revoked = false;
+		let resolveRevoked!: (value: { requested: never[]; granted: never[] }) => void;
+		const revoked = new Promise<{ requested: never[]; granted: never[] }>((resolve) => {
+			resolveRevoked = resolve;
+		});
 		try {
 			const { container } = renderDetails({
 				ext: pluginTile('plugin-a', true),
 				contributions: contributions([panel('plugin-a')]),
-				getGrants: vi.fn(async () => (revoked ? { requested: [], granted: [] } : granted)),
+				getGrants: vi.fn().mockResolvedValueOnce(granted).mockReturnValueOnce(revoked),
 			});
 			await waitFor(() => expect(container.querySelector('webview')).not.toBeNull());
-			revoked = true;
-			await act(async () => {
-				changed?.();
+			act(() => {
+				changed?.({ records: [{ ...pluginRecord('plugin-a', true), enabled: false }] });
 			});
 			expect(container.querySelector('webview')).toBeNull();
+			await act(async () => resolveRevoked({ requested: [], granted: [] }));
+			expect(container.querySelector('webview')).toBeNull();
+		} finally {
+			subscription.mockRestore();
+		}
+	});
+
+	it('keeps an authorized panel mounted during an unrelated registry refresh', async () => {
+		let changed: ((registry?: PluginRegistry) => void) | undefined;
+		const subscription = vi.spyOn(window.maestro.plugins, 'onChanged').mockImplementation((cb) => {
+			changed = cb;
+			return () => {};
+		});
+		let resolveRefresh!: (value: typeof granted) => void;
+		const refresh = new Promise<typeof granted>((resolve) => {
+			resolveRefresh = resolve;
+		});
+		const getGrants = vi.fn().mockResolvedValueOnce(granted).mockReturnValueOnce(refresh);
+		try {
+			const { container } = renderDetails({
+				ext: pluginTile('plugin-a', true),
+				contributions: contributions([panel('plugin-a')]),
+				getGrants,
+			});
+			await waitFor(() => expect(container.querySelector('webview')).not.toBeNull());
+			const mountedPanel = container.querySelector('webview');
+			act(() => changed?.({ records: [pluginRecord('plugin-a', true), pluginRecord('plugin-b')] }));
+			expect(getGrants).toHaveBeenCalledTimes(2);
+			expect(container.querySelector('webview')).toBe(mountedPanel);
+			await act(async () => resolveRefresh(granted));
+			expect(container.querySelector('webview')).toBe(mountedPanel);
 		} finally {
 			subscription.mockRestore();
 		}

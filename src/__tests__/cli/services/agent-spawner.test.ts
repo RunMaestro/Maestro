@@ -1011,6 +1011,10 @@ Some text with [x] in it that's not a checkbox
 				Buffer.from('{"type":"result","result":"late answer","session_id":"provider-late"}\n')
 			);
 			controller.abort();
+			mockChild.emit(
+				'error',
+				Object.assign(new Error('The operation was aborted'), { name: 'AbortError' })
+			);
 			mockChild.emit('close', 0);
 			expect(await pending).toMatchObject({
 				success: false,
@@ -1728,13 +1732,20 @@ Some text with [x] in it that's not a checkbox
 			expect(options.signal).toBe(controller.signal);
 			mockStdout.emit(
 				'data',
-				Buffer.from('{"type":"item.completed","item":{"type":"agent_message","text":"partial"}}\n')
+				Buffer.from(
+					'{"type":"thread.started","thread_id":"codex-cancelled"}\n{"type":"item.completed","item":{"type":"agent_message","text":"partial"}}\n'
+				)
 			);
 			controller.abort();
+			mockChild.emit(
+				'error',
+				Object.assign(new Error('The operation was aborted'), { name: 'AbortError' })
+			);
 			mockChild.emit('close', null, 'SIGTERM');
 			expect(await pending).toMatchObject({
 				success: false,
 				error: 'Agent run timed out or was cancelled',
+				agentSessionId: 'codex-cancelled',
 			});
 		});
 

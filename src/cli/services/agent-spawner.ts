@@ -932,6 +932,15 @@ async function spawnClaudeAgent(
 		child.on('error', (error) => {
 			if (settled) return;
 			settled = true;
+			if (overrides.signal?.aborted || error.name === 'AbortError') {
+				resolve({
+					success: false,
+					error: 'Agent run timed out or was cancelled',
+					agentSessionId: sessionId,
+					usageStats,
+				});
+				return;
+			}
 			resolve({
 				success: false,
 				error: `Failed to spawn Claude: ${error.message}`,
@@ -1417,6 +1426,15 @@ async function spawnJsonLineAgent(
 		child.on('error', (error) => {
 			if (settled) return;
 			settled = true;
+			if (overrides.signal?.aborted || error.name === 'AbortError') {
+				resolve({
+					success: false,
+					error: 'Agent run timed out or was cancelled',
+					agentSessionId: sessionId,
+					usageStats,
+				});
+				return;
+			}
 			resolve({ success: false, error: `Failed to spawn ${agentName}: ${error.message}` });
 		});
 	});
