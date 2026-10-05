@@ -15,6 +15,12 @@ interface ResizeHandlesCommonProps {
 	onResetSize?: () => void;
 	/** Whether a size is actually remembered, so the tooltip can say so. */
 	canReset?: boolean;
+	/**
+	 * Which edges and corners get a handle. Defaults to all eight; pass a subset
+	 * for a surface that only grows one way (a dropdown resized by its bottom
+	 * edge passes `['s']`).
+	 */
+	directions?: readonly ModalResizeDirection[];
 }
 
 type ResizeHandlesProps = ResizeHandlesCommonProps &
@@ -78,6 +84,7 @@ export function ResizeHandles({
 	testIdPrefix = 'modal-resize-handle',
 	onResetSize,
 	canReset = false,
+	directions = DIRECTIONS,
 }: ResizeHandlesProps) {
 	if (disabled) return null;
 	const handleStyles = contained ? CONTAINED_HANDLE_STYLES : HANDLE_STYLES;
@@ -92,7 +99,7 @@ export function ResizeHandles({
 
 	return (
 		<>
-			{DIRECTIONS.map((direction) => (
+			{directions.map((direction) => (
 				<div
 					key={direction}
 					aria-hidden="true"

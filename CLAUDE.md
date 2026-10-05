@@ -84,6 +84,7 @@ Grep-verified 2026-09-04 (`npm run docs:verify` re-checks every path). This is t
 - **Naming the OS file manager in copy:** `getFileManagerName(platform)`, `fileManagerName()` in `src/renderer/utils/platformUtils.ts`
 - **Color math and contrast:** `readableTextOn()`, `isReadableOn()` in `src/shared/colorContrast.ts`
 - **Agent display name:** `getAgentDisplayName()` in `src/shared/agentMetadata.ts`
+- **Naming the account a login acts on:** `AccountPill`, `ghAccountLabel()` in `src/renderer/components/ui/AccountPill.tsx`; `parseGhActiveAccount()` in `src/main/utils/ghErrors.ts`
 - **Whether an agent is working right now (main process):** `isAgentBusy(session, processManager)`, `isAiTabProcessActive(...)` in `src/main/utils/agent-busy.ts`
 - **Which provider account an agent runs as:** `resolveAgentProfile()`, `effectiveAgentCustomEnvVars()`, `PROVIDER_PROFILE_CONFIGS` in `src/shared/providerProfiles.ts`
 - **Keeping a plan account on the Usage Dashboard after its agents leave:** `rememberQuotaAccounts()`, `pruneMissingQuotaAccounts()` in `src/main/stores/quotaAccountsStore.ts`; `partitionSnapshotsByAge()`, `SNAPSHOT_RETENTION_MS` in `src/main/stores/usageSnapshotRetention.ts`
@@ -93,7 +94,7 @@ Grep-verified 2026-09-04 (`npm run docs:verify` re-checks every path). This is t
 - **Writing a Claude session's origin record:** `setClaudeSessionOrigin()`, `mergeClaudeSessionOrigin()` in `src/main/storage/claude-session-origins.ts`
 - **Toast notifications:** `notifyToast({ color, title, message, dismissible? })`, `theme` in `src/renderer/stores/notificationStore.ts`
 - **What a toast click does:** `ToastClickAction`, `parseToastClickAction()` in `src/shared/toastClickAction.ts`; `dispatchToastClickAction()`, `runToastClick()` in `src/renderer/services/toastClickActions.ts`
-- **Toast history / unread state:** `history`, `markNotificationRead()`, `selectUnreadNotificationCount()` in `src/renderer/stores/notificationStore.ts`, rendered by `<NotificationCenter>` in `src/renderer/components/NotificationCenter.tsx`
+- **Toast history / unread state:** `history`, `markNotificationRead()`, `selectUnreadNotificationCount()` in `src/renderer/stores/notificationStore.ts`, rendered by the header `<NotificationCenter>` bell and app-level `<NotificationCenterHost>` in `src/renderer/components/NotificationCenter.tsx`. CLI: `open notification-center`, `notify inbox list [--unread]`, `read <id>`, `read-all`, `clear`, `dismiss`, `activate <id>`, `link <id>`, `open`, `close`
 - **Center flash (rapid acks):** `notifyCenterFlash({ message, color, detail?, duration? })`, `flashCopiedToClipboard()` in `src/renderer/stores/centerFlashStore.ts`
 - **Opening a modal / dashboard by name:** `UI_SURFACES`, `resolveUiSurface()` in `src/shared/uiSurfaces.ts`
 - **Whether a modal takes the window over:** `DESTINATION_MODALS`, `DESTINATION_SHORTCUT_IDS`, `registerExternalDestination()` in `src/renderer/stores/modalStore.ts`
@@ -191,6 +192,7 @@ Grep-verified 2026-09-04 (`npm run docs:verify` re-checks every path). This is t
 - **A view preference a user sets by clicking:** `usePersistedToggle(storageKey, defaultValue)`, `AutoRunNoticeBanner` in `src/renderer/hooks/ui/usePersistedToggle.ts`
 - **Sizing a Document Graph node:** `calculateNodeWidth(label, previewCharLimit)`, `calculateNodeHeight(previewText, previewCharLimit)` in `src/renderer/components/DocumentGraph/mindMapLayouts.ts`
 - **A pane width the user sets by dragging:** `useResizablePanel()`, `settingsKey` in `src/renderer/hooks/ui/useResizablePanel.ts`
+- **A dropdown the user resizes by its bottom edge (never off screen):** `useResizableDropdownHeight()`, `fitDropdownHeight` in `src/renderer/hooks/ui/useResizableDropdownHeight.ts`
 - **Sizing a surface to its longest label:** `widestLabelWidth(labels, opts)`, `estimateLabelWidth()` in `src/renderer/utils/labelWidth.ts`
 - **A modal default sized to the screen:** `viewportModalSize({ width, height })`, `defaultSize` in `src/renderer/utils/modalSizing.ts`
 - **Focus after render:** `useFocusAfterRender()`, `useFocusOnMount()` in `src/renderer/hooks/utils/useFocusAfterRender.ts`

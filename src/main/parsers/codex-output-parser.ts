@@ -178,6 +178,8 @@ interface CodexRawMessage {
 	item?: CodexItem;
 	usage?: CodexUsage;
 	error?: string | { message?: string; type?: string };
+	/** Text of the bare exec-JSON `error` event (`{"type":"error","message":"..."}`). */
+	message?: string;
 }
 
 /**
@@ -265,6 +267,30 @@ function extractErrorText(error: CodexRawMessage['error'], fallback = 'Unknown e
 	if (typeof error === 'object' && error?.message) return error.message;
 	if (typeof error === 'string') return error;
 	return fallback;
+}
+
+/**
+ * Whether a raw line is Codex announcing a retry it is about to make, rather
+ * than a failure of the turn.
+ *
+ * `codex exec --json` forwards every transient stream failure as a bare
+ * `{"type":"error","message":"Reconnecting... 2/5 (stream disconnected before
+ * completion: ...)"}`. Upstream, that notification carries `will_retry: true`,
+ * but the exec JSONL writer drops the flag, so the text is the only signal left.
+ * Codex core formats every retry notice as `Reconnecting... N/M` or
+ * `Reconnecting... waiting for network`, which is what this keys on.
+ *
+ * Treated like `stream_error` (see transformEventMsg): progress, never an error.
+ * Raising it put a turn Codex was still retrying into the blocking error state,
+ * and StdoutHandler's once-only `errorEmitted` latch then swallowed the real
+ * terminal error if the retries ran out (#1694).
+ */
+function isCodexRetryNotice(obj: Record<string, unknown>): boolean {
+	return (
+		obj.type === 'error' &&
+		typeof obj.message === 'string' &&
+		/^Reconnecting\.\.\./.test(obj.message)
+	);
 }
 
 /**
@@ -459,6 +485,18 @@ export class CodexOutputParser implements AgentOutputParser {
 			return {
 				type: 'error',
 				text: extractErrorText(msg.error, 'Turn failed'),
+				raw: msg,
+			};
+		}
+
+		// A retry Codex is about to make. Progress, not an error, and kept out of
+		// `streamedText` for the same reason as `stream_error` below.
+		if (isCodexRetryNotice(msg as Record<string, unknown>)) {
+			return {
+				type: 'text',
+				text: String(msg.message),
+				isPartial: true,
+				isReasoning: true,
 				raw: msg,
 			};
 		}
@@ -979,6 +1017,10 @@ export class CodexOutputParser implements AgentOutputParser {
 				parsedJson = parsed;
 				errorText = payload.message;
 			}
+		} else if (isCodexRetryNotice(obj)) {
+			// Codex is retrying on its own. If the retries run out, the turn still
+			// ends on a terminal `error` / `turn.failed` line, which is caught here.
+			return null;
 		} else if (obj.type === 'error' || obj.type === 'turn.failed' || obj.error) {
 			parsedJson = parsed;
 			// Legacy shapes carry the text in `error`; the bare exec-JSON `error`

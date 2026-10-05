@@ -248,6 +248,55 @@ describe('WebSocketMessageHandler', () => {
 		handler.setCallbacks(callbacks);
 	});
 
+	describe('Notification inbox', () => {
+		it('forwards validated actions and returns the resulting snapshot with the request ID', async () => {
+			callbacks.notificationInbox = vi.fn().mockResolvedValue({
+				success: true,
+				unreadCount: 1,
+				open: true,
+				notifications: [{ id: 'n1' }],
+			});
+			handler.setCallbacks(callbacks);
+			handler.handleMessage(client, {
+				type: 'notification_inbox',
+				action: 'read',
+				id: 'n2',
+				requestId: 'request-1',
+			});
+			await vi.waitFor(() => expect(client.socket.send).toHaveBeenCalled());
+			expect(callbacks.notificationInbox).toHaveBeenCalledWith({
+				action: 'read',
+				id: 'n2',
+				unread: undefined,
+			});
+			expect(JSON.parse(vi.mocked(client.socket.send).mock.calls[0][0] as string)).toMatchObject({
+				type: 'notification_inbox_result',
+				requestId: 'request-1',
+				success: true,
+				unreadCount: 1,
+			});
+		});
+		it.each([{ action: 'bogus' }, { action: 'clear', id: {} }, { action: 'list', unread: 'yes' }])(
+			'rejects malformed requests: %j',
+			(request) => {
+				callbacks.notificationInbox = vi.fn();
+				handler.handleMessage(client, { type: 'notification_inbox', ...request });
+				expect(callbacks.notificationInbox).not.toHaveBeenCalled();
+				expect(JSON.parse(vi.mocked(client.socket.send).mock.calls[0][0] as string).success).toBe(
+					false
+				);
+			}
+		);
+		it('reports an unavailable renderer instead of claiming success', async () => {
+			handler.handleMessage(client, { type: 'notification_inbox', action: 'clear' });
+			await vi.waitFor(() => expect(client.socket.send).toHaveBeenCalled());
+			expect(JSON.parse(vi.mocked(client.socket.send).mock.calls[0][0] as string)).toMatchObject({
+				success: false,
+				error: 'Notification inbox unavailable',
+			});
+		});
+	});
+
 	describe('Ping/Pong Health Check', () => {
 		it('should respond to ping with pong', () => {
 			handler.handleMessage(client, { type: 'ping' });

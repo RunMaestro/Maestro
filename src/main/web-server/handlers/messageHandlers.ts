@@ -35,6 +35,12 @@
  * - get_session_history: Return tab conversation history with --since/--tail filters (CLI: `session show`)
  */
 
+import { NOTIFICATION_INBOX_ACTIONS } from '../../../shared/notificationInbox';
+import type {
+	NotificationInboxRequest,
+	NotificationInboxResult,
+} from '../../../shared/notificationInbox';
+
 import path from 'path';
 import fs from 'fs/promises';
 import { app } from 'electron';
@@ -50,10 +56,12 @@ import {
 import { generateDebugPackage, type DebugPackageDependencies } from '../../debug-package';
 import {
 	checkFeedbackGhAuth,
+	getFeedbackGhLoginCommand,
 	searchFeedbackIssues,
 	submitFeedbackConversation,
 	subscribeFeedbackIssue,
 } from '../../feedback';
+import { listFeedbackAccounts, rememberFeedbackAccount } from '../../feedback/accounts';
 import {
 	MAX_FEEDBACK_ATTACHMENTS,
 	type FeedbackConversationSubmitPayload,
@@ -245,6 +253,7 @@ export interface MessageHandlerCallbacks {
 		options: OpenFileTabOptions
 	) => Promise<boolean>;
 	/** Open a modal/dashboard by `UiSurface.id`, optionally on a validated tab id. */
+	notificationInbox?: (request: NotificationInboxRequest) => Promise<NotificationInboxResult>;
 	openModal: (params: { surface: string; tab?: string }) => Promise<boolean>;
 	/** Render the Document Graph over an explicit file set or directory. */
 	openDocumentGraph: (params: {
@@ -587,6 +596,10 @@ export class WebSocketMessageHandler {
 				this.handleOpenDocumentGraph(client, message);
 				break;
 
+			case 'notification_inbox':
+				void this.handleNotificationInbox(client, message);
+				break;
+
 			case 'open_modal':
 				this.handleOpenModal(client, message);
 				break;
@@ -891,12 +904,22 @@ export class WebSocketMessageHandler {
 				void this.handleFeedbackSearch(client, message);
 				break;
 
+			case 'feedback_gh_login_command':
+				void this.answerFeedback(client, message, async () => ({
+					...(await getFeedbackGhLoginCommand()),
+				}));
+				break;
+
 			case 'feedback_submit':
 				void this.handleFeedbackSubmit(client, message);
 				break;
 
 			case 'feedback_subscribe':
 				void this.handleFeedbackSubscribe(client, message);
+				break;
+
+			case 'feedback_accounts':
+				void this.handleFeedbackAccounts(client, message);
 				break;
 
 			case 'marketplace_get_manifest':
@@ -2083,6 +2106,36 @@ export class WebSocketMessageHandler {
 			.catch((error) => {
 				sendErrorResult(`Failed to open document graph: ${error.message}`);
 			});
+	}
+
+	/** Validate inbox requests, then return the renderer's resulting history snapshot. */
+	private async handleNotificationInbox(
+		client: WebClient,
+		message: WebClientMessage
+	): Promise<void> {
+		let result: NotificationInboxResult;
+		if (
+			!NOTIFICATION_INBOX_ACTIONS.includes(message.action as NotificationInboxRequest['action']) ||
+			(message.id !== undefined && typeof message.id !== 'string') ||
+			(message.unread !== undefined && typeof message.unread !== 'boolean')
+		) {
+			result = { success: false, error: 'Invalid notification inbox request' };
+		} else {
+			try {
+				result = (await this.callbacks.notificationInbox?.({
+					action: message.action as NotificationInboxRequest['action'],
+					id: message.id as string | undefined,
+					unread: message.unread as boolean | undefined,
+				})) ?? { success: false, error: 'Notification inbox unavailable' };
+			} catch (error) {
+				result = { success: false, error: error instanceof Error ? error.message : String(error) };
+			}
+		}
+		this.send(client, {
+			type: 'notification_inbox_result',
+			requestId: message.requestId,
+			...result,
+		});
 	}
 
 	/**
@@ -5301,7 +5354,9 @@ export class WebSocketMessageHandler {
 
 	/** Handle feedback_check_auth - is `gh` installed and logged in. */
 	private handleFeedbackCheckAuth(client: WebClient, message: WebClientMessage): Promise<void> {
-		return this.answerFeedback(client, message, async () => ({ ...(await checkFeedbackGhAuth()) }));
+		return this.answerFeedback(client, message, async () => ({
+			...(await checkFeedbackGhAuth({ fresh: message.fresh === true })),
+		}));
 	}
 
 	/** Handle feedback_search - possible duplicate issues for a query. */
@@ -5345,6 +5400,30 @@ export class WebSocketMessageHandler {
 		return this.answerFeedback(client, message, async () => ({
 			...(await subscribeFeedbackIssue({ issueNumber, comment })),
 		}));
+	}
+
+	/**
+	 * Handle feedback_accounts - the accounts the Feedback chat can run as, in the
+	 * order it tries them. `use` (a profile key, or null to forget) records the
+	 * account the next conversation tries first, as a pick in the chat does.
+	 */
+	private handleFeedbackAccounts(client: WebClient, message: WebClientMessage): Promise<void> {
+		return this.answerFeedback(client, message, async () => {
+			const getAgentDetector = () =>
+				this.callbacks.getDebugPackageDeps?.()?.getAgentDetector() ?? null;
+			if (message.use === null) {
+				rememberFeedbackAccount(null);
+			} else if (typeof message.use === 'string') {
+				const { accounts } = await listFeedbackAccounts(getAgentDetector);
+				if (!accounts.some((account) => account.key === message.use)) {
+					throw new Error(
+						`No feedback account with key "${message.use}". Run "maestro-cli feedback accounts" to list them.`
+					);
+				}
+				rememberFeedbackAccount(message.use);
+			}
+			return { ...(await listFeedbackAccounts(getAgentDetector)) };
+		});
 	}
 
 	/**

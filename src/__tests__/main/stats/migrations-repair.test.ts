@@ -72,7 +72,12 @@ function hasTable(db: Database.Database, table: string): boolean {
  */
 function rcShapedDb(
 	version: number,
-	missing: { tokenColumns?: boolean; resilience?: boolean; wizard?: boolean }
+	missing: {
+		tokenColumns?: boolean;
+		resilience?: boolean;
+		wizard?: boolean;
+		wizardActiveMs?: boolean;
+	}
 ): Database.Database {
 	const db = openDb();
 	runMigrations(db);
@@ -83,6 +88,7 @@ function rcShapedDb(
 	}
 	if (missing.resilience) db.exec('DROP TABLE resilience_events');
 	if (missing.wizard) db.exec('DROP TABLE wizard_runs');
+	if (missing.wizardActiveMs) db.exec('ALTER TABLE wizard_runs DROP COLUMN active_ms');
 	db.exec('CREATE TABLE IF NOT EXISTS multi_window_usage_daily (date TEXT PRIMARY KEY)');
 	db.pragma(`user_version = ${version}`);
 	return db;
@@ -97,7 +103,7 @@ describe('runMigrations repairs schema skipped by a cross-branch user_version', 
 		const db = openDb();
 		runMigrations(db);
 
-		expect(getCurrentVersion(db)).toBe(10);
+		expect(getCurrentVersion(db)).toBe(11);
 		expect(columnNames(db, 'query_events')).toEqual(
 			expect.arrayContaining([...ADD_QUERY_EVENT_TOKEN_COLUMNS])
 		);
@@ -117,7 +123,7 @@ describe('runMigrations repairs schema skipped by a cross-branch user_version', 
 		expect(() => db.prepare(INSERT_QUERY_EVENT_SQL)).not.toThrow();
 		expect(hasTable(db, 'resilience_events')).toBe(true);
 		expect(hasTable(db, 'wizard_runs')).toBe(true);
-		expect(getCurrentVersion(db)).toBe(10);
+		expect(getCurrentVersion(db)).toBe(11);
 	});
 
 	it('creates wizard_runs for an rc v10 database that already had tokens and resilience', () => {
@@ -131,12 +137,22 @@ describe('runMigrations repairs schema skipped by a cross-branch user_version', 
 		expect(vi.mocked(logger.warn).mock.calls[0][0]).toContain('v10');
 	});
 
-	it('leaves a newer rc database with complete schema untouched', () => {
-		const db = rcShapedDb(11, {});
+	it('adds active_ms to an rc v12 database whose wizard_runs predates it', () => {
+		// rc v11 = wizard_runs without active_ms; rc v12 is unrelated to wizards.
+		const db = rcShapedDb(12, { wizardActiveMs: true });
 
 		runMigrations(db);
 
-		expect(getCurrentVersion(db)).toBe(11);
+		expect(columnNames(db, 'wizard_runs')).toContain('active_ms');
+		expect(getCurrentVersion(db)).toBe(12);
+	});
+
+	it('leaves a newer rc database with complete schema untouched', () => {
+		const db = rcShapedDb(12, {});
+
+		runMigrations(db);
+
+		expect(getCurrentVersion(db)).toBe(12);
 		expect(logger.warn).not.toHaveBeenCalled();
 	});
 });

@@ -45,6 +45,16 @@ The mobile web interface provides a comprehensive remote control experience:
 The web interface uses your local IP address (e.g., `192.168.x.x`) for LAN accessibility. Both devices must be on the same network.
 </Note>
 
+## Network Exposure
+
+Maestro always runs a small server so `maestro-cli` can talk to the app. While the button reads **OFFLINE**, that server listens on `127.0.0.1` only, so nothing on your network can reach it. Turning on **LIVE** restarts it on every interface (`0.0.0.0`) so your phone can connect, and turning **LIVE** off puts it back on `127.0.0.1` with a new token.
+
+The server also refuses any browser request that comes from a page it did not serve. A web page that learns your Maestro URL cannot read from it or open its WebSocket.
+
+<Warning>
+The URL token is the only credential. Anyone who has the URL while **LIVE** is on has full control of Maestro, including its terminals. The LAN URL is plain HTTP, so share it only on a network you trust, and prefer the Cloudflare tunnel (HTTPS) on shared Wi-Fi.
+</Warning>
+
 ## Remote Control (Outside Your Network)
 
 To access Maestro from outside your local network (e.g., on mobile data or from another location):
@@ -87,6 +97,10 @@ However, if you need a **fixed port** (e.g., for firewall rules, reverse proxies
 - Ensure your network firewall is properly configured
 - Consider additional authentication at the network level
   </Warning>
+
+<Note>
+A reverse proxy must forward the original `Host` header (nginx: `proxy_set_header Host $host;`, Caddy does this by default). Maestro refuses browser requests whose `Origin` does not match the `Host` they were sent to.
+</Note>
 
 ## Connection Handling
 

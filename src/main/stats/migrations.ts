@@ -115,6 +115,15 @@ function getMigrations(): Migration[] {
 			up: (db) => migrateV10(db),
 			isApplied: (db) => hasTable(db, 'wizard_runs'),
 		},
+		{
+			// MERGE NOTE (main -> rc): rides on the v9/v10 renumbering above - this
+			// becomes 13 on rc, where wizard_runs is v11 and v12 is taken. The body
+			// is guarded by hasColumn, so renumbering and re-applying are both safe.
+			version: 11,
+			description: 'Add active_ms column to wizard_runs so wizard time excludes idle tabs',
+			up: (db) => migrateV11(db),
+			isApplied: (db) => hasColumn(db, 'wizard_runs', 'active_ms'),
+		},
 	];
 }
 
@@ -418,6 +427,19 @@ function migrateV10(db: Database.Database): void {
 	runStatements(db, CREATE_WIZARD_RUNS_SQL);
 	runStatements(db, CREATE_WIZARD_RUNS_INDEXES_SQL);
 	logger.debug('Created wizard_runs table', LOG_CONTEXT);
+}
+
+/**
+ * Migration v11: wizard_runs.active_ms - time actually spent in the wizard.
+ * Rows from before it stay NULL ("not measured") rather than being backfilled
+ * from `ended_at - started_at`, which is the open-to-close wall clock this
+ * column exists to replace. The dashboard leaves NULL rows out of time totals.
+ */
+function migrateV11(db: Database.Database): void {
+	if (!hasColumn(db, 'wizard_runs', 'active_ms')) {
+		db.prepare('ALTER TABLE wizard_runs ADD COLUMN active_ms INTEGER').run();
+	}
+	logger.debug('Added active_ms column to wizard_runs', LOG_CONTEXT);
 }
 
 /**

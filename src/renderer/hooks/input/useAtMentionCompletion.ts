@@ -2,7 +2,7 @@ import { useMemo, useCallback, useState, useEffect } from 'react';
 import type { Session } from '../../types';
 import type { FileNode } from '../../types/fileTree';
 import type { AutoRunTreeNode } from '../batch/useAutoRunHandlers';
-import { fuzzyMatchWithScore } from '../../utils/search';
+import { fuzzyMatchWithScore, isSubsequence } from '../../utils/search';
 
 export interface AtMentionSuggestion {
 	value: string; // Full path to insert
@@ -18,28 +18,25 @@ export interface UseAtMentionCompletionReturn {
 }
 
 /**
- * PERF: Maximum number of file tree entries to flatten.
- * For repos with 100k+ files, unbounded traversal creates a massive array
- * that blocks the main thread. 50k entries is more than enough for
- * meaningful @mention suggestions while keeping traversal fast.
- * Breadth-first-like order naturally prioritizes shallower (more relevant) files.
- */
-const MAX_FILE_TREE_ENTRIES = 50_000;
-
-/**
  * PERF: Maximum number of results to return from fuzzy search.
+ *
+ * There is deliberately NO cap on how much of the file tree is searched. The
+ * tree is already bounded by the File Indexing setting, and anything the Files
+ * panel shows must be mentionable. A former 50k flatten cap (which also counted
+ * folders, and was walked depth-first with the unlimited `.maestro` subtree
+ * first) silently hid most of a large repo. An early exit on "50 substring
+ * hits" was dropped for the same reason: a basename prefix hit found later
+ * outscores every path-substring hit found earlier.
  */
 const MAX_SUGGESTION_RESULTS = 15;
 
-/**
- * PERF: Once this many exact substring matches are found (and we have MAX_SUGGESTION_RESULTS),
- * stop searching. Exact matches score highest in fuzzyMatchWithScore (they receive a +50
- * bonus in search.ts), so once we have 50 exact substring matches the top-15 results are
- * virtually guaranteed to be optimal - any remaining files would only contribute weaker
- * fuzzy-only matches that cannot outscore them. 50 provides a comfortable margin over
- * MAX_SUGGESTION_RESULTS (15) to account for score ties and type-based sorting.
- */
-const EARLY_EXIT_EXACT_MATCH_THRESHOLD = 50;
+interface MentionCandidate {
+	name: string;
+	type: 'file' | 'folder';
+	path: string;
+	/** Lowercased path, computed once per tree for the per-keystroke pre-filter. */
+	pathLower: string;
+}
 
 /**
  * Hook for providing @ mention file completion in AI mode.
@@ -47,9 +44,7 @@ const EARLY_EXIT_EXACT_MATCH_THRESHOLD = 50;
  */
 export function useAtMentionCompletion(session: Session | null): UseAtMentionCompletionReturn {
 	// State for Auto Run folder files (fetched asynchronously)
-	const [autoRunFiles, setAutoRunFiles] = useState<
-		{ name: string; type: 'file' | 'folder'; path: string }[]
-	>([]);
+	const [autoRunFiles, setAutoRunFiles] = useState<MentionCandidate[]>([]);
 
 	// Fetch Auto Run folder files when the path changes
 	const autoRunFolderPath = session?.autoRunFolderPath;
@@ -78,7 +73,7 @@ export function useAtMentionCompletion(session: Session | null): UseAtMentionCom
 				if (cancelled) return;
 
 				if (result.success && result.tree) {
-					const files: { name: string; type: 'file' | 'folder'; path: string }[] = [];
+					const files: MentionCandidate[] = [];
 
 					// Traverse the Auto Run tree (similar to fileTree traversal)
 					const traverse = (nodes: AutoRunTreeNode[], _currentPath = '') => {
@@ -89,6 +84,7 @@ export function useAtMentionCompletion(session: Session | null): UseAtMentionCom
 								name: node.type === 'file' ? `${node.name}.md` : node.name,
 								type: node.type,
 								path: displayPath,
+								pathLower: displayPath.toLowerCase(),
 							});
 							if (node.type === 'folder' && node.children) {
 								traverse(node.children, displayPath);
@@ -117,21 +113,19 @@ export function useAtMentionCompletion(session: Session | null): UseAtMentionCom
 	}, [autoRunFolderPath, sessionCwd]);
 
 	// Build a flat list of all files/folders from the file tree
-	// PERF: Capped at MAX_FILE_TREE_ENTRIES to avoid blocking the main thread on huge repos
 	const projectFiles = useMemo(() => {
 		if (!session?.fileTree) return [];
 
-		const files: { name: string; type: 'file' | 'folder'; path: string }[] = [];
+		const files: MentionCandidate[] = [];
 
 		const traverse = (nodes: FileNode[], currentPath = '') => {
 			for (const node of nodes) {
-				if (files.length >= MAX_FILE_TREE_ENTRIES) return;
-
 				const fullPath = currentPath ? `${currentPath}/${node.name}` : node.name;
 				files.push({
 					name: node.name,
 					type: node.type,
 					path: fullPath,
+					pathLower: fullPath.toLowerCase(),
 				});
 				if (node.type === 'folder' && node.children) {
 					traverse(node.children, fullPath);
@@ -192,9 +186,13 @@ export function useAtMentionCompletion(session: Session | null): UseAtMentionCom
 
 			const suggestions: AtMentionSuggestion[] = [];
 			const filterLower = filter.toLowerCase();
-			let exactSubstringMatchCount = 0;
 
 			for (const file of allFiles) {
+				// PERF: The name is a suffix of the path, so a path that does not contain
+				// the filter as a subsequence cannot match on either. Rejecting here skips
+				// both scoring passes for the bulk of a large tree.
+				if (!isSubsequence(file.pathLower, filterLower)) continue;
+
 				// Match against both file name and full path
 				const nameMatch = fuzzyMatchWithScore(file.name, filter);
 				const pathMatch = fuzzyMatchWithScore(file.path, filter);
@@ -211,24 +209,6 @@ export function useAtMentionCompletion(session: Session | null): UseAtMentionCom
 						score: bestMatch.score,
 						source: file.source,
 					});
-
-					// Track exact substring matches for early exit
-					if (
-						file.name.toLowerCase().includes(filterLower) ||
-						file.path.toLowerCase().includes(filterLower)
-					) {
-						exactSubstringMatchCount++;
-					}
-
-					// PERF: Early exit - once we have enough high-quality exact substring
-					// matches and enough total results, further searching through remaining
-					// files would only yield lower-scoring fuzzy matches.
-					if (
-						exactSubstringMatchCount >= EARLY_EXIT_EXACT_MATCH_THRESHOLD &&
-						suggestions.length >= MAX_SUGGESTION_RESULTS
-					) {
-						break;
-					}
 				}
 			}
 

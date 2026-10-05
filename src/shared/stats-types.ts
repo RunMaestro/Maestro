@@ -243,6 +243,13 @@ export interface WizardRun {
 	documents: number;
 	/** Task checkboxes across those documents. */
 	tasks: number;
+	/**
+	 * Time actually spent in the wizard: agent turns in full, gaps waiting on the
+	 * user capped (see `src/renderer/services/wizardStats.ts`). Use this, never
+	 * `endedAt - startedAt`, which counts a tab left open for days. Absent on
+	 * rows recorded before it was measured.
+	 */
+	activeMs?: number;
 	/** Working directory the run targeted, when known. */
 	projectPath?: string;
 }
@@ -250,4 +257,4 @@ export interface WizardRun {
 /**
  * Database schema version for migrations
  */
-export const STATS_DB_VERSION = 10;
+export const STATS_DB_VERSION = 11;

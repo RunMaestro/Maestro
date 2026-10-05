@@ -3,9 +3,12 @@
  * Extracted from main/index.ts for better modularity.
  */
 
+import type { NotificationInboxResult } from '../../shared/notificationInbox';
+
 import { randomUUID } from 'crypto';
 import { app as electronApp, BrowserWindow, ipcMain } from 'electron';
-import { WebServer } from './WebServer';
+import { WebServer, type WebServerOptions } from './WebServer';
+import { tunnelManager } from '../tunnel-manager';
 import { getThemeById } from '../themes';
 import { getHistoryManager } from '../history-manager';
 import { logger } from '../utils/logger';
@@ -142,9 +145,10 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 
 	/**
 	 * Create and configure the web server with all necessary callbacks.
-	 * Called when user enables the web interface.
+	 * Pass `lanAccess` only for Live Mode; the default is the loopback-only
+	 * server that backs maestro-cli.
 	 */
-	return function createWebServer(): WebServer {
+	return function createWebServer(options: WebServerOptions = {}): WebServer {
 		// Use custom port if enabled, otherwise 0 for random port assignment
 		const useCustomPort = settingsStore.get('webInterfaceUseCustomPort', false);
 		const customPort = settingsStore.get('webInterfaceCustomPort', 8080);
@@ -178,10 +182,17 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 			}
 		}
 
-		const server = new WebServer(port, securityToken);
+		const server = new WebServer(port, securityToken, options);
+
+		// The Remote Control tunnel serves the web interface from a public
+		// trycloudflare.com origin; accept it alongside the request's own host.
+		server.setTrustedOriginsProvider(() => {
+			const { url } = tunnelManager.getStatus();
+			return url ? [url] : [];
+		});
 
 		// Roaming to a different network changes the LAN IP the URL and QR code
-		// are built from. The server keeps serving (it binds 0.0.0.0), so all
+		// are built from. A LAN server keeps serving (it binds 0.0.0.0), so all
 		// that is needed is telling every window to redraw the new address -
 		// no restart, no token rotation, and any phone already connected over
 		// the old address just reconnects. Broadcast rather than main-window
@@ -2409,6 +2420,16 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 				}, timeoutMs);
 			});
 		};
+
+		server.setNotificationInboxCallback((request) =>
+			remoteRequest<NotificationInboxResult>(
+				'notificationInbox',
+				'notificationInbox',
+				{ success: false, error: 'Notification inbox unavailable or timed out' },
+				(mainWindow, responseChannel) =>
+					mainWindow.webContents.send('remote:notificationInbox', request, responseChannel)
+			)
+		);
 
 		// Reset all `[x]` checkboxes back to `[ ]` for an Auto Run document.
 		// Forwards to the renderer which uses the existing autorun:readDoc / writeDoc IPC

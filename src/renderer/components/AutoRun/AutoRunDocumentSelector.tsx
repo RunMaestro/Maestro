@@ -21,6 +21,7 @@ import { getExplorerFileIcon } from '../../utils/theme';
 import { fuzzyMatchWithScore } from '../../utils/search';
 import { useModalLayer } from '../../hooks/ui/useModalLayer';
 import { useResizableModal } from '../../hooks/ui/useResizableModal';
+import { useResizableDropdownHeight } from '../../hooks/ui/useResizableDropdownHeight';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { ResizeHandles } from '../ui/ResizeHandles';
 import { aggregateFolderTaskCounts } from './documentTaskAggregation';
@@ -30,6 +31,13 @@ import { aggregateFolderTaskCounts } from './documentTaskAggregation';
 // the app restarts. Folders start collapsed; only paths the user explicitly
 // expands land here.
 const persistedExpandedFolders = new Set<string>();
+
+/** Where the dropdown's dragged height is remembered (survives app restarts). */
+export const DOCUMENT_DROPDOWN_HEIGHT_KEY = 'maestro:autoRunDocumentDropdownHeight';
+/** Height before the user has ever dragged the bottom edge. */
+const DOCUMENT_DROPDOWN_DEFAULT_HEIGHT = 562;
+/** Filter row, a couple of entries, and the Change Folder row. */
+const DOCUMENT_DROPDOWN_MIN_HEIGHT = 160;
 
 // Tree node type for folder structure
 export interface DocTreeNode {
@@ -92,6 +100,15 @@ export const AutoRunDocumentSelector = forwardRef<
 	const buttonRef = useRef<HTMLButtonElement>(null);
 	const createInputRef = useRef<HTMLInputElement>(null);
 	const filterInputRef = useRef<HTMLInputElement>(null);
+
+	// The user drags the bottom edge; the height is remembered, and clamped to
+	// the window on every open and resize so the bottom row never leaves screen.
+	const dropdownHeight = useResizableDropdownHeight({
+		storageKey: DOCUMENT_DROPDOWN_HEIGHT_KEY,
+		open: isOpen,
+		defaultHeight: DOCUMENT_DROPDOWN_DEFAULT_HEIGHT,
+		minHeight: DOCUMENT_DROPDOWN_MIN_HEIGHT,
+	});
 
 	// Fuzzy filter input + keyboard navigation (active while dropdown is open).
 	const [filterQuery, setFilterQuery] = useState('');
@@ -492,11 +509,13 @@ export const AutoRunDocumentSelector = forwardRef<
 					{/* Dropdown Menu - extends right under the action buttons for more width */}
 					{isOpen && (
 						<div
+							ref={dropdownHeight.panelRef}
+							data-testid="autorun-document-dropdown"
 							className="absolute top-full left-0 mt-1 rounded shadow-lg overflow-hidden z-50 flex flex-col"
 							style={{
 								backgroundColor: theme.colors.bgSidebar,
 								border: `1px solid ${theme.colors.border}`,
-								maxHeight: '562px',
+								maxHeight: `${dropdownHeight.maxHeight}px`,
 								minWidth: '100%',
 								width: 'calc(100% + 120px)', // Extend under the +, refresh, and folder buttons
 							}}
@@ -619,6 +638,15 @@ export const AutoRunDocumentSelector = forwardRef<
 									Change Folder...
 								</button>
 							</div>
+							<ResizeHandles
+								directions={['s']}
+								contained
+								accentColor={theme.colors.accent}
+								testIdPrefix="autorun-document-dropdown-resize"
+								onResizeStart={dropdownHeight.onResizeStart}
+								onResetSize={dropdownHeight.reset}
+								canReset={dropdownHeight.isCustomized}
+							/>
 						</div>
 					)}
 				</div>

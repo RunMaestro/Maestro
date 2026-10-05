@@ -12,19 +12,18 @@
  * inside the header.
  */
 
+import { shortcutSuffix } from './ui/ShortcutHint';
+import { useSettingsStore } from '../stores/settingsStore';
 import { memo, useCallback, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { AlertTriangle, Bell, Check, Info, Sparkles, XCircle } from 'lucide-react';
+import { AlertTriangle, Bell, Check, Info, Sparkles, X, XCircle } from 'lucide-react';
 import type { Theme } from '../types';
 import {
-	notifyToast,
 	selectUnreadNotificationCount,
 	useNotificationStore,
-	type NotificationRecord,
 	type ToastColor,
 } from '../stores/notificationStore';
-import { runToastClick } from '../services/toastClickActions';
-import { jumpToAgent } from '../services/agentNavigation';
+import { activateNotification, openNotificationLink } from '../services/notificationInbox';
 import { formatRelativeTime } from '../../shared/formatters';
 import { useClickOutside } from '../hooks/ui/useClickOutside';
 import { useAnchoredMenuPosition } from '../hooks/ui/useAnchoredMenuPosition';
@@ -58,46 +57,32 @@ function NotificationIcon({ color }: { color: ToastColor }) {
 	}
 }
 
-/**
- * Jump to the agent a notification came from. History outlives agents, so a
- * missing one is an ordinary outcome here and has to be said out loud.
- */
-function jumpToNotificationSource(sessionId: string, tabId?: string): void {
-	if (jumpToAgent(sessionId, { tabId })) return;
-	notifyToast({
-		color: 'yellow',
-		title: 'Agent Not Found',
-		message: 'The agent this notification came from no longer exists.',
-		skipHistory: true,
-	});
-}
-
 interface NotificationCenterProps {
 	theme: Theme;
 }
 
+/** Header bell with the live unread count and configurable shortcut hint. */
 export const NotificationCenter = memo(function NotificationCenter({
 	theme,
 }: NotificationCenterProps) {
-	const anchorRef = useRef<HTMLButtonElement>(null);
 	const open = useNotificationStore((s) => s.notificationCenterOpen);
 	const setOpen = useNotificationStore((s) => s.setNotificationCenterOpen);
 	const unreadCount = useNotificationStore(selectUnreadNotificationCount);
-	const close = useCallback(() => setOpen(false), [setOpen]);
 
+	const shortcut = useSettingsStore((s) => s.shortcuts.openNotificationCenter);
 	const label = unreadCount > 0 ? `Notifications (${unreadCount} unread)` : 'Notifications';
 
 	return (
 		<>
 			<button
-				ref={anchorRef}
 				type="button"
 				onClick={() => setOpen(!open)}
 				className="relative p-2 rounded hover:bg-white/5 shrink-0"
-				title={label}
+				title={`${label}${shortcutSuffix(shortcut?.keys)}`}
 				aria-label={label}
 				aria-haspopup="dialog"
 				aria-expanded={open}
+				id="notification-center-trigger"
 				data-testid="notification-center-button"
 			>
 				<Bell className="w-4 h-4" style={{ color: theme.colors.textDim }} />
@@ -112,17 +97,37 @@ export const NotificationCenter = memo(function NotificationCenter({
 					</span>
 				)}
 			</button>
-			{open && <NotificationCenterPopover theme={theme} anchorRef={anchorRef} onClose={close} />}
 		</>
 	);
 });
 
+/** App-level host: history remains reachable when the Main Panel header is absent. */
+export function NotificationCenterHost({ theme }: NotificationCenterProps) {
+	const open = useNotificationStore((s) => s.notificationCenterOpen);
+	const setOpen = useNotificationStore((s) => s.setNotificationCenterOpen);
+	const close = useCallback(() => setOpen(false), [setOpen]);
+	const fallbackRef = useRef<HTMLSpanElement | null>(null);
+	const bell = open ? document.getElementById('notification-center-trigger') : null;
+	const anchorRef = bell ? { current: bell } : fallbackRef;
+	return (
+		<>
+			<span
+				aria-hidden="true"
+				className="fixed right-4 top-12 pointer-events-none"
+				ref={fallbackRef}
+			/>
+			{open && <NotificationCenterPopover theme={theme} anchorRef={anchorRef} onClose={close} />}
+		</>
+	);
+}
+
 interface NotificationCenterPopoverProps {
 	theme: Theme;
-	anchorRef: React.RefObject<HTMLButtonElement | null>;
+	anchorRef: React.RefObject<HTMLElement | null>;
 	onClose: () => void;
 }
 
+/** History controls and entry actions, positioned against the bell or the app fallback. */
 function NotificationCenterPopover({ theme, anchorRef, onClose }: NotificationCenterPopoverProps) {
 	const menuRef = useRef<HTMLDivElement>(null);
 	const { left, top, ready } = useAnchoredMenuPosition(menuRef, anchorRef, { align: 'end' });
@@ -135,7 +140,6 @@ function NotificationCenterPopover({ theme, anchorRef, onClose }: NotificationCe
 	});
 
 	const history = useNotificationStore((s) => s.history);
-	const markNotificationRead = useNotificationStore((s) => s.markNotificationRead);
 	const markAllNotificationsRead = useNotificationStore((s) => s.markAllNotificationsRead);
 	const clearNotificationHistory = useNotificationStore((s) => s.clearNotificationHistory);
 	const unreadCount = useNotificationStore(selectUnreadNotificationCount);
@@ -146,13 +150,6 @@ function NotificationCenterPopover({ theme, anchorRef, onClose }: NotificationCe
 		unreadCount > 0 ? 'unread' : 'all'
 	);
 	const visible = filter === 'unread' ? history.filter((n) => !n.read) : history;
-
-	const handleActivate = (record: NotificationRecord) => {
-		markNotificationRead(record.id);
-		if (runToastClick(record, { onSessionClick: jumpToNotificationSource })) {
-			onClose();
-		}
-	};
 
 	const actionStyle = (enabled: boolean) => ({
 		color: enabled ? theme.colors.accent : theme.colors.textDim,
@@ -182,6 +179,15 @@ function NotificationCenterPopover({ theme, anchorRef, onClose }: NotificationCe
 				<span className="text-sm font-bold" style={{ color: theme.colors.textMain }}>
 					Notifications
 				</span>
+				<button
+					type="button"
+					onClick={onClose}
+					aria-label="Close notifications"
+					className="p-1 rounded hover:bg-white/5"
+					style={{ color: theme.colors.textDim }}
+				>
+					<X className="w-4 h-4" />
+				</button>
 				<SegmentedControl
 					value={filter}
 					onChange={setFilter}
@@ -208,11 +214,11 @@ function NotificationCenterPopover({ theme, anchorRef, onClose }: NotificationCe
 							.filter(Boolean)
 							.join(' · ');
 						return (
-							<li key={record.id}>
+							<li key={record.id} className="border-b" style={{ borderColor: theme.colors.border }}>
 								<button
 									type="button"
-									onClick={() => handleActivate(record)}
-									className="w-full flex items-start gap-2.5 px-3 py-2.5 text-left border-b hover:bg-white/5"
+									onClick={() => activateNotification(record)}
+									className="w-full flex items-start gap-2.5 px-3 py-2.5 text-left hover:bg-white/5"
 									style={{ borderColor: theme.colors.border }}
 									data-testid="notification-center-item"
 									data-read={record.read}
@@ -259,6 +265,16 @@ function NotificationCenterPopover({ theme, anchorRef, onClose }: NotificationCe
 										/>
 									)}
 								</button>
+								{record.actionUrl && (
+									<button
+										type="button"
+										className="mx-3 mb-2 text-xs hover:underline break-all text-left"
+										style={{ color: accent }}
+										onClick={() => openNotificationLink(record)}
+									>
+										{record.actionLabel || record.actionUrl}
+									</button>
+								)}
 							</li>
 						);
 					})}

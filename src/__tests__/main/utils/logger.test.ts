@@ -301,6 +301,33 @@ describe('Logger', () => {
 			});
 		});
 
+		describe('routeConsoleToStderr', () => {
+			it('echoes every level to console.error so stdout stays clean', async () => {
+				logger.setLogLevel('debug');
+				logger.routeConsoleToStderr();
+
+				logger.debug('debug line');
+				logger.info('info line');
+				logger.warn('warn line');
+				logger.error('error line');
+
+				expect(consoleLogSpy).not.toHaveBeenCalled();
+				expect(consoleInfoSpy).not.toHaveBeenCalled();
+				expect(consoleWarnSpy).not.toHaveBeenCalled();
+				const echoed = consoleErrorSpy.mock.calls.map((call) => String(call[0]));
+				expect(echoed).toHaveLength(4);
+				expect(echoed[1]).toContain('[INFO]');
+				expect(echoed[1]).toContain('info line');
+				// Routing changes only where the echo goes, not what is recorded.
+				expect(logger.getLogs().map((entry) => entry.level)).toEqual([
+					'debug',
+					'info',
+					'warn',
+					'error',
+				]);
+			});
+		});
+
 		describe('warn', () => {
 			it('should log warn message with correct structure', async () => {
 				logger.warn('warn test');

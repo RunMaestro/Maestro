@@ -92,7 +92,7 @@ Tracks individual tasks within an Auto Run session:
 
 **Indexes**: `auto_run_session_id`, `start_time`
 
-#### `wizard_runs` (Migration v10)
+#### `wizard_runs` (Migration v10, `active_ms` v11)
 
 One row per Auto Run wizard conversation, powering the Wizard section of the dashboard's Auto Run tab:
 
@@ -110,16 +110,21 @@ One row per Auto Run wizard conversation, powering the Wizard section of the das
 | `documents`    | INTEGER NOT NULL | Auto Run documents produced                                |
 | `tasks`        | INTEGER NOT NULL | Task checkboxes across those documents                     |
 | `project_path` | TEXT             | Project path                                               |
+| `active_ms`    | INTEGER          | Time actually spent in the wizard (v11; NULL = not timed)  |
 
 **Indexes**: `started_at`, compound `(surface, started_at)`
 
 Unlike every other table here, a row is written **repeatedly** - once per milestone (opened, each
 exchange, documents written, closed), always under the same `id`, via `INSERT OR REPLACE`. The reason
 is that the payoff (documents) and the close are separated by however long the user reads the result,
-and many runs are never closed at all, so a single write at the end would lose whole runs. `ended_at`
-therefore means "last activity", which keeps `ended_at - started_at` an honest measure of time spent
-in the wizard whether or not the run was ever closed. The renderer side of that state machine is
-`src/renderer/services/wizardStats.ts`.
+and many runs are never closed at all, so a single write at the end would lose whole runs.
+
+Time spent is `active_ms`, never `ended_at - started_at`. A wizard tab can sit open for days, and the
+open-to-close window once logged 26 hours for a 9-message run. `active_ms` is accrued gap by gap
+between milestones: a gap while the agent works (a turn or a document generation) counts in full up
+to 60 minutes, and a gap while the wizard waits on the user counts at most 5 minutes. Rows from before
+v11 stay NULL rather than being backfilled from the window, and the dashboard leaves them out of time
+totals. The renderer side of that state machine is `src/renderer/services/wizardStats.ts`.
 
 #### `session_lifecycle` (Migration v3)
 
@@ -199,6 +204,7 @@ Defined in `src/main/stats/migrations.ts`. Migrations are sequential and recorde
 | v8      | Add per-turn token and cost columns to `query_events`                 |
 | v9      | Add `resilience_events` table                                         |
 | v10     | Add `wizard_runs` table                                               |
+| v11     | Add `active_ms` column to `wizard_runs`                               |
 
 To add a new migration:
 

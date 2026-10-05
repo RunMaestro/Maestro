@@ -29,6 +29,20 @@ describe('Process Preload API', () => {
 		api = createProcessApi();
 	});
 
+	describe('notification inbox bridge', () => {
+		it('returns the resulting store snapshot and unregisters the request listener', () => {
+			const result = { success: true, unreadCount: 0, notifications: [] };
+			const callback = vi.fn().mockReturnValue(result);
+			const cleanup = api.onRemoteNotificationInbox(callback);
+			const handler = mockOn.mock.calls.find((call) => call[0] === 'remote:notificationInbox')![1];
+			handler({}, { action: 'clear' }, 'response-channel');
+			expect(callback).toHaveBeenCalledWith({ action: 'clear' });
+			expect(mockSend).toHaveBeenCalledWith('response-channel', result);
+			cleanup();
+			expect(mockRemoveListener).toHaveBeenCalledWith('remote:notificationInbox', handler);
+		});
+	});
+
 	describe('spawn', () => {
 		it('should invoke process:spawn with config', async () => {
 			const config: ProcessConfig = {

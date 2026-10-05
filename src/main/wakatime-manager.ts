@@ -282,6 +282,7 @@ export class WakaTimeManager {
 	private languageCache: Map<string, string> = new Map();
 	private cliPath: string | null = null;
 	private cliDetected = false;
+	private detecting: Promise<boolean> | null = null;
 	private installing: Promise<boolean> | null = null;
 	private lastUpdateCheck = 0;
 
@@ -315,8 +316,19 @@ export class WakaTimeManager {
 	/** Detect wakatime-cli on PATH or in ~/.wakatime/ */
 	async detectCli(): Promise<boolean> {
 		if (this.cliDetected) return this.cliPath !== null;
-		this.cliDetected = true;
+		// Concurrent callers share the in-flight probe. Answering them from
+		// `cliPath` before the probe settles reported "not installed" for a CLI
+		// that was about to be found, and kicked off a redundant download.
+		if (!this.detecting) {
+			this.detecting = this.probeCli().finally(() => {
+				this.cliDetected = true;
+				this.detecting = null;
+			});
+		}
+		return this.detecting;
+	}
 
+	private async probeCli(): Promise<boolean> {
 		// Try common binary names on PATH
 		for (const cmd of ['wakatime-cli', 'wakatime']) {
 			const result = await execFileNoThrow(cmd, ['--version']);

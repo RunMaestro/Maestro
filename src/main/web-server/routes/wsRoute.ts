@@ -33,6 +33,9 @@ export type { LiveSessionInfo, CustomAICommand } from '../types';
 // Logger context for all WebSocket route logs
 const LOG_CONTEXT = 'WebServer:WS';
 
+/** RFC 6455 close code for a connection refused on policy grounds. */
+const WS_CLOSE_POLICY_VIOLATION = 1008;
+
 /**
  * Session data for WebSocket initial sync.
  * Uses SessionData as the base type.
@@ -43,6 +46,13 @@ export type WsSessionData = SessionData;
  * Callbacks required by WebSocket route
  */
 export interface WsRouteCallbacks {
+	/**
+	 * Whether an upgrade with these `Origin` / `Host` headers may connect.
+	 * Browsers send `Origin` on every WebSocket upgrade and never enforce CORS
+	 * on one, so this is the only thing stopping a hostile page that knows the
+	 * URL from driving the server. Missing callback = refuse.
+	 */
+	isOriginAllowed: (origin: string | string[] | undefined, host: string | undefined) => boolean;
 	getSessions: () => SessionData[];
 	getTheme: () => Theme | null;
 	getBionifyReadingMode: () => boolean;
@@ -85,6 +95,12 @@ export class WsRoute {
 		const token = this.securityToken;
 
 		server.get(`/${token}/ws`, { websocket: true }, (connection, request) => {
+			if (this.callbacks.isOriginAllowed?.(request.headers.origin, request.headers.host) !== true) {
+				logger.warn(`Refused WebSocket from origin ${String(request.headers.origin)}`, LOG_CONTEXT);
+				connection.socket.close(WS_CLOSE_POLICY_VIOLATION, 'Origin not allowed');
+				return;
+			}
+
 			const clientId = `web-client-${++this.clientIdCounter}`;
 
 			// Extract sessionId from query string if provided (for session-specific subscriptions)

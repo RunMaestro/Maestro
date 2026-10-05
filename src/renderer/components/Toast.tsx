@@ -272,6 +272,7 @@ const ToastItem = memo(function ToastItem({
 							style={{ color: theme.colors.accent }}
 							onClick={(e) => {
 								e.stopPropagation();
+								useNotificationStore.getState().markNotificationRead(toast.id);
 								openUrl(toast.actionUrl!);
 							}}
 						>

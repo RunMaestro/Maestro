@@ -16,7 +16,7 @@
 
 import { create } from 'zustand';
 import { logger } from '../utils/logger';
-import type { ToastClickAction } from '../../shared/toastClickAction';
+import { parseToastClickAction, type ToastClickAction } from '../../shared/toastClickAction';
 
 // ============================================================================
 // Types
@@ -133,6 +133,7 @@ function historyStorage(): Storage | null {
 	}
 }
 
+/** Validate persisted display fields and every optional action before replay. */
 function isNotificationRecord(value: unknown): value is NotificationRecord {
 	if (!value || typeof value !== 'object') return false;
 	const v = value as Record<string, unknown>;
@@ -141,6 +142,14 @@ function isNotificationRecord(value: unknown): value is NotificationRecord {
 		typeof v.title === 'string' &&
 		typeof v.message === 'string' &&
 		typeof v.timestamp === 'number' &&
+		Number.isFinite(v.timestamp) &&
+		['green', 'yellow', 'orange', 'red', 'theme'].includes(v.color as string) &&
+		['success', 'info', 'warning', 'error'].includes(v.type as string) &&
+		['sessionId', 'tabId', 'actionUrl', 'actionLabel', 'group', 'project', 'tabName'].every(
+			(key) => v[key] === undefined || typeof v[key] === 'string'
+		) &&
+		v.onClick === undefined &&
+		!parseToastClickAction(v.clickAction).error &&
 		typeof v.read === 'boolean'
 	);
 }
@@ -158,6 +167,7 @@ export function loadNotificationHistory(): NotificationRecord[] {
 	}
 }
 
+/** Persist history without allowing storage failures to break notification delivery. */
 function saveNotificationHistory(history: NotificationRecord[]): void {
 	try {
 		// JSON.stringify drops `onClick` on its own: functions are not serialized.
@@ -167,6 +177,7 @@ function saveNotificationHistory(history: NotificationRecord[]): void {
 	}
 }
 
+/** Prefer a canonical color, falling back to legacy semantic aliases. */
 export function resolveToastColor(opts: { color?: ToastColor; type?: ToastType }): ToastColor {
 	if (opts.color) return opts.color;
 	if (opts.type) return TOAST_TYPE_TO_COLOR[opts.type];
@@ -232,6 +243,7 @@ export function selectConfig(s: NotificationStoreState): NotificationConfig {
 	return s.config;
 }
 
+/** Count unread entries without allocating a filtered history array. */
 export function selectUnreadNotificationCount(s: NotificationStoreState): number {
 	let count = 0;
 	for (const record of s.history) {
@@ -275,7 +287,13 @@ export const useNotificationStore = create<NotificationStore>()((set) => ({
 			clearTimeout(timerId);
 		}
 		autoDismissTimers.clear();
-		set({ toasts: [] });
+		set((s) => {
+			const dismissed = new Set(s.toasts.map((t) => t.id));
+			return {
+				toasts: [],
+				history: s.history.map((n) => (dismissed.has(n.id) && !n.read ? { ...n, read: true } : n)),
+			};
+		});
 	},
 
 	// --- Notification history ---

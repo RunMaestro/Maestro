@@ -99,6 +99,26 @@ describe('fitMediaFloatRect', () => {
 		expect(rect.top).toBe(0);
 	});
 
+	it('keeps the header below the title strip, healing a position stuck under it', () => {
+		// The title strip is an OS drag region that eats clicks; a stored top of 0
+		// left the player unmovable and unclosable.
+		const rect = fitMediaFloatRect({ top: 0, left: 200, width: 400 }, audioFit, {
+			...VIEW,
+			top: 40,
+		});
+		expect(rect.top).toBe(40);
+	});
+
+	it('shrinks a tall video to the band below the title strip', () => {
+		const rect = fitMediaFloatRect({ top: 0, left: 0, width: 1600 }, videoFit, {
+			width: 1600,
+			height: 500,
+			top: 40,
+		});
+		expect(rect.top).toBe(40);
+		expect(rect.top + rect.height).toBeLessThanOrEqual(500);
+	});
+
 	it('recovers a position persisted on a larger monitor', () => {
 		// The whole reason this clamping exists: geometry saved at 2560x1440 must
 		// not leave the widget off screen on a laptop.

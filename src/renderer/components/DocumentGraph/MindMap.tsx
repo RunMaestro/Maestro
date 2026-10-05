@@ -32,6 +32,7 @@ import {
 } from './mindMapLayouts';
 import { isPreviewOff } from './previewCharLimit';
 import { DEFAULT_SCROLL_MODE, type GraphScrollMode } from './scrollMode';
+import { transformAfterResize, type ViewTransform } from './viewportResize';
 import { clusterColor, clusterHullStyle } from './clusterColors';
 import { logger } from '../../utils/logger';
 import { GraphMiniMap } from './GraphMiniMap';
@@ -763,7 +764,11 @@ export function MindMap({
 	// State - combine zoom and pan into single transform state to avoid jitter
 	const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
 	const [focusedNodeId, setFocusedNodeId] = useState<string | null>(null);
-	const [transform, setTransform] = useState({ zoom: 1, panX: 0, panY: 0 });
+	const [transform, setTransform] = useState<ViewTransform>({ zoom: 1, panX: 0, panY: 0 });
+	// The transform the last fit produced, by identity: while it is still the
+	// live one, the user has not zoomed or panned since.
+	const lastFitRef = useRef<ViewTransform | null>(null);
+	const prevSizeRef = useRef({ width, height });
 	const [isPanning, setIsPanning] = useState(false);
 	const [panStart, setPanStart] = useState({ x: 0, y: 0 });
 
@@ -1167,11 +1172,13 @@ export function MindMap({
 		const contentCenterX = (minX + maxX) / 2;
 		const contentCenterY = (minY + maxY) / 2;
 
-		setTransform({
+		const next = {
 			zoom: nextZoom,
 			panX: width / 2 - contentCenterX * nextZoom,
 			panY: height / 2 - contentCenterY * nextZoom,
-		});
+		};
+		lastFitRef.current = next;
+		setTransform(next);
 	}, [layout.bounds, width, height]);
 
 	// Frame the graph on mount, and whenever the thing being drawn changes shape
@@ -1181,7 +1188,23 @@ export function MindMap({
 		if (layout.nodes.length > 0) {
 			fitToView();
 		}
-	}, [centerFilePath, layoutType, previewCharLimit, width, height]);
+	}, [centerFilePath, layoutType, previewCharLimit]);
+
+	// A resize is not a new graph. Selecting a node shows the info bar above the
+	// canvas, which shrinks it; re-framing on that threw away the user's zoom on
+	// every click. Re-fit only a view the user has not moved since the last fit
+	// (that covers the placeholder size giving way to the real one on open).
+	useEffect(() => {
+		const prevSize = prevSizeRef.current;
+		prevSizeRef.current = { width, height };
+		if (layout.nodes.length === 0) return;
+		const next = transformAfterResize(transform, lastFitRef.current, prevSize, { width, height });
+		if (next === 'refit') {
+			fitToView();
+		} else if (next !== transform) {
+			setTransform(next);
+		}
+	}, [width, height]);
 
 	// Explicit re-fit requested by the parent (the `F` key).
 	useEffect(() => {

@@ -17,6 +17,7 @@ import {
 	countWizardExchange,
 	finishWizardRun,
 	recordWizardDocuments,
+	setWizardAgentWorking,
 	updateWizardRun,
 } from '../../services/wizardStats';
 import { getAutoRunFolderPath, type ExistingDocument } from '../../utils/existingDocsDetector';
@@ -958,7 +959,9 @@ export function useInlineWizard(): UseInlineWizardReturn {
 				const currentState = tabStatesRef.current.get(tabId);
 				const currentHistory = currentState?.conversationHistory || [];
 
-				// Call the AI service
+				// Call the AI service. The agent's turn is wizard time in full; the
+				// finally below hands the clock back to the user however it ends.
+				setWizardAgentWorking(tabId, true);
 				const result = await sendWizardMessage(session, content, currentHistory, callbacks);
 
 				// The user stopped this turn while it was running. cancelTurn already cleared
@@ -1033,6 +1036,8 @@ export function useInlineWizard(): UseInlineWizardReturn {
 				}));
 
 				callbacks?.onError?.(errorMessage);
+			} finally {
+				setWizardAgentWorking(tabId, false);
 			}
 		},
 		[currentTabId, setTabState] // Depend on currentTabId and setTabState
@@ -1445,6 +1450,8 @@ export function useInlineWizard(): UseInlineWizardReturn {
 				currentDocumentIndex: 0,
 			}));
 
+			// Generation is agent work however long it runs; see sendMessage.
+			setWizardAgentWorking(tabId, true);
 			try {
 				// Call the document generation service with the effective Auto Run folder path.
 				// Prefer the AI-extracted project name from the conversation so the playbook
@@ -1607,6 +1614,8 @@ export function useInlineWizard(): UseInlineWizardReturn {
 				}));
 
 				callbacks?.onError?.(errorMessage);
+			} finally {
+				setWizardAgentWorking(tabId, false);
 			}
 		},
 		[currentTabId, setTabState]

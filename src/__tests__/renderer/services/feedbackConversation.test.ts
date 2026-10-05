@@ -136,6 +136,52 @@ describe('FeedbackConversationManager', () => {
 		expect(spawn.mock.calls[0][0].cwd).toBe('/home/tester');
 	});
 
+	it("runs as the chosen account: its env replaces the provider's, its binary is used", async () => {
+		const { spawn, listeners } = installProcessMocks(CLAUDE_AGENT);
+		const manager = new FeedbackConversationManager();
+		const env = { CLAUDE_CONFIG_DIR: '/home/tester/.claude-work' };
+		const sessionId = manager.start({
+			agentType: 'claude-code',
+			systemPrompt: 'prompt',
+			cwd: '/home/tester',
+			account: { env, customPath: '/opt/claude', sshRemoteId: null },
+		});
+
+		const pending = manager.sendMessage('it broke', []);
+		await vi.waitFor(() => expect(spawn).toHaveBeenCalled());
+		completeTurn(listeners, sessionId, VALID_RESPONSE);
+		await pending;
+
+		expect(spawn.mock.calls[0][0]).toMatchObject({
+			sessionCustomEnvVars: env,
+			sessionCustomPath: '/opt/claude',
+			sessionSshRemoteConfig: undefined,
+		});
+	});
+
+	it('reports a non-zero exit as a failed turn so the caller can try another account', async () => {
+		const { spawn, listeners } = installProcessMocks(CLAUDE_AGENT);
+		const manager = new FeedbackConversationManager();
+		const sessionId = manager.start({ agentType: 'claude-code', systemPrompt: 'prompt' });
+
+		const pending = manager.sendTurn('it broke', []);
+		await vi.waitFor(() => expect(spawn).toHaveBeenCalled());
+		listeners.data?.(sessionId, 'Invalid API key - Please run /login');
+		listeners.exit?.(sessionId, 1);
+		const result = await pending;
+
+		expect(result.failed).toBe(true);
+		expect(result.error).toContain('Please run /login');
+
+		// The next turn can run as a different account in the same conversation.
+		manager.switchAccount('claude-code', { env: { CLAUDE_CONFIG_DIR: '/b' }, sshRemoteId: null });
+		const retry = manager.sendTurn('it broke', []);
+		await vi.waitFor(() => expect(spawn).toHaveBeenCalledTimes(2));
+		completeTurn(listeners, sessionId, VALID_RESPONSE);
+		expect((await retry).failed).toBe(false);
+		expect(spawn.mock.calls[1][0].sessionCustomEnvVars).toEqual({ CLAUDE_CONFIG_DIR: '/b' });
+	});
+
 	it('strips blanket permission grants from the agent args', async () => {
 		const { spawn, listeners } = installProcessMocks(CLAUDE_AGENT);
 		const manager = new FeedbackConversationManager();

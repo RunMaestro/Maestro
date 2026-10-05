@@ -1251,6 +1251,83 @@ Show a toast notification (queued, click X or icon to dismiss)
 | `--open-url <url>`        | On click, open this URL in the system browser (opens outside Maestro; use --open-browser for an in-app tab)                                                                                                                    | -       |
 | `--json`                  | Output as JSON (for scripting)                                                                                                                                                                                                 | -       |
 
+## `maestro-cli notify inbox`
+
+Read and manage the desktop notification center history
+
+## `maestro-cli notify inbox list`
+
+List retained notifications with stable IDs
+
+| Option     | Description              | Default |
+| ---------- | ------------------------ | ------- |
+| `--unread` | Only list unread entries | -       |
+| `--json`   | Output as JSON           | -       |
+
+## `maestro-cli notify inbox open`
+
+Open the notification center
+
+| Option   | Description    | Default |
+| -------- | -------------- | ------- |
+| `--json` | Output as JSON | -       |
+
+## `maestro-cli notify inbox close`
+
+Close the notification center
+
+| Option   | Description    | Default |
+| -------- | -------------- | ------- |
+| `--json` | Output as JSON | -       |
+
+## `maestro-cli notify inbox read-all`
+
+Mark every history entry read
+
+| Option   | Description    | Default |
+| -------- | -------------- | ------- |
+| `--json` | Output as JSON | -       |
+
+## `maestro-cli notify inbox clear`
+
+Clear retained history
+
+| Option   | Description    | Default |
+| -------- | -------------- | ------- |
+| `--json` | Output as JSON | -       |
+
+## `maestro-cli notify inbox dismiss`
+
+Dismiss visible toasts and mark their entries read
+
+| Option   | Description    | Default |
+| -------- | -------------- | ------- |
+| `--json` | Output as JSON | -       |
+
+## `maestro-cli notify inbox read <id>`
+
+Mark one notification read
+
+| Option   | Description    | Default |
+| -------- | -------------- | ------- |
+| `--json` | Output as JSON | -       |
+
+## `maestro-cli notify inbox activate <id>`
+
+Run a notification body action
+
+| Option   | Description    | Default |
+| -------- | -------------- | ------- |
+| `--json` | Output as JSON | -       |
+
+## `maestro-cli notify inbox link <id>`
+
+Open a notification inline link
+
+| Option   | Description    | Default |
+| -------- | -------------- | ------- |
+| `--json` | Output as JSON | -       |
+
 ## `maestro-cli notify flash <message>`
 
 Show a center-screen flash (momentary, exclusive — replaces any active flash)
@@ -1311,11 +1388,30 @@ Send Feedback from the CLI: check gh, find duplicates, +1 an issue, or file a ne
 
 ## `maestro-cli feedback auth`
 
-Check that the GitHub CLI (gh) is installed and logged in (required to file)
+Check that the GitHub CLI (gh) is installed, logged in, and allowed to file on the feedback repo (required to file); names the gh account, and prints the login command when signing in can fix it
 
-| Option   | Description                    | Default |
-| -------- | ------------------------------ | ------- |
-| `--json` | Output as JSON (for scripting) | -       |
+| Option    | Description                                          | Default |
+| --------- | ---------------------------------------------------- | ------- |
+| `--fresh` | Skip the cached verdict (after logging in elsewhere) | -       |
+| `--json`  | Output as JSON (for scripting)                       | -       |
+
+## `maestro-cli feedback login`
+
+Sign the GitHub CLI in for feedback (gh auth login, device code + browser), as the modal's "Log in to GitHub" does
+
+| Option   | Description                               | Default |
+| -------- | ----------------------------------------- | ------- |
+| `--json` | Output the result as JSON (for scripting) | -       |
+
+## `maestro-cli feedback accounts`
+
+List the provider accounts the Feedback chat can run as, in the order it tries them (first usable one wins)
+
+| Option        | Description                                                               | Default |
+| ------------- | ------------------------------------------------------------------------- | ------- |
+| `--use <key>` | Make this account (a key from the list) the one the next chat tries first | -       |
+| `--clear`     | Forget the remembered account and pick automatically again                | -       |
+| `--json`      | Output as JSON (for scripting)                                            | -       |
 
 ## `maestro-cli feedback search <query>`
 

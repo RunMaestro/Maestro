@@ -610,6 +610,20 @@ const CODEX_ERROR_PATTERNS: AgentErrorPatterns = {
 			recoverable: true,
 		},
 		{
+			// OpenAI closed the response stream mid-turn and Codex's own retries ran
+			// out (#1694): "stream disconnected before completion: websocket closed by
+			// server before response.completed". A transport drop between Codex and
+			// OpenAI, so it is transient. Keyed on the transport cause, not the
+			// prefix alone: Codex also wraps permanent failures in the same prefix
+			// ("stream disconnected before completion: The model ... does not
+			// exist"), and those must not be retried.
+			pattern:
+				/stream disconnected before completion:.*(?:websocket closed|before response\.completed|idle timeout)/i,
+			message:
+				'OpenAI closed the Codex response stream before the turn finished. This is a provider-side drop - retry the prompt.',
+			recoverable: true,
+		},
+		{
 			// Codex's HTTP client renders upstream failures as
 			// "unexpected status <code> <reason>". 429 is claimed earlier by the
 			// rate_limited bank (which runs first), so this covers the rest.

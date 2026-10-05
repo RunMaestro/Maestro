@@ -16,8 +16,8 @@ const stmtCache = new StatementCache();
 
 const UPSERT_SQL = `
   INSERT OR REPLACE INTO wizard_runs
-    (id, session_id, agent_type, surface, mode, outcome, started_at, ended_at, exchanges, documents, tasks, project_path)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    (id, session_id, agent_type, surface, mode, outcome, started_at, ended_at, exchanges, documents, tasks, project_path, active_ms)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `;
 
 /**
@@ -39,7 +39,8 @@ export function recordWizardRun(db: Database.Database, run: WizardRun): string {
 		run.exchanges,
 		run.documents,
 		run.tasks,
-		normalizePath(run.projectPath)
+		normalizePath(run.projectPath),
+		run.activeMs ?? null
 	);
 	logger.debug(`Recorded wizard run ${run.id} (${run.outcome})`, LOG_CONTEXT);
 	return run.id;
@@ -58,6 +59,7 @@ interface WizardRunRow {
 	documents: number;
 	tasks: number;
 	project_path: string | null;
+	active_ms: number | null;
 }
 
 /** Get wizard runs that STARTED within the time range, newest first. */
@@ -85,6 +87,7 @@ export function getWizardRuns(db: Database.Database, range: StatsTimeRange): Wiz
 		documents: row.documents,
 		tasks: row.tasks,
 		projectPath: row.project_path ?? undefined,
+		activeMs: row.active_ms ?? undefined,
 	}));
 }
 

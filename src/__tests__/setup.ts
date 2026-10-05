@@ -250,6 +250,8 @@ const mockMaestro = {
 		submitConversation: vi.fn().mockResolvedValue({ success: true }),
 		searchIssues: vi.fn().mockResolvedValue({ issues: [] }),
 		subscribeIssue: vi.fn().mockResolvedValue({ success: true }),
+		listAccounts: vi.fn().mockResolvedValue({ accounts: [], lastWorkingKey: null }),
+		rememberAccount: vi.fn().mockResolvedValue(undefined),
 	},
 	git: {
 		branch: vi.fn().mockResolvedValue({ stdout: 'main' }),

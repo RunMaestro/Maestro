@@ -4,7 +4,7 @@
  * Verifies:
  * - The four questions the section exists to answer (time, runs, docs, tasks)
  * - Derived metrics: hit rate, tasks per document, docs per productive run
- * - Duration comes from the run window, not wall clock since the first run
+ * - Duration comes from each run's active time, never its open-to-close window
  * - Empty state when no wizard runs are in range
  * - Refetches when the dashboard broadcasts a stats update
  */
@@ -31,6 +31,7 @@ function makeRun(overrides: Partial<WizardRun> = {}): WizardRun {
 		outcome: 'generated',
 		startedAt,
 		endedAt: startedAt + 10 * MINUTE,
+		activeMs: 10 * MINUTE,
 		exchanges: 3,
 		documents: 2,
 		tasks: 10,
@@ -65,18 +66,55 @@ describe('WizardStats', () => {
 		expect(screen.queryByTestId('wizard-stats')).not.toBeInTheDocument();
 	});
 
-	it('sums time in conversation from each run window, not wall clock', async () => {
+	it('sums active time, not the open-to-close window of a tab left open', async () => {
 		const now = Date.now();
 		mockStatsApi.getWizardRuns.mockResolvedValue([
-			makeRun({ id: 'a', startedAt: now - 5 * HOUR, endedAt: now - 5 * HOUR + 20 * MINUTE }),
-			makeRun({ id: 'b', startedAt: now - HOUR, endedAt: now - HOUR + 10 * MINUTE }),
+			// Open for a full day, 20 minutes of it actually spent in the wizard.
+			makeRun({
+				id: 'a',
+				startedAt: now - 30 * HOUR,
+				endedAt: now - 6 * HOUR,
+				activeMs: 20 * MINUTE,
+			}),
+			makeRun({
+				id: 'b',
+				startedAt: now - HOUR,
+				endedAt: now - HOUR + 10 * MINUTE,
+				activeMs: 10 * MINUTE,
+			}),
 		]);
 
 		render(<WizardStats timeRange="week" theme={theme} />);
 
-		// 30m total across two runs spanning five hours of wall clock.
 		const tile = await screen.findByLabelText(/^Time in the Wizard: 30m/i);
 		expect(tile).toHaveAccessibleName(/15m 0s per run/i);
+	});
+
+	it('leaves runs recorded before active time out of the time figures', async () => {
+		const now = Date.now();
+		mockStatsApi.getWizardRuns.mockResolvedValue([
+			makeRun({
+				id: 'legacy',
+				startedAt: now - 30 * HOUR,
+				endedAt: now - 4 * HOUR,
+				activeMs: undefined,
+			}),
+			makeRun({ id: 'timed', activeMs: 12 * MINUTE }),
+		]);
+
+		render(<WizardStats timeRange="week" theme={theme} />);
+
+		const tile = await screen.findByLabelText(/^Time in the Wizard: 12m/i);
+		expect(tile).toHaveAccessibleName(/12m 0s per run · 1 earlier untimed/i);
+	});
+
+	it('shows a dash rather than 0m when no run in range was timed', async () => {
+		mockStatsApi.getWizardRuns.mockResolvedValue([makeRun({ activeMs: undefined })]);
+
+		render(<WizardStats timeRange="week" theme={theme} />);
+
+		const tile = await screen.findByLabelText(/^Time in the Wizard: -/i);
+		expect(tile).toHaveAccessibleName(/1 earlier untimed/i);
 	});
 
 	it('counts runs and splits them by surface', async () => {

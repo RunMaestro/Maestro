@@ -1,7 +1,45 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { FeedbackChatView } from '../../../renderer/components/FeedbackChatView';
 import type { Theme, Session } from '../../../renderer/types';
+import type { FeedbackAccount } from '../../../shared/feedbackAccounts';
+
+// The real login dialog spawns a PTY; here it is a stub that signs in on click.
+vi.mock('../../../renderer/components/GitHubLoginModal', () => ({
+	GitHubLoginModal: (props: { reason?: string; onSignedIn: () => void }) => (
+		<div data-testid="gh-login-modal-stub" data-reason={props.reason ?? ''}>
+			<button type="button" onClick={props.onSignedIn}>
+				stub-signed-in
+			</button>
+		</div>
+	),
+}));
+
+function account(overrides: Partial<FeedbackAccount> & { key: string }): FeedbackAccount {
+	return {
+		toolType: 'claude-code',
+		label: overrides.key,
+		env: {},
+		sshRemoteId: null,
+		agentNames: [],
+		source: 'agent',
+		status: 'ready',
+		...overrides,
+	};
+}
+
+const WORK = account({
+	key: 'claude-code::/home/me/.claude-work',
+	label: 'Claude Code - work',
+	env: { CLAUDE_CONFIG_DIR: '/home/me/.claude-work' },
+	agentNames: ['Agent 1'],
+});
+const DEFAULT = account({
+	key: 'claude-code::/home/me/.claude',
+	label: 'Claude Code (default)',
+	source: 'provider-default',
+	status: 'not-logged-in',
+});
 
 const theme: Theme = {
 	id: 'test-dark',
@@ -57,11 +95,12 @@ describe('FeedbackChatView', () => {
 		});
 	});
 
-	it('auto-starts chat when gh is authenticated and a supported agent is detected', async () => {
+	it('auto-starts chat as the first usable account when gh is authenticated', async () => {
 		window.maestro.feedback.checkGhAuth.mockResolvedValue({ authenticated: true });
-		window.maestro.agents.detect.mockResolvedValue([
-			{ id: 'claude-code', name: 'Claude Code', available: true },
-		]);
+		window.maestro.feedback.listAccounts.mockResolvedValue({
+			accounts: [WORK, DEFAULT],
+			lastWorkingKey: null,
+		});
 		window.maestro.feedback.getConversationPrompt.mockResolvedValue({
 			prompt: 'system prompt',
 			environment: '- Maestro version: 1.0.0',
@@ -87,6 +126,81 @@ describe('FeedbackChatView', () => {
 
 		// The conversation prompt was fetched (chat actually started).
 		expect(window.maestro.feedback.getConversationPrompt).toHaveBeenCalled();
+
+		// The picker names the account it chose, so the user can override it.
+		const picker = screen.getByTestId('feedback-account-picker') as HTMLSelectElement;
+		expect(picker.value).toBe(WORK.key);
+	});
+
+	it('falls through to the next account when the first turn fails, and remembers the one that worked', async () => {
+		const OTHER = account({
+			key: 'claude-code::/home/me/.claude-home',
+			label: 'Claude Code - home',
+			env: { CLAUDE_CONFIG_DIR: '/home/me/.claude-home' },
+		});
+		window.maestro.feedback.checkGhAuth.mockResolvedValue({ authenticated: true });
+		window.maestro.feedback.listAccounts.mockResolvedValue({
+			accounts: [WORK, OTHER],
+			lastWorkingKey: null,
+		});
+		window.maestro.agents.get.mockResolvedValue({
+			id: 'claude-code',
+			available: true,
+			command: 'claude',
+			args: [],
+		});
+
+		let onExit: ((sid: string, code: number) => void) | undefined;
+		let onData: ((sid: string, data: string) => void) | undefined;
+		window.maestro.process.onExit.mockImplementation((cb: typeof onExit) => {
+			onExit = cb;
+			return () => {};
+		});
+		// The shared setup mock has no onData; give this test its own.
+		(window.maestro.process as unknown as { onData: unknown }).onData = vi.fn(
+			(cb: typeof onData) => {
+				onData = cb;
+				return () => {};
+			}
+		);
+		const spawned: Array<{ sessionId: string; sessionCustomEnvVars?: Record<string, string> }> = [];
+		window.maestro.process.spawn.mockImplementation(
+			(config: { sessionId: string; sessionCustomEnvVars?: Record<string, string> }) => {
+				spawned.push(config);
+				const attempt = spawned.length;
+				queueMicrotask(() => {
+					if (attempt === 1) {
+						onExit?.(config.sessionId, 1);
+					} else {
+						onData?.(config.sessionId, JSON.stringify({ confidence: 50, message: 'Tell me more' }));
+						onExit?.(config.sessionId, 0);
+					}
+				});
+				return Promise.resolve({ pid: 1, success: true });
+			}
+		);
+
+		render(
+			<FeedbackChatView
+				theme={theme}
+				sessions={sessions}
+				onCancel={vi.fn()}
+				onSubmitSuccess={vi.fn()}
+			/>
+		);
+
+		const input = await screen.findByPlaceholderText('Describe your issue or idea...');
+		fireEvent.change(input, { target: { value: 'The player gets stuck' } });
+		await act(async () => {
+			fireEvent.keyDown(input, { key: 'Enter' });
+		});
+
+		await screen.findByText('Tell me more');
+		expect(spawned.map((c) => c.sessionCustomEnvVars)).toEqual([WORK.env, OTHER.env]);
+		expect(window.maestro.feedback.rememberAccount).toHaveBeenCalledWith(OTHER.key);
+		expect((screen.getByTestId('feedback-account-picker') as HTMLSelectElement).value).toBe(
+			OTHER.key
+		);
 	});
 
 	it('shows loading spinner during GH auth check', () => {
@@ -106,7 +220,10 @@ describe('FeedbackChatView', () => {
 
 	it('shows the no-providers screen when gh is authenticated but no supported agents are detected', async () => {
 		window.maestro.feedback.checkGhAuth.mockResolvedValue({ authenticated: true });
-		window.maestro.agents.detect.mockResolvedValue([]);
+		window.maestro.feedback.listAccounts.mockResolvedValue({
+			accounts: [account({ key: 'codex::/home/me/.codex', status: 'not-installed' })],
+			lastWorkingKey: null,
+		});
 
 		render(
 			<FeedbackChatView
@@ -123,6 +240,197 @@ describe('FeedbackChatView', () => {
 
 		// The chat should not have been started.
 		expect(window.maestro.feedback.getConversationPrompt).not.toHaveBeenCalled();
+	});
+
+	it('offers an embedded GitHub login when gh is not signed in, then continues into the chat', async () => {
+		window.maestro.feedback.checkGhAuth.mockResolvedValue({
+			authenticated: false,
+			reason: 'not-authenticated',
+			message: 'GitHub CLI (gh) is not signed in to GitHub, so feedback cannot be filed.',
+		});
+		window.maestro.feedback.listAccounts.mockResolvedValue({
+			accounts: [WORK],
+			lastWorkingKey: null,
+		});
+
+		render(
+			<FeedbackChatView
+				theme={theme}
+				sessions={sessions}
+				onCancel={vi.fn()}
+				onSubmitSuccess={vi.fn()}
+			/>
+		);
+
+		fireEvent.click(await screen.findByTestId('feedback-gh-login'));
+		fireEvent.click(await screen.findByText('stub-signed-in'));
+
+		expect(await screen.findByPlaceholderText('Describe your issue or idea...')).toBeTruthy();
+		expect(screen.queryByTestId('gh-login-modal-stub')).toBeNull();
+	});
+
+	it('links to the install page instead of a login when gh is not installed', async () => {
+		window.maestro.feedback.checkGhAuth.mockResolvedValue({
+			authenticated: false,
+			reason: 'not-installed',
+			message: 'GitHub CLI (gh) is not installed.',
+		});
+
+		render(
+			<FeedbackChatView
+				theme={theme}
+				sessions={sessions}
+				onCancel={vi.fn()}
+				onSubmitSuccess={vi.fn()}
+			/>
+		);
+
+		expect(await screen.findByTestId('feedback-gh-install')).toBeTruthy();
+		expect(screen.queryByTestId('feedback-gh-login')).toBeNull();
+	});
+
+	// gh is signed in, but GitHub refused this account an issue on the repo. The
+	// screen says so up front and names the account, instead of letting the user
+	// write a report that fails at submit.
+	it('names a refused account and offers the login only when it can fix the refusal', async () => {
+		window.maestro.feedback.checkGhAuth.mockResolvedValue({
+			authenticated: false,
+			reason: 'no-repo-access',
+			needsGhLogin: true,
+			message: 'GitHub refused the request because an organization restricts third-party apps.',
+			account: { host: 'github.com', login: 'octocat' },
+		});
+
+		const { unmount } = render(
+			<FeedbackChatView
+				theme={theme}
+				sessions={sessions}
+				onCancel={vi.fn()}
+				onSubmitSuccess={vi.fn()}
+			/>
+		);
+
+		expect(await screen.findByText('GitHub Refused This Account')).toBeTruthy();
+		expect(screen.getByTestId('feedback-gh-account').textContent).toContain('octocat @ github.com');
+		expect(screen.getByTestId('feedback-gh-login')).toBeTruthy();
+		unmount();
+
+		window.maestro.feedback.checkGhAuth.mockResolvedValue({
+			authenticated: false,
+			reason: 'no-repo-access',
+			needsGhLogin: false,
+			message: 'GitHub refused this account an issue on RunMaestro/Maestro.',
+		});
+		render(
+			<FeedbackChatView
+				theme={theme}
+				sessions={sessions}
+				onCancel={vi.fn()}
+				onSubmitSuccess={vi.fn()}
+			/>
+		);
+
+		expect(await screen.findByText('GitHub Refused This Account')).toBeTruthy();
+		expect(screen.queryByTestId('feedback-gh-login')).toBeNull();
+		expect(screen.getByTestId('feedback-gh-recheck')).toBeTruthy();
+	});
+
+	it('Check Again re-asks gh past the cache', async () => {
+		window.maestro.feedback.checkGhAuth
+			.mockResolvedValueOnce({ authenticated: false, reason: 'not-authenticated' })
+			.mockResolvedValueOnce({ authenticated: true });
+		window.maestro.feedback.listAccounts.mockResolvedValue({
+			accounts: [WORK],
+			lastWorkingKey: null,
+		});
+
+		render(
+			<FeedbackChatView
+				theme={theme}
+				sessions={sessions}
+				onCancel={vi.fn()}
+				onSubmitSuccess={vi.fn()}
+			/>
+		);
+
+		fireEvent.click(await screen.findByTestId('feedback-gh-recheck'));
+		expect(await screen.findByPlaceholderText('Describe your issue or idea...')).toBeTruthy();
+		expect(window.maestro.feedback.checkGhAuth).toHaveBeenLastCalledWith({ fresh: true });
+	});
+
+	it('offers the GitHub login when gh refuses the submit, then files again once signed in', async () => {
+		window.maestro.feedback.checkGhAuth.mockResolvedValue({ authenticated: true });
+		window.maestro.feedback.listAccounts.mockResolvedValue({
+			accounts: [WORK],
+			lastWorkingKey: null,
+		});
+		window.maestro.feedback.searchIssues.mockResolvedValue({ issues: [] });
+		window.maestro.feedback.submitConversation
+			.mockResolvedValueOnce({
+				success: false,
+				error: 'Your GitHub CLI login has expired or was revoked.',
+				needsGhLogin: true,
+			})
+			.mockResolvedValueOnce({ success: true, issueUrl: 'https://github.com/x/y/issues/7' });
+		window.maestro.agents.get.mockResolvedValue({
+			id: 'claude-code',
+			available: true,
+			command: 'claude',
+			args: [],
+		});
+		let onExit: ((sid: string, code: number) => void) | undefined;
+		let onData: ((sid: string, data: string) => void) | undefined;
+		window.maestro.process.onExit.mockImplementation((cb: typeof onExit) => {
+			onExit = cb;
+			return () => {};
+		});
+		(window.maestro.process as unknown as { onData: unknown }).onData = vi.fn(
+			(cb: typeof onData) => {
+				onData = cb;
+				return () => {};
+			}
+		);
+		window.maestro.process.spawn.mockImplementation((config: { sessionId: string }) => {
+			queueMicrotask(() => {
+				onData?.(
+					config.sessionId,
+					JSON.stringify({
+						confidence: 95,
+						ready: true,
+						message: 'Got it',
+						category: 'bug_report',
+						summary: 'Player stuck under title bar',
+						structured: { expectedBehavior: 'moves', actualBehavior: 'stuck' },
+					})
+				);
+				onExit?.(config.sessionId, 0);
+			});
+			return Promise.resolve({ pid: 1, success: true });
+		});
+
+		render(
+			<FeedbackChatView
+				theme={theme}
+				sessions={sessions}
+				onCancel={vi.fn()}
+				onSubmitSuccess={vi.fn()}
+			/>
+		);
+		const input = await screen.findByPlaceholderText('Describe your issue or idea...');
+		fireEvent.change(input, { target: { value: 'The player gets stuck' } });
+		await act(async () => {
+			fireEvent.keyDown(input, { key: 'Enter' });
+		});
+		fireEvent.click(await screen.findByText('Submit Feedback'));
+
+		fireEvent.click(await screen.findByTestId('feedback-gh-login-retry'));
+		expect(screen.getByTestId('gh-login-modal-stub').getAttribute('data-reason')).toContain(
+			'expired'
+		);
+		fireEvent.click(screen.getByText('stub-signed-in'));
+
+		expect(await screen.findByText('Feedback Submitted')).toBeTruthy();
+		expect(window.maestro.feedback.submitConversation).toHaveBeenCalledTimes(2);
 	});
 
 	it('calls onCancel when Close button is clicked on GH error', async () => {
@@ -148,9 +456,9 @@ describe('FeedbackChatView', () => {
 		expect(onCancel).toHaveBeenCalledOnce();
 	});
 
-	it('shows a distinct error screen when agent detection itself throws', async () => {
+	it('shows a distinct error screen when account discovery itself throws', async () => {
 		window.maestro.feedback.checkGhAuth.mockResolvedValue({ authenticated: true });
-		window.maestro.agents.detect.mockRejectedValue(new Error('IPC channel closed'));
+		window.maestro.feedback.listAccounts.mockRejectedValue(new Error('IPC channel closed'));
 
 		render(
 			<FeedbackChatView
@@ -177,9 +485,10 @@ describe('FeedbackChatView', () => {
 	it('lets the user dismiss the boot screen if conversation start fails', async () => {
 		const onCancel = vi.fn();
 		window.maestro.feedback.checkGhAuth.mockResolvedValue({ authenticated: true });
-		window.maestro.agents.detect.mockResolvedValue([
-			{ id: 'claude-code', name: 'Claude Code', available: true },
-		]);
+		window.maestro.feedback.listAccounts.mockResolvedValue({
+			accounts: [WORK, DEFAULT],
+			lastWorkingKey: null,
+		});
 		window.maestro.feedback.getConversationPrompt.mockRejectedValue(
 			new Error('Prompt fetch failed')
 		);

@@ -33,6 +33,7 @@ vi.mock('../../../../main/utils/logger', () => ({
  */
 function createMockCallbacks(): WsRouteCallbacks {
 	return {
+		isOriginAllowed: vi.fn().mockReturnValue(true),
 		getSessions: vi.fn().mockReturnValue([
 			{
 				id: 'session-1',
@@ -95,6 +96,7 @@ function createMockSocket() {
 	return {
 		readyState: WebSocket.OPEN,
 		send: vi.fn(),
+		close: vi.fn(),
 		on: vi.fn((event: string, handler: Function) => {
 			if (!eventHandlers.has(event)) {
 				eventHandlers.set(event, []);
@@ -121,12 +123,13 @@ function createMockConnection() {
 /**
  * Create mock Fastify request
  */
-function createMockRequest(sessionId?: string) {
+function createMockRequest(sessionId?: string, origin?: string) {
 	const queryString = sessionId ? `?sessionId=${sessionId}` : '';
 	return {
 		url: `/test-token/ws${queryString}`,
 		headers: {
 			host: 'localhost:3000',
+			...(origin !== undefined ? { origin } : {}),
 		},
 	};
 }
@@ -421,8 +424,33 @@ describe('WsRoute', () => {
 		});
 	});
 
+	describe('Origin check', () => {
+		it('passes the Origin and Host headers to isOriginAllowed', () => {
+			const route = mockFastify.getRoute('GET', `/${securityToken}/ws`);
+			route!.handler(createMockConnection(), createMockRequest(undefined, 'http://localhost:3000'));
+
+			expect(callbacks.isOriginAllowed).toHaveBeenCalledWith(
+				'http://localhost:3000',
+				'localhost:3000'
+			);
+		});
+
+		it('closes a refused socket with 1008 before sending or registering anything', () => {
+			(callbacks.isOriginAllowed as any).mockReturnValue(false);
+			const route = mockFastify.getRoute('GET', `/${securityToken}/ws`);
+			const connection = createMockConnection();
+
+			route!.handler(connection, createMockRequest(undefined, 'https://evil.example'));
+
+			expect(connection.socket.close).toHaveBeenCalledWith(1008, 'Origin not allowed');
+			expect(connection.socket.send).not.toHaveBeenCalled();
+			expect(connection.socket.on).not.toHaveBeenCalled();
+			expect(callbacks.onClientConnect).not.toHaveBeenCalled();
+		});
+	});
+
 	describe('Callback Resilience', () => {
-		it('should handle missing callbacks gracefully', () => {
+		it('refuses the connection when no origin check is wired (fails closed)', () => {
 			const emptyWsRoute = new WsRoute(securityToken);
 			// Don't set any callbacks
 			const emptyFastify = createMockFastify();
@@ -436,17 +464,14 @@ describe('WsRoute', () => {
 				route!.handler(connection, createMockRequest());
 			}).not.toThrow();
 
-			// Should still send connected message
-			const sentMessages = (connection.socket.send as any).mock.calls.map((call: any[]) =>
-				JSON.parse(call[0])
-			);
-			const connectedMsg = sentMessages.find((m: any) => m.type === 'connected');
-			expect(connectedMsg).toBeDefined();
+			expect(connection.socket.close).toHaveBeenCalledWith(1008, 'Origin not allowed');
+			expect(connection.socket.send).not.toHaveBeenCalled();
 		});
 
 		it('should handle partial callbacks', () => {
 			const partialWsRoute = new WsRoute(securityToken);
 			partialWsRoute.setCallbacks({
+				isOriginAllowed: vi.fn().mockReturnValue(true),
 				getSessions: vi.fn().mockReturnValue([]),
 				getTheme: vi.fn().mockReturnValue(null),
 				getCustomCommands: vi.fn().mockReturnValue([]),

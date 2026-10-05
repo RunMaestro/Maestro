@@ -84,10 +84,13 @@ import { promptsGet, promptsList } from './commands/prompts-get';
 import { gistCreate } from './commands/gist';
 import { notifyToast } from './commands/notify-toast';
 import { notifyFlash } from './commands/notify-flash';
+import { notificationInbox } from './commands/notification-inbox';
 import { profilingStart, profilingStop, profilingStatus } from './commands/profiling';
 import { supportPackage } from './commands/support-package';
 import {
+	feedbackAccounts,
 	feedbackAuth,
+	feedbackLogin,
 	feedbackSearch,
 	feedbackSubmit,
 	feedbackSubscribe,
@@ -127,6 +130,7 @@ import { gloss } from './commands/gloss';
 import { themeShow, themeExport, themeImport, themeSet } from './commands/theme';
 import { encoreList, encoreSet } from './commands/encore';
 import { setVerbosity } from './output/verbosity';
+import { logger } from '../main/utils/logger';
 
 // Injected at build time by scripts/build-cli.mjs via esbuild `define`.
 // The typeof guard keeps non-esbuild execution paths (ts-node, plain tsc output) from
@@ -134,6 +138,11 @@ import { setVerbosity } from './output/verbosity';
 declare const __MAESTRO_CLI_VERSION__: string;
 const cliVersion: string =
 	typeof __MAESTRO_CLI_VERSION__ !== 'undefined' ? __MAESTRO_CLI_VERSION__ : '0.0.0-dev';
+
+// stdout carries command output (often JSON that scripts parse), so the
+// main-process logger shared with modules like the WakaTime manager must keep
+// its diagnostics on stderr. See #1698.
+logger.routeConsoleToStderr();
 
 const program = new Command();
 
@@ -1449,6 +1458,44 @@ notify
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(notifyToast);
 
+const inbox = notify
+	.command('inbox')
+	.description('Read and manage the desktop notification center history');
+inbox
+	.command('list')
+	.description('List retained notifications with stable IDs')
+	.option('--unread', 'Only list unread entries')
+	.option('--json', 'Output as JSON')
+	.action((options) => notificationInbox({ action: 'list', unread: options.unread }, options));
+for (const action of ['open', 'close', 'read-all', 'clear', 'dismiss'] as const) {
+	inbox
+		.command(action)
+		.description(
+			{
+				open: 'Open the notification center',
+				close: 'Close the notification center',
+				'read-all': 'Mark every history entry read',
+				clear: 'Clear retained history',
+				dismiss: 'Dismiss visible toasts and mark their entries read',
+			}[action]
+		)
+		.option('--json', 'Output as JSON')
+		.action((options) => notificationInbox({ action }, options));
+}
+for (const action of ['read', 'activate', 'link'] as const) {
+	inbox
+		.command(`${action} <id>`)
+		.description(
+			{
+				read: 'Mark one notification read',
+				activate: 'Run a notification body action',
+				link: 'Open a notification inline link',
+			}[action]
+		)
+		.option('--json', 'Output as JSON')
+		.action((id, options) => notificationInbox({ action, id }, options));
+}
+
 notify
 	.command('flash <message>')
 	.description('Show a center-screen flash (momentary, exclusive — replaces any active flash)')
@@ -1509,9 +1556,33 @@ const feedback = program
 
 feedback
 	.command('auth')
-	.description('Check that the GitHub CLI (gh) is installed and logged in (required to file)')
+	.description(
+		'Check that the GitHub CLI (gh) is installed, logged in, and allowed to file on the feedback repo (required to file); names the gh account, and prints the login command when signing in can fix it'
+	)
+	.option('--fresh', 'Skip the cached verdict (after logging in elsewhere)')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(feedbackAuth);
+
+feedback
+	.command('login')
+	.description(
+		'Sign the GitHub CLI in for feedback (gh auth login, device code + browser), as the modal\'s "Log in to GitHub" does'
+	)
+	.option('--json', 'Output the result as JSON (for scripting)')
+	.action(feedbackLogin);
+
+feedback
+	.command('accounts')
+	.description(
+		'List the provider accounts the Feedback chat can run as, in the order it tries them (first usable one wins)'
+	)
+	.option(
+		'--use <key>',
+		'Make this account (a key from the list) the one the next chat tries first'
+	)
+	.option('--clear', 'Forget the remembered account and pick automatically again')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(feedbackAccounts);
 
 feedback
 	.command('search <query>')

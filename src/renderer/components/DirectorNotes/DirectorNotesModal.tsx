@@ -10,7 +10,7 @@ import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { OverviewTab, type TabFocusHandle } from './OverviewTab';
 import { hasCachedSynopsis } from './AIOverviewTab';
 import { useSettings } from '../../hooks';
-import { useModalStore, selectModalData } from '../../stores/modalStore';
+import { useModalStore, selectModalData, getModalActions } from '../../stores/modalStore';
 import { daysToLookbackHours, formatLookbackSinceDate } from './lookback';
 import { ResizeHandles } from '../ui/ResizeHandles';
 
@@ -61,6 +61,16 @@ export function DirectorNotesModal({
 	const [overviewError, setOverviewError] = useState<string | null>(null);
 	const [lookbackHours, setLookbackHours] = useState<number | null>(() =>
 		daysToLookbackHours(directorNotesSettings.defaultLookbackDays)
+	);
+
+	// Settings sits below this modal in the layer stack, so it would open
+	// hidden behind it. Close first, then deep-link to the exact control.
+	const openSetting = useCallback(
+		(settingId: string) => {
+			onClose();
+			getModalActions().openSettings('encore', settingId);
+		},
+		[onClose]
 	);
 
 	// "Director's Notes Since Friday May 8th" - updates live when the
@@ -310,7 +320,13 @@ export function DirectorNotesModal({
 						}
 					>
 						<div className={`h-full ${activeTab === 'overview' ? '' : 'hidden'}`}>
-							<OverviewTab ref={overviewTabRef} theme={theme} shortcuts={shortcuts} />
+							<OverviewTab
+								ref={overviewTabRef}
+								theme={theme}
+								shortcuts={shortcuts}
+								idealEndState={directorNotesSettings.idealEndState}
+								onOpenSetting={openSetting}
+							/>
 						</div>
 						<div className={`h-full ${activeTab === 'history' ? '' : 'hidden'}`}>
 							<UnifiedHistoryTab

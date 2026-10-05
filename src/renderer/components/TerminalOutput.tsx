@@ -8,6 +8,7 @@ import React, {
 	useCallback,
 	memo,
 } from 'react';
+import { createPortal } from 'react-dom';
 import {
 	ChevronDown,
 	ChevronUp,
@@ -58,6 +59,14 @@ import { EscCloseButton } from './ui/EscCloseButton';
 import { ShellCommandCard } from './ShellCommandCard';
 import { isSelfContainedCard } from '../utils/logEntries';
 import { SaveMarkdownModal } from './SaveMarkdownModal';
+import {
+	TerminalSelectionContextMenu,
+	type TerminalSelectionContextMenuState,
+} from './TerminalSelectionContextMenu';
+import { resolveImageFromEvent } from './ImageContextMenuHost';
+import { isEditingTextTarget } from '../utils/editableTarget';
+import { appendQuoteToDraft } from '../utils/quoteSelection';
+import { useComposerInputStore } from '../stores/composerInputStore';
 import { generateTerminalProseStyles } from '../utils/markdownConfig';
 import { linkifyNode } from '../utils/linkify';
 import { safeClipboardWrite } from '../utils/clipboard';
@@ -1770,6 +1779,65 @@ export const TerminalOutput = memo(
 			setSaveModalContent(text);
 		}, []);
 
+		// Right-click on selected transcript text: Quote in Message / Copy (issue #1663).
+		const [selectionMenu, setSelectionMenu] = useState<TerminalSelectionContextMenuState | null>(
+			null
+		);
+		const closeSelectionMenu = useCallback(() => setSelectionMenu(null), []);
+
+		const handleTranscriptContextMenu = useCallback((e: React.MouseEvent) => {
+			// A link or image menu already claimed this right-click, or it landed in a
+			// text field (the native cut/copy/paste + spellcheck menu owns those).
+			if (e.defaultPrevented || isEditingTextTarget(e.target)) return;
+			if (resolveImageFromEvent(e.nativeEvent)) return;
+			const selection = window.getSelection();
+			const text = selection?.toString() ?? '';
+			if (!selection || selection.isCollapsed || !text.trim()) return;
+			const container = scrollContainerRef.current;
+			if (
+				!container ||
+				!selection.anchorNode ||
+				!selection.focusNode ||
+				!container.contains(selection.anchorNode) ||
+				!container.contains(selection.focusNode)
+			) {
+				return;
+			}
+			// Only when the click lands on the highlighted text itself, so a stale
+			// selection elsewhere in the transcript is not what gets quoted.
+			const target = e.target as Node;
+			let onSelection = false;
+			for (let i = 0; i < selection.rangeCount && !onSelection; i++) {
+				onSelection = selection.getRangeAt(i).intersectsNode(target);
+			}
+			if (!onSelection) return;
+			e.preventDefault();
+			setSelectionMenu({ x: e.clientX, y: e.clientY, selection: text });
+		}, []);
+
+		// Append the passage to the composer as a Markdown quote and park the caret
+		// on the blank line below it, ready for the comment about that passage.
+		// Repeating it stacks quotes, so one message can answer several passages.
+		const handleQuoteSelection = useCallback(
+			(text: string) => {
+				const composer = useComposerInputStore.getState();
+				// A quote is prose for the agent, never a shell command line.
+				if (composer.aiCommandMode !== 'off') composer.setAiCommandMode('off');
+				composer.setAiValue((prev) => appendQuoteToDraft(prev, text));
+				window.getSelection()?.removeAllRanges();
+				// Wait a frame so the controlled textarea has rendered the new value.
+				requestAnimationFrame(() => {
+					const input = inputRef.current;
+					if (!input) return;
+					input.focus();
+					const end = input.value.length;
+					input.setSelectionRange(end, end);
+					input.scrollTop = input.scrollHeight;
+				});
+			},
+			[inputRef]
+		);
+
 		// Layer stack integration for search overlay
 		const { registerLayer, unregisterLayer, updateLayerHandler } = useLayerStack();
 		const layerIdRef = useRef<string>();
@@ -3041,6 +3109,7 @@ export const TerminalOutput = memo(
 						overflowAnchor: session.inputMode === 'ai' && autoScrollPaused ? 'none' : undefined,
 					}}
 					onScroll={handleScroll}
+					onContextMenu={handleTranscriptContextMenu}
 					// The input events that prove a scroll is the user's. `scroll` itself
 					// cannot: this component writes `scrollTop` on every frame of a
 					// restore and on every mutation while following the tail, and each
@@ -3236,6 +3305,18 @@ export const TerminalOutput = memo(
 				)}
 
 				{/* Copy flash now rendered globally by <CenterFlash /> */}
+
+				{selectionMenu &&
+					createPortal(
+						<TerminalSelectionContextMenu
+							menu={selectionMenu}
+							theme={theme}
+							onDismiss={closeSelectionMenu}
+							onQuote={handleQuoteSelection}
+							onCopy={copyToClipboard}
+						/>,
+						document.body
+					)}
 
 				{/* Save Markdown Modal */}
 				{saveModalContent !== null && (

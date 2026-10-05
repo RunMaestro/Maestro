@@ -1061,6 +1061,35 @@ describe('notificationStore', () => {
 			expect(history().at(-1)!.title).toBe('n5');
 		});
 
+		it('bulk dismissal marks only visible entries read and persists that state', () => {
+			const expired = notifyToast({ title: 'Expired', message: '', duration: 1000 });
+			vi.advanceTimersByTime(1000);
+			const visible = notifyToast({ title: 'Visible', message: '', dismissible: true });
+			useNotificationStore.getState().clearToasts();
+			expect(history().find((n) => n.id === expired)!.read).toBe(false);
+			expect(history().find((n) => n.id === visible)!.read).toBe(true);
+			expect(loadNotificationHistory().find((n) => n.id === visible)!.read).toBe(true);
+		});
+
+		it('drops malformed persisted action and identity fields', () => {
+			notifyToast({
+				title: 'Valid',
+				message: '',
+				clickAction: { kind: 'open-url', url: 'https://example.com' },
+			});
+			const valid = history()[0];
+			localStorage.setItem(
+				NOTIFICATION_HISTORY_STORAGE_KEY,
+				JSON.stringify([
+					{ ...valid, id: 'bad-action', clickAction: { kind: 'open-file' } },
+					{ ...valid, id: 'bad-source', sessionId: {} },
+					{ ...valid, id: 'bad-callback', onClick: 'not a function' },
+					valid,
+				])
+			);
+			expect(loadNotificationHistory()).toEqual([valid]);
+		});
+
 		it('marks one entry read and leaves the rest', () => {
 			const first = notifyToast({ type: 'info', title: 'First', message: 'a' });
 			notifyToast({ type: 'info', title: 'Second', message: 'b' });

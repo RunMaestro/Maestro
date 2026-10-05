@@ -21,6 +21,7 @@ import type { FileNode } from '../../types/fileTree';
 import { buildFileTreeIndices } from '../../utils/remarkFileLinks';
 import { urlTransformAllowingMaestro } from '../../utils/markdownUrlTransform';
 import { getHomeDir, getHomeDirAsync } from '../../utils/homeDir';
+import { copyTextWithFlash } from '../../utils/inlineCodeCopy';
 import {
 	createMarkdownComponents,
 	createWizardBubbleMarkdownComponents,
@@ -63,7 +64,7 @@ export interface MarkdownProps {
 	bionifyAlgorithm?: string;
 
 	// --- Chat preset ---
-	/** Copy callback for code-fence copy buttons (required for chat). */
+	/** Copy callback for code-fence copy buttons. Defaults to clipboard write + center flash. */
 	onCopy?: (text: string) => void;
 	/** Allow raw HTML passthrough via rehype-raw (DOMPurify-sanitized). */
 	allowRawHtml?: boolean;
@@ -209,7 +210,7 @@ export const Markdown = memo(function Markdown({
 			case 'chat':
 				return createChatMarkdownComponents({
 					theme,
-					onCopy: onCopy ?? (() => {}),
+					onCopy: onCopy ?? copyTextWithFlash,
 					onFileClick,
 					projectRoot,
 					sshRemoteId,

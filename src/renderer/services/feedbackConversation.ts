@@ -8,6 +8,7 @@
  */
 
 import type { ToolType } from '../types';
+import type { FeedbackAccount } from '../../shared/feedbackAccounts';
 import { getStdinFlags } from '../utils/spawnHelpers';
 
 // ============================================================================
@@ -55,11 +56,12 @@ export interface FeedbackConversationConfig {
 	 * .app and made every diagnostic command fail.
 	 */
 	cwd?: string;
-	sshRemoteConfig?: {
-		enabled: boolean;
-		remoteId: string | null;
-		workingDirOverride?: string;
-	};
+	/**
+	 * The account to run as (see `shared/feedbackAccounts`). Its env replaces the
+	 * provider-level set, the way an agent's own env does, so the chat signs in
+	 * as that account rather than the provider's default login.
+	 */
+	account?: Pick<FeedbackAccount, 'env' | 'customPath' | 'sshRemoteId' | 'remoteCwd'>;
 }
 
 /** A diagnostic command the feedback agent ran while investigating. */
@@ -77,6 +79,18 @@ export interface FeedbackSendCallbacks {
 	onDiagnostic?: (diagnostic: FeedbackDiagnostic) => void;
 	onComplete?: (response: FeedbackParsedResponse) => void;
 	onError?: (error: string) => void;
+}
+
+/** What one turn produced, and whether the agent behind it ran at all. */
+export interface FeedbackTurnResult {
+	response: FeedbackParsedResponse;
+	/**
+	 * The agent could not answer: it was missing, or exited non-zero (a refused
+	 * login lands here). The caller decides whether to try another account.
+	 */
+	failed: boolean;
+	/** Why it failed, with the tail of the agent's output when there was any. */
+	error?: string;
 }
 
 // ============================================================================
@@ -284,7 +298,7 @@ export class FeedbackConversationManager {
 	private thinkingCleanup?: () => void;
 	private toolCleanup?: () => void;
 	private timeoutId?: ReturnType<typeof setTimeout>;
-	private sshRemoteConfig?: FeedbackConversationConfig['sshRemoteConfig'];
+	private account?: FeedbackConversationConfig['account'];
 	private cwd = '.';
 
 	/**
@@ -296,10 +310,23 @@ export class FeedbackConversationManager {
 		this.sessionId = `feedback-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 		this.agentType = config.agentType;
 		this.systemPrompt = config.systemPrompt;
-		this.sshRemoteConfig = config.sshRemoteConfig;
+		this.account = config.account;
 		this.cwd = config.cwd || '.';
 
 		return this.sessionId;
+	}
+
+	/**
+	 * Run the next turn as a different account. Every turn is a fresh process
+	 * that is handed the whole conversation, so switching between turns loses
+	 * nothing.
+	 */
+	switchAccount(agentType: ToolType, account: FeedbackConversationConfig['account']): void {
+		if (!this.sessionId) {
+			throw new Error('No active feedback conversation. Call start() first.');
+		}
+		this.agentType = agentType;
+		this.account = account;
 	}
 
 	/**
@@ -310,6 +337,18 @@ export class FeedbackConversationManager {
 		history: FeedbackMessage[],
 		callbacks?: FeedbackSendCallbacks
 	): Promise<FeedbackParsedResponse> {
+		return (await this.sendTurn(userMessage, history, callbacks)).response;
+	}
+
+	/**
+	 * Send a user message and report whether the agent actually answered, so a
+	 * caller can fall through to another account when it did not.
+	 */
+	async sendTurn(
+		userMessage: string,
+		history: FeedbackMessage[],
+		callbacks?: FeedbackSendCallbacks
+	): Promise<FeedbackTurnResult> {
 		if (!this.sessionId || !this.agentType) {
 			throw new Error('No active feedback conversation. Call start() first.');
 		}
@@ -321,23 +360,31 @@ export class FeedbackConversationManager {
 			throw new Error(`Agent ${this.agentType} not found`);
 		}
 
-		const isRemote = this.sshRemoteConfig?.enabled && this.sshRemoteConfig?.remoteId;
-		if (!isRemote && !agent.available) {
-			throw new Error(`Agent ${this.agentType} is not available`);
+		const account = this.account;
+		const isRemote = Boolean(account?.sshRemoteId);
+		// An account's own binary stands in for detection, which only knows the
+		// provider-level path.
+		if (!isRemote && !agent.available && !account?.customPath) {
+			const error = `${this.agentType} is not installed`;
+			callbacks?.onError?.(error);
+			return { response: { ...DEFAULT_FEEDBACK_RESPONSE }, failed: true, error };
 		}
 
 		const prompt = this.buildPrompt(userMessage, history);
 
 		const currentSessionId = this.sessionId;
-		return new Promise<FeedbackParsedResponse>((resolve) => {
+		return new Promise<FeedbackTurnResult>((resolve) => {
 			// Activity timeout
 			const resetTimeout = () => {
 				if (this.timeoutId) clearTimeout(this.timeoutId);
 				this.timeoutId = setTimeout(() => {
 					this.cleanupListeners();
 					resolve({
-						...DEFAULT_FEEDBACK_RESPONSE,
-						message: 'The agent took too long to respond. Please try again.',
+						response: {
+							...DEFAULT_FEEDBACK_RESPONSE,
+							message: 'The agent took too long to respond. Please try again.',
+						},
+						failed: false,
 					});
 				}, INACTIVITY_TIMEOUT_MS);
 			};
@@ -405,14 +452,16 @@ export class FeedbackConversationManager {
 					const parsed = extractJsonFromOutput(this.outputBuffer);
 					const response = parsed ?? DEFAULT_FEEDBACK_RESPONSE;
 					callbacks?.onComplete?.(response);
-					resolve(response);
+					resolve({ response, failed: false });
 				} else {
 					const errorResponse = {
 						...DEFAULT_FEEDBACK_RESPONSE,
 						message: 'Something went wrong processing your message. Please try again.',
 					};
-					callbacks?.onError?.(`Agent exited with code ${code}`);
-					resolve(errorResponse);
+					const tail = this.outputBuffer.trim().slice(-300);
+					const error = `Agent exited with code ${code}${tail ? `: ${tail}` : ''}`;
+					callbacks?.onError?.(error);
+					resolve({ response: errorResponse, failed: true, error });
 				}
 			});
 
@@ -421,9 +470,8 @@ export class FeedbackConversationManager {
 			const commandToUse = agent.path || agent.command;
 
 			// Get stdin flags for Windows
-			const isSshSession = Boolean(this.sshRemoteConfig?.enabled);
 			const stdinFlags = getStdinFlags({
-				isSshSession,
+				isSshSession: isRemote,
 				supportsStreamJsonInput: Boolean(agent?.capabilities?.supportsStreamJsonInput),
 				hasImages: false,
 			});
@@ -439,11 +487,18 @@ export class FeedbackConversationManager {
 			window.maestro.process.spawn({
 				sessionId: currentSessionId,
 				toolType: this.agentType!,
-				cwd: this.cwd,
+				cwd: isRemote && account?.remoteCwd ? account.remoteCwd : this.cwd,
 				command: commandToUse,
 				args: argsForSpawn,
 				prompt,
 				readOnlyMode: true,
+				// The account: its env replaces the provider-level set, exactly as
+				// the agent it came from is spawned.
+				sessionCustomEnvVars: account?.env,
+				sessionCustomPath: account?.customPath,
+				sessionSshRemoteConfig: account?.sshRemoteId
+					? { enabled: true, remoteId: account.sshRemoteId }
+					: undefined,
 				...stdinFlags,
 			} as any);
 		});
@@ -548,6 +603,7 @@ export class FeedbackConversationManager {
 		}
 		this.sessionId = null;
 		this.agentType = null;
+		this.account = undefined;
 		this.systemPrompt = '';
 		this.outputBuffer = '';
 	}

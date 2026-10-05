@@ -12,10 +12,12 @@ import type {
 	FeedbackAttachmentPayload,
 	FeedbackAuthResponse,
 	FeedbackConversationSubmitPayload,
+	FeedbackGhLoginCommand,
 	FeedbackIssueSearchResponse,
 	FeedbackSubmissionPayload,
 	FeedbackSubmitResponse,
 } from '../../shared/feedback';
+import type { FeedbackAccountsResponse } from '../../shared/feedbackAccounts';
 
 export type {
 	FeedbackAttachmentPayload,
@@ -31,9 +33,14 @@ export type {
  */
 export interface FeedbackApi {
 	/**
-	 * Check whether gh CLI is available and authenticated
+	 * Check whether gh CLI is available and authenticated. `fresh` skips the
+	 * cached verdict (after a login, or "Check again").
 	 */
-	checkGhAuth: () => Promise<FeedbackAuthResponse>;
+	checkGhAuth: (options?: { fresh?: boolean }) => Promise<FeedbackAuthResponse>;
+	/**
+	 * The gh login command, with the gh binary feedback uses
+	 */
+	getGhLoginCommand: () => Promise<FeedbackGhLoginCommand>;
 	/**
 	 * Submit structured user feedback and create a GitHub issue
 	 */
@@ -60,6 +67,14 @@ export interface FeedbackApi {
 	 * Subscribe to an existing issue (+1 reaction) and optionally comment
 	 */
 	subscribeIssue: (issueNumber: number, comment?: string) => Promise<FeedbackSubmitResponse>;
+	/**
+	 * Accounts the feedback chat can run as, checked and in pick order
+	 */
+	listAccounts: () => Promise<FeedbackAccountsResponse>;
+	/**
+	 * Remember the account the next conversation tries first
+	 */
+	rememberAccount: (key: string | null) => Promise<void>;
 }
 
 /**
@@ -67,7 +82,11 @@ export interface FeedbackApi {
  */
 export function createFeedbackApi(): FeedbackApi {
 	return {
-		checkGhAuth: (): Promise<FeedbackAuthResponse> => ipcRenderer.invoke('feedback:check-gh-auth'),
+		checkGhAuth: (options?: { fresh?: boolean }): Promise<FeedbackAuthResponse> =>
+			ipcRenderer.invoke('feedback:check-gh-auth', { fresh: options?.fresh === true }),
+
+		getGhLoginCommand: (): Promise<FeedbackGhLoginCommand> =>
+			ipcRenderer.invoke('feedback:gh-login-command'),
 
 		submit: (payload: FeedbackSubmissionPayload): Promise<FeedbackSubmitResponse> =>
 			ipcRenderer.invoke('feedback:submit', {
@@ -93,5 +112,11 @@ export function createFeedbackApi(): FeedbackApi {
 
 		subscribeIssue: (issueNumber: number, comment?: string): Promise<FeedbackSubmitResponse> =>
 			ipcRenderer.invoke('feedback:subscribe-issue', { issueNumber, comment }),
+
+		listAccounts: (): Promise<FeedbackAccountsResponse> =>
+			ipcRenderer.invoke('feedback:list-accounts'),
+
+		rememberAccount: (key: string | null): Promise<void> =>
+			ipcRenderer.invoke('feedback:remember-account', { key }),
 	};
 }

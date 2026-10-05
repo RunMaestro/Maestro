@@ -45,6 +45,11 @@ import { readDirRemote } from '../../utils/remote-fs';
 import { runWorktreeSetupScript } from '../../utils/worktree-setup-script';
 import { captureException } from '../../utils/sentry';
 import type { SshRemoteConfig } from '../../../shared/types';
+import {
+	beginRemoteSync,
+	branchSwitchBlocker,
+	type BranchSwitchGuardDeps,
+} from '../../utils/branch-switch-guard';
 
 const LOG_CONTEXT = '[Git]';
 
@@ -56,6 +61,10 @@ export interface GitHandlerDependencies {
 	settingsStore: {
 		get: (key: string, defaultValue?: unknown) => unknown;
 	};
+	/** Live processes, so a branch switch can refuse while an agent works in the tree. */
+	getProcessManager?: BranchSwitchGuardDeps['getProcessManager'];
+	/** Agent name for an agent id, for the refusal message. */
+	getAgentName?: BranchSwitchGuardDeps['getAgentName'];
 }
 
 // Worktree directory watchers keyed by session ID
@@ -214,6 +223,39 @@ async function runStreamingGitCommand(
 
 	const gitArgs = buildStreamingGitArgs(operation, branch, setUpstream);
 
+	// Push and pull read (pre-push hook) or write (merge) the working tree, so a
+	// branch switch must wait for them. Fetch only touches refs.
+	const releaseSync =
+		operation === 'fetch'
+			? () => {}
+			: await beginRemoteSync(operation, cwd, sshRemote, effectiveRemoteCwd);
+	try {
+		return await spawnStreamingGitCommand(event, {
+			runId,
+			operation,
+			cwd,
+			sshRemote,
+			effectiveRemoteCwd,
+			gitArgs,
+		});
+	} finally {
+		releaseSync();
+	}
+}
+
+async function spawnStreamingGitCommand(
+	event: Electron.IpcMainInvokeEvent,
+	options: {
+		runId: string;
+		operation: GitStreamingOperation;
+		cwd: string;
+		sshRemote: SshRemoteConfig | undefined;
+		effectiveRemoteCwd: string | undefined;
+		gitArgs: string[];
+	}
+): Promise<GitRunCommandResult> {
+	const { runId, operation, cwd, sshRemote, effectiveRemoteCwd, gitArgs } = options;
+
 	// Full shell PATH so git hooks (Husky pre-push running npm, etc.) resolve
 	// their tooling, and GIT_TERMINAL_PROMPT=0 so a missing credential fails
 	// fast with a readable error instead of hanging on a prompt nobody can see.
@@ -299,7 +341,7 @@ async function runStreamingGitCommand(
  *
  * @param deps Dependencies including settingsStore for SSH remote configuration lookup
  */
-export function registerGitHandlers(_deps: GitHandlerDependencies): void {
+export function registerGitHandlers(deps: GitHandlerDependencies): void {
 	// Basic Git operations
 	// All handlers accept optional sshRemoteId and remoteCwd for remote execution
 
@@ -661,6 +703,8 @@ export function registerGitHandlers(_deps: GitHandlerDependencies): void {
 					return { success: false, error: `SSH remote not found: ${sshRemoteId}` };
 				}
 				const effectiveRemoteCwd = sshRemote ? remoteCwd || cwd : undefined;
+				const blocker = await branchSwitchBlocker(deps, cwd, sshRemote, effectiveRemoteCwd);
+				if (blocker) return { success: false, error: blocker };
 				const args = createTracking
 					? ['checkout', '-b', branch, '--track', `origin/${branch}`]
 					: ['checkout', branch];
@@ -1126,6 +1170,15 @@ export function registerGitHandlers(_deps: GitHandlerDependencies): void {
 				createIfMissing: boolean,
 				sshRemoteId?: string
 			) => {
+				const guardRemote = sshRemoteId ? getSshRemoteById(sshRemoteId) : undefined;
+				const blocker = await branchSwitchBlocker(
+					deps,
+					worktreePath,
+					guardRemote,
+					guardRemote ? worktreePath : undefined
+				);
+				if (blocker) return { success: false, hasUncommittedChanges: false, error: blocker };
+
 				// SSH remote: dispatch to remote git operations
 				if (sshRemoteId) {
 					const sshConfig = sshRemoteId ? getSshRemoteById(sshRemoteId) : undefined;

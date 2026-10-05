@@ -320,6 +320,17 @@ function normalizeSubscription(
 				? (sub.gh_label_target as CueGitHubLabelTarget)
 				: undefined,
 		gh_labels: normalizeGhLabels(sub.gh_labels),
+		// The GitHub trigger source reads both off the normalized subscription.
+		// Leaving them out here silently turned every YAML re-trigger sub into
+		// fire-once-per-item, so follow-up comments never reached the agent.
+		retrigger_on_comments:
+			typeof sub.retrigger_on_comments === 'boolean' ? sub.retrigger_on_comments : undefined,
+		max_notifications:
+			typeof sub.max_notifications === 'number' &&
+			Number.isInteger(sub.max_notifications) &&
+			sub.max_notifications >= 0
+				? sub.max_notifications
+				: undefined,
 		agent_id:
 			typeof sub.agent_id === 'string' && sub.agent_id.trim().length > 0
 				? sub.agent_id.trim()

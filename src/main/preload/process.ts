@@ -9,6 +9,11 @@
  * - SSH remote execution support
  */
 
+import type {
+	NotificationInboxRequest,
+	NotificationInboxResult,
+} from '../../shared/notificationInbox';
+
 import { ipcRenderer } from 'electron';
 import type { UsageStats } from '../../shared/types';
 import type { ToastClickAction } from '../../shared/toastClickAction';
@@ -555,6 +560,24 @@ export function createProcessApi() {
 				});
 			ipcRenderer.on('remote:openFileTab', handler);
 			return () => ipcRenderer.removeListener('remote:openFileTab', handler);
+		},
+
+		/** Subscribe to inbox operations and acknowledge the resulting live-store snapshot. */
+		onRemoteNotificationInbox: (
+			callback: (request: NotificationInboxRequest) => NotificationInboxResult
+		): (() => void) => {
+			const handler = (_: unknown, request: NotificationInboxRequest, responseChannel: string) => {
+				try {
+					ipcRenderer.send(responseChannel, callback(request));
+				} catch (error) {
+					ipcRenderer.send(responseChannel, {
+						success: false,
+						error: error instanceof Error ? error.message : String(error),
+					});
+				}
+			};
+			ipcRenderer.on('remote:notificationInbox', handler);
+			return () => ipcRenderer.removeListener('remote:notificationInbox', handler);
 		},
 
 		/**
