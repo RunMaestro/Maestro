@@ -35,6 +35,7 @@ import {
 	summaryUsageStats,
 } from './history-entries';
 import { CLI_AUTORUN_POLICY } from './policy';
+import { extractGoalSynopsis } from './synopsis';
 
 export interface RunGoalOptions {
 	/** Write per-iteration + summary entries to History. Default true. */
@@ -118,8 +119,8 @@ export async function* runGoal(
 		signal,
 	} = options;
 	const { clock, log, controller } = deps;
-	const pauseOnError =
-		(deps.policy ?? CLI_AUTORUN_POLICY).onAgentError === 'pause' && controller !== undefined;
+	const policy = deps.policy ?? CLI_AUTORUN_POLICY;
+	const pauseOnError = policy.onAgentError === 'pause' && controller !== undefined;
 	const runStartTime = clock.now();
 
 	const gitBranch = await deps.environment.gitBranch(session.cwd);
@@ -151,6 +152,24 @@ export async function* runGoal(
 		// captures the driving prompts up front, even if the run is killed early.
 		if (writeHistory) {
 			await deps.history.append(buildGoalStartEntry(session, runStartTime, goalConfig));
+		}
+
+		// Usage Dashboard bookkeeping. A goal run shows as `Goal: <goal>`, progress on the 0 to 100 task scale.
+		let statsRunId: string | null = null;
+		if (deps.stats) {
+			try {
+				statsRunId = await deps.stats.startRun({
+					agentType: session.toolType,
+					documentPath: formatGoalRunDocumentPath(goalConfig.goal),
+					startTime: runStartTime,
+					tasksTotal: 100,
+					projectPath: session.cwd,
+				});
+			} catch (statsError) {
+				log.warn('Failed to start Auto Run stats tracking', session.name, {
+					error: String(statsError),
+				});
+			}
 		}
 
 		const history: GoalIterationRecord[] = [];
@@ -300,7 +319,9 @@ export async function* runGoal(
 			});
 
 			const synopsis = result.success
-				? iterationSynopsis(result.response, iteration)
+				? policy.synopsis === 'from-response'
+					? extractGoalSynopsis(result.response, iteration)
+					: iterationSynopsis(result.response, iteration)
 				: result.error || `Iteration ${iteration} failed`;
 			const rationaleText = markers.rationale?.trim();
 			const iterationSummary = `Goal progress: ${displayProgress}% - ${rationaleText || synopsis}`;
@@ -323,6 +344,28 @@ export async function* runGoal(
 						elapsedMs,
 					})
 				);
+			}
+
+			// Checkpoint each iteration so every increment of work is a recoverable commit. Best effort: a
+			// clean tree is a quiet no-op, and a failed commit never stops the run.
+			if (policy.checkpointCommits && deps.environment.commitAll && isGit) {
+				const commitMessage = `Maestro Auto Run (goal) iteration ${iteration} - ${
+					markers.rationale?.trim() || `progress ${displayProgress}%`
+				}`;
+				try {
+					const commit = await deps.environment.commitAll(session.cwd, commitMessage);
+					if (commit.committed) {
+						log.autorun(
+							`Goal iteration ${iteration} committed ${commit.commitHash ?? ''}`.trim(),
+							session.name,
+							{ iteration, commitHash: commit.commitHash }
+						);
+					} else if (commit.error) {
+						log.warn(`Goal iteration ${iteration} auto-commit failed`, session.name, commit.error);
+					}
+				} catch (commitError) {
+					log.warn(`Goal iteration ${iteration} auto-commit threw`, session.name, commitError);
+				}
 			}
 
 			yield {
@@ -389,6 +432,15 @@ export async function* runGoal(
 		// Paused time is waiting on a person, not work (AE10).
 		const totalElapsedMs = clock.now() - runStartTime - (controller?.pausedMs() ?? 0);
 		const isSuccess = exitReason === 'completed';
+		if (statsRunId && deps.stats) {
+			try {
+				await deps.stats.endRun(statsRunId, totalElapsedMs, finalProgress);
+			} catch (statsError) {
+				log.warn('Failed to end Auto Run stats tracking', session.name, {
+					error: String(statsError),
+				});
+			}
+		}
 		const usageStats = summaryUsageStats(totalInputTokens, totalOutputTokens, totalCost);
 
 		if (writeHistory) {

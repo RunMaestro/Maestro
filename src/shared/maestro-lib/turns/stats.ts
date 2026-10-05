@@ -1,6 +1,6 @@
 /**
- * Recording a turn in `stats.db`, the database the Usage Dashboard reads, so work done in the
- * TUI is counted next to work done in the desktop.
+ * Recording a turn, or an Auto Run, in `stats.db`, the database the Usage Dashboard reads, so work
+ * done in the TUI is counted next to work done in the desktop.
  *
  * The row is the desktop's own: one `query_events` row per turn, bound by the shared
  * `bindQueryEvent` over `INSERT_QUERY_EVENT_SQL`, with the shared id format. What differs is
@@ -26,10 +26,20 @@
 
 import * as fs from 'fs';
 
-import type { QueryEvent } from '../../stats-types';
+import type { AutoRunSession, AutoRunTask, QueryEvent } from '../../stats-types';
+import { readStoreDocument } from '../store/io';
 import { logger } from '../host';
 import type { DataDirVerdict } from '../runtime/data-dir-lock';
 import type { MaestroPaths } from '../paths/resolve';
+import {
+	AUTO_RUN_SESSION_COLUMNS,
+	AUTO_RUN_TASK_COLUMNS,
+	INSERT_AUTO_RUN_SESSION_SQL,
+	INSERT_AUTO_RUN_TASK_SQL,
+	UPDATE_AUTO_RUN_END_SQL,
+	bindAutoRunSession,
+	bindAutoRunTask,
+} from '../stats/auto-run-insert';
 import {
 	INSERT_QUERY_EVENT_SQL,
 	QUERY_EVENT_COLUMNS,
@@ -70,9 +80,24 @@ export interface StatsRecorderOptions {
 	fence?: () => DataDirVerdict;
 }
 
+/**
+ * The user's `statsCollectionEnabled` setting, read fresh: the gate the desktop's stats writers use,
+ * so usage is collected unless it was explicitly turned off.
+ */
+export async function readStatsCollectionEnabled(settingsFile: string): Promise<boolean> {
+	const read = await readStoreDocument<Record<string, unknown>>(settingsFile);
+	return read.status !== 'ok' || read.data.statsCollectionEnabled !== false;
+}
+
 export interface StatsRecorder {
 	/** Insert one `query_events` row. Never throws. */
 	recordQuery(event: Omit<QueryEvent, 'id'>): Promise<StatsRecordResult>;
+	/** Insert one `auto_run_sessions` row, the start of a run. `id` is the run's handle. Never throws. */
+	startAutoRun(session: Omit<AutoRunSession, 'id'>): Promise<StatsRecordResult>;
+	/** Insert one `auto_run_tasks` row for the run `task.autoRunSessionId` names. Never throws. */
+	recordAutoTask(task: Omit<AutoRunTask, 'id'>): Promise<StatsRecordResult>;
+	/** Close a run: its duration and the tasks it finished. Never throws. */
+	endAutoRun(id: string, duration: number, tasksCompleted: number): Promise<StatsRecordResult>;
 }
 
 /** How long a writer waits on the desktop's lock before giving up, ms. */
@@ -93,7 +118,15 @@ export function createStatsRecorder(options: StatsRecorderOptions): StatsRecorde
 		return { ok: false, reason, message };
 	}
 
-	async function recordQuery(event: Omit<QueryEvent, 'id'>): Promise<StatsRecordResult> {
+	/**
+	 * Open the desktop's database for one write, check it has the columns this build writes, run
+	 * `write`, and close it. Every way this can not happen is a skipped row, never a throw.
+	 */
+	async function withDatabase(
+		table: string,
+		columns: readonly string[],
+		write: (db: StatsConnection) => string
+	): Promise<StatsRecordResult> {
 		if (options.isEnabled && !(await options.isEnabled())) {
 			return { ok: false, reason: 'disabled', message: 'Usage statistics are turned off.' };
 		}
@@ -104,7 +137,7 @@ export function createStatsRecorder(options: StatsRecorderOptions): StatsRecorde
 		if (!fs.existsSync(file)) {
 			return skipped(
 				'no-database',
-				`${file} does not exist yet, so this turn is not in the Usage Dashboard. The desktop creates it on its first launch.`
+				`${file} does not exist yet, so this work is not in the Usage Dashboard. The desktop creates it on its first launch.`
 			);
 		}
 
@@ -122,22 +155,20 @@ export function createStatsRecorder(options: StatsRecorderOptions): StatsRecorde
 			db.pragma(`busy_timeout = ${BUSY_TIMEOUT_MS}`);
 
 			const present = new Set(
-				(db.pragma('table_info(query_events)') as Array<{ name: string }>).map((row) => row.name)
+				(db.pragma(`table_info(${table})`) as Array<{ name: string }>).map((row) => row.name)
 			);
-			const missing = QUERY_EVENT_COLUMNS.filter((column) => !present.has(column));
+			const missing = columns.filter((column) => !present.has(column));
 			if (missing.length > 0) {
 				return skipped(
 					'schema',
-					`${file} has no ${missing.join(', ')} in query_events: it predates this build. Open the desktop once so it can migrate the file.`
+					`${file} has no ${missing.join(', ')} in ${table}: it predates this build. Open the desktop once so it can migrate the file.`
 				);
 			}
 
-			const id = generateId();
-			db.prepare(INSERT_QUERY_EVENT_SQL).run(...bindQueryEvent(id, event));
-			return { ok: true, id };
+			return { ok: true, id: write(db) };
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
-			logger.error(`Failed to record the turn in ${file}: ${message}`, LOG_CONTEXT);
+			logger.error(`Failed to record in ${file}: ${message}`, LOG_CONTEXT);
 			return { ok: false, reason: 'failed', message };
 		} finally {
 			try {
@@ -148,5 +179,29 @@ export function createStatsRecorder(options: StatsRecorderOptions): StatsRecorde
 		}
 	}
 
-	return { recordQuery };
+	return {
+		recordQuery: (event) =>
+			withDatabase('query_events', QUERY_EVENT_COLUMNS, (db) => {
+				const id = generateId();
+				db.prepare(INSERT_QUERY_EVENT_SQL).run(...bindQueryEvent(id, event));
+				return id;
+			}),
+		startAutoRun: (session) =>
+			withDatabase('auto_run_sessions', AUTO_RUN_SESSION_COLUMNS, (db) => {
+				const id = generateId();
+				db.prepare(INSERT_AUTO_RUN_SESSION_SQL).run(...bindAutoRunSession(id, session));
+				return id;
+			}),
+		recordAutoTask: (task) =>
+			withDatabase('auto_run_tasks', AUTO_RUN_TASK_COLUMNS, (db) => {
+				const id = generateId();
+				db.prepare(INSERT_AUTO_RUN_TASK_SQL).run(...bindAutoRunTask(id, task));
+				return id;
+			}),
+		endAutoRun: (id, duration, tasksCompleted) =>
+			withDatabase('auto_run_sessions', AUTO_RUN_SESSION_COLUMNS, (db) => {
+				db.prepare(UPDATE_AUTO_RUN_END_SQL).run(duration, tasksCompleted, id);
+				return id;
+			}),
+	};
 }

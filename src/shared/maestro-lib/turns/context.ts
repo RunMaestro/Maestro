@@ -11,11 +11,8 @@
  */
 
 import * as fs from 'fs';
-import * as path from 'path';
 import { PROMPT_IDS } from '../../promptDefinitions';
-import { PROMPT_CUSTOMIZATIONS_FILE } from '../settings/snapshot';
 import { logger } from '../host';
-import { execFileNoThrow } from '../launch/exec-file';
 import { getShellPath } from '../launch/getShellPath';
 import {
 	checkBinaryExists,
@@ -23,7 +20,8 @@ import {
 	type BinaryDetectionResult,
 } from '../launch/path-prober';
 import type { MaestroPaths } from '../paths/resolve';
-import { createPromptLoader, findBundledPromptsDir } from '../prompts/load';
+import { readGitBranch } from '../runtime/git';
+import { createPromptLoaderFor } from '../prompts/load';
 import { getAgentCapabilities } from '../providers/capabilities';
 import { getAgentDefinition, type AgentConfig } from '../providers/definitions';
 import { readAgentConfigsStore, readSettingsStore } from '../store/read-stores';
@@ -77,12 +75,6 @@ async function defaultProbe(
 	customPath?: string
 ): Promise<BinaryDetectionResult> {
 	return customPath ? checkCustomPath(customPath) : checkBinaryExists(binaryName);
-}
-
-async function defaultGitBranch(cwd: string): Promise<string | undefined> {
-	const result = await execFileNoThrow('git', ['rev-parse', '--abbrev-ref', 'HEAD'], cwd);
-	if (result.exitCode !== 0) return undefined;
-	return result.stdout.trim() || undefined;
 }
 
 /**
@@ -159,20 +151,11 @@ export async function loadTurnContext(
 
 	// Prompts. No bundled directory means no prompt can load: the turn goes without Maestro's
 	// system prompt, as a desktop turn does when the template did not load.
-	const moduleDirectory = sources.moduleDirectory ?? path.dirname(process.argv[1] ?? process.cwd());
-	const bundledPromptsDir = sources.bundledPromptsDir ?? findBundledPromptsDir(moduleDirectory);
-	if (!bundledPromptsDir) {
-		logger.warn(
-			'The bundled prompts directory was not found; sending no system prompt',
-			LOG_CONTEXT
-		);
-	}
-	const loader = bundledPromptsDir
-		? createPromptLoader({
-				bundledPromptsDir,
-				customizationsFile: path.join(sources.paths.userDataDir, PROMPT_CUSTOMIZATIONS_FILE),
-			})
-		: undefined;
+	const loader = createPromptLoaderFor({
+		userDataDir: sources.paths.userDataDir,
+		...(sources.bundledPromptsDir ? { bundledPromptsDir: sources.bundledPromptsDir } : {}),
+		...(sources.moduleDirectory ? { moduleDirectory: sources.moduleDirectory } : {}),
+	});
 
 	// Git branch and history path are local reads: for an SSH agent they would describe a path on
 	// this machine that is not the one the agent works in (F7).
@@ -181,7 +164,7 @@ export async function loadTurnContext(
 	if (!sshEnabled) {
 		if (agent.isGitRepo) {
 			try {
-				gitBranch = await (sources.readGitBranch ?? defaultGitBranch)(agent.cwd);
+				gitBranch = await (sources.readGitBranch ?? readGitBranch)(agent.cwd);
 			} catch {
 				// A branch that cannot be read is an empty variable, not a failed turn.
 			}

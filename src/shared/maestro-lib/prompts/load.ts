@@ -22,6 +22,7 @@ import * as path from 'path';
 import { CORE_PROMPTS } from '../../promptDefinitions';
 import { logger } from '../host';
 import { parseStoreJson } from '../store/corrupt-store';
+import { PROMPT_CUSTOMIZATIONS_FILE } from '../settings/snapshot';
 
 const LOG_CONTEXT = '[PromptLoader]';
 
@@ -220,4 +221,31 @@ export function createPromptLoader(options: PromptLoaderOptions): PromptLoader {
 			});
 		},
 	};
+}
+
+export interface PromptLoaderSources {
+	/** The data directory holding `core-prompts-customizations.json`. */
+	userDataDir: string;
+	/** The directory holding the bundled `.md` prompts. Found by probing from `moduleDirectory` when omitted. */
+	bundledPromptsDir?: string;
+	/** The directory of the running bundle, which the bundled-prompt probe is relative to. Default: the entry script's. */
+	moduleDirectory?: string;
+}
+
+/**
+ * The prompt loader a host that has no desktop uses: the user's customizations from the data
+ * directory over the bundled prompts it can find. `undefined` when no bundled directory exists,
+ * so a turn goes without a prompt, as a desktop turn does when its template did not load.
+ */
+export function createPromptLoaderFor(sources: PromptLoaderSources): PromptLoader | undefined {
+	const moduleDirectory = sources.moduleDirectory ?? path.dirname(process.argv[1] ?? process.cwd());
+	const bundledPromptsDir = sources.bundledPromptsDir ?? findBundledPromptsDir(moduleDirectory);
+	if (!bundledPromptsDir) {
+		logger.warn('The bundled prompts directory was not found; no prompt can load', LOG_CONTEXT);
+		return undefined;
+	}
+	return createPromptLoader({
+		bundledPromptsDir,
+		customizationsFile: path.join(sources.userDataDir, PROMPT_CUSTOMIZATIONS_FILE),
+	});
 }

@@ -659,4 +659,44 @@ describe('cli-activity', () => {
 			expect(parsed.activities).toHaveLength(2);
 		});
 	});
+
+	describe('on another data directory (F9)', () => {
+		const DIR = path.join('/data', 'dev');
+		const FILE = path.join(DIR, 'cli-activity.json');
+
+		it('registers and unregisters in that directory, never the default one', () => {
+			mockFs.readFileSync.mockReturnValue(JSON.stringify({ activities: [] }));
+			registerCliActivity(sampleActivity, DIR);
+			const [writtenPath, writtenContent] = mockFs.writeFileSync.mock.calls[0];
+			expect(writtenPath).toBe(FILE);
+			expect(JSON.parse(writtenContent as string).activities).toEqual([sampleActivity]);
+
+			mockFs.readFileSync.mockReturnValue(JSON.stringify({ activities: [sampleActivity] }));
+			unregisterCliActivity(sampleActivity.sessionId, DIR);
+			expect(mockFs.writeFileSync.mock.calls[1][0]).toBe(FILE);
+			expect(mockFs.readFileSync).toHaveBeenCalledWith(FILE, 'utf-8');
+			// Nothing was read from or written to the user's own file.
+			expect(mockFs.writeFileSync.mock.calls.every(([target]) => target === FILE)).toBe(true);
+		});
+
+		it('reads that directory for a busy check', () => {
+			mockFs.readFileSync.mockReturnValue(
+				JSON.stringify({ activities: [{ ...sampleActivity, pid: process.pid }] })
+			);
+			expect(getCliActivityForSession(sampleActivity.sessionId, DIR)).toMatchObject({
+				sessionId: sampleActivity.sessionId,
+			});
+			expect(isSessionBusyWithCli(sampleActivity.sessionId, DIR)).toBe(true);
+			expect(mockFs.readFileSync.mock.calls.every(([target]) => target === FILE)).toBe(true);
+		});
+
+		it('creates that directory when it is missing', () => {
+			mockFs.existsSync.mockReturnValue(false);
+			mockFs.readFileSync.mockImplementation(() => {
+				throw new Error('ENOENT');
+			});
+			registerCliActivity(sampleActivity, DIR);
+			expect(mockFs.mkdirSync).toHaveBeenCalledWith(DIR, { recursive: true });
+		});
+	});
 });

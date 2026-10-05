@@ -15,6 +15,8 @@
  *   FAKE_AGENT_STDIN_OUT   read stdin to its end and write it here
  *   FAKE_AGENT_ENV_OUT     write its environment here (JSON)
  *   FAKE_AGENT_HOLD        after replaying, stay running until signalled
+ *   FAKE_AGENT_TICK_FILE   tick the first unchecked task (`- [ ]`) of this file before replaying,
+ *                          as an Auto Run agent does when it finishes a task
  */
 
 import fs from 'node:fs';
@@ -32,6 +34,11 @@ if (process.env.FAKE_AGENT_ARGV_OUT) {
 }
 if (process.env.FAKE_AGENT_ENV_OUT) {
 	fs.writeFileSync(process.env.FAKE_AGENT_ENV_OUT, JSON.stringify(process.env));
+}
+
+if (process.env.FAKE_AGENT_TICK_FILE) {
+	const file = process.env.FAKE_AGENT_TICK_FILE;
+	fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace('- [ ]', '- [x]'));
 }
 
 function readStdin() {

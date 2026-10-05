@@ -23,6 +23,7 @@ export * from './runtime/index';
 export * from './runtime/client';
 export * from './runtime/processes';
 export * from './runtime/turns';
+export * from './runtime/autorun';
 export * from './runtime/providers';
 export * from './runtime/settings-watch';
 
@@ -73,6 +74,30 @@ export * from './autorun/progress';
 export * from './autorun/run-tracker';
 export * from './autorun/templates';
 export * from './autorun/validate';
+
+// The Auto Run engine the CLI and the runtime both run (L6). `engine-types` names the ports; its
+// `AutoRunPause` is the engine's own and the progress module's is the wire reading of one, so
+// the engine's types are listed rather than starred.
+export type {
+	AutoRunController,
+	AutoRunDeps,
+	AutoRunDocumentRead,
+	AutoRunEvent,
+	AutoRunResolution,
+	AutoRunStatsRun,
+	AutoRunStatsTask,
+	AutoRunTurnPurpose,
+	AutoRunTurnRequest,
+	AutoRunTurnResult,
+	MaybePromise,
+} from './autorun/engine-types';
+export * from './autorun/run-playbook';
+export * from './autorun/run-goal';
+export * from './autorun/policy';
+export * from './autorun/preflight';
+export * from './autorun/run-control';
+export * from './autorun/synopsis';
+export * from './autorun/task-selection';
 
 // Group chats: the record, its events and reducer, and the create rules (GC-1 to GC-4)
 export * from './groupchat/chat';
@@ -188,12 +213,15 @@ export * from './turns/turn-events';
 
 // The usage row a turn writes, defined once for the desktop's stats module and the runtime
 export * from './stats/query-event-insert';
+export * from './stats/auto-run-insert';
 export * from './stats/utils';
 
 // Process control
 export * from './control/termination';
 export * from './control/process-tree';
 export * from './control/pty-kill';
+export * from './control/idle-watchdog';
+export * from './control/agent-liveness';
 
 // Host services
 export * from './host';

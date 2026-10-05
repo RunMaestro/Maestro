@@ -361,3 +361,61 @@ export function assembleTurn(
 		},
 	};
 }
+
+/** What an Auto Run turn is made of. The engine has already built the prompt. */
+export interface AutoRunTurnInput {
+	/**
+	 * The finished prompt: template variables expanded, the new-session message already in front.
+	 * Nothing is layered on top of it.
+	 */
+	prompt: string;
+	/** Resume this provider session (a synopsis or handoff turn). Absent: a fresh session. */
+	resumeSessionId?: string;
+	/** Resolved by the engine for this turn: the document's hint, the run override, the agent. */
+	model?: string;
+	effort?: string;
+}
+
+/**
+ * Assemble one Auto Run turn: the same arguments, environment, and system prompt a desktop
+ * Auto Run task gets (`spawnAgentForSession`), and none of a chat message's layers.
+ *
+ * It is `assembleTurn` with the differences a run has, so a chat turn and a run turn cannot drift
+ * on how the provider is launched. The run has no tab, so there is no nudge (the engine's prompt
+ * is a finished prompt, and the nudge belongs to what a person types), and the agent's
+ * new-session message is the engine's to place (it prepends it to every task, as the desktop
+ * does), so it is not added twice. The run always writes: `permissionMode: 'full'`, never
+ * read-only, and the turn is marked `querySource: 'auto'` so delegation reporting downstream does
+ * not count it as hands-on work.
+ */
+export function assembleAutoRunTurn(
+	agent: TurnAgent,
+	input: AutoRunTurnInput,
+	context: TurnContext
+): AssembleTurnResult {
+	const result = assembleTurn(
+		{ ...agent, nudgeMessage: undefined, newSessionMessage: undefined },
+		{
+			id: '',
+			agentSessionId: input.resumeSessionId ?? null,
+			permissionMode: 'full',
+		},
+		{
+			text: input.prompt,
+			// Present even when a field inside is undefined: the engine resolved "the agent's own".
+			turnSettings: { model: input.model, effort: input.effort },
+		},
+		// The run is the holder of the tree; its own turns must not be read-only for that.
+		{ ...context, autoRunHoldsTree: false }
+	);
+	if (!result.ok) return result;
+	return {
+		ok: true,
+		turn: {
+			...result.turn,
+			readOnly: false,
+			permissionMode: 'full',
+			launch: { ...result.turn.launch, readOnlyMode: false, querySource: 'auto' },
+		},
+	};
+}

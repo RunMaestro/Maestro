@@ -7,8 +7,8 @@
  * is served from the repository's memory or a fresh read of a store file, and
  * every event comes from the one bus both client implementations share (RT15).
  *
- * Turns are answered by the runtime's turn service (`./turns`). Auto Run, group chats,
- * and consults answer `unsupported` until the phases that bring them (7, 8). `unsupported` is a value, not a throw, so a
+ * Turns are answered by the runtime's turn service (`./turns`) and Auto Run by its run service
+ * (`./autorun`). Group chats and consults answer `unsupported` until the phase that brings them (8). `unsupported` is a value, not a throw, so a
  * TUI written against the contract degrades the same way it does against an
  * older desktop.
  *
@@ -18,6 +18,7 @@
 import type { AgentRepository } from '../agents/repository';
 import type { EventBus } from '../client/event-bus';
 import type {
+	AutoRunApi,
 	ClientError,
 	ClientErrorCode,
 	ClientMethod,
@@ -58,6 +59,8 @@ export interface RuntimeClientDeps {
 	listProviders(): Promise<ProviderInfo[]>;
 	/** Send, interrupt, queue, and the per-tab event stream. */
 	turns: TurnsApi;
+	/** Launch, stop, resume, skip, and abort a spec-driven or goal-driven run. */
+	autoRun: AutoRunApi;
 }
 
 const ok = <T>(value: T): ClientResult<T> => ({ ok: true, value });
@@ -201,12 +204,18 @@ export function createRuntimeClient(deps: RuntimeClientDeps): MaestroClient {
 		},
 
 		autoRun: {
-			launch: () => unsupported('autoRun.launch', 'Auto Run'),
-			launchGoal: () => unsupported('autoRun.launchGoal', 'Auto Run'),
-			stop: () => unsupported('autoRun.stop', 'Auto Run'),
-			resume: () => unsupported('autoRun.resume', 'Auto Run'),
-			skip: () => unsupported('autoRun.skip', 'Auto Run'),
-			abort: () => unsupported('autoRun.abort', 'Auto Run'),
+			// A fenced runtime reads but does not start work: a run it started could not be recorded.
+			launch: (agentId, input) =>
+				Promise.resolve(gate('autoRun.launch', true) ?? deps.autoRun.launch(agentId, input)),
+			launchGoal: (agentId, input) =>
+				Promise.resolve(
+					gate('autoRun.launchGoal', true) ?? deps.autoRun.launchGoal(agentId, input)
+				),
+			// Stopping and answering a pause only reduce what runs, so they stay available when fenced.
+			stop: (agentId) => guarded('autoRun.stop', () => deps.autoRun.stop(agentId)),
+			resume: (agentId) => guarded('autoRun.resume', () => deps.autoRun.resume(agentId)),
+			skip: (agentId) => guarded('autoRun.skip', () => deps.autoRun.skip(agentId)),
+			abort: (agentId) => guarded('autoRun.abort', () => deps.autoRun.abort(agentId)),
 		},
 
 		groupChats: {

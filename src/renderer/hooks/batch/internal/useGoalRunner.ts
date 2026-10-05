@@ -36,6 +36,7 @@ import { logger } from '../../../utils/logger';
 import { notifyToast } from '../../../stores/notificationStore';
 import { useSessionStore, selectSessionById } from '../../../stores/sessionStore';
 import { useSettingsStore } from '../../../stores/settingsStore';
+import { extractGoalSynopsis } from '../../../../shared/maestro-lib/autorun/synopsis';
 import type { BatchAction } from '../batchReducer';
 import type { ErrorResolutionAction, ErrorResolutionEntry } from './useBatchControlActions';
 import { claimFlushState, type AutoRunFlushStateRefs } from './batchFlushState';
@@ -134,36 +135,6 @@ export interface UseGoalRunnerDeps {
 
 export interface UseGoalRunnerReturn {
 	startGoalRun: (sessionId: string, config: BatchRunConfig, folderPath: string) => Promise<void>;
-}
-
-/**
- * Extract a concise, human-readable synopsis from an agent's iteration output.
- *
- * Mirrors the first-paragraph heuristic in `useDocumentProcessor.processTask`:
- * the goal prompt instructs the agent to start with a synopsis, so we take the
- * first paragraph's first sentence (stripping the progress marker and markdown
- * noise) rather than making a separate summarization call.
- */
-function extractGoalSynopsis(response: string | undefined, iteration: number): string {
-	const fallback = `Iteration ${iteration} completed`;
-	if (!response) return fallback;
-
-	// Drop the maestro markers so they never leak into the synopsis line.
-	const withoutMarkers = response.replace(/<!--\s*maestro:[\s\S]*?-->/g, '').trim();
-	if (!withoutMarkers) return fallback;
-
-	const firstParagraph = withoutMarkers.split(/\n\n+/)[0]?.trim() ?? '';
-	const cleaned = firstParagraph
-		.replace(/^\*\*Summary:\*\*\s*/i, '')
-		.replace(/^#+\s*/, '')
-		.replace(/\*\*/g, '')
-		.trim();
-
-	if (cleaned.length <= 10) return fallback;
-
-	const firstSentence = cleaned.match(/^.+?[.!?](?=\s+[A-Z]|\s*\n|\s*$)/);
-	if (firstSentence) return firstSentence[0].trim();
-	return cleaned.length > 150 ? `${cleaned.slice(0, 150)}...` : cleaned;
 }
 
 /**

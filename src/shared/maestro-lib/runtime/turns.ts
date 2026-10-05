@@ -32,7 +32,7 @@
  */
 
 import { getClaudeTokenSourceFields, type ClaudeTokenSourceFields } from '../../claudeTokenMode';
-import type { SshRemoteConfig, ToolType } from '../../types';
+import type { ToolType } from '../../types';
 import type { AgentRepository } from '../agents/repository';
 import { DEFAULT_RULE_CONTEXT, type RuleContext } from '../agents/rules';
 import type { EventBus } from '../client/event-bus';
@@ -50,10 +50,8 @@ import type {
 } from '../client/types';
 import { logger } from '../host';
 import type { BinaryDetectionResult } from '../launch/path-prober';
-import type { SshRemoteSettingsStore } from '../launch/ssh-remote-resolver';
 import { createOutputParser } from '../parsers/parser-factory';
 import type { MaestroPaths } from '../paths/resolve';
-import { readSettingsStore } from '../store/read-stores';
 import {
 	createExecutionQueue,
 	TurnCollisionError,
@@ -81,6 +79,7 @@ import { createTurnEventMapper, type UnstampedTurnEvent } from '../turns/turn-ev
 import type { StatsConnectionConstructor } from '../turns/stats';
 import type { DataDirVerdict } from './data-dir-lock';
 import type { ProcessRegistry } from './processes';
+import { createSshRemoteStore } from './ssh-store';
 
 const LOG_CONTEXT = '[RuntimeTurns]';
 
@@ -120,12 +119,16 @@ export interface RuntimeTurnsOptions {
 	registry: ProcessRegistry;
 	fence(): DataDirVerdict;
 	rules?: Partial<RuleContext>;
+	/** Does an Auto Run hold this agent's working tree? A write message then waits for the run (AE17). */
+	autoRunHolds?(agentId: string): boolean;
 	options?: RuntimeTurnOptions;
 	deps?: Partial<RuntimeTurnDeps>;
 }
 
 export interface RuntimeTurns {
 	readonly api: TurnsApi;
+	/** Look at an agent's queue again, for a hold that cleared (an Auto Run ended). */
+	drain(agentId: string): void;
 	/** Stop looking at queues: nothing more starts. Running turns are left to `registry.stopAll`. */
 	dispose(): void;
 }
@@ -177,14 +180,7 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 		context: options.rules,
 	});
 
-	/** The stored SSH remotes, read when a turn starts so an edit in the desktop applies to the next one. */
-	const sshStore: SshRemoteSettingsStore = {
-		getSshRemotes: () => {
-			const read = readSettingsStore(paths.settingsFile);
-			const remotes = read.status === 'ok' ? read.data.sshRemotes : undefined;
-			return Array.isArray(remotes) ? (remotes as SshRemoteConfig[]) : [];
-		},
-	};
+	const sshStore = createSshRemoteStore(paths);
 
 	const queues = new Map<string, ExecutionQueue<TurnItem>>();
 	/** Resolved by the first dispatch attempt of an item that ran straight away. */
@@ -233,7 +229,11 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 			...(command ? { command } : {}),
 			...(item.readOnly ? { readOnly: true } : {}),
 		};
-		const assembled = assembleTurn(agent, tab, message, loaded.context);
+		const assembled = assembleTurn(agent, tab, message, {
+			...loaded.context,
+			// A run that started between this message being queued and now makes it read-only instead.
+			autoRunHoldsTree: options.autoRunHolds?.(agentId) ?? false,
+		});
 		if (!assembled.ok) throw new Error(assembled.message);
 		const turn: AssembledTurn = assembled.turn;
 		const provider = turn.settings.provider;
@@ -398,6 +398,7 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 			queue = createExecutionQueue<TurnItem>({
 				start: (item) => startItem(agentId, item),
 				onEvent: (event) => onQueueEvent(agentId, event),
+				holdsTree: () => options.autoRunHolds?.(agentId) ?? false,
 				...(deps.recheckMs !== undefined ? { recheckMs: deps.recheckMs } : {}),
 				...(deps.schedule ? { schedule: deps.schedule } : {}),
 			});
@@ -532,6 +533,7 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 
 	return {
 		api,
+		drain: (agentId) => queues.get(agentId)?.drain(),
 		dispose() {
 			unsubscribeLifecycle();
 			for (const queue of queues.values()) queue.dispose();

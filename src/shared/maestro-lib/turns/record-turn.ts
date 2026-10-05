@@ -27,7 +27,6 @@
  * Usage is recorded for every turn that ran.
  */
 
-import { readStoreDocument } from '../store/io';
 import { formatSessionId } from '../store/tab-display';
 import type { LogEntryRecord } from '../store/transcript';
 import type { AgentRepository } from '../agents/repository';
@@ -43,6 +42,7 @@ import type { AssembledTurn } from './assemble';
 import { createHistoryWriter, type HistoryAppendResult, type HistoryWriter } from './history';
 import {
 	createStatsRecorder,
+	readStatsCollectionEnabled,
 	type StatsConnectionConstructor,
 	type StatsRecordResult,
 	type StatsRecorder,
@@ -101,7 +101,7 @@ export interface TurnRecorder {
 }
 
 /** The text of a failure entry for a crash the provider did not classify. */
-function describeCrash(exit: CompletedTurn['exit']): string {
+export function describeCrash(exit: CompletedTurn['exit']): string {
 	if (exit.spawnError) return `The agent could not be started: ${exit.spawnError.message}`;
 	const stderr = exit.stderrText.trim().slice(-STDERR_TAIL_CHARS);
 	const how = exit.signal
@@ -188,10 +188,7 @@ export function createTurnRecorder(options: TurnRecorderOptions): TurnRecorder {
 			loadSqlite: options.loadSqlite,
 			...(options.fence ? { fence: options.fence } : {}),
 			// The same gate the desktop's stats writers use: collected unless explicitly turned off.
-			isEnabled: async () => {
-				const read = await readStoreDocument<Record<string, unknown>>(options.paths.settingsFile);
-				return read.status !== 'ok' || read.data.statsCollectionEnabled !== false;
-			},
+			isEnabled: () => readStatsCollectionEnabled(options.paths.settingsFile),
 		});
 
 	async function recordTurn(turn: RecordedTurn): Promise<TurnRecordResult> {

@@ -8,8 +8,7 @@ import fsSync from 'fs';
 import path from 'path';
 import { CORE_PROMPTS, getPromptFilename } from '../../shared/promptDefinitions';
 import { getConfigDirectory } from './storage';
-import { describeSegmentLimit } from '../../shared/autorunModelHints';
-import { PROMPT_IDS } from '../../shared/promptDefinitions';
+import { buildTaskSelectionBlock } from '../../shared/maestro-lib/autorun/task-selection';
 import { bundledPromptCandidates } from '../../shared/maestro-lib/prompts/load';
 
 const cliPromptCache = new Map<string, string>();
@@ -146,13 +145,9 @@ export function _resetCliPromptCacheForTests(): void {
  * mode. A playbook that predates the setting has no `taskSelectionMode`, and
  * per-task is the behaviour those playbooks were written against.
  */
-export async function getCliTaskSelectionBlock(
+export function getCliTaskSelectionBlock(
 	mode: 'task' | 'document' | undefined,
 	segment?: { count: number; total: number }
 ): Promise<string> {
-	const id = mode === 'document' ? PROMPT_IDS.AUTORUN_PER_DOCUMENT : PROMPT_IDS.AUTORUN_PER_TASK;
-	const content = await getCliPrompt(id);
-	const block = content.replace(/\s+$/, '');
-	if (mode !== 'document') return block;
-	return `${block}${describeSegmentLimit(segment)}`;
+	return buildTaskSelectionBlock(getCliPrompt, mode, segment);
 }

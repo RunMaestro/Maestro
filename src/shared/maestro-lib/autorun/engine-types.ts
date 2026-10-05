@@ -107,6 +107,31 @@ export interface AutoRunDocumentRead {
 	content: string;
 	/** Unchecked tasks. The count the loop, the preflight, and the stall guard run on. */
 	unchecked: number;
+	/**
+	 * Checked tasks, when the port counts them (C2). A task count that includes them survives an
+	 * agent that adds tasks as it works; without it the engine falls back to the drop in
+	 * `unchecked`, floored at zero.
+	 */
+	checked?: number;
+}
+
+/** What the Usage Dashboard's Auto Run panels need to know about a run at its start. */
+export interface AutoRunStatsRun {
+	agentType: string;
+	/** The documents joined by commas, or `Goal: <goal>` for a goal run. */
+	documentPath: string;
+	startTime: number;
+	/** Unchecked tasks at the start; 100 for a goal run (progress is the task scale). */
+	tasksTotal: number;
+	projectPath: string;
+}
+
+export interface AutoRunStatsTask {
+	taskIndex: number;
+	taskContent?: string;
+	startTime: number;
+	duration: number;
+	success: boolean;
 }
 
 export interface AutoRunDeps {
@@ -125,6 +150,15 @@ export interface AutoRunDeps {
 		/** Reset on completion: the document's text with every task unchecked. */
 		uncheckAll(content: string): string;
 	};
+	/**
+	 * Optional. Called where the desktop calls `startAutoRun`, `recordAutoTask`, and `endAutoRun`
+	 * (AE12). A failure is the port's to swallow: the engine only reports it.
+	 */
+	stats?: {
+		startRun(run: AutoRunStatsRun): MaybePromise<string | null>;
+		recordTask(runId: string, task: AutoRunStatsTask): MaybePromise<void>;
+		endRun(runId: string, durationMs: number, tasksCompleted: number): MaybePromise<void>;
+	};
 	history: {
 		append(entry: AutoRunHistoryEntry): MaybePromise<void>;
 		/** May throw: the engine then reports its own counters, as both engines do today. */
@@ -141,6 +175,14 @@ export interface AutoRunDeps {
 		gitBranch(cwd: string): MaybePromise<string | undefined>;
 		isGitRepo(cwd: string): MaybePromise<boolean>;
 		groupName(groupId: string | undefined): MaybePromise<string | undefined>;
+		/**
+		 * Policy `checkpointCommits` (AE23): `git add -A` and commit what the iteration left. Best
+		 * effort, never throws into the run. Absent: no checkpoint.
+		 */
+		commitAll?(
+			cwd: string,
+			message: string
+		): MaybePromise<{ committed: boolean; commitHash?: string; error?: string }>;
 	};
 	/** Tells the desktop and other CLI processes that this agent is busy for the run's length. */
 	activity: {

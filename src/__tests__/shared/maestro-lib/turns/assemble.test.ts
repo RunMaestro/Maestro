@@ -5,6 +5,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import {
+	assembleAutoRunTurn,
 	assembleTurn,
 	type AssembledTurn,
 	type TurnAgent,
@@ -459,5 +460,73 @@ describe('the launch request (PA2, PA8, PA9)', () => {
 				context: { providerConfig: { contextWindow: 5000 } },
 			}).contextWindow
 		).toBe(123456);
+	});
+});
+
+describe('assembleAutoRunTurn', () => {
+	const run = (
+		input: Partial<Parameters<typeof assembleAutoRunTurn>[1]> = {},
+		agent: Partial<TurnAgent> = {},
+		context: Partial<TurnContext> = {}
+	): AssembledTurn => {
+		const result = assembleAutoRunTurn(
+			makeAgent(agent),
+			{ prompt: 'DO THE TASK', ...input },
+			makeContext('claude-code', context)
+		);
+		if (!result.ok) throw new Error(`expected a turn: ${result.message}`);
+		return result.turn;
+	};
+
+	it('sends the engine prompt as it is: no nudge, no second new-session message', () => {
+		const turn = run(
+			{ prompt: 'NEW-SESSION-MSG\n\nDO THE TASK' },
+			{ nudgeMessage: 'NUDGE', newSessionMessage: 'NEW-SESSION-MSG' }
+		);
+		expect(turn.userPrompt).toBe('NEW-SESSION-MSG\n\nDO THE TASK');
+		expect(turn.prompt).toContain('DO THE TASK');
+		expect(turn.prompt).not.toContain('NUDGE');
+		expect(turn.prompt.match(/NEW-SESSION-MSG/g)).toHaveLength(1);
+	});
+
+	it('always writes, whatever holds the tree, and is marked as automation', () => {
+		const turn = run({}, {}, { autoRunHoldsTree: true });
+		expect(turn.readOnly).toBe(false);
+		expect(turn.permissionMode).toBe('full');
+		expect(turn.launch.readOnlyMode).toBe(false);
+		expect(turn.launch.querySource).toBe('auto');
+		expect(turn.entry.readOnly).toBeUndefined();
+	});
+
+	it('runs under the model and effort the engine resolved, even when that is the agent default', () => {
+		const turn = run({ model: 'opus', effort: 'high' }, { customModel: 'sonnet' });
+		expect(turn.settings).toMatchObject({ provider: 'claude-code', model: 'opus', effort: 'high' });
+		const defaulted = run({}, { customModel: 'sonnet', customEffort: 'low' });
+		// The engine already folded the agent's value in: undefined here means "the agent default".
+		expect(defaulted.settings.model).toBeUndefined();
+		expect(defaulted.settings.effort).toBeUndefined();
+	});
+
+	it('resumes a provider session for a synopsis or handoff turn, and starts fresh otherwise', () => {
+		expect(run({ resumeSessionId: 'prov-1' }).resumeSessionId).toBe('prov-1');
+		expect(run({ resumeSessionId: 'prov-1' }).launch.isResuming).toBe(true);
+		expect(run().resumeSessionId).toBeUndefined();
+		expect(run().launch.isResuming).toBe(false);
+	});
+
+	it('gives the agent the same system prompt and caller identity a chat turn gets, without a tab', () => {
+		const turn = run();
+		expect(turn.systemPrompt).toBe('SYSTEM for Test Agent (agent-1) tab ');
+		expect(turn.launch.maestroEnvVars).toMatchObject({ MAESTRO_CALLER_AGENT_ID: 'agent-1' });
+		expect(turn.launch.maestroEnvVars).not.toHaveProperty('MAESTRO_CALLER_TAB_ID');
+	});
+
+	it('refuses a provider that cannot run a single turn without a terminal', () => {
+		const result = assembleAutoRunTurn(
+			makeAgent({ toolType: 'terminal' }),
+			{ prompt: 'x' },
+			makeContext('terminal')
+		);
+		expect(result).toMatchObject({ ok: false, reason: 'no-batch-mode' });
 	});
 });

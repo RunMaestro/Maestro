@@ -439,15 +439,19 @@ describe('createMaestroRuntime', () => {
 	// -----------------------------------------------------------------------
 
 	describe('what waits for a later phase', () => {
-		it('answers unsupported, as values, for Auto Run, group chats, and consults (turns are in turns.test.ts)', async () => {
+		it('answers unsupported, as values, for group chats and consults (turns are in turns.test.ts, Auto Run in autorun.test.ts)', async () => {
 			const runtime = await start();
 			const results = await Promise.all([
-				runtime.autoRun.stop('a1'),
 				runtime.groupChats.list(),
 				runtime.consults.ask({ targetAgentId: 'a1', question: '?' }),
 				runtime.providers.models('claude-code'),
 			]);
 			for (const result of results) expect(errorOf(result).code).toBe('unsupported');
+		});
+
+		it('answers an Auto Run control for an agent with no run as not-found, since Auto Run is supported', async () => {
+			const runtime = await start();
+			expect(errorOf(await runtime.autoRun.stop('a1')).code).toBe('not-found');
 		});
 	});
 

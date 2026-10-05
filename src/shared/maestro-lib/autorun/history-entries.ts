@@ -207,6 +207,52 @@ export function buildErrorPauseEntry(
 	};
 }
 
+/**
+ * The row a stalled document leaves: the desktop's wording, so the History panel reads the same
+ * whichever host ran the document. `Document stalled:` is a control row
+ * (`CONTROL_SUMMARY_PREFIXES`), so it never counts as a task.
+ */
+export function buildStallEntry(
+	agent: RowAgent,
+	now: number,
+	fields: {
+		document: string;
+		remainingTasks: number;
+		runsWithoutProgress: number;
+		hasNextDocument: boolean;
+	}
+): HistoryEntry {
+	return {
+		id: generateUUID(),
+		type: 'AUTO',
+		timestamp: now,
+		summary: `Document stalled: ${fields.document} (${fields.remainingTasks} tasks remaining)`,
+		fullResponse: [
+			`**Document Stalled: ${fields.document}**`,
+			'',
+			`The AI agent ran ${fields.runsWithoutProgress} times on this document but made no task-level progress:`,
+			`- No tasks were checked off`,
+			`- No tasks were added or removed`,
+			'',
+			`**What this means:**`,
+			`The remaining tasks in this document may be:`,
+			`- Already complete (but not checked off)`,
+			`- Unclear or ambiguous for the AI to act on`,
+			`- Dependent on external factors or manual intervention`,
+			`- Outside the scope of what the AI can accomplish`,
+			'',
+			`**Remaining unchecked tasks:** ${fields.remainingTasks}`,
+			'',
+			fields.hasNextDocument
+				? `Skipping to the next document in the playbook...`
+				: `No more documents to process.`,
+		].join('\n'),
+		projectPath: agent.cwd,
+		sessionId: agent.id,
+		success: false,
+	};
+}
+
 /** Human label for a goal run's exit reason. */
 export function goalExitReasonLabel(reason: GoalExitReason): string {
 	switch (reason) {

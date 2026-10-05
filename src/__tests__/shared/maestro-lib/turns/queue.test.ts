@@ -31,7 +31,7 @@ interface Turn {
 }
 
 /** A queue whose turns last until the test ends them. `failures` scripts `start` per item id. */
-function harness(options: { retryHeld?: Set<string> } = {}) {
+function harness(options: { retryHeld?: Set<string>; holdsTree?: { on: boolean } } = {}) {
 	const turns: Turn[] = [];
 	const events: QueueEvent<Item>[] = [];
 	const failures = new Map<string, Error[]>();
@@ -60,6 +60,7 @@ function harness(options: { retryHeld?: Set<string> } = {}) {
 			return handle;
 		},
 		isRetryHeld: (tabId) => options.retryHeld?.has(tabId) ?? false,
+		holdsTree: () => options.holdsTree?.on ?? false,
 		onEvent: (event) => events.push(event),
 		schedule: (run) => {
 			timers.push(run);
@@ -129,6 +130,31 @@ describe('decideSubmit', () => {
 		expect(decideSubmit(item('a', 't1', { forceParallel: true }), view([], [], ['t1']))).toBe(
 			'queue'
 		);
+	});
+});
+
+describe('an Auto Run holding the working tree', () => {
+	const held = (busy: Array<{ tabId: string; readOnly?: boolean }> = [], queued: Item[] = []) => ({
+		busy,
+		queued,
+		holdsTree: true,
+	});
+
+	it('queues a write, even on an idle agent, but lets a read-only or forced-parallel turn run', () => {
+		expect(decideSubmit(item('a', 't1'), held())).toBe('queue');
+		expect(decideSubmit(item('a', 't1', { readOnly: true }), held())).toBe('run');
+		expect(decideSubmit(item('a', 't1', { forceParallel: true }), held())).toBe('run');
+	});
+
+	it('keeps a write at the head waiting until the hold clears', () => {
+		const head = item('a', 't1');
+		expect(chooseNext(held([], [head]))).toEqual({ action: 'wait', item: head });
+		expect(chooseNext({ busy: [], queued: [head] })).toEqual({ action: 'dispatch', item: head });
+	});
+
+	it('still dispatches a read-only head', () => {
+		const head = item('a', 't1', { readOnly: true });
+		expect(chooseNext(held([], [head]))).toEqual({ action: 'dispatch', item: head });
 	});
 });
 
@@ -537,5 +563,30 @@ describe('createExecutionQueue lifecycle', () => {
 		queue.submit(item('a', 't1'));
 		await queue.settled();
 		expect(queue.busyTabIds()).toEqual([]);
+	});
+});
+
+describe('createExecutionQueue with an Auto Run holding the tree', () => {
+	it('queues a write while the hold is on, and starts it when the hold clears and the queue drains', async () => {
+		const hold = { on: true };
+		const h = harness({ holdsTree: hold });
+
+		expect(h.queue.submit(item('a', 't1')).queued).toBe(true);
+		await h.flush();
+		expect(h.startOrder).toEqual([]);
+
+		// Clearing the hold changes nothing by itself: the owner looks at the queue again.
+		hold.on = false;
+		expect(h.startOrder).toEqual([]);
+		h.queue.drain();
+		await h.flush();
+		expect(h.startOrder).toEqual(['a']);
+	});
+
+	it('runs a read-only turn at once beside the hold', async () => {
+		const h = harness({ holdsTree: { on: true } });
+		expect(h.queue.submit(item('r', 't1', { readOnly: true })).queued).toBe(false);
+		await h.flush();
+		expect(h.startOrder).toEqual(['r']);
 	});
 });

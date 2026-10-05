@@ -36,6 +36,7 @@ import {
 	type RuntimeLockMode,
 } from './data-dir-lock';
 import { createProcessRegistry } from './processes';
+import { createRuntimeAutoRun, type RuntimeAutoRun } from './autorun';
 import { createProviderLister } from './providers';
 import { watchSettingsFile, type WatchDirectory } from './settings-watch';
 import { createRuntimeTurns, type RuntimeTurnDeps, type RuntimeTurnOptions } from './turns';
@@ -90,6 +91,11 @@ export interface MaestroRuntime extends MaestroClient {
 	readonly paths: MaestroPaths;
 	/** What this process wrote into `maestro-runtime.lock`. */
 	readonly lock: RuntimeLockInfo;
+	/**
+	 * The Auto Runs in flight, for a host that reports them (`host status`, the refusal to stop with
+	 * work in flight) and replays them to a client that connects mid-run.
+	 */
+	readonly runs: Pick<RuntimeAutoRun, 'activeRuns' | 'latestState'>;
 }
 
 /** What the status bar prints after `host: `. */
@@ -193,6 +199,12 @@ export async function createMaestroRuntime(options: MaestroRuntimeOptions): Prom
 		repository.fence(reason);
 		running.stopHeartbeat?.();
 		running.settingsWatcher?.close();
+		autoRun.stopAll().catch((error) => {
+			logger.warn(
+				`Stopping Auto Runs after losing the data directory failed: ${errorText(error)}`,
+				LOG_CONTEXT
+			);
+		});
 		registry.stopAll().catch((error) => {
 			logger.warn(
 				`Stopping processes after losing the data directory failed: ${errorText(error)}`,
@@ -262,6 +274,19 @@ export async function createMaestroRuntime(options: MaestroRuntimeOptions): Prom
 		now: deps.now,
 	});
 
+	// The run releases what it held back (queued chat messages) when it ends, and the turn service
+	// asks whether a run holds an agent: each needs the other, so the run reaches `turns`, declared
+	// below, only when a run ends.
+	const autoRun = createRuntimeAutoRun({
+		paths,
+		repository,
+		bus,
+		registry,
+		fence,
+		options: options.turns,
+		deps: { probeBinary: deps.probeBinary, ...deps.turns },
+		onRunEnded: (agentId) => turns.drain(agentId),
+	});
 	const turns = createRuntimeTurns({
 		paths,
 		repository,
@@ -269,6 +294,7 @@ export async function createMaestroRuntime(options: MaestroRuntimeOptions): Prom
 		registry,
 		fence,
 		rules: deps.rules,
+		autoRunHolds: (agentId) => autoRun.holds(agentId),
 		options: options.turns,
 		deps: { probeBinary: deps.probeBinary, ...deps.turns },
 	});
@@ -290,6 +316,8 @@ export async function createMaestroRuntime(options: MaestroRuntimeOptions): Prom
 				// Nothing new starts; the turns that run are stopped and finish recording themselves
 				// (their records are repository commands), and only then is the write queue drained.
 				turns.dispose();
+				// Runs first: stopping one records how it ended (History, stats) while the lock is still held.
+				await autoRun.stopAll();
 				await registry.stopAll();
 				await repository.drain();
 			} finally {
@@ -316,7 +344,16 @@ export async function createMaestroRuntime(options: MaestroRuntimeOptions): Prom
 		shutdown,
 		listProviders,
 		turns: turns.api,
+		autoRun: autoRun.api,
 	});
 
-	return { ok: true, runtime: { ...client, paths, lock: lock.info } };
+	return {
+		ok: true,
+		runtime: {
+			...client,
+			paths,
+			lock: lock.info,
+			runs: { activeRuns: autoRun.activeRuns, latestState: autoRun.latestState },
+		},
+	};
 }

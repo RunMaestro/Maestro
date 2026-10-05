@@ -296,4 +296,100 @@ describe.skipIf(!DatabaseSync)('createStatsRecorder', () => {
 		expect(closed).toBe(true);
 		expect(errors[0]).toContain('database is locked');
 	});
+
+	describe('an Auto Run', () => {
+		function table(name: string): Array<Record<string, unknown>> {
+			const db = new DatabaseSync!(statsFile);
+			try {
+				return db.prepare(`SELECT * FROM ${name}`).all() as Array<Record<string, unknown>>;
+			} finally {
+				db.close();
+			}
+		}
+
+		it('is opened, given its tasks, and closed in the rows the Usage Dashboard reads', async () => {
+			createDesktopDatabase();
+			const recorder = createStatsRecorder({ paths: { statsFile }, loadSqlite: () => Adapted });
+
+			const started = await recorder.startAutoRun({
+				sessionId: 'agent-1',
+				agentType: 'claude-code',
+				documentPath: 'one, two',
+				startTime: 1_700_000_000_000,
+				duration: 0,
+				tasksTotal: 3,
+				projectPath: 'C:\\work\\proj',
+			});
+			if (!started.ok) throw new Error(started.message);
+			await recorder.recordAutoTask({
+				autoRunSessionId: started.id,
+				sessionId: 'agent-1',
+				agentType: 'claude-code',
+				taskIndex: 0,
+				taskContent: 'Did the first task.',
+				startTime: 1_700_000_001_000,
+				duration: 900,
+				success: true,
+			});
+			const closed = await recorder.endAutoRun(started.id, 5000, 3);
+			expect(closed.ok).toBe(true);
+
+			expect(table('auto_run_sessions')).toMatchObject([
+				{
+					id: started.id,
+					session_id: 'agent-1',
+					agent_type: 'claude-code',
+					// Forward slashes, as the desktop stores every path.
+					document_path: 'one, two',
+					project_path: 'C:/work/proj',
+					start_time: 1_700_000_000_000,
+					duration: 5000,
+					tasks_total: 3,
+					tasks_completed: 3,
+				},
+			]);
+			expect(table('auto_run_tasks')).toMatchObject([
+				{
+					auto_run_session_id: started.id,
+					task_index: 0,
+					task_content: 'Did the first task.',
+					duration: 900,
+					success: 1,
+				},
+			]);
+		});
+
+		it('skips a file that predates the Auto Run tables instead of creating them', async () => {
+			const old = new DatabaseSync!(statsFile);
+			old.exec('CREATE TABLE query_events (id TEXT PRIMARY KEY)');
+			old.close();
+			const result = await createStatsRecorder({
+				paths: { statsFile },
+				loadSqlite: () => Adapted,
+			}).startAutoRun({
+				sessionId: 'agent-1',
+				agentType: 'claude-code',
+				startTime: 1,
+				duration: 0,
+			});
+			expect(result).toMatchObject({ ok: false, reason: 'schema' });
+			expect(result.ok ? '' : result.message).toContain('auto_run_sessions');
+		});
+
+		it('is not recorded when usage statistics are turned off', async () => {
+			createDesktopDatabase();
+			const result = await createStatsRecorder({
+				paths: { statsFile },
+				loadSqlite: () => Adapted,
+				isEnabled: () => false,
+			}).startAutoRun({
+				sessionId: 'agent-1',
+				agentType: 'claude-code',
+				startTime: 1,
+				duration: 0,
+			});
+			expect(result).toMatchObject({ ok: false, reason: 'disabled' });
+			expect(table('auto_run_sessions')).toEqual([]);
+		});
+	});
 });

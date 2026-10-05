@@ -35,11 +35,13 @@ import {
 	buildErrorPauseEntry,
 	buildFinalLoopEntry,
 	buildLoopEntry,
+	buildStallEntry,
 	buildTaskHistoryEntry,
 	summaryUsageStats,
 } from './history-entries';
 import { CLI_AUTORUN_POLICY } from './policy';
 import { preflightPlaybook } from './preflight';
+import { extractTaskSynopsis } from './synopsis';
 
 export interface RunPlaybookOptions {
 	dryRun?: boolean;
@@ -262,6 +264,24 @@ export async function* runPlaybook(
 		// system prompt rather than aborting the playbook.
 		await deps.turns.prepare?.();
 
+		// Usage Dashboard bookkeeping for the run. A port that cannot record is a warning, not a stop.
+		let statsRunId: string | null = null;
+		if (deps.stats) {
+			try {
+				statsRunId = await deps.stats.startRun({
+					agentType: session.toolType,
+					documentPath: playbook.documents.map((d) => d.filename).join(', '),
+					startTime: batchStartTime,
+					tasksTotal: initialTotalTasks,
+					projectPath: session.cwd,
+				});
+			} catch (statsError) {
+				log.warn('Failed to start Auto Run stats tracking', session.name, {
+					error: String(statsError),
+				});
+			}
+		}
+
 		// Track totals
 		let totalCompletedTasks = 0;
 		let totalCost = 0;
@@ -360,6 +380,20 @@ export async function* runPlaybook(
 			reconciled: FinalSummaryTotals,
 			outcome?: string
 		): Promise<void> => {
+			// Every end of a run passes through here, so this is where the stats row closes.
+			if (statsRunId && deps.stats) {
+				try {
+					await deps.stats.endRun(
+						statsRunId,
+						reconciled.totalElapsedMs,
+						reconciled.totalCompletedTasks
+					);
+				} catch (statsError) {
+					log.warn('Failed to end Auto Run stats tracking', session.name, {
+						error: String(statsError),
+					});
+				}
+			}
 			if (!writeHistory) return;
 			await deps.history.append(
 				buildAutoRunSummaryEntry(session, clock.now(), reconciled, loopIteration + 1, outcome)
@@ -568,7 +602,10 @@ export async function* runPlaybook(
 					// BEFORE the prompt is built: the selection block depends on where
 					// the document's model hints change, so the content has to exist
 					// first.
-					const { content: docContent } = await deps.documents.read(folderPath, docEntry.filename);
+					const { content: docContent, checked: checkedBefore } = await deps.documents.read(
+						folderPath,
+						docEntry.filename
+					);
 					const expandedDocContent = docContent
 						? substituteTemplateVariables(docContent, templateContext)
 						: '';
@@ -611,7 +648,9 @@ export async function* runPlaybook(
 					// Each task spawns a fresh provider session, so prefix the agent's
 					// New Session Message onto every spawn (matches interactive behavior).
 					const finalPrompt = prependNewSessionMessage(
-						`${basePrompt}\n\n---\n\n# Current Document: ${docFilePath}\n\nProcess tasks from this document and save changes back to the file above.\n\n${expandedDocContent}`,
+						policy.inlineDocument
+							? `${basePrompt}\n\n---\n\n# Current Document: ${docFilePath}\n\nProcess tasks from this document and save changes back to the file above.\n\n${expandedDocContent}`
+							: basePrompt,
 						session.newSessionMessage
 					);
 
@@ -673,12 +712,20 @@ export async function* runPlaybook(
 					const elapsedMs = clock.now() - taskStartTime;
 
 					// Re-read document to get new task count and check for halt marker
-					const { unchecked: newRemainingTasks, content: postContent } = await deps.documents.read(
-						folderPath,
-						docEntry.filename
-					);
+					const {
+						unchecked: newRemainingTasks,
+						checked: checkedAfter,
+						content: postContent,
+					} = await deps.documents.read(folderPath, docEntry.filename);
 					currentContent = postContent;
-					const tasksCompletedThisRun = remainingTasks - newRemainingTasks;
+					// Checked boxes gained, which survives an agent that adds tasks as it works. A port that
+					// does not count them falls back to the drop in unchecked tasks. Never negative (C2).
+					const tasksCompletedThisRun = Math.max(
+						0,
+						checkedBefore !== undefined && checkedAfter !== undefined
+							? checkedAfter - checkedBefore
+							: remainingTasks - newRemainingTasks
+					);
 					const haltMarker = detectHaltMarker(postContent);
 
 					// Did anything actually move? Compared by CHECKBOX, never by document
@@ -723,7 +770,14 @@ export async function* runPlaybook(
 					let shortSummary = `[${docEntry.filename}] Task completed`;
 					let fullSynopsis = shortSummary;
 
-					if (result.success && result.agentSessionId && !skipSynopsis) {
+					const synopsisMode = skipSynopsis ? 'none' : policy.synopsis;
+					if (result.success && synopsisMode === 'from-response') {
+						// The prompt asks the agent to open with a synopsis, so no second turn is spent on one.
+						({ shortSummary, fullSynopsis } = extractTaskSynopsis(
+							result.response,
+							docEntry.filename
+						));
+					} else if (result.success && result.agentSessionId && synopsisMode === 'resume-turn') {
 						// Request synopsis from the agent. A synopsis is a throwaway
 						// summarization of work that already happened, so it runs at the
 						// bottom of both ladders regardless of what the task ran at. On a
@@ -792,6 +846,22 @@ export async function* runPlaybook(
 								timestamp: clock.now(),
 								entryId: historyEntry.id,
 							};
+						}
+					}
+
+					if (statsRunId && deps.stats && tasksCompletedThisRun > 0) {
+						try {
+							await deps.stats.recordTask(statsRunId, {
+								taskIndex: totalCompletedTasks - 1,
+								taskContent: shortSummary || undefined,
+								startTime: taskStartTime,
+								duration: elapsedMs,
+								success: result.success,
+							});
+						} catch (statsError) {
+							log.warn('Failed to record Auto Run task stats', session.name, {
+								error: String(statsError),
+							});
 						}
 					}
 
@@ -926,6 +996,18 @@ export async function* runPlaybook(
 						remainingTasks: documentStalled.remainingTasks,
 						hasNextDocument,
 					};
+
+					// The History panel hears about a stall too, so a run left overnight explains itself (C4).
+					if (writeHistory) {
+						await deps.history.append(
+							buildStallEntry(session, clock.now(), {
+								document: docEntry.filename,
+								remainingTasks: documentStalled.remainingTasks,
+								runsWithoutProgress: consecutiveNoChangeCount,
+								hasNextDocument,
+							})
+						);
+					}
 
 					// Skipped, not completed: emitting document_complete here would tell
 					// every consumer the tasks got done.

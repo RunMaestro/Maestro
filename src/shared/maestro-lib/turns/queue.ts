@@ -16,6 +16,7 @@
  * - Order is strict from the head: the first runnable item decides. A blocked head blocks the
  *   items behind it, except items the user has paused, which are skipped in place.
  * - A pending retry on a tab holds that tab's queue (Agent Resilience).
+ * - An Auto Run holds its agent's working tree: a write turn waits for the run to end.
  * - A dispatch that fails never loses the prompt. The item keeps its place. A collision (the
  *   tab's previous process has not gone) stays runnable and is looked at again; any other
  *   failure comes back held, so a cause that will not clear cannot spin the queue.
@@ -84,6 +85,12 @@ export interface ExecutionQueueOptions<T extends QueueItem> {
 	start(item: T): Promise<QueuedTurnHandle>;
 	/** Does this tab have a retry counting down? A tab in a retry holds its queue. */
 	isRetryHeld?(tabId: string): boolean;
+	/**
+	 * An Auto Run holds the agent's working tree (AE17): a turn that would write waits until it
+	 * ends, and a read-only or forced-parallel one still runs. The owner calls `drain()` when the
+	 * hold clears.
+	 */
+	holdsTree?(): boolean;
 	onEvent?(event: QueueEvent<T>): void;
 	/** How long to wait before trying again after a collision. Default 4000. */
 	recheckMs?: number;
@@ -103,6 +110,13 @@ export interface QueueView<T extends QueueItem> {
 	/** Items waiting, in order, held ones included. */
 	queued: readonly T[];
 	isRetryHeld?(tabId: string): boolean;
+	/** An Auto Run holds the working tree. */
+	holdsTree?: boolean;
+}
+
+/** A turn the working-tree hold keeps back: it would write, and nobody forced it past the run. */
+function blockedByTreeHold(item: QueueItem, view: { holdsTree?: boolean }): boolean {
+	return view.holdsTree === true && !item.readOnly && !item.forceParallel;
 }
 
 export const DEFAULT_COLLISION_RECHECK_MS = 4000;
@@ -129,12 +143,13 @@ function canWriteBypassQueue<T extends QueueItem>(item: T, view: QueueView<T>): 
 
 /**
  * Run a new message now, or queue it? The composer's rule (`useInputProcessing`), minus the
- * Auto Run and bridge-connection holds, which the TUI does not have.
+ * bridge-connection hold, which the TUI does not have. The Auto Run hold arrives as `holdsTree`.
  */
 export function decideSubmit<T extends QueueItem>(item: T, view: QueueView<T>): 'run' | 'queue' {
 	// A retry counting down holds the tab even though the tab reads idle: sending now burns
 	// against the same wall. This outranks force-parallel, which only skips tab serialization.
 	if (view.isRetryHeld?.(item.tabId)) return 'queue';
+	if (blockedByTreeHold(item, view)) return 'queue';
 	const tabBusy = view.busy.some((turn) => turn.tabId === item.tabId);
 	if (tabBusy) return 'queue';
 	if (item.forceParallel) return 'run';
@@ -164,6 +179,7 @@ export function chooseNext<T extends QueueItem>(
 	// be in a different retry, and dispatching there would discard its prompt.
 	if (exitingTabId && view.isRetryHeld?.(exitingTabId)) return { action: 'wait', item: head };
 	if (view.isRetryHeld?.(head.tabId)) return { action: 'wait', item: head };
+	if (blockedByTreeHold(head, view)) return { action: 'wait', item: head };
 	if (view.busy.some((turn) => turn.tabId === head.tabId)) return { action: 'wait', item: head };
 	const othersBusy = view.busy.length > 0;
 	if (head.forceParallel || head.readOnly || !othersBusy) return { action: 'dispatch', item: head };
@@ -245,6 +261,7 @@ export function createExecutionQueue<T extends QueueItem>(
 		busy: busyTurns(),
 		queued: waiting(),
 		isRetryHeld: options.isRetryHeld,
+		holdsTree: options.holdsTree?.() ?? false,
 	});
 
 	const notifyIfSettled = (): void => {
