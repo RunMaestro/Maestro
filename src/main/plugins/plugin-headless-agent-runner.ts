@@ -7,7 +7,10 @@ import type { PluginToolReceipt } from './plugin-tool-run-identity';
 import { MCP_CONFIG_BY_AGENT } from '../../shared/plugins/mcp-agent-config';
 import { logger } from '../utils/logger';
 
-const HEADLESS_RUN_TIMEOUT_MS = 20 * 60_000;
+import {
+	HEADLESS_RUN_TIMEOUT_MS,
+	HEADLESS_RUN_COMPLETION_TIMEOUT_MS,
+} from '../../shared/plugins/headless-agent-timeouts';
 
 export interface PluginHeadlessRunnerDeps {
 	getAgent: (agentId: string) => SessionInfo | undefined;
@@ -67,12 +70,12 @@ export function createPluginHeadlessAgentRunner(
 		}
 		const runToken =
 			local && deps.hasPluginTools()
-				? deps.issueRunToken(agent.id, HEADLESS_RUN_TIMEOUT_MS + 60_000, receiptToolId)
+				? deps.issueRunToken(agent.id, HEADLESS_RUN_COMPLETION_TIMEOUT_MS, receiptToolId)
 				: undefined;
 		let pluginRunProofFile: string | undefined;
 		try {
 			pluginRunProofFile = runToken
-				? createPluginRunProofFile(runToken, HEADLESS_RUN_TIMEOUT_MS + 60_000)
+				? createPluginRunProofFile(runToken, HEADLESS_RUN_COMPLETION_TIMEOUT_MS)
 				: undefined;
 			deps.audit(agent.id, !!providerSessionId);
 			if (signal?.aborted) {

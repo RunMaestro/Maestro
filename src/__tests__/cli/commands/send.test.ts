@@ -206,7 +206,7 @@ describe('send command', () => {
 		expect(desktop.sendCommand).toHaveBeenCalledWith(
 			expect.objectContaining({ requiredToolId: 'sh.maestro.relay/send' }),
 			'plugins_send_agent_result',
-			expect.any(Number)
+			61 * 60_000
 		);
 		expect(spawnAgent).not.toHaveBeenCalled();
 		expect(JSON.parse(consoleSpy.mock.calls[0][0])).toMatchObject({

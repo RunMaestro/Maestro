@@ -13,6 +13,7 @@ import {
 	withMaestroClient,
 } from '../services/maestro-client';
 import type { ToolType } from '../../shared/types';
+import { HEADLESS_RUN_COMPLETION_TIMEOUT_MS } from '../../shared/plugins/headless-agent-timeouts';
 import type { PluginToolReceipt } from '../../main/plugins/plugin-tool-run-identity';
 
 interface SendOptions {
@@ -211,7 +212,7 @@ export async function send(
 								...(requiredToolId ? { requiredToolId } : {}),
 							},
 							'plugins_send_agent_result',
-							21 * 60_000
+							HEADLESS_RUN_COMPLETION_TIMEOUT_MS
 						);
 					} catch (error) {
 						// An older desktop echoes an unsupported verb before starting any

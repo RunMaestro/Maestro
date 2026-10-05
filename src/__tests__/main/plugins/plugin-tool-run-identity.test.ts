@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
+import { HEADLESS_RUN_COMPLETION_TIMEOUT_MS } from '../../../shared/plugins/headless-agent-timeouts';
 import {
 	PluginToolRunIdentity,
 	createPluginRunProofFile,
@@ -29,6 +30,24 @@ describe('PluginToolRunIdentity', () => {
 			vi.advanceTimersByTime(1_001);
 			expect(runs.resolve(token)).toEqual({ callerAgentId: null });
 		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it('keeps headless identity and proof through 60 minutes and expires both at 61', () => {
+		vi.useFakeTimers();
+		const runs = new PluginToolRunIdentity();
+		const token = runs.issue('relay-agent', HEADLESS_RUN_COMPLETION_TIMEOUT_MS);
+		const file = createPluginRunProofFile(token, HEADLESS_RUN_COMPLETION_TIMEOUT_MS);
+		try {
+			vi.advanceTimersByTime(60 * 60_000);
+			expect(runs.resolve(token)).toEqual({ callerAgentId: 'relay-agent' });
+			expect(fs.existsSync(file)).toBe(true);
+			vi.advanceTimersByTime(60_000);
+			expect(runs.resolve(token)).toEqual({ callerAgentId: null });
+			expect(fs.existsSync(file)).toBe(false);
+		} finally {
+			if (fs.existsSync(file)) removePluginRunProofFile(file);
 			vi.useRealTimers();
 		}
 	});
