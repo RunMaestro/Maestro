@@ -1,7 +1,18 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Text, useApp, useInput, type Key } from 'ink';
-import type { AgentRecord, ClientResult, MaestroClient, MaestroPaths } from '../shared/maestro-lib';
-import { asThinkingMode, isAutoRunActive, visibleAiTabsOf } from '../shared/maestro-lib';
+import type {
+	AgentRecord,
+	ClientResult,
+	GroupChatRecord,
+	MaestroClient,
+	MaestroPaths,
+} from '../shared/maestro-lib';
+import {
+	asThinkingMode,
+	isAutoRunActive,
+	isGroupChatBusy,
+	visibleAiTabsOf,
+} from '../shared/maestro-lib';
 import { AgentForm } from './agents/AgentForm';
 import {
 	acceptCompletion,
@@ -32,6 +43,7 @@ import {
 import {
 	backspacePrompt,
 	deleteAgentConfirm,
+	deleteGroupChatConfirm,
 	deleteGroupConfirm,
 	groupChoices,
 	manageTargetOf,
@@ -40,6 +52,7 @@ import {
 	newGroupPrompt,
 	pickerStartIndex,
 	renameAgentPrompt,
+	renameGroupChatPrompt,
 	renameGroupPrompt,
 	renameTabPrompt,
 	submitConfirm,
@@ -91,19 +104,32 @@ import {
 } from './autorun/state';
 import {
 	EMPTY_COMPOSER,
-	backspace as composerBackspace,
-	composerTextFor,
-	deleteToLineStart,
+	applyDraftKey,
 	insertNewline,
-	insertText,
 	isBlankComposer,
-	moveLeft,
-	moveRight,
-	moveToLineEnd,
-	moveToLineStart,
-	moveVertical,
 	type ComposerState,
 } from './composer/draft';
+import { GroupChatFormView } from './groupchat/GroupChatFormView';
+import { GroupChatListView } from './groupchat/GroupChatListView';
+import { GroupChatView } from './groupchat/GroupChatView';
+import {
+	backspaceChatForm,
+	cycleChatChoice,
+	highlightedGroupChat,
+	initialChatForm,
+	liveChatOf,
+	moveChatFormFocus,
+	moveGroupChatCursor,
+	openGroupChatList,
+	pressChatFormEnter,
+	stopChat,
+	submitChatForm,
+	submitChatMessage,
+	typeIntoChatForm,
+	type GroupChatListState,
+	type GroupChatScreen,
+} from './groupchat/state';
+import { useGroupChats } from './groupchat/useGroupChats';
 import { mergeLiveTurn } from './composer/liveTurn';
 import { ARM_QUIT_NOTICE, decideCtrlC, interruptTurn, submitDraft } from './composer/turns';
 import { useTurnStream } from './composer/useTurnStream';
@@ -176,8 +202,22 @@ type OverlayState =
 	| { kind: 'palette'; palette: PaletteState }
 	| { kind: 'menu'; cursor: number }
 	| { kind: 'autoRun'; view: AutoRunViewState; screen?: RunScreen }
-	| { kind: 'prompt'; prompt: PromptState; submitting: boolean; error?: string }
-	| { kind: 'confirm'; confirm: ConfirmState; submitting: boolean; error?: string }
+	| { kind: 'groupChats'; list: GroupChatListState; screen?: GroupChatScreen }
+	| {
+			kind: 'prompt';
+			prompt: PromptState;
+			submitting: boolean;
+			error?: string;
+			/** Opened from the group chat list: finishing or leaving it goes back to that list. */
+			returnToChats?: boolean;
+	  }
+	| {
+			kind: 'confirm';
+			confirm: ConfirmState;
+			submitting: boolean;
+			error?: string;
+			returnToChats?: boolean;
+	  }
 	| { kind: 'groupPicker'; agentId: string; cursor: number }
 	| {
 			kind: 'providerPicker';
@@ -229,6 +269,21 @@ export function App({ paths, client, editFile = runEditor }: AppProps): React.Re
 	const autoRunsByAgent = useAutoRunRuns(source.client);
 	const runsRef = useRef(autoRunsByAgent);
 	runsRef.current = autoRunsByAgent;
+	// Every group chat on the host, folded as events arrive, so a chat opened mid-round is whole.
+	const groupChatStore = useGroupChats(source.client);
+	const chatsLiveRef = useRef(groupChatStore);
+	chatsLiveRef.current = groupChatStore;
+	const chatScreen =
+		overlay?.kind === 'groupChats' && overlay.screen?.kind === 'chat' ? overlay.screen : undefined;
+	const openChatRecord: GroupChatRecord | undefined =
+		chatScreen && overlay?.kind === 'groupChats'
+			? (groupChatStore.live[chatScreen.chatId]?.chat ??
+				overlay.list.chats.find((chat) => chat.id === chatScreen.chatId))
+			: undefined;
+	const openChatRecordRef = useRef(openChatRecord);
+	openChatRecordRef.current = openChatRecord;
+	const liveChatOfListed = (listed: GroupChatRecord) =>
+		liveChatOf(listed, groupChatStore.live[listed.id]?.chat);
 	// What the launch form reads off the host while it is open: the agent's provider's models.
 	const launchScreen =
 		overlay?.kind === 'autoRun' && overlay.screen?.kind === 'launch' ? overlay.screen : undefined;
@@ -557,6 +612,11 @@ export function App({ paths, client, editFile = runEditor }: AppProps): React.Re
 			}
 			return;
 		}
+		if (stillOpen && (latest as { returnToChats?: boolean }).returnToChats) {
+			// Opened from the group chat list: go back to it, with the answer under it.
+			void openGroupChats({ message: result.value });
+			return;
+		}
 		if (stillOpen) setOverlay(undefined);
 		setNotice(result.value);
 	};
@@ -571,7 +631,14 @@ export function App({ paths, client, editFile = runEditor }: AppProps): React.Re
 	const submitConfirmOverlay = () => {
 		const current = overlayRef.current;
 		if (current?.kind === 'confirm') {
-			void settleOverlay('confirm', (client) => submitConfirm(client, current.confirm));
+			const { confirm } = current;
+			void settleOverlay('confirm', async (client) => {
+				const result = await submitConfirm(client, confirm);
+				if (result.ok && confirm.kind === 'deleteGroupChat') {
+					chatsLiveRef.current.drop(confirm.chatId);
+				}
+				return result;
+			});
 		}
 	};
 
@@ -759,6 +826,188 @@ export function App({ paths, client, editFile = runEditor }: AppProps): React.Re
 		});
 	};
 
+	/**
+	 * Reads the chats off the host and shows the list. `creating` puts the create form up over it,
+	 * `cursorOn` keeps the cursor on a chat across a reload, and `message` is the line the list opens with.
+	 */
+	const openGroupChats = async (
+		options: { creating?: boolean; cursorOn?: string; message?: string } = {}
+	) => {
+		const client = requireClient();
+		if (!client) return;
+		const listed = await client.groupChats.list();
+		if (!listed.ok) {
+			setNotice(listed.error.message);
+			return;
+		}
+		setOverlay({
+			kind: 'groupChats',
+			list: openGroupChatList(listed.value, options),
+			...(options.creating
+				? { screen: { kind: 'create', form: initialChatForm(), submitting: false } as const }
+				: {}),
+		});
+	};
+
+	/** Reads one chat fresh and folds it into the live store, so events that landed during the read are kept. */
+	const readChat = async (client: MaestroClient, chatId: string) => {
+		const readAt = Date.now();
+		const read = await client.groupChats.get(chatId);
+		if (read.ok) chatsLiveRef.current.seed(read.value, readAt);
+		return read;
+	};
+
+	/** Opens a chat. `refreshList` re-reads the list too: a chat that was just created is not in the one held. */
+	const openChat = async (chatId: string, refreshList = false) => {
+		const client = requireClient();
+		if (!client) return;
+		const [read, listed] = await Promise.all([
+			readChat(client, chatId),
+			refreshList ? client.groupChats.list() : Promise.resolve(undefined),
+		]);
+		if (!read.ok) {
+			setNotice(read.error.message);
+			return;
+		}
+		const held = overlayRef.current;
+		const list =
+			listed?.ok === true
+				? openGroupChatList(listed.value, { cursorOn: chatId })
+				: held?.kind === 'groupChats'
+					? held.list
+					: openGroupChatList([read.value], { cursorOn: chatId });
+		setOverlay({
+			kind: 'groupChats',
+			list,
+			screen: { kind: 'chat', chatId, draft: EMPTY_COMPOSER },
+		});
+	};
+
+	// A connection that could not resume missed pushes: read the open chat again.
+	const openChatId = chatScreen?.chatId;
+	const openChatStale = openChatId ? groupChatStore.live[openChatId]?.stale === true : false;
+	useEffect(() => {
+		const client = source.client;
+		if (!openChatStale || !openChatId || !client) return;
+		void readChat(client, openChatId).then((read) => {
+			if (!read.ok) setNotice(read.error.message);
+		});
+	}, [openChatStale, openChatId]);
+
+	/** Changes the open chat screen. Does nothing when the person has left it for another chat or none. */
+	const updateChatScreen = (
+		chatId: string,
+		change: (screen: Extract<GroupChatScreen, { kind: 'chat' }>) => GroupChatScreen
+	) => {
+		const latest = overlayRef.current;
+		if (
+			latest?.kind !== 'groupChats' ||
+			latest.screen?.kind !== 'chat' ||
+			latest.screen.chatId !== chatId
+		) {
+			return;
+		}
+		setOverlay({ ...latest, screen: change(latest.screen) });
+	};
+
+	const updateChatForm = (
+		change: (form: ReturnType<typeof initialChatForm>) => ReturnType<typeof initialChatForm>
+	) => {
+		const latest = overlayRef.current;
+		if (latest?.kind !== 'groupChats' || latest.screen?.kind !== 'create') return;
+		setOverlay({ ...latest, screen: { ...latest.screen, form: change(latest.screen.form) } });
+	};
+
+	const submitChatCreate = async () => {
+		const client = source.client;
+		const current = overlayRef.current;
+		if (!client || current?.kind !== 'groupChats' || current.screen?.kind !== 'create') return;
+		const { screen } = current;
+		if (screen.submitting) return;
+		setOverlay({
+			...current,
+			screen: { ...screen, submitting: true, form: { ...screen.form, error: undefined } },
+		});
+		const result = await submitChatForm(client, screen.form);
+		const latest = overlayRef.current;
+		const form =
+			latest?.kind === 'groupChats' && latest.screen?.kind === 'create' ? latest : undefined;
+		if (!result.ok) {
+			// Esc while the host was answering: the chat may exist, so say so where the person will see it.
+			if (form?.screen?.kind === 'create') {
+				setOverlay({
+					...form,
+					screen: {
+						...form.screen,
+						submitting: false,
+						form: { ...form.screen.form, error: result.error.message },
+					},
+				});
+			} else setNotice(result.error.message);
+			return;
+		}
+		if (form) await openChat(result.value.chatId, true);
+		else setNotice(`Created group chat ${screen.form.name.trim()}.`);
+	};
+
+	/** Sends the open chat's draft. Cleared at once so a second Enter cannot send it twice; a refusal puts it back. */
+	const sendChatDraft = async () => {
+		const client = source.client;
+		const current = overlayRef.current;
+		const chat = openChatRecordRef.current;
+		if (!client || !chat || current?.kind !== 'groupChats' || current.screen?.kind !== 'chat') {
+			return;
+		}
+		const draft = current.screen.draft;
+		if (isBlankComposer(draft)) return;
+		if (isGroupChatBusy(chat)) {
+			updateChatScreen(chat.id, (screen) => ({
+				...screen,
+				message: undefined,
+				error: 'The chat is working. Wait for the round to end, or stop it, then send.',
+			}));
+			return;
+		}
+		updateChatScreen(chat.id, (screen) => ({
+			...screen,
+			draft: EMPTY_COMPOSER,
+			error: undefined,
+			message: undefined,
+		}));
+		const outcome = await submitChatMessage(client, chat, draft);
+		if (outcome.status === 'failed' || outcome.status === 'busy') {
+			// Back in the box, unless the person has started something new in the meantime.
+			updateChatScreen(chat.id, (screen) => ({
+				...screen,
+				draft: screen.draft.text === '' ? draft : screen.draft,
+				error: outcome.message,
+			}));
+		}
+	};
+
+	/** GC-3: stops the open chat's moderator and participants, and shows the answer under the log. */
+	const stopOpenChat = async () => {
+		const client = source.client;
+		const chat = openChatRecordRef.current;
+		const current = overlayRef.current;
+		if (!client || !chat || current?.kind !== 'groupChats' || current.screen?.kind !== 'chat') {
+			return;
+		}
+		updateChatScreen(chat.id, (screen) => ({
+			...screen,
+			busy: 'Stopping...',
+			message: undefined,
+			error: undefined,
+		}));
+		const result = await stopChat(client, chat);
+		updateChatScreen(chat.id, (screen) => ({
+			...screen,
+			busy: undefined,
+			message: result.ok ? result.value : undefined,
+			error: result.ok ? undefined : result.error.message,
+		}));
+	};
+
 	/** Enter in the name box writes the template and opens it; Enter on a row opens that document. */
 	const openAutoRunDocument = (current: Extract<OverlayState, { kind: 'autoRun' }>) => {
 		if (current.view.naming) {
@@ -852,8 +1101,19 @@ export function App({ paths, client, editFile = runEditor }: AppProps): React.Re
 	 */
 	const interrupt = async (viaKey: boolean) => {
 		const now = Date.now();
+		// On an open group chat the turn in question is the chat's round, not the agent behind it.
+		const inChat =
+			overlayRef.current?.kind === 'groupChats' && overlayRef.current.screen?.kind === 'chat';
+		const chatRunning =
+			inChat &&
+			openChatRecordRef.current !== undefined &&
+			isGroupChatBusy(openChatRecordRef.current);
 		const decision = viaKey
-			? decideCtrlC({ now, lastAt: lastCtrlCRef.current, running: turnRunningRef.current })
+			? decideCtrlC({
+					now,
+					lastAt: lastCtrlCRef.current,
+					running: inChat ? chatRunning : turnRunningRef.current,
+				})
 			: 'interrupt';
 		if (decision === 'quit') {
 			exit();
@@ -862,6 +1122,10 @@ export function App({ paths, client, editFile = runEditor }: AppProps): React.Re
 		if (viaKey) lastCtrlCRef.current = now;
 		if (decision === 'arm-quit') {
 			setNotice(ARM_QUIT_NOTICE);
+			return;
+		}
+		if (inChat) {
+			await stopOpenChat();
 			return;
 		}
 		const target = composerTargetRef.current;
@@ -877,20 +1141,7 @@ export function App({ paths, client, editFile = runEditor }: AppProps): React.Re
 	const editComposer = (input: string, key: Key) => {
 		const target = composerTargetRef.current;
 		if (!target) return;
-		const edit = (change: (state: ComposerState) => ComposerState) => setDraft(target.key, change);
-		if (isBackspaceKey(key)) edit(composerBackspace);
-		else if (key.leftArrow) edit(moveLeft);
-		else if (key.rightArrow) edit(moveRight);
-		else if (key.upArrow) edit((state) => moveVertical(state, -1));
-		else if (key.downArrow) edit((state) => moveVertical(state, 1));
-		else if (key.ctrl) {
-			if (input === 'a') edit(moveToLineStart);
-			else if (input === 'e') edit(moveToLineEnd);
-			else if (input === 'u') edit(deleteToLineStart);
-		} else {
-			const text = composerTextFor(input, key);
-			if (text) edit((state) => insertText(state, text));
-		}
+		setDraft(target.key, (state) => applyDraftKey(state, input, key));
 	};
 
 	const runAction = (action: KeyAction, current: OverlayState | undefined, viaKey = false) => {
@@ -935,7 +1186,8 @@ export function App({ paths, client, editFile = runEditor }: AppProps): React.Re
 				if (agent) void openForm('edit', agent.id);
 				return;
 			case 'submitForm':
-				void submitForm();
+				if (current?.kind === 'groupChats') void submitChatCreate();
+				else void submitForm();
 				return;
 			case 'newTab': {
 				const client = requireClient();
@@ -1079,12 +1331,72 @@ export function App({ paths, client, editFile = runEditor }: AppProps): React.Re
 				else setNotice('Select an agent to watch its Auto Run.');
 				return;
 			}
+			case 'groupChats':
+				void openGroupChats();
+				return;
+			case 'newGroupChat':
+				// From the palette there is no list yet: open it, with the form up.
+				if (current?.kind === 'groupChats') {
+					setOverlay({
+						...current,
+						screen: { kind: 'create', form: initialChatForm(), submitting: false },
+					});
+				} else void openGroupChats({ creating: true });
+				return;
+			case 'renameGroupChat':
+			case 'deleteGroupChat':
+			case 'reloadGroupChats':
+			case 'stopGroupChat':
+			case 'sendGroupChat': {
+				// A group chat key means something only on its own screens; from anywhere else it opens the list.
+				if (current?.kind !== 'groupChats') {
+					void openGroupChats();
+					return;
+				}
+				if (action === 'stopGroupChat') {
+					void stopOpenChat();
+					return;
+				}
+				if (action === 'sendGroupChat') {
+					void sendChatDraft();
+					return;
+				}
+				const chat = highlightedGroupChat(current.list);
+				if (action === 'reloadGroupChats') {
+					void openGroupChats({ cursorOn: chat?.id });
+					return;
+				}
+				if (!chat) {
+					setNotice('No group chat is highlighted.');
+					return;
+				}
+				if (action === 'renameGroupChat') {
+					setOverlay({
+						kind: 'prompt',
+						prompt: renameGroupChatPrompt(chat),
+						submitting: false,
+						returnToChats: true,
+					});
+				} else {
+					setOverlay({
+						kind: 'confirm',
+						confirm: deleteGroupChatConfirm(liveChatOfListed(chat)),
+						submitting: false,
+						returnToChats: true,
+					});
+				}
+				return;
+			}
 			case 'confirm':
 				submitConfirmOverlay();
 				return;
 			case 'choicePrev':
 			case 'choiceNext': {
 				const delta = action === 'choiceNext' ? 1 : -1;
+				if (current?.kind === 'groupChats') {
+					updateChatForm((form) => cycleChatChoice(data.agents, form, delta));
+					return;
+				}
 				if (current?.kind === 'autoRun' && current.screen?.kind === 'launch') {
 					updateLaunch((form) => cycleLaunchField(form, launchFieldsNow(form), delta));
 					return;
@@ -1102,6 +1414,16 @@ export function App({ paths, client, editFile = runEditor }: AppProps): React.Re
 				return;
 			}
 			case 'closeOverlay':
+				// Esc on a group chat screen goes back to the list under it.
+				if (current?.kind === 'groupChats' && current.screen) {
+					setOverlay({ kind: 'groupChats', list: current.list });
+					return;
+				}
+				// A rename or delete opened from the group chat list goes back to it.
+				if ((current?.kind === 'prompt' || current?.kind === 'confirm') && current.returnToChats) {
+					void openGroupChats();
+					return;
+				}
 				// Esc in the name box puts the box away and keeps the list.
 				if (current?.kind === 'autoRun' && current.view.naming) {
 					setOverlay({ ...current, view: cancelNaming(current.view) });
@@ -1174,6 +1496,12 @@ export function App({ paths, client, editFile = runEditor }: AppProps): React.Re
 				} else if (current?.kind === 'groupPicker') {
 					const count = groupChoices(groupsFromSections(data.sections)).length;
 					setOverlay({ ...current, cursor: moveGroupCursor(current.cursor, delta, count) });
+				} else if (current?.kind === 'groupChats') {
+					if (current.screen?.kind === 'create') {
+						updateChatForm((form) => moveChatFormFocus(data.agents, form, delta));
+					} else if (!current.screen) {
+						setOverlay({ ...current, list: moveGroupChatCursor(current.list, delta) });
+					}
 				} else if (current?.kind === 'autoRun' && current.screen?.kind === 'launch') {
 					updateLaunch((form) => moveLaunchFocus(form, launchFieldsNow(form), delta));
 				} else if (current?.kind === 'autoRun' && current.screen) {
@@ -1219,6 +1547,16 @@ export function App({ paths, client, editFile = runEditor }: AppProps): React.Re
 				}
 				if (current?.kind === 'providerPicker') {
 					void submitProviderPicker(current);
+					return;
+				}
+				if (current?.kind === 'groupChats') {
+					if (current.screen?.kind === 'create') {
+						updateChatForm((form) => pressChatFormEnter(data.agents, form));
+						return;
+					}
+					const chat = highlightedGroupChat(current.list);
+					if (chat) void openChat(chat.id);
+					else setNotice('No group chat to open. Press n to create one.');
 					return;
 				}
 				if (current?.kind === 'autoRun' && current.screen?.kind === 'launch') {
@@ -1278,15 +1616,21 @@ export function App({ paths, client, editFile = runEditor }: AppProps): React.Re
 			setNotice(undefined);
 			const current = overlayRef.current;
 			const context: KeyContext = current
-				? current.kind === 'autoRun'
-					? current.screen?.kind === 'launch'
-						? 'autoRunLaunch'
-						: current.screen?.kind === 'progress'
-							? 'autoRunProgress'
-							: current.view.naming
-								? 'autoRunName'
-								: 'autoRun'
-					: current.kind
+				? current.kind === 'groupChats'
+					? current.screen?.kind === 'create'
+						? 'groupChatForm'
+						: current.screen?.kind === 'chat'
+							? 'groupChat'
+							: 'groupChats'
+					: current.kind === 'autoRun'
+						? current.screen?.kind === 'launch'
+							? 'autoRunLaunch'
+							: current.screen?.kind === 'progress'
+								? 'autoRunProgress'
+								: current.view.naming
+									? 'autoRunName'
+									: 'autoRun'
+						: current.kind
 				: composerHasKeys()
 					? 'composer'
 					: 'main';
@@ -1317,6 +1661,22 @@ export function App({ paths, client, editFile = runEditor }: AppProps): React.Re
 				}
 				const text = typedTextFor(input, key);
 				if (text) setOverlay({ ...current, prompt: typeIntoPrompt(current.prompt, text) });
+				return;
+			}
+			if (current?.kind === 'groupChats' && current.screen?.kind === 'create') {
+				if (isBackspaceKey(key)) updateChatForm(backspaceChatForm);
+				else {
+					const text = typedTextFor(input, key);
+					if (text) updateChatForm((form) => typeIntoChatForm(form, text));
+				}
+				return;
+			}
+			if (current?.kind === 'groupChats' && current.screen?.kind === 'chat') {
+				const { chatId } = current.screen;
+				updateChatScreen(chatId, (screen) => ({
+					...screen,
+					draft: applyDraftKey(screen.draft, input, key),
+				}));
 				return;
 			}
 			if (current?.kind === 'autoRun' && current.screen?.kind === 'launch') {
@@ -1493,6 +1853,40 @@ export function App({ paths, client, editFile = runEditor }: AppProps): React.Re
 								agent={picked}
 								state={overlay.view}
 								run={autoRunsByAgent[picked.id]}
+								width={width}
+								height={height}
+							/>
+						);
+					}
+					case 'groupChats': {
+						if (overlay.screen?.kind === 'create') {
+							return (
+								<GroupChatFormView
+									agents={data.agents}
+									form={overlay.screen.form}
+									submitting={overlay.screen.submitting}
+									width={width}
+									height={height}
+								/>
+							);
+						}
+						if (overlay.screen?.kind === 'chat') {
+							return openChatRecord ? (
+								<GroupChatView
+									chat={openChatRecord}
+									draft={overlay.screen.draft}
+									busy={overlay.screen.busy}
+									message={overlay.screen.message}
+									error={overlay.screen.error}
+									width={width}
+									height={height}
+								/>
+							) : null;
+						}
+						return (
+							<GroupChatListView
+								state={overlay.list}
+								liveOf={liveChatOfListed}
 								width={width}
 								height={height}
 							/>

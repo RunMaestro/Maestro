@@ -7,6 +7,7 @@
  */
 
 import type { Key } from 'ink';
+import { isBackspaceKey } from '../app/textInput';
 import { cellWidth } from '../transcript/cellWidth';
 
 export interface ComposerState {
@@ -138,6 +139,26 @@ export function moveVertical(state: ComposerState, delta: 1 | -1): ComposerState
 	if (end === text.length) return { ...state, cursor: text.length };
 	const nextStart = end + 1;
 	return { ...state, cursor: indexAtColumn(text, nextStart, lineEndOf(text, nextStart), column) };
+}
+
+/**
+ * What a keypress that no binding claimed does to a draft: delete, move the
+ * caret, jump to a line end, or type. Shared by every message box (the
+ * conversation's composer and a group chat's), so they edit alike.
+ */
+export function applyDraftKey(state: ComposerState, input: string, key: Key): ComposerState {
+	if (isBackspaceKey(key)) return backspace(state);
+	if (key.leftArrow) return moveLeft(state);
+	if (key.rightArrow) return moveRight(state);
+	if (key.upArrow) return moveVertical(state, -1);
+	if (key.downArrow) return moveVertical(state, 1);
+	if (key.ctrl) {
+		if (input === 'a') return moveToLineStart(state);
+		if (input === 'e') return moveToLineEnd(state);
+		if (input === 'u') return deleteToLineStart(state);
+		return state;
+	}
+	return insertText(state, composerTextFor(input, key));
 }
 
 export interface ComposerRow {

@@ -31,6 +31,13 @@ import {
 	type GoalRunLaunchInput,
 } from '../autorun/launch';
 import { parseAutoRunProgress } from '../autorun/progress';
+import {
+	parseGroupChatFrame,
+	parseGroupChatRecord,
+	validateGroupChatCreate,
+	type GroupChatCreateInput,
+	type GroupChatRecord,
+} from '../groupchat/chat';
 import { isValidAgentId } from '../../agentIds';
 import { buildSnapshotKey, type AgentCapabilitiesSnapshotMap } from '../../agentCapabilities';
 import { stripBlankEnvVars } from '../../agentEnvironment';
@@ -161,6 +168,8 @@ class WsMaestroClient implements MaestroClient {
 	private readonly mirror: ClientMirror;
 	private readonly listeners = new Set<ListenerEntry>();
 	private readonly turnStates = new Map<string, TurnState>();
+	/** Group chats this client has read or heard about: each gets a `gap` when a connection could not resume. */
+	private readonly knownGroupChats = new Set<string>();
 
 	private state: ConnectionState = 'idle';
 	private hostInfo: HostInfo | undefined;
@@ -301,6 +310,16 @@ class WsMaestroClient implements MaestroClient {
 				'abort_auto_run_error',
 				'abort_auto_run_error_result'
 			),
+	};
+
+	readonly groupChats = {
+		list: () => this.groupChatsList(),
+		get: (chatId: string) => this.groupChatsGet(chatId),
+		create: (input: GroupChatCreateInput) => this.groupChatsCreate(input),
+		send: (chatId: string, message: string) => this.groupChatsSend(chatId, message),
+		stop: (chatId: string) => this.groupChatsStop(chatId),
+		rename: (chatId: string, name: string) => this.groupChatsRename(chatId, name),
+		remove: (chatId: string) => this.groupChatsRemove(chatId),
 	};
 
 	readonly settings = {
@@ -694,6 +713,7 @@ class WsMaestroClient implements MaestroClient {
 			});
 			if (wasReconnect) this.emitGapForRunningTurns();
 			else this.turnStates.clear();
+			this.emitGapForGroupChats();
 		}
 		for (const queued of attempt.pending) this.handleFrame(queued);
 		attempt.pending = [];
@@ -723,6 +743,13 @@ class WsMaestroClient implements MaestroClient {
 			this.emitTurn(agentId, tabId, { kind: 'gap', at: this.now() });
 		}
 		this.turnStates.clear();
+	}
+
+	/** A fresh snapshot means pushes were missed: every chat held must be read again. */
+	private emitGapForGroupChats(): void {
+		for (const chatId of this.knownGroupChats) {
+			this.emit({ type: 'groupChat', chatId, event: { kind: 'gap', at: this.now() } });
+		}
 	}
 
 	// -- frames --------------------------------------------------------------
@@ -870,6 +897,14 @@ class WsMaestroClient implements MaestroClient {
 				return;
 			}
 			default: {
+				if (channel.startsWith('groupChat:')) {
+					const parsed = parseGroupChatFrame(channel, args, this.now());
+					if (parsed) {
+						this.knownGroupChats.add(parsed.chatId);
+						this.emit({ type: 'groupChat', chatId: parsed.chatId, event: parsed.event });
+					}
+					return;
+				}
 				const batch = parseBatchFrame(channel, args);
 				if (batch) {
 					this.emit({
@@ -1801,6 +1836,129 @@ class WsMaestroClient implements MaestroClient {
 		if (!sent.ok) return sent;
 		const result = this.checkResult(method, sent.value, { stateRefusal: true });
 		return result.ok ? ok(undefined) : result;
+	}
+
+	// =======================================================================
+	// Group chats
+	// =======================================================================
+
+	private async groupChatsList(): Promise<ClientResult<GroupChatRecord[]>> {
+		const method: ClientMethod = 'groupChats.list';
+		const sent = await this.send(method, { type: 'get_group_chats' }, 'group_chats_list');
+		if (!sent.ok) return sent;
+		const chats = Array.isArray(sent.value.chats)
+			? sent.value.chats
+					.map(parseGroupChatRecord)
+					.filter((chat): chat is GroupChatRecord => chat !== undefined)
+			: [];
+		for (const chat of chats) this.knownGroupChats.add(chat.id);
+		return ok(chats);
+	}
+
+	private async groupChatsGet(chatId: string): Promise<ClientResult<GroupChatRecord>> {
+		const method: ClientMethod = 'groupChats.get';
+		const sent = await this.send(
+			method,
+			{ type: 'get_group_chat_state', chatId },
+			'group_chat_state'
+		);
+		if (!sent.ok) return sent;
+		const chat = parseGroupChatRecord(sent.value.state);
+		if (!chat) return this.fail(method, 'not-found', `No group chat ${chatId}`);
+		this.knownGroupChats.add(chat.id);
+		return ok(chat);
+	}
+
+	private async groupChatsCreate(
+		input: GroupChatCreateInput
+	): Promise<ClientResult<{ chatId: string }>> {
+		const method: ClientMethod = 'groupChats.create';
+		const gate = this.requireConnected(method);
+		if (gate) return gate;
+		const checked = validateGroupChatCreate(input);
+		if (!checked.ok) return this.fail(method, 'invalid', checked.reason);
+		const { name, participantIds, message } = checked.value;
+		const missing = participantIds.find((id) => !this.mirror.getAgent(id));
+		if (missing) return this.fail(method, 'not-found', `No agent ${missing}`);
+		// The host moderates with a provider, so the moderator agent is read down to its provider.
+		const moderator = input.moderatorAgentId
+			? this.mirror.getAgent(input.moderatorAgentId)
+			: undefined;
+		if (input.moderatorAgentId && !moderator) {
+			return this.fail(method, 'not-found', `No agent ${input.moderatorAgentId}`);
+		}
+		const sent = await this.send(
+			method,
+			{
+				type: 'start_group_chat',
+				topic: name,
+				participantIds,
+				...(moderator?.toolType ? { moderatorAgentId: moderator.toolType } : {}),
+				...(message ? { message } : {}),
+			},
+			'start_group_chat_result'
+		);
+		if (!sent.ok) return sent;
+		const result = this.checkResult(method, sent.value);
+		if (!result.ok) {
+			// The chat can exist when only its opening message failed; the host's text says so.
+			return result;
+		}
+		const chatId = asString(result.value.chatId);
+		if (!chatId) return this.fail(method, 'failed', 'The desktop did not report the new chat.');
+		this.knownGroupChats.add(chatId);
+		return ok({ chatId });
+	}
+
+	private async groupChatsSend(chatId: string, message: string): Promise<ClientResult<void>> {
+		const method: ClientMethod = 'groupChats.send';
+		const gate = this.requireConnected(method);
+		if (gate) return gate;
+		if (!message.trim()) return this.fail(method, 'invalid', 'The message is empty.');
+		const sent = await this.send(
+			method,
+			{ type: 'send_group_chat_message', chatId, message },
+			'send_group_chat_message_result'
+		);
+		if (!sent.ok) return sent;
+		if (sent.value.success === true) return ok(undefined);
+		// The host answers a bare false for a chat that is busy and for one that is gone.
+		return this.fail(
+			method,
+			'rejected',
+			'The desktop did not take the message: the chat is still working, or it no longer exists.'
+		);
+	}
+
+	private async groupChatsStop(chatId: string): Promise<ClientResult<void>> {
+		const method: ClientMethod = 'groupChats.stop';
+		const sent = await this.send(
+			method,
+			{ type: 'stop_group_chat', chatId },
+			'stop_group_chat_result'
+		);
+		if (!sent.ok) return sent;
+		const result = this.checkResult(method, sent.value);
+		return result.ok ? ok(undefined) : result;
+	}
+
+	/** The host has no message for these two (gap G15), so they ride the IPC handlers the desktop's own UI calls. */
+	private async groupChatsRename(chatId: string, name: string): Promise<ClientResult<void>> {
+		const method: ClientMethod = 'groupChats.rename';
+		const trimmed = name.trim();
+		if (!trimmed) return this.fail(method, 'invalid', 'The name cannot be empty.');
+		if (trimmed.length > MAX_NAME_LENGTH) {
+			return this.fail(method, 'invalid', `Names are at most ${MAX_NAME_LENGTH} characters.`);
+		}
+		const done = await this.invoke<unknown>(method, 'groupChat:rename', [chatId, trimmed]);
+		return done.ok ? ok(undefined) : done;
+	}
+
+	private async groupChatsRemove(chatId: string): Promise<ClientResult<void>> {
+		const done = await this.invoke<unknown>('groupChats.remove', 'groupChat:delete', [chatId]);
+		if (!done.ok) return done;
+		this.knownGroupChats.delete(chatId);
+		return ok(undefined);
 	}
 
 	// =======================================================================

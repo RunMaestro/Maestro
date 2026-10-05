@@ -272,6 +272,52 @@ describe('keymap', () => {
 		});
 	});
 
+	describe('the group chat screens', () => {
+		const type = (context: KeyContext, input: string) => resolveAction(context, input, NO_KEY);
+
+		it('opens the list with c from the main view, and gives the list its own letters', () => {
+			expect(type('main', 'c')).toBe('groupChats');
+			expect(type('groupChats', 'n')).toBe('newGroupChat');
+			expect(type('groupChats', 'R')).toBe('renameGroupChat');
+			expect(type('groupChats', 'X')).toBe('deleteGroupChat');
+			expect(type('groupChats', 'r')).toBe('reloadGroupChats');
+			expect(type('groupChats', 'j')).toBe('moveDown');
+		});
+
+		it('keeps every letter for typing in the form and in an open chat', () => {
+			for (const context of ['groupChatForm', 'groupChat'] as const) {
+				for (const letter of ['j', 'k', 'n', 'c', 'x', 'R', 'X', ' ']) {
+					expect(type(context, letter), `${context} ${letter}`).toBeUndefined();
+				}
+			}
+			const form = (key: Partial<Key>, input = '') =>
+				resolveAction('groupChatForm', input, { ...NO_KEY, ...key });
+			expect(form({ downArrow: true })).toBe('moveDown');
+			expect(form({ tab: true })).toBe('moveDown');
+			expect(form({ tab: true, shift: true })).toBe('moveUp');
+			expect(form({ leftArrow: true })).toBe('choicePrev');
+			expect(form({ rightArrow: true })).toBe('choiceNext');
+			expect(form({ ctrl: true }, 's')).toBe('submitForm');
+		});
+
+		it('sends on Enter and stops on Ctrl-X in an open chat, which never queues a message', () => {
+			const chat = (key: Partial<Key>, input = '') =>
+				resolveAction('groupChat', input, { ...NO_KEY, ...key });
+			expect(chat({ return: true })).toBe('sendGroupChat');
+			expect(chat({ ctrl: true }, 'x')).toBe('stopGroupChat');
+			expect(chat({ ctrl: true }, 'c')).toBe('interrupt');
+			expect(chat({ upArrow: true })).toBeUndefined();
+		});
+
+		it('leaves every screen on Esc', () => {
+			for (const context of ['groupChats', 'groupChatForm', 'groupChat'] as const) {
+				expect(resolveAction(context, '', { ...NO_KEY, escape: true }), context).toBe(
+					'closeOverlay'
+				);
+			}
+		});
+	});
+
 	it('throws for an action nobody bound, so a typo cannot print an empty hint', () => {
 		expect(() => bindingFor('nope' as never)).toThrow('no binding');
 	});

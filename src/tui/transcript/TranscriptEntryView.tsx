@@ -8,6 +8,7 @@ import {
 	isToolEntry,
 	sourceStyle,
 	summarizeToolEntry,
+	type SourceStyle,
 } from './entries';
 import { MarkdownView } from './MarkdownView';
 
@@ -17,6 +18,12 @@ export interface TranscriptEntryViewProps {
 	width: number;
 	/** Show a tool call's input and output under its one-line summary. */
 	expandTools: boolean;
+	/**
+	 * A header style for entries this view does not know the sender of (a group
+	 * chat names each speaker). Keep the function's identity stable: the view is
+	 * memoized, and a new function each render would redraw every entry.
+	 */
+	styleFor?: (entry: LogEntryRecord) => SourceStyle | undefined;
 }
 
 /**
@@ -28,6 +35,7 @@ function TranscriptEntryViewImpl({
 	entry,
 	width,
 	expandTools,
+	styleFor,
 }: TranscriptEntryViewProps): React.ReactElement {
 	const indent = entryIndent(entry);
 	const inner = Math.max(1, width - indent);
@@ -53,7 +61,7 @@ function TranscriptEntryViewImpl({
 		);
 	}
 
-	const style = sourceStyle(entry.source);
+	const style = styleFor?.(entry) ?? sourceStyle(entry.source);
 	return (
 		<Box flexDirection="column" marginTop={1} paddingLeft={indent} width={width}>
 			<Text>

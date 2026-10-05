@@ -1668,6 +1668,249 @@ describe('createWsMaestroClient', () => {
 
 	// -----------------------------------------------------------------------
 
+	describe('group chats (GC-1 to GC-4)', () => {
+		const CHAT = '5f1c2a9e-0b7d-4c1e-9a55-3d7f2c0b6a11';
+		const chatEvents = () => events.flatMap((event) => (event.type === 'groupChat' ? [event] : []));
+		const remoteChat = (fields: Frame = {}): Frame => ({
+			id: CHAT,
+			topic: 'Release review',
+			participants: [{ sessionId: 's-1', name: 'Alpha', toolType: 'claude-code' }],
+			messages: [],
+			isActive: false,
+			state: 'idle',
+			moderatorAgentId: 'codex',
+			...fields,
+		});
+
+		it('lists chats without their lines, and reads one with its log', async () => {
+			await connect();
+			bridge.typed.set('get_group_chats', reply('group_chats_list', { chats: [remoteChat()] }));
+			const listed = await client.groupChats.list();
+			expect(listed).toMatchObject({
+				ok: true,
+				value: [
+					{
+						id: CHAT,
+						name: 'Release review',
+						moderatorProvider: 'codex',
+						state: 'idle',
+						participants: [{ name: 'Alpha', provider: 'claude-code' }],
+						lines: [],
+					},
+				],
+			});
+
+			bridge.typed.set('get_group_chat_state', (message) => ({
+				type: 'group_chat_state',
+				chatId: message.chatId,
+				state: remoteChat({
+					messages: [
+						{
+							id: 'm0',
+							participantId: 'user',
+							participantName: 'user',
+							content: 'Ship it?',
+							timestamp: 1_700_000_000_000,
+							role: 'user',
+						},
+					],
+				}),
+			}));
+			const read = await client.groupChats.get(CHAT);
+			expect(read.ok && read.value.lines.map((line) => [line.speaker, line.text])).toEqual([
+				['user', 'Ship it?'],
+			]);
+			expect(bridge.sent('get_group_chat_state')).toEqual([
+				expect.objectContaining({ chatId: CHAT }),
+			]);
+		});
+
+		it('answers not-found for a chat the host does not hold', async () => {
+			await connect();
+			bridge.typed.set('get_group_chat_state', (message) => ({
+				type: 'group_chat_state',
+				chatId: message.chatId,
+				state: null,
+			}));
+			expect(await client.groupChats.get('gone')).toMatchObject({
+				ok: false,
+				error: { code: 'not-found', method: 'groupChats.get' },
+			});
+		});
+
+		it('creates a chat with the moderator agent read down to its provider', async () => {
+			agents = [agentRecord(A1), agentRecord('a2', { toolType: 'codex' })];
+			await connect();
+			bridge.typed.set('start_group_chat', () => ({
+				type: 'start_group_chat_result',
+				success: true,
+				chatId: CHAT,
+			}));
+			const result = await client.groupChats.create({
+				name: '  Release review  ',
+				moderatorAgentId: 'a2',
+				participantIds: [A1, 'a2', A1],
+				message: 'Is 1.4 ready?',
+			});
+			expect(result).toEqual({ ok: true, value: { chatId: CHAT } });
+			expect(bridge.sent('start_group_chat')).toEqual([
+				expect.objectContaining({
+					topic: 'Release review',
+					participantIds: [A1, 'a2'],
+					moderatorAgentId: 'codex',
+					message: 'Is 1.4 ready?',
+				}),
+			]);
+		});
+
+		it('sends only what was chosen, and refuses a bad create before sending', async () => {
+			await connect();
+			bridge.typed.set('start_group_chat', () => ({
+				type: 'start_group_chat_result',
+				success: true,
+				chatId: CHAT,
+			}));
+			await client.groupChats.create({ name: 'Plain', participantIds: [A1] });
+			const message = bridge.sent('start_group_chat')[0];
+			expect(message).not.toHaveProperty('moderatorAgentId');
+			expect(message).not.toHaveProperty('message');
+
+			bridge.clearReceived();
+			expect(await client.groupChats.create({ name: ' ', participantIds: [A1] })).toMatchObject({
+				ok: false,
+				error: { code: 'invalid', method: 'groupChats.create' },
+			});
+			expect(await client.groupChats.create({ name: 'x', participantIds: [] })).toMatchObject({
+				ok: false,
+				error: { code: 'invalid' },
+			});
+			expect(
+				await client.groupChats.create({ name: 'x', participantIds: ['nobody'] })
+			).toMatchObject({
+				ok: false,
+				error: { code: 'not-found' },
+			});
+			expect(
+				await client.groupChats.create({
+					name: 'x',
+					participantIds: [A1],
+					moderatorAgentId: 'nobody',
+				})
+			).toMatchObject({ ok: false, error: { code: 'not-found' } });
+			expect(bridge.sent('start_group_chat')).toEqual([]);
+		});
+
+		it('reports the desktop words when it refuses a create', async () => {
+			await connect();
+			bridge.typed.set('start_group_chat', () => ({
+				type: 'start_group_chat_result',
+				success: false,
+				error: '2 agents answer to @Alpha; rename one so the mention is unambiguous',
+			}));
+			expect(await client.groupChats.create({ name: 'x', participantIds: [A1] })).toMatchObject({
+				ok: false,
+				error: { message: expect.stringContaining('2 agents answer to @Alpha') },
+			});
+		});
+
+		it('sends a message, and reads a bare false as the chat being busy or gone', async () => {
+			await connect();
+			bridge.typed.set('send_group_chat_message', reply('send_group_chat_message_result'));
+			expect(await client.groupChats.send(CHAT, 'hello')).toEqual({ ok: true, value: undefined });
+			expect(bridge.sent('send_group_chat_message')).toEqual([
+				expect.objectContaining({ chatId: CHAT, message: 'hello' }),
+			]);
+
+			bridge.typed.set('send_group_chat_message', () => ({
+				type: 'send_group_chat_message_result',
+				success: false,
+			}));
+			expect(await client.groupChats.send(CHAT, 'again')).toMatchObject({
+				ok: false,
+				error: { code: 'rejected', method: 'groupChats.send' },
+			});
+			expect(await client.groupChats.send(CHAT, '  ')).toMatchObject({
+				ok: false,
+				error: { code: 'invalid' },
+			});
+		});
+
+		it('stops a chat', async () => {
+			await connect();
+			bridge.typed.set('stop_group_chat', reply('stop_group_chat_result'));
+			expect(await client.groupChats.stop(CHAT)).toEqual({ ok: true, value: undefined });
+			expect(bridge.sent('stop_group_chat')).toEqual([expect.objectContaining({ chatId: CHAT })]);
+		});
+
+		it('renames and deletes through the desktop IPC handlers, since no message exists (gap G15)', async () => {
+			await connect();
+			bridge.invokes.set('groupChat:rename', () => remoteChat());
+			bridge.invokes.set('groupChat:delete', () => true);
+			expect(await client.groupChats.rename(CHAT, '  Renamed  ')).toEqual({
+				ok: true,
+				value: undefined,
+			});
+			expect(bridge.invoked('groupChat:rename')[0].args).toEqual([CHAT, 'Renamed']);
+			expect(await client.groupChats.rename(CHAT, ' ')).toMatchObject({
+				ok: false,
+				error: { code: 'invalid' },
+			});
+			expect(await client.groupChats.remove(CHAT)).toEqual({ ok: true, value: undefined });
+			expect(bridge.invoked('groupChat:delete')[0].args).toEqual([CHAT]);
+		});
+
+		it('turns the groupChat channels into events, and ignores the ones a client has no use for', async () => {
+			await connect();
+			bridge.pushBridgeEvent('groupChat:stateChange', CHAT, 'moderator-thinking');
+			bridge.pushBridgeEvent('groupChat:message', CHAT, {
+				timestamp: '2026-10-04T15:00:00.000Z',
+				from: 'moderator',
+				content: 'Asking @Alpha.',
+			});
+			bridge.pushBridgeEvent('groupChat:participantState', CHAT, 'Alpha', 'working');
+			bridge.pushBridgeEvent('groupChat:participantsChanged', CHAT, [
+				{ name: 'Alpha', agentId: 'claude-code', sessionId: 's-1', addedAt: 1 },
+			]);
+			bridge.pushBridgeEvent('groupChat:queueState', CHAT, { items: [] });
+			bridge.pushBridgeEvent('groupChat:moderatorUsage', CHAT, { totalCost: 1 });
+			await vi.waitFor(() => expect(chatEvents()).toHaveLength(4));
+			expect(chatEvents().map((event) => [event.chatId, event.event.kind])).toEqual([
+				[CHAT, 'state'],
+				[CHAT, 'message'],
+				[CHAT, 'participant'],
+				[CHAT, 'participants'],
+			]);
+			expect(chatEvents()[1].event).toMatchObject({
+				kind: 'message',
+				line: { from: 'moderator', speaker: 'moderator', text: 'Asking @Alpha.' },
+			});
+			// A group chat is no agent's turn, whatever its process ids look like.
+			expect(events.every((event) => event.type !== 'turn')).toBe(true);
+		});
+
+		it('tells every chat it has seen that pushes were missed after a resync', async () => {
+			await connect();
+			bridge.typed.set('get_group_chats', reply('group_chats_list', { chats: [remoteChat()] }));
+			await client.groupChats.list();
+			events.length = 0;
+
+			bridge.resumed = false;
+			bridge.epoch = 'epoch-2';
+			bridge.dropAll();
+			await vi.waitFor(() => expect(chatEvents()).toHaveLength(1));
+			expect(chatEvents()[0]).toMatchObject({ chatId: CHAT, event: { kind: 'gap' } });
+		});
+
+		it('is host-unavailable before connecting', async () => {
+			expect(await client.groupChats.list()).toMatchObject({
+				ok: false,
+				error: { code: 'host-unavailable', method: 'groupChats.list' },
+			});
+		});
+	});
+
+	// -----------------------------------------------------------------------
+
 	describe('events', () => {
 		it('filters by type and by agent, and survives a throwing listener', async () => {
 			const onlyTabs: MaestroEvent[] = [];

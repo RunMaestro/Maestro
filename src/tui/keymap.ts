@@ -31,7 +31,13 @@ export type KeyContext =
 	/** The form that configures an Auto Run: letters type into its text boxes. */
 	| 'autoRunLaunch'
 	/** The live progress of an Auto Run, with its controls. */
-	| 'autoRunProgress';
+	| 'autoRunProgress'
+	/** The list of group chats. */
+	| 'groupChats'
+	/** The form that creates a group chat: letters type into its text boxes. */
+	| 'groupChatForm'
+	/** One open group chat: letters type into its message box. */
+	| 'groupChat';
 
 export type KeyAction =
 	| 'quit'
@@ -70,6 +76,13 @@ export type KeyAction =
 	| 'resumeRun'
 	| 'skipDocument'
 	| 'abortRun'
+	| 'groupChats'
+	| 'newGroupChat'
+	| 'renameGroupChat'
+	| 'deleteGroupChat'
+	| 'reloadGroupChats'
+	| 'stopGroupChat'
+	| 'sendGroupChat'
 	| 'newGroup'
 	| 'confirm'
 	| 'send'
@@ -144,9 +157,12 @@ export const KEYMAP: readonly Binding[] = [
 			'providerPicker',
 			'autoRun',
 			'autoRunLaunch',
+			'groupChats',
+			'groupChatForm',
 		],
 		chordsByContext: {
 			palette: [{ named: 'down' }, { input: 'n', ctrl: true }],
+			groupChatForm: [{ named: 'down' }, { named: 'tab' }, { input: 'n', ctrl: true }],
 			// A form is a text box: letters type, so the cursor moves on arrows, Tab, and Ctrl-N.
 			form: [{ named: 'down' }, { named: 'tab' }, { input: 'n', ctrl: true }],
 			autoRunLaunch: [{ named: 'down' }, { named: 'tab' }, { input: 'n', ctrl: true }],
@@ -170,9 +186,12 @@ export const KEYMAP: readonly Binding[] = [
 			'providerPicker',
 			'autoRun',
 			'autoRunLaunch',
+			'groupChats',
+			'groupChatForm',
 		],
 		chordsByContext: {
 			palette: [{ named: 'up' }, { input: 'p', ctrl: true }],
+			groupChatForm: [{ named: 'up' }, { named: 'tab', shift: true }, { input: 'p', ctrl: true }],
 			form: [{ named: 'up' }, { named: 'tab', shift: true }, { input: 'p', ctrl: true }],
 			autoRunLaunch: [{ named: 'up' }, { named: 'tab', shift: true }, { input: 'p', ctrl: true }],
 			prompt: [{ named: 'up' }, { named: 'tab', shift: true }, { input: 'p', ctrl: true }],
@@ -194,6 +213,8 @@ export const KEYMAP: readonly Binding[] = [
 			'autoRun',
 			'autoRunName',
 			'autoRunLaunch',
+			'groupChats',
+			'groupChatForm',
 		],
 		description: 'Open agent, fold group, pick, next field, save, edit',
 		agentMenu: 'Open conversation',
@@ -345,6 +366,48 @@ export const KEYMAP: readonly Binding[] = [
 		description: 'Abort a paused Auto Run',
 	},
 	{
+		action: 'groupChats',
+		chords: [{ input: 'c' }],
+		contexts: ['main'],
+		description: 'Group chats',
+	},
+	{
+		action: 'newGroupChat',
+		chords: [{ input: 'n' }],
+		contexts: ['groupChats'],
+		description: 'New group chat',
+	},
+	{
+		action: 'renameGroupChat',
+		chords: [{ input: 'R' }],
+		contexts: ['groupChats'],
+		description: 'Rename the highlighted group chat',
+	},
+	{
+		action: 'deleteGroupChat',
+		chords: [{ input: 'X' }],
+		contexts: ['groupChats'],
+		description: 'Delete the highlighted group chat',
+	},
+	{
+		action: 'reloadGroupChats',
+		chords: [{ input: 'r' }],
+		contexts: ['groupChats'],
+		description: 'Reload the group chats',
+	},
+	{
+		action: 'sendGroupChat',
+		chords: [{ named: 'return' }],
+		contexts: ['groupChat'],
+		description: 'Send to the moderator (one round at a time)',
+	},
+	{
+		action: 'stopGroupChat',
+		chords: [{ input: 'x', ctrl: true }],
+		contexts: ['groupChat'],
+		description: 'Stop the round: moderator and participants',
+	},
+	{
 		action: 'newGroup',
 		chords: [{ input: 'N' }],
 		contexts: ['main'],
@@ -364,7 +427,7 @@ export const KEYMAP: readonly Binding[] = [
 			{ input: '\n', label: 'Ctrl-J' },
 			{ input: '\r', label: 'Alt-Enter' },
 		],
-		contexts: ['composer'],
+		contexts: ['composer', 'groupChat'],
 		description: 'New line in the message',
 	},
 	{
@@ -387,6 +450,9 @@ export const KEYMAP: readonly Binding[] = [
 			'autoRunName',
 			'autoRunLaunch',
 			'autoRunProgress',
+			'groupChats',
+			'groupChatForm',
+			'groupChat',
 		],
 		description: 'Interrupt the turn; twice in 1s quits',
 		agentMenu: 'Interrupt turn',
@@ -406,19 +472,19 @@ export const KEYMAP: readonly Binding[] = [
 	{
 		action: 'submitForm',
 		chords: [{ input: 's', ctrl: true }],
-		contexts: ['form'],
-		description: 'Save the agent form',
+		contexts: ['form', 'groupChatForm'],
+		description: 'Save the agent or group chat form',
 	},
 	{
 		action: 'choicePrev',
 		chords: [{ named: 'left' }],
-		contexts: ['form', 'autoRunLaunch'],
+		contexts: ['form', 'autoRunLaunch', 'groupChatForm'],
 		description: 'Previous choice in a form field',
 	},
 	{
 		action: 'choiceNext',
 		chords: [{ named: 'right' }],
-		contexts: ['form', 'autoRunLaunch'],
+		contexts: ['form', 'autoRunLaunch', 'groupChatForm'],
 		description: 'Next choice, or accept the path completion',
 	},
 	{
@@ -475,6 +541,9 @@ export const KEYMAP: readonly Binding[] = [
 			'autoRunName',
 			'autoRunLaunch',
 			'autoRunProgress',
+			'groupChats',
+			'groupChatForm',
+			'groupChat',
 		],
 		// A confirmation also takes `n`: "no" is the answer a hand reaches for next to `y`.
 		chordsByContext: { confirm: [{ named: 'escape' }, { input: 'n' }] },

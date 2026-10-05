@@ -5,6 +5,7 @@ import type {
 	ClientMethod,
 	ClientResult,
 	ConnectionState,
+	GroupChatRecord,
 	GroupRecord,
 	HostInfo,
 	LogEntryRecord,
@@ -40,6 +41,8 @@ export interface FakeClientOptions {
 	updateNotices?: string[];
 	/** What `autoRun.launchGoal` reports as `tabId`. */
 	goalRunTabId?: string;
+	/** The group chats the host holds. `groupChats.get` returns one with its lines; `list` returns them without. */
+	groupChats?: GroupChatRecord[];
 	/** Make these methods fail with this code, so a test can see how a refusal is shown. */
 	failures?: Partial<Record<ClientMethod, ClientError['code']>>;
 }
@@ -54,6 +57,10 @@ export interface FakeClient {
 	setQueue(items: QueuedTurn[]): void;
 	/** Every `tabs.transcript` call, as `agentId:tabId`. */
 	transcriptReads: string[];
+	/** The group chats the host holds: a test edits a chat here to change what the next `get` reads. */
+	groupChats: GroupChatRecord[];
+	/** Every `groupChats.get` call, as the chat id. */
+	chatReads: string[];
 	/** Tabs closed through `tabs.close`, as the host's closed-tab history holds them. */
 	closedTabs: Array<{ agentId: string; tab: AITabRecord }>;
 	/** What the connection did, in order. */
@@ -98,6 +105,9 @@ export function createFakeClient(options: FakeClientOptions = {}): FakeClient {
 	let tabCount = 0;
 	let createdCount = 0;
 	let groupCount = 0;
+	let chatCount = 0;
+	const chats = (options.groupChats ?? []).map((chat) => ({ ...chat }));
+	const chatReads: string[] = [];
 	let state: ConnectionState = 'idle';
 
 	const record = (method: ClientMethod, ...args: unknown[]): ClientResult<never> | undefined => {
@@ -335,6 +345,56 @@ export function createFakeClient(options: FakeClientOptions = {}): FakeClient {
 			skip: async (agentId) => record('autoRun.skip', agentId) ?? { ok: true, value: undefined },
 			abort: async (agentId) => record('autoRun.abort', agentId) ?? { ok: true, value: undefined },
 		},
+		groupChats: {
+			// Reads are not recorded: the TUI re-reads a chat on events, and tests assert the writes.
+			list: async () => {
+				const refused = options.failures?.['groupChats.list'];
+				if (refused) return fail('groupChats.list', refused);
+				return { ok: true, value: chats.map((chat) => ({ ...chat, lines: [] })) };
+			},
+			get: async (chatId) => {
+				chatReads.push(chatId);
+				const refused = options.failures?.['groupChats.get'];
+				if (refused) return fail('groupChats.get', refused);
+				const found = chats.find((chat) => chat.id === chatId);
+				return found ? { ok: true, value: { ...found } } : fail('groupChats.get', 'not-found');
+			},
+			create: async (input) => {
+				const refused = record('groupChats.create', input);
+				if (refused) return refused;
+				chatCount += 1;
+				const chatId = `new-chat-${chatCount}`;
+				chats.push({
+					id: chatId,
+					name: input.name,
+					participants: [],
+					state: 'moderator-thinking',
+					working: [],
+					archived: false,
+					lines: [],
+				});
+				return { ok: true, value: { chatId } };
+			},
+			send: async (chatId, message) =>
+				record('groupChats.send', chatId, message) ?? { ok: true, value: undefined },
+			stop: async (chatId) => record('groupChats.stop', chatId) ?? { ok: true, value: undefined },
+			rename: async (chatId, name) => {
+				const refused = record('groupChats.rename', chatId, name);
+				if (refused) return refused;
+				const found = chats.find((chat) => chat.id === chatId);
+				if (!found) return fail('groupChats.rename', 'not-found');
+				found.name = name;
+				return { ok: true, value: undefined };
+			},
+			remove: async (chatId) => {
+				const refused = record('groupChats.remove', chatId);
+				if (refused) return refused;
+				const at = chats.findIndex((chat) => chat.id === chatId);
+				if (at < 0) return fail('groupChats.remove', 'not-found');
+				chats.splice(at, 1);
+				return { ok: true, value: undefined };
+			},
+		},
 		settings: {
 			get: async () => ({ ok: true, value: {} }),
 			subscribe: () => () => undefined,
@@ -367,6 +427,8 @@ export function createFakeClient(options: FakeClientOptions = {}): FakeClient {
 			transcripts[`${agentId}:${tabId}`] = entries;
 		},
 		transcriptReads,
+		groupChats: chats,
+		chatReads,
 		closedTabs,
 		calls,
 		requests,

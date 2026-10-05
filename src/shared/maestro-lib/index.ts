@@ -52,6 +52,9 @@ export * from './autorun/run-tracker';
 export * from './autorun/templates';
 export * from './autorun/validate';
 
+// Group chats: the record, its events and reducer, and the create rules (GC-1 to GC-4)
+export * from './groupchat/chat';
+
 // Agent form rules, shared with the desktop so a TUI form and the Edit dialog cannot disagree
 export { defaultAgentNameForPath, projectNameFromPath } from '../projectIdentity';
 export {

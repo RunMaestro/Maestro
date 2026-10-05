@@ -19,6 +19,7 @@ import type { TurnOutcome } from '../streaming/turn-outcome';
 import type { AgentError, SshRemoteConfig, ThinkingMode, UsageStats } from '../../types';
 import type { AutoRunLaunchInput, GoalRunLaunchInput } from '../autorun/launch';
 import type { AutoRunRunEvent } from '../autorun/run-tracker';
+import type { GroupChatCreateInput, GroupChatEvent, GroupChatRecord } from '../groupchat/chat';
 
 // ---------------------------------------------------------------------------
 // Results and errors
@@ -89,6 +90,13 @@ export type ClientMethod =
 	| 'autoRun.resume'
 	| 'autoRun.skip'
 	| 'autoRun.abort'
+	| 'groupChats.list'
+	| 'groupChats.get'
+	| 'groupChats.create'
+	| 'groupChats.send'
+	| 'groupChats.stop'
+	| 'groupChats.rename'
+	| 'groupChats.remove'
 	| 'settings.get'
 	| 'settings.sshRemotes'
 	| 'providers.list'
@@ -409,6 +417,48 @@ export interface AutoRunApi {
 }
 
 // ---------------------------------------------------------------------------
+// Group chats
+// ---------------------------------------------------------------------------
+
+/**
+ * GC-1 to GC-4. The chats are the desktop's own (same storage, GC-4): one
+ * started here continues on the desktop and the other way round. A chat is
+ * driven by its moderator, which routes a message to participants, collects
+ * their replies, and posts a synthesis; none of that runs in this client.
+ *
+ * Progress arrives as `groupChat` events (a line landing, the moderator's state,
+ * a participant starting or finishing). A participant's reply lands as one
+ * line when its turn ends: the bridge carries no partial text for a chat.
+ */
+export interface GroupChatsApi {
+	/** Every chat, without its lines. */
+	list(): Promise<ClientResult<GroupChatRecord[]>>;
+	/** One chat with its log, read fresh from the host. */
+	get(chatId: string): Promise<ClientResult<GroupChatRecord>>;
+	/**
+	 * GC-1. Creates the chat and sends the moderator its opening message, so the
+	 * chat is already running when this answers. Every participant is addressed
+	 * by name in that message, which is what makes the router add them.
+	 */
+	create(input: GroupChatCreateInput): Promise<ClientResult<{ chatId: string }>>;
+	/**
+	 * GC-2. Send a message to the moderator. A chat takes one round at a time:
+	 * while the moderator or a participant is working this is `rejected`, and the
+	 * message is not queued.
+	 */
+	send(chatId: string, message: string): Promise<ClientResult<void>>;
+	/** GC-3. Stop the moderator, every participant, and any Auto Run the chat started. */
+	stop(chatId: string): Promise<ClientResult<void>>;
+	/** GC-1. The desktop's Left Bar reads the new name after its next load (gap G15). */
+	rename(chatId: string, name: string): Promise<ClientResult<void>>;
+	/**
+	 * GC-1. Stops the chat's processes, then deletes its log and images. The
+	 * desktop's Left Bar still lists the chat until its next load (gap G15).
+	 */
+	remove(chatId: string): Promise<ClientResult<void>>;
+}
+
+// ---------------------------------------------------------------------------
 // Settings
 // ---------------------------------------------------------------------------
 
@@ -483,7 +533,12 @@ export type MaestroEvent =
 	 * A run's progress, from the host's `autorun_state` and the run's own
 	 * process stream (its output and usage). Fold them with `reduceAutoRun`.
 	 */
-	| { type: 'autorun'; agentId: string; event: AutoRunRunEvent };
+	| { type: 'autorun'; agentId: string; event: AutoRunRunEvent }
+	/**
+	 * Something happened in a group chat. Fold it with `reduceGroupChat`. A `gap`
+	 * follows a connection that could not resume: re-read the chats you hold.
+	 */
+	| { type: 'groupChat'; chatId: string; event: GroupChatEvent };
 
 export type MaestroEventType = MaestroEvent['type'];
 
@@ -505,6 +560,7 @@ export interface MaestroClient {
 	readonly tabs: TabsApi;
 	readonly turns: TurnsApi;
 	readonly autoRun: AutoRunApi;
+	readonly groupChats: GroupChatsApi;
 	readonly settings: SettingsApi;
 	readonly providers: ProvidersApi;
 	readonly events: EventsApi;

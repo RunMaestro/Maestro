@@ -62,6 +62,8 @@ export interface ComposerProps {
 	focused: boolean;
 	running: boolean;
 	queued: number;
+	/** Replaces the header line, for a surface where Enter does something else (a group chat does not queue). */
+	header?: string;
 }
 
 /** Lines the composer takes: its header plus its text rows. */
@@ -81,11 +83,12 @@ export function Composer({
 	focused,
 	running,
 	queued,
+	header,
 }: ComposerProps): React.ReactElement {
 	return (
 		<Box flexDirection="column" width={width} flexShrink={0}>
 			<Text dimColor wrap="truncate-end">
-				{composerHeader({ focused, running, queued, empty })}
+				{header ?? composerHeader({ focused, running, queued, empty })}
 			</Text>
 			{layout.rows.map((row, index) => (
 				<Box key={index} width={width}>

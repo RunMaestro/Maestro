@@ -1,7 +1,7 @@
 import React from 'react';
 import { Box } from 'ink';
 import type { LogEntryRecord } from '../../shared/maestro-lib';
-import { entryBodyBlocks } from './entries';
+import { entryBodyBlocks, type SourceStyle } from './entries';
 import { TranscriptEntryView } from './TranscriptEntryView';
 
 export interface TranscriptViewportProps {
@@ -9,6 +9,8 @@ export interface TranscriptViewportProps {
 	width: number;
 	height: number;
 	expandTools: boolean;
+	/** See `TranscriptEntryViewProps.styleFor`. */
+	styleFor?: (entry: LogEntryRecord) => SourceStyle | undefined;
 }
 
 /** A cheap line count for one entry: enough to know when the window is full, not exact. */
@@ -33,6 +35,7 @@ export function TranscriptViewport({
 	width,
 	height,
 	expandTools,
+	styleFor,
 }: TranscriptViewportProps): React.ReactElement {
 	let budget = height;
 	let start = entries.length;
@@ -51,7 +54,12 @@ export function TranscriptViewport({
 		>
 			{shown.map((entry) => (
 				<Box key={entry.id} flexShrink={0} flexDirection="column">
-					<TranscriptEntryView entry={entry} width={width} expandTools={expandTools} />
+					<TranscriptEntryView
+						entry={entry}
+						width={width}
+						expandTools={expandTools}
+						styleFor={styleFor}
+					/>
 				</Box>
 			))}
 		</Box>

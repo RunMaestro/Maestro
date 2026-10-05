@@ -12,6 +12,7 @@ import type {
 	AITabRecord,
 	AgentRecord,
 	ClientResult,
+	GroupChatRecord,
 	GroupRecord,
 	MaestroClient,
 } from '../../shared/maestro-lib';
@@ -46,7 +47,12 @@ export function manageTargetOf(row: PaneRow | undefined): ManageTarget {
 // Text prompts: rename an agent, rename a group, create a group
 // ---------------------------------------------------------------------------
 
-export type PromptKind = 'renameAgent' | 'renameGroup' | 'newGroup' | 'renameTab';
+export type PromptKind =
+	| 'renameAgent'
+	| 'renameGroup'
+	| 'newGroup'
+	| 'renameTab'
+	| 'renameGroupChat';
 export type PromptField = 'name' | 'emoji';
 
 export interface PromptState {
@@ -93,6 +99,15 @@ export const renameTabPrompt = (agent: AgentRecord, tab: AITabRecord): PromptSta
 	focus: 'name',
 });
 
+export const renameGroupChatPrompt = (chat: GroupChatRecord): PromptState => ({
+	kind: 'renameGroupChat',
+	targetId: chat.id,
+	original: chat.name,
+	name: chat.name,
+	emoji: '',
+	focus: 'name',
+});
+
 export const newGroupPrompt = (): PromptState => ({
 	kind: 'newGroup',
 	original: '',
@@ -111,6 +126,8 @@ export function promptTitle(state: PromptState): string {
 			return 'New group';
 		case 'renameTab':
 			return `Rename tab: ${state.original || 'unnamed'}`;
+		case 'renameGroupChat':
+			return `Rename group chat: ${state.original}`;
 	}
 }
 
@@ -175,7 +192,12 @@ export async function submitPrompt(
 			error: {
 				code: 'invalid',
 				message: problem,
-				method: state.kind === 'newGroup' ? 'groups.create' : 'agents.rename',
+				method:
+					state.kind === 'newGroup'
+						? 'groups.create'
+						: state.kind === 'renameGroupChat'
+							? 'groupChats.rename'
+							: 'agents.rename',
 			},
 		};
 	}
@@ -198,6 +220,13 @@ export async function submitPrompt(
 			if (!result.ok) return result;
 			return { ok: true, value: name ? `Renamed the tab to ${name}.` : 'Cleared the tab name.' };
 		}
+		case 'renameGroupChat': {
+			if (name === state.original) return { ok: true, value: 'Name unchanged.' };
+			const result = await client.groupChats.rename(state.targetId ?? '', name);
+			return result.ok
+				? { ok: true, value: `Renamed group chat ${state.original} to ${name}.` }
+				: result;
+		}
 		case 'newGroup': {
 			const emoji = state.emoji.trim();
 			const result = await client.groups.create({ name, ...(emoji ? { emoji } : {}) });
@@ -214,6 +243,13 @@ export async function submitPrompt(
 
 export type ConfirmState =
 	| { kind: 'deleteAgent'; agentId: string; name: string; tabCount: number; busy: boolean }
+	| {
+			kind: 'deleteGroupChat';
+			chatId: string;
+			name: string;
+			participantCount: number;
+			busy: boolean;
+	  }
 	| { kind: 'deleteGroup'; groupId: string; name: string; emoji?: string; agentCount: number };
 
 export const deleteAgentConfirm = (agent: AgentRecord): ConfirmState => ({
@@ -222,6 +258,14 @@ export const deleteAgentConfirm = (agent: AgentRecord): ConfirmState => ({
 	name: agent.name,
 	tabCount: (agent.aiTabs ?? []).length,
 	busy: agent.state === 'busy',
+});
+
+export const deleteGroupChatConfirm = (chat: GroupChatRecord): ConfirmState => ({
+	kind: 'deleteGroupChat',
+	chatId: chat.id,
+	name: chat.name,
+	participantCount: chat.participants.length,
+	busy: chat.state !== 'idle',
 });
 
 export const deleteGroupConfirm = (
@@ -264,6 +308,18 @@ export function confirmText(state: ConfirmState): ConfirmText {
 			...(state.busy ? { warning: 'A turn is running. It is stopped first.' } : {}),
 		};
 	}
+	if (state.kind === 'deleteGroupChat') {
+		return {
+			title: `Delete group chat: ${state.name}`,
+			removes: [`The chat ${state.name}`, 'Its log and the images in it'],
+			keeps: [
+				state.participantCount === 0
+					? 'No agent is in it'
+					: `All ${plural(state.participantCount, 'agent')} that took part, with their tabs and History`,
+			],
+			...(state.busy ? { warning: 'A round is running. It is stopped first.' } : {}),
+		};
+	}
 	return {
 		title: `Delete group: ${displayGroup(state.name, state.emoji)}`,
 		removes: [`The group ${state.name}`],
@@ -287,6 +343,12 @@ export async function submitConfirm(
 					ok: true,
 					value: `Deleted ${state.name}. Its History and provider session files are kept.`,
 				}
+			: result;
+	}
+	if (state.kind === 'deleteGroupChat') {
+		const result = await client.groupChats.remove(state.chatId);
+		return result.ok
+			? { ok: true, value: `Deleted group chat ${state.name}. The agents in it are untouched.` }
 			: result;
 	}
 	const result = await client.groups.remove(state.groupId);
