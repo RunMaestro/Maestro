@@ -39,7 +39,7 @@ import { WsRoute, type WsRouteCallbacks } from '../../../main/web-server/routes/
 import { createRemoteHostStatusProvider } from '../../../main/web-server/remote-host-status';
 import { getOrCreateHostInstanceId } from '../../../main/web-server/host-identity';
 import { WEB_LOGIN_WS_CLOSE_CODE } from '../../../shared/webLogin';
-import { BroadcastService } from '../../../main/web-server/services/BroadcastService';
+import { BroadcastService } from '../../../main/web-server/services/broadcastService';
 import { WebSocketMessageHandler } from '../../../main/web-server/handlers/messageHandlers/WebSocketMessageHandler';
 import type { WebClient } from '../../../main/web-server/types';
 
