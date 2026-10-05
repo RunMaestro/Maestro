@@ -1008,7 +1008,9 @@ Some text with [x] in it that's not a checkbox
 			expect(options.signal).toBe(controller.signal);
 			mockStdout.emit(
 				'data',
-				Buffer.from('{"type":"result","result":"late answer","session_id":"provider-late"}\n')
+				Buffer.from(
+					'{"type":"result","result":"late answer","session_id":"provider-late","total_cost_usd":0.08}'
+				)
 			);
 			controller.abort();
 			mockChild.emit(
@@ -1020,6 +1022,7 @@ Some text with [x] in it that's not a checkbox
 				success: false,
 				error: 'Agent run timed out or was cancelled',
 				agentSessionId: 'provider-late',
+				usageStats: { totalCostUsd: 0.08 },
 			});
 		});
 
@@ -1732,9 +1735,7 @@ Some text with [x] in it that's not a checkbox
 			expect(options.signal).toBe(controller.signal);
 			mockStdout.emit(
 				'data',
-				Buffer.from(
-					'{"type":"thread.started","thread_id":"codex-cancelled"}\n{"type":"item.completed","item":{"type":"agent_message","text":"partial"}}\n'
-				)
+				Buffer.from('{"type":"thread.started","thread_id":"codex-cancelled"}')
 			);
 			controller.abort();
 			mockChild.emit(
