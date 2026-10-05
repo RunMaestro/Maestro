@@ -17,6 +17,12 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { isPidAlive, parseCliServerInfo } from '../client/discovery';
+import {
+	CUE_ENGINE_LOCK_SPEC,
+	inspectProcessLockContent,
+	type ProcessLockState,
+} from '../runtime/lock';
+import { RUNTIME_LOCK_SPEC } from '../runtime/data-dir-lock';
 import type { MaestroPaths, SyncDirSource } from './resolve';
 import type { UserDataDirRule } from './userDataDir';
 
@@ -51,16 +57,6 @@ export const defaultDoctorDeps: DoctorDeps = {
 	bootTime: () => Date.now() - os.uptime() * 1000,
 };
 
-/**
- * Mirrors `CUE_ENGINE_LOCK_STALE_MS` and the boot tolerance in
- * `src/main/cue/cue-engine-lock.ts`. Duplicated because shared code cannot
- * import from `src/main`; `doctor-cue-lock-parity.test.ts` fails if the two
- * drift.
- */
-export const DOCTOR_CUE_LOCK_STALE_MS = 180_000;
-export const DOCTOR_CUE_BOOT_TOLERANCE_MS = 60_000;
-export const CUE_ENGINE_LOCK_FILE_NAME = 'cue-engine.lock';
-
 export interface DoctorPathCheck {
 	label: string;
 	path: string;
@@ -72,7 +68,8 @@ export type DesktopStatus =
 	| { state: 'running'; pid: number; port: number; version?: string; startedAt: number }
 	| { state: 'stale'; pid: number };
 
-export type CueLockStatus =
+/** What a lock file says, as the doctor reports it. Both locks share the shape. */
+export type LockStatus =
 	| { state: 'none' }
 	| { state: 'unreadable' }
 	| { state: 'held'; pid: number; mode: string; startedAt: string }
@@ -92,7 +89,9 @@ export interface DoctorReport {
 	sync: DoctorPathCheck & { source: SyncDirSource; rejection?: string };
 	stores: DoctorPathCheck[];
 	desktop: DesktopStatus;
-	cueEngine: CueLockStatus;
+	cueEngine: LockStatus;
+	/** `maestro-runtime.lock`: the process that is the only writer of this directory. */
+	runtime: LockStatus;
 }
 
 export interface DoctorInput {
@@ -130,47 +129,22 @@ function inspectDesktop(paths: MaestroPaths, deps: DoctorDeps): DesktopStatus {
 	};
 }
 
-function inspectCueEngine(userDataDir: string, deps: DoctorDeps): CueLockStatus {
-	const raw = readOptional(deps, path.join(userDataDir, CUE_ENGINE_LOCK_FILE_NAME));
+function toLockStatus(state: ProcessLockState): LockStatus {
+	if (state.state === 'none' || state.state === 'unreadable') return { state: state.state };
+	const { pid, mode, startedAt } = state.info;
+	if (state.state === 'live') return { state: 'held', pid, mode, startedAt };
+	return { state: 'stale', pid, mode, reason: state.reason };
+}
+
+/** Reads a lock file through the injected filesystem and classifies it with the shared primitive. */
+function inspectLockFile(
+	userDataDir: string,
+	spec: typeof CUE_ENGINE_LOCK_SPEC,
+	deps: DoctorDeps
+): LockStatus {
+	const raw = readOptional(deps, path.join(userDataDir, spec.fileName));
 	if (raw === undefined) return { state: 'none' };
-
-	let parsed: unknown;
-	try {
-		parsed = JSON.parse(raw);
-	} catch {
-		return { state: 'unreadable' };
-	}
-	const lock = parsed as {
-		pid?: unknown;
-		mode?: unknown;
-		startedAt?: unknown;
-		heartbeatAt?: unknown;
-		bootTime?: unknown;
-	} | null;
-	if (!lock || typeof lock.pid !== 'number' || typeof lock.mode !== 'string') {
-		return { state: 'unreadable' };
-	}
-
-	const startedAt = typeof lock.startedAt === 'string' ? lock.startedAt : new Date(0).toISOString();
-	const stale = (reason: 'process gone' | 'earlier boot' | 'heartbeat quiet'): CueLockStatus => ({
-		state: 'stale',
-		pid: lock.pid as number,
-		mode: lock.mode as string,
-		reason,
-	});
-
-	if (!deps.isPidAlive(lock.pid)) return stale('process gone');
-	if (
-		typeof lock.bootTime === 'number' &&
-		Math.abs(lock.bootTime - deps.bootTime()) > DOCTOR_CUE_BOOT_TOLERANCE_MS
-	) {
-		return stale('earlier boot');
-	}
-	const beat = Date.parse(typeof lock.heartbeatAt === 'string' ? lock.heartbeatAt : startedAt);
-	if (!Number.isFinite(beat) || deps.now() - beat > DOCTOR_CUE_LOCK_STALE_MS) {
-		return stale('heartbeat quiet');
-	}
-	return { state: 'held', pid: lock.pid, mode: lock.mode, startedAt };
+	return toLockStatus(inspectProcessLockContent(raw, spec, deps));
 }
 
 export function buildDoctorReport(
@@ -206,7 +180,8 @@ export function buildDoctorReport(
 		},
 		stores,
 		desktop: inspectDesktop(paths, deps),
-		cueEngine: inspectCueEngine(paths.userDataDir, deps),
+		cueEngine: inspectLockFile(paths.userDataDir, CUE_ENGINE_LOCK_SPEC, deps),
+		runtime: inspectLockFile(paths.userDataDir, RUNTIME_LOCK_SPEC, deps),
 	};
 }
 
@@ -273,6 +248,19 @@ export function formatDoctorReport(report: DoctorReport): string {
 		out.push('  not held (cue-engine.lock is unreadable)');
 	} else {
 		out.push('  not held (no cue-engine.lock)');
+	}
+
+	out.push('');
+	out.push('Writer lock');
+	const { runtime } = report;
+	if (runtime.state === 'held') {
+		out.push(`  held by a ${runtime.mode} (pid ${runtime.pid}, since ${runtime.startedAt})`);
+	} else if (runtime.state === 'stale') {
+		out.push(`  not held (stale ${runtime.mode} lock, pid ${runtime.pid}: ${runtime.reason})`);
+	} else if (runtime.state === 'unreadable') {
+		out.push('  not held (maestro-runtime.lock is unreadable)');
+	} else {
+		out.push('  not held (no maestro-runtime.lock)');
 	}
 
 	if (!report.ok) {

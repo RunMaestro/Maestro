@@ -38,19 +38,20 @@
  * {@link CUE_ENGINE_LOCK_STALE_MS}, is stale whatever its PID says.
  */
 
-import * as fs from 'fs';
-import * as path from 'path';
-import * as os from 'os';
 import { resolveUserDataDir } from '../../shared/userDataDir';
+import {
+	CUE_ENGINE_LOCK_SPEC,
+	createProcessLock,
+	type ProcessLock,
+	type ProcessLockDeps,
+} from '../../shared/maestro-lib/runtime/lock';
 
 export type CueEngineRunnerMode = 'desktop' | 'standalone';
 
 /** How often the owning engine refreshes the lock's heartbeat. */
-export const CUE_ENGINE_LOCK_HEARTBEAT_MS = 30_000;
+export const CUE_ENGINE_LOCK_HEARTBEAT_MS = CUE_ENGINE_LOCK_SPEC.heartbeatMs;
 /** A lock whose heartbeat is older than this is stale even if its PID is alive (six missed beats). */
-export const CUE_ENGINE_LOCK_STALE_MS = 180_000;
-/** Two boot-time readings closer than this are the same boot: `os.uptime()` is coarse and drifts slightly. */
-const BOOT_TIME_TOLERANCE_MS = 60_000;
+export const CUE_ENGINE_LOCK_STALE_MS = CUE_ENGINE_LOCK_SPEC.staleMs;
 
 export interface CueEngineLockInfo {
 	pid: number;
@@ -65,18 +66,11 @@ export interface CueEngineLockInfo {
 	host?: string;
 }
 
-function lockFilePath(dataDir: string = resolveUserDataDir()): string {
-	return path.join(dataDir, 'cue-engine.lock');
-}
-
-function currentBootTime(): number {
-	return Date.now() - os.uptime() * 1000;
-}
-
 /**
  * Whether the process named in a lock is still alive. `process.kill(pid, 0)`
  * sends no signal - it only tests for permission/existence - and Node
- * documents this as working the same way on Windows and POSIX.
+ * documents this as working the same way on Windows and POSIX. Any error counts
+ * as "not alive", so this lock's behavior is unchanged by the shared primitive.
  */
 function isProcessAlive(pid: number): boolean {
 	if (!Number.isFinite(pid) || pid <= 0) return false;
@@ -88,73 +82,20 @@ function isProcessAlive(pid: number): boolean {
 	}
 }
 
-/**
- * Whether a lock still belongs to a running engine: its PID is alive, it was
- * written during THIS boot, and its heartbeat is recent. The last two are what
- * catch a reused PID (see the module doc).
- */
-function isLockLive(info: CueEngineLockInfo): boolean {
-	if (!isProcessAlive(info.pid)) return false;
-	if (
-		typeof info.bootTime === 'number' &&
-		Math.abs(info.bootTime - currentBootTime()) > BOOT_TIME_TOLERANCE_MS
-	) {
-		return false;
-	}
-	const beat = Date.parse(info.heartbeatAt ?? info.startedAt);
-	if (!Number.isFinite(beat)) return false;
-	return Date.now() - beat <= CUE_ENGINE_LOCK_STALE_MS;
-}
-
-function parseLock(raw: string): CueEngineLockInfo | null {
-	let parsed: unknown;
-	try {
-		parsed = JSON.parse(raw);
-	} catch {
-		return null;
-	}
-	const info = parsed as Partial<CueEngineLockInfo> | null;
-	if (!info || typeof info.pid !== 'number' || typeof info.mode !== 'string') return null;
-	return {
-		pid: info.pid,
-		mode: info.mode as CueEngineRunnerMode,
-		startedAt: typeof info.startedAt === 'string' ? info.startedAt : new Date(0).toISOString(),
-		heartbeatAt: typeof info.heartbeatAt === 'string' ? info.heartbeatAt : undefined,
-		bootTime: typeof info.bootTime === 'number' ? info.bootTime : undefined,
-		host: typeof info.host === 'string' ? info.host : undefined,
-	};
-}
-
-/** The lock file's contents, live or not. `null` when missing or corrupt. */
-function readRawLock(dataDir?: string): CueEngineLockInfo | null {
-	try {
-		return parseLock(fs.readFileSync(lockFilePath(dataDir), 'utf-8'));
-	} catch {
-		return null;
-	}
+/** Built per call: `MAESTRO_USER_DATA` and the clock are read when the call is made, not when the module loads. */
+function engineLock(dataDir: string = resolveUserDataDir()): ProcessLock<CueEngineRunnerMode> {
+	const deps: Partial<ProcessLockDeps> = { pid: process.pid, isPidAlive: isProcessAlive };
+	return createProcessLock<CueEngineRunnerMode>(dataDir, CUE_ENGINE_LOCK_SPEC, deps);
 }
 
 /** Read the current lock, if any. Returns `null` for a missing, corrupt, or stale lock - a stale lock is reported as absent rather than thrown, since the caller's next step is always "so can I start?". */
 export function readCueEngineLock(dataDir?: string): CueEngineLockInfo | null {
-	const info = readRawLock(dataDir);
-	return info && isLockLive(info) ? info : null;
+	return engineLock(dataDir).holder();
 }
 
 export type CueEngineLockResult =
 	| { acquired: true }
 	| { acquired: false; heldBy: CueEngineLockInfo };
-
-function buildLockInfo(mode: CueEngineRunnerMode, startedAt?: string): CueEngineLockInfo {
-	const now = new Date().toISOString();
-	return {
-		pid: process.pid,
-		mode,
-		startedAt: startedAt ?? now,
-		heartbeatAt: now,
-		bootTime: currentBootTime(),
-		host: safeHostname(),
-	};
-}
 
 /**
  * Attempt to acquire the lock for this process. Fails (without throwing) when
@@ -170,39 +111,7 @@ export function acquireCueEngineLock(
 	mode: CueEngineRunnerMode,
 	dataDir?: string
 ): CueEngineLockResult {
-	const filePath = lockFilePath(dataDir);
-	const dir = path.dirname(filePath);
-	if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-
-	for (let attempt = 0; attempt < 3; attempt++) {
-		const existing = readRawLock(dataDir);
-		if (existing && isLockLive(existing)) {
-			if (existing.pid !== process.pid) return { acquired: false, heldBy: existing };
-			fs.writeFileSync(filePath, JSON.stringify(buildLockInfo(mode), null, 2), 'utf-8');
-			return { acquired: true };
-		}
-		if (fs.existsSync(filePath)) {
-			// Stale or corrupt. A concurrent starter may remove it first; the
-			// `wx` create below is what decides who wins.
-			try {
-				fs.unlinkSync(filePath);
-			} catch {
-				// Already removed.
-			}
-		}
-		try {
-			fs.writeFileSync(filePath, JSON.stringify(buildLockInfo(mode), null, 2), {
-				encoding: 'utf-8',
-				flag: 'wx',
-			});
-			return { acquired: true };
-		} catch (err) {
-			if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
-			// Created by someone else between our read and write - loop and re-read.
-		}
-	}
-	const holder = readRawLock(dataDir);
-	return { acquired: false, heldBy: holder ?? buildLockInfo(mode) };
+	return engineLock(dataDir).acquire(mode);
 }
 
 export type CueEngineLockTouchResult = 'held' | 'lost';
@@ -218,28 +127,7 @@ export function touchCueEngineLock(
 	mode: CueEngineRunnerMode,
 	dataDir?: string
 ): CueEngineLockTouchResult {
-	const existing = readRawLock(dataDir);
-	if (existing && existing.pid !== process.pid && isLockLive(existing)) return 'lost';
-	const startedAt = existing?.pid === process.pid ? existing.startedAt : undefined;
-	try {
-		fs.writeFileSync(
-			lockFilePath(dataDir),
-			JSON.stringify(buildLockInfo(mode, startedAt), null, 2),
-			'utf-8'
-		);
-	} catch {
-		// A failed write only ages the heartbeat; the next beat retries.
-	}
-	return 'held';
-}
-
-/** Best-effort hostname for the lock's human-readable hint. Never throws. */
-function safeHostname(): string | undefined {
-	try {
-		return os.hostname();
-	} catch {
-		return undefined;
-	}
+	return engineLock(dataDir).touch(mode);
 }
 
 /**
@@ -247,11 +135,5 @@ function safeHostname(): string | undefined {
  * lock was taken over must not delete a lock it no longer owns.
  */
 export function releaseCueEngineLock(dataDir?: string): void {
-	const existing = readRawLock(dataDir);
-	if (existing && existing.pid !== process.pid && isLockLive(existing)) return;
-	try {
-		fs.unlinkSync(lockFilePath(dataDir));
-	} catch {
-		// Already gone, or never existed - releasing an absent lock is a no-op.
-	}
+	engineLock(dataDir).release();
 }

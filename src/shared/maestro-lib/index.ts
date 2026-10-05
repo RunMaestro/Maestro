@@ -14,6 +14,10 @@ export * from './paths/syncPath';
 export * from './paths/doctor';
 export * from './paths/complete';
 
+// The lock primitive and the data-dir lock built on it
+export * from './runtime/lock';
+export * from './runtime/data-dir-lock';
+
 // Desktop bridge: find the running desktop (cli-server.json) and talk to it
 export * from './client/discovery';
 export * from './client/bridge-connection';

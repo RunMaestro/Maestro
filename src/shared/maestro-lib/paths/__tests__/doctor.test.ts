@@ -163,6 +163,39 @@ describe('buildDoctorReport', () => {
 			});
 		});
 
+		it('reads maestro-runtime.lock through the same rule, reporting a TUI holder', () => {
+			const runtimeLock = JSON.stringify({
+				pid: 812,
+				mode: 'tui',
+				startedAt: new Date(NOW - 60_000).toISOString(),
+				heartbeatAt: new Date(NOW - 10_000).toISOString(),
+				bootTime: BOOT,
+			});
+			const deps = makeDeps({ '/data/Maestro/maestro-runtime.lock': runtimeLock });
+			const report = buildDoctorReport(input, deps);
+			expect(report.runtime).toMatchObject({ state: 'held', pid: 812, mode: 'tui' });
+			expect(report.cueEngine).toEqual({ state: 'none' });
+			expect(formatDoctorReport(report)).toContain('held by a tui (pid 812');
+		});
+
+		it('reports no runtime lock, and a stale one with its reason', () => {
+			expect(buildDoctorReport(input, makeDeps({})).runtime).toEqual({ state: 'none' });
+			const deps = makeDeps(
+				{
+					'/data/Maestro/maestro-runtime.lock': JSON.stringify({
+						pid: 5,
+						mode: 'host',
+						startedAt: new Date(NOW - 60_000).toISOString(),
+					}),
+				},
+				{ isPidAlive: () => false }
+			);
+			expect(buildDoctorReport(input, deps).runtime).toMatchObject({
+				state: 'stale',
+				reason: 'process gone',
+			});
+		});
+
 		it('is unreadable for corrupt JSON or a record without a pid', () => {
 			expect(buildDoctorReport(input, makeDeps({ [LOCK]: '{oops' })).cueEngine).toEqual({
 				state: 'unreadable',
