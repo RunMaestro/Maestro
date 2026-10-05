@@ -1667,6 +1667,9 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 		};
 	}
 
+	handlers['media.close']!.ownsReleaseResource = (pluginId, params) =>
+		mediaTools.ownsCloseRequest(pluginId, params);
+
 	// Release a plugin's still-open host resources (wake locks + fs watchers) when
 	// it stops, crashes, or is uninstalled. Absent an explicit release/unwatch
 	// call these maps are never pruned, so a stopped plugin would otherwise leak an

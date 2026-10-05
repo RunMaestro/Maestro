@@ -155,6 +155,10 @@ describe('media tools boundary', () => {
 	it('reserves without I/O, caps jobs, and binds job ownership', async () => {
 		const jobId = await open();
 		expect(await fs.readdir(root)).toEqual([]);
+		expect(tools.ownsCloseRequest('p', { jobId })).toBe(true);
+		expect(tools.ownsCloseRequest('other', { jobId })).toBe(false);
+		expect(tools.ownsCloseRequest('p', { jobId, extra: true })).toBe(false);
+		expect(tools.ownsCloseRequest('p', { jobId: 'missing' })).toBe(false);
 		await open();
 		await expect(open()).rejects.toMatchObject({ code: 'MediaBusy' });
 		await expect(tools.call('other', 'media.download', { jobId, url })).rejects.toMatchObject({
@@ -387,6 +391,10 @@ describe('media tools boundary', () => {
 		await vi.advanceTimersByTimeAsync(MEDIA_LIMITS.jobTimeoutMs);
 		await outcome;
 		expect(await fs.readdir(root)).toEqual([]);
+		expect(tools.ownsCloseRequest('p', { jobId })).toBe(false);
+		expect(tools.ownsCloseRequest('other', { jobId })).toBe(false);
+		expect(tools.ownsCloseRequest('p', { jobId, extra: true })).toBe(false);
+		expect(tools.ownsCloseRequest('p', { jobId: 'missing' })).toBe(false);
 		await open();
 	});
 

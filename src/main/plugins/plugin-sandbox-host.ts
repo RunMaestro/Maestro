@@ -35,7 +35,10 @@ export interface SandboxControlEvent {
 
 /** An injected implementation of one host method. Receives the calling plugin
  * id (for per-plugin scoping) and the validated params. */
-export type HostCallHandler = (pluginId: string, params: unknown) => Promise<unknown>;
+export type HostCallHandler = ((pluginId: string, params: unknown) => Promise<unknown>) & {
+	/** Host-only ownership query for rate-limit exemptions on active release requests. */
+	ownsReleaseResource?: (pluginId: string, params: unknown) => boolean;
+};
 export type HostCallHandlers = Partial<Record<HostMethod, HostCallHandler>>;
 
 export interface PluginSandboxHostDeps {
@@ -106,6 +109,7 @@ interface PendingTool {
 interface RunningPlugin {
 	/** Separate bounded release slots so saturated ordinary calls cannot block cancellation. */
 	mediaClosesInFlight: number;
+	mediaCloseWindowCount: number;
 	proc: UtilityProcess;
 	shutdownTimer?: NodeJS.Timeout;
 	inFlight: number;
@@ -230,6 +234,7 @@ export class PluginSandboxHost {
 			windowStart: Date.now(),
 			windowCount: 0,
 			mediaClosesInFlight: 0,
+			mediaCloseWindowCount: 0,
 			pendingTools: new Map(),
 			nextToolId: 1,
 		};
@@ -458,6 +463,7 @@ export class PluginSandboxHost {
 			if (now - record.windowStart > RATE_WINDOW_MS) {
 				record.windowStart = now;
 				record.windowCount = 0;
+				record.mediaCloseWindowCount = 0;
 			}
 			record.windowCount += 1;
 			if (record.inFlight >= MAX_IN_FLIGHT && request.method !== 'media.close') {
@@ -494,6 +500,17 @@ export class PluginSandboxHost {
 		if (!handler) {
 			respond({ ok: false, error: `host method ${method} is not implemented` });
 			return;
+		}
+
+		if (record && method === 'media.close') {
+			if (
+				record.mediaCloseWindowCount >= RATE_MAX_PER_WINDOW &&
+				!handler.ownsReleaseResource?.(pluginId, request.params)
+			) {
+				respond({ ok: false, error: 'MediaBusy' });
+				return;
+			}
+			record.mediaCloseWindowCount += 1;
 		}
 
 		if (record) {

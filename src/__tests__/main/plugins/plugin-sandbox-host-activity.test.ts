@@ -140,6 +140,51 @@ describe('PluginSandboxHost per-plugin observability', () => {
 		expect(running.inFlight).toBe(32);
 	});
 
+	it('bounds sequential unknown close requests while preserving owned-job cancellation', async () => {
+		const close = Object.assign(
+			vi.fn(async () => undefined),
+			{
+				ownsReleaseResource: (_pluginId: string, params: unknown) =>
+					(params as { jobId?: string }).jobId === 'owned',
+			}
+		);
+		const bounded = new PluginSandboxHost({ broker: allowAll, handlers: { 'media.close': close } });
+		bounded.start('bounded', dir, 'entry.js');
+		const dispatch = bounded as unknown as HostInternals;
+		const now = vi.spyOn(Date, 'now').mockReturnValue(Date.now());
+		try {
+			for (let id = 1; id <= 201; id++) {
+				await dispatch.handleChildMessage('bounded', proc, {
+					id,
+					method: 'media.close',
+					params: { jobId: 'missing' },
+				});
+			}
+			expect(close).toHaveBeenCalledTimes(200);
+			expect(proc.postMessage).toHaveBeenLastCalledWith({
+				id: 201,
+				ok: false,
+				error: 'MediaBusy',
+				errorCode: 'MediaBusy',
+			});
+			await dispatch.handleChildMessage('bounded', proc, {
+				id: 202,
+				method: 'media.close',
+				params: { jobId: 'owned' },
+			});
+			expect(close).toHaveBeenCalledTimes(201);
+			now.mockReturnValue(Date.now() + 1001);
+			await dispatch.handleChildMessage('bounded', proc, {
+				id: 203,
+				method: 'media.close',
+				params: { jobId: 'missing' },
+			});
+			expect(close).toHaveBeenCalledTimes(202);
+		} finally {
+			now.mockRestore();
+		}
+	});
+
 	it('lists a started plugin with zeroed counters', () => {
 		const map = host.getActivity();
 		expect(Object.keys(map)).toEqual(['p']);

@@ -244,6 +244,17 @@ export class PluginMediaTools {
 		return job.closing;
 	}
 
+	/** Host-only, no-I/O query. Only a valid close for an owned retained job can bypass rate limits. */
+	ownsCloseRequest(pluginId: string, raw: unknown): boolean {
+		if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return false;
+		const params = raw as Record<string, unknown>;
+		return (
+			Object.keys(params).length === 1 &&
+			typeof params.jobId === 'string' &&
+			this.jobs.get(params.jobId)?.pluginId === pluginId
+		);
+	}
+
 	cleanupPlugin(pluginId: string): void {
 		for (const job of this.jobs.values())
 			if (job.pluginId === pluginId) void this.close(job, 'MediaCancelled').catch(() => {});
