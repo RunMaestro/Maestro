@@ -1,39 +1,23 @@
 import { useCallback } from 'react';
 import { updateBrowserTab, updateSessionWith, useSessionStore } from '../../../stores/sessionStore';
-import type { Session } from '../../../types';
-import type { BrowserTab } from '../../../../shared/browserPage';
+
 import {
 	closeBrowserTab as closeBrowserTabHelper,
 	ensureInUnifiedTabOrder,
 } from '../../../utils/tabHelpers';
 import { DEFAULT_BROWSER_TAB_URL } from '../../../utils/browserTabPersistence';
-import { insertAfterActiveInUnifiedTabOrder } from '../../../utils/unifiedTabOrderUtils';
+
 import { useSettingsStore } from '../../../stores/settingsStore';
 import { useUIStore } from '../../../stores/uiStore';
-import { createBrowserTab, normalizeBrowserTabUpdates } from './browserTabHelpers';
 import type { BrowserTabHandlersReturn } from './types';
+import {
+	activateBrowserTab,
+	createBrowserTab,
+	normalizeBrowserTabUpdates,
+} from './browserTabHelpers';
 import { isWebDesktop } from '../../../utils/runtimeContext';
 import { notifyCenterFlash } from '../../../stores/centerFlashStore';
-import type { BrowserTabCreationOptions } from '../../../../shared/browserPage';
-
-function activateBrowserTab(session: Session, tab: BrowserTab): Session {
-	const existing = session.browserTabs ?? [];
-	const order = session.unifiedTabOrder ?? [];
-	return {
-		...session,
-		browserTabs: existing.some((candidate) => candidate.id === tab.id)
-			? existing
-			: [...existing, tab],
-		activeFileTabId: null,
-		activeBrowserTabId: tab.id,
-		activeTerminalTabId: null,
-		inputMode: 'ai',
-		activeGroupId: null,
-		unifiedTabOrder: order.some((ref) => ref.type === 'browser' && ref.id === tab.id)
-			? order
-			: insertAfterActiveInUnifiedTabOrder(session, { type: 'browser', id: tab.id }),
-	};
-}
+import type { BrowserTab, BrowserTabCreationOptions } from '../../../../shared/browserPage';
 
 export function useBrowserTabHandlers(): BrowserTabHandlersReturn {
 	const openBrowserTab = useCallback(

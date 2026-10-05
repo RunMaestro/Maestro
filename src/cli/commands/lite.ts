@@ -115,7 +115,7 @@ export function registerLiteCommands(program: Command): void {
 		.option('--no-tailscale', 'Do not read existing Tailscale client service metadata')
 		.option(
 			'--tailscale-peers',
-			'Allow fixed HTTPS 443 Maestro checks of up to 32 existing peers per refresh; no login or trust'
+			'Allow direct HTTP Maestro checks on Tailscale TCP 56036 for up to 32 existing peers per refresh; no login or trust'
 		)
 		.action((options, command: Command) =>
 			run('discovery-start', command, () => ({

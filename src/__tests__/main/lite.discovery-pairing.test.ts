@@ -388,10 +388,12 @@ describe('production discovery adapters with synthetic inputs', () => {
 				await manager.start({ tailscalePeers: true });
 				await vi.advanceTimersByTimeAsync(0);
 				expect(probe).toHaveBeenCalledTimes(1);
+				expect(networkChanged).not.toHaveBeenCalled();
 				if (change === 'tailnet') suffix = 'second.ts.net';
 				else address = '192.0.2.11';
 				await vi.advanceTimersByTimeAsync(30000);
 				expect(manager.snapshot().candidates).toEqual([]);
+				expect(networkChanged).toHaveBeenCalledTimes(1);
 				expect(probe.mock.calls.every(([row]) => row.endpoint === 'http://100.64.0.10:56036')).toBe(
 					true
 				);
@@ -407,6 +409,18 @@ describe('production discovery adapters with synthetic inputs', () => {
 			}
 		}
 	);
+	it('keeps active connections when a search is stopped or restarted', async () => {
+		const disconnected = vi.fn();
+		const manager = new DiscoveryManager(() => undefined, disconnected);
+		try {
+			await manager.start({ lan: false, tailscale: false });
+			manager.stop();
+			await manager.start({ lan: false, tailscale: false });
+			expect(disconnected).not.toHaveBeenCalled();
+		} finally {
+			manager.stop();
+		}
+	});
 	it('discards stopped asynchronous searches without launching another provider operation', async () => {
 		const pending = Promise.withResolvers<string>();
 		const services = vi.fn(async () => '[]');

@@ -99,8 +99,23 @@ const VIEW_FIELDS = [
 ] as const;
 
 /** Remember only navigation/composer data, never transcripts or shared work. */
-export function persistClientSessionView(session: Session): void {
+export function persistClientSessionView(session: Session, previous?: Session): void {
 	if (!isWebDesktop()) return;
+	if (
+		previous &&
+		VIEW_FIELDS.every((field) => session[field] === previous[field]) &&
+		(session.aiTabs?.length ?? 0) === (previous.aiTabs?.length ?? 0) &&
+		(session.aiTabs ?? []).every((tab, index) => {
+			const old = previous.aiTabs[index];
+			return (
+				tab.id === old.id &&
+				tab.inputValue === old.inputValue &&
+				tab.commandMode === old.commandMode &&
+				tab.stagedImages === old.stagedImages
+			);
+		})
+	)
+		return;
 	const view: Record<string, unknown> = {};
 	for (const field of VIEW_FIELDS) view[field] = session[field];
 	view.drafts = (session.aiTabs ?? []).map(({ id, inputValue, commandMode, stagedImages }) => ({

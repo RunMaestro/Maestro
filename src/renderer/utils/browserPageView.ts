@@ -206,6 +206,10 @@ export function createHostBrowserPageView(
 	);
 	const key = (event: KeyboardEvent, type: 'keyDown' | 'keyUp') => {
 		if (!active || event.isComposing) return;
+		if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'v') {
+			event.stopPropagation();
+			return;
+		}
 		if (
 			(event.metaKey || event.ctrlKey || event.altKey) &&
 			!['Meta', 'Control', 'Alt', 'Shift'].includes(event.key) &&
@@ -238,7 +242,9 @@ export function createHostBrowserPageView(
 	});
 	keyboard.addEventListener('paste', (event) => {
 		event.preventDefault();
-		void action({ kind: 'paste' }).catch(failure);
+		event.stopPropagation();
+		const text = event.clipboardData?.getData('text/plain');
+		if (text) send({ type: 'text', text });
 	});
 	const element = Object.assign(root, {
 		src: initialUrl,

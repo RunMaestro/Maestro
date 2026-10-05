@@ -567,7 +567,14 @@ export function registerPersistenceHandlers(
 		if ((event as { type?: string })?.type !== 'bridge') return sessions;
 		return Promise.all(
 			sessions.map(async (session) => {
-				const live = await readOwningTranscript(session.id, '');
+				const live = await readOwningTranscript(session.id, '').catch((error: unknown) => {
+					logger.warn('Owning transcript unavailable for bootstrap', 'Sessions', {
+						sessionId: session.id,
+						error: error instanceof Error ? error.message : String(error),
+					});
+					return undefined;
+				});
+				if (!live) return session;
 				return {
 					...session,
 					browserTabs: live.runtime?.browserTabs,
@@ -672,6 +679,7 @@ export function registerPersistenceHandlers(
 				const updates = dropResurrections(relocatedUpdates, new Set(previousMap.keys()));
 				const removeSet = new Set(removeIds);
 				const updateMap = new Map(updates.map((s) => [s.id, s]));
+				const touchedIds = new Set(updateMap.keys());
 
 				// Build merged array preserving the existing order. Apply updates and
 				// skip removals in a single pass, then append any new sessions whose
@@ -702,8 +710,8 @@ export function registerPersistenceHandlers(
 					if (removeSet.has(newSession.id)) continue;
 					merged.push(mergeDeferredSessionContent(newSession, undefined));
 				}
-				const sessionsToPersist = merged.map(
-					(session) => compactSessionToolOutputs(session).session
+				const sessionsToPersist = merged.map((session) =>
+					touchedIds.has(session.id) ? compactSessionToolOutputs(session).session : session
 				);
 
 				// Lifecycle logging (parallel to setAll's debug logs)
@@ -808,6 +816,7 @@ export function registerPersistenceHandlers(
 				for (const id of removedIds) forgetAgentActors(id);
 				const updatedSessions = sessionsToPersist.filter(
 					(session) =>
+						touchedIds.has(session.id) &&
 						previousMap.has(session.id) &&
 						JSON.stringify(session) !== JSON.stringify(previousMap.get(session.id))
 				);
@@ -869,16 +878,17 @@ export function registerPersistenceHandlers(
 					sessions.push(previousSession);
 				}
 			}
-			const sessionsToPersist = sessions.map(
-				(session) =>
-					compactSessionToolOutputs(
-						mergeSessionPersistenceChanges(
-							mergeDeferredSessionContent(session, previousSessionMap.get(session.id)),
-							previousSessionMap.get(session.id),
-							baselineMap.get(session.id),
-							remote
-						)
-					).session
+			const sessionsToPersist = sessions.map((session) =>
+				incomingIds.has(session.id)
+					? compactSessionToolOutputs(
+							mergeSessionPersistenceChanges(
+								mergeDeferredSessionContent(session, previousSessionMap.get(session.id)),
+								previousSessionMap.get(session.id),
+								baselineMap.get(session.id),
+								remote
+							)
+						).session
+					: session
 			);
 
 			// Log session lifecycle events at DEBUG level
@@ -953,6 +963,7 @@ export function registerPersistenceHandlers(
 			// deletion from an omitted id. Explicit removes arrive through setMany.
 			const updatedSessions = sessionsToPersist.filter(
 				(session) =>
+					incomingIds.has(session.id) &&
 					previousSessionMap.has(session.id) &&
 					JSON.stringify(session) !== JSON.stringify(previousSessionMap.get(session.id))
 			);

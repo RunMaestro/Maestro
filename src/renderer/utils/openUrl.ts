@@ -12,10 +12,9 @@
 
 import type { BrowserTab } from '../../shared/browserPage';
 import { useSettingsStore } from '../stores/settingsStore';
-import { useSessionStore, selectActiveSession } from '../stores/sessionStore';
-import { generateId } from './ids';
-import { getBrowserTabPartition } from './browserTabPersistence';
-import { insertAfterActiveInUnifiedTabOrder } from './unifiedTabOrderUtils';
+import { useSessionStore, selectActiveSession, updateSessionWith } from '../stores/sessionStore';
+import { activateBrowserTab, createBrowserTab } from '../hooks/tabs/internal/browserTabHelpers';
+import { notifyCenterFlash } from '../stores/centerFlashStore';
 import { isWebDesktop } from './runtimeContext';
 import { isHostLocalPreviewUrl } from '../../shared/hostLocalPreview';
 
@@ -75,41 +74,31 @@ export function openInSystemBrowser(url: string): void {
  * Open a URL in a Maestro browser tab within the current active agent.
  */
 export function openInMaestroBrowser(url: string): void {
-	const { setSessions } = useSessionStore.getState();
 	const session = selectActiveSession(useSessionStore.getState());
 	if (!session) {
+		if (isWebDesktop() && isHostLocalPreviewUrl(url)) {
+			notifyCenterFlash({ color: 'red', message: 'Select an agent to open a host preview' });
+			return;
+		}
 		// No active session - fall back to system browser
 		window.maestro.shell.openExternal(url);
 		return;
 	}
 
-	const newBrowserTab: BrowserTab = {
-		id: generateId(),
-		url,
-		title: url,
-		createdAt: Date.now(),
-		partition: getBrowserTabPartition(session.id),
-		canGoBack: false,
-		canGoForward: false,
-		isLoading: true,
-		favicon: null,
-	};
-
-	setSessions((prev) =>
-		prev.map((s) => {
-			if (s.id !== session.id) return s;
-			return {
-				...s,
-				browserTabs: [...(s.browserTabs || []), newBrowserTab],
-				activeFileTabId: null,
-				activeBrowserTabId: newBrowserTab.id,
-				activeTerminalTabId: null,
-				inputMode: 'ai' as const,
-				unifiedTabOrder: insertAfterActiveInUnifiedTabOrder(s, {
-					type: 'browser',
-					id: newBrowserTab.id,
-				}),
-			};
-		})
-	);
+	const activate = (tab: BrowserTab) =>
+		updateSessionWith(session.id, (current) => activateBrowserTab(current, tab));
+	if (isWebDesktop()) {
+		void window.maestro.browserSession
+			.createTab(session.id, { url, title: url })
+			.then(activate)
+			.catch((error) =>
+				notifyCenterFlash({
+					color: 'red',
+					message: 'Could not create host browser tab',
+					detail: error instanceof Error ? error.message : String(error),
+				})
+			);
+		return;
+	}
+	activate(createBrowserTab(session.id, url, { title: url }));
 }

@@ -79,7 +79,10 @@ export async function openTunnel(
 	onExit: (message: string) => void,
 	preferredPort?: number
 ): Promise<{ tunnel: OwnedTunnel; url: URL }> {
-	const port = await availablePort(preferredPort);
+	const port = await availablePort(preferredPort).catch((error: NodeJS.ErrnoException) => {
+		if (preferredPort && error.code === 'EADDRINUSE') return availablePort();
+		throw error;
+	});
 	const args = tunnelArgs(config, endpoint, port);
 	// Respect aliases/agent/key/jump resolution, but refuse inherited extra listeners.
 	const { stdout } = await promisify(execFile)('ssh', ['-G', ...args], {

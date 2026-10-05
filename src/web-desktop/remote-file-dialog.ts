@@ -27,10 +27,10 @@ export function subscribeHostFolderRequest(listener: () => void): () => void {
 /** One shared picker serves every existing dialog.selectFolder call. */
 export function selectHostFolder(invoke: HostFolderRequest['invoke']): Promise<string | null> {
 	if (request) return Promise.reject(new Error('A host directory picker is already open'));
-	const { promise, resolve } = Promise.withResolvers<string | null>();
-	request = { invoke, resolve };
-	for (const listener of listeners) listener();
-	return promise;
+	return new Promise((resolve) => {
+		request = { invoke, resolve };
+		for (const listener of listeners) listener();
+	});
 }
 
 /** Remote exports choose a host destination; they never open a native host dialog. */
@@ -39,15 +39,15 @@ export function selectHostSaveFile(
 	options: { defaultPath?: string; filters?: Array<{ name: string; extensions: string[] }> } = {}
 ): Promise<string | null> {
 	if (request) return Promise.reject(new Error('A host directory picker is already open'));
-	const { promise, resolve } = Promise.withResolvers<string | null>();
-	request = {
-		invoke,
-		resolve,
-		saveName: getBasename(options.defaultPath || 'export'),
-		filters: options.filters,
-	};
-	for (const listener of listeners) listener();
-	return promise;
+	return new Promise((resolve) => {
+		request = {
+			invoke,
+			resolve,
+			saveName: getBasename(options.defaultPath || 'export'),
+			filters: options.filters,
+		};
+		for (const listener of listeners) listener();
+	});
 }
 
 export function finishHostFolderSelection(path: string | null): void {

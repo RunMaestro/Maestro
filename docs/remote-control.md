@@ -99,9 +99,10 @@ The **Connection** menu, top bar and **Commands** palette share the same actions
 | Disconnect          | Top bar or Connection menu | Top bar or Connection menu | `maestro-cli lite disconnect`  |
 | Close Lite          | Ctrl+W                     | Cmd+W                      | `maestro-cli lite close --yes` |
 
-Escape and visible close controls leave the connection UI. Escape returns to
-the host view when connected; without a host view it closes Lite. Closing Lite
-never acts as a request to kill an agent or stop the host.
+Escape dismisses the command palette, cancels the current edit, or goes back in
+the guided connection flow. When a host view is available it can return there;
+otherwise it returns to the computer list without quitting Lite. Use **Close Lite**
+to quit. Closing Lite never requests that the host or its agents stop.
 
 ```bash
 maestro-cli lite status --user-data /absolute/path/to/lite-data
@@ -131,6 +132,17 @@ downloading a host file are explicit transfers, not workspace synchronization.
 A localhost preview is opened by the host's browser, not by a local Lite webview.
 Host administration, account management and native application updates remain
 host-only; remote operator access is not multi-tenant isolation.
+
+An active host browser view keeps its viewport when Lite displays the same tab.
+Remote frame failures retry automatically; closing the view cancels retries and
+queued input. Paste uses the client's clipboard, not the host's clipboard.
+Restarting discovery does not disconnect an existing session; an actual network
+identity change still invalidates it. If a saved SSH forwarding port is occupied,
+Lite chooses another loopback port without disturbing the existing listener.
+
+A session whose owning window cannot answer bootstrap falls back to its saved
+metadata without hiding other sessions. Agent errors remain visible on remote
+clients; retries, History writes and other execution effects remain host-owned.
 
 Accepted agents, queues, terminals and automation stay on the host when a client
 disconnects. Keep the host window alive, including when backgrounded or minimized.
@@ -168,8 +180,8 @@ bind address.
 3. If Tailscale is unavailable, **Open Tailscale** opens the installed provider app
    or official download page. Complete provider/OS steps yourself, then use
    **Check again**. An unavailable provider leaves access closed.
-4. On the laptop, extract the matched **Maestro-Lite-Windows-x64.zip** and run
-   **Start-Maestro-Lite.cmd**. Choose **Find my computer**, then select the host.
+4. On the laptop, [launch the installed Maestro in Lite mode](#launch-lite) with
+   `Maestro --lite`. Choose **Find my computer**, then select the host.
    Lite opens directly to this step; saved connections and diagnostics are not shown alongside it.
 5. The desktop shows **“LAPTOP-NAME wants to connect to this computer”** with
    **Decline** and **Show code**, even when setup is closed. **Show code** opens the
@@ -279,8 +291,8 @@ provider but use actual browser HTTP/WebSocket traffic through the production
 relay and routes. They do not substitute for testing two real computers, their
 network policy and the client's operating-system credential store.
 
-See the [guided connection implementation notes](../Plans/maestro-lite-discovery-pairing-research.md#guided-connect-flow)
-for the authorization contract and verification boundaries.
+See [Pairing, persistence and revocation](#pairing-persistence-and-revocation)
+for the authorization contract. The verification boundaries are described above.
 
 ## Mobile Web Interface
 

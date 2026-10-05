@@ -1753,18 +1753,26 @@ export class WebServer {
 			this.isRunning = true;
 			if (this.lanAccess) this.startAddressWatcher();
 			if (this.getRemoteHostStatus) {
-				const status = await this.getRemoteHostStatus();
-				await this.litePairing.initialize(status.instanceId, {
-					name: status.hostName,
-					appVersion: status.appVersion,
-					parent: this.getPairingParent,
-					backendPort: () => (this.lanAccess ? this.port : undefined),
-					listenTailnet: (address) => listenTailnet(this.server, address),
-					endpoints: () => {
-						const tunnel = tunnelManager.getStatus();
-						return tunnel.isRunning && tunnel.url ? [tunnel.url] : [];
-					},
-				});
+				try {
+					const status = await this.getRemoteHostStatus();
+					await this.litePairing.initialize(status.instanceId, {
+						name: status.hostName,
+						appVersion: status.appVersion,
+						parent: this.getPairingParent,
+						backendPort: () => (this.lanAccess ? this.port : undefined),
+						listenTailnet: (address) => listenTailnet(this.server, address),
+						endpoints: () => {
+							const tunnel = tunnelManager.getStatus();
+							return tunnel.isRunning && tunnel.url ? [tunnel.url] : [];
+						},
+					});
+				} catch (error) {
+					logger.error(
+						'Device pairing is unavailable; the core web server remains running',
+						LOG_CONTEXT,
+						error
+					);
+				}
 			}
 
 			return {

@@ -6,7 +6,9 @@ import { WebServer } from '../../../main/web-server/WebServer';
 import { MEDIA_PATH_PARAM_MAX_LENGTH } from '../../../main/web-server/routes/mediaRoutes';
 
 const isolated = vi.hoisted(() => ({ directory: '' }));
-vi.mock('electron', () => ({ app: { getPath: () => isolated.directory } }));
+vi.mock('electron', () => ({
+	app: { getPath: () => isolated.directory, getVersion: () => '0.0.0-test' },
+}));
 beforeEach(() => {
 	isolated.directory = mkdtempSync(path.join(os.tmpdir(), 'maestro-web-server-'));
 });
@@ -228,6 +230,21 @@ describe('WebServer network exposure', () => {
 		expect(listen).toHaveBeenCalledWith({ port: 0, host: '0.0.0.0' });
 		expect(result.url).toMatch(/^http:\/\/192\.168\.1\.50:/);
 		expect(internals.startAddressWatcher).toHaveBeenCalled();
+	});
+	it('keeps the live core HTTP server available when optional pairing initialization fails', async () => {
+		const server = new WebServer(0);
+		server.setRemoteHostStatusProvider(async () => {
+			throw new Error('Pairing status unavailable');
+		});
+		try {
+			const started = await server.start();
+			const health = await fetch(new URL('/health', started.url));
+			expect(health.status).toBe(200);
+			expect(await health.json()).toMatchObject({ status: 'ok' });
+			expect((await server.start()).port).toBe(started.port);
+		} finally {
+			await server.stop();
+		}
 	});
 });
 

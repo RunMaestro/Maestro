@@ -136,8 +136,12 @@ export class HostBrowserPages {
 				details,
 			} satisfies BrowserPageEvent);
 	}
+	private nativeActive(page: Page): boolean {
+		for (const active of page.nativeViews.values()) if (active) return true;
+		return false;
+	}
 	private painting(page: Page): boolean {
-		return page.remoteActive || Array.from(page.nativeViews.values()).some(Boolean);
+		return page.remoteActive || this.nativeActive(page);
 	}
 	private updatePainting(page: Page): void {
 		const guest = page.window.webContents;
@@ -319,7 +323,7 @@ export class HostBrowserPages {
 		const page = await this.ensure(target, size);
 		page.remoteActive = true;
 		page.remoteRetained = true;
-		this.resize(page, size);
+		if (!this.nativeActive(page)) this.resize(page, size);
 		this.updatePainting(page);
 		return this.state(page);
 	}
@@ -331,14 +335,21 @@ export class HostBrowserPages {
 	}
 	async frame(target: BrowserRelayTarget, size: BrowserRelayViewport): Promise<BrowserRelayFrame> {
 		const page = this.existing(target);
-		this.resize(page, size);
+		if (!this.nativeActive(page)) this.resize(page, size);
 		const image = await this.image(page);
 		page.encodedJPEG ??= 'data:image/jpeg;base64,' + image.toJPEG(75).toString('base64');
 		return { ...this.state(page), dataUrl: page.encodedJPEG };
 	}
-	async input(target: BrowserRelayTarget, input: BrowserRelayInput): Promise<void> {
+	async input(
+		target: BrowserRelayTarget,
+		input: BrowserRelayInput,
+		assertActive?: () => void
+	): Promise<void> {
 		const page = this.existing(target);
-		const pending = page.inputQueue.then(() => this.deps.input(page.window.webContents, input));
+		const pending = page.inputQueue.then(() => {
+			assertActive?.();
+			return this.deps.input(page.window.webContents, input);
+		});
 		page.inputQueue = pending.catch(() => {});
 		return pending;
 	}
@@ -467,7 +478,7 @@ export class HostBrowserPages {
 				const page = this.owned(event, target);
 				if (!page.nativeViews.has(viewId)) throw new Error('Native browser presentation closed');
 				page.nativeViews.set(viewId, true);
-				if (!page.remoteActive) this.resize(page, size);
+				this.resize(page, size);
 				this.updatePainting(page);
 				return this.frame(target, page.viewport);
 			}

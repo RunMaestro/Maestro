@@ -306,6 +306,7 @@ export class DiscoveryManager {
 				if (config.tailscalePeers === true) {
 					const discovery = tailscalePeerDiscovery(status, this.now());
 					if (peerScopeChecked && discovery.tailnet !== peerTailnet) {
+						this.networkChanged();
 						void this.start({ ...config, tailscalePeers: false });
 						return;
 					}
@@ -375,6 +376,7 @@ export class DiscoveryManager {
 							.sort()
 							.join(',') !== fingerprint
 					) {
+						this.networkChanged();
 						void this.start({ ...this.config, tailscalePeers: false });
 						return;
 					}
@@ -413,7 +415,7 @@ export class DiscoveryManager {
 			tailscale: { status: 'stopped', message: 'Tailscale discovery stopped.' },
 			cloudflare: invitationState,
 		};
-		this.networkChanged();
+
 		this.changed();
 	}
 }

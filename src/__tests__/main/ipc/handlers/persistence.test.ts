@@ -835,8 +835,9 @@ describe('persistence IPC handlers', () => {
 			],
 		};
 
-		it('uses current host-only incognito and terminal inventory in remote bootstrap without persisting them', async () => {
-			mockSessionsStore.get.mockReturnValue([stored]);
+		it('keeps responsive owner inventory and falls back only for a missing owner during bootstrap', async () => {
+			vi.useFakeTimers();
+			mockSessionsStore.get.mockReturnValue([stored, { ...stored, id: 'missing-owner' }]);
 			const browserTabs = [
 				{
 					id: 'private',
@@ -856,7 +857,7 @@ describe('persistence IPC handlers', () => {
 						channel: string,
 						payload: { sessionId: string; tabId: string; requestId: string }
 					) => {
-						if (channel !== 'sessions:transcriptRequest') return;
+						if (channel !== 'sessions:transcriptRequest' || payload.sessionId !== stored.id) return;
 						handlers.get('sessions:publishTranscript')!(
 							{ sender: { id: 1 } },
 							{
@@ -876,12 +877,25 @@ describe('persistence IPC handlers', () => {
 			// Partial window fixture models the trusted native publication endpoint.
 			vi.mocked(BrowserWindow.getAllWindows).mockReturnValue([win] as unknown as BrowserWindow[]);
 			try {
-				const [bootstrap] = await handlers.get('sessions:getBootstrap')!({ type: 'bridge' });
+				const pending = handlers.get('sessions:getBootstrap')!({ type: 'bridge' });
+				await vi.advanceTimersByTimeAsync(5000);
+				const [bootstrap, fallback] = await pending;
+				expect(fallback.id).toBe('missing-owner');
+				expect(
+					fallback.aiTabs.map((tab: { id: string; logs: unknown[] }) => ({
+						id: tab.id,
+						logs: tab.logs,
+					}))
+				).toEqual([
+					{ id: 't1', logs: [] },
+					{ id: 't2', logs: [] },
+				]);
 				expect(bootstrap.browserTabs).toEqual(browserTabs);
 				expect(bootstrap.terminalTabs).toEqual(terminalTabs);
 				expect(bootstrap.aiTabs[0].logs).toEqual([]);
 				expect(mockSessionsStore.set).not.toHaveBeenCalled();
 			} finally {
+				vi.useRealTimers();
 				vi.mocked(BrowserWindow.getAllWindows).mockReturnValue([]);
 			}
 		});

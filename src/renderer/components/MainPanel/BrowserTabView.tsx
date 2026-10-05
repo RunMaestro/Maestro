@@ -212,7 +212,7 @@ const NativeBrowserTabView = React.memo(
 				.sessions.find((candidate) =>
 					candidate.browserTabs?.some((browser) => browser.id === tab.id)
 				);
-			if (!host || !session) throw new Error('Browser tab has no owning host session');
+			if (!host || !session) return;
 			const page = createHostBrowserPageView(
 				{ sessionId: session.id, tabId: tab.id },
 				initialSrcRef.current,

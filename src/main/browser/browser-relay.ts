@@ -127,6 +127,10 @@ export class BrowserRelay {
 		}
 	}
 
+	assertActive(clientId: string, id: string): void {
+		this.get(clientId, id);
+	}
+
 	close(clientId: string, id: string): void {
 		const lease = this.leases.get(id);
 		if (!lease || lease.clientId !== clientId) return;
@@ -319,9 +323,10 @@ export function registerBrowserRelayHandlers(deps: {
 		'browser:relayInput',
 		async (event: RelayEvent, id: string, input: BrowserRelayInput) => {
 			const validated = validateInput(input);
-			const result = await relay!.run(client(event), id, 'resolve');
+			const clientId = client(event);
+			const result = await relay!.run(clientId, id, 'resolve');
 			if (!result.target) throw new Error('Host browser tab is not registered');
-			await pages.input(result.target, validated);
+			await pages.input(result.target, validated, () => relay!.assertActive(clientId, id));
 		}
 	);
 }

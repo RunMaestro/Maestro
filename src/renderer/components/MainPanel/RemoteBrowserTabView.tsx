@@ -161,6 +161,7 @@ export const RemoteBrowserTabView = forwardRef<BrowserTabViewHandle, RemoteBrows
 			const api = window.maestro.browserSession;
 			const pump = async () => {
 				if (stopped || !id) return;
+				let delay = 125;
 				try {
 					const next = await enqueue((current) => api.relayFrame(current, viewport.current));
 					if (stopped) return;
@@ -170,13 +171,17 @@ export const RemoteBrowserTabView = forwardRef<BrowserTabViewHandle, RemoteBrows
 					if (stopped) return;
 					frameRef.current = next;
 					setFrame(next);
+					setError(null);
 					if (!addressFocused.current) setAddress(next.url);
 					// Host owns metadata persistence. A frame is presentation, not a session write.
-					timer = window.setTimeout(() => {
-						void pump();
-					}, 125);
 				} catch (err) {
+					delay = 1000;
 					if (!stopped) setError(err instanceof Error ? err.message : String(err));
+				} finally {
+					if (!stopped)
+						timer = window.setTimeout(() => {
+							void pump();
+						}, delay);
 				}
 			};
 			const session = useSessionStore

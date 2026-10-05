@@ -37,7 +37,7 @@ import { logger } from '../../../utils/logger';
 import { removeHiddenProgressLog } from './helpers/exitTabCleanup';
 import { getErrorTitleForType } from './helpers/errorTitles';
 import { isLimitError } from '../../../../shared/types';
-import { useOwnedSideEffectGate } from './useOwnedSessionGate';
+import { useOwnedSessionGate, useOwnedSideEffectGate } from './useOwnedSessionGate';
 import {
 	scheduleRetryForError,
 	getRetryEntry,
@@ -60,7 +60,7 @@ export interface UseAgentErrorListenerDeps {
 }
 
 export function useAgentErrorListener(deps: UseAgentErrorListenerDeps): void {
-	const ownedGate = useOwnedSideEffectGate();
+	const ownedGate = useOwnedSessionGate();
 	const sideEffectGate = useOwnedSideEffectGate();
 	useEffect(() => {
 		const getSessions = () => useSessionStore.getState().sessions;
@@ -199,7 +199,7 @@ export function useAgentErrorListener(deps: UseAgentErrorListenerDeps): void {
 			const rawBatchState = deps.getBatchStateRef.current?.(actualSessionId);
 			const batchState = rawBatchState?.mirrored === true ? undefined : rawBatchState;
 			const batchOwnsError = !!(batchState?.isRunning && !batchState.errorPaused);
-			const canAutoRetry = !isSessionNotFound && !!tabIdFromSession;
+			const canAutoRetry = ownsSideEffects && !isSessionNotFound && !!tabIdFromSession;
 			const willAutoRetryInteractive =
 				canAutoRetry &&
 				!batchOwnsError &&
@@ -214,7 +214,7 @@ export function useAgentErrorListener(deps: UseAgentErrorListenerDeps): void {
 			// (session not found, auth, ...) ended the outage badly. Say so now;
 			// otherwise the exit listener reads the still-in-flight entry as a
 			// clean completion and paints the card green.
-			if (!willAutoRetry && tabIdFromSession) {
+			if (ownsSideEffects && !willAutoRetry && tabIdFromSession) {
 				failInFlightRetry(actualSessionId, tabIdFromSession, agentError.message);
 			}
 
@@ -372,13 +372,13 @@ export function useAgentErrorListener(deps: UseAgentErrorListenerDeps): void {
 				// after the synchronous pause above and never awaited: a reset that
 				// succeeds is picked up by the existing retry/auto-resume machinery
 				// on its next probe, and one that fails must not disturb the pause.
-				if (pausedSession) {
+				if (ownsSideEffects && pausedSession) {
 					void maybeAutoResetCodexUsage(pausedSession, agentError).catch(() => {
 						// The service reports its own outcome to the user; a throw here
 						// would only mean the attempt never started.
 					});
 				}
-				if (isLimit && !isSshBacked && window.maestro.agents?.getLimitResetAt) {
+				if (ownsSideEffects && isLimit && !isSshBacked && window.maestro.agents?.getLimitResetAt) {
 					void window.maestro.agents
 						.getLimitResetAt(agentError.agentId)
 						.then((resetAt) => {
@@ -407,7 +407,7 @@ export function useAgentErrorListener(deps: UseAgentErrorListenerDeps): void {
 			}
 
 			// Pause active Auto Run batch and record history when applicable.
-			if (deps.getBatchStateRef.current && deps.pauseBatchOnErrorRef.current) {
+			if (ownsSideEffects && deps.getBatchStateRef.current && deps.pauseBatchOnErrorRef.current) {
 				const batchState = deps.getBatchStateRef.current(actualSessionId);
 				// Mirrored run - the owning client pauses it and writes the history
 				// entry. Doing either here duplicates a persisted record and parks a
@@ -513,7 +513,7 @@ export function useAgentErrorListener(deps: UseAgentErrorListenerDeps): void {
 					const authTabId =
 						tabIdFromSession ??
 						(!isBatchError && erroredSession ? getActiveTab(erroredSession)?.id : undefined);
-					if (authTabId) {
+					if (ownsSideEffects && authTabId) {
 						void persistDispatchSnapshotForAuth(actualSessionId, authTabId);
 					}
 					const { opened, providerKey } = reportAuthFailure({

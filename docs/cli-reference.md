@@ -72,6 +72,50 @@ Connect to a saved profile using the native TLS, SSH, authentication, and identi
 | -------- | ----------- | ------- |
 | `--json` | Output JSON | -       |
 
+## `maestro-cli lite discovery`
+
+Local-network and consented Tailscale peer or advertised Service discovery
+
+## `maestro-cli lite discovery show`
+
+## `maestro-cli lite discovery status`
+
+## `maestro-cli lite discovery stop`
+
+## `maestro-cli lite discovery start`
+
+| Option               | Description                                                                                                        | Default |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------ | ------- |
+| `--interface <ipv4>` | Advanced override: use one approved LAN interface instead of automatic selection                                   | -       |
+| `--no-lan`           | Do not browse local-network advertisements                                                                         | -       |
+| `--no-tailscale`     | Do not read existing Tailscale client service metadata                                                             | -       |
+| `--tailscale-peers`  | Allow direct HTTP Maestro checks on Tailscale TCP 56036 for up to 32 existing peers per refresh; no login or trust | -       |
+
+## `maestro-cli lite discovery import`
+
+Read an expiring host invitation from stdin; never connect or save trust
+
+## `maestro-cli lite pair`
+
+Attended metadata-only PIN proof; never creates a full Maestro login
+
+## `maestro-cli lite pair request <key>`
+
+| Option             | Description                      | Default |
+| ------------------ | -------------------------------- | ------- |
+| `--generation <n>` | Generation from discovery status | -       |
+| `--name <label>`   | Self-asserted client label       | -       |
+
+## `maestro-cli lite pair submit`
+
+| Option        | Description                                          | Default |
+| ------------- | ---------------------------------------------------- | ------- |
+| `--pin-stdin` | Read six-digit PIN from stdin, not process arguments | -       |
+
+## `maestro-cli lite pair read`
+
+## `maestro-cli lite pair cancel`
+
 ## `maestro-cli lite status`
 
 Read connection status, errors, selected profile, and local presentation state
@@ -114,12 +158,12 @@ Show the native connection command palette
 
 ## `maestro-cli lite dismiss`
 
-Dismiss native connection controls, or close a disconnected client with --yes
+Return to the remote view or stay on setup; never close Lite
 
-| Option   | Description                                                    | Default |
-| -------- | -------------------------------------------------------------- | ------- |
-| `--json` | Output JSON                                                    | -       |
-| `--yes`  | Explicitly confirm closing this client without a native dialog | -       |
+| Option   | Description                                           | Default |
+| -------- | ----------------------------------------------------- | ------- |
+| `--json` | Output JSON                                           | -       |
+| `--yes`  | Accepted for compatibility; dismiss never closes Lite | -       |
 
 ## `maestro-cli lite close`
 
