@@ -238,7 +238,8 @@ describe('program loop', () => {
 		};
 		await runProgramLoopTick(state, io);
 		const prompt = io.wake.mock.calls[0][1];
-		const example = prompt.split('```json\n')[1]?.split('\n```')[0];
+		// The prompt template is read from disk; tolerate a CRLF checkout.
+		const example = prompt.split(/```json\r?\n/)[1]?.split(/\r?\n```/)[0];
 		const sample = JSON.parse(example ?? '') as {
 			programId: string;
 			tasks: {
