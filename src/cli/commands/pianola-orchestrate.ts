@@ -18,6 +18,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { spawn } from 'child_process';
+import { killProcessTreeNow } from '../../main/utils/processTree';
 import { readSettingValue } from '../services/storage';
 import { isEncoreEnabled, requireEncore } from '../utils/encore-gate';
 import {
@@ -98,6 +99,52 @@ const DEFAULT_SANDBOX_RUNNER = [
 	'python3',
 	'/mnt/c/Users/Administrator/Software/Maestro/.worktrees/pianola-portfolio/scripts/pianola-sandbox/sandbox_runner.py',
 ];
+const SANDBOX_LAUNCH_GRACE_SECONDS = 60;
+
+class SandboxRunnerConfigurationError extends Error {}
+
+/** Resolve relative to the bundled CLI, never the caller's working directory. */
+export function resolvePianolaSandboxRunner(
+	cliDir = __dirname,
+	platform = process.platform
+): string[] {
+	const candidates = [
+		path.resolve(cliDir, 'scripts/pianola-sandbox/sandbox_runner.py'),
+		// build:cli does not copy the runner; dist/cli falls back to the repository root.
+		path.resolve(cliDir, '../../scripts/pianola-sandbox/sandbox_runner.py'),
+		// Unbundled source execution (src/cli/commands).
+		path.resolve(cliDir, '../../../scripts/pianola-sandbox/sandbox_runner.py'),
+	];
+	for (const candidate of candidates) {
+		try {
+			if (!fs.statSync(candidate).isFile()) continue;
+			fs.accessSync(candidate, fs.constants.R_OK);
+			return platform === 'win32'
+				? ['wsl.exe', '--', 'python3', translatePianolaSandboxPath(candidate)]
+				: ['python3', candidate];
+		} catch {
+			continue;
+		}
+	}
+	throw new SandboxRunnerConfigurationError(
+		'Cannot locate sandbox_runner.py beside the CLI or in its repository; configure pianola.sandboxRunner with a readable runner argv prefix'
+	);
+}
+
+function sandboxRunnerPrefix(): string[] {
+	const configured = readSettingValue('pianola.sandboxRunner');
+	if (configured === undefined || configured === null) return resolvePianolaSandboxRunner();
+	if (
+		!Array.isArray(configured) ||
+		!configured.length ||
+		configured.some((part) => typeof part !== 'string' || !part)
+	) {
+		throw new SandboxRunnerConfigurationError(
+			'Invalid pianola.sandboxRunner: expected a non-empty argv prefix'
+		);
+	}
+	return configured as string[];
+}
 
 interface CreateSessionResult {
 	success?: boolean;
@@ -244,27 +291,25 @@ export function quoteForPosixShell(value: string): string {
  * `bash -c` string on the Linux side, so a Go `-run '^(A|B)$'` regex or a glob would be
  * parsed by that shell; each argument is single-quoted there and arrives verbatim.
  */
-export function sandboxSpawnArgs(launcher: string, args: readonly string[]): string[] {
+export function sandboxSpawnArgs(
+	launcher: string,
+	args: readonly string[],
+	prefix: readonly string[] = []
+): string[] {
 	const crossesWsl = /(^|[\\/])wsl(\.exe)?$/i.test(launcher);
-	return crossesWsl ? args.map(quoteForPosixShell) : [...args];
+	const separator = crossesWsl ? prefix.indexOf('--') : -1;
+	return separator >= 0
+		? [
+				...prefix.slice(0, separator + 1),
+				...prefix.slice(separator + 1).map(quoteForPosixShell),
+				...args.map(quoteForPosixShell),
+			]
+		: [...prefix, ...(crossesWsl ? args.map(quoteForPosixShell) : args)];
 }
 
 async function runSandbox(task: PianolaTask): Promise<PianolaSandboxObservation> {
 	const spec = task.validation!;
-	const prefix = readSettingValue('pianola.sandboxRunner') ?? DEFAULT_SANDBOX_RUNNER;
-	if (
-		!Array.isArray(prefix) ||
-		!prefix.length ||
-		prefix.some((part) => typeof part !== 'string' || !part)
-	)
-		return {
-			observed: false,
-			returncode: null,
-			stdout: '',
-			stderr: '',
-			timedOut: false,
-			error: 'Invalid pianola.sandboxRunner setting',
-		};
+	const prefix = sandboxRunnerPrefix();
 	const runnerArgs = [
 		'--workspace',
 		translatePianolaSandboxPath(spec.target),
@@ -282,16 +327,31 @@ async function runSandbox(task: PianolaTask): Promise<PianolaSandboxObservation>
 		'--',
 		...spec.command,
 	];
-	// wsl.exe joins its arguments into one `bash -c` string on the Linux side, so a Go
-	// `-run '^(A|B)$'` regex or a glob would be parsed by that shell. Quote each argument
-	// for POSIX sh when the runner is reached through wsl.exe; the runner then sees exact argv.
-	// The launcher's own flags (wsl.exe -d Ubuntu -u dev --) stay as they are; only what
-	// follows them crosses into the Linux shell.
-	const spawnArgs = [...prefix.slice(1), ...sandboxSpawnArgs(prefix[0], runnerArgs)];
+	// WSL receives POSIX-quoted oracle arguments; launcher flags remain untouched.
+	const spawnArgs = sandboxSpawnArgs(prefix[0], runnerArgs, prefix.slice(1));
 	return new Promise((resolve) => {
 		const child = spawn(prefix[0], spawnArgs, { windowsHide: true });
 		let stdout = '';
 		let stderr = '';
+		const wallSeconds = (spec.timeoutSeconds ?? 120) + SANDBOX_LAUNCH_GRACE_SECONDS;
+		let settled = false;
+		const finish = (observation: PianolaSandboxObservation): void => {
+			if (settled) return;
+			settled = true;
+			clearTimeout(timer);
+			resolve(observation);
+		};
+		const timer = setTimeout(() => {
+			if (child.pid) killProcessTreeNow(child.pid, { label: 'Pianola sandbox launcher' });
+			finish({
+				observed: false,
+				returncode: null,
+				stdout,
+				stderr,
+				timedOut: true,
+				error: `Sandbox launcher exceeded wall-clock ceiling of ${wallSeconds}s (validation timeout plus launch grace)`,
+			});
+		}, wallSeconds * 1000);
 		child.stdout.on('data', (chunk: Buffer) => {
 			stdout += chunk.toString();
 		});
@@ -299,7 +359,7 @@ async function runSandbox(task: PianolaTask): Promise<PianolaSandboxObservation>
 			stderr += chunk.toString();
 		});
 		child.on('error', (error) =>
-			resolve({
+			finish({
 				observed: false,
 				returncode: null,
 				stdout: '',
@@ -309,6 +369,7 @@ async function runSandbox(task: PianolaTask): Promise<PianolaSandboxObservation>
 			})
 		);
 		child.on('close', (code) => {
+			if (settled) return;
 			try {
 				if (!stdout.trim()) {
 					// The runner never printed an observation: wsl.exe or python refused to start.
@@ -322,10 +383,10 @@ async function runSandbox(task: PianolaTask): Promise<PianolaSandboxObservation>
 					(observation.returncode !== null && typeof observation.returncode !== 'number')
 				)
 					throw new Error('Invalid sandbox observation');
-				resolve(observation);
+				finish(observation);
 			} catch (error) {
 				const detail = stderr.trim().slice(-300);
-				resolve({
+				finish({
 					observed: false,
 					returncode: null,
 					stdout,
@@ -399,7 +460,23 @@ export async function pianolaValidate(
 		process.exitCode = 1;
 		return;
 	}
-	const result = await validateTask(planId, task);
+	let result;
+	try {
+		result = await validateTask(planId, task);
+	} catch (error) {
+		if (!(error instanceof SandboxRunnerConfigurationError)) throw error;
+		if (options.json)
+			console.log(
+				JSON.stringify({
+					success: false,
+					code: 'PIANOLA_SANDBOX_CONFIGURATION',
+					error: error.message,
+				})
+			);
+		else console.error(error.message);
+		process.exitCode = 1;
+		return;
+	}
 	console.log(options.json ? JSON.stringify(result) : JSON.stringify(result, null, 2));
 	process.exitCode = result.verdict === 'verified' ? 0 : result.verdict === 'failed' ? 2 : 3;
 }
@@ -766,6 +843,27 @@ export async function pianolaOrchestrate(
 		process.exit(1);
 		return;
 	}
+	const program = plan.programId
+		? readPianolaPrograms().find((entry) => entry.id === plan.programId)
+		: undefined;
+	if (program?.charter.validationRequired !== false && plan.tasks.some((task) => task.validation)) {
+		try {
+			sandboxRunnerPrefix();
+		} catch (error) {
+			if (!(error instanceof SandboxRunnerConfigurationError)) throw error;
+			if (options.json)
+				console.log(
+					JSON.stringify({
+						success: false,
+						code: 'PIANOLA_SANDBOX_CONFIGURATION',
+						error: error.message,
+					})
+				);
+			else console.error(error.message);
+			process.exitCode = 1;
+			return;
+		}
+	}
 
 	const intervalMs = parseIntervalSeconds(options.interval) * 1000;
 	const concurrencyLimit = parseConcurrency(options.concurrency);
@@ -811,10 +909,10 @@ export async function pianolaOrchestrate(
 	// Short-lived per-tab transcript cache so getRunState (awaiting-input check)
 	// and getRecentMessages share one get_session_history round-trip per tick.
 	const historyCache = new Map<string, { at: number; messages: PianolaMessage[] }>();
-	const getHistory = async (tabId: string): Promise<PianolaMessage[]> => {
+	const getHistory = async (tabId: string, fresh = false): Promise<PianolaMessage[]> => {
 		const now = Date.now();
 		const cached = historyCache.get(tabId);
-		if (cached && now - cached.at < SESSION_LIST_TTL_MS) return cached.messages;
+		if (!fresh && cached && now - cached.at < SESSION_LIST_TTL_MS) return cached.messages;
 		const result = await client.sendCommand<SessionHistoryResult>(
 			{ type: 'get_session_history', tabId, tail: HISTORY_TAIL },
 			'session_history_result'
@@ -834,7 +932,7 @@ export async function pianolaOrchestrate(
 		return messages;
 	};
 
-	const getTaskMessages = async (task: PianolaTask): Promise<PianolaMessage[]> => {
+	const getTaskMessages = async (task: PianolaTask, fresh = false): Promise<PianolaMessage[]> => {
 		const run = capturedRunForTask(task);
 		const finalText = run?.metadata?.answerTail;
 		if (
@@ -853,7 +951,7 @@ export async function pianolaOrchestrate(
 				},
 			];
 		}
-		return task.tabId ? getHistory(task.tabId) : [];
+		return task.tabId ? getHistory(task.tabId, fresh) : [];
 	};
 
 	const signals = new AgentRunSignals({
@@ -898,9 +996,9 @@ export async function pianolaOrchestrate(
 				return 'connecting';
 			return 'completed';
 		},
-		getRecentMessages: async (task) => {
+		getRecentMessages: async (task, options) => {
 			if (!task.tabId) return [];
-			return getTaskMessages(task);
+			return getTaskMessages(task, options?.fresh);
 		},
 		ensureAgent: async (task) => {
 			if (task.agentId) {
@@ -982,9 +1080,11 @@ export async function pianolaOrchestrate(
 			const res = await runDispatch(agentId, task.prompt, { newTab: true, background: true });
 			// Dispatch success is delivery, not a run receipt. Never retry a delivered
 			// but unaddressable prompt: that could duplicate work. The engine parks it.
+			const tabId = res.tabId ?? res.sessionId ?? undefined;
+			if (res.success && tabId) historyCache.delete(tabId);
 			return {
 				success: !!res.success,
-				tabId: res.tabId ?? res.sessionId ?? undefined,
+				tabId,
 				error: res.error,
 				deliveryUncertain: !res.success && !UNDISPATCHED_CODES.has(res.code ?? ''),
 			};
@@ -1001,6 +1101,8 @@ export async function pianolaOrchestrate(
 			}
 		},
 		reactiveEnabled: () => autopilotEnabledNow(),
+		getProgramCharter: (programId) =>
+			readPianolaPrograms().find((entry) => entry.id === programId)?.charter,
 		getRunLedger: async (task) => ledgerForTask(task),
 		validate: async (task) => {
 			const program = plan.programId
@@ -1025,8 +1127,10 @@ export async function pianolaOrchestrate(
 				attempt: (task.fixAttempts ?? 0) + 1,
 			});
 			try {
+				if (task.tabId) historyCache.delete(task.tabId);
 				const res = await runDispatch(agentId, fixPrompt, { newTab: true, background: true });
 				const tabId = res.tabId ?? res.sessionId;
+				if (tabId) historyCache.delete(tabId);
 				const uncertain = !res.success && !UNDISPATCHED_CODES.has(res.code ?? '');
 				if ((res.success || uncertain) && !tabId)
 					return {

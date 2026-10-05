@@ -28,6 +28,7 @@ import { detectTaskOutcome } from './pianola-completion-detector';
 import type { PianolaPlan, PianolaPlanProgress, PianolaTask } from './pianola-tasks';
 import { computeReadyTasks, markTaskStatus, planProgress, propagateBlocked } from './pianola-tasks';
 import type { PianolaMessage } from './types';
+import type { PianolaProgramCharter } from './pianola-programs';
 
 export type { AgentRunState } from './pianola-completion-detector';
 
@@ -76,7 +77,14 @@ export interface OrchestratorDeps {
 	/** Observe an agent's current run state for a dispatched (running) task. */
 	getRunState: (task: PianolaTask) => Promise<AgentRunState>;
 	/** Read the tail of a running task's transcript, chronological (oldest first). */
-	getRecentMessages: (task: PianolaTask) => Promise<readonly PianolaMessage[]>;
+	getRecentMessages: (
+		task: PianolaTask,
+		options?: { fresh?: boolean }
+	) => Promise<readonly PianolaMessage[]>;
+	/** Program-specific validation and fix policy; absent programs preserve existing defaults. */
+	getProgramCharter?: (
+		programId: string
+	) => Pick<PianolaProgramCharter, 'validationRequired' | 'maxAttempts'> | undefined;
 	/** Reuse task.agentId or create an agent for the task. Returns the bound id/type or an error. */
 	ensureAgent: (
 		task: PianolaTask
@@ -149,6 +157,19 @@ async function safeNotify(deps: OrchestratorDeps, task: PianolaTask): Promise<vo
 	}
 }
 
+/** A post-dispatch prompt is the boundary, not a fast reply already following it. */
+function dispatchMessageId(
+	messages: readonly PianolaMessage[],
+	previousId?: string | null
+): string | null {
+	const start =
+		previousId == null ? 0 : messages.findIndex((message) => message.id === previousId) + 1;
+	for (let i = messages.length - 1; i >= start; i--) {
+		if (messages[i].role === 'user') return messages[i].id;
+	}
+	return previousId === undefined ? (messages[messages.length - 1]?.id ?? null) : previousId;
+}
+
 /**
  * Run one orchestration tick. Pure aside from the injected deps: it polls running
  * tasks, settles done/failed, cascades blocked, dispatches up to the concurrency
@@ -161,6 +182,10 @@ export async function runOrchestratorIteration(
 	options: { concurrencyLimit: number }
 ): Promise<OrchestratorIterationResult> {
 	let plan = state.plan;
+	const charter = plan.programId ? deps.getProgramCharter?.(plan.programId) : undefined;
+	const maxFixAttempts = charter?.maxAttempts ?? MAX_FIX_ATTEMPTS;
+	const missingRequiredValidation = (task: PianolaTask): boolean =>
+		charter?.validationRequired === true && !task.validation;
 	const completedTaskIds: string[] = [];
 	const failedTaskIds: string[] = [];
 	const dispatchedTaskIds: string[] = [];
@@ -195,9 +220,15 @@ export async function runOrchestratorIteration(
 				: await deps.getRecentMessages(task);
 		// Only messages from the current dispatch may decide this task's outcome.
 		const recentMessages =
-			task.dispatchedMessageCount !== undefined
-				? transcript.slice(task.dispatchedMessageCount)
-				: transcript;
+			task.dispatchedMessageId !== undefined
+				? transcript.slice(
+						task.dispatchedMessageId === null
+							? 0
+							: transcript.findIndex((message) => message.id === task.dispatchedMessageId) + 1
+					)
+				: task.dispatchedMessageCount !== undefined
+					? transcript.slice(task.dispatchedMessageCount)
+					: transcript;
 		prevStates[task.id] = currentState;
 		const detected = detectTaskOutcome({
 			previousState: state.prevStates[task.id],
@@ -213,7 +244,7 @@ export async function runOrchestratorIteration(
 		const repliedSinceDispatch =
 			currentState === 'idle' &&
 			detected.outcome === 'working' &&
-			task.dispatchedMessageCount !== undefined &&
+			(task.dispatchedMessageId !== undefined || task.dispatchedMessageCount !== undefined) &&
 			recentMessages.some((message) => message.role === 'assistant');
 		const outcome = revalidating || repliedSinceDispatch ? 'done' : detected.outcome;
 		const reason =
@@ -221,6 +252,11 @@ export async function runOrchestratorIteration(
 				? 'agent replied after dispatch and is idle'
 				: detected.reason;
 		if (outcome === 'done') {
+			if (missingRequiredValidation(task)) {
+				plan = markTaskStatus(plan, task.id, 'needs_review', {
+					error: 'validation required by program charter but task declares none',
+				});
+				continue;
 			// A capture can finish before the renderer has persisted its last output.
 			// Require a stable post-exit transcript across ticks; persist the cursor
 			// so controller recovery cannot turn an empty/partial snapshot into success.
@@ -358,6 +394,12 @@ export async function runOrchestratorIteration(
 	if (deps.reactiveEnabled?.() === true) {
 		for (const task of plan.tasks.filter((t) => t.status === 'needs_review')) {
 			if (task.holdReason === 'delivery_uncertain') continue;
+			if (missingRequiredValidation(task)) {
+				plan = markTaskStatus(plan, task.id, 'needs_review', {
+					error: 'validation required by program charter but task declares none',
+				});
+				continue;
+			}
 			const ledger = deps.getRunLedger ? await deps.getRunLedger(task) : undefined;
 			if (ledger?.executionComplete === false) continue;
 			// Fully green (zero open findings of ANY severity AND checks passed): the
@@ -387,7 +429,7 @@ export async function runOrchestratorIteration(
 			if (ledger?.checksPending) continue;
 			// Still needs work: dispatch a bounded fix, or escalate when capped.
 			const attempts = task.fixAttempts ?? 0;
-			if (attempts >= MAX_FIX_ATTEMPTS) {
+			if (attempts >= maxFixAttempts) {
 				plan = markTaskStatus(plan, task.id, 'failed', {
 					error: `fix loop exhausted after ${attempts} attempts; escalated to user`,
 				});
@@ -411,6 +453,8 @@ export async function runOrchestratorIteration(
 					fixAttempts: attempts + 1,
 				});
 				deps.persist(plan);
+				const beforeDispatch = await deps.getRecentMessages(task, { fresh: true });
+				const previousId = beforeDispatch[beforeDispatch.length - 1]?.id ?? null;
 				const fix = await deps.dispatchFix(task, ledger);
 				// An uncertain failure may already have started work. Keep its persisted
 				// claim and attempt count; only a confirmed refusal can restore them.
@@ -422,14 +466,14 @@ export async function runOrchestratorIteration(
 					continue;
 				}
 				if (fix.success) {
-					const transcript = await deps.getRecentMessages(task);
+					const transcript = await deps.getRecentMessages(task, { fresh: true });
 					plan = markTaskStatus(plan, task.id, 'fixing', {
 						runId: ledger.runId,
 						tabId: fix.tabId,
 						executionRunId: undefined,
 						completionCursor: '',
 						fixAttempts: attempts + 1,
-						dispatchedMessageCount: transcript.length,
+						dispatchedMessageId: dispatchMessageId(transcript, previousId),
 					});
 					deps.log(`[orchestrator] task "${task.id}" fixing (attempt ${attempts + 1})`);
 				} else {
@@ -519,13 +563,12 @@ export async function runOrchestratorIteration(
 		}
 
 		const dispatchedTask = { ...task, agentId: agentResult.agentId, tabId: res.tabId };
-		const transcriptAtDispatch = await deps.getRecentMessages(dispatchedTask);
+		const transcriptAtDispatch = await deps.getRecentMessages(dispatchedTask, { fresh: true });
 		plan = markTaskStatus(plan, task.id, 'running', {
 			agentId: agentResult.agentId,
 			agentType: agentResult.agentType,
 			tabId: res.tabId,
-			// The prompt just sent is the last message; outcome detection starts after it.
-			dispatchedMessageCount: Math.max(0, transcriptAtDispatch.length - 1),
+			dispatchedMessageId: dispatchMessageId(transcriptAtDispatch),
 		});
 		// A dispatch receipt proves delivery only; wait for a real run observation.
 		deps.persist(plan);

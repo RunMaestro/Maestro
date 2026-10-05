@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as fsPromises from 'fs/promises';
 import * as path from 'path';
 import * as os from 'os';
+import { randomUUID } from 'crypto';
 import { logger } from '../../utils/logger';
 import { captureException } from '../../utils/sentry';
 import { parseDataUrl } from '../../../shared/maestro-lib/launch/image-refs';
@@ -49,21 +50,27 @@ export function saveImageToTempFile(dataUrl: string, index: number): string | nu
  * Fire-and-forget to avoid blocking the main thread.
  */
 /**
- * Write a prompt to a temp file for CLIs that accept a file-backed message
+ * Write a prompt to a unique, exclusively-created temp file for file-backed messages
  * (see `promptFileArgs`). Returns null when the write fails so the caller can
  * fall back to argv delivery. Cleaned up with the process's other temp files.
  */
 export function savePromptToTempFile(prompt: string): string | null {
-	const tempPath = path.join(os.tmpdir(), `maestro-prompt-${Date.now()}-${process.pid}.md`);
-	try {
-		fs.writeFileSync(tempPath, prompt, { encoding: 'utf8', mode: 0o600 });
-		return tempPath;
-	} catch (error) {
-		void captureException(error);
-		logger.error('[ProcessManager] Failed to save prompt to temp file', 'ProcessManager', {
-			error: String(error),
-		});
-		return null;
+	for (;;) {
+		const tempPath = path.join(
+			os.tmpdir(),
+			`maestro-prompt-${Date.now()}-${process.pid}-${randomUUID()}.md`
+		);
+		try {
+			fs.writeFileSync(tempPath, prompt, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
+			return tempPath;
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code === 'EEXIST') continue;
+			void captureException(error);
+			logger.error('[ProcessManager] Failed to save prompt to temp file', 'ProcessManager', {
+				error: String(error),
+			});
+			return null;
+		}
 	}
 }
 

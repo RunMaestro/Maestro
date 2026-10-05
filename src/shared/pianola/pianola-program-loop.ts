@@ -180,7 +180,10 @@ export async function runProgramLoopTick(
 		tabId &&
 		!state.targets.some(
 			(target) =>
-				target.kind === 'watch' && target.agentId === program.leadAgentId && target.enabled
+				target.kind === 'watch' &&
+				target.agentId === program.leadAgentId &&
+				target.tabId === tabId &&
+				target.enabled
 		)
 	)
 		await deps.ensureWatch(program.leadAgentId, tabId);

@@ -161,6 +161,7 @@ def _capture(
     assert process.stdout is not None and process.stderr is not None
     streams = {"stdout": bytearray(), "stderr": bytearray(), "status": bytearray()}
     isolation: dict[str, object] = {}
+    truncated = {"stdout": False, "stderr": False}
     released = False
     exit_status: int | None = None
     with selectors.DefaultSelector() as selector:
@@ -177,9 +178,13 @@ def _capture(
                     selector.unregister(key.fileobj)
                     continue
                 name = key.data
-                streams[name].extend(chunk)
-                if len(streams["stdout"]) + len(streams["stderr"]) > limits.output_bytes:
-                    raise IsolationError("CLI observation exceeded its output allowance")
+                if name == "status":
+                    streams[name].extend(chunk)
+                else:
+                    available = max(0, limits.output_bytes - len(streams[name]))
+                    streams[name].extend(chunk[:available])
+                    if len(chunk) > available:
+                        truncated[name] = True
                 if len(streams["status"]) > 8192:
                     raise IsolationError("Invalid isolation status stream")
                 if name != "status":
@@ -211,6 +216,7 @@ def _capture(
     process.wait(timeout=remaining)
     if not released or exit_status != process.returncode or streams["status"].strip():
         raise IsolationError("No complete isolation receipt: " + streams["stderr"].decode("utf-8", "replace")[:2000])
+    isolation["outputTruncated"] = truncated
     return bytes(streams["stdout"]), bytes(streams["stderr"]), isolation
 
 
@@ -268,12 +274,27 @@ def _toolchain_mounts(command: Sequence[str], workspace: Path) -> list[str]:
             if key.strip() == "home" and value.strip():
                 aliases.append(Path(value.strip()))
     real = first.resolve(strict=True)
-    roots.append(real.parents[1] if real.parent.name == "bin" else real.parent)
+    install = real.parent
+    if real.parent.name == "bin" and (real.parent.parent / "pyvenv.cfg").is_file():
+        install = real.parent.parent
+    elif real.parent.name == "bin" and any(
+            parent.name == "uv" and parent.parent.name == "share" for parent in real.parents):
+        install = real.parent.parent
+    roots.append(install)
+    import pwd
+    homes = {Path(entry.pw_dir).resolve() for entry in pwd.getpwall() if entry.pw_dir.startswith("/")}
+    homes.add(Path.home().resolve())
     mounts: list[str] = []
     bound: list[Path] = []
     for root in roots:
         resolved = root.resolve(strict=True)
-        if (resolved == Path("/") or resolved.is_relative_to(workspace) or resolved.is_relative_to("/usr")
+        if (resolved == Path("/") or resolved.parent.name == "home"
+                or any(home.is_relative_to(resolved) for home in homes)):
+            if root == install:
+                resolved = real
+            else:
+                continue
+        if (resolved.is_relative_to(workspace) or resolved.is_relative_to("/usr")
                 or any(resolved.is_relative_to(existing) for existing in bound)):
             continue
         bound.append(resolved)
@@ -395,7 +416,8 @@ def main() -> None:
         result = run_isolated_cli(command, Path(args.workspace), [Path(p) for p in args.artifact],
                                   timeout=args.timeout)
         payload = {"returncode": result.returncode, "stdout": result.stdout, "stderr": result.stderr,
-                   "observed": True, "error": None, "timedOut": False}
+                   "observed": True, "error": None, "timedOut": False,
+                   "outputTruncated": result.isolation["outputTruncated"]}
     except CandidateError as exc:
         # The oracle never ran, but the candidate is definitely wrong: a failed check, not an unknown.
         payload = {"returncode": 1, "stdout": "", "stderr": f"candidate contract: {exc}\n",

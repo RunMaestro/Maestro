@@ -107,12 +107,35 @@ describe('program loop', () => {
 		await runProgramLoopTick(state, io);
 		expect(io.wake).toHaveBeenCalledTimes(2);
 	});
-	it('leaves paused programs alone', async () => {
+	it('leaves paused programs alone, including an active plan', async () => {
 		const state = blank();
 		state.program = { ...program, status: 'paused' };
+		state.plans = [plan];
 		const io = deps();
 		expect((await runProgramLoopTick(state, io)).reason).toContain('paused');
 		expect(io.wake).not.toHaveBeenCalled();
+		expect(io.ensureOrchestrate).not.toHaveBeenCalled();
+		expect(io.ensureWatch).not.toHaveBeenCalled();
+	});
+	it('rebinds the lead watch when a later wake opens a new tab', async () => {
+		const state = blank();
+		const io = deps();
+		const first = await runProgramLoopTick(state, io);
+		state.memo = first.memo;
+		state.targets = [
+			{
+				id: 'watch',
+				kind: 'watch',
+				agentId: 'lead',
+				tabId: 'fresh-tab',
+				enabled: true,
+				createdAt: 1,
+			},
+		];
+		state.now = '2026-10-02T13:00:00.000Z';
+		io.wake.mockResolvedValueOnce({ success: true, tabId: 'next-tab' });
+		await runProgramLoopTick(state, io);
+		expect(io.ensureWatch).toHaveBeenNthCalledWith(2, 'lead', 'next-tab');
 	});
 	it('logs target registration and wake, but not identical consecutive no-ops', async () => {
 		const state = blank();

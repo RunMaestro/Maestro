@@ -16,6 +16,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { reconcileSuggestionEvidence } from './pianola-synthesis';
 import { settledDecisionPairs } from './transcript-mining';
+import { assertSerializedJsonIsSafe } from '../jsonUtils';
 import {
 	PIANOLA_RULES_FILENAME,
 	PIANOLA_DECISIONS_FILENAME,
@@ -58,6 +59,9 @@ import { canonicalJson } from '../canonicalJson';
 import type { PianolaProgram, PianolaAsk } from './pianola-programs';
 import { validateProgramLoopMemo, type ProgramLoopMemo } from './pianola-program-loop';
 
+const ASKS_LOCK_TIMEOUT_MS = 5_000;
+const ASKS_LOCK_STALE_MS = 30_000;
+const lockWait = new Int32Array(new SharedArrayBuffer(4));
 export interface PianolaFsStoreConfig {
 	/** Resolve the data dir (Electron userData for main, config dir for CLI). Re-read per op. */
 	resolveDir: () => string;
@@ -83,6 +87,7 @@ export interface PianolaFsStore {
 	upsertProgram(program: PianolaProgram): PianolaProgram[];
 	readAsks(): PianolaAsk[];
 	writeAsks(asks: PianolaAsk[]): PianolaAsk[];
+	updateAsks(update: (asks: PianolaAsk[]) => PianolaAsk[]): PianolaAsk[];
 	readProgramLoopMemo(): ProgramLoopMemo;
 	writeProgramLoopMemo(memo: ProgramLoopMemo): void;
 	readSuggestions(): PianolaSuggestionsFile;
@@ -115,10 +120,26 @@ export function createPianolaFsStore(config: PianolaFsStoreConfig): PianolaFsSto
 		const dir = resolveDir();
 		if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 		const target = path.join(dir, name);
-		const tmp = `${target}.tmp`;
+		const tmp =
+			target +
+			'.' +
+			process.pid +
+			'.' +
+			Date.now() +
+			'.' +
+			Math.random().toString(36).slice(2) +
+			'.tmp';
 		const body = JSON.stringify(value, null, indent);
-		fs.writeFileSync(tmp, trailingNewline ? `${body}\n` : body, 'utf-8');
-		fs.renameSync(tmp, target);
+		assertSerializedJsonIsSafe(body, target);
+		try {
+			fs.writeFileSync(tmp, trailingNewline ? body + '\n' : body, {
+				encoding: 'utf-8',
+				flag: 'wx',
+			});
+			fs.renameSync(tmp, target);
+		} finally {
+			fs.rmSync(tmp, { force: true });
+		}
 	}
 
 	/** Read + JSON.parse a file; `fallback()` covers a missing file AND unparseable JSON. */
@@ -256,12 +277,60 @@ export function createPianolaFsStore(config: PianolaFsStoreConfig): PianolaFsSto
 			(raw) => validatePianolaAsksFile(raw).asks
 		);
 	}
-	function writeAsks(asks: PianolaAsk[]): PianolaAsk[] {
+	function withAsksLock<T>(operation: () => T): T {
+		const lock = filePath(PIANOLA_ASKS_FILENAME) + '.lock';
+		fs.mkdirSync(path.dirname(lock), { recursive: true });
+		const token = process.pid + '.' + Date.now() + '.' + Math.random().toString(36).slice(2);
+		const deadline = Date.now() + ASKS_LOCK_TIMEOUT_MS;
+		while (true) {
+			if (Date.now() >= deadline) throw new Error('Timed out waiting for Pianola asks lock');
+			try {
+				fs.writeFileSync(lock, token, { flag: 'wx' });
+				break;
+			} catch (error) {
+				if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+			}
+			try {
+				if (Date.now() - fs.statSync(lock).mtimeMs > ASKS_LOCK_STALE_MS) {
+					const owner = Number(fs.readFileSync(lock, 'utf8').split('.')[0]);
+					let alive = Number.isInteger(owner) && owner > 0;
+					if (alive) {
+						try {
+							process.kill(owner, 0);
+						} catch (error) {
+							if ((error as NodeJS.ErrnoException).code === 'ESRCH') alive = false;
+						}
+					}
+					if (!alive) {
+						const stale = lock + '.' + token + '.stale';
+						fs.renameSync(lock, stale);
+						fs.rmSync(stale, { force: true });
+						continue;
+					}
+				}
+			} catch (error) {
+				if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue;
+				throw error;
+			}
+			Atomics.wait(lockWait, 0, 0, 10);
+		}
+		try {
+			return operation();
+		} finally {
+			if (fs.readFileSync(lock, 'utf8') === token) fs.rmSync(lock, { force: true });
+		}
+	}
+	function persistAsks(asks: PianolaAsk[]): PianolaAsk[] {
 		const validated = validatePianolaAsksFile({ asks }).asks;
 		writeJsonAtomic(PIANOLA_ASKS_FILENAME, { asks: validated });
 		return validated;
 	}
-
+	function writeAsks(asks: PianolaAsk[]): PianolaAsk[] {
+		return withAsksLock(() => persistAsks(asks));
+	}
+	function updateAsks(update: (asks: PianolaAsk[]) => PianolaAsk[]): PianolaAsk[] {
+		return withAsksLock(() => persistAsks(update(readAsks())));
+	}
 	function readSuggestions(): PianolaSuggestionsFile {
 		let content: string;
 		try {
@@ -496,6 +565,7 @@ export function createPianolaFsStore(config: PianolaFsStoreConfig): PianolaFsSto
 		upsertProgram,
 		readAsks,
 		writeAsks,
+		updateAsks,
 		readSuggestions,
 		readProgramLoopMemo,
 		writeProgramLoopMemo,
