@@ -324,6 +324,16 @@ describe('cli-server-discovery', () => {
 			expect(result).toBeNull();
 		});
 
+		it('reads the discovery file from an explicit data directory', () => {
+			mockFs.readFileSync.mockReturnValue(JSON.stringify(sampleInfo));
+
+			expect(readCliServerInfo('/srv/maestro-data')).toEqual(sampleInfo);
+			expect(mockFs.readFileSync).toHaveBeenCalledWith(
+				path.join('/srv/maestro-data', 'cli-server.json'),
+				'utf-8'
+			);
+		});
+
 		it('should return parsed data for valid file', () => {
 			mockFs.readFileSync.mockReturnValue(JSON.stringify(sampleInfo));
 

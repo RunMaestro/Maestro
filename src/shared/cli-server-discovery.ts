@@ -58,8 +58,13 @@ function getConfigDir(): string {
 
 const DISCOVERY_FILE = 'cli-server.json';
 
-function getDiscoveryFilePath(): string {
-	return path.join(getConfigDir(), DISCOVERY_FILE);
+/**
+ * Discovery file location. `dataDir` names a specific data directory (the
+ * bundle importer asks whether a desktop runs against ITS target); without it
+ * the directory resolves as above.
+ */
+function getDiscoveryFilePath(dataDir?: string): string {
+	return path.join(dataDir ?? getConfigDir(), DISCOVERY_FILE);
 }
 
 /**
@@ -90,12 +95,12 @@ export function writeCliServerInfo(info: CliServerInfo): void {
 }
 
 /**
- * Read CLI server info from the discovery file
+ * Read CLI server info from the discovery file (in `dataDir` when given).
  * Returns null if the file is missing or invalid
  */
-export function readCliServerInfo(): CliServerInfo | null {
+export function readCliServerInfo(dataDir?: string): CliServerInfo | null {
 	try {
-		const filePath = getDiscoveryFilePath();
+		const filePath = getDiscoveryFilePath(dataDir);
 		const content = fs.readFileSync(filePath, 'utf-8');
 		const data = JSON.parse(content) as CliServerInfo;
 		if (
@@ -126,10 +131,10 @@ export function deleteCliServerInfo(): void {
 
 /**
  * Check if the CLI server is still running by reading the discovery file
- * and verifying the PID is alive
+ * (in `dataDir` when given) and verifying the PID is alive
  */
-export function isCliServerRunning(): boolean {
-	const info = readCliServerInfo();
+export function isCliServerRunning(dataDir?: string): boolean {
+	const info = readCliServerInfo(dataDir);
 	if (!info) return false;
 
 	try {

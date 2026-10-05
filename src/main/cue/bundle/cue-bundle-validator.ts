@@ -62,6 +62,33 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 	return !!value && typeof value === 'object' && !Array.isArray(value);
 }
 
+/** A bundle zip's entries, read once and shared by the validator and the importer. */
+export interface CueBundleArchive {
+	/** File entries by normalized archive path. Unsafe names are left out. */
+	entries: Map<string, Buffer>;
+	/** Entry names that were absolute or parent-relative, in archive order. */
+	unsafeNames: string[];
+}
+
+/**
+ * Read every file entry of the bundle at `bundlePath`. Throws only when the
+ * file is missing, is not a readable zip, or trips the zip reader's caps.
+ */
+export function readCueBundleArchive(bundlePath: string): CueBundleArchive {
+	const zip = readZipArchive(bundlePath);
+	const entries = new Map<string, Buffer>();
+	const unsafeNames: string[] = [];
+	for (const entry of zip.getEntries()) {
+		if (entry.isDirectory) continue;
+		if (isUnsafeZipEntryName(entry.entryName)) {
+			unsafeNames.push(entry.entryName);
+			continue;
+		}
+		entries.set(entry.entryName, entry.getData());
+	}
+	return { entries, unsafeNames };
+}
+
 /**
  * Validate the bundle at `bundlePath`. Throws only when the file is missing or
  * is not a readable zip; every other problem is returned as an issue.
@@ -70,7 +97,15 @@ export async function validateCueBundle(
 	bundlePath: string,
 	options: CueBundleValidateOptions
 ): Promise<CueBundleValidationResult> {
-	const zip = readZipArchive(bundlePath);
+	return validateCueBundleArchive(readCueBundleArchive(bundlePath), options);
+}
+
+/** Validate a bundle already read with {@link readCueBundleArchive}. Never throws. */
+export function validateCueBundleArchive(
+	archive: CueBundleArchive,
+	options: CueBundleValidateOptions
+): CueBundleValidationResult {
+	const { entries } = archive;
 	const errors: CueBundleValidationIssue[] = [];
 	const warnings: CueBundleValidationIssue[] = [];
 	const error = (code: string, message: string, file?: string) =>
@@ -84,18 +119,8 @@ export async function validateCueBundle(
 		...(manifest ? { manifest } : {}),
 	});
 
-	const entries = new Map<string, Buffer>();
-	for (const entry of zip.getEntries()) {
-		if (entry.isDirectory) continue;
-		if (isUnsafeZipEntryName(entry.entryName)) {
-			error(
-				'unsafe-path',
-				'Archive entry has an absolute or parent-relative path',
-				entry.entryName
-			);
-			continue;
-		}
-		entries.set(entry.entryName, entry.getData());
+	for (const name of archive.unsafeNames) {
+		error('unsafe-path', 'Archive entry has an absolute or parent-relative path', name);
 	}
 
 	// ─── Manifest ────────────────────────────────────────────────────────────

@@ -16,6 +16,7 @@ import {
 	cancelScheduledTask,
 	collectScheduledTasks,
 	createScheduledTask,
+	mergeSubscriptionsIntoCueYaml,
 	updateScheduledTask,
 	type ScheduledTaskAgent,
 } from '../../../main/cue/cue-scheduled-tasks';
@@ -228,5 +229,63 @@ describe('cue-scheduled-tasks', () => {
 			expect(readSubs(projectRoot)).toHaveLength(0);
 			expect(await cancelScheduledTask(projectRoot, 'ghost')).toMatchObject({ removed: false });
 		});
+	});
+});
+
+describe('mergeSubscriptionsIntoCueYaml', () => {
+	const existing =
+		'# Pipeline: Kept (color: #123456)\n' +
+		yaml.dump({
+			settings: { owner_agent_id: 'a1', timeout_minutes: 10 },
+			subscriptions: [
+				{ name: 'keep', event: 'time.heartbeat', interval_minutes: 5, prompt: 'k' },
+				{ name: 'shared', event: 'time.heartbeat', interval_minutes: 5, prompt: 'old' },
+			],
+		});
+	const incoming = [
+		{ name: 'shared', event: 'time.heartbeat', interval_minutes: 9, prompt: 'new' },
+		{ name: 'fresh', event: 'time.heartbeat', interval_minutes: 1, prompt: 'f' },
+	];
+
+	function subsOf(content: string): Array<Record<string, unknown>> {
+		return (yaml.load(content) as { subscriptions: Array<Record<string, unknown>> }).subscriptions;
+	}
+
+	it('appends new names, reports shared ones, and keeps the header', () => {
+		const result = mergeSubscriptionsIntoCueYaml(existing, incoming);
+		expect(result).toMatchObject({ added: ['fresh'], replaced: [], conflicts: ['shared'] });
+		expect(result.content.startsWith('# Pipeline: Kept (color: #123456)\n')).toBe(true);
+		expect(subsOf(result.content).map((s) => s.name)).toEqual(['keep', 'shared', 'fresh']);
+		expect(subsOf(result.content)[1].prompt).toBe('old');
+	});
+
+	it('replaces a shared name in place when asked', () => {
+		const result = mergeSubscriptionsIntoCueYaml(existing, incoming, { replaceExisting: true });
+		expect(result).toMatchObject({ added: ['fresh'], replaced: ['shared'], conflicts: [] });
+		expect(subsOf(result.content).map((s) => s.name)).toEqual(['keep', 'shared', 'fresh']);
+		expect(subsOf(result.content)[1].prompt).toBe('new');
+	});
+
+	it('adds only settings the file does not set', () => {
+		const result = mergeSubscriptionsIntoCueYaml(existing, [], {
+			settings: { owner_agent_id: 'b2', max_concurrent: 2 },
+		});
+		expect(result.settingsAdded).toEqual(['max_concurrent']);
+		expect(result.settingsKept).toEqual(['owner_agent_id']);
+		expect((yaml.load(result.content) as { settings: unknown }).settings).toEqual({
+			owner_agent_id: 'a1',
+			timeout_minutes: 10,
+			max_concurrent: 2,
+		});
+	});
+
+	it('starts a new document when there is no file', () => {
+		const result = mergeSubscriptionsIntoCueYaml(null, incoming);
+		expect(result.added).toEqual(['shared', 'fresh']);
+		expect(subsOf(result.content).map((s) => s.name)).toEqual(['shared', 'fresh']);
+	});
+
+	it('throws on a file that is not YAML', () => {
+		expect(() => mergeSubscriptionsIntoCueYaml('a: [unclosed', [])).toThrow();
 	});
 });

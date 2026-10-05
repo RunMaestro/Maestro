@@ -2,7 +2,11 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as os from 'os';
-import { atomicWriteJson, createKeyedWriteQueue } from '../../../main/utils/atomic-json-store';
+import {
+	atomicWriteFile,
+	atomicWriteJson,
+	createKeyedWriteQueue,
+} from '../../../main/utils/atomic-json-store';
 
 describe('atomicWriteJson', () => {
 	let dir: string;
@@ -19,6 +23,13 @@ describe('atomicWriteJson', () => {
 		const file = path.join(dir, 'data.json');
 		await atomicWriteJson(file, { a: 1, b: [2, 3] });
 		expect(JSON.parse(await fs.readFile(file, 'utf-8'))).toEqual({ a: 1, b: [2, 3] });
+	});
+
+	it('writes raw bytes unchanged through atomicWriteFile', async () => {
+		const file = path.join(dir, 'blob.bin');
+		const bytes = Buffer.from([0xff, 0xfe, 0x00, 0x41, 0xc3]);
+		await atomicWriteFile(file, bytes);
+		expect((await fs.readFile(file)).equals(bytes)).toBe(true);
 	});
 
 	it('leaves no .tmp file behind', async () => {

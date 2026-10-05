@@ -90,6 +90,113 @@ function existingCueConfigPath(projectRoot: string): string | null {
 	return null;
 }
 
+export interface CueYamlMergeOptions {
+	/**
+	 * Replace an existing subscription that shares a name with a new one, in
+	 * place. Without it a shared name is reported in `conflicts` and the new
+	 * subscription is left out.
+	 */
+	replaceExisting?: boolean;
+	/** Settings to add. Only keys the file does not set are written. */
+	settings?: Record<string, unknown>;
+}
+
+export interface CueYamlMergeResult {
+	/** The whole new file: the original leading comment block, then the YAML. */
+	content: string;
+	/** Names appended to the end of `subscriptions`. */
+	added: string[];
+	/** Names replaced in place (`replaceExisting` only). */
+	replaced: string[];
+	/** Names already present and not replaced. */
+	conflicts: string[];
+	/** Settings keys the file did not set, which were added. */
+	settingsAdded: string[];
+	/** Settings keys the file already set to a different value, which were kept. */
+	settingsKept: string[];
+}
+
+function subscriptionName(entry: unknown): string | undefined {
+	return entry &&
+		typeof entry === 'object' &&
+		typeof (entry as { name?: unknown }).name === 'string'
+		? (entry as { name: string }).name
+		: undefined;
+}
+
+/**
+ * Merge subscriptions (and optionally settings) into a cue.yaml's text, without
+ * touching the disk. `raw` is the current file, or null when there is none.
+ * Every existing subscription keeps its place; the leading comment block (the
+ * `# Pipeline: ...` header) is preserved. Comments elsewhere in the body do not
+ * survive, since js-yaml has no comment model.
+ *
+ * Throws when `raw` is not valid YAML.
+ */
+export function mergeSubscriptionsIntoCueYaml(
+	raw: string | null,
+	newSubs: Record<string, unknown>[],
+	options: CueYamlMergeOptions = {}
+): CueYamlMergeResult {
+	let parsed: Record<string, unknown> = { subscriptions: [] };
+	let header = '';
+	if (raw !== null) {
+		header = extractLeadingCommentBlock(raw);
+		const loaded = yaml.load(raw);
+		if (loaded && typeof loaded === 'object' && !Array.isArray(loaded)) {
+			parsed = loaded as Record<string, unknown>;
+		}
+	}
+
+	const settingsAdded: string[] = [];
+	const settingsKept: string[] = [];
+	if (options.settings && Object.keys(options.settings).length > 0) {
+		const current =
+			parsed.settings && typeof parsed.settings === 'object' && !Array.isArray(parsed.settings)
+				? (parsed.settings as Record<string, unknown>)
+				: {};
+		const merged: Record<string, unknown> = { ...current };
+		for (const [key, value] of Object.entries(options.settings)) {
+			if (!(key in current)) {
+				merged[key] = value;
+				settingsAdded.push(key);
+			} else if (JSON.stringify(current[key]) !== JSON.stringify(value)) settingsKept.push(key);
+		}
+		parsed.settings = merged;
+	}
+
+	const subs = Array.isArray(parsed.subscriptions) ? [...(parsed.subscriptions as unknown[])] : [];
+	const indexByName = new Map<string, number>();
+	subs.forEach((entry, i) => {
+		const name = subscriptionName(entry);
+		if (name !== undefined && !indexByName.has(name)) indexByName.set(name, i);
+	});
+
+	const added: string[] = [];
+	const replaced: string[] = [];
+	const conflicts: string[] = [];
+	for (const sub of newSubs) {
+		const name = subscriptionName(sub);
+		const existing = name !== undefined ? indexByName.get(name) : undefined;
+		if (existing === undefined) {
+			subs.push(sub);
+			if (name !== undefined) {
+				indexByName.set(name, subs.length - 1);
+				added.push(name);
+			}
+		} else if (options.replaceExisting) {
+			subs[existing] = sub;
+			replaced.push(name!);
+		} else {
+			conflicts.push(name!);
+		}
+	}
+	parsed.subscriptions = subs;
+
+	const dumped = yaml.dump(parsed, { lineWidth: -1, noRefs: true, sortKeys: false });
+	return { content: header + dumped, added, replaced, conflicts, settingsAdded, settingsKept };
+}
+
 /**
  * Append `newSubs` to `<projectRoot>/.maestro/cue.yaml`, creating the file and
  * `.maestro/` directory when either is missing. A legacy `maestro-cue.yaml` is
@@ -107,39 +214,14 @@ export function appendSubscriptionsToYaml(
 	const canonicalPath = path.join(projectRoot, CUE_CONFIG_PATH);
 	const existing = existingCueConfigPath(projectRoot);
 
-	let parsed: Record<string, unknown> = { subscriptions: [] };
-	let header = '';
-
-	if (existing) {
-		const raw = fs.readFileSync(existing, 'utf-8');
-		header = extractLeadingCommentBlock(raw);
-		const loaded = yaml.load(raw);
-		if (loaded && typeof loaded === 'object' && !Array.isArray(loaded)) {
-			parsed = loaded as Record<string, unknown>;
-		}
-	}
-
-	const existingSubs = Array.isArray(parsed.subscriptions)
-		? (parsed.subscriptions as unknown[])
-		: [];
-
-	const existingNames = new Set(
-		existingSubs.flatMap((entry) =>
-			entry && typeof entry === 'object' && typeof (entry as { name?: unknown }).name === 'string'
-				? [(entry as { name: string }).name]
-				: []
-		)
+	const merge = mergeSubscriptionsIntoCueYaml(
+		existing ? fs.readFileSync(existing, 'utf-8') : null,
+		newSubs
 	);
-	for (const newSub of newSubs) {
-		if (typeof newSub.name === 'string' && existingNames.has(newSub.name)) {
-			throw new Error(`subscription "${newSub.name}" already exists in ${canonicalPath}`);
-		}
+	if (merge.conflicts.length > 0) {
+		throw new Error(`subscription "${merge.conflicts[0]}" already exists in ${canonicalPath}`);
 	}
-
-	parsed.subscriptions = [...existingSubs, ...newSubs];
-
-	const dumped = yaml.dump(parsed, { lineWidth: -1, noRefs: true, sortKeys: false });
-	const output = header + dumped;
+	const output = merge.content;
 
 	const maestroDir = path.join(projectRoot, MAESTRO_DIR);
 	if (!fs.existsSync(maestroDir)) {
