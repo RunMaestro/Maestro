@@ -39,6 +39,17 @@ describe('HoverTooltip', () => {
 		}
 	});
 
+	it('preserves the single-line label alignment and line height with a nonshrinking shortcut', () => {
+		const tip = open(
+			<HoverTooltip theme={mockTheme} label="Run" shortcut="Ctrl+Enter">
+				<span>trigger</span>
+			</HoverTooltip>
+		);
+		expect(tip.className).toContain('items-center');
+		expect(tip.className).not.toContain('leading-snug');
+		expect(screen.getByText('Ctrl+Enter').className).toContain('shrink-0');
+	});
+
 	// Sentence-length labels must wrap; position clamping alone cannot keep a
 	// non-wrapping tooltip inside the viewport.
 	it('wraps and caps its width when given a maxWidth', () => {

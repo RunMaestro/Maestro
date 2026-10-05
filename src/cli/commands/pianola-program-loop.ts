@@ -19,9 +19,9 @@ import {
 	readPianolaAsks,
 	readPianolaDecisions,
 	readPianolaSupervisorTargets,
-	upsertPianolaSupervisorTarget,
+	updatePianolaSupervisorTargets,
 	readPianolaProgramLoopMemo,
-	writePianolaProgramLoopMemo,
+	updatePianolaProgramLoopMemo,
 	appendPianolaDecision,
 } from '../services/pianola-store';
 
@@ -74,22 +74,29 @@ export async function pianolaProgramLoop(
 						now,
 					},
 					{
+						persistMemo: (entry) => updatePianolaProgramLoopMemo(programId, entry),
 						ensureOrchestrate: (plan, concurrency) => {
-							if (
-								readPianolaPrograms().find((entry) => entry.id === programId)?.status !== 'active'
-							)
-								return;
-							const existing = readPianolaSupervisorTargets().find(
-								(target) => target.kind === 'orchestrate' && target.planId === plan.id
-							);
-							upsertPianolaSupervisorTarget({
-								id: existing?.id ?? generateUUID(),
-								kind: 'orchestrate',
-								enabled: true,
-								createdAt: existing?.createdAt ?? Date.now(),
-								planId: plan.id,
-								concurrency,
-								intervalSeconds: 5,
+							updatePianolaSupervisorTargets((current) => {
+								if (
+									readPianolaPrograms().find((entry) => entry.id === programId)?.status !== 'active'
+								)
+									return current;
+								const existing = current.find(
+									(target) => target.kind === 'orchestrate' && target.planId === plan.id
+								);
+								if (existing && !existing.enabled) return current;
+								const target = {
+									id: existing?.id ?? generateUUID(),
+									kind: 'orchestrate' as const,
+									enabled: true,
+									createdAt: existing?.createdAt ?? Date.now(),
+									planId: plan.id,
+									concurrency,
+									intervalSeconds: 5,
+								};
+								return existing
+									? current.map((entry) => (entry.id === existing.id ? target : entry))
+									: [...current, target];
 							});
 						},
 						wake: async (agentId, prompt) => {
@@ -108,21 +115,27 @@ export async function pianolaProgramLoop(
 							return { success: response.success, tabId, error: response.error };
 						},
 						ensureWatch: (agentId, tabId) => {
-							if (
-								readPianolaPrograms().find((entry) => entry.id === programId)?.status !== 'active'
-							)
-								return;
-							const existing = readPianolaSupervisorTargets().find(
-								(target) => target.kind === 'watch' && target.agentId === agentId
-							);
-							upsertPianolaSupervisorTarget({
-								id: existing?.id ?? generateUUID(),
-								kind: 'watch',
-								enabled: true,
-								createdAt: existing?.createdAt ?? Date.now(),
-								agentId,
-								tabId,
-								intervalSeconds: 5,
+							updatePianolaSupervisorTargets((current) => {
+								if (
+									readPianolaPrograms().find((entry) => entry.id === programId)?.status !== 'active'
+								)
+									return current;
+								const existing = current.find(
+									(target) => target.kind === 'watch' && target.agentId === agentId
+								);
+								if (existing && !existing.enabled) return current;
+								const target = {
+									id: existing?.id ?? generateUUID(),
+									kind: 'watch' as const,
+									enabled: true,
+									createdAt: existing?.createdAt ?? Date.now(),
+									agentId,
+									tabId,
+									intervalSeconds: 5,
+								};
+								return existing
+									? current.map((entry) => (entry.id === existing.id ? target : entry))
+									: [...current, target];
 							});
 						},
 						prompt: (kind, variables) => {
@@ -136,7 +149,7 @@ export async function pianolaProgramLoop(
 						},
 					}
 				);
-				writePianolaProgramLoopMemo({ ...memo, [programId]: result.memo });
+				updatePianolaProgramLoopMemo(programId, result.memo);
 				if (shouldLogProgramLoopDecision(memo[programId], result)) {
 					appendPianolaDecision({
 						id: generateUUID(),
@@ -156,9 +169,9 @@ export async function pianolaProgramLoop(
 						decision: { action: 'ignore', matchedRuleId: null, reason: result.reason },
 						...(result.error ? { error: result.error } : {}),
 					});
-					writePianolaProgramLoopMemo({
-						...memo,
-						[programId]: { ...result.memo, lastLoggedReason: result.reason },
+					updatePianolaProgramLoopMemo(programId, {
+						...result.memo,
+						lastLoggedReason: result.reason,
 					});
 				}
 				if (options.json) console.log(JSON.stringify(result));

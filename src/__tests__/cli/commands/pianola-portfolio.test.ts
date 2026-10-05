@@ -73,10 +73,171 @@ beforeEach(() => {
 	vi.clearAllMocks();
 	vi.spyOn(console, 'log').mockImplementation(() => {});
 	connect.mockResolvedValue(undefined);
-	sendCommand.mockResolvedValue({ success: true, sessionId: 'session-1' });
+	sendCommand.mockImplementation(async (command) =>
+		command.type === 'get_sessions' ? { sessions: [] } : { success: true, sessionId: 'session-1' }
+	);
 });
 
 describe('portfolio CLI commands', () => {
+	it('keeps old metadata after a partial apply and recovers created roles by live identity on retry', async () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pianola-apply-retry-'));
+		const file = path.join(dir, 'manifest.json');
+		const original: PianolaProgram = {
+			id: 'product',
+			title: 'Product',
+			root: '/old',
+			roles: { lead: { name: 'Lead' }, engineer: { name: 'Engineer', agentId: 'eng' } },
+			charter: { maxConcurrent: 1, maxAttempts: 2, validationRequired: true },
+			status: 'active',
+			createdAt: 1,
+			updatedAt: 1,
+		};
+		state.programs = [original];
+		fs.writeFileSync(file, JSON.stringify({ programs: [{ ...original, root: '/new' }] }));
+		const live: { id: string; name: string; cwd: string; toolType: string }[] = [];
+		let failCwd = true;
+		sendCommand.mockImplementation(async (command) => {
+			if (command.type === 'get_sessions') return { sessions: live };
+			if (command.type === 'create_session') {
+				live.push({
+					id: 'created-lead',
+					name: command.name,
+					cwd: command.cwd,
+					toolType: command.toolType,
+				});
+				return { success: true, sessionId: 'created-lead' };
+			}
+			if (command.type === 'update_session_cwd' && command.sessionId === 'eng' && failCwd)
+				return { success: false, error: 'Agent is busy' };
+			return { success: true };
+		});
+		const exit = vi.spyOn(process, 'exit').mockImplementation(() => {
+			throw new Error('exit');
+		});
+		try {
+			await expect(pianolaProgramApply({ file, json: true })).rejects.toThrow('exit');
+			expect(state.programs).toEqual([original]);
+			failCwd = false;
+			await pianolaProgramApply({ file, json: true });
+			expect(
+				sendCommand.mock.calls.filter(([command]) => command.type === 'create_session')
+			).toHaveLength(1);
+			expect(
+				sendCommand.mock.calls.filter(
+					([command]) => command.type === 'update_session_cwd' && command.sessionId === 'eng'
+				)
+			).toHaveLength(2);
+			expect(state.programs[0]).toMatchObject({
+				root: '/new',
+				leadAgentId: 'created-lead',
+				roles: { lead: { agentId: 'created-lead' }, engineer: { agentId: 'eng' } },
+			});
+		} finally {
+			exit.mockRestore();
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
+	});
+	it('migrates an existing role to the manifest remote without creating or deleting an agent', async () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pianola-apply-ssh-'));
+		const file = path.join(dir, 'manifest.json');
+		const original: PianolaProgram = {
+			id: 'product',
+			title: 'Product',
+			root: '/remote',
+			remoteId: 'wsl-dev',
+			leadAgentId: 'lead',
+			roles: { lead: { name: 'Lead', agentId: 'lead' } },
+			charter: { maxConcurrent: 1, maxAttempts: 2, validationRequired: true },
+			status: 'active',
+			createdAt: 1,
+			updatedAt: 1,
+		};
+		state.programs = [original];
+		fs.writeFileSync(file, JSON.stringify({ programs: [{ ...original, remoteId: 'new-remote' }] }));
+		sendCommand.mockImplementation(async (command) =>
+			command.type === 'get_sessions'
+				? {
+						sessions: [
+							{
+								id: 'lead',
+								name: 'Lead',
+								cwd: '/remote',
+								toolType: 'omp',
+								sessionSshRemoteConfig: { enabled: true, remoteId: 'wsl-dev' },
+							},
+						],
+					}
+				: { success: true }
+		);
+		try {
+			await pianolaProgramApply({ file, json: true });
+			expect(sendCommand).toHaveBeenCalledWith(
+				expect.objectContaining({
+					type: 'update_session_ssh',
+					sessionId: 'lead',
+					sshPatch: { enabled: true, remoteId: 'new-remote', workingDirOverride: '/remote' },
+				}),
+				'update_session_ssh_result'
+			);
+			expect(
+				sendCommand.mock.calls.some(
+					([command]) => command.type === 'create_session' || command.type === 'delete_session'
+				)
+			).toBe(false);
+		} finally {
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
+	});
+	it.each([
+		'templates: {base: &base {name: manual, event: time.heartbeat}}\nsubscriptions: [*base]\n',
+		'subscriptions: [&manual {name: manual, event: time.heartbeat}]\ncopy: *manual\n',
+	])('preserves aliases and their anchors when expanding inline subscriptions: %s', (raw) => {
+		const program: PianolaProgram = {
+			id: 'product',
+			title: 'Product',
+			root: 'C:\\product',
+			roles: { lead: { name: 'Lead', agentId: 'lead' } },
+			charter: { maxConcurrent: 1, maxAttempts: 2, validationRequired: true },
+			status: 'active',
+			createdAt: 1,
+			updatedAt: 1,
+		};
+		const updated = updateGeneratedCueYaml(raw, program);
+		const parsed = yaml.load(updated) as {
+			subscriptions: { name: string; event: string }[];
+			copy?: unknown;
+		};
+		expect(parsed.subscriptions[0]).toEqual({ name: 'manual', event: 'time.heartbeat' });
+		expect(parsed.subscriptions.map((sub) => sub.name)).toEqual(['manual', 'product-standup']);
+		if (raw.includes('copy:')) expect(parsed.copy).toEqual(parsed.subscriptions[0]);
+		expect(updateGeneratedCueYaml(updated, program)).toBe(updated);
+	});
+	it('does not replace marker text inside hand-written prompt scalars', () => {
+		const program: PianolaProgram = {
+			id: 'product',
+			title: 'Product',
+			root: 'C:\\product',
+			roles: { lead: { name: 'Lead', agentId: 'lead' } },
+			charter: { maxConcurrent: 1, maxAttempts: 2, validationRequired: true },
+			status: 'active',
+			createdAt: 1,
+			updatedAt: 1,
+		};
+		const prompt =
+			'# generated by pianola program apply: begin\nKeep this text.\n# generated by pianola program apply: end\n';
+		const raw =
+			'subscriptions:\n  - name: manual\n    event: time.heartbeat\n    prompt: |\n' +
+			prompt
+				.split('\n')
+				.filter(Boolean)
+				.map((line) => '      ' + line + '\n')
+				.join('');
+		const updated = updateGeneratedCueYaml(raw, program);
+		const parsed = yaml.load(updated) as { subscriptions: { name: string; prompt: string }[] };
+		expect(parsed.subscriptions[0].prompt).toBe(prompt);
+		expect(parsed.subscriptions.map((sub) => sub.name)).toEqual(['manual', 'product-standup']);
+		expect(updateGeneratedCueYaml(updated, program)).toBe(updated);
+	});
 	it('persists both asks when independent agents escalate concurrently', async () => {
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pianola-concurrent-escalate-'));
 		const entry = path.join(dir, 'portfolio.cjs');
@@ -177,9 +338,10 @@ describe('portfolio CLI commands', () => {
 			},
 		];
 		const original = state.targets;
+		state.targets[0] = { ...state.targets[0], enabled: false };
 		pianolaProgramStatus('product', 'paused', { json: true });
 		expect(state.programs[0].status).toBe('paused');
-		expect(state.targets.map((target) => target.enabled)).toEqual([false, false, true, false]);
+		expect(state.targets).toEqual(original);
 		pianolaProgramStatus('product', 'active', { json: true });
 		expect(state.targets).toEqual(original);
 	});
@@ -202,7 +364,7 @@ describe('portfolio CLI commands', () => {
 		await pianolaProgramApply({ file, json: true });
 		expect(state.programs[0]).toEqual(saved);
 		expect(connect).toHaveBeenCalledTimes(1);
-		expect(sendCommand).toHaveBeenCalledTimes(1);
+		expect(sendCommand).toHaveBeenCalledTimes(2);
 		expect(disconnect).toHaveBeenCalledTimes(1);
 	});
 	it('retries a role left unassigned by an interrupted apply', async () => {
@@ -244,7 +406,10 @@ describe('portfolio CLI commands', () => {
 			fs.writeFileSync(file, source.replace('remoteId: wsl-dev', 'remoteId: Dev Box'));
 			await pianolaProgramApply({ file, json: true });
 			expect(state.programs[0].remoteId).toBe('wsl-dev');
-			expect(sendCommand.mock.calls[0][0].sessionSshRemoteConfig.remoteId).toBe('wsl-dev');
+			expect(
+				sendCommand.mock.calls.find(([command]) => command.type === 'create_session')![0]
+					.sessionSshRemoteConfig.remoteId
+			).toBe('wsl-dev');
 			sendCommand.mockClear();
 			fs.writeFileSync(
 				file,
@@ -390,6 +555,10 @@ describe('portfolio CLI commands', () => {
 		}
 	});
 	it.each([
+		'subscriptions:\r\n  - name: manual\r\n    event: time.heartbeat\r\nsettings:\r\n  max_concurrent: 2\r\n',
+		'subscriptions: &manual\n  - name: manual\n    event: time.heartbeat\nsettings:\n  max_concurrent: 2\n',
+		'subscriptions: null\nsettings:\n  max_concurrent: 2\n',
+		'"subscriptions": []\nsettings:\n  max_concurrent: 2\n',
 		'subscriptions: []\nsettings:\n  max_concurrent: 2\n',
 		'subscriptions: [{name: manual, event: time.heartbeat}]\nsettings:\n  max_concurrent: 2\n',
 		'subscriptions:\n- name: manual\n  event: time.heartbeat\nsettings:\n  max_concurrent: 2\n',

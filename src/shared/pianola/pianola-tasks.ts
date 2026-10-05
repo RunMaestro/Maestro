@@ -58,11 +58,12 @@ export interface PianolaTask {
 	/** Transcript length when the current run (dispatch or fix) was sent, so a run that
 	 *  finishes between two polls is still recognised by the reply that follows it. */
 	dispatchedMessageCount?: number;
-	/** Id of the last transcript message when the current run (dispatch or fix) was
-	 *  sent; `null` when the transcript was empty. Replies are detected by id, so a
-	 *  capped history tail cannot hide them the way a length offset could. */
+	/** Id of the last transcript message captured on the target tab BEFORE the
+	 * current dispatch or fix; `null` when that transcript was empty. Id boundaries
+	 * remain valid when a capped history tail would hide a length offset. */
 	dispatchedMessageId?: string | null;
 	validation?: PianolaTaskValidation;
+	/** Consecutive infrastructure-unknown verdicts for the current completed run. */
 	validationUnknownAttempts?: number;
 }
 
@@ -222,6 +223,13 @@ function validatePianolaTask(raw: unknown, index: number, errors: string[]): Pia
 			(raw.validationUnknownAttempts as number) < 0)
 	) {
 		errors.push('Task ' + label + ' has invalid validationUnknownAttempts.');
+		ok = false;
+	}
+	if (
+		raw.fixAttempts !== undefined &&
+		(!Number.isInteger(raw.fixAttempts) || (raw.fixAttempts as number) < 0)
+	) {
+		errors.push('Task ' + label + ' has invalid fixAttempts.');
 		ok = false;
 	}
 	if (

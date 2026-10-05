@@ -72,6 +72,11 @@ describe('isTerminalStatus', () => {
 });
 
 describe('validatePlan', () => {
+	it('rejects negative fix attempts that would extend the charter retry budget', () => {
+		const result = validatePlan(rawPlan([rawTask({ fixAttempts: -1 })]));
+		expect(result.plan).toBeNull();
+		expect(result.errors.some((error) => error.includes('fixAttempts'))).toBe(true);
+	});
 	it('accepts a good linear plan', () => {
 		const { plan: result, errors } = validatePlan(
 			rawPlan([

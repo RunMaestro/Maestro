@@ -22,6 +22,40 @@ const success: PianolaSandboxObservation = {
 };
 
 describe('independent validation verdict', () => {
+	it('keeps a nonzero exit unknown when stderr truncation can hide a read-only diagnostic', () => {
+		const observation = {
+			...success,
+			returncode: 1,
+			stderr: 'x'.repeat(100000),
+			outputTruncated: { stdout: false, stderr: true },
+			readOnlyWriteDetected: true,
+		};
+		expect(validatePianolaVerdict(spec, observation).verdict).toBe('unknown');
+	});
+	it('still verifies successful commands with truncated output', () => {
+		const observation = { ...success, outputTruncated: { stdout: true, stderr: true } };
+		expect(validatePianolaVerdict(spec, observation).verdict).toBe('verified');
+	});
+	it('reports trusted-root policy violations as candidate failures, not infrastructure unknowns', () => {
+		const result = validatePianolaVerdict(spec, {
+			...success,
+			returncode: 1,
+			policyViolation: 'Validation target is outside the trusted root',
+		});
+		expect(result).toEqual({
+			verdict: 'failed',
+			reason: 'Validation target is outside the trusted root',
+		});
+	});
+	it('does not mistake ordinary truncated failure diagnostics for infrastructure errors', () => {
+		const observation = {
+			...success,
+			returncode: 1,
+			stderr: 'assertion failed',
+			outputTruncated: { stdout: false, stderr: true },
+		};
+		expect(validatePianolaVerdict(spec, observation).verdict).toBe('failed');
+	});
 	it('verifies a successful oracle and records a passed check', () => {
 		const result = validatePianolaVerdict(spec, success);
 		expect(result.verdict).toBe('verified');

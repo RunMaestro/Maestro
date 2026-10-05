@@ -14,7 +14,7 @@ export {
 } from '../../../shared/maestro-lib/launch/image-refs';
 
 /**
- * Save a base64 data URL image to a temp file.
+ * Save a base64 data URL image to a unique, exclusively-created temp file.
  * Returns the full path to the temp file, or null on failure.
  */
 export function saveImageToTempFile(dataUrl: string, index: number): string | null {
@@ -25,17 +25,24 @@ export function saveImageToTempFile(dataUrl: string, index: number): string | nu
 	}
 
 	const ext = parsed.mediaType.split('/')[1] || 'png';
-	const filename = `maestro-image-${Date.now()}-${index}.${ext}`;
-	const tempPath = path.join(os.tmpdir(), filename);
 
 	try {
 		const buffer = Buffer.from(parsed.base64, 'base64');
-		fs.writeFileSync(tempPath, buffer);
-		logger.debug('[ProcessManager] Saved image to temp file', 'ProcessManager', {
-			tempPath,
-			size: buffer.length,
-		});
-		return tempPath;
+		for (;;) {
+			const filename = `maestro-image-${Date.now()}-${process.pid}-${randomUUID()}-${index}.${ext}`;
+			const tempPath = path.join(os.tmpdir(), filename);
+			try {
+				fs.writeFileSync(tempPath, buffer, { mode: 0o600, flag: 'wx' });
+			} catch (error) {
+				if ((error as NodeJS.ErrnoException).code === 'EEXIST') continue;
+				throw error;
+			}
+			logger.debug('[ProcessManager] Saved image to temp file', 'ProcessManager', {
+				tempPath,
+				size: buffer.length,
+			});
+			return tempPath;
+		}
 	} catch (error) {
 		void captureException(error);
 		logger.error('[ProcessManager] Failed to save image to temp file', 'ProcessManager', {

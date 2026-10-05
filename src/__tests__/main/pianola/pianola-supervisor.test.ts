@@ -21,6 +21,8 @@ vi.mock('../../../main/pianola/pianola-store-main', () => ({
 	readSupervisorTargets: vi.fn(() => []),
 	writeSupervisorTargets: vi.fn(),
 	supervisorFilePath: vi.fn(() => '/fake/maestro-pianola-supervisor.json'),
+	readPrograms: vi.fn(() => []),
+	readPlans: vi.fn(() => []),
 }));
 vi.mock('../../../main/cue/cue-cli-executor', () => ({
 	resolveMaestroCliScriptPath: () => '/fake/maestro-cli.js',
@@ -45,6 +47,8 @@ import { PianolaSupervisor, type AutoWatchSession } from '../../../main/pianola/
 import {
 	readSupervisorTargets,
 	writeSupervisorTargets,
+	readPrograms,
+	readPlans,
 } from '../../../main/pianola/pianola-store-main';
 import { captureException } from '../../../main/utils/sentry';
 import * as fs from 'fs';
@@ -137,6 +141,8 @@ beforeEach(() => {
 	pidSeq = 0;
 	enabled = true;
 	vi.mocked(readSupervisorTargets).mockReturnValue([]);
+	vi.mocked(readPrograms).mockReturnValue([]);
+	vi.mocked(readPlans).mockReturnValue([]);
 	sup = makeSupervisor();
 });
 
@@ -315,6 +321,49 @@ describe('PianolaSupervisor spawn + exit lifecycle', () => {
 });
 
 describe('PianolaSupervisor reconcile', () => {
+	it('suppresses paused program targets through reconcile, restart, and stale relaunch', () => {
+		vi.mocked(readPrograms).mockReturnValue([
+			{ id: 'product', status: 'paused', leadAgentId: 'a1' } as never,
+		]);
+		vi.mocked(readPlans).mockReturnValue([
+			{
+				id: 'p1',
+				programId: 'product',
+				title: 'Plan',
+				createdAt: 1,
+				tasks: [{ id: 't', title: 'Task', prompt: 'Work', dependsOn: [], status: 'pending' }],
+			},
+		]);
+		setTargets([
+			watchTarget(),
+			orchestrateTarget(),
+			{ id: 'program', kind: 'program', programId: 'product', enabled: true, createdAt: 1 },
+		]);
+		sup.reconcile();
+		expect(spawned).toHaveLength(0);
+		expect(sup.relaunchStale()).toBe(0);
+		vi.mocked(readPrograms).mockReturnValue([
+			{ id: 'product', status: 'active', leadAgentId: 'a1' } as never,
+		]);
+		sup.reconcile();
+		expect(spawned).toHaveLength(3);
+		spawned[1].exit(1);
+		vi.mocked(readPrograms).mockReturnValue([
+			{ id: 'product', status: 'paused', leadAgentId: 'a1' } as never,
+		]);
+		vi.advanceTimersByTime(1000);
+		expect(spawned).toHaveLength(3);
+		sup.reconcile();
+		expect(spawned[0].killed).toBe(true);
+		expect(spawned[2].killed).toBe(true);
+	});
+	it('does not launch orchestration for a completed plan', () => {
+		vi.mocked(readPlans).mockReturnValue([{ id: 'p1', title: 'Plan', createdAt: 1, tasks: [] }]);
+		setTargets([orchestrateTarget()]);
+		sup.reconcile();
+		expect(spawned).toHaveLength(0);
+		expect(sup.relaunchStale()).toBe(0);
+	});
 	it('restarts a watch bound to a new tab without restarting unchanged targets', () => {
 		const spawnChild = vi.fn((_command: string, _args: readonly string[]) => {
 			const child = new FakeChild(++pidSeq);

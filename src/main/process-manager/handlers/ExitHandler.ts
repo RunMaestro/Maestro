@@ -120,6 +120,10 @@ export class ExitHandler {
 		// the final flush, exit), so a guard placed any lower silently lets some of
 		// this process's output land in the successor's turn.
 		if (this.isSuperseded(sessionId, managedProcess)) {
+			if (managedProcess.tempImageFiles) {
+				cleanupTempFiles(managedProcess.tempImageFiles);
+				managedProcess.tempImageFiles = undefined;
+			}
 			logger.warn(
 				'[ProcessManager] Session re-spawned during exit handling, suppressing all exit side effects',
 				'ProcessManager',
@@ -437,6 +441,7 @@ export class ExitHandler {
 		// Clean up temp image files if any
 		if (managedProcess.tempImageFiles && managedProcess.tempImageFiles.length > 0) {
 			cleanupTempFiles(managedProcess.tempImageFiles);
+			managedProcess.tempImageFiles = undefined;
 		}
 
 		// Emit query-complete for batch mode processes. Listeners flush buffered data
@@ -708,6 +713,7 @@ export class ExitHandler {
 		// Clean up temp image files if any
 		if (managedProcess?.tempImageFiles && managedProcess.tempImageFiles.length > 0) {
 			cleanupTempFiles(managedProcess.tempImageFiles);
+			managedProcess.tempImageFiles = undefined;
 		}
 
 		this.emitter.emit('data', sessionId, `[error] ${error.message}`);

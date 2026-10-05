@@ -160,6 +160,10 @@ export function createCueSessionRuntimeService(
 		if (!loadResult.ok && loadResult.reason === 'missing' && previousState) {
 			const reappeared = await configReappeared(session.projectRoot);
 			if (!deps.enabled()) return { kind: 'disabled' };
+			if (!getSession(session.id)) {
+				removeSessionInternal(session.id);
+				return { kind: 'disabled' };
+			}
 			// A stop, removal, or newer refresh may have settled this session during the wait.
 			if (registry.get(session.id) !== previousState) {
 				return { kind: registry.has(session.id) ? 'loaded' : 'disabled' };
@@ -429,16 +433,13 @@ export function createCueSessionRuntimeService(
 		sessionName?: string;
 		activeCount?: number;
 	}> {
+		const session = getSession(sessionId);
+		if (!session) return { reloaded: false, configRemoved: false };
 		const hadSession = registry.has(sessionId);
 		// Snapshot GitHub-seen IDs BEFORE teardown so we can diff against the
 		// post-reload set and clear seen rows for removed GitHub subscriptions.
 		const oldGitHubIds = collectGitHubSubIds(sessionId);
 
-		const session = getSession(sessionId);
-		if (!session) {
-			teardownSession(sessionId);
-			return { reloaded: false, configRemoved: false };
-		}
 
 		const outcome = await initSession({ ...session, projectRoot }, { reason });
 		if (outcome.kind === 'disabled') return { reloaded: false, configRemoved: false };

@@ -12,6 +12,7 @@ import * as path from 'path';
 import {
 	pianolaSuperviseWatch,
 	pianolaSuperviseProgram,
+	pianolaSuperviseOrchestrate,
 } from '../../../cli/commands/pianola-supervise';
 import { pianolaProgramLoop } from '../../../cli/commands/pianola-program-loop';
 import { pianolaProgramStatus } from '../../../cli/commands/pianola-portfolio';
@@ -20,6 +21,7 @@ import {
 	upsertPianolaProgram,
 	upsertPianolaPlan,
 	writePianolaProgramLoopMemo,
+	readPianolaDecisions,
 } from '../../../cli/services/pianola-store';
 
 const { sendCommand, dispatch } = vi.hoisted(() => ({ sendCommand: vi.fn(), dispatch: vi.fn() }));
@@ -72,6 +74,14 @@ afterEach(() => {
 });
 
 describe('pianolaSuperviseWatch dedupe', () => {
+	it('reuses orchestration registration for the same plan', () => {
+		pianolaSuperviseOrchestrate('plan', { json: true });
+		const firstId = lastTargetId();
+		pianolaSuperviseOrchestrate('plan', { concurrency: '4', json: true });
+		expect(readPianolaSupervisorTargets()).toEqual([
+			expect.objectContaining({ id: firstId, planId: 'plan', concurrency: 4 }),
+		]);
+	});
 	it('reuses the existing target id when re-registering the same tab + agent', () => {
 		pianolaSuperviseWatch('tab-1', { agent: 'agent-1', json: true });
 		const firstId = lastTargetId();
@@ -126,6 +136,31 @@ describe('program-loop target registration', () => {
 		createdAt: 1,
 		updatedAt: 1,
 	};
+	it('does not mistake inherited Object properties for a saved program memo', async () => {
+		upsertPianolaProgram({ ...program, id: 'constructor' });
+		sendCommand.mockResolvedValue({ sessions: [] });
+		dispatch.mockResolvedValueOnce({ success: true, tabId: 'fresh-tab' });
+		await expect(
+			pianolaProgramLoop('constructor', { once: true, json: true })
+		).resolves.toBeUndefined();
+	});
+	it('writes no decisions or targets on an idle-backoff tick', async () => {
+		upsertPianolaProgram(program);
+		writePianolaProgramLoopMemo({
+			product: { notifiedTaskIds: [], lastWakeAt: new Date().toISOString() },
+		});
+		sendCommand.mockResolvedValue({ sessions: [] });
+		dispatch.mockClear();
+		await pianolaProgramLoop('product', { once: true, json: true });
+		expect(dispatch).not.toHaveBeenCalled();
+		expect(readPianolaSupervisorTargets()).toEqual([]);
+		expect(readPianolaDecisions()).toEqual([]);
+		expect(fs.readdirSync(tmpDir).sort()).toEqual([
+			'maestro-pianola-program-loop.json',
+			'maestro-pianola-programs.json',
+			'maestro-settings.json',
+		]);
+	});
 	it('updates the same watch target to the second wake tab', async () => {
 		upsertPianolaProgram(program);
 		sendCommand.mockResolvedValue({
@@ -175,7 +210,7 @@ describe('program-loop target registration', () => {
 		});
 		await pianolaProgramLoop('product', { once: true, json: true });
 		expect(readPianolaSupervisorTargets()).toEqual([
-			expect.objectContaining({ tabId: 'old-tab', enabled: false }),
+			expect.objectContaining({ tabId: 'old-tab', enabled: true }),
 		]);
 	});
 });
