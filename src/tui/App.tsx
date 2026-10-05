@@ -227,6 +227,12 @@ export interface AppProps {
 	editFile?: (file: string) => Promise<EditorResult>;
 	/** The bindings before the Encore gate. Tests pass a table with a gated binding in it. */
 	keymap?: readonly Binding[];
+	/**
+	 * Moves the work to a detached `maestro-cli host` and attaches to it, so it goes on after the TUI
+	 * quits. The caller swaps `client` on success; the answer is the line the status bar shows.
+	 * Absent where the TUI cannot start one (a test).
+	 */
+	onStartBackgroundHost?: () => Promise<{ notice: string }>;
 }
 
 /**
@@ -287,6 +293,7 @@ export function App({
 	startupNotice,
 	editFile = runEditor,
 	keymap: baseKeymap = KEYMAP,
+	onStartBackgroundHost,
 }: AppProps): React.ReactElement {
 	const { exit } = useApp();
 	const size = useTerminalSize();
@@ -627,6 +634,22 @@ export function App({
 		cursorRef.current = found.cursorKey;
 		setCursorKey(found.cursorKey);
 		return true;
+	};
+
+	/** Hands the data directory to a detached host. The answer, good or bad, is the notice. */
+	const startBackgroundHost = async () => {
+		if (!onStartBackgroundHost) {
+			setNotice('A background host cannot be started from here.');
+			return;
+		}
+		setNotice('Starting the background host...');
+		try {
+			setNotice((await onStartBackgroundHost()).notice);
+		} catch (error) {
+			setNotice(
+				`Could not start the background host: ${error instanceof Error ? error.message : String(error)}`
+			);
+		}
 	};
 
 	const runPaletteEntry = (entry: PaletteEntry) => {
@@ -1611,6 +1634,9 @@ export function App({
 				return;
 			case 'reloadSettings':
 				reloadSettings();
+				return;
+			case 'startBackgroundHost':
+				void startBackgroundHost();
 				return;
 			case 'newGroupChat':
 				// From the palette there is no list yet: open it, with the form up.

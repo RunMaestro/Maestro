@@ -13,9 +13,12 @@
  */
 
 import {
+	createMaestroRuntime,
+	createWsMaestroClient,
 	resolveRuntimeTurnOptions,
 	type MaestroClient,
 	type MaestroPaths,
+	type MaestroRuntime,
 	type MaestroRuntimeOptions,
 	type RuntimeRefusal,
 	type RuntimeStart,
@@ -31,7 +34,7 @@ export interface TuiStartupDeps {
 
 export type TuiStartup =
 	/** The TUI owns the directory: its runtime is the client and writes are live. */
-	| { branch: 'in-process'; client: MaestroClient }
+	| { branch: 'in-process'; client: MaestroRuntime }
 	/** A desktop or detached host owns it: the client attaches and follows it. */
 	| { branch: 'attach'; client: MaestroClient }
 	/** Nobody can be written through: the store files are read, and `label` says why. */
@@ -84,3 +87,20 @@ export async function startTuiHost(
  * shared with `maestro-cli host` (`resolveRuntimeTurnOptions`).
  */
 export const resolveTuiTurnOptions = resolveRuntimeTurnOptions;
+
+/**
+ * The two collaborators `startTuiHost` needs, for a TUI that starts the way `index.tsx` does. One
+ * function, because starting a background host runs the same decision a second time (see
+ * `background-host.ts`): the directory is released, the host starts, and the TUI asks again, so the
+ * answer is `attach` for a host that came up and `in-process` if it did not.
+ */
+export function tuiStartupDeps(
+	paths: Pick<MaestroPaths, 'userDataDir'>,
+	moduleDirectory: string
+): TuiStartupDeps {
+	return {
+		startRuntime: (options) =>
+			createMaestroRuntime({ ...options, turns: resolveTuiTurnOptions(moduleDirectory) }),
+		attachToHost: () => createWsMaestroClient({ userDataDir: paths.userDataDir }),
+	};
+}

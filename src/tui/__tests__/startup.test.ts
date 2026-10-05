@@ -4,12 +4,17 @@ import * as os from 'os';
 import * as path from 'path';
 import {
 	createMaestroRuntime,
+	createWsMaestroClient,
+	startRuntimeServer,
+	writeCliServerInfoTo,
 	type MaestroClient,
 	type MaestroRuntimeOptions,
 	type RuntimeRefusal,
+	type RuntimeServer,
 	type RuntimeStart,
+	type MaestroRuntime,
 } from '../../shared/maestro-lib';
-import { readOnlyLabelFor, resolveTuiTurnOptions, startTuiHost } from '../startup';
+import { readOnlyLabelFor, resolveTuiTurnOptions, startTuiHost, tuiStartupDeps } from '../startup';
 
 const paths = { userDataDir: '/data', productionDataDir: '/data-prod' };
 const fakeClient = { tag: 'fake' } as unknown as MaestroClient;
@@ -178,5 +183,75 @@ describe('resolveTuiTurnOptions', () => {
 		const options = resolveTuiTurnOptions(bundle, () => false);
 		expect(options.maestroCliPath).toBeUndefined();
 		expect(options.maestroPBinPath).toBeNull();
+	});
+});
+
+describe('startTuiHost attaching to a detached host', () => {
+	let dir: string;
+	let host: MaestroRuntime;
+	let server: RuntimeServer;
+
+	beforeEach(async () => {
+		dir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-tui-attach-'));
+		// The detached host: the library runtime served over the desktop bridge, as `maestro-cli host` does.
+		const started = await createMaestroRuntime({
+			dataDir: dir,
+			mode: 'host',
+			deps: { pid: 100, isPidAlive: () => true },
+		});
+		if (!started.ok) throw new Error(started.refusal.message);
+		host = started.runtime;
+		server = await startRuntimeServer({
+			runtime: host,
+			token: 'tok',
+			cliSecret: 'secret',
+			onStopRequested: () => undefined,
+		});
+		// This test process stands in for the host process: its pid is alive and fresh.
+		writeCliServerInfoTo(dir, {
+			port: server.port,
+			token: 'tok',
+			pid: process.pid,
+			startedAt: Date.now(),
+			cliSecret: 'secret',
+			hostKind: 'headless',
+		});
+	});
+	afterEach(async () => {
+		await server.close();
+		await host.connection.close();
+		fs.rmSync(dir, { recursive: true, force: true });
+	});
+
+	it('finds the host by discovery and attaches with the same client as for a desktop', async () => {
+		const startup = await startTuiHost(
+			{ userDataDir: dir, productionDataDir: dir },
+			{
+				startRuntime: (options) =>
+					createMaestroRuntime({ ...options, deps: { pid: 4242, isPidAlive: () => true } }),
+				attachToHost: () => createWsMaestroClient({ userDataDir: dir, reconcileIntervalMs: 0 }),
+			}
+		);
+		expect(startup.branch).toBe('attach');
+		if (startup.branch !== 'attach') return;
+		try {
+			const connected = await startup.client.connection.connect();
+			expect(connected.ok).toBe(true);
+			if (connected.ok) {
+				expect(connected.value.kind).toBe('headless');
+				expect(connected.value.label).toBe(`headless pid ${process.pid}`);
+			}
+			expect((await startup.client.agents.list()).ok).toBe(true);
+		} finally {
+			await startup.client.connection.close();
+		}
+	});
+});
+
+describe('tuiStartupDeps', () => {
+	it('attaches with a WebSocket client on the TUI data directory', () => {
+		const deps = tuiStartupDeps({ userDataDir: '/data' }, '/opt/maestro/dist/cli');
+		const client = deps.attachToHost();
+		expect(client.connection.state()).toBe('idle');
 	});
 });

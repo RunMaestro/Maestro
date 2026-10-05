@@ -94,6 +94,7 @@ export type KeyAction =
 	| 'sendGroupChat'
 	| 'settings'
 	| 'reloadSettings'
+	| 'startBackgroundHost'
 	| 'newGroup'
 	| 'confirm'
 	| 'send'
@@ -438,6 +439,12 @@ export const KEYMAP: readonly Binding[] = [
 		chords: [{ input: 'S' }],
 		contexts: ['main'],
 		description: 'Settings the desktop holds (read-only)',
+	},
+	{
+		action: 'startBackgroundHost',
+		chords: [{ input: 'B' }],
+		contexts: ['main'],
+		description: 'Start background host',
 	},
 	{
 		action: 'reloadSettings',
