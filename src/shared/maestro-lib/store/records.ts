@@ -51,6 +51,31 @@ export interface AITabRecord extends UnknownFields {
 	hidden?: boolean;
 	customModel?: string;
 	customEffort?: string;
+	/** Composer chips: what a turn sent from this tab saves, shows, and allows. */
+	saveToHistory?: boolean;
+	showThinking?: string;
+	readOnlyMode?: boolean;
+	enterToSend?: boolean;
+	/** Set while the desktop is generating this tab's name. */
+	isGeneratingName?: boolean;
+}
+
+/**
+ * Where an agent's turns run when they run over SSH (`sessionSshRemoteConfig`). Not a named field of
+ * `AgentRecord`: a record read from disk is not trusted, so readers go through `sshRecordOf`.
+ */
+export interface AgentSshRecord extends UnknownFields {
+	enabled?: boolean;
+	remoteId?: string | null;
+	workingDirOverride?: string;
+}
+
+/** A tab the runtime closed: the desktop's `ClosedTab` shape, so it can load an archive entry as is. */
+export interface ClosedTabRecord extends UnknownFields {
+	tab: AITabRecord;
+	/** Where the tab sat in the agent's `aiTabs` when it closed. */
+	index: number;
+	closedAt: number;
 }
 
 /** One agent, mirroring the persisted fields of the renderer's `Session`. */
@@ -73,6 +98,16 @@ export interface AgentRecord extends UnknownFields {
 	unifiedTabOrder?: TabRefRecord[];
 	customModel?: string;
 	customEffort?: string;
+	/** Where the agent runs; the same directory as `cwd` and `projectRoot` unless a record was hand-edited. */
+	fullPath?: string;
+	shellCwd?: string;
+	/** Absent means `<projectRoot>/.maestro/playbooks`. */
+	autoRunFolderPath?: string;
+	customPath?: string;
+	customArgs?: string;
+	customEnvVars?: Record<string, string>;
+	customContextWindow?: number;
+	contextWindowSource?: string;
 }
 
 /** One Left Bar group, mirroring `Group` in `src/shared/types.ts`. */

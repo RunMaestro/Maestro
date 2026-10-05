@@ -46,6 +46,13 @@ export { asThinkingMode } from '../types';
 // Provider swap: park and restore provider-specific tab and agent state (PS-5)
 export * from './agents/providerSwap';
 
+// The agent, group, and tab commands (L1a): pure rules shared with the desktop, the closed-tab
+// archive, and the repository that applies them to the store files
+export * from './agents/rules';
+export * from './agents/closed-tabs';
+export * from './agents/repository';
+export * from './client/event-bus';
+
 // Auto Run: the folder, document scanners, and validation both engines and the TUI read alike
 export * from '../markdownTaskScan';
 export * from '../autorunMarkers';

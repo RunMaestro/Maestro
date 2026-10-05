@@ -88,20 +88,20 @@ function readStoreFile<T>(file: string, checkShape: ShapeCheck): StoreReadResult
 	return classifyStoreContent(file, content, checkShape);
 }
 
-/** An optional key, when present, must hold an array. */
-function optionalArray(key: string): ShapeCheck {
+/** A shape check: an optional key, when present, must hold an array. */
+export function optionalArrayShape(key: string): ShapeCheck {
 	return (value) =>
 		value[key] === undefined || Array.isArray(value[key]) ? null : `"${key}" is not an array`;
 }
 
 /** `maestro-sessions.json`: every agent, its tabs, and their transcripts. */
 export function readSessionsStore(file: string): StoreReadResult<SessionsDocument> {
-	return readStoreFile(file, optionalArray('sessions'));
+	return readStoreFile(file, optionalArrayShape('sessions'));
 }
 
 /** `maestro-groups.json`: the Left Bar groups. */
 export function readGroupsStore(file: string): StoreReadResult<GroupsDocument> {
-	return readStoreFile(file, optionalArray('groups'));
+	return readStoreFile(file, optionalArrayShape('groups'));
 }
 
 /** `maestro-settings.json`: the desktop's settings. */

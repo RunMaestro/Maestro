@@ -15,47 +15,23 @@ import {
 	rebasePathOntoRoot,
 	workingDirectoryChangeBlocker,
 } from '../../shared/agentWorkingDirectory';
+import { relocateAgentPaths } from '../../shared/maestro-lib/agents/rules';
 import type { Session } from '../types';
 
 /**
- * Return `session` relocated to `newDir`, with every path field moved together.
- * State that describes the OLD directory (file tree, changed files, git refs)
- * is cleared, so the Files panel reloads from the new root and git polling
- * re-detects the repo instead of showing the previous project's tree. Returns
- * the session untouched when `newDir` is blank or the agent already lives there.
+ * Return `session` relocated to `newDir`, with every path field moved together
+ * (`relocateAgentPaths`, shared with the headless runtime). State that describes
+ * the OLD directory (file tree, changed files, git refs) is cleared, so the Files
+ * panel reloads from the new root and git polling re-detects the repo instead of
+ * showing the previous project's tree. Returns the session untouched when
+ * `newDir` is blank or the agent already lives there.
  */
 export function withWorkingDirectory(session: Session, newDir: string): Session {
-	const dir = newDir.trim();
-	if (!dir) return session;
-
-	const oldRoot = session.projectRoot || session.cwd;
-	const ssh = session.sessionSshRemoteConfig;
-	// "Already there" means every field that says where the agent lives names
-	// `dir`, not just projectRoot: an agent an older `update-agent --cwd` left
-	// split (cwd moved, projectRoot did not) is repaired by moving it onto its
-	// own projectRoot. `shellCwd` is not compared, because a `cd` in the command
-	// terminal moves it on purpose.
-	const alreadyThere =
-		isSameDirectory(oldRoot, dir) &&
-		isSameDirectory(session.cwd, dir) &&
-		isSameDirectory(session.fullPath, dir) &&
-		(!ssh?.enabled || !ssh.workingDirOverride || isSameDirectory(ssh.workingDirOverride, dir));
-	if (alreadyThere) return session;
+	const moved = relocateAgentPaths(session, newDir);
+	if (moved === session) return session;
 
 	return {
-		...session,
-		cwd: dir,
-		fullPath: dir,
-		shellCwd: dir,
-		projectRoot: dir,
-		autoRunFolderPath: session.autoRunFolderPath
-			? rebasePathOntoRoot(session.autoRunFolderPath, oldRoot, dir)
-			: session.autoRunFolderPath,
-		// Over SSH the remote spawn cwd is read from the override, so it moves too.
-		sessionSshRemoteConfig: ssh?.enabled ? { ...ssh, workingDirOverride: dir } : ssh,
-		// The remote cwd the agent last reported described the old project. New
-		// terminal tabs read it ahead of the override, so it must not survive.
-		remoteCwd: undefined,
+		...moved,
 		fileTree: [],
 		// A load that was in flight for the old root must not be allowed to land.
 		// The auto-loader skips a session while `fileTreeLoading` is set, so the
@@ -72,11 +48,6 @@ export function withWorkingDirectory(session: Session, newDir: string): Session 
 		fileTreeTruncated: undefined,
 		fileTreeLoadedCap: undefined,
 		fileTreeLastScanTime: undefined,
-		changedFiles: [],
-		isGitRepo: false,
-		gitBranches: undefined,
-		gitTags: undefined,
-		gitRefsCacheTime: undefined,
 	};
 }
 

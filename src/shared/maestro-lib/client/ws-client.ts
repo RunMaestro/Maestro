@@ -22,7 +22,13 @@
 import type { AgentRecord, AITabRecord, GroupRecord } from '../store/records';
 import { agentsOf, groupsOf } from '../store/read-stores';
 import { transcriptOf, type LogEntryRecord } from '../store/transcript';
-import { logger } from '../host';
+import {
+	buildAgentConfigPatch,
+	buildTabConfigPatch,
+	checkAgentCreateInput,
+	MAX_AGENT_NAME_LENGTH,
+} from '../agents/rules';
+import { createEventBus } from './event-bus';
 import { getAgentDisplayName } from '../../agentMetadata';
 import {
 	validateAutoRunLaunch,
@@ -110,7 +116,9 @@ const DEFAULT_HEARTBEAT_TIMEOUT_MS = 10_000;
 const DEFAULT_RECONCILE_INTERVAL_MS = 5_000;
 /** Section 8.5: the desktop persists a finished turn on a ~2 s debounce. */
 const POST_OUTCOME_REFRESH_MS = 2_500;
-const MAX_NAME_LENGTH = 100;
+
+/** The longest group chat name. Agent names have their own limit (`MAX_AGENT_NAME_LENGTH`). */
+const MAX_CHAT_NAME_LENGTH = 100;
 
 const TOO_OLD_MESSAGE = 'The running Maestro is too old for the TUI; update the desktop app.';
 
@@ -155,11 +163,6 @@ interface Attempt {
 	handshakeSettled: boolean;
 }
 
-interface ListenerEntry {
-	listener: (event: MaestroEvent) => void;
-	filter?: EventFilter;
-}
-
 // ---------------------------------------------------------------------------
 // The client
 // ---------------------------------------------------------------------------
@@ -174,7 +177,7 @@ class WsMaestroClient implements MaestroClient {
 	private readonly now: () => number;
 
 	private readonly mirror: ClientMirror;
-	private readonly listeners = new Set<ListenerEntry>();
+	private readonly bus = createEventBus(LOG_CONTEXT);
 	private readonly turnStates = new Map<string, TurnState>();
 	/** Group chats this client has read or heard about: each gets a `gap` when a connection could not resume. */
 	private readonly knownGroupChats = new Set<string>();
@@ -370,29 +373,15 @@ class WsMaestroClient implements MaestroClient {
 	// =======================================================================
 
 	private subscribe(listener: (event: MaestroEvent) => void, filter?: EventFilter): Unsubscribe {
-		const entry: ListenerEntry = { listener, filter };
-		this.listeners.add(entry);
-		return () => {
-			this.listeners.delete(entry);
-		};
+		return this.bus.subscribe(listener, filter);
 	}
 
 	private emit(event: MaestroEvent): void {
-		for (const entry of [...this.listeners]) {
-			if (!matchesFilter(event, entry.filter)) continue;
-			try {
-				entry.listener(event);
-			} catch (error) {
-				logger.warn(
-					`An event listener threw: ${error instanceof Error ? error.message : String(error)}`,
-					LOG_CONTEXT
-				);
-			}
-		}
+		this.bus.emit(event);
 	}
 
 	private emitAll(events: MaestroEvent[]): void {
-		for (const event of events) this.emit(event);
+		this.bus.emitAll(events);
 	}
 
 	private emitTurn(agentId: string, tabId: string, event: TurnEvent): void {
@@ -1215,13 +1204,9 @@ class WsMaestroClient implements MaestroClient {
 	}
 
 	private async agentsCreate(input: AgentCreateInput): Promise<ClientResult<{ agentId: string }>> {
-		const name = input.name?.trim();
-		if (!name) return this.fail('agents.create', 'invalid', 'The agent needs a name.');
-		if (!input.provider || input.provider === 'terminal' || !isValidAgentId(input.provider)) {
-			return this.fail('agents.create', 'invalid', `Unknown provider "${input.provider}".`);
-		}
-		if (!input.cwd?.trim())
-			return this.fail('agents.create', 'invalid', 'The agent needs a working directory.');
+		const inputCheck = checkAgentCreateInput(input);
+		if (!inputCheck.ok) return this.fail('agents.create', inputCheck.code, inputCheck.message);
+		const { name } = inputCheck.value;
 
 		const env = input.env ? stripBlankEnvVars(input.env) : undefined;
 		const message: Record<string, unknown> = {
@@ -1261,11 +1246,11 @@ class WsMaestroClient implements MaestroClient {
 	private async agentsRename(agentId: string, name: string): Promise<ClientResult<void>> {
 		const trimmed = name?.trim();
 		if (!trimmed) return this.fail('agents.rename', 'invalid', 'The name cannot be empty.');
-		if (trimmed.length > MAX_NAME_LENGTH) {
+		if (trimmed.length > MAX_AGENT_NAME_LENGTH) {
 			return this.fail(
 				'agents.rename',
 				'invalid',
-				`The name must be ${MAX_NAME_LENGTH} characters or fewer.`
+				`The name must be ${MAX_AGENT_NAME_LENGTH} characters or fewer.`
 			);
 		}
 		const sent = await this.send(
@@ -1318,11 +1303,11 @@ class WsMaestroClient implements MaestroClient {
 		if (patch.name !== undefined) {
 			const trimmed = patch.name.trim();
 			if (!trimmed) return this.fail(method, 'invalid', 'The name cannot be empty.');
-			if (trimmed.length > MAX_NAME_LENGTH) {
+			if (trimmed.length > MAX_AGENT_NAME_LENGTH) {
 				return this.fail(
 					method,
 					'invalid',
-					`The name must be ${MAX_NAME_LENGTH} characters or fewer.`
+					`The name must be ${MAX_AGENT_NAME_LENGTH} characters or fewer.`
 				);
 			}
 		}
@@ -1398,7 +1383,7 @@ class WsMaestroClient implements MaestroClient {
 			}
 		}
 
-		const config = buildConfigPatch(patch);
+		const config = buildAgentConfigPatch(patch);
 		if (config.fields.length > 0) {
 			const sent = await this.send(
 				method,
@@ -1601,13 +1586,7 @@ class WsMaestroClient implements MaestroClient {
 		tabId: string,
 		patch: TabPatch
 	): Promise<ClientResult<void>> {
-		const tabPatch: Record<string, unknown> = {};
-		if (patch.readOnly !== undefined) tabPatch.readOnlyMode = patch.readOnly;
-		if (patch.thinking !== undefined) tabPatch.showThinking = patch.thinking;
-		if (patch.model !== undefined) tabPatch.customModel = patch.model;
-		if (patch.effort !== undefined) tabPatch.customEffort = patch.effort;
-		if (patch.saveToHistory !== undefined) tabPatch.saveToHistory = patch.saveToHistory;
-		if (patch.enterToSend !== undefined) tabPatch.enterToSend = patch.enterToSend;
+		const tabPatch = buildTabConfigPatch(patch);
 		if (Object.keys(tabPatch).length === 0) return ok(undefined);
 
 		const sent = await this.send(
@@ -1965,8 +1944,8 @@ class WsMaestroClient implements MaestroClient {
 		const method: ClientMethod = 'groupChats.rename';
 		const trimmed = name.trim();
 		if (!trimmed) return this.fail(method, 'invalid', 'The name cannot be empty.');
-		if (trimmed.length > MAX_NAME_LENGTH) {
-			return this.fail(method, 'invalid', `Names are at most ${MAX_NAME_LENGTH} characters.`);
+		if (trimmed.length > MAX_CHAT_NAME_LENGTH) {
+			return this.fail(method, 'invalid', `Names are at most ${MAX_CHAT_NAME_LENGTH} characters.`);
 		}
 		const done = await this.invoke<unknown>(method, 'groupChat:rename', [chatId, trimmed]);
 		return done.ok ? ok(undefined) : done;
@@ -2115,62 +2094,6 @@ class WsMaestroClient implements MaestroClient {
 // ---------------------------------------------------------------------------
 // Module-level helpers
 // ---------------------------------------------------------------------------
-
-/**
- * Whether an event passes a filter. The agent filter narrows the agent-scoped
- * events (agent, tab, turn); connection, snapshot, group, and settings events
- * are about no single agent and always pass it.
- */
-function matchesFilter(event: MaestroEvent, filter: EventFilter | undefined): boolean {
-	if (!filter) return true;
-	if (filter.types && !filter.types.includes(event.type)) return false;
-	if (filter.agentId === undefined) return true;
-	switch (event.type) {
-		case 'agent.added':
-		case 'agent.updated':
-			return event.agent.id === filter.agentId;
-		case 'agent.removed':
-		case 'tab.added':
-		case 'tab.updated':
-		case 'tab.removed':
-		case 'turn':
-		case 'autorun':
-			return event.agentId === filter.agentId;
-		default:
-			return true;
-	}
-}
-
-/** The config-patch form of an `AgentPatch`: which fields it carries, and the host's keys for them. */
-function buildConfigPatch(patch: AgentPatch): {
-	fields: AgentPatchField[];
-	patch: Record<string, unknown>;
-} {
-	const fields: AgentPatchField[] = [];
-	const out: Record<string, unknown> = {};
-	const put = (field: AgentPatchField, key: string, value: unknown): void => {
-		fields.push(field);
-		out[key] = value;
-	};
-	if (patch.model !== undefined) put('model', 'customModel', patch.model);
-	if (patch.effort !== undefined) put('effort', 'customEffort', patch.effort);
-	if (patch.contextWindow !== undefined) {
-		fields.push('contextWindow');
-		out.customContextWindow = patch.contextWindow;
-		out.contextWindowSource = patch.contextWindow === null ? null : 'user-edited';
-	}
-	if (patch.customPath !== undefined) put('customPath', 'customPath', patch.customPath);
-	if (patch.customArgs !== undefined) put('customArgs', 'customArgs', patch.customArgs);
-	if (patch.env !== undefined) {
-		put('env', 'customEnvVars', patch.env === null ? null : stripBlankEnvVars(patch.env));
-	}
-	if (patch.nudgeMessage !== undefined) put('nudgeMessage', 'nudgeMessage', patch.nudgeMessage);
-	if (patch.newSessionMessage !== undefined) {
-		put('newSessionMessage', 'newSessionMessage', patch.newSessionMessage);
-	}
-	if (patch.bookmarked !== undefined) put('bookmarked', 'bookmarked', patch.bookmarked);
-	return { fields, patch: out };
-}
 
 /**
  * Create the `MaestroClient` for the desktop running against `userDataDir`.
