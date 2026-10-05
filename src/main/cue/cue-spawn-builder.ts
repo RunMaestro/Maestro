@@ -25,7 +25,11 @@ import { buildSpawnPath } from '../utils/spawnPath';
 import { logger } from '../utils/logger';
 import os from 'os';
 import path from 'path';
-import { buildMcpInjection, MCP_CONFIG_BY_AGENT } from '../../shared/plugins/mcp-agent-config';
+import {
+	buildMcpInjection,
+	mergeMcpInjectionArgs,
+	MCP_CONFIG_BY_AGENT,
+} from '../../shared/plugins/mcp-agent-config';
 import {
 	getActivePluginManager,
 	isPluginsFeatureEnabled,
@@ -332,7 +336,7 @@ export async function buildSpawnSpec(
 			{ tmpDir: os.tmpdir(), join: path.join }
 		);
 		if (injection.files.length === 0) {
-			spawnArgs = [...injection.globalArgs, ...spawnArgs];
+			spawnArgs = mergeMcpInjectionArgs(mcpCap, spawnArgs, injection.globalArgs);
 			spawnEnvVars = {
 				...(spawnEnvVars || {}),
 				...injection.env,

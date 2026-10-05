@@ -179,7 +179,14 @@ describe('cue-spawn-builder', () => {
 			pluginToolRunIdentity.revoke(result.spec.pluginRunToken!);
 			removePluginRunProofFile(result.spec.pluginRunProofFile!);
 		});
-		it('injects a Codex Cue MCP bridge with the configured agent identity', async () => {
+		it('injects a Codex Cue MCP bridge beside exec config and before its prompt', async () => {
+			mockBuildAgentArgs.mockReturnValueOnce([
+				'exec',
+				'resume',
+				'provider-session',
+				'-c',
+				'model_reasoning_summary=auto',
+			]);
 			mockPluginsEnabled.mockReturnValue(true);
 			mockActivePluginManager.mockReturnValue({ getContributions: () => ({ tools: [{}] }) });
 			mockGetAgentDefinition.mockReturnValue({
@@ -196,6 +203,11 @@ describe('cue-spawn-builder', () => {
 			expect(result.ok).toBe(true);
 			if (!result.ok) return;
 			expect(result.spec.args.join(' ')).toContain('mcp_servers.maestro.command');
+			const bridgeIndex = result.spec.args.findIndex((arg) =>
+				arg.startsWith('mcp_servers.maestro.command=')
+			);
+			expect(bridgeIndex).toBeGreaterThan(result.spec.args.indexOf('model_reasoning_summary=auto'));
+			expect(bridgeIndex).toBeLessThan(result.spec.args.indexOf('--'));
 			expect(result.spec.args.join(' ')).toContain(JSON.stringify(result.spec.pluginRunProofFile));
 			expect(pluginToolRunIdentity.resolve(result.spec.pluginRunToken).callerAgentId).toBe(
 				'session-1'

@@ -18,6 +18,7 @@ import {
 } from '../../../plugins/plugin-manager-singleton';
 import {
 	buildMcpInjection,
+	mergeMcpInjectionArgs,
 	MCP_CONFIG_BY_AGENT,
 } from '../../../../shared/plugins/mcp-agent-config';
 import type { InteractiveReplayController } from '../../../agents/claude-interactive-replay';
@@ -423,7 +424,7 @@ async function handleProcessSpawnImpl(
 					});
 				}, 30_000);
 			}
-			finalArgs = [...mcpInjection.globalArgs, ...finalArgs];
+			finalArgs = mergeMcpInjectionArgs(mcpCap, finalArgs, mcpInjection.globalArgs);
 			effectiveCustomEnvVars = {
 				...(effectiveCustomEnvVars || {}),
 				...mcpInjection.env,

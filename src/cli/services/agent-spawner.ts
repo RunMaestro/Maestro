@@ -28,7 +28,11 @@ import { buildExpandedPath, buildExpandedEnv } from '../../shared/pathUtils';
 import { isWindows, getWhichCommand } from '../../shared/platformDetection';
 import { embedSystemPromptInPrompt } from '../../shared/embeddedSystemPrompt';
 import { applyAgentConfigOverrides, buildAdditionalDirArgs } from '../../main/utils/agent-args';
-import { buildMcpInjection, MCP_CONFIG_BY_AGENT } from '../../shared/plugins/mcp-agent-config';
+import {
+	buildMcpInjection,
+	mergeMcpInjectionArgs,
+	MCP_CONFIG_BY_AGENT,
+} from '../../shared/plugins/mcp-agent-config';
 import type { AgentSendProgressEvent } from '../../shared/plugins/rpc-protocol';
 import { buildCliWakaTimeHeartbeat } from './wakatime';
 import {
@@ -677,7 +681,7 @@ async function spawnClaudeAgent(
 	);
 	if (!sshEnabled && spawnDecision.mode !== 'interactive') {
 		const mcp = localPluginMcp('claude-code', overrides);
-		baseArgs = [...mcp.args, ...baseArgs];
+		baseArgs = mergeMcpInjectionArgs(MCP_CONFIG_BY_AGENT['claude-code'], baseArgs, mcp.args);
 	}
 
 	// Beat WakaTime for the life of the run. CLI-spawned agents never reach the
@@ -1141,7 +1145,7 @@ async function spawnJsonLineAgent(
 			: resolvedArgs;
 	if (!sshRemoteConfig?.enabled) {
 		const mcp = localPluginMcp(toolType, overrides);
-		baseArgs = [...mcp.args, ...baseArgs];
+		baseArgs = mergeMcpInjectionArgs(MCP_CONFIG_BY_AGENT[toolType], baseArgs, mcp.args);
 	}
 	const effectivePrompt =
 		overrides.appendSystemPrompt && !supportsNativeSystemPrompt && !isResume

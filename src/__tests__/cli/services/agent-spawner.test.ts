@@ -945,22 +945,33 @@ Some text with [x] in it that's not a checkbox
 			mockSpawn.mockReturnValue(mockChild);
 		});
 
-		it('injects a local Codex MCP bridge with only the proof-file path in argv', async () => {
-			const proofFile = '/private/run/proof';
-			const pending = spawnAgent('codex', '/project', 'post summary', undefined, {
-				pluginRunProofFile: proofFile,
-				mcpCliScriptPath: '/bundled/maestro-cli.js',
-			});
-			await new Promise((resolve) => setTimeout(resolve, 0));
-			const [, args, options] = mockSpawn.mock.calls[0];
-			expect(args).toContain('-c');
-			expect(args.join(' ')).toContain('mcp_servers.maestro.command');
-			expect(args.join(' ')).toContain(proofFile);
-			expect(args.join(' ')).not.toContain('secret-run-proof');
-			expect(options.env.MAESTRO_PLUGIN_RUN_TOKEN).toBeUndefined();
-			mockChild.emit('close', 1);
-			await pending;
-		});
+		it.each([undefined, 'provider-session'])(
+			'injects Codex MCP config beside exec config (resume=%s)',
+			async (session) => {
+				const proofFile = '/private/run/proof';
+				const pending = spawnAgent('codex', '/project', 'post summary', session, {
+					customEffort: 'high',
+					customArgs: '-c model_reasoning_summary=auto',
+					pluginRunProofFile: proofFile,
+					mcpCliScriptPath: '/bundled/maestro-cli.js',
+				});
+				await new Promise((resolve) => setTimeout(resolve, 0));
+				const [, args, options] = mockSpawn.mock.calls[0];
+				expect(args).toContain('-c');
+				expect(args.join(' ')).toContain('mcp_servers.maestro.command');
+				const bridgeIndex = args.findIndex((arg: string) =>
+					arg.startsWith('mcp_servers.maestro.command=')
+				);
+				expect(bridgeIndex).toBeGreaterThan(args.indexOf('exec'));
+				expect(bridgeIndex).toBeGreaterThan(args.indexOf('model_reasoning_summary=auto'));
+				expect(bridgeIndex).toBeLessThan(args.indexOf('--'));
+				expect(args.join(' ')).toContain(proofFile);
+				expect(args.join(' ')).not.toContain('secret-run-proof');
+				expect(options.env.MAESTRO_PLUGIN_RUN_TOKEN).toBeUndefined();
+				mockChild.emit('close', 1);
+				await pending;
+			}
+		);
 
 		it('should spawn Claude with correct arguments', async () => {
 			const resultPromise = spawnAgent('claude-code', '/project/path', 'Test prompt');
