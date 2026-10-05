@@ -139,6 +139,7 @@ import { initializeStatsDB, closeStatsDB, getStatsDB } from './stats';
 import { isStatsCollectionEnabled } from './stats/utils';
 import { setClaudeSessionOrigin } from './storage/claude-session-origins';
 import { setAgentSessionName } from './storage/agent-session-origins';
+import { setAgentSessionStar, setClaudeSessionStar } from './storage/session-star';
 import { createSshRemoteStoreAdapter } from './utils/ssh-remote-resolver';
 import { stopSessionCleanup } from './group-chat/group-chat-moderator';
 import { initializePrompts, getPrompt, savePrompt } from './prompt-manager';
@@ -2939,6 +2940,54 @@ app
 								agent.projectRoot,
 								providerSessionId,
 								name
+							);
+						}
+					},
+					// A tab named from any surface: the provider's session name, then the History entries that
+					// conversation made (the same two writes a window's rename made itself before).
+					syncTabName: async (agent, tab, name) => {
+						const providerSessionId =
+							typeof tab.agentSessionId === 'string' ? tab.agentSessionId : '';
+						if (!providerSessionId || !agent.projectRoot) return;
+						if (agent.toolType === 'claude-code') {
+							setClaudeSessionOrigin(
+								claudeSessionOriginsStore,
+								agent.projectRoot,
+								providerSessionId,
+								{
+									sessionName: name,
+								}
+							);
+						} else {
+							setAgentSessionName(
+								agentSessionOriginsStore,
+								agent.toolType,
+								agent.projectRoot,
+								providerSessionId,
+								name || null
+							);
+						}
+						await getHistoryManager().updateSessionNameByClaudeSessionId(providerSessionId, name);
+					},
+					// A tab starred from any surface: the origin star and the transcript mirror.
+					syncTabStarred: (agent, tab, starred) => {
+						const providerSessionId =
+							typeof tab.agentSessionId === 'string' ? tab.agentSessionId : '';
+						if (!providerSessionId || !agent.projectRoot) return;
+						if (agent.toolType === 'claude-code') {
+							setClaudeSessionStar(
+								claudeSessionOriginsStore,
+								agent.projectRoot,
+								providerSessionId,
+								starred
+							);
+						} else {
+							setAgentSessionStar(
+								agentSessionOriginsStore,
+								agent.toolType,
+								agent.projectRoot,
+								providerSessionId,
+								starred
 							);
 						}
 					},

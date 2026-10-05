@@ -339,6 +339,338 @@ describe('agent repository: the desktop surface', () => {
 		});
 	});
 
+	describe('desktop tab commands (DG3, DG7, DG10)', () => {
+		const orderOf = (agentId: string) =>
+			(readSessions().sessions as Array<{ id: string; unifiedTabOrder: unknown[] }>).find(
+				(agent) => agent.id === agentId
+			)?.unifiedTabOrder;
+		const tabIdsOf = (agentId: string) =>
+			(
+				(readSessions().sessions as Array<{ id: string; aiTabs: Array<{ id: string }> }>).find(
+					(agent) => agent.id === agentId
+				)?.aiTabs ?? []
+			).map((entry) => entry.id);
+
+		describe('createTab', () => {
+			it('uses a client-chosen id, and says so in the events', async () => {
+				const repo = await setup({ sessions: twoAgents() });
+				expect(value(await repo.createTab('a1', { tabId: 'mine' }))).toEqual({ tabId: 'mine' });
+				expect(tabIdsOf('a1')).toEqual(['a1-t1', 'a1-t2', 'mine']);
+				expect(events.map((e) => e.type)).toEqual(['tab.added', 'agent.updated']);
+				expect(events[0]).toMatchObject({ type: 'tab.added', tab: { id: 'mine' } });
+			});
+
+			it('answers a tab the agent already shows under that id with success and no change', async () => {
+				const repo = await setup({ sessions: twoAgents() });
+				value(await repo.createTab('a1', { tabId: 'mine' }));
+				const revision = repo.revisionOf('a1');
+				events.length = 0;
+				expect(value(await repo.createTab('a1', { tabId: 'mine' }))).toEqual({ tabId: 'mine' });
+				expect(tabIdsOf('a1').filter((id) => id === 'mine')).toHaveLength(1);
+				expect(events).toEqual([]);
+				expect(repo.revisionOf('a1')).toBe(revision);
+			});
+
+			it.each([
+				['empty', ''],
+				['blank', '  '],
+				['unsafe', '../x'],
+			])('refuses a tab id that is %s', async (_label, tabId) => {
+				const repo = await setup({ sessions: twoAgents() });
+				expect(errorOf(await repo.createTab('a1', { tabId })).code).toBe('invalid');
+				expect(tabIdsOf('a1')).toEqual(['a1-t1', 'a1-t2']);
+			});
+
+			it('refuses the id of a hidden consult tab: that one is not the tab the window made', async () => {
+				const repo = await setup({
+					sessions: {
+						sessions: [
+							seedAgent('a1', 'Alpha', {
+								aiTabs: [tab('a1-t1'), tab('hid', { hidden: true })],
+								unifiedTabOrder: [{ type: 'ai', id: 'a1-t1' }],
+							}),
+						],
+					},
+				});
+				expect(errorOf(await repo.createTab('a1', { tabId: 'hid' })).code).toBe('invalid');
+			});
+
+			it('places the tab where the window put it: after a ref, or first', async () => {
+				const repo = await setup({
+					sessions: {
+						sessions: [
+							seedAgent('a1', 'Alpha', {
+								unifiedTabOrder: [
+									{ type: 'ai', id: 'a1-t1' },
+									{ type: 'file', id: 'f1' },
+									{ type: 'ai', id: 'a1-t2' },
+								],
+							}),
+						],
+					},
+				});
+				value(await repo.createTab('a1', { tabId: 'x', placeAfter: { type: 'file', id: 'f1' } }));
+				expect(orderOf('a1')).toEqual([
+					{ type: 'ai', id: 'a1-t1' },
+					{ type: 'file', id: 'f1' },
+					{ type: 'ai', id: 'x' },
+					{ type: 'ai', id: 'a1-t2' },
+				]);
+				value(await repo.createTab('a1', { tabId: 'y', placeAfter: null }));
+				expect((orderOf('a1') as Array<{ id: string }>)[0]).toEqual({ type: 'ai', id: 'y' });
+			});
+
+			it('falls back to the placement setting for an anchor the order does not hold', async () => {
+				const repo = await setup({ sessions: twoAgents() });
+				value(
+					await repo.createTab('a1', {
+						tabId: 'x',
+						placeAfter: { type: 'file', id: 'never-folded' },
+					})
+				);
+				expect((orderOf('a1') as Array<{ id: string }>).at(-1)).toEqual({ type: 'ai', id: 'x' });
+			});
+
+			it('without options is the create every other client gets', async () => {
+				const repo = await setup({ sessions: twoAgents() });
+				expect(value(await repo.createTab('a1')).tabId).toMatch(/^id-\d+$/);
+			});
+		});
+
+		describe('closeTab', () => {
+			const busy = { isBusy: () => true, stopAgent: async () => undefined };
+
+			it('refuses a tab with a turn running by default, as every client but the desktop is', async () => {
+				const repo = await setup({ sessions: twoAgents() }, { processes: busy });
+				expect(errorOf(await repo.closeTab('a1', 'a1-t1'))).toMatchObject({
+					code: 'rejected',
+					method: 'tabs.close',
+				});
+				expect(errorOf(await repo.closeTab('a1', 'a1-t1', { busy: 'refuse' })).code).toBe(
+					'rejected'
+				);
+				expect(tabIdsOf('a1')).toEqual(['a1-t1', 'a1-t2']);
+			});
+
+			it('orphans it when asked (DM18): archived now, the process left alone', async () => {
+				const stopAgent = vi.fn(async () => undefined);
+				const repo = await setup(
+					{ sessions: twoAgents() },
+					{ processes: { isBusy: () => true, stopAgent } }
+				);
+				value(await repo.closeTab('a1', 'a1-t1', { busy: 'orphan' }));
+				expect(tabIdsOf('a1')).toEqual(['a1-t2']);
+				expect(stopAgent).not.toHaveBeenCalled();
+				const archived = await readClosedTabs(closedTabsFile(dir, 'a1'));
+				expect(archived.map((entry) => entry.tab.id)).toEqual(['a1-t1']);
+			});
+
+			it('creates the replacement tab under the id the window chose', async () => {
+				const repo = await setup({
+					sessions: {
+						sessions: [
+							seedAgent('a1', 'Alpha', {
+								aiTabs: [tab('only')],
+								activeTabId: 'only',
+								unifiedTabOrder: [{ type: 'ai', id: 'only' }],
+							}),
+						],
+					},
+				});
+				value(await repo.closeTab('a1', 'only', { freshTabId: 'fresh' }));
+				expect(tabIdsOf('a1')).toEqual(['fresh']);
+				expect(orderOf('a1')).toEqual([{ type: 'ai', id: 'fresh' }]);
+				expect(events.map((e) => e.type)).toEqual(['tab.removed', 'tab.added', 'agent.updated']);
+			});
+
+			it('refuses a replacement id that is empty, unsafe, or taken, and closes nothing', async () => {
+				const repo = await setup({ sessions: twoAgents() });
+				expect(errorOf(await repo.closeTab('a1', 'a1-t1', { freshTabId: '../x' })).code).toBe(
+					'invalid'
+				);
+				expect(errorOf(await repo.closeTab('a1', 'a1-t1', { freshTabId: 'a1-t2' })).code).toBe(
+					'invalid'
+				);
+				expect(tabIdsOf('a1')).toEqual(['a1-t1', 'a1-t2']);
+			});
+
+			it('is not-found for a tab that is not there, which the window reads as already closed', async () => {
+				const repo = await setup({ sessions: twoAgents() });
+				expect(errorOf(await repo.closeTab('a1', 'ghost', { busy: 'orphan' })).code).toBe(
+					'not-found'
+				);
+			});
+		});
+
+		describe('reorderTab', () => {
+			const withFile = () => ({
+				sessions: [
+					seedAgent('a1', 'Alpha', {
+						unifiedTabOrder: [
+							{ type: 'ai', id: 'a1-t1' },
+							{ type: 'file', id: 'f1' },
+							{ type: 'ai', id: 'a1-t2' },
+						],
+					}),
+				],
+			});
+
+			it('moves a ref of any kind so it sits at the index, and emits agent.updated', async () => {
+				const repo = await setup({ sessions: withFile() });
+				value(await repo.reorderTab('a1', { type: 'file', id: 'f1' }, 0));
+				expect(orderOf('a1')).toEqual([
+					{ type: 'file', id: 'f1' },
+					{ type: 'ai', id: 'a1-t1' },
+					{ type: 'ai', id: 'a1-t2' },
+				]);
+				expect(events.map((e) => e.type)).toEqual(['agent.updated']);
+				expect(repo.revisionOf('a1')).toBe(1);
+				value(await repo.reorderTab('a1', { type: 'ai', id: 'a1-t1' }, 99));
+				expect((orderOf('a1') as Array<{ id: string }>).at(-1)).toEqual({
+					type: 'ai',
+					id: 'a1-t1',
+				});
+			});
+
+			it('changes nothing, and says nothing, when the ref is already there', async () => {
+				const repo = await setup({ sessions: withFile() });
+				value(await repo.reorderTab('a1', { type: 'file', id: 'f1' }, 1));
+				expect(events).toEqual([]);
+				expect(repo.revisionOf('a1')).toBe(0);
+			});
+
+			it('is not-found for a ref the order does not hold, and for an unknown agent', async () => {
+				const repo = await setup({ sessions: withFile() });
+				expect(
+					errorOf(await repo.reorderTab('a1', { type: 'file', id: 'ghost' }, 0))
+				).toMatchObject({
+					code: 'not-found',
+					method: 'tabs.reorder',
+				});
+				expect(errorOf(await repo.reorderTab('nope', { type: 'ai', id: 'a1-t1' }, 0)).code).toBe(
+					'not-found'
+				);
+			});
+
+			it('does not tell a different kind of ref with the same id apart wrongly', async () => {
+				const repo = await setup({ sessions: withFile() });
+				expect(errorOf(await repo.reorderTab('a1', { type: 'browser', id: 'f1' }, 0)).code).toBe(
+					'not-found'
+				);
+			});
+		});
+	});
+
+	describe('agent edit fields (DG6)', () => {
+		it('sets and clears the fields Edit Agent writes beyond the CLI ones', async () => {
+			const repo = await setup({ sessions: twoAgents() });
+			const receipt = value(
+				await repo.updateAgent('a1', {
+					customProviderPath: '/opt/claude',
+					envDisabled: { OLD_KEY: 'x', BLANK: '' },
+					additionalDirectories: [{ path: '/shared', read: true, write: false }],
+					retryOnAvailabilityErrors: false,
+					retryOnTokenExhaustion: true,
+					codexAutoResetOnExhaustion: true,
+					enableMaestroP: false,
+					maestroPPath: '/opt/maestro-p',
+					maestroPMode: 'dynamic',
+				})
+			);
+			expect(receipt.applied).toEqual([
+				'customProviderPath',
+				'envDisabled',
+				'additionalDirectories',
+				'retryOnAvailabilityErrors',
+				'retryOnTokenExhaustion',
+				'codexAutoResetOnExhaustion',
+				'enableMaestroP',
+				'maestroPPath',
+				'maestroPMode',
+			]);
+			expect(readSessions().sessions[0]).toMatchObject({
+				customProviderPath: '/opt/claude',
+				customEnvVarsDisabled: { OLD_KEY: 'x' },
+				additionalDirectories: [{ path: '/shared', read: true, write: false }],
+				retryOnAvailabilityErrors: false,
+				retryOnTokenExhaustion: true,
+				codexAutoResetOnExhaustion: true,
+				enableMaestroP: false,
+				maestroPPath: '/opt/maestro-p',
+				maestroPMode: 'dynamic',
+			});
+
+			value(
+				await repo.updateAgent('a1', {
+					customProviderPath: null,
+					envDisabled: null,
+					additionalDirectories: [],
+					retryOnAvailabilityErrors: null,
+					codexAutoResetOnExhaustion: false,
+					enableMaestroP: null,
+					maestroPPath: null,
+					maestroPMode: null,
+				})
+			);
+			const stored = readSessions().sessions[0];
+			for (const key of [
+				'customProviderPath',
+				'customEnvVarsDisabled',
+				'additionalDirectories',
+				'retryOnAvailabilityErrors',
+				'codexAutoResetOnExhaustion',
+				'enableMaestroP',
+				'maestroPPath',
+				'maestroPMode',
+			]) {
+				expect(stored).not.toHaveProperty(key);
+			}
+			// Left alone: not named in the second patch.
+			expect(stored.retryOnTokenExhaustion).toBe(true);
+		});
+
+		it('parks the Edit Agent override fields with the provider on a switch, and restores them on the way back', async () => {
+			const repo = await setup({
+				sessions: {
+					sessions: [
+						seedAgent('a1', 'Alpha', {
+							customProviderPath: '/opt/claude',
+							enableMaestroP: true,
+							maestroPMode: 'interactive',
+						}),
+					],
+				},
+			});
+			value(await repo.updateAgent('a1', { provider: 'codex' }));
+			const away = readSessions().sessions[0];
+			expect(away).not.toHaveProperty('customProviderPath');
+			expect(away.providerOverrides['claude-code']).toMatchObject({
+				customProviderPath: '/opt/claude',
+				enableMaestroP: true,
+			});
+			value(await repo.updateAgent('a1', { provider: 'claude-code' }));
+			expect(readSessions().sessions[0]).toMatchObject({
+				customProviderPath: '/opt/claude',
+				enableMaestroP: true,
+				maestroPMode: 'interactive',
+			});
+		});
+
+		it('stores ssh history flags beside enabled and remoteId', async () => {
+			const repo = await setup({ sessions: twoAgents() });
+			value(
+				await repo.updateAgent('a1', {
+					ssh: { enabled: false, remoteId: null, shareHistoryToProjectDir: true },
+				})
+			);
+			expect(readSessions().sessions[0].sessionSshRemoteConfig).toEqual({
+				enabled: false,
+				remoteId: null,
+				shareHistoryToProjectDir: true,
+			});
+		});
+	});
+
 	describe('create fields (DG6)', () => {
 		it('stores what the New Agent flows set, only when given', async () => {
 			const repo = await setup();

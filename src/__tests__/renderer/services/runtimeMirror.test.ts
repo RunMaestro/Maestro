@@ -21,8 +21,10 @@ import {
 	markRuntimeMirrorLoaded,
 	persistGroupsToRuntime,
 	resetRuntimeMirror,
+	runtimeAnchorFor,
 	runtimeKnowsAgent,
 	runtimeRevisionOf,
+	runtimeTabIndexFor,
 	sendRuntimeCommand,
 	sendRuntimeFold,
 	seedRuntimeMirror,
@@ -378,6 +380,148 @@ describe('the runtime mirror', () => {
 			expect(added.name).toBe('Normalized');
 			expect((added as any).fileExplorerScrollPos).toBe(5);
 			expect(restoreSession).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('a refused command after an optimistic change (DM11)', () => {
+		const refusal = (extra: Record<string, unknown> = {}) => ({
+			result: { ok: false, error: { code: 'rejected', message: 'No.', method: 'tabs.rename' } },
+			changes: [],
+			...extra,
+		});
+
+		it('snaps the agent to the record the refusal carries, even at the revision it already holds', async () => {
+			seed([agentRecord('a1')], [], { a1: 5 });
+			// The window renamed the tab at once; the runtime refused and still has no name for it.
+			store().setSessions(
+				store().sessions.map((s) => ({
+					...s,
+					aiTabs: s.aiTabs.map((t) => ({ ...t, name: 'Local' })),
+				})) as any
+			);
+			command.mockResolvedValue(refusal({ authoritative: { agent: agentRecord('a1'), rev: 5 } }));
+			const answer = await sendRuntimeCommand(
+				{ method: 'tabs.rename', agentId: 'a1', tabId: 'a1-t1', name: 'Local' },
+				{ agentIds: ['a1'] }
+			);
+			expect(answer.result.ok).toBe(false);
+			expect(store().sessions[0].aiTabs[0].name).toBeNull();
+		});
+
+		it('puts back a tab the window closed and the runtime kept', async () => {
+			const two = agentRecord('a1', {
+				aiTabs: [tabRecord('a1-t1'), tabRecord('a1-t2')],
+				unifiedTabOrder: [
+					{ type: 'ai', id: 'a1-t1' },
+					{ type: 'ai', id: 'a1-t2' },
+				],
+			});
+			seedRuntimeMirror(snapshotOf([two]));
+			store().setSessions([
+				session('a1', {
+					aiTabs: [
+						{ ...tabRecord('a1-t1'), logs: [], inputValue: '', stagedImages: [], state: 'idle' },
+						{ ...tabRecord('a1-t2'), logs: [], inputValue: '', stagedImages: [], state: 'idle' },
+					],
+					unifiedTabOrder: two.unifiedTabOrder,
+				}),
+			]);
+			markRuntimeMirrorLoaded();
+			// Closed locally: the second tab is gone from this window's copy.
+			store().setSessions(
+				store().sessions.map((s) => ({
+					...s,
+					aiTabs: s.aiTabs.slice(0, 1),
+					unifiedTabOrder: s.unifiedTabOrder.slice(0, 1),
+				})) as any
+			);
+			command.mockResolvedValue(refusal({ authoritative: { agent: two, rev: 1 } }));
+			await sendRuntimeCommand(
+				{ method: 'tabs.close', agentId: 'a1', tabId: 'a1-t2' },
+				{ agentIds: ['a1'] }
+			);
+			expect(store().sessions[0].aiTabs.map((t) => t.id)).toEqual(['a1-t1', 'a1-t2']);
+			expect(store().sessions[0].unifiedTabOrder.map((r) => r.id)).toEqual(['a1-t1', 'a1-t2']);
+		});
+
+		it('changes nothing when the refusal names no agent', async () => {
+			seed([agentRecord('a1')]);
+			const before = store().sessions;
+			command.mockResolvedValue(refusal());
+			await sendRuntimeCommand({ method: 'groups.remove', groupId: 'g1' });
+			expect(store().sessions).toBe(before);
+		});
+
+		it('does not snap for a command that worked', async () => {
+			seed([agentRecord('a1')]);
+			command.mockResolvedValue({
+				result: { ok: true, value: undefined },
+				changes: [],
+				authoritative: { agent: agentRecord('a1', { name: 'Never' }), rev: 9 },
+			});
+			await sendRuntimeCommand({ method: 'agents.rename', agentId: 'a1', name: 'x' });
+			expect(store().sessions[0].name).toBe('A1');
+		});
+	});
+
+	describe('strip positions in the runtime terms', () => {
+		const order = (...ids: string[]) =>
+			ids.map((id) => ({ type: id.startsWith('f') ? 'file' : 'ai', id })) as any;
+
+		beforeEach(() => {
+			// The runtime holds two AI tabs and one file tab.
+			seed([
+				agentRecord('a1', {
+					aiTabs: [tabRecord('t1'), tabRecord('t2')],
+					unifiedTabOrder: order('t1', 'f1', 't2'),
+				}),
+			]);
+		});
+
+		it('counts an index over the refs both sides hold, so a ref only this window has does not shift it', () => {
+			// This window also holds a file tab the runtime has not heard of.
+			const mine = order('t1', 'fnew', 'f1', 't2');
+			expect(runtimeTabIndexFor('a1', mine, mine[3])).toBe(2);
+			expect(runtimeTabIndexFor('a1', mine, mine[2])).toBe(1);
+			expect(runtimeTabIndexFor('a1', mine, mine[0])).toBe(0);
+		});
+
+		it('has no index for a ref the runtime does not hold, or for an agent it does not know', () => {
+			const mine = order('t1', 'fnew', 'f1', 't2');
+			expect(runtimeTabIndexFor('a1', mine, mine[1])).toBeUndefined();
+			expect(runtimeTabIndexFor('ghost', mine, mine[0])).toBeUndefined();
+		});
+
+		it('anchors a new tab to the nearest earlier ref the runtime holds', () => {
+			const mine = order('t1', 'fnew', 'tnew', 'f1', 't2');
+			expect(runtimeAnchorFor('a1', mine, 2)).toEqual({ type: 'ai', id: 't1' });
+			expect(runtimeAnchorFor('a1', mine, 4)).toEqual({ type: 'file', id: 'f1' });
+		});
+
+		it('anchors a tab that leads the strip to null, and one with no known predecessor to undefined', () => {
+			expect(runtimeAnchorFor('a1', order('tnew', 't1'), 0)).toBeNull();
+			expect(runtimeAnchorFor('a1', order('fa', 'fb', 'tnew'), 2)).toBeUndefined();
+			expect(runtimeAnchorFor('ghost', order('t1', 'tnew'), 1)).toBeUndefined();
+		});
+
+		it('follows the record the window last applied', async () => {
+			await applyRuntimeMessage(
+				message(
+					{
+						type: 'agent.updated',
+						agent: agentRecord('a1', {
+							aiTabs: [tabRecord('t1'), tabRecord('t2')],
+							unifiedTabOrder: order('t2', 't1'),
+						}),
+					},
+					{ rev: 9 }
+				)
+			);
+			const mine = order('t2', 't1');
+			expect(runtimeTabIndexFor('a1', mine, mine[1])).toBe(1);
+			expect(
+				runtimeTabIndexFor('a1', order('t2', 'f1', 't1'), order('t2', 'f1', 't1')[1])
+			).toBeUndefined();
 		});
 	});
 

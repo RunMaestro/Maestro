@@ -41,6 +41,17 @@ vi.mock('../../../../renderer/stores/sessionStore', () => ({
 	},
 }));
 
+// Phase 9: the hosted-runtime flag defaults to false, so every test outside the hosted ones runs the OFF
+// path unchanged. Closing the wizard's own tab is also a runtime command when hosted.
+const hostedMocks = vi.hoisted(() => ({
+	isLibraryRuntimeHosting: vi.fn(() => false),
+	closeAiTab: vi.fn(async () => ({ ok: true, value: undefined })),
+}));
+vi.mock('../../../../renderer/services/libraryRuntime', () => ({
+	isLibraryRuntimeHosting: hostedMocks.isLibraryRuntimeHosting,
+}));
+vi.mock('../../../../renderer/services/agentOps', () => ({ closeAiTab: hostedMocks.closeAiTab }));
+
 // Mock theme for testing
 
 // Thin wrapper: seeds an active wizard state on the session so the
@@ -99,6 +110,7 @@ describe('WizardInputPanel', () => {
 
 	beforeEach(() => {
 		vi.clearAllMocks();
+		hostedMocks.isLibraryRuntimeHosting.mockReturnValue(false);
 	});
 
 	describe('layout', () => {
@@ -672,6 +684,59 @@ describe('WizardInputPanel', () => {
 
 			expect(mockSetSessions).toHaveBeenCalledTimes(1);
 			expect(onExitWizard).not.toHaveBeenCalled();
+		});
+
+		describe('when the library runtime is hosted', () => {
+			const wizardTabSession = () =>
+				createMockSession({
+					aiTabs: [
+						{
+							id: 'tab-1',
+							name: 'Wizard',
+							logs: [
+								{ id: 'l1', timestamp: Date.now(), source: 'system', text: 'Starting wizard...' },
+							],
+						},
+						{ id: 'tab-2', name: 'Other', logs: [] },
+					] as any,
+				});
+			const confirmExit = (session: Session) => {
+				render(<WizardInputPanel {...defaultProps} session={session} />);
+				const textarea = screen.getByPlaceholderText('Tell the wizard about your project...');
+				fireEvent.keyDown(textarea, { key: 'Escape' });
+				fireEvent.click(screen.getByTestId('wizard-exit-confirm-button'));
+			};
+
+			it('tells the runtime to close the wizard tab it closes here', () => {
+				hostedMocks.isLibraryRuntimeHosting.mockReturnValue(true);
+				confirmExit(wizardTabSession());
+				expect(mockSetSessions).toHaveBeenCalledTimes(1);
+				expect(hostedMocks.closeAiTab).toHaveBeenCalledTimes(1);
+				expect(hostedMocks.closeAiTab).toHaveBeenCalledWith('test-session', 'tab-1');
+			});
+
+			it('sends nothing for an exit that keeps the tab', () => {
+				hostedMocks.isLibraryRuntimeHosting.mockReturnValue(true);
+				confirmExit(
+					createMockSession({
+						aiTabs: [
+							{
+								id: 'tab-1',
+								name: 'Main',
+								logs: [{ id: 'l2', timestamp: Date.now(), source: 'user', text: 'earlier work' }],
+							},
+							{ id: 'tab-2', name: 'Other', logs: [] },
+						] as any,
+					})
+				);
+				expect(hostedMocks.closeAiTab).not.toHaveBeenCalled();
+			});
+
+			it('sends nothing when the setting is off', () => {
+				confirmExit(wizardTabSession());
+				expect(mockSetSessions).toHaveBeenCalledTimes(1);
+				expect(hostedMocks.closeAiTab).not.toHaveBeenCalled();
+			});
 		});
 
 		it('stops the running turn instead of closing the tab when Escape is pressed mid-turn', () => {

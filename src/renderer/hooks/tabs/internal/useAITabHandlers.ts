@@ -9,8 +9,12 @@ import {
 	useSessionStore,
 } from '../../../stores/sessionStore';
 import { clearLiveDraft } from '../../../utils/liveDraftStore';
+import { generateId } from '../../../utils/ids';
 import { logger } from '../../../utils/logger';
-import { persistTabStarred } from '../../../utils/starredSessions';
+import { notifyStarredSessionsChanged, persistTabStarred } from '../../../utils/starredSessions';
+import { closeAiTab, createAiTab, setAiTabStarred } from '../../../services/agentOps';
+import { isLibraryRuntimeHosting } from '../../../services/libraryRuntime';
+import { runtimeAnchorFor } from '../../../services/runtimeMirror';
 import { isWebDesktop } from '../../../utils/runtimeContext';
 import { noteDesktopAiTabSelection } from '../../../utils/desktopTabSelectionSync';
 import {
@@ -30,7 +34,18 @@ import {
 	toggleReadOnlyModeFields,
 	visibleAiTabs,
 } from '../../../utils/tabHelpers';
+import type { TabRefRecord } from '../../../../shared/maestro-lib/store/records';
 import type { AITabHandlersReturn } from './types';
+
+/**
+ * The id of the tab a close put in the closed one's place: one the agent did not have before. A close
+ * creates a replacement only when no tab of any kind survives, and the hosted close must name that id to
+ * the runtime so both sides hold the same tab.
+ */
+function replacementTabId(before: ReadonlySet<string>, sessionId: string): string | undefined {
+	const after = useSessionStore.getState().sessions.find((s) => s.id === sessionId);
+	return after?.aiTabs.find((tab) => !before.has(tab.id))?.id;
+}
 
 export function useAITabHandlers(
 	inputRef?: RefObject<HTMLTextAreaElement | null>
@@ -82,6 +97,30 @@ export function useAITabHandlers(
 				.catch((error) =>
 					logger.error('[useAITabHandlers] Failed to create desktop tab:', undefined, error)
 				);
+			return;
+		}
+
+		// Hosted: the tab appears at once under an id this window chooses (DM11, DG10), so the keystroke
+		// after Cmd+T reaches it, and the runtime creates the same tab under that id. The anchor says where
+		// this window put it, so the runtime's strip is the one already on screen.
+		if (isLibraryRuntimeHosting()) {
+			const tabId = generateId();
+			let created = false;
+			let anchor: TabRefRecord | null | undefined;
+			updateSessionWith(activeSessionId, (session) => {
+				const result = createTab(session, {
+					id: tabId,
+					saveToHistory: defaultSaveToHistory,
+					showThinking: defaultShowThinking,
+				});
+				if (!result) return session;
+				created = true;
+				const order = result.session.unifiedTabOrder as TabRefRecord[];
+				const at = order.findIndex((ref) => ref.type === 'ai' && ref.id === tabId);
+				anchor = at === -1 ? undefined : runtimeAnchorFor(activeSessionId, order, at);
+				return result.session;
+			});
+			if (created) void createAiTab(activeSessionId, tabId, anchor);
 			return;
 		}
 
@@ -159,6 +198,7 @@ export function useAITabHandlers(
 			}
 
 			clearLiveDraft(tabId);
+			const idsBefore = new Set(sessionBeforeClose?.aiTabs.map((t) => t.id) ?? []);
 			updateSessionWith(activeSessionId, (s) => {
 				const tab = s.aiTabs.find((t) => t.id === tabId);
 				const isWizardTab = tab && hasActiveWizard(tab);
@@ -174,6 +214,13 @@ export function useAITabHandlers(
 				}
 				return result.session;
 			});
+
+			// Hosted: the runtime archives the tab and leaves a running turn to finish (DM18). It is told
+			// the id of the replacement tab this window made, when closing the last tab made one.
+			if (isLibraryRuntimeHosting() && sessionBeforeClose && tabBeforeClose) {
+				const freshTabId = replacementTabId(idsBefore, activeSessionId);
+				void closeAiTab(activeSessionId, tabId, freshTabId ? { freshTabId } : {});
+			}
 
 			if (wasWizardTab) {
 				endInlineWizard(tabId).catch((error) =>
@@ -222,6 +269,8 @@ export function useAITabHandlers(
 			.filter((t) => hasActiveWizard(t))
 			.map((t) => t.id);
 
+		const closedIds: string[] = visibleAiTabs(activeSession?.aiTabs).map((t) => t.id);
+		const idsBefore = new Set(activeSession?.aiTabs.map((t) => t.id) ?? []);
 		updateSessionWith(activeSessionId, (s) => {
 			let updatedSession = s;
 			const tabIds = visibleAiTabs(s.aiTabs).map((t) => t.id);
@@ -237,6 +286,18 @@ export function useAITabHandlers(
 			}
 			return updatedSession;
 		});
+
+		// Hosted: the same closes, in the same order, so the runtime ends where this window did. Only the
+		// last can leave the agent without a tab, so only it names the replacement.
+		if (isLibraryRuntimeHosting() && closedIds.length > 0) {
+			const freshTabId = replacementTabId(idsBefore, activeSessionId);
+			void (async () => {
+				for (const [index, tabId] of closedIds.entries()) {
+					const last = index === closedIds.length - 1;
+					await closeAiTab(activeSessionId, tabId, last && freshTabId ? { freshTabId } : {});
+				}
+			})();
+		}
 
 		for (const tabId of wizardTabIds) {
 			endInlineWizard(tabId).catch((error) =>
@@ -314,6 +375,17 @@ export function useAITabHandlers(
 		if (!session) return;
 		const tabToStar = session.aiTabs.find((t) => t.id === tabId);
 		if (!tabToStar?.agentSessionId) return;
+
+		// Hosted: the runtime stores the star, and main writes the provider's origin record and the
+		// transcript mirror for it, whichever surface starred the tab (4.9). The Left Bar's cache is told
+		// once that is done.
+		if (isLibraryRuntimeHosting()) {
+			updateAiTab(session.id, tabId, (t) => ({ ...t, starred }));
+			void setAiTabStarred(session.id, tabId, starred).then((result) => {
+				if (result.ok) notifyStarredSessionsChanged();
+			});
+			return;
+		}
 
 		persistTabStarred(session, tabToStar, starred);
 		updateAiTab(session.id, tabId, (t) => ({ ...t, starred }));

@@ -27,6 +27,7 @@ import {
 	recordTabSession,
 	relocateAgentPaths,
 	renameTabRecord,
+	reorderUnifiedTabOrder,
 	sshRecordOf,
 	switchAgentRecordProvider,
 	tabDefaultsFromSettings,
@@ -1031,6 +1032,163 @@ describe('desktop migration rules (DG6, DG8, DG10)', () => {
 		expect(buildGroupRecord({ name: 'g' }, existing, makeContext())).toMatchObject({
 			ok: true,
 			value: { id: 'group-id-1' },
+		});
+	});
+
+	it('adds a tab under the id the caller chose, directly after the ref it names', () => {
+		const withFile = agent({
+			unifiedTabOrder: [
+				{ type: 'ai', id: 't1' },
+				{ type: 'file', id: 'f1' },
+				{ type: 'ai', id: 't2' },
+				{ type: 'ai', id: 't3' },
+			],
+		});
+		const after = addTabRecord(withFile, makeContext(), DEFAULT_TAB_DEFAULTS, {
+			id: 'mine',
+			placeAfter: { type: 'file', id: 'f1' },
+		});
+		expect(after.tab.id).toBe('mine');
+		expect(after.agent.unifiedTabOrder?.map((ref) => ref.id)).toEqual([
+			't1',
+			'f1',
+			'mine',
+			't2',
+			't3',
+		]);
+		const first = addTabRecord(withFile, makeContext(), DEFAULT_TAB_DEFAULTS, {
+			id: 'lead',
+			placeAfter: null,
+		});
+		expect(first.agent.unifiedTabOrder?.[0]).toEqual({ type: 'ai', id: 'lead' });
+	});
+
+	it('falls back to the placement setting for an anchor the order lacks, and for no anchor at all', () => {
+		const unknown = addTabRecord(agent(), makeContext(), DEFAULT_TAB_DEFAULTS, {
+			placeAfter: { type: 'file', id: 'never-folded' },
+		});
+		const plain = addTabRecord(agent(), makeContext(), DEFAULT_TAB_DEFAULTS);
+		expect(unknown.agent.unifiedTabOrder?.at(-1)).toEqual({ type: 'ai', id: unknown.tab.id });
+		expect(plain.agent.unifiedTabOrder?.at(-1)).toEqual({ type: 'ai', id: plain.tab.id });
+		// An anchor never moves what the person is looking at.
+		expect(unknown.agent.activeTabId).toBe(agent().activeTabId);
+	});
+
+	it('closes the last tab into a replacement under the id the caller chose', () => {
+		const only = agent({
+			aiTabs: [tab('t1')],
+			activeTabId: 't1',
+			unifiedTabOrder: [{ type: 'ai', id: 't1' }],
+		});
+		const outcome = closeTabRecord(only, 't1', makeContext(), DEFAULT_TAB_DEFAULTS, {
+			freshTabId: 'fresh',
+		});
+		expect(outcome?.freshTab?.id).toBe('fresh');
+		expect(outcome?.agent.activeTabId).toBe('fresh');
+		expect(outcome?.agent.unifiedTabOrder).toEqual([{ type: 'ai', id: 'fresh' }]);
+		const generated = closeTabRecord(only, 't1', makeContext(), DEFAULT_TAB_DEFAULTS);
+		expect(generated?.freshTab?.id).toMatch(/^id-\d+$/);
+	});
+
+	describe('reorderUnifiedTabOrder', () => {
+		const order = [
+			{ type: 'ai', id: 'a' },
+			{ type: 'file', id: 'f' },
+			{ type: 'ai', id: 'b' },
+			{ type: 'terminal', id: 't' },
+		];
+
+		it('puts the ref at the index of the result, any kind', () => {
+			expect(
+				reorderUnifiedTabOrder(order, { type: 'terminal', id: 't' }, 0)?.map((r) => r.id)
+			).toEqual(['t', 'a', 'f', 'b']);
+			expect(reorderUnifiedTabOrder(order, { type: 'ai', id: 'a' }, 2)?.map((r) => r.id)).toEqual([
+				'f',
+				'b',
+				'a',
+				't',
+			]);
+		});
+
+		it('clamps an index past either end, so a window that counts fewer refs still lands at the end', () => {
+			expect(reorderUnifiedTabOrder(order, { type: 'ai', id: 'a' }, 99)?.at(-1)).toEqual({
+				type: 'ai',
+				id: 'a',
+			});
+			expect(reorderUnifiedTabOrder(order, { type: 'terminal', id: 't' }, -5)?.[0]).toEqual({
+				type: 'terminal',
+				id: 't',
+			});
+		});
+
+		it('returns an equal order for a move that changes nothing, and null for a ref it lacks', () => {
+			expect(reorderUnifiedTabOrder(order, { type: 'file', id: 'f' }, 1)).toEqual(order);
+			expect(reorderUnifiedTabOrder(order, { type: 'ai', id: 'ghost' }, 0)).toBeNull();
+			// The kind is part of the identity: a browser tab named "f" is not the file tab "f".
+			expect(reorderUnifiedTabOrder(order, { type: 'browser', id: 'f' }, 0)).toBeNull();
+		});
+
+		it('does not change the order it was given', () => {
+			const before = JSON.stringify(order);
+			reorderUnifiedTabOrder(order, { type: 'ai', id: 'a' }, 3);
+			expect(JSON.stringify(order)).toBe(before);
+		});
+	});
+
+	describe('buildAgentConfigPatch: the Edit Agent fields (DG6)', () => {
+		it('maps each new field to the record key it is stored under', () => {
+			const built = buildAgentConfigPatch({
+				customProviderPath: '/opt/claude',
+				envDisabled: { PARKED: 'x', BLANK: '' },
+				additionalDirectories: [{ path: '/a', read: true, write: false }],
+				retryOnAvailabilityErrors: false,
+				retryOnTokenExhaustion: true,
+				codexAutoResetOnExhaustion: true,
+				enableMaestroP: false,
+				maestroPPath: '/p',
+				maestroPMode: 'dynamic',
+			});
+			expect(built.fields).toEqual([
+				'customProviderPath',
+				'envDisabled',
+				'additionalDirectories',
+				'retryOnAvailabilityErrors',
+				'retryOnTokenExhaustion',
+				'codexAutoResetOnExhaustion',
+				'enableMaestroP',
+				'maestroPPath',
+				'maestroPMode',
+			]);
+			expect(built.patch).toEqual({
+				customProviderPath: '/opt/claude',
+				customEnvVarsDisabled: { PARKED: 'x' },
+				additionalDirectories: [{ path: '/a', read: true, write: false }],
+				retryOnAvailabilityErrors: false,
+				retryOnTokenExhaustion: true,
+				codexAutoResetOnExhaustion: true,
+				enableMaestroP: false,
+				maestroPPath: '/p',
+				maestroPMode: 'dynamic',
+			});
+		});
+
+		it('turns an empty list, an all-blank map, and a false Codex flag into a clear', () => {
+			const built = buildAgentConfigPatch({
+				envDisabled: { BLANK: '  ' },
+				additionalDirectories: [],
+				codexAutoResetOnExhaustion: false,
+			});
+			expect(built.patch).toEqual({
+				customEnvVarsDisabled: null,
+				additionalDirectories: null,
+				codexAutoResetOnExhaustion: null,
+			});
+		});
+
+		it('carries null through as a clear, and says nothing for a field the patch lacks', () => {
+			const built = buildAgentConfigPatch({ enableMaestroP: null, maestroPMode: null });
+			expect(built.patch).toEqual({ enableMaestroP: null, maestroPMode: null });
+			expect(buildAgentConfigPatch({}).fields).toEqual([]);
 		});
 	});
 });

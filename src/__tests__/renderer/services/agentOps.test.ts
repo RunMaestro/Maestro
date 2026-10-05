@@ -72,6 +72,63 @@ describe('agentOps', () => {
 			{},
 		],
 		['removeGroup', () => ops.removeGroup('g1'), { method: 'groups.remove', groupId: 'g1' }, {}],
+		[
+			'createAiTab without an anchor',
+			() => ops.createAiTab('a1', 't9'),
+			{ method: 'tabs.create', agentId: 'a1', options: { tabId: 't9' } },
+			{ agentIds: ['a1'] },
+		],
+		[
+			'createAiTab leading the strip',
+			() => ops.createAiTab('a1', 't9', null),
+			{ method: 'tabs.create', agentId: 'a1', options: { tabId: 't9', placeAfter: null } },
+			{ agentIds: ['a1'] },
+		],
+		[
+			'createAiTab after a ref',
+			() => ops.createAiTab('a1', 't9', { type: 'file', id: 'f1' }),
+			{
+				method: 'tabs.create',
+				agentId: 'a1',
+				options: { tabId: 't9', placeAfter: { type: 'file', id: 'f1' } },
+			},
+			{ agentIds: ['a1'] },
+		],
+		[
+			'renameAiTab',
+			() => ops.renameAiTab('a1', 't1', 'Docs'),
+			{ method: 'tabs.rename', agentId: 'a1', tabId: 't1', name: 'Docs' },
+			{ agentIds: ['a1'] },
+		],
+		[
+			'closeAiTab orphans a running turn',
+			() => ops.closeAiTab('a1', 't1'),
+			{ method: 'tabs.close', agentId: 'a1', tabId: 't1', options: { busy: 'orphan' } },
+			{ agentIds: ['a1'] },
+		],
+		[
+			'closeAiTab names the replacement tab',
+			() => ops.closeAiTab('a1', 't1', { freshTabId: 'fresh' }),
+			{
+				method: 'tabs.close',
+				agentId: 'a1',
+				tabId: 't1',
+				options: { busy: 'orphan', freshTabId: 'fresh' },
+			},
+			{ agentIds: ['a1'] },
+		],
+		[
+			'setAiTabStarred',
+			() => ops.setAiTabStarred('a1', 't1', true),
+			{ method: 'tabs.star', agentId: 'a1', tabId: 't1', starred: true },
+			{ agentIds: ['a1'] },
+		],
+		[
+			'reorderTab',
+			() => ops.reorderTab('a1', { type: 'ai', id: 't1' }, 2),
+			{ method: 'tabs.reorder', agentId: 'a1', ref: { type: 'ai', id: 't1' }, toIndex: 2 },
+			{ agentIds: ['a1'] },
+		],
 	];
 
 	it.each(cases)(
@@ -107,6 +164,43 @@ describe('agentOps', () => {
 			type: 'error',
 			title: 'Rename Failed',
 			message: 'That name is taken.',
+		});
+	});
+
+	it('reads closing a tab the runtime no longer holds as done, with no toast', async () => {
+		sendRuntimeCommand.mockResolvedValue({
+			result: {
+				ok: false,
+				error: { code: 'not-found', message: 'No tab t1.', method: 'tabs.close' },
+			},
+			changes: [],
+		});
+		await expect(ops.closeAiTab('a1', 't1')).resolves.toEqual({ ok: true, value: undefined });
+		expect(notifyToast).not.toHaveBeenCalled();
+	});
+
+	it('still reports a missing tab as a failure for every other tab operation', async () => {
+		sendRuntimeCommand.mockResolvedValue({
+			result: {
+				ok: false,
+				error: { code: 'not-found', message: 'No tab t1.', method: 'tabs.rename' },
+			},
+			changes: [],
+		});
+		await expect(ops.renameAiTab('a1', 't1', 'x')).resolves.toEqual({
+			ok: false,
+			message: 'No tab t1.',
+		});
+		expect(notifyToast).toHaveBeenCalledWith(expect.objectContaining({ title: 'Rename Failed' }));
+	});
+
+	it('hands an agent update back its receipt, so a provider switch can show what it could not park', async () => {
+		sendRuntimeCommand.mockResolvedValue(
+			ok({ applied: ['provider'], notices: ['Cleared a queued setting.'] })
+		);
+		await expect(ops.updateAgent('a1', { provider: 'codex' })).resolves.toEqual({
+			ok: true,
+			value: { applied: ['provider'], notices: ['Cleared a queued setting.'] },
 		});
 	});
 

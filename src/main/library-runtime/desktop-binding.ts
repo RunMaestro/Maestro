@@ -24,6 +24,7 @@ import type {
 import { baselineOf, buildFold } from '../../shared/maestro-lib/agents/fold-builder';
 import type { ClientResult, MaestroEvent } from '../../shared/maestro-lib/client/types';
 import type { MaestroRuntime } from '../../shared/maestro-lib/runtime';
+import { projectAgentRecord } from '../../shared/maestro-lib/store/read-stores';
 import type { AgentRecord } from '../../shared/maestro-lib/store/records';
 import type {
 	LibraryRuntimeCommand,
@@ -44,9 +45,15 @@ const LOG_CONTEXT = '[LibraryRuntime]';
 /** A runtime that has the desktop API: one started in mode `desktop`. */
 export type DesktopRuntime = MaestroRuntime & { desktop: DesktopRuntimeApi };
 
+/**
+ * A listener over the stamped events. One that returns a promise is waited for before the command that
+ * caused the event answers, so a side effect (4.9) is done by the time its sender hears back.
+ */
+export type DesktopEventListener = (message: LibraryRuntimeEventMessage) => void | Promise<unknown>;
+
 export interface DesktopBinding {
 	/** Every runtime event, stamped. Returns the unsubscribe function. */
-	onEvent(listener: (message: LibraryRuntimeEventMessage) => void): () => void;
+	onEvent(listener: DesktopEventListener): () => void;
 	/** The stored records with transcripts and the revisions to guard later events with. */
 	snapshot(): DesktopSnapshot;
 	/**
@@ -117,6 +124,26 @@ interface CommandScope {
 	/** Absent for a fold: its events are not a command's. */
 	commandId?: string;
 	changes: LibraryRuntimeEventMessage[];
+	/** What the listeners are still doing for this scope's events. */
+	pending: Array<Promise<unknown>>;
+}
+
+/** The agent a failed command was about, when it names one the runtime may still hold. */
+function agentOfCommand(command: LibraryRuntimeCommand): string | undefined {
+	switch (command.method) {
+		case 'agents.update':
+		case 'agents.rename':
+		case 'agents.remove':
+		case 'groups.moveAgent':
+		case 'tabs.create':
+		case 'tabs.rename':
+		case 'tabs.close':
+		case 'tabs.star':
+		case 'tabs.reorder':
+			return command.agentId;
+		default:
+			return undefined;
+	}
 }
 
 function dispatch(
@@ -142,12 +169,22 @@ function dispatch(
 			return runtime.groups.remove(command.groupId);
 		case 'groups.moveAgent':
 			return runtime.groups.moveAgent(command.agentId, command.groupId);
+		case 'tabs.create':
+			return runtime.desktop.createTab(command.agentId, command.options);
+		case 'tabs.rename':
+			return runtime.tabs.rename(command.agentId, command.tabId, command.name);
+		case 'tabs.close':
+			return runtime.desktop.closeTab(command.agentId, command.tabId, command.options);
+		case 'tabs.star':
+			return runtime.tabs.star(command.agentId, command.tabId, command.starred);
+		case 'tabs.reorder':
+			return runtime.desktop.reorderTab(command.agentId, command.ref, command.toIndex);
 	}
 }
 
 export function createDesktopBinding(runtime: DesktopRuntime): DesktopBinding {
 	const scope = new AsyncLocalStorage<CommandScope>();
-	const listeners = new Set<(message: LibraryRuntimeEventMessage) => void>();
+	const listeners = new Set<DesktopEventListener>();
 
 	const unsubscribe = runtime.events.subscribe(
 		(event) => {
@@ -161,7 +198,17 @@ export function createDesktopBinding(runtime: DesktopRuntime): DesktopBinding {
 			current?.changes.push(message);
 			for (const listener of [...listeners]) {
 				try {
-					listener(message);
+					const working = listener(message);
+					if (working && typeof (working as Promise<unknown>).then === 'function') {
+						current?.pending.push(
+							(working as Promise<unknown>).catch((error) =>
+								logger.warn(
+									`A runtime event listener failed: ${error instanceof Error ? error.message : String(error)}`,
+									LOG_CONTEXT
+								)
+							)
+						);
+					}
 				} catch (error) {
 					logger.warn(
 						`A runtime event listener threw: ${error instanceof Error ? error.message : String(error)}`,
@@ -195,7 +242,9 @@ export function createDesktopBinding(runtime: DesktopRuntime): DesktopBinding {
 	async function landFold(fold: DesktopFold): Promise<LibraryRuntimeFoldAnswer> {
 		const bounded = await applyFoldBoundary(fold, stored);
 		// A fold's events are marked, so the side effects of a change skip what a renderer already did.
-		const result = await scope.run({ changes: [] }, () => runtime.desktop.fold(bounded));
+		const result = await scope.run({ changes: [], pending: [] }, () =>
+			runtime.desktop.fold(bounded)
+		);
 		for (const drift of result.drift) {
 			logger.debug(`Fold drift: ${drift.kind}`, LOG_CONTEXT, drift);
 		}
@@ -241,10 +290,30 @@ export function createDesktopBinding(runtime: DesktopRuntime): DesktopBinding {
 
 		async command(request) {
 			const changes: LibraryRuntimeEventMessage[] = [];
-			const result = await scope.run({ commandId: request.commandId, changes }, () =>
+			const pending: Array<Promise<unknown>> = [];
+			const result = await scope.run({ commandId: request.commandId, changes, pending }, () =>
 				dispatch(runtime, request.command)
 			);
-			return { result, changes };
+			// The side effects of the change (4.9) finish before the sender hears back, so a window that
+			// refreshes a cache on the answer reads what they wrote.
+			if (pending.length > 0) await Promise.all(pending);
+			if (result.ok) return { result, changes };
+			// A refusal raises no event, so a window that applied the change first has nothing to correct
+			// itself with: hand it the agent as the runtime has it.
+			const agentId = agentOfCommand(request.command);
+			const agent = agentId ? storedAgents().find((entry) => entry.id === agentId) : undefined;
+			return {
+				result,
+				changes,
+				...(agent
+					? {
+							authoritative: {
+								agent: projectAgentRecord(agent),
+								rev: runtime.desktop.revisionOf(agent.id),
+							},
+						}
+					: {}),
+			};
 		},
 
 		fold: landFold,
@@ -270,7 +339,7 @@ export function createDesktopBinding(runtime: DesktopRuntime): DesktopBinding {
 		async foldLegacyGroups(groups) {
 			const collapsed: Record<string, boolean> = {};
 			for (const group of groups) collapsed[group.id] = group.collapsed === true;
-			await scope.run({ changes: [] }, () =>
+			await scope.run({ changes: [], pending: [] }, () =>
 				runtime.desktop.fold({ agents: [], groups: { collapsed } })
 			);
 		},

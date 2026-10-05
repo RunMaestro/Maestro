@@ -37,14 +37,20 @@ import {
 	buildRuntimeFold,
 	markRuntimeMirrorLoaded,
 	resetRuntimeMirror,
+	runtimeAnchorFor,
+	runtimeTabIndexFor,
 	seedRuntimeMirror,
 	sendRuntimeFold,
 	setRuntimeMirrorHost,
 	startRuntimeEventStream,
 } from '../../../renderer/services/runtimeMirror';
+import { closedTabsFile, readClosedTabs } from '../../../shared/maestro-lib/agents/closed-tabs';
+import { buildAgentEditPatch } from '../../../renderer/utils/agentEditPatch';
+import { closeTab, createTab, moveUnifiedTabToTarget } from '../../../renderer/utils/tabHelpers';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { notifyToast } from '../../../renderer/stores/notificationStore';
 import type { Session } from '../../../renderer/types';
+import { createMockFileTab } from '../../helpers/mockTab';
 
 const T0 = Date.parse('2026-10-04T12:00:00Z');
 const confText = (doc: unknown) => JSON.stringify(doc, null, '\t');
@@ -258,5 +264,227 @@ describe('the renderer mirror over a real runtime', () => {
 		expect(stored().map((a) => a.id)).toEqual(['a1', 'a2']);
 		await binding.foldLegacySessions([seedAgent('wiz', 'Wizard')]);
 		expect(stored().map((a) => a.id)).toEqual(['a1', 'a2']);
+	});
+
+	// -----------------------------------------------------------------------
+	// Tabs (Phase 9, task 4): the window applies its own helper first, then sends the command, and the
+	// runtime's answer must leave the two exactly equal. Each case runs the renderer's REAL helper.
+	// -----------------------------------------------------------------------
+
+	describe('tabs, applied here first and then sent (DM11)', () => {
+		const storedTabIds = (agent: number) => stored()[agent].aiTabs.map((tab: any) => tab.id);
+		const storeTabIds = (agent: number) => store().sessions[agent].aiTabs.map((tab) => tab.id);
+		const orderIds = (order: Array<{ id: string }>) => order.map((ref) => ref.id);
+
+		/** What useAITabHandlers does for Cmd+T. */
+		async function newTab(index: number, tabId: string) {
+			const agentId = store().sessions[index].id;
+			let anchor: ReturnType<typeof runtimeAnchorFor>;
+			store().setSessions(
+				store().sessions.map((s, i) => {
+					if (i !== index) return s;
+					const made = createTab(s, { id: tabId, saveToHistory: true, showThinking: 'off' })!;
+					const order = made.session.unifiedTabOrder;
+					anchor = runtimeAnchorFor(
+						agentId,
+						order,
+						order.findIndex((ref) => ref.id === tabId)
+					);
+					return made.session;
+				})
+			);
+			return ops.createAiTab(agentId, tabId, anchor);
+		}
+
+		it('creates a tab under the id the window chose, in the place the window put it', async () => {
+			const result = await newTab(0, 'mine');
+			expect(result).toEqual({ ok: true, value: { tabId: 'mine' } });
+			expect(storedTabIds(0)).toEqual(['a1-t1', 'mine']);
+			expect(storeTabIds(0)).toEqual(['a1-t1', 'mine']);
+			expect(orderIds(store().sessions[0].unifiedTabOrder)).toEqual(
+				orderIds(stored()[0].unifiedTabOrder)
+			);
+			// The window keeps the new tab selected: the runtime never moves what a person is looking at.
+			expect(store().sessions[0].activeTabId).toBe('mine');
+			// Nothing was added twice by the runtime's answer or its broadcast.
+			await new Promise((resolve) => setTimeout(resolve, 20));
+			expect(storeTabIds(0)).toEqual(['a1-t1', 'mine']);
+		});
+
+		it('is idempotent: sending the same create twice leaves one tab', async () => {
+			await newTab(0, 'mine');
+			const again = await ops.createAiTab('a1', 'mine');
+			expect(again.ok).toBe(true);
+			expect(storedTabIds(0)).toEqual(['a1-t1', 'mine']);
+		});
+
+		it('renames and stars a tab, and the runtime stores what the window shows', async () => {
+			store().setSessions(
+				store().sessions.map((s, i) =>
+					i === 0
+						? { ...s, aiTabs: s.aiTabs.map((t) => ({ ...t, name: 'Docs', starred: true })) }
+						: s
+				)
+			);
+			expect((await ops.renameAiTab('a1', 'a1-t1', ' Docs ')).ok).toBe(true);
+			expect((await ops.setAiTabStarred('a1', 'a1-t1', true)).ok).toBe(true);
+			expect(stored()[0].aiTabs[0]).toMatchObject({ name: 'Docs', starred: true });
+			expect(store().sessions[0].aiTabs[0]).toMatchObject({ name: 'Docs', starred: true });
+		});
+
+		it('closes a tab into the archive, and a last tab into the replacement the window made', async () => {
+			// a2 has one tab: closing it makes a replacement, and both sides must name the same one.
+			const before = new Set(store().sessions[1].aiTabs.map((t) => t.id));
+			store().setSessions(
+				store().sessions.map((s, i) => (i === 1 ? closeTab(s, 'a2-t1', false)!.session : s))
+			);
+			const fresh = store().sessions[1].aiTabs.find((t) => !before.has(t.id))!;
+			const result = await ops.closeAiTab('a2', 'a2-t1', { freshTabId: fresh.id });
+			expect(result.ok).toBe(true);
+			expect(storedTabIds(1)).toEqual([fresh.id]);
+			expect(storeTabIds(1)).toEqual([fresh.id]);
+			const archived = await readClosedTabs(closedTabsFile(dir, 'a2'));
+			expect(archived.map((entry) => entry.tab.id)).toEqual(['a2-t1']);
+		});
+
+		it('treats closing a tab the runtime no longer has as done', async () => {
+			expect((await ops.closeAiTab('a1', 'never-existed')).ok).toBe(true);
+			expect(notifyToast).not.toHaveBeenCalled();
+		});
+
+		it('reorders the strip, counting only the refs the runtime holds', async () => {
+			await newTab(0, 'second');
+			// A file tab only this window has: the runtime has not heard of it.
+			store().setSessions(
+				store().sessions.map((s, i) =>
+					i === 0
+						? {
+								...s,
+								filePreviewTabs: [createMockFileTab({ id: 'file-new' })],
+								unifiedTabOrder: [{ type: 'file', id: 'file-new' }, ...s.unifiedTabOrder],
+							}
+						: s
+				) as Session[]
+			);
+			let moved: { type: string; id: string } | undefined;
+			let order: any[] = [];
+			store().setSessions(
+				store().sessions.map((s, i) => {
+					if (i !== 0) return s;
+					const next = moveUnifiedTabToTarget(s, 'second', 'a1-t1');
+					order = next.unifiedTabOrder;
+					moved = next.unifiedTabOrder.find((ref) => ref.id === 'second');
+					return next;
+				})
+			);
+			const index = runtimeTabIndexFor('a1', order, moved as any);
+			expect(index).toBe(0);
+			const result = await ops.reorderTab('a1', moved as any, index!);
+			expect(result.ok).toBe(true);
+			expect(orderIds(stored()[0].unifiedTabOrder)).toEqual(['second', 'a1-t1']);
+			// The window keeps the file tab only it holds, where its own order had it.
+			expect(orderIds(store().sessions[0].unifiedTabOrder)).toEqual([
+				'file-new',
+				'second',
+				'a1-t1',
+			]);
+		});
+
+		it('snaps the window back to the runtime when it refuses a change the window already made', async () => {
+			await newTab(0, 'second');
+			const authoritative = orderIds(stored()[0].unifiedTabOrder);
+			// The window reordered, then the runtime refused (a ref it does not hold).
+			store().setSessions(
+				store().sessions.map((s, i) =>
+					i === 0 ? { ...s, unifiedTabOrder: [...s.unifiedTabOrder].reverse() } : s
+				)
+			);
+			const refused = await ops.reorderTab('a1', { type: 'ai', id: 'ghost' }, 0);
+			expect(refused.ok).toBe(false);
+			expect(orderIds(store().sessions[0].unifiedTabOrder)).toEqual(authoritative);
+		});
+	});
+
+	describe('Edit Agent, as one update (Phase 9, task 4)', () => {
+		it('switches the provider, parking every tab, and the window ends where the runtime does', async () => {
+			store().setSessions(
+				store().sessions.map((s, i) =>
+					i === 0
+						? { ...s, aiTabs: s.aiTabs.map((t) => ({ ...t, agentSessionId: 'claude-conv-1' })) }
+						: s
+				) as Session[]
+			);
+			await runtime.agents.update('a1', { model: 'opus' });
+			await vi.waitFor(() => expect(store().sessions[0].customModel).toBe('opus'));
+			// The runtime does not hold the tab's provider session id yet: a turn the desktop ran wrote it.
+			await sendRuntimeFold(buildRuntimeFold({ sessions: store().sessions }));
+
+			const patch = buildAgentEditPatch(store().sessions[0], {
+				name: 'Alpha',
+				toolType: 'codex',
+				customModel: 'gpt-5',
+			});
+			expect(patch).toMatchObject({ provider: 'codex', model: 'gpt-5' });
+			const result = await ops.updateAgent('a1', patch);
+			expect(result.ok).toBe(true);
+
+			expect(stored()[0].toolType).toBe('codex');
+			expect(store().sessions[0].toolType).toBe('codex');
+			expect(store().sessions[0].customModel).toBe('gpt-5');
+			// Nothing was dropped: the Claude conversation is parked on the tab, and so is the model.
+			expect(stored()[0].aiTabs[0].providerSessions?.['claude-code']?.agentSessionId).toBe(
+				'claude-conv-1'
+			);
+			expect(store().sessions[0].aiTabs[0].providerSessions?.['claude-code']?.agentSessionId).toBe(
+				'claude-conv-1'
+			);
+			expect(stored()[0].providerOverrides?.['claude-code']?.customModel).toBe('opus');
+			expect(store().sessions[0].aiTabs[0].agentSessionId).toBeNull();
+		});
+
+		it('moves the working directory with every path field, on both sides', async () => {
+			const patch = buildAgentEditPatch(store().sessions[1], {
+				name: 'Beta',
+				workingDirectory: '/work/moved',
+			});
+			expect((await ops.updateAgent('a2', patch)).ok).toBe(true);
+			for (const side of [stored()[1], store().sessions[1] as any]) {
+				expect(side.cwd).toBe('/work/moved');
+				expect(side.fullPath).toBe('/work/moved');
+				expect(side.projectRoot).toBe('/work/moved');
+			}
+		});
+
+		it('saves the fields Edit Agent adds beyond the CLI ones', async () => {
+			const patch = buildAgentEditPatch(store().sessions[0], {
+				name: 'Alpha',
+				nudgeMessage: 'be brief',
+				customEnvVarsDisabled: { PARKED: 'x' },
+				additionalDirectories: [{ path: '/shared', read: true, write: false }],
+				retryOnAvailabilityErrors: false,
+				sessionSshRemoteConfig: { enabled: false, remoteId: null, shareHistoryToProjectDir: true },
+			});
+			expect((await ops.updateAgent('a1', patch)).ok).toBe(true);
+			expect(stored()[0]).toMatchObject({
+				nudgeMessage: 'be brief',
+				customEnvVarsDisabled: { PARKED: 'x' },
+				additionalDirectories: [{ path: '/shared', read: true, write: false }],
+				retryOnAvailabilityErrors: false,
+				sessionSshRemoteConfig: { enabled: false, remoteId: null, shareHistoryToProjectDir: true },
+			});
+			expect(store().sessions[0]).toMatchObject({
+				nudgeMessage: 'be brief',
+				customEnvVarsDisabled: { PARKED: 'x' },
+				retryOnAvailabilityErrors: false,
+			});
+		});
+
+		it('refuses a taken name with the runtime message and leaves the store alone', async () => {
+			const patch = buildAgentEditPatch(store().sessions[0], { name: 'Beta' });
+			const result = await ops.updateAgent('a1', patch);
+			expect(result.ok).toBe(false);
+			expect(store().sessions[0].name).toBe('Alpha');
+			expect(notifyToast).toHaveBeenCalledWith(expect.objectContaining({ title: 'Update Failed' }));
+		});
 	});
 });

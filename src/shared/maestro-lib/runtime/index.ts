@@ -473,6 +473,9 @@ export async function createMaestroRuntime(options: MaestroRuntimeOptions): Prom
 					groupsRevision: repository.groupsRevision,
 					documents: repository.documents,
 					updateGroup: repository.updateGroup,
+					createTab: repository.createTab,
+					closeTab: repository.closeTab,
+					reorderTab: repository.reorderTab,
 					flush: repository.flush,
 				}
 			: undefined;

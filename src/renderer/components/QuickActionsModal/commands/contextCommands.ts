@@ -1,6 +1,9 @@
 import type React from 'react';
 import { buildSessionDeepLink } from '../../../../shared/deep-link-urls';
+import { setAiTabStarred } from '../../../services/agentOps';
 import { requestFileDeletion } from '../../../services/fileDeletion';
+import { isLibraryRuntimeHosting } from '../../../services/libraryRuntime';
+import { notifyStarredSessionsChanged } from '../../../utils/starredSessions';
 import type { Session } from '../../../types';
 import type { MainPanelHandle } from '../../MainPanel/types';
 import type { ActiveTabInfo, QuickAction } from '../types';
@@ -174,6 +177,13 @@ export function buildActiveTabContextCommands({
 						};
 					})
 				);
+				// Hosted: the star is also a command, so the runtime stores it and main writes the provider's
+				// origin record for it; the Left Bar's starred cache is told once that is done.
+				if (isLibraryRuntimeHosting()) {
+					void setAiTabStarred(activeSessionId, activeTab.id, !activeTab.starred).then((result) => {
+						if (result.ok) notifyStarredSessionsChanged();
+					});
+				}
 				setQuickActionOpen(false);
 			},
 		});

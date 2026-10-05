@@ -209,6 +209,145 @@ describe('the desktop binding', () => {
 		expect(sessions.activeSessionId).toBe('a1');
 	});
 
+	describe('tab commands (Phase 9, task 4)', () => {
+		const desktop = () => (runtime as DesktopRuntime).desktop;
+		const tabsOf = () =>
+			desktop()
+				.snapshot()
+				.agents[0].aiTabs?.map((tab) => tab.id);
+
+		it('creates a tab under the client-chosen id, where the window put it', async () => {
+			const answer = await binding.command({
+				commandId: 'c-tab-1',
+				command: {
+					method: 'tabs.create',
+					agentId: 'a1',
+					options: { tabId: 'mine', placeAfter: null },
+				},
+			});
+			expect(answer.result).toMatchObject({ ok: true, value: { tabId: 'mine' } });
+			expect(answer.changes.map((c) => c.event.type)).toEqual(['tab.added', 'agent.updated']);
+			expect(answer.changes.every((c) => c.origin?.commandId === 'c-tab-1')).toBe(true);
+			expect(desktop().snapshot().agents[0].unifiedTabOrder?.[0]).toEqual({
+				type: 'ai',
+				id: 'mine',
+			});
+		});
+
+		it('renames, stars, reorders, and closes through the repository', async () => {
+			await binding.command({
+				commandId: 'c1',
+				command: { method: 'tabs.create', agentId: 'a1', options: { tabId: 'second' } },
+			});
+			const renamed = await binding.command({
+				commandId: 'c2',
+				command: { method: 'tabs.rename', agentId: 'a1', tabId: 'second', name: ' Docs ' },
+			});
+			expect(renamed.result.ok).toBe(true);
+			const starred = await binding.command({
+				commandId: 'c3',
+				command: { method: 'tabs.star', agentId: 'a1', tabId: 'second', starred: true },
+			});
+			expect(starred.result.ok).toBe(true);
+			expect(desktop().snapshot().agents[0].aiTabs?.[1]).toMatchObject({
+				id: 'second',
+				name: 'Docs',
+				starred: true,
+			});
+			const moved = await binding.command({
+				commandId: 'c4',
+				command: {
+					method: 'tabs.reorder',
+					agentId: 'a1',
+					ref: { type: 'ai', id: 'second' },
+					toIndex: 0,
+				},
+			});
+			expect(moved.result.ok).toBe(true);
+			expect(desktop().snapshot().agents[0].unifiedTabOrder?.[0]).toEqual({
+				type: 'ai',
+				id: 'second',
+			});
+			const closed = await binding.command({
+				commandId: 'c5',
+				command: {
+					method: 'tabs.close',
+					agentId: 'a1',
+					tabId: 'second',
+					options: { busy: 'orphan' },
+				},
+			});
+			expect(closed.result.ok).toBe(true);
+			expect(tabsOf()).toEqual(['a1-t1']);
+		});
+
+		it('hands a refused command the agent as the runtime has it, so an optimistic window can snap back', async () => {
+			const answer = await binding.command({
+				commandId: 'c6',
+				command: { method: 'tabs.rename', agentId: 'a1', tabId: 'ghost', name: 'x' },
+			});
+			expect(answer.result).toMatchObject({ ok: false, error: { code: 'not-found' } });
+			expect(answer.changes).toEqual([]);
+			expect(answer.authoritative).toMatchObject({
+				agent: { id: 'a1', aiTabs: [{ id: 'a1-t1' }] },
+				rev: desktop().revisionOf('a1'),
+			});
+		});
+
+		it('leaves the authoritative agent out of a success, and out of a refusal that names no agent', async () => {
+			const fine = await binding.command({
+				commandId: 'c7',
+				command: { method: 'tabs.create', agentId: 'a1' },
+			});
+			expect(fine.authoritative).toBeUndefined();
+			const noAgent = await binding.command({
+				commandId: 'c8',
+				command: { method: 'groups.rename', groupId: 'nope', name: 'x' },
+			});
+			expect(noAgent.result.ok).toBe(false);
+			expect(noAgent.authoritative).toBeUndefined();
+		});
+
+		it('waits for a listener that returns a promise before it answers', async () => {
+			let release!: () => void;
+			let finished = false;
+			binding.onEvent((message) => {
+				if (message.event.type !== 'agent.updated') return;
+				return new Promise<void>((resolve) => {
+					release = () => {
+						finished = true;
+						resolve();
+					};
+				});
+			});
+			let answered = false;
+			const pending = binding
+				.command({
+					commandId: 'c9',
+					command: { method: 'tabs.rename', agentId: 'a1', tabId: 'a1-t1', name: 'Named' },
+				})
+				.then((answer) => {
+					answered = true;
+					return answer;
+				});
+			await new Promise((resolve) => setTimeout(resolve, 20));
+			expect(answered).toBe(false);
+			release();
+			const answer = await pending;
+			expect(finished).toBe(true);
+			expect(answer.result.ok).toBe(true);
+		});
+
+		it('still answers when a listener rejects', async () => {
+			binding.onEvent(() => Promise.reject(new Error('side effect failed')));
+			const answer = await binding.command({
+				commandId: 'c10',
+				command: { method: 'tabs.rename', agentId: 'a1', tabId: 'a1-t1', name: 'Named' },
+			});
+			expect(answer.result.ok).toBe(true);
+		});
+	});
+
 	it('a snapshot carries records, revisions, and the active agent', async () => {
 		const snapshot = await binding.loadSnapshot();
 		expect(snapshot.agents.map((a) => a.id)).toEqual(['a1']);

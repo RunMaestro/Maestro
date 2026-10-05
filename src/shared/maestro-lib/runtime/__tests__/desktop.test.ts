@@ -87,10 +87,13 @@ describe('the desktop part of the runtime', () => {
 		expect(desktop.desktop).toBeDefined();
 		expect(Object.keys(desktop.desktop ?? {}).sort()).toEqual(
 			[
+				'closeTab',
+				'createTab',
 				'documents',
 				'flush',
 				'fold',
 				'groupsRevision',
+				'reorderTab',
 				'revisionOf',
 				'snapshot',
 				'updateGroup',
@@ -147,6 +150,33 @@ describe('the desktop part of the runtime', () => {
 		value(await runtime.desktop!.updateGroup(groupId, { name: 'play' }));
 		expect(value(await runtime.groups.list())[0].name).toBe('PLAY');
 		expect(runtime.desktop!.groupsRevision()).toBe(2);
+	});
+
+	it('creates, reorders, and closes a tab through the desktop api, as the client API sees it', async () => {
+		const runtime = await start('desktop');
+		const created = value(
+			await runtime.desktop!.createTab('a1', { tabId: 'mine', placeAfter: null })
+		);
+		expect(created.tabId).toBe('mine');
+		expect(value(await runtime.tabs.list('a1')).map((entry) => entry.id)).toEqual([
+			'mine',
+			'a1-t1',
+		]);
+		expect(runtime.desktop!.snapshot().agents[0].unifiedTabOrder).toEqual([
+			{ type: 'ai', id: 'mine' },
+			{ type: 'ai', id: 'a1-t1' },
+		]);
+
+		value(await runtime.desktop!.reorderTab('a1', { type: 'ai', id: 'mine' }, 1));
+		expect(runtime.desktop!.snapshot().agents[0].unifiedTabOrder).toEqual([
+			{ type: 'ai', id: 'a1-t1' },
+			{ type: 'ai', id: 'mine' },
+		]);
+
+		value(await runtime.desktop!.closeTab('a1', 'mine', { busy: 'orphan' }));
+		expect(value(await runtime.tabs.list('a1')).map((entry) => entry.id)).toEqual(['a1-t1']);
+		// Three committed changes, three revisions.
+		expect(runtime.desktop!.revisionOf('a1')).toBe(3);
 	});
 
 	it('writes a pending fold at shutdown, before the lock goes', async () => {

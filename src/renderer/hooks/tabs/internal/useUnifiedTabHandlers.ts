@@ -4,6 +4,10 @@ import { selectActiveSession, useSessionStore } from '../../../stores/sessionSto
 import type { Session } from '../../../types';
 import { clearLiveDraft } from '../../../utils/liveDraftStore';
 import { logger } from '../../../utils/logger';
+import { closeAiTab, reorderTab } from '../../../services/agentOps';
+import { isLibraryRuntimeHosting } from '../../../services/libraryRuntime';
+import { runtimeTabIndexFor } from '../../../services/runtimeMirror';
+import type { TabRefRecord } from '../../../../shared/maestro-lib/store/records';
 import {
 	closeBrowserTab as closeBrowserTabHelper,
 	hasActiveWizard,
@@ -38,6 +42,8 @@ export function useUnifiedTabHandlers({
 	// index spaces whenever a hidden or tiled tab is present.
 	const handleUnifiedTabReorder = useCallback((sourceTabId: string, targetTabId: string) => {
 		const { setSessions, activeSessionId } = useSessionStore.getState();
+		let movedRef: TabRefRecord | undefined;
+		let nextOrder: TabRefRecord[] = [];
 		setSessions((prev: Session[]) =>
 			prev.map((s) => {
 				if (s.id !== activeSessionId) return s;
@@ -48,9 +54,19 @@ export function useUnifiedTabHandlers({
 					moved: updated !== s,
 					order: updated.unifiedTabOrder.map((r) => `${r.type}:${r.id.slice(0, 8)}`),
 				});
+				if (updated !== s) {
+					movedRef = updated.unifiedTabOrder.find((ref) => ref.id === sourceTabId);
+					nextOrder = updated.unifiedTabOrder as TabRefRecord[];
+				}
 				return updated;
 			})
 		);
+		// Hosted: the runtime owns the order of the refs it holds (DM7), so the move is a command. The index
+		// counts only those refs; one the runtime has not heard of yet is placed by this window's next fold.
+		if (isLibraryRuntimeHosting() && movedRef) {
+			const toIndex = runtimeTabIndexFor(activeSessionId, nextOrder, movedRef);
+			if (toIndex !== undefined) void reorderTab(activeSessionId, movedRef, toIndex);
+		}
 	}, []);
 
 	const closeRefs = useCallback(
@@ -75,6 +91,17 @@ export function useUnifiedTabHandlers({
 					return applyUnifiedTabClosures(s, refsToClose);
 				})
 			);
+
+			// Hosted: each AI tab that closed is archived by the runtime, in the order this window closed
+			// them. The active tab always survives these three operations, so none needs a replacement.
+			if (isLibraryRuntimeHosting()) {
+				const aiIds = refsToClose.filter((ref) => ref.type === 'ai').map((ref) => ref.id);
+				if (aiIds.length > 0) {
+					void (async () => {
+						for (const tabId of aiIds) await closeAiTab(activeSessionId, tabId);
+					})();
+				}
+			}
 
 			for (const tabId of terminalTabIds) {
 				// Diagnostic: bulk close is a separate terminal-removal path from the

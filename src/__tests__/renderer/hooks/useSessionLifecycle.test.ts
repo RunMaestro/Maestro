@@ -36,7 +36,13 @@ import { createGroupFromTabRefs } from '../../../renderer/utils/panelLayout';
 import { notifyToast } from '../../../renderer/stores/notificationStore';
 import { isLibraryRuntimeHosting } from '../../../renderer/services/libraryRuntime';
 import { persistGroupsToRuntime } from '../../../renderer/services/runtimeMirror';
-import { removeAgent } from '../../../renderer/services/agentOps';
+import {
+	removeAgent,
+	renameAiTab,
+	setAiTabStarred,
+	updateAgent,
+} from '../../../renderer/services/agentOps';
+import { onStarredSessionsChanged } from '../../../renderer/utils/starredSessions';
 
 vi.mock('../../../renderer/stores/notificationStore', () => ({ notifyToast: vi.fn() }));
 
@@ -58,6 +64,9 @@ vi.mock('../../../renderer/services/runtimeMirror', async () => {
 
 vi.mock('../../../renderer/services/agentOps', () => ({
 	removeAgent: vi.fn(async () => ({ ok: true, value: undefined })),
+	renameAiTab: vi.fn(async () => ({ ok: true, value: undefined })),
+	setAiTabStarred: vi.fn(async () => ({ ok: true, value: undefined })),
+	updateAgent: vi.fn(async () => ({ ok: true, value: { applied: [] } })),
 }));
 
 // ============================================================================
@@ -2451,6 +2460,292 @@ describe('useSessionLifecycle when the library runtime is hosted', () => {
 			const updater = mockSetRemovedWorktreePaths.mock.calls[0][0];
 			expect(Array.from(updater(new Set<string>()))).toEqual(['/projects/myapp-wt']);
 			expect(removeAgent).toHaveBeenCalledWith('wt-1');
+		});
+	});
+
+	describe('handleSaveEditAgent', () => {
+		beforeEach(() => {
+			vi.mocked(updateAgent).mockResolvedValue({ ok: true, value: { applied: [] } });
+		});
+		const save = (
+			sessionId: string,
+			name: string,
+			...rest: Parameters<ReturnType<typeof useSessionLifecycle>['handleSaveEditAgent']> extends [
+				unknown,
+				unknown,
+				...infer R,
+			]
+				? R
+				: never
+		) => {
+			const { result } = renderHook(() => useSessionLifecycle(createDeps()));
+			act(() => {
+				result.current.handleSaveEditAgent(sessionId, name, ...rest);
+			});
+		};
+
+		it('sends one agents.update with only what changed, and leaves the store to the runtime answer', () => {
+			const session = createMockSession({ id: 'session-1', name: 'Old Name', customModel: 'opus' });
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+
+			save(
+				'session-1',
+				'New Name',
+				undefined,
+				'nudge',
+				undefined,
+				undefined,
+				undefined,
+				undefined,
+				'opus'
+			);
+
+			expect(updateAgent).toHaveBeenCalledTimes(1);
+			expect(updateAgent).toHaveBeenCalledWith('session-1', {
+				name: 'New Name',
+				nudgeMessage: 'nudge',
+			});
+			// The command's answer edits the store; the save itself does not.
+			expect(useSessionStore.getState().sessions[0].name).toBe('Old Name');
+		});
+
+		it('sends nothing for a save that changed nothing', () => {
+			const session = createMockSession({ id: 'session-1', name: 'Same' });
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+			save('session-1', 'Same');
+			expect(updateAgent).not.toHaveBeenCalled();
+		});
+
+		it('names a provider change, with every override field the form carries', () => {
+			const session = createMockSession({
+				id: 'session-1',
+				name: 'Alpha',
+				toolType: 'claude-code' as ToolType,
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+			save(
+				'session-1',
+				'Alpha',
+				'codex' as ToolType,
+				undefined,
+				undefined,
+				'/codex',
+				undefined,
+				undefined,
+				'gpt-5'
+			);
+			expect(updateAgent).toHaveBeenCalledWith(
+				'session-1',
+				expect.objectContaining({ provider: 'codex', customPath: '/codex', model: 'gpt-5' })
+			);
+		});
+
+		it('shows what a provider switch could not park, from the runtime receipt', async () => {
+			vi.mocked(updateAgent).mockResolvedValue({
+				ok: true,
+				value: { applied: ['provider'], notices: ['A queued message lost its model.'] },
+			});
+			const session = createMockSession({
+				id: 'session-1',
+				name: 'Alpha',
+				toolType: 'claude-code' as ToolType,
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+			save('session-1', 'Alpha', 'codex' as ToolType);
+			await act(async () => {
+				await Promise.resolve();
+			});
+			expect(notifyToast).toHaveBeenCalledWith({
+				color: 'yellow',
+				title: 'Switched to Codex',
+				message: 'A queued message lost its model.',
+			});
+		});
+
+		it('says nothing about a switch that parked everything', async () => {
+			const session = createMockSession({
+				id: 'session-1',
+				name: 'Alpha',
+				toolType: 'claude-code' as ToolType,
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+			save('session-1', 'Alpha', 'codex' as ToolType);
+			await act(async () => {
+				await Promise.resolve();
+			});
+			expect(notifyToast).not.toHaveBeenCalled();
+		});
+
+		it('moves the directory through the patch, and refuses it with a notice while the agent runs', () => {
+			const idle = createMockSession({
+				id: 'session-1',
+				name: 'Alpha',
+				cwd: '/old',
+				state: 'idle',
+			});
+			useSessionStore.setState({ sessions: [idle], activeSessionId: 'session-1' });
+			save('session-1', 'Alpha', ...Array(18).fill(undefined), '/new');
+			expect(updateAgent).toHaveBeenLastCalledWith('session-1', { cwd: '/new' });
+
+			vi.mocked(updateAgent).mockClear();
+			const busy = createMockSession({
+				id: 'session-1',
+				name: 'Alpha',
+				cwd: '/old',
+				state: 'busy',
+			});
+			useSessionStore.setState({ sessions: [busy], activeSessionId: 'session-1' });
+			save('session-1', 'Alpha', ...Array(18).fill(undefined), '/new');
+			expect(updateAgent).not.toHaveBeenCalled();
+			expect(notifyToast).toHaveBeenCalledWith(
+				expect.objectContaining({ title: 'Working directory not changed' })
+			);
+		});
+
+		it('does nothing, quietly, for an agent this window does not hold', () => {
+			useSessionStore.setState({ sessions: [], activeSessionId: '' });
+			save('ghost', 'Whatever');
+			expect(updateAgent).not.toHaveBeenCalled();
+		});
+
+		it('makes none of the local writes the OFF save makes', () => {
+			const session = createMockSession({ id: 'session-1', name: 'Old' });
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+			save('session-1', 'New');
+			expect(useSessionStore.getState().sessions[0]).toBe(session);
+		});
+	});
+
+	describe('handleRenameTab', () => {
+		const rename = (name: string) => {
+			const tab = createMockAITab({
+				id: 'tab-1',
+				agentSessionId: 'agent-123',
+				name: 'Old',
+				isGeneratingName: true,
+			});
+			const session = createMockSession({
+				id: 'session-1',
+				toolType: 'claude-code' as any,
+				aiTabs: [tab],
+				activeTabId: 'tab-1',
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+			useModalStore.getState().openModal('renameTab', { tabId: 'tab-1', initialName: 'Old' });
+			const { result } = renderHook(() => useSessionLifecycle(createDeps()));
+			act(() => {
+				result.current.handleRenameTab(name);
+			});
+			return useSessionStore.getState().sessions[0].aiTabs[0];
+		};
+
+		it('renames the tab at once and sends the command, without the provider and History writes main now makes', () => {
+			const updated = rename('New Tab Name');
+			expect(updated.name).toBe('New Tab Name');
+			expect(updated.isGeneratingName).toBe(false);
+			expect(renameAiTab).toHaveBeenCalledWith('session-1', 'tab-1', 'New Tab Name');
+			expect(window.maestro.claude.updateSessionName).not.toHaveBeenCalled();
+			expect(window.maestro.agentSessions.setSessionName).not.toHaveBeenCalled();
+			expect(window.maestro.history.updateSessionName).not.toHaveBeenCalled();
+		});
+
+		it('clears the name for an empty or blank value, as the runtime does', () => {
+			expect(rename('').name).toBeNull();
+			expect(renameAiTab).toHaveBeenLastCalledWith('session-1', 'tab-1', '');
+			expect(rename('   ').name).toBeNull();
+		});
+
+		it('trims the name it shows to what the runtime will store', () => {
+			expect(rename('  Spaced  ').name).toBe('Spaced');
+		});
+
+		it('still renames a terminal tab locally, which is not a runtime tab', () => {
+			const session = createMockSession({
+				id: 'session-1',
+				terminalTabs: [
+					{
+						id: 'term-1',
+						name: null,
+						shellType: 'zsh',
+						pid: 1,
+						cwd: '/tmp',
+						createdAt: 1,
+						state: 'idle',
+					},
+				],
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+			useModalStore.getState().openModal('renameTab', { tabId: 'term-1', initialName: '' });
+			const { result } = renderHook(() => useSessionLifecycle(createDeps()));
+			act(() => {
+				result.current.handleRenameTab('shell');
+			});
+			expect(useSessionStore.getState().sessions[0].terminalTabs?.[0].name).toBe('shell');
+			expect(renameAiTab).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('toggleTabStar', () => {
+		const setup = (starred: boolean) => {
+			const tab = createMockAITab({ id: 'tab-1', starred, agentSessionId: 'ag-1' });
+			const session = createMockSession({
+				id: 'session-1',
+				toolType: 'claude-code' as any,
+				aiTabs: [tab],
+				activeTabId: 'tab-1',
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+			return renderHook(() => useSessionLifecycle(createDeps()));
+		};
+
+		it('stars the tab at once and sends the command, leaving the origin write to main', () => {
+			const { result } = setup(false);
+			act(() => {
+				result.current.toggleTabStar();
+			});
+			expect(useSessionStore.getState().sessions[0].aiTabs[0].starred).toBe(true);
+			expect(setAiTabStarred).toHaveBeenCalledWith('session-1', 'tab-1', true);
+			expect(window.maestro.claude.updateSessionStarred).not.toHaveBeenCalled();
+		});
+
+		it('unstars it the same way', () => {
+			const { result } = setup(true);
+			act(() => {
+				result.current.toggleTabStar();
+			});
+			expect(useSessionStore.getState().sessions[0].aiTabs[0].starred).toBe(false);
+			expect(setAiTabStarred).toHaveBeenCalledWith('session-1', 'tab-1', false);
+		});
+
+		it('tells the starred-sessions cache once the runtime has finished, not before', async () => {
+			let finish!: (value: { ok: true; value: undefined }) => void;
+			vi.mocked(setAiTabStarred).mockReturnValue(new Promise((resolve) => (finish = resolve)));
+			const changed = vi.fn();
+			const stop = onStarredSessionsChanged(changed);
+			const { result } = setup(false);
+			act(() => {
+				result.current.toggleTabStar();
+			});
+			expect(changed).not.toHaveBeenCalled();
+			await act(async () => {
+				finish({ ok: true, value: undefined });
+				await Promise.resolve();
+			});
+			expect(changed).toHaveBeenCalledTimes(1);
+			stop();
+		});
+
+		it('does not tell the cache when the runtime refused', async () => {
+			vi.mocked(setAiTabStarred).mockResolvedValue({ ok: false, message: 'no' });
+			const changed = vi.fn();
+			const stop = onStarredSessionsChanged(changed);
+			const { result } = setup(false);
+			await act(async () => {
+				result.current.toggleTabStar();
+				await Promise.resolve();
+			});
+			expect(changed).not.toHaveBeenCalled();
+			stop();
 		});
 	});
 

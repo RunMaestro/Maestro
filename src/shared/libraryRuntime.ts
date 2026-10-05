@@ -9,7 +9,12 @@
  * Design: `Plans/maestro-tui-desktop-migration.md` sections 4.1, 4.2 and 5.
  */
 
-import type { DesktopFoldResult } from './maestro-lib/agents/desktop-fold-types';
+import type {
+	DesktopCloseTabOptions,
+	DesktopCreateTabOptions,
+	DesktopFoldResult,
+} from './maestro-lib/agents/desktop-fold-types';
+import type { AgentRecord, TabRefRecord } from './maestro-lib/store/records';
 import type {
 	AgentCreateInput,
 	AgentPatch,
@@ -81,7 +86,12 @@ export type LibraryRuntimeCommand =
 	| { method: 'groups.rename'; groupId: string; name: string }
 	| { method: 'groups.update'; groupId: string; patch: GroupPatch }
 	| { method: 'groups.remove'; groupId: string }
-	| { method: 'groups.moveAgent'; agentId: string; groupId: string | null };
+	| { method: 'groups.moveAgent'; agentId: string; groupId: string | null }
+	| { method: 'tabs.create'; agentId: string; options?: DesktopCreateTabOptions }
+	| { method: 'tabs.rename'; agentId: string; tabId: string; name: string }
+	| { method: 'tabs.close'; agentId: string; tabId: string; options?: DesktopCloseTabOptions }
+	| { method: 'tabs.star'; agentId: string; tabId: string; starred: boolean }
+	| { method: 'tabs.reorder'; agentId: string; ref: TabRefRecord; toIndex: number };
 
 export interface LibraryRuntimeCommandRequest {
 	/** Chosen by the caller; stamped on every event the command causes. */
@@ -97,6 +107,12 @@ export interface LibraryRuntimeCommandAnswer {
 	 * a revision it already holds).
 	 */
 	changes: LibraryRuntimeEventMessage[];
+	/**
+	 * Set when the command failed and names an agent the runtime holds: that agent as the runtime has it now
+	 * (transcripts left out) and its revision. A window that applied the change optimistically snaps to it,
+	 * since a refusal raises no event to correct the screen.
+	 */
+	authoritative?: { agent: AgentRecord; rev: number };
 }
 
 export interface LibraryRuntimeFoldAnswer extends DesktopFoldResult {

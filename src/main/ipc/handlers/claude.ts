@@ -17,6 +17,7 @@
 import { ipcMain, BrowserWindow } from 'electron';
 import type { ClaudeSessionOrigin, ClaudeSessionOriginsData } from '../../stores/types';
 import { setClaudeSessionOrigin } from '../../storage/claude-session-origins';
+import { setClaudeSessionStar } from '../../storage/session-star';
 import path from 'path';
 import os from 'os';
 import fs from 'fs/promises';
@@ -36,10 +37,6 @@ import {
 import { app } from 'electron';
 import { captureException } from '../../utils/sentry';
 import { isExpectedSessionReadError } from '../../utils/session-read-errors';
-import {
-	snapshotStarredTranscript,
-	releaseTranscriptMirror,
-} from '../../storage/starred-transcript-mirror';
 
 /**
  * Legacy global stats cache structure for deprecated claude:getGlobalStats handler.
@@ -1712,32 +1709,14 @@ export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 		withIpcErrorLogging(
 			handlerOpts('updateSessionStarred', ORIGINS_LOG_CONTEXT),
 			async (projectPath: string, agentSessionId: string, starred: boolean) => {
-				const starEntry = setClaudeSessionOrigin(
-					claudeSessionOriginsStore,
-					projectPath,
-					agentSessionId,
-					{ starred }
-				);
+				// Mirrors the transcript on star / drops it on unstar so the conversation survives
+				// provider-side deletion. Fire-and-forget inside: the star must not wait on disk I/O.
+				setClaudeSessionStar(claudeSessionOriginsStore, projectPath, agentSessionId, starred);
 				logger.debug(
 					`Updated Claude session starred: ${agentSessionId} = ${starred}`,
 					ORIGINS_LOG_CONTEXT,
 					{ projectPath }
 				);
-
-				// Mirror the transcript on star / drop it on unstar so the conversation
-				// survives provider-side deletion. Fire-and-forget - see the generic
-				// agentSessions:setSessionStarred handler for the rationale.
-				const starSessionName = typeof starEntry === 'object' ? starEntry.sessionName : undefined;
-				if (starred) {
-					void snapshotStarredTranscript({
-						agentId: 'claude-code',
-						projectPath,
-						sessionId: agentSessionId,
-						sessionName: starSessionName,
-					});
-				} else {
-					void releaseTranscriptMirror({ agentId: 'claude-code', sessionId: agentSessionId });
-				}
 				return true;
 			}
 		)

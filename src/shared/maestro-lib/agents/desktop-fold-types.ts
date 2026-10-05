@@ -99,6 +99,30 @@ export interface DesktopSnapshot {
 	groupsRev: number;
 }
 
+/** What a desktop tab create may say (DG10). The client API's `tabs.create(agentId)` takes neither. */
+export interface DesktopCreateTabOptions {
+	/**
+	 * A client-chosen id, so the window's optimistic tab and the runtime's are one tab. Refused when empty
+	 * or unsafe as a file name. A tab the agent already shows under that id answers success and changes
+	 * nothing: a fold that adopted the tab first, or a command sent twice, must not fail the second time.
+	 */
+	tabId?: string;
+	/** Where the window put the tab in its own strip: directly after this ref, or first when `null`. */
+	placeAfter?: TabRefRecord | null;
+}
+
+/** What a desktop tab close may say (DG3, DG10). */
+export interface DesktopCloseTabOptions {
+	/**
+	 * `refuse` (the default, and what every other client gets): a tab with a turn running cannot be closed.
+	 * `orphan` (DM18, what Cmd+W does on the desktop today): the tab is archived now and the process is left
+	 * to finish, since stopping it is a separate act the person did not ask for.
+	 */
+	busy?: 'refuse' | 'orphan';
+	/** A client-chosen id for the replacement tab created when no tab of any kind survives. */
+	freshTabId?: string;
+}
+
 /**
  * What the desktop adds on top of the client API: the fold, the snapshot, the revisions, and the group
  * update. Present on a runtime started in mode `desktop`; the TUI and the detached host have none.
@@ -118,6 +142,19 @@ export interface DesktopRuntimeApi {
 	documents(): { sessions: SessionsDocument; groups: GroupsDocument };
 	/** DG8. A group's name, emoji, or parent, checked with `canSetGroupParent`. Write-through, like every command. */
 	updateGroup(groupId: string, patch: GroupPatch): Promise<ClientResult<void>>;
+	/** DG10. `tabs.create` with a client-chosen id and the window's own placement. */
+	createTab(
+		agentId: string,
+		options?: DesktopCreateTabOptions
+	): Promise<ClientResult<{ tabId: string }>>;
+	/** DG3, DG10. `tabs.close` that may orphan a running turn instead of refusing. */
+	closeTab(
+		agentId: string,
+		tabId: string,
+		options?: DesktopCloseTabOptions
+	): Promise<ClientResult<void>>;
+	/** DG7. Move one ref of `unifiedTabOrder`, any kind, so it sits at `toIndex` of the result. */
+	reorderTab(agentId: string, ref: TabRefRecord, toIndex: number): Promise<ClientResult<void>>;
 	/** Resolve once every accepted command and fold is on disk. */
 	flush(): Promise<void>;
 }

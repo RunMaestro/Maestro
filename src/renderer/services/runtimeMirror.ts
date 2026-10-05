@@ -32,7 +32,11 @@ import {
 } from '../../shared/maestro-lib/agents/fold-builder';
 import { GROUP_DOMAIN_KEYS } from '../../shared/maestro-lib/agents/ownership';
 import { valuesEqual } from '../../shared/maestro-lib/client/mirror';
-import type { AgentRecord, GroupRecord } from '../../shared/maestro-lib/store/records';
+import type {
+	AgentRecord,
+	GroupRecord,
+	TabRefRecord,
+} from '../../shared/maestro-lib/store/records';
 import type {
 	LibraryRuntimeCommand,
 	LibraryRuntimeCommandAnswer,
@@ -82,7 +86,10 @@ let fenced = false;
  * revision) are skipped.
  */
 let loaded = false;
-let early: Array<{ message: LibraryRuntimeEventMessage; options: { force?: boolean } }> = [];
+let early: Array<{
+	message: LibraryRuntimeEventMessage;
+	options: { force?: boolean; snap?: boolean };
+}> = [];
 /** Events apply one at a time, in arrival order: restoring an agent suspends. */
 let queue: Promise<void> = Promise.resolve();
 
@@ -213,12 +220,14 @@ function applyGroups(
 async function applyAgent(
 	record: AgentRecord,
 	rev: number | undefined,
-	options: { force?: boolean }
+	options: { force?: boolean; snap?: boolean }
 ): Promise<void> {
 	const id = record.id;
 	if (gone.has(id)) return;
 	const known = agents.get(id);
-	if (rev !== undefined && known && rev <= known.rev) return;
+	// A snap is the record of a command that FAILED: it raised no event and bumped no revision, so the
+	// revision it carries equals the one this window holds, and the stale test would drop it.
+	if (!options.snap && rev !== undefined && known && rev <= known.rev) return;
 	if (!options.force && (inFlight.get(id) ?? 0) > 0) {
 		const pending = held.get(id);
 		if (!pending || (rev ?? 0) >= (pending.rev ?? 0)) {
@@ -309,7 +318,7 @@ function applyFenced(reason: string): void {
  */
 export function applyRuntimeMessage(
 	message: LibraryRuntimeEventMessage,
-	options: { force?: boolean } = {}
+	options: { force?: boolean; snap?: boolean } = {}
 ): Promise<void> {
 	if (!loaded) {
 		early.push({ message, options });
@@ -397,6 +406,17 @@ export async function sendRuntimeCommand(
 	try {
 		const answer = await api.command({ commandId: generateId(), command });
 		for (const change of answer.changes) await applyRuntimeMessage(change, { force: true });
+		if (!answer.result.ok && answer.authoritative) {
+			// A refusal raises no event. An operation that applied its change first (a tab, a rename)
+			// is put back to what the runtime holds.
+			await applyRuntimeMessage(
+				{
+					event: { type: 'agent.updated', agent: answer.authoritative.agent },
+					rev: answer.authoritative.rev,
+				},
+				{ force: true, snap: true }
+			);
+		}
 		return answer;
 	} finally {
 		if (options.creating) pendingLocal.delete(options.creating.id);
@@ -416,6 +436,58 @@ export async function sendRuntimeCommand(
 			if (pending) void applyRuntimeMessage(pending);
 		}
 	}
+}
+
+// ---------------------------------------------------------------------------
+// Translating this window's strip positions into the runtime's
+// ---------------------------------------------------------------------------
+
+const refKey = (ref: TabRefRecord): string => `${ref.type}:${ref.id}`;
+
+/**
+ * The strip as the runtime last told this window about it. A window holds refs the runtime has not heard of
+ * yet (a file tab opened since the last fold), so an index counted over the window's whole strip names a
+ * different place in the runtime's shorter one. These two functions count over the refs both sides hold.
+ */
+function runtimeOrderKeys(agentId: string): Set<string> | undefined {
+	const mirror = agents.get(agentId);
+	return mirror ? new Set(mirror.baseline.order.map(refKey)) : undefined;
+}
+
+/**
+ * Where `ref` sits among the refs of `order` that the runtime also holds, or undefined when the runtime
+ * does not hold `ref` (nothing it could move: the window's fold places that ref relative to its neighbour).
+ * Pass the window's order AFTER the move.
+ */
+export function runtimeTabIndexFor(
+	agentId: string,
+	order: readonly TabRefRecord[],
+	ref: TabRefRecord
+): number | undefined {
+	const known = runtimeOrderKeys(agentId);
+	if (!known || !known.has(refKey(ref))) return undefined;
+	return order
+		.filter((entry) => known.has(refKey(entry)))
+		.findIndex((entry) => refKey(entry) === refKey(ref));
+}
+
+/**
+ * What a new tab at `index` of `order` sits after, in the runtime's terms: the nearest earlier ref the
+ * runtime holds; `null` when the tab leads the strip; `undefined` when refs precede it but the runtime
+ * holds none of them (it then places the tab by the placement setting).
+ */
+export function runtimeAnchorFor(
+	agentId: string,
+	order: readonly TabRefRecord[],
+	index: number
+): TabRefRecord | null | undefined {
+	if (index <= 0) return null;
+	const known = runtimeOrderKeys(agentId);
+	if (!known) return undefined;
+	for (let at = index - 1; at >= 0; at -= 1) {
+		if (known.has(refKey(order[at]))) return order[at];
+	}
+	return undefined;
 }
 
 // ---------------------------------------------------------------------------

@@ -41,11 +41,12 @@ import { resolveActiveNavTab } from './useNavigationHistory';
 import type { NavHistoryEntry } from './useNavigationHistory';
 import { captureException } from '../../utils/sentry';
 import { logger } from '../../utils/logger';
-import { persistTabStarred } from '../../utils/starredSessions';
+import { notifyStarredSessionsChanged, persistTabStarred } from '../../utils/starredSessions';
 import { toggleTabUnreadFilter } from '../../services/unreadFilters';
 import { isLibraryRuntimeHosting } from '../../services/libraryRuntime';
 import { persistGroupsToRuntime } from '../../services/runtimeMirror';
-import { removeAgent } from '../../services/agentOps';
+import { removeAgent, renameAiTab, setAiTabStarred, updateAgent } from '../../services/agentOps';
+import { buildAgentEditPatch } from '../../utils/agentEditPatch';
 import {
 	withWorkingDirectory,
 	workingDirectoryChangeBlocker,
@@ -211,6 +212,49 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 				notifyToast({ color: 'yellow', title: 'Working directory not changed', message: blocker });
 			}
 
+			// Hosted: the save is one `agents.update`. The runtime does the provider switch (parking every tab's
+			// session and the outgoing provider's overrides, as `switchAgentProvider` does here), the
+			// directory move, and the config fields in one validated write. The window then applies the
+			// record it answers with, replaying the switch and the move on its own copy (DM9, DM10).
+			if (isLibraryRuntimeHosting()) {
+				if (!current) return;
+				const patch = buildAgentEditPatch(current, {
+					name,
+					toolType,
+					nudgeMessage,
+					newSessionMessage,
+					customPath,
+					customArgs,
+					customEnvVars,
+					customEnvVarsDisabled,
+					customModel,
+					customEffort,
+					customContextWindow,
+					contextWindowSource,
+					sessionSshRemoteConfig,
+					enableMaestroP,
+					maestroPPath,
+					maestroPMode,
+					retryOnAvailabilityErrors,
+					retryOnTokenExhaustion,
+					additionalDirectories,
+					codexAutoResetOnExhaustion,
+					workingDirectory: relocateTo,
+				});
+				if (Object.keys(patch).length === 0) return;
+				void updateAgent(sessionId, patch).then((result) => {
+					const notices = result.ok ? result.value?.notices : undefined;
+					if (toolType && notices && notices.length > 0) {
+						notifyToast({
+							color: 'yellow',
+							title: `Switched to ${getAgentDisplayName(toolType)}`,
+							message: notices.join(' '),
+						});
+					}
+				});
+				return;
+			}
+
 			// What a provider switch could not park, for the notice below (PS-3).
 			let switchNotices: string[] = [];
 
@@ -340,6 +384,22 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 						),
 					};
 				});
+				return;
+			}
+
+			// Hosted: the name is applied here at once and sent as a command. Main writes the provider's
+			// session name and relabels History for it, for a rename from any surface (4.9), so this
+			// window makes neither call.
+			if (isLibraryRuntimeHosting()) {
+				const trimmed = newName.trim();
+				updateSessionWith(activeSession.id, (s) => ({
+					...s,
+					aiTabs: s.aiTabs.map((t) =>
+						// Clear isGeneratingName to cancel any in-progress automatic naming
+						t.id === renameTabId ? { ...t, name: trimmed || null, isGeneratingName: false } : t
+					),
+				}));
+				void renameAiTab(activeSession.id, renameTabId, newName);
 				return;
 			}
 
@@ -560,6 +620,15 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 		if (!tab) return;
 
 		const newStarred = !tab.starred;
+		// Hosted: the star is a command; main writes the provider's origin record and the transcript
+		// mirror for it, and the Left Bar's starred cache is told once that is done.
+		if (isLibraryRuntimeHosting()) {
+			updateAiTab(session.id, tab.id, (t) => ({ ...t, starred: newStarred }));
+			void setAiTabStarred(session.id, tab.id, newStarred).then((result) => {
+				if (result.ok) notifyStarredSessionsChanged();
+			});
+			return;
+		}
 		updateSessionWith(session.id, (s) => {
 			// Persist starred status to session metadata (async) and broadcast the
 			// change so the Left Bar's starred-sessions cache refreshes. Uses

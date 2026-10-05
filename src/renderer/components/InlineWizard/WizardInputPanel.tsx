@@ -34,6 +34,8 @@ import {
 	Square,
 } from 'lucide-react';
 import type { Session, Theme } from '../../types';
+import { closeAiTab } from '../../services/agentOps';
+import { isLibraryRuntimeHosting } from '../../services/libraryRuntime';
 import { WizardPill } from './WizardPill';
 import { WizardConfidenceGauge } from './WizardConfidenceGauge';
 import { WizardExitConfirmDialog } from './WizardExitConfirmDialog';
@@ -233,6 +235,9 @@ export const WizardInputPanel = React.memo(function WizardInputPanel({
 					return result ? result.session : s;
 				})
 			);
+			// Hosted: the runtime archives the tab too. Another tab survives (`exitWillCloseTab`), so no
+			// replacement is made.
+			if (isLibraryRuntimeHosting()) void closeAiTab(session.id, activeTabId);
 			return;
 		}
 		onExitWizard();

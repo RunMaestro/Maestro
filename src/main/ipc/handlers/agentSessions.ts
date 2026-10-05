@@ -44,11 +44,11 @@ import type {
 } from '../../agents';
 import type { GlobalAgentStats, ProviderStats, SshRemoteConfig } from '../../../shared/types';
 import { setAgentSessionName } from '../../storage/agent-session-origins';
+import { setAgentSessionStar } from '../../storage/session-star';
 import { captureException } from '../../utils/sentry';
 import { isExpectedSessionReadError } from '../../utils/session-read-errors';
 import {
 	snapshotStarredTranscript,
-	releaseTranscriptMirror,
 	releaseSnoozedTranscriptMirror,
 	restoreStarredTranscript,
 	listMirroredStarredSessions,
@@ -834,39 +834,8 @@ export function registerAgentSessionsHandlers(deps?: AgentSessionsHandlerDepende
 					logger.warn('Origins store not available', LOG_CONTEXT);
 					return;
 				}
-				const allOrigins = originsStore.get('origins', {});
-				if (!allOrigins[agentId]) allOrigins[agentId] = {};
-				if (!allOrigins[agentId][projectPath]) allOrigins[agentId][projectPath] = {};
-
-				if (starred) {
-					allOrigins[agentId][projectPath][sessionId] = {
-						...allOrigins[agentId][projectPath][sessionId],
-						starred: true,
-					};
-				} else {
-					// Remove starred
-					const existing = allOrigins[agentId][projectPath][sessionId];
-					if (existing) {
-						delete existing.starred;
-						// Clean up if empty
-						if (!existing.sessionName && !existing.origin) {
-							delete allOrigins[agentId][projectPath][sessionId];
-						}
-					}
-				}
-				originsStore.set('origins', allOrigins);
+				setAgentSessionStar(originsStore, agentId, projectPath, sessionId, starred);
 				logger.info(`Set session starred for ${agentId}/${sessionId}: ${starred}`, LOG_CONTEXT);
-
-				// Keep Maestro's own transcript mirror in sync with the star: snapshot
-				// on star so the conversation survives provider-side deletion, drop the
-				// mirror on unstar so it ages out naturally again. Fire-and-forget - the
-				// star toggle must not block on disk I/O.
-				if (starred) {
-					const sessionName = allOrigins[agentId]?.[projectPath]?.[sessionId]?.sessionName;
-					void snapshotStarredTranscript({ agentId, projectPath, sessionId, sessionName });
-				} else {
-					void releaseTranscriptMirror({ agentId, sessionId });
-				}
 			}
 		)
 	);

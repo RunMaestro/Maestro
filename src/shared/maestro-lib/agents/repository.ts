@@ -69,6 +69,7 @@ import type {
 	GroupRecord,
 	GroupsDocument,
 	SessionsDocument,
+	TabRefRecord,
 } from '../store/records';
 import {
 	agentsOf,
@@ -86,7 +87,13 @@ import {
 	removeClosedTabArchive,
 } from './closed-tabs';
 import { applyDesktopFold } from './desktop-fold';
-import type { DesktopFold, DesktopFoldResult, DesktopSnapshot } from './desktop-fold-types';
+import type {
+	DesktopCloseTabOptions,
+	DesktopCreateTabOptions,
+	DesktopFold,
+	DesktopFoldResult,
+	DesktopSnapshot,
+} from './desktop-fold-types';
 import {
 	activeAgentAfterRemoval,
 	addTabRecord,
@@ -103,6 +110,7 @@ import {
 	checkAgentCreateInput,
 	checkAgentName,
 	closeTabRecord,
+	reorderUnifiedTabOrder,
 	DEFAULT_GROUP_EMOJI,
 	DEFAULT_RULE_CONTEXT,
 	DEFAULT_TAB_DEFAULTS,
@@ -223,9 +231,18 @@ export interface AgentRepository {
 	removeGroup(groupId: string): Promise<ClientResult<void>>;
 	moveAgentToGroup(agentId: string, groupId: string | null): Promise<ClientResult<void>>;
 
-	createTab(agentId: string): Promise<ClientResult<{ tabId: string }>>;
+	createTab(
+		agentId: string,
+		options?: DesktopCreateTabOptions
+	): Promise<ClientResult<{ tabId: string }>>;
 	renameTab(agentId: string, tabId: string, name: string): Promise<ClientResult<void>>;
-	closeTab(agentId: string, tabId: string): Promise<ClientResult<void>>;
+	closeTab(
+		agentId: string,
+		tabId: string,
+		options?: DesktopCloseTabOptions
+	): Promise<ClientResult<void>>;
+	/** DG7. Move one ref of `unifiedTabOrder` (any kind) so it sits at `toIndex` of the result. */
+	reorderTab(agentId: string, ref: TabRefRecord, toIndex: number): Promise<ClientResult<void>>;
 	starTab(agentId: string, tabId: string, starred: boolean): Promise<ClientResult<void>>;
 	updateTab(agentId: string, tabId: string, patch: TabPatch): Promise<ClientResult<void>>;
 	/**
@@ -1142,12 +1159,33 @@ export function createAgentRepository(options: AgentRepositoryOptions): AgentRep
 		});
 	}
 
-	function createTab(agentId: string): Promise<ClientResult<{ tabId: string }>> {
+	function createTab(
+		agentId: string,
+		options: DesktopCreateTabOptions = {}
+	): Promise<ClientResult<{ tabId: string }>> {
 		const method: ClientMethod = 'tabs.create';
 		return run(method, async () => {
 			const agent = findAgent(agentId);
 			if (!agent) return noAgent(method, agentId);
-			const { agent: next, tab } = addTabRecord(agent, ctx, await readTabDefaults());
+			// A client-chosen id (DG10): the window's optimistic tab and this one are the same tab.
+			if (options.tabId !== undefined) {
+				if (!options.tabId.trim()) return failure(method, 'invalid', 'The tab id cannot be empty.');
+				if (!isSafeFileId(options.tabId)) {
+					return failure(method, 'invalid', `"${options.tabId}" cannot be used as a tab id.`);
+				}
+				const held = agent.aiTabs?.find((tab) => tab.id === options.tabId);
+				// Already there and drawn: the answer is the same as for the first time, with nothing to say.
+				if (held && held.hidden !== true) {
+					return { ok: true, plan: { value: { tabId: held.id }, events: [] } };
+				}
+				if (held) {
+					return failure(method, 'invalid', `The tab id "${options.tabId}" is already in use.`);
+				}
+			}
+			const { agent: next, tab } = addTabRecord(agent, ctx, await readTabDefaults(), {
+				...(options.tabId !== undefined ? { id: options.tabId } : {}),
+				...(options.placeAfter !== undefined ? { placeAfter: options.placeAfter } : {}),
+			});
 			return {
 				ok: true,
 				plan: {
@@ -1266,20 +1304,40 @@ export function createAgentRepository(options: AgentRepositoryOptions): AgentRep
 	 * open and also archived. A tab with a turn running is refused until it stops,
 	 * since closing it would orphan a process whose output nothing could record.
 	 */
-	function closeTab(agentId: string, tabId: string): Promise<ClientResult<void>> {
+	function closeTab(
+		agentId: string,
+		tabId: string,
+		options: DesktopCloseTabOptions = {}
+	): Promise<ClientResult<void>> {
 		const method: ClientMethod = 'tabs.close';
 		return run(method, async () => {
 			const agent = findAgent(agentId);
 			if (!agent) return noAgent(method, agentId);
 			if (!visibleTab(agent, tabId)) return noTab(method, tabId);
-			if (processes.isBusy(agentId, tabId)) {
+			// DG3: the desktop orphans a running turn (the archive is taken now and the process finishes
+			// on its own); every other client is refused, since nothing could record the output.
+			if (options.busy !== 'orphan' && processes.isBusy(agentId, tabId)) {
 				return failure(
 					method,
 					'rejected',
 					'The tab has a turn running. Stop it before closing the tab.'
 				);
 			}
-			const outcome = closeTabRecord(agent, tabId, ctx, await readTabDefaults());
+			if (options.freshTabId !== undefined) {
+				if (!options.freshTabId.trim() || !isSafeFileId(options.freshTabId)) {
+					return failure(method, 'invalid', `"${options.freshTabId}" cannot be used as a tab id.`);
+				}
+				if (agent.aiTabs?.some((tab) => tab.id === options.freshTabId)) {
+					return failure(
+						method,
+						'invalid',
+						`The tab id "${options.freshTabId}" is already in use.`
+					);
+				}
+			}
+			const outcome = closeTabRecord(agent, tabId, ctx, await readTabDefaults(), {
+				...(options.freshTabId !== undefined ? { freshTabId: options.freshTabId } : {}),
+			});
 			if (!outcome) return noTab(method, tabId);
 			const events: MaestroEvent[] = [{ type: 'tab.removed', agentId, tabId }];
 			if (outcome.freshTab) {
@@ -1293,6 +1351,36 @@ export function createAgentRepository(options: AgentRepositoryOptions): AgentRep
 					before: () => archiveClosedTab(paths.syncDir, agentId, outcome.closed),
 					sessions: withAgents(new Map([[agentId, outcome.agent]])),
 					events,
+				},
+			};
+		});
+	}
+
+	/**
+	 * DG7. Reorder one ref of the strip. The order is the agent's `unifiedTabOrder`, so any kind of tab
+	 * moves the same way. A ref the order does not hold is not found: the window moved something it has
+	 * not folded yet, and its fold places that ref relative to the one before it.
+	 */
+	function reorderTab(
+		agentId: string,
+		ref: TabRefRecord,
+		toIndex: number
+	): Promise<ClientResult<void>> {
+		const method: ClientMethod = 'tabs.reorder';
+		return run(method, () => {
+			const agent = findAgent(agentId);
+			if (!agent) return noAgent(method, agentId);
+			const order = Array.isArray(agent.unifiedTabOrder) ? agent.unifiedTabOrder : [];
+			const moved = reorderUnifiedTabOrder(order, ref, toIndex);
+			if (!moved) return noTab(method, ref.id);
+			if (valuesEqual(moved, order)) return { ok: true, plan: { value: undefined, events: [] } };
+			const next: AgentRecord = { ...agent, unifiedTabOrder: moved };
+			return {
+				ok: true,
+				plan: {
+					value: undefined,
+					sessions: withAgents(new Map([[agentId, next]])),
+					events: [{ type: 'agent.updated', agent: project(next) }],
 				},
 			};
 		});
@@ -1435,6 +1523,7 @@ export function createAgentRepository(options: AgentRepositoryOptions): AgentRep
 		createTab,
 		renameTab,
 		closeTab,
+		reorderTab,
 		starTab,
 		updateTab,
 		appendTranscript,

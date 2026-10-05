@@ -325,6 +325,32 @@ export function insertAfterActiveInUnifiedTabOrder(
 	return [...order.slice(0, active + 1), ref, ...order.slice(active + 1)];
 }
 
+/** What a desktop create may say about the tab it adds (DG10). */
+export interface AddTabOptions {
+	/** A client-chosen id, already checked. Absent: the context makes one. */
+	id?: string;
+	/**
+	 * Where the caller put the tab in its own strip: directly after this ref, or first when `null`. The
+	 * runtime's own record of "the tab the person is looking at" lags the window's, so the placement
+	 * setting alone would put the ref somewhere the window did not. A ref the order does not hold falls
+	 * back to the placement setting.
+	 */
+	placeAfter?: TabRefRecord | null;
+}
+
+/** `ref` directly after `after` (first when `null`), or `undefined` when `after` is not in the order. */
+function insertAfterRefInUnifiedTabOrder(
+	agent: AgentRecord,
+	ref: TabRefRecord,
+	after: TabRefRecord | null
+): TabRefRecord[] | undefined {
+	const order = Array.isArray(agent.unifiedTabOrder) ? agent.unifiedTabOrder : [];
+	if (after === null) return [ref, ...order];
+	const at = order.findIndex((entry) => entry.type === after.type && entry.id === after.id);
+	if (at === -1) return undefined;
+	return [...order.slice(0, at + 1), ref, ...order.slice(at + 1)];
+}
+
 /**
  * Add a fresh AI tab. It is inserted by the placement setting and never made the
  * active one: a create from a script must not move what the person is looking at
@@ -333,17 +359,19 @@ export function insertAfterActiveInUnifiedTabOrder(
 export function addTabRecord(
 	agent: AgentRecord,
 	ctx: RuleContext,
-	defaults: TabDefaults
+	defaults: TabDefaults,
+	options: AddTabOptions = {}
 ): { agent: AgentRecord; tab: AITabRecord } {
-	const tab = buildTabRecord(ctx, defaults);
+	const tab = buildTabRecord(ctx, defaults, options.id);
+	const ref: TabRefRecord = { type: 'ai', id: tab.id };
+	const anchored =
+		options.placeAfter === undefined
+			? undefined
+			: insertAfterRefInUnifiedTabOrder(agent, ref, options.placeAfter);
 	const next: AgentRecord = {
 		...agent,
 		aiTabs: [...(Array.isArray(agent.aiTabs) ? agent.aiTabs : []), tab],
-		unifiedTabOrder: insertAfterActiveInUnifiedTabOrder(
-			agent,
-			{ type: 'ai', id: tab.id },
-			defaults.placement
-		),
+		unifiedTabOrder: anchored ?? insertAfterActiveInUnifiedTabOrder(agent, ref, defaults.placement),
 	};
 	// An agent that had no AI tab to point at (only non-AI tabs were open) now has one.
 	if (!agent.activeTabId) next.activeTabId = tab.id;
@@ -459,6 +487,12 @@ export function recordConsultAnswerRecord(
 		: appended;
 }
 
+/** What a desktop close may say about the tab it replaces the closed one with (DG10). */
+export interface CloseTabOptions {
+	/** A client-chosen id for the replacement tab, already checked, so the window's copy and the runtime's are one tab. */
+	freshTabId?: string;
+}
+
 export interface CloseTabOutcome {
 	agent: AgentRecord;
 	/** What the archive receives. */
@@ -483,7 +517,8 @@ export function closeTabRecord(
 	agent: AgentRecord,
 	tabId: string,
 	ctx: RuleContext,
-	defaults: TabDefaults
+	defaults: TabDefaults,
+	options: CloseTabOptions = {}
 ): CloseTabOutcome | null {
 	const tabs = Array.isArray(agent.aiTabs) ? agent.aiTabs : [];
 	const index = tabs.findIndex((tab) => tab.id === tabId);
@@ -503,7 +538,7 @@ export function closeTabRecord(
 
 	if (visible.length === 0 && otherTabs === 0) {
 		// Hidden consult tabs stay beside the replacement: they are the person's data.
-		freshTab = buildTabRecord(ctx, defaults);
+		freshTab = buildTabRecord(ctx, defaults, options.freshTabId);
 		aiTabs = [...aiTabs, freshTab];
 		order = [...order, { type: 'ai', id: freshTab.id }];
 		activeTabId = freshTab.id;
@@ -550,6 +585,25 @@ function neighbourTabId(
 export function renameTabRecord(tab: AITabRecord, name: string): AITabRecord {
 	const trimmed = name.trim();
 	return { ...tab, name: trimmed ? trimmed : null, isGeneratingName: false };
+}
+
+/**
+ * `order` with `ref` moved so it sits at `toIndex` of the result (DG7). The index counts every ref the
+ * order holds, any kind. It is clamped to the ends, so a window that counts fewer refs than the runtime
+ * (it has not folded a new file tab yet) still lands the move at the nearest end instead of failing.
+ * Returns `null` when `ref` is not in the order, and the same array when the move changes nothing.
+ */
+export function reorderUnifiedTabOrder(
+	order: readonly TabRefRecord[],
+	ref: TabRefRecord,
+	toIndex: number
+): TabRefRecord[] | null {
+	const from = order.findIndex((entry) => entry.type === ref.type && entry.id === ref.id);
+	if (from === -1) return null;
+	const without = order.filter((_, index) => index !== from);
+	const to = Math.min(Math.max(0, Math.trunc(toIndex)), without.length);
+	if (to === from) return [...order];
+	return [...without.slice(0, to), order[from], ...without.slice(to)];
 }
 
 /** What starting a turn on a tab writes: the message, whose provider owns the turn, and a consumed merge. */
@@ -879,6 +933,44 @@ export function buildAgentConfigPatch(patch: AgentPatch): {
 		put('newSessionMessage', 'newSessionMessage', patch.newSessionMessage);
 	}
 	if (patch.bookmarked !== undefined) put('bookmarked', 'bookmarked', patch.bookmarked);
+	// DG6: what Edit Agent writes beyond the CLI's fields. A blank value in a map is unset (`stripBlankEnvVars`).
+	if (patch.customProviderPath !== undefined) {
+		put('customProviderPath', 'customProviderPath', patch.customProviderPath);
+	}
+	if (patch.envDisabled !== undefined) {
+		const parked = patch.envDisabled === null ? null : stripBlankEnvVars(patch.envDisabled);
+		put(
+			'envDisabled',
+			'customEnvVarsDisabled',
+			parked && Object.keys(parked).length > 0 ? parked : null
+		);
+	}
+	if (patch.additionalDirectories !== undefined) {
+		const grants = patch.additionalDirectories;
+		put(
+			'additionalDirectories',
+			'additionalDirectories',
+			grants === null || grants.length === 0 ? null : [...grants]
+		);
+	}
+	if (patch.retryOnAvailabilityErrors !== undefined) {
+		put('retryOnAvailabilityErrors', 'retryOnAvailabilityErrors', patch.retryOnAvailabilityErrors);
+	}
+	if (patch.retryOnTokenExhaustion !== undefined) {
+		put('retryOnTokenExhaustion', 'retryOnTokenExhaustion', patch.retryOnTokenExhaustion);
+	}
+	if (patch.codexAutoResetOnExhaustion !== undefined) {
+		// Stored only when true, as on create: the flag's absence already means off.
+		put(
+			'codexAutoResetOnExhaustion',
+			'codexAutoResetOnExhaustion',
+			patch.codexAutoResetOnExhaustion === true ? true : null
+		);
+	}
+	if (patch.enableMaestroP !== undefined)
+		put('enableMaestroP', 'enableMaestroP', patch.enableMaestroP);
+	if (patch.maestroPPath !== undefined) put('maestroPPath', 'maestroPPath', patch.maestroPPath);
+	if (patch.maestroPMode !== undefined) put('maestroPMode', 'maestroPMode', patch.maestroPMode);
 	return { fields, patch: out };
 }
 

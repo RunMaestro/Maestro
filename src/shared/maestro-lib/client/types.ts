@@ -80,6 +80,7 @@ export type ClientMethod =
 	| 'tabs.rename'
 	| 'tabs.close'
 	| 'tabs.star'
+	| 'tabs.reorder'
 	| 'tabs.update'
 	| 'tabs.transcript'
 	| 'turns.send'
@@ -163,6 +164,10 @@ export interface AgentSshSettings {
 	/** An id from `settings.sshRemotes()`, or null for none. */
 	remoteId: string | null;
 	workingDirOverride?: string;
+	/** DG6. Keep the remote's History in step with this machine's. The desktop's Edit Agent sets it. */
+	syncHistory?: boolean;
+	/** DG6. Mirror History into the project directory. Kept even when SSH is off. */
+	shareHistoryToProjectDir?: boolean;
 }
 
 /** AG-2 and AG-3. */
@@ -242,6 +247,21 @@ export interface AgentPatch {
 	nudgeMessage?: string | null;
 	newSessionMessage?: string | null;
 	bookmarked?: boolean;
+	// DG6: the rest of what the desktop's Edit Agent writes. Each is a config field, so `null` clears it.
+	/** The provider binary (`customProviderPath`), distinct from the agent's own `customPath`. */
+	customProviderPath?: string | null;
+	/** Variables switched off in the editor: kept on the record, never spawned with. Replaces the whole map. */
+	envDisabled?: Record<string, string> | null;
+	/** Extra directories the agent may read and write. Replaces the whole list. */
+	additionalDirectories?: Array<string | Record<string, unknown>> | null;
+	retryOnAvailabilityErrors?: boolean | null;
+	retryOnTokenExhaustion?: boolean | null;
+	/** Codex only. Stored only when true: the flag's absence already means off. */
+	codexAutoResetOnExhaustion?: boolean | null;
+	/** The Claude token source. `false` is an explicit API choice, distinct from `null` (unset). */
+	enableMaestroP?: boolean | null;
+	maestroPPath?: string | null;
+	maestroPMode?: 'interactive' | 'dynamic' | null;
 }
 
 export type AgentPatchField = keyof AgentPatch;

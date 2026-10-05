@@ -73,6 +73,16 @@ export function agentPatchFromConfig(config: Record<string, unknown>): AgentPatc
 	take('nudgeMessage', 'nudgeMessage');
 	take('newSessionMessage', 'newSessionMessage');
 	take('bookmarked', 'bookmarked');
+	// DG6: what the desktop's Edit Agent writes beyond the CLI's fields.
+	take('customProviderPath', 'customProviderPath');
+	take('customEnvVarsDisabled', 'envDisabled');
+	take('additionalDirectories', 'additionalDirectories');
+	take('retryOnAvailabilityErrors', 'retryOnAvailabilityErrors');
+	take('retryOnTokenExhaustion', 'retryOnTokenExhaustion');
+	take('codexAutoResetOnExhaustion', 'codexAutoResetOnExhaustion');
+	take('enableMaestroP', 'enableMaestroP');
+	take('maestroPPath', 'maestroPPath');
+	take('maestroPMode', 'maestroPMode');
 	return patch as AgentPatch;
 }
 

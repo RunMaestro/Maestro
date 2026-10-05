@@ -26,12 +26,46 @@ vi.mock('../../../../../renderer/contexts/InlineWizardContext', () => ({
 
 vi.mock('../../../../../renderer/utils/runtimeContext', () => runtimeMocks);
 
+// Phase 9: the hosted-runtime flag defaults to false, so every test outside the hosted describe runs
+// the OFF path unchanged. The operations are mocked so a test sees the command, not the runtime.
+const hostedMocks = vi.hoisted(() => ({
+	isLibraryRuntimeHosting: vi.fn(() => false),
+	createAiTab: vi.fn(async () => ({ ok: true, value: { tabId: '' } })),
+	closeAiTab: vi.fn(async () => ({ ok: true, value: undefined })),
+	setAiTabStarred: vi.fn(async () => ({ ok: true, value: undefined })),
+	runtimeAnchorFor: vi.fn(() => undefined as unknown),
+}));
+
+vi.mock('../../../../../renderer/services/libraryRuntime', async () => {
+	const actual = await vi.importActual<
+		typeof import('../../../../../renderer/services/libraryRuntime')
+	>('../../../../../renderer/services/libraryRuntime');
+	return { ...actual, isLibraryRuntimeHosting: hostedMocks.isLibraryRuntimeHosting };
+});
+vi.mock('../../../../../renderer/services/agentOps', () => ({
+	createAiTab: hostedMocks.createAiTab,
+	closeAiTab: hostedMocks.closeAiTab,
+	setAiTabStarred: hostedMocks.setAiTabStarred,
+}));
+vi.mock('../../../../../renderer/services/runtimeMirror', async () => {
+	const actual = await vi.importActual<
+		typeof import('../../../../../renderer/services/runtimeMirror')
+	>('../../../../../renderer/services/runtimeMirror');
+	return { ...actual, runtimeAnchorFor: hostedMocks.runtimeAnchorFor };
+});
+
 describe('useAITabHandlers', () => {
 	beforeEach(() => {
 		resetTabHandlerStores();
 		clearDesktopAiTabSelections();
 		inlineWizardMocks.endWizard.mockClear();
 		runtimeMocks.isWebDesktop.mockReturnValue(false);
+		hostedMocks.isLibraryRuntimeHosting.mockReturnValue(false);
+		hostedMocks.createAiTab.mockClear();
+		hostedMocks.closeAiTab.mockClear();
+		hostedMocks.setAiTabStarred.mockClear();
+		hostedMocks.runtimeAnchorFor.mockReset();
+		hostedMocks.runtimeAnchorFor.mockReturnValue(undefined);
 	});
 
 	afterEach(() => {
@@ -320,5 +354,258 @@ describe('useAITabHandlers', () => {
 			true
 		);
 		expect(getSession().aiTabs[0].starred).toBe(true);
+	});
+});
+
+describe('useAITabHandlers when the library runtime is hosted', () => {
+	beforeEach(() => {
+		resetTabHandlerStores();
+		inlineWizardMocks.endWizard.mockClear();
+		runtimeMocks.isWebDesktop.mockReturnValue(false);
+		hostedMocks.isLibraryRuntimeHosting.mockReturnValue(true);
+		hostedMocks.createAiTab.mockClear();
+		hostedMocks.closeAiTab.mockClear();
+		hostedMocks.setAiTabStarred.mockClear();
+		hostedMocks.runtimeAnchorFor.mockReset();
+		hostedMocks.runtimeAnchorFor.mockReturnValue(undefined);
+	});
+
+	afterEach(() => {
+		hostedMocks.isLibraryRuntimeHosting.mockReturnValue(false);
+		cleanup();
+	});
+
+	describe('a new tab', () => {
+		it('appears at once under an id this window chose, and the runtime is told the same id', () => {
+			setupSession({ aiTabs: [createMockAITab({ id: 'ai-1' })] });
+			useSettingsStore.setState({
+				defaultSaveToHistory: false,
+				defaultShowThinking: 'sticky',
+			} as any);
+
+			const { result } = renderHook(() => useAITabHandlers());
+			act(() => {
+				result.current.handleNewTab();
+			});
+
+			const session = getSession();
+			expect(session.aiTabs).toHaveLength(2);
+			const created = session.aiTabs[1];
+			expect(created).toMatchObject({ saveToHistory: false, showThinking: 'sticky' });
+			expect(session.activeTabId).toBe(created.id);
+			expect(hostedMocks.createAiTab).toHaveBeenCalledTimes(1);
+			expect(hostedMocks.createAiTab).toHaveBeenCalledWith('test-session', created.id, undefined);
+		});
+
+		it('says where this window put the tab, in the runtime terms', () => {
+			const anchor = { type: 'ai', id: 'ai-1' };
+			hostedMocks.runtimeAnchorFor.mockReturnValue(anchor);
+			setupSession({ aiTabs: [createMockAITab({ id: 'ai-1' })] });
+
+			const { result } = renderHook(() => useAITabHandlers());
+			act(() => {
+				result.current.handleNewTab();
+			});
+
+			const created = getSession().aiTabs[1];
+			expect(hostedMocks.runtimeAnchorFor).toHaveBeenCalledTimes(1);
+			const [agentId, order, index] = hostedMocks.runtimeAnchorFor.mock.calls[0] as unknown as [
+				string,
+				Array<{ id: string }>,
+				number,
+			];
+			expect(agentId).toBe('test-session');
+			expect(order[index].id).toBe(created.id);
+			expect(hostedMocks.createAiTab).toHaveBeenCalledWith('test-session', created.id, anchor);
+		});
+
+		it('keeps the browser path: a web client asks the desktop for the tab', () => {
+			setupSession({ id: 'session-1', aiTabs: [createMockAITab({ id: 'ai-1' })] });
+			runtimeMocks.isWebDesktop.mockReturnValue(true);
+			const requestNewTab = vi.fn(() => new Promise(() => {}));
+			(
+				window.maestro.web as typeof window.maestro.web & { requestNewTab: typeof requestNewTab }
+			).requestNewTab = requestNewTab;
+
+			const { result } = renderHook(() => useAITabHandlers());
+			act(() => {
+				result.current.handleNewTab();
+			});
+
+			expect(requestNewTab).toHaveBeenCalledWith('session-1', false);
+			expect(hostedMocks.createAiTab).not.toHaveBeenCalled();
+		});
+
+		it('sends nothing when the setting is off', () => {
+			hostedMocks.isLibraryRuntimeHosting.mockReturnValue(false);
+			setupSession({ aiTabs: [createMockAITab({ id: 'ai-1' })] });
+			const { result } = renderHook(() => useAITabHandlers());
+			act(() => {
+				result.current.handleNewTab();
+			});
+			expect(getSession().aiTabs).toHaveLength(2);
+			expect(hostedMocks.createAiTab).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('closing a tab', () => {
+		it('closes it here and tells the runtime, which leaves a running turn to finish', () => {
+			setupSession({
+				aiTabs: [createMockAITab({ id: 'ai-1' }), createMockAITab({ id: 'ai-2' })],
+				activeTabId: 'ai-1',
+			});
+			const { result } = renderHook(() => useAITabHandlers());
+			act(() => {
+				result.current.handleTabClose('ai-2');
+			});
+			expect(getSession().aiTabs.map((tab) => tab.id)).toEqual(['ai-1']);
+			expect(hostedMocks.closeAiTab).toHaveBeenCalledTimes(1);
+			expect(hostedMocks.closeAiTab).toHaveBeenCalledWith('test-session', 'ai-2', {});
+		});
+
+		it('names the replacement tab when closing the last one made one', () => {
+			setupSession({ aiTabs: [createMockAITab({ id: 'ai-1' })], activeTabId: 'ai-1' });
+			const { result } = renderHook(() => useAITabHandlers());
+			act(() => {
+				result.current.handleTabClose('ai-1');
+			});
+			const [fresh] = getSession().aiTabs;
+			expect(fresh.id).not.toBe('ai-1');
+			expect(hostedMocks.closeAiTab).toHaveBeenCalledWith('test-session', 'ai-1', {
+				freshTabId: fresh.id,
+			});
+		});
+
+		it('waits for the confirmation of a draft before it sends anything', () => {
+			setupSession({
+				aiTabs: [createMockAITab({ id: 'ai-1' }), createMockAITab({ id: 'ai-2' })],
+				activeTabId: 'ai-1',
+			});
+			setLiveDraft('ai-2', 'unsent');
+			const { result } = renderHook(() => useAITabHandlers());
+			act(() => {
+				result.current.handleTabClose('ai-2');
+			});
+			expect(hostedMocks.closeAiTab).not.toHaveBeenCalled();
+			act(() => {
+				useModalStore.getState().modals.get('confirm')?.data?.onConfirm();
+			});
+			expect(hostedMocks.closeAiTab).toHaveBeenCalledWith('test-session', 'ai-2', {});
+		});
+
+		it('sends the close of a wizard tab too', async () => {
+			setupSession({
+				aiTabs: [
+					createMockAITab({ id: 'wizard-1', wizardState: { isActive: true } as any }),
+					createMockAITab({ id: 'ai-2' }),
+				],
+			});
+			const { result } = renderHook(() => useAITabHandlers());
+			act(() => {
+				result.current.handleTabClose('wizard-1');
+			});
+			expect(hostedMocks.closeAiTab).toHaveBeenCalledWith('test-session', 'wizard-1', {});
+			await vi.waitFor(() => expect(inlineWizardMocks.endWizard).toHaveBeenCalledWith('wizard-1'));
+		});
+
+		it('sends nothing for a tab that is not there', () => {
+			setupSession({ aiTabs: [createMockAITab({ id: 'ai-1' })] });
+			const { result } = renderHook(() => useAITabHandlers());
+			act(() => {
+				result.current.performTabClose('ghost');
+			});
+			expect(hostedMocks.closeAiTab).not.toHaveBeenCalled();
+		});
+
+		it('sends nothing when the setting is off', () => {
+			hostedMocks.isLibraryRuntimeHosting.mockReturnValue(false);
+			setupSession({
+				aiTabs: [createMockAITab({ id: 'ai-1' }), createMockAITab({ id: 'ai-2' })],
+			});
+			const { result } = renderHook(() => useAITabHandlers());
+			act(() => {
+				result.current.handleTabClose('ai-2');
+			});
+			expect(hostedMocks.closeAiTab).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('closing all tabs', () => {
+		it('closes every visible tab in order, naming the replacement on the last close only', async () => {
+			setupSession({
+				aiTabs: [
+					createMockAITab({ id: 'ai-1' }),
+					createMockAITab({ id: 'ai-2' }),
+					createMockAITab({ id: 'consult', hidden: true }),
+				],
+				activeTabId: 'ai-1',
+			});
+			const { result } = renderHook(() => useAITabHandlers());
+			await act(async () => {
+				result.current.handleCloseAllTabs();
+				await Promise.resolve();
+			});
+			const fresh = getSession().aiTabs.find((tab) => tab.id !== 'consult' && !tab.hidden)!;
+			await vi.waitFor(() => expect(hostedMocks.closeAiTab).toHaveBeenCalledTimes(2));
+			expect(hostedMocks.closeAiTab.mock.calls).toEqual([
+				['test-session', 'ai-1', {}],
+				['test-session', 'ai-2', { freshTabId: fresh.id }],
+			]);
+			// The hidden consult tab is never closed from here.
+			expect(hostedMocks.closeAiTab.mock.calls.map((call) => call[1])).not.toContain('consult');
+		});
+
+		it('waits for one close to answer before it sends the next', async () => {
+			let releaseFirst!: () => void;
+			hostedMocks.closeAiTab.mockImplementationOnce(
+				() =>
+					new Promise((resolve) => {
+						releaseFirst = () => resolve({ ok: true, value: undefined });
+					})
+			);
+			setupSession({
+				aiTabs: [createMockAITab({ id: 'ai-1' }), createMockAITab({ id: 'ai-2' })],
+				activeTabId: 'ai-1',
+			});
+			const { result } = renderHook(() => useAITabHandlers());
+			await act(async () => {
+				result.current.handleCloseAllTabs();
+				await Promise.resolve();
+			});
+			expect(hostedMocks.closeAiTab).toHaveBeenCalledTimes(1);
+			await act(async () => {
+				releaseFirst();
+				await Promise.resolve();
+				await Promise.resolve();
+			});
+			expect(hostedMocks.closeAiTab).toHaveBeenCalledTimes(2);
+		});
+	});
+
+	describe('starring a tab', () => {
+		it('stars it here and sends the command, leaving the provider write to main', () => {
+			setupSession({
+				aiTabs: [createMockAITab({ id: 'ai-1', agentSessionId: 'agent-1' })],
+				toolType: 'codex' as any,
+				projectRoot: '/repo',
+			});
+			const { result } = renderHook(() => useAITabHandlers());
+			act(() => {
+				result.current.handleTabStar('ai-1', true);
+			});
+			expect(getSession().aiTabs[0].starred).toBe(true);
+			expect(hostedMocks.setAiTabStarred).toHaveBeenCalledWith('test-session', 'ai-1', true);
+			expect(window.maestro.agentSessions.setSessionStarred).not.toHaveBeenCalled();
+		});
+
+		it('still does nothing for a tab with no provider session yet', () => {
+			setupSession({ aiTabs: [createMockAITab({ id: 'ai-1', agentSessionId: null })] });
+			const { result } = renderHook(() => useAITabHandlers());
+			act(() => {
+				result.current.handleTabStar('ai-1', true);
+			});
+			expect(getSession().aiTabs[0].starred).toBeFalsy();
+			expect(hostedMocks.setAiTabStarred).not.toHaveBeenCalled();
+		});
 	});
 });

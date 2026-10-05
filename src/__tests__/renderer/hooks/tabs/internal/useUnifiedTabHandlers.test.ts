@@ -45,10 +45,41 @@ vi.mock('../../../../../renderer/contexts/InlineWizardContext', () => ({
 	}),
 }));
 
+// Phase 9: the hosted-runtime flag defaults to false, so every test outside the hosted describe runs the
+// OFF path unchanged. The operations are mocked so a test sees the command, not the runtime.
+const hostedMocks = vi.hoisted(() => ({
+	isLibraryRuntimeHosting: vi.fn(() => false),
+	closeAiTab: vi.fn(async () => ({ ok: true, value: undefined })),
+	reorderTab: vi.fn(async () => ({ ok: true, value: undefined })),
+	runtimeTabIndexFor: vi.fn(() => undefined as number | undefined),
+}));
+
+vi.mock('../../../../../renderer/services/libraryRuntime', async () => {
+	const actual = await vi.importActual<
+		typeof import('../../../../../renderer/services/libraryRuntime')
+	>('../../../../../renderer/services/libraryRuntime');
+	return { ...actual, isLibraryRuntimeHosting: hostedMocks.isLibraryRuntimeHosting };
+});
+vi.mock('../../../../../renderer/services/agentOps', () => ({
+	closeAiTab: hostedMocks.closeAiTab,
+	reorderTab: hostedMocks.reorderTab,
+}));
+vi.mock('../../../../../renderer/services/runtimeMirror', async () => {
+	const actual = await vi.importActual<
+		typeof import('../../../../../renderer/services/runtimeMirror')
+	>('../../../../../renderer/services/runtimeMirror');
+	return { ...actual, runtimeTabIndexFor: hostedMocks.runtimeTabIndexFor };
+});
+
 describe('useUnifiedTabHandlers', () => {
 	beforeEach(() => {
 		resetTabHandlerStores();
 		inlineWizardMocks.endWizard.mockClear();
+		hostedMocks.isLibraryRuntimeHosting.mockReturnValue(false);
+		hostedMocks.closeAiTab.mockClear();
+		hostedMocks.reorderTab.mockClear();
+		hostedMocks.runtimeTabIndexFor.mockReset();
+		hostedMocks.runtimeTabIndexFor.mockReturnValue(undefined);
 	});
 
 	afterEach(() => {
@@ -329,5 +360,191 @@ describe('useUnifiedTabHandlers', () => {
 		});
 
 		expect(getSession().aiTabs.map((t) => t.id)).toEqual(['ai-1', 'ai-2']);
+	});
+});
+
+describe('useUnifiedTabHandlers when the library runtime is hosted', () => {
+	beforeEach(() => {
+		resetTabHandlerStores();
+		inlineWizardMocks.endWizard.mockClear();
+		hostedMocks.isLibraryRuntimeHosting.mockReturnValue(true);
+		hostedMocks.closeAiTab.mockClear();
+		hostedMocks.reorderTab.mockClear();
+		hostedMocks.runtimeTabIndexFor.mockReset();
+		hostedMocks.runtimeTabIndexFor.mockReturnValue(undefined);
+	});
+
+	afterEach(() => {
+		hostedMocks.isLibraryRuntimeHosting.mockReturnValue(false);
+		cleanup();
+	});
+
+	describe('reordering the strip', () => {
+		const twoTabs = () =>
+			setupSession({
+				aiTabs: [createMockAITab({ id: 'ai-1' }), createMockAITab({ id: 'ai-2' })],
+			});
+
+		it('moves the chip here and sends the move, with the index the runtime counts', () => {
+			twoTabs();
+			hostedMocks.runtimeTabIndexFor.mockReturnValue(1);
+			const { result } = renderHook(() => useUnifiedTabHandlers({ handleCloseFileTab: vi.fn() }));
+
+			act(() => {
+				result.current.handleUnifiedTabReorder('ai-1', 'ai-2');
+			});
+
+			expect(getSession().unifiedTabOrder).toEqual([
+				{ type: 'ai', id: 'ai-2' },
+				{ type: 'ai', id: 'ai-1' },
+			]);
+			// The order AFTER the move is what the index is counted over.
+			expect(hostedMocks.runtimeTabIndexFor).toHaveBeenCalledWith(
+				'test-session',
+				[
+					{ type: 'ai', id: 'ai-2' },
+					{ type: 'ai', id: 'ai-1' },
+				],
+				{ type: 'ai', id: 'ai-1' }
+			);
+			expect(hostedMocks.reorderTab).toHaveBeenCalledWith(
+				'test-session',
+				{ type: 'ai', id: 'ai-1' },
+				1
+			);
+		});
+
+		it('moves a tab of any kind the same way', () => {
+			setupSession({
+				aiTabs: [createMockAITab({ id: 'ai-1' })],
+				filePreviewTabs: [createMockFileTab({ id: 'file-1' })],
+				unifiedTabOrder: [
+					{ type: 'ai', id: 'ai-1' },
+					{ type: 'file', id: 'file-1' },
+				],
+			});
+			hostedMocks.runtimeTabIndexFor.mockReturnValue(0);
+			const { result } = renderHook(() => useUnifiedTabHandlers({ handleCloseFileTab: vi.fn() }));
+			act(() => {
+				result.current.handleUnifiedTabReorder('file-1', 'ai-1');
+			});
+			expect(hostedMocks.reorderTab).toHaveBeenCalledWith(
+				'test-session',
+				{ type: 'file', id: 'file-1' },
+				0
+			);
+		});
+
+		it('sends nothing when the runtime does not hold the tab yet: the next fold places it', () => {
+			twoTabs();
+			hostedMocks.runtimeTabIndexFor.mockReturnValue(undefined);
+			const { result } = renderHook(() => useUnifiedTabHandlers({ handleCloseFileTab: vi.fn() }));
+			act(() => {
+				result.current.handleUnifiedTabReorder('ai-1', 'ai-2');
+			});
+			expect(getSession().unifiedTabOrder[0]).toEqual({ type: 'ai', id: 'ai-2' });
+			expect(hostedMocks.reorderTab).not.toHaveBeenCalled();
+		});
+
+		it('sends nothing for a move that did not happen', () => {
+			twoTabs();
+			hostedMocks.runtimeTabIndexFor.mockReturnValue(0);
+			const { result } = renderHook(() => useUnifiedTabHandlers({ handleCloseFileTab: vi.fn() }));
+			act(() => {
+				result.current.handleUnifiedTabReorder('ai-1', 'gone');
+			});
+			expect(hostedMocks.reorderTab).not.toHaveBeenCalled();
+		});
+
+		it('sends nothing when the setting is off', () => {
+			hostedMocks.isLibraryRuntimeHosting.mockReturnValue(false);
+			twoTabs();
+			hostedMocks.runtimeTabIndexFor.mockReturnValue(1);
+			const { result } = renderHook(() => useUnifiedTabHandlers({ handleCloseFileTab: vi.fn() }));
+			act(() => {
+				result.current.handleUnifiedTabReorder('ai-1', 'ai-2');
+			});
+			expect(hostedMocks.reorderTab).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('closing a set of tabs', () => {
+		it('archives each AI tab it closed, in order, and not the other kinds', async () => {
+			setupSession({
+				aiTabs: [
+					createMockAITab({ id: 'ai-1' }),
+					createMockAITab({ id: 'ai-2' }),
+					createMockAITab({ id: 'ai-3' }),
+				],
+				filePreviewTabs: [createMockFileTab({ id: 'file-1' })],
+				activeTabId: 'ai-1',
+				unifiedTabOrder: [
+					{ type: 'ai', id: 'ai-1' },
+					{ type: 'file', id: 'file-1' },
+					{ type: 'ai', id: 'ai-2' },
+					{ type: 'ai', id: 'ai-3' },
+				],
+			});
+			const { result } = renderHook(() => useUnifiedTabHandlers({ handleCloseFileTab: vi.fn() }));
+
+			await act(async () => {
+				result.current.handleCloseOtherTabs();
+				await Promise.resolve();
+			});
+
+			await vi.waitFor(() => expect(hostedMocks.closeAiTab).toHaveBeenCalledTimes(2));
+			expect(hostedMocks.closeAiTab.mock.calls).toEqual([
+				['test-session', 'ai-2'],
+				['test-session', 'ai-3'],
+			]);
+		});
+
+		it('does not send a tab it left open: a draft survives the bulk close', async () => {
+			setupSession({
+				aiTabs: [
+					createMockAITab({ id: 'ai-1' }),
+					createMockAITab({ id: 'ai-2', inputValue: 'draft' }),
+					createMockAITab({ id: 'ai-3' }),
+				],
+				activeTabId: 'ai-1',
+			});
+			const { result } = renderHook(() => useUnifiedTabHandlers({ handleCloseFileTab: vi.fn() }));
+			await act(async () => {
+				result.current.handleCloseTabsRight();
+				await Promise.resolve();
+			});
+			await vi.waitFor(() => expect(hostedMocks.closeAiTab).toHaveBeenCalledTimes(1));
+			expect(hostedMocks.closeAiTab).toHaveBeenCalledWith('test-session', 'ai-3');
+		});
+
+		it('sends nothing when it closed no AI tab', () => {
+			setupSession({
+				aiTabs: [createMockAITab({ id: 'ai-1' })],
+				filePreviewTabs: [createMockFileTab({ id: 'file-1' })],
+				activeTabId: 'ai-1',
+				unifiedTabOrder: [
+					{ type: 'ai', id: 'ai-1' },
+					{ type: 'file', id: 'file-1' },
+				],
+			});
+			const { result } = renderHook(() => useUnifiedTabHandlers({ handleCloseFileTab: vi.fn() }));
+			act(() => {
+				result.current.handleCloseOtherTabs();
+			});
+			expect(hostedMocks.closeAiTab).not.toHaveBeenCalled();
+		});
+
+		it('sends nothing when the setting is off', () => {
+			hostedMocks.isLibraryRuntimeHosting.mockReturnValue(false);
+			setupSession({
+				aiTabs: [createMockAITab({ id: 'ai-1' }), createMockAITab({ id: 'ai-2' })],
+				activeTabId: 'ai-1',
+			});
+			const { result } = renderHook(() => useUnifiedTabHandlers({ handleCloseFileTab: vi.fn() }));
+			act(() => {
+				result.current.handleCloseTabsRight();
+			});
+			expect(hostedMocks.closeAiTab).not.toHaveBeenCalled();
+		});
 	});
 });
