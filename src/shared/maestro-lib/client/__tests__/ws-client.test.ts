@@ -91,6 +91,14 @@ describe('createWsMaestroClient', () => {
 			expect(bridge.connections).toHaveLength(0);
 		});
 
+		it('labels a detached host by what wrote the file', async () => {
+			bridge.writeDiscovery({ hostKind: 'headless' });
+			expect(await client.connection.discover()).toMatchObject({
+				ok: true,
+				value: { kind: 'headless', label: `headless pid ${process.pid}` },
+			});
+		});
+
 		it('says why no host was found: no file, then a stale pid', async () => {
 			bridge.removeDiscovery();
 			const missing = await client.connection.discover();

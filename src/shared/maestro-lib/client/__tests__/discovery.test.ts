@@ -32,6 +32,8 @@ import * as path from 'path';
 
 import {
 	writeCliServerInfo,
+	writeCliServerInfoTo,
+	deleteCliServerInfoFrom,
 	readCliServerInfo,
 	readCliServerInfoFrom,
 	deleteCliServerInfo,
@@ -264,6 +266,7 @@ describe('cli-server-discovery', () => {
 			expect(mockFs.writeFileSync).toHaveBeenCalledWith(
 				expectedTmp,
 				JSON.stringify(sampleInfo, null, 2),
+				// The file holds the token and the CLI secret: owner-only.
 				{ encoding: 'utf-8', mode: 0o600 }
 			);
 			expect(mockFs.renameSync).toHaveBeenCalledWith(expectedTmp, expectedFile);
@@ -286,6 +289,19 @@ describe('cli-server-discovery', () => {
 			expect(mockFs.chmodSync.mock.invocationCallOrder[0]).toBeLessThan(
 				mockFs.renameSync.mock.invocationCallOrder[0]
 			);
+		});
+
+		it('should write into a data directory the caller resolved', () => {
+			const info: CliServerInfo = { ...sampleInfo, hostKind: 'headless', cliSecret: 's' };
+			writeCliServerInfoTo('/data/maestro', info);
+
+			const file = path.join('/data/maestro', 'cli-server.json');
+			expect(mockFs.writeFileSync).toHaveBeenCalledWith(
+				file + '.tmp',
+				JSON.stringify(info, null, 2),
+				{ encoding: 'utf-8', mode: 0o600 }
+			);
+			expect(mockFs.renameSync).toHaveBeenCalledWith(file + '.tmp', file);
 		});
 
 		it('should create directory if it does not exist', () => {
@@ -463,6 +479,25 @@ describe('cli-server-discovery', () => {
 			});
 
 			expect(() => deleteCliServerInfo()).not.toThrow();
+		});
+	});
+
+	describe('deleteCliServerInfoFrom', () => {
+		const file = path.join('/data/maestro', 'cli-server.json');
+
+		it('removes the file in a resolved directory', () => {
+			deleteCliServerInfoFrom('/data/maestro');
+			expect(mockFs.unlinkSync).toHaveBeenCalledWith(file);
+		});
+
+		it('removes it only while it still names the given pid', () => {
+			mockFs.readFileSync.mockReturnValue(JSON.stringify({ ...sampleInfo, pid: 7 }));
+
+			deleteCliServerInfoFrom('/data/maestro', 8);
+			expect(mockFs.unlinkSync).not.toHaveBeenCalled();
+
+			deleteCliServerInfoFrom('/data/maestro', 7);
+			expect(mockFs.unlinkSync).toHaveBeenCalledWith(file);
 		});
 	});
 

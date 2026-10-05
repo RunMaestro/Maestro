@@ -26,6 +26,10 @@ export * from './runtime/turns';
 export * from './runtime/autorun';
 export * from './runtime/providers';
 export * from './runtime/settings-watch';
+export * from './runtime/turn-options';
+export * from './runtime/file-logger';
+export * from './runtime/server';
+export * from './client/host-control';
 
 // Desktop bridge: find the running desktop (cli-server.json) and talk to it
 export * from './client/discovery';

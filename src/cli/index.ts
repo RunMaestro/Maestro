@@ -66,6 +66,7 @@ import {
 	cueEngineStatus,
 	cueEngineInspect,
 } from './commands/cue-engine';
+import { hostStart, hostStatus, hostStop } from './commands/host';
 import { createAgent } from './commands/create-agent';
 import { createGroup } from './commands/create-group';
 import { removeGroup } from './commands/remove-group';
@@ -1213,6 +1214,41 @@ program
 	.option('--dev', 'Use the development data directory')
 	.option('--doctor', 'Print the resolved paths and runtime state, then exit')
 	.action((options) => tui(options));
+
+// Host commands - run Maestro's runtime detached (no desktop) and control that process
+const host = program
+	.command('host')
+	.description('Run the Maestro runtime detached, with no desktop app, and control it');
+
+host
+	.command('start')
+	.description('Start a detached host that serves this data directory over the bridge')
+	.option('--data-dir <path>', 'Maestro data directory (default: resolved like the desktop app)')
+	.option('--dev', 'Use the development data directory')
+	.option('--port <port>', 'Port to listen on (default: any free port)')
+	.option(
+		'--foreground',
+		'Serve in this process instead of detaching (what the detached child runs)'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => hostStart(options, cliVersion));
+
+host
+	.command('status')
+	.description('Report the host: pid, uptime, lock holder, Cue state, and work in flight')
+	.option('--data-dir <path>', 'Maestro data directory (default: resolved like the desktop app)')
+	.option('--dev', 'Use the development data directory')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => hostStatus(options));
+
+host
+	.command('stop')
+	.description('Stop the host (refuses while a turn or Auto Run is in flight, unless --force)')
+	.option('--data-dir <path>', 'Maestro data directory (default: resolved like the desktop app)')
+	.option('--dev', 'Use the development data directory')
+	.option('--force', 'Stop even with work in flight; a run records how it ended first')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => hostStop(options));
 
 // Completions command - emit a shell completion script (introspects the program)
 program

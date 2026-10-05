@@ -41,6 +41,12 @@ export interface CliServerInfo {
 	 * stays closed to the CLI on such a build when Web Login is on.
 	 */
 	cliSecret?: string;
+	/**
+	 * Who wrote this file. Absent means the desktop app (every build before the
+	 * detached host); `headless` is `maestro-cli host`, which serves the same
+	 * bridge with no window. Read for the host label (`headless pid 812`).
+	 */
+	hostKind?: 'headless';
 }
 
 // Get the Maestro config directory path (lowercase "maestro")
@@ -67,10 +73,6 @@ function getConfigDir(): string {
 
 const DISCOVERY_FILE = 'cli-server.json';
 
-function getDiscoveryFilePath(): string {
-	return path.join(getConfigDir(), DISCOVERY_FILE);
-}
-
 /**
  * Owner-only permissions for the discovery file. The token in it grants full
  * control of the app, so other users on the machine must not read it. Ignored
@@ -79,13 +81,21 @@ function getDiscoveryFilePath(): string {
 const DISCOVERY_FILE_MODE = 0o600;
 
 /**
- * Write CLI server info atomically (write to .tmp then rename)
+ * Write CLI server info atomically (write to .tmp then rename). The file holds
+ * the token and the CLI secret, so it is created owner-only (0600).
  */
 export function writeCliServerInfo(info: CliServerInfo): void {
-	const filePath = getDiscoveryFilePath();
-	const dir = path.dirname(filePath);
-	if (!fs.existsSync(dir)) {
-		fs.mkdirSync(dir, { recursive: true });
+	writeCliServerInfoTo(getConfigDir(), info);
+}
+
+/**
+ * `writeCliServerInfo` for a data directory the caller resolved: a detached host
+ * serves the directory it was started on, which the environment may not name.
+ */
+export function writeCliServerInfoTo(userDataDir: string, info: CliServerInfo): void {
+	const filePath = path.join(userDataDir, DISCOVERY_FILE);
+	if (!fs.existsSync(userDataDir)) {
+		fs.mkdirSync(userDataDir, { recursive: true });
 	}
 	const tmpPath = filePath + '.tmp';
 	// `mode` only applies when the file is created, so a .tmp left over from an
@@ -160,9 +170,18 @@ export function isPidAlive(pid: number): boolean {
  * Delete the CLI server discovery file (called on shutdown)
  */
 export function deleteCliServerInfo(): void {
+	deleteCliServerInfoFrom(getConfigDir());
+}
+
+/**
+ * Delete the discovery file in a resolved data directory, but only while it still
+ * names `onlyIfPid`: a host that exits late must not remove the file a newer host
+ * has already published. Without `onlyIfPid` it is removed unconditionally.
+ */
+export function deleteCliServerInfoFrom(userDataDir: string, onlyIfPid?: number): void {
 	try {
-		const filePath = getDiscoveryFilePath();
-		fs.unlinkSync(filePath);
+		if (onlyIfPid !== undefined && readCliServerInfoFrom(userDataDir)?.pid !== onlyIfPid) return;
+		fs.unlinkSync(path.join(userDataDir, DISCOVERY_FILE));
 	} catch {
 		// File may not exist, ignore
 	}

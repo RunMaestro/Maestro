@@ -543,14 +543,15 @@ class WsMaestroClient implements MaestroClient {
 				`The Maestro desktop (pid ${info.pid}) is not running.`
 			);
 		}
+		const kind = info.hostKind === 'headless' ? 'headless' : 'desktop';
 		return ok({
 			info,
 			host: {
-				kind: 'desktop',
+				kind,
 				pid: info.pid,
 				...(info.version ? { version: info.version } : {}),
 				startedAt: info.startedAt,
-				label: `desktop pid ${info.pid}`,
+				label: `${kind} pid ${info.pid}`,
 			},
 		});
 	}

@@ -96,6 +96,8 @@ export interface MaestroRuntime extends MaestroClient {
 	 * work in flight) and replays them to a client that connects mid-run.
 	 */
 	readonly runs: Pick<RuntimeAutoRun, 'activeRuns' | 'latestState'>;
+	/** Chat turns running now. With `runs`, the work `host stop` refuses to cut off. */
+	turnsInFlight(): number;
 }
 
 /** What the status bar prints after `host: `. */
@@ -354,6 +356,7 @@ export async function createMaestroRuntime(options: MaestroRuntimeOptions): Prom
 			paths,
 			lock: lock.info,
 			runs: { activeRuns: autoRun.activeRuns, latestState: autoRun.latestState },
+			turnsInFlight: () => registry.size(),
 		},
 	};
 }
