@@ -88,6 +88,7 @@ import {
 } from '../../../main/group-chat/group-chat-router';
 import {
 	spawnModerator,
+	killModerator,
 	clearAllModeratorSessions,
 	getModeratorSessionId,
 	type IProcessManager,
@@ -2219,6 +2220,25 @@ describe('group-chat-router', () => {
 			);
 			// The participant's own session, never the moderator's or the user's agent.
 			expect(mockProcessManager.kill).toHaveBeenCalledWith(sessionId);
+		});
+	});
+
+	// ===========================================================================
+	// Stopping a running moderator (GD23 a)
+	// ===========================================================================
+	describe('stopping a running moderator', () => {
+		it('kills the running turn by its full session id, not the per-chat prefix', async () => {
+			const chat = await createTestChatWithModerator('Stop Moderator Test');
+			await routeUserMessage(chat.id, 'Start the work', mockProcessManager, mockAgentDetector);
+			const spawnedId = vi.mocked(mockProcessManager.spawn).mock.calls.at(-1)![0].sessionId;
+			const prefix = getModeratorSessionId(chat.id);
+			// ProcessManager.kill matches exact keys: the prefix names no running process
+			expect(spawnedId).not.toBe(prefix);
+			vi.mocked(mockProcessManager.kill).mockClear();
+
+			await killModerator(chat.id, mockProcessManager);
+
+			expect(mockProcessManager.kill).toHaveBeenCalledWith(spawnedId);
 		});
 	});
 });

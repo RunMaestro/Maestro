@@ -109,6 +109,33 @@ export { createGroupChatStore, extractFirstSentence } from './groupchat/storage'
 export type { GroupChatStore, GroupChatStoreOptions } from './groupchat/storage';
 export { appendToLog, readLog, saveImage, escapeContent, unescapeContent } from './groupchat/log';
 export type { GroupChatMessage } from './groupchat/log';
+// The engine: rounds, delegation, synthesis, recovery, watchdogs, over injected ports (Phase 8)
+export {
+	createGroupChatEngine,
+	isDeletedGroupChatFailure,
+	extractMentions,
+	extractAutoRunDirectives,
+} from './groupchat/router';
+export type { GroupChatEngine, GroupChatEngineOptions, AutoRunDirective } from './groupchat/router';
+export type {
+	GroupChatAgentDirectory,
+	GroupChatEventSink,
+	GroupChatLauncher,
+	GroupChatPromptId,
+	GroupChatSessionInfo,
+	GroupChatSpawn,
+	GroupChatTurnEnd,
+	GroupChatTurnRunner,
+	ModeratorUsage,
+	ParticipantState,
+} from './groupchat/types';
+export { createGroupChatTurnMetrics } from './groupchat/turn-metrics';
+export type { GroupChatTurnMetrics, GroupChatTurnSpans } from './groupchat/turn-metrics';
+export {
+	GROUP_CHAT_PREFIX,
+	parseModeratorSessionId,
+	parseParticipantSessionId,
+} from './groupchat/session-ids';
 
 // Cross-agent mentions: who a message can mention, what it resolves to, the `@` picker's rules (XM-1 to XM-3)
 export * from './mentions/roster';

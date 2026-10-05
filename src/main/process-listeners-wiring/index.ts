@@ -21,24 +21,13 @@ import type { getSettingsStore } from '../stores';
 import { setupProcessListeners } from '../process-listeners';
 import { setupWakaTimeListener } from '../process-listeners/wakatime-listener';
 import { powerManager } from '../power-manager';
-import { groupChatEmitters } from '../ipc/handlers/groupChat';
-import {
-	routeModeratorResponse,
-	routeAgentResponse,
-	markParticipantResponded,
-	settleGroupChatToIdle,
-	spawnModeratorSynthesis,
-	getGroupChatReadOnlyState,
-	respawnParticipantWithRecovery,
-	clearActiveParticipantTaskSession,
-	clearModeratorResponseTimeout,
-} from '../group-chat/group-chat-router';
+import { groupChatEmitters } from '../group-chat/emitters';
+import { desktopGroupChatEngine, desktopLauncherFor } from '../group-chat/desktop-engine';
 import {
 	updateParticipant,
 	loadGroupChat,
 	updateGroupChat,
 } from '../group-chat/group-chat-storage';
-import { needsSessionRecovery, initiateSessionRecovery } from '../group-chat/session-recovery';
 import {
 	appendToGroupChatBuffer,
 	getGroupChatBufferedOutput,
@@ -85,25 +74,12 @@ export function wireProcessListeners(deps: ProcessListenersWiringDependencies): 
 		powerManager,
 		groupChatEmitters,
 		emitPluginEvent: (event) => deps.getPluginEventBus()?.emit(event),
-		groupChatRouter: {
-			routeModeratorResponse,
-			routeAgentResponse,
-			markParticipantResponded,
-			settleGroupChatToIdle,
-			spawnModeratorSynthesis,
-			getGroupChatReadOnlyState,
-			respawnParticipantWithRecovery,
-			clearActiveParticipantTaskSession,
-			clearModeratorResponseTimeout,
-		},
+		groupChatEngine: desktopGroupChatEngine,
+		groupChatLauncherFor: desktopLauncherFor,
 		groupChatStorage: {
 			loadGroupChat,
 			updateGroupChat,
 			updateParticipant,
-		},
-		sessionRecovery: {
-			needsSessionRecovery,
-			initiateSessionRecovery,
 		},
 		outputBuffer: {
 			appendToGroupChatBuffer,

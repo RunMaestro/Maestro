@@ -13,28 +13,17 @@ import { extractCopilotUsageFromDisk } from '../group-chat/copilot-usage-extract
 
 type ExitEventArgs = Parameters<ProcessManagerEvents['exit']>;
 
-/**
- * True when routing a participant's response failed only because the group chat
- * no longer exists.
- *
- * Participants keep running after the user deletes their group chat, so the exit
- * that fires minutes later routes into a chat `loadGroupChat` can no longer
- * find. The listener already handles it (the participant is marked done and the
- * buffer is cleared), so it is an expected outcome of a normal user action
- * rather than a defect worth reporting (MAESTRO-M4). Any other routing failure
- * still reaches Sentry.
- */
-export function isDeletedGroupChatFailure(error: unknown): boolean {
-	const message = error instanceof Error ? error.message : String(error ?? '');
-	return /^Group chat not found: /i.test(message);
-}
+// The predicate moved into the library with the progression that uses it; re-exported
+// so this module keeps its public surface.
+export { isDeletedGroupChatFailure } from '../../shared/maestro-lib/groupchat/router';
 
 /**
  * Sets up the exit listener for process termination.
  * Handles:
  * - Power management cleanup
- * - Group chat moderator exit (routing buffered output)
- * - Group chat participant exit (routing, recovery, synthesis triggering)
+ * - Group chat moderator and participant exits: read the buffered output and report the
+ *   finished turn to the group chat engine, which routes it, recovers a lost session,
+ *   and starts the synthesis
  * - Regular process exit forwarding
  * - Web broadcast of exit events
  */
@@ -50,9 +39,9 @@ export function setupExitListener(
 		| 'outputBuffer'
 		| 'outputParser'
 		| 'groupChatEmitters'
-		| 'groupChatRouter'
+		| 'groupChatEngine'
+		| 'groupChatLauncherFor'
 		| 'groupChatStorage'
-		| 'sessionRecovery'
 		| 'debugLog'
 		| 'logger'
 		| 'patterns'
@@ -71,9 +60,9 @@ export function setupExitListener(
 		outputBuffer,
 		outputParser,
 		groupChatEmitters,
-		groupChatRouter,
+		groupChatEngine,
+		groupChatLauncherFor,
 		groupChatStorage,
-		sessionRecovery,
 		debugLog,
 		logger,
 		patterns,
@@ -121,6 +110,49 @@ export function setupExitListener(
 		}
 	}
 
+	/**
+	 * Reports a finished group chat turn to the engine.
+	 *
+	 * The desktop's half of the turn is reading the process's buffered output; what the
+	 * output means, and what happens next, is the engine's. The text is read lazily
+	 * because which parser applies depends on the agent, which only the engine's chat
+	 * load knows. The exit code travels for logs only: a turn that returned text has
+	 * responded whatever the code was.
+	 *
+	 * The buffer is released once the engine has finished with the turn, never before:
+	 * recovery and routing both read what it holds.
+	 */
+	function reportGroupChatTurn(sessionId: string, code: number): void {
+		const bufferedOutput = outputBuffer.getGroupChatBufferedOutput(sessionId) ?? '';
+		debugLog('GroupChat:Debug', ` Buffered output length: ${bufferedOutput.length}`);
+
+		groupChatEngine
+			.turnEnded(
+				{
+					processId: sessionId,
+					rawOutput: bufferedOutput,
+					readText: (agentType) =>
+						bufferedOutput ? outputParser.extractTextFromStreamJson(bufferedOutput, agentType) : '',
+					exitCode: code,
+				},
+				groupChatLauncherFor(getProcessManager(), getAgentDetector())
+			)
+			.catch((err: unknown) => {
+				// The engine handles its own failures; this is the last line of defense
+				// against an unhandled rejection from the report itself.
+				debugLog('GroupChat:Debug', ` ERROR reporting group chat turn:`, err);
+				logger.error('[GroupChat] Failed to report group chat turn', 'ProcessListener', {
+					error: String(err),
+					sessionId,
+				});
+				void captureException(err, { operation: 'groupChat:turnEnded', sessionId });
+			})
+			.finally(() => {
+				outputBuffer.clearGroupChatBuffer(sessionId);
+				debugLog('GroupChat:Debug', ` Cleared output buffer for session`);
+			});
+	}
+
 	processManager.on('exit', (...[sessionId, code, signal, settlement]: ExitEventArgs) => {
 		// Remove power block reason for this session
 		// This allows system sleep when no AI sessions are active
@@ -130,12 +162,11 @@ export function setupExitListener(
 		// Most sessions don't start with 'group-chat-', so this avoids expensive regex matching
 		const isGroupChatSession = sessionId.startsWith(GROUP_CHAT_PREFIX);
 
-		// Handle group chat moderator exit - route buffered output and set state back to idle
+		// Handle group chat moderator exit.
 		// Session ID format: group-chat-{groupChatId}-moderator-{uuid}
-		// This handles BOTH initial moderator responses AND synthesis responses.
-		// The routeModeratorResponse function will check for @mentions:
-		// - If @mentions present: route to agents (continue conversation)
-		// - If no @mentions: final response to user (conversation complete for this turn)
+		// This handles BOTH initial moderator responses AND synthesis responses; the
+		// engine decides what the text means (@mentions route to agents, no @mentions is
+		// the final answer).
 		const moderatorMatch = isGroupChatSession ? sessionId.match(REGEX_MODERATOR_SESSION) : null;
 		if (moderatorMatch) {
 			const groupChatId = moderatorMatch[1];
@@ -143,140 +174,14 @@ export function setupExitListener(
 			debugLog('GroupChat:Debug', ` Group Chat ID: ${groupChatId}`);
 			debugLog('GroupChat:Debug', ` Session ID: ${sessionId}`);
 			debugLog('GroupChat:Debug', ` Exit code: ${code}`);
-			logger.debug(`[GroupChat] Moderator exit: groupChatId=${groupChatId}`, 'ProcessListener', {
-				sessionId,
-			});
 
-			// Clear the moderator timeout since the process has exited
-			groupChatRouter.clearModeratorResponseTimeout(groupChatId);
-
-			// Route the buffered output now that process is complete
-			const bufferedOutput = outputBuffer.getGroupChatBufferedOutput(sessionId);
-			debugLog('GroupChat:Debug', ` Buffered output length: ${bufferedOutput?.length ?? 0}`);
-			if (bufferedOutput) {
-				debugLog(
-					'GroupChat:Debug',
-					` Raw buffered output preview: "${bufferedOutput.substring(0, 300)}${bufferedOutput.length > 300 ? '...' : ''}"`
-				);
-				logger.debug(
-					`[GroupChat] Moderator has buffered output (${bufferedOutput.length} chars)`,
-					'ProcessListener',
-					{ groupChatId }
-				);
-				// Process the moderator output asynchronously.
-				// routeModeratorResponse handles its own state transitions:
-				// - Sets 'agent-working' if @mentions spawn participants
-				// - Sets 'idle' if no participants were spawned (final response)
-				// We only set 'idle' here for error/empty paths where routing doesn't run.
-				void (async () => {
-					// Helper to load chat with retry for transient failures
-					const loadChatWithRetry = async () => {
-						try {
-							return await groupChatStorage.loadGroupChat(groupChatId);
-						} catch (firstErr) {
-							void captureException(firstErr);
-							debugLog('GroupChat:Debug', ` First chat load failed, retrying after 100ms...`);
-							logger.warn('[GroupChat] Chat load failed, retrying once', 'ProcessListener', {
-								error: String(firstErr),
-								groupChatId,
-							});
-							// Wait 100ms and retry once for transient I/O issues
-							await new Promise((resolve) => setTimeout(resolve, 100));
-							return await groupChatStorage.loadGroupChat(groupChatId);
-						}
-					};
-
-					try {
-						const chat = await loadChatWithRetry();
-						debugLog('GroupChat:Debug', ` Chat loaded for parsing: ${chat?.name || 'null'}`);
-						const agentType = chat?.moderatorAgentId;
-						debugLog('GroupChat:Debug', ` Agent type for parsing: ${agentType}`);
-						const parsedText = outputParser.extractTextFromStreamJson(bufferedOutput, agentType);
-						debugLog('GroupChat:Debug', ` Parsed text length: ${parsedText.length}`);
-						debugLog(
-							'GroupChat:Debug',
-							` Parsed text preview: "${parsedText.substring(0, 300)}${parsedText.length > 300 ? '...' : ''}"`
-						);
-						if (parsedText.trim()) {
-							debugLog('GroupChat:Debug', ` Routing moderator response...`);
-							logger.info(
-								`[GroupChat] Routing moderator response (${parsedText.length} chars)`,
-								'ProcessListener',
-								{ groupChatId }
-							);
-							const readOnly = groupChatRouter.getGroupChatReadOnlyState(groupChatId);
-							debugLog('GroupChat:Debug', ` Read-only state: ${readOnly}`);
-							const pm = getProcessManager();
-							const ad = getAgentDetector();
-							// Await routing - it manages state transitions internally
-							await groupChatRouter.routeModeratorResponse(
-								groupChatId,
-								parsedText,
-								pm ?? undefined,
-								ad ?? undefined,
-								readOnly
-							);
-						} else {
-							debugLog('GroupChat:Debug', ` WARNING: Parsed text is empty!`);
-							logger.warn(
-								'[GroupChat] Moderator output parsed to empty string',
-								'ProcessListener',
-								{ groupChatId, bufferedLength: bufferedOutput.length }
-							);
-							groupChatEmitters.emitMessage?.(groupChatId, {
-								timestamp: new Date().toISOString(),
-								from: 'system',
-								content: `⚠️ Moderator produced no visible output. You can send another message to retry.`,
-							});
-							groupChatEmitters.emitStateChange?.(groupChatId, 'idle');
-							debugLog('GroupChat:Debug', ` Emitted state change: idle (empty output)`);
-						}
-					} catch (err) {
-						debugLog('GroupChat:Debug', ` ERROR in moderator response processing:`, err);
-						const parsedTextForLog = outputParser.extractTextFromStreamJson(bufferedOutput);
-						logger.error('[GroupChat] Failed to process moderator response', 'ProcessListener', {
-							error: String(err),
-							groupChatId,
-							bufferedLength: bufferedOutput.length,
-							parsedTextPreview: parsedTextForLog.substring(0, 500),
-							parsedTextLength: parsedTextForLog.length,
-						});
-						captureException(err, {
-							operation: 'groupChat:processModeratorExit',
-							groupChatId,
-						});
-						groupChatEmitters.emitMessage?.(groupChatId, {
-							timestamp: new Date().toISOString(),
-							from: 'system',
-							content: `⚠️ Failed to process moderator response. You can send another message to retry.`,
-						});
-						groupChatEmitters.emitStateChange?.(groupChatId, 'idle');
-						debugLog('GroupChat:Debug', ` Emitted state change: idle (error recovery)`);
-					}
-				})().finally(() => {
-					outputBuffer.clearGroupChatBuffer(sessionId);
-					debugLog('GroupChat:Debug', ` Cleared output buffer for session`);
-				});
-			} else {
-				debugLog('GroupChat:Debug', ` WARNING: No buffered output!`);
-				logger.warn('[GroupChat] Moderator exit with no buffered output', 'ProcessListener', {
-					groupChatId,
-					sessionId,
-				});
-				groupChatEmitters.emitMessage?.(groupChatId, {
-					timestamp: new Date().toISOString(),
-					from: 'system',
-					content: `⚠️ Moderator exited without producing output. You can send another message to retry.`,
-				});
-				groupChatEmitters.emitStateChange?.(groupChatId, 'idle');
-				debugLog('GroupChat:Debug', ` Emitted state change: idle`);
-			}
+			reportGroupChatTurn(sessionId, code);
 			debugLog('GroupChat:Debug', ` =============================================`);
 			// Don't send to regular exit handler
 			return;
 		}
 
-		// Handle group chat participant exit - route buffered output and update participant state
+		// Handle group chat participant exit.
 		// Session ID format: group-chat-{groupChatId}-participant-{name}-{uuid|timestamp}
 		// Only parse if it's a group chat session (performance optimization)
 		const participantExitInfo = isGroupChatSession
@@ -289,16 +194,6 @@ export function setupExitListener(
 			debugLog('GroupChat:Debug', ` Participant: ${participantName}`);
 			debugLog('GroupChat:Debug', ` Session ID: ${sessionId}`);
 			debugLog('GroupChat:Debug', ` Exit code: ${code}`);
-			logger.debug(
-				`[GroupChat] Participant exit: ${participantName} (groupChatId=${groupChatId})`,
-				'ProcessListener',
-				{ sessionId }
-			);
-
-			// Emit participant state change to show this participant is done working
-			groupChatEmitters.emitParticipantState?.(groupChatId, participantName, 'idle');
-			groupChatRouter.clearActiveParticipantTaskSession(groupChatId, participantName);
-			debugLog('GroupChat:Debug', ` Emitted participant state: idle`);
 
 			// Refresh on-disk usage for copilot-cli participants. Copilot in batch
 			// mode only writes the session.shutdown event (the sole carrier of
@@ -307,243 +202,7 @@ export function setupExitListener(
 			// the participant's context gauge stays at 0% forever.
 			void refreshCopilotUsageAfterExit(groupChatId, participantName);
 
-			// Route the buffered output now that process is complete
-			// IMPORTANT: We must wait for the response to be logged before triggering synthesis
-			// to avoid a race condition where synthesis reads the log before the response is written
-			const bufferedOutput = outputBuffer.getGroupChatBufferedOutput(sessionId);
-			debugLog('GroupChat:Debug', ` Buffered output length: ${bufferedOutput?.length ?? 0}`);
-
-			// Helper function to mark participant and potentially trigger synthesis
-			const markAndMaybeSynthesize = () => {
-				const isLastParticipant = groupChatRouter.markParticipantResponded(
-					groupChatId,
-					participantName
-				);
-				debugLog('GroupChat:Debug', ` Is last participant to respond: ${isLastParticipant}`);
-				const pm = getProcessManager();
-				const ad = getAgentDetector();
-				if (isLastParticipant) {
-					// "Can synthesis run?" is a different question from "is the room
-					// still working?". Gating both on one condition meant a missing
-					// process manager or agent detector fell through every branch,
-					// leaving the room on 'agent-working' with its power block held -
-					// the quit dialog then reports a running chat that has finished.
-					if (pm && ad) {
-						// All participants have responded - spawn moderator synthesis round
-						debugLog(
-							'GroupChat:Debug',
-							` All participants responded - spawning synthesis round...`
-						);
-						logger.info(
-							'[GroupChat] All participants responded, spawning moderator synthesis',
-							'ProcessListener',
-							{ groupChatId }
-						);
-						groupChatRouter.spawnModeratorSynthesis(groupChatId, pm, ad).catch((err) => {
-							debugLog('GroupChat:Debug', ` ERROR spawning synthesis:`, err);
-							logger.error('[GroupChat] Failed to spawn moderator synthesis', 'ProcessListener', {
-								error: String(err),
-								groupChatId,
-							});
-							// Reset to idle so user is not stuck waiting indefinitely
-							groupChatRouter.settleGroupChatToIdle(groupChatId);
-							groupChatEmitters.emitMessage?.(groupChatId, {
-								timestamp: new Date().toISOString(),
-								from: 'system',
-								content: `⚠️ Synthesis failed. You can send another message to continue.`,
-							});
-							captureException(err, {
-								operation: 'groupChat:spawnModeratorSynthesis',
-								groupChatId,
-							});
-						});
-					} else {
-						debugLog(
-							'GroupChat:Debug',
-							` All participants responded but synthesis is unavailable - settling to idle`
-						);
-						groupChatRouter.settleGroupChatToIdle(groupChatId);
-					}
-				} else {
-					// More participants pending
-					debugLog('GroupChat:Debug', ` Waiting for more participants to respond...`);
-				}
-			};
-
-			if (bufferedOutput) {
-				debugLog(
-					'GroupChat:Debug',
-					` Raw buffered output preview: "${bufferedOutput.substring(0, 300)}${bufferedOutput.length > 300 ? '...' : ''}"`
-				);
-
-				// Handle session recovery and normal processing in an async IIFE
-				void (async () => {
-					// Check if this is a session_not_found error - if so, recover and retry
-					// But don't attempt recovery if this IS already a recovery session (prevent infinite loops)
-					const isRecoverySession = sessionId.includes('-recovery-');
-					const chat = await groupChatStorage.loadGroupChat(groupChatId);
-					const agentType = chat?.participants.find((p) => p.name === participantName)?.agentId;
-
-					if (
-						!isRecoverySession &&
-						sessionRecovery.needsSessionRecovery(bufferedOutput, agentType)
-					) {
-						debugLog(
-							'GroupChat:Debug',
-							` Session not found error detected for ${participantName} - initiating recovery`
-						);
-						logger.info('[GroupChat] Session recovery needed', 'ProcessListener', {
-							groupChatId,
-							participantName,
-						});
-
-						// Clear the buffer first
-						outputBuffer.clearGroupChatBuffer(sessionId);
-
-						// Initiate recovery (clears agentSessionId)
-						await sessionRecovery.initiateSessionRecovery(groupChatId, participantName);
-
-						// Re-spawn the participant with recovery context
-						const pm = getProcessManager();
-						const ad = getAgentDetector();
-						if (pm && ad) {
-							debugLog(
-								'GroupChat:Debug',
-								` Re-spawning ${participantName} with recovery context...`
-							);
-							// Notify UI that recovery is in progress
-							groupChatEmitters.emitMessage?.(groupChatId, {
-								timestamp: new Date().toISOString(),
-								from: 'system',
-								content: `Session expired for ${participantName}. Creating a new session...`,
-							});
-							try {
-								await groupChatRouter.respawnParticipantWithRecovery(
-									groupChatId,
-									participantName,
-									pm,
-									ad
-								);
-								debugLog(
-									'GroupChat:Debug',
-									` Successfully re-spawned ${participantName} for recovery`
-								);
-								// Don't mark as responded yet - the recovery spawn will complete and trigger this
-							} catch (respawnErr) {
-								void captureException(respawnErr);
-								debugLog('GroupChat:Debug', ` Failed to respawn ${participantName}:`, respawnErr);
-								logger.error(
-									'[GroupChat] Failed to respawn participant for recovery',
-									'ProcessListener',
-									{
-										error: String(respawnErr),
-										participant: participantName,
-									}
-								);
-								// Notify UI that recovery failed
-								groupChatEmitters.emitMessage?.(groupChatId, {
-									timestamp: new Date().toISOString(),
-									from: 'system',
-									content: `⚠️ Failed to create new session for ${participantName}: ${String(respawnErr)}`,
-								});
-								// Mark as responded since recovery failed
-								markAndMaybeSynthesize();
-							}
-						} else {
-							debugLog(
-								'GroupChat:Debug',
-								` Cannot respawn - processManager or agentDetector not available`
-							);
-							markAndMaybeSynthesize();
-						}
-						debugLog('GroupChat:Debug', ` ===============================================`);
-						return;
-					}
-
-					// Normal processing - parse and route the response
-					try {
-						debugLog(
-							'GroupChat:Debug',
-							` Chat loaded for participant parsing: ${chat?.name || 'null'}`
-						);
-						debugLog('GroupChat:Debug', ` Agent type for parsing: ${agentType}`);
-						const parsedText = outputParser.extractTextFromStreamJson(bufferedOutput, agentType);
-						debugLog('GroupChat:Debug', ` Parsed text length: ${parsedText.length}`);
-						debugLog(
-							'GroupChat:Debug',
-							` Parsed text preview: "${parsedText.substring(0, 200)}${parsedText.length > 200 ? '...' : ''}"`
-						);
-						if (parsedText.trim()) {
-							debugLog('GroupChat:Debug', ` Routing agent response from ${participantName}...`);
-							// Await the response logging before marking participant as responded
-							const pm = getProcessManager();
-							await groupChatRouter.routeAgentResponse(
-								groupChatId,
-								participantName,
-								parsedText,
-								pm ?? undefined
-							);
-							debugLog(
-								'GroupChat:Debug',
-								` Successfully routed agent response from ${participantName}`
-							);
-							// Mark participant AFTER routing completes successfully
-							markAndMaybeSynthesize();
-						} else {
-							debugLog('GroupChat:Debug', ` WARNING: Parsed text is empty for ${participantName}!`);
-							// No response to route, mark participant as done
-							markAndMaybeSynthesize();
-						}
-					} catch (err) {
-						if (!isDeletedGroupChatFailure(err)) void captureException(err);
-						debugLog('GroupChat:Debug', ` ERROR loading chat for participant:`, err);
-						logger.error(
-							'[GroupChat] Failed to load chat for participant output parsing',
-							'ProcessListener',
-							{ error: String(err), participant: participantName }
-						);
-						try {
-							const parsedText = outputParser.extractTextFromStreamJson(bufferedOutput);
-							if (parsedText.trim()) {
-								const pm = getProcessManager();
-								await groupChatRouter.routeAgentResponse(
-									groupChatId,
-									participantName,
-									parsedText,
-									pm ?? undefined
-								);
-								// Mark participant AFTER routing completes successfully
-								markAndMaybeSynthesize();
-							} else {
-								// No response to route, mark participant as done
-								markAndMaybeSynthesize();
-							}
-						} catch (routeErr) {
-							if (!isDeletedGroupChatFailure(routeErr)) void captureException(routeErr);
-							debugLog('GroupChat:Debug', ` ERROR routing agent response (fallback):`, routeErr);
-							logger.error('[GroupChat] Failed to route agent response', 'ProcessListener', {
-								error: String(routeErr),
-								participant: participantName,
-							});
-							// Mark participant as done even after error (can't retry)
-							markAndMaybeSynthesize();
-						}
-					}
-				})().finally(() => {
-					outputBuffer.clearGroupChatBuffer(sessionId);
-					debugLog('GroupChat:Debug', ` Cleared output buffer for participant session`);
-					// Note: markAndMaybeSynthesize() is called explicitly in each code path above
-					// to ensure proper sequencing - NOT in finally() which would cause race conditions
-					// with session recovery (where we DON'T want to mark until recovery completes)
-				});
-			} else {
-				debugLog(
-					'GroupChat:Debug',
-					` WARNING: No buffered output for participant ${participantName}!`
-				);
-				// No output to log, so mark participant as responded immediately
-				markAndMaybeSynthesize();
-			}
+			reportGroupChatTurn(sessionId, code);
 			debugLog('GroupChat:Debug', ` ===============================================`);
 			// Don't send to regular exit handler
 			return;

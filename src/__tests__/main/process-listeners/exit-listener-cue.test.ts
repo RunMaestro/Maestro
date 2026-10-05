@@ -37,15 +37,12 @@ function createExitListenerDeps(options: {
 			parseParticipantSessionId: () => null,
 		},
 		groupChatEmitters: {},
-		groupChatRouter: {
-			clearModeratorResponseTimeout: vi.fn(),
-			clearActiveParticipantTaskSession: vi.fn(),
+		groupChatEngine: {
+			turnEnded: vi.fn().mockResolvedValue(undefined),
 		},
+		groupChatLauncherFor: vi.fn(),
 		groupChatStorage: {
 			loadGroupChat: vi.fn(),
-		},
-		sessionRecovery: {
-			needsSessionRecovery: vi.fn(),
 		},
 		debugLog: vi.fn(),
 		logger: {

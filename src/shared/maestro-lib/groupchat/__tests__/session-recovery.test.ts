@@ -1,6 +1,6 @@
 /**
  * @file session-recovery.test.ts
- * @description Unit tests for the Group Chat session recovery module.
+ * @description Unit tests for the library's Group Chat session recovery module.
  *
  * Tests cover:
  * - detectSessionNotFoundError: detecting session-not-found errors from agent output
@@ -12,46 +12,38 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 // Mock dependencies before importing the module under test
-vi.mock('../../../shared/maestro-lib/parsers/error-patterns', () => ({
+vi.mock('../../parsers/error-patterns', () => ({
 	getErrorPatterns: vi.fn(() => ({})),
 	matchErrorPattern: vi.fn(() => null),
 }));
 
-vi.mock('../../../main/group-chat/group-chat-log', () => ({
+vi.mock('../log', () => ({
 	readLog: vi.fn(async () => []),
-}));
-
-vi.mock('../../../main/group-chat/group-chat-storage', () => ({
-	loadGroupChat: vi.fn(async () => null),
-	updateParticipant: vi.fn(async () => ({})),
-	getGroupChatDir: vi.fn(() => '/tmp/gc'),
-}));
-
-vi.mock('../../../main/utils/logger', () => ({
-	logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
 
 import {
 	detectSessionNotFoundError,
 	needsSessionRecovery,
-	buildRecoveryContext,
-	initiateSessionRecovery,
-} from '../../../main/group-chat/session-recovery';
+	createSessionRecovery,
+} from '../session-recovery';
 
-import {
-	getErrorPatterns,
-	matchErrorPattern,
-} from '../../../shared/maestro-lib/parsers/error-patterns';
-import { readLog } from '../../../main/group-chat/group-chat-log';
-import { loadGroupChat, updateParticipant } from '../../../main/group-chat/group-chat-storage';
+import { getErrorPatterns, matchErrorPattern } from '../../parsers/error-patterns';
+import { readLog } from '../log';
 
 const mockedGetErrorPatterns = vi.mocked(getErrorPatterns);
 const mockedMatchErrorPattern = vi.mocked(matchErrorPattern);
 const mockedReadLog = vi.mocked(readLog);
-const mockedLoadGroupChat = vi.mocked(loadGroupChat);
-const mockedUpdateParticipant = vi.mocked(updateParticipant);
+// The recovery steps read and write a chat through a store the caller supplies
+const mockedLoadGroupChat = vi.fn();
+const mockedUpdateParticipant = vi.fn();
+const { buildRecoveryContext, initiateSessionRecovery } = createSessionRecovery({
+	store: {
+		loadGroupChat: mockedLoadGroupChat,
+		updateParticipant: mockedUpdateParticipant,
+	},
+});
 
-describe('group-chat/session-recovery', () => {
+describe('groupchat/session-recovery', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 	});

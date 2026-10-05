@@ -106,41 +106,15 @@ const assertGroupChatProviderProcessesEnabled = (): void => {
 	}
 };
 
-/**
- * Moderator usage stats for display in the moderator card.
- */
-export interface ModeratorUsage {
-	contextUsage: number;
-	totalCost: number;
-	tokenCount: number;
-}
+import {
+	groupChatEmitters,
+	type ModeratorUsage,
+	type ParticipantState,
+} from '../../group-chat/emitters';
 
-/**
- * Participant state for tracking individual agent working status.
- */
-export type ParticipantState = 'idle' | 'working';
-
-/**
- * Module-level object to store emitter functions after initialization.
- * These can be used by other modules to emit messages and state changes.
- */
-export const groupChatEmitters: {
-	emitMessage?: (groupChatId: string, message: GroupChatMessage) => void;
-	emitStateChange?: (groupChatId: string, state: GroupChatState) => void;
-	emitParticipantsChanged?: (groupChatId: string, participants: GroupChatParticipant[]) => void;
-	emitModeratorUsage?: (groupChatId: string, usage: ModeratorUsage) => void;
-	emitHistoryEntry?: (groupChatId: string, entry: GroupChatHistoryEntry) => void;
-	emitParticipantState?: (
-		groupChatId: string,
-		participantName: string,
-		state: ParticipantState
-	) => void;
-	emitModeratorSessionIdChanged?: (groupChatId: string, sessionId: string) => void;
-	emitParticipantLiveOutput?: (groupChatId: string, participantName: string, chunk: string) => void;
-	emitAutoRunTriggered?: (groupChatId: string, participantName: string, filename?: string) => void;
-	/** Tells the renderer to force-complete the batch run for a participant (clears stuck AUTO badge). */
-	emitAutoRunBatchComplete?: (groupChatId: string, participantName: string) => void;
-} = {};
+// The emitters object and its two types live in the group chat module (so the router
+// no longer imports this file); re-exported so every existing import keeps resolving.
+export { groupChatEmitters, type ModeratorUsage, type ParticipantState };
 
 // Helper to create handler options with consistent context
 const handlerOpts = (operation: string): Pick<CreateHandlerOptions, 'context' | 'operation'> => ({

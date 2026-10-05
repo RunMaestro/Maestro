@@ -1,9 +1,9 @@
 /**
- * Group-chat routing noise filter on the process exit listener.
+ * Group-chat routing noise filter in the group chat engine.
  *
  * Participants keep running after the user deletes their group chat, so the
  * exit that fires later routes into a chat `loadGroupChat` can no longer find
- * and `routeAgentResponse` throws `Group chat not found: <id>`. The listener
+ * and `routeAgentResponse` throws `Group chat not found: <id>`. The engine
  * already recovers (participant marked done, buffer cleared), and it retries
  * once through the fallback path, so a single deleted chat produced two Sentry
  * events per participant (MAESTRO-M4).
@@ -13,7 +13,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { isDeletedGroupChatFailure } from '../../../main/process-listeners/exit-listener';
+import { isDeletedGroupChatFailure } from '../router';
 
 describe('isDeletedGroupChatFailure', () => {
 	it('matches the error routeAgentResponse throws for a deleted chat', () => {

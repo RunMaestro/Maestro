@@ -1,18 +1,18 @@
 /**
- * @file session-parser.test.ts
+ * @file session-ids.test.ts
  * @description Unit tests for group chat session ID parsing utilities.
  *
- * groupChatId is ALWAYS a uuidv4() in production (see group-chat-storage.ts:
- * createGroupChat). The regex patterns in main/constants.ts anchor on the UUID
+ * groupChatId is ALWAYS a uuidv4() in production (see the store's
+ * createGroupChat). The regex patterns in session-ids.ts anchor on the UUID
  * format to eliminate greedy-backtrack ambiguity when participant names contain
  * sentinel substrings like "-participant-" or "-recovery-". These tests use
  * real UUIDs and exercise the adversarial cases that previously mis-parsed.
  */
 
 import { describe, it, expect } from 'vitest';
-import { parseParticipantSessionId } from '../../../main/group-chat/session-parser';
+import { parseParticipantSessionId, parseModeratorSessionId } from '../session-ids';
 
-// Real UUIDs for test fixtures. The regex in constants.ts accepts the
+// Real UUIDs for test fixtures. The regex in session-ids.ts accepts the
 // canonical 8-4-4-4-12 hex shape regardless of UUID version, so a v1
 // (GC_ID_2 is the RFC 4122 namespace UUID) and a v4 (GC_ID) both work
 // equivalently and exercise the same code paths. Production groupChatIds
@@ -20,7 +20,7 @@ import { parseParticipantSessionId } from '../../../main/group-chat/session-pars
 const GC_ID = '550e8400-e29b-41d4-a716-446655440000';
 const GC_ID_2 = '6ba7b810-9dad-11d1-80b4-00c04fd430c8';
 
-describe('group-chat/session-parser', () => {
+describe('groupchat/session-ids', () => {
 	describe('parseParticipantSessionId', () => {
 		describe('non-participant session IDs', () => {
 			it('should return null for regular session IDs', () => {
@@ -213,6 +213,26 @@ describe('group-chat/session-parser', () => {
 				expect(timestampResult).not.toBeNull();
 				expect(timestampResult!.participantName).toBe('Claude');
 			});
+		});
+	});
+
+	describe('parseModeratorSessionId', () => {
+		it('returns the chat id for a moderator turn', () => {
+			expect(parseModeratorSessionId(`group-chat-${GC_ID}-moderator-1702934567890`)).toBe(GC_ID);
+		});
+
+		it('covers the synthesis turn, which shares the format', () => {
+			expect(parseModeratorSessionId(`group-chat-${GC_ID}-moderator-synthesis-1702934567890`)).toBe(
+				GC_ID
+			);
+		});
+
+		it('returns null for participant ids, plain ids, and a non-UUID chat id', () => {
+			expect(
+				parseModeratorSessionId(`group-chat-${GC_ID}-participant-Claude-1702934567890`)
+			).toBeNull();
+			expect(parseModeratorSessionId('session-abc123-ai-tab')).toBeNull();
+			expect(parseModeratorSessionId('group-chat-not-a-uuid-moderator-1')).toBeNull();
 		});
 	});
 });
