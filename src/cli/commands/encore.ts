@@ -5,7 +5,12 @@
 
 import { resolveEncoreFeatures } from '../../shared/encoreFeatureDefaults';
 import { readSettingValue } from '../services/storage';
-import { sendSimpleCommand, reportResult, failCommand } from '../services/session-command';
+import {
+	sendSimpleCommand,
+	reportResult,
+	failCommand,
+	exitIfMaestroNotRunning,
+} from '../services/session-command';
 
 // Feature ID -> display name. Keys mirror EncoreFeatureFlags in
 // src/shared/encoreFeatures.ts. Aliases let an agent say "group chat" or "cue".
@@ -104,6 +109,7 @@ export async function encoreSet(
 			jsonExtra: { feature: key, enabled },
 		});
 	} catch (error) {
+		exitIfMaestroNotRunning(error, { json: options.json });
 		failCommand(error instanceof Error ? error.message : String(error), options.json);
 	}
 }

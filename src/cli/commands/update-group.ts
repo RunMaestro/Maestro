@@ -7,7 +7,11 @@
 // clicking through the UI.
 
 import { resolveGroupId } from '../services/storage';
-import { sendSimpleCommand, failCommand } from '../services/session-command';
+import {
+	sendSimpleCommand,
+	failCommand,
+	exitIfMaestroNotRunning,
+} from '../services/session-command';
 import {
 	verifyPersistedGroup,
 	describePersistedGroup,
@@ -82,6 +86,7 @@ export async function updateGroup(groupId: string, options: UpdateGroupOptions):
 			'update_group_result'
 		);
 	} catch (error) {
+		exitIfMaestroNotRunning(error, { json: options.json });
 		return failCommand(error instanceof Error ? error.message : String(error), options.json);
 	}
 

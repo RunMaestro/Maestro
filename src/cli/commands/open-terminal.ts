@@ -6,6 +6,7 @@
 import { withMaestroClient, resolveSessionId } from '../services/maestro-client';
 import { resolveAgentId } from '../services/storage';
 import { resolveBackgroundFlag } from '../../shared/focusPlacement';
+import { exitIfMaestroNotRunning } from '../services/session-command';
 
 interface OpenTerminalOptions {
 	agent?: string;
@@ -77,6 +78,7 @@ export async function openTerminal(options: OpenTerminalOptions): Promise<void> 
 			process.exit(1);
 		}
 	} catch (error) {
+		exitIfMaestroNotRunning(error, { json: options.json });
 		const msg = error instanceof Error ? error.message : String(error);
 		if (options.json) console.log(JSON.stringify({ success: false, error: msg }));
 		else console.error(`Error: ${msg}`);

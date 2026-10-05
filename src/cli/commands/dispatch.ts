@@ -4,6 +4,8 @@
 
 import { resolveAgentId, readSettingValue } from '../services/storage';
 import { withMaestroClient, UnsupportedCommandError } from '../services/maestro-client';
+import { ExitCode } from '../exit-codes';
+import { MaestroNotRunningError, MAESTRO_NOT_RUNNING_CODE } from '../services/maestro-not-running';
 import { getSettingDefault } from '../../shared/settingsMetadata';
 import { resolveBackgroundFlag } from '../../shared/focusPlacement';
 import { callerMessageFields, readCallerIdentity } from '../../shared/agentDelegation';
@@ -199,6 +201,9 @@ function callbackNotArmedResponse(agentId: string, tabId: string | null): Dispat
 }
 
 function mapDispatchError(error: unknown, agentId: string): DispatchResponse {
+	if (error instanceof MaestroNotRunningError) {
+		return { success: false, error: error.message, code: error.code };
+	}
 	if (error instanceof UnsupportedCommandError) {
 		return { success: false, error: error.message, code: 'UNSUPPORTED' };
 	}
@@ -214,22 +219,6 @@ function mapDispatchError(error: unknown, agentId: string): DispatchResponse {
 		};
 	}
 	const lowerMsg = msg.toLowerCase();
-	if (
-		lowerMsg.includes('econnrefused') ||
-		lowerMsg.includes('connection refused') ||
-		lowerMsg.includes('websocket') ||
-		lowerMsg.includes('enotfound') ||
-		lowerMsg.includes('etimedout') ||
-		lowerMsg.includes('maestro desktop app is not running') ||
-		lowerMsg.includes('discovery file is stale') ||
-		lowerMsg.includes('not connected to maestro')
-	) {
-		return {
-			success: false,
-			error: 'Maestro desktop is not running or not reachable',
-			code: 'MAESTRO_NOT_RUNNING',
-		};
-	}
 	if (
 		lowerMsg.includes('session not found') ||
 		lowerMsg.includes('no such session') ||
@@ -520,7 +509,9 @@ export async function dispatch(
 
 	if (!result.success) {
 		emitErrorJson(result.error ?? 'Unknown error', result.code ?? 'UNKNOWN');
-		process.exit(1);
+		process.exit(
+			result.code === MAESTRO_NOT_RUNNING_CODE ? ExitCode.NotRunning : ExitCode.GeneralError
+		);
 		return;
 	}
 

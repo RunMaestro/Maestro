@@ -1,6 +1,7 @@
 // Notify-flash command - show a center-screen flash in the Maestro desktop app.
 
 import { withMaestroClient } from '../services/maestro-client';
+import { exitIfMaestroNotRunning } from '../services/session-command';
 
 interface NotifyFlashOptions {
 	color?: string;
@@ -79,6 +80,7 @@ export async function notifyFlash(message: string, options: NotifyFlashOptions):
 			process.exit(1);
 		}
 	} catch (error) {
+		exitIfMaestroNotRunning(error, { json: options.json });
 		const errMsg = error instanceof Error ? error.message : String(error);
 		if (options.json) {
 			console.log(JSON.stringify({ success: false, error: errMsg }));
