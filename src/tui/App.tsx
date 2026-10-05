@@ -105,10 +105,34 @@ import {
 import {
 	EMPTY_COMPOSER,
 	applyDraftKey,
+	composerFrom,
 	insertNewline,
 	isBlankComposer,
 	type ComposerState,
 } from './composer/draft';
+import {
+	acceptMention,
+	dismissMentionPicker,
+	groupsOfSections,
+	initialMentionUi,
+	mentionItemsFor,
+	resolveMentionPicker,
+	stepMentionCursor,
+	type MentionPicker,
+	type MentionUi,
+} from './composer/mentions';
+import {
+	addConsult,
+	consultEntries,
+	delegationWarning,
+	mergeByTime,
+	planMentionSend,
+	runConsult,
+	runDelegation,
+	settleConsult,
+	type ConsultsByTab,
+	type MentionSendPlan,
+} from './composer/consults';
 import { GroupChatFormView } from './groupchat/GroupChatFormView';
 import { GroupChatListView } from './groupchat/GroupChatListView';
 import { GroupChatView } from './groupchat/GroupChatView';
@@ -151,6 +175,7 @@ import { useTerminalSize } from './app/useTerminalSize';
 import { useViewState } from './app/useViewState';
 import { cyclePane, isAgentsPaneVisible, visiblePanes, type PaneId } from './app/layout';
 import { KEYMAP, resolveAction, type KeyAction, type KeyContext } from './keymap';
+import { getAtMentionTrigger, type AgentMentionSuggestion } from '../shared/maestro-lib';
 import { agentMenuEntries } from './palette/agentMenu';
 import { AgentMenuOverlay } from './palette/AgentMenuOverlay';
 import { buildPaletteEntries, type PaletteEntry } from './palette/entries';
@@ -371,9 +396,23 @@ export function App({ paths, client, editFile = runEditor }: AppProps): React.Re
 	const thinkingMode = asThinkingMode(activeTab?.showThinking) ?? 'off';
 	// The turn on screen is the one the stream is following; before it has seen one, the tab's own state.
 	const turnRunning = stream.turn ? stream.turn.running : activeTab?.state === 'busy';
+	// What the person asked other agents from this tab: answered inline, kept in memory (XM-2).
+	const [consults, setConsultsState] = useState<ConsultsByTab>({});
+	const consultsRef = useRef<ConsultsByTab>({});
+	const updateConsults = (change: (all: ConsultsByTab) => ConsultsByTab) => {
+		consultsRef.current = change(consultsRef.current);
+		setConsultsState(consultsRef.current);
+	};
+	const consultSeqRef = useRef(0);
+	const tabConsults =
+		cursorAgent && activeTab ? consults[`${cursorAgent.id}:${activeTab.id}`] : undefined;
 	const activeEntries = useMemo(
-		() => mergeLiveTurn(storedEntries, stream.turn, thinkingMode),
-		[storedEntries, stream.turn, thinkingMode]
+		() =>
+			mergeByTime(
+				mergeLiveTurn(storedEntries, stream.turn, thinkingMode),
+				consultEntries(tabConsults ?? [])
+			),
+		[storedEntries, stream.turn, thinkingMode, tabConsults]
 	);
 
 	// Drafts are per tab, so switching away from a half-written message does not lose it. Held in a
@@ -414,6 +453,61 @@ export function App({ paths, client, editFile = runEditor }: AppProps): React.Re
 		const visible = isAgentsPaneVisible(columnsRef.current, agentsPaneOverrideRef.current);
 		return !visible || focusRef.current === 'conversation';
 	};
+
+	// The `@` agent picker is derived from the draft each time it is asked for, never stored, so a
+	// paste or a held key cannot leave it describing text that is gone (XM-1). Its own state is the
+	// highlighted row and the `@` Esc closed.
+	const mentionUiRef = useRef<MentionUi>(initialMentionUi(''));
+	const mentionItemsRef = useRef<{
+		agents: unknown;
+		sections: unknown;
+		agentId: string;
+		items: AgentMentionSuggestion[];
+	}>();
+	const getMentionItems = (agentId: string): AgentMentionSuggestion[] => {
+		const latest = dataRef.current;
+		const cached = mentionItemsRef.current;
+		if (
+			cached &&
+			cached.agents === latest.agents &&
+			cached.sections === latest.sections &&
+			cached.agentId === agentId
+		)
+			return cached.items;
+		const items = mentionItemsFor(latest.agents, latest.sections, agentId);
+		mentionItemsRef.current = {
+			agents: latest.agents,
+			sections: latest.sections,
+			agentId,
+			items,
+		};
+		return items;
+	};
+	const mentionUiFor = (key: string): MentionUi =>
+		mentionUiRef.current.key === key ? mentionUiRef.current : initialMentionUi(key);
+	const setMentionUi = (next: MentionUi) => {
+		mentionUiRef.current = next;
+		setDraftVersion((version) => version + 1);
+	};
+	const currentMentionPicker = (): MentionPicker | undefined => {
+		const target = composerTargetRef.current;
+		if (!target || !composerHasKeys()) return undefined;
+		const current = draftsRef.current[target.key] ?? EMPTY_COMPOSER;
+		// Most drafts carry no `@`: skip building the roster for them.
+		if (!current.text.includes('@')) return undefined;
+		return resolveMentionPicker(current, getMentionItems(target.agentId), mentionUiFor(target.key));
+	};
+	const mentionPicker = composerKey ? currentMentionPicker() : undefined;
+
+	// A delegation hands another agent work it can act on, so it takes two presses: the first says
+	// what it grants and arms, the second (same draft) sends (XM-3).
+	const delegationArmRef = useRef<{ key: string; text: string; warning: string } | undefined>(
+		undefined
+	);
+	const delegationWarningNow =
+		composerKey && delegationArmRef.current?.key === composerKey
+			? delegationArmRef.current.warning
+			: undefined;
 
 	const paletteEntries = useMemo(() => buildPaletteEntries(data.agents), [data.agents]);
 	const paletteEntriesRef = useRef(paletteEntries);
@@ -1072,6 +1166,49 @@ export function App({ paths, client, editFile = runEditor }: AppProps): React.Re
 		setNotice(result.value);
 	};
 
+	/**
+	 * Asks every agent the message names, in the background on each, and shows the answers inline
+	 * under the consulted agent's name. `message` is set when the person's own line is not already in
+	 * the transcript (a message only the consulted agents receive).
+	 */
+	const startConsults = (
+		target: NonNullable<typeof composerTargetRef.current>,
+		plan: MentionSendPlan,
+		message: string | undefined
+	) => {
+		const at = Date.now();
+		for (const consulted of plan.targets) {
+			consultSeqRef.current += 1;
+			const id = `consult-${consultSeqRef.current}`;
+			updateConsults((all) =>
+				addConsult(all, target.key, {
+					id,
+					agentId: consulted.id,
+					agentName: consulted.name,
+					status: 'asking',
+					text: '',
+					at,
+					message,
+				})
+			);
+			void runConsult(
+				target.client,
+				{ agentId: target.agentId, tabId: target.tabId },
+				consulted,
+				plan.question
+			).then((settled) => updateConsults((all) => settleConsult(all, target.key, id, settled)));
+		}
+	};
+
+	/** What a draft's mentions mean here, or undefined when it names no other agent. */
+	const mentionPlanOf = (text: string, agentId: string): MentionSendPlan | undefined =>
+		planMentionSend(
+			text,
+			dataRef.current.agents,
+			groupsOfSections(dataRef.current.sections),
+			agentId
+		);
+
 	/** Sends the open tab's draft. Cleared at once so a second Enter cannot send it twice; a refusal puts it back. */
 	const sendDraft = async () => {
 		const target = composerTargetRef.current;
@@ -1081,17 +1218,85 @@ export function App({ paths, client, editFile = runEditor }: AppProps): React.Re
 		}
 		const text = draftsRef.current[target.key] ?? EMPTY_COMPOSER;
 		if (isBlankComposer(text)) return;
+		// `@agent` in the message consults that agent (XM-2): read-only, in the background, answered inline.
+		const plan = mentionPlanOf(text.text, target.agentId);
+		if (plan && plan.question === '') {
+			setNotice(`Say what to ask ${plan.targets.map((consulted) => consulted.name).join(', ')}.`);
+			return;
+		}
 		setDraft(target.key, () => EMPTY_COMPOSER);
-		const outcome = await submitDraft(target.client, target.agentId, target.tabId, text);
+		if (plan?.suppressLocal) {
+			// Addressed only to the consulted agents: this agent does not get the message.
+			startConsults(target, plan, text.text.trimEnd());
+			return;
+		}
+		const outcome = await submitDraft(
+			target.client,
+			target.agentId,
+			target.tabId,
+			// This agent gets the message with each consulted name quoted, so the desktop does not consult them again.
+			plan ? composerFrom(plan.localText) : text
+		);
 		if (outcome.status === 'failed') {
 			// Back in the box, unless the person has started something new in the meantime.
 			setDraft(target.key, (now) => (now.text === '' ? text : now));
 			setNotice(outcome.message);
 			return;
 		}
+		if (plan) startConsults(target, plan, undefined);
 		if (outcome.status === 'sent' && outcome.queued) {
 			setNotice(outcome.notice);
 			refreshQueueRef.current();
+		}
+	};
+
+	/** Ctrl-D: hand the message to the mentioned agents as work. The first press says what that grants. */
+	const delegateDraft = async () => {
+		const target = composerTargetRef.current;
+		if (!target) {
+			requireClient();
+			return;
+		}
+		const text = draftsRef.current[target.key] ?? EMPTY_COMPOSER;
+		const plan = isBlankComposer(text) ? undefined : mentionPlanOf(text.text, target.agentId);
+		if (!plan) {
+			setNotice('Write a message that names an agent with @ to delegate it.');
+			return;
+		}
+		if (plan.question === '') {
+			setNotice('Say what the agent should do.');
+			return;
+		}
+		const armed = delegationArmRef.current;
+		if (!armed || armed.key !== target.key || armed.text !== text.text) {
+			const warning = delegationWarning(plan.targets);
+			delegationArmRef.current = { key: target.key, text: text.text, warning };
+			setNotice(warning);
+			setDraftVersion((version) => version + 1);
+			return;
+		}
+		delegationArmRef.current = undefined;
+		setDraft(target.key, () => EMPTY_COMPOSER);
+		const sourceName =
+			dataRef.current.agents.find((a) => a.id === target.agentId)?.name ?? 'an agent';
+		const at = Date.now();
+		for (const delegate of plan.targets) {
+			consultSeqRef.current += 1;
+			const id = `consult-${consultSeqRef.current}`;
+			updateConsults((all) =>
+				addConsult(all, target.key, {
+					id,
+					agentId: delegate.id,
+					agentName: delegate.name,
+					status: 'asking',
+					text: '',
+					at,
+					message: text.text.trimEnd(),
+				})
+			);
+			void runDelegation(target.client, sourceName, delegate, plan.question).then((settled) =>
+				updateConsults((all) => settleConsult(all, target.key, id, settled))
+			);
 		}
 	};
 
@@ -1141,7 +1346,17 @@ export function App({ paths, client, editFile = runEditor }: AppProps): React.Re
 	const editComposer = (input: string, key: Key) => {
 		const target = composerTargetRef.current;
 		if (!target) return;
-		setDraft(target.key, (state) => applyDraftKey(state, input, key));
+		setDraft(target.key, (state) => {
+			const next = applyDraftKey(state, input, key);
+			// Esc closed the picker for one `@`; once that `@` is gone, the next one opens it again.
+			if (
+				mentionUiRef.current.dismissedAt !== undefined &&
+				!getAtMentionTrigger(next.text, next.cursor)
+			) {
+				mentionUiRef.current = initialMentionUi(target.key);
+			}
+			return next;
+		});
 	};
 
 	const runAction = (action: KeyAction, current: OverlayState | undefined, viaKey = false) => {
@@ -1155,6 +1370,23 @@ export function App({ paths, client, editFile = runEditor }: AppProps): React.Re
 				return;
 			case 'send':
 				void sendDraft();
+				return;
+			case 'acceptMention': {
+				const target = composerTargetRef.current;
+				const picker = currentMentionPicker();
+				if (!target || !picker) return;
+				setDraft(target.key, (state) => acceptMention(state, picker));
+				setMentionUi(initialMentionUi(target.key));
+				return;
+			}
+			case 'dismissMention': {
+				const picker = currentMentionPicker();
+				const target = composerTargetRef.current;
+				if (picker && target) setMentionUi(dismissMentionPicker(mentionUiFor(target.key), picker));
+				return;
+			}
+			case 'delegate':
+				void delegateDraft();
 				return;
 			case 'newline': {
 				const target = composerTargetRef.current;
@@ -1469,6 +1701,12 @@ export function App({ paths, client, editFile = runEditor }: AppProps): React.Re
 			case 'moveDown':
 			case 'moveUp': {
 				const delta = action === 'moveDown' ? 1 : -1;
+				const picker = current ? undefined : currentMentionPicker();
+				const composerTarget = composerTargetRef.current;
+				if (picker && composerTarget) {
+					setMentionUi(stepMentionCursor(mentionUiFor(composerTarget.key), picker, delta));
+					return;
+				}
 				if (current?.kind === 'help') {
 					setOverlay({ ...current, cursor: moveGroupCursor(current.cursor, delta, KEYMAP.length) });
 				} else if (current?.kind === 'history') {
@@ -1632,14 +1870,21 @@ export function App({ paths, client, editFile = runEditor }: AppProps): React.Re
 									: 'autoRun'
 						: current.kind
 				: composerHasKeys()
-					? 'composer'
+					? currentMentionPicker()
+						? 'composerMention'
+						: 'composer'
 					: 'main';
 			const action = resolveAction(context, input, key);
+			// A delegation is armed by one press of its key and sent by the next; anything else disarms it.
+			if (action !== 'delegate' && delegationArmRef.current) {
+				delegationArmRef.current = undefined;
+				setDraftVersion((version) => version + 1);
+			}
 			if (action) {
 				runAction(action, current, true);
 				return;
 			}
-			if (context === 'composer') {
+			if (context === 'composer' || context === 'composerMention') {
 				editComposer(input, key);
 				return;
 			}
@@ -1937,7 +2182,15 @@ export function App({ paths, client, editFile = runEditor }: AppProps): React.Re
 			focusedPane={effectiveFocus}
 			expandTools={expandTools}
 			composer={
-				composerKey ? { state: draft, running: turnRunning, queued: stream.queued } : undefined
+				composerKey
+					? {
+							state: draft,
+							running: turnRunning,
+							queued: stream.queued,
+							mentions: mentionPicker,
+							header: delegationWarningNow,
+						}
+					: undefined
 			}
 			overlay={renderOverlay}
 			agentsPaneOverride={agentsPaneOverride}

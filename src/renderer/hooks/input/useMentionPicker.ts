@@ -10,6 +10,7 @@ import {
 	mentionQuoteChar,
 	stripMentionQuotes,
 } from '../../../shared/mentionPatterns';
+import { spliceMentionLiteral } from '../../../shared/maestro-lib/mentions/trigger';
 
 /**
  * The four filter scopes of the unified `@` picker. `all` interleaves every
@@ -219,13 +220,8 @@ export function buildMentionAccept(
 	filter: string,
 	item: MentionPickerItem
 ): MentionAcceptResult {
-	const beforeAt = inputValue.substring(0, startIndex);
-	let afterIndex = startIndex + 1 + filter.length;
-	const openQuote = mentionQuoteChar(filter);
-	if (openQuote && inputValue[afterIndex] === openQuote) afterIndex += 1;
-	const afterFilter = inputValue.substring(afterIndex);
 	const literal = mentionInsertLiteral(item);
-	const value = beforeAt + literal + afterFilter;
+	const { value, caretPos } = spliceMentionLiteral(inputValue, startIndex, filter, literal);
 
 	if (item.kind === 'directory') {
 		// A quoted directory (`@"my folder/"`) parks the caret before its closing
@@ -240,5 +236,5 @@ export function buildMentionAccept(
 		};
 	}
 	// Caret lands immediately after the spliced token, past its trailing space.
-	return { value, caretPos: startIndex + literal.length, keepOpen: false, nextFilter: '' };
+	return { value, caretPos, keepOpen: false, nextFilter: '' };
 }

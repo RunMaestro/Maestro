@@ -97,6 +97,7 @@ export type ClientMethod =
 	| 'groupChats.stop'
 	| 'groupChats.rename'
 	| 'groupChats.remove'
+	| 'consults.ask'
 	| 'settings.get'
 	| 'settings.sshRemotes'
 	| 'providers.list'
@@ -459,6 +460,48 @@ export interface GroupChatsApi {
 }
 
 // ---------------------------------------------------------------------------
+// Consults
+// ---------------------------------------------------------------------------
+
+export interface ConsultAskInput {
+	/** The agent to ask. */
+	targetAgentId: string;
+	/** A self-contained question: no transcript is forwarded unless `withContext`. */
+	question: string;
+	/** The asking agent, for attribution and for the consult tab the target keeps per asker. */
+	fromAgentId?: string;
+	/** The asking agent's tab, so the desktop can place its hand-off marker there. */
+	fromTabId?: string;
+	/** Forward the asking tab's transcript as context. Off by default. */
+	withContext?: boolean;
+	/** How long to wait for the answer. The host clamps it to 10 seconds through an hour. Default 600000. */
+	timeoutMs?: number;
+}
+
+export interface ConsultAnswer {
+	/** What the consulted agent said. Empty when it answered with nothing. */
+	answer: string;
+	/** The consulted agent's name, as the host reports it. */
+	agentName?: string;
+}
+
+/**
+ * XM-1 to XM-3. A consult is one question to one agent, read-only, and fully in
+ * the background on the consulted agent: it runs in a hidden tab of its own, with
+ * no tab chip, no unread mark, and no change to the desktop's view. It is NOT a
+ * `turns.send` to the target, which would land in whatever conversation the
+ * person has open there.
+ */
+export interface ConsultsApi {
+	/**
+	 * Ask `targetAgentId` and wait for the answer, which can take minutes. Not
+	 * `ok` when the agent is gone, did not answer in time, or the consult was
+	 * stopped; the error message says which. A partial answer is not returned.
+	 */
+	ask(input: ConsultAskInput): Promise<ClientResult<ConsultAnswer>>;
+}
+
+// ---------------------------------------------------------------------------
 // Settings
 // ---------------------------------------------------------------------------
 
@@ -561,6 +604,7 @@ export interface MaestroClient {
 	readonly turns: TurnsApi;
 	readonly autoRun: AutoRunApi;
 	readonly groupChats: GroupChatsApi;
+	readonly consults: ConsultsApi;
 	readonly settings: SettingsApi;
 	readonly providers: ProvidersApi;
 	readonly events: EventsApi;

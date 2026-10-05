@@ -208,6 +208,7 @@ describe('keymap', () => {
 		const contexts: KeyContext[] = [
 			'main',
 			'composer',
+			'composerMention',
 			'help',
 			'tabs',
 			'history',
@@ -269,6 +270,41 @@ describe('keymap', () => {
 			for (const action of ['startRun', 'startGoalRun', 'watchRun'] as const) {
 				expect(bindingFor(action).agentMenu, action).toBeTruthy();
 			}
+		});
+	});
+
+	describe('the @ agent picker (XM-1)', () => {
+		const pick = (key: Partial<Key>, input = '') =>
+			resolveAction('composerMention', input, { ...NO_KEY, ...key });
+
+		it('picks with arrows and Ctrl-N/P, inserts on Tab or Enter, and closes on Esc', () => {
+			expect(pick({ downArrow: true })).toBe('moveDown');
+			expect(pick({ upArrow: true })).toBe('moveUp');
+			expect(pick({ ctrl: true }, 'n')).toBe('moveDown');
+			expect(pick({ ctrl: true }, 'p')).toBe('moveUp');
+			expect(pick({ tab: true })).toBe('acceptMention');
+			expect(pick({ return: true })).toBe('acceptMention');
+			expect(pick({ escape: true })).toBe('dismissMention');
+		});
+
+		it('keeps every letter for the name being typed, and Enter does not send while it is open', () => {
+			for (const letter of ['j', 'k', 'n', 'p', 'd', ' ']) {
+				expect(pick({}, letter), letter).toBeUndefined();
+			}
+			expect(resolveAction('composer', '', { ...NO_KEY, return: true })).toBe('send');
+			expect(pick({ return: true })).not.toBe('send');
+		});
+
+		it('delegates with Ctrl-D from the composer, picker open or not, and nowhere else', () => {
+			expect(resolveAction('composer', 'd', { ...NO_KEY, ctrl: true })).toBe('delegate');
+			expect(pick({ ctrl: true }, 'd')).toBe('delegate');
+			expect(resolveAction('main', 'd', { ...NO_KEY, ctrl: true })).toBeUndefined();
+			expect(bindingFor('delegate').description).toMatch(/work/);
+		});
+
+		it('still reaches the palette and the newline key with the picker open', () => {
+			expect(pick({ ctrl: true }, 'k')).toBe('palette');
+			expect(pick({}, '\n')).toBe('newline');
 		});
 	});
 

@@ -23,11 +23,7 @@
 
 import type { Session } from '../types';
 import { useSessionStore } from '../stores/sessionStore';
-import {
-	buildKnownMentionNameSet,
-	resolveMentionedTargetSessionIds,
-} from '../hooks/input/useAgentMentionCompletion';
-import { messageStartsWithAgentMention } from '../../shared/crossAgentContext';
+import { planMentions } from '../../shared/maestro-lib/mentions/roster';
 import { sendCrossAgentRequest } from '../hooks/agent/useCrossAgentDispatch';
 
 /** What a message's `@mentions` resolve to, before anything is sent. */
@@ -55,22 +51,10 @@ export function planCrossAgentMentions(
 	sourceSessionId: string
 ): CrossAgentMentionPlan | null {
 	const { sessions, groups } = useSessionStore.getState();
-	const targetSessionIds = resolveMentionedTargetSessionIds(
-		message,
-		sessions,
-		groups,
-		sourceSessionId
-	).filter((id) => id !== sourceSessionId); // Self-mention guard (defend at dispatch).
-	if (targetSessionIds.length === 0) return null;
-
-	// Roster for the leading-mention check, so a message that leads with a
-	// file-shaped agent name (`@RunMaestro.ai fix this`) suppresses the local
-	// send just like a bare `@Codex` does.
-	const knownMentionNames = buildKnownMentionNameSet(sessions, groups, sourceSessionId);
-	return {
-		targetSessionIds,
-		suppressLocal: messageStartsWithAgentMention(message, knownMentionNames),
-	};
+	// The rules (agents only, self filtered, a leading mention suppresses the local
+	// send) live in maestro-lib so the TUI composer plans exactly the same way.
+	const plan = planMentions(message, sessions, groups, sourceSessionId);
+	return plan ? { targetSessionIds: plan.targetAgentIds, suppressLocal: plan.suppressLocal } : null;
 }
 
 /**

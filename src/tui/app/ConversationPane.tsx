@@ -17,6 +17,9 @@ import {
 	composerHeight,
 } from '../composer/Composer';
 import { layoutComposer, type ComposerState } from '../composer/draft';
+import { MentionPickerView } from '../composer/MentionPickerView';
+import { consultStyle } from '../composer/consults';
+import { mentionPickerHeight, type MentionPicker } from '../composer/mentions';
 import { StatusLine, STATUS_LINE_HEIGHT } from '../status/StatusLine';
 
 /** The tab the pane shows: the TUI's pick, else the desktop's active tab, else the first. */
@@ -38,6 +41,10 @@ export interface ConversationComposer {
 	running: boolean;
 	/** Messages waiting in the host's execution queue for this tab. */
 	queued: number;
+	/** The `@` agent picker, while the caret is in an `@name` that matches someone. */
+	mentions?: MentionPicker;
+	/** Replaces the header line, for a message that needs a warning before Enter (a delegation). */
+	header?: string;
 }
 
 export interface ConversationPaneProps {
@@ -91,8 +98,11 @@ export function ConversationPane({
 			? layoutComposer(composer.state, innerWidth - COMPOSER_PREFIX_WIDTH, COMPOSER_MAX_ROWS)
 			: undefined;
 	// The status line shows for any tab on screen, with or without a desktop to send through.
+	const pickerRows = composer?.mentions ? mentionPickerHeight(composer.mentions) : 0;
 	const reserved =
-		(composerLayout ? composerHeight(composerLayout) : 0) + (activeTab ? STATUS_LINE_HEIGHT : 0);
+		(composerLayout ? composerHeight(composerLayout) : 0) +
+		pickerRows +
+		(activeTab ? STATUS_LINE_HEIGHT : 0);
 
 	return (
 		<Box
@@ -119,11 +129,15 @@ export function ConversationPane({
 							width={innerWidth}
 							height={Math.max(1, height - CONVERSATION_CHROME_LINES - reserved)}
 							expandTools={expandTools}
+							styleFor={consultStyle}
 						/>
 					) : (
 						<Text dimColor>This agent has no tabs.</Text>
 					)}
 					{activeTab ? <StatusLine agent={agent} tab={activeTab} width={innerWidth} /> : null}
+					{composer?.mentions ? (
+						<MentionPickerView picker={composer.mentions} width={innerWidth} />
+					) : null}
 					{composer && composerLayout ? (
 						<Composer
 							layout={composerLayout}
@@ -132,6 +146,7 @@ export function ConversationPane({
 							focused={focused}
 							running={composer.running}
 							queued={composer.queued}
+							header={composer.header}
 						/>
 					) : null}
 				</>

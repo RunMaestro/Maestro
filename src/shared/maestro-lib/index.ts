@@ -55,6 +55,11 @@ export * from './autorun/validate';
 // Group chats: the record, its events and reducer, and the create rules (GC-1 to GC-4)
 export * from './groupchat/chat';
 
+// Cross-agent mentions: who a message can mention, what it resolves to, the `@` picker's rules (XM-1 to XM-3)
+export * from './mentions/roster';
+export * from './mentions/trigger';
+export { stripMentionQuotes } from '../mentionPatterns';
+
 // Agent form rules, shared with the desktop so a TUI form and the Edit dialog cannot disagree
 export { defaultAgentNameForPath, projectNameFromPath } from '../projectIdentity';
 export {

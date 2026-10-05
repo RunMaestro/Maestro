@@ -490,6 +490,39 @@ Decisions worth knowing:
 - **No queue.** `send_group_chat_message` answers a bare `false` while the chat is busy or gone, so `send` is `rejected` with a message that names both. The desktop's own group chat queue (`groupChat:submitMessage`, owned by main) is a different path; the TUI does not use it in this version, so a busy chat refuses and the draft stays in the box.
 - **A reply lands as one line.** A participant's process emits raw provider output that the desktop itself turns into a reply only when the turn ends, so there is no partial text on the bridge. Live progress is the moderator's state, each participant's working flag, and each line as it is logged.
 
+### 4.6.3 Consults
+
+```ts
+export interface ConsultsApi {
+	/** XM-1 to XM-3. One read-only question to one agent; waits for the answer, which can take minutes. */
+	ask(input: ConsultAskInput): Promise<ClientResult<ConsultAnswer>>;
+}
+
+export interface ConsultAskInput {
+	targetAgentId: string;
+	question: string;
+	fromAgentId?: string; // attribution, and the consult tab the target keeps per asker
+	fromTabId?: string;
+	withContext?: boolean; // forward the asking tab's transcript; off by default
+	timeoutMs?: number; // default 600000; the host clamps to 10000..3600000
+}
+
+export interface ConsultAnswer {
+	answer: string;
+	agentName?: string;
+}
+```
+
+A consult is the `maestro-cli ask` path: a hidden tab on the target with a fresh context, no tab chip, no unread mark, and no change to the desktop's view. It is NOT `turns.send` to the target, which would land in whatever conversation the person has open there.
+
+Decisions worth knowing:
+
+- **The answer is not written into the asking tab.** The desktop keeps the exchange on the consulted agent's hidden tab only, so the TUI shows it inline from the call's result and holds it in memory for the run of the TUI. Reopening the TUI does not bring it back.
+- **Not `ok` means no answer.** An agent that is gone, a timeout, and a stopped consult all fail with the host's words (`The consult with Beta was stopped.`). A partial answer the host reports with a failure is dropped.
+- **The client waits `timeoutMs` plus 15 seconds.** The host's own timeout names the agent that went quiet; a client-side one could only say the desktop did not answer.
+- **Read-only is the host's rule, not an option here.** The consulted agent is told it may read the asking agent's folder. There is no writable consult. Handing another agent work it can act on is `tabs.create` plus `turns.send` on a NEW tab, which the TUI offers only as an explicit, confirmed delegation (Ctrl-D), never as a side effect of a mention.
+- **The desktop consults any mention in a message it is handed.** `turns.send` text goes through the desktop's own mention planner, so a TUI that consults itself and also sends the same text would consult twice. The TUI sends this agent the message with each resolved mention quoted (`"@Beta"`), which the scanner reads as literal text. A message that leads with a mention is not sent to this agent at all, as on the desktop.
+
 ### 4.7 Settings
 
 ```ts
@@ -588,6 +621,7 @@ export interface MaestroClient {
 	readonly turns: TurnsApi;
 	readonly autoRun: AutoRunApi;
 	readonly groupChats: GroupChatsApi;
+	readonly consults: ConsultsApi;
 	readonly settings: SettingsApi;
 	readonly providers: ProvidersApi;
 	readonly events: EventsApi;
@@ -721,6 +755,14 @@ None of these carries `background: true`: the desktop handlers start, stop, and 
 | `groupChats.remove` | **invoke** `groupChat:delete` (`id`)                                                                                                                        | Kills the moderator and participants first, then deletes the log (G15). The desktop's list is not told.                                                                                                          |
 
 None of these carries `background: true`: the desktop handlers neither select a chat nor open one. `broadcastGroupChatMessage` and `broadcastGroupChatStateChange` exist on the web server but have NO callers, so the typed `group_chat_message` and `group_chat_state_change` frames are never sent; the live feed is the `groupChat:*` `bridge.event` channels in 6.1.
+
+### 5.5.3 Consults
+
+| Method         | Mapping                                                                                                                                                                                                        | Notes                                                                                                                                                                                                                                                                 |
+| -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `consults.ask` | `cross_agent_ask` {`sessionId` (the target), `question`, `fromSessionId?`, `fromTabId?`, `withContext`, `timeoutMs`} -> `cross_agent_ask_result` {`success`, `answer`, `error`, `canceled`, `targetAgentName`} | The reply takes as long as the answer, so the socket waits `timeoutMs` plus 15 seconds instead of the 10 second request timeout. `canceled` is `rejected`; any other failure goes through `classifyFailure`. No `background`: nothing here selects an agent or a tab. |
+
+The `cross-agent-<requestId>` process the desktop spawns for a consult is dropped from the turn stream (6.1), so a consult never raises a turn event on any tab.
 
 ### 5.6 Settings
 
@@ -978,7 +1020,6 @@ Not in this version of the interface. The Phase 4 tasks add each one with its ma
 
 | Namespace   | Method                 | Bridge mapping                                                                                 | Requirement  |
 | ----------- | ---------------------- | ---------------------------------------------------------------------------------------------- | ------------ |
-| `consults`  | `ask`                  | `cross_agent_ask` -> `cross_agent_ask_result`                                                  | XM-1 to XM-3 |
 | `agents`    | `update({ provider })` | **missing** until Phase 4 (G8)                                                                 | PS-1 to PS-5 |
 | `agents`    | `createWorktree`       | `create_worktree_session` {`parentSessionId`, `branchName`, `baseBranch`, `background: true`}  | AG-6         |
 | `providers` | `config`               | **invoke** `agents:getConfig`                                                                  | ST-1         |

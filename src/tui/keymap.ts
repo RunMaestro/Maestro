@@ -14,6 +14,8 @@ export type KeyContext =
 	| 'main'
 	/** The Conversation pane has focus and a desktop is attached: letters type into the composer. */
 	| 'composer'
+	/** The composer with the `@` agent picker open: arrows pick a row, Tab or Enter inserts it, other keys still type. */
+	| 'composerMention'
 	| 'help'
 	| 'tabs'
 	| 'history'
@@ -86,6 +88,9 @@ export type KeyAction =
 	| 'newGroup'
 	| 'confirm'
 	| 'send'
+	| 'acceptMention'
+	| 'dismissMention'
+	| 'delegate'
 	| 'newline'
 	| 'interrupt'
 	| 'blurComposer'
@@ -159,9 +164,11 @@ export const KEYMAP: readonly Binding[] = [
 			'autoRunLaunch',
 			'groupChats',
 			'groupChatForm',
+			'composerMention',
 		],
 		chordsByContext: {
 			palette: [{ named: 'down' }, { input: 'n', ctrl: true }],
+			composerMention: [{ named: 'down' }, { input: 'n', ctrl: true }],
 			groupChatForm: [{ named: 'down' }, { named: 'tab' }, { input: 'n', ctrl: true }],
 			// A form is a text box: letters type, so the cursor moves on arrows, Tab, and Ctrl-N.
 			form: [{ named: 'down' }, { named: 'tab' }, { input: 'n', ctrl: true }],
@@ -188,9 +195,11 @@ export const KEYMAP: readonly Binding[] = [
 			'autoRunLaunch',
 			'groupChats',
 			'groupChatForm',
+			'composerMention',
 		],
 		chordsByContext: {
 			palette: [{ named: 'up' }, { input: 'p', ctrl: true }],
+			composerMention: [{ named: 'up' }, { input: 'p', ctrl: true }],
 			groupChatForm: [{ named: 'up' }, { named: 'tab', shift: true }, { input: 'p', ctrl: true }],
 			form: [{ named: 'up' }, { named: 'tab', shift: true }, { input: 'p', ctrl: true }],
 			autoRunLaunch: [{ named: 'up' }, { named: 'tab', shift: true }, { input: 'p', ctrl: true }],
@@ -420,6 +429,24 @@ export const KEYMAP: readonly Binding[] = [
 		description: 'Send the message (queued while busy)',
 	},
 	{
+		action: 'acceptMention',
+		chords: [{ named: 'tab' }, { named: 'return' }],
+		contexts: ['composerMention'],
+		description: 'Insert the agent; a group inserts its members',
+	},
+	{
+		action: 'dismissMention',
+		chords: [{ named: 'escape' }],
+		contexts: ['composerMention'],
+		description: 'Close the agent picker, keep the text',
+	},
+	{
+		action: 'delegate',
+		chords: [{ input: 'd', ctrl: true }],
+		contexts: ['composer', 'composerMention'],
+		description: 'Hand the message to the @agent as work (can edit)',
+	},
+	{
 		action: 'newline',
 		// Terminals send a plain Enter for Shift-Enter, so the line feed (Ctrl-J) is the reliable key;
 		// ESC then CR is what most terminals send for Alt-Enter, or for Shift-Enter when mapped.
@@ -427,7 +454,7 @@ export const KEYMAP: readonly Binding[] = [
 			{ input: '\n', label: 'Ctrl-J' },
 			{ input: '\r', label: 'Alt-Enter' },
 		],
-		contexts: ['composer', 'groupChat'],
+		contexts: ['composer', 'composerMention', 'groupChat'],
 		description: 'New line in the message',
 	},
 	{
@@ -436,6 +463,7 @@ export const KEYMAP: readonly Binding[] = [
 		contexts: [
 			'main',
 			'composer',
+			'composerMention',
 			'help',
 			'tabs',
 			'history',
@@ -496,13 +524,13 @@ export const KEYMAP: readonly Binding[] = [
 	{
 		action: 'toggleAgentsPane',
 		chords: [{ input: 'b', ctrl: true }],
-		contexts: ['main', 'composer'],
+		contexts: ['main', 'composer', 'composerMention'],
 		description: 'Show or hide the Agents pane',
 	},
 	{
 		action: 'palette',
 		chords: [{ input: 'k', ctrl: true }],
-		contexts: ['main', 'composer', 'palette'],
+		contexts: ['main', 'composer', 'composerMention', 'palette'],
 		description: 'Command palette',
 	},
 	{

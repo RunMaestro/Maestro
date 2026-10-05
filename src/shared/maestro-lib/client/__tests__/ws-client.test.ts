@@ -1911,6 +1911,95 @@ describe('createWsMaestroClient', () => {
 
 	// -----------------------------------------------------------------------
 
+	describe('consults (XM-1 to XM-3)', () => {
+		it('asks through cross_agent_ask, attributed to the asker, and returns the answer', async () => {
+			await connect();
+			bridge.typed.set(
+				'cross_agent_ask',
+				reply('cross_agent_ask_result', { answer: 'Use main.', targetAgentName: 'Beta' })
+			);
+			expect(
+				await client.consults.ask({
+					targetAgentId: 'a2',
+					question: 'which branch?',
+					fromAgentId: A1,
+					fromTabId: 't1',
+				})
+			).toEqual({ ok: true, value: { answer: 'Use main.', agentName: 'Beta' } });
+			expect(bridge.sent('cross_agent_ask')).toEqual([
+				expect.objectContaining({
+					sessionId: 'a2',
+					question: 'which branch?',
+					fromSessionId: A1,
+					fromTabId: 't1',
+					withContext: false,
+					timeoutMs: 600_000,
+				}),
+			]);
+		});
+
+		it('keeps the consult read-only and out of the desktop: no tab, no turn, no focus message', async () => {
+			await connect();
+			bridge.typed.set('cross_agent_ask', reply('cross_agent_ask_result', { answer: 'ok' }));
+			await client.consults.ask({ targetAgentId: 'a2', question: 'q' });
+			expect(bridge.received.map((frame) => frame.type)).toEqual(['cross_agent_ask']);
+		});
+
+		it('clamps the wait to the host bounds', async () => {
+			await connect();
+			bridge.typed.set('cross_agent_ask', reply('cross_agent_ask_result', { answer: 'late' }));
+			await client.consults.ask({ targetAgentId: 'a2', question: 'q', timeoutMs: 1 });
+			await client.consults.ask({ targetAgentId: 'a2', question: 'q', timeoutMs: 9e9 });
+			expect(bridge.sent('cross_agent_ask').map((frame) => frame.timeoutMs)).toEqual([
+				10_000, 3_600_000,
+			]);
+		});
+
+		it('reports the host reason when the agent is gone, did not answer, or was stopped', async () => {
+			await connect();
+			bridge.typed.set('cross_agent_ask', () => ({
+				type: 'cross_agent_ask_result',
+				success: false,
+				error: 'Agent not found',
+			}));
+			expect(await client.consults.ask({ targetAgentId: 'zz', question: 'q' })).toMatchObject({
+				ok: false,
+				error: { code: 'not-found', method: 'consults.ask' },
+			});
+
+			bridge.typed.set('cross_agent_ask', () => ({
+				type: 'cross_agent_ask_result',
+				success: false,
+				canceled: true,
+				targetAgentName: 'Beta',
+			}));
+			expect(await client.consults.ask({ targetAgentId: 'a2', question: 'q' })).toMatchObject({
+				ok: false,
+				error: { code: 'rejected', message: 'The consult with Beta was stopped.' },
+			});
+		});
+
+		it('refuses an empty question and a self-consult without a call, and needs a host', async () => {
+			await connect();
+			expect(await client.consults.ask({ targetAgentId: 'a2', question: '  ' })).toMatchObject({
+				ok: false,
+				error: { code: 'invalid' },
+			});
+			expect(
+				await client.consults.ask({ targetAgentId: A1, question: 'q', fromAgentId: A1 })
+			).toMatchObject({ ok: false, error: { code: 'invalid' } });
+			expect(bridge.sent('cross_agent_ask')).toEqual([]);
+
+			await client.connection.close();
+			expect(await client.consults.ask({ targetAgentId: 'a2', question: 'q' })).toMatchObject({
+				ok: false,
+				error: { code: 'host-unavailable', method: 'consults.ask' },
+			});
+		});
+	});
+
+	// -----------------------------------------------------------------------
+
 	describe('events', () => {
 		it('filters by type and by agent, and survives a throwing listener', async () => {
 			const onlyTabs: MaestroEvent[] = [];

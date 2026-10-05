@@ -75,6 +75,8 @@ import type {
 	ClientMethod,
 	ClientResult,
 	ConnectionState,
+	ConsultAnswer,
+	ConsultAskInput,
 	EventFilter,
 	GroupCreateInput,
 	HostInfo,
@@ -95,6 +97,12 @@ import type {
 const LOG_CONTEXT = '[WsMaestroClient]';
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 10_000;
+/** The host's own consult bounds (`handleCrossAgentAsk` clamps again). */
+const DEFAULT_CONSULT_TIMEOUT_MS = 600_000;
+const MIN_CONSULT_TIMEOUT_MS = 10_000;
+const MAX_CONSULT_TIMEOUT_MS = 3_600_000;
+/** Extra wait on the socket so the HOST's timeout, which names the agent that went quiet, is the one that fires. */
+const CONSULT_WAIT_GRACE_MS = 15_000;
 const DEFAULT_RECONNECT_INITIAL_MS = 500;
 const DEFAULT_RECONNECT_MAX_MS = 15_000;
 const DEFAULT_HEARTBEAT_INTERVAL_MS = 15_000;
@@ -322,6 +330,10 @@ class WsMaestroClient implements MaestroClient {
 		remove: (chatId: string) => this.groupChatsRemove(chatId),
 	};
 
+	readonly consults = {
+		ask: (input: ConsultAskInput) => this.consultsAsk(input),
+	};
+
 	readonly settings = {
 		get: (keys: readonly string[]) => this.settingsGet(keys),
 		subscribe: (
@@ -435,10 +447,16 @@ class WsMaestroClient implements MaestroClient {
 		method: ClientMethod,
 		message: Record<string, unknown>,
 		replyType: string,
-		options: { matchByType?: boolean } = {}
+		options: { matchByType?: boolean; timeoutMs?: number } = {}
 	): Promise<ClientResult<T>> {
 		try {
-			const reply = await conn.sendCommand<T>(message, replyType, this.requestTimeoutMs, options);
+			const { timeoutMs, ...commandOptions } = options;
+			const reply = await conn.sendCommand<T>(
+				message,
+				replyType,
+				timeoutMs ?? this.requestTimeoutMs,
+				commandOptions
+			);
 			return ok(reply);
 		} catch (error) {
 			return this.mapThrown(method, error);
@@ -470,7 +488,7 @@ class WsMaestroClient implements MaestroClient {
 		method: ClientMethod,
 		message: Record<string, unknown>,
 		replyType: string,
-		options: { matchByType?: boolean } = {}
+		options: { matchByType?: boolean; timeoutMs?: number } = {}
 	): Promise<ClientResult<T>> {
 		const gate = this.requireConnected(method);
 		if (gate || !this.conn) {
@@ -1959,6 +1977,48 @@ class WsMaestroClient implements MaestroClient {
 		if (!done.ok) return done;
 		this.knownGroupChats.delete(chatId);
 		return ok(undefined);
+	}
+
+	// =======================================================================
+	// Consults
+	// =======================================================================
+
+	private async consultsAsk(input: ConsultAskInput): Promise<ClientResult<ConsultAnswer>> {
+		const method: ClientMethod = 'consults.ask';
+		const gate = this.requireConnected(method);
+		if (gate) return gate;
+		if (!input.question.trim()) return this.fail(method, 'invalid', 'The question is empty.');
+		if (input.fromAgentId && input.fromAgentId === input.targetAgentId) {
+			return this.fail(method, 'invalid', 'An agent cannot consult itself.');
+		}
+		const timeoutMs = Math.min(
+			Math.max(input.timeoutMs ?? DEFAULT_CONSULT_TIMEOUT_MS, MIN_CONSULT_TIMEOUT_MS),
+			MAX_CONSULT_TIMEOUT_MS
+		);
+		const sent = await this.send(
+			method,
+			{
+				type: 'cross_agent_ask',
+				sessionId: input.targetAgentId,
+				question: input.question,
+				...(input.fromAgentId ? { fromSessionId: input.fromAgentId } : {}),
+				...(input.fromTabId ? { fromTabId: input.fromTabId } : {}),
+				withContext: input.withContext === true,
+				timeoutMs,
+			},
+			'cross_agent_ask_result',
+			{ timeoutMs: timeoutMs + CONSULT_WAIT_GRACE_MS }
+		);
+		if (!sent.ok) return sent;
+		const reply = sent.value;
+		const agentName = asString(reply.targetAgentName);
+		if (reply.success === true) return ok({ answer: asString(reply.answer) ?? '', agentName });
+		const who = agentName ?? 'the agent';
+		if (reply.canceled === true) {
+			return this.fail(method, 'rejected', `The consult with ${who} was stopped.`);
+		}
+		const text = asString(reply.error);
+		return this.fail(method, classifyFailure(text), text ?? `${who} did not answer.`);
 	}
 
 	// =======================================================================

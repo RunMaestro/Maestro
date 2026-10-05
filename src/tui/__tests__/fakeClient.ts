@@ -43,6 +43,13 @@ export interface FakeClientOptions {
 	goalRunTabId?: string;
 	/** The group chats the host holds. `groupChats.get` returns one with its lines; `list` returns them without. */
 	groupChats?: GroupChatRecord[];
+	/** What `consults.ask` answers, by the consulted agent's id. An agent not listed answers `ok` with nothing. */
+	consultReplies?: Record<
+		string,
+		{ answer?: string; code?: ClientError['code']; agentName?: string }
+	>;
+	/** Hold every `consults.ask` until `releaseConsults()`, so a test can see the asking state. */
+	holdConsults?: boolean;
 	/** Make these methods fail with this code, so a test can see how a refusal is shown. */
 	failures?: Partial<Record<ClientMethod, ClientError['code']>>;
 }
@@ -61,6 +68,8 @@ export interface FakeClient {
 	groupChats: GroupChatRecord[];
 	/** Every `groupChats.get` call, as the chat id. */
 	chatReads: string[];
+	/** Answer every `consults.ask` held by `holdConsults`. */
+	releaseConsults(): void;
 	/** Tabs closed through `tabs.close`, as the host's closed-tab history holds them. */
 	closedTabs: Array<{ agentId: string; tab: AITabRecord }>;
 	/** What the connection did, in order. */
@@ -109,6 +118,7 @@ export function createFakeClient(options: FakeClientOptions = {}): FakeClient {
 	const chats = (options.groupChats ?? []).map((chat) => ({ ...chat }));
 	const chatReads: string[] = [];
 	let state: ConnectionState = 'idle';
+	const heldConsults: Array<() => void> = [];
 
 	const record = (method: ClientMethod, ...args: unknown[]): ClientResult<never> | undefined => {
 		requests.push({ method, args });
@@ -395,6 +405,24 @@ export function createFakeClient(options: FakeClientOptions = {}): FakeClient {
 				return { ok: true, value: undefined };
 			},
 		},
+		consults: {
+			ask: async (input) => {
+				const refused = record('consults.ask', input);
+				if (refused) return refused;
+				if (options.holdConsults) {
+					await new Promise<void>((resolve) => heldConsults.push(resolve));
+				}
+				const reply = options.consultReplies?.[input.targetAgentId];
+				if (reply?.code) return fail('consults.ask', reply.code);
+				return {
+					ok: true,
+					value: {
+						answer: reply?.answer ?? '',
+						...(reply?.agentName ? { agentName: reply.agentName } : {}),
+					},
+				};
+			},
+		},
 		settings: {
 			get: async () => ({ ok: true, value: {} }),
 			subscribe: () => () => undefined,
@@ -427,6 +455,9 @@ export function createFakeClient(options: FakeClientOptions = {}): FakeClient {
 			transcripts[`${agentId}:${tabId}`] = entries;
 		},
 		transcriptReads,
+		releaseConsults: () => {
+			for (const release of heldConsults.splice(0)) release();
+		},
 		groupChats: chats,
 		chatReads,
 		closedTabs,
