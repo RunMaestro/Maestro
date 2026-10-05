@@ -65,7 +65,7 @@ import {
 	cueEngineStatus,
 	cueEngineInspect,
 } from './commands/cue-engine';
-import { bundleExport, bundleInspect, bundleValidate } from './commands/bundle';
+import { bundleExport, bundleImport, bundleInspect, bundleValidate } from './commands/bundle';
 import { createAgent } from './commands/create-agent';
 import { createGroup } from './commands/create-group';
 import { removeGroup } from './commands/remove-group';
@@ -1160,11 +1160,12 @@ cueEngine
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(cueEngineInspect);
 
-// Bundle commands - pack a Cue pipeline or one agent into a portable zip.
-// Reads the data directory directly, so these work with the app closed.
+// Bundle commands - pack a Cue pipeline or one agent into a portable zip, and
+// import one. Read the data directory directly, so these work with the app
+// closed (import refuses to run while it is open).
 const bundle = program
 	.command('bundle')
-	.description('Export, validate, and inspect portable Cue pipeline and agent bundles');
+	.description('Export, validate, inspect, and import portable Cue pipeline and agent bundles');
 
 bundle
 	.command('export')
@@ -1192,6 +1193,30 @@ bundle
 	.description('Describe a bundle from its manifest and README without unpacking the rest')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(bundleInspect);
+
+bundle
+	.command('import <bundle>')
+	.description(
+		'Import a bundle into a data directory and local workspace folders (desktop and Cue engine must be stopped)'
+	)
+	.option(
+		'-w, --workspace <key=path>',
+		'Map a bundle workspace to a local folder (repeatable, one per workspace)',
+		(val: string, prev: string[]) => [...prev, val],
+		[] as string[]
+	)
+	.option(
+		'--agent-path <tool=path>',
+		'Set the binary a provider runs, e.g. claude-code=/usr/local/bin/claude (repeatable)',
+		(val: string, prev: string[]) => [...prev, val],
+		[] as string[]
+	)
+	.option('--data-dir <path>', 'Import into this Maestro data directory instead of the default')
+	.option('--dry-run', 'Report everything the import would do, including conflicts; write nothing')
+	.option('--force', 'Overwrite conflicting agents, subscriptions, playbooks, files, and paths')
+	.option('--reject-shell-commands', 'Refuse the import if any subscription runs a shell command')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((bundlePath, options) => bundleImport(cliVersion, bundlePath, options));
 
 // Director's Notes commands
 const directorNotes = program
