@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 
 import pytest
+import sandbox_runner
 
 pytestmark = pytest.mark.skipif(shutil.which("bwrap") is None, reason="bubblewrap required")
 RUNNER = Path(__file__).with_name("sandbox_runner.py")
@@ -79,3 +80,24 @@ def test_bare_python_prefers_the_project_venv(tmp_path):
     assert result["observed"] is True, result
     assert result["returncode"] == 0, result
     assert result["stdout"].strip() == "/workspace/.venv"
+
+
+def test_user_bin_does_not_expose_home(tmp_path):
+    home = tmp_path / "home" / "u"
+    tool = home / "bin" / "tool"
+    tool.parent.mkdir(parents=True)
+    tool.write_text("#!/bin/sh\necho ok\n")
+    mounts = sandbox_runner._toolchain_mounts([str(tool)], tmp_path / "workspace")
+    sources = [mounts[i + 1] for i, arg in enumerate(mounts) if arg == "--ro-bind"]
+    assert str(tool.parent) in sources or str(tool) in sources
+    assert str(home) not in sources
+
+
+def test_verbose_success_keeps_observed_verdict(tmp_path):
+    result = observe(tmp_path, "python3", "-c",
+                     "import sys; sys.stdout.write('x' * 120000); sys.stderr.write('y' * 120000)")
+    assert result["observed"] is True, result
+    assert result["returncode"] == 0
+    assert result["stdout"] == "x" * 100000
+    assert result["stderr"] == "y" * 100000
+    assert result["outputTruncated"] == {"stdout": True, "stderr": True}

@@ -112,7 +112,7 @@ An open ask from the same agent and program is updated, preserving the higher se
 
 ## Program loop
 
-Supervise a product program to wake its lead only for a new bounded outcome, a newly blocked or failed task, or the completion of the last plan. A busy lead is never interrupted. The loop supervises the active plan's orchestrator and watches the lead's tab after a successful wake; the lead writes plans with pianola plan set --file but does not dispatch tasks. Idle handoffs are at least 60 minutes apart. Pause a program to stop further loop actions without deleting its charter.
+Supervise a product program to wake its lead only for a new bounded outcome, a newly blocked or failed task, or the completion of the last plan. A busy lead is never interrupted. The loop supervises the active plan's orchestrator and watches the lead's tab after a successful wake; the lead writes plans with `pianola plan set --file` but does not dispatch tasks. Idle handoffs are at least 60 minutes apart. Pausing a program disables its plans' supervised orchestrators and its lead watch, as well as stopping further loop actions, without deleting its charter. Resuming re-enables those targets; a paused tick cannot register new ones.
 
 ```bash
 maestro-cli pianola supervise program <program-id> --interval 120
@@ -122,7 +122,7 @@ maestro-cli pianola program pause <program-id>
 
 Loop memo state is stored in maestro-pianola-program-loop.json in the Maestro data directory. Program-loop actions appear in Recent decisions without creating a Needs you escalation; repeated unchanged no-ops are omitted. The brief reports whether each program is supervised and its last wake reason and time.
 
-Applying a program also writes Cue routines into a local Windows root's .maestro/cue.yaml. Product programs get a weekday 08:30 standup and an engineer-completion-to-marketing draft subscription. The portfolio program gets Monday CTO and CMO reviews and a Wednesday social draft sweep. These write drafts and reviews only, never publish. Re-apply replaces only the marked generated block and preserves hand-written subscriptions. Remote roots are skipped by the CLI if an SSH file writer is unavailable; manage that Cue file through the app's remote filesystem instead.
+Applying a program also writes Cue routines into a local Windows root's `.maestro/cue.yaml`. Product programs get a weekday 08:30 standup and a weekday 17:00 marketing draft sweep over verified work from the last day. The portfolio program gets Monday CTO and CMO reviews and a Wednesday social draft sweep. These write drafts and reviews only, never publish. Re-apply replaces only the marked generated block and preserves hand-written subscriptions. For a remote root, the CLI writes through `remoteRootOnHost` and skips the Cue file when that value is unset.
 
 ## Task plans
 
@@ -142,7 +142,7 @@ An engineer task can include a validation oracle with command (argv), target (wo
 
 Run an oracle manually with maestro-cli pianola validate <planId> <taskId> --json.
 
-The optional pianola.sandboxRunner setting is an argv prefix. Its default is ["wsl.exe", "-d", "Ubuntu", "-u", "dev", "--", "python3", "/mnt/c/Users/Administrator/Software/Maestro/.worktrees/pianola-portfolio/scripts/pianola-sandbox/sandbox_runner.py"]. Windows target and artifact paths are translated to WSL /mnt paths. A program charter with validationRequired: false disables automatic validation for that program; manual validation remains available. The verb exits 0 when verified, 2 when failed, and 3 when unknown.
+The optional pianola.sandboxRunner setting overrides the validator with a non-empty argv prefix, for example ["python3", "/opt/maestro/sandbox_runner.py"]. By default, Pianola resolves scripts/pianola-sandbox/sandbox_runner.py relative to the installed CLI: beside its bundle first, then from the repository root above dist/cli (the current build does not copy the script into dist). Linux/macOS invoke python3 <path>; Windows invokes wsl.exe -- python3 /mnt/<drive>/... using the default WSL distro and user, with target and artifact paths translated to /mnt paths. The runner requires a Linux host with bubblewrap and resource-controlling user-manager support; macOS therefore requires a configured Linux launcher. A missing default script or invalid override is a configuration error naming pianola.sandboxRunner, not an unknown oracle verdict. A program charter with validationRequired: false disables automatic validation; true requires each task to declare a validation spec. Manual validation remains available. Output is drained to EOF with a bounded head per stream and truncation flags, without losing the exit verdict. The launcher is killed if it exceeds timeoutSeconds (default 120) plus 60 seconds of launch grace. The verb exits 0 when verified, 2 when failed, 3 when unknown, and 1 for configuration errors.
 
 ## Learning from how you already work
 

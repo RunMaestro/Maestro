@@ -3364,6 +3364,43 @@ Some text with [x] in it that's not a checkbox
 			});
 		});
 
+		it('creates distinct exclusive prompt files for turns started in the same millisecond', async () => {
+			await withPlatform('win32', async () => {
+				vi.spyOn(Date, 'now').mockReturnValue(123456);
+				const first = spawnAgent('omp', 'C:\\proj', 'first', undefined, {
+					appendSystemPrompt: longSystemPrompt,
+				});
+				await driveSpawnToCompletion(first, 0);
+				const firstFile = (fs.writeFileSync as Mock).mock.calls[0][0];
+				const second = spawnAgent('omp', 'C:\\proj', 'second', undefined, {
+					appendSystemPrompt: longSystemPrompt,
+				});
+				await driveSpawnToCompletion(second, 0);
+				const writes = (fs.writeFileSync as Mock).mock.calls;
+				expect(writes[1][0]).not.toBe(firstFile);
+				for (const call of writes) {
+					expect(call[2]).toEqual({ encoding: 'utf-8', mode: 0o600, flag: 'wx' });
+				}
+			});
+		});
+
+		it('retries a colliding prompt file without reverting to oversized argv', async () => {
+			await withPlatform('win32', async () => {
+				vi.mocked(fs.writeFileSync).mockImplementationOnce(() => {
+					throw Object.assign(new Error('exists'), { code: 'EEXIST' });
+				});
+				const p = spawnAgent('omp', 'C:\\proj', 'user msg', undefined, {
+					appendSystemPrompt: longSystemPrompt,
+				});
+				await driveSpawnToCompletion(p, 0);
+				const writes = (fs.writeFileSync as Mock).mock.calls;
+				expect(writes).toHaveLength(2);
+				expect(writes[1][0]).not.toBe(writes[0][0]);
+				expect(spawnCall().args).toContain('@' + writes[1][0]);
+				expect(writes[1][2]).toEqual({ encoding: 'utf-8', mode: 0o600, flag: 'wx' });
+			});
+		});
+
 		it('keeps a short prompt inline on Windows', async () => {
 			await withPlatform('win32', async () => {
 				const p = spawnAgent('omp', 'C:\\proj', 'short task');

@@ -149,20 +149,20 @@ describe('CueEngine sleep/wake detection', () => {
 		engine.stop();
 	});
 
-	it('should write heartbeat immediately on start', () => {
+	it('should write heartbeat immediately on start', async () => {
 		const deps = createMockDeps();
 		const engine = new CueEngine(deps);
-		engine.start();
+		await engine.start();
 
 		expect(mockUpdateHeartbeat).toHaveBeenCalledTimes(1);
 
 		engine.stop();
 	});
 
-	it('should write heartbeat every 30 seconds', () => {
+	it('should write heartbeat every 30 seconds', async () => {
 		const deps = createMockDeps();
 		const engine = new CueEngine(deps);
-		engine.start();
+		await engine.start();
 
 		// Initial call
 		expect(mockUpdateHeartbeat).toHaveBeenCalledTimes(1);
@@ -225,14 +225,14 @@ describe('CueEngine sleep/wake detection', () => {
 		engine.stop();
 	});
 
-	it('should reconcile when gap exceeds 2 minutes', () => {
+	it('should reconcile when gap exceeds 2 minutes', async () => {
 		// Last heartbeat was 10 minutes ago
 		const tenMinutesAgo = Date.now() - 10 * 60 * 1000;
 		mockGetLastHeartbeat.mockReturnValue(tenMinutesAgo);
 
 		const deps = createMockDeps();
 		const engine = new CueEngine(deps);
-		engine.start();
+		await engine.start();
 
 		expect(mockReconcileMissedTimeEvents).toHaveBeenCalledTimes(1);
 		const reconcileArgs = mockReconcileMissedTimeEvents.mock.calls[0][0];
@@ -244,13 +244,13 @@ describe('CueEngine sleep/wake detection', () => {
 		engine.stop();
 	});
 
-	it('should log sleep detection with gap duration', () => {
+	it('should log sleep detection with gap duration', async () => {
 		const fiveMinutesAgo = Date.now() - 5 * 60 * 1000;
 		mockGetLastHeartbeat.mockReturnValue(fiveMinutesAgo);
 
 		const deps = createMockDeps();
 		const engine = new CueEngine(deps);
-		engine.start();
+		await engine.start();
 
 		expect(deps.onLog).toHaveBeenCalledWith(
 			'cue',
@@ -293,13 +293,13 @@ describe('CueEngine sleep/wake detection', () => {
 		engine.stop();
 	});
 
-	it('should pass session info to the reconciler', () => {
+	it('should pass session info to the reconciler', async () => {
 		const tenMinutesAgo = Date.now() - 10 * 60 * 1000;
 		mockGetLastHeartbeat.mockReturnValue(tenMinutesAgo);
 
 		const deps = createMockDeps();
 		const engine = new CueEngine(deps);
-		engine.start();
+		await engine.start();
 
 		const reconcileArgs = mockReconcileMissedTimeEvents.mock.calls[0][0];
 		const sessions = reconcileArgs.sessions as Map<string, unknown>;

@@ -46,6 +46,7 @@ export const writePianolaPrograms = store.writePrograms;
 export const upsertPianolaProgram = store.upsertProgram;
 export const readPianolaAsks = store.readAsks;
 export const writePianolaAsks = store.writeAsks;
+export const updatePianolaAsks = store.updateAsks;
 export const readPianolaProgramLoopMemo = store.readProgramLoopMemo;
 export const writePianolaProgramLoopMemo = store.writeProgramLoopMemo;
 export const readPianolaSupervisorTargets = store.readSupervisorTargets;

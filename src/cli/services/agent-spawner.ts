@@ -4,6 +4,7 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { randomUUID } from 'crypto';
 import type {
 	AdditionalDirectory,
 	AgentSshRemoteConfig,
@@ -172,7 +173,7 @@ const SYSTEM_PROMPT_TMPFILE_CLEANUP_MS = 30_000;
 const PROMPT_FILE_THRESHOLD_CHARS = 24_000;
 
 /**
- * Write a long prompt to a temp file and return the agent's file-delivery
+ * Write a long prompt to a unique, exclusive temp file and return its file-delivery
  * args, or null when the agent cannot take a file, the platform does not
  * need it, or the write fails (the caller then delivers inline as before).
  * Cleanup mirrors the system-prompt tempfile above.
@@ -184,15 +185,23 @@ function buildPromptFileArgs(
 ): string[] | null {
 	if (!isWindows() || isSshSession || !def?.promptFileArgs) return null;
 	if (prompt.length <= PROMPT_FILE_THRESHOLD_CHARS) return null;
-	const tempFile = path.join(os.tmpdir(), `maestro-prompt-${Date.now()}-${process.pid}.md`);
-	try {
-		fs.writeFileSync(tempFile, prompt, { encoding: 'utf-8', mode: 0o600 });
-	} catch (writeErr) {
-		const reason = writeErr instanceof Error ? writeErr.message : String(writeErr);
-		console.error(
-			`[maestro-cli] prompt tempfile write failed (${reason}); delivering the prompt inline`
+	let tempFile: string;
+	for (;;) {
+		tempFile = path.join(
+			os.tmpdir(),
+			`maestro-prompt-${Date.now()}-${process.pid}-${randomUUID()}.md`
 		);
-		return null;
+		try {
+			fs.writeFileSync(tempFile, prompt, { encoding: 'utf-8', mode: 0o600, flag: 'wx' });
+			break;
+		} catch (writeErr) {
+			if ((writeErr as NodeJS.ErrnoException).code === 'EEXIST') continue;
+			const reason = writeErr instanceof Error ? writeErr.message : String(writeErr);
+			console.error(
+				`[maestro-cli] prompt tempfile write failed (${reason}); delivering the prompt inline`
+			);
+			return null;
+		}
 	}
 	const cleanupTimer = setTimeout(() => {
 		fs.promises.unlink(tempFile).catch((unlinkErr: NodeJS.ErrnoException) => {

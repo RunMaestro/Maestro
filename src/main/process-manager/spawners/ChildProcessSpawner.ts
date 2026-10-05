@@ -127,6 +127,30 @@ export class ChildProcessSpawner {
 		// inside bash -c), skip the appending paths below and treat it as already-added.
 		let promptAddedToArgs = !!config.promptAlreadyInArgs;
 
+		const appendPromptArgs = (text: string): void => {
+			// File-backed delivery avoids Windows' argv limit, including image turns.
+			const promptFilePath =
+				isWindows() && promptFileArgs && text.length > PROMPT_FILE_THRESHOLD_CHARS
+					? savePromptToTempFile(text)
+					: null;
+			if (promptFilePath && promptFileArgs) {
+				tempImageFiles.push(promptFilePath);
+				finalArgs = [...finalArgs, ...promptFileArgs(promptFilePath)];
+				logger.info(
+					'[ProcessManager] Delivering long prompt through a temp file',
+					'ProcessManager',
+					{
+						sessionId,
+						toolType,
+						promptLength: text.length,
+					}
+				);
+			} else {
+				finalArgs = [...finalArgs, ...buildPromptArgv({ promptArgs, noPromptSeparator }, text)];
+			}
+			promptAddedToArgs = true;
+		};
+
 		if (hasImages && prompt && capabilities.supportsStreamJsonInput) {
 			// For agents that support stream-json input (like Claude Code)
 			// Always add --input-format stream-json when sending images via stdin.
@@ -161,11 +185,7 @@ export class ChildProcessSpawner {
 					: buildImagePromptPrefix(tempImageFiles);
 				effectivePrompt = imagePrefix + prompt;
 				if (!promptViaStdin) {
-					finalArgs = [
-						...finalArgs,
-						...buildPromptArgv({ promptArgs, noPromptSeparator }, effectivePrompt),
-					];
-					promptAddedToArgs = true;
+					appendPromptArgs(effectivePrompt);
 				}
 				logger.debug('[ProcessManager] Embedded image paths in prompt', 'ProcessManager', {
 					sessionId,
@@ -183,8 +203,7 @@ export class ChildProcessSpawner {
 					finalArgs = [...finalArgs, ...imageArgs(tempPath)];
 				}
 				if (!promptViaStdin) {
-					finalArgs = [...finalArgs, ...buildPromptArgv({ promptArgs, noPromptSeparator }, prompt)];
-					promptAddedToArgs = true;
+					appendPromptArgs(prompt);
 				}
 				logger.debug('[ProcessManager] Using file-based image args', 'ProcessManager', {
 					sessionId,
@@ -194,32 +213,8 @@ export class ChildProcessSpawner {
 				});
 			}
 		} else if (prompt && !promptViaStdin && !promptAddedToArgs) {
-			// Regular batch mode - prompt as CLI arg
-			// SKIP this when prompt is sent via stdin to avoid shell escaping issues,
-			// or when the caller already embedded the prompt in args (promptAlreadyInArgs).
-			// On Windows the agent is spawned through PowerShell, whose command line caps at
-			// ~32K; a prompt carrying the embedded system prompt exceeds it and spawn fails
-			// with ENAMETOOLONG. CLIs that read a prompt from a file get it that way instead.
-			const promptFilePath =
-				isWindows() && promptFileArgs && prompt.length > PROMPT_FILE_THRESHOLD_CHARS
-					? savePromptToTempFile(prompt)
-					: null;
-			if (promptFilePath && promptFileArgs) {
-				tempImageFiles.push(promptFilePath);
-				finalArgs = [...args, ...promptFileArgs(promptFilePath)];
-				logger.info(
-					'[ProcessManager] Delivering long prompt through a temp file',
-					'ProcessManager',
-					{
-						sessionId,
-						toolType,
-						promptLength: prompt.length,
-					}
-				);
-			} else {
-				finalArgs = [...args, ...buildPromptArgv({ promptArgs, noPromptSeparator }, prompt)];
-			}
-			promptAddedToArgs = true;
+			finalArgs = args;
+			appendPromptArgs(prompt);
 		} else {
 			finalArgs = args;
 		}

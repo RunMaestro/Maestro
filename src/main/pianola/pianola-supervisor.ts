@@ -158,17 +158,25 @@ export class PianolaSupervisor {
 				this.children.delete(id);
 			}
 		}
-
-		// Spawn enabled targets with no live child; refresh config on the rest so a
-		// later restart uses the latest args. A target already in backing-off keeps
-		// its scheduled restart; a stopped/failed target is not auto-restarted here.
+		// Rebind running children when their command changes (not on metadata-only writes).
 		for (const target of targets) {
 			if (!target.enabled) continue;
 			const existing = this.children.get(target.id);
 			if (!existing) {
 				this.spawn(target);
 			} else {
-				existing.target = target;
+				const previousArgs = this.buildArgs(existing.target);
+				const nextArgs = this.buildArgs(target);
+				if (
+					previousArgs?.length !== nextArgs?.length ||
+					previousArgs?.some((arg, index) => arg !== nextArgs?.[index])
+				) {
+					this.stopChild(target.id);
+					this.children.delete(target.id);
+					this.spawn(target);
+				} else {
+					existing.target = target;
+				}
 			}
 		}
 	}

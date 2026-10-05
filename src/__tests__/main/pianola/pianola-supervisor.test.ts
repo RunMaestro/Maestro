@@ -210,6 +210,52 @@ describe('PianolaSupervisor spawn + exit lifecycle', () => {
 });
 
 describe('PianolaSupervisor reconcile', () => {
+	it('restarts a watch bound to a new tab without restarting unchanged targets', () => {
+		const spawnChild = vi.fn((_command: string, _args: readonly string[]) => {
+			const child = new FakeChild(++pidSeq);
+			spawned.push(child);
+			return child as unknown as ChildProcess;
+		});
+		sup = new PianolaSupervisor({
+			isEnabled: () => enabled,
+			getPianolaAgentId: () => 'pianola-agent',
+			spawnChild,
+		});
+		setTargets([watchTarget()]);
+		sup.reconcile();
+		setTargets([{ ...watchTarget(), createdAt: 5 }]);
+		sup.reconcile();
+		expect(spawned).toHaveLength(1);
+		setTargets([{ ...watchTarget(), tabId: 'next-tab' }]);
+		sup.reconcile();
+		expect(spawned[0].killed).toBe(true);
+		expect(spawnChild.mock.calls[1][1]).toEqual([
+			'/fake/maestro-cli.js',
+			'pianola',
+			'watch',
+			'next-tab',
+			'--agent',
+			'a1',
+			'--interval',
+			'5',
+		]);
+		spawned[0].exit(1);
+		vi.advanceTimersByTime(BACKOFF_CAP_MS);
+		expect(spawned).toHaveLength(2);
+		expect(sup.getHealth()[0]).toMatchObject({ id: 'w1', state: 'running' });
+	});
+	it('stops and restores program orchestrators and watches when targets are disabled then resumed', () => {
+		setTargets([watchTarget(), orchestrateTarget()]);
+		sup.reconcile();
+		setTargets([watchTarget('w1', false), orchestrateTarget('o1', false)]);
+		sup.reconcile();
+		expect(spawned.every((child) => child.killed)).toBe(true);
+		expect(sup.getHealth()).toEqual([]);
+		setTargets([watchTarget(), orchestrateTarget()]);
+		sup.reconcile();
+		expect(spawned).toHaveLength(4);
+		expect(sup.getHealth().map((entry) => entry.state)).toEqual(['running', 'running']);
+	});
 	it('spawns an enabled target with no child and stops a removed one', () => {
 		setTargets([watchTarget('w1'), orchestrateTarget('o1')]);
 		sup.reconcile();

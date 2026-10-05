@@ -12,7 +12,10 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import type { AgentRun } from '../../../shared/agent-run';
-import type { OrchestratorState } from '../../../shared/pianola/pianola-orchestrator';
+import type {
+	OrchestratorState,
+	OrchestratorDeps,
+} from '../../../shared/pianola/pianola-orchestrator';
 import type { PianolaPlan, PianolaPlanProgress } from '../../../shared/pianola/pianola-tasks';
 
 const {
@@ -40,6 +43,7 @@ vi.mock('../../../cli/services/pianola-store', () => ({
 	readPianolaPlans: vi.fn(() => []),
 	getPianolaPlan: vi.fn(),
 	upsertPianolaPlan: vi.fn(),
+	readPianolaPrograms: vi.fn(() => []),
 }));
 vi.mock('../../../cli/services/maestro-client', () => ({
 	MaestroClient: class {
@@ -66,6 +70,7 @@ import {
 	pianolaValidate,
 	quoteForPosixShell,
 	resolveExistingPianolaAgentType,
+	resolvePianolaSandboxRunner,
 	sandboxSpawnArgs,
 } from '../../../cli/commands/pianola-orchestrate';
 import { readSettingValue } from '../../../cli/services/storage';
@@ -73,6 +78,7 @@ import {
 	getPianolaPlan,
 	readPianolaPlans,
 	upsertPianolaPlan,
+	readPianolaPrograms,
 } from '../../../cli/services/pianola-store';
 import { runDispatch } from '../../../cli/commands/dispatch';
 
@@ -394,6 +400,90 @@ describe('pianolaOrchestrate - iteration error resilience', () => {
 			expect.objectContaining({ status: 'fixing' })
 		);
 	});
+
+	it('invalidates cached history after a fix dispatch and honors explicit fresh boundary reads', async () => {
+		vi.mocked(readSettingValue).mockReturnValue({ pianola: true, autopilot: true });
+		let history = [
+			{
+				id: 'old',
+				role: 'assistant',
+				source: 'ai',
+				content: 'old reply',
+				timestamp: new Date(0).toISOString(),
+			},
+		];
+		sendCommandMock.mockImplementation(async (command) =>
+			command.type === 'get_session_history' ? { messages: history } : { sessions: [] }
+		);
+		vi.mocked(runDispatch).mockImplementation(async () => {
+			history = [
+				...history,
+				{
+					id: 'fix',
+					role: 'user',
+					source: 'user',
+					content: 'fix request',
+					timestamp: new Date(1).toISOString(),
+				},
+			];
+			return { success: true } as never;
+		});
+		runIterationMock.mockImplementation(
+			async (state: OrchestratorState, deps: OrchestratorDeps) => {
+				const task = {
+					id: 't',
+					title: 'T',
+					prompt: 'p',
+					dependsOn: [],
+					status: 'needs_review' as const,
+					agentId: 'agent-1',
+					tabId: 'tab-1',
+				};
+				expect((await deps.getRecentMessages(task)).at(-1)?.id).toBe('old');
+				await deps.dispatchFix!(task, {});
+				expect((await deps.getRecentMessages(task)).at(-1)?.id).toBe('fix');
+				history = [
+					...history,
+					{
+						id: 'reply',
+						role: 'assistant',
+						source: 'ai',
+						content: 'fixed',
+						timestamp: new Date(2).toISOString(),
+					},
+				];
+				expect((await deps.getRecentMessages(task, { fresh: true })).at(-1)?.id).toBe('reply');
+				return doneResult(state);
+			}
+		);
+		await pianolaOrchestrate('plan-1', { once: true });
+	});
+
+	it('does not require runner configuration when the program disables automatic validation', async () => {
+		vi.mocked(readSettingValue).mockImplementation((key) =>
+			key === 'encoreFeatures' ? { pianola: true } : []
+		);
+		vi.mocked(getPianolaPlan).mockReturnValue({
+			...PLAN,
+			programId: 'program-1',
+			tasks: [
+				{
+					id: 't',
+					title: 'T',
+					prompt: 'p',
+					dependsOn: [],
+					status: 'running',
+					validation: { command: ['true'], target: '/work' },
+				},
+			],
+		});
+		vi.mocked(readPianolaPrograms).mockReturnValueOnce([
+			{ id: 'program-1', charter: { validationRequired: false } },
+		] as never);
+		runIterationMock.mockImplementation(async (state: OrchestratorState) => doneResult(state));
+		await pianolaOrchestrate('plan-1', { once: true });
+		expect(runIterationMock).toHaveBeenCalledOnce();
+	});
 });
 
 describe('resolveExistingPianolaAgentType', () => {
@@ -584,6 +674,18 @@ describe('sandbox launcher arguments', () => {
 	it('single-quotes every argument when the runner is reached through wsl.exe', () => {
 		// wsl.exe hands its argv to bash -c; an unquoted Go -run regex breaks that shell.
 		const args = ['--', 'go', 'test', '-run', '^(A|B)$', "it's"];
+		expect(
+			sandboxSpawnArgs('wsl.exe', args, [
+				'--',
+				'python3',
+				'/mnt/c/Program Files/Maestro/sandbox_runner.py',
+			])
+		).toEqual([
+			'--',
+			"'python3'",
+			"'/mnt/c/Program Files/Maestro/sandbox_runner.py'",
+			...args.map(quoteForPosixShell),
+		]);
 		expect(sandboxSpawnArgs('wsl.exe', args)).toEqual([
 			"'--'",
 			"'go'",
@@ -599,5 +701,133 @@ describe('sandbox launcher arguments', () => {
 	});
 	it('escapes embedded single quotes for a POSIX shell', () => {
 		expect(quoteForPosixShell("a'b")).toBe("'a'\\''b'");
+	});
+});
+
+describe('portable default sandbox runner', () => {
+	it.each(['linux', 'darwin', 'win32'] as const)(
+		'resolves a repository runner from the installed CLI on %s',
+		(platform) => {
+			const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pianola-default-'));
+			try {
+				const runner = path.join(dir, 'scripts/pianola-sandbox/sandbox_runner.py');
+				fs.mkdirSync(path.dirname(runner), { recursive: true });
+				fs.writeFileSync(runner, '');
+				const prefix = resolvePianolaSandboxRunner(path.join(dir, 'dist/cli'), platform);
+				expect(prefix).toEqual(
+					platform === 'win32'
+						? [
+								'wsl.exe',
+								'--',
+								'python3',
+								runner
+									.replace(/^([a-z]):[\\/]/i, (_, drive: string) => `/mnt/${drive.toLowerCase()}/`)
+									.replace(/\\/g, '/'),
+							]
+						: ['python3', runner]
+				);
+			} finally {
+				fs.rmSync(dir, { recursive: true, force: true });
+			}
+		}
+	);
+
+	it('names the override when the installed runner is absent', () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pianola-no-runner-'));
+		try {
+			expect(() => resolvePianolaSandboxRunner(dir)).toThrow('pianola.sandboxRunner');
+		} finally {
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it('reports invalid runner configuration without recording an unknown oracle verdict', async () => {
+		const oldExitCode = process.exitCode;
+		const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+		try {
+			vi.mocked(readSettingValue).mockImplementation((key) =>
+				key === 'encoreFeatures' ? { pianola: true } : []
+			);
+			vi.mocked(getPianolaPlan).mockReturnValue({
+				...PLAN,
+				tasks: [
+					{
+						id: 't',
+						title: 'T',
+						prompt: 'p',
+						dependsOn: [],
+						status: 'running',
+						validation: { command: ['true'], target: '/work' },
+					},
+				],
+			});
+			appendAgentRunEventMock.mockClear();
+			await pianolaValidate('plan-1', 't', { json: true });
+			const result = JSON.parse(log.mock.lastCall![0] as string);
+			expect(result).toMatchObject({ success: false, code: 'PIANOLA_SANDBOX_CONFIGURATION' });
+			expect(result.error).toContain('pianola.sandboxRunner');
+			expect(result.verdict).toBeUndefined();
+			expect(appendAgentRunEventMock).not.toHaveBeenCalled();
+			expect(process.exitCode).toBe(1);
+		} finally {
+			process.exitCode = oldExitCode;
+			log.mockRestore();
+		}
+	});
+});
+
+describe('sandbox launcher wall-clock ceiling', () => {
+	it('kills a runner that never exits and reports an unknown observation', async () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pianola-hung-'));
+		const runner = path.join(dir, 'runner.cjs');
+		const pidFile = path.join(dir, 'pid.txt');
+		const oldExitCode = process.exitCode;
+		const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+		let run: AgentRun | undefined;
+		try {
+			fs.writeFileSync(
+				runner,
+				`require('fs').writeFileSync(${JSON.stringify(pidFile)}, String(process.pid)); setInterval(() => {}, 1000);`
+			);
+			vi.mocked(readSettingValue).mockImplementation((key) =>
+				key === 'encoreFeatures' ? { pianola: true } : [process.execPath, runner]
+			);
+			vi.mocked(getPianolaPlan).mockReturnValue({
+				...PLAN,
+				tasks: [
+					{
+						id: 't',
+						title: 'T',
+						prompt: 'p',
+						dependsOn: [],
+						status: 'running',
+						validation: { command: ['true'], target: '/work', timeoutSeconds: 1 },
+					},
+				],
+			});
+			getAgentRunMock.mockImplementation(() => run);
+			upsertAgentRunMock.mockImplementation((next: AgentRun) => {
+				run = next;
+				return next;
+			});
+			vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+			const pending = pianolaValidate('plan-1', 't', { json: true });
+			await vi.waitFor(() => expect(fs.existsSync(pidFile)).toBe(true));
+			const pid = Number(fs.readFileSync(pidFile, 'utf8'));
+			await vi.advanceTimersByTimeAsync(61_000);
+			await pending;
+			const result = JSON.parse(log.mock.lastCall![0] as string);
+			expect(result.verdict).toBe('unknown');
+			expect(result.reason).toContain('Sandbox launcher exceeded wall-clock ceiling of 61s');
+			expect(result.check.status).toBe('error');
+			expect(process.exitCode).toBe(3);
+			vi.useRealTimers();
+			await vi.waitFor(() => expect(() => process.kill(pid, 0)).toThrow());
+		} finally {
+			vi.useRealTimers();
+			process.exitCode = oldExitCode;
+			log.mockRestore();
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
 	});
 });
