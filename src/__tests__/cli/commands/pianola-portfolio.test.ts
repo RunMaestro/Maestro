@@ -82,10 +82,14 @@ describe('portfolio CLI commands', () => {
 	it('keeps old metadata after a partial apply and recovers created roles by live identity on retry', async () => {
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pianola-apply-retry-'));
 		const file = path.join(dir, 'manifest.json');
+		// Real directories: a successful apply writes `<root>/.maestro/cue.yaml`, and a
+		// bare `/new` is rooted on every platform but only writable on Windows.
+		const oldRoot = path.join(dir, 'old');
+		const newRoot = path.join(dir, 'new');
 		const original: PianolaProgram = {
 			id: 'product',
 			title: 'Product',
-			root: '/old',
+			root: oldRoot,
 			roles: { lead: { name: 'Lead' }, engineer: { name: 'Engineer', agentId: 'eng' } },
 			charter: { maxConcurrent: 1, maxAttempts: 2, validationRequired: true },
 			status: 'active',
@@ -93,7 +97,7 @@ describe('portfolio CLI commands', () => {
 			updatedAt: 1,
 		};
 		state.programs = [original];
-		fs.writeFileSync(file, JSON.stringify({ programs: [{ ...original, root: '/new' }] }));
+		fs.writeFileSync(file, JSON.stringify({ programs: [{ ...original, root: newRoot }] }));
 		const live: { id: string; name: string; cwd: string; toolType: string }[] = [];
 		let failCwd = true;
 		sendCommand.mockImplementation(async (command) => {
@@ -128,7 +132,7 @@ describe('portfolio CLI commands', () => {
 				)
 			).toHaveLength(2);
 			expect(state.programs[0]).toMatchObject({
-				root: '/new',
+				root: newRoot,
 				leadAgentId: 'created-lead',
 				roles: { lead: { agentId: 'created-lead' }, engineer: { agentId: 'eng' } },
 			});
