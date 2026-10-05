@@ -9,7 +9,7 @@ import {
 	type RuntimeRefusal,
 	type RuntimeStart,
 } from '../../shared/maestro-lib';
-import { readOnlyLabelFor, startTuiHost } from '../startup';
+import { readOnlyLabelFor, resolveTuiTurnOptions, startTuiHost } from '../startup';
 
 const paths = { userDataDir: '/data', productionDataDir: '/data-prod' };
 const fakeClient = { tag: 'fake' } as unknown as MaestroClient;
@@ -156,5 +156,27 @@ describe('startTuiHost on a real data directory', () => {
 		const third = await startTuiHost(tuiPaths, real());
 		expect(third.branch).toBe('in-process');
 		if (third.branch === 'in-process') await third.client.connection.close();
+	});
+});
+
+describe('resolveTuiTurnOptions', () => {
+	const bundle = path.join('/opt', 'maestro', 'dist', 'cli');
+
+	it('finds the CLI script and maestro-p beside the running bundle', () => {
+		const present = new Set([
+			path.join(bundle, 'maestro-cli.js'),
+			path.join(bundle, 'maestro-p.js'),
+		]);
+		const options = resolveTuiTurnOptions(bundle, (file) => present.has(file));
+		expect(options.moduleDirectory).toBe(bundle);
+		expect(options.maestroCliPath).toBe(path.join(bundle, 'maestro-cli.js'));
+		expect(options.maestroPBinPath).toBe(path.join(bundle, 'maestro-p.js'));
+		expect(typeof options.loadSqlite).toBe('function');
+	});
+
+	it('leaves a sibling that is not there absent, so the turn degrades instead of naming a missing file', () => {
+		const options = resolveTuiTurnOptions(bundle, () => false);
+		expect(options.maestroCliPath).toBeUndefined();
+		expect(options.maestroPBinPath).toBeNull();
 	});
 });

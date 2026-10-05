@@ -7,8 +7,8 @@
  * is served from the repository's memory or a fresh read of a store file, and
  * every event comes from the one bus both client implementations share (RT15).
  *
- * Turns, Auto Run, group chats, and consults answer `unsupported` until the
- * phases that bring them (6, 7, 8). `unsupported` is a value, not a throw, so a
+ * Turns are answered by the runtime's turn service (`./turns`). Auto Run, group chats,
+ * and consults answer `unsupported` until the phases that bring them (7, 8). `unsupported` is a value, not a throw, so a
  * TUI written against the contract degrades the same way it does against an
  * older desktop.
  *
@@ -28,6 +28,7 @@ import type {
 	ProviderInfo,
 	SettingsChange,
 	TranscriptOptions,
+	TurnsApi,
 	Unsubscribe,
 } from '../client/types';
 import type { SshRemoteConfig } from '../../types';
@@ -55,6 +56,8 @@ export interface RuntimeClientDeps {
 	/** Flush, stop what the runtime started, release the lock. Safe to call twice. */
 	shutdown(): Promise<void>;
 	listProviders(): Promise<ProviderInfo[]>;
+	/** Send, interrupt, queue, and the per-tab event stream. */
+	turns: TurnsApi;
 }
 
 const ok = <T>(value: T): ClientResult<T> => ({ ok: true, value });
@@ -182,13 +185,19 @@ export function createRuntimeClient(deps: RuntimeClientDeps): MaestroClient {
 		},
 
 		turns: {
-			send: () => unsupported('turns.send', 'Sending a message'),
-			interrupt: () => unsupported('turns.interrupt', 'Stopping a turn'),
+			// A fenced runtime reads but does not start work: a turn it started could not be recorded.
+			send: (agentId, tabId, input) =>
+				Promise.resolve(gate('turns.send', true) ?? deps.turns.send(agentId, tabId, input)),
+			// Stopping and tidying the queue stay available when fenced: they only reduce what runs.
+			interrupt: (agentId, tabId) =>
+				guarded('turns.interrupt', () => deps.turns.interrupt(agentId, tabId)),
 			queue: {
-				list: () => unsupported('turns.queue.list', 'The execution queue'),
-				remove: () => unsupported('turns.queue.remove', 'The execution queue'),
+				list: (agentId) => guarded('turns.queue.list', () => deps.turns.queue.list(agentId)),
+				remove: (agentId, itemId) =>
+					guarded('turns.queue.remove', () => deps.turns.queue.remove(agentId, itemId)),
 			},
-			subscribe: (): Unsubscribe => () => undefined,
+			subscribe: (agentId, tabId, listener): Unsubscribe =>
+				deps.turns.subscribe(agentId, tabId, listener),
 		},
 
 		autoRun: {

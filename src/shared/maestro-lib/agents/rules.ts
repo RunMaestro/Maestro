@@ -21,8 +21,15 @@ import { isSameDirectory, rebasePathOntoRoot } from '../../agentWorkingDirectory
 import { validateGroupAppearance } from '../../groupAppearance';
 import { canCreateGroupInside, removeGroupAndPromoteChildren } from '../../groupHierarchy';
 import { PLAYBOOKS_DIR } from '../../maestro-paths';
-import { asThinkingMode, type Group, type ThinkingMode, type ToolType } from '../../types';
+import {
+	asThinkingMode,
+	type Group,
+	type ThinkingMode,
+	type ToolType,
+	type UsageStats,
+} from '../../types';
 import { generateUUID } from '../../uuid';
+import { addUsageStats } from '../streaming/usage-totals';
 import type {
 	AgentCreateInput,
 	AgentPatch,
@@ -39,7 +46,13 @@ import type {
 	GroupRecord,
 	TabRefRecord,
 } from '../store/records';
-import { switchAgentProvider, type ProviderSwitchAgent } from './providerSwap';
+import type { LogEntryRecord } from '../store/transcript';
+import {
+	switchAgentProvider,
+	updateProviderSlot,
+	type ProviderSwitchAgent,
+	type ProviderSwitchTab,
+} from './providerSwap';
 
 // ---------------------------------------------------------------------------
 // Context
@@ -425,6 +438,68 @@ function neighbourTabId(
 export function renameTabRecord(tab: AITabRecord, name: string): AITabRecord {
 	const trimmed = name.trim();
 	return { ...tab, name: trimmed ? trimmed : null, isGeneratingName: false };
+}
+
+/** What starting a turn on a tab writes: the message, whose provider owns the turn, and a consumed merge. */
+export interface TurnBegin {
+	/** The person's message, as it will read in the transcript. Written before the provider runs. */
+	userEntry: LogEntryRecord;
+	/** The provider the turn was sent under (settings are codified at send). */
+	provider: ToolType;
+	/** `pendingMergedContext` went into the prompt, so it is spent (PA17). */
+	consumedMergedContext: boolean;
+}
+
+/**
+ * A tab with a turn started on it: the message is in the transcript (so a crash cannot cost the
+ * person what they typed), `turnProvider` names who owns the turn's late events, and a merged
+ * context the prompt carried is cleared in the same write that sends it.
+ */
+export function beginTurnRecord(tab: AITabRecord, begin: TurnBegin): AITabRecord {
+	const { pendingMergedContext: _spent, ...kept } = tab;
+	const base = begin.consumedMergedContext ? kept : tab;
+	return {
+		...base,
+		turnProvider: begin.provider,
+		logs: [...(Array.isArray(tab.logs) ? tab.logs : []), begin.userEntry],
+	};
+}
+
+/** What a provider told the runtime about a tab's conversation. Absent fields are left as they are. */
+export interface TabSessionUpdate {
+	agentSessionId?: string;
+	/** One finished turn's usage, folded into the provider's running total on the tab. */
+	addUsage?: UsageStats;
+}
+
+/**
+ * Record a provider's session id and usage on the slot that provider owns: the live fields when it
+ * is the agent's current provider, its parked entry otherwise. A turn that outlives a provider
+ * swap must not write its resume token into the new provider's slot (`updateProviderSlot`).
+ */
+export function recordTabSession(
+	tab: AITabRecord,
+	agent: AgentRecord,
+	owningProvider: string,
+	update: TabSessionUpdate
+): AITabRecord {
+	const fields: Record<string, unknown> = {};
+	if (update.agentSessionId !== undefined) fields.agentSessionId = update.agentSessionId;
+	if (update.addUsage !== undefined) {
+		const slot = (
+			owningProvider === agent.toolType
+				? tab
+				: (tab.providerSessions as Record<string, unknown>)?.[owningProvider]
+		) as { usageStats?: UsageStats } | undefined;
+		fields.usageStats = addUsageStats(slot?.usageStats, update.addUsage);
+	}
+	if (Object.keys(fields).length === 0) return tab;
+	return updateProviderSlot(
+		tab as unknown as ProviderSwitchTab,
+		agent as unknown as ProviderSwitchAgent,
+		owningProvider as ToolType,
+		fields
+	) as unknown as AITabRecord;
 }
 
 /** The tab fields a client may edit, and the type each accepts. */

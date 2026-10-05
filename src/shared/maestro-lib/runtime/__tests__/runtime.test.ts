@@ -439,20 +439,15 @@ describe('createMaestroRuntime', () => {
 	// -----------------------------------------------------------------------
 
 	describe('what waits for a later phase', () => {
-		it('answers unsupported, as values, for turns, Auto Run, group chats, and consults', async () => {
+		it('answers unsupported, as values, for Auto Run, group chats, and consults (turns are in turns.test.ts)', async () => {
 			const runtime = await start();
 			const results = await Promise.all([
-				runtime.turns.send('a1', 't1', { text: 'hi' }),
-				runtime.turns.interrupt('a1', 't1'),
-				runtime.turns.queue.list('a1'),
-				runtime.turns.queue.remove('a1', 'q1'),
 				runtime.autoRun.stop('a1'),
 				runtime.groupChats.list(),
 				runtime.consults.ask({ targetAgentId: 'a1', question: '?' }),
 				runtime.providers.models('claude-code'),
 			]);
 			for (const result of results) expect(errorOf(result).code).toBe('unsupported');
-			expect(runtime.turns.subscribe('a1', 't1', () => undefined)).toBeTypeOf('function');
 		});
 	});
 

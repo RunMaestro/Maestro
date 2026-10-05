@@ -1,3 +1,5 @@
+import { dirname } from 'path';
+import { fileURLToPath } from 'url';
 import { render } from 'ink';
 import {
 	createMaestroRuntime,
@@ -9,7 +11,7 @@ import { App } from './App';
 import { parseTuiArgs } from './args';
 import { runDoctor } from './doctor';
 import { createFileLogger, tuiLogFilePath } from './logger';
-import { startTuiHost } from './startup';
+import { resolveTuiTurnOptions, startTuiHost } from './startup';
 
 const args = parseTuiArgs(process.argv.slice(2));
 
@@ -30,7 +32,11 @@ setMaestroLibLogger(createFileLogger(tuiLogFilePath(paths.userDataDir)));
 // No desktop and no other runtime on the directory: this process hosts it and the runtime is the
 // client. A running desktop is attached to; anything else opens read-only (see `startup.ts`).
 const startup = await startTuiHost(paths, {
-	startRuntime: createMaestroRuntime,
+	startRuntime: (options) =>
+		createMaestroRuntime({
+			...options,
+			turns: resolveTuiTurnOptions(dirname(fileURLToPath(import.meta.url))),
+		}),
 	attachToHost: () => createWsMaestroClient({ userDataDir: paths.userDataDir }),
 });
 const client = startup.branch === 'read-only' ? undefined : startup.client;

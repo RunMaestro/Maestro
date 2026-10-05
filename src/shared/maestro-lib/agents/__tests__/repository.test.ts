@@ -830,6 +830,64 @@ describe('agent repository', () => {
 			});
 		});
 
+		describe('beginTurn and recordTabSession', () => {
+			const userEntry = { id: 'u1', timestamp: 10, source: 'user', text: 'hello' };
+
+			it('writes the message, the owning provider, and the spent merge in one write', async () => {
+				const repo = await setup({
+					sessions: {
+						sessions: [
+							seedAgent('a1', 'Alpha', {
+								aiTabs: [tab('t1', { pendingMergedContext: 'carried over' })],
+							}),
+						],
+					},
+				});
+				events.length = 0;
+				value(
+					await repo.beginTurn('a1', 't1', {
+						userEntry,
+						provider: 'claude-code',
+						consumedMergedContext: true,
+					})
+				);
+				const stored = readSessions().sessions[0].aiTabs[0];
+				expect(stored.logs.map((l: { id: string }) => l.id)).toEqual(['t1-l1', 'u1']);
+				expect(stored.turnProvider).toBe('claude-code');
+				expect(stored).not.toHaveProperty('pendingMergedContext');
+				expect(events.map((event) => event.type)).toEqual(['tab.updated', 'agent.updated']);
+			});
+
+			it('records a session id on the current provider, and on a parked slot for a late turn', async () => {
+				const repo = await setup({ sessions: twoAgents() });
+				value(await repo.recordTabSession('a1', 'a1-t1', 'claude-code', { agentSessionId: 'S1' }));
+				expect(readSessions().sessions[0].aiTabs[0].agentSessionId).toBe('S1');
+
+				value(await repo.recordTabSession('a1', 'a1-t1', 'codex', { agentSessionId: 'C1' }));
+				const stored = readSessions().sessions[0].aiTabs[0];
+				expect(stored.agentSessionId).toBe('S1');
+				expect(stored.providerSessions.codex.agentSessionId).toBe('C1');
+			});
+
+			it('answers not-found and writes nothing for an agent or tab that is gone', async () => {
+				const repo = await setup({ sessions: twoAgents() });
+				expect(
+					errorOf(
+						await repo.beginTurn('nope', 'a1-t1', {
+							userEntry,
+							provider: 'claude-code',
+							consumedMergedContext: false,
+						})
+					).code
+				).toBe('not-found');
+				expect(
+					errorOf(await repo.recordTabSession('a1', 'nope', 'claude-code', { agentSessionId: 'x' }))
+						.code
+				).toBe('not-found');
+				expect(readSessions().sessions[0].aiTabs[0].logs).toHaveLength(1);
+			});
+		});
+
 		describe('closeTab', () => {
 			it('archives the whole tab, removes it, and moves the active tab left', async () => {
 				const repo = await setup({

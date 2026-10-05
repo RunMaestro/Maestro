@@ -67,6 +67,11 @@ export interface RecordedTurn {
 	startedAt: number;
 	/** When the process ended, epoch ms. */
 	endedAt: number;
+	/**
+	 * The person's message is already in the transcript (the runtime writes it when the turn
+	 * starts, through `beginTurn`). The entries written here then start at the answer.
+	 */
+	userEntryWritten?: boolean;
 }
 
 /** What happened to each record. A skipped record says why. */
@@ -106,30 +111,43 @@ function describeCrash(exit: CompletedTurn['exit']): string {
 }
 
 /**
- * The transcript entries of one turn: the message the person sent, then the answer, then a
- * failure when it crashed. Pure; ids and times come from the caller.
+ * The transcript entry for the message a person sent (CH-5): what they typed, never the hidden
+ * layers. Pure; the id and time come from the caller.
+ */
+export function buildUserTranscriptEntry(
+	entry: AssembledTurn['entry'],
+	timestamp: number,
+	ctx: Pick<RuleContext, 'newId'>
+): LogEntryRecord {
+	return {
+		id: ctx.newId(),
+		timestamp,
+		source: 'user',
+		text: entry.text,
+		delivered: true,
+		...(entry.images?.length ? { images: entry.images } : {}),
+		...(entry.readOnly ? { readOnly: true } : {}),
+		...(entry.aiCommand
+			? {
+					aiCommand: {
+						command: entry.aiCommand.command,
+						description: entry.aiCommand.description ?? '',
+					},
+				}
+			: {}),
+	};
+}
+
+/**
+ * The transcript entries of one turn: the message the person sent (unless the runtime already
+ * wrote it), then the answer, then a failure when it crashed. Pure; ids and times come from the
+ * caller.
  */
 export function buildTurnTranscript(turn: RecordedTurn, ctx: RuleContext): LogEntryRecord[] {
 	const { entry, settings } = turn.assembled;
-	const entries: LogEntryRecord[] = [
-		{
-			id: ctx.newId(),
-			timestamp: turn.startedAt,
-			source: 'user',
-			text: entry.text,
-			delivered: true,
-			...(entry.images?.length ? { images: entry.images } : {}),
-			...(entry.readOnly ? { readOnly: true } : {}),
-			...(entry.aiCommand
-				? {
-						aiCommand: {
-							command: entry.aiCommand.command,
-							description: entry.aiCommand.description ?? '',
-						},
-					}
-				: {}),
-		},
-	];
+	const entries: LogEntryRecord[] = turn.userEntryWritten
+		? []
+		: [buildUserTranscriptEntry(entry, turn.startedAt, ctx)];
 
 	const answer = turn.completed.answerText?.trim() ? turn.completed.answerText : undefined;
 	if (answer) {
@@ -200,6 +218,8 @@ export function createTurnRecorder(options: TurnRecorderOptions): TurnRecorder {
 		);
 
 		const { completed } = turn;
+		// The provider the turn ran under, frozen at send: the agent may have swapped since.
+		const provider = turn.assembled.settings.provider;
 		const finished =
 			completed.outcome === 'completed' || completed.outcome === 'completed-with-warning';
 		const summary = summarizeAnswer(completed.answerText) || 'Completed successfully';
@@ -210,7 +230,7 @@ export function createTurnRecorder(options: TurnRecorderOptions): TurnRecorder {
 			history = { ok: false, reason: 'not-recorded', message: 'The tab does not save to History.' };
 		} else {
 			const context = completed.usage
-				? estimateContextUsage(completed.usage, agent.toolType as ToolType)
+				? estimateContextUsage(completed.usage, provider as ToolType)
 				: null;
 			const entry: HistoryEntry = {
 				id: ctx.newId(),
@@ -234,7 +254,7 @@ export function createTurnRecorder(options: TurnRecorderOptions): TurnRecorder {
 
 		const stats = await statsRecorder.recordQuery({
 			sessionId: agent.id,
-			agentType: agent.toolType,
+			agentType: provider,
 			source: 'user',
 			startTime: turn.startedAt,
 			duration: turn.endedAt - turn.startedAt,

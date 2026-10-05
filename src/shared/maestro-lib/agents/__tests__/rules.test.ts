@@ -9,6 +9,7 @@ import {
 	buildAgentRecord,
 	buildGroupRecord,
 	buildTabConfigPatch,
+	beginTurnRecord,
 	buildTabRecord,
 	checkAgentCreateInput,
 	checkAgentName,
@@ -19,6 +20,7 @@ import {
 	MAX_AGENT_NAME_LENGTH,
 	mergeSshPatch,
 	normalizeGroupName,
+	recordTabSession,
 	relocateAgentPaths,
 	renameTabRecord,
 	sshRecordOf,
@@ -660,5 +662,99 @@ describe('groups', () => {
 		expect(next.map((g) => g.id)).toEqual(['child', 'other']);
 		expect('parentGroupId' in next[0]).toBe(false);
 		expect(next[1]).toBe(other);
+	});
+});
+
+describe('beginTurnRecord', () => {
+	const userEntry = { id: 'u1', timestamp: 5, source: 'user', text: 'hello' };
+
+	it('adds the message to the transcript and names the provider that owns the turn', () => {
+		const before = tab('t1', {
+			logs: [{ id: 'old', timestamp: 1, source: 'ai', text: 'earlier' }],
+		});
+		const after = beginTurnRecord(before, {
+			userEntry,
+			provider: 'claude-code',
+			consumedMergedContext: false,
+		});
+		expect((after.logs as { id: string }[]).map((entry) => entry.id)).toEqual(['old', 'u1']);
+		expect(after.turnProvider).toBe('claude-code');
+		expect(before.logs).toHaveLength(1);
+	});
+
+	it('clears a merged context the prompt carried, and keeps one it did not', () => {
+		const pending = tab('t1', { pendingMergedContext: 'from another tab' });
+		const spent = beginTurnRecord(pending, {
+			userEntry,
+			provider: 'codex',
+			consumedMergedContext: true,
+		});
+		expect(spent).not.toHaveProperty('pendingMergedContext');
+		const kept = beginTurnRecord(pending, {
+			userEntry,
+			provider: 'codex',
+			consumedMergedContext: false,
+		});
+		expect(kept.pendingMergedContext).toBe('from another tab');
+	});
+
+	it('starts a transcript on a tab that has none', () => {
+		const after = beginTurnRecord(
+			{ id: 't1' },
+			{ userEntry, provider: 'claude-code', consumedMergedContext: false }
+		);
+		expect(after.logs).toEqual([userEntry]);
+	});
+});
+
+describe('recordTabSession', () => {
+	const usage = (input: number) => ({
+		inputTokens: input,
+		outputTokens: 1,
+		cacheReadInputTokens: 0,
+		cacheCreationInputTokens: 0,
+		totalCostUsd: 0.5,
+		contextWindow: 0,
+	});
+
+	it("writes the live fields when the provider is the agent's current one", () => {
+		const after = recordTabSession(tab('t1'), agent(), 'claude-code', { agentSessionId: 'S1' });
+		expect(after.agentSessionId).toBe('S1');
+		expect(after).not.toHaveProperty('providerSessions');
+	});
+
+	it("writes a parked slot when the turn's provider is no longer the agent's, leaving the live one alone", () => {
+		const live = tab('t1', { agentSessionId: 'CODEX-1' });
+		const after = recordTabSession(live, agent({ toolType: 'codex' }), 'claude-code', {
+			agentSessionId: 'CLAUDE-LATE',
+		});
+		expect(after.agentSessionId).toBe('CODEX-1');
+		expect(after.providerSessions).toEqual({
+			'claude-code': { agentSessionId: 'CLAUDE-LATE' },
+		});
+	});
+
+	it('folds one turn of usage into the provider running total, live or parked', () => {
+		const once = recordTabSession(tab('t1'), agent(), 'claude-code', { addUsage: usage(10) });
+		const twice = recordTabSession(once, agent(), 'claude-code', { addUsage: usage(5) });
+		expect((twice.usageStats as { inputTokens: number }).inputTokens).toBe(15);
+		expect((twice.usageStats as { totalCostUsd: number }).totalCostUsd).toBe(1);
+
+		const parkedOnce = recordTabSession(tab('t1'), agent({ toolType: 'codex' }), 'claude-code', {
+			addUsage: usage(10),
+		});
+		const parkedTwice = recordTabSession(parkedOnce, agent({ toolType: 'codex' }), 'claude-code', {
+			addUsage: usage(5),
+		});
+		const parked = (
+			parkedTwice.providerSessions as Record<string, { usageStats: { inputTokens: number } }>
+		)['claude-code'];
+		expect(parked.usageStats.inputTokens).toBe(15);
+		expect(parkedTwice).not.toHaveProperty('usageStats');
+	});
+
+	it('returns the tab itself when there is nothing to record', () => {
+		const same = tab('t1');
+		expect(recordTabSession(same, agent(), 'claude-code', {})).toBe(same);
 	});
 });

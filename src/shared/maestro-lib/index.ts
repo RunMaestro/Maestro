@@ -22,6 +22,7 @@ export * from './runtime/data-dir-lock';
 export * from './runtime/index';
 export * from './runtime/client';
 export * from './runtime/processes';
+export * from './runtime/turns';
 export * from './runtime/providers';
 export * from './runtime/settings-watch';
 
@@ -38,6 +39,7 @@ export * from './store/corrupt-store';
 export * from './store/records';
 export * from './store/read-stores';
 export * from './store/atomic-write';
+export * from './store/native-sqlite';
 export * from './store/io';
 export * from './store/read-history';
 export * from './store/transcript';
@@ -182,6 +184,7 @@ export * from './turns/summary';
 export * from './turns/history';
 export * from './turns/stats';
 export * from './turns/record-turn';
+export * from './turns/turn-events';
 
 // The usage row a turn writes, defined once for the desktop's stats module and the runtime
 export * from './stats/query-event-insert';

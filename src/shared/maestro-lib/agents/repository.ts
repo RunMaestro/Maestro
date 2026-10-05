@@ -78,6 +78,7 @@ import {
 	buildAgentConfigPatch,
 	buildAgentRecord,
 	buildGroupRecord,
+	beginTurnRecord,
 	buildTabConfigPatch,
 	checkAgentCreateInput,
 	checkAgentName,
@@ -87,6 +88,7 @@ import {
 	groupsWithout,
 	mergeSshPatch,
 	normalizeGroupName,
+	recordTabSession,
 	relocateAgentPaths,
 	sshRecordOf,
 	renameTabRecord,
@@ -97,6 +99,8 @@ import {
 	type RuleContext,
 	type RuleResult,
 	type TabDefaults,
+	type TabSessionUpdate,
+	type TurnBegin,
 } from './rules';
 
 const LOG_CONTEXT = '[AgentRepository]';
@@ -184,6 +188,23 @@ export interface AgentRepository {
 		agentId: string,
 		tabId: string,
 		entries: readonly LogEntryRecord[]
+	): Promise<ClientResult<void>>;
+	/**
+	 * Start a turn on a tab in one write: the person's message joins the transcript, the tab
+	 * records which provider owns the turn, and a merged context the prompt carried is cleared.
+	 * One write, so a crash cannot leave a message sent but its merge still pending.
+	 */
+	beginTurn(agentId: string, tabId: string, begin: TurnBegin): Promise<ClientResult<void>>;
+	/**
+	 * Record what `provider` said about the tab's conversation (its session id, its usage), on
+	 * the slot that provider owns. A turn that outlives a provider swap writes its resume token
+	 * to the parked slot, never the current provider's.
+	 */
+	recordTabSession(
+		agentId: string,
+		tabId: string,
+		provider: string,
+		update: TabSessionUpdate
 	): Promise<ClientResult<void>>;
 }
 
@@ -898,29 +919,29 @@ export function createAgentRepository(options: AgentRepositoryOptions): AgentRep
 		);
 	};
 
-	function appendTranscript(
+	/**
+	 * Rewrite one tab, hidden consult tabs included, and say so: `tab.updated` (for a tab a person
+	 * can see) then `agent.updated`. These are internal writes that report under the tab update
+	 * they amount to. Not `updateEvents`: it compares the old and new tab deeply, and a transcript
+	 * is the one field that is large and known to have changed.
+	 */
+	function rewriteTab(
 		agentId: string,
 		tabId: string,
-		entries: readonly LogEntryRecord[]
+		rewrite: (tab: AITabRecord, agent: AgentRecord) => AITabRecord
 	): Promise<ClientResult<void>> {
-		// An internal write, not a client method: it reports under the tab update it amounts to.
 		const method: ClientMethod = 'tabs.update';
 		return run(method, () => {
 			const agent = findAgent(agentId);
 			if (!agent) return noAgent(method, agentId);
 			const tab = agent.aiTabs?.find((candidate) => candidate.id === tabId);
 			if (!tab) return noTab(method, tabId);
-			if (entries.length === 0) return { ok: true, plan: { value: undefined, events: [] } };
-			const changed: AITabRecord = {
-				...tab,
-				logs: [...(Array.isArray(tab.logs) ? tab.logs : []), ...entries],
-			};
+			const changed = rewrite(tab, agent);
+			if (changed === tab) return { ok: true, plan: { value: undefined, events: [] } };
 			const next: AgentRecord = {
 				...agent,
 				aiTabs: (agent.aiTabs ?? []).map((entry) => (entry.id === tabId ? changed : entry)),
 			};
-			// Not `updateEvents`: it compares the old and new tab deeply, and a transcript is the
-			// one field that is large and known to have changed.
 			const events: MaestroEvent[] = visibleTab(agent, tabId)
 				? [{ type: 'tab.updated', agentId, tab: projectTab(changed) }]
 				: [];
@@ -931,6 +952,23 @@ export function createAgentRepository(options: AgentRepositoryOptions): AgentRep
 			};
 		});
 	}
+
+	const appendTranscript = (agentId: string, tabId: string, entries: readonly LogEntryRecord[]) =>
+		rewriteTab(agentId, tabId, (tab) =>
+			entries.length === 0
+				? tab
+				: { ...tab, logs: [...(Array.isArray(tab.logs) ? tab.logs : []), ...entries] }
+		);
+
+	const beginTurn = (agentId: string, tabId: string, begin: TurnBegin) =>
+		rewriteTab(agentId, tabId, (tab) => beginTurnRecord(tab, begin));
+
+	const recordSession = (
+		agentId: string,
+		tabId: string,
+		provider: string,
+		update: TabSessionUpdate
+	) => rewriteTab(agentId, tabId, (tab, agent) => recordTabSession(tab, agent, provider, update));
 
 	/**
 	 * Close a tab into the closed-tab archive (RT6), never deleting its transcript.
@@ -1006,5 +1044,7 @@ export function createAgentRepository(options: AgentRepositoryOptions): AgentRep
 		starTab,
 		updateTab,
 		appendTranscript,
+		beginTurn,
+		recordTabSession: recordSession,
 	};
 }

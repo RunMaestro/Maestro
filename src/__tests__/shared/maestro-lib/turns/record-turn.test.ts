@@ -30,6 +30,7 @@ import type { MaestroPaths } from '../../../../shared/maestro-lib/paths/resolve'
 import { transcriptOf } from '../../../../shared/maestro-lib/store/transcript';
 import {
 	buildTurnTranscript,
+	buildUserTranscriptEntry,
 	createTurnRecorder,
 	type RecordedTurn,
 } from '../../../../shared/maestro-lib/turns/record-turn';
@@ -168,6 +169,16 @@ describe('turn records', () => {
 		// The desktop reads the same file.
 		const onDisk = JSON.parse(fs.readFileSync(paths.sessionsFile, 'utf-8'));
 		expect(onDisk.sessions[0].aiTabs[0].logs).toHaveLength(2);
+	});
+
+	it('records usage under the provider the turn was sent to, not the one the agent has now', async () => {
+		const { recorder: records } = await recorder();
+		await records.recordTurn(
+			turn({
+				assembled: { entry: { text: 'hi' }, settings: { provider: 'codex' } },
+			})
+		);
+		expect(statsEvents[0]?.agentType).toBe('codex');
 	});
 
 	it('records a USER history entry the desktop reads, built from the answer', async () => {
@@ -331,6 +342,23 @@ describe('turn records', () => {
 				images: ['maestro-image://store/a.png'],
 				readOnly: true,
 				aiCommand: { command: '/commit', description: '' },
+			});
+		});
+
+		it('starts at the answer when the runtime already wrote the message', () => {
+			const entries = buildTurnTranscript(turn({ userEntryWritten: true }), ctx);
+			expect(entries.map((e) => e.source)).toEqual(['stdout']);
+		});
+
+		it('builds the same user entry the recorder would, from the same inputs', () => {
+			const sent = { text: 'fix it', readOnly: true as const };
+			const entry = buildUserTranscriptEntry(sent, 42, ctx);
+			expect(entry).toMatchObject({
+				source: 'user',
+				text: 'fix it',
+				timestamp: 42,
+				delivered: true,
+				readOnly: true,
 			});
 		});
 

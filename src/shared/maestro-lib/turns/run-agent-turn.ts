@@ -128,6 +128,8 @@ export interface AgentTurnRun {
 	interrupt(): void;
 	/** Stop without the interrupt stage. */
 	terminate(): void;
+	/** Last resort for process exit: no grace, nothing awaited. */
+	terminateNow(): void;
 	stopRequested(): boolean;
 }
 
@@ -397,6 +399,7 @@ export async function runAgentTurn(
 			result,
 			interrupt: () => running.handle.interrupt(),
 			terminate: () => running.handle.terminate(),
+			terminateNow: () => running.handle.terminateNow(),
 			stopRequested: () => running.handle.stopRequested(),
 		},
 	};

@@ -38,6 +38,7 @@ import {
 import { createProcessRegistry } from './processes';
 import { createProviderLister } from './providers';
 import { watchSettingsFile, type WatchDirectory } from './settings-watch';
+import { createRuntimeTurns, type RuntimeTurnDeps, type RuntimeTurnOptions } from './turns';
 
 const LOG_CONTEXT = '[MaestroRuntime]';
 
@@ -53,6 +54,8 @@ export type RuntimeDeps = DataDirLockDeps & {
 	probeBinary(binaryName: string, customPath?: string): Promise<BinaryDetectionResult>;
 	/** Watches the settings directory. */
 	watchDirectory: WatchDirectory;
+	/** The seams of the turn service: the provider launch and the probes a turn makes. */
+	turns: Partial<RuntimeTurnDeps>;
 };
 
 export interface MaestroRuntimeOptions {
@@ -68,6 +71,8 @@ export interface MaestroRuntimeOptions {
 	allowSyncedDataDir?: boolean;
 	/** Quarantine a corrupt sessions or groups file and start from defaults. Default false: refuse. */
 	quarantineCorruptStores?: boolean;
+	/** What the runtime needs to run turns: the SQLite loader, the CLI script, the bundled prompts. */
+	turns?: RuntimeTurnOptions;
 	deps?: Partial<RuntimeDeps>;
 }
 
@@ -197,15 +202,18 @@ export async function createMaestroRuntime(options: MaestroRuntimeOptions): Prom
 		bus.emit({ type: 'host.lost', reason });
 	};
 
+	/** Is this process still the data directory's writer? Losing it fences the whole runtime. */
+	const fence = () => {
+		const verdict = lock.verify();
+		if (!verdict.ok) fenceRuntime(verdict.reason);
+		return verdict;
+	};
+
 	const repository = createAgentRepository({
 		paths,
 		bus,
 		processes: registry,
-		fence: () => {
-			const verdict = lock.verify();
-			if (!verdict.ok) fenceRuntime(verdict.reason);
-			return verdict;
-		},
+		fence,
 		quarantineCorruptStores: options.quarantineCorruptStores,
 		context: deps.rules,
 		readTabDefaults: deps.readTabDefaults,
@@ -254,6 +262,17 @@ export async function createMaestroRuntime(options: MaestroRuntimeOptions): Prom
 		now: deps.now,
 	});
 
+	const turns = createRuntimeTurns({
+		paths,
+		repository,
+		bus,
+		registry,
+		fence,
+		rules: deps.rules,
+		options: options.turns,
+		deps: { probeBinary: deps.probeBinary, ...deps.turns },
+	});
+
 	// NF-7: a crash or a plain exit must not leave a held lock or an orphan it could have stopped.
 	const onExit = (): void => {
 		registry.terminateAllNow();
@@ -268,9 +287,11 @@ export async function createMaestroRuntime(options: MaestroRuntimeOptions): Prom
 			running.stopHeartbeat?.();
 			running.settingsWatcher?.close();
 			try {
-				// Commands already accepted finish writing before the lock is let go.
-				await repository.drain();
+				// Nothing new starts; the turns that run are stopped and finish recording themselves
+				// (their records are repository commands), and only then is the write queue drained.
+				turns.dispose();
 				await registry.stopAll();
+				await repository.drain();
 			} finally {
 				process.off('exit', onExit);
 				lock.release();
@@ -294,6 +315,7 @@ export async function createMaestroRuntime(options: MaestroRuntimeOptions): Prom
 		fencedReason: () => fencedText,
 		shutdown,
 		listProviders,
+		turns: turns.api,
 	});
 
 	return { ok: true, runtime: { ...client, paths, lock: lock.info } };
