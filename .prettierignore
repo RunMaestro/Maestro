@@ -16,3 +16,6 @@ docs/releases.md
 # undone by the next `npm run fonts:fetch`, breaking the format gate on a
 # routine font refresh.
 src/renderer/generated-fonts.css
+
+# Local build and verification evidence
+.build/
