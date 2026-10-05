@@ -22,6 +22,7 @@ import {
 import { getClaudeTokenMode } from '../../shared/claudeTokenMode';
 import { QUERY_SOURCE_ENV_VAR } from '../../shared/querySource';
 import { buildSpawnPath } from '../utils/spawnPath';
+import { logger } from '../utils/logger';
 import os from 'os';
 import path from 'path';
 import { buildMcpInjection, MCP_CONFIG_BY_AGENT } from '../../shared/plugins/mcp-agent-config';
@@ -338,7 +339,13 @@ export async function buildSpawnSpec(
 			};
 		} else {
 			pluginToolRunIdentity.revoke(pluginRunToken);
-			removePluginRunProofFile(pluginRunProofFile);
+			try {
+				removePluginRunProofFile(pluginRunProofFile);
+			} catch (error) {
+				logger.warn('Could not remove plugin run proof file', '[PluginRunIdentity]', {
+					error: String(error),
+				});
+			}
 			pluginRunToken = undefined;
 			pluginRunProofFile = undefined;
 		}
