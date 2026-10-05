@@ -360,6 +360,17 @@ export interface AutoRunController {
 
 **Clock** (AE10). `totalElapsedMs = clock.now() - startedAt - controller.pausedMs()`; a loop row subtracts the pauses inside that loop. A task turn never spans a pause, so per-task times are unchanged. Without a controller, `pausedMs` is 0 and the CLI's figures stay exactly as they are.
 
+**As landed in task 3** (`autorun/run-control.ts`, `policy.ts`, `run-playbook.ts`, `run-goal.ts`). Pause, gate, stop, and the clock are in; what differs from the sketch above:
+
+- `awaitResolution` answers `{ resolution, auto }`, not a bare resolution, so the engine can emit `resumed { auto }` without the controller knowing about events. `createRunController({ clock, autoResume, setTimer, clearTimer })` answers the engine's three methods plus `requestStop()`, `resolve()`, `isPaused()`, `pending()`, `autoResumesUsed()`. A stop before or during a pause answers `abort`. A `resolve` with nothing pending returns false.
+- `AutoRunPolicy` carries only `onGate`, `onAgentError`, and `autoResume` (`policy.ts`). `AutoRunDeps` gets optional `policy` (absent: `CLI_AUTORUN_POLICY`, so the CLI adapters needed no edit) and `controller`. A policy of `pause` with no controller falls back to the CLI behavior: the engine never waits on nobody. The auto-resume policy is read by whoever builds the controller, not by the engine.
+- `AutoRunTurnResult` gains `agentError` and `errorKind`. The engine pauses on `agentError` alone and feeds `errorKind` to `evaluateStall` as `watchdogFailure`.
+- Order after a task (playbook): record, interrupted, halt, then the error pause, then the stall. A skip leaves the document without `document_complete`; a stall from the same dispatch still wins the label. Abort and graceful stop both end through one `stopRun` closure; abort writes `Auto Run stopped: aborted by operator`, stop writes `Auto Run stopped: by operator`, both inside `FINAL_AUTORUN_SUMMARY_RE`.
+- The gate check moved into the task loop (C3). Under the CLI policy this is the one visible change: a gate mid-document now reports `document_gated` after the earlier tasks run, instead of the dispatch going through it.
+- A goal run pauses on any classified error, does not record or count that iteration, and retries the same iteration number on resume. Skip and abort end it `stopped-by-user`. Usage from the failed turn still counts toward the run's cost.
+- The error-pause row is `Auto Run error: <title> (<document or goal iteration N>)`, `success: false`, no `completedTaskCount`. `getErrorTitleForType` moved to `src/shared/agentErrorTitles.ts` (the renderer path re-exports it).
+- Not yet landed from the section 6 and 4.4 lists, left for the task that first needs them (task 5, the runtime adapter): C1, C2, C4, C5, and the policy branches `reset`, `synopsis`, `inlineDocument`, `checkpointCommits`. The CLI output they would change is unchanged today.
+
 ### 4.7 The CLI adapter (task 2)
 
 `src/cli/services/batch-processor.ts` keeps `runPlaybook(session, playbook, folderPath, options)` and `export { detectHaltMarker }`; `goal-runner.ts` keeps `runGoal`. Each builds the ports from the CLI modules it imports today (`agent-spawner`, `agent-run-capture`, `storage`, `prompt-loader`, `git-utils`, `system-prompt`, `shared/cli-activity`, `main/utils/logger`), so every `vi.mock` path in the existing tests still intercepts. It passes no controller and `options.signal` (from task 3, also `CLI_AUTORUN_POLICY`), and forwards only the CLI event types.

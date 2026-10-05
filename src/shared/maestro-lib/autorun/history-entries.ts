@@ -186,6 +186,27 @@ export function buildAutoRunSummaryEntry(
 	};
 }
 
+/**
+ * The row an error pause leaves, so a run parked overnight explains itself in History. `Auto Run
+ * error:` is a control row (`CONTROL_SUMMARY_PREFIXES`), so it never counts as a task.
+ */
+export function buildErrorPauseEntry(
+	agent: RowAgent,
+	now: number,
+	fields: { title: string; where: string; message: string }
+): HistoryEntry {
+	return {
+		id: generateUUID(),
+		type: 'AUTO',
+		timestamp: now,
+		summary: `Auto Run error: ${fields.title} (${fields.where})`,
+		fullResponse: [`**Auto Run Paused On An Error**`, ``, fields.message].join('\n'),
+		projectPath: agent.cwd,
+		sessionId: agent.id,
+		success: false,
+	};
+}
+
 /** Human label for a goal run's exit reason. */
 export function goalExitReasonLabel(reason: GoalExitReason): string {
 	switch (reason) {

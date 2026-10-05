@@ -7,7 +7,9 @@
  * History rows, the same exits.
  */
 
+import { getErrorTitleForType } from '../../agentErrorTitles';
 import {
+	acknowledgeHitlGate,
 	describeUnresolvedHaltMarker,
 	detectHaltMarker,
 	findPendingHitlGate,
@@ -30,11 +32,13 @@ import type { Playbook, SessionInfo, UsageStats } from '../../types';
 import type { AutoRunDeps, AutoRunEvent } from './engine-types';
 import {
 	buildAutoRunSummaryEntry,
+	buildErrorPauseEntry,
 	buildFinalLoopEntry,
 	buildLoopEntry,
 	buildTaskHistoryEntry,
 	summaryUsageStats,
 } from './history-entries';
+import { CLI_AUTORUN_POLICY } from './policy';
 import { preflightPlaybook } from './preflight';
 
 export interface RunPlaybookOptions {
@@ -63,6 +67,8 @@ export interface RunPlaybookOptions {
 }
 
 const OPERATOR_STOP_OUTCOME = 'stopped: by operator';
+/** The person answered a pause with abort. Still a `stopped` row, so the run boundary holds. */
+const OPERATOR_ABORT_OUTCOME = 'stopped: aborted by operator';
 
 /**
  * Process a playbook and yield events.
@@ -85,7 +91,12 @@ export async function* runPlaybook(
 		ignoreModelHints = false,
 		signal,
 	} = options;
-	const { clock, log } = deps;
+	const { clock, log, controller } = deps;
+	const policy = deps.policy ?? CLI_AUTORUN_POLICY;
+	// Pausing needs somebody to answer. Without a controller a gate is reported and skipped, and a
+	// failed task is recorded and the run goes on, exactly as the CLI always has.
+	const pauseOnGate = policy.onGate === 'pause' && controller !== undefined;
+	const pauseOnError = policy.onAgentError === 'pause' && controller !== undefined;
 	const batchStartTime = clock.now();
 	// Bottom of both ladders for every synopsis turn in this run. Resolved once:
 	// it depends only on the provider, which cannot change mid-run.
@@ -258,6 +269,10 @@ export async function* runPlaybook(
 
 		// Per-loop tracking
 		let loopStartTime = clock.now();
+		// Paused time before this loop began, so a loop's duration leaves out only its own pauses.
+		let loopPausedBase = controller?.pausedMs() ?? 0;
+		const loopElapsed = (): number =>
+			clock.now() - loopStartTime - ((controller?.pausedMs() ?? 0) - loopPausedBase);
 		let loopTasksCompleted = 0;
 		let loopTotalInputTokens = 0;
 		let loopTotalOutputTokens = 0;
@@ -288,7 +303,7 @@ export async function* runPlaybook(
 					loopIteration + 1,
 					{
 						tasksCompleted: loopTasksCompleted,
-						elapsedMs: clock.now() - loopStartTime,
+						elapsedMs: loopElapsed(),
 						inputTokens: loopTotalInputTokens,
 						outputTokens: loopTotalOutputTokens,
 						cost: loopTotalCost,
@@ -312,7 +327,8 @@ export async function* runPlaybook(
 		const reconcileTotals = async (): Promise<FinalSummaryTotals> => {
 			const runtimeTotals: FinalSummaryTotals = {
 				totalCompletedTasks,
-				totalElapsedMs: clock.now() - batchStartTime,
+				// Paused time is waiting on a person, not work (AE10).
+				totalElapsedMs: clock.now() - batchStartTime - (controller?.pausedMs() ?? 0),
 				totalInputTokens,
 				totalOutputTokens,
 				totalCost,
@@ -350,13 +366,52 @@ export async function* runPlaybook(
 			);
 		};
 
+		// End the run on an operator stop (Ctrl+C, a graceful stop, or an abort answered at a pause).
+		// It reconciles and closes exactly like a halt so the next run's aggregation does not
+		// absorb this one's task entries.
+		const stopRun = async function* (
+			aborted: boolean,
+			where?: { document: string; taskIndex?: number }
+		): AsyncGenerator<AutoRunEvent> {
+			log.autorun(
+				aborted ? `Auto Run aborted by operator` : `Auto Run stopped by operator`,
+				session.name,
+				{ ...where, loopNumber: loopIteration + 1 }
+			);
+
+			await createFinalLoopEntry(aborted ? 'Aborted by operator' : 'Stopped by operator');
+			deps.activity.end(session.id);
+
+			const stopReconciled = await reconcileTotals();
+			await createAutoRunSummary(
+				stopReconciled,
+				aborted ? OPERATOR_ABORT_OUTCOME : OPERATOR_STOP_OUTCOME
+			);
+
+			yield {
+				type: 'complete',
+				timestamp: clock.now(),
+				success: false,
+				totalTasksCompleted: stopReconciled.totalCompletedTasks,
+				totalElapsedMs: stopReconciled.totalElapsedMs,
+				totalCost: stopReconciled.totalCost,
+				stopped: true,
+			};
+		};
+
 		// Main processing loop
 		while (true) {
 			let anyTasksProcessedThisIteration = false;
 
 			// Process each document in order
-			for (let docIndex = 0; docIndex < playbook.documents.length; docIndex++) {
+			docLoop: for (let docIndex = 0; docIndex < playbook.documents.length; docIndex++) {
 				const docEntry = playbook.documents[docIndex];
+
+				// A graceful stop lands between documents as well as between tasks.
+				if (controller?.stopRequested()) {
+					yield* stopRun(false, { document: docEntry.filename });
+					return;
+				}
 
 				// Read document and count tasks
 				const { unchecked: initialTaskCount, content: docHeadContent } = await deps.documents.read(
@@ -386,30 +441,10 @@ export async function* runPlaybook(
 					loopNumber: loopIteration + 1,
 				});
 
-				// A gate asks for a human, and a batch run does not have one. Report it
-				// and move on rather than dispatching a task nobody can finish. The
-				// desktop engine pauses here instead, because there IS someone to wait
-				// for; the marker means the same thing on both, only the response
-				// differs.
-				const gate = findPendingHitlGate(docHeadContent);
-				if (gate) {
-					log.autorun(`Document gated on a human: ${docEntry.filename}`, session.name, {
-						document: docEntry.filename,
-						reason: gate.reason,
-						line: gate.line + 1,
-						loopNumber: loopIteration + 1,
-					});
-
-					yield {
-						type: 'document_gated',
-						timestamp: clock.now(),
-						document: docEntry.filename,
-						reason: gate.reason,
-						artifact: gate.artifact,
-						line: gate.line + 1,
-					};
-					continue;
-				}
+				// The document text as the last read left it. The gate check below runs on it before
+				// every dispatch, not once per document: a gate above the third task is invisible
+				// while the first is pending, so checking only at the head would dispatch past it.
+				let currentContent = docHeadContent;
 
 				let docTasksCompleted = 0;
 				let taskIndex = 0;
@@ -419,9 +454,89 @@ export async function* runPlaybook(
 				// agent cannot finish is re-dispatched forever.
 				let consecutiveNoChangeCount = 0;
 				let documentStalled: { reason: string; remainingTasks: number } | null = null;
+				// An error pause answered with skip: leave this document without completing it.
+				let documentSkipped = false;
 
 				// Process tasks in this document
 				while (remainingTasks > 0) {
+					if (controller?.stopRequested()) {
+						yield* stopRun(false, { document: docEntry.filename, taskIndex });
+						return;
+					}
+
+					// A gate asks for a human. A batch run has none, so it reports the gate and
+					// moves on rather than dispatching a task nobody can finish. A run that can
+					// wait parks here instead, and on resume records the human step itself: the
+					// marker means the same thing on both, only the response differs.
+					const gate = findPendingHitlGate(currentContent);
+					if (gate) {
+						const gateLine = gate.line + 1;
+						if (!pauseOnGate) {
+							log.autorun(`Document gated on a human: ${docEntry.filename}`, session.name, {
+								document: docEntry.filename,
+								reason: gate.reason,
+								line: gateLine,
+								loopNumber: loopIteration + 1,
+							});
+
+							yield {
+								type: 'document_gated',
+								timestamp: clock.now(),
+								document: docEntry.filename,
+								reason: gate.reason,
+								artifact: gate.artifact,
+								line: gateLine,
+							};
+							continue docLoop;
+						}
+
+						log.autorun(`Auto Run paused at a human gate: ${docEntry.filename}`, session.name, {
+							document: docEntry.filename,
+							reason: gate.reason,
+							line: gateLine,
+							loopNumber: loopIteration + 1,
+						});
+						yield {
+							type: 'paused',
+							timestamp: clock.now(),
+							kind: 'gate',
+							document: docEntry.filename,
+							documentIndex: docIndex,
+							gate: { reason: gate.reason, artifact: gate.artifact, line: gateLine },
+						};
+						const { resolution, auto } = await controller!.awaitResolution({
+							kind: 'gate',
+							document: docEntry.filename,
+							gate: { reason: gate.reason, artifact: gate.artifact, line: gateLine },
+						});
+						yield { type: 'resumed', timestamp: clock.now(), resolution, auto };
+
+						if (resolution === 'abort') {
+							yield* stopRun(true, { document: docEntry.filename, taskIndex });
+							return;
+						}
+						if (resolution === 'skip') continue docLoop;
+
+						// Resume. Re-read first: the person may have ticked the box themselves, and
+						// the document is the truth, not what this run read before it parked.
+						const reread = await deps.documents.read(folderPath, docEntry.filename);
+						const acknowledged = acknowledgeHitlGate(reread.content);
+						if (acknowledged !== null) {
+							await deps.documents.write(folderPath, `${docEntry.filename}.md`, acknowledged);
+						}
+						yield {
+							type: 'gate_acknowledged',
+							timestamp: clock.now(),
+							document: docEntry.filename,
+							line: gateLine,
+							written: acknowledged !== null,
+						};
+						const afterGate = await deps.documents.read(folderPath, docEntry.filename);
+						currentContent = afterGate.content;
+						remainingTasks = afterGate.unchecked;
+						continue;
+					}
+
 					// Emit task start
 					yield {
 						type: 'task_start',
@@ -562,6 +677,7 @@ export async function* runPlaybook(
 						folderPath,
 						docEntry.filename
 					);
+					currentContent = postContent;
 					const tasksCompletedThisRun = remainingTasks - newRemainingTasks;
 					const haltMarker = detectHaltMarker(postContent);
 
@@ -573,6 +689,8 @@ export async function* runPlaybook(
 						before: countMarkdownTasks(expandedDocContent || docContent),
 						after: countMarkdownTasks(postContent),
 						consecutiveNoChangeCount,
+						// A watchdog killed the turn: a dead run, not a slow one.
+						watchdogFailure: result.errorKind !== undefined,
 					});
 					consecutiveNoChangeCount = stall.consecutiveNoChangeCount;
 
@@ -678,31 +796,9 @@ export async function* runPlaybook(
 					}
 
 					// The operator stopped the run (Ctrl+C). The interrupted task was
-					// recorded above as "interrupted", not as a failure, and the run
-					// reconciles and closes exactly like a halt so the next run's
-					// aggregation does not absorb this one's task entries.
+					// recorded above as "interrupted", not as a failure.
 					if (result.outcome === 'interrupted' || signal?.aborted) {
-						log.autorun(`Auto Run stopped by operator`, session.name, {
-							document: docEntry.filename,
-							taskIndex,
-							loopNumber: loopIteration + 1,
-						});
-
-						await createFinalLoopEntry('Stopped by operator');
-						deps.activity.end(session.id);
-
-						const stopReconciled = await reconcileTotals();
-						await createAutoRunSummary(stopReconciled, OPERATOR_STOP_OUTCOME);
-
-						yield {
-							type: 'complete',
-							timestamp: clock.now(),
-							success: false,
-							totalTasksCompleted: stopReconciled.totalCompletedTasks,
-							totalElapsedMs: stopReconciled.totalElapsedMs,
-							totalCost: stopReconciled.totalCost,
-							stopped: true,
-						};
+						yield* stopRun(false, { document: docEntry.filename, taskIndex });
 						return;
 					}
 
@@ -754,6 +850,51 @@ export async function* runPlaybook(
 					remainingTasks = newRemainingTasks;
 					taskIndex++;
 
+					// A classified agent error parks a run that has someone to answer it. The
+					// task is already recorded and the halt marker already honored (a halt
+					// written by the failing turn still ends the run), so this only decides
+					// whether to go on. The stall decision from this dispatch stands whatever
+					// the answer: a skip would leave the document anyway.
+					if (pauseOnError && result.agentError) {
+						const agentError = result.agentError;
+						const title = getErrorTitleForType(agentError.type);
+						log.autorun(`Auto Run paused on an agent error: ${title}`, session.name, {
+							document: docEntry.filename,
+							taskIndex,
+							errorType: agentError.type,
+							loopNumber: loopIteration + 1,
+						});
+						if (writeHistory) {
+							await deps.history.append(
+								buildErrorPauseEntry(session, clock.now(), {
+									title,
+									where: docEntry.filename,
+									message: agentError.message,
+								})
+							);
+						}
+						yield {
+							type: 'paused',
+							timestamp: clock.now(),
+							kind: 'error',
+							document: docEntry.filename,
+							documentIndex: docIndex,
+							agentError,
+						};
+						const { resolution, auto } = await controller!.awaitResolution({
+							kind: 'error',
+							document: docEntry.filename,
+							agentError,
+						});
+						yield { type: 'resumed', timestamp: clock.now(), resolution, auto };
+
+						if (resolution === 'abort') {
+							yield* stopRun(true, { document: docEntry.filename, taskIndex });
+							return;
+						}
+						if (resolution === 'skip') documentSkipped = true;
+					}
+
 					// The document made no progress often enough that dispatching it again
 					// would just spend tokens on the same wall. Give up on THIS document
 					// and move to the next one - unlike a halt, the playbook continues.
@@ -764,6 +905,7 @@ export async function* runPlaybook(
 						};
 						break;
 					}
+					if (documentSkipped) break;
 				}
 
 				if (documentStalled) {
@@ -789,6 +931,9 @@ export async function* runPlaybook(
 					// every consumer the tasks got done.
 					continue;
 				}
+
+				// Left on request, with tasks still open: same as a stall, nothing completed.
+				if (documentSkipped) continue;
 
 				// Document complete - handle reset-on-completion
 				if (docEntry.resetOnCompletion && docTasksCompleted > 0) {
@@ -946,7 +1091,7 @@ export async function* runPlaybook(
 			}
 
 			// Emit loop complete event
-			const loopElapsedMs = clock.now() - loopStartTime;
+			const loopElapsedMs = loopElapsed();
 			const loopUsageStats: UsageStats | undefined = summaryUsageStats(
 				loopTotalInputTokens,
 				loopTotalOutputTokens,
@@ -984,6 +1129,7 @@ export async function* runPlaybook(
 
 			// Reset per-loop tracking
 			loopStartTime = clock.now();
+			loopPausedBase = controller?.pausedMs() ?? 0;
 			loopTasksCompleted = 0;
 			loopTotalInputTokens = 0;
 			loopTotalOutputTokens = 0;

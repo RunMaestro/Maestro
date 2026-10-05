@@ -10,6 +10,7 @@
  * the ports it runs on; the decisions are shared so the surfaces behave alike.
  */
 
+import { getErrorTitleForType } from '../../agentErrorTitles';
 import { hasCapability } from '../providers/capabilities';
 import { GOAL_RUN_HARD_ITERATION_CAP } from '../../goalDriven/types';
 import type { GoalExitReason, GoalIterationRecord, GoalRunConfig } from '../../goalDriven/types';
@@ -27,11 +28,13 @@ import { substituteTemplateVariables, type TemplateContext } from '../../templat
 import type { SessionInfo, UsageStats } from '../../types';
 import type { AutoRunDeps, AutoRunEvent } from './engine-types';
 import {
+	buildErrorPauseEntry,
 	buildGoalFinalEntry,
 	buildGoalIterationEntry,
 	buildGoalStartEntry,
 	summaryUsageStats,
 } from './history-entries';
+import { CLI_AUTORUN_POLICY } from './policy';
 
 export interface RunGoalOptions {
 	/** Write per-iteration + summary entries to History. Default true. */
@@ -114,7 +117,9 @@ export async function* runGoal(
 		effort: runEffort,
 		signal,
 	} = options;
-	const { clock, log } = deps;
+	const { clock, log, controller } = deps;
+	const pauseOnError =
+		(deps.policy ?? CLI_AUTORUN_POLICY).onAgentError === 'pause' && controller !== undefined;
 	const runStartTime = clock.now();
 
 	const gitBranch = await deps.environment.gitBranch(session.cwd);
@@ -169,7 +174,7 @@ export async function* runGoal(
 			}
 
 			// The operator stopped the run between iterations.
-			if (signal?.aborted) {
+			if (signal?.aborted || controller?.stopRequested()) {
 				exitReason = 'stopped-by-user';
 				if (iteration > 0) exitDetail = `Stopped by the operator after iteration ${iteration}.`;
 				break;
@@ -228,6 +233,50 @@ export async function* runGoal(
 			if (result.outcome === 'interrupted') {
 				exitReason = 'stopped-by-user';
 				exitDetail = `Stopped by the operator during iteration ${iteration}.`;
+				break;
+			}
+
+			// A classified agent error parks a run that has someone to answer it. The iteration is
+			// neither recorded nor counted: it never produced a self-report, and a retry must be
+			// the same iteration number, not the next one. This applies to every classified error,
+			// where the desktop only waited on a limit error and let the loop go on under a paused
+			// banner for the rest (`Plans/maestro-tui-autorun-engine.md`, F5).
+			if (pauseOnError && result.agentError) {
+				const agentError = result.agentError;
+				const title = getErrorTitleForType(agentError.type);
+				log.autorun(`Goal-Driven Auto Run paused on an agent error: ${title}`, session.name, {
+					iteration,
+					errorType: agentError.type,
+				});
+				if (writeHistory) {
+					await deps.history.append(
+						buildErrorPauseEntry(session, clock.now(), {
+							title,
+							where: `goal iteration ${iteration}`,
+							message: agentError.message,
+						})
+					);
+				}
+				yield {
+					type: 'paused',
+					timestamp: clock.now(),
+					kind: 'error',
+					iteration,
+					agentError,
+				};
+				const { resolution, auto } = await controller!.awaitResolution({
+					kind: 'error',
+					iteration,
+					agentError,
+				});
+				yield { type: 'resumed', timestamp: clock.now(), resolution, auto };
+
+				if (resolution === 'resume') {
+					iteration--;
+					continue;
+				}
+				exitReason = 'stopped-by-user';
+				exitDetail = `Stopped by the operator after an agent error in iteration ${iteration}.`;
 				break;
 			}
 
@@ -337,7 +386,8 @@ export async function* runGoal(
 			}
 		}
 
-		const totalElapsedMs = clock.now() - runStartTime;
+		// Paused time is waiting on a person, not work (AE10).
+		const totalElapsedMs = clock.now() - runStartTime - (controller?.pausedMs() ?? 0);
 		const isSuccess = exitReason === 'completed';
 		const usageStats = summaryUsageStats(totalInputTokens, totalOutputTokens, totalCost);
 

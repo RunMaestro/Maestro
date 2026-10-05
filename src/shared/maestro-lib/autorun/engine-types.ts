@@ -11,9 +11,10 @@
  * CLI's synchronous file helpers and the runtime's async writers fit one shape.
  */
 
-import type { HistoryEntry, TaskSelectionMode, UsageStats } from '../../types';
+import type { AgentError, HistoryEntry, TaskSelectionMode, UsageStats } from '../../types';
 import type { PromptId } from '../../promptDefinitions';
 import type { TurnOutcome } from '../streaming/turn-outcome';
+import type { AutoRunPolicy } from './policy';
 
 export type MaybePromise<T> = T | Promise<T>;
 
@@ -52,6 +53,51 @@ export interface AutoRunTurnResult {
 	error?: string;
 	/** How the turn ended: a user stop is told apart from a crash by this, never by `error`. */
 	outcome?: TurnOutcome;
+	/**
+	 * The classified failure. An error pause keys on this and nothing else, so the run never races
+	 * an exit against a separate error event (AE7). Only a surface that pauses sets it.
+	 */
+	agentError?: AgentError;
+	/**
+	 * Set by a watchdog that killed a hung or overlong turn. A watchdog failure trips the stall
+	 * guard at once instead of after three more dispatches.
+	 */
+	errorKind?: 'watchdog-stalled' | 'watchdog-timeout';
+}
+
+/** How a person (or the auto-resume timer) answers a pause. */
+export type AutoRunResolution = 'resume' | 'skip' | 'abort';
+
+/** Why a run is parked. */
+export type AutoRunPause =
+	| {
+			kind: 'error';
+			/** The playbook document, absent for a goal run. */
+			document?: string;
+			/** The goal iteration that failed, absent for a playbook run. */
+			iteration?: number;
+			agentError: AgentError;
+	  }
+	| {
+			kind: 'gate';
+			document: string;
+			gate: { reason: string; artifact?: string; line: number };
+	  };
+
+/**
+ * What the engine needs from whoever can stop or answer a run. Absent from the deps, a run never
+ * pauses and stops only through its `AbortSignal` (the CLI).
+ */
+export interface AutoRunController {
+	/** Graceful stop: checked before every document, dispatch, and goal iteration. */
+	stopRequested(): boolean;
+	/**
+	 * Park until answered. A stop answers `abort`. `auto` is true when the auto-resume timer, not a
+	 * person, answered.
+	 */
+	awaitResolution(pause: AutoRunPause): Promise<{ resolution: AutoRunResolution; auto: boolean }>;
+	/** Closed and open paused time so far, taken off the run clock (AE10). */
+	pausedMs(): number;
 }
 
 /** The record of a run the engine appends to History. */
@@ -111,4 +157,8 @@ export interface AutoRunDeps {
 		autorun(message: string, context?: string, data?: unknown): void;
 		warn(message: string, context?: string, data?: unknown): void;
 	};
+	/** Surface rules. Absent: `CLI_AUTORUN_POLICY`, which is what the engine did before policy existed. */
+	policy?: AutoRunPolicy;
+	/** Absent: the run never pauses and stops only through `signal`. */
+	controller?: AutoRunController;
 }
