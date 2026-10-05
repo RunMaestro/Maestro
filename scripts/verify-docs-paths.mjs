@@ -8,7 +8,11 @@ import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const docs = ['CLAUDE.md', 'docs/agent-guides/CANONICAL-UTILITIES.md'];
+const docs = [
+	'CLAUDE.md',
+	'docs/agent-guides/CANONICAL-UTILITIES.md',
+	'docs/agent-guides/CLI-HEADLESS.md',
+];
 
 let missing = 0;
 let checked = 0;
