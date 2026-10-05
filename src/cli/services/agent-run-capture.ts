@@ -22,12 +22,20 @@ import { generateUUID } from '../../shared/uuid';
 import { logger } from '../../main/utils/logger';
 import { SIGINT_EXIT_CODE } from '../utils/interrupt';
 import type { AgentResult } from './agent-spawner';
+import type { UsageStats } from '../../shared/types';
 
 const LOG_CONTEXT = 'AgentRunCapture';
 
 export interface CliRunSettlement {
 	status: 'completed' | 'failed' | 'cancelled';
 	exitCode: number;
+	/**
+	 * The provider's token/cost report for the turn, when it sent one. Lands on
+	 * `AgentRun.usage` so the run's usage is persisted in the data dir: `send`
+	 * writes no history entry, so without this its usage existed only on stdout,
+	 * which on a headless server means nowhere.
+	 */
+	usage?: UsageStats;
 }
 
 /**
@@ -36,13 +44,27 @@ export interface CliRunSettlement {
  * other failure settles as failed (exit 1).
  */
 export function settlementFromAgentResult(result: AgentResult): CliRunSettlement {
+	// An interrupted or failed turn can still have spent tokens; keep the report.
+	const usage = result.usageStats ? { usage: result.usageStats } : {};
 	if (result.outcome === 'interrupted') {
-		return { status: 'cancelled', exitCode: SIGINT_EXIT_CODE };
+		return { status: 'cancelled', exitCode: SIGINT_EXIT_CODE, ...usage };
 	}
 	return {
 		status: result.success ? 'completed' : 'failed',
 		exitCode: result.success ? 0 : 1,
+		...usage,
 	};
+}
+
+/**
+ * The run's `usage` record: the provider's fields minus empty ones, or nothing
+ * at all when it reported none. Never a fabricated zero record - the same rule
+ * the desktop producer (`usageFromProvider`) follows.
+ */
+function runUsage(usage: UsageStats | undefined): AgentRun['usage'] {
+	if (!usage) return undefined;
+	const entries = Object.entries(usage).filter(([, v]) => v !== undefined && v !== null);
+	return entries.length > 0 ? Object.fromEntries(entries) : undefined;
 }
 
 export interface CaptureCliRunInput {
@@ -83,7 +105,8 @@ function buildRun(
 	createdAt: number,
 	updatedAt: number,
 	status: AgentRunStatus,
-	metadata?: AgentRun['metadata']
+	metadata?: AgentRun['metadata'],
+	usage?: AgentRun['usage']
 ): AgentRun {
 	return {
 		id: runId,
@@ -100,6 +123,7 @@ function buildRun(
 		...(input.sessionId ? { sessionId: input.sessionId } : {}),
 		...(input.prompt !== undefined ? { prompt: input.prompt } : {}),
 		...(metadata ? { metadata } : {}),
+		...(usage ? { usage } : {}),
 	};
 }
 
@@ -126,9 +150,12 @@ function settleRun(
 	const completedAt = Date.now();
 	const durationMs = completedAt - startedAt;
 	const { status, exitCode } = settlement;
+	const usage = runUsage(settlement.usage);
 	// Guard the lifecycle edge (running -> completed/failed/cancelled) before persisting.
 	assertTransition('running', status);
-	upsertAgentRun(buildRun(input, runId, startedAt, completedAt, status, { durationMs, exitCode }));
+	upsertAgentRun(
+		buildRun(input, runId, startedAt, completedAt, status, { durationMs, exitCode }, usage)
+	);
 	appendAgentRunEvent({
 		id: `evt_${runId}_${status}_${completedAt}`,
 		runId,

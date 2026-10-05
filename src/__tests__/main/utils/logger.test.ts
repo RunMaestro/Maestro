@@ -109,6 +109,37 @@ describe('Logger', () => {
 		});
 	});
 
+	describe('routeConsoleToStderr for the CLI', () => {
+		// maestro-cli prints its result (`--json`, JSONL run events) on stdout and
+		// reuses main modules that log through this logger; an Auto Run's
+		// `autorun` lines used to land in the middle of that JSON stream.
+		it('sends every level to stderr and nothing to stdout', () => {
+			logger.setLogLevel('debug');
+			logger.routeConsoleToStderr();
+
+			logger.debug('d');
+			logger.info('i');
+			logger.warn('w');
+			logger.error('e');
+			logger.autorun('a', 'Agent');
+			logger.toast('t');
+			logger.cue('c');
+
+			expect(consoleLogSpy).not.toHaveBeenCalled();
+			expect(consoleInfoSpy).not.toHaveBeenCalled();
+			expect(consoleWarnSpy).not.toHaveBeenCalled();
+			expect(consoleErrorSpy).toHaveBeenCalledTimes(7);
+			expect(String(consoleErrorSpy.mock.calls[4][0])).toContain('[AUTORUN] [Agent] a');
+		});
+
+		it('is off by default, so the desktop keeps its per-level console output', () => {
+			logger.info('i');
+			logger.autorun('a');
+			expect(consoleInfoSpy).toHaveBeenCalledTimes(2);
+			expect(consoleErrorSpy).not.toHaveBeenCalled();
+		});
+	});
+
 	describe('Log Level Management', () => {
 		it('should have default log level of info', async () => {
 			expect(logger.getLogLevel()).toBe('info');
