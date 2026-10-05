@@ -642,6 +642,83 @@ describe('importCueBundle against a fixture bundle', () => {
 		expect(doc.subscriptions.map((s) => s.name)).toEqual(['legacy', 'tick', 'hook']);
 	});
 
+	describe('provider binary paths', () => {
+		const configsPath = () => path.join(dataDir, 'maestro-agent-configs.json');
+		const binary = () => {
+			const file = path.join(tmp, 'bin', 'claude');
+			write(file, '#!/bin/sh\n');
+			fs.chmodSync(file, 0o755);
+			return file;
+		};
+
+		it('writes the binary as the provider path and keeps other provider settings', async () => {
+			writeJson(configsPath(), {
+				configs: { 'claude-code': { customArgs: '--verbose' } },
+				other: 1,
+			});
+			const bin = binary();
+			const result = await importCueBundle(options({}, { agentPaths: { 'claude-code': bin } }));
+			expect(result.plan.agentPaths).toEqual([
+				{ toolType: 'claude-code', path: bin, action: 'create' },
+			]);
+			const stored = JSON.parse(fs.readFileSync(configsPath(), 'utf-8'));
+			expect(stored).toEqual({
+				configs: { 'claude-code': { customArgs: '--verbose', customPath: bin } },
+				other: 1,
+			});
+		});
+
+		it('reports a different existing path as a conflict, and an equal one as unchanged', async () => {
+			const bin = binary();
+			writeJson(configsPath(), { configs: { 'claude-code': { customPath: '/old/claude' } } });
+			const plan = await planCueBundleImport(options({}, { agentPaths: { 'claude-code': bin } }));
+			expect(plan.conflicts).toEqual([
+				{
+					kind: 'agent-path',
+					target: 'claude-code',
+					message: 'claude-code already runs /old/claude',
+				},
+			]);
+			expect(plan.agentPaths[0]).toMatchObject({ action: 'overwrite', previous: '/old/claude' });
+			expect((await refused(options({}, { agentPaths: { 'claude-code': bin } }))).code).toBe(
+				'CONFLICTS'
+			);
+
+			writeJson(configsPath(), { configs: { 'claude-code': { customPath: bin } } });
+			const same = await planCueBundleImport(options({}, { agentPaths: { 'claude-code': bin } }));
+			expect(same.conflicts).toEqual([]);
+			expect(same.agentPaths[0].action).toBe('unchanged');
+		});
+
+		it('warns about a missing binary and a tool no agent runs', async () => {
+			const plan = await planCueBundleImport(
+				options({}, { agentPaths: { codex: path.join(tmp, 'nope', 'codex') } })
+			);
+			expect(plan.warnings.some((w) => w.includes('No agent in this bundle runs codex'))).toBe(
+				true
+			);
+			expect(plan.warnings.some((w) => w.includes('missing or not executable'))).toBe(true);
+		});
+
+		it('refuses an unknown tool type or a relative path', async () => {
+			expect((await refused(options({}, { agentPaths: { nope: '/bin/x' } }))).code).toBe(
+				'INVALID_OPTIONS'
+			);
+			expect((await refused(options({}, { agentPaths: { codex: 'bin/codex' } }))).code).toBe(
+				'INVALID_OPTIONS'
+			);
+		});
+
+		it('rolls the provider path back with everything else', async () => {
+			writeJson(configsPath(), { configs: { codex: { customArgs: '-q' } } });
+			const before = fs.readFileSync(configsPath(), 'utf-8');
+			vi.mocked(writeSessionsStoreFile).mockRejectedValueOnce(new Error('disk full'));
+			const error = await importError(options({}, { agentPaths: { 'claude-code': binary() } }));
+			expect(error.code).toBe('WRITE_FAILED');
+			expect(fs.readFileSync(configsPath(), 'utf-8')).toBe(before);
+		});
+	});
+
 	it('rolls every earlier write back when the agent records fail to write', async () => {
 		const freshData = path.join(tmp, 'fresh-data');
 		write(path.join(projRoot, '.maestro/cue.yaml'), yaml.dump({ subscriptions: [] }));

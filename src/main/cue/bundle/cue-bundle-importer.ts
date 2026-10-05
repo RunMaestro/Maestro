@@ -13,9 +13,10 @@
  *    nothing: bundle integrity and engine version, no Cue engine or desktop on
  *    the data dir, every workspace mapped to an existing folder, every target
  *    path contained in its root, every conflict. A dry run stops here.
- * 2. **Apply** (`importCueBundle`) writes in a fixed order with the agent
- *    records LAST, so a failure partway never leaves an agent pointing at files
- *    that are not there. Each target's prior bytes were captured in phase 1,
+ * 2. **Apply** (`importCueBundle`) writes in a fixed order: workspace files,
+ *    data-dir Auto Run documents, playbooks, cue.yaml merges, the pipeline
+ *    layout, provider binary paths, and the agent records LAST, so a failure
+ *    partway never leaves an agent pointing at files that are not there. Each target's prior bytes were captured in phase 1,
  *    and a failed write puts every earlier target back.
  *
  * Every refusal is a {@link CueBundleImportError} with a stable `code`, so the
@@ -51,6 +52,13 @@ import {
 	writeSessionsStoreFile,
 	type SessionsStoreData,
 } from '../../stores/sessions-store-file';
+import {
+	AgentConfigsStoreCorruptError,
+	agentConfigsStorePath,
+	readAgentConfigsStoreFile,
+	writeAgentConfigsStoreFile,
+	type AgentConfigsStoreData,
+} from '../../stores/agent-configs-store-file';
 import { readCueEngineLock } from '../cue-engine-lock';
 import { sanitizeCustomEnvVars } from '../cue-env-sanitizer';
 import { writeCueYamlAtomicSync } from '../cue-yaml-write';
@@ -132,6 +140,13 @@ export interface CueBundleImportOptions {
 	force?: boolean;
 	/** Refuse the import when any subscription runs a shell command. */
 	refuseShellCommands?: boolean;
+	/**
+	 * Provider binary overrides, tool type -> absolute path, written to the
+	 * data dir's `maestro-agent-configs.json` as `configs[toolType].customPath`.
+	 * That provider-level path is what Cue, the CLI and the desktop launch; an
+	 * agent record's own `customPath` is never read by Cue.
+	 */
+	agentPaths?: Record<string, string>;
 	/** Environment consulted for required secrets. Defaults to `process.env`. */
 	env?: NodeJS.ProcessEnv;
 	onLog?: (level: CueBundleImportLogLevel, message: string) => void;
@@ -142,11 +157,12 @@ export type CueBundleImportConflictKind =
 	| 'subscription'
 	| 'playbooks'
 	| 'file'
-	| 'pipeline';
+	| 'pipeline'
+	| 'agent-path';
 
 export interface CueBundleImportConflict {
 	kind: CueBundleImportConflictKind;
-	/** Agent id, subscription name, pipeline name, or file path. */
+	/** Agent id, subscription name, pipeline name, tool type, or file path. */
 	target: string;
 	message: string;
 }
@@ -218,6 +234,14 @@ export interface CueBundleImportSecret {
 	passesServerAllowlist?: boolean;
 }
 
+export interface CueBundleImportAgentPath {
+	toolType: string;
+	path: string;
+	action: 'create' | 'overwrite' | 'unchanged';
+	/** The provider's binary path before the import, when it had one. */
+	previous?: string;
+}
+
 export interface CueBundleImportPlan {
 	bundle: { name: string; kind: CueBundleKind; producerVersion: string };
 	dataDir: string;
@@ -227,6 +251,7 @@ export interface CueBundleImportPlan {
 	files: CueBundleImportFile[];
 	cueConfigs: CueBundleImportCueConfig[];
 	pipeline?: { id: string; name: string; action: 'create' | 'overwrite' | 'unchanged' };
+	agentPaths: CueBundleImportAgentPath[];
 	shellCommands: CueBundleImportShellCommand[];
 	env: CueBundleImportEnvReport[];
 	secrets: CueBundleImportSecret[];
@@ -249,7 +274,7 @@ interface PlannedWrite {
 	content: Buffer | string | null;
 	/** The target's bytes at plan time, or null when it did not exist. */
 	before: Buffer | null;
-	via: 'file' | 'cue-yaml' | 'layout';
+	via: 'file' | 'cue-yaml' | 'layout' | 'agent-configs';
 }
 
 interface InternalPlan {
@@ -257,6 +282,7 @@ interface InternalPlan {
 	/** In write order; the sessions store is handled separately, last. */
 	writes: PlannedWrite[];
 	layout?: PipelineLayoutState;
+	agentConfigsData?: AgentConfigsStoreData;
 	sessionsData: SessionsStoreData;
 	sessionsBefore: Buffer | null;
 }
@@ -400,6 +426,22 @@ async function buildPlan(options: CueBundleImportOptions): Promise<InternalPlan>
 		);
 	}
 	const dataDir = path.resolve(options.dataDir);
+	for (const [toolType, binary] of Object.entries(options.agentPaths ?? {})) {
+		if (!isValidAgentId(toolType)) {
+			throw new CueBundleImportError(
+				'INVALID_OPTIONS',
+				`Unknown agent type "${toolType}" for a binary path`,
+				{ toolType }
+			);
+		}
+		if (!binary || !path.isAbsolute(binary)) {
+			throw new CueBundleImportError(
+				'INVALID_OPTIONS',
+				`The binary path for ${toolType} must be an absolute path: ${binary}`,
+				{ toolType }
+			);
+		}
+	}
 	const env = options.env ?? process.env;
 	const warnings: string[] = [];
 
@@ -953,6 +995,61 @@ async function buildPlan(options: CueBundleImportOptions): Promise<InternalPlan>
 		}
 	}
 
+	// ─── Provider binary paths ───────────────────────────────────────────────
+	const agentPaths: CueBundleImportAgentPath[] = [];
+	let agentConfigsData: AgentConfigsStoreData | undefined;
+	const requestedPaths = Object.entries(options.agentPaths ?? {}).sort(([a], [b]) =>
+		a.localeCompare(b)
+	);
+	if (requestedPaths.length > 0) {
+		let current: ReturnType<typeof readAgentConfigsStoreFile>;
+		try {
+			current = readAgentConfigsStoreFile(dataDir);
+		} catch (error) {
+			if (error instanceof AgentConfigsStoreCorruptError) {
+				throw new CueBundleImportError('STORE_CORRUPT', error.message, { path: error.filePath });
+			}
+			throw error;
+		}
+		const configs = { ...current.configs };
+		const usedTools = new Set(agents.map((a) => a.toolType));
+		for (const [toolType, binary] of requestedPaths) {
+			if (!usedTools.has(toolType)) {
+				warnings.push(`No agent in this bundle runs ${toolType}; its binary path is set anyway.`);
+			}
+			try {
+				fs.accessSync(binary, fs.constants.X_OK);
+			} catch {
+				warnings.push(`${binary} (for ${toolType}) is missing or not executable yet.`);
+			}
+			const previous = configs[toolType]?.customPath;
+			const prev = typeof previous === 'string' && previous ? previous : undefined;
+			if (prev === binary) {
+				agentPaths.push({ toolType, path: binary, action: 'unchanged', previous: prev });
+				continue;
+			}
+			if (prev) {
+				conflicts.push({
+					kind: 'agent-path',
+					target: toolType,
+					message: `${toolType} already runs ${prev}`,
+				});
+			}
+			agentPaths.push({
+				toolType,
+				path: binary,
+				action: prev ? 'overwrite' : 'create',
+				...(prev ? { previous: prev } : {}),
+			});
+			configs[toolType] = { ...configs[toolType], customPath: binary };
+		}
+		if (agentPaths.some((p) => p.action !== 'unchanged')) {
+			agentConfigsData = { ...current.data, configs };
+			const target = agentConfigsStorePath(dataDir);
+			writes.push({ target, content: null, before: fileBefore(target), via: 'agent-configs' });
+		}
+	}
+
 	// ─── Secrets ─────────────────────────────────────────────────────────────
 	for (const name of manifest.requirements.secrets) {
 		if (!secretUsers.has(name)) secretUsers.set(name, new Set());
@@ -970,9 +1067,6 @@ async function buildPlan(options: CueBundleImportOptions): Promise<InternalPlan>
 		}
 		return secret;
 	});
-	for (const secret of secrets) {
-		if (!secret.set) warnings.push(`Secret ${secret.name} is not set in this environment.`);
-	}
 
 	const plan: CueBundleImportPlan = {
 		bundle: {
@@ -986,6 +1080,7 @@ async function buildPlan(options: CueBundleImportOptions): Promise<InternalPlan>
 		files,
 		cueConfigs,
 		...(pipeline ? { pipeline } : {}),
+		agentPaths,
 		shellCommands,
 		env: envReports,
 		secrets,
@@ -996,6 +1091,7 @@ async function buildPlan(options: CueBundleImportOptions): Promise<InternalPlan>
 		plan,
 		writes,
 		layout,
+		agentConfigsData,
 		sessionsData: { ...sessionsData, sessions: nextSessions },
 		sessionsBefore,
 	};
@@ -1085,7 +1181,9 @@ export async function importCueBundle(
 			ensureDir(path.dirname(write.target), createdDirs);
 			if (write.via === 'cue-yaml') writeCueYamlAtomicSync(write.target, String(write.content));
 			else if (write.via === 'layout') savePipelineLayout(internal.layout!, plan.dataDir);
-			else await atomicWriteFile(write.target, write.content as Buffer);
+			else if (write.via === 'agent-configs') {
+				await writeAgentConfigsStoreFile(plan.dataDir, internal.agentConfigsData!);
+			} else await atomicWriteFile(write.target, write.content as Buffer);
 		}
 		// Agents last: until this write lands, nothing points at the files above.
 		done.push(sessionsWrite);

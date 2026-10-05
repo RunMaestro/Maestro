@@ -1,11 +1,12 @@
 // Bundle commands - pack a Cue pipeline or a single agent into a portable,
-// deterministic zip (`src/shared/cue-bundle-types.ts`), then check or describe
-// one.
+// deterministic zip (`src/shared/cue-bundle-types.ts`), check or describe one,
+// and import one into a data directory.
 //
 // Reads Maestro's data directory straight off disk, so it works with the
-// desktop app closed. The exporter, validator, and zip reader are loaded with a
-// dynamic `import()` so archiver, js-yaml, and the Cue config reader stay out of
-// every other command's startup path.
+// desktop app closed (import REQUIRES it closed). The exporter, validator,
+// importer, and zip reader are loaded with a dynamic `import()` so archiver,
+// js-yaml, and the Cue config reader stay out of every other command's startup
+// path.
 
 import * as fs from 'fs';
 import { resolveUserDataDir } from '../../shared/userDataDir';
@@ -16,6 +17,11 @@ import { ExitCode } from '../exit-codes';
 import { formatSize } from '../../shared/formatters';
 import type { CueBundleManifest } from '../../shared/cue-bundle-types';
 import type { CueBundleValidationIssue } from '../../main/cue/bundle/cue-bundle-validator';
+import type {
+	CueBundleImportConflict,
+	CueBundleImportErrorCode,
+	CueBundleImportPlan,
+} from '../../main/cue/bundle/cue-bundle-importer';
 
 export interface BundleExportOptions {
 	agent?: string;
@@ -27,9 +33,27 @@ export interface BundleExportOptions {
 	json?: boolean;
 }
 
-function fail(message: string, options: { json?: boolean }, code = ExitCode.GeneralError): never {
+/**
+ * Report a failure and exit. `jsonCode` and `details` are added to the JSON
+ * payload only when given, so verbs that never passed them print what they
+ * always printed.
+ */
+function fail(
+	message: string,
+	options: { json?: boolean },
+	code = ExitCode.GeneralError,
+	jsonCode?: string,
+	details?: Record<string, unknown>
+): never {
 	if (options.json) {
-		console.log(JSON.stringify({ success: false, error: message }));
+		console.log(
+			JSON.stringify({
+				success: false,
+				error: message,
+				...(jsonCode ? { code: jsonCode } : {}),
+				...(details && Object.keys(details).length > 0 ? { details } : {}),
+			})
+		);
 	} else {
 		console.error(`Error: ${message}`);
 	}
@@ -242,4 +266,206 @@ export async function bundleInspect(
 		lines.push('', 'Warnings:', ...manifest.warnings.map((w) => `  ${w}`));
 	}
 	console.log(lines.join('\n'));
+}
+
+export interface BundleImportOptions {
+	/** `key=path`, one per bundle workspace. */
+	workspace?: string[];
+	/** `tool=path`, provider binary overrides. */
+	agentPath?: string[];
+	dataDir?: string;
+	dryRun?: boolean;
+	force?: boolean;
+	rejectShellCommands?: boolean;
+	json?: boolean;
+}
+
+/** Import error codes that mean the invocation was wrong, not the data. */
+const IMPORT_USAGE_CODES: ReadonlySet<CueBundleImportErrorCode> = new Set([
+	'INVALID_OPTIONS',
+	'WORKSPACE_UNMAPPED',
+]);
+
+/**
+ * Parse repeatable `name=value` flags. Throws a usage message for a value with
+ * no `=`, an empty side, or a name given twice. `resolve` turns the value into
+ * the stored form (a CLI path is resolved against the working directory).
+ */
+function parsePairs(
+	values: string[] | undefined,
+	flag: string,
+	resolve: (value: string) => string
+): Record<string, string> {
+	const out: Record<string, string> = {};
+	for (const raw of values ?? []) {
+		const eq = raw.indexOf('=');
+		const name = eq > 0 ? raw.slice(0, eq).trim() : '';
+		const value = eq > 0 ? raw.slice(eq + 1).trim() : '';
+		if (!name || !value) {
+			throw new Error(`${flag} expects name=path, got "${raw}"`);
+		}
+		if (name in out) throw new Error(`${flag} gives "${name}" more than once`);
+		out[name] = resolve(value);
+	}
+	return out;
+}
+
+function formatConflict(conflict: CueBundleImportConflict): string {
+	return `  [${conflict.kind}] ${conflict.message}`;
+}
+
+function formatImportPlan(plan: CueBundleImportPlan, applied: boolean, force: boolean): string {
+	const kind = plan.bundle.kind === 'maestro-pipeline' ? 'pipeline' : 'agent';
+	const lines = [
+		`${applied ? 'Imported' : 'Would import'} ${kind} "${plan.bundle.name}" into ${plan.dataDir}${plan.createDataDir ? (applied ? ' (created)' : ' (would be created)') : ''}`,
+		'',
+		'Agents:',
+		...plan.agents.map(
+			(a) =>
+				`  ${a.name} (${a.toolType}) ${a.action === 'create' ? 'new' : 'updated'}, works in ${a.cwd}`
+		),
+	];
+	const count = (action: string) => plan.files.filter((f) => f.action === action).length;
+	lines.push(
+		'',
+		`Files: ${count('create')} new, ${count('overwrite')} overwritten, ${count('unchanged')} unchanged`
+	);
+	for (const cfg of plan.cueConfigs) {
+		const parts = [
+			cfg.added.length ? `added ${cfg.added.join(', ')}` : '',
+			cfg.replaced.length ? `replaced ${cfg.replaced.join(', ')}` : '',
+			cfg.unchanged.length ? `unchanged ${cfg.unchanged.join(', ')}` : '',
+		].filter(Boolean);
+		lines.push(
+			`cue.yaml (${cfg.workspace}): ${parts.join('; ') || 'nothing to add'}${cfg.legacyRemoved ? `; replaces ${cfg.legacyRemoved}` : ''}`
+		);
+	}
+	if (plan.pipeline) lines.push(`Pipeline layout: ${plan.pipeline.name} (${plan.pipeline.action})`);
+	for (const p of plan.agentPaths) {
+		lines.push(
+			`Binary for ${p.toolType}: ${p.path} (${p.action}${p.previous && p.action !== 'unchanged' ? `, was ${p.previous}` : ''})`
+		);
+	}
+
+	if (plan.shellCommands.length > 0) {
+		lines.push('', `Shell commands (${plan.shellCommands.length}):`);
+		for (const c of plan.shellCommands) {
+			lines.push(`  ${c.workspace} / ${c.subscription}: ${c.command}`);
+		}
+	}
+	const dropped = plan.env.filter((e) => e.dropped.length > 0);
+	if (dropped.length > 0) {
+		lines.push('', 'Dropped environment variables:');
+		for (const e of dropped) lines.push(`  ${e.agentName}: ${e.dropped.join(', ')}`);
+	}
+	if (plan.secrets.length > 0) {
+		lines.push('', 'Secrets:');
+		for (const secret of plan.secrets) {
+			const blocked =
+				secret.passesServerAllowlist === false
+					? '; in server mode add it to MAESTRO_SERVER_ENV_ALLOW'
+					: '';
+			lines.push(
+				`  ${secret.name}  ${secret.set ? 'set' : 'NOT SET'}  (${secret.usedBy.join(', ')})${blocked}`
+			);
+		}
+	}
+	if (plan.conflicts.length > 0) {
+		lines.push(
+			'',
+			applied && force ? 'Conflicts (overwritten):' : 'Conflicts:',
+			...plan.conflicts.map(formatConflict)
+		);
+		if (!applied) lines.push('  Pass --force to overwrite them.');
+	}
+	if (plan.warnings.length > 0) {
+		lines.push('', 'Warnings:', ...plan.warnings.map((w) => `  ${w}`));
+	}
+	return lines.join('\n');
+}
+
+/**
+ * Import a bundle into a data directory and the folders its workspaces map to.
+ * Refuses while a Cue engine or the desktop app runs against that directory.
+ * Exit 2 for a usage problem, 1 for any other refusal; the JSON `code` names
+ * the exact kind (`CueBundleImportErrorCode`).
+ */
+export async function bundleImport(
+	cliVersion: string,
+	bundlePath: string,
+	options: BundleImportOptions
+): Promise<void> {
+	let workspaces: Record<string, string>;
+	let agentPaths: Record<string, string>;
+	try {
+		workspaces = parsePairs(options.workspace, '--workspace', resolveCliPath);
+		agentPaths = parsePairs(options.agentPath, '--agent-path', resolveCliPath);
+	} catch (error) {
+		fail(
+			error instanceof Error ? error.message : String(error),
+			options,
+			ExitCode.InvalidUsage,
+			'INVALID_OPTIONS'
+		);
+	}
+	const dataDir = options.dataDir ? resolveCliPath(options.dataDir) : resolveUserDataDir();
+
+	const { importCueBundle, CueBundleImportError } =
+		await import('../../main/cue/bundle/cue-bundle-importer');
+	let result: Awaited<ReturnType<typeof importCueBundle>>;
+	try {
+		result = await importCueBundle({
+			bundlePath: resolveCliPath(bundlePath),
+			dataDir,
+			workspaces,
+			agentPaths,
+			runningVersion: cliVersion,
+			dryRun: options.dryRun,
+			force: options.force,
+			refuseShellCommands: options.rejectShellCommands,
+		});
+	} catch (error) {
+		if (!(error instanceof CueBundleImportError)) {
+			fail(error instanceof Error ? error.message : String(error), options);
+		}
+		const exit = IMPORT_USAGE_CODES.has(error.code) ? ExitCode.InvalidUsage : ExitCode.GeneralError;
+		if (!options.json) {
+			const detail: string[] = [];
+			if (error.code === 'CONFLICTS') {
+				detail.push(
+					...(error.details.conflicts as CueBundleImportConflict[]).map(formatConflict),
+					'Re-run with --dry-run to see the full plan, or --force to overwrite.'
+				);
+			} else if (error.code === 'WORKSPACE_UNMAPPED') {
+				const keys = error.details.workspaces as string[];
+				detail.push(...keys.map((key) => `  --workspace ${key}=<local folder>`));
+			} else if (error.code === 'SHELL_COMMANDS_REFUSED') {
+				const commands = error.details.shellCommands as Array<{
+					workspace: string;
+					subscription: string;
+					command: string;
+				}>;
+				detail.push(...commands.map((c) => `  ${c.workspace} / ${c.subscription}: ${c.command}`));
+			} else if (error.code === 'BUNDLE_INVALID') {
+				const issues = (error.details.errors as CueBundleValidationIssue[] | undefined) ?? [];
+				detail.push(...issues.map(formatIssue));
+			}
+			console.error(`Error: ${error.message}`);
+			if (detail.length > 0) console.error(detail.join('\n'));
+			process.exit(exit);
+		}
+		fail(error.message, options, exit, error.code, error.details);
+	}
+
+	if (options.json) {
+		console.log(
+			JSON.stringify(
+				{ success: true, applied: result.applied, dryRun: !!options.dryRun, plan: result.plan },
+				null,
+				2
+			)
+		);
+		return;
+	}
+	console.log(formatImportPlan(result.plan, result.applied, !!options.force));
 }
