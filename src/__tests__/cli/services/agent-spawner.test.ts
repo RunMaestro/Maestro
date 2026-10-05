@@ -46,71 +46,43 @@ const mockChild = Object.assign(new EventEmitter(), {
 });
 
 /**
- * How the harness answers a `which` / `where` PATH probe.
+ * How the harness answers the PATH lookup.
  *
- * Every LOCAL agent spawn now resolves its binary before exec'ing it (#1608),
- * so a cold cache means one probe child in front of the agent child. Tests
- * assert on the AGENT spawn, so the probe is answered here and never reaches
- * `mockSpawn` - which keeps `mockSpawn.mock.calls[0]` the agent spawn for every
- * existing assertion in this file.
- *
- * Set to `null` to fall through to `mockSpawn` instead: the detection tests
- * drive the probe themselves and assert on what it resolved.
+ * Every LOCAL agent spawn resolves its binary before exec'ing it (#1608), and
+ * the CLI resolves it through the library's `checkBinaryExists`, the same
+ * lookup the desktop uses. That lookup's own rules (known install locations,
+ * `which` / `where`, the Windows .exe/.cmd choice) are covered in
+ * path-prober.test.ts, so here it answers from this resolver. Detection tests
+ * set it to describe what the lookup found.
  */
-type PathProbeResolver = ((binary: string) => string | undefined) | null;
+type PathProbeResolver = (binary: string) => string | undefined;
 const DEFAULT_PATH_PROBE: PathProbeResolver = (binary) => `/usr/local/bin/${binary}`;
 let pathProbeResolver: PathProbeResolver = DEFAULT_PATH_PROBE;
 
-/** Commands `getWhichCommand()` can return, on either platform. */
-const PATH_PROBE_COMMANDS = new Set(['which', 'where']);
-
-/**
- * A short-lived child that answers one PATH probe on the next tick. The probe's
- * listeners are attached synchronously after `spawn()` returns, so the answer
- * cannot be emitted inline.
- */
-function makePathProbeChild(binary: string) {
-	const stdout = Object.assign(new EventEmitter(), { setEncoding: vi.fn() });
-	const child = Object.assign(new EventEmitter(), {
-		stdin: { end: vi.fn(), write: vi.fn() },
-		stdout,
-		stderr: Object.assign(new EventEmitter(), { setEncoding: vi.fn() }),
-	});
-	const resolved = pathProbeResolver?.(binary);
-	setTimeout(() => {
-		if (resolved) {
-			stdout.emit('data', Buffer.from(`${resolved}\n`));
-			child.emit('close', 0);
-		} else {
-			// Non-zero exit is how `which`/`where` reports "not on PATH".
-			child.emit('close', 1);
-		}
-	}, 0);
-	return child;
+const mockCheckBinaryExists = vi.fn();
+function answerPathProbe(binary: string) {
+	const resolved = pathProbeResolver(binary);
+	return Promise.resolve(resolved ? { exists: true, path: resolved } : { exists: false });
 }
 
-function routeSpawn(...args: unknown[]) {
-	const [command, spawnArgs] = args as [unknown, unknown];
-	if (
-		pathProbeResolver &&
-		typeof command === 'string' &&
-		PATH_PROBE_COMMANDS.has(command) &&
-		Array.isArray(spawnArgs)
-	) {
-		return makePathProbeChild(String(spawnArgs[0]));
-	}
-	return mockSpawn(...args);
-}
+vi.mock('../../../shared/maestro-lib/launch/path-prober', async (importOriginal) => {
+	const actual =
+		await importOriginal<typeof import('../../../shared/maestro-lib/launch/path-prober')>();
+	return {
+		...actual,
+		checkBinaryExists: (binary: string) => mockCheckBinaryExists(binary),
+	};
+});
 
 // Mock child_process before imports
 vi.mock('child_process', async (importOriginal) => {
 	const actual = await importOriginal<typeof import('child_process')>();
 	return {
 		...actual,
-		spawn: (...args: unknown[]) => routeSpawn(...args),
+		spawn: (...args: unknown[]) => mockSpawn(...args),
 		default: {
 			...actual,
-			spawn: (...args: unknown[]) => routeSpawn(...args),
+			spawn: (...args: unknown[]) => mockSpawn(...args),
 		},
 	};
 });
@@ -224,6 +196,7 @@ describe('agent-spawner', () => {
 		]);
 		mockWrapSpawnWithSsh.mockReset();
 		pathProbeResolver = DEFAULT_PATH_PROBE;
+		mockCheckBinaryExists.mockImplementation(answerPathProbe);
 		// The host decides how a prompt travels: on Windows an agent that reads
 		// stdin gets it there, everywhere else it goes on the command line. The
 		// tests below describe the command line, so they pin a POSIX host; the
@@ -634,9 +607,6 @@ Some text with [x] in it that's not a checkbox
 		beforeEach(() => {
 			// Reset the cached path by reimporting
 			vi.resetModules();
-			// Detection IS the subject here, so the probe goes through mockSpawn
-			// and each test drives and asserts on it.
-			pathProbeResolver = null;
 		});
 
 		it('should detect Claude with custom path from settings', async () => {
@@ -666,92 +636,63 @@ Some text with [x] in it that's not a checkbox
 
 			// Mock file does not exist
 			vi.mocked(fs.promises.stat).mockRejectedValue(new Error('ENOENT'));
-
-			// Mock which command finding claude
-			mockSpawn.mockReturnValue(mockChild);
+			pathProbeResolver = () => '/usr/local/bin/claude';
 
 			// Re-import to get fresh module
 			const { detectClaude: freshDetectClaude } =
 				await import('../../../cli/services/agent-spawner');
 
-			const resultPromise = freshDetectClaude();
-
-			// Simulate which finding claude
-			await new Promise((resolve) => setTimeout(resolve, 0));
-			mockStdout.emit('data', Buffer.from('/usr/local/bin/claude\n'));
-			await new Promise((resolve) => setTimeout(resolve, 0));
-			mockChild.emit('close', 0);
-
-			const result = await resultPromise;
+			const result = await freshDetectClaude();
 
 			expect(result.available).toBe(true);
 			expect(result.path).toBe('/usr/local/bin/claude');
 			expect(result.source).toBe('path');
 		});
 
-		it('should not leave a carriage return on the path when Windows `where` prints several matches', async () => {
-			// `where.exe` separates results with CRLF. Taking the first line by
-			// splitting on '\n' alone left a trailing '\r' on it, so the spawn then
-			// failed with `spawn C:\...\copilot\r ENOENT` (seen against a real
-			// Copilot install, which matches both `copilot` and `copilot.exe`).
+		it('resolves PATH through the shared lookup the desktop uses, by binary name', async () => {
 			mockGetAgentCustomPath.mockReturnValue(undefined);
-			vi.mocked(fs.promises.stat).mockRejectedValue(new Error('ENOENT'));
-			mockSpawn.mockReturnValue(mockChild);
 
 			const { detectClaude: freshDetectClaude } =
 				await import('../../../cli/services/agent-spawner');
-			const resultPromise = freshDetectClaude();
+			await freshDetectClaude();
 
-			await new Promise((resolve) => setTimeout(resolve, 0));
-			mockStdout.emit('data', Buffer.from('C:\\bin\\claude\r\nC:\\bin\\claude.exe\r\n'));
-			await new Promise((resolve) => setTimeout(resolve, 0));
-			mockChild.emit('close', 0);
+			expect(mockCheckBinaryExists).toHaveBeenCalledTimes(1);
+			expect(mockCheckBinaryExists).toHaveBeenCalledWith('claude');
+			// No `which` / `where` child of the CLI's own.
+			expect(mockSpawn).not.toHaveBeenCalled();
+		});
 
-			const result = await resultPromise;
-			expect(result.path).toBe('C:\\bin\\claude');
+		it('runs the .cmd shim the lookup resolves for an npm install on Windows (#1718)', async () => {
+			// An npm install puts an extensionless sh shim first on PATH, and
+			// CreateProcess cannot run it. The CLI used to take the first `where`
+			// hit; the shared lookup picks the runnable .cmd beside it, as the
+			// desktop does.
+			Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+			mockGetAgentCustomPath.mockReturnValue(undefined);
+			const shim = 'C:\\Users\\t\\AppData\\Roaming\\npm\\opencode.cmd';
+			pathProbeResolver = () => shim;
+
+			const { detectAgent: freshDetectAgent } = await import('../../../cli/services/agent-spawner');
+			const result = await freshDetectAgent('opencode');
+
+			expect(mockCheckBinaryExists).toHaveBeenCalledWith('opencode');
+			expect(result).toEqual({ available: true, path: shim, source: 'path' });
 		});
 
 		it('should return unavailable when Claude is not found', async () => {
 			// No custom path
 			mockGetAgentCustomPath.mockReturnValue(undefined);
-
-			// Mock which command not finding claude
-			mockSpawn.mockReturnValue(mockChild);
+			pathProbeResolver = () => undefined;
 
 			// Re-import to get fresh module
 			vi.resetModules();
 			const { detectClaude: freshDetectClaude } =
 				await import('../../../cli/services/agent-spawner');
 
-			const resultPromise = freshDetectClaude();
-
-			// Simulate which not finding claude
-			await new Promise((resolve) => setTimeout(resolve, 0));
-			mockChild.emit('close', 1);
-
-			const result = await resultPromise;
+			const result = await freshDetectClaude();
 
 			expect(result.available).toBe(false);
 			expect(result.path).toBeUndefined();
-		});
-
-		it('should handle which command error', async () => {
-			mockGetAgentCustomPath.mockReturnValue(undefined);
-			mockSpawn.mockReturnValue(mockChild);
-
-			vi.resetModules();
-			const { detectClaude: freshDetectClaude } =
-				await import('../../../cli/services/agent-spawner');
-
-			const resultPromise = freshDetectClaude();
-
-			// Simulate error event
-			await new Promise((resolve) => setTimeout(resolve, 0));
-			mockChild.emit('error', new Error('spawn error'));
-
-			const result = await resultPromise;
-
-			expect(result.available).toBe(false);
 		});
 
 		it('should return cached result on subsequent calls', async () => {
@@ -789,20 +730,14 @@ Some text with [x] in it that's not a checkbox
 				isFile: () => false,
 			} as fs.Stats);
 
-			// Mock which not finding claude
-			mockSpawn.mockReturnValue(mockChild);
+			// The PATH lookup won't find it either
+			pathProbeResolver = () => undefined;
 
 			vi.resetModules();
 			const { detectClaude: freshDetectClaude } =
 				await import('../../../cli/services/agent-spawner');
 
-			const resultPromise = freshDetectClaude();
-
-			// which command won't find it either
-			await new Promise((resolve) => setTimeout(resolve, 0));
-			mockChild.emit('close', 1);
-
-			const result = await resultPromise;
+			const result = await freshDetectClaude();
 
 			expect(result.available).toBe(false);
 		});
@@ -820,19 +755,14 @@ Some text with [x] in it that's not a checkbox
 			} as fs.Stats);
 			vi.mocked(fs.promises.access).mockRejectedValue(new Error('EACCES'));
 
-			// Mock which not finding claude
-			mockSpawn.mockReturnValue(mockChild);
+			// The PATH lookup won't find it either
+			pathProbeResolver = () => undefined;
 
 			vi.resetModules();
 			const { detectClaude: freshDetectClaude } =
 				await import('../../../cli/services/agent-spawner');
 
-			const resultPromise = freshDetectClaude();
-
-			await new Promise((resolve) => setTimeout(resolve, 0));
-			mockChild.emit('close', 1);
-
-			const result = await resultPromise;
+			const result = await freshDetectClaude();
 
 			// Restore platform
 			Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
@@ -844,8 +774,6 @@ Some text with [x] in it that's not a checkbox
 	describe('detectAgent', () => {
 		beforeEach(() => {
 			vi.resetModules();
-			// Detection IS the subject here - drive the probe through mockSpawn.
-			pathProbeResolver = null;
 		});
 
 		it('should detect agent with custom path from settings', async () => {
@@ -921,17 +849,11 @@ Some text with [x] in it that's not a checkbox
 		it('should fall back to PATH detection when custom path is invalid', async () => {
 			mockGetAgentCustomPath.mockReturnValue('/invalid/path');
 			vi.mocked(fs.promises.stat).mockRejectedValue(new Error('ENOENT'));
-			mockSpawn.mockReturnValue(mockChild);
+			pathProbeResolver = () => '/usr/local/bin/codex';
 
 			const { detectAgent: freshDetectAgent } = await import('../../../cli/services/agent-spawner');
 
-			const resultPromise = freshDetectAgent('codex');
-			await new Promise((resolve) => setTimeout(resolve, 0));
-			mockStdout.emit('data', Buffer.from('/usr/local/bin/codex\n'));
-			await new Promise((resolve) => setTimeout(resolve, 0));
-			mockChild.emit('close', 0);
-
-			const result = await resultPromise;
+			const result = await freshDetectAgent('codex');
 			expect(result.available).toBe(true);
 			expect(result.path).toBe('/usr/local/bin/codex');
 			expect(result.source).toBe('path');
@@ -939,15 +861,11 @@ Some text with [x] in it that's not a checkbox
 
 		it('should return unavailable when agent is not found', async () => {
 			mockGetAgentCustomPath.mockReturnValue(undefined);
-			mockSpawn.mockReturnValue(mockChild);
+			pathProbeResolver = () => undefined;
 
 			const { detectAgent: freshDetectAgent } = await import('../../../cli/services/agent-spawner');
 
-			const resultPromise = freshDetectAgent('opencode');
-			await new Promise((resolve) => setTimeout(resolve, 0));
-			mockChild.emit('close', 1);
-
-			const result = await resultPromise;
+			const result = await freshDetectAgent('opencode');
 			expect(result.available).toBe(false);
 		});
 
@@ -1970,10 +1888,8 @@ Some text with [x] in it that's not a checkbox
 		const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 		// A local spawn first resolves the agent binary (`resolveLocalAgentCommand`).
-		// With a cold detection cache that would spawn a `which`/`where` lookup
-		// through the same fake `spawn` these tests drive, so resolve through a
-		// configured custom path instead. Without this the block only passes when an
-		// earlier test happens to have warmed the module-level cache.
+		// Resolve it through a configured custom path, so these tests describe the
+		// same command whether or not an earlier test warmed the module-level cache.
 		beforeEach(() => {
 			mockGetAgentCustomPath.mockReturnValue('/custom/path/to/agent');
 			vi.mocked(fs.promises.stat).mockResolvedValue({ isFile: () => true } as fs.Stats);
@@ -2462,60 +2378,26 @@ Some text with [x] in it that's not a checkbox
 	});
 
 	describe('platform-specific behavior', () => {
-		beforeEach(() => {
-			// These assert on the probe command itself (`where` vs `which`), so it
-			// has to reach mockSpawn.
-			pathProbeResolver = null;
-		});
+		// Whether `where` or `which` runs is the shared lookup's choice now, and
+		// path-prober.test.ts covers it. What the CLI owns is handing every
+		// platform's PATH lookup to that one function.
+		it.each(['win32', 'darwin', 'linux'])(
+			'hands the PATH lookup to the shared lookup on %s',
+			async (platform) => {
+				Object.defineProperty(process, 'platform', { value: platform, configurable: true });
+				mockGetAgentCustomPath.mockReturnValue(undefined);
+				pathProbeResolver = () => undefined;
 
-		it('should use where command on Windows for findClaudeInPath', async () => {
-			const originalPlatform = process.platform;
-			Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+				vi.resetModules();
+				const { detectClaude: freshDetectClaude } =
+					await import('../../../cli/services/agent-spawner');
+				const result = await freshDetectClaude();
 
-			mockGetAgentCustomPath.mockReturnValue(undefined);
-			mockSpawn.mockReturnValue(mockChild);
-
-			vi.resetModules();
-			const { detectClaude: freshDetectClaude } =
-				await import('../../../cli/services/agent-spawner');
-
-			const resultPromise = freshDetectClaude();
-
-			await new Promise((resolve) => setTimeout(resolve, 0));
-
-			// On Windows, 'where' should be used
-			const command = mockSpawn.mock.calls[0][0];
-			expect(command).toBe('where');
-
-			mockChild.emit('close', 1);
-			await resultPromise;
-
-			Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
-		});
-
-		it('should use which command on Unix', async () => {
-			const originalPlatform = process.platform;
-			Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
-
-			mockGetAgentCustomPath.mockReturnValue(undefined);
-			mockSpawn.mockReturnValue(mockChild);
-
-			vi.resetModules();
-			const { detectClaude: freshDetectClaude } =
-				await import('../../../cli/services/agent-spawner');
-
-			const resultPromise = freshDetectClaude();
-
-			await new Promise((resolve) => setTimeout(resolve, 0));
-
-			const command = mockSpawn.mock.calls[0][0];
-			expect(command).toBe('which');
-
-			mockChild.emit('close', 1);
-			await resultPromise;
-
-			Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
-		});
+				expect(mockCheckBinaryExists).toHaveBeenCalledWith('claude');
+				expect(mockSpawn).not.toHaveBeenCalled();
+				expect(result.available).toBe(false);
+			}
+		);
 
 		it('should skip X_OK check on Windows', async () => {
 			const originalPlatform = process.platform;

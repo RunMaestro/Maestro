@@ -1,7 +1,6 @@
 // Agent spawner service for CLI
 // Spawns agent CLIs and parses their output
 
-import { spawn } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -27,7 +26,7 @@ import {
 	resolveSystemPromptDelivery,
 	type SystemPromptDelivery,
 } from '../../shared/maestro-lib/launch/prompt-delivery';
-import { checkCustomPath } from '../../shared/maestro-lib/launch/path-prober';
+import { checkBinaryExists, checkCustomPath } from '../../shared/maestro-lib/launch/path-prober';
 import { BACKGROUND_STOP_GRACE_MS } from '../../shared/maestro-lib/control/termination';
 import { startTurn, type StartTurnOptions } from '../../shared/maestro-lib/run/start-turn';
 import { TurnCapture } from '../../shared/maestro-lib/run/turn-capture';
@@ -38,8 +37,7 @@ import { getAgentCustomPath, readAgentConfig, readSshRemotes } from './storage';
 import { generateUUID } from '../../shared/uuid';
 import type { QuerySource } from '../../shared/querySource';
 import { sanitizeSessionId } from '../../shared/history';
-import { buildExpandedPath } from '../../shared/pathUtils';
-import { isWindows, getWhichCommand } from '../../shared/platformDetection';
+import { isWindows } from '../../shared/platformDetection';
 import { embedSystemPromptInPrompt } from '../../shared/embeddedSystemPrompt';
 import {
 	applyAgentConfigOverrides,
@@ -356,49 +354,11 @@ export interface DetectResult {
 }
 
 /**
- * Build an expanded PATH that includes common binary installation locations
- */
-function getExpandedPath(): string {
-	return buildExpandedPath();
-}
-
-/**
  * Resolve a configured executable path, including known rotating install locations.
  */
 async function resolveExecutablePath(filePath: string): Promise<string | undefined> {
 	const detection = await checkCustomPath(filePath);
 	return detection.exists ? detection.path : undefined;
-}
-
-/**
- * Find a command in PATH using 'which' (Unix) or 'where' (Windows)
- */
-async function findCommandInPath(commandName: string): Promise<string | undefined> {
-	return new Promise((resolve) => {
-		const env = { ...process.env, PATH: getExpandedPath() };
-		const command = getWhichCommand();
-
-		const proc = spawn(command, [commandName], { env });
-		let stdout = '';
-
-		proc.stdout?.on('data', (data) => {
-			stdout += data.toString();
-		});
-
-		proc.on('close', (code) => {
-			if (code === 0 && stdout.trim()) {
-				// `where.exe` separates matches with CRLF; splitting on '\n' alone would
-				// leave a trailing '\r' on the first one.
-				resolve(stdout.trim().split(/\r?\n/)[0]);
-			} else {
-				resolve(undefined);
-			}
-		});
-
-		proc.on('error', () => {
-			resolve(undefined);
-		});
-	});
 }
 
 /**
@@ -427,11 +387,14 @@ export async function detectAgent(toolType: ToolType): Promise<DetectResult> {
 		);
 	}
 
-	// 2. Fall back to PATH detection
-	const pathResult = await findCommandInPath(defaultCommand);
-	if (pathResult) {
-		cachedPaths.set(toolType, pathResult);
-		return { available: true, path: pathResult, source: 'path' };
+	// 2. Fall back to the same lookup the desktop uses. It probes the known
+	// install locations first, and on Windows picks the runnable .exe or .cmd
+	// over the extensionless sh shim an npm install puts first on PATH, which
+	// CreateProcess cannot run (#1718).
+	const detection = await checkBinaryExists(defaultCommand);
+	if (detection.exists && detection.path) {
+		cachedPaths.set(toolType, detection.path);
+		return { available: true, path: detection.path, source: 'path' };
 	}
 
 	return { available: false };

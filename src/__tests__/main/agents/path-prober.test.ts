@@ -777,6 +777,33 @@ describe('path-prober', () => {
 			}
 		});
 
+		it('picks the .cmd over the extensionless npm shim `where` lists first (#1718)', async () => {
+			// An npm global install writes `opencode` (an sh shim CreateProcess
+			// cannot run) next to `opencode.cmd`, and `where` lists the shim first.
+			const originalPlatform = process.platform;
+			Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+			const cmdShim = 'C:\\tools\\npm\\opencode.cmd';
+
+			try {
+				// The known install locations hold nothing; only the .cmd beside the
+				// shim exists.
+				accessMock.mockImplementation(async (p) => {
+					if (p === cmdShim) return undefined;
+					throw new Error('ENOENT');
+				});
+				execMock.mockResolvedValue({
+					exitCode: 0,
+					stdout: 'C:\\tools\\npm\\opencode\r\nC:\\tools\\npm\\opencode.cmd\r\n',
+					stderr: '',
+				});
+
+				const result = await checkBinaryExists('opencode');
+				expect(result).toEqual({ exists: true, path: cmdShim });
+			} finally {
+				Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
+			}
+		});
+
 		it('should handle Windows CRLF line endings', async () => {
 			const originalPlatform = process.platform;
 			Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
