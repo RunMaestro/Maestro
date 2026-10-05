@@ -19,7 +19,8 @@ import {
 import { markStaleForDeletedWorktreeUsingStore } from '../../../agent-run/worktree-stale';
 import { runWorktreeSetupScript } from '../../../utils/worktree-setup-script';
 import type { SshRemoteConfig } from '../../../../shared/types';
-import { LOG_CONTEXT, handlerOpts } from './shared';
+import { branchSwitchBlocker } from '../../../utils/branch-switch-guard';
+import { LOG_CONTEXT, handlerOpts, type GitHandlerDependencies } from './shared';
 import {
 	clearWorktreeCreatedByMaestro,
 	markWorktreeCreatedByMaestro,
@@ -88,7 +89,7 @@ async function markWorktreeCreationAliases(worktreePath: string): Promise<string
  * its own module-level watcher state and is a distinct concern from
  * create/checkout/list/remove.
  */
-export function registerWorktreeHandlers(): void {
+export function registerWorktreeHandlers(deps: GitHandlerDependencies): void {
 	// Git worktree operations for Auto Run parallelization
 
 	// Get information about a worktree at a given path
@@ -455,6 +456,15 @@ export function registerWorktreeHandlers(): void {
 				createIfMissing: boolean,
 				sshRemoteId?: string
 			) => {
+				const guardRemote = sshRemoteId ? getSshRemoteById(sshRemoteId) : undefined;
+				const blocker = await branchSwitchBlocker(
+					deps,
+					worktreePath,
+					guardRemote,
+					guardRemote ? worktreePath : undefined
+				);
+				if (blocker) return { success: false, hasUncommittedChanges: false, error: blocker };
+
 				// SSH remote: dispatch to remote git operations
 				if (sshRemoteId) {
 					const sshConfig = sshRemoteId ? getSshRemoteById(sshRemoteId) : undefined;

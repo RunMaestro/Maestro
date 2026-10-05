@@ -20,6 +20,7 @@ Host device management, access settings, existing HTTPS endpoints and update con
 ## Transport and authorization
 
 - The primary transport is direct Tailscale IPv4 on TCP port 56036. It uses the installed, authenticated local Tailscale daemon and assigned interface. It does not configure Serve, certificates, firewall rules, ACLs or operating-system startup.
+- The ordinary control server remains loopback-only unless LAN access is enabled separately. Consented Lite access opens a dedicated listener on the assigned Tailscale interface, including when the loopback backend uses port 56036. Both application paths reuse the shared HTTP/WebSocket origin policy and retain device authorization.
 - Peer discovery identifies candidates but grants no application access. Direct destinations must be current eligible peers, and saved client credentials are bound to the verified Tailscale node identity as well as the host instance and origin.
 - The temporary code is proved using `@serenity-kit/opaque`. The request binds the client capability, host identity, route, epoch and requested scope. Host approval methods are not exposed through the remote pairing API.
 - Requests have bounded lifetimes and attempt limits. Native prompts are queued and bound to the same live request. Expiry, cancellation, host replacement and shutdown invalidate stale prompts.
@@ -51,6 +52,8 @@ The implemented guided flow passed 153 focused tests across ten files and 15 nat
 The scenarios cover pairing, remembered reconnect, cancellation, revocation, stale/reopened request handling, rejected unauthenticated requests, sender and sandbox boundaries, outage recovery, input focus and separate guide/management navigation. The old-completion reopening regression failed before the focus correction and passed afterward. Native layouts were inspected at narrow widths and 125% zoom.
 
 Main/preload and full Windows builds, focused production ESLint and browser-typed preload checks passed. The extracted runtime also exercised an in-memory SQLite write/read and loaded node-pty without spawning a shell.
+
+After integrating the `rc` branch, 160 focused server/origin/authorization tests and the source native flow passed again. A separate real-HTTP startup smoke check proved loopback-only control plus a dedicated private listener at the same advertised port, discovery availability, private-path scoping, unpaired-access rejection, foreign-origin rejection and trusted-tunnel access. Its tailnet identity/socket boundary was isolated; it created no device grants. The earlier packaged build and installed host were not replaced as part of PR publication.
 
 ```bash
 npm run build:main

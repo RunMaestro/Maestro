@@ -34,7 +34,7 @@ vi.mock('../../../main/browser/browser-relay', () => ({
 
 import { registerLiteRoutes } from '../../../main/web-server/routes/liteRoutes';
 import { webLoginPreHandler } from '../../../main/web-server/auth/web-login-hook';
-import { remoteOriginPreHandler } from '../../../main/web-server/auth/remote-origin';
+import { isAllowedRequestOrigin } from '../../../main/web-server/originPolicy';
 import { WsRoute, type WsRouteCallbacks } from '../../../main/web-server/routes/wsRoute';
 import { createRemoteHostStatusProvider } from '../../../main/web-server/remote-host-status';
 import { getOrCreateHostInstanceId } from '../../../main/web-server/host-identity';
@@ -83,7 +83,7 @@ function provider(win: BrowserWindow | null, backend = true) {
 async function httpHost(win: BrowserWindow | null = null) {
 	const server = Fastify();
 	servers.push(server);
-	server.addHook('onRequest', remoteOriginPreHandler);
+
 	server.addHook('preHandler', webLoginPreHandler(token));
 	registerLiteRoutes(server, token, provider(win));
 	await server.ready();
@@ -183,36 +183,6 @@ describe('Lite host handshake and readiness', () => {
 			})
 		).toThrow('read-only data directory');
 	});
-	it('rejects foreign origins and preserves HTTPS reverse proxies that retain Host', async () => {
-		const server = await httpHost();
-		const url = `/${token}/api/lite/handshake`;
-		expect(
-			(
-				await server.inject({
-					url,
-					headers: {
-						host: 'maestro.example',
-						origin: 'https://evil.example',
-						'x-forwarded-host': 'evil.example',
-						'x-forwarded-proto': 'https',
-					},
-				})
-			).statusCode
-		).toBe(403);
-		expect(
-			(
-				await server.inject({
-					url,
-					headers: {
-						host: 'maestro.example',
-						origin: 'https://maestro.example',
-						'x-forwarded-proto': 'https',
-					},
-				})
-			).statusCode
-		).toBe(200);
-		expect((await server.inject({ url, headers: { origin: 'null' } })).statusCode).toBe(403);
-	});
 });
 
 describe('live socket authorization', () => {
@@ -225,6 +195,7 @@ describe('live socket authorization', () => {
 		const accepted: string[] = [];
 		const route = new WsRoute(token);
 		route.setCallbacks({
+			isOriginAllowed: (origin, host) => isAllowedRequestOrigin({ origin, host }),
 			handleMessage: (_clientId, message) => accepted.push(message.type),
 		} as WsRouteCallbacks);
 		route.registerRoute(server);
@@ -252,6 +223,7 @@ describe('live socket authorization', () => {
 		broadcasts.setGetWebClientsCallback(() => clients);
 		const route = new WsRoute(token);
 		route.setCallbacks({
+			isOriginAllowed: (origin, host) => isAllowedRequestOrigin({ origin, host }),
 			onClientConnect: (client: WebClient) => clients.set(client.id, client),
 		} as WsRouteCallbacks);
 		route.registerRoute(server);

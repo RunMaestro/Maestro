@@ -94,6 +94,9 @@ export type SettingsTab =
 	| 'theme'
 	| 'notifications'
 	| 'aicommands'
+	// Same story as Display: rendered and accepted by SettingsModal, missing
+	// here, so Director's Notes could not deep-link to its own settings.
+	| 'encore'
 	| 'prompts';
 // Note: ScratchPadMode was removed as part of the Scratchpad → Auto Run migration
 export type FocusArea = 'sidebar' | 'main' | 'right';

@@ -19,6 +19,11 @@ import * as historyManagerModule from '../../../../main/history-manager';
 import type { HistoryManager } from '../../../../main/history-manager';
 import type { HistoryEntry } from '../../../../shared/types';
 import { MAX_ENTRIES_PER_SESSION } from '../../../../shared/history';
+import {
+	resetSharedHistoryScopeCache,
+	SSH_SCOPE_BUDGET_MS,
+	SSH_SCOPE_FRESH_MS,
+} from '../../../../main/utils/director-notes-shared-history';
 
 // Mock electron's ipcMain. `app` is needed because the shared-history collector
 // materializes its cross-host corpus into userData for the synopsis agent.
@@ -124,6 +129,9 @@ describe('director-notes IPC handlers', () => {
 
 	beforeEach(() => {
 		vi.clearAllMocks();
+		// SSH scope reads are cached for SSH_SCOPE_FRESH_MS; without a reset one
+		// case's remote entries leak into the next.
+		resetSharedHistoryScopeCache();
 
 		// Create mock process manager and agent detector
 		mockProcessManager = {
@@ -1177,6 +1185,72 @@ describe('director-notes IPC handlers', () => {
 			const result = await handler!({} as any, { lookbackDays: 7 });
 
 			expect(result.entries.map((e: HistoryEntry) => e.id)).toEqual(['local-1']);
+		});
+
+		// An offline remote costs ConnectTimeout x retries (10-40s). Every
+		// Director's Notes surface reads shared history, so unbudgeted it froze
+		// Rich Mode on "Loading activity..." for the whole wait.
+		describe('SSH read budget', () => {
+			afterEach(() => {
+				vi.useRealTimers();
+			});
+
+			it('answers with local history when a remote never responds', async () => {
+				vi.useFakeTimers();
+				withSshAgent();
+				vi.mocked(mockHistoryManager.listSessionsWithHistory).mockReturnValue(['session-1']);
+				vi.mocked(mockHistoryManager.getEntries).mockReturnValue([
+					createMockEntry({ id: 'local-1' }),
+				]);
+				mockReadRemoteEntriesSsh.mockReturnValue(new Promise(() => {}));
+
+				const handler = handlers.get('director-notes:getRichOverviewStats');
+				const pending = handler!({} as any, { lookbackDays: 7 });
+				await vi.advanceTimersByTimeAsync(SSH_SCOPE_BUDGET_MS);
+				const result = await pending;
+
+				expect(result.totalEntries).toBe(1);
+			});
+
+			it('shares one remote read between concurrent callers and reuses it while fresh', async () => {
+				withSshAgent();
+				const now = Date.now();
+				vi.mocked(mockHistoryManager.listSessionsWithHistory).mockReturnValue([]);
+				mockReadRemoteEntriesSsh.mockResolvedValue([foreignEntry({ timestamp: now - 1000 })]);
+
+				const stats = handlers.get('director-notes:getRichOverviewStats');
+				const list = handlers.get('director-notes:getUnifiedHistory');
+				const [a, b] = await Promise.all([
+					stats!({} as any, { lookbackDays: 7 }),
+					list!({} as any, { lookbackDays: 7 }),
+				]);
+				const c = await stats!({} as any, { lookbackDays: 7 });
+
+				expect(mockReadRemoteEntriesSsh).toHaveBeenCalledTimes(1);
+				expect(a.totalEntries).toBe(1);
+				expect(b.entries).toHaveLength(1);
+				expect(c.totalEntries).toBe(1);
+			});
+
+			it('serves the last good read while a slow refresh runs in the background', async () => {
+				vi.useFakeTimers();
+				withSshAgent();
+				vi.mocked(mockHistoryManager.listSessionsWithHistory).mockReturnValue([]);
+				const handler = handlers.get('director-notes:getRichOverviewStats');
+
+				mockReadRemoteEntriesSsh.mockResolvedValueOnce([foreignEntry({ timestamp: Date.now() })]);
+				expect((await handler!({} as any, { lookbackDays: 7 })).totalEntries).toBe(1);
+
+				// Past the fresh window the remote is asked again, and this time hangs.
+				await vi.advanceTimersByTimeAsync(SSH_SCOPE_FRESH_MS + 1);
+				mockReadRemoteEntriesSsh.mockReturnValueOnce(new Promise(() => {}));
+				const pending = handler!({} as any, { lookbackDays: 7 });
+				await vi.advanceTimersByTimeAsync(SSH_SCOPE_BUDGET_MS);
+				const result = await pending;
+
+				expect(mockReadRemoteEntriesSsh).toHaveBeenCalledTimes(2);
+				expect(result.totalEntries).toBe(1);
+			});
 		});
 	});
 

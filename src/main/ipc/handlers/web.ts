@@ -24,6 +24,7 @@
 import { ipcMain, app, BrowserWindow } from 'electron';
 import { logger } from '../../utils/logger';
 import { WebServer } from '../../web-server';
+import type { WebServerOptions } from '../../web-server/WebServer';
 import type { AITabData } from '../../web-server/services/broadcastService';
 import { getAutoRunStateTracker } from '../../autorun/autorun-state-tracker';
 import type { AutoRunBroadcastState } from '../../../shared/autoRunBroadcast';
@@ -53,7 +54,7 @@ const SERVER_STARTUP_POLL_INTERVAL_MS = 100;
 export interface WebHandlerDependencies {
 	getWebServer: () => WebServer | null;
 	setWebServer: (server: WebServer | null) => void;
-	createWebServer: () => WebServer;
+	createWebServer: (options?: WebServerOptions) => WebServer;
 	settingsStore: SettingsStoreInterface;
 }
 
@@ -94,8 +95,10 @@ const ENSURE_CLI_MAX_ATTEMPTS = 3;
  * Ensure the CLI server is running and the discovery file is published.
  *
  * Called during app initialization to make the web server always available
- * for CLI IPC connections. The server binds to 0.0.0.0 - this is intentional
- * for LAN accessibility; the UUID security token prevents unauthorized access.
+ * for CLI IPC connections. The server it creates binds 127.0.0.1 only: the URL
+ * token is a capability anyone who sees it can use, so it must not be on the
+ * network unless the user turned on Live Mode (`live:startServer`). An
+ * already-running Live Mode server is left as it is.
  *
  * Retries on any failure (port collision, transient fs error, etc.) and
  * verifies the discovery file is actually present on disk after each attempt.
@@ -411,9 +414,12 @@ export function registerWebHandlers(deps: WebHandlerDependencies): void {
 		};
 	});
 
+	// Only a Live Mode (LAN) server has a dashboard. The loopback CLI server's
+	// URL is not one: auto-start reads a non-null answer as "Live is already
+	// on" and would never open the server to the LAN.
 	ipcMain.handle('live:getDashboardUrl', async () => {
 		const webServer = getWebServer();
-		if (!webServer) {
+		if (!webServer || !webServer.isActive() || !webServer.isLanAccessible()) {
 			return null;
 		}
 		return webServer.getSecureUrl();
@@ -444,8 +450,11 @@ export function registerWebHandlers(deps: WebHandlerDependencies): void {
 			// server (spun up by ensureCliServer) keeps the previous token -
 			// reusing it on the next Live ON would silently leak the prior URL.
 			// Tear it down so createWebServer() mints a fresh ephemeral token.
+			// The CLI-only server is also bound to loopback, so it has to be
+			// replaced by a LAN server either way; a persistent token survives
+			// the swap because the factory reads it from settings.
 			const persistentWebLink = settingsStore.get<boolean>('persistentWebLink', false);
-			if (webServer && !persistentWebLink) {
+			if (webServer && (!persistentWebLink || !webServer.isLanAccessible())) {
 				try {
 					await webServer.stop();
 				} catch (err: any) {
@@ -465,8 +474,8 @@ export function registerWebHandlers(deps: WebHandlerDependencies): void {
 
 			// Create web server if it doesn't exist
 			if (!webServer) {
-				logger.info('Creating web server', 'WebServer');
-				webServer = createWebServer();
+				logger.info('Creating LAN web server for Live Mode', 'WebServer');
+				webServer = createWebServer({ lanAccess: true });
 				setWebServer(webServer);
 			}
 
@@ -523,9 +532,9 @@ export function registerWebHandlers(deps: WebHandlerDependencies): void {
 			return { success: false, error: error.message };
 		}
 
-		// Bring the CLI server back up on a fresh port + token. The user
-		// turned off Live Mode (closing the public URL) but the CLI server
-		// must remain reachable for maestro-cli.
+		// Bring the CLI server back up on a fresh port + token, bound to
+		// loopback. The user turned off Live Mode (closing the LAN URL) but
+		// the CLI server must remain reachable for maestro-cli.
 		await ensureCliServer(deps);
 		return { success: true };
 	});
@@ -609,8 +618,8 @@ export function registerWebHandlers(deps: WebHandlerDependencies): void {
 			return { success: false, count, error: error.message };
 		}
 
-		// Bring the CLI server back up on a fresh port + token so maestro-cli
-		// continues working after Live Mode is fully disabled.
+		// Bring the CLI server back up on a fresh port + token, bound to
+		// loopback, so maestro-cli keeps working after Live Mode is disabled.
 		await ensureCliServer(deps);
 		return { success: true, count };
 	});

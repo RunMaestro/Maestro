@@ -1,8 +1,9 @@
 /**
  * Feedback and support-package WebSocket message handlers.
  *
- * Handles: support_package_create, feedback_check_auth, feedback_search,
- * feedback_submit, feedback_subscribe. These are the CLI's route to the same
+ * Handles: support_package_create, feedback_check_auth,
+ * feedback_gh_login_command, feedback_search, feedback_submit,
+ * feedback_subscribe, feedback_accounts. These are the CLI's route to the same
  * service functions the Send Feedback modal and Create Debug Package use, so
  * the CLI files the byte-identical issue and zip.
  */
@@ -11,10 +12,12 @@ import path from 'path';
 import { generateDebugPackage } from '../../../debug-package';
 import {
 	checkFeedbackGhAuth,
+	getFeedbackGhLoginCommand,
 	searchFeedbackIssues,
 	submitFeedbackConversation,
 	subscribeFeedbackIssue,
 } from '../../../feedback';
+import { listFeedbackAccounts, rememberFeedbackAccount } from '../../../feedback/accounts';
 import {
 	MAX_FEEDBACK_ATTACHMENTS,
 	type FeedbackConversationSubmitPayload,
@@ -121,7 +124,20 @@ export function handleFeedbackCheckAuth(
 	client: WebClient,
 	message: WebClientMessage
 ): Promise<void> {
-	return answerFeedback(ctx, client, message, async () => ({ ...(await checkFeedbackGhAuth()) }));
+	return answerFeedback(ctx, client, message, async () => ({
+		...(await checkFeedbackGhAuth({ fresh: message.fresh === true })),
+	}));
+}
+
+/** Handle feedback_gh_login_command - the gh login command, with the gh binary feedback uses. */
+export function handleFeedbackGhLoginCommand(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): Promise<void> {
+	return answerFeedback(ctx, client, message, async () => ({
+		...(await getFeedbackGhLoginCommand()),
+	}));
 }
 
 /** Handle feedback_search - possible duplicate issues for a query. */
@@ -177,4 +193,32 @@ export function handleFeedbackSubscribe(
 	return answerFeedback(ctx, client, message, async () => ({
 		...(await subscribeFeedbackIssue({ issueNumber, comment })),
 	}));
+}
+
+/**
+ * Handle feedback_accounts - the accounts the Feedback chat can run as, in the
+ * order it tries them. `use` (a profile key, or null to forget) records the
+ * account the next conversation tries first, as a pick in the chat does.
+ */
+export function handleFeedbackAccounts(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): Promise<void> {
+	return answerFeedback(ctx, client, message, async () => {
+		const getAgentDetector = () =>
+			ctx.callbacks.getDebugPackageDeps?.()?.getAgentDetector() ?? null;
+		if (message.use === null) {
+			rememberFeedbackAccount(null);
+		} else if (typeof message.use === 'string') {
+			const { accounts } = await listFeedbackAccounts(getAgentDetector);
+			if (!accounts.some((account) => account.key === message.use)) {
+				throw new Error(
+					`No feedback account with key "${message.use}". Run "maestro-cli feedback accounts" to list them.`
+				);
+			}
+			rememberFeedbackAccount(message.use);
+		}
+		return { ...(await listFeedbackAccounts(getAgentDetector)) };
+	});
 }

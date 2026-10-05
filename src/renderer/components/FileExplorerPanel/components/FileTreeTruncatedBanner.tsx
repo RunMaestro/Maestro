@@ -1,4 +1,4 @@
-import { AlertTriangle, X } from 'lucide-react';
+import { AlertTriangle, Loader2, X } from 'lucide-react';
 import type { Theme } from '../../../types';
 
 interface FileTreeTruncatedBannerProps {
@@ -7,6 +7,12 @@ interface FileTreeTruncatedBannerProps {
 	onLoadMore: () => void;
 	onLoadAll: () => void;
 	isRefreshing: boolean;
+	/**
+	 * Which button started the scan that is still running. A 200k-entry scan
+	 * can take many seconds, and the banner stays up while it runs, so the
+	 * clicked button has to show it is working or the click reads as dead.
+	 */
+	pendingLoad?: 'more' | 'all' | null;
 	/** Collapses the banner down to the hazard icon next to the path row. */
 	onCollapse: () => void;
 }
@@ -17,8 +23,10 @@ export function FileTreeTruncatedBanner({
 	onLoadMore,
 	onLoadAll,
 	isRefreshing,
+	pendingLoad = null,
 	onCollapse,
 }: FileTreeTruncatedBannerProps) {
+	const busy = isRefreshing || pendingLoad !== null;
 	const capLabel =
 		previousCap !== undefined && Number.isFinite(previousCap)
 			? previousCap.toLocaleString()
@@ -51,26 +59,30 @@ export function FileTreeTruncatedBanner({
 					<button
 						type="button"
 						onClick={onLoadMore}
-						disabled={isRefreshing}
-						className="px-2 py-0.5 rounded text-xs-plus font-medium transition-colors disabled:opacity-50"
+						disabled={busy}
+						aria-busy={pendingLoad === 'more'}
+						className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs-plus font-medium transition-colors disabled:opacity-50"
 						style={{
 							backgroundColor: theme.colors.accent,
 							color: theme.colors.bgMain,
 						}}
 					>
-						Load more ({nextCap})
+						{pendingLoad === 'more' && <Loader2 className="w-3 h-3 animate-spin" />}
+						{pendingLoad === 'more' ? `Loading ${nextCap}...` : `Load more (${nextCap})`}
 					</button>
 					<button
 						type="button"
 						onClick={onLoadAll}
-						disabled={isRefreshing}
-						className="px-2 py-0.5 rounded text-xs-plus font-medium border transition-colors disabled:opacity-50"
+						disabled={busy}
+						aria-busy={pendingLoad === 'all'}
+						className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs-plus font-medium border transition-colors disabled:opacity-50"
 						style={{
 							borderColor: theme.colors.border,
 							color: theme.colors.textMain,
 						}}
 					>
-						Load all
+						{pendingLoad === 'all' && <Loader2 className="w-3 h-3 animate-spin" />}
+						{pendingLoad === 'all' ? 'Loading all...' : 'Load all'}
 					</button>
 				</div>
 			</div>

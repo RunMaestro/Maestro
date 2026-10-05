@@ -15,6 +15,7 @@ export interface HostPairingOptions {
 	name: string;
 	appVersion: string;
 	endpoints: () => string[];
+	/** Existing all-interface listener port; undefined when the backend is loopback-only. */
 	backendPort?: () => number | undefined;
 	listenTailnet?: TailnetListener;
 	parent?: () => BrowserWindow | null;

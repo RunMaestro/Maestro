@@ -5,14 +5,17 @@
  * surface can share the same loader + module-level cache. Resolves `file://`
  * and bare file paths through `window.maestro.fs.readFile`; HTTP(S) and data
  * URLs render immediately. The cache prevents flicker when react-markdown
- * rebuilds the component tree during streaming.
+ * rebuilds the component tree during streaming. A loaded image opens in the
+ * full-screen pan/zoom viewer on click or from its hover expand button.
  */
 
-import React, { memo, useEffect, useMemo, useState } from 'react';
+import React, { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { ImageOff } from 'lucide-react';
 import { Spinner } from '../../ui/Spinner';
 import { safeDecodeURIComponent } from '../../../../shared/stringUtils';
 import type { Theme } from '../../../types';
+import { ExpandToViewerButton } from '../../ZoomViewer/ExpandToViewerButton';
+import { openZoomViewer } from '../../ZoomViewer/zoomViewerStore';
 
 // Module-level cache for local images to prevent flicker on re-render.
 // Bounded with simple FIFO eviction so a long-lived session that scrolls
@@ -93,6 +96,7 @@ export const LocalImage = memo((props: LocalImageProps) => {
 	const [dataUrl, setDataUrl] = useState<string | null>(initialState.dataUrl);
 	const [error, setError] = useState<string | null>(null);
 	const [loading, setLoading] = useState(initialState.loading);
+	const imgRef = useRef<HTMLImageElement>(null);
 
 	useEffect(() => {
 		// If we already have data from cache, skip loading
@@ -179,7 +183,31 @@ export const LocalImage = memo((props: LocalImageProps) => {
 		...(maxHeight ? { maxHeight: `${maxHeight}px`, objectFit: 'contain' } : {}),
 	};
 
-	return <img src={dataUrl} alt={alt || ''} style={imageStyle} draggable={draggable} />;
+	// Clicking the image opens the full-screen pan/zoom viewer, unless the image
+	// is a link: then the click belongs to the link and the corner button is
+	// the way in.
+	const handleClick = (e: React.MouseEvent<HTMLImageElement>) => {
+		if (e.currentTarget.closest('a')) return;
+		openZoomViewer(e.currentTarget, alt || undefined);
+	};
+
+	return (
+		<span className="relative inline-block group max-w-full align-top">
+			<img
+				ref={imgRef}
+				src={dataUrl}
+				alt={alt || ''}
+				style={{ ...imageStyle, cursor: 'zoom-in' }}
+				onClick={handleClick}
+				draggable={draggable}
+			/>
+			<ExpandToViewerButton
+				theme={theme}
+				title={alt || undefined}
+				resolveTarget={() => imgRef.current}
+			/>
+		</span>
+	);
 });
 
 LocalImage.displayName = 'LocalImage';

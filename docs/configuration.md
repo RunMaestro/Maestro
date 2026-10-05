@@ -16,7 +16,7 @@ Settings are organized into tabs:
 | **Display**                     | [Typography](#typography) (a font and size per surface, presets, custom fonts, zoom), terminal width, log level and buffer, max output lines per response, document graph settings, context window warnings, [Accessibility](#accessibility) (Color Blind Mode, Bionify reading emphasis)            |
 | **Shortcuts**                   | Customize keyboard shortcuts (see [Keyboard Shortcuts](./keyboard-shortcuts))                                                                                                                                                                                                                        |
 | **Themes**                      | Dark, light, and vibe mode themes, custom theme builder with import/export                                                                                                                                                                                                                           |
-| **Notifications**               | OS notifications, custom command notifications, toast notification duration and width                                                                                                                                                                                                                |
+| **Notifications**               | OS notifications, custom command notifications, toast notification duration, position, and width                                                                                                                                                                                                     |
 | **AI Commands**                 | View and edit slash commands, [Spec-Kit](./speckit-commands), [OpenSpec](./openspec-commands), and [BMAD](./bmad-commands) prompts                                                                                                                                                                   |
 | **Maestro Prompts**             | Browse and edit the 23 core system prompts (wizard, Auto Run, group chat, context, etc.). Changes take effect immediately; reset to bundled defaults at any time                                                                                                                                     |
 | **SSH Hosts**                   | Configure remote hosts for [SSH agent execution](./ssh-remote-execution)                                                                                                                                                                                                                             |
@@ -471,14 +471,16 @@ In-app toast notifications appear in the corner when events occur. Configure how
 | **5s / 10s / 20s / 30s** | Toast disappears after the specified time |
 | **Never**                | Toast stays until manually dismissed      |
 
+Choose which corner toasts appear in: **Top Left**, **Top Right**, **Bottom Left**, or **Bottom Right** (the default). Toasts in a bottom corner stack upward. Toasts in a top corner stack downward, below the title bar. In both cases the newest toast is nearest the corner. In a bottom corner, the stack rises above the message input when it would otherwise cover it. To switch corners without opening Settings, search **Move Toast Notifications** in Quick Actions (<kbd>Cmd</kbd>+<kbd>K</kbd>), or run `maestro-cli settings set toastPosition top-left` (also `top-right`, `bottom-left`, `bottom-right`).
+
 You can also set how wide toasts render:
 
-| Width       | Behavior                                                                                  |
-| ----------- | ----------------------------------------------------------------------------------------- |
-| **Small**   | Default compact size                                                                      |
-| **Medium**  | Roughly 1.4x wider than Small                                                             |
-| **Large**   | Roughly 1.8x wider than Small, for longer content                                         |
-| **Dynamic** | Matches the Right Bar width, filling that column and re-sizing live as you drag the panel |
+| Width       | Behavior                                                                                        |
+| ----------- | ----------------------------------------------------------------------------------------------- |
+| **Small**   | Default compact size                                                                            |
+| **Medium**  | Roughly 1.4x wider than Small                                                                   |
+| **Large**   | Roughly 1.8x wider than Small, for longer content                                               |
+| **Dynamic** | Matches the side bar on the toast's side (Right Bar or Left Bar), re-sizing live as you drag it |
 
 #### Clicking a Toast
 

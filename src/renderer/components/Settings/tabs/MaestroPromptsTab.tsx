@@ -21,7 +21,17 @@
  */
 
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { ExternalLink, Maximize2, Minimize2, HelpCircle, X, GitCompare } from 'lucide-react';
+import { Diff, Hunk } from 'react-diff-view';
+import 'react-diff-view/style/index.css';
+import {
+	ExternalLink,
+	Maximize2,
+	Minimize2,
+	HelpCircle,
+	X,
+	GitCompare,
+	FileDiff,
+} from 'lucide-react';
 import type { Theme } from '../../../constants/themes';
 import { refreshRendererPrompts } from '../../../services/promptInit';
 import { captureException, captureMessage } from '../../../utils/sentry';
@@ -38,7 +48,8 @@ import { FilterInput } from '../../ui/FilterInput';
 import { SegmentedControl } from '../../ui/SegmentedControl';
 import { Markdown } from '../../Markdown';
 import { MarkdownEditor, type MarkdownEditorHandle } from '../../FilePreview/markdownEditor';
-import { generateProseStyles } from '../../../utils/markdownConfig';
+import { generateDiffViewStyles, generateProseStyles } from '../../../utils/markdownConfig';
+import { buildSyntheticGitDiff, parseGitDiff } from '../../../utils/gitDiffParser';
 import { searchMatchRanges } from '../../../utils/highlightMatches';
 import { useDebouncedValue } from '../../../hooks/utils/useThrottle';
 import { useEventListener } from '../../../hooks/utils/useEventListener';
@@ -71,6 +82,15 @@ interface MaestroPromptsTabProps {
 
 /** Which half of the Preview/Edit switch is showing. */
 type PromptViewMode = 'preview' | 'edit';
+
+/**
+ * A read-only comparison that takes over the editor pane:
+ * - `default`: the current bundled default as source, offered when an app
+ *   update changed the default under a customization.
+ * - `diff`: what this prompt changes relative to the bundled default, opened
+ *   from the Modified badge.
+ */
+type PromptComparisonView = 'default' | 'diff';
 
 // Same order as the Memory Viewer so the two switches read alike; the DEFAULT
 // differs (`edit`), because this pane exists to change a prompt rather than to
@@ -338,11 +358,13 @@ export function MaestroPromptsTab({
 	const [viewMode, setViewMode] = useState<PromptViewMode>('edit');
 	const [previewContent, setPreviewContent] = useState('');
 	const [isBuildingPreview, setIsBuildingPreview] = useState(false);
-	// "Show bundled default" overlay: read-only view of the current bundled
-	// content, surfaced when the user's customization has drifted from the
-	// default after an app update. Mutually exclusive with preview mode.
-	const [isShowingDefault, setIsShowingDefault] = useState(false);
+	// Comparison overlays against the bundled default (see PromptComparisonView).
+	// Mutually exclusive with each other and with preview mode.
+	const [comparisonView, setComparisonView] = useState<PromptComparisonView | null>(null);
+	const isShowingDefault = comparisonView === 'default';
 	const [bundledDefaultContent, setBundledDefaultContent] = useState('');
+	const [bundledDefaultError, setBundledDefaultError] = useState<string | null>(null);
+	const colorBlindMode = useSettingsStore((s) => s.colorBlindMode);
 	const [isLoadingBundledDefault, setIsLoadingBundledDefault] = useState(false);
 
 	// Keyword filter over id, description, and body. Everything is already in
@@ -440,8 +462,8 @@ export function MaestroPromptsTab({
 			setShowHelp(false);
 			return true;
 		}
-		if (isShowingDefault) {
-			setIsShowingDefault(false);
+		if (comparisonView) {
+			setComparisonView(null);
 			return true;
 		}
 		if (isEditorExpanded) {
@@ -495,7 +517,7 @@ export function MaestroPromptsTab({
 	 * screen and read as a dead control.
 	 */
 	const changeViewMode = useCallback((mode: PromptViewMode) => {
-		setIsShowingDefault(false);
+		setComparisonView(null);
 		setViewMode(mode);
 	}, []);
 
@@ -504,7 +526,7 @@ export function MaestroPromptsTab({
 		if (!eventMatchesShortcutKeys(e, toggleModeKeys)) return;
 		e.preventDefault();
 		e.stopPropagation();
-		setIsShowingDefault(false);
+		setComparisonView(null);
 		setViewMode((mode) => (mode === 'preview' ? 'edit' : 'preview'));
 	});
 
@@ -526,10 +548,10 @@ export function MaestroPromptsTab({
 		}
 	}, [viewMode, showHelp, focusList]);
 
-	// Exit the bundled-default overlay when switching prompts - it describes the
-	// prompt you were looking at, not the one you just opened.
+	// Exit the bundled-default comparison when switching prompts - it describes
+	// the prompt you were looking at, not the one you just opened.
 	useEffect(() => {
-		setIsShowingDefault(false);
+		setComparisonView(null);
 	}, [selectedPrompt?.id]);
 
 	/**
@@ -594,36 +616,79 @@ export function MaestroPromptsTab({
 		};
 	}, [viewMode, selectedPrompt?.id, activeSession, conductorProfile]);
 
-	const handleToggleShowDefault = useCallback(async () => {
-		if (isShowingDefault) {
-			setIsShowingDefault(false);
-			return;
-		}
-		if (!selectedPrompt) return;
-		// The bundled default is a comparison view of the SOURCE, so it takes
-		// over the editor pane rather than sitting beside the rendered preview.
-		setViewMode('edit');
-		setIsLoadingBundledDefault(true);
-		try {
-			const result = await window.maestro.prompts.getBundledDefault(selectedPrompt.id);
-			if (result.success && typeof result.content === 'string') {
-				setBundledDefaultContent(result.content);
-				setIsShowingDefault(true);
-			} else {
-				const msg = result.error || 'Failed to load bundled default';
-				setBundledDefaultContent(`Failed to load bundled default: ${msg}`);
-				setIsShowingDefault(true);
+	/**
+	 * Open (or, if it is already showing, close) a comparison against the
+	 * bundled default. Both views read the same bundled text, fetched fresh on
+	 * every open so a view never compares against a stale copy.
+	 */
+	const toggleComparison = useCallback(
+		async (view: PromptComparisonView) => {
+			if (comparisonView === view) {
+				setComparisonView(null);
+				return;
 			}
-		} catch (err) {
-			captureException(err instanceof Error ? err : new Error(String(err)), {
-				extra: { context: 'MaestroPromptsTab.toggleShowDefault', promptId: selectedPrompt.id },
-			});
-			setBundledDefaultContent(`Failed to load bundled default: ${String(err)}`);
-			setIsShowingDefault(true);
-		} finally {
-			setIsLoadingBundledDefault(false);
-		}
-	}, [isShowingDefault, selectedPrompt]);
+			if (!selectedPrompt) return;
+			// A comparison is of the SOURCE, so it takes over the editor pane
+			// rather than sitting beside the rendered preview.
+			setViewMode('edit');
+			setIsLoadingBundledDefault(true);
+			try {
+				const result = await window.maestro.prompts.getBundledDefault(selectedPrompt.id);
+				if (result.success && typeof result.content === 'string') {
+					setBundledDefaultContent(result.content);
+					setBundledDefaultError(null);
+				} else {
+					setBundledDefaultContent('');
+					setBundledDefaultError(result.error || 'Failed to load bundled default');
+				}
+			} catch (err) {
+				captureException(err instanceof Error ? err : new Error(String(err)), {
+					extra: {
+						context: 'MaestroPromptsTab.toggleComparison',
+						view,
+						promptId: selectedPrompt.id,
+					},
+				});
+				setBundledDefaultContent('');
+				setBundledDefaultError(String(err));
+			} finally {
+				setComparisonView(view);
+				setIsLoadingBundledDefault(false);
+			}
+		},
+		[comparisonView, selectedPrompt]
+	);
+
+	const handleToggleShowDefault = useCallback(
+		() => toggleComparison('default'),
+		[toggleComparison]
+	);
+	const handleToggleDiff = useCallback(() => toggleComparison('diff'), [toggleComparison]);
+
+	/**
+	 * The bundled default against the text in the editor. The editor, not the
+	 * saved copy, is the "new" side: it is what Save would write, so unsaved
+	 * edits show up here instead of being silently left out of the comparison.
+	 * `null` while no diff is showing; an empty list when there is nothing to
+	 * show.
+	 */
+	const promptDiffFiles = useMemo(() => {
+		if (comparisonView !== 'diff' || bundledDefaultError) return null;
+		if (bundledDefaultContent === editedContent) return [];
+		return parseGitDiff(
+			buildSyntheticGitDiff(
+				selectedPrompt?.filename ?? 'prompt.md',
+				bundledDefaultContent,
+				editedContent
+			)
+		);
+	}, [
+		comparisonView,
+		bundledDefaultError,
+		bundledDefaultContent,
+		editedContent,
+		selectedPrompt?.filename,
+	]);
 
 	// Auto-dismiss success message after 3 seconds
 	useEffect(() => {
@@ -794,7 +859,7 @@ export function MaestroPromptsTab({
 						? { ...prev, content: editedContent, isModified: true, hasDefaultDrifted: false }
 						: null
 				);
-				setIsShowingDefault(false);
+				setComparisonView(null);
 				setHasUnsavedChanges(false);
 				setSuccessMessage('Changes saved');
 			} else {
@@ -842,7 +907,7 @@ export function MaestroPromptsTab({
 						: null
 				);
 				setEditedContent(result.content);
-				setIsShowingDefault(false);
+				setComparisonView(null);
 				setHasUnsavedChanges(false);
 				setSuccessMessage('Reset to default');
 			} else {
@@ -862,8 +927,30 @@ export function MaestroPromptsTab({
 		}
 	}, [selectedPrompt]);
 
+	const canDiffAgainstDefault = !!selectedPrompt?.isModified || hasUnsavedChanges;
+	const diffButtonTitle =
+		comparisonView === 'diff'
+			? 'Exit diff view'
+			: 'Show what you changed compared to the bundled default';
+
 	const editorHeaderActions = (
 		<>
+			{canDiffAgainstDefault && (
+				<button
+					className="expand-toggle-button"
+					onClick={handleToggleDiff}
+					disabled={isLoadingBundledDefault}
+					title={diffButtonTitle}
+					aria-pressed={comparisonView === 'diff'}
+					data-testid="prompt-diff-toggle"
+					style={{
+						color: comparisonView === 'diff' ? theme.colors.accent : theme.colors.textDim,
+						borderColor: comparisonView === 'diff' ? theme.colors.accent : theme.colors.border,
+					}}
+				>
+					<FileDiff className="w-3.5 h-3.5" />
+				</button>
+			)}
 			{selectedPrompt?.hasDefaultDrifted && (
 				<button
 					className="expand-toggle-button"
@@ -910,9 +997,9 @@ export function MaestroPromptsTab({
 	 * a find bar, so there is no cursor into the results.
 	 */
 	useEffect(() => {
-		if (viewMode !== 'edit' || isShowingDefault) return;
+		if (viewMode !== 'edit' || comparisonView) return;
 		editorRef.current?.setSearchMatches(searchMatchRanges(editedContent, filterQueryTrimmed), -1);
-	}, [viewMode, isShowingDefault, editedContent, filterQueryTrimmed]);
+	}, [viewMode, comparisonView, editedContent, filterQueryTrimmed]);
 
 	const renderEditorBody = useCallback(() => {
 		// A plugin owns its prompt's content, so it is shown in the same editor
@@ -935,12 +1022,66 @@ export function MaestroPromptsTab({
 		// The bundled default is a read-only comparison view, so it takes the
 		// editor's place rather than opening beside it - and it is shown as
 		// SOURCE, since the point is to diff wording against your own copy.
+		if (comparisonView === 'diff') {
+			return (
+				<div
+					className="prompt-diff"
+					// Focusable for the same reason as the preview: the arrow keys
+					// should scroll it without a click first.
+					tabIndex={0}
+					style={{
+						borderColor: theme.colors.accent,
+						backgroundColor: theme.colors.bgMain,
+						color: theme.colors.textMain,
+					}}
+					data-testid="prompt-diff"
+				>
+					<style>{generateDiffViewStyles(theme, colorBlindMode)}</style>
+					<div className="prompt-diff-legend font-mono" style={{ color: theme.colors.textDim }}>
+						<span>- bundled default</span>
+						<span>
+							+ your version
+							{hasUnsavedChanges ? ' (including unsaved edits)' : ''}
+						</span>
+					</div>
+					{bundledDefaultError ? (
+						<p className="prompt-diff-empty" style={{ color: theme.colors.error }}>
+							Failed to load bundled default: {bundledDefaultError}
+						</p>
+					) : !promptDiffFiles || promptDiffFiles.length === 0 ? (
+						<p className="prompt-diff-empty" style={{ color: theme.colors.textDim }}>
+							No differences from the bundled default.
+						</p>
+					) : (
+						<div className="font-mono text-sm">
+							{promptDiffFiles.map((file) =>
+								file.parsedDiff.map((parsedFile, index) => (
+									<Diff
+										key={`${file.newPath}-${index}`}
+										viewType="unified"
+										diffType={parsedFile.type}
+										hunks={parsedFile.hunks}
+									>
+										{(hunks) => hunks.map((hunk) => <Hunk key={hunk.content} hunk={hunk} />)}
+									</Diff>
+								))
+							)}
+						</div>
+					)}
+				</div>
+			);
+		}
+
 		if (isShowingDefault) {
 			return (
 				<div className="prompt-editor-shell" style={{ borderColor: theme.colors.warning }}>
 					<MarkdownEditor
 						key={`default-${selectedPrompt?.id ?? 'none'}`}
-						value={bundledDefaultContent}
+						value={
+							bundledDefaultError
+								? `Failed to load bundled default: ${bundledDefaultError}`
+								: bundledDefaultContent
+						}
 						onChange={() => {}}
 						readOnly
 						language="markdown"
@@ -1015,8 +1156,13 @@ export function MaestroPromptsTab({
 		);
 	}, [
 		isSelectedPluginPrompt,
+		comparisonView,
 		isShowingDefault,
 		bundledDefaultContent,
+		bundledDefaultError,
+		promptDiffFiles,
+		hasUnsavedChanges,
+		colorBlindMode,
 		viewMode,
 		previewContent,
 		isBuildingPreview,
@@ -1117,6 +1263,8 @@ export function MaestroPromptsTab({
 				editorTokenCount={editorTokenCount}
 				editorHeaderActions={editorHeaderActions}
 				showModifiedBadge={selectedPrompt?.isModified}
+				onModifiedBadgeClick={handleToggleDiff}
+				modifiedBadgeTitle={diffButtonTitle}
 				showDefaultDriftedBadge={selectedPrompt?.hasDefaultDrifted}
 				renderEditorBody={renderEditorBody}
 				successMessage={successMessage}

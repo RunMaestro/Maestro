@@ -17,6 +17,7 @@ import {
 	composeFeedbackPromptFromText,
 	deleteFeedbackDraft,
 	deleteSubmittedIssue,
+	getFeedbackGhLoginCommand,
 	listFeedbackDrafts,
 	listSubmittedIssues,
 	refreshSubmittedIssueStates,
@@ -26,6 +27,7 @@ import {
 	submitFeedbackConversation,
 	subscribeFeedbackIssue,
 } from '../../feedback';
+import { listFeedbackAccounts, rememberFeedbackAccount } from '../../feedback/accounts';
 
 const LOG_CONTEXT = '[Feedback]';
 
@@ -64,7 +66,14 @@ export function registerFeedbackHandlers(deps: FeedbackHandlerDependencies): voi
 
 	ipcMain.handle(
 		'feedback:check-gh-auth',
-		withIpcErrorLogging(handlerOpts('check-gh-auth'), () => checkFeedbackGhAuth())
+		withIpcErrorLogging(handlerOpts('check-gh-auth'), (payload?: { fresh?: boolean }) =>
+			checkFeedbackGhAuth({ fresh: payload?.fresh === true })
+		)
+	);
+
+	ipcMain.handle(
+		'feedback:gh-login-command',
+		withIpcErrorLogging(handlerOpts('gh-login-command'), () => getFeedbackGhLoginCommand())
 	);
 
 	ipcMain.handle(
@@ -97,6 +106,20 @@ export function registerFeedbackHandlers(deps: FeedbackHandlerDependencies): voi
 			handlerOpts('submit-conversation'),
 			(payload: Parameters<typeof submitFeedbackConversation>[0]) =>
 				submitFeedbackConversation(payload, deps.debugPackageDeps)
+		)
+	);
+
+	ipcMain.handle(
+		'feedback:list-accounts',
+		withIpcErrorLogging(handlerOpts('list-accounts'), () =>
+			listFeedbackAccounts(() => deps.debugPackageDeps?.getAgentDetector() ?? null)
+		)
+	);
+
+	ipcMain.handle(
+		'feedback:remember-account',
+		withIpcErrorLogging(handlerOpts('remember-account'), async (payload: { key: string | null }) =>
+			rememberFeedbackAccount(payload?.key ?? null)
 		)
 	);
 

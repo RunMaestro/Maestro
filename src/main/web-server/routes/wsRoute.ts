@@ -19,7 +19,7 @@ import { FastifyInstance, FastifyRequest } from 'fastify';
 import { logger } from '../../utils/logger';
 import { WEB_LOGIN_WS_CLOSE_CODE } from '../../../shared/webLogin';
 import { isWebRequestAuthorized, resolveWebRequestAuth } from '../auth/web-login-policy';
-import { isRemoteOriginAllowed } from '../auth/remote-origin';
+
 import type {
 	Theme,
 	WebClient,
@@ -36,6 +36,9 @@ export type { LiveSessionInfo, CustomAICommand } from '../types';
 // Logger context for all WebSocket route logs
 const LOG_CONTEXT = 'WebServer:WS';
 
+/** RFC 6455 close code for a connection refused on policy grounds. */
+const WS_CLOSE_POLICY_VIOLATION = 1008;
+
 /**
  * Session data for WebSocket initial sync.
  * Uses SessionData as the base type.
@@ -46,6 +49,13 @@ export type WsSessionData = SessionData;
  * Callbacks required by WebSocket route
  */
 export interface WsRouteCallbacks {
+	/**
+	 * Whether an upgrade with these `Origin` / `Host` headers may connect.
+	 * Browsers send `Origin` on every WebSocket upgrade and never enforce CORS
+	 * on one, so this is the only thing stopping a hostile page that knows the
+	 * URL from driving the server. Missing callback = refuse.
+	 */
+	isOriginAllowed: (origin: string | string[] | undefined, host: string | undefined) => boolean;
 	getSessions: () => SessionData[];
 	getTheme: () => Theme | null;
 	getBionifyReadingMode: () => boolean;
@@ -107,12 +117,16 @@ export class WsRoute {
 		admission?: (request: FastifyRequest) => boolean
 	): void {
 		server.get(`/${token}/ws`, { websocket: true }, (socket, request) => {
-			if (admission && !admission(request)) {
-				socket.close(4403, 'Host admission expired or revoked');
+			// Origin first, before Web Login: a refused page must not even learn
+			// whether a login is required.
+			if (this.callbacks.isOriginAllowed?.(request.headers.origin, request.headers.host) !== true) {
+				logger.warn(`Refused WebSocket from origin ${String(request.headers.origin)}`, LOG_CONTEXT);
+				socket.close(WS_CLOSE_POLICY_VIOLATION, 'Origin not allowed');
 				return;
 			}
-			if (!isRemoteOriginAllowed(request)) {
-				socket.close(1008, 'Cross-origin remote access is not allowed');
+
+			if (admission && !admission(request)) {
+				socket.close(4403, 'Host admission expired or revoked');
 				return;
 			}
 			const clientId = `web-client-${++this.clientIdCounter}`;

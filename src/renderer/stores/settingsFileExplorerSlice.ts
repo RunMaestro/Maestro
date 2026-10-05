@@ -54,6 +54,7 @@ export const SSH_REDUCE_ENTRY_CAP_STEP = 0.05;
 export interface FileExplorerState {
 	showHiddenFiles: boolean;
 	fileExplorerIconTheme: FileExplorerIconTheme;
+	fileTreeBranchConnectors: boolean;
 	localIgnorePatterns: string[];
 	localHonorGitignore: boolean;
 	fileExplorerMaxDepth: number;
@@ -67,6 +68,7 @@ export interface FileExplorerState {
 export interface FileExplorerActions {
 	setShowHiddenFiles: (value: boolean) => void;
 	setFileExplorerIconTheme: (value: FileExplorerIconTheme) => void;
+	setFileTreeBranchConnectors: (value: boolean) => void;
 	setLocalIgnorePatterns: (value: string[]) => void;
 	setLocalHonorGitignore: (value: boolean) => void;
 	setFileExplorerMaxDepth: (value: number) => void;
@@ -84,6 +86,7 @@ export const createFileExplorerSlice: StateCreator<SettingsStore, [], [], FileEx
 ) => ({
 	showHiddenFiles: true,
 	fileExplorerIconTheme: 'rich',
+	fileTreeBranchConnectors: false,
 	localIgnorePatterns: [...DEFAULT_LOCAL_IGNORE_PATTERNS],
 	localHonorGitignore: true,
 	fileExplorerMaxDepth: DEFAULT_FILE_EXPLORER_MAX_DEPTH,
@@ -101,6 +104,11 @@ export const createFileExplorerSlice: StateCreator<SettingsStore, [], [], FileEx
 	setFileExplorerIconTheme: (value) => {
 		set({ fileExplorerIconTheme: value });
 		window.maestro.settings.set('fileExplorerIconTheme', value);
+	},
+
+	setFileTreeBranchConnectors: (value) => {
+		set({ fileTreeBranchConnectors: value });
+		window.maestro.settings.set('fileTreeBranchConnectors', value);
 	},
 
 	setLocalIgnorePatterns: (value) => {
@@ -172,6 +180,9 @@ export function hydrateFileExplorerSettings(
 		patch.fileExplorerIconTheme =
 			normalizeFileExplorerIconTheme(allSettings['fileExplorerIconTheme']) ?? 'rich';
 	}
+
+	if (allSettings['fileTreeBranchConnectors'] !== undefined)
+		patch.fileTreeBranchConnectors = allSettings['fileTreeBranchConnectors'] as boolean;
 
 	// Local file indexing ignore patterns (with array validation)
 	if (

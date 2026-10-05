@@ -2088,7 +2088,7 @@ describe('ProcessMonitor', () => {
 			render(<ProcessMonitor theme={theme} sessions={[]} groups={[]} onClose={onClose} />);
 
 			await waitFor(() => {
-				expect(screen.getByText('TIME HEARTBEAT')).toBeInTheDocument();
+				expect(screen.getByText('CUE · TIME HEARTBEAT')).toBeInTheDocument();
 			});
 		});
 

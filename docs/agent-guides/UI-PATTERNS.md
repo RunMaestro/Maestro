@@ -2303,7 +2303,9 @@ const showWordmark =
 
 The wand button stays at every width, so the header never loses its identity or its switch-agent affordance.
 
-**The now-playing pill is the row's shrink target of last resort.** Something has to yield, and the filename inside that pill is the only thing in the row that can be clipped without looking broken. It is therefore `min-w-0` rather than `shrink-0` (a flex item defaults to `min-width: auto` and refuses to go below its content, so both the pill and the button inside it need `min-w-0`), while both transport buttons, both icons, and the divider stay `shrink-0` - they are the entire transport a minimized player has.
+**The now-playing pill is the row's shrink target of last resort.** Something has to yield, and the filename inside that pill is the only thing in the row that can be clipped without looking broken. The filename is the ONLY thing that yields, and the pill must never shrink past its own transport. So the pill is NOT `min-w-0` and NOT `overflow-hidden` (that pair let a squeezed band shrink it below its buttons and clip the restore button in half); it keeps its automatic minimum, and that minimum is exactly the transport, because the toggle is a grid whose label track is `minmax(0, max-content)`. The label takes its natural width when there is room and contributes nothing to the pill's min-content. The toggle itself stays free of `min-w-0` too, or the glyph spills over the divider. Without the pill's clip, the hover backgrounds carry their own corner radius so they do not square off its rounded ends.
+
+**Reserves built from rem units scale with the root.** The trophy badge and the now-playing pill are padding and icon boxes with no label to measure, so `useHeaderTextDelta().remScale` (root size over the 14px baseline, floored at 1) multiplies `HEADER_BADGE_WIDTH` and both now-playing reserves. Without it a larger root drew both wider than the header had reserved.
 
 **The wordmark yields ahead of the indicators, so it stops charging them once it is gone.** The LIVE toggle's label threshold adds the badge's reserve only while `showWordmark` is true:
 

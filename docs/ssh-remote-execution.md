@@ -367,6 +367,31 @@ To use a WSL distribution instead, point at `bash.exe` in System32:
 New-ItemProperty -Path "HKLM:\SOFTWARE\OpenSSH" -Name DefaultShell -Value "C:\Windows\System32\bash.exe" -PropertyType String -Force
 ```
 
+`bash.exe` opens the **default** WSL distribution. `DefaultShell` cannot carry
+arguments, so a value like `wsl.exe -d Ubuntu` does not work. To use a
+specific distribution, make it the default instead:
+
+```powershell
+wsl --set-default Ubuntu
+```
+
+WSL distributions are registered per Windows account. Install the distribution
+and run `wsl --set-default` while signed in as the user Maestro connects as,
+not as a different admin account. The agent runs as that distribution's
+default Linux user. To change that user, set `default=<name>` under `[user]`
+in the distribution's `/etc/wsl.conf`, then run `wsl --terminate Ubuntu`.
+
+<Warning>
+Do not launch WSL through `ForceCommand` in `sshd_config` (for example, a
+`Match User` block that runs a `.bat` file calling `wsl.exe -d Ubuntu`). This
+gives you a per-user shell, but it replaces every command Maestro sends.
+Starting an agent still works because that script arrives on stdin. The file
+tree, git status, and **Test Connection** send their commands as arguments, so
+they get an empty shell and come back with nothing. `DefaultShell` is a
+machine-wide registry value and cannot be set in `sshd_config` or inside a
+`Match` block, so use `wsl --set-default` to choose the distribution.
+</Warning>
+
 Restart the SSH service so new connections pick up the change:
 
 ```powershell

@@ -1,10 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, waitFor } from '@testing-library/react';
+import { render, waitFor, fireEvent, act, screen } from '@testing-library/react';
 import {
 	LocalImage,
 	resolveLocalImagePath,
 } from '../../../../renderer/components/Markdown/components/LocalImage';
 import { mockTheme } from '../../../helpers/mockTheme';
+import { useZoomViewerStore } from '../../../../renderer/components/ZoomViewer/zoomViewerStore';
 
 const PNG = 'data:image/png;base64,iVBORw0KGgo=';
 
@@ -60,5 +61,35 @@ describe('LocalImage', () => {
 		);
 		expect(readFile).not.toHaveBeenCalled();
 		expect(container.querySelector('img')?.getAttribute('src')).toBe('https://example.com/a.png');
+	});
+});
+
+describe('LocalImage zoom viewer', () => {
+	beforeEach(() => {
+		act(() => useZoomViewerStore.getState().close());
+	});
+
+	it('opens the image in the pan/zoom viewer on click', () => {
+		const { container } = render(
+			<LocalImage src="https://example.com/a.png" alt="chart" theme={mockTheme} />
+		);
+		const img = container.querySelector('img')!;
+		fireEvent.click(img);
+		const request = useZoomViewerStore.getState().request;
+		expect(request?.element).toBe(img);
+		expect(request?.title).toBe('chart');
+	});
+
+	it('leaves a click on a linked image to the link, but the expand button still opens it', () => {
+		const { container } = render(
+			<a href="https://example.com">
+				<LocalImage src="https://example.com/a.png" alt="chart" theme={mockTheme} />
+			</a>
+		);
+		fireEvent.click(container.querySelector('img')!);
+		expect(useZoomViewerStore.getState().request).toBeNull();
+
+		fireEvent.click(screen.getByTestId('expand-to-viewer'));
+		expect(useZoomViewerStore.getState().request?.element).toBe(container.querySelector('img'));
 	});
 });

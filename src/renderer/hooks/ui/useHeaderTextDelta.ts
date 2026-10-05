@@ -48,6 +48,15 @@ export interface HeaderTextDelta {
 	wordmark: number;
 	/** Extra px the LIVE/OFFLINE label needs versus the baseline font. >= 0. */
 	liveLabel: number;
+	/**
+	 * How much larger the root is than the baseline 14px, as a multiplier. >= 1.
+	 * For reserves built from rem units (padding, icon boxes) rather than text:
+	 * those carry no label to measure, so they are scaled instead. Without it a
+	 * larger root drew the trophy badge and the now-playing pill wider than the
+	 * header had reserved, and the band squeezed the pill until it clipped its
+	 * own restore button.
+	 */
+	remScale: number;
 }
 
 function widthDelta(
@@ -110,6 +119,9 @@ export function useHeaderTextDelta(): HeaderTextDelta {
 				0,
 				0
 			),
+			// Floored at 1 for the same reason the deltas are: a smaller root must
+			// not shrink a reserve below the chrome it was calibrated to hold.
+			remScale: Math.max(1, rootPx / BASELINE_ROOT_PX),
 		};
 	}, [fontFamily, fontSize, fontZoom]);
 }

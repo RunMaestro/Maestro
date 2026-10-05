@@ -22,7 +22,7 @@ const SIGKILL_DELAY_MS = 5000;
 // ─── Types ──────���────────────────────────────────────────────────────────────
 
 /** Metadata stored alongside each active Cue process */
-interface CueActiveProcess {
+export interface CueActiveProcess {
 	child: ChildProcess;
 	command: string;
 	args: string[];
@@ -185,48 +185,72 @@ function extractCleanStderr(rawStderr: string, toolType: string): string {
 	return cleaned.trim() ? cleaned : '';
 }
 
+// ─── Public API ─────────────���─────────────────────────���──────────────────────
+
 /**
  * Kill a Cue child process, using taskkill on Windows to terminate the entire
  * process tree (POSIX signals don't work for shell-spawned processes on Windows).
+ *
+ * The one kill path for every Cue spawn (agent prompts, shell commands,
+ * maestro-cli calls). `sync` is the shutdown path: it blocks on taskkill and
+ * escalates to SIGKILL at once, because the event loop may drain before a
+ * deferred timer fires. Otherwise returns the pending SIGKILL escalation timer
+ * so a caller that settles first can clear it.
  */
-function killCueProcess(child: ChildProcess, sync = false): void {
+export function killCueProcess(
+	child: ChildProcess,
+	sync = false
+): ReturnType<typeof setTimeout> | undefined {
 	if (isWindows() && child.pid) {
 		if (sync) {
-			// During shutdown, block until taskkill completes so the process tree
-			// is actually dead before Electron exits.
 			try {
-				execFileSync('taskkill', ['/pid', String(child.pid), '/t', '/f'], {
-					timeout: 5000,
-				});
+				execFileSync('taskkill', ['/pid', String(child.pid), '/t', '/f'], { timeout: 5000 });
 			} catch {
-				// taskkill returns non-zero if the process is already dead, which is fine
+				// taskkill returns non-zero when the process is already dead - fine.
 			}
 		} else {
 			execFile('taskkill', ['/pid', String(child.pid), '/t', '/f'], (error) => {
 				if (!error) return;
-				const msg = error.message.toLowerCase();
-				const alreadyStopped = msg.includes('not found') || msg.includes('no running instance');
-				if (alreadyStopped) return;
-
-				captureException(error, {
-					operation: 'cue:taskkill',
-					pid: child.pid,
-				});
+				// A child that exited before taskkill ran makes it fail benignly.
+				// Checking `child.exitCode` is locale-independent, unlike matching
+				// the error message text.
+				if (child.exitCode !== null || child.signalCode !== null) return;
+				captureException(error, { operation: 'cue:taskkill', pid: child.pid });
 			});
 		}
-	} else {
-		child.kill('SIGTERM');
-
-		// Escalate to SIGKILL after delay - only if the process hasn't actually exited.
-		setTimeout(() => {
-			if (child.exitCode === null && child.signalCode === null) {
-				child.kill('SIGKILL');
-			}
-		}, SIGKILL_DELAY_MS);
+		return undefined;
 	}
+	child.kill('SIGTERM');
+	if (sync) {
+		if (child.exitCode === null && child.signalCode === null) {
+			child.kill('SIGKILL');
+		}
+		return undefined;
+	}
+	// Escalate to SIGKILL after delay - only if the process hasn't actually exited.
+	return setTimeout(() => {
+		if (child.exitCode === null && child.signalCode === null) {
+			child.kill('SIGKILL');
+		}
+	}, SIGKILL_DELAY_MS);
 }
 
-// ─── Public API ─────────────���─────────────────────────���──────────────────────
+/**
+ * Register a running Cue child process. Every Cue spawn path registers here -
+ * agent prompts ({@link runProcess}), `action: command` shell commands, and
+ * maestro-cli calls - because this map is what the Process Monitor lists and
+ * what Stop reaches. A spawn that skips it runs invisibly and cannot be stopped
+ * from the UI.
+ *
+ * @returns Unregister function. Call it once the child settles; it only removes
+ * this entry, so a stale call cannot drop a newer run under the same id.
+ */
+export function trackCueProcess(runId: string, entry: CueActiveProcess): () => void {
+	activeProcesses.set(runId, entry);
+	return () => {
+		if (activeProcesses.get(runId) === entry) activeProcesses.delete(runId);
+	};
+}
 
 /**
  * Spawn a process from a SpawnSpec, capture stdio, and enforce timeout.
@@ -278,7 +302,7 @@ export function runProcess(
 		let stdout = '';
 		let stderr = '';
 
-		activeProcesses.set(runId, {
+		const untrack = trackCueProcess(runId, {
 			child,
 			command: spec.command,
 			args: spec.args,
@@ -296,7 +320,7 @@ export function runProcess(
 			if (settled) return;
 			settled = true;
 
-			activeProcesses.delete(runId);
+			untrack();
 			if (timeoutTimer) clearTimeout(timeoutTimer);
 
 			resolve({

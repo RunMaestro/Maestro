@@ -960,6 +960,112 @@ describe('ClaudeOutputParser', () => {
 		});
 	});
 
+	describe('Stop hook continuations', () => {
+		const assistantText = (id: string, text: string, extra: Record<string, unknown> = {}) => ({
+			type: 'assistant',
+			message: { id, role: 'assistant', content: [{ type: 'text', text }] },
+			...extra,
+		});
+		const assistantTool = (id: string) => ({
+			type: 'assistant',
+			message: {
+				id,
+				role: 'assistant',
+				content: [{ type: 'tool_use', id: `tool-${id}`, name: 'Bash', input: {} }],
+			},
+		});
+		const toolResult = (id: string) => ({
+			type: 'user',
+			message: {
+				role: 'user',
+				content: [{ type: 'tool_result', tool_use_id: `tool-${id}`, content: 'ok' }],
+			},
+		});
+		const stopHookFeedback = {
+			type: 'user',
+			message: {
+				role: 'user',
+				content: [
+					{
+						type: 'text',
+						text: 'Stop hook feedback:\n[scripts/stop-if-dirty.sh]: Uncommitted changes: 8 paths.',
+					},
+				],
+			},
+		};
+		const result = (text: string) => ({ type: 'result', subtype: 'success', result: text });
+		const feed = (p: ClaudeOutputParser, messages: object[]) =>
+			messages.map((message) => p.parseJsonObject(message));
+
+		it('keeps the reply a Stop hook held back ahead of the post-hook text', () => {
+			const p = new ClaudeOutputParser();
+			const events = feed(p, [
+				assistantText('m1', 'Email login never went live.'),
+				stopHookFeedback,
+				assistantText('m2', 'I committed the 8 paths.'),
+				result('I committed the 8 paths.'),
+			]);
+
+			expect(events[events.length - 1]?.text).toBe(
+				'Email login never went live.\n\n---\n\nI committed the 8 paths.'
+			);
+		});
+
+		it('does not hold narration that led to a tool call', () => {
+			const p = new ClaudeOutputParser();
+			const events = feed(p, [
+				assistantText('m1', 'Deploying now.'),
+				assistantTool('m1'),
+				toolResult('m1'),
+				assistantText('m2', 'Charts are live.'),
+				stopHookFeedback,
+				assistantText('m3', 'Nothing to commit.'),
+				result('Nothing to commit.'),
+			]);
+
+			expect(events[events.length - 1]?.text).toBe('Charts are live.\n\n---\n\nNothing to commit.');
+		});
+
+		it('leaves a turn with no Stop hook block unchanged', () => {
+			const p = new ClaudeOutputParser();
+			const events = feed(p, [assistantText('m1', 'Paris.'), result('Paris.')]);
+
+			expect(events[events.length - 1]?.text).toBe('Paris.');
+		});
+
+		it('ignores subagent messages and starts the next turn clean', () => {
+			const p = new ClaudeOutputParser();
+			feed(p, [assistantText('m1', 'First answer.'), stopHookFeedback, result('Follow-up.')]);
+			const events = feed(p, [
+				assistantText('s1', 'Subagent text.', { parent_tool_use_id: 'task-1' }),
+				{ ...stopHookFeedback, parent_tool_use_id: 'task-1' },
+				assistantText('m2', 'Second answer.'),
+				result('Second answer.'),
+			]);
+
+			expect(events[events.length - 1]?.text).toBe('Second answer.');
+		});
+
+		it('survives duplicate emission and re-parsing of the same lines', () => {
+			const p = new ClaudeOutputParser();
+			const reply = assistantText('m1', 'The answer.');
+			const final = result('Follow-up.');
+			feed(p, [
+				reply,
+				reply,
+				stopHookFeedback,
+				stopHookFeedback,
+				assistantText('m2', 'Follow-up.'),
+			]);
+
+			const first = p.parseJsonObject(final);
+			const reparsed = p.parseJsonObject(final);
+
+			expect(first?.text).toBe('The answer.\n\n---\n\nFollow-up.');
+			expect(reparsed?.text).toBe(first?.text);
+		});
+	});
+
 	describe('detectErrorFromLine', () => {
 		it('should return null for empty lines', () => {
 			expect(parser.detectErrorFromLine('')).toBeNull();

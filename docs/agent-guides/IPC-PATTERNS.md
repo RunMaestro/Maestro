@@ -331,7 +331,7 @@ interface HandlerDependencies {
 
 Each handler module exports a `register*Handlers(deps)` function and a `*HandlerDependencies` interface specifying which subset of dependencies it needs.
 
-**Note:** `registerWebHandlers` is NOT called from `registerAllHandlers()` because it requires module-level webServer state management. It's registered separately in `src/main/index.ts`.
+**Note:** `registerWebHandlers` is NOT called from `registerAllHandlers()` because it requires module-level webServer state management. It's registered separately in `setupIpcHandlers()` (`src/main/ipc/bootstrap/index.ts`), which has the webServer accessor in its deps object.
 
 ---
 

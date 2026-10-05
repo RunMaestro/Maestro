@@ -60,6 +60,23 @@ interface MarkdownRendererProps {
 	 */
 	chatMath?: boolean;
 	/**
+	 * Chip-render Codex's assistant directives (`:codex-followup[...]{...}`).
+	 *
+	 * Off by default, and set only for Codex agents: the syntax is Codex's own
+	 * emitting convention, so a message from any other provider that contains it
+	 * is quoting the format rather than offering an action.
+	 */
+	codexDirectives?: boolean;
+	/**
+	 * Which conversation a clicked `:codex-followup` chip belongs to.
+	 *
+	 * Separate from `codexDirectives` on purpose: the flag decides whether the
+	 * syntax is PARSED, this decides whether a chip is CLICKABLE. A surface that
+	 * parses without this renders the offer with no control on it, which is the
+	 * right behavior anywhere the click target would be ambiguous.
+	 */
+	codexFollowup?: { sessionId: string; tabId: string };
+	/**
 	 * Extra rehype plugins appended after the standard stack. Used to add
 	 * `rehype-slug` on surfaces that need heading anchors for a table of
 	 * contents (Director's Notes Plain mode).

@@ -474,6 +474,11 @@ async function main() {
 	});
 	const wsRoute = new WsRoute('test-legacy');
 	wsRoute.setCallbacks({
+		isOriginAllowed: (origin, host) =>
+			require(path.join(dist, 'main/web-server/originPolicy.js')).isAllowedRequestOrigin({
+				origin,
+				host,
+			}),
 		getBionifyReadingMode: () => false,
 		getSessions: () => [],
 		getTheme: () => null,

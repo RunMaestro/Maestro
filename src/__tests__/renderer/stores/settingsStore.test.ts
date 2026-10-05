@@ -113,6 +113,7 @@ function resetStore() {
 		groupChatAutoScroll: true,
 		showHiddenFiles: true,
 		fileExplorerIconTheme: 'rich',
+		toastPosition: 'bottom-right',
 		terminalWidth: 100,
 		logLevel: 'info',
 		maxLogBuffer: 5000,
@@ -243,6 +244,7 @@ describe('settingsStore', () => {
 			expect(state.fileExplorerMaxEntries).toBe(100_000);
 			expect(state.sshReduceEntryCapEnabled).toBe(false);
 			expect(state.sshReduceEntryCapFraction).toBe(0.1);
+			expect(state.toastPosition).toBe('bottom-right');
 			expect(state.terminalWidth).toBe(100);
 			expect(state.logLevel).toBe('info');
 			expect(state.maxLogBuffer).toBe(5000);
@@ -566,7 +568,7 @@ describe('settingsStore', () => {
 				});
 
 				it('quotes the live Right Bar width for the dynamic preset', () => {
-					useSettingsStore.setState({ rightPanelWidth: 500 });
+					useSettingsStore.setState({ rightPanelWidth: 500, toastPosition: 'bottom-right' });
 					useSettingsStore.getState().setToastWidth('dynamic');
 					const [toast] = useNotificationStore.getState().toasts;
 					expect(toast.title).toBe('Toast Width: Dynamic');
@@ -588,6 +590,43 @@ describe('settingsStore', () => {
 					const [toast] = useNotificationStore.getState().toasts;
 					expect(toast.skipCustomNotification).toBe(true);
 					expect(toast.skipOsNotification).toBe(true);
+				});
+			});
+
+			describe('setToastPosition', () => {
+				beforeEach(() => {
+					useNotificationStore.setState({ toasts: [] });
+					useSettingsStore.setState({ toastPosition: 'bottom-right' });
+				});
+
+				it('updates state and persists', () => {
+					useSettingsStore.getState().setToastPosition('top-left');
+					expect(useSettingsStore.getState().toastPosition).toBe('top-left');
+					expect(window.maestro.settings.set).toHaveBeenCalledWith('toastPosition', 'top-left');
+				});
+
+				it('fires a preview toast naming the corner and stack direction', () => {
+					useSettingsStore.getState().setToastPosition('top-right');
+					const toasts = useNotificationStore.getState().toasts;
+					expect(toasts).toHaveLength(1);
+					expect(toasts[0].title).toBe('Toast Position: Top Right');
+					expect(toasts[0].message).toContain('downward');
+				});
+
+				it('shares one preview with the width setting instead of stacking', () => {
+					useSettingsStore.getState().setToastWidth('large');
+					useSettingsStore.getState().setToastPosition('bottom-left');
+					const toasts = useNotificationStore.getState().toasts;
+					expect(toasts).toHaveLength(1);
+					expect(toasts[0].title).toBe('Toast Position: Bottom Left');
+				});
+
+				it('makes a dynamic-width preview quote the Left Bar in a left corner', () => {
+					useSettingsStore.setState({ leftSidebarWidth: 300, toastPosition: 'top-left' });
+					useSettingsStore.getState().setToastWidth('dynamic');
+					const [toast] = useNotificationStore.getState().toasts;
+					// 300 less the 16px gutter on each side.
+					expect(toast.message).toContain('Left Bar width (268px)');
 				});
 			});
 		});
@@ -2064,6 +2103,23 @@ describe('settingsStore', () => {
 			await loadAllSettings();
 
 			expect(useSettingsStore.getState().fileExplorerIconTheme).toBe('rich');
+		});
+
+		it('loads a valid persisted toastPosition', async () => {
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({ toastPosition: 'top-left' });
+
+			await loadAllSettings();
+
+			expect(useSettingsStore.getState().toastPosition).toBe('top-left');
+		});
+
+		it('falls back to bottom-right for an invalid toastPosition', async () => {
+			useSettingsStore.setState({ toastPosition: 'top-left' });
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({ toastPosition: 'middle' });
+
+			await loadAllSettings();
+
+			expect(useSettingsStore.getState().toastPosition).toBe('bottom-right');
 		});
 
 		it('keeps edits made while a reload is in flight', async () => {

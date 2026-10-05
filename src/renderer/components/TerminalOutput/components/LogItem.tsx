@@ -39,6 +39,7 @@ import { CrossAgentResponseHeader } from '../../CrossAgentResponseHeader';
 import { isHiddenProgressEntry } from '../utils/collapseAiResponseLogs';
 import { SessionRecoveryCardConnector } from './SessionRecoveryCardConnector';
 import { ToolBadge } from './ToolBadge';
+import { codexDirectivesLiveForSource } from '../../../services/codexFollowup';
 
 /**
  * Shallow content comparison for the nested subagent tool entries. Identity is
@@ -104,6 +105,8 @@ export const LogItem = memo(
 		bionifyAlgorithm,
 		userMessageAlignment,
 		responseDurationMs,
+		codexDirectives,
+		codexFollowupTabId,
 		isClaudeCode,
 		isAdaptiveMode,
 		showProviderModePill,
@@ -223,6 +226,27 @@ export const LogItem = memo(
 			shouldCollapse && !isExpanded && isTerminal && log.source !== 'user'
 				? getCachedAnsiHtml(displayText, theme.id, ansiConverter)
 				: htmlContent;
+
+		/*
+		 * Codex followup chips are an ASSISTANT affordance.
+		 *
+		 * `codexDirectives` says the owning agent is Codex; this says which of
+		 * this component's bodies the syntax is live in. Only text the agent
+		 * itself produced qualifies - `stdout` / `ai`, the same pair
+		 * `useAgentExitListener` treats as the assistant's own output. A directive
+		 * in a USER message is text the user typed, so it stays the text they
+		 * typed, and the same holds for the AI-command body (a generated shell
+		 * command), an error body, a thinking block, and tool output: in all of
+		 * those the string describes the format rather than offering an action.
+		 */
+		const codexDirectivesForBody =
+			Boolean(codexDirectives) && codexDirectivesLiveForSource(log.source);
+		// No tab means no conversation for a click to land in, so the directives
+		// still render (as their label) but without a control on them.
+		const codexFollowup =
+			codexDirectivesForBody && codexFollowupTabId
+				? { sessionId, tabId: codexFollowupTabId }
+				: undefined;
 
 		const isUserMessage = log.source === 'user';
 		const isReversed = isUserMessage
@@ -736,6 +760,8 @@ export const LogItem = memo(
 											sshRemoteId={sshRemoteId}
 											chatLineBreaks
 											chatMath
+											codexDirectives={codexDirectivesForBody}
+											codexFollowup={codexFollowup}
 										/>
 									) : (
 										displayText
@@ -827,6 +853,8 @@ export const LogItem = memo(
 											sshRemoteId={sshRemoteId}
 											chatLineBreaks
 											chatMath
+											codexDirectives={codexDirectivesForBody}
+											codexFollowup={codexFollowup}
 										/>
 									) : (
 										<div>{filteredText}</div>
@@ -905,6 +933,8 @@ export const LogItem = memo(
 										sshRemoteId={sshRemoteId}
 										chatLineBreaks
 										chatMath
+										codexDirectives={codexDirectivesForBody}
+										codexFollowup={codexFollowup}
 									/>
 								) : (
 									// Raw markdown source mode (show original text with markdown syntax visible)

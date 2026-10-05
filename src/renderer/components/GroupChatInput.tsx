@@ -52,6 +52,7 @@ import { useUIStore } from '../stores/uiStore';
 import { groupChatOutputSearchKey } from '../utils/outputSearch';
 import { OUTPUT_SEARCH_INPUT_SELECTOR } from '../hooks/ui/useOutputSearchLayer';
 import { useAutosizeTextarea } from '../hooks/ui/useAutosizeTextarea';
+import { useToastAvoidZone } from '../hooks/ui/useToastAvoidZone';
 import { KEYSTROKE_TEXTAREA_MAX_HEIGHT } from '../utils/textareaSizing';
 
 /** Maximum image file size in bytes (10MB) */
@@ -180,6 +181,8 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 		(draft: string, targetGroupChatId: string) => queueDraftFlush(targetGroupChatId, draft),
 		[queueDraftFlush]
 	);
+	// Toasts lift above the composer instead of covering it (Right Bar closed).
+	const toastAvoidRef = useToastAvoidZone();
 
 	useEffect(() => {
 		if (!draftFlushRef) return;
@@ -559,6 +562,7 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 
 	return (
 		<div
+			ref={toastAvoidRef}
 			className="relative p-4 border-t"
 			style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgSidebar }}
 		>

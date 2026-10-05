@@ -4,7 +4,7 @@ import {
 	generateInlineDocuments,
 	type DocumentGenerationCallbacks,
 } from '../../../services/inlineWizardDocumentGeneration';
-import { recordWizardDocuments } from '../../../services/wizardStats';
+import { recordWizardDocuments, setWizardAgentWorking } from '../../../services/wizardStats';
 import { logger } from '../../../utils/logger';
 import { resolveAutoRunFolderPath } from './documents';
 import type { GenerationProgress, InlineWizardState, SetInlineWizardTabState } from './types';
@@ -77,6 +77,8 @@ export function useInlineWizardGenerationActions({
 				currentDocumentIndex: 0,
 			}));
 
+			// Generation is agent work however long it runs; see sendMessage.
+			setWizardAgentWorking(tabId, true);
 			try {
 				const projectNameForGeneration = getProjectNameForGeneration(currentState);
 				const result = await generateInlineDocuments({
@@ -216,6 +218,8 @@ export function useInlineWizardGenerationActions({
 				}));
 
 				callbacks?.onError?.(errorMessage);
+			} finally {
+				setWizardAgentWorking(tabId, false);
 			}
 		},
 		[currentTabId, setCurrentTabId, setTabState, tabStatesRef]

@@ -9,7 +9,10 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { installLocalStorageMock } from '../../../helpers/mockLocalStorage';
-import { usePersistedPanelWidth } from '../../../../renderer/hooks/ui/usePersistedPanelWidth';
+import {
+	usePersistedPanelSize,
+	usePersistedPanelWidth,
+} from '../../../../renderer/hooks/ui/usePersistedPanelWidth';
 
 const KEY = 'test.panelWidth';
 const BOUNDS = { defaultWidth: 560, minWidth: 320, maxWidth: 1400 };
@@ -107,5 +110,40 @@ describe('usePersistedPanelWidth', () => {
 		const { result } = renderHook(() => usePersistedPanelWidth(KEY, BOUNDS));
 		act(() => result.current.setWidth(700));
 		expect(result.current.width).toBe(700);
+	});
+});
+
+describe('usePersistedPanelSize', () => {
+	const SIZE_BOUNDS = { defaultSize: 400, minSize: 100, maxSize: 900 };
+
+	beforeEach(() => {
+		installLocalStorageMock();
+	});
+
+	it('reports isCustomized only while a picked size is stored', () => {
+		const { result } = renderHook(() => usePersistedPanelSize(KEY, SIZE_BOUNDS));
+		expect(result.current).toMatchObject({ size: 400, isCustomized: false });
+
+		act(() => result.current.setSize(650));
+		expect(result.current).toMatchObject({ size: 650, isCustomized: true });
+
+		act(() => result.current.reset());
+		expect(result.current).toMatchObject({ size: 400, isCustomized: false });
+		expect(window.localStorage.getItem(KEY)).toBeNull();
+	});
+
+	it('re-clamps the stored size when the bounds change after mount', () => {
+		window.localStorage.setItem(KEY, '800');
+		const { result, rerender } = renderHook(
+			({ maxSize }) => usePersistedPanelSize(KEY, { ...SIZE_BOUNDS, maxSize }),
+			{ initialProps: { maxSize: 900 } }
+		);
+		expect(result.current.size).toBe(800);
+
+		rerender({ maxSize: 500 });
+		expect(result.current.size).toBe(500);
+		// The stored preference is untouched, so widening the bounds restores it.
+		rerender({ maxSize: 900 });
+		expect(result.current.size).toBe(800);
 	});
 });

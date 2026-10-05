@@ -9,6 +9,8 @@ import { getShellPath } from '../../../runtime/getShellPath';
 import { captureMessage } from '../../../utils/sentry';
 import { processCarriageReturns, stripAnsiCodes } from '../../../../shared/stringUtils';
 import type { GitRunCommandResult, GitStreamingOperation } from '../../../../shared/gitUtils';
+import type { SshRemoteConfig } from '../../../../shared/types';
+import { beginRemoteSync } from '../../../utils/branch-switch-guard';
 import { LOG_CONTEXT, handlerOpts } from './shared';
 
 // Cancel callbacks for in-flight streaming git commands, keyed by runId.
@@ -122,6 +124,39 @@ async function runStreamingGitCommand(
 	}
 
 	const gitArgs = buildStreamingGitArgs(operation, branch, setUpstream);
+
+	// Push and pull read (pre-push hook) or write (merge) the working tree, so a
+	// branch switch must wait for them. Fetch only touches refs.
+	const releaseSync =
+		operation === 'fetch'
+			? () => {}
+			: await beginRemoteSync(operation, cwd, sshRemote, effectiveRemoteCwd);
+	try {
+		return await spawnStreamingGitCommand(event, {
+			runId,
+			operation,
+			cwd,
+			sshRemote,
+			effectiveRemoteCwd,
+			gitArgs,
+		});
+	} finally {
+		releaseSync();
+	}
+}
+
+async function spawnStreamingGitCommand(
+	event: Electron.IpcMainInvokeEvent,
+	options: {
+		runId: string;
+		operation: GitStreamingOperation;
+		cwd: string;
+		sshRemote: SshRemoteConfig | undefined;
+		effectiveRemoteCwd: string | undefined;
+		gitArgs: string[];
+	}
+): Promise<GitRunCommandResult> {
+	const { runId, operation, cwd, sshRemote, effectiveRemoteCwd, gitArgs } = options;
 
 	// Full shell PATH so git hooks (Husky pre-push running npm, etc.) resolve
 	// their tooling, and GIT_TERMINAL_PROMPT=0 so a missing credential fails
