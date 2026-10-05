@@ -3,11 +3,13 @@ import { readFile, writeFile, mkdir, rename } from 'fs/promises';
 import path from 'path';
 import type { SshRemoteConfig } from '../../shared/types';
 import { validateSshOption } from '../../shared/sshOptions';
+import { CONNECT_PATH } from './pairing/protocol';
+import { directTailnetOrigin } from './tailnet-origin';
 
 export interface LiteProfile {
 	id: string;
 	name: string;
-	transport: 'ssh' | 'https';
+	transport: 'ssh' | 'https' | 'tailscale';
 	url: string;
 	ssh?: SshRemoteConfig;
 	instanceId?: string;
@@ -22,6 +24,12 @@ export function normalizeRemoteUrl(input: string, transport: LiteProfile['transp
 		throw new Error(
 			'Remote Control URLs must not contain credentials, query parameters, or fragments.'
 		);
+	if (transport === 'tailscale') {
+		directTailnetOrigin(url.origin);
+		if (url.pathname !== CONNECT_PATH)
+			throw new Error('Direct Tailscale access requires the paired connection path.');
+		return url;
+	}
 	if (
 		transport === 'https' ? url.protocol !== 'https:' : !['http:', 'https:'].includes(url.protocol)
 	)
@@ -29,6 +37,7 @@ export function normalizeRemoteUrl(input: string, transport: LiteProfile['transp
 	if (transport === 'ssh' && !['localhost', '127.0.0.1', '[::1]'].includes(url.hostname))
 		throw new Error('SSH Remote Control URL must address the host’s loopback interface.');
 	url.pathname = url.pathname.replace(/\/+$/, '').replace(/\/desktop$/, '');
+	if (transport === 'https' && url.pathname === CONNECT_PATH) return url;
 	const segments = url.pathname.split('/').slice(1);
 	if (!segments.length || segments.some((part) => !part || !/^[A-Za-z0-9_-]+$/.test(part)))
 		throw new Error('Paste the host’s Remote Control URL including its token.');

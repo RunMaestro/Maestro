@@ -132,6 +132,7 @@ export function createWebApi() {
  */
 export function createWebserverApi() {
 	return {
+		openLitePairing: () => ipcRenderer.invoke('webserver:openLitePairing') as Promise<void>,
 		getUrl: () => ipcRenderer.invoke('webserver:getUrl'),
 		getConnectedClients: () => ipcRenderer.invoke('webserver:getConnectedClients'),
 	};

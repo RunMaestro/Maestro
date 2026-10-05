@@ -3,12 +3,23 @@ import * as os from 'os';
 import { getConfigDir } from './cli-server-discovery';
 import { expandTilde } from './pathUtils';
 import type { LiteProfile } from '../main/lite/profiles';
+import type { DiscoveryPairingState } from './lite-discovery';
 
 export const LITE_CONTROL_PROTOCOL_VERSION = 1;
 export const LITE_CONTROL_DISCOVERY_FILE = 'lite-control.json';
 export const LITE_CONTROL_MAX_BYTES = 1024 * 1024;
 
 export type LiteControlAction =
+	| 'discover'
+	| 'discovery-start'
+	| 'discovery-import'
+	| 'discovery-stop'
+	| 'discovery-status'
+	| 'network-changed'
+	| 'pair-request'
+	| 'pair-submit'
+	| 'pair-read'
+	| 'pair-cancel'
 	| 'status'
 	| 'list'
 	| 'read'
@@ -33,6 +44,7 @@ export interface LiteControlState {
 	profiles: LiteProfile[];
 	aliases: string[];
 	closing?: boolean;
+	discoveryPairing?: DiscoveryPairingState;
 }
 
 export interface LiteControlOptions {

@@ -20,7 +20,11 @@ export function registerLiteRoutes(
 		const handshake: MaestroRemoteHandshake = {
 			...status,
 			protocolVersion: MAESTRO_REMOTE_PROTOCOL_VERSION,
-			authentication: { loginEnabled: auth.required, authenticated: auth.user !== undefined },
+			authentication: {
+				loginEnabled: auth.method === 'device-pairing' ? false : auth.required,
+				authenticated: auth.user !== undefined,
+				...(auth.method ? { method: auth.method } : {}),
+			},
 		};
 		return reply.header('cache-control', 'no-store').send(handshake);
 	});

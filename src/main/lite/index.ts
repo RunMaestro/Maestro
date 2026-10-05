@@ -1,3 +1,6 @@
+import { DiscoveryController, type DiscoveredConnection } from './discovery/controller';
+import { ADMISSION_HEADER, CONNECT_PATH } from './pairing/protocol';
+import { DeviceCredentials } from './device-credentials';
 import {
 	app,
 	BrowserWindow,
@@ -15,7 +18,7 @@ import { mkdirSync } from 'fs';
 import { LiteProfiles, normalizeRemoteUrl, hostPartition } from './profiles';
 import type { LiteProfile } from './profiles';
 import { openTunnel } from './tunnel';
-import type { OwnedTunnel } from './tunnel';
+import { openTailnetRelay } from './tailnet-relay';
 import { validateHandshake, HostConnectionError } from './handshake';
 import { connectionPage } from './ui';
 import { parseSshConfig } from '../utils/ssh-config-parser';
@@ -40,6 +43,7 @@ export async function startLite(): Promise<void> {
 	}
 	await app.whenReady();
 	const profiles = new LiteProfiles(app.getPath('userData'));
+	const deviceCredentials = new DeviceCredentials(app.getPath('userData'));
 	let loadError: string | undefined;
 	try {
 		await profiles.load();
@@ -62,7 +66,7 @@ export async function startLite(): Promise<void> {
 		},
 	});
 	let view: WebContentsView | undefined;
-	let tunnel: OwnedTunnel | undefined;
+	let tunnel: { stop(): Promise<void> } | undefined;
 	let tunnelClosing: Promise<void> = Promise.resolve();
 	let transportOpening: Promise<void> = Promise.resolve();
 	let abort: AbortController | undefined;
@@ -70,12 +74,36 @@ export async function startLite(): Promise<void> {
 	let connectionVersion = 0;
 	let picker = true;
 	let commandsVisible = false;
-	let status = 'Disconnected — all work executes on the host';
+	let status = 'Disconnected';
 	let error = loadError;
 	let poll: NodeJS.Timeout | undefined;
 	let hostName = '';
 	let busyPoll = false;
 	let controlServer: { close(): Promise<void> } | undefined;
+	let discovered: DiscoveredConnection | undefined;
+	let discoveredSession: Session | undefined;
+	const discovery = new DiscoveryController(
+		publish,
+		() => profiles.list(),
+		(connection) => {
+			discovered = connection;
+			discoveredSession = session.fromPartition('maestro-lite-discovered-' + randomUUID());
+			void connect(connection.profile.id);
+		},
+		(reason) => {
+			if (selected === discovered?.profile.id) selected = undefined;
+			discovered = undefined;
+			discoveredSession = undefined;
+			fail(
+				reason === 'network-changed'
+					? 'Your network changed. Check Tailscale, then choose the host again.'
+					: reason === 'pairing-failed'
+						? 'Pairing could not finish. Choose the host to try again.'
+						: 'The connection closed. Choose the host to reconnect.'
+			);
+		},
+		deviceCredentials
+	);
 	function getState(): LiteControlState {
 		return {
 			status,
@@ -85,6 +113,7 @@ export async function startLite(): Promise<void> {
 			commandsVisible,
 			canReturn: !!view,
 			profiles: profiles.list(),
+			discoveryPairing: discovery.snapshot(),
 			aliases,
 		};
 	}
@@ -122,7 +151,7 @@ export async function startLite(): Promise<void> {
 		picker = true;
 		commandsVisible = false;
 		hostName = '';
-		status = 'Disconnected — host work continues';
+		status = 'Disconnected. Work on the host keeps running.';
 		error = undefined;
 		publish();
 		return Promise.all([tunnelClosing, transportOpening]).then(() => {});
@@ -248,11 +277,15 @@ export async function startLite(): Promise<void> {
 		if (response.status === 401) return undefined;
 		if (!response.ok)
 			throw new HostConnectionError(
-				`Host handshake failed (HTTP ${response.status}). Verify Remote Control URL/token and host compatibility.`
+				base.pathname === CONNECT_PATH
+					? `Host refused this device (HTTP ${response.status}). If it was revoked, forget this pairing and request a new code.`
+					: `Host handshake failed (HTTP ${response.status}). Verify Remote Control URL/token and host compatibility.`
 			);
 		if (!response.headers.get('content-type')?.includes('application/json'))
 			throw new HostConnectionError(
-				'Host did not return a Lite handshake. Verify the URL and upgrade the host.'
+				base.pathname === CONNECT_PATH
+					? 'Host did not return a Lite handshake. Keep full Maestro open and update both devices to matching versions.'
+					: 'Host did not return a Lite handshake. Verify the URL and upgrade the host.'
 			);
 		return response.json();
 	}
@@ -269,13 +302,35 @@ export async function startLite(): Promise<void> {
 		abort = controller;
 		const signal = controller.signal;
 		try {
-			let profile = profiles.get(id);
+			const selectedDiscovery = discovered?.profile.id === id ? discovered : undefined;
+			let profile = selectedDiscovery?.profile ?? profiles.get(id);
+
 			// The partition already isolates profile + host; keep view state across app restarts.
 			const clientId = encodeURIComponent(profile.id);
 			status = `Connecting · ${profile.name}`;
 			publish();
 			let base = normalizeRemoteUrl(profile.url, profile.transport);
-			if (profile.transport === 'ssh') {
+			if (profile.transport === 'tailscale') {
+				if (!selectedDiscovery)
+					throw new HostConnectionError('Select and pair the discovered Tailscale host first.');
+				const opening = openTailnetRelay(
+					base,
+					selectedDiscovery.credential,
+					signal,
+					selectedDiscovery.peerId!
+				);
+				transportOpening = opening.then(
+					() => {},
+					() => {}
+				);
+				const result = await opening;
+				if (signal.aborted) {
+					await result.tunnel.stop();
+					return;
+				}
+				tunnel = result.tunnel;
+				base = result.url;
+			} else if (profile.transport === 'ssh') {
 				const opening = openTunnel(
 					profile.ssh!,
 					base,
@@ -297,10 +352,38 @@ export async function startLite(): Promise<void> {
 				tunnel = result.tunnel;
 				base = result.url;
 			}
-			const authentication = session.fromPartition(`maestro-lite-auth-${randomUUID()}`);
+			const authentication = selectedDiscovery
+				? discoveredSession!
+				: session.fromPartition('maestro-lite-auth-' + randomUUID());
+			if (profile.transport === 'tailscale') await authentication.setProxy({ mode: 'direct' });
+			if (selectedDiscovery)
+				authentication.webRequest.onBeforeSendHeaders((details, callback) => {
+					const url = new URL(details.url);
+					const sameOrigin =
+						url.host === base.host &&
+						(url.protocol === base.protocol ||
+							url.protocol === (base.protocol === 'https:' ? 'wss:' : 'ws:'));
+					const inside =
+						url.pathname === base.pathname || url.pathname.startsWith(base.pathname + '/');
+					const headers = { ...details.requestHeaders };
+					for (const key of Object.keys(headers))
+						if (key.toLowerCase() === ADMISSION_HEADER) delete headers[key];
+					if (sameOrigin && inside) {
+						if (signal.aborted || discovered !== selectedDiscovery) {
+							callback({ cancel: true });
+							return;
+						}
+						headers[ADMISSION_HEADER] = selectedDiscovery.credential;
+					}
+					callback({ requestHeaders: headers });
+				});
 			let raw = await handshake(authentication, base, signal);
 			if (raw === undefined) {
-				status = `Authenticating · ${profile.name} — use the host login below`;
+				if (selectedDiscovery)
+					throw new HostConnectionError(
+						'Device authorization was revoked. Forget this pairing, select the host and pair again.'
+					);
+				status = `Sign in to ${profile.name} below`;
 				picker = false;
 				publish();
 				let checking = false;
@@ -338,17 +421,24 @@ export async function startLite(): Promise<void> {
 				}
 			}
 			if (signal.aborted) return;
-			const host = validateHandshake(raw, profile);
+			const host = validateHandshake(raw, profile, !!selectedDiscovery);
 			const localPort = profile.transport === 'ssh' ? Number(base.port) : undefined;
-			if (profile.instanceId !== host.instanceId || profile.localPort !== localPort) {
+			if (
+				!selectedDiscovery &&
+				(profile.instanceId !== host.instanceId || profile.localPort !== localPort)
+			) {
 				profile = { ...profile, instanceId: host.instanceId, localPort };
 				await profiles.save(profile);
 			}
-			const isolated = session.fromPartition(hostPartition(profile.id, host.instanceId));
+			const isolated = selectedDiscovery
+				? authentication
+				: session.fromPartition(hostPartition(profile.id, host.instanceId));
 			// Never restore authentication into an endpoint before identity validation, even on port reuse.
-			for (const cookie of await authentication.cookies.get({
-				url: `${base}/api/lite/handshake`,
-			})) {
+			for (const cookie of isolated === authentication
+				? []
+				: await authentication.cookies.get({
+						url: `${base}/api/lite/handshake`,
+					})) {
 				await isolated.cookies.set({
 					url: `${base}/api/lite/handshake`,
 					name: cookie.name,
@@ -360,16 +450,17 @@ export async function startLite(): Promise<void> {
 					...(cookie.session ? {} : { expirationDate: cookie.expirationDate }),
 				});
 			}
-			validateHandshake(await handshake(isolated, base, signal), profile);
+			validateHandshake(await handshake(isolated, base, signal), profile, !!selectedDiscovery);
 			// Native Lite is online-only: migrate PWA workers without clearing host cookies or drafts.
 			await isolated.clearStorageData({ storages: ['serviceworkers', 'cachestorage'] });
 			if (signal.aborted) return;
 			removeView();
 			view = makeView(isolated, base, true);
 			window.contentView.addChildView(view);
-			hostName = `${host.hostName} · ${profile.name}`;
+			hostName =
+				host.hostName === profile.name ? host.hostName : `${host.hostName} (${profile.name})`;
 			picker = false;
-			status = `Opening Maestro · ${hostName} — work executes on host`;
+			status = `Opening Maestro on ${hostName}`;
 			error = undefined;
 			publish();
 			await view.webContents.loadURL(`${base}/desktop?lite=1&liteClientId=${clientId}`);
@@ -383,17 +474,18 @@ export async function startLite(): Promise<void> {
 					try {
 						if (++count % 5 === 0) {
 							const response = await handshake(isolated, base, signal);
+
 							if (response === undefined)
 								throw new HostConnectionError(
 									'Host login expired or was revoked. Reconnect and authenticate again.'
 								);
-							validateHandshake(response, profile);
+							validateHandshake(response, profile, !!selectedDiscovery);
 						}
 						const bridge = await current.webContents.executeJavaScript(
 							'window.__MAESTRO_BRIDGE_STATE__ || "connecting"'
 						);
 						if (!signal.aborted) {
-							status = `${String(bridge)} · ${hostName} — work executes on host`;
+							status = `${String(bridge)} · ${hostName}`;
 							error = undefined;
 							publish();
 						}
@@ -401,7 +493,7 @@ export async function startLite(): Promise<void> {
 						if (!signal.aborted) {
 							if (cause instanceof HostConnectionError) fail(cause.message);
 							else {
-								status = `Reconnecting · ${hostName} — check your last message before sending it again`;
+								status = `Reconnecting · ${hostName}. Check your last message before sending it again.`;
 								error = String(cause);
 								publish();
 							}
@@ -431,6 +523,24 @@ export async function startLite(): Promise<void> {
 		if (cli && ['remove', 'trust', 'close'].includes(name) && !options.confirmed)
 			throw new Error(`${name} requires explicit confirmation.`);
 		switch (name) {
+			case 'discovery-start':
+			case 'discovery-import':
+			case 'discovery-stop':
+			case 'discovery-status':
+			case 'network-changed':
+			case 'pair-request':
+			case 'pair-submit':
+			case 'pair-read':
+			case 'pair-cancel':
+			case 'pair-forget':
+				await discovery.control(name, payload);
+				return { state: getState() };
+			case 'discover':
+				picker = true;
+				commandsVisible = false;
+				publish();
+				window.webContents.send('lite:discover');
+				return { state: getState() };
 			case 'status':
 			case 'list':
 				return { state: getState() };
@@ -472,13 +582,16 @@ export async function startLite(): Promise<void> {
 				} else window.close();
 				return { state: { ...getState(), closing: true } };
 			case 'disconnect':
+				await discovery.control('pair-cancel', undefined);
 				await disconnect();
 				break;
 			case 'connect':
 			case 'reconnect': {
 				const id = name === 'connect' ? String(payload) : selected;
+				if (discovered && id !== discovered.profile.id)
+					await discovery.control('pair-cancel', undefined);
 				if (!id) {
-					if (cli) throw new Error('Select a saved connection before reconnecting.');
+					if (cli) throw new Error('Select a host before reconnecting.');
 					picker = true;
 					publish();
 					break;
@@ -554,6 +667,10 @@ export async function startLite(): Promise<void> {
 	}
 	function shortcuts(event: Electron.Event, input: Electron.Input): void {
 		if (input.type !== 'keyDown') return;
+		if ((input.control || input.meta) && input.shift && input.key.toLowerCase() === 'd') {
+			event.preventDefault();
+			void control('discover');
+		}
 		if ((input.control || input.meta) && input.shift && input.key.toLowerCase() === 'l') {
 			event.preventDefault();
 			void control('connections');
@@ -567,6 +684,35 @@ export async function startLite(): Promise<void> {
 			void control('commands');
 		}
 	}
+	ipcMain.handle('lite:connection-update', async (event, action: string) => {
+		if (
+			event.sender !== window.webContents ||
+			event.senderFrame !== window.webContents.mainFrame ||
+			event.sender.getURL() !== localUrl
+		)
+			throw new Error('Updates require the trusted local connection window.');
+		if (action === 'install') {
+			const answer = await dialog.showMessageBox(window, {
+				type: 'warning',
+				buttons: ['Cancel', 'Restart and install'],
+				defaultId: 0,
+				cancelId: 0,
+				message: 'Restart this Lite client to install?',
+				detail: 'This disconnects Lite. Work on the remote host is not stopped or updated.',
+			});
+			if (answer.response !== 1)
+				return {
+					status: 'downloaded',
+					message: 'Restart cancelled. Your update remains downloaded.',
+				};
+			await disconnect();
+			discovery.close();
+			await controlServer?.close();
+			controlServer = undefined;
+		}
+		const { connectionUpdateAction } = await import('../auto-updater');
+		return connectionUpdateAction(action);
+	});
 	ipcMain.handle('lite:control', (event, name: string, payload: unknown) => {
 		if (
 			event.sender !== window.webContents ||
@@ -581,11 +727,13 @@ export async function startLite(): Promise<void> {
 	window.webContents.on('before-input-event', (event, input) => shortcuts(event, input));
 	window.on('resize', publish);
 	window.on('closed', () => {
+		discovery.close();
 		abort?.abort();
 		clearInterval(poll);
 		tunnel?.stop();
 		view?.webContents.close();
 		ipcMain.removeHandler('lite:control');
+		ipcMain.removeHandler('lite:connection-update');
 		app.quit();
 	});
 	let stoppingControl: Promise<void> | undefined;
@@ -606,6 +754,11 @@ export async function startLite(): Promise<void> {
 			{
 				label: 'Connection',
 				submenu: [
+					{
+						label: 'Discover hosts',
+						accelerator: 'CmdOrCtrl+Shift+D',
+						click: () => void control('discover'),
+					},
 					{
 						label: 'Connections',
 						accelerator: 'CmdOrCtrl+Shift+L',

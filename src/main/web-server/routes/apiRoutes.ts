@@ -83,9 +83,7 @@ export class ApiRoutes {
 	/**
 	 * Register all API routes on the Fastify server
 	 */
-	registerRoutes(server: FastifyInstance): void {
-		const token = this.securityToken;
-
+	registerRoutes(server: FastifyInstance, token = this.securityToken): void {
 		// Get all sessions (not just "live" ones - security token protects access)
 		server.get(
 			`/${token}/api/sessions`,

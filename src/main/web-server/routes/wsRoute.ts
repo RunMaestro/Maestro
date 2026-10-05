@@ -15,7 +15,7 @@
  * 6. Client can send messages which are delegated to WebSocketMessageHandler
  */
 
-import { FastifyInstance } from 'fastify';
+import { FastifyInstance, FastifyRequest } from 'fastify';
 import { logger } from '../../utils/logger';
 import { WEB_LOGIN_WS_CLOSE_CODE } from '../../../shared/webLogin';
 import { isWebRequestAuthorized, resolveWebRequestAuth } from '../auth/web-login-policy';
@@ -101,10 +101,16 @@ export class WsRoute {
 	/**
 	 * Register the WebSocket route on the Fastify server
 	 */
-	registerRoute(server: FastifyInstance): void {
-		const token = this.securityToken;
-
+	registerRoute(
+		server: FastifyInstance,
+		token = this.securityToken,
+		admission?: (request: FastifyRequest) => boolean
+	): void {
 		server.get(`/${token}/ws`, { websocket: true }, (socket, request) => {
+			if (admission && !admission(request)) {
+				socket.close(4403, 'Host admission expired or revoked');
+				return;
+			}
 			if (!isRemoteOriginAllowed(request)) {
 				socket.close(1008, 'Cross-origin remote access is not allowed');
 				return;
@@ -157,6 +163,10 @@ export class WsRoute {
 				// there is no later point at which a frame can say who sent it.
 				...(auth.user ? { user: auth.user, sessionId: auth.sessionId } : {}),
 				isAuthorized: () => {
+					if (admission && !admission(request)) {
+						socket.close(4403, 'Host admission expired or revoked');
+						return false;
+					}
 					const currentAuth = resolveWebRequestAuth(request);
 					if (!isWebRequestAuthorized(currentAuth)) {
 						socket.close(WEB_LOGIN_WS_CLOSE_CODE, 'Login required');
@@ -166,6 +176,9 @@ export class WsRoute {
 					return true;
 				},
 			};
+			const admissionCheck = admission
+				? setInterval(() => client.isAuthorized?.(), 1000)
+				: undefined;
 
 			// Notify parent about connection
 			this.callbacks.onClientConnect?.(client);
@@ -294,6 +307,7 @@ export class WsRoute {
 
 			// Handle disconnection
 			socket.on('close', () => {
+				clearInterval(admissionCheck);
 				this.callbacks.onClientDisconnect?.(clientId);
 				logger.info(`Client disconnected: ${clientId}`, LOG_CONTEXT);
 			});

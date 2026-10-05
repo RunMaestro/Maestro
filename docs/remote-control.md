@@ -61,7 +61,7 @@ persistent cookie storage where available.
 
 ### Connect over SSH
 
-1. Choose **Add connection**, name it, and select **SSH tunnel**.
+1. Open **Saved connections and manual sign-in**, choose **Add a connection**, name it, and select **SSH tunnel**.
 2. Enter the host's complete Remote Control URL, including its token. For a
    server on the SSH machine, use its loopback address and configured port.
 3. Enter the SSH hostname or an existing SSH config alias. Use **Use SSH config
@@ -77,15 +77,15 @@ client. Closing or disconnecting Lite closes its tunnel, not accepted host work.
 
 ### Connect over HTTPS
 
-Choose **Direct HTTPS**, enter the complete HTTPS Remote Control URL, and sign
-in with a host Web Login account. Direct HTTP and hosts without Web Login are
-rejected. Do not bypass certificate errors or expose the raw HTTP server to
-the public internet.
+Open **Saved connections and manual sign-in**, choose **Add a connection**, select
+**HTTPS link**, enter the complete HTTPS Remote Control URL, and sign in with a host
+Web Login account. Arbitrary direct HTTP and HTTPS hosts without Web Login are rejected.
+Do not bypass certificate errors or expose the raw HTTP server to the public internet.
 
 Lite pins the authenticated host's persistent instance identity. A changed
 identity is an error, not permission to reuse the previous host's cookies or
-drafts. Verify the replacement out of band before using **Forget previous host
-identity and authenticate again**. That action does not bypass TLS or SSH trust.
+drafts. Verify the replacement out of band before using **Forget host identity and
+sign in again**. That action does not bypass TLS or SSH trust.
 
 ### Controls and CLI
 
@@ -143,6 +143,139 @@ before it is submitted again.
 
 Lite is a runtime mode in the existing Electron distribution. It is not a separate
 small installer and has no offline execution fallback.
+
+### Discovery-first Lite and persistent Tailscale access
+
+The primary flow is **enable direct access once → discover → select → pair once by
+code and host approval → connected**. There is no Maestro account, username or
+password, and no Tailscale Serve route, certificate provisioning, advertisement or
+administrator step. Tailscale supplies the encrypted network; Maestro's paired-device
+credential supplies application authorization.
+
+#### Enable the host once
+
+1. Keep full Maestro running on a machine connected to Tailscale. Open
+   **Remote Control → Connect another device...**.
+2. If access is off, read and select the access consent box, then choose
+   **Turn on access**. The app checks the existing local Tailscale daemon and assigned
+   interface; it does not run `tailscale up`, configure Serve, change firewall/ACL
+   rules or request a certificate.
+3. If Tailscale is unavailable, **Open Tailscale** opens the installed provider app
+   or official download page. Complete provider/OS steps yourself, then use
+   **Check again**. An unavailable provider leaves access closed.
+4. On the laptop, extract the matched **Maestro-Lite-Windows-x64.zip** and run
+   **Start-Maestro-Lite.cmd**. Choose **Find my computer**, then select the host.
+   Lite opens directly to this step; saved connections and diagnostics are not shown alongside it.
+5. The desktop shows **“LAPTOP-NAME wants to connect to this computer”** with
+   **Decline** and **Show code**, even when setup is closed. **Show code** opens the
+   code step for that request. **Decline** rejects it without showing a code.
+6. Enter the large six-digit code in Lite. After verification, review the device
+   and its access on the desktop, then choose **Pair device and allow control**. Showing a code does
+   not grant access. No login or manually entered URL is needed.
+
+Both computers show the same four-step flow: choose the computer, review the request,
+enter the code, then allow access. The host waits for the other computer once access
+is enabled. Only the active request is shown; **Next request** selects another waiting
+request without approving it. Completion offers **Done**.
+
+**Manage access** is a separate host screen for paired devices, turning access off,
+HTTPS options and updates. In Lite, **Can't find your computer?** opens help with
+separate saved/manual connections, invitation and diagnostic screens. **Back** or
+Escape leaves a secondary screen; **Cancel** ends the current pairing attempt.
+Status refreshes preserve code entry and keyboard focus.
+
+**Requested access is full operator access:** chats, agents, terminals and
+read/write files. Approve only devices trusted with that access. A discovery result
+or Tailscale membership is not permission to control Maestro. The code expires
+after two minutes and has bounded attempts; final host confirmation remains required.
+The requesting computer's OS hostname is supplied by its Lite main process; it is
+an identification hint, not proof of identity. Only one incoming prompt appears at
+a time. Cancelled, expired, replaced or shutdown requests dismiss their prompt, and
+a late **Show code** action cannot approve a newer request. Showing the code is not a device
+grant; final host approval after the code proof remains separate.
+
+#### Direct transport and discovery
+
+Direct mode uses the fixed **TCP port 56036** on an assigned Tailscale IPv4 address.
+When Maestro's existing backend already uses that port, its existing listener is
+reused. Otherwise a private listener bound only to the Tailscale address reuses the
+same production HTTP/WebSocket routes. The normal backend port and existing web
+configuration are not rewritten.
+
+The application prefix is **/.well-known/maestro/**; its **connect/** subtree carries
+desktop/assets, API, files/media, Concerto and WebSockets. Direct requests require
+both the actual Tailscale destination socket and a current eligible source peer.
+Forwarded headers or a forged Host header cannot substitute for those checks.
+Application access additionally requires a valid, non-revoked device credential.
+
+Lite checks up to 32 eligible online peers from its existing Tailscale network map,
+not an address range or an advertising directory. It checks only the fixed Maestro
+port and manifest path. The local daemon's node identity—not remote manifest text—is
+bound to the remembered device credential. A changed node or host identity refuses
+credential reuse and requires explicit verification/new pairing.
+
+Direct HTTP is an explicit tailnet-only transport, **not a general HTTP fallback**.
+It accepts only canonical Tailscale IP/port endpoints, verifies the current local
+daemon/interface/peer and binds outgoing sockets to that interface. A bounded,
+authenticated loopback adapter gives the native browser a secure localhost context
+and forwards only this host's application subtree over the verified tailnet socket.
+It is not a general proxy; foreign origins, sibling paths and redirects outside the
+selected host are rejected. Credentials stay in the main process and scoped request
+headers, never page JavaScript, discovery metadata, URLs, clipboard or logs.
+
+Existing HTTPS/SSH transports keep their original verification and authorization
+rules. HTTPS certificate checks are not disabled. Optional named Services, LAN
+advertising and Internet/Cloudflare invitations remain secondary compatibility
+paths, not prerequisites for direct Tailscale. Cloudflare Access challenges still
+fail closed; no Access bypass or automatic named-tunnel provisioning is claimed.
+
+#### Pairing, persistence and revocation
+
+Setup revision **6**, protocol **maestro-device-pairing/1**, scope **host.control**
+use OPAQUE code proof plus explicit host-local confirmation. Older builds require a
+matched update; prior grants are not silently moved to a different transport/origin.
+
+The host stores only credential verifiers and public device metadata in
+`lite-paired-devices.json`. Lite stores its secret in `lite-device-credentials.json`
+using Electron's OS-backed `safeStorage`; unavailable or plaintext OS protection
+fails closed. Direct credentials also bind the authenticated Tailscale node identity.
+The existing optional Web Login plugin/account policy is unchanged and is not used
+for device pairing.
+
+The host's `lite-tailnet-access.json` stores application consent bound to this
+Maestro instance, Tailscale device/network and address. Closing setup does not stop
+access. Restart restores consent only after read-only daemon/interface validation;
+it does not recreate routes or silently switch networks. Periodic checks close
+access during an outage and recover only the originally consented network. A changed
+node/network requires explicit review rather than overwriting unrelated settings.
+
+On the host, open **Manage access**. **Turn off access** closes the application
+path/private listener without changing Tailscale or erasing paired devices. Choose
+**Remove**, then **Remove device** under **Paired devices** to remove authorization
+persistently and close HTTP/WebSocket access. Client
+**Forget pairing** removes its protected local copy; remove access on the host to deny a lost device.
+Normal disconnect and host restart retain pairing. Requests that expire or are
+cancelled before completion do not create a remembered grant.
+
+**Full Maestro and its owning renderer must run on an awake, connected machine.**
+This is not a headless daemon or wake service and does not change OS startup settings.
+The existing Tailscale policy and host firewall must permit the direct connection;
+Maestro does not silently relax either. No Serve/UAC configuration is involved.
+
+#### Verification
+
+The direct transport has focused boundary/authentication coverage, real loopback
+HTTP/WebSocket relay tests, and native source/packaged UI/IPC scenarios. Run the
+native scenarios with `npm run build:main`, `npm run build:preload`, then
+`npm run test:lite-native`.
+
+The native runs mock the external Tailscale socket/daemon and OS credential
+provider but use actual browser HTTP/WebSocket traffic through the production
+relay and routes. They do not substitute for testing two real computers, their
+network policy and the client's operating-system credential store.
+
+See the [guided connection implementation notes](../Plans/maestro-lite-discovery-pairing-research.md#guided-connect-flow)
+for the authorization contract and verification boundaries.
 
 ## Mobile Web Interface
 

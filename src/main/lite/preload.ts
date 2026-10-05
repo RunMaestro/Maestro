@@ -1,3 +1,4 @@
+import { installDiscoveryControls, readableError } from './discovery/preload';
 import { ipcRenderer } from 'electron';
 import type { LiteProfile } from './profiles';
 import type { LiteControlState } from '../../shared/lite-control';
@@ -12,30 +13,43 @@ window.addEventListener('DOMContentLoaded', () => {
 	let pending = false;
 	let saving = false;
 	let initialized = false;
-	const report = (error: unknown) => {
-		element('error').textContent = error instanceof Error ? error.message : String(error);
-		element('error').focus();
+	let forgottenError = '';
+	const setError = (text: string) => {
+		if (element('error').textContent !== text) element('error').textContent = text;
+		element('error-actions').hidden = !/forget this pairing/i.test(text);
 	};
+	const report = (error: unknown) => {
+		const text = readableError(error);
+		setError(text);
+		if (text) element('error').focus();
+	};
+	const discovery = installDiscoveryControls(report);
 	function refresh(): void {
 		const saved = profiles.length > 0;
+		element('saved').hidden = !saved || !element('profile').hidden;
+		element('manual-new').hidden = !saved || !element('profile').hidden;
+		element<HTMLButtonElement>('guide-back').disabled = pending;
 		element<HTMLButtonElement>('cancel').disabled = saving;
 		element<HTMLSelectElement>('profiles').disabled = pending;
 		element('saved').hidden = !saved;
+		element('manual-new').hidden = saved;
 		for (const id of ['connect', 'edit', 'remove'])
 			element<HTMLButtonElement>(id).disabled = pending || !saved;
 		for (const id of ['new', 'save', 'save-connect'])
 			element<HTMLButtonElement>(id).disabled = pending;
-		element<HTMLButtonElement>('reconnect').disabled =
-			pending || !profiles.some((profile) => profile.id === state?.selected);
+		const reconnectable =
+			profiles.some((profile) => profile.id === state?.selected) ||
+			(!!state?.selected && state.discoveryPairing?.pairing.phase === 'connected');
+		element<HTMLButtonElement>('reconnect').disabled = pending || !reconnectable;
 		element<HTMLButtonElement>('disconnect').disabled = !state?.selected;
 		element('disconnect').textContent = pending ? 'Cancel connection' : 'Disconnect';
 		element('profile').setAttribute('aria-busy', String(pending));
-		element('connect').textContent = pending ? 'Connecting...' : 'Connect';
+		element('connect').textContent = pending ? 'Connecting…' : 'Connect';
 		document.querySelectorAll<HTMLButtonElement>('[data-action]').forEach((button) => {
 			const action = button.dataset.action;
 			button.disabled =
 				action === 'reconnect'
-					? pending || !profiles.some((profile) => profile.id === state?.selected)
+					? pending || !reconnectable
 					: action === 'disconnect'
 						? !state?.selected
 						: false;
@@ -58,17 +72,14 @@ window.addEventListener('DOMContentLoaded', () => {
 			? 'http://127.0.0.1:8080/your-link/desktop'
 			: 'https://your-host.example/your-link/desktop';
 		element('url-help').textContent = ssh
-			? "Paste the host's Remote Control link using localhost or 127.0.0.1. The tunnel connects to it on the host."
-			: 'Paste the complete HTTPS link from the host. You will sign in after connecting.';
+			? "Paste the host's Remote Control link that starts with localhost or 127.0.0.1. The tunnel opens it on the host."
+			: "In Maestro on the host, open Remote Control and copy its link. You'll sign in after connecting.";
 	}
 	function edit(profile?: LiteProfile): void {
 		selected = profile?.id;
 		element('profile').hidden = false;
-		element('form-title').textContent = profile
-			? 'Edit connection'
-			: profiles.length
-				? 'Add connection'
-				: 'Add your first connection';
+		discovery.showManual();
+		element('form-title').textContent = profile ? 'Edit connection' : 'Add a connection';
 		input('name').value = profile?.name ?? '';
 		input('url').value = profile?.url ?? '';
 		element<HTMLSelectElement>('transport').value = profile?.transport ?? 'https';
@@ -84,21 +95,19 @@ window.addEventListener('DOMContentLoaded', () => {
 		);
 		element<HTMLDetailsElement>('advanced').open = false;
 		transportChanged();
-		element('error').textContent = '';
+		refresh();
 		element('notice').textContent = '';
 	}
 	async function connect(name: 'connect' | 'reconnect', id?: string): Promise<void> {
 		if (pending) return;
 		pending = true;
-		element('error').textContent = '';
-		element('notice').textContent =
-			'Connecting to your host. You can cancel using the button above.';
+		setError('');
+		element('notice').textContent = '';
 		refresh();
 		try {
 			await action(name, id);
 		} finally {
 			pending = false;
-			element('notice').textContent = '';
 			refresh();
 		}
 	}
@@ -109,21 +118,24 @@ window.addEventListener('DOMContentLoaded', () => {
 			return;
 		}
 		edit(profiles.find((profile) => profile.id === element<HTMLSelectElement>('profiles').value));
-		if (profiles.length) {
-			element('profile').hidden = true;
-			element('connect').focus();
-		} else {
-			element('notice').textContent =
-				'Setup canceled. You can add a connection whenever you are ready.';
-			input('name').focus();
-		}
+		element('profile').hidden = true;
+		if (profiles.length) element('connect').focus();
+		else discovery.showHosts();
+		refresh();
 	}
 	ipcRenderer.on('lite:state', (_event, next: LiteControlState) => {
 		state = next;
-		element('status').textContent = state.status;
-		element('status').title = state.status;
+		const statusText = state.status.charAt(0).toUpperCase() + state.status.slice(1);
+		if (element('status').textContent !== statusText) {
+			element('status').textContent = statusText;
+			element('status').title = statusText;
+		}
 		element('picker').hidden = !state.picker;
 		element('return').hidden = !state.picker || !state.canReturn;
+		element('connections').hidden = state.picker;
+		element('palette').hidden = state.picker && !state.commandsVisible;
+		element('reconnect').hidden = state.picker;
+		element('disconnect').hidden = state.picker;
 		element('commands').classList.toggle('open', state.commandsVisible === true);
 		element('palette').setAttribute('aria-expanded', String(state.commandsVisible === true));
 		const old = element<HTMLSelectElement>('profiles').value;
@@ -145,22 +157,24 @@ window.addEventListener('DOMContentLoaded', () => {
 			if (choice) element<HTMLSelectElement>('profiles').value = choice.id;
 			if (!initialized) {
 				edit(choice);
-				element('profile').hidden = profiles.length > 0;
-				element<HTMLDetailsElement>('setup-help').open = profiles.length === 0;
+				element('profile').hidden = true;
+				discovery.showHosts(false);
 				initialized = true;
-			} else if (!profiles.length) edit();
+			}
 		}
 		const profile = profiles.find(
 			(entry) => entry.id === element<HTMLSelectElement>('profiles').value
 		);
 		element('identity-details').hidden = !profile?.instanceId;
 		element('identity').textContent = profile?.instanceId
-			? `Verified host: ${profile.instanceId}`
+			? `Verified host ID: ${profile.instanceId}`
 			: '';
 		element('trust').hidden = !profile?.instanceId;
-		if (state.error && element('error').textContent !== state.error) report(state.error);
-		else if (!state.picker || state.status.startsWith('Disconnected'))
-			element('error').textContent = '';
+		const shownError = readableError(state.error);
+		if (shownError !== forgottenError) forgottenError = '';
+		if (shownError && shownError !== forgottenError && element('error').textContent !== shownError)
+			report(state.error);
+		else if (!state.picker || state.status.startsWith('Disconnected')) setError('');
 		element('aliases').replaceChildren(
 			...state.aliases.map((alias) => {
 				const option = document.createElement('option');
@@ -195,6 +209,10 @@ window.addEventListener('DOMContentLoaded', () => {
 		'click',
 		() => void action('trust', element<HTMLSelectElement>('profiles').value)
 	);
+	element('manual-new').addEventListener('click', () => {
+		edit();
+		input('name').focus();
+	});
 	element('cancel').addEventListener('click', cancelEdit);
 	element('transport').addEventListener('change', transportChanged);
 	element('reconnect').addEventListener('click', () => void connect('reconnect'));
@@ -217,8 +235,13 @@ window.addEventListener('DOMContentLoaded', () => {
 		if (state?.commandsVisible) {
 			void action('dismiss');
 			element('palette').focus();
-		} else if (pending || !element('profile').hidden) cancelEdit();
-		else void action('dismiss');
+		} else if (pending || (!element('manual-connections').hidden && !element('profile').hidden))
+			cancelEdit();
+		else if (discovery.escape()) return;
+		else if (state?.canReturn) void action('dismiss');
+		else {
+			discovery.showHosts();
+		}
 	});
 	element('profile').addEventListener('submit', async (event) => {
 		event.preventDefault();
@@ -265,14 +288,25 @@ window.addEventListener('DOMContentLoaded', () => {
 			selected = id;
 			element<HTMLSelectElement>('profiles').value = id;
 			element('profile').hidden = true;
-			element<HTMLDetailsElement>('setup-help').open = false;
-			element('notice').textContent = 'Connection saved. Choose Connect when you are ready.';
+			element('notice').textContent = connectAfterSave ? '' : 'Connection saved.';
 			element('connect').focus();
 			if (connectAfterSave) await connect('connect', id);
 		} catch (error) {
 			report(error);
 		}
 	});
+	element('error-forget').addEventListener('click', async () => {
+		forgottenError = element('error').textContent ?? '';
+		setError('');
+		if (!(await action('pair-forget'))) {
+			forgottenError = '';
+			return;
+		}
+		element('notice').textContent = 'Pairing forgotten. Choose the host to pair again.';
+		element('discovery-heading').focus();
+	});
 	edit();
+	element('profile').hidden = true;
+	discovery.showHosts(false);
 	void action('ready');
 });

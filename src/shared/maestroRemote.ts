@@ -9,6 +9,6 @@ export interface MaestroRemoteHandshake {
 	platform: string;
 	ready: boolean;
 	unavailableReason?: string;
-	authentication: { loginEnabled: boolean; authenticated: boolean };
+	authentication: { loginEnabled: boolean; authenticated: boolean; method?: 'device-pairing' };
 	capabilities: { sessions: boolean; terminal: boolean; files: boolean; browserRelay: boolean };
 }

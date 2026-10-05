@@ -21,8 +21,7 @@
  *
  * Extracted from main/index.ts to improve code organization.
  */
-
-import { ipcMain, app } from 'electron';
+import { ipcMain, app, BrowserWindow } from 'electron';
 import { logger } from '../../utils/logger';
 import { WebServer } from '../../web-server';
 import type { AITabData } from '../../web-server/services/broadcastService';
@@ -617,6 +616,14 @@ export function registerWebHandlers(deps: WebHandlerDependencies): void {
 	});
 
 	// Web server management
+	ipcMain.handle('webserver:openLitePairing', async (event) => {
+		const parent = BrowserWindow.fromWebContents(event.sender);
+		if (!parent || event.senderFrame !== event.sender.mainFrame)
+			throw new Error('Host-local window required');
+		const server = getWebServer();
+		if (!server?.isActive()) throw new Error('Existing Maestro server is not running');
+		await server.openLitePairing(parent);
+	});
 	ipcMain.handle('webserver:getUrl', async () => {
 		return getWebServer()?.getSecureUrl();
 	});

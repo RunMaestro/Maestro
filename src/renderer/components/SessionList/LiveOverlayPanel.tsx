@@ -4,6 +4,7 @@ import { QRCodeSVG } from 'qrcode.react';
 import type { Theme } from '../../types';
 import { safeClipboardWrite } from '../../utils/clipboard';
 import { ToggleSwitch } from '../ui/ToggleSwitch';
+import { isWebDesktop } from '../../utils/runtimeContext';
 
 import type { TunnelStatus } from '../../hooks/remote/useLiveOverlay';
 import { openUrl } from '../../utils/openUrl';
@@ -66,6 +67,7 @@ export const LiveOverlayPanel = memo(function LiveOverlayPanel({
 }: LiveOverlayPanelProps) {
 	const containerRef = useRef<HTMLDivElement>(null);
 	const [isPersistPending, setIsPersistPending] = useState(false);
+	const [pairingError, setPairingError] = useState('');
 	const [position, setPosition] = useState<{ top: number; left: number } | null>(null);
 
 	useEffect(() => {
@@ -143,6 +145,21 @@ export const LiveOverlayPanel = memo(function LiveOverlayPanel({
 						)}
 					</div>
 				</div>
+				{!isWebDesktop() && (
+					<div className="p-3 border-b" style={{ borderColor: theme.colors.border }}>
+						<button
+							type="button"
+							onClick={() => {
+								void window.maestro.webserver
+									.openLitePairing()
+									.catch((error: Error) => setPairingError(error.message));
+							}}
+						>
+							Connect another device...
+						</button>
+						{pairingError && <p role="alert">{pairingError}</p>}
+					</div>
+				)}
 
 				{/* Remote Access Toggle Section */}
 				<div className="p-3 border-b" style={{ borderColor: theme.colors.border }}>

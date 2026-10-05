@@ -6,7 +6,11 @@ export class HostConnectionError extends Error {
 	name = 'HostConnectionError';
 }
 
-export function validateHandshake(value: unknown, profile: LiteProfile): MaestroRemoteHandshake {
+export function validateHandshake(
+	value: unknown,
+	profile: LiteProfile,
+	devicePaired = false
+): MaestroRemoteHandshake {
 	const host = value as MaestroRemoteHandshake;
 	if (
 		!host ||
@@ -35,12 +39,19 @@ export function validateHandshake(value: unknown, profile: LiteProfile): Maestro
 		throw new HostConnectionError(
 			'Host identity changed. Disconnect and verify the host before explicitly forgetting the saved identity.'
 		);
-	if (profile.transport === 'https' && !host.authentication.loginEnabled)
-		throw new HostConnectionError(
-			'Direct HTTPS requires host login. Enable Web Login on the host; TLS alone is not authentication.'
-		);
-	if (host.authentication.loginEnabled && !host.authentication.authenticated)
-		throw new HostConnectionError('Host login is required.');
+	if (devicePaired) {
+		if (host.authentication.method !== 'device-pairing' || !host.authentication.authenticated)
+			throw new HostConnectionError(
+				'Paired-device authorization was rejected. Pair this device again.'
+			);
+	} else {
+		if (profile.transport === 'https' && !host.authentication.loginEnabled)
+			throw new HostConnectionError(
+				'Direct manual HTTPS requires host login. Use device pairing for code-only access.'
+			);
+		if (host.authentication.loginEnabled && !host.authentication.authenticated)
+			throw new HostConnectionError('Host login is required.');
+	}
 	if (!host.ready)
 		throw new HostConnectionError(
 			`Host is not ready: ${host.unavailableReason || 'keep full Maestro and its owning window running.'}`

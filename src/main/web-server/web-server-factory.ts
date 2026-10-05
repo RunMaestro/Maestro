@@ -150,7 +150,7 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 		}
 
 		const server = new WebServer(port, securityToken);
-		server.setRemoteHostStatusProvider(createRemoteHostStatusProvider(deps));
+		server.setRemoteHostStatusProvider(createRemoteHostStatusProvider(deps), deps.getMainWindow);
 
 		// Roaming to a different network changes the LAN IP the URL and QR code
 		// are built from. The server keeps serving (it binds 0.0.0.0), so all

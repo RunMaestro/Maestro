@@ -65,6 +65,7 @@
 		"test:e2e": "bun run build:main && bun run build:renderer && playwright test",
 		"test:e2e:ui": "bun run build:main && bun run build:renderer && playwright test --ui",
 		"test:e2e:headed": "bun run build:main && bun run build:renderer && playwright test --headed",
+		"test:lite-native": "node --test src/__tests__/integration/lite-native-ipc.test.cjs",
 		"test:integration": "vitest run --config vitest.integration.config.ts",
 		"test:integration:watch": "vitest --config vitest.integration.config.ts",
 		"test:performance": "vitest run --config vitest.performance.config.mts",
@@ -320,6 +321,8 @@
 		}
 	},
 	"dependencies": {
+		"@serenity-kit/opaque": "1.1.0",
+		"dns-packet": "5.6.1",
 		"@codemirror/commands": "^6.10.3",
 		"@codemirror/lang-cpp": "^6.0.3",
 		"@codemirror/lang-css": "^6.3.1",

@@ -29,6 +29,13 @@ import { FastifyInstance, FastifyRequest } from 'fastify';
 import { randomUUID } from 'crypto';
 import path from 'path';
 import { existsSync } from 'fs';
+import { app, type BrowserWindow } from 'electron';
+import { tunnelManager } from '../tunnel-manager';
+import { HostPairingWindow } from '../lite/pairing/host-window';
+import { listenTailnet } from '../lite/tailnet-listener';
+import { registerPairingRoutes } from '../lite/pairing/routes';
+
+import { registerLiteConnectionRoutes } from './routes/liteConnectionRoutes';
 import { logger } from '../utils/logger';
 import type { GroupAppearance, GroupUpdateRequest } from '../../shared/groupAppearance';
 import { getLocalIpAddress } from '../utils/networkUtils';
@@ -209,6 +216,24 @@ const DEFAULT_RATE_LIMIT_CONFIG: RateLimitConfig = {
 export class WebServer {
 	private server: FastifyInstance;
 	private port: number;
+	private litePairing = new HostPairingWindow();
+	private getPairingParent: () => BrowserWindow | null = () => null;
+	async openLitePairing(parent: BrowserWindow): Promise<void> {
+		if (!this.isRunning || !this.getRemoteHostStatus)
+			throw new Error('Existing Maestro server must be running');
+		const status = await this.getRemoteHostStatus();
+		await this.litePairing.open(parent, status.instanceId, {
+			name: status.hostName,
+			appVersion: status.appVersion,
+			parent: this.getPairingParent,
+			backendPort: () => this.port,
+			listenTailnet: (address) => listenTailnet(this.server, address),
+			endpoints: () => {
+				const tunnel = tunnelManager.getStatus();
+				return tunnel.isRunning && tunnel.url ? [tunnel.url] : [];
+			},
+		});
+	}
 	private isRunning: boolean = false;
 	private webClients: Map<string, WebClient> = new Map();
 	private rateLimitConfig: RateLimitConfig = { ...DEFAULT_RATE_LIMIT_CONFIG };
@@ -336,8 +361,12 @@ export class WebServer {
 		// Note: setupMiddleware and setupRoutes are called in start() to handle async properly
 	}
 
-	setRemoteHostStatusProvider(provider: () => Promise<RemoteHostStatus>): void {
+	setRemoteHostStatusProvider(
+		provider: () => Promise<RemoteHostStatus>,
+		parent?: () => BrowserWindow | null
+	): void {
 		this.getRemoteHostStatus = provider;
+		if (parent) this.getPairingParent = parent;
 	}
 
 	/**
@@ -1011,6 +1040,12 @@ export class WebServer {
 	}
 
 	private setupRoutes(): void {
+		registerPairingRoutes(
+			this.server,
+			() => this.litePairing.host,
+			() => true,
+			app.getVersion()
+		);
 		// Setup static routes (web-desktop SPA, PWA files, health check). The
 		// desktop bundle is served at the token root and at /<token>/desktop -
 		// see StaticRoutes.registerRoutes.
@@ -1094,6 +1129,20 @@ export class WebServer {
 				this.broadcastService.resumeBridgeClient(epoch, lastSeq, subscribedSessionId),
 		});
 		this.wsRoute.registerRoute(this.server);
+		registerLiteConnectionRoutes(this.server, {
+			getHost: () => this.litePairing.host,
+			webDesktopPath: this.webDesktopPath,
+			webAssetsPath: this.webAssetsPath,
+			apiRoutes: this.apiRoutes,
+			wsRoute: this.wsRoute,
+			getHostStatus: async () => {
+				if (!this.getRemoteHostStatus) throw new Error('Remote host contract is not configured');
+				const status = await this.getRemoteHostStatus();
+				return this.webDesktopPath
+					? status
+					: { ...status, ready: false, unavailableReason: 'Host web-desktop assets are not built' };
+			},
+		});
 	}
 
 	private async releaseWebClient(clientId: string): Promise<void> {
@@ -1561,7 +1610,8 @@ export class WebServer {
 			const store = getWebUserStore();
 			this.unsubscribeWebUsers = store.onChange(() => {
 				for (const client of this.webClients.values()) {
-					if (!client.user) continue;
+					// Device-authorized sockets have no account session; their own verifier enforces revocation.
+					if (!client.user || !client.sessionId) continue;
 					if (store.resolveSession(client.sessionId)) continue;
 					logger.info(
 						`Closing ${client.id}: session for "${client.user.username}" was revoked`,
@@ -1626,6 +1676,20 @@ export class WebServer {
 
 			this.isRunning = true;
 			this.startAddressWatcher();
+			if (this.getRemoteHostStatus) {
+				const status = await this.getRemoteHostStatus();
+				await this.litePairing.initialize(status.instanceId, {
+					name: status.hostName,
+					appVersion: status.appVersion,
+					parent: this.getPairingParent,
+					backendPort: () => this.port,
+					listenTailnet: (address) => listenTailnet(this.server, address),
+					endpoints: () => {
+						const tunnel = tunnelManager.getStatus();
+						return tunnel.isRunning && tunnel.url ? [tunnel.url] : [];
+					},
+				});
+			}
 
 			return {
 				port: this.port,
@@ -1663,6 +1727,7 @@ export class WebServer {
 		this.addressWatcher = createNetworkAddressWatcher({
 			initialAddress: this.localIpAddress,
 			onChange: ({ address }) => {
+				this.litePairing.stop();
 				this.localIpAddress = address;
 				this.onLocalAddressChanged?.(this.getSecureUrl());
 			},
@@ -1675,6 +1740,7 @@ export class WebServer {
 	}
 
 	async stop(): Promise<void> {
+		await this.litePairing.close();
 		if (!this.isRunning) {
 			return;
 		}

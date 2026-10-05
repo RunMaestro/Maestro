@@ -97,6 +97,78 @@ export function registerLiteCommands(program: Command): void {
 		)
 		.option('--json', 'Output JSON')
 		.action((id: string, _options, command: Command) => run('connect', command, () => id));
+	const discovery = lite
+		.command('discovery')
+		.description('Local-network and consented Tailscale peer or advertised Service discovery');
+	discovery.command('show').action((_options, command: Command) => run('discover', command));
+	discovery
+		.command('status')
+		.action((_options, command: Command) => run('discovery-status', command));
+	discovery.command('stop').action((_options, command: Command) => run('discovery-stop', command));
+	discovery
+		.command('start')
+		.option(
+			'--interface <ipv4>',
+			'Advanced override: use one approved LAN interface instead of automatic selection'
+		)
+		.option('--no-lan', 'Do not browse local-network advertisements')
+		.option('--no-tailscale', 'Do not read existing Tailscale client service metadata')
+		.option(
+			'--tailscale-peers',
+			'Allow fixed HTTPS 443 Maestro checks of up to 32 existing peers per refresh; no login or trust'
+		)
+		.action((options, command: Command) =>
+			run('discovery-start', command, () => ({
+				interfaceAddress: options.interface,
+				lan: options.lan,
+				tailscale: options.tailscale,
+				tailscalePeers: options.tailscalePeers,
+			}))
+		);
+	discovery
+		.command('import')
+		.description('Read an expiring host invitation from stdin; never connect or save trust')
+		.action((_options, command: Command) =>
+			run('discovery-import', command, async () => {
+				let invitation = '';
+				for await (const chunk of process.stdin) {
+					invitation += chunk.toString();
+					if (invitation.length > 4096) throw new Error('Invitation is too large');
+				}
+				return invitation.trim();
+			})
+		);
+	const pairing = lite
+		.command('pair')
+		.description('Attended metadata-only PIN proof; never creates a full Maestro login');
+	pairing
+		.command('request <key>')
+		.requiredOption('--generation <n>', 'Generation from discovery status')
+		.requiredOption('--name <label>', 'Self-asserted client label')
+		.action((key: string, options, command: Command) =>
+			run('pair-request', command, () => ({
+				key,
+				generation: Number(options.generation),
+				name: options.name,
+			}))
+		);
+	pairing
+		.command('submit')
+		.requiredOption('--pin-stdin', 'Read six-digit PIN from stdin, not process arguments')
+		.action((_options, command: Command) =>
+			run('pair-submit', command, async () => {
+				let value = '';
+				for await (const chunk of process.stdin) {
+					value += chunk.toString();
+					if (value.length > 16) throw new Error('Expected six-digit PIN');
+				}
+				const pin = value.trim();
+				if (!/^\d{6}$/.test(pin)) throw new Error('Expected six-digit PIN');
+				return pin;
+			})
+		);
+	pairing.command('read').action((_options, command: Command) => run('pair-read', command));
+	pairing.command('cancel').action((_options, command: Command) => run('pair-cancel', command));
 	const controls: [LiteControlAction, string][] = [
 		['status', 'Read connection status, errors, selected profile, and local presentation state'],
 		['reconnect', 'Reconnect the selected profile without replaying host commands'],
