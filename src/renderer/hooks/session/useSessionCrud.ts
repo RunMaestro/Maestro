@@ -15,7 +15,7 @@
  */
 
 import { useCallback, useState } from 'react';
-import type { AdditionalDirectory, ToolType, Session, AITab } from '../../types';
+import type { AdditionalDirectory, ToolType, Session } from '../../types';
 import { useSessionStore, selectSessionById } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useUIStore } from '../../stores/uiStore';
@@ -26,7 +26,7 @@ import { generateId } from '../../utils/ids';
 import { validateNewSession } from '../../utils/sessionValidation';
 import { getTerminalSessionId } from '../../utils/terminalTabHelpers';
 import { gitService } from '../../services/git';
-import { PLAYBOOKS_DIR } from '../../../shared/maestro-paths';
+import { buildNewAgentRecord, newAgentClaudeInteractive } from '../../../shared/newAgentRecord';
 import { logger } from '../../utils/logger';
 import { removeGroupAndPromoteChildren } from '../../../shared/groupHierarchy';
 
@@ -225,74 +225,26 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 				}
 
 				const currentDefaults = useSettingsStore.getState();
-				const initialTabId = generateId();
-				const initialTab: AITab = {
-					id: initialTabId,
-					agentSessionId: null,
-					name: null,
-					starred: false,
-					logs: [],
-					inputValue: '',
-					stagedImages: [],
-					createdAt: Date.now(),
-					state: 'idle',
-					saveToHistory: currentDefaults.defaultSaveToHistory,
-					showThinking: currentDefaults.defaultShowThinking,
-				};
-
 				const newSession: Session = {
-					id: newId,
-					name,
+					...buildNewAgentRecord(
+						{
+							id: newId,
+							name,
+							toolType: agentId,
+							cwd: workingDir,
+							groupId,
+							saveToHistory: currentDefaults.defaultSaveToHistory,
+							showThinking: currentDefaults.defaultShowThinking,
+						},
+						{ generateId }
+					),
 					toolType: agentId as ToolType,
-					state: 'idle',
-					cwd: workingDir,
-					fullPath: workingDir,
-					projectRoot: workingDir,
 					additionalDirectories,
-					createdAt: Date.now(),
 					isGitRepo,
 					gitBranches,
 					gitTags,
 					gitRefsCacheTime,
-					aiLogs: [],
-					shellLogs: [
-						{
-							id: generateId(),
-							timestamp: Date.now(),
-							source: 'system',
-							text: 'Shell Session Ready.',
-						},
-					],
-					workLog: [],
-					contextUsage: 0,
-					inputMode: agentId === 'terminal' ? 'terminal' : 'ai',
 					aiPid,
-					terminalPid: 0,
-					port: 3000 + Math.floor(Math.random() * 100),
-					isLive: false,
-					changedFiles: [],
-					fileTree: [],
-					fileExplorerExpanded: [],
-					fileExplorerScrollPos: 0,
-					fileTreeAutoRefreshInterval: 180,
-					shellCwd: workingDir,
-					aiCommandHistory: [],
-					shellCommandHistory: [],
-					executionQueue: [],
-					activeTimeMs: 0,
-					aiTabs: [initialTab],
-					activeTabId: initialTabId,
-					closedTabHistory: [],
-					filePreviewTabs: [],
-					activeFileTabId: null,
-					browserTabs: [],
-					activeBrowserTabId: null,
-					terminalTabs: [],
-					activeTerminalTabId: null,
-					unifiedTabOrder: [{ type: 'ai' as const, id: initialTabId }],
-					unifiedClosedTabHistory: [],
-					tabGroups: [],
-					activeGroupId: null,
 					nudgeMessage,
 					newSessionMessage,
 					customPath,
@@ -303,8 +255,6 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 					customProviderPath,
 					customEffort: customEffort?.trim() || undefined,
 					sessionSshRemoteConfig,
-					groupId,
-					autoRunFolderPath: `${workingDir}/${PLAYBOOKS_DIR}`,
 					enableMaestroP,
 					maestroPPath,
 					maestroPMode,
@@ -317,8 +267,7 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 					// value already means off and storing `false` on every non-Codex
 					// agent would be noise in every session record.
 					codexAutoResetOnExhaustion: codexAutoResetOnExhaustion === true ? true : undefined,
-					claudeInteractive:
-						agentId === 'claude-code' ? { mode: 'api', modeReason: 'auto' } : undefined,
+					claudeInteractive: newAgentClaudeInteractive(agentId),
 				};
 
 				setSessions((prev) => [...prev, newSession]);
