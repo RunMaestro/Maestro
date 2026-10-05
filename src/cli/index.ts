@@ -3,6 +3,7 @@
 // Command-line interface for Maestro
 
 import { Command } from 'commander';
+import { logger } from '../main/utils/logger';
 import { asThinkingMode, type ThinkingMode } from '../shared/types';
 import { parseCliBool, isInheritValue } from './utils/parse';
 import { listGroups } from './commands/list-groups';
@@ -195,6 +196,12 @@ import { mcpServe } from './commands/mcp';
 declare const __MAESTRO_CLI_VERSION__: string;
 const cliVersion: string =
 	typeof __MAESTRO_CLI_VERSION__ !== 'undefined' ? __MAESTRO_CLI_VERSION__ : '0.0.0-dev';
+
+// stdout carries a command's result (`--json`, JSONL run events). The main
+// modules the CLI reuses log through the desktop logger, which writes info and
+// Auto Run lines to stdout; send all of it to stderr so the result stays
+// parseable.
+logger.consoleToStderr();
 
 const program = new Command();
 

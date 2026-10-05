@@ -65,6 +65,8 @@ class Logger extends EventEmitter {
 	private logs: SystemLogEntry[] = [];
 	private maxLogs = DEFAULT_MAX_LOGS;
 	private minLevel: MainLogLevel = 'info'; // Default log level
+	/** See `consoleToStderr()`. */
+	private consoleOnStderr = false;
 	private fileLogEnabled = false;
 	private logFilePath: string;
 	private logFileStream: fs.WriteStream | null = null;
@@ -287,6 +289,19 @@ class Logger extends EventEmitter {
 		return this.fileLogEnabled;
 	}
 
+	/**
+	 * Send every console line to stderr, whatever its level.
+	 *
+	 * For a process whose stdout is a contract rather than a log: `maestro-cli`
+	 * prints a command's RESULT there (`--json`, JSONL run events), and the main
+	 * modules it reuses log through this logger, so an Auto Run's
+	 * `logger.autorun(...)` lines landed in the middle of the JSON stream and a
+	 * script reading it could not parse it. The desktop never calls this.
+	 */
+	consoleToStderr(): void {
+		this.consoleOnStderr = true;
+	}
+
 	setLogLevel(level: MainLogLevel): void {
 		this.minLevel = level;
 	}
@@ -347,6 +362,10 @@ class Logger extends EventEmitter {
 		// (e.g., when a parent process consuming output dies unexpectedly)
 		// Fixes MAESTRO-5C
 		try {
+			if (this.consoleOnStderr) {
+				console.error(message, entry.data || '');
+				return;
+			}
 			switch (entry.level) {
 				case 'error':
 					console.error(message, entry.data || '');
