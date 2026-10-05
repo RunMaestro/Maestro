@@ -796,7 +796,14 @@ export async function exportCueBundle(
 	const manifestWorkspaces: CueBundleWorkspace[] = [];
 	const events = new Set<string>();
 	const secrets = new Set<string>();
-	for (const ws of workspaces.values()) {
+	// Ordered by key, the bundle's only name for a project root. Ordering by the
+	// root's absolute path would make the manifest depend on where the projects
+	// happen to be checked out, so a bundle re-exported after an import into
+	// other folders would not be the same bytes.
+	const byKey = [...workspaces.values()].sort((a, b) =>
+		a.key < b.key ? -1 : a.key > b.key ? 1 : 0
+	);
+	for (const ws of byKey) {
 		const entry: CueBundleWorkspace = { key: ws.key, name: path.basename(ws.root) };
 		if (ws.contributedConfig) {
 			const subs = ws.subscriptions.map((sub) =>
