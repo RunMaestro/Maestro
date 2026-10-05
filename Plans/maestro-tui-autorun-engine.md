@@ -250,6 +250,15 @@ export interface AutoRunDeps {
 
 Task 2 maps the CLI's reader onto `documents.read` as it is (its own regex count, no `checked`); C1 in task 3 switches the count to `countMarkdownTasks` and adds `checked`.
 
+**As landed in task 2** (`src/shared/maestro-lib/autorun/engine-types.ts`). Three ports differ from the sketch above, each for a reason the move exposed; task 3 builds on the landed shapes:
+
+- `documents.uncheckAll(content)` is a port. The CLI's tests mock `uncheckAllTasks` from `agent-spawner`, and the in-place reset has to route through that function; task 3's working-copy reset adds `createWorkingCopy` beside it.
+- `documents.read` answers `{ content, unchecked }` only. `checked` arrives with C1.
+- `activity.begin` takes `{ agentId, playbookId, playbookName, startedAt }`, the fields `cli-activity.json` stores, not a single `label`. The CLI adapter adds `pid`.
+- `AutoRunEvent` is the open `{ type, timestamp, [key]: unknown }` shape `JsonlEvent` has, so the CLI adapter passes events through without a copy. The typed union and the three new event types arrive with the controller in task 3.
+- There is no `synopsis.ts` yet: `iterationSynopsis` stays private to `run-goal.ts` until C5 replaces it. The row builders and `summaryUsageStats` live in `history-entries.ts`; `preflight.ts` returns one scan and the engine yields the `debug` events from it afterward, so a `--debug` consumer sees the scan lines together instead of between reads (no other output moved).
+- The CLI's ports are built in one place, `src/cli/services/autorun-cli-deps.ts`, shared by both adapters.
+
 The agent is the record the CLI passes today (`SessionInfo`), typed structurally, so a runtime `AgentRecord` fits. The template context still reads the whole record, as `substituteTemplateVariables` does now.
 
 ### 4.4 Policy
