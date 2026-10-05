@@ -24,6 +24,8 @@ import { HostPairingWindow } from '../../../main/lite/pairing/host-window';
 import { registerPairingRoutes } from '../../../main/lite/pairing/routes';
 import { hash, token, PAIR_PATH, type PairingTransport } from '../../../main/lite/pairing/protocol';
 
+const appVersion: string = require('../../../../package.json').version;
+
 const mocks = vi.hoisted(() => ({ sockets: vi.fn(), interfaces: vi.fn(), directory: '' }));
 vi.mock('../../../main/web-server/auth/web-login-policy', () => ({
 	isWebLoginEnabled: () => true,
@@ -85,7 +87,7 @@ class MockSocket extends EventEmitter {
 	});
 }
 const endpoint = 'https://host.example.test:8443';
-const options = { name: 'Synthetic host', appVersion: '0.18.6-RC', endpoints: () => [endpoint] };
+const options = { name: 'Synthetic host', appVersion, endpoints: () => [endpoint] };
 let shell: HostPairingWindow | undefined;
 
 beforeAll(async () => {

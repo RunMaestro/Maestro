@@ -21,6 +21,8 @@ import { webLoginPreHandler } from '../../../../main/web-server/auth/web-login-h
 import { ApiRoutes } from '../../../../main/web-server/routes/apiRoutes';
 import { WsRoute } from '../../../../main/web-server/routes/wsRoute';
 import { WEB_LOGIN_COOKIE } from '../../../../shared/webLogin';
+import { isAllowedRequestOrigin } from '../../../../main/web-server/originPolicy';
+const appVersion: string = require('../../../../../package.json').version;
 const state = vi.hoisted(() => ({ enabled: false, authenticated: false }));
 vi.mock('../../../../main/utils/logger', () => ({
 	logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
@@ -67,7 +69,7 @@ async function fixture() {
 		server,
 		() => host,
 		() => true,
-		'0.18.6-RC'
+		appVersion
 	);
 	mkdirSync(path.join(directory, 'assets'));
 	writeFileSync(
@@ -95,6 +97,7 @@ async function fixture() {
 	const ws = new WsRoute('unexposed-secret');
 	const messages: unknown[] = [];
 	ws.setCallbacks({
+		isOriginAllowed: (origin, host) => isAllowedRequestOrigin({ origin, host }),
 		getBionifyReadingMode: () => false,
 		getSessions: () => [],
 		getTheme: () => null,

@@ -24,6 +24,7 @@ import {
 	type PairingTransport,
 	type Route,
 } from '../../main/lite/pairing/protocol';
+const appVersion: string = require('../../../package.json').version;
 const route: Route = { endpoint: 'https://aster.example.test:8443', source: 'lan' };
 const servers: ReturnType<typeof Fastify>[] = [];
 afterEach(async () => {
@@ -46,7 +47,7 @@ async function fixture() {
 		app,
 		() => active,
 		() => allowed,
-		'0.18.6-RC'
+		appVersion
 	);
 	const traces: { operation: string; body: unknown; response: string }[] = [];
 	const transportFor = (r: Route): PairingTransport => ({
@@ -195,7 +196,7 @@ describe('production discovery adapters with synthetic inputs', () => {
 			version: 1,
 			instanceId: 'aster-id',
 			name: 'Aster',
-			appVersion: '0.18.6-RC',
+			appVersion: appVersion,
 			setupRevision: 6,
 			pairing: { protocol: 'maestro-device-pairing/1', scope: SCOPE, enabled: true },
 			capabilities: [SCOPE],
@@ -301,7 +302,7 @@ describe('production discovery adapters with synthetic inputs', () => {
 					version: 1,
 					instanceId: 'aster-id',
 					name: 'Aster',
-					appVersion: '0.18.6-RC',
+					appVersion: appVersion,
 					setupRevision: 6,
 					pairing: { protocol: 'maestro-device-pairing/1', scope: SCOPE, enabled: true },
 					capabilities: [SCOPE],
@@ -352,7 +353,7 @@ describe('production discovery adapters with synthetic inputs', () => {
 					version: 1,
 					instanceId: 'aster-id',
 					name: 'Aster',
-					appVersion: '0.18.6-RC',
+					appVersion: appVersion,
 					setupRevision: 6,
 					pairing: { protocol: 'maestro-device-pairing/1', scope: SCOPE, enabled: true },
 					capabilities: [SCOPE],

@@ -7,13 +7,15 @@ import { candidate } from '../../main/lite/discovery/types';
 import { probeService, validateManifest } from '../../main/lite/discovery/probe';
 import { MdnsBrowser } from '../../main/lite/discovery/mdns';
 
+const appVersion: string = require('../../../package.json').version;
+
 const row = candidate('aster-id', 'Aster', 'https://aster.example.test', 'lan', Date.now() + 60000);
 const manifest = {
 	protocol: 'maestro-discovery',
 	version: 1,
 	instanceId: 'aster-id',
 	name: 'Aster',
-	appVersion: '0.18.6-RC',
+	appVersion: appVersion,
 	setupRevision: 6,
 
 	pairing: { protocol: 'maestro-device-pairing/1', scope: 'host.control', enabled: true },
@@ -50,7 +52,7 @@ describe('service compatibility before PIN selection', () => {
 		expect(checked).toMatchObject({
 			id: 'aster-id',
 			identityHint: 'aster-id',
-			version: '0.18.6-RC',
+
 			availability: 'ready',
 		});
 	});
