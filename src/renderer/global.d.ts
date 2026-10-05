@@ -178,7 +178,14 @@ import type { CueLogPayload } from '../shared/cue-log-types';
 import type { CueStatsAggregation, CueStatsTimeRange } from '../shared/cue-stats-types';
 import type { QueryEvent, StatsAggregation } from '../shared/stats-types';
 import type { MaestroCliStatus, MaestroCliInstallResult } from '../shared/maestro-cli';
-import type { LibraryRuntimeStatus } from '../shared/libraryRuntime';
+import type {
+	LibraryRuntimeCommandAnswer,
+	LibraryRuntimeCommandRequest,
+	LibraryRuntimeEventMessage,
+	LibraryRuntimeFoldAnswer,
+	LibraryRuntimeStatus,
+} from '../shared/libraryRuntime';
+import type { DesktopFold, DesktopSnapshot } from '../shared/maestro-lib/agents/desktop-fold-types';
 import type { MaestroEvent } from '../shared/maestro-lib/client/types';
 import type { DebugPackageOptions } from '../shared/debugPackage';
 import type {
@@ -4629,7 +4636,10 @@ interface MaestroAPI {
 	// Library runtime hosting (Phase 9): whether main owns agent state this run, and its events
 	libraryRuntime: {
 		status: () => Promise<LibraryRuntimeStatus>;
-		onEvent: (listener: (message: { event: MaestroEvent }) => void) => () => void;
+		onEvent: (listener: (message: LibraryRuntimeEventMessage) => void) => () => void;
+		snapshot: () => Promise<DesktopSnapshot | null>;
+		command: (request: LibraryRuntimeCommandRequest) => Promise<LibraryRuntimeCommandAnswer>;
+		fold: (fold: DesktopFold) => Promise<LibraryRuntimeFoldAnswer>;
 	};
 
 	prompts: {

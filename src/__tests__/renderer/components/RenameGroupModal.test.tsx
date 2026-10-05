@@ -15,6 +15,21 @@ import { RenameGroupModal } from '../../../renderer/components/RenameGroupModal'
 import { LayerStackProvider } from '../../../renderer/contexts/LayerStackContext';
 import type { Theme, Group } from '../../../renderer/types';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
+import { isLibraryRuntimeHosting } from '../../../renderer/services/libraryRuntime';
+import { updateGroup } from '../../../renderer/services/agentOps';
+
+// Phase 9: the hosted-runtime flag and the update command. The flag defaults to false, so every
+// test outside the hosted describe exercises the OFF path unchanged.
+vi.mock('../../../renderer/services/libraryRuntime', async () => {
+	const actual = await vi.importActual<typeof import('../../../renderer/services/libraryRuntime')>(
+		'../../../renderer/services/libraryRuntime'
+	);
+	return { ...actual, isLibraryRuntimeHosting: vi.fn(() => false) };
+});
+
+vi.mock('../../../renderer/services/agentOps', () => ({
+	updateGroup: vi.fn(),
+}));
 
 // Mock lucide-react
 vi.mock('lucide-react', async (importOriginal) => ({
@@ -106,12 +121,14 @@ describe('RenameGroupModal', () => {
 		useSettingsStore.setState({
 			encoreFeatures: { ...useSettingsStore.getState().encoreFeatures, groupsPlus: false },
 		});
+		vi.mocked(isLibraryRuntimeHosting).mockReturnValue(false);
 	});
 
 	afterEach(() => {
 		vi.runOnlyPendingTimers();
 		vi.useRealTimers();
 		vi.clearAllMocks();
+		vi.mocked(isLibraryRuntimeHosting).mockReturnValue(false);
 	});
 
 	const defaultProps = () => ({
@@ -883,6 +900,80 @@ describe('RenameGroupModal', () => {
 			// The modal content div should have the custom background color
 			const title = screen.getByText('Rename Group');
 			expect(title).toHaveStyle({ color: '#00ff00' });
+		});
+	});
+
+	describe('when the library runtime is hosted', () => {
+		const clickRename = async () => {
+			await act(async () => {
+				fireEvent.click(screen.getByRole('button', { name: 'Rename' }));
+			});
+		};
+
+		beforeEach(() => {
+			vi.mocked(isLibraryRuntimeHosting).mockReturnValue(true);
+			vi.mocked(updateGroup).mockResolvedValue({ ok: true, value: undefined });
+		});
+
+		it('sends updateGroup with the trimmed name and leaves casing to the runtime', async () => {
+			renderWithLayerStack(
+				<RenameGroupModal {...defaultProps()} groupName="  new name  " groupEmoji="🚀" />
+			);
+
+			await clickRename();
+
+			expect(updateGroup).toHaveBeenCalledTimes(1);
+			expect(updateGroup).toHaveBeenCalledWith('group-1', {
+				name: 'new name',
+				emoji: '🚀',
+				icon: null,
+				color: null,
+			});
+			expect(setGroups).not.toHaveBeenCalled();
+			expect(onClose).toHaveBeenCalledTimes(1);
+		});
+
+		it('sends the icon and color when they are set', async () => {
+			renderWithLayerStack(
+				<RenameGroupModal
+					{...defaultProps()}
+					groupName="Styled"
+					groupEmoji=""
+					groupIcon="rocket"
+					groupColor="#ff0000"
+				/>
+			);
+
+			await clickRename();
+
+			expect(updateGroup).toHaveBeenCalledWith('group-1', {
+				name: 'Styled',
+				emoji: '',
+				icon: 'rocket',
+				color: '#ff0000',
+			});
+			expect(setGroups).not.toHaveBeenCalled();
+		});
+
+		it('stays open when the runtime refuses the update', async () => {
+			vi.mocked(updateGroup).mockResolvedValue({ ok: false, message: 'name is taken' });
+			renderWithLayerStack(<RenameGroupModal {...defaultProps()} groupName="Taken" />);
+
+			await clickRename();
+
+			expect(updateGroup).toHaveBeenCalledTimes(1);
+			expect(onClose).not.toHaveBeenCalled();
+			expect(setGroups).not.toHaveBeenCalled();
+		});
+
+		it('sends nothing for a blank name', async () => {
+			renderWithLayerStack(<RenameGroupModal {...defaultProps()} groupName="   " />);
+
+			expect(screen.getByRole('button', { name: 'Rename' })).toBeDisabled();
+			await clickRename();
+
+			expect(updateGroup).not.toHaveBeenCalled();
+			expect(onClose).not.toHaveBeenCalled();
 		});
 	});
 });

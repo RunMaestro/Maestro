@@ -15,6 +15,28 @@ import type {
 } from '../../../../renderer/types';
 import { useSessionStore } from '../../../../renderer/stores/sessionStore';
 import { resetStore } from '../../../helpers/resetStores';
+import { isLibraryRuntimeHosting } from '../../../../renderer/services/libraryRuntime';
+import { buildRuntimeFold, sendRuntimeFold } from '../../../../renderer/services/runtimeMirror';
+
+// Phase 9: the hosted-runtime flag and the fold. The flag defaults to false, so every test outside
+// the hosted describe exercises the OFF path (sessions:setAll / sessions:setMany) unchanged.
+vi.mock('../../../../renderer/services/libraryRuntime', async () => {
+	const actual = await vi.importActual<
+		typeof import('../../../../renderer/services/libraryRuntime')
+	>('../../../../renderer/services/libraryRuntime');
+	return { ...actual, isLibraryRuntimeHosting: vi.fn(() => false) };
+});
+
+vi.mock('../../../../renderer/services/runtimeMirror', async () => {
+	const actual = await vi.importActual<
+		typeof import('../../../../renderer/services/runtimeMirror')
+	>('../../../../renderer/services/runtimeMirror');
+	return {
+		...actual,
+		buildRuntimeFold: vi.fn(),
+		sendRuntimeFold: vi.fn(),
+	};
+});
 
 // The renderer sentry module only exports these two helpers, so a full mock is
 // safe and avoids pulling @sentry/electron/renderer into jsdom. Lets us assert
@@ -139,6 +161,7 @@ describe('useDebouncedPersistence', () => {
 	beforeEach(() => {
 		vi.useFakeTimers();
 		vi.clearAllMocks();
+		vi.mocked(isLibraryRuntimeHosting).mockReturnValue(false);
 		resetStore(useSessionStore);
 		// The hook refuses to write a tree that was never read from disk. Every
 		// test here is about what happens AFTER a successful read, so model one.
@@ -147,6 +170,7 @@ describe('useDebouncedPersistence', () => {
 
 	afterEach(() => {
 		vi.useRealTimers();
+		vi.mocked(isLibraryRuntimeHosting).mockReturnValue(false);
 	});
 
 	// -----------------------------------------------------------------------
@@ -2753,5 +2777,234 @@ describe('useDebouncedPersistence', () => {
 			expect(reported).toBeInstanceOf(Error);
 			expect(reported.message).toBe('boom');
 		});
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Hosted (Phase 9): a flush is one desktop fold sent to the runtime
+// ---------------------------------------------------------------------------
+
+describe('useDebouncedPersistence when the library runtime is hosted', () => {
+	let foldCounter = 0;
+
+	beforeEach(() => {
+		vi.useFakeTimers();
+		vi.clearAllMocks();
+		foldCounter = 0;
+		vi.mocked(isLibraryRuntimeHosting).mockReturnValue(true);
+		// Each build answers a distinct sentinel, so the test can prove what was sent.
+		vi.mocked(buildRuntimeFold).mockImplementation((() => ({
+			agents: [],
+			marker: ++foldCounter,
+		})) as any);
+		vi.mocked(sendRuntimeFold).mockResolvedValue(undefined);
+		resetStore(useSessionStore);
+		useSessionStore.setState({ sessionsReadOk: true });
+	});
+
+	afterEach(() => {
+		vi.useRealTimers();
+		vi.mocked(isLibraryRuntimeHosting).mockReturnValue(false);
+	});
+
+	const flush = async () => {
+		await act(async () => {
+			await vi.advanceTimersByTimeAsync(2000);
+		});
+	};
+
+	const foldInput = (call: number) =>
+		vi.mocked(buildRuntimeFold).mock.calls[call][0] as {
+			sessions: Session[];
+			removedIds: string[];
+			ownsAgent: (id: string) => boolean;
+		};
+
+	it('sends the full tree as one fold on the first flush, not setAll', async () => {
+		const s1 = makeSession({ id: 's1' });
+		const s2 = makeSession({ id: 's2' });
+		renderPersistence(makeInitialLoadRef(true));
+
+		act(() => {
+			seedSessions([s1, s2]);
+		});
+		await flush();
+
+		expect(buildRuntimeFold).toHaveBeenCalledTimes(1);
+		const input = foldInput(0);
+		expect(input.sessions.map((s) => s.id)).toEqual(['s1', 's2']);
+		expect(input.removedIds).toEqual([]);
+		expect(sendRuntimeFold).toHaveBeenCalledTimes(1);
+		expect(sendRuntimeFold).toHaveBeenCalledWith({ agents: [], marker: 1 });
+		expect(window.maestro.sessions.setAll).not.toHaveBeenCalled();
+		expect(window.maestro.sessions.setMany).not.toHaveBeenCalled();
+	});
+
+	it('prepares each session for persistence before folding it', async () => {
+		const tab = makeTab({ id: 'tab-1', state: 'busy' });
+		const s1 = makeSession({ id: 's1', aiTabs: [tab], activeTabId: 'tab-1', state: 'busy' });
+		renderPersistence(makeInitialLoadRef(true));
+
+		act(() => {
+			seedSessions([s1]);
+		});
+		await flush();
+
+		const sent = foldInput(0).sessions[0];
+		expect(sent.id).toBe('s1');
+		// Runtime state is reset on the way out, exactly as the OFF path persists it.
+		expect(sent.state).toBe('idle');
+		expect(sent.aiTabs[0].state).toBe('idle');
+	});
+
+	it('answers true for ownership when no window context scopes the agents', async () => {
+		renderPersistence(makeInitialLoadRef(true));
+
+		act(() => {
+			seedSessions([makeSession({ id: 's1' })]);
+		});
+		await flush();
+
+		expect(foldInput(0).ownsAgent('anything')).toBe(true);
+	});
+
+	it('sends only the dirty sessions on a later flush', async () => {
+		const s1 = makeSession({ id: 's1', name: 'One' });
+		const s2 = makeSession({ id: 's2', name: 'Two' });
+		renderPersistence(makeInitialLoadRef(true));
+		act(() => {
+			seedSessions([s1, s2]);
+		});
+		await flush();
+
+		act(() => {
+			seedSessions([{ ...s1, name: 'One Updated' }, s2]);
+		});
+		await flush();
+
+		expect(buildRuntimeFold).toHaveBeenCalledTimes(2);
+		const input = foldInput(1);
+		expect(input.sessions.map((s) => s.id)).toEqual(['s1']);
+		expect(input.sessions[0].name).toBe('One Updated');
+		expect(input.removedIds).toEqual([]);
+		expect(sendRuntimeFold).toHaveBeenCalledTimes(2);
+		expect(sendRuntimeFold).toHaveBeenLastCalledWith({ agents: [], marker: 2 });
+		expect(window.maestro.sessions.setAll).not.toHaveBeenCalled();
+		expect(window.maestro.sessions.setMany).not.toHaveBeenCalled();
+	});
+
+	it('carries a removal as removedIds on a later flush', async () => {
+		const s1 = makeSession({ id: 's1' });
+		const s2 = makeSession({ id: 's2' });
+		renderPersistence(makeInitialLoadRef(true));
+		act(() => {
+			seedSessions([s1, s2]);
+		});
+		await flush();
+
+		act(() => {
+			seedSessions([s1]);
+		});
+		await flush();
+
+		const input = foldInput(1);
+		expect(input.sessions).toEqual([]);
+		expect(input.removedIds).toEqual(['s2']);
+		expect(window.maestro.sessions.setMany).not.toHaveBeenCalled();
+	});
+
+	it('carries tombstones on the first flush when a mounted agent was removed before it', async () => {
+		const s1 = makeSession({ id: 's1' });
+		const s2 = makeSession({ id: 's2' });
+		// Loaded before the hook mounted, so the hook keeps this tree to express the deletion.
+		seedSessions([s1, s2]);
+		renderPersistence(makeInitialLoadRef(true));
+
+		act(() => {
+			seedSessions([s1]);
+		});
+		await flush();
+
+		expect(buildRuntimeFold).toHaveBeenCalledTimes(1);
+		const input = foldInput(0);
+		expect(input.sessions.map((s) => s.id)).toEqual(['s1']);
+		expect(input.removedIds).toEqual(['s2']);
+		expect(window.maestro.sessions.setMany).not.toHaveBeenCalled();
+		expect(window.maestro.sessions.setAll).not.toHaveBeenCalled();
+	});
+
+	it('sends nothing when a later flush has nothing dirty', async () => {
+		const s1 = makeSession({ id: 's1' });
+		renderPersistence(makeInitialLoadRef(true));
+		act(() => {
+			seedSessions([s1]);
+		});
+		await flush();
+		vi.mocked(buildRuntimeFold).mockClear();
+		vi.mocked(sendRuntimeFold).mockClear();
+
+		act(() => {
+			seedSessions([s1]);
+		});
+		await flush();
+
+		expect(buildRuntimeFold).not.toHaveBeenCalled();
+		expect(sendRuntimeFold).not.toHaveBeenCalled();
+	});
+
+	it('keeps the batch pending and the baseline unadvanced when the first fold is rejected', async () => {
+		vi.mocked(sendRuntimeFold).mockRejectedValueOnce(
+			new Error('The library runtime is not available.')
+		);
+		const s1 = makeSession({ id: 's1' });
+		const { result } = renderPersistence(makeInitialLoadRef(true));
+
+		act(() => {
+			seedSessions([s1]);
+		});
+		await flush();
+
+		expect(sendRuntimeFold).toHaveBeenCalledTimes(1);
+		expect(result.current.isPending).toBe(true);
+		expect(window.maestro.sessions.setAll).not.toHaveBeenCalled();
+
+		// The baseline never advanced, so the next flush is still the full first-flush tree.
+		act(() => {
+			seedSessions([s1, makeSession({ id: 's2' })]);
+		});
+		await flush();
+
+		expect(sendRuntimeFold).toHaveBeenCalledTimes(2);
+		expect(foldInput(1).sessions.map((s) => s.id)).toEqual(['s1', 's2']);
+		expect(result.current.isPending).toBe(false);
+	});
+
+	it('keeps the batch pending and re-sends the same dirty session when a later fold is rejected', async () => {
+		const s1 = makeSession({ id: 's1', name: 'One' });
+		const { result } = renderPersistence(makeInitialLoadRef(true));
+		act(() => {
+			seedSessions([s1]);
+		});
+		await flush();
+		expect(result.current.isPending).toBe(false);
+
+		vi.mocked(sendRuntimeFold).mockRejectedValueOnce(new Error('did not accept the fold'));
+		act(() => {
+			seedSessions([{ ...s1, name: 'Two' }]);
+		});
+		await flush();
+
+		expect(result.current.isPending).toBe(true);
+		expect(foldInput(1).sessions.map((s) => s.name)).toEqual(['Two']);
+
+		// Baseline stayed at the pre-failure tree: the same session is dirty again.
+		act(() => {
+			seedSessions([{ ...s1, name: 'Two' }]);
+		});
+		await flush();
+
+		expect(foldInput(2).sessions.map((s) => s.id)).toEqual(['s1']);
+		expect(foldInput(2).sessions[0].name).toBe('Two');
+		expect(result.current.isPending).toBe(false);
 	});
 });

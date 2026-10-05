@@ -1,6 +1,8 @@
 import { useCallback, useState } from 'react';
 import type { Session, Group } from '../../types';
 import { setGroupParent as updateGroupParent } from '../../../shared/groupHierarchy';
+import { isLibraryRuntimeHosting } from '../../services/libraryRuntime';
+import { moveAgentToGroup, renameGroup, updateGroup } from '../../services/agentOps';
 
 /**
  * State returned from useGroupManagement for modal management
@@ -116,6 +118,12 @@ export function useGroupManagement(deps: UseGroupManagementDeps): UseGroupManage
 				setEditingGroupId(null);
 				return;
 			}
+			if (isLibraryRuntimeHosting()) {
+				// The runtime applies the group name rule and every window mirrors the result.
+				void renameGroup(groupId, trimmedName);
+				setEditingGroupId(null);
+				return;
+			}
 			setGroups((prev) =>
 				prev.map((g) => (g.id === groupId ? { ...g, name: trimmedName.toUpperCase() } : g))
 			);
@@ -139,6 +147,11 @@ export function useGroupManagement(deps: UseGroupManagementDeps): UseGroupManage
 
 	const setGroupParent = useCallback(
 		(groupId: string, parentGroupId: string | undefined) => {
+			if (isLibraryRuntimeHosting()) {
+				// The runtime checks the nesting rule (`canSetGroupParent`); a refused move toasts and changes nothing.
+				void updateGroup(groupId, { parentGroupId: parentGroupId ?? null });
+				return;
+			}
 			setGroups((prev) => updateGroupParent(prev, groupId, parentGroupId));
 		},
 		[setGroups]
@@ -150,6 +163,11 @@ export function useGroupManagement(deps: UseGroupManagementDeps): UseGroupManage
 	const handleDropOnGroup = useCallback(
 		(groupId: string) => {
 			if (draggingSessionId) {
+				if (isLibraryRuntimeHosting()) {
+					void moveAgentToGroup(draggingSessionId, groupId);
+					setDraggingSessionId(null);
+					return;
+				}
 				setSessions((prev) =>
 					prev.map((s) => {
 						if (s.id === draggingSessionId) return { ...s, groupId };
@@ -169,6 +187,11 @@ export function useGroupManagement(deps: UseGroupManagementDeps): UseGroupManage
 	 */
 	const handleDropOnUngrouped = useCallback(() => {
 		if (draggingSessionId) {
+			if (isLibraryRuntimeHosting()) {
+				void moveAgentToGroup(draggingSessionId, null);
+				setDraggingSessionId(null);
+				return;
+			}
 			setSessions((prev) =>
 				prev.map((s) => {
 					if (s.id === draggingSessionId) return { ...s, groupId: undefined };

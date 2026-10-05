@@ -29,11 +29,15 @@ import type {
 	initializeStores,
 } from '../../stores';
 
+import type { DesktopBinding } from '../../library-runtime/desktop-binding';
+
 export interface IpcBootstrapDependencies {
 	// getters - mutable `let` singletons that stay declared in index.ts
 	getMainWindow: () => BrowserWindow | null;
 	getProcessManager: () => ProcessManager | null;
 	getWebServer: () => WebServer | null;
+	/** The hosted runtime's binding, or null when this run hosts none (Phase 9). */
+	getRuntimeBinding?: () => DesktopBinding | null;
 	getAgentDetector: () => AgentDetector | null;
 	getCueEngine: () => CueEngine | null;
 	getPianolaSupervisor: () => PianolaSupervisor | null;

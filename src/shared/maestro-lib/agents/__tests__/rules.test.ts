@@ -1,3 +1,4 @@
+import { GROUP_ICON_IDS } from '../../../groupAppearance';
 import { describe, expect, it } from 'vitest';
 import {
 	activeAgentAfterRemoval,
@@ -634,6 +635,22 @@ describe('groups', () => {
 		});
 	});
 
+	it('keeps an icon and a color beside the emoji, validated apart from it', () => {
+		const built = buildGroupRecord(
+			{ name: 'a', emoji: '🚀', icon: GROUP_ICON_IDS[0], color: '#aabbcc' },
+			[],
+			makeContext()
+		);
+		expect(built).toMatchObject({
+			ok: true,
+			value: { emoji: '🚀', icon: GROUP_ICON_IDS[0], color: '#AABBCC' },
+		});
+		expect(buildGroupRecord({ name: 'a', icon: 'nope' }, [], makeContext()).ok).toBe(false);
+		expect(buildGroupRecord({ name: 'a', color: 'blue-ish' }, [], makeContext()).ok).toBe(false);
+		const plain = buildGroupRecord({ name: 'a' }, [], makeContext());
+		expect(plain.ok && plain.value).not.toHaveProperty('icon');
+	});
+
 	it('allows one level of nesting and no more', () => {
 		const root = group('root');
 		const child = group('child', { parentGroupId: 'root' });
@@ -861,5 +878,159 @@ describe('consult tab records', () => {
 		// The live slot belongs to codex now; the old provider's token is parked.
 		expect(after.agentSessionId).toBeNull();
 		expect(JSON.stringify(after.providerSessions)).toContain('sess-claude');
+	});
+});
+
+describe('desktop migration rules (DG6, DG8, DG10)', () => {
+	const input = { name: 'Docs', provider: 'codex', cwd: '/p/docs' };
+	const build = (extra: Record<string, unknown> = {}) => {
+		const full = { ...input, ...extra };
+		const checked = checkAgentCreateInput(full);
+		if (!checked.ok) throw new Error('unreachable');
+		return buildAgentRecord(full, checked.value, makeContext(), DEFAULT_TAB_DEFAULTS);
+	};
+
+	it('builds the same record with no ids as it always did, and consumes ids in the same order', () => {
+		const { agent: built, tab: first } = build();
+		// The tab asks the context first, then the agent, then the shell's welcome entry.
+		expect(first.id).toBe('id-1');
+		expect(built.id).toBe('id-2');
+		expect((built.shellLogs as Array<{ id: string }>)[0].id).toBe('id-3');
+	});
+
+	it('uses a client-chosen agent and tab id, and leaves the context unspent for them', () => {
+		const { agent: built, tab: first } = build({ id: 'mine', tabId: 'my-tab' });
+		expect(built.id).toBe('mine');
+		expect(first.id).toBe('my-tab');
+		expect(built.activeTabId).toBe('my-tab');
+		expect(built.unifiedTabOrder).toEqual([{ type: 'ai', id: 'my-tab' }]);
+		expect((built.shellLogs as Array<{ id: string }>)[0].id).toBe('id-1');
+	});
+
+	it('buildTabRecord takes an id, and the context makes one otherwise', () => {
+		expect(buildTabRecord(makeContext(), DEFAULT_TAB_DEFAULTS, 'given').id).toBe('given');
+		expect(buildTabRecord(makeContext(), DEFAULT_TAB_DEFAULTS).id).toBe('id-1');
+	});
+
+	it('writes the create fields only when given', () => {
+		const plain = build().agent;
+		for (const key of [
+			'customProviderPath',
+			'customEnvVarsDisabled',
+			'additionalDirectories',
+			'retryOnAvailabilityErrors',
+			'retryOnTokenExhaustion',
+			'codexAutoResetOnExhaustion',
+			'parentSessionId',
+			'worktreeBranch',
+			'worktreeParentPath',
+			'worktreeConfig',
+			'isPianola',
+			'symphonyMetadata',
+			'enableMaestroP',
+			'maestroPPath',
+			'maestroPMode',
+		]) {
+			expect(key in plain).toBe(false);
+		}
+		const full = build({
+			customProviderPath: '/bin/x',
+			customEnvVarsDisabled: { A: '1', B: '' },
+			additionalDirectories: ['/d'],
+			retryOnAvailabilityErrors: false,
+			retryOnTokenExhaustion: false,
+			codexAutoResetOnExhaustion: true,
+			parentSessionId: 'p',
+			worktreeBranch: 'b',
+			worktreeParentPath: '/w',
+			worktreeConfig: { basePath: '/w' },
+			isPianola: true,
+			symphonyMetadata: { n: 1 },
+			enableMaestroP: false,
+			maestroPPath: '/p',
+			maestroPMode: 'interactive',
+		}).agent;
+		expect(full).toMatchObject({
+			customProviderPath: '/bin/x',
+			customEnvVarsDisabled: { A: '1' },
+			additionalDirectories: ['/d'],
+			retryOnAvailabilityErrors: false,
+			retryOnTokenExhaustion: false,
+			codexAutoResetOnExhaustion: true,
+			parentSessionId: 'p',
+			worktreeBranch: 'b',
+			worktreeParentPath: '/w',
+			worktreeConfig: { basePath: '/w' },
+			isPianola: true,
+			symphonyMetadata: { n: 1 },
+			enableMaestroP: false,
+			maestroPPath: '/p',
+			maestroPMode: 'interactive',
+		});
+	});
+
+	it('copies the additional directories rather than sharing the caller array', () => {
+		const dirs = ['/d'];
+		const { agent: built } = build({ additionalDirectories: dirs });
+		expect(built.additionalDirectories).not.toBe(dirs);
+	});
+
+	it('does not store the Pianola or Codex reset flags as false', () => {
+		const built = build({ isPianola: false, codexAutoResetOnExhaustion: false }).agent;
+		expect('isPianola' in built).toBe(false);
+		expect('codexAutoResetOnExhaustion' in built).toBe(false);
+	});
+
+	it('lets Edit Agent write the added agent keys, and clears them with null', () => {
+		const result = applyAgentConfigPatch(agent(), {
+			customProviderPath: '/bin/x',
+			customEnvVarsDisabled: { A: '1' },
+			additionalDirectories: ['/d'],
+			retryOnAvailabilityErrors: true,
+			retryOnTokenExhaustion: false,
+			codexAutoResetOnExhaustion: true,
+		});
+		if (!result.ok) throw new Error('unreachable');
+		expect(result.value).toMatchObject({
+			customProviderPath: '/bin/x',
+			retryOnTokenExhaustion: false,
+		});
+		const cleared = applyAgentConfigPatch(result.value, { customProviderPath: null });
+		if (!cleared.ok) throw new Error('unreachable');
+		expect('customProviderPath' in cleared.value).toBe(false);
+	});
+
+	it('takes a permission mode on a tab, and refuses anything else', () => {
+		for (const mode of ['full', 'standard', 'readonly']) {
+			expect(applyTabPatch(tab('t'), { permissionMode: mode })).toMatchObject({
+				ok: true,
+				value: { permissionMode: mode },
+			});
+		}
+		expect(applyTabPatch(tab('t'), { permissionMode: 'yolo' })).toMatchObject({ ok: false });
+		expect(applyTabPatch(tab('t'), { permissionMode: true })).toMatchObject({ ok: false });
+		const cleared = applyTabPatch(tab('t', { permissionMode: 'full' }), { permissionMode: null });
+		if (!cleared.ok) throw new Error('unreachable');
+		expect('permissionMode' in cleared.value).toBe(false);
+	});
+
+	it('builds a group with the id the caller chose, and refuses a taken or empty one', () => {
+		const existing: GroupRecord[] = [{ id: 'taken', name: 'T' }];
+		expect(buildGroupRecord({ id: ' mine ', name: 'g' }, existing, makeContext())).toMatchObject({
+			ok: true,
+			value: { id: 'mine' },
+		});
+		expect(buildGroupRecord({ id: 'taken', name: 'g' }, existing, makeContext())).toMatchObject({
+			ok: false,
+			code: 'invalid',
+		});
+		expect(buildGroupRecord({ id: '  ', name: 'g' }, existing, makeContext())).toMatchObject({
+			ok: false,
+			code: 'invalid',
+		});
+		expect(buildGroupRecord({ name: 'g' }, existing, makeContext())).toMatchObject({
+			ok: true,
+			value: { id: 'group-id-1' },
+		});
 	});
 });

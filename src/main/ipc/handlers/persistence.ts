@@ -30,6 +30,7 @@ export type { MaestroSettings, SessionsData, GroupsData } from '../../stores/typ
 import type { MaestroSettings, SessionsData, GroupsData, StoredSession } from '../../stores/types';
 import type { Group, SessionCliActivity } from '../../../shared/types';
 import type { PluginEvent } from '../../../shared/plugins/events';
+import type { DesktopBinding } from '../../library-runtime/desktop-binding';
 import { buildSessionLifecycleEvents } from './plugin-session-events';
 import { relocateSessionImages, resolveToDataUrl } from '../../storage/session-image-store';
 import { backupGroupsBeforeWipe } from '../../stores/groups-backup';
@@ -183,6 +184,13 @@ export interface PersistenceHandlerDependencies {
 	emitPluginEvent?: (event: PluginEvent) => void;
 	/** Resolve only after the deferred sessions document reaches disk. */
 	flushSessionWrites: () => Promise<void>;
+	/**
+	 * The hosted runtime's binding, when this run hosts one (Phase 9). Read per call, never captured: the
+	 * runtime starts before these handlers are registered, but a test or a later start may change it.
+	 * While it answers, the runtime is the only writer of the sessions and groups files, so a flush from a
+	 * window that does not know about revisions lands as a fold instead of reaching the store.
+	 */
+	getRuntimeBinding?: () => DesktopBinding | null;
 }
 
 /**
@@ -215,6 +223,7 @@ export function registerPersistenceHandlers(
 		getWebServer,
 		emitPluginEvent,
 		flushSessionWrites,
+		getRuntimeBinding,
 	} = deps;
 	const sessionWriteQueue = createKeyedWriteQueue();
 	const queueWrite =
@@ -588,7 +597,12 @@ export function registerPersistenceHandlers(
 				if (removeSet.has(newSession.id)) continue;
 				merged.push(mergeDeferredSessionContent(newSession, undefined));
 			}
-			const sessionsToPersist = merged.map((session) => compactSessionToolOutputs(session).session);
+			// Hosted: the fold's boundary compacts and merges, and the runtime owns the file, so the whole
+			// merged array is never built here.
+			const runtimeBinding = getRuntimeBinding?.() ?? null;
+			const sessionsToPersist = runtimeBinding
+				? []
+				: merged.map((session) => compactSessionToolOutputs(session).session);
 
 			// Lifecycle logging (parallel to setAll's debug logs)
 			for (const session of updates) {
@@ -652,6 +666,26 @@ export function registerPersistenceHandlers(
 					if (previousMap.has(id)) {
 						webServer.broadcastSessionRemoved(id);
 					}
+				}
+			}
+
+			if (runtimeBinding) {
+				// The runtime owns the file: desktop-owned keys land, an agent it has never seen is adopted,
+				// and a domain edit from a copy of unknown age is dropped (it must never overwrite a command).
+				// Agents entering and leaving reach every client as runtime events, not a lifecycle push.
+				try {
+					await runtimeBinding.foldLegacySessions(
+						updates as unknown as Record<string, unknown>[],
+						removeIds.filter((id) => previousMap.has(id))
+					);
+					return true;
+				} catch (err) {
+					logger.error(
+						`Failed to fold sessions into the library runtime (setMany): ${(err as Error).message}`,
+						'Sessions',
+						err
+					);
+					return false;
 				}
 			}
 
@@ -722,6 +756,8 @@ export function registerPersistenceHandlers(
 			// closed an agent still carries it, and this path would write it back.
 			const sessions = dropResurrections(relocatedSessions, new Set(previousSessionMap.keys()));
 			const incomingIds = new Set(sessions.map((s) => s.id));
+			const runtimeBinding = getRuntimeBinding?.() ?? null;
+			const incomingOnly = runtimeBinding ? [...sessions] : [];
 			// setAll is a client's opening snapshot, so an omitted id means the client
 			// never saw that agent. Only setMany's explicit removeIds may delete one.
 			for (const previousSession of previousSessions) {
@@ -729,7 +765,7 @@ export function registerPersistenceHandlers(
 					sessions.push(previousSession);
 				}
 			}
-			const sessionsToPersist = sessions.map(
+			const sessionsToPersist = (runtimeBinding ? [] : sessions).map(
 				(session) =>
 					compactSessionToolOutputs(
 						mergeDeferredSessionContent(session, previousSessionMap.get(session.id))
@@ -792,6 +828,22 @@ export function registerPersistenceHandlers(
 				}
 			}
 
+			if (runtimeBinding) {
+				try {
+					await runtimeBinding.foldLegacySessions(
+						incomingOnly as unknown as Record<string, unknown>[]
+					);
+					return true;
+				} catch (err) {
+					logger.error(
+						`Failed to fold sessions into the library runtime (setAll): ${(err as Error).message}`,
+						'Sessions',
+						err
+					);
+					return false;
+				}
+			}
+
 			try {
 				sessionsStore.set('sessions', sessionsToPersist);
 				await flushSessionWrites();
@@ -838,6 +890,21 @@ export function registerPersistenceHandlers(
 	});
 
 	ipcMain.handle('groups:setAll', async (_, groups: Group[]) => {
+		const runtimeBinding = getRuntimeBinding?.() ?? null;
+		if (runtimeBinding) {
+			// The runtime owns the groups file. A caller that does not know about revisions can only move
+			// `collapsed`; creating, renaming, and removing a group are commands.
+			try {
+				await runtimeBinding.foldLegacyGroups(groups);
+				return true;
+			} catch (err) {
+				logger.warn(
+					`Failed to fold groups into the library runtime: ${(err as Error).message}`,
+					'Groups'
+				);
+				return false;
+			}
+		}
 		try {
 			// Back the registry up before letting an empty one replace it.
 			//

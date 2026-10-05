@@ -6,6 +6,8 @@ import { generateId } from '../utils/ids';
 import { canCreateGroupInside } from '../../shared/groupHierarchy';
 import { usePluginContributions } from '../hooks/usePluginContributions';
 import { selectGroupsPlusEnabled, useSettingsStore } from '../stores/settingsStore';
+import { isLibraryRuntimeHosting } from '../services/libraryRuntime';
+import { createGroup } from '../services/agentOps';
 
 interface CreateGroupModalProps {
 	theme: Theme;
@@ -33,7 +35,7 @@ export function CreateGroupModal(props: CreateGroupModalProps) {
 	const inputRef = useRef<HTMLInputElement>(null);
 	const pluginContributions = usePluginContributions();
 
-	const handleCreate = () => {
+	const handleCreate = async () => {
 		if (groupName.trim()) {
 			const resolvedParentGroupId =
 				groupsPlusEnabled && canCreateGroupInside(groups, parentGroupId)
@@ -50,7 +52,21 @@ export function CreateGroupModal(props: CreateGroupModalProps) {
 				...(resolvedParentGroupId ? { parentGroupId: resolvedParentGroupId } : {}),
 				collapsed: false,
 			};
-			setGroups([...groups, newGroup]);
+			if (isLibraryRuntimeHosting()) {
+				// The runtime creates the group under the id chosen here and every window mirrors it. A refusal
+				// (a name that is taken, a bad nesting) is toasted and leaves the dialog open to fix.
+				const created = await createGroup({
+					id: newGroupId,
+					name: newGroup.name,
+					emoji: groupEmoji,
+					...(groupIcon ? { icon: groupIcon } : {}),
+					...(groupColor ? { color: groupColor } : {}),
+					...(resolvedParentGroupId ? { parentGroupId: resolvedParentGroupId } : {}),
+				});
+				if (!created.ok) return;
+			} else {
+				setGroups([...groups, newGroup]);
+			}
 
 			// Call callback with new group ID if provided
 			if (onGroupCreated) {

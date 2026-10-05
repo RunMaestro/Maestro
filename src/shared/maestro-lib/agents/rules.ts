@@ -268,10 +268,13 @@ export function checkAgentCreateInput(input: AgentCreateInput): RuleResult<Check
 // Tabs
 // ---------------------------------------------------------------------------
 
-/** A fresh AI tab: no provider session yet, the settings defaults, an empty transcript. */
-export function buildTabRecord(ctx: RuleContext, defaults: TabDefaults): AITabRecord {
+/**
+ * A fresh AI tab: no provider session yet, the settings defaults, an empty transcript. `id` is a
+ * client-chosen id (DG10), already checked; absent, the context makes one.
+ */
+export function buildTabRecord(ctx: RuleContext, defaults: TabDefaults, id?: string): AITabRecord {
 	return {
-		id: ctx.newId(),
+		id: id ?? ctx.newId(),
 		agentSessionId: null,
 		name: null,
 		starred: false,
@@ -612,7 +615,9 @@ export function recordTabSession(
 }
 
 /** The tab fields a client may edit, and the type each accepts. */
-export const TAB_EDITABLE_KEYS: Readonly<Record<string, 'boolean' | 'string' | 'thinking'>> = {
+export const TAB_EDITABLE_KEYS: Readonly<
+	Record<string, 'boolean' | 'string' | 'thinking' | 'permission'>
+> = {
 	starred: 'boolean',
 	hasUnread: 'boolean',
 	saveToHistory: 'boolean',
@@ -621,7 +626,12 @@ export const TAB_EDITABLE_KEYS: Readonly<Record<string, 'boolean' | 'string' | '
 	showThinking: 'thinking',
 	customModel: 'string',
 	customEffort: 'string',
+	// DG6: the three-way permission mode the composer's access chip sets (`full`, `standard`, `readonly`).
+	permissionMode: 'permission',
 };
+
+/** The values `permissionMode` accepts, as the renderer's `AITab.permissionMode` takes them. */
+const PERMISSION_MODES: ReadonlySet<unknown> = new Set(['full', 'standard', 'readonly']);
 
 /** The record-keyed form of a `TabPatch`: the keys the tab stores, with `null` still meaning "clear". */
 export function buildTabConfigPatch(patch: TabPatch): Record<string, unknown> {
@@ -662,7 +672,9 @@ export function applyTabPatch(
 				? typeof value === 'boolean'
 				: kind === 'string'
 					? typeof value === 'string'
-					: asThinkingMode(value) !== undefined;
+					: kind === 'permission'
+						? PERMISSION_MODES.has(value)
+						: asThinkingMode(value) !== undefined;
 		if (!valid) return invalid(`Invalid value for tab field '${key}'.`);
 		next[key] = value;
 	}
@@ -696,6 +708,36 @@ export function mergeSshPatch(
 }
 
 /**
+ * The optional create fields the desktop's New Agent flows set (DG6). Each is written only when given,
+ * so an input that carries none builds the record it always did. `codexAutoResetOnExhaustion` and
+ * `isPianola` are stored only when true: their absence already means off.
+ */
+function applyCreateExtras(agent: AgentRecord, input: AgentCreateInput): void {
+	if (input.customProviderPath) agent.customProviderPath = input.customProviderPath;
+	if (input.customEnvVarsDisabled) {
+		const parked = stripBlankEnvVars(input.customEnvVarsDisabled);
+		if (Object.keys(parked).length > 0) agent.customEnvVarsDisabled = parked;
+	}
+	if (input.additionalDirectories) agent.additionalDirectories = [...input.additionalDirectories];
+	if (input.retryOnAvailabilityErrors !== undefined) {
+		agent.retryOnAvailabilityErrors = input.retryOnAvailabilityErrors;
+	}
+	if (input.retryOnTokenExhaustion !== undefined) {
+		agent.retryOnTokenExhaustion = input.retryOnTokenExhaustion;
+	}
+	if (input.codexAutoResetOnExhaustion === true) agent.codexAutoResetOnExhaustion = true;
+	if (input.parentSessionId) agent.parentSessionId = input.parentSessionId;
+	if (input.worktreeBranch) agent.worktreeBranch = input.worktreeBranch;
+	if (input.worktreeParentPath) agent.worktreeParentPath = input.worktreeParentPath;
+	if (input.worktreeConfig) agent.worktreeConfig = input.worktreeConfig;
+	if (input.isPianola === true) agent.isPianola = true;
+	if (input.symphonyMetadata) agent.symphonyMetadata = input.symphonyMetadata;
+	if (input.enableMaestroP !== undefined) agent.enableMaestroP = input.enableMaestroP;
+	if (input.maestroPPath) agent.maestroPPath = input.maestroPPath;
+	if (input.maestroPMode) agent.maestroPMode = input.maestroPMode;
+}
+
+/**
  * A new agent, as the desktop's "new agent" flow writes it: one fresh AI tab, the
  * settings defaults, every path field the directory, the default Auto Run folder.
  * `input` has passed `checkAgentCreateInput`.
@@ -706,7 +748,7 @@ export function buildAgentRecord(
 	ctx: RuleContext,
 	defaults: TabDefaults
 ): { agent: AgentRecord; tab: AITabRecord } {
-	const tab = buildTabRecord(ctx, defaults);
+	const tab = buildTabRecord(ctx, defaults, input.tabId);
 	const { name, provider, cwd } = checked;
 	const env = input.env ? stripBlankEnvVars(input.env) : undefined;
 	const effort = input.effort?.trim();
@@ -714,7 +756,7 @@ export function buildAgentRecord(
 	const now = ctx.now();
 
 	const agent: AgentRecord = {
-		id: ctx.newId(),
+		id: input.id ?? ctx.newId(),
 		name,
 		toolType: provider,
 		state: 'idle',
@@ -775,6 +817,7 @@ export function buildAgentRecord(
 	if (provider === 'claude-code') {
 		agent.claudeInteractive = { mode: 'api', modeReason: 'auto' };
 	}
+	applyCreateExtras(agent, input);
 	return { agent, tab };
 }
 
@@ -799,6 +842,13 @@ export const AGENT_EDITABLE_KEYS: ReadonlySet<string> = new Set([
 	'maestroPMode',
 	'maestroPPath',
 	'bookmarked',
+	// DG6: the rest of what Edit Agent writes.
+	'customProviderPath',
+	'customEnvVarsDisabled',
+	'additionalDirectories',
+	'retryOnAvailabilityErrors',
+	'retryOnTokenExhaustion',
+	'codexAutoResetOnExhaustion',
 ]);
 
 /** The record-keyed form of an `AgentPatch`'s config fields, and the `AgentPatchField`s it carries. */
@@ -977,7 +1027,8 @@ export const DEFAULT_GROUP_EMOJI = '\u{1F4C2}';
 
 /**
  * A new user group. The parent must be a root group (one level of nesting), the
- * appearance is validated before anything is built, and the id is `group-<id>`.
+ * appearance is validated before anything is built, and the id is `group-<id>`, unless the caller
+ * chose one (DG10): that id is used as given, and refused when empty or already a group's.
  */
 export function buildGroupRecord(
 	input: GroupCreateInput,
@@ -986,19 +1037,32 @@ export function buildGroupRecord(
 ): RuleResult<GroupRecord> {
 	const name = normalizeGroupName(input.name);
 	if (!name) return invalid('The group needs a name.');
+	const chosenId = input.id === undefined ? undefined : input.id.trim();
+	if (chosenId !== undefined) {
+		if (!chosenId) return invalid('The group id cannot be empty.');
+		if (existing.some((group) => group.id === chosenId)) {
+			return invalid(`A group with the id "${chosenId}" already exists.`);
+		}
+	}
 	const parent = input.parentGroupId || undefined;
 	if (!canCreateGroupInside(existing as unknown as Group[], parent)) {
 		return invalid('A group can only be created inside a top-level group.');
 	}
+	// The emoji and the icon are checked apart: the desktop stores both (a group with an icon still
+	// carries its emoji), where the CLI's single `--emoji` or `--icon` choice is its own rule.
 	const appearance = validateGroupAppearance({ emoji: input.emoji });
 	if (!appearance.ok) return invalid(appearance.error);
+	const look = validateGroupAppearance({ icon: input.icon, color: input.color });
+	if (!look.ok) return invalid(look.error);
 	return {
 		ok: true,
 		value: {
-			id: `group-${ctx.newId()}`,
+			id: chosenId ?? `group-${ctx.newId()}`,
 			name,
 			emoji: appearance.value.emoji || DEFAULT_GROUP_EMOJI,
 			kind: 'user',
+			...(look.value.icon ? { icon: look.value.icon } : {}),
+			...(look.value.color ? { color: look.value.color } : {}),
 			...(parent ? { parentGroupId: parent } : {}),
 			collapsed: false,
 		},

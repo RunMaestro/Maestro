@@ -25,6 +25,19 @@ describe('Library runtime preload API', () => {
 		expect(mockInvoke).toHaveBeenCalledWith('libraryRuntime:status');
 	});
 
+	it('reads the snapshot, sends a command, and sends a fold over their own channels', async () => {
+		mockInvoke.mockResolvedValue('answer');
+		const api = createLibraryRuntimeApi();
+		await expect(api.snapshot()).resolves.toBe('answer');
+		expect(mockInvoke).toHaveBeenLastCalledWith('libraryRuntime:snapshot');
+		const request = { commandId: 'c', command: { method: 'agents.remove', agentId: 'a' } } as const;
+		await api.command(request);
+		expect(mockInvoke).toHaveBeenLastCalledWith('libraryRuntime:command', request);
+		const fold = { agents: [] };
+		await api.fold(fold);
+		expect(mockInvoke).toHaveBeenLastCalledWith('libraryRuntime:fold', fold);
+	});
+
 	it('delivers a forwarded runtime event to the listener, without the IPC event object', () => {
 		const listener = vi.fn();
 		createLibraryRuntimeApi().onEvent(listener);

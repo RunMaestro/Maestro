@@ -36,6 +36,8 @@ import { useMediaPlaybackStore, selectNowPlayingVisible } from '../../stores/med
 import type { Session, Group, Theme } from '../../types';
 import { isWorktreeGroup } from '../../../shared/types';
 import { canSetGroupParent, removeGroupAndPromoteChildren } from '../../../shared/groupHierarchy';
+import { isLibraryRuntimeHosting } from '../../services/libraryRuntime';
+import { moveAgentToGroup, removeGroup as removeGroupOnRuntime } from '../../services/agentOps';
 import { resolveGroupAppearance } from '../ui/groupAppearanceOptions';
 import { SafeSvgIcon } from '../ui/SafeSvgIcon';
 import { getBadgeForTime } from '../../constants/conductorBadges';
@@ -562,6 +564,15 @@ function SessionListInner(props: SessionListProps) {
 	);
 	const setSessions = useSessionStore.getState().setSessions;
 	const setGroups = useSessionStore.getState().setGroups;
+	// Deleting a group: hosted, the runtime ungroups its members and promotes its child groups (one
+	// command, applied to every window); otherwise the store does both here.
+	const deleteGroupById = (groupId: string) => {
+		if (isLibraryRuntimeHosting()) {
+			void removeGroupOnRuntime(groupId);
+			return;
+		}
+		setGroups((prev) => removeGroupAndPromoteChildren(prev, groupId));
+	};
 	const setPersistentWebLink = useSettingsStore.getState().setPersistentWebLink;
 	const setWebInterfaceUseCustomPort = useSettingsStore.getState().setWebInterfaceUseCustomPort;
 	const setWebInterfaceCustomPort = useSettingsStore.getState().setWebInterfaceCustomPort;
@@ -839,6 +850,10 @@ function SessionListInner(props: SessionListProps) {
 	const handleMoveToGroup = useCallback(
 		(sessionId: string, groupId: string) => {
 			const normalizedGroupId = groupId || undefined;
+			if (isLibraryRuntimeHosting()) {
+				void moveAgentToGroup(sessionId, normalizedGroupId ?? null);
+				return;
+			}
 			setSessions((prev) =>
 				prev.map((s) => {
 					if (s.id === sessionId) return { ...s, groupId: normalizedGroupId };
@@ -2057,7 +2072,7 @@ function SessionListInner(props: SessionListProps) {
 													showConfirmation(
 														`Are you sure you want to delete the group "${group.name}"?`,
 														() => {
-															setGroups((prev) => removeGroupAndPromoteChildren(prev, group.id));
+															deleteGroupById(group.id);
 														}
 													);
 												}}
@@ -2485,9 +2500,7 @@ function SessionListInner(props: SessionListProps) {
 										showConfirmation(
 											`Are you sure you want to delete the group "${groupContextMenuGroup.name}"?`,
 											() => {
-												setGroups((prev) =>
-													removeGroupAndPromoteChildren(prev, groupContextMenuGroup.id)
-												);
+												deleteGroupById(groupContextMenuGroup.id);
 											}
 										)
 								: () =>
@@ -2495,6 +2508,11 @@ function SessionListInner(props: SessionListProps) {
 											`Delete the group "${groupContextMenuGroup.name}"? Its ${groupContextMenuMemberCount} agent${groupContextMenuMemberCount === 1 ? '' : 's'} will be moved out of the group, not deleted.`,
 											() => {
 												const gid = groupContextMenuGroup.id;
+												if (isLibraryRuntimeHosting()) {
+													// The runtime ungroups the members (and their worktree children) with the group.
+													deleteGroupById(gid);
+													return;
+												}
 												// Ungroup members (and their synced worktree children) first.
 												setSessions((prev) =>
 													prev.map((s) => (s.groupId === gid ? { ...s, groupId: undefined } : s))

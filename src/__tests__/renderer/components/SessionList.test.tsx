@@ -36,6 +36,8 @@ import { useModalStore } from '../../../renderer/stores/modalStore';
 import { useMediaPlaybackStore } from '../../../renderer/stores/mediaPlaybackStore';
 import { requestSidebarReveal } from '../../../renderer/utils/sidebarReveal';
 import type { BatchRunState } from '../../../renderer/types';
+import { isLibraryRuntimeHosting } from '../../../renderer/services/libraryRuntime';
+import { moveAgentToGroup, removeGroup } from '../../../renderer/services/agentOps';
 
 const LEGACY_WORKTREE_EMOJI = String.fromCodePoint(0x1f333);
 
@@ -120,6 +122,20 @@ vi.mock('../../../renderer/components/plugins/PluginUiItemsSlot', () => ({
 }));
 
 // Mock gitService
+// Phase 9: the hosted-runtime flag and the repository commands it routes through. The flag defaults to
+// false, so every test outside the hosted describe exercises the OFF path unchanged.
+vi.mock('../../../renderer/services/libraryRuntime', async () => {
+	const actual = await vi.importActual<typeof import('../../../renderer/services/libraryRuntime')>(
+		'../../../renderer/services/libraryRuntime'
+	);
+	return { ...actual, isLibraryRuntimeHosting: vi.fn(() => false) };
+});
+
+vi.mock('../../../renderer/services/agentOps', () => ({
+	moveAgentToGroup: vi.fn(),
+	removeGroup: vi.fn(),
+}));
+
 vi.mock('../../../renderer/services/git', () => ({
 	gitService: {
 		getStatus: vi.fn().mockResolvedValue({ files: [] }),
@@ -322,6 +338,7 @@ const createDefaultProps = (
 describe('SessionList', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		vi.mocked(isLibraryRuntimeHosting).mockReturnValue(false);
 		resetSidebarNavStore();
 		vi.mocked(window.maestro.plugins.contributions).mockResolvedValue(EMPTY_PLUGIN_CONTRIBUTIONS);
 		vi.mocked(window.maestro.plugins.getGroupings).mockResolvedValue([]);
@@ -379,6 +396,7 @@ describe('SessionList', () => {
 
 	afterEach(() => {
 		vi.clearAllTimers();
+		vi.mocked(isLibraryRuntimeHosting).mockReturnValue(false);
 	});
 
 	// ============================================================================
@@ -4545,6 +4563,116 @@ describe('SessionList', () => {
 			const withPill = render(<SessionList {...createDefaultProps({})} />);
 			expect(screen.queryByText('MAESTRO')).not.toBeInTheDocument();
 			withPill.unmount();
+		});
+	});
+
+	// ============================================================================
+	// Hosted (Phase 9): the runtime owns the agent tree and the groups
+	// ============================================================================
+
+	describe('when the library runtime is hosted', () => {
+		const ok = { ok: true as const, value: undefined };
+
+		beforeEach(() => {
+			vi.mocked(isLibraryRuntimeHosting).mockReturnValue(true);
+			vi.mocked(moveAgentToGroup).mockResolvedValue(ok);
+			vi.mocked(removeGroup).mockResolvedValue(ok);
+		});
+
+		const openMoveFlyout = (agentName: string) => {
+			fireEvent.contextMenu(screen.getByText(agentName), { clientX: 100, clientY: 100 });
+			fireEvent.mouseEnter(screen.getByText('Move to Group').closest('div')!);
+			return within(screen.getByTestId('session-context-flyout'));
+		};
+
+		describe('Move to Group', () => {
+			it('sends moveAgentToGroup with the group id and does not edit the store', () => {
+				const group = createMockGroup({ id: 'g1', name: 'Click Target', collapsed: true });
+				const sessions = [createMockSession({ id: 's1', name: 'Move Me To Group' })];
+				useSessionStore.setState({ sessions, groups: [group] });
+				useUIStore.setState({ leftSidebarOpen: true });
+				const setSessions = vi.spyOn(useSessionStore.getState(), 'setSessions');
+				render(<SessionList {...createDefaultProps({ sortedSessions: sessions })} />);
+
+				fireEvent.click(openMoveFlyout('Move Me To Group').getByText('Click Target'));
+
+				expect(moveAgentToGroup).toHaveBeenCalledTimes(1);
+				expect(moveAgentToGroup).toHaveBeenCalledWith('s1', 'g1');
+				expect(setSessions).not.toHaveBeenCalled();
+				// The store changes when the runtime's answer lands, not here.
+				expect(useSessionStore.getState().sessions[0].groupId).toBeUndefined();
+			});
+
+			it('sends null to ungroup an agent', () => {
+				// Expanded, so the member's row is on screen.
+				const group = createMockGroup({ id: 'g1', name: 'Home Group', collapsed: false });
+				const sessions = [createMockSession({ id: 's1', name: 'Ungroup Me', groupId: 'g1' })];
+				useSessionStore.setState({ sessions, groups: [group] });
+				useUIStore.setState({ leftSidebarOpen: true });
+				const setSessions = vi.spyOn(useSessionStore.getState(), 'setSessions');
+				render(<SessionList {...createDefaultProps({ sortedSessions: sessions })} />);
+
+				fireEvent.click(openMoveFlyout('Ungroup Me').getByText('Ungrouped'));
+
+				expect(moveAgentToGroup).toHaveBeenCalledWith('s1', null);
+				expect(setSessions).not.toHaveBeenCalled();
+				expect(useSessionStore.getState().sessions[0].groupId).toBe('g1');
+			});
+		});
+
+		describe('Delete Group', () => {
+			it('removes an empty group through the runtime after the confirmation is accepted', () => {
+				const group = createMockGroup({ id: 'g1', name: 'Empty Group' });
+				useSessionStore.setState({ sessions: [], groups: [group] });
+				useUIStore.setState({ leftSidebarOpen: true });
+				const setGroups = vi.spyOn(useSessionStore.getState(), 'setGroups');
+				const showConfirmation = vi.fn();
+				render(<SessionList {...createDefaultProps({ sortedSessions: [], showConfirmation })} />);
+
+				fireEvent.contextMenu(screen.getByText('Empty Group'), { clientX: 100, clientY: 100 });
+				fireEvent.click(screen.getByText('Delete Group'));
+
+				expect(showConfirmation).toHaveBeenCalledWith(
+					expect.stringContaining('Empty Group'),
+					expect.any(Function)
+				);
+				// Nothing is sent until the user accepts.
+				expect(removeGroup).not.toHaveBeenCalled();
+
+				act(() => {
+					showConfirmation.mock.calls[0][1]();
+				});
+
+				expect(removeGroup).toHaveBeenCalledTimes(1);
+				expect(removeGroup).toHaveBeenCalledWith('g1');
+				expect(setGroups).not.toHaveBeenCalled();
+				expect(useSessionStore.getState().groups.map((g) => g.id)).toEqual(['g1']);
+			});
+
+			it('leaves the ungrouping of members to the runtime for a populated group', () => {
+				const group = createMockGroup({ id: 'g1', name: 'Busy Group' });
+				const sessions = [createMockSession({ id: 's1', name: 'Member', groupId: 'g1' })];
+				useSessionStore.setState({ sessions, groups: [group] });
+				useUIStore.setState({ leftSidebarOpen: true });
+				const setGroups = vi.spyOn(useSessionStore.getState(), 'setGroups');
+				const setSessions = vi.spyOn(useSessionStore.getState(), 'setSessions');
+				const showConfirmation = vi.fn();
+				render(
+					<SessionList {...createDefaultProps({ sortedSessions: sessions, showConfirmation })} />
+				);
+
+				fireEvent.contextMenu(screen.getByText('Busy Group'), { clientX: 100, clientY: 100 });
+				fireEvent.click(screen.getByText('Delete Group'));
+				act(() => {
+					showConfirmation.mock.calls[0][1]();
+				});
+
+				expect(removeGroup).toHaveBeenCalledTimes(1);
+				expect(removeGroup).toHaveBeenCalledWith('g1');
+				expect(setGroups).not.toHaveBeenCalled();
+				expect(setSessions).not.toHaveBeenCalled();
+				expect(useSessionStore.getState().sessions[0].groupId).toBe('g1');
+			});
 		});
 	});
 });

@@ -43,6 +43,9 @@ import { logger } from '../../utils/logger';
 import { captureException } from '../../utils/sentry';
 import { compactSessionToolOutputs } from '../../../shared/toolOutput';
 import { MAX_PERSISTED_SESSION_LOGS } from '../../../shared/deferredSessionContent';
+import { useWindowContextOptional } from '../../contexts/WindowContext';
+import { isLibraryRuntimeHosting } from '../../services/libraryRuntime';
+import { buildRuntimeFold, sendRuntimeFold } from '../../services/runtimeMirror';
 
 /**
  * Thrown by `persistInternal` when the session registry was never read back
@@ -386,6 +389,12 @@ export function useDebouncedPersistence(
 	// Store the latest sessions in a ref for access in flush callbacks
 	const sessionsRef = useRef<Session[]>(useSessionStore.getState().sessions);
 
+	// With the runtime hosted, a flush is a desktop fold, and only the window that folds an agent's
+	// stream may send that agent's turn state (4.7). Read through a ref so the flush never goes stale.
+	const ownsSession = useWindowContextOptional()?.ownsSession;
+	const ownsSessionRef = useRef(ownsSession);
+	ownsSessionRef.current = ownsSession;
+
 	// Store the timer ID for cleanup
 	const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -442,11 +451,32 @@ export function useDebouncedPersistence(
 			throw new Error(SESSIONS_NOT_READ_MESSAGE);
 		}
 		const current = sessionsRef.current;
+		/**
+		 * Hosted: the flush is a fold. Desktop-owned keys land, a domain edit lands only at the revision
+		 * this window last applied, an agent the runtime never told this window about is adopted, and an
+		 * agent removed without a command is removed. Throws on failure, like the IPC calls it replaces
+		 * answering false, so the caller keeps the batch pending.
+		 */
+		const foldHosted = async (sessions: Session[], removedIds: string[]): Promise<void> => {
+			await sendRuntimeFold(
+				buildRuntimeFold({
+					sessions: sessions.map(prepareSessionForPersistence),
+					removedIds,
+					ownsAgent: (id) => ownsSessionRef.current?.(id) ?? true,
+				})
+			);
+		};
 		if (previouslyPersistedRef.current === null) {
-			const sessionsForPersistence = current.map(prepareSessionForPersistence);
 			const tombstones = mountedSessionsRef.current
 				? diffSessions(mountedSessionsRef.current, current).tombstones
 				: [];
+			if (isLibraryRuntimeHosting()) {
+				await foldHosted(current, tombstones);
+				previouslyPersistedRef.current = current;
+				startupBaselineNeedsFullFlushRef.current = false;
+				return;
+			}
+			const sessionsForPersistence = current.map(prepareSessionForPersistence);
 			const ok =
 				tombstones.length > 0
 					? await window.maestro.sessions.setMany(sessionsForPersistence, tombstones)
@@ -463,6 +493,12 @@ export function useDebouncedPersistence(
 		if (sessionsToPersist.length === 0 && tombstones.length === 0) {
 			// Nothing changed - safe to advance the baseline (it would be
 			// identical anyway).
+			previouslyPersistedRef.current = current;
+			startupBaselineNeedsFullFlushRef.current = false;
+			return;
+		}
+		if (isLibraryRuntimeHosting()) {
+			await foldHosted(sessionsToPersist, tombstones);
 			previouslyPersistedRef.current = current;
 			startupBaselineNeedsFullFlushRef.current = false;
 			return;

@@ -43,6 +43,7 @@ import type {
 	SessionReadOptions,
 } from '../../agents';
 import type { GlobalAgentStats, ProviderStats, SshRemoteConfig } from '../../../shared/types';
+import { setAgentSessionName } from '../../storage/agent-session-origins';
 import { captureException } from '../../utils/sentry';
 import { isExpectedSessionReadError } from '../../utils/session-read-errors';
 import {
@@ -813,27 +814,7 @@ export function registerAgentSessionsHandlers(deps?: AgentSessionsHandlerDepende
 					logger.warn('Origins store not available', LOG_CONTEXT);
 					return;
 				}
-				const allOrigins = originsStore.get('origins', {});
-				if (!allOrigins[agentId]) allOrigins[agentId] = {};
-				if (!allOrigins[agentId][projectPath]) allOrigins[agentId][projectPath] = {};
-
-				if (sessionName) {
-					allOrigins[agentId][projectPath][sessionId] = {
-						...allOrigins[agentId][projectPath][sessionId],
-						sessionName,
-					};
-				} else {
-					// Remove sessionName
-					const existing = allOrigins[agentId][projectPath][sessionId];
-					if (existing) {
-						delete existing.sessionName;
-						// Clean up if empty
-						if (!existing.starred && !existing.origin) {
-							delete allOrigins[agentId][projectPath][sessionId];
-						}
-					}
-				}
-				originsStore.set('origins', allOrigins);
+				setAgentSessionName(originsStore, agentId, projectPath, sessionId, sessionName);
 				logger.info(`Set session name for ${agentId}/${sessionId}: ${sessionName}`, LOG_CONTEXT);
 			}
 		)

@@ -29,6 +29,9 @@ import * as path from 'path';
 
 import { workingDirectoryChangeBlocker } from '../../agentWorkingDirectory';
 import { isValidAgentId } from '../../agentIds';
+import { validateGroupAppearance } from '../../groupAppearance';
+import { canSetGroupParent } from '../../groupHierarchy';
+import type { Group } from '../../types';
 import type {
 	AgentCreateInput,
 	AgentPatch,
@@ -39,6 +42,7 @@ import type {
 	ClientMethod,
 	ClientResult,
 	GroupCreateInput,
+	GroupPatch,
 	MaestroEvent,
 	TabPatch,
 } from '../client/types';
@@ -66,9 +70,23 @@ import type {
 	GroupsDocument,
 	SessionsDocument,
 } from '../store/records';
-import { agentsOf, groupsOf, optionalArrayShape, visibleAiTabsOf } from '../store/read-stores';
+import {
+	agentsOf,
+	groupsOf,
+	optionalArrayShape,
+	projectAgentRecord as project,
+	projectTabRecord as projectTab,
+	visibleAiTabsOf,
+} from '../store/read-stores';
 import type { LogEntryRecord } from '../store/transcript';
-import { archiveClosedTab, removeClosedTabArchive } from './closed-tabs';
+import {
+	archiveClosedTab,
+	closedTabsFile,
+	readClosedTabs,
+	removeClosedTabArchive,
+} from './closed-tabs';
+import { applyDesktopFold } from './desktop-fold';
+import type { DesktopFold, DesktopFoldResult, DesktopSnapshot } from './desktop-fold-types';
 import {
 	activeAgentAfterRemoval,
 	addTabRecord,
@@ -85,6 +103,7 @@ import {
 	checkAgentCreateInput,
 	checkAgentName,
 	closeTabRecord,
+	DEFAULT_GROUP_EMOJI,
 	DEFAULT_RULE_CONTEXT,
 	DEFAULT_TAB_DEFAULTS,
 	groupsWithout,
@@ -143,6 +162,11 @@ export interface AgentRepositoryOptions {
 	readTabDefaults?: () => Promise<TabDefaults>;
 	/** Why a local working directory cannot be used, or null. Default: `unusableCwdReason`. */
 	checkCwd?: (cwd: string) => string | null;
+	/**
+	 * How long a desktop fold waits before its coalesced write (DG4). Folds replace the in-memory documents
+	 * at once and share one write; 0 means the next tick. Default 250 ms, the desktop's own.
+	 */
+	foldWriteDelayMs?: number;
 }
 
 /** Why the repository could not load its documents. The runtime unions these into `RuntimeRefusal`. */
@@ -165,8 +189,29 @@ export interface AgentRepository {
 	getTab(agentId: string, tabId: string): AITabRecord | undefined;
 	/** After this, every command answers `host-lost` with `reason`. Reads still work. */
 	fence(reason: string): void;
-	/** Resolves once every command accepted so far has finished, written or failed. Shutdown awaits it before releasing the lock. */
+	/**
+	 * Resolves once every command accepted so far has finished, written or failed, and every pending
+	 * fold write has been attempted. Shutdown awaits it before releasing the lock.
+	 */
 	drain(): Promise<void>;
+
+	/** The agent's revision, 0 when unknown. Bumped before the event of every committed change to it (DG5). */
+	revisionOf(agentId: string): number;
+	/** Bumped before every `groups.changed`. */
+	groupsRevision(): number;
+	/** The stored records WITH transcripts (the in-memory document, not a projection), and every revision. */
+	snapshot(): DesktopSnapshot;
+	/** The documents as held, for the main-process store facade. Read only; never held across an await. */
+	documents(): { sessions: SessionsDocument; groups: GroupsDocument };
+	/** DG8. A group's name, emoji, or parent, checked with `canSetGroupParent`. Write-through. */
+	updateGroup(groupId: string, patch: GroupPatch): Promise<ClientResult<void>>;
+	/**
+	 * Land a desktop fold (4.5). Runs in the command queue; the documents change at once and one coalesced
+	 * write follows. Fenced: answers `host-lost`.
+	 */
+	applyFold(fold: DesktopFold): Promise<ClientResult<DesktopFoldResult>>;
+	/** Write every pending fold now. Resolves when durable; rejects when the write fails. */
+	flush(): Promise<void>;
 
 	createAgent(input: AgentCreateInput): Promise<ClientResult<{ agentId: string }>>;
 	updateAgent(agentId: string, patch: AgentPatch): Promise<ClientResult<AgentUpdateReceipt>>;
@@ -246,6 +291,8 @@ interface Plan<T> {
 	before?: () => Promise<void>;
 	/** Runs after the writes landed. A failure is logged and never fails the command. */
 	after?: () => Promise<void>;
+	/** Runs synchronously once the writes landed, before the revisions bump and the events leave. */
+	onCommit?: () => void;
 	events: MaestroEvent[];
 }
 
@@ -264,18 +311,6 @@ function visibleTab(agent: AgentRecord, tabId: string): AITabRecord | undefined 
 	return visibleAiTabsOf(agent).find((tab) => tab.id === tabId);
 }
 
-/** A record without its transcripts (R6). */
-function project(agent: AgentRecord): AgentRecord {
-	if (!Array.isArray(agent.aiTabs)) return agent;
-	return { ...agent, aiTabs: agent.aiTabs.map(projectTab) };
-}
-
-function projectTab(tab: AITabRecord): AITabRecord {
-	if (!('logs' in tab)) return tab;
-	const { logs: _logs, ...rest } = tab;
-	return rest;
-}
-
 function isAgentEntry(entry: unknown): entry is AgentRecord {
 	const candidate = entry as Partial<AgentRecord> | null;
 	return (
@@ -292,6 +327,29 @@ function isSafeFileId(id: string): boolean {
 	return id.length > 0 && !/[\\/]/.test(id) && id !== '.' && id !== '..';
 }
 
+/** Removed agents and groups remembered so a stale fold cannot bring one back. Bounded like main's tombstones. */
+const TOMBSTONE_LIMIT = 1000;
+
+/** The default wait before a fold's coalesced write: the desktop's own (`WRITE_COALESCE_MS`). */
+const DEFAULT_FOLD_WRITE_DELAY_MS = 250;
+
+/** `id` as the newest member of `set`, the oldest dropped past the limit. */
+function remember(set: Set<string>, id: string): void {
+	set.delete(id);
+	set.add(id);
+	while (set.size > TOMBSTONE_LIMIT) {
+		const oldest = set.values().next().value;
+		if (oldest === undefined) break;
+		set.delete(oldest);
+	}
+}
+
+const NO_TAB_IDS: ReadonlySet<string> = new Set();
+
+function errorText(error: unknown): string {
+	return error instanceof Error ? error.message : String(error);
+}
+
 const DEFAULT_SESSIONS: SessionsDocument = { sessions: [] };
 const DEFAULT_GROUPS: GroupsDocument = { groups: [] };
 
@@ -305,6 +363,19 @@ export function createAgentRepository(options: AgentRepositoryOptions): AgentRep
 	let groupsDoc: GroupsDocument = DEFAULT_GROUPS;
 	let fencedReason: string | undefined;
 	let chain: Promise<unknown> = Promise.resolve();
+
+	// Revisions (DG5): one per agent and one for the groups, bumped before the event of every committed
+	// change so a listener that reads them inside its callback sees the post-commit value.
+	const revisions = new Map<string, number>();
+	let groupsRev = 0;
+	const removedAgents = new Set<string>();
+	const removedGroups = new Set<string>();
+
+	// Fold writes (DG4): the documents change at once; one trailing timer writes what is dirty.
+	const foldWriteDelayMs = options.foldWriteDelayMs ?? DEFAULT_FOLD_WRITE_DELAY_MS;
+	let sessionsDirty = false;
+	let groupsDirty = false;
+	let foldTimer: ReturnType<typeof setTimeout> | undefined;
 
 	const readTabDefaults =
 		options.readTabDefaults ??
@@ -362,11 +433,78 @@ export function createAgentRepository(options: AgentRepositoryOptions): AgentRep
 		}
 	}
 
+	/** Run `work` after everything queued before it. A rejection does not stop the queue. */
+	function enqueue<T>(work: () => Promise<T>): Promise<T> {
+		const next = chain.then(work);
+		chain = next.catch(() => undefined);
+		return next;
+	}
+
+	/** Revisions and tombstones for what a commit or a fold emits. Runs before the events leave. */
+	function noteCommitted(events: readonly MaestroEvent[]): void {
+		const bumped = new Set<string>();
+		let groupsBumped = false;
+		for (const event of events) {
+			if (event.type === 'agent.added' || event.type === 'agent.updated') {
+				const id = event.agent.id;
+				if (bumped.has(id)) continue;
+				bumped.add(id);
+				revisions.set(id, (revisions.get(id) ?? 0) + 1);
+			} else if (event.type === 'agent.removed') {
+				revisions.delete(event.agentId);
+				remember(removedAgents, event.agentId);
+			} else if (event.type === 'groups.changed' && !groupsBumped) {
+				groupsBumped = true;
+				groupsRev += 1;
+			}
+		}
+	}
+
+	function clearFoldTimer(): void {
+		if (foldTimer === undefined) return;
+		clearTimeout(foldTimer);
+		foldTimer = undefined;
+	}
+
+	/** Write what a fold left dirty. The caller is in the queue, so the documents cannot change under it. */
+	async function writeDirty(): Promise<void> {
+		if (!sessionsDirty && !groupsDirty) return;
+		guardWrite();
+		if (sessionsDirty) {
+			await writeStoreDocument(paths.sessionsFile, sessionsDoc, {
+				registry: SESSIONS_REGISTRY,
+				memoKey: 'sessions',
+			});
+			sessionsDirty = false;
+		}
+		if (groupsDirty) {
+			await writeStoreDocument(paths.groupsFile, groupsDoc, { registry: GROUPS_REGISTRY });
+			groupsDirty = false;
+		}
+	}
+
+	/** One trailing write for however many folds arrive inside the delay. It never throws into the timer. */
+	function scheduleFoldWrite(): void {
+		if ((!sessionsDirty && !groupsDirty) || foldTimer !== undefined) return;
+		foldTimer = setTimeout(() => {
+			foldTimer = undefined;
+			void enqueue(async () => {
+				try {
+					await writeDirty();
+				} catch (error) {
+					// Still dirty: the next fold, command, or flush writes it.
+					logger.warn(`The deferred fold write failed: ${errorText(error)}`, LOG_CONTEXT);
+				}
+			});
+		}, foldWriteDelayMs);
+		(foldTimer as { unref?: () => void }).unref?.();
+	}
+
 	async function run<T>(
 		method: ClientMethod,
 		planner: () => Promise<Planned<T>> | Planned<T>
 	): Promise<ClientResult<T>> {
-		const next = chain.then(async (): Promise<ClientResult<T>> => {
+		return enqueue(async (): Promise<ClientResult<T>> => {
 			try {
 				if (fencedReason !== undefined) throw new FencedError(fencedReason);
 				const planned = await planner();
@@ -378,18 +516,24 @@ export function createAgentRepository(options: AgentRepositoryOptions): AgentRep
 
 				// Each file's in-memory copy is replaced as soon as ITS write lands, so a
 				// failure on the second file leaves memory describing what is on disk.
+				// The document is whole, so this write carries whatever a fold already put in memory.
 				if (plan.sessions) {
 					guardWrite();
 					await writeStoreDocument(paths.sessionsFile, plan.sessions, {
 						registry: SESSIONS_REGISTRY,
+						memoKey: 'sessions',
 					});
 					sessionsDoc = plan.sessions;
+					sessionsDirty = false;
 				}
 				if (plan.groups) {
 					guardWrite();
 					await writeStoreDocument(paths.groupsFile, plan.groups, { registry: GROUPS_REGISTRY });
 					groupsDoc = plan.groups;
+					groupsDirty = false;
 				}
+				if (!sessionsDirty && !groupsDirty) clearFoldTimer();
+				plan.onCommit?.();
 
 				if (plan.after) {
 					try {
@@ -401,14 +545,13 @@ export function createAgentRepository(options: AgentRepositoryOptions): AgentRep
 						);
 					}
 				}
+				noteCommitted(plan.events);
 				bus.emitAll(plan.events);
 				return { ok: true, value: plan.value };
 			} catch (error) {
 				return failFromThrown(method, error);
 			}
 		});
-		chain = next.catch(() => undefined);
-		return next;
 	}
 
 	// -----------------------------------------------------------------------
@@ -514,6 +657,30 @@ export function createAgentRepository(options: AgentRepositoryOptions): AgentRep
 		return run(method, async () => {
 			const checked = checkAgentCreateInput(input);
 			if (!checked.ok) return failure(method, checked.code, checked.message);
+
+			// Client-chosen ids (DG10): the caller's optimistic record and this one are the same record.
+			if (input.id !== undefined) {
+				if (!input.id.trim()) return failure(method, 'invalid', 'The agent id cannot be empty.');
+				if (!isSafeFileId(input.id)) {
+					return failure(method, 'invalid', `"${input.id}" cannot be used as an agent id.`);
+				}
+				if (findAgent(input.id)) {
+					return failure(method, 'invalid', `An agent with the id "${input.id}" already exists.`);
+				}
+				if (removedAgents.has(input.id)) {
+					return failure(
+						method,
+						'invalid',
+						`The agent id "${input.id}" belonged to a removed agent.`
+					);
+				}
+			}
+			if (input.tabId !== undefined) {
+				if (!input.tabId.trim()) return failure(method, 'invalid', 'The tab id cannot be empty.');
+				if (!isSafeFileId(input.tabId)) {
+					return failure(method, 'invalid', `"${input.tabId}" cannot be used as a tab id.`);
+				}
+			}
 
 			const ssh = input.ssh?.enabled ? input.ssh : undefined;
 			const validation = validateNewAgent(
@@ -823,6 +990,7 @@ export function createAgentRepository(options: AgentRepositoryOptions): AgentRep
 				ok: true,
 				plan: {
 					value: undefined,
+					onCommit: () => remember(removedGroups, groupId),
 					// Members first: if the groups write then fails, nothing is lost, the group is just empty.
 					...(ungrouped.size > 0 ? { sessions: withAgents(ungrouped) } : {}),
 					groups: withGroups(next),
@@ -864,6 +1032,74 @@ export function createAgentRepository(options: AgentRepositoryOptions): AgentRep
 					events: [...moved.values()].map(
 						(next): MaestroEvent => ({ type: 'agent.updated', agent: project(next) })
 					),
+				},
+			};
+		});
+	}
+
+	/**
+	 * DG8. A group's name, emoji, or parent. The parent is checked with `canSetGroupParent` (one level of
+	 * nesting, an existing top-level parent, no cycle); `null` or an empty id moves the group to the top
+	 * level. A patch that changes nothing writes nothing and says nothing.
+	 */
+	function updateGroup(groupId: string, patch: GroupPatch): Promise<ClientResult<void>> {
+		const method: ClientMethod = 'groups.update';
+		return run(method, () => {
+			const list = groups();
+			const group = list.find((candidate) => candidate.id === groupId);
+			if (!group) return noGroup(method, groupId);
+
+			let next: GroupRecord = group;
+			if (patch.name !== undefined) {
+				const normalized = normalizeGroupName(patch.name);
+				if (!normalized) return failure(method, 'invalid', 'The group needs a name.');
+				next = { ...next, name: normalized };
+			}
+			if (patch.emoji !== undefined) {
+				const appearance = validateGroupAppearance({ emoji: patch.emoji });
+				if (!appearance.ok) return failure(method, 'invalid', appearance.error);
+				next = { ...next, emoji: appearance.value.emoji || DEFAULT_GROUP_EMOJI };
+			}
+			// Icon and color: null clears, a string is validated like a create.
+			for (const key of ['icon', 'color'] as const) {
+				const value = patch[key];
+				if (value === undefined) continue;
+				if (value === null) {
+					const { [key]: _cleared, ...rest } = next;
+					next = rest as GroupRecord;
+					continue;
+				}
+				const look = validateGroupAppearance({ [key]: value });
+				if (!look.ok) return failure(method, 'invalid', look.error);
+				next = { ...next, [key]: look.value[key] };
+			}
+			if (patch.parentGroupId !== undefined) {
+				const parent = patch.parentGroupId || undefined;
+				if (!canSetGroupParent(list as unknown as Group[], groupId, parent)) {
+					return failure(
+						method,
+						'invalid',
+						'A group can only be nested one level deep, inside an existing top-level group.'
+					);
+				}
+				if (parent) {
+					next = { ...next, parentGroupId: parent };
+				} else if (next.parentGroupId !== undefined) {
+					const { parentGroupId: _top, ...rest } = next;
+					next = rest;
+				}
+			}
+
+			if (next === group || valuesEqual(next, group)) {
+				return { ok: true, plan: { value: undefined, events: [] } };
+			}
+			const updated = list.map((candidate) => (candidate.id === groupId ? next : candidate));
+			return {
+				ok: true,
+				plan: {
+					value: undefined,
+					groups: withGroups(updated),
+					events: [{ type: 'groups.changed', groups: updated }],
 				},
 			};
 		});
@@ -1062,6 +1298,83 @@ export function createAgentRepository(options: AgentRepositoryOptions): AgentRep
 		});
 	}
 
+	// -----------------------------------------------------------------------
+	// The desktop fold and its write
+	// -----------------------------------------------------------------------
+
+	/** Every agent's revision, 0 for one the runtime has never changed. */
+	function revisionsOfAll(): Record<string, number> {
+		const out: Record<string, number> = {};
+		for (const agent of agents()) out[agent.id] = revisions.get(agent.id) ?? 0;
+		return out;
+	}
+
+	/**
+	 * Land a desktop fold (4.5): the pure applier decides, this commits. Archives first (RT6), then the
+	 * in-memory documents change at once and ONE coalesced write follows (DG4). Events leave with the
+	 * revisions already bumped, `agent.removed` first and `groups.changed` last. A fold that changes
+	 * nothing stored writes nothing and says nothing.
+	 */
+	function applyFold(fold: DesktopFold): Promise<ClientResult<DesktopFoldResult>> {
+		const method: ClientMethod = 'desktop.fold';
+		return enqueue(async (): Promise<ClientResult<DesktopFoldResult>> => {
+			try {
+				// A fenced repository never lands a fold: the data directory is someone else's now.
+				guardWrite();
+
+				// The archive is the tab tombstone, read only for the agents that adopt a tab.
+				const closedTabs = new Map<string, ReadonlySet<string>>();
+				for (const entry of fold.agents ?? []) {
+					if (!entry.adoptTabs || entry.adoptTabs.length === 0) continue;
+					const archived = await readClosedTabs(closedTabsFile(paths.syncDir, entry.id));
+					closedTabs.set(entry.id, new Set(archived.map((closed) => closed.tab.id)));
+				}
+				const closing = (fold.agents ?? []).some((entry) => (entry.closeTabs?.length ?? 0) > 0);
+				const defaults = closing ? await readTabDefaults() : DEFAULT_TAB_DEFAULTS;
+
+				const plan = applyDesktopFold(
+					{
+						sessions: sessionsDoc,
+						groups: groupsDoc,
+						revisionOf: (agentId) => revisions.get(agentId) ?? 0,
+						groupsRev,
+						removedAgentIds: removedAgents,
+						removedGroupIds: removedGroups,
+						closedTabIds: (agentId) => closedTabs.get(agentId) ?? NO_TAB_IDS,
+					},
+					fold,
+					{ ctx, defaults }
+				);
+
+				// A closed tab is archived before it leaves the record, so a failure between the two
+				// writes leaves it open and also archived, never lost.
+				for (const item of plan.archive) {
+					await archiveClosedTab(paths.syncDir, item.agentId, item.closed);
+				}
+
+				if (plan.sessions) {
+					sessionsDoc = plan.sessions;
+					sessionsDirty = true;
+				}
+				if (plan.groups) {
+					groupsDoc = plan.groups;
+					groupsDirty = true;
+				}
+				for (const id of plan.tombstoneAgents) remember(removedAgents, id);
+				for (const id of plan.tombstoneGroups) remember(removedGroups, id);
+				noteCommitted(plan.events);
+				scheduleFoldWrite();
+				bus.emitAll(plan.events);
+				return {
+					ok: true,
+					value: { revs: revisionsOfAll(), groupsRev, drift: plan.drift },
+				};
+			} catch (error) {
+				return failFromThrown(method, error);
+			}
+		});
+	}
+
 	return {
 		load,
 		listAgents: () => agents().map(project),
@@ -1083,7 +1396,34 @@ export function createAgentRepository(options: AgentRepositoryOptions): AgentRep
 		},
 		drain: async () => {
 			await chain;
+			// Shutdown: whatever a fold left dirty is written now, while the lock is still held. A failure
+			// is logged: there is nobody left to retry it.
+			await enqueue(async () => {
+				clearFoldTimer();
+				try {
+					await writeDirty();
+				} catch (error) {
+					logger.warn(`Writing the pending fold failed: ${errorText(error)}`, LOG_CONTEXT);
+				}
+			});
 		},
+		revisionOf: (agentId) => revisions.get(agentId) ?? 0,
+		groupsRevision: () => groupsRev,
+		snapshot: (): DesktopSnapshot => ({
+			agents: agents(),
+			groups: groups(),
+			activeSessionId: sessionsDoc.activeSessionId ?? '',
+			revs: revisionsOfAll(),
+			groupsRev,
+		}),
+		documents: () => ({ sessions: sessionsDoc, groups: groupsDoc }),
+		updateGroup,
+		applyFold,
+		flush: () =>
+			enqueue(async () => {
+				clearFoldTimer();
+				await writeDirty();
+			}),
 		createAgent,
 		updateAgent,
 		renameAgent,

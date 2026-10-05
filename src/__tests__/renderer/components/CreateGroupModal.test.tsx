@@ -15,6 +15,21 @@ import { CreateGroupModal } from '../../../renderer/components/CreateGroupModal'
 import { LayerStackProvider } from '../../../renderer/contexts/LayerStackContext';
 import type { Theme, Group } from '../../../renderer/types';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
+import { isLibraryRuntimeHosting } from '../../../renderer/services/libraryRuntime';
+import { createGroup } from '../../../renderer/services/agentOps';
+
+// Phase 9: the hosted-runtime flag and the create command. The flag defaults to false, so every
+// test outside the hosted describe exercises the OFF path unchanged.
+vi.mock('../../../renderer/services/libraryRuntime', async () => {
+	const actual = await vi.importActual<typeof import('../../../renderer/services/libraryRuntime')>(
+		'../../../renderer/services/libraryRuntime'
+	);
+	return { ...actual, isLibraryRuntimeHosting: vi.fn(() => false) };
+});
+
+vi.mock('../../../renderer/services/agentOps', () => ({
+	createGroup: vi.fn(),
+}));
 
 // Mock lucide-react
 vi.mock('lucide-react', async (importOriginal) => ({
@@ -104,11 +119,13 @@ describe('CreateGroupModal', () => {
 		onClose = vi.fn();
 		vi.useFakeTimers();
 		setGroupsPlusEnabled(false);
+		vi.mocked(isLibraryRuntimeHosting).mockReturnValue(false);
 	});
 
 	afterEach(() => {
 		vi.clearAllMocks();
 		vi.useRealTimers();
+		vi.mocked(isLibraryRuntimeHosting).mockReturnValue(false);
 	});
 
 	const renderModal = (overrides: Partial<React.ComponentProps<typeof CreateGroupModal>> = {}) => {
@@ -977,6 +994,111 @@ describe('CreateGroupModal', () => {
 			// Find emoji button (contains 📂)
 			const emojiButton = screen.getByText('📂').closest('button');
 			expect(emojiButton).toHaveAttribute('type', 'button');
+		});
+	});
+
+	describe('when the library runtime is hosted', () => {
+		const clickCreate = async () => {
+			await act(async () => {
+				fireEvent.click(screen.getByRole('button', { name: 'Create' }));
+			});
+		};
+		const typeName = (value: string) =>
+			fireEvent.change(screen.getByPlaceholderText('Enter group name...'), { target: { value } });
+
+		beforeEach(() => {
+			vi.mocked(isLibraryRuntimeHosting).mockReturnValue(true);
+			vi.mocked(createGroup).mockResolvedValue({ ok: true, value: { groupId: 'group-test-id' } });
+		});
+
+		it('sends createGroup with a client-chosen id and the upper-cased trimmed name', async () => {
+			const onGroupCreated = vi.fn();
+			renderModal({ onGroupCreated });
+
+			fireEvent.click(screen.getByText('📂'));
+			fireEvent.click(screen.getByTestId('select-emoji-🚀'));
+			typeName('  my test group  ');
+			await clickCreate();
+
+			expect(createGroup).toHaveBeenCalledTimes(1);
+			// No icon, color, or parent key unless one was chosen.
+			expect(createGroup).toHaveBeenCalledWith({
+				id: 'group-test-id',
+				name: 'MY TEST GROUP',
+				emoji: '🚀',
+			});
+			expect(setGroups).not.toHaveBeenCalled();
+			expect(onGroupCreated).toHaveBeenCalledWith('group-test-id');
+			expect(onClose).toHaveBeenCalledTimes(1);
+		});
+
+		it('carries the chosen icon and color', async () => {
+			setGroupsPlusEnabled(true);
+			renderModal();
+
+			typeName('Styled');
+			fireEvent.click(screen.getAllByRole('button', { name: /^Use .+ icon$/ })[0]);
+			fireEvent.click(screen.getAllByRole('button', { name: /^Use .+ label color$/ })[0]);
+			await clickCreate();
+
+			expect(createGroup).toHaveBeenCalledWith({
+				id: 'group-test-id',
+				name: 'STYLED',
+				// Picking an icon clears the emoji.
+				emoji: '',
+				icon: expect.any(String),
+				color: expect.any(String),
+			});
+			expect(setGroups).not.toHaveBeenCalled();
+		});
+
+		it('carries the resolved parent folder', async () => {
+			setGroupsPlusEnabled(true);
+			renderModal({ initialParentGroupId: 'group-1' });
+
+			typeName('Project');
+			await clickCreate();
+
+			expect(createGroup).toHaveBeenCalledWith(
+				expect.objectContaining({ id: 'group-test-id', parentGroupId: 'group-1' })
+			);
+			expect(setGroups).not.toHaveBeenCalled();
+		});
+
+		it('drops a parent the Groups Plus feature would not allow', async () => {
+			setGroupsPlusEnabled(false);
+			renderModal({ initialParentGroupId: 'group-1' });
+
+			typeName('Project');
+			await clickCreate();
+
+			expect(vi.mocked(createGroup).mock.calls[0][0]).not.toHaveProperty('parentGroupId');
+		});
+
+		it('stays open and reports nothing when the runtime refuses the group', async () => {
+			vi.mocked(createGroup).mockResolvedValue({ ok: false, message: 'name is taken' });
+			const onGroupCreated = vi.fn();
+			renderModal({ onGroupCreated });
+
+			typeName('Taken');
+			await clickCreate();
+
+			expect(createGroup).toHaveBeenCalledTimes(1);
+			expect(onGroupCreated).not.toHaveBeenCalled();
+			expect(onClose).not.toHaveBeenCalled();
+			expect(setGroups).not.toHaveBeenCalled();
+			// The dialog is still there with the name to fix.
+			expect(screen.getByPlaceholderText('Enter group name...')).toHaveValue('Taken');
+		});
+
+		it('does nothing for a blank name', async () => {
+			renderModal();
+
+			typeName('   ');
+			fireEvent.keyDown(screen.getByPlaceholderText('Enter group name...'), { key: 'Enter' });
+			await act(async () => {});
+
+			expect(createGroup).not.toHaveBeenCalled();
 		});
 	});
 });

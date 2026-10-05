@@ -5,3 +5,7 @@ export { createDesktopRuntimeProcesses } from './processes';
 export type { DesktopProcessSource } from './processes';
 export { createRuntimeBridge, RUNTIME_BRIDGE_MESSAGE_TYPES } from './bridge';
 export type { RuntimeBridge, RuntimeMessageRouter, RuntimeBroadcastTarget } from './bridge';
+export { createDesktopBinding } from './desktop-binding';
+export type { DesktopBinding, DesktopRuntime } from './desktop-binding';
+export { wireDesktopRuntime } from './desktop-wiring';
+export type { DesktopWiring, DesktopWiringOptions } from './desktop-wiring';

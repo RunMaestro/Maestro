@@ -34,8 +34,31 @@ import { createMockFileTab, createMockAITab } from '../../helpers/mockTab';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 import { createGroupFromTabRefs } from '../../../renderer/utils/panelLayout';
 import { notifyToast } from '../../../renderer/stores/notificationStore';
+import { isLibraryRuntimeHosting } from '../../../renderer/services/libraryRuntime';
+import { persistGroupsToRuntime } from '../../../renderer/services/runtimeMirror';
+import { removeAgent } from '../../../renderer/services/agentOps';
 
 vi.mock('../../../renderer/stores/notificationStore', () => ({ notifyToast: vi.fn() }));
+
+// Phase 9: the hosted-runtime flag, the groups fold, and the remove command. The flag defaults to
+// false, so every test outside the hosted describe exercises the OFF path unchanged.
+vi.mock('../../../renderer/services/libraryRuntime', async () => {
+	const actual = await vi.importActual<typeof import('../../../renderer/services/libraryRuntime')>(
+		'../../../renderer/services/libraryRuntime'
+	);
+	return { ...actual, isLibraryRuntimeHosting: vi.fn(() => false) };
+});
+
+vi.mock('../../../renderer/services/runtimeMirror', async () => {
+	const actual = await vi.importActual<typeof import('../../../renderer/services/runtimeMirror')>(
+		'../../../renderer/services/runtimeMirror'
+	);
+	return { ...actual, persistGroupsToRuntime: vi.fn(async () => undefined) };
+});
+
+vi.mock('../../../renderer/services/agentOps', () => ({
+	removeAgent: vi.fn(async () => ({ ok: true, value: undefined })),
+}));
 
 // ============================================================================
 // Test Helpers
@@ -96,6 +119,7 @@ function createDeps(overrides: Partial<SessionLifecycleDeps> = {}): SessionLifec
 
 beforeEach(() => {
 	vi.clearAllMocks();
+	vi.mocked(isLibraryRuntimeHosting).mockReturnValue(false);
 	vi.useFakeTimers();
 
 	// Reset stores
@@ -154,6 +178,7 @@ afterEach(() => {
 	cleanup();
 	vi.useRealTimers();
 	vi.restoreAllMocks();
+	vi.mocked(isLibraryRuntimeHosting).mockReturnValue(false);
 });
 
 // ============================================================================
@@ -2323,6 +2348,163 @@ describe('useSessionLifecycle', () => {
 				tabId: 'tab-1',
 				tabKind: 'ai',
 			});
+		});
+	});
+});
+
+// ============================================================================
+// Hosted (Phase 9): main owns the agent tree and the groups file
+// ============================================================================
+
+describe('useSessionLifecycle when the library runtime is hosted', () => {
+	beforeEach(() => {
+		vi.mocked(isLibraryRuntimeHosting).mockReturnValue(true);
+		vi.mocked(removeAgent).mockResolvedValue({ ok: true, value: undefined });
+		vi.mocked(persistGroupsToRuntime).mockResolvedValue(undefined);
+	});
+
+	describe('performDeleteSession', () => {
+		it('sends removeAgent and skips every local cleanup the runtime now owns', async () => {
+			const session = createMockSession({
+				id: 'session-1',
+				terminalTabs: [
+					{
+						id: 'tab-t1',
+						name: null,
+						shellType: 'zsh',
+						pid: 111,
+						cwd: '/tmp',
+						createdAt: Date.now(),
+						state: 'idle',
+					},
+				],
+			});
+			const other = createMockSession({ id: 'session-2' });
+			useSessionStore.setState({
+				sessions: [session, other],
+				activeSessionId: 'session-1',
+			});
+
+			const { result } = renderHook(() => useSessionLifecycle(createDeps()));
+
+			await act(async () => {
+				await result.current.performDeleteSession(session, false);
+				vi.runAllTimers();
+			});
+
+			expect(removeAgent).toHaveBeenCalledTimes(1);
+			expect(removeAgent).toHaveBeenCalledWith('session-1');
+			expect(window.maestro.stats.recordSessionClosed).not.toHaveBeenCalled();
+			expect(window.maestro.process.kill).not.toHaveBeenCalled();
+			expect(window.maestro.playbooks.deleteAll).not.toHaveBeenCalled();
+			// The command's answer edits the store; this call neither filters it nor flushes.
+			expect(useSessionStore.getState().sessions.map((s) => s.id)).toEqual([
+				'session-1',
+				'session-2',
+			]);
+			expect(useSessionStore.getState().activeSessionId).toBe('session-1');
+			expect(mockFlushSessionPersistence).not.toHaveBeenCalled();
+		});
+
+		it('still trashes the working directory when asked', async () => {
+			const session = createMockSession({ id: 'session-1', cwd: '/projects/myapp' });
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+
+			const { result } = renderHook(() => useSessionLifecycle(createDeps()));
+
+			await act(async () => {
+				await result.current.performDeleteSession(session, true);
+			});
+
+			expect(window.maestro.shell.trashItem).toHaveBeenCalledWith('/projects/myapp');
+			expect(removeAgent).toHaveBeenCalledWith('session-1');
+		});
+
+		it('does not trash the working directory when not asked', async () => {
+			const session = createMockSession({ id: 'session-1' });
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+
+			const { result } = renderHook(() => useSessionLifecycle(createDeps()));
+
+			await act(async () => {
+				await result.current.performDeleteSession(session, false);
+			});
+
+			expect(window.maestro.shell.trashItem).not.toHaveBeenCalled();
+		});
+
+		it('still records the removed worktree path', async () => {
+			const session = createMockSession({
+				id: 'wt-1',
+				cwd: '/projects/myapp-wt',
+				worktreeParentPath: '/projects',
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'wt-1' });
+
+			const { result } = renderHook(() => useSessionLifecycle(createDeps()));
+
+			await act(async () => {
+				await result.current.performDeleteSession(session, false);
+			});
+
+			expect(mockSetRemovedWorktreePaths).toHaveBeenCalledTimes(1);
+			const updater = mockSetRemovedWorktreePaths.mock.calls[0][0];
+			expect(Array.from(updater(new Set<string>()))).toEqual(['/projects/myapp-wt']);
+			expect(removeAgent).toHaveBeenCalledWith('wt-1');
+		});
+	});
+
+	describe('groups persistence effect', () => {
+		it('persists groups through the runtime instead of groups.setAll', () => {
+			const groups = [{ id: 'g1', name: 'Group 1', emoji: '', collapsed: false }];
+			useSessionStore.setState({
+				sessions: [],
+				activeSessionId: '',
+				groups,
+				initialLoadComplete: true,
+				groupsLoaded: true,
+			});
+
+			renderHook(() => useSessionLifecycle(createDeps()));
+
+			expect(persistGroupsToRuntime).toHaveBeenCalledWith(groups);
+			expect(window.maestro.groups.setAll).not.toHaveBeenCalled();
+		});
+
+		it('does not persist before the initial load completes', () => {
+			useSessionStore.setState({
+				sessions: [],
+				activeSessionId: '',
+				groups: [{ id: 'g1', name: 'Group 1', emoji: '', collapsed: false }],
+				initialLoadComplete: false,
+				groupsLoaded: true,
+			});
+
+			renderHook(() => useSessionLifecycle(createDeps()));
+
+			expect(persistGroupsToRuntime).not.toHaveBeenCalled();
+			expect(window.maestro.groups.setAll).not.toHaveBeenCalled();
+		});
+
+		it('survives a rejected fold without throwing', async () => {
+			vi.mocked(persistGroupsToRuntime).mockRejectedValue(new Error('fenced'));
+			useSessionStore.setState({
+				sessions: [],
+				activeSessionId: '',
+				groups: [{ id: 'g1', name: 'Group 1', emoji: '', collapsed: false }],
+				initialLoadComplete: true,
+				groupsLoaded: true,
+			});
+
+			expect(() => renderHook(() => useSessionLifecycle(createDeps()))).not.toThrow();
+			// Let the rejection settle; an unhandled one would fail the run.
+			await act(async () => {
+				await Promise.resolve();
+				await Promise.resolve();
+			});
+
+			expect(persistGroupsToRuntime).toHaveBeenCalledTimes(1);
+			expect(window.maestro.groups.setAll).not.toHaveBeenCalled();
 		});
 	});
 });

@@ -227,6 +227,7 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 		sessionsStore: deps.sessionsStore,
 		groupsStore: deps.groupsStore,
 		getWebServer: deps.getWebServer,
+		...(deps.getRuntimeBinding ? { getRuntimeBinding: deps.getRuntimeBinding } : {}),
 		// Metadata-only session/agent lifecycle -> subscribed plugins. Null-safe:
 		// the bus is created during plugin init and re-authorizes every delivery
 		// against live grants, so this is a no-op when plugins are disabled.

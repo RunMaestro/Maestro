@@ -37,6 +37,7 @@ import { assertSerializedJsonIsSafe } from '../../jsonUtils';
 import { createKeyedWriteQueue } from '../../keyedWriteQueue';
 import { atomicWriteFile, atomicWriteJson } from './atomic-write';
 import { corruptStorePath, parseStoreJson } from './corrupt-store';
+import { serializeWithMemoizedArray } from './memoized-serialize';
 import {
 	classifyReadError,
 	classifyStoreContent,
@@ -118,9 +119,15 @@ function schemaVersionOfText(content: string): number {
 	return parsed.ok ? storeSchemaVersion(parsed.value) : 1;
 }
 
-/** Serialize a document in the format electron-store writes. */
-export function serializeStoreDocument(doc: unknown): string {
-	const serialized = JSON.stringify(doc, null, '\t');
+/**
+ * Serialize a document in the format electron-store writes. `memoKey` names an array whose elements are
+ * serialized once and reused while the element object is unchanged (DG4); the text is the same.
+ */
+export function serializeStoreDocument(doc: unknown, memoKey?: string): string {
+	const serialized =
+		memoKey === undefined
+			? JSON.stringify(doc, null, '\t')
+			: serializeWithMemoizedArray(doc, memoKey);
 	assertSerializedJsonIsSafe(serialized, 'store document');
 	return serialized;
 }
@@ -195,6 +202,12 @@ export interface WriteStoreOptions {
 	knownSchemaVersion?: number;
 	/** Set for the registry stores so an emptying write is backed up first. */
 	registry?: RegistrySpec;
+	/**
+	 * The document's big array (`'sessions'`): each element is serialized once and the text reused while
+	 * the element object is unchanged, so a write costs what changed, not the whole file (DG4). The
+	 * output is byte for byte the same.
+	 */
+	memoKey?: string;
 }
 
 export interface StoreWriteResult {
@@ -235,7 +248,7 @@ export function writeStoreDocument(
 
 		// Serialize first: a payload that cannot be written must fail before any
 		// side effect (a wipe backup, a temp file).
-		const serialized = serializeStoreDocument(doc);
+		const serialized = serializeStoreDocument(doc, options.memoKey);
 
 		const existingText = await readExistingText(file);
 		if (existingText !== null) {

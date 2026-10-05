@@ -9,12 +9,22 @@
  * desktop's stale copy was written again (issues #1398 / #1492).
  */
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { renderHook, waitFor } from '@testing-library/react';
 import { useSessionStore } from '../../../../renderer/stores/sessionStore';
 import { useSessionLifecycleSync } from '../../../../renderer/hooks/session/useSessionLifecycleSync';
 import type { Session } from '../../../../renderer/types';
 import { createMockSession, resetStore } from '../../../helpers';
+import { isLibraryRuntimeHosting } from '../../../../renderer/services/libraryRuntime';
+
+// Phase 9: the hosted-runtime flag. It defaults to false, so every test outside the hosted describe
+// exercises the OFF path unchanged.
+vi.mock('../../../../renderer/services/libraryRuntime', async () => {
+	const actual = await vi.importActual<
+		typeof import('../../../../renderer/services/libraryRuntime')
+	>('../../../../renderer/services/libraryRuntime');
+	return { ...actual, isLibraryRuntimeHosting: vi.fn(() => false) };
+});
 
 type Payload = { added?: Session[]; removedIds?: string[] };
 
@@ -27,6 +37,7 @@ describe('useSessionLifecycleSync', () => {
 	const restoreSession = vi.fn(async (s: Session) => ({ ...s, name: `${s.name} (restored)` }));
 
 	beforeEach(() => {
+		vi.mocked(isLibraryRuntimeHosting).mockReturnValue(false);
 		resetStore(useSessionStore);
 		// Every test but the mid-load one acts on a client that has finished
 		// loading; the hook deliberately holds deltas until then.
@@ -241,5 +252,61 @@ describe('useSessionLifecycleSync', () => {
 	it('does nothing when the bridge predates the channel', () => {
 		(window as unknown as { maestro: unknown }).maestro = { sessions: {} };
 		expect(() => renderHook(() => useSessionLifecycleSync(restoreSession))).not.toThrow();
+	});
+
+	describe('when the library runtime is hosted', () => {
+		beforeEach(() => {
+			vi.mocked(isLibraryRuntimeHosting).mockReturnValue(true);
+		});
+
+		afterEach(() => {
+			vi.mocked(isLibraryRuntimeHosting).mockReturnValue(false);
+		});
+
+		it('ignores an added agent: the mirror owns the list', async () => {
+			useSessionStore.setState({
+				sessions: [createMockSession({ id: 'local' })],
+				activeSessionId: 'local',
+			});
+
+			renderHook(() => useSessionLifecycleSync(restoreSession));
+			handler!({ added: [createMockSession({ id: 'from-web' })] });
+
+			// Let the delta's queue turn run before asserting nothing happened.
+			await new Promise((resolve) => setTimeout(resolve, 20));
+
+			expect(restoreSession).not.toHaveBeenCalled();
+			expect(useSessionStore.getState().sessions.map((s) => s.id)).toEqual(['local']);
+		});
+
+		it('ignores a removal and leaves the focused agent alone', async () => {
+			useSessionStore.setState({
+				sessions: [createMockSession({ id: 'a' }), createMockSession({ id: 'b' })],
+				activeSessionId: 'b',
+			});
+
+			renderHook(() => useSessionLifecycleSync(restoreSession));
+			handler!({ removedIds: ['b'] });
+
+			await new Promise((resolve) => setTimeout(resolve, 20));
+
+			expect(useSessionStore.getState().sessions.map((s) => s.id)).toEqual(['a', 'b']);
+			expect(useSessionStore.getState().activeSessionId).toBe('b');
+		});
+
+		it('does not probe for live turns', async () => {
+			const reattach = vi.fn();
+			useSessionStore.setState({
+				sessions: [createMockSession({ id: 'a' })],
+				activeSessionId: 'a',
+			});
+
+			renderHook(() => useSessionLifecycleSync(restoreSession, reattach));
+			handler!({ added: [createMockSession({ id: 'busy-one' })] });
+
+			await new Promise((resolve) => setTimeout(resolve, 20));
+
+			expect(reattach).not.toHaveBeenCalled();
+		});
 	});
 });

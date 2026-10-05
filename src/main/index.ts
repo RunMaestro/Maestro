@@ -135,7 +135,10 @@ import {
 } from './ipc/handlers';
 import { setupIpcHandlers } from './ipc/bootstrap';
 import { stopCoworkingBridge } from './coworking/coworking-bridge';
-import { initializeStatsDB, closeStatsDB } from './stats';
+import { initializeStatsDB, closeStatsDB, getStatsDB } from './stats';
+import { isStatsCollectionEnabled } from './stats/utils';
+import { setClaudeSessionOrigin } from './storage/claude-session-origins';
+import { setAgentSessionName } from './storage/agent-session-origins';
 import { createSshRemoteStoreAdapter } from './utils/ssh-remote-resolver';
 import { stopSessionCleanup } from './group-chat/group-chat-moderator';
 import { initializePrompts, getPrompt, savePrompt } from './prompt-manager';
@@ -165,6 +168,8 @@ import {
 	startLibraryRuntimeHost,
 	buildDesktopRuntimeDeps,
 	createRuntimeBridge,
+	wireDesktopRuntime,
+	type DesktopWiring,
 	type LibraryRuntimeHost,
 	type RuntimeBridge,
 } from './library-runtime';
@@ -482,6 +487,7 @@ let libraryRuntimeBridge: RuntimeBridge | null = null;
 // Why a requested runtime did not start, shown once as a toast when the first window has loaded (DM4).
 let pendingLibraryRuntimeNotice: string | null = null;
 let stopForwardingRuntimeEvents: (() => void) | null = null;
+let desktopRuntimeWiring: DesktopWiring | null = null;
 let agentDetector: AgentDetector | null = null;
 let cueEngine: CueEngine | null = null;
 let pianolaSupervisor: PianolaSupervisor | null = null;
@@ -2885,17 +2891,64 @@ app
 				pendingLibraryRuntimeNotice = message;
 			},
 		});
-		stopForwardingRuntimeEvents = registerLibraryRuntimeHandlers(libraryRuntimeHost);
 		const hostedRuntime = libraryRuntimeHost.runtime();
 		if (hostedRuntime) {
 			libraryRuntimeBridge = createRuntimeBridge(hostedRuntime);
-			// Until the renderer is a subscriber (Phase 9, task 3) a window shows a remote change only
-			// after a restart, and its own flush still writes the stores.
-			logger.warn(
-				'The library runtime is hosted, but the renderer does not mirror it yet. Windows show remote agent changes only after a restart.',
-				'Startup'
-			);
+			// The binding, the store facade over the sessions and groups stores, and the side-effect
+			// listener. From here the runtime is the only writer of both files, and every window mirrors it.
+			desktopRuntimeWiring = wireDesktopRuntime({
+				runtime: hostedRuntime,
+				sessionsStore,
+				groupsStore,
+				effects: {
+					recordSessionCreated: (event) => {
+						if (!isStatsCollectionEnabled(store)) return;
+						const db = getStatsDB();
+						if (!db.isReady()) return;
+						db.recordSessionCreated(event);
+						safeSend('stats:updated');
+					},
+					recordSessionClosed: (sessionId, closedAt) => {
+						const db = getStatsDB();
+						if (!db.isReady()) return;
+						db.recordSessionClosed(sessionId, closedAt);
+						safeSend('stats:updated');
+					},
+					syncProviderSessionName: (agent, name) => {
+						const tabs = (agent.aiTabs ?? []) as Array<{
+							id: string;
+							agentSessionId?: string | null;
+						}>;
+						const providerSessionId =
+							tabs.find((tab) => tab.id === agent.activeTabId)?.agentSessionId ||
+							tabs[0]?.agentSessionId;
+						if (!providerSessionId || !agent.projectRoot) return;
+						if (agent.toolType === 'claude-code') {
+							setClaudeSessionOrigin(
+								claudeSessionOriginsStore,
+								agent.projectRoot,
+								providerSessionId,
+								{
+									sessionName: name,
+								}
+							);
+						} else {
+							setAgentSessionName(
+								agentSessionOriginsStore,
+								agent.toolType,
+								agent.projectRoot,
+								providerSessionId,
+								name
+							);
+						}
+					},
+				},
+			});
 		}
+		stopForwardingRuntimeEvents = registerLibraryRuntimeHandlers(
+			libraryRuntimeHost,
+			desktopRuntimeWiring?.binding
+		);
 
 		// Set up IPC handlers
 		logger.debug('Setting up IPC handlers', 'Startup');
@@ -2904,6 +2957,7 @@ app
 			getMainWindow: () => mainWindow,
 			getProcessManager: () => processManager,
 			getWebServer: () => webServer,
+			getRuntimeBinding: () => desktopRuntimeWiring?.binding ?? null,
 			setWebServer: (server) => {
 				webServer = server;
 			},
@@ -3234,7 +3288,8 @@ quitHandler = createQuitHandler({
 		if (!libraryRuntimeHost?.runtime()) return null;
 		stopForwardingRuntimeEvents?.();
 		libraryRuntimeBridge?.dispose();
-		return libraryRuntimeHost.close();
+		// The runtime drains its own writes when it closes; the wiring only lets go of what it hooked.
+		return libraryRuntimeHost.close().finally(() => desktopRuntimeWiring?.dispose());
 	},
 	powerManager,
 	stopSessionCleanup,

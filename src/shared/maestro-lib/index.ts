@@ -67,6 +67,20 @@ export * from './agents/closed-tabs';
 export * from './agents/repository';
 export * from './client/event-bus';
 
+// The desktop fold (DG5): who writes each stored key, the one tab-order merge, the applier and its
+// wire shapes, and the sessions writer's per-element memo (DG4, hoisted from the desktop's store)
+export * from './agents/ownership';
+export * from './agents/tab-order';
+export * from './agents/desktop-fold-types';
+export * from './agents/desktop-fold';
+export * from './agents/fold-builder';
+export { valuesEqual } from './client/mirror';
+export { serializeWithMemoizedArray } from './store/memoized-serialize';
+
+// The request handler and frame mapper the detached host and the desktop's bridge answer clients with
+export { createFrameState, framesForEvent } from './runtime/server-frames';
+export { createRequestHandler } from './runtime/server-requests';
+
 // Auto Run: the folder, document scanners, and validation both engines and the TUI read alike
 export * from '../markdownTaskScan';
 export * from '../autorunMarkers';

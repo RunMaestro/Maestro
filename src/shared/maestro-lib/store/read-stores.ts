@@ -191,3 +191,19 @@ export function visibleAiTabsOf(agent: AgentRecord): AITabRecord[] {
 	}
 	return [...ordered, ...visible.filter((tab) => byId.has(tab.id))];
 }
+
+/** A tab without its transcript (R6). */
+export function projectTabRecord(tab: AITabRecord): AITabRecord {
+	if (!('logs' in tab)) return tab;
+	const { logs: _logs, ...rest } = tab;
+	return rest;
+}
+
+/**
+ * A record without its transcripts (R6): what a command hands out and an event carries. A stored
+ * object is never handed to a caller, so the copy is shallow on purpose and the tabs are new objects.
+ */
+export function projectAgentRecord(agent: AgentRecord): AgentRecord {
+	if (!Array.isArray(agent.aiTabs)) return agent;
+	return { ...agent, aiTabs: agent.aiTabs.map(projectTabRecord) };
+}

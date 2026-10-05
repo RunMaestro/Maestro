@@ -29,6 +29,15 @@ import { gitService } from '../../services/git';
 import { PLAYBOOKS_DIR } from '../../../shared/maestro-paths';
 import { logger } from '../../utils/logger';
 import { removeGroupAndPromoteChildren } from '../../../shared/groupHierarchy';
+import { isLibraryRuntimeHosting } from '../../services/libraryRuntime';
+import {
+	createAgent,
+	moveAgentToGroup,
+	removeAgent,
+	removeGroup,
+	renameAgent,
+	setAgentBookmarked,
+} from '../../services/agentOps';
 
 // ============================================================================
 // Dependencies interface
@@ -321,20 +330,61 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 						agentId === 'claude-code' ? { mode: 'api', modeReason: 'auto' } : undefined,
 				};
 
-				setSessions((prev) => [...prev, newSession]);
-				setActiveSessionId(newId);
-				// Claim the agent for THIS window before any process spawns, so a
-				// secondary window surfaces it immediately and the primary's catch-all
-				// never flashes it. No-op in the primary window / outside a WindowProvider.
-				void registerNewSession?.(newId);
-				(window as any).maestro.stats.recordSessionCreated({
-					sessionId: newId,
-					agentType: agentId,
-					projectPath: workingDir,
-					createdAt: Date.now(),
-					isRemote: !!isRemoteSession,
-					isWorktree: false,
-				});
+				// Hosted (Phase 9): the runtime creates the agent and every window mirrors it. The ids are
+				// ours (client-chosen, DG10), so `newSession` is the same record the runtime builds; its arrival
+				// puts this copy, with the runtime's domain keys taken onto it, into the store. The runtime's
+				// side effects record the lifecycle row.
+				if (isLibraryRuntimeHosting()) {
+					// Claim before the command, so no window surfaces the agent as an unclaimed arrival.
+					void registerNewSession?.(newId);
+					const created = await createAgent(
+						{
+							id: newId,
+							tabId: initialTabId,
+							name,
+							provider: agentId,
+							cwd: workingDir,
+							...(groupId ? { groupId } : {}),
+							...(customModel ? { model: customModel } : {}),
+							...(customEffort?.trim() ? { effort: customEffort.trim() } : {}),
+							...(customContextWindow ? { contextWindow: customContextWindow } : {}),
+							...(customPath ? { customPath } : {}),
+							...(customArgs ? { customArgs } : {}),
+							...(customEnvVars ? { env: customEnvVars } : {}),
+							...(sessionSshRemoteConfig ? { ssh: sessionSshRemoteConfig } : {}),
+							...(nudgeMessage ? { nudgeMessage } : {}),
+							...(newSessionMessage ? { newSessionMessage } : {}),
+							...(customProviderPath ? { customProviderPath } : {}),
+							...(additionalDirectories
+								? { additionalDirectories: additionalDirectories as unknown as string[] }
+								: {}),
+							...(retryOnAvailabilityErrors !== undefined ? { retryOnAvailabilityErrors } : {}),
+							...(retryOnTokenExhaustion !== undefined ? { retryOnTokenExhaustion } : {}),
+							...(codexAutoResetOnExhaustion === true ? { codexAutoResetOnExhaustion: true } : {}),
+							...(enableMaestroP !== undefined ? { enableMaestroP } : {}),
+							...(maestroPPath ? { maestroPPath } : {}),
+							...(maestroPMode ? { maestroPMode } : {}),
+						},
+						newSession
+					);
+					if (!created.ok) return;
+					setActiveSessionId(newId);
+				} else {
+					setSessions((prev) => [...prev, newSession]);
+					setActiveSessionId(newId);
+					// Claim the agent for THIS window before any process spawns, so a
+					// secondary window surfaces it immediately and the primary's catch-all
+					// never flashes it. No-op in the primary window / outside a WindowProvider.
+					void registerNewSession?.(newId);
+					(window as any).maestro.stats.recordSessionCreated({
+						sessionId: newId,
+						agentType: agentId,
+						projectPath: workingDir,
+						createdAt: Date.now(),
+						isRemote: !!isRemoteSession,
+						isWorktree: false,
+					});
+				}
 
 				setActiveFocus('main');
 				setTimeout(() => inputRef.current?.focus(), 50);
@@ -373,7 +423,9 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 					sessionCount !== 1 ? 's' : ''
 				} in it? This action cannot be undone.`,
 				async () => {
-					for (const session of groupSessions) {
+					// Hosted: removing an agent stops its processes and deletes its playbooks in the runtime.
+					const hosted = isLibraryRuntimeHosting();
+					for (const session of hosted ? [] : groupSessions) {
 						try {
 							await (window as any).maestro.process.kill(`${session.id}-ai`);
 						} catch (error) {
@@ -407,6 +459,25 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 
 					if (pathsToTrack.length > 0) {
 						setRemovedWorktreePaths((prev) => new Set([...prev, ...pathsToTrack]));
+					}
+
+					if (hosted) {
+						// One command per agent, then the group. An agent the runtime refuses to remove
+						// keeps its group, and the toast says why.
+						let removedAll = true;
+						for (const session of groupSessions) {
+							const removed = await removeAgent(session.id);
+							if (!removed.ok) removedAll = false;
+						}
+						if (removedAll) await removeGroup(groupId);
+						notifyToast({
+							type: removedAll ? 'success' : 'warning',
+							title: removedAll ? 'Group Removed' : 'Group Not Fully Removed',
+							message: removedAll
+								? `Removed "${group.name}" and ${sessionCount} agent${sessionCount !== 1 ? 's' : ''}`
+								: `Some agents in "${group.name}" could not be removed`,
+						});
+						return;
 					}
 
 					const sessionIdsToRemove = new Set(groupSessions.map((s) => s.id));
@@ -456,6 +527,13 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 
 	const finishRenamingSession = useCallback(
 		(sessId: string, newName: string) => {
+			if (isLibraryRuntimeHosting()) {
+				// The runtime renames the agent and, as a side effect of the commit, the provider's own
+				// session name. The row shows the new name when the answer lands.
+				void renameAgent(sessId, newName);
+				setEditingSessionId(null);
+				return;
+			}
 			setSessions((prev) => {
 				const updated = prev.map((s) => (s.id === sessId ? { ...s, name: newName } : s));
 				const session = updated.find((s) => s.id === sessId);
@@ -491,6 +569,11 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 	// toggleBookmark
 	// ========================================================================
 	const toggleBookmark = useCallback((sessionId: string) => {
+		if (isLibraryRuntimeHosting()) {
+			const current = selectSessionById(sessionId)(useSessionStore.getState());
+			if (current) void setAgentBookmarked(sessionId, !current.bookmarked);
+			return;
+		}
 		useSessionStore
 			.getState()
 			.setSessions((prev) =>
@@ -531,6 +614,11 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 	const handleGroupCreated = useCallback(
 		(groupId: string) => {
 			if (pendingMoveToGroupSessionId) {
+				if (isLibraryRuntimeHosting()) {
+					void moveAgentToGroup(pendingMoveToGroupSessionId, groupId);
+					setPendingMoveToGroupSessionId(null);
+					return;
+				}
 				setSessions((prev) =>
 					prev.map((s) => {
 						if (s.id === pendingMoveToGroupSessionId) return { ...s, groupId };

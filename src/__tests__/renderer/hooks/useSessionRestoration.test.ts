@@ -29,6 +29,32 @@ vi.mock('../../../renderer/utils/ids', () => ({
 	generateId: vi.fn(() => `mock-id-${++idCounter}`),
 }));
 
+// Phase 9: the hosted-runtime status and the mirror. The status defaults to OFF, so every test outside
+// the hosted describe exercises today's stores-read startup unchanged.
+vi.mock('../../../renderer/services/libraryRuntime', async () => {
+	const actual = await vi.importActual<typeof import('../../../renderer/services/libraryRuntime')>(
+		'../../../renderer/services/libraryRuntime'
+	);
+	return {
+		...actual,
+		isLibraryRuntimeHosting: vi.fn(() => false),
+		loadLibraryRuntimeStatus: vi.fn(async () => ({ hosting: false })),
+	};
+});
+
+vi.mock('../../../renderer/services/runtimeMirror', async () => {
+	const actual = await vi.importActual<typeof import('../../../renderer/services/runtimeMirror')>(
+		'../../../renderer/services/runtimeMirror'
+	);
+	return {
+		...actual,
+		seedRuntimeMirror: vi.fn(),
+		markRuntimeMirrorLoaded: vi.fn(),
+		setRuntimeMirrorHost: vi.fn(),
+		startRuntimeEventStream: vi.fn(() => () => undefined),
+	};
+});
+
 import { useSessionRestoration } from '../../../renderer/hooks/session/useSessionRestoration';
 import {
 	updateAiTab,
@@ -40,6 +66,16 @@ import { gitService } from '../../../renderer/services/git';
 import type { BrowserTab, Session } from '../../../renderer/types';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 import { WEB_BRIDGE_RECONCILE_EVENT } from '../../../shared/webClientConfig';
+import {
+	isLibraryRuntimeHosting,
+	loadLibraryRuntimeStatus,
+} from '../../../renderer/services/libraryRuntime';
+import {
+	markRuntimeMirrorLoaded,
+	seedRuntimeMirror,
+	setRuntimeMirrorHost,
+	startRuntimeEventStream,
+} from '../../../renderer/services/runtimeMirror';
 
 // Cast to access mock methods
 const mockGitService = gitService as {
@@ -118,6 +154,8 @@ beforeEach(() => {
 	vi.clearAllMocks();
 	idCounter = 0;
 	runtime.web = false;
+	vi.mocked(isLibraryRuntimeHosting).mockReturnValue(false);
+	vi.mocked(loadLibraryRuntimeStatus).mockResolvedValue({ hosting: false });
 
 	useSessionStore.setState({
 		sessions: [],
@@ -2427,5 +2465,137 @@ describe('restoreSession - Terminal tab persistence', () => {
 		// mode falls back to AI rather than stranding the user in terminal mode.
 		expect(mixedRestored!.activeTerminalTabId).toBeNull();
 		expect(mixedRestored!.inputMode).toBe('ai');
+	});
+});
+
+// ============================================================================
+// Hosted (Phase 9): the store mirrors the runtime's snapshot
+// ============================================================================
+
+describe('Session & Group loading effect when the library runtime is hosted', () => {
+	const mockSnapshot = vi.fn();
+
+	function makeSnapshot() {
+		return {
+			agents: [
+				createMockSession({ id: 'rt-1', name: 'Runtime One' }),
+				createMockSession({ id: 'rt-2', name: 'Runtime Two' }),
+			],
+			groups: [{ id: 'group-1', name: 'ALPHA', emoji: '📁', collapsed: false }],
+			activeSessionId: 'rt-2',
+			revs: { 'rt-1': 3, 'rt-2': 5 },
+			groupsRev: 7,
+		};
+	}
+
+	beforeEach(() => {
+		vi.mocked(isLibraryRuntimeHosting).mockReturnValue(true);
+		vi.mocked(loadLibraryRuntimeStatus).mockResolvedValue({ hosting: true });
+		mockSnapshot.mockReset();
+		(window as any).maestro.libraryRuntime = { snapshot: mockSnapshot };
+	});
+
+	afterEach(() => {
+		delete (window as any).maestro.libraryRuntime;
+		vi.mocked(isLibraryRuntimeHosting).mockReturnValue(false);
+	});
+
+	it('loads the snapshot into the store without reading the stores', async () => {
+		const snapshot = makeSnapshot();
+		mockSnapshot.mockResolvedValue(snapshot);
+
+		renderHook(() => useSessionRestoration());
+		await vi.waitFor(() => expect(useSessionStore.getState().sessionsLoaded).toBe(true));
+
+		const state = useSessionStore.getState();
+		expect(state.sessions.map((s) => s.id)).toEqual(['rt-1', 'rt-2']);
+		expect(state.sessions.map((s) => s.name)).toEqual(['Runtime One', 'Runtime Two']);
+		expect(state.groups).toEqual(snapshot.groups);
+		expect(state.groupsLoaded).toBe(true);
+		expect(state.sessionsReadOk).toBe(true);
+		expect(mockGetAll).not.toHaveBeenCalled();
+		expect(mockGetBootstrap).not.toHaveBeenCalled();
+		expect(mockGroupsGetAll).not.toHaveBeenCalled();
+	});
+
+	it('does not read the bootstrap in a browser either', async () => {
+		runtime.web = true;
+		mockSnapshot.mockResolvedValue(makeSnapshot());
+
+		renderHook(() => useSessionRestoration());
+		await vi.waitFor(() => expect(useSessionStore.getState().sessionsLoaded).toBe(true));
+
+		expect(useSessionStore.getState().sessions.map((s) => s.id)).toEqual(['rt-1', 'rt-2']);
+		expect(mockGetBootstrap).not.toHaveBeenCalled();
+		expect(mockGetAll).not.toHaveBeenCalled();
+	});
+
+	it('seeds the mirror, then marks it loaded only once the store holds the agents', async () => {
+		const snapshot = makeSnapshot();
+		mockSnapshot.mockResolvedValue(snapshot);
+		let idsAtMark: string[] = [];
+		vi.mocked(markRuntimeMirrorLoaded).mockImplementation(() => {
+			idsAtMark = useSessionStore.getState().sessions.map((s) => s.id);
+		});
+
+		renderHook(() => useSessionRestoration());
+		await vi.waitFor(() => expect(markRuntimeMirrorLoaded).toHaveBeenCalledTimes(1));
+
+		expect(setRuntimeMirrorHost).toHaveBeenCalledTimes(1);
+		expect(seedRuntimeMirror).toHaveBeenCalledTimes(1);
+		expect(seedRuntimeMirror).toHaveBeenCalledWith(snapshot);
+		expect(vi.mocked(seedRuntimeMirror).mock.invocationCallOrder[0]).toBeLessThan(
+			vi.mocked(markRuntimeMirrorLoaded).mock.invocationCallOrder[0]
+		);
+		expect(idsAtMark).toEqual(['rt-1', 'rt-2']);
+	});
+
+	it('starts the event stream before the snapshot is read', async () => {
+		mockSnapshot.mockResolvedValue(makeSnapshot());
+
+		renderHook(() => useSessionRestoration());
+		await vi.waitFor(() => expect(mockSnapshot).toHaveBeenCalledTimes(1));
+
+		expect(startRuntimeEventStream).toHaveBeenCalledTimes(1);
+		expect(vi.mocked(startRuntimeEventStream).mock.invocationCallOrder[0]).toBeLessThan(
+			mockSnapshot.mock.invocationCallOrder[0]
+		);
+	});
+
+	it('stays a mirror and seeds with no revisions when the snapshot cannot be read', async () => {
+		mockSnapshot.mockRejectedValue(new Error('runtime not ready'));
+		mockGetAll.mockResolvedValueOnce([createMockSession({ id: 'disk-1' })]);
+		mockGroupsGetAll.mockResolvedValueOnce([
+			{ id: 'disk-group', name: 'DISK', emoji: '', collapsed: false },
+		]);
+
+		renderHook(() => useSessionRestoration());
+		await vi.waitFor(() => expect(useSessionStore.getState().sessionsLoaded).toBe(true));
+
+		expect(mockGetAll).toHaveBeenCalledTimes(1);
+		expect(mockGroupsGetAll).toHaveBeenCalledTimes(1);
+		expect(useSessionStore.getState().sessions.map((s) => s.id)).toEqual(['disk-1']);
+		expect(useSessionStore.getState().groups.map((g) => g.id)).toEqual(['disk-group']);
+		// The runtime still owns the data, so the window is seeded from what it read: no revisions, which
+		// makes its fold's domain part stale (dropped) until an event brings one in. And it is released,
+		// so events that arrive are applied instead of waiting forever.
+		expect(seedRuntimeMirror).toHaveBeenCalledTimes(1);
+		expect(seedRuntimeMirror).toHaveBeenCalledWith(
+			expect.objectContaining({ revs: {}, groupsRev: 0, activeSessionId: '' })
+		);
+		expect(markRuntimeMirrorLoaded).toHaveBeenCalledTimes(1);
+	});
+
+	it("keeps today's path when the runtime is not hosting", async () => {
+		vi.mocked(loadLibraryRuntimeStatus).mockResolvedValue({ hosting: false });
+		mockGetAll.mockResolvedValueOnce([createMockSession({ id: 'disk-1' })]);
+
+		renderHook(() => useSessionRestoration());
+		await vi.waitFor(() => expect(useSessionStore.getState().sessionsLoaded).toBe(true));
+
+		expect(mockSnapshot).not.toHaveBeenCalled();
+		expect(startRuntimeEventStream).not.toHaveBeenCalled();
+		expect(markRuntimeMirrorLoaded).not.toHaveBeenCalled();
+		expect(mockGetAll).toHaveBeenCalledTimes(1);
 	});
 });

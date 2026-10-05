@@ -2071,4 +2071,100 @@ describe('persistence IPC handlers', () => {
 			expect(result).toEqual([]);
 		});
 	});
+
+	describe('with the library runtime hosted', () => {
+		const baseSession = {
+			id: 's1',
+			name: 'Session 1',
+			cwd: '/test',
+			projectRoot: '/test',
+			state: 'idle' as const,
+			inputMode: 'ai' as const,
+			toolType: 'claude-code',
+		};
+		let binding: {
+			foldLegacySessions: ReturnType<typeof vi.fn>;
+			foldLegacyGroups: ReturnType<typeof vi.fn>;
+		};
+
+		beforeEach(() => {
+			binding = {
+				foldLegacySessions: vi
+					.fn()
+					.mockResolvedValue({ ok: true, revs: {}, groupsRev: 0, drift: [] }),
+				foldLegacyGroups: vi.fn().mockResolvedValue(undefined),
+			};
+			handlers.clear();
+			registerPersistenceHandlers({
+				settingsStore: mockSettingsStore as unknown as Store<MaestroSettings>,
+				sessionsStore: mockSessionsStore as unknown as Store<SessionsData>,
+				groupsStore: mockGroupsStore as unknown as Store<GroupsData>,
+				getWebServer: getWebServerFn,
+				flushSessionWrites: mockFlushSessionWrites,
+				getRuntimeBinding: () => binding as never,
+			});
+		});
+
+		it('folds the dirty sessions of a setMany instead of writing the store', async () => {
+			mockSessionsStore.get.mockReturnValue([{ ...baseSession }, { ...baseSession, id: 's2' }]);
+
+			const result = await handlers.get('sessions:setMany')!(
+				{} as any,
+				[{ ...baseSession, name: 'Updated' }],
+				['s2', 'never-stored']
+			);
+
+			expect(result).toBe(true);
+			expect(binding.foldLegacySessions).toHaveBeenCalledWith(
+				[expect.objectContaining({ id: 's1', name: 'Updated' })],
+				['s2']
+			);
+			expect(mockSessionsStore.set).not.toHaveBeenCalled();
+			expect(mockFlushSessionWrites).not.toHaveBeenCalled();
+		});
+
+		it('still tells web clients about a state change in a hosted setMany', async () => {
+			mockWebServer.getWebClientCount.mockReturnValue(1);
+			mockSessionsStore.get.mockReturnValue([{ ...baseSession }]);
+
+			await handlers.get('sessions:setMany')!({} as any, [{ ...baseSession, state: 'busy' }], []);
+
+			expect(mockWebServer.broadcastSessionStateChange).toHaveBeenCalledWith(
+				's1',
+				'busy',
+				expect.any(Object)
+			);
+		});
+
+		it('answers false when the fold fails, so the renderer keeps the batch pending', async () => {
+			binding.foldLegacySessions.mockRejectedValue(new Error('disk full'));
+			mockSessionsStore.get.mockReturnValue([{ ...baseSession }]);
+
+			const result = await handlers.get('sessions:setMany')!({} as any, [{ ...baseSession }], []);
+
+			expect(result).toBe(false);
+		});
+
+		it('folds only the incoming sessions of a setAll, and never the ones it left out', async () => {
+			mockSessionsStore.get.mockReturnValue([{ ...baseSession, id: 'older' }]);
+
+			const result = await handlers.get('sessions:setAll')!({} as any, [{ ...baseSession }]);
+
+			expect(result).toBe(true);
+			expect(binding.foldLegacySessions).toHaveBeenCalledWith([
+				expect.objectContaining({ id: 's1' }),
+			]);
+			expect(mockSessionsStore.set).not.toHaveBeenCalled();
+		});
+
+		it('folds the groups of a groups:setAll as collapsed state only', async () => {
+			const groups = [{ id: 'g1', name: 'G1', collapsed: true }];
+
+			const result = await handlers.get('groups:setAll')!({} as any, groups);
+
+			expect(result).toBe(true);
+			expect(binding.foldLegacyGroups).toHaveBeenCalledWith(groups);
+			expect(mockGroupsStore.set).not.toHaveBeenCalled();
+		});
+	});
 });

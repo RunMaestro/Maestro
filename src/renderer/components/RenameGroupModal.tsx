@@ -4,6 +4,8 @@ import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { Modal, ModalFooter, FormInput, GroupAppearancePicker } from './ui';
 import { usePluginContributions } from '../hooks/usePluginContributions';
 import { selectGroupsPlusEnabled, useSettingsStore } from '../stores/settingsStore';
+import { isLibraryRuntimeHosting } from '../services/libraryRuntime';
+import { updateGroup } from '../services/agentOps';
 
 interface RenameGroupModalProps {
 	theme: Theme;
@@ -42,8 +44,19 @@ export function RenameGroupModal(props: RenameGroupModalProps) {
 	const groupsPlusEnabled = useSettingsStore(selectGroupsPlusEnabled);
 	const pluginContributions = usePluginContributions();
 
-	const handleRename = () => {
+	const handleRename = async () => {
 		if (groupName.trim() && groupId) {
+			if (isLibraryRuntimeHosting()) {
+				// One command per change the person made; the runtime keeps the emoji beside an icon.
+				const updated = await updateGroup(groupId, {
+					name: groupName.trim(),
+					emoji: groupEmoji,
+					icon: groupIcon ?? null,
+					color: groupColor ?? null,
+				});
+				if (updated.ok) onClose();
+				return;
+			}
 			setGroups((prev) =>
 				prev.map((g) =>
 					g.id === groupId

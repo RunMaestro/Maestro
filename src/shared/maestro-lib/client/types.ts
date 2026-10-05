@@ -73,6 +73,8 @@ export type ClientMethod =
 	| 'groups.rename'
 	| 'groups.remove'
 	| 'groups.moveAgent'
+	| 'groups.update'
+	| 'desktop.fold'
 	| 'tabs.list'
 	| 'tabs.create'
 	| 'tabs.rename'
@@ -165,6 +167,13 @@ export interface AgentSshSettings {
 
 /** AG-2 and AG-3. */
 export interface AgentCreateInput {
+	/**
+	 * A client-chosen agent id (DG10), so a caller's optimistic record and the host's are the same
+	 * record. Refused when taken or unsafe as a file name. Absent: the host picks one.
+	 */
+	id?: string;
+	/** A client-chosen id for the agent's first AI tab (DG10). Same rules as `id`. */
+	tabId?: string;
 	name: string;
 	/** Provider id, e.g. `claude-code`: one `providers.list()` reports as available. */
 	provider: string;
@@ -183,6 +192,31 @@ export interface AgentCreateInput {
 	autoRunFolderPath?: string;
 	nudgeMessage?: string;
 	newSessionMessage?: string;
+	// DG6: what the desktop's New Agent flows set that a script never did. All optional; absent keeps the
+	// record exactly as it was built before these existed.
+	/** The provider binary (`customProviderPath`), distinct from the agent's own `customPath`. */
+	customProviderPath?: string;
+	/** Environment variables switched off in the editor: kept on the record, never spawned with. */
+	customEnvVarsDisabled?: Record<string, string>;
+	/** Extra directories the agent may read and write (the provider's directory grants). */
+	additionalDirectories?: string[];
+	retryOnAvailabilityErrors?: boolean;
+	retryOnTokenExhaustion?: boolean;
+	/** Stored only when true: the flag's absence already means off. */
+	codexAutoResetOnExhaustion?: boolean;
+	/** A worktree agent's parent, branch, and the parent's worktree folder. */
+	parentSessionId?: string;
+	worktreeBranch?: string;
+	worktreeParentPath?: string;
+	/** The parent's per-agent worktree settings (`SessionWorktreeConfig`), stored as given. */
+	worktreeConfig?: Record<string, unknown>;
+	isPianola?: boolean;
+	/** Symphony contribution metadata (`SymphonySessionMetadata`), stored as given. */
+	symphonyMetadata?: Record<string, unknown>;
+	/** The Claude token source: `enableMaestroP`, `maestroPMode`, `maestroPPath`. */
+	enableMaestroP?: boolean;
+	maestroPPath?: string;
+	maestroPMode?: 'interactive' | 'dynamic';
 }
 
 /**
@@ -241,10 +275,28 @@ export interface AgentsApi {
 // ---------------------------------------------------------------------------
 
 export interface GroupCreateInput {
+	/** A client-chosen group id (DG10). Refused when taken. Absent: the host picks one. */
+	id?: string;
 	name: string;
 	emoji?: string;
+	/** A built-in or plugin icon id (`groupAppearance`). Kept beside the emoji: the desktop stores both. */
+	icon?: string;
+	/** `#RRGGBB` or a plugin color id. */
+	color?: string;
 	/** Nest under this group. One level only; the host enforces it. */
 	parentGroupId?: string;
+}
+
+/** DG8. Absent means unchanged. Used by the desktop binding (`runtime.desktop.updateGroup`), not part of `GroupsApi`. */
+export interface GroupPatch {
+	name?: string;
+	emoji?: string;
+	/** null clears the icon. */
+	icon?: string | null;
+	/** null clears the color. */
+	color?: string | null;
+	/** null moves the group to the top level. One level only, checked with `canSetGroupParent`. */
+	parentGroupId?: string | null;
 }
 
 export interface GroupsApi {

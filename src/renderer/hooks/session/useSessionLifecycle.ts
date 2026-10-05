@@ -40,8 +40,12 @@ import { collectLeafTabRefs, generateGroupName, resolveTabRefTitle } from '../..
 import { resolveActiveNavTab } from './useNavigationHistory';
 import type { NavHistoryEntry } from './useNavigationHistory';
 import { captureException } from '../../utils/sentry';
+import { logger } from '../../utils/logger';
 import { persistTabStarred } from '../../utils/starredSessions';
 import { toggleTabUnreadFilter } from '../../services/unreadFilters';
+import { isLibraryRuntimeHosting } from '../../services/libraryRuntime';
+import { persistGroupsToRuntime } from '../../services/runtimeMirror';
+import { removeAgent } from '../../services/agentOps';
 import {
 	withWorkingDirectory,
 	workingDirectoryChangeBlocker,
@@ -450,45 +454,50 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 	const performDeleteSession = useCallback(
 		async (session: Session, eraseWorkingDirectory: boolean) => {
 			const id = session.id;
+			// Hosted: the runtime stops every process the agent runs, deletes its playbooks, and records
+			// the lifecycle row when it removes the agent, whatever surface asked.
+			const hosted = isLibraryRuntimeHosting();
 
-			// Record session closure for Usage Dashboard (before cleanup)
-			window.maestro.stats.recordSessionClosed(id, Date.now());
+			if (!hosted) {
+				// Record session closure for Usage Dashboard (before cleanup)
+				window.maestro.stats.recordSessionClosed(id, Date.now());
 
-			// Kill all processes for this session (AI + legacy terminal + terminal tabs)
-			try {
-				await window.maestro.process.kill(`${id}-ai`);
-			} catch (error) {
-				captureException(error, {
-					extra: { sessionId: id, operation: 'kill-ai' },
-				});
-			}
-
-			try {
-				await window.maestro.process.kill(`${id}-terminal`);
-			} catch (error) {
-				captureException(error, {
-					extra: { sessionId: id, operation: 'kill-terminal' },
-				});
-			}
-
-			// Kill terminal tab PTYs - each tab has its own PTY with ID {sessionId}-terminal-{tabId}
-			for (const tab of session.terminalTabs || []) {
+				// Kill all processes for this session (AI + legacy terminal + terminal tabs)
 				try {
-					await window.maestro.process.kill(getTerminalSessionId(id, tab.id));
+					await window.maestro.process.kill(`${id}-ai`);
 				} catch (error) {
 					captureException(error, {
-						extra: { sessionId: id, tabId: tab.id, operation: 'kill-terminal-tab' },
+						extra: { sessionId: id, operation: 'kill-ai' },
 					});
 				}
-			}
 
-			// Delete associated playbooks
-			try {
-				await window.maestro.playbooks.deleteAll(id);
-			} catch (error) {
-				captureException(error, {
-					extra: { sessionId: id, operation: 'delete-playbooks' },
-				});
+				try {
+					await window.maestro.process.kill(`${id}-terminal`);
+				} catch (error) {
+					captureException(error, {
+						extra: { sessionId: id, operation: 'kill-terminal' },
+					});
+				}
+
+				// Kill terminal tab PTYs - each tab has its own PTY with ID {sessionId}-terminal-{tabId}
+				for (const tab of session.terminalTabs || []) {
+					try {
+						await window.maestro.process.kill(getTerminalSessionId(id, tab.id));
+					} catch (error) {
+						captureException(error, {
+							extra: { sessionId: id, tabId: tab.id, operation: 'kill-terminal-tab' },
+						});
+					}
+				}
+
+				// Delete associated playbooks
+				try {
+					await window.maestro.playbooks.deleteAll(id);
+				} catch (error) {
+					captureException(error, {
+						extra: { sessionId: id, operation: 'delete-playbooks' },
+					});
+				}
 			}
 
 			// If this is a worktree session, track its path to prevent re-discovery
@@ -510,6 +519,13 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 						type: 'error',
 					});
 				}
+			}
+
+			if (hosted) {
+				// The command's answer removes the agent from this store and re-points the active agent
+				// (`applyRemoved`); a refusal leaves everything as it was, with the runtime's message toasted.
+				await removeAgent(id);
+				return;
 			}
 
 			const { sessions: currentSessions } = useSessionStore.getState();
@@ -582,6 +598,14 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 	// back, so a registry we never read is never persisted.
 	useEffect(() => {
 		if (initialLoadComplete && groupsLoaded) {
+			if (isLibraryRuntimeHosting()) {
+				// The runtime owns the groups file. This carries `collapsed` and any edit a site that is not
+				// a command yet made; creating, renaming, restyling, and removing are commands (agentOps).
+				persistGroupsToRuntime(groups).catch((error) =>
+					logger.warn('[Persistence] groups fold failed', undefined, error)
+				);
+				return;
+			}
 			window.maestro.groups.setAll(groups);
 		}
 	}, [groups, initialLoadComplete, groupsLoaded]);

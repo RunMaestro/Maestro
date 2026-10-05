@@ -9,11 +9,27 @@
  * - Drag-and-drop session grouping
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useGroupManagement, type UseGroupManagementDeps } from '../../../renderer/hooks';
 import type { Group, Session } from '../../../renderer/types';
 import { createMockSession } from '../../helpers/mockSession';
+import { isLibraryRuntimeHosting } from '../../../renderer/services/libraryRuntime';
+import { moveAgentToGroup, renameGroup, updateGroup } from '../../../renderer/services/agentOps';
+
+// The flag defaults to false, so the tests outside the hosted describe exercise the OFF path unchanged.
+vi.mock('../../../renderer/services/libraryRuntime', async () => {
+	const actual = await vi.importActual<typeof import('../../../renderer/services/libraryRuntime')>(
+		'../../../renderer/services/libraryRuntime'
+	);
+	return { ...actual, isLibraryRuntimeHosting: vi.fn(() => false) };
+});
+
+vi.mock('../../../renderer/services/agentOps', () => ({
+	moveAgentToGroup: vi.fn(),
+	renameGroup: vi.fn(),
+	updateGroup: vi.fn(),
+}));
 
 // ============================================================================
 // Test Helpers
@@ -47,6 +63,7 @@ const createDeps = (overrides: Partial<UseGroupManagementDeps> = {}): UseGroupMa
 describe('useGroupManagement', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		vi.mocked(isLibraryRuntimeHosting).mockReturnValue(false);
 	});
 
 	it('toggles group collapsed state', () => {
@@ -215,5 +232,110 @@ describe('useGroupManagement', () => {
 
 		const updater = deps.setGroups.mock.calls[0][0];
 		expect(updater(deps.groups)).toBe(deps.groups);
+	});
+});
+
+describe('useGroupManagement when the library runtime is hosted', () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+		vi.mocked(isLibraryRuntimeHosting).mockReturnValue(true);
+		vi.mocked(renameGroup).mockResolvedValue({ ok: true, value: undefined });
+		vi.mocked(updateGroup).mockResolvedValue({ ok: true, value: undefined });
+		vi.mocked(moveAgentToGroup).mockResolvedValue({ ok: true, value: undefined });
+	});
+
+	afterEach(() => {
+		vi.mocked(isLibraryRuntimeHosting).mockReturnValue(false);
+	});
+
+	it('renames a group with the trimmed name and leaves casing to the runtime', () => {
+		const deps = createDeps();
+		const { result } = renderHook(() => useGroupManagement(deps));
+
+		act(() => {
+			result.current.finishRenamingGroup('group-1', '  new name  ');
+		});
+
+		expect(renameGroup).toHaveBeenCalledWith('group-1', 'new name');
+		expect(deps.setEditingGroupId).toHaveBeenCalledWith(null);
+		expect(deps.setGroups).not.toHaveBeenCalled();
+	});
+
+	it('only clears editing for a blank rename', () => {
+		const deps = createDeps();
+		const { result } = renderHook(() => useGroupManagement(deps));
+
+		act(() => {
+			result.current.finishRenamingGroup('group-1', '   ');
+		});
+
+		expect(renameGroup).not.toHaveBeenCalled();
+		expect(deps.setEditingGroupId).toHaveBeenCalledWith(null);
+		expect(deps.setGroups).not.toHaveBeenCalled();
+	});
+
+	it('sets a group parent through updateGroup', () => {
+		const deps = createDeps();
+		const { result } = renderHook(() => useGroupManagement(deps));
+
+		act(() => {
+			result.current.setGroupParent('group-1', 'parent');
+		});
+
+		expect(updateGroup).toHaveBeenCalledWith('group-1', { parentGroupId: 'parent' });
+		expect(deps.setGroups).not.toHaveBeenCalled();
+	});
+
+	it('turns an undefined parent into null so the runtime moves the group to the root', () => {
+		const deps = createDeps();
+		const { result } = renderHook(() => useGroupManagement(deps));
+
+		act(() => {
+			result.current.setGroupParent('group-1', undefined);
+		});
+
+		expect(updateGroup).toHaveBeenCalledWith('group-1', { parentGroupId: null });
+		expect(deps.setGroups).not.toHaveBeenCalled();
+	});
+
+	it('moves the dragged agent into the group on drop', () => {
+		const deps = createDeps({ draggingSessionId: 'session-1' });
+		const { result } = renderHook(() => useGroupManagement(deps));
+
+		act(() => {
+			result.current.handleDropOnGroup('group-1');
+		});
+
+		expect(moveAgentToGroup).toHaveBeenCalledWith('session-1', 'group-1');
+		expect(deps.setDraggingSessionId).toHaveBeenCalledWith(null);
+		expect(deps.setSessions).not.toHaveBeenCalled();
+		expect(deps.setGroups).not.toHaveBeenCalled();
+	});
+
+	it('ungroups the dragged agent on drop onto the ungrouped area', () => {
+		const deps = createDeps({ draggingSessionId: 'session-1' });
+		const { result } = renderHook(() => useGroupManagement(deps));
+
+		act(() => {
+			result.current.handleDropOnUngrouped();
+		});
+
+		expect(moveAgentToGroup).toHaveBeenCalledWith('session-1', null);
+		expect(deps.setDraggingSessionId).toHaveBeenCalledWith(null);
+		expect(deps.setSessions).not.toHaveBeenCalled();
+		expect(deps.setGroups).not.toHaveBeenCalled();
+	});
+
+	it('ignores drops when no agent is being dragged', () => {
+		const deps = createDeps({ draggingSessionId: null });
+		const { result } = renderHook(() => useGroupManagement(deps));
+
+		act(() => {
+			result.current.handleDropOnGroup('group-1');
+			result.current.handleDropOnUngrouped();
+		});
+
+		expect(moveAgentToGroup).not.toHaveBeenCalled();
+		expect(deps.setDraggingSessionId).not.toHaveBeenCalled();
 	});
 });

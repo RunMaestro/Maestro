@@ -26,6 +26,7 @@
 import { useEffect } from 'react';
 import type { Session } from '../../types';
 import { useSessionStore } from '../../stores/sessionStore';
+import { isLibraryRuntimeHosting } from '../../services/libraryRuntime';
 import { logger } from '../../utils/logger';
 import { captureException } from '../../utils/sentry';
 
@@ -85,6 +86,10 @@ export function useSessionLifecycleSync(
 		const applyDelta = async (payload: SessionLifecycleSyncPayload): Promise<void> => {
 			await whenSessionsLoaded();
 			if (disposed) return;
+			// Hosted: the runtime holds the one list of agents and tombstones, and every window mirrors its
+			// events (`runtimeMirror.ts`). Main sends no lifecycle push then; a stray one must not be applied
+			// on top of the mirror.
+			if (isLibraryRuntimeHosting()) return;
 
 			const known = new Set(useSessionStore.getState().sessions.map((s) => s.id));
 			// Both directions are filtered against what this client actually has:

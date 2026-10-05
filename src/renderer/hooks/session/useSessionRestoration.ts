@@ -15,7 +15,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef } from 'react';
-import type { Session, SessionState, ToolType, LogEntry } from '../../types';
+import type { Group, Session, SessionState, ToolType, LogEntry } from '../../types';
 import { isLimitError } from '../../../shared/types';
 import { updateSessionWith, useSessionStore } from '../../stores/sessionStore';
 import { useGroupChatStore } from '../../stores/groupChatStore';
@@ -42,6 +42,14 @@ import { WEB_BRIDGE_RECONCILE_EVENT } from '../../../shared/webClientConfig';
 import { requestWebBridgeReconcile } from '../../services/webBridgeReconcile';
 import { releaseConnectionHeldQueueItems } from '../../utils/executionQueue';
 import { isWebDesktop } from '../../utils/runtimeContext';
+import { loadLibraryRuntimeStatus } from '../../services/libraryRuntime';
+import {
+	markRuntimeMirrorLoaded,
+	seedRuntimeMirror,
+	setRuntimeMirrorHost,
+	startRuntimeEventStream,
+} from '../../services/runtimeMirror';
+import type { DesktopSnapshot } from '../../../shared/maestro-lib/agents/desktop-fold-types';
 import {
 	MAX_PERSISTED_AI_COMMAND_HISTORY,
 	mergeDeferredItems,
@@ -809,6 +817,15 @@ export function useSessionRestoration(): SessionRestorationReturn {
 	// --- Session & group loading effect ---
 	// Use a ref to prevent duplicate execution in React Strict Mode
 	const sessionLoadStarted = useRef(false);
+	// The mirror calls these when an agent arrives from the runtime; refs keep the latest closures.
+	const restoreSessionRef = useRef<(session: Session) => Promise<Session>>(
+		async (session) => session
+	);
+	const reattachLiveTurnsRef = useRef<() => void | Promise<void>>(() => undefined);
+	// Never stopped: the stream lives as long as the window, and a StrictMode remount must not end it.
+	const stopRuntimeStream = useRef<(() => void) | null>(null);
+	restoreSessionRef.current = restoreSession;
+	reattachLiveTurnsRef.current = reattachLiveAiTurns;
 	const sessionLoadInFlight = useRef(false);
 	useEffect(() => {
 		if (sessionLoadStarted.current) {
@@ -820,11 +837,51 @@ export function useSessionRestoration(): SessionRestorationReturn {
 			if (sessionLoadInFlight.current) return;
 			sessionLoadInFlight.current = true;
 			setSessionsLoaded(false);
+			// With the runtime hosted (Phase 9) main owns the agent tree and this store mirrors it: the
+			// stream starts BEFORE the snapshot is read, so nothing emitted in between is lost, and the
+			// events that arrive while the store loads wait until it holds the snapshot's agents.
+			let runtimeSnapshot: DesktopSnapshot | null = null;
+			try {
+				if ((await loadLibraryRuntimeStatus()).hosting) {
+					setRuntimeMirrorHost({
+						restoreSession: (session) => restoreSessionRef.current(session),
+						reattachLiveTurns: () => reattachLiveTurnsRef.current(),
+					});
+					stopRuntimeStream.current ??= startRuntimeEventStream();
+					runtimeSnapshot = (await window.maestro.libraryRuntime.snapshot()) ?? null;
+					if (runtimeSnapshot) seedRuntimeMirror(runtimeSnapshot);
+				}
+			} catch (runtimeError) {
+				// The runtime is still the owner, so this window stays a mirror: read what it holds the way a
+				// non-hosted window would, and seed with no revisions. A fold's domain part is then dropped as
+				// stale until an event brings a revision in, which can only cost an edit, never overwrite one.
+				logger.error('Failed to read the library runtime snapshot:', undefined, runtimeError);
+				try {
+					const [agents, groups] = await Promise.all([
+						isWebDesktop()
+							? window.maestro.sessions.getBootstrap()
+							: window.maestro.sessions.getAll(),
+						window.maestro.groups.getAll(),
+					]);
+					runtimeSnapshot = {
+						agents: agents as unknown as DesktopSnapshot['agents'],
+						groups: groups as unknown as DesktopSnapshot['groups'],
+						activeSessionId: '',
+						revs: {},
+						groupsRev: 0,
+					};
+					seedRuntimeMirror(runtimeSnapshot);
+				} catch (readError) {
+					logger.error('Failed to read the stored agents:', undefined, readError);
+				}
+			}
 			try {
 				window.__updateSplash?.(50, 'Seating the musicians...');
-				const savedSessions = isWebDesktop()
-					? await window.maestro.sessions.getBootstrap()
-					: await window.maestro.sessions.getAll();
+				const savedSessions = runtimeSnapshot
+					? (runtimeSnapshot.agents as unknown as Session[])
+					: isWebDesktop()
+						? await window.maestro.sessions.getBootstrap()
+						: await window.maestro.sessions.getAll();
 
 				// Handle sessions
 				if (savedSessions && savedSessions.length > 0) {
@@ -901,7 +958,9 @@ export function useSessionRestoration(): SessionRestorationReturn {
 				//
 				// So: never persist a registry we never successfully read.
 				try {
-					const savedGroups = await window.maestro.groups.getAll();
+					const savedGroups = runtimeSnapshot
+						? (runtimeSnapshot.groups as unknown as Group[])
+						: await window.maestro.groups.getAll();
 					setGroups(savedGroups && savedGroups.length > 0 ? savedGroups : []);
 					setGroupsLoaded(true);
 				} catch (groupsError) {
@@ -937,6 +996,8 @@ export function useSessionRestoration(): SessionRestorationReturn {
 				// Error loading sessions - no file tree to wait for
 				useSessionStore.getState().setInitialFileTreeReady(true);
 			} finally {
+				// The store holds the snapshot's agents now: apply what the runtime emitted meanwhile.
+				if (runtimeSnapshot) markRuntimeMirrorLoaded();
 				// Mark initial load as complete to enable persistence
 				initialLoadComplete.current = true;
 

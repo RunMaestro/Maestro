@@ -42,6 +42,28 @@ vi.mock('../../../renderer/utils/sessionValidation', () => ({
 	validateNewSession: vi.fn(() => ({ valid: true, error: null })),
 }));
 
+// Phase 9: the hosted-runtime flag and the repository commands it routes through. The flag defaults
+// to false, so every test outside the hosted describe exercises the OFF path unchanged.
+vi.mock('../../../renderer/services/libraryRuntime', async () => {
+	const actual = await vi.importActual<typeof import('../../../renderer/services/libraryRuntime')>(
+		'../../../renderer/services/libraryRuntime'
+	);
+	return { ...actual, isLibraryRuntimeHosting: vi.fn(() => false) };
+});
+
+vi.mock('../../../renderer/services/agentOps', () => ({
+	createAgent: vi.fn(),
+	renameAgent: vi.fn(),
+	removeAgent: vi.fn(),
+	updateAgent: vi.fn(),
+	setAgentBookmarked: vi.fn(),
+	moveAgentToGroup: vi.fn(),
+	createGroup: vi.fn(),
+	renameGroup: vi.fn(),
+	updateGroup: vi.fn(),
+	removeGroup: vi.fn(),
+}));
+
 // ============================================================================
 // Imports (after mocks)
 // ============================================================================
@@ -56,6 +78,15 @@ import { notifyToast } from '../../../renderer/stores/notificationStore';
 import { gitService } from '../../../renderer/services/git';
 import { validateNewSession } from '../../../renderer/utils/sessionValidation';
 import type { Session } from '../../../renderer/types';
+import { isLibraryRuntimeHosting } from '../../../renderer/services/libraryRuntime';
+import {
+	createAgent,
+	moveAgentToGroup,
+	removeAgent,
+	removeGroup,
+	renameAgent,
+	setAgentBookmarked,
+} from '../../../renderer/services/agentOps';
 
 // ============================================================================
 // Window mock
@@ -161,6 +192,7 @@ function createDeps(overrides: Partial<UseSessionCrudDeps> = {}): UseSessionCrud
 beforeEach(() => {
 	idCounter = 0;
 	vi.clearAllMocks();
+	vi.mocked(isLibraryRuntimeHosting).mockReturnValue(false);
 
 	// Reset stores
 	useSessionStore.setState({
@@ -186,6 +218,7 @@ beforeEach(() => {
 
 afterEach(() => {
 	cleanup();
+	vi.mocked(isLibraryRuntimeHosting).mockReturnValue(false);
 });
 
 // ============================================================================
@@ -1330,6 +1363,274 @@ describe('useSessionCrud', () => {
 			expect(typeof result.current.handleCreateGroupAndMove).toBe('function');
 			expect(typeof result.current.handleGroupCreated).toBe('function');
 			expect(result.current).toHaveProperty('pendingMoveToGroupSessionId');
+		});
+	});
+});
+
+// ============================================================================
+// Hosted (Phase 9): main owns the agent tree, this window sends repository commands
+// ============================================================================
+
+describe('useSessionCrud when the library runtime is hosted', () => {
+	const ok = { ok: true as const, value: undefined };
+
+	beforeEach(() => {
+		vi.mocked(isLibraryRuntimeHosting).mockReturnValue(true);
+		vi.mocked(createAgent).mockResolvedValue({ ok: true, value: { agentId: 'x' } });
+		vi.mocked(removeAgent).mockResolvedValue(ok);
+		vi.mocked(removeGroup).mockResolvedValue(ok);
+		vi.mocked(renameAgent).mockResolvedValue(ok);
+		vi.mocked(setAgentBookmarked).mockResolvedValue(ok);
+		vi.mocked(moveAgentToGroup).mockResolvedValue(ok);
+	});
+
+	describe('createNewSession', () => {
+		it('sends one createAgent with client-chosen ids and the local Session', async () => {
+			const deps = createDeps();
+			const { result } = renderHook(() => useSessionCrud(deps));
+
+			await act(async () => {
+				await result.current.createNewSession(
+					'claude-code',
+					'/test/project',
+					'Hosted Agent',
+					'nudge text',
+					'new session text',
+					'/custom/claude',
+					'--flag',
+					{ KEY: 'v' },
+					'opus',
+					200000,
+					'/provider/path',
+					{ enabled: true, remoteId: 'remote-1' },
+					' high ',
+					'grp-1',
+					true,
+					'/maestro-p',
+					'dynamic',
+					false,
+					false,
+					undefined,
+					true
+				);
+			});
+
+			expect(createAgent).toHaveBeenCalledTimes(1);
+			const [input, local] = vi.mocked(createAgent).mock.calls[0];
+			expect(input).toEqual({
+				id: 'mock-id-1',
+				tabId: 'mock-id-2',
+				name: 'Hosted Agent',
+				provider: 'claude-code',
+				cwd: '/test/project',
+				groupId: 'grp-1',
+				model: 'opus',
+				effort: 'high',
+				contextWindow: 200000,
+				customPath: '/custom/claude',
+				customArgs: '--flag',
+				env: { KEY: 'v' },
+				ssh: { enabled: true, remoteId: 'remote-1' },
+				nudgeMessage: 'nudge text',
+				newSessionMessage: 'new session text',
+				customProviderPath: '/provider/path',
+				retryOnAvailabilityErrors: false,
+				retryOnTokenExhaustion: false,
+				codexAutoResetOnExhaustion: true,
+				enableMaestroP: true,
+				maestroPPath: '/maestro-p',
+				maestroPMode: 'dynamic',
+			});
+			expect(local.id).toBe(input.id);
+			expect(local.aiTabs[0].id).toBe(input.tabId);
+		});
+
+		it('omits optional fields the caller did not choose', async () => {
+			const deps = createDeps();
+			const { result } = renderHook(() => useSessionCrud(deps));
+
+			await act(async () => {
+				await result.current.createNewSession('claude-code', '/test/project', 'Bare');
+			});
+
+			expect(vi.mocked(createAgent).mock.calls[0][0]).toEqual({
+				id: 'mock-id-1',
+				tabId: 'mock-id-2',
+				name: 'Bare',
+				provider: 'claude-code',
+				cwd: '/test/project',
+			});
+		});
+
+		it('does not record stats or touch the store itself, and activates the agent on success', async () => {
+			const deps = createDeps();
+			const { result } = renderHook(() => useSessionCrud(deps));
+
+			await act(async () => {
+				await result.current.createNewSession('claude-code', '/test/project', 'Hosted Agent');
+			});
+
+			expect(mockMaestro.stats.recordSessionCreated).not.toHaveBeenCalled();
+			// The runtime's events put the agent in the store, not this call.
+			expect(useSessionStore.getState().sessions).toHaveLength(0);
+			expect(useSessionStore.getState().activeSessionId).toBe('mock-id-1');
+		});
+
+		it('leaves the active agent alone when the runtime refuses the create', async () => {
+			vi.mocked(createAgent).mockResolvedValue({ ok: false, message: 'duplicate name' });
+			useSessionStore.setState({ activeSessionId: 'existing' });
+			const deps = createDeps();
+			const { result } = renderHook(() => useSessionCrud(deps));
+
+			await act(async () => {
+				await result.current.createNewSession('claude-code', '/test/project', 'Hosted Agent');
+			});
+
+			expect(createAgent).toHaveBeenCalledTimes(1);
+			expect(useSessionStore.getState().activeSessionId).toBe('existing');
+			expect(useSessionStore.getState().sessions).toHaveLength(0);
+			expect(mockMaestro.stats.recordSessionCreated).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('deleteWorktreeGroup', () => {
+		async function confirmDelete(deps: UseSessionCrudDeps) {
+			useSessionStore.setState({
+				groups: [{ id: 'grp-1', name: 'My Group' }],
+				sessions: [
+					createSession({ id: 's1', groupId: 'grp-1' }),
+					createSession({ id: 's2', groupId: 'grp-1' }),
+				],
+			});
+			const { result } = renderHook(() => useSessionCrud(deps));
+			act(() => {
+				result.current.deleteWorktreeGroup('grp-1');
+			});
+			const onConfirm = (deps.showConfirmation as any).mock.calls[0][1];
+			await act(async () => {
+				await onConfirm();
+			});
+		}
+
+		it('removes each agent then the group, without killing processes locally', async () => {
+			const deps = createDeps();
+			await confirmDelete(deps);
+
+			expect(mockMaestro.process.kill).not.toHaveBeenCalled();
+			expect(mockMaestro.playbooks.deleteAll).not.toHaveBeenCalled();
+			expect(removeAgent).toHaveBeenCalledTimes(2);
+			expect(removeAgent).toHaveBeenNthCalledWith(1, 's1');
+			expect(removeAgent).toHaveBeenNthCalledWith(2, 's2');
+			expect(removeGroup).toHaveBeenCalledWith('grp-1');
+			expect(vi.mocked(removeGroup).mock.invocationCallOrder[0]).toBeGreaterThan(
+				vi.mocked(removeAgent).mock.invocationCallOrder[1]
+			);
+			expect(notifyToast).toHaveBeenCalledWith(
+				expect.objectContaining({ type: 'success', title: 'Group Removed' })
+			);
+			// The runtime owns the tree: the store is not edited here.
+			expect(useSessionStore.getState().sessions).toHaveLength(2);
+			expect(useSessionStore.getState().groups).toHaveLength(1);
+		});
+
+		it('keeps the group and warns when one agent cannot be removed', async () => {
+			vi.mocked(removeAgent).mockImplementation(async (id: string) =>
+				id === 's1' ? { ok: false, message: 'busy' } : ok
+			);
+			const deps = createDeps();
+			await confirmDelete(deps);
+
+			expect(removeAgent).toHaveBeenCalledTimes(2);
+			expect(removeGroup).not.toHaveBeenCalled();
+			expect(notifyToast).toHaveBeenCalledWith(
+				expect.objectContaining({ type: 'warning', title: 'Group Not Fully Removed' })
+			);
+		});
+	});
+
+	describe('finishRenamingSession', () => {
+		it('sends renameAgent, clears the editing id, and does not rename locally', () => {
+			useSessionStore.setState({
+				sessions: [createSession({ id: 'sess-1', name: 'Old Name' })],
+			});
+			useUIStore.setState({ editingSessionId: 'sess-1' } as any);
+			const deps = createDeps();
+			const { result } = renderHook(() => useSessionCrud(deps));
+
+			act(() => {
+				result.current.finishRenamingSession('sess-1', 'New Name');
+			});
+
+			expect(renameAgent).toHaveBeenCalledWith('sess-1', 'New Name');
+			expect(useUIStore.getState().editingSessionId).toBeNull();
+			expect(useSessionStore.getState().sessions[0].name).toBe('Old Name');
+			expect(mockMaestro.claude.updateSessionName).not.toHaveBeenCalled();
+			expect(mockMaestro.agentSessions.setSessionName).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('toggleBookmark', () => {
+		it('sends the inverted bookmark value', () => {
+			useSessionStore.setState({
+				sessions: [
+					createSession({ id: 'off', bookmarked: false }),
+					createSession({ id: 'on', bookmarked: true }),
+				],
+			});
+			const deps = createDeps();
+			const { result } = renderHook(() => useSessionCrud(deps));
+
+			act(() => {
+				result.current.toggleBookmark('off');
+				result.current.toggleBookmark('on');
+			});
+
+			expect(setAgentBookmarked).toHaveBeenCalledWith('off', true);
+			expect(setAgentBookmarked).toHaveBeenCalledWith('on', false);
+			// The store changes when the runtime's answer lands, not here.
+			expect(useSessionStore.getState().sessions[0].bookmarked).toBe(false);
+			expect(useSessionStore.getState().sessions[1].bookmarked).toBe(true);
+		});
+
+		it('sends nothing for an unknown agent', () => {
+			const deps = createDeps();
+			const { result } = renderHook(() => useSessionCrud(deps));
+
+			act(() => {
+				result.current.toggleBookmark('missing');
+			});
+
+			expect(setAgentBookmarked).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('handleGroupCreated', () => {
+		it('moves the pending agent through the runtime and clears the pending id', () => {
+			useSessionStore.setState({ sessions: [createSession({ id: 'sess-move' })] });
+			const deps = createDeps();
+			const { result } = renderHook(() => useSessionCrud(deps));
+
+			act(() => {
+				result.current.handleCreateGroupAndMove('sess-move');
+			});
+			act(() => {
+				result.current.handleGroupCreated('new-group-id');
+			});
+
+			expect(moveAgentToGroup).toHaveBeenCalledWith('sess-move', 'new-group-id');
+			expect(result.current.pendingMoveToGroupSessionId).toBeNull();
+			expect(useSessionStore.getState().sessions[0].groupId).toBeUndefined();
+		});
+
+		it('does nothing when no move is pending', () => {
+			const deps = createDeps();
+			const { result } = renderHook(() => useSessionCrud(deps));
+
+			act(() => {
+				result.current.handleGroupCreated('new-group-id');
+			});
+
+			expect(moveAgentToGroup).not.toHaveBeenCalled();
 		});
 	});
 });

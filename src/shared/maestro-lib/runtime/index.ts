@@ -19,6 +19,7 @@ import * as fs from 'fs/promises';
 
 import { createSleepTracker } from '../../sleepTracking';
 import { createAgentRepository } from '../agents/repository';
+import type { DesktopFold, DesktopRuntimeApi } from '../agents/desktop-fold-types';
 import type { RepositoryLoadFailure, RepositoryProcesses } from '../agents/repository';
 import type { RuleContext, TabDefaults } from '../agents/rules';
 import { createEventBus } from '../client/event-bus';
@@ -125,6 +126,11 @@ export interface MaestroRuntime extends MaestroClient {
 	roundsInFlight(): number;
 	/** Consults waiting on another agent's answer (GD24). */
 	consultsInFlight(): number;
+	/**
+	 * What the desktop adds: the fold, the snapshot, the revisions, the group update. Present only when
+	 * the runtime was started in mode `desktop` (DG5); the TUI and the detached host have none.
+	 */
+	readonly desktop?: DesktopRuntimeApi;
 }
 
 /** What the status bar prints after `host: `. */
@@ -451,6 +457,26 @@ export async function createMaestroRuntime(options: MaestroRuntimeOptions): Prom
 		consults: { api: consults.api, cancelForSource: consults.cancelForSource },
 	});
 
+	// DG5: the desktop's part of the API. The fold unwraps the repository's answer: a failure (fenced,
+	// closed, a write that cannot even start) is a thrown Error that main maps onto the IPC answer.
+	const desktop: DesktopRuntimeApi | undefined =
+		options.mode === 'desktop'
+			? {
+					snapshot: repository.snapshot,
+					fold: async (fold: DesktopFold) => {
+						if (phase === 'closed') throw new Error('The runtime is closed.');
+						const result = await repository.applyFold(fold);
+						if (!result.ok) throw new Error(result.error.message);
+						return result.value;
+					},
+					revisionOf: repository.revisionOf,
+					groupsRevision: repository.groupsRevision,
+					documents: repository.documents,
+					updateGroup: repository.updateGroup,
+					flush: repository.flush,
+				}
+			: undefined;
+
 	return {
 		ok: true,
 		runtime: {
@@ -462,6 +488,7 @@ export async function createMaestroRuntime(options: MaestroRuntimeOptions): Prom
 			turnsInFlight: () => registry.size() - background.activeCount(),
 			roundsInFlight: groupChats.roundsInFlight,
 			consultsInFlight: consults.inFlight,
+			...(desktop ? { desktop } : {}),
 		},
 	};
 }
