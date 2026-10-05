@@ -17,19 +17,13 @@
  * permanent loss into a recoverable one.
  */
 
-import * as path from 'path';
 import { logger } from '../utils/logger';
-import { atomicWriteJson } from '../utils/atomic-json-store';
+import {
+	backupRegistryBeforeWipe as backupRegistry,
+	type RegistryBackupOptions as LibRegistryBackupOptions,
+} from '../../shared/maestro-lib/store/io';
 
-export interface RegistryBackupOptions<T> {
-	/** What is on disk right now. Read by the caller, since each store reads differently. */
-	existing: T[] | undefined | null;
-	/** What is about to be written. */
-	incoming: T[] | undefined | null;
-	/** Path of the live store; the backup is written beside it. */
-	storePath: string;
-	/** Backup filename, written into the store's directory. */
-	backupFilename: string;
+export interface RegistryBackupOptions<T> extends Omit<LibRegistryBackupOptions<T>, 'now'> {
 	/** Logger category and the noun used in log lines. */
 	label: string;
 }
@@ -40,33 +34,23 @@ export interface RegistryBackupOptions<T> {
  * was nothing stored to lose. A backup failure is logged and swallowed - a
  * snapshot that cannot be written must not stop the user's actual change from
  * being saved.
+ *
+ * The decision and the write live in the library (`store/io.ts`), shared with
+ * the headless runtime; this wrapper only reports the outcome to the log.
  */
 export async function backupRegistryBeforeWipe<T>(
 	options: RegistryBackupOptions<T>
 ): Promise<void> {
-	const { existing, incoming, storePath, backupFilename, label } = options;
-
-	if (incoming && incoming.length > 0) {
-		return;
-	}
-	if (!existing || existing.length === 0) {
-		return;
-	}
-
-	const backupPath = path.join(path.dirname(storePath), backupFilename);
-	try {
-		await atomicWriteJson(backupPath, {
-			savedAt: new Date().toISOString(),
-			reason: 'registry-emptied',
-			entries: existing,
-		});
+	const { label, ...backup } = options;
+	const outcome = await backupRegistry(backup);
+	if (outcome.status === 'backed-up') {
 		logger.warn(
-			`${label} registry emptied (${existing.length} removed). Previous registry backed up to ${backupPath}`,
+			`${label} registry emptied (${outcome.count} removed). Previous registry backed up to ${outcome.path}`,
 			label
 		);
-	} catch (err) {
+	} else if (outcome.status === 'failed') {
 		logger.warn(
-			`Failed to back up ${label.toLowerCase()} before an empty write: ${(err as Error).message}`,
+			`Failed to back up ${label.toLowerCase()} before an empty write: ${outcome.error.message}`,
 			label
 		);
 	}

@@ -16,7 +16,7 @@ vi.mock('../../../main/utils/logger', () => ({
 	logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
 
-vi.mock('../../../main/utils/atomic-json-store', () => ({
+vi.mock('../../../shared/maestro-lib/store/atomic-write', () => ({
 	atomicWriteJson: vi.fn().mockResolvedValue(undefined),
 }));
 
@@ -25,7 +25,7 @@ import {
 	GROUPS_BACKUP_FILENAME,
 	type GroupsBackupStore,
 } from '../../../main/stores/groups-backup';
-import { atomicWriteJson } from '../../../main/utils/atomic-json-store';
+import { atomicWriteJson } from '../../../shared/maestro-lib/store/atomic-write';
 import type { Group } from '../../../shared/types';
 
 const mockWrite = atomicWriteJson as unknown as ReturnType<typeof vi.fn>;

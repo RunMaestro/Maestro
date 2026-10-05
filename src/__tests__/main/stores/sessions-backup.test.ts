@@ -10,7 +10,7 @@ vi.mock('../../../main/utils/logger', () => ({
 	logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
 
-vi.mock('../../../main/utils/atomic-json-store', () => ({
+vi.mock('../../../shared/maestro-lib/store/atomic-write', () => ({
 	atomicWriteJson: vi.fn().mockResolvedValue(undefined),
 }));
 
@@ -18,7 +18,7 @@ import {
 	backupSessionsBeforeWipe,
 	SESSIONS_BACKUP_FILENAME,
 } from '../../../main/stores/sessions-backup';
-import { atomicWriteJson } from '../../../main/utils/atomic-json-store';
+import { atomicWriteJson } from '../../../shared/maestro-lib/store/atomic-write';
 import type { StoredSession } from '../../../main/stores/types';
 
 const mockWrite = atomicWriteJson as unknown as ReturnType<typeof vi.fn>;

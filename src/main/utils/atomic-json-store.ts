@@ -14,7 +14,7 @@
  *     appends its own entry, and the later writer clobbers the earlier one.
  *
  * `atomicWriteJson` fixes (1): write to a temp file, then `rename` over the
- * target. rename() is atomic on POSIX and effectively atomic on NTFS, so every
+ * target (implemented in `src/shared/maestro-lib/store/atomic-write.ts`). rename() is atomic on POSIX and effectively atomic on NTFS, so every
  * reader sees either the whole old file or the whole new file - never a partial
  * one. This holds across processes too, which matters because both the desktop
  * app and `maestro-cli` write the same history files.
@@ -30,64 +30,8 @@
  * `group-chat-storage.ts`.
  */
 
-import * as fs from 'fs/promises';
-import { assertSerializedJsonIsSafe } from '../../shared/jsonUtils';
-
-/**
- * Atomically write JSON to `filePath` via a temp file + rename. Prevents
- * partial/corrupt reads if the process crashes or another reader/writer lands
- * mid-write. Retries the rename on EPERM/EBUSY (transient Windows file locks
- * from OneDrive/antivirus).
- *
- * Safety gate: `assertSerializedJsonIsSafe` validates the payload BEFORE the
- * temp file is created, so a `JSON.stringify` that produces `undefined` (e.g.
- * passing `undefined`) can never be renamed over an existing good file. We
- * refuse the write instead of destroying data.
- */
-export async function atomicWriteJson(filePath: string, data: unknown): Promise<void> {
-	const serialized = JSON.stringify(data, null, 2);
-	assertSerializedJsonIsSafe(serialized, filePath);
-	await atomicWriteFile(filePath, serialized);
-}
-
-/**
- * Atomically write arbitrary string contents to `filePath` via a temp file +
- * rename, with the same EPERM/EBUSY retry behavior as atomicWriteJson. Use for
- * non-JSON payloads (TOML, comment-preserving JSON) where the caller has already
- * produced the exact bytes to persist. A crash mid-write leaves the original
- * file intact instead of truncating it.
- *
- * Also the write path for line-oriented stores (JSONL history), where the payload
- * is many independent records rather than one document. Callers own validation:
- * unlike `atomicWriteJson` there is no parse-back gate, because the content is not
- * a single parseable value. Never hand this an empty string when the target holds
- * data you care about.
- */
-export async function atomicWriteFile(
-	filePath: string,
-	contents: string,
-	options?: { mode?: number }
-): Promise<void> {
-	const tmp = `${filePath}.tmp`;
-	await fs.writeFile(
-		tmp,
-		contents,
-		options?.mode !== undefined ? { encoding: 'utf-8', mode: options.mode } : 'utf-8'
-	);
-	const maxRetries = 3;
-	for (let attempt = 0; attempt <= maxRetries; attempt++) {
-		try {
-			await fs.rename(tmp, filePath);
-			return;
-		} catch (err) {
-			const code = (err as NodeJS.ErrnoException).code;
-			if ((code === 'EPERM' || code === 'EBUSY') && attempt < maxRetries) {
-				await new Promise((resolve) => setTimeout(resolve, 100 * Math.pow(2, attempt)));
-				continue;
-			}
-			throw err;
-		}
-	}
-}
+// The write functions live in the library so the headless runtime can use them
+// with no desktop present; this module stays the import site main callers use.
+export { atomicWriteJson, atomicWriteFile } from '../../shared/maestro-lib/store/atomic-write';
 
 export { createKeyedWriteQueue, type KeyedWriteQueue } from '../../shared/keyedWriteQueue';

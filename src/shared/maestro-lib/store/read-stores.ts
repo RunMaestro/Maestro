@@ -45,22 +45,29 @@ export type StoreReadResult<T> =
 	| { status: 'unreadable'; file: string; reason: string; code?: string };
 
 /** Checks a parsed document's shape; returns why it is wrong, or null. */
-type ShapeCheck = (value: Record<string, unknown>) => string | null;
+export type ShapeCheck = (value: Record<string, unknown>) => string | null;
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
 	return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function readStoreFile<T>(file: string, checkShape: ShapeCheck): StoreReadResult<T> {
-	let content: string;
-	try {
-		content = fs.readFileSync(file, 'utf-8');
-	} catch (error) {
-		const err = error as NodeJS.ErrnoException;
-		if (err.code === 'ENOENT') return { status: 'missing', file };
-		return { status: 'unreadable', file, reason: err.message, code: err.code };
-	}
+/** A failed read, classified: no file, or a read that errored. */
+export function classifyReadError<T>(file: string, error: unknown): StoreReadResult<T> {
+	const err = error as NodeJS.ErrnoException;
+	if (err.code === 'ENOENT') return { status: 'missing', file };
+	return { status: 'unreadable', file, reason: err.message, code: err.code };
+}
 
+/**
+ * Classify a store file's bytes: parsed and the right shape, or corrupt. The
+ * one definition of "corrupt", shared by the sync readers here and the async
+ * reader in `io.ts`, so a read-only client and a writer cannot disagree.
+ */
+export function classifyStoreContent<T>(
+	file: string,
+	content: string,
+	checkShape: ShapeCheck
+): StoreReadResult<T> {
 	const parsed = parseStoreJson<unknown>(content);
 	if (!parsed.ok) return { status: 'corrupt', file, reason: parsed.error.message };
 	if (!isPlainObject(parsed.value)) {
@@ -69,6 +76,16 @@ function readStoreFile<T>(file: string, checkShape: ShapeCheck): StoreReadResult
 	const shapeError = checkShape(parsed.value);
 	if (shapeError) return { status: 'corrupt', file, reason: shapeError };
 	return { status: 'ok', file, data: parsed.value as T };
+}
+
+function readStoreFile<T>(file: string, checkShape: ShapeCheck): StoreReadResult<T> {
+	let content: string;
+	try {
+		content = fs.readFileSync(file, 'utf-8');
+	} catch (error) {
+		return classifyReadError(file, error);
+	}
+	return classifyStoreContent(file, content, checkShape);
 }
 
 /** An optional key, when present, must hold an array. */
