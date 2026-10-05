@@ -10,6 +10,7 @@
 import * as fs from 'fs';
 import { resolveUserDataDir } from '../../shared/userDataDir';
 import { resolveAgentId } from '../services/storage';
+import { readSessionsStoreFile } from '../../main/stores/sessions-store-file';
 import { resolveCliPath } from '../utils/parse';
 import { ExitCode } from '../exit-codes';
 import { formatSize } from '../../shared/formatters';
@@ -58,13 +59,12 @@ export async function bundleExport(
 			fail(`Maestro data directory not found: ${dataDir}`, options);
 		}
 
-		const { exportCueBundle, readSessions } =
-			await import('../../main/cue/bundle/cue-bundle-exporter');
+		const { exportCueBundle } = await import('../../main/cue/bundle/cue-bundle-exporter');
 
 		let agentId: string | undefined;
 		let agentName: string | undefined;
 		if (options.agent) {
-			const sessions = readSessions(dataDir);
+			const { sessions } = readSessionsStoreFile(dataDir);
 			agentId = resolveAgentId(options.agent, sessions);
 			agentName = sessions.find((s) => s.id === agentId)?.name;
 		}

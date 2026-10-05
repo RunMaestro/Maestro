@@ -48,6 +48,7 @@ import {
 	type CueBundleWorkspaceSource,
 } from '../../../shared/cue-bundle-types';
 import { resolveCueConfigPath } from '../config/cue-config-repository';
+import { readSessionsStoreFile } from '../../stores/sessions-store-file';
 
 /** Every entry gets this date, so the archive bytes depend only on content. */
 export const CUE_BUNDLE_FIXED_MTIME = new Date('2026-01-01T00:00:00Z');
@@ -291,14 +292,6 @@ function resolveGitRef(
 }
 
 // ─── Data loading ────────────────────────────────────────────────────────────
-
-/** Agents from `maestro-sessions.json`, in stored order (Cue's ownership order). */
-export function readSessions(dataDir: string): SessionInfo[] {
-	const store = readJsonFile<{ sessions?: SessionInfo[] }>(
-		path.join(dataDir, 'maestro-sessions.json')
-	);
-	return Array.isArray(store?.sessions) ? store.sessions : [];
-}
 
 function readProviderEnv(dataDir: string, toolType: string): Record<string, string> | undefined {
 	const store = readJsonFile<{ configs?: Record<string, Record<string, unknown>> }>(
@@ -691,7 +684,8 @@ export async function exportCueBundle(
 	}
 	if (!options.outputPath) throw new Error('An output path is required');
 	const dataDir = path.resolve(options.dataDir);
-	const sessions = readSessions(dataDir);
+	// Stored order is Cue's ownership order.
+	const sessions = readSessionsStoreFile(dataDir).sessions;
 	const sessionById = new Map(sessions.map((s) => [s.id, s]));
 	const builder = new BundleBuilder();
 	const createdAt = resolveCreatedAt(options);

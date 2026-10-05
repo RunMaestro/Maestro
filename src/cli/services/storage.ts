@@ -4,6 +4,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { resolveUserDataDir } from '../../shared/userDataDir';
+import { readSessionsStoreFile } from '../../main/stores/sessions-store-file';
 import type { Group, SessionInfo, HistoryEntry, SshRemoteConfig } from '../../shared/types';
 import {
 	HISTORY_JSONL_EXT,
@@ -60,12 +61,6 @@ function writeStoreFile<T>(filename: string, data: T): void {
 }
 
 // Store file structures (as used by Electron Store)
-interface SessionsStore {
-	sessions: SessionInfo[];
-	/** Agent the desktop UI currently has selected (400ms-debounced write). */
-	activeSessionId?: string;
-}
-
 interface GroupsStore {
 	groups: Group[];
 }
@@ -87,8 +82,7 @@ interface AgentConfigsStore {
  * Read all sessions from storage
  */
 export function readSessions(): SessionInfo[] {
-	const data = readStoreFile<SessionsStore>('maestro-sessions.json');
-	return data?.sessions || [];
+	return readSessionsStoreFile(getConfigDir()).sessions;
 }
 
 /**
@@ -97,8 +91,7 @@ export function readSessions(): SessionInfo[] {
  * themselves, so this is the same read `readSessions` already does.
  */
 export function readActiveAgentId(): string | null {
-	const data = readStoreFile<SessionsStore>('maestro-sessions.json');
-	const id = data?.activeSessionId;
+	const id = readSessionsStoreFile(getConfigDir()).data?.activeSessionId;
 	return typeof id === 'string' && id.length > 0 ? id : null;
 }
 
