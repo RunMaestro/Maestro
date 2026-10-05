@@ -3,6 +3,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { withMaestroClient, resolveTargetSessionId } from '../services/maestro-client';
+import { exitIfMaestroNotRunning } from '../services/session-command';
 
 interface AutoRunOptions {
 	agent?: string;
@@ -166,6 +167,7 @@ export async function autoRun(docs: string[], options: AutoRunOptions): Promise<
 			process.exit(1);
 		}
 	} catch (error) {
+		exitIfMaestroNotRunning(error, {});
 		console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
 		process.exit(1);
 	}

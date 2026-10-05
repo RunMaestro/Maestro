@@ -3,6 +3,7 @@
 import { withMaestroClient } from '../services/maestro-client';
 import { submitCueTrigger } from '../services/cue-trigger-inbox';
 import { readCueEngineLock } from '../../main/cue/cue-engine-lock';
+import { exitIfMaestroNotRunning } from '../services/session-command';
 
 interface CueTriggerOptions {
 	prompt?: string;
@@ -69,6 +70,7 @@ export async function cueTrigger(
 			process.exit(1);
 		}
 	} catch (error) {
+		exitIfMaestroNotRunning(error, { json: options.json, jsonExtra: { type: 'error' } });
 		if (options.json) {
 			console.log(
 				JSON.stringify({

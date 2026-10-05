@@ -8,6 +8,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, type MockInstance } from 'vitest';
+import { MaestroNotRunningError } from '../../../cli/services/maestro-not-running';
 
 vi.mock('../../../cli/services/maestro-client', () => ({
 	withMaestroClient: vi.fn(),
@@ -77,15 +78,17 @@ describe('queue command', () => {
 			);
 		});
 
-		it('exits 1 with MAESTRO_NOT_RUNNING when the app is down', async () => {
-			vi.mocked(withMaestroClient).mockRejectedValue(new Error('ECONNREFUSED'));
+		it('exits 3 with MAESTRO_NOT_RUNNING when the app is down', async () => {
+			vi.mocked(withMaestroClient).mockRejectedValue(
+				new MaestroNotRunningError('connect-failed', 'connect ECONNREFUSED 127.0.0.1:1')
+			);
 
 			await queueList({});
 
 			const output = JSON.parse(consoleSpy.mock.calls[0][0]);
 			expect(output.success).toBe(false);
 			expect(output.code).toBe('MAESTRO_NOT_RUNNING');
-			expect(processExitSpy).toHaveBeenCalledWith(1);
+			expect(processExitSpy.mock.calls[0]).toEqual([3]);
 		});
 
 		it('exits 1 with LIST_FAILED when the renderer returns success:false', async () => {

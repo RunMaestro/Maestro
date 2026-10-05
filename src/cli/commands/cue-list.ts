@@ -1,6 +1,7 @@
 // Cue list command - list all Cue subscriptions across agents
 
 import { withMaestroClient } from '../services/maestro-client';
+import { exitIfMaestroNotRunning } from '../services/session-command';
 
 interface CueListOptions {
 	json?: boolean;
@@ -62,6 +63,7 @@ export async function cueList(options: CueListOptions): Promise<void> {
 			console.log(lines.join('\n'));
 		}
 	} catch (error) {
+		exitIfMaestroNotRunning(error, { json: options.json, jsonExtra: { type: 'error' } });
 		if (options.json) {
 			console.log(
 				JSON.stringify({

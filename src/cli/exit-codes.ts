@@ -6,6 +6,7 @@
 // `process.exit(1)`; existing call sites are migrated opportunistically.
 
 import { CommandTimeoutError, UnsupportedCommandError } from './services/maestro-client';
+import { MaestroNotRunningError } from './services/maestro-not-running';
 
 export enum ExitCode {
 	/** Command succeeded. */
@@ -29,10 +30,11 @@ export function exitWith(code: ExitCode): never {
 
 /**
  * Map a failure from a bridge call to its exit code, so a script can tell an
- * old app build (`Unsupported`) or a hung renderer (`Timeout`) from an
- * ordinary error without parsing the message.
+ * absent app (`NotRunning`), an old app build (`Unsupported`) or a hung
+ * renderer (`Timeout`) from an ordinary error without parsing the message.
  */
 export function exitCodeForError(error: unknown): ExitCode {
+	if (error instanceof MaestroNotRunningError) return ExitCode.NotRunning;
 	if (error instanceof UnsupportedCommandError) return ExitCode.Unsupported;
 	if (error instanceof CommandTimeoutError) return ExitCode.Timeout;
 	return ExitCode.GeneralError;

@@ -23,6 +23,7 @@ import { getSessionById } from '../services/storage';
 import { resolveBackgroundFlag } from '../../shared/focusPlacement';
 import { isMediaFile, type MediaOpenMode } from '../../shared/mediaTypes';
 import { resolveOwningAgent } from '../utils/owning-agent';
+import { exitIfMaestroNotRunning } from '../services/session-command';
 
 interface OpenFileOptions {
 	agent?: string;
@@ -105,6 +106,7 @@ export async function openFile(filePath: string, options: OpenFileOptions): Prom
 			process.exit(1);
 		}
 	} catch (error) {
+		exitIfMaestroNotRunning(error, { json: options.json });
 		const msg = error instanceof Error ? error.message : String(error);
 		if (options.json) console.log(JSON.stringify({ success: false, error: msg }));
 		else console.error(`Error: ${msg}`);

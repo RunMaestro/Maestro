@@ -18,6 +18,7 @@ import { formatError, formatSuccess } from '../output/formatter';
 import { toClaudeTokenModeSource, type ClaudeTokenMode } from '../../shared/claudeTokenMode';
 import { AGENT_IDS } from '../../shared/agentIds';
 import { parseCliBool } from '../utils/parse';
+import { exitIfMaestroNotRunning } from '../services/session-command';
 
 // Provider types a user can switch an agent to. Mirrors create-agent's set
 // (the internal `terminal` type is not user-selectable).
@@ -383,6 +384,7 @@ export async function updateAgent(agentId: string, options: UpdateAgentOptions):
 			}
 		});
 	} catch (error) {
+		exitIfMaestroNotRunning(error, { json: options.json });
 		emitError(error instanceof Error ? error.message : String(error), options);
 	}
 

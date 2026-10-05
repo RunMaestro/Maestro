@@ -16,6 +16,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { withMaestroClient } from '../services/maestro-client';
+import { exitIfMaestroNotRunning } from '../services/session-command';
 import { ExitCode, exitCodeForError, exitWith } from '../exit-codes';
 import { resolveCliPath } from '../utils/parse';
 import { getImageMimeType } from '../../shared/gitUtils';
@@ -73,6 +74,7 @@ function fail(message: string, options: JsonOption, code: ExitCode, extra?: obje
 }
 
 function failFromError(error: unknown, options: JsonOption): never {
+	exitIfMaestroNotRunning(error, options);
 	const message = error instanceof Error ? error.message : String(error);
 	return fail(message, options, exitCodeForError(error));
 }

@@ -2,17 +2,21 @@
 
 import { readCliServerInfo, isCliServerRunning } from '../../shared/cli-server-discovery';
 import { withMaestroClient } from '../services/maestro-client';
+import { MAESTRO_NOT_RUNNING_MESSAGE } from '../services/maestro-not-running';
 import { ExitCode } from '../exit-codes';
 
 export async function status(): Promise<void> {
 	const info = readCliServerInfo();
 	if (!info) {
-		console.log('Maestro desktop app is not running');
+		console.log(MAESTRO_NOT_RUNNING_MESSAGE);
 		process.exit(ExitCode.NotRunning);
 	}
 
 	if (!isCliServerRunning()) {
-		console.log('Maestro discovery file is stale (app may have crashed)');
+		// Same outcome as no file at all, said the same way; the stale pid is
+		// the only extra fact worth a second line.
+		console.log(MAESTRO_NOT_RUNNING_MESSAGE);
+		console.log(`(discovery file is stale: pid ${info.pid} is gone, the app may have crashed)`);
 		process.exit(ExitCode.NotRunning);
 	}
 

@@ -26,6 +26,7 @@ import type {
 	ConcertoDesignerActionResult,
 	MovementDesignerInspection,
 } from '../../shared/concerto-html';
+import { exitIfMaestroNotRunning } from '../services/session-command';
 
 interface MovementAddOptions {
 	type?: string;
@@ -203,6 +204,7 @@ async function sendMovement(
 			process.exit(1);
 		}
 	} catch (error) {
+		exitIfMaestroNotRunning(error, { json });
 		const msg = error instanceof Error ? error.message : String(error);
 		if (json) console.log(JSON.stringify({ success: false, error: msg }));
 		else console.error(`Error: ${msg}`);
@@ -384,6 +386,7 @@ export async function movementState(options: { json?: boolean }): Promise<void> 
 			console.log(`  ${it.id}  (${it.x},${it.y}) ${it.width}x${it.height} z${it.z}${title}`);
 		}
 	} catch (error) {
+		exitIfMaestroNotRunning(error, { json: options.json });
 		console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
 		process.exit(1);
 	}
@@ -409,6 +412,7 @@ export async function movementInspect(id: string, options: MovementInspectOption
 			}>({ type: 'get_movement_designer_inspection', id }, 'movement_designer_inspection_result')
 		);
 	} catch (error) {
+		exitIfMaestroNotRunning(error, { json: options.json });
 		failMovementCommand(error instanceof Error ? error.message : String(error), options.json);
 	}
 	if (!result.success || !result.inspection) {
@@ -431,6 +435,7 @@ export async function movementInspect(id: string, options: MovementInspectOption
 		mkdirSync(path.dirname(output), { recursive: true });
 		writeFileSync(output, screenshot);
 	} catch (error) {
+		exitIfMaestroNotRunning(error, { json: options.json });
 		failMovementCommand(error instanceof Error ? error.message : String(error), options.json);
 	}
 	const report = {
@@ -497,6 +502,7 @@ export async function movementInteract(
 		if (options.json) console.log(JSON.stringify({ success: true, result }));
 		else console.log(`${result.message}: ${result.selector}`);
 	} catch (error) {
+		exitIfMaestroNotRunning(error, { json: options.json });
 		const message = error instanceof Error ? error.message : String(error);
 		if (options.json) console.log(JSON.stringify({ success: false, error: message }));
 		else console.error(`Error: ${message}`);

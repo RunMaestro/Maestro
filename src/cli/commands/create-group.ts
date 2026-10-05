@@ -1,7 +1,11 @@
 // Create group command - create a new group in the Maestro desktop app
 
 import { resolveGroupId } from '../services/storage';
-import { sendSimpleCommand, failCommand } from '../services/session-command';
+import {
+	sendSimpleCommand,
+	failCommand,
+	exitIfMaestroNotRunning,
+} from '../services/session-command';
 import { verifyPersistedGroup, describePersistedGroup } from '../services/group-appearance';
 import { validateGroupAppearance } from '../../shared/groupAppearance';
 import { formatSuccess } from '../output/formatter';
@@ -53,6 +57,7 @@ export async function createGroup(name: string, options: CreateGroupOptions): Pr
 	try {
 		result = await sendSimpleCommand(payload, 'create_group_result');
 	} catch (error) {
+		exitIfMaestroNotRunning(error, { json: options.json });
 		return failCommand(error instanceof Error ? error.message : String(error), options.json);
 	}
 
