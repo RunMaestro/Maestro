@@ -99,6 +99,7 @@ export async function handlePluginsSendAgent(
 	const agentId = message.agentId;
 	const prompt = message.prompt;
 	const sessionId = message.providerSessionId;
+	const requiredToolId = message.requiredToolId;
 	if (
 		typeof agentId !== 'string' ||
 		!ctx.callbacks.getSessionDetail?.(agentId) ||
@@ -111,14 +112,66 @@ export async function handlePluginsSendAgent(
 		respond({ available: true, success: false, error: 'Invalid headless agent request' });
 		return;
 	}
+	if (
+		requiredToolId !== undefined &&
+		(typeof requiredToolId !== 'string' ||
+			!requiredToolId ||
+			requiredToolId.length > 200 ||
+			!manager.getContributions().tools.some((tool) => tool.id === requiredToolId))
+	) {
+		respond({ available: true, success: false, error: 'Required plugin tool unavailable' });
+		return;
+	}
 	try {
 		const controller = new AbortController();
 		const onClose = (): void => controller.abort();
 		client.socket.once('close', onClose);
 		try {
+			const reply = await run(
+				agentId,
+				prompt,
+				sessionId as string | undefined,
+				controller.signal,
+				'user',
+				undefined,
+				requiredToolId as string | undefined
+			);
+			const toolStillActive =
+				requiredToolId === undefined ||
+				(isPluginsFeatureEnabled() &&
+					getActivePluginManager() === manager &&
+					manager.getContributions().tools.some((tool) => tool.id === requiredToolId));
+			const hasReceipt =
+				requiredToolId === undefined ||
+				(Array.isArray(reply.toolReceipts) &&
+					reply.toolReceipts.some(
+						(receipt) =>
+							receipt !== null &&
+							typeof receipt === 'object' &&
+							/^[0-9a-f]{32}$/.test(receipt.runId) &&
+							receipt.agentId === agentId &&
+							receipt.toolId === requiredToolId &&
+							Array.isArray(receipt.messageIds) &&
+							receipt.messageIds.length > 0 &&
+							receipt.messageIds.every(
+								(id) => typeof id === 'string' && /^[1-9][0-9]{0,19}$/.test(id)
+							)
+					));
 			respond({
 				available: true,
-				...(await run(agentId, prompt, sessionId as string | undefined, controller.signal, 'user')),
+				...reply,
+				...(requiredToolId && (!toolStillActive || !hasReceipt)
+					? {
+							success: false,
+							response: null,
+							error:
+								reply.success === false && reply.error
+									? reply.error
+									: !toolStillActive
+										? 'Required plugin tool became unavailable'
+										: 'Required plugin tool returned no delivery receipt',
+						}
+					: {}),
 			});
 		} finally {
 			client.socket.off('close', onClose);

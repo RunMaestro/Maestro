@@ -179,6 +179,30 @@ describe('cue-spawn-builder', () => {
 			pluginToolRunIdentity.revoke(result.spec.pluginRunToken!);
 			removePluginRunProofFile(result.spec.pluginRunProofFile!);
 		});
+		it('injects a Codex Cue MCP bridge with the configured agent identity', async () => {
+			mockPluginsEnabled.mockReturnValue(true);
+			mockActivePluginManager.mockReturnValue({ getContributions: () => ({ tools: [{}] }) });
+			mockGetAgentDefinition.mockReturnValue({
+				...defaultAgentDef,
+				id: 'codex',
+				command: 'codex',
+				binaryName: 'codex',
+			});
+			const session = createConfig().session;
+			const result = await buildSpawnSpec(
+				createConfig({ toolType: 'codex', session: { ...session, toolType: 'codex' } }),
+				'post summary'
+			);
+			expect(result.ok).toBe(true);
+			if (!result.ok) return;
+			expect(result.spec.args.join(' ')).toContain('mcp_servers.maestro.command');
+			expect(result.spec.args.join(' ')).toContain(result.spec.pluginRunProofFile);
+			expect(pluginToolRunIdentity.resolve(result.spec.pluginRunToken).callerAgentId).toBe(
+				'session-1'
+			);
+			pluginToolRunIdentity.revoke(result.spec.pluginRunToken!);
+			removePluginRunProofFile(result.spec.pluginRunProofFile!);
+		});
 		it('returns error for unknown agent type', async () => {
 			mockGetAgentDefinition.mockReturnValue(undefined);
 

@@ -14,6 +14,7 @@
  */
 import type { PluginManager } from './plugin-manager';
 import type { AgentSendProgressEvent } from '../../shared/plugins/rpc-protocol';
+import type { PluginToolReceipt } from './plugin-tool-run-identity';
 
 export interface HeadlessAgentReply {
 	success: boolean;
@@ -21,6 +22,8 @@ export interface HeadlessAgentReply {
 	sessionId: string | null;
 	error?: string;
 	usageStats?: import('../../shared/types').UsageStats;
+	/** Present only for an authenticated CLI run that requested one tool ID. */
+	toolReceipts?: PluginToolReceipt[];
 }
 export type HeadlessAgentRunner = (
 	agentId: string,
@@ -28,7 +31,8 @@ export type HeadlessAgentRunner = (
 	sessionId?: string,
 	signal?: AbortSignal,
 	origin?: 'user' | 'auto',
-	onProgress?: (event: AgentSendProgressEvent) => void
+	onProgress?: (event: AgentSendProgressEvent) => void,
+	receiptToolId?: string
 ) => Promise<HeadlessAgentReply>;
 let headlessAgentRunner: HeadlessAgentRunner | null = null;
 

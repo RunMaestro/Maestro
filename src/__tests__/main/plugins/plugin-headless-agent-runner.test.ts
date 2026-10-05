@@ -13,6 +13,83 @@ const agent = {
 } as SessionInfo;
 
 describe('plugin headless agent runner', () => {
+	it('returns only receipts tied to its issued proof, independent of final prose', async () => {
+		const identity = new runIdentity.PluginToolRunIdentity();
+		const run = createPluginHeadlessAgentRunner({
+			getAgent: () => agent,
+			detectAgent: async () => ({ available: true }),
+			hasPluginTools: () => true,
+			spawn: async (_type, _cwd, prompt, _session, options) => {
+				const token = fs.readFileSync(options!.pluginRunProofFile!, 'utf8');
+				if (prompt === 'real send') {
+					identity.recordReceipt(token, 'sh.maestro.relay/send', { messageIds: ['123'] });
+				}
+				return { success: true, response: '{"messageIds":["999"]}' };
+			},
+			prepareSystemPrompt: async () => undefined,
+			issueRunToken: (id, ttl, toolId) => identity.issue(id, ttl, toolId),
+			getRunReceipts: (token) => identity.getReceipts(token),
+			revokeRunToken: (token) => identity.revoke(token),
+			cliScriptPath: () => '/cli.js',
+			audit: vi.fn(),
+		});
+		const delivered = await run(
+			'agent-a',
+			'real send',
+			undefined,
+			undefined,
+			'user',
+			undefined,
+			'sh.maestro.relay/send'
+		);
+		expect(delivered.toolReceipts).toEqual([
+			{
+				runId: expect.stringMatching(/^[0-9a-f]{32}$/),
+				agentId: 'agent-a',
+				toolId: 'sh.maestro.relay/send',
+				messageIds: ['123'],
+			},
+		]);
+		const claimedOnly = await run(
+			'agent-a',
+			'model only',
+			undefined,
+			undefined,
+			'user',
+			undefined,
+			'sh.maestro.relay/send'
+		);
+		expect(claimedOnly.toolReceipts).toEqual([]);
+	});
+
+	it('refuses a receipt request for an agent without verified MCP injection', async () => {
+		const spawn = vi.fn();
+		const run = createPluginHeadlessAgentRunner({
+			getAgent: () => ({ ...agent, toolType: 'opencode' }),
+			detectAgent: async () => ({ available: true }),
+			hasPluginTools: () => true,
+			spawn,
+			prepareSystemPrompt: async () => undefined,
+			issueRunToken: vi.fn(),
+			getRunReceipts: () => [],
+			revokeRunToken: vi.fn(),
+			cliScriptPath: () => '/cli.js',
+			audit: vi.fn(),
+		});
+		expect(
+			await run(
+				'agent-a',
+				'report',
+				undefined,
+				undefined,
+				'user',
+				undefined,
+				'sh.maestro.relay/send'
+			)
+		).toMatchObject({ success: false, error: 'Authenticated plugin tool receipt unavailable' });
+		expect(spawn).not.toHaveBeenCalled();
+	});
+
 	it('reports no successful response when a provider exits without final text', async () => {
 		const onProgress = vi.fn();
 		const run = createPluginHeadlessAgentRunner({

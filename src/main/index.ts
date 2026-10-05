@@ -2281,7 +2281,9 @@ app
 			hasPluginTools: () => (pluginManager?.getContributions().tools.length ?? 0) > 0,
 			spawn: spawnAgent,
 			prepareSystemPrompt: prepareMaestroSystemPromptCli,
-			issueRunToken: (agentId, ttlMs) => pluginToolRunIdentity.issue(agentId, ttlMs),
+			issueRunToken: (agentId, ttlMs, receiptToolId) =>
+				pluginToolRunIdentity.issue(agentId, ttlMs, receiptToolId),
+			getRunReceipts: (token) => pluginToolRunIdentity.getReceipts(token),
 			revokeRunToken: (token) => pluginToolRunIdentity.revoke(token),
 			cliScriptPath: resolveMaestroCliScriptPath,
 			audit: (agentId, resumed) =>

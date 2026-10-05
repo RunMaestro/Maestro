@@ -9,6 +9,25 @@ const DEFAULT_TTL_MS = 60 * 60 * 1000;
 // Cue permits a 24-hour run; keep its caller proof valid for that full budget
 // plus the one-minute teardown margin requested by the spawn builder.
 const MAX_TTL_MS = 24 * DEFAULT_TTL_MS + 60_000;
+const MAX_RUN_RECEIPTS = 16;
+const MAX_MESSAGE_IDS = 20;
+
+/** Only host-observed IDs from a successful call to the requested tool. */
+export interface PluginToolReceipt {
+	runId: string;
+	agentId: string;
+	toolId: string;
+	messageIds: string[];
+}
+
+interface PluginToolRun {
+	agentId: string;
+	runId: string;
+	expiresAt: number;
+	receiptToolId?: string;
+	receipts: PluginToolReceipt[];
+	receiptsOverflowed: boolean;
+}
 
 export interface PluginToolCallerContext {
 	/** Verified against a stored Maestro agent when the run proof was issued. */
@@ -16,16 +35,26 @@ export interface PluginToolCallerContext {
 }
 
 export class PluginToolRunIdentity {
-	private readonly runs = new Map<string, { agentId: string; expiresAt: number }>();
+	private readonly runs = new Map<string, PluginToolRun>();
 
-	issue(agentId: string, ttlMs = DEFAULT_TTL_MS): string {
+	issue(agentId: string, ttlMs = DEFAULT_TTL_MS, receiptToolId?: string): string {
 		if (!agentId || !Number.isFinite(ttlMs) || ttlMs <= 0) throw new Error('InvalidPluginRun');
+		if (receiptToolId !== undefined && (!receiptToolId || receiptToolId.length > 200)) {
+			throw new Error('InvalidPluginReceiptTool');
+		}
 		const now = Date.now();
 		for (const [token, run] of this.runs) {
 			if (run.expiresAt <= now) this.runs.delete(token);
 		}
 		const token = randomBytes(32).toString('hex');
-		this.runs.set(token, { agentId, expiresAt: now + Math.min(ttlMs, MAX_TTL_MS) });
+		this.runs.set(token, {
+			agentId,
+			runId: randomBytes(16).toString('hex'),
+			expiresAt: now + Math.min(ttlMs, MAX_TTL_MS),
+			receiptToolId,
+			receipts: [],
+			receiptsOverflowed: false,
+		});
 		return token;
 	}
 
@@ -40,6 +69,50 @@ export class PluginToolRunIdentity {
 			return { callerAgentId: null };
 		}
 		return { callerAgentId: run.agentId };
+	}
+
+	/** The caller's tool JSON cannot supply any part of this receipt. */
+	recordReceipt(token: unknown, toolId: string, result: unknown): void {
+		if (this.resolve(token).callerAgentId === null) return;
+		const run = this.runs.get(token as string);
+		if (!run?.receiptToolId || run.receiptToolId !== toolId || run.receiptsOverflowed) return;
+		if (!result || typeof result !== 'object' || Array.isArray(result)) return;
+		const toolResult = result as Record<string, unknown>;
+		if (
+			toolResult.success === false ||
+			toolResult.ok === false ||
+			(toolResult.error !== undefined && toolResult.error !== null)
+		) {
+			return;
+		}
+		const ids = toolResult.messageIds;
+		if (
+			!Array.isArray(ids) ||
+			ids.length === 0 ||
+			ids.length > MAX_MESSAGE_IDS ||
+			!ids.every((id) => typeof id === 'string' && /^[1-9][0-9]{0,19}$/.test(id))
+		) {
+			return;
+		}
+		if (run.receipts.length >= MAX_RUN_RECEIPTS) {
+			run.receiptsOverflowed = true;
+			run.receipts = [];
+			return;
+		}
+		run.receipts.push({
+			runId: run.runId,
+			agentId: run.agentId,
+			toolId,
+			messageIds: [...ids],
+		});
+	}
+
+	getReceipts(token: unknown): PluginToolReceipt[] {
+		if (this.resolve(token).callerAgentId === null) return [];
+		const run = this.runs.get(token as string);
+		return run && !run.receiptsOverflowed
+			? run.receipts.map((receipt) => ({ ...receipt, messageIds: [...receipt.messageIds] }))
+			: [];
 	}
 
 	revoke(token: string): void {

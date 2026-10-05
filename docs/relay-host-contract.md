@@ -75,6 +75,19 @@ The host gives the MCP bridge a random, short-lived run proof when it actually s
 
 A desktop run proof expires after one hour even if the turn is still running. A later tool call from that turn then receives `callerAgentId: null`; the plugin must reject an identity-sensitive send.
 
+For a CLI headless run that explicitly requests a tool receipt, the host arms
+only that namespaced tool ID on the new run proof. After the sandbox returns a
+successful tool result, the host records only its nonempty numeric
+`messageIds`, the actual tool ID, the verified agent ID, and a random run ID
+distinct from the secret proof. It does not record tool arguments, message
+text, credentials, or unrelated tool results. The receipt is read before the
+proof is revoked and is returned only to the authenticated local CLI request.
+`maestro-cli send --require-tool-receipt sh.maestro.relay/send` exits successfully
+only when the provider succeeds, the tool remains active, and this run has a
+matching receipt. The ordinary `send` response and plugin `agents.send` API
+are unchanged. A failed run can still carry a receipt for a send completed
+before the failure; do not automatically retry without examining it.
+
 Local Claude API-mode and Codex desktop, Cue, and desktop-backed `maestro-cli send` runs receive the verified MCP config. Claude's interactive maestro-p path is excluded because its Node argv cannot accept the config flag. Cue runs use their configured Maestro agent ID and a distinct provider session. `maestro-cli send` uses a host runner when the desktop plugin service is available; the WebSocket must be both loopback and authenticated with the CLI's per-boot secret. The standalone fallback remains available when that verb is unsupported by an older desktop. A dropped connection after submitting a run is reported as an error instead of starting a duplicate local run. SSH agents receive no local MCP bridge because the desktop discovery socket is not reachable there. Other providers remain unverified and receive no automatic MCP injection.
 
 The proof is scoped to the local same-user process boundary. A model with full shell access can act as that OS user and may read its own proof file; this mechanism authenticates plugin tool calls, not arbitrary local commands by that user. The plugin must still enforce its target policy. A bridge whose desktop connection fails reports tool-call errors. No Discord delivery is implied by a model's own prose.

@@ -442,6 +442,11 @@ program
 	.option('-s, --session <id>', 'Resume an existing agent session (for multi-turn conversations)')
 	.option('-r, --read-only', 'Run in read-only/plan mode (agent cannot modify files)')
 	.option('-t, --tab', 'Open/focus the session tab in Maestro desktop')
+	.option('--require-plugin-tools', 'Fail if a desktop-backed run with plugin tools is unavailable')
+	.option(
+		'--require-tool-receipt <tool-id>',
+		'Require a host-observed delivery receipt from this plugin tool ID'
+	)
 	.option(
 		'--no-system-prompt',
 		'Skip the Maestro system prompt (agent identity, git branch, history path, conductor profile). Default is to include it for parity with the desktop app.'

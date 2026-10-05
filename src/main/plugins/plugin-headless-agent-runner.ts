@@ -3,6 +3,8 @@ import type { SessionInfo } from '../../shared/types';
 import type { AgentResult, SpawnAgentOptions } from '../../cli/services/agent-spawner';
 import type { HeadlessAgentRunner } from './plugin-manager-singleton';
 import { createPluginRunProofFile, removePluginRunProofFile } from './plugin-tool-run-identity';
+import type { PluginToolReceipt } from './plugin-tool-run-identity';
+import { MCP_CONFIG_BY_AGENT } from '../../shared/plugins/mcp-agent-config';
 import { logger } from '../utils/logger';
 
 const HEADLESS_RUN_TIMEOUT_MS = 20 * 60_000;
@@ -19,7 +21,8 @@ export interface PluginHeadlessRunnerDeps {
 		options?: SpawnAgentOptions
 	) => Promise<AgentResult>;
 	prepareSystemPrompt: (agent: SessionInfo) => Promise<string | undefined>;
-	issueRunToken: (agentId: string, ttlMs: number) => string;
+	issueRunToken: (agentId: string, ttlMs: number, receiptToolId?: string) => string;
+	getRunReceipts?: (token: string) => PluginToolReceipt[];
 	revokeRunToken: (token: string) => void;
 	cliScriptPath: () => string;
 	audit: (agentId: string, resumed: boolean) => void;
@@ -28,10 +31,32 @@ export interface PluginHeadlessRunnerDeps {
 export function createPluginHeadlessAgentRunner(
 	deps: PluginHeadlessRunnerDeps
 ): HeadlessAgentRunner {
-	return async (agentId, prompt, providerSessionId, signal, origin = 'auto', onProgress) => {
+	return async (
+		agentId,
+		prompt,
+		providerSessionId,
+		signal,
+		origin = 'auto',
+		onProgress,
+		receiptToolId
+	) => {
 		const agent = deps.getAgent(agentId);
 		if (!agent) throw new Error(`agents.send: no agent "${agentId}"`);
 		const local = !agent.sessionSshRemoteConfig?.enabled;
+		if (
+			receiptToolId &&
+			(!local ||
+				!MCP_CONFIG_BY_AGENT[agent.toolType]?.verified ||
+				!deps.hasPluginTools() ||
+				!deps.getRunReceipts)
+		) {
+			return {
+				success: false,
+				response: null,
+				sessionId: null,
+				error: 'Authenticated plugin tool receipt unavailable',
+			};
+		}
 		if (local && !(await deps.detectAgent(agent.toolType)).available) {
 			return {
 				success: false,
@@ -42,7 +67,7 @@ export function createPluginHeadlessAgentRunner(
 		}
 		const runToken =
 			local && deps.hasPluginTools()
-				? deps.issueRunToken(agent.id, HEADLESS_RUN_TIMEOUT_MS + 60_000)
+				? deps.issueRunToken(agent.id, HEADLESS_RUN_TIMEOUT_MS + 60_000, receiptToolId)
 				: undefined;
 		let pluginRunProofFile: string | undefined;
 		try {
@@ -86,6 +111,7 @@ export function createPluginHeadlessAgentRunner(
 				response: success ? result.response! : null,
 				sessionId: result.agentSessionId ?? null,
 				usageStats: result.usageStats,
+				...(receiptToolId && runToken ? { toolReceipts: deps.getRunReceipts!(runToken) } : {}),
 				...(success ? {} : { error: result.error ?? 'Agent run failed or returned no final text' }),
 			};
 		} finally {

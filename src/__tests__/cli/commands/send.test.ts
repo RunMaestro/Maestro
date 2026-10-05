@@ -119,6 +119,179 @@ describe('send command', () => {
 		});
 	});
 
+	it('requires the authenticated desktop plugin path when requested', async () => {
+		vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
+		vi.mocked(getSessionById).mockReturnValue(mockAgent({ toolType: 'codex' }));
+		vi.mocked(detectAgent).mockResolvedValue({ available: true, path: '/usr/bin/codex' });
+		await send('agent-abc', 'report', { requirePluginTools: true });
+		expect(spawnAgent).not.toHaveBeenCalled();
+		expect(JSON.parse(consoleSpy.mock.calls[0][0])).toMatchObject({
+			success: false,
+			code: 'PLUGIN_TOOLS_UNAVAILABLE',
+		});
+		expect(processExitSpy).toHaveBeenCalledWith(1);
+	});
+
+	it('does not fall back when the desktop has no active plugin tools', async () => {
+		vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
+		vi.mocked(getSessionById).mockReturnValue(mockAgent({ toolType: 'codex' }));
+		vi.mocked(detectAgent).mockResolvedValue({ available: true, path: '/usr/bin/codex' });
+		desktop.connect.mockResolvedValue(undefined);
+		desktop.sendCommand.mockResolvedValue({
+			available: false,
+			error: 'Plugin headless runner unavailable',
+		});
+		await send('agent-abc', 'report', { requirePluginTools: true });
+		expect(spawnAgent).not.toHaveBeenCalled();
+		expect(JSON.parse(consoleSpy.mock.calls[0][0])).toMatchObject({
+			success: false,
+			error: 'Plugin headless runner unavailable',
+		});
+		expect(processExitSpy).toHaveBeenCalledWith(1);
+	});
+
+	it('does not fall back to an older desktop without the authenticated host verb', async () => {
+		vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
+		vi.mocked(getSessionById).mockReturnValue(mockAgent({ toolType: 'codex' }));
+		vi.mocked(detectAgent).mockResolvedValue({ available: true, path: '/usr/bin/codex' });
+		desktop.connect.mockResolvedValue(undefined);
+		desktop.sendCommand.mockRejectedValue(new UnsupportedCommandError('plugins_send_agent'));
+		await send('agent-abc', 'report', { requirePluginTools: true });
+		expect(spawnAgent).not.toHaveBeenCalled();
+		expect(JSON.parse(consoleSpy.mock.calls[0][0])).toMatchObject({
+			success: false,
+		});
+		expect(processExitSpy).toHaveBeenCalledWith(1);
+	});
+
+	it('uses the host result for a required plugin-tool run', async () => {
+		vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
+		vi.mocked(getSessionById).mockReturnValue(mockAgent({ toolType: 'codex' }));
+		vi.mocked(detectAgent).mockResolvedValue({ available: true, path: '/usr/bin/codex' });
+		desktop.connect.mockResolvedValue(undefined);
+		desktop.sendCommand.mockResolvedValue({
+			available: true,
+			success: true,
+			response: '{"messageIds":["123"]}',
+			sessionId: 'provider-1',
+		});
+		await send('agent-abc', 'report', { requirePluginTools: true });
+		expect(spawnAgent).not.toHaveBeenCalled();
+		expect(JSON.parse(consoleSpy.mock.calls[0][0])).toMatchObject({
+			success: true,
+			response: '{"messageIds":["123"]}',
+			sessionId: 'provider-1',
+		});
+	});
+
+	it('accepts only a host-observed receipt for the requested tool and agent', async () => {
+		vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
+		vi.mocked(getSessionById).mockReturnValue(mockAgent({ toolType: 'codex' }));
+		vi.mocked(detectAgent).mockResolvedValue({ available: true, path: '/usr/bin/codex' });
+		desktop.connect.mockResolvedValue(undefined);
+		desktop.sendCommand.mockResolvedValue({
+			available: true,
+			success: true,
+			response: 'done',
+			toolReceipts: [
+				{
+					runId: 'a'.repeat(32),
+					agentId: 'agent-abc-123',
+					toolId: 'sh.maestro.relay/send',
+					messageIds: ['123'],
+				},
+			],
+		});
+		await send('agent-abc', 'report', { requireToolReceipt: 'sh.maestro.relay/send' });
+		expect(desktop.sendCommand).toHaveBeenCalledWith(
+			expect.objectContaining({ requiredToolId: 'sh.maestro.relay/send' }),
+			'plugins_send_agent_result',
+			expect.any(Number)
+		);
+		expect(spawnAgent).not.toHaveBeenCalled();
+		expect(JSON.parse(consoleSpy.mock.calls[0][0])).toMatchObject({
+			success: true,
+			toolReceipts: [{ agentId: 'agent-abc-123', messageIds: ['123'] }],
+		});
+	});
+
+	it('rejects model-written IDs and receipts from another agent or tool', async () => {
+		vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
+		vi.mocked(getSessionById).mockReturnValue(mockAgent({ toolType: 'codex' }));
+		vi.mocked(detectAgent).mockResolvedValue({ available: true, path: '/usr/bin/codex' });
+		desktop.connect.mockResolvedValue(undefined);
+		for (const toolReceipts of [
+			[],
+			[
+				{
+					runId: 'a'.repeat(32),
+					agentId: 'agent-other',
+					toolId: 'sh.maestro.relay/send',
+					messageIds: ['123'],
+				},
+			],
+			[
+				{
+					runId: 'a'.repeat(32),
+					agentId: 'agent-abc-123',
+					toolId: 'other/send',
+					messageIds: ['123'],
+				},
+			],
+			[
+				{
+					runId: 'a'.repeat(32),
+					agentId: 'agent-abc-123',
+					toolId: 'sh.maestro.relay/send',
+					messageIds: [],
+				},
+			],
+		]) {
+			consoleSpy.mockClear();
+			desktop.sendCommand.mockResolvedValueOnce({
+				available: true,
+				success: true,
+				response: '{"messageIds":["invented"]}',
+				toolReceipts,
+			});
+			await send('agent-abc', 'report', { requireToolReceipt: 'sh.maestro.relay/send' });
+			expect(JSON.parse(consoleSpy.mock.calls[0][0])).toMatchObject({
+				success: false,
+				response: null,
+				error: 'Required plugin tool returned no delivery receipt',
+			});
+		}
+		expect(spawnAgent).not.toHaveBeenCalled();
+	});
+
+	it('keeps a failed provider run failed even if a tool receipt was observed', async () => {
+		vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
+		vi.mocked(getSessionById).mockReturnValue(mockAgent({ toolType: 'codex' }));
+		vi.mocked(detectAgent).mockResolvedValue({ available: true, path: '/usr/bin/codex' });
+		desktop.connect.mockResolvedValue(undefined);
+		desktop.sendCommand.mockResolvedValue({
+			available: true,
+			success: false,
+			error: 'provider failed after the tool call',
+			toolReceipts: [
+				{
+					runId: 'a'.repeat(32),
+					agentId: 'agent-abc-123',
+					toolId: 'sh.maestro.relay/send',
+					messageIds: ['123'],
+				},
+			],
+		});
+		await send('agent-abc', 'report', { requireToolReceipt: 'sh.maestro.relay/send' });
+		expect(JSON.parse(consoleSpy.mock.calls[0][0])).toMatchObject({
+			success: false,
+			response: null,
+			error: 'provider failed after the tool call',
+			toolReceipts: [{ messageIds: ['123'] }],
+		});
+		expect(processExitSpy).toHaveBeenCalledWith(1);
+	});
+
 	it('reports an ambiguous desktop disconnect without starting a duplicate run', async () => {
 		vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
 		vi.mocked(getSessionById).mockReturnValue(mockAgent());
