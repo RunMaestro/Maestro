@@ -18,6 +18,7 @@ import * as path from 'path';
 import Database from 'better-sqlite3';
 import { logger } from '../utils/logger';
 import { fetchWithTimeout } from '../utils/fetchWithTimeout';
+import { PluginMediaTools } from './plugin-media-tools';
 import type { HostCallHandler, HostCallHandlers } from './plugin-sandbox-host';
 import type { PermissionBroker } from './permission-broker';
 import type { HostMethod } from '../../shared/plugins/rpc-protocol';
@@ -672,6 +673,13 @@ function resolveRealPath(target: string): string {
 }
 
 export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
+	const mediaTools = new PluginMediaTools({
+		egressGuard: deps.egressGuard,
+		authorize: (pluginId) => {
+			assertBrokerAllowed(deps, pluginId, 'media.open', {});
+			assertTrustedActVerb(deps, pluginId);
+		},
+	});
 	const fsWatchers = new Map<string, { pluginId: string; watcher: fs.FSWatcher }>();
 	const sleepHandles = new Map<string, { pluginId: string; reason: string }>();
 	const backgroundServices = new Map<string, Map<string, PluginBackgroundService>>();
@@ -1640,12 +1648,32 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 		};
 	}
 
+	for (const method of [
+		'media.status',
+		'media.open',
+		'media.download',
+		'media.probe',
+		'media.decode',
+		'media.run',
+		'media.close',
+	] as const) {
+		handlers[method] = (pluginId, params) => {
+			// Close must always be able to cancel: bypass rate/concurrency, retain live permission.
+			if (!['media.status', 'media.open', 'media.run'].includes(method))
+				return mediaTools.call(pluginId, method, params);
+			return underGuard(deps.actionGuard, pluginId, 'media:tools', 'discord-voice', () =>
+				mediaTools.call(pluginId, method, params)
+			);
+		};
+	}
+
 	// Release a plugin's still-open host resources (wake locks + fs watchers) when
 	// it stops, crashes, or is uninstalled. Absent an explicit release/unwatch
 	// call these maps are never pruned, so a stopped plugin would otherwise leak an
 	// active powerSaveBlocker and an open fs.watch handle. Idempotent: a second
 	// call for the same plugin finds nothing left to release.
 	const cleanupPluginResources = (pluginId: string): void => {
+		mediaTools.cleanupPlugin(pluginId);
 		for (const [watchId, entry] of fsWatchers) {
 			if (entry.pluginId !== pluginId) continue;
 			try {

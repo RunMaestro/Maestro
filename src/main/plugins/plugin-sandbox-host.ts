@@ -12,6 +12,7 @@
  * children down (graceful shutdown message, then hard kill after a grace).
  */
 
+import { MEDIA_ERROR_CODES } from '../../shared/plugins/media-tools';
 import { utilityProcess, type UtilityProcess } from 'electron';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -419,6 +420,20 @@ export class PluginSandboxHost {
 		const request = msg as unknown as HostRequest;
 
 		const respond = (res: Omit<HostResponse, 'id'>): void => {
+			if (request.method.startsWith('media.') && !res.ok) {
+				const code = (MEDIA_ERROR_CODES as readonly string[]).includes(res.error ?? '')
+					? res.error!
+					: /permission denied/.test(res.error ?? '')
+						? 'MediaDenied'
+						: /rate limit|concurrent|concurrency limit/.test(res.error ?? '')
+							? 'MediaBusy'
+							: /not implemented/.test(res.error ?? '')
+								? 'MediaUnavailable'
+								: /serializable|size limit/.test(res.error ?? '')
+									? 'MediaInvalid'
+									: 'MediaProcessFailed';
+				res = { ok: false, error: code, errorCode: code };
+			}
 			try {
 				proc.postMessage({ id: request.id, ...res });
 			} catch {
@@ -435,11 +450,11 @@ export class PluginSandboxHost {
 				record.windowCount = 0;
 			}
 			record.windowCount += 1;
-			if (record.inFlight >= MAX_IN_FLIGHT) {
+			if (record.inFlight >= MAX_IN_FLIGHT && request.method !== 'media.close') {
 				respond({ ok: false, error: 'too many concurrent host calls' });
 				return;
 			}
-			if (record.windowCount > RATE_MAX_PER_WINDOW) {
+			if (record.windowCount > RATE_MAX_PER_WINDOW && request.method !== 'media.close') {
 				respond({ ok: false, error: 'host call rate limit exceeded' });
 				return;
 			}

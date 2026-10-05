@@ -61,3 +61,23 @@ expectTypeOf<PluginEventPayloads>().toEqualTypeOf<SrcPluginEventPayloads>();
 expectTypeOf<PluginCategory>().toEqualTypeOf<SrcPluginCategory>();
 expectTypeOf<PluginManifest>().toEqualTypeOf<SrcPluginManifest>();
 expectTypeOf<ManifestValidationResult>().toEqualTypeOf<SrcManifestValidationResult>();
+
+import type {
+	MaestroMediaApi,
+	MediaProbe,
+	MediaRunOptions,
+	MediaToolStatus,
+	MediaFailure,
+} from '../index';
+import type {
+	MaestroMediaApi as SrcMediaApi,
+	MediaProbe as SrcMediaProbe,
+	MediaRunOptions as SrcMediaOptions,
+	MediaToolStatus as SrcMediaStatus,
+	MediaFailure as SrcMediaFailure,
+} from '../../../../src/shared/plugins/media-tools';
+expectTypeOf<MaestroMediaApi>().toEqualTypeOf<SrcMediaApi>();
+expectTypeOf<MediaProbe>().toEqualTypeOf<SrcMediaProbe>();
+expectTypeOf<MediaRunOptions>().toEqualTypeOf<SrcMediaOptions>();
+expectTypeOf<MediaToolStatus>().toEqualTypeOf<SrcMediaStatus>();
+expectTypeOf<MediaFailure>().toEqualTypeOf<SrcMediaFailure>();

@@ -70,6 +70,7 @@ export function serializedJsonByteLength(value: unknown): number | null {
 export type PluginCapability =
 	| 'fs:read' // read files under a path scope
 	| 'fs:write' // write files under a path scope
+	| 'media:tools' // fixed Discord voice media profiles, opaque jobs only
 	| 'net:fetch' // HTTP(S) fetch to a host scope
 	| 'net:connect' // hold an outbound persistent websocket to a host scope (Discord/Slack gateway)
 	| 'agents:read' // list/read agents and their state
@@ -105,6 +106,7 @@ export type PluginCapability =
 export const PLUGIN_CAPABILITIES: readonly PluginCapability[] = [
 	'fs:read',
 	'fs:write',
+	'media:tools',
 	'net:fetch',
 	'net:connect',
 	'agents:read',
@@ -155,6 +157,7 @@ const CAPABILITY_RISK: Record<PluginCapability, CapabilityRisk> = {
 	'sessions:focus': 'low',
 	'fs:read': 'medium',
 	'fs:watch': 'medium',
+	'media:tools': 'high',
 	'net:fetch': 'medium',
 	'net:connect': 'high',
 	'sessions:read': 'medium',
@@ -194,6 +197,7 @@ const CAPABILITY_SCOPE_KIND: Record<PluginCapability, ScopeKind> = {
 	'fs:read': 'path',
 	'fs:write': 'path',
 	'fs:watch': 'path',
+	'media:tools': 'allowlist',
 	'net:fetch': 'host',
 	'net:connect': 'host',
 	'agents:read': 'none',
@@ -351,6 +355,8 @@ export function describeCapability(capability: PluginCapability): string {
 			return 'Read files';
 		case 'fs:write':
 			return 'Create and modify files';
+		case 'media:tools':
+			return 'Download Discord voice attachments and run fixed local media tools (8 MiB, 120 seconds; no general file or process access)';
 		case 'net:fetch':
 			return 'Make network requests (unscoped includes localhost and your internal network)';
 		case 'net:connect':
@@ -419,7 +425,9 @@ export function describeCapability(capability: PluginCapability): string {
 // --- Host API version (from shared/plugins/host-api.ts) ---------------------
 
 /**
- * The host API version this Maestro build implements. Bumped to 1.16.0 for three
+ * 1.22.0 adds the bounded media:tools job API (Discord attachments and fixed
+ * local profiles). 1.17-1.21 are reserved by the separate Relay host work.
+ * The host API version this Maestro build implements. 1.16.0 added three
  * backward-compatible additions: the metadata-only `session.activated` event
  * topic (`{ sessionId, tabId? }`, opaque ids only, fired when the focused agent
  * changes), the `sessions.focus` method plus its narrow `sessions:focus`
@@ -450,7 +458,7 @@ export function describeCapability(capability: PluginCapability): string {
  * `ui:contribute` / `ui:panel` / `ui:render-unsafe`; 1.3.0 added `tools` +
  * `keybindings`; 1.2.0 added `transcripts:read`.
  */
-export const HOST_API_VERSION = '1.16.0';
+export const HOST_API_VERSION = '1.22.0';
 
 /** Result of checking a plugin's declared host-API requirement. */
 export interface HostApiCompatibility {
@@ -605,6 +613,8 @@ export interface PluginManifest {
 	 * requires no minHostApi bump.
 	 */
 	beta?: boolean;
+	/** Optional marketplace publication date, YYYY-MM-DD. */
+	releaseDate?: string;
 	/** Declarative contributions. Structurally validated; semantics land later. */
 	contributes?: Record<string, unknown>;
 	/** Relative path to the sandboxed code entrypoint. Required tier >= 1; forbidden tier 0. */
@@ -622,6 +632,8 @@ export interface ManifestValidationResult {
 /** Allowed plugin id shape: reverse-DNS-ish or kebab-case, starting with a
  * letter. Strict so an id is always safe as an object key and a log token. */
 export const PLUGIN_ID_PATTERN = /^[a-z][a-z0-9]*([._-][a-z0-9]+)*$/;
+
+const RELEASE_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
 const SEMVER_PATTERN = /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)*$/;
 
@@ -646,6 +658,7 @@ export function validatePluginManifest(input: unknown): ManifestValidationResult
 		homepage,
 		category,
 		beta,
+		releaseDate,
 		contributes,
 		entry,
 		permissions,
@@ -716,6 +729,15 @@ export function validatePluginManifest(input: unknown): ManifestValidationResult
 	if (beta !== undefined && typeof beta !== 'boolean') {
 		errors.push('beta, when present, must be a boolean');
 	}
+	if (releaseDate !== undefined) {
+		if (typeof releaseDate !== 'string') {
+			errors.push('releaseDate, when present, must be a string');
+		} else if (!RELEASE_DATE_PATTERN.test(releaseDate.trim())) {
+			errors.push(`releaseDate "${releaseDate}" is invalid: use YYYY-MM-DD`);
+		} else if (Number.isNaN(Date.parse(`${releaseDate.trim()}T00:00:00Z`))) {
+			errors.push(`releaseDate "${releaseDate}" is not a real calendar date`);
+		}
+	}
 	if (contributes !== undefined && !isPlainObject(contributes)) {
 		errors.push('contributes, when present, must be an object');
 	}
@@ -766,6 +788,7 @@ export function validatePluginManifest(input: unknown): ManifestValidationResult
 		...(isNonEmptyString(homepage) ? { homepage: (homepage as string).trim() } : {}),
 		...(normalizedCategory ? { category: normalizedCategory } : {}),
 		...(beta === true ? { beta: true } : {}),
+		...(isNonEmptyString(releaseDate) ? { releaseDate: (releaseDate as string).trim() } : {}),
 		...(isPlainObject(contributes) ? { contributes } : {}),
 		...(safeEntry ? { entry: safeEntry } : {}),
 		...(parsedPermissions.requests.length > 0 ? { permissions: parsedPermissions.requests } : {}),
@@ -1303,6 +1326,13 @@ export interface PluginEvent<T extends PluginEventTopic = PluginEventTopic> {
 export const HOST_API = {
 	'fs.read': { capability: 'fs:read' },
 	'fs.write': { capability: 'fs:write' },
+	'media.status': { capability: 'media:tools' },
+	'media.open': { capability: 'media:tools' },
+	'media.download': { capability: 'media:tools' },
+	'media.probe': { capability: 'media:tools' },
+	'media.decode': { capability: 'media:tools' },
+	'media.run': { capability: 'media:tools' },
+	'media.close': { capability: 'media:tools' },
 	'net.fetch': { capability: 'net:fetch' },
 	'net.connect': { capability: 'net:connect' },
 	'net.send': { capability: 'net:connect' },
@@ -1668,7 +1698,79 @@ export interface MaestroBackgroundApi {
 
 /** The full `maestro` runtime surface handed to `activate(maestro)`. Frozen and
  * namespaced exactly as the host injects it. */
+/** Bounded media primitives. STT orchestration and result interpretation belong to plugins. */
+export const MEDIA_LIMITS = {
+	maxDownloadBytes: 8 * 1024 * 1024,
+	maxDurationSeconds: 120,
+	jobTimeoutMs: 120_000,
+	maxProcessOutputBytes: 16 * 1024,
+	maxResultBytes: 128 * 1024,
+	maxPcmBytes: 4 * 1024 * 1024,
+	maxJobsPerPlugin: 2,
+	maxJobs: 4,
+} as const;
+
+/** Only multilingual model IDs; never a plugin-selected filesystem path. */
+export const MEDIA_MODEL_IDS = [
+	'tiny',
+	'base',
+	'small',
+	'medium',
+	'large-v1',
+	'large-v2',
+	'large-v3',
+	'large-v3-turbo',
+] as const;
+export type MediaModelId = (typeof MEDIA_MODEL_IDS)[number];
+export const MEDIA_ERROR_CODES = [
+	'MediaInvalid',
+	'MediaDenied',
+	'MediaUnavailable',
+	'MediaTooLarge',
+	'MediaTooLong',
+	'MediaTimeout',
+	'MediaCancelled',
+	'MediaBusy',
+	'MediaProcessFailed',
+	'MediaOutputTooLarge',
+] as const;
+export type MediaErrorCode = (typeof MEDIA_ERROR_CODES)[number];
+
+/** Stable error.code across the host RPC; diagnostic text contains only this code. */
+export interface MediaFailure extends Error {
+	code: MediaErrorCode;
+}
+
+export interface MediaProbe {
+	container: 'ogg' | 'wav';
+	durationSeconds: number;
+	streams: { type: 'audio'; codec: 'opus' | 'pcm_s16le'; sampleRate: number; channels: number }[];
+}
+export interface MediaToolStatus {
+	profiles: 'whisper-cli'[];
+	models: MediaModelId[];
+	missing: ('ffprobe' | 'ffmpeg' | 'whisper-cli' | 'model-directory')[];
+}
+export interface MediaRunOptions {
+	profile: 'whisper-cli';
+	model: MediaModelId;
+	/** Lowercase Whisper language code; defaults to de. Translation is always off. */
+	language?: string;
+}
+export interface MaestroMediaApi {
+	status(): Promise<MediaToolStatus>;
+	/** Reserves an opaque job without I/O. Fixed deadline starts here. */
+	open(): Promise<{ jobId: string }>;
+	download(jobId: string, url: string): Promise<{ audioId: string; bytes: number }>;
+	probe(jobId: string, audioId: string): Promise<MediaProbe>;
+	decode(jobId: string, audioId: string): Promise<{ audioId: string; durationSeconds: number }>;
+	run(jobId: string, audioId: string, options: MediaRunOptions): Promise<{ json: string }>;
+	/** Cancels pending work, waits for child exit and removes all artifacts. Idempotent. */
+	close(jobId: string): Promise<void>;
+}
+
 export interface MaestroSdk {
+	readonly media: MaestroMediaApi;
 	readonly pluginId: string;
 	readonly fs: MaestroFsApi;
 	readonly net: MaestroNetApi;

@@ -79,6 +79,29 @@ describe('PluginSandboxHost per-plugin observability', () => {
 
 	afterEach(() => fs.rmSync(dir, { recursive: true, force: true }));
 
+	it('returns stable media codes and suppresses raw host error details', async () => {
+		const mediaHost = new PluginSandboxHost({
+			broker: allowAll,
+			handlers: {
+				'media.download': async () => {
+					throw new Error('TOKEN signed-url private/audio');
+				},
+			},
+		});
+		mediaHost.start('media', dir, 'entry.js');
+		await (mediaHost as unknown as HostInternals).handleChildMessage('media', proc, {
+			id: 42,
+			method: 'media.download',
+			params: { jobId: 'opaque', url: 'signed-url' },
+		});
+		expect(proc.postMessage).toHaveBeenLastCalledWith({
+			id: 42,
+			ok: false,
+			error: 'MediaProcessFailed',
+			errorCode: 'MediaProcessFailed',
+		});
+	});
+
 	it('lists a started plugin with zeroed counters', () => {
 		const map = host.getActivity();
 		expect(Object.keys(map)).toEqual(['p']);

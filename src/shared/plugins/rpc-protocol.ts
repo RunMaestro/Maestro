@@ -26,6 +26,13 @@ import type { PluginCapability } from './permissions';
 export const HOST_API = {
 	'fs.read': { capability: 'fs:read' },
 	'fs.write': { capability: 'fs:write' },
+	'media.status': { capability: 'media:tools' },
+	'media.open': { capability: 'media:tools' },
+	'media.download': { capability: 'media:tools' },
+	'media.probe': { capability: 'media:tools' },
+	'media.decode': { capability: 'media:tools' },
+	'media.run': { capability: 'media:tools' },
+	'media.close': { capability: 'media:tools' },
 	'net.fetch': { capability: 'net:fetch' },
 	'net.connect': { capability: 'net:connect' },
 	'net.send': { capability: 'net:connect' },
@@ -121,6 +128,8 @@ export interface HostResponse {
 	ok: boolean;
 	result?: unknown;
 	error?: string;
+	/** Stable machine-readable failure code when provided by the host. */
+	errorCode?: string;
 }
 
 /** Control messages the host sends to the sandbox (not request/response). */
@@ -161,6 +170,14 @@ export function extractTarget(method: HostMethod, params: unknown): string | und
 		case 'fs.write':
 		case 'fs.watch':
 			return typeof p.path === 'string' ? p.path : undefined;
+		case 'media.status':
+		case 'media.open':
+		case 'media.download':
+		case 'media.probe':
+		case 'media.decode':
+		case 'media.run':
+		case 'media.close':
+			return 'discord-voice';
 		case 'net.fetch': {
 			const url = typeof p.url === 'string' ? p.url : undefined;
 			if (!url) return undefined;
