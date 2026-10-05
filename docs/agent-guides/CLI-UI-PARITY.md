@@ -223,6 +223,28 @@ it returns the whole `DesktopTabEntry`, so a verb that needs the current value
 (`tab thinking cycle`) reads it from the same call that resolved the tab instead
 of taking a second round trip or trusting a value the caller guessed.
 
+## When the desktop app is absent
+
+A verb that reaches the desktop through the bridge cannot run without it, and an
+agent calling it has to be able to tell "the app is down" from "the command was
+rejected". Every app-dependent verb therefore reports a missing app as ONE
+outcome: message `Maestro desktop app is not running or not reachable`, JSON code
+`MAESTRO_NOT_RUNNING`, exit 3, in human and `--json` output alike.
+
+- **Writing a new verb:** put `exitIfMaestroNotRunning(error, { json })`
+  (`src/cli/services/session-command.ts`) first in the catch that wraps its
+  bridge call.
+- **Never classify the error by its wording.** `MaestroClient.connect()` throws
+  a typed `MaestroNotRunningError`, and catches that flattened it to a string are
+  how a dozen verbs used to exit 1 under five different messages.
+- **The table-driven `src/__tests__/cli/app-not-running.test.ts` covers every
+  existing verb.** Add a row for a new one.
+
+A verb that does NOT need the app is one an agent can run on a headless server.
+Which verbs those are, how the CLI picks its data directory there, and what
+a headless run records is in [CLI-HEADLESS.md](CLI-HEADLESS.md). No UI action
+changed with this: no row in Covered or Open gaps moved.
+
 ## Covered
 
 | Point-and-click action                                                    | CLI                                                                                                                     |
