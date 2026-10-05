@@ -219,6 +219,10 @@ export interface AppProps {
 	 * files and stays read-only.
 	 */
 	client?: MaestroClient;
+	/** Why there is no client, for the status bar: another TUI holds the data directory, a store is corrupt. */
+	readOnlyLabel?: string;
+	/** News on the status bar at start, such as the full text of the refusal behind `readOnlyLabel`. */
+	startupNotice?: string;
 	/** Opens a file in the person's editor and resolves when it closes. Tests pass a stand-in. */
 	editFile?: (file: string) => Promise<EditorResult>;
 	/** The bindings before the Encore gate. Tests pass a table with a gated binding in it. */
@@ -279,13 +283,15 @@ type OverlayState =
 export function App({
 	paths,
 	client,
+	readOnlyLabel,
+	startupNotice,
 	editFile = runEditor,
 	keymap: baseKeymap = KEYMAP,
 }: AppProps): React.ReactElement {
 	const { exit } = useApp();
 	const size = useTerminalSize();
 
-	const source = useAgentSource(paths, client);
+	const source = useAgentSource(paths, client, readOnlyLabel);
 	const data = source.data;
 	const dataRef = useRef(data);
 	dataRef.current = data;
@@ -348,7 +354,7 @@ export function App({
 		progressScreen !== undefined && isAutoRunActive(autoRunsByAgent[progressScreen.agentId])
 	);
 	// One line of news for the status bar (read-only refusals, a saved agent). The next key clears it.
-	const [notice, setNotice] = useState<string | undefined>(undefined);
+	const [notice, setNotice] = useState<string | undefined>(startupNotice);
 	// The file open in the person's editor. While set, the App draws one fixed line and reads no keys.
 	const [editing, setEditing] = useState<string | undefined>(undefined);
 	const editFileRef = useRef(editFile);

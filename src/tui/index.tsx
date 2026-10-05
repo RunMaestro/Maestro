@@ -1,5 +1,6 @@
 import { render } from 'ink';
 import {
+	createMaestroRuntime,
 	createWsMaestroClient,
 	resolveMaestroPaths,
 	setMaestroLibLogger,
@@ -8,6 +9,7 @@ import { App } from './App';
 import { parseTuiArgs } from './args';
 import { runDoctor } from './doctor';
 import { createFileLogger, tuiLogFilePath } from './logger';
+import { startTuiHost } from './startup';
 
 const args = parseTuiArgs(process.argv.slice(2));
 
@@ -25,11 +27,28 @@ const paths = resolveMaestroPaths(pathOptions);
 // reporter stays the default no-op.
 setMaestroLibLogger(createFileLogger(tuiLogFilePath(paths.userDataDir)));
 
-// The App attaches to a running desktop through this client, and reads the store
-// files when there is none. It keeps the connection until the TUI quits.
-const client = createWsMaestroClient({ userDataDir: paths.userDataDir });
+// No desktop and no other runtime on the directory: this process hosts it and the runtime is the
+// client. A running desktop is attached to; anything else opens read-only (see `startup.ts`).
+const startup = await startTuiHost(paths, {
+	startRuntime: createMaestroRuntime,
+	attachToHost: () => createWsMaestroClient({ userDataDir: paths.userDataDir }),
+});
+const client = startup.branch === 'read-only' ? undefined : startup.client;
 
-// Ctrl-C is a key the App answers (it interrupts a running turn; twice within a second quits), so Ink must not exit on it.
-const instance = render(<App paths={paths} client={client} />, { exitOnCtrlC: false });
-await instance.waitUntilExit();
-await client.connection.close();
+try {
+	// Ctrl-C is a key the App answers (it interrupts a running turn; twice within a second quits), so Ink must not exit on it.
+	const instance = render(
+		<App
+			paths={paths}
+			client={client}
+			{...(startup.branch === 'read-only'
+				? { readOnlyLabel: startup.label, startupNotice: startup.notice }
+				: {})}
+		/>,
+		{ exitOnCtrlC: false }
+	);
+	await instance.waitUntilExit();
+} finally {
+	// For the runtime this is the shutdown: it stops what it started and releases the data-dir lock.
+	await client?.connection.close();
+}

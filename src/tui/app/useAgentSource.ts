@@ -37,7 +37,11 @@ export interface AgentSource {
  * files stay on screen while the client is still looking, so the first frame
  * is never empty.
  */
-export function useAgentSource(paths: StorePaths, client: MaestroClient | undefined): AgentSource {
+export function useAgentSource(
+	paths: StorePaths,
+	client: MaestroClient | undefined,
+	readOnlyLabel?: string
+): AgentSource {
 	const [fileData, setFileData] = useState(() => loadAgentData(paths));
 	const [connection, setConnection] = useState<SourceConnection>(
 		client ? { mode: 'connecting' } : { mode: 'files' }
@@ -102,7 +106,7 @@ export function useAgentSource(paths: StorePaths, client: MaestroClient | undefi
 	);
 	return {
 		data,
-		hostLabel: hostLabelFor(connection),
+		hostLabel: hostLabelFor(connection, readOnlyLabel),
 		client: attachedToDesktop ? client : undefined,
 		live: attachedToDesktop && live !== undefined,
 	};

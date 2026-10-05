@@ -168,6 +168,37 @@ describe('App attached to a desktop through a client', () => {
 		second.unmount();
 	});
 
+	it('labels the host `this TUI` when its own runtime is the client', async () => {
+		const fake = createFakeClient({
+			agents: DESK_AGENTS,
+			groups: DESK_GROUPS,
+			host: { kind: 'in-process', label: 'this TUI' },
+		});
+		const { lastFrame, unmount } = await renderWith(fake.client);
+		const frame = lastFrame() ?? '';
+		expect(frame).toContain('host: this TUI');
+		expect(frame).toContain('Deskbound');
+		unmount();
+	});
+
+	it('shows why there is no client when another TUI holds the directory, and the refusal as news', async () => {
+		const instance = render(
+			<App
+				paths={paths()}
+				readOnlyLabel="read-only (TUI pid 812 holds this data dir)"
+				startupNotice="tui pid 812 holds this data directory."
+			/>
+		);
+		await tick();
+		resizeStdout(instance.stdout, 140, 30);
+		await tick();
+		const frame = instance.lastFrame() ?? '';
+		expect(frame).toContain('host: read-only (TUI pid 812 holds this data dir)');
+		expect(frame).toContain('tui pid 812 holds this data directory.');
+		expect(frame).toContain('FromFile');
+		instance.unmount();
+	});
+
 	it('works with no client at all, as before', async () => {
 		const { lastFrame, unmount } = await renderWith(undefined);
 		expect(lastFrame()).toContain('host: read-only');

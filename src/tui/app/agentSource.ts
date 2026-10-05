@@ -64,8 +64,13 @@ export type SourceConnection =
 	/** The desktop was attached and dropped; the last data stays on screen while the client retries. */
 	| { mode: 'lost'; host: HostInfo };
 
-/** What the status bar prints after `host: `. */
-export function hostLabelFor(connection: SourceConnection): string {
+/**
+ * What the status bar prints after `host: `. `readOnlyLabel` names why no client
+ * was started at all (another TUI holds the directory, a store is corrupt); it
+ * speaks for the plain `files` mode only, since a reason from a client that did
+ * try is the more specific answer.
+ */
+export function hostLabelFor(connection: SourceConnection, readOnlyLabel?: string): string {
 	switch (connection.mode) {
 		case 'connecting':
 			return 'connecting';
@@ -76,6 +81,6 @@ export function hostLabelFor(connection: SourceConnection): string {
 		case 'files':
 			if (connection.reason === 'unsupported') return 'read-only (desktop too old)';
 			if (connection.reason === 'unauthorized') return 'read-only (desktop refused)';
-			return 'read-only';
+			return readOnlyLabel ?? 'read-only';
 	}
 }
