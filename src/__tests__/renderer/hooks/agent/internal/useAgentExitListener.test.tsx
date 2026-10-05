@@ -1,8 +1,10 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useAgentExitListener } from '../../../../../renderer/hooks/agent/internal/useAgentExitListener';
 import { useSessionStore } from '../../../../../renderer/stores/sessionStore';
 import { useRetryStore } from '../../../../../renderer/stores/retryStore';
+import { useSettingsStore } from '../../../../../renderer/stores/settingsStore';
+import { useNotificationStore } from '../../../../../renderer/stores/notificationStore';
 import { createMockSession } from '../../../../helpers/mockSession';
 import { createMockAITab } from '../../../../helpers/mockTab';
 
@@ -46,6 +48,9 @@ function makeDeps() {
 
 beforeEach(() => {
 	vi.clearAllMocks();
+	useSettingsStore.setState(useSettingsStore.getInitialState(), true);
+	useNotificationStore.setState(useNotificationStore.getInitialState(), true);
+	useNotificationStore.getState().setOsNotifications(false);
 	handler = undefined;
 	useRetryStore.setState({ retries: {}, outages: {} } as any);
 	useSessionStore.setState({
@@ -61,6 +66,13 @@ beforeEach(() => {
 		stats: { recordQuery: vi.fn().mockResolvedValue(undefined) },
 		logger: { log: vi.fn() },
 	};
+});
+
+afterEach(async () => {
+	// Exit side effects are intentionally deferred; settle them before resetting stores.
+	await act(async () => {
+		await new Promise((resolve) => setTimeout(resolve, 0));
+	});
 });
 
 describe('useAgentExitListener', () => {
@@ -315,4 +327,75 @@ describe('useAgentExitListener', () => {
 
 		expect(deps.activeHiddenToolRef.current.has('sess-1:tab-1')).toBe(false);
 	});
+	it.each([true, false])(
+		'records a final completion with viewing=%s while retaining popup/audio defaults',
+		async (viewing) => {
+			const tab = createMockAITab({
+				id: 'tab-1',
+				state: 'busy',
+				thinkingStartTime: Date.now() - 100,
+				logs: [],
+			});
+			useSessionStore.setState({
+				sessions: [
+					createMockSession({ id: 'sess-1', aiTabs: [tab], activeTabId: 'tab-1', state: 'busy' }),
+				],
+				activeSessionId: viewing ? 'sess-1' : '',
+			});
+			const speak = vi.fn().mockResolvedValue(undefined);
+			window.maestro.notification.speak = speak;
+			useNotificationStore.getState().setAudioFeedback(true, 'say');
+			renderHook(() => useAgentExitListener(makeDeps()));
+			await act(async () => {
+				await handler!('sess-1-ai-tab-1', 0);
+				await new Promise((resolve) => setTimeout(resolve, 0));
+			});
+			expect(useNotificationStore.getState().history).toHaveLength(1);
+			expect(useNotificationStore.getState().toasts).toHaveLength(viewing ? 0 : 1);
+			expect(speak).toHaveBeenCalledTimes(1);
+		}
+	);
+
+	it.each([false, true])(
+		'records intermediate queued replies only when opted in (%s)',
+		async (enabled) => {
+			useSettingsStore.setState({ notificationHistoryQueuedReplies: enabled });
+			const tab = createMockAITab({
+				id: 'tab-1',
+				state: 'busy',
+				thinkingStartTime: Date.now() - 100,
+				logs: [],
+			});
+			const queued = {
+				id: 'next',
+				timestamp: 1,
+				tabId: 'tab-1',
+				type: 'message' as const,
+				text: 'Next',
+				readOnlyMode: true,
+			};
+			useSessionStore.setState({
+				sessions: [
+					createMockSession({
+						id: 'sess-1',
+						aiTabs: [tab],
+						activeTabId: 'tab-1',
+						state: 'busy',
+						executionQueue: [queued],
+					}),
+				],
+			});
+			const dispatch = vi.fn();
+			const deps = makeDeps();
+			deps.processQueuedItemRef.current = dispatch as never;
+			renderHook(() => useAgentExitListener(deps));
+			await act(async () => {
+				await handler!('sess-1-ai-tab-1', 0);
+				await new Promise((resolve) => setTimeout(resolve, 0));
+			});
+			expect(dispatch).toHaveBeenCalledTimes(1);
+			expect(useNotificationStore.getState().history).toHaveLength(enabled ? 1 : 0);
+			expect(useNotificationStore.getState().toasts).toHaveLength(0);
+		}
+	);
 });

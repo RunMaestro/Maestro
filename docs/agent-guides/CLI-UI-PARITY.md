@@ -206,13 +206,14 @@ of taking a second round trip or trusting a value the caller guessed.
 
 ## Covered
 
-Notification center history uses the live desktop `notificationStore` over a request-response bridge. `notify inbox list --unread` filters the snapshot, `read <id>` / `read-all` update read state, `clear` clears history, `dismiss` clears visible toasts, and `activate <id>` / `link <id>` run the same entry and inline-link actions as the UI. Every result includes the resulting unread count and history. `open notification-center` and `notify inbox open` open the app-level popover even when the Main Panel header is absent.
+Notification center history uses the live desktop `notificationStore` over a request-response bridge. `notify inbox list --unread` filters the snapshot, `read <id>` / `read-all` update read state, `clear` clears history, `dismiss [id]` dismisses one entry or clears visible toasts, and `activate <id>` / `link <id>` run the same entry and inline-link actions as the UI. Every result includes the resulting unread count and history. `detail <id>` / `collapse` expand and collapse the same in-inbox details view. The five opt-in inbox preferences are registered settings and can be changed with `settings set <key> <value>`. `open notification-center` and `notify inbox open` open the app-level popover even when the Main Panel header is absent.
 
 | Point-and-click action                       | CLI                                                                  |
 | -------------------------------------------- | -------------------------------------------------------------------- |
 | Open / close notification center             | `open notification-center`, `notify inbox open` / `close`            |
 | Read / clear / activate notification history | `notify inbox list`, `read`, `read-all`, `clear`, `activate`, `link` |
-| Dismiss visible notifications                | `notify inbox dismiss`                                               |
+| Dismiss one / all visible notifications      | `notify inbox dismiss [id]`                                          |
+| Expand / collapse full inbox details         | `notify inbox detail <id>` / `collapse`                              |
 | Bookmark / unbookmark an agent (Cmd+Shift+B) | `bookmark` / `unbookmark`, or `update-agent --bookmark`              |
 | Create / rename / remove an agent            | `create-agent`, `rename-agent`, `remove-agent`                       |
 | Edit Agent modal fields                      | `update-agent`, `settings agent set`                                 |

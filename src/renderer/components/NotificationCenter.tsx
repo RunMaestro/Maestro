@@ -15,7 +15,7 @@
 import { NOTIFICATION_HISTORY_PERSISTENCE_ERROR } from '../../shared/notificationInbox';
 import { shortcutSuffix } from './ui/ShortcutHint';
 import { useSettingsStore } from '../stores/settingsStore';
-import { memo, useCallback, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { AlertTriangle, Bell, Check, Info, Sparkles, X, XCircle } from 'lucide-react';
 import type { Theme } from '../types';
@@ -24,8 +24,13 @@ import {
 	useNotificationStore,
 	type ToastColor,
 } from '../stores/notificationStore';
-import { activateNotification, openNotificationLink } from '../services/notificationInbox';
+import {
+	activateNotification,
+	openNotificationLink,
+	performNotificationInboxAction,
+} from '../services/notificationInbox';
 import { formatRelativeTime } from '../../shared/formatters';
+import { useListNavigation } from '../hooks/keyboard/useListNavigation';
 import { useClickOutside } from '../hooks/ui/useClickOutside';
 import { useAnchoredMenuPosition } from '../hooks/ui/useAnchoredMenuPosition';
 import { useModalLayer } from '../hooks/ui/useModalLayer';
@@ -140,6 +145,11 @@ function NotificationCenterPopover({ theme, anchorRef, onClose }: NotificationCe
 		eventType: 'click',
 	});
 
+	const large = useSettingsStore((s) => s.notificationCenterLarge);
+	const details = useSettingsStore((s) => s.notificationCenterDetails);
+	const keyboardNavigation = useSettingsStore((s) => s.notificationCenterKeyboardNavigation);
+	const expandedId = useNotificationStore((s) => s.notificationCenterExpandedId);
+	const previousFocus = useRef(document.activeElement as HTMLElement | null);
 	const history = useNotificationStore((s) => s.history);
 	const historyPersistenceFailed = useNotificationStore((s) => s.historyPersistenceFailed);
 	const markAllNotificationsRead = useNotificationStore((s) => s.markAllNotificationsRead);
@@ -151,8 +161,75 @@ function NotificationCenterPopover({ theme, anchorRef, onClose }: NotificationCe
 	const [filter, setFilter] = useState<NotificationFilter>(() =>
 		unreadCount > 0 ? 'unread' : 'all'
 	);
-	const visible = filter === 'unread' ? history.filter((n) => !n.read) : history;
+	const visible =
+		filter === 'unread'
+			? history.filter((n) => !n.read || (details && n.id === expandedId))
+			: history;
 	const canClearHistory = history.length > 0 || historyPersistenceFailed;
+
+	const { selectedIndex, setSelectedIndex, handleKeyDown } = useListNavigation({
+		listLength: visible.length,
+		onSelect: (index) => activateNotification(visible[index]),
+		enablePageNavigation: true,
+		enabled: keyboardNavigation,
+	});
+
+	// Opt-in focus management also restores the caller when closing without navigation.
+	useEffect(() => {
+		if (!keyboardNavigation || !ready) return;
+		const menu = menuRef.current;
+		const first = menu?.querySelector<HTMLElement>('[data-testid="notification-center-item"]');
+		(first ?? menu)?.focus();
+		return () => {
+			if (menu?.contains(document.activeElement) || document.activeElement === document.body) {
+				if (previousFocus.current?.isConnected) previousFocus.current.focus();
+			}
+		};
+	}, [keyboardNavigation, ready]);
+
+	useEffect(() => {
+		if (!keyboardNavigation || !ready) return;
+		const active = document.activeElement;
+		// Never pull focus away from filters, links, detail controls, or other surfaces.
+		if (
+			active !== menuRef.current &&
+			active !== document.body &&
+			!menuRef.current?.querySelector('[data-testid="notification-center-item"]:focus')
+		)
+			return;
+		const item = menuRef.current?.querySelectorAll<HTMLElement>(
+			'[data-testid="notification-center-item"]'
+		)[selectedIndex];
+		(item ?? menuRef.current)?.focus();
+		item?.scrollIntoView?.({ block: 'nearest' });
+	}, [keyboardNavigation, ready, selectedIndex, visible]);
+
+	const onEntryKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+		if (!keyboardNavigation || event.altKey || event.ctrlKey || event.metaKey) return;
+		if (
+			!(event.target instanceof HTMLElement) ||
+			event.target.dataset.testid !== 'notification-center-item'
+		)
+			return;
+		const record = visible[selectedIndex];
+		if (!record) return;
+		if (event.key.toLowerCase() === 'r') {
+			performNotificationInboxAction({ action: 'read', id: record.id });
+		} else if (event.key === 'Delete' || event.key === 'Backspace') {
+			performNotificationInboxAction({ action: 'dismiss', id: record.id });
+		} else if (event.key.toLowerCase() === 'd' && details) {
+			performNotificationInboxAction({
+				action: expandedId === record.id ? 'collapse' : 'detail',
+				id: record.id,
+			});
+		} else {
+			handleKeyDown(event);
+			if (event.defaultPrevented) event.stopPropagation();
+			return;
+		}
+		event.preventDefault();
+		event.stopPropagation();
+	};
 
 	const actionStyle = (enabled: boolean) => ({
 		color: enabled ? theme.colors.accent : theme.colors.textDim,
@@ -162,12 +239,14 @@ function NotificationCenterPopover({ theme, anchorRef, onClose }: NotificationCe
 	return createPortal(
 		<div
 			ref={menuRef}
-			className="fixed z-[100] w-[22rem] max-w-[calc(100vw-1rem)] flex flex-col rounded-lg shadow-xl overflow-hidden select-none"
+			className={`fixed z-[100] ${large ? 'w-[38rem]' : 'w-[22rem]'} max-w-[calc(100vw-1rem)] flex flex-col rounded-lg shadow-xl overflow-hidden select-none`}
+			tabIndex={keyboardNavigation ? -1 : undefined}
+			onKeyDown={onEntryKeyDown}
 			style={{
 				left,
 				top,
 				opacity: ready ? 1 : 0,
-				maxHeight: 'min(32rem, calc(100vh - 5rem))',
+				maxHeight: large ? 'min(48rem, calc(100vh - 5rem))' : 'min(32rem, calc(100vh - 5rem))',
 				backgroundColor: theme.colors.bgSidebar,
 				border: `1px solid ${theme.colors.border}`,
 			}}
@@ -220,7 +299,8 @@ function NotificationCenterPopover({ theme, anchorRef, onClose }: NotificationCe
 				</div>
 			) : (
 				<ul className="flex-1 min-h-0 overflow-y-auto scrollbar-thin">
-					{visible.map((record) => {
+					{visible.map((record, index) => {
+						const expanded = details && expandedId === record.id;
 						const accent = toastAccentColor(record.color, theme);
 						const source = [record.group, record.project, record.tabName]
 							.filter(Boolean)
@@ -229,8 +309,15 @@ function NotificationCenterPopover({ theme, anchorRef, onClose }: NotificationCe
 							<li key={record.id} className="border-b" style={{ borderColor: theme.colors.border }}>
 								<button
 									type="button"
-									onClick={() => activateNotification(record)}
-									className="w-full flex items-start gap-2.5 px-3 py-2.5 text-left hover:bg-white/5"
+									onClick={() => {
+										if (!expanded || !window.getSelection()?.toString())
+											activateNotification(record);
+									}}
+									onFocus={() => {
+										if (keyboardNavigation) setSelectedIndex(index);
+									}}
+									tabIndex={keyboardNavigation ? (index === selectedIndex ? 0 : -1) : undefined}
+									className={`w-full flex items-start gap-2.5 px-3 py-2.5 text-left hover:bg-white/5 ${keyboardNavigation ? 'focus-ring-inset' : ''}`}
 									style={{ borderColor: theme.colors.border }}
 									data-testid="notification-center-item"
 									data-read={record.read}
@@ -246,7 +333,9 @@ function NotificationCenterPopover({ theme, anchorRef, onClose }: NotificationCe
 											className="flex items-baseline justify-between gap-2 text-2xs"
 											style={{ color: theme.colors.textDim }}
 										>
-											<span className="truncate">{source}</span>
+											<span className={expanded ? 'min-w-0 break-words select-text' : 'truncate'}>
+												{source}
+											</span>
 											<span
 												className="shrink-0"
 												title={new Date(record.timestamp).toLocaleString()}
@@ -262,7 +351,7 @@ function NotificationCenterPopover({ theme, anchorRef, onClose }: NotificationCe
 										</span>
 										{record.message && (
 											<span
-												className="block text-xs mt-0.5 break-words line-clamp-3"
+												className={`text-xs mt-0.5 break-words ${expanded ? 'block whitespace-pre-wrap select-text' : 'line-clamp-3'}`}
 												style={{ color: theme.colors.textDim }}
 											>
 												{record.message}
@@ -277,6 +366,53 @@ function NotificationCenterPopover({ theme, anchorRef, onClose }: NotificationCe
 										/>
 									)}
 								</button>
+								{(details || keyboardNavigation) && (
+									<div
+										className="flex gap-3 px-3 pb-2 text-xs"
+										style={{ color: theme.colors.accent }}
+									>
+										{details && (
+											<button
+												type="button"
+												className="hover:underline"
+												aria-expanded={expanded}
+												onClick={() =>
+													performNotificationInboxAction({
+														action: expanded ? 'collapse' : 'detail',
+														id: record.id,
+													})
+												}
+											>
+												{expanded ? 'Hide details' : 'Show details'}
+											</button>
+										)}
+										{keyboardNavigation && (
+											<>
+												<button
+													type="button"
+													className="hover:underline disabled:opacity-50"
+													disabled={record.read}
+													title="Mark as read (R)"
+													onClick={() =>
+														performNotificationInboxAction({ action: 'read', id: record.id })
+													}
+												>
+													Mark as read
+												</button>
+												<button
+													type="button"
+													className="hover:underline"
+													title="Dismiss (Delete)"
+													onClick={() =>
+														performNotificationInboxAction({ action: 'dismiss', id: record.id })
+													}
+												>
+													Dismiss
+												</button>
+											</>
+										)}
+									</div>
+								)}
 								{record.actionUrl && (
 									<button
 										type="button"
@@ -291,6 +427,12 @@ function NotificationCenterPopover({ theme, anchorRef, onClose }: NotificationCe
 						);
 					})}
 				</ul>
+			)}
+
+			{keyboardNavigation && (
+				<p className="px-3 py-2 text-xs" style={{ color: theme.colors.textDim }}>
+					Arrows: navigate · Enter: open · R: read · Delete: dismiss{details ? ' · D: details' : ''}
+				</p>
 			)}
 
 			<div

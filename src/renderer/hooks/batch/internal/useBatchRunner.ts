@@ -1026,6 +1026,20 @@ export function useBatchRunner({
 								elapsedTimeMs,
 							});
 
+							// Optional per-task inbox entries never alter the existing popup/audio policy.
+							if (useSettingsStore.getState().notificationHistoryAutoRunTasks) {
+								notifyToast({
+									type: success ? 'success' : 'error',
+									title: success ? 'Auto Run task complete' : 'Auto Run task failed',
+									message: fullSynopsis || shortSummary,
+									project: session.name,
+									agentSessionId,
+									sessionId,
+									taskDuration: elapsedTimeMs,
+									historyOnly: true,
+								});
+							}
+
 							// Speak the synopsis via TTS if audio feedback is enabled
 							// Use refs to get latest setting values (user may toggle mid-run)
 							if (

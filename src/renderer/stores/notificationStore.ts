@@ -99,6 +99,8 @@ export interface Toast {
 	// Keep this toast out of the notification center's history. Use for UI
 	// previews that report nothing the user could want to come back to.
 	skipHistory?: boolean;
+	/** Record in the inbox without a popup, OS notification, custom command, or timer. */
+	historyOnly?: boolean;
 	// Generic click handler - if set, clicking the toast invokes this callback.
 	// Renderer-only - not serializable across the CLI/web bridge.
 	onClick?: () => void;
@@ -214,6 +216,7 @@ export interface NotificationStoreState {
 	history: NotificationRecord[];
 	/** Whether the header's notification center popover is open. */
 	notificationCenterOpen: boolean;
+	notificationCenterExpandedId: string | null;
 	/** True when the latest history change could not be persisted. */
 	historyPersistenceFailed: boolean;
 	config: NotificationConfig;
@@ -235,6 +238,7 @@ export interface NotificationStoreActions {
 	/** Empty the history. Toasts still on screen are left alone. */
 	clearNotificationHistory: () => void;
 	setNotificationCenterOpen: (open: boolean) => void;
+	setNotificationCenterExpandedId: (id: string | null) => void;
 	/** Update default duration (seconds). */
 	setDefaultDuration: (duration: number) => void;
 	/** Configure audio feedback (TTS). */
@@ -273,6 +277,7 @@ export const useNotificationStore = create<NotificationStore>()((set) => ({
 	toasts: [],
 	history: loadNotificationHistory(),
 	notificationCenterOpen: false,
+	notificationCenterExpandedId: null,
 	historyPersistenceFailed: false,
 	config: {
 		defaultDuration: 20,
@@ -330,9 +335,11 @@ export const useNotificationStore = create<NotificationStore>()((set) => ({
 		}),
 
 	// A fresh array retries persistence even after a failed clear already emptied the inbox.
-	clearNotificationHistory: () => set({ history: [] }),
+	clearNotificationHistory: () => set({ history: [], notificationCenterExpandedId: null }),
 
-	setNotificationCenterOpen: (open) => set({ notificationCenterOpen: open }),
+	setNotificationCenterOpen: (open) =>
+		set({ notificationCenterOpen: open, ...(!open ? { notificationCenterExpandedId: null } : {}) }),
+	setNotificationCenterExpandedId: (id) => set({ notificationCenterExpandedId: id }),
 
 	// --- Configuration ---
 	setDefaultDuration: (duration) =>
@@ -394,6 +401,9 @@ export type NotifyToastInput = Omit<Toast, 'id' | 'timestamp' | 'color' | 'type'
  * 7. OS notifications via window.maestro.notification.show
  * 8. Auto-dismiss timer (skipped when dismissible or duration=0)
  *
+ * `historyOnly` records without delivering a popup, audio command, OS notification,
+ * or auto-dismiss timer. Callers preserve any existing audio policy separately.
+ *
  * Callable from React components and non-React code alike.
  *
  * @returns The generated toast ID
@@ -437,13 +447,15 @@ export function notifyToast(toast: NotifyToastInput): string {
 	};
 
 	// Only add to visible toast queue if not disabled
-	if (!toastsDisabled) {
+	if (!toastsDisabled && !toast.historyOnly) {
 		store.addToast(newToast);
 	}
 
 	if (!toast.skipHistory) {
 		store.recordNotification(newToast);
 	}
+
+	if (toast.historyOnly) return id;
 
 	// --- Side effects ---
 

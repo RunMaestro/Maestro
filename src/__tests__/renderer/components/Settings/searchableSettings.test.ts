@@ -39,6 +39,16 @@ function collectRenderedSettingIds(): { id: string; file: string }[] {
 }
 
 describe('searchableSettings', () => {
+	it.each([
+		'notification center',
+		'queued reply',
+		'expand details',
+		'keyboard navigation',
+		'auto run task',
+	])('finds inbox preferences for %s', (query) => {
+		expect(searchSettings(query).some((s) => s.id === 'notifications-center')).toBe(true);
+	});
+
 	describe('ALL_SEARCHABLE_SETTINGS', () => {
 		it('should contain entries from all tabs', () => {
 			const tabs = new Set(ALL_SEARCHABLE_SETTINGS.map((s) => s.tab));

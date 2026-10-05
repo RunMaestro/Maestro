@@ -12,6 +12,7 @@ import {
 	useNotificationStore,
 	type NotificationRecord,
 } from '../../../renderer/stores/notificationStore';
+import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { mockTheme } from '../../helpers/mockTheme';
 
 const mockOpenUrl = vi.fn();
@@ -54,6 +55,8 @@ const items = () => screen.queryAllByTestId('notification-center-item');
 describe('NotificationCenter', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		useSettingsStore.setState(useSettingsStore.getInitialState(), true);
+		useNotificationStore.setState({ notificationCenterExpandedId: null });
 		mockJumpToAgent.mockReturnValue(true);
 		seed([]);
 		useNotificationStore.setState({ historyPersistenceFailed: false });
@@ -310,5 +313,90 @@ describe('NotificationCenter', () => {
 		expect(screen.getByTestId('notification-center-empty')).toHaveTextContent(
 			'No notifications yet'
 		);
+	});
+	it('keeps the compact panel, clamped preview, and existing focus by default', () => {
+		seed([record()], true);
+		render(
+			<>
+				<button autoFocus>Composer</button>
+				<NotificationCenterHost theme={mockTheme} />
+			</>
+		);
+		expect(screen.getByTestId('notification-center')).toHaveClass('w-[22rem]');
+		expect(screen.getByText('All done')).toHaveClass('line-clamp-3');
+		expect(screen.queryByRole('button', { name: 'Show details' })).not.toBeInTheDocument();
+		expect(screen.getByRole('button', { name: 'Composer' })).toHaveFocus();
+	});
+
+	it('offers a larger panel only when enabled', () => {
+		useSettingsStore.setState({ notificationCenterLarge: true });
+		seed([], true);
+		render(<NotificationCenterHost theme={mockTheme} />);
+		expect(screen.getByTestId('notification-center')).toHaveClass('w-[38rem]');
+		expect(screen.getByTestId('notification-center')).toHaveStyle({
+			maxHeight: 'min(48rem, calc(100vh - 5rem))',
+		});
+	});
+
+	it('expands full content without activating the entry or marking it read', () => {
+		useSettingsStore.setState({ notificationCenterDetails: true });
+		seed([record({ project: 'A very long source name', sessionId: 'agent-1' })], true);
+		render(<NotificationCenterHost theme={mockTheme} />);
+		fireEvent.click(screen.getByRole('button', { name: 'Show details' }));
+		expect(screen.getByText('All done')).not.toHaveClass('line-clamp-3');
+		expect(screen.getByText('A very long source name')).not.toHaveClass('truncate');
+		expect(mockJumpToAgent).not.toHaveBeenCalled();
+		expect(useNotificationStore.getState().history[0].read).toBe(false);
+		fireEvent.click(screen.getByRole('button', { name: 'Hide details' }));
+		expect(screen.getByText('All done')).toHaveClass('line-clamp-3');
+	});
+
+	it('focuses the inbox and supports arrows, reading, and dismissal when enabled', () => {
+		useSettingsStore.setState({ notificationCenterKeyboardNavigation: true });
+		seed([record({ id: 'a' }), record({ id: 'b' }), record({ id: 'c' })], true);
+		render(<NotificationCenterHost theme={mockTheme} />);
+		expect(items()[0]).toHaveFocus();
+		fireEvent.keyDown(items()[0], { key: 'ArrowDown' });
+		expect(items()[1]).toHaveFocus();
+		fireEvent.keyDown(items()[1], { key: 'r' });
+		expect(useNotificationStore.getState().history.find((n) => n.id === 'b')?.read).toBe(true);
+		expect(items()[1]).toHaveFocus();
+		fireEvent.keyDown(items()[1], { key: 'Delete' });
+		expect(useNotificationStore.getState().history.find((n) => n.id === 'c')?.read).toBe(true);
+		expect(items()[0]).toHaveFocus();
+	});
+
+	it('restores focus after closing and lets Enter activate once', () => {
+		useSettingsStore.setState({ notificationCenterKeyboardNavigation: true });
+		seed([record({ id: 'a', sessionId: 'agent-1' })]);
+		render(
+			<>
+				<NotificationCenter theme={mockTheme} />
+				<NotificationCenterHost theme={mockTheme} />
+			</>
+		);
+		const bell = screen.getByTestId('notification-center-button');
+		bell.focus();
+		fireEvent.click(bell);
+		expect(items()[0]).toHaveFocus();
+		fireEvent.click(screen.getByRole('button', { name: 'Close notifications' }));
+		expect(bell).toHaveFocus();
+		fireEvent.click(bell);
+		fireEvent.keyDown(items()[0], { key: 'Enter' });
+		expect(mockJumpToAgent).toHaveBeenCalledTimes(1);
+	});
+
+	it('does not intercept keyboard activation of independent links', () => {
+		useSettingsStore.setState({ notificationCenterKeyboardNavigation: true });
+		seed(
+			[record({ actionUrl: 'https://example.com', actionLabel: 'Link', sessionId: 'agent-1' })],
+			true
+		);
+		render(<NotificationCenterHost theme={mockTheme} />);
+		const link = screen.getByRole('button', { name: 'Link' });
+		link.focus();
+		fireEvent.keyDown(link, { key: 'Enter' });
+		expect(mockJumpToAgent).not.toHaveBeenCalled();
+		expect(link).toHaveFocus();
 	});
 });

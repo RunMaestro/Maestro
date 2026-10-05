@@ -10,6 +10,7 @@ import {
 	useNotificationStore,
 	type NotificationRecord,
 } from '../stores/notificationStore';
+import { useSettingsStore } from '../stores/settingsStore';
 import { jumpToAgent } from './agentNavigation';
 import { runToastClick } from './toastClickActions';
 import { openUrl } from '../utils/openUrl';
@@ -46,7 +47,11 @@ export function performNotificationInboxAction(
 ): NotificationInboxResult {
 	const store = useNotificationStore.getState();
 	const record = request.id ? store.history.find((n) => n.id === request.id) : undefined;
-	if (['read', 'activate', 'link'].includes(request.action) && !record)
+	if (
+		(['read', 'activate', 'link', 'detail'].includes(request.action) ||
+			(request.action === 'dismiss' && request.id !== undefined)) &&
+		!record
+	)
 		return { success: false, error: 'Notification not found' };
 	switch (request.action) {
 		case 'open':
@@ -65,7 +70,24 @@ export function performNotificationInboxAction(
 			store.clearNotificationHistory();
 			break;
 		case 'dismiss':
-			store.clearToasts();
+			if (record) {
+				store.markNotificationRead(record.id);
+				store.removeToast(record.id);
+			} else {
+				store.clearToasts();
+			}
+			break;
+		case 'detail':
+			if (!useSettingsStore.getState().notificationCenterDetails)
+				return {
+					success: false,
+					error: 'Enable notificationCenterDetails to expand entries in the inbox',
+				};
+			store.setNotificationCenterExpandedId(record!.id);
+			store.setNotificationCenterOpen(true);
+			break;
+		case 'collapse':
+			store.setNotificationCenterExpandedId(null);
 			break;
 		case 'activate':
 			activateNotification(record!);
@@ -88,6 +110,7 @@ export function performNotificationInboxAction(
 		error: persistenceFailed ? NOTIFICATION_HISTORY_PERSISTENCE_ERROR : undefined,
 		historyPersistenceFailed: current.historyPersistenceFailed,
 		open: current.notificationCenterOpen,
+		expandedId: current.notificationCenterExpandedId,
 		unreadCount: selectUnreadNotificationCount(current),
 		notifications: current.history
 			.filter((n) => !request.unread || !n.read)

@@ -811,7 +811,12 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 						queuedItemToProcess!.item
 					);
 				}, 0);
-			} else if (toastData) {
+			}
+
+			if (
+				toastData &&
+				(!queuedItemToProcess || useSettingsStore.getState().notificationHistoryQueuedReplies)
+			) {
 				setTimeout(() => {
 					window.maestro.logger.log('info', 'Agent process completed', 'App', {
 						agentSessionId: toastData!.agentSessionId,
@@ -836,20 +841,21 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 						currentActiveSession?.id === actualSessionId &&
 						(!tabIdFromSession || currentActiveSession.activeTabId === tabIdFromSession);
 
-					if (!isViewingCompletedTab) {
-						notifyToast({
-							type: 'success',
-							title: toastData!.title,
-							message: toastData!.summary,
-							group: toastData!.groupName,
-							project: toastData!.projectName,
-							taskDuration: toastData!.duration,
-							agentSessionId: toastData!.agentSessionId,
-							tabName: toastData!.tabName,
-							sessionId: toastData!.sessionId,
-							tabId: toastData!.tabId,
-						});
-					} else {
+					const historyOnly = !!queuedItemToProcess || isViewingCompletedTab;
+					notifyToast({
+						historyOnly,
+						type: 'success',
+						title: toastData!.title,
+						message: toastData!.summary,
+						group: toastData!.groupName,
+						project: toastData!.projectName,
+						taskDuration: toastData!.duration,
+						agentSessionId: toastData!.agentSessionId,
+						tabName: toastData!.tabName,
+						sessionId: toastData!.sessionId,
+						tabId: toastData!.tabId,
+					});
+					if (isViewingCompletedTab && !queuedItemToProcess) {
 						// Viewing the completed tab: the visual toast is suppressed (no need
 						// to pop a toast about the tab you're already watching), but the
 						// audio/TTS cue must still fire. Otherwise custom notifications are

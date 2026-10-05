@@ -424,6 +424,11 @@ export interface SettingsStoreState {
 	audioFeedbackEnabled: boolean;
 	audioFeedbackCommand: string;
 	toastDuration: number;
+	notificationCenterLarge: boolean;
+	notificationCenterDetails: boolean;
+	notificationCenterKeyboardNavigation: boolean;
+	notificationHistoryQueuedReplies: boolean;
+	notificationHistoryAutoRunTasks: boolean;
 	idleNotificationEnabled: boolean;
 	idleNotificationCommand: string;
 	checkForUpdatesOnStartup: boolean;
@@ -603,6 +608,11 @@ export interface SettingsStoreActions {
 	setAudioFeedbackEnabled: (value: boolean) => void;
 	setAudioFeedbackCommand: (value: string) => void;
 	setToastDuration: (value: number) => void;
+	setNotificationCenterLarge: (value: boolean) => void;
+	setNotificationCenterDetails: (value: boolean) => void;
+	setNotificationCenterKeyboardNavigation: (value: boolean) => void;
+	setNotificationHistoryQueuedReplies: (value: boolean) => void;
+	setNotificationHistoryAutoRunTasks: (value: boolean) => void;
 	setIdleNotificationEnabled: (value: boolean) => void;
 	setIdleNotificationCommand: (value: string) => void;
 	setCheckForUpdatesOnStartup: (value: boolean) => void;
@@ -885,6 +895,11 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		audioFeedbackEnabled: false,
 		audioFeedbackCommand: 'say',
 		toastDuration: 20,
+		notificationCenterLarge: false,
+		notificationCenterDetails: false,
+		notificationCenterKeyboardNavigation: false,
+		notificationHistoryQueuedReplies: false,
+		notificationHistoryAutoRunTasks: false,
 		idleNotificationEnabled: false,
 		idleNotificationCommand: 'say Maestro is idle',
 		checkForUpdatesOnStartup: true,
@@ -1356,6 +1371,31 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		setToastDuration: (value) => {
 			set({ toastDuration: value });
 			window.maestro.settings.set('toastDuration', value);
+		},
+
+		setNotificationCenterLarge: (value) => {
+			set({ notificationCenterLarge: value });
+			window.maestro.settings.set('notificationCenterLarge', value);
+		},
+
+		setNotificationCenterDetails: (value) => {
+			set({ notificationCenterDetails: value });
+			window.maestro.settings.set('notificationCenterDetails', value);
+		},
+
+		setNotificationCenterKeyboardNavigation: (value) => {
+			set({ notificationCenterKeyboardNavigation: value });
+			window.maestro.settings.set('notificationCenterKeyboardNavigation', value);
+		},
+
+		setNotificationHistoryQueuedReplies: (value) => {
+			set({ notificationHistoryQueuedReplies: value });
+			window.maestro.settings.set('notificationHistoryQueuedReplies', value);
+		},
+
+		setNotificationHistoryAutoRunTasks: (value) => {
+			set({ notificationHistoryAutoRunTasks: value });
+			window.maestro.settings.set('notificationHistoryAutoRunTasks', value);
 		},
 
 		setIdleNotificationEnabled: (value) => {
@@ -2801,6 +2841,27 @@ export async function loadAllSettings(): Promise<void> {
 
 		if (allSettings['toastDuration'] !== undefined)
 			patch.toastDuration = allSettings['toastDuration'] as number;
+
+		if (typeof allSettings['notificationCenterLarge'] === 'boolean')
+			patch.notificationCenterLarge = allSettings['notificationCenterLarge'] as boolean;
+
+		if (typeof allSettings['notificationCenterDetails'] === 'boolean')
+			patch.notificationCenterDetails = allSettings['notificationCenterDetails'] as boolean;
+
+		if (typeof allSettings['notificationCenterKeyboardNavigation'] === 'boolean')
+			patch.notificationCenterKeyboardNavigation = allSettings[
+				'notificationCenterKeyboardNavigation'
+			] as boolean;
+
+		if (typeof allSettings['notificationHistoryQueuedReplies'] === 'boolean')
+			patch.notificationHistoryQueuedReplies = allSettings[
+				'notificationHistoryQueuedReplies'
+			] as boolean;
+
+		if (typeof allSettings['notificationHistoryAutoRunTasks'] === 'boolean')
+			patch.notificationHistoryAutoRunTasks = allSettings[
+				'notificationHistoryAutoRunTasks'
+			] as boolean;
 
 		if (allSettings['idleNotificationEnabled'] !== undefined)
 			patch.idleNotificationEnabled = allSettings['idleNotificationEnabled'] as boolean;

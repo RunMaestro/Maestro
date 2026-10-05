@@ -152,12 +152,12 @@ const VARIANT_TO_COLOR: Record<NotifyCenterFlashVariant, NotifyCenterFlashColor>
 const EXTERNAL_FLASH_MAX_DURATION_MS = 5000;
 
 /**
- * Hard upper bound on toast duration (seconds) for externally-triggered
+ * Hard upper bound on toast duration (milliseconds) for externally-triggered
  * toasts. Toasts are corner notifications so the cap is more generous than
  * Center Flash, but `0` (never auto-dismiss) is rejected - external scripts
  * that want a sticky toast must opt in explicitly via `dismissible: true`.
  */
-const EXTERNAL_TOAST_MAX_DURATION_SECONDS = 60;
+const EXTERNAL_TOAST_MAX_DURATION_MS = 60000;
 import { AGENT_IDS } from '../../../shared/agentIds';
 
 // Logger context for all message handler logs
@@ -5025,14 +5025,14 @@ export class WebSocketMessageHandler {
 			if (!Number.isFinite(duration) || duration <= 0) {
 				sendResult(
 					false,
-					'duration must be a positive number of seconds (use dismissible:true for sticky toasts)'
+					'duration must be a positive number of milliseconds (use dismissible:true for sticky toasts)'
 				);
 				return;
 			}
-			if (duration > EXTERNAL_TOAST_MAX_DURATION_SECONDS) {
+			if (duration > EXTERNAL_TOAST_MAX_DURATION_MS) {
 				sendResult(
 					false,
-					`duration cannot exceed ${EXTERNAL_TOAST_MAX_DURATION_SECONDS} seconds for externally-triggered toasts (use dismissible:true to make it sticky)`
+					`duration cannot exceed ${EXTERNAL_TOAST_MAX_DURATION_MS} milliseconds for externally-triggered toasts (use dismissible:true to make it sticky)`
 				);
 				return;
 			}

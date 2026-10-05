@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { performNotificationInboxAction } from '../../../renderer/services/notificationInbox';
+import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { notifyToast, useNotificationStore } from '../../../renderer/stores/notificationStore';
 
 const openUrl = vi.fn();
@@ -10,6 +11,8 @@ vi.mock('../../../renderer/utils/openUrl', () => ({
 describe('notification inbox operations', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		useSettingsStore.setState({ notificationCenterDetails: false });
+		useNotificationStore.setState({ notificationCenterExpandedId: null });
 		useNotificationStore.setState({ history: [], toasts: [], notificationCenterOpen: false });
 		useNotificationStore.getState().setDefaultDuration(-1);
 		useNotificationStore.getState().setOsNotifications(false);
@@ -74,5 +77,28 @@ describe('notification inbox operations', () => {
 		expect(performNotificationInboxAction({ action: 'link', id })).toMatchObject({
 			success: false,
 		});
+	});
+	it('dismisses one entry without discarding history or other visible toasts', () => {
+		useNotificationStore.getState().setDefaultDuration(0);
+		const first = notifyToast({ title: 'First', message: '' });
+		const second = notifyToast({ title: 'Second', message: '' });
+		const result = performNotificationInboxAction({ action: 'dismiss', id: first });
+		expect(result.unreadCount).toBe(1);
+		expect(result.notifications).toHaveLength(2);
+		expect(useNotificationStore.getState().toasts.map((n) => n.id)).toEqual([second]);
+		expect(performNotificationInboxAction({ action: 'dismiss', id: 'gone' }).success).toBe(false);
+	});
+
+	it('shares opt-in detail expansion with the CLI and does not mark entries read', () => {
+		const id = notifyToast({ title: 'Details', message: 'Full content' });
+		expect(performNotificationInboxAction({ action: 'detail', id }).success).toBe(false);
+		useSettingsStore.setState({ notificationCenterDetails: true });
+		expect(performNotificationInboxAction({ action: 'detail', id })).toMatchObject({
+			success: true,
+			open: true,
+			expandedId: id,
+			unreadCount: 1,
+		});
+		expect(performNotificationInboxAction({ action: 'collapse' }).expandedId).toBe(null);
 	});
 });

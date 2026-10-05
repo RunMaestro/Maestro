@@ -1467,7 +1467,7 @@ inbox
 	.option('--unread', 'Only list unread entries')
 	.option('--json', 'Output as JSON')
 	.action((options) => notificationInbox({ action: 'list', unread: options.unread }, options));
-for (const action of ['open', 'close', 'read-all', 'clear', 'dismiss'] as const) {
+for (const action of ['open', 'close', 'read-all', 'clear', 'collapse'] as const) {
 	inbox
 		.command(action)
 		.description(
@@ -1476,13 +1476,18 @@ for (const action of ['open', 'close', 'read-all', 'clear', 'dismiss'] as const)
 				close: 'Close the notification center',
 				'read-all': 'Mark every history entry read',
 				clear: 'Clear retained history',
-				dismiss: 'Dismiss visible toasts and mark their entries read',
+				collapse: 'Collapse expanded notification details',
 			}[action]
 		)
 		.option('--json', 'Output as JSON')
 		.action((options) => notificationInbox({ action }, options));
 }
-for (const action of ['read', 'activate', 'link'] as const) {
+inbox
+	.command('dismiss [id]')
+	.description('Dismiss one notification or all visible toasts and mark their entries read')
+	.option('--json', 'Output as JSON')
+	.action((id, options) => notificationInbox({ action: 'dismiss', id }, options));
+for (const action of ['read', 'activate', 'link', 'detail'] as const) {
 	inbox
 		.command(`${action} <id>`)
 		.description(
@@ -1490,6 +1495,8 @@ for (const action of ['read', 'activate', 'link'] as const) {
 				read: 'Mark one notification read',
 				activate: 'Run a notification body action',
 				link: 'Open a notification inline link',
+				detail:
+					'Expand full notification details in the inbox (requires notificationCenterDetails)',
 			}[action]
 		)
 		.option('--json', 'Output as JSON')

@@ -1296,9 +1296,17 @@ Clear retained history
 | -------- | -------------- | ------- |
 | `--json` | Output as JSON | -       |
 
-## `maestro-cli notify inbox dismiss`
+## `maestro-cli notify inbox collapse`
 
-Dismiss visible toasts and mark their entries read
+Collapse expanded notification details
+
+| Option   | Description    | Default |
+| -------- | -------------- | ------- |
+| `--json` | Output as JSON | -       |
+
+## `maestro-cli notify inbox dismiss [id]`
+
+Dismiss one notification or all visible toasts and mark their entries read
 
 | Option   | Description    | Default |
 | -------- | -------------- | ------- |
@@ -1323,6 +1331,14 @@ Run a notification body action
 ## `maestro-cli notify inbox link <id>`
 
 Open a notification inline link
+
+| Option   | Description    | Default |
+| -------- | -------------- | ------- |
+| `--json` | Output as JSON | -       |
+
+## `maestro-cli notify inbox detail <id>`
+
+Expand full notification details in the inbox (requires notificationCenterDetails)
 
 | Option   | Description    | Default |
 | -------- | -------------- | ------- |

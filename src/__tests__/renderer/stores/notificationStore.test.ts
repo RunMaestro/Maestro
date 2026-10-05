@@ -1197,3 +1197,21 @@ describe('notificationStore', () => {
 		});
 	});
 });
+
+describe('history-only completion recording', () => {
+	it('persists an entry without a popup, audio, OS notification, or expiry timer', () => {
+		useNotificationStore.setState({ history: [] });
+		useNotificationStore.getState().setAudioFeedback(true, 'say');
+		const timeout = vi.spyOn(globalThis, 'setTimeout');
+		const id = notifyToast({ title: 'Complete', message: 'Reply finished', historyOnly: true });
+		expect(useNotificationStore.getState().history).toEqual([
+			expect.objectContaining({ id, read: false }),
+		]);
+		expect(useNotificationStore.getState().toasts).toEqual([]);
+		expect(mockSpeak).not.toHaveBeenCalled();
+		expect(mockShow).not.toHaveBeenCalled();
+		expect(timeout.mock.calls.some(([, delay]) => Number(delay) > 0)).toBe(false);
+		expect(loadNotificationHistory()).toEqual([expect.objectContaining({ id })]);
+		timeout.mockRestore();
+	});
+});

@@ -443,6 +443,20 @@ A toast is only on screen for a moment, so every one is also kept in the notific
 
 The history keeps the most recent 200 notifications and survives a restart. If you find the popups intrusive, set the toast duration to **Off**: in-app floating toasts are suppressed and history is still recorded. OS notifications and custom notification commands remain enabled independently; disable both separately for inbox-only delivery.
 
+The compact inbox, three-line message previews, and initially unbound **Open Notification Center** shortcut remain the defaults. In **Settings → Notifications → Notification center**, these enhancements are opt-in:
+
+| Setting                                                       | Default | Behavior when enabled                                                                                                                                                                                                                              |
+| ------------------------------------------------------------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Use a larger notification center (`notificationCenterLarge`)  | Off     | Opens a wider, taller panel, bounded by the window.                                                                                                                                                                                                |
+| Expand notification details (`notificationCenterDetails`)     | Off     | Adds Show details / Hide details to read the full source, title, and message without leaving the inbox.                                                                                                                                            |
+| Keyboard navigation (`notificationCenterKeyboardNavigation`)  | Off     | Focuses the inbox on opening. Arrows and Home/End/PageUp/PageDown navigate, Enter activates, R marks read, Delete/Backspace dismisses, and D toggles details when enabled. Escape closes; focus returns to the caller when no navigation occurred. |
+| Record each queued reply (`notificationHistoryQueuedReplies`) | Off     | Records intermediate queued replies in the inbox. By default, only the final completion is recorded.                                                                                                                                               |
+| Record each Auto Run task (`notificationHistoryAutoRunTasks`) | Off     | Records each completed task in the inbox. By default, existing run outcomes, warnings, and errors are recorded.                                                                                                                                    |
+
+**Configure notification shortcut** opens the Shortcuts tab, where **Open Notification Center** can be bound. Existing bindings are preserved.
+
+A final completion is recorded even when you are viewing its tab. Its popup remains suppressed and the existing custom audio cue still runs. Intermediate queued and Auto Run task entries are history-only; enabling them does not add popups, OS notifications, or audio commands. Synopsis notifications remain separate from completion notifications. Dismissing an inbox entry marks it read and removes its floating toast, while retaining the history entry.
+
 ### When Notifications Trigger
 
 Notifications are sent when:

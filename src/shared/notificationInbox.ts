@@ -13,6 +13,8 @@ export const NOTIFICATION_INBOX_ACTIONS = [
 	'dismiss',
 	'activate',
 	'link',
+	'detail',
+	'collapse',
 ] as const;
 export type NotificationInboxAction = (typeof NOTIFICATION_INBOX_ACTIONS)[number];
 export interface NotificationInboxRequest {
@@ -37,6 +39,7 @@ export interface NotificationInboxResult {
 	success: boolean;
 	error?: string;
 	open?: boolean;
+	expandedId?: string | null;
 	unreadCount?: number;
 	historyPersistenceFailed?: boolean;
 	notifications?: NotificationInboxEntry[];

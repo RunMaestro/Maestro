@@ -1,3 +1,4 @@
+import { useShallow } from 'zustand/react/shallow';
 import { useState, useEffect } from 'react';
 import {
 	Bell,
@@ -18,6 +19,11 @@ import type { ToastPosition } from '../../shared/toastPosition';
 import { TOAST_POSITIONS, TOAST_POSITION_LABELS } from '../../shared/toastPosition';
 import { SettingCheckbox } from './SettingCheckbox';
 import { ToggleButtonGroup } from './ToggleButtonGroup';
+import { SettingsSectionHeading } from './Settings/SettingsSectionHeading';
+import { SectionCard } from './Settings/tabs/DisplayTypography/components/SectionCard';
+import { ToggleSwitch } from './ui/ToggleSwitch';
+import { useSettingsStore } from '../stores/settingsStore';
+import { shortcutSuffix } from './ui/ShortcutHint';
 import { logger } from '../utils/logger';
 
 interface NotificationsPanelProps {
@@ -37,6 +43,7 @@ interface NotificationsPanelProps {
 	setIdleNotificationEnabled: (value: boolean) => void;
 	idleNotificationCommand: string;
 	setIdleNotificationCommand: (value: string) => void;
+	onConfigureNotificationShortcut?: () => void;
 	theme: Theme;
 }
 
@@ -60,7 +67,23 @@ export function NotificationsPanel({
 	idleNotificationCommand,
 	setIdleNotificationCommand,
 	theme,
+	onConfigureNotificationShortcut,
 }: NotificationsPanelProps) {
+	const settings = useSettingsStore(
+		useShallow((s) => ({
+			notificationCenterLarge: s.notificationCenterLarge,
+			setNotificationCenterLarge: s.setNotificationCenterLarge,
+			notificationCenterDetails: s.notificationCenterDetails,
+			setNotificationCenterDetails: s.setNotificationCenterDetails,
+			notificationCenterKeyboardNavigation: s.notificationCenterKeyboardNavigation,
+			setNotificationCenterKeyboardNavigation: s.setNotificationCenterKeyboardNavigation,
+			notificationHistoryQueuedReplies: s.notificationHistoryQueuedReplies,
+			setNotificationHistoryQueuedReplies: s.setNotificationHistoryQueuedReplies,
+			notificationHistoryAutoRunTasks: s.notificationHistoryAutoRunTasks,
+			setNotificationHistoryAutoRunTasks: s.setNotificationHistoryAutoRunTasks,
+			shortcuts: s.shortcuts,
+		}))
+	);
 	// Custom notification test state
 	const [testNotificationId, setTestNotificationId] = useState<number | null>(null);
 	const [testStatus, setTestStatus] = useState<TestStatus>('idle');
@@ -124,6 +147,114 @@ export function NotificationsPanel({
 
 	return (
 		<div className="space-y-6">
+			<div data-setting-id="notifications-center">
+				<SettingsSectionHeading
+					icon={Bell}
+					description="Optional inbox enhancements. All are off by default."
+				>
+					Notification center
+				</SettingsSectionHeading>
+				<SectionCard theme={theme}>
+					<div className="flex items-center justify-between gap-3">
+						<div className="flex-1">
+							<div className="font-medium" style={{ color: theme.colors.textMain }}>
+								Use a larger notification center
+							</div>
+							<p className="text-xs opacity-70 mt-0.5">
+								Use a wider, taller inbox while keeping it within the window.
+							</p>
+						</div>
+						<ToggleSwitch
+							theme={theme}
+							checked={settings.notificationCenterLarge}
+							onChange={settings.setNotificationCenterLarge}
+							ariaLabel="Use a larger notification center"
+						/>
+					</div>
+					<div className="flex items-center justify-between gap-3">
+						<div className="flex-1">
+							<div className="font-medium" style={{ color: theme.colors.textMain }}>
+								Expand notification details
+							</div>
+							<p className="text-xs opacity-70 mt-0.5">
+								Read full source names, titles, and messages inside the inbox.
+							</p>
+						</div>
+						<ToggleSwitch
+							theme={theme}
+							checked={settings.notificationCenterDetails}
+							onChange={settings.setNotificationCenterDetails}
+							ariaLabel="Expand notification details"
+						/>
+					</div>
+					<div className="flex items-center justify-between gap-3">
+						<div className="flex-1">
+							<div className="font-medium" style={{ color: theme.colors.textMain }}>
+								Keyboard navigation in the notification center
+							</div>
+							<p className="text-xs opacity-70 mt-0.5">
+								Focus the inbox when it opens and navigate entries with arrow keys.
+							</p>
+						</div>
+						<ToggleSwitch
+							theme={theme}
+							checked={settings.notificationCenterKeyboardNavigation}
+							onChange={settings.setNotificationCenterKeyboardNavigation}
+							ariaLabel="Keyboard navigation in the notification center"
+						/>
+					</div>
+					<div className="flex items-center justify-between gap-3">
+						<div className="flex-1">
+							<div className="font-medium" style={{ color: theme.colors.textMain }}>
+								Record each queued reply
+							</div>
+							<p className="text-xs opacity-70 mt-0.5">
+								Keep every completed queued reply in notification history. By default, only the
+								final reply is recorded.
+							</p>
+						</div>
+						<ToggleSwitch
+							theme={theme}
+							checked={settings.notificationHistoryQueuedReplies}
+							onChange={settings.setNotificationHistoryQueuedReplies}
+							ariaLabel="Record each queued reply"
+						/>
+					</div>
+					<div className="flex items-center justify-between gap-3">
+						<div className="flex-1">
+							<div className="font-medium" style={{ color: theme.colors.textMain }}>
+								Record each Auto Run task
+							</div>
+							<p className="text-xs opacity-70 mt-0.5">
+								Keep each completed Auto Run task in notification history. By default, run outcomes,
+								warnings, and errors are recorded.
+							</p>
+						</div>
+						<ToggleSwitch
+							theme={theme}
+							checked={settings.notificationHistoryAutoRunTasks}
+							onChange={settings.setNotificationHistoryAutoRunTasks}
+							ariaLabel="Record each Auto Run task"
+						/>
+					</div>
+					<p className="text-xs opacity-70">
+						Configure Open Notification Center in Shortcuts. It starts unbound; your existing
+						binding is preserved.
+					</p>
+					{onConfigureNotificationShortcut && (
+						<button
+							type="button"
+							className="text-xs hover:underline"
+							style={{ color: theme.colors.accent }}
+							onClick={onConfigureNotificationShortcut}
+						>
+							Configure notification shortcut
+							{shortcutSuffix(settings.shortcuts.openNotificationCenter?.keys)}
+						</button>
+					)}
+				</SectionCard>
+			</div>
+
 			{/* OS Notifications */}
 			<div data-setting-id="notifications-os">
 				<SettingCheckbox
