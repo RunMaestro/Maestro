@@ -112,10 +112,17 @@ export async function handlePluginsSendAgent(
 		return;
 	}
 	try {
-		respond({
-			available: true,
-			...(await run(agentId, prompt, sessionId as string | undefined, undefined, 'user')),
-		});
+		const controller = new AbortController();
+		const onClose = (): void => controller.abort();
+		client.socket.once('close', onClose);
+		try {
+			respond({
+				available: true,
+				...(await run(agentId, prompt, sessionId as string | undefined, controller.signal, 'user')),
+			});
+		} finally {
+			client.socket.off('close', onClose);
+		}
 	} catch (error) {
 		respond({
 			available: true,

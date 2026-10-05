@@ -33,6 +33,25 @@ describe('PluginToolRunIdentity', () => {
 		}
 	});
 
+	it('keeps Cue identity and its proof file through the 24-hour run budget', () => {
+		vi.useFakeTimers();
+		const runs = new PluginToolRunIdentity();
+		const ttlMs = 24 * 60 * 60 * 1000 + 60_000;
+		const token = runs.issue('cue-agent', ttlMs);
+		const file = createPluginRunProofFile(token, ttlMs);
+		try {
+			vi.advanceTimersByTime(24 * 60 * 60 * 1000);
+			expect(runs.resolve(token)).toEqual({ callerAgentId: 'cue-agent' });
+			expect(fs.existsSync(file)).toBe(true);
+			vi.advanceTimersByTime(60_001);
+			expect(runs.resolve(token)).toEqual({ callerAgentId: null });
+			expect(fs.existsSync(file)).toBe(false);
+		} finally {
+			if (fs.existsSync(file)) removePluginRunProofFile(file);
+			vi.useRealTimers();
+		}
+	});
+
 	it('writes the proof to an owner-only local file and removes it', () => {
 		const file = createPluginRunProofFile('secret-proof', 1_000);
 		try {

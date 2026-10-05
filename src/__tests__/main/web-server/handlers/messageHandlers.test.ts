@@ -126,6 +126,8 @@ function createMockClient(id: string = 'test-client'): WebClient {
 		socket: {
 			readyState: WebSocket.OPEN,
 			send: vi.fn(),
+			once: vi.fn(),
+			off: vi.fn(),
 		} as unknown as WebSocket,
 	};
 }
@@ -4881,7 +4883,14 @@ describe('WebSocketMessageHandler - plugin MCP tool bridge', () => {
 			prompt: 'hello',
 		});
 		await vi.waitFor(() => expect(run).toHaveBeenCalled());
-		expect(run).toHaveBeenCalledWith('agent-a', 'hello', undefined, undefined, 'user');
+		expect(run).toHaveBeenCalledWith(
+			'agent-a',
+			'hello',
+			undefined,
+			expect.any(AbortSignal),
+			'user'
+		);
+		expect(client.socket.off).toHaveBeenCalledWith('close', expect.any(Function));
 		expect(lastResult()).toMatchObject({
 			type: 'plugins_send_agent_result',
 			available: true,
@@ -4889,6 +4898,34 @@ describe('WebSocketMessageHandler - plugin MCP tool bridge', () => {
 			response: 'hello',
 			sessionId: 'provider-1',
 		});
+	});
+
+	it('aborts a desktop-routed CLI send when its socket closes', async () => {
+		let finishRun!: (reply: { success: boolean; response: string | null; sessionId: null }) => void;
+		const run = vi.fn(
+			() =>
+				new Promise<{ success: boolean; response: string | null; sessionId: null }>((resolve) => {
+					finishRun = resolve;
+				})
+		);
+		vi.mocked(getHeadlessAgentRunner).mockReturnValue(run);
+		client.cliAuthenticated = true;
+		(client.socket as unknown as { _socket: { remoteAddress: string } })._socket = {
+			remoteAddress: '127.0.0.1',
+		};
+		handler.handleMessage(client, {
+			type: 'plugins_send_agent',
+			agentId: 'agent-a',
+			prompt: 'hello',
+		});
+		await vi.waitFor(() => expect(run).toHaveBeenCalled());
+		const signal = vi.mocked(run).mock.calls[0][3] as AbortSignal;
+		const onClose = vi.mocked(client.socket.once).mock.calls[0][1] as () => void;
+		expect(signal.aborted).toBe(false);
+		onClose();
+		expect(signal.aborted).toBe(true);
+		finishRun({ success: false, response: null, sessionId: null });
+		await vi.waitFor(() => expect(client.socket.off).toHaveBeenCalledWith('close', onClose));
 	});
 
 	it('refuses the headless runner to a non-loopback web client', async () => {

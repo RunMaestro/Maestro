@@ -6,7 +6,9 @@ import * as path from 'path';
 import { logger } from '../utils/logger';
 
 const DEFAULT_TTL_MS = 60 * 60 * 1000;
-const MAX_TTL_MS = 4 * DEFAULT_TTL_MS;
+// Cue permits a 24-hour run; keep its caller proof valid for that full budget
+// plus the one-minute teardown margin requested by the spawn builder.
+const MAX_TTL_MS = 24 * DEFAULT_TTL_MS + 60_000;
 
 export interface PluginToolCallerContext {
 	/** Verified against a stored Maestro agent when the run proof was issued. */
