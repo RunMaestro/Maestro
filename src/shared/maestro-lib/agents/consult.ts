@@ -189,6 +189,32 @@ export function createConsultService() {
 	}
 
 	/**
+	 * Stop every consult in flight, whoever asked: a host that is shutting down. Each settles like
+	 * Stop does (partial answer flushed, stamped `canceled`).
+	 *
+	 * @returns How many consults were cancelled.
+	 */
+	function cancelAll(): number {
+		const doomed = [...activeConsults.values()];
+		for (const consult of doomed) consult.cancel();
+		return doomed.length;
+	}
+
+	/**
+	 * Stop one consult by its request id, settling it like Stop does (the partial answer is flushed,
+	 * stamped `canceled`). For a caller that owns the clock: a host that waits for the answer and
+	 * gives up after a time it was told.
+	 *
+	 * @returns Whether a consult with that id was in flight.
+	 */
+	function cancel(requestId: string): boolean {
+		const consult = activeConsults.get(requestId);
+		if (!consult) return false;
+		consult.cancel();
+		return true;
+	}
+
+	/**
 	 * Dispatch a cross-agent request to the target agent without blocking the caller. Response
 	 * text is reported through `opts.onChunk`; the promise resolves once the spawn has been
 	 * initiated (or an error chunk emitted).
@@ -514,7 +540,7 @@ export function createConsultService() {
 		}
 	}
 
-	return { start, cancelForSource, activeCount: () => activeConsults.size };
+	return { start, cancel, cancelForSource, cancelAll, activeCount: () => activeConsults.size };
 }
 
 export type ConsultService = ReturnType<typeof createConsultService>;

@@ -42,6 +42,7 @@ import type { AgentSpawnResult, SpawnAgentOptions } from '../agent/useAgentExecu
 import * as Sentry from '@sentry/electron/renderer';
 import { queueLeaderboardDelta, noteAutoRunCreditSettled } from '../../services/leaderboard';
 import { logger } from '../../utils/logger';
+import { groupChatAutoRunSummary } from '../../../shared/maestro-lib/groupchat/autorun-summary';
 
 /**
  * Resolve the effective group name for a session, falling back to the parent's group
@@ -574,9 +575,7 @@ export function useBatchHandlers(deps: UseBatchHandlersDeps): UseBatchHandlersRe
 			// This MUST succeed for the moderator to receive the result and continue the conversation.
 			const gcAutoRun = consumeGroupChatAutoRun(info.sessionId);
 			if (gcAutoRun) {
-				const summary = info.wasStopped
-					? `Auto Run stopped: completed ${info.completedTasks} of ${info.totalTasks} tasks across ${info.documentsProcessed} document(s).`
-					: `Auto Run complete: ${info.completedTasks}/${info.totalTasks} tasks finished across ${info.documentsProcessed} document(s).`;
+				const summary = groupChatAutoRunSummary(info);
 				window.maestro.groupChat
 					.reportAutoRunComplete(gcAutoRun.groupChatId, gcAutoRun.participantName, summary)
 					.catch((err) => {

@@ -50,6 +50,11 @@ export interface CompletedTurn {
 export interface RunningTurn {
 	handle: TurnHandle;
 	completed: Promise<CompletedTurn>;
+	/**
+	 * What the turn has answered so far (the result text, else what was streamed), for a caller that
+	 * stops a turn and still wants to show what it said. `undefined` before any answer text.
+	 */
+	answerSoFar(): string | undefined;
 }
 
 /** Thrown before anything is spawned when the provider has no output parser. */
@@ -139,7 +144,7 @@ export function runTurn(
 		};
 	});
 
-	return { handle, completed };
+	return { handle, completed, answerSoFar: () => capture.answerText };
 }
 
 /** `runTurn` for a caller that only wants the finished turn. */

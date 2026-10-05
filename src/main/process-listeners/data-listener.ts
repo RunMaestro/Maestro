@@ -5,7 +5,6 @@
 
 import type { ProcessManager } from '../process-manager';
 import { GROUP_CHAT_PREFIX, type ProcessListenerDependencies } from './types';
-import { groupChatEmitters } from '../ipc/handlers/groupChat';
 
 /**
  * Maximum buffer size per session (10MB).
@@ -47,10 +46,24 @@ export function setupDataListener(
 	processManager: ProcessManager,
 	deps: Pick<
 		ProcessListenerDependencies,
-		'safeSend' | 'getWebServer' | 'outputBuffer' | 'outputParser' | 'debugLog' | 'patterns'
+		| 'safeSend'
+		| 'getWebServer'
+		| 'outputBuffer'
+		| 'outputParser'
+		| 'groupChatEngine'
+		| 'debugLog'
+		| 'patterns'
 	>
 ): void {
-	const { safeSend, getWebServer, outputBuffer, outputParser, debugLog, patterns } = deps;
+	const {
+		safeSend,
+		getWebServer,
+		outputBuffer,
+		outputParser,
+		groupChatEngine,
+		debugLog,
+		patterns,
+	} = deps;
 	const {
 		REGEX_MODERATOR_SESSION,
 		REGEX_AI_SUFFIX,
@@ -134,14 +147,7 @@ export function setupDataListener(
 	// so we need raw-stdout to stream chunks in real time during agent work.
 	processManager.on('raw-stdout', (sessionId: string, chunk: string) => {
 		if (!sessionId.startsWith(GROUP_CHAT_PREFIX)) return;
-		const participantInfo = outputParser.parseParticipantSessionId(sessionId);
-		if (participantInfo) {
-			groupChatEmitters.emitParticipantLiveOutput?.(
-				participantInfo.groupChatId,
-				participantInfo.participantName,
-				chunk
-			);
-		}
+		groupChatEngine.liveOutput(sessionId, chunk);
 	});
 
 	processManager.on('data', (sessionId: string, data: string) => {

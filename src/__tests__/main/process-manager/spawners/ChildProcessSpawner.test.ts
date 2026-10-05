@@ -63,13 +63,18 @@ vi.mock('../../../../main/parsers', () => ({
 	})),
 }));
 
-vi.mock('../../../../main/agents', () => ({
+// What a turn starts is decided by `planPipeSpawn` in the library, so the library modules it reads
+// are the seams (the spawner re-exports the same functions from `main/...` for its own callers).
+vi.mock('../../../../shared/maestro-lib/providers/capabilities', async (importOriginal) => ({
+	...(await importOriginal<
+		typeof import('../../../../shared/maestro-lib/providers/capabilities')
+	>()),
 	getAgentCapabilities: vi.fn(() => ({
 		supportsStreamJsonInput: true,
 	})),
 }));
 
-vi.mock('../../../../main/process-manager/utils/envBuilder', () => ({
+vi.mock('../../../../shared/maestro-lib/launch/env', () => ({
 	buildChildProcessEnv: vi.fn(() => ({ PATH: '/usr/bin' })),
 	collectMaestroEnvVars: vi.fn(() => ({})),
 }));
@@ -82,11 +87,11 @@ vi.mock('../../../../main/process-manager/utils/imageUtils', () => ({
 	}),
 }));
 
-vi.mock('../../../../main/process-manager/utils/streamJsonBuilder', () => ({
+vi.mock('../../../../shared/maestro-lib/launch/stream-json-message', () => ({
 	buildStreamJsonMessage: vi.fn(() => '{"type":"message"}'),
 }));
 
-vi.mock('../../../../main/process-manager/utils/shellEscape', () => ({
+vi.mock('../../../../shared/maestro-lib/launch/windows-shell-escape', () => ({
 	escapeArgsForShell: vi.fn((args) => args),
 	isPowerShellShell: vi.fn(() => false),
 }));
@@ -102,14 +107,13 @@ vi.mock('../../../../shared/platformDetection', () => ({
 
 import { ChildProcessSpawner } from '../../../../main/process-manager/spawners/ChildProcessSpawner';
 import type { ManagedProcess, ProcessConfig } from '../../../../main/process-manager/types';
-import { getAgentCapabilities } from '../../../../main/agents';
-import { buildChildProcessEnv } from '../../../../main/process-manager/utils/envBuilder';
-import { buildStreamJsonMessage } from '../../../../main/process-manager/utils/streamJsonBuilder';
+import { getAgentCapabilities } from '../../../../shared/maestro-lib/providers/capabilities';
+import { buildChildProcessEnv } from '../../../../shared/maestro-lib/launch/env';
+import { buildStreamJsonMessage } from '../../../../shared/maestro-lib/launch/stream-json-message';
 import { saveImageToTempFile } from '../../../../main/process-manager/utils/imageUtils';
 import { createOutputParser } from '../../../../main/parsers';
 import { isWindows } from '../../../../shared/platformDetection';
 import { getAgentDefinition } from '../../../../main/agents/definitions';
-import { getAgentCapabilities as getRealAgentCapabilities } from '../../../../main/agents/capabilities';
 import { logger } from '../../../../main/utils/logger';
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -928,9 +932,13 @@ describe('ChildProcessSpawner', () => {
 			vi.mocked(isWindows).mockReturnValue(false);
 		});
 
-		it('delivers a long Hermes query through stdin with explicit one-shot query selection', () => {
+		it('delivers a long Hermes query through stdin with explicit one-shot query selection', async () => {
 			const { spawner } = createTestContext();
 			const hermes = getAgentDefinition('hermes')!;
+			// The module's own function is mocked above; the real one is what this case wants.
+			const { getAgentCapabilities: getRealAgentCapabilities } = await vi.importActual<
+				typeof import('../../../../shared/maestro-lib/providers/capabilities')
+			>('../../../../shared/maestro-lib/providers/capabilities');
 			const capabilities = getRealAgentCapabilities('hermes');
 			vi.mocked(getAgentCapabilities).mockReturnValueOnce(capabilities);
 			const prompt = 'Private playbook text "quoted" & %PATH% 日本語\n'.repeat(1000);

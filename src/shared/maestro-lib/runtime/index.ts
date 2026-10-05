@@ -17,12 +17,14 @@
 
 import * as fs from 'fs/promises';
 
+import { createSleepTracker } from '../../sleepTracking';
 import { createAgentRepository } from '../agents/repository';
 import type { RepositoryLoadFailure } from '../agents/repository';
 import type { RuleContext, TabDefaults } from '../agents/rules';
 import { createEventBus } from '../client/event-bus';
 import type { HostInfo, MaestroClient } from '../client/types';
 import { logger } from '../host';
+import { createGroupChatTurnMetrics } from '../groupchat/turn-metrics';
 import type { BinaryDetectionResult } from '../launch/path-prober';
 import { assertUserDataDirExists, type UserDataDirOptions } from '../paths/userDataDir';
 import { resolveMaestroPaths, type MaestroPaths } from '../paths/resolve';
@@ -35,6 +37,9 @@ import {
 	type RuntimeLockInfo,
 	type RuntimeLockMode,
 } from './data-dir-lock';
+import { createBackgroundTurns, type BackgroundTurnDeps } from './background-turns';
+import { createRuntimeConsults } from './consults';
+import { createRuntimeGroupChats } from './group-chats';
 import { createProcessRegistry } from './processes';
 import { createRuntimeAutoRun, type RuntimeAutoRun } from './autorun';
 import { createProviderLister } from './providers';
@@ -57,6 +62,10 @@ export type RuntimeDeps = DataDirLockDeps & {
 	watchDirectory: WatchDirectory;
 	/** The seams of the turn service: the provider launch and the probes a turn makes. */
 	turns: Partial<RuntimeTurnDeps>;
+	/** The seams of the group chat and consult runner: the provider launch and the binary probe. */
+	background: Partial<BackgroundTurnDeps>;
+	/** The seams of the consult service: the shortest wait a caller may ask for. */
+	consults: { minTimeoutMs?: number };
 };
 
 export interface MaestroRuntimeOptions {
@@ -96,8 +105,12 @@ export interface MaestroRuntime extends MaestroClient {
 	 * work in flight) and replays them to a client that connects mid-run.
 	 */
 	readonly runs: Pick<RuntimeAutoRun, 'activeRuns' | 'latestState'>;
-	/** Chat turns running now. With `runs`, the work `host stop` refuses to cut off. */
+	/** Chat turns running now. With the rest, the work `host stop` refuses to cut off. */
 	turnsInFlight(): number;
+	/** Group chats whose moderator or a participant is working (GD24). */
+	roundsInFlight(): number;
+	/** Consults waiting on another agent's answer (GD24). */
+	consultsInFlight(): number;
 }
 
 /** What the status bar prints after `host: `. */
@@ -201,6 +214,13 @@ export async function createMaestroRuntime(options: MaestroRuntimeOptions): Prom
 		repository.fence(reason);
 		running.stopHeartbeat?.();
 		running.settingsWatcher?.close();
+		consults.dispose();
+		groupChats.stopAll().catch((error) => {
+			logger.warn(
+				`Stopping group chats after losing the data directory failed: ${errorText(error)}`,
+				LOG_CONTEXT
+			);
+		});
 		autoRun.stopAll().catch((error) => {
 			logger.warn(
 				`Stopping Auto Runs after losing the data directory failed: ${errorText(error)}`,
@@ -301,6 +321,41 @@ export async function createMaestroRuntime(options: MaestroRuntimeOptions): Prom
 		deps: { probeBinary: deps.probeBinary, ...deps.turns },
 	});
 
+	// Group chats and consults: the processes a round and a question are made of (GD20). The metrics are
+	// one instance because the spawn path starts a turn's clock and the engine finishes it.
+	const sleepTracker = createSleepTracker();
+	const groupChatMetrics = createGroupChatTurnMetrics({
+		spans: { begin: sleepTracker.beginSpan, elapsedMs: sleepTracker.elapsedMs },
+	});
+	const background = createBackgroundTurns({
+		paths,
+		registry,
+		host: options.turns ?? {},
+		beginTurn: (processId) => groupChatMetrics.begin(processId),
+		deps: { probeBinary: deps.probeBinary, ...deps.background },
+	});
+	const groupChats = createRuntimeGroupChats({
+		paths,
+		repository,
+		bus,
+		registry,
+		fence,
+		background,
+		metrics: groupChatMetrics,
+		autoRun,
+		options: options.turns,
+	});
+	const consults = createRuntimeConsults({
+		paths,
+		repository,
+		fence,
+		background,
+		rules: deps.rules,
+		...(deps.consults?.minTimeoutMs !== undefined
+			? { minTimeoutMs: deps.consults.minTimeoutMs }
+			: {}),
+	});
+
 	// NF-7: a crash or a plain exit must not leave a held lock or an orphan it could have stopped.
 	const onExit = (): void => {
 		registry.terminateAllNow();
@@ -318,9 +373,16 @@ export async function createMaestroRuntime(options: MaestroRuntimeOptions): Prom
 				// Nothing new starts; the turns that run are stopped and finish recording themselves
 				// (their records are repository commands), and only then is the write queue drained.
 				turns.dispose();
-				// Runs first: stopping one records how it ended (History, stats) while the lock is still held.
+				// Rounds first: stopping one records how it ended in the chat's log while the lock is
+				// still held. Then the runs (History, stats), then every process that is left, a
+				// consult's included.
+				consults.dispose();
+				await groupChats.stopAll();
 				await autoRun.stopAll();
 				await registry.stopAll();
+				// What a stopped consult writes down about how it ended, before the lock goes.
+				await consults.settled();
+				await groupChats.drain();
 				await repository.drain();
 			} finally {
 				process.off('exit', onExit);
@@ -347,6 +409,8 @@ export async function createMaestroRuntime(options: MaestroRuntimeOptions): Prom
 		listProviders,
 		turns: turns.api,
 		autoRun: autoRun.api,
+		groupChats: groupChats.api,
+		consults: { api: consults.api, cancelForSource: consults.cancelForSource },
 	});
 
 	return {
@@ -356,7 +420,10 @@ export async function createMaestroRuntime(options: MaestroRuntimeOptions): Prom
 			paths,
 			lock: lock.info,
 			runs: { activeRuns: autoRun.activeRuns, latestState: autoRun.latestState },
-			turnsInFlight: () => registry.size(),
+			// The registry holds every process the runtime owns; the background ones are counted apart.
+			turnsInFlight: () => registry.size() - background.activeCount(),
+			roundsInFlight: groupChats.roundsInFlight,
+			consultsInFlight: consults.inFlight,
 		},
 	};
 }

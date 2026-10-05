@@ -285,6 +285,8 @@ function describeCue(cue: HostCueState): string {
 function describeWork(work: HostWork): string {
 	if (!hostHasWork(work)) return 'idle';
 	const parts = [plural(work.turns, 'turn')];
+	if (work.rounds) parts.push(plural(work.rounds, 'group chat round'));
+	if (work.consults) parts.push(plural(work.consults, 'consult'));
 	for (const run of work.runs) {
 		parts.push(`${run.kind} run on ${run.agentId}${run.paused ? ' (paused)' : ''}`);
 	}

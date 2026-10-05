@@ -40,7 +40,7 @@ vi.mock('../../../shared/maestro-lib/launch/ssh-spawn-wrapper', async () => {
 vi.mock('../../../main/agents/probeRemoteMaestroP', () => ({
 	ensureRemoteMaestroPProbed: vi.fn().mockResolvedValue(undefined),
 }));
-vi.mock('../../../main/utils/ssh-remote-resolver', () => ({
+vi.mock('../../../shared/maestro-lib/launch/ssh-remote-resolver', () => ({
 	getSshRemoteConfig: vi.fn(() => ({ config: null, source: 'session' })),
 }));
 

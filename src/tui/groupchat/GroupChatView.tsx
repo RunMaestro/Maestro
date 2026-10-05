@@ -10,14 +10,19 @@ import {
 	composerHeight,
 } from '../composer/Composer';
 import { layoutComposer, type ComposerState } from '../composer/draft';
+import { MentionPickerView } from '../composer/MentionPickerView';
+import { mentionPickerHeight, type MentionPicker } from '../composer/mentions';
 import { keysFor } from '../keymap';
 import { TranscriptViewport } from '../transcript';
 import { groupChatEntries, groupChatStyle, participantColor } from './entries';
+import { CHAT_MENTION_HINT } from './mentions';
 import { chatActivityLine, participantRows } from './state';
 
 export interface GroupChatViewProps {
 	chat: GroupChatRecord;
 	draft: ComposerState;
+	/** The `@` picker, open while the caret is in an `@name` (GC-5). */
+	picker?: MentionPicker;
 	/** A call in flight, for one line. */
 	busy?: string;
 	message?: string;
@@ -37,6 +42,7 @@ const CHROME_LINES = 6;
 export function GroupChatView({
 	chat,
 	draft,
+	picker,
 	busy,
 	message,
 	error,
@@ -73,7 +79,13 @@ export function GroupChatView({
 				key={chat.id}
 				entries={entries}
 				width={inner}
-				height={Math.max(1, height - CHROME_LINES - composerHeight(layout))}
+				height={Math.max(
+					1,
+					height -
+						CHROME_LINES -
+						composerHeight(layout) -
+						(picker ? mentionPickerHeight(picker) : 0)
+				)}
 				expandTools={false}
 				styleFor={groupChatStyle}
 			/>
@@ -84,6 +96,9 @@ export function GroupChatView({
 				{error ?? busy ?? message ?? ' '}
 			</Text>
 			<Box flexDirection="column" flexShrink={0}>
+				{picker ? (
+					<MentionPickerView picker={picker} width={inner} hint={CHAT_MENTION_HINT} />
+				) : null}
 				<Composer
 					layout={layout}
 					empty={draft.text === ''}

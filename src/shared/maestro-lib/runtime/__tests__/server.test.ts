@@ -219,16 +219,17 @@ describe('runtime server', () => {
 		);
 	});
 
-	it('refuses group chats and consults with a reason, not a crash', async () => {
+	it('answers group chat and consult requests with a reason, not a crash', async () => {
 		value(await client.connection.connect());
 		expect(value(await client.groupChats.list())).toEqual([]);
-		expect(errorOf(await client.groupChats.send('c1', 'hi')).code).toBe('rejected');
+		expect(errorOf(await client.groupChats.get('nope')).code).toBe('not-found');
+		expect(errorOf(await client.groupChats.send('nope', 'hi')).code).toBe('rejected');
 		expect(
-			errorOf(await client.groupChats.create({ name: 'x', participantIds: ['a1'] })).message
-		).toMatch(/not available/);
+			errorOf(await client.groupChats.create({ name: 'x', participantIds: ['nope'] })).code
+		).toBe('not-found');
 		expect(
-			errorOf(await client.consults.ask({ targetAgentId: 'a1', question: 'hi' })).message
-		).toMatch(/not available/);
+			errorOf(await client.consults.ask({ targetAgentId: 'nope', question: 'hi' })).message
+		).toMatch(/nope/);
 	});
 
 	describe('who may connect', () => {
@@ -298,7 +299,7 @@ describe('runtime server', () => {
 			expect(refused).toEqual({
 				stopping: false,
 				reason: 'work-in-flight',
-				work: { turns: 1, runs: [] },
+				work: { turns: 1, runs: [], rounds: 0, consults: 0 },
 			});
 			expect(stopRequests).toBe(0);
 

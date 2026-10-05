@@ -4,8 +4,16 @@ import { parseAutoRunProgress } from '../../autorun/progress';
 import { parseProcessFrame } from '../../client/bridge-frames';
 import type { MaestroEvent, TurnEvent } from '../../client/types';
 import {
+	makeGroupChatLine,
+	parseGroupChatFrame,
+	parseGroupChatRecord,
+	type GroupChatEvent,
+	type GroupChatRecord,
+} from '../../groupchat/chat';
+import {
 	createFrameState,
 	framesForEvent,
+	groupChatToWire,
 	progressToWire,
 	tabProcessId,
 	type Frame,
@@ -191,5 +199,73 @@ describe('framesForEvent', () => {
 				state
 			)[0]
 		).toEqual({ type: 'bridge.event', channel: 'process:data', args: ['a1-batch-5', 'ticking'] });
+	});
+});
+
+describe('group chats', () => {
+	const chat: GroupChatRecord = {
+		id: 'c1',
+		name: 'Release review',
+		moderatorProvider: 'claude-code',
+		participants: [{ sessionId: 's-a', name: 'Alpha', provider: 'codex' }],
+		state: 'agent-working',
+		working: ['Alpha'],
+		archived: false,
+		lines: [
+			makeGroupChatLine('user', 'Ship it?', 1_000),
+			makeGroupChatLine('Alpha', 'Yes.', 2_000),
+		],
+	};
+
+	it('projects a chat the way the desktop bridge reports it, and the client reads it back', () => {
+		const read = parseGroupChatRecord(groupChatToWire(chat));
+
+		expect(read).toMatchObject({
+			id: 'c1',
+			name: 'Release review',
+			moderatorProvider: 'claude-code',
+			state: 'agent-working',
+			archived: false,
+			participants: chat.participants,
+		});
+		// The lines survive with the same identity, so a snapshot and a push of one line agree.
+		expect(read?.lines.map((line) => line.id)).toEqual(chat.lines.map((line) => line.id));
+	});
+
+	it('marks the user’s lines as the user’s and everyone else’s as the assistant’s', () => {
+		const wire = groupChatToWire(chat) as { messages: Array<{ role: string }> };
+		expect(wire.messages.map((m) => m.role)).toEqual(['user', 'assistant']);
+	});
+
+	/** Every event, as a frame, through the client's own parser. */
+	const roundTrip = (event: GroupChatEvent): GroupChatEvent | undefined => {
+		const [frame] = framesForEvent({ type: 'groupChat', chatId: 'c1', event }, createFrameState());
+		if (!frame) return undefined;
+		const parsed = parseGroupChatFrame(frame.channel as string, frame.args as unknown[], event.at);
+		expect(parsed?.chatId).toBe('c1');
+		return parsed?.event;
+	};
+
+	it.each<GroupChatEvent>([
+		{ kind: 'message', at: 5_000, line: makeGroupChatLine('Beta', 'Looks fine.', 5_000) },
+		{ kind: 'state', at: 5_000, state: 'moderator-thinking' },
+		{ kind: 'participant', at: 5_000, name: 'Alpha', working: true },
+		{ kind: 'participant', at: 5_000, name: 'Alpha', working: false },
+		{
+			kind: 'participants',
+			at: 5_000,
+			participants: [{ sessionId: 's-a', name: 'Alpha', provider: 'codex' }],
+		},
+	])('sends a $kind event the client reads as the same event', (event) => {
+		expect(roundTrip(event)).toEqual(event);
+	});
+
+	it('sends nothing for a gap: that is the client’s own signal', () => {
+		expect(
+			framesForEvent(
+				{ type: 'groupChat', chatId: 'c1', event: { kind: 'gap', at: 1 } },
+				createFrameState()
+			)
+		).toEqual([]);
 	});
 });

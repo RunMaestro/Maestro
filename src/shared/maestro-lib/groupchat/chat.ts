@@ -249,6 +249,12 @@ export interface GroupChatCreateInput {
 	 * Absent: the first participant's provider.
 	 */
 	moderatorAgentId?: string;
+	/**
+	 * The provider that moderates, named directly. Wins over `moderatorAgentId`: the host moderates
+	 * with a provider, and a caller that already has one (the wire's `start_group_chat` carries a
+	 * provider id) need not invent an agent to say it.
+	 */
+	moderatorProvider?: string;
 	/** Agents that join. At least one. A terminal agent cannot. */
 	participantIds: readonly string[];
 	/** The opening message the moderator receives. Absent: the name. */

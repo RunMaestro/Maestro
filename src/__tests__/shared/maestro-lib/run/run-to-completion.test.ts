@@ -236,3 +236,39 @@ describe('runTurn', () => {
 		expect(strict.outcome).toBe('crashed');
 	});
 });
+
+describe('answerSoFar', () => {
+	const claudeNormal = CAPTURED_RECORDINGS['captured-claude-code-normal'];
+
+	it('is empty before the turn has said anything, and the answer once it has', async () => {
+		const running = runTurn(
+			fakeAgentSpec(scratch.dir, fakeTurnFromRecording(claudeNormal), { hold: true }),
+			{ agentId: 'claude-code', sessionId: SESSION_LABEL, stopGraceMs: 200 }
+		);
+		try {
+			await new Promise<void>((resolve) => {
+				const poll = setInterval(() => {
+					if (running.answerSoFar() !== undefined) {
+						clearInterval(poll);
+						resolve();
+					}
+				}, 10);
+			});
+			// The process is still held open: this is what a stopped turn can still show.
+			expect(running.answerSoFar()).toContain('Paris');
+		} finally {
+			running.handle.terminate();
+			await running.completed;
+		}
+	});
+
+	it('agrees with the finished turn’s answer', async () => {
+		const running = runTurn(fakeAgentSpec(scratch.dir, fakeTurnFromRecording(claudeNormal)), {
+			agentId: 'claude-code',
+			sessionId: SESSION_LABEL,
+			stopGraceMs: 200,
+		});
+		const completed = await running.completed;
+		expect(running.answerSoFar()).toBe(completed.answerText);
+	});
+});

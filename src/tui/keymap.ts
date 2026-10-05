@@ -45,6 +45,8 @@ export type KeyContext =
 	| 'groupChatForm'
 	/** One open group chat: letters type into its message box. */
 	| 'groupChat'
+	/** An open group chat with the `@` picker open: arrows pick a participant, Tab or Enter inserts it (GC-5). */
+	| 'groupChatMention'
 	/** The read-only settings view. */
 	| 'settings';
 
@@ -181,11 +183,13 @@ export const KEYMAP: readonly Binding[] = [
 			'groupChats',
 			'groupChatForm',
 			'composerMention',
+			'groupChatMention',
 			'settings',
 		],
 		chordsByContext: {
 			palette: [{ named: 'down' }, { input: 'n', ctrl: true }],
 			composerMention: [{ named: 'down' }, { input: 'n', ctrl: true }],
+			groupChatMention: [{ named: 'down' }, { input: 'n', ctrl: true }],
 			groupChatForm: [{ named: 'down' }, { named: 'tab' }, { input: 'n', ctrl: true }],
 			// A form is a text box: letters type, so the cursor moves on arrows, Tab, and Ctrl-N.
 			form: [{ named: 'down' }, { named: 'tab' }, { input: 'n', ctrl: true }],
@@ -213,11 +217,13 @@ export const KEYMAP: readonly Binding[] = [
 			'groupChats',
 			'groupChatForm',
 			'composerMention',
+			'groupChatMention',
 			'settings',
 		],
 		chordsByContext: {
 			palette: [{ named: 'up' }, { input: 'p', ctrl: true }],
 			composerMention: [{ named: 'up' }, { input: 'p', ctrl: true }],
+			groupChatMention: [{ named: 'up' }, { input: 'p', ctrl: true }],
 			groupChatForm: [{ named: 'up' }, { named: 'tab', shift: true }, { input: 'p', ctrl: true }],
 			form: [{ named: 'up' }, { named: 'tab', shift: true }, { input: 'p', ctrl: true }],
 			autoRunLaunch: [{ named: 'up' }, { named: 'tab', shift: true }, { input: 'p', ctrl: true }],
@@ -431,7 +437,7 @@ export const KEYMAP: readonly Binding[] = [
 	{
 		action: 'stopGroupChat',
 		chords: [{ input: 'x', ctrl: true }],
-		contexts: ['groupChat'],
+		contexts: ['groupChat', 'groupChatMention'],
 		description: 'Stop the round: moderator and participants',
 	},
 	{
@@ -467,13 +473,13 @@ export const KEYMAP: readonly Binding[] = [
 	{
 		action: 'acceptMention',
 		chords: [{ named: 'tab' }, { named: 'return' }],
-		contexts: ['composerMention'],
+		contexts: ['composerMention', 'groupChatMention'],
 		description: 'Insert the agent; a group inserts its members',
 	},
 	{
 		action: 'dismissMention',
 		chords: [{ named: 'escape' }],
-		contexts: ['composerMention'],
+		contexts: ['composerMention', 'groupChatMention'],
 		description: 'Close the agent picker, keep the text',
 	},
 	{
@@ -490,7 +496,7 @@ export const KEYMAP: readonly Binding[] = [
 			{ input: '\n', label: 'Ctrl-J' },
 			{ input: '\r', label: 'Alt-Enter' },
 		],
-		contexts: ['composer', 'composerMention', 'groupChat'],
+		contexts: ['composer', 'composerMention', 'groupChat', 'groupChatMention'],
 		description: 'New line in the message',
 	},
 	{
@@ -517,6 +523,7 @@ export const KEYMAP: readonly Binding[] = [
 			'groupChats',
 			'groupChatForm',
 			'groupChat',
+			'groupChatMention',
 			'settings',
 		],
 		description: 'Interrupt the turn; twice in 1s quits',

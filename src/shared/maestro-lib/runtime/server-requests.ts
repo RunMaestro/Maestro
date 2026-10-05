@@ -21,7 +21,7 @@ import type {
 	ProviderInfo,
 	TabPatch,
 } from '../client/types';
-import type { Frame } from './server-frames';
+import { groupChatToWire, type Frame } from './server-frames';
 
 type Request = Record<string, unknown>;
 
@@ -52,10 +52,6 @@ function outcome<T>(
 		? { type, success: true, ...extra(result.value) }
 		: { type, success: false, error: errorText(result) };
 }
-
-/** What a group chat or a consult answers on a host that has neither yet (phase 8). */
-const NO_GROUP_CHATS = 'Group chats are not available on a headless host yet.';
-const NO_CONSULTS = 'Asking another agent is not available on a headless host yet.';
 
 // ---------------------------------------------------------------------------
 // Wire patches back to the client's patches
@@ -164,6 +160,21 @@ async function invokeChannel(
 			const key = str(args[0]);
 			if (!key) throw new Error('A settings key is required.');
 			return orThrow(await client.settings.get([key]))[key];
+		}
+		// The desktop's Left Bar rename and delete have no bridge message of their own (gap G15), so a
+		// client reaches them through the IPC channels the desktop's own UI calls.
+		case 'groupChat:rename': {
+			const chatId = str(args[0]);
+			const name = typeof args[1] === 'string' ? args[1] : '';
+			if (!chatId) throw new Error('A chat is required.');
+			orThrow(await client.groupChats.rename(chatId, name));
+			return { id: chatId, name: name.trim() };
+		}
+		case 'groupChat:delete': {
+			const chatId = str(args[0]);
+			if (!chatId) throw new Error('A chat is required.');
+			orThrow(await client.groupChats.remove(chatId));
+			return true;
 		}
 		case 'ssh-remote:getConfigs':
 			return { success: true, configs: orThrow(await client.settings.sshRemotes()) };
@@ -503,19 +514,76 @@ export function createRequestHandler(client: MaestroClient): RequestHandler {
 					await client.autoRun.abort(sessionId(message))
 				);
 
-			// -- group chats and consults: not on a headless host yet ------------
-			case 'get_group_chats':
-				return { type: 'group_chats_list', chats: [] };
-			case 'get_group_chat_state':
-				return { type: 'group_chat_state', state: null };
-			case 'start_group_chat':
-				return { type: 'start_group_chat_result', success: false, error: NO_GROUP_CHATS };
+			// -- group chats ------------------------------------------------
+			case 'get_group_chats': {
+				const chats = await client.groupChats.list();
+				return {
+					type: 'group_chats_list',
+					chats: chats.ok ? chats.value.map(groupChatToWire) : [],
+				};
+			}
+			case 'get_group_chat_state': {
+				const chat = await client.groupChats.get(str(message.chatId) ?? '');
+				return { type: 'group_chat_state', state: chat.ok ? groupChatToWire(chat.value) : null };
+			}
+			case 'start_group_chat': {
+				const participantIds = Array.isArray(message.participantIds)
+					? message.participantIds.filter((id): id is string => typeof id === 'string')
+					: [];
+				const result = await client.groupChats.create({
+					name: typeof message.topic === 'string' ? message.topic : '',
+					participantIds,
+					// The wire names the moderator by PROVIDER: the host moderates with a provider, not an agent.
+					...(str(message.moderatorAgentId)
+						? { moderatorProvider: str(message.moderatorAgentId) }
+						: {}),
+					...(str(message.message) ? { message: str(message.message) } : {}),
+				});
+				return outcome('start_group_chat_result', result, (value) => ({ chatId: value.chatId }));
+			}
 			case 'send_group_chat_message':
-				return { type: 'send_group_chat_message_result', success: false, error: NO_GROUP_CHATS };
+				return outcome(
+					'send_group_chat_message_result',
+					await client.groupChats.send(
+						str(message.chatId) ?? '',
+						typeof message.message === 'string' ? message.message : ''
+					)
+				);
 			case 'stop_group_chat':
-				return { type: 'stop_group_chat_result', success: false, error: NO_GROUP_CHATS };
-			case 'cross_agent_ask':
-				return { type: 'cross_agent_ask_result', success: false, error: NO_CONSULTS };
+				return outcome(
+					'stop_group_chat_result',
+					await client.groupChats.stop(str(message.chatId) ?? '')
+				);
+
+			// -- consults ----------------------------------------------------
+			// Waits as long as the answer takes: the caller's own timeout bounds it, not a delivery receipt.
+			case 'cross_agent_ask': {
+				const result = await client.consults.ask({
+					targetAgentId: sessionId(message),
+					question: typeof message.question === 'string' ? message.question : '',
+					...(str(message.fromSessionId) ? { fromAgentId: str(message.fromSessionId) } : {}),
+					...(str(message.fromTabId) ? { fromTabId: str(message.fromTabId) } : {}),
+					withContext: message.withContext === true,
+					...(num(message.timeoutMs) !== undefined ? { timeoutMs: num(message.timeoutMs) } : {}),
+				});
+				if (result.ok) {
+					return {
+						type: 'cross_agent_ask_result',
+						success: true,
+						answer: result.value.answer,
+						...(result.value.agentName ? { targetAgentName: result.value.agentName } : {}),
+					};
+				}
+				// A consult the caller's Stop ended is not the target failing to answer.
+				const stopped =
+					result.error.code === 'rejected' && /was stopped/i.test(result.error.message);
+				return {
+					type: 'cross_agent_ask_result',
+					success: false,
+					error: errorText(result),
+					...(stopped ? { canceled: true } : {}),
+				};
+			}
 
 			default:
 				return undefined;

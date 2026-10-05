@@ -154,6 +154,89 @@ describe('group chats in the TUI (GC-1 to GC-4)', () => {
 		});
 	});
 
+	describe('an open chat: addressing a participant (GC-5)', () => {
+		const GAMMA: AgentRecord = {
+			id: 'a4',
+			name: 'Gamma',
+			toolType: 'opencode',
+			state: 'idle',
+			aiTabs: [{ id: 't4', name: 'four' }],
+		};
+		const DOWN = '\u001B[B';
+
+		/** The picker's rows, without the Agents pane drawn beside them. */
+		const pickerRows = (frame: string): string => {
+			const lines = frame.split('\n').map((line) => line.slice(28));
+			const start = lines.findIndex((line) => line.includes('Address a participant'));
+			const end = lines.findIndex((line, index) => index > start && line.includes('Enter send'));
+			return lines.slice(start + 1, end).join('\n');
+		};
+
+		const openChat = async () => {
+			const m = await mount({ agents: [...AGENTS(), GAMMA] });
+			await m.press('c', ENTER);
+			return m;
+		};
+
+		it('opens on @ with the participants first, then the agents the moderator could add', async () => {
+			const m = await openChat();
+			await m.press('@');
+			expect(m.frame()).toContain('Address a participant, or add an agent');
+			const rows = pickerRows(m.frame());
+			expect(rows.indexOf('Alpha')).toBeGreaterThanOrEqual(0);
+			expect(rows.indexOf('Alpha')).toBeLessThan(rows.indexOf('Gamma'));
+			expect(rows.indexOf('Beta')).toBeLessThan(rows.indexOf('Gamma'));
+			// A terminal is never a candidate.
+			expect(rows).not.toContain('Shell');
+			m.unmount();
+		});
+
+		it('narrows as you type, and Tab inserts the name and carries on typing', async () => {
+			const m = await openChat();
+			await m.press('@', 'b', 'e');
+			expect(pickerRows(m.frame())).toContain('Beta');
+			expect(pickerRows(m.frame())).not.toContain('Gamma');
+			await m.press(TAB);
+			expect(m.frame()).toContain('@Beta');
+			expect(m.frame()).not.toContain('Address a participant');
+			await m.press('p', 'l', 'e', 'a', 's', 'e');
+			await m.press(ENTER);
+			expect(sends(m, 'groupChats.send').map((request) => request.args)).toEqual([
+				[RECORDED_CHAT_ID, '@Beta please'],
+			]);
+			m.unmount();
+		});
+
+		it('takes Enter as insert, not send, while the picker is open', async () => {
+			const m = await openChat();
+			await m.press('@', 'a');
+			await m.press(ENTER);
+			expect(sends(m, 'groupChats.send')).toEqual([]);
+			expect(m.frame()).toContain('@Alpha');
+			m.unmount();
+		});
+
+		it('moves the highlight with the arrows', async () => {
+			const m = await openChat();
+			await m.press('@', DOWN, TAB);
+			expect(m.frame()).toContain('@Beta');
+			m.unmount();
+		});
+
+		it('closes on Esc keeping the text, and the next Esc leaves the chat', async () => {
+			const m = await openChat();
+			await m.press('h', 'i', SPACE, '@');
+			expect(m.frame()).toContain('Address a participant');
+			await m.press(ESC);
+			expect(m.frame()).not.toContain('Address a participant');
+			expect(m.frame()).toContain('Group chat: Release review');
+			expect(m.frame()).toContain('hi @');
+			await m.press(ESC);
+			expect(m.frame()).toContain('Group chats');
+			m.unmount();
+		});
+	});
+
 	describe('an open chat: watching a round (GC-2, GC-3)', () => {
 		const openChat = async (m: Awaited<ReturnType<typeof mount>>) => {
 			await m.press('c', ENTER);

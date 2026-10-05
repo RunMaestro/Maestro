@@ -37,6 +37,8 @@ interface Harness {
 	/** Every id the engine asked the runner to stop. */
 	stops: string[];
 	messages: Array<{ chatId: string; from: string; content: string }>;
+	/** Every participant whose Auto Run badge the engine asked the host to clear. */
+	batchComplete: string[];
 	states: Array<{ chatId: string; state: string }>;
 	participantStates: Array<{ name: string; state: string }>;
 	historyTypes: string[];
@@ -52,6 +54,7 @@ function createHarness(dir: string): Harness {
 	const states: Harness['states'] = [];
 	const participantStates: Harness['participantStates'] = [];
 	const historyTypes: string[] = [];
+	const batchComplete: string[] = [];
 	const spawns: GroupChatSpawn[] = [];
 	const stops: string[] = [];
 	const sessions: GroupChatSessionInfo[] = [];
@@ -68,7 +71,7 @@ function createHarness(dir: string): Harness {
 		participantState: (_chatId, name, state) => participantStates.push({ name, state }),
 		moderatorSessionIdChanged: vi.fn(),
 		autoRunTriggered: vi.fn(),
-		autoRunBatchComplete: vi.fn(),
+		autoRunBatchComplete: (_chatId, name) => batchComplete.push(name),
 		participantLiveOutput: vi.fn(),
 	};
 
@@ -129,6 +132,7 @@ function createHarness(dir: string): Harness {
 		spawns,
 		stops,
 		messages,
+		batchComplete,
 		states,
 		participantStates,
 		historyTypes,
@@ -566,6 +570,57 @@ describe('group chat engine', () => {
 			expect(h.participantStates.at(-1)).toEqual({ name: 'Alice', state: 'idle' });
 			expect(lastState(chat.id)).toBe('idle');
 			expect(h.engine.markParticipantResponded(chat.id, 'Alice')).toBe(false);
+		});
+	});
+
+	describe('a participant’s Auto Run ends (GD12)', () => {
+		const summary = 'Auto Run complete: 2/2 tasks finished across 1 document(s).';
+
+		it('logs the summary as the participant’s reply and clears its card and badge', async () => {
+			const chat = await chatWith('Alice', 'Bob');
+			await delegateTo(chat.id, 'Alice', 'Bob');
+			h.messages.length = 0;
+
+			await h.engine.autoRunCompleted(chat.id, 'Alice', summary, h.launcher);
+
+			const log = await readLog(chat.logPath);
+			expect(log.some((m) => m.from === 'Alice' && m.content === summary)).toBe(true);
+			expect(h.participantStates.at(-1)).toEqual({ name: 'Alice', state: 'idle' });
+			expect(h.batchComplete).toEqual(['Alice']);
+		});
+
+		it('waits for the others, and releases the synthesis when the last one ends', async () => {
+			const chat = await chatWith('Alice', 'Bob');
+			const [, bob] = await delegateTo(chat.id, 'Alice', 'Bob');
+			h.spawns.length = 0;
+
+			await h.engine.autoRunCompleted(chat.id, 'Alice', summary, h.launcher);
+			expect(moderatorSpawns()).toHaveLength(0);
+
+			// Bob finishes as an ordinary process; the Auto Run closes the round out all the same.
+			await h.engine.turnEnded({ processId: bob, text: 'Bob is done.', exitCode: 0 }, h.launcher);
+			expect(moderatorSpawns()).toHaveLength(1);
+		});
+
+		it('starts the synthesis when the Auto Run is the last to finish', async () => {
+			const chat = await chatWith('Alice');
+			await delegateTo(chat.id, 'Alice');
+			h.spawns.length = 0;
+
+			await h.engine.autoRunCompleted(chat.id, 'Alice', summary, h.launcher);
+
+			expect(moderatorSpawns()).toHaveLength(1);
+			expect(h.historyTypes).toContain('response');
+		});
+
+		it('settles the room to idle when no launcher can run the synthesis, and releases the power block', async () => {
+			const chat = await chatWith('Alice');
+			await delegateTo(chat.id, 'Alice');
+
+			await h.engine.autoRunCompleted(chat.id, 'Alice', summary);
+
+			expect(lastState(chat.id)).toBe('idle');
+			expect(h.power.unblock).toHaveBeenCalledWith(`groupchat:${chat.id}`);
 		});
 	});
 

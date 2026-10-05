@@ -14,6 +14,7 @@ import type { ParticipantState } from '../ipc/handlers/groupChat';
 import type { SshRemoteConfig } from '../../shared/types';
 import type { PluginEvent } from '../../shared/plugins/events';
 import type { GroupChatLauncher, GroupChatTurnEnd } from '../../shared/maestro-lib/groupchat/types';
+import type { UsageStats } from '../process-manager/types';
 
 // ==========================================================================
 // Constants
@@ -83,6 +84,12 @@ export interface ProcessListenerDependencies {
 	/** The group chat engine: a surface reports each finished turn here and it decides what follows */
 	groupChatEngine: {
 		turnEnded: (end: GroupChatTurnEnd, launcher?: GroupChatLauncher) => Promise<void>;
+		/** A group chat process announced its provider session id (stored and shown). */
+		sessionAnnounced: (processId: string, agentSessionId: string) => Promise<void>;
+		/** A group chat process reported usage (the turn's ledger and the cards). */
+		usageReported: (processId: string, usage: UsageStats) => void;
+		/** A participant's output as it streams. */
+		liveOutput: (processId: string, chunk: string) => void;
 	};
 	/**
 	 * Builds the launcher a turn starts its successors with, from the process manager
@@ -114,21 +121,11 @@ export interface ProcessListenerDependencies {
 		extractTextFromStreamJson: (output: string, agentType?: string) => string;
 		parseParticipantSessionId: (sessionId: string) => ParticipantInfo | null;
 	};
-	/** Usage aggregator functions */
-	usageAggregator: {
-		calculateContextTokens: (usageStats: {
-			inputTokens: number;
-			outputTokens: number;
-			cacheReadInputTokens: number;
-			cacheCreationInputTokens: number;
-		}) => number;
-	};
 	/** Debug log function */
 	debugLog: (prefix: string, message: string, ...args: unknown[]) => void;
 	/** Regex patterns */
 	patterns: {
 		REGEX_MODERATOR_SESSION: RegExp;
-		REGEX_MODERATOR_SESSION_TIMESTAMP: RegExp;
 		REGEX_AI_SUFFIX: RegExp;
 		REGEX_AI_TAB_ID: RegExp;
 		/** Matches batch session IDs: {id}-batch-{timestamp} */

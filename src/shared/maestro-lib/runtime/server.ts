@@ -118,6 +118,8 @@ export async function startRuntimeServer(options: RuntimeServerOptions): Promise
 	const work = (): HostWork => ({
 		turns: runtime.turnsInFlight(),
 		runs: runtime.runs.activeRuns(),
+		rounds: runtime.roundsInFlight(),
+		consults: runtime.consultsInFlight(),
 	});
 
 	const statusReport = (): HostStatusReport => {

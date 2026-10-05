@@ -10,10 +10,14 @@ import type { TuiStartup } from '../startup';
 
 const attached = { branch: 'attach', client: { tag: 'ws' } as unknown as MaestroClient } as const;
 
-function runtimeWith(options: { turns?: number; runs?: number } = {}) {
+function runtimeWith(
+	options: { turns?: number; runs?: number; rounds?: number; consults?: number } = {}
+) {
 	const close = vi.fn(async () => undefined);
 	const client = {
 		turnsInFlight: () => options.turns ?? 0,
+		roundsInFlight: () => options.rounds ?? 0,
+		consultsInFlight: () => options.consults ?? 0,
 		runs: { activeRuns: () => Array.from({ length: options.runs ?? 0 }, () => ({})) },
 		connection: { close },
 	} as unknown as MaestroRuntime;
@@ -72,6 +76,12 @@ describe('startBackgroundHost', () => {
 		[{ turns: 2 }, '2 turns running here'],
 		[{ runs: 1 }, '1 Auto Run running here'],
 		[{ turns: 1, runs: 1 }, '1 turn and 1 Auto Run running here'],
+		[{ rounds: 1 }, '1 group chat round running here'],
+		[{ consults: 2 }, '2 consults running here'],
+		[
+			{ turns: 1, rounds: 1, consults: 1 },
+			'1 turn and 1 group chat round and 1 consult running here',
+		],
 	])('refuses without touching the runtime while %j is running', async (work, text) => {
 		const { startup, close } = runtimeWith(work);
 		const d = deps({ ok: true }, attached);

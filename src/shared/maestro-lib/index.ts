@@ -136,6 +136,64 @@ export {
 	parseModeratorSessionId,
 	parseParticipantSessionId,
 } from './groupchat/session-ids';
+// The pieces the desktop's thin bindings and the headless runtime share (Phase 8): the launch, the
+// process spec, the storage shapes, session recovery, and the consult prompt and service
+export { createConsultService } from './agents/consult';
+export type { ConsultRunner, CrossAgentTargetSession } from './agents/consult';
+export {
+	buildConsultHistoryEntry,
+	buildConsultTabName,
+	buildCrossAgentPrompt,
+	crossAgentTerminationNote,
+	serializeTranscript,
+} from './agents/consult-prompt';
+export { GROUP_CHAT_MODERATOR_NAME, resolveGroupChatTurnKey } from './groupchat/turn-metrics';
+export type { GroupChatTurnMeasurement } from './groupchat/turn-metrics';
+export type {
+	GroupChat,
+	GroupChatUpdate,
+	ParticipantRemovalResult,
+	ParticipantUpdate,
+} from './groupchat/types';
+export {
+	REGEX_MODERATOR_SESSION,
+	REGEX_MODERATOR_SESSION_TIMESTAMP,
+	REGEX_PARTICIPANT_FALLBACK,
+	REGEX_PARTICIPANT_TIMESTAMP,
+	REGEX_PARTICIPANT_UUID,
+} from './groupchat/session-ids';
+export type { SessionOverrides } from './groupchat/participants';
+export { extractAllMentions } from './groupchat/router';
+export {
+	createSessionRecovery,
+	detectSessionNotFoundError,
+	needsSessionRecovery,
+} from './groupchat/session-recovery';
+export { prepareGroupChatSpawn } from './groupchat/spawn';
+export { getWindowsSpawnConfig } from './groupchat/windows-spawn';
+export type { SpawnSshConfig, WindowsSpawnConfig } from './groupchat/windows-spawn';
+export { toGroupChatSessionInfo } from './groupchat/session-info';
+export { buildStreamJsonMessage } from './launch/stream-json-message';
+export {
+	escapeArgsForShell,
+	escapeCmdArg,
+	escapeCmdArgs,
+	escapePowerShellArg,
+	escapePowerShellArgs,
+	getWindowsShellForAgentExecution,
+	isPowerShellShell,
+} from './launch/windows-shell-escape';
+export type { WindowsShellConfig, WindowsShellResult } from './launch/windows-shell-escape';
+export { planPipeSpawn } from './run/pipe-spawn';
+export type { PipeSpawnConfig, PipeSpawnImages, PipeSpawnPlan } from './run/pipe-spawn';
+export { locateProviderBinary } from './turns/provider-binary';
+export type { BinaryProbe } from './turns/provider-binary';
+export { resolveProviderAgent } from './turns/provider-agent';
+export type { BackgroundTurnDeps } from './runtime/background-turns';
+// How a name is spoken as a mention in a chat (the TUI's picker over a chat's message box)
+export { getMentionNameForContext, mentionMatches } from '../group-chat-types';
+export { groupChatAutoRunSummary } from './groupchat/autorun-summary';
+export type { GroupChatAutoRunOutcome } from './groupchat/autorun-summary';
 
 // Cross-agent mentions: who a message can mention, what it resolves to, the `@` picker's rules (XM-1 to XM-3)
 export * from './mentions/roster';

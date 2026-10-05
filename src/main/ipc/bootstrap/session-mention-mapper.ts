@@ -3,48 +3,28 @@
  * resolve @mention auto-add targets.
  *
  * Extracted verbatim out of main/index.ts's setupIpcHandlers()
- * (setGetSessionsCallback) - the one piece of real logic in that function,
- * isolated here for reviewability (Phase 5 refactoring).
+ * (setGetSessionsCallback). The field mapping itself is `toGroupChatSessionInfo` in
+ * the library, shared with the headless runtime; this binds it to the desktop's SSH
+ * remote store and live process liveness.
  */
 
-import os from 'os';
 import type { getSshRemoteById } from '../../stores';
 import { isAgentBusy, type ProcessLivenessProbe } from '../../utils/agent-busy';
+import { toGroupChatSessionInfo } from '../../../shared/maestro-lib/groupchat/session-info';
 
 export function mapSessionsForMentions(
 	sessions: any[],
 	getSshRemoteByIdFn: typeof getSshRemoteById,
 	processManager?: ProcessLivenessProbe | null
 ) {
-	return sessions.map((s: any) => {
-		// Resolve SSH remote name if session has SSH config
-		let sshRemoteName: string | undefined;
-		if (s.sessionSshRemoteConfig?.enabled && s.sessionSshRemoteConfig.remoteId) {
-			const sshConfig = getSshRemoteByIdFn(s.sessionSshRemoteConfig.remoteId);
-			sshRemoteName = sshConfig?.name;
-		}
-		return {
-			id: s.id,
-			name: s.name,
-			toolType: s.toolType,
-			cwd: s.cwd || s.fullPath || os.homedir(),
-			customArgs: s.customArgs,
-			customEnvVars: s.customEnvVars,
-			customModel: s.customModel,
-			// Claude token-source selection, so group chat participants honor
-			// the same maestro-p TUI / API / dynamic choice as their agent.
-			enableMaestroP: s.enableMaestroP,
-			maestroPMode: s.maestroPMode,
-			maestroPPath: s.maestroPPath,
-			sshRemoteName,
-			// Pass full SSH config for remote execution support
-			sshRemoteConfig: s.sessionSshRemoteConfig,
-			autoRunFolderPath: s.autoRunFolderPath,
-			worktreeBasePath: s.worktreeConfig?.basePath,
+	return sessions.map((s: any) => ({
+		...toGroupChatSessionInfo(s, {
+			sshRemoteName: (remoteId) => getSshRemoteByIdFn(remoteId)?.name,
 			// Live liveness, not the persisted state: persistence rewrites every
 			// session and tab to 'idle' on the way to disk, so the stored record
 			// can never say whether this agent is mid-turn.
 			isBusy: isAgentBusy(s, processManager),
-		};
-	});
+		}),
+		worktreeBasePath: s.worktreeConfig?.basePath,
+	}));
 }

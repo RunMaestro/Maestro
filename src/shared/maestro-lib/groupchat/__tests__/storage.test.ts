@@ -1158,6 +1158,20 @@ describe('createGroupChatStore options', () => {
 		expect(entry.id).toMatch(uuid);
 	});
 
+	it('drains: resolves once every queued write has landed, so a host can release its lock', async () => {
+		const queued = createGroupChatStore({ groupChatsDir: () => testDir });
+		const chat = await queued.createGroupChat('Queued', 'claude-code');
+
+		// Writes issued without awaiting, as listeners do while a round ends.
+		void queued.updateGroupChat(chat.id, { name: 'One' });
+		void queued.updateGroupChat(chat.id, { name: 'Two' });
+		void queued.updateGroupChat(chat.id, { name: 'Three' });
+		await queued.drain();
+
+		expect((await queued.loadGroupChat(chat.id))?.name).toBe('Three');
+		await expect(queued.drain()).resolves.toBeUndefined();
+	});
+
 	it('refuses every write when beforeWrite throws, and still reads', async () => {
 		let fenced = false;
 		const fence = createGroupChatStore({

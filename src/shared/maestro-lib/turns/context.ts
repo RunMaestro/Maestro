@@ -14,11 +14,7 @@ import * as fs from 'fs';
 import { PROMPT_IDS } from '../../promptDefinitions';
 import { logger } from '../host';
 import { getShellPath } from '../launch/getShellPath';
-import {
-	checkBinaryExists,
-	checkCustomPath,
-	type BinaryDetectionResult,
-} from '../launch/path-prober';
+import type { BinaryDetectionResult } from '../launch/path-prober';
 import type { MaestroPaths } from '../paths/resolve';
 import { readGitBranch } from '../runtime/git';
 import { createPromptLoaderFor } from '../prompts/load';
@@ -27,6 +23,7 @@ import { getAgentDefinition, type AgentConfig } from '../providers/definitions';
 import { readAgentConfigsStore, readSettingsStore } from '../store/read-stores';
 import { historyFilePath } from '../store/read-history';
 import type { TurnAgent, TurnContext } from './assemble';
+import { locateProviderBinary } from './provider-binary';
 import type { TurnCommand } from './prompt';
 
 const LOG_CONTEXT = '[TurnContext]';
@@ -70,13 +67,6 @@ function stringRecord(value: unknown): Record<string, string> | undefined {
 	return entries.length > 0 ? Object.fromEntries(entries) : undefined;
 }
 
-async function defaultProbe(
-	binaryName: string,
-	customPath?: string
-): Promise<BinaryDetectionResult> {
-	return customPath ? checkCustomPath(customPath) : checkBinaryExists(binaryName);
-}
-
 /**
  * Read what a turn on `agent` needs. Refuses, before anything is written, a provider this
  * build does not know and a binary that is not on this machine (the desktop fails the same
@@ -95,7 +85,6 @@ export async function loadTurnContext(
 		};
 	}
 	const capabilities = getAgentCapabilities(agent.toolType);
-	const probe = sources.probeBinary ?? defaultProbe;
 	const sshEnabled = agent.sessionSshRemoteConfig?.enabled === true;
 
 	// Provider config and the global settings: a file that is missing is "nothing set", and
@@ -114,39 +103,19 @@ export async function loadTurnContext(
 	const settingsData = settings.status === 'ok' ? settings.data : {};
 
 	// The binary. A turn on an SSH remote runs the remote's own binary, so nothing is probed here.
-	let command: string;
-	if (sshEnabled) {
-		command = agent.customPath || definition.binaryName;
-	} else {
-		let detected: BinaryDetectionResult | undefined;
-		if (agent.customPath) {
-			detected = await probe(definition.binaryName, agent.customPath);
-			if (!detected.exists || !detected.path) {
-				logger.warn(
-					`Ignoring invalid local custom path for ${agent.toolType}: ${agent.customPath}`,
-					LOG_CONTEXT
-				);
-				detected = undefined;
-			}
-		}
-		const providerCustomPath =
-			typeof providerConfig.customPath === 'string' ? providerConfig.customPath : undefined;
-		if (!detected && providerCustomPath) {
-			const viaProvider = await probe(definition.binaryName, providerCustomPath);
-			if (viaProvider.exists && viaProvider.path) detected = viaProvider;
-		}
-		if (!detected) {
-			const onPath = await probe(definition.binaryName);
-			if (onPath.exists && onPath.path) detected = onPath;
-		}
-		if (!detected?.path) {
-			return {
-				ok: false,
-				reason: 'not-installed',
-				message: `${definition.name} (${definition.binaryName}) was not found on this machine`,
-			};
-		}
-		command = detected.path;
+	const command = await locateProviderBinary(definition, {
+		agentCustomPath: agent.customPath,
+		providerCustomPath:
+			typeof providerConfig.customPath === 'string' ? providerConfig.customPath : undefined,
+		sshEnabled,
+		probe: sources.probeBinary,
+	});
+	if (!command) {
+		return {
+			ok: false,
+			reason: 'not-installed',
+			message: `${definition.name} (${definition.binaryName}) was not found on this machine`,
+		};
 	}
 
 	// Prompts. No bundled directory means no prompt can load: the turn goes without Maestro's

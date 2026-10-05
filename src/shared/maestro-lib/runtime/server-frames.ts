@@ -12,6 +12,7 @@ import type { AutoRunBroadcastState } from '../../autoRunBroadcast';
 import type { AutoRunProgress } from '../autorun/progress';
 import type { AutoRunRunEvent } from '../autorun/run-tracker';
 import type { MaestroEvent, TurnEvent } from '../client/types';
+import type { GroupChatEvent, GroupChatRecord } from '../groupchat/chat';
 
 export type Frame = Record<string, unknown>;
 
@@ -167,6 +168,78 @@ function autoRunFrames(agentId: string, run: AutoRunRunEvent): Frame[] {
 }
 
 /**
+ * A chat as the desktop bridge reports it (`get_group_chats`, `get_group_chat_state`): the inverse
+ * of `parseGroupChatRecord`. `topic` is the chat's name, the provider rides as `toolType`, and a
+ * line's time is epoch ms, which that parser reads as it reads the desktop's ISO strings.
+ */
+export function groupChatToWire(chat: GroupChatRecord): Frame {
+	return {
+		id: chat.id,
+		topic: chat.name,
+		...(chat.moderatorProvider ? { moderatorAgentId: chat.moderatorProvider } : {}),
+		participants: chat.participants.map((participant) => ({
+			sessionId: participant.sessionId,
+			name: participant.name,
+			toolType: participant.provider,
+		})),
+		messages: chat.lines.map((line) => ({
+			id: line.id,
+			participantId: line.from,
+			participantName: line.from,
+			content: line.text,
+			timestamp: line.at,
+			role: line.from === 'user' ? 'user' : 'assistant',
+		})),
+		isActive: chat.state !== 'idle',
+		state: chat.state,
+		archived: chat.archived,
+	};
+}
+
+/**
+ * The `groupChat:*` channel a chat event travels on, in the desktop's own shapes: the inverse of
+ * `parseGroupChatFrame`. A `gap` is the client's own signal that it missed events, so none is sent.
+ */
+function groupChatFrames(chatId: string, event: GroupChatEvent): Frame[] {
+	switch (event.kind) {
+		case 'message':
+			return [
+				bridgeEvent('groupChat:message', chatId, {
+					timestamp: new Date(event.line.at).toISOString(),
+					from: event.line.from,
+					content: event.line.text,
+				}),
+			];
+		case 'state':
+			return [bridgeEvent('groupChat:stateChange', chatId, event.state)];
+		case 'participant':
+			return [
+				bridgeEvent(
+					'groupChat:participantState',
+					chatId,
+					event.name,
+					event.working ? 'working' : 'idle'
+				),
+			];
+		case 'participants':
+			return [
+				bridgeEvent(
+					'groupChat:participantsChanged',
+					chatId,
+					event.participants.map((participant) => ({
+						sessionId: participant.sessionId,
+						name: participant.name,
+						toolType: participant.provider,
+						agentId: participant.provider,
+					}))
+				),
+			];
+		case 'gap':
+			return [];
+	}
+}
+
+/**
  * The frames one runtime event becomes. Tab events are left out: every tab change is followed by an
  * `agent.updated` carrying the whole agent, which is what a client reads tabs from.
  */
@@ -183,6 +256,8 @@ export function framesForEvent(event: MaestroEvent, state: FrameState): Frame[] 
 			return turnFrames(event.agentId, event.tabId, event.event, state);
 		case 'autorun':
 			return autoRunFrames(event.agentId, event.event);
+		case 'groupChat':
+			return groupChatFrames(event.chatId, event.event);
 		default:
 			return [];
 	}

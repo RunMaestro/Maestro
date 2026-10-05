@@ -35,14 +35,22 @@ import {
 	requiresIdleParticipants,
 	stripMarkdownFormatting,
 } from '../../group-chat-types';
+import { FALLBACK_CONTEXT_WINDOW } from '../../agentConstants';
 import { getClaudeTokenMode } from '../../claudeTokenMode';
+import type { UsageStats } from '../../types';
 import { buildAgentArgs, applyAgentConfigOverrides } from '../launch/agent-args';
+import { calculateContextTokens } from '../parsers/usage-aggregator';
 import { logger, captureException } from '../host';
 import { appendToLog, readLog, saveImage } from './log';
 import { createGroupChatModerators, type GroupChatProcessControl } from './moderator';
 import { createGroupChatParticipants } from './participants';
 import { createSessionRecovery, needsSessionRecovery } from './session-recovery';
-import { parseModeratorSessionId, parseParticipantSessionId } from './session-ids';
+import {
+	GROUP_CHAT_PREFIX,
+	REGEX_MODERATOR_SESSION_TIMESTAMP,
+	parseModeratorSessionId,
+	parseParticipantSessionId,
+} from './session-ids';
 import { extractFirstSentence, type GroupChatStore } from './storage';
 import { GROUP_CHAT_MODERATOR_NAME, resolveGroupChatTurnKey } from './turn-metrics';
 import type { GroupChatTurnMetrics } from './turn-metrics';
@@ -151,7 +159,7 @@ export function extractMentions(text: string, participants: GroupChatParticipant
 	return mentions;
 }
 
-function findSessionForParticipantName(
+export function findSessionForParticipantName(
 	participantName: string,
 	sessions: readonly GroupChatSessionInfo[]
 ): GroupChatSessionInfo | undefined {
@@ -2729,6 +2737,46 @@ Review the agent responses above. Either:
 	}
 
 	/**
+	 * Marks a participant as done and, when it was the last one the round was waiting for, starts the
+	 * moderator's synthesis.
+	 *
+	 * "Can synthesis run?" is a different question from "is the room still working?". Gating both on
+	 * one condition left the room on 'agent-working' with its power block held whenever the launcher
+	 * was missing, so the room settles to idle whether or not a synthesis could start.
+	 */
+	async function markParticipantDone(
+		groupChatId: string,
+		participantName: string,
+		launcher: GroupChatLauncher | undefined
+	): Promise<void> {
+		const isLastParticipant = markParticipantResponded(groupChatId, participantName);
+		if (!isLastParticipant) return;
+		if (launcher) {
+			logger.info(
+				'[GroupChat] All participants responded, spawning moderator synthesis',
+				'ProcessListener',
+				{ groupChatId }
+			);
+			await spawnModeratorSynthesis(groupChatId, launcher).catch((err) => {
+				logger.error('[GroupChat] Failed to spawn moderator synthesis', 'ProcessListener', {
+					error: String(err),
+					groupChatId,
+				});
+				// Reset to idle so the user is not stuck waiting indefinitely
+				settleGroupChatToIdle(groupChatId);
+				events.message(groupChatId, {
+					timestamp: new Date().toISOString(),
+					from: 'system',
+					content: `⚠️ Synthesis failed. You can send another message to continue.`,
+				});
+				captureException(err, { operation: 'groupChat:spawnModeratorSynthesis', groupChatId });
+			});
+		} else {
+			settleGroupChatToIdle(groupChatId);
+		}
+	}
+
+	/**
 	 * A participant's turn is over. Whatever came back is its reply, whatever the exit
 	 * code was (B1): a crash or a kill after text still counts as responded. A turn
 	 * that returned nothing is closed out silently (B2), so one dead participant never
@@ -2753,36 +2801,8 @@ Review the agent responses above. Either:
 		// Mark the participant and, when it was the last one, start the synthesis.
 		// Called explicitly on each path below (never from a finally): session recovery
 		// must NOT mark the participant until the recovery turn ends.
-		const markAndMaybeSynthesize = async (): Promise<void> => {
-			const isLastParticipant = markParticipantResponded(groupChatId, participantName);
-			if (!isLastParticipant) return;
-			// "Can synthesis run?" is a different question from "is the room still
-			// working?". Gating both on one condition left the room on 'agent-working'
-			// with its power block held whenever the launcher was missing.
-			if (launcher) {
-				logger.info(
-					'[GroupChat] All participants responded, spawning moderator synthesis',
-					'ProcessListener',
-					{ groupChatId }
-				);
-				await spawnModeratorSynthesis(groupChatId, launcher).catch((err) => {
-					logger.error('[GroupChat] Failed to spawn moderator synthesis', 'ProcessListener', {
-						error: String(err),
-						groupChatId,
-					});
-					// Reset to idle so the user is not stuck waiting indefinitely
-					settleGroupChatToIdle(groupChatId);
-					events.message(groupChatId, {
-						timestamp: new Date().toISOString(),
-						from: 'system',
-						content: `⚠️ Synthesis failed. You can send another message to continue.`,
-					});
-					captureException(err, { operation: 'groupChat:spawnModeratorSynthesis', groupChatId });
-				});
-			} else {
-				settleGroupChatToIdle(groupChatId);
-			}
-		};
+		const markAndMaybeSynthesize = (): Promise<void> =>
+			markParticipantDone(groupChatId, participantName, launcher);
 
 		// No output to log, so the participant is done immediately
 		const hasOutput = Boolean(end.rawOutput) || Boolean(end.text);
@@ -2921,6 +2941,150 @@ Review the agent responses above. Either:
 		);
 	}
 
+	/**
+	 * A participant's Auto Run (started by a `!autorun` directive) ended. The run is another agent
+	 * session, so no group chat process exits to report it: the surface that ran it says so here, with
+	 * what it amounted to. The summary is logged as the participant's reply, the participant's card
+	 * and Auto Run badge are cleared, and the round continues exactly as it does when a participant's
+	 * process ends (the last one releases the synthesis).
+	 */
+	async function autoRunCompleted(
+		groupChatId: string,
+		participantName: string,
+		summary: string,
+		launcher?: GroupChatLauncher
+	): Promise<void> {
+		// Log the autorun summary as the participant's response
+		await routeAgentResponse(groupChatId, participantName, summary);
+
+		// Reset participant state to idle (mirrors what the turn end does for regular participants).
+		// Without this the participant card stays "Working" because no process exit fires for
+		// autorun participants.
+		events.participantState(groupChatId, participantName, 'idle');
+
+		// Tell the UI to definitively complete the batch run for this participant, so the AUTO badge
+		// and progress bar are always cleared.
+		events.autoRunBatchComplete(groupChatId, participantName);
+
+		await markParticipantDone(groupChatId, participantName, launcher);
+	}
+
+	// -----------------------------------------------------------------------
+	// Observations of a running turn
+	//
+	// What a surface that watches the process (the desktop's listeners, the headless runner) tells
+	// the engine while a turn runs. None of them decides what comes next; that is `turnEnded`.
+	// -----------------------------------------------------------------------
+
+	/**
+	 * A group chat process announced its provider session id: store it where the chat can resume it,
+	 * and tell the UI. A participant's id continues that participant's conversation; a moderator
+	 * turn's id (a plain turn, not a synthesis) is the chat's `moderatorAgentSessionId`, which is not
+	 * `moderatorSessionId`, the routing prefix.
+	 *
+	 * Never rejects: a failed write is logged and the round goes on without a resume id.
+	 */
+	async function sessionAnnounced(processId: string, agentSessionId: string): Promise<void> {
+		if (!processId.startsWith(GROUP_CHAT_PREFIX)) return;
+
+		const participant = parseParticipantSessionId(processId);
+		if (participant) {
+			try {
+				const updated = await updateParticipant(
+					participant.groupChatId,
+					participant.participantName,
+					{
+						agentSessionId,
+					}
+				);
+				// `updateParticipant` answers the updated chat, so no extra read is needed.
+				events.participantsChanged(participant.groupChatId, updated.participants);
+			} catch (error) {
+				logger.error('[GroupChat] Failed to update participant agentSessionId', LOG_CONTEXT, {
+					error: String(error),
+					participant: participant.participantName,
+				});
+			}
+			return;
+		}
+
+		const moderator = processId.match(REGEX_MODERATOR_SESSION_TIMESTAMP);
+		if (moderator) {
+			const groupChatId = moderator[1];
+			try {
+				await store.updateGroupChat(groupChatId, { moderatorAgentSessionId: agentSessionId });
+				events.moderatorSessionIdChanged(groupChatId, agentSessionId);
+			} catch (error) {
+				logger.error('[GroupChat] Failed to update moderator agent session ID', LOG_CONTEXT, {
+					error: String(error),
+					groupChatId,
+				});
+			}
+		}
+	}
+
+	/**
+	 * A group chat process reported usage. Folds it into the turn's ledger (the chat's totals need
+	 * how many tokens the turn BURNED, which is not the context snapshot below), then updates the
+	 * participant's card or the moderator's.
+	 *
+	 * Context usage is skipped when the total exceeds the window: a multi-tool turn reports values
+	 * accumulated over its internal calls, and a percentage over 100 is not a measurement.
+	 */
+	function usageReported(processId: string, usage: UsageStats): void {
+		if (!processId.startsWith(GROUP_CHAT_PREFIX)) return;
+		metrics.recordUsage(processId, usage);
+
+		const totalContextTokens = calculateContextTokens(usage);
+		const effectiveWindow = usage.contextWindow > 0 ? usage.contextWindow : FALLBACK_CONTEXT_WINDOW;
+		const fits = totalContextTokens <= effectiveWindow;
+
+		const participant = parseParticipantSessionId(processId);
+		if (participant) {
+			const update: { contextUsage?: number; tokenCount?: number; totalCost: number } = {
+				totalCost: usage.totalCostUsd,
+			};
+			if (fits) {
+				update.contextUsage = Math.round((totalContextTokens / effectiveWindow) * 100);
+				update.tokenCount = totalContextTokens;
+			}
+			updateParticipant(participant.groupChatId, participant.participantName, update)
+				.then((updated) =>
+					events.participantsChanged(participant.groupChatId, updated.participants)
+				)
+				.catch((error) => {
+					logger.error('[GroupChat] Failed to update participant usage', LOG_CONTEXT, {
+						error: String(error),
+						participant: participant.participantName,
+					});
+				});
+		}
+
+		const moderatorChatId = parseModeratorSessionId(processId);
+		if (moderatorChatId) {
+			// An accumulated total is reported as -1 so the card keeps its previous values; cost always moves.
+			events.moderatorUsage(
+				moderatorChatId,
+				fits
+					? {
+							contextUsage: Math.round((totalContextTokens / effectiveWindow) * 100),
+							totalCost: usage.totalCostUsd,
+							tokenCount: totalContextTokens,
+						}
+					: { contextUsage: -1, totalCost: usage.totalCostUsd, tokenCount: -1 }
+			);
+		}
+	}
+
+	/** A participant's output as it streams, for a peek panel. A moderator's is not shown. */
+	function liveOutput(processId: string, chunk: string): void {
+		if (!processId.startsWith(GROUP_CHAT_PREFIX)) return;
+		const participant = parseParticipantSessionId(processId);
+		if (participant) {
+			events.participantLiveOutput(participant.groupChatId, participant.participantName, chunk);
+		}
+	}
+
 	return {
 		// Moderator registry
 		spawnModerator: moderators.spawnModerator,
@@ -2942,7 +3106,11 @@ Review the agent responses above. Either:
 		respawnParticipantWithRecovery,
 		// Progression
 		turnEnded,
+		autoRunCompleted,
 		noteActivity: noteGroupChatActivity,
+		sessionAnnounced,
+		usageReported,
+		liveOutput,
 		// Round state
 		settleGroupChatToIdle,
 		setModeratorResponseTimeout,

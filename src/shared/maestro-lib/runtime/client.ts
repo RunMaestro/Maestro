@@ -7,10 +7,11 @@
  * is served from the repository's memory or a fresh read of a store file, and
  * every event comes from the one bus both client implementations share (RT15).
  *
- * Turns are answered by the runtime's turn service (`./turns`) and Auto Run by its run service
- * (`./autorun`). Group chats and consults answer `unsupported` until the phase that brings them (8). `unsupported` is a value, not a throw, so a
- * TUI written against the contract degrades the same way it does against an
- * older desktop.
+ * Turns are answered by the runtime's turn service (`./turns`), Auto Run by its run service
+ * (`./autorun`), group chats by the library's group chat engine (`./group-chats`), and consults by
+ * the consult service (`./consults`). What a host cannot do answers `unsupported`: a value, not a
+ * throw, so a TUI written against the contract degrades the same way it does against an older
+ * desktop.
  *
  * Design: `Plans/maestro-tui-runtime.md` section 8.
  */
@@ -24,6 +25,8 @@ import type {
 	ClientMethod,
 	ClientResult,
 	ConnectionState,
+	ConsultsApi,
+	GroupChatsApi,
 	HostInfo,
 	MaestroClient,
 	ProviderInfo,
@@ -61,6 +64,10 @@ export interface RuntimeClientDeps {
 	turns: TurnsApi;
 	/** Launch, stop, resume, skip, and abort a spec-driven or goal-driven run. */
 	autoRun: AutoRunApi;
+	/** Create, read, send into, stop, rename, and delete group chats. */
+	groupChats: GroupChatsApi;
+	/** Ask another agent. `cancelForSource` is how Stop on the asker reaches the consults it started. */
+	consults: { api: ConsultsApi; cancelForSource(agentId: string): number };
 }
 
 const ok = <T>(value: T): ClientResult<T> => ({ ok: true, value });
@@ -192,8 +199,13 @@ export function createRuntimeClient(deps: RuntimeClientDeps): MaestroClient {
 			send: (agentId, tabId, input) =>
 				Promise.resolve(gate('turns.send', true) ?? deps.turns.send(agentId, tabId, input)),
 			// Stopping and tidying the queue stay available when fenced: they only reduce what runs.
+			// Stop is agent-level: it ends the turn on the tab AND every consult the agent started (B20).
 			interrupt: (agentId, tabId) =>
-				guarded('turns.interrupt', () => deps.turns.interrupt(agentId, tabId)),
+				guarded('turns.interrupt', async () => {
+					const stopped = await deps.turns.interrupt(agentId, tabId);
+					const consults = deps.consults.cancelForSource(agentId);
+					return stopped.ok && consults > 0 ? ok({ stopped: true }) : stopped;
+				}),
 			queue: {
 				list: (agentId) => guarded('turns.queue.list', () => deps.turns.queue.list(agentId)),
 				remove: (agentId, itemId) =>
@@ -219,17 +231,24 @@ export function createRuntimeClient(deps: RuntimeClientDeps): MaestroClient {
 		},
 
 		groupChats: {
-			list: () => unsupported('groupChats.list', 'Group chats'),
-			get: () => unsupported('groupChats.get', 'Group chats'),
-			create: () => unsupported('groupChats.create', 'Group chats'),
-			send: () => unsupported('groupChats.send', 'Group chats'),
-			stop: () => unsupported('groupChats.stop', 'Group chats'),
-			rename: () => unsupported('groupChats.rename', 'Group chats'),
-			remove: () => unsupported('groupChats.remove', 'Group chats'),
+			list: () => guarded('groupChats.list', () => deps.groupChats.list()),
+			get: (chatId) => guarded('groupChats.get', () => deps.groupChats.get(chatId)),
+			// A fenced runtime reads but does not start work: a message it sent could not be recorded.
+			create: (input) =>
+				Promise.resolve(gate('groupChats.create', true) ?? deps.groupChats.create(input)),
+			send: (chatId, message) =>
+				Promise.resolve(gate('groupChats.send', true) ?? deps.groupChats.send(chatId, message)),
+			// Stopping only reduces what runs, so it stays available when fenced.
+			stop: (chatId) => guarded('groupChats.stop', () => deps.groupChats.stop(chatId)),
+			rename: (chatId, name) =>
+				Promise.resolve(gate('groupChats.rename', true) ?? deps.groupChats.rename(chatId, name)),
+			remove: (chatId) =>
+				Promise.resolve(gate('groupChats.remove', true) ?? deps.groupChats.remove(chatId)),
 		},
 
+		// A fenced runtime does not start a consult: its answer could not be recorded.
 		consults: {
-			ask: () => unsupported('consults.ask', 'Asking another agent'),
+			ask: (input) => Promise.resolve(gate('consults.ask', true) ?? deps.consults.api.ask(input)),
 		},
 
 		settings: {

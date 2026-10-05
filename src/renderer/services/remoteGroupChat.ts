@@ -11,9 +11,9 @@
  */
 
 import type { GroupChatState } from '../../shared/group-chat-types';
-import { mentionMatches } from '../../shared/group-chat-types';
 import {
 	type RemoteGroupChatState,
+	planGroupChatStart,
 	toRemoteGroupChatState,
 	withParticipantMentions,
 } from '../../shared/groupChatRemote';
@@ -60,9 +60,8 @@ export async function getRemoteGroupChatState(
  *
  * Participants join the way they do when a user types `@name`: the opening
  * message mentions each one and the router adds them with their full agent
- * config (SSH remote, custom args, env). That only works when each name picks
- * out exactly one agent, so an ambiguous name is refused up front rather than
- * letting the router quietly pick the first match.
+ * config (SSH remote, custom args, env). The checks that make that safe
+ * (`planGroupChatStart`) are shared with the headless runtime.
  */
 export async function startRemoteGroupChat(
 	topic: string,
@@ -70,26 +69,10 @@ export async function startRemoteGroupChat(
 	options: RemoteStartGroupChatOptions = {}
 ): Promise<{ chatId?: string; error?: string }> {
 	const sessions = useSessionStore.getState().sessions;
-	const participants = [];
-	for (const id of participantIds) {
-		const session = sessions.find((s) => s.id === id);
-		if (!session) return { error: `Unknown agent: ${id}` };
-		if (session.toolType === 'terminal') {
-			return { error: `"${session.name}" is a terminal agent and cannot join a group chat` };
-		}
-		const namesakes = sessions.filter(
-			(s) => s.toolType !== 'terminal' && mentionMatches(session.name, s.name)
-		);
-		if (namesakes.length > 1) {
-			return {
-				error: `${namesakes.length} agents answer to @${session.name}; rename one so the mention is unambiguous`,
-			};
-		}
-		participants.push(session);
-	}
-	if (participants.length === 0) return { error: 'At least 1 participant is required' };
+	const plan = planGroupChatStart(participantIds, sessions, options.moderatorAgentId);
+	if (!plan.ok) return { error: plan.error };
+	const { participants, moderatorProvider: moderatorAgentId } = plan;
 
-	const moderatorAgentId = options.moderatorAgentId ?? participants[0].toolType;
 	let chat;
 	try {
 		chat = await window.maestro.groupChat.create(topic, moderatorAgentId);

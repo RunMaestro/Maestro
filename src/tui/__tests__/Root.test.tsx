@@ -17,6 +17,8 @@ const IN_PROCESS = { kind: 'in-process', label: 'this TUI' } as const;
 function inProcess(fake: FakeClient, work: { turns?: number; runs?: number } = {}): TuiStartup {
 	const client = Object.assign(fake.client, {
 		turnsInFlight: () => work.turns ?? 0,
+		roundsInFlight: () => 0,
+		consultsInFlight: () => 0,
 		runs: { activeRuns: () => Array.from({ length: work.runs ?? 0 }, () => ({})) },
 	}) as unknown as MaestroRuntime;
 	return { branch: 'in-process', client };

@@ -4,26 +4,22 @@
  *
  * Every spawn site in the Group Chat router (moderator, participant, synthesis,
  * recovery) follows the same pattern: maybe SSH-wrap the command, apply
- * Windows-specific shell/stdin config, then call `processManager.spawn`. This
- * helper consolidates that sequence so each call site only needs to describe
- * the semantic spawn intent rather than repeat the mechanics.
+ * Windows-specific shell/stdin config, then call `processManager.spawn`. The first two
+ * steps are `prepareGroupChatSpawn` in the library (the headless runtime runs the same
+ * ones); this helper supplies the desktop's collaborators and hands the result to the
+ * `ProcessManager`.
  */
 
 import { IProcessManager } from './group-chat-moderator';
-import { getContextWindowValue } from '../utils/agent-args';
-import { wrapSpawnWithSsh, sshUnresolvedRemoteMessage } from '../utils/ssh-spawn-wrapper';
-import { getSshRemoteConfig, type SshRemoteSettingsStore } from '../utils/ssh-remote-resolver';
+import type { SshRemoteSettingsStore } from '../utils/ssh-remote-resolver';
 import { ensureRemoteMaestroPProbed } from '../agents/probeRemoteMaestroP';
 import { getWindowsSpawnConfig } from './group-chat-config';
 import { beginGroupChatTurn } from './group-chat-turn-metrics';
 import type { AgentConfig } from '../agents/definitions';
 import type { AgentSshRemoteConfig } from '../../shared/types';
-import {
-	resolveClaudeSpawnMode,
-	applyClaudeSpawnDecision,
-	buildRemoteInteractiveSpawn,
-} from '../agents/resolveClaudeSpawnMode';
+import { resolveClaudeSpawnMode } from '../agents/resolveClaudeSpawnMode';
 import type { ClaudeTokenMode } from '../../shared/claudeTokenMode';
+import { prepareGroupChatSpawn } from '../../shared/maestro-lib/groupchat/spawn';
 
 export interface SpawnGroupChatAgentConfig {
 	/** Stable session id for the process manager */
@@ -83,9 +79,9 @@ export interface SpawnGroupChatAgentResult {
  * Spawn a Group Chat agent process with SSH + Windows shell handling applied.
  *
  * The helper:
- * 1. Optionally wraps the command with SSH (when `sshRemoteConfig.enabled`)
- * 2. Applies Windows-specific shell/stdin config (skipped for SSH)
- * 3. Calls `processManager.spawn` with the resolved config
+ * 1. Prepares the spawn in the library: optional SSH wrapping (when `sshRemoteConfig.enabled`),
+ *    the Claude token source, and the Windows shell/stdin config (skipped for SSH)
+ * 2. Calls `processManager.spawn` with the prepared config
  *
  * All four legacy call sites (moderator, participant, synthesis, recovery) used
  * this exact sequence with only cosmetic differences - see git history for the
@@ -94,173 +90,52 @@ export interface SpawnGroupChatAgentResult {
 export async function spawnGroupChatAgent(
 	config: SpawnGroupChatAgentConfig
 ): Promise<SpawnGroupChatAgentResult> {
-	const {
-		sessionId,
-		agentId,
-		agent,
-		args,
-		cwd,
-		prompt,
-		customEnvVars,
-		agentConfigValues,
-		sshRemoteConfig,
-		sshStore,
-		processManager,
-		readOnlyMode = false,
-		debugLabel,
-	} = config;
+	const { processManager, sshStore } = config;
 
-	const baseCommand = config.command ?? agent.path ?? agent.command;
-
-	let spawnCommand = baseCommand;
-	let spawnArgs = args;
-	let spawnCwd = cwd;
-	let spawnPrompt: string | undefined = prompt;
-	let spawnEnvVars = customEnvVars;
-	let spawnSshStdinScript: string | undefined;
-	let spawnSshRemoteCommand: string | undefined;
-
-	// Over SSH, warm the remote maestro-p probe BEFORE resolving so a remote TUI
-	// selection falls back to API instead of exiting 127 when maestro-p isn't
-	// installed on the remote (the resolver reads this from the cache).
-	if (sshRemoteConfig?.enabled && sshStore) {
-		const sshRemote = getSshRemoteConfig(sshStore, {
-			sessionSshConfig: sshRemoteConfig,
-		}).config;
-		if (sshRemote) {
-			await ensureRemoteMaestroPProbed(sshRemote);
-		}
-	}
-
-	// Resolve the Claude token source (maestro-p TUI vs `claude --print`) and,
-	// for the interactive/dynamic case, rewrite the spawn to run maestro-p via
-	// process.execPath. The resolver returns API for non-Claude agents and SSH
-	// spawns, so this is a no-op outside the local Claude Code interactive path.
-	// maestro-p reads the prompt the same way claude does (positional after the
-	// args processManager appends), so prompt delivery is unchanged.
-	const claudeDecision = resolveClaudeSpawnMode({
-		agent,
-		tokenMode: config.tokenMode ?? 'api',
-		sshEnabled: !!sshRemoteConfig?.enabled,
-		// Lets the resolver fall a remote TUI spawn back to API when the remote
-		// has no maestro-p on its PATH (avoids exit 127).
-		sshRemoteId: sshRemoteConfig?.remoteId ?? undefined,
-		command: baseCommand,
-		sessionCustomEnvVars: customEnvVars,
-		maestroPPath: config.maestroPPath,
-		now: new Date(),
-	});
-	if (claudeDecision.mode === 'interactive' && claudeDecision.maestroPBinPath) {
-		const applied = applyClaudeSpawnDecision({
-			decision: claudeDecision,
-			interactiveModeArgs: agent.interactiveModeArgs,
-			command: baseCommand,
-			args,
-			customEnvVars,
+	const prepared = await prepareGroupChatSpawn(
+		{
+			processId: config.sessionId,
+			providerId: config.agentId,
+			agent: config.agent,
+			command: config.command,
+			args: config.args,
+			cwd: config.cwd,
+			prompt: config.prompt,
+			customEnvVars: config.customEnvVars,
+			agentConfigValues: config.agentConfigValues,
+			sshRemoteConfig: config.sshRemoteConfig,
+			tokenMode: config.tokenMode,
+			maestroPPath: config.maestroPPath,
+			readOnlyMode: config.readOnlyMode,
+			debugLabel: config.debugLabel,
 			maxWaitSeconds: config.maxWaitSeconds,
-		});
-		spawnCommand = applied.command;
-		spawnArgs = applied.args;
-		spawnEnvVars = applied.customEnvVars;
-		if (debugLabel) {
-			console.log(
-				`[GroupChat:Debug] ${debugLabel} resolved to maestro-p (tokenMode=${config.tokenMode})`
-			);
+		},
+		{
+			sshStore: sshStore ?? null,
+			resolveClaudeSpawnMode,
+			probeRemoteMaestroP: ensureRemoteMaestroPProbed,
+			windowsSpawnConfig: getWindowsSpawnConfig,
+			beginTurn: beginGroupChatTurn,
 		}
-	}
+	);
 
-	// Apply SSH wrapping if configured
-	if (sshRemoteConfig?.enabled && !sshStore) {
-		throw new Error(
-			`SSH remote is enabled but sshStore is not available for ${debugLabel ?? sessionId}`
-		);
-	}
-	if (sshStore && sshRemoteConfig?.enabled) {
-		if (debugLabel) {
-			console.log(`[GroupChat:Debug] Applying SSH wrapping for ${debugLabel}...`);
-		}
-		// Claude interactive/dynamic over SSH runs maestro-p on the remote host
-		// (must be on its PATH) to drive the remote TUI on the Max subscription.
-		// Returns null for the API path, leaving the SSH config untouched.
-		const remoteInteractive = buildRemoteInteractiveSpawn({
-			decision: claudeDecision,
-			interactiveModeArgs: agent.interactiveModeArgs,
-			remoteClaudeBin: claudeDecision.claudeRealBinPath,
-			maxWaitSeconds: config.maxWaitSeconds,
-		});
-		if (remoteInteractive && debugLabel) {
-			console.log(
-				`[GroupChat:Debug] ${debugLabel} resolved to remote maestro-p over SSH (tokenMode=${config.tokenMode})`
-			);
-		}
-		const sshWrapped = await wrapSpawnWithSsh(
-			{
-				command: baseCommand,
-				args: remoteInteractive ? [...remoteInteractive.prependArgs, ...args] : args,
-				cwd,
-				prompt,
-				customEnvVars: remoteInteractive
-					? { ...(customEnvVars ?? {}), ...remoteInteractive.env }
-					: customEnvVars,
-				promptArgs: agent.promptArgs,
-				noPromptSeparator: agent.noPromptSeparator,
-				agentBinaryName: remoteInteractive ? remoteInteractive.command : agent.binaryName,
-			},
-			sshRemoteConfig,
-			sshStore
-		);
-		// wrapSpawnWithSsh quietly hands back the unmodified local config when the
-		// remote cannot be resolved. Taking it would run this agent on the user's
-		// own machine against the REMOTE's cwd - the participant would either fail
-		// on a missing directory or, worse, succeed against the wrong files. The
-		// user opted into a remote host, so fail loudly instead of degrading.
-		if (!sshWrapped.sshRemoteUsed) {
-			throw new Error(sshUnresolvedRemoteMessage(sshRemoteConfig));
-		}
-		spawnCommand = sshWrapped.command;
-		spawnArgs = sshWrapped.args;
-		spawnCwd = sshWrapped.cwd;
-		spawnPrompt = sshWrapped.prompt;
-		spawnEnvVars = sshWrapped.customEnvVars;
-		spawnSshStdinScript = sshWrapped.sshStdinScript;
-		spawnSshRemoteCommand = sshWrapped.sshRemoteCommand;
-		if (sshWrapped.sshRemoteUsed && debugLabel) {
-			console.log(
-				`[GroupChat:Debug] SSH remote used for ${debugLabel}: ${sshWrapped.sshRemoteUsed.name}`
-			);
-		}
-	}
-
-	// Get Windows-specific spawn config (shell, stdin mode) - skipped for SSH
-	const winConfig = getWindowsSpawnConfig(agentId, sshRemoteConfig ?? undefined);
-	if (winConfig.shell && debugLabel) {
-		console.log(`[GroupChat:Debug] Windows shell config for ${debugLabel}: ${winConfig.shell}`);
-	}
-
-	// Start the clock at the single choke point every turn shape goes through
-	// (moderator, participant, synthesis, recovery), so a new spawn site is
-	// measured without having to remember to opt in.
-	beginGroupChatTurn(sessionId);
-
-	const spawnResult = processManager.spawn({
-		sessionId,
-		toolType: agentId,
-		cwd: spawnCwd,
-		command: spawnCommand,
-		args: spawnArgs,
-		readOnlyMode,
-		prompt: spawnPrompt,
-		contextWindow: getContextWindowValue(agent, agentConfigValues ?? {}),
-		customEnvVars: spawnEnvVars,
-		promptArgs: agent.promptArgs,
-		noPromptSeparator: agent.noPromptSeparator,
-		shell: winConfig.shell,
-		runInShell: winConfig.runInShell,
-		sendPromptViaStdin: winConfig.sendPromptViaStdin,
-		sendPromptViaStdinRaw: winConfig.sendPromptViaStdinRaw,
-		sshStdinScript: spawnSshStdinScript,
-		sshRemoteCommand: spawnSshRemoteCommand,
+	return processManager.spawn({
+		sessionId: prepared.processId,
+		toolType: prepared.providerId,
+		cwd: prepared.cwd,
+		command: prepared.command,
+		args: prepared.args,
+		readOnlyMode: prepared.readOnlyMode,
+		prompt: prepared.prompt,
+		contextWindow: prepared.contextWindow,
+		customEnvVars: prepared.customEnvVars,
+		promptArgs: prepared.promptArgs,
+		noPromptSeparator: prepared.noPromptSeparator,
+		shell: prepared.shell,
+		runInShell: prepared.runInShell,
+		sendPromptViaStdin: prepared.sendPromptViaStdin,
+		sendPromptViaStdinRaw: prepared.sendPromptViaStdinRaw,
+		sshStdinScript: prepared.sshStdinScript,
+		sshRemoteCommand: prepared.sshRemoteCommand,
 	});
-
-	return spawnResult;
 }

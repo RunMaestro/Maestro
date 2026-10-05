@@ -64,7 +64,7 @@ describe('Exit Listener', () => {
 			},
 			groupChatEngine: {
 				turnEnded: vi.fn().mockResolvedValue(undefined),
-			},
+			} as never,
 			groupChatLauncherFor: vi.fn().mockReturnValue(mockLauncher),
 			groupChatStorage: {
 				loadGroupChat: vi.fn().mockResolvedValue(createMockGroupChat()),
@@ -95,7 +95,6 @@ describe('Exit Listener', () => {
 			debugLog: vi.fn(),
 			patterns: {
 				REGEX_MODERATOR_SESSION: /^group-chat-(.+)-moderator-/,
-				REGEX_MODERATOR_SESSION_TIMESTAMP: /^group-chat-(.+)-moderator-\d+$/,
 				REGEX_AI_SUFFIX: /-ai-.+$/,
 				REGEX_AI_TAB_ID: /-ai-(.+?)(?:-fp-\d+)?$/,
 				REGEX_BATCH_SESSION: /-batch-\d+$/,

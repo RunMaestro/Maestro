@@ -438,15 +438,19 @@ describe('createMaestroRuntime', () => {
 
 	// -----------------------------------------------------------------------
 
-	describe('what waits for a later phase', () => {
-		it('answers unsupported, as values, for group chats and consults (turns are in turns.test.ts, Auto Run in autorun.test.ts)', async () => {
+	describe('what the desktop still owns, and what the runtime answers itself', () => {
+		it('answers unsupported, as a value, for what only the desktop can do (turns are in turns.test.ts, Auto Run in autorun.test.ts, group chats and consults in group-chats.test.ts and consults.test.ts)', async () => {
 			const runtime = await start();
-			const results = await Promise.all([
-				runtime.groupChats.list(),
-				runtime.consults.ask({ targetAgentId: 'a1', question: '?' }),
-				runtime.providers.models('claude-code'),
-			]);
-			for (const result of results) expect(errorOf(result).code).toBe('unsupported');
+			expect(errorOf(await runtime.providers.models('claude-code')).code).toBe('unsupported');
+		});
+
+		it('answers group chats and consults itself: nothing to list, and an unknown target is not found', async () => {
+			const runtime = await start();
+			expect(value(await runtime.groupChats.list())).toEqual([]);
+			expect(errorOf(await runtime.groupChats.get('nope')).code).toBe('not-found');
+			expect(
+				errorOf(await runtime.consults.ask({ targetAgentId: 'nobody', question: '?' })).code
+			).toBe('not-found');
 		});
 
 		it('answers an Auto Run control for an agent with no run as not-found, since Auto Run is supported', async () => {

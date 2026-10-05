@@ -51,10 +51,14 @@ export async function startBackgroundHost(
 	const runtime = current.client;
 	const turns = runtime.turnsInFlight();
 	const runs = runtime.runs.activeRuns().length;
-	if (turns + runs > 0) {
+	const rounds = runtime.roundsInFlight();
+	const consults = runtime.consultsInFlight();
+	if (turns + runs + rounds + consults > 0) {
 		const what = [
 			...(turns > 0 ? [plural(turns, 'turn')] : []),
 			...(runs > 0 ? [plural(runs, 'Auto Run')] : []),
+			...(rounds > 0 ? [plural(rounds, 'group chat round')] : []),
+			...(consults > 0 ? [plural(consults, 'consult')] : []),
 		].join(' and ');
 		return {
 			notice: `${what} running here would end with this TUI's runtime. Wait for the work to finish or stop it, then start the host.`,

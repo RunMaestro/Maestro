@@ -554,3 +554,75 @@ describe('a group is never a consult target (XM-1)', () => {
 		]);
 	});
 });
+
+/**
+ * `cancel` is Stop addressed by request id: for a host that waits for the answer and gives up
+ * after a time it was told, so it can end one consult without ending the asking agent's others.
+ */
+describe('cancel', () => {
+	beforeEach(() => vi.useFakeTimers());
+	afterEach(() => vi.useRealTimers());
+
+	it('stops one consult by its id and settles it as canceled', async () => {
+		const { service, dispatch, runner, chunks } = harness();
+		await dispatch();
+		runner.partial = 'so far';
+
+		expect(service.cancel('r1')).toBe(true);
+
+		expect(runner.stopped).toEqual(['cross-agent-r1']);
+		expect(chunks).toHaveLength(1);
+		expect(chunks[0]).toMatchObject({ done: true, canceled: true, chunk: 'so far' });
+		expect(service.activeCount()).toBe(0);
+	});
+
+	it('leaves other consults, even from the same source, running', async () => {
+		const a = harness({ request: { requestId: 'r1' } });
+		await a.dispatch();
+		// A second consult on the same service shares its registry.
+		const runner2 = new FakeRunner();
+		const chunks2: CrossAgentResponseChunk[] = [];
+		await a.service.start(request({ requestId: 'r2' }), {
+			runner: runner2,
+			resolveAgent: async () => claudeAgent(),
+			sshStore: null,
+			getTargetSession: () => targetSession(),
+			onChunk: (c) => chunks2.push(c),
+		});
+
+		expect(a.service.cancel('r1')).toBe(true);
+
+		expect(runner2.stopped).toEqual([]);
+		expect(chunks2).toEqual([]);
+		expect(a.service.activeCount()).toBe(1);
+	});
+
+	it('cancelAll stops every consult in flight, whoever asked, and answers how many', async () => {
+		const first = harness({ request: { requestId: 'r1', sourceSessionId: 'src-1' } });
+		await first.dispatch();
+		const runner2 = new FakeRunner();
+		const chunks2: CrossAgentResponseChunk[] = [];
+		await first.service.start(request({ requestId: 'r2', sourceSessionId: 'src-2' }), {
+			runner: runner2,
+			resolveAgent: async () => claudeAgent(),
+			sshStore: null,
+			getTargetSession: () => targetSession(),
+			onChunk: (c) => chunks2.push(c),
+		});
+
+		expect(first.service.cancelAll()).toBe(2);
+
+		expect(first.chunks[0]).toMatchObject({ done: true, canceled: true });
+		expect(chunks2[0]).toMatchObject({ done: true, canceled: true });
+		expect(first.service.activeCount()).toBe(0);
+		expect(first.service.cancelAll()).toBe(0);
+	});
+
+	it('answers false for an id that is not in flight, or one that already finished', async () => {
+		const { service, dispatch, runner } = harness();
+		expect(service.cancel('nope')).toBe(false);
+		await dispatch();
+		runner.end(0, 'done');
+		expect(service.cancel('r1')).toBe(false);
+	});
+});

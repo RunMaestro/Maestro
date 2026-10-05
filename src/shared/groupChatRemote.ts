@@ -82,3 +82,60 @@ export function withParticipantMentions(body: string, participantNames: string[]
 	const prefix = missing.map((name) => `@${normalizeMentionName(name)}`).join(' ');
 	return `${prefix}\n\n${body}`;
 }
+
+/** What a remote start needs to know about an agent: enough to check it can join a chat. */
+export interface GroupChatStartAgent {
+	id: string;
+	name: string;
+	toolType: string;
+}
+
+export type GroupChatStartPlan =
+	| { ok: true; participants: GroupChatStartAgent[]; moderatorProvider: string }
+	| { ok: false; error: string };
+
+/**
+ * The checks a remotely started chat makes before anything is created.
+ *
+ * Participants join the way they do when a user types `@name`: the opening message mentions each
+ * one and the router adds them with their full agent config (SSH remote, custom args, env). That
+ * only works when each name picks out exactly one agent, so an ambiguous name is refused up front
+ * rather than letting the router quietly pick the first match. The moderator is a PROVIDER, not an
+ * agent: absent one, the first participant's provider moderates.
+ *
+ * The desktop's renderer and the headless runtime both start chats through this, so the same
+ * request is accepted or refused the same way by either host.
+ */
+export function planGroupChatStart(
+	participantIds: readonly string[],
+	agents: readonly GroupChatStartAgent[],
+	moderatorProvider?: string
+): GroupChatStartPlan {
+	const participants: GroupChatStartAgent[] = [];
+	for (const id of participantIds) {
+		const agent = agents.find((candidate) => candidate.id === id);
+		if (!agent) return { ok: false, error: `Unknown agent: ${id}` };
+		if (agent.toolType === 'terminal') {
+			return {
+				ok: false,
+				error: `"${agent.name}" is a terminal agent and cannot join a group chat`,
+			};
+		}
+		const namesakes = agents.filter(
+			(candidate) => candidate.toolType !== 'terminal' && mentionMatches(agent.name, candidate.name)
+		);
+		if (namesakes.length > 1) {
+			return {
+				ok: false,
+				error: `${namesakes.length} agents answer to @${agent.name}; rename one so the mention is unambiguous`,
+			};
+		}
+		participants.push(agent);
+	}
+	if (participants.length === 0) return { ok: false, error: 'At least 1 participant is required' };
+	return {
+		ok: true,
+		participants,
+		moderatorProvider: moderatorProvider || participants[0].toolType,
+	};
+}

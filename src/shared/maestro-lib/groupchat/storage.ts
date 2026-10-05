@@ -631,6 +631,8 @@ export function createGroupChatStore(options: GroupChatStoreOptions) {
 		deleteGroupChatHistoryEntry,
 		clearGroupChatHistory,
 		getGroupChatHistoryFilePath,
+		/** Resolves once every queued metadata write has landed. Call before the host releases its lock. */
+		drain: () => groupChatWriteQueue.idle(),
 	};
 }
 

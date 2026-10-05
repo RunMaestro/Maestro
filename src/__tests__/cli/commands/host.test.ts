@@ -177,6 +177,15 @@ describe('maestro-cli host', () => {
 			expect(text).toContain('not running here: standalone pid 5 holds the Cue lock');
 		});
 
+		it('names group chat rounds and consults a stop would cut off', () => {
+			const text = formatHostStatus(
+				report({ work: { turns: 0, runs: [], rounds: 2, consults: 1 } })
+			);
+			expect(text).toContain('Work: 0 turns, 2 group chat rounds, 1 consult');
+			// A host that predates them reports neither, and that is simply idle.
+			expect(formatHostStatus(report({ work: { turns: 0, runs: [] } }))).toContain('Work: idle');
+		});
+
 		it('reports no host with the not-running exit code', async () => {
 			await hostStatus(
 				{ dataDir: dir },
@@ -228,6 +237,22 @@ describe('maestro-cli host', () => {
 			);
 			expect(err.join('\n')).toContain('2 turns');
 			expect(err.join('\n')).toContain('--force');
+			expect(process.exitCode).toBe(1);
+		});
+
+		it('refuses while only a group chat round is running', async () => {
+			publish(process.pid);
+			await hostStop(
+				{ dataDir: dir },
+				deps({
+					requestStop: async () => ({
+						stopping: false,
+						reason: 'work-in-flight',
+						work: { turns: 0, runs: [], rounds: 1 },
+					}),
+				})
+			);
+			expect(err.join('\n')).toContain('1 group chat round');
 			expect(process.exitCode).toBe(1);
 		});
 

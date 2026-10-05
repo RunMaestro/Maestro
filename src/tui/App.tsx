@@ -136,6 +136,7 @@ import {
 import { GroupChatFormView } from './groupchat/GroupChatFormView';
 import { GroupChatListView } from './groupchat/GroupChatListView';
 import { GroupChatView } from './groupchat/GroupChatView';
+import { resolveChatMentionPicker } from './groupchat/mentions';
 import {
 	backspaceChatForm,
 	cycleChatChoice,
@@ -529,6 +530,20 @@ export function App({
 		return resolveMentionPicker(current, getMentionItems(target.agentId), mentionUiFor(target.key));
 	};
 	const mentionPicker = composerKey ? currentMentionPicker() : undefined;
+
+	// The same picker over an open group chat's message box (GC-5): participants first, then the
+	// agents the moderator could add. Derived from the draft each time, like the composer's.
+	const currentChatMentionPicker = (): MentionPicker | undefined => {
+		const latest = overlayRef.current;
+		const chat = openChatRecordRef.current;
+		if (latest?.kind !== 'groupChats' || latest.screen?.kind !== 'chat' || !chat) return undefined;
+		return resolveChatMentionPicker(
+			latest.screen.draft,
+			chat,
+			dataRef.current.agents,
+			latest.screen.mention ?? initialMentionUi(chat.id)
+		);
+	};
 
 	// A delegation hands another agent work it can act on, so it takes two presses: the first says
 	// what it grants and arms, the second (same draft) sends (XM-3).
@@ -1434,6 +1449,16 @@ export function App({
 				void sendDraft();
 				return;
 			case 'acceptMention': {
+				const chatPicker = currentChatMentionPicker();
+				if (chatPicker && current?.kind === 'groupChats' && current.screen?.kind === 'chat') {
+					const chatId = current.screen.chatId;
+					updateChatScreen(chatId, (screen) => ({
+						...screen,
+						draft: acceptMention(screen.draft, chatPicker),
+						mention: initialMentionUi(chatId),
+					}));
+					return;
+				}
 				const target = composerTargetRef.current;
 				const picker = currentMentionPicker();
 				if (!target || !picker) return;
@@ -1442,6 +1467,15 @@ export function App({
 				return;
 			}
 			case 'dismissMention': {
+				const chatPicker = currentChatMentionPicker();
+				if (chatPicker && current?.kind === 'groupChats' && current.screen?.kind === 'chat') {
+					const chatId = current.screen.chatId;
+					updateChatScreen(chatId, (screen) => ({
+						...screen,
+						mention: dismissMentionPicker(screen.mention ?? initialMentionUi(chatId), chatPicker),
+					}));
+					return;
+				}
 				const picker = currentMentionPicker();
 				const target = composerTargetRef.current;
 				if (picker && target) setMentionUi(dismissMentionPicker(mentionUiFor(target.key), picker));
@@ -1773,6 +1807,19 @@ export function App({
 			case 'moveDown':
 			case 'moveUp': {
 				const delta = action === 'moveDown' ? 1 : -1;
+				const chatPicker = current?.kind === 'groupChats' ? currentChatMentionPicker() : undefined;
+				if (chatPicker && current?.kind === 'groupChats' && current.screen?.kind === 'chat') {
+					const chatId = current.screen.chatId;
+					updateChatScreen(chatId, (screen) => ({
+						...screen,
+						mention: stepMentionCursor(
+							screen.mention ?? initialMentionUi(chatId),
+							chatPicker,
+							delta
+						),
+					}));
+					return;
+				}
 				const picker = current ? undefined : currentMentionPicker();
 				const composerTarget = composerTargetRef.current;
 				if (picker && composerTarget) {
@@ -1933,7 +1980,9 @@ export function App({
 					? current.screen?.kind === 'create'
 						? 'groupChatForm'
 						: current.screen?.kind === 'chat'
-							? 'groupChat'
+							? currentChatMentionPicker()
+								? 'groupChatMention'
+								: 'groupChat'
 							: 'groupChats'
 					: current.kind === 'autoRun'
 						? current.screen?.kind === 'launch'
@@ -1993,10 +2042,13 @@ export function App({
 			}
 			if (current?.kind === 'groupChats' && current.screen?.kind === 'chat') {
 				const { chatId } = current.screen;
-				updateChatScreen(chatId, (screen) => ({
-					...screen,
-					draft: applyDraftKey(screen.draft, input, key),
-				}));
+				updateChatScreen(chatId, (screen) => {
+					const draft = applyDraftKey(screen.draft, input, key);
+					// Esc closed the picker for one `@`; once that `@` is gone, the next one opens it again.
+					const dismissed = screen.mention?.dismissedAt !== undefined;
+					const reset = dismissed && !getAtMentionTrigger(draft.text, draft.cursor);
+					return { ...screen, draft, ...(reset ? { mention: initialMentionUi(chatId) } : {}) };
+				});
 				return;
 			}
 			if (current?.kind === 'autoRun' && current.screen?.kind === 'launch') {
@@ -2206,6 +2258,12 @@ export function App({
 								<GroupChatView
 									chat={openChatRecord}
 									draft={overlay.screen.draft}
+									picker={resolveChatMentionPicker(
+										overlay.screen.draft,
+										openChatRecord,
+										data.agents,
+										overlay.screen.mention ?? initialMentionUi(openChatRecord.id)
+									)}
 									busy={overlay.screen.busy}
 									message={overlay.screen.message}
 									error={overlay.screen.error}

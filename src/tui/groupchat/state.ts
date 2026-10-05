@@ -17,6 +17,7 @@ import {
 } from '../../shared/maestro-lib';
 import type { ComposerState } from '../composer/draft';
 import { isBlankComposer } from '../composer/draft';
+import type { MentionUi } from '../composer/mentions';
 
 // ---------------------------------------------------------------------------
 // The list
@@ -281,6 +282,8 @@ export type GroupChatScreen =
 			kind: 'chat';
 			chatId: string;
 			draft: ComposerState;
+			/** The `@` picker's highlighted row and the `@` Esc closed (GC-5). Absent until it is used. */
+			mention?: MentionUi;
 			/** A call in flight, for one line. */
 			busy?: string;
 			/** The answer to the last stop or send. */

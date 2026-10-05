@@ -25,6 +25,10 @@ export interface HostWork {
 	/** Chat turns running now. */
 	turns: number;
 	runs: HostRunSummary[];
+	/** Group chats whose moderator or a participant is working. Absent from a host that predates group chats. */
+	rounds?: number;
+	/** Consults waiting on another agent's answer. Absent from a host that predates them. */
+	consults?: number;
 }
 
 /** Where the Cue engine stands in the host process (spec D3, Q5). */
@@ -63,7 +67,9 @@ export const HOST_STOP_REPLY = 'host_stop_result';
 
 /** `true` when the host has anything a stop would interrupt. */
 export function hostHasWork(work: HostWork): boolean {
-	return work.turns > 0 || work.runs.length > 0;
+	return (
+		work.turns > 0 || work.runs.length > 0 || (work.rounds ?? 0) > 0 || (work.consults ?? 0) > 0
+	);
 }
 
 export interface HostControlOptions {
