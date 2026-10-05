@@ -33,6 +33,10 @@ describe('plugin provider session bindings', () => {
 		first.remember('relay', 'agent-a', 'provider-1');
 		const restarted = new PluginAgentSessionBindings(baseDir);
 		expect(() => restarted.assertOwned('relay', 'agent-a', 'provider-1')).not.toThrow();
+		expect(restarted.hasBindings('relay')).toBe(true);
+		expect(restarted.isOwned('relay', 'agent-a', 'provider-1')).toBe(true);
+		expect(restarted.isOwned('relay', 'agent-b', 'provider-1')).toBe(false);
+		expect(restarted.isOwned('other', 'agent-a', 'provider-1')).toBe(false);
 		expect(() => restarted.assertOwned('relay', 'agent-b', 'provider-1')).toThrow(/not owned/);
 		expect(() => restarted.assertOwned('other', 'agent-a', 'provider-1')).toThrow(/not owned/);
 		expect(() => restarted.assertOwned('relay', 'agent-a', 'unknown')).toThrow(/not owned/);
@@ -43,6 +47,7 @@ describe('plugin provider session bindings', () => {
 		const bindings = new PluginAgentSessionBindings(baseDir);
 		bindings.remember('relay', 'agent-a', 'provider-1');
 		bindings.purge('relay');
+		expect(bindings.hasBindings('relay')).toBe(false);
 		expect(() => bindings.assertOwned('relay', 'agent-a', 'provider-1')).toThrow(/not owned/);
 	});
 

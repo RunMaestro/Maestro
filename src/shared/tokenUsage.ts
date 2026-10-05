@@ -82,7 +82,7 @@ export interface SessionTokenBreakdown {
 	 * Distribution chart's token mode; sessions with no recorded origin are left
 	 * out of that split rather than guessed at.
 	 */
-	origin?: 'user' | 'auto';
+	origin?: 'user' | 'auto' | 'relay';
 	byModel: ModelTokenUsage[];
 	inputTokens: number;
 	outputTokens: number;

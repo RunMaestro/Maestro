@@ -203,7 +203,7 @@ export interface WindowState {
 // Claude Session Origins Store
 // ============================================================================
 
-export type ClaudeSessionOrigin = 'user' | 'auto';
+export type ClaudeSessionOrigin = 'user' | 'auto' | 'relay';
 
 export interface ClaudeSessionOriginInfo {
 	origin: ClaudeSessionOrigin;
@@ -227,7 +227,10 @@ export interface AgentSessionOriginsData {
 		string,
 		Record<
 			string,
-			Record<string, { origin?: 'user' | 'auto'; sessionName?: string; starred?: boolean }>
+			Record<
+				string,
+				{ origin?: 'user' | 'auto' | 'relay'; sessionName?: string; starred?: boolean }
+			>
 		>
 	>;
 }

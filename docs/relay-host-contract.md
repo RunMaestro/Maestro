@@ -55,6 +55,23 @@ A plugin stop or uninstall aborts outstanding sends and closes admission for new
 
 Before spawning, the host checks the live `agents:dispatch` allowlist for the exact agent ID, separate unattended consent, trusted plugin signature, low/medium Pianola risk verdict, closed parameter schema, and the ActionGuard rate/concurrency/audit gate. The target is resolved against stored agents at execution time. `agents.dispatch` remains an asynchronous desktop dispatch acknowledgment.
 
+## Relay session origin and History
+
+The host attributes `agents.send` calls from the authenticated `sh.maestro.relay`
+plugin as `relay`; the plugin cannot supply an origin in its request. The
+provider process still runs as unattended Auto Run. Completed authorized turns,
+including failed provider results, receive a `RELAY` History entry with the
+provider session ID and result status. History persistence errors are logged
+without replacing the provider result.
+
+Relay provider sessions carry a Relay badge in the session browser. The host
+preserves that provenance when a Claude or Codex session is resumed from the
+desktop, and retains existing session names and stars. At startup, older
+sessions are attributed only when the private binding store proves ownership by
+Relay and that exact Maestro agent; ordinary CLI sessions remain unattributed.
+This backfill adds origin metadata, not historical turn entries. Existing History
+filter selections gain `RELAY` on upgrade; a later explicit deselection persists.
+
 ## First-message thread title (Host API 1.21.0)
 
 ```ts

@@ -90,6 +90,32 @@ describe('plugin headless agent runner', () => {
 		expect(spawn).not.toHaveBeenCalled();
 	});
 
+	it('keeps Relay as host attribution while marking its provider process unattended', async () => {
+		const spawn = vi.fn(async () => ({
+			success: true,
+			response: 'done',
+			agentSessionId: 'relay-1',
+		}));
+		const run = createPluginHeadlessAgentRunner({
+			getAgent: () => agent,
+			detectAgent: async () => ({ available: true }),
+			hasPluginTools: () => false,
+			spawn,
+			prepareSystemPrompt: async () => undefined,
+			issueRunToken: vi.fn(),
+			revokeRunToken: vi.fn(),
+			cliScriptPath: () => '/cli.js',
+			audit: vi.fn(),
+		});
+		await run('agent-a', 'hello', undefined, undefined, 'relay');
+		expect(spawn).toHaveBeenCalledWith(
+			'codex',
+			'/project',
+			'hello',
+			undefined,
+			expect.objectContaining({ querySource: 'auto' })
+		);
+	});
 	it('reports no successful response when a provider exits without final text', async () => {
 		const onProgress = vi.fn();
 		const run = createPluginHeadlessAgentRunner({

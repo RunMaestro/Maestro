@@ -1910,7 +1910,7 @@ interface MaestroAPI {
 				cacheReadTokens: number;
 				cacheCreationTokens: number;
 				durationSeconds: number;
-				origin?: 'user' | 'auto';
+				origin?: 'user' | 'auto' | 'relay';
 				sessionName?: string;
 				starred?: boolean;
 			}>;
@@ -2044,7 +2044,10 @@ interface MaestroAPI {
 			agentId: string,
 			projectPath: string
 		) => Promise<
-			Record<string, { origin?: 'user' | 'auto'; sessionName?: string; starred?: boolean }>
+			Record<
+				string,
+				{ origin?: 'user' | 'auto' | 'relay'; sessionName?: string; starred?: boolean }
+			>
 		>;
 		setSessionName: (
 			agentId: string,
@@ -2290,7 +2293,7 @@ interface MaestroAPI {
 				cacheReadTokens: number;
 				cacheCreationTokens: number;
 				durationSeconds: number;
-				origin?: 'user' | 'auto';
+				origin?: 'user' | 'auto' | 'relay';
 				sessionName?: string;
 				starred?: boolean;
 			}>
@@ -2407,8 +2410,9 @@ interface MaestroAPI {
 				string,
 				| 'user'
 				| 'auto'
+				| 'relay'
 				| {
-						origin: 'user' | 'auto';
+						origin: 'user' | 'auto' | 'relay';
 						sessionName?: string;
 						starred?: boolean;
 						contextUsage?: number;

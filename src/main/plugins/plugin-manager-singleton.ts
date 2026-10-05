@@ -30,7 +30,7 @@ export type HeadlessAgentRunner = (
 	prompt: string,
 	sessionId?: string,
 	signal?: AbortSignal,
-	origin?: 'user' | 'auto',
+	origin?: 'user' | 'auto' | 'relay',
 	onProgress?: (event: AgentSendProgressEvent) => void,
 	receiptToolId?: string
 ) => Promise<HeadlessAgentReply>;

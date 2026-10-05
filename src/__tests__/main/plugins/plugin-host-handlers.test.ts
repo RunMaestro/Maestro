@@ -957,6 +957,88 @@ describe('high-power act verbs (agents.dispatch / process.spawn)', () => {
 		);
 	});
 
+	it('derives Relay attribution from the authenticated plugin on fresh and resumed sends', async () => {
+		const providerSessions = new PluginAgentSessionBindings(path.join(kvBase, 'relay-sessions'));
+		const recordRelayTurn = vi.fn(async () => {});
+		const sendAgent = vi.fn(async (_agentId: string, prompt: string, sessionId?: string) => ({
+			success: true,
+			response: `answer:${prompt}`,
+			sessionId: sessionId ?? 'provider-relay',
+		}));
+		const h = buildHostCallHandlers(
+			makeDeps({
+				broker: brokerFor(() => [scopedGrant('agents:dispatch', 'a')]),
+				dispatchUnattendedAllowed: () => true,
+				providerSessions,
+				recordRelayTurn,
+				sendAgent,
+			})
+		);
+		await h['agents.send']!('sh.maestro.relay', { agentId: 'a', prompt: 'first' });
+		expect(providerSessions.isOwned('sh.maestro.relay', 'a', 'provider-relay')).toBe(true);
+		await h['agents.send']!('sh.maestro.relay', {
+			agentId: 'a',
+			prompt: 'again',
+			opts: { sessionId: 'provider-relay' },
+		});
+		expect(sendAgent).toHaveBeenLastCalledWith(
+			'a',
+			'again',
+			'provider-relay',
+			expect.any(AbortSignal),
+			'relay',
+			expect.any(Function)
+		);
+		expect(recordRelayTurn).toHaveBeenCalledTimes(2);
+		expect(recordRelayTurn).toHaveBeenLastCalledWith('a', 'again', {
+			success: true,
+			response: 'answer:again',
+			sessionId: 'provider-relay',
+			error: undefined,
+		});
+		await h['agents.send']!('other.plugin', { agentId: 'a', prompt: 'ordinary plugin' });
+		expect(sendAgent).toHaveBeenLastCalledWith(
+			'a',
+			'ordinary plugin',
+			undefined,
+			expect.any(AbortSignal),
+			'auto',
+			expect.any(Function)
+		);
+		expect(recordRelayTurn).toHaveBeenCalledTimes(2);
+		await expect(
+			h['agents.send']!('sh.maestro.relay', {
+				agentId: 'a',
+				prompt: 'claim',
+				opts: { origin: 'relay' },
+			})
+		).rejects.toThrow();
+	});
+
+	it('retains a failed Relay result when History persistence fails', async () => {
+		const result = {
+			success: false,
+			response: null,
+			sessionId: 'failed-relay',
+			error: 'Provider failed',
+		};
+		const recordRelayTurn = vi.fn(async () => {
+			throw new Error('History unavailable');
+		});
+		const h = buildHostCallHandlers(
+			makeDeps({
+				broker: brokerFor(() => [scopedGrant('agents:dispatch', 'a')]),
+				dispatchUnattendedAllowed: () => true,
+				sendAgent: vi.fn(async () => result),
+				recordRelayTurn,
+			})
+		);
+		await expect(
+			h['agents.send']!('sh.maestro.relay', { agentId: 'a', prompt: 'hello' })
+		).resolves.toEqual(result);
+		expect(recordRelayTurn).toHaveBeenCalledWith('a', 'hello', result);
+	});
+
 	it('stops a running send when its dispatch grant is revoked during progress', async () => {
 		let grants: PermissionGrant[] = [scopedGrant('agents:dispatch', 'a')];
 		let report: ((event: AgentSendProgressEvent) => void) | undefined;

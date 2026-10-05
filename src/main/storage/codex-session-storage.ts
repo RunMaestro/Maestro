@@ -24,6 +24,8 @@ import { app } from 'electron';
 import path from 'path';
 import os from 'os';
 import fs from 'fs/promises';
+import type Store from 'electron-store';
+import type { ClaudeSessionOriginsData } from '../stores/types';
 import { logger } from '../utils/logger';
 import { captureException } from '../utils/sentry';
 import { readFileRemote, readDirRemote, statRemote } from '../utils/remote-fs';
@@ -491,6 +493,29 @@ async function parseSessionFile(
 export class CodexSessionStorage extends BaseSessionStorage {
 	readonly agentId: ToolType = 'codex';
 
+	constructor(private readonly originsStore?: Store<ClaudeSessionOriginsData>) {
+		super();
+	}
+
+	private attachOriginInfo(sessions: AgentSessionInfo[], projectPath: string): AgentSessionInfo[] {
+		if (!this.originsStore) return sessions;
+		const origins = this.originsStore.get('origins', {});
+		return sessions.map((session) => {
+			const record =
+				origins[projectPath]?.[session.sessionId] ??
+				origins[session.projectPath]?.[session.sessionId];
+			if (!record) return session;
+			const info = typeof record === 'string' ? { origin: record } : record;
+			return {
+				...session,
+				origin: info.origin,
+				...(typeof record === 'object'
+					? { sessionName: record.sessionName, starred: record.starred }
+					: {}),
+			};
+		});
+	}
+
 	/**
 	 * Get the Codex sessions directory path for an account (`CODEX_HOME`), or
 	 * the default account when `accountDir` is undefined.
@@ -940,7 +965,7 @@ export class CodexSessionStorage extends BaseSessionStorage {
 			);
 		}
 
-		return sessions;
+		return this.attachOriginInfo(sessions, projectPath);
 	}
 
 	/**
@@ -988,7 +1013,7 @@ export class CodexSessionStorage extends BaseSessionStorage {
 			LOG_CONTEXT
 		);
 
-		return sessions;
+		return this.attachOriginInfo(sessions, projectPath);
 	}
 
 	async readSessionMessages(

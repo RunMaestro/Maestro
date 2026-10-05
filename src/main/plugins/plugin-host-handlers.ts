@@ -296,7 +296,7 @@ export interface HostHandlerDeps {
 		prompt: string,
 		sessionId?: string,
 		signal?: AbortSignal,
-		origin?: 'user' | 'auto',
+		origin?: 'user' | 'auto' | 'relay',
 		onProgress?: (event: AgentSendProgressEvent) => void
 	) => Promise<{
 		success: boolean;
@@ -312,6 +312,12 @@ export interface HostHandlerDeps {
 	) => Promise<string | null>;
 	/** Host-only persistent ownership ledger for resumable provider sessions. */
 	providerSessions?: PluginAgentSessionBindings;
+	/** Host-owned persistence for a turn from the authenticated Relay plugin. */
+	recordRelayTurn?: (
+		agentId: string,
+		prompt: string,
+		result: { success: boolean; response: string | null; sessionId: string | null; error?: string }
+	) => Promise<void>;
 	/** Whether the plugin holds the separate, revocable UNATTENDED consent for
 	 * `agents:dispatch` against `agentId`. Direct plugin dispatch is definitionally
 	 * "nobody at the keyboard" (a plugin's own code called it), so the handler
@@ -1556,7 +1562,7 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 							prompt,
 							opts.sessionId as string | undefined,
 							controller.signal,
-							'auto',
+							pluginId === 'sh.maestro.relay' ? 'relay' : 'auto',
 							onProgress
 						);
 						// Stop/uninstall may have purged this plugin's bindings while the
@@ -1578,6 +1584,18 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 						assertTrustedActVerb(deps, pluginId);
 						if (success && sessionId) {
 							providerSessions.remember(pluginId, agentId, sessionId);
+						}
+						if (pluginId === 'sh.maestro.relay') {
+							try {
+								await deps.recordRelayTurn?.(agentId, prompt, {
+									success,
+									response,
+									sessionId,
+									error,
+								});
+							} catch (recordError) {
+								logger.error(`Could not record Relay turn: ${String(recordError)}`, '[Plugins]');
+							}
 						}
 						return { success, response, sessionId, ...(error ? { error } : {}) };
 					} finally {

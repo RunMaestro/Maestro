@@ -25,6 +25,15 @@ export class PluginAgentSessionBindings {
 		}
 	}
 
+	/** Read-only ownership check for conservative migration of old plugin sessions. */
+	isOwned(pluginId: string, agentId: string, sessionId: string): boolean {
+		return this.store.get(pluginId, this.key(sessionId)) === agentId;
+	}
+
+	hasBindings(pluginId: string): boolean {
+		return this.store.keys(pluginId).length > 0;
+	}
+
 	remember(pluginId: string, agentId: string, sessionId: string): void {
 		const key = this.key(sessionId);
 		const currentOwner = this.store.get(pluginId, key);

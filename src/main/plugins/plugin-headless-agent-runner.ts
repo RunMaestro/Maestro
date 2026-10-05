@@ -94,7 +94,7 @@ export function createPluginHeadlessAgentRunner(
 				enableMaestroP: agent.enableMaestroP,
 				maestroPMode: agent.maestroPMode,
 				maestroPPath: agent.maestroPPath,
-				querySource: origin,
+				querySource: origin === 'relay' ? 'auto' : origin,
 				pluginRunProofFile,
 				mcpCliScriptPath: deps.cliScriptPath(),
 				timeoutMs: HEADLESS_RUN_TIMEOUT_MS,

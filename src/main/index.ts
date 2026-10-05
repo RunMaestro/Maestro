@@ -64,6 +64,9 @@ import { createPluginHostViewBridge } from './plugin-host-view-bridge';
 import { ActionGuard } from './plugins/action-guard';
 import { PluginKvStore } from './plugins/plugin-kv-store';
 import { PluginAgentSessionBindings } from './plugins/plugin-agent-session-bindings';
+import { setClaudeSessionOrigin } from './storage/claude-session-origins';
+import { CodexSessionStorage } from './storage/codex-session-storage';
+import { getSessionStorage } from './agents';
 import { PluginEventBusImpl } from './plugins/plugin-event-bus';
 import { createEgressGuard } from './plugins/net-egress-guard';
 // [UiCommandeer] WS-ui-command host bridge (see runUiCommand wiring below).
@@ -134,6 +137,7 @@ import {
 	getWindowStateStore,
 	getClaudeSessionOriginsStore,
 	getAgentSessionOriginsStore,
+	getSshRemoteById,
 } from './stores';
 import { runSettingsMigrations } from './stores/migrations';
 import { migrateClaudeSessionNamesFromHistory } from './stores/migrations/claude-session-names-backfill';
@@ -1645,6 +1649,37 @@ app
 		const pluginProviderSessions = new PluginAgentSessionBindings(
 			path.join(app.getPath('userData'), 'plugin-agent-sessions')
 		);
+		const relayProjectPath = (agent: SessionInfo): string =>
+			agent.sessionSshRemoteConfig?.enabled
+				? agent.sessionSshRemoteConfig.workingDirOverride || agent.projectRoot || agent.cwd
+				: agent.projectRoot || agent.cwd;
+		const markRelaySession = (agent: SessionInfo, providerSessionId: string, backfill = false) => {
+			const projectPath = relayProjectPath(agent);
+			if (agent.toolType === 'claude-code' || agent.toolType === 'codex') {
+				const existing = claudeSessionOriginsStore.get('origins', {})[projectPath]?.[
+					providerSessionId
+				];
+				if (backfill && (typeof existing === 'string' ? existing : existing?.origin) === 'relay') {
+					return;
+				}
+				setClaudeSessionOrigin(claudeSessionOriginsStore, projectPath, providerSessionId, {
+					origin: 'relay',
+				});
+				return;
+			}
+			const origins = agentSessionOriginsStore.get('origins', {});
+			const project = origins[agent.toolType]?.[projectPath] ?? {};
+			const existing = project[providerSessionId];
+			if (backfill && existing?.origin === 'relay') return;
+			origins[agent.toolType] = {
+				...origins[agent.toolType],
+				[projectPath]: {
+					...project,
+					[providerSessionId]: { ...existing, origin: 'relay' },
+				},
+			};
+			agentSessionOriginsStore.set('origins', origins);
+		};
 		const pluginEgressGuard = createEgressGuard({
 			// The app's own web/CLI server. Loopback + RFC1918 are already blocked by
 			// IP classification; this is belt-and-suspenders for a public-bind setup.
@@ -2459,6 +2494,25 @@ app
 					);
 				},
 				providerSessions: pluginProviderSessions,
+				recordRelayTurn: async (agentId, prompt, result) => {
+					const agent = (sessionsStore.get('sessions', []) as SessionInfo[]).find(
+						(session) => session.id === agentId
+					);
+					if (!agent) return;
+					if (result.sessionId) markRelaySession(agent, result.sessionId);
+					const projectPath = relayProjectPath(agent);
+					await getHistoryManager().addEntry(agent.id, projectPath, {
+						id: crypto.randomUUID(),
+						type: 'RELAY',
+						timestamp: Date.now(),
+						summary: (result.response || result.error || prompt).slice(0, 500),
+						fullResponse: result.response || undefined,
+						projectPath,
+						sessionId: agent.id,
+						agentSessionId: result.sessionId || undefined,
+						success: result.success,
+					});
+				},
 				// Direct plugin dispatch is never user-present, so it requires the
 				// separate unattended consent on TOP of the interactive allowlist grant
 				// - the same grant source and check the time-based scheduler uses.
@@ -2924,6 +2978,42 @@ app
 			getAgentConfigForAgent,
 			getCustomEnvVarsForAgent,
 		});
+
+		// Older Relay turns predate origin recording. The private host binding is
+		// the proof: only a session owned by this exact plugin and agent qualifies.
+		// A real CLI session has no such binding, so it is never relabeled.
+		if (pluginProviderSessions.hasBindings('sh.maestro.relay')) {
+			void (async () => {
+				for (const agent of sessionsStore.get('sessions', []) as SessionInfo[]) {
+					const storage = getSessionStorage(agent.toolType);
+					if (!storage) continue;
+					try {
+						const remoteId = agent.sessionSshRemoteConfig?.enabled
+							? agent.sessionSshRemoteConfig.remoteId
+							: null;
+						const ssh = remoteId ? getSshRemoteById(remoteId) : undefined;
+						if (agent.sessionSshRemoteConfig?.enabled && !ssh) continue;
+						const projectPath = relayProjectPath(agent);
+						const sessions =
+							storage instanceof CodexSessionStorage
+								? await storage.listSessions(projectPath, ssh, agent.customEnvVars?.CODEX_HOME)
+								: await storage.listSessions(projectPath, ssh);
+						for (const session of sessions) {
+							if (
+								!pluginProviderSessions.isOwned('sh.maestro.relay', agent.id, session.sessionId)
+							) {
+								continue;
+							}
+							markRelaySession(agent, session.sessionId, true);
+						}
+					} catch (error) {
+						logger.warn(`Relay origin backfill skipped ${agent.id}: ${String(error)}`, 'Migration');
+					}
+				}
+			})().catch((error) =>
+				logger.warn(`Relay origin backfill failed: ${String(error)}`, 'Migration')
+			);
+		}
 
 		// Set up process event listeners
 		logger.debug('Setting up process event listeners', 'Startup');

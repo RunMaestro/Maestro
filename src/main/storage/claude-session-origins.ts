@@ -30,7 +30,15 @@ export function mergeClaudeSessionOrigin(
 ): StoredClaudeSessionOrigin {
 	const base: ClaudeSessionOriginInfo =
 		typeof existing === 'string' ? { origin: existing } : (existing ?? { origin: 'user' });
-	const merged: ClaudeSessionOriginInfo = { ...base, ...patch };
+	// Desktop and Auto Run resumes can register another turn origin. The
+	// session's trusted Relay provenance belongs to its initiating host call.
+	const merged: ClaudeSessionOriginInfo = {
+		...base,
+		...patch,
+		...(base.origin === 'relay' && patch.origin && patch.origin !== 'relay'
+			? { origin: 'relay' as const }
+			: {}),
+	};
 	const { origin, ...rest } = merged;
 	return Object.values(rest).some((value) => value !== undefined) ? merged : origin;
 }
