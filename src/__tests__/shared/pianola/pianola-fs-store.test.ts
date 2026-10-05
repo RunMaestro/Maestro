@@ -25,6 +25,108 @@ afterEach(() => {
 });
 
 describe('portfolio files', () => {
+	it('lets timers progress while waiting for a live lock owner and updates after release', async () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pianola-async-lock-'));
+		dirs.push(dir);
+		const store = createPianolaFsStore({ resolveDir: () => dir, indent: 2, trailingNewline: true });
+		const lock = path.join(dir, 'maestro-pianola-asks.json.lock');
+		const owner = process.pid + '.0.live-owner';
+		fs.writeFileSync(lock, owner);
+		const old = new Date(Date.now() - 60_000);
+		fs.utimesSync(lock, old, old);
+		const update = vi.fn(() => []);
+		let settled = false;
+		const pending = store.updateAsksAsync(update);
+		const outcome = pending.then(
+			(value) => {
+				settled = true;
+				return { value };
+			},
+			(error: unknown) => {
+				settled = true;
+				return { error };
+			}
+		);
+		await new Promise<void>((resolve) => setTimeout(resolve, 20));
+		expect(settled).toBe(false);
+		expect(update).not.toHaveBeenCalled();
+		expect(fs.readFileSync(lock, 'utf8')).toBe(owner);
+		fs.rmSync(lock);
+		expect(await outcome).toEqual({ value: [] });
+		expect(update).toHaveBeenCalledOnce();
+		expect(fs.existsSync(lock)).toBe(false);
+		expect(store.readAsks()).toEqual([]);
+	});
+	it.each(['write asks', 'targets', 'memo'])(
+		'keeps the event loop responsive while waiting to persist %s',
+		async (kind) => {
+			const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pianola-async-store-'));
+			dirs.push(dir);
+			const store = createPianolaFsStore({
+				resolveDir: () => dir,
+				indent: 2,
+				trailingNewline: true,
+			});
+			const filename =
+				kind === 'memo'
+					? 'maestro-pianola-program-loop.json'
+					: kind === 'targets'
+						? 'maestro-pianola-supervisor.json'
+						: 'maestro-pianola-asks.json';
+			const lock = path.join(dir, filename + '.lock');
+			fs.writeFileSync(lock, process.pid + '.0.live');
+			const target = {
+				id: 'watch',
+				kind: 'watch' as const,
+				tabId: 'tab',
+				agentId: 'lead',
+				enabled: true,
+				createdAt: 1,
+			};
+			const pending =
+				kind === 'memo'
+					? store.updateProgramLoopMemoAsync('product', { notifiedTaskIds: ['plan:task'] })
+					: kind === 'targets'
+						? store.updateSupervisorTargetsAsync(() => [target])
+						: store.writeAsksAsync([]);
+			await new Promise<void>((resolve) => setTimeout(resolve, 20));
+			expect(fs.existsSync(path.join(dir, filename))).toBe(false);
+			fs.rmSync(lock);
+			await pending;
+			expect(fs.existsSync(lock)).toBe(false);
+			if (kind === 'memo')
+				expect(store.readProgramLoopMemo()).toEqual({
+					product: { notifiedTaskIds: ['plan:task'] },
+				});
+			else if (kind === 'targets') expect(store.readSupervisorTargets()).toEqual([target]);
+			else expect(store.readAsks()).toEqual([]);
+		}
+	);
+	it('bounds async waits without stealing live locks and releases after failed mutations', async () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pianola-async-timeout-'));
+		dirs.push(dir);
+		const store = createPianolaFsStore({ resolveDir: () => dir, indent: 2, trailingNewline: true });
+		const lock = path.join(dir, 'maestro-pianola-asks.json.lock');
+		const owner = process.pid + '.0.live';
+		fs.writeFileSync(lock, owner);
+		let clock = Date.now();
+		vi.spyOn(Date, 'now').mockImplementation(() => (clock += 1_000));
+		await expect(store.writeAsksAsync([])).rejects.toThrow(
+			'Timed out waiting for Pianola asks lock'
+		);
+		expect(fs.readFileSync(lock, 'utf8')).toBe(owner);
+		vi.restoreAllMocks();
+		fs.writeFileSync(lock, 'abandoned');
+		const old = new Date(Date.now() - 60_000);
+		fs.utimesSync(lock, old, old);
+		await expect(
+			store.updateAsksAsync(() => {
+				throw new Error('Rejected mutation');
+			})
+		).rejects.toThrow('Rejected mutation');
+		expect(fs.existsSync(lock)).toBe(false);
+		await expect(store.writeAsksAsync([])).resolves.toEqual([]);
+	});
 	it('restores a replacement live owner instead of stealing it during stale reclaim', () => {
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pianola-lock-replace-'));
 		dirs.push(dir);
