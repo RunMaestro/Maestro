@@ -382,6 +382,25 @@ describe('app-lifecycle/quit-handler', () => {
 			expect(deps.closeStatsDB).toHaveBeenCalled();
 		});
 
+		it('releases the data-dir lock last, after the stats database closes', async () => {
+			mockIsMacOS = false;
+			const { createQuitHandler } = await import('../../../main/app-lifecycle/quit-handler');
+
+			const releaseDataDirLock = vi.fn();
+			const quitHandler = createQuitHandler({
+				...deps,
+				releaseDataDirLock,
+			} as Parameters<typeof createQuitHandler>[0]);
+			quitHandler.setup();
+			quitHandler.confirmQuit();
+			beforeQuitHandler!({ preventDefault: vi.fn() });
+
+			expect(releaseDataDirLock).toHaveBeenCalledTimes(1);
+			expect(
+				(deps.closeStatsDB as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0]
+			).toBeLessThan(releaseDataDirLock.mock.invocationCallOrder[0]);
+		});
+
 		it('saves the multi-window layout during cleanup, before processes are torn down', async () => {
 			const { createQuitHandler } = await import('../../../main/app-lifecycle/quit-handler');
 

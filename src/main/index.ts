@@ -6,6 +6,7 @@ import {
 	safeStorage,
 	shell,
 	ipcMain,
+	dialog,
 	type OpenExternalOptions,
 	type IpcMainInvokeEvent,
 } from 'electron';
@@ -168,6 +169,7 @@ import {
 	createWindowManager,
 	createQuitHandler,
 	closeCadenzaHudWindow,
+	claimDataDirForDesktop,
 	type QuitHandler,
 } from './app-lifecycle';
 // Multi-window registry (single source of truth for window<->session ownership)
@@ -282,6 +284,24 @@ if (isDevelopment && !DEMO_MODE && !process.env.USE_PROD_DATA) {
 // in the same data directory the app actually uses. Without this, dev and prod
 // would clobber each other's cli-server.json at the hardcoded platform default.
 process.env.MAESTRO_USER_DATA = app.getPath('userData');
+
+// Take the data directory before any store is written. A headless runtime (a TUI
+// hosting in process, or a detached host) is the only writer while it runs; the
+// desktop loading its stores on top of one would overwrite its changes (CO-5).
+// Store setup below writes at module load, so this has to come first.
+const dataDirClaim = claimDataDirForDesktop(app.getPath('userData'), {
+	onLost: (reason) => logger.warn(`Data directory lock lost: ${reason}`, 'DataDirGuard'),
+});
+if (dataDirClaim.outcome === 'blocked') {
+	// showErrorBox is safe before the app is ready.
+	dialog.showErrorBox(dataDirClaim.title, dataDirClaim.message);
+	app.exit(0);
+	// app.exit() is not guaranteed to stop this module before the store setup below.
+	process.exit(0);
+} else if (dataDirClaim.outcome === 'proceed') {
+	logger.info(`Data directory lock not taken: ${dataDirClaim.reason}`, 'DataDirGuard');
+}
+const releaseDataDirLock = dataDirClaim.outcome === 'claimed' ? dataDirClaim.release : undefined;
 
 // ============================================================================
 // Store Initialization (after userData path is configured)
@@ -3151,6 +3171,7 @@ quitHandler = createQuitHandler({
 		settingsWatcher.stop();
 		timeZoneWatcher.stop();
 	},
+	releaseDataDirLock,
 	powerManager,
 	stopSessionCleanup,
 	getPersistedSessions: () => sessionsStore.get('sessions', []) as Array<Record<string, unknown>>,
