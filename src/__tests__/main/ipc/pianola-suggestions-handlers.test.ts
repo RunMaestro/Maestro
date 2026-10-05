@@ -23,16 +23,16 @@ const store = vi.hoisted(() => ({
 	writeRules: vi.fn((rules: PianolaRule[]) => rules),
 	readDecisions: vi.fn(() => []),
 	readSupervisorTargets: vi.fn(() => [] as PianolaSupervisedTarget[]),
-	writeSupervisorTargets: vi.fn((targets: PianolaSupervisedTarget[]) => targets),
-	updateSupervisorTargets: vi.fn(
-		(update: (targets: PianolaSupervisedTarget[]) => PianolaSupervisedTarget[]) => update([])
+	writeSupervisorTargetsAsync: vi.fn(async (targets: PianolaSupervisedTarget[]) => targets),
+	updateSupervisorTargetsAsync: vi.fn(
+		async (update: (targets: PianolaSupervisedTarget[]) => PianolaSupervisedTarget[]) => update([])
 	),
 	readPlans: vi.fn(() => [] as PianolaPlan[]),
 	readAsks: vi.fn(() => [] as PianolaAsk[]),
-	writeAsks: vi.fn((asks: PianolaAsk[]) => asks),
-	updateAsks: vi.fn((update: (asks: PianolaAsk[]) => PianolaAsk[]) => update([])),
-	upsertSupervisorTarget: vi.fn(),
-	removeSupervisorTarget: vi.fn(),
+	writeAsksAsync: vi.fn(async (asks: PianolaAsk[]) => asks),
+	updateAsksAsync: vi.fn(async (update: (asks: PianolaAsk[]) => PianolaAsk[]) => update([])),
+	upsertSupervisorTargetAsync: vi.fn(async () => [] as PianolaSupervisedTarget[]),
+	removeSupervisorTargetAsync: vi.fn(async () => [] as PianolaSupervisedTarget[]),
 	readPrograms: vi.fn(
 		() => [] as Pick<PianolaProgram, 'id' | 'status' | 'updatedAt' | 'leadAgentId'>[]
 	),
@@ -83,10 +83,10 @@ beforeEach(() => {
 	store.readSupervisorTargets.mockReturnValue([]);
 	store.readPlans.mockReturnValue([]);
 	store.readAsks.mockReturnValue([]);
-	store.updateAsks.mockImplementation((update) => update([]));
-	store.writeAsks.mockImplementation((asks) => asks);
-	store.writeSupervisorTargets.mockImplementation((targets) => targets);
-	store.updateSupervisorTargets.mockImplementation((update) =>
+	store.updateAsksAsync.mockImplementation(async (update) => update([]));
+	store.writeAsksAsync.mockImplementation(async (asks) => asks);
+	store.writeSupervisorTargetsAsync.mockImplementation(async (targets) => targets);
+	store.updateSupervisorTargetsAsync.mockImplementation(async (update) =>
 		update(store.readSupervisorTargets())
 	);
 });
@@ -194,11 +194,23 @@ describe('program controls IPC', () => {
 		};
 		let saved = [{ ...original, tabId: 'new' }];
 		store.readSupervisorTargets.mockReturnValue([original]);
-		store.updateSupervisorTargets.mockImplementation(
-			(update) => (saved = update(saved) as typeof saved)
-		);
+		let release!: () => void;
+		const gate = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		store.updateSupervisorTargetsAsync.mockImplementation(async (update) => {
+			await gate;
+			return (saved = update(saved) as typeof saved);
+		});
 		registerPianolaHandlers({ settingsStore: settingsStore(true), supervisor });
-		await handlers.get('pianola:supervisor-set-enabled')!({}, 'watch', false);
+		const pending = handlers.get('pianola:supervisor-set-enabled')!({}, 'watch', false);
+		await Promise.resolve();
+		expect(store.updateSupervisorTargetsAsync).toHaveBeenCalledOnce();
+		expect(supervisor.reconcile).not.toHaveBeenCalled();
+		expect(saved[0].enabled).toBe(true);
+		release();
+		await pending;
+		expect(supervisor.reconcile).toHaveBeenCalledOnce();
 		expect(saved).toEqual([{ ...original, tabId: 'new', enabled: false }]);
 	});
 	it('pauses and restores only the program orchestrator and lead watch', async () => {
@@ -214,7 +226,7 @@ describe('program controls IPC', () => {
 			{ id: 'other', kind: 'orchestrate', planId: 'other', enabled: true, createdAt: 1 },
 		];
 		store.readSupervisorTargets.mockImplementation(() => targets);
-		store.writeSupervisorTargets.mockImplementation((next) => (targets = next));
+		store.writeSupervisorTargetsAsync.mockImplementation(async (next) => (targets = next));
 		registerPianolaHandlers({ settingsStore: settingsStore(true), supervisor });
 		await handlers.get('pianola:set-program-status')!({}, 'product', 'paused');
 		await handlers.get('pianola:set-program-status')!({}, 'product', 'paused');
@@ -239,15 +251,37 @@ describe('program controls IPC', () => {
 			const concurrent = { ...original, id: 'concurrent', dedupeKey: 'other:product' };
 			store.readAsks.mockReturnValue([original]);
 			let saved = [original, concurrent];
-			store.writeAsks.mockImplementation((asks) => (saved = asks));
-			store.updateAsks.mockImplementation((update) => (saved = update(saved)));
+			store.writeAsksAsync.mockImplementation(async (asks) => (saved = asks));
+			let release!: () => void;
+			const gate = new Promise<void>((resolve) => {
+				release = resolve;
+			});
+			store.updateAsksAsync.mockImplementation(async (update) => {
+				await gate;
+				return (saved = update(saved));
+			});
 			registerPianolaHandlers({ settingsStore: settingsStore(true), supervisor });
-			const result = (await handlers.get(channel)!(
-				{},
-				'original',
-				'Proceed',
-				'Approved'
-			)) as PianolaAsk;
+			let settled = false;
+			const pending = Promise.resolve(
+				handlers.get(channel)!({}, 'original', 'Proceed', 'Approved')
+			);
+			const outcome = pending.then(
+				(value) => {
+					settled = true;
+					return value as PianolaAsk;
+				},
+				(error: unknown) => {
+					settled = true;
+					return error;
+				}
+			);
+			await Promise.resolve();
+			await Promise.resolve();
+			expect(store.updateAsksAsync).toHaveBeenCalledOnce();
+			expect(settled).toBe(false);
+			expect(saved[0].status).toBe('open');
+			release();
+			const result = (await outcome) as PianolaAsk;
 			expect(result.status).toBe(channel === 'pianola:resolve-ask' ? 'resolved' : 'dismissed');
 			expect(saved).toEqual([result, concurrent]);
 		}
@@ -256,8 +290,8 @@ describe('program controls IPC', () => {
 		store.readPrograms.mockReturnValue([{ id: 'product', status: 'active', updatedAt: 1 }]);
 		registerPianolaHandlers({ settingsStore: settingsStore(true), supervisor });
 		await handlers.get('pianola:supervise-program')!({}, 'product');
-		expect(store.updateSupervisorTargets).toHaveBeenCalledOnce();
-		expect(store.updateSupervisorTargets.mock.results[0].value).toEqual([
+		expect(store.updateSupervisorTargetsAsync).toHaveBeenCalledOnce();
+		expect(await store.updateSupervisorTargetsAsync.mock.results[0].value).toEqual([
 			expect.objectContaining({
 				kind: 'program',
 				programId: 'product',

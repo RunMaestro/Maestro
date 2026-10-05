@@ -156,7 +156,7 @@ export function createCueSessionRuntimeService(
 			yamlWatchers.set(session.id, { projectRoot: session.projectRoot, cleanup });
 		}
 		const previousState = registry.get(session.id);
-		const loadResult = loadCueConfigDetailed(session.projectRoot);
+		let loadResult = loadCueConfigDetailed(session.projectRoot);
 		if (!loadResult.ok && loadResult.reason === 'missing' && previousState) {
 			const reappeared = await configReappeared(session.projectRoot);
 			if (!deps.enabled()) return { kind: 'disabled' };
@@ -168,7 +168,8 @@ export function createCueSessionRuntimeService(
 			if (registry.get(session.id) !== previousState) {
 				return { kind: registry.has(session.id) ? 'loaded' : 'disabled' };
 			}
-			if (reappeared) return { kind: 'loaded' };
+			// Reappearance confirms existence, not unchanged content; reload the recovered file.
+			if (reappeared) loadResult = loadCueConfigDetailed(session.projectRoot);
 		}
 
 		// Idempotency guard: tear down any pre-existing registration to prevent

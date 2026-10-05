@@ -61,7 +61,7 @@ describe('CueSessionRuntimeService missing-config retry', () => {
 		const { session, registry, deps, runtime } = createRuntime();
 		await runtime.initSession(session, { reason: 'user-toggle' });
 		const state = registry.get(session.id)!;
-		vi.mocked(loadCueConfigDetailed).mockReturnValue({ ok: false, reason: 'missing' });
+		vi.mocked(loadCueConfigDetailed).mockReturnValueOnce({ ok: false, reason: 'missing' });
 		vi.mocked(resolveCueConfigPath)
 			.mockReset()
 			.mockReturnValueOnce(null)
@@ -81,10 +81,39 @@ describe('CueSessionRuntimeService missing-config retry', () => {
 		expect(resolveCueConfigPath).toHaveBeenCalledTimes(2);
 		await vi.advanceTimersByTimeAsync(150);
 		expect(await refresh).toMatchObject({ reloaded: true, configRemoved: false, activeCount: 1 });
-		expect(resolveCueConfigPath).toHaveBeenCalledTimes(3);
+		expect(resolveCueConfigPath).toHaveBeenCalledTimes(4);
+		expect(registry.get(session.id)).not.toBe(state);
+		expect(registry.get(session.id)!.config).toBe(config);
+		expect(deps.clearQueue).toHaveBeenCalledExactlyOnceWith(session.id, true);
+		runtime.clearAll();
+	});
+
+	it('reloads changed subscriptions when a missing config reappears', async () => {
+		const { session, registry, deps, runtime } = createRuntime();
+		await runtime.initSession(session, { reason: 'user-toggle' });
+		const state = registry.get(session.id)!;
+		const stop = state.triggerSources[0].stop;
+		const replacement = createMockConfig({
+			subscriptions: [
+				{ name: 'replacement', event: 'time.heartbeat', prompt: 'new', interval_minutes: 10 },
+			],
+		});
+		vi.mocked(loadCueConfigDetailed)
+			.mockReturnValueOnce({ ok: false, reason: 'missing' })
+			.mockReturnValue({ ok: true, config: replacement, warnings: [] });
+		const refresh = runtime.refreshSession(session.id, session.projectRoot);
 		expect(registry.get(session.id)).toBe(state);
-		expect(state.config.subscriptions).toHaveLength(1);
-		expect(deps.clearQueue).not.toHaveBeenCalled();
+		expect(stop).not.toHaveBeenCalled();
+		await vi.advanceTimersByTimeAsync(150);
+		expect(await refresh).toMatchObject({ reloaded: true, configRemoved: false, activeCount: 1 });
+		expect(registry.get(session.id)!.config.subscriptions).toEqual(replacement.subscriptions);
+		expect(stop).toHaveBeenCalledOnce();
+		expect(registry.get(session.id)!.triggerSources[0].start).toHaveBeenCalledOnce();
+		expect(loadCueConfigDetailed).toHaveBeenCalledTimes(3);
+		expect(deps.onLog).toHaveBeenCalledWith(
+			'warn',
+			expect.stringContaining('already-initialized session')
+		);
 		runtime.clearAll();
 	});
 
@@ -113,6 +142,42 @@ describe('CueSessionRuntimeService missing-config retry', () => {
 		runtime.clearAll();
 	});
 
+	it('does not replace a newer refresh when an older missing-config retry settles', async () => {
+		const { session, registry, runtime } = createRuntime();
+		await runtime.initSession(session, { reason: 'user-toggle' });
+		vi.mocked(loadCueConfigDetailed).mockReturnValueOnce({ ok: false, reason: 'missing' });
+		const olderRefresh = runtime.refreshSession(session.id, session.projectRoot);
+		const replacement = createMockConfig({
+			subscriptions: [{ name: 'newer', event: 'cli.trigger', prompt: 'new' }],
+		});
+		vi.mocked(loadCueConfigDetailed).mockReturnValue({
+			ok: true,
+			config: replacement,
+			warnings: [],
+		});
+		await runtime.refreshSession(session.id, session.projectRoot);
+		const newerState = registry.get(session.id);
+		await vi.advanceTimersByTimeAsync(150);
+		expect(await olderRefresh).toMatchObject({ reloaded: true, configRemoved: false });
+		expect(registry.get(session.id)).toBe(newerState);
+		expect(newerState!.config).toBe(replacement);
+		expect(loadCueConfigDetailed).toHaveBeenCalledTimes(3);
+		runtime.clearAll();
+	});
+
+	it('does not reload after the engine stops during a missing-config retry', async () => {
+		const { session, registry, deps, runtime } = createRuntime();
+		await runtime.initSession(session, { reason: 'user-toggle' });
+		vi.mocked(loadCueConfigDetailed).mockReturnValueOnce({ ok: false, reason: 'missing' });
+		const refresh = runtime.refreshSession(session.id, session.projectRoot);
+		deps.enabled = () => false;
+		runtime.clearAll();
+		await vi.advanceTimersByTimeAsync(150);
+		expect(await refresh).toEqual({ reloaded: false, configRemoved: false });
+		expect(registry.has(session.id)).toBe(false);
+		expect(loadCueConfigDetailed).toHaveBeenCalledTimes(2);
+	});
+
 	it('does not resurrect a removed session while a missing-config retry is pending', async () => {
 		const { session, registry, runtime } = createRuntime();
 		await runtime.initSession(session, { reason: 'user-toggle' });
@@ -129,12 +194,12 @@ describe('CueSessionRuntimeService missing-config retry', () => {
 		const { session, registry, runtime } = createRuntime();
 		await runtime.initSession(session, { reason: 'user-toggle' });
 		const state = registry.get(session.id);
-		vi.mocked(loadCueConfigDetailed).mockReturnValue({ ok: false, reason: 'missing' });
+		vi.mocked(loadCueConfigDetailed).mockReturnValueOnce({ ok: false, reason: 'missing' });
 		const init = runtime.initSession(session, { reason: 'refresh' });
 		expect(registry.get(session.id)).toBe(state);
 		await vi.advanceTimersByTimeAsync(150);
 		expect(await init).toEqual({ kind: 'loaded' });
-		expect(registry.get(session.id)).toBe(state);
+		expect(registry.get(session.id)!.config).toBe(config);
 		runtime.clearAll();
 	});
 	it('leaves a pending watcher untouched when refresh targets an unknown session', async () => {

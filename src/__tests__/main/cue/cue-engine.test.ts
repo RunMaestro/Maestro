@@ -846,7 +846,10 @@ describe('CueEngine', () => {
 					},
 				],
 			});
-			mockLoadCueConfig.mockReturnValueOnce(config).mockReturnValue(null);
+			mockLoadCueConfig
+				.mockReturnValueOnce(config)
+				.mockReturnValueOnce(null)
+				.mockReturnValue(config);
 			mockResolveCueConfigPath.mockReturnValue('/projects/test/.maestro/cue.yaml');
 			const deps = createMockDeps();
 			const engine = new CueEngine(deps);
@@ -868,6 +871,54 @@ describe('CueEngine', () => {
 					'cue',
 					expect.stringContaining('Config removed'),
 					expect.anything()
+				);
+			} finally {
+				mockResolveCueConfigPath.mockReturnValue(null);
+				engine.stop();
+			}
+		});
+
+		it('reloads changed subscriptions and schedules when a missing config reappears', async () => {
+			vi.setSystemTime(new Date('2026-03-09T08:59:00'));
+			const original = createMockConfig({
+				subscriptions: [
+					{ name: 'A', event: 'time.scheduled', prompt: 'old', schedule_times: ['09:00'] },
+				],
+			});
+			const replacement = createMockConfig({
+				subscriptions: [
+					{ name: 'B', event: 'time.scheduled', prompt: 'new', schedule_times: ['10:00'] },
+				],
+			});
+			mockLoadCueConfig
+				.mockReturnValueOnce(original)
+				.mockReturnValueOnce(null)
+				.mockReturnValue(replacement);
+			mockResolveCueConfigPath.mockReturnValue('/projects/test/.maestro/cue.yaml');
+			const deps = createMockDeps();
+			const engine = new CueEngine(deps);
+			await engine.start();
+			try {
+				const refresh = engine.refreshSession('session-1', '/projects/test');
+				await vi.advanceTimersByTimeAsync(150);
+				await refresh;
+				expect(engine.getStatus()).toEqual([
+					expect.objectContaining({
+						sessionId: 'session-1',
+						subscriptionCount: 1,
+						enabled: true,
+						nextTrigger: new Date('2026-03-09T10:00:00').toISOString(),
+					}),
+				]);
+				expect(engine.getGraphData()[0].subscriptions.map((sub) => sub.name)).toEqual(['B']);
+				expect(deps.onLog).toHaveBeenCalledWith(
+					'cue',
+					expect.stringContaining('Config reloaded'),
+					expect.objectContaining({ type: 'configReloaded', sessionId: 'session-1' })
+				);
+				await vi.advanceTimersByTimeAsync(61 * 60_000);
+				expect(deps.onCueRun).toHaveBeenCalledExactlyOnceWith(
+					expect.objectContaining({ subscriptionName: 'B', prompt: 'new' })
 				);
 			} finally {
 				mockResolveCueConfigPath.mockReturnValue(null);
