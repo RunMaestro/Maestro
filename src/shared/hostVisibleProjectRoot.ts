@@ -1,9 +1,9 @@
 /**
  * Where an agent's project root can be read from the desktop host.
  *
- * Cue reads `<projectRoot>/.maestro/cue.yaml` with the host filesystem, so an
- * agent that runs over SSH has, by default, no Cue at all: its POSIX root does
- * not exist here. When the remote is also mounted on the host (a WSL distro as
+ * Cue reads `<projectRoot>/.maestro/cue.yaml` with the host filesystem. Without
+ * a host mount, it preserves the session's existing root unchanged. When the
+ * remote is also mounted on the host (a WSL distro as
  * `\\wsl.localhost\<distro>`, an SMB share, an sshfs mount) the remote can say
  * so with `hostMountRoot`, and the agent's root is read through that mount.
  * Nothing is guessed: no `hostMountRoot`, no translation.
@@ -27,8 +27,8 @@ export interface RemoteBoundSession {
 }
 
 /**
- * The session's project root as a path the host can open, or `null` when the
- * session runs on a remote that is not mounted on the host.
+ * The session's existing project root, translated only for an explicitly
+ * host-mounted remote. Returns null if that translation would escape the mount.
  */
 export function hostVisibleProjectRoot(
 	session: RemoteBoundSession,
@@ -39,11 +39,22 @@ export function hostVisibleProjectRoot(
 	const ssh = session.sessionSshRemoteConfig;
 	if (!ssh?.enabled || !ssh.remoteId) return local;
 	const remote = remotes.find((candidate) => candidate.id === ssh.remoteId);
-	const mount = remote?.hostMountRoot?.replace(/[\\/]+$/, '');
-	if (!mount) return null;
+	const mount = remote?.hostMountRoot;
+	if (!mount) return local;
 	const remoteRoot = ssh.workingDirOverride || local;
 	if (!remoteRoot.startsWith('/')) return null;
-	// `\\wsl.localhost\Ubuntu` + `/home/dev/app` -> `\\wsl.localhost\Ubuntu\home\dev\app`
+	// Treat both separators as path boundaries before joining onto the host.
+	// A raw concatenation would let /../x traverse outside the declared mount.
+	const parts: string[] = [];
+	for (const part of remoteRoot.split(/[\\/]+/)) {
+		if (!part || part === '.') continue;
+		if (part === '..') {
+			if (parts.length === 0) return null;
+			parts.pop();
+		} else {
+			parts.push(part);
+		}
+	}
 	const separator = mount.includes('\\') ? '\\' : '/';
-	return mount + remoteRoot.replace(/\//g, separator);
+	return mount.replace(/[\\/]+$/, '') + separator + parts.join(separator);
 }

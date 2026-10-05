@@ -246,6 +246,7 @@ export class CueEngine {
 	private forceDrain: (() => void) | null = null;
 	/** `forceStop()` arrived with no drain running: the drain it starts is forced from the outset. */
 	private forceNextDrain = false;
+	private startGeneration = 0;
 	/** Set to 'system-boot' while the engine is running after a system-boot or
 	 * user-toggle-on start. Drives refreshSession() to fire app.startup for
 	 * sessions that arrive after start() (the common case at boot). */
@@ -777,11 +778,18 @@ export class CueEngine {
 		this.queuePersistence.beginRestoreEpoch();
 		this.pendingPluginRestoreIds = this.queuePersistence.persistedIds(true);
 
-		const sessions = this.deps.getSessions();
-		await Promise.all(
-			sessions.map((session) => this.sessionRuntimeService.initSession(session, { reason }))
-		);
-		if (!this.enabled) return;
+		const generation = this.startGeneration;
+		try {
+			const sessions = this.deps.getSessions();
+			await Promise.all(
+				sessions.map((session) => this.sessionRuntimeService.initSession(session, { reason }))
+			);
+		} catch (error) {
+			// A failed old start must not stop a newer engine cycle.
+			if (generation === this.startGeneration) this.stop();
+			throw error;
+		}
+		if (!this.enabled || generation !== this.startGeneration) return;
 
 		// Phase 12A - restore persisted queue entries AFTER sessions are
 		// initialized (so registry.get(...) has their configs / timeout). Each
@@ -924,6 +932,7 @@ export class CueEngine {
 	stop(): void {
 		if (!this.enabled) return;
 
+		this.startGeneration++;
 		this.enabled = false;
 		this.pendingPluginRestoreIds = new Set();
 		this.deferredPluginRestoreOwners.clear();

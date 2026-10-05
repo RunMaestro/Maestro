@@ -14,7 +14,7 @@
 
 import {
 	readPianolaSupervisorTargets,
-	upsertPianolaSupervisorTarget,
+	updatePianolaSupervisorTargets,
 	removePianolaSupervisorTarget,
 	type PianolaSupervisedTarget,
 } from '../services/pianola-store';
@@ -115,31 +115,35 @@ export function pianolaSuperviseWatch(tabId: string, options: PianolaSuperviseWa
 	// Reuse an existing watcher for the same (kind, tabId, agentId) so registering
 	// the same tab twice replaces it in place instead of spawning a second watcher
 	// that would double-answer the same prompt.
-	const existing = readPianolaSupervisorTargets().find(
-		(t) => t.kind === 'watch' && t.tabId === tabId && t.agentId === options.agent
-	);
-	const target: PianolaSupervisedTarget = {
-		id: existing?.id ?? generateUUID(),
-		kind: 'watch',
-		enabled: true,
-		createdAt: existing?.createdAt ?? Date.now(),
-		tabId,
-		agentId: options.agent,
-	};
-	const interval = parsePositiveInt(options.interval, 1);
-	if (interval !== undefined) target.intervalSeconds = interval;
-	// Keep a previously chosen idle timeout when re-registering without the flag.
-	let idleHours = existing?.idleHours;
-	if (options.idleHours !== undefined) {
-		const parsed = Number(options.idleHours.trim());
-		if (options.idleHours.trim() === '' || !Number.isFinite(parsed) || parsed < 0) {
-			fail('--idle-hours must be a number of hours (0 = never)', options.json);
+	let target!: PianolaSupervisedTarget;
+	const written = updatePianolaSupervisorTargets((current) => {
+		const existing = current.find(
+			(t) => t.kind === 'watch' && t.tabId === tabId && t.agentId === options.agent
+		);
+		target = {
+			id: existing?.id ?? generateUUID(),
+			kind: 'watch',
+			enabled: true,
+			createdAt: existing?.createdAt ?? Date.now(),
+			tabId,
+			agentId: options.agent,
+		};
+		const interval = parsePositiveInt(options.interval, 1);
+		if (interval !== undefined) target.intervalSeconds = interval;
+		// Keep a previously chosen idle timeout when re-registering without the flag.
+		let idleHours = existing?.idleHours;
+		if (options.idleHours !== undefined) {
+			const parsed = Number(options.idleHours.trim());
+			if (options.idleHours.trim() === '' || !Number.isFinite(parsed) || parsed < 0) {
+				fail('--idle-hours must be a number of hours (0 = never)', options.json);
+			}
+			idleHours = parsed;
 		}
-		idleHours = parsed;
-	}
-	if (idleHours !== undefined) target.idleHours = idleHours;
-
-	const written = upsertPianolaSupervisorTarget(target);
+		if (idleHours !== undefined) target.idleHours = idleHours;
+		return existing
+			? current.map((entry) => (entry.id === existing.id ? target : entry))
+			: [...current, target];
+	});
 	if (!written.some((t) => t.id === target.id)) {
 		fail('Target failed validation and was not saved', options.json);
 	}
@@ -159,20 +163,26 @@ export function pianolaSuperviseOrchestrate(
 	options: PianolaSuperviseOrchestrateOptions
 ): void {
 	ensurePianolaEnabled(options.json);
-
-	const target: PianolaSupervisedTarget = {
-		id: generateUUID(),
-		kind: 'orchestrate',
-		enabled: true,
-		createdAt: Date.now(),
-		planId,
-	};
-	const interval = parsePositiveInt(options.interval, 1);
-	if (interval !== undefined) target.intervalSeconds = interval;
-	const concurrency = parsePositiveInt(options.concurrency, 1);
-	if (concurrency !== undefined) target.concurrency = concurrency;
-
-	const written = upsertPianolaSupervisorTarget(target);
+	let target!: PianolaSupervisedTarget;
+	const written = updatePianolaSupervisorTargets((current) => {
+		const existing = current.find(
+			(target) => target.kind === 'orchestrate' && target.planId === planId
+		);
+		target = {
+			id: existing?.id ?? generateUUID(),
+			kind: 'orchestrate',
+			enabled: true,
+			createdAt: existing?.createdAt ?? Date.now(),
+			planId,
+		};
+		const interval = parsePositiveInt(options.interval, 1);
+		if (interval !== undefined) target.intervalSeconds = interval;
+		const concurrency = parsePositiveInt(options.concurrency, 1);
+		if (concurrency !== undefined) target.concurrency = concurrency;
+		return existing
+			? current.map((entry) => (entry.id === existing.id ? target : entry))
+			: [...current, target];
+	});
 	if (!written.some((t) => t.id === target.id)) {
 		fail('Target failed validation and was not saved', options.json);
 	}
@@ -189,18 +199,23 @@ export function pianolaSuperviseProgram(
 	options: { interval?: string; json?: boolean }
 ): void {
 	ensurePianolaEnabled(options.json);
-	const existing = readPianolaSupervisorTargets().find(
-		(target) => target.kind === 'program' && target.programId === programId
-	);
-	const target: PianolaSupervisedTarget = {
-		id: existing?.id ?? generateUUID(),
-		kind: 'program',
-		enabled: true,
-		createdAt: existing?.createdAt ?? Date.now(),
-		programId,
-		intervalSeconds: parsePositiveInt(options.interval, 1) ?? 120,
-	};
-	const written = upsertPianolaSupervisorTarget(target);
+	let target!: PianolaSupervisedTarget;
+	const written = updatePianolaSupervisorTargets((current) => {
+		const existing = current.find(
+			(target) => target.kind === 'program' && target.programId === programId
+		);
+		target = {
+			id: existing?.id ?? generateUUID(),
+			kind: 'program',
+			enabled: true,
+			createdAt: existing?.createdAt ?? Date.now(),
+			programId,
+			intervalSeconds: parsePositiveInt(options.interval, 1) ?? 120,
+		};
+		return existing
+			? current.map((entry) => (entry.id === existing.id ? target : entry))
+			: [...current, target];
+	});
 	if (!written.some((entry) => entry.id === target.id))
 		fail('Target failed validation and was not saved', options.json);
 	if (options.json)
@@ -264,12 +279,11 @@ export function pianolaSuperviseSetEnabled(
 	options: PianolaSuperviseCommonOptions
 ): void {
 	ensurePianolaEnabled(options.json);
-	const current = readPianolaSupervisorTargets().find((t) => t.id === id);
-	if (!current) {
-		fail(`No supervised target with id ${id}`, options.json);
-	}
-	// Immutable: build a new target rather than mutating the read result.
-	const written = upsertPianolaSupervisorTarget({ ...current, enabled });
+	const written = updatePianolaSupervisorTargets((current) =>
+		current.map((target) => (target.id === id ? { ...target, enabled } : target))
+	);
+	if (!written.some((target) => target.id === id))
+		fail('No supervised target with id ' + id, options.json);
 	const verb = enabled ? 'Enabled' : 'Disabled';
 	if (options.json) {
 		console.log(JSON.stringify({ success: true, id, enabled, targetCount: written.length }));

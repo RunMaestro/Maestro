@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { spawn } from 'child_process';
+import { buildSync } from 'esbuild';
 import { createPianolaFsStore } from '../../../shared/pianola/fs-store';
 import type { PianolaProgram, PianolaAsk } from '../../../shared/pianola/pianola-programs';
 
@@ -23,6 +25,161 @@ afterEach(() => {
 });
 
 describe('portfolio files', () => {
+	it('restores a replacement live owner instead of stealing it during stale reclaim', () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pianola-lock-replace-'));
+		dirs.push(dir);
+		const store = createPianolaFsStore({ resolveDir: () => dir, indent: 2, trailingNewline: true });
+		const lock = path.join(dir, 'maestro-pianola-asks.json.lock');
+		fs.writeFileSync(lock, 'abandoned');
+		const old = new Date(Date.now() - 60_000);
+		fs.utimesSync(lock, old, old);
+		const owner = process.pid + '.0.live-new-owner';
+		let clock = Date.now();
+		vi.spyOn(Date, 'now').mockImplementation(() => (clock += 500));
+		const update = vi.fn(() => []);
+		renameOverride = (from, to) => {
+			renameOverride = null;
+			fs.writeFileSync(lock, owner);
+			fs.renameSync(from, to);
+		};
+		try {
+			expect(() => store.updateAsks(update)).toThrow('Timed out waiting for Pianola asks lock');
+			expect(update).not.toHaveBeenCalled();
+			expect(fs.readFileSync(lock, 'utf8')).toBe(owner);
+		} finally {
+			renameOverride = null;
+		}
+	});
+	it('round-trips memo keys that coincide with Object prototype names', () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pianola-memo-keys-'));
+		dirs.push(dir);
+		const store = createPianolaFsStore({ resolveDir: () => dir, indent: 2, trailingNewline: true });
+		expect(store.readProgramLoopMemo()['constructor']).toBeUndefined();
+		store.updateProgramLoopMemo('__proto__', { notifiedTaskIds: ['plan:task'] });
+		expect(Object.keys(store.readProgramLoopMemo())).toEqual(['__proto__']);
+		expect(store.readProgramLoopMemo()['__proto__'].notifiedTaskIds).toEqual(['plan:task']);
+	});
+	it.each(['memo', 'targets'])(
+		'serializes %s updates across two independent processes',
+		async (kind) => {
+			const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pianola-memo-processes-'));
+			dirs.push(dir);
+			const entry = path.join(dir, 'store.cjs');
+			buildSync({
+				entryPoints: [path.resolve(__dirname, '../../../shared/pianola/fs-store.ts')],
+				outfile: entry,
+				bundle: true,
+				platform: 'node',
+				format: 'cjs',
+			});
+			const initial = createPianolaFsStore({
+				resolveDir: () => dir,
+				indent: 2,
+				trailingNewline: true,
+			});
+			if (kind === 'memo') initial.writeProgramLoopMemo({});
+			else initial.writeSupervisorTargets([]);
+			const workers = ['one', 'two'].map((id) => {
+				const script = [
+					'const fs = require("fs");',
+					'const store = require(' +
+						JSON.stringify(entry) +
+						').createPianolaFsStore({ resolveDir: () => ' +
+						JSON.stringify(dir) +
+						', indent: 2, trailingNewline: true });',
+					kind === 'memo' ? 'store.readProgramLoopMemo();' : 'store.readSupervisorTargets();',
+					'const read = fs.readFileSync; fs.readFileSync = (file, ...args) => { const value = read.call(fs, file, ...args); if (String(file).endsWith(' +
+						JSON.stringify(
+							kind === 'memo'
+								? 'maestro-pianola-program-loop.json'
+								: 'maestro-pianola-supervisor.json'
+						) +
+						')) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100); return value; };',
+					'console.log("ready");',
+					kind === 'memo'
+						? 'process.stdin.once("data", () => { store.updateProgramLoopMemo(' +
+							JSON.stringify(id) +
+							', { notifiedTaskIds: [' +
+							JSON.stringify(id + ':task') +
+							'] }); process.stdin.destroy(); });'
+						: 'process.stdin.once("data", () => { store.upsertSupervisorTarget(' +
+							JSON.stringify({
+								id,
+								kind: 'watch',
+								agentId: id,
+								tabId: id,
+								enabled: true,
+								createdAt: 1,
+							}) +
+							'); process.stdin.destroy(); });',
+				].join('\n');
+				const child = spawn(process.execPath, ['-e', script], { stdio: ['pipe', 'pipe', 'pipe'] });
+				let errors = '';
+				child.stderr.on('data', (chunk) => {
+					errors += String(chunk);
+				});
+				const ready = new Promise<void>((resolve, reject) => {
+					child.stdout.on('data', (chunk) => {
+						if (String(chunk).includes('ready')) resolve();
+					});
+					child.once('error', reject);
+					child.once('close', (code) => {
+						if (code !== 0) reject(new Error(errors));
+					});
+				});
+				const done = new Promise<void>((resolve, reject) => {
+					child.once('error', reject);
+					child.once('close', (code) => (code === 0 ? resolve() : reject(new Error(errors))));
+				});
+				return { child, ready, done };
+			});
+			try {
+				const done = Promise.all(workers.map((worker) => worker.done));
+				await Promise.all(workers.map((worker) => worker.ready));
+				for (const worker of workers) worker.child.stdin.write('go');
+				await done;
+				const store = createPianolaFsStore({
+					resolveDir: () => dir,
+					indent: 2,
+					trailingNewline: true,
+				});
+				if (kind === 'memo')
+					expect(store.readProgramLoopMemo()).toEqual({
+						one: { notifiedTaskIds: ['one:task'] },
+						two: { notifiedTaskIds: ['two:task'] },
+					});
+				else
+					expect(
+						store
+							.readSupervisorTargets()
+							.map((target) => target.id)
+							.sort()
+					).toEqual(['one', 'two']);
+			} finally {
+				for (const worker of workers) if (worker.child.exitCode === null) worker.child.kill();
+			}
+		},
+		15_000
+	);
+	it('merges memo updates from independent program loops', () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pianola-memo-'));
+		dirs.push(dir);
+		const first = createPianolaFsStore({ resolveDir: () => dir, indent: 2, trailingNewline: true });
+		const second = createPianolaFsStore({
+			resolveDir: () => dir,
+			indent: 2,
+			trailingNewline: true,
+		});
+		expect(first.readProgramLoopMemo()).toEqual({});
+		expect(second.readProgramLoopMemo()).toEqual({});
+		first.updateProgramLoopMemo('one', { notifiedTaskIds: ['p:t'] });
+		second.updateProgramLoopMemo('two', { notifiedTaskIds: ['q:u'] });
+		first.updateProgramLoopMemo('one', { notifiedTaskIds: ['p:t'], lastLoggedReason: 'idle' });
+		expect(second.readProgramLoopMemo()).toEqual({
+			one: { notifiedTaskIds: ['p:t'], lastLoggedReason: 'idle' },
+			two: { notifiedTaskIds: ['q:u'] },
+		});
+	});
 	it('uses independent temporary files when writes overlap, even in the same millisecond', () => {
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pianola-atomic-'));
 		dirs.push(dir);

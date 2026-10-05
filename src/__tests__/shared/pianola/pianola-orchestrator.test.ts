@@ -381,6 +381,23 @@ describe('runOrchestratorIteration - prevStates carry-across', () => {
 });
 
 describe('runOrchestratorIteration - dispatch failure does not leak agents', () => {
+	it('retains the ensured agent and tab when the pre-dispatch boundary read fails', async () => {
+		const deps = makeDeps();
+		deps.ensureAgent = vi.fn(async () => ({ agentId: 'created-agent', tabId: 'target-tab' }));
+		deps.getRecentMessages = vi.fn(async () => {
+			throw new Error('history unavailable');
+		});
+		const result = await runOrchestratorIteration(initialOrchestratorState(plan([task()])), deps, {
+			concurrencyLimit: 1,
+		});
+		expect(result.state.plan.tasks[0]).toMatchObject({
+			status: 'pending',
+			agentId: 'created-agent',
+			tabId: 'target-tab',
+		});
+		expect(deps.dispatch).not.toHaveBeenCalled();
+		expect(deps.persist).toHaveBeenCalledWith(result.state.plan);
+	});
 	it('persists the bound agent on a failed dispatch so the retry reuses it', async () => {
 		const p = plan([task({ id: 'A' })]);
 		let created = 0;
@@ -416,6 +433,68 @@ describe('runOrchestratorIteration - dispatch failure does not leak agents', () 
 
 describe('independent oracle settlement', () => {
 	const validation = { command: ['sh', '-c', 'true'], target: '/tmp/work' };
+	it.each(['verified', 'failed'] as const)(
+		'resets transient unknown attempts after %s',
+		async (verdict) => {
+			const deps = makeDeps({ runStates: { t1: 'idle' } });
+			deps.validate = vi.fn(async () => ({ verdict, reason: 'oracle result' }));
+			deps.getRunLedger = vi.fn(async () => ({ checksPassed: verdict === 'verified' }));
+			const result = await runOrchestratorIteration(
+				{
+					plan: plan([task({ status: 'running', validation, validationUnknownAttempts: 1 })]),
+					prevStates: {},
+				},
+				deps,
+				{ concurrencyLimit: 1 }
+			);
+			expect(result.state.plan.tasks[0].validationUnknownAttempts).toBe(0);
+		}
+	);
+	it('does not settle an unknown oracle using unrelated passing checks or dispatch candidate fixes', async () => {
+		const deps = makeDeps({ runStates: { t1: 'idle' } });
+		deps.validate = vi.fn(async () => ({ verdict: 'unknown', reason: 'sandbox unavailable' }));
+		deps.getRunLedger = vi.fn(async () => ({ checksPassed: true, openFindings: 0 }));
+		deps.reactiveEnabled = () => true;
+		deps.dispatchFix = vi.fn(async () => ({ success: true }));
+		deps.requestMerge = vi.fn(async () => ({ merged: true }));
+		const first = await runOrchestratorIteration(
+			{ plan: plan([task({ status: 'running', validation })]), prevStates: { t1: 'busy' } },
+			deps,
+			{ concurrencyLimit: 1 }
+		);
+		const second = await runOrchestratorIteration(first.state, deps, { concurrencyLimit: 1 });
+		expect(statusOf(second.state, 't1')).toBe('needs_review');
+		expect(deps.requestMerge).not.toHaveBeenCalled();
+		deps.getRunLedger = vi.fn(async () => ({ checksPassed: false }));
+		await runOrchestratorIteration(second.state, deps, { concurrencyLimit: 1 });
+		expect(deps.dispatchFix).not.toHaveBeenCalled();
+	});
+	it('routes a failed verdict to review even without a ledger reader', async () => {
+		const deps = makeDeps({ runStates: { t1: 'idle' } });
+		deps.validate = vi.fn(async () => ({ verdict: 'failed', reason: 'assertion failed' }));
+		const result = await runOrchestratorIteration(
+			{ plan: plan([task({ status: 'running', validation })]), prevStates: { t1: 'busy' } },
+			deps,
+			{ concurrencyLimit: 1 }
+		);
+		expect(statusOf(result.state, 't1')).toBe('needs_review');
+		expect(result.completedTaskIds).toEqual([]);
+	});
+	it('does not claim required validation passed when no validator is wired', async () => {
+		const deps = makeDeps({ runStates: { t1: 'idle' } });
+		deps.getProgramCharter = () => ({ validationRequired: true, maxAttempts: 3 });
+		deps.getRunLedger = vi.fn(async () => ({ checksPassed: true, openFindings: 0 }));
+		deps.reactiveEnabled = () => true;
+		const result = await runOrchestratorIteration(
+			{
+				plan: plan([task({ status: 'running', validation })], { programId: 'p' }),
+				prevStates: { t1: 'busy' },
+			},
+			deps,
+			{ concurrencyLimit: 1 }
+		);
+		expect(statusOf(result.state, 't1')).toBe('needs_review');
+	});
 	it('validates before reading the ledger and completes only on green', async () => {
 		let checked = false;
 		const deps = makeDeps({ runStates: { t1: 'idle' } });

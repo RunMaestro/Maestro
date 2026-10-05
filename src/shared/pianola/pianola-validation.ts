@@ -10,6 +10,8 @@ export interface PianolaSandboxObservation {
 	stderr: string;
 	timedOut: boolean;
 	error: string | null;
+	policyViolation?: string;
+	readOnlyWriteDetected?: boolean;
 }
 
 export function translatePianolaSandboxPath(path: string): string {
@@ -44,9 +46,16 @@ export function validatePianolaVerdict(
 ): { verdict: PianolaValidationVerdict; reason: string } {
 	if (spec.artifacts?.some((artifact) => !insideTarget(spec.target, artifact)))
 		return { verdict: 'failed', reason: 'Artifact path outside validation target' };
+	if (observation.policyViolation)
+		return { verdict: 'failed', reason: observation.policyViolation };
 	if (!observation.observed)
 		return { verdict: 'unknown', reason: observation.error ?? 'Sandbox could not start' };
 	if (observation.timedOut) return { verdict: 'unknown', reason: 'Validation timed out' };
+	if (observation.readOnlyWriteDetected === true)
+		return {
+			verdict: 'unknown',
+			reason: 'Validation attempted a write to a read-only file system',
+		};
 	if (
 		(observation.returncode === 126 || observation.returncode === 127) &&
 		/No such file or directory|not found|Permission denied/i.test(observation.stderr)

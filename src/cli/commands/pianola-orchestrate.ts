@@ -158,6 +158,8 @@ export interface DesktopSessionEntry {
 	agentId: string;
 	toolType: string;
 	state: 'idle' | 'busy' | 'unknown';
+	state: 'idle' | 'busy';
+	active?: boolean;
 }
 
 interface DesktopSessionsList {
@@ -307,12 +309,17 @@ export function sandboxSpawnArgs(
 		: [...prefix, ...(crossesWsl ? args.map(quoteForPosixShell) : args)];
 }
 
-async function runSandbox(task: PianolaTask): Promise<PianolaSandboxObservation> {
+async function runSandbox(
+	task: PianolaTask,
+	trustedRoot: string
+): Promise<PianolaSandboxObservation> {
 	const spec = task.validation!;
 	const prefix = sandboxRunnerPrefix();
 	const runnerArgs = [
 		'--workspace',
 		translatePianolaSandboxPath(spec.target),
+		'--trusted-root',
+		translatePianolaSandboxPath(trustedRoot),
 		'--timeout',
 		String(spec.timeoutSeconds ?? 120),
 		// Leads name artifacts relative to the root; the runner wants absolute sandbox paths.
@@ -402,6 +409,10 @@ async function runSandbox(task: PianolaTask): Promise<PianolaSandboxObservation>
 async function validateTask(planId: string, task: PianolaTask) {
 	const spec = task.validation!;
 	const runId = resolvePianolaRunId(planId, task);
+	const plan = getPianolaPlan(planId);
+	const trustedRoot = plan?.programId
+		? readPianolaPrograms().find((program) => program.id === plan.programId)?.root
+		: task.cwd;
 	const startedAt = Date.now();
 	const preflight = validatePianolaVerdict(spec, {
 		observed: false,
@@ -410,8 +421,14 @@ async function validateTask(planId: string, task: PianolaTask) {
 		stderr: '',
 		timedOut: false,
 		error: null,
+		...(!trustedRoot?.trim()
+			? {
+					policyViolation:
+						'Validation trusted-root policy requires a declared program root or standalone task cwd',
+				}
+			: {}),
 	});
-	const observation = preflight.verdict === 'failed' ? null : await runSandbox(task);
+	const observation = preflight.verdict === 'failed' ? null : await runSandbox(task, trustedRoot!);
 	const { verdict, reason } = observation ? validatePianolaVerdict(spec, observation) : preflight;
 	const check = checkFromVerdict(verdict, reason, spec.command, startedAt, Date.now());
 	let run = getAgentRun(runId);
@@ -535,7 +552,10 @@ export function resolveExistingPianolaAgentType(
 ): string | undefined {
 	if (task.agentType) return task.agentType;
 	if (!task.agentId) return undefined;
-	return sessions.find((session) => session.sessionId === task.agentId)?.toolType;
+	const matches = sessions.filter(
+		(session) => session.agentId === task.agentId || session.sessionId === task.agentId
+	);
+	return (matches.find((session) => session.active) ?? matches[0])?.toolType;
 }
 
 function campaignIdForPianolaPlan(planId: string): string {
@@ -846,6 +866,13 @@ export async function pianolaOrchestrate(
 	const program = plan.programId
 		? readPianolaPrograms().find((entry) => entry.id === plan.programId)
 		: undefined;
+	const programPausedNow = (): boolean =>
+		!!plan.programId &&
+		readPianolaPrograms().find((entry) => entry.id === plan.programId)?.status === 'paused';
+	if (program?.status === 'paused') {
+		console.log('[orchestrator] Program paused; stopping.');
+		return;
+	}
 	if (program?.charter.validationRequired !== false && plan.tasks.some((task) => task.validation)) {
 		try {
 			sandboxRunnerPrefix();
@@ -1001,19 +1028,25 @@ export async function pianolaOrchestrate(
 			return getTaskMessages(task, options?.fresh);
 		},
 		ensureAgent: async (task) => {
+			if (programPausedNow()) return { error: 'program paused' };
 			if (task.agentId) {
 				let agentType = task.agentType;
-				if (!agentType) {
-					try {
-						agentType = resolveExistingPianolaAgentType(task, await listDesktopSessions());
-					} catch {
-						// Preserve the pre-existing short-circuit behavior if the live session
-						// list is temporarily unavailable; the next tick can enrich it.
-					}
+				let tabId = task.tabId;
+				try {
+					const sessions = await listDesktopSessions();
+					const matching = sessions.filter((entry) => entry.agentId === task.agentId);
+					const target = tabId
+						? sessions.find((entry) => entry.tabId === tabId)
+						: (matching.find((entry) => entry.active) ?? matching[0]);
+					tabId ??= target?.tabId;
+					agentType ??= target?.toolType ?? resolveExistingPianolaAgentType(task, sessions);
+				} catch {
+					// Retain the binding on transient discovery failure; dispatch requires a known tab.
 				}
 				return {
 					agentId: task.agentId,
 					...(agentType ? { agentType } : {}),
+					...(tabId ? { tabId } : {}),
 				};
 			}
 			// Capability/load-aware selection: pick a ready, least-loaded tool type
@@ -1074,9 +1107,23 @@ export async function pianolaOrchestrate(
 			if (!result.success || !result.sessionId) {
 				return { error: result.error ?? 'create_session did not return a sessionId' };
 			}
-			return { agentId: result.sessionId, agentType: toolType || 'claude-code' };
+			sessionsCache = null;
+			try {
+				const sessions = await listDesktopSessions();
+				const matching = sessions.filter((entry) => entry.agentId === result.sessionId);
+				const target = matching.find((entry) => entry.active) ?? matching[0];
+				return {
+					agentId: result.sessionId,
+					agentType: toolType || 'claude-code',
+					tabId: target?.tabId,
+				};
+			} catch {
+				// Preserve the newly created agent so a discovery timeout cannot orphan it.
+				return { agentId: result.sessionId, agentType: toolType || 'claude-code' };
+			}
 		},
 		dispatch: async (task, agentId) => {
+			if (programPausedNow()) return { success: false, error: 'program paused' };
 			const res = await runDispatch(agentId, task.prompt, { newTab: true, background: true });
 			// Dispatch success is delivery, not a run receipt. Never retry a delivered
 			// but unaddressable prompt: that could duplicate work. The engine parks it.
@@ -1120,6 +1167,8 @@ export async function pianolaOrchestrate(
 			const fixPrompt = `The acceptance ledger is AgentRun ${ledger.runId ?? '(unavailable)'}. It has ${ledger.openFindings ?? 0} open review finding(s) and/or failing checks. Required checks: ${(task.requiredChecks ?? []).join(', ') || '(existing ledger checks)'}. Address them and record evidence on that exact acceptance run, then stop.`;
 			const agentId = task.agentId;
 			if (!agentId) return { success: false, error: 'no agent bound' };
+			if (!task.tabId) return { success: false, error: 'no target tab bound' };
+			if (programPausedNow()) return { success: false, error: 'program paused' };
 			auditAgentRunAction(ledger.runId, 'auto-fix', {
 				taskId: task.id,
 				openFindings: ledger.openFindings ?? 0,
@@ -1128,6 +1177,7 @@ export async function pianolaOrchestrate(
 			});
 			try {
 				if (task.tabId) historyCache.delete(task.tabId);
+				if (programPausedNow()) return { success: false, error: 'program paused' };
 				const res = await runDispatch(agentId, fixPrompt, { newTab: true, background: true });
 				const tabId = res.tabId ?? res.sessionId;
 				if (tabId) historyCache.delete(tabId);
@@ -1166,6 +1216,7 @@ export async function pianolaOrchestrate(
 			// rates high-risk (high-risk-always-escalates).
 			if (!autopilotEnabledNow())
 				return { merged: false, error: 'Pianola automatic repairs are disabled' };
+			if (programPausedNow()) return { merged: false, error: 'program paused' };
 			if (ledger.checksPassed !== true || (ledger.openFindings ?? 0) > 0) {
 				return { merged: false, error: 'not green (needs passing checks + zero open findings)' };
 			}
@@ -1215,11 +1266,28 @@ export async function pianolaOrchestrate(
 				console.error('[orchestrator] Pianola disabled in Settings; stopping.');
 				break;
 			}
+			if (programPausedNow()) {
+				console.log('[orchestrator] Program paused; stopping.');
+				break;
+			}
 
 			let result: OrchestratorIterationResult;
 			try {
 				result = await runOrchestratorIteration(state, deps, { concurrencyLimit });
 			} catch (error) {
+				if (error instanceof SandboxRunnerConfigurationError) {
+					if (options.json)
+						console.log(
+							JSON.stringify({
+								success: false,
+								code: 'PIANOLA_SANDBOX_CONFIGURATION',
+								error: error.message,
+							})
+						);
+					else console.error(error.message);
+					process.exitCode = 1;
+					break;
+				}
 				// A transient failure (e.g. a WS sendCommand timeout) must not tear down
 				// the whole run. Mirror the watcher: log and keep orchestrating - the next
 				// tick re-polls and re-dispatches from the persisted plan.

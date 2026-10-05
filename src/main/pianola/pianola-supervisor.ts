@@ -30,6 +30,8 @@ import {
 	readSupervisorTargets,
 	removeSupervisorTarget,
 	writeSupervisorTargets,
+	readPrograms,
+	readPlans,
 	supervisorFilePath,
 	readScopeCheckpoint,
 	writeScopeCheckpoint,
@@ -38,6 +40,8 @@ import {
 } from './pianola-store-main';
 import { PIANOLA_WATCH_RETIRED_EXIT_CODE } from '../../shared/pianola/pianola-watcher';
 import { pausePianolaScopeDecisions } from '../../shared/pianola/pianola-decision-lifecycle';
+import { planProgress } from '../../shared/pianola/pianola-tasks';
+import { PIANOLA_PROGRAMS_FILENAME, PIANOLA_PLANS_FILENAME } from '../../shared/pianola/storage';
 import type { PianolaSupervisedTarget, PianolaSupervisedKind } from '../../shared/pianola/storage';
 import {
 	resolvePianolaScopeOwnership,
@@ -163,6 +167,22 @@ export class PianolaSupervisor {
 	constructor(deps: PianolaSupervisorDeps) {
 		this.deps = deps;
 		this.spawnChild = deps.spawnChild ?? ((command, args, opts) => spawn(command, args, opts));
+	}
+	private runnableTargets(): PianolaSupervisedTarget[] {
+		const programs = readPrograms();
+		const plans = readPlans();
+		const paused = new Set(
+			programs.filter((program) => program.status === 'paused').map((program) => program.id)
+		);
+		const pausedLeads = new Set(
+			programs.filter((program) => paused.has(program.id)).map((program) => program.leadAgentId)
+		);
+		return readSupervisorTargets().filter((target) => {
+			if (target.kind === 'program') return !paused.has(target.programId ?? '');
+			if (target.kind === 'watch') return !pausedLeads.has(target.agentId);
+			const plan = plans.find((plan) => plan.id === target.planId);
+			return !plan || (!planProgress(plan).complete && !paused.has(plan.programId ?? ''));
+		});
 	}
 
 	/** Register future top-level agents and retire their watches when they close. */
@@ -293,7 +313,7 @@ export class PianolaSupervisor {
 			return;
 		}
 
-		const targets = readSupervisorTargets();
+		const targets = this.runnableTargets();
 		const byId = new Map(targets.map((t) => [t.id, t] as const));
 
 		// Stop and forget children whose target was removed or disabled.
@@ -344,7 +364,7 @@ export class PianolaSupervisor {
 	 */
 	relaunchStale(): number {
 		if (!this.deps.isEnabled()) return 0;
-		const targets = readSupervisorTargets();
+		const targets = this.runnableTargets();
 		const stale = staleTargets(targets, (id) => this.isAlive(id));
 		for (const target of stale) {
 			const existing = this.children.get(target.id);
@@ -441,7 +461,13 @@ export class PianolaSupervisor {
 			// file throws, and atomic temp+rename writes replace the inode anyway.
 			this.watcher = fs.watch(dir, (_event, changed) => {
 				// Some platforms report a null filename; reconcile to be safe.
-				if (changed && changed !== filename) return;
+				if (
+					changed &&
+					changed !== filename &&
+					changed !== PIANOLA_PROGRAMS_FILENAME &&
+					changed !== PIANOLA_PLANS_FILENAME
+				)
+					return;
 				this.scheduleReconcile();
 			});
 			this.watcher.on('error', (error) => {
@@ -633,7 +659,7 @@ export class PianolaSupervisor {
 				entry.state = 'stopped';
 				return;
 			}
-			const target = readSupervisorTargets().find((t) => t.id === entry.target.id);
+			const target = this.runnableTargets().find((t) => t.id === entry.target.id);
 			if (!target || !target.enabled) {
 				entry.state = 'stopped';
 				this.children.delete(entry.target.id);

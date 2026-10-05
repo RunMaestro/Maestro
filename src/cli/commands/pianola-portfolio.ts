@@ -1,7 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import yaml from 'js-yaml';
-import { isScalar, isSeq, parseDocument } from 'yaml';
+import { isScalar, isSeq, parseDocument, stringify as stringifyYaml } from 'yaml';
 import { writeCueYamlAtomicSync } from '../../main/cue/cue-yaml-write';
 import { MaestroClient } from '../services/maestro-client';
 import { readAgentRuns } from '../services/agent-run-store';
@@ -17,7 +17,6 @@ import {
 	readPianolaPlans,
 	readPianolaDecisions,
 	readPianolaSupervisorTargets,
-	writePianolaSupervisorTargets,
 	readPianolaProgramLoopMemo,
 } from '../services/pianola-store';
 import {
@@ -150,12 +149,16 @@ export function updateGeneratedCueYaml(raw: string, program: PianolaProgram): st
 		!(isScalar(subscriptions) && subscriptions.value === null)
 	)
 		throw new Error('Cue subscriptions must be an array');
+	if (isScalar(subscriptions) && subscriptions.value === null && subscriptions.range) {
+		raw = raw.slice(0, subscriptions.range[0]) + raw.slice(subscriptions.range[1]);
+	}
 	if (isSeq(subscriptions) && subscriptions.flow && subscriptions.range) {
-		const entries = subscriptions.toJSON();
-		const list = entries.length
+		subscriptions.flow = false;
+		// The sequence anchor remains in the untouched mapping header.
+		subscriptions.anchor = undefined;
+		const list = subscriptions.items.length
 			? '\n' +
-				yaml
-					.dump(entries, { lineWidth: -1, noRefs: true })
+				stringifyYaml(subscriptions, { verifyAliasOrder: false })
 					.trimEnd()
 					.split('\n')
 					.map((line) => '  ' + line)
@@ -164,7 +167,10 @@ export function updateGeneratedCueYaml(raw: string, program: PianolaProgram): st
 		raw = raw.slice(0, subscriptions.range[0]) + list + raw.slice(subscriptions.range[1]);
 	}
 	const generated = generatedCueSubscriptions(program);
-	const match = /^subscriptions:[ \t]*(?:#.*)?$/m.exec(raw);
+	const match =
+		/^(?:subscriptions|"subscriptions"|'subscriptions'):[ \t]*(?:&[\w-]+[ \t]*)?(?:#.*)?\r?$/m.exec(
+			raw
+		);
 	const after = match ? match.index + match[0].length : raw.length;
 	const tail = raw.slice(after);
 	const boundary = /^(?!-\s)[^\s#][^\n]*:/m.exec(tail);
@@ -183,8 +189,10 @@ export function updateGeneratedCueYaml(raw: string, program: PianolaProgram): st
 			]),
 			GENERATED_END,
 		].join('\n') + '\n';
-	const start = raw.indexOf(GENERATED_BEGIN);
-	const end = raw.indexOf(GENERATED_END);
+	const startMatch = new RegExp('^' + GENERATED_BEGIN + '\\r?$', 'm').exec(raw);
+	const endMatch = new RegExp('^' + GENERATED_END + '\\r?$', 'm').exec(raw);
+	const start = startMatch?.index ?? -1;
+	const end = endMatch?.index ?? -1;
 	if (start >= 0 || end >= 0) {
 		if (start < 0 || end < start) throw new Error('Unmatched generated Cue block marker');
 		const updated =
@@ -332,8 +340,51 @@ export async function pianolaProgramApply(options: {
 				? program.remoteEnv
 				: { MAESTRO_CLI_JS: process.argv[1] ?? '', MAESTRO_USER_DATA: getConfigDirectory() };
 			program = { ...program, updatedAt: existing ? Date.now() : program.updatedAt };
-			upsertPianolaProgram(program);
-			for (const [key, role] of Object.entries(program.roles)) {
+			let desktopSessions:
+				| {
+						id: string;
+						name: string;
+						cwd: string;
+						toolType: string;
+						sessionSshRemoteConfig?: { enabled: boolean; remoteId?: string | null };
+				  }[]
+				| undefined;
+			const liveSessions = async () => {
+				if (desktopSessions) return desktopSessions;
+				if (!client) {
+					client = new MaestroClient();
+					await client.connect();
+				}
+				const response = await client.sendCommand<{
+					sessions?: NonNullable<typeof desktopSessions>;
+				}>({ type: 'get_sessions' }, 'sessions_list');
+				if (!Array.isArray(response.sessions)) throw new Error('Could not list live role agents');
+				desktopSessions = response.sessions;
+				return desktopSessions;
+			};
+			for (const [key, inputRole] of Object.entries(program.roles)) {
+				let role = inputRole;
+				if (!role.agentId) {
+					const matches = (await liveSessions()).filter(
+						(session) =>
+							session.name === role.name &&
+							session.cwd === program.root &&
+							session.toolType === (role.agentType ?? 'omp') &&
+							(session.sessionSshRemoteConfig?.enabled
+								? session.sessionSshRemoteConfig.remoteId
+								: undefined) === program.remoteId
+					);
+					if (matches.length > 1)
+						throw new Error(`Multiple live agents match ${program.id}:${key}`);
+					if (matches[0]) {
+						role = { ...role, agentId: matches[0].id };
+						program = {
+							...program,
+							roles: { ...program.roles, [key]: role },
+							...(key === 'lead' ? { leadAgentId: role.agentId } : {}),
+						};
+					}
+				}
 				if (role.agentId) {
 					const old = existing?.roles[key];
 					const configPatch: Record<string, unknown> = {};
@@ -341,6 +392,28 @@ export async function pianolaProgramApply(options: {
 					if (old?.instructions !== role.instructions)
 						configPatch.newSessionMessage = role.instructions ?? null;
 					if (roleEnv) configPatch.customEnvVars = roleEnv;
+					if (existing?.remoteId !== program.remoteId) {
+						const session = (await liveSessions()).find((session) => session.id === role.agentId);
+						if (!session) throw new Error(`Role agent not found: ${role.agentId}`);
+						const remoteId = session.sessionSshRemoteConfig?.enabled
+							? session.sessionSshRemoteConfig.remoteId
+							: undefined;
+						if (remoteId !== program.remoteId) {
+							const result = await client!.sendCommand<{ success: boolean; error?: string }>(
+								{
+									type: 'update_session_ssh',
+									sessionId: role.agentId,
+									sshPatch: {
+										enabled: !!program.remoteId,
+										remoteId: program.remoteId ?? null,
+										workingDirOverride: program.root,
+									},
+								},
+								'update_session_ssh_result'
+							);
+							if (!result.success) throw new Error(result.error ?? 'Failed to update role remote');
+						}
+					}
 					if (Object.keys(configPatch).length || (existing && existing.root !== program.root)) {
 						if (!client) {
 							client = new MaestroClient();
@@ -399,8 +472,8 @@ export async function pianolaProgramApply(options: {
 					roles: { ...program.roles, [key]: { ...role, agentId: result.sessionId } },
 					...(key === 'lead' ? { leadAgentId: result.sessionId } : {}),
 				};
-				upsertPianolaProgram(program);
 			}
+			upsertPianolaProgram(program);
 			const warning = writeProgramCue(program);
 			if (warning) cueWarnings.push(warning);
 			applied.push(program);
@@ -438,21 +511,6 @@ export function pianolaProgramStatus(
 	const updated =
 		current.status === status ? current : { ...current, status, updatedAt: Date.now() };
 	if (updated !== current) upsertPianolaProgram(updated);
-	const planIds = new Set(
-		readPianolaPlans()
-			.filter((plan) => plan.programId === id)
-			.map((plan) => plan.id)
-	);
-	const targets = readPianolaSupervisorTargets();
-	const enabled = status === 'active';
-	const next = targets.map((target) =>
-		(target.kind === 'orchestrate' && planIds.has(target.planId ?? '')) ||
-		(target.kind === 'watch' && !!current.leadAgentId && target.agentId === current.leadAgentId)
-			? { ...target, enabled }
-			: target
-	);
-	if (next.some((target, index) => target.enabled !== targets[index].enabled))
-		writePianolaSupervisorTargets(next);
 	print(updated, options.json);
 }
 

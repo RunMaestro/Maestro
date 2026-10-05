@@ -1,8 +1,8 @@
 """Linux CLI observation: sealed candidates, isolated namespaces, enforced resources.
 
-Only the accepted artifact files enter the sandbox. Candidate code cannot access
-host homes, credentials, sockets, or its writable source tree. Missing kernel,
-bubblewrap, or user-manager controls are errors, never an unsandboxed fallback.
+The project is read-only context; accepted artifacts are additionally sealed.
+Toolchain mounts are pinned before launch. Missing kernel, bubblewrap, or
+user-manager controls are errors, never an unsandboxed fallback.
 """
 from __future__ import annotations
 
@@ -30,6 +30,10 @@ class IsolationError(RuntimeError):
 
 class CandidateError(RuntimeError):
     """The candidate violated its own contract; a definite, repairable failure rather than a missing observation."""
+
+
+class PolicyViolation(CandidateError):
+    """The validation target is outside the operator-declared workspace boundary."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,8 +76,10 @@ def _snapshot(
     if len(paths) > limits.artifact_count:
         raise IsolationError("CLI validation artifact manifest exceeds its limit")
     root_fd = _descriptor(stack, os.open(workspace, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW))
+    if Path(os.readlink(f"/proc/self/fd/{root_fd}")) != workspace:
+        raise PolicyViolation("Validation target changed while its trusted-root scope was checked")
     mounts: list[str] = ["--dir", "/workspace"]
-    descriptors: list[int] = []
+    descriptors: list[int] = [root_fd]
     observed: list[tuple[Path, str, int]] = []
     seen: set[Path] = set()
     remaining = limits.artifact_bytes
@@ -87,11 +93,11 @@ def _snapshot(
         seen.add(relative)
         with ExitStack() as source_stack:
             parent_fd = root_fd
-            for part in relative.parts[:-1]:
-                parent_fd = _descriptor(source_stack, os.open(
-                    part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent_fd,
-                ))
             try:
+                for part in relative.parts[:-1]:
+                    parent_fd = _descriptor(source_stack, os.open(
+                        part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent_fd,
+                    ))
                 source_fd = _descriptor(source_stack, os.open(
                     relative.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent_fd,
                 ))
@@ -162,6 +168,8 @@ def _capture(
     streams = {"stdout": bytearray(), "stderr": bytearray(), "status": bytearray()}
     isolation: dict[str, object] = {}
     truncated = {"stdout": False, "stderr": False}
+    read_only_write_detected = False
+    stderr_tail = b""
     released = False
     exit_status: int | None = None
     with selectors.DefaultSelector() as selector:
@@ -181,6 +189,10 @@ def _capture(
                 if name == "status":
                     streams[name].extend(chunk)
                 else:
+                    if name == "stderr" and not read_only_write_detected:
+                        diagnostic = (stderr_tail + chunk).lower()
+                        read_only_write_detected = b"read-only file system" in diagnostic or b"erofs" in diagnostic
+                        stderr_tail = diagnostic[-20:]
                     available = max(0, limits.output_bytes - len(streams[name]))
                     streams[name].extend(chunk[:available])
                     if len(chunk) > available:
@@ -217,6 +229,7 @@ def _capture(
     if not released or exit_status != process.returncode or streams["status"].strip():
         raise IsolationError("No complete isolation receipt: " + streams["stderr"].decode("utf-8", "replace")[:2000])
     isolation["outputTruncated"] = truncated
+    isolation["readOnlyWriteDetected"] = read_only_write_detected
     return bytes(streams["stdout"]), bytes(streams["stderr"]), isolation
 
 
@@ -256,7 +269,9 @@ def _resolve_command(command: Sequence[str], workspace: Path | None = None) -> l
     return list(command) if real.is_relative_to("/usr") else [*command[:index], str(real), *command[index + 1:]]
 
 
-def _toolchain_mounts(command: Sequence[str], workspace: Path) -> list[str]:
+def _toolchain_mounts(
+    command: Sequence[str], workspace: Path, stack: ExitStack, descriptors: list[int],
+) -> list[str]:
     """Read-only project interpreter: an absolute program outside the workspace (after any env prefix), its
     virtualenv, and the base Python that virtualenv names, at their host paths (symlink aliases included)."""
     first = Path(command[_program_index(command)])
@@ -269,7 +284,13 @@ def _toolchain_mounts(command: Sequence[str], workspace: Path) -> list[str]:
     aliases: list[Path] = [] if first.is_relative_to(workspace) else [first]
     if venv is not None:
         roots.append(venv)
-        for line in (venv / "pyvenv.cfg").read_text(encoding="utf-8").splitlines():
+        config_fd = _descriptor(stack, os.open(venv / "pyvenv.cfg", os.O_RDONLY | os.O_NONBLOCK))
+        if not stat.S_ISREG(os.fstat(config_fd).st_mode):
+            raise IsolationError("Toolchain configuration must be a regular file")
+        config = os.read(config_fd, 8193)
+        if len(config) > 8192:
+            raise IsolationError("Toolchain configuration exceeds its 8192-byte limit")
+        for line in config.decode("utf-8").splitlines():
             key, _, value = line.partition("=")
             if key.strip() == "home" and value.strip():
                 aliases.append(Path(value.strip()))
@@ -297,8 +318,13 @@ def _toolchain_mounts(command: Sequence[str], workspace: Path) -> list[str]:
         if (resolved.is_relative_to(workspace) or resolved.is_relative_to("/usr")
                 or any(resolved.is_relative_to(existing) for existing in bound)):
             continue
+        fd = _descriptor(stack, os.open(resolved, os.O_PATH | os.O_NOFOLLOW))
+        source = Path(f"/proc/self/fd/{fd}")
+        if stat.S_ISLNK(os.fstat(fd).st_mode) or Path(os.readlink(source)) != resolved:
+            raise IsolationError("Toolchain mount changed while its scope was checked")
+        descriptors.append(fd)
         bound.append(resolved)
-        mounts.extend(["--ro-bind", str(resolved), str(resolved)])
+        mounts.extend(["--ro-bind", str(source), str(resolved)])
     linked: set[Path] = set()
     for path in aliases:
         for ancestor in (path, *path.parents):
@@ -312,8 +338,16 @@ def _toolchain_mounts(command: Sequence[str], workspace: Path) -> list[str]:
 def run_isolated_cli(
     command: Sequence[str], workspace: Path, artifacts: Sequence[Path], *,
     timeout: float = 30, limits: CliIsolationLimits = CliIsolationLimits(),
+    trusted_root: Path | None = None,
 ) -> IsolatedCliResult:
     """Observe an argv command against sealed artifacts; never execute on the host."""
+    if trusted_root is None:
+        raise PolicyViolation("Validation requires an operator-declared --trusted-root")
+    trusted_root = trusted_root.resolve()
+    requested_workspace = workspace.absolute()
+    workspace = workspace.resolve(strict=True)
+    if not workspace.is_relative_to(trusted_root):
+        raise PolicyViolation(f"Validation target {workspace} is outside trusted root {trusted_root}")
     if sys.platform != "linux":
         raise IsolationError("CLI isolation requires the configured Linux validation host")
     if not math.isfinite(timeout) or not 0 < timeout <= limits.timeout_seconds:
@@ -323,7 +357,11 @@ def run_isolated_cli(
     bwrap = shutil.which("bwrap")
     if bwrap is None or not Path("/usr/bin/systemd-run").is_file():
         raise IsolationError("Provision bubblewrap and a resource-controlling user manager before CLI validation")
-    workspace = workspace.resolve(strict=True)
+    artifacts = [workspace / path.relative_to(requested_workspace)
+                 if path.is_relative_to(requested_workspace) else path for path in artifacts]
+    command = [str(workspace / Path(value).relative_to(requested_workspace))
+               if Path(value).is_absolute() and Path(value).is_relative_to(requested_workspace)
+               else value for value in command]
     unit = "guardian-validation-" + uuid.uuid4().hex + ".scope"
     environment = {
         "PATH": "/usr/local/bin:/usr/bin:/bin", "LANG": "C.UTF-8", "TZ": "UTC",
@@ -371,12 +409,12 @@ def run_isolated_cli(
             argv.append("/workspace/" + path.relative_to(workspace).as_posix()
                         if path.is_absolute() and path.is_relative_to(workspace) else value)
         # The whole project is read-only context for its own tests; claimed artifacts are sealed over it below.
-        args.extend(["--ro-bind", str(workspace), "/workspace"])
+        args.extend(["--ro-bind", f"/proc/self/fd/{artifact_fds[0]}", "/workspace"])
         if not workspace.is_relative_to("/tmp"):
             # Editable installs name the project's real path; alias it to the same read-only view. Its parent
             # directories land on the read-only root, never in the writable /tmp scratch mount.
             args.extend(["--symlink", "/workspace", str(workspace)])
-        args.extend(_toolchain_mounts(command, workspace))
+        args.extend(_toolchain_mounts(command, workspace, stack, artifact_fds))
         args.extend(mounts)
         args.extend(["--remount-ro", "/", "--json-status-fd", str(status_write),
                      "--block-fd", str(release_read), "--", *argv])
@@ -407,6 +445,7 @@ def main() -> None:
 
     parser = argparse.ArgumentParser(description="Observe a CLI oracle inside the Pianola sandbox")
     parser.add_argument("--workspace", required=True)
+    parser.add_argument("--trusted-root")
     parser.add_argument("--timeout", type=float, default=120)
     parser.add_argument("--artifact", action="append", default=[])
     parser.add_argument("command", nargs=argparse.REMAINDER)
@@ -414,18 +453,24 @@ def main() -> None:
     command = args.command[1:] if args.command[:1] == ["--"] else args.command
     try:
         result = run_isolated_cli(command, Path(args.workspace), [Path(p) for p in args.artifact],
-                                  timeout=args.timeout)
+                                  timeout=args.timeout,
+                                  trusted_root=Path(args.trusted_root) if args.trusted_root else None)
         payload = {"returncode": result.returncode, "stdout": result.stdout, "stderr": result.stderr,
                    "observed": True, "error": None, "timedOut": False,
-                   "outputTruncated": result.isolation["outputTruncated"]}
+                   "outputTruncated": result.isolation["outputTruncated"],
+                   "readOnlyWriteDetected": result.isolation["readOnlyWriteDetected"]}
+    except PolicyViolation as exc:
+        payload = {"returncode": 1, "stdout": "", "stderr": str(exc), "observed": True,
+                   "error": None, "timedOut": False, "policyViolation": str(exc)}
     except CandidateError as exc:
         # The oracle never ran, but the candidate is definitely wrong: a failed check, not an unknown.
         payload = {"returncode": 1, "stdout": "", "stderr": f"candidate contract: {exc}\n",
                    "observed": True, "error": None, "timedOut": False}
-    except (IsolationError, OSError) as exc:
+    except (RuntimeError, OSError, ValueError, subprocess.TimeoutExpired) as exc:
         message = str(exc)
         payload = {"returncode": None, "stdout": "", "stderr": "", "observed": False,
-                   "error": message, "timedOut": "wall-time" in message or isinstance(exc, TimeoutError)}
+                   "error": message, "timedOut": "wall-time" in message or
+                   isinstance(exc, (TimeoutError, subprocess.TimeoutExpired))}
     print(json.dumps(payload))
 
 
