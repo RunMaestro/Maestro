@@ -5,6 +5,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { resolveUserDataDir } from '../../shared/userDataDir';
 import { readSessionsStoreFile } from '../../main/stores/sessions-store-file';
+import { readAgentConfigsStoreFile } from '../../main/stores/agent-configs-store-file';
 import type { Group, SessionInfo, HistoryEntry, SshRemoteConfig } from '../../shared/types';
 import {
 	HISTORY_JSONL_EXT,
@@ -356,8 +357,7 @@ function deleteNestedValue(obj: Record<string, unknown>, path: string): boolean 
  * This includes custom paths set by the user in the desktop app
  */
 export function readAgentConfigs(): Record<string, Record<string, unknown>> {
-	const data = readStoreFile<AgentConfigsStore>('maestro-agent-configs.json');
-	return data?.configs || {};
+	return readAgentConfigsStoreFile(getConfigDir()).configs;
 }
 
 /**
@@ -394,7 +394,8 @@ export function readAgentConfigValue(agentId: string, key: string): unknown {
  * Write a single agent config value.
  */
 export function writeAgentConfigValue(agentId: string, key: string, value: unknown): boolean {
-	const data = readStoreFile<AgentConfigsStore>('maestro-agent-configs.json') || { configs: {} };
+	const file = readAgentConfigsStoreFile(getConfigDir());
+	const data: AgentConfigsStore = { ...file.data, configs: file.configs };
 	if (!data.configs[agentId]) {
 		data.configs[agentId] = {};
 	}
@@ -408,8 +409,9 @@ export function writeAgentConfigValue(agentId: string, key: string, value: unkno
  * Returns true if the key existed and was removed.
  */
 export function deleteAgentConfigValue(agentId: string, key: string): boolean {
-	const data = readStoreFile<AgentConfigsStore>('maestro-agent-configs.json');
-	if (!data?.configs?.[agentId] || !(key in data.configs[agentId])) {
+	const file = readAgentConfigsStoreFile(getConfigDir());
+	const data: AgentConfigsStore = { ...file.data, configs: file.configs };
+	if (!data.configs[agentId] || !(key in data.configs[agentId])) {
 		return false;
 	}
 	delete data.configs[agentId][key];

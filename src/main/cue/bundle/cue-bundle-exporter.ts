@@ -49,6 +49,7 @@ import {
 } from '../../../shared/cue-bundle-types';
 import { resolveCueConfigPath } from '../config/cue-config-repository';
 import { readSessionsStoreFile } from '../../stores/sessions-store-file';
+import { readAgentConfigsStoreFile } from '../../stores/agent-configs-store-file';
 
 /** Every entry gets this date, so the archive bytes depend only on content. */
 export const CUE_BUNDLE_FIXED_MTIME = new Date('2026-01-01T00:00:00Z');
@@ -294,10 +295,7 @@ function resolveGitRef(
 // ─── Data loading ────────────────────────────────────────────────────────────
 
 function readProviderEnv(dataDir: string, toolType: string): Record<string, string> | undefined {
-	const store = readJsonFile<{ configs?: Record<string, Record<string, unknown>> }>(
-		path.join(dataDir, 'maestro-agent-configs.json')
-	);
-	const env = store?.configs?.[toolType]?.customEnvVars;
+	const env = readAgentConfigsStoreFile(dataDir).configs[toolType]?.customEnvVars;
 	return env && typeof env === 'object' ? (env as Record<string, string>) : undefined;
 }
 
