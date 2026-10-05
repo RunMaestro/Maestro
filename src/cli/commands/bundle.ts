@@ -8,8 +8,7 @@
 // js-yaml, and the Cue config reader stay out of every other command's startup
 // path.
 
-import * as fs from 'fs';
-import { resolveUserDataDir } from '../../shared/userDataDir';
+import { assertUserDataDirExists, resolveUserDataDir } from '../../shared/userDataDir';
 import { resolveAgentId } from '../services/storage';
 import { readSessionsStoreFile } from '../../main/stores/sessions-store-file';
 import { resolveCliPath } from '../utils/parse';
@@ -79,8 +78,21 @@ export async function bundleExport(
 
 	try {
 		const dataDir = options.dataDir ? resolveCliPath(options.dataDir) : resolveUserDataDir();
-		if (!fs.existsSync(dataDir)) {
-			fail(`Maestro data directory not found: ${dataDir}`, options);
+		// Never export from a guessed directory: a missing one (an install's
+		// `Maestro` vs a dev checkout's `maestro`) would otherwise read as "agent
+		// not found". Only a missing directory is this error; a permission or I/O
+		// error falls through to the ordinary failure below. Import is the
+		// deliberate exception - it provisions a fresh data dir.
+		try {
+			assertUserDataDirExists(dataDir);
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code) throw error;
+			fail(
+				error instanceof Error ? error.message : String(error),
+				options,
+				ExitCode.GeneralError,
+				'DATA_DIR_NOT_FOUND'
+			);
 		}
 
 		const { exportCueBundle } = await import('../../main/cue/bundle/cue-bundle-exporter');

@@ -5,9 +5,8 @@
 // Extracted to avoid duplicating the (subtle) desktop config-path logic and the
 // --wait poll loop across commands.
 
-import * as fs from 'fs';
-import * as path from 'path';
-import * as os from 'os';
+import { resolveUserDataDir } from '../../shared/userDataDir';
+import { readSessionsStoreFile } from '../../main/stores/sessions-store-file';
 import { isSessionBusyWithCli, getCliActivityForSession } from '../../shared/cli-activity';
 import { formatWarning, formatInfo } from '../output/formatter';
 import { humanizeDuration } from '../../shared/duration';
@@ -20,36 +19,19 @@ export interface BusyCheckResult {
 /**
  * Check if the desktop app has the session in a busy state.
  *
- * NOTE: This reads the desktop app's lowercase "maestro" config directory (the
- * electron-store default from package.json "name": "maestro"), which is
- * intentionally different from cli/services/storage.ts using "Maestro"
- * (capitalized) for CLI-specific storage. We need the desktop's session state,
- * not CLI storage.
+ * Reads the desktop's `maestro-sessions.json` from Maestro's data directory as
+ * `resolveUserDataDir()` resolves it - the same directory every other CLI read
+ * uses. It used to hard-code the lowercase `maestro` directory and ignore
+ * `MAESTRO_USER_DATA`, so in dev and on a case-sensitive packaged install it
+ * read a file that did not exist and answered "not busy".
  */
 export function isSessionBusyInDesktop(sessionId: string): BusyCheckResult {
 	try {
-		const platform = os.platform();
-		const home = os.homedir();
-		let configDir: string;
-
-		if (platform === 'darwin') {
-			configDir = path.join(home, 'Library', 'Application Support', 'maestro');
-		} else if (platform === 'win32') {
-			configDir = path.join(
-				process.env.APPDATA || path.join(home, 'AppData', 'Roaming'),
-				'maestro'
-			);
-		} else {
-			configDir = path.join(process.env.XDG_CONFIG_HOME || path.join(home, '.config'), 'maestro');
-		}
-
-		const sessionsPath = path.join(configDir, 'maestro-sessions.json');
-		const content = fs.readFileSync(sessionsPath, 'utf-8');
-		const data = JSON.parse(content);
-		const sessions = data.sessions || [];
-
-		const session = sessions.find((s: { id: string }) => s.id === sessionId);
-		if (session && session.state === 'busy') {
+		const { sessions } = readSessionsStoreFile(resolveUserDataDir());
+		// `state` is not part of the CLI's `SessionInfo`: it is the desktop's
+		// runtime field, read here straight off the stored record.
+		const session = sessions.find((s) => s.id === sessionId) as { state?: string } | undefined;
+		if (session?.state === 'busy') {
 			return { busy: true, reason: 'Desktop app shows agent is busy' };
 		}
 		return { busy: false };

@@ -4,23 +4,18 @@
  * Shared module for tracking when CLI is actively running tasks on a session.
  * Used to sync state between CLI and desktop app.
  *
- * NOTE: This file has its own `getConfigDir()` implementation (lowercase "maestro")
- * which matches the electron-store default from package.json `"name": "maestro"`.
- * The CLI storage.ts uses "Maestro" (capitalized) which is inconsistent.
- * This module uses lowercase to be consistent with the Electron app.
- *
- * Duplicated implementations:
- * - cli/services/storage.ts → getConfigDir() uses "Maestro" (capitalized)
- * - main/group-chat/group-chat-storage.ts → getConfigDir() uses electron-store
- * - shared/cli-activity.ts → getConfigDir() uses "maestro" (lowercase)
- *
- * These are kept separate to avoid cross-module dependencies and maintain
- * compatibility with existing data directories.
+ * The file lives in Maestro's data directory as `resolveUserDataDir()` resolves
+ * it. Both ends read it: the CLI registers its runs here and the desktop watches
+ * the same path (`cli-watcher.ts`) and consults it before starting a turn
+ * (`isAgentBusy`). A private lowercase fallback that ignored `MAESTRO_USER_DATA`
+ * used to put the CLI's file somewhere the desktop never looked, in dev and on a
+ * case-sensitive packaged install, so the desktop would start its own turn on an
+ * agent a playbook was driving.
  */
 
 import * as fs from 'fs';
 import * as path from 'path';
-import * as os from 'os';
+import { resolveUserDataDir } from './userDataDir';
 
 interface CliActivityStatus {
 	sessionId: string;
@@ -36,25 +31,10 @@ interface CliActivityFile {
 	activities: CliActivityStatus[];
 }
 
-// Get the Maestro config directory path
-function getConfigDir(): string {
-	const platform = os.platform();
-	const home = os.homedir();
-
-	if (platform === 'darwin') {
-		return path.join(home, 'Library', 'Application Support', 'maestro');
-	} else if (platform === 'win32') {
-		return path.join(process.env.APPDATA || path.join(home, 'AppData', 'Roaming'), 'maestro');
-	} else {
-		// Linux and others
-		return path.join(process.env.XDG_CONFIG_HOME || path.join(home, '.config'), 'maestro');
-	}
-}
-
 const ACTIVITY_FILE = 'cli-activity.json';
 
 function getActivityFilePath(): string {
-	return path.join(getConfigDir(), ACTIVITY_FILE);
+	return path.join(resolveUserDataDir(), ACTIVITY_FILE);
 }
 
 /**
