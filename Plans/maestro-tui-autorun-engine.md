@@ -453,6 +453,8 @@ C4 and C5 are not bugs; they take the desktop's better rule now because the runt
 | 6    | The host serves `AutoRunApi` over the desktop's messages (5.5.1), pushes `autorun_state`, replays live runs on connect                       | Host tests on a temp dir                                                                             |
 | 8    | The M3 test                                                                                                                                  | Section 8, history counts                                                                            |
 
+Worktree runs (AR-9, W1) are deferred in Phase 7 (AE13): no client field asks for one and the only create path is the desktop's `git:worktreeSetup`, so the library engine has none.
+
 ---
 
 ## 8. Testing
