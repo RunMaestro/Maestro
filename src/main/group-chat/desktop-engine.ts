@@ -39,6 +39,7 @@ import { groupChatEmitters } from './emitters';
 import * as storage from './group-chat-storage';
 import { desktopTurnMetrics } from './group-chat-turn-metrics';
 import { spawnGroupChatAgent } from './spawnGroupChatAgent';
+import { toSpawnGroupChatAgentConfig } from './spawn-config';
 import type { IProcessManager } from './group-chat-moderator';
 
 // ---------------------------------------------------------------------------
@@ -179,25 +180,12 @@ export function createDesktopGroupChatLauncher(
 		runner: {
 			...createDesktopTurnStopper(processManager),
 			start: async (spawn) =>
-				spawnGroupChatAgent({
-					sessionId: spawn.processId,
-					agentId: spawn.providerId,
-					agent: spawn.agent,
-					command: spawn.command,
-					args: spawn.args,
-					cwd: spawn.cwd,
-					prompt: spawn.prompt,
-					customEnvVars: spawn.customEnvVars,
-					agentConfigValues: spawn.agentConfigValues,
-					sshRemoteConfig: spawn.sshRemoteConfig,
-					sshStore: desktopAgentDirectory.sshStore(),
-					tokenMode: spawn.tokenMode,
-					maestroPPath: spawn.maestroPPath,
-					processManager,
-					readOnlyMode: spawn.readOnlyMode,
-					debugLabel: spawn.debugLabel,
-					maxWaitSeconds: spawn.maxWaitSeconds,
-				}),
+				spawnGroupChatAgent(
+					toSpawnGroupChatAgentConfig(spawn, {
+						processManager,
+						sshStore: desktopAgentDirectory.sshStore(),
+					})
+				),
 		},
 		resolveAgent: (providerId) => agentDetector.getAgent(providerId),
 	};

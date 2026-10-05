@@ -1041,6 +1041,138 @@ describe('agent repository', () => {
 		});
 	});
 
+	// -----------------------------------------------------------------------
+
+	describe('consult tabs', () => {
+		const KEY = { sourceSessionId: 'a2', sourceTabId: 'a2-t1' };
+		const question = (text: string) => ({
+			id: `q-${text}`,
+			timestamp: 5,
+			source: 'user',
+			text,
+		});
+		const open = (text = 'what do you think?') => ({
+			key: KEY,
+			name: '↩ Beta',
+			question: question(text),
+		});
+		const answer = (text: string, extra: Record<string, unknown> = {}) => ({
+			entry: { id: `a-${text}`, timestamp: 6, source: 'ai', text },
+			provider: 'claude-code',
+			...extra,
+		});
+
+		it('creates a hidden tab that no person-visible surface can see (XM-2)', async () => {
+			const repo = await setup({ sessions: twoAgents() });
+			const before = repo.getAgent('a1')!;
+
+			const opened = value(await repo.openConsultTab('a1', open()));
+
+			// Not listed, not announced, not focused.
+			expect(repo.listTabs('a1')?.map((t) => t.id)).toEqual(['a1-t1', 'a1-t2']);
+			expect(events.map((event) => event.type)).toEqual(['agent.updated']);
+			const after = repo.getAgent('a1')!;
+			expect(after.activeTabId).toBe(before.activeTabId);
+			expect(after.activeFileTabId).toBe(before.activeFileTabId);
+			expect(after.activeTerminalTabId).toBe(before.activeTerminalTabId);
+
+			// Held on disk, keyed and named like the desktop's consult tab.
+			const stored = readSessions().sessions[0].aiTabs.find(
+				(t: { id: string }) => t.id === opened.tabId
+			);
+			expect(stored).toMatchObject({
+				hidden: true,
+				name: '↩ Beta',
+				saveToHistory: false,
+				consultOrigin: KEY,
+				logs: [{ text: 'what do you think?', source: 'user' }],
+			});
+			expect(stored.hasUnread).toBeUndefined();
+			expect(readSessions().sessions[0].unifiedTabOrder).toContainEqual({
+				type: 'ai',
+				id: opened.tabId,
+			});
+			expect(opened.resumeAgentSessionId).toBeUndefined();
+		});
+
+		it('reuses the tab for the same pairing and hands back the session to resume', async () => {
+			const repo = await setup({ sessions: twoAgents() });
+			const first = value(await repo.openConsultTab('a1', open('first')));
+			value(
+				await repo.recordConsultAnswer(
+					'a1',
+					first.tabId,
+					answer('one', { agentSessionId: 'sess-1' })
+				)
+			);
+
+			const second = value(await repo.openConsultTab('a1', open('second')));
+
+			expect(second.tabId).toBe(first.tabId);
+			expect(second.resumeAgentSessionId).toBe('sess-1');
+			const tabs = readSessions().sessions[0].aiTabs;
+			expect(tabs).toHaveLength(3);
+			expect(
+				tabs
+					.find((t: { id: string }) => t.id === first.tabId)
+					.logs.map((l: { text: string }) => l.text)
+			).toEqual(['first', 'one', 'second']);
+		});
+
+		it('keeps a separate tab per asking tab', async () => {
+			const repo = await setup({ sessions: twoAgents() });
+			const one = value(await repo.openConsultTab('a1', open()));
+			const other = value(
+				await repo.openConsultTab('a1', {
+					...open(),
+					key: { sourceSessionId: 'a2', sourceTabId: 'a2-t2' },
+				})
+			);
+			expect(other.tabId).not.toBe(one.tabId);
+		});
+
+		it('records the session id only for a consult that succeeded (B18)', async () => {
+			const repo = await setup({ sessions: twoAgents() });
+			const { tabId } = value(await repo.openConsultTab('a1', open()));
+
+			value(await repo.recordConsultAnswer('a1', tabId, answer('it failed')));
+			expect(repo.getTab('a1', tabId)?.agentSessionId ?? null).toBeNull();
+
+			value(
+				await repo.recordConsultAnswer('a1', tabId, answer('it worked', { agentSessionId: 's9' }))
+			);
+			expect(repo.getTab('a1', tabId)?.agentSessionId).toBe('s9');
+		});
+
+		it('never raises unread or a tab event when an answer lands', async () => {
+			const repo = await setup({ sessions: twoAgents() });
+			const { tabId } = value(await repo.openConsultTab('a1', open()));
+			events.length = 0;
+
+			value(await repo.recordConsultAnswer('a1', tabId, answer('done', { agentSessionId: 's1' })));
+
+			expect(events.map((event) => event.type)).toEqual(['agent.updated']);
+			expect(repo.getTab('a1', tabId)?.hasUnread).toBeUndefined();
+			// The agent's visible tabs are exactly what they were.
+			expect(repo.getAgent('a1')?.aiTabs?.filter((t) => t.hidden !== true)).toHaveLength(2);
+			expect(repo.listTabs('a1')?.some((t) => t.hasUnread)).toBe(false);
+		});
+
+		it('answers not-found for an unknown agent or tab', async () => {
+			const repo = await setup({ sessions: twoAgents() });
+			expect(errorOf(await repo.openConsultTab('nobody', open())).code).toBe('not-found');
+			expect(errorOf(await repo.recordConsultAnswer('a1', 'nope', answer('x'))).code).toBe(
+				'not-found'
+			);
+		});
+
+		it('refuses to write once fenced, like every other command', async () => {
+			const repo = await setup({ sessions: twoAgents() });
+			repo.fence('lost');
+			expect(errorOf(await repo.openConsultTab('a1', open())).code).toBe('host-lost');
+		});
+	});
+
 	it('drain resolves only after every accepted command has been written', async () => {
 		const repo = await setup({ sessions: twoAgents() });
 		const pending = [repo.renameAgent('a1', 'Gamma'), repo.createGroup({ name: 'late' })];

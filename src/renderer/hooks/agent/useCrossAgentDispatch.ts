@@ -19,7 +19,7 @@
  */
 
 import { useCallback, useEffect, useRef } from 'react';
-import type { HistoryEntry, LogEntry, Session, ToolType } from '../../types';
+import type { LogEntry, Session, ToolType } from '../../types';
 import { updateSessionWith, updateAiTab, useSessionStore } from '../../stores/sessionStore';
 import { useCrossAgentInFlightStore } from '../../stores/crossAgentInFlightStore';
 import { createTab } from '../../utils/tabHelpers';
@@ -31,6 +31,11 @@ import {
 	selectContextWindow,
 } from '../../../shared/crossAgentContext';
 import { parseSynopsis } from '../../../shared/synopsis';
+import {
+	buildConsultHistoryEntry,
+	buildConsultTabName,
+	crossAgentTerminationNote,
+} from '../../../shared/maestro-lib/agents/consult-prompt';
 import type {
 	CrossAgentResponseChunk,
 	CrossAgentTranscriptEntry,
@@ -128,20 +133,9 @@ export interface CrossAgentCompletion {
 	targetAgentSessionId?: string;
 }
 
-/**
- * Pure: the note explaining why a consult ended, or null when it simply
- * finished. The attribution header only carries `error` in an `sr-only` span, so
- * the reason has to reach the bubble body or the user never sees it.
- *
- * Stop and failure are deliberately worded apart: the user pressing Stop is not
- * the target agent failing to answer, and reporting it as one blames the wrong
- * party for something the user chose.
- */
-export function crossAgentTerminationNote(chunk: CrossAgentResponseChunk): string | null {
-	if (chunk.canceled) return `⏹ ${chunk.targetAgentName} was stopped.`;
-	if (chunk.error) return `⚠️ ${chunk.targetAgentName} could not respond: ${chunk.error}`;
-	return null;
-}
+// The wording of a consult's end, and the target's History entry, are shared with the headless
+// consult service so a consult reads the same whichever host ran it.
+export { crossAgentTerminationNote, buildConsultTabName, buildConsultHistoryEntry };
 
 /**
  * Pure: fold a chunk's text into the prior accumulation and resolve what should
@@ -201,11 +195,6 @@ export function buildCrossAgentLogEntry(
 			},
 		},
 	};
-}
-
-/** Label for a consult tab on the target: signals an inbound consult + who from. */
-export function buildConsultTabName(sourceAgentName: string): string {
-	return `↩ ${sourceAgentName}`;
 }
 
 /**
@@ -357,76 +346,6 @@ function rememberCompletion(requestId: string, completion: CrossAgentCompletion)
 		if (oldest.done) break;
 		completedRequests.delete(oldest.value);
 	}
-}
-
-/**
- * Pure: build the History entry for a finished consult. Exported for unit
- * testing; `recordConsultHistory` resolves the store state and hands the pieces
- * in, so every derivation rule below is verifiable without IPC or a store.
- */
-export function buildConsultHistoryEntry(opts: {
-	entryId: string;
-	timestamp: number;
-	/** Display name of the agent that did the consulting. */
-	sourceAgentName: string;
-	/** Short subject derived from the question; may be empty. */
-	subject: string;
-	/** Accumulated response text (empty on a consult that failed before answering). */
-	accumulated: string;
-	/** Failure reason, when the consult errored. */
-	error?: string;
-	/** The user stopped the consult; not a failure of the target agent. */
-	canceled?: boolean;
-	/** The target agent's provider session id, when one was captured. */
-	agentSessionId?: string;
-	/** Fallback label when there is no subject. */
-	consultTabName?: string | null;
-	targetName?: string | null;
-	historySessionId: string;
-	projectPath: string;
-}): HistoryEntry {
-	// Summary names WHO consulted and ABOUT WHAT; the pill carries the subject so
-	// multiple consults from the same agent are distinguishable at a glance. The
-	// consult TAB stays named after the source agent (it's the reused container
-	// for every consult from that tab) - only this per-consult entry gets the subject.
-	const summary = opts.subject
-		? `Consulted by ${opts.sourceAgentName}: ${opts.subject}`
-		: `Consulted by ${opts.sourceAgentName}`;
-	const sessionName = opts.subject
-		? `↩ ${opts.subject}`
-		: (opts.consultTabName ?? opts.targetName ?? undefined) || undefined;
-
-	// A failed or stopped consult may accumulate nothing, so the raw text alone
-	// would leave the detail view blank. The reason lives on the chunk - not in
-	// `accumulated` - so fold it in here the same way the inline bubble does
-	// (partial text first, then the reason). A cancel is recorded as a SUCCESS
-	// with a note: the user stopping a consult is not the target failing.
-	const endNote = opts.canceled
-		? '⏹ Consult stopped by the user.'
-		: opts.error
-			? `⚠️ Consult failed: ${opts.error}`
-			: '';
-	const detailFallback = [opts.accumulated, endNote].filter(Boolean).join('\n\n');
-
-	return {
-		id: opts.entryId,
-		// A consult is an ordinary message that happened to be proxied in from
-		// another agent - NOT automation. Logging it as AUTO made it render as an
-		// Auto Run task and inflated the Auto Run counts.
-		type: 'AGENT',
-		timestamp: opts.timestamp,
-		summary,
-		// Raw response (or the failure reason) is the immediate fallback for the
-		// detail view; replaced with a condensed summary by enrichConsultDetail
-		// once it returns.
-		fullResponse: detailFallback || undefined,
-		agentSessionId: opts.agentSessionId,
-		sessionId: opts.historySessionId,
-		sessionName,
-		projectPath: opts.projectPath,
-		sourceAgentName: opts.sourceAgentName,
-		success: !opts.error,
-	};
 }
 
 /**

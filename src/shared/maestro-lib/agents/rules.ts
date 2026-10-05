@@ -347,6 +347,115 @@ export function addTabRecord(
 	return { agent: next, tab };
 }
 
+/** The pairing a consult tab belongs to: which agent, and which of its tabs, asked. */
+export interface ConsultTabKey {
+	sourceSessionId: string;
+	sourceTabId: string;
+}
+
+/** The consult tab an agent keeps for `key`, if one exists. A hidden tab is found like any other. */
+export function findConsultTabRecord(
+	agent: AgentRecord,
+	key: ConsultTabKey
+): AITabRecord | undefined {
+	return agent.aiTabs?.find(
+		(tab) =>
+			tab.consultOrigin?.sourceSessionId === key.sourceSessionId &&
+			tab.consultOrigin?.sourceTabId === key.sourceTabId
+	);
+}
+
+/** What opening a consult tab writes: who asked, what the tab is called, and the question. */
+export interface ConsultTabOpen {
+	key: ConsultTabKey;
+	/** The tab's label (`↩ <source agent>`), used only when the tab is created. */
+	name: string;
+	/** The question, as the first (or next) user entry of the consult tab. */
+	question: LogEntryRecord;
+}
+
+/**
+ * Find or create the HIDDEN consult tab for a (source agent, source tab) pairing and append the
+ * question to it. A repeat consult from the same pairing reuses the tab, and its captured provider
+ * session id comes back so the target resumes it.
+ *
+ * A consult is background work on the consulted agent, so this changes nothing the person sees
+ * there: the tab is hidden (no chip), it is never made the active tab and no other active id moves,
+ * and it is not saved to History as a conversation of its own (the consult records its own entry).
+ * Its ref still joins `unifiedTabOrder`, which is what restores its place if it is ever revealed.
+ */
+export function openConsultTabRecord(
+	agent: AgentRecord,
+	open: ConsultTabOpen,
+	ctx: RuleContext,
+	defaults: TabDefaults
+): { agent: AgentRecord; tab: AITabRecord; resumeAgentSessionId?: string; created: boolean } {
+	const existing = findConsultTabRecord(agent, open.key);
+	if (existing) {
+		const tab = {
+			...existing,
+			logs: [...(Array.isArray(existing.logs) ? existing.logs : []), open.question],
+		};
+		return {
+			agent: {
+				...agent,
+				aiTabs: (agent.aiTabs ?? []).map((entry) => (entry.id === tab.id ? tab : entry)),
+			},
+			tab,
+			resumeAgentSessionId: existing.agentSessionId ?? undefined,
+			created: false,
+		};
+	}
+	const tab: AITabRecord = {
+		...buildTabRecord(ctx, { ...defaults, saveToHistory: false }),
+		name: open.name,
+		logs: [open.question],
+		hidden: true,
+		consultOrigin: { ...open.key },
+	};
+	return {
+		agent: {
+			...agent,
+			aiTabs: [...(Array.isArray(agent.aiTabs) ? agent.aiTabs : []), tab],
+			unifiedTabOrder: [
+				...(Array.isArray(agent.unifiedTabOrder) ? agent.unifiedTabOrder : []),
+				{ type: 'ai', id: tab.id },
+			],
+		},
+		tab,
+		created: true,
+	};
+}
+
+/** What a finished consult writes onto its consult tab. */
+export interface ConsultAnswerRecord {
+	/** The answer, or the failure with its termination note, as one transcript entry. */
+	entry: LogEntryRecord;
+	/** The provider the consult ran under, so the resume token lands on that provider's slot. */
+	provider: string;
+	/** The target's provider session id. Present only for a consult that SUCCEEDED (B18). */
+	agentSessionId?: string;
+}
+
+/**
+ * The consult tab after its answer: the entry appended, and the provider session id stored only
+ * when the consult succeeded, so a run that auth, usage or CLI errored is never resumed. The tab's
+ * `hasUnread` is never touched: a consult is answered in the background.
+ */
+export function recordConsultAnswerRecord(
+	tab: AITabRecord,
+	agent: AgentRecord,
+	answer: ConsultAnswerRecord
+): AITabRecord {
+	const appended: AITabRecord = {
+		...tab,
+		logs: [...(Array.isArray(tab.logs) ? tab.logs : []), answer.entry],
+	};
+	return answer.agentSessionId
+		? recordTabSession(appended, agent, answer.provider, { agentSessionId: answer.agentSessionId })
+		: appended;
+}
+
 export interface CloseTabOutcome {
 	agent: AgentRecord;
 	/** What the archive receives. */

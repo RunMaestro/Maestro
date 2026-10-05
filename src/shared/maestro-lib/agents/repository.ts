@@ -79,6 +79,8 @@ import {
 	buildAgentRecord,
 	buildGroupRecord,
 	beginTurnRecord,
+	openConsultTabRecord,
+	recordConsultAnswerRecord,
 	buildTabConfigPatch,
 	checkAgentCreateInput,
 	checkAgentName,
@@ -97,6 +99,8 @@ import {
 	validateAgentRename,
 	validateNewAgent,
 	type RuleContext,
+	type ConsultAnswerRecord,
+	type ConsultTabOpen,
 	type RuleResult,
 	type TabDefaults,
 	type TabSessionUpdate,
@@ -205,6 +209,25 @@ export interface AgentRepository {
 		tabId: string,
 		provider: string,
 		update: TabSessionUpdate
+	): Promise<ClientResult<void>>;
+	/**
+	 * Find or create the hidden consult tab an agent keeps for a (source agent, source tab) pairing
+	 * and append the question (a consult is a background turn on the consulted agent). The tab is
+	 * hidden, never active, raises no tab event and no unread. Answers the tab and the provider
+	 * session id to resume, absent on the first consult.
+	 */
+	openConsultTab(
+		agentId: string,
+		open: ConsultTabOpen
+	): Promise<ClientResult<{ tabId: string; resumeAgentSessionId?: string }>>;
+	/**
+	 * Record a finished consult on its consult tab in one write: the answer entry, and the
+	 * provider session id only when the consult succeeded.
+	 */
+	recordConsultAnswer(
+		agentId: string,
+		tabId: string,
+		answer: ConsultAnswerRecord
 	): Promise<ClientResult<void>>;
 }
 
@@ -970,6 +993,37 @@ export function createAgentRepository(options: AgentRepositoryOptions): AgentRep
 		update: TabSessionUpdate
 	) => rewriteTab(agentId, tabId, (tab, agent) => recordTabSession(tab, agent, provider, update));
 
+	function openConsultTab(
+		agentId: string,
+		open: ConsultTabOpen
+	): Promise<ClientResult<{ tabId: string; resumeAgentSessionId?: string }>> {
+		const method: ClientMethod = 'tabs.create';
+		return run(method, async () => {
+			const agent = findAgent(agentId);
+			if (!agent) return noAgent(method, agentId);
+			const opened = openConsultTabRecord(agent, open, ctx, await readTabDefaults());
+			const value = {
+				tabId: opened.tab.id,
+				...(opened.resumeAgentSessionId
+					? { resumeAgentSessionId: opened.resumeAgentSessionId }
+					: {}),
+			};
+			// No `tab.added` or `tab.updated`: the tab is hidden, and a client's view of the agent does
+			// not change. `agent.updated` keeps a mirror's copy of the record current.
+			return {
+				ok: true,
+				plan: {
+					value,
+					sessions: withAgents(new Map([[agentId, opened.agent]])),
+					events: [{ type: 'agent.updated', agent: project(opened.agent) }],
+				},
+			};
+		});
+	}
+
+	const recordConsultAnswer = (agentId: string, tabId: string, answer: ConsultAnswerRecord) =>
+		rewriteTab(agentId, tabId, (tab, agent) => recordConsultAnswerRecord(tab, agent, answer));
+
 	/**
 	 * Close a tab into the closed-tab archive (RT6), never deleting its transcript.
 	 * The archive is written first: a failure between the two writes leaves the tab
@@ -1046,5 +1100,7 @@ export function createAgentRepository(options: AgentRepositoryOptions): AgentRep
 		appendTranscript,
 		beginTurn,
 		recordTabSession: recordSession,
+		openConsultTab,
+		recordConsultAnswer,
 	};
 }

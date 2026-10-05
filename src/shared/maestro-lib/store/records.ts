@@ -49,6 +49,8 @@ export interface AITabRecord extends UnknownFields {
 	hasUnread?: boolean;
 	/** A consult tab not drawn in the tab strip (see `isAiTabHidden`). */
 	hidden?: boolean;
+	/** On a consult tab: the (agent, tab) pairing that consults this agent through it. */
+	consultOrigin?: { sourceSessionId: string; sourceTabId: string };
 	customModel?: string;
 	customEffort?: string;
 	/** Composer chips: what a turn sent from this tab saves, shows, and allows. */

@@ -15,11 +15,14 @@ import {
 	checkAgentName,
 	closeTabRecord,
 	DEFAULT_TAB_DEFAULTS,
+	findConsultTabRecord,
 	groupsWithout,
 	insertAfterActiveInUnifiedTabOrder,
 	MAX_AGENT_NAME_LENGTH,
 	mergeSshPatch,
 	normalizeGroupName,
+	openConsultTabRecord,
+	recordConsultAnswerRecord,
 	recordTabSession,
 	relocateAgentPaths,
 	renameTabRecord,
@@ -756,5 +759,107 @@ describe('recordTabSession', () => {
 	it('returns the tab itself when there is nothing to record', () => {
 		const same = tab('t1');
 		expect(recordTabSession(same, agent(), 'claude-code', {})).toBe(same);
+	});
+});
+
+describe('consult tab records', () => {
+	const key = { sourceSessionId: 'src', sourceTabId: 'src-t1' };
+	const question = (text: string) => ({ id: `q-${text}`, timestamp: 9, source: 'user', text });
+	const open = (text = 'why?') => ({ key, name: '↩ Source', question: question(text) });
+
+	it('creates a hidden, unfocused tab keyed by its origin and filed under the ordered tabs', () => {
+		const before = agent();
+		const opened = openConsultTabRecord(before, open(), makeContext(), DEFAULT_TAB_DEFAULTS);
+
+		expect(opened.created).toBe(true);
+		expect(opened.tab).toMatchObject({
+			hidden: true,
+			name: '↩ Source',
+			saveToHistory: false,
+			consultOrigin: key,
+			agentSessionId: null,
+		});
+		expect(opened.tab.logs).toEqual([question('why?')]);
+		// Nothing the person looks at moves, even with the `after-current` placement setting.
+		expect(opened.agent.activeTabId).toBe('t2');
+		expect(opened.agent.unifiedTabOrder?.at(-1)).toEqual({ type: 'ai', id: opened.tab.id });
+		expect(
+			openConsultTabRecord(before, open(), makeContext(), {
+				...DEFAULT_TAB_DEFAULTS,
+				placement: 'after-current',
+			}).agent.unifiedTabOrder?.at(-1)
+		).toEqual({ type: 'ai', id: opened.tab.id });
+		// The input is untouched.
+		expect(before.aiTabs).toHaveLength(3);
+	});
+
+	it('does not give a tab-less agent a hidden tab to look at', () => {
+		const bare = agent({ aiTabs: [], unifiedTabOrder: [], activeTabId: undefined });
+		const opened = openConsultTabRecord(bare, open(), makeContext(), DEFAULT_TAB_DEFAULTS);
+		expect(opened.agent.activeTabId).toBeUndefined();
+	});
+
+	it('finds the tab for the same pairing and appends to it, handing back the session to resume', () => {
+		const first = openConsultTabRecord(agent(), open('one'), makeContext(), DEFAULT_TAB_DEFAULTS);
+		const withSession = {
+			...first.agent,
+			aiTabs: first.agent.aiTabs!.map((t) =>
+				t.id === first.tab.id ? { ...t, agentSessionId: 'sess-1' } : t
+			),
+		};
+
+		const again = openConsultTabRecord(
+			withSession,
+			open('two'),
+			makeContext(),
+			DEFAULT_TAB_DEFAULTS
+		);
+
+		expect(again.created).toBe(false);
+		expect(again.tab.id).toBe(first.tab.id);
+		expect(again.resumeAgentSessionId).toBe('sess-1');
+		expect((again.tab.logs as { text: string }[]).map((l) => l.text)).toEqual(['one', 'two']);
+		expect(again.agent.aiTabs).toHaveLength(4);
+		expect(findConsultTabRecord(again.agent, key)?.id).toBe(first.tab.id);
+		expect(
+			findConsultTabRecord(again.agent, { sourceSessionId: 'src', sourceTabId: 'other' })
+		).toBeUndefined();
+	});
+
+	it('records an answer, storing the session only when the consult succeeded', () => {
+		const opened = openConsultTabRecord(agent(), open(), makeContext(), DEFAULT_TAB_DEFAULTS);
+		const entry = { id: 'a1', timestamp: 10, source: 'ai', text: 'because' };
+
+		const failed = recordConsultAnswerRecord(opened.tab, opened.agent, {
+			entry: { ...entry, source: 'error' },
+			provider: 'claude-code',
+		});
+		expect(failed.agentSessionId).toBeNull();
+		expect((failed.logs as { source: string }[]).map((l) => l.source)).toEqual(['user', 'error']);
+
+		const ok = recordConsultAnswerRecord(opened.tab, opened.agent, {
+			entry,
+			provider: 'claude-code',
+			agentSessionId: 'sess-9',
+		});
+		expect(ok.agentSessionId).toBe('sess-9');
+		// A consult is answered in the background: never unread, never un-hidden.
+		expect(ok.hasUnread).toBeUndefined();
+		expect(ok.hidden).toBe(true);
+	});
+
+	it("writes the session to the provider's own slot when the agent has since changed provider", () => {
+		const opened = openConsultTabRecord(agent(), open(), makeContext(), DEFAULT_TAB_DEFAULTS);
+		const swapped = { ...opened.agent, toolType: 'codex' };
+
+		const after = recordConsultAnswerRecord(opened.tab, swapped, {
+			entry: { id: 'a1', timestamp: 10, source: 'ai', text: 'late' },
+			provider: 'claude-code',
+			agentSessionId: 'sess-claude',
+		});
+
+		// The live slot belongs to codex now; the old provider's token is parked.
+		expect(after.agentSessionId).toBeNull();
+		expect(JSON.stringify(after.providerSessions)).toContain('sess-claude');
 	});
 });
