@@ -105,12 +105,13 @@ dependency, so there are no Dependabot alerts to send.
 gh api -X POST repos/RunMaestro/Maestro/security-advisories/<GHSA>/cve
 ```
 
-GitHub is the CNA for this repo and reviews within about 72 hours. The
-endpoint returns `202` on every call, including repeats, so it cannot tell you
-whether a request is pending. Confirm on the advisory page (logged in): a
-"Request CVE" button still showing means the request did not register. Poll
-`--jq .cve_id` and send the ID to the reporter when it lands. If it is still
-`null` after 72 hours, contact GitHub Security Lab.
+GitHub is the CNA for this repo and reviews within 3 working days. **Nothing
+confirms that a request is pending.** The endpoint returns `202` on every call,
+including repeats, and the advisory page keeps showing the "Request CVE" button
+after a request (seen on GHSA-q8p2-cpg2-fhpc both before and after a click), so
+neither one is evidence either way. Request once, write down the date, and poll
+`--jq .cve_id`. Send the ID to the reporter when it lands. If it is still
+`null` after 3 working days, open a GitHub Support ticket naming the GHSA.
 
 ## Phase 4: Fix and release
 
@@ -226,7 +227,7 @@ In this order, each step only after the one before is verified:
 - [ ] Each claim validated on `origin/main` and `origin/rc`
 - [ ] Severity scored on the realistic path; reasoning written down
 - [ ] Advisory draft complete: description, CVSS, CWEs, versions per channel, credits
-- [ ] CVE requested and confirmed on the advisory page
+- [ ] CVE requested (date noted); `cve_id` polled until assigned
 - [ ] Fix on main with attack-path tests and updated SECURITY.md and docs
 - [ ] Fix ported to rc by hand; rc-only consumers checked
 - [ ] Stable release verified, then RC release verified
