@@ -196,7 +196,7 @@ describe('cue-spawn-builder', () => {
 			expect(result.ok).toBe(true);
 			if (!result.ok) return;
 			expect(result.spec.args.join(' ')).toContain('mcp_servers.maestro.command');
-			expect(result.spec.args.join(' ')).toContain(result.spec.pluginRunProofFile);
+			expect(result.spec.args.join(' ')).toContain(JSON.stringify(result.spec.pluginRunProofFile));
 			expect(pluginToolRunIdentity.resolve(result.spec.pluginRunToken).callerAgentId).toBe(
 				'session-1'
 			);
