@@ -4,7 +4,7 @@
  * `/run/secrets` location is injected so the host's own mounts never leak in.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -15,6 +15,12 @@ import {
 	lookupSecret,
 	resolveSecrets,
 } from '../../shared/serverSecrets';
+
+// Pass-through, so the default-location tests can see which paths were statted.
+vi.mock('fs', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('fs')>();
+	return { ...actual, statSync: vi.fn(actual.statSync) };
+});
 
 let tmp: string;
 let credentials: string;
@@ -184,5 +190,28 @@ describe('resolveSecrets', () => {
 			path: '/run/secrets/TOKEN',
 		});
 		expect(message).toBe('TOKEN (/run/secrets/TOKEN) is empty');
+	});
+});
+
+describe('the default /run/secrets location', () => {
+	const originalPlatform = process.platform;
+	afterEach(() => {
+		Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
+	});
+
+	function statted(platform: NodeJS.Platform): string[] {
+		Object.defineProperty(process, 'platform', { value: platform, configurable: true });
+		const stat = vi.mocked(fs.statSync);
+		stat.mockClear();
+		lookupSecret('TOKEN', { env: { TOKEN: 'from-env' } });
+		return stat.mock.calls.map(([file]) => String(file));
+	}
+
+	it('is read on Linux', () => {
+		expect(statted('linux')).toEqual([path.join('/run/secrets', 'TOKEN')]);
+	});
+
+	it('is not read on Windows, where it would mean C:\\run\\secrets', () => {
+		expect(statted('win32')).toEqual([]);
 	});
 });
