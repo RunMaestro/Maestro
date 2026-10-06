@@ -80,3 +80,38 @@ node node_modules/vitest/vitest.mjs run \
   installed; the report passed Prettier directly.
 - Cross-platform CI was not run locally. No source edits required new tests
   or source language-service diagnostics; Markdown has no configured LSP.
+
+## Rebase validation (2026-10-05)
+
+Rebased all 55 contribution commits onto upstream `rc` at
+`0c810524cdee371266671c218e4d80a668490bc8`. The original tip is preserved
+locally on `backup/issue-1555-before-rebase-20261005`.
+
+The only conflict was in `MainPanelContent.tsx`: retained the discovery
+card's passive-layer browser-focus handling and upstream's `useToastAvoidZone`
+registration. Reviewed the range-diff to confirm the contribution survived.
+
+Validation on macOS with the workspace-local Node.js 22.19.0 toolchain:
+
+- All 2,466 tests in the 49-file regression manifest in
+  [[did-you-know-regression]] passed. The JSON results report zero failed
+  files, failed tests, or pending tests.
+- `npm run lint`, `npm run lint:eslint`, and `npm run build:renderer` passed.
+- `npm run docs:verify` passed with 575 asserted paths; `npm run lint:doc-refs`
+  passed across 39 documents.
+- Prettier on contribution files and `git diff --check` passed.
+- The existing headless browser smoke script passed dock geometry, backdrop
+  hit testing, keyboard activation, return to the full card, reduced motion,
+  and narrow viewport checks. Inspected the docked-card screenshot.
+
+The browser smoke check uses a component harness, not a running Electron
+webview. Real docs-page focus/scrolling, launch timing in the desktop app,
+and the full theme/zoom/artwork review still need manual verification.
+The optional representative screenshots remain unadded.
+
+The full local test suite and live-provider scenarios were not run, following
+this contribution's playbook restriction. Full Linux and Windows CI must pass
+before merge. The earlier mocked group-chat failures were not rerun in this
+rebase pass; their September 19 baseline remains documented separately.
+The renderer build emitted dynamic-import/chunking warnings outside this
+feature. No dependency or lockfile changes were made.
