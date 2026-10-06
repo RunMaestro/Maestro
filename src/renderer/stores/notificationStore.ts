@@ -472,9 +472,11 @@ export function showOsNotification(
 	if (!isWebDesktop()) {
 		// Desktop: unchanged host-notification bridge.
 		if (typeof window !== 'undefined' && window.maestro?.notification?.show) {
-			window.maestro.notification.show(title, body, sessionId, tabId, options.clickAction).catch((err) => {
-				logger.error('[notificationStore] Failed to show OS notification:', undefined, err);
-			});
+			window.maestro.notification
+				.show(title, body, sessionId, tabId, options.clickAction)
+				.catch((err) => {
+					logger.error('[notificationStore] Failed to show OS notification:', undefined, err);
+				});
 		}
 		return;
 	}
