@@ -882,15 +882,18 @@ Export, validate, inspect, and import portable Cue pipeline and agent bundles
 
 Export one Cue pipeline or one agent to a deterministic bundle zip
 
-| Option                     | Description                                                    | Default |
-| -------------------------- | -------------------------------------------------------------- | ------- |
-| `-a, --agent <id-or-name>` | Export this agent (exclusive with --pipeline)                  | -       |
-| `-p, --pipeline <name>`    | Export this Cue pipeline (exclusive with --agent)              | -       |
-| `-o, --output <path>`      | Zip to write (default: ./&lt;name>.maestro-bundle.zip)         | -       |
-| `--allow-inline-secrets`   | Export subscriptions that hold a literal webhook.secret        | -       |
-| `--data-dir <path>`        | Read Maestro's data from this directory instead of the default | -       |
-| `--created-at <iso>`       | Record this ISO-8601 time as the bundle creation time          | -       |
-| `--json`                   | Output as JSON (for scripting)                                 | -       |
+| Option                     | Description                                                                               | Default |
+| -------------------------- | ----------------------------------------------------------------------------------------- | ------- |
+| `-a, --agent <id-or-name>` | Export this agent (exclusive with --pipeline)                                             | -       |
+| `-p, --pipeline <name>`    | Export this Cue pipeline (exclusive with --agent)                                         | -       |
+| `-o, --output <path>`      | Zip to write (default: ./&lt;name>.maestro-bundle.zip)                                    | -       |
+| `--allow-inline-secrets`   | Export subscriptions that hold a literal webhook.secret                                   | -       |
+| `--data-dir <path>`        | Read Maestro's data from this directory instead of the default                            | -       |
+| `--created-at <iso>`       | Record this ISO-8601 time as the bundle creation time                                     | -       |
+| `--no-claude-skills`       | Leave out Claude Code skills (.claude/skills)                                             | -       |
+| `--no-claude-mcp`          | Leave out .mcp.json (exported with secrets as $\{VAR\} references)                        | -       |
+| `--no-claude-memory`       | Leave out CLAUDE.md and Claude auto memory (exported with secret-looking tokens redacted) | -       |
+| `--json`                   | Output as JSON (for scripting)                                                            | -       |
 
 ## `maestro-cli bundle validate <bundle>`
 
@@ -911,7 +914,7 @@ Describe a bundle from its manifest and README without unpacking the rest
 
 ## `maestro-cli bundle import <bundle>`
 
-Import a bundle into a data directory and local workspace folders (desktop and Cue engine must be stopped)
+Import a bundle into the running app, or with it closed into a data directory, plus local workspace folders
 
 | Option                       | Description                                                                         | Default |
 | ---------------------------- | ----------------------------------------------------------------------------------- | ------- |

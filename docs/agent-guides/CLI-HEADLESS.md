@@ -17,13 +17,13 @@ Verified on 2026-10-05 with real Claude Code and OpenCode turns (see [Verificati
 
 ### Run headless, verified live
 
-| Verb                                                                  | Notes                                                                                            |
-| --------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| `send <agent> <message>`                                              | New turn and `--session <id>` resume. `--tab` needs the app, but only warns (exit 0) without it. |
-| `run-doc <docs> --agent <agent>`                                      | Auto Run over documents, with synopsis turns.                                                    |
-| `playbook <playbook-id>`                                              | Runs a saved playbook, including one provisioned by `bundle import`.                             |
-| `goal-run <agent> <goal>`                                             | Without `--visible`. `--visible` and `--wait` hand the run to the desktop and need it.           |
-| `bundle export`, `bundle validate`, `bundle inspect`, `bundle import` | Provisioning. Export reads an explicit `--data-dir`; import creates the target.                  |
+| Verb                                                                  | Notes                                                                                                                                                                                                                                                                                                        |
+| --------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `send <agent> <message>`                                              | New turn and `--session <id>` resume. `--tab` needs the app, but only warns (exit 0) without it.                                                                                                                                                                                                             |
+| `run-doc <docs> --agent <agent>`                                      | Auto Run over documents, with synopsis turns.                                                                                                                                                                                                                                                                |
+| `playbook <playbook-id>`                                              | Runs a saved playbook, including one provisioned by `bundle import`.                                                                                                                                                                                                                                         |
+| `goal-run <agent> <goal>`                                             | Without `--visible`. `--visible` and `--wait` hand the run to the desktop and need it.                                                                                                                                                                                                                       |
+| `bundle export`, `bundle validate`, `bundle inspect`, `bundle import` | Provisioning. Export reads an explicit `--data-dir`; import creates the target. With the app running and no `--data-dir`, export and import go through it instead (the Bundles tab's code path, `src/main/cue-bundle-service.ts`), so imported agents land in the app rather than a file it would overwrite. |
 
 ### Run headless by code path (no bridge call)
 

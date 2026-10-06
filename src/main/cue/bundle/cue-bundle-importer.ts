@@ -21,6 +21,10 @@
  *
  * Every refusal is a {@link CueBundleImportError} with a stable `code`, so the
  * CLI can map it to an exit code and a JSON payload.
+ *
+ * Importing into the RUNNING desktop app goes through a {@link CueBundleImportHost}:
+ * the app owns its agents in memory, so they come from it and go back to it
+ * instead of through `maestro-sessions.json`, which it would overwrite.
  */
 
 import * as fs from 'fs';
@@ -29,6 +33,8 @@ import * as yaml from 'js-yaml';
 import type { CuePipeline, PipelineLayoutState } from '../../../shared/cue-pipeline-types';
 import type { SessionInfo } from '../../../shared/types';
 import {
+	CUE_BUNDLE_AGENT_FIELDS,
+	CUE_BUNDLE_CLAUDE_MEMORY_DIR,
 	CUE_BUNDLE_LAYOUT_PATH,
 	CUE_BUNDLE_MANIFEST_PATH,
 	CUE_BUNDLE_README_PATH,
@@ -38,6 +44,7 @@ import {
 } from '../../../shared/cue-bundle-types';
 import { CUE_CONFIG_PATH, PLAYBOOKS_DIR } from '../../../shared/maestro-paths';
 import { isValidAgentId } from '../../../shared/agentIds';
+import { isSecretEnvKey } from '../../../shared/agentEnvironment';
 import { getSettingDefault } from '../../../shared/settingsMetadata';
 import { buildNewAgentRecord, newAgentClaudeInteractive } from '../../../shared/newAgentRecord';
 import { generateUUID } from '../../../shared/uuid';
@@ -73,6 +80,13 @@ import {
 	type CueBundleValidationIssue,
 } from './cue-bundle-validator';
 import { isWithin } from './cue-bundle-exporter';
+import {
+	MCP_CONFIG_FILE,
+	isClaudeMemoryFileName,
+	mcpConfigReferences,
+	mergeMcpConfig,
+} from './cue-bundle-claude-assets';
+import { claudeMemoryDir, resolveClaudeConfigDir } from '../../memory-manager';
 
 // ─── Public types ───────────────────────────────────────────────────────────
 
@@ -147,9 +161,31 @@ export interface CueBundleImportOptions {
 	 * agent record's own `customPath` is never read by Cue.
 	 */
 	agentPaths?: Record<string, string>;
-	/** Environment consulted for required secrets. Defaults to `process.env`. */
+	/** Environment consulted for required secrets and `CLAUDE_CONFIG_DIR`. Defaults to `process.env`. */
 	env?: NodeJS.ProcessEnv;
+	/** Claude's config directory, for imported auto memory. Defaults to `CLAUDE_CONFIG_DIR` or `~/.claude`. */
+	claudeConfigDir?: string;
+	/** Import into a running desktop app instead of its files. See {@link CueBundleImportHost}. */
+	host?: CueBundleImportHost;
 	onLog?: (level: CueBundleImportLogLevel, message: string) => void;
+}
+
+/**
+ * The running desktop app an import goes into. The app holds its agents in
+ * memory and would overwrite `maestro-sessions.json` on its next save, so the
+ * import reads the agents from it and hands the new and updated ones back.
+ * Every other file is written as usual. The checks for an engine or app on
+ * the data directory are skipped: the caller is that app, and its own Cue
+ * engine picks up the merged cue.yaml files.
+ */
+export interface CueBundleImportHost {
+	/** The app's agents right now. */
+	sessions: SessionInfo[];
+	/**
+	 * Add `created` and replace `updated` (matched by id). Called last, after
+	 * every file is written; a throw rolls the files back.
+	 */
+	applyAgents(change: { created: SessionInfo[]; updated: SessionInfo[] }): Promise<void>;
 }
 
 export type CueBundleImportConflictKind =
@@ -167,7 +203,7 @@ export interface CueBundleImportConflict {
 	message: string;
 }
 
-export type CueBundleImportFileKind = 'workspace' | 'autorun' | 'playbooks';
+export type CueBundleImportFileKind = 'workspace' | 'autorun' | 'playbooks' | 'claude-memory';
 
 export interface CueBundleImportFile {
 	kind: CueBundleImportFileKind;
@@ -275,6 +311,8 @@ interface PlannedWrite {
 	/** The target's bytes at plan time, or null when it did not exist. */
 	before: Buffer | null;
 	via: 'file' | 'cue-yaml' | 'layout' | 'agent-configs';
+	/** Set the executable bit after writing (a skill's script). */
+	executable?: boolean;
 }
 
 interface InternalPlan {
@@ -426,6 +464,13 @@ async function buildPlan(options: CueBundleImportOptions): Promise<InternalPlan>
 		);
 	}
 	const dataDir = path.resolve(options.dataDir);
+	if (options.host && Object.keys(options.agentPaths ?? {}).length > 0) {
+		// The app keeps provider settings in memory; a file write would be lost.
+		throw new CueBundleImportError(
+			'INVALID_OPTIONS',
+			'Binary paths cannot be set by an import into the running app. Set them in Settings.'
+		);
+	}
 	for (const [toolType, binary] of Object.entries(options.agentPaths ?? {})) {
 		if (!isValidAgentId(toolType)) {
 			throw new CueBundleImportError(
@@ -494,7 +539,7 @@ async function buildPlan(options: CueBundleImportOptions): Promise<InternalPlan>
 
 	// ─── Data directory ──────────────────────────────────────────────────────
 	const createDataDir = !fs.existsSync(dataDir);
-	if (!createDataDir) {
+	if (!createDataDir && !options.host) {
 		assertDataDirIdle(dataDir, log);
 		const syncPath = readJsonObject(path.join(dataDir, 'maestro-bootstrap.json'))?.customSyncPath;
 		if (typeof syncPath === 'string' && syncPath) {
@@ -506,19 +551,25 @@ async function buildPlan(options: CueBundleImportOptions): Promise<InternalPlan>
 		}
 	}
 
-	let sessionsData: SessionsStoreData;
+	let sessionsData: SessionsStoreData = {};
 	let existingSessions: SessionInfo[];
-	try {
-		const file = readSessionsStoreFile(dataDir);
-		sessionsData = file.data ?? {};
-		existingSessions = file.sessions;
-	} catch (error) {
-		if (error instanceof SessionsStoreCorruptError) {
-			throw new CueBundleImportError('STORE_CORRUPT', error.message, { path: error.filePath });
+	if (options.host) {
+		existingSessions = options.host.sessions;
+	} else {
+		try {
+			const file = readSessionsStoreFile(dataDir);
+			sessionsData = file.data ?? {};
+			existingSessions = file.sessions;
+		} catch (error) {
+			if (error instanceof SessionsStoreCorruptError) {
+				throw new CueBundleImportError('STORE_CORRUPT', error.message, { path: error.filePath });
+			}
+			throw error;
 		}
-		throw error;
 	}
-	const sessionsBefore = readIfExists(path.join(dataDir, 'maestro-sessions.json'));
+	const sessionsBefore = options.host
+		? null
+		: readIfExists(path.join(dataDir, 'maestro-sessions.json'));
 
 	// ─── Workspaces ──────────────────────────────────────────────────────────
 	const unmapped = manifest.workspaces.filter((ws) => !options.workspaces[ws.key]);
@@ -580,7 +631,8 @@ async function buildPlan(options: CueBundleImportOptions): Promise<InternalPlan>
 		kind: CueBundleImportFileKind,
 		source: string,
 		target: string,
-		bytes: Buffer
+		bytes: Buffer,
+		executable = false
 	) => {
 		const before = fileBefore(target);
 		let action: CueBundleImportFile['action'] = 'create';
@@ -600,8 +652,55 @@ async function buildPlan(options: CueBundleImportOptions): Promise<InternalPlan>
 		}
 		files.push({ kind, source, target, action });
 		plannedTargets.add(target);
-		if (action !== 'unchanged') writes.push({ target, content: bytes, before, via: 'file' });
+		// Same bytes but missing its executable bit still needs the write's chmod.
+		const lacksExec = executable && before !== null && (fs.statSync(target).mode & 0o111) === 0;
+		if (action !== 'unchanged' || lacksExec) {
+			writes.push({
+				target,
+				content: bytes,
+				before,
+				via: 'file',
+				...(executable ? { executable } : {}),
+			});
+		}
 	};
+
+	/**
+	 * A workspace `.mcp.json` is merged, not replaced: the bundle's servers are
+	 * added to the ones already there, and a same-named server that differs is
+	 * a conflict.
+	 */
+	const planMcpConfig = (source: string, target: string, bytes: Buffer) => {
+		const before = fileBefore(target);
+		let content: string;
+		let action: CueBundleImportFile['action'];
+		try {
+			const merged = mergeMcpConfig(before?.toString('utf-8'), bytes.toString('utf-8'));
+			content = merged.content;
+			action = !before ? 'create' : merged.unchanged ? 'unchanged' : 'overwrite';
+			if (merged.replaced.length > 0) {
+				conflicts.push({
+					kind: 'file',
+					target,
+					message: `${target} already defines MCP server${merged.replaced.length === 1 ? '' : 's'} ${merged.replaced.map((n) => `"${n}"`).join(', ')} differently`,
+				});
+			}
+		} catch (error) {
+			content = bytes.toString('utf-8');
+			action = 'overwrite';
+			conflicts.push({
+				kind: 'file',
+				target,
+				message: `${target} cannot be merged (${error instanceof Error ? error.message : String(error)}); force replaces it`,
+			});
+		}
+		files.push({ kind: 'workspace', source, target, action });
+		plannedTargets.add(target);
+		if (action !== 'unchanged') writes.push({ target, content, before, via: 'file' });
+	};
+	const claudeConfigDir = options.claudeConfigDir ?? resolveClaudeConfigDir(options.env);
+	/** `${VAR}` names the bundle's `.mcp.json` files reference, with who reads them. */
+	const mcpSecrets: Array<[string, string]> = [];
 
 	// ─── Agents ──────────────────────────────────────────────────────────────
 	const settingsFile = readJsonObject(path.join(dataDir, 'maestro-settings.json')) ?? {};
@@ -694,7 +793,7 @@ async function buildPlan(options: CueBundleImportOptions): Promise<InternalPlan>
 			enableMaestroP: settings.enableMaestroP,
 			maestroPMode: settings.maestroPMode,
 			customEnvVars,
-		};
+		} satisfies Record<(typeof CUE_BUNDLE_AGENT_FIELDS)[number], unknown>;
 		const sameName = existingSessions.find(
 			(s) => s.id !== agent.id && s.name.toLowerCase() === settings.name.toLowerCase()
 		);
@@ -789,8 +888,31 @@ async function buildPlan(options: CueBundleImportOptions): Promise<InternalPlan>
 			continue;
 		}
 		const ws = /^workspaces\/([^/]+)\/(.+)$/.exec(source);
+		if (ws && roots.has(ws[1]) && ws[2] === MCP_CONFIG_FILE) {
+			const target = containedTarget(roots.get(ws[1])!, ws[2], source);
+			planMcpConfig(source, target, bytes);
+			for (const name of mcpConfigReferences(bytes.toString('utf-8'))) {
+				// `${HOME}` and the like are configuration, not something to set.
+				if (isSecretEnvKey(name) || manifest.requirements.secrets.includes(name)) {
+					mcpSecrets.push([name, `mcp:${ws[1]}`]);
+				}
+			}
+			continue;
+		}
 		if (ws && roots.has(ws[1])) {
-			planFile('workspace', source, containedTarget(roots.get(ws[1])!, ws[2], source), bytes);
+			planFile(
+				'workspace',
+				source,
+				containedTarget(roots.get(ws[1])!, ws[2], source),
+				bytes,
+				entry.executable === true
+			);
+			continue;
+		}
+		const memory = new RegExp(`^${CUE_BUNDLE_CLAUDE_MEMORY_DIR}/([^/]+)/([^/]+)$`).exec(source);
+		if (memory && roots.has(memory[1]) && isClaudeMemoryFileName(memory[2])) {
+			const dir = claudeMemoryDir(claudeConfigDir, realpathOrResolve(roots.get(memory[1])!));
+			planFile('claude-memory', source, containedTarget(dir, memory[2], source), bytes);
 			continue;
 		}
 		const auto = /^autorun\/([^/]+)\/(.+)$/.exec(source);
@@ -1051,6 +1173,12 @@ async function buildPlan(options: CueBundleImportOptions): Promise<InternalPlan>
 	}
 
 	// ─── Secrets ─────────────────────────────────────────────────────────────
+	// Claude expands these from its own environment, so on a server they are
+	// subject to the inherited-env allowlist like an agent's own secrets.
+	for (const [name, user] of mcpSecrets) {
+		addSecretUser(name, user);
+		agentSecretNames.add(name);
+	}
 	for (const name of manifest.requirements.secrets) {
 		if (!secretUsers.has(name)) secretUsers.set(name, new Set());
 	}
@@ -1157,7 +1285,7 @@ export async function importCueBundle(
 
 	// The plan may be minutes old by now (a CLI prompt, a slow disk): look again
 	// right before the first write.
-	if (fs.existsSync(plan.dataDir)) assertDataDirIdle(plan.dataDir, log);
+	if (fs.existsSync(plan.dataDir) && !options.host) assertDataDirIdle(plan.dataDir, log);
 
 	const createdDirs: string[] = [];
 	const done: PlannedWrite[] = [];
@@ -1183,11 +1311,21 @@ export async function importCueBundle(
 			else if (write.via === 'layout') savePipelineLayout(internal.layout!, plan.dataDir);
 			else if (write.via === 'agent-configs') {
 				await writeAgentConfigsStoreFile(plan.dataDir, internal.agentConfigsData!);
-			} else await atomicWriteFile(write.target, write.content as Buffer);
+			} else {
+				await atomicWriteFile(write.target, write.content as Buffer);
+				if (write.executable) fs.chmodSync(write.target, 0o755);
+			}
 		}
 		// Agents last: until this write lands, nothing points at the files above.
-		done.push(sessionsWrite);
-		await writeSessionsStoreFile(plan.dataDir, internal.sessionsData);
+		if (options.host) {
+			const byId = new Map((internal.sessionsData.sessions ?? []).map((s) => [s.id, s]));
+			const pick = (action: CueBundleImportAgent['action']) =>
+				plan.agents.filter((a) => a.action === action).map((a) => byId.get(a.id)!);
+			await options.host.applyAgents({ created: pick('create'), updated: pick('update') });
+		} else {
+			done.push(sessionsWrite);
+			await writeSessionsStoreFile(plan.dataDir, internal.sessionsData);
+		}
 	} catch (error) {
 		const failures: string[] = [];
 		for (const write of done.reverse()) {

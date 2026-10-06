@@ -76,8 +76,18 @@ export function getMemoryDirectoryPath(
 	if (agentId !== 'claude-code') {
 		throw new Error(`Memory viewer is not supported for agent "${agentId}"`);
 	}
-	const encoded = encodeClaudeProjectPath(projectPath);
-	return path.join(homeDir ?? os.homedir(), '.claude', 'projects', encoded, 'memory');
+	return claudeMemoryDir(path.join(homeDir ?? os.homedir(), '.claude'), projectPath);
+}
+
+/** Claude Code's config directory: `CLAUDE_CONFIG_DIR`, else `~/.claude`. */
+export function resolveClaudeConfigDir(env: NodeJS.ProcessEnv = process.env): string {
+	const configured = env.CLAUDE_CONFIG_DIR?.trim();
+	return configured ? path.resolve(configured) : path.join(os.homedir(), '.claude');
+}
+
+/** Where Claude keeps auto memory for a project, under a given config directory. */
+export function claudeMemoryDir(claudeConfigDir: string, projectPath: string): string {
+	return path.join(claudeConfigDir, 'projects', encodeClaudeProjectPath(projectPath), 'memory');
 }
 
 function assertSafeFilename(filename: string): void {
