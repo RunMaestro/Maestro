@@ -15,6 +15,8 @@ import {
 	pluginExtension,
 	sortExtensions,
 	BUILTIN_FEATURES,
+	BUILTIN_DEPENDENCIES,
+	isDependencyMet,
 	CATEGORY_FILTERS,
 	EXTENSION_SORT_VALUES,
 	SORT_OPTIONS,
@@ -104,6 +106,7 @@ describe('extensionModel first-party projection (all Encore features)', () => {
 			'coworking',
 			'opencodeServer',
 			'concerto',
+			'board',
 			'groupsPlus',
 			'ttsr',
 			'webLogin',
@@ -171,6 +174,36 @@ describe('extensionModel first-party projection (all Encore features)', () => {
 		for (const ext of extensions) {
 			expect(ext.state).toBe('not-installed');
 		}
+	});
+});
+
+describe('feature dependencies (Board requires Maestro Cue)', () => {
+	const boardDef = BUILTIN_FEATURES.find((d) => d.flag === 'board');
+
+	it('declares board -> maestroCue as the first dependent flag', () => {
+		expect(BUILTIN_DEPENDENCIES.board).toBe('maestroCue');
+	});
+
+	it('projects dependsOn onto the board tile and leaves independent tiles undefined', () => {
+		expect(boardDef).toBeDefined();
+		const boardTile = builtinExtension(boardDef!, flags({ board: true }));
+		expect(boardTile.dependsOn).toBe('maestroCue');
+
+		const cueDef = BUILTIN_FEATURES.find((d) => d.flag === 'maestroCue')!;
+		const cueTile = builtinExtension(cueDef, flags());
+		expect(cueTile.dependsOn).toBeUndefined();
+	});
+
+	it('isDependencyMet is false when Cue is off and true when Cue is on', () => {
+		const boardTile = builtinExtension(boardDef!, flags({ board: true }));
+		expect(isDependencyMet(boardTile, flags({ maestroCue: false }))).toBe(false);
+		expect(isDependencyMet(boardTile, flags({ maestroCue: true }))).toBe(true);
+	});
+
+	it('isDependencyMet is always true for a feature with no dependency', () => {
+		const cueDef = BUILTIN_FEATURES.find((d) => d.flag === 'maestroCue')!;
+		const cueTile = builtinExtension(cueDef, flags());
+		expect(isDependencyMet(cueTile, flags())).toBe(true);
 	});
 });
 

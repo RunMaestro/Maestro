@@ -119,6 +119,14 @@ export const CORE_PROMPTS: PromptDefinition[] = [
 		description: 'Git commit command prompt',
 		category: 'commands',
 	},
+	// Board
+	{
+		id: 'board-decompose',
+		filename: 'board-decompose.md',
+		description:
+			'Optional Board auto-decompose: fan a triage card into a small graph of child cards (off by default, gated on the board autoDecompose flag)',
+		category: 'board',
+	},
 	{
 		id: 'ai-command',
 		filename: 'ai-command.md',
@@ -306,6 +314,8 @@ export const PROMPT_IDS = {
 	// Commands
 	IMAGE_ONLY_DEFAULT: 'image-only-default',
 	COMMIT_COMMAND: 'commit-command',
+	// Board
+	BOARD_DECOMPOSE: 'board-decompose',
 	AI_COMMAND: 'ai-command',
 	// Per-agent prompt preambles
 	COPILOT_PREAMBLE: 'copilot-preamble',

@@ -225,7 +225,7 @@ describe('EditAgentModal', () => {
 		const args = onSave.mock.calls[0];
 		// `workingDirectory` is second-from-last now that `codexAutoResetOnExhaustion`
 		// trails it - anchor on the slot rather than on "last".
-		expect(args[args.length - 2]).toBe('/home/user/moved-project');
+		expect(args[20]).toBe('/home/user/moved-project');
 	});
 
 	it('should refuse a local working directory that does not exist', async () => {
@@ -312,7 +312,7 @@ describe('EditAgentModal', () => {
 		const args = onSave.mock.calls[0];
 		// `workingDirectory` is second-from-last now that `codexAutoResetOnExhaustion`
 		// trails it - anchor on the slot rather than on "last".
-		expect(args[args.length - 2]).toBeUndefined(); // workingDirectory unchanged
+		expect(args[20]).toBeUndefined(); // workingDirectory unchanged
 	});
 
 	it('should refuse a new SSH working directory the remote reports is not a directory', async () => {
@@ -520,7 +520,8 @@ describe('EditAgentModal', () => {
 				// provenance is recorded and P1 precedence stands (finding AD1)
 				undefined, // customEnvVarsDisabled (nothing switched off)
 				undefined, // workingDirectory unchanged
-				false // codexAutoResetOnExhaustion: off by default
+				false, // codexAutoResetOnExhaustion: off by default
+				false // boardWorker (defaults off, checkbox untouched)
 			);
 		});
 
@@ -620,7 +621,8 @@ describe('EditAgentModal', () => {
 			// provenance is recorded and P1 precedence stands (finding AD1)
 			undefined, // customEnvVarsDisabled (nothing switched off)
 			undefined, // workingDirectory unchanged
-			false // codexAutoResetOnExhaustion: off by default
+			false, // codexAutoResetOnExhaustion: off by default
+			false // boardWorker (defaults off, checkbox untouched)
 		);
 		expect(onClose).toHaveBeenCalled();
 	});
@@ -857,7 +859,8 @@ describe('EditAgentModal', () => {
 			// provenance is recorded and P1 precedence stands (finding AD1)
 			undefined, // customEnvVarsDisabled (nothing switched off)
 			undefined, // workingDirectory unchanged
-			false // codexAutoResetOnExhaustion: off by default
+			false, // codexAutoResetOnExhaustion: off by default
+			false // boardWorker (defaults off, checkbox untouched)
 		);
 	});
 
@@ -934,7 +937,8 @@ describe('EditAgentModal', () => {
 			// provenance is recorded and P1 precedence stands (finding AD1)
 			undefined, // customEnvVarsDisabled (nothing switched off)
 			undefined, // workingDirectory unchanged
-			false // codexAutoResetOnExhaustion: off by default
+			false, // codexAutoResetOnExhaustion: off by default
+			false // boardWorker (defaults off, checkbox untouched)
 		);
 	});
 
@@ -1017,7 +1021,8 @@ describe('EditAgentModal', () => {
 			// provenance is recorded and P1 precedence stands (finding AD1)
 			undefined, // customEnvVarsDisabled (nothing switched off)
 			undefined, // workingDirectory unchanged
-			false // codexAutoResetOnExhaustion: off by default
+			false, // codexAutoResetOnExhaustion: off by default
+			false // boardWorker (defaults off, checkbox untouched)
 		);
 	});
 
@@ -1443,7 +1448,7 @@ describe('EditAgentModal', () => {
 			fireEvent.click(screen.getByText('Save Changes'));
 
 			const args = onSave.mock.calls[0];
-			expect(args[args.length - 1]).toBe(true);
+			expect(args[21]).toBe(true);
 		});
 
 		it('carries an opt-OUT out through Save', async () => {
@@ -1456,7 +1461,7 @@ describe('EditAgentModal', () => {
 			fireEvent.click(screen.getByText('Save Changes'));
 
 			const args = onSave.mock.calls[0];
-			expect(args[args.length - 1]).toBe(false);
+			expect(args[21]).toBe(false);
 		});
 
 		it('is absent for a provider with no reset credits', async () => {

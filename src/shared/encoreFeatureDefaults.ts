@@ -17,6 +17,7 @@ export const ENCORE_FEATURE_DEFAULTS = {
 	symphony: true,
 	maestroCue: true,
 	pianola: false,
+	board: false,
 	plugins: false,
 	coworking: false,
 	opencodeServer: false,

@@ -37,6 +37,8 @@ interface BuildFeatureCommandsArgs {
 	onOpenSymphony?: () => void;
 	onOpenDirectorNotes?: () => void;
 	onOpenMaestroCue?: () => void;
+	onOpenBoard?: () => void;
+	onOpenProfiles?: () => void;
 	onOpenPianola?: () => void;
 	onConfigureCue?: (session: Session) => void;
 	onOpenLastDocumentGraph?: () => void;
@@ -98,6 +100,8 @@ export function buildFeatureCommands({
 	onOpenSymphony,
 	onOpenDirectorNotes,
 	onOpenMaestroCue,
+	onOpenBoard,
+	onOpenProfiles,
 	onOpenPianola,
 	onConfigureCue,
 	onOpenLastDocumentGraph,
@@ -354,6 +358,30 @@ export function buildFeatureCommands({
 			subtext: 'Event-driven automation dashboard',
 			action: () => {
 				onOpenMaestroCue();
+				setQuickActionOpen(false);
+			},
+		});
+	}
+
+	if (onOpenBoard) {
+		commands.push({
+			id: 'board',
+			label: 'Board',
+			subtext: 'Card DAG kanban dispatched on the Cue tick',
+			action: () => {
+				onOpenBoard();
+				setQuickActionOpen(false);
+			},
+		});
+	}
+
+	if (onOpenProfiles) {
+		commands.push({
+			id: 'agent-profiles',
+			label: 'Agent Profiles',
+			subtext: 'Manage the assignees board cards dispatch to',
+			action: () => {
+				onOpenProfiles();
 				setQuickActionOpen(false);
 			},
 		});
