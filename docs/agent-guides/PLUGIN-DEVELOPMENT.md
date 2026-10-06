@@ -298,7 +298,13 @@ Only `action: 'notify'` runs on tier 0. `action: 'dispatch'` needs `agents:dispa
 ```
 
 ```json
-{ "id": "flow", "title": "Agent Flow", "entry": "panel.html", "placement": "modal", "size": "full" }
+{
+	"id": "vet-overlay",
+	"title": "Vet Overlay",
+	"entry": "panel.html",
+	"placement": "modal",
+	"size": "full"
+}
 ```
 
 ### hostViews (tier 0 static; tier 1 updates)

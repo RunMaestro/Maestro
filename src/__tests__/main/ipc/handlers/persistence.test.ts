@@ -338,7 +338,7 @@ describe('persistence IPC handlers', () => {
 				expect(localEmit).toHaveBeenCalledTimes(1);
 				expect(localEmit.mock.calls[0][0].payload).toEqual({ sessionId: 'A' });
 
-				// Agent Flow calls sessions.focus(B): index.ts emits B directly, then
+				// A plugin calls sessions.focus(B): index.ts emits B directly, then
 				// records it through the shared dedupe. Simulate that record here.
 				noteSessionActivated('B');
 
@@ -372,7 +372,7 @@ describe('persistence IPC handlers', () => {
 				await localSetHandler({}, 'A');
 				expect(localEmit).not.toHaveBeenCalled();
 
-				// Agent Flow directly focuses B mid-window (index.ts emits B on the bus
+				// A plugin directly focuses B mid-window (index.ts emits B on the bus
 				// and records it here). This must cancel the pending A flush.
 				noteSessionActivated('B');
 
