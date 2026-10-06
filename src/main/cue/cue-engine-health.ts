@@ -71,6 +71,12 @@ export interface CueEngineHealthOptions {
 	eventLoop?: CueEventLoopDelaySource;
 }
 
+/** What changed, as told to `CueEngineHealth.subscribe` listeners (the systemd notifier). */
+export type CueHealthChange =
+	| { kind: 'phase'; phase: CueEnginePhase }
+	| { kind: 'readiness' }
+	| { kind: 'drainPhase'; drainPhase: string; message: string };
+
 export interface CueEngineHealth {
 	readonly version: string;
 	readonly dataDir: string;
@@ -89,6 +95,18 @@ export interface CueEngineHealth {
 	/** Refresh the readiness report when it is stale; resolves once it is current (or the refresh failed). */
 	ensureFreshReadiness(): Promise<void>;
 	eventLoopDelay(): CueEventLoopDelay | null;
+	/**
+	 * Record a drain phase (`CueEngineDeps.onDrainPhase`). It changes no rule
+	 * here; it exists so a listener can report progress (systemd STATUS=).
+	 */
+	noteDrainPhase(drainPhase: string, message: string): void;
+	/**
+	 * Be told about every phase change, readiness update and drain phase.
+	 * Returns an unsubscribe function. A throwing listener is ignored.
+	 */
+	subscribe(listener: (change: CueHealthChange) => void): () => void;
+	/** One human-readable line for the current state (systemd STATUS=, logs). */
+	statusText(): string;
 	dispose(): void;
 }
 
@@ -139,10 +157,26 @@ export function createCueEngineHealth(options: CueEngineHealthOptions): CueEngin
 	let report: CueReadinessReport | null = null;
 	let reportAt = 0;
 	let inFlight: Promise<void> | null = null;
+	const listeners = new Set<(change: CueHealthChange) => void>();
+	const emit = (change: CueHealthChange) => {
+		for (const listener of [...listeners]) {
+			try {
+				listener(change);
+			} catch {
+				// A listener (the systemd notifier) must never break the engine.
+			}
+		}
+	};
 
 	const setPhase = (next: CueEnginePhase) => {
-		if (phase === 'lock-lost') return;
+		if (phase === 'lock-lost' || phase === next) return;
 		phase = next;
+		emit({ kind: 'phase', phase });
+	};
+	const storeReport = (next: CueReadinessReport) => {
+		report = next;
+		reportAt = now();
+		emit({ kind: 'readiness' });
 	};
 
 	return {
@@ -156,23 +190,19 @@ export function createCueEngineHealth(options: CueEngineHealthOptions): CueEngin
 		markDraining: () => setPhase('draining'),
 		markStopped: () => setPhase('stopped'),
 		markLockLost: () => {
+			if (phase === 'lock-lost') return;
 			phase = 'lock-lost';
+			emit({ kind: 'phase', phase });
 		},
 		readiness: () => report,
-		setReadiness(next) {
-			report = next;
-			reportAt = now();
-		},
+		setReadiness: storeReport,
 		ensureFreshReadiness() {
 			const refresh = options.refreshReadiness;
 			if (!refresh) return Promise.resolve();
 			if (report && now() - reportAt < CUE_READINESS_REFRESH_MS) return Promise.resolve();
 			if (!inFlight) {
 				inFlight = refresh()
-					.then((next) => {
-						report = next;
-						reportAt = now();
-					})
+					.then(storeReport)
 					.catch(() => {
 						// Keep the previous report; stamp the attempt so a failing probe
 						// is not retried on every request.
@@ -185,6 +215,29 @@ export function createCueEngineHealth(options: CueEngineHealthOptions): CueEngin
 			return inFlight;
 		},
 		eventLoopDelay: () => options.eventLoop?.read() ?? null,
+		noteDrainPhase: (drainPhase, message) => emit({ kind: 'drainPhase', drainPhase, message }),
+		subscribe(listener) {
+			listeners.add(listener);
+			return () => listeners.delete(listener);
+		},
+		statusText() {
+			switch (phase) {
+				case 'starting':
+					return 'Starting';
+				case 'draining':
+					return 'Draining';
+				case 'stopped':
+					return 'Stopped';
+				case 'lock-lost':
+					return 'Stopped dispatching: another Cue engine took over the lock';
+				case 'running':
+					if (!report) return 'Running';
+					if (!report.ready) {
+						return `Running with ${report.gaps.length} readiness gap(s); see /readyz or cue engine check`;
+					}
+					return `Running: ${report.agents} agent(s), ${report.subscriptions} subscription(s)`;
+			}
+		},
 		dispose: () => options.eventLoop?.dispose(),
 	};
 }
