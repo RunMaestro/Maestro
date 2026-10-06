@@ -1492,6 +1492,8 @@ export interface Session {
 	customEnvVars?: Record<string, string>; // Custom environment variables (overrides agent-level)
 	// Env vars switched off in the editor: parked, never spawned with. See shared/types.ts.
 	customEnvVarsDisabled?: Record<string, string>;
+	// Secret NAMES from bundle import, resolved by the CLI and Cue at launch. Carried, never read here. See shared/types.ts.
+	requiredSecrets?: string[];
 	customModel?: string; // Custom model ID (overrides agent-level)
 	customEffort?: string; // Custom effort/reasoning level (overrides agent-level)
 	customProviderPath?: string; // Custom provider path (overrides agent-level)

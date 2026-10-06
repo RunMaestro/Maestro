@@ -367,6 +367,7 @@ describe('goal-runner (runGoal)', () => {
 			customEffort: 'high',
 			customArgs: '--foo',
 			customEnvVars: { BAR: '1' },
+			requiredSecrets: ['DEPLOY_TOKEN'],
 			sessionSshRemoteConfig: { enabled: true, remoteId: 'remote-1' } as never,
 		});
 
@@ -378,6 +379,7 @@ describe('goal-runner (runGoal)', () => {
 			customEffort: 'high',
 			customArgs: '--foo',
 			customEnvVars: { BAR: '1' },
+			requiredSecrets: ['DEPLOY_TOKEN'],
 			sshRemoteConfig: { enabled: true, remoteId: 'remote-1' },
 		});
 	});

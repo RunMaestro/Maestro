@@ -15,14 +15,23 @@
  * SSH remote that cannot be resolved: that fails on every surface, where
  * desktop and Cue used to run the agent LOCALLY against the remote's path.
  *
- * Pure apart from reading `process.env` (through `buildAgentEnvironment`): no
- * spawning, no I/O. A plan for an SSH remote describes the remote invocation;
- * the caller hands it to the SSH wrapper, which owns building the ssh command.
+ * No spawning. Its only reads are `process.env` (through
+ * `buildAgentEnvironment`) and, for a CLI or Cue launch of an agent that
+ * declares `requiredSecrets`, those secrets' files (`serverSecrets.ts`). A
+ * plan for an SSH remote describes the remote invocation; the caller hands it
+ * to the SSH wrapper, which owns building the ssh command.
  */
 
 import { isWindows } from '../../platformDetection';
 import type { QuerySource } from '../../querySource';
 import type { AgentSshRemoteConfig, SshRemoteConfig } from '../../types';
+import {
+	describeSecretProblem,
+	resolveSecrets,
+	type SecretLookupOptions,
+	type SecretProblem,
+	type SecretSource,
+} from '../../serverSecrets';
 import { buildAgentEnvironment, resolveAgentEnvVars, type AgentEnvSurface } from './env';
 import {
 	resolvePromptDelivery,
@@ -84,6 +93,16 @@ export interface AgentLaunchInput {
 	extraPathDirs?: string[];
 	/** Cue only: inherit just the server-mode allowlist (see `filterServerProcessEnv`). */
 	isServerMode?: boolean;
+	/**
+	 * Secret names this agent needs (the agent record's `requiredSecrets`,
+	 * written by bundle import). CLI and Cue resolve them from systemd
+	 * credentials, `/run/secrets` or the environment and put the values in this
+	 * launch's environment only; desktop never reads them. Local launches only:
+	 * a value is never sent to an SSH remote.
+	 */
+	requiredSecrets?: readonly string[];
+	/** Where secrets are looked up. Defaults to the real paths and `process.env`; tests inject. */
+	secretLookup?: SecretLookupOptions;
 
 	/** The agent's SSH setting, and where to look its remote up. */
 	sshRemoteConfig?: AgentSshRemoteConfig | null;
@@ -110,6 +129,22 @@ interface LaunchPlanCommon {
 	 * Process Details shows as "set by Maestro".
 	 */
 	envVars: Record<string, string> | undefined;
+	/**
+	 * What happened to `requiredSecrets`, by NAME only (safe to log). Absent
+	 * when the agent declares none or the surface does not deliver them.
+	 */
+	secrets?: LaunchSecretsReport;
+}
+
+export interface LaunchSecretsReport {
+	/** Names placed in the environment, with where each value came from. */
+	injected: { name: string; source: SecretSource }[];
+	/** Names set nowhere. */
+	missing: string[];
+	/** Names whose file exists but cannot be used. */
+	unusable: { name: string; problem: SecretProblem; path?: string }[];
+	/** Names not delivered because the agent runs on an SSH remote. */
+	notDeliveredToRemote: string[];
 }
 
 export type AgentLaunchPlan =
@@ -157,6 +192,14 @@ export function buildAgentLaunchPlan(input: AgentLaunchInput): AgentLaunchPlanRe
 			? { ...(layered ?? {}), ...(input.maestroEnvVars ?? {}) }
 			: undefined;
 
+	// Declared secrets: CLI and Cue only, so the desktop never reads a secret
+	// file, and never into `envVars`, which crosses to an SSH remote and is
+	// shown in Process Details.
+	const declaredSecrets =
+		input.surface !== 'desktop' && input.requiredSecrets && input.requiredSecrets.length > 0
+			? [...new Set(input.requiredSecrets)].sort()
+			: undefined;
+
 	const prompt = resolvePromptDelivery({
 		agent,
 		prompt: input.prompt,
@@ -179,10 +222,24 @@ export function buildAgentLaunchPlan(input: AgentLaunchInput): AgentLaunchPlanRe
 				prompt,
 				stdin: undefined,
 				envVars,
+				...(declaredSecrets
+					? {
+							secrets: {
+								injected: [],
+								missing: [],
+								unusable: [],
+								notDeliveredToRemote: declaredSecrets,
+							},
+						}
+					: {}),
 				env: undefined,
 			},
 		};
 	}
+
+	const resolved = declaredSecrets
+		? resolveSecrets(declaredSecrets, input.secretLookup)
+		: undefined;
 
 	const args =
 		prompt.via === 'argv' || prompt.via === 'stdin'
@@ -198,8 +255,19 @@ export function buildAgentLaunchPlan(input: AgentLaunchInput): AgentLaunchPlanRe
 			prompt,
 			stdin: prompt.via === 'stdin' && prompt.format === 'raw' ? input.prompt : undefined,
 			envVars,
+			...(resolved
+				? {
+						secrets: {
+							injected: resolved.found,
+							missing: resolved.missing,
+							unusable: resolved.unusable,
+							notDeliveredToRemote: [],
+						},
+					}
+				: {}),
 			env: buildAgentEnvironment({
 				...layers,
+				secretEnvVars: resolved?.values,
 				surface: input.surface,
 				maestroEnvVars: input.maestroEnvVars,
 				isResuming: input.isResuming,
@@ -209,4 +277,32 @@ export function buildAgentLaunchPlan(input: AgentLaunchInput): AgentLaunchPlanRe
 			}),
 		},
 	};
+}
+
+/**
+ * One warning line for the secrets an agent declared but did not get, or
+ * `undefined` when every one was delivered. Names, sources and paths only:
+ * never a value, so it is safe in any log.
+ */
+export function describeUndeliveredSecrets(
+	agentName: string,
+	report: LaunchSecretsReport | undefined
+): string | undefined {
+	if (!report) return undefined;
+	const parts: string[] = [];
+	if (report.missing.length > 0) {
+		parts.push(
+			`not set: ${report.missing.join(', ')} (looked in $CREDENTIALS_DIRECTORY, /run/secrets and the environment)`
+		);
+	}
+	if (report.unusable.length > 0) {
+		parts.push(`unusable: ${report.unusable.map(describeSecretProblem).join('; ')}`);
+	}
+	if (report.notDeliveredToRemote.length > 0) {
+		parts.push(
+			`not sent to the SSH remote: ${report.notDeliveredToRemote.join(', ')} (set them on the remote host)`
+		);
+	}
+	if (parts.length === 0) return undefined;
+	return `Agent "${agentName}" requires secrets it did not receive - ${parts.join('; ')}`;
 }

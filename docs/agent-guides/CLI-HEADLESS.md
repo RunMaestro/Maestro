@@ -116,6 +116,30 @@ What is skipped, and why it is safe:
 
 **node-pty is never loaded by `maestro-cli.js`.** `cue engine start`, `send`, `run-doc`, `playbook` and `goal-run` run without it. Only `maestro-p.js` loads it, the driver for a Claude agent in TUI mode (`enableMaestroP`), which also needs `maestro-p.js` built and shipped. It installs from its prebuild anyway, so there is nothing to skip; on a platform without one, a failed node-pty compile fails `npm ci` even though the engine would never use it.
 
+## Secrets on a server
+
+A bundle never carries a secret value: `bundle export` reduces every secret-looking env var to its name (`env.required` per agent, `requirements.secrets` in the manifest, plus webhook `secret_env` names). On a server, the value comes from one of three places, looked up by `lookupSecret()` / `resolveSecrets()` in `src/shared/serverSecrets.ts`:
+
+| Order | Where                             | Set by                                                    |
+| ----- | --------------------------------- | --------------------------------------------------------- |
+| 1     | `$CREDENTIALS_DIRECTORY/<NAME>`   | systemd (`LoadCredential=NAME:/path` or `SetCredential=`) |
+| 2     | `/run/secrets/<NAME>`             | Docker / Kubernetes secret mounts                         |
+| 3     | the environment variable `<NAME>` | the unit, the container, or the shell                     |
+
+- **Files before the environment.** A file is the deliberate channel: it is not visible in `/proc/<pid>/environ` or `docker inspect`, and it is not inherited by every child process. A stale value left in a unit file or a shell must not shadow a secret the operator just rotated in its file. systemd comes first because its directory is private to this one service.
+- **A file that exists is the answer.** If it is unreadable, a directory, empty, or over 64 KiB, the lookup reports that problem (by name and path) and does NOT fall back to the environment.
+- **File rules.** The file name is exactly the variable name. Names must be environment variable names (`[A-Za-z_][A-Za-z0-9_]*`), which also rules out separators and `..`. One trailing line ending (`\n` or `\r\n`) is dropped, since `echo token > file` writes one. Kubernetes' symlinked secret files are followed.
+- **Per agent, never global.** `bundle import` records each agent's names on its record (`requiredSecrets`). At launch the CLI and Cue resolve exactly those names and put the values in that one agent's process environment (`buildAgentLaunchPlan`, `requiredSecrets`). They are never written to `process.env`, so other agents do not receive them, and in server mode a declared secret reaches its agent WITHOUT being added to `MAESTRO_SERVER_ENV_ALLOW` (doing so would hand it to every agent). The layer sits directly above the inherited environment: the agent record's own value for the same name still wins. One caveat: the CLI passes the shell's whole environment to every agent it runs (it has no allowlist), so a secret supplied only as an environment variable reaches every CLI-run agent anyway; the per-agent scoping is what file-supplied secrets, and Cue in server mode, get.
+- **Where it applies.** Cue agent runs and `send`, `run-doc`, `playbook`, `goal-run`. Webhook `secret_env` uses the same lookup, so a webhook secret can be a file too. `bundle import` reports `set` (and `source`) with the same lookup, so a secret supplied only as a file is not reported missing. The desktop never reads secret files.
+- **Missing secrets do not stop a run.** The launch logs one warning naming what is missing (`Agent "X" requires secrets it did not receive - not set: NPM_TOKEN ...`) and the agent reports its own auth error. The readiness gate is where a missing secret should block startup.
+- **Never stored or logged.** Values go to the child environment and nowhere else: not `envVars` (Process Details, and what crosses to SSH), not the JSON or text logs (`formatJsonLogLine` lifts ids only), not `cue.db`, the history, the run ledger or the session store. An agent that prints its own environment is the one leak Maestro cannot prevent.
+
+Limits:
+
+- **SSH-remote agents get no secret values.** Sending one would put it on an ssh command line. The plan reports it (`not sent to the SSH remote`); set it on the remote host.
+- **Cue `action: command` shell steps get no declared secrets.** They inherit only the server allowlist. Name the variable in `MAESTRO_SERVER_ENV_ALLOW` if a shell step needs it.
+- **`requiredSecrets` has no editor.** It comes from import and goes back out on export. To change it, re-import, or edit the record while the app is closed.
+
 ## Engine logs (`--log-format`)
 
 `cue engine start --log-format text|json`, default `text`.
@@ -210,5 +234,7 @@ Afterwards:
 | `MAESTRO_USER_DATA=<missing> ... cue engine status\|inspect\|stop --data-dir $D`, `cue trigger echo-beat --data-dir $D` | each acts on `$D`; the trigger ran a second time through the inbox                                                                                      |
 | `... --data-dir <missing>` on `start` and `trigger`                                                                     | exit 1, `DATA_DIR_NOT_FOUND`, folder not created                                                                                                        |
 | `MAESTRO_SERVER_MODE=1` with a shell step printing `$MAESTRO_USER_DATA` and an unlisted secret                          | the child saw `$D` and not the secret                                                                                                                   |
+
+**Live, 2026-10-06 (secrets).** A two-agent pipeline exported from a source data dir where `Deployer` sets `DEPLOY_TOKEN` (exported by name only), imported into a server data dir with `CREDENTIALS_DIRECTORY` holding `DEPLOY_TOKEN` = a sentinel. A fake `codex` recorded each agent's `DEPLOY_TOKEN`. `bundle import` reported it `set (systemd credential)` and wrote `requiredSecrets: ["DEPLOY_TOKEN"]` on Deployer only. Under plain Node with real SQLite: `cue engine start` (server mode, JSON logs, an unrelated engine secret in its env), `send`, `run-doc`, `playbook` and `goal-run` all gave Deployer the sentinel and Reviewer nothing; the unrelated engine secret reached neither. The sentinel appeared in no stdout, stderr, JSON log line, `cue.db`, session store, run ledger or history file. Re-exporting from the server kept `env.required: ["DEPLOY_TOKEN"]`.
 
 To re-run: build, then repeat the table with a fresh `$S`. The source dir needs a `maestro-sessions.json` with one agent per provider (its `autoRunFolderPath` inside its workspace) and a `playbooks/<agent>.json`.

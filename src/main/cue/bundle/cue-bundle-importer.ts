@@ -43,6 +43,12 @@ import { buildNewAgentRecord, newAgentClaudeInteractive } from '../../../shared/
 import { generateUUID } from '../../../shared/uuid';
 import { readCliServerInfo, isCliServerRunning } from '../../../shared/cli-server-discovery';
 import { filterServerProcessEnv } from '../../../shared/maestro-lib/launch/env';
+import {
+	describeSecretProblem,
+	isValidSecretName,
+	lookupSecret,
+	type SecretSource,
+} from '../../../shared/serverSecrets';
 import type { ThinkingMode } from '../../../shared/types';
 import { assertNoSymlinkOnPath } from '../../utils/zip-archive';
 import { atomicWriteFile } from '../../utils/atomic-json-store';
@@ -147,8 +153,13 @@ export interface CueBundleImportOptions {
 	 * agent record's own `customPath` is never read by Cue.
 	 */
 	agentPaths?: Record<string, string>;
-	/** Environment consulted for required secrets. Defaults to `process.env`. */
+	/**
+	 * Environment consulted for required secrets (and for systemd's
+	 * `CREDENTIALS_DIRECTORY`). Defaults to `process.env`.
+	 */
 	env?: NodeJS.ProcessEnv;
+	/** Override the `/run/secrets` directory; `null` disables it. Tests use this. */
+	runSecretsDir?: string | null;
 	onLog?: (level: CueBundleImportLogLevel, message: string) => void;
 }
 
@@ -222,14 +233,25 @@ export interface CueBundleImportEnvReport {
 
 export interface CueBundleImportSecret {
 	name: string;
-	/** Whether the importing environment sets it to a non-empty value. */
+	/**
+	 * Whether this machine supplies it: a systemd credential, a
+	 * `/run/secrets/<NAME>` file, or a non-empty environment variable, looked
+	 * up exactly as the engine and the CLI will at launch.
+	 */
 	set: boolean;
+	/** Where the value was found, when it was. */
+	source?: SecretSource;
+	/** Why a secret file that exists cannot be used (names the path, never the value). */
+	problem?: string;
 	/** Who reads it: `agent:<name>` or `webhook:<subscription>`. */
 	usedBy: string[];
 	/**
 	 * For a secret an agent reads: whether server mode's inherited-env
-	 * allowlist lets it through to the agent. Webhook secrets are read by the
-	 * engine itself, so the allowlist does not apply to them.
+	 * allowlist also lets it through. Informational: a declared secret reaches
+	 * the agents that declared it either way (it is resolved per agent at
+	 * launch), but one on the allowlist is ALSO inherited by every agent the
+	 * engine runs whenever it is set in the engine's environment. Webhook
+	 * secrets are read by the engine itself, so the allowlist does not apply.
 	 */
 	passesServerAllowlist?: boolean;
 }
@@ -288,6 +310,17 @@ interface InternalPlan {
 }
 
 // ─── Small helpers ──────────────────────────────────────────────────────────
+
+/**
+ * The secret names an agent record keeps: valid env var names only (a name is
+ * also a file name under `/run/secrets`, so nothing with a separator or `..`
+ * is stored), de-duplicated and sorted so a re-import writes the same record.
+ * `undefined` when there are none, so the field is simply absent.
+ */
+function requiredSecretNames(value: unknown): string[] | undefined {
+	const names = [...new Set(asStringList(value).filter(isValidSecretName))].sort();
+	return names.length > 0 ? names : undefined;
+}
 
 function asStringList(value: unknown): string[] {
 	if (typeof value === 'string') return value ? [value] : [];
@@ -694,6 +727,9 @@ async function buildPlan(options: CueBundleImportOptions): Promise<InternalPlan>
 			enableMaestroP: settings.enableMaestroP,
 			maestroPMode: settings.maestroPMode,
 			customEnvVars,
+			// Names only. The CLI and Cue resolve them at launch from systemd
+			// credentials, /run/secrets or the environment, for this agent alone.
+			requiredSecrets: requiredSecretNames(settings.env?.required),
 		};
 		const sameName = existingSessions.find(
 			(s) => s.id !== agent.id && s.name.toLowerCase() === settings.name.toLowerCase()
@@ -1055,12 +1091,18 @@ async function buildPlan(options: CueBundleImportOptions): Promise<InternalPlan>
 		if (!secretUsers.has(name)) secretUsers.set(name, new Set());
 	}
 	const secrets: CueBundleImportSecret[] = [...secretUsers.keys()].sort().map((name) => {
-		const value = env[name];
+		// The same lookup the engine and the CLI make at launch, so a secret
+		// supplied only as a file is not reported missing. The value is dropped.
+		const lookup = lookupSecret(name, { env, runSecretsDir: options.runSecretsDir });
 		const secret: CueBundleImportSecret = {
 			name,
-			set: value !== undefined && value !== '',
+			set: lookup.status === 'found',
 			usedBy: [...secretUsers.get(name)!].sort(),
 		};
+		if (lookup.status === 'found') secret.source = lookup.source;
+		if (lookup.status === 'unusable') {
+			secret.problem = describeSecretProblem({ name, ...lookup });
+		}
 		if (agentSecretNames.has(name)) {
 			secret.passesServerAllowlist =
 				Object.keys(filterServerProcessEnv({ [name]: 'x' })).length > 0;

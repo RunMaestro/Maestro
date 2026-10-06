@@ -20,22 +20,38 @@ import {
 	type CueWebhookDelivery,
 } from '../cue-webhook-server';
 import { passesFilter } from './cue-trigger-filter';
+import { describeSecretProblem, lookupSecret } from '../../../shared/serverSecrets';
 import type { CueTriggerSource, CueTriggerSourceContext } from './cue-trigger-source';
 
 /**
  * Resolve the subscription's shared secret. `secret_env` wins over a literal
  * `secret` so a project can commit the variable name and keep the value out of
- * git. Returns null when neither yields a non-empty value, which leaves the
- * subscription unregistered rather than listening without authentication.
+ * git. The name is looked up the way every server secret is: a systemd
+ * credential, then `/run/secrets/<NAME>`, then the environment
+ * (`src/shared/serverSecrets.ts`). Returns the reason when nothing usable is
+ * found, which leaves the subscription unregistered rather than listening
+ * without authentication. Never logs the value.
  */
-function resolveSecret(webhook: { secret?: string; secret_env?: string }): string | null {
+function resolveSecret(webhook: {
+	secret?: string;
+	secret_env?: string;
+}): { secret: string } | { secret: null; reason?: string } {
 	if (webhook.secret_env) {
-		const fromEnv = process.env[webhook.secret_env];
-		if (fromEnv && fromEnv.length > 0) return fromEnv;
-		return null;
+		const lookup = lookupSecret(webhook.secret_env);
+		if (lookup.status === 'found') return { secret: lookup.value };
+		if (lookup.status === 'missing') {
+			return {
+				secret: null,
+				reason: `"${webhook.secret_env}" is not set in $CREDENTIALS_DIRECTORY, /run/secrets or the environment`,
+			};
+		}
+		return {
+			secret: null,
+			reason: describeSecretProblem({ name: webhook.secret_env, ...lookup }),
+		};
 	}
-	if (webhook.secret && webhook.secret.length > 0) return webhook.secret;
-	return null;
+	if (webhook.secret && webhook.secret.length > 0) return { secret: webhook.secret };
+	return { secret: null };
 }
 
 /**
@@ -69,15 +85,16 @@ export function createCueWebhookTriggerSource(
 	const path = normalizeWebhookPath(webhook.path || ctx.subscription.name);
 	if (!path) return null;
 
-	const secret = resolveSecret(webhook);
-	if (!secret) {
+	const resolved = resolveSecret(webhook);
+	if (resolved.secret === null) {
 		ctx.onLog(
 			'error',
 			`[CUE] "${ctx.subscription.name}" webhook not started: no secret resolved` +
-				(webhook.secret_env ? ` (env var "${webhook.secret_env}" is unset or empty)` : '')
+				('reason' in resolved && resolved.reason ? ` (${resolved.reason})` : '')
 		);
 		return null;
 	}
+	const secret = resolved.secret;
 
 	const signatureHeader = webhook.signature_header;
 	let unregister: (() => void) | null = null;

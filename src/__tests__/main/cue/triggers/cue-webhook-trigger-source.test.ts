@@ -18,6 +18,9 @@ import type { CueEvent, CueSubscription } from '../../../../main/cue/cue-types';
 import type { SessionInfo } from '../../../../shared/types';
 import { EventEmitter } from 'events';
 import type * as http from 'http';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 
 function makeSession(): SessionInfo {
 	return {
@@ -129,6 +132,46 @@ describe('cue-webhook-trigger-source', () => {
 
 		expect(await deliver('hook', '{}', { 'x-maestro-cue-secret': 'from-env' })).toBe(202);
 		expect(emit).toHaveBeenCalledTimes(1);
+	});
+
+	describe('secret_env from a secret file', () => {
+		let credentials: string;
+		const originalCredentials = process.env.CREDENTIALS_DIRECTORY;
+
+		beforeEach(() => {
+			credentials = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'webhook-secret-')));
+			process.env.CREDENTIALS_DIRECTORY = credentials;
+		});
+
+		afterEach(() => {
+			if (originalCredentials === undefined) delete process.env.CREDENTIALS_DIRECTORY;
+			else process.env.CREDENTIALS_DIRECTORY = originalCredentials;
+			fs.rmSync(credentials, { recursive: true, force: true });
+		});
+
+		it('reads a systemd credential, ahead of the environment', async () => {
+			fs.writeFileSync(path.join(credentials, 'WEBHOOK_TEST_SECRET'), 'from-file\n');
+			process.env.WEBHOOK_TEST_SECRET = 'stale-env';
+			const { ctx, emit } = makeCtx(
+				makeSub({ webhook: { path: 'hook', secret_env: 'WEBHOOK_TEST_SECRET' } })
+			);
+			createCueWebhookTriggerSource(ctx)?.start();
+
+			expect(await deliver('hook', '{}', { 'x-maestro-cue-secret': 'stale-env' })).toBe(401);
+			expect(await deliver('hook', '{}', { 'x-maestro-cue-secret': 'from-file' })).toBe(202);
+			expect(emit).toHaveBeenCalledTimes(1);
+		});
+
+		it('refuses to start on an unusable file and names it without its value', () => {
+			fs.writeFileSync(path.join(credentials, 'WEBHOOK_TEST_SECRET'), '');
+			process.env.WEBHOOK_TEST_SECRET = 'stale-env';
+			const { ctx, onLog } = makeCtx(makeSub({ webhook: { secret_env: 'WEBHOOK_TEST_SECRET' } }));
+			expect(createCueWebhookTriggerSource(ctx)).toBeNull();
+			const message = String(onLog.mock.calls[0][1]);
+			expect(message).toContain('WEBHOOK_TEST_SECRET');
+			expect(message).toContain('is empty');
+			expect(message).not.toContain('stale-env');
+		});
 	});
 
 	it('defaults the path to a slug of the subscription name', async () => {

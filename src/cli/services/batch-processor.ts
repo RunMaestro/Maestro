@@ -657,6 +657,7 @@ export async function* runPlaybook(
 								customArgs: session.customArgs,
 								additionalDirectories: session.additionalDirectories,
 								customEnvVars: session.customEnvVars,
+								requiredSecrets: session.requiredSecrets,
 								sshRemoteConfig: session.sessionSshRemoteConfig,
 								appendSystemPrompt: playbookSystemPrompt,
 								// This is Auto Run, not someone typing. Marks the turn so delegation
@@ -752,6 +753,7 @@ export async function* runPlaybook(
 										customArgs: session.customArgs,
 										additionalDirectories: session.additionalDirectories,
 										customEnvVars: session.customEnvVars,
+										requiredSecrets: session.requiredSecrets,
 										sshRemoteConfig: session.sessionSshRemoteConfig,
 										querySource: 'auto',
 										// Honor the token source for the Auto Run synopsis turn too.

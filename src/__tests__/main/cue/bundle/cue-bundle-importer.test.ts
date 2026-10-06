@@ -506,6 +506,34 @@ describe('importCueBundle against a fixture bundle', () => {
 			expect(typeof plan.secrets[0].passesServerAllowlist).toBe('boolean');
 			expect(plan.secrets[1].passesServerAllowlist).toBeUndefined();
 		});
+
+		it('keeps the declared secret names on the agent record, never a value', async () => {
+			await importCueBundle(options({}, { env: { API_KEY: 'value-that-must-not-be-stored' } }));
+			const [agent] = readSessionsStoreFile(dataDir).sessions;
+			expect(agent.requiredSecrets).toEqual(['API_KEY']);
+			expect(fs.readFileSync(path.join(dataDir, 'maestro-sessions.json'), 'utf8')).not.toContain(
+				'value-that-must-not-be-stored'
+			);
+		});
+
+		it('reports a secret supplied only as a file as set, the way the launch will find it', async () => {
+			const credentials = path.join(tmp, 'credentials');
+			const runSecrets = path.join(tmp, 'run-secrets');
+			fs.mkdirSync(credentials);
+			fs.mkdirSync(runSecrets);
+			fs.writeFileSync(path.join(credentials, 'API_KEY'), 'k\n');
+			fs.writeFileSync(path.join(runSecrets, 'HOOK_SECRET'), '');
+			const plan = await planCueBundleImport(
+				options({}, { env: { CREDENTIALS_DIRECTORY: credentials }, runSecretsDir: runSecrets })
+			);
+			expect(plan.secrets.find((x) => x.name === 'API_KEY')).toMatchObject({
+				set: true,
+				source: 'credentials',
+			});
+			const hook = plan.secrets.find((x) => x.name === 'HOOK_SECRET');
+			expect(hook).toMatchObject({ set: false });
+			expect(hook?.problem).toContain('is empty');
+		});
 	});
 
 	describe('conflicts', () => {

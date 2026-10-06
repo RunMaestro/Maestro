@@ -15,7 +15,10 @@ import {
 	sshUnresolvedRemoteMessage,
 	type SshSpawnWrapConfig,
 } from '../utils/ssh-spawn-wrapper';
-import { buildAgentLaunchPlan } from '../../shared/maestro-lib/launch/launch-plan';
+import {
+	buildAgentLaunchPlan,
+	describeUndeliveredSecrets,
+} from '../../shared/maestro-lib/launch/launch-plan';
 import { buildSpawnPath } from '../utils/spawnPath';
 import { QUERY_SOURCE_ENV_VAR } from '../../shared/querySource';
 import { ensureRemoteMaestroPProbed } from '../agents/probeRemoteMaestroP';
@@ -84,6 +87,7 @@ export async function buildSpawnSpec(
 		customPath,
 		customArgs,
 		customEnvVars,
+		requiredSecrets,
 		customModel,
 		customEffort,
 		sshStore,
@@ -164,6 +168,8 @@ export async function buildSpawnSpec(
 		// the user typed, because Cue prompts ARE the user's words from cue.yaml.
 		querySource: 'cue',
 		isServerMode: config.isServerMode,
+		// The secrets this agent declared, into this run's environment only.
+		requiredSecrets,
 		sshRemoteConfig,
 		sshStore,
 	});
@@ -171,6 +177,9 @@ export async function buildSpawnSpec(
 		return { ok: false, message: planResult.error };
 	}
 	const plan = planResult.plan;
+	// Names only: the run still starts, and the agent reports its own auth error.
+	const undeliveredSecrets = describeUndeliveredSecrets(session?.name ?? toolType, plan.secrets);
+	if (undeliveredSecrets) config.onLog('warn', `[CUE] ${undeliveredSecrets}`);
 
 	let command = plan.command;
 	let spawnArgs = plan.args;
