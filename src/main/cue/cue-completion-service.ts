@@ -51,7 +51,8 @@ export interface CueCompletionService {
 	notifyAgentCompleted(sessionId: string, completionData?: AgentCompletionData): void;
 }
 
-function getMatchingSources(sub: CueSubscription): string[] {
+/** The sources an `agent.completed` subscription waits on; more than one makes it a fan-in. */
+export function getMatchingSources(sub: CueSubscription): string[] {
 	return Array.isArray(sub.source_session)
 		? sub.source_session
 		: sub.source_session

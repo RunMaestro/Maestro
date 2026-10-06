@@ -143,6 +143,8 @@ When an agent process exits, `notifyAgentCompleted(sessionId, completionData)` i
 
 `CueFanInTracker` (`cue-fan-in-tracker.ts`) keeps a `Map<key, Map<sourceId, FanInSourceCompletion>>` keyed by `${ownerSessionId}:${subscriptionName}`. **Subscription names containing `:` will mis-key health lookups** (`cue-engine.ts:583` splits on first `:`) - validation should reject them; for now, just don't.
 
+**Durable progress (standalone engine only).** With `deps.runnerMode === 'standalone'` the tracker gets a `persistence` (`cue-fan-in-persistence.ts`) and writes each completed source to `cue_fan_in_state` as it arrives (same tail-capped output it holds in memory). Rows are deleted BEFORE the dispatch when the fan-in fires (at most once), and on timeout, `clearForSession`, `expireTracker` and `reset` (per key, never a table wipe: `cue.db` is shared by every engine on the data dir). `forgetInMemory()` (the drain's teardown) keeps them. At `start()`, after sessions init and the queue restore, `CueFanInTracker.restore()` rebuilds them against the CURRENT config (`getMatchingSources`, the completion service's own source list): a subscription that is gone, no longer a fan-in, or lost one of the stored sources drops its rows with a warning; the timeout counts from the first source's arrival, wall clock including downtime, so one that ran out while down gets `timeout_on_fail` exactly as a live timeout would. **Not on the desktop:** the renderer re-runs `refreshSession` for every agent at boot, and a refresh's `teardownSession` clears fan-in state, so durable rows there would need a change to what a yaml reload does.
+
 Timeout behavior is governed by the per-config `timeout_on_fail` setting:
 
 - **`break`** - drop the fan-in silently when not all sources have arrived in time (no chain step fires).
@@ -159,7 +161,7 @@ System sleep / app suspension can leave the engine paused mid-day. Handled in fo
 - **`cue-reconciler.ts`** - fires **one** catch-up event per enabled subscription whose missed cadence fell inside the gap:
   - `time.heartbeat`: `{ reconciled: true, missedCount, sleepDurationMs }` based on `Math.floor(gap / interval)`.
   - `time.scheduled`: `{ reconciled: true, missedCount, mostRecentSlotMs, matched_time, matched_day, sleepDurationMs }` for the **most recent** missed slot only - long sleeps don't queue one run per slot.
-  - `file.changed` / `agent.completed` / `task.pending` are NOT reconciled (FSEvents survives sleep, fan-in state is durable, task scanner re-scans on next tick).
+  - `file.changed` / `agent.completed` / `task.pending` are NOT reconciled (FSEvents survives sleep, partial fan-in progress is not reconciled: it lives in memory, and only the standalone engine persists it in `cue_fan_in_state`; task scanner re-scans on next tick).
 - **`cue-engine.ts:reconcileAfterWake`** - the resume-time entry point. Stops the heartbeat (so its 30s tick can't clobber `last_seen` mid-reconcile), runs `detectSleepAndReconcile`, then calls `pollNow()` on every trigger source that exposes it (currently the GitHub poller - fires an immediate `gh pr/issue list` so PRs/issues that appeared during sleep surface within seconds instead of waiting up to `poll_minutes`). Re-starts the heartbeat in a `finally` block. Idempotent against multiple resume events from the same wake.
 
 ## Timezone changes (laptop crossing zones)
@@ -206,12 +208,13 @@ Filters apply per trigger before emit - a filtered-out event is invisible to the
 
 Single SQLite database, WAL mode. Tables:
 
-| Table             | Purpose                                              | Notes                                                           |
-| ----------------- | ---------------------------------------------------- | --------------------------------------------------------------- |
-| `cue_events`      | Run journal (running / completed / failed / timeout) | 7-day retention. Indexed on `created_at`, `session_id`.         |
-| `cue_event_queue` | Phase 12A persisted queue                            | Indexed on `session_id`, `queued_at`. Replayed at engine start. |
-| `cue_heartbeat`   | Single-row `(id=1, last_seen)`                       | Drives sleep detection.                                         |
-| `cue_github_seen` | Per-subscription seen-item dedupe                    | 30-day retention; pruned every 24h.                             |
+| Table              | Purpose                                               | Notes                                                                                                                                   |
+| ------------------ | ----------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `cue_events`       | Run journal (running / completed / failed / timeout)  | 7-day retention. Indexed on `created_at`, `session_id`.                                                                                 |
+| `cue_event_queue`  | Phase 12A persisted queue                             | Indexed on `session_id`, `queued_at`. Replayed at engine start.                                                                         |
+| `cue_heartbeat`    | Single-row `(id=1, last_seen)`                        | Drives sleep detection.                                                                                                                 |
+| `cue_github_seen`  | Per-subscription seen-item dedupe                     | 30-day retention; pruned every 24h.                                                                                                     |
+| `cue_fan_in_state` | Partial fan-in progress, one row per completed source | Standalone engine only. Written through per completion, deleted when the fan-in fires, times out or is reset. Restored at engine start. |
 
 `cue_event_queue` does NOT carry `pipelineName` - restored runs degrade to legacy labels.
 
