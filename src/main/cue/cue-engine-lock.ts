@@ -46,6 +46,45 @@
  * but a PID from a different namespace (another container) means nothing to
  * `kill(pid, 0)` here, so such a lock is judged by its heartbeat alone. On
  * Linux the lock records the PID namespace inode to tell the two apart.
+ *
+ * Taking over a stale lock must be atomic, not just creating one. The naive
+ * "unlink the stale file, then create with `wx`" lets two engines that both
+ * read the same stale lock each remove what the other just created, so both
+ * believe they hold it (the crash-then-restart case for two containers on one
+ * volume). Re-reading after the create does not fix that: the first engine can
+ * see its own token before the second one's unlink lands. So the module keeps
+ * one rule:
+ *
+ * - Creating a lock where none exists is one atomic step: the content goes to
+ *   a per-process temp file that is then hard-linked into place (`link` fails
+ *   with `EEXIST` when a lock is already there).
+ * - Every other change to an EXISTING lock (a stale takeover, the owner's
+ *   heartbeat or re-acquire rewrite, a release) happens only while holding the
+ *   CLAIM for that lock's exact generation. The generation is a hash of the
+ *   file's bytes; the claim is an atomic `mkdir` of
+ *   `cue-engine.lock.claim-<generation>.<level>`. Under the claim the holder
+ *   re-reads the file and proceeds only if the bytes are still the ones it
+ *   judged. Two processes can only hold claims on two different generations,
+ *   and the file can only be one of them, so judging, removing and replacing a
+ *   lock is serialized.
+ *
+ * The lock file is never written in place, so a reader cannot catch a half
+ * written lock and judge it "corrupt, therefore stale": creation uses the
+ * link above and a rewrite goes to the temp file and is renamed over the lock.
+ * Where the filesystem refuses hard links, creation falls back to `wx`.
+ *
+ * A claim is held for a few filesystem calls. If its holder is killed inside
+ * that window the directory is left behind; once it is older than
+ * {@link CUE_ENGINE_LOCK_HEARTBEAT_MS} the next process claims the next LEVEL
+ * of the same generation instead of removing it, because removing a stale
+ * mutex is exactly the race this exists to prevent, while only one process
+ * can win each `mkdir`. A process suspended inside its claim for longer than
+ * that is the same suspended-owner case the heartbeat already covers: it learns
+ * it lost the lock at its next `touchCueEngineLock`.
+ *
+ * All of this relies on `mkdir`, `link` and `rename` being atomic, which holds
+ * on local filesystems, including one volume shared between containers on the
+ * same host. Network filesystems (NFS, SMB) are out of scope.
  */
 
 import * as fs from 'fs';
@@ -62,6 +101,16 @@ export const CUE_ENGINE_LOCK_HEARTBEAT_MS = 30_000;
 export const CUE_ENGINE_LOCK_STALE_MS = 180_000;
 /** Two boot-time readings closer than this are the same boot: `os.uptime()` is coarse and drifts slightly. */
 const BOOT_TIME_TOLERANCE_MS = 60_000;
+/** A claim directory older than this belongs to a holder that died inside it (see the module doc). */
+const CLAIM_STALE_MS = CUE_ENGINE_LOCK_HEARTBEAT_MS;
+/** How many orphaned claims on one generation can be stepped past before giving up. */
+const MAX_CLAIM_LEVELS = 4;
+/** Pause before re-reading when another process holds the claim we need. */
+const CLAIM_BUSY_BACKOFF_MS = 25;
+/** Read-judge-act rounds before an acquire or touch settles on what it last saw. */
+const MAX_LOCK_ATTEMPTS = 6;
+/** `link` errors meaning the filesystem cannot hard-link, as opposed to "a lock is already there". */
+const LINK_UNSUPPORTED_CODES = new Set(['EPERM', 'ENOTSUP', 'ENOSYS', 'EXDEV', 'EOPNOTSUPP']);
 
 /** Identity of THIS process as a lock owner. Minted once; never derived from the PID (see the module doc). */
 const processToken = crypto.randomUUID();
@@ -192,19 +241,224 @@ function parseLock(raw: string): CueEngineLockInfo | null {
 	};
 }
 
-/** The lock file's contents, live or not. `null` when missing or corrupt. */
-function readRawLock(dataDir?: string): CueEngineLockInfo | null {
+/** One read of the lock file: its generation (hash of the bytes) and, when it parses, its contents. */
+interface LockSnapshot {
+	generation: string;
+	info: CueEngineLockInfo | null;
+}
+
+/** The lock file as it is on disk, live or not. `null` when it cannot be read (normally: missing). */
+function readLockSnapshot(dataDir?: string): LockSnapshot | null {
+	let raw: string;
 	try {
-		return parseLock(fs.readFileSync(lockFilePath(dataDir), 'utf-8'));
+		raw = fs.readFileSync(lockFilePath(dataDir), 'utf-8');
 	} catch {
 		return null;
 	}
+	return {
+		generation: crypto.createHash('sha256').update(raw).digest('hex').slice(0, 16),
+		info: parseLock(raw),
+	};
 }
 
 /** Read the current lock, if any. Returns `null` for a missing, corrupt, or stale lock - a stale lock is reported as absent rather than thrown, since the caller's next step is always "so can I start?". */
 export function readCueEngineLock(dataDir?: string): CueEngineLockInfo | null {
-	const info = readRawLock(dataDir);
+	const info = readLockSnapshot(dataDir)?.info ?? null;
 	return info && isLockLive(info) ? info : null;
+}
+
+/** Named points between reading, claiming and writing, for tests that force an interleaving. */
+export type CueEngineLockTestHookPoint =
+	| 'acquireAfterJudgedStale'
+	| 'afterClaim'
+	| 'touchAfterRead'
+	| 'releaseAfterRead';
+
+let testHook: ((point: CueEngineLockTestHookPoint) => void) | undefined;
+
+/**
+ * Test-only seam: run `hook` at each named point so a test can let another
+ * process act in the middle of an acquire, touch or release. Pass `undefined`
+ * to clear it. Never set outside tests.
+ */
+export function __setCueEngineLockTestHook(
+	hook: ((point: CueEngineLockTestHookPoint) => void) | undefined
+): void {
+	testHook = hook;
+}
+
+function sleepSync(ms: number): void {
+	Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+function errorCode(err: unknown): string | undefined {
+	return (err as NodeJS.ErrnoException | null)?.code;
+}
+
+function serializeLock(info: CueEngineLockInfo): string {
+	return JSON.stringify(info, null, 2);
+}
+
+/** This process's scratch file; the lock's content is written here first so the lock itself is never partial. */
+function tempFilePath(dataDir?: string): string {
+	return `${lockFilePath(dataDir)}.tmp-${processToken}`;
+}
+
+function claimPrefix(generation: string, dataDir?: string): string {
+	return `${lockFilePath(dataDir)}.claim-${generation}.`;
+}
+
+/**
+ * Create the lock only if none exists, with its full content in one step.
+ * Returns `false` when a lock is already there.
+ */
+function createLockExclusive(info: CueEngineLockInfo, dataDir?: string): boolean {
+	const target = lockFilePath(dataDir);
+	const tmp = tempFilePath(dataDir);
+	const body = serializeLock(info);
+	fs.writeFileSync(tmp, body, 'utf-8');
+	try {
+		fs.linkSync(tmp, target);
+		return true;
+	} catch (err) {
+		if (errorCode(err) === 'EEXIST') return false;
+		if (!LINK_UNSUPPORTED_CODES.has(errorCode(err) ?? '')) throw err;
+		try {
+			fs.writeFileSync(target, body, { encoding: 'utf-8', flag: 'wx' });
+			return true;
+		} catch (wxErr) {
+			if (errorCode(wxErr) === 'EEXIST') return false;
+			throw wxErr;
+		}
+	} finally {
+		try {
+			fs.unlinkSync(tmp);
+		} catch {
+			// Nothing to clean up.
+		}
+	}
+}
+
+/** Replace an existing lock's content atomically. Only called while holding its claim. */
+function replaceLock(info: CueEngineLockInfo, dataDir?: string): void {
+	const tmp = tempFilePath(dataDir);
+	fs.writeFileSync(tmp, serializeLock(info), 'utf-8');
+	try {
+		fs.renameSync(tmp, lockFilePath(dataDir));
+	} catch (err) {
+		try {
+			fs.unlinkSync(tmp);
+		} catch {
+			// Nothing to clean up.
+		}
+		throw err;
+	}
+}
+
+/** Remove the lock file; already gone is fine. Only called while holding its claim. */
+function removeLockFile(dataDir?: string): void {
+	try {
+		fs.unlinkSync(lockFilePath(dataDir));
+	} catch (err) {
+		if (errorCode(err) !== 'ENOENT') throw err;
+	}
+}
+
+/**
+ * Take the claim on one lock generation. Returns the claim directory, or
+ * `null` when another live process holds it. An orphaned claim (older than
+ * {@link CLAIM_STALE_MS}) is stepped past to the next level, never removed.
+ */
+function takeClaim(generation: string, dataDir?: string): string | null {
+	const prefix = claimPrefix(generation, dataDir);
+	for (let level = 0; level < MAX_CLAIM_LEVELS; level++) {
+		const dir = `${prefix}${level}`;
+		try {
+			fs.mkdirSync(dir);
+			return dir;
+		} catch (err) {
+			if (errorCode(err) !== 'EEXIST') throw err;
+		}
+		let age: number;
+		try {
+			age = Date.now() - fs.statSync(dir).mtimeMs;
+		} catch {
+			// Its holder just finished, which means the file has moved on.
+			return null;
+		}
+		if (age <= CLAIM_STALE_MS) return null;
+	}
+	return null;
+}
+
+function dropClaim(dir: string): void {
+	try {
+		fs.rmdirSync(dir);
+	} catch {
+		// Already removed by a takeover that cleaned up this generation.
+	}
+}
+
+type ClaimOutcome<T> = { ok: true; value: T } | { ok: false; reason: 'busy' | 'changed' };
+
+/**
+ * Run `action` while holding the claim on `generation`, and only if the lock
+ * file still has exactly that generation. `'busy'`: another process holds the
+ * claim. `'changed'`: the file moved on since it was judged.
+ */
+function withGenerationClaim<T>(
+	generation: string,
+	action: () => T,
+	dataDir?: string
+): ClaimOutcome<T> {
+	const claim = takeClaim(generation, dataDir);
+	if (!claim) return { ok: false, reason: 'busy' };
+	try {
+		testHook?.('afterClaim');
+		if (readLockSnapshot(dataDir)?.generation !== generation) {
+			return { ok: false, reason: 'changed' };
+		}
+		return { ok: true, value: action() };
+	} finally {
+		dropClaim(claim);
+	}
+}
+
+/**
+ * After a takeover the old generation can never come back, so every claim on
+ * it (ours, and any orphan we stepped past) is dead. Also sweep scratch files
+ * and claims that outlived {@link CUE_ENGINE_LOCK_STALE_MS}: their owners
+ * crashed. Best effort; leftovers are harmless.
+ */
+function cleanUpAfterTakeover(oldGeneration: string, dataDir?: string): void {
+	const lockPath = lockFilePath(dataDir);
+	const dir = path.dirname(lockPath);
+	const base = path.basename(lockPath);
+	const oldPrefix = path.basename(claimPrefix(oldGeneration, dataDir));
+	let entries: string[];
+	try {
+		entries = fs.readdirSync(dir);
+	} catch {
+		return;
+	}
+	for (const name of entries) {
+		if (!name.startsWith(`${base}.`)) continue;
+		const full = path.join(dir, name);
+		try {
+			if (name.startsWith(oldPrefix)) {
+				fs.rmdirSync(full);
+				continue;
+			}
+			const isClaim = name.startsWith(`${base}.claim-`);
+			const isTemp = name.startsWith(`${base}.tmp-`);
+			if (!isClaim && !isTemp) continue;
+			if (Date.now() - fs.statSync(full).mtimeMs <= CUE_ENGINE_LOCK_STALE_MS) continue;
+			if (isClaim) fs.rmdirSync(full);
+			else fs.unlinkSync(full);
+		} catch {
+			// Removed concurrently, or not ours to judge.
+		}
+	}
 }
 
 export type CueEngineLockResult =
@@ -232,48 +486,63 @@ function buildLockInfo(mode: CueEngineRunnerMode, startedAt?: string): CueEngine
  * process already holds a live lock (re-acquire is a no-op success). "This
  * exact process" means the token matches, not the PID.
  *
- * Creation is atomic (`wx`), so two engines starting at the same instant
- * cannot both see "no lock" and both write one. A stale lock is removed and
- * creation retried; whoever loses the `wx` race re-reads and sees the winner.
+ * With no lock on disk, creation is one atomic step, so two engines starting
+ * at the same instant cannot both write one. A stale or corrupt lock is only
+ * replaced while holding the claim on its generation (see the module doc), so
+ * of N engines racing to take over the same stale lock exactly one succeeds;
+ * the rest re-read and report the winner.
  */
 export function acquireCueEngineLock(
 	mode: CueEngineRunnerMode,
 	dataDir?: string
 ): CueEngineLockResult {
-	const filePath = lockFilePath(dataDir);
-	const dir = path.dirname(filePath);
+	const dir = path.dirname(lockFilePath(dataDir));
 	if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 
-	for (let attempt = 0; attempt < 3; attempt++) {
-		const existing = readRawLock(dataDir);
-		if (existing && isLockLive(existing)) {
-			if (!isCueEngineLockOwnedByThisProcess(existing)) {
-				return { acquired: false, heldBy: existing };
+	for (let attempt = 0; attempt < MAX_LOCK_ATTEMPTS; attempt++) {
+		const current = readLockSnapshot(dataDir);
+		if (!current) {
+			if (createLockExclusive(buildLockInfo(mode), dataDir)) return { acquired: true };
+			// Created by someone else between our read and write - re-read.
+			continue;
+		}
+		const info = current.info;
+		if (info && isLockLive(info)) {
+			if (!isCueEngineLockOwnedByThisProcess(info)) return { acquired: false, heldBy: info };
+			const rewrite = withGenerationClaim(
+				current.generation,
+				() => replaceLock(buildLockInfo(mode), dataDir),
+				dataDir
+			);
+			if (rewrite.ok) return { acquired: true };
+			if (rewrite.reason === 'busy') sleepSync(CLAIM_BUSY_BACKOFF_MS);
+			continue;
+		}
+		// Stale or corrupt. Replace it only under its generation's claim.
+		testHook?.('acquireAfterJudgedStale');
+		const takeover = withGenerationClaim(
+			current.generation,
+			() => {
+				removeLockFile(dataDir);
+				return createLockExclusive(buildLockInfo(mode), dataDir);
+			},
+			dataDir
+		);
+		if (takeover.ok) {
+			if (takeover.value) {
+				cleanUpAfterTakeover(current.generation, dataDir);
+				return { acquired: true };
 			}
-			fs.writeFileSync(filePath, JSON.stringify(buildLockInfo(mode), null, 2), 'utf-8');
-			return { acquired: true };
+			// A creator on the no-lock path got in after our remove: it won.
+			continue;
 		}
-		if (fs.existsSync(filePath)) {
-			// Stale or corrupt. A concurrent starter may remove it first; the
-			// `wx` create below is what decides who wins.
-			try {
-				fs.unlinkSync(filePath);
-			} catch {
-				// Already removed.
-			}
-		}
-		try {
-			fs.writeFileSync(filePath, JSON.stringify(buildLockInfo(mode), null, 2), {
-				encoding: 'utf-8',
-				flag: 'wx',
-			});
-			return { acquired: true };
-		} catch (err) {
-			if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
-			// Created by someone else between our read and write - loop and re-read.
-		}
+		if (takeover.reason === 'busy') sleepSync(CLAIM_BUSY_BACKOFF_MS);
 	}
-	const holder = readRawLock(dataDir);
+	const holder = readLockSnapshot(dataDir)?.info ?? null;
+	if (holder && isLockLive(holder) && isCueEngineLockOwnedByThisProcess(holder)) {
+		// Ours and live; another process was only inspecting it.
+		return { acquired: true };
+	}
 	return { acquired: false, heldBy: holder ?? buildLockInfo(mode) };
 }
 
@@ -283,29 +552,55 @@ export type CueEngineLockTouchResult = 'held' | 'lost';
  * Refresh this process's heartbeat on the lock. Reports `'lost'` when another
  * live engine now owns it - possible when this process was suspended long
  * enough for its lock to go stale and be taken over - so the caller stops
- * dispatching rather than double-firing beside the new owner. A missing lock
- * (deleted by hand) is simply rewritten.
+ * dispatching rather than double-firing beside the new owner.
+ *
+ * A missing lock (deleted by hand) is recreated, but only through the same
+ * atomic create a fresh acquire uses, so it can never overwrite a lock another
+ * engine created in the meantime. Rewriting an existing lock happens under its
+ * generation's claim for the same reason. When another process holds that
+ * claim it is judging our lock: if our heartbeat is still fresh this beat is
+ * skipped, and if it has gone stale the takeover is real and this reports
+ * `'lost'`.
  */
 export function touchCueEngineLock(
 	mode: CueEngineRunnerMode,
 	dataDir?: string
 ): CueEngineLockTouchResult {
-	const existing = readRawLock(dataDir);
-	if (existing && !isCueEngineLockOwnedByThisProcess(existing) && isLockLive(existing)) {
-		return 'lost';
+	for (let attempt = 0; attempt < MAX_LOCK_ATTEMPTS; attempt++) {
+		const current = readLockSnapshot(dataDir);
+		testHook?.('touchAfterRead');
+		if (!current) {
+			try {
+				if (createLockExclusive(buildLockInfo(mode), dataDir)) return 'held';
+			} catch {
+				// A failed write only ages the heartbeat; the next beat retries.
+				return 'held';
+			}
+			continue;
+		}
+		const info = current.info;
+		const ours = info !== null && isCueEngineLockOwnedByThisProcess(info);
+		if (info && !ours && isLockLive(info)) return 'lost';
+		const startedAt = ours ? info.startedAt : undefined;
+		let rewrite: ClaimOutcome<void>;
+		try {
+			rewrite = withGenerationClaim(
+				current.generation,
+				() => replaceLock(buildLockInfo(mode, startedAt), dataDir),
+				dataDir
+			);
+		} catch {
+			// A failed write only ages the heartbeat; the next beat retries.
+			return 'held';
+		}
+		if (rewrite.ok) return 'held';
+		if (rewrite.reason === 'busy') {
+			if (ours) return isLockLive(info) ? 'held' : 'lost';
+			sleepSync(CLAIM_BUSY_BACKOFF_MS);
+		}
 	}
-	const startedAt =
-		existing && isCueEngineLockOwnedByThisProcess(existing) ? existing.startedAt : undefined;
-	try {
-		fs.writeFileSync(
-			lockFilePath(dataDir),
-			JSON.stringify(buildLockInfo(mode, startedAt), null, 2),
-			'utf-8'
-		);
-	} catch {
-		// A failed write only ages the heartbeat; the next beat retries.
-	}
-	return 'held';
+	const final = readLockSnapshot(dataDir)?.info ?? null;
+	return final && !isCueEngineLockOwnedByThisProcess(final) && isLockLive(final) ? 'lost' : 'held';
 }
 
 /** Best-effort hostname for the lock's human-readable hint. Never throws. */
@@ -319,14 +614,20 @@ function safeHostname(): string | undefined {
 
 /**
  * Release the lock, but ONLY if this process still holds it. A caller whose
- * lock was taken over must not delete a lock it no longer owns.
+ * lock was taken over must not delete a lock it no longer owns, so the remove
+ * happens under the claim on the generation judged here: a lock replaced in
+ * between is a different generation and is left alone.
  */
 export function releaseCueEngineLock(dataDir?: string): void {
-	const existing = readRawLock(dataDir);
-	if (existing && !isCueEngineLockOwnedByThisProcess(existing) && isLockLive(existing)) return;
+	const current = readLockSnapshot(dataDir);
+	// Already gone, or never existed - releasing an absent lock is a no-op.
+	if (!current) return;
+	testHook?.('releaseAfterRead');
+	const info = current.info;
+	if (info && !isCueEngineLockOwnedByThisProcess(info) && isLockLive(info)) return;
 	try {
-		fs.unlinkSync(lockFilePath(dataDir));
+		withGenerationClaim(current.generation, () => removeLockFile(dataDir), dataDir);
 	} catch {
-		// Already gone, or never existed - releasing an absent lock is a no-op.
+		// Best effort: an unremovable lock goes stale and is taken over.
 	}
 }
