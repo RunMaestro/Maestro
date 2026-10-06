@@ -3,6 +3,7 @@ import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { assertSerializedJsonIsSafe, parseJsonWithBom } from '../../../shared/jsonUtils';
 import { displayName, connectionOrigin } from '../discovery/types';
+import { createKeyedWriteQueue } from '../../utils/atomic-json-store';
 
 export interface PairedDevice {
 	id: string;
@@ -21,7 +22,7 @@ const digest = (value: string) => createHash('sha256').update(value).digest('hex
 export class PairedDevices {
 	private records = new Map<string, DeviceRecord>();
 	private loaded?: Promise<void>;
-	private pending: Promise<void> = Promise.resolve();
+	private writes = createKeyedWriteQueue();
 	private file?: string;
 	constructor(directory?: string) {
 		if (directory) this.file = path.join(directory, 'lite-paired-devices.json');
@@ -72,24 +73,27 @@ export class PairedDevices {
 			.map(({ verifier: _verifier, ...record }) => record);
 	}
 	async add(credential: string, name: string, instanceId: string, origin: string): Promise<void> {
-		if (!validCredential(credential) || !instanceId) throw new Error('invalid-device-credential');
-		if (this.records.size >= 128) throw new Error('paired-device-limit');
-		const id = credential.split('.')[0];
-		if (this.records.has(id)) throw new Error('device-already-paired');
-		this.records.set(id, {
-			id,
-			name: displayName(name),
-			instanceId,
-			origin: connectionOrigin(origin),
-			createdAt: Date.now(),
-			verifier: digest(credential),
+		await this.writes.enqueue(this.file ?? 'devices', async () => {
+			await this.load();
+			if (!validCredential(credential) || !instanceId) throw new Error('invalid-device-credential');
+			if (this.records.size >= 128) throw new Error('paired-device-limit');
+			const id = credential.split('.')[0];
+			if (this.records.has(id)) throw new Error('device-already-paired');
+			this.records.set(id, {
+				id,
+				name: displayName(name),
+				instanceId,
+				origin: connectionOrigin(origin),
+				createdAt: Date.now(),
+				verifier: digest(credential),
+			});
+			try {
+				await this.persist();
+			} catch (error) {
+				this.records.delete(id);
+				throw error;
+			}
 		});
-		try {
-			await this.persist();
-		} catch (error) {
-			this.records.delete(id);
-			throw error;
-		}
 	}
 	resolve(credential: unknown, instanceId: string, origin: string): PairedDevice | undefined {
 		if (!validCredential(credential)) return;
@@ -105,20 +109,21 @@ export class PairedDevices {
 		return device;
 	}
 	async revoke(id: string): Promise<void> {
+		// Close live authorization immediately, including while another disk write is pending.
 		this.records.delete(id);
-		await this.persist();
+		await this.writes.enqueue(this.file ?? 'devices', async () => {
+			await this.load();
+			this.records.delete(id);
+			await this.persist();
+		});
 	}
-	private persist(): Promise<void> {
-		if (!this.file) return Promise.resolve();
+	private async persist(): Promise<void> {
+		if (!this.file) return;
 		const text = JSON.stringify([...this.records.values()]);
 		assertSerializedJsonIsSafe(text, this.file);
 		const file = this.file;
-		const operation = this.pending.then(async () => {
-			await mkdir(path.dirname(file), { recursive: true });
-			await writeFile(file + '.tmp', text, { mode: 0o600 });
-			await rename(file + '.tmp', file);
-		});
-		this.pending = operation.catch(() => {});
-		return operation;
+		await mkdir(path.dirname(file), { recursive: true });
+		await writeFile(file + '.tmp', text, { mode: 0o600 });
+		await rename(file + '.tmp', file);
 	}
 }

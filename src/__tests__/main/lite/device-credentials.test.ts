@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, readFileSync, rmSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { rename } from 'node:fs/promises';
 const protection = vi.hoisted(() => ({ available: true }));
 vi.mock('electron', async () => {
 	const { createCipheriv, createDecipheriv } = await import('node:crypto');
@@ -24,7 +25,12 @@ vi.mock('electron', async () => {
 		},
 	};
 });
+vi.mock('node:fs/promises', async (original) => {
+	const fs = await original<typeof import('node:fs/promises')>();
+	return { ...fs, rename: vi.fn(fs.rename) };
+});
 import { DeviceCredentials } from '../../../main/lite/device-credentials';
+import { PairedDevices } from '../../../main/lite/pairing/paired-devices';
 let directory: string;
 const origin = 'https://aster.synthetic.ts.net',
 	first = 'A'.repeat(43) + '.' + 'B'.repeat(43),
@@ -35,6 +41,18 @@ beforeEach(() => {
 });
 afterEach(() => rmSync(directory, { recursive: true, force: true }));
 describe('OS-protected paired device persistence', () => {
+	it('does not roll back a newer successful save when an earlier concurrent write fails', async () => {
+		const store = new DeviceCredentials(directory);
+		await store.get('aster-id', origin);
+		vi.mocked(rename).mockRejectedValueOnce(new Error('Synthetic disk failure'));
+		const results = await Promise.allSettled([
+			store.save('aster-id', origin, first),
+			store.save('aster-id', origin, second),
+		]);
+		expect(results.map((result) => result.status)).toEqual(['rejected', 'fulfilled']);
+		expect(await store.get('aster-id', origin)).toBe(second);
+		expect(await new DeviceCredentials(directory).get('aster-id', origin)).toBe(second);
+	});
 	it('restores only the same host/origin and forgets without deleting a newer credential', async () => {
 		const store = new DeviceCredentials(directory);
 		await store.save('aster-id', origin, first);
@@ -66,5 +84,42 @@ describe('OS-protected paired device persistence', () => {
 		expect(await restarted.get('aster-id', direct, 'host-node')).toBe(first);
 		await expect(restarted.get('aster-id', direct, 'replacement-node')).rejects.toThrow('identity');
 		await expect(restarted.get('aster-id', direct)).rejects.toThrow('node identity');
+	});
+});
+describe('host paired device persistence', () => {
+	it('revokes live access immediately while waiting for another pairing write', async () => {
+		const store = new PairedDevices(directory);
+		await store.add(first, 'First device', 'aster-id', origin);
+		let finishWrite!: () => void;
+		const persist = vi.mocked(rename).getMockImplementation()!;
+		vi.mocked(rename).mockImplementationOnce(async (...args) => {
+			await new Promise<void>((resolve) => (finishWrite = resolve));
+			return persist(...args);
+		});
+		const adding = store.add(second, 'Second device', 'aster-id', origin);
+		await vi.waitFor(() => expect(finishWrite).toBeTypeOf('function'));
+		const revoking = store.revoke(first.split('.')[0]);
+		expect(store.resolve(first, 'aster-id', origin)).toBeUndefined();
+		finishWrite();
+		await Promise.all([adding, revoking]);
+		const restarted = new PairedDevices(directory);
+		await restarted.load();
+		expect(restarted.resolve(first, 'aster-id', origin)).toBeUndefined();
+		expect(restarted.resolve(second, 'aster-id', origin)?.name).toBe('Second device');
+	});
+	it('does not persist a failed pairing through a later concurrent successful write', async () => {
+		const store = new PairedDevices(directory);
+		await store.load();
+		vi.mocked(rename).mockRejectedValueOnce(new Error('Synthetic disk failure'));
+		const results = await Promise.allSettled([
+			store.add(first, 'First device', 'aster-id', origin),
+			store.add(second, 'Second device', 'aster-id', origin),
+		]);
+		expect(results.map((result) => result.status)).toEqual(['rejected', 'fulfilled']);
+		expect(store.resolve(first, 'aster-id', origin)).toBeUndefined();
+		const restarted = new PairedDevices(directory);
+		await restarted.load();
+		expect(restarted.resolve(first, 'aster-id', origin)).toBeUndefined();
+		expect(restarted.resolve(second, 'aster-id', origin)?.name).toBe('Second device');
 	});
 });

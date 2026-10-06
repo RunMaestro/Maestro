@@ -4,6 +4,7 @@ import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { assertSerializedJsonIsSafe, parseJsonWithBom } from '../../shared/jsonUtils';
 import { connectionOrigin } from './discovery/types';
+import { createKeyedWriteQueue } from '../utils/atomic-json-store';
 
 interface SavedDevice {
 	instanceId: string;
@@ -14,7 +15,7 @@ interface SavedDevice {
 /** Main-process only. Never send credentials to the renderer, URLs, clipboard or logs. */
 export class DeviceCredentials {
 	private rows = new Map<string, { instanceId: string; origin: string; encrypted: string }>();
-	private pending: Promise<void> = Promise.resolve();
+	private writes = createKeyedWriteQueue();
 	private loaded?: Promise<void>;
 	private readonly file: string;
 	constructor(directory: string) {
@@ -92,55 +93,55 @@ export class DeviceCredentials {
 		credential: string,
 		peerId?: string
 	): Promise<void> {
-		await this.load();
-		this.assertAvailable();
-		origin = connectionOrigin(origin);
-		if (origin.startsWith('http:') && !peerId)
-			throw new Error('A verified Tailscale node identity is required.');
-		if (!/^[A-Za-z0-9_-]{43}\.[A-Za-z0-9_-]{43}$/.test(credential) || !instanceId)
-			throw new Error('Invalid paired-device credential.');
-		const key = this.key(instanceId, origin);
-		if (!this.rows.has(key) && this.rows.size >= 128)
-			throw new Error('Remove a saved pairing before adding another device.');
-		const previous = this.rows.get(key);
-		this.rows.set(key, {
-			instanceId,
-			origin,
-			encrypted: safeStorage
-				.encryptString(JSON.stringify({ instanceId, origin, credential, peerId }))
-				.toString('base64'),
+		await this.writes.enqueue(this.file, async () => {
+			await this.load();
+			this.assertAvailable();
+			origin = connectionOrigin(origin);
+			if (origin.startsWith('http:') && !peerId)
+				throw new Error('A verified Tailscale node identity is required.');
+			if (!/^[A-Za-z0-9_-]{43}\.[A-Za-z0-9_-]{43}$/.test(credential) || !instanceId)
+				throw new Error('Invalid paired-device credential.');
+			const key = this.key(instanceId, origin);
+			if (!this.rows.has(key) && this.rows.size >= 128)
+				throw new Error('Remove a saved pairing before adding another device.');
+			const previous = this.rows.get(key);
+			this.rows.set(key, {
+				instanceId,
+				origin,
+				encrypted: safeStorage
+					.encryptString(JSON.stringify({ instanceId, origin, credential, peerId }))
+					.toString('base64'),
+			});
+			try {
+				await this.persist();
+			} catch (error) {
+				if (previous) this.rows.set(key, previous);
+				else this.rows.delete(key);
+				throw error;
+			}
 		});
-		try {
-			await this.persist();
-		} catch (error) {
-			if (previous) this.rows.set(key, previous);
-			else this.rows.delete(key);
-			throw error;
-		}
 	}
 	async forget(origin: string, expectedCredential?: string): Promise<void> {
-		await this.load();
-		for (const [key, row] of this.rows) {
-			if (row.origin !== connectionOrigin(origin)) continue;
-			if (
-				expectedCredential &&
-				JSON.parse(safeStorage.decryptString(Buffer.from(row.encrypted, 'base64'))).credential !==
-					expectedCredential
-			)
-				continue;
-			this.rows.delete(key);
-		}
-		await this.persist();
+		await this.writes.enqueue(this.file, async () => {
+			await this.load();
+			for (const [key, row] of this.rows) {
+				if (row.origin !== connectionOrigin(origin)) continue;
+				if (
+					expectedCredential &&
+					JSON.parse(safeStorage.decryptString(Buffer.from(row.encrypted, 'base64'))).credential !==
+						expectedCredential
+				)
+					continue;
+				this.rows.delete(key);
+			}
+			await this.persist();
+		});
 	}
-	private persist(): Promise<void> {
+	private async persist(): Promise<void> {
 		const text = JSON.stringify([...this.rows.values()]);
 		assertSerializedJsonIsSafe(text, this.file);
-		const operation = this.pending.then(async () => {
-			await mkdir(path.dirname(this.file), { recursive: true });
-			await writeFile(this.file + '.tmp', text, { mode: 0o600 });
-			await rename(this.file + '.tmp', this.file);
-		});
-		this.pending = operation.catch(() => {});
-		return operation;
+		await mkdir(path.dirname(this.file), { recursive: true });
+		await writeFile(this.file + '.tmp', text, { mode: 0o600 });
+		await rename(this.file + '.tmp', this.file);
 	}
 }
