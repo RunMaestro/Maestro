@@ -90,6 +90,14 @@ export const CORE_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		category: 'shell',
 	},
 
+	mediaModelDirectory: {
+		description:
+			'Absolute directory containing local multilingual Whisper ggml-<model>.bin files for host media tools. Takes precedence over MAESTRO_MEDIA_MODEL_DIR; empty uses that environment fallback. Changes apply without restart.',
+		type: 'string',
+		default: '',
+		category: 'integrations',
+	},
+
 	// --- Logging ---
 	logLevel: {
 		description: 'Minimum log level for the system log viewer. Values: debug, info, warn, error.',
