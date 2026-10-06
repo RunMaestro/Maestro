@@ -30,6 +30,8 @@
 export type PluginCapability =
 	| 'fs:read' // read files under a path scope
 	| 'fs:write' // write files under a path scope
+	| 'services:call'
+	| 'services:provide'
 	| 'media:tools' // fixed Discord voice media profiles, opaque jobs only
 	| 'net:fetch' // HTTP(S) fetch to a host scope
 	| 'net:connect' // hold an outbound persistent websocket to a host scope (Discord/Slack gateway)
@@ -66,6 +68,8 @@ export type PluginCapability =
 export const PLUGIN_CAPABILITIES: readonly PluginCapability[] = [
 	'fs:read',
 	'fs:write',
+	'services:call',
+	'services:provide',
 	'media:tools',
 	'net:fetch',
 	'net:connect',
@@ -117,6 +121,8 @@ const CAPABILITY_RISK: Record<PluginCapability, CapabilityRisk> = {
 	'sessions:focus': 'low',
 	'fs:read': 'medium',
 	'fs:watch': 'medium',
+	'services:call': 'high',
+	'services:provide': 'high',
 	'media:tools': 'high',
 	'net:fetch': 'medium',
 	'net:connect': 'high',
@@ -157,6 +163,8 @@ const CAPABILITY_SCOPE_KIND: Record<PluginCapability, ScopeKind> = {
 	'fs:read': 'path',
 	'fs:write': 'path',
 	'fs:watch': 'path',
+	'services:call': 'allowlist',
+	'services:provide': 'allowlist',
 	'media:tools': 'allowlist',
 	'net:fetch': 'host',
 	'net:connect': 'host',
@@ -517,6 +525,10 @@ export function describeCapability(capability: PluginCapability): string {
 			return 'Read files';
 		case 'fs:write':
 			return 'Create and modify files';
+		case 'services:call':
+			return 'Call an explicitly bound plugin service (exact provider/service; bounded requests and results)';
+		case 'services:provide':
+			return 'Provide an own declared host-mediated service (exact service ID; no direct plugin IPC)';
 		case 'media:tools':
 			return 'Download Discord voice attachments and run fixed local media tools (8 MiB, 120 seconds; no general file or process access)';
 		case 'net:fetch':

@@ -18,6 +18,8 @@ import * as path from 'path';
 import Database from 'better-sqlite3';
 import { logger } from '../utils/logger';
 import { fetchWithTimeout } from '../utils/fetchWithTimeout';
+import { PluginServiceHost, ServiceError } from './plugin-service-host';
+import type { PluginManifest } from '../../shared/plugins/plugin-manifest';
 import { PluginMediaTools, resolveMediaRuntime } from './plugin-media-tools';
 import type { HostCallHandler, HostCallHandlers } from './plugin-sandbox-host';
 import type { PermissionBroker } from './permission-broker';
@@ -124,6 +126,27 @@ export interface PluginSessionMetadata {
 }
 
 export interface HostHandlerDeps {
+	serviceManifest?: (pluginId: string) => PluginManifest | undefined;
+	serviceRunning?: (pluginId: string) => boolean;
+	serviceAllowed?: (
+		pluginId: string,
+		capability: 'services:call' | 'services:provide' | 'media:tools',
+		target: string
+	) => boolean;
+	serviceInvoke?: (
+		provider: string,
+		command: string,
+		request: unknown,
+		signal: AbortSignal,
+		timeoutMs: number
+	) => Promise<unknown>;
+	registerServiceReconcile?: (reconcile: () => void) => void;
+	registerServiceAvailability?: (
+		available: (pluginId: string, requirementId: string) => boolean
+	) => void;
+	serviceChanged?: () => void;
+	serviceCancelProvider?: (pluginId: string, callId: string) => void;
+
 	/** The broker, so fs handlers can RE-authorize the real (symlink-resolved)
 	 * path after the initial string-based authorization (TOCTOU/symlink defense
 	 * AND the userData-tree exclusion, which runs on the resolved path). */
@@ -681,6 +704,25 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 			assertTrustedActVerb(deps, pluginId);
 		},
 	});
+	const services = new PluginServiceHost({
+		manifest: (id) => deps.serviceManifest?.(id),
+		running: (id) => deps.serviceRunning?.(id) === true,
+		allowed: (id, capability, target) => deps.serviceAllowed?.(id, capability, target) === true,
+		invoke: (provider, command, request, signal, timeoutMs) =>
+			deps.serviceInvoke
+				? deps.serviceInvoke(provider, command, request, signal, timeoutMs)
+				: Promise.reject(new ServiceError('ServiceUnavailable')),
+		media: mediaTools,
+		guard: deps.actionGuard,
+		changed: deps.serviceChanged,
+		cancelProvider: deps.serviceCancelProvider,
+		settingsPanel: (id, panel) => deps.getPanel?.(id, panel)?.placement === 'settings',
+		openSettings: deps.panelVisibility
+			? (id, panel) => deps.panelVisibility!(id, `${id}/${panel}`, 'open')
+			: undefined,
+	});
+	deps.registerServiceAvailability?.((id, requirement) => services.available(id, requirement));
+	deps.registerServiceReconcile?.(() => services.reconcile());
 	const fsWatchers = new Map<string, { pluginId: string; watcher: fs.FSWatcher }>();
 	const sleepHandles = new Map<string, { pluginId: string; reason: string }>();
 	const backgroundServices = new Map<string, Map<string, PluginBackgroundService>>();
@@ -1669,6 +1711,87 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 		};
 	}
 
+	for (const [method, keys, execute] of [
+		[
+			'services.register',
+			['serviceId'],
+			(id: string, p: Record<string, unknown>) => services.register(id, p.serviceId as string),
+		],
+		[
+			'services.unregister',
+			['serviceId'],
+			(id: string, p: Record<string, unknown>) => services.unregister(id, p.serviceId as string),
+		],
+		[
+			'services.readiness',
+			['serviceId'],
+			(id: string, p: Record<string, unknown>) => services.readiness(id, p.serviceId as string),
+		],
+		[
+			'services.status',
+			['requirementId'],
+			(id: string, p: Record<string, unknown>) => services.status(id, p.requirementId as string),
+		],
+		[
+			'services.openSettings',
+			['requirementId'],
+			(id: string, p: Record<string, unknown>) =>
+				services.openSettings(id, p.requirementId as string),
+		],
+		[
+			'services.start',
+			['requirementId', 'request'],
+			(id: string, p: Record<string, unknown>) =>
+				services.start(id, p.requirementId as string, p.request),
+		],
+		[
+			'services.result',
+			['callId'],
+			(id: string, p: Record<string, unknown>) => services.result(id, p.callId as string),
+		],
+		[
+			'services.cancel',
+			['callId'],
+			(id: string, p: Record<string, unknown>) => services.cancel(id, p.callId as string),
+		],
+		[
+			'services.media.probe',
+			['callId', 'audioId'],
+			(id: string, p: Record<string, unknown>) =>
+				services.media(id, 'probe', p.callId as string, p.audioId as string),
+		],
+		[
+			'services.media.decode',
+			['callId', 'audioId'],
+			(id: string, p: Record<string, unknown>) =>
+				services.media(id, 'decode', p.callId as string, p.audioId as string),
+		],
+		[
+			'services.media.run',
+			['callId', 'audioId'],
+			(id: string, p: Record<string, unknown>) =>
+				services.media(id, 'run', p.callId as string, p.audioId as string),
+		],
+	] as const) {
+		handlers[method] = async (id, raw) => {
+			const p = asObject(raw);
+			if (
+				Object.keys(p).some((key) => !(keys as readonly string[]).includes(key)) ||
+				keys.some(
+					(key) =>
+						key !== 'request' &&
+						(typeof p[key] !== 'string' ||
+							(p[key] as string).length > 128 ||
+							!(p[key] as string).length)
+				)
+			)
+				throw new ServiceError('ServiceInvalid');
+			assertBrokerAllowed(deps, id, method, p);
+			return execute(id, p);
+		};
+	}
+	handlers['services.cancel']!.ownsReleaseResource = (id, raw) => services.ownsCancel(id, raw);
+
 	handlers['media.close']!.ownsReleaseResource = (pluginId, params) =>
 		mediaTools.ownsCloseRequest(pluginId, params);
 
@@ -1678,6 +1801,7 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 	// active powerSaveBlocker and an open fs.watch handle. Idempotent: a second
 	// call for the same plugin finds nothing left to release.
 	const cleanupPluginResources = (pluginId: string): void => {
+		services.cleanupPlugin(pluginId);
 		mediaTools.cleanupPlugin(pluginId);
 		for (const [watchId, entry] of fsWatchers) {
 			if (entry.pluginId !== pluginId) continue;

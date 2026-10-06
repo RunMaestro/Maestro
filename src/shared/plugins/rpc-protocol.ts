@@ -26,6 +26,17 @@ import type { PluginCapability } from './permissions';
 export const HOST_API = {
 	'fs.read': { capability: 'fs:read' },
 	'fs.write': { capability: 'fs:write' },
+	'services.register': { capability: 'services:provide' },
+	'services.unregister': { capability: 'services:provide' },
+	'services.readiness': { capability: 'services:provide' },
+	'services.status': { capability: 'services:call' },
+	'services.openSettings': { capability: 'services:call' },
+	'services.start': { capability: 'services:call' },
+	'services.result': { capability: 'services:call' },
+	'services.cancel': { capability: 'services:call' },
+	'services.media.probe': { capability: 'media:tools' },
+	'services.media.decode': { capability: 'media:tools' },
+	'services.media.run': { capability: 'media:tools' },
 	'media.status': { capability: 'media:tools' },
 	'media.open': { capability: 'media:tools' },
 	'media.download': { capability: 'media:tools' },
@@ -110,6 +121,10 @@ export function isHostMethod(value: unknown): value is HostMethod {
  * special-casing.
  */
 export const HANDLER_REAUTHORIZED_METHODS: ReadonlySet<HostMethod> = new Set<HostMethod>([
+	'services.status',
+	'services.openSettings',
+	'services.start',
+	'services.result',
 	'net.send',
 	'net.close',
 ]);
@@ -152,6 +167,8 @@ export interface ToolResult {
 	ok: boolean;
 	result?: unknown;
 	error?: string;
+	/** Only host-known codes survive a service invocation. */
+	errorCode?: string;
 }
 
 /**
@@ -166,6 +183,14 @@ export function extractTarget(method: HostMethod, params: unknown): string | und
 		unknown
 	>;
 	switch (method) {
+		case 'services.register':
+		case 'services.unregister':
+		case 'services.readiness':
+			return typeof p.serviceId === 'string' ? p.serviceId : undefined;
+		case 'services.media.probe':
+		case 'services.media.decode':
+		case 'services.media.run':
+			return 'service-transcription';
 		case 'fs.read':
 		case 'fs.write':
 		case 'fs.watch':

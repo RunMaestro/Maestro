@@ -39,6 +39,10 @@ vi.mock('../../../main/utils/logger', () => ({
 
 import { PluginSandboxHost } from '../../../main/plugins/plugin-sandbox-host';
 import type { PermissionBroker } from '../../../main/plugins/permission-broker';
+import { createSandboxRealm } from '../../../main/plugins/plugin-sandbox-entry';
+import { PluginServiceHost } from '../../../main/plugins/plugin-service-host';
+import type { PluginMediaTools } from '../../../main/plugins/plugin-media-tools';
+import type { PluginManifest } from '../../../shared/plugins/plugin-manifest';
 
 const allowAll = { authorize: () => ({ allowed: true }) } as unknown as PermissionBroker;
 
@@ -66,6 +70,7 @@ describe('PluginSandboxHost.invokeTool request/response', () => {
 
 	beforeEach(() => {
 		vi.clearAllMocks();
+		proc.postMessage.mockReset();
 		listeners.clear();
 		dir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-tool-'));
 		fs.writeFileSync(path.join(dir, 'entry.js'), '// entry', 'utf-8');
@@ -74,6 +79,183 @@ describe('PluginSandboxHost.invokeTool request/response', () => {
 	});
 
 	afterEach(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+	it.each(['ServiceEmpty', 'unknown'])(
+		'preserves only allowlisted errors across provider realm, host invocation and consumer SDK (%s)',
+		async (code) => {
+			const providerLogs = vi.fn();
+			const provider = createSandboxRealm({
+				send: (json) => {
+					const req = JSON.parse(json);
+					queueMicrotask(() =>
+						provider.deliverResponse(JSON.stringify({ id: req.id, ok: true, result: null }))
+					);
+				},
+				log: providerLogs,
+				timerStart: vi.fn(),
+				timerClear: vi.fn(),
+			});
+			provider.init('p');
+			provider.runScript(
+				`module.exports={activate: function(sdk){return sdk.services.register('transcription',function(){var err=new Error('PRIVATE_PATH_MARKER');err.code=${JSON.stringify(code)};throw err;});}};`,
+				'provider-error'
+			);
+			await provider.activate();
+			proc.postMessage.mockImplementation((message) => {
+				if (message.kind !== 'invokeTool') return;
+				void provider
+					.invokeTool(JSON.stringify({ commandId: message.commandId, args: message.args }))
+					.then((json) =>
+						emit('message', { kind: 'toolResult', id: message.id, ...JSON.parse(json) })
+					);
+			});
+			const controller = new AbortController();
+			let cleaned = false;
+			const manifests: Record<string, PluginManifest> = {
+				p: {
+					id: 'p',
+					name: 'Provider',
+					version: '1.0.0',
+					tier: 1,
+					maestro: { minHostApi: '1.24.0' },
+					provides: [
+						{ id: 'transcription', contract: 'maestro.audio.transcribe', version: '1.0.0' },
+					],
+				},
+				c: {
+					id: 'c',
+					name: 'Consumer',
+					version: '1.0.0',
+					tier: 1,
+					maestro: { minHostApi: '1.24.0' },
+					requires: [
+						{
+							id: 'voice',
+							provider: 'p',
+							service: 'transcription',
+							contract: 'maestro.audio.transcribe',
+							version: '1.0.0',
+							optional: true,
+						},
+					],
+				},
+			};
+			const registry = new PluginServiceHost({
+				manifest: (id) => manifests[id],
+				running: () => true,
+				allowed: () => true,
+				invoke: (id, command, args, signal, timeoutMs) =>
+					host.invokeTool(id, command, args, { signal, timeoutMs }),
+				media: {
+					delegate: () => ({
+						audioId: 'provider-alias',
+						expiresAt: Date.now() + 10000,
+						signal: controller.signal,
+						call: vi.fn(),
+						close: async () => {
+							controller.abort();
+							cleaned = true;
+						},
+					}),
+				} as unknown as PluginMediaTools,
+			});
+			registry.register('p', 'transcription');
+			const consumerListeners = new Map<string, (...args: unknown[]) => void>();
+			const consumerProc = {
+				postMessage: vi.fn((message) => {
+					if (typeof message.ok === 'boolean') consumer.deliverResponse(JSON.stringify(message));
+				}),
+				on: (event: string, cb: (...args: unknown[]) => void) => consumerListeners.set(event, cb),
+				kill: vi.fn(),
+			};
+			forkMock.mockReturnValueOnce(consumerProc);
+			const consumerHost = new PluginSandboxHost({
+				broker: allowAll,
+				handlers: {
+					'services.start': (id, raw) => {
+						const p = raw as { requirementId: string; request: unknown };
+						return registry.start(id, p.requirementId, p.request);
+					},
+					'services.result': (id, raw) => registry.result(id, (raw as { callId: string }).callId),
+				},
+			});
+			const consumerLogs = vi.fn();
+			const consumer = createSandboxRealm({
+				send: (json) => consumerListeners.get('message')!(JSON.parse(json)),
+				log: consumerLogs,
+				timerStart: vi.fn(),
+				timerClear: vi.fn(),
+			});
+			consumer.init('c');
+			consumerHost.start('c', dir, 'entry.js');
+			consumer.runScript(
+				`module.exports={activate:async function(sdk){var call=await sdk.services.start('voice',{jobId:'owner-job',audioId:'owner-audio',model:'base',language:'de'});try{await sdk.services.result(call.callId);}catch(err){console.log(err.code+':'+err.message);}}};`,
+				'consumer-error'
+			);
+			await consumer.activate();
+			const expected = code === 'ServiceEmpty' ? code : 'ServiceFailed';
+			expect(consumerLogs).toHaveBeenCalledWith('info', expected + ':' + expected);
+			expect(providerLogs).toHaveBeenCalledWith('error', expected);
+			expect(JSON.stringify(providerLogs.mock.calls)).not.toContain('PRIVATE_PATH_MARKER');
+			expect(JSON.stringify(consumerProc.postMessage.mock.calls)).not.toContain(
+				'PRIVATE_PATH_MARKER'
+			);
+			expect(cleaned).toBe(true);
+		}
+	);
+	it('bars new service work synchronously when stop begins', async () => {
+		vi.useFakeTimers();
+		try {
+			expect(host.isAcceptingServiceCalls('p')).toBe(true);
+			host.stop('p');
+			expect(host.isAcceptingServiceCalls('p')).toBe(false);
+			await expect(host.invokeTool('p', 'service:transcription', {})).rejects.toThrow(
+				'ServiceUnavailable'
+			);
+			await vi.advanceTimersByTimeAsync(2001);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it('aborts only the service round-trip and ignores late replies while preserving ordinary tool behavior', async () => {
+		const controller = new AbortController();
+		const response = host.invokeTool(
+			'p',
+			'service:transcription',
+			{},
+			{ signal: controller.signal, timeoutMs: 120000 }
+		);
+		const assertion = expect(response).rejects.toThrow('ServiceCancelled');
+		const sent = lastInvokeTool();
+		controller.abort(new Error('ServiceCancelled'));
+		await assertion;
+		emit('message', { kind: 'toolResult', id: sent.id, ok: true, result: 'late' });
+		const ordinary = host.invokeTool('p', 'lookup', {});
+		emit('message', { kind: 'toolResult', id: lastInvokeTool().id, ok: true, result: 42 });
+		await expect(ordinary).resolves.toBe(42);
+	});
+	it('reports a bounded service deadline with a stable failure code and handles pre-cancellation', async () => {
+		vi.useFakeTimers();
+		try {
+			const controller = new AbortController();
+			const response = host.invokeTool(
+				'p',
+				'service:transcription',
+				{},
+				{ signal: controller.signal, timeoutMs: 20 }
+			);
+			const assertion = expect(response).rejects.toThrow('ServiceTimeout');
+			await vi.advanceTimersByTimeAsync(21);
+			await assertion;
+			controller.abort(new Error('ServiceCancelled'));
+			await expect(
+				host.invokeTool('p', 'service:transcription', {}, { signal: controller.signal })
+			).rejects.toThrow('ServiceCancelled');
+		} finally {
+			vi.useRealTimers();
+		}
+	});
 
 	it('resolves with the result once the child posts a matching toolResult', async () => {
 		const p = host.invokeTool('p', 'lookup', { q: 'x' });

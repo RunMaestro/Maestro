@@ -14,6 +14,22 @@
 
 import { expectTypeOf } from 'vitest';
 import type {
+	MaestroServicesApi,
+	TranscriptionInvocation,
+	TranscriptionResult,
+	PluginServiceStatus,
+} from '../index';
+import type {
+	MaestroServicesApi as SrcServicesApi,
+	TranscriptionInvocation as SrcInvocation,
+	TranscriptionResult as SrcResult,
+	PluginServiceStatus as SrcStatus,
+} from '../../../../src/shared/plugins/services';
+expectTypeOf<MaestroServicesApi>().toEqualTypeOf<SrcServicesApi>();
+expectTypeOf<TranscriptionInvocation>().toEqualTypeOf<SrcInvocation>();
+expectTypeOf<TranscriptionResult>().toEqualTypeOf<SrcResult>();
+expectTypeOf<PluginServiceStatus>().toEqualTypeOf<SrcStatus>();
+import type {
 	UiItemContribution,
 	HostViewContribution,
 	HostViewBlocks,

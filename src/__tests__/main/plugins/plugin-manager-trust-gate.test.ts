@@ -28,7 +28,14 @@ import { makeSigningKeys, signPluginDir } from './plugin-signing-helper';
 const trustedSigner = makeSigningKeys();
 const strangerSigner = makeSigningKeys();
 
-function writeCodePlugin(id: string, opts: { theme?: boolean; settings?: boolean } = {}): string {
+function writeCodePlugin(
+	id: string,
+	opts: {
+		theme?: boolean;
+		settings?: boolean;
+		requires?: import('../../../shared/plugins/services').RequiredService[];
+	} = {}
+): string {
 	const dir = path.join(pluginsDir(), id);
 	fs.mkdirSync(dir, { recursive: true });
 	const manifest = {
@@ -38,6 +45,7 @@ function writeCodePlugin(id: string, opts: { theme?: boolean; settings?: boolean
 		tier: 1,
 		entry: 'main.js',
 		maestro: { minHostApi: '1.0.0' },
+		...(opts.requires ? { requires: opts.requires } : {}),
 		...(opts.settings
 			? {
 					permissions: [{ capability: 'ui:panel' }],
@@ -232,5 +240,45 @@ describe('settings panel activation boundary', () => {
 		manager.setEnabled('settings.trusted', true);
 		manager.uninstall('settings.trusted');
 		expect(manager.getPanelHtml('settings.trusted/config')).toBeNull();
+	});
+});
+
+describe('explicit service startup dependencies', () => {
+	it('starts/stops mandatory consumers with availability while optional denial leaves text plugins running', () => {
+		let available = false;
+		const sandbox = makeSandbox();
+		const manager = new PluginManager({
+			isEnabled: () => true,
+			sandbox,
+			trustedKeys: () => [trustedSigner.publicKeyB64],
+			serviceAvailable: () => available,
+		});
+		const requirement = {
+			id: 'voice',
+			provider: 'example.media',
+			service: 'transcription',
+			contract: 'maestro.audio.transcribe' as const,
+			version: '^1.0.0',
+		};
+		signPluginDir(
+			writeCodePlugin('mandatory.consumer', { requires: [requirement] }),
+			trustedSigner
+		);
+		signPluginDir(
+			writeCodePlugin('optional.consumer', { requires: [{ ...requirement, optional: true }] }),
+			trustedSigner
+		);
+		manager.refresh();
+		manager.setEnabled('mandatory.consumer', true);
+		manager.setEnabled('optional.consumer', true);
+		expect(sandbox.isRunning('mandatory.consumer')).toBe(false);
+		expect(sandbox.isRunning('optional.consumer')).toBe(true);
+		available = true;
+		manager.reconcileServiceDependencies();
+		expect(sandbox.isRunning('mandatory.consumer')).toBe(true);
+		available = false;
+		manager.reconcileServiceDependencies();
+		expect(sandbox.isRunning('mandatory.consumer')).toBe(false);
+		expect(sandbox.isRunning('optional.consumer')).toBe(true);
 	});
 });

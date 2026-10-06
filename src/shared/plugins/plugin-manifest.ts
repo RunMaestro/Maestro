@@ -12,6 +12,7 @@
  * tightened per contribution point as each lands in Phase 1+.
  */
 
+import { parseServiceDeclarations, type ProvidedService, type RequiredService } from './services';
 import { isHostApiCompatible } from './host-api';
 import { parsePermissions, type PermissionRequest } from './permissions';
 
@@ -111,6 +112,8 @@ export interface PluginManifest {
 	 * and the broker enforces them at runtime.
 	 */
 	permissions?: PermissionRequest[];
+	provides?: ProvidedService[];
+	requires?: RequiredService[];
 }
 
 /** Outcome of validating one manifest. */
@@ -287,6 +290,12 @@ export function validatePluginManifest(input: unknown): ManifestValidationResult
 		errors.push('tier 0 plugins are data-only and must not request permissions');
 	}
 
+	const services = parseServiceDeclarations(
+		(input as Record<string, unknown>).provides,
+		(input as Record<string, unknown>).requires,
+		normalizedTier
+	);
+	errors.push(...services.errors);
 	if (errors.length > 0) {
 		return { manifest: null, errors };
 	}
@@ -306,6 +315,8 @@ export function validatePluginManifest(input: unknown): ManifestValidationResult
 		...(isNonEmptyString(releaseDate) ? { releaseDate: (releaseDate as string).trim() } : {}),
 		...(isPlainObject(contributes) ? { contributes } : {}),
 		...(safeEntry ? { entry: safeEntry } : {}),
+		...(services.provides.length ? { provides: services.provides } : {}),
+		...(services.requires.length ? { requires: services.requires } : {}),
 		...(parsedPermissions.requests.length > 0 ? { permissions: parsedPermissions.requests } : {}),
 	};
 	return { manifest, errors: [] };

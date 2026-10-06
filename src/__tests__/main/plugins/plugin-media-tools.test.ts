@@ -533,3 +533,94 @@ describe('media tools boundary', () => {
 		});
 	});
 });
+
+describe('service media leases', () => {
+	it('mints fresh aliases, preserves the original deadline and ownership, and makes handoff exclusive', async () => {
+		const jobId = await open();
+		const audioId = await download(jobId);
+		const started = Date.now();
+		const lease = tools.delegate('p', jobId, audioId, { model: 'base', language: 'de' }, () => {});
+		expect(lease.audioId).not.toBe(audioId);
+		expect(lease.expiresAt).toBeLessThanOrEqual(started + MEDIA_LIMITS.jobTimeoutMs);
+		expect(() =>
+			tools.delegate('p', jobId, audioId, { model: 'base', language: 'de' }, () => {})
+		).toThrow('MediaBusy');
+		await expect(tools.call('p', 'media.probe', { jobId, audioId })).rejects.toMatchObject({
+			code: 'MediaBusy',
+		});
+		await expect(
+			tools.call('other', 'media.probe', { jobId, audioId: lease.audioId })
+		).rejects.toMatchObject({ code: 'MediaInvalid' });
+		await expect(lease.call('probe', audioId)).rejects.toMatchObject({ code: 'MediaInvalid' });
+		await lease.call('probe', lease.audioId);
+		const decoded = (await lease.call('decode', lease.audioId)) as { audioId: string };
+		expect(decoded.audioId).not.toBe(audioId);
+		expect(decoded.audioId).not.toBe(lease.audioId);
+		expect(await lease.call('run', decoded.audioId)).toEqual({ json: whisperJson });
+		await lease.close();
+		expect(await fs.readdir(root)).toEqual([]);
+		await expect(lease.call('probe', lease.audioId)).rejects.toMatchObject({
+			code: 'MediaCancelled',
+		});
+	});
+	it('refuses foreign, missing and already consumed owner handles', async () => {
+		const jobId = await open();
+		const audioId = await download(jobId);
+		expect(() =>
+			tools.delegate('other', jobId, audioId, { model: 'base', language: 'de' }, () => {})
+		).toThrow('MediaInvalid');
+		expect(() =>
+			tools.delegate('p', jobId, 'missing', { model: 'base', language: 'de' }, () => {})
+		).toThrow('MediaInvalid');
+		const lease = tools.delegate('p', jobId, audioId, { model: 'base', language: 'de' }, () => {});
+		await lease.close();
+		expect(() =>
+			tools.delegate('p', jobId, audioId, { model: 'base', language: 'de' }, () => {})
+		).toThrow('MediaInvalid');
+	});
+	it('kills delegated subprocesses and cleans artifacts when the owner closes mid-operation', async () => {
+		const jobId = await open();
+		const audioId = await download(jobId);
+		const lease = tools.delegate('p', jobId, audioId, { model: 'base', language: 'de' }, () => {});
+		hold = true;
+		const operation = lease.call('probe', lease.audioId);
+		const failure = expect(operation).rejects.toMatchObject({ code: 'MediaCancelled' });
+		await vi.waitFor(() => expect(children.length).toBe(1));
+		await tools.call('p', 'media.close', { jobId });
+		await failure;
+		expect(children[0].kill).toHaveBeenCalled();
+		expect(lease.signal.aborted).toBe(true);
+		expect(await fs.readdir(root)).toEqual([]);
+	});
+	it('re-authorizes the provider during work and kills before returning a revoke failure', async () => {
+		const jobId = await open();
+		const audioId = await download(jobId);
+		let providerAllowed = true;
+		const lease = tools.delegate('p', jobId, audioId, { model: 'base', language: 'de' }, () => {
+			if (!providerAllowed)
+				throw Object.assign(new Error('ServiceDenied'), { code: 'ServiceDenied' });
+		});
+		hold = true;
+		const operation = lease.call('probe', lease.audioId);
+		const failure = expect(operation).rejects.toThrow();
+		await vi.waitFor(() => expect(children.length).toBe(1));
+		providerAllowed = false;
+		await lease.close();
+		await failure;
+		expect(children[0].kill).toHaveBeenCalled();
+		expect(await fs.readdir(root)).toEqual([]);
+	});
+	it('never extends the parent job lifetime on delegation', async () => {
+		vi.useFakeTimers();
+		const jobId = await open();
+		const audioId = await download(jobId);
+		const originalDeadline = Date.now() + MEDIA_LIMITS.jobTimeoutMs;
+		await vi.advanceTimersByTimeAsync(50000);
+		const lease = tools.delegate('p', jobId, audioId, { model: 'base', language: 'de' }, () => {});
+		expect(lease.expiresAt).toBe(originalDeadline);
+		await vi.advanceTimersByTimeAsync(MEDIA_LIMITS.jobTimeoutMs - 50000);
+		expect(lease.signal.aborted).toBe(true);
+		await lease.close();
+		expect(await fs.readdir(root)).toEqual([]);
+	});
+});

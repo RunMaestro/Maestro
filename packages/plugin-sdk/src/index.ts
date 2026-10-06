@@ -70,6 +70,8 @@ export function serializedJsonByteLength(value: unknown): number | null {
 export type PluginCapability =
 	| 'fs:read' // read files under a path scope
 	| 'fs:write' // write files under a path scope
+	| 'services:call'
+	| 'services:provide'
 	| 'media:tools' // fixed Discord voice media profiles, opaque jobs only
 	| 'net:fetch' // HTTP(S) fetch to a host scope
 	| 'net:connect' // hold an outbound persistent websocket to a host scope (Discord/Slack gateway)
@@ -106,6 +108,8 @@ export type PluginCapability =
 export const PLUGIN_CAPABILITIES: readonly PluginCapability[] = [
 	'fs:read',
 	'fs:write',
+	'services:call',
+	'services:provide',
 	'media:tools',
 	'net:fetch',
 	'net:connect',
@@ -157,6 +161,8 @@ const CAPABILITY_RISK: Record<PluginCapability, CapabilityRisk> = {
 	'sessions:focus': 'low',
 	'fs:read': 'medium',
 	'fs:watch': 'medium',
+	'services:call': 'high',
+	'services:provide': 'high',
 	'media:tools': 'high',
 	'net:fetch': 'medium',
 	'net:connect': 'high',
@@ -197,6 +203,8 @@ const CAPABILITY_SCOPE_KIND: Record<PluginCapability, ScopeKind> = {
 	'fs:read': 'path',
 	'fs:write': 'path',
 	'fs:watch': 'path',
+	'services:call': 'allowlist',
+	'services:provide': 'allowlist',
 	'media:tools': 'allowlist',
 	'net:fetch': 'host',
 	'net:connect': 'host',
@@ -355,6 +363,10 @@ export function describeCapability(capability: PluginCapability): string {
 			return 'Read files';
 		case 'fs:write':
 			return 'Create and modify files';
+		case 'services:call':
+			return 'Call an explicitly bound plugin service (exact provider/service; bounded requests and results)';
+		case 'services:provide':
+			return 'Provide an own declared host-mediated service (exact service ID; no direct plugin IPC)';
 		case 'media:tools':
 			return 'Download Discord voice attachments and run fixed local media tools (8 MiB, 120 seconds; no general file or process access)';
 		case 'net:fetch':
@@ -458,7 +470,7 @@ export function describeCapability(capability: PluginCapability): string {
  * `ui:contribute` / `ui:panel` / `ui:render-unsafe`; 1.3.0 added `tools` +
  * `keybindings`; 1.2.0 added `transcripts:read`.
  */
-export const HOST_API_VERSION = '1.23.0';
+export const HOST_API_VERSION = '1.24.0';
 
 /** Result of checking a plugin's declared host-API requirement. */
 export interface HostApiCompatibility {
@@ -477,7 +489,7 @@ function parseSemver(
 		`^v?(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:-(${identifier}(?:\\.${identifier})*))?(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?$`
 	);
 	const m = re.exec(value.trim());
-	if (!m) return null;
+	if (!m || [m[1], m[2], m[3]].some((part) => !Number.isSafeInteger(Number(part)))) return null;
 	return {
 		major: Number(m[1]),
 		minor: Number(m[2]),
@@ -621,6 +633,8 @@ export interface PluginManifest {
 	entry?: string;
 	/** Capabilities requested (tier >= 1). Validated against the fixed vocabulary. */
 	permissions?: PermissionRequest[];
+	provides?: ProvidedService[];
+	requires?: RequiredService[];
 }
 
 /** Outcome of validating one manifest. */
@@ -775,6 +789,12 @@ export function validatePluginManifest(input: unknown): ManifestValidationResult
 		errors.push('tier 0 plugins are data-only and must not request permissions');
 	}
 
+	const services = parseServiceDeclarations(
+		(input as Record<string, unknown>).provides,
+		(input as Record<string, unknown>).requires,
+		normalizedTier
+	);
+	errors.push(...services.errors);
 	if (errors.length > 0) {
 		return { manifest: null, errors };
 	}
@@ -794,6 +814,8 @@ export function validatePluginManifest(input: unknown): ManifestValidationResult
 		...(isNonEmptyString(releaseDate) ? { releaseDate: (releaseDate as string).trim() } : {}),
 		...(isPlainObject(contributes) ? { contributes } : {}),
 		...(safeEntry ? { entry: safeEntry } : {}),
+		...(services.provides.length ? { provides: services.provides } : {}),
+		...(services.requires.length ? { requires: services.requires } : {}),
 		...(parsedPermissions.requests.length > 0 ? { permissions: parsedPermissions.requests } : {}),
 	};
 	return { manifest, errors: [] };
@@ -1330,6 +1352,17 @@ export interface PluginEvent<T extends PluginEventTopic = PluginEventTopic> {
 export const HOST_API = {
 	'fs.read': { capability: 'fs:read' },
 	'fs.write': { capability: 'fs:write' },
+	'services.register': { capability: 'services:provide' },
+	'services.unregister': { capability: 'services:provide' },
+	'services.readiness': { capability: 'services:provide' },
+	'services.status': { capability: 'services:call' },
+	'services.openSettings': { capability: 'services:call' },
+	'services.start': { capability: 'services:call' },
+	'services.result': { capability: 'services:call' },
+	'services.cancel': { capability: 'services:call' },
+	'services.media.probe': { capability: 'media:tools' },
+	'services.media.decode': { capability: 'media:tools' },
+	'services.media.run': { capability: 'media:tools' },
 	'media.status': { capability: 'media:tools' },
 	'media.open': { capability: 'media:tools' },
 	'media.download': { capability: 'media:tools' },
@@ -1774,6 +1807,7 @@ export interface MaestroMediaApi {
 }
 
 export interface MaestroSdk {
+	readonly services: MaestroServicesApi;
 	readonly media: MaestroMediaApi;
 	readonly pluginId: string;
 	readonly fs: MaestroFsApi;
@@ -1813,4 +1847,222 @@ export function defineManifest(m: PluginManifest): PluginManifest {
 /** Identity helper: type-check a plugin module's activate/deactivate hooks. */
 export function definePlugin(p: PluginModule): PluginModule {
 	return p;
+}
+
+// Vendored host-known service contracts; parity is pinned by the SDK drift tests.
+export const TRANSCRIPTION_CONTRACT = 'maestro.audio.transcribe';
+export const TRANSCRIPTION_VERSION = '1.0.0';
+export const TRANSCRIPTION_LANGUAGES = ['de', 'en'] as const;
+export const SERVICE_LIMITS = {
+	declarations: 16,
+	requestBytes: 4096,
+	resultBytes: 64 * 1024,
+	textCharacters: 12_000,
+	calls: 4,
+	callsPerPlugin: 2,
+	timeoutMs: MEDIA_LIMITS.jobTimeoutMs,
+} as const;
+export const SERVICE_ERROR_CODES = [
+	'ServiceDenied',
+	'ServiceUnavailable',
+	'ServiceIncompatible',
+	'ServiceBusy',
+	'ServiceTimeout',
+	'ServiceCancelled',
+	'ServiceInvalid',
+	'ServiceEmpty',
+	'ServiceFailed',
+] as const;
+export type ServiceErrorCode = (typeof SERVICE_ERROR_CODES)[number];
+export interface ProvidedService {
+	id: string;
+	contract: typeof TRANSCRIPTION_CONTRACT;
+	version: string;
+	settingsPanel?: string;
+}
+export interface RequiredService {
+	id: string;
+	provider: string;
+	service: string;
+	contract: typeof TRANSCRIPTION_CONTRACT;
+	version: string;
+	optional?: boolean;
+}
+export interface TranscriptionRequest {
+	jobId: string;
+	audioId: string;
+	model: MediaModelId;
+	language: (typeof TRANSCRIPTION_LANGUAGES)[number];
+}
+export interface TranscriptionResult {
+	text: string;
+	language: string;
+	durationSeconds: number;
+	model: MediaModelId;
+	multilingual: true;
+	translated: false;
+}
+/** Provider sees minted aliases and the original deadline, never owner handles or URLs. */
+export interface TranscriptionInvocation {
+	callId: string;
+	audioId: string;
+	expiresAt: number;
+	model: MediaModelId;
+	language: (typeof TRANSCRIPTION_LANGUAGES)[number];
+}
+export interface PluginServiceStatus {
+	state: 'ready' | 'unavailable' | 'denied' | 'incompatible' | 'busy';
+	provider: string;
+	service: string;
+	contract: typeof TRANSCRIPTION_CONTRACT;
+	version?: string;
+	settingsTarget?: { kind: 'plugin-panel'; pluginId: string; panelId: string };
+	readiness?: MediaToolStatus & { languages: readonly string[] };
+}
+export interface ServiceInvocationContext {
+	isCancelled(): boolean;
+	onCancel(callback: () => void): () => void;
+}
+export interface MaestroServicesApi {
+	register(
+		serviceId: string,
+		handler: (
+			request: TranscriptionInvocation,
+			context: ServiceInvocationContext
+		) => Promise<TranscriptionResult>
+	): Promise<void>;
+	unregister(serviceId: string): Promise<void>;
+	status(requirementId: string): Promise<PluginServiceStatus>;
+	openSettings(requirementId: string): Promise<void>;
+	/** Reserves synchronously in the host. Caller must cancel a late successful start after local cancellation. */
+	start(requirementId: string, request: TranscriptionRequest): Promise<{ callId: string }>;
+	result(callId: string): Promise<TranscriptionResult>;
+	cancel(callId: string): Promise<void>;
+	/** Provider diagnostics, no paths, only for an own declared service with scoped consent. */
+	readiness(serviceId: string): Promise<MediaToolStatus & { languages: readonly string[] }>;
+	readonly media: {
+		probe(callId: string, audioId: string): Promise<MediaProbe>;
+		decode(callId: string, audioId: string): Promise<{ audioId: string; durationSeconds: number }>;
+		run(callId: string, audioId: string): Promise<{ json: string }>;
+	};
+}
+
+const LOCAL_SERVICE_ID = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/;
+const PROVIDER_ID = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/;
+function object(value: unknown): value is Record<string, unknown> {
+	return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+/** Closed, bounded declarations; only contracts the host can validate are admitted. */
+export function parseServiceDeclarations(
+	provides: unknown,
+	requires: unknown,
+	tier: number
+): { provides: ProvidedService[]; requires: RequiredService[]; errors: string[] } {
+	const out: { provides: ProvidedService[]; requires: RequiredService[]; errors: string[] } = {
+		provides: [],
+		requires: [],
+		errors: [],
+	};
+	for (const [kind, raw] of [
+		['provides', provides],
+		['requires', requires],
+	] as const) {
+		if (raw === undefined) continue;
+		if (tier < 1 || !Array.isArray(raw) || raw.length > SERVICE_LIMITS.declarations) {
+			out.errors.push(
+				`${kind}: expected at most ${SERVICE_LIMITS.declarations} code-tier service declarations`
+			);
+			continue;
+		}
+		const ids = new Set<string>();
+		for (const item of raw) {
+			const allowed =
+				kind === 'provides'
+					? ['id', 'contract', 'version', 'settingsPanel']
+					: ['id', 'provider', 'service', 'contract', 'version', 'optional'];
+			if (
+				!object(item) ||
+				Object.keys(item).some((key) => !allowed.includes(key)) ||
+				typeof item.id !== 'string' ||
+				!LOCAL_SERVICE_ID.test(item.id) ||
+				ids.has(item.id) ||
+				item.contract !== TRANSCRIPTION_CONTRACT ||
+				typeof item.version !== 'string' ||
+				item.version.length > 128
+			) {
+				out.errors.push(`${kind}: invalid or duplicate service declaration`);
+				continue;
+			}
+			ids.add(item.id);
+			if (kind === 'provides') {
+				if (
+					!/^1\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(item.version) ||
+					!parseSemver(item.version) ||
+					parseSemver(item.version)?.major !== 1 ||
+					(item.settingsPanel !== undefined &&
+						(typeof item.settingsPanel !== 'string' || !LOCAL_SERVICE_ID.test(item.settingsPanel)))
+				) {
+					out.errors.push('provides: invalid contract version or settingsPanel');
+					continue;
+				}
+				out.provides.push(item as unknown as ProvidedService);
+			} else {
+				if (
+					typeof item.provider !== 'string' ||
+					!PROVIDER_ID.test(item.provider) ||
+					typeof item.service !== 'string' ||
+					!LOCAL_SERVICE_ID.test(item.service) ||
+					!/^\^?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(item.version) ||
+					!parseSemver(item.version.replace(/^\^/, '')) ||
+					(item.optional !== undefined && typeof item.optional !== 'boolean')
+				) {
+					out.errors.push(
+						'requires: invalid pinned provider, service, version range or optional flag'
+					);
+					continue;
+				}
+				out.requires.push(item as unknown as RequiredService);
+			}
+		}
+	}
+	return out;
+}
+
+export function isTranscriptionRequest(value: unknown): value is TranscriptionRequest {
+	return (
+		object(value) &&
+		Object.keys(value).length === 4 &&
+		Object.keys(value).every((k) => ['jobId', 'audioId', 'model', 'language'].includes(k)) &&
+		typeof value.jobId === 'string' &&
+		value.jobId.length > 0 &&
+		value.jobId.length <= 64 &&
+		typeof value.audioId === 'string' &&
+		value.audioId.length > 0 &&
+		value.audioId.length <= 64 &&
+		(MEDIA_MODEL_IDS as readonly unknown[]).includes(value.model) &&
+		(TRANSCRIPTION_LANGUAGES as readonly unknown[]).includes(value.language)
+	);
+}
+export function isTranscriptionResult(
+	value: unknown,
+	expected: Pick<TranscriptionRequest, 'model' | 'language'>
+): value is TranscriptionResult {
+	return (
+		object(value) &&
+		Object.keys(value).length === 6 &&
+		Object.keys(value).every((k) =>
+			['text', 'language', 'durationSeconds', 'model', 'multilingual', 'translated'].includes(k)
+		) &&
+		typeof value.text === 'string' &&
+		value.text.trim().length > 0 &&
+		value.text.length <= SERVICE_LIMITS.textCharacters &&
+		value.language === expected.language &&
+		value.model === expected.model &&
+		value.multilingual === true &&
+		value.translated === false &&
+		typeof value.durationSeconds === 'number' &&
+		Number.isFinite(value.durationSeconds) &&
+		value.durationSeconds > 0 &&
+		value.durationSeconds <= MEDIA_LIMITS.maxDurationSeconds
+	);
 }

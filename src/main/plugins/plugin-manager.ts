@@ -70,6 +70,7 @@ export interface PluginSandboxLifecycle {
 }
 
 export interface PluginManagerDeps {
+	serviceAvailable?: (pluginId: string, requirementId: string) => boolean;
 	/** Whether the `plugins` Encore flag is currently on. Re-read on every call. */
 	isEnabled: () => boolean;
 	/** Optional change hook (e.g. to broadcast to the renderer) after mutations. */
@@ -313,8 +314,30 @@ export class PluginManager {
 			!!record.manifest &&
 			record.manifest.tier >= 1 &&
 			!!record.manifest.entry &&
-			record.signature?.status === 'trusted'
+			record.signature?.status === 'trusted' &&
+			(record.manifest.requires ?? []).every(
+				(r) => r.optional === true || this.deps.serviceAvailable?.(record.id, r.id) === true
+			)
 		);
+	}
+
+	/** Reconcile only consumers with mandatory dependencies; never restart a crashed provider here. */
+	reconcileServiceDependencies(): void {
+		if (!this.deps.isEnabled()) return;
+		const sandbox = this.deps.sandbox;
+		if (!sandbox) return;
+		for (const record of this.registry.records) {
+			if (!record.manifest?.requires?.some((r) => !r.optional)) continue;
+			if (!this.isRunnable(record)) {
+				if (sandbox.isRunning(record.id)) sandbox.stop(record.id);
+			} else if (!sandbox.isRunning(record.id) && record.manifest.entry) {
+				try {
+					sandbox.start(record.id, record.source, record.manifest.entry);
+				} catch {
+					/* isolated start failure */
+				}
+			}
+		}
 	}
 
 	/**

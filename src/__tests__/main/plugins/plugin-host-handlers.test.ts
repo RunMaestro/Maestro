@@ -22,7 +22,8 @@ import { PluginEventBusImpl } from '../../../main/plugins/plugin-event-bus';
 import { PermissionBroker } from '../../../main/plugins/permission-broker';
 import { PluginBackgroundSupervisor } from '../../../main/plugins/plugin-background-supervisor';
 import { PluginGroupingRegistry } from '../../../main/plugins/plugin-grouping-registry';
-import type { PermissionGrant } from '../../../shared/plugins/permissions';
+import { isPermitted, type PermissionGrant } from '../../../shared/plugins/permissions';
+import type { PluginManifest } from '../../../shared/plugins/plugin-manifest';
 
 let kvBase: string;
 let kv: PluginKvStore;
@@ -76,6 +77,70 @@ function brokerFor(getGrants: () => PermissionGrant[]): PermissionBroker {
 function grant(capability: PermissionGrant['capability']): PermissionGrant {
 	return { capability, grantedAt: 1 };
 }
+
+describe('service RPC boundary', () => {
+	it.each([
+		['services.register', { serviceId: 'transcription', pluginId: 'victim' }],
+		['services.start', { requirementId: 'voice', request: {}, provider: 'victim' }],
+		['services.media.run', { callId: 'call', audioId: 'alias', path: '/secret' }],
+		['services.cancel', { callId: 'call', owner: 'victim' }],
+	] as const)('rejects caller-supplied routing/paths in %s', async (method, params) => {
+		const handlers = buildHostCallHandlers(makeDeps());
+		await expect(handlers[method]!('p', params)).rejects.toMatchObject({ code: 'ServiceInvalid' });
+	});
+	it('resolves only own requirements and requires both scoped provider grants even with a permissive outer broker', async () => {
+		const manifests: Record<string, PluginManifest> = {
+			consumer: {
+				id: 'consumer',
+				name: 'Consumer',
+				version: '1.0.0',
+				tier: 1,
+				entry: 'main.js',
+				maestro: { minHostApi: '1.24.0' },
+				requires: [
+					{
+						id: 'voice',
+						provider: 'provider',
+						service: 'transcription',
+						contract: 'maestro.audio.transcribe',
+						version: '^1.0.0',
+						optional: true,
+					},
+				],
+			},
+			provider: {
+				id: 'provider',
+				name: 'Provider',
+				version: '1.0.0',
+				tier: 1,
+				entry: 'main.js',
+				maestro: { minHostApi: '1.24.0' },
+				provides: [{ id: 'transcription', contract: 'maestro.audio.transcribe', version: '1.0.0' }],
+			},
+		};
+		const grants: PermissionGrant[] = [
+			{ capability: 'services:provide', scope: 'transcription', grantedAt: 1 },
+		];
+		const handlers = buildHostCallHandlers(
+			makeDeps({
+				serviceManifest: (id) => manifests[id],
+				serviceRunning: () => true,
+				serviceAllowed: (id, cap, target) => id === 'provider' && isPermitted(grants, cap, target),
+			})
+		);
+		await expect(
+			handlers['services.register']!('provider', { serviceId: 'transcription' })
+		).rejects.toMatchObject({ code: 'ServiceDenied' });
+		grants.push({ capability: 'media:tools', scope: 'service-transcription', grantedAt: 1 });
+		await handlers['services.register']!('provider', { serviceId: 'transcription' });
+		await expect(
+			handlers['services.status']!('consumer', { requirementId: 'voice' })
+		).resolves.toMatchObject({ state: 'denied' });
+		await expect(
+			handlers['services.status']!('intruder', { requirementId: 'voice' })
+		).rejects.toMatchObject({ code: 'ServiceInvalid' });
+	});
+});
 
 describe('settings.set', () => {
 	it('rejects keys outside the plugin namespace', async () => {

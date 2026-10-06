@@ -96,9 +96,9 @@ describe('@maestro/plugin-sdk vendored-contract drift guard', () => {
 		expect(HOST_METHOD_CAPABILITY).toEqual(SRC_HOST_METHOD_CAPABILITY);
 	});
 
-	it('HOST_API_VERSION matches the source and is pinned to 1.23.0', () => {
+	it('HOST_API_VERSION matches the source and is pinned to 1.24.0', () => {
 		expect(HOST_API_VERSION).toBe(SRC_HOST_API_VERSION);
-		expect(HOST_API_VERSION).toBe('1.23.0');
+		expect(HOST_API_VERSION).toBe('1.24.0');
 	});
 
 	it('capability risk and descriptions match the source', () => {
@@ -269,4 +269,58 @@ it('media ceilings, model IDs and failure codes match the host', () => {
 	expect(MEDIA_LIMITS).toEqual(SRC_MEDIA_LIMITS);
 	expect(MEDIA_MODEL_IDS).toEqual(SRC_MEDIA_MODELS);
 	expect(MEDIA_ERROR_CODES).toEqual(SRC_MEDIA_ERRORS);
+});
+
+describe('vendored services contract parity', () => {
+	it('matches manifest parsing for closed provides/requires declarations', async () => {
+		const host = await import('../../../../src/shared/plugins/services');
+		const sdk = await import('../index');
+		expect(sdk.SERVICE_LIMITS).toEqual(host.SERVICE_LIMITS);
+		expect(sdk.SERVICE_ERROR_CODES).toEqual(host.SERVICE_ERROR_CODES);
+		for (const version of [
+			'1.0.0',
+			'^1.0.0',
+			'*',
+			'>=1.0.0',
+			'bad',
+			'2.0.0',
+			'1.0.0-beta',
+			'1.00.0',
+			'1.999999999999999999999.0',
+			'^1.999999999999999999999.0',
+		]) {
+			const provided = { id: 'transcription', contract: host.TRANSCRIPTION_CONTRACT, version };
+			const required = {
+				id: 'voice',
+				provider: 'example.media',
+				service: 'transcription',
+				contract: host.TRANSCRIPTION_CONTRACT,
+				version,
+				optional: true,
+			};
+			expect(sdk.parseServiceDeclarations([provided], [required], 1)).toEqual(
+				host.parseServiceDeclarations([provided], [required], 1)
+			);
+		}
+		const manifest = {
+			id: 'example.plugin',
+			name: 'Example',
+			version: '1.0.0',
+			tier: 1,
+			entry: 'main.js',
+			maestro: { minHostApi: '1.24.0' },
+			provides: [{ id: 'transcription', contract: host.TRANSCRIPTION_CONTRACT, version: '1.0.0' }],
+			requires: [
+				{
+					id: 'voice',
+					provider: 'example.media',
+					service: 'transcription',
+					contract: host.TRANSCRIPTION_CONTRACT,
+					version: '^1.0.0',
+					optional: true,
+				},
+			],
+		};
+		expect(validatePluginManifest(manifest)).toEqual(srcValidatePluginManifest(manifest));
+	});
 });

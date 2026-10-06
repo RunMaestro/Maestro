@@ -275,3 +275,14 @@ The manager admits them only for active trusted records with live `ui:panel`
 grants. `hostSettings: ["media"]` draws a host-owned link to Host media tools;
 it grants no host setting access. Own `ui.openPanel` can navigate to a settings
 card; close/toggle remain modal-only. Identity is the existing namespaced panel ID.
+
+## Host-mediated services (1.24.0)
+
+`provides` / pinned `requires` declarations, exact consent scopes and the closed
+transcription contract are documented in [plugin-services.md](docs/plugin-services.md).
+`PluginServiceHost` routes through the existing sandbox result bridge; only
+`PluginMediaTools.delegate` mints call-bound aliases. Owner jobs become exclusive,
+keep their original deadline/limits and close before result delivery.
+Registration and mandatory consumer startup are reconciled through main; optional
+dependencies never gate text plugins. Revocation removes registrations and
+in-flight work; cancellation remains usable after revoke. No direct peer IPC.

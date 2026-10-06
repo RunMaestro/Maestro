@@ -30,6 +30,7 @@
  */
 
 import * as vm from 'vm';
+import { SERVICE_ERROR_CODES } from '../../shared/plugins/services';
 import {
 	isHostMethod,
 	type HostControlMessage,
@@ -97,6 +98,7 @@ export interface SandboxRealm {
  */
 const BOOTSTRAP_SOURCE = String.raw`(function bootstrap(bridge) {
 	'use strict';
+	var serviceErrorCodes = ${JSON.stringify(SERVICE_ERROR_CODES)};
 	var bridgeSend = bridge.send;
 	var bridgeLog = bridge.log;
 	var bridgeTimerStart = bridge.timerStart;
@@ -177,12 +179,23 @@ const BOOTSTRAP_SOURCE = String.raw`(function bootstrap(bridge) {
 
 	// ---- plugin registries ---------------------------------------------------
 	var commandHandlers = new Map();
+	var serviceHandlers = new Map();
+	var serviceInvocations = new Map();
 	var eventHandlers = new Map();
 
 	function deliverEvent(json) {
 		var msg;
 		try { msg = JSON.parse(json); } catch (e) { return; }
 		if (!msg || typeof msg.topic !== 'string') return;
+  if (msg.topic === 'services.cancel' && msg.payload && typeof msg.payload.callId === 'string') {
+   var invocation = serviceInvocations.get(msg.payload.callId);
+   if (invocation && !invocation.cancelled) {
+    invocation.cancelled = true;
+    invocation.callbacks.forEach(function (fn) { try { fn(); } catch (error) { safeLog('error', 'service cancellation callback failed'); } });
+    invocation.callbacks.clear();
+   }
+   return;
+  }
 		var handlers = eventHandlers.get(msg.topic);
 		if (!handlers) return;
 		var meta = Object.freeze({ topic: msg.topic, at: typeof msg.at === 'string' ? msg.at : '' });
@@ -216,8 +229,23 @@ const BOOTSTRAP_SOURCE = String.raw`(function bootstrap(bridge) {
 		var msg;
 		try { msg = JSON.parse(json); } catch (e) { return Promise.resolve(JSON.stringify({ ok: false, error: 'malformed tool invocation' })); }
 		var commandId = msg && typeof msg.commandId === 'string' ? msg.commandId : '';
-		var handler = commandHandlers.get(commandId);
+		var isService = commandId.indexOf('service:') === 0;
+		function failure(err) {
+			if (isService) {
+				var code = 'ServiceFailed';
+				try {
+					var candidate = err && err.code !== undefined ? err.code : err && err.message;
+					if (serviceErrorCodes.indexOf(candidate) !== -1) code = candidate;
+				} catch (e) { /* hostile error getter */ }
+				safeLog('error', code);
+				return JSON.stringify({ok: false, error: code, errorCode: code});
+			}
+			safeLog('error', 'tool "' + commandId + '" threw: ' + String(err));
+			return JSON.stringify({ok: false, error: err && err.message ? String(err.message) : String(err)});
+		}
+		var handler = isService ? serviceHandlers.get(commandId.slice('service:'.length)) : commandHandlers.get(commandId);
 		if (!handler) {
+			if (isService) return Promise.resolve(failure({code: 'ServiceUnavailable'}));
 			safeLog('warn', 'no handler registered for tool "' + commandId + '"');
 			return Promise.resolve(JSON.stringify({ ok: false, error: 'no handler registered for tool "' + commandId + '"' }));
 		}
@@ -227,17 +255,15 @@ const BOOTSTRAP_SOURCE = String.raw`(function bootstrap(bridge) {
 					function (result) {
 						var body;
 						try { body = JSON.stringify({ ok: true, result: result === undefined ? null : result }); }
-						catch (e) { body = JSON.stringify({ ok: false, error: 'tool result is not JSON-serializable' }); }
+						catch (e) { body = isService ? failure({code: 'ServiceInvalid'}) : JSON.stringify({ ok: false, error: 'tool result is not JSON-serializable' }); }
 						resolve(body);
 					},
 					function (err) {
-						safeLog('error', 'tool "' + commandId + '" threw: ' + String(err));
-						resolve(JSON.stringify({ ok: false, error: err && err.message ? String(err.message) : String(err) }));
+						resolve(failure(err));
 					}
 				);
 			} catch (err) {
-				safeLog('error', 'tool "' + commandId + '" threw: ' + String(err));
-				resolve(JSON.stringify({ ok: false, error: err && err.message ? String(err.message) : String(err) }));
+				resolve(failure(err));
 			}
 		});
 	}
@@ -252,6 +278,38 @@ const BOOTSTRAP_SOURCE = String.raw`(function bootstrap(bridge) {
 				write: function (path, contents) { return hostCall('fs.write', { path: path, contents: contents }); },
 				watch: function (path, opts) { return hostCall('fs.watch', { path: path, opts: opts }); }
 			}),
+   services: Object.freeze({
+    register: function (id, handler) {
+     if (typeof handler !== 'function') return Promise.reject(new Error('service handler must be a function'));
+     if (serviceHandlers.has(id)) return Promise.reject(new Error('ServiceBusy'));
+     serviceHandlers.set(id, function (request) {
+      var state = { cancelled: false, callbacks: new Set() };
+      serviceInvocations.set(request.callId, state);
+      var context = Object.freeze({
+       isCancelled: function () { return state.cancelled; },
+       onCancel: function (callback) {
+        if (typeof callback !== 'function') throw new Error('invalid cancellation callback');
+        if (state.cancelled) callback(); else state.callbacks.add(callback);
+        return function () { state.callbacks.delete(callback); };
+       }
+      });
+      return Promise.resolve().then(function () { return handler(request, context); }).finally(function () { serviceInvocations.delete(request.callId); state.callbacks.clear(); });
+     });
+     return hostCall('services.register', { serviceId: id }).catch(function (error) { serviceHandlers.delete(id); throw error; });
+    },
+    unregister: function (id) { serviceHandlers.delete(id); return hostCall('services.unregister', { serviceId: id }); },
+    readiness: function (id) { return hostCall('services.readiness', { serviceId: id }); },
+    status: function (id) { return hostCall('services.status', { requirementId: id }); },
+    openSettings: function (id) { return hostCall('services.openSettings', { requirementId: id }); },
+    start: function (id, request) { return hostCall('services.start', { requirementId: id, request: request }); },
+    result: function (id) { return hostCall('services.result', { callId: id }); },
+    cancel: function (id) { return hostCall('services.cancel', { callId: id }); },
+    media: Object.freeze({
+     probe: function (callId, audioId) { return hostCall('services.media.probe', { callId: callId, audioId: audioId }); },
+     decode: function (callId, audioId) { return hostCall('services.media.decode', { callId: callId, audioId: audioId }); },
+     run: function (callId, audioId) { return hostCall('services.media.run', { callId: callId, audioId: audioId }); }
+    })
+   }),
 			media: Object.freeze({
 				status: function () { return hostCall('media.status', {}); },
 				open: function () { return hostCall('media.open', {}); },

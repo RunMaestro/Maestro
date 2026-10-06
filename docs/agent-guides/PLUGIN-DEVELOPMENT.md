@@ -788,3 +788,13 @@ Host API 1.23.0 promotes existing `placement: "settings"` panels into independen
 Settings destinations. Use stable local IDs; request `ui:panel` and obtain trust
 and consent. See [plugin-settings-cards.md](../plugin-settings-cards.md) for search,
 deep links, own-panel navigation and the closed `hostSettings: ["media"]` link.
+
+## Host-mediated plugin services
+
+Host API 1.24.0 adds code-tier `provides`/`requires`, `services:provide` and
+`services:call` with exact scopes, and `maestro.services`. Read the concrete
+[service SDK/manifest contract](../plugin-services.md) before implementing a
+provider/consumer. The first example is
+[Local transcription](../../examples/plugins/transcription-service/README.md),
+using only opaque, call-bound delegated media handles. Reuse the host broker;
+do not add a peer IPC bridge, raw media transfer or generic settings writer.
