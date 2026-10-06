@@ -1315,6 +1315,18 @@ export function claimWebhookDelivery(path: string, deliveryId: string): boolean 
 	return result.changes > 0;
 }
 
+/**
+ * Forget a claimed delivery, so the sender's retry is handled again. For a
+ * subscriber that failed on it: a claim it could not act on must not turn the
+ * retry into a duplicate.
+ */
+export function releaseWebhookDelivery(path: string, deliveryId: string): void {
+	if (!db) return;
+	getDb()
+		.prepare(`DELETE FROM cue_webhook_deliveries WHERE path = ? AND delivery_id = ?`)
+		.run(path, deliveryId);
+}
+
 // ============================================================================
 // Phase 12A - Queue Persistence
 // ============================================================================

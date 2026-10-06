@@ -187,8 +187,11 @@ export function TriggerConfig({ node, theme, onUpdateNode }: TriggerConfigProps)
 		debouncedUpdate(next);
 	}, [localConfig, debouncedUpdate]);
 
+	// With no path set, the listener uses the subscription's name. A saved
+	// trigger knows it; a new one gets its path written when webhooks are
+	// switched on, so what this panel shows is what the listener serves.
 	const githubWebhookPath = normalizeWebhookPath(
-		localConfig.webhook_path || data.customLabel || data.label || ''
+		localConfig.webhook_path || data.subscriptionName || data.customLabel || data.label || ''
 	);
 
 	/** Optional webhook settings shared by the GitHub PR, issue and label triggers. */
@@ -210,6 +213,11 @@ export function TriggerConfig({ node, theme, onUpdateNode }: TriggerConfigProps)
 					onChange={(e) => {
 						setGithubWebhookOpen(e.target.checked);
 						if (!e.target.checked) clearWebhookConfig();
+						// Saving the path keeps the choice through a save and reload, and
+						// brings in the missing-secret check until one is set.
+						else if (!localConfig.webhook_path) {
+							updateConfig('webhook_path', githubWebhookPath || 'github');
+						}
 					}}
 					style={{ accentColor: CUE_COLOR }}
 				/>

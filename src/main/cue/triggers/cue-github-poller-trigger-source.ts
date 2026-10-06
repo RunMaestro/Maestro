@@ -102,6 +102,7 @@ export function createCueGitHubPollerTriggerSource(
 
 		const rawCap = ctx.subscription.max_notifications ?? DEFAULT_MAX_NOTIFICATIONS;
 		unregisterWebhook = registerCueWebhook({
+			id: subscriptionId,
 			path,
 			secret,
 			signatureHeader: webhook.signature_header || GITHUB_SIGNATURE_HEADER,
@@ -127,7 +128,7 @@ export function createCueGitHubPollerTriggerSource(
 					ctx.onLog('info', `[CUE] "${ctx.subscription.name}" webhook: ${result.note}`);
 				}
 				for (const event of result.events) dispatch(event);
-				if (result.needsSeed) pollNowFn?.();
+				if (result.needsSeed || result.pollNow) pollNowFn?.();
 			},
 		});
 		ctx.onLog(

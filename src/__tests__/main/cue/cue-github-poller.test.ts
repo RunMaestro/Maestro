@@ -275,6 +275,46 @@ describe('cue-github-poller', () => {
 		cleanup();
 	});
 
+	it('runs one poll at a time: a pollNow during a poll runs one more afterwards', async () => {
+		// Webhooks call pollNow; two polls side by side could fire the same items.
+		let inFlight = 0;
+		let maxInFlight = 0;
+		let prLists = 0;
+		mockExecFile.mockImplementation(
+			(
+				cmd: string,
+				args: string[],
+				_opts: unknown,
+				cb: (err: Error | null, stdout: string, stderr: string) => void
+			) => {
+				const key = `${cmd} ${args.join(' ')}`;
+				if (key.includes('--version')) return cb(null, '2.0.0', '');
+				if (key.includes('pr list')) {
+					prLists++;
+					inFlight++;
+					maxInFlight = Math.max(maxInFlight, inFlight);
+					setTimeout(() => {
+						inFlight--;
+						cb(null, '[]', '');
+					}, 1000);
+					return;
+				}
+				cb(new Error(`Command not found: ${key}`), '', '');
+			}
+		);
+		let handle: { pollNow: () => void } | undefined;
+		const cleanup = createCueGitHubPoller(makeConfig({ onReady: (h) => (handle = h) }));
+		await vi.advanceTimersByTimeAsync(2000); // the first poll is waiting on gh
+
+		handle!.pollNow();
+		handle!.pollNow();
+		await vi.advanceTimersByTimeAsync(3000);
+
+		expect(maxInFlight).toBe(1);
+		expect(prLists).toBe(2);
+		cleanup();
+	});
+
 	it('repo auto-detection - resolves from gh repo view', async () => {
 		const config = makeConfig({ repo: undefined });
 		setupExecFile({

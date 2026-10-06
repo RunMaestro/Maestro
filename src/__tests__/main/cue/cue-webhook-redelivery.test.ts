@@ -1,16 +1,17 @@
 /**
  * Redelivered webhooks: a sender retrying a delivery (same delivery id) is
- * answered with a 2xx but fires nothing the second time.
+ * answered with a 2xx but fires nothing the second time. Dedupe is kept per
+ * subscriber, so a subscriber that failed on the delivery gets the retry.
  *
- * `claimWebhookDelivery` is backed by an in-memory set here; its SQL is
- * covered in cue-db.test.ts.
+ * `claimWebhookDelivery` / `releaseWebhookDelivery` are backed by an in-memory
+ * set here; their SQL is covered in cue-db.test.ts.
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { EventEmitter } from 'events';
 import * as http from 'http';
 
-const { claimed, claimMock } = vi.hoisted(() => {
+const { claimed, claimMock, releaseMock } = vi.hoisted(() => {
 	const claimed = new Set<string>();
 	return {
 		claimed,
@@ -20,11 +21,15 @@ const { claimed, claimMock } = vi.hoisted(() => {
 			claimed.add(key);
 			return true;
 		}),
+		releaseMock: vi.fn((path: string, id: string) => {
+			claimed.delete(`${path}\u0000${id}`);
+		}),
 	};
 });
 
 vi.mock('../../../main/cue/cue-db', () => ({
 	claimWebhookDelivery: (path: string, id: string) => claimMock(path, id),
+	releaseWebhookDelivery: (path: string, id: string) => releaseMock(path, id),
 }));
 
 vi.mock('../../../main/utils/sentry', () => ({
@@ -86,10 +91,12 @@ describe('webhook redelivery', () => {
 	beforeEach(() => {
 		claimed.clear();
 		claimMock.mockClear();
+		releaseMock.mockClear();
 		process.env.MAESTRO_CUE_WEBHOOK_PORT = '0';
 		deliveries = [];
 		onLog = vi.fn();
 		unregister = registerCueWebhook({
+			id: 'session-1:hook',
 			path: 'my-hook',
 			secret: 's3cret',
 			onDelivery: (d) => deliveries.push(d),
@@ -140,6 +147,40 @@ describe('webhook redelivery', () => {
 		// The genuine delivery with that id still fires.
 		await send({ 'x-github-delivery': 'abc-123' });
 		expect(deliveries).toHaveLength(1);
+	});
+
+	it('retries only the subscriber that failed, and answers 500 so the sender retries', async () => {
+		let failOnce = true;
+		const second: CueWebhookDelivery[] = [];
+		const unregisterSecond = registerCueWebhook({
+			id: 'session-2:hook',
+			path: 'my-hook',
+			secret: 's3cret',
+			onDelivery: (d) => {
+				if (failOnce) {
+					failOnce = false;
+					throw new Error('database is locked');
+				}
+				second.push(d);
+			},
+			onLog,
+		});
+		try {
+			const first = await send({ 'x-github-delivery': 'abc-123' });
+			expect(first.status).toBe(500);
+			expect(first.body).toEqual({ accepted: 1, failed: 1 });
+			expect(deliveries).toHaveLength(1);
+			expect(releaseMock).toHaveBeenCalledWith('my-hook#session-2:hook', 'abc-123');
+			expect(onLog).toHaveBeenCalledWith('error', expect.stringContaining('database is locked'));
+
+			const retry = await send({ 'x-github-delivery': 'abc-123' });
+			expect(retry.status).toBe(202);
+			expect(retry.body).toEqual({ accepted: 1 });
+			expect(deliveries).toHaveLength(1); // the one that succeeded is not repeated
+			expect(second).toHaveLength(1);
+		} finally {
+			unregisterSecond();
+		}
 	});
 
 	it('fires the delivery when the database cannot be read', async () => {

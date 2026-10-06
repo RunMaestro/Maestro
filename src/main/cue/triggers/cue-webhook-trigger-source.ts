@@ -151,6 +151,7 @@ export function createCueWebhookTriggerSource(
 			if (unregister) return; // idempotent
 
 			unregister = registerCueWebhook({
+				id: `${ctx.session.id}:${ctx.subscription.name}`,
 				path,
 				secret,
 				signatureHeader,

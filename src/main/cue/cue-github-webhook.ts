@@ -13,10 +13,10 @@
  *  - issues: `issues` and `issue_comment` on an issue
  *  - labels: `labeled` actions on `pull_request` and `issues`
  *
- * A comment payload does not carry a pull request's branches or draft flag,
- * so a comment on a pull request this subscription never fired for is left to
- * the next poll, which sees the whole item. Comments on known items re-fire
- * when `retrigger_on_comments` is on.
+ * A comment payload (`issue_comment` on a pull request) does not carry the
+ * pull request's branches or draft flag, which a subscription filter may test.
+ * Such a delivery never fires or records anything: it asks the poller to run
+ * now, and the poll fires the change with the whole pull request.
  */
 
 import type { CueGitHubLabelTarget } from '../../shared/cue';
@@ -29,7 +29,7 @@ import {
 	labelEventMatchesFilters,
 	matchesGitHubStateFilter,
 	recordLabelEventFired,
-	wasLabelEventFiredByOtherSource,
+	claimLabelEventFiredByOtherSource,
 	type GitHubComment,
 	type GitHubItemEventType,
 	type GitHubItemSnapshot,
@@ -67,6 +67,9 @@ export interface GitHubWebhookResult {
 	/** True when the subscription has never been seeded: the poller should
 	 *  run now so the items that already existed are recorded. */
 	needsSeed?: boolean;
+	/** True when the delivery reported a change it cannot fire itself (a
+	 *  comment payload without branch data): the poller should run now. */
+	pollNow?: boolean;
 }
 
 type Json = Record<string, unknown>;
@@ -258,7 +261,7 @@ export function handleGitHubWebhookDelivery(
 		});
 		if (!matches)
 			return { events: [], note: `label "${ev.label}" does not match this subscription` };
-		if (wasLabelEventFiredByOtherSource(sub.subscriptionId, repo, ev, 'webhook')) {
+		if (claimLabelEventFiredByOtherSource(sub.subscriptionId, repo, ev, 'webhook')) {
 			return { events: [], note: `label "${ev.label}" on #${ev.number} already fired from a poll` };
 		}
 		recordLabelEventFired(sub.subscriptionId, repo, ev, 'webhook');
@@ -301,8 +304,16 @@ export function handleGitHubWebhookDelivery(
 		cap: sub.cap,
 	});
 
+	if (!complete && decision.kind !== 'skip') {
+		// Firing from this payload would test filters against empty branch and
+		// draft fields, and recording it would make the poll skip the change.
+		return {
+			events: [],
+			note: `#${item.number}: a comment payload has no branch data; polling for the full pull request`,
+			pollNow: true,
+		};
+	}
 	if (decision.kind === 'new') {
-		if (!complete) return { events: [], note: `#${item.number} is left to the next poll` };
 		markGitHubItemSeen(sub.subscriptionId, itemKey, item.updatedAt);
 		return { events: [buildGitHubItemEvent(sub.eventType, sub.triggerName, repo, item, null)] };
 	}

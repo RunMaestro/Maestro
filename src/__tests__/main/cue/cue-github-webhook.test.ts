@@ -275,7 +275,7 @@ describe('handleGitHubWebhookDelivery', () => {
 		expect(seen.has(rowKey(SUB_ID, `pr:${REPO}:42`))).toBe(true);
 	});
 
-	it('re-fires on a comment for a known pull request, carrying the comment, and the poll then stays quiet', async () => {
+	it('leaves a comment on a known pull request to an immediate poll, which fires it with the whole pull request', async () => {
 		seen.set(rowKey(SUB_ID, `pr:${REPO}:42`), {
 			lastRevision: '2026-10-06T11:30:00Z',
 			fireCount: 0,
@@ -306,6 +306,55 @@ describe('handleGitHubWebhookDelivery', () => {
 			})
 		);
 
+		// No branch or draft data in a comment payload: nothing fires or is recorded.
+		expect(result).toMatchObject({ events: [], pollNow: true });
+		expect(seen.get(rowKey(SUB_ID, `pr:${REPO}:42`))).toEqual({
+			lastRevision: '2026-10-06T11:30:00Z',
+			fireCount: 0,
+		});
+
+		setupGh({
+			'pr list': JSON.stringify([ghPr({ updatedAt: '2026-10-06T12:05:00Z', baseRefName: 'main' })]),
+			'pr view': JSON.stringify({
+				comments: [
+					{
+						author: { login: 'reviewer' },
+						body: 'Please add a test',
+						createdAt: '2026-10-06T12:05:00Z',
+						url: 'https://github.com/acme/widgets/pull/42#issuecomment-1',
+					},
+				],
+			}),
+		});
+		const polled = await pollOnce('github.pull_request', { retriggerOnComments: true });
+		expect(polled).toHaveLength(1);
+		expect(polled[0].payload).toMatchObject({
+			is_retrigger: true,
+			base_branch: 'main',
+			new_comments: [expect.objectContaining({ body: 'Please add a test' })],
+		});
+	});
+
+	it('re-fires on a review comment, whose payload carries the pull request, and the poll then stays quiet', async () => {
+		seen.set(rowKey(SUB_ID, `pr:${REPO}:42`), {
+			lastRevision: '2026-10-06T11:30:00Z',
+			fireCount: 0,
+		});
+		const result = handleGitHubWebhookDelivery(
+			sub({ retriggerOnComments: true }),
+			delivery('pull_request_review_comment', {
+				action: 'created',
+				repository: { full_name: REPO },
+				pull_request: webhookPr({ updated_at: '2026-10-06T12:05:00Z' }),
+				comment: {
+					user: { login: 'reviewer' },
+					body: 'Please add a test',
+					created_at: '2026-10-06T12:05:00Z',
+					html_url: 'https://github.com/acme/widgets/pull/42#discussion_r1',
+				},
+			})
+		);
+
 		expect(result.events).toHaveLength(1);
 		expect(result.events[0].payload).toMatchObject({
 			is_retrigger: true,
@@ -315,7 +364,7 @@ describe('handleGitHubWebhookDelivery', () => {
 					author: 'reviewer',
 					body: 'Please add a test',
 					createdAt: '2026-10-06T12:05:00Z',
-					url: 'https://github.com/acme/widgets/pull/42#issuecomment-1',
+					url: 'https://github.com/acme/widgets/pull/42#discussion_r1',
 				},
 			],
 		});
@@ -326,6 +375,26 @@ describe('handleGitHubWebhookDelivery', () => {
 
 		setupGh({ 'pr list': JSON.stringify([ghPr({ updatedAt: '2026-10-06T12:05:00Z' })]) });
 		expect(await pollOnce('github.pull_request', { retriggerOnComments: true })).toEqual([]);
+	});
+
+	it('ignores a delivery older than the change it already fired, and keeps the newer revision', () => {
+		seen.set(rowKey(SUB_ID, `pr:${REPO}:42`), {
+			lastRevision: '2026-10-06T12:05:00Z',
+			fireCount: 1,
+		});
+		const late = handleGitHubWebhookDelivery(
+			sub({ retriggerOnComments: true }),
+			delivery('pull_request', {
+				action: 'edited',
+				repository: { full_name: REPO },
+				pull_request: webhookPr({ updated_at: '2026-10-06T12:00:00Z' }),
+			})
+		);
+		expect(late.events).toEqual([]);
+		expect(seen.get(rowKey(SUB_ID, `pr:${REPO}:42`))).toEqual({
+			lastRevision: '2026-10-06T12:05:00Z',
+			fireCount: 1,
+		});
 	});
 
 	it('leaves a comment on a pull request it never fired for to the next poll', () => {
@@ -526,7 +595,12 @@ describe('handleGitHubWebhookDelivery', () => {
 				})
 			).toHaveLength(1);
 			expect(
-				seen.has(rowKey('session-1:triage', labelEventKey('poll', REPO, 8, 'needs-review')))
+				seen.has(
+					rowKey(
+						'session-1:triage',
+						labelEventKey('poll', REPO, 8, 'needs-review', '2026-10-06T12:00:00Z')
+					)
+				)
 			).toBe(true);
 
 			const late = handleGitHubWebhookDelivery(labelSub(), labeledDelivery('needs-review'));
@@ -582,6 +656,61 @@ describe('handleGitHubWebhookDelivery', () => {
 					labeledDelivery('needs-review', '2026-10-06T12:00:30Z')
 				).events
 			).toHaveLength(1);
+		});
+
+		it('fires a re-add a minute after the poll fired the first add', async () => {
+			seen.set(rowKey('session-1:triage', '__label_watermark__'), {
+				lastRevision: '100',
+				fireCount: 0,
+			});
+			setupGh({
+				'issues/events': JSON.stringify([feedEvent(101, 'needs-review', '2026-10-06T12:00:00Z')]),
+			});
+			expect(
+				await pollOnce('github.label', {
+					triggerName: 'triage',
+					subscriptionId: 'session-1:triage',
+				})
+			).toHaveLength(1);
+			// Removed and added again a minute later: a new add, not the same one.
+			expect(
+				handleGitHubWebhookDelivery(
+					labelSub(),
+					labeledDelivery('needs-review', '2026-10-06T12:01:00Z')
+				).events
+			).toHaveLength(1);
+		});
+
+		it('matches each webhook add once when the poll catches up on several', async () => {
+			seen.set(rowKey('session-1:triage', '__label_watermark__'), {
+				lastRevision: '100',
+				fireCount: 0,
+			});
+			expect(
+				handleGitHubWebhookDelivery(
+					labelSub(),
+					labeledDelivery('needs-review', '2026-10-06T12:00:00Z')
+				).events
+			).toHaveLength(1);
+			expect(
+				handleGitHubWebhookDelivery(
+					labelSub(),
+					labeledDelivery('needs-review', '2026-10-06T12:05:00Z')
+				).events
+			).toHaveLength(1);
+			// The feed stamps each add a second off the payload's updated_at.
+			setupGh({
+				'issues/events': JSON.stringify([
+					feedEvent(102, 'needs-review', '2026-10-06T12:05:01Z'),
+					feedEvent(101, 'needs-review', '2026-10-06T12:00:01Z'),
+				]),
+			});
+			expect(
+				await pollOnce('github.label', {
+					triggerName: 'triage',
+					subscriptionId: 'session-1:triage',
+				})
+			).toEqual([]);
 		});
 
 		it('respects the watched labels', () => {

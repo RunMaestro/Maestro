@@ -111,6 +111,24 @@ export type GitHubItemDecision =
  * - `retrigger`: fired before, `retrigger_on_comments` is on, the item changed
  *   since its last fire, and the re-fire cap is not reached.
  */
+/**
+ * Whether `updatedAt` is a later revision than `lastRevision`. Webhooks can
+ * arrive out of order, and a poll can overlap a delivery, so an older change
+ * must neither fire nor move the stored revision back. Revisions that are not
+ * timestamps fall back to "different".
+ */
+export function isNewerRevision(
+	updatedAt: string,
+	lastRevision: string | null | undefined
+): boolean {
+	if (!updatedAt) return false;
+	if (!lastRevision) return true;
+	const next = Date.parse(updatedAt);
+	const previous = Date.parse(lastRevision);
+	if (Number.isFinite(next) && Number.isFinite(previous)) return next > previous;
+	return updatedAt !== lastRevision;
+}
+
 export function decideGitHubItem(options: {
 	subscriptionId: string;
 	itemKey: string;
@@ -124,8 +142,8 @@ export function decideGitHubItem(options: {
 	if (!options.retrigger) return { kind: 'skip' };
 	const state = getGitHubItemState(options.subscriptionId, options.itemKey);
 	if (!state) return { kind: 'skip' };
-	// No new activity since the last fire.
-	if (!options.updatedAt || state.lastRevision === options.updatedAt) return { kind: 'skip' };
+	// No activity newer than the last fire (an older delivery arriving late included).
+	if (!isNewerRevision(options.updatedAt, state.lastRevision)) return { kind: 'skip' };
 	// Cap reached: state stays frozen so raising the cap later resumes from here.
 	if (state.fireCount >= options.cap) return { kind: 'skip' };
 	return { kind: 'retrigger', state };
@@ -207,45 +225,72 @@ export interface GitHubLabelEventSnapshot {
 export type GitHubLabelSource = 'poll' | 'webhook';
 
 /**
- * How far apart the poller's and a webhook's timestamps for one label add may
- * be and still count as the same add. The issue-events feed stamps the event
- * itself, while a webhook payload only carries the item's `updated_at`, which
- * GitHub sets in the same moment; the window absorbs rounding between the two.
+ * How far apart (in seconds) the poller's and a webhook's timestamps for one
+ * label add may be and still count as the same add. The issue-events feed
+ * stamps the event itself, while a webhook payload carries the item's
+ * `updated_at`, which GitHub sets in the same moment; a few seconds absorbs
+ * rounding without merging a real remove-and-re-add.
  */
-export const LABEL_EVENT_MATCH_WINDOW_MS = 2 * 60 * 1000;
+export const LABEL_EVENT_MATCH_TOLERANCE_S = 5;
+
+/** A label add a source fired, not yet matched by the other source. */
+const LABEL_FIRED = 'fired';
+/** A label add the other source has since reported too; it matches nothing else. */
+const LABEL_MATCHED = 'matched';
+
+function labelSecond(labeledAt: string): number | null {
+	const ms = Date.parse(labeledAt);
+	return Number.isFinite(ms) ? Math.floor(ms / 1000) : null;
+}
 
 /**
- * The `cue_github_seen` key recording the last add of one label on one item
- * that a source fired. Each source keeps its own key and checks only the
- * other's, so repeats within one source behave as they always have (a label
- * removed and re-added fires twice) and only the same add reported by both a
- * webhook and a poll is collapsed into one fire.
+ * The `cue_github_seen` key for ONE label add a source fired: one row per add,
+ * stamped with its second. Repeats within one source behave as they always
+ * have (a label removed and re-added fires twice); only the same add reported
+ * by both a webhook and a poll is collapsed into one fire.
  */
 export function labelEventKey(
 	source: GitHubLabelSource,
 	repo: string,
 	number: number,
-	label: string
+	label: string,
+	labeledAt: string
 ): string {
-	return `label-${source}:${repo}:${number}:${label.toLowerCase()}`;
+	const second = labelSecond(labeledAt);
+	return `label-${source}:${repo}:${number}:${label.toLowerCase()}:${second ?? labeledAt}`;
 }
 
-/** Whether the other source already fired this label add. */
-export function wasLabelEventFiredByOtherSource(
+/**
+ * Whether the other source already fired this label add. A match is used up:
+ * each add one source fired accounts for exactly one add from the other, so a
+ * label removed and re-added still fires again.
+ */
+export function claimLabelEventFiredByOtherSource(
 	subscriptionId: string,
 	repo: string,
 	ev: Pick<GitHubLabelEventSnapshot, 'number' | 'label' | 'labeledAt'>,
 	source: GitHubLabelSource
 ): boolean {
 	const other: GitHubLabelSource = source === 'poll' ? 'webhook' : 'poll';
-	const state = getGitHubItemState(subscriptionId, labelEventKey(other, repo, ev.number, ev.label));
-	if (!state?.lastRevision) return false;
-	const previous = Date.parse(state.lastRevision);
-	const current = Date.parse(ev.labeledAt);
-	if (!Number.isFinite(previous) || !Number.isFinite(current)) {
-		return state.lastRevision === ev.labeledAt;
+	const second = labelSecond(ev.labeledAt);
+	const candidates: string[] = [];
+	if (second === null) {
+		candidates.push(labelEventKey(other, repo, ev.number, ev.label, ev.labeledAt));
+	} else {
+		// Nearest second first, so two adds close together pair up in order.
+		for (let delta = 0; delta <= LABEL_EVENT_MATCH_TOLERANCE_S; delta++) {
+			for (const s of delta === 0 ? [second] : [second - delta, second + delta]) {
+				candidates.push(`label-${other}:${repo}:${ev.number}:${ev.label.toLowerCase()}:${s}`);
+			}
+		}
 	}
-	return Math.abs(current - previous) <= LABEL_EVENT_MATCH_WINDOW_MS;
+	for (const key of candidates) {
+		if (getGitHubItemState(subscriptionId, key)?.lastRevision === LABEL_FIRED) {
+			setGitHubItemRevision(subscriptionId, key, LABEL_MATCHED);
+			return true;
+		}
+	}
+	return false;
 }
 
 /** Record that a source fired this label add. */
@@ -257,8 +302,8 @@ export function recordLabelEventFired(
 ): void {
 	setGitHubItemRevision(
 		subscriptionId,
-		labelEventKey(source, repo, ev.number, ev.label),
-		ev.labeledAt
+		labelEventKey(source, repo, ev.number, ev.label, ev.labeledAt),
+		LABEL_FIRED
 	);
 }
 
