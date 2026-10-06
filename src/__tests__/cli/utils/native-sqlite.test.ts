@@ -181,6 +181,26 @@ describe('loadBetterSqlite3 under plain Node', () => {
 		expect(error.attempts[0].error).not.toContain('\n');
 	});
 
+	it('offers the server-checkout fix only under plain Node', () => {
+		const messageFor = (overrides: Parameters<typeof runtime>[0]): string => {
+			try {
+				loadBetterSqlite3(runtime(overrides, { [SQLITE_PACKAGE]: abiMismatchDatabase() }));
+			} catch (error) {
+				return (error as Error).message;
+			}
+			throw new Error('expected loadBetterSqlite3 to fail');
+		};
+
+		const plainNode = messageFor({});
+		expect(plainNode).toContain('MAESTRO_SERVER_INSTALL=1 (skips electron-rebuild)');
+		expect(plainNode).toContain('npm run rebuild:node-native');
+
+		resetBetterSqlite3Cache();
+		const onElectron = messageFor({ electronVersion: '41.0.0', resourcesPath: RESOURCES });
+		expect(onElectron).not.toContain('MAESTRO_SERVER_INSTALL');
+		expect(onElectron).not.toContain('rebuild:node-native');
+	});
+
 	it('explains a missing package without the require stack', () => {
 		const rt = runtime({}, {});
 

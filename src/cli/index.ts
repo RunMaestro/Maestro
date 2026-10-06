@@ -2,7 +2,7 @@
 // Maestro CLI
 // Command-line interface for Maestro
 
-import { Command } from 'commander';
+import { Command, Option } from 'commander';
 import { asThinkingMode, type ThinkingMode } from '../shared/types';
 import { parseCliBool, isInheritValue } from './utils/parse';
 import { listGroups } from './commands/list-groups';
@@ -1009,6 +1009,10 @@ cue
 	.option('-p, --prompt <text>', 'Override the subscription prompt with custom text')
 	.option('--json', 'Output as JSON (for scripting)')
 	.option('--source-agent-id <id>', 'Agent ID to pass as source context for write-back')
+	.option(
+		'--data-dir <path>',
+		'Maestro data directory to use (overrides MAESTRO_USER_DATA; must already exist)'
+	)
 	.action(cueTrigger);
 
 cue
@@ -1137,12 +1141,28 @@ cueEngine
 	.command('start')
 	.description('Start the Cue engine in this process and block until Ctrl+C / stopped')
 	.option('--json', 'Print machine-readable start/failure status')
+	.option(
+		'--data-dir <path>',
+		'Maestro data directory to use (overrides MAESTRO_USER_DATA; must already exist)'
+	)
+	.addOption(
+		new Option(
+			'--log-format <format>',
+			'Log line format: text, or one JSON object per line on stderr'
+		)
+			.choices(['text', 'json'])
+			.default('text')
+	)
 	.action(cueEngineStart);
 
 cueEngine
 	.command('stop')
 	.description('Stop a running standalone engine (refuses to signal a desktop-owned one)')
 	.option('--json', 'Output as JSON (for scripting)')
+	.option(
+		'--data-dir <path>',
+		'Maestro data directory to use (overrides MAESTRO_USER_DATA; must already exist)'
+	)
 	.option('--wait-ms <ms>', 'How long to wait for the lock to clear after signaling', (v) =>
 		parseInt(v, 10)
 	)
@@ -1152,12 +1172,20 @@ cueEngine
 	.command('status')
 	.description('Report whether an engine is running and its last known heartbeat')
 	.option('--json', 'Output as JSON (for scripting)')
+	.option(
+		'--data-dir <path>',
+		'Maestro data directory to use (overrides MAESTRO_USER_DATA; must already exist)'
+	)
 	.action(cueEngineStatus);
 
 cueEngine
 	.command('inspect')
 	.description('List every agent with a readable .maestro/cue.yaml and its subscription counts')
 	.option('--json', 'Output as JSON (for scripting)')
+	.option(
+		'--data-dir <path>',
+		'Maestro data directory to use (overrides MAESTRO_USER_DATA; must already exist)'
+	)
 	.action(cueEngineInspect);
 
 // Bundle commands - pack a Cue pipeline or one agent into a portable zip, and

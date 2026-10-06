@@ -137,6 +137,8 @@ export function describeSqliteUnavailable(
 				`    command runs on the app's own runtime, which ships a compatible ${SQLITE_PACKAGE}.`,
 				`  - Or install a ${SQLITE_PACKAGE} built for this Node.js next to the CLI:`,
 				`      npm install --prefix "${runtime.cliDir}" ${SQLITE_PACKAGE}`,
+				`  - Or, in a source checkout run under plain Node (a server), install with`,
+				`    MAESTRO_SERVER_INSTALL=1 (skips electron-rebuild) or run "npm run rebuild:node-native".`,
 			];
 
 	return [

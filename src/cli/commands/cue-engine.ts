@@ -22,53 +22,107 @@ import {
 	isCueEngineLockOwnedByThisProcess,
 	readCueEngineLock,
 } from '../../main/cue/cue-engine-lock';
-import { createStandaloneCueEngine } from '../services/cue-standalone-engine';
+import {
+	consoleCueLog,
+	createStandaloneCueEngine,
+	cueLogForFormat,
+	type CueLogFormat,
+	type StandaloneCueLog,
+} from '../services/cue-standalone-engine';
 import { startCueTriggerInbox } from '../services/cue-trigger-inbox';
 import { readSessions } from '../services/storage';
 import { SqliteUnavailableError } from '../utils/native-sqlite';
-import { assertUserDataDirExists, resolveUserDataDir } from '../../shared/userDataDir';
+import {
+	applyDataDirOption,
+	describeDataDirSource,
+	requireDataDirOrExit,
+} from '../services/data-dir-option';
+import { logger } from '../../main/utils/logger';
 import { getAgentDisplayName } from '../../shared/agentMetadata';
 import { humanizeDuration } from '../../shared/duration';
 
 export interface CueEngineStartOptions {
 	json?: boolean;
+	/** Explicit data directory; wins over MAESTRO_USER_DATA (see data-dir-option.ts). */
+	dataDir?: string;
+	/** `text` (default) or `json`: one JSON object per log line, on stderr. */
+	logFormat?: CueLogFormat;
 }
 
 export interface CueEngineStopOptions {
 	json?: boolean;
+	dataDir?: string;
 	/** Milliseconds to wait for the lock to clear after signaling before giving up. Mainly for tests. */
 	waitMs?: number;
 }
 
 export interface CueEngineStatusOptions {
 	json?: boolean;
+	dataDir?: string;
 }
 
 /**
- * Refuse to run against a data directory that does not exist.
+ * Report a `better-sqlite3` that cannot load in this runtime.
  *
- * With no `MAESTRO_USER_DATA` the directory is a GUESS (an install writes
- * `Maestro`, a dev checkout `maestro` or `maestro-dev`). Every verb here would
- * otherwise answer from the wrong folder without complaint: `start` creates it
- * and runs a healthy-looking engine over zero agents, `stop` and `status` find no
- * lock and report nothing running, `inspect` lists no agents. The error names
- * the folders that do exist and points at `MAESTRO_USER_DATA`.
- *
- * Only a missing directory is reported here; a permission or I/O error is a
- * different problem and propagates as itself.
+ * The message is `SqliteUnavailableError`'s (see `utils/native-sqlite.ts`):
+ * the runtime, the ABI the copy it found was built for, and how to fix it.
+ * The stack would only bury that. Every verb that needs `cue.db` reports it
+ * the same way: this text on stderr, or `{ error: 'sqlite_unavailable' }` as
+ * the `--json` result.
  */
-function requireDataDir(options: { json?: boolean }): void {
+function reportSqliteUnavailable(
+	error: SqliteUnavailableError,
+	options: { json?: boolean },
+	log?: StandaloneCueLog
+): void {
+	if (options.json) {
+		console.log(JSON.stringify({ error: 'sqlite_unavailable', message: error.message }, null, 2));
+	} else if (log) {
+		log('error', error.message);
+	} else {
+		console.error(`[Cue] ${error.message}`);
+	}
+}
+
+/**
+ * Exit 1 when `better-sqlite3` cannot load in this runtime.
+ *
+ * `cue.db` needs the native addon, and a dev checkout's copy is built for
+ * Electron's ABI (`postinstall` runs `electron-rebuild`), so under plain Node
+ * the engine would log the failure from `initCueDb()` and refuse to start.
+ * Probing here, before the lock is taken, turns that into the loader's
+ * instructions and exit code 1. In the bundle `better-sqlite3` is the lazy
+ * shim, whose first constructor call throws `SqliteUnavailableError`; any other
+ * error propagates as itself.
+ */
+async function requireSqliteOrExit(
+	options: { json?: boolean },
+	log: StandaloneCueLog = consoleCueLog
+): Promise<void> {
 	try {
-		assertUserDataDirExists(resolveUserDataDir());
+		const { default: Database } = await import('better-sqlite3');
+		new Database(':memory:').close();
 	} catch (error) {
-		if ((error as NodeJS.ErrnoException).code) throw error;
-		const message = error instanceof Error ? error.message : String(error);
-		if (options.json) {
-			console.log(JSON.stringify({ success: false, error: message, code: 'DATA_DIR_NOT_FOUND' }));
-		} else {
-			console.error(`[Cue] ${message}`);
-		}
+		if (!(error instanceof SqliteUnavailableError)) throw error;
+		reportSqliteUnavailable(error, options, log);
 		process.exit(1);
+	}
+}
+
+/**
+ * `buildStatusPayload()`, or `null` after reporting a `better-sqlite3` that
+ * cannot load (exit code 1). Status figures come from `cue.db`.
+ */
+async function statusPayloadOrReport(options: {
+	json?: boolean;
+}): Promise<CueEngineStatusPayload | null> {
+	try {
+		return await buildStatusPayload();
+	} catch (error) {
+		if (!(error instanceof SqliteUnavailableError)) throw error;
+		reportSqliteUnavailable(error, options);
+		process.exitCode = 1;
+		return null;
 	}
 }
 
@@ -80,10 +134,19 @@ function requireDataDir(options: { json?: boolean }): void {
  * here is safe by construction, not by this command's own checking.
  */
 export async function cueEngineStart(options: CueEngineStartOptions = {}): Promise<void> {
-	// Before anything touches disk: the lock, cue.db and the trigger inbox all
-	// create the directory they are handed.
-	requireDataDir(options);
-	const engine = await createStandaloneCueEngine();
+	// Before anything reads the data directory: every reader resolves it
+	// through MAESTRO_USER_DATA, which --data-dir sets.
+	const dataDir = applyDataDirOption(options.dataDir);
+	// stdout is the command's RESULT channel under --json, and never carries a
+	// JSON log stream; every log line then goes to stderr (see CLI-HEADLESS.md).
+	if (options.logFormat === 'json') logger.consoleJson();
+	const log = cueLogForFormat(options.logFormat, { stderrOnly: options.json });
+	// The lock, cue.db and the trigger inbox all create the directory they are
+	// handed, so refuse a missing one first.
+	requireDataDirOrExit({ json: options.json, log });
+	log('info', `Data directory: ${dataDir.dir} (from ${describeDataDirSource(dataDir.source)})`);
+	await requireSqliteOrExit(options, log);
+	const engine = await createStandaloneCueEngine({ onLog: log });
 
 	let shuttingDown = false;
 	let stopTriggerInbox: (() => void) | null = null;
@@ -91,7 +154,7 @@ export async function cueEngineStart(options: CueEngineStartOptions = {}): Promi
 		if (shuttingDown) return;
 		shuttingDown = true;
 		stopTriggerInbox?.();
-		console.log(`\n[Cue] Received ${signal}, stopping engine...`);
+		log('info', `Received ${signal}, stopping engine...`);
 		engine.stop();
 		// Give in-flight log lines a tick to flush before exiting - stop()
 		// itself is synchronous, but downstream process kills (shell/cli
@@ -117,7 +180,7 @@ export async function cueEngineStart(options: CueEngineStartOptions = {}): Promi
 		if (options.json) {
 			console.log(JSON.stringify({ started: false, error: conflictMessage }));
 		} else {
-			console.error(`[Cue] ${conflictMessage}`);
+			log('error', conflictMessage);
 		}
 		process.exitCode = 1;
 		return;
@@ -130,11 +193,12 @@ export async function cueEngineStart(options: CueEngineStartOptions = {}): Promi
 	);
 
 	if (options.json) {
-		console.log(JSON.stringify({ started: true, pid: process.pid }));
+		console.log(JSON.stringify({ started: true, pid: process.pid, dataDir: dataDir.dir }));
 	} else {
 		const sessionCount = readSessions().length;
-		console.log(
-			`[Cue] Engine started (pid ${process.pid}). Watching ${sessionCount} agent(s) for .maestro/cue.yaml. Press Ctrl+C to stop.`
+		log(
+			'info',
+			`Engine started (pid ${process.pid}). Watching ${sessionCount} agent(s) for .maestro/cue.yaml. Press Ctrl+C to stop.`
 		);
 	}
 	void status;
@@ -152,7 +216,8 @@ export async function cueEngineStart(options: CueEngineStartOptions = {}): Promi
  * user asked for; use the desktop app's own Settings toggle instead).
  */
 export async function cueEngineStop(options: CueEngineStopOptions = {}): Promise<void> {
-	requireDataDir(options);
+	applyDataDirOption(options.dataDir);
+	requireDataDirOrExit(options);
 	const lock = readCueEngineLock();
 	if (!lock) {
 		const message = 'No Cue engine is currently running (lock file absent or stale).';
@@ -249,21 +314,10 @@ async function buildStatusPayload(): Promise<CueEngineStatusPayload> {
 }
 
 export async function cueEngineStatus(options: CueEngineStatusOptions = {}): Promise<void> {
-	requireDataDir(options);
-	let payload: CueEngineStatusPayload;
-	try {
-		payload = await buildStatusPayload();
-	} catch (error) {
-		// The message already says how to fix it; the stack would only bury that.
-		if (!(error instanceof SqliteUnavailableError)) throw error;
-		if (options.json) {
-			console.log(JSON.stringify({ error: 'sqlite_unavailable', message: error.message }, null, 2));
-		} else {
-			console.error(`[Cue] ${error.message}`);
-		}
-		process.exitCode = 1;
-		return;
-	}
+	applyDataDirOption(options.dataDir);
+	requireDataDirOrExit(options);
+	const payload = await statusPayloadOrReport(options);
+	if (!payload) return;
 
 	if (options.json) {
 		console.log(JSON.stringify(payload, null, 2));
@@ -301,6 +355,7 @@ interface CueEngineInspectAgentPayload {
 
 export interface CueEngineInspectOptions {
 	json?: boolean;
+	dataDir?: string;
 }
 
 /**
@@ -309,7 +364,8 @@ export interface CueEngineInspectOptions {
  * this runner watch" answers, complementing `status`'s "is it running".
  */
 export async function cueEngineInspect(options: CueEngineInspectOptions = {}): Promise<void> {
-	requireDataDir(options);
+	applyDataDirOption(options.dataDir);
+	requireDataDirOrExit(options);
 	const { loadCueConfigDetailed } = await import('../../main/cue/cue-yaml-loader');
 	const sessions = readSessions();
 	const agents: CueEngineInspectAgentPayload[] = [];
@@ -345,7 +401,8 @@ export async function cueEngineInspect(options: CueEngineInspectOptions = {}): P
 		});
 	}
 
-	const status = await buildStatusPayload();
+	const status = await statusPayloadOrReport(options);
+	if (!status) return;
 
 	if (options.json) {
 		console.log(JSON.stringify({ status, agents }, null, 2));

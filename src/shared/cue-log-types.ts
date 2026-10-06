@@ -22,6 +22,8 @@ export type CueLogPayload =
 			runId: string;
 			sessionId: string;
 			subscriptionName: string;
+			/** The pipeline the subscription belongs to (its name, as `cue_events.pipeline_id` stores it). */
+			pipelineId?: string;
 	  }
 	| {
 			type: 'runFinished';
@@ -29,12 +31,15 @@ export type CueLogPayload =
 			sessionId: string;
 			subscriptionName: string;
 			status: string;
+			pipelineId?: string;
 	  }
 	| {
 			type: 'runStopped';
 			runId: string;
 			sessionId: string;
 			subscriptionName: string;
+			/** The pipeline the subscription belongs to (its name, as `cue_events.pipeline_id` stores it). */
+			pipelineId?: string;
 	  }
 	| {
 			type: 'queueOverflow';
