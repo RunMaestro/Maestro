@@ -2,8 +2,19 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'fs';
 import os from 'os';
 import path from 'path';
+import { once } from 'node:events';
+import WebSocket from 'ws';
 import { WebServer } from '../../../main/web-server/WebServer';
 import { MEDIA_PATH_PARAM_MAX_LENGTH } from '../../../main/web-server/routes/mediaRoutes';
+import {
+	WebUserStore,
+	setWebUserStoreForTests,
+} from '../../../main/web-server/auth/web-user-store';
+import { WEB_LOGIN_COOKIE, WEB_LOGIN_WS_CLOSE_CODE } from '../../../shared/webLogin';
+import { PairingHost } from '../../../main/lite/pairing/host';
+import { PairedDevices } from '../../../main/lite/pairing/paired-devices';
+import { HostPairingWindow } from '../../../main/lite/pairing/host-window';
+import { ADMISSION_HEADER, CONNECT_PATH } from '../../../main/lite/pairing/protocol';
 
 const isolated = vi.hoisted(() => ({ directory: '' }));
 vi.mock('electron', () => ({
@@ -139,6 +150,64 @@ describe('WebServer Fastify configuration', () => {
 	});
 });
 describe('independent browser-account and paired-device revocation', () => {
+	it('proactively closes idle real sockets through the account watcher and remembered-device verifier', async () => {
+		const users = new WebUserStore(path.join(isolated.directory, 'web-users.json'));
+		const password = 'synthetic-revocation-test-password';
+		await users.createUser({ username: 'operator', password });
+		const login = await users.login('operator', password);
+		if (!login.ok) throw new Error('Synthetic account did not authenticate');
+		setWebUserStoreForTests(users);
+		const credential = 'A'.repeat(43) + '.' + 'B'.repeat(43);
+		const origin = 'https://host.example.test';
+		const devices = new PairedDevices(isolated.directory);
+		await devices.add(credential, 'Synthetic laptop', 'synthetic-host', origin);
+		// Restore the remembered grant from disk, as a host restart would.
+		const host = await PairingHost.create(
+			'Synthetic host',
+			'synthetic-host',
+			[origin],
+			Date.now,
+			true,
+			new PairedDevices(isolated.directory)
+		);
+		vi.spyOn(HostPairingWindow.prototype, 'host', 'get').mockReturnValue(host);
+		const server = new WebServer(0);
+		const sockets: WebSocket[] = [];
+		try {
+			const started = await server.start();
+			const address = new URL(started.url).origin;
+			const account = new WebSocket(`${address.replace('http:', 'ws:')}/${started.token}/ws`, {
+				headers: { cookie: `${WEB_LOGIN_COOKIE}=${login.sessionId}`, origin: address },
+			});
+			sockets.push(account);
+			expect(JSON.parse(String((await once(account, 'message'))[0])).type).toBe('connected');
+			const paired = new WebSocket(`${address.replace('http:', 'ws:')}${CONNECT_PATH}/ws`, {
+				headers: { host: new URL(origin).host, origin, [ADMISSION_HEADER]: credential },
+			});
+			sockets.push(paired);
+			expect(JSON.parse(String((await once(paired, 'message'))[0])).type).toBe('connected');
+			expect(server.getWebClientCount()).toBe(2);
+			const accountSend = vi.spyOn(account, 'send');
+			const pairedSend = vi.spyOn(paired, 'send');
+			const accountClosed = once(account, 'close', { signal: AbortSignal.timeout(5000) });
+			await users.logout(login.sessionId);
+			expect((await accountClosed)[0]).toBe(WEB_LOGIN_WS_CLOSE_CODE);
+			expect(paired.readyState).toBe(WebSocket.OPEN);
+			await vi.waitFor(() => expect(server.getWebClientCount()).toBe(1));
+			const pairedClosed = once(paired, 'close', { signal: AbortSignal.timeout(5000) });
+			await host.devices.revoke(credential.split('.')[0]);
+			expect((await pairedClosed)[0]).toBe(4403);
+			await vi.waitFor(() => expect(server.getWebClientCount()).toBe(0));
+			expect(accountSend).not.toHaveBeenCalled();
+			expect(pairedSend).not.toHaveBeenCalled();
+		} finally {
+			for (const socket of sockets) socket.terminate();
+			await server.stop();
+			host.dispose();
+			await users.flush();
+			setWebUserStoreForTests(null);
+		}
+	});
 	it('closes sockets whose session no longer resolves and leaves the rest alone', async () => {
 		const listeners: Array<() => void> = [];
 		const live = new Set(['sid-live']);
