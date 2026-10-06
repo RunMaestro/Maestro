@@ -34,7 +34,13 @@ vi.mock('../../../cli/services/storage', () => ({
 	readSettings: () => ({}),
 }));
 
-import { buildStandaloneCueEngineDeps } from '../../../cli/services/cue-standalone-engine';
+import {
+	buildStandaloneCueEngineDeps,
+	consoleCueLog,
+	cueLogForFormat,
+	jsonCueLog,
+	stderrCueLog,
+} from '../../../cli/services/cue-standalone-engine';
 
 const event: CueEvent = {
 	id: 'evt-1',
@@ -67,5 +73,53 @@ describe('buildStandaloneCueEngineDeps', () => {
 
 		expect(executeCuePrompt).toHaveBeenCalledTimes(1);
 		expect(initializeOutputParsers).toHaveBeenCalledTimes(1);
+	});
+});
+
+describe('engine log sinks (--log-format)', () => {
+	it('picks text by default, JSON on request, and the stderr-only text form under --json', () => {
+		expect(cueLogForFormat(undefined)).toBe(consoleCueLog);
+		expect(cueLogForFormat('text')).toBe(consoleCueLog);
+		expect(cueLogForFormat('text', { stderrOnly: true })).toBe(stderrCueLog);
+		expect(cueLogForFormat('json')).toBe(jsonCueLog);
+		expect(cueLogForFormat('json', { stderrOnly: true })).toBe(jsonCueLog);
+	});
+
+	it('jsonCueLog writes one JSON line to stderr with the run ids and never stdout', () => {
+		const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+		const stdout = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+		jsonCueLog('cue', '[CUE] Run started: nightly', {
+			type: 'runStarted',
+			runId: 'run-9',
+			sessionId: 'agent-1',
+			subscriptionName: 'nightly',
+			pipelineId: 'Build',
+		});
+		expect(stdout).not.toHaveBeenCalled();
+		const written = String(stderr.mock.calls[0][0]);
+		expect(written.endsWith('\n')).toBe(true);
+		expect(JSON.parse(written)).toMatchObject({
+			level: 'info',
+			message: '[CUE] Run started: nightly',
+			context: 'Cue',
+			event: 'runStarted',
+			runId: 'run-9',
+			sessionId: 'agent-1',
+			subscriptionName: 'nightly',
+			pipelineId: 'Build',
+		});
+		expect(typeof JSON.parse(written).timestamp).toBe('string');
+		stderr.mockRestore();
+		stdout.mockRestore();
+	});
+
+	it('stderrCueLog keeps the text shape but never writes to stdout', () => {
+		const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+		const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+		stderrCueLog('info', 'Engine started');
+		expect(log).not.toHaveBeenCalled();
+		expect(error).toHaveBeenCalledWith('[Cue] Engine started');
+		log.mockRestore();
+		error.mockRestore();
 	});
 });

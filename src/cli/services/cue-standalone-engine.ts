@@ -65,6 +65,7 @@ import {
 	type CueRunSessionRecord,
 } from '../../main/cue/cue-run-router';
 import type { CueRunResult } from '../../shared/cue/contracts';
+import { formatJsonLogLine } from '../../shared/jsonLogLine';
 import {
 	readSessions,
 	readSshRemotes,
@@ -134,6 +135,39 @@ export function consoleCueLog(level: string, message: string): void {
 		console.log(line);
 	}
 }
+
+/**
+ * `--log-format json`: one JSON object per line on stderr, through the same
+ * `formatJsonLogLine()` the main-process logger uses in its JSON mode, so the
+ * engine's lines and the shared modules' lines carry the same fields. Run
+ * identifiers (`runId`, `subscriptionName`, `pipelineId`, `sessionId`) are
+ * lifted out of the engine's structured payload; the payload itself is never
+ * copied (see `jsonLogLine.ts`).
+ */
+export function jsonCueLog(level: string, message: string, data?: unknown): void {
+	process.stderr.write(`${formatJsonLogLine({ level, message, context: 'Cue', data })}\n`);
+}
+
+/** `consoleCueLog`'s text, every level on stderr: for `start --json`, whose stdout is the result. */
+export function stderrCueLog(_level: string, message: string): void {
+	console.error(`[Cue] ${message}`);
+}
+
+/**
+ * The engine log sink for a `--log-format` value. JSON lines always go to
+ * stderr; text lines keep the info-on-stdout split a human at a terminal
+ * expects, unless `stderrOnly` (the command printed `--json`, so stdout is a
+ * contract and a log line there would break the parse).
+ */
+export function cueLogForFormat(
+	format: CueLogFormat | undefined,
+	options: { stderrOnly?: boolean } = {}
+): StandaloneCueLog {
+	if (format === 'json') return jsonCueLog;
+	return options.stderrOnly ? stderrCueLog : consoleCueLog;
+}
+
+export type CueLogFormat = 'text' | 'json';
 
 function sshStoreAdapter(): SshRemoteSettingsStore {
 	return { getSshRemotes: () => readSshRemotes() };

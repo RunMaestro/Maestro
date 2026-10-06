@@ -27,6 +27,7 @@ import {
 import { reconcileMissedTimeEvents, type ReconcileSessionInfo } from './cue-reconciler';
 import { captureException } from '../utils/sentry';
 import type { CueConfig, CueEvent, CueSubscription } from './cue-types';
+import { describeNativeModuleLoadError } from '../../shared/nativeModuleError';
 
 /** Sleep gap threshold for triggering reconciliation. Same as the old heartbeat module. */
 export const SLEEP_THRESHOLD_MS = 120_000; // 2 minutes
@@ -98,11 +99,14 @@ export function createCueRecoveryService(deps: CueRecoveryServiceDeps): CueRecov
 			return { ok: true };
 		} catch (error) {
 			const err = error instanceof Error ? error : new Error(String(error));
+			// A native addon built for the other runtime is a deployment problem,
+			// not a bug: say so in one line, and keep it out of Sentry.
+			const nativeLoad = describeNativeModuleLoadError(err);
 			deps.onLog(
 				'error',
-				`[CUE] Failed to initialize Cue database - engine will not start: ${err.message}`
+				`[CUE] Failed to initialize Cue database - engine will not start: ${nativeLoad?.message ?? err.message}`
 			);
-			captureException(err, { extra: { operation: 'cue.dbInit' } });
+			if (!nativeLoad) captureException(err, { extra: { operation: 'cue.dbInit' } });
 			return { ok: false, error: err };
 		}
 	}

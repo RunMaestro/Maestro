@@ -140,6 +140,36 @@ describe('Logger', () => {
 		});
 	});
 
+	describe('consoleJson', () => {
+		// `cue engine start --log-format json`: the shared Cue modules log through
+		// this logger, so its lines must come out in the same JSON shape as the
+		// engine's own, on stderr, one object per line.
+		it('writes one JSON object per line to stderr and nothing to the console methods', () => {
+			const writeSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+			logger.consoleJson();
+
+			logger.warn('careful', 'Telemetry');
+			logger.cue('c', 'Cue', { runId: 'r1', prompt: 'never logged' });
+
+			expect(consoleErrorSpy).not.toHaveBeenCalled();
+			expect(consoleInfoSpy).not.toHaveBeenCalled();
+			expect(consoleWarnSpy).not.toHaveBeenCalled();
+			const lines = writeSpy.mock.calls.map((c) => String(c[0]));
+			expect(lines).toHaveLength(2);
+			for (const line of lines)
+				expect(line.endsWith('\n') && !line.slice(0, -1).includes('\n')).toBe(true);
+			expect(JSON.parse(lines[0])).toMatchObject({
+				level: 'warn',
+				message: 'careful',
+				context: 'Telemetry',
+			});
+			const second = JSON.parse(lines[1]);
+			expect(second).toMatchObject({ level: 'info', category: 'cue', runId: 'r1' });
+			expect(lines[1]).not.toContain('never logged');
+			writeSpy.mockRestore();
+		});
+	});
+
 	describe('Log Level Management', () => {
 		it('should have default log level of info', async () => {
 			expect(logger.getLogLevel()).toBe('info');

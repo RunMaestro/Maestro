@@ -18,6 +18,7 @@ import {
 } from '../../shared/logger-types';
 import { isWindows, isMacOS } from '../../shared/platformDetection';
 import { setMaestroLibLogger } from '../../shared/maestro-lib/host';
+import { formatJsonLogLine } from '../../shared/jsonLogLine';
 
 // Re-export types for backwards compatibility
 export type { MainLogLevel as LogLevel, SystemLogEntry as LogEntry };
@@ -67,6 +68,8 @@ class Logger extends EventEmitter {
 	private minLevel: MainLogLevel = 'info'; // Default log level
 	/** See `consoleToStderr()`. */
 	private consoleOnStderr = false;
+	/** See `consoleJson()`. */
+	private consoleAsJson = false;
 	private fileLogEnabled = false;
 	private logFilePath: string;
 	private logFileStream: fs.WriteStream | null = null;
@@ -302,6 +305,19 @@ class Logger extends EventEmitter {
 		this.consoleOnStderr = true;
 	}
 
+	/**
+	 * Write every console line as one JSON object on stderr
+	 * (`cue engine start --log-format json`), in the shape
+	 * `formatJsonLogLine()` defines, so the lines the shared Cue modules log
+	 * here match the engine's own `onLog` lines field for field. Implies
+	 * `consoleToStderr()`: stdout stays the command's result channel. The
+	 * desktop never calls this.
+	 */
+	consoleJson(): void {
+		this.consoleOnStderr = true;
+		this.consoleAsJson = true;
+	}
+
 	setLogLevel(level: MainLogLevel): void {
 		this.minLevel = level;
 	}
@@ -362,6 +378,10 @@ class Logger extends EventEmitter {
 		// (e.g., when a parent process consuming output dies unexpectedly)
 		// Fixes MAESTRO-5C
 		try {
+			if (this.consoleAsJson) {
+				process.stderr.write(`${formatJsonLogLine(entry)}\n`);
+				return;
+			}
 			if (this.consoleOnStderr) {
 				console.error(message, entry.data || '');
 				return;

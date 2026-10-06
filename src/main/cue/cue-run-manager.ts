@@ -507,6 +507,7 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 			runId,
 			sessionId,
 			subscriptionName,
+			...(pipelineName ? { pipelineId: pipelineName } : {}),
 		} satisfies CueLogPayload);
 		deps.onRunStarted?.({ runId, sessionId, subscriptionName });
 
@@ -800,6 +801,7 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 					sessionId,
 					subscriptionName,
 					status: result.status,
+					...(pipelineName ? { pipelineId: pipelineName } : {}),
 				} satisfies CueLogPayload);
 
 				// Notify engine of completion (for activity log + chain propagation).
@@ -1015,6 +1017,7 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 				runId,
 				sessionId: run.result.sessionId,
 				subscriptionName: run.result.subscriptionName,
+				...(run.result.pipelineName ? { pipelineId: run.result.pipelineName } : {}),
 			} satisfies CueLogPayload);
 			return true;
 		},
