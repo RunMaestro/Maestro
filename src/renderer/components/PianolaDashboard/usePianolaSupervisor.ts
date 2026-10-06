@@ -14,6 +14,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSessionStore } from '../../stores/sessionStore';
+import { useSettingsStore } from '../../stores/settingsStore';
 import type { Session } from '../../types';
 import type { PianolaSupervisedTarget } from '../../../shared/pianola/storage';
 import type {
@@ -103,6 +104,8 @@ const POLL_MS = 4000;
 export interface PianolaSupervisorState {
 	watched: WatchedAgentRow[];
 	watchable: WatchableAgent[];
+	autoWatchNewAgents: boolean;
+	setAutoWatchNewAgents: (enabled: boolean) => Promise<void>;
 	watch: (agentId: string, tabId: string) => Promise<void>;
 	unwatch: (targetId: string) => Promise<void>;
 	setEnabled: (targetId: string, enabled: boolean) => Promise<void>;
@@ -125,6 +128,26 @@ export function usePianolaSupervisor(): PianolaSupervisorState {
 	const sessions = useSessionStore((s) => s.sessions);
 	const [targets, setTargets] = useState<PianolaSupervisedTarget[]>([]);
 	const [health, setHealth] = useState<PianolaSupervisorHealth[]>([]);
+	const autoWatchNewAgents = useSettingsStore((s) => s.pianolaAutoWatchNewAgents);
+	const saveAutoWatchNewAgents = useSettingsStore((s) => s.setPianolaAutoWatchNewAgents);
+	const setAutoWatchNewAgents = useCallback(
+		async (enabled: boolean): Promise<void> => {
+			try {
+				await saveAutoWatchNewAgents(enabled);
+			} catch (error) {
+				notifyToast({
+					color: 'red',
+					title: 'Pianola setting failed',
+					message: 'Could not save automatic watching.',
+				});
+				captureException(error, {
+					tags: { feature: 'pianola' },
+					extra: { action: 'save auto-watch setting' },
+				});
+			}
+		},
+		[saveAutoWatchNewAgents]
+	);
 	// Mutations (add/remove/setEnabled) are authoritative: each bumps this epoch
 	// before and after its IPC call and always applies its returned snapshot. A
 	// poll captures the epoch when it starts and applies only if it is unchanged
@@ -222,5 +245,14 @@ export function usePianolaSupervisor(): PianolaSupervisorState {
 
 	const refresh = useCallback(() => void load(), [load]);
 
-	return { watched, watchable, watch, unwatch, setEnabled, refresh };
+	return {
+		watched,
+		watchable,
+		autoWatchNewAgents,
+		setAutoWatchNewAgents,
+		watch,
+		unwatch,
+		setEnabled,
+		refresh,
+	};
 }

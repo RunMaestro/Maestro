@@ -235,6 +235,21 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 		// block the UI thread. Await it here so the handlers' boolean
 		// acknowledgement keeps meaning "this revision reached disk".
 		flushSessionWrites: flushPendingSessionWrites,
+		onSessionsPersisted: (added, current, removedIds) => {
+			try {
+				deps
+					.getPianolaSupervisor()
+					?.autoWatchNewSessions(
+						added,
+						current,
+						deps.settingsStore.get('pianolaAutoWatchNewAgents', false) === true,
+						removedIds
+					);
+			} catch (error) {
+				logger.error('Could not register new Pianola watches', '[Pianola]', error);
+				void captureException(error, { operation: 'pianola:autoWatchNewSessions' });
+			}
+		},
 	});
 	// Wire the plugin focus verbs into the persistence layer's session.activated
 	// dedupe so the two emit paths share one last-emitted id.

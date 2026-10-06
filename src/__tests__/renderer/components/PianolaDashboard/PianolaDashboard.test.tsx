@@ -14,6 +14,11 @@ import type { DashboardData } from '../../../../renderer/components/PianolaDashb
 
 const hookMock = vi.hoisted(() => ({ usePianolaDashboardData: vi.fn() }));
 vi.mock('../../../../renderer/components/PianolaDashboard/usePianolaDashboardData', () => hookMock);
+const supervisorMock = vi.hoisted(() => ({ usePianolaSupervisor: vi.fn() }));
+vi.mock(
+	'../../../../renderer/components/PianolaDashboard/usePianolaSupervisor',
+	() => supervisorMock
+);
 
 import { PianolaDashboard } from '../../../../renderer/components/PianolaDashboard/PianolaDashboard';
 
@@ -79,9 +84,65 @@ const refresh = vi.fn();
 beforeEach(() => {
 	vi.clearAllMocks();
 	hookMock.usePianolaDashboardData.mockReturnValue({ data: populatedData(), refresh });
+	supervisorMock.usePianolaSupervisor.mockReturnValue({
+		watched: [],
+		watchable: [],
+		autoWatchNewAgents: false,
+		setAutoWatchNewAgents: vi.fn(),
+		watch: vi.fn(),
+		unwatch: vi.fn(),
+		setEnabled: vi.fn(),
+		refresh: vi.fn(),
+	});
 });
 
 describe('PianolaDashboard data mapping', () => {
+	it('collapses a long watch list and keeps the add action accessible', () => {
+		supervisorMock.usePianolaSupervisor.mockReturnValue({
+			...supervisorMock.usePianolaSupervisor(),
+			watched: Array.from({ length: 6 }, (_, i) => ({
+				targetId: `target-${i}`,
+				agentId: `agent-${i}`,
+				agentName: `Agent ${i}`,
+				enabled: true,
+			})),
+		});
+		render(<PianolaDashboard theme={theme} onJumpToAgent={vi.fn()} />);
+		expect(screen.getByText('Watched by Pianola')).toBeInTheDocument();
+		expect(screen.queryByText('Agent 0')).not.toBeInTheDocument();
+		expect(screen.getByText('Watch an agent')).toBeInTheDocument();
+		fireEvent.click(screen.getByRole('button', { name: 'Show agents' }));
+		expect(screen.getByText('Agent 0')).toBeInTheDocument();
+		fireEvent.click(screen.getByRole('button', { name: 'Hide agents' }));
+		expect(screen.queryByText('Agent 0')).not.toBeInTheDocument();
+	});
+
+	it('shows failures and backing-off watches while the watch list is collapsed', () => {
+		supervisorMock.usePianolaSupervisor.mockReturnValue({
+			...supervisorMock.usePianolaSupervisor(),
+			watched: Array.from({ length: 6 }, (_, i) => ({
+				targetId: `target-${i}`,
+				agentId: `agent-${i}`,
+				agentName: `Agent ${i}`,
+				enabled: true,
+				state: i === 0 ? 'failed' : i === 1 ? 'backing-off' : 'running',
+			})),
+		});
+		render(<PianolaDashboard theme={theme} onJumpToAgent={vi.fn()} />);
+		expect(screen.queryByText('Agent 0')).not.toBeInTheDocument();
+		expect(screen.getByRole('status')).toHaveTextContent('2 failing');
+	});
+
+	it('offers the automatic watch setting in the dashboard', () => {
+		const setAutoWatchNewAgents = vi.fn();
+		supervisorMock.usePianolaSupervisor.mockReturnValue({
+			...supervisorMock.usePianolaSupervisor(),
+			setAutoWatchNewAgents,
+		});
+		render(<PianolaDashboard theme={theme} onJumpToAgent={vi.fn()} />);
+		fireEvent.click(screen.getByRole('checkbox', { name: 'Automatically watch new agents' }));
+		expect(setAutoWatchNewAgents).toHaveBeenCalledWith(true);
+	});
 	it('renders each status bucket and the agents in it', () => {
 		render(<PianolaDashboard theme={theme} onJumpToAgent={vi.fn()} />);
 
