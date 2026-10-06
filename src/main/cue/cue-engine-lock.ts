@@ -73,6 +73,12 @@
  * link above and a rewrite goes to the temp file and is renamed over the lock.
  * Where the filesystem refuses hard links, creation falls back to `wx`.
  *
+ * On Windows a rename, link, remove or `mkdir` can be refused for a moment
+ * because another process has the path open (a racing engine reading the
+ * lock, a pending delete, an antivirus scan). Those refusals are treated as
+ * "busy": back off and retry, never throw and never report the lock as taken.
+ * The same error codes off Windows keep their usual, permanent meaning.
+ *
  * A claim is held for a few filesystem calls. If its holder is killed inside
  * that window the directory is left behind; once it is older than
  * {@link CUE_ENGINE_LOCK_HEARTBEAT_MS} the next process claims the next LEVEL
@@ -92,6 +98,7 @@ import * as path from 'path';
 import * as os from 'os';
 import * as crypto from 'crypto';
 import { resolveUserDataDir } from '../../shared/userDataDir';
+import { isWindows } from '../../shared/platformDetection';
 
 export type CueEngineRunnerMode = 'desktop' | 'standalone';
 
@@ -111,6 +118,8 @@ const CLAIM_BUSY_BACKOFF_MS = 25;
 const MAX_LOCK_ATTEMPTS = 6;
 /** `link` errors meaning the filesystem cannot hard-link, as opposed to "a lock is already there". */
 const LINK_UNSUPPORTED_CODES = new Set(['EPERM', 'ENOTSUP', 'ENOSYS', 'EXDEV', 'EOPNOTSUPP']);
+/** Codes Windows reports while another process has the file or directory open (see {@link isTransientSharingError}). */
+const WINDOWS_SHARING_CODES = new Set(['EPERM', 'EACCES', 'EBUSY']);
 
 /** Identity of THIS process as a lock owner. Minted once; never derived from the PID (see the module doc). */
 const processToken = crypto.randomUUID();
@@ -295,6 +304,20 @@ function errorCode(err: unknown): string | undefined {
 	return (err as NodeJS.ErrnoException | null)?.code;
 }
 
+/**
+ * Whether an fs error is Windows refusing the call because another process has
+ * the path open right now: a racing engine or `cue engine status` reading the
+ * lock (a rename cannot replace a file with an open handle), a just-removed
+ * entry another handle still pins, or an antivirus scan of a file we just
+ * wrote. These clear in milliseconds, so every caller treats them as "busy,
+ * back off and retry" - never as a failure to throw and never as success.
+ * Off Windows the same codes mean something permanent (a real permission
+ * problem, a filesystem without hard links) and keep their old handling.
+ */
+function isTransientSharingError(err: unknown): boolean {
+	return isWindows() && WINDOWS_SHARING_CODES.has(errorCode(err) ?? '');
+}
+
 function serializeLock(info: CueEngineLockInfo): string {
 	return JSON.stringify(info, null, 2);
 }
@@ -308,28 +331,39 @@ function claimPrefix(generation: string, dataDir?: string): string {
 	return `${lockFilePath(dataDir)}.claim-${generation}.`;
 }
 
+type CreateOutcome = 'created' | 'exists' | 'sharing';
+
 /**
  * Create the lock only if none exists, with its full content in one step.
- * Returns `false` when a lock is already there.
+ * `'exists'` when a lock is already there; `'sharing'` when Windows refused
+ * because another process has the path open (retry after a back-off).
  */
-function createLockExclusive(info: CueEngineLockInfo, dataDir?: string): boolean {
+function createLockExclusive(info: CueEngineLockInfo, dataDir?: string): CreateOutcome {
 	const target = lockFilePath(dataDir);
 	const tmp = tempFilePath(dataDir);
 	const body = serializeLock(info);
-	fs.writeFileSync(tmp, body, 'utf-8');
 	try {
-		fs.linkSync(tmp, target);
-		return true;
-	} catch (err) {
-		if (errorCode(err) === 'EEXIST') return false;
-		if (!LINK_UNSUPPORTED_CODES.has(errorCode(err) ?? '')) throw err;
+		fs.writeFileSync(tmp, body, 'utf-8');
 		try {
-			fs.writeFileSync(target, body, { encoding: 'utf-8', flag: 'wx' });
-			return true;
-		} catch (wxErr) {
-			if (errorCode(wxErr) === 'EEXIST') return false;
-			throw wxErr;
+			fs.linkSync(tmp, target);
+			return 'created';
+		} catch (err) {
+			if (errorCode(err) === 'EEXIST') return 'exists';
+			// Checked first: on Windows EPERM from `link` is a sharing refusal,
+			// not a filesystem that cannot hard-link.
+			if (isTransientSharingError(err)) return 'sharing';
+			if (!LINK_UNSUPPORTED_CODES.has(errorCode(err) ?? '')) throw err;
+			try {
+				fs.writeFileSync(target, body, { encoding: 'utf-8', flag: 'wx' });
+				return 'created';
+			} catch (wxErr) {
+				if (errorCode(wxErr) === 'EEXIST') return 'exists';
+				throw wxErr;
+			}
 		}
+	} catch (err) {
+		if (isTransientSharingError(err)) return 'sharing';
+		throw err;
 	} finally {
 		try {
 			fs.unlinkSync(tmp);
@@ -399,19 +433,29 @@ function dropClaim(dir: string): void {
 	}
 }
 
-type ClaimOutcome<T> = { ok: true; value: T } | { ok: false; reason: 'busy' | 'changed' };
+type ClaimOutcome<T> =
+	| { ok: true; value: T }
+	| { ok: false; reason: 'busy' | 'changed' | 'sharing' };
 
 /**
  * Run `action` while holding the claim on `generation`, and only if the lock
  * file still has exactly that generation. `'busy'`: another process holds the
- * claim. `'changed'`: the file moved on since it was judged.
+ * claim. `'changed'`: the file moved on since it was judged. `'sharing'`:
+ * Windows refused a step because another process had the path open; nothing
+ * was decided, so the caller backs off and retries.
  */
 function withGenerationClaim<T>(
 	generation: string,
 	action: () => T,
 	dataDir?: string
 ): ClaimOutcome<T> {
-	const claim = takeClaim(generation, dataDir);
+	let claim: string | null;
+	try {
+		claim = takeClaim(generation, dataDir);
+	} catch (err) {
+		if (isTransientSharingError(err)) return { ok: false, reason: 'sharing' };
+		throw err;
+	}
 	if (!claim) return { ok: false, reason: 'busy' };
 	try {
 		testHook?.('afterClaim');
@@ -419,6 +463,9 @@ function withGenerationClaim<T>(
 			return { ok: false, reason: 'changed' };
 		}
 		return { ok: true, value: action() };
+	} catch (err) {
+		if (isTransientSharingError(err)) return { ok: false, reason: 'sharing' };
+		throw err;
 	} finally {
 		dropClaim(claim);
 	}
@@ -502,8 +549,10 @@ export function acquireCueEngineLock(
 	for (let attempt = 0; attempt < MAX_LOCK_ATTEMPTS; attempt++) {
 		const current = readLockSnapshot(dataDir);
 		if (!current) {
-			if (createLockExclusive(buildLockInfo(mode), dataDir)) return { acquired: true };
-			// Created by someone else between our read and write - re-read.
+			const created = createLockExclusive(buildLockInfo(mode), dataDir);
+			if (created === 'created') return { acquired: true };
+			if (created === 'sharing') sleepSync(CLAIM_BUSY_BACKOFF_MS);
+			// Otherwise created by someone else between our read and write - re-read.
 			continue;
 		}
 		const info = current.info;
@@ -515,7 +564,7 @@ export function acquireCueEngineLock(
 				dataDir
 			);
 			if (rewrite.ok) return { acquired: true };
-			if (rewrite.reason === 'busy') sleepSync(CLAIM_BUSY_BACKOFF_MS);
+			if (rewrite.reason !== 'changed') sleepSync(CLAIM_BUSY_BACKOFF_MS);
 			continue;
 		}
 		// Stale or corrupt. Replace it only under its generation's claim.
@@ -529,14 +578,17 @@ export function acquireCueEngineLock(
 			dataDir
 		);
 		if (takeover.ok) {
-			if (takeover.value) {
+			if (takeover.value === 'created') {
 				cleanUpAfterTakeover(current.generation, dataDir);
 				return { acquired: true };
 			}
-			// A creator on the no-lock path got in after our remove: it won.
+			// 'exists': a creator on the no-lock path got in after our remove,
+			// so it won. 'sharing': the old lock is gone but Windows refused the
+			// create for a moment; re-read and try again.
+			if (takeover.value === 'sharing') sleepSync(CLAIM_BUSY_BACKOFF_MS);
 			continue;
 		}
-		if (takeover.reason === 'busy') sleepSync(CLAIM_BUSY_BACKOFF_MS);
+		if (takeover.reason !== 'changed') sleepSync(CLAIM_BUSY_BACKOFF_MS);
 	}
 	const holder = readLockSnapshot(dataDir)?.info ?? null;
 	if (holder && isLockLive(holder) && isCueEngineLockOwnedByThisProcess(holder)) {
@@ -570,12 +622,15 @@ export function touchCueEngineLock(
 		const current = readLockSnapshot(dataDir);
 		testHook?.('touchAfterRead');
 		if (!current) {
+			let created: CreateOutcome;
 			try {
-				if (createLockExclusive(buildLockInfo(mode), dataDir)) return 'held';
+				created = createLockExclusive(buildLockInfo(mode), dataDir);
 			} catch {
 				// A failed write only ages the heartbeat; the next beat retries.
 				return 'held';
 			}
+			if (created === 'created') return 'held';
+			if (created === 'sharing') sleepSync(CLAIM_BUSY_BACKOFF_MS);
 			continue;
 		}
 		const info = current.info;
@@ -594,7 +649,10 @@ export function touchCueEngineLock(
 			return 'held';
 		}
 		if (rewrite.ok) return 'held';
-		if (rewrite.reason === 'busy') {
+		if (rewrite.reason === 'sharing') {
+			// Nobody else decided anything; a reader had the file open.
+			sleepSync(CLAIM_BUSY_BACKOFF_MS);
+		} else if (rewrite.reason === 'busy') {
 			if (ours) return isLockLive(info) ? 'held' : 'lost';
 			sleepSync(CLAIM_BUSY_BACKOFF_MS);
 		}
