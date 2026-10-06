@@ -156,6 +156,11 @@ export interface CueEngineLockInfo {
 	bootTime?: number;
 	/** Free-text hint for a human reading the lock file directly (hostname, etc). Best-effort, not load-bearing. */
 	host?: string;
+	/**
+	 * Loopback port of the owner's status server (`--status-port`), so
+	 * `cue engine status` can say where to ask. Absent when the owner runs none.
+	 */
+	statusPort?: number;
 }
 
 function lockFilePath(dataDir: string = resolveUserDataDir()): string {
@@ -247,6 +252,7 @@ function parseLock(raw: string): CueEngineLockInfo | null {
 		heartbeatAt: typeof info.heartbeatAt === 'string' ? info.heartbeatAt : undefined,
 		bootTime: typeof info.bootTime === 'number' ? info.bootTime : undefined,
 		host: typeof info.host === 'string' ? info.host : undefined,
+		statusPort: typeof info.statusPort === 'number' ? info.statusPort : undefined,
 	};
 }
 
@@ -512,6 +518,18 @@ export type CueEngineLockResult =
 	| { acquired: true }
 	| { acquired: false; heldBy: CueEngineLockInfo };
 
+/** This process's status server port, stamped on every lock it writes. See {@link setCueEngineLockStatusPort}. */
+let ownStatusPort: number | undefined;
+
+/**
+ * Record the status server port this process listens on, so every lock it
+ * acquires or refreshes carries it. Set before the engine starts; `undefined`
+ * clears it. Only the standalone runner sets it.
+ */
+export function setCueEngineLockStatusPort(port: number | undefined): void {
+	ownStatusPort = port;
+}
+
 function buildLockInfo(mode: CueEngineRunnerMode, startedAt?: string): CueEngineLockInfo {
 	const now = new Date().toISOString();
 	return {
@@ -523,6 +541,7 @@ function buildLockInfo(mode: CueEngineRunnerMode, startedAt?: string): CueEngine
 		heartbeatAt: now,
 		bootTime: currentBootTime(),
 		host: safeHostname(),
+		...(ownStatusPort !== undefined ? { statusPort: ownStatusPort } : {}),
 	};
 }
 

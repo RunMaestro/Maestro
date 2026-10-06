@@ -9,19 +9,24 @@
  * that engine can and cannot do relative to the desktop app's own instance.
  * `stop` / `status` / `inspect` talk to that runner ONLY through the
  * on-disk state it shares with the desktop app (the cross-process lock file,
- * `cue.db`) - there is no live RPC channel into a running standalone
- * process, so `status`/`inspect` report what was last PERSISTED (lock info,
- * DB heartbeat, recent history rows), not the runner's live in-memory
- * counters (active run count, queue depth). A future iteration could open a
- * small localhost status endpoint from the runner itself for that; today's
- * scope is what the shared files already answer.
+ * `cue.db`), so `status`/`inspect` report what was last PERSISTED (lock info,
+ * DB heartbeat, recent history rows). The runner's live in-memory figures
+ * (active runs, queue depth, readiness) are served by its own loopback status
+ * server when started with `--status-port` (`src/main/cue/cue-status-server.ts`);
+ * `status` reports that port from the lock file.
  */
 
 import {
 	isCueEngineLockInForeignPidNamespace,
 	isCueEngineLockOwnedByThisProcess,
 	readCueEngineLock,
+	setCueEngineLockStatusPort,
 } from '../../main/cue/cue-engine-lock';
+import {
+	createCueEngineHealth,
+	createEventLoopDelaySource,
+} from '../../main/cue/cue-engine-health';
+import type { CueStatusServerHandle } from '../../main/cue/cue-status-server';
 import {
 	consoleCueLog,
 	createStandaloneCueEngine,
@@ -53,6 +58,13 @@ export interface CueEngineStartOptions {
 	dataDir?: string;
 	/** `text` (default) or `json`: one JSON object per log line, on stderr. */
 	logFormat?: CueLogFormat;
+	/**
+	 * Serve /healthz, /readyz and /status on 127.0.0.1 at this port (see
+	 * `cue-status-server.ts`). Off when absent.
+	 */
+	statusPort?: number;
+	/** CLI version, reported by /status. Supplied by the command registration. */
+	version?: string;
 }
 
 export interface CueEngineStopOptions {
@@ -173,13 +185,63 @@ export async function cueEngineStart(options: CueEngineStartOptions = {}): Promi
 		process.exit(1);
 	}
 
-	const engine = await createStandaloneCueEngine({ onLog: log });
+	// The one state object every health surface reads (cue-engine-health.ts).
+	// The status server, the lock heartbeat (onLockLost) and shutdown all
+	// update it; nothing here keeps a parallel flag.
+	const health = createCueEngineHealth({
+		version: options.version ?? 'unknown',
+		dataDir: dataDir.dir,
+		refreshReadiness: computeCueReadiness,
+		eventLoop: options.statusPort !== undefined ? createEventLoopDelaySource() : undefined,
+	});
+	health.setReadiness(readiness);
+
+	const engine = await createStandaloneCueEngine({
+		onLog: log,
+		onLockLost: () => health.markLockLost(),
+	});
+
+	// The status server binds BEFORE the engine starts, so a taken port fails
+	// the command with nothing armed: no lock, no trigger, no inbox.
+	let statusServer: CueStatusServerHandle | null = null;
+	if (options.statusPort !== undefined) {
+		const { startCueStatusServer, CueStatusPortInUseError, CUE_STATUS_HOST } =
+			await import('../../main/cue/cue-status-server');
+		try {
+			statusServer = await startCueStatusServer({
+				port: options.statusPort,
+				health,
+				engine,
+			});
+		} catch (err) {
+			health.dispose();
+			if (!(err instanceof CueStatusPortInUseError)) throw err;
+			if (options.json) {
+				console.log(
+					JSON.stringify({ started: false, code: err.code, error: err.message, port: err.port })
+				);
+			} else {
+				log('error', err.message);
+			}
+			process.exit(1);
+		}
+		setCueEngineLockStatusPort(statusServer.port);
+		log('info', `Status server listening on http://${CUE_STATUS_HOST}:${statusServer.port}`);
+	}
+	const closeStatusServer = () => {
+		health.dispose();
+		const server = statusServer;
+		statusServer = null;
+		return server ? server.close() : Promise.resolve();
+	};
 
 	let shuttingDown = false;
 	let stopTriggerInbox: (() => void) | null = null;
 	const shutdown = (signal: string) => {
 		if (shuttingDown) return;
 		shuttingDown = true;
+		health.markStopped();
+		void closeStatusServer();
 		stopTriggerInbox?.();
 		log('info', `Received ${signal}, stopping engine...`);
 		engine.stop();
@@ -193,7 +255,6 @@ export async function cueEngineStart(options: CueEngineStartOptions = {}): Promi
 
 	engine.start('system-boot');
 
-	const status = engine.getStatus();
 	// A lock conflict makes start() a silent no-op (see cue-engine.ts) -
 	// surface that here as a real command failure rather than exiting 0
 	// having done nothing, which the exit code below distinguishes.
@@ -209,6 +270,9 @@ export async function cueEngineStart(options: CueEngineStartOptions = {}): Promi
 		} else {
 			log('error', conflictMessage);
 		}
+		health.markStopped();
+		if (statusServer) setCueEngineLockStatusPort(undefined);
+		await closeStatusServer();
 		process.exitCode = 1;
 		return;
 	}
@@ -218,6 +282,7 @@ export async function cueEngineStart(options: CueEngineStartOptions = {}): Promi
 	stopTriggerInbox = startCueTriggerInbox((name, prompt, sourceAgentId) =>
 		engine.triggerSubscription(name, prompt, sourceAgentId)
 	);
+	health.markRunning();
 
 	if (options.json) {
 		console.log(
@@ -227,6 +292,7 @@ export async function cueEngineStart(options: CueEngineStartOptions = {}): Promi
 				dataDir: dataDir.dir,
 				ready: readiness.ready,
 				gaps: readiness.gaps.length,
+				...(statusServer ? { statusPort: statusServer.port } : {}),
 			})
 		);
 	} else {
@@ -236,7 +302,6 @@ export async function cueEngineStart(options: CueEngineStartOptions = {}): Promi
 			`Engine started (pid ${process.pid}). Watching ${sessionCount} agent(s) for .maestro/cue.yaml. Press Ctrl+C to stop.`
 		);
 	}
-	void status;
 
 	// Block forever - the process stays alive on the SIGINT/SIGTERM
 	// listeners above until shutdown() calls process.exit().
@@ -345,6 +410,8 @@ interface CueEngineStatusPayload {
 	lastHeartbeatMs?: number | null;
 	lastHeartbeatAgeMs?: number | null;
 	totalEvents?: number;
+	/** Loopback port of the runner's status server, when it runs one. */
+	statusPort?: number;
 }
 
 async function buildStatusPayload(options: { json?: boolean }): Promise<CueEngineStatusPayload> {
@@ -369,6 +436,7 @@ async function buildStatusPayload(options: { json?: boolean }): Promise<CueEngin
 		lastHeartbeatMs,
 		lastHeartbeatAgeMs: lastHeartbeatMs != null ? Date.now() - lastHeartbeatMs : null,
 		totalEvents: countCueEvents(),
+		...(lock.statusPort !== undefined ? { statusPort: lock.statusPort } : {}),
 	};
 }
 
@@ -394,6 +462,9 @@ export async function cueEngineStatus(options: CueEngineStatusOptions = {}): Pro
 			? `  Last heartbeat: ${humanizeDuration(payload.lastHeartbeatAgeMs)} ago`
 			: '  Last heartbeat: none yet',
 		`  Total events recorded: ${payload.totalEvents ?? 0}`,
+		payload.statusPort !== undefined
+			? `  Status server: http://127.0.0.1:${payload.statusPort}/status`
+			: '  Status server: not running (start with --status-port)',
 	];
 	console.log(lines.join('\n'));
 }

@@ -78,6 +78,8 @@ A `github.pull_request` event for a chained subscription, traced from trigger to
 
 `stop()` reverses everything: clears heartbeat timer, tears down trigger sources, stops active runs, but **does not clear the persisted queue** - it survives across stops so the next `start()` can replay.
 
+**Lock heartbeat.** Every `CUE_ENGINE_LOCK_HEARTBEAT_MS` the engine refreshes the cross-process lock (`touchCueEngineLock`). On `'lost'` (another engine took it over while this one was suspended) it calls the optional `deps.onLockLost()` and then `stop()`. The standalone runner wires `onLockLost` to `health.markLockLost()` (`cue-engine-health.ts`), which is what fails its `/healthz` (`cue-status-server.ts`, behind `cue engine start --status-port`); see [CLI-HEADLESS.md -> Status server](docs/agent-guides/CLI-HEADLESS.md#status-server---status-port).
+
 ## Session lifecycle and ownership
 
 `initSession` (`cue-session-runtime-service.ts:107-200`) is the choke point:
