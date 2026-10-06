@@ -4,6 +4,7 @@ The complete, reasoned entry for every commonly-reimplemented function in the co
 
 Grep-verified 2026-09-04 (`npm run docs:verify` checks that every path below still resolves).
 
+- **Browser relay text chunks:** `chunkBrowserRelayText(text)` in `src/shared/browserRelay.ts` yields strings of at most 16,384 UTF-16 code units, matching the host input validator. Native streamed pages and remote browser tabs use it for paste, composition, and textarea input. Sending a whole large paste used to reject it; slicing just the prefix would silently lose the rest. The generator preserves surrogate pairs at chunk boundaries. Consume it inside one existing queued operation and await each IPC call so later keystrokes cannot interleave and a large paste cannot exhaust the queue's operation limit. Recheck disposal or lease ownership between chunks; never replay abandoned input after reconnection.
 - **ID generation:** `generateId()` in `src/renderer/utils/ids.ts`, `generateUUID()` in `src/shared/uuid.ts`
 - **Format file size:** `formatSize()` in `src/shared/formatters.ts`
 - **Format numbers:** `formatNumber()` (compact: `1.2M`) and `formatCount()` (exact, grouped: `1,204,993`) in `src/shared/formatters.ts`. Pick by whether the digits ARE the information - a badge wants the magnitude, a filtered row count wants the number.

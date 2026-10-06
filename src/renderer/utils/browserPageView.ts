@@ -4,6 +4,7 @@ import type {
 	BrowserRelayInput,
 } from '../../shared/browserRelay';
 import type { BrowserPageState, BrowserPageAction } from '../../shared/browserPage';
+import { chunkBrowserRelayText } from '../../shared/browserRelay';
 
 /** Existing native browser controls operate on this presentation of a main-owned page. */
 export interface HostBrowserPageElement extends HTMLDivElement {
@@ -62,6 +63,7 @@ export function createHostBrowserPageView(
 		generation = 0;
 	let dimensions: BrowserRelayViewport = { width: 1024, height: 768 };
 	let timer: ReturnType<typeof setTimeout> | undefined;
+	let retryDelay = 0;
 	let queue: Promise<unknown> = Promise.resolve();
 	const dispatch = (type: string, details?: Record<string, unknown>) => {
 		const event = new Event(type);
@@ -110,7 +112,14 @@ export function createHostBrowserPageView(
 	};
 	const action = (value: BrowserPageAction) => enqueue(() => api.pageAction(target, value));
 	const send = (value: BrowserRelayInput) => {
-		void enqueue(() => api.pageInput(target, value)).catch(failure);
+		void enqueue(async () => {
+			if (value.type !== 'text') return api.pageInput(target, value);
+			// A whole paste owns one queue entry so later keystrokes cannot interleave.
+			for (const text of chunkBrowserRelayText(value.text)) {
+				if (disposed) return;
+				await api.pageInput(target, { type: 'text', text });
+			}
+		}).catch(failure);
 	};
 	function measure(): BrowserRelayViewport {
 		const bounds = root.getBoundingClientRect();
@@ -121,20 +130,30 @@ export function createHostBrowserPageView(
 	}
 	async function pump(current: number): Promise<void> {
 		if (disposed || !active || generation !== current) return;
+		let delay = 125;
 		try {
-			const frame = await enqueue(() => api.pageFrame(target, viewId, measure()));
-			if (disposed || !active || generation !== current) return;
+			const frame = await enqueue(() => {
+				if (disposed || !active || generation !== current) return Promise.resolve(undefined);
+				return api.pageFrame(target, viewId, measure());
+			});
+			if (!frame || disposed || !active || generation !== current) return;
 			const decoded = new Image();
 			decoded.src = frame.dataUrl;
 			await decoded.decode();
 			if (disposed || !active || generation !== current) return;
 			dimensions = { width: frame.width, height: frame.height };
 			image.src = frame.dataUrl;
-			timer = setTimeout(() => {
-				void pump(current);
-			}, 125);
+			if (retryDelay) dispatch('did-finish-load');
+			retryDelay = 0;
 		} catch (error) {
+			if (disposed || !active || generation !== current) return;
+			delay = retryDelay = Math.min(retryDelay ? retryDelay * 2 : 1000, 5000);
 			failure(error);
+		} finally {
+			if (!disposed && active && generation === current)
+				timer = setTimeout(() => {
+					void pump(current);
+				}, delay);
 		}
 	}
 	const modifiers = (event: MouseEvent | KeyboardEvent | WheelEvent): string[] =>
@@ -294,7 +313,8 @@ export function createHostBrowserPageView(
 			generation++;
 			clearTimeout(timer);
 			if (active) {
-				void opening.then(() => pump(generation)).catch(failure);
+				const current = generation;
+				void opening.then(() => pump(current)).catch(failure);
 			} else {
 				keyboard.blur();
 				root.blur();

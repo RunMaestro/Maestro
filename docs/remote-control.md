@@ -133,9 +133,20 @@ A localhost preview is opened by the host's browser, not by a local Lite webview
 Host administration, account management and native application updates remain
 host-only; remote operator access is not multi-tenant isolation.
 
-An active host browser view keeps its viewport when Lite displays the same tab.
+Local desktop browser tabs keep their native webview, including rich-text and
+image paste. When Lite attaches to a mounted tab, it captures that same page
+without reloading it or changing the host viewport. Tabs first opened remotely
+without a mounted native guest use a shared offscreen page.
+
+Native tabs follow the desktop browser keep-alive setting. If the host unloads
+one (including when switching agents), a connected remote view reopens its saved
+URL offscreen; unsaved forms, page history and other in-page state do not survive
+that unload. Offscreen pages remain alive while remotely retained.
+
 Remote frame failures retry automatically; closing the view cancels retries and
-queued input. Paste uses the client's clipboard, not the host's clipboard.
+queued input. Streamed views support plain-text paste from the client's clipboard;
+large pastes are sent in order without truncation. They do not transfer rich
+clipboard content or images from the host.
 Restarting discovery does not disconnect an existing session; an actual network
 identity change still invalidates it. If a saved SSH forwarding port is occupied,
 Lite chooses another loopback port without disturbing the existing listener.

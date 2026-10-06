@@ -54,6 +54,7 @@ This guide has been split into focused sub-documents for progressive disclosure:
 
 Grep-verified 2026-09-04 (`npm run docs:verify` re-checks every path). This is the INDEX: name, canonical symbols, home file. The full entry for each - the failure it replaced, its invariants, and the traps that made the duplicates wrong - lives in [CANONICAL-UTILITIES.md](docs/agent-guides/CANONICAL-UTILITIES.md). If a name below matches what you are about to write, import the canonical one; read its full entry before extending or working around it.
 
+- **Browser relay text chunks:** `chunkBrowserRelayText()` in `src/shared/browserRelay.ts` keeps pasted text within the host input limit without splitting Unicode surrogate pairs. Await all chunks inside one queued operation.
 - **ID generation:** `generateId()`, `generateUUID()` in `src/renderer/utils/ids.ts`
 - **Format file size:** `formatSize()` in `src/shared/formatters.ts`
 - **Format numbers:** `formatNumber()`, `formatCount()` in `src/shared/formatters.ts`

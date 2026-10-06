@@ -8,6 +8,23 @@ export interface BrowserRelayViewport {
 	height: number;
 }
 
+/** Split relay text at the host's UTF-16 limit without breaking surrogate pairs. */
+export function* chunkBrowserRelayText(text: string): Generator<string> {
+	for (let start = 0; start < text.length; ) {
+		let end = Math.min(start + 16_384, text.length);
+		if (
+			end < text.length &&
+			text.charCodeAt(end - 1) >= 0xd800 &&
+			text.charCodeAt(end - 1) <= 0xdbff &&
+			text.charCodeAt(end) >= 0xdc00 &&
+			text.charCodeAt(end) <= 0xdfff
+		)
+			end--;
+		yield text.slice(start, end);
+		start = end;
+	}
+}
+
 export type BrowserRelayInput =
 	| {
 			type: 'mouseDown' | 'mouseUp' | 'mouseMove';

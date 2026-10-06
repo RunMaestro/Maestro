@@ -18,6 +18,7 @@ import type {
 import { useSessionStore } from '../../stores/sessionStore';
 import { resolveBrowserTabNavigationTarget } from '../../utils/browserTabPersistence';
 import { safeClipboardWrite } from '../../utils/clipboard';
+import { chunkBrowserRelayText } from '../../../shared/browserRelay';
 
 interface RemoteBrowserTabViewProps {
 	tab: BrowserTab;
@@ -86,7 +87,15 @@ export const RemoteBrowserTabView = forwardRef<BrowserTabViewHandle, RemoteBrows
 		);
 		const send = useCallback(
 			(input: BrowserRelayInput) => {
-				void enqueue((id) => window.maestro.browserSession.relayInput(id, input)).catch(() => {});
+				void enqueue(async (id) => {
+					const api = window.maestro.browserSession;
+					if (input.type !== 'text') return api.relayInput(id, input);
+					// Reserve one operation for the paste so it cannot interleave with typing.
+					for (const text of chunkBrowserRelayText(input.text)) {
+						if (!alive.current || lease.current !== id) return;
+						await api.relayInput(id, { type: 'text', text });
+					}
+				}).catch(() => {});
 			},
 			[enqueue]
 		);
