@@ -34,6 +34,10 @@ beforeEach(() => {
 	process.env.INHERITED_ONLY = 'kept';
 	delete process.env.UNSET_KEY;
 	delete process.env.MAESTRO_SESSION_RESUMED;
+	// The suite asserts these are absent, and an agent shell (a Claude Code
+	// session running the tests) commonly exports them.
+	delete process.env.CLAUDE_CONFIG_DIR;
+	delete process.env.ANTHROPIC_API_KEY;
 });
 
 afterEach(() => {
