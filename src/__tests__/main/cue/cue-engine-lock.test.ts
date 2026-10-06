@@ -596,10 +596,22 @@ setInterval(() => {
 		}
 	}, 30_000);
 
-	afterAll(() => {
-		for (const w of workers) w.child.kill();
-		fs.rmSync(rootDir, { recursive: true, force: true });
-	});
+	afterAll(async () => {
+		// Wait for every worker to exit before removing its control directory:
+		// Windows refuses (EBUSY / EPERM) to delete a directory a dying process
+		// is still polling.
+		await Promise.all(
+			workers.map(
+				(w) =>
+					new Promise<void>((resolve) => {
+						if (w.child.exitCode !== null || w.child.signalCode !== null) return resolve();
+						w.child.once('exit', () => resolve());
+						w.child.kill();
+					})
+			)
+		);
+		fs.rmSync(rootDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+	}, 30_000);
 
 	afterEach(async () => {
 		const { __setCueEngineLockTestHook } = await import('../../../main/cue/cue-engine-lock');
