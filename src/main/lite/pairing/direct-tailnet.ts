@@ -4,6 +4,7 @@ import { readTailnet, type TailnetState } from '../tailnet';
 import { TAILNET_PORT } from '../tailnet-origin';
 import { PairingHost } from './host';
 import type { PairedDevices } from './paired-devices';
+import { createKeyedWriteQueue } from '../../utils/atomic-json-store';
 
 interface Consent {
 	version: 1;
@@ -36,6 +37,7 @@ export class DirectTailnetHost {
 	private timer?: NodeJS.Timeout;
 	private revision = 0;
 	private pending?: Promise<void>;
+	private controls = createKeyedWriteQueue();
 	private initialized = false;
 	private readonly file: string;
 	constructor(
@@ -186,21 +188,27 @@ export class DirectTailnetHost {
 	async enable(consent: boolean): Promise<void> {
 		if (consent !== true)
 			throw new Error('Review and explicitly allow direct Tailscale access first.');
-		if (this.state.enabled && this.state.ready) return;
-		await this.refresh();
-		if (!this.snapshot || Date.now() - this.snapshot.checkedAt >= 45000)
-			throw new Error(this.state.message);
-		const state = this.snapshot;
-		await this.save({
-			version: 1,
-			enabled: true,
-			instanceId: this.instanceId,
-			device: state.device,
-			tailnet: state.tailnet,
-			address: state.address,
+		const revision = this.revision;
+		await this.controls.enqueue(this.file, async () => {
+			if (revision !== this.revision) throw new Error('Direct access request was cancelled.');
+			if (this.state.enabled && this.state.ready) return;
+			await this.refresh();
+			if (revision !== this.revision) throw new Error('Direct access request was cancelled.');
+			if (!this.snapshot || Date.now() - this.snapshot.checkedAt >= 45000)
+				throw new Error(this.state.message);
+			const state = this.snapshot;
+			await this.save({
+				version: 1,
+				enabled: true,
+				instanceId: this.instanceId,
+				device: state.device,
+				tailnet: state.tailnet,
+				address: state.address,
+			});
+			if (revision !== this.revision) throw new Error('Direct access request was cancelled.');
+			this.state.enabled = true;
+			await this.refresh();
 		});
-		this.state.enabled = true;
-		await this.refresh();
 	}
 	async disable(): Promise<void> {
 		this.state.enabled = false;
@@ -208,12 +216,15 @@ export class DirectTailnetHost {
 		this.revision++;
 		this.currentHost?.dispose();
 		this.currentHost = undefined;
-		await this.pending;
-		await this.stopListener?.();
-		this.stopListener = undefined;
-		if (this.consent) await this.save({ ...this.consent, enabled: false });
-		this.state.message =
-			'Direct Tailscale access is off. Tailscale routes, policy and remembered devices were not changed.';
+		// Invalidate immediately, then wait for an older consent write before saving the revocation.
+		await this.controls.enqueue(this.file, async () => {
+			await this.pending;
+			await this.stopListener?.();
+			this.stopListener = undefined;
+			if (this.consent) await this.save({ ...this.consent, enabled: false });
+			this.state.message =
+				'Direct Tailscale access is off. Tailscale routes, policy and remembered devices were not changed.';
+		});
 	}
 	async close(): Promise<void> {
 		this.revision++;
@@ -222,8 +233,10 @@ export class DirectTailnetHost {
 		this.state.ready = false;
 		this.currentHost?.dispose();
 		this.currentHost = undefined;
-		await this.pending;
-		await this.stopListener?.();
-		this.stopListener = undefined;
+		await this.controls.enqueue(this.file, async () => {
+			await this.pending;
+			await this.stopListener?.();
+			this.stopListener = undefined;
+		});
 	}
 }

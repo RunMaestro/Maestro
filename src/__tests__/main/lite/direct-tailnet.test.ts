@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rename, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 const fixture = vi.hoisted(() => ({ status: '', address: '100.64.0.10' }));
@@ -10,10 +10,15 @@ vi.mock('node:os', async (original) => ({
 	...(await original<typeof import('node:os')>()),
 	networkInterfaces: () => ({ tail: [{ address: fixture.address }] }),
 }));
+vi.mock('node:fs/promises', async (original) => {
+	const fs = await original<typeof import('node:fs/promises')>();
+	return { ...fs, rename: vi.fn(fs.rename) };
+});
 import { readTailnet, tailnetDestination } from '../../../main/lite/tailnet';
 import { directTailnetOrigin } from '../../../main/lite/tailnet-origin';
 import { DirectTailnetHost } from '../../../main/lite/pairing/direct-tailnet';
 import { PairedDevices } from '../../../main/lite/pairing/paired-devices';
+import { readTailscaleStatus } from '../../../main/lite/discovery/tailscale';
 let directory: string;
 const hosts: DirectTailnetHost[] = [];
 const state = (changes: Record<string, unknown> = {}) =>
@@ -53,6 +58,63 @@ async function host() {
 	return h;
 }
 describe('direct tailnet transport and consent', () => {
+	it('keeps access disabled when an earlier enable check finishes after disable', async () => {
+		const h = await host();
+		await h.refresh();
+		let finishCheck!: (value: string) => void;
+		vi.mocked(readTailscaleStatus).mockImplementationOnce(
+			() => new Promise((resolve) => (finishCheck = resolve))
+		);
+		const enabling = h.enable(true);
+		await vi.waitFor(() => expect(finishCheck).toBeTypeOf('function'));
+		const disabling = h.disable();
+		finishCheck(state());
+		await Promise.allSettled([enabling, disabling]);
+		expect(h.state.enabled).toBe(false);
+		expect(h.host).toBeUndefined();
+		await h.close();
+		expect((await host()).host).toBeUndefined();
+	});
+	it('persists disable after an in-flight consent write so restarting cannot reopen access', async () => {
+		const h = await host();
+		let finishWrite!: () => void;
+		const persist = vi.mocked(rename).getMockImplementation()!;
+		vi.mocked(rename).mockImplementationOnce(async (...args) => {
+			await new Promise<void>((resolve) => (finishWrite = resolve));
+			return persist(...args);
+		});
+		const enabling = h.enable(true);
+		await vi.waitFor(() => expect(finishWrite).toBeTypeOf('function'));
+		const disabling = h.disable();
+		finishWrite();
+		await Promise.allSettled([enabling, disabling]);
+		expect(h.state.enabled).toBe(false);
+		expect(h.host).toBeUndefined();
+		expect(
+			JSON.parse(await readFile(path.join(directory, 'lite-tailnet-access.json'), 'utf8')).enabled
+		).toBe(false);
+		await h.close();
+		expect((await host()).host).toBeUndefined();
+	});
+	it('cancels a pending enable on shutdown while allowing a later explicit enable after disable', async () => {
+		const h = await host();
+		await h.refresh();
+		let finishCheck!: (value: string) => void;
+		vi.mocked(readTailscaleStatus).mockImplementationOnce(
+			() => new Promise((resolve) => (finishCheck = resolve))
+		);
+		const enabling = h.enable(true);
+		await vi.waitFor(() => expect(finishCheck).toBeTypeOf('function'));
+		const closing = h.close();
+		finishCheck(state());
+		await Promise.allSettled([enabling, closing]);
+		expect(h.state.enabled).toBe(false);
+		expect(h.host).toBeUndefined();
+		const restarted = await host();
+		await Promise.all([restarted.disable(), restarted.enable(true)]);
+		expect(restarted.state.enabled).toBe(true);
+		expect(restarted.host).toBeDefined();
+	});
 	it.each([
 		'http://127.0.0.1:56036',
 		'http://192.168.1.2:56036',
