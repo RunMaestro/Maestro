@@ -36,6 +36,10 @@ npx electron scripts/spike-socks-pac.mjs
 The verification run used `npx --no-install` for both commands to ensure the installed
 binary was used. Both commands exited 0, and the spike reproduced the earlier run.
 
+Revalidated on 2026-10-05 after rebasing onto `rc` at `0c810524c`, using the
+same installed Electron and Chromium versions. All eight outcomes reproduced
+without timeouts or network errors.
+
 The standalone [spike](spike-socks-pac.mjs) uses
 `session.fromPartition('persist:maestro-browser-session-spike')` and that session's
 `fetch()`. Each request has a five-second timeout, disables caching, and is preceded
