@@ -81,6 +81,7 @@ import {
 	type WakeSnoozedTabResult,
 } from '../utils/snoozeHelpers';
 import { runSnoozeWakePrompt } from '../services/snoozeWakePrompt';
+import { reopenDesktopTabIfNeeded } from '../services/desktopTabClose';
 import { logger } from '../utils/logger';
 
 /**
@@ -549,6 +550,7 @@ export const useTabStore = create<TabStore>()((set) => ({
 	reopenClosedTab: () => {
 		const session = getActiveSession();
 		if (!session) return null;
+		if (reopenDesktopTabIfNeeded(session)) return null;
 		const result = reopenUnifiedClosedTabHelper(session);
 		if (!result) return null;
 		updateActiveSession(result.session);

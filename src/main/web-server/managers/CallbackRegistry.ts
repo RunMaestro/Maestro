@@ -17,6 +17,7 @@ import type {
 	SelectTabCallback,
 	NewTabCallback,
 	CloseTabCallback,
+	ReopenTabCallback,
 	RenameTabCallback,
 	RenameTabResult,
 	StarTabCallback,
@@ -175,6 +176,7 @@ export interface WebServerCallbacks {
 	selectTab: SelectTabCallback | null;
 	newTab: NewTabCallback | null;
 	closeTab: CloseTabCallback | null;
+	reopenTab: ReopenTabCallback | null;
 	renameTab: RenameTabCallback | null;
 	starTab: StarTabCallback | null;
 	snoozeCommand: SnoozeCommandCallback | null;
@@ -279,6 +281,7 @@ export class CallbackRegistry {
 		selectTab: null,
 		newTab: null,
 		closeTab: null,
+		reopenTab: null,
 		renameTab: null,
 		starTab: null,
 		snoozeCommand: null,
@@ -446,6 +449,11 @@ export class CallbackRegistry {
 	async closeTab(sessionId: string, tabId: string): Promise<boolean> {
 		if (!this.callbacks.closeTab) return false;
 		return this.callbacks.closeTab(sessionId, tabId);
+	}
+
+	/** Restore the requested conversation from the owning renderer's close history. */
+	async reopenTab(sessionId: string, tabId: string): Promise<{ tabId: string } | null> {
+		return this.callbacks.reopenTab?.(sessionId, tabId) ?? null;
 	}
 
 	async renameTab(
@@ -1129,6 +1137,11 @@ export class CallbackRegistry {
 	setCloseTabCallback(callback: CloseTabCallback): void {
 		logger.info('[CallbackRegistry] setCloseTabCallback called', LOG_CONTEXT);
 		this.callbacks.closeTab = callback;
+	}
+
+	/** Register the owner-side conversation restore callback. */
+	setReopenTabCallback(callback: ReopenTabCallback): void {
+		this.callbacks.reopenTab = callback;
 	}
 
 	setRenameTabCallback(callback: RenameTabCallback): void {
