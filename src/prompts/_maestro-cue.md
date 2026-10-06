@@ -16,19 +16,19 @@ Each subscription has a unique `name`, an `event` type, an `enabled` flag, a `pr
 
 ### Event Types
 
-| Event                 | Fires when…                                                          | Key config fields                                                                                   |
-| --------------------- | -------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
-| `app.startup`         | Maestro launches                                                     | -                                                                                                   |
-| `time.heartbeat`      | Every N minutes                                                      | `interval_minutes`                                                                                  |
-| `time.scheduled`      | At specific clock times (cron-like)                                  | `schedule_times`, `schedule_days`                                                                   |
-| `time.once`           | At a specific wall-clock moment, exactly once (self-destructs after) | `fire_at`, optional `grace_minutes`, `self_destruct_on_failure`                                     |
-| `file.changed`        | Files matching a glob are added/changed/removed                      | `watch` (glob)                                                                                      |
-| `agent.completed`     | An upstream agent finishes a run                                     | `source_session` (name or names)                                                                    |
-| `github.pull_request` | A PR matches a filter (polled)                                       | `repo`, `gh_state`, `label`, `poll_minutes`, `filter`, `retrigger_on_comments`, `max_notifications` |
-| `github.issue`        | An issue matches a filter (polled)                                   | `repo`, `gh_state`, `label`, `poll_minutes`, `filter`, `retrigger_on_comments`, `max_notifications` |
-| `github.label`        | A label is added to a PR or issue (polled)                           | `repo`, `gh_label_target` (`pr`/`issue`/`both`), `gh_labels`, `poll_minutes`, `filter`              |
-| `task.pending`        | Pending `- [ ]` tasks detected in watched files                      | `watch`                                                                                             |
-| `cli.trigger`         | Manually fired via `maestro-cli cue trigger`                         | -                                                                                                   |
+| Event                 | Fires when…                                                            | Key config fields                                                                                              |
+| --------------------- | ---------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `app.startup`         | Maestro launches                                                       | -                                                                                                              |
+| `time.heartbeat`      | Every N minutes                                                        | `interval_minutes`                                                                                             |
+| `time.scheduled`      | At specific clock times (cron-like)                                    | `schedule_times`, `schedule_days`                                                                              |
+| `time.once`           | At a specific wall-clock moment, exactly once (self-destructs after)   | `fire_at`, optional `grace_minutes`, `self_destruct_on_failure`                                                |
+| `file.changed`        | Files matching a glob are added/changed/removed                        | `watch` (glob)                                                                                                 |
+| `agent.completed`     | An upstream agent finishes a run                                       | `source_session` (name or names)                                                                               |
+| `github.pull_request` | A PR matches a filter (polled, optionally also by webhook)             | `repo`, `gh_state`, `label`, `poll_minutes`, `filter`, `retrigger_on_comments`, `max_notifications`, `webhook` |
+| `github.issue`        | An issue matches a filter (polled, optionally also by webhook)         | `repo`, `gh_state`, `label`, `poll_minutes`, `filter`, `retrigger_on_comments`, `max_notifications`, `webhook` |
+| `github.label`        | A label is added to a PR or issue (polled, optionally also by webhook) | `repo`, `gh_label_target` (`pr`/`issue`/`both`), `gh_labels`, `poll_minutes`, `filter`, `webhook`              |
+| `task.pending`        | Pending `- [ ]` tasks detected in watched files                        | `watch`                                                                                                        |
+| `cli.trigger`         | Manually fired via `maestro-cli cue trigger`                           | -                                                                                                              |
 
 ### Scheduled Tasks (one-shot and repeating)
 
@@ -542,6 +542,23 @@ By default, a `github.pull_request` / `github.issue` subscription fires **once**
 ```
 
 Counter semantics: the **initial discovery fire is always allowed** and does NOT count toward the cap. With `max_notifications: 10` you get 1 initial + 10 re-fires = 11 total fires per PR/issue. Once the cap is hit, the poller stops emitting events for that item but freezes its tracked revision, so raising the cap later resumes from the right point rather than replaying stale activity.
+
+**"React within seconds, not on the next poll" - add a `webhook` block to a GitHub trigger.**
+
+Any `github.pull_request` / `github.issue` / `github.label` subscription can also take GitHub webhook deliveries. Polling continues as a reconcile (every 30 minutes unless `poll_minutes` is set), and a change seen by both fires once. Only add this when the user has, or will set up, a GitHub webhook that can reach Maestro (a tunnel or reverse proxy to `http://127.0.0.1:17997/cue/<path>`, content type `application/json`, the same secret). Never put the secret in the YAML: use `secret_env`.
+
+```yaml
+- name: pr-review-fast
+  event: github.pull_request
+  enabled: true
+  repo: owner/name
+  webhook:
+    path: gh-prs # served at /cue/gh-prs
+    secret_env: GH_WEBHOOK_SECRET # GitHub's X-Hub-Signature-256 is checked by default
+  agent_id: <agent-id>
+  prompt: |
+    Review PR #{{CUE_GH_NUMBER}}: {{CUE_GH_TITLE}} - {{CUE_GH_URL}}
+```
 
 **"When pending tasks pile up in /docs/tasks, work on them" → `task.pending`**
 

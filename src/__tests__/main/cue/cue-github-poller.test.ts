@@ -275,6 +275,46 @@ describe('cue-github-poller', () => {
 		cleanup();
 	});
 
+	it('runs one poll at a time: a pollNow during a poll runs one more afterwards', async () => {
+		// Webhooks call pollNow; two polls side by side could fire the same items.
+		let inFlight = 0;
+		let maxInFlight = 0;
+		let prLists = 0;
+		mockExecFile.mockImplementation(
+			(
+				cmd: string,
+				args: string[],
+				_opts: unknown,
+				cb: (err: Error | null, stdout: string, stderr: string) => void
+			) => {
+				const key = `${cmd} ${args.join(' ')}`;
+				if (key.includes('--version')) return cb(null, '2.0.0', '');
+				if (key.includes('pr list')) {
+					prLists++;
+					inFlight++;
+					maxInFlight = Math.max(maxInFlight, inFlight);
+					setTimeout(() => {
+						inFlight--;
+						cb(null, '[]', '');
+					}, 1000);
+					return;
+				}
+				cb(new Error(`Command not found: ${key}`), '', '');
+			}
+		);
+		let handle: { pollNow: () => void } | undefined;
+		const cleanup = createCueGitHubPoller(makeConfig({ onReady: (h) => (handle = h) }));
+		await vi.advanceTimersByTimeAsync(2000); // the first poll is waiting on gh
+
+		handle!.pollNow();
+		handle!.pollNow();
+		await vi.advanceTimersByTimeAsync(3000);
+
+		expect(maxInFlight).toBe(1);
+		expect(prLists).toBe(2);
+		cleanup();
+	});
+
 	it('repo auto-detection - resolves from gh repo view', async () => {
 		const config = makeConfig({ repo: undefined });
 		setupExecFile({
@@ -1697,6 +1737,22 @@ describe('cue-github-poller', () => {
 				'warn',
 				expect.stringContaining('may have been skipped')
 			);
+			cleanup();
+		});
+
+		it('fires once for an event that shifted onto the next page mid-scan', async () => {
+			mockGetGitHubItemState.mockReturnValue({ lastRevision: '4000', fireCount: 0 });
+			const config = labelConfig();
+			setupLabelFeed({
+				1: Array.from({ length: 100 }, (_, i) => labelEvent({ id: 6000 - i })),
+				// New activity pushed page 1's last event (5901) onto page 2.
+				2: [labelEvent({ id: 5901 }), labelEvent({ id: 5000 }), labelEvent({ id: 4000 })],
+			});
+
+			const cleanup = createCueGitHubPoller(config);
+			await vi.advanceTimersByTimeAsync(2100);
+
+			expect(config.onEvent).toHaveBeenCalledTimes(101);
 			cleanup();
 		});
 

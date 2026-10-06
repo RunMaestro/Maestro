@@ -28,6 +28,7 @@ import * as http from 'http';
 import { normalizeWebhookPath } from '../../shared/cue';
 import type { MainLogLevel } from '../../shared/logger-types';
 import { captureException } from '../utils/sentry';
+import { claimWebhookDelivery, releaseWebhookDelivery } from './cue-db';
 
 /** Default port for the Cue webhook listener. Override with `MAESTRO_CUE_WEBHOOK_PORT`. */
 export const DEFAULT_CUE_WEBHOOK_PORT = 17997;
@@ -81,6 +82,12 @@ export interface CueWebhookDelivery {
 
 /** What a `webhook.received` subscription registers with the shared server. */
 export interface CueWebhookRegistration {
+	/**
+	 * Stable identity of the subscriber (its subscription id). Redelivery
+	 * dedupe is kept per subscriber, so a retry reaches only the ones that
+	 * failed the first time.
+	 */
+	id: string;
 	/** Path segment under `/cue/`. Already normalized by the caller. */
 	path: string;
 	/** Shared secret this registration authenticates with. */
@@ -209,14 +216,46 @@ function resolveVendorEvent(headers: http.IncomingHttpHeaders): string {
 	return '';
 }
 
-/** Vendor delivery id, falling back to a locally generated one. */
-function resolveDeliveryId(headers: http.IncomingHttpHeaders): string {
+/**
+ * Vendor delivery id, falling back to a locally generated one. `fromSender`
+ * says which: only an id the sender chose can come back on a redelivery, so
+ * only that kind is worth remembering.
+ */
+function resolveDeliveryId(headers: http.IncomingHttpHeaders): { id: string; fromSender: boolean } {
 	const candidates = ['x-github-delivery', 'x-request-id', 'x-maestro-delivery'];
 	for (const key of candidates) {
 		const value = headers[key];
-		if (typeof value === 'string' && value.length > 0) return value;
+		if (typeof value === 'string' && value.length > 0) return { id: value, fromSender: true };
 	}
-	return crypto.randomUUID();
+	return { id: crypto.randomUUID(), fromSender: false };
+}
+
+/** The dedupe key of one subscriber on one path. */
+function claimScope(path: string, reg: CueWebhookRegistration): string {
+	return `${path}#${reg.id}`;
+}
+
+/**
+ * True when this subscriber has not accepted this delivery before. A failing
+ * database must not drop deliveries, so an error counts as new (the behavior
+ * before redeliveries were remembered) and is reported.
+ */
+function isFirstDelivery(scope: string, deliveryId: string): boolean {
+	try {
+		return claimWebhookDelivery(scope, deliveryId);
+	} catch (err) {
+		void captureException(err, { operation: 'cueWebhookClaimDelivery' });
+		return true;
+	}
+}
+
+/** Undo a claim, so the sender's retry reaches this subscriber again. */
+function releaseDelivery(scope: string, deliveryId: string): void {
+	try {
+		releaseWebhookDelivery(scope, deliveryId);
+	} catch (err) {
+		void captureException(err, { operation: 'cueWebhookReleaseDelivery' });
+	}
 }
 
 function respond(
@@ -363,26 +402,64 @@ export async function handleCueWebhookRequest(
 	}
 
 	const event = resolveVendorEvent(req.headers);
-	const deliveryId = resolveDeliveryId(req.headers);
+	const { id: deliveryId, fromSender } = resolveDeliveryId(req.headers);
+
+	// A redelivery (same sender-chosen id within 24 hours) reaches only the
+	// subscribers that have not handled it; when none are left it is
+	// acknowledged with a 2xx so the sender stops retrying, and fires nothing.
+	const fresh = fromSender
+		? authenticated.filter((reg) => isFirstDelivery(claimScope(path, reg), deliveryId))
+		: authenticated;
+	for (const reg of authenticated) {
+		if (!fresh.includes(reg)) {
+			reg.onLog(
+				'info',
+				`[CUE] webhook delivery ${deliveryId} to "/cue/${path}" was already handled - ignoring the redelivery`
+			);
+		}
+	}
+	if (fresh.length === 0) {
+		respond(res, 200, { accepted: 0, duplicate: true });
+		return;
+	}
+
 	const receivedAt = new Date().toISOString();
 	const truncatedRaw =
 		rawBody.length > MAX_STORED_RAW_BODY
 			? rawBody.subarray(0, MAX_STORED_RAW_BODY).toString('utf8')
 			: decodedBody;
 
-	for (const reg of authenticated) {
-		reg.onDelivery({
-			path,
-			event,
-			deliveryId,
-			receivedAt,
-			headers: sanitizeHeaders(req.headers, reg.signatureHeader),
-			body: parsed,
-			rawBody: truncatedRaw,
-		});
+	let failed = 0;
+	for (const reg of fresh) {
+		try {
+			reg.onDelivery({
+				path,
+				event,
+				deliveryId,
+				receivedAt,
+				headers: sanitizeHeaders(req.headers, reg.signatureHeader),
+				body: parsed,
+				rawBody: truncatedRaw,
+			});
+		} catch (err) {
+			// This subscriber did not take the delivery: release its claim so a
+			// retry reaches it, while the ones that succeeded stay deduped.
+			failed++;
+			if (fromSender) releaseDelivery(claimScope(path, reg), deliveryId);
+			reg.onLog(
+				'error',
+				`[CUE] webhook delivery ${deliveryId} to "/cue/${path}" failed: ${err instanceof Error ? err.message : String(err)}`
+			);
+			void captureException(err, { operation: 'cueWebhookDelivery', path });
+		}
 	}
 
-	respond(res, 202, { accepted: authenticated.length });
+	if (failed > 0) {
+		// A non-2xx so the sender retries; the retry skips who already has it.
+		respond(res, 500, { accepted: fresh.length - failed, failed });
+		return;
+	}
+	respond(res, 202, { accepted: fresh.length });
 }
 
 /** Open the shared socket if it isn't already listening. */

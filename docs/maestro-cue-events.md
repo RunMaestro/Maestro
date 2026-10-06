@@ -406,7 +406,8 @@ Polls GitHub for new pull requests using the GitHub CLI (`gh`).
 | Field          | Type   | Default | Description                                                                  |
 | -------------- | ------ | ------- | ---------------------------------------------------------------------------- |
 | `repo`         | string | auto    | GitHub repo in `owner/repo` format. Auto-detected from git remote if omitted |
-| `poll_minutes` | number | 5       | Minutes between polls (minimum 1)                                            |
+| `poll_minutes` | number | 5       | Minutes between polls (minimum 1). 30 when `webhook` is set                  |
+| `webhook`      | object | none    | Also take GitHub webhook deliveries. See [GitHub webhooks](#github-webhooks) |
 
 **Behavior:**
 
@@ -464,10 +465,11 @@ Polls GitHub for new issues using the GitHub CLI (`gh`). Behaves identically to 
 
 **Optional fields:**
 
-| Field          | Type   | Default | Description                        |
-| -------------- | ------ | ------- | ---------------------------------- |
-| `repo`         | string | auto    | GitHub repo in `owner/repo` format |
-| `poll_minutes` | number | 5       | Minutes between polls (minimum 1)  |
+| Field          | Type   | Default | Description                                                                  |
+| -------------- | ------ | ------- | ---------------------------------------------------------------------------- |
+| `repo`         | string | auto    | GitHub repo in `owner/repo` format                                           |
+| `poll_minutes` | number | 5       | Minutes between polls (minimum 1). 30 when `webhook` is set                  |
+| `webhook`      | object | none    | Also take GitHub webhook deliveries. See [GitHub webhooks](#github-webhooks) |
 
 **Behavior:**
 
@@ -517,13 +519,14 @@ Unlike `github.pull_request` / `github.issue`, which poll item lists and fire on
 
 **Optional fields:**
 
-| Field             | Type            | Default | Description                                                            |
-| ----------------- | --------------- | ------- | ---------------------------------------------------------------------- |
-| `repo`            | string          | auto    | GitHub repo in `owner/repo` format                                     |
-| `gh_label_target` | string          | `both`  | Which kind to watch: `pr`, `issue`, or `both`                          |
-| `gh_labels`       | string or array | any     | Labels that fire the trigger, matched case-insensitively. Omit for any |
-| `poll_minutes`    | number          | 5       | Minutes between polls (minimum 1)                                      |
-| `gh_state`        | string          | any     | Narrow to items that are `open`, `closed`, or `merged` when labeled    |
+| Field             | Type            | Default | Description                                                                  |
+| ----------------- | --------------- | ------- | ---------------------------------------------------------------------------- |
+| `repo`            | string          | auto    | GitHub repo in `owner/repo` format                                           |
+| `gh_label_target` | string          | `both`  | Which kind to watch: `pr`, `issue`, or `both`                                |
+| `gh_labels`       | string or array | any     | Labels that fire the trigger, matched case-insensitively. Omit for any       |
+| `poll_minutes`    | number          | 5       | Minutes between polls (minimum 1). 30 when `webhook` is set                  |
+| `gh_state`        | string          | any     | Narrow to items that are `open`, `closed`, or `merged` when labeled          |
+| `webhook`         | object          | none    | Also take GitHub webhook deliveries. See [GitHub webhooks](#github-webhooks) |
 
 **Behavior:**
 
@@ -567,6 +570,71 @@ The GitHub fields of `github.pull_request` / `github.issue` are all present, plu
 | `{{CUE_GH_TYPE}}`        | `pull_request` or `issue`, whichever was labeled | `pull_request`         |
 
 The branch variables (`{{CUE_GH_BRANCH}}`, `{{CUE_GH_BASE_BRANCH}}`) are empty for this event: the label feed does not carry branch data. Fetch it in the prompt with `gh pr view {{CUE_GH_NUMBER}}` when you need it.
+
+---
+
+## GitHub webhooks
+
+`github.pull_request`, `github.issue`, and `github.label` poll by default. Add a `webhook` block and the same subscription also takes GitHub's webhook deliveries, so the agent starts within seconds of the change instead of on the next poll. Polling keeps running as a reconcile, every 30 minutes unless `poll_minutes` says otherwise, and catches anything a delivery missed: Maestro was closed, the tunnel was down, or GitHub gave up retrying.
+
+A change seen both ways fires once. Deliveries and polls record what they fired in the same place, so whichever arrives second finds it already handled.
+
+**`webhook` sub-fields:**
+
+| Field              | Type   | Description                                                                      |
+| ------------------ | ------ | -------------------------------------------------------------------------------- |
+| `path`             | string | URL segment under `/cue/`. Defaults to a slug of the subscription name.          |
+| `secret_env`       | string | Name of an environment variable holding the webhook secret. Preferred.           |
+| `secret`           | string | Literal secret. Mutually exclusive with `secret_env`.                            |
+| `signature_header` | string | Header carrying the HMAC signature. Defaults to `X-Hub-Signature-256`, GitHub's. |
+
+A secret is required, as for `webhook.received`. If its environment variable is not set when the subscription loads, the Cue log says so and the subscription keeps polling.
+
+**Example:**
+
+```yaml
+subscriptions:
+  - name: pr-reviewer
+    event: github.pull_request
+    repo: owner/name
+    retrigger_on_comments: true
+    webhook:
+      path: gh-prs
+      secret_env: GH_WEBHOOK_SECRET
+    prompt: |
+      PR #{{CUE_GH_NUMBER}}: {{CUE_GH_TITLE}}
+      {{CUE_GH_URL}}
+
+      {{CUE_NEW_COMMENTS}}
+
+      Review the PR, or answer the new comments.
+```
+
+**Setting up the webhook on GitHub:**
+
+1. In the repository, open **Settings > Webhooks > Add webhook**.
+2. **Payload URL:** a public URL that forwards to `http://127.0.0.1:17997/cue/<path>`. GitHub cannot reach the loopback listener directly, so put a tunnel or a reverse proxy in front of it (see the listener notes under `webhook.received`).
+3. **Content type:** `application/json`. Form-encoded deliveries are ignored.
+4. **Secret:** the value of the environment variable named in `secret_env`.
+5. **Events:** pick individual events, matching the triggers that use this path:
+
+| Trigger               | GitHub events                                                                                                        |
+| --------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `github.pull_request` | Pull requests. With `retrigger_on_comments`, also Pull request reviews, Pull request review comments, Issue comments |
+| `github.issue`        | Issues. With `retrigger_on_comments`, also Issue comments                                                            |
+| `github.label`        | Pull requests and Issues. Only `labeled` actions fire                                                                |
+
+GitHub sends a ping when the webhook is saved, and the Cue log reports it as connected. Several subscriptions can share one `path` and secret; each one picks out the deliveries that apply to it.
+
+**Behavior:**
+
+- Deliveries for a repository other than the subscription's `repo` are ignored.
+- A subscription that has never polled fires the delivery, then polls straight away so the items that already existed are recorded instead of fired.
+- A comment on a pull request (`issue_comment`) does not carry the pull request's branches or draft flag, which a `filter` may test. Instead of firing from it, Maestro polls right away, and the poll fires the change with the whole pull request.
+- GitHub's retries and its **Redeliver** button reuse the delivery id. Maestro remembers delivery ids for 24 hours and answers a repeat with `200` without firing it again. If a subscription fails on a delivery, the answer is `500` and a retry reaches that subscription only.
+- When a webhook and a poll both report a label add, it fires once. Each add is matched on its own, so a label removed and re-added still fires twice, even a minute apart.
+- A delivery older than the change already fired (GitHub does not promise order) fires nothing.
+- `filter`, `gh_state`, and `max_notifications` apply to deliveries exactly as they do to polls, and the payload fields are the same.
 
 ---
 
@@ -654,6 +722,7 @@ A secret is mandatory. A webhook path with no authentication is a remote trigger
 - To take deliveries from the public internet, point a tunnel (ngrok, cloudflared) or a reverse proxy at the loopback port. Binding the listener itself to `0.0.0.0` is possible but puts an agent trigger directly on your network.
 - Only `POST` is accepted. Bodies over 1 MB are rejected with `413`.
 - Multiple subscriptions may share a `path`. Each authenticates independently, and every one that passes receives the delivery.
+- A delivery whose id (`X-GitHub-Delivery`, `X-Request-Id`, or `X-Maestro-Delivery`) a subscription already accepted in the last 24 hours is not fired for it again; when every subscription on the path has it, the answer is `200`. If a subscription fails on a delivery, the answer is `500` and a retry reaches only the subscriptions that did not get it. A delivery with no id header is never treated as a repeat.
 
 **Authenticating a delivery:**
 

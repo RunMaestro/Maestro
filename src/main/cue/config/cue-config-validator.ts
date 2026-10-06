@@ -539,6 +539,16 @@ function validateEventSpecificFields(
 				);
 			}
 		}
+		// Optional: a GitHub trigger may also take webhook deliveries.
+		if (sub.webhook !== undefined) {
+			validateWebhookConfig(
+				sub.webhook,
+				typeof sub.name === 'string' ? sub.name : '',
+				prefix,
+				errors,
+				event
+			);
+		}
 	} else if (event === 'github.pull_request' || event === 'github.issue') {
 		if (sub.repo !== undefined && typeof sub.repo !== 'string') {
 			errors.push(`${prefix}: "repo" must be a string (e.g., "owner/repo") for ${event} events`);
@@ -582,6 +592,16 @@ function validateEventSpecificFields(
 				);
 			}
 		}
+		// Optional: a GitHub trigger may also take webhook deliveries.
+		if (sub.webhook !== undefined) {
+			validateWebhookConfig(
+				sub.webhook,
+				typeof sub.name === 'string' ? sub.name : '',
+				prefix,
+				errors,
+				event
+			);
+		}
 	} else if (event === 'app.startup') {
 		// No additional required fields for the startup trigger.
 	} else if (event === 'cli.trigger') {
@@ -591,7 +611,8 @@ function validateEventSpecificFields(
 			sub.webhook,
 			typeof sub.name === 'string' ? sub.name : '',
 			prefix,
-			errors
+			errors,
+			event
 		);
 	} else if (
 		sub.event &&
@@ -617,14 +638,15 @@ function validateWebhookConfig(
 	rawWebhook: unknown,
 	subName: string,
 	prefix: string,
-	errors: string[]
+	errors: string[],
+	event: string
 ): void {
 	if (rawWebhook === undefined || rawWebhook === null) {
-		errors.push(`${prefix}: "webhook" is required for webhook.received events`);
+		errors.push(`${prefix}: "webhook" is required for ${event} events`);
 		return;
 	}
 	if (typeof rawWebhook !== 'object' || Array.isArray(rawWebhook)) {
-		errors.push(`${prefix}: "webhook" must be an object for webhook.received events`);
+		errors.push(`${prefix}: "webhook" must be an object for ${event} events`);
 		return;
 	}
 
@@ -640,7 +662,7 @@ function validateWebhookConfig(
 		typeof webhook.secret_env === 'string' && webhook.secret_env.trim().length > 0;
 	if (!hasSecret && !hasSecretEnv) {
 		errors.push(
-			`${prefix}: "webhook.secret" or "webhook.secret_env" is required for webhook.received events - an unauthenticated webhook would let any local process trigger this agent`
+			`${prefix}: "webhook.secret" or "webhook.secret_env" is required for ${event} events - an unauthenticated webhook would let any local process trigger this agent`
 		);
 	} else if (hasSecret && hasSecretEnv) {
 		errors.push(

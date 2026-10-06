@@ -135,6 +135,9 @@ import {
 	clearGitHubSeenForSubscription,
 	safeRecordCueEvent,
 	safeUpdateCueEventStatus,
+	claimWebhookDelivery,
+	releaseWebhookDelivery,
+	WEBHOOK_DELIVERY_RETENTION_MS,
 } from '../../../main/cue/cue-db';
 
 beforeEach(() => {
@@ -697,5 +700,69 @@ describe('safeUpdateCueEventStatus', () => {
 	it('does not throw when DB is unavailable (not initialized)', () => {
 		closeCueDb();
 		expect(() => safeUpdateCueEventStatus('evt-1', 'completed')).not.toThrow();
+	});
+});
+
+describe('cue-db webhook delivery dedupe', () => {
+	beforeEach(() => {
+		initCueDb(undefined, path.join(os.tmpdir(), 'test-cue.db'));
+	});
+
+	it('creates the deliveries table and its index at init', () => {
+		expect(
+			prepareCalls.some((sql) => sql.includes('CREATE TABLE IF NOT EXISTS cue_webhook_deliveries'))
+		).toBe(true);
+		expect(prepareCalls.some((sql) => sql.includes('idx_cue_webhook_deliveries_received'))).toBe(
+			true
+		);
+	});
+
+	it('claims a new delivery with one INSERT OR IGNORE, after dropping an expired row', () => {
+		vi.clearAllMocks();
+		runCalls.length = 0;
+		prepareCalls.length = 0;
+		const before = Date.now();
+
+		expect(claimWebhookDelivery('github', 'abc-123')).toBe(true);
+
+		const expire = prepareCalls.findIndex((sql) =>
+			sql.includes('DELETE FROM cue_webhook_deliveries WHERE path = ? AND delivery_id = ?')
+		);
+		const insert = prepareCalls.findIndex((sql) =>
+			sql.includes('INSERT OR IGNORE INTO cue_webhook_deliveries')
+		);
+		expect(expire).toBeGreaterThanOrEqual(0);
+		expect(insert).toBeGreaterThan(expire);
+		const [expirePath, expireId, cutoff] = runCalls[0] as [string, string, number];
+		expect([expirePath, expireId]).toEqual(['github', 'abc-123']);
+		expect(cutoff).toBeGreaterThanOrEqual(before - WEBHOOK_DELIVERY_RETENTION_MS);
+		expect(runCalls[1].slice(0, 2)).toEqual(['github', 'abc-123']);
+	});
+
+	it('releases a claim with one DELETE, so the retry is handled again', () => {
+		vi.clearAllMocks();
+		runCalls.length = 0;
+		prepareCalls.length = 0;
+		releaseWebhookDelivery('github#session-1:sub', 'abc-123');
+		expect(prepareCalls).toEqual([
+			'DELETE FROM cue_webhook_deliveries WHERE path = ? AND delivery_id = ?',
+		]);
+		expect(runCalls).toEqual([['github#session-1:sub', 'abc-123']]);
+	});
+
+	it('reports a redelivery when the INSERT changes nothing', () => {
+		mockStatement.run
+			.mockImplementationOnce(() => ({ changes: 0 }))
+			.mockImplementationOnce(() => ({ changes: 0 }));
+		expect(claimWebhookDelivery('github', 'abc-123')).toBe(false);
+	});
+
+	it('treats every delivery as new without a database', () => {
+		closeCueDb();
+		expect(claimWebhookDelivery('github', 'abc-123')).toBe(true);
+	});
+
+	it('remembers deliveries for 24 hours', () => {
+		expect(WEBHOOK_DELIVERY_RETENTION_MS).toBe(24 * 60 * 60 * 1000);
 	});
 });

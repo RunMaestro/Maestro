@@ -8,10 +8,9 @@
  */
 
 import { execFile as cpExecFile } from 'child_process';
-import { createCueEvent, type CueEvent } from './cue-types';
+import type { CueEvent } from './cue-types';
 import {
 	isCueDbReady,
-	isGitHubItemSeen,
 	markGitHubItemSeen,
 	hasAnyGitHubSeen,
 	pruneGitHubSeen,
@@ -24,14 +23,26 @@ import type { CueGitHubLabelTarget } from '../../shared/cue';
 import { resolveGhPath, getExpandedEnv } from '../utils/cliDetection';
 import { captureException } from '../utils/sentry';
 import type { CueLogPayload } from '../../shared/cue-log-types';
+import {
+	buildGitHubItemEvent,
+	buildGitHubLabelEvent,
+	decideGitHubItem,
+	DEFAULT_MAX_NOTIFICATIONS,
+	githubItemKey,
+	isNewerRevision,
+	labelEventMatchesFilters,
+	recordLabelEventFired,
+	claimLabelEventFiredByOtherSource,
+	type GitHubComment,
+	type GitHubItemEventType,
+	type GitHubItemSnapshot,
+	type GitHubLabelEventSnapshot,
+	type GitHubLabelFilters,
+} from './cue-github-items';
 
-/**
- * Default per-item re-trigger cap when `retrigger_on_comments` is enabled but
- * `max_notifications` is omitted. Counts re-fires only - the initial discovery
- * fire is always allowed. Set so a busy PR can't flood Cue indefinitely while
- * leaving plenty of room for legitimate back-and-forth between agents.
- */
-export const DEFAULT_MAX_NOTIFICATIONS = 10;
+export type { GitHubComment } from './cue-github-items';
+
+export { DEFAULT_MAX_NOTIFICATIONS } from './cue-github-items';
 
 /**
  * Sentinel value for `max_notifications` meaning "no cap". Chosen over `null`
@@ -89,12 +100,44 @@ interface RawGitHubComment {
 	url?: string;
 }
 
-/** Normalized comment shape attached to re-trigger event payloads. */
-export interface GitHubComment {
-	author: string;
-	body: string;
-	createdAt: string;
-	url: string;
+/** Normalize one item from `gh pr list` / `gh issue list` JSON. */
+function snapshotFromGh(item: any): GitHubItemSnapshot {
+	return {
+		number: item.number,
+		title: item.title,
+		author: item.author?.login ?? 'unknown',
+		url: item.url,
+		body: item.body ?? '',
+		state: item.state?.toLowerCase() ?? 'open',
+		labels: (item.labels ?? []).map((l: { name: string }) => l.name),
+		createdAt: item.createdAt ?? '',
+		updatedAt: item.updatedAt ?? '',
+		isDraft: item.isDraft ?? false,
+		headRef: item.headRefName ?? '',
+		baseRef: item.baseRefName ?? '',
+		mergedAt: item.mergedAt ?? '',
+		assignees: (item.assignees ?? []).map((a: { login: string }) => a.login),
+	};
+}
+
+/** Normalize one label add from the issue-events feed. */
+function labelSnapshotFromFeed(ev: RawLabelEvent): GitHubLabelEventSnapshot {
+	return {
+		label: ev.label,
+		actor: ev.actor,
+		labeledAt: ev.created_at,
+		number: ev.number,
+		title: ev.title,
+		url: ev.url,
+		body: ev.body ?? '',
+		state: ev.state ?? 'open',
+		labels: ev.labels ?? [],
+		isPr: ev.is_pr,
+		merged: ev.merged,
+		author: ev.author,
+		itemCreatedAt: ev.item_created_at ?? '',
+		itemUpdatedAt: ev.item_updated_at ?? '',
+	};
 }
 
 /**
@@ -267,9 +310,10 @@ export interface CueGitHubPollerConfig {
 	 * immediate poll (in addition to the normal poll schedule). The caller
 	 * stores the handle so it can fire on system wake / user request without
 	 * re-spawning the poller. Calling `pollNow()` after the poller is stopped
-	 * is a no-op.
+	 * is a no-op. `getRepo()` is the repo the poller keys items by (the
+	 * configured one, or what `gh` auto-detected), or null until it is known.
 	 */
-	onReady?: (handle: { pollNow: () => void }) => void;
+	onReady?: (handle: { pollNow: () => void; getRepo: () => string | null }) => void;
 	/**
 	 * Optional gate: when this returns `false`, doPoll skips the HTTP fetch
 	 * to gh CLI. The 24h prune timer keeps running (cheap). Used by the
@@ -442,6 +486,62 @@ export function createCueGitHubPoller(config: CueGitHubPollerConfig): () => void
 		}
 	}
 
+	/**
+	 * Run one pull request or issue through the shared decision and fire what
+	 * it calls for. The webhook path makes the same decision against the same
+	 * rows, so whichever source sees a change first fires it and the other
+	 * skips it.
+	 */
+	async function processItem(
+		itemEventType: GitHubItemEventType,
+		repo: string,
+		item: GitHubItemSnapshot,
+		isFirstRun: boolean
+	): Promise<void> {
+		const itemKey = githubItemKey(itemEventType, repo, item.number);
+		const updatedAt = item.updatedAt;
+		const decision = decideGitHubItem({
+			subscriptionId,
+			itemKey,
+			updatedAt,
+			isFirstRun,
+			retrigger,
+			cap,
+		});
+
+		if (decision.kind === 'seed') {
+			markGitHubItemSeen(subscriptionId, itemKey, updatedAt);
+			return;
+		}
+		if (decision.kind === 'skip') return;
+
+		if (decision.kind === 'retrigger') {
+			const newComments = await fetchNewComments(
+				itemEventType === 'github.pull_request' ? 'pr' : 'issue',
+				repo,
+				item.number,
+				decision.state.lastRevision
+			);
+			if (stopped) return;
+			// A webhook can record this change, or a newer one, while the comments
+			// load; decide again on what is stored now.
+			const current = getGitHubItemState(subscriptionId, itemKey);
+			if (!current || !isNewerRevision(updatedAt, current.lastRevision)) return;
+			if (current.fireCount >= cap) return;
+			onEvent(
+				buildGitHubItemEvent(itemEventType, triggerName, repo, item, {
+					retriggerCount: current.fireCount + 1,
+					newComments: newComments ?? [],
+				})
+			);
+			recordGitHubRetrigger(subscriptionId, itemKey, updatedAt);
+			return;
+		}
+
+		onEvent(buildGitHubItemEvent(itemEventType, triggerName, repo, item, null));
+		markGitHubItemSeen(subscriptionId, itemKey, updatedAt);
+	}
+
 	async function pollPRs(repo: string): Promise<void> {
 		// For "merged" state, query closed PRs and filter by merge status client-side
 		const ghStateArg = stateFilter === 'merged' ? 'closed' : stateFilter;
@@ -479,74 +579,8 @@ export function createCueGitHubPoller(config: CueGitHubPollerConfig): () => void
 
 		for (const item of items) {
 			if (stopped) return;
-			const itemKey = `pr:${repo}:${item.number}`;
-			const updatedAt: string = item.updatedAt ?? '';
-
-			if (isFirstRun) {
-				markGitHubItemSeen(subscriptionId, itemKey, updatedAt);
-				continue;
-			}
-
-			if (isGitHubItemSeen(subscriptionId, itemKey)) {
-				if (!retrigger) continue;
-				const state = getGitHubItemState(subscriptionId, itemKey);
-				if (!state) continue;
-				// No new activity since last seen → nothing to do.
-				if (!updatedAt || state.lastRevision === updatedAt) continue;
-				// Cap reached: freeze state so raising the cap later resumes
-				// from the right point. Don't update last_revision.
-				if (state.fireCount >= cap) continue;
-
-				const newComments = await fetchNewComments('pr', repo, item.number, state.lastRevision);
-				if (stopped) return;
-				const event = createCueEvent('github.pull_request', triggerName, {
-					type: 'pull_request',
-					number: item.number,
-					title: item.title,
-					author: item.author?.login ?? 'unknown',
-					url: item.url,
-					body: (item.body ?? '').slice(0, 5000),
-					state: item.mergedAt ? 'merged' : (item.state?.toLowerCase() ?? 'open'),
-					draft: item.isDraft ?? false,
-					labels: (item.labels ?? []).map((l: { name: string }) => l.name).join(','),
-					head_branch: item.headRefName ?? '',
-					base_branch: item.baseRefName ?? '',
-					repo,
-					created_at: item.createdAt ?? '',
-					updated_at: updatedAt,
-					merged_at: item.mergedAt ?? '',
-					is_retrigger: true,
-					retrigger_count: state.fireCount + 1,
-					new_comments: newComments ?? [],
-				});
-				onEvent(event);
-				recordGitHubRetrigger(subscriptionId, itemKey, updatedAt);
-				continue;
-			}
-
-			const event = createCueEvent('github.pull_request', triggerName, {
-				type: 'pull_request',
-				number: item.number,
-				title: item.title,
-				author: item.author?.login ?? 'unknown',
-				url: item.url,
-				body: (item.body ?? '').slice(0, 5000),
-				state: item.mergedAt ? 'merged' : (item.state?.toLowerCase() ?? 'open'),
-				draft: item.isDraft ?? false,
-				labels: (item.labels ?? []).map((l: { name: string }) => l.name).join(','),
-				head_branch: item.headRefName ?? '',
-				base_branch: item.baseRefName ?? '',
-				repo,
-				created_at: item.createdAt ?? '',
-				updated_at: updatedAt,
-				merged_at: item.mergedAt ?? '',
-				is_retrigger: false,
-				retrigger_count: 0,
-				new_comments: [],
-			});
-
-			onEvent(event);
-			markGitHubItemSeen(subscriptionId, itemKey, updatedAt);
+			await processItem('github.pull_request', repo, snapshotFromGh(item), isFirstRun);
+			if (stopped) return;
 		}
 
 		if (isFirstRun) {
@@ -583,65 +617,8 @@ export function createCueGitHubPoller(config: CueGitHubPollerConfig): () => void
 
 		for (const item of items) {
 			if (stopped) return;
-			const itemKey = `issue:${repo}:${item.number}`;
-			const updatedAt: string = item.updatedAt ?? '';
-
-			if (isFirstRun) {
-				markGitHubItemSeen(subscriptionId, itemKey, updatedAt);
-				continue;
-			}
-
-			if (isGitHubItemSeen(subscriptionId, itemKey)) {
-				if (!retrigger) continue;
-				const state = getGitHubItemState(subscriptionId, itemKey);
-				if (!state) continue;
-				if (!updatedAt || state.lastRevision === updatedAt) continue;
-				if (state.fireCount >= cap) continue;
-
-				const newComments = await fetchNewComments('issue', repo, item.number, state.lastRevision);
-				if (stopped) return;
-				const event = createCueEvent('github.issue', triggerName, {
-					type: 'issue',
-					number: item.number,
-					title: item.title,
-					author: item.author?.login ?? 'unknown',
-					url: item.url,
-					body: (item.body ?? '').slice(0, 5000),
-					state: item.state?.toLowerCase() ?? 'open',
-					labels: (item.labels ?? []).map((l: { name: string }) => l.name).join(','),
-					assignees: (item.assignees ?? []).map((a: { login: string }) => a.login).join(','),
-					repo,
-					created_at: item.createdAt ?? '',
-					updated_at: updatedAt,
-					is_retrigger: true,
-					retrigger_count: state.fireCount + 1,
-					new_comments: newComments ?? [],
-				});
-				onEvent(event);
-				recordGitHubRetrigger(subscriptionId, itemKey, updatedAt);
-				continue;
-			}
-
-			const event = createCueEvent('github.issue', triggerName, {
-				type: 'issue',
-				number: item.number,
-				title: item.title,
-				author: item.author?.login ?? 'unknown',
-				url: item.url,
-				body: (item.body ?? '').slice(0, 5000),
-				state: item.state?.toLowerCase() ?? 'open',
-				labels: (item.labels ?? []).map((l: { name: string }) => l.name).join(','),
-				assignees: (item.assignees ?? []).map((a: { login: string }) => a.login).join(','),
-				repo,
-				created_at: item.createdAt ?? '',
-				updated_at: updatedAt,
-				is_retrigger: false,
-				retrigger_count: 0,
-				new_comments: [],
-			});
-
-			onEvent(event);
-			markGitHubItemSeen(subscriptionId, itemKey, updatedAt);
+			await processItem('github.issue', repo, snapshotFromGh(item), isFirstRun);
+			if (stopped) return;
 		}
 
 		if (isFirstRun) {
@@ -693,18 +670,7 @@ export function createCueGitHubPoller(config: CueGitHubPollerConfig): () => void
 		}
 	}
 
-	/** True when this label event matches the subscription's kind + label + state filters. */
-	function labelEventMatches(ev: RawLabelEvent): boolean {
-		if (labelTarget === 'pr' && !ev.is_pr) return false;
-		if (labelTarget === 'issue' && ev.is_pr) return false;
-		if (watchedLabels.size > 0 && !watchedLabels.has((ev.label ?? '').toLowerCase())) return false;
-		// `gh_state` is optional here (unlike the PR/issue pollers, which
-		// default to "open"): a label subscription with no explicit state
-		// should fire wherever the label lands.
-		if (!ghState || stateFilter === 'all') return true;
-		if (stateFilter === 'merged') return ev.is_pr && ev.merged;
-		return (ev.state ?? '').toLowerCase() === stateFilter;
-	}
+	const labelFilters: GitHubLabelFilters = { labelTarget, watchedLabels, ghState };
 
 	/**
 	 * Poll the repo-wide issue-events feed and fire for every `labeled` event
@@ -720,7 +686,7 @@ export function createCueGitHubPoller(config: CueGitHubPollerConfig): () => void
 		const watermark = Number(watermarkState?.lastRevision ?? '');
 		const isFirstRun = watermarkState?.lastRevision == null || !Number.isFinite(watermark);
 
-		const collected: RawLabelEvent[] = [];
+		const collected = new Map<number, RawLabelEvent>();
 		let highestId = Number.isFinite(watermark) ? watermark : 0;
 		let reachedWatermark = false;
 
@@ -730,7 +696,9 @@ export function createCueGitHubPoller(config: CueGitHubPollerConfig): () => void
 			for (const ev of events) {
 				if (typeof ev.id !== 'number') continue;
 				if (ev.id > highestId) highestId = ev.id;
-				if (!isFirstRun && ev.id > watermark) collected.push(ev);
+				// Keyed by id: the feed is offset-paged, so events that land
+				// mid-scan push the tail of one page onto the next.
+				if (!isFirstRun && ev.id > watermark) collected.set(ev.id, ev);
 			}
 			// The first page alone establishes the watermark on a first run, and
 			// a page that isn't full is the end of the feed either way.
@@ -762,31 +730,16 @@ export function createCueGitHubPoller(config: CueGitHubPollerConfig): () => void
 
 		// Oldest first so a batch of label adds reaches the agent in the order
 		// a human applied them.
-		collected.sort((a, b) => a.id - b.id);
+		const ordered = [...collected.values()].sort((a, b) => a.id - b.id);
 
-		for (const ev of collected) {
+		for (const raw of ordered) {
 			if (stopped) return;
-			if (!labelEventMatches(ev)) continue;
-			const event = createCueEvent('github.label', triggerName, {
-				type: ev.is_pr ? 'pull_request' : 'issue',
-				label: ev.label,
-				label_actor: ev.actor,
-				labeled_at: ev.created_at,
-				number: ev.number,
-				title: ev.title,
-				author: ev.author,
-				url: ev.url,
-				body: ev.body ?? '',
-				state: ev.is_pr && ev.merged ? 'merged' : (ev.state ?? 'open'),
-				labels: (ev.labels ?? []).join(','),
-				repo,
-				created_at: ev.item_created_at ?? '',
-				updated_at: ev.item_updated_at ?? '',
-				is_retrigger: false,
-				retrigger_count: 0,
-				new_comments: [],
-			});
-			onEvent(event);
+			const ev = labelSnapshotFromFeed(raw);
+			if (!labelEventMatchesFilters(ev, labelFilters)) continue;
+			// A webhook may already have fired this add.
+			if (claimLabelEventFiredByOtherSource(subscriptionId, repo, ev, 'poll')) continue;
+			onEvent(buildGitHubLabelEvent(triggerName, repo, ev));
+			recordLabelEventFired(subscriptionId, repo, ev, 'poll');
 		}
 
 		// Advance past everything scanned, matched or not: an event filtered out
@@ -796,7 +749,32 @@ export function createCueGitHubPoller(config: CueGitHubPollerConfig): () => void
 		}
 	}
 
+	/**
+	 * One poll at a time. A webhook can ask for a poll (`pollNow`) while the
+	 * scheduled one is still running; two polls side by side could both read
+	 * the label watermark and fire the same adds. A request made during a poll
+	 * runs one more poll after it instead.
+	 */
+	let polling = false;
+	let pollRequested = false;
 	async function doPoll(): Promise<void> {
+		if (polling) {
+			pollRequested = true;
+			return;
+		}
+		polling = true;
+		try {
+			await pollOnce();
+		} finally {
+			polling = false;
+		}
+		if (pollRequested && !stopped) {
+			pollRequested = false;
+			await doPoll();
+		}
+	}
+
+	async function pollOnce(): Promise<void> {
 		if (stopped) return;
 		// Visibility-aware pause: skip the gh CLI fetch when inactive. The
 		// scheduleNextPoll loop keeps running so we resume cleanly when the
@@ -954,6 +932,7 @@ export function createCueGitHubPoller(config: CueGitHubPollerConfig): () => void
 				void captureException(err, { operation: 'cue:github:pollNow', triggerName });
 			});
 		},
+		getRepo: () => resolvedRepo,
 	});
 
 	// Cleanup function

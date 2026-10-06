@@ -26,6 +26,7 @@ import {
 	type CueNotifyConfig,
 	type CueSubscription,
 } from '../../../../shared/cue';
+import { applyWebhookToTriggerConfig } from './webhookTriggerConfig';
 
 /** Minimal graph session input - compatible with both local and cue-types CueGraphSession */
 interface GraphSessionInput {
@@ -307,26 +308,20 @@ function extractTriggerConfig(sub: CueSubscription): TriggerNodeData['config'] {
 			if (sub.poll_minutes != null) config.poll_minutes = sub.poll_minutes;
 			if (sub.retrigger_on_comments === true) config.retrigger_on_comments = true;
 			if (sub.max_notifications != null) config.max_notifications = sub.max_notifications;
+			applyWebhookToTriggerConfig(sub.webhook, config);
 			break;
 		case 'github.label':
 			if (sub.repo != null) config.repo = sub.repo;
 			if (sub.poll_minutes != null) config.poll_minutes = sub.poll_minutes;
 			if (sub.gh_label_target != null) config.gh_label_target = sub.gh_label_target;
 			if (sub.gh_labels != null) config.gh_labels = sub.gh_labels;
+			applyWebhookToTriggerConfig(sub.webhook, config);
 			break;
 		case 'task.pending':
 			if (sub.watch != null) config.watch = sub.watch;
 			break;
 		case 'webhook.received':
-			// A literal `secret` is hydrated (and re-emitted on save) purely so
-			// the editor doesn't strip a hand-written one off disk. The panel
-			// shows it read-only; new triggers always get `secret_env`.
-			if (sub.webhook?.secret != null) config.webhook_secret = sub.webhook.secret;
-			if (sub.webhook?.path != null) config.webhook_path = sub.webhook.path;
-			if (sub.webhook?.secret_env != null) config.webhook_secret_env = sub.webhook.secret_env;
-			if (sub.webhook?.signature_header != null) {
-				config.webhook_signature_header = sub.webhook.signature_header;
-			}
+			applyWebhookToTriggerConfig(sub.webhook, config);
 			break;
 	}
 

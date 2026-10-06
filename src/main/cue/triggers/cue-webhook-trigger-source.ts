@@ -28,7 +28,10 @@ import type { CueTriggerSource, CueTriggerSourceContext } from './cue-trigger-so
  * git. Returns null when neither yields a non-empty value, which leaves the
  * subscription unregistered rather than listening without authentication.
  */
-function resolveSecret(webhook: { secret?: string; secret_env?: string }): string | null {
+export function resolveWebhookSecret(webhook: {
+	secret?: string;
+	secret_env?: string;
+}): string | null {
 	if (webhook.secret_env) {
 		const fromEnv = process.env[webhook.secret_env];
 		if (fromEnv && fromEnv.length > 0) return fromEnv;
@@ -69,7 +72,7 @@ export function createCueWebhookTriggerSource(
 	const path = normalizeWebhookPath(webhook.path || ctx.subscription.name);
 	if (!path) return null;
 
-	const secret = resolveSecret(webhook);
+	const secret = resolveWebhookSecret(webhook);
 	if (!secret) {
 		ctx.onLog(
 			'error',
@@ -148,6 +151,7 @@ export function createCueWebhookTriggerSource(
 			if (unregister) return; // idempotent
 
 			unregister = registerCueWebhook({
+				id: `${ctx.session.id}:${ctx.subscription.name}`,
 				path,
 				secret,
 				signatureHeader,
