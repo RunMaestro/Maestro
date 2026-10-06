@@ -83,6 +83,10 @@ export interface UseSettingsReturn {
 	pianolaAutoWatchNewAgents: boolean;
 	setPianolaAutoWatchNewAgents: (value: boolean) => Promise<void>;
 
+	// Host media tools
+	mediaModelDirectory: string;
+	setMediaModelDirectory: (value: string) => Promise<boolean>;
+
 	// GitHub CLI settings
 	ghPath: string;
 	setGhPath: (value: string) => void;

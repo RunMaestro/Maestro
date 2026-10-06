@@ -38,6 +38,13 @@ describe('Settings Preload API', () => {
 			api = createSettingsApi();
 		});
 
+		it('exposes the read-only host media status', async () => {
+			const status = { profiles: [], models: ['base'], missing: ['ffmpeg'] };
+			mockInvoke.mockResolvedValue(status);
+			expect(await api.getMediaStatus()).toEqual(status);
+			expect(mockInvoke).toHaveBeenCalledWith('settings:mediaStatus');
+		});
+
 		describe('get', () => {
 			it('should invoke settings:get with key', async () => {
 				mockInvoke.mockResolvedValue('test-value');

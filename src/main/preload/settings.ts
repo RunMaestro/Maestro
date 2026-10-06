@@ -9,6 +9,7 @@
 
 import { ipcRenderer } from 'electron';
 import type { Group } from '../../shared/types';
+import type { MediaToolStatus } from '../../shared/plugins/media-tools';
 
 /**
  * Stored session data for persistence.
@@ -26,6 +27,8 @@ export function createSettingsApi() {
 		get: (key: string) => ipcRenderer.invoke('settings:get', key),
 		set: (key: string, value: unknown) => ipcRenderer.invoke('settings:set', key, value),
 		getAll: () => ipcRenderer.invoke('settings:getAll'),
+		/** Read-only host diagnostic; does not execute media tools or require a plugin grant. */
+		getMediaStatus: (): Promise<MediaToolStatus> => ipcRenderer.invoke('settings:mediaStatus'),
 		/** Listen for external settings file changes (e.g., from maestro-cli) */
 		onExternalChange: (handler: () => void) => {
 			const wrappedHandler = () => handler();

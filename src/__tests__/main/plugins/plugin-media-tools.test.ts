@@ -491,4 +491,45 @@ describe('media tools boundary', () => {
 			missing: [],
 		});
 	});
+	it('uses the live host directory before the environment fallback', async () => {
+		native.paths.mockResolvedValue([]);
+		const fallback = path.join(root, 'fallback');
+		const configured = path.join(root, 'configured');
+		await fs.mkdir(fallback);
+		await fs.mkdir(configured);
+		await fs.writeFile(path.join(fallback, 'ggml-small.bin'), 'model');
+		await fs.writeFile(path.join(configured, 'ggml-base.bin'), 'model');
+		vi.stubEnv('MAESTRO_MEDIA_MODEL_DIR', fallback);
+		expect(Object.keys((await resolveMediaRuntime(configured)).models)).toEqual(['base']);
+		expect(Object.keys((await resolveMediaRuntime('')).models)).toEqual(['small']);
+		expect(Object.keys((await resolveMediaRuntime()).models)).toEqual(['small']);
+		await fs.writeFile(path.join(configured, 'ggml-tiny.bin'), 'model');
+		expect(Object.keys((await resolveMediaRuntime(configured)).models)).toEqual(['tiny', 'base']);
+	});
+
+	it.each(['relative/models', '~/models', '/missing/model/directory', null, 42, {}])(
+		'fails closed for invalid host directory %j even with an environment fallback',
+		async (directory) => {
+			native.paths.mockResolvedValue([]);
+			await fs.writeFile(path.join(root, 'ggml-base.bin'), 'model');
+			vi.stubEnv('MAESTRO_MEDIA_MODEL_DIR', root);
+			expect((await resolveMediaRuntime(directory)).models).toEqual({});
+		}
+	);
+
+	it('canonicalizes the host root and excludes escaping links, directories and unlisted models', async () => {
+		native.paths.mockResolvedValue([]);
+		const modelRoot = path.join(root, 'models');
+		const alias = path.join(root, 'alias');
+		await fs.mkdir(modelRoot);
+		await fs.symlink(modelRoot, alias, 'dir');
+		await fs.writeFile(path.join(modelRoot, 'ggml-base.bin'), 'model');
+		await fs.writeFile(path.join(modelRoot, 'ggml-base.en.bin'), 'model');
+		await fs.writeFile(path.join(root, 'secret'), 'secret');
+		await fs.symlink(path.join(root, 'secret'), path.join(modelRoot, 'ggml-small.bin'));
+		await fs.mkdir(path.join(modelRoot, 'ggml-medium.bin'));
+		expect((await resolveMediaRuntime(alias)).models).toEqual({
+			base: await fs.realpath(path.join(modelRoot, 'ggml-base.bin')),
+		});
+	});
 });

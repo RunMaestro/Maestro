@@ -351,6 +351,7 @@ export interface SettingsStoreState
 	 */
 	shellEnvVarsDisabled: Record<string, string>;
 	ghPath: string;
+	mediaModelDirectory: string;
 	/** Playback speed for audio/video in the file preview. Sticky across files. */
 	/**
 	 * True when the main process found an installation id already on disk (i.e.
@@ -496,6 +497,7 @@ export interface SettingsStoreActions
 	setShellEnvVars: (value: Record<string, string>) => void;
 	setShellEnvVarsDisabled: (value: Record<string, string>) => void;
 	setGhPath: (value: string) => void;
+	setMediaModelDirectory: (value: string) => Promise<boolean>;
 	setMediaPlaybackRate: (value: number) => void;
 	setEnterToSendAI: (value: boolean) => void;
 	setEnterToSendAIExpanded: (value: boolean) => void;
@@ -738,6 +740,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		shellEnvVars: {},
 		shellEnvVarsDisabled: {},
 		ghPath: '',
+		mediaModelDirectory: '',
 		hasPriorInstallation: false,
 		mediaPlaybackRate: 1,
 		enterToSendAI: true,
@@ -893,6 +896,13 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		setGhPath: (value) => {
 			set({ ghPath: value });
 			window.maestro.settings.set('ghPath', value);
+		},
+
+		setMediaModelDirectory: async (value) => {
+			if (!(await window.maestro.settings.set('mediaModelDirectory', value))) return false;
+			const persisted = await window.maestro.settings.get('mediaModelDirectory');
+			set({ mediaModelDirectory: persisted as string });
+			return true;
 		},
 
 		setMediaPlaybackRate: (value) => {
@@ -1973,6 +1983,10 @@ export async function loadAllSettings(): Promise<void> {
 		if (allSettings['defaultShell'] !== undefined)
 			patch.defaultShell = allSettings['defaultShell'] as string;
 
+		patch.mediaModelDirectory =
+			typeof allSettings['mediaModelDirectory'] === 'string'
+				? allSettings['mediaModelDirectory']
+				: '';
 		if (allSettings['customShellPath'] !== undefined)
 			patch.customShellPath = allSettings['customShellPath'] as string;
 
