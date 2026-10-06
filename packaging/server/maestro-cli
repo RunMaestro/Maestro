@@ -1,0 +1,16 @@
+#!/bin/sh
+# maestro-cli on a Cue server: runs the bundle against the server's data
+# directory. Installed to /usr/local/bin by install.sh and the container image.
+
+export MAESTRO_USER_DATA="${MAESTRO_USER_DATA:-/var/lib/maestro/data}"
+
+# Files written as root (an imported bundle, settings) are unreadable to the
+# engine, which runs as the maestro user.
+if [ "$(id -u)" = 0 ] && [ -z "${MAESTRO_ALLOW_ROOT:-}" ]; then
+	echo "maestro-cli: run it as the maestro user, so the engine can read what it writes:" >&2
+	echo "  sudo -H -u maestro maestro-cli $*" >&2
+	echo "Set MAESTRO_ALLOW_ROOT=1 to run it as root anyway." >&2
+	exit 1
+fi
+
+exec node /opt/maestro/maestro-cli.js "$@"

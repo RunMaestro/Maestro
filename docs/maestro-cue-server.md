@@ -1,0 +1,156 @@
+---
+title: Running Cue on a Server
+description: Run Maestro Cue pipelines unattended on a Linux server or in a container, without the desktop app.
+icon: server
+---
+
+Build a pipeline in the desktop app, export it as a bundle, and run it on a server with `maestro-cli cue engine`. The engine runs the same triggers, agents and chains as the desktop, with no window and no one logged in.
+
+There are two ways to install it: a Linux VM with systemd, or a container. Both use the same server bundle and the same engine flags.
+
+## Before you start
+
+- **Agents run unattended with full permissions.** Cue always runs agents in YOLO mode, and on a server nobody watches the run. Give the engine its own machine or container, the dedicated `maestro` user both installs create, and workspaces that hold nothing else.
+- **Use agents in API mode.** Put the provider's API key in the environment (for example `ANTHROPIC_API_KEY`). Claude's TUI mode is not available on a server.
+- **One engine per data directory.** Do not point two servers or containers at the same data directory or volume.
+- **Export the pipeline from the desktop app** with `maestro-cli bundle export --pipeline <name> --output pipeline.zip`. See the [CLI reference](./cli-reference) for `bundle export` and `bundle import`.
+
+## Build the server bundle
+
+From a Maestro checkout:
+
+```bash
+npm run build:server
+```
+
+This writes `dist/maestro-server-<version>.tgz`: the CLI, the prompt files it loads, the systemd unit, and the installer. The SQLite driver the engine needs is installed on the target, so the bundle works on both x86_64 and arm64.
+
+The container build runs this step itself.
+
+## Option 1: Linux VM with systemd
+
+Debian 12, Ubuntu 22.04, or newer.
+
+```bash
+scp dist/maestro-server-<version>.tgz my-server:
+ssh my-server
+tar -xzf maestro-server-<version>.tgz
+sudo ./maestro-server/install.sh
+```
+
+The installer adds git and the GitHub CLI, installs Node.js 24 unless Node.js 22 or newer is already there, creates the `maestro` user, and installs the `maestro-cue` service without starting it. Run it with `--help` for its options (`--enable` starts the service, `--skip-gh` leaves out the GitHub CLI).
+
+| Path                                      | What it holds                                                      |
+| ----------------------------------------- | ------------------------------------------------------------------ |
+| `/opt/maestro`                            | The CLI and its SQLite driver                                      |
+| `/usr/local/bin/maestro-cli`              | Wrapper that runs the CLI against the server's data directory      |
+| `/var/lib/maestro`                        | Home of the `maestro` user: agent logins, `gh` config              |
+| `/var/lib/maestro/data`                   | The Maestro data directory: agents, playbooks, `cue.db`            |
+| `/srv/maestro`                            | Workspaces                                                         |
+| `/etc/maestro/maestro.env`                | API keys and other environment variables (root and `maestro` only) |
+| `/etc/maestro/credentials`                | Secret files for `LoadCredential=` (root only)                     |
+| `/etc/systemd/system/maestro-cue.service` | The service                                                        |
+
+Then set it up as the `maestro` user. Each workspace in the bundle (`bundle inspect` lists their keys) is bound to a folder that must already exist, usually a clone of the project. The wrapper refuses to run as root, because files root writes into the data directory are unreadable to the engine.
+
+```bash
+# 1. API keys
+sudo nano /etc/maestro/maestro.env        # ANTHROPIC_API_KEY=...
+
+# 2. The workspace (the project the agents work in), then the pipeline
+sudo -H -u maestro git clone https://github.com/acme/app.git /srv/maestro/proj
+sudo -H -u maestro maestro-cli bundle import pipeline.zip --workspace proj=/srv/maestro/proj
+
+# 3. GitHub, for github.* triggers (or set GH_TOKEN in the env file)
+sudo -H -u maestro gh auth login
+
+# 4. Start
+sudo systemctl enable --now maestro-cue
+journalctl -u maestro-cue -f
+```
+
+**How the service behaves:**
+
+- It is ready (`systemctl status` shows `active`) once agents are loaded and every subscription has what it needs. With `--require-ready`, a missing agent binary, secret or `gh` stops the start and the log lists every gap.
+- A watchdog restarts it if the engine stops answering for 30 seconds, and it restarts after a crash.
+- `systemctl stop` lets active runs finish for up to 90 seconds before stopping them, and allows 120 seconds in total.
+- It runs with a read-only system. Only `/var/lib/maestro` and `/srv/maestro` are writable. For workspaces elsewhere, add a drop-in with `sudo systemctl edit maestro-cue`:
+
+```ini
+[Service]
+ReadWritePaths=/home/me/projects
+```
+
+**Secrets as files.** Instead of the env file, a secret can live in `/etc/maestro/credentials/<NAME>` and be passed in by name:
+
+```ini
+[Service]
+LoadCredential=GH_WEBHOOK_SECRET:/etc/maestro/credentials/GH_WEBHOOK_SECRET
+```
+
+**Upgrading.** Unpack a newer bundle and run its `install.sh` again. The data directory, workspaces, env file and credentials are kept, and a running service is restarted on the new version. The installer replaces the unit file, so keep your changes in drop-ins.
+
+## Option 2: Container
+
+Build the image from the repository root:
+
+```bash
+docker build -f packaging/server/Dockerfile -t maestro-cue .
+```
+
+| Build argument | Default                     | What it does                                                                                    |
+| -------------- | --------------------------- | ----------------------------------------------------------------------------------------------- |
+| `AGENT_CLIS`   | `@anthropic-ai/claude-code` | Agent CLIs to install, as npm package names separated by spaces. Add `@openai/codex` and so on. |
+| `NODE_VERSION` | `24`                        | Node.js major version of the base image                                                         |
+
+The image runs as the `maestro` user under `tini`, with git and the GitHub CLI. It has two volumes: `/var/lib/maestro` (the user's home and the data directory) and `/srv/maestro` (workspaces).
+
+Clone the workspace and import the pipeline into the volumes, then start the engine:
+
+```bash
+docker run --rm -v maestro-work:/srv/maestro --entrypoint git \
+  maestro-cue clone https://github.com/acme/app.git /srv/maestro/proj
+
+docker run --rm \
+  -v maestro-home:/var/lib/maestro -v maestro-work:/srv/maestro \
+  -v "$PWD/pipeline.zip:/tmp/pipeline.zip:ro" \
+  maestro-cue bundle import /tmp/pipeline.zip --workspace proj=/srv/maestro/proj
+
+docker run -d --name maestro-cue --restart unless-stopped --stop-timeout 120 \
+  --env-file maestro.env \
+  -v maestro-home:/var/lib/maestro -v maestro-work:/srv/maestro \
+  -p 127.0.0.1:17997:17997 \
+  maestro-cue
+```
+
+`maestro.env` holds `KEY=value` lines such as `ANTHROPIC_API_KEY=...` and `GH_TOKEN=...`. To log `gh` in interactively instead, run `docker exec -it maestro-cue gh auth login`; the login is kept in the `maestro-home` volume.
+
+With Docker Compose, `packaging/server/compose.yaml` has the same setup: `docker compose up -d --build` from that folder.
+
+**Things to know:**
+
+- **Stop timeout.** The engine drains active runs for up to 90 seconds on stop, but `docker stop` waits only 10 seconds by default. Use `--stop-timeout 120` (or `docker stop -t 120`), or `stop_grace_period: 120s` in Compose.
+- **Restart after a hard kill.** If the engine is killed without stopping (`docker kill`, out of memory, a host crash), its lock stays behind. A new container cannot tell that lock from one held by another container on the same volume, so it waits for the lock to go quiet: the engine refuses to start for up to 3 minutes, and a restart policy brings it back after that.
+- **Health.** The image's health check calls `/healthz` on the engine's status port, 7433, inside the container. `docker ps` shows `healthy` once it answers.
+- **Secrets as files.** Docker and Compose secrets mounted at `/run/secrets/<NAME>` are read by name, like systemd credentials.
+- **Webhook port.** Inside the container the webhook listener listens on all interfaces so the port can be published. Publish it to the host's loopback (`127.0.0.1:17997:17997`) and put a reverse proxy or tunnel in front of it.
+
+## Health and status
+
+The engine answers on `127.0.0.1:7433`, reachable only from the same host (or, for the container, from inside it):
+
+| Endpoint       | Answers                                                                          |
+| -------------- | -------------------------------------------------------------------------------- |
+| `GET /healthz` | `200` while the engine is alive                                                  |
+| `GET /readyz`  | `200` once it is ready; `503` while starting, draining, or after losing its lock |
+| `GET /status`  | Live counters: active runs and queue depth                                       |
+
+`maestro-cli cue engine status` and `maestro-cli cue engine inspect` report the engine's lock, heartbeat and recent runs from the data directory.
+
+## Logs
+
+The engine logs one JSON object per line. On a VM they go to the journal (`journalctl -u maestro-cue`), in a container to `docker logs maestro-cue`.
+
+## Webhooks
+
+`webhook.received` subscriptions, and GitHub triggers that take webhooks, listen on port `17997`, bound to loopback. Do not expose the port directly: put a reverse proxy (nginx, Caddy) or a tunnel (cloudflared, ngrok) in front of `http://127.0.0.1:17997/cue/<path>`. See `webhook.received` and GitHub webhooks in [Cue Event Types](./maestro-cue-events).
