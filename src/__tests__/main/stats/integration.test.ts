@@ -703,6 +703,23 @@ describe('Concurrent writes and database locking', () => {
  * Note: These tests verify the configuration and mock the build process.
  * Actual native module compilation is tested in CI/CD workflows.
  */
+/**
+ * The desktop install's postinstall chain. `package.json` delegates to
+ * `scripts/postinstall.mjs` (which skips the Electron steps for a server
+ * install, `MAESTRO_SERVER_INSTALL=1`), so the commands live in that file:
+ * read both, so these checks follow the chain wherever it is written.
+ */
+async function effectivePostinstall(packageJson: { scripts: Record<string, string> }) {
+	const fs = await import('node:fs');
+	const path = await import('node:path');
+	const script = packageJson.scripts.postinstall;
+	const delegated = script.match(/node\s+(scripts\/[\w.-]+\.mjs)/);
+	if (!delegated) return script;
+	const file = fs.readFileSync(path.join(__dirname, '..', '..', '..', '..', delegated[1]), 'utf8');
+	// The script spells argv as JS string literals (`'-f', '-w', 'node-pty,better-sqlite3'`).
+	return `${script}\n${file}`;
+}
+
 describe('electron-rebuild verification for better-sqlite3', () => {
 	describe('package.json configuration', () => {
 		it('should have postinstall script that runs electron-rebuild for better-sqlite3', async () => {
@@ -719,8 +736,8 @@ describe('electron-rebuild verification for better-sqlite3', () => {
 
 			expect(packageJson.scripts).toBeDefined();
 			expect(packageJson.scripts.postinstall).toBeDefined();
-			expect(packageJson.scripts.postinstall).toContain('electron-rebuild');
-			expect(packageJson.scripts.postinstall).toContain('better-sqlite3');
+			expect(await effectivePostinstall(packageJson)).toContain('electron-rebuild');
+			expect(await effectivePostinstall(packageJson)).toContain('better-sqlite3');
 		});
 
 		it('should have better-sqlite3 in dependencies', async () => {
@@ -882,7 +899,7 @@ describe('electron-rebuild verification for better-sqlite3', () => {
 			const packageJson = JSON.parse(packageJsonContent);
 
 			// The -f (force) flag ensures rebuild even if binaries exist
-			expect(packageJson.scripts.postinstall).toContain('-f');
+			expect(await effectivePostinstall(packageJson)).toContain('-f');
 		});
 	});
 
@@ -968,9 +985,9 @@ describe('electron-rebuild verification for better-sqlite3', () => {
 			const packageJson = JSON.parse(packageJsonContent);
 
 			// postinstall uses electron-rebuild which automatically detects electron version
-			expect(packageJson.scripts.postinstall).toContain('electron-rebuild');
+			expect(await effectivePostinstall(packageJson)).toContain('electron-rebuild');
 			// The -w flag specifies which modules to rebuild
-			expect(packageJson.scripts.postinstall).toContain('-w');
+			expect(await effectivePostinstall(packageJson)).toContain('-w');
 		});
 	});
 

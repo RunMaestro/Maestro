@@ -66,16 +66,55 @@ node maestro-cli.js send <agent-id> "..."
 
 `cue.db` (`src/main/cue/cue-db.ts`) needs `better-sqlite3`, a native addon whose binary is tied to one runtime ABI. Findings, reproduced on 2026-10-06 (Node v22.22.1, ABI 127; Electron, ABI 145):
 
-| Install                                                                  | `cue engine start` under it                                                                                             |
-| ------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------- |
-| Dev checkout, `node dist/cli/maestro-cli.js`                             | Fails: `postinstall` ran `electron-rebuild`, so the binary is ABI 145. Reported as one line (below), exit 1.            |
-| Desktop install, `maestro-cli` shim (`ELECTRON_RUN_AS_NODE=1 <app> ...`) | Works: the shim runs the bundle on Electron, matching the binary. The packaged app ships it through `asarUnpack`.       |
-| Server, `MAESTRO_SERVER_INSTALL=1 npm ci`                                | Works: better-sqlite3's own install script (`prebuild-install`) fetches the ABI 127 prebuild and nothing overwrites it. |
+| Install                                                                  | `cue engine start` under it                                                                                                                                                  |
+| ------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Dev checkout, `node dist/cli/maestro-cli.js`                             | Fails: `postinstall` ran `electron-rebuild`, so the binary is ABI 145. Reported as one line (below), exit 1.                                                                 |
+| Desktop install, `maestro-cli` shim (`ELECTRON_RUN_AS_NODE=1 <app> ...`) | Works: the shim runs the bundle on Electron, matching the binary. The packaged app ships it through `asarUnpack`.                                                            |
+| Server, `MAESTRO_SERVER_INSTALL=1 npm ci`                                | Works: better-sqlite3's own install script (`prebuild-install`) fetches the prebuild for the installing Node (ABI 127 on Node 22, 137 on Node 24) and nothing overwrites it. |
 
 - **The cause is our `postinstall`, not the addon.** better-sqlite3 installs for whichever Node runs `npm install`; `electron-rebuild` then replaces that binary with Electron's. `scripts/postinstall.mjs` skips `ensure-electron` and `electron-rebuild` when `MAESTRO_SERVER_INSTALL=1` (or `true`). Unset, it runs exactly the chain it always did, so the desktop's copy is untouched.
-- **Docker / systemd host:** `MAESTRO_SERVER_INSTALL=1 npm ci && npm run build:cli`, then run `node dist/cli/maestro-cli.js cue engine start ...` with that same Node. The build needs the dev dependencies (esbuild), so install everything, build, and copy `dist/cli/maestro-cli.js` plus the runtime `node_modules` (at least `better-sqlite3`, `bindings`, `file-uri-to-path`) into the final stage. Electron is still downloaded as a dependency but never repaired or used; a slim image can drop it from the final stage.
+- **Docker / systemd host:** follow the [server install recipe](#server-install-recipe) below.
 - **An existing checkout that wants plain Node:** `npm run rebuild:node-native` (`npm rebuild better-sqlite3`). That breaks the checkout's desktop dev run until `npx electron-rebuild -f -w better-sqlite3`, since there is only one binary.
 - **When it cannot load:** `start` probes the addon before taking the lock and exits 1 with one line, e.g. `better-sqlite3 is built for a different runtime (module ABI 145, this Node v22.22.1 needs 127). Under plain Node, install with MAESTRO_SERVER_INSTALL=1 ...`; JSON code `SQLITE_NATIVE_UNAVAILABLE`. `status` and `inspect` do the same when they need `cue.db`. The diagnosis is `describeNativeModuleLoadError()` (`src/shared/nativeModuleError.ts`), which the engine's own database-init log line also uses; an error that is not a load failure is passed through unchanged.
+
+## Server install recipe
+
+Verified on 2026-10-06 in a clean `node:24-bookworm-slim` container: no Python, no `make` or `g++`, no git, no `.git`. Two stages, because building `maestro-cli.js` needs esbuild (a devDependency) while running it does not.
+
+**Build stage** (full dependencies, to produce the bundle):
+
+```bash
+export MAESTRO_SERVER_INSTALL=1 ELECTRON_SKIP_BINARY_DOWNLOAD=1
+npm ci
+npm run build:cli          # also build:maestro-p for Claude agents in TUI mode
+```
+
+**Runtime stage** (production dependencies only):
+
+```bash
+export MAESTRO_SERVER_INSTALL=1
+# copy in: package.json, package-lock.json, .npmrc, scripts/, dist/cli/, src/prompts/
+npm ci --omit=dev
+node dist/cli/maestro-cli.js cue engine start --data-dir /data --log-format json
+```
+
+- **Use the same Node major in both stages.** better-sqlite3 is ABI-specific, and `npm ci --omit=dev` fetches it for the runtime stage's Node. `.npmrc` sets `engine-strict=true` and `package.json` wants Node 22+.
+- **Keep the repo layout in the runtime stage:** `dist/cli/maestro-cli.js` (plus `maestro-p.js` if built) next to `src/prompts/`. The prompt loader finds `src/prompts/` two levels above the bundle (`src/cli/services/prompt-loader.ts`).
+- **`scripts/` must be present for `npm ci`:** `preinstall`, `postinstall` and `prepare` run `scripts/check-python.mjs`, `scripts/postinstall.mjs` and `scripts/setup-git-hooks.mjs`.
+- **Build tools: none needed on Debian/Ubuntu (glibc) x64 or arm64.** Every native module installs from a prebuild: better-sqlite3 (Node 24 prebuild via `prebuild-install`), node-pty (bundled N-API prebuilds), and in the build stage canvas and lzma-native too. Add `python3 make g++` only if a prebuild is missing for your platform (another libc such as Alpine/musl, another architecture, or a Node release newer than better-sqlite3's prebuilds), so that `node-gyp` can compile. Alpine is untested.
+- **Do not use `--ignore-scripts`.** It also skips better-sqlite3's own install script, leaving no binary at all.
+
+What is skipped, and why it is safe:
+
+| Skipped                               | How                                                               | Why it is safe                                                                                                                                                                     |
+| ------------------------------------- | ----------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `electron-rebuild`, `ensure-electron` | `MAESTRO_SERVER_INSTALL=1` (`scripts/postinstall.mjs`)            | They rebuild native modules for Electron, which plain Node cannot load.                                                                                                            |
+| Electron itself                       | `--omit=dev` (runtime); `ELECTRON_SKIP_BINARY_DOWNLOAD=1` (build) | It is a devDependency, never loaded by the CLI (`electron` is aliased to `src/cli/electron-shim.cjs`). Without the variable the build stage downloads a ~100MB binary for nothing. |
+| patch-package                         | `--omit=dev`; `postinstall.mjs` skips it when it is not installed | The repo has no `patches/` directory today. If one appears and patch-package is missing, `postinstall.mjs` fails the install instead of shipping unpatched dependencies.           |
+| Python toolchain check                | `check-python.mjs` exits 0 when no Python is found                | It is advisory only.                                                                                                                                                               |
+| Git hooks                             | `setup-git-hooks.mjs` exits 0 without `.git` or `git`             | Hooks are for development checkouts.                                                                                                                                               |
+
+**node-pty is never loaded by `maestro-cli.js`.** `cue engine start`, `send`, `run-doc`, `playbook` and `goal-run` run without it. Only `maestro-p.js` loads it, the driver for a Claude agent in TUI mode (`enableMaestroP`), which also needs `maestro-p.js` built and shipped. It installs from its prebuild anyway, so there is nothing to skip; on a platform without one, a failed node-pty compile fails `npm ci` even though the engine would never use it.
 
 ## Engine logs (`--log-format`)
 
@@ -117,7 +156,7 @@ The agent's own transcripts go to the provider's store (`~/.claude/projects`, Op
 | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `cue.db` needs `better-sqlite3` built for the runtime, and a checkout has one binary, so it serves either the desktop (Electron) or plain Node at a time.                                             | A server installs with `MAESTRO_SERVER_INSTALL=1` (see [Native modules on a server](#native-modules-on-a-server)). Shipping a second, Node-ABI binary in the desktop app is a packaging decision not taken here: the shim already runs on Electron.                                                                                                                                                                |
 | A Claude agent in TUI mode (`enableMaestroP`, `maestroPMode: interactive`) fails headless with `tui_exited` in a workspace Claude Code has not trusted. Every fresh `bundle import` workspace is one. | maestro-p deliberately never accepts the workspace-trust prompt on a turn, because trust persists for the folder. Accepting it silently on a server is a security decision. Either trust the folder once (run `claude` there interactively), or keep the agent in API mode, the default for new and imported agents. The runtime is not the cause: the same command succeeds under plain Node in a trusted folder. |
-| A server install must ship `prompts/core/` and `maestro-p.js` beside `maestro-cli.js`, plus `node-pty` for the TUI path.                                                                              | Packaging. The prompt loader probes the bundle's directory (`src/cli/services/prompt-loader.ts`); in a checkout it finds `src/prompts/`.                                                                                                                                                                                                                                                                           |
+| A server install must ship the prompts and `maestro-p.js` beside `maestro-cli.js`, plus `node-pty` for the TUI path (see [Server install recipe](#server-install-recipe)).                            | Packaging. The prompt loader probes the bundle's directory (`src/cli/services/prompt-loader.ts`); in a checkout it finds `src/prompts/`.                                                                                                                                                                                                                                                                           |
 | A fresh imported directory has no `history-migrated.json`, so history goes to the legacy single file.                                                                                                 | Correct and lossless: the desktop migrates the file when it first opens the directory.                                                                                                                                                                                                                                                                                                                             |
 | The desktop-busy check (`src/cli/services/agent-busy.ts`) can never report busy.                                                                                                                      | The desktop does not persist `state: 'busy'`. Two CLI runs on one agent are still kept apart by the CLI activity marker, which the same check reads first.                                                                                                                                                                                                                                                         |
 | CLI runs do not appear in the Usage Dashboard query charts.                                                                                                                                           | Those read `stats.db` `query_events`, which only the desktop writes (SQLite). Their usage is in the ledger instead.                                                                                                                                                                                                                                                                                                |
