@@ -117,7 +117,7 @@ describe('bundle export through the running app', () => {
 			{
 				type: 'cue_bundle_export',
 				request: expect.objectContaining({
-					agentId: AGENT_ID,
+					agent: 'Reviewer',
 					outputPath: output,
 					claudeAssets: { skills: true, mcp: true, memory: false },
 				}),
@@ -127,6 +127,29 @@ describe('bundle export through the running app', () => {
 		);
 		expect(stdout()).toContain(`Exported agent "Reviewer" to ${output}`);
 		expect(stdout()).toContain('Secrets to set on import: GITHUB_TOKEN');
+	});
+
+	it('lets the app resolve an agent this data directory does not have', async () => {
+		// A desktop with a custom sync folder keeps its agents elsewhere.
+		fs.writeFileSync(path.join(tmp, 'maestro-sessions.json'), JSON.stringify({ sessions: [] }));
+		sendCommand.mockResolvedValue({
+			type: 'cue_bundle_export_result',
+			outcome: { ok: false, code: 'AGENT_NOT_FOUND', message: 'Agent not found: Synced' },
+		});
+		await expect(bundleExport('0.18.6', { agent: 'Synced', json: true })).rejects.toThrow(
+			'__exit__'
+		);
+		expect(sendCommand).toHaveBeenCalledWith(
+			{
+				type: 'cue_bundle_export',
+				request: expect.objectContaining({
+					agent: 'Synced',
+					outputPath: path.resolve('synced.maestro-bundle.zip'),
+				}),
+			},
+			'cue_bundle_export_result',
+			expect.any(Number)
+		);
 	});
 
 	it('exits 1 with the code the app returned', async () => {

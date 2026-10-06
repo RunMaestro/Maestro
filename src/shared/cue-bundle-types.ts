@@ -63,6 +63,8 @@ export interface CueBundleFileEntry {
 	sha256: string;
 	/** Size of the stored bytes. */
 	size: number;
+	/** The source file was executable (a skill's script); import sets the bit again. */
+	executable?: boolean;
 }
 
 /** Where a workspace's code came from, so an importer can tell the user what to clone. */

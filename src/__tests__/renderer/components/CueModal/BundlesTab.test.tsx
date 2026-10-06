@@ -237,6 +237,33 @@ describe('import', () => {
 		);
 	});
 
+	it('asks again for overwrite approval when a folder change brings a new plan', async () => {
+		const conflicted = plan({
+			conflicts: [{ kind: 'file', target: '/a/.mcp.json', message: 'differs in A' }],
+		});
+		api()
+			.import.mockResolvedValueOnce({ ok: true, applied: false, plan: conflicted })
+			.mockResolvedValueOnce({
+				ok: true,
+				applied: false,
+				plan: plan({
+					conflicts: [{ kind: 'file', target: '/b/.mcp.json', message: 'differs in B' }],
+				}),
+			});
+		renderTab();
+		await chooseBundle();
+		await mapWorkspace();
+		await screen.findByText('differs in A');
+		fireEvent.click(screen.getByRole('checkbox', { name: /Overwrite them/ }));
+		expect(screen.getByRole('button', { name: 'Import' })).toBeEnabled();
+
+		vi.mocked(window.maestro.dialog.selectFolder).mockResolvedValue('/srv/other');
+		fireEvent.click(screen.getByRole('button', { name: 'Choose the folder for workspace web' }));
+		await screen.findByText('differs in B');
+		expect(screen.getByRole('checkbox', { name: /Overwrite them/ })).not.toBeChecked();
+		expect(screen.getByRole('button', { name: 'Import' })).toBeDisabled();
+	});
+
 	it('lists what makes a bundle unusable and asks for no folders', async () => {
 		api().chooseFile.mockResolvedValue('/tmp/old.zip');
 		api().inspect.mockResolvedValue({

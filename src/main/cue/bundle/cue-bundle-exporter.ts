@@ -33,7 +33,10 @@ import * as yaml from 'js-yaml';
 import type { Playbook, SessionInfo } from '../../../shared/types';
 import type { CuePipeline, PipelineLayoutState } from '../../../shared/cue-pipeline-types';
 import { CUE_CONFIG_PATH } from '../../../shared/maestro-paths';
-import { effectiveAgentCustomEnvVars } from '../../../shared/providerProfiles';
+import {
+	effectiveAgentCustomEnvVars,
+	resolveAgentAccountKey,
+} from '../../../shared/providerProfiles';
 import { isSecretEnvKey } from '../../../shared/agentEnvironment';
 import {
 	CUE_BUNDLE_LAYOUT_PATH,
@@ -387,6 +390,8 @@ function resolveContainedFile(root: string, ref: string, what: string): string {
 class BundleBuilder {
 	readonly files = new Map<string, Buffer>();
 	readonly warnings = new Set<string>();
+	/** Archive paths whose source was executable; stored 0755 and flagged in the manifest. */
+	readonly executables = new Set<string>();
 
 	add(archivePath: string, content: Buffer | string): void {
 		const buf = typeof content === 'string' ? Buffer.from(content, 'utf-8') : content;
@@ -671,7 +676,11 @@ function buildReadme(manifest: Omit<CueBundleManifest, 'files'>): string {
 	return lines.join('\n');
 }
 
-async function writeZip(outputPath: string, files: Map<string, Buffer>): Promise<void> {
+async function writeZip(
+	outputPath: string,
+	files: Map<string, Buffer>,
+	executables: ReadonlySet<string>
+): Promise<void> {
 	await fs.promises.mkdir(path.dirname(outputPath), { recursive: true });
 	const tmpPath = `${outputPath}.${process.pid}.tmp`;
 	try {
@@ -684,7 +693,11 @@ async function writeZip(outputPath: string, files: Map<string, Buffer>): Promise
 			archive.on('warning', reject);
 			archive.pipe(output);
 			for (const name of [...files.keys()].sort()) {
-				archive.append(files.get(name)!, { name, date: CUE_BUNDLE_FIXED_MTIME, mode: 0o644 });
+				archive.append(files.get(name)!, {
+					name,
+					date: CUE_BUNDLE_FIXED_MTIME,
+					mode: executables.has(name) ? 0o755 : 0o644,
+				});
 			}
 			void archive.finalize();
 		});
@@ -854,14 +867,39 @@ export async function exportCueBundle(
 		}
 		const source = readGitSource(ws.root);
 		if (source) entry.source = source;
-		if (includedAgents.some((a) => a.toolType === 'claude-code' && agentRoot(a) === ws.root)) {
+		const claudeAgents = includedAgents.filter(
+			(a) => a.toolType === 'claude-code' && agentRoot(a) === ws.root
+		);
+		if (claudeAgents.length > 0) {
+			// Auto memory lives under the account the agent runs as, which its
+			// own CLAUDE_CONFIG_DIR picks, not necessarily Maestro's default.
+			const accounts = claudeAgents.map((a) => ({
+				agent: a,
+				dir:
+					resolveAgentAccountKey(
+						'claude-code',
+						effectiveAgentCustomEnvVars(
+							a.customEnvVars,
+							readProviderEnv(agentConfigsDir, a.toolType)
+						),
+						undefined
+					) ?? claudeConfigDir,
+			}));
+			if (new Set(accounts.map((a) => path.resolve(a.dir))).size > 1) {
+				builder.warnings.add(
+					`Workspace "${ws.key}": its Claude agents use different Claude accounts; memory was exported from ${accounts[0].agent.name}'s.`
+				);
+			}
 			const claude = collectClaudeAssets({
 				root: ws.root,
 				key: ws.key,
 				selection: claudeSelection,
-				claudeConfigDir,
+				claudeConfigDir: path.resolve(accounts[0].dir),
 			});
-			for (const file of claude.files) builder.add(file.archivePath, file.content);
+			for (const file of claude.files) {
+				builder.add(file.archivePath, file.content);
+				if (file.executable) builder.executables.add(file.archivePath);
+			}
 			for (const name of claude.secrets) secrets.add(name);
 			for (const warning of claude.warnings) builder.warnings.add(warning);
 			if (claude.assets) entry.claude = claude.assets;
@@ -971,7 +1009,12 @@ export async function exportCueBundle(
 
 	const files: CueBundleFileEntry[] = [...builder.files.keys()].sort().map((p) => {
 		const buf = builder.files.get(p)!;
-		return { path: p, sha256: sha256(buf), size: buf.length };
+		return {
+			path: p,
+			sha256: sha256(buf),
+			size: buf.length,
+			...(builder.executables.has(p) ? { executable: true } : {}),
+		};
 	});
 	const manifest: CueBundleManifest = { ...head, files };
 	addGenerated(CUE_BUNDLE_MANIFEST_PATH, JSON.stringify(manifest, null, '\t') + '\n');
@@ -993,7 +1036,7 @@ export async function exportCueBundle(
 	assertNoLocalPaths(builder, generated, forbiddenNeedles(localRoots));
 
 	const outputPath = path.resolve(options.outputPath);
-	await writeZip(outputPath, builder.files);
+	await writeZip(outputPath, builder.files, builder.executables);
 	const zipBytes = await fs.promises.readFile(outputPath);
 	return { outputPath, manifest, size: zipBytes.length, sha256: sha256(zipBytes) };
 }

@@ -90,6 +90,35 @@ function referenceName(server: string, name: string): string {
 
 // ─── .mcp.json ───────────────────────────────────────────────────────────────
 
+/** A `${NAME}` or `${NAME:-default}` reference, as Claude Code expands it. */
+const REFERENCE_RE = /\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}/g;
+
+/** A value that is one reference and nothing else. */
+function isPureReference(value: string): boolean {
+	return /^\$\{[A-Za-z_][A-Za-z0-9_]*\}$/.test(value);
+}
+
+/** The literal text around a value's references: what would travel as written. */
+function literalText(value: string): string {
+	return value.replace(REFERENCE_RE, ' ');
+}
+
+/**
+ * Drop the default from a `${NAME:-default}` that looks secret. Claude Code
+ * uses the default when NAME is unset, so a secret default travels with the
+ * bundle as surely as a literal value.
+ */
+function stripSecretDefaults(value: string): string {
+	return value.replace(REFERENCE_RE, (whole, name: string, fallback: string | undefined) => {
+		if (fallback === undefined || fallback === '') return whole;
+		const secret =
+			isSecretEnvKey(name) ||
+			containsCredentialToken(fallback) ||
+			/:\/\/[^/@\s]+:[^/@\s]+@/.test(fallback);
+		return secret ? `\${${name}}` : whole;
+	});
+}
+
 export interface ScrubbedMcpConfig {
 	/** The scrubbed file, ready to store. */
 	content: string;
@@ -121,54 +150,64 @@ export function scrubMcpConfig(raw: string): ScrubbedMcpConfig {
 		if (!isRecord(server)) continue;
 
 		if (isRecord(server.env)) {
-			for (const [key, value] of Object.entries(server.env)) {
-				if (typeof value !== 'string' || value.includes('${')) continue;
-				if (isSecretEnvKey(key) || containsCredentialToken(value)) {
+			for (const [key, raw] of Object.entries(server.env)) {
+				if (typeof raw !== 'string') continue;
+				const value = stripSecretDefaults(raw);
+				if (isPureReference(value)) {
+					server.env[key] = value;
+				} else if (isSecretEnvKey(key) || containsCredentialToken(literalText(value))) {
 					server.env[key] = `\${${key}}`;
 					secrets.add(key);
+				} else {
+					server.env[key] = value;
 				}
 			}
 		}
 
 		if (isRecord(server.headers)) {
-			for (const [header, value] of Object.entries(server.headers)) {
-				if (typeof value !== 'string' || value.includes('${')) continue;
-				if (!SECRET_NAME_RE.test(header) && !containsCredentialToken(value)) continue;
-				const scheme = /^(Bearer|Basic|Token)\s+\S/i.exec(value)?.[1];
+			for (const [header, raw] of Object.entries(server.headers)) {
+				if (typeof raw !== 'string') continue;
+				const value = stripSecretDefaults(raw);
+				const scheme = /^(Bearer|Basic|Token)\s+(.*)$/i.exec(value);
+				const credential = scheme ? scheme[2].trim() : value;
+				const secret =
+					!isPureReference(credential) &&
+					(SECRET_NAME_RE.test(header) || containsCredentialToken(literalText(value)));
+				if (!secret) {
+					server.headers[header] = value;
+					continue;
+				}
 				const ref = reference(serverName, header);
-				server.headers[header] = scheme ? `${scheme} ${ref}` : ref;
+				server.headers[header] = scheme ? `${scheme[1]} ${ref}` : ref;
 			}
 		}
 
 		if (Array.isArray(server.args)) {
 			const args = server.args as unknown[];
 			for (let i = 0; i < args.length; i++) {
-				const arg = args[i];
-				if (typeof arg !== 'string' || arg.includes('${')) continue;
+				if (typeof args[i] !== 'string') continue;
+				const arg = stripSecretDefaults(args[i] as string);
+				args[i] = arg;
 				const flagWithValue = /^(--?[\w-]+)=(.*)$/.exec(arg);
 				if (flagWithValue && SECRET_NAME_RE.test(flagWithValue[1]) && flagWithValue[2]) {
-					args[i] = `${flagWithValue[1]}=${reference(serverName, flagWithValue[1])}`;
+					if (!isPureReference(flagWithValue[2])) {
+						args[i] = `${flagWithValue[1]}=${reference(serverName, flagWithValue[1])}`;
+					}
 					continue;
 				}
-				const next = args[i + 1];
-				if (
-					/^--?[\w-]+$/.test(arg) &&
-					SECRET_NAME_RE.test(arg) &&
-					typeof next === 'string' &&
-					next &&
-					!next.startsWith('-') &&
-					!next.includes('${')
-				) {
-					args[i + 1] = reference(serverName, arg);
+				const next =
+					typeof args[i + 1] === 'string' ? stripSecretDefaults(args[i + 1] as string) : null;
+				if (/^--?[\w-]+$/.test(arg) && SECRET_NAME_RE.test(arg) && next && !next.startsWith('-')) {
+					args[i + 1] = isPureReference(next) ? next : reference(serverName, arg);
 					i++;
 					continue;
 				}
-				if (containsCredentialToken(arg)) args[i] = reference(serverName, `arg ${i}`);
+				if (containsCredentialToken(literalText(arg))) args[i] = reference(serverName, `arg ${i}`);
 			}
 		}
 
-		if (typeof server.url === 'string' && !server.url.includes('${')) {
-			server.url = scrubUrl(server.url, (name) => reference(serverName, name));
+		if (typeof server.url === 'string') {
+			server.url = scrubUrl(stripSecretDefaults(server.url), (name) => reference(serverName, name));
 		}
 
 		if (typeof server.command === 'string' && path.isAbsolute(server.command)) {
@@ -202,30 +241,47 @@ export function mcpConfigReferences(content: string): string[] {
 	return [...names].sort();
 }
 
-/** Strip userinfo and replace secret query values with references. */
+/**
+ * Strip userinfo and replace secret query values with references. References
+ * already in the URL are kept as written: they are set aside while the URL is
+ * parsed, so serializing cannot percent-encode them.
+ */
 function scrubUrl(url: string, reference: (name: string) => string): string {
+	const kept: string[] = [];
+	const masked = url.replace(REFERENCE_RE, (ref) => {
+		kept.push(ref);
+		return `MAESTROKEEP${kept.length - 1}X`;
+	});
+	const restore = (text: string) => text.replace(/MAESTROKEEP(\d+)X/g, (_m, i) => kept[Number(i)]);
+	const isKept = (text: string) => /^MAESTROKEEP\d+X$/.test(text);
+
 	let parsed: URL;
 	try {
-		parsed = new URL(url);
+		parsed = new URL(masked);
 	} catch {
-		return containsCredentialToken(url) ? reference('url') : url;
+		return containsCredentialToken(literalText(url)) ? reference('url') : url;
 	}
 	let changed = false;
-	if (parsed.username || parsed.password) {
+	const userinfo = [parsed.username, parsed.password].filter(Boolean);
+	if (userinfo.length > 0 && !userinfo.every(isKept)) {
 		parsed.username = '';
 		parsed.password = '';
 		changed = true;
 	}
 	const replacements: Array<[string, string]> = [];
 	for (const [name, value] of parsed.searchParams) {
-		if (value && (SECRET_NAME_RE.test(name) || containsCredentialToken(value))) {
+		if (!value || isKept(value)) continue;
+		if (
+			SECRET_NAME_RE.test(name) ||
+			containsCredentialToken(value.replace(/MAESTROKEEP\d+X/g, ' '))
+		) {
 			replacements.push([name, reference(name)]);
 		}
 	}
 	if (!changed && replacements.length === 0) return url;
-	// Put the references in after serializing, so `${` is not percent-encoded.
+	// New references go in after serializing, like the kept ones.
 	replacements.forEach(([name], i) => parsed.searchParams.set(name, `MAESTROREF${i}MAESTROREF`));
-	let out = parsed.toString();
+	let out = restore(parsed.toString());
 	replacements.forEach(([, ref], i) => {
 		out = out.replace(`MAESTROREF${i}MAESTROREF`, ref);
 	});
@@ -265,6 +321,8 @@ export function mergeMcpConfig(
 export interface ClaudeAssetFile {
 	archivePath: string;
 	content: Buffer;
+	/** The source file had an executable bit (a skill's script). */
+	executable?: boolean;
 }
 
 export interface ClaudeAssetCollection {
@@ -314,9 +372,10 @@ export function collectClaudeAssets(options: CollectClaudeAssetsOptions): Claude
 	const assets: CueBundleClaudeAssets = {};
 	const workspacePath = (rel: string) => `workspaces/${key}/${rel}`;
 
-	const addText = (archivePath: string, buf: Buffer, label: string) => {
+	const addText = (archivePath: string, buf: Buffer, label: string, executable = false) => {
+		const exec = executable ? { executable: true } : {};
 		if (isBinary(buf)) {
-			files.push({ archivePath, content: buf });
+			files.push({ archivePath, content: buf, ...exec });
 			return;
 		}
 		const { text, redacted } = redactCredentialTokens(buf.toString('utf-8'));
@@ -325,14 +384,15 @@ export function collectClaudeAssets(options: CollectClaudeAssetsOptions): Claude
 				`Redacted ${redacted} secret-looking token${redacted === 1 ? '' : 's'} in ${label}.`
 			);
 		}
-		files.push({ archivePath, content: Buffer.from(text, 'utf-8') });
+		files.push({ archivePath, content: Buffer.from(text, 'utf-8'), ...exec });
 	};
 
 	if (selection.skills) {
 		const skills = collectSkills(root, warnings, key);
 		for (const rel of skills.files) {
-			const buf = fs.readFileSync(path.join(root, rel));
-			addText(workspacePath(rel), buf, `${key}/${rel}`);
+			const file = path.join(root, rel);
+			const executable = (fs.statSync(file).mode & 0o111) !== 0;
+			addText(workspacePath(rel), fs.readFileSync(file), `${key}/${rel}`, executable);
 		}
 		if (skills.names.length > 0) assets.skills = skills.names;
 	}

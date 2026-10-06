@@ -11,7 +11,7 @@
  */
 
 import type { Session } from '../types';
-import type { SessionInfo } from '../../shared/types';
+import type { SessionInfo, ToolType } from '../../shared/types';
 import { CUE_BUNDLE_AGENT_FIELDS } from '../../shared/cue-bundle-types';
 import type {
 	CueBundleExportOutcome,
@@ -21,6 +21,12 @@ import type {
 	CueBundleInspectOutcome,
 } from '../../main/cue-bundle-service';
 import { useSessionStore } from '../stores/sessionStore';
+import {
+	isSameDirectory,
+	withWorkingDirectory,
+	workingDirectoryChangeBlocker,
+} from '../utils/agentWorkingDirectory';
+import { switchTabProvider } from '../utils/providerTabSessions';
 import { gitService } from './git';
 
 export const cueBundleService = {
@@ -57,6 +63,46 @@ function bundleFieldsOf(record: SessionInfo): Partial<Session> {
 	return out as Partial<Session>;
 }
 
+/** Whether an update moves the agent to another folder. */
+function moves(session: Session, fields: Partial<Session>): boolean {
+	const dir = fields.projectRoot ?? fields.cwd;
+	return typeof dir === 'string' && !isSameDirectory(session.projectRoot || session.cwd, dir);
+}
+
+/**
+ * An existing agent with the bundle's settings, moved and switched the way
+ * the app moves and switches agents: `withWorkingDirectory` clears what
+ * described the old folder, and `switchTabProvider` parks each tab's resume
+ * token for the old provider instead of handing it to the new one.
+ */
+function applyBundleUpdate(session: Session, fields: Partial<Session>): Session {
+	let next = session;
+	if (moves(session, fields)) {
+		next = withWorkingDirectory(next, (fields.projectRoot ?? fields.cwd) as string);
+	}
+	const toolType = fields.toolType as ToolType | undefined;
+	if (toolType && toolType !== session.toolType) {
+		// As the app's own provider switch does: the old provider's overrides go,
+		// and the bundle's fields below set the new provider's.
+		next = {
+			...next,
+			aiTabs: next.aiTabs.map((tab) => switchTabProvider(tab, session.toolType, toolType)),
+			customPath: undefined,
+			customArgs: undefined,
+			customEnvVars: undefined,
+			customEnvVarsDisabled: undefined,
+			customModel: undefined,
+			customEffort: undefined,
+			customContextWindow: undefined,
+			contextWindowSource: undefined,
+			enableMaestroP: undefined,
+			maestroPPath: undefined,
+			maestroPMode: undefined,
+		};
+	}
+	return { ...next, ...fields };
+}
+
 /** A new agent, with the git state the Left Bar shows, as a created agent gets it. */
 async function withGitState(record: SessionInfo): Promise<Session> {
 	const session = record as unknown as Session;
@@ -73,13 +119,27 @@ async function withGitState(record: SessionInfo): Promise<Session> {
  * Add the agents an import created and update the ones it replaced, then
  * write them to disk before answering, so a CLI import followed by
  * `list agents` sees them.
+ *
+ * Throws when an agent that would move is working, or when the save fails.
+ * Either way the agents are left as they were, and main rolls the import's
+ * files back.
  */
 export async function applyImportedAgents(change: {
 	created: SessionInfo[];
 	updated: SessionInfo[];
 }): Promise<void> {
-	const created = await Promise.all(change.created.map(withGitState));
 	const updates = new Map(change.updated.map((record) => [record.id, bundleFieldsOf(record)]));
+	const current = new Map(useSessionStore.getState().sessions.map((s) => [s.id, s]));
+	for (const [id, fields] of updates) {
+		const session = current.get(id);
+		if (!session || !moves(session, fields)) continue;
+		const blocker = workingDirectoryChangeBlocker(session);
+		if (blocker) throw new Error(`Agent "${session.name}" is working. ${blocker}`);
+	}
+
+	const created = await Promise.all(change.created.map(withGitState));
+	const originals = new Map<string, Session>();
+	const createdIds = new Set<string>();
 	const touched: Session[] = [];
 
 	useSessionStore.getState().setSessions((prev) => {
@@ -87,14 +147,26 @@ export async function applyImportedAgents(change: {
 		const next = prev.map((s) => {
 			const fields = updates.get(s.id);
 			if (!fields) return s;
-			const merged = { ...s, ...fields };
-			touched.push(merged);
-			return merged;
+			originals.set(s.id, s);
+			const updated = applyBundleUpdate(s, fields);
+			touched.push(updated);
+			return updated;
 		});
 		const added = created.filter((s) => !existingIds.has(s.id));
+		for (const s of added) createdIds.add(s.id);
 		touched.push(...added);
 		return [...next, ...added];
 	});
 
-	await window.maestro.sessions.setMany(touched, []);
+	try {
+		const saved = await window.maestro.sessions.setMany(touched, []);
+		if (saved === false) throw new Error('The imported agents could not be saved.');
+	} catch (error) {
+		useSessionStore
+			.getState()
+			.setSessions((prev) =>
+				prev.filter((s) => !createdIds.has(s.id)).map((s) => originals.get(s.id) ?? s)
+			);
+		throw error;
+	}
 }

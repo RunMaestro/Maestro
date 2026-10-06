@@ -75,6 +75,23 @@ describe('exportBundleFromApp', () => {
 		expect(fs.existsSync(path.join(ctx.dataDir, 'maestro-sessions.json'))).toBe(false);
 	});
 
+	it('resolves an agent by name or id prefix against the live agents', async () => {
+		const ctx = context([agent()]);
+		const byName = await exportBundleFromApp(ctx, {
+			agent: 'planner',
+			outputPath: path.join(tmp, 'a.zip'),
+		});
+		expect(byName).toMatchObject({ ok: true });
+		const byPrefix = await exportBundleFromApp(ctx, {
+			agent: AGENT_ID.slice(0, 8),
+			outputPath: path.join(tmp, 'b.zip'),
+		});
+		expect(byPrefix).toMatchObject({ ok: true });
+		expect(
+			await exportBundleFromApp(ctx, { agent: 'nobody', outputPath: path.join(tmp, 'c.zip') })
+		).toMatchObject({ ok: false, code: 'AGENT_NOT_FOUND' });
+	});
+
 	it('reports a refusal as data', async () => {
 		const outcome = await exportBundleFromApp(context([agent()]), {
 			agentId: 'missing',
@@ -113,6 +130,26 @@ describe('inspectBundle', () => {
 		const outcome = inspectBundle(outputPath, '0.1.0');
 		expect(outcome).toMatchObject({ ok: true, valid: false });
 		if (outcome.ok) expect(outcome.manifest?.name).toBe('Planner');
+	});
+
+	it('returns no manifest when its shape is wrong, so nothing displays a broken one', async () => {
+		const archiver = (await import('archiver')).default;
+		const bad = path.join(tmp, 'bad.zip');
+		await new Promise<void>((resolve, reject) => {
+			const out = fs.createWriteStream(bad);
+			const zip = archiver('zip');
+			out.on('close', () => resolve());
+			zip.on('error', reject);
+			zip.pipe(out);
+			zip.append('{}', { name: 'manifest.json' });
+			void zip.finalize();
+		});
+		const outcome = inspectBundle(bad, '0.18.6');
+		expect(outcome).toMatchObject({ ok: true, valid: false });
+		if (outcome.ok) {
+			expect(outcome.manifest).toBeUndefined();
+			expect(outcome.errors.length).toBeGreaterThan(0);
+		}
 	});
 
 	it('reports a file that is not a zip', () => {
@@ -189,6 +226,40 @@ describe('importBundleIntoApp', () => {
 			created: [],
 			updated: [expect.objectContaining({ id: AGENT_ID })],
 		});
+	});
+
+	it("runs overlapping imports one after the other, so neither loses the other's MCP server", async () => {
+		async function bundleWithServer(name: string, id: string, server: string): Promise<string> {
+			const root = path.join(tmp, name, 'proj');
+			write(
+				path.join(root, '.mcp.json'),
+				JSON.stringify({ mcpServers: { [server]: { command: server } } })
+			);
+			const outputPath = path.join(tmp, `${name}.zip`);
+			const outcome = await exportBundleFromApp(
+				context(
+					[agent({ id, name, toolType: 'claude-code', cwd: root, projectRoot: root })],
+					path.join(tmp, `${name}-data`)
+				),
+				{ agentId: id, outputPath }
+			);
+			expect(outcome.ok).toBe(true);
+			return outputPath;
+		}
+		const first = await bundleWithServer('alpha', '1a2b3c4d-0000-4000-8000-000000000001', 'alpha');
+		const second = await bundleWithServer('beta', '1a2b3c4d-0000-4000-8000-000000000002', 'beta');
+		const dst = path.join(tmp, 'shared', 'proj');
+		fs.mkdirSync(dst, { recursive: true });
+		const ctx = context([]);
+
+		const results = await Promise.all([
+			importBundleIntoApp(ctx, { bundlePath: first, workspaces: { proj: dst } }),
+			importBundleIntoApp(ctx, { bundlePath: second, workspaces: { proj: dst } }),
+		]);
+
+		expect(results.map((r) => r.ok)).toEqual([true, true]);
+		const servers = JSON.parse(fs.readFileSync(path.join(dst, '.mcp.json'), 'utf-8')).mcpServers;
+		expect(Object.keys(servers).sort()).toEqual(['alpha', 'beta']);
 	});
 
 	it('wants absolute paths', async () => {

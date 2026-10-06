@@ -21,9 +21,10 @@
  */
 
 import * as path from 'path';
+import { resolveAgentId } from '../cli/services/storage';
 import type { SessionInfo } from '../shared/types';
 import type { CueBundleClaudeAssetSelection, CueBundleManifest } from '../shared/cue-bundle-types';
-import { CUE_BUNDLE_MANIFEST_PATH, CUE_BUNDLE_README_PATH } from '../shared/cue-bundle-types';
+import { CUE_BUNDLE_README_PATH } from '../shared/cue-bundle-types';
 import { exportCueBundle } from './cue/bundle/cue-bundle-exporter';
 import {
 	CueBundleImportError,
@@ -64,9 +65,14 @@ export interface CueBundleFailure {
 }
 
 export interface CueBundleExportRequest {
-	/** Pipeline name or id. Exclusive with `agentId`. */
+	/** Pipeline name or id. Exclusive with `agentId` and `agent`. */
 	pipeline?: string;
 	agentId?: string;
+	/**
+	 * Agent id, unique id prefix or name, resolved against the app's own
+	 * agents (the CLI cannot see them when they sit in a custom sync folder).
+	 */
+	agent?: string;
 	/** Absolute path of the zip to write. */
 	outputPath: string;
 	claudeAssets?: CueBundleClaudeAssetSelection;
@@ -134,12 +140,20 @@ export async function exportBundleFromApp(
 	if (invalid) return invalid;
 	try {
 		ctx.flushSessions?.();
+		let agentId = request.agentId;
+		if (!agentId && request.agent) {
+			try {
+				agentId = resolveAgentId(request.agent, ctx.getSessions());
+			} catch (error) {
+				return failure(error, 'AGENT_NOT_FOUND');
+			}
+		}
 		const result = await exportCueBundle({
 			dataDir: ctx.dataDir,
 			agentConfigsDir: ctx.agentConfigsDir,
 			sessions: ctx.getSessions(),
 			pipeline: request.pipeline,
-			agentId: request.agentId,
+			agentId,
 			outputPath: request.outputPath,
 			claudeAssets: request.claudeAssets,
 			allowInlineSecrets: request.allowInlineSecrets,
@@ -160,16 +174,9 @@ export function inspectBundle(bundlePath: string, runningVersion: string): CueBu
 		const archive = readCueBundleArchive(bundlePath);
 		const result = validateCueBundleArchive(archive, { runningVersion, checkEnv: false });
 		const readme = archive.entries.get(CUE_BUNDLE_README_PATH)?.toString('utf-8');
-		let manifest = result.manifest;
-		if (!manifest) {
-			// Show what the manifest says even when validation rejects it.
-			try {
-				const raw = archive.entries.get(CUE_BUNDLE_MANIFEST_PATH);
-				if (raw) manifest = JSON.parse(raw.toString('utf-8')) as CueBundleManifest;
-			} catch {
-				// Unparseable; `errors` already says so.
-			}
-		}
+		// Only a manifest the validator could read: a raw one with the wrong
+		// shape (`{}`, say) would break whatever displays it.
+		const manifest = result.manifest;
 		return {
 			ok: true,
 			bundlePath,
@@ -203,10 +210,30 @@ function importOptions(
 }
 
 /**
+ * Imports run one at a time, plan through agent hand-off. Two at once could
+ * both merge into the same `.mcp.json` as it was before either wrote, and one
+ * failing would roll its files back over the other's.
+ */
+let importQueue: Promise<unknown> = Promise.resolve();
+
+function oneAtATime<T>(task: () => Promise<T>): Promise<T> {
+	const run = importQueue.then(task, task);
+	importQueue = run.catch(() => undefined);
+	return run;
+}
+
+/**
  * Import a bundle into the app, or with `dryRun` only plan it. A plan lists
  * conflicts; an import refuses them unless `force` is set.
  */
-export async function importBundleIntoApp(
+export function importBundleIntoApp(
+	ctx: CueBundleAppContext,
+	request: CueBundleImportRequest
+): Promise<CueBundleImportOutcome> {
+	return oneAtATime(() => importNow(ctx, request));
+}
+
+async function importNow(
 	ctx: CueBundleAppContext,
 	request: CueBundleImportRequest
 ): Promise<CueBundleImportOutcome> {

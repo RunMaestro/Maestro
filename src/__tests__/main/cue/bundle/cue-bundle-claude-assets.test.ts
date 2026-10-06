@@ -100,6 +100,57 @@ describe('scrubMcpConfig', () => {
 		expect(secrets).toEqual(['GH_TOKEN']);
 	});
 
+	it('scrubs a literal secret that sits beside a reference', () => {
+		const { json, secrets } = scrub({
+			api: {
+				type: 'http',
+				url: 'https://host/mcp?tenant=${TENANT}&api_key=live-secret',
+				headers: { Authorization: 'Bearer ${TOKEN}', 'X-Trace': '${TRACE_ID}-' + GITHUB_PAT },
+			},
+		});
+		expect(json.api.url).toBe('https://host/mcp?tenant=${TENANT}&api_key=${MCP_API_API_KEY}');
+		expect(json.api.headers).toEqual({
+			Authorization: 'Bearer ${TOKEN}',
+			'X-Trace': '${MCP_API_X_TRACE}',
+		});
+		expect(JSON.stringify(json)).not.toContain('live-secret');
+		expect(JSON.stringify(json)).not.toContain(GITHUB_PAT);
+		expect(secrets).toEqual(
+			expect.arrayContaining(['MCP_API_API_KEY', 'MCP_API_X_TRACE', 'TOKEN'])
+		);
+	});
+
+	it('drops secret defaults and keeps harmless ones', () => {
+		const { json } = scrub({
+			svc: {
+				command: 'svc',
+				args: ['--api-key=${KEY:-' + ANTHROPIC_KEY + '}', '--port', '${PORT:-8080}'],
+				env: {
+					GH_TOKEN: '${GH_TOKEN:-' + GITHUB_PAT + '}',
+					DB_URL: '${DB_URL:-postgres://admin:hunter2@db/app}',
+					LOG_LEVEL: '${LOG_LEVEL:-info}',
+				},
+				headers: { Authorization: 'Bearer ${API_TOKEN:-plain-secret-value}' },
+			},
+		});
+		expect(json.svc.args).toEqual(['--api-key=${KEY}', '--port', '${PORT:-8080}']);
+		expect(json.svc.env).toEqual({
+			GH_TOKEN: '${GH_TOKEN}',
+			DB_URL: '${DB_URL}',
+			LOG_LEVEL: '${LOG_LEVEL:-info}',
+		});
+		expect(json.svc.headers.Authorization).toBe('Bearer ${API_TOKEN}');
+	});
+
+	it('keeps URL references as written when it rewrites another part', () => {
+		const { json } = scrub({
+			api: { type: 'sse', url: 'https://${USER_NAME}:${PASS}@host/sse?team=${TEAM}&token=abc' },
+		});
+		expect(json.api.url).toBe(
+			'https://${USER_NAME}:${PASS}@host/sse?team=${TEAM}&token=${MCP_API_TOKEN}'
+		);
+	});
+
 	it('warns about an absolute command path without naming it', () => {
 		const { warnings } = scrub({ local: { command: '/Users/someone/bin/server' } });
 		expect(warnings).toHaveLength(1);

@@ -110,6 +110,8 @@ export function BundleImportSection({ theme, onImported }: BundleImportSectionPr
 		setPlan(null);
 		setFailure(null);
 		setImported(null);
+		// Approval to overwrite covers the conflicts the user saw, not a new plan's.
+		setForce(false);
 		cueBundleService
 			.plan({ bundlePath: inspection.bundlePath, workspaces: folders })
 			.then((outcome) => {

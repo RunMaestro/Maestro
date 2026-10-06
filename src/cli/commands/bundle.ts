@@ -145,22 +145,35 @@ export async function bundleExport(
 
 		const { exportCueBundle } = await import('../../main/cue/bundle/cue-bundle-exporter');
 
+		const throughApp = shouldGoThroughApp(options);
 		let agentId: string | undefined;
 		let agentName: string | undefined;
-		if (options.agent) {
+		if (options.agent && throughApp) {
+			// The app resolves the agent against its own list, which a custom sync
+			// folder keeps out of this data directory. This lookup only names the
+			// default output file, so it may find nothing.
+			try {
+				agentName = readSessionsStoreFile(dataDir).sessions.find(
+					(s) => s.id === options.agent || s.name === options.agent
+				)?.name;
+			} catch {
+				// Unreadable here; the app still has the agents.
+			}
+		} else if (options.agent) {
 			const { sessions } = readSessionsStoreFile(dataDir);
 			agentId = resolveAgentId(options.agent, sessions);
 			agentName = sessions.find((s) => s.id === agentId)?.name;
 		}
 
 		const outputPath = resolveCliPath(
-			options.output ?? defaultOutputName(options.pipeline ?? agentName ?? 'bundle')
+			options.output ??
+				defaultOutputName(options.pipeline ?? agentName ?? options.agent ?? 'bundle')
 		);
 
 		let result: { outputPath: string; size: number; sha256: string; manifest: CueBundleManifest };
-		if (shouldGoThroughApp(options)) {
+		if (throughApp) {
 			const request: CueBundleExportRequest = {
-				agentId,
+				agent: options.agent,
 				pipeline: options.pipeline,
 				outputPath,
 				allowInlineSecrets: options.allowInlineSecrets,

@@ -120,6 +120,43 @@ describe('Claude Code assets in an agent bundle', () => {
 		});
 	});
 
+	it("reads memory from the account the agent runs as, not Maestro's default", async () => {
+		const workAccount = path.join(tmp, 'claude-work');
+		write(path.join(claudeMemoryDir(workAccount, src.root), 'MEMORY.md'), '- work account notes\n');
+		const sessions = JSON.parse(
+			fs.readFileSync(path.join(src.dataDir, 'maestro-sessions.json'), 'utf-8')
+		);
+		sessions.sessions[0].customEnvVars = { CLAUDE_CONFIG_DIR: workAccount };
+		write(path.join(src.dataDir, 'maestro-sessions.json'), JSON.stringify(sessions));
+
+		const { outputPath } = await exportAgent();
+		expect(entriesOf(outputPath).get('claude-memory/app/MEMORY.md')).toBe('- work account notes\n');
+	});
+
+	it('says which account it used when Claude agents in one workspace differ', async () => {
+		const sessions = JSON.parse(
+			fs.readFileSync(path.join(src.dataDir, 'maestro-sessions.json'), 'utf-8')
+		);
+		sessions.sessions.push({
+			id: 'ffffffff-ffff-4fff-8fff-ffffffffffff',
+			name: 'Second',
+			toolType: 'claude-code',
+			cwd: src.root,
+			projectRoot: src.root,
+			customEnvVars: { CLAUDE_CONFIG_DIR: path.join(tmp, 'claude-other') },
+		});
+		write(path.join(src.dataDir, 'maestro-sessions.json'), JSON.stringify(sessions));
+		write(
+			path.join(src.root, '.maestro/cue.yaml'),
+			`subscriptions:\n  - name: a\n    event: time.heartbeat\n    interval_minutes: 60\n    prompt: x\n    agent_id: ${AGENT_ID}\n    pipeline_name: P\n  - name: b\n    event: time.heartbeat\n    interval_minutes: 60\n    prompt: y\n    agent_id: ffffffff-ffff-4fff-8fff-ffffffffffff\n    pipeline_name: P\n`
+		);
+		const { manifest } = await exportAgent({ agentId: undefined, pipeline: 'P' });
+		expect(manifest.agents).toHaveLength(2);
+		expect(manifest.warnings).toEqual(
+			expect.arrayContaining([expect.stringContaining('use different Claude accounts')])
+		);
+	});
+
 	it('leaves the assets out when switched off', async () => {
 		const { outputPath, manifest } = await exportAgent({
 			claudeAssets: { skills: false, mcp: false, memory: false },
@@ -174,6 +211,39 @@ describe('Claude Code assets in an agent bundle', () => {
 			usedBy: ['mcp:app'],
 		});
 	});
+
+	it.skipIf(process.platform === 'win32')(
+		'keeps a skill script executable through export and import',
+		async () => {
+			const script = path.join(src.root, '.claude/skills/triage/scripts/check.sh');
+			write(script, '#!/bin/sh\necho ok\n');
+			fs.chmodSync(script, 0o755);
+			const { outputPath, manifest } = await exportAgent();
+			expect(
+				manifest.files.find(
+					(f) => f.path === 'workspaces/app/.claude/skills/triage/scripts/check.sh'
+				)
+			).toMatchObject({ executable: true });
+			expect(
+				manifest.files.find((f) => f.path === 'workspaces/app/.claude/skills/triage/SKILL.md')
+					?.executable
+			).toBeUndefined();
+
+			const dst = target();
+			await importCueBundle({
+				bundlePath: outputPath,
+				dataDir: dst.dataDir,
+				workspaces: { app: dst.root },
+				runningVersion: '99.0.0',
+				claudeConfigDir: dst.claudeDir,
+			});
+			const imported = path.join(dst.root, '.claude/skills/triage/scripts/check.sh');
+			expect(fs.statSync(imported).mode & 0o111).not.toBe(0);
+			expect(fs.statSync(path.join(dst.root, '.claude/skills/triage/SKILL.md')).mode & 0o111).toBe(
+				0
+			);
+		}
+	);
 
 	it('reports an MCP server that differs as a conflict', async () => {
 		const { outputPath } = await exportAgent();
