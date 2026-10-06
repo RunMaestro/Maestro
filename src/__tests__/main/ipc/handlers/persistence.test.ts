@@ -2175,6 +2175,37 @@ describe('persistence IPC handlers', () => {
 		});
 	});
 	describe('multi-client observed writes', () => {
+		it('broadcasts merged host state instead of stale fields from a remote save', async () => {
+			const baseline = {
+				id: 'shared',
+				name: 'Before',
+				toolType: 'claude-code',
+				cwd: path.join('synthetic', 'before'),
+				state: 'idle',
+				inputMode: 'ai',
+			};
+			mockSessionsStore.get.mockReturnValue([{ ...baseline, name: 'Host renamed', state: 'busy' }]);
+			mockWebServer.getWebClientCount.mockReturnValue(1);
+			const cwd = path.join('synthetic', 'after');
+			await handlers.get('sessions:setMany')!(
+				{ type: 'bridge' },
+				[{ ...baseline, name: 'Stale client rename', inputMode: 'terminal', cwd }],
+				[],
+				[baseline]
+			);
+			const persisted = mockSessionsStore.set.mock.calls.find(([key]) => key === 'sessions')![1][0];
+			expect(persisted).toMatchObject({
+				name: 'Host renamed',
+				state: 'busy',
+				inputMode: 'ai',
+				cwd,
+			});
+			expect(mockWebServer.broadcastSessionStateChange).toHaveBeenCalledWith(
+				'shared',
+				'busy',
+				expect.objectContaining({ name: 'Host renamed', inputMode: 'ai', cwd })
+			);
+		});
 		it.each(['sessions:setMany', 'sessions:setAll'])(
 			'retains host transcript, new tabs, consumed queue and read-state across stale %s',
 			async (channel) => {

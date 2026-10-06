@@ -737,8 +737,8 @@ export function registerPersistenceHandlers(
 
 				const webServer = getWebServer();
 				if (webServer && webServer.getWebClientCount() > 0) {
-					for (const session of updates) {
-						if (removeSet.has(session.id)) continue;
+					for (const session of sessionsToPersist) {
+						if (!touchedIds.has(session.id)) continue;
 						const prev = previousMap.get(session.id);
 						if (prev) {
 							if (
