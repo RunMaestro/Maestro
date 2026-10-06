@@ -35,6 +35,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import { isWindows } from './platformDetection';
 
 /** The variable systemd sets to a service's credentials directory. */
 export const CREDENTIALS_DIRECTORY_ENV_VAR = 'CREDENTIALS_DIRECTORY';
@@ -60,7 +61,11 @@ export type SecretProblem = 'invalid-name' | 'unreadable' | 'not-a-file' | 'too-
 export interface SecretLookupOptions {
 	/** Environment to read `CREDENTIALS_DIRECTORY` and the fallback values from. Defaults to `process.env`. */
 	env?: NodeJS.ProcessEnv;
-	/** Override the `/run/secrets` directory; `null` disables it. Tests use this. */
+	/**
+	 * Override the `/run/secrets` directory; `null` disables it. Tests use this.
+	 * Left unset, it is `/run/secrets` everywhere but Windows, where that path
+	 * would resolve against the current drive (`C:\run\secrets`), so it is off.
+	 */
 	runSecretsDir?: string | null;
 }
 
@@ -123,7 +128,11 @@ export function lookupSecret(name: string, options: SecretLookupOptions = {}): S
 		if (found) return found;
 	}
 	const runSecretsDir =
-		options.runSecretsDir === undefined ? RUN_SECRETS_DIR : options.runSecretsDir;
+		options.runSecretsDir === undefined
+			? isWindows()
+				? null
+				: RUN_SECRETS_DIR
+			: options.runSecretsDir;
 	if (runSecretsDir) {
 		const found = readSecretFile(runSecretsDir, name, 'run-secrets');
 		if (found) return found;
