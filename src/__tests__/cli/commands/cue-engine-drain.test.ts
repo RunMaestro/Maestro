@@ -12,6 +12,29 @@ import * as os from 'os';
 import * as path from 'path';
 import { parseCliSeconds } from '../../../cli/utils/parse';
 
+// systemd-notify, as spawned by the notifier: recorded, exits 0 at once.
+const notifySpawns = vi.hoisted(() => ({
+	args: [] as string[][],
+	/** engine.start / inbox calls seen when each message was spawned. */
+	seen: [] as Array<{ engineStarted: number; inboxStarted: number }>,
+	probe: () => ({ engineStarted: 0, inboxStarted: 0 }),
+}));
+vi.mock('child_process', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('child_process')>();
+	const { EventEmitter } = await import('events');
+	return {
+		...actual,
+		spawn: vi.fn((command: string, args: string[], options: unknown) => {
+			if (command !== 'systemd-notify') return actual.spawn(command, args, options as never);
+			notifySpawns.args.push(args);
+			notifySpawns.seen.push(notifySpawns.probe());
+			const child = new EventEmitter();
+			queueMicrotask(() => child.emit('exit', 0, null));
+			return child;
+		}),
+	};
+});
+
 vi.mock('better-sqlite3', () => ({
 	default: class {
 		close() {}
@@ -104,6 +127,14 @@ beforeEach(() => {
 	vi.clearAllMocks();
 	added = { SIGINT: process.listeners('SIGINT'), SIGTERM: process.listeners('SIGTERM') };
 	exits = [];
+	notifySpawns.args = [];
+	notifySpawns.seen = [];
+	notifySpawns.probe = () => ({
+		engineStarted: engine.start.mock.calls.length,
+		inboxStarted: vi.mocked(startCueTriggerInbox).mock.calls.length,
+	});
+	delete process.env.NOTIFY_SOCKET;
+	delete process.env.WATCHDOG_USEC;
 	vi.spyOn(console, 'log').mockImplementation(() => {});
 	vi.spyOn(console, 'error').mockImplementation(() => {});
 	vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -171,5 +202,31 @@ describe('--drain-timeout parsing', () => {
 		for (const bad of ['-1', '1.5', 'abc', '', '9e9999']) {
 			expect(() => parseCliSeconds(bad, '--drain-timeout')).toThrow(/--drain-timeout/);
 		}
+	});
+});
+
+describe('cue engine start under systemd', () => {
+	it('sends READY after the engine and inbox start, then STOPPING at the drain', async () => {
+		process.env.NOTIFY_SOCKET = '/run/fake-notify';
+		await startEngine();
+		expect(process.env.NOTIFY_SOCKET).toBeUndefined();
+		await vi.waitFor(() => expect(notifySpawns.args).toHaveLength(1));
+		expect(notifySpawns.args[0][0]).toBe('READY=1');
+		expect(notifySpawns.args[0]).toContain(`MAINPID=${process.pid}`);
+		// Sent only once the engine was started and the trigger inbox armed.
+		expect(notifySpawns.seen[0]).toEqual({ engineStarted: 1, inboxStarted: 1 });
+
+		newListeners('SIGTERM')[0]('SIGTERM');
+		await vi.waitFor(() =>
+			expect(notifySpawns.args.map((a) => a[0])).toEqual(['READY=1', 'STOPPING=1'])
+		);
+	});
+
+	it('spawns no systemd-notify without NOTIFY_SOCKET', async () => {
+		await startEngine();
+		newListeners('SIGTERM')[0]('SIGTERM');
+		drainControl.resolve(false);
+		await vi.waitFor(() => expect(exits).toEqual([0]));
+		expect(notifySpawns.args).toEqual([]);
 	});
 });

@@ -27,6 +27,7 @@ import {
 	createEventLoopDelaySource,
 } from '../../main/cue/cue-engine-health';
 import type { CueStatusServerHandle } from '../../main/cue/cue-status-server';
+import { createSystemdNotifier, watchdogIntervalMs } from '../../main/cue/cue-systemd-notify';
 import {
 	consoleCueLog,
 	createStandaloneCueEngine,
@@ -71,6 +72,9 @@ export interface CueEngineStartOptions {
 	 */
 	drainTimeout?: number;
 }
+
+/** Longest the exit waits for queued systemd messages (one `systemd-notify` is ~ms). */
+const SYSTEMD_FLUSH_ON_EXIT_MS = 2_000;
 
 /** Default `--drain-timeout`: with the stop ladder's grace it fits systemd's TimeoutStopSec=120. */
 export const DEFAULT_DRAIN_TIMEOUT_SECONDS = 90;
@@ -226,17 +230,41 @@ export async function cueEngineStart(options: CueEngineStartOptions = {}): Promi
 	// The one state object every health surface reads (cue-engine-health.ts).
 	// The status server, the lock heartbeat (onLockLost) and shutdown all
 	// update it; nothing here keeps a parallel flag.
+	// Under a systemd watchdog the loop is measured even without a status
+	// server: the watchdog pings only while /healthz's rule holds.
+	const systemdWatchdog =
+		Boolean(process.env.NOTIFY_SOCKET) &&
+		watchdogIntervalMs(process.env.WATCHDOG_USEC, process.env.WATCHDOG_PID, process.pid) !== null;
 	const health = createCueEngineHealth({
 		version: options.version ?? 'unknown',
 		dataDir: dataDir.dir,
 		refreshReadiness: computeCueReadiness,
-		eventLoop: options.statusPort !== undefined ? createEventLoopDelaySource() : undefined,
+		eventLoop:
+			options.statusPort !== undefined || systemdWatchdog
+				? createEventLoopDelaySource()
+				: undefined,
 	});
 	health.setReadiness(readiness);
+
+	// systemd (Type=notify): READY, WATCHDOG and STOPPING follow the health
+	// object. Null, and nothing ever spawned, without NOTIFY_SOCKET. Created
+	// before the engine so NOTIFY_SOCKET is gone from the environment before
+	// any agent can inherit it.
+	const notifier = createSystemdNotifier({ env: process.env, health, onLog: log });
+	if (notifier) {
+		notifier.start();
+		log(
+			'info',
+			notifier.watchdogIntervalMs !== null
+				? `systemd: notifications on, watchdog ping every ${notifier.watchdogIntervalMs / 1000}s while healthy`
+				: 'systemd: notifications on (no watchdog configured)'
+		);
+	}
 
 	const engine = await createStandaloneCueEngine({
 		onLog: log,
 		onLockLost: () => health.markLockLost(),
+		onDrainPhase: (phase, message) => health.noteDrainPhase(phase, message),
 	});
 
 	// The status server binds BEFORE the engine starts, so a taken port fails
@@ -298,6 +326,9 @@ export async function cueEngineStart(options: CueEngineStartOptions = {}): Promi
 				health.markStopped();
 				if (statusServer) setCueEngineLockStatusPort(undefined);
 				await closeStatusServer();
+				notifier?.stop();
+				// The drain's last STATUS lines are still queued behind STOPPING.
+				await notifier?.flush(SYSTEMD_FLUSH_ON_EXIT_MS);
 				process.exit(report.forced ? 1 : 0);
 			})
 			.catch((err) => {
@@ -326,7 +357,9 @@ export async function cueEngineStart(options: CueEngineStartOptions = {}): Promi
 		} else {
 			log('error', conflictMessage);
 		}
+		// The notifier reports STATUS=Stopped (no READY) and the unit fails.
 		health.markStopped();
+		notifier?.stop();
 		if (statusServer) setCueEngineLockStatusPort(undefined);
 		await closeStatusServer();
 		process.exitCode = 1;

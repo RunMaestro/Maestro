@@ -162,6 +162,12 @@ export interface CueEngineDeps {
 	 * second shutdown signal runs.
 	 */
 	killAllCueProcessesNow?: () => void;
+	/**
+	 * Told each drain phase with its log message (`drain`). The standalone
+	 * runner forwards it to its health object, which reports it to systemd as
+	 * STATUS=. Metadata only: counts and phase names, no run content.
+	 */
+	onDrainPhase?: (phase: CueDrainPhase, message: string) => void;
 }
 
 /** One phase of `CueEngine.drain`, as logged (`engineDrain` payload). */
@@ -885,6 +891,11 @@ export class CueEngine {
 			drainPhase: phase,
 			...(count !== undefined ? { count } : {}),
 		} satisfies CueLogPayload);
+		try {
+			this.deps.onDrainPhase?.(phase, message);
+		} catch {
+			// A reporting hook must not break the drain.
+		}
 	}
 
 	private async runDrain(timeoutMs: number): Promise<CueDrainReport> {

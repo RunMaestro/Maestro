@@ -240,6 +240,23 @@ describe('CueEngine.drain', () => {
 		expect(drainLines(onLog)).toEqual(['disarmed', 'waiting', 'persisted', 'finished']);
 	});
 
+	it('tells onDrainPhase each phase with its message', async () => {
+		const onDrainPhase = vi.fn();
+		const { engine, exec } = boot({ onDrainPhase });
+		await vi.advanceTimersByTimeAsync(0);
+		const drained = engine.drain({ timeoutMs: 60_000 });
+		exec.finish('tick');
+		exec.finish('beat-b');
+		await drained;
+		expect(onDrainPhase.mock.calls.map((c) => c[0])).toEqual([
+			'disarmed',
+			'waiting',
+			'persisted',
+			'finished',
+		]);
+		expect(onDrainPhase.mock.calls[3][1]).toMatch(/2 run\(s\) finished/);
+	});
+
 	it('runs each deferred successor exactly once on the next start, even after long downtime', async () => {
 		const first = boot();
 		await vi.advanceTimersByTimeAsync(0);

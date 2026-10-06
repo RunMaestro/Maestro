@@ -235,6 +235,8 @@ export interface StandaloneCueEngineOptions {
 	onLog?: StandaloneCueLog;
 	/** See `CueEngineDeps.onLockLost`. */
 	onLockLost?: () => void;
+	/** See `CueEngineDeps.onDrainPhase`. */
+	onDrainPhase?: CueEngineDeps['onDrainPhase'];
 }
 
 /** Build the full `CueEngineDeps` for a standalone runner. Exported separately from the engine construction so a caller (tests, `inspect`) can build deps without booting a real engine loop. */
@@ -254,6 +256,7 @@ export function buildStandaloneCueEngineDeps(
 		onLog,
 		runnerMode: 'standalone',
 		...(options.onLockLost ? { onLockLost: options.onLockLost } : {}),
+		...(options.onDrainPhase ? { onDrainPhase: options.onDrainPhase } : {}),
 		// The drain's process accounting. Before the first run fires the
 		// executors are not loaded, so there is nothing alive to count or kill.
 		countLiveCueProcesses: () => settledExecutors?.countLiveCueProcesses() ?? 0,
