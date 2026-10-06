@@ -311,6 +311,8 @@ interface PlannedWrite {
 	/** The target's bytes at plan time, or null when it did not exist. */
 	before: Buffer | null;
 	via: 'file' | 'cue-yaml' | 'layout' | 'agent-configs';
+	/** Set the executable bit after writing (a skill's script). */
+	executable?: boolean;
 }
 
 interface InternalPlan {
@@ -629,7 +631,8 @@ async function buildPlan(options: CueBundleImportOptions): Promise<InternalPlan>
 		kind: CueBundleImportFileKind,
 		source: string,
 		target: string,
-		bytes: Buffer
+		bytes: Buffer,
+		executable = false
 	) => {
 		const before = fileBefore(target);
 		let action: CueBundleImportFile['action'] = 'create';
@@ -649,7 +652,17 @@ async function buildPlan(options: CueBundleImportOptions): Promise<InternalPlan>
 		}
 		files.push({ kind, source, target, action });
 		plannedTargets.add(target);
-		if (action !== 'unchanged') writes.push({ target, content: bytes, before, via: 'file' });
+		// Same bytes but missing its executable bit still needs the write's chmod.
+		const lacksExec = executable && before !== null && (fs.statSync(target).mode & 0o111) === 0;
+		if (action !== 'unchanged' || lacksExec) {
+			writes.push({
+				target,
+				content: bytes,
+				before,
+				via: 'file',
+				...(executable ? { executable } : {}),
+			});
+		}
 	};
 
 	/**
@@ -887,7 +900,13 @@ async function buildPlan(options: CueBundleImportOptions): Promise<InternalPlan>
 			continue;
 		}
 		if (ws && roots.has(ws[1])) {
-			planFile('workspace', source, containedTarget(roots.get(ws[1])!, ws[2], source), bytes);
+			planFile(
+				'workspace',
+				source,
+				containedTarget(roots.get(ws[1])!, ws[2], source),
+				bytes,
+				entry.executable === true
+			);
 			continue;
 		}
 		const memory = new RegExp(`^${CUE_BUNDLE_CLAUDE_MEMORY_DIR}/([^/]+)/([^/]+)$`).exec(source);
@@ -1292,7 +1311,10 @@ export async function importCueBundle(
 			else if (write.via === 'layout') savePipelineLayout(internal.layout!, plan.dataDir);
 			else if (write.via === 'agent-configs') {
 				await writeAgentConfigsStoreFile(plan.dataDir, internal.agentConfigsData!);
-			} else await atomicWriteFile(write.target, write.content as Buffer);
+			} else {
+				await atomicWriteFile(write.target, write.content as Buffer);
+				if (write.executable) fs.chmodSync(write.target, 0o755);
+			}
 		}
 		// Agents last: until this write lands, nothing points at the files above.
 		if (options.host) {

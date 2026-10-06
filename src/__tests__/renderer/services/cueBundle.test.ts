@@ -43,7 +43,8 @@ describe('applyImportedAgents', () => {
 					id: 'e1',
 					name: 'Renamed',
 					toolType: 'codex',
-					cwd: '/new',
+					// Same folder: a working agent may be renamed or retuned, just not moved.
+					cwd: '/old',
 					customModel: 'gpt-5',
 					aiTabs: [],
 					state: 'idle',
@@ -53,7 +54,7 @@ describe('applyImportedAgents', () => {
 
 		const sessions = useSessionStore.getState().sessions;
 		const updated = sessions.find((s) => s.id === 'e1')!;
-		expect(updated).toMatchObject({ name: 'Renamed', cwd: '/new', customModel: 'gpt-5' });
+		expect(updated).toMatchObject({ name: 'Renamed', cwd: '/old', customModel: 'gpt-5' });
 		// Not import fields: the running agent keeps its own.
 		expect(updated.aiTabs).toEqual([{ id: 'tab-1' }]);
 		expect(updated.state).toBe('busy');
@@ -79,6 +80,94 @@ describe('applyImportedAgents', () => {
 			updated: [],
 		});
 		expect(useSessionStore.getState().sessions.filter((s) => s.id === 'e1')).toHaveLength(1);
+	});
+});
+
+describe('applyImportedAgents on an existing agent', () => {
+	const agent = (overrides: Record<string, unknown> = {}) =>
+		({
+			id: 'e1',
+			name: 'Old name',
+			toolType: 'codex',
+			cwd: '/old',
+			projectRoot: '/old',
+			fullPath: '/old',
+			state: 'idle',
+			aiPid: 0,
+			customPath: '/usr/local/bin/codex',
+			fileTree: [{ name: 'stale' }],
+			isGitRepo: true,
+			aiTabs: [{ id: 'tab-1', agentSessionId: 'codex-thread-1', logs: [{ text: 'hi' }] }],
+			...overrides,
+		}) as unknown as Session;
+
+	it('moves it the way the app does and parks resume tokens on a provider switch', async () => {
+		useSessionStore.setState({ sessions: [agent()] });
+		await applyImportedAgents({
+			created: [],
+			updated: [
+				{
+					id: 'e1',
+					name: 'Old name',
+					toolType: 'claude-code',
+					cwd: '/new',
+					projectRoot: '/new',
+					fullPath: '/new',
+				} as unknown as SessionInfo,
+			],
+		});
+		const s = useSessionStore.getState().sessions[0];
+		expect(s).toMatchObject({ toolType: 'claude-code', cwd: '/new', projectRoot: '/new' });
+		// What described the old folder is gone.
+		expect(s.fileTree).toEqual([]);
+		expect(s.isGitRepo).toBe(false);
+		// The old provider's resume token and binary do not reach the new provider.
+		expect(s.aiTabs[0].agentSessionId).toBeNull();
+		expect(s.aiTabs[0].providerSessions?.codex?.agentSessionId).toBe('codex-thread-1');
+		expect(s.aiTabs[0].logs).toEqual([{ text: 'hi' }]);
+		expect(s.customPath).toBeUndefined();
+	});
+
+	it('refuses to move a working agent and changes nothing', async () => {
+		const busy = agent({ state: 'busy' });
+		useSessionStore.setState({ sessions: [busy] });
+		await expect(
+			applyImportedAgents({
+				created: [{ id: 'n9', name: 'New', toolType: 'codex', cwd: '/n' } as SessionInfo],
+				updated: [
+					{
+						id: 'e1',
+						name: 'Old name',
+						toolType: 'codex',
+						cwd: '/elsewhere',
+						projectRoot: '/elsewhere',
+					} as unknown as SessionInfo,
+				],
+			})
+		).rejects.toThrow('is working');
+		expect(useSessionStore.getState().sessions).toEqual([busy]);
+		expect(window.maestro.sessions.setMany).not.toHaveBeenCalled();
+	});
+
+	it('puts the agents back when the save fails', async () => {
+		const original = agent();
+		useSessionStore.setState({ sessions: [original] });
+		vi.mocked(window.maestro.sessions.setMany).mockResolvedValueOnce(false);
+		await expect(
+			applyImportedAgents({
+				created: [{ id: 'n8', name: 'New', toolType: 'codex', cwd: '/n' } as SessionInfo],
+				updated: [
+					{
+						id: 'e1',
+						name: 'Renamed',
+						toolType: 'codex',
+						cwd: '/old',
+						projectRoot: '/old',
+					} as unknown as SessionInfo,
+				],
+			})
+		).rejects.toThrow('could not be saved');
+		expect(useSessionStore.getState().sessions).toEqual([original]);
 	});
 });
 
