@@ -61,6 +61,7 @@ import {
 } from './commands/cue-pipeline';
 import {
 	cueEngineStart,
+	cueEngineCheck,
 	cueEngineStop,
 	cueEngineStatus,
 	cueEngineInspect,
@@ -1153,7 +1154,23 @@ cueEngine
 			.choices(['text', 'json'])
 			.default('text')
 	)
+	.option(
+		'--require-ready',
+		'Refuse to start (exit 1, nothing armed) when the readiness check finds any gap; see "cue engine check"'
+	)
 	.action(cueEngineStart);
+
+cueEngine
+	.command('check')
+	.description(
+		'Check that every agent, secret, workspace, cue.yaml and tool the engine needs is present; list every gap (exit 1 when not ready)'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.option(
+		'--data-dir <path>',
+		'Maestro data directory to use (overrides MAESTRO_USER_DATA; must already exist)'
+	)
+	.action(cueEngineCheck);
 
 cueEngine
 	.command('stop')

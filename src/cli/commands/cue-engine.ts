@@ -30,7 +30,7 @@ import {
 	type StandaloneCueLog,
 } from '../services/cue-standalone-engine';
 import { startCueTriggerInbox } from '../services/cue-trigger-inbox';
-import { readSessions } from '../services/storage';
+import { readAgentConfigs, readSessions, readSshRemotes } from '../services/storage';
 import { SqliteUnavailableError } from '../utils/native-sqlite';
 import {
 	applyDataDirOption,
@@ -38,11 +38,17 @@ import {
 	requireDataDirOrExit,
 } from '../services/data-dir-option';
 import { logger } from '../../main/utils/logger';
+import type { CueReadinessReport } from '../../main/cue/cue-readiness';
 import { getAgentDisplayName } from '../../shared/agentMetadata';
 import { humanizeDuration } from '../../shared/duration';
 
 export interface CueEngineStartOptions {
 	json?: boolean;
+	/**
+	 * Refuse to start, before the lock or any trigger is armed, when the
+	 * readiness check finds a gap (see `cue-readiness.ts`).
+	 */
+	requireReady?: boolean;
 	/** Explicit data directory; wins over MAESTRO_USER_DATA (see data-dir-option.ts). */
 	dataDir?: string;
 	/** `text` (default) or `json`: one JSON object per log line, on stderr. */
@@ -127,6 +133,44 @@ async function statusPayloadOrReport(options: {
 }
 
 /**
+ * Run the readiness check over the data directory this command resolved.
+ *
+ * Dynamic import: the checker reaches the Cue config loader and the provider
+ * probes, which a CLI invoked for an unrelated verb should not load (the same
+ * reason `cue-standalone-engine.ts` defers its executors).
+ */
+async function computeCueReadiness(): Promise<CueReadinessReport> {
+	const { checkCueReadiness } = await import('../../main/cue/cue-readiness');
+	return checkCueReadiness({
+		sessions: readSessions(),
+		agentConfigs: readAgentConfigs(),
+		sshRemotes: readSshRemotes(),
+	});
+}
+
+/**
+ * Log each readiness gap as its own line: names, paths and ids only, so a
+ * JSON log line carries the agent and subscription as indexed fields.
+ */
+function logReadiness(report: CueReadinessReport, log: StandaloneCueLog, level: string): void {
+	if (report.ready) {
+		log(
+			'info',
+			`Ready: ${report.agents} agent(s), ${report.workspaces} workspace(s), ${report.subscriptions} subscription(s) checked, no gaps.`
+		);
+		return;
+	}
+	for (const gap of report.gaps) {
+		log(level, `Not ready [${gap.kind}]: ${gap.message}`, {
+			type: 'readinessGap',
+			...(gap.agentId ? { sessionId: gap.agentId } : {}),
+			...(gap.subscription ? { subscriptionName: gap.subscription } : {}),
+		});
+	}
+	log(level, `Not ready: ${report.gaps.length} gap(s).`);
+}
+
+/**
  * Start the standalone engine in THIS process and block until interrupted.
  * `CueEngine.start()` acquires the cross-process lock itself
  * (`cue-engine-lock.ts`) and simply no-ops (with a logged error) if another
@@ -146,6 +190,19 @@ export async function cueEngineStart(options: CueEngineStartOptions = {}): Promi
 	requireDataDirOrExit({ json: options.json, log });
 	log('info', `Data directory: ${dataDir.dir} (from ${describeDataDirSource(dataDir.source)})`);
 	await requireSqliteOrExit(options, log);
+
+	// Readiness, before the lock, the trigger inbox or any trigger is armed.
+	// Always computed (a server's status endpoint reports it); only
+	// --require-ready turns a gap into a refusal.
+	const readiness = await computeCueReadiness();
+	logReadiness(readiness, log, options.requireReady ? 'error' : 'warn');
+	if (options.requireReady && !readiness.ready) {
+		if (options.json) {
+			console.log(JSON.stringify({ started: false, code: 'NOT_READY', readiness }, null, 2));
+		}
+		process.exit(1);
+	}
+
 	const engine = await createStandaloneCueEngine({ onLog: log });
 
 	let shuttingDown = false;
@@ -193,7 +250,15 @@ export async function cueEngineStart(options: CueEngineStartOptions = {}): Promi
 	);
 
 	if (options.json) {
-		console.log(JSON.stringify({ started: true, pid: process.pid, dataDir: dataDir.dir }));
+		console.log(
+			JSON.stringify({
+				started: true,
+				pid: process.pid,
+				dataDir: dataDir.dir,
+				ready: readiness.ready,
+				gaps: readiness.gaps.length,
+			})
+		);
 	} else {
 		const sessionCount = readSessions().length;
 		log(
@@ -206,6 +271,29 @@ export async function cueEngineStart(options: CueEngineStartOptions = {}): Promi
 	// Block forever - the process stays alive on the SIGINT/SIGTERM
 	// listeners above until shutdown() calls process.exit().
 	await new Promise<void>(() => {});
+}
+
+export interface CueEngineCheckOptions {
+	json?: boolean;
+	dataDir?: string;
+}
+
+/**
+ * The readiness check alone: what `cue engine start --require-ready` would
+ * refuse on, without starting anything. Meant for right after `bundle import`.
+ * Exit 0 when ready, 1 with every gap listed when not. Needs no SQLite.
+ */
+export async function cueEngineCheck(options: CueEngineCheckOptions = {}): Promise<void> {
+	applyDataDirOption(options.dataDir);
+	requireDataDirOrExit(options);
+	const { formatCueReadiness } = await import('../../main/cue/cue-readiness');
+	const report = await computeCueReadiness();
+	if (options.json) {
+		console.log(JSON.stringify(report, null, 2));
+	} else {
+		for (const line of formatCueReadiness(report)) console.log(line);
+	}
+	if (!report.ready) process.exitCode = 1;
 }
 
 /**

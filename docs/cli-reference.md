@@ -846,11 +846,21 @@ Run Maestro Cue unattended (no desktop app) and control that runner
 
 Start the Cue engine in this process and block until Ctrl+C / stopped
 
-| Option                  | Description                                                                     | Default  |
-| ----------------------- | ------------------------------------------------------------------------------- | -------- |
-| `--json`                | Print machine-readable start/failure status                                     | -        |
-| `--data-dir <path>`     | Maestro data directory to use (overrides MAESTRO_USER_DATA; must already exist) | -        |
-| `--log-format <format>` | Log line format: text, or one JSON object per line on stderr                    | `"text"` |
+| Option                  | Description                                                                                            | Default  |
+| ----------------------- | ------------------------------------------------------------------------------------------------------ | -------- |
+| `--json`                | Print machine-readable start/failure status                                                            | -        |
+| `--data-dir <path>`     | Maestro data directory to use (overrides MAESTRO_USER_DATA; must already exist)                        | -        |
+| `--log-format <format>` | Log line format: text, or one JSON object per line on stderr                                           | `"text"` |
+| `--require-ready`       | Refuse to start (exit 1, nothing armed) when the readiness check finds any gap; see "cue engine check" | -        |
+
+## `maestro-cli cue engine check`
+
+Check that every agent, secret, workspace, cue.yaml and tool the engine needs is present; list every gap (exit 1 when not ready)
+
+| Option              | Description                                                                     | Default |
+| ------------------- | ------------------------------------------------------------------------------- | ------- |
+| `--json`            | Output as JSON (for scripting)                                                  | -       |
+| `--data-dir <path>` | Maestro data directory to use (overrides MAESTRO_USER_DATA; must already exist) | -       |
 
 ## `maestro-cli cue engine stop`
 

@@ -247,54 +247,55 @@ changed with this: no row in Covered or Open gaps moved.
 
 ## Covered
 
-| Point-and-click action                                                    | CLI                                                                                                                     |
-| ------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| Bookmark / unbookmark an agent (Cmd+Shift+B)                              | `bookmark` / `unbookmark`, or `update-agent --bookmark`                                                                 |
-| Create / rename / remove an agent                                         | `create-agent`, `rename-agent`, `remove-agent`                                                                          |
-| Edit Agent modal fields                                                   | `update-agent`, `settings agent set`                                                                                    |
-| Switch an agent's provider                                                | `update-agent --provider --force`                                                                                       |
-| Move an agent to a group                                                  | `update-agent --group`                                                                                                  |
-| Change working directory                                                  | `update-agent --cwd`                                                                                                    |
-| SSH remote execution config                                               | `update-agent --ssh-remote / --ssh-cwd`, `create-ssh-remote`                                                            |
-| Edit an SSH remote, incl. its `ssh -o` list                               | `update-ssh-remote --ssh-option / --clear-ssh-options`                                                                  |
-| Focus an agent, switch AI/Shell mode                                      | `focus-agent`, `switch-mode`                                                                                            |
-| Create / rename / remove a group                                          | `create-group`, `rename-group`, `remove-group`                                                                          |
-| Group icon, color, and nesting                                            | `create-group --icon/--color/--parent`, `update-group`                                                                  |
-| Create a worktree agent                                                   | `create-worktree`                                                                                                       |
-| New / close / rename a tab                                                | `tab new`, `tab close`, `tab rename`                                                                                    |
-| Star a tab (Cmd+Shift+S)                                                  | `tab star` / `tab unstar`                                                                                               |
-| Mark a tab unread                                                         | `tab unread` / `tab read`                                                                                               |
-| Toggle Save to History                                                    | `tab save-to-history`                                                                                                   |
-| Composer chips: thinking, read-only access                                | `tab thinking` (off/on/sticky/cycle), `tab read-only`                                                                   |
-| Model / effort pills on one tab                                           | `tab model`, `tab effort` (`inherit` clears the override)                                                               |
-| Enter-to-send chip                                                        | `tab enter-to-send`                                                                                                     |
-| Read one tab's settings back                                              | `tab show`, or `session list --json`                                                                                    |
-| Move Tab to First / Last                                                  | `tab move <tab-id> first\|last\|<index>`                                                                                |
-| Send a message, or run a shell command                                    | `send`, `dispatch`, `send-terminal`                                                                                     |
-| Consult another agent (`@mention`)                                        | `ask <agent> "<question>" --from <caller>`                                                                              |
-| Open a file / URL / terminal tab                                          | `open-file`, `open-browser`, `open-terminal`                                                                            |
-| Open a modal or dashboard                                                 | `open <surface> [--tab]` (registry in `src/shared/uiSurfaces.ts`)                                                       |
-| Auto Run: start, stop, resume, skip, abort                                | `auto-run`, `stop-auto-run`, `resume-auto-run`, ...                                                                     |
-| Settings, theme, Encore features                                          | `settings`, `theme`, `set-theme`, `encore`                                                                              |
-| Toasts and center flashes                                                 | `notify toast`, `notify flash`                                                                                          |
-| Save a pasted chat image (right-click)                                    | `image save` (`image list` to find it)                                                                                  |
-| Cue subscriptions and scheduled tasks                                     | `cue trigger`, `cue schedule`, `cue pipeline`                                                                           |
-| Snooze a tab, list / wake / dismiss what is parked                        | `snooze tab`, `snooze list`, `unsnooze`, `snooze dismiss`, `snooze reschedule`, `snooze history`                        |
-| Send Feedback modal (open / file / +1)                                    | `open feedback`, `feedback auth\|search\|submit\|subscribe`                                                             |
-| Feedback: screenshots, support package box                                | `feedback submit --attach <png...> --support-package`                                                                   |
-| Feedback: Running as (account picker)                                     | `feedback accounts [--use <key> \| --clear]`                                                                            |
-| Feedback: Log in to GitHub / Check Again                                  | `feedback login`, `feedback auth --fresh`                                                                               |
-| Create Debug Package (support package)                                    | `support-package -o <dir> [--no-logs ...]`                                                                              |
-| Start / End Performance Profiling                                         | `profiling start`, `profiling status`, `profiling stop -o <zip>`                                                        |
-| Cue dashboard: subscription on/off switch                                 | `cue enable <sub>`, `cue disable <sub>` (any event type)                                                                |
-| Cue dashboard: activity log                                               | `cue activity [-a <agent>] [-n <limit>]`                                                                                |
-| Auto Run panel: progress                                                  | `auto-run-status -a <agent>`                                                                                            |
-| Auto Run panel: Change folder                                             | `auto-run-folder <path> -a <agent>`                                                                                     |
-| Playbook Exchange: browse, README, install                                | `marketplace list`, `marketplace show <id>`, `marketplace import`                                                       |
-| Export a Cue pipeline or agent as a bundle (CLI first; no UI surface yet) | `bundle export --pipeline <name>` / `bundle export --agent <name>`                                                      |
-| Check a Cue bundle before import (CLI first; no UI surface yet)           | `bundle validate <zip> [--check-env] [--json]`                                                                          |
-| Preview a Cue bundle's contents (CLI first; no UI surface yet)            | `bundle inspect <zip> [--json]`                                                                                         |
-| Import a Cue bundle into a data dir (CLI first; no UI surface yet)        | `bundle import <zip> -w <key=path> [--agent-path <tool=path>] [--dry-run] [--force] [--reject-shell-commands] [--json]` |
+| Point-and-click action                                                         | CLI                                                                                                                     |
+| ------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------- |
+| Bookmark / unbookmark an agent (Cmd+Shift+B)                                   | `bookmark` / `unbookmark`, or `update-agent --bookmark`                                                                 |
+| Create / rename / remove an agent                                              | `create-agent`, `rename-agent`, `remove-agent`                                                                          |
+| Edit Agent modal fields                                                        | `update-agent`, `settings agent set`                                                                                    |
+| Switch an agent's provider                                                     | `update-agent --provider --force`                                                                                       |
+| Move an agent to a group                                                       | `update-agent --group`                                                                                                  |
+| Change working directory                                                       | `update-agent --cwd`                                                                                                    |
+| SSH remote execution config                                                    | `update-agent --ssh-remote / --ssh-cwd`, `create-ssh-remote`                                                            |
+| Edit an SSH remote, incl. its `ssh -o` list                                    | `update-ssh-remote --ssh-option / --clear-ssh-options`                                                                  |
+| Focus an agent, switch AI/Shell mode                                           | `focus-agent`, `switch-mode`                                                                                            |
+| Create / rename / remove a group                                               | `create-group`, `rename-group`, `remove-group`                                                                          |
+| Group icon, color, and nesting                                                 | `create-group --icon/--color/--parent`, `update-group`                                                                  |
+| Create a worktree agent                                                        | `create-worktree`                                                                                                       |
+| New / close / rename a tab                                                     | `tab new`, `tab close`, `tab rename`                                                                                    |
+| Star a tab (Cmd+Shift+S)                                                       | `tab star` / `tab unstar`                                                                                               |
+| Mark a tab unread                                                              | `tab unread` / `tab read`                                                                                               |
+| Toggle Save to History                                                         | `tab save-to-history`                                                                                                   |
+| Composer chips: thinking, read-only access                                     | `tab thinking` (off/on/sticky/cycle), `tab read-only`                                                                   |
+| Model / effort pills on one tab                                                | `tab model`, `tab effort` (`inherit` clears the override)                                                               |
+| Enter-to-send chip                                                             | `tab enter-to-send`                                                                                                     |
+| Read one tab's settings back                                                   | `tab show`, or `session list --json`                                                                                    |
+| Move Tab to First / Last                                                       | `tab move <tab-id> first\|last\|<index>`                                                                                |
+| Send a message, or run a shell command                                         | `send`, `dispatch`, `send-terminal`                                                                                     |
+| Consult another agent (`@mention`)                                             | `ask <agent> "<question>" --from <caller>`                                                                              |
+| Open a file / URL / terminal tab                                               | `open-file`, `open-browser`, `open-terminal`                                                                            |
+| Open a modal or dashboard                                                      | `open <surface> [--tab]` (registry in `src/shared/uiSurfaces.ts`)                                                       |
+| Auto Run: start, stop, resume, skip, abort                                     | `auto-run`, `stop-auto-run`, `resume-auto-run`, ...                                                                     |
+| Settings, theme, Encore features                                               | `settings`, `theme`, `set-theme`, `encore`                                                                              |
+| Toasts and center flashes                                                      | `notify toast`, `notify flash`                                                                                          |
+| Save a pasted chat image (right-click)                                         | `image save` (`image list` to find it)                                                                                  |
+| Cue subscriptions and scheduled tasks                                          | `cue trigger`, `cue schedule`, `cue pipeline`                                                                           |
+| Snooze a tab, list / wake / dismiss what is parked                             | `snooze tab`, `snooze list`, `unsnooze`, `snooze dismiss`, `snooze reschedule`, `snooze history`                        |
+| Send Feedback modal (open / file / +1)                                         | `open feedback`, `feedback auth\|search\|submit\|subscribe`                                                             |
+| Feedback: screenshots, support package box                                     | `feedback submit --attach <png...> --support-package`                                                                   |
+| Feedback: Running as (account picker)                                          | `feedback accounts [--use <key> \| --clear]`                                                                            |
+| Feedback: Log in to GitHub / Check Again                                       | `feedback login`, `feedback auth --fresh`                                                                               |
+| Create Debug Package (support package)                                         | `support-package -o <dir> [--no-logs ...]`                                                                              |
+| Start / End Performance Profiling                                              | `profiling start`, `profiling status`, `profiling stop -o <zip>`                                                        |
+| Cue dashboard: subscription on/off switch                                      | `cue enable <sub>`, `cue disable <sub>` (any event type)                                                                |
+| Cue dashboard: activity log                                                    | `cue activity [-a <agent>] [-n <limit>]`                                                                                |
+| Auto Run panel: progress                                                       | `auto-run-status -a <agent>`                                                                                            |
+| Auto Run panel: Change folder                                                  | `auto-run-folder <path> -a <agent>`                                                                                     |
+| Playbook Exchange: browse, README, install                                     | `marketplace list`, `marketplace show <id>`, `marketplace import`                                                       |
+| Export a Cue pipeline or agent as a bundle (CLI first; no UI surface yet)      | `bundle export --pipeline <name>` / `bundle export --agent <name>`                                                      |
+| Check a Cue bundle before import (CLI first; no UI surface yet)                | `bundle validate <zip> [--check-env] [--json]`                                                                          |
+| Preview a Cue bundle's contents (CLI first; no UI surface yet)                 | `bundle inspect <zip> [--json]`                                                                                         |
+| Import a Cue bundle into a data dir (CLI first; no UI surface yet)             | `bundle import <zip> -w <key=path> [--agent-path <tool=path>] [--dry-run] [--force] [--reject-shell-commands] [--json]` |
+| Check a data dir is ready to run Cue unattended (CLI first; no UI surface yet) | `cue engine check [--data-dir <path>] [--json]`; `cue engine start --require-ready` refuses on the same report          |
 
 ## Open gaps
 
@@ -368,6 +369,10 @@ a design constraint; they are simply not built yet.
     the agent records to go through the renderer's session store instead of
     the file, with the rest of the plan (files, cue.yaml, playbooks, layout,
     binary paths) written as today.
+15. **Cue readiness in the desktop.** `cue engine check` has no UI. The report
+    is a value (`checkCueReadiness()` in `src/main/cue/cue-readiness.ts`), so a
+    Cue modal panel could render its gaps directly; it is CLI first because it
+    exists for unattended servers, where nobody opens the desktop.
 
 ### Audit backlog (2026-09-27)
 

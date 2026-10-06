@@ -30,7 +30,7 @@ Verified on 2026-10-05 with real Claude Code and OpenCode turns, and the Cue eng
 `agent-run *`, `campaign *`, `list agents|groups|playbooks|sessions|ssh-remotes`, `show agent|playbook`, `clean playbooks`, `settings *` and `settings agent *`, `display *`, `create|update|remove|test-ssh-remote`, `cue schedule`, `director-notes history`, `prompts list|get`, `image list|save` (the file-tree refresh after a save is skipped silently), `encore list`, `theme show|export`, `set-theme --list`, `gloss` with no level (lists the levels), `pianola rules|add-rule|learn|profile|set-profile|log|plan *|supervise *`, `plugin *`, `reference`, `completions`.
 
 - **Writes to stores the app also owns:** `settings set`, the SSH remote verbs and `display *` write JSON directly. With no app that is fine; with the app running, the last writer wins (see doc 22 section 5.2).
-- **`cue engine start|stop|status|inspect`:** no bridge. `start` opens `cue.db` through `better-sqlite3`, and so do `status` and `inspect` whenever an engine holds the lock, so they need a `better-sqlite3` built for the runtime running them (see [Native modules on a server](#native-modules-on-a-server)). Verified live under plain Node on 2026-10-06. All four take `--data-dir`.
+- **`cue engine start|stop|status|inspect|check`:** no bridge. `start` opens `cue.db` through `better-sqlite3`, and so do `status` and `inspect` whenever an engine holds the lock, so they need a `better-sqlite3` built for the runtime running them (see [Native modules on a server](#native-modules-on-a-server)). Verified live under plain Node on 2026-10-06. All five take `--data-dir`.
 - **`cue trigger`:** reaches a standalone engine through its file inbox when one holds the engine lock, and the app otherwise. With neither, it reports the app as not running. Takes `--data-dir`.
 
 ### Need the app
@@ -140,6 +140,31 @@ Limits:
 - **Cue `action: command` shell steps get no declared secrets.** They inherit only the server allowlist. Name the variable in `MAESTRO_SERVER_ENV_ALLOW` if a shell step needs it.
 - **`requiredSecrets` has no editor.** It comes from import and goes back out on export. To change it, re-import, or edit the record while the app is closed.
 
+## Readiness (`--require-ready`, `cue engine check`)
+
+`checkCueReadiness()` (`src/main/cue/cue-readiness.ts`) checks everything an unattended engine over this data dir would need and returns ONE value, `CueReadinessReport`: `ready`, `checkedAt`, counts of agents, workspaces and subscriptions, and `gaps`, each with a `kind`, the `agentId` / `agentName` / `subscription` / `workspace` / `secret` / `tool` it concerns, and one actionable `message`. Every gap is collected; nothing stops at the first.
+
+Which agents: those whose project root has a Cue config and owns a subscription, plus every `fan_out` target. Other agents in the data dir (a desktop's unrelated ones) are not checked.
+
+| Gap kind                             | Checked by (the code the real run uses)                                                                                                                                       |
+| ------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `unsupported-provider`               | `planSessionTurn`: unknown provider, no batch mode, or no output parser (Hermes)                                                                                              |
+| `binary-missing`                     | `planSessionTurn` with the provider's configured path (`maestro-agent-configs.json`, written by `bundle import --agent-path`), else detection: what `cue-run-router` launches |
+| `workspace-missing`                  | the agent's working directory exists                                                                                                                                          |
+| `secret-missing` / `secret-unusable` | `resolveSecrets` / `lookupSecret` for each agent's `requiredSecrets` and each webhook `secret_env`                                                                            |
+| `ssh-remote`                         | `resolveSshLaunchTarget` for an SSH agent (its binary and secrets are on the remote and are not checked)                                                                      |
+| `cue-config`                         | `loadCueConfigDetailed`, the engine's loader: parse or validation failure, skipped subscriptions, missing prompt files                                                        |
+| `unknown-agent`                      | a `fan_out` target (`findFanOutTarget`, the dispatcher's lookup) or `agent_id` that is not an agent                                                                           |
+| `tool-missing`                       | `gh` (`isGhInstalled`) only when a `github.*` trigger exists; `git` (`checkBinaryExists`) only when such a trigger infers its repo from the checkout                          |
+| `not-a-git-checkout`                 | that inferring trigger's project root has no `.git`                                                                                                                           |
+
+- **`cue engine start`** always computes the report, after the data dir and SQLite checks and BEFORE the engine is built: no lock, trigger, webhook listener, timer or trigger inbox exists yet. Without `--require-ready` each gap is logged as a warning and the engine starts as before. With it, gaps are logged as errors and the command exits 1 without arming anything. Under `--json` stdout is `{"started": false, "code": "NOT_READY", "readiness": <report>}`; a successful start adds `ready` and `gaps` to its result. Under `--log-format json` each gap is its own line with `event: "readinessGap"` and `sessionId` / `subscriptionName` as fields.
+- **`cue engine check [--data-dir] [--json]`** is the same report without starting (no SQLite needed). Run it right after `bundle import`. Exit 0 when ready, 1 when not.
+- **Never a secret value**: gaps name secrets and paths only.
+- **Once, at startup.** The engine hot-reloads `cue.yaml` and secrets rotate, so a startup verdict goes stale. The status endpoint's `/readyz` should call `checkCueReadiness()` again (it is side-effect free, and costs a few binary probes) with a short cache, and report `ready`, `checkedAt` and the gaps; systemd `READY=1` should be sent once the startup report is ready and the engine has started.
+
+Not checked (each would need a probe the launch does not make yet): whether `gh` is authenticated, an SSH agent's remote binary and secrets, the maestro-p TUI path for Claude agents in interactive mode, `owner_agent_id` ownership problems, and `source_session` names on `agent.completed` triggers.
+
 ## Engine logs (`--log-format`)
 
 `cue engine start --log-format text|json`, default `text`.
@@ -236,5 +261,7 @@ Afterwards:
 | `MAESTRO_SERVER_MODE=1` with a shell step printing `$MAESTRO_USER_DATA` and an unlisted secret                          | the child saw `$D` and not the secret                                                                                                                   |
 
 **Live, 2026-10-06 (secrets).** A two-agent pipeline exported from a source data dir where `Deployer` sets `DEPLOY_TOKEN` (exported by name only), imported into a server data dir with `CREDENTIALS_DIRECTORY` holding `DEPLOY_TOKEN` = a sentinel. A fake `codex` recorded each agent's `DEPLOY_TOKEN`. `bundle import` reported it `set (systemd credential)` and wrote `requiredSecrets: ["DEPLOY_TOKEN"]` on Deployer only. Under plain Node with real SQLite: `cue engine start` (server mode, JSON logs, an unrelated engine secret in its env), `send`, `run-doc`, `playbook` and `goal-run` all gave Deployer the sentinel and Reviewer nothing; the unrelated engine secret reached neither. The sentinel appeared in no stdout, stderr, JSON log line, `cue.db`, session store, run ledger or history file. Re-exporting from the server kept `env.required: ["DEPLOY_TOKEN"]`.
+
+**Live, 2026-10-06 (readiness).** In a clean `node:22-bookworm-slim` container (no `gh`, no `git`), a data dir with a Claude agent whose configured binary is missing and whose `DEPLOY_TOKEN` is unset, a Hermes agent, an agent whose working directory is missing, a `github.pull_request` trigger with no `repo` in a non-git folder, a webhook whose `HOOK_SECRET` is unset, and a `fan_out` to a missing agent: `cue engine check` listed all 9 gaps and exited 1; `cue engine start --require-ready` exited 1 with the same gaps (text, `--json` and JSON log lines) and the data dir afterwards held no `cue.db` and no trigger inbox. A healthy data dir (configured fake `codex`, secret in `/run/secrets`) reported ready, and `start --require-ready` started the engine and ran its subscription.
 
 To re-run: build, then repeat the table with a fresh `$S`. The source dir needs a `maestro-sessions.json` with one agent per provider (its `autoRunFolderPath` inside its workspace) and a `playbooks/<agent>.json`.
