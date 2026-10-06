@@ -282,7 +282,7 @@ jobs:
           # only make sense once a public key exists to validate against.
           ANCHOR=$(node -e "console.log(require('./dist/shared/plugins/publisher-keys.js').MAESTRO_PUBLISHER_KEYS.join(','))")
 
-          # This branch runs only when the committed anchor was deliberately emptied.
+          # Skip signing only when the committed publisher anchor was deliberately emptied.
           # There is nothing to validate a signature against, so skip signing and
           # ship the bundled plugins unsigned rather than breaking every release
           # target. Unsigned bundled plugins are simply not seeded at runtime
