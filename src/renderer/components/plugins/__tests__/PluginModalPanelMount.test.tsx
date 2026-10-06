@@ -20,6 +20,7 @@ import type {
 	PanelContribution,
 } from '../../../../shared/plugins/contributions';
 import { useUIStore } from '../../../stores/uiStore';
+import { useModalStore } from '../../../stores/modalStore';
 
 const theme = THEMES.dracula;
 
@@ -107,6 +108,19 @@ afterEach(() => {
 });
 
 describe('PluginModalPanelMount', () => {
+	it('routes a settings panel to its own settings card after contributions load', async () => {
+		pluginBridge.contributions.mockResolvedValue({
+			...EMPTY,
+			panels: [panel({ placement: 'settings' })],
+		});
+		renderMount();
+		await waitFor(() => expect(pluginBridge.contributions).toHaveBeenCalled());
+		broadcast('open');
+		expect(useModalStore.getState().getData('settings')).toMatchObject({
+			settingId: 'plugin-settings:acme.flow/flow',
+		});
+		expect(useUIStore.getState().openPluginPanelId).toBeNull();
+	});
 	it('renders nothing until the store field names a live panel', async () => {
 		const { container } = renderMount();
 

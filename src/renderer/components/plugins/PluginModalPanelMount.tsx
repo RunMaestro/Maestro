@@ -18,7 +18,7 @@
  * the `ui.*Panel` verbs (where it is enforced) rather than here.
  */
 
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import type { Theme } from '../../types';
 import { usePluginContributions } from '../../hooks/usePluginContributions';
 import { pluginSettingsId } from '../../../shared/plugins/panel-host';
@@ -28,6 +28,8 @@ import { PluginPanelHost } from '../Settings/PluginPanelHost';
 
 export function PluginModalPanelMount({ theme }: { theme: Theme }) {
 	const contributions = usePluginContributions();
+	const panelsRef = useRef(contributions.panels);
+	panelsRef.current = contributions.panels;
 	const openPluginPanelId = useUIStore((s) => s.openPluginPanelId);
 	const setOpenPluginPanelId = useUIStore((s) => s.setOpenPluginPanelId);
 	const toggleOpenPluginPanelId = useUIStore((s) => s.toggleOpenPluginPanelId);
@@ -36,7 +38,7 @@ export function PluginModalPanelMount({ theme }: { theme: Theme }) {
 		const plugins = window.maestro?.plugins;
 		if (!plugins?.onPanelVisibility) return;
 		return plugins.onPanelVisibility(({ panelId, action }) => {
-			const panel = contributions.panels.find((p) => p.id === panelId);
+			const panel = panelsRef.current.find((p) => p.id === panelId);
 			if (panel?.placement === 'settings') {
 				if (action === 'open')
 					useModalStore
@@ -50,7 +52,7 @@ export function PluginModalPanelMount({ theme }: { theme: Theme }) {
 			// happens to be open.
 			else if (useUIStore.getState().openPluginPanelId === panelId) setOpenPluginPanelId(null);
 		});
-	}, [setOpenPluginPanelId, toggleOpenPluginPanelId, contributions.panels]);
+	}, [setOpenPluginPanelId, toggleOpenPluginPanelId]);
 
 	const panel = useMemo(
 		() =>
