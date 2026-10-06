@@ -32,6 +32,15 @@ const engine = vi.hoisted(() => ({
 	getQueueStatus: vi.fn(() => new Map()),
 	getGraphData: vi.fn(() => []),
 	triggerSubscription: vi.fn(),
+	drain: vi.fn(async () => ({
+		forced: false,
+		completed: 0,
+		stopped: 0,
+		persistedQueue: 0,
+		partialFanIns: 0,
+		durationMs: 0,
+	})),
+	forceStop: vi.fn(),
 }));
 vi.mock('../../../cli/services/cue-standalone-engine', async (importOriginal) => ({
 	...(await importOriginal<typeof import('../../../cli/services/cue-standalone-engine')>()),

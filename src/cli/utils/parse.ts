@@ -38,6 +38,19 @@ export function parseCliPort(value: string, flag: string): number {
 }
 
 /**
+ * Parse a whole number of seconds, 0 or more. Throws with the flag named, like
+ * {@link parseCliBool}.
+ */
+export function parseCliSeconds(value: string, flag: string): number {
+	const v = String(value).trim();
+	const seconds = /^\d+$/.test(v) ? Number(v) : NaN;
+	if (!Number.isSafeInteger(seconds)) {
+		throw new Error(`${flag} expects a whole number of seconds (0 or more), got "${value}"`);
+	}
+	return seconds;
+}
+
+/**
  * Words that clear a per-tab or per-agent override so the value is inherited
  * again (from the agent, or from the global setting). Distinct from `false`:
  * clearing enter-to-send returns the tab to the `enterToSendAI` setting rather

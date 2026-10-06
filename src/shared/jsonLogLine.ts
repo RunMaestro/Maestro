@@ -22,6 +22,7 @@ export const JSON_LOG_ID_FIELDS = [
 	'pipelineId',
 	'sessionId',
 	'status',
+	'drainPhase',
 ] as const;
 
 /** The standard levels a log shipper understands. */
@@ -48,6 +49,8 @@ export interface JsonLogLine {
 	pipelineId?: string;
 	sessionId?: string;
 	status?: string;
+	/** Phase of a Cue engine drain (`engineDrain` lines). */
+	drainPhase?: string;
 }
 
 function normalizeLevel(level: string): JsonLogLevel {

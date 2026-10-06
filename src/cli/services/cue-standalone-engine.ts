@@ -89,7 +89,12 @@ function loadExecutorsUncached() {
 		import('../../main/cue/cue-cli-executor'),
 		import('../../main/cue/cue-notify-executor'),
 		import('../../main/cue/cue-auth-detector'),
-	]).then(([, executor, shell, cli, notify, authDetector]) => ({
+		// Every executor registers its children here; the drain counts and
+		// kills through it (see CueEngineDeps.countLiveCueProcesses).
+		import('../../main/cue/cue-process-lifecycle'),
+	]).then(([, executor, shell, cli, notify, authDetector, lifecycle]) => ({
+		countLiveCueProcesses: () => lifecycle.getActiveProcessMap().size,
+		killAllCueProcessesNow: lifecycle.stopAllProcesses,
 		executeCuePrompt: executor.executeCuePrompt,
 		stopCueRun: executor.stopCueRun,
 		executeCueShell: shell.executeCueShell,
@@ -249,6 +254,10 @@ export function buildStandaloneCueEngineDeps(
 		onLog,
 		runnerMode: 'standalone',
 		...(options.onLockLost ? { onLockLost: options.onLockLost } : {}),
+		// The drain's process accounting. Before the first run fires the
+		// executors are not loaded, so there is nothing alive to count or kill.
+		countLiveCueProcesses: () => settledExecutors?.countLiveCueProcesses() ?? 0,
+		killAllCueProcessesNow: () => settledExecutors?.killAllCueProcessesNow(),
 	};
 }
 

@@ -65,7 +65,15 @@ export interface CueEngineStartOptions {
 	statusPort?: number;
 	/** CLI version, reported by /status. Supplied by the command registration. */
 	version?: string;
+	/**
+	 * Seconds a SIGTERM / SIGINT lets runs in flight finish before they are
+	 * stopped (see `CueEngine.drain`). Default {@link DEFAULT_DRAIN_TIMEOUT_SECONDS}.
+	 */
+	drainTimeout?: number;
 }
+
+/** Default `--drain-timeout`: with the stop ladder's grace it fits systemd's TimeoutStopSec=120. */
+export const DEFAULT_DRAIN_TIMEOUT_SECONDS = 90;
 
 export interface CueEngineStopOptions {
 	json?: boolean;
@@ -265,20 +273,38 @@ export async function cueEngineStart(options: CueEngineStartOptions = {}): Promi
 		return server ? server.close() : Promise.resolve();
 	};
 
+	// First signal: drain (see CueEngine.drain). Second signal: stop every
+	// run and kill every Cue process tree now. The process exits only once the
+	// drain has resolved, i.e. with no agent process left running.
 	let shuttingDown = false;
 	let stopTriggerInbox: (() => void) | null = null;
+	const drainTimeoutMs = (options.drainTimeout ?? DEFAULT_DRAIN_TIMEOUT_SECONDS) * 1000;
 	const shutdown = (signal: string) => {
-		if (shuttingDown) return;
+		if (shuttingDown) {
+			log('warn', `Received ${signal} again, stopping every run now...`);
+			engine.forceStop();
+			return;
+		}
 		shuttingDown = true;
-		health.markStopped();
-		void closeStatusServer();
+		health.markDraining();
 		stopTriggerInbox?.();
-		log('info', `Received ${signal}, stopping engine...`);
-		engine.stop();
-		// Give in-flight log lines a tick to flush before exiting - stop()
-		// itself is synchronous, but downstream process kills (shell/cli
-		// executors) it triggers are not guaranteed to have settled yet.
-		setTimeout(() => process.exit(0), 250);
+		log(
+			'info',
+			`Received ${signal}, draining (up to ${drainTimeoutMs / 1000}s; send it again to stop now)...`
+		);
+		void engine
+			.drain({ timeoutMs: drainTimeoutMs })
+			.then(async (report) => {
+				health.markStopped();
+				if (statusServer) setCueEngineLockStatusPort(undefined);
+				await closeStatusServer();
+				process.exit(report.forced ? 1 : 0);
+			})
+			.catch((err) => {
+				log('error', `Drain failed: ${err instanceof Error ? err.message : String(err)}`);
+				engine.forceStop();
+				process.exit(1);
+			});
 	};
 	process.on('SIGINT', () => shutdown('SIGINT'));
 	process.on('SIGTERM', () => shutdown('SIGTERM'));
