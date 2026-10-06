@@ -20,10 +20,12 @@ import { logger } from '../utils/logger';
 import { PermissionBroker } from './permission-broker';
 import {
 	isHostMethod,
+	MAX_AGENT_SEND_TOOL_SUMMARY_CHARS,
 	type HostMethod,
 	type HostRequest,
 	type HostResponse,
 	type ToolResult,
+	type AgentSendProgressEvent,
 } from '../../shared/plugins/rpc-protocol';
 import type { PluginEvent } from '../../shared/plugins/events';
 
@@ -35,7 +37,11 @@ export interface SandboxControlEvent {
 
 /** An injected implementation of one host method. Receives the calling plugin
  * id (for per-plugin scoping) and the validated params. */
-export type HostCallHandler = ((pluginId: string, params: unknown) => Promise<unknown>) & {
+export type HostCallHandler = ((
+	pluginId: string,
+	params: unknown,
+	context?: { onProgress: (event: AgentSendProgressEvent) => void }
+) => Promise<unknown>) & {
 	/** Host-only ownership query for rate-limit exemptions on active release requests. */
 	ownsReleaseResource?: (pluginId: string, params: unknown) => boolean;
 };
@@ -111,6 +117,7 @@ interface RunningPlugin {
 	mediaClosesInFlight: number;
 	mediaCloseWindowCount: number;
 	proc: UtilityProcess;
+	stopping?: boolean;
 	shutdownTimer?: NodeJS.Timeout;
 	inFlight: number;
 	windowStart: number;
@@ -119,6 +126,7 @@ interface RunningPlugin {
 	pendingTools: Map<number, PendingTool>;
 	/** Monotonic correlation id for the next tool invocation. */
 	nextToolId: number;
+	inFlightIds: Set<number>;
 }
 
 /** Mutable per-plugin observability accumulator. Kept separate from `running`
@@ -237,6 +245,7 @@ export class PluginSandboxHost {
 			mediaCloseWindowCount: 0,
 			pendingTools: new Map(),
 			nextToolId: 1,
+			inFlightIds: new Set(),
 		};
 		this.running.set(pluginId, record);
 		// Ensure an observability record exists so a freshly started plugin shows
@@ -248,6 +257,7 @@ export class PluginSandboxHost {
 		});
 		proc.on('exit', (code: number) => {
 			const existing = this.running.get(pluginId);
+			if (existing !== record) return;
 			if (existing?.shutdownTimer) clearTimeout(existing.shutdownTimer);
 			// Fail every outstanding tool round-trip: the child that owed a reply
 			// is gone, so the awaiting caller must reject rather than hang.
@@ -273,7 +283,7 @@ export class PluginSandboxHost {
 	 */
 	invokeCommand(pluginId: string, commandId: string, args?: unknown): boolean {
 		const record = this.running.get(pluginId);
-		if (!record) return false;
+		if (!record || record.stopping) return false;
 		// Cap the host->child payload the same way HostRequest params are bounded:
 		// a non-serializable or oversized args object is dropped, never posted.
 		let serialized: string;
@@ -301,9 +311,15 @@ export class PluginSandboxHost {
 	 * too many tool calls are already in flight, the round-trip exceeds
 	 * {@link TOOL_INVOKE_TIMEOUT_MS}, or the child exits before replying.
 	 */
-	invokeTool(pluginId: string, commandId: string, args?: unknown): Promise<unknown> {
+	invokeTool(
+		pluginId: string,
+		commandId: string,
+		args?: unknown,
+		context: { callerAgentId: string | null } = { callerAgentId: null }
+	): Promise<unknown> {
 		const record = this.running.get(pluginId);
-		if (!record) return Promise.reject(new Error(`plugin "${pluginId}" is not running`));
+		if (!record || record.stopping)
+			return Promise.reject(new Error(`plugin "${pluginId}" is not running`));
 		// Bound the host->child payload exactly like invokeCommand / HostRequest.
 		let serialized: string;
 		try {
@@ -327,7 +343,7 @@ export class PluginSandboxHost {
 			if (typeof timer.unref === 'function') timer.unref();
 			record.pendingTools.set(id, { resolve, reject, timer });
 			try {
-				record.proc.postMessage({ kind: 'invokeTool', id, commandId, args });
+				record.proc.postMessage({ kind: 'invokeTool', id, commandId, args, context });
 			} catch (err) {
 				record.pendingTools.delete(id);
 				clearTimeout(timer);
@@ -361,7 +377,7 @@ export class PluginSandboxHost {
 	 */
 	pushEvent(pluginId: string, event: PluginEvent | SandboxControlEvent): boolean {
 		const record = this.running.get(pluginId);
-		if (!record) return false;
+		if (!record || record.stopping) return false;
 		try {
 			record.proc.postMessage({
 				kind: 'event',
@@ -378,7 +394,9 @@ export class PluginSandboxHost {
 	/** Stop a plugin: ask it to shut down, then hard-kill after a grace period. */
 	stop(pluginId: string): void {
 		const record = this.running.get(pluginId);
-		if (!record) return;
+		if (!record || record.stopping) return;
+		// Close admission before notifying observers or asking the child to exit.
+		record.stopping = true;
 		this.deps.onStop?.(pluginId);
 		try {
 			record.proc.postMessage({ kind: 'shutdown' });
@@ -451,6 +469,14 @@ export class PluginSandboxHost {
 
 		// Backpressure + rate limiting against a flooding child.
 		const record = this.running.get(pluginId);
+		if (record?.stopping) {
+			respond({ ok: false, error: 'plugin is stopping' });
+			return;
+		}
+		if (!record || record.proc !== proc || record.inFlightIds.has(request.id)) {
+			respond({ ok: false, error: 'duplicate or stale host request' });
+			return;
+		}
 		if (record) {
 			if (
 				request.method === 'media.close' &&
@@ -513,21 +539,45 @@ export class PluginSandboxHost {
 			record.mediaCloseWindowCount += 1;
 		}
 
-		if (record) {
-			record.inFlight += 1;
-			if (method === 'media.close') record.mediaClosesInFlight += 1;
-		}
+		record.inFlightIds.add(request.id);
+		record.inFlight += 1;
+		if (method === 'media.close') record.mediaClosesInFlight += 1;
+		let active = true;
+		const onProgress = (event: AgentSendProgressEvent): void => {
+			if (!active || record.stopping || this.running.get(pluginId) !== record) return;
+			if (!this.deps.broker.authorize(pluginId, method, request.params).allowed) return;
+			// Keep the optional public action bounded at the final host -> sandbox
+			// boundary as well. Older callers and events without a summary pass through.
+			const publicEvent =
+				event.type === 'tool' && event.summary !== undefined
+					? {
+							...event,
+							...(typeof event.summary === 'string' &&
+							event.summary.length <= MAX_AGENT_SEND_TOOL_SUMMARY_CHARS &&
+							!/[\x00-\x1f\x7f]/.test(event.summary)
+								? { summary: event.summary }
+								: { summary: undefined }),
+						}
+					: event;
+			try {
+				proc.postMessage({ kind: 'progress', id: request.id, event: publicEvent });
+			} catch {
+				// The owning sandbox exited; the provider run is aborted by onCrash.
+			}
+		};
 		const act = this.activityFor(pluginId);
 		act.totalCalls += 1;
 		act.inFlight += 1;
 		act.lastActivity = Date.now();
 		if (act.inFlight > act.peakInFlight) act.peakInFlight = act.inFlight;
 		try {
-			const result = await handler(pluginId, request.params);
+			const result = await handler(pluginId, request.params, { onProgress });
 			respond({ ok: true, result });
 		} catch (err) {
 			respond({ ok: false, error: err instanceof Error ? err.message : String(err) });
 		} finally {
+			active = false;
+			record.inFlightIds.delete(request.id);
 			if (record) {
 				record.inFlight = Math.max(0, record.inFlight - 1);
 				if (method === 'media.close')

@@ -160,6 +160,9 @@ export interface ParsedEvent {
 	 */
 	isPartial?: boolean;
 
+	/** Codex answer role when its JSON format supplies a phase (or omits one). */
+	responsePhase?: 'commentary' | 'final' | 'candidate';
+
 	/**
 	 * Is this reasoning/thinking content?
 	 * If true, this is internal agent reasoning that should not be included

@@ -20,6 +20,19 @@ const createMockEntry = (overrides: Partial<HistoryEntry> = {}): HistoryEntry =>
 });
 
 describe('HistoryEntryItem', () => {
+	it('renders the English Relay label for a Relay turn', () => {
+		render(
+			<HistoryEntryItem
+				entry={createMockEntry({ type: 'RELAY' })}
+				index={0}
+				isSelected={false}
+				theme={mockTheme}
+				onOpenDetailModal={vi.fn()}
+			/>
+		);
+		expect(screen.getByText('Relay')).toBeInTheDocument();
+		expect(screen.queryByText('RELAY')).not.toBeInTheDocument();
+	});
 	beforeEach(() => {
 		vi.useFakeTimers();
 		vi.setSystemTime(new Date('2025-06-15T12:00:00Z'));

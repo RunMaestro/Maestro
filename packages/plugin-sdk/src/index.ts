@@ -425,9 +425,12 @@ export function describeCapability(capability: PluginCapability): string {
 // --- Host API version (from shared/plugins/host-api.ts) ---------------------
 
 /**
- * 1.22.0 adds the bounded media:tools job API (Discord attachments and fixed
- * local profiles). 1.17-1.21 are reserved by the separate Relay host work.
- * The host API version this Maestro build implements. 1.16.0 added three
+ * 1.22.0 adds bounded media jobs and fixed local tool profiles.
+ * The host API version this Maestro build implements. 1.21.0 adds isolated
+ * `agents.generateTitle`. 1.20.0 adds an optional
+ * per-call public progress callback to agents.send. 1.18.0 places settings panels in plugin details;
+ * 1.19.0 adds the isolated panel theme bridge. 1.17.0 added `agents.send` and verified plugin-tool caller context.
+ * 1.16.0 added three
  * backward-compatible additions: the metadata-only `session.activated` event
  * topic (`{ sessionId, tabId? }`, opaque ids only, fired when the focused agent
  * changes), the `sessions.focus` method plus its narrow `sessions:focus`
@@ -633,8 +636,6 @@ export interface ManifestValidationResult {
  * letter. Strict so an id is always safe as an object key and a log token. */
 export const PLUGIN_ID_PATTERN = /^[a-z][a-z0-9]*([._-][a-z0-9]+)*$/;
 
-const RELEASE_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
-
 const SEMVER_PATTERN = /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)*$/;
 
 /** Validate one parsed plugin.json object. Returns the typed manifest plus
@@ -732,7 +733,7 @@ export function validatePluginManifest(input: unknown): ManifestValidationResult
 	if (releaseDate !== undefined) {
 		if (typeof releaseDate !== 'string') {
 			errors.push('releaseDate, when present, must be a string');
-		} else if (!RELEASE_DATE_PATTERN.test(releaseDate.trim())) {
+		} else if (!/^\d{4}-\d{2}-\d{2}$/.test(releaseDate.trim())) {
 			errors.push(`releaseDate "${releaseDate}" is invalid: use YYYY-MM-DD`);
 		} else if (
 			Number.isNaN(Date.parse(`${releaseDate.trim()}T00:00:00Z`)) ||
@@ -917,7 +918,8 @@ export interface CommandContribution {
 	description?: string;
 }
 
-/** Where a contributed panel docks. `modal` (default) keeps today's behavior. */
+/** Where a panel renders. `settings` uses its owning plugin's Settings sub-tab
+ * on hosts at 1.18.0+, while earlier hosts use the global Display tab. */
 export type PanelPlacement = 'modal' | 'left' | 'right' | 'main' | 'settings';
 
 /** Chrome size for a `modal` panel. `full` renders edge-to-edge (a summonable
@@ -1343,6 +1345,8 @@ export const HOST_API = {
 	'agents.list': { capability: 'agents:read' },
 	'agents.get': { capability: 'agents:read' },
 	'agents.dispatch': { capability: 'agents:dispatch' },
+	'agents.send': { capability: 'agents:dispatch' },
+	'agents.generateTitle': { capability: 'agents:dispatch' },
 	'notifications.toast': { capability: 'notifications:toast' },
 	'settings.get': { capability: 'settings:read' },
 	'settings.set': { capability: 'settings:write' },
@@ -1494,10 +1498,35 @@ export interface MaestroNetApi {
 }
 
 /** List/read agents (`agents:read`) and dispatch prompts (`agents:dispatch`). */
+export type AgentSendProgressEvent =
+	| { type: 'activity'; text: string; at: string }
+	| { type: 'commentary'; text: string; at: string }
+	| {
+			type: 'tool';
+			tool: string;
+			status: 'started' | 'completed' | 'failed';
+			at: string;
+			/** English public action, at most 120 chars, from allowlisted tool metadata. */
+			summary?: string;
+	  };
+
 export interface MaestroAgentsApi {
 	list(): Promise<unknown>;
 	get(agentId: string): Promise<unknown>;
 	dispatch(agentId: string, prompt: string, opts?: unknown): Promise<unknown>;
+	/** Isolated cheap naming turn; never creates or resumes a provider conversation. */
+	generateTitle(agentId: string, firstMessage: string): Promise<string | null>;
+	/** Fresh provider session unless sessionId is supplied; never a desktop tab id. */
+	send(
+		agentId: string,
+		prompt: string,
+		opts?: { sessionId?: string; onProgress?: (event: AgentSendProgressEvent) => void }
+	): Promise<{
+		success: boolean;
+		response: string | null;
+		sessionId: string | null;
+		error?: string;
+	}>;
 }
 
 /** Read metadata-only history entries (`history:read`). */
@@ -1654,7 +1683,10 @@ export interface MaestroCommandsApi {
 
 /** Register handlers for agent tools the host invokes on this plugin. */
 export interface MaestroToolsApi {
-	register(localId: string, handler: (args: unknown) => unknown): void;
+	register(
+		localId: string,
+		handler: (args: unknown, context: { readonly callerAgentId: string | null }) => unknown
+	): void;
 }
 
 /** Ask the OS to open an external URL (`shell:openExternal`). */

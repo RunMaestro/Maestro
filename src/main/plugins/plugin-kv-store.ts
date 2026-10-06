@@ -91,16 +91,32 @@ export class PluginKvStore {
 	 * key count for a NEW key) so a permitted-but-hostile plugin cannot exhaust
 	 * disk. Persisted atomically.
 	 */
-	set(pluginId: string, key: string, value: string): void {
+	set(
+		pluginId: string,
+		key: string,
+		value: string,
+		options?: { evictOldestOnLimit?: boolean; touch?: boolean }
+	): void {
 		this.assertKey(key);
 		if (typeof value !== 'string') throw new Error('storage value must be a string');
 		if (Buffer.byteLength(value, 'utf8') > this.limits.maxValueBytes) {
 			throw new Error(`storage value exceeds ${this.limits.maxValueBytes} bytes`);
 		}
-		const store = this.load(pluginId);
+		// Work on a copy so a failed atomic replacement leaves the cached state
+		// identical to the on-disk store.
+		const store = Object.assign(Object.create(null) as Record<string, string>, this.load(pluginId));
 		const isNew = !Object.prototype.hasOwnProperty.call(store, key);
-		if (isNew && Object.keys(store).length >= this.limits.maxKeys) {
-			throw new Error(`storage key limit reached (${this.limits.maxKeys})`);
+		if (isNew) {
+			const keys = Object.keys(store);
+			if (keys.length >= this.limits.maxKeys) {
+				if (!options?.evictOldestOnLimit || keys.length === 0) {
+					throw new Error(`storage key limit reached (${this.limits.maxKeys})`);
+				}
+				delete store[keys[0]];
+			}
+		} else if (options?.touch) {
+			// Object key order is the eviction order; move a resumed binding to the end.
+			delete store[key];
 		}
 		store[key] = value;
 		this.persist(pluginId, store);
@@ -109,7 +125,7 @@ export class PluginKvStore {
 	/** Delete one key. Returns whether it existed. */
 	delete(pluginId: string, key: string): boolean {
 		this.assertKey(key);
-		const store = this.load(pluginId);
+		const store = Object.assign(Object.create(null) as Record<string, string>, this.load(pluginId));
 		if (!Object.prototype.hasOwnProperty.call(store, key)) return false;
 		delete store[key];
 		this.persist(pluginId, store);
@@ -156,6 +172,13 @@ export class PluginKvStore {
 		// Resolve (and validate) the path BEFORE the try, so an invalid/escaping
 		// plugin id throws rather than being swallowed as "missing store".
 		const file = this.fileFor(pluginId);
+		// A store may predate owner-only permissions. Harden it before reading a
+		// credential and before a later write replaces it.
+		if (fs.existsSync(file)) {
+			this.hardenPath(this.baseDir, true);
+			this.hardenPath(this.dirFor(pluginId), true);
+			this.hardenPath(file, false);
+		}
 		let store: Record<string, string> = Object.create(null);
 		try {
 			const raw = fs.readFileSync(file, 'utf8');
@@ -176,11 +199,29 @@ export class PluginKvStore {
 
 	private persist(pluginId: string, store: Record<string, string>): void {
 		const dir = this.dirFor(pluginId);
-		fs.mkdirSync(dir, { recursive: true });
+		fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+		this.hardenPath(this.baseDir, true);
+		this.hardenPath(dir, true);
 		const file = path.join(dir, STORE_FILENAME);
 		const tmp = path.join(dir, `${STORE_FILENAME}.tmp-${process.pid}-${Date.now()}`);
-		fs.writeFileSync(tmp, JSON.stringify(store), 'utf8');
-		fs.renameSync(tmp, file);
-		this.cache.set(pluginId, store);
+		try {
+			fs.writeFileSync(tmp, JSON.stringify(store), { encoding: 'utf8', mode: 0o600, flag: 'wx' });
+			this.hardenPath(tmp, false);
+			fs.renameSync(tmp, file);
+			// Rename is the commit point. Even if the final path check fails,
+			// subsequent reads must reflect the bytes already committed to disk.
+			this.cache.set(pluginId, store);
+			this.hardenPath(file, false);
+		} finally {
+			if (fs.existsSync(tmp)) fs.unlinkSync(tmp);
+		}
+	}
+
+	private hardenPath(target: string, directory: boolean): void {
+		const stat = fs.lstatSync(target);
+		if (stat.isSymbolicLink() || (directory ? !stat.isDirectory() : !stat.isFile())) {
+			throw new Error('unsafe plugin storage path');
+		}
+		if (process.platform !== 'win32') fs.chmodSync(target, directory ? 0o700 : 0o600);
 	}
 }

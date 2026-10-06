@@ -26,6 +26,7 @@ import {
 	formatWarning,
 	formatSessions,
 	formatSshRemotes,
+	formatDirectorNotesHistory,
 	type GroupDisplay,
 	type AgentDisplay,
 	type PlaybookDisplay,
@@ -56,6 +57,36 @@ describe('formatter', () => {
 	// ============================================================================
 	// Color and Style Helper Tests
 	// ============================================================================
+
+	it('labels Relay History entries with their host origin', () => {
+		const result = formatDirectorNotesHistory(
+			{
+				stats: {
+					agentCount: 1,
+					autoCount: 0,
+					userCount: 0,
+					cueCount: 0,
+					agentEntryCount: 0,
+					totalCount: 1,
+					lookbackDays: 1,
+				},
+				total: 1,
+				showing: 1,
+				entries: [
+					{
+						id: 'relay-turn',
+						type: 'RELAY',
+						timestamp: 1,
+						summary: 'Relay answer',
+						sourceSessionId: 'agent-a',
+					},
+				],
+			},
+			1
+		);
+		expect(result).toContain('[RELAY]');
+		expect(result).not.toContain('[USER]');
+	});
 
 	describe('Color and style handling', () => {
 		it('should include ANSI codes when stdout is TTY', () => {

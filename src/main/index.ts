@@ -47,7 +47,11 @@ import { PermissionBroker } from './plugins/permission-broker';
 import { PluginSandboxHost } from './plugins/plugin-sandbox-host';
 import { PluginBackgroundSupervisor } from './plugins/plugin-background-supervisor';
 import { PluginGroupingRegistry } from './plugins/plugin-grouping-registry';
-import { setActivePluginManager } from './plugins/plugin-manager-singleton';
+import {
+	setActivePluginManager,
+	setHeadlessAgentRunner,
+	type HeadlessAgentRunner,
+} from './plugins/plugin-manager-singleton';
 import { PluginSchedulerHost } from './plugins/plugin-scheduler-host';
 import {
 	buildHostCallHandlers,
@@ -59,6 +63,10 @@ import { createCadenzaDelivery, registerCadenzaIpcHandlers } from './cadenza-bri
 import { createPluginHostViewBridge } from './plugin-host-view-bridge';
 import { ActionGuard } from './plugins/action-guard';
 import { PluginKvStore } from './plugins/plugin-kv-store';
+import { PluginAgentSessionBindings } from './plugins/plugin-agent-session-bindings';
+import { setClaudeSessionOrigin } from './storage/claude-session-origins';
+import { CodexSessionStorage } from './storage/codex-session-storage';
+import { getSessionStorage } from './agents';
 import { PluginEventBusImpl } from './plugins/plugin-event-bus';
 import { createEgressGuard } from './plugins/net-egress-guard';
 // [UiCommandeer] WS-ui-command host bridge (see runUiCommand wiring below).
@@ -98,7 +106,13 @@ import {
 import { configureCueTelemetry } from './cue/cue-telemetry';
 import { executeCuePrompt, stopCueRun } from './cue/cue-executor';
 import { executeCueShell } from './cue/cue-shell-executor';
-import { executeCueCli } from './cue/cue-cli-executor';
+import { executeCueCli, resolveMaestroCliScriptPath } from './cue/cue-cli-executor';
+import { spawnAgent, detectAgent } from '../cli/services/agent-spawner';
+import { prepareMaestroSystemPromptCli } from '../cli/services/system-prompt';
+import { pluginToolRunIdentity } from './plugins/plugin-tool-run-identity';
+import { createPluginHeadlessAgentRunner } from './plugins/plugin-headless-agent-runner';
+import { generateTabName } from './ipc/handlers/tabNaming';
+import type { SessionInfo } from '../shared/types';
 import { executeCueNotify } from './cue/cue-notify-executor';
 import { reportCueAuthFailure } from './cue/cue-auth-detector';
 import { setSusFactorNotifier } from './cue/cue-susfactor';
@@ -123,6 +137,7 @@ import {
 	getWindowStateStore,
 	getClaudeSessionOriginsStore,
 	getAgentSessionOriginsStore,
+	getSshRemoteById,
 } from './stores';
 import { runSettingsMigrations } from './stores/migrations';
 import { migrateClaudeSessionNamesFromHistory } from './stores/migrations/claude-session-names-backfill';
@@ -1631,6 +1646,40 @@ app
 		const pluginKvStore = new PluginKvStore({
 			baseDir: path.join(app.getPath('userData'), 'plugin-data'),
 		});
+		const pluginProviderSessions = new PluginAgentSessionBindings(
+			path.join(app.getPath('userData'), 'plugin-agent-sessions')
+		);
+		const relayProjectPath = (agent: SessionInfo): string =>
+			agent.sessionSshRemoteConfig?.enabled
+				? agent.sessionSshRemoteConfig.workingDirOverride || agent.projectRoot || agent.cwd
+				: agent.projectRoot || agent.cwd;
+		const markRelaySession = (agent: SessionInfo, providerSessionId: string, backfill = false) => {
+			const projectPath = relayProjectPath(agent);
+			if (agent.toolType === 'claude-code' || agent.toolType === 'codex') {
+				const existing = claudeSessionOriginsStore.get('origins', {})[projectPath]?.[
+					providerSessionId
+				];
+				if (backfill && (typeof existing === 'string' ? existing : existing?.origin) === 'relay') {
+					return;
+				}
+				setClaudeSessionOrigin(claudeSessionOriginsStore, projectPath, providerSessionId, {
+					origin: 'relay',
+				});
+				return;
+			}
+			const origins = agentSessionOriginsStore.get('origins', {});
+			const project = origins[agent.toolType]?.[projectPath] ?? {};
+			const existing = project[providerSessionId];
+			if (backfill && existing?.origin === 'relay') return;
+			origins[agent.toolType] = {
+				...origins[agent.toolType],
+				[projectPath]: {
+					...project,
+					[providerSessionId]: { ...existing, origin: 'relay' },
+				},
+			};
+			agentSessionOriginsStore.set('origins', origins);
+		};
 		const pluginEgressGuard = createEgressGuard({
 			// The app's own web/CLI server. Loopback + RFC1918 are already blocked by
 			// IP classification; this is belt-and-suspenders for a public-bind setup.
@@ -2283,6 +2332,27 @@ app
 			}
 		});
 		pluginGroupingRegistry = groupingRegistry;
+		const runHeadlessAgent: HeadlessAgentRunner = createPluginHeadlessAgentRunner({
+			getAgent: (agentId) =>
+				(sessionsStore.get('sessions', []) as SessionInfo[]).find(
+					(session) => session.id === agentId
+				),
+			detectAgent,
+			hasPluginTools: () => (pluginManager?.getContributions().tools.length ?? 0) > 0,
+			spawn: spawnAgent,
+			prepareSystemPrompt: prepareMaestroSystemPromptCli,
+			issueRunToken: (agentId, ttlMs, receiptToolId) =>
+				pluginToolRunIdentity.issue(agentId, ttlMs, receiptToolId),
+			getRunReceipts: (token) => pluginToolRunIdentity.getReceipts(token),
+			revokeRunToken: (token) => pluginToolRunIdentity.revoke(token),
+			cliScriptPath: resolveMaestroCliScriptPath,
+			audit: (agentId, resumed) =>
+				logger.info(
+					`agents.send -> agent ${agentId} providerSession=${resumed ? 'resume' : 'fresh'}`,
+					'[PluginAudit]'
+				),
+		});
+		setHeadlessAgentRunner(runHeadlessAgent);
 		const sandboxHost = new PluginSandboxHost({
 			broker: pluginBroker,
 			handlers: buildHostCallHandlers({
@@ -2421,6 +2491,53 @@ app
 					pluginManager?.getRegistry().records.find((r) => r.id === pluginId)?.signature?.status ===
 					'trusted',
 				dispatch: async (agentId, prompt) => dispatchPromptToSession(agentId, prompt),
+				sendAgent: runHeadlessAgent,
+				generateTitle: async (agentId, firstMessage, signal) => {
+					const session = (sessionsStore.get('sessions', []) as SessionInfo[]).find(
+						(candidate) => candidate.id === agentId
+					);
+					if (!session) throw new Error(`agents.generateTitle: no agent "${agentId}"`);
+					return generateTabName(
+						{
+							getProcessManager: () => processManager,
+							getAgentDetector: () => agentDetector,
+							agentConfigsStore,
+							settingsStore: store,
+						},
+						{
+							userMessage: firstMessage,
+							agentType: session.toolType,
+							cwd: session.cwd,
+							sessionSshRemoteConfig: session.sessionSshRemoteConfig,
+							sessionCustomEnvVars: session.customEnvVars,
+							enableMaestroP: session.enableMaestroP,
+							maestroPMode: session.maestroPMode,
+							maestroPPath: session.maestroPPath,
+							useUtilityAgent: false,
+						},
+						signal
+					);
+				},
+				providerSessions: pluginProviderSessions,
+				recordRelayTurn: async (agentId, prompt, result) => {
+					const agent = (sessionsStore.get('sessions', []) as SessionInfo[]).find(
+						(session) => session.id === agentId
+					);
+					if (!agent) return;
+					if (result.sessionId) markRelaySession(agent, result.sessionId);
+					const projectPath = relayProjectPath(agent);
+					await getHistoryManager().addEntry(agent.id, projectPath, {
+						id: crypto.randomUUID(),
+						type: 'RELAY',
+						timestamp: Date.now(),
+						summary: (result.response || result.error || prompt).slice(0, 500),
+						fullResponse: result.response || undefined,
+						projectPath,
+						sessionId: agent.id,
+						agentSessionId: result.sessionId || undefined,
+						success: result.success,
+					});
+				},
 				// Direct plugin dispatch is never user-present, so it requires the
 				// separate unattended consent on TOP of the interactive allowlist grant
 				// - the same grant source and check the time-based scheduler uses.
@@ -2516,6 +2633,7 @@ app
 			// Complete uninstall (invariant #8): purge the plugin's KV store, its
 			// plugins.<id>.* settings, and its event subscriptions.
 			purgePluginData: (id) => {
+				pluginProviderSessions.purge(id);
 				purgePluginData(id, {
 					kvStore: pluginKvStore,
 					settingsDeleteNamespace: pluginSettingsDeleteNamespace,
@@ -2555,9 +2673,8 @@ app
 				const record = pluginManager?.getRegistry().records.find((r) => r.id === pluginId);
 				return record ? pluginIdentity(record.source, trustedKeysFor()) : null;
 			},
-			openPrompt: async ({ pluginId, offered, nonce }) => {
+			openPrompt: async ({ pluginId, offered, requested, nonce }) => {
 				const record = pluginManager?.getRegistry().records.find((r) => r.id === pluginId);
-				const requested = pluginManager?.getRequestedPermissions(pluginId) ?? [];
 				// [FC1Finish] Full-trust banner for a CODE plugin (tier >= 1 with an
 				// entry file): under Option-B trusted-to-run there is no OS sandbox,
 				// so consent must say what enabling actually does.
@@ -2889,6 +3006,42 @@ app
 			getAgentConfigForAgent,
 			getCustomEnvVarsForAgent,
 		});
+
+		// Older Relay turns predate origin recording. The private host binding is
+		// the proof: only a session owned by this exact plugin and agent qualifies.
+		// A real CLI session has no such binding, so it is never relabeled.
+		if (pluginProviderSessions.hasBindings('sh.maestro.relay')) {
+			void (async () => {
+				for (const agent of sessionsStore.get('sessions', []) as SessionInfo[]) {
+					const storage = getSessionStorage(agent.toolType);
+					if (!storage) continue;
+					try {
+						const remoteId = agent.sessionSshRemoteConfig?.enabled
+							? agent.sessionSshRemoteConfig.remoteId
+							: null;
+						const ssh = remoteId ? getSshRemoteById(remoteId) : undefined;
+						if (agent.sessionSshRemoteConfig?.enabled && !ssh) continue;
+						const projectPath = relayProjectPath(agent);
+						const sessions =
+							storage instanceof CodexSessionStorage
+								? await storage.listSessions(projectPath, ssh, agent.customEnvVars?.CODEX_HOME)
+								: await storage.listSessions(projectPath, ssh);
+						for (const session of sessions) {
+							if (
+								!pluginProviderSessions.isOwned('sh.maestro.relay', agent.id, session.sessionId)
+							) {
+								continue;
+							}
+							markRelaySession(agent, session.sessionId, true);
+						}
+					} catch (error) {
+						logger.warn(`Relay origin backfill skipped ${agent.id}: ${String(error)}`, 'Migration');
+					}
+				}
+			})().catch((error) =>
+				logger.warn(`Relay origin backfill failed: ${String(error)}`, 'Migration')
+			);
+		}
 
 		// Set up process event listeners
 		logger.debug('Setting up process event listeners', 'Startup');

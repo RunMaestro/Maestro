@@ -277,7 +277,7 @@ The `key` must NOT: be a prototype segment (`__proto__` / `prototype` / `constru
 }
 ```
 
-Only `action: 'notify'` runs on tier 0. `action: 'dispatch'` needs `agents:dispatch`, which is currently inert.
+Only `action: 'notify'` runs on tier 0. `action: 'dispatch'` needs `agents:dispatch` and its host gates.
 
 ### commands (tier 1)
 
@@ -289,7 +289,7 @@ Only `action: 'notify'` runs on tier 0. `action: 'dispatch'` needs `agents:dispa
 
 ### panels (tier 1)
 
-`{ id, title, entry, placement, size? }` where `entry` is a plugin-relative `.html` file and `placement` is `'modal' | 'left' | 'right' | 'main' | 'settings'` (defaults to `modal`). The `settings` placement renders only in the neutral Display settings host, never in plugin management, consent, uninstall, or grant/revoke UI.
+`{ id, title, entry, placement, size? }` where `entry` is a plugin-relative `.html` file and `placement` is `'modal' | 'left' | 'right' | 'main' | 'settings'` (defaults to `modal`). On host API 1.18.0+, `settings` renders inside the owning plugin's Settings sub-tab in Settings → Encore → Plugins, next to Permissions. The host mounts only panels whose `pluginId` exactly matches the selected enabled plugin and whose verified grants include `ui:panel`. Consent, permissions, grant/revoke, and uninstall controls remain host-owned outside the isolated panel frame. Earlier hosts mount the same placement in the global Display tab; set `maestro.minHostApi` to `1.18.0` when your plugin relies on the detail-page location. No new manifest field or capability is needed.
 
 `size` is `'default' | 'full'` and applies to `modal` panels only (defaults to `default`). As an explicit exception to the general contribution policy above (where a bad item is dropped), an unknown `size` reports a manifest error but keeps the panel, falling back to `default` rather than dropping the contribution. `default` renders the fixed modal chrome; `full` renders an edge-to-edge overlay inset a few pixels from the window edge, for mission-control-style surfaces you summon rather than browse. Requires `minHostApi: '1.16.0'`.
 
@@ -377,7 +377,7 @@ host controls the frame, icon mapping, tooltip, and non-suppressible plugin prov
 
 ### tools (tier 1)
 
-`{ id, name, description, inputSchema? }` - a named operation an agent can call. Register a handler with `maestro.tools.register(localId, fn)`; the host invokes it via a brokered request/response (`plugins:invoke-tool`) and your handler's return value is returned to the caller. When the `plugins` feature is on, registered tools are also exposed to a spawned agent's model over MCP: the host points the agent at `maestro-cli mcp serve` (claude and codex auto-inject the ephemeral config; other agents are best-guess), and every model-initiated call is risk-gated before the broker runs it.
+`{ id, name, description, inputSchema? }` - a named operation an agent can call. Register a handler with `maestro.tools.register(localId, fn)`; the host invokes it via a brokered request/response and returns the handler's result. The handler receives `(args, context)`, where `context.callerAgentId` is a host-verified agent ID or `null`. Never use `args.agentId` as caller identity. When the `plugins` feature is on, registered tools are also exposed to a spawned agent's model over MCP: the host points local Claude and Codex runs at `maestro-cli mcp serve`, and every model-initiated call is risk-gated. See [Relay host contract](../relay-host-contract.md).
 
 ### keybindings (tier 1)
 
@@ -462,42 +462,44 @@ module.exports = { activate, deactivate };
 
 Every method below is broker-gated and needs the matching capability granted. Signatures are copied from `buildSdk` (`src/main/plugins/plugin-sandbox-entry.ts`).
 
-| SDK method                                                                          | Capability                   |
-| ----------------------------------------------------------------------------------- | ---------------------------- |
-| `maestro.pluginId` (string)                                                         | -                            |
-| `maestro.fs.read(path)` -> `Promise<string>`                                        | `fs:read`                    |
-| `maestro.fs.write(path, contents)` -> `Promise<void>`                               | `fs:write`                   |
-| `maestro.net.fetch(url, init?)` -> `Promise<unknown>`                               | `net:fetch`                  |
-| `maestro.net.connect(url, opts?)` -> `Promise<{ socketId }>` (`wss://` only)        | `net:connect`                |
-| `maestro.net.send(socketId, data)` -> `Promise<{ ok: true }>`                       | `net:connect`                |
-| `maestro.net.close(socketId, opts?)` -> `Promise<{ ok: true }>`                     | `net:connect`                |
-| `maestro.agents.list()`                                                             | `agents:read`                |
-| `maestro.agents.get(agentId)`                                                       | `agents:read`                |
-| `maestro.agents.dispatch(agentId, prompt, opts?)` (needs unattended consent)        | `agents:dispatch`            |
-| `maestro.notifications.toast(message, opts?)` -> `Promise<void>`                    | `notifications:toast`        |
-| `maestro.settings.get(key)`                                                         | `settings:read`              |
-| `maestro.settings.set(key, value)` (key must be `plugins.<id>.*`)                   | `settings:write`             |
-| `maestro.sessions.list()` (metadata only)                                           | `sessions:read`              |
-| `maestro.sessions.get(sessionId)` (metadata only)                                   | `sessions:read`              |
-| `maestro.sessions.focus(sessionId, tabId?)` -> `Promise<void>` (lands on an AI tab) | `sessions:focus`             |
-| `maestro.transcripts.read({ sessionId, fields, projectPath?, limit?, since? })`     | `transcripts:read`           |
-| `maestro.storage.get(key)`                                                          | `storage:read`               |
-| `maestro.storage.keys()`                                                            | `storage:read`               |
-| `maestro.storage.set(key, value)` (value is a string)                               | `storage:write`              |
-| `maestro.storage.delete(key)`                                                       | `storage:write`              |
-| `maestro.ui.runCommand(commandId, args?)`                                           | `ui:command`                 |
-| `maestro.ui.hostView.update(localId, blocks)` -> `Promise<void>`                    | `ui:hostView`                |
-| `maestro.ui.hostView.remove(localId)` -> `Promise<void>`                            | `ui:hostView`                |
-| `maestro.ui.panelPost(panelId, data)` -> `Promise<void>` (own panels, 64 KB JSON)   | `ui:panel`                   |
-| `maestro.ui.openPanel(panelId)` -> `Promise<void>` (own `modal` panels only)        | `ui:panel`                   |
-| `maestro.ui.closePanel(panelId)` -> `Promise<void>` (own `modal` panels only)       | `ui:panel`                   |
-| `maestro.ui.togglePanel(panelId)` -> `Promise<void>` (own `modal` panels only)      | `ui:panel`                   |
-| `maestro.events.on(topic, handler(payload, meta))`                                  | - (delivery needs subscribe) |
-| `maestro.events.subscribe(topics[])`                                                | `events:subscribe`           |
-| `maestro.events.unsubscribe(topics?)`                                               | `events:subscribe`           |
-| `maestro.commands.register(commandId, handler(args))`                               | - (invoked by host)          |
-| `maestro.tools.register(toolId, handler(args))` (result returned to host)           | - (invoked by host)          |
-| `maestro.process.spawn(command, opts?)` (trusted + gated)                           | `process:spawn`              |
+| SDK method                                                                                            | Capability                   |
+| ----------------------------------------------------------------------------------------------------- | ---------------------------- |
+| `maestro.pluginId` (string)                                                                           | -                            |
+| `maestro.fs.read(path)` -> `Promise<string>`                                                          | `fs:read`                    |
+| `maestro.fs.write(path, contents)` -> `Promise<void>`                                                 | `fs:write`                   |
+| `maestro.net.fetch(url, init?)` -> `Promise<unknown>`                                                 | `net:fetch`                  |
+| `maestro.net.connect(url, opts?)` -> `Promise<{ socketId }>` (`wss://` only)                          | `net:connect`                |
+| `maestro.net.send(socketId, data)` -> `Promise<{ ok: true }>`                                         | `net:connect`                |
+| `maestro.net.close(socketId, opts?)` -> `Promise<{ ok: true }>`                                       | `net:connect`                |
+| `maestro.agents.list()`                                                                               | `agents:read`                |
+| `maestro.agents.get(agentId)`                                                                         | `agents:read`                |
+| `maestro.agents.dispatch(agentId, prompt, opts?)` (needs unattended consent)                          | `agents:dispatch`            |
+| `maestro.agents.send(agentId, prompt, { sessionId?, onProgress? })` -> response + provider session ID | `agents:dispatch`            |
+| `maestro.agents.generateTitle(agentId, firstMessage)` -> short title or `null`                        | `agents:dispatch`            |
+| `maestro.notifications.toast(message, opts?)` -> `Promise<void>`                                      | `notifications:toast`        |
+| `maestro.settings.get(key)`                                                                           | `settings:read`              |
+| `maestro.settings.set(key, value)` (key must be `plugins.<id>.*`)                                     | `settings:write`             |
+| `maestro.sessions.list()` (metadata only)                                                             | `sessions:read`              |
+| `maestro.sessions.get(sessionId)` (metadata only)                                                     | `sessions:read`              |
+| `maestro.sessions.focus(sessionId, tabId?)` -> `Promise<void>` (lands on an AI tab)                   | `sessions:focus`             |
+| `maestro.transcripts.read({ sessionId, fields, projectPath?, limit?, since? })`                       | `transcripts:read`           |
+| `maestro.storage.get(key)`                                                                            | `storage:read`               |
+| `maestro.storage.keys()`                                                                              | `storage:read`               |
+| `maestro.storage.set(key, value)` (value is a string)                                                 | `storage:write`              |
+| `maestro.storage.delete(key)`                                                                         | `storage:write`              |
+| `maestro.ui.runCommand(commandId, args?)`                                                             | `ui:command`                 |
+| `maestro.ui.hostView.update(localId, blocks)` -> `Promise<void>`                                      | `ui:hostView`                |
+| `maestro.ui.hostView.remove(localId)` -> `Promise<void>`                                              | `ui:hostView`                |
+| `maestro.ui.panelPost(panelId, data)` -> `Promise<void>` (own panels, 64 KB JSON)                     | `ui:panel`                   |
+| `maestro.ui.openPanel(panelId)` -> `Promise<void>` (own `modal` panels only)                          | `ui:panel`                   |
+| `maestro.ui.closePanel(panelId)` -> `Promise<void>` (own `modal` panels only)                         | `ui:panel`                   |
+| `maestro.ui.togglePanel(panelId)` -> `Promise<void>` (own `modal` panels only)                        | `ui:panel`                   |
+| `maestro.events.on(topic, handler(payload, meta))`                                                    | - (delivery needs subscribe) |
+| `maestro.events.subscribe(topics[])`                                                                  | `events:subscribe`           |
+| `maestro.events.unsubscribe(topics?)`                                                                 | `events:subscribe`           |
+| `maestro.commands.register(commandId, handler(args))`                                                 | - (invoked by host)          |
+| `maestro.tools.register(toolId, handler(args, context))` (verified caller ID or null)                 | - (invoked by host)          |
+| `maestro.process.spawn(command, opts?)` (trusted + gated)                                             | `process:spawn`              |
 
 `net.fetch` returns `{ status, statusText, headers, body }` (body is text, capped at 5 MB). Requests are egress-guarded: loopback, link-local, RFC1918, cloud-metadata, and the app's own port are blocked, and redirects are not followed (`redirect: 'error'`), so a 3xx to a non-granted host fails.
 
@@ -531,7 +533,11 @@ The API is three brokered calls plus event delivery:
 
 Caps and guarantees: at most **4 open sockets** per plugin; **64 KB** per frame in both directions; the connect is pinned through the same egress guard as `net.fetch` (loopback / RFC1918 / link-local / cloud-metadata are blocked); and `send`/`close` re-authorize your still-held grant on every call, so if the user revokes `net:connect` mid-stream the next call is denied. Every socket is force-closed when the plugin is disabled, crashes, or is uninstalled.
 
-Because the gateway must survive a crash, pair `net:connect` with `maestro.background.register(...)` (`background:service`) so the supervisor restarts your plugin and you reopen the socket in `activate`. And if your bridge turns inbound messages into agent work via `maestro.agents.dispatch(...)`, that path needs BOTH the allowlist `agents:dispatch` grant AND the separate **unattended consent** - dispatch driven by a socket event is never user-present.
+Because the gateway must survive a crash, pair `net:connect` with `maestro.background.register(...)` (`background:service`) so the supervisor restarts your plugin and you reopen the socket in `activate`. For a reply and resumable provider session, call `maestro.agents.send(...)`. The host records successful provider sessions and only resumes one for the same plugin and agent; persist the returned ID per external thread. To name an external thread from its first message, call `maestro.agents.generateTitle(agentId, firstMessage)` once; it returns a short tab-style topic title or `null` on generation failure, with no provider session or history. `send`, `dispatch`, and `generateTitle` need the allowlist `agents:dispatch` grant and separate **unattended consent**.
+
+`agents.send` can report invocation-scoped progress through `onProgress(event)`. A tool event has `type: 'tool'`, `tool`, `status`, `at`, and optional `summary`. The summary is an English public action of at most 120 characters (for example, `Reading file notes.md` or `Running shell command`) derived from allowlisted provider metadata. It may be absent when the host cannot identify a safe action. Do not treat it as a raw command, full path, tool arguments, output, or agent reasoning. Older callers can omit `onProgress` and older consumers can ignore `summary`.
+
+`agents.send(...).response` contains only the selected final answer. A run with no final text fails with `response: null`; commentary and reasoning never become a successful fallback answer. Codex commentary with an explicit phase reaches `onProgress` immediately. Codex's phase-less `agent_message` is buffered because it could be the final answer: the host reports it as commentary only after a later distinct answer confirms it was interim. The latest phase-less candidate becomes the answer at turn completion unless an explicit final phase was supplied. Progress is scoped to that one send and stops when it settles or is cancelled. Other providers' answer token deltas are retained only as a response fallback where their stream format requires it; they are not progress events. Consumers should render the returned response unchanged and use progress only for a live status display.
 
 ```js
 /** @import { MaestroSdk } from '@maestro/plugin-sdk' */
@@ -558,6 +564,8 @@ async function activate(maestro) {
 ## 7. Panels (HTML + the postMessage bridge)
 
 A panel renders in an isolated Electron `<webview>` guest with a per-plugin in-memory session (partition `plugin:<pluginId>`): no Node, contextIsolation, OS sandbox, opaque origin, and a restrictive CSP served by the host (`connect-src 'none'`, etc.). Navigation and network egress are denied in the main process - the panel lives on its initial document.
+
+On host API 1.19.0+, the host automatically sets these CSS custom properties on the panel document's root from the active theme: `--maestro-bg-main`, `--maestro-bg-sidebar`, `--maestro-bg-activity`, `--maestro-border`, `--maestro-text-main`, `--maestro-text-dim`, `--maestro-accent`, `--maestro-accent-dim`, `--maestro-accent-foreground`, `--maestro-success`, `--maestro-warning`, and `--maestro-error`. It also sets `color-scheme` to `light` or `dark` (`vibe` themes use `dark`) and updates open panels when the theme changes. Use CSS fallbacks for hosts before 1.19.0, for example `background: var(--maestro-bg-main, #fafafa)`. These visual tokens require no additional capability. A plugin that works with fallbacks can keep `minHostApi: '1.18.0'`.
 
 **A panel CANNOT make network requests directly.** No `fetch`/XHR/WebSocket. To cause any effect, post a command to the parent; the plugin's registered command handler runs in the sandbox and uses the brokered SDK from there.
 
@@ -697,7 +705,7 @@ An integral-but-untrusted plugin still runs once the user enables = consents. A 
 - **Host-API compatibility is strict.** Same major and `host >= minHostApi`, or the plugin will not load.
 - **Setting-key rules are enforced twice** (declarative contributions and runtime `settings.set`): no prototype segments, no `encoreFeatures`, no secret-looking names, no path separators.
 - **`entry` rules:** required for tier >= 1, forbidden for tier 0, must stay inside the plugin folder.
-- **Inert capabilities:** `agents:dispatch` and `process:spawn` are declared but have no production handler; do not build on them yet.
+- **Local tool identity:** `context.callerAgentId` is `null` without a valid host-issued run proof. Reject it for identity-sensitive effects. Local Claude API-mode and Codex desktop, Cue, and desktop-backed CLI runs receive proofs; Claude maestro-p and SSH runs do not receive a local MCP bridge.
 - **Trusted chrome cannot be extended.** Declarative `uiItems`, sandboxed panels, and any high-trust `ui:render-unsafe` UI must never target or cover plugin management/enable-disable controls, consent dialogs, uninstall/grant-revoke flows, or SSH/permission-mode/agent-identity indicators.
 
 ## 14. Tooling: the SDK package and the `maestro plugin` CLI

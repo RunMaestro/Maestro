@@ -21,9 +21,14 @@
 import semver from 'semver';
 
 /**
- * 1.22.0 adds the bounded media:tools job API (Discord attachments and fixed
- * local profiles). 1.17-1.21 are reserved by the separate Relay host work.
- * The host API version this Maestro build implements. 1.16.0 added three
+ * 1.22.0 adds bounded media jobs and fixed local tool profiles.
+ * The host API version this Maestro build implements. 1.21.0 adds isolated
+ * `agents.generateTitle` using Maestro's tab naming path. 1.20.0 adds invocation-
+ * scoped public progress callbacks to `agents.send`, without a new grant.
+ * 1.18.0 places settings panels in plugin details; 1.19.0 adds the isolated panel theme bridge.
+ * 1.17.0 added
+ * `agents.send` and the verified second argument to plugin tool handlers.
+ * 1.16.0 added three
  * backward-compatible additions: the metadata-only `session.activated` event
  * topic (`{ sessionId, tabId? }`, opaque ids only, fired when the focused agent
  * changes), the `sessions.focus` method plus its narrow `sessions:focus`

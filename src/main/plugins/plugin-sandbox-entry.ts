@@ -70,6 +70,8 @@ export interface SandboxRealm {
 	runScript(code: string, filename: string, timeoutMs?: number): void;
 	/** Resolve/reject a pending SDK call; `json` is a HostResponse. */
 	deliverResponse(json: string): void;
+	/** Deliver progress to the callback owned by one pending agents.send call. */
+	deliverProgress(json: string): void;
 	/** Fan an event out to registered handlers; `json` is `{topic, at, payload}`. */
 	deliverEvent(json: string): void;
 	/** Fire-and-forget a registered command; `json` is `{commandId, args}`. */
@@ -110,10 +112,10 @@ const BOOTSTRAP_SOURCE = String.raw`(function bootstrap(bridge) {
 	// ---- brokered host calls -------------------------------------------------
 	var pending = new Map();
 	var nextCallId = 1;
-	function hostCall(method, params) {
+	function hostCall(method, params, onProgress) {
 		var d = Promise.withResolvers();
 		var id = nextCallId++;
-		pending.set(id, d);
+		pending.set(id, { resolve: d.resolve, reject: d.reject, onProgress: onProgress });
 		try {
 			bridgeSend(JSON.stringify({ id: id, method: method, params: params }));
 		} catch (e) {
@@ -135,6 +137,15 @@ const BOOTSTRAP_SOURCE = String.raw`(function bootstrap(bridge) {
 			if (typeof res.errorCode === 'string') failure.code = res.errorCode;
 			call.reject(failure);
 		}
+	}
+	function deliverProgress(json) {
+		var msg;
+		try { msg = JSON.parse(json); } catch (e) { return; }
+		if (!msg || typeof msg.id !== 'number') return;
+		var call = pending.get(msg.id);
+		if (!call || typeof call.onProgress !== 'function') return;
+		try { call.onProgress(msg.event); }
+		catch (e) { safeLog('error', 'agents.send progress callback threw: ' + String(e)); }
 	}
 
 	// ---- curated globals -----------------------------------------------------
@@ -223,7 +234,7 @@ const BOOTSTRAP_SOURCE = String.raw`(function bootstrap(bridge) {
 		}
 		return new Promise(function (resolve) {
 			try {
-				Promise.resolve(handler(msg.args)).then(
+				Promise.resolve(handler(msg.args, Object.freeze({ callerAgentId: msg.context && typeof msg.context.callerAgentId === 'string' ? msg.context.callerAgentId : null }))).then(
 					function (result) {
 						var body;
 						try { body = JSON.stringify({ ok: true, result: result === undefined ? null : result }); }
@@ -270,7 +281,18 @@ const BOOTSTRAP_SOURCE = String.raw`(function bootstrap(bridge) {
 			agents: Object.freeze({
 				list: function () { return hostCall('agents.list', {}); },
 				get: function (agentId) { return hostCall('agents.get', { agentId: agentId }); },
-				dispatch: function (agentId, prompt, opts) { return hostCall('agents.dispatch', { agentId: agentId, prompt: prompt, opts: opts }); }
+				dispatch: function (agentId, prompt, opts) { return hostCall('agents.dispatch', { agentId: agentId, prompt: prompt, opts: opts }); },
+				send: function (agentId, prompt, opts) {
+					if (opts && opts.onProgress !== undefined && typeof opts.onProgress !== 'function')
+						return Promise.reject(new TypeError('onProgress must be a function'));
+					var wireOpts = opts;
+					if (opts && typeof opts === 'object' && !Array.isArray(opts)) {
+						wireOpts = Object.create(null);
+						Object.keys(opts).forEach(function (key) { if (key !== 'onProgress') wireOpts[key] = opts[key]; });
+					}
+					return hostCall('agents.send', { agentId: agentId, prompt: prompt, opts: wireOpts }, opts && opts.onProgress);
+				},
+				generateTitle: function (agentId, firstMessage) { return hostCall('agents.generateTitle', { agentId: agentId, firstMessage: firstMessage }); }
 			}),
 			history: Object.freeze({
 				list: function (params) { return hostCall('history.list', params || {}); },
@@ -409,6 +431,7 @@ const BOOTSTRAP_SOURCE = String.raw`(function bootstrap(bridge) {
 	return {
 		init: init,
 		deliverResponse: deliverResponse,
+		deliverProgress: deliverProgress,
 		deliverEvent: deliverEvent,
 		invokeCommand: invokeCommand,
 		invokeTool: invokeTool,
@@ -525,7 +548,9 @@ if (parentPort) {
 				return;
 			}
 			void activeRealm
-				.invokeTool(JSON.stringify({ commandId: msg.commandId, args: msg.args }))
+				.invokeTool(
+					JSON.stringify({ commandId: msg.commandId, args: msg.args, context: msg.context })
+				)
 				.then((json) => {
 					try {
 						reply(JSON.parse(json) as Omit<ToolResult, 'kind' | 'id'>);
@@ -539,6 +564,10 @@ if (parentPort) {
 			activeRealm?.deliverEvent(
 				JSON.stringify({ topic: msg.topic, at: msg.at, payload: msg.payload })
 			);
+			return;
+		}
+		if (msg.kind === 'progress') {
+			activeRealm?.deliverProgress(JSON.stringify({ id: msg.id, event: msg.event }));
 			return;
 		}
 		if (msg.kind === 'shutdown') {
