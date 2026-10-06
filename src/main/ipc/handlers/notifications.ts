@@ -13,7 +13,7 @@
 import { ipcMain, Notification, BrowserWindow } from 'electron';
 import { spawn, type ChildProcess } from 'child_process';
 import { logger } from '../../utils/logger';
-import { createSafeSend, type SafeSendFn } from '../../utils/safe-send';
+import { createSafeSend, isWebContentsAvailable, type SafeSendFn } from '../../utils/safe-send';
 import { parseDeepLink, dispatchDeepLink } from '../../deep-links';
 import { buildSessionDeepLink } from '../../../shared/deep-link-urls';
 import { captureException } from '../../utils/sentry';
