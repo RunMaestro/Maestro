@@ -635,6 +635,17 @@ describe('net.fetch fail-closed (connection pinning)', () => {
 });
 
 describe('settings.get scoping', () => {
+	it('denies host media paths even for trusted plugins with settings:read', async () => {
+		const get = vi.fn(() => '/private/models');
+		const h = buildHostCallHandlers(
+			makeDeps({ settingsGet: get, broker: brokerFor(() => [grant('settings:read')]) })
+		);
+		await expect(h['settings.get']!('p', { key: 'mediaModelDirectory' })).rejects.toThrow(
+			'host-only'
+		);
+		expect(get).not.toHaveBeenCalled();
+	});
+
 	it('denies the feature gate and peer namespaces, allows own + general keys', async () => {
 		const settingsGet = vi.fn((key: string) => `V:${key}`);
 		const h = buildHostCallHandlers(makeDeps({ settingsGet }));

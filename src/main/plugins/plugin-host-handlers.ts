@@ -819,6 +819,7 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 			assertBrokerAllowed(deps, pluginId, 'settings.get', p);
 			if (SECRET_KEY_PATTERN.test(p.key)) throw new Error('access to secret settings is denied');
 			if (/encorefeatures/i.test(p.key)) throw new Error('access to the feature gate is denied');
+			if (p.key === 'mediaModelDirectory') throw new Error('host media configuration is host-only');
 			const ownNamespace = `plugins.${pluginId}.`;
 			if (p.key.startsWith('plugins.') && !p.key.startsWith(ownNamespace)) {
 				throw new Error("access to another plugin's settings is denied");
