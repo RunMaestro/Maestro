@@ -141,75 +141,91 @@ afterEach(() => {
 });
 
 describe('shared host browser page', () => {
-	it('attaches remote capture and input to the live native guest without a second page or navigation', async () => {
-		const capturePage = vi.fn().mockResolvedValue({
-			isEmpty: () => false,
-			getSize: () => nativeSize,
-			toJPEG: () => Buffer.from('native frame'),
-		});
-		const loadURL = vi.fn();
-		ipc.native = Object.assign(new EventEmitter(), {
-			id: 42,
-			hostWebContents: owner.webContents,
-			session: ipc.nativeSession,
-			getType: () => 'webview',
-			isDestroyed: () => false,
-			getURL: () => 'https://example.com/form',
-			getTitle: () => 'Unsaved form',
-			isLoading: () => false,
-			navigationHistory: { canGoBack: () => true, canGoForward: () => false },
-			capturePage,
-			loadURL,
-			debugger: { isAttached: () => true, sendCommand: vi.fn().mockResolvedValue(undefined) },
-		});
-		const lease = await invoke('browser:relayOpen', remote, target, remoteSize);
-		expect(ipc.windows).toHaveLength(0);
-		expect(await invoke('browser:relayFrame', remote, lease, remoteSize)).toMatchObject({
-			...nativeSize,
-			url: 'https://example.com/form',
-			dataUrl: expect.any(String),
-		});
-		await invoke('browser:relayInput', remote, lease, { type: 'text', text: 'continue form' });
-		expect(ipc.native.debugger.sendCommand).toHaveBeenCalledWith('Input.insertText', {
-			text: 'continue form',
-		});
-		const scaledSize = { width: 2560, height: 1440 };
-		const resize = vi.fn().mockReturnValue({
-			getSize: () => scaledSize,
-			toJPEG: () => Buffer.from('scaled frame'),
-		});
-		capturePage.mockResolvedValueOnce({
-			isEmpty: () => false,
-			getSize: () => ({ width: 3840, height: 2160 }),
-			toJPEG: () => Buffer.from('large frame'),
-			resize,
-		} as Awaited<ReturnType<typeof capturePage>>);
-		expect(await invoke('browser:relayFrame', remote, lease, remoteSize)).toMatchObject(scaledSize);
-		expect(resize).toHaveBeenCalledWith(scaledSize);
-		await invoke('browser:relayInput', remote, lease, {
-			type: 'mouseWheel',
-			x: 2500,
-			y: 1400,
-			deltaX: 0,
-			deltaY: 120,
-		});
-		expect(ipc.native.debugger.sendCommand).toHaveBeenLastCalledWith(
-			'Input.dispatchMouseEvent',
-			expect.objectContaining({ type: 'mouseWheel', x: 3750, y: 2100, deltaY: 120 })
-		);
-		await invoke('browser:relayClose', remote, lease);
-		expect(loadURL).not.toHaveBeenCalled();
-		expect(capturePage).toHaveBeenCalledTimes(2);
-		// Native guests retain the desktop keep-alive lifetime. After the host
-		// unmounts one, an attached remote view can reopen its URL offscreen.
-		const reopened = await invoke('browser:relayOpen', remote, target, remoteSize);
-		ipc.native.emit('destroyed');
-		ipc.native = null;
-		expect(await invoke('browser:relayFrame', remote, reopened, remoteSize)).toMatchObject(
-			remoteSize
-		);
-		expect(ipc.windows).toHaveLength(1);
-	});
+	it.each([1, 2, 2.5])(
+		'attaches the live native guest and maps input at device pixel ratio %s',
+		async (pixelRatio) => {
+			const pixelRatioRead = vi.fn().mockResolvedValue(pixelRatio);
+			const capturePage = vi.fn().mockResolvedValue({
+				isEmpty: () => false,
+				getSize: () => nativeSize,
+				toJPEG: () => Buffer.from('native frame'),
+			});
+			const loadURL = vi.fn();
+			ipc.native = Object.assign(new EventEmitter(), {
+				id: 42,
+				hostWebContents: owner.webContents,
+				session: ipc.nativeSession,
+				getType: () => 'webview',
+				isDestroyed: () => false,
+				getURL: () => 'https://example.com/form',
+				getTitle: () => 'Unsaved form',
+				isLoading: () => false,
+				navigationHistory: { canGoBack: () => true, canGoForward: () => false },
+				capturePage,
+				executeJavaScriptInIsolatedWorld: pixelRatioRead,
+				loadURL,
+				debugger: { isAttached: () => true, sendCommand: vi.fn().mockResolvedValue(undefined) },
+			});
+			const lease = await invoke('browser:relayOpen', remote, target, remoteSize);
+			expect(ipc.windows).toHaveLength(0);
+			expect(await invoke('browser:relayFrame', remote, lease, remoteSize)).toMatchObject({
+				...nativeSize,
+				url: 'https://example.com/form',
+				dataUrl: expect.any(String),
+			});
+			await invoke('browser:relayInput', remote, lease, { type: 'text', text: 'continue form' });
+			expect(ipc.native.debugger.sendCommand).toHaveBeenCalledWith('Input.insertText', {
+				text: 'continue form',
+			});
+			pixelRatioRead.mockRejectedValueOnce(new Error('Navigation interrupted the ratio read'));
+			await expect(invoke('browser:relayFrame', remote, lease, remoteSize)).rejects.toThrow(
+				'Navigation interrupted'
+			);
+			const scaledSize = { width: 2560, height: 1440 };
+			const resize = vi.fn().mockReturnValue({
+				getSize: () => scaledSize,
+				toJPEG: () => Buffer.from('scaled frame'),
+			});
+			capturePage.mockResolvedValueOnce({
+				isEmpty: () => false,
+				getSize: () => ({ width: 3840, height: 2160 }),
+				toJPEG: () => Buffer.from('large frame'),
+				resize,
+			} as Awaited<ReturnType<typeof capturePage>>);
+			expect(await invoke('browser:relayFrame', remote, lease, remoteSize)).toMatchObject(
+				scaledSize
+			);
+			expect(resize).toHaveBeenCalledWith(scaledSize);
+			await invoke('browser:relayInput', remote, lease, {
+				type: 'mouseWheel',
+				x: 2500,
+				y: 1400,
+				deltaX: 0,
+				deltaY: 120,
+			});
+			expect(ipc.native.debugger.sendCommand).toHaveBeenLastCalledWith(
+				'Input.dispatchMouseEvent',
+				expect.objectContaining({
+					type: 'mouseWheel',
+					x: Math.round(3750 / pixelRatio),
+					y: Math.round(2100 / pixelRatio),
+					deltaY: 120,
+				})
+			);
+			await invoke('browser:relayClose', remote, lease);
+			expect(loadURL).not.toHaveBeenCalled();
+			expect(capturePage).toHaveBeenCalledTimes(3);
+			// Native guests retain the desktop keep-alive lifetime. After the host
+			// unmounts one, an attached remote view can reopen its URL offscreen.
+			const reopened = await invoke('browser:relayOpen', remote, target, remoteSize);
+			ipc.native.emit('destroyed');
+			ipc.native = null;
+			expect(await invoke('browser:relayFrame', remote, reopened, remoteSize)).toMatchObject(
+				remoteSize
+			);
+			expect(ipc.windows).toHaveLength(1);
+		}
+	);
 
 	it.each(['owner', 'partition', 'type'] as const)(
 		'refuses native guest identity with the wrong %s',

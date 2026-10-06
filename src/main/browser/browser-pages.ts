@@ -376,12 +376,24 @@ export class HostBrowserPages {
 		let image = await this.image(page);
 		if (!page.window) {
 			if (image.isEmpty()) throw new Error('Native browser did not paint a frame');
-			page.nativeSize = image.getSize();
-			const scale = Math.min(1, 2560 / page.nativeSize.width, 1600 / page.nativeSize.height);
+			// capturePage returns physical pixels, but CDP input uses CSS pixels.
+			// An isolated world reads the real ratio (including page zoom) even if
+			// page scripts replace window.devicePixelRatio in their own world.
+			const pixelRatio: unknown = await page.guest.executeJavaScriptInIsolatedWorld(1004, [
+				{ code: 'window.devicePixelRatio' },
+			]);
+			if (typeof pixelRatio !== 'number' || !Number.isFinite(pixelRatio) || pixelRatio <= 0)
+				throw new Error('Native browser pixel ratio is unavailable');
+			const physicalSize = image.getSize();
+			page.nativeSize = {
+				width: Math.max(1, Math.round(physicalSize.width / pixelRatio)),
+				height: Math.max(1, Math.round(physicalSize.height / pixelRatio)),
+			};
+			const scale = Math.min(1, 2560 / physicalSize.width, 1600 / physicalSize.height);
 			if (scale < 1)
 				image = image.resize({
-					width: Math.max(1, Math.floor(page.nativeSize.width * scale)),
-					height: Math.max(1, Math.floor(page.nativeSize.height * scale)),
+					width: Math.max(1, Math.floor(physicalSize.width * scale)),
+					height: Math.max(1, Math.floor(physicalSize.height * scale)),
 				});
 			page.viewport = image.getSize();
 			page.encodedJPEG = null;
