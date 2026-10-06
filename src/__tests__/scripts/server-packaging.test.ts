@@ -65,13 +65,17 @@ describe('server packaging', () => {
 
 	it('gives the drain time to finish before anything is killed', () => {
 		const drain = Number(flag(containerArgs, '--drain-timeout'));
-		expect(Number(unitValue('TimeoutStopSec'))).toBeGreaterThan(drain);
+		// The contract: at least the drain plus 15 s of stop-ladder grace and margin.
+		expect(Number(unitValue('TimeoutStopSec'))).toBeGreaterThanOrEqual(drain + 15);
 		const grace = compose.match(/stop_grace_period: (\d+)s/)?.[1];
 		expect(Number(grace)).toBeGreaterThan(drain);
 	});
 
-	it('runs the engine under a supervisor that reaches its process tree', () => {
-		expect(execForm('ENTRYPOINT').slice(0, 3)).toEqual(['/usr/bin/tini', '-g', '--']);
+	it('signals only the engine on stop, so the drain can let agents finish', () => {
+		// Agents share the engine's process group: tini -g would SIGTERM them all.
+		const entrypoint = execForm('ENTRYPOINT');
+		expect(entrypoint.slice(0, 2)).toEqual(['/usr/bin/tini', '--']);
+		expect(entrypoint).not.toContain('-g');
 		expect(unitValue('KillMode')).toBe('mixed');
 	});
 
@@ -79,6 +83,7 @@ describe('server packaging', () => {
 		expect(unitValue('Type')).toBe('notify');
 		expect(unitValue('NotifyAccess')).toBe('all');
 		expect(unitValue('WatchdogSec')).toBe('30');
+		expect(unitValue('TimeoutStartSec')).toBe('60');
 		expect(unitValue('Restart')).toBe('on-failure');
 	});
 
