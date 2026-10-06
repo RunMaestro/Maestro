@@ -291,6 +291,16 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 				argBuilder: (value: string) =>
 					value && value.trim() ? ['-c', `reasoning.effort="${value.trim()}"`] : [],
 			},
+			{
+				key: 'reasoningSummary',
+				type: 'select',
+				label: 'Reasoning Summary',
+				description:
+					'Request readable Codex reasoning summaries for the Thinking display. Default follows the Codex CLI and model; some providers do not support summaries.',
+				options: ['', 'auto', 'concise', 'detailed', 'none'],
+				default: '',
+				argBuilder: (value: string) => (value ? ['-c', `model_reasoning_summary="${value}"`] : []),
+			},
 		],
 	},
 	{
