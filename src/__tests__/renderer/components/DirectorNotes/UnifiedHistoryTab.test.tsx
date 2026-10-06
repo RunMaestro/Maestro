@@ -194,7 +194,7 @@ vi.mock('../../../../renderer/components/History', () => ({
 			if (raw !== null) {
 				const parsed = JSON.parse(raw);
 				if (Array.isArray(parsed)) {
-					const valid = parsed.filter((t) => ['USER', 'AGENT', 'AUTO', 'CUE'].includes(t));
+					const valid = parsed.filter((t) => ['USER', 'AGENT', 'RELAY', 'AUTO', 'CUE'].includes(t));
 					const set = new Set<string>(valid);
 					if (!maestroCueEnabled) set.delete('CUE');
 					return set;
@@ -204,7 +204,9 @@ vi.mock('../../../../renderer/components/History', () => ({
 			// fall through to default
 		}
 		return new Set(
-			maestroCueEnabled ? ['USER', 'AGENT', 'AUTO', 'CUE'] : ['USER', 'AGENT', 'AUTO']
+			maestroCueEnabled
+				? ['USER', 'AGENT', 'RELAY', 'AUTO', 'CUE']
+				: ['USER', 'AGENT', 'RELAY', 'AUTO']
 		);
 	},
 	savePersistedHistoryFilters: (key: string, filters: Set<string>) => {
@@ -388,7 +390,7 @@ describe('UnifiedHistoryTab', () => {
 					lookbackDays: 7,
 					// All visible types selected by default; pushed to the server so
 					// pagination spans the filtered dataset (maestroCue disabled here).
-					filter: ['USER', 'AGENT', 'AUTO'],
+					filter: ['USER', 'AGENT', 'RELAY', 'AUTO'],
 					limit: 100,
 					offset: 0,
 				});
@@ -413,7 +415,7 @@ describe('UnifiedHistoryTab', () => {
 			await waitFor(() => {
 				expect(mockGetUnifiedHistory).toHaveBeenCalledWith({
 					lookbackDays: 0,
-					filter: ['USER', 'AGENT', 'AUTO'],
+					filter: ['USER', 'AGENT', 'RELAY', 'AUTO'],
 					limit: 100,
 					offset: 0,
 				});

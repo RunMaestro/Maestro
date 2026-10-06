@@ -10,8 +10,9 @@ import {
 } from '../../../stores/sessionStore';
 import { clearLiveDraft } from '../../../utils/liveDraftStore';
 import { logger } from '../../../utils/logger';
-import { persistTabStarred } from '../../../utils/starredSessions';
+import { persistTabStarred, snapshotClosedTabTranscript } from '../../../utils/starredSessions';
 import { isWebDesktop } from '../../../utils/runtimeContext';
+import { requestDesktopTabClose, requestDesktopTabCloses } from '../../../services/desktopTabClose';
 import { noteDesktopAiTabSelection } from '../../../utils/desktopTabSelectionSync';
 import {
 	addAiTabToUnifiedHistory,
@@ -21,7 +22,6 @@ import {
 	cycleShowThinkingFields,
 	getActiveTab,
 	getInitialRenameValue,
-	getTabDisplayName,
 	hasActiveWizard,
 	hasDraft,
 	hasWizardInteraction,
@@ -32,6 +32,7 @@ import {
 } from '../../../utils/tabHelpers';
 import type { AITabHandlersReturn } from './types';
 
+/** Manage AI tabs, delegating browser inventory changes to the owning desktop. */
 export function useAITabHandlers(
 	inputRef?: RefObject<HTMLTextAreaElement | null>
 ): AITabHandlersReturn {
@@ -132,30 +133,12 @@ export function useAITabHandlers(
 			const tabBeforeClose = sessionBeforeClose?.aiTabs.find((t) => t.id === tabId);
 			const wasWizardTab = !!tabBeforeClose && hasActiveWizard(tabBeforeClose);
 
-			// Closing a starred tab is a context-loss boundary: capture the provider
-			// transcript into Maestro's own mirror now, so it survives even if the
-			// provider later deletes its copy. Fire-and-forget; no-op for unstarred
-			// tabs or tabs that never got a provider session id.
-			if (
-				sessionBeforeClose &&
-				tabBeforeClose?.starred &&
-				tabBeforeClose.agentSessionId &&
-				sessionBeforeClose.projectRoot
-			) {
-				window.maestro.agentSessions
-					.snapshotStarredTranscript(
-						sessionBeforeClose.toolType || 'claude-code',
-						sessionBeforeClose.projectRoot,
-						tabBeforeClose.agentSessionId,
-						getTabDisplayName(tabBeforeClose)
-					)
-					.catch((error) =>
-						logger.warn(
-							'[useTabHandlers] Failed to mirror starred transcript on close',
-							undefined,
-							error
-						)
-					);
+			if (isWebDesktop()) {
+				void requestDesktopTabClose(activeSessionId, tabId, endInlineWizard);
+				return;
+			}
+			if (sessionBeforeClose && tabBeforeClose) {
+				snapshotClosedTabTranscript(sessionBeforeClose, tabBeforeClose);
 			}
 
 			clearLiveDraft(tabId);
@@ -216,6 +199,14 @@ export function useAITabHandlers(
 	const performCloseAllTabs = useCallback(() => {
 		const { activeSessionId, sessions } = useSessionStore.getState();
 		const activeSession = sessions.find((s) => s.id === activeSessionId);
+		if (isWebDesktop()) {
+			void requestDesktopTabCloses(
+				activeSessionId,
+				visibleAiTabs(activeSession?.aiTabs).map((tab) => tab.id),
+				endInlineWizard
+			);
+			return;
+		}
 		visibleAiTabs(activeSession?.aiTabs).forEach((t) => clearLiveDraft(t.id));
 
 		const wizardTabIds = visibleAiTabs(activeSession?.aiTabs)

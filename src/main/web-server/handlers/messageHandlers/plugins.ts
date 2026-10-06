@@ -8,8 +8,10 @@ import { logger } from '../../../utils/logger';
 import {
 	getActivePluginManager,
 	isPluginsFeatureEnabled,
+	getHeadlessAgentRunner,
 } from '../../../plugins/plugin-manager-singleton';
 import { evaluatePluginDispatch } from '../../../../shared/plugins/plugin-dispatch-gate';
+import { pluginToolRunIdentity } from '../../../plugins/plugin-tool-run-identity';
 import { LOG_CONTEXT } from './shared';
 import type { WebClient, WebClientMessage, MessageHandlerContext } from './types';
 
@@ -54,6 +56,133 @@ export function handlePluginsListTools(
 		tools,
 		requestId: message.requestId,
 	});
+}
+
+/** Only a locally stored agent can receive a run proof. The local CLI is a
+ * trusted same-user client; the proof is never inferred from --tab. */
+export async function handlePluginsSendAgent(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): Promise<void> {
+	const respond = (extra: Record<string, unknown>): void =>
+		ctx.send(client, {
+			type: 'plugins_send_agent_result',
+			requestId: message.requestId,
+			...extra,
+		});
+	// A tunnel/reverse proxy can make a remote browser appear to arrive over
+	// loopback. Only the CLI secret verified on WebSocket upgrade identifies the
+	// CLI; address is an additional restriction, never the credential.
+	const remoteAddress = (client.socket as unknown as { _socket?: { remoteAddress?: string } })
+		._socket?.remoteAddress;
+	if (
+		client.cliAuthenticated !== true ||
+		(remoteAddress !== '127.0.0.1' &&
+			remoteAddress !== '::1' &&
+			remoteAddress !== '::ffff:127.0.0.1')
+	) {
+		respond({ available: false, error: 'Local CLI connection required' });
+		return;
+	}
+	const run = getHeadlessAgentRunner();
+	const manager = getActivePluginManager();
+	if (
+		!isPluginsFeatureEnabled() ||
+		!manager ||
+		manager.getContributions().tools.length === 0 ||
+		!run
+	) {
+		respond({ available: false, error: 'Plugin headless runner unavailable' });
+		return;
+	}
+	const agentId = message.agentId;
+	const prompt = message.prompt;
+	const sessionId = message.providerSessionId;
+	const requiredToolId = message.requiredToolId;
+	if (
+		typeof agentId !== 'string' ||
+		!ctx.callbacks.getSessionDetail?.(agentId) ||
+		typeof prompt !== 'string' ||
+		!prompt.trim() ||
+		prompt.length > 64 * 1024 ||
+		(sessionId !== undefined &&
+			(typeof sessionId !== 'string' || !/^[^\x00-\x1f\x7f]{1,256}$/.test(sessionId)))
+	) {
+		respond({ available: true, success: false, error: 'Invalid headless agent request' });
+		return;
+	}
+	if (
+		requiredToolId !== undefined &&
+		(typeof requiredToolId !== 'string' ||
+			!requiredToolId ||
+			requiredToolId.length > 200 ||
+			!manager.getContributions().tools.some((tool) => tool.id === requiredToolId))
+	) {
+		respond({ available: true, success: false, error: 'Required plugin tool unavailable' });
+		return;
+	}
+	try {
+		const controller = new AbortController();
+		const onClose = (): void => controller.abort();
+		client.socket.once('close', onClose);
+		try {
+			const reply = await run(
+				agentId,
+				prompt,
+				sessionId as string | undefined,
+				controller.signal,
+				'user',
+				undefined,
+				requiredToolId as string | undefined
+			);
+			const toolStillActive =
+				requiredToolId === undefined ||
+				(isPluginsFeatureEnabled() &&
+					getActivePluginManager() === manager &&
+					manager.getContributions().tools.some((tool) => tool.id === requiredToolId));
+			const hasReceipt =
+				requiredToolId === undefined ||
+				(Array.isArray(reply.toolReceipts) &&
+					reply.toolReceipts.some(
+						(receipt) =>
+							receipt !== null &&
+							typeof receipt === 'object' &&
+							/^[0-9a-f]{32}$/.test(receipt.runId) &&
+							receipt.agentId === agentId &&
+							receipt.toolId === requiredToolId &&
+							Array.isArray(receipt.messageIds) &&
+							receipt.messageIds.length > 0 &&
+							receipt.messageIds.every(
+								(id) => typeof id === 'string' && /^[1-9][0-9]{0,19}$/.test(id)
+							)
+					));
+			respond({
+				available: true,
+				...reply,
+				...(requiredToolId && (!toolStillActive || !hasReceipt)
+					? {
+							success: false,
+							response: null,
+							error:
+								reply.success === false && reply.error
+									? reply.error
+									: !toolStillActive
+										? 'Required plugin tool became unavailable'
+										: 'Required plugin tool returned no delivery receipt',
+						}
+					: {}),
+			});
+		} finally {
+			client.socket.off('close', onClose);
+		}
+	} catch (error) {
+		respond({
+			available: true,
+			success: false,
+			error: error instanceof Error ? error.message : String(error),
+		});
+	}
 }
 
 /**
@@ -109,7 +238,19 @@ export async function handlePluginsCallTool(
 		return;
 	}
 	try {
-		const result = await manager.invokeTool(toolId, args);
+		const context = pluginToolRunIdentity.resolve(message.runToken);
+		logger.info(
+			`[PluginAudit] tool ${toolId} callerAgentId=${context.callerAgentId ?? 'unverified'}`,
+			LOG_CONTEXT
+		);
+		const result = await manager.invokeTool(toolId, args, context);
+		if (
+			isPluginsFeatureEnabled() &&
+			getActivePluginManager() === manager &&
+			manager.getContributions().tools.some((tool) => tool.id === toolId)
+		) {
+			pluginToolRunIdentity.recordReceipt(message.runToken, toolId, result);
+		}
 		respond({ ok: true, result });
 	} catch (error) {
 		respond({ ok: false, error: error instanceof Error ? error.message : String(error) });

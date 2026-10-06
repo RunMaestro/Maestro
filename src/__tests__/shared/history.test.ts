@@ -397,7 +397,13 @@ describe('history entry type helpers', () => {
 
 	describe('ALL_HISTORY_ENTRY_TYPES', () => {
 		it('is the single list of every entry type', () => {
-			expect([...ALL_HISTORY_ENTRY_TYPES].sort()).toEqual(['AGENT', 'AUTO', 'CUE', 'USER']);
+			expect([...ALL_HISTORY_ENTRY_TYPES].sort()).toEqual([
+				'AGENT',
+				'AUTO',
+				'CUE',
+				'RELAY',
+				'USER',
+			]);
 		});
 	});
 

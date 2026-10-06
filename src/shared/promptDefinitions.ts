@@ -41,6 +41,13 @@ export const CORE_PROMPTS: PromptDefinition[] = [
 		description: 'Wizard document generation prompt',
 		category: 'wizard',
 	},
+	// TTSR (Time-Traveling Stream Rules)
+	{
+		id: 'ttsr-rule-authoring',
+		filename: 'ttsr-rule-authoring.md',
+		description: 'Briefs an agent on the TTSR rule schema so it can author rule files',
+		category: 'ttsr',
+	},
 	// Inline Wizard
 	{
 		id: 'wizard-inline-system',
@@ -111,6 +118,14 @@ export const CORE_PROMPTS: PromptDefinition[] = [
 		filename: 'commit-command.md',
 		description: 'Git commit command prompt',
 		category: 'commands',
+	},
+	// Board
+	{
+		id: 'board-decompose',
+		filename: 'board-decompose.md',
+		description:
+			'Optional Board auto-decompose: fan a triage card into a small graph of child cards (off by default, gated on the board autoDecompose flag)',
+		category: 'board',
 	},
 	{
 		id: 'ai-command',
@@ -313,6 +328,8 @@ export const PROMPT_IDS = {
 	// Commands
 	IMAGE_ONLY_DEFAULT: 'image-only-default',
 	COMMIT_COMMAND: 'commit-command',
+	// Board
+	BOARD_DECOMPOSE: 'board-decompose',
 	AI_COMMAND: 'ai-command',
 	// Per-agent prompt preambles
 	COPILOT_PREAMBLE: 'copilot-preamble',
@@ -320,6 +337,8 @@ export const PROMPT_IDS = {
 	MAESTRO_SYSTEM_PROMPT: 'maestro-system-prompt',
 	// Pianola
 	PIANOLA_SYSTEM: 'pianola-system',
+	// TTSR
+	TTSR_RULE_AUTHORING: 'ttsr-rule-authoring',
 	// Group Chat
 	GROUP_CHAT_MODERATOR_SYSTEM: 'group-chat-moderator-system',
 	GROUP_CHAT_MODERATOR_SYNTHESIS: 'group-chat-moderator-synthesis',

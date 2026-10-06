@@ -57,6 +57,9 @@ import { createTabsApi } from './tabs';
 import { createAiCommandApi } from './aiCommand';
 import { createDirectorNotesApi } from './directorNotes';
 import { createCueApi } from './cue';
+import { createTtsrApi } from './ttsr';
+import { createProfilesApi } from './profiles';
+import { createBoardApi } from './board';
 import { createCueBackupApi } from './cueBackup';
 import { createPianolaApi } from './pianola';
 import { createPluginsApi } from './plugins';
@@ -248,8 +251,17 @@ contextBridge.exposeInMainWorld('maestro', {
 	// Cue API (event-driven automation)
 	cue: createCueApi(),
 
+	// Agent Profiles API (named model/effort/role bundles layered on a base agent)
+	profiles: createProfilesApi(),
+
+	// Board API (persistent task DAG stored in .maestro/board.yaml)
+	board: createBoardApi(),
+
 	// Cue Backup API (Cue modal Backup tab - snapshot/restore cue.yaml + prompts)
 	cueBackup: createCueBackupApi(),
+
+	// TTSR API (Time-Traveling Stream Rules - push events only)
+	ttsr: createTtsrApi(),
 
 	// Pianola API (autonomous manager: rules + decision log)
 	pianola: createPianolaApi(),
@@ -363,6 +375,10 @@ export {
 	createDirectorNotesApi,
 	// Cue
 	createCueApi,
+	// Agent Profiles
+	createProfilesApi,
+	// Board
+	createBoardApi,
 	// Cue Backup
 	createCueBackupApi,
 	// Pianola
@@ -623,6 +639,26 @@ export type {
 	CueEventType,
 	CueRunStatus,
 } from './cue';
+export type {
+	// From ttsr
+	TtsrApi,
+	TtsrAbortClearedPayload,
+	TtsrAbortPendingPayload,
+	TtsrMatchedPayload,
+	TtsrTriggeredPayload,
+} from './ttsr';
+export type {
+	// From profiles
+	ProfilesApi,
+	AgentProfile,
+} from './profiles';
+export type {
+	// From board
+	BoardApi,
+	Board,
+	BoardCard,
+	CardStatus,
+} from './board';
 export type {
 	// From pianola
 	PianolaApi,

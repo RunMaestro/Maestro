@@ -93,6 +93,17 @@ const WALKER_SOURCE = String.raw`
 `;
 
 describe('plugin sandbox realm - escape regression (FC1)', () => {
+	it('routes generateTitle through the brokered host method', () => {
+		const bridge = makeBridge();
+		const realm = bootRealm(bridge);
+		realm.runScript("maestro.agents.generateTitle('agent-a', 'Build a login form');", 'title-call');
+		const request = JSON.parse((bridge.send as ReturnType<typeof vi.fn>).mock.calls[0][0]);
+		expect(request).toMatchObject({
+			method: 'agents.generateTitle',
+			params: { agentId: 'agent-a', firstMessage: 'Build a login form' },
+		});
+	});
+
 	it('constructor-chain escape throws for every value reachable from plugin code', () => {
 		const bridge = makeBridge();
 		const realm = bootRealm(bridge);
@@ -194,6 +205,58 @@ describe('plugin sandbox realm - escape regression (FC1)', () => {
 });
 
 describe('plugin sandbox realm - behavioral parity', () => {
+	it('routes agents.send progress only to its pending call and drops late events', async () => {
+		const sent: Array<{ id: number; method: string; params: unknown }> = [];
+		const bridge = makeBridge({ send: vi.fn((json: string) => sent.push(JSON.parse(json))) });
+		const realm = bootRealm(bridge);
+		realm.runScript(
+			String.raw`
+			globalThis.progress = [];
+			globalThis.calls = [
+				maestro.agents.send('a', 'one', { onProgress: function (e) { progress.push(['one', e.summary || e.text]); } }),
+				maestro.agents.send('a', 'two', { sessionId: 'owned', onProgress: function (e) { progress.push(['two', e.summary || e.text]); } })
+			];
+		`,
+			'send-progress'
+		);
+		expect(sent).toHaveLength(2);
+		expect(sent[0].params).toEqual({ agentId: 'a', prompt: 'one', opts: {} });
+		expect(sent[1].params).toEqual({ agentId: 'a', prompt: 'two', opts: { sessionId: 'owned' } });
+		realm.deliverProgress(
+			JSON.stringify({ id: sent[1].id, event: { type: 'commentary', text: 'second', at: 'now' } })
+		);
+		realm.deliverProgress(
+			JSON.stringify({
+				id: sent[0].id,
+				event: {
+					type: 'tool',
+					tool: 'Read',
+					status: 'started',
+					summary: 'Reading file first.md',
+					at: 'now',
+				},
+			})
+		);
+		realm.deliverResponse(
+			JSON.stringify({ id: sent[0].id, ok: true, result: { success: true, response: 'done' } })
+		);
+		realm.deliverProgress(
+			JSON.stringify({ id: sent[0].id, event: { type: 'activity', text: 'late', at: 'now' } })
+		);
+		realm.deliverResponse(
+			JSON.stringify({ id: sent[1].id, ok: true, result: { success: true, response: 'done' } })
+		);
+		await Promise.all([Promise.resolve(), Promise.resolve()]);
+		realm.runScript('console.log(JSON.stringify(progress));', 'progress-result');
+		const infos = (bridge.log as ReturnType<typeof vi.fn>).mock.calls.filter(
+			([level]) => level === 'info'
+		);
+		expect(JSON.parse(String(infos.at(-1)?.[1]))).toEqual([
+			['two', 'second'],
+			['one', 'Reading file first.md'],
+		]);
+	});
+
 	it('SDK calls round-trip through the bridge as JSON and resolve in-realm', async () => {
 		const sent: string[] = [];
 		const bridge = makeBridge({ send: vi.fn((json: string) => sent.push(json)) });
@@ -270,6 +333,37 @@ describe('plugin sandbox realm - behavioral parity', () => {
 		expect(JSON.parse(result)).toEqual({ ok: true, result: { pong: { n: 7 } } });
 		const missing = await realm.invokeTool(JSON.stringify({ commandId: 'nope', args: null }));
 		expect(JSON.parse(missing).ok).toBe(false);
+	});
+
+	it('passes host caller identity as a separate frozen tool context', async () => {
+		const realm = bootRealm();
+		realm.runScript(
+			String.raw`
+			module.exports = { activate: function (maestro) {
+				maestro.tools.register('who', function (args, context) {
+					return { claimed: args.agentId, verified: context.callerAgentId,
+						frozen: Object.isFrozen(context) };
+				});
+			} };
+		`,
+			'tool-context'
+		);
+		await realm.activate();
+		const result = await realm.invokeTool(
+			JSON.stringify({
+				commandId: 'who',
+				args: { agentId: 'forged' },
+				context: { callerAgentId: 'agent-a' },
+			})
+		);
+		expect(JSON.parse(result)).toEqual({
+			ok: true,
+			result: {
+				claimed: 'forged',
+				verified: 'agent-a',
+				frozen: true,
+			},
+		});
 	});
 
 	it('events fan out to in-realm handlers with parsed context-realm payloads', async () => {
@@ -368,5 +462,37 @@ describe('plugin sandbox realm - behavioral parity', () => {
 			},
 			{ method: 'ui.hostViewRemove', params: { id: 'status' } },
 		]);
+	});
+});
+
+describe('media SDK contract', () => {
+	it('sends opaque media params and preserves machine-readable failure codes in the sandbox realm', async () => {
+		const sent: string[] = [];
+		const bridge = makeBridge({ send: vi.fn((json: string) => sent.push(json)) });
+		const realm = bootRealm(bridge);
+		realm.runScript(
+			`module.exports = { activate: function (maestro) {
+			return maestro.media.run('job', 'audio', { profile: 'whisper-cli', model: 'base', language: 'de' }).catch(function (error) {
+				console.log(error.code + ':' + (error instanceof Error));
+			});
+		} };`,
+			'media-roundtrip'
+		);
+		const activated = realm.activate();
+		const request = JSON.parse(sent[0]);
+		expect(request).toMatchObject({
+			method: 'media.run',
+			params: { jobId: 'job', audioId: 'audio', options: { model: 'base', language: 'de' } },
+		});
+		realm.deliverResponse(
+			JSON.stringify({
+				id: request.id,
+				ok: false,
+				error: 'MediaTimeout',
+				errorCode: 'MediaTimeout',
+			})
+		);
+		await activated;
+		expect(bridge.log).toHaveBeenCalledWith('info', 'MediaTimeout:true');
 	});
 });

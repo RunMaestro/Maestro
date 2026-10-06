@@ -47,7 +47,10 @@ import {
 	registerDirectorNotesHandlers,
 	registerCrossAgentHandlers,
 	registerCueHandlers,
+	registerProfileHandlers,
+	registerBoardHandlers,
 	registerCueBackupHandlers,
+	registerTtsrHandlers,
 	registerWakatimeHandlers,
 	registerFeedbackHandlers,
 	registerMaestroCliHandlers,
@@ -178,9 +181,32 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 		getCueEngine: deps.getCueEngine,
 	});
 
+	// Agent Profiles - named model/effort/role bundles layered on a base agent
+	registerProfileHandlers();
+
+	// Board - persistent task DAG stored in .maestro/board.yaml. The engine is
+	// needed for `board:cancelCard`, which routes through the live dispatcher.
+	registerBoardHandlers({
+		getCueEngine: deps.getCueEngine,
+		// Board F3: a manual move into Done opens the card's PR out of band, so the
+		// handler needs the same toast relay and log sink the dispatcher path uses.
+		notifyToast: (payload) => deps.safeSend('remote:notifyToast', payload),
+		onLog: (_level, message) => logger.cue(message, 'Board'),
+	});
+
 	// Cue Backup - snapshot / restore .maestro/cue.yaml + prompts (Cue modal Backup tab)
 	registerCueBackupHandlers({
 		sessionsStore: deps.sessionsStore,
+	});
+
+	// TTSR rule + per-project settings CRUD (Right Bar Rules tab). A write from
+	// the UI drops the runtime's cached rules straight away; the file watcher
+	// would also catch it, a debounce later.
+	registerTtsrHandlers({
+		onRulesChanged: (projectRoot: string) => deps.getTtsrRuntime()?.invalidateRules(projectRoot),
+		// The spawning renderer's ack for a corrective turn, which cancels the
+		// "did not start" watchdog armed when the interrupt was broadcast.
+		onCorrectiveResult: (result) => deps.getTtsrRuntime()?.correctiveAck?.resolve(result),
 	});
 
 	// Agent management operations - extracted to src/main/ipc/handlers/agents.ts
@@ -201,6 +227,12 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 		safeSend: deps.safeSend,
 		sessionsStore: deps.sessionsStore,
 		interactiveReplayController: deps.getInteractiveReplayController() ?? undefined,
+		// TTSR folds any queued `<system-reminder>` into this conversation's next
+		// prompt, and clears the queue only once that prompt has really been
+		// spawned. Returns '' while the feature is off, so the spawn path is
+		// unchanged.
+		peekTtsrReminders: (sessionId: string) =>
+			deps.getTtsrRuntime()?.peekDeferredReminders(sessionId) ?? { text: '', commit: () => {} },
 		getCueProcesses: () => {
 			// Always query the executor's active process map - processes may still be
 			// running even if the engine has been disabled (in-flight runs complete
@@ -235,6 +267,21 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 		// block the UI thread. Await it here so the handlers' boolean
 		// acknowledgement keeps meaning "this revision reached disk".
 		flushSessionWrites: flushPendingSessionWrites,
+		onSessionsPersisted: (added, current, removedIds) => {
+			try {
+				deps
+					.getPianolaSupervisor()
+					?.autoWatchNewSessions(
+						added,
+						current,
+						deps.settingsStore.get('pianolaAutoWatchNewAgents', false) === true,
+						removedIds
+					);
+			} catch (error) {
+				logger.error('Could not register new Pianola watches', '[Pianola]', error);
+				void captureException(error, { operation: 'pianola:autoWatchNewSessions' });
+			}
+		},
 	});
 	// Wire the plugin focus verbs into the persistence layer's session.activated
 	// dedupe so the two emit paths share one last-emitted id.
@@ -495,7 +542,11 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 	registerAgentErrorHandlers();
 
 	// Register notification handlers (extracted to handlers/notifications.ts)
-	registerNotificationsHandlers({ getMainWindow: deps.getMainWindow });
+	registerNotificationsHandlers({
+		getMainWindow: deps.getMainWindow,
+		ensureMainWindow: deps.ensureMainWindow,
+		getWindowRegistry: () => deps.windowRegistry,
+	});
 
 	// Register attachments handlers (extracted to handlers/attachments.ts)
 	registerAttachmentsHandlers({ app: deps.app });

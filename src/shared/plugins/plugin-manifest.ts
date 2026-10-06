@@ -246,7 +246,10 @@ export function validatePluginManifest(input: unknown): ManifestValidationResult
 			errors.push('releaseDate, when present, must be a string');
 		} else if (!RELEASE_DATE_PATTERN.test(releaseDate.trim())) {
 			errors.push(`releaseDate "${releaseDate}" is invalid: use YYYY-MM-DD`);
-		} else if (Number.isNaN(Date.parse(`${releaseDate.trim()}T00:00:00Z`))) {
+		} else if (
+			Number.isNaN(Date.parse(`${releaseDate.trim()}T00:00:00Z`)) ||
+			new Date(`${releaseDate.trim()}T00:00:00Z`).toISOString().slice(0, 10) !== releaseDate.trim()
+		) {
 			errors.push(`releaseDate "${releaseDate}" is not a real calendar date`);
 		}
 	}

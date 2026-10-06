@@ -40,7 +40,7 @@ export interface InitializeSessionStoragesOptions {
 export function initializeSessionStorages(options?: InitializeSessionStoragesOptions): void {
 	registerSessionStorage(new ClaudeSessionStorage(options?.claudeSessionOriginsStore));
 	registerSessionStorage(new OpenCodeSessionStorage());
-	registerSessionStorage(new CodexSessionStorage());
+	registerSessionStorage(new CodexSessionStorage(options?.claudeSessionOriginsStore));
 	registerSessionStorage(new FactoryDroidSessionStorage());
 	registerSessionStorage(new CopilotSessionStorage());
 	registerSessionStorage(new OmpSessionStorage());

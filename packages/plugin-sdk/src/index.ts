@@ -70,6 +70,7 @@ export function serializedJsonByteLength(value: unknown): number | null {
 export type PluginCapability =
 	| 'fs:read' // read files under a path scope
 	| 'fs:write' // write files under a path scope
+	| 'media:tools' // fixed Discord voice media profiles, opaque jobs only
 	| 'net:fetch' // HTTP(S) fetch to a host scope
 	| 'net:connect' // hold an outbound persistent websocket to a host scope (Discord/Slack gateway)
 	| 'agents:read' // list/read agents and their state
@@ -105,6 +106,7 @@ export type PluginCapability =
 export const PLUGIN_CAPABILITIES: readonly PluginCapability[] = [
 	'fs:read',
 	'fs:write',
+	'media:tools',
 	'net:fetch',
 	'net:connect',
 	'agents:read',
@@ -155,6 +157,7 @@ const CAPABILITY_RISK: Record<PluginCapability, CapabilityRisk> = {
 	'sessions:focus': 'low',
 	'fs:read': 'medium',
 	'fs:watch': 'medium',
+	'media:tools': 'high',
 	'net:fetch': 'medium',
 	'net:connect': 'high',
 	'sessions:read': 'medium',
@@ -194,6 +197,7 @@ const CAPABILITY_SCOPE_KIND: Record<PluginCapability, ScopeKind> = {
 	'fs:read': 'path',
 	'fs:write': 'path',
 	'fs:watch': 'path',
+	'media:tools': 'allowlist',
 	'net:fetch': 'host',
 	'net:connect': 'host',
 	'agents:read': 'none',
@@ -351,6 +355,8 @@ export function describeCapability(capability: PluginCapability): string {
 			return 'Read files';
 		case 'fs:write':
 			return 'Create and modify files';
+		case 'media:tools':
+			return 'Download Discord voice attachments and run fixed local media tools (8 MiB, 120 seconds; no general file or process access)';
 		case 'net:fetch':
 			return 'Make network requests (unscoped includes localhost and your internal network)';
 		case 'net:connect':
@@ -419,7 +425,12 @@ export function describeCapability(capability: PluginCapability): string {
 // --- Host API version (from shared/plugins/host-api.ts) ---------------------
 
 /**
- * The host API version this Maestro build implements. Bumped to 1.16.0 for three
+ * 1.22.0 adds bounded media jobs and fixed local tool profiles.
+ * The host API version this Maestro build implements. 1.21.0 adds isolated
+ * `agents.generateTitle`. 1.20.0 adds an optional
+ * per-call public progress callback to agents.send. 1.18.0 places settings panels in plugin details;
+ * 1.19.0 adds the isolated panel theme bridge. 1.17.0 added `agents.send` and verified plugin-tool caller context.
+ * 1.16.0 added three
  * backward-compatible additions: the metadata-only `session.activated` event
  * topic (`{ sessionId, tabId? }`, opaque ids only, fired when the focused agent
  * changes), the `sessions.focus` method plus its narrow `sessions:focus`
@@ -427,8 +438,11 @@ export function describeCapability(capability: PluginCapability): string {
  * power), and the summonable-panel trio `ui.openPanel` / `ui.closePanel` /
  * `ui.togglePanel` under the existing `ui:panel` capability alongside the
  * optional panel manifest field `size?: 'default' | 'full'` (absent or invalid
- * => `default`, so older manifests are untouched). 1.15.0 is taken by the Board
- * + Profiles work, so this fork skips it. 1.14.0 added the
+ * => `default`, so older manifests are untouched). 1.15.0 added the additive
+ * Board event topics `board.cardStatusChanged` / `board.cardCompleted` /
+ * `board.cardBlocked` / `board.decomposed` (metadata-only: ids, statuses, and
+ * the card title; never prompts, run output, summaries, or block reasons).
+ * 1.14.0 added the
  * backward-compatible additive `tool.executed` event topic (metadata-only tool
  * lifecycle: name + timing, never arguments or results) plus the `ui.panelPost`
  * host-to-panel push method (own-panels-only, JSON-only, MAX_PANEL_POST_BYTES
@@ -450,7 +464,7 @@ export function describeCapability(capability: PluginCapability): string {
  * `ui:contribute` / `ui:panel` / `ui:render-unsafe`; 1.3.0 added `tools` +
  * `keybindings`; 1.2.0 added `transcripts:read`.
  */
-export const HOST_API_VERSION = '1.16.0';
+export const HOST_API_VERSION = '1.22.0';
 
 /** Result of checking a plugin's declared host-API requirement. */
 export interface HostApiCompatibility {
@@ -605,6 +619,8 @@ export interface PluginManifest {
 	 * requires no minHostApi bump.
 	 */
 	beta?: boolean;
+	/** Optional marketplace publication date, YYYY-MM-DD. */
+	releaseDate?: string;
 	/** Declarative contributions. Structurally validated; semantics land later. */
 	contributes?: Record<string, unknown>;
 	/** Relative path to the sandboxed code entrypoint. Required tier >= 1; forbidden tier 0. */
@@ -646,6 +662,7 @@ export function validatePluginManifest(input: unknown): ManifestValidationResult
 		homepage,
 		category,
 		beta,
+		releaseDate,
 		contributes,
 		entry,
 		permissions,
@@ -716,6 +733,18 @@ export function validatePluginManifest(input: unknown): ManifestValidationResult
 	if (beta !== undefined && typeof beta !== 'boolean') {
 		errors.push('beta, when present, must be a boolean');
 	}
+	if (releaseDate !== undefined) {
+		if (typeof releaseDate !== 'string') {
+			errors.push('releaseDate, when present, must be a string');
+		} else if (!/^\d{4}-\d{2}-\d{2}$/.test(releaseDate.trim())) {
+			errors.push(`releaseDate "${releaseDate}" is invalid: use YYYY-MM-DD`);
+		} else if (
+			Number.isNaN(Date.parse(`${releaseDate.trim()}T00:00:00Z`)) ||
+			new Date(`${releaseDate.trim()}T00:00:00Z`).toISOString().slice(0, 10) !== releaseDate.trim()
+		) {
+			errors.push(`releaseDate "${releaseDate}" is not a real calendar date`);
+		}
+	}
 	if (contributes !== undefined && !isPlainObject(contributes)) {
 		errors.push('contributes, when present, must be an object');
 	}
@@ -766,6 +795,7 @@ export function validatePluginManifest(input: unknown): ManifestValidationResult
 		...(isNonEmptyString(homepage) ? { homepage: (homepage as string).trim() } : {}),
 		...(normalizedCategory ? { category: normalizedCategory } : {}),
 		...(beta === true ? { beta: true } : {}),
+		...(isNonEmptyString(releaseDate) ? { releaseDate: (releaseDate as string).trim() } : {}),
 		...(isPlainObject(contributes) ? { contributes } : {}),
 		...(safeEntry ? { entry: safeEntry } : {}),
 		...(parsedPermissions.requests.length > 0 ? { permissions: parsedPermissions.requests } : {}),
@@ -891,7 +921,8 @@ export interface CommandContribution {
 	description?: string;
 }
 
-/** Where a contributed panel docks. `modal` (default) keeps today's behavior. */
+/** Where a panel renders. `settings` uses its owning plugin's Settings sub-tab
+ * on hosts at 1.18.0+, while earlier hosts use the global Display tab. */
 export type PanelPlacement = 'modal' | 'left' | 'right' | 'main' | 'settings';
 
 /** Chrome size for a `modal` panel. `full` renders edge-to-edge (a summonable
@@ -1184,6 +1215,10 @@ export const PLUGIN_EVENT_TOPICS = [
 	'history.entryAdded', // a history entry was added (ids/classification only)
 	'agent.completed', // an agent reached a terminal state (metadata only, no output)
 	'tool.executed', // a tool call started or finished (name + timing only, no arguments or results)
+	'board.cardStatusChanged', // a board card moved between statuses (ids + statuses)
+	'board.cardCompleted', // a board card finished successfully (ids only, no summary)
+	'board.cardBlocked', // a board card needs a human (ids + run outcome, no reason text)
+	'board.decomposed', // an auto-decompose pass expanded triage cards (counts only)
 	'session.activated', // the focused agent changed (ids only, no titles or content)
 ] as const;
 
@@ -1282,6 +1317,56 @@ export interface PluginEventPayloads {
 		timestamp: number;
 		durationMs?: number;
 	};
+	/**
+	 * Board card status transition. Every transition the board dispatcher
+	 * performs: promote, claim, retry, reclaim, cancel, terminal.
+	 *
+	 * `cardTitle` is the only human-authored string here. No other generated
+	 * text (prompt body, run output, run summary, block reason) is ever carried
+	 * on these topics.
+	 */
+	'board.cardStatusChanged': {
+		boardId: string;
+		cardId: string;
+		cardTitle: string;
+		fromStatus: string;
+		toStatus: string;
+		/** 1-based attempt number of the card's latest run, when it has one. */
+		attempt?: number;
+		/** Pool worker bound to the latest run (worker pool), when pooled. */
+		workerAgentId?: string;
+		projectPath?: string;
+	};
+	'board.cardCompleted': {
+		boardId: string;
+		cardId: string;
+		cardTitle: string;
+		attempt?: number;
+		workerAgentId?: string;
+		/** Branch of the isolated worktree the attempt ran in, when isolated. */
+		worktreeBranch?: string;
+		projectPath?: string;
+	};
+	'board.cardBlocked': {
+		boardId: string;
+		cardId: string;
+		cardTitle: string;
+		attempt?: number;
+		workerAgentId?: string;
+		/**
+		 * Outcome enum recorded on the failed run (`error` / `blocked` / ...).
+		 * A CLASSIFICATION, never the free-form block reason, which can quote
+		 * agent output.
+		 */
+		outcome?: string;
+		projectPath?: string;
+	};
+	'board.decomposed': {
+		boardId: string;
+		/** How many triage cards the pass expanded into children. */
+		triageCardCount: number;
+		projectPath?: string;
+	};
 	/** The focused agent changed. Opaque ids ONLY - no title, no project path,
 	 * nothing derived from the session's content. */
 	'session.activated': { sessionId: string; tabId?: string };
@@ -1303,6 +1388,13 @@ export interface PluginEvent<T extends PluginEventTopic = PluginEventTopic> {
 export const HOST_API = {
 	'fs.read': { capability: 'fs:read' },
 	'fs.write': { capability: 'fs:write' },
+	'media.status': { capability: 'media:tools' },
+	'media.open': { capability: 'media:tools' },
+	'media.download': { capability: 'media:tools' },
+	'media.probe': { capability: 'media:tools' },
+	'media.decode': { capability: 'media:tools' },
+	'media.run': { capability: 'media:tools' },
+	'media.close': { capability: 'media:tools' },
 	'net.fetch': { capability: 'net:fetch' },
 	'net.connect': { capability: 'net:connect' },
 	'net.send': { capability: 'net:connect' },
@@ -1310,6 +1402,8 @@ export const HOST_API = {
 	'agents.list': { capability: 'agents:read' },
 	'agents.get': { capability: 'agents:read' },
 	'agents.dispatch': { capability: 'agents:dispatch' },
+	'agents.send': { capability: 'agents:dispatch' },
+	'agents.generateTitle': { capability: 'agents:dispatch' },
 	'notifications.toast': { capability: 'notifications:toast' },
 	'settings.get': { capability: 'settings:read' },
 	'settings.set': { capability: 'settings:write' },
@@ -1461,10 +1555,35 @@ export interface MaestroNetApi {
 }
 
 /** List/read agents (`agents:read`) and dispatch prompts (`agents:dispatch`). */
+export type AgentSendProgressEvent =
+	| { type: 'activity'; text: string; at: string }
+	| { type: 'commentary'; text: string; at: string }
+	| {
+			type: 'tool';
+			tool: string;
+			status: 'started' | 'completed' | 'failed';
+			at: string;
+			/** English public action, at most 120 chars, from allowlisted tool metadata. */
+			summary?: string;
+	  };
+
 export interface MaestroAgentsApi {
 	list(): Promise<unknown>;
 	get(agentId: string): Promise<unknown>;
 	dispatch(agentId: string, prompt: string, opts?: unknown): Promise<unknown>;
+	/** Isolated cheap naming turn; never creates or resumes a provider conversation. */
+	generateTitle(agentId: string, firstMessage: string): Promise<string | null>;
+	/** Fresh provider session unless sessionId is supplied; never a desktop tab id. */
+	send(
+		agentId: string,
+		prompt: string,
+		opts?: { sessionId?: string; onProgress?: (event: AgentSendProgressEvent) => void }
+	): Promise<{
+		success: boolean;
+		response: string | null;
+		sessionId: string | null;
+		error?: string;
+	}>;
 }
 
 /** Read metadata-only history entries (`history:read`). */
@@ -1621,7 +1740,10 @@ export interface MaestroCommandsApi {
 
 /** Register handlers for agent tools the host invokes on this plugin. */
 export interface MaestroToolsApi {
-	register(localId: string, handler: (args: unknown) => unknown): void;
+	register(
+		localId: string,
+		handler: (args: unknown, context: { readonly callerAgentId: string | null }) => unknown
+	): void;
 }
 
 /** Ask the OS to open an external URL (`shell:openExternal`). */
@@ -1668,7 +1790,79 @@ export interface MaestroBackgroundApi {
 
 /** The full `maestro` runtime surface handed to `activate(maestro)`. Frozen and
  * namespaced exactly as the host injects it. */
+/** Bounded media primitives. STT orchestration and result interpretation belong to plugins. */
+export const MEDIA_LIMITS = {
+	maxDownloadBytes: 8 * 1024 * 1024,
+	maxDurationSeconds: 120,
+	jobTimeoutMs: 120_000,
+	maxProcessOutputBytes: 16 * 1024,
+	maxResultBytes: 128 * 1024,
+	maxPcmBytes: 4 * 1024 * 1024,
+	maxJobsPerPlugin: 2,
+	maxJobs: 4,
+} as const;
+
+/** Only multilingual model IDs; never a plugin-selected filesystem path. */
+export const MEDIA_MODEL_IDS = [
+	'tiny',
+	'base',
+	'small',
+	'medium',
+	'large-v1',
+	'large-v2',
+	'large-v3',
+	'large-v3-turbo',
+] as const;
+export type MediaModelId = (typeof MEDIA_MODEL_IDS)[number];
+export const MEDIA_ERROR_CODES = [
+	'MediaInvalid',
+	'MediaDenied',
+	'MediaUnavailable',
+	'MediaTooLarge',
+	'MediaTooLong',
+	'MediaTimeout',
+	'MediaCancelled',
+	'MediaBusy',
+	'MediaProcessFailed',
+	'MediaOutputTooLarge',
+] as const;
+export type MediaErrorCode = (typeof MEDIA_ERROR_CODES)[number];
+
+/** Stable error.code across the host RPC; diagnostic text contains only this code. */
+export interface MediaFailure extends Error {
+	code: MediaErrorCode;
+}
+
+export interface MediaProbe {
+	container: 'ogg' | 'wav';
+	durationSeconds: number;
+	streams: { type: 'audio'; codec: 'opus' | 'pcm_s16le'; sampleRate: number; channels: number }[];
+}
+export interface MediaToolStatus {
+	profiles: 'whisper-cli'[];
+	models: MediaModelId[];
+	missing: ('ffprobe' | 'ffmpeg' | 'whisper-cli' | 'model-directory')[];
+}
+export interface MediaRunOptions {
+	profile: 'whisper-cli';
+	model: MediaModelId;
+	/** Lowercase Whisper language code; defaults to de. Translation is always off. */
+	language?: string;
+}
+export interface MaestroMediaApi {
+	status(): Promise<MediaToolStatus>;
+	/** Reserves an opaque job without I/O. Fixed deadline starts here. */
+	open(): Promise<{ jobId: string }>;
+	download(jobId: string, url: string): Promise<{ audioId: string; bytes: number }>;
+	probe(jobId: string, audioId: string): Promise<MediaProbe>;
+	decode(jobId: string, audioId: string): Promise<{ audioId: string; durationSeconds: number }>;
+	run(jobId: string, audioId: string, options: MediaRunOptions): Promise<{ json: string }>;
+	/** Cancels pending work, waits for child exit and removes all artifacts. Idempotent. */
+	close(jobId: string): Promise<void>;
+}
+
 export interface MaestroSdk {
+	readonly media: MaestroMediaApi;
 	readonly pluginId: string;
 	readonly fs: MaestroFsApi;
 	readonly net: MaestroNetApi;

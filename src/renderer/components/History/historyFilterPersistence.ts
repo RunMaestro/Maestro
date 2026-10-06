@@ -38,10 +38,10 @@ export function historyPanelFilterKeyForAgent(sessionId: string): string {
  * listed here is switched ON when upgrading a legacy payload; once the set is
  * re-saved in the current format, an explicit deselection is honored forever.
  */
-const TYPES_ADDED_AFTER_V1: readonly HistoryEntryType[] = ['AGENT'];
+const TYPES_ADDED_AFTER_V1: readonly HistoryEntryType[] = ['AGENT', 'RELAY'];
 
 /** Current persisted-payload shape. Legacy payloads are a bare array. */
-const FILTER_PAYLOAD_VERSION = 2;
+const FILTER_PAYLOAD_VERSION = 3;
 
 interface PersistedFilterPayload {
 	v: number;
@@ -74,7 +74,9 @@ export function loadPersistedHistoryFilters(key: string): Set<HistoryEntryType> 
 			Array.isArray((parsed as PersistedFilterPayload).filters)
 		) {
 			// Current payload: the user's choice is complete - honor it verbatim.
-			return new Set((parsed as PersistedFilterPayload).filters.filter(isHistoryEntryType));
+			const payload = parsed as PersistedFilterPayload;
+			const filters = payload.filters.filter(isHistoryEntryType);
+			return new Set(payload.v < FILTER_PAYLOAD_VERSION ? [...filters, 'RELAY'] : filters);
 		}
 
 		return null;

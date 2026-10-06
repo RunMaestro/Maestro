@@ -82,7 +82,11 @@ export class PermissionBroker {
 		const grants = this.deps.getGrants(pluginId);
 		let allowed: boolean;
 		let reason: string | undefined;
-		if (HANDLER_REAUTHORIZED_METHODS.has(method)) {
+		if (method === 'media.close') {
+			// Release only; ownership and closed schema enforced by the media handler.
+			// Revocation must never prevent cancellation of one's own pending job.
+			allowed = true;
+		} else if (HANDLER_REAUTHORIZED_METHODS.has(method)) {
 			// Scope lives in an already-open resource the params reference by opaque
 			// id, not here. Confirm only that the capability is held; the host handler
 			// re-authorizes the resource's real origin against the live grant. Without

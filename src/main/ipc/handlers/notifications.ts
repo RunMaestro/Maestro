@@ -13,10 +13,11 @@
 import { ipcMain, Notification, BrowserWindow } from 'electron';
 import { spawn, type ChildProcess } from 'child_process';
 import { logger } from '../../utils/logger';
-import { createSafeSend, type SafeSendFn } from '../../utils/safe-send';
+import { createSafeSend, isWebContentsAvailable, type SafeSendFn } from '../../utils/safe-send';
 import { parseDeepLink, dispatchDeepLink } from '../../deep-links';
 import { buildSessionDeepLink } from '../../../shared/deep-link-urls';
 import { captureException } from '../../utils/sentry';
+import { parseToastClickAction, type ToastClickAction } from '../../../shared/toastClickAction';
 import type { WindowRegistry } from '../../window-registry';
 
 // ==========================================================================
@@ -408,6 +409,7 @@ async function processNextNotification(): Promise<void> {
  */
 export interface NotificationsHandlerDependencies {
 	getMainWindow: () => BrowserWindow | null;
+	ensureMainWindow?: () => void;
 	/**
 	 * Multi-window registry getter. When wired, a notification's click handler
 	 * resolves the window that currently owns the agent (via
@@ -453,6 +455,31 @@ export function resolveNotificationClickWindow(
  * Register all notification-related IPC handlers
  */
 export function registerNotificationsHandlers(deps?: NotificationsHandlerDependencies): void {
+	const pendingActions: ToastClickAction[] = [];
+	const readyRenderers = new WeakSet<Electron.WebContents>();
+	const flushActions = (): void => {
+		const target = deps?.getMainWindow();
+		if (!target || !isWebContentsAvailable(target) || !readyRenderers.has(target.webContents))
+			return;
+		if (pendingActions.length === 0) return;
+		if (target.isMinimized()) target.restore();
+		target.show();
+		target.focus();
+		while (pendingActions.length > 0) {
+			target.webContents.send('notification:clickAction', pendingActions.shift()!);
+		}
+	};
+	// The renderer announces readiness only after installing its click listener.
+	// A reopened window must not receive a queued action during initial loading.
+	ipcMain.handle('notification:ready', (event) => {
+		const target = deps?.getMainWindow();
+		if (!target || !isWebContentsAvailable(target) || event.sender !== target.webContents) return;
+		if (!readyRenderers.has(event.sender)) {
+			readyRenderers.add(event.sender);
+			event.sender.once('did-start-loading', () => readyRenderers.delete(event.sender));
+		}
+		flushActions();
+	});
 	// Capture the window getter for the module-level queue helpers so completion
 	// events reach both the desktop renderer and web-desktop bridge clients.
 	commandCompletedSafeSend = createSafeSend(deps?.getMainWindow ?? (() => null));
@@ -465,9 +492,12 @@ export function registerNotificationsHandlers(deps?: NotificationsHandlerDepende
 			title: string,
 			body: string,
 			sessionId?: string,
-			tabId?: string
+			tabId?: string,
+			clickAction?: ToastClickAction
 		): Promise<NotificationShowResponse> => {
 			try {
+				const parsedAction = parseToastClickAction(clickAction);
+				if (parsedAction.error) return { success: false, error: parsedAction.error };
 				if (Notification.isSupported()) {
 					const notification = new Notification({
 						title,
@@ -482,13 +512,18 @@ export function registerNotificationsHandlers(deps?: NotificationsHandlerDepende
 					};
 					notification.on('close', releaseNotification);
 
-					// Wire click handler for navigation if session context is provided.
-					// Route the click to the window that currently owns the agent
-					// (resolved via the window registry) so a multi-window layout
-					// focuses the correct window instead of always the primary;
-					// resolveNotificationClickWindow falls back to the main window when
-					// there is no registry / owning window.
-					if (sessionId && deps?.getMainWindow) {
+					// Wire click handler for navigation if session context is provided
+					const action = parsedAction.action;
+					if (action && deps?.getMainWindow) {
+						notification.on('click', () => {
+							pendingActions.push(action);
+							if (pendingActions.length > NOTIFICATION_MAX_QUEUE_SIZE) pendingActions.shift();
+							const target = deps.getMainWindow();
+							if (!target || target.isDestroyed()) deps.ensureMainWindow?.();
+							flushActions();
+							releaseNotification();
+						});
+					} else if (sessionId && deps?.getMainWindow) {
 						const deepLinkUrl = buildSessionDeepLink(sessionId, tabId);
 
 						notification.on('click', () => {

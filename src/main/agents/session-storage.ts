@@ -24,7 +24,7 @@ const LOG_CONTEXT = '[AgentSessionStorage]';
 /**
  * Session origin types - indicates how the session was created
  */
-export type AgentSessionOrigin = 'user' | 'auto';
+export type AgentSessionOrigin = 'user' | 'auto' | 'relay';
 
 /**
  * Session message from agent session files

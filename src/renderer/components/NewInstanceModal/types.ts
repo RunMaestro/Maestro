@@ -98,7 +98,8 @@ export interface EditAgentModalProps {
 		/** New working directory; `undefined` when the user left it unchanged. */
 		workingDirectory?: string,
 		/** Codex only: spend a reset credit automatically on quota exhaustion. Defaults off. */
-		codexAutoResetOnExhaustion?: boolean
+		codexAutoResetOnExhaustion?: boolean,
+		boardWorker?: boolean
 	) => void;
 	theme: Theme;
 	session: Session | null;

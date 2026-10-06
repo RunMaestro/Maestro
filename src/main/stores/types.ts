@@ -124,6 +124,8 @@ export interface MaestroSettings {
 	// ('claude-code' | 'codex'); value is the interval in ms (0 = off). Read by
 	// the main-process background scheduler (usage-refresh-scheduler.ts).
 	usageRefreshIntervals: Record<string, number>;
+	/** Add a supervised Pianola watch for each newly created top-level agent. */
+	pianolaAutoWatchNewAgents: boolean;
 	// System-wide hotkey to summon the Maestro window (key array, e.g. ['Meta','Shift','M']).
 	// Empty array disables it. Stored in the same format as `shortcuts` so the UI can reuse
 	// the existing capture helpers; converted to an Electron Accelerator at registration time.
@@ -205,7 +207,7 @@ export interface WindowState {
 // Claude Session Origins Store
 // ============================================================================
 
-export type ClaudeSessionOrigin = 'user' | 'auto';
+export type ClaudeSessionOrigin = 'user' | 'auto' | 'relay';
 
 export interface ClaudeSessionOriginInfo {
 	origin: ClaudeSessionOrigin;
@@ -229,7 +231,10 @@ export interface AgentSessionOriginsData {
 		string,
 		Record<
 			string,
-			Record<string, { origin?: 'user' | 'auto'; sessionName?: string; starred?: boolean }>
+			Record<
+				string,
+				{ origin?: 'user' | 'auto' | 'relay'; sessionName?: string; starred?: boolean }
+			>
 		>
 	>;
 }

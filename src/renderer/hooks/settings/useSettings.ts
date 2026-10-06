@@ -14,6 +14,7 @@ import { useEffect } from 'react';
 import { useStoreWithEqualityFn } from 'zustand/traditional';
 import { shallow } from 'zustand/shallow';
 import type { BrowserConfirmPolicy } from '../../../shared/coworkingBrowser';
+import type { TtsrContextMode } from '../../../shared/ttsr-types';
 import type {
 	ThemeId,
 	ThemeColors,
@@ -77,6 +78,14 @@ export interface UseSettingsReturn {
 	/** Variables switched off in the editor: kept for later, never spawned with. */
 	shellEnvVarsDisabled: Record<string, string>;
 	setShellEnvVarsDisabled: (value: Record<string, string>) => void;
+
+	// Pianola auto-watch
+	pianolaAutoWatchNewAgents: boolean;
+	setPianolaAutoWatchNewAgents: (value: boolean) => Promise<void>;
+
+	// Host media tools
+	mediaModelDirectory: string;
+	setMediaModelDirectory: (value: string) => Promise<boolean>;
 
 	// GitHub CLI settings
 	ghPath: string;
@@ -440,6 +449,14 @@ export interface UseSettingsReturn {
 	// Symphony registry URLs (additional user-configured registries)
 	symphonyRegistryUrls: string[];
 	setSymphonyRegistryUrls: (value: string[]) => void;
+
+	// TTSR (Time-Traveling Stream Rules)
+	ttsrEnabled: boolean;
+	setTtsrEnabled: (value: boolean) => void;
+	ttsrDisabledRules: string[];
+	setTtsrDisabledRules: (value: string[]) => void;
+	ttsrContextMode: TtsrContextMode;
+	setTtsrContextMode: (value: TtsrContextMode) => void;
 
 	// Coworking browser interaction (agent ids allowed to use browser tools)
 	coworkingBrowserInteraction: string[];

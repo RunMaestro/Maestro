@@ -26,6 +26,11 @@ import {
 } from './cue-process-lifecycle';
 import { getOutputParser } from '../parsers';
 import { beginSleepAwareSpan, sleepAwareElapsedMs } from '../utils/sleep-tracker';
+import { logger } from '../utils/logger';
+import {
+	pluginToolRunIdentity,
+	removePluginRunProofFile,
+} from '../plugins/plugin-tool-run-identity';
 // Re-export types that external consumers use
 export type { CueProcessInfo } from './cue-process-lifecycle';
 export type { SpawnSpec } from './cue-spawn-builder';
@@ -258,15 +263,29 @@ export async function executeCuePrompt(config: CueExecutionConfig): Promise<CueR
 		sshActuallyUsed
 	);
 
-	const processResult = await runProcess(runId, spec, {
-		toolType: config.toolType,
-		timeoutMs,
-		sshRemoteEnabled: sshActuallyUsed,
-		sshStdinScript: sshActuallyUsed ? spec.sshStdinScript : undefined,
-		stdinPrompt: sshActuallyUsed ? spec.stdinPrompt : undefined,
-		onLog,
-		onActivity: wakaHeartbeat,
-	});
+	let processResult;
+	try {
+		processResult = await runProcess(runId, spec, {
+			toolType: config.toolType,
+			timeoutMs,
+			sshRemoteEnabled: sshActuallyUsed,
+			sshStdinScript: sshActuallyUsed ? spec.sshStdinScript : undefined,
+			stdinPrompt: sshActuallyUsed ? spec.stdinPrompt : undefined,
+			onLog,
+			onActivity: wakaHeartbeat,
+		});
+	} finally {
+		if (spec.pluginRunToken) pluginToolRunIdentity.revoke(spec.pluginRunToken);
+		if (spec.pluginRunProofFile) {
+			try {
+				removePluginRunProofFile(spec.pluginRunProofFile);
+			} catch (error) {
+				logger.warn('Could not remove plugin run proof file', '[PluginRunIdentity]', {
+					error: String(error),
+				});
+			}
+		}
+	}
 
 	// 5. Assemble final result
 	return {

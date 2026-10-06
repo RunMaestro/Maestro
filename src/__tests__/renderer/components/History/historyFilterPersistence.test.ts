@@ -69,7 +69,7 @@ describe('historyFilterPersistence', () => {
 		it('defaults to all-on (incl. CUE and AGENT) when nothing is stored and Cue is enabled', () => {
 			const key = historyPanelFilterKeyForAgent(AGENT_A);
 			expect(resolveInitialHistoryFilters(key, true)).toEqual(
-				new Set(['USER', 'AGENT', 'AUTO', 'CUE'])
+				new Set(['USER', 'AGENT', 'RELAY', 'AUTO', 'CUE'])
 			);
 		});
 
@@ -85,7 +85,15 @@ describe('historyFilterPersistence', () => {
 			// every consult entry.
 			const key = historyPanelFilterKeyForAgent(AGENT_A);
 			localStorage.setItem(key, JSON.stringify(['USER', 'AUTO']));
-			expect(resolveInitialHistoryFilters(key, true)).toEqual(new Set(['USER', 'AUTO', 'AGENT']));
+			expect(resolveInitialHistoryFilters(key, true)).toEqual(
+				new Set(['USER', 'AUTO', 'AGENT', 'RELAY'])
+			);
+		});
+
+		it('switches Relay on for a saved filter selection from before Relay existed', () => {
+			const key = historyPanelFilterKeyForAgent(AGENT_A);
+			localStorage.setItem(key, JSON.stringify({ v: 2, filters: ['USER', 'AUTO'] }));
+			expect(resolveInitialHistoryFilters(key, true)).toEqual(new Set(['USER', 'AUTO', 'RELAY']));
 		});
 
 		it('honors an explicit AGENT deselection saved in the current format', () => {

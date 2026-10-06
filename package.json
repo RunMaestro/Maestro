@@ -59,6 +59,7 @@
 		"format:check:all": "prettier --check .",
 		"validate:push": "bun run format:check:all && bun run lint && bun run lint:eslint && bun run test",
 		"test": "cross-env NODE_OPTIONS=--max-old-space-size=8192 vitest run",
+		"test:packaged-net-fetch": "node scripts/smoke-packaged-net-fetch.mjs",
 		"test:watch": "cross-env NODE_OPTIONS=--max-old-space-size=8192 vitest",
 		"test:coverage": "cross-env NODE_OPTIONS=--max-old-space-size=8192 vitest run --coverage",
 		"test:e2e": "bun run build:main && bun run build:renderer && playwright test",
@@ -103,6 +104,8 @@
 			"node_modules/better-sqlite3/**/*",
 			"node_modules/@napi-rs/keyring/**/*",
 			"node_modules/@napi-rs/keyring-*/*",
+			"node_modules/@ast-grep/napi/**/*",
+			"node_modules/@ast-grep/napi-*/*",
 			"node_modules/bindings/**/*",
 			"node_modules/file-uri-to-path/**/*"
 		],
@@ -319,6 +322,7 @@
 		}
 	},
 	"dependencies": {
+		"@ast-grep/napi": "^0.44.1",
 		"@codemirror/commands": "^6.10.3",
 		"@codemirror/lang-cpp": "^6.0.3",
 		"@codemirror/lang-css": "^6.3.1",
@@ -406,6 +410,7 @@
 		"remark-math": "^6.0.0",
 		"semver": "^7.7.4",
 		"shiki": "^4.0.2",
+		"undici": "^7.29.1",
 		"ws": "^8.16.0",
 		"zustand": "^5.0.11"
 	},

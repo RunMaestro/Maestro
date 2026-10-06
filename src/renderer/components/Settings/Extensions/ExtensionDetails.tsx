@@ -5,13 +5,13 @@
  * the requested permissions (risk-colored, via getGrants), a contributions
  * summary (filtered by pluginId), and the lifecycle actions: Enable/Disable,
  * Configure (consent + a live editor for the plugin's contributed settings,
- * written to `plugins.<id>.*`), Revoke, and Uninstall. For a built-in feature
+ * written to `plugins.<id>.*`), Update, Revoke, and Uninstall. For a built-in feature
  * it shows the description and an enable toggle.
  */
 
-import { useCallback, useEffect, useState, type ReactNode } from 'react';
-import { Power, Settings as SettingsIcon, Trash2, KeyRound } from 'lucide-react';
-import type { Theme } from '../../../types';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { Power, Settings as SettingsIcon, Trash2, KeyRound, RefreshCw } from 'lucide-react';
+import type { EncoreFeatureFlags, Theme } from '../../../types';
 import { capabilityRisk, describeCapability } from '../../../../shared/plugins/permissions';
 import { formatCalendarDay } from '../../../../shared/formatters';
 import { PermissionList, RISK_COLOR } from './PermissionList';
@@ -23,10 +23,13 @@ import type {
 	AggregatedContributions,
 	SettingContribution,
 } from '../../../../shared/plugins/contributions';
+import { collectContributions } from '../../../../shared/plugins/contributions';
 import type { PluginRecord } from '../../../../shared/plugins/plugin-registry';
+import type { PluginRegistry } from '../../../../shared/plugins/plugin-registry';
 import {
 	CATEGORY_LABELS,
 	STATE_LABELS,
+	isDependencyMet,
 	extensionBadge,
 	type ExtensionState,
 	type UnifiedExtension,
@@ -34,15 +37,21 @@ import {
 import { FIRST_PARTY_PLUGINS } from '../../../../shared/plugins/first-party';
 import { getModalActions } from '../../../stores/modalStore';
 import { launchFromSettings } from '../../../utils/launchFromSettings';
+import { PluginPanelFrame } from '../../plugins/PluginPanelFrame';
 
 interface ExtensionDetailsProps {
 	theme: Theme;
 	ext: UnifiedExtension;
+	/** Current Encore flags, used to gate features with an unmet dependency
+	 * (e.g. Board requires Maestro Cue). Optional: when omitted, dependencies are
+	 * treated as met (the production ExtensionsView always supplies it). */
+	encoreFeatures?: EncoreFeatureFlags;
 	contributions: AggregatedContributions | null;
 	busy: boolean;
 	onTogglePlugin: (record: PluginRecord) => void;
 	onToggleBuiltin: (flag: NonNullable<UnifiedExtension['flag']>) => void;
 	onUninstall: (record: PluginRecord) => void;
+	onUpdate?: (record: PluginRecord) => void;
 	onRevoke: (id: string) => void;
 	getGrants: (id: string) => Promise<PluginGrantsSnapshot>;
 	/** First-party feature config body rendered in the Settings sub-tab (from
@@ -72,11 +81,13 @@ const CONTRIB_BUCKETS: ReadonlyArray<{
 export function ExtensionDetails({
 	theme,
 	ext,
+	encoreFeatures,
 	contributions,
 	busy,
 	onTogglePlugin,
 	onToggleBuiltin,
 	onUninstall,
+	onUpdate,
 	onRevoke,
 	getGrants,
 	settingsBody,
@@ -91,12 +102,19 @@ export function ExtensionDetails({
 		snapshot: PluginGrantsSnapshot;
 	} | null>(null);
 	const grants = grantsState?.pluginId === ext.id ? grantsState.snapshot : null;
+	const grantsLoadGeneration = useRef(0);
 	const [configureOpen, setConfigureOpen] = useState(false);
 	const [settingValues, setSettingValues] = useState<Record<string, boolean | string | number>>({});
 	const [activeSubTab, setActiveSubTab] = useState<'settings' | 'permissions'>('settings');
 
 	const isPlugin = ext.kind === 'plugin';
 	const record = ext.record;
+	const recordEnabled = record?.enabled;
+	const recordLoadStatus = record?.loadStatus;
+	const recordVersion = record?.manifest?.version;
+	const recordSource = record?.source;
+	const recordSignatureStatus = record?.signature?.status;
+	const recordSignerKey = record?.signature?.signerKey;
 	const isCodeTier = (ext.tier ?? 0) >= 1;
 
 	// Load the plugin's requested/granted permissions whenever the selection
@@ -108,31 +126,107 @@ export function ExtensionDetails({
 			return;
 		}
 		let cancelled = false;
-		void getGrants(ext.id)
-			.then((snap) => {
-				if (!cancelled) setGrantsState({ pluginId: ext.id, snapshot: snap });
-			})
-			.catch(() => {
-				if (!cancelled) setGrantsState(null);
-			});
+		const load = (initial = false) => {
+			const generation = ++grantsLoadGeneration.current;
+			if (initial) setGrantsState(null);
+			void getGrants(ext.id)
+				.then((snap) => {
+					if (!cancelled && generation === grantsLoadGeneration.current)
+						setGrantsState({ pluginId: ext.id, snapshot: snap });
+				})
+				.catch(() => {
+					if (!cancelled && generation === grantsLoadGeneration.current) setGrantsState(null);
+				});
+		};
+		load(true);
+		// Keep the frame across unrelated registry changes. Detach it immediately
+		// when this plugin is disabled, removed, or replaced. The parent will
+		// refresh its record before grants are read for the changed identity.
+		const unsubscribe = window.maestro.plugins.onChanged((registry?: PluginRegistry) => {
+			const current = registry?.records.find((item) => item.id === ext.id);
+			const selectedChanged =
+				!current ||
+				recordEnabled === undefined ||
+				current.enabled !== recordEnabled ||
+				current.loadStatus !== recordLoadStatus ||
+				current.manifest?.version !== recordVersion ||
+				current.source !== recordSource ||
+				current.signature?.status !== recordSignatureStatus ||
+				current.signature?.signerKey !== recordSignerKey;
+			if (selectedChanged) {
+				++grantsLoadGeneration.current;
+				setGrantsState(null);
+			} else {
+				load();
+			}
+		});
 		return () => {
 			cancelled = true;
+			unsubscribe?.();
 		};
-	}, [isPlugin, ext.id, getGrants]);
+	}, [
+		isPlugin,
+		ext.id,
+		getGrants,
+		recordEnabled,
+		recordLoadStatus,
+		recordVersion,
+		recordSource,
+		recordSignatureStatus,
+		recordSignerKey,
+	]);
 
 	const isPianola = !isPlugin && ext.flag === 'pianola';
+	const isBoard = !isPlugin && ext.flag === 'board';
 	// Web Login manages its accounts in its own tile: the channels behind that
 	// pane are desktop-only, so there is nowhere else they could be offered.
 	const isWebLogin = !isPlugin && ext.flag === 'webLogin';
 
+	// A validated installed manifest describes what the Settings tab offers even
+	// while the plugin is disabled. This is discovery data only: active, verified
+	// contributions below remain the sole source of panel webviews and controls.
+	const declared =
+		isPlugin &&
+		record?.manifest &&
+		record.loadStatus === 'ok' &&
+		record.signature?.status !== 'invalid'
+			? collectContributions(record.manifest)
+			: null;
+	const declaredSettingsPanels =
+		declared?.panels.filter((panel) => panel.placement === 'settings') ?? [];
 	const pluginSettings: SettingContribution[] = contributions
 		? contributions.settings.filter((s) => s.pluginId === ext.id)
 		: [];
 	const canConfigurePlugin = isPlugin && ext.state === 'enabled' && pluginSettings.length > 0;
+	// The contributed list is already capability-gated by the host. Match the
+	// selected plugin exactly, and require its freshly loaded grant as well before
+	// attaching any webview (including during a plugin switch or grant revoke).
+	const settingsPanels =
+		isPlugin && ext.state === 'enabled' && record?.enabled && ext.loadStatus === 'ok'
+			? (contributions?.panels ?? []).filter(
+					(panel) =>
+						panel.pluginId === ext.id &&
+						panel.placement === 'settings' &&
+						declaredSettingsPanels.some(
+							(declaredPanel) =>
+								declaredPanel.id === panel.id && declaredPanel.entry === panel.entry
+						)
+				)
+			: [];
+	const canMountSettingsPanels =
+		settingsPanels.length > 0 &&
+		Boolean(grants?.granted.some((grant) => grant.capability === 'ui:panel'));
 
 	// The Settings sub-tab exists when there's something to configure: a
 	// first-party config body, a configurable plugin, or Pianola's modal entry.
-	const hasSettingsTab = Boolean(settingsBody) || canConfigurePlugin || isPianola || isWebLogin;
+	const hasSettingsTab =
+		Boolean(settingsBody) ||
+		canConfigurePlugin ||
+		Boolean(declared?.settings.length) ||
+		declaredSettingsPanels.length > 0 ||
+		isPianola ||
+		isBoard ||
+		isWebLogin;
 
 	// Reset transient editor + sub-tab when switching extensions. Default to
 	// Settings when it exists, else Permissions.
@@ -185,6 +279,16 @@ export function ExtensionDetails({
 
 	const grantedCaps = new Set((grants?.granted ?? []).map((g) => g.capability));
 	const toggleLabel = ext.state === 'enabled' ? 'Disable' : 'Enable';
+
+	// Dependency gate (e.g. Board requires Maestro Cue): block ENABLING until the
+	// required flag is on. Disabling stays allowed so a feature can always be
+	// turned off. Mirrors the main-process dispatcher's dual-gate.
+	const dependencyMet = encoreFeatures ? isDependencyMet(ext, encoreFeatures) : true;
+	const dependencyName =
+		ext.dependsOn && ext.dependsOn in FIRST_PARTY_PLUGINS
+			? FIRST_PARTY_PLUGINS[ext.dependsOn as keyof typeof FIRST_PARTY_PLUGINS].name
+			: ext.dependsOn;
+	const enableBlockedByDependency = !isPlugin && !dependencyMet && ext.state !== 'enabled';
 
 	// First-party tiles surface their supervised background services; status
 	// derives from the definition + the bridge-written flag state (enable
@@ -271,7 +375,7 @@ export function ExtensionDetails({
 					style={{ color: theme.colors.error }}
 				>
 					This plugin&apos;s files no longer match their signature (tampered). It is fully disabled:
-					no code runs and no contributions apply. Reinstall it from a trusted source.
+					no code runs and no contributions apply. Update it from a trusted source.
 				</p>
 			)}
 			{isPlugin && isCodeTier && ext.trust !== 'trusted' && ext.trust !== 'invalid' && (
@@ -291,8 +395,10 @@ export function ExtensionDetails({
 				<button
 					type="button"
 					data-testid="extension-enable-toggle"
-					disabled={busy || (isPlugin && ext.loadStatus !== 'ok')}
+					disabled={busy || (isPlugin && ext.loadStatus !== 'ok') || enableBlockedByDependency}
+					title={enableBlockedByDependency ? `Requires ${dependencyName}` : undefined}
 					onClick={() => {
+						if (enableBlockedByDependency) return;
 						if (isPlugin && record) onTogglePlugin(record);
 						else if (ext.flag) onToggleBuiltin(ext.flag);
 					}}
@@ -302,12 +408,27 @@ export function ExtensionDetails({
 					<Power className="w-4 h-4" /> {toggleLabel}
 				</button>
 
+				{enableBlockedByDependency && (
+					<span
+						data-testid="extension-dependency-hint"
+						className="text-xs"
+						style={{ color: theme.colors.textDim }}
+					>
+						Requires {dependencyName}. Enable it first.
+					</span>
+				)}
+
 				{isPlugin && isCodeTier && (
 					<button
 						type="button"
 						data-testid="extension-revoke"
 						disabled={busy}
-						onClick={() => onRevoke(ext.id)}
+						onClick={() => {
+							// Detach the guest synchronously; the host revokes the grant next.
+							grantsLoadGeneration.current++;
+							setGrantsState(null);
+							onRevoke(ext.id);
+						}}
 						className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-sm transition-colors hover:bg-white/5 disabled:opacity-50"
 						style={{ borderColor: theme.colors.border, color: theme.colors.warning }}
 					>
@@ -316,16 +437,31 @@ export function ExtensionDetails({
 				)}
 
 				{isPlugin && record && (
-					<button
-						type="button"
-						data-testid="extension-uninstall"
-						disabled={busy}
-						onClick={() => onUninstall(record)}
-						className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-sm transition-colors hover:bg-white/5 disabled:opacity-50"
-						style={{ borderColor: theme.colors.border, color: theme.colors.error }}
-					>
-						<Trash2 className="w-4 h-4" /> Uninstall
-					</button>
+					<>
+						{onUpdate && (
+							<button
+								type="button"
+								data-testid="extension-update"
+								disabled={busy}
+								onClick={() => onUpdate(record)}
+								className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-sm transition-colors hover:bg-white/5 disabled:opacity-50"
+								style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
+								title="Choose a folder with a newer version of this plugin"
+							>
+								<RefreshCw className="w-4 h-4" /> Update from folder…
+							</button>
+						)}
+						<button
+							type="button"
+							data-testid="extension-uninstall"
+							disabled={busy}
+							onClick={() => onUninstall(record)}
+							className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-sm transition-colors hover:bg-white/5 disabled:opacity-50"
+							style={{ borderColor: theme.colors.border, color: theme.colors.error }}
+						>
+							<Trash2 className="w-4 h-4" /> Uninstall
+						</button>
+					</>
 				)}
 			</div>
 
@@ -545,6 +681,54 @@ export function ExtensionDetails({
 			    Pianola's modal entry - whichever applies to this extension. */}
 			{activeSubTab === 'settings' && (
 				<div className="mt-5" data-testid="extension-settings-panel">
+					{isPlugin && declared && ext.state !== 'enabled' && (
+						<div
+							data-testid="extension-plugin-settings-status"
+							className="text-xs rounded-lg border p-3 mb-4"
+							style={{ borderColor: theme.colors.border, color: theme.colors.textDim }}
+						>
+							This plugin is installed but disabled. Select Enable to review permissions for this
+							version. Its settings will be available after approval.
+						</div>
+					)}
+					{isPlugin &&
+						declaredSettingsPanels.length > 0 &&
+						ext.state === 'enabled' &&
+						grants &&
+						!canMountSettingsPanels && (
+							<div
+								data-testid="extension-plugin-settings-status"
+								className="text-xs rounded-lg border p-3 mb-4"
+								style={{ borderColor: theme.colors.border, color: theme.colors.textDim }}
+							>
+								The settings panel is unavailable without current ui:panel permission. Disable and
+								then Enable this plugin to review its permissions.
+							</div>
+						)}
+					{canMountSettingsPanels && (
+						<div className="space-y-4 mb-5" data-testid="extension-plugin-settings-panels">
+							{settingsPanels.map((panel) => (
+								<div
+									key={panel.id}
+									className="overflow-hidden rounded-lg border"
+									style={{ borderColor: theme.colors.border }}
+								>
+									<div
+										className="px-3 py-2 text-sm font-medium"
+										style={{
+											color: theme.colors.textMain,
+											borderBottom: `1px solid ${theme.colors.border}`,
+										}}
+									>
+										{panel.title}
+									</div>
+									<div className="h-[440px]">
+										<PluginPanelFrame key={`${ext.id}:${panel.id}`} theme={theme} panel={panel} />
+									</div>
+								</div>
+							))}
+						</div>
+					)}
 					{/* First-party feature with an inline config body */}
 					{!isPlugin && settingsBody ? (
 						ext.state === 'enabled' ? (
@@ -598,6 +782,32 @@ export function ExtensionDetails({
 								style={{ borderColor: theme.colors.border, color: theme.colors.textDim }}
 							>
 								Enable Pianola to open its manager and rules.
+							</div>
+						))}
+
+					{/* Board: the kanban surface lives in its own modal. The open action
+					    also requires the Cue dependency: with Cue off the modal will not
+					    mount (AppStandaloneModals), so an active button would be a no-op. */}
+					{isBoard &&
+						(ext.state === 'enabled' && dependencyMet ? (
+							<button
+								type="button"
+								data-testid="extension-open-board"
+								onClick={() => getModalActions().setBoardModalOpen(true)}
+								className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-sm transition-colors hover:bg-white/5"
+								style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
+							>
+								<SettingsIcon className="w-4 h-4" /> Open Board
+							</button>
+						) : (
+							<div
+								data-testid="extension-settings-disabled-hint"
+								className="text-xs rounded-lg border p-3"
+								style={{ borderColor: theme.colors.border, color: theme.colors.textDim }}
+							>
+								{ext.state === 'enabled'
+									? `Enable ${dependencyName ?? 'Maestro Cue'} to open the Board.`
+									: 'Enable Board to open its kanban surface.'}
 							</div>
 						))}
 

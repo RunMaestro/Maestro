@@ -20,6 +20,9 @@ playwright-report/
 test-results/
 
 # Dependencies
+# Bare, with no trailing slash on purpose: a trailing-slash rule matches only
+# directories, so a dev/worktree symlink named node_modules would not be
+# covered, and it must not be committed either.
 node_modules
 
 # Build outputs
@@ -69,3 +72,6 @@ yarn-error.log*
 
 # Bundled-plugin signing artifact (release-time build output; dev signs locally)
 examples/plugins/*/signature.json
+
+# Local media broker build and test evidence
+.build/

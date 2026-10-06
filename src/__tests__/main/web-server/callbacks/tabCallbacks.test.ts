@@ -26,6 +26,10 @@ type RenameCallback = (
 
 function setup() {
 	let renameCallback: RenameCallback | undefined;
+	let closeCallback: ((sessionId: string, tabId: string) => Promise<boolean>) | undefined;
+	let reopenCallback:
+		| ((sessionId: string, tabId: string) => Promise<{ tabId: string } | null>)
+		| undefined;
 	const webContents = {
 		send: vi.fn(),
 		once: vi.fn(),
@@ -39,7 +43,15 @@ function setup() {
 					? (callback: RenameCallback) => {
 							renameCallback = callback;
 						}
-					: () => {},
+					: prop === 'setCloseTabCallback'
+						? (callback: typeof closeCallback) => {
+								closeCallback = callback;
+							}
+						: prop === 'setReopenTabCallback'
+							? (callback: typeof reopenCallback) => {
+									reopenCallback = callback;
+								}
+							: () => {},
 		}
 	);
 
@@ -51,7 +63,12 @@ function setup() {
 		} as never
 	);
 
-	return { renameCallback: renameCallback!, webContents };
+	return {
+		renameCallback: renameCallback!,
+		closeCallback: closeCallback!,
+		reopenCallback: reopenCallback!,
+		webContents,
+	};
 }
 
 /**
@@ -67,7 +84,7 @@ function respond(
 	callIndex: number,
 	result: unknown
 ) {
-	const responseChannel = webContents.send.mock.calls[callIndex][4];
+	const responseChannel = webContents.send.mock.calls[callIndex].at(-1);
 	const handler = vi
 		.mocked(ipcMain.once)
 		.mock.calls.find(([channel]) => channel === responseChannel)?.[1];
@@ -79,6 +96,56 @@ function respond(
 describe('tab callbacks', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+	});
+
+	it('does not acknowledge a close just because the event was delivered', async () => {
+		const { closeCallback, webContents } = setup();
+		let settled = false;
+		const pending = closeCallback('session-1', 'tab-1').then((value) => {
+			settled = true;
+			return value;
+		});
+		await Promise.resolve();
+		expect(settled).toBe(false);
+		expect(webContents.send).toHaveBeenCalledWith(
+			'remote:closeTab',
+			'session-1',
+			'tab-1',
+			expect.any(String)
+		);
+		respond(webContents, 0, true);
+		expect(await pending).toBe(true);
+	});
+
+	it.each([false, undefined, {}, 'true'])(
+		'rejects an unconfirmed close result %j',
+		async (reply) => {
+			const { closeCallback, webContents } = setup();
+			const pending = closeCallback('session-1', 'tab-1');
+			respond(webContents, 0, reply);
+			expect(await pending).toBe(false);
+		}
+	);
+
+	it('times out a renderer that is reloading and removes the reply listener', async () => {
+		vi.useFakeTimers();
+		try {
+			const { closeCallback, webContents } = setup();
+			const pending = closeCallback('session-1', 'tab-1');
+			const channel = webContents.send.mock.calls[0].at(-1);
+			await vi.advanceTimersByTimeAsync(3000);
+			expect(await pending).toBe(false);
+			expect(ipcMain.removeListener).toHaveBeenCalledWith(channel, expect.any(Function));
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it('returns only the desktop-minted reopen identity', async () => {
+		const { reopenCallback, webContents } = setup();
+		const pending = reopenCallback('session-1', 'tab-1');
+		respond(webContents, 0, { tabId: 'restored' });
+		expect(await pending).toEqual({ tabId: 'restored' });
 	});
 
 	it('waits for renderer rename persistence before reporting success', async () => {

@@ -1,8 +1,23 @@
 import type { ChildProcess } from 'child_process';
 import type { IPty } from 'node-pty';
 import type { OpencodeClient } from '@opencode-ai/sdk';
-import type { AgentOutputParser } from '../parsers';
+import type { AgentOutputParser, ParsedEvent } from '../parsers';
 import type { AgentError } from '../../shared/types';
+
+/**
+ * Optional hook invoked for every normalized agent event, straight out of
+ * `AgentOutputParser.parseJsonObject` and before any routing, coalescing, or
+ * reasoning gate. This is the only seam that sees partial prose (which the
+ * public `thinking-chunk`/`data` events drop for several agents), thinking,
+ * and tool calls with their full `input` payloads, for every structured agent
+ * in one place.
+ *
+ * It is injected (`ProcessManager.setParsedEventObserver`) rather than imported
+ * so consumers - currently Time-Traveling Stream Rules - stay out of the
+ * process manager's dependency graph. Must be cheap and synchronous: it runs
+ * once per event on the stdout hot path.
+ */
+export type ParsedEventObserver = (sessionId: string, event: ParsedEvent) => void;
 
 /**
  * Kill/interrupt handle for server-backed processes that have no OS child
@@ -75,6 +90,11 @@ export interface ProcessConfig {
 	 *  script's `#!/usr/bin/env node` shebang. Local spawn only - SSH builds
 	 *  its remote PATH separately. */
 	extraPathDirs?: string[];
+	/** Set only on a TTSR corrective respawn: the id from `ttsr:triggered`,
+	 *  echoed back by the renderer. Carried on the `spawn` event so the TTSR
+	 *  spawn registry recognises its own corrective turn by correlation rather
+	 *  than by inspecting the prompt. Nothing in the spawner reads it. */
+	ttsrCorrelationId?: string;
 	/** Agent-reported session id when this spawn is resuming a prior session
 	 *  (e.g. Copilot's `--resume=<id>`, Claude's `--resume <id>`). The spawner
 	 *  uses it to seed `ManagedProcess.agentSessionId` so post-exit work that

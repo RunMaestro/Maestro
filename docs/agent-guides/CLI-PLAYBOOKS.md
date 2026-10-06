@@ -270,12 +270,14 @@ Conventions to preserve when touching this:
 Send a message to an agent and receive a JSON response. Supports multi-turn conversations via session resumption.
 
 ```bash
-maestro-cli send <agent-id> <message> [-s, --session <id>]
+maestro-cli send <agent-id> <message> [-s, --session <id>] [--require-plugin-tools] [--require-tool-receipt <tool-id>]
 ```
 
 Options:
 
 - `--session <id>` - Resume an existing agent session for multi-turn conversations
+- `--require-plugin-tools` - Require the authenticated desktop plugin runner with active tools. If unavailable, fail instead of falling back to a standalone CLI run. Use with a supported local provider; the caller must still verify the specific tool result and any external delivery receipt.
+- `--require-tool-receipt <tool-id>` - Also require a host-observed successful call to this exact namespaced plugin tool ID (for Relay, `sh.maestro.relay/send`) with nonempty numeric `messageIds`. Implies the fail-closed desktop path. The JSON response adds `toolReceipts: [{ runId, agentId, toolId, messageIds }]`; exit status is nonzero if the provider fails, the tool is unavailable, or no matching receipt is observed. A failed run may still include receipts from a tool call that completed before the failure, so consumers must inspect them before retrying.
 
 Response format:
 

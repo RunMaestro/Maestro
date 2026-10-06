@@ -39,7 +39,7 @@ describe('PluginManager.invokeTool', () => {
 			ok: true,
 			value: 7,
 		});
-		expect(invokeTool).toHaveBeenCalledWith('demo', 'lookup', { q: 'x' });
+		expect(invokeTool).toHaveBeenCalledWith('demo', 'lookup', { q: 'x' }, { callerAgentId: null });
 	});
 
 	it('preserves a local id that itself contains a slash', async () => {
@@ -48,7 +48,9 @@ describe('PluginManager.invokeTool', () => {
 		const manager = new PluginManager({ isEnabled: () => true, sandbox });
 
 		await manager.invokeTool('demo/group/run', undefined);
-		expect(invokeTool).toHaveBeenCalledWith('demo', 'group/run', undefined);
+		expect(invokeTool).toHaveBeenCalledWith('demo', 'group/run', undefined, {
+			callerAgentId: null,
+		});
 	});
 
 	it('rejects a malformed id without touching the sandbox', async () => {

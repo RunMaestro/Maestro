@@ -13,6 +13,7 @@
  */
 
 import { create } from 'zustand';
+import type { TtsrToastMarker } from '../../shared/ttsr-types';
 import { logger } from '../utils/logger';
 import { isWebDesktop } from '../utils/runtimeContext';
 import type { ToastClickAction } from '../../shared/toastClickAction';
@@ -105,6 +106,12 @@ export interface Toast {
 	// `onClick` wins (it can do anything; `clickAction` is the limited subset
 	// that survives serialization).
 	clickAction?: ToastClickAction;
+	// Structured TTSR interrupt marker. Present only on toasts raised by a
+	// turn-triggered self-repair abort. The display layer (Toast.tsx) reads it to
+	// append a client-specific outcome line resolved at display time; the plain
+	// `message` stays a sensible fallback for clients that ignore this field.
+	// Additive - non-TTSR toasts leave it unset and render unchanged.
+	ttsr?: TtsrToastMarker;
 }
 
 export function resolveToastColor(opts: { color?: ToastColor; type?: ToastType }): ToastColor {
@@ -377,6 +384,7 @@ export function notifyToast(toast: NotifyToastInput): string {
 		// if a web-desktop notification can't be delivered.
 		showOsNotification(notifTitle, notifBody, toast.sessionId, toast.tabId, {
 			fallbackToast: false,
+			clickAction: toast.onClick ? undefined : toast.clickAction,
 		});
 	}
 
@@ -437,6 +445,7 @@ export interface ShowOsNotificationOptions {
 	 * shown a toast (e.g. notifyToast itself) to avoid a duplicate.
 	 */
 	fallbackToast?: boolean;
+	clickAction?: ToastClickAction;
 }
 
 /**
@@ -463,7 +472,10 @@ export function showOsNotification(
 	if (!isWebDesktop()) {
 		// Desktop: unchanged host-notification bridge.
 		if (typeof window !== 'undefined' && window.maestro?.notification?.show) {
-			window.maestro.notification.show(title, body, sessionId, tabId).catch((err) => {
+			const result = options.clickAction
+				? window.maestro.notification.show(title, body, sessionId, tabId, options.clickAction)
+				: window.maestro.notification.show(title, body, sessionId, tabId);
+			result.catch((err) => {
 				logger.error('[notificationStore] Failed to show OS notification:', undefined, err);
 			});
 		}

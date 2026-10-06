@@ -160,6 +160,9 @@ export interface ParsedEvent {
 	 */
 	isPartial?: boolean;
 
+	/** Codex answer role when its JSON format supplies a phase (or omits one). */
+	responsePhase?: 'commentary' | 'final' | 'candidate';
+
 	/**
 	 * Is this reasoning/thinking content?
 	 * If true, this is internal agent reasoning that should not be included
@@ -167,6 +170,17 @@ export interface ParsedEvent {
 	 * where reasoning and answer deltas share the same event type.
 	 */
 	isReasoning?: boolean;
+
+	/**
+	 * Was this event's prose already delivered token-by-token via streaming deltas?
+	 * Set on a complete 'assistant' text event whose text was already emitted as
+	 * partial 'text' events from stream_event deltas (claude-code with
+	 * --include-partial-messages). Downstream consumers (streamedText append,
+	 * thinking-chunk emit, TTSR prose buffer) use this to skip re-ingesting the
+	 * same text, avoiding double-counting. The 'text' field stays populated so
+	 * display consumers still get the full message.
+	 */
+	textAlreadyStreamed?: boolean;
 
 	/**
 	 * Tool use blocks extracted from the message (for agents with mixed content)

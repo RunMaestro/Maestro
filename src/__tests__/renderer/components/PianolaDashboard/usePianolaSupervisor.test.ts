@@ -11,6 +11,7 @@ import { usePianolaSupervisor } from '../../../../renderer/components/PianolaDas
 import type { PianolaSupervisorSnapshot } from '../../../../main/ipc/handlers/pianola';
 import { notifyToast } from '../../../../renderer/stores/notificationStore';
 import { captureException } from '../../../../renderer/utils/sentry';
+import { loadAllSettings, useSettingsStore } from '../../../../renderer/stores/settingsStore';
 
 vi.mock('../../../../renderer/stores/notificationStore', () => ({ notifyToast: vi.fn() }));
 vi.mock('../../../../renderer/utils/sentry', () => ({ captureException: vi.fn() }));
@@ -35,6 +36,7 @@ let addImpl: () => Promise<PianolaSupervisorSnapshot>;
 let originalMaestro: typeof window.maestro;
 
 beforeEach(() => {
+	useSettingsStore.setState({ pianolaAutoWatchNewAgents: false, settingsLoaded: true });
 	listImpl = () => Promise.resolve(emptySnap);
 	addImpl = () => Promise.resolve(watchSnap);
 	originalMaestro = window.maestro;
@@ -58,6 +60,72 @@ afterEach(() => {
 });
 
 describe('usePianolaSupervisor', () => {
+	it('loads and saves the automatic watch setting', async () => {
+		vi.mocked(window.maestro.settings.getAll).mockResolvedValueOnce({
+			pianolaAutoWatchNewAgents: true,
+		});
+		await loadAllSettings();
+		const { result } = renderHook(() => usePianolaSupervisor());
+		await waitFor(() => expect(result.current.autoWatchNewAgents).toBe(true));
+		await act(async () => {
+			await result.current.setAutoWatchNewAgents(false);
+		});
+		expect(window.maestro.settings.set).toHaveBeenCalledWith('pianolaAutoWatchNewAgents', false);
+		expect(result.current.autoWatchNewAgents).toBe(false);
+	});
+
+	it('keeps the last automatic watch setting when persistence rejects it', async () => {
+		vi.mocked(window.maestro.settings.set).mockResolvedValueOnce(false);
+		vi.mocked(window.maestro.settings.getAll).mockResolvedValueOnce({
+			pianolaAutoWatchNewAgents: false,
+		});
+		const { result } = renderHook(() => usePianolaSupervisor());
+		await act(async () => {
+			await result.current.setAutoWatchNewAgents(true);
+		});
+		expect(result.current.autoWatchNewAgents).toBe(false);
+		expect(notifyToast).toHaveBeenCalledWith(expect.objectContaining({ color: 'red' }));
+	});
+
+	it('recovers the stored setting when a save fails before initial hydration', async () => {
+		useSettingsStore.setState({ settingsLoaded: false });
+		const initialRead = deferred<Record<string, unknown>>();
+		vi.mocked(window.maestro.settings.getAll)
+			.mockReturnValueOnce(initialRead.promise)
+			.mockResolvedValueOnce({ pianolaAutoWatchNewAgents: true });
+		const initialLoad = loadAllSettings();
+		vi.mocked(window.maestro.settings.set).mockResolvedValueOnce(false);
+		const { result } = renderHook(() => usePianolaSupervisor());
+		await act(async () => {
+			await result.current.setAutoWatchNewAgents(false);
+		});
+		expect(result.current.autoWatchNewAgents).toBe(true);
+		await act(async () => {
+			initialRead.resolve({ pianolaAutoWatchNewAgents: true });
+			await initialLoad;
+		});
+		expect(result.current.autoWatchNewAgents).toBe(true);
+	});
+
+	it('does not overwrite external hydration with a late save acknowledgement', async () => {
+		const save = deferred<boolean>();
+		vi.mocked(window.maestro.settings.set).mockReturnValueOnce(save.promise);
+		const { result } = renderHook(() => usePianolaSupervisor());
+		let saving: Promise<void>;
+		act(() => {
+			saving = result.current.setAutoWatchNewAgents(true);
+		});
+		vi.mocked(window.maestro.settings.getAll).mockResolvedValueOnce({
+			pianolaAutoWatchNewAgents: false,
+		});
+		await act(async () => {
+			await loadAllSettings();
+			save.resolve(true);
+			await saving;
+		});
+		expect(result.current.autoWatchNewAgents).toBe(false);
+	});
+
 	it('clears watched rows when Pianola becomes disabled', async () => {
 		listImpl = () => Promise.resolve(watchSnap);
 		const { result } = renderHook(() => usePianolaSupervisor());

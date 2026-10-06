@@ -220,6 +220,8 @@ export interface WebClient {
 	id: string;
 	connectedAt: number;
 	subscribedSessionId?: string;
+	/** Set only from the verified per-boot CLI secret on WebSocket upgrade. */
+	cliAuthenticated?: boolean;
 	/**
 	 * The Web Login account behind this socket, resolved once at the upgrade
 	 * from the session cookie. Undefined when the gate is off and for
@@ -348,6 +350,10 @@ export type SelectTabCallback = (sessionId: string, tabId: string) => Promise<bo
 export type NewTabCallback = (
 	sessionId: string,
 	background?: boolean
+) => Promise<{ tabId: string } | null>;
+export type ReopenTabCallback = (
+	sessionId: string,
+	tabId: string
 ) => Promise<{ tabId: string } | null>;
 export type CloseTabCallback = (sessionId: string, tabId: string) => Promise<boolean>;
 export interface RenameTabResult {
@@ -594,6 +600,8 @@ export type OpenBrowserTabCallback = (
  */
 export type CloseBrowserTabCallback = (tabId: string) => Promise<boolean>;
 export interface OpenTerminalTabConfig {
+	/** Explicit signal that the agent is waiting for a person at this terminal. */
+	inputRequired?: boolean;
 	cwd?: string;
 	shell?: string;
 	name?: string | null;

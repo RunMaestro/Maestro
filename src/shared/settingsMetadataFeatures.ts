@@ -76,6 +76,12 @@ export const FEATURES_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		default: { ...ENCORE_FEATURE_DEFAULTS },
 		category: 'advanced',
 	},
+	pianolaAutoWatchNewAgents: {
+		description: 'Automatically watch newly created top-level agents when Pianola is enabled.',
+		type: 'boolean',
+		default: false,
+		category: 'advanced',
+	},
 	directorNotesSettings: {
 		description:
 			"Director's Notes settings: provider (or auto-select), lookback window, default reading mode, optional ideal end state.",
@@ -100,6 +106,27 @@ export const FEATURES_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 			'Collapse repeated Maestro Cue runs in the History panel into one row per trigger, showing the run count, the most recent run time, and a failure count. Expand a row to reach the individual runs. Turn this off to list every Cue run separately.',
 		type: 'boolean',
 		default: true,
+		category: 'advanced',
+	},
+	ttsrEnabled: {
+		description:
+			'Time-Traveling Stream Rules: watch agent output streams and interrupt turns that match a rule. AND-gated with the ttsr Encore feature flag.',
+		type: 'boolean',
+		default: false,
+		category: 'advanced',
+	},
+	ttsrDisabledRules: {
+		description:
+			'TTSR rule names disabled globally. Rules listed here are loaded but never matched.',
+		type: 'array',
+		default: [],
+		category: 'advanced',
+	},
+	ttsrContextMode: {
+		description:
+			"How an interrupted turn is torn down: 'keep' (SIGINT, let the provider commit the partial turn) or 'discard' (hard kill, best-effort pre-commit). Applies to projects whose .maestro/ttsr.yaml does not set its own contextMode. Validated in the TTSR normalizer.",
+		type: 'string',
+		default: 'keep',
 		category: 'advanced',
 	},
 	coworkingBrowserInteraction: {

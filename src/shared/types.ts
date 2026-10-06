@@ -316,6 +316,12 @@ export interface SessionInfo {
 	codexAutoResetOnExhaustion?: boolean;
 	/** Per-session SSH remote config - when enabled, CLI spawns via SSH. */
 	sessionSshRemoteConfig?: AgentSshRemoteConfig;
+	/**
+	 * Board worker pool (Board Phase 6): opt-in flag marking this agent as an
+	 * available board worker in its project directory. Only opted-in, in-directory
+	 * agents are auto-assigned role-only cards.
+	 */
+	boardWorker?: boolean;
 }
 
 // Usage statistics from AI agent CLI (Claude Code, Codex, etc.)
@@ -415,7 +421,7 @@ export interface UsageStats {
  * Adding a member here? `ALL_HISTORY_ENTRY_TYPES` (shared/history.ts) is the
  * single list every filter/validator iterates - update it, not a local copy.
  */
-export type HistoryEntryType = 'AUTO' | 'USER' | 'CUE' | 'AGENT';
+export type HistoryEntryType = 'AUTO' | 'USER' | 'CUE' | 'AGENT' | 'RELAY';
 
 export interface HistoryEntry {
 	id: string;

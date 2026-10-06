@@ -16,6 +16,7 @@
 
 import { create } from 'zustand';
 import type { BrowserConfirmPolicy } from '../../shared/coworkingBrowser';
+import { isTtsrContextMode, type TtsrContextMode } from '../../shared/ttsr-types';
 import { isWindowsPlatform } from '../utils/platformUtils';
 import type {
 	CustomAICommand,
@@ -350,6 +351,7 @@ export interface SettingsStoreState
 	 */
 	shellEnvVarsDisabled: Record<string, string>;
 	ghPath: string;
+	mediaModelDirectory: string;
 	/** Playback speed for audio/video in the file preview. Sticky across files. */
 	/**
 	 * True when the main process found an installation id already on disk (i.e.
@@ -447,6 +449,9 @@ export interface SettingsStoreState
 	utilityModelId: string | null;
 	encoreFeatures: EncoreFeatureFlags;
 	symphonyRegistryUrls: string[];
+	ttsrEnabled: boolean;
+	ttsrDisabledRules: string[];
+	ttsrContextMode: TtsrContextMode;
 	coworkingBrowserInteraction: string[];
 	coworkingBrowserInteractionConfirm: Record<string, BrowserConfirmPolicy>;
 	coworkingBackgroundBrowsers: boolean;
@@ -470,6 +475,7 @@ export interface SettingsStoreState
 	bmadEnabled: boolean;
 	lastSelectedPromptId: string | null;
 	spellCheck: boolean;
+	pianolaAutoWatchNewAgents: boolean;
 }
 
 export interface SettingsStoreActions
@@ -491,6 +497,7 @@ export interface SettingsStoreActions
 	setShellEnvVars: (value: Record<string, string>) => void;
 	setShellEnvVarsDisabled: (value: Record<string, string>) => void;
 	setGhPath: (value: string) => void;
+	setMediaModelDirectory: (value: string) => Promise<boolean>;
 	setMediaPlaybackRate: (value: number) => void;
 	setEnterToSendAI: (value: boolean) => void;
 	setEnterToSendAIExpanded: (value: boolean) => void;
@@ -559,6 +566,9 @@ export interface SettingsStoreActions
 	setUtilityModelId: (value: string | null) => void;
 	setEncoreFeatures: (value: EncoreFeatureFlags) => void;
 	setSymphonyRegistryUrls: (value: string[]) => void;
+	setTtsrEnabled: (value: boolean) => void;
+	setTtsrDisabledRules: (value: string[]) => void;
+	setTtsrContextMode: (value: TtsrContextMode) => void;
 	setCoworkingBrowserInteraction: (value: string[]) => void;
 	setCoworkingBrowserInteractionConfirm: (value: Record<string, BrowserConfirmPolicy>) => void;
 	setCoworkingBackgroundBrowsers: (value: boolean) => void;
@@ -581,6 +591,7 @@ export interface SettingsStoreActions
 	setBmadEnabled: (value: boolean) => void;
 	setLastSelectedPromptId: (value: string | null) => void;
 	setSpellCheck: (value: boolean) => void;
+	setPianolaAutoWatchNewAgents: (value: boolean) => Promise<void>;
 
 	// Async setters
 	setLogLevel: (value: string) => Promise<void>;
@@ -729,6 +740,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		shellEnvVars: {},
 		shellEnvVarsDisabled: {},
 		ghPath: '',
+		mediaModelDirectory: '',
 		hasPriorInstallation: false,
 		mediaPlaybackRate: 1,
 		enterToSendAI: true,
@@ -805,6 +817,9 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		utilityModelId: null,
 		encoreFeatures: DEFAULT_ENCORE_FEATURES,
 		symphonyRegistryUrls: [],
+		ttsrEnabled: false,
+		ttsrDisabledRules: [],
+		ttsrContextMode: 'keep',
 		coworkingBrowserInteraction: [],
 		coworkingBrowserInteractionConfirm: {},
 		coworkingBackgroundBrowsers: false,
@@ -827,6 +842,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		bmadEnabled: true,
 		lastSelectedPromptId: null,
 		spellCheck: false,
+		pianolaAutoWatchNewAgents: false,
 
 		...createAnnotatorSlice(set, get, api),
 		...createWakatimeSlice(set, get, api),
@@ -880,6 +896,13 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		setGhPath: (value) => {
 			set({ ghPath: value });
 			window.maestro.settings.set('ghPath', value);
+		},
+
+		setMediaModelDirectory: async (value) => {
+			if (!(await window.maestro.settings.set('mediaModelDirectory', value))) return false;
+			const persisted = await window.maestro.settings.get('mediaModelDirectory');
+			set({ mediaModelDirectory: persisted as string });
+			return true;
 		},
 
 		setMediaPlaybackRate: (value) => {
@@ -1321,6 +1344,21 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 			window.maestro.settings.set('symphonyRegistryUrls', value);
 		},
 
+		setTtsrEnabled: (value) => {
+			set({ ttsrEnabled: value });
+			window.maestro.settings.set('ttsrEnabled', value);
+		},
+
+		setTtsrDisabledRules: (value) => {
+			set({ ttsrDisabledRules: value });
+			window.maestro.settings.set('ttsrDisabledRules', value);
+		},
+
+		setTtsrContextMode: (value) => {
+			set({ ttsrContextMode: value });
+			window.maestro.settings.set('ttsrContextMode', value);
+		},
+
 		setCoworkingBrowserInteraction: (value) => {
 			set({ coworkingBrowserInteraction: value });
 			window.maestro.settings.set('coworkingBrowserInteraction', value);
@@ -1439,6 +1477,21 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		setSpellCheck: (value) => {
 			set({ spellCheck: value });
 			window.maestro.settings.set('spellCheck', value);
+		},
+
+		setPianolaAutoWatchNewAgents: async (value) => {
+			set({ pianolaAutoWatchNewAgents: value });
+			try {
+				const saved = await window.maestro.settings.set('pianolaAutoWatchNewAgents', value);
+				if (saved === false) throw new Error('Setting was not saved');
+				// External hydration may already have applied a newer value. The save
+				// acknowledgement must not overwrite it.
+			} catch (error) {
+				// Re-read the persisted value rather than reverting to a possibly stale
+				// pre-save snapshot (including the default before initial hydration).
+				await loadAllSettings();
+				throw error;
+			}
 		},
 
 		// ============================================================================
@@ -1930,6 +1983,10 @@ export async function loadAllSettings(): Promise<void> {
 		if (allSettings['defaultShell'] !== undefined)
 			patch.defaultShell = allSettings['defaultShell'] as string;
 
+		patch.mediaModelDirectory =
+			typeof allSettings['mediaModelDirectory'] === 'string'
+				? allSettings['mediaModelDirectory']
+				: '';
 		if (allSettings['customShellPath'] !== undefined)
 			patch.customShellPath = allSettings['customShellPath'] as string;
 
@@ -2477,6 +2534,19 @@ export async function loadAllSettings(): Promise<void> {
 				.map((v) => v.trim());
 		}
 
+		// TTSR (Time-Traveling Stream Rules)
+		if (typeof allSettings['ttsrEnabled'] === 'boolean') {
+			patch.ttsrEnabled = allSettings['ttsrEnabled'];
+		}
+		if (Array.isArray(allSettings['ttsrDisabledRules'])) {
+			patch.ttsrDisabledRules = (allSettings['ttsrDisabledRules'] as unknown[])
+				.filter((v): v is string => typeof v === 'string' && v.trim().length > 0)
+				.map((v) => v.trim());
+		}
+		if (isTtsrContextMode(allSettings['ttsrContextMode'])) {
+			patch.ttsrContextMode = allSettings['ttsrContextMode'];
+		}
+
 		// Coworking browser interaction (agent ids allowed to use browser tools)
 		if (Array.isArray(allSettings['coworkingBrowserInteraction'])) {
 			patch.coworkingBrowserInteraction = (allSettings['coworkingBrowserInteraction'] as unknown[])
@@ -2602,6 +2672,8 @@ export async function loadAllSettings(): Promise<void> {
 
 		if (allSettings['spellCheck'] !== undefined)
 			patch.spellCheck = allSettings['spellCheck'] as boolean;
+
+		patch.pianolaAutoWatchNewAgents = allSettings['pianolaAutoWatchNewAgents'] === true;
 
 		hydrateAnnotatorSettings(allSettings, patch);
 
@@ -2850,6 +2922,7 @@ export function getSettingsActions() {
 		setFilePreviewToolbarButtonVisibility: state.setFilePreviewToolbarButtonVisibility,
 		setModeratorStandingInstructions: state.setModeratorStandingInstructions,
 		setSpellCheck: state.setSpellCheck,
+		setPianolaAutoWatchNewAgents: state.setPianolaAutoWatchNewAgents,
 		setAutoRunDisabled: state.setAutoRunDisabled,
 		setDotfilesToggleHidden: state.setDotfilesToggleHidden,
 		setAutoRunInactivityTimeoutMin: state.setAutoRunInactivityTimeoutMin,

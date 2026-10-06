@@ -17,6 +17,9 @@
  */
 
 import * as fs from 'fs';
+import { withMaestroClient } from '../services/maestro-client';
+import { failCommand } from '../services/session-command';
+import { resolveCliPath } from '../utils/parse';
 import * as path from 'path';
 import {
 	createHash,
@@ -649,5 +652,32 @@ export async function pluginPack(dir: string, options: PluginPackOptions): Promi
 		console.log(JSON.stringify({ success: true, out: outPath, files: files.length, bytes }));
 	} else {
 		console.log(`Packed ${files.length} file(s) into ${outPath} (${bytes} bytes)`);
+	}
+}
+
+// Installed-plugin operations use the same IPC handlers as the Extensions UI.
+export async function pluginRuntime(
+	action: 'list' | 'update',
+	dir: string | undefined,
+	options: { json?: boolean }
+): Promise<void> {
+	try {
+		const reply = await withMaestroClient((client) =>
+			client.sendCommand<{ ok: boolean; result?: unknown; error?: string }>(
+				{
+					type: 'bridge.invoke',
+					channel: action === 'update' ? 'plugins:update' : 'plugins:list',
+					args: action === 'update' ? [resolveCliPath(dir!)] : [],
+				},
+				'bridge.response',
+				60_000
+			)
+		);
+		if (!reply.ok) throw new Error(reply.error || 'Plugin operation failed');
+		console.log(
+			JSON.stringify({ success: true, snapshot: reply.result }, null, options.json ? 0 : 2)
+		);
+	} catch (error) {
+		failCommand(error instanceof Error ? error.message : String(error), options.json);
 	}
 }
