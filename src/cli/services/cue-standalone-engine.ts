@@ -65,6 +65,7 @@ import {
 	type CueRunSessionRecord,
 } from '../../main/cue/cue-run-router';
 import type { CueRunResult } from '../../shared/cue/contracts';
+import type { CueExternalNotification } from '../../main/cue/cue-notify-webhook';
 import { formatJsonLogLine } from '../../shared/jsonLogLine';
 import {
 	readSessions,
@@ -184,7 +185,23 @@ function sshStoreAdapter(): SshRemoteSettingsStore {
  * narrowings documented above. Executors arrive from `loadExecutors()` so the
  * router itself never imports them as values.
  */
-function buildOnCueRun(onLog: StandaloneCueLog): CueEngineDeps['onCueRun'] {
+/** Hand a notification to `--notify-webhook`'s sink; never lets it fail a run. */
+function forward(
+	sink: ((notification: CueExternalNotification) => void) | undefined,
+	notification: CueExternalNotification
+): void {
+	if (!sink) return;
+	try {
+		sink(notification);
+	} catch {
+		// Best effort by contract (see cue-notify-webhook.ts).
+	}
+}
+
+function buildOnCueRun(
+	onLog: StandaloneCueLog,
+	onExternalNotification?: (notification: CueExternalNotification) => void
+): CueEngineDeps['onCueRun'] {
 	return async (params) => {
 		const executors = await loadExecutors();
 		const deps: CueRunActionDeps = {
@@ -204,8 +221,27 @@ function buildOnCueRun(onLog: StandaloneCueLog): CueEngineDeps['onCueRun'] {
 				(readSettings() as { conductorProfile?: string }).conductorProfile || undefined,
 			// No window in a headless runner - executeCueNotify already
 			// degrades gracefully for this (see module doc, point 2).
-			onNotify: (notifyParams) => executors.executeCueNotify({ ...notifyParams, mainWindow: null }),
-			reportAuthFailure: (result, toolType) => reportStandaloneAuthFailure(result, toolType, onLog),
+			onNotify: async (notifyParams) => {
+				const result = await executors.executeCueNotify({ ...notifyParams, mainWindow: null });
+				// The toast the desktop would show, for --notify-webhook.
+				forward(onExternalNotification, {
+					type: 'cue.notify',
+					agent: {
+						id: notifyParams.agentId,
+						name: notifyParams.session.name,
+						toolType: notifyParams.session.toolType,
+					},
+					subscription: notifyParams.subscription.name,
+					pipeline: notifyParams.subscription.pipeline_name ?? null,
+					runId: notifyParams.runId,
+					title: notifyParams.title,
+					message: notifyParams.message,
+					sticky: notifyParams.sticky === true,
+				});
+				return result;
+			},
+			reportAuthFailure: (result, toolType) =>
+				reportStandaloneAuthFailure(result, toolType, onLog, onExternalNotification),
 		};
 		return executeCueRunAction(deps, params);
 	};
@@ -215,7 +251,8 @@ function buildOnCueRun(onLog: StandaloneCueLog): CueEngineDeps['onCueRun'] {
 async function reportStandaloneAuthFailure(
 	result: CueRunResult,
 	toolType: string,
-	onLog: StandaloneCueLog
+	onLog: StandaloneCueLog,
+	onExternalNotification?: (notification: CueExternalNotification) => void
 ): Promise<void> {
 	let message: string | null = null;
 	try {
@@ -225,6 +262,17 @@ async function reportStandaloneAuthFailure(
 		return;
 	}
 	if (!message) return;
+	// `message` is the error bank's fixed classification, never run output.
+	forward(onExternalNotification, {
+		type: 'agent.auth_expired',
+		agent: { id: result.sessionId, name: result.sessionName, toolType },
+		subscription: result.subscriptionName,
+		pipeline: result.pipelineName ?? null,
+		runId: result.runId,
+		title: `${result.sessionName}: login expired`,
+		message,
+		sticky: true,
+	});
 	onLog(
 		'error',
 		`"${result.subscriptionName}" failed on expired ${toolType} credentials: ${message}. Re-authenticate this agent (e.g. its CLI's own login command) and the next run will pick up fresh credentials.`
@@ -237,6 +285,12 @@ export interface StandaloneCueEngineOptions {
 	onLockLost?: () => void;
 	/** See `CueEngineDeps.onDrainPhase`. */
 	onDrainPhase?: CueEngineDeps['onDrainPhase'];
+	/**
+	 * Told every `action: notify` run and every run that failed on an expired
+	 * agent login (`--notify-webhook`). Must not throw or block; it is called
+	 * inline with the run.
+	 */
+	onExternalNotification?: (notification: CueExternalNotification) => void;
 }
 
 /** Build the full `CueEngineDeps` for a standalone runner. Exported separately from the engine construction so a caller (tests, `inspect`) can build deps without booting a real engine loop. */
@@ -246,7 +300,7 @@ export function buildStandaloneCueEngineDeps(
 	const onLog = options.onLog ?? consoleCueLog;
 	return {
 		getSessions: () => readSessions(),
-		onCueRun: buildOnCueRun(onLog),
+		onCueRun: buildOnCueRun(onLog, options.onExternalNotification),
 		onStopCueRun: (runId) => {
 			if (!settledExecutors) return false; // see settledExecutors' doc comment
 			// One registry holds every Cue spawn (agent, shell, maestro-cli), so

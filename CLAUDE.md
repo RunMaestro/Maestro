@@ -93,6 +93,7 @@ Grep-verified 2026-09-04 (`npm run docs:verify` re-checks every path). This is t
 - **Whether a data dir can run Cue unattended (`cue engine check`, `--require-ready`, `/readyz`):** `checkCueReadiness()` in `src/main/cue/cue-readiness.ts` (every gap at once, each check calling the launch's own code)
 - **Stopping a headless Cue engine without losing work:** `CueEngine.drain()` / `forceStop()` in `src/main/cue/cue-engine.ts` (never `stop()`, which deletes the persisted queue)
 - **Telling systemd about a headless Cue engine (READY / WATCHDOG / STOPPING):** `createSystemdNotifier()` in `src/main/cue/cue-systemd-notify.ts`, driven only by the `CueEngineHealth` object
+- **Forwarding a headless Cue notification (`--notify-webhook`):** `createCueNotifyWebhook()` / `parseNotifyWebhookUrl()` in `src/main/cue/cue-notify-webhook.ts` (fire-and-forget, picked fields only)
 - **Health of a headless Cue engine (`/healthz`, `/readyz`, `/status`):** `createCueEngineHealth()` in `src/main/cue/cue-engine-health.ts` (the one state object a drain or notifier updates), served by `startCueStatusServer()` in `src/main/cue/cue-status-server.ts`
 - **A secret a server supplies by name (systemd credential, `/run/secrets`, env):** `lookupSecret()`, `resolveSecrets()` in `src/shared/serverSecrets.ts` (files before env; values only into one agent's launch env via `requiredSecrets`, never `process.env` or a log)
 - **A native addon that will not load:** `describeNativeModuleLoadError()` in `src/shared/nativeModuleError.ts` (one-line ABI diagnosis; `null` for unrelated errors)

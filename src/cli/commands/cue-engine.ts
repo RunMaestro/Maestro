@@ -28,6 +28,7 @@ import {
 } from '../../main/cue/cue-engine-health';
 import type { CueStatusServerHandle } from '../../main/cue/cue-status-server';
 import { createSystemdNotifier, watchdogIntervalMs } from '../../main/cue/cue-systemd-notify';
+import { createCueNotifyWebhook, parseNotifyWebhookUrl } from '../../main/cue/cue-notify-webhook';
 import {
 	consoleCueLog,
 	createStandaloneCueEngine,
@@ -71,9 +72,15 @@ export interface CueEngineStartOptions {
 	 * stopped (see `CueEngine.drain`). Default {@link DEFAULT_DRAIN_TIMEOUT_SECONDS}.
 	 */
 	drainTimeout?: number;
+	/**
+	 * Forward notify actions and expired agent logins here (see
+	 * cue-notify-webhook.ts). Validated before anything starts; never echoed
+	 * back, since its query string or user info may carry a token.
+	 */
+	notifyWebhook?: string;
 }
 
-/** Longest the exit waits for queued systemd messages (one `systemd-notify` is ~ms). */
+/** Longest the exit waits for queued systemd messages and webhook POSTs. */
 const SYSTEMD_FLUSH_ON_EXIT_MS = 2_000;
 
 /** Default `--drain-timeout`: with the stop ladder's grace it fits systemd's TimeoutStopSec=120. */
@@ -182,6 +189,22 @@ export async function cueEngineStart(options: CueEngineStartOptions = {}): Promi
 	// The lock, cue.db and the trigger inbox all create the directory they are
 	// handed, so refuse a missing one first.
 	requireDataDirOrExit({ json: options.json, log });
+	// Fail fast on a bad --notify-webhook, with our own message: commander's
+	// would quote the raw value, credentials and all.
+	let webhookTarget: ReturnType<typeof parseNotifyWebhookUrl> | undefined;
+	if (options.notifyWebhook !== undefined) {
+		try {
+			webhookTarget = parseNotifyWebhookUrl(options.notifyWebhook);
+		} catch (err) {
+			const message = (err as Error).message;
+			if (options.json) {
+				console.log(JSON.stringify({ started: false, code: 'INVALID_OPTIONS', error: message }));
+			} else {
+				log('error', message);
+			}
+			process.exit(2);
+		}
+	}
 	log('info', `Data directory: ${dataDir.dir} (from ${describeDataDirSource(dataDir.source)})`);
 	await requireSqliteOrExit(options, log);
 
@@ -231,7 +254,13 @@ export async function cueEngineStart(options: CueEngineStartOptions = {}): Promi
 		);
 	}
 
+	const webhook = webhookTarget
+		? createCueNotifyWebhook({ target: webhookTarget, onLog: log })
+		: null;
+	if (webhook) log('info', `Notify webhook: ${webhook.display}`);
+
 	const engine = await createStandaloneCueEngine({
+		...(webhook ? { onExternalNotification: (n) => webhook.send(n) } : {}),
 		onLog: log,
 		onLockLost: () => health.markLockLost(),
 		onDrainPhase: (phase, message) => health.noteDrainPhase(phase, message),
@@ -297,8 +326,12 @@ export async function cueEngineStart(options: CueEngineStartOptions = {}): Promi
 				if (statusServer) setCueEngineLockStatusPort(undefined);
 				await closeStatusServer();
 				notifier?.stop();
-				// The drain's last STATUS lines are still queued behind STOPPING.
-				await notifier?.flush(SYSTEMD_FLUSH_ON_EXIT_MS);
+				// The drain's last STATUS lines are still queued behind STOPPING, and
+				// a notify run that finished during the drain may still be posting.
+				await Promise.all([
+					notifier?.flush(SYSTEMD_FLUSH_ON_EXIT_MS),
+					webhook?.flush(SYSTEMD_FLUSH_ON_EXIT_MS),
+				]);
 				process.exit(report.forced ? 1 : 0);
 			})
 			.catch((err) => {

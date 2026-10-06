@@ -1180,6 +1180,10 @@ cueEngine
 		},
 		90
 	)
+	.option(
+		'--notify-webhook <url>',
+		'POST a JSON notice for every notify action and every expired agent login to this http(s) URL'
+	)
 	.action((opts) => cueEngineStart({ ...opts, version: cliVersion }));
 
 cueEngine

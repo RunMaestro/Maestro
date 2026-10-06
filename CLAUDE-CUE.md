@@ -82,7 +82,9 @@ A `github.pull_request` event for a chained subscription, traced from trigger to
 
 **systemd (`cue-systemd-notify.ts`).** The standalone runner's notifier follows the health object (`subscribe`): READY on `running`, WATCHDOG at `WATCHDOG_USEC / 2` only while `evaluateLiveness` holds, STOPPING at the drain, STATUS per drain phase (`deps.onDrainPhase`). Absent `NOTIFY_SOCKET` it is null and spawns nothing.
 
-\*\*Lock heartbeat. Every `CUE_ENGINE_LOCK_HEARTBEAT_MS` the engine refreshes the cross-process lock (`touchCueEngineLock`). On `'lost'` (another engine took it over while this one was suspended) it calls the optional `deps.onLockLost()` and then `stop()`. The standalone runner wires `onLockLost` to `health.markLockLost()` (`cue-engine-health.ts`), which is what fails its `/healthz` (`cue-status-server.ts`, behind `cue engine start --status-port`); see [CLI-HEADLESS.md -> Status server](docs/agent-guides/CLI-HEADLESS.md#status-server---status-port).
+**Notify webhook (`cue-notify-webhook.ts`).** `--notify-webhook` on the standalone runner: its `onNotify` and auth-failure hooks hand a `CueExternalNotification` (explicitly picked fields, never prompt, payload, output or env) to a fire-and-forget sender with bounded in-flight and queue, no retries, and once-per-burst logging. The desktop is unchanged.
+
+**Lock heartbeat.** Every `CUE_ENGINE_LOCK_HEARTBEAT_MS` the engine refreshes the cross-process lock (`touchCueEngineLock`). On `'lost'` (another engine took it over while this one was suspended) it calls the optional `deps.onLockLost()` and then `stop()`. The standalone runner wires `onLockLost` to `health.markLockLost()` (`cue-engine-health.ts`), which is what fails its `/healthz` (`cue-status-server.ts`, behind `cue engine start --status-port`); see [CLI-HEADLESS.md -> Status server](docs/agent-guides/CLI-HEADLESS.md#status-server---status-port).
 
 ## Session lifecycle and ownership
 

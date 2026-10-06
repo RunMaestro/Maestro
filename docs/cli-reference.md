@@ -854,6 +854,7 @@ Start the Cue engine in this process and block until Ctrl+C / stopped
 | `--require-ready`           | Refuse to start (exit 1, nothing armed) when the readiness check finds any gap; see "cue engine check"         | -        |
 | `--status-port <port>`      | Serve /healthz, /readyz and /status on 127.0.0.1 at this port (documented port: 7433). Off unless given        | -        |
 | `--drain-timeout <seconds>` | On SIGTERM/SIGINT, let runs in flight finish for this long before stopping them; a second signal stops at once | `90`     |
+| `--notify-webhook <url>`    | POST a JSON notice for every notify action and every expired agent login to this http(s) URL                   | -        |
 
 ## `maestro-cli cue engine check`
 
