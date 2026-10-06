@@ -98,6 +98,20 @@ export interface CueSessionRuntimeService {
 	removeSession(sessionId: string): void;
 	teardownSession(sessionId: string): void;
 	clearAll(): void;
+	/**
+	 * The drain's first step (`CueEngine.drain`): stop every trigger source and
+	 * yaml watcher so no new work arrives, but keep the registry. Unlike
+	 * `teardownSession` it leaves fan-in state and the queue alone (teardown
+	 * clears both, deleting persisted rows), and settings and `agent.completed`
+	 * configs stay readable for the successors of runs still finishing.
+	 * Returns how many sources were stopped.
+	 */
+	disarmAll(): number;
+	/**
+	 * Resolves once every stopped source has settled the emits it already
+	 * acknowledged (see `CueTriggerSource.settle`). Call after `disarmAll`.
+	 */
+	settleAll(): Promise<void>;
 	/** Drop ALL app.startup dedup keys. Delegated from engine.stop(). */
 	clearAllStartupKeys(): void;
 }
@@ -107,6 +121,9 @@ export function createCueSessionRuntimeService(
 ): CueSessionRuntimeService {
 	const { registry } = deps;
 	const pendingYamlWatchers = new Map<string, () => void>();
+
+	/** Sources `disarmAll` stopped, kept only so `settleAll` can wait on them. */
+	let disarmedSources: CueTriggerSource[] = [];
 
 	function getSession(sessionId: string): SessionInfo | undefined {
 		return deps.getSessions().find((session) => session.id === sessionId);
@@ -515,6 +532,30 @@ export function createCueSessionRuntimeService(
 				cleanup();
 			}
 			pendingYamlWatchers.clear();
+		},
+
+		disarmAll(): number {
+			let stopped = 0;
+			disarmedSources = [];
+			for (const [, state] of registry.snapshot()) {
+				for (const source of state.triggerSources) {
+					source.stop();
+					disarmedSources.push(source);
+					stopped++;
+				}
+				state.triggerSources = [];
+				for (const cleanup of state.yamlWatchers) cleanup();
+				state.yamlWatchers = [];
+			}
+			for (const [, cleanup] of pendingYamlWatchers) cleanup();
+			pendingYamlWatchers.clear();
+			return stopped;
+		},
+
+		async settleAll(): Promise<void> {
+			const sources = disarmedSources;
+			disarmedSources = [];
+			await Promise.all(sources.map((source) => source.settle?.()));
 		},
 
 		clearAllStartupKeys(): void {

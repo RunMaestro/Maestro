@@ -5,7 +5,7 @@
 import { Command, InvalidArgumentError, Option } from 'commander';
 import { logger } from '../main/utils/logger';
 import { asThinkingMode, type ThinkingMode } from '../shared/types';
-import { parseCliBool, parseCliPort, isInheritValue } from './utils/parse';
+import { parseCliBool, parseCliPort, parseCliSeconds, isInheritValue } from './utils/parse';
 import { listGroups } from './commands/list-groups';
 import { listAgents } from './commands/list-agents';
 import { listPlaybooks } from './commands/list-playbooks';
@@ -1167,6 +1167,18 @@ cueEngine
 				throw new InvalidArgumentError((err as Error).message);
 			}
 		}
+	)
+	.option(
+		'--drain-timeout <seconds>',
+		'On SIGTERM/SIGINT, let runs in flight finish for this long before stopping them; a second signal stops at once',
+		(value) => {
+			try {
+				return parseCliSeconds(value, '--drain-timeout');
+			} catch (err) {
+				throw new InvalidArgumentError((err as Error).message);
+			}
+		},
+		90
 	)
 	.action((opts) => cueEngineStart({ ...opts, version: cliVersion }));
 

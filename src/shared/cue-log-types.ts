@@ -15,6 +15,12 @@
 export type CueLogPayload =
 	| { type: 'engineStarted' }
 	| { type: 'engineStopped' }
+	| {
+			/** One phase of a graceful drain (`CueEngine.drain`); counts are in the message. */
+			type: 'engineDrain';
+			drainPhase: 'disarmed' | 'waiting' | 'stopping' | 'persisted' | 'finished' | 'forced';
+			count?: number;
+	  }
 	| { type: 'configReloaded'; sessionId: string }
 	| { type: 'configRemoved'; sessionId: string }
 	| {

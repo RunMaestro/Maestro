@@ -307,4 +307,35 @@ describe('cue-queue-persistence', () => {
 			expect(p.restoreAll().size).toBe(0);
 		});
 	});
+
+	describe('rows a drain deferred', () => {
+		const timeoutMs = 30 * 60 * 1000;
+
+		it('measures age while an engine was up, not the downtime, and rebases queuedAt', () => {
+			const p = makePersistence({ timeoutMs });
+			// Queued 5 minutes before the drain, restored 5 hours later.
+			const drainedAt = NOW - 5 * 60 * 60 * 1000;
+			p.persist('s-1', 'deferred', makeEntry({ queuedAt: drainedAt - 5 * 60_000, drainedAt }));
+
+			const [entry] = p.restoreAll().get('s-1')!;
+			expect(entry.persistId).toBe('deferred');
+			expect(entry.drainedAt).toBe(drainedAt);
+			expect(entry.queuedAt).toBe(NOW - 5 * 60_000);
+			// The stamp is the module's; the event itself never carries it.
+			expect(entry.event).not.toHaveProperty('maestroDrainedAt');
+		});
+
+		it('still drops a deferred row that was already stale when the engine stopped', () => {
+			const p = makePersistence({ timeoutMs });
+			const drainedAt = NOW - 60_000;
+			p.persist('s-1', 'old', makeEntry({ queuedAt: drainedAt - 31 * 60_000, drainedAt }));
+			expect(p.restoreAll().size).toBe(0);
+		});
+
+		it('keeps the wall-clock rule for an unstamped row of the same age', () => {
+			const p = makePersistence({ timeoutMs });
+			p.persist('s-1', 'crash', makeEntry({ queuedAt: NOW - 5 * 60 * 60 * 1000 - 5 * 60_000 }));
+			expect(p.restoreAll().size).toBe(0);
+		});
+	});
 });
