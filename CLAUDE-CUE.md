@@ -201,12 +201,13 @@ Filters apply per trigger before emit - a filtered-out event is invisible to the
 
 Single SQLite database, WAL mode. Tables:
 
-| Table             | Purpose                                              | Notes                                                           |
-| ----------------- | ---------------------------------------------------- | --------------------------------------------------------------- |
-| `cue_events`      | Run journal (running / completed / failed / timeout) | 7-day retention. Indexed on `created_at`, `session_id`.         |
-| `cue_event_queue` | Phase 12A persisted queue                            | Indexed on `session_id`, `queued_at`. Replayed at engine start. |
-| `cue_heartbeat`   | Single-row `(id=1, last_seen)`                       | Drives sleep detection.                                         |
-| `cue_github_seen` | Per-subscription seen-item dedupe                    | 30-day retention; pruned every 24h.                             |
+| Table                    | Purpose                                              | Notes                                                           |
+| ------------------------ | ---------------------------------------------------- | --------------------------------------------------------------- |
+| `cue_events`             | Run journal (running / completed / failed / timeout) | 7-day retention. Indexed on `created_at`, `session_id`.         |
+| `cue_event_queue`        | Phase 12A persisted queue                            | Indexed on `session_id`, `queued_at`. Replayed at engine start. |
+| `cue_heartbeat`          | Single-row `(id=1, last_seen)`                       | Drives sleep detection.                                         |
+| `cue_github_seen`        | Per-subscription seen-item dedupe                    | 30-day retention; pruned every 24h.                             |
+| `cue_webhook_deliveries` | Webhook delivery ids already accepted, per path      | 24-hour retention; expired rows pruned at most once a minute.   |
 
 `cue_event_queue` does NOT carry `pipelineName` - restored runs degrade to legacy labels.
 
@@ -277,6 +278,7 @@ Hot-path callers (`recordTriggerFired`, `recordRunCompleted`) MUST be non-throwi
 9. **Sentry `operation` tags are part of the alerting contract.** `cue:heartbeat`, `cue:finalizeOutputRunStatus`, `cue:shell:sshWrap`, `cue:cliExecutor` are referenced by oncall paging rules. Don't refactor away the per-call-site tags.
 10. **A timezone change can repeat or skip one `time.scheduled` slot.** Local-time semantics: fly west and the wall clock rewinds past a slot that already fired today, so it fires again; fly east and a slot can be stepped over. This is deliberate - `handleTimeZoneChange` never synthesizes a catch-up for a slot that occurred in neither zone. Sleep-gap catch-ups are unaffected (the zone is applied before the reconciler runs).
 11. **Restored queue entries lose `pipelineName`.** This is by design (no schema column). If we ever care to preserve labels across crashes, add a column to `cue_event_queue` and thread it through `PersistableQueueEntry`.
+12. **GitHub webhooks and the poller decide through one function.** A GitHub trigger with a `webhook` block takes deliveries (`cue-github-webhook.ts`) and keeps polling as a reconcile. Both build the same item snapshot and call `decideGitHubItem()` in `cue-github-items.ts` against the same `cue_github_seen` rows, which is what makes a change seen both ways fire once. Change the payload or the seen/retrigger rules there, never in one path only. Label adds are the exception: each source keeps its own `label-poll:` / `label-webhook:` key and only checks the OTHER source's key inside `LABEL_EVENT_MATCH_WINDOW_MS`, so a label removed and re-added still fires twice from either source alone. A delivery to a subscription with no seen rows yet fires without recording and calls `pollNow()` to seed; recording it would make the poller's first run fire every existing item.
 
 ## Common change recipes
 

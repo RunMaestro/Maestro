@@ -2,7 +2,7 @@
  * TriggerConfig - Event-type-specific configuration fields for trigger nodes.
  *
  * Renders form fields based on the trigger's event type (heartbeat, scheduled,
- * file change, agent completed, GitHub PR/issue, task pending).
+ * file change, agent completed, GitHub PR/issue/label, task pending, webhook).
  */
 
 import { useState, useEffect, useCallback } from 'react';
@@ -14,6 +14,7 @@ import { useDebouncedCallback } from '../../../../hooks/utils';
 import { registerPendingEdit } from '../../../../hooks/cue/pendingEditsRegistry';
 import { getInputStyle, getLabelStyle } from './triggerConfigStyles';
 import { CueSelect } from '../CueSelect';
+import { hasWebhookTriggerConfig } from '../../utils/webhookTriggerConfig';
 
 /** Sentinel value matching `cue-github-poller.UNLIMITED_NOTIFICATIONS`. */
 const UNLIMITED_NOTIFICATIONS = 0;
@@ -22,6 +23,10 @@ const DEFAULT_MAX_NOTIFICATIONS = 10;
  *  remain valid in YAML - the slider just clamps for visual display. */
 const MAX_NOTIFICATIONS_SLIDER_MIN = 1;
 const MAX_NOTIFICATIONS_SLIDER_MAX = 25;
+/** Poll interval placeholders: the plain default, and the slower reconcile
+ *  default once GitHub webhooks deliver changes (see the trigger source). */
+const GITHUB_POLL_PLACEHOLDER = '5';
+const GITHUB_RECONCILE_POLL_PLACEHOLDER = '30';
 
 interface TriggerConfigProps {
 	node: PipelineNode;
@@ -33,6 +38,11 @@ export function TriggerConfig({ node, theme, onUpdateNode }: TriggerConfigProps)
 	const data = node.data as TriggerNodeData;
 	const [localConfig, setLocalConfig] = useState(data.config);
 	const [localCustomLabel, setLocalCustomLabel] = useState(data.customLabel ?? '');
+	// Whether the GitHub trigger's webhook section is shown. Open whenever the
+	// trigger already carries webhook settings; the checkbox opens it for a new one.
+	const [githubWebhookOpen, setGithubWebhookOpen] = useState(() =>
+		hasWebhookTriggerConfig(data.config)
+	);
 
 	const themedInputStyle = getInputStyle(theme);
 	const themedLabelStyle = getLabelStyle(theme);
@@ -44,6 +54,12 @@ export function TriggerConfig({ node, theme, onUpdateNode }: TriggerConfigProps)
 	useEffect(() => {
 		setLocalCustomLabel(data.customLabel ?? '');
 	}, [data.customLabel]);
+
+	useEffect(() => {
+		setGithubWebhookOpen(hasWebhookTriggerConfig(data.config));
+		// Re-read only when a different trigger is selected: while editing, the
+		// checkbox owns this, so clearing a field does not collapse the section.
+	}, [node.id]);
 
 	const { debouncedCallback: debouncedUpdate, flush: flushConfig } = useDebouncedCallback(
 		(...args: unknown[]) => {
@@ -158,6 +174,85 @@ export function TriggerConfig({ node, theme, onUpdateNode }: TriggerConfigProps)
 			debouncedUpdate(updated);
 		},
 		[localConfig, debouncedUpdate]
+	);
+
+	/** Turn a GitHub trigger's webhook section off, dropping its settings. */
+	const clearWebhookConfig = useCallback(() => {
+		const next = { ...localConfig };
+		delete next.webhook_path;
+		delete next.webhook_secret_env;
+		delete next.webhook_secret;
+		delete next.webhook_signature_header;
+		setLocalConfig(next);
+		debouncedUpdate(next);
+	}, [localConfig, debouncedUpdate]);
+
+	const githubWebhookPath = normalizeWebhookPath(
+		localConfig.webhook_path || data.customLabel || data.label || ''
+	);
+
+	/** Optional webhook settings shared by the GitHub PR, issue and label triggers. */
+	const githubWebhookFields = (
+		<>
+			<label
+				style={{
+					...themedLabelStyle,
+					display: 'flex',
+					flexDirection: 'row',
+					alignItems: 'center',
+					gap: 6,
+					cursor: 'pointer',
+				}}
+			>
+				<input
+					type="checkbox"
+					checked={githubWebhookOpen}
+					onChange={(e) => {
+						setGithubWebhookOpen(e.target.checked);
+						if (!e.target.checked) clearWebhookConfig();
+					}}
+					style={{ accentColor: CUE_COLOR }}
+				/>
+				<span>Also take GitHub webhooks</span>
+			</label>
+			{githubWebhookOpen && (
+				<>
+					<label style={themedLabelStyle}>
+						URL path
+						<input
+							type="text"
+							value={localConfig.webhook_path ?? ''}
+							onChange={(e) => updateConfig('webhook_path', e.target.value)}
+							placeholder={githubWebhookPath || 'github'}
+							style={themedInputStyle}
+						/>
+					</label>
+					<label style={themedLabelStyle}>
+						Secret environment variable
+						<input
+							type="text"
+							value={localConfig.webhook_secret_env ?? ''}
+							onChange={(e) => updateConfig('webhook_secret_env', e.target.value)}
+							placeholder="GITHUB_WEBHOOK_SECRET"
+							style={themedInputStyle}
+						/>
+					</label>
+					{localConfig.webhook_secret && !localConfig.webhook_secret_env && (
+						<div style={{ color: theme.colors.textDim, fontSize: 12, fontStyle: 'italic' }}>
+							This trigger uses a literal secret written directly in cue.yaml. Set an environment
+							variable above to move it out of the committed file.
+						</div>
+					)}
+					<div style={{ color: theme.colors.textDim, fontSize: 12 }}>
+						In the repository's webhook settings, point the payload URL at{' '}
+						<code>/cue/{githubWebhookPath || 'github'}</code> on Maestro's webhook port (through a
+						tunnel or reverse proxy), use <code>application/json</code>, and set the secret to this
+						variable's value. Polling keeps running, every {GITHUB_RECONCILE_POLL_PLACEHOLDER}{' '}
+						minutes unless set, to catch anything a delivery missed.
+					</div>
+				</>
+			)}
+		</>
 	);
 
 	const nameField = (
@@ -315,7 +410,9 @@ export function TriggerConfig({ node, theme, onUpdateNode }: TriggerConfigProps)
 							min={1}
 							value={localConfig.poll_minutes ?? ''}
 							onChange={(e) => updateNumericConfig('poll_minutes', e.target.value)}
-							placeholder="5"
+							placeholder={
+								githubWebhookOpen ? GITHUB_RECONCILE_POLL_PLACEHOLDER : GITHUB_POLL_PLACEHOLDER
+							}
 							style={themedInputStyle}
 						/>
 					</label>
@@ -357,6 +454,7 @@ export function TriggerConfig({ node, theme, onUpdateNode }: TriggerConfigProps)
 							labelStyle={themedLabelStyle}
 						/>
 					)}
+					{githubWebhookFields}
 				</div>
 			);
 		}
@@ -406,7 +504,9 @@ export function TriggerConfig({ node, theme, onUpdateNode }: TriggerConfigProps)
 							min={1}
 							value={localConfig.poll_minutes ?? ''}
 							onChange={(e) => updateNumericConfig('poll_minutes', e.target.value)}
-							placeholder="5"
+							placeholder={
+								githubWebhookOpen ? GITHUB_RECONCILE_POLL_PLACEHOLDER : GITHUB_POLL_PLACEHOLDER
+							}
 							style={themedInputStyle}
 						/>
 					</label>
@@ -414,6 +514,7 @@ export function TriggerConfig({ node, theme, onUpdateNode }: TriggerConfigProps)
 						Fires once per label that lands on a PR or issue, within one poll interval. Labels
 						already present when the trigger is first saved do not fire.
 					</div>
+					{githubWebhookFields}
 				</div>
 			);
 		}

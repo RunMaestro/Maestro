@@ -257,6 +257,31 @@ const CREATE_CUE_TELEMETRY_OUTBOX_INDEX_SQL = `
   CREATE INDEX IF NOT EXISTS idx_cue_telemetry_outbox_created ON cue_telemetry_outbox(created_at)
 `;
 
+/**
+ * Webhook deliveries already accepted, keyed by path and the sender's delivery
+ * id. A sender that retries (GitHub's "Redeliver", a timeout on its side)
+ * reuses the id, so the retry is answered without firing anything a second
+ * time. Rows live for {@link WEBHOOK_DELIVERY_RETENTION_MS}.
+ */
+const CREATE_CUE_WEBHOOK_DELIVERIES_SQL = `
+  CREATE TABLE IF NOT EXISTS cue_webhook_deliveries (
+    path TEXT NOT NULL,
+    delivery_id TEXT NOT NULL,
+    received_at INTEGER NOT NULL,
+    PRIMARY KEY (path, delivery_id)
+  )
+`;
+
+const CREATE_CUE_WEBHOOK_DELIVERIES_INDEX_SQL = `
+  CREATE INDEX IF NOT EXISTS idx_cue_webhook_deliveries_received ON cue_webhook_deliveries(received_at)
+`;
+
+/** How long a webhook delivery id is remembered. */
+export const WEBHOOK_DELIVERY_RETENTION_MS = 24 * 60 * 60 * 1000;
+
+/** Expired delivery rows are swept at most this often, from the claim path. */
+const WEBHOOK_DELIVERY_PRUNE_INTERVAL_MS = 60 * 1000;
+
 // ============================================================================
 // Module State
 // ============================================================================
@@ -328,6 +353,8 @@ export function initCueDb(
 	db.prepare(CREATE_CUE_TELEMETRY_OUTBOX_INDEX_SQL).run();
 	db.prepare(CREATE_CUE_SUSFACTOR_BLOCKS_SQL).run();
 	db.prepare(CREATE_CUE_SUSFACTOR_BLOCKS_INDEX_SQL).run();
+	db.prepare(CREATE_CUE_WEBHOOK_DELIVERIES_SQL).run();
+	db.prepare(CREATE_CUE_WEBHOOK_DELIVERIES_INDEX_SQL).run();
 
 	log('info', `Cue database initialized at ${dbPath}`);
 }
@@ -1248,6 +1275,44 @@ export function pruneGitHubSeen(olderThanMs: number): void {
  */
 export function clearGitHubSeenForSubscription(subscriptionId: string): void {
 	getDb().prepare(`DELETE FROM cue_github_seen WHERE subscription_id = ?`).run(subscriptionId);
+}
+
+// ============================================================================
+// Webhook Delivery Dedupe
+// ============================================================================
+
+let lastWebhookDeliveryPruneAt = 0;
+
+/**
+ * Claim a webhook delivery. Returns true the first time a (path, delivery id)
+ * pair is seen within {@link WEBHOOK_DELIVERY_RETENTION_MS}, false for a
+ * redelivery that must not fire again.
+ *
+ * The INSERT is the check, so two copies of one delivery racing in cannot both
+ * claim it. A row older than the retention window no longer counts, even
+ * before the periodic sweep removes it. Fails open: without a database every
+ * delivery is new, which is how webhooks behaved before this table existed.
+ */
+export function claimWebhookDelivery(path: string, deliveryId: string): boolean {
+	if (!db) return true;
+	const now = Date.now();
+	const cutoff = now - WEBHOOK_DELIVERY_RETENTION_MS;
+	const database = getDb();
+	database
+		.prepare(
+			`DELETE FROM cue_webhook_deliveries WHERE path = ? AND delivery_id = ? AND received_at < ?`
+		)
+		.run(path, deliveryId, cutoff);
+	const result = database
+		.prepare(
+			`INSERT OR IGNORE INTO cue_webhook_deliveries (path, delivery_id, received_at) VALUES (?, ?, ?)`
+		)
+		.run(path, deliveryId, now);
+	if (now - lastWebhookDeliveryPruneAt >= WEBHOOK_DELIVERY_PRUNE_INTERVAL_MS) {
+		lastWebhookDeliveryPruneAt = now;
+		database.prepare(`DELETE FROM cue_webhook_deliveries WHERE received_at < ?`).run(cutoff);
+	}
+	return result.changes > 0;
 }
 
 // ============================================================================

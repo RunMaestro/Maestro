@@ -429,6 +429,33 @@ describe('round-trip: trigger event configs survive serialization', () => {
 		expect(data.config.max_notifications).toBeUndefined();
 	});
 
+	it('github.pull_request keeps its webhook block through a save', () => {
+		const data = getReconstructedTriggerConfig('github.pull_request', {
+			repo: 'org/repo',
+			webhook_path: 'gh-prs',
+			webhook_secret_env: 'GH_WEBHOOK_SECRET',
+		});
+		expect(data.config.webhook_path).toBe('gh-prs');
+		expect(data.config.webhook_secret_env).toBe('GH_WEBHOOK_SECRET');
+	});
+
+	it('github.label keeps its webhook block, including a custom signature header', () => {
+		const data = getReconstructedTriggerConfig('github.label', {
+			repo: 'org/repo',
+			gh_labels: ['needs-review'],
+			webhook_secret_env: 'GH_WEBHOOK_SECRET',
+			webhook_signature_header: 'X-Hub-Signature-256',
+		});
+		expect(data.config.webhook_secret_env).toBe('GH_WEBHOOK_SECRET');
+		expect(data.config.webhook_signature_header).toBe('X-Hub-Signature-256');
+	});
+
+	it('github.issue without webhook settings writes no webhook block', () => {
+		const data = getReconstructedTriggerConfig('github.issue', { repo: 'org/repo' });
+		expect(data.config.webhook_path).toBeUndefined();
+		expect(data.config.webhook_secret_env).toBeUndefined();
+	});
+
 	it('github.pull_request preserves max_notifications=0 (unlimited sentinel)', () => {
 		const data = getReconstructedTriggerConfig('github.pull_request', {
 			repo: 'org/repo',

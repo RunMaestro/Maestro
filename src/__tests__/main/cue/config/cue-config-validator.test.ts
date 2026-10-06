@@ -299,3 +299,47 @@ describe('validateSubscription - github.label', () => {
 		).toBe(true);
 	});
 });
+
+// ────────────────────────────────────────────────────────────────────────────
+// GitHub triggers with an optional webhook block
+// ────────────────────────────────────────────────────────────────────────────
+
+describe('validateSubscription - GitHub triggers with a webhook', () => {
+	const base = {
+		name: 'review-prs',
+		event: 'github.pull_request',
+		prompt: 'Review it',
+		agent_id: 'agent-xyz',
+		repo: 'org/repo',
+	};
+
+	it('accepts a GitHub trigger with no webhook block', () => {
+		expect(errs(base)).toEqual([]);
+	});
+
+	it('accepts a webhook block with a secret env var', () => {
+		expect(errs({ ...base, webhook: { secret_env: 'GH_WEBHOOK_SECRET' } })).toEqual([]);
+		expect(
+			errs({ ...base, event: 'github.label', webhook: { secret_env: 'GH_WEBHOOK_SECRET' } })
+		).toEqual([]);
+	});
+
+	it('rejects a webhook block with no secret, naming the event', () => {
+		const found = errs({ ...base, event: 'github.issue', webhook: { path: 'issues' } });
+		expect(
+			found.some((e) =>
+				/"webhook.secret" or "webhook.secret_env" is required for github.issue/.test(e)
+			)
+		).toBe(true);
+	});
+
+	it('rejects both a literal secret and a secret env var', () => {
+		const found = errs({ ...base, webhook: { secret: 'x', secret_env: 'Y' } });
+		expect(found.some((e) => /mutually exclusive/.test(e))).toBe(true);
+	});
+
+	it('rejects a webhook that is not an object', () => {
+		const found = errs({ ...base, event: 'github.label', webhook: 'yes' });
+		expect(found.some((e) => /"webhook" must be an object for github.label/.test(e))).toBe(true);
+	});
+});

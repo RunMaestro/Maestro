@@ -1700,6 +1700,22 @@ describe('cue-github-poller', () => {
 			cleanup();
 		});
 
+		it('fires once for an event that shifted onto the next page mid-scan', async () => {
+			mockGetGitHubItemState.mockReturnValue({ lastRevision: '4000', fireCount: 0 });
+			const config = labelConfig();
+			setupLabelFeed({
+				1: Array.from({ length: 100 }, (_, i) => labelEvent({ id: 6000 - i })),
+				// New activity pushed page 1's last event (5901) onto page 2.
+				2: [labelEvent({ id: 5901 }), labelEvent({ id: 5000 }), labelEvent({ id: 4000 })],
+			});
+
+			const cleanup = createCueGitHubPoller(config);
+			await vi.advanceTimersByTimeAsync(2100);
+
+			expect(config.onEvent).toHaveBeenCalledTimes(101);
+			cleanup();
+		});
+
 		it('warns when the watermark is out of reach instead of skipping silently', async () => {
 			mockGetGitHubItemState.mockReturnValue({ lastRevision: '1', fireCount: 0 });
 			const config = labelConfig();
