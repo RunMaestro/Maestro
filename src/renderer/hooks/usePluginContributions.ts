@@ -55,6 +55,7 @@ export function usePluginContributions(): AggregatedContributions {
 
 		void load();
 		const unsubscribe = plugins.onChanged(() => {
+			setContributions(EMPTY);
 			void load();
 		});
 

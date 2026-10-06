@@ -39,6 +39,20 @@ import type {
 (globalThis as unknown as { __APP_VERSION__: string }).__APP_VERSION__ = '1.0.0';
 (globalThis as unknown as { __COMMIT_HASH__: string }).__COMMIT_HASH__ = '';
 
+import {
+	aggregateContributions,
+	type PanelContribution,
+} from '../../../shared/plugins/contributions';
+let settingsPanels: PanelContribution[] = [];
+vi.mock('../../../renderer/hooks/usePluginContributions', () => ({
+	usePluginContributions: () => ({ ...aggregateContributions([]), panels: settingsPanels }),
+}));
+vi.mock('../../../renderer/components/plugins/PluginPanelFrame', () => ({
+	PluginPanelFrame: ({ panel }: { panel: PanelContribution }) => (
+		<div data-testid="plugin-settings-frame">{panel.id}</div>
+	),
+}));
+
 // Mock the LayerStackContext
 vi.mock('../../../renderer/contexts/LayerStackContext', () => ({
 	useLayerStack: vi.fn(() => ({
@@ -440,6 +454,7 @@ function setViewportWidth(width: number): void {
 
 describe('SettingsModal', () => {
 	beforeEach(() => {
+		settingsPanels = [];
 		vi.useFakeTimers();
 		__resetLastOpenSettingsTabForTests();
 		useModalStore.getState().closeAll();
@@ -2989,5 +3004,50 @@ describe('SettingsModal', () => {
 			const nav = screen.getByLabelText('Settings tabs');
 			expect(nav.closest('div.flex')?.className).toContain('hidden');
 		});
+	});
+});
+
+describe('plugin settings destinations', () => {
+	const panel: PanelContribution = {
+		id: 'example.plugin/config',
+		localId: 'config',
+		pluginId: 'example.plugin',
+		title: 'Example Preferences',
+		entry: 'panel.html',
+		placement: 'settings',
+		size: 'default',
+		hostSettings: ['media'],
+	};
+	it('navigates/searches/deep-links by stable panel identity and unmounts on removal', async () => {
+		__resetLastOpenSettingsTabForTests();
+		settingsPanels = [panel];
+		const props = {
+			isOpen: true,
+			onClose: vi.fn(),
+			theme: mockTheme,
+			themes: { dracula: mockTheme },
+			initialSettingId: 'plugin-settings:example.plugin/config',
+		};
+		const view = render(<SettingsModal {...props} />);
+		expect(await screen.findByTestId('plugin-settings-frame')).toHaveTextContent(panel.id);
+		expect(screen.getByRole('button', { name: 'Example Preferences' })).toBeInTheDocument();
+		fireEvent.change(screen.getByRole('textbox', { name: 'Search settings' }), {
+			target: { value: 'example.plugin' },
+		});
+		await waitFor(() =>
+			expect(screen.getByText('Settings from example.plugin')).toBeInTheDocument()
+		);
+		fireEvent.change(screen.getByRole('textbox', { name: 'Search settings' }), {
+			target: { value: '' },
+		});
+		fireEvent.click(screen.getByRole('button', { name: 'Host media tools' }));
+		expect(useModalStore.getState().getData('settings')).toMatchObject({
+			tab: 'environment',
+			settingId: 'environment-host-media',
+		});
+		settingsPanels = [];
+		view.rerender(<SettingsModal {...props} initialSettingId={undefined} />);
+		expect(screen.queryByTestId('plugin-settings-frame')).not.toBeInTheDocument();
+		expect(screen.queryByRole('button', { name: 'Example Preferences' })).not.toBeInTheDocument();
 	});
 });

@@ -411,6 +411,16 @@ describe('ui.openPanel / ui.closePanel / ui.togglePanel', () => {
 				size: 'full' as const,
 			};
 		}
+		if (localId === 'config')
+			return {
+				id: 'p/config',
+				localId,
+				pluginId,
+				title: 'Config',
+				entry: 'panel.html',
+				placement: 'settings' as const,
+				size: 'default' as const,
+			};
 		if (localId === 'side') {
 			return {
 				id: 'p/side',
@@ -424,6 +434,17 @@ describe('ui.openPanel / ui.closePanel / ui.togglePanel', () => {
 		}
 		return null;
 	};
+
+	it('opens own settings destinations but never closes/toggles host settings', async () => {
+		const sink = vi.fn();
+		const h = buildHostCallHandlers(
+			makeDeps({ panelVisibility: sink, getPanel, broker: brokerFor(() => [grant('ui:panel')]) })
+		);
+		await h['ui.openPanel']!('p', { panelId: 'config' });
+		expect(sink).toHaveBeenCalledWith('p', 'p/config', 'open');
+		await expect(h['ui.closePanel']!('p', { panelId: 'config' })).rejects.toThrow();
+		await expect(h['ui.togglePanel']!('p', { panelId: 'config' })).rejects.toThrow();
+	});
 
 	const granted = (panelVisibility: ReturnType<typeof vi.fn>) =>
 		buildHostCallHandlers(

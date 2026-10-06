@@ -266,3 +266,12 @@ is low-risk and unscoped because its only output is virtual presentation.
 Host API 1.22.0 adds `media:tools` (exact `discord-voice` scope), opaque media jobs
 and fixed native profiles. STT remains in the plugin; no tools/models are bundled.
 See [plugin-media-tools.md](docs/plugin-media-tools.md) for the contract and runtime prerequisites.
+
+## Plugin settings cards (1.23.0)
+
+Settings-placement panels are independent searchable Settings destinations, not
+Display-tab docks. See [the authoring contract](docs/plugin-settings-cards.md).
+The manager admits them only for active trusted records with live `ui:panel`
+grants. `hostSettings: ["media"]` draws a host-owned link to Host media tools;
+it grants no host setting access. Own `ui.openPanel` can navigate to a settings
+card; close/toggle remain modal-only. Identity is the existing namespaced panel ID.

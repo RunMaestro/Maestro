@@ -159,3 +159,8 @@ export function withPanelCsp(html: string): string {
 	}
 	return `${meta}${html}`;
 }
+
+/** Stable settings destination shared by search, host navigation and SDK openPanel. */
+export function pluginSettingsId(panelId: string): `plugin-settings:${string}` {
+	return `plugin-settings:${panelId}`;
+}

@@ -40,7 +40,8 @@ export interface SearchableSetting {
 		| 'ssh'
 		| 'environment'
 		| 'encore'
-		| 'prompts';
+		| 'prompts'
+		| `plugin-settings:${string}`;
 	/** Human-readable tab label */
 	tabLabel: string;
 	/** The setting's visible title */
@@ -81,33 +82,37 @@ export const ALL_SEARCHABLE_SETTINGS: SearchableSetting[] = [
  * Search settings by query string. Matches against label, description, tab label, and keywords.
  * Returns matching settings sorted by relevance (label match first, then description, then keywords).
  */
-export function searchSettings(query: string): SearchableSetting[] {
+export function searchSettings(
+	query: string,
+	additional: SearchableSetting[] = []
+): SearchableSetting[] {
 	if (!query.trim()) return [];
 	const q = query.toLowerCase().trim();
 	const terms = q.split(/\s+/);
 
-	return ALL_SEARCHABLE_SETTINGS.map((setting) => {
-		const label = setting.label.toLowerCase();
-		const desc = (setting.description || '').toLowerCase();
-		const tabLabel = setting.tabLabel.toLowerCase();
-		const keywords = (setting.keywords || []).join(' ').toLowerCase();
-		const all = `${label} ${desc} ${tabLabel} ${keywords}`;
+	return [...ALL_SEARCHABLE_SETTINGS, ...additional]
+		.map((setting) => {
+			const label = setting.label.toLowerCase();
+			const desc = (setting.description || '').toLowerCase();
+			const tabLabel = setting.tabLabel.toLowerCase();
+			const keywords = (setting.keywords || []).join(' ').toLowerCase();
+			const all = `${label} ${desc} ${tabLabel} ${keywords}`;
 
-		// Every search term must appear somewhere
-		const allMatch = terms.every((term) => all.includes(term));
-		if (!allMatch) return null;
+			// Every search term must appear somewhere
+			const allMatch = terms.every((term) => all.includes(term));
+			if (!allMatch) return null;
 
-		// Score: label match is strongest, then description, then keywords
-		let score = 0;
-		for (const term of terms) {
-			if (label.includes(term)) score += 3;
-			else if (desc.includes(term)) score += 2;
-			else if (tabLabel.includes(term)) score += 1;
-			else if (keywords.includes(term)) score += 1;
-		}
+			// Score: label match is strongest, then description, then keywords
+			let score = 0;
+			for (const term of terms) {
+				if (label.includes(term)) score += 3;
+				else if (desc.includes(term)) score += 2;
+				else if (tabLabel.includes(term)) score += 1;
+				else if (keywords.includes(term)) score += 1;
+			}
 
-		return { setting, score };
-	})
+			return { setting, score };
+		})
 		.filter(Boolean)
 		.sort((a, b) => b!.score - a!.score)
 		.map((entry) => entry!.setting);

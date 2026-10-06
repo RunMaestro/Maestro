@@ -781,3 +781,10 @@ Discord voice downloads and fixed ffprobe/ffmpeg/whisper-cli profiles. Keep STT
 orchestration and result interpretation in the plugin. General network/file/process
 grants are unnecessary. Read [the media contract](../plugin-media-tools.md) before
 adding an adapter; it defines opaque jobs, ceilings, cancellation, errors and prerequisites.
+
+## Independent plugin settings
+
+Host API 1.23.0 promotes existing `placement: "settings"` panels into independent
+Settings destinations. Use stable local IDs; request `ui:panel` and obtain trust
+and consent. See [plugin-settings-cards.md](../plugin-settings-cards.md) for search,
+deep links, own-panel navigation and the closed `hostSettings: ["media"]` link.

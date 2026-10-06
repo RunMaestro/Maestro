@@ -903,3 +903,25 @@ describe('combined contribution surfaces', () => {
 		expect(c.groupings).toHaveLength(1);
 	});
 });
+
+describe('settings panel host destinations', () => {
+	it.each([
+		['settings', ['media'], true],
+		['settings', ['mediaModelDirectory'], false],
+		['settings', 'media', false],
+		['modal', ['media'], false],
+	])('validates %s/%j without generic settings targets', (placement, hostSettings, valid) => {
+		const result = collectContributions(
+			manifest(
+				'example.plugin',
+				{
+					panels: [{ id: 'config', title: 'Config', entry: 'panel.html', placement, hostSettings }],
+				},
+				2
+			)
+		);
+		expect(result.panels.length).toBe(valid ? 1 : 0);
+		if (valid) expect(result.panels[0].hostSettings).toEqual(['media']);
+		else expect(result.errors.join(' ')).toContain('hostSettings');
+	});
+});

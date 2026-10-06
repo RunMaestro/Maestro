@@ -458,7 +458,7 @@ export function describeCapability(capability: PluginCapability): string {
  * `ui:contribute` / `ui:panel` / `ui:render-unsafe`; 1.3.0 added `tools` +
  * `keybindings`; 1.2.0 added `transcripts:read`.
  */
-export const HOST_API_VERSION = '1.22.0';
+export const HOST_API_VERSION = '1.23.0';
 
 /** Result of checking a plugin's declared host-API requirement. */
 export interface HostApiCompatibility {
@@ -935,6 +935,7 @@ export interface PanelContribution {
 	entry: string;
 	placement: PanelPlacement;
 	size: PanelSize;
+	hostSettings?: 'media'[];
 }
 
 /** A runtime agent a (tier-1) plugin registers - a Left Bar entry backed by a
@@ -1609,9 +1610,9 @@ export interface MaestroUiApi {
 	 * (`ui:panel`). Delivered to the panel page as a `maestro:panelData` window
 	 * message; JSON-only, capped at MAX_PANEL_POST_BYTES, no reply channel. */
 	panelPost(panelId: string, data: unknown): Promise<void>;
-	/** Show one of this plugin's OWN `modal` panels as a host-drawn overlay
+	/** Open this plugin's own modal overlay or settings card (Host API 1.23.0)
 	 * (`ui:panel`). Own-panels-only: a foreign or namespaced id never resolves,
-	 * and a docked panel is rejected. */
+	 * and other docked placements are rejected. */
 	openPanel(panelId: string): Promise<void>;
 	/** Hide one of this plugin's own modal panels, if it is the open one. */
 	closePanel(panelId: string): Promise<void>;

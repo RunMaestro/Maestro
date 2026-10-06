@@ -1407,7 +1407,7 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 				// Only `modal` panels have a summonable host; docked ones are always
 				// mounted and have their own hide control, so this would be a no-op the
 				// plugin could not distinguish from success.
-				if (panel.placement !== 'modal') {
+				if (panel.placement !== 'modal' && !(panel.placement === 'settings' && action === 'open')) {
 					throw new Error(`panel "${panelId}" is not a modal panel`);
 				}
 				panelVisibility(pluginId, `${pluginId}/${panelId}`, action);
