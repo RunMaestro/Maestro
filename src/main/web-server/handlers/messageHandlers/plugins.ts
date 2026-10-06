@@ -189,8 +189,8 @@ export async function handlePluginsSendAgent(
  * Handle plugins_call_tool - risk-gate a model-initiated plugin tool call,
  * then invoke it via the broker. The toolId MUST be a declared `tools`
  * contribution (never an arbitrary command handler), and risk is rated on the
- * model's ARGUMENTS via the shared Pianola gate - a HIGH verdict is surfaced
- * and NEVER executed. Tool failures: `{ ok:false, error }`; blocks: `{ blocked:true }`.
+ * model's ARGUMENTS via the shared Pianola gate. Only the trusted, authenticated
+ * Relay reply transport is exempt from the topic ceiling. Tool failures: `{ ok:false, error }`; blocks: `{ blocked:true }`.
  */
 export async function handlePluginsCallTool(
 	ctx: MessageHandlerContext,
@@ -232,13 +232,39 @@ export async function handlePluginsCallTool(
 	// the slug noise of the raw toolId. Follow-up: per-tool risk metadata + a
 	// user-approval path for HIGH instead of a hard block.
 	const riskText = `${declaredTool.name} ${declaredTool.description} ${argText}`;
-	const verdict = evaluatePluginDispatch(riskText);
-	if (!verdict.eligible) {
-		respond({ ok: false, blocked: true, risk: verdict.risk, reason: verdict.reason });
-		return;
+	const context = pluginToolRunIdentity.resolve(message.runToken);
+	// Only Relay's declared reply transport can carry conversational text
+	// without a topic veto. Host proof + live signature trust are required;
+	// the plugin still enforces its sender, guild, channel/thread bindings and
+	// outbound policy, and its network calls remain brokered. Other tools,
+	// including other Relay tools, retain the usual risk ceiling.
+	const isRelayReply =
+		toolId === 'sh.maestro.relay/send' &&
+		declaredTool.pluginId === 'sh.maestro.relay' &&
+		declaredTool.localId === 'send';
+	if (isRelayReply) {
+		if (!context.callerAgentId) {
+			respond({ ok: false, error: 'Verified caller required' });
+			return;
+		}
+		if (
+			!manager
+				.getActiveRecords()
+				.some(
+					(record) => record.id === 'sh.maestro.relay' && record.signature?.status === 'trusted'
+				)
+		) {
+			respond({ ok: false, error: 'Relay reply requires a trusted signed plugin' });
+			return;
+		}
+	} else {
+		const verdict = evaluatePluginDispatch(riskText);
+		if (!verdict.eligible) {
+			respond({ ok: false, blocked: true, risk: verdict.risk, reason: verdict.reason });
+			return;
+		}
 	}
 	try {
-		const context = pluginToolRunIdentity.resolve(message.runToken);
 		logger.info(
 			`[PluginAudit] tool ${toolId} callerAgentId=${context.callerAgentId ?? 'unverified'}`,
 			LOG_CONTEXT

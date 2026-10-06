@@ -116,6 +116,50 @@ describe('plugin headless agent runner', () => {
 			expect.objectContaining({ querySource: 'auto' })
 		);
 	});
+	it('retains the configured execution options for a Relay conversation', async () => {
+		const configured = {
+			...agent,
+			customArgs: '--configured-mode',
+			customEnvVars: { USER_MODE: 'configured' },
+			additionalDirectories: ['/additional'],
+			customModel: 'configured-model',
+			customEffort: 'high',
+		} as SessionInfo;
+		const spawn = vi.fn(async () => ({
+			success: true,
+			response: 'Release discussion',
+			agentSessionId: 'provider',
+		}));
+		const run = createPluginHeadlessAgentRunner({
+			getAgent: () => configured,
+			detectAgent: async () => ({ available: true }),
+			hasPluginTools: () => false,
+			spawn,
+			prepareSystemPrompt: async () => 'configured context',
+			issueRunToken: vi.fn(),
+			revokeRunToken: vi.fn(),
+			cliScriptPath: () => '/cli.js',
+			audit: vi.fn(),
+		});
+		await run('agent-a', 'How does a Release work?', 'provider', undefined, 'relay');
+		expect(spawn).toHaveBeenCalledWith(
+			'codex',
+			'/project',
+			'How does a Release work?',
+			'provider',
+			expect.objectContaining({
+				customArgs: configured.customArgs,
+				customEnvVars: configured.customEnvVars,
+				additionalDirectories: configured.additionalDirectories,
+				customModel: configured.customModel,
+				customEffort: configured.customEffort,
+				appendSystemPrompt: 'configured context',
+				querySource: 'auto',
+			})
+		);
+		expect(spawn.mock.calls[0][4]).not.toHaveProperty('readOnlyMode');
+	});
+
 	it('reports no successful response when a provider exits without final text', async () => {
 		const onProgress = vi.fn();
 		const run = createPluginHeadlessAgentRunner({

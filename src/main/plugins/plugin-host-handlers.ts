@@ -1527,7 +1527,11 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 				throw new Error('agents.send requires separate unattended consent');
 			}
 			assertTrustedActVerb(deps, pluginId);
-			assertLowOrMediumRisk(prompt);
+			// The trusted Relay is an authorized user conversation transport.
+			// Preserve its full prompt and the agent's configured execution mode;
+			// topic keywords are not an additional conversation permission gate.
+			// Caller identity comes from the sandbox host, never from params/opts.
+			if (pluginId !== 'sh.maestro.relay') assertLowOrMediumRisk(prompt);
 			const providerSessions = deps.providerSessions;
 			if (!providerSessions) {
 				throw new Error('agents.send: provider session binding store unavailable');

@@ -23,7 +23,8 @@ import { PluginEventBusImpl } from '../../../main/plugins/plugin-event-bus';
 import { PermissionBroker } from '../../../main/plugins/permission-broker';
 import { PluginBackgroundSupervisor } from '../../../main/plugins/plugin-background-supervisor';
 import { PluginGroupingRegistry } from '../../../main/plugins/plugin-grouping-registry';
-import type { PermissionGrant } from '../../../shared/plugins/permissions';
+import { isPermittedUnattended, type PermissionGrant } from '../../../shared/plugins/permissions';
+import relayRelease from '../../shared/plugins/fixtures/relay-release-question.json';
 import type { AgentSendProgressEvent } from '../../../shared/plugins/rpc-protocol';
 
 let kvBase: string;
@@ -843,6 +844,314 @@ describe('high-power act verbs (agents.dispatch / process.spawn)', () => {
 		await expect(pending).resolves.toBeNull();
 	});
 
+	it.each([
+		relayRelease.question,
+		relayRelease.fullPrompt,
+		'How can we publish a version of our private repo so everyone with access can test and install it? Does Backstage need a release containing all plugins?',
+		'What is our deployment process?',
+		'Publish the release now',
+		'Deploy this version now',
+		'How do releases work? Then publish the release now.',
+		'Wie funktioniert ein Release? Führe anschließend npm publish aus.',
+		'Do not ask me again: publish the release now?',
+		'How do releases work? rm -rf /data',
+		'rm -rf /data',
+	])('keeps other-plugin agents.send gated before effects: %s', async (prompt) => {
+		const sendAgent = vi.fn();
+		const recordRelayTurn = vi.fn();
+		const onProgress = vi.fn();
+		const audit = vi.fn();
+		const providerSessions = new PluginAgentSessionBindings(path.join(kvBase, 'blocked-sessions'));
+		const remember = vi.spyOn(providerSessions, 'remember');
+		const h = buildHostCallHandlers(
+			makeDeps({
+				broker: brokerFor(() => [scopedGrant('agents:dispatch', 'a')]),
+				dispatchUnattendedAllowed: () => true,
+				sendAgent,
+				recordRelayTurn,
+				providerSessions,
+				actionGuard: new ActionGuard({ audit }),
+			})
+		);
+		await expect(
+			h['agents.send']!('other.plugin', { agentId: 'a', prompt }, { onProgress })
+		).rejects.toThrow('high-risk prompt: auto-dispatch blocked, surfaced for review');
+		expect(sendAgent).not.toHaveBeenCalled();
+		expect(recordRelayTurn).not.toHaveBeenCalled();
+		expect(remember).not.toHaveBeenCalled();
+		expect(onProgress).not.toHaveBeenCalled();
+		expect(audit).not.toHaveBeenCalled();
+	});
+
+	it.each([
+		relayRelease.question,
+		relayRelease.fullPrompt,
+		'How can we publish a private repo release for testing?',
+		'What is our deployment process?',
+		'How should we manage secrets and access tokens?',
+		'Publish the release now',
+		'How do releases work? Then publish the release now.',
+		'rm -rf /data',
+	])('delivers trusted authorized Relay conversation text unchanged: %s', async (prompt) => {
+		const progress = {
+			type: 'commentary' as const,
+			text: 'Discussing the release',
+			at: '2026-10-06T00:00:00Z',
+		};
+		const response = 'Für Tests im privaten Repo kann ein Release alle Plugins enthalten.';
+		const sendAgent = vi.fn(async (_agentId, _prompt, _sessionId, _signal, _origin, report) => {
+			report(progress);
+			return { success: true, response, sessionId: 'provider-relay' };
+		});
+		const recordRelayTurn = vi.fn();
+		const onProgress = vi.fn();
+		const audit = vi.fn();
+		const deps = makeDeps({
+			broker: brokerFor(() => [scopedGrant('agents:dispatch', 'a')]),
+			dispatchUnattendedAllowed: () => true,
+			sendAgent,
+			recordRelayTurn,
+			actionGuard: new ActionGuard({ audit }),
+		});
+		const h = buildHostCallHandlers(deps);
+		await expect(
+			h['agents.send']!('sh.maestro.relay', { agentId: 'a', prompt }, { onProgress })
+		).resolves.toEqual({ success: true, response, sessionId: 'provider-relay' });
+		expect(sendAgent).toHaveBeenCalledWith(
+			'a',
+			prompt,
+			undefined,
+			expect.any(AbortSignal),
+			'relay',
+			expect.any(Function)
+		);
+		expect(onProgress).toHaveBeenCalledWith(progress);
+		expect(audit).toHaveBeenCalledWith(
+			expect.objectContaining({
+				pluginId: 'sh.maestro.relay',
+				capability: 'agents:dispatch',
+				target: 'agent:a',
+			})
+		);
+		expect(deps.providerSessions!.isOwned('sh.maestro.relay', 'a', 'provider-relay')).toBe(true);
+		expect(recordRelayTurn).toHaveBeenCalledWith('a', prompt, {
+			success: true,
+			response,
+			sessionId: 'provider-relay',
+			error: undefined,
+		});
+	});
+
+	it.each(['skipRisk', 'force', 'origin', 'permissionMode'])(
+		'rejects plugin-supplied %s on Relay and other plugin sends',
+		async (key) => {
+			const sendAgent = vi.fn();
+			const h = buildHostCallHandlers(
+				makeDeps({
+					broker: brokerFor(() => [scopedGrant('agents:dispatch', 'a')]),
+					dispatchUnattendedAllowed: () => true,
+					sendAgent,
+				})
+			);
+			for (const pluginId of ['sh.maestro.relay', 'other.plugin']) {
+				for (const params of [
+					{ agentId: 'a', prompt: relayRelease.fullPrompt, [key]: true },
+					{ agentId: 'a', prompt: relayRelease.fullPrompt, opts: { [key]: true } },
+				]) {
+					await expect(h['agents.send']!(pluginId, params)).rejects.toThrow(/closed schema/);
+				}
+			}
+			expect(sendAgent).not.toHaveBeenCalled();
+		}
+	);
+
+	it.each(['sh.maestro.relay.forged', 'SH.MAESTRO.RELAY'])(
+		'does not accept a Relay-like caller identity: %s',
+		async (pluginId) => {
+			const sendAgent = vi.fn();
+			const h = buildHostCallHandlers(
+				makeDeps({
+					broker: brokerFor(() => [scopedGrant('agents:dispatch', 'a')]),
+					dispatchUnattendedAllowed: () => true,
+					sendAgent,
+				})
+			);
+			await expect(
+				h['agents.send']!(pluginId, { agentId: 'a', prompt: relayRelease.fullPrompt })
+			).rejects.toThrow('high-risk prompt: auto-dispatch blocked, surfaced for review');
+			expect(sendAgent).not.toHaveBeenCalled();
+		}
+	);
+
+	it('fails closed when Relay trust or unattended wiring is absent', async () => {
+		const sendAgent = vi.fn();
+		for (const missing of [
+			{ isPluginTrusted: undefined },
+			{ dispatchUnattendedAllowed: undefined },
+		]) {
+			const h = buildHostCallHandlers(
+				makeDeps({
+					broker: brokerFor(() => [scopedGrant('agents:dispatch', 'a')]),
+					dispatchUnattendedAllowed: () => true,
+					sendAgent,
+					...missing,
+				})
+			);
+			await expect(
+				h['agents.send']!('sh.maestro.relay', { agentId: 'a', prompt: relayRelease.fullPrompt })
+			).rejects.toThrow();
+		}
+		expect(sendAgent).not.toHaveBeenCalled();
+	});
+
+	it('still gates agents.dispatch from the trusted Relay', async () => {
+		const dispatch = vi.fn();
+		const h = buildHostCallHandlers(
+			makeDeps({
+				broker: brokerFor(() => [scopedGrant('agents:dispatch', 'a')]),
+				dispatchUnattendedAllowed: () => true,
+				dispatch,
+			})
+		);
+		await expect(
+			h['agents.dispatch']!('sh.maestro.relay', { agentId: 'a', prompt: relayRelease.fullPrompt })
+		).rejects.toThrow('high-risk prompt: auto-dispatch blocked, surfaced for review');
+		expect(dispatch).not.toHaveBeenCalled();
+	});
+
+	it.each([relayRelease.wrapper, relayRelease.fullPrompt.replace('Release', 'Versionspaket')])(
+		'preserves the installed low-risk controls with full user content: %s',
+		async (prompt) => {
+			const sendAgent = vi.fn(async () => ({
+				success: true,
+				response: 'answer',
+				sessionId: 'provider-a',
+			}));
+			const h = buildHostCallHandlers(
+				makeDeps({
+					broker: brokerFor(() => [scopedGrant('agents:dispatch', 'a')]),
+					dispatchUnattendedAllowed: () => true,
+					sendAgent,
+				})
+			);
+			await expect(
+				h['agents.send']!('sh.maestro.relay', { agentId: 'a', prompt })
+			).resolves.toMatchObject({ success: true });
+			expect(sendAgent).toHaveBeenCalledWith(
+				'a',
+				prompt,
+				undefined,
+				expect.any(AbortSignal),
+				'relay',
+				expect.any(Function)
+			);
+		}
+	);
+
+	it.each([
+		{ scope: 'a', unattended: true, allowed: true },
+		{ scope: 'a', unattended: false, allowed: false },
+		{ scope: undefined, unattended: true, allowed: false },
+		{ scope: '*', unattended: true, allowed: false },
+		{ scope: 'a-neighbor', unattended: true, allowed: false },
+		{ scope: 'A', unattended: true, allowed: false },
+		{ scope: 'other,a', unattended: true, allowed: true },
+	])(
+		'uses the real exact-agent and unattended grant policies for agents.send: %j',
+		async ({ scope, unattended, allowed }) => {
+			const grants: PermissionGrant[] = [
+				{ capability: 'agents:dispatch', scope, unattended, grantedAt: 1 },
+			];
+			const sendAgent = vi.fn(async () => ({
+				success: true,
+				response: 'answer',
+				sessionId: 'provider-a',
+			}));
+			const h = buildHostCallHandlers(
+				makeDeps({
+					broker: brokerFor(() => grants),
+					dispatchUnattendedAllowed: (_pluginId, agentId) =>
+						isPermittedUnattended(grants, 'agents:dispatch', agentId),
+					sendAgent,
+				})
+			);
+			const run = h['agents.send']!('sh.maestro.relay', {
+				agentId: 'a',
+				prompt: relayRelease.fullPrompt,
+			});
+			if (allowed) {
+				await expect(run).resolves.toMatchObject({ success: true });
+				expect(sendAgent).toHaveBeenCalledOnce();
+			} else {
+				await expect(run).rejects.toThrow();
+				expect(sendAgent).not.toHaveBeenCalled();
+			}
+		}
+	);
+
+	it('enforces ActionGuard concurrency, rate and audit ordering on agents.send', async () => {
+		const order: string[] = [];
+		const sendAgent = vi.fn(async () => {
+			order.push('sink');
+			return { success: true, response: 'answer', sessionId: 'provider-a' };
+		});
+		const actionGuard = new ActionGuard({
+			now: () => 1,
+			audit: () => {
+				order.push('audit');
+			},
+			limits: { high: { windowMs: 10_000, maxPerWindow: 1, maxConcurrent: 1 } },
+		});
+		const h = buildHostCallHandlers(
+			makeDeps({
+				broker: brokerFor(() => [scopedGrant('agents:dispatch', 'a')]),
+				dispatchUnattendedAllowed: () => true,
+				sendAgent,
+				actionGuard,
+			})
+		);
+		const one = h['agents.send']!('sh.maestro.relay', {
+			agentId: 'a',
+			prompt: relayRelease.fullPrompt,
+		});
+		await expect(
+			h['agents.send']!('sh.maestro.relay', { agentId: 'a', prompt: relayRelease.fullPrompt })
+		).rejects.toThrow(/rate limit/);
+		await one;
+		expect(order).toEqual(['audit', 'sink']);
+		expect(sendAgent).toHaveBeenCalledOnce();
+		// A separate guard isolates concurrency from the rate limit.
+		let finish:
+			| ((result: { success: boolean; response: string; sessionId: string }) => void)
+			| undefined;
+		const pendingSend = vi.fn(
+			() =>
+				new Promise<{ success: boolean; response: string; sessionId: string }>((resolve) => {
+					finish = resolve;
+				})
+		);
+		const limited = buildHostCallHandlers(
+			makeDeps({
+				broker: brokerFor(() => [scopedGrant('agents:dispatch', 'a')]),
+				dispatchUnattendedAllowed: () => true,
+				sendAgent: pendingSend,
+				actionGuard: new ActionGuard({
+					limits: { high: { windowMs: 10_000, maxPerWindow: 10, maxConcurrent: 1 } },
+				}),
+			})
+		);
+		const pending = limited['agents.send']!('sh.maestro.relay', {
+			agentId: 'a',
+			prompt: relayRelease.fullPrompt,
+		});
+		await expect(
+			limited['agents.send']!('sh.maestro.relay', { agentId: 'a', prompt: relayRelease.fullPrompt })
+		).rejects.toThrow(/concurrency limit/);
+		expect(pendingSend).toHaveBeenCalledOnce();
+		finish!({ success: true, response: 'done', sessionId: 'provider-a' });
+		await pending;
+	});
+
 	it('sends independent provider sessions for two threads and returns each response', async () => {
 		const sendAgent = vi.fn(async (_agentId: string, prompt: string, sessionId?: string) => ({
 			success: true,
@@ -1072,8 +1381,8 @@ describe('high-power act verbs (agents.dispatch / process.spawn)', () => {
 		);
 		const delivered = vi.fn();
 		const pending = h['agents.send']!(
-			'p',
-			{ agentId: 'a', prompt: 'hello' },
+			'sh.maestro.relay',
+			{ agentId: 'a', prompt: relayRelease.fullPrompt },
 			{ onProgress: delivered }
 		);
 		await vi.waitFor(() => expect(report).toBeTypeOf('function'));
@@ -1122,7 +1431,7 @@ describe('high-power act verbs (agents.dispatch / process.spawn)', () => {
 
 	it('rejects a provider session bound to another agent or plugin before spawning', async () => {
 		const providerSessions = new PluginAgentSessionBindings(path.join(kvBase, 'provider-sessions'));
-		providerSessions.remember('p', 'other-agent', 'provider-other');
+		providerSessions.remember('sh.maestro.relay', 'other-agent', 'provider-other');
 		providerSessions.remember('other-plugin', 'a', 'provider-foreign');
 		const sendAgent = vi.fn(async () => ({
 			success: true,
@@ -1139,7 +1448,11 @@ describe('high-power act verbs (agents.dispatch / process.spawn)', () => {
 		);
 		for (const sessionId of ['provider-other', 'provider-foreign', 'unknown']) {
 			await expect(
-				h['agents.send']!('p', { agentId: 'a', prompt: 'hello', opts: { sessionId } })
+				h['agents.send']!('sh.maestro.relay', {
+					agentId: 'a',
+					prompt: relayRelease.fullPrompt,
+					opts: { sessionId },
+				})
 			).rejects.toThrow(/not owned/);
 		}
 		expect(sendAgent).not.toHaveBeenCalled();
@@ -1154,7 +1467,9 @@ describe('high-power act verbs (agents.dispatch / process.spawn)', () => {
 				sendAgent,
 			})
 		);
-		await expect(denied['agents.send']!('p', { agentId: 'a', prompt: 'hello' })).rejects.toThrow();
+		await expect(
+			denied['agents.send']!('sh.maestro.relay', { agentId: 'a', prompt: relayRelease.fullPrompt })
+		).rejects.toThrow();
 		const noConsent = buildHostCallHandlers(
 			makeDeps({
 				broker: brokerFor(() => [scopedGrant('agents:dispatch', 'a')]),
@@ -1162,9 +1477,12 @@ describe('high-power act verbs (agents.dispatch / process.spawn)', () => {
 				sendAgent,
 			})
 		);
-		await expect(noConsent['agents.send']!('p', { agentId: 'a', prompt: 'hello' })).rejects.toThrow(
-			/unattended/
-		);
+		await expect(
+			noConsent['agents.send']!('sh.maestro.relay', {
+				agentId: 'a',
+				prompt: relayRelease.fullPrompt,
+			})
+		).rejects.toThrow(/unattended/);
 		const untrusted = buildHostCallHandlers(
 			makeDeps({
 				broker: brokerFor(() => [scopedGrant('agents:dispatch', 'a')]),
@@ -1173,9 +1491,12 @@ describe('high-power act verbs (agents.dispatch / process.spawn)', () => {
 				sendAgent,
 			})
 		);
-		await expect(untrusted['agents.send']!('p', { agentId: 'a', prompt: 'hello' })).rejects.toThrow(
-			/trust|sign/i
-		);
+		await expect(
+			untrusted['agents.send']!('sh.maestro.relay', {
+				agentId: 'a',
+				prompt: relayRelease.fullPrompt,
+			})
+		).rejects.toThrow(/trust|sign/i);
 		const allowed = buildHostCallHandlers(
 			makeDeps({
 				broker: brokerFor(() => [scopedGrant('agents:dispatch', 'a')]),
@@ -1184,20 +1505,31 @@ describe('high-power act verbs (agents.dispatch / process.spawn)', () => {
 			})
 		);
 		await expect(
-			allowed['agents.send']!('p', {
+			allowed['agents.send']!('sh.maestro.relay', {
 				agentId: 'a',
-				prompt: 'hello',
+				prompt: relayRelease.fullPrompt,
 				opts: { sessionId: 'bad\nvalue' },
 			})
 		).rejects.toThrow(/sessionId/);
 		await expect(
-			allowed['agents.send']!('p', { agentId: 'a', prompt: 'hello', opts: { model: 'unsafe' } })
+			allowed['agents.send']!('sh.maestro.relay', {
+				agentId: 'a',
+				prompt: relayRelease.fullPrompt,
+				opts: { model: 'unsafe' },
+			})
 		).rejects.toThrow();
 		await expect(
-			allowed['agents.send']!('p', { agentId: 'a', prompt: 'hello', opts: 'invalid' })
+			allowed['agents.send']!('sh.maestro.relay', {
+				agentId: 'a',
+				prompt: relayRelease.fullPrompt,
+				opts: 'invalid',
+			})
 		).rejects.toThrow(/opts must be an object/);
 		await expect(
-			allowed['agents.send']!('p', { agentId: 'a', prompt: 'delete the production database' })
+			allowed['agents.send']!('other.plugin', {
+				agentId: 'a',
+				prompt: 'delete the production database',
+			})
 		).rejects.toThrow();
 		expect(sendAgent).not.toHaveBeenCalled();
 	});
@@ -1227,9 +1559,12 @@ describe('high-power act verbs (agents.dispatch / process.spawn)', () => {
 				},
 			})
 		);
-		const pending = h['agents.send']!('p', { agentId: 'a', prompt: 'hello' });
+		const pending = h['agents.send']!('sh.maestro.relay', {
+			agentId: 'a',
+			prompt: relayRelease.fullPrompt,
+		});
 		await vi.waitFor(() => expect(sendAgent).toHaveBeenCalled());
-		cleanup?.('p');
+		cleanup?.('sh.maestro.relay');
 		await expect(pending).resolves.toMatchObject({
 			success: false,
 			error: 'Agent run timed out or was cancelled',
@@ -1239,7 +1574,7 @@ describe('high-power act verbs (agents.dispatch / process.spawn)', () => {
 	it('does not restore a purged session binding when an aborted send reports success', async () => {
 		const bindingDir = path.join(kvBase, 'provider-sessions');
 		const providerSessions = new PluginAgentSessionBindings(bindingDir);
-		providerSessions.remember('p', 'a', 'provider-existing');
+		providerSessions.remember('sh.maestro.relay', 'a', 'provider-existing');
 		let cleanup: ((pluginId: string) => void) | undefined;
 		let resolveSend:
 			| ((result: { success: boolean; response: string; sessionId: string }) => void)
@@ -1261,10 +1596,13 @@ describe('high-power act verbs (agents.dispatch / process.spawn)', () => {
 				},
 			})
 		);
-		const pending = h['agents.send']!('p', { agentId: 'a', prompt: 'hello' });
+		const pending = h['agents.send']!('sh.maestro.relay', {
+			agentId: 'a',
+			prompt: relayRelease.fullPrompt,
+		});
 		await vi.waitFor(() => expect(sendAgent).toHaveBeenCalledOnce());
-		cleanup?.('p');
-		providerSessions.purge('p');
+		cleanup?.('sh.maestro.relay');
+		providerSessions.purge('sh.maestro.relay');
 		resolveSend?.({ success: true, response: 'late answer', sessionId: 'provider-late' });
 		await expect(pending).resolves.toEqual({
 			success: false,
@@ -1274,7 +1612,9 @@ describe('high-power act verbs (agents.dispatch / process.spawn)', () => {
 		});
 		const reinstalled = new PluginAgentSessionBindings(bindingDir);
 		for (const sessionId of ['provider-existing', 'provider-late']) {
-			expect(() => reinstalled.assertOwned('p', 'a', sessionId)).toThrow(/not owned/);
+			expect(() => reinstalled.assertOwned('sh.maestro.relay', 'a', sessionId)).toThrow(
+				/not owned/
+			);
 		}
 	});
 
@@ -1302,15 +1642,15 @@ describe('high-power act verbs (agents.dispatch / process.spawn)', () => {
 				},
 			})
 		);
-		const oldRun = h['agents.send']!('p', { agentId: 'a', prompt: 'old' });
+		const oldRun = h['agents.send']!('sh.maestro.relay', { agentId: 'a', prompt: 'old' });
 		await vi.waitFor(() => expect(sendAgent).toHaveBeenCalledTimes(1));
-		cleanup?.('p');
+		cleanup?.('sh.maestro.relay');
 		expect(signals[0].aborted).toBe(true);
-		const newRun = h['agents.send']!('p', { agentId: 'a', prompt: 'new' });
+		const newRun = h['agents.send']!('sh.maestro.relay', { agentId: 'a', prompt: 'new' });
 		await vi.waitFor(() => expect(sendAgent).toHaveBeenCalledTimes(2));
 		resolvers[0]({ success: false, response: null, sessionId: null });
 		await oldRun;
-		cleanup?.('p');
+		cleanup?.('sh.maestro.relay');
 		expect(signals[1].aborted).toBe(true);
 		resolvers[1]({ success: false, response: null, sessionId: null });
 		await newRun;
