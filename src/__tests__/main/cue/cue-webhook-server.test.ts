@@ -65,6 +65,8 @@ function makeRequest(opts: {
 	return req;
 }
 
+let registrationCount = 0;
+
 function register(overrides: Partial<CueWebhookRegistration> = {}): {
 	deliveries: CueWebhookDelivery[];
 	onLog: ReturnType<typeof vi.fn>;
@@ -73,6 +75,7 @@ function register(overrides: Partial<CueWebhookRegistration> = {}): {
 	const deliveries: CueWebhookDelivery[] = [];
 	const onLog = vi.fn();
 	const unregister = registerCueWebhook({
+		id: `session-1:hook-${++registrationCount}`,
 		path: 'my-hook',
 		secret: 's3cret',
 		onDelivery: (d) => deliveries.push(d),

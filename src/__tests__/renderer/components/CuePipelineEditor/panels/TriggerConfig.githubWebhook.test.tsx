@@ -61,6 +61,27 @@ describe('TriggerConfig GitHub webhook section', () => {
 		}
 	);
 
+	it('saves the shown path when switched on, so the choice survives a reload', () => {
+		const onUpdateNode = vi.fn();
+		render(
+			<TriggerConfig
+				node={makeTriggerNode('github.pull_request')}
+				theme={theme}
+				onUpdateNode={onUpdateNode}
+			/>
+		);
+		fireEvent.click(screen.getByRole('checkbox', { name: /Also take GitHub webhooks/i }));
+		flushAllPendingEdits();
+		expect(lastConfig(onUpdateNode)).toMatchObject({ webhook_path: 'review-prs' });
+	});
+
+	it("shows a saved trigger's subscription name as the default path", () => {
+		const node = makeTriggerNode('github.issue', { webhook_secret_env: 'GH_SECRET' });
+		(node.data as TriggerNodeData).subscriptionName = 'Nightly Triage';
+		render(<TriggerConfig node={node} theme={theme} onUpdateNode={vi.fn()} />);
+		expect(screen.getByText('/cue/nightly-triage')).toBeInTheDocument();
+	});
+
 	it('opens already filled in for a trigger that carries webhook settings', () => {
 		render(
 			<TriggerConfig

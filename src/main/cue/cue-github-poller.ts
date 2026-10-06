@@ -34,9 +34,10 @@ import {
 	decideGitHubItem,
 	DEFAULT_MAX_NOTIFICATIONS,
 	githubItemKey,
+	isNewerRevision,
 	labelEventMatchesFilters,
 	recordLabelEventFired,
-	wasLabelEventFiredByOtherSource,
+	claimLabelEventFiredByOtherSource,
 	type GitHubComment,
 	type GitHubItemEventType,
 	type GitHubItemSnapshot,
@@ -480,11 +481,14 @@ export function createCueGitHubPoller(config: CueGitHubPollerConfig): () => void
 				decision.state.lastRevision
 			);
 			if (stopped) return;
-			// A webhook can record this same change while the comments load.
-			if (getGitHubItemState(subscriptionId, itemKey)?.lastRevision === updatedAt) return;
+			// A webhook can record this change, or a newer one, while the comments
+			// load; decide again on what is stored now.
+			const current = getGitHubItemState(subscriptionId, itemKey);
+			if (!current || !isNewerRevision(updatedAt, current.lastRevision)) return;
+			if (current.fireCount >= cap) return;
 			onEvent(
 				buildGitHubItemEvent(itemEventType, triggerName, repo, item, {
-					retriggerCount: decision.state.fireCount + 1,
+					retriggerCount: current.fireCount + 1,
 					newComments: newComments ?? [],
 				})
 			);
@@ -691,7 +695,7 @@ export function createCueGitHubPoller(config: CueGitHubPollerConfig): () => void
 			const ev = labelSnapshotFromFeed(raw);
 			if (!labelEventMatchesFilters(ev, labelFilters)) continue;
 			// A webhook may already have fired this add.
-			if (wasLabelEventFiredByOtherSource(subscriptionId, repo, ev, 'poll')) continue;
+			if (claimLabelEventFiredByOtherSource(subscriptionId, repo, ev, 'poll')) continue;
 			onEvent(buildGitHubLabelEvent(triggerName, repo, ev));
 			recordLabelEventFired(subscriptionId, repo, ev, 'poll');
 		}
@@ -703,7 +707,32 @@ export function createCueGitHubPoller(config: CueGitHubPollerConfig): () => void
 		}
 	}
 
+	/**
+	 * One poll at a time. A webhook can ask for a poll (`pollNow`) while the
+	 * scheduled one is still running; two polls side by side could both read
+	 * the label watermark and fire the same adds. A request made during a poll
+	 * runs one more poll after it instead.
+	 */
+	let polling = false;
+	let pollRequested = false;
 	async function doPoll(): Promise<void> {
+		if (polling) {
+			pollRequested = true;
+			return;
+		}
+		polling = true;
+		try {
+			await pollOnce();
+		} finally {
+			polling = false;
+		}
+		if (pollRequested && !stopped) {
+			pollRequested = false;
+			await doPoll();
+		}
+	}
+
+	async function pollOnce(): Promise<void> {
 		if (stopped) return;
 		// Visibility-aware pause: skip the gh CLI fetch when inactive. The
 		// scheduleNextPoll loop keeps running so we resume cleanly when the

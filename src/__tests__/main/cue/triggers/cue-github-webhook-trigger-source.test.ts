@@ -129,6 +129,7 @@ describe('GitHub trigger source with a webhook', () => {
 
 		expect(registrations).toHaveLength(1);
 		expect(registrations[0]).toMatchObject({
+			id: 'session-1:Review PRs',
 			path: 'review-prs',
 			secret: 'hunter2',
 			signatureHeader: 'x-hub-signature-256',
@@ -218,6 +219,17 @@ describe('GitHub trigger source with a webhook', () => {
 
 	it('asks the poller to seed when the subscription has never been polled', () => {
 		handleMock.mockReturnValue({ events: [], needsSeed: true });
+		const { source } = makeSource('github.pull_request', {
+			webhook: { secret_env: 'TEST_GH_SECRET' },
+		});
+		source.start();
+
+		(registrations[0].onDelivery as (d: CueWebhookDelivery) => void)(delivery());
+		expect(mockPollNow).toHaveBeenCalledOnce();
+	});
+
+	it('asks the poller to run now for a change the delivery cannot fire itself', () => {
+		handleMock.mockReturnValue({ events: [], pollNow: true, note: 'no branch data' });
 		const { source } = makeSource('github.pull_request', {
 			webhook: { secret_env: 'TEST_GH_SECRET' },
 		});
