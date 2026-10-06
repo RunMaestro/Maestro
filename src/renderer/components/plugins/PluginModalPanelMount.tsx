@@ -61,6 +61,13 @@ export function PluginModalPanelMount({ theme }: { theme: Theme }) {
 				: null,
 		[contributions.panels, openPluginPanelId]
 	);
+	useEffect(() => {
+		if (panel?.placement !== 'settings') return;
+		useModalStore
+			.getState()
+			.openModal('settings', { tab: 'encore', settingId: pluginSettingsId(panel.id) });
+		setOpenPluginPanelId(null);
+	}, [panel, setOpenPluginPanelId]);
 
 	if (!panel || panel.placement === 'settings') return null;
 
