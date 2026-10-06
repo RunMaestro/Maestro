@@ -48,6 +48,7 @@ import {
 	registerCrossAgentHandlers,
 	registerCueHandlers,
 	registerCueBackupHandlers,
+	registerCueBundleHandlers,
 	registerWakatimeHandlers,
 	registerFeedbackHandlers,
 	registerMaestroCliHandlers,
@@ -173,6 +174,11 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 	// Cue Backup - snapshot / restore .maestro/cue.yaml + prompts (Cue modal Backup tab)
 	registerCueBackupHandlers({
 		sessionsStore: deps.sessionsStore,
+	});
+	// Cue bundles - export / import pipelines and agents (Cue modal Bundles tab)
+	registerCueBundleHandlers({
+		sessionsStore: deps.sessionsStore,
+		getMainWindow: deps.getMainWindow,
 	});
 
 	// Agent management operations - extracted to src/main/ipc/handlers/agents.ts

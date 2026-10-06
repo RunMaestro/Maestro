@@ -1287,6 +1287,22 @@ export class WebServer {
 				const { removePipelineOnDisk } = await import('../cue/pipeline-layout-mutations');
 				return removePipelineOnDisk(identifier);
 			},
+			// Bundles: the same service the Cue modal's Bundles tab calls, with
+			// the app context its IPC handlers own (live agents, renderer hand-off).
+			exportCueBundle: async (request) => {
+				const { getCueBundleAppContext } = await import('../ipc/handlers/cue-bundle');
+				const { exportBundleFromApp } = await import('../cue-bundle-service');
+				const ctx = getCueBundleAppContext();
+				if (!ctx) throw new Error('Cue bundles are not ready yet');
+				return exportBundleFromApp(ctx, request);
+			},
+			importCueBundle: async (request) => {
+				const { getCueBundleAppContext } = await import('../ipc/handlers/cue-bundle');
+				const { importBundleIntoApp } = await import('../cue-bundle-service');
+				const ctx = getCueBundleAppContext();
+				if (!ctx) throw new Error('Cue bundles are not ready yet');
+				return importBundleIntoApp(ctx, request);
+			},
 			getUsageDashboard: async (timeRange: 'day' | 'week' | 'month' | 'all') =>
 				this.callbackRegistry.getUsageDashboard(timeRange),
 			getAchievements: async () => this.callbackRegistry.getAchievements(),

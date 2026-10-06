@@ -156,6 +156,8 @@ import {
 	handleCuePipelineGet,
 	handleCuePipelineSet,
 	handleCuePipelineRemove,
+	handleCueBundleExport,
+	handleCueBundleImport,
 } from './cue';
 import { handleEnqueueCommand, handleListQueue, handleRemoveQueueItem } from './queue';
 import {
@@ -581,6 +583,14 @@ export class WebSocketMessageHandler {
 
 			case 'cue_pipeline_remove':
 				handleCuePipelineRemove(this.ctx, client, message);
+				break;
+
+			case 'cue_bundle_export':
+				handleCueBundleExport(this.ctx, client, message);
+				break;
+
+			case 'cue_bundle_import':
+				handleCueBundleImport(this.ctx, client, message);
 				break;
 
 			case 'get_usage_dashboard':
