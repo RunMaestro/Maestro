@@ -7,7 +7,8 @@
 # Agent API keys and other variables: /etc/maestro/maestro.env.
 # Secrets the engine reads as files: /etc/maestro/credentials, passed in with
 # LoadCredential= (example below). The engine finds them under
-# $CREDENTIALS_DIRECTORY by name.
+# $CREDENTIALS_DIRECTORY by name, before the environment, and hands each
+# agent only the secrets its bundle declared.
 
 [Unit]
 Description=Maestro Cue engine
@@ -18,9 +19,11 @@ After=network-online.target
 [Service]
 Type=notify
 # Readiness and watchdog pings come from a systemd-notify child process, not
-# the engine's own PID.
+# the engine's own PID. Pings run every WatchdogSec / 2.
 NotifyAccess=all
 WatchdogSec=30
+# Readiness probes run before READY; 60s covers a slow binary or PATH probe.
+TimeoutStartSec=60
 User=maestro
 Group=maestro
 Environment=HOME=/var/lib/maestro

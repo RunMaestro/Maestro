@@ -38,7 +38,7 @@ tar -xzf maestro-server-<version>.tgz
 sudo ./maestro-server/install.sh
 ```
 
-The installer adds git and the GitHub CLI, installs Node.js 24 unless Node.js 22 or newer is already there, creates the `maestro` user, and installs the `maestro-cue` service without starting it. Run it with `--help` for its options (`--enable` starts the service, `--skip-gh` leaves out the GitHub CLI).
+The installer adds git and the GitHub CLI, creates the `maestro` user, and picks one Node.js for everything: the one on PATH when it is 22 or newer and the `maestro` user can run it, otherwise Node.js 24 from nodejs.org. With that Node.js it installs Claude Code, the SQLite driver and the CLI, then installs the `maestro-cue` service without starting it. Run it with `--help` for its options: `--enable` starts the service, `--agent-cli <npm package>` picks the agent CLIs instead of Claude Code (repeat it, for example `--agent-cli @openai/codex`), `--no-agent-cli` installs none, and `--skip-gh` leaves out the GitHub CLI.
 
 | Path                                      | What it holds                                                      |
 | ----------------------------------------- | ------------------------------------------------------------------ |
@@ -64,16 +64,21 @@ sudo -H -u maestro maestro-cli bundle import pipeline.zip --workspace proj=/srv/
 # 3. GitHub, for github.* triggers (or set GH_TOKEN in the env file)
 sudo -H -u maestro gh auth login
 
-# 4. Start
+# 4. Check every subscription has its agent binary, secrets and tools
+sudo -H -u maestro maestro-cli cue engine check
+
+# 5. Start
 sudo systemctl enable --now maestro-cue
 journalctl -u maestro-cue -f
 ```
 
+`cue engine check` also reports an empty data directory as ready, so confirm it lists your agents (`--json` has `agents` and `subscriptions`).
+
 **How the service behaves:**
 
-- It is ready (`systemctl status` shows `active`) once agents are loaded and every subscription has what it needs. With `--require-ready`, a missing agent binary, secret or `gh` stops the start and the log lists every gap.
-- A watchdog restarts it if the engine stops answering for 30 seconds, and it restarts after a crash.
-- `systemctl stop` lets active runs finish for up to 90 seconds before stopping them, and allows 120 seconds in total.
+- It is ready (`systemctl status` shows `active`) once agents are loaded, the lock is held and triggers are armed. With `--require-ready`, which the unit passes, a missing agent binary, secret or `gh` stops the start and the log lists every gap. Start-up may take up to 60 seconds.
+- A watchdog restarts it if the engine stops answering for 30 seconds, or loses its lock to another engine, and it restarts after a crash.
+- `systemctl stop` drains: new events are queued, active runs get up to 90 seconds to finish, and whatever is queued runs after the next start. The unit allows 120 seconds in total. A script that stops it with `maestro-cli cue engine stop` should pass `--wait-ms 120000`, since that waits only 5 seconds by default.
 - It runs with a read-only system. Only `/var/lib/maestro` and `/srv/maestro` are writable. For workspaces elsewhere, add a drop-in with `sudo systemctl edit maestro-cue`:
 
 ```ini
@@ -81,12 +86,15 @@ journalctl -u maestro-cue -f
 ReadWritePaths=/home/me/projects
 ```
 
-**Secrets as files.** Instead of the env file, a secret can live in `/etc/maestro/credentials/<NAME>` and be passed in by name:
+**Secrets as files.** A secret can live in `/etc/maestro/credentials/<NAME>` instead of the env file, and be passed in by name:
 
 ```ini
 [Service]
 LoadCredential=GH_WEBHOOK_SECRET:/etc/maestro/credentials/GH_WEBHOOK_SECRET
+LoadCredential=ANTHROPIC_API_KEY:/etc/maestro/credentials/ANTHROPIC_API_KEY
 ```
+
+The engine looks for each secret in this order: the credentials directory, `/run/secrets/<NAME>`, then the environment. A file is the safer channel: it is not visible in the process environment, and each agent receives only the secrets its bundle declared. Shell command steps receive none; name a variable in `MAESTRO_SERVER_ENV_ALLOW` if a step needs it.
 
 **Upgrading.** Unpack a newer bundle and run its `install.sh` again. The data directory, workspaces, env file and credentials are kept, and a running service is restarted on the new version. The installer replaces the unit file, so keep your changes in drop-ins.
 
@@ -129,21 +137,21 @@ With Docker Compose, `packaging/server/compose.yaml` has the same setup: `docker
 
 **Things to know:**
 
-- **Stop timeout.** The engine drains active runs for up to 90 seconds on stop, but `docker stop` waits only 10 seconds by default. Use `--stop-timeout 120` (or `docker stop -t 120`), or `stop_grace_period: 120s` in Compose.
+- **Stop timeout.** The engine drains active runs for up to 90 seconds on stop, but `docker stop` waits only 10 seconds by default. Use `--stop-timeout 120` (or `docker stop -t 120`), or `stop_grace_period: 120s` in Compose. The image runs `tini` without `-g`, so the stop signal reaches the engine alone and runs in flight can finish.
 - **Restart after a hard kill.** If the engine is killed without stopping (`docker kill`, out of memory, a host crash), its lock stays behind. A new container cannot tell that lock from one held by another container on the same volume, so it waits for the lock to go quiet: the engine refuses to start for up to 3 minutes, and a restart policy brings it back after that.
 - **Health.** The image's health check calls `/healthz` on the engine's status port, 7433, inside the container. `docker ps` shows `healthy` once it answers.
-- **Secrets as files.** Docker and Compose secrets mounted at `/run/secrets/<NAME>` are read by name, like systemd credentials.
+- **Secrets as files.** Docker and Compose secrets mounted at `/run/secrets/<NAME>` are read by name before the environment, like systemd credentials, and each agent receives only the secrets its bundle declared.
 - **Webhook port.** Inside the container the webhook listener listens on all interfaces so the port can be published. Publish it to the host's loopback (`127.0.0.1:17997:17997`) and put a reverse proxy or tunnel in front of it.
 
 ## Health and status
 
 The engine answers on `127.0.0.1:7433`, reachable only from the same host (or, for the container, from inside it):
 
-| Endpoint       | Answers                                                                          |
-| -------------- | -------------------------------------------------------------------------------- |
-| `GET /healthz` | `200` while the engine is alive                                                  |
-| `GET /readyz`  | `200` once it is ready; `503` while starting, draining, or after losing its lock |
-| `GET /status`  | Live counters: active runs and queue depth                                       |
+| Endpoint       | Answers                                                                                                              |
+| -------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `GET /healthz` | `200` while the engine holds its lock and responds; `503` once it lost the lock (restart it)                         |
+| `GET /readyz`  | `200` once it is running with no readiness gap; `503` while starting, draining, after losing its lock, or with a gap |
+| `GET /status`  | Phase, active runs, queue depth and readiness                                                                        |
 
 `maestro-cli cue engine status` and `maestro-cli cue engine inspect` report the engine's lock, heartbeat and recent runs from the data directory.
 

@@ -4,6 +4,11 @@
 
 export MAESTRO_USER_DATA="${MAESTRO_USER_DATA:-/var/lib/maestro/data}"
 
+# The Node.js that runs the CLI and the engine. install.sh writes its absolute
+# path here, so the service, a shell and the SQLite driver built at install all
+# agree on one runtime.
+NODE=node
+
 # Files written as root (an imported bundle, settings) are unreadable to the
 # engine, which runs as the maestro user.
 if [ "$(id -u)" = 0 ] && [ -z "${MAESTRO_ALLOW_ROOT:-}" ]; then
@@ -13,4 +18,4 @@ if [ "$(id -u)" = 0 ] && [ -z "${MAESTRO_ALLOW_ROOT:-}" ]; then
 	exit 1
 fi
 
-exec node /opt/maestro/maestro-cli.js "$@"
+exec "$NODE" /opt/maestro/maestro-cli.js "$@"
