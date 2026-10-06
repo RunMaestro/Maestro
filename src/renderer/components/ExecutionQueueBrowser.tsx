@@ -35,6 +35,9 @@ import { Modal, ModalFooter } from './ui/Modal';
 import { QueuedItemEditModal } from './QueuedItemEditModal';
 import { ForcedParallelRequiredModal } from './ForcedParallelRequiredModal';
 import { TurnSettingPills } from './ui/TurnSettingPills';
+import { MiniBadge } from './ui/MiniBadge';
+import { HeldForRetryBadge } from './HeldForRetryBadge';
+import { useIsHeldRetryItem } from '../stores/retryStore';
 import {
 	useQueueReorder,
 	useQueueRowDrag,
@@ -587,7 +590,7 @@ export function ExecutionQueueBrowser({
 												className="inline-block w-2 h-2 rounded-full"
 												style={{ backgroundColor: theme.colors.warning }}
 											/>
-											<span className="font-mono">{tab.displayName}</span>
+											<span>{tab.displayName}</span>
 										</li>
 									))}
 								</ul>
@@ -709,6 +712,8 @@ function QueueItemRow({
 	const { showDragReady, showGrabbed, isDimmed } = visual;
 
 	const isCommand = item.type === 'command';
+	const isWaitingForConnection = !!item.waitingForConnection;
+	const isHeldForRetry = useIsHeldRetryItem(item.id);
 	// Read up to the first 4k characters and let CSS line-clamp cap the card at
 	// three lines. The native ellipsis fills the space without wrapping past the
 	// card, so longer messages show as much as fits rather than a hard 100-char cut.
@@ -764,7 +769,13 @@ function QueueItemRow({
 					boxShadow: isSelected && !isDragging ? `0 0 0 1px ${theme.colors.accent}` : undefined,
 					cursor: canDrag ? (isDragging ? 'grabbing' : 'grab') : 'default',
 					...queueDragCardStyle(theme, { isDragging, showGrabbed }),
-					opacity: isDragging ? 0.95 : isPaused ? 0.45 : isDimmed ? 0.5 : 1,
+					opacity: isDragging
+						? 0.95
+						: isPaused || isWaitingForConnection
+							? 0.45
+							: isDimmed
+								? 0.5
+								: 1,
 				}}
 				{...cardHandlers}
 			>
@@ -773,6 +784,8 @@ function QueueItemRow({
 
 				{/* Position indicator */}
 				<span
+					// Monospace on purpose: these are #1..#N in a fixed 5px-wide slot,
+					// and proportional digits would make the column ragged.
 					className="text-xs font-mono mt-0.5 w-5 text-center transition-all duration-200"
 					style={{
 						color: theme.colors.textDim,
@@ -806,7 +819,8 @@ function QueueItemRow({
 									e.stopPropagation();
 									onSwitchToSession();
 								}}
-								className="text-xs px-1.5 py-0.5 rounded font-mono hover:opacity-80 transition-opacity cursor-pointer"
+								// Prose label, not code - see ExecutionQueueIndicator.
+								className="text-xs px-1.5 py-0.5 rounded hover:opacity-80 transition-opacity cursor-pointer"
 								style={{
 									backgroundColor: theme.colors.accent + '25',
 									color: theme.colors.textMain,
@@ -823,16 +837,15 @@ function QueueItemRow({
 							<Clock className="w-3 h-3" />
 							{timeDisplay}
 						</span>
-						{isPaused && (
-							<span
-								className="text-2xs font-bold tracking-wider px-1.5 py-0.5 rounded"
-								style={{
-									backgroundColor: theme.colors.warning + '33',
-									color: theme.colors.warning,
-								}}
-							>
-								HELD
-							</span>
+						{isHeldForRetry && <HeldForRetryBadge theme={theme} />}
+						{isPaused && <MiniBadge label="HELD" theme={theme} color={theme.colors.warning} />}
+						{isWaitingForConnection && (
+							<MiniBadge
+								label="WAITING FOR CONNECTION"
+								theme={theme}
+								color={theme.colors.warning}
+								title="This message will run after Maestro reconnects"
+							/>
 						)}
 					</div>
 					<div

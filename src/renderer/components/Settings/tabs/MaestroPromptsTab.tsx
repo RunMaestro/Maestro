@@ -57,7 +57,12 @@ import { eventMatchesShortcutKeys } from '../../../utils/shortcutMatch';
 import { isTextInputTarget } from '../../../utils/messageScrollNavigation';
 import { PROMPT_IDS } from '../../../../shared/promptDefinitions';
 import { estimateTokenCount } from '../../../../shared/formatters';
+import { usePluginContributions } from '../../../hooks/usePluginContributions';
 import './MaestroPromptsTab.css';
+
+// Category key for plugin-contributed prompts. They are read-only (a plugin owns
+// their content), shown for reference/insertion, never edited via this tab.
+const PLUGIN_PROMPT_CATEGORY = 'plugin';
 
 interface CorePrompt {
 	id: string;
@@ -121,6 +126,7 @@ const CATEGORY_INFO: Record<string, { label: string }> = {
 	'group-chat': { label: 'Group Chat' },
 	includes: { label: 'Includes' },
 	'inline-wizard': { label: 'Inline Wizard' },
+	[PLUGIN_PROMPT_CATEGORY]: { label: 'Plugin Prompts' },
 	system: { label: 'System' },
 	wizard: { label: 'Wizard' },
 };
@@ -130,19 +136,21 @@ const CATEGORY_HELP: Record<string, string> = {
 	wizard:
 		'Prompts used by the Wizard feature for AI-guided conversations, document generation, and continuation flows.',
 	'inline-wizard':
-		'Prompts for the Inline Wizard that operates within the editor — new sessions, iterations, and generation.',
+		'Prompts for the Inline Wizard that operates within the editor - new sessions, iterations, and generation.',
 	autorun:
-		'Prompts controlling Auto Run behavior — the default execution prompt and synopsis generation for Auto Run documents.',
+		'Prompts controlling Auto Run behavior - the default execution prompt and synopsis generation for Auto Run documents.',
 	'group-chat':
-		'Prompts for Group Chat sessions — moderator system/synthesis prompts, participant behavior, and participant request formatting.',
+		'Prompts for Group Chat sessions - moderator system/synthesis prompts, participant behavior, and participant request formatting.',
 	context:
-		'Prompts for context management — grooming (trimming context), transferring context between sessions, and summarization.',
+		'Prompts for context management - grooming (trimming context), transferring context between sessions, and summarization.',
 	commands:
-		'Prompts for built-in commands — image-only message handling and git commit message generation.',
+		'Prompts for built-in commands - image-only message handling and git commit message generation.',
 	includes:
 		'Reusable blocks referenced from other prompts. Two directives consume them: {{INCLUDE:name}} fully inlines the content at assembly time (use for foundational rules every agent must have); {{REF:name}} expands to a one-line pointer that tells the agent to fetch it on demand via `maestro-cli prompts get <name>` (use for heavy reference material only some sessions need). Keeps shared content (history format, Auto Run spec, CLI reference, Cue model, file-access rules) in one place so every agent that needs it gets the same wording.',
 	system:
-		"System-level prompts — the Maestro system context injected into agents, tab naming, Director's Notes, and feedback.",
+		"System-level prompts - the Maestro system context injected into agents, tab naming, Director's Notes, and feedback.",
+	[PLUGIN_PROMPT_CATEGORY]:
+		'Read-only prompts contributed by installed plugins. Their content is owned by the plugin and cannot be edited here.',
 };
 
 // Group template variables by prefix for the help panel
@@ -192,7 +200,7 @@ function PromptsHelpPanel({ theme, onClose }: { theme: Theme; onClose?: () => vo
 					code.
 				</p>
 				<p className="prompts-help-text" style={{ color: theme.colors.textDim }}>
-					Changes take effect immediately — no restart required. Use the{' '}
+					Changes take effect immediately - no restart required. Use the{' '}
 					<strong style={{ color: theme.colors.textMain }}>Reset to Default</strong> button to
 					revert any prompt to its bundled original.
 				</p>
@@ -246,7 +254,7 @@ function PromptsHelpPanel({ theme, onClose }: { theme: Theme; onClose?: () => vo
 					>
 						.md
 					</code>{' '}
-					(native separators for the host OS) — nothing else, no description or formatting. Wrap the
+					(native separators for the host OS) - nothing else, no description or formatting. Wrap the
 					directive with whatever prose, list markers, or context you want; the agent reads the file
 					directly. Use this for heavy reference material only some sessions need. The path resolves
 					to bundled content; to honor your customizations on this tab, agents should fetch via{' '}
@@ -379,6 +387,33 @@ export function MaestroPromptsTab({
 	if (initialRecalledPromptIdRef.current === undefined) {
 		initialRecalledPromptIdRef.current = lastSelectedPromptId ?? null;
 	}
+
+	// Plugin-contributed prompts (read-only). Empty when the plugins Encore flag
+	// is off. Shaped like CorePrompt so they slot into the same list/editor, but
+	// flagged via pluginPromptIds so save/reset/editing stay disabled for them.
+	const pluginContributions = usePluginContributions();
+	const pluginPromptItems = useMemo<CorePrompt[]>(
+		() =>
+			pluginContributions.prompts.map((p) => ({
+				id: p.id,
+				filename: '',
+				description: p.description ?? `Plugin prompt from ${p.pluginId}`,
+				category: PLUGIN_PROMPT_CATEGORY,
+				content: p.content,
+				isModified: false,
+				hasDefaultDrifted: false,
+			})),
+		[pluginContributions.prompts]
+	);
+	const pluginPromptIds = useMemo(
+		() => new Set(pluginPromptItems.map((p) => p.id)),
+		[pluginPromptItems]
+	);
+	const allPrompts = useMemo(
+		() => [...prompts, ...pluginPromptItems],
+		[prompts, pluginPromptItems]
+	);
+	const isSelectedPluginPrompt = selectedPrompt ? pluginPromptIds.has(selectedPrompt.id) : false;
 
 	const autocomplete = useEditorTemplateAutocomplete({
 		editorRef: editorRef as React.RefObject<MarkdownEditorHandle>,
@@ -712,7 +747,7 @@ export function MaestroPromptsTab({
 	 * matching only the names would leave the whole point of the box undone.
 	 */
 	const filteredPrompts = useMemo(() => {
-		const sorted = [...prompts].sort((a, b) => a.id.localeCompare(b.id));
+		const sorted = [...allPrompts].sort((a, b) => a.id.localeCompare(b.id));
 		if (!filterQueryTrimmed) return sorted.map((prompt) => ({ prompt, snippet: undefined }));
 		const q = filterQueryTrimmed.toLowerCase();
 		return sorted
@@ -729,7 +764,7 @@ export function MaestroPromptsTab({
 				snippet: matchingLine(prompt.content, filterQueryTrimmed),
 			}))
 			.filter((entry) => entry.matches);
-	}, [prompts, filterQueryTrimmed, hasUnsavedChanges, selectedPrompt?.id]);
+	}, [allPrompts, filterQueryTrimmed, hasUnsavedChanges, selectedPrompt?.id]);
 
 	// Read at filter time to hand focus back to the list; a ref keeps the
 	// Escape ladder off the filtered list's identity.
@@ -767,7 +802,7 @@ export function MaestroPromptsTab({
 
 	const handleSelectPrompt = useCallback(
 		(id: string) => {
-			const prompt = prompts.find((p) => p.id === id);
+			const prompt = allPrompts.find((p) => p.id === id);
 			if (!prompt) return;
 			if (hasUnsavedChanges) {
 				const discard = window.confirm('You have unsaved changes. Discard them?');
@@ -967,6 +1002,23 @@ export function MaestroPromptsTab({
 	}, [viewMode, comparisonView, editedContent, filterQueryTrimmed]);
 
 	const renderEditorBody = useCallback(() => {
+		// A plugin owns its prompt's content, so it is shown in the same editor
+		// with writing switched off - readable and copyable, never saveable.
+		if (isSelectedPluginPrompt) {
+			return (
+				<div className="prompt-editor-shell" style={{ borderColor: theme.colors.border }}>
+					<MarkdownEditor
+						key={`plugin-${selectedPrompt?.id ?? 'none'}`}
+						value={editedContent}
+						onChange={() => {}}
+						readOnly
+						language="markdown"
+						theme={theme}
+					/>
+				</div>
+			);
+		}
+
 		// The bundled default is a read-only comparison view, so it takes the
 		// editor's place rather than opening beside it - and it is shown as
 		// SOURCE, since the point is to diff wording against your own copy.
@@ -1103,6 +1155,7 @@ export function MaestroPromptsTab({
 			</>
 		);
 	}, [
+		isSelectedPluginPrompt,
 		comparisonView,
 		isShowingDefault,
 		bundledDefaultContent,
@@ -1133,7 +1186,7 @@ export function MaestroPromptsTab({
 			{!isEditorExpanded && (
 				<div className="prompts-tab-header-text">
 					<div className="text-xs font-bold opacity-70 uppercase mb-1">Core System Prompts</div>
-					<p className="text-xs opacity-50">
+					<p className="text-xs opacity-70">
 						Customize the system prompts used by Maestro features. Changes take effect immediately.
 						Use <code className="text-xs opacity-70">{'{{INCLUDE:name}}'}</code> to reference other
 						prompt files.
@@ -1219,7 +1272,7 @@ export function MaestroPromptsTab({
 				primaryAction={{
 					label: isSaving ? 'Saving...' : 'Save',
 					loading: isSaving,
-					disabled: !hasUnsavedChanges,
+					disabled: !hasUnsavedChanges || isSelectedPluginPrompt,
 					onClick: handleSave,
 				}}
 				secondaryAction={{

@@ -208,7 +208,7 @@ window.maestro = {
 
 ## Process Manager
 
-The `ProcessManager` class (`src/main/process-manager.ts`) handles two process types:
+The `ProcessManager` class (`src/main/process-manager/ProcessManager.ts`) handles two process types:
 
 ### PTY Processes (via `node-pty`)
 
@@ -392,7 +392,7 @@ Maestro uses 15 custom hooks for state management and functionality.
 
 ### Core Hooks
 
-#### useSettings (`src/renderer/hooks/useSettings.ts`)
+#### useSettings (`src/renderer/hooks/settings/useSettings.ts`)
 
 Manages all application settings with automatic persistence.
 
@@ -409,7 +409,7 @@ Manages all application settings with automatic persistence.
 - Keyboard shortcuts
 - Custom AI commands
 
-#### useSessionManager (`src/renderer/hooks/useSessionManager.ts`)
+#### Agent and group CRUD (`src/renderer/hooks/session/useSessionCrud.ts`, `src/renderer/hooks/session/useGroupManagement.ts`)
 
 Manages agents and groups with CRUD operations.
 
@@ -422,7 +422,7 @@ Manages agents and groups with CRUD operations.
 - `createNewGroup(name, emoji, moveSession, activeSessionId)`
 - Drag and drop handlers
 
-#### useFileTreeManagement (`src/renderer/hooks/useFileTreeManagement.ts`)
+#### useFileTreeManagement (`src/renderer/hooks/git/useFileTreeManagement.ts`)
 
 Manages file tree refresh/filter state and git-related file metadata.
 
@@ -433,7 +433,7 @@ Manages file tree refresh/filter state and git-related file metadata.
 - `cancelFileTreeLoad(sessionId)` - Abort the in-flight tree load (halts further readDir round-trips on an SSH tree; a local tree is walked in one main-process call, so cancelling only discards the result)
 - `filteredFileTree` - Derived tree based on filter string
 
-#### useBatchProcessor (`src/renderer/hooks/useBatchProcessor.ts`)
+#### useBatchProcessor (`src/renderer/hooks/batch/useBatchProcessor.ts`)
 
 Manages Auto Run batch execution logic.
 
@@ -445,7 +445,7 @@ Manages Auto Run batch execution logic.
 
 ### UI Management Hooks
 
-#### useLayerStack (`src/renderer/hooks/useLayerStack.ts`)
+#### useLayerStack (`src/renderer/hooks/ui/useLayerStack.ts`)
 
 Core layer management for modals and overlays.
 
@@ -455,17 +455,17 @@ Core layer management for modals and overlays.
 - `unregisterLayer(id)` - Remove a layer
 - `updateLayerHandler(id, handler)` - Update escape handler
 
-#### useNavigationHistory (`src/renderer/hooks/useNavigationHistory.ts`)
+#### useNavigationHistory (`src/renderer/hooks/session/useNavigationHistory.ts`)
 
 Back/forward navigation through sessions and tabs. See [Navigation History](#navigation-history).
 
 ### Input & Autocomplete Hooks
 
-#### useAtMentionCompletion (`src/renderer/hooks/useAtMentionCompletion.ts`)
+#### useAtMentionCompletion (`src/renderer/hooks/input/useAtMentionCompletion.ts`)
 
 Handles @-mention autocomplete for file references in prompts.
 
-#### useTabCompletion (`src/renderer/hooks/useTabCompletion.ts`)
+#### useTabCompletion (`src/renderer/hooks/input/useTabCompletion.ts`)
 
 Tab completion utilities for terminal-style input.
 
@@ -482,15 +482,15 @@ Do not hand-roll a second `{{` detector for a new editor; write a target for it 
 
 ### Feature Hooks
 
-#### useAchievements (`src/renderer/hooks/useAchievements.ts`)
+#### useAchievements (`src/renderer/hooks/batch/useAchievements.ts`)
 
 Achievement/badge system for Auto Run usage. See [Achievement System](#achievement-system).
 
-#### useActivityTracker (`src/renderer/hooks/useActivityTracker.ts`)
+#### useActivityTracker (`src/renderer/hooks/session/useActivityTracker.ts`)
 
 User activity tracking for agent idle detection and status.
 
-#### useMobileLandscape (`src/renderer/hooks/useMobileLandscape.ts`)
+#### useMobileLandscape (`src/renderer/hooks/remote/useMobileLandscape.ts`)
 
 Mobile landscape orientation detection for responsive layouts.
 
@@ -1095,9 +1095,9 @@ unifiedClosedTabHistory: ClosedTabEntry[]; // Undo stack for Cmd+Shift+T
 
 **`unifiedTabOrder` is the source of truth for the TabBar.** Every tab in `aiTabs` or `filePreviewTabs` must have a corresponding `UnifiedTabRef` in `unifiedTabOrder`. Tabs missing from this array will have content that renders (via `activeTabId`/`activeFileTabId` lookups) but will be invisible in the TabBar.
 
-When adding or activating tabs, always update `unifiedTabOrder`. Use `ensureInUnifiedTabOrder()` from `tabHelpers.ts` when activating existing tabs defensively. See [[CLAUDE-PATTERNS.md]] section 6 for code examples.
+When adding or activating tabs, always update `unifiedTabOrder`. Use `ensureInUnifiedTabOrder()` from `tabHelpers` when activating existing tabs defensively. See [[CLAUDE-PATTERNS.md]] section 6 for code examples.
 
-The shared `buildUnifiedTabs(session)` function in `tabHelpers.ts` is the canonical way to compute the tab list for rendering. It follows `unifiedTabOrder` and appends any orphaned tabs as a safety net.
+The shared `buildUnifiedTabs(session)` function in `tabHelpers` is the canonical way to compute the tab list for rendering. It follows `unifiedTabOrder` and appends any orphaned tabs as a safety net.
 
 ### Behavior
 
@@ -1131,7 +1131,7 @@ File tabs display a colored badge based on file extension. Colors are theme-awar
 | `FilePreview.tsx`            | File content viewer with edit mode; routes each format to its viewer                                |
 | `ParquetViewer/`             | Parquet grid, schema rail, and filter bar (client of `src/main/parquet/`)                           |
 | `MainPanel.tsx`              | Coordinates tab display and file loading                                                            |
-| `tabHelpers.ts`              | Shared tab utilities (`buildUnifiedTabs`, `ensureInUnifiedTabOrder`, `createTab`, `closeTab`, etc.) |
+| `tabHelpers/`                | Shared tab utilities (`buildUnifiedTabs`, `ensureInUnifiedTabOrder`, `createTab`, `closeTab`, etc.) |
 | `useTabHandlers.ts`          | Tab operation hooks including `handleOpenFileTab`                                                   |
 | `tabStore.ts`                | Zustand selectors for tab state (`selectUnifiedTabs`, `selectActiveTab`)                            |
 | `useDebouncedPersistence.ts` | Persists file tabs across sessions                                                                  |
@@ -1151,7 +1151,7 @@ Persistent PTY-backed terminal tabs that integrate into the unified tab bar alon
 - **Spawn failure UX**: `state === 'exited' && pid === 0` shows an error overlay with a Retry button
 - **Exit message**: PTY exit writes a yellow ANSI banner and new-terminal hint to the xterm buffer
 - **Font-swap hazard (no mitigation in `XTerminal` today)**: xterm measures its cell size ONCE, inside `term.open()`. The terminal fonts load from Google Fonts with `display=swap` (`src/renderer/index.html`), so a face that arrives after that leaves every glyph drawn at its own advance inside a cell sized for the fallback, which renders as `C l a u d e   C o d e` - correct letters, stretched spacing. Terminal tabs mask it by re-fitting on every show/hide; a terminal that mounts once inside a modal has nothing that re-measures it. `XTerminal` carried a `document.fonts.ready` re-measure for this and it was removed, so a new always-mounted terminal surface has to solve it itself.
-- **Fixed-pitch guarantee (`resolveTerminalFontFamily()` in `XTerminal.tsx`)**: Maestro has ONE `fontFamily` setting, shared between the app chrome and every terminal, so a user who picks a proportional UI font (Avenir Next was the reported case) breaks every terminal at once. That is a different failure from the font-swap hazard above and needs a different fix, because the configured font resolves perfectly - it simply is not fixed-pitch, so appending a `monospace` fallback is never reached. Since CSS cannot be asked whether a family is monospace, `isFixedPitchStack()` MEASURES it on a canvas: a fixed-pitch face gives `W` and `i` the same advance, while Avenir Next gives them 1025 and 296. A proportional stack is replaced with `FIXED_PITCH_FALLBACK_STACK`; anything measurably fixed-pitch is left alone, and unmeasurable input (no canvas, jsdom) keeps the user's font rather than overriding on no evidence. `ensureMonospaceFallback()` still runs first and covers the other half - a font that fails to resolve at all, where the browser would otherwise fall back to the context default (`sans-serif` on a canvas, the inherited UI font in the DOM).
+- **Fixed-pitch guarantee (`resolveTerminalFontFamily()` in `src/renderer/utils/fixedPitchFont.ts`, called by `XTerminal.tsx`)**: the terminal font inherits the interface font whenever the user has not set one of its own, so picking a proportional UI font (Avenir Next was the reported case) breaks every terminal at once. That is a different failure from the font-swap hazard above and needs a different fix, because the configured font resolves perfectly - it simply is not fixed-pitch, so the appended `monospace` fallback is never reached. Since CSS cannot be asked whether a family is monospace, `isFixedPitchStack()` MEASURES it on a canvas: a fixed-pitch face gives `W` and `i` the same advance, while Avenir Next gives them 1025 and 296. A proportional stack is replaced with `MONO_FALLBACK_STACK`; anything measurably fixed-pitch is left alone, and unmeasurable input (no canvas, jsdom) keeps the user's font rather than overriding on no evidence. The shared `withMonoFallback()` (`src/shared/fontStack.ts`) still runs first and covers the other half - a font that fails to resolve at all, where the browser would otherwise fall back to the context default (`sans-serif` on a canvas, the inherited UI font in the DOM). Do NOT add a terminal-local copy of that fallback chain; every surface degrades through the one in `fontStack.ts`.
 
 ### Terminal Tab Interface
 
@@ -1220,7 +1220,9 @@ interface QueuedItem {
 - Auto Run tasks queue with regular messages
 - Queue visible via indicator in tab bar
 - Users can cancel pending items via queue browser
+- A queued message that `@mentions` another agent (`crossAgentMention: true`) consults that agent when the item is DISPATCHED, not when it was queued (`src/renderer/services/crossAgentMentions.ts`)
 - Tab labels in the indicator and browser are resolved from the LIVE tab via `resolveQueuedItemTabName()`; `QueuedItem.tabName` is only a fallback for a tab that no longer exists
+- Producers other than the composer (the CLI's `dispatch --queue`, a snooze's prompt-on-return) build their item with `buildQueuedMessageItem()` / `enqueuePromptForTab()` (`src/renderer/services/queuedPrompt.ts`) so it is byte-identical to a UI-queued one. Queueing rather than spawning is also what makes a prompt safe to send in the same tick a tab was created in: the target is re-resolved at drain time
 
 ### Session Fields
 
@@ -1504,54 +1506,31 @@ groupChatEmitters.emitModeratorUsage(chatId, usage); // Token usage stats
 
 ## Web/Mobile Interface
 
-Progressive Web App (PWA) for remote control of Maestro from mobile devices.
+<!-- doc-refs-ignore -->
+
+Maestro's mobile and remote-control experience is the **web-desktop build**: the same React renderer (`src/renderer/`) compiled for the browser and served over a WebSocket IPC bridge. There is no longer a separate mobile React app - the legacy `src/web/mobile/` bundle was retired in Phase 06 and its portable touch hooks were hoisted into `src/renderer`. See [WEB-MOBILE.md](docs/agent-guides/WEB-MOBILE.md) for the full guide.
 
 ### Architecture
 
 ```
-src/web/
-├── index.ts              # Entry point
-├── main.tsx              # React entry
-├── index.html            # HTML template
-├── index.css             # Global styles
-├── components/           # Shared components (Button, Card, Input, Badge)
-├── hooks/                # Web-specific hooks
-├── mobile/               # Mobile-optimized components
-├── utils/                # Web utilities
-└── public/               # PWA assets (manifest, icons, service worker)
+src/web-desktop/          # Browser entry point for the renderer
+├── index.html            # HTML template (mobile viewport + PWA tags)
+├── bootstrap.ts          # Boots the renderer against the WebSocket bridge
+├── electron-shim.ts      # Browser stand-in for the Electron/preload API
+└── sentry-shim.ts        # No-op Sentry shim for the browser build
+
+src/web/public/           # PWA assets served into dist/web-desktop
+├── manifest.json         # Web app manifest
+└── sw.js                 # Service worker (PWA install + caching)
 ```
 
-### Mobile Components (`src/web/mobile/`)
+Touch and mobile affordances live in the shared renderer, gated on `isCoarsePointer()`:
 
-| Component                       | Purpose                          |
-| ------------------------------- | -------------------------------- |
-| `App.tsx`                       | Main mobile app shell            |
-| `TabBar.tsx`                    | Bottom navigation bar            |
-| `SessionPillBar.tsx`            | Horizontal session selector      |
-| `CommandInputBar.tsx`           | Message input with voice support |
-| `MessageHistory.tsx`            | Conversation display             |
-| `ResponseViewer.tsx`            | AI response viewer               |
-| `AutoRunIndicator.tsx`          | Auto Run status display          |
-| `MobileHistoryPanel.tsx`        | Command history browser          |
-| `QuickActionsMenu.tsx`          | Quick action shortcuts           |
-| `SlashCommandAutocomplete.tsx`  | Command autocomplete             |
-| `ConnectionStatusIndicator.tsx` | WebSocket connection status      |
-| `OfflineQueueBanner.tsx`        | Offline message queue indicator  |
+- `src/renderer/utils/touch.ts` - touch primitives (haptics, pointer detection, gesture thresholds)
+- `src/renderer/hooks/utils/` - `useSwipeGestures`, `useLongPress`, `useVoiceInput`, `useKeyboardVisibility`
+- `src/renderer/components/TerminalTouchBar.tsx`, `shared/LongPressable.tsx` - touch-facing UI
 
-### Web Hooks (`src/web/hooks/`)
-
-| Hook                      | Purpose                         |
-| ------------------------- | ------------------------------- |
-| `useWebSocket.ts`         | WebSocket connection management |
-| `useSessions.ts`          | Session state synchronization   |
-| `useCommandHistory.ts`    | Command history management      |
-| `useSwipeGestures.ts`     | Touch gesture handling          |
-| `usePullToRefresh.ts`     | Pull-to-refresh functionality   |
-| `useOfflineQueue.ts`      | Offline message queuing         |
-| `useNotifications.ts`     | Push notification handling      |
-| `useDeviceColorScheme.ts` | System theme detection          |
-| `useUnreadBadge.ts`       | Unread message badge            |
-| `useSwipeUp.ts`           | Swipe-up gesture detection      |
+> The remaining `src/web/{components,hooks,utils,constants}` files are orphaned dead code from the retired mobile app; only `src/web/public/` is still built.
 
 ### Communication
 

@@ -26,16 +26,21 @@ To add support for a new agent, follow this checklist. The agent completeness te
 
 1. **Add agent ID** to `src/shared/agentIds.ts` → `AGENT_IDS` tuple
 2. **Add agent definition** to `src/main/agents/definitions.ts` → `AGENT_DEFINITIONS` array
-3. **Define capabilities** in `src/main/agents/capabilities.ts` → `AGENT_CAPABILITIES` record (23 boolean fields)
+3. **Define capabilities** in `src/main/agents/capabilities.ts` → `AGENT_CAPABILITIES` record (24 boolean fields)
 4. **Add display name & beta status** to `src/shared/agentMetadata.ts` - add entry to the internal `AGENT_DISPLAY_NAMES` record and optionally to `BETA_AGENTS` set (both are module-private; use `getAgentDisplayName()` and `isBetaAgent()` to read them)
 5. **Add context window default** (if applicable) to `src/shared/agentConstants.ts` → `DEFAULT_CONTEXT_WINDOWS`
-6. **Sync renderer interfaces** - add any new capability flags to `AgentCapabilities` in `src/renderer/hooks/agent/useAgentCapabilities.ts`, `src/renderer/types/index.ts`, and `src/renderer/global.d.ts`
+6. **Register it in the provider pickers** - add an entry to `AGENT_PICKER_META` in `src/shared/agentMetadata.ts` (description + brand color), or `null` if the agent must never be offered. This is what puts the provider in the New Agent modal, the New Agent Wizard's tile strip, and the Group Chat moderator dropdown, all at once. See [Step 2.6](#step-26-register-the-provider-in-the-pickers)
+7. **Add a re-auth command** to `AGENT_LOGIN_COMMANDS` in `src/shared/agentMetadata.ts` (`null` only when the agent carries no credentials of its own)
+8. **Draw the tile logo** - add a `case` to `AgentLogo` in `src/renderer/components/Wizard/screens/AgentSelectionScreen/components/AgentLogo.tsx`, and a glyph to `AGENT_ICONS` in `src/renderer/constants/agentIcons.ts`
+9. **Sync renderer interfaces** - add any new capability flags to `AgentCapabilities` in `src/renderer/hooks/agent/useAgentCapabilities.ts`, `src/renderer/types/index.ts`, and `src/renderer/global.d.ts`
 
 #### Conditional Steps (based on capabilities)
 
-7. **If `supportsJsonOutput: true`**: Create output parser at `src/main/parsers/{agent}-output-parser.ts`, register in `src/main/parsers/index.ts`
-8. **If output parser exists**: Add error patterns to `src/main/parsers/error-patterns.ts`
-9. **If `supportsSessionStorage: true`**: Create session storage extending `BaseSessionStorage` at `src/main/storage/{agent}-session-storage.ts`, register in `src/main/storage/index.ts`
+10. **If `supportsJsonOutput: true`**: Create output parser at `src/main/parsers/{agent}-output-parser.ts`, register in `src/main/parsers/index.ts`
+11. **If output parser exists**: Add error patterns to `src/main/parsers/error-patterns.ts`
+12. **If `supportsSessionStorage: true`**: Create session storage extending `BaseSessionStorage` at `src/main/storage/{agent}-session-storage.ts`, register in `src/main/storage/index.ts`
+13. **If `supportsAdditionalDirectories: true`**: Add `additionalDirArgs` to the agent's definition in `src/main/agents/definitions.ts` - see [Step 3.5](#step-35-additional-directories)
+14. **If the agent needs binary probing beyond `$PATH`**: Add install locations to `src/main/agents/path-prober.ts` (both the Windows and the POSIX tables)
 
 #### CI Enforcement
 
@@ -46,6 +51,10 @@ The `agent-completeness.test.ts` test validates:
 - Every agent with `supportsJsonOutput` has a registered output parser
 - Every agent with `supportsSessionStorage` has a registered session storage
 - Every agent with an output parser has error patterns registered
+- Every agent declares `additionalDirArgs` **iff** `supportsAdditionalDirectories` is true
+- Every ID in `AGENT_IDS` has a picker decision in `AGENT_PICKER_META` (compile-time: the record is keyed by `AgentId`)
+- Every pickable agent has a real, non-hidden definition and a usable re-auth command
+- Every pickable agent draws a real logo rather than the blank fallback ring (`AgentSelectionScreen/components.test.tsx`)
 
 See detailed instructions below.
 
@@ -122,7 +131,7 @@ Each agent declares capabilities that determine which UI features are available.
 ### Capability Interface
 
 ```typescript
-// src/main/agents/capabilities.ts (23 boolean fields + 1 optional)
+// src/main/agents/capabilities.ts (24 boolean fields + 1 optional)
 
 interface AgentCapabilities {
 	// Core features
@@ -136,6 +145,7 @@ interface AgentCapabilities {
 	supportsImageInputOnResume: boolean; // Can receive images when resuming a session
 	supportsSlashCommands: boolean; // Has discoverable slash commands
 	supportsStreamJsonInput: boolean; // Accepts --input-format stream-json for image stdin
+	supportsPromptViaStdin: boolean; // CLI reads the prompt from stdin when it is not an argument
 
 	// Storage & tracking
 	supportsSessionStorage: boolean; // Persists provider sessions we can browse
@@ -144,7 +154,7 @@ interface AgentCapabilities {
 
 	// Execution behavior
 	supportsBatchMode: boolean; // Runs per-message (vs persistent process)
-	requiresPromptToStart: boolean; // No eager spawn — needs prompt to start
+	requiresPromptToStart: boolean; // No eager spawn - needs prompt to start
 	supportsStreaming: boolean; // Streams output incrementally
 	supportsModelSelection: boolean; // Supports --model flag for model selection
 
@@ -162,6 +172,9 @@ interface AgentCapabilities {
 	usesJsonLineOutput: boolean; // Uses JSONL (not JSON) in batch mode
 	usesCombinedContextWindow: boolean; // Combined input+output context display
 
+	// Filesystem scope
+	supportsAdditionalDirectories: boolean; // CLI can grant dirs outside the cwd (e.g. --add-dir)
+
 	// Optional non-boolean
 	imageResumeMode?: 'prompt-embed'; // How to handle images on resume when -i unavailable
 }
@@ -173,31 +186,33 @@ interface AgentCapabilities {
 
 ### Capability-to-UI Feature Mapping
 
-| Capability                    | UI Feature                    | Hidden When False        |
-| ----------------------------- | ----------------------------- | ------------------------ |
-| `supportsResume`              | Resume button                 | Button disabled          |
-| `supportsReadOnlyMode`        | Read-only toggle              | Toggle hidden            |
-| `supportsJsonOutput`          | Output parsing                | Raw text fallback        |
-| `supportsSessionId`           | Session ID pill               | Pill hidden              |
-| `supportsImageInput`          | Image attachment button       | Button hidden            |
-| `supportsImageInputOnResume`  | Image attach on resume        | Button hidden on resume  |
-| `supportsSlashCommands`       | Slash command autocomplete    | Autocomplete disabled    |
-| `supportsStreamJsonInput`     | Image via stdin (stream-json) | Uses file path fallback  |
-| `supportsSessionStorage`      | Sessions browser tab          | Tab hidden               |
-| `supportsCostTracking`        | Cost widget                   | Widget hidden            |
-| `supportsUsageStats`          | Token usage display           | Display hidden           |
-| `supportsBatchMode`           | Batch processing              | Persistent process mode  |
-| `requiresPromptToStart`       | Eager spawn on create         | Agent spawns immediately |
-| `supportsStreaming`           | Real-time display             | Waits for full response  |
-| `supportsModelSelection`      | Model dropdown                | Dropdown hidden          |
-| `supportsResultMessages`      | Show only final result        | Shows all messages       |
-| `supportsThinkingDisplay`     | Thinking/reasoning panel      | Panel hidden             |
-| `supportsContextMerge`        | Receive merged context        | Merge option hidden      |
-| `supportsContextExport`       | Export context                | Export option hidden     |
-| `supportsWizard`              | Wizard agent selection        | Agent excluded           |
-| `supportsGroupChatModeration` | Moderator dropdown            | Agent excluded           |
-| `usesJsonLineOutput`          | CLI batch parsing strategy    | Uses JSON fallback       |
-| `usesCombinedContextWindow`   | Context bar display           | Separate bars            |
+| Capability                      | UI Feature                                        | Hidden When False                                                |
+| ------------------------------- | ------------------------------------------------- | ---------------------------------------------------------------- |
+| `supportsResume`                | Resume button                                     | Button disabled                                                  |
+| `supportsReadOnlyMode`          | Read-only toggle                                  | Toggle hidden                                                    |
+| `supportsJsonOutput`            | Output parsing                                    | Raw text fallback                                                |
+| `supportsSessionId`             | Session ID pill                                   | Pill hidden                                                      |
+| `supportsImageInput`            | Image attachment button                           | Button hidden                                                    |
+| `supportsImageInputOnResume`    | Image attach on resume                            | Button hidden on resume                                          |
+| `supportsSlashCommands`         | Slash command autocomplete                        | Autocomplete disabled                                            |
+| `supportsStreamJsonInput`       | Image via stdin (stream-json)                     | Uses file path fallback                                          |
+| `supportsPromptViaStdin`        | Windows sends long prompts over stdin             | Prompt always stays in argv (~32K limit applies)                 |
+| `supportsSessionStorage`        | Sessions browser tab                              | Tab hidden                                                       |
+| `supportsCostTracking`          | Cost widget                                       | Widget hidden                                                    |
+| `supportsUsageStats`            | Token usage display                               | Display hidden                                                   |
+| `supportsBatchMode`             | Batch processing                                  | Persistent process mode                                          |
+| `requiresPromptToStart`         | Eager spawn on create                             | Agent spawns immediately                                         |
+| `supportsStreaming`             | Real-time display                                 | Waits for full response                                          |
+| `supportsModelSelection`        | Model dropdown                                    | Dropdown hidden                                                  |
+| `supportsResultMessages`        | Show only final result                            | Shows all messages                                               |
+| `supportsThinkingDisplay`       | Thinking/reasoning panel                          | Panel hidden                                                     |
+| `supportsContextMerge`          | Receive merged context                            | Merge option hidden                                              |
+| `supportsAdditionalDirectories` | Additional Directories: native `--add-dir` grants | Section still shown; grants are prompt-only and the copy says so |
+| `supportsContextExport`         | Export context                                    | Export option hidden                                             |
+| `supportsWizard`                | Wizard agent selection                            | Agent excluded                                                   |
+| `supportsGroupChatModeration`   | Moderator dropdown                                | Agent excluded                                                   |
+| `usesJsonLineOutput`            | CLI batch parsing strategy                        | Uses JSON fallback                                               |
+| `usesCombinedContextWindow`     | Context bar display                               | Separate bars                                                    |
 
 ### Context Window Configuration
 
@@ -250,6 +265,7 @@ When adding a new agent, start with all capabilities set to `false`:
   supportsImageInputOnResume: false,
   supportsSlashCommands: false,
   supportsStreamJsonInput: false,
+  supportsPromptViaStdin: false,
   supportsSessionStorage: false,
   supportsCostTracking: false,
   supportsUsageStats: false,
@@ -293,6 +309,9 @@ your-agent --help | grep -i plan
 your-agent --help | grep -i readonly
 your-agent --help | grep -i permission
 
+# Check for directory grants outside the cwd (Additional Directories)
+your-agent --help | grep -iE "add-dir|directories|workspace|writable|allowed"
+
 # Test JSON output
 your-agent run --format json "say hello" 2>&1 | head -20
 ```
@@ -304,6 +323,8 @@ Document:
 - [ ] How to resume a session
 - [ ] How to enable read-only mode
 - [ ] Token/usage reporting format
+- [ ] Whether directories outside the cwd can be granted, and **what a grant means**
+      (read? write? both?) - see [Additional Directories](#additional-directories) below
 
 ### Step 2: Add Agent Definition
 
@@ -352,6 +373,62 @@ const BETA_AGENTS: ReadonlySet<AgentId> = new Set([
 ]);
 ```
 
+### Step 2.6: Register the Provider in the Pickers
+
+A provider that is defined, capable, and detected is still invisible until it is
+registered for the pickers. Maestro asks the user to choose a provider in three
+places - the New Agent modal, the New Agent Wizard's tile strip, and the Group
+Chat moderator dropdown - and all three read one registry.
+
+Edit `src/shared/agentMetadata.ts`:
+
+```typescript
+export const AGENT_PICKER_META: Record<AgentId, AgentPickerMeta | null> = {
+	// ... existing agents. Key order does not matter: PICKABLE_AGENT_IDS sorts
+	// by display name, so the pickers render one alphabetical list either way.
+	'your-agent': {
+		description: "Your Vendor's AI coding assistant",
+		brandColor: '#4285F4',
+	},
+	// null withholds an agent from every picker (internal or unshipped)
+	terminal: null,
+};
+```
+
+Three things follow from that one entry:
+
+- `AGENT_TILES` (the wizard strip) is derived from it, so the tile appears with
+  the right name, pitch, brand color, and Beta badge.
+- `SUPPORTED_AGENTS` (the New Agent modal) re-exports the same list, so the row
+  becomes selectable rather than dimmed as "coming soon".
+- The Group Chat moderator dropdown filters the same tiles by what is installed,
+  so an installed provider becomes a choosable moderator.
+
+The record is keyed by `AgentId`, so adding an id to `AGENT_IDS` does not compile
+until a decision is made here. That is deliberate: Grok and Qwen3 Coder each
+shipped selectable in the New Agent modal yet absent from the wizard and
+un-pickable as a moderator, because the three lists were hand-written and nothing
+forced them to agree.
+
+Where the provider LANDS in each list is not your call: `PICKABLE_AGENT_IDS`
+sorts by display name so the user scans one predictable alphabetical order
+everywhere. If the new provider should also be a candidate DEFAULT - the choice a
+picker makes when the user has not made one - add it to `AGENT_AUTOSELECT_ORDER`
+in the same file, which is consulted in preference order and skips anything the
+user has not installed. Leaving it out is the normal case; it simply means the
+provider is never auto-selected.
+
+Then draw the mark. Add a `case` for the agent to `AgentLogo`
+(`src/renderer/components/Wizard/screens/AgentSelectionScreen/components/AgentLogo.tsx`)
+and a glyph to `AGENT_ICONS` (`src/renderer/constants/agentIcons.ts`). Without
+the first, the tile renders the fallback empty ring, which reads as a bug; a test
+in `AgentSelectionScreen/components.test.tsx` fails when a pickable provider has
+no mark of its own.
+
+Brand colors are run through `readableTextOn()` before painting, so a near-black
+or near-background brand color is nudged into legibility rather than vanishing.
+Use the real brand color and let the helper do the rest.
+
 ### Step 3: Define Capabilities
 
 Edit `src/main/agents/capabilities.ts`:
@@ -368,6 +445,7 @@ const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		supportsImageInputOnResume: false, // true if images work on resume
 		supportsSlashCommands: false,
 		supportsStreamJsonInput: false, // true if --input-format stream-json
+		supportsPromptViaStdin: false, // true ONLY if the CLI reads the prompt from stdin - verify it
 		supportsSessionStorage: false, // Enable if you implement storage
 		supportsCostTracking: false, // Enable if API-based with costs
 		supportsUsageStats: true, // If token counts in output
@@ -383,11 +461,66 @@ const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		supportsGroupChatModeration: false, // Enable if agent can moderate group chats
 		usesJsonLineOutput: false, // true if batch output is JSONL (not JSON)
 		usesCombinedContextWindow: false, // true if context = input + output combined
+		supportsAdditionalDirectories: false, // true if the CLI can grant dirs outside the cwd
 	},
 };
 ```
 
+### Step 3.5: Additional Directories
+
+Maestro lets the user grant an agent extra directories beyond its working directory,
+each with independent **read** and **write** toggles (`AdditionalDirectory` in
+`src/shared/types.ts`). Every agent gets these grants in its system prompt via the
+`{{ADDITIONAL_DIRECTORIES}}` block, whether or not its CLI knows anything about
+directories - that path needs no per-agent work.
+
+What differs per provider is whether the grants are also **enforced by the CLI**.
+Wiring that up is two lines, and the two must agree:
+
+1. `supportsAdditionalDirectories: true` in `capabilities.ts`
+2. `additionalDirArgs` in `definitions.ts` - maps the grants to your CLI's flags
+
+```typescript
+// src/main/agents/definitions.ts
+import { dirsWithAnyAccess, dirsWithWriteAccess, repeatDirFlag } from '../../shared/additionalDirectories';
+
+// A CLI whose flag means "allow tool access to this dir" (Claude Code, Copilot-CLI):
+additionalDirArgs: (dirs) => repeatDirFlag('--add-dir', dirsWithAnyAccess(dirs)),
+
+// A CLI whose flag adds a WRITABLE sandbox root (Codex):
+additionalDirArgs: (dirs) => repeatDirFlag('--add-dir', dirsWithWriteAccess(dirs)),
+```
+
+`agent-completeness.test.ts` fails CI if the capability and the builder disagree in
+either direction, so a provider cannot silently promise enforcement it never delivers.
+
+**Read the provider's flag description before picking a helper.** The flags look
+identical and are not: Claude Code's `--add-dir` grants tool _access_ (read and
+write), while Codex's `--add-dir` only adds a _writable_ root. Handing Codex a
+read-only grant would give the sandbox write access the user never asked for.
+
+**Nothing today expresses "write but never read."** A native grant opens the
+directory; the finer read/write rule is carried only by the prompt block. Do not
+write UI copy or docs that claim otherwise.
+
+Current support:
+
+| Agent           | Flag                              | Grant means               |
+| --------------- | --------------------------------- | ------------------------- |
+| `claude-code`   | `--add-dir <dir>` (repeatable)    | Tool access (read+write)  |
+| `codex`         | `--add-dir <dir>` (repeatable)    | Writable sandbox root     |
+| `copilot-cli`   | `--add-dir <dir>` (repeatable)    | Allowed list (read+write) |
+| `opencode`      | none (`--dir` only moves the cwd) | Prompt-only               |
+| `factory-droid` | unverified                        | Prompt-only               |
+| `gemini-cli`    | unverified                        | Prompt-only               |
+
+Emit the flag **once per directory** (`repeatDirFlag`) rather than as a single
+variadic list. A variadic option swallows the positional that follows it, and the
+prompt is passed positionally on several spawn paths.
+
 ### Step 4: Create Output Parser
+
+<!-- doc-refs-ignore -->
 
 Create `src/main/parsers/your-agent-output-parser.ts`:
 
@@ -496,6 +629,8 @@ export const YOUR_AGENT_ERROR_PATTERNS = {
 ```
 
 ### Step 7: Implement Session Storage (Optional)
+
+<!-- doc-refs-ignore -->
 
 If your agent stores sessions in browseable files, create `src/main/storage/your-agent-session-storage.ts`:
 
@@ -634,6 +769,8 @@ detectError(line: string): AgentError | null {
 ## Testing Your Agent
 
 ### Unit Tests
+
+<!-- doc-refs-ignore -->
 
 Create `src/__tests__/parsers/your-agent-output-parser.test.ts`:
 
@@ -880,16 +1017,13 @@ Since OpenCode supports multiple providers/models, Maestro should consider:
 
 ---
 
-### Gemini CLI 📋 Planned
+### Gemini CLI 📋 Superseded
 
-**Status:** Not yet implemented
+**Status:** Not shipping. Hidden from the UI, kept only for type/back-compat.
 
-**To Add:**
-
-1. Agent definition in `agents/definitions.ts`
-2. Capabilities in `agents/capabilities.ts`
-3. Output parser for Gemini JSON format
-4. Error patterns for Google API errors
+Google's terminal agent story moved to Antigravity CLI (`agy`). See
+[Antigravity CLI](#antigravity-cli--implemented-unverified-against-a-live-binary) below for
+the shipping integration.
 
 ---
 
@@ -964,3 +1098,131 @@ codex exec --json resume <thread_id> "continue"
 - **Error Patterns:** auth failures, rate limiting, token exhaustion (7 variants), network errors, model-availability errors, session-not-found.
 - **Model Discovery:** Fetches the `github-copilot` model list from [models.dev](https://models.dev) (3s timeout) and merges it with the user's configured model from `~/.copilot/config.json`. See `readCopilotConfiguredModel` / `fetchCopilotModelsFromApi` in `src/main/agents/detector.ts`.
 - **Known Limitations:** Interactive PTY mode does not go through `wrapSpawnWithSsh()`, so interactive Copilot-CLI over SSH is not supported. Batch mode (`-p`) works over SSH.
+
+---
+
+### Grok CLI ✅ Fully Implemented
+
+**Status:** Beta (marked via `BETA_AGENTS` in `src/shared/agentMetadata.ts`). All facts below verified against grok v0.2.93.
+
+| Aspect           | Value                                                                                                                         |
+| ---------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| Binary           | `grok`                                                                                                                        |
+| JSON Output      | `--output-format streaming-json` (JSONL, one event per line)                                                                  |
+| Batch Mode       | `-p/--single <prompt>` headless mode (no subcommand prefix)                                                                   |
+| Resume           | `--resume <session-id>`                                                                                                       |
+| Read-only        | `--permission-mode plan` (CLI-enforced; blocks writes headlessly without hanging)                                             |
+| YOLO Mode        | `--always-approve` (also the batch-mode arg; boolean flag so arg dedup stays clean)                                           |
+| Session ID Field | `sessionId` (camelCase, UUIDv7) on the final `end` event only; no init event exists                                           |
+| Session Storage  | `$GROK_HOME/sessions/<percent-encoded-cwd>/<session-uuid>/` (default `GROK_HOME=~/.grok`)                                     |
+| Context Window   | 500K tokens (grok-4.5 default); 200K for grok-composer-2.5-fast                                                               |
+| Model Selection  | `-m <model>`; dynamic discovery from `$GROK_HOME/models_cache.json` (or `grok models`)                                        |
+| Reasoning Effort | `--reasoning-effort` accepts none, minimal, low, medium, high, xhigh, max (default high; grok-4.5 rejects `none` server-side) |
+
+**Implementation Status:**
+
+- ✅ Output Parser: `src/main/parsers/grok-output-parser.ts`
+- ✅ Session Storage: `src/main/storage/grok-session-storage.ts` (Copilot-style directory-per-session layout; parses `summary.json` + `chat_history.jsonl`, local and SSH-remote)
+- ✅ Error Patterns: `src/main/parsers/error-patterns.ts` (auth, rate limit, context exhaustion, network, invalid model)
+- ✅ Capabilities: resume, read-only, session storage, streaming, thinking display, result messages, model selection, batch mode, inline wizard (`supportsWizard`); `supportsUsageStats` and `supportsCostTracking` are false because the stream carries neither
+
+**JSON Event Types:**
+
+Exactly four event types appear on stdout with `--output-format streaming-json`:
+
+- `thought` → reasoning delta (routed to the thinking panel via `isReasoning: true`)
+- `text` → assistant text delta (partial; deltas concatenate directly)
+- `end` → final result (`stopReason`, `sessionId`, `requestId`); the only place the session ID appears; carries no usage and no cost
+- `error` → failure (`message`); duplicated on stderr as `Error: <message>`, process exits 1
+
+**Known Limitations:**
+
+- **No tool events on stdout:** tool activity is recorded only in the on-disk session files (`events.jsonl` / `chat_history.jsonl`), so live tool display is not possible from the stream
+- **No token usage or cost anywhere in the stream:** the context usage widget shows nothing for Grok until xAI adds usage fields
+- **Interactive PTY mode is not wired:** Maestro drives Grok in batch mode only, like Codex
+- **No image input:** no image flag observed in `grok --help`
+- **No `noToolsArgs` / all-tools-off flag:** verified on v0.2.93 - `--tools ""` is treated as unset, and a hard-coded `--disallowed-tools` list would rot. Tab naming uses plan mode (`readOnlyArgs`) only. Do not add `noToolsArgs` until Grok ships a verified all-off flag.
+- **Wizard discovery is always-approve (not plan):** discovery needs read/fetch (package.json, GitHub). Spawns use `--always-approve --max-turns 8 --no-subagents` via `GROK_WIZARD_DISCOVERY_ARGS` in `src/renderer/utils/grokWizard.ts`. Residual: the model can still write under cwd within the turn budget (no Claude-style tool allowlist on Grok CLI yet). Prefer a tool allowlist if/when the CLI supports one.
+- **History is not a scrubbed vault:** transcripts under `$GROK_HOME/sessions/` (default `~/.grok/sessions/`) are plain JSONL. Maestro reads them for History without redacting user-pasted secrets - same OS-user confidentiality model as Claude/Codex.
+- **Auth/rate error patterns are multi-token only:** bare `401`/`429` are intentionally not matched (false positives on recovery UX). Tighten further when live unauthenticated/rate-limit CLI strings are captured.
+
+**Command Line Pattern:**
+
+```bash
+# Basic batch execution (Maestro's default composition)
+grok --cwd /path/to/project --always-approve --output-format streaming-json -p "prompt"
+
+# Resume a session
+grok --cwd /path/to/project --always-approve --output-format streaming-json --resume <session-id> -p "continue"
+
+# Read-only plan mode
+grok --cwd /path/to/project --output-format streaming-json --permission-mode plan -p "prompt"
+```
+
+---
+
+### Antigravity CLI ✅ Implemented (unverified against a live binary)
+
+**Status:** Beta (marked beta via `BETA_AGENTS` in `src/shared/agentMetadata.ts`)
+
+Google's terminal coding agent, and the successor to the Gemini CLI effort above.
+
+- **Agent ID:** `antigravity`
+- **Binary:** `agy` (installs to `~/.local/bin/agy` on macOS/Linux, `%LOCALAPPDATA%\agy\bin` on Windows)
+- **Auth:** Google account. Headless runs reuse cached credentials, so the user must sign in once from an interactive `agy` session on that machine first.
+
+| Aspect             | Value                                                        |
+| ------------------ | ------------------------------------------------------------ |
+| Batch/headless     | `-p` (aliases `--print`, `--prompt`)                         |
+| JSON Output        | `--output-format stream-json` (also supports `json`, `text`) |
+| Resume             | `--conversation <id>` (`--continue` resumes the most recent) |
+| Session ID Field   | `conversation_id`                                            |
+| Model Selection    | `--model <slug>`                                             |
+| Reasoning Effort   | `--effort low\|medium\|high`                                 |
+| Auto-approve tools | `--dangerously-skip-permissions`                             |
+| Terminal sandbox   | `--sandbox`                                                  |
+| Headless timeout   | `--print-timeout` (CLI default 5m; Maestro defaults to 30m)  |
+| Session Storage    | ❌ On-disk conversation format is undocumented               |
+
+**Implementation Status:**
+
+- ✅ Output Parser: `src/main/parsers/antigravity-output-parser.ts`
+- ✅ Error Patterns: `src/main/parsers/error-patterns.ts` (`ANTIGRAVITY_ERROR_PATTERNS`)
+- ❌ Session Storage: not implemented; `supportsSessionStorage` is false
+- ⏳ Capabilities: derived from the published headless contract, not from a captured live run
+
+**Stream-JSON Event Types:**
+
+Antigravity discriminates on an `event` key and nests the payload under a property of the
+same name, which is why it needs its own parser rather than a Claude-parser subclass:
+
+- `init` → `{ cwd, tools, permission_mode, model, agent }`. Carries no `conversation_id`.
+- `step_update` → `{ conversation_id, step_index, state (ACTIVE|DONE), step_type
+(user_input|agent_response|tool|checkpoint), text_delta, tool_name, tool_info, usage }`
+- `result` → `{ conversation_id, status, response, error, duration_seconds, num_turns, usage }`.
+  `error` is present only on failure, so its presence (not the free-form `status` string) is
+  what the parser keys off to reclassify a result as an error.
+
+Usage fields are snake_case: `input_tokens`, `output_tokens`, `thinking_tokens`,
+`cache_read_tokens`, `total_tokens`. No context window is reported, so the configured
+window drives the context meter.
+
+**Known Limitations:**
+
+- **No true read-only mode.** Headless mode auto-allows reading _and writing_ files inside the
+  active workspace; `--sandbox` only restricts terminal commands. `supportsReadOnlyMode` is
+  therefore false and `readOnlyCliEnforced` is false. Knock-on effect: tab naming spawns
+  read-only and leans on `noToolsArgs` to stop a task-like first message from becoming a real
+  agentic run, but the CLI has no tool-disabling flag to put there, so a naming run can still
+  touch workspace files. (`noToolsArgs` is Claude-only today, so this is shared with every
+  other non-Claude agent - Antigravity is just the one that also lacks CLI read-only.)
+- **No image input.** No documented attachment flag, so `supportsImageInput` is false.
+- **No slash commands in headless mode.** They are a TUI-only affordance.
+- **Batch runs pass `--dangerously-skip-permissions`.** Without it, headless mode soft-denies
+  shell commands and a run stalls on its first terminal tool call.
+
+**Documentation Sources:**
+
+- [Antigravity CLI overview](https://antigravity.google/docs/cli/overview)
+- [Headless mode](https://antigravity.google/docs/cli/headless)
+- [Installation & auth](https://antigravity.google/docs/cli/install)

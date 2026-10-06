@@ -1,7 +1,8 @@
 import React from 'react';
-import { Bot, User, Zap } from 'lucide-react';
+import { Bot, User, Zap, MessagesSquare } from 'lucide-react';
 import type { Theme, HistoryEntryType } from '../../types';
 import { CUE_COLOR } from '../../../shared/cue-pipeline-types';
+import { AGENT_COLOR } from '../../../shared/crossAgentTypes';
 
 // Double checkmark SVG component for validated entries
 export const DoubleCheck = ({
@@ -47,6 +48,10 @@ export const LOOKBACK_OPTIONS: LookbackPeriod[] = [
 // CUE_COLOR is imported above from shared/cue-pipeline-types and re-exported for History consumers
 export { CUE_COLOR };
 
+// AGENT_COLOR is defined in shared/crossAgentTypes (so the shared widget library
+// can use it too) and re-exported here for History consumers, mirroring CUE_COLOR.
+export { AGENT_COLOR };
+
 /**
  * Tinted pill scheme from one hex color: faint fill, full-strength text, and a
  * border between the two. Every history type pill (AI and group chat) uses it.
@@ -66,6 +71,8 @@ export const getPillColor = (type: HistoryEntryType, theme: Theme) => {
 			return tintedPillColors(theme.colors.accent);
 		case 'CUE':
 			return tintedPillColors(CUE_COLOR);
+		case 'AGENT':
+			return tintedPillColors(AGENT_COLOR);
 		default:
 			return {
 				bg: theme.colors.bgActivity,
@@ -84,10 +91,23 @@ export const getEntryIcon = (type: HistoryEntryType) => {
 			return User;
 		case 'CUE':
 			return Zap;
+		case 'AGENT':
+			return MessagesSquare;
 		default:
 			return Bot;
 	}
 };
+
+/**
+ * Does this entry type carry a pass/fail outcome worth showing an indicator for?
+ *
+ * USER turns have no notion of success (the user just talked), so their
+ * `success` field is meaningless. Everything the app DISPATCHES - an Auto Run
+ * task, a Cue trigger, a consult proxied in from another agent - either
+ * completed or it didn't, and a failed one must be visibly marked.
+ */
+export const hasRunOutcome = (type: HistoryEntryType): boolean =>
+	type === 'AUTO' || type === 'CUE' || type === 'AGENT';
 
 // Estimated row heights for virtualization. Used by the row virtualizer
 // before measureElement reports the actual rendered size. If these
@@ -117,6 +137,7 @@ export const estimateHistoryRowHeight = (entry: {
 	usageStats?: { totalCostUsd?: number };
 	achievementAction?: string;
 	hostname?: string;
+	userName?: string;
 	cueEventType?: string;
 	cueGroup?: { runCount: number };
 }): number => {
@@ -125,6 +146,7 @@ export const estimateHistoryRowHeight = (entry: {
 		entry.elapsedTimeMs !== undefined ||
 		(entry.usageStats && (entry.usageStats.totalCostUsd ?? 0) > 0) ||
 		!!entry.achievementAction ||
+		!!entry.userName ||
 		!!entry.hostname;
 	if (hasFooter) height += ESTIMATED_ROW_HEIGHT_FOOTER;
 	// The group's tally line and the "Triggered by:" subtitle are the same

@@ -9,13 +9,24 @@
  *   - Owning tab/session switching effects for input persistence
  *   - Providing paste, drop, blur, and replay handlers
  *
+ * PERF: Does not subscribe to the full active Session. Streaming log / token
+ * updates must not re-render MaestroConsoleInner via this hook. Reactive
+ * subscriptions are limited to primitives (activeSessionId, inputMode,
+ * activeTabId) and stable field refs (stagedImages). Handlers and sync
+ * callbacks resolve the live session via getState() / sessionsRef at event time.
+ *
  * Reads from: sessionStore, settingsStore, groupChatStore, uiStore,
  *             fileExplorerStore, InputContext
  */
 
 import { useCallback, useEffect, useRef, useMemo } from 'react';
-import type { Session, BatchRunState, QueuedItem, CustomAICommand } from '../../types';
-import { useSessionStore, selectActiveSession } from '../../stores/sessionStore';
+import type { Session, Group, BatchRunState, QueuedItem, CustomAICommand } from '../../types';
+import {
+	useSessionStore,
+	selectActiveSession,
+	updateSessionWith,
+	updateAiTab,
+} from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useGroupChatStore } from '../../stores/groupChatStore';
 import { useUIStore } from '../../stores/uiStore';
@@ -24,14 +35,27 @@ import { useInputContext } from '../../contexts/InputContext';
 import { getActiveTab } from '../../utils/tabHelpers';
 import { setLiveDraft } from '../../utils/liveDraftStore';
 import { notifyCenterFlash } from '../../stores/centerFlashStore';
+import { notifyToast } from '../../stores/notificationStore';
+import { uploadPathlessFile } from '../../utils/osFileDrop';
 import { useComposerInputStore } from '../../stores/composerInputStore';
 import { useDebouncedValue } from '../utils';
 import { useInputSync } from './useInputSync';
 import { useTabCompletion } from './useTabCompletion';
 import type { TabCompletionSuggestion } from './useTabCompletion';
-import { useAtMentionCompletion, type AtMentionSuggestion } from './useAtMentionCompletion';
+import { useAtMentionCompletion } from './useAtMentionCompletion';
+import { useMentionPicker, type MentionPickerItem, type MentionCategory } from './useMentionPicker';
 import { useInputProcessing } from './useInputProcessing';
 import { useInputKeyDown } from './useInputKeyDown';
+import {
+	useCrossAgentDispatch,
+	type SpawnBackgroundSynopsisFn,
+} from '../agent/useCrossAgentDispatch';
+import {
+	planCrossAgentMentions,
+	dispatchCrossAgentMentions,
+	type CrossAgentMentionPlan,
+} from '../../services/crossAgentMentions';
+import { formatFileMention, stripMentionQuotes } from '../../../shared/mentionPatterns';
 import { IMAGE_EXTENSIONS } from '../../utils/fileExplorerIcons/shared';
 import { screenshotReferenceLabel } from '../../utils/stagedImageOrder';
 import { STAGED_IMAGE_MIME } from '../../components/InputArea/components/stagedImageDrag';
@@ -48,6 +72,12 @@ function isImagePath(path: string): boolean {
 	const ext = path.toLowerCase().split('.').pop();
 	return ext ? IMAGE_EXTENSIONS.has(ext) : false;
 }
+
+// Stable empty references so the gated sessions/groups selectors return the same
+// value on every render while the `@` picker is closed - no re-render churn.
+const EMPTY_SESSIONS: Session[] = [];
+const EMPTY_GROUPS: Group[] = [];
+const EMPTY_STAGED_IMAGES: string[] = [];
 
 /**
  * Convert an absolute filesystem path into the form used inside an `@` mention:
@@ -118,6 +148,12 @@ export interface UseInputHandlersDeps {
 	sessionsRef: React.MutableRefObject<Session[]>;
 	/** Active session ID ref for non-reactive access */
 	activeSessionIdRef: React.MutableRefObject<string>;
+	/**
+	 * Background synopsis spawn (from useAgentExecution), forwarded to the
+	 * cross-agent consult so it can condense a finished consultation's response
+	 * into the History detail view.
+	 */
+	spawnBackgroundSynopsis: SpawnBackgroundSynopsisFn;
 }
 
 // ============================================================================
@@ -136,13 +172,21 @@ export interface UseInputHandlersReturn {
 	/** Set staged images for the current message */
 	setStagedImages: (images: string[] | ((prev: string[]) => string[])) => void;
 	/** Process and send the current input */
-	processInput: (text?: string, options?: { forceParallel?: boolean; images?: string[] }) => void;
+	processInput: (
+		text?: string,
+		options?: { forceParallel?: boolean; images?: string[]; sessionId?: string; tabId?: string }
+	) => void;
 	/** Ref to latest processInput for use in memoized callbacks */
 	processInputRef: React.MutableRefObject<
-		(text?: string, options?: { forceParallel?: boolean; images?: string[] }) => void
+		(
+			text?: string,
+			options?: { forceParallel?: boolean; images?: string[]; sessionId?: string; tabId?: string }
+		) => void
 	>;
 	/** Keyboard event handler for the input textarea */
 	handleInputKeyDown: (e: React.KeyboardEvent) => void;
+	/** Capture the agent/tab that owns the composer when the input gains focus */
+	handleMainPanelInputFocus: () => void;
 	/** Handler for input blur (persists input to session state) */
 	handleMainPanelInputBlur: () => void;
 	/** Replay a message (optionally with images) */
@@ -153,8 +197,10 @@ export interface UseInputHandlersReturn {
 	handleDrop: (e: React.DragEvent) => void;
 	/** Tab completion suggestions for terminal mode */
 	tabCompletionSuggestions: TabCompletionSuggestion[];
-	/** @ mention suggestions for AI mode */
-	atMentionSuggestions: AtMentionSuggestion[];
+	/** Unified `@` picker rows for the active category (AI mode) */
+	atMentionItems: MentionPickerItem[];
+	/** Per-category totals for the picker's category bar */
+	atMentionCounts: Record<MentionCategory, number>;
 	/** Sync file tree highlight to match tab completion suggestion */
 	syncFileTreeToTabCompletion: (suggestion: TabCompletionSuggestion | undefined) => void;
 }
@@ -189,13 +235,33 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 		allCustomCommands,
 		sessionsRef,
 		activeSessionIdRef,
+		spawnBackgroundSynopsis,
 	} = deps;
 
-	// --- Store subscriptions (reactive) ---
-	const activeSession = useSessionStore(selectActiveSession);
+	// --- Store subscriptions (reactive, narrow) ---
+	// PERF: Never useSessionStore(selectActiveSession). Streamed logs/tokens would
+	// re-render MaestroConsoleInner on every chunk.
 	const activeSessionId = useSessionStore((s) => s.activeSessionId);
+	// The id `selectActiveSession` actually resolved to, which is NOT always
+	// `activeSessionId`: the selector falls back to `sessions[0]` while a freshly
+	// created agent catches up. Draft ownership has to tell those apart, so it
+	// gets its own narrow subscription rather than the whole session object.
+	const resolvedSessionId = useSessionStore((s) => selectActiveSession(s)?.id);
+	const activeSessionInputMode = useSessionStore((s) => selectActiveSession(s)?.inputMode);
+	const activeTabId = useSessionStore((s) => {
+		const session = selectActiveSession(s);
+		return session ? getActiveTab(session)?.id : undefined;
+	});
+	const stagedImages = useSessionStore((s) => {
+		const session = selectActiveSession(s);
+		if (!session || session.inputMode !== 'ai') return EMPTY_STAGED_IMAGES;
+		const images = getActiveTab(session)?.stagedImages;
+		// Empty arrays are truthy - without this, every stream flush that rebuilds
+		// the tab with `stagedImages: []` returns a new [] ref and re-renders App.
+		if (!images || images.length === 0) return EMPTY_STAGED_IMAGES;
+		return images;
+	});
 	const setSessions = useMemo(() => useSessionStore.getState().setSessions, []);
-	const activeGroupChatId = useGroupChatStore((s) => s.activeGroupChatId);
 	const setGroupChatStagedImages = useMemo(
 		() => useGroupChatStore.getState().setGroupChatStagedImages,
 		[]
@@ -219,11 +285,18 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 		tabCompletionFilter,
 		atMentionOpen,
 		atMentionFilter,
+		atMentionCategory,
 		setSlashCommandOpen,
 	} = useInputContext();
 
+	// All agents + groups feed the Agents scope of the unified `@` picker. Gate
+	// the subscription on atMentionOpen so streaming flushes from any agent don't
+	// recompute mention suggestions while the picker is closed (mirrors the
+	// fileSuggestions gate below). Stable empty refs avoid re-render churn.
+	const sessions = useSessionStore((s) => (atMentionOpen ? s.sessions : EMPTY_SESSIONS));
+	const groups = useSessionStore((s) => (atMentionOpen ? s.groups : EMPTY_GROUPS));
+
 	// --- Derived values ---
-	const activeTab = activeSession ? getActiveTab(activeSession) : null;
 	// The tab the composer is currently drafting FOR, which is not the same
 	// question as "which tab does the app show". `selectActiveSession` falls back
 	// to `sessions[0]` so the UI has something to render while a freshly created
@@ -233,11 +306,10 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 	// the text is then parked unowned and adopted by the real tab when it lands,
 	// rather than flushed onto a stranger's tab.
 	const activeTabIdForInput =
-		activeSession && (!activeSessionId || activeSession.id === activeSessionId)
-			? activeTab?.id
+		resolvedSessionId && (!activeSessionId || resolvedSessionId === activeSessionId)
+			? activeTabId
 			: undefined;
-	const isAiMode = activeSession?.inputMode === 'ai';
-	const activeSessionInputMode = activeSession?.inputMode;
+	const isAiMode = activeSessionInputMode === 'ai';
 
 	// ====================================================================
 	// Input State
@@ -283,60 +355,55 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 	// Memoized setter that dispatches to the correct slice based on current mode.
 	const setInputValue = useCallback(
 		(value: string | ((prev: string) => string)) => {
-			if (activeSession?.inputMode === 'ai') {
+			if (activeSessionInputMode === 'ai') {
 				setAiValue(value);
 			} else {
 				setTerminalValue(value);
 			}
 		},
-		[activeSession?.inputMode, setAiValue, setTerminalValue]
+		[activeSessionInputMode, setAiValue, setTerminalValue]
 	);
 
 	// ====================================================================
 	// Staged Images
 	// ====================================================================
 
-	const stagedImages = useMemo(() => {
-		if (!activeSession || activeSession.inputMode !== 'ai') return [];
-		return activeTab?.stagedImages || [];
-	}, [activeTab?.stagedImages, activeSession?.inputMode]);
-
 	const setStagedImages = useCallback(
 		(imagesOrUpdater: string[] | ((prev: string[]) => string[])) => {
+			const activeSession = selectActiveSession(useSessionStore.getState());
 			if (!activeSession) return;
-			setSessions((prev) =>
-				prev.map((s) => {
-					if (s.id !== activeSession.id) return s;
-					return {
-						...s,
-						aiTabs: s.aiTabs.map((tab) => {
-							if (tab.id !== s.activeTabId) return tab;
-							const currentImages = tab.stagedImages || [];
-							const newImages =
-								typeof imagesOrUpdater === 'function'
-									? imagesOrUpdater(currentImages)
-									: imagesOrUpdater;
-							return { ...tab, stagedImages: newImages };
-						}),
-					};
-				})
-			);
+			updateSessionWith(activeSession.id, (s) => {
+				const tabId = s.activeTabId;
+				if (!tabId) return s;
+				return {
+					...s,
+					aiTabs: s.aiTabs.map((tab) => {
+						if (tab.id !== tabId) return tab;
+						const currentImages = tab.stagedImages || [];
+						const newImages =
+							typeof imagesOrUpdater === 'function'
+								? imagesOrUpdater(currentImages)
+								: imagesOrUpdater;
+						return { ...tab, stagedImages: newImages };
+					}),
+				};
+			});
 		},
-		[activeSession]
+		[]
 	);
 
 	// ====================================================================
 	// Sub-hook calls
 	// ====================================================================
 
-	// Input sync handlers
-	const { syncAiInputToSession, queueAiDraftFlush, syncTerminalInputToSession } = useInputSync(
-		activeSession,
-		{ setSessions }
-	);
+	// Input sync handlers (resolve session via getState inside callbacks)
+	const { syncAiInputToSession, queueAiDraftFlush, syncTerminalInputToSession } = useInputSync({
+		setSessions,
+	});
 
 	// Mirror the live AI draft out of the composer store on every keystroke:
-	//  - into liveDraftStore, so hasDraft() reflects what's on screen;
+	//  - into liveDraftStore, so hasDraft() reflects what's on screen
+	//    (tab.inputValue only updates on blur/submit);
 	//  - onto the tab itself via a coalesced write-back, so the text survives
 	//    anything that skips the blur / submit / tab-switch flush points (a
 	//    quit while typing, an unmount, focus that never left the textarea).
@@ -374,36 +441,41 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 		});
 	}, [activeTabIdForInput, adoptAiDraft, queueAiDraftFlush]);
 
-	// Tab completion
-	const { getSuggestions: getTabCompletionSuggestions } = useTabCompletion(activeSession);
-
-	// @ mention completion
-	const { getSuggestions: getAtMentionSuggestions } = useAtMentionCompletion(activeSession);
+	// Tab / @mention completion: no-arg form subscribes only to non-streaming fields
+	const { getSuggestions: getTabCompletionSuggestions } = useTabCompletion();
+	const { getSuggestions: getAtMentionSuggestions } = useAtMentionCompletion();
 
 	// ====================================================================
 	// Tab/Session switching effects
 	// ====================================================================
 
 	const prevActiveTabIdRef = useRef<string | undefined>(activeTabIdForInput);
-	const prevActiveSessionIdRef = useRef<string | undefined>(activeSession?.id);
+	const prevActiveSessionIdRef = useRef<string | undefined>(resolvedSessionId);
 	const didHydrateAiInputRef = useRef(false);
 	const didHydrateTerminalInputRef = useRef(false);
 
 	useEffect(() => {
-		if (!activeTab || !activeTabIdForInput || didHydrateAiInputRef.current) return;
+		if (!activeTabIdForInput || didHydrateAiInputRef.current) return;
+		// Read the tab from the store rather than subscribing to it: this hook
+		// deliberately holds no whole-session subscription (see the PERF note on
+		// the selectors above), and the store copy is the fresher one anyway.
+		const session = selectActiveSession(useSessionStore.getState());
+		const tab = session ? getActiveTab(session) : null;
+		if (!tab) return;
 		loadAiDraft(
 			activeTabIdForInput,
-			activeTab.inputValue ?? '',
-			normalizeComposerCommandMode(activeTab.commandMode)
+			tab.inputValue ?? '',
+			normalizeComposerCommandMode(tab.commandMode)
 		);
 		didHydrateAiInputRef.current = true;
 	}, [activeTabIdForInput, loadAiDraft]);
 
 	useEffect(() => {
-		if (!activeSession || didHydrateTerminalInputRef.current) return;
-		setTerminalValue(activeSession.terminalDraftInput ?? '');
+		if (!activeSessionId || didHydrateTerminalInputRef.current) return;
+		const session = selectActiveSession(useSessionStore.getState());
+		setTerminalValue(session?.terminalDraftInput ?? '');
 		didHydrateTerminalInputRef.current = true;
-	}, [activeSession?.id, setTerminalValue]);
+	}, [activeSessionId, setTerminalValue]);
 
 	// Hand the composer over when the tab being drafted for changes - including
 	// to "no tab at all", which is a legal state (every AI tab closed with a file
@@ -423,10 +495,17 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 		const composer = useComposerInputStore.getState();
 		const ownerTabId = composer.aiValueTabId;
 		if (ownerTabId) {
-			syncAiInputToSession(composer.aiValue, ownerTabId);
+			syncAiInputToSession(composer.aiValue, { tabId: ownerTabId });
 		}
 
-		if (!nextTabId || !activeTab) {
+		// Resolve the incoming session/tab from the store, not a render snapshot:
+		// this hook keeps no whole-session subscription, and a coalesced draft
+		// write-back (or text injected by another surface) can land between the
+		// render and this effect, which a snapshot would show as empty.
+		const session = selectActiveSession(useSessionStore.getState());
+		const nextTab = session ? getActiveTab(session) : null;
+
+		if (!nextTabId || !nextTab) {
 			// Nowhere to draft for. Text that belonged to a tab is safely flushed
 			// above, so clear it; text nobody owns stays parked in the composer for
 			// the next tab to adopt, because the user typed it and it is not ours
@@ -435,15 +514,7 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 			return;
 		}
 
-		// Load new tab's persisted input value + mode. Read it from the store
-		// rather than this render's snapshot: a coalesced draft write-back (or
-		// text injected into the tab by another surface) can land between the
-		// render and this effect, and the snapshot would show it as empty.
-		const storedTab =
-			useSessionStore
-				.getState()
-				.sessions.find((s) => s.id === activeSession?.id)
-				?.aiTabs?.find((t) => t.id === nextTabId) ?? activeTab;
+		const storedTab = session?.aiTabs?.find((t) => t.id === nextTabId) ?? nextTab;
 		const storedValue = storedTab.inputValue ?? '';
 		// Unowned text was typed while no tab existed to hold it (the user started
 		// a message as a new agent was still coming up). The tab that materializes
@@ -457,40 +528,32 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 		}
 
 		// Clear hasUnread indicator on newly active tab
-		if (activeTab.hasUnread && activeSession) {
-			setSessions((prev) =>
-				prev.map((s) => {
-					if (s.id !== activeSession.id) return s;
-					return {
-						...s,
-						aiTabs: s.aiTabs.map((t) => (t.id === nextTabId ? { ...t, hasUnread: false } : t)),
-					};
-				})
-			);
+		if (nextTab.hasUnread && session) {
+			updateAiTab(session.id, nextTabId, (t) => ({ ...t, hasUnread: false }));
 		}
 		// Intentionally only depend on the drafted-for tab id, NOT inputValue
 	}, [activeTabIdForInput]);
 
 	// Sync terminal input when switching sessions
 	useEffect(() => {
-		if (activeSession && activeSession.id !== prevActiveSessionIdRef.current) {
+		if (activeSessionId && activeSessionId !== prevActiveSessionIdRef.current) {
 			const prevSessionId = prevActiveSessionIdRef.current;
 
 			// Save terminal input to the previous session (including empty string to persist cleared input)
 			if (prevSessionId) {
 				const currentTerminalValue = useComposerInputStore.getState().terminalValue;
-				setSessions((prev) =>
-					prev.map((s) =>
-						s.id === prevSessionId ? { ...s, terminalDraftInput: currentTerminalValue } : s
-					)
-				);
+				updateSessionWith(prevSessionId, (s) => ({
+					...s,
+					terminalDraftInput: currentTerminalValue,
+				}));
 			}
 
 			// Load terminal input from the new session
-			setTerminalValue(activeSession.terminalDraftInput ?? '');
-			prevActiveSessionIdRef.current = activeSession.id;
+			const session = selectActiveSession(useSessionStore.getState());
+			setTerminalValue(session?.terminalDraftInput ?? '');
+			prevActiveSessionIdRef.current = activeSessionId;
 		}
-	}, [activeSession?.id]);
+	}, [activeSessionId]);
 
 	// ====================================================================
 	// Completion suggestions (memoized)
@@ -535,8 +598,15 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 		getTabCompletionSuggestions,
 	]);
 
-	const debouncedAtMentionFilter = useDebouncedValue(atMentionOpen ? atMentionFilter : '', 100);
-	const atMentionSuggestions = useMemo(() => {
+	// The stored filter is raw (it carries the opening quote while the user types a
+	// quoted `@"path with spaces"` mention); the fuzzy file search wants it bare.
+	const debouncedAtMentionFilter = useDebouncedValue(
+		atMentionOpen ? stripMentionQuotes(atMentionFilter) : '',
+		100
+	);
+	// File/directory suggestions (raw) - only computed while the picker is open in
+	// AI mode. These feed the Files/Directories scopes of the unified picker.
+	const fileSuggestions = useMemo(() => {
 		if (!atMentionOpen || !activeSessionId || activeSessionInputMode !== 'ai') {
 			return [];
 		}
@@ -548,6 +618,17 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 		debouncedAtMentionFilter,
 		getAtMentionSuggestions,
 	]);
+
+	// Unified picker: composes file/dir suggestions with agents/groups into one
+	// ranked, category-aware list. Single source of truth for the dropdown.
+	const { items: atMentionItems, counts: atMentionCounts } = useMentionPicker({
+		filter: debouncedAtMentionFilter,
+		category: atMentionCategory,
+		sessions,
+		groups,
+		currentSessionId: activeSessionId,
+		fileSuggestions,
+	});
 
 	// Sync file tree selection to match tab completion suggestion
 	const syncFileTreeToTabCompletion = useCallback(
@@ -575,8 +656,27 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 	// useInputProcessing (processes and sends input)
 	// ====================================================================
 
+	// Cross-agent @mention dispatch (Phase 03). Mounted here (a singleton hook)
+	// so the response-chunk subscription is set up once. The planning/dispatch
+	// pair itself lives in services/crossAgentMentions so the queue drain can
+	// fire a deferred consult from outside React.
+	useCrossAgentDispatch(spawnBackgroundSynopsis);
+
+	// Resolve a message's mentions WITHOUT consulting anyone yet. The send path
+	// decides when to fire: immediately for a message that dispatches now, or at
+	// dequeue time for one that lands in the execution queue. `suppressLocal` on
+	// the returned plan means the message leads with an `@agent` mention, so only
+	// the mentioned agent(s) answer; a trailing mention (`hey @Backend,
+	// thoughts?`) or a leading `@file` mention leaves it false and the source
+	// agent answers too.
+	const handleCrossAgentMentionPlan = useCallback(
+		(message: string, sourceSession: Session): CrossAgentMentionPlan | null =>
+			planCrossAgentMentions(message, sourceSession.id),
+		[]
+	);
+
 	const { processInput, processInputRef: _hookProcessInputRef } = useInputProcessing({
-		activeSession,
+		// PERF: Omit activeSession; processInput resolves via sessionsRef / getState.
 		activeSessionId,
 		setSessions,
 		getInputValue,
@@ -601,11 +701,16 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 		isWizardActive: isWizardActiveForCurrentTab,
 		onSkillsCommand: handleSkillsCommand,
 		conductorProfile,
+		onPlanCrossAgentMentions: handleCrossAgentMentionPlan,
+		onDispatchCrossAgentMentions: dispatchCrossAgentMentions,
 	});
 
 	// processInputRef - maintained for access in memoized callbacks without stale closures
 	const processInputRef = useRef<
-		(text?: string, options?: { forceParallel?: boolean; images?: string[] }) => void
+		(
+			text?: string,
+			options?: { forceParallel?: boolean; images?: string[]; sessionId?: string; tabId?: string }
+		) => void
 	>(() => {});
 	useEffect(() => {
 		processInputRef.current = processInput;
@@ -619,7 +724,7 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 		getInputValue,
 		setInputValue,
 		tabCompletionSuggestions,
-		atMentionSuggestions,
+		atMentionItems,
 		allSlashCommands,
 		syncFileTreeToTabCompletion,
 		processInput,
@@ -634,9 +739,21 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 	// Handlers
 	// ====================================================================
 
+	// Agent/tab that owned the composer when it last gained focus. Blur must write
+	// here - not to the live active agent (click can switch focus before blur runs).
+	const composerFocusTargetRef = useRef<{ sessionId: string; tabId?: string } | null>(null);
+
+	const handleMainPanelInputFocus = useCallback(() => {
+		const session = selectActiveSession(useSessionStore.getState());
+		const tab = session ? getActiveTab(session) : null;
+		composerFocusTargetRef.current = session ? { sessionId: session.id, tabId: tab?.id } : null;
+	}, []);
+
 	const handleMainPanelInputBlur = useCallback(() => {
+		const target = composerFocusTargetRef.current;
+		const blurSessionId = target?.sessionId ?? activeSessionIdRef.current;
 		const currentIsAiMode =
-			sessionsRef.current.find((s) => s.id === activeSessionIdRef.current)?.inputMode === 'ai';
+			sessionsRef.current.find((s) => s.id === blurSessionId)?.inputMode === 'ai';
 		const composer = useComposerInputStore.getState();
 		if (currentIsAiMode) {
 			// Attribute the text to the tab that owns it. Blur can fire after the
@@ -645,9 +762,9 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 			// would then stamp this text onto the newly active tab - erasing that
 			// tab's own draft. Unowned text has no tab to be written to yet.
 			const ownerTabId = composer.aiValueTabId ?? activeTabIdRef.current;
-			if (ownerTabId) syncAiInputToSession(composer.aiValue, ownerTabId);
+			if (ownerTabId) syncAiInputToSession(composer.aiValue, { tabId: ownerTabId });
 		} else {
-			syncTerminalInputToSession(composer.terminalValue);
+			syncTerminalInputToSession(composer.terminalValue, blurSessionId || undefined);
 		}
 	}, [syncAiInputToSession, syncTerminalInputToSession]);
 
@@ -655,32 +772,49 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 		(text: string, images?: string[]) => {
 			// Preserve draft input so replay doesn't clobber what the user was typing
 			const draftInput = useComposerInputStore.getState().aiValue;
+			const activeSession = selectActiveSession(useSessionStore.getState());
+			const activeTab = activeSession ? getActiveTab(activeSession) : null;
 			const draftImages = activeTab?.stagedImages ? [...activeTab.stagedImages] : [];
-			// The restore below runs a tick later - pin it to the tab that owns the
-			// draft so it can't be written onto whatever tab is active then.
+			// The restore below runs a tick later - pin it to the tab that OWNS the
+			// draft so it can't be written onto whatever tab is active by then.
 			const draftTabId = useComposerInputStore.getState().aiValueTabId ?? activeTabIdRef.current;
+			const pin = activeSession
+				? { sessionId: activeSession.id, tabId: draftTabId ?? activeTab?.id }
+				: undefined;
 
 			if (images && images.length > 0) {
 				setStagedImages(images);
 			}
 			setTimeout(() => {
-				processInputRef.current(text);
+				// Pin the agent/tab from click time so a focus change before the
+				// timeout cannot retarget the replay. Images were staged above.
+				processInputRef.current(text, pin);
 				// Restore draft input after processInput clears it
 				if (draftInput) {
 					setInputValue(draftInput);
-					syncAiInputToSession(draftInput, draftTabId);
+					if (pin) {
+						syncAiInputToSession(draftInput, pin);
+					} else {
+						syncAiInputToSession(draftInput);
+					}
 				}
 				if (draftImages.length > 0) {
 					setStagedImages(draftImages);
 				}
 			}, 0);
 		},
-		[setStagedImages, setInputValue, syncAiInputToSession, activeTab?.stagedImages]
+		[setStagedImages, setInputValue, syncAiInputToSession]
 	);
 
 	const handlePaste = useCallback(
 		(e: React.ClipboardEvent) => {
-			const isGroupChatActive = !!activeGroupChatId;
+			const activeSession = selectActiveSession(useSessionStore.getState());
+			const groupChatId = useGroupChatStore.getState().activeGroupChatId;
+			const isGroupChatActive = !!groupChatId;
+			// Bound now, not when the FileReader resolves: the image belongs to the
+			// room it was pasted into, even if the user switches rooms meanwhile.
+			const stageGroupChatImages = (v: (prev: string[]) => string[]) =>
+				setGroupChatStagedImages(v, groupChatId);
 			const isDirectAIMode = activeSession && activeSession.inputMode === 'ai';
 
 			const items = e.clipboardData.items;
@@ -734,7 +868,7 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 							if (event.target?.result) {
 								const imageData = event.target!.result as string;
 								if (isGroupChatActive) {
-									setGroupChatStagedImages((prev: string[]) => {
+									stageGroupChatImages((prev: string[]) => {
 										if (prev.includes(imageData)) {
 											setSuccessFlashNotification('Duplicate image ignored');
 											setTimeout(() => setSuccessFlashNotification(null), 2000);
@@ -759,9 +893,14 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 				}
 			}
 		},
-		[activeGroupChatId, activeSession, setInputValue, setStagedImages, getCommandMode]
+		[setInputValue, setStagedImages, getCommandMode]
 	);
 
+	/**
+	 * Append arbitrary text to the LIVE composer. Used by drops that are not
+	 * `@` mentions (a staged-image slot reference, say), which always target the
+	 * tab on screen because the drag ends there.
+	 */
 	const appendToAiInput = useCallback(
 		(text: string) => {
 			setInputValue((prev) => {
@@ -773,23 +912,77 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 		[setInputValue]
 	);
 
+	/**
+	 * Append `@` mentions to the AI composer.
+	 *
+	 * `pinnedTabId` names the tab the mentions belong to. Pass it whenever the
+	 * append can land after the active tab may have moved (an upload that awaits
+	 * the host, say): the composer store holds whatever draft is on screen right
+	 * now, so an unpinned write would drop the mention into whichever
+	 * conversation the user switched to. When the pinned tab is no longer the one
+	 * on screen the mention goes onto that tab's own persisted draft instead.
+	 *
+	 * The background write deliberately does not go through
+	 * `syncAiInputToSession`: that reads `aiCommandMode` from the live composer
+	 * and would stamp the on-screen tab's bang-ladder rung onto the background
+	 * tab, and it cancels the queued flush that belongs to the tab being typed
+	 * in. Only `inputValue` is touched here.
+	 *
+	 * Returns true when the live composer was the one updated, so the caller
+	 * knows whether focusing the textarea is the right follow-up.
+	 */
 	const appendMentionsToAiInput = useCallback(
-		(paths: string[]) => {
-			if (paths.length === 0) return;
-			appendToAiInput(paths.map((p) => `@${p}`).join(' '));
+		(paths: string[], pinnedTabId?: string): boolean => {
+			if (paths.length === 0) return false;
+			const joined = paths.map((p) => formatFileMention(p)).join(' ');
+			const append = (prev: string) => {
+				if (!prev) return joined + ' ';
+				const sep = /\s$/.test(prev) ? '' : ' ';
+				return prev + sep + joined + ' ';
+			};
+			const pinIsOnScreen =
+				!pinnedTabId || (isAiModeRef.current && pinnedTabId === activeTabIdRef.current);
+			if (!pinIsOnScreen) {
+				// Tab was closed mid-upload: the file is still on the host, there is
+				// just no draft left to mention it in.
+				const owner = useSessionStore
+					.getState()
+					.sessions.find((s) => s.aiTabs?.some((t) => t.id === pinnedTabId));
+				if (!owner || !pinnedTabId) {
+					notifyToast({
+						color: 'yellow',
+						title: 'Attachment has nowhere to go',
+						message: 'The tab it was dropped into was closed before the upload finished',
+					});
+					return false;
+				}
+				updateAiTab(owner.id, pinnedTabId, (t) => ({
+					...t,
+					inputValue: append(t.inputValue ?? ''),
+				}));
+				return false;
+			}
+			setInputValue(append);
+			return true;
 		},
-		[appendToAiInput]
+		[setInputValue]
 	);
 
-	const appendMentionsToGroupChatDraft = useCallback((paths: string[]) => {
+	const appendMentionsToGroupChatDraft = useCallback((paths: string[], pinnedChatId?: string) => {
 		if (paths.length === 0) return;
-		const joined = paths.map((p) => `@${p}`).join(' ');
+		const joined = paths.map((p) => formatFileMention(p)).join(' ');
 		// Reading the store via getState() (instead of subscribing) is intentional:
 		// this callback only runs on user drop events, so we always want the latest
 		// chatId / setter at fire time and don't want stale-closure invalidation to
 		// re-create the callback (and bust handleDrop's useCallback deps) on every
 		// store update.
-		const { activeGroupChatId: chatId, setGroupChats } = useGroupChatStore.getState();
+		//
+		// `pinnedChatId` is the chat the drop happened in. An upload resolves
+		// asynchronously, so without the pin a mention would land in whichever chat
+		// is open when it finishes - or vanish entirely once the user has left
+		// group chat.
+		const { activeGroupChatId, setGroupChats } = useGroupChatStore.getState();
+		const chatId = pinnedChatId ?? activeGroupChatId;
 		if (!chatId) return;
 		setGroupChats((prev) =>
 			prev.map((c) => {
@@ -802,13 +995,61 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 		);
 	}, []);
 
+	/**
+	 * Attach dropped files that carry no filesystem path (the web-desktop build
+	 * runs in a browser, so `getPathForFile` comes back empty and the file may
+	 * live on a different machine than the agent). The bytes are uploaded into
+	 * the session's attachments directory and the resulting host path is
+	 * @mentioned. Anything that fails raises a toast - dropping a file into the
+	 * chat and getting nothing back at all is the bug this exists to avoid.
+	 */
+	const uploadAndMentionPathlessFiles = useCallback(
+		async (
+			files: File[],
+			ownerId: string,
+			projectRoot: string | undefined,
+			toGroupChat: boolean,
+			pinnedTabId: string | undefined
+		) => {
+			const mentions: string[] = [];
+			for (const file of files) {
+				try {
+					const savedPath = await uploadPathlessFile(file, ownerId);
+					mentions.push(toMentionPath(savedPath, projectRoot));
+				} catch (error) {
+					notifyToast({
+						color: 'red',
+						title: 'Could not attach file',
+						message: error instanceof Error ? error.message : `Could not attach ${file.name}`,
+					});
+				}
+			}
+			if (mentions.length === 0) return;
+			if (toGroupChat) {
+				// `ownerId` is the group chat the drop happened in.
+				appendMentionsToGroupChatDraft(mentions, ownerId);
+			} else if (appendMentionsToAiInput(mentions, pinnedTabId)) {
+				// Only steal focus when the mention actually went into the composer
+				// that is on screen.
+				inputRef.current?.focus();
+			}
+		},
+		[appendMentionsToAiInput, appendMentionsToGroupChatDraft, inputRef]
+	);
+
 	const handleDrop = useCallback(
 		(e: React.DragEvent) => {
 			e.preventDefault();
 			dragCounterRef.current = 0;
 			setIsDraggingFile(false);
 
-			const isGroupChatActive = !!activeGroupChatId;
+			const activeSession = selectActiveSession(useSessionStore.getState());
+			const groupChatId = useGroupChatStore.getState().activeGroupChatId;
+			const isGroupChatActive = !!groupChatId;
+			// Bound now, not when the FileReader resolves: the image belongs to the
+			// room it was pasted into, even if the user switches rooms meanwhile.
+			const stageGroupChatImages = (v: (prev: string[]) => string[]) =>
+				setGroupChatStagedImages(v, groupChatId);
 			const isDirectAIMode = activeSession && activeSession.inputMode === 'ai';
 
 			// Neither command rung has an agent to hand attachments (or @mentions)
@@ -915,6 +1156,8 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 
 			const files = e.dataTransfer.files;
 			const externalPaths: string[] = [];
+			// Files with no resolvable path (browser drops) get uploaded instead.
+			const pathlessFiles: File[] = [];
 			const projectRoot = activeSession?.projectRoot ?? activeSession?.fullPath;
 
 			for (let i = 0; i < files.length; i++) {
@@ -925,7 +1168,7 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 						if (event.target?.result) {
 							const imageData = event.target!.result as string;
 							if (isGroupChatActive) {
-								setGroupChatStagedImages((prev: string[]) => {
+								stageGroupChatImages((prev: string[]) => {
 									if (prev.includes(imageData)) {
 										setSuccessFlashNotification('Duplicate image ignored');
 										setTimeout(() => setSuccessFlashNotification(null), 2000);
@@ -953,7 +1196,35 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 					const filePath = window.maestro.fs.getPathForFile(file);
 					if (filePath) {
 						externalPaths.push(toMentionPath(filePath, projectRoot));
+					} else {
+						// No path to mention: the web-desktop build is a browser, where
+						// `File` objects have no path at all. Upload the bytes to the host
+						// so the agent has something real to read.
+						pathlessFiles.push(file);
 					}
+				}
+			}
+
+			if (pathlessFiles.length > 0) {
+				const ownerId = isGroupChatActive
+					? useGroupChatStore.getState().activeGroupChatId
+					: activeSession?.id;
+				if (ownerId) {
+					void uploadAndMentionPathlessFiles(
+						pathlessFiles,
+						ownerId,
+						projectRoot,
+						isGroupChatActive,
+						// Pin the tab from drop time so switching tabs or agents while
+						// the bytes are in flight cannot retarget the mention.
+						activeSession ? getActiveTab(activeSession)?.id : undefined
+					);
+				} else {
+					notifyToast({
+						color: 'red',
+						title: 'Could not attach file',
+						message: 'There is no active agent to attach it to',
+					});
 				}
 			}
 
@@ -967,12 +1238,11 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 			}
 		},
 		[
-			activeGroupChatId,
-			activeSession,
 			setStagedImages,
 			appendToAiInput,
 			appendMentionsToAiInput,
 			appendMentionsToGroupChatDraft,
+			uploadAndMentionPathlessFiles,
 			getCommandMode,
 		]
 	);
@@ -988,12 +1258,14 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 		processInput,
 		processInputRef,
 		handleInputKeyDown,
+		handleMainPanelInputFocus,
 		handleMainPanelInputBlur,
 		handleReplayMessage,
 		handlePaste,
 		handleDrop,
 		tabCompletionSuggestions,
-		atMentionSuggestions,
+		atMentionItems,
+		atMentionCounts,
 		syncFileTreeToTabCompletion,
 	};
 }

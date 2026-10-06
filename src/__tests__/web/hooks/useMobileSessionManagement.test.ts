@@ -101,4 +101,109 @@ describe('useMobileSessionManagement', () => {
 		expect(result.current.sessionLogs.aiLogs).toHaveLength(1);
 		expect(result.current.sessionLogs.aiLogs[0].text).toBe('hello');
 	});
+
+	it('keeps a confirmed remote tab rename through sync and reconnect reload', () => {
+		const sendSpy = vi.fn();
+		const tab = {
+			id: 'tab-1',
+			agentSessionId: 'agent-session-1',
+			name: null,
+			starred: false,
+			inputValue: '',
+			createdAt: 1700000000000,
+			state: 'idle',
+		};
+		const session = {
+			id: 'session-1',
+			name: 'Session 1',
+			toolType: 'claude-code',
+			state: 'idle',
+			inputMode: 'ai',
+			cwd: '/tmp',
+			aiTabs: [tab],
+			activeTabId: 'tab-1',
+		} as Session;
+		const { result } = renderHook(() =>
+			useMobileSessionManagement({
+				...baseDeps,
+				savedActiveSessionId: 'session-1',
+				savedActiveTabId: 'tab-1',
+				sendRef: { current: sendSpy },
+			})
+		);
+
+		act(() => {
+			result.current.setSessions([session]);
+		});
+		act(() => {
+			result.current.handleRenameTab('tab-1', 'Client Plan');
+		});
+		act(() => {
+			result.current.sessionsHandlers.onRenameTabResult('session-1', 'tab-1', true, 'Client Plan');
+		});
+
+		expect(sendSpy).toHaveBeenCalledWith({
+			type: 'rename_tab',
+			sessionId: 'session-1',
+			tabId: 'tab-1',
+			newName: 'Client Plan',
+		});
+		expect(result.current.sessions[0].aiTabs?.[0].name).toBe('Client Plan');
+
+		const syncedTabs = [{ ...tab, name: 'Client Plan' }];
+		act(() => {
+			result.current.sessionsHandlers.onTabsChanged('session-1', syncedTabs, 'tab-1');
+		});
+		expect(result.current.sessions[0].aiTabs?.[0].name).toBe('Client Plan');
+
+		act(() => {
+			result.current.sessionsHandlers.onSessionsUpdate([{ ...session, aiTabs: syncedTabs }]);
+		});
+		expect(result.current.sessions[0].aiTabs?.[0].name).toBe('Client Plan');
+	});
+
+	it('does not leave a false tab name when remote rename fails', () => {
+		const session = {
+			id: 'session-1',
+			name: 'Session 1',
+			toolType: 'claude-code',
+			state: 'idle',
+			inputMode: 'ai',
+			cwd: '/tmp',
+			aiTabs: [
+				{
+					id: 'tab-1',
+					agentSessionId: 'agent-session-1',
+					name: 'Old Name',
+					starred: false,
+					inputValue: '',
+					createdAt: 1700000000000,
+					state: 'idle',
+				},
+			],
+			activeTabId: 'tab-1',
+		} as Session;
+		const { result } = renderHook(() =>
+			useMobileSessionManagement({
+				...baseDeps,
+				savedActiveSessionId: 'session-1',
+				savedActiveTabId: 'tab-1',
+			})
+		);
+
+		act(() => {
+			result.current.setSessions([session]);
+		});
+		act(() => {
+			result.current.sessionsHandlers.onRenameTabResult(
+				'session-1',
+				'tab-1',
+				false,
+				'False Name',
+				'disk full'
+			);
+		});
+
+		expect(result.current.sessions[0].aiTabs?.[0].name).toBe('Old Name');
+	});
 });

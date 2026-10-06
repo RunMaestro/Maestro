@@ -3,9 +3,10 @@
 // the same tab on follow-up calls without owning a persistent channel.
 
 import { resolveAgentId, readSettingValue } from '../services/storage';
-import { withMaestroClient } from '../services/maestro-client';
+import { withMaestroClient, UnsupportedCommandError } from '../services/maestro-client';
 import { getSettingDefault } from '../../shared/settingsMetadata';
 import { resolveBackgroundFlag } from '../../shared/focusPlacement';
+import { callerMessageFields, readCallerIdentity } from '../../shared/agentDelegation';
 
 export interface DispatchOptions {
 	newTab?: boolean;
@@ -18,9 +19,33 @@ export interface DispatchOptions {
 	 * `send_command` path it suppresses the agent switch the desktop does today.
 	 */
 	background?: boolean;
-	/** Move the view to the target after dispatching. */
+	/** Commander sets this to `true` when `--focus` is passed. Unset/false is the
+	 *  default and dispatches in the background: the desktop delivers the prompt
+	 *  without switching to or focusing the target agent/tab. Only `focus === true`
+	 *  brings the target to the foreground. */
 	focus?: boolean;
+	/** When true, queue the prompt into the target agent's execution queue if the
+	 *  tab is busy (instead of rejecting). Idle target dispatches immediately.
+	 *  Mutually exclusive with --new-tab and --force. */
+	queue?: boolean;
+	/** Alias for `queue`. */
+	wait?: boolean;
+	/**
+	 * Agent to wake with a real turn when THIS dispatch finishes. The callback is
+	 * correlated to (target agent, target tab) established at dispatch time, so
+	 * other runs of the same agent do not trigger it. Requires --new-tab or --tab.
+	 */
+	notifyOnComplete?: string;
+	/** Specific caller tab to wake. Defaults to the caller's active AI tab. */
+	callbackTab?: string;
+	/** Overrides the default callback prompt body ({{DISPATCH_*}} substituted). */
+	callbackPrompt?: string;
+	/** Give up and fire a `timeout` callback after this many seconds. */
+	callbackTimeout?: string;
 }
+
+/** Hard cap mirrored from the main-process registry (24h). */
+const MAX_CALLBACK_TIMEOUT_SECONDS = 24 * 60 * 60;
 
 export interface DispatchResponse {
 	success: boolean;
@@ -31,10 +56,196 @@ export interface DispatchResponse {
 	tabId?: string | null;
 	error?: string;
 	code?: string;
+	/** True when the prompt was queued (target busy); false when dispatched now.
+	 *  Set by the --queue path and by --new-tab, whose fresh tab inherits the
+	 *  agent's busy state and so queues behind the turn already running. */
+	queued?: boolean;
+	/** 1-based position in the execution queue (only when queued). */
+	queuePosition?: number;
+	/** Id of the queued item (only when queued); usable with `queue remove`. */
+	itemId?: string;
+	/** Id of the armed dispatch callback (only with --notify-on-complete). */
+	callbackId?: string;
+	/** Caller agent that will be woken when this dispatch finishes. */
+	notifyOnComplete?: string;
+}
+
+/**
+ * Validate and normalize the `--notify-on-complete` family. Returns the fields
+ * to merge into the outgoing websocket message, or an error response.
+ *
+ * The callback is bound to a specific tab, so an explicit target tab is
+ * mandatory: without `--new-tab` or `--tab` the dispatch lands in whichever tab
+ * happens to be active, and there is nothing stable to correlate a completion
+ * against.
+ */
+function buildCallbackFields(
+	options: DispatchOptions,
+	targetAgentId: string
+):
+	| { ok: true; fields: Record<string, unknown>; callerAgentId?: string }
+	| { ok: false; response: DispatchResponse } {
+	const hasCallbackModifier =
+		options.callbackTab !== undefined ||
+		options.callbackPrompt !== undefined ||
+		options.callbackTimeout !== undefined;
+
+	if (!options.notifyOnComplete) {
+		if (hasCallbackModifier) {
+			return {
+				ok: false,
+				response: {
+					success: false,
+					error:
+						'--callback-tab / --callback-prompt / --callback-timeout require --notify-on-complete',
+					code: 'INVALID_OPTIONS',
+				},
+			};
+		}
+		return { ok: true, fields: {} };
+	}
+
+	if (!options.newTab && !options.tab) {
+		return {
+			ok: false,
+			response: {
+				success: false,
+				error:
+					'--notify-on-complete requires --new-tab or --tab (the callback is correlated to a specific tab)',
+				code: 'INVALID_OPTIONS',
+			},
+		};
+	}
+
+	let callerAgentId: string;
+	try {
+		callerAgentId = resolveAgentId(options.notifyOnComplete);
+	} catch (error) {
+		const msg = error instanceof Error ? error.message : 'Unknown error';
+		return { ok: false, response: { success: false, error: msg, code: 'AGENT_NOT_FOUND' } };
+	}
+
+	// A callback that wakes the tab it is waiting on never terminates.
+	if (
+		callerAgentId === targetAgentId &&
+		(!options.callbackTab || (options.tab && options.callbackTab === options.tab))
+	) {
+		return {
+			ok: false,
+			response: {
+				success: false,
+				error:
+					'--notify-on-complete cannot target the dispatch target itself (would wake the tab it waits on)',
+				code: 'INVALID_OPTIONS',
+			},
+		};
+	}
+
+	let callbackTimeoutSeconds: number | undefined;
+	if (options.callbackTimeout !== undefined) {
+		const parsed = Number(options.callbackTimeout);
+		if (!Number.isFinite(parsed) || parsed <= 0) {
+			return {
+				ok: false,
+				response: {
+					success: false,
+					error: '--callback-timeout must be a positive number of seconds',
+					code: 'INVALID_OPTIONS',
+				},
+			};
+		}
+		callbackTimeoutSeconds = Math.min(Math.round(parsed), MAX_CALLBACK_TIMEOUT_SECONDS);
+	}
+
+	return {
+		ok: true,
+		callerAgentId,
+		fields: {
+			notifyOnComplete: callerAgentId,
+			...(options.callbackTab ? { callbackTab: options.callbackTab } : {}),
+			...(options.callbackPrompt ? { callbackPrompt: options.callbackPrompt } : {}),
+			...(callbackTimeoutSeconds !== undefined ? { callbackTimeout: callbackTimeoutSeconds } : {}),
+		},
+	};
 }
 
 function emitErrorJson(error: string, code: string): void {
 	console.log(JSON.stringify({ success: false, error, code }, null, 2));
+}
+
+/**
+ * Map a thrown dispatch/enqueue error to the stable DispatchResponse error
+ * codes downstream consumers (Maestro-Discord, Cue) rely on. Shared by the
+ * send_command and enqueue_command paths so both surface "app down" vs
+ * "session not found" vs "unsupported build" identically.
+ */
+/**
+ * The prompt landed but the desktop never acked a callbackId - an older desktop
+ * build that ignores `notifyOnComplete`, or an arming path that silently did
+ * nothing. Reporting success here would leave the caller waiting forever for a
+ * wake-up that nobody armed, so fail loudly with a dedicated code and hand back
+ * the tab id so the caller can still poll or re-dispatch.
+ */
+function callbackNotArmedResponse(agentId: string, tabId: string | null): DispatchResponse {
+	return {
+		success: false,
+		agentId,
+		sessionId: tabId,
+		tabId,
+		error:
+			'Prompt was dispatched but the desktop did not arm the completion callback (no callbackId acknowledged). No wake-up will arrive.',
+		code: 'CALLBACK_NOT_ARMED',
+	};
+}
+
+function mapDispatchError(error: unknown, agentId: string): DispatchResponse {
+	if (error instanceof UnsupportedCommandError) {
+		return { success: false, error: error.message, code: 'UNSUPPORTED' };
+	}
+	const msg = error instanceof Error ? error.message : String(error);
+	// Checked before the substring sniffing below: this reason came from the
+	// desktop verbatim, so it must not be re-classified by whatever words it
+	// happens to contain.
+	if (msg.startsWith('NEW_TAB_REFUSED:')) {
+		return {
+			success: false,
+			error: msg.slice('NEW_TAB_REFUSED:'.length),
+			code: 'DISPATCH_REFUSED',
+		};
+	}
+	const lowerMsg = msg.toLowerCase();
+	if (
+		lowerMsg.includes('econnrefused') ||
+		lowerMsg.includes('connection refused') ||
+		lowerMsg.includes('websocket') ||
+		lowerMsg.includes('enotfound') ||
+		lowerMsg.includes('etimedout') ||
+		lowerMsg.includes('maestro desktop app is not running') ||
+		lowerMsg.includes('discovery file is stale') ||
+		lowerMsg.includes('not connected to maestro')
+	) {
+		return {
+			success: false,
+			error: 'Maestro desktop is not running or not reachable',
+			code: 'MAESTRO_NOT_RUNNING',
+		};
+	}
+	if (
+		lowerMsg.includes('session not found') ||
+		lowerMsg.includes('no such session') ||
+		lowerMsg.includes('unknown session')
+	) {
+		return { success: false, error: `Session not found: ${agentId}`, code: 'SESSION_NOT_FOUND' };
+	}
+	if (msg.startsWith('NEW_TAB_NO_ID:')) {
+		return {
+			success: false,
+			error:
+				'Maestro desktop acknowledged --new-tab without returning a tab id (cannot chain dispatch)',
+			code: 'NEW_TAB_NO_ID',
+		};
+	}
+	return { success: false, error: `Command failed: ${msg}`, code: 'COMMAND_FAILED' };
 }
 
 /**
@@ -55,14 +266,37 @@ export async function runDispatch(
 		};
 	}
 
-	// `--new-tab --force` is meaningless - a freshly created tab can never be
-	// busy, so the bypass-busy semantics of --force don't apply. Reject the
-	// combo rather than silently ignoring --force, which would mismatch the
-	// help text and confuse callers debugging why nothing is being bypassed.
+	// `--new-tab --force` is meaningless - the new tab owns no turn to bypass,
+	// and a prompt that cannot start because the AGENT is mid-turn is queued for
+	// the new tab rather than rejected. Reject the combo rather than silently
+	// ignoring --force, which would mismatch the help text and confuse callers
+	// debugging why nothing is being bypassed.
 	if (options.newTab && options.force) {
 		return {
 			success: false,
-			error: '--new-tab cannot be combined with --force (a new tab is never busy)',
+			error: '--new-tab cannot be combined with --force (a new tab owns no turn to bypass)',
+			code: 'INVALID_OPTIONS',
+		};
+	}
+
+	// --queue is the safe counterpart to --force: instead of bypassing the busy
+	// guard, it respects it by waiting in line. Combining the two is
+	// contradictory. And --new-tab already does what --queue asks for - a prompt
+	// it cannot start now waits in the agent's queue - so the flag is redundant
+	// there; reject both combos rather than silently ignoring --queue.
+	const queue = options.queue === true || options.wait === true;
+	if (queue && options.newTab) {
+		return {
+			success: false,
+			error: '--queue cannot be combined with --new-tab (--new-tab already queues a busy agent)',
+			code: 'INVALID_OPTIONS',
+		};
+	}
+	if (queue && options.force) {
+		return {
+			success: false,
+			error:
+				'--queue cannot be combined with --force (--queue waits for the busy guard; --force bypasses it)',
 			code: 'INVALID_OPTIONS',
 		};
 	}
@@ -91,20 +325,56 @@ export async function runDispatch(
 		return { success: false, error: msg, code: 'AGENT_NOT_FOUND' };
 	}
 
+	// Dispatch runs in the background by default (no focus stealing); only an
+	// explicit `--focus` (Commander: focus === true) tells the desktop to switch
+	// to and focus the target agent/tab. The `background` bit is threaded to both
+	// the new-tab and existing-tab command paths.
+	const background = resolveBackgroundFlag(options, 'dispatch-new-tab');
+
+	const callback = buildCallbackFields(options, agentId);
+	if (!callback.ok) return callback.response;
+
+	// Who is dispatching, when this runs inside a Maestro agent's shell. The
+	// desktop uses it to mark the hand-off in the CALLER's transcript; a human or
+	// an external script has no identity and the message goes out unchanged.
+	const caller = callerMessageFields(readCallerIdentity(process.env));
+
+	// --queue routes through the renderer's authoritative execution queue.
+	if (queue) {
+		return runQueueDispatch(agentId, message, options, background, callback.fields, caller);
+	}
 	try {
-		const tabId = await withMaestroClient(async (client) => {
+		const dispatched = await withMaestroClient(async (client) => {
 			if (options.newTab) {
-				const result = await client.sendCommand<{ tabId?: string }>(
+				const result = await client.sendCommand<{
+					success?: boolean;
+					tabId?: string;
+					callbackId?: string;
+					queued?: boolean;
+					error?: string;
+				}>(
 					{
 						type: 'new_ai_tab_with_prompt',
 						sessionId: agentId,
 						prompt: message,
 						// Background by default: a dispatched prompt is an agent talking to
 						// an agent, and the tab id we return is how the caller follows it.
-						background: resolveBackgroundFlag(options, 'dispatch-new-tab'),
+						...(background ? { background: true } : {}),
+						...callback.fields,
+						...caller,
 					},
 					'new_ai_tab_with_prompt_result'
 				);
+				// An explicit refusal is reported with the desktop's OWN reason.
+				// `sendCommand` resolves on any reply, success or not, so a refusal
+				// carrying no tab id used to fall through to the NEW_TAB_NO_ID branch
+				// below and be reported as a protocol fault - which is the one thing
+				// it is not (#1602).
+				if (result.success === false) {
+					throw new Error(
+						`NEW_TAB_REFUSED:${result.error || 'Maestro desktop refused the dispatch'}`
+					);
+				}
 				// `--new-tab`'s sole purpose is to surface a fresh tab id for
 				// chaining (`dispatch --tab <tabId>`). If the desktop acked
 				// without one (older build / race), fail loudly with a dedicated
@@ -114,86 +384,130 @@ export async function runDispatch(
 				if (!result.tabId) {
 					throw new Error('NEW_TAB_NO_ID: new_ai_tab_with_prompt acknowledged without a tabId');
 				}
-				return result.tabId;
+				return {
+					tabId: result.tabId,
+					callbackId: result.callbackId,
+					queued: result.queued === true,
+				};
 			}
-			const result = await client.sendCommand<{ tabId?: string }>(
+			const result = await client.sendCommand<{ tabId?: string; callbackId?: string }>(
 				{
 					type: 'send_command',
 					sessionId: agentId,
 					command: message,
 					inputMode: 'ai',
-					// Writing to an existing tab selects the target agent today. The
-					// verb keeps that default, but an agent handing work to another
-					// agent can now say so and leave the human where they were.
-					background: resolveBackgroundFlag(options, 'dispatch'),
 					...(options.tab ? { tabId: options.tab } : {}),
 					...(options.force ? { force: true } : {}),
+					// Dispatch is background-by-default on BOTH paths (see the
+					// resolve above); `--focus` is the opt-out. Do not re-resolve
+					// under the `dispatch` key here - that key describes the
+					// foreground default this verb deliberately does not take, and a
+					// second `background` field in this object silently shadows the
+					// spread below it.
+					...(background ? { background: true } : {}),
+					...callback.fields,
+					...caller,
 				},
 				'command_result'
 			);
-			return result.tabId;
+			return { tabId: result.tabId, callbackId: result.callbackId, queued: false };
 		});
 		// `--tab <tabId>` is the authoritative target; the desktop handler
 		// echoes it back when we pass one. If the desktop omitted it (older
 		// build / no active tab known), fall back to the value the caller
 		// supplied so callers can still chain dispatches deterministically.
-		const resolvedTabId = tabId ?? options.tab ?? null;
+		const resolvedTabId = dispatched.tabId ?? options.tab ?? null;
+		if (callback.callerAgentId && !dispatched.callbackId) {
+			return callbackNotArmedResponse(agentId, resolvedTabId);
+		}
 		return {
 			success: true,
 			agentId,
 			sessionId: resolvedTabId,
 			tabId: resolvedTabId,
+			// `--new-tab` at a working agent creates the tab and queues the prompt
+			// behind the turn already running, so say which of the two happened.
+			...(dispatched.queued ? { queued: true } : {}),
+			...(dispatched.callbackId ? { callbackId: dispatched.callbackId } : {}),
+			...(callback.callerAgentId ? { notifyOnComplete: callback.callerAgentId } : {}),
 		};
 	} catch (error) {
-		const msg = error instanceof Error ? error.message : String(error);
-		const lowerMsg = msg.toLowerCase();
-		// Map MaestroClient's own throw messages alongside socket-level ones.
-		// MaestroClient throws three distinct strings before any WebSocket
-		// activity ("Maestro desktop app is not running", "Maestro discovery
-		// file is stale (app may have crashed)", "Not connected to Maestro");
-		// without these, those errors fall through to COMMAND_FAILED and break
-		// the error-code contract downstream consumers (Maestro-Discord, Cue)
-		// rely on to distinguish "app down" from "command rejected".
-		if (
-			lowerMsg.includes('econnrefused') ||
-			lowerMsg.includes('connection refused') ||
-			lowerMsg.includes('websocket') ||
-			lowerMsg.includes('enotfound') ||
-			lowerMsg.includes('etimedout') ||
-			lowerMsg.includes('maestro desktop app is not running') ||
-			lowerMsg.includes('discovery file is stale') ||
-			lowerMsg.includes('not connected to maestro')
-		) {
-			return {
-				success: false,
-				error: 'Maestro desktop is not running or not reachable',
-				code: 'MAESTRO_NOT_RUNNING',
-			};
+		return mapDispatchError(error, agentId);
+	}
+}
+
+/**
+ * `dispatch --queue` path. Routes the prompt to the renderer's authoritative
+ * execution queue via the enqueue_command round-trip. A busy target joins the
+ * queue (FIFO by timestamp); an idle target dispatches immediately. Returns the
+ * tab/session id plus queue position so scripts can track status. The queue
+ * lives in the desktop renderer, so this fails with MAESTRO_NOT_RUNNING when the
+ * app is down - exactly like every other dispatch mode.
+ */
+async function runQueueDispatch(
+	agentId: string,
+	message: string,
+	options: DispatchOptions,
+	background: boolean,
+	callbackFields: Record<string, unknown>,
+	callerFields: Record<string, unknown>
+): Promise<DispatchResponse> {
+	try {
+		const result = await withMaestroClient(async (client) =>
+			client.sendCommand<{
+				success?: boolean;
+				tabId?: string;
+				queued?: boolean;
+				queuePosition?: number;
+				queueLength?: number;
+				itemId?: string;
+				callbackId?: string;
+				error?: string;
+			}>(
+				{
+					type: 'enqueue_command',
+					sessionId: agentId,
+					command: message,
+					inputMode: 'ai',
+					...(options.tab ? { tabId: options.tab } : {}),
+					...(background ? { background: true } : {}),
+					...callbackFields,
+					...callerFields,
+				},
+				'enqueue_command_result'
+			)
+		);
+
+		if (result.success === false) {
+			const err = result.error ?? 'Enqueue failed';
+			const lower = err.toLowerCase();
+			const code = lower.includes('session not found')
+				? 'SESSION_NOT_FOUND'
+				: lower.startsWith('tab not found')
+					? 'TAB_NOT_FOUND'
+					: 'ENQUEUE_FAILED';
+			return { success: false, error: err, code };
 		}
-		if (
-			lowerMsg.includes('session not found') ||
-			lowerMsg.includes('no such session') ||
-			lowerMsg.includes('unknown session')
-		) {
-			return {
-				success: false,
-				error: `Session not found: ${agentId}`,
-				code: 'SESSION_NOT_FOUND',
-			};
-		}
-		if (msg.startsWith('NEW_TAB_NO_ID:')) {
-			return {
-				success: false,
-				error:
-					'Maestro desktop acknowledged --new-tab without returning a tab id (cannot chain dispatch)',
-				code: 'NEW_TAB_NO_ID',
-			};
+
+		const resolvedTabId = result.tabId ?? options.tab ?? null;
+		if (typeof callbackFields.notifyOnComplete === 'string' && !result.callbackId) {
+			return callbackNotArmedResponse(agentId, resolvedTabId);
 		}
 		return {
-			success: false,
-			error: `Command failed: ${msg}`,
-			code: 'COMMAND_FAILED',
+			success: true,
+			agentId,
+			sessionId: resolvedTabId,
+			tabId: resolvedTabId,
+			queued: result.queued === true,
+			...(result.queuePosition !== undefined ? { queuePosition: result.queuePosition } : {}),
+			...(result.itemId ? { itemId: result.itemId } : {}),
+			...(result.callbackId ? { callbackId: result.callbackId } : {}),
+			...(typeof callbackFields.notifyOnComplete === 'string'
+				? { notifyOnComplete: callbackFields.notifyOnComplete }
+				: {}),
 		};
+	} catch (error) {
+		return mapDispatchError(error, agentId);
 	}
 }
 
@@ -217,6 +531,11 @@ export async function dispatch(
 				agentId: result.agentId,
 				sessionId: result.sessionId,
 				tabId: result.tabId,
+				...(result.queued !== undefined ? { queued: result.queued } : {}),
+				...(result.queuePosition !== undefined ? { queuePosition: result.queuePosition } : {}),
+				...(result.itemId ? { itemId: result.itemId } : {}),
+				...(result.callbackId ? { callbackId: result.callbackId } : {}),
+				...(result.notifyOnComplete ? { notifyOnComplete: result.notifyOnComplete } : {}),
 			},
 			null,
 			2

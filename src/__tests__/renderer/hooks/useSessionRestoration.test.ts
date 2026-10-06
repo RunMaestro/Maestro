@@ -8,6 +8,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act, cleanup } from '@testing-library/react';
 
+const runtime = vi.hoisted(() => ({ web: false }));
+vi.mock('../../../renderer/utils/runtimeContext', () => ({
+	isWebDesktop: () => runtime.web,
+	isElectronDesktop: () => !runtime.web,
+}));
+
 // Mock gitService before any imports that use it
 vi.mock('../../../renderer/services/git', () => ({
 	gitService: {
@@ -24,11 +30,16 @@ vi.mock('../../../renderer/utils/ids', () => ({
 }));
 
 import { useSessionRestoration } from '../../../renderer/hooks/session/useSessionRestoration';
-import { useSessionStore } from '../../../renderer/stores/sessionStore';
+import {
+	updateAiTab,
+	updateSessionWith,
+	useSessionStore,
+} from '../../../renderer/stores/sessionStore';
 import { useGroupChatStore } from '../../../renderer/stores/groupChatStore';
 import { gitService } from '../../../renderer/services/git';
-import type { Session } from '../../../renderer/types';
+import type { BrowserTab, Session } from '../../../renderer/types';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
+import { WEB_BRIDGE_RECONCILE_EVENT } from '../../../shared/webClientConfig';
 
 // Cast to access mock methods
 const mockGitService = gitService as {
@@ -93,6 +104,8 @@ function createMockSession(overrides: Partial<Session> = {}): Session {
 
 // Mock IPC
 const mockGetAll = vi.fn();
+const mockGetBootstrap = vi.fn();
+const mockGetDeferredContent = vi.fn();
 const mockGroupsGetAll = vi.fn();
 const mockGroupChatList = vi.fn();
 const mockAgentsGet = vi.fn();
@@ -104,6 +117,7 @@ const mockAgentsGet = vi.fn();
 beforeEach(() => {
 	vi.clearAllMocks();
 	idCounter = 0;
+	runtime.web = false;
 
 	useSessionStore.setState({
 		sessions: [],
@@ -112,6 +126,7 @@ beforeEach(() => {
 		sessionsLoaded: false,
 		initialLoadComplete: false,
 		groupsLoaded: false,
+		sessionsReadOk: false,
 	} as any);
 
 	useGroupChatStore.setState({
@@ -124,6 +139,8 @@ beforeEach(() => {
 	}
 	(window as any).maestro.sessions = {
 		getAll: mockGetAll,
+		getBootstrap: mockGetBootstrap,
+		getDeferredContent: mockGetDeferredContent,
 		getActiveSessionId: vi.fn().mockResolvedValue(''),
 		setActiveSessionId: vi.fn(),
 	};
@@ -134,6 +151,7 @@ beforeEach(() => {
 	};
 
 	mockGetAll.mockResolvedValue([]);
+	mockGetBootstrap.mockResolvedValue([]);
 	mockGroupsGetAll.mockResolvedValue([]);
 	mockGroupChatList.mockResolvedValue([]);
 });
@@ -146,7 +164,7 @@ afterEach(() => {
 // restoreSession - Migration logic
 // ============================================================================
 
-describe('restoreSession — Migration logic', () => {
+describe('restoreSession - Migration logic', () => {
 	it('sets projectRoot to cwd when missing', async () => {
 		const session = createMockSession({ projectRoot: undefined, cwd: '/my/path' });
 		const { result } = renderHook(() => useSessionRestoration());
@@ -388,6 +406,51 @@ describe('restoreSession — Migration logic', () => {
 		expect(restored!.unifiedTabOrder).toEqual([{ type: 'ai', id: 'tab-1' }]);
 	});
 
+	it('drops ephemeral (incognito) tabs during restoration and cleans their refs', async () => {
+		// An ephemeral tab should never reach disk, but a crash mid-write (or a
+		// hand-edited payload) can leave one behind. Restoration must drop it:
+		// its in-memory partition is gone, so reviving it yields a dead tab.
+		const keeper: BrowserTab = {
+			id: 'browser-keep',
+			url: 'https://example.com/docs',
+			title: 'Example Docs',
+			createdAt: 1,
+			partition: 'persist:maestro-browser-session-session-1',
+			canGoBack: false,
+			canGoForward: false,
+			isLoading: false,
+		};
+		const flagged: BrowserTab = { ...keeper, id: 'browser-flagged', ephemeral: true };
+		const prefixOnly: BrowserTab = {
+			...keeper,
+			id: 'browser-prefix',
+			partition: 'maestro-ephemeral-session-1-a1b2c3d4',
+		};
+		const session = createMockSession({
+			browserTabs: [keeper, flagged, prefixOnly],
+			activeBrowserTabId: 'browser-flagged',
+			unifiedTabOrder: [
+				{ type: 'ai' as const, id: 'tab-1' },
+				{ type: 'browser' as const, id: 'browser-keep' },
+				{ type: 'browser' as const, id: 'browser-flagged' },
+				{ type: 'browser' as const, id: 'browser-prefix' },
+			],
+		});
+		const { result } = renderHook(() => useSessionRestoration());
+
+		let restored: Session;
+		await act(async () => {
+			restored = await result.current.restoreSession(session);
+		});
+
+		expect(restored!.browserTabs.map((tab) => tab.id)).toEqual(['browser-keep']);
+		expect(restored!.activeBrowserTabId).toBeNull();
+		expect(restored!.unifiedTabOrder).toEqual([
+			{ type: 'ai', id: 'tab-1' },
+			{ type: 'browser', id: 'browser-keep' },
+		]);
+	});
+
 	it('repairs unified tab order for restored browser tabs without changing active AI focus', async () => {
 		const session = createMockSession({
 			browserTabs: [
@@ -416,6 +479,91 @@ describe('restoreSession — Migration logic', () => {
 			{ type: 'ai', id: 'tab-1' },
 			{ type: 'browser', id: 'browser-1' },
 		]);
+	});
+
+	it('keeps a terminal tab tiled into a group across restart (no startup command)', async () => {
+		// A grouped terminal is part of a layout the user built, so it must survive a
+		// restart even without a startup command; the group then stays intact.
+		const session = createMockSession({
+			terminalTabs: [
+				{
+					id: 'term-1',
+					name: null,
+					shellType: 'zsh',
+					pid: 999,
+					cwd: '/x',
+					createdAt: 1,
+					state: 'running',
+				},
+			] as any,
+			tabGroups: [
+				{
+					id: 'g1',
+					name: 'G',
+					createdAt: 0,
+					focusedPaneId: 'l1',
+					layout: {
+						kind: 'split',
+						id: 's1',
+						direction: 'row',
+						sizes: [0.5, 0.5],
+						children: [
+							{ kind: 'leaf', id: 'l1', tab: { type: 'ai', id: 'tab-1' } },
+							{ kind: 'leaf', id: 'l2', tab: { type: 'terminal', id: 'term-1' } },
+						],
+					},
+				},
+			] as any,
+			activeGroupId: 'g1',
+			unifiedTabOrder: [
+				{ type: 'ai', id: 'tab-1' },
+				{ type: 'terminal', id: 'term-1' },
+			],
+		});
+		const { result } = renderHook(() => useSessionRestoration());
+
+		let restored: Session;
+		await act(async () => {
+			restored = await result.current.restoreSession(session);
+		});
+
+		// Terminal tab retained (and PTY runtime reset), so the group survives with it.
+		const kept = restored!.terminalTabs.find((t) => t.id === 'term-1');
+		expect(kept).toBeDefined();
+		expect(kept!.pid).toBe(0);
+		expect(restored!.tabGroups).toHaveLength(1);
+	});
+
+	it('drops an ungrouped terminal tab that has no startup command', async () => {
+		// Regression: the normal (non-tiled) behavior is unchanged - a plain terminal
+		// with no startup command still does not persist across restart.
+		const session = createMockSession({
+			terminalTabs: [
+				{
+					id: 'term-x',
+					name: null,
+					shellType: 'zsh',
+					pid: 1,
+					cwd: '/x',
+					createdAt: 1,
+					state: 'running',
+				},
+			] as any,
+			tabGroups: [],
+			activeGroupId: null,
+			unifiedTabOrder: [
+				{ type: 'ai', id: 'tab-1' },
+				{ type: 'terminal', id: 'term-x' },
+			],
+		});
+		const { result } = renderHook(() => useSessionRestoration());
+
+		let restored: Session;
+		await act(async () => {
+			restored = await result.current.restoreSession(session);
+		});
+
+		expect(restored!.terminalTabs.some((t) => t.id === 'term-x')).toBe(false);
 	});
 
 	it('migrates toolType terminal to claude-code', async () => {
@@ -452,7 +600,7 @@ describe('restoreSession — Migration logic', () => {
 // restoreSession - Corruption recovery
 // ============================================================================
 
-describe('restoreSession — Corruption recovery', () => {
+describe('restoreSession - Corruption recovery', () => {
 	it('creates default tab when aiTabs is empty', async () => {
 		const session = createMockSession({ aiTabs: [], activeTabId: null });
 		const { result } = renderHook(() => useSessionRestoration());
@@ -695,7 +843,7 @@ describe('restoreSession — Corruption recovery', () => {
 // restoreSession - Runtime state reset
 // ============================================================================
 
-describe('restoreSession — Runtime state reset', () => {
+describe('restoreSession - Runtime state reset', () => {
 	it('resets aiPid to 0 (lazy spawn)', async () => {
 		const session = createMockSession({ aiPid: 999 });
 		const { result } = renderHook(() => useSessionRestoration());
@@ -768,6 +916,40 @@ describe('restoreSession — Runtime state reset', () => {
 
 		expect(restored!.agentError).toBeUndefined();
 		expect(restored!.agentErrorPaused).toBe(false);
+	});
+
+	it('preserves a limit pause so auto-resume re-attaches after restart', async () => {
+		// Auto-Resume On Limit: a persisted limit pause must come back live (state
+		// 'error', paused, error intact) so the Phase 3 coordinator's startup tick
+		// re-finds it. The give-up/backoff fields (limitPausedAt, resumeAttemptCount,
+		// limitResetAt) must survive the round-trip too.
+		const limitError = {
+			type: 'rate_limited',
+			message: 'Rate limited',
+			recoverable: true,
+			agentId: 'claude-code',
+			timestamp: 1000,
+			resumeAttemptCount: 2,
+			limitResetAt: 5000,
+			limitPausedAt: 1000,
+		};
+		const session = createMockSession({
+			state: 'error' as any,
+			agentError: limitError as any,
+			agentErrorPaused: true,
+			agentErrorTabId: 'tab-1',
+		});
+		const { result } = renderHook(() => useSessionRestoration());
+
+		let restored: Session;
+		await act(async () => {
+			restored = await result.current.restoreSession(session);
+		});
+
+		expect(restored!.state).toBe('error');
+		expect(restored!.agentErrorPaused).toBe(true);
+		expect(restored!.agentError).toEqual(limitError);
+		expect(restored!.agentErrorTabId).toBe('tab-1');
 	});
 
 	it('resets isLive and liveUrl', async () => {
@@ -928,7 +1110,7 @@ describe('restoreSession — Runtime state reset', () => {
 // restoreSession - Git info for local sessions
 // ============================================================================
 
-describe('restoreSession — Git info (local sessions)', () => {
+describe('restoreSession - Git info (local sessions)', () => {
 	it('fetches git info synchronously for local sessions', async () => {
 		const session = createMockSession({
 			sshRemoteId: undefined,
@@ -1012,7 +1194,7 @@ describe('restoreSession — Git info (local sessions)', () => {
 // restoreSession - Error handling
 // ============================================================================
 
-describe('restoreSession — Error handling', () => {
+describe('restoreSession - Error handling', () => {
 	it('returns idle session even when agent is unavailable (validated in background)', async () => {
 		const session = createMockSession();
 		const { result } = renderHook(() => useSessionRestoration());
@@ -1275,6 +1457,135 @@ describe('initialLoadComplete proxy', () => {
 // ============================================================================
 
 describe('Session & Group loading effect', () => {
+	it('loads browser metadata first, then merges a live log into the selected transcript', async () => {
+		runtime.web = true;
+		const thin = createMockSession({
+			id: 'web-agent',
+			shellLogs: [],
+			deferredContent: { tabIds: ['tab-1'], commands: true },
+		});
+		mockGetBootstrap.mockResolvedValueOnce([thin]);
+		let resolveContent!: (content: {
+			logs: Session['aiTabs'][number]['logs'];
+			shellLogs: Session['shellLogs'];
+			agentCommands: NonNullable<Session['agentCommands']>;
+			aiCommandHistory: string[];
+		}) => void;
+		mockGetDeferredContent.mockReturnValueOnce(
+			new Promise((resolve) => {
+				resolveContent = resolve;
+			})
+		);
+		renderHook(() => useSessionRestoration());
+		await vi.waitFor(() => expect(mockGetBootstrap).toHaveBeenCalled());
+		await vi.waitFor(() =>
+			expect(mockGetDeferredContent).toHaveBeenCalledWith('web-agent', 'tab-1', true)
+		);
+		expect(mockGetAll).not.toHaveBeenCalled();
+		act(() => {
+			updateAiTab('web-agent', 'tab-1', (tab) => ({
+				...tab,
+				logs: [{ id: 'live', timestamp: 2, source: 'stdout', text: 'new' }],
+			}));
+			updateSessionWith('web-agent', (session) => ({
+				...session,
+				shellLogs: [{ id: 'live-shell', timestamp: 2, source: 'stdout', text: 'new shell' }],
+			}));
+		});
+		await act(async () => {
+			resolveContent({
+				logs: [{ id: 'old', timestamp: 1, source: 'stdout', text: 'saved' }],
+				shellLogs: [{ id: 'old-shell', timestamp: 1, source: 'stdout', text: 'shell' }],
+				agentCommands: [{ command: '/old', description: 'Old' }],
+				aiCommandHistory: ['old prompt'],
+			});
+		});
+		await vi.waitFor(() => {
+			const session = useSessionStore.getState().sessions[0];
+			expect(session.aiTabs[0].logs.map((log) => log.id)).toEqual(['old', 'live']);
+			expect(session.shellLogs.map((log) => log.id)).toEqual(['old-shell', 'live-shell']);
+			expect(session.deferredContent).toBeUndefined();
+			expect(session.aiCommandHistory).toEqual(['old prompt']);
+		});
+	});
+
+	it('retries a failed deferred read only after the bridge reconnects', async () => {
+		runtime.web = true;
+		mockGetBootstrap.mockResolvedValueOnce([
+			createMockSession({
+				id: 'web-agent',
+				deferredContent: { tabIds: ['tab-1'], commands: true },
+			}),
+		]);
+		mockGetDeferredContent
+			.mockRejectedValueOnce(new Error('bridge disconnected'))
+			.mockResolvedValueOnce({ logs: [], shellLogs: [], agentCommands: [], aiCommandHistory: [] });
+		renderHook(() => useSessionRestoration());
+		await vi.waitFor(() => expect(mockGetDeferredContent).toHaveBeenCalledTimes(1));
+		await act(async () => {
+			updateSessionWith('web-agent', (session) => ({ ...session, name: 'Renamed' }));
+		});
+		expect(mockGetDeferredContent).toHaveBeenCalledTimes(1);
+		act(() => window.dispatchEvent(new Event(WEB_BRIDGE_RECONCILE_EVENT)));
+		await vi.waitFor(() => expect(mockGetDeferredContent).toHaveBeenCalledTimes(2));
+	});
+
+	it.each([false, true])(
+		'loads visible deferred AI panes when the focused pane fails: %s',
+		async (failFocusedPane) => {
+			runtime.web = true;
+			const base = createMockSession({ id: 'web-agent' });
+			mockGetBootstrap.mockResolvedValueOnce([
+				createMockSession({
+					id: 'web-agent',
+					aiTabs: [base.aiTabs[0], { ...base.aiTabs[0], id: 'tab-2' }],
+					unifiedTabOrder: [
+						{ type: 'ai', id: 'tab-1' },
+						{ type: 'ai', id: 'tab-2' },
+					],
+					activeGroupId: 'g1',
+					tabGroups: [
+						{
+							id: 'g1',
+							name: 'G',
+							createdAt: 0,
+							focusedPaneId: 'l1',
+							layout: {
+								kind: 'split',
+								id: 's1',
+								direction: 'row',
+								sizes: [0.5, 0.5],
+								children: [
+									{ kind: 'leaf', id: 'l1', tab: { type: 'ai', id: 'tab-1' } },
+									{ kind: 'leaf', id: 'l2', tab: { type: 'ai', id: 'tab-2' } },
+								],
+							},
+						},
+					],
+					deferredContent: { tabIds: ['tab-1', 'tab-2'], commands: true },
+				}),
+			]);
+			mockGetDeferredContent.mockImplementation(async (_sessionId, tabId: string) => {
+				if (failFocusedPane && tabId === 'tab-1') throw new Error('tab unavailable');
+				return {
+					logs: [{ id: `saved-${tabId}`, timestamp: 1, source: 'stdout', text: 'saved' }],
+					shellLogs: [],
+					agentCommands: [],
+					aiCommandHistory: [],
+				};
+			});
+			renderHook(() => useSessionRestoration());
+			await vi.waitFor(() => {
+				const session = useSessionStore.getState().sessions[0];
+				expect(session?.aiTabs.map((tab) => tab.logs.map((log) => log.id))).toEqual([
+					failFocusedPane ? [] : ['saved-tab-1'],
+					['saved-tab-2'],
+				]);
+				expect(session.deferredContent?.tabIds).toEqual(failFocusedPane ? ['tab-1'] : undefined);
+			});
+		}
+	);
+
 	it('loads sessions from IPC on mount', async () => {
 		const session = createMockSession({ id: 'loaded-1' });
 		mockGetAll.mockResolvedValueOnce([session]);
@@ -1305,6 +1616,43 @@ describe('Session & Group loading effect', () => {
 		expect(mockGroupsGetAll).toHaveBeenCalled();
 		const groups = useSessionStore.getState().groups;
 		expect(groups).toHaveLength(1);
+	});
+
+	it('repairs invalid persisted group parent relationships on load', async () => {
+		mockGetAll.mockResolvedValueOnce([]);
+		mockGroupsGetAll.mockResolvedValueOnce([
+			{ id: 'company', name: 'Company', emoji: '📁', collapsed: false },
+			{
+				id: 'project',
+				name: 'Project',
+				emoji: '📁',
+				collapsed: false,
+				parentGroupId: 'company',
+			},
+			{
+				id: 'orphan',
+				name: 'Orphan',
+				emoji: '📁',
+				collapsed: false,
+				parentGroupId: 'missing',
+			},
+			{
+				id: 'grandchild',
+				name: 'Grandchild',
+				emoji: '📁',
+				collapsed: false,
+				parentGroupId: 'project',
+			},
+		]);
+
+		renderHook(() => useSessionRestoration());
+
+		await vi.waitFor(() => {
+			const groups = useSessionStore.getState().groups;
+			expect(groups.find((group) => group.id === 'project')?.parentGroupId).toBe('company');
+			expect(groups.find((group) => group.id === 'orphan')?.parentGroupId).toBeUndefined();
+			expect(groups.find((group) => group.id === 'grandchild')?.parentGroupId).toBeUndefined();
+		});
 	});
 
 	it('loads group chats from IPC on mount', async () => {
@@ -1411,6 +1759,65 @@ describe('Session & Group loading effect', () => {
 		// group persistence stays switched off. Without this, the empty registry
 		// above is written straight back to disk.
 		expect(useSessionStore.getState().groupsLoaded).toBe(false);
+		// Same for sessions: the flush must not write the [] above over the file.
+		expect(useSessionStore.getState().sessionsReadOk).toBe(false);
+	});
+
+	describe('session registry load guard', () => {
+		it('marks the registry read when sessions come back', async () => {
+			mockGetAll.mockResolvedValueOnce([createMockSession({ id: 'loaded-1' })]);
+
+			renderHook(() => useSessionRestoration());
+			await act(async () => {
+				await new Promise((r) => setTimeout(r, 50));
+			});
+
+			expect(useSessionStore.getState().sessionsReadOk).toBe(true);
+		});
+
+		it('marks the registry read when the user has no agents yet', async () => {
+			mockGetAll.mockResolvedValueOnce([]);
+
+			renderHook(() => useSessionRestoration());
+			await act(async () => {
+				await new Promise((r) => setTimeout(r, 50));
+			});
+
+			// An empty list that was actually READ is a real answer, so a brand
+			// new install can still save its first agent.
+			expect(useSessionStore.getState().sessionsReadOk).toBe(true);
+		});
+
+		it('leaves the registry unread when the sessions read fails', async () => {
+			mockGetAll.mockRejectedValueOnce(new Error('sessions store unreadable'));
+
+			renderHook(() => useSessionRestoration());
+			await act(async () => {
+				await new Promise((r) => setTimeout(r, 50));
+			});
+
+			expect(useSessionStore.getState().sessionsReadOk).toBe(false);
+			expect(useSessionStore.getState().initialLoadComplete).toBe(true);
+		});
+
+		it('retries a failed read after the bridge reconnects', async () => {
+			runtime.web = true;
+			mockGetBootstrap
+				.mockRejectedValueOnce(new Error('bridge disconnected'))
+				.mockResolvedValueOnce([createMockSession({ id: 'recovered' })]);
+			renderHook(() => useSessionRestoration());
+			await vi.waitFor(() => expect(useSessionStore.getState().sessionsLoaded).toBe(true));
+			expect(useSessionStore.getState().sessionsReadOk).toBe(false);
+
+			act(() => window.dispatchEvent(new Event(WEB_BRIDGE_RECONCILE_EVENT)));
+			await vi.waitFor(() => {
+				expect(useSessionStore.getState().sessionsReadOk).toBe(true);
+				expect(useSessionStore.getState().sessions.map((session) => session.id)).toEqual([
+					'recovered',
+				]);
+			});
+			expect(mockGetBootstrap).toHaveBeenCalledTimes(2);
+		});
 	});
 
 	// ======================================================================
@@ -1631,7 +2038,7 @@ describe('Session & Group loading effect', () => {
 // restoreSession - Terminal tab persistence
 // ============================================================================
 
-describe('restoreSession — Terminal tab persistence', () => {
+describe('restoreSession - Terminal tab persistence', () => {
 	it('preserves terminal tab metadata (name, shellType, cwd, createdAt) across restart', async () => {
 		const createdAt = 1700000000000;
 		const session = createMockSession({

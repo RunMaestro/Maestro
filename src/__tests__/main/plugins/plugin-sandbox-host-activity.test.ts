@@ -1,0 +1,290 @@
+/**
+ * @file plugin-sandbox-host-activity.test.ts
+ * @description Read-only per-plugin observability on the sandbox host:
+ *   - a started plugin shows up in getActivity() with zeroed counters,
+ *   - dispatching a host call increments totalCalls and peak in-flight, and
+ *     in-flight returns to zero once the call settles (overlapping calls drive
+ *     peak above one),
+ *   - a non-zero child exit bumps crashCount and clears in-flight, while a clean
+ *     exit does not,
+ *   - the recent-log ring buffer is bounded to 50 (oldest dropped),
+ *   - getActivity() returns serializable snapshots that are copies (mutating a
+ *     snapshot never leaks into host state).
+ * Time is driven by awaiting the dispatch promise the host already exposes (no
+ * wall-clock timers). electron's utilityProcess and the file logger are mocked
+ * so nothing is forked and no log file is written.
+ */
+
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
+
+const { forkMock, listeners, proc } = vi.hoisted(() => {
+	const listeners = new Map<string, (...a: unknown[]) => void>();
+	const proc = {
+		postMessage: vi.fn(),
+		on: (event: string, cb: (...a: unknown[]) => void) => {
+			listeners.set(event, cb);
+		},
+		kill: vi.fn(),
+	};
+	const forkMock = vi.fn(() => proc);
+	return { forkMock, listeners, proc };
+});
+
+vi.mock('electron', () => ({
+	utilityProcess: { fork: forkMock },
+}));
+
+vi.mock('../../../main/utils/logger', () => ({
+	logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
+}));
+
+import { PluginSandboxHost } from '../../../main/plugins/plugin-sandbox-host';
+import type { ActivitySnapshot } from '../../../main/plugins/plugin-sandbox-host';
+import type { PermissionBroker } from '../../../main/plugins/permission-broker';
+
+/** Reach the private dispatch entry point so a host call can be awaited to
+ *  completion deterministically (no wall-clock timers). */
+interface HostInternals {
+	handleChildMessage(pluginId: string, child: unknown, data: unknown): Promise<void>;
+}
+
+const allowAll = { authorize: () => ({ allowed: true }) } as unknown as PermissionBroker;
+
+function emit(event: string, ...args: unknown[]): void {
+	const cb = listeners.get(event);
+	if (!cb) throw new Error(`no listener captured for "${event}"`);
+	cb(...args);
+}
+
+describe('PluginSandboxHost per-plugin observability', () => {
+	let dir: string;
+	let host: PluginSandboxHost;
+	let internal: HostInternals;
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		listeners.clear();
+		dir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-act-'));
+		fs.writeFileSync(path.join(dir, 'entry.js'), '// entry', 'utf-8');
+		host = new PluginSandboxHost({
+			broker: allowAll,
+			handlers: { 'storage.get': async () => 'ok' },
+		});
+		internal = host as unknown as HostInternals;
+		host.start('p', dir, 'entry.js');
+	});
+
+	afterEach(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+	it('returns stable media codes and suppresses raw host error details', async () => {
+		const mediaHost = new PluginSandboxHost({
+			broker: allowAll,
+			handlers: {
+				'media.download': async () => {
+					throw new Error('TOKEN signed-url private/audio');
+				},
+			},
+		});
+		mediaHost.start('media', dir, 'entry.js');
+		await (mediaHost as unknown as HostInternals).handleChildMessage('media', proc, {
+			id: 42,
+			method: 'media.download',
+			params: { jobId: 'opaque', url: 'signed-url' },
+		});
+		expect(proc.postMessage).toHaveBeenLastCalledWith({
+			id: 42,
+			ok: false,
+			error: 'MediaProcessFailed',
+			errorCode: 'MediaProcessFailed',
+		});
+	});
+
+	it('reserves only two cancellation slots independently of ordinary RPC saturation', async () => {
+		const gate = Promise.withResolvers<void>();
+		const close = vi.fn(() => gate.promise);
+		const bounded = new PluginSandboxHost({ broker: allowAll, handlers: { 'media.close': close } });
+		bounded.start('bounded', dir, 'entry.js');
+		const running = (
+			bounded as unknown as { running: Map<string, { inFlight: number; windowCount: number }> }
+		).running.get('bounded')!;
+		running.inFlight = 32;
+		running.windowCount = 201;
+		const dispatch = bounded as unknown as HostInternals;
+		const first = dispatch.handleChildMessage('bounded', proc, {
+			id: 1,
+			method: 'media.close',
+			params: { jobId: 'a' },
+		});
+		const second = dispatch.handleChildMessage('bounded', proc, {
+			id: 2,
+			method: 'media.close',
+			params: { jobId: 'b' },
+		});
+		await dispatch.handleChildMessage('bounded', proc, {
+			id: 3,
+			method: 'media.close',
+			params: { jobId: 'c' },
+		});
+		expect(close).toHaveBeenCalledTimes(2);
+		expect(proc.postMessage).toHaveBeenLastCalledWith({
+			id: 3,
+			ok: false,
+			error: 'MediaBusy',
+			errorCode: 'MediaBusy',
+		});
+		gate.resolve();
+		await Promise.all([first, second]);
+		expect(running.inFlight).toBe(32);
+	});
+
+	it('bounds sequential unknown close requests while preserving owned-job cancellation', async () => {
+		const close = Object.assign(
+			vi.fn(async () => undefined),
+			{
+				ownsReleaseResource: (_pluginId: string, params: unknown) =>
+					(params as { jobId?: string }).jobId === 'owned',
+			}
+		);
+		const bounded = new PluginSandboxHost({ broker: allowAll, handlers: { 'media.close': close } });
+		bounded.start('bounded', dir, 'entry.js');
+		const dispatch = bounded as unknown as HostInternals;
+		const now = vi.spyOn(Date, 'now').mockReturnValue(Date.now());
+		try {
+			for (let id = 1; id <= 201; id++) {
+				await dispatch.handleChildMessage('bounded', proc, {
+					id,
+					method: 'media.close',
+					params: { jobId: 'missing' },
+				});
+			}
+			expect(close).toHaveBeenCalledTimes(200);
+			expect(proc.postMessage).toHaveBeenLastCalledWith({
+				id: 201,
+				ok: false,
+				error: 'MediaBusy',
+				errorCode: 'MediaBusy',
+			});
+			await dispatch.handleChildMessage('bounded', proc, {
+				id: 202,
+				method: 'media.close',
+				params: { jobId: 'owned' },
+			});
+			expect(close).toHaveBeenCalledTimes(201);
+			now.mockReturnValue(Date.now() + 1001);
+			await dispatch.handleChildMessage('bounded', proc, {
+				id: 203,
+				method: 'media.close',
+				params: { jobId: 'missing' },
+			});
+			expect(close).toHaveBeenCalledTimes(202);
+		} finally {
+			now.mockRestore();
+		}
+	});
+
+	it('lists a started plugin with zeroed counters', () => {
+		const map = host.getActivity();
+		expect(Object.keys(map)).toEqual(['p']);
+		expect(map.p).toMatchObject({
+			totalCalls: 0,
+			inFlight: 0,
+			peakInFlight: 0,
+			crashCount: 0,
+			recentLogs: [],
+		});
+		expect(typeof map.p.lastActivity).toBe('number');
+	});
+
+	it('counts a dispatched host call and clears in-flight once it settles', async () => {
+		await internal.handleChildMessage('p', proc, {
+			id: 1,
+			method: 'storage.get',
+			params: { key: 'k' },
+		});
+		const snap = host.getActivity('p');
+		expect(snap?.totalCalls).toBe(1);
+		expect(snap?.peakInFlight).toBe(1);
+		expect(snap?.inFlight).toBe(0);
+	});
+
+	it('tracks peak in-flight across overlapping calls', async () => {
+		const gate = Promise.withResolvers<void>();
+		host = new PluginSandboxHost({
+			broker: allowAll,
+			handlers: {
+				'storage.get': async () => {
+					await gate.promise;
+					return 'ok';
+				},
+			},
+		});
+		internal = host as unknown as HostInternals;
+		host.start('p', dir, 'entry.js');
+
+		const c1 = internal.handleChildMessage('p', proc, { id: 1, method: 'storage.get', params: {} });
+		const c2 = internal.handleChildMessage('p', proc, { id: 2, method: 'storage.get', params: {} });
+
+		let snap = host.getActivity('p');
+		expect(snap?.inFlight).toBe(2);
+		expect(snap?.peakInFlight).toBe(2);
+		expect(snap?.totalCalls).toBe(2);
+
+		gate.resolve();
+		await Promise.all([c1, c2]);
+
+		snap = host.getActivity('p');
+		expect(snap?.inFlight).toBe(0);
+		expect(snap?.peakInFlight).toBe(2);
+		expect(snap?.totalCalls).toBe(2);
+	});
+
+	it('bumps crashCount and clears in-flight on a non-zero child exit', () => {
+		emit('exit', 1);
+		const snap = host.getActivity('p');
+		expect(snap?.crashCount).toBe(1);
+		expect(snap?.inFlight).toBe(0);
+		expect(host.isRunning('p')).toBe(false);
+	});
+
+	it('does not bump crashCount on a clean exit', () => {
+		emit('exit', 0);
+		expect(host.getActivity('p')?.crashCount).toBe(0);
+	});
+
+	it('bounds the recent-log ring buffer to 50, dropping the oldest', async () => {
+		for (let i = 0; i < 60; i++) {
+			await internal.handleChildMessage('p', proc, {
+				kind: 'log',
+				level: 'info',
+				message: `m${i}`,
+			});
+		}
+		const snap = host.getActivity('p');
+		expect(snap?.recentLogs).toHaveLength(50);
+		expect(snap?.recentLogs[0]?.message).toBe('m10');
+		expect(snap?.recentLogs[49]?.message).toBe('m59');
+		expect(snap?.recentLogs[0]).toMatchObject({ level: 'info' });
+		expect(typeof snap?.recentLogs[0]?.at).toBe('number');
+	});
+
+	it('returns copies: mutating a snapshot does not affect host state', async () => {
+		await internal.handleChildMessage('p', proc, {
+			kind: 'log',
+			level: 'warn',
+			message: 'hello',
+		});
+		const snap = host.getActivity('p') as ActivitySnapshot;
+		expect(snap.recentLogs).toHaveLength(1);
+		snap.recentLogs.push({ level: 'error', message: 'injected', at: Date.now() });
+		snap.totalCalls = 999;
+		expect(host.getActivity('p')?.recentLogs).toHaveLength(1);
+		expect(host.getActivity('p')?.totalCalls).toBe(0);
+	});
+
+	it('getActivity(unknownId) is undefined', () => {
+		expect(host.getActivity('missing')).toBeUndefined();
+	});
+});

@@ -68,7 +68,7 @@ describe('handleAutoRunRefresh', () => {
 			tree: [],
 		});
 		const deps = createDeps();
-		const { result } = renderHook(() => useAutoRunHandlers(createSession(), deps));
+		const { result } = renderHook(() => useAutoRunHandlers(deps));
 
 		await act(async () => {
 			await result.current.handleAutoRunRefresh({ silent: true });
@@ -92,7 +92,7 @@ describe('handleAutoRunRefresh', () => {
 			error: 'boom',
 		});
 		const deps = createDeps();
-		const { result } = renderHook(() => useAutoRunHandlers(createSession(), deps));
+		const { result } = renderHook(() => useAutoRunHandlers(deps));
 
 		await act(async () => {
 			await result.current.handleAutoRunRefresh({ silent: true });
@@ -116,7 +116,7 @@ describe('handleAutoRunRefresh', () => {
 				}) as never
 		);
 		const deps = createDeps();
-		const { result } = renderHook(() => useAutoRunHandlers(createSession(), deps));
+		const { result } = renderHook(() => useAutoRunHandlers(deps));
 
 		let first: Promise<void> = Promise.resolve();
 		let second: Promise<void> = Promise.resolve();
@@ -152,7 +152,7 @@ describe('handleAutoRunRefresh', () => {
 			})
 		);
 		const deps = createDeps();
-		const { result } = renderHook(() => useAutoRunHandlers(createSession(), deps));
+		const { result } = renderHook(() => useAutoRunHandlers(deps));
 
 		let refresh: Promise<void> = Promise.resolve();
 		act(() => {

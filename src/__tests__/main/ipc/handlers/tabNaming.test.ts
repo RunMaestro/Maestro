@@ -12,6 +12,10 @@ import type { ProcessManager } from '../../../../main/process-manager';
 import type { AgentDetector, AgentConfig } from '../../../../main/agents';
 
 // Mock the logger
+vi.mock('../../../../main/utils/sentry', () => ({
+	captureException: vi.fn(),
+}));
+
 vi.mock('../../../../main/utils/logger', () => ({
 	logger: {
 		info: vi.fn(),
@@ -132,6 +136,9 @@ describe('Tab Naming IPC Handlers', () => {
 		],
 		batchModeArgs: ['--print'],
 		readOnlyArgs: ['--permission-mode', 'plan'],
+		capabilities: {
+			supportsPromptViaStdin: true,
+		},
 	};
 
 	beforeEach(async () => {
@@ -167,7 +174,13 @@ describe('Tab Naming IPC Handlers', () => {
 		};
 
 		mockSettingsStore = {
-			get: vi.fn().mockReturnValue({}),
+			// Return the provided default for utility-agent keys (null) so the
+			// resolver falls back to the session agent; other keys default to {}.
+			get: vi.fn((key: string, defaultValue?: unknown) =>
+				key === 'utilityAgentId' || key === 'utilityModelId'
+					? (defaultValue ?? null)
+					: (defaultValue ?? {})
+			),
 			set: vi.fn(),
 		};
 
@@ -256,6 +269,84 @@ describe('Tab Naming IPC Handlers', () => {
 
 			const result = await resultPromise;
 			expect(result).toBe('Login Form Implementation');
+		});
+
+		it('routes naming to the configured utility agent instead of the session agent', async () => {
+			// A cheaper/faster utility agent (codex) is configured; tab naming for a
+			// claude-code session must resolve to codex for detection AND the spawn.
+			const mockCodexAgent: AgentConfig = {
+				id: 'codex',
+				name: 'OpenAI Codex',
+				command: 'codex',
+				path: '/usr/local/bin/codex',
+				args: [],
+			};
+			mockAgentDetector.getAgent.mockResolvedValue(mockCodexAgent);
+			mockSettingsStore.get.mockImplementation((key: string, defaultValue?: unknown) => {
+				if (key === 'utilityAgentId') return 'codex';
+				if (key === 'utilityModelId') return 'gpt-4o-mini';
+				return defaultValue ?? {};
+			});
+
+			let onDataCallback: ((sessionId: string, data: string) => void) | undefined;
+			let onExitCallback: ((sessionId: string) => void) | undefined;
+			mockProcessManager.on.mockImplementation(
+				(event: string, callback: (...args: any[]) => void) => {
+					if (event === 'data') onDataCallback = callback;
+					if (event === 'exit') onExitCallback = callback;
+				}
+			);
+
+			const resultPromise = invokeHandler('tabNaming:generateTabName', {
+				userMessage: 'Help me implement a login form',
+				agentType: 'claude-code',
+				cwd: '/test/project',
+			});
+
+			await vi.waitFor(() => {
+				expect(mockProcessManager.spawn).toHaveBeenCalled();
+			});
+
+			// Detection and spawn must both use the utility agent, not claude-code.
+			expect(mockAgentDetector.getAgent).toHaveBeenCalledWith('codex');
+			expect(mockProcessManager.spawn).toHaveBeenCalledWith(
+				expect.objectContaining({ toolType: 'codex' })
+			);
+
+			onDataCallback?.('tab-naming-mock-uuid-1234', 'Login Form Implementation');
+			onExitCallback?.('tab-naming-mock-uuid-1234');
+			await resultPromise;
+		});
+
+		it('uses the session agent when no utility agent is configured (backward compatible)', async () => {
+			// Default settings (utilityAgentId = null) must leave the session agent untouched.
+			let onDataCallback: ((sessionId: string, data: string) => void) | undefined;
+			let onExitCallback: ((sessionId: string) => void) | undefined;
+			mockProcessManager.on.mockImplementation(
+				(event: string, callback: (...args: any[]) => void) => {
+					if (event === 'data') onDataCallback = callback;
+					if (event === 'exit') onExitCallback = callback;
+				}
+			);
+
+			const resultPromise = invokeHandler('tabNaming:generateTabName', {
+				userMessage: 'Help me implement a login form',
+				agentType: 'claude-code',
+				cwd: '/test/project',
+			});
+
+			await vi.waitFor(() => {
+				expect(mockProcessManager.spawn).toHaveBeenCalled();
+			});
+
+			expect(mockAgentDetector.getAgent).toHaveBeenCalledWith('claude-code');
+			expect(mockProcessManager.spawn).toHaveBeenCalledWith(
+				expect.objectContaining({ toolType: 'claude-code' })
+			);
+
+			onDataCallback?.('tab-naming-mock-uuid-1234', 'Login Form Implementation');
+			onExitCallback?.('tab-naming-mock-uuid-1234');
+			await resultPromise;
 		});
 
 		it('forwards promptArgs and noPromptSeparator so agents like copilot-cli receive -p <prompt>', async () => {
@@ -584,6 +675,62 @@ describe('Tab Naming IPC Handlers', () => {
 			expect(result).toBe('Leaderboard Endpoint');
 		});
 
+		it('ignores reasoning deltas when extracting from Grok streaming-json output', async () => {
+			// Grok streams `thought` deltas BEFORE the answer's `text` deltas, and
+			// the grok parser forwards them as text events with isReasoning=true.
+			// Without filtering those out, the accumulated response text would be
+			// the thinking fragment glued to the answer ("The user wants a nameAuth
+			// Bug Fix") and that garbage would pass extractTabName's filters.
+			const mockGrokAgent: AgentConfig = {
+				id: 'grok',
+				name: 'Grok CLI',
+				command: 'grok',
+				path: '/usr/local/bin/grok',
+				args: [],
+				promptArgs: (p: string) => ['-p', p],
+			};
+			mockAgentDetector.getAgent.mockResolvedValue(mockGrokAgent);
+
+			let onDataCallback: ((sessionId: string, data: string) => void) | undefined;
+			let onExitCallback: ((sessionId: string, code?: number) => void) | undefined;
+
+			mockProcessManager.on.mockImplementation(
+				(event: string, callback: (...args: any[]) => void) => {
+					if (event === 'data') onDataCallback = callback;
+					if (event === 'exit') onExitCallback = callback;
+				}
+			);
+
+			const resultPromise = invokeHandler('tabNaming:generateTabName', {
+				userMessage: 'Fix the authentication bug',
+				agentType: 'grok',
+				cwd: '/test/project',
+			});
+
+			await vi.waitFor(() => {
+				expect(mockProcessManager.spawn).toHaveBeenCalled();
+			});
+
+			// Real grok v0.2.93 stream shape (thoughts, then text, then end):
+			const streamJson = [
+				JSON.stringify({ type: 'thought', data: 'The user wants a name' }),
+				JSON.stringify({ type: 'text', data: 'Auth Bug' }),
+				JSON.stringify({ type: 'text', data: ' Fix' }),
+				JSON.stringify({
+					type: 'end',
+					stopReason: 'EndTurn',
+					sessionId: '019f47fb-2316-7f21-98db-55907d4ddb60',
+					requestId: 'req-1',
+				}),
+			].join('\n');
+
+			onDataCallback?.('tab-naming-mock-uuid-1234', streamJson);
+			onExitCallback?.('tab-naming-mock-uuid-1234', 0);
+
+			const result = await resultPromise;
+			expect(result).toBe('Auth Bug Fix');
+		});
+
 		it('returns null for empty output', async () => {
 			let onDataCallback: ((sessionId: string, data: string) => void) | undefined;
 			let onExitCallback: ((sessionId: string) => void) | undefined;
@@ -822,6 +969,47 @@ describe('Tab Naming IPC Handlers', () => {
 
 			expect(mockProcessManager.spawn).toHaveBeenCalledWith(
 				expect.objectContaining({ sendPromptViaStdinRaw: true })
+			);
+
+			onDataCallback?.('tab-naming-mock-uuid-1234', 'Tab Name');
+			onExitCallback?.('tab-naming-mock-uuid-1234');
+			await resultPromise;
+		});
+
+		it('does NOT set sendPromptViaStdinRaw for agents that never read stdin', async () => {
+			// omp takes the prompt positionally; stdin delivery would name nothing.
+			const { isWindows } = await import('../../../../shared/platformDetection');
+			(isWindows as Mock).mockReturnValue(true);
+			mockAgentDetector.getAgent.mockResolvedValue({
+				...mockClaudeAgent,
+				id: 'omp',
+				command: 'omp',
+				path: '/home/user/.bun/bin/omp',
+				capabilities: { supportsPromptViaStdin: false },
+			} as AgentConfig);
+
+			let onDataCallback: ((sessionId: string, data: string) => void) | undefined;
+			let onExitCallback: ((sessionId: string) => void) | undefined;
+
+			mockProcessManager.on.mockImplementation(
+				(event: string, callback: (...args: any[]) => void) => {
+					if (event === 'data') onDataCallback = callback;
+					if (event === 'exit') onExitCallback = callback;
+				}
+			);
+
+			const resultPromise = invokeHandler('tabNaming:generateTabName', {
+				userMessage: 'long first message',
+				agentType: 'omp',
+				cwd: '/test/project',
+			});
+
+			await vi.waitFor(() => {
+				expect(mockProcessManager.spawn).toHaveBeenCalled();
+			});
+
+			expect(mockProcessManager.spawn).toHaveBeenCalledWith(
+				expect.objectContaining({ sendPromptViaStdinRaw: false })
 			);
 
 			onDataCallback?.('tab-naming-mock-uuid-1234', 'Tab Name');
@@ -1158,6 +1346,80 @@ describe('Tab Naming IPC Handlers', () => {
 			await resultPromise;
 		});
 
+		// Regression for #1110: on the TUI path maestro-p strips the headless-only
+		// flags (including the `--tools ""` guard), so naming runs a real agentic
+		// turn and its raw terminal transcript is thinking/response prose, not
+		// stream-json. Scraping that buffer put a sentence fragment on the tab,
+		// which users saw as the response streaming into the tab name. Prose has no
+		// angle brackets, so STRUCTURAL_NOISE_RE can't catch it - we must decline.
+		it('returns null instead of scraping a plain-text TUI transcript for a name', async () => {
+			mockAgentDetector.getAgent.mockResolvedValue(interactiveClaudeAgent);
+			let onDataCallback: ((sessionId: string, data: string) => void) | undefined;
+			let onExitCallback: ((sessionId: string, code?: number) => void) | undefined;
+			mockProcessManager.on.mockImplementation(
+				(event: string, callback: (...args: any[]) => void) => {
+					if (event === 'data') onDataCallback = callback;
+					if (event === 'exit') onExitCallback = callback;
+				}
+			);
+
+			const resultPromise = invokeHandler('tabNaming:generateTabName', {
+				userMessage: 'Help me implement a login form',
+				agentType: 'claude-code',
+				cwd: '/test/project',
+				enableMaestroP: true,
+				maestroPMode: 'interactive',
+				maestroPPath: '/bundled/maestro-p.js',
+			});
+
+			await vi.waitFor(() => {
+				expect(mockProcessManager.spawn).toHaveBeenCalled();
+			});
+
+			// A realistic maestro-p TUI transcript: short prose lines that clear the
+			// 40-char filter and carry no structural noise.
+			onDataCallback?.(
+				'tab-naming-mock-uuid-1234',
+				'I should look at the auth flow\nLet me start with the form\n'
+			);
+			onExitCallback?.('tab-naming-mock-uuid-1234', 0);
+
+			await expect(resultPromise).resolves.toBeNull();
+		});
+
+		it('still accepts a stream-json name on the TUI path', async () => {
+			mockAgentDetector.getAgent.mockResolvedValue(interactiveClaudeAgent);
+			let onDataCallback: ((sessionId: string, data: string) => void) | undefined;
+			let onExitCallback: ((sessionId: string, code?: number) => void) | undefined;
+			mockProcessManager.on.mockImplementation(
+				(event: string, callback: (...args: any[]) => void) => {
+					if (event === 'data') onDataCallback = callback;
+					if (event === 'exit') onExitCallback = callback;
+				}
+			);
+
+			const resultPromise = invokeHandler('tabNaming:generateTabName', {
+				userMessage: 'Help me implement a login form',
+				agentType: 'claude-code',
+				cwd: '/test/project',
+				enableMaestroP: true,
+				maestroPMode: 'interactive',
+				maestroPPath: '/bundled/maestro-p.js',
+			});
+
+			await vi.waitFor(() => {
+				expect(mockProcessManager.spawn).toHaveBeenCalled();
+			});
+
+			onDataCallback?.(
+				'tab-naming-mock-uuid-1234',
+				`${JSON.stringify({ type: 'result', subtype: 'success', result: 'Login Form' })}\n`
+			);
+			onExitCallback?.('tab-naming-mock-uuid-1234', 0);
+
+			await expect(resultPromise).resolves.toBe('Login Form');
+		});
+
 		it('spawns plain claude when the agent is API-only (enableMaestroP false)', async () => {
 			mockAgentDetector.getAgent.mockResolvedValue(interactiveClaudeAgent);
 			const finish = wireProcessEvents();
@@ -1191,9 +1453,11 @@ describe('Tab Naming IPC Handlers', () => {
 			// (CLAUDE_CODE_CONFIG_DIR / ANTHROPIC_API_KEY). Tab naming used to drop both,
 			// so a working chat could still fail naming with "Not logged in".
 			mockAgentDetector.getAgent.mockResolvedValue(interactiveClaudeAgent);
-			mockSettingsStore.get.mockImplementation((key: string, fallback?: unknown) =>
-				key === 'shellEnvVars' ? { CLAUDE_CONFIG_DIR: '/home/u/.claude' } : (fallback ?? {})
-			);
+			mockSettingsStore.get.mockImplementation((key: string, fallback?: unknown) => {
+				if (key === 'shellEnvVars') return { CLAUDE_CONFIG_DIR: '/home/u/.claude' };
+				if (key === 'utilityAgentId' || key === 'utilityModelId') return fallback ?? null;
+				return fallback ?? {};
+			});
 			const finish = wireProcessEvents();
 
 			const resultPromise = invokeHandler('tabNaming:generateTabName', {
@@ -1298,6 +1562,60 @@ describe('Tab Naming IPC Handlers', () => {
 			await resultPromise;
 		});
 	});
+
+	describe('spawn failures (MAESTRO-X4)', () => {
+		// child_process.spawn throws synchronously for an unusable binary. The
+		// call sits in the naming Promise's executor, and the enclosing
+		// try/catch returns that promise rather than awaiting it, so the throw
+		// escaped as a hard IPC rejection for a purely cosmetic feature.
+		async function spawnThrowing(error: unknown) {
+			const { captureException } = await import('../../../../main/utils/sentry');
+			(captureException as Mock).mockClear();
+			mockProcessManager.spawn.mockImplementation(() => {
+				throw error;
+			});
+
+			const result = await invokeHandler('tabNaming:generateTabName', {
+				userMessage: 'Help me implement a login form',
+				agentType: 'claude-code',
+				cwd: '/test/project',
+			});
+			return { result, captureException: captureException as Mock };
+		}
+
+		function errnoError(message: string, code: string): NodeJS.ErrnoException {
+			const err = new Error(message) as NodeJS.ErrnoException;
+			err.code = code;
+			return err;
+		}
+
+		it('resolves to null instead of rejecting when spawn throws EFTYPE', async () => {
+			const { result } = await spawnThrowing(errnoError('spawn EFTYPE', 'EFTYPE'));
+			expect(result).toBeNull();
+		});
+
+		it('does not page Sentry for an unusable agent binary', async () => {
+			for (const code of ['ENOENT', 'EFTYPE', 'EACCES', 'EPERM', 'ENOEXEC']) {
+				const { result, captureException } = await spawnThrowing(errnoError(`spawn ${code}`, code));
+				expect(result).toBeNull();
+				expect(captureException).not.toHaveBeenCalled();
+			}
+		});
+
+		it('still reports an unexpected spawn error to Sentry', async () => {
+			const { result, captureException } = await spawnThrowing(
+				new TypeError('spawnCommand is not a string')
+			);
+			expect(result).toBeNull();
+			expect(captureException).toHaveBeenCalledTimes(1);
+		});
+
+		it('removes its process listeners when the spawn fails', async () => {
+			await spawnThrowing(errnoError('spawn EFTYPE', 'EFTYPE'));
+			expect(mockProcessManager.off).toHaveBeenCalledWith('data', expect.any(Function));
+			expect(mockProcessManager.off).toHaveBeenCalledWith('exit', expect.any(Function));
+		});
+	});
 });
 
 describe('tab naming diagnostic logging', () => {
@@ -1362,7 +1680,13 @@ describe('tab naming diagnostic logging', () => {
 		};
 
 		mockSettingsStore = {
-			get: vi.fn().mockReturnValue({}),
+			// Return the provided default for utility-agent keys (null) so the
+			// resolver falls back to the session agent; other keys default to {}.
+			get: vi.fn((key: string, defaultValue?: unknown) =>
+				key === 'utilityAgentId' || key === 'utilityModelId'
+					? (defaultValue ?? null)
+					: (defaultValue ?? {})
+			),
 			set: vi.fn(),
 		};
 
@@ -1637,7 +1961,11 @@ describe('extractTabName utility', () => {
 			};
 
 			mockSettingsStore = {
-				get: vi.fn().mockReturnValue({}),
+				get: vi.fn((key: string, defaultValue?: unknown) =>
+					key === 'utilityAgentId' || key === 'utilityModelId'
+						? (defaultValue ?? null)
+						: (defaultValue ?? {})
+				),
 				set: vi.fn(),
 			};
 

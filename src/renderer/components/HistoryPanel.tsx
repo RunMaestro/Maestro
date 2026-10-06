@@ -23,6 +23,8 @@ import {
 	HistoryFilterToggle,
 	HostSourceFilter,
 	LOCAL_HOST_KEY,
+	UserSourceFilter,
+	DESKTOP_USER_KEY,
 	ESTIMATED_ROW_HEIGHT,
 	estimateHistoryRowHeight,
 	LOOKBACK_OPTIONS,
@@ -31,7 +33,7 @@ import {
 	resolveInitialHistoryFilters,
 	savePersistedHistoryFilters,
 } from './History';
-import type { GraphBucket } from './History/ActivityGraph';
+import type { PrecomputedGraphBucket } from './History/ActivityGraph';
 import { useUIStore } from '../stores/uiStore';
 import { useSettingsStore } from '../stores/settingsStore';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
@@ -40,6 +42,7 @@ import { trackShortcutUsage } from '../utils/shortcutTracking';
 import { notifyCenterFlash } from '../stores/centerFlashStore';
 import { logger } from '../utils/logger';
 import { RIGHT_PANEL_COMPACT_THRESHOLD } from '../constants/rightPanel';
+import { visibleHistoryEntryTypes } from '../../shared/history';
 import { EscCloseButton } from './ui/EscCloseButton';
 
 interface HistoryPanelProps {
@@ -47,7 +50,7 @@ interface HistoryPanelProps {
 	theme: Theme;
 	onJumpToAgentSession?: (agentSessionId: string) => void;
 	onResumeSession?: (agentSessionId: string) => void;
-	onOpenSessionAsTab?: (agentSessionId: string, projectPath?: string) => void;
+	onOpenSessionAsTab?: (agentSessionId: string, projectPath?: string, sessionName?: string) => void;
 	onOpenAboutModal?: () => void; // For opening About/achievements panel from history entries
 	// File linking props for history detail modal
 	fileTree?: FileNode[];
@@ -102,9 +105,7 @@ export const HistoryPanel = React.memo(
 		const shortcuts = useSettingsStore((s) => s.shortcuts);
 		const rightPanelWidth = useSettingsStore((s) => s.rightPanelWidth);
 		const compact = rightPanelWidth < RIGHT_PANEL_COMPACT_THRESHOLD;
-		const visibleTypes: HistoryEntryType[] = maestroCueEnabled
-			? ['USER', 'AUTO', 'CUE']
-			: ['USER', 'AUTO'];
+		const visibleTypes: HistoryEntryType[] = visibleHistoryEntryTypes(maestroCueEnabled);
 
 		// History source-type filters (USER/AUTO/CUE) are persisted per-agent so
 		// each agent keeps its own selection across switches and app restarts.
@@ -132,6 +133,12 @@ export const HistoryPanel = React.memo(
 		// Source/host filter - null means "All Sources". When set, both the
 		// entry list and the activity graph narrow to entries from that host.
 		const [selectedHost, setSelectedHost] = useState<string | null>(null);
+		// Sender filter - null means "All Senders". Unlike the host filter this
+		// one runs purely client-side over the loaded window: there is no
+		// server-side aggregate of Web Login accounts to count against, and the
+		// picker only appears once the window actually holds more than one
+		// sender, so what it offers is exactly what it can narrow.
+		const [selectedUser, setSelectedUser] = useState<string | null>(null);
 		const searchFilterOpen = useUIStore((s) => s.historySearchFilterOpen);
 		const setSearchFilterOpen = useUIStore((s) => s.setHistorySearchFilterOpen);
 		const [graphViewportRange, setGraphViewportRange] = useState<
@@ -143,7 +150,9 @@ export const HistoryPanel = React.memo(
 		// so flipping between windows is cheap once each has been computed.
 		const [graphLookbackHours, setGraphLookbackHours] = useState<number | null>(null);
 		// Server-cached graph buckets for the current lookback.
-		const [graphBuckets, setGraphBuckets] = useState<GraphBucket[] | undefined>(undefined);
+		const [graphBuckets, setGraphBuckets] = useState<PrecomputedGraphBucket[] | undefined>(
+			undefined
+		);
 		const [graphRange, setGraphRange] = useState<{ start: number; end: number } | undefined>(
 			undefined
 		);
@@ -423,6 +432,11 @@ export const HistoryPanel = React.memo(
 					if (entryHost !== selectedHost) return false;
 				}
 
+				if (selectedUser !== null) {
+					const entryUser = entry.userName ?? DESKTOP_USER_KEY;
+					if (entryUser !== selectedUser) return false;
+				}
+
 				if (searchFilter) {
 					const searchLower = searchFilter.toLowerCase();
 					const summaryMatch = entry.summary?.toLowerCase().includes(searchLower);
@@ -430,6 +444,12 @@ export const HistoryPanel = React.memo(
 					const sessionIdMatch = entry.agentSessionId?.toLowerCase().includes(searchLower);
 					const sessionNameMatch = entry.sessionName?.toLowerCase().includes(searchLower);
 					const hostnameMatch = entry.hostname?.toLowerCase().includes(searchLower);
+					// Both halves of the sender pill are searchable: the pill draws
+					// the display name, so typing what is on screen has to find the
+					// row, while the username is what the filter and the CLI speak.
+					const userMatch =
+						entry.userName?.toLowerCase().includes(searchLower) ||
+						entry.userDisplayName?.toLowerCase().includes(searchLower);
 					// The trigger name is the most prominent text on a Cue row
 					// (and the whole label on a collapsed one), so a user who
 					// types it expects that row back. Without this, the name is
@@ -442,6 +462,7 @@ export const HistoryPanel = React.memo(
 						!sessionIdMatch &&
 						!sessionNameMatch &&
 						!hostnameMatch &&
+						!userMatch &&
 						!cueTriggerMatch
 					)
 						return false;
@@ -449,7 +470,7 @@ export const HistoryPanel = React.memo(
 
 				return true;
 			});
-		}, [historyEntries, activeFilters, searchFilter, selectedHost]);
+		}, [historyEntries, activeFilters, searchFilter, selectedHost, selectedUser]);
 
 		// Is the user hiding at least one entry type right now? The type filter
 		// runs SERVER-side (see `loadPage`), so `totalCount` is already net of
@@ -494,6 +515,37 @@ export const HistoryPanel = React.memo(
 			}
 		}, [hostCounts, selectedHost]);
 
+		// Tally senders over the loaded window. There is no server-side
+		// aggregate to prefer here (unlike hosts), so this is always the
+		// client-side count - which is also what the filter narrows, so the
+		// parenthesized numbers and the resulting list cannot disagree.
+		// `DESKTOP_USER_KEY` sorts first, then accounts alphabetically.
+		const { userCounts, userLabels } = useMemo(() => {
+			const raw = new Map<string, number>();
+			const labels = new Map<string, string>();
+			for (const entry of historyEntries) {
+				const key = entry?.userName ?? DESKTOP_USER_KEY;
+				raw.set(key, (raw.get(key) ?? 0) + 1);
+				if (entry?.userName && entry.userDisplayName) {
+					labels.set(entry.userName, entry.userDisplayName);
+				}
+			}
+			const sorted = new Map<string, number>();
+			if (raw.has(DESKTOP_USER_KEY)) sorted.set(DESKTOP_USER_KEY, raw.get(DESKTOP_USER_KEY)!);
+			for (const key of [...raw.keys()].filter((k) => k !== DESKTOP_USER_KEY).sort()) {
+				sorted.set(key, raw.get(key)!);
+			}
+			return { userCounts: sorted, userLabels: labels };
+		}, [historyEntries]);
+
+		// Clear the sender filter if the selected sender falls out of the
+		// loaded window (e.g. session switch, lookback narrowed).
+		useEffect(() => {
+			if (selectedUser !== null && !userCounts.has(selectedUser)) {
+				setSelectedUser(null);
+			}
+		}, [userCounts, selectedUser]);
+
 		// Note: With virtualization, we no longer need to slice entries
 		// The virtualizer handles rendering only visible items efficiently
 		// filteredEntries is kept as an alias for backwards compatibility with some handlers
@@ -522,6 +574,15 @@ export const HistoryPanel = React.memo(
 			count: allFilteredEntries.length,
 			getScrollElement: () => listRef.current,
 			estimateSize,
+			// Key measurements to the ENTRY, not its slot. The measurement cache is
+			// keyed by item key, and the default key is the index - so when a search
+			// or type filter changes the list, index 3 silently inherits the measured
+			// height of whatever used to be at index 3. A short entry landing in a
+			// tall entry's slot then renders with a large gap beneath it (and vice
+			// versa) until something forces a remeasure. Keying by id makes a changed
+			// list a cache miss, which correctly falls back to estimateSize and lets
+			// measureElement correct from there.
+			getItemKey: (index) => allFilteredEntries[index]?.id ?? index,
 			overscan: 5, // Render 5 extra items above/below viewport
 			gap: 12, // Space between items (equivalent to space-y-3)
 			initialRect: { width: 300, height: 600 }, // Provide initial dimensions to avoid flushSync during render
@@ -551,7 +612,7 @@ export const HistoryPanel = React.memo(
 					return;
 				}
 				trackShortcutUsage('historyJumpToSession');
-				onOpenSessionAsTab?.(entry.agentSessionId, entry.projectPath);
+				onOpenSessionAsTab?.(entry.agentSessionId, entry.projectPath, entry.sessionName);
 			},
 			[allFilteredEntries, onOpenSessionAsTab]
 		);
@@ -879,6 +940,7 @@ export const HistoryPanel = React.memo(
 							theme={theme}
 							visibleTypes={visibleTypes}
 							compact={compact}
+							fillWidth
 						/>
 
 						{/* Activity graph inline when only 2 types (no CUE).
@@ -1038,6 +1100,21 @@ export const HistoryPanel = React.memo(
 					</div>
 				)}
 
+				{/* Sender picker - only shown when the loaded window contains
+				    more than one sender (a Web Login account plus the desktop,
+				    or several accounts). Same rule as the host picker above. */}
+				{userCounts.size > 1 && (
+					<div className="mt-2 flex-shrink-0">
+						<UserSourceFilter
+							userCounts={userCounts}
+							userLabels={userLabels}
+							selectedUser={selectedUser}
+							onSelect={setSelectedUser}
+							theme={theme}
+						/>
+					</div>
+				)}
+
 				{/* Detail Modal */}
 				{detailModalEntry && (
 					<HistoryDetailModal
@@ -1046,7 +1123,10 @@ export const HistoryPanel = React.memo(
 						agentId={session.toolType}
 						onClose={closeDetailModal}
 						onJumpToAgentSession={onJumpToAgentSession}
-						onResumeSession={onResumeSession}
+						// Prefer the open-as-tab path: it carries the entry's projectPath and
+						// sessionName, so a resume from the modal names the tab exactly like a
+						// resume from the row behind it.
+						onResumeSession={onOpenSessionAsTab ?? onResumeSession}
 						onDelete={handleDeleteEntry}
 						onUpdate={async (entryId, updates) => {
 							// Pass sessionId for efficient lookup in per-session storage

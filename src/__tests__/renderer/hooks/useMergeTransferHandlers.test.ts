@@ -99,8 +99,10 @@ vi.mock('../../../renderer/stores/modalStore', () => ({
 
 // Mock notificationStore
 const mockNotifyToast = vi.fn();
+const mockShowOsNotification = vi.fn();
 vi.mock('../../../renderer/stores/notificationStore', () => ({
 	notifyToast: (...args: unknown[]) => mockNotifyToast(...args),
+	showOsNotification: (...args: unknown[]) => mockShowOsNotification(...args),
 }));
 
 // Mock other dependencies
@@ -542,7 +544,7 @@ describe('useMergeTransferHandlers', () => {
 	// handleSendToAgent - terminal buffer transfer path
 	// ----------------------------------------------------------------
 
-	describe('handleSendToAgent — terminal buffer mode', () => {
+	describe('handleSendToAgent - terminal buffer mode', () => {
 		beforeEach(() => {
 			useTabStore.getState().setPendingTerminalBufferSend(null);
 		});
@@ -759,25 +761,26 @@ describe('useMergeTransferHandlers', () => {
 	// ----------------------------------------------------------------
 
 	describe('sub-hook callbacks', () => {
-		it('passes sessions and setSessions to useMergeSessionWithSessions', () => {
+		it('passes setSessions and activeTabId to useMergeSessionWithSessions', () => {
 			const deps = createMockDeps();
 			renderHook(() => useMergeTransferHandlers(deps));
 
 			const mockMerge = vi.mocked(useMergeSessionWithSessions);
 			const callArgs = mockMerge.mock.calls[0]?.[0];
-			expect(callArgs).toHaveProperty('sessions');
+			expect(callArgs).not.toHaveProperty('sessions');
 			expect(callArgs).toHaveProperty('setSessions');
+			expect(callArgs).toHaveProperty('activeTabId');
 			expect(callArgs).toHaveProperty('onSessionCreated');
 			expect(callArgs).toHaveProperty('onMergeComplete');
 		});
 
-		it('passes sessions and setSessions to useSendToAgentWithSessions', () => {
+		it('passes setSessions to useSendToAgentWithSessions', () => {
 			const deps = createMockDeps();
 			renderHook(() => useMergeTransferHandlers(deps));
 
 			const mockTransfer = vi.mocked(useSendToAgentWithSessions);
 			const callArgs = mockTransfer.mock.calls[0]?.[0];
-			expect(callArgs).toHaveProperty('sessions');
+			expect(callArgs).not.toHaveProperty('sessions');
 			expect(callArgs).toHaveProperty('setSessions');
 			expect(callArgs).toHaveProperty('onSessionCreated');
 		});
@@ -809,9 +812,12 @@ describe('useMergeTransferHandlers', () => {
 					title: 'Session Merged',
 				})
 			);
-			expect((window as any).maestro.notification.show).toHaveBeenCalledWith(
+			expect(mockShowOsNotification).toHaveBeenCalledWith(
 				'Session Merged',
-				expect.stringContaining('Merged Session')
+				expect.stringContaining('Merged Session'),
+				undefined,
+				undefined,
+				{ fallbackToast: false }
 			);
 		});
 
@@ -878,7 +884,7 @@ describe('useMergeTransferHandlers', () => {
 	// handleSendToAgent - additional coverage
 	// ----------------------------------------------------------------
 
-	describe('handleSendToAgent — additional coverage', () => {
+	describe('handleSendToAgent - additional coverage', () => {
 		it('formats context message with empty logs as no-context message', async () => {
 			const sourceSession = createMockSession({
 				aiTabs: [
@@ -1240,7 +1246,7 @@ describe('useMergeTransferHandlers', () => {
 	// onMergeComplete - additional coverage
 	// ----------------------------------------------------------------
 
-	describe('onMergeComplete — additional coverage', () => {
+	describe('onMergeComplete - additional coverage', () => {
 		it('does not navigate or toast when merge result is not successful', () => {
 			const mockSetActiveSessionId = vi.fn();
 			const deps = createMockDeps({ setActiveSessionId: mockSetActiveSessionId });
@@ -1356,7 +1362,7 @@ describe('useMergeTransferHandlers', () => {
 	// onSessionCreated - additional coverage
 	// ----------------------------------------------------------------
 
-	describe('onSessionCreated — additional coverage', () => {
+	describe('onSessionCreated - additional coverage', () => {
 		it('includes saved tokens info when tokensSaved > 0', () => {
 			const deps = createMockDeps();
 			renderHook(() => useMergeTransferHandlers(deps));
@@ -1435,9 +1441,12 @@ describe('useMergeTransferHandlers', () => {
 				});
 			});
 
-			expect((window as any).maestro.notification.show).toHaveBeenCalledWith(
+			expect(mockShowOsNotification).toHaveBeenCalledWith(
 				'Session Merged',
-				'Created "My Merged Session" with merged context'
+				'Created "My Merged Session" with merged context',
+				undefined,
+				undefined,
+				{ fallbackToast: false }
 			);
 		});
 	});
@@ -1446,7 +1455,7 @@ describe('useMergeTransferHandlers', () => {
 	// handleMerge - additional coverage
 	// ----------------------------------------------------------------
 
-	describe('handleMerge — additional coverage', () => {
+	describe('handleMerge - additional coverage', () => {
 		it('passes all parameters to executeMerge', async () => {
 			const deps = createMockDeps();
 			const { result } = renderHook(() => useMergeTransferHandlers(deps));

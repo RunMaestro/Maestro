@@ -15,6 +15,7 @@
  */
 
 import type { ToolType, SshRemoteConfig } from '../../shared/types';
+import type { ModelTokenUsage } from '../../shared/tokenUsage';
 import { isValidAgentId } from '../../shared/agentIds';
 import { logger } from '../utils/logger';
 
@@ -63,6 +64,14 @@ export interface AgentSessionInfo {
 	outputTokens: number;
 	cacheReadTokens: number;
 	cacheCreationTokens: number;
+	/**
+	 * Per-model token/cost split summing to the session totals above. Optional
+	 * because most callers only need the totals; populated by storages that can
+	 * recover the model id from their transcript (claude/opencode/copilot inline,
+	 * codex/factory as a single session-model bucket) for the Cost & Tokens
+	 * dashboard. Absent means "not computed", not "no models".
+	 */
+	byModel?: ModelTokenUsage[];
 	durationSeconds: number;
 	origin?: AgentSessionOrigin;
 	sessionName?: string;
@@ -149,11 +158,29 @@ export interface AgentSessionStorage {
 
 	/**
 	 * List all sessions for a project
+	 *
+	 * `accountDir` is the provider's config/home root for one account
+	 * (`~/.codex-work`), NOT the sessions subdir under it. It exists because a
+	 * provider's account-selecting env var (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`,
+	 * `COPILOT_HOME`) is set per agent in `customEnvVars` and never in Maestro's
+	 * own environment, so a storage that resolved its root from `process.env`
+	 * would read a directory no agent ever used. Undefined keeps the default
+	 * root, so callers that do not attribute by account need not pass it.
+	 *
+	 * A provider with no account-selecting env var (see
+	 * `PROVIDER_PROFILE_CONFIGS`) is free to leave the parameter unimplemented
+	 * rather than accept one it cannot honour.
+	 *
 	 * @param projectPath - The project directory path
 	 * @param sshConfig - Optional SSH config for remote access
+	 * @param accountDir - Optional account config/home root to read instead of the default
 	 * @returns Array of session metadata sorted by modified date (newest first)
 	 */
-	listSessions(projectPath: string, sshConfig?: SshRemoteConfig): Promise<AgentSessionInfo[]>;
+	listSessions(
+		projectPath: string,
+		sshConfig?: SshRemoteConfig,
+		accountDir?: string
+	): Promise<AgentSessionInfo[]>;
 
 	/**
 	 * List sessions with pagination support

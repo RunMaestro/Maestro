@@ -12,7 +12,7 @@
  * Claude (bash) integration (see src/specify_cli/integrations/base.py
  * process_template).
  *
- * Usage: npm run refresh-speckit
+ * Usage: bun run refresh-speckit
  */
 
 import fs from 'fs';

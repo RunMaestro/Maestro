@@ -19,7 +19,13 @@ export const DEFAULT_CONTEXT_WINDOWS: Partial<Record<AgentId, number>> = {
 	codex: 200000, // OpenAI o3/o4-mini context window
 	opencode: 128000, // OpenCode (depends on model, 128k is conservative default)
 	'factory-droid': 200000, // Factory Droid (varies by model, defaults to Claude Opus)
+	hermes: 200000, // Conservative fallback until runtime-specific reporting lands
+	pi: 200000, // Conservative fallback until runtime-specific reporting lands
 	'copilot-cli': 200000, // Copilot-CLI (varies by model, defaults to Claude Sonnet)
+	'qwen3-coder': 262144, // Qwen3-Coder native 256K context window
+	omp: 200000, // Oh My Pi (fallback until runtime-specific reporting lands)
+	grok: 500000, // Grok CLI (grok-4.5 default, per ~/.grok/models_cache.json)
+	antigravity: 1048576, // Antigravity CLI drives Gemini 3.x models (1M token window)
 	terminal: 0, // Terminal has no context window
 };
 

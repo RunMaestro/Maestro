@@ -6,13 +6,19 @@ import {
 	takeNextRunnableQueueItem,
 	reorderQueueItem,
 	resolveQueuedItemTabName,
+	hasWorkAheadOfNewMessage,
+	applyQueuedItemRelease,
 	getForceSendEligibility,
 	shouldOfferForceSend,
 	applyQueuedItemEdit,
+	applyQueuedItemDispatchFailure,
 	isSameQueuedPrompt,
 	findQueuedDuplicate,
+	releaseConnectionHeldQueueItems,
 } from '../../../renderer/utils/executionQueue';
 import type { AITab, QueuedItem, Session } from '../../../renderer/types';
+import { createMockSession } from '../../helpers/mockSession';
+import { createMockAITab } from '../../helpers/mockTab';
 
 function item(id: string, paused = false): QueuedItem {
 	return { id, timestamp: 0, tabId: 'tab-1', type: 'message', text: id, paused };
@@ -23,9 +29,20 @@ function tabItem(id: string, tabId: string): QueuedItem {
 }
 
 describe('executionQueue helpers', () => {
-	it('isRunnableQueueItem treats only non-paused items as runnable', () => {
+	it('isRunnableQueueItem treats user and connection holds as non-runnable', () => {
 		expect(isRunnableQueueItem(item('a'))).toBe(true);
 		expect(isRunnableQueueItem(item('b', true))).toBe(false);
+		expect(isRunnableQueueItem({ ...item('c'), waitingForConnection: true })).toBe(false);
+	});
+
+	it('releaseConnectionHeldQueueItems removes only the connection hold', () => {
+		const held = { ...item('a', true), waitingForConnection: true };
+		const queue = [held, item('b')];
+		const released = releaseConnectionHeldQueueItems(queue);
+
+		expect(released[0]).toEqual(item('a', true));
+		expect(released[1]).toEqual(item('b'));
+		expect(releaseConnectionHeldQueueItems(released)).toBe(released);
 	});
 
 	it('nextRunnableQueueItem returns the first non-paused item', () => {
@@ -33,6 +50,17 @@ describe('executionQueue helpers', () => {
 		expect(nextRunnableQueueItem(q)?.id).toBe('b');
 		expect(nextRunnableQueueItem([item('a', true)])).toBeUndefined();
 		expect(nextRunnableQueueItem([])).toBeUndefined();
+	});
+
+	it('does not let later work overtake a connection-held item', () => {
+		const q = [
+			item('paused', true),
+			{ ...item('held'), waitingForConnection: true },
+			item('later'),
+		];
+		expect(nextRunnableQueueItem(q)).toBeUndefined();
+		expect(hasRunnableQueueItem(q)).toBe(false);
+		expect(takeNextRunnableQueueItem(q)).toEqual({ item: null, remaining: q });
 	});
 
 	it('hasRunnableQueueItem reflects whether any item can run', () => {
@@ -96,6 +124,120 @@ describe('reorderQueueItem', () => {
 		const q = [tabItem('a', 'tab-1'), tabItem('x', 'tab-2')];
 		// tab-1 has only one item, so index 1 is out of range for its view.
 		expect(reorderQueueItem(q, 0, 1, 'tab-1')).toBe(q);
+	});
+});
+
+describe('hasWorkAheadOfNewMessage', () => {
+	it('is false for an idle agent with an empty queue', () => {
+		const session = createMockSession({ aiTabs: [createMockAITab({ id: 'tab-1' })] });
+		expect(hasWorkAheadOfNewMessage(session)).toBe(false);
+	});
+
+	it('is true while any tab is mid-turn, including a closed-but-thinking orphan', () => {
+		const busy = createMockSession({
+			aiTabs: [createMockAITab({ id: 'tab-1', state: 'busy' })],
+		});
+		expect(hasWorkAheadOfNewMessage(busy)).toBe(true);
+
+		// A tab closed mid-send keeps working in the background and still holds
+		// the agent's order, so a new message lands behind it.
+		const orphaned = createMockSession({
+			aiTabs: [createMockAITab({ id: 'tab-1' })],
+			orphanedThinkingTabs: [createMockAITab({ id: 'tab-gone', state: 'busy' })],
+		});
+		expect(hasWorkAheadOfNewMessage(orphaned)).toBe(true);
+	});
+
+	it('counts runnable and connection-held work, but not user-paused work', () => {
+		const queued = createMockSession({
+			aiTabs: [createMockAITab({ id: 'tab-1' })],
+			executionQueue: [item('a')],
+		});
+		expect(hasWorkAheadOfNewMessage(queued)).toBe(true);
+
+		// A paused item is invisible to dispatch, so nothing is actually ahead.
+		const held = createMockSession({
+			aiTabs: [createMockAITab({ id: 'tab-1' })],
+			executionQueue: [item('a', true)],
+		});
+		expect(hasWorkAheadOfNewMessage(held)).toBe(false);
+
+		const connectionHeld = createMockSession({
+			aiTabs: [createMockAITab({ id: 'tab-1' })],
+			executionQueue: [{ ...item('a'), waitingForConnection: true }],
+		});
+		expect(hasWorkAheadOfNewMessage(connectionHeld)).toBe(true);
+	});
+
+	it('is true while Auto Run is active, which never marks the agent busy', () => {
+		const session = createMockSession({ aiTabs: [createMockAITab({ id: 'tab-1' })] });
+		expect(hasWorkAheadOfNewMessage(session, { autoRunActive: true })).toBe(true);
+	});
+});
+
+describe('applyQueuedItemRelease', () => {
+	it('returns the agent to idle when the released tab was the only one working', () => {
+		const session = createMockSession({
+			state: 'busy',
+			busySource: 'ai',
+			thinkingStartTime: 123,
+			aiTabs: [createMockAITab({ id: 'tab-1', state: 'busy', thinkingStartTime: 123 })],
+		});
+
+		const next = applyQueuedItemRelease(session, 'tab-1');
+
+		expect(next.aiTabs[0].state).toBe('idle');
+		expect(next.aiTabs[0].thinkingStartTime).toBeUndefined();
+		expect(next.state).toBe('idle');
+		expect(next.busySource).toBeUndefined();
+		expect(next.thinkingStartTime).toBeUndefined();
+	});
+
+	it('keeps the agent busy when another tab is still mid-turn', () => {
+		// Blanking the agent state here would strand the other tab's thinking pill.
+		const session = createMockSession({
+			state: 'busy',
+			busySource: 'ai',
+			thinkingStartTime: 123,
+			aiTabs: [
+				createMockAITab({ id: 'tab-1', state: 'busy', thinkingStartTime: 123 }),
+				createMockAITab({ id: 'tab-2', state: 'busy', thinkingStartTime: 456 }),
+			],
+		});
+
+		const next = applyQueuedItemRelease(session, 'tab-1');
+
+		expect(next.aiTabs[0].state).toBe('idle');
+		expect(next.aiTabs[1].state).toBe('busy');
+		expect(next.state).toBe('busy');
+		expect(next.thinkingStartTime).toBe(123);
+	});
+
+	it('keeps the agent busy for a still-thinking orphan tab', () => {
+		const session = createMockSession({
+			state: 'busy',
+			busySource: 'ai',
+			aiTabs: [createMockAITab({ id: 'tab-1', state: 'busy' })],
+			orphanedThinkingTabs: [createMockAITab({ id: 'tab-gone', state: 'busy' })],
+		});
+
+		const next = applyQueuedItemRelease(session, 'tab-1');
+
+		expect(next.state).toBe('busy');
+		expect(next.orphanedThinkingTabs?.[0].state).toBe('busy');
+	});
+
+	it('leaves the queue untouched', () => {
+		const session = createMockSession({
+			state: 'busy',
+			aiTabs: [createMockAITab({ id: 'tab-1', state: 'busy' })],
+			executionQueue: [item('a'), item('b')],
+		});
+
+		expect(applyQueuedItemRelease(session, 'tab-1').executionQueue.map((i) => i.id)).toEqual([
+			'a',
+			'b',
+		]);
 	});
 });
 
@@ -238,6 +380,123 @@ describe('applyQueuedItemEdit', () => {
 		const next = applyQueuedItemEdit(queue, 'a', patch({ model: 'opus' }));
 
 		expect(next[0].paused).toBe(true);
+	});
+});
+
+// ============================================================================
+// applyQueuedItemDispatchFailure
+// ============================================================================
+
+describe('applyQueuedItemDispatchFailure', () => {
+	function sessionWithCard(overrides: Partial<Session> = {}): Session {
+		const tab = createMockAITab({
+			id: 'tab-1',
+			state: 'busy',
+			thinkingStartTime: 111,
+			logs: [
+				{ id: 'log-old', timestamp: 1, source: 'user', text: 'send this' },
+				{ id: 'log-card', timestamp: 2, source: 'user', text: 'send this', queuedItemId: 'q1' },
+			],
+		});
+		return createMockSession({
+			id: 's1',
+			state: 'busy',
+			busySource: 'ai',
+			thinkingStartTime: 111,
+			aiTabs: [tab],
+			activeTabId: 'tab-1',
+			executionQueue: [],
+			...overrides,
+		} as Partial<Session>);
+	}
+
+	const failed: QueuedItem = {
+		id: 'q1',
+		timestamp: 0,
+		tabId: 'tab-1',
+		type: 'message',
+		text: 'send this',
+	};
+
+	it('releases the tab, removes only the card this dispatch wrote, and re-queues at the head', () => {
+		const later: QueuedItem = { ...failed, id: 'q2', text: 'later' };
+		const next = applyQueuedItemDispatchFailure(
+			sessionWithCard({ executionQueue: [later] }),
+			failed,
+			{
+				hold: false,
+			}
+		);
+
+		expect(next.aiTabs[0].state).toBe('idle');
+		expect(next.aiTabs[0].thinkingStartTime).toBeUndefined();
+		expect(next.state).toBe('idle');
+		// The identical message the user really did send earlier survives; only the
+		// stamped card for this failed dispatch goes.
+		expect(next.aiTabs[0].logs.map((l) => l.id)).toEqual(['log-old']);
+		// Head of the queue, so it keeps its place ahead of everything behind it.
+		expect(next.executionQueue.map((i) => i.id)).toEqual(['q1', 'q2']);
+		expect(next.executionQueue[0].paused).toBeFalsy();
+	});
+
+	it('holds the item when the failure is not a transient collision', () => {
+		const next = applyQueuedItemDispatchFailure(sessionWithCard(), failed, { hold: true });
+
+		expect(next.executionQueue.map((i) => i.id)).toEqual(['q1']);
+		// Preserved and visible, but it cannot spin the queue against a wall that
+		// would refuse it identically on the next tick.
+		expect(next.executionQueue[0].paused).toBe(true);
+	});
+
+	it('is idempotent when the item is already back in the queue', () => {
+		// `retryStore.holdFailedItemInQueue` parks the failed turn in the queue for
+		// the life of an outage. A second copy would double-send the prompt.
+		const held = sessionWithCard({ executionQueue: [failed] });
+
+		const next = applyQueuedItemDispatchFailure(held, failed, { hold: false });
+
+		expect(next.executionQueue.map((i) => i.id)).toEqual(['q1']);
+	});
+
+	it('leaves the agent busy when another tab is still running its own turn', () => {
+		const base = sessionWithCard();
+		const withOther = {
+			...base,
+			aiTabs: [...base.aiTabs, createMockAITab({ id: 'tab-2', state: 'busy' })],
+		} as Session;
+
+		const next = applyQueuedItemDispatchFailure(withOther, failed, { hold: false });
+
+		expect(next.aiTabs.find((t) => t.id === 'tab-1')!.state).toBe('idle');
+		expect(next.aiTabs.find((t) => t.id === 'tab-2')!.state).toBe('busy');
+		expect(next.state).toBe('busy');
+	});
+
+	it('strips the card from a closed-but-still-draining orphan tab', () => {
+		const orphan = createMockAITab({
+			id: 'tab-9',
+			state: 'busy',
+			logs: [{ id: 'log-card', timestamp: 2, source: 'user', text: 'x', queuedItemId: 'q1' }],
+		});
+		const base = createMockSession({
+			id: 's1',
+			state: 'busy',
+			aiTabs: [createMockAITab({ id: 'tab-1' })],
+			activeTabId: 'tab-1',
+			executionQueue: [],
+			orphanedThinkingTabs: [orphan],
+		} as Partial<Session>);
+
+		const next = applyQueuedItemDispatchFailure(
+			base,
+			{ ...failed, tabId: 'tab-9' },
+			{
+				hold: false,
+			}
+		);
+
+		expect(next.orphanedThinkingTabs![0].logs).toHaveLength(0);
+		expect(next.orphanedThinkingTabs![0].state).toBe('idle');
 	});
 });
 

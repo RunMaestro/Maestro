@@ -66,6 +66,15 @@ export interface AgentCapabilities {
 	/** Agent supports read-only/plan mode (e.g., --permission-mode plan) */
 	supportsReadOnlyMode: boolean;
 
+	/**
+	 * Agent supports the `standard` permission mode with a working live
+	 * permission relay (interactive allow/deny). Optional: only set true for
+	 * agents whose relay is implemented and verified (currently Claude Code).
+	 * When false/undefined, the UI hides `standard` from the permission toggle
+	 * rather than expose a non-functional option (it would abort/auto-deny).
+	 */
+	supportsStandardPermissionMode?: boolean;
+
 	/** Agent outputs JSON-formatted responses (for parsing) */
 	supportsJsonOutput: boolean;
 
@@ -108,6 +117,17 @@ export interface AgentCapabilities {
 	/** Agent supports --input-format stream-json for image input via stdin */
 	supportsStreamJsonInput: boolean;
 
+	/**
+	 * Agent's CLI reads the prompt from stdin when it is not passed as an
+	 * argument. Windows spawns deliver the prompt over stdin instead of argv to
+	 * stay under the ~32K CreateProcess command-line limit, which only works for
+	 * CLIs that actually read stdin. An agent that accepts the prompt solely as a
+	 * positional argument (Oh My Pi) would otherwise start with no prompt at all,
+	 * emit its session line, and exit 0 without ever calling the model.
+	 * False keeps the prompt in argv on every platform.
+	 */
+	supportsPromptViaStdin: boolean;
+
 	/** Agent emits streaming thinking/reasoning content that can be displayed */
 	supportsThinkingDisplay: boolean;
 
@@ -139,6 +159,18 @@ export interface AgentCapabilities {
 	supportsProjectMemory: boolean;
 
 	/**
+	 * Agent's CLI can grant access to directories outside the working directory
+	 * (e.g. `--add-dir`), so Maestro's Additional Directories are enforced by the
+	 * provider rather than by instructions alone.
+	 *
+	 * When true, the definition MUST also supply `additionalDirArgs` - the
+	 * completeness test fails otherwise. When false, the grants still reach the
+	 * agent through the `{{ADDITIONAL_DIRECTORIES}}` block in the system prompt;
+	 * they're just advisory. See `src/shared/additionalDirectories.ts`.
+	 */
+	supportsAdditionalDirectories: boolean;
+
+	/**
 	 * How images should be handled on resume when -i flag is not available.
 	 * 'prompt-embed': Save images to temp files and embed file paths in the prompt text.
 	 * undefined: Use default image handling (or no special resume handling needed).
@@ -167,6 +199,7 @@ export const DEFAULT_CAPABILITIES: AgentCapabilities = {
 	supportsResultMessages: false,
 	supportsModelSelection: false,
 	supportsStreamJsonInput: false,
+	supportsPromptViaStdin: false,
 	supportsThinkingDisplay: false,
 	supportsContextMerge: false,
 	supportsContextExport: false,
@@ -176,6 +209,7 @@ export const DEFAULT_CAPABILITIES: AgentCapabilities = {
 	usesCombinedContextWindow: false,
 	supportsAppendSystemPrompt: false,
 	supportsProjectMemory: false,
+	supportsAdditionalDirectories: false,
 };
 
 // Session group
@@ -183,7 +217,15 @@ export interface Group {
 	id: string;
 	name: string;
 	emoji: string;
+	kind?: 'user' | 'worktree';
+	icon?: string;
+	color?: string;
+	parentGroupId?: string;
 	collapsed: boolean;
+}
+
+export function isWorktreeGroup(group: Group): boolean {
+	return group.kind === 'worktree' || group.emoji === '🌳';
 }
 
 /**
@@ -212,6 +254,13 @@ export interface SessionInfo {
 	cwd: string;
 	projectRoot: string;
 	autoRunFolderPath?: string;
+	/** Extra directories granted beyond the working directory (prompt-level grants). */
+	additionalDirectories?: AdditionalDirectory[];
+	/**
+	 * Per-agent worktree settings (Worktree Directory, watcher, setup script).
+	 * Set on parent agents from the Git menu's Configure Worktrees dialog.
+	 */
+	worktreeConfig?: SessionWorktreeConfig;
 	/** Left Bar bookmark - pins the agent to the Bookmarks section at the top. */
 	bookmarked?: boolean;
 	/** Per-session model override (wins over agent-level `model` config option). */
@@ -258,6 +307,13 @@ export interface SessionInfo {
 	 * via {@link resilienceEnabled}. Set explicitly `false` to opt out.
 	 */
 	retryOnTokenExhaustion?: boolean;
+	/**
+	 * Codex only: spend a rate-limit reset credit automatically when this agent
+	 * hits a plan-quota wall, instead of waiting for the window to reopen.
+	 * Defaults OFF - credits are finite and irreversible, so unattended spending
+	 * is opt-in. See `shouldAutoSpendCredit` in shared/codexResetCredits.
+	 */
+	codexAutoResetOnExhaustion?: boolean;
 	/** Per-session SSH remote config - when enabled, CLI spawns via SSH. */
 	sessionSshRemoteConfig?: AgentSshRemoteConfig;
 }
@@ -271,15 +327,95 @@ export interface UsageStats {
 	totalCostUsd: number;
 	contextWindow: number;
 	/**
+	 * True when `contextWindow` is an authoritative, runtime-resolved value (the
+	 * model's real window discovered from the provider's own catalog) rather than
+	 * a static per-agent default/fallback. Consumers use this to let the real
+	 * window win over the agent-level configured fallback while still honoring an
+	 * explicit per-session override. Set by providers whose window is model-
+	 * dependent and reported per turn (currently Oh My Pi); undefined otherwise.
+	 */
+	contextWindowResolved?: boolean;
+	/**
+	 * The model whose window `contextWindow` describes, for providers whose window
+	 * is model-dependent (currently Oh My Pi). Consumers that preserve a resolved
+	 * window across an unresolved delta (see `mergeContextWindow`) scope that
+	 * preservation to the SAME model so a mid-session model switch to a model that
+	 * is absent from the primed catalog can't leave the gauge stuck on the previous
+	 * model's window. Undefined for providers with a single static window.
+	 */
+	contextWindowModel?: string;
+	/**
+	 * True when this usage event exists ONLY to correct a previously emitted
+	 * context window (Oh My Pi's catalog primed after the first turn's fallback
+	 * usage was already emitted - see `pushResolvedOmpContextWindow`). The token
+	 * and cost fields are a REPLAY of that already-counted turn, so accumulating
+	 * consumers must NOT add them again: update the context window and leave every
+	 * token/cost total untouched. Undefined for ordinary per-turn usage events.
+	 */
+	contextWindowCorrectionOnly?: boolean;
+	/**
+	 * Monotonic sequence number stamped by main's context-timeline capture log
+	 * (`src/main/process-listeners/context-timeline-log.ts`) as the event goes
+	 * out on `process:usage`. The renderer records it on the Context Timeline
+	 * point it builds, so a renderer that later hydrates from the main-side log
+	 * can dedup hydrated captures against live ones exactly. Undefined for usage
+	 * events that never passed through that listener (unit tests, replays).
+	 */
+	captureSeq?: number;
+	/**
 	 * Reasoning/thinking tokens (separate from outputTokens)
 	 * Some models like OpenAI o3/o4-mini report reasoning tokens separately.
 	 * These are already included in outputTokens but tracked separately for UI display.
 	 */
 	reasoningTokens?: number;
+	/**
+	 * Absolute context-occupancy snapshot for the turn, set by providers whose
+	 * top-level fields above are NOT occupancy. Two sources today:
+	 *
+	 * - Codex: its CLI reports cumulative session usage which we delta-normalize
+	 *   before emitting (see normalizeUsageToDelta in StdoutHandler), so the
+	 *   top-level fields are per-turn DELTAS - correct for token accumulation,
+	 *   wrong for context fill. The pre-normalization cumulative total is the
+	 *   occupancy.
+	 * - Claude Code: its result message sums every internal API call of the turn,
+	 *   so the top-level fields are token SPEND and a tool-heavy turn can exceed
+	 *   the window entirely. Its parser attaches the LAST internal call's usage
+	 *   here, which is real occupancy (a single call's input is what was
+	 *   physically sent to the model). Note `outputTokens` in that case is the
+	 *   last call's output, not the turn's - occupancy consumers read the input
+	 *   side.
+	 *
+	 * Consumers that plot context occupancy (the Context Timeline inspector, the
+	 * context gauge) read from here when present and fall back to the top-level
+	 * fields otherwise. Undefined for providers whose top-level fields are already
+	 * absolute for the current turn (Copilot, OpenCode).
+	 */
+	absoluteUsage?: {
+		inputTokens: number;
+		outputTokens: number;
+		cacheReadInputTokens: number;
+		cacheCreationInputTokens: number;
+		reasoningTokens: number;
+	};
 }
 
-// History entry types for the History panel
-export type HistoryEntryType = 'AUTO' | 'USER' | 'CUE';
+/**
+ * History entry types for the History panel.
+ *
+ * - `USER`  - an interactive turn the user typed themselves.
+ * - `AUTO`  - an Auto Run (playbook / goal) task the engine dispatched.
+ * - `CUE`   - a turn triggered by a Cue subscription.
+ * - `AGENT` - an ordinary message proxied in from ANOTHER agent (a cross-agent
+ *   `@mention` consult). It is a normal turn, not automation: the only thing
+ *   that differs from `USER` is who typed it. Consults were originally logged as
+ *   `AUTO`, which made them render as Auto Run tasks and inflated the Auto Run
+ *   counts; `normalizeHistoryEntryType` in `shared/history.ts` re-maps those
+ *   legacy entries on read.
+ *
+ * Adding a member here? `ALL_HISTORY_ENTRY_TYPES` (shared/history.ts) is the
+ * single list every filter/validator iterates - update it, not a local copy.
+ */
+export type HistoryEntryType = 'AUTO' | 'USER' | 'CUE' | 'AGENT';
 
 export interface HistoryEntry {
 	id: string;
@@ -295,12 +431,30 @@ export interface HistoryEntry {
 	usageStats?: UsageStats;
 	success?: boolean;
 	elapsedTimeMs?: number;
+	completedTaskCount?: number;
 	validated?: boolean;
 	cueTriggerName?: string;
 	cueEventType?: string;
 	cueSourceSession?: string;
+	/**
+	 * Cross-agent attribution: the display name of the agent that consulted this
+	 * one via an `@mention`. Set on the history entry the TARGET agent keeps so it
+	 * "remembers who consulted it" (mirrors GroupChatHistoryEntry.participantName).
+	 */
+	sourceAgentName?: string;
 	/** Hostname of the machine that created this entry (for shared history) */
 	hostname?: string;
+	/** Web Login account that sent the turn (username). Absent for turns typed at the desktop. */
+	userName?: string;
+	/** Display name of the Web Login account named by {@link userName}. */
+	userDisplayName?: string;
+	/**
+	 * Which AI tab the turn ran in. Carried so the main process can look up the
+	 * account that STARTED the turn (`resolveTurnActor`) - the entry is written
+	 * by the desktop renderer's exit listener, where no acting user is in scope.
+	 * Not the provider session id; that is `agentSessionId`.
+	 */
+	tabId?: string;
 	/**
 	 * Claude-only, per-turn: which interface spent the quota for this turn.
 	 * `interactive` = maestro-p TUI (Max plan), `api` = `claude --print` (per-token).
@@ -392,6 +546,34 @@ export interface Playbook {
 	};
 }
 
+/**
+ * Playbook status file contract (`.maestro/STATUS.json`).
+ *
+ * A running playbook / Auto Run can write this file to surface rich execution
+ * context to the Maestro UI. The main process watches for the file and pushes
+ * its contents to the renderer, which displays them in the Auto Run progress
+ * panel. Every field is optional so partial writes still render usefully.
+ *
+ * This is the single canonical declaration of the shape. The preload bridge,
+ * renderer types, and ambient `global.d.ts` all reference this type rather than
+ * redeclaring it.
+ */
+export interface PlaybookStatus {
+	/** Current feature or work item identifier (e.g. "F-13") */
+	feature?: string;
+	/** Current phase of the playbook (e.g. "IMPLEMENT", "VERIFY", "SPECIFY") */
+	phase?: string;
+	/** Human-readable summary of current progress */
+	summary?: string;
+	/** Test results from the current phase */
+	tests?: {
+		pass: number;
+		fail: number;
+	};
+	/** Relative path to a relevant artifact file */
+	artifact?: string;
+}
+
 // Document entry in the batch run queue (runtime version with IDs)
 export interface BatchDocumentEntry {
 	id: string;
@@ -401,6 +583,29 @@ export interface BatchDocumentEntry {
 	isMissing?: boolean;
 }
 
+/**
+ * An extra directory an agent may touch beyond its working directory.
+ *
+ * Enforcement is prompt-level: the grants are rendered into the Maestro system
+ * prompt as {{ADDITIONAL_DIRECTORIES}} and the agent is instructed to honor
+ * them. Nothing sandboxes the agent process, so a grant is a statement of
+ * intent, not a hard boundary.
+ *
+ * `read` and `write` are independent - a directory can be read-only (reference
+ * material), write-only (a drop box the agent should never read back), or both.
+ * An entry with neither flag set is inert and is omitted from the prompt.
+ *
+ * `description` is an optional hint the Conductor can attach to explain what the
+ * directory is for or how the agent should use it. When present it is rendered
+ * into the {{ADDITIONAL_DIRECTORIES}} prompt block alongside the access rule.
+ */
+export interface AdditionalDirectory {
+	path: string;
+	read: boolean;
+	write: boolean;
+	description?: string;
+}
+
 // Git worktree configuration for Auto Run
 export interface WorktreeConfig {
 	enabled: boolean;
@@ -408,6 +613,23 @@ export interface WorktreeConfig {
 	branchName: string;
 	createPROnCompletion: boolean;
 	prTargetBranch: string;
+}
+
+// Per-agent worktree settings, stored on parent sessions as `worktreeConfig`.
+// Distinct from `WorktreeConfig` above, which describes a single batch run's
+// worktree. Shared because three readers must agree on where worktrees go:
+// the desktop's create-worktree flow, the CLI's `list agents` / `show agent`
+// output, and the {{WORKTREE_BASE_PATH}} line in every agent's system prompt.
+export interface SessionWorktreeConfig {
+	/** Directory where worktrees are created. */
+	basePath: string;
+	/** Whether to watch it for worktrees created outside Maestro (chokidar). */
+	watchEnabled: boolean;
+	/**
+	 * Shell command run inside each newly created worktree (copy .env files,
+	 * run setup.sh, install deps). Blank/undefined disables it.
+	 */
+	setupScript?: string;
 }
 
 // Target specification for dispatching Auto Run to a worktree agent
@@ -429,72 +651,6 @@ export interface BatchRunConfig {
 	taskSelectionMode?: TaskSelectionMode;
 	worktree?: WorktreeConfig;
 	worktreeTarget?: WorktreeRunTarget;
-}
-
-// ============================================================================
-// Agent Capabilities
-// ============================================================================
-
-/**
- * Capability flags that determine what features are available for each agent.
- * Canonical definition - import from here, not from capabilities.ts or preload.
- */
-export interface AgentCapabilities {
-	/** Agent supports resuming existing sessions (e.g., --resume flag) */
-	supportsResume: boolean;
-	/** Agent supports read-only/plan mode (e.g., --permission-mode plan) */
-	supportsReadOnlyMode: boolean;
-	/** Agent outputs JSON-formatted responses (for parsing) */
-	supportsJsonOutput: boolean;
-	/** Agent provides a session ID for conversation continuity */
-	supportsSessionId: boolean;
-	/** Agent can accept image inputs (screenshots, diagrams, etc.) */
-	supportsImageInput: boolean;
-	/** Agent can accept image inputs when resuming an existing session */
-	supportsImageInputOnResume: boolean;
-	/** Agent supports slash commands (e.g., /help, /compact) */
-	supportsSlashCommands: boolean;
-	/** Agent stores session history in a discoverable location */
-	supportsSessionStorage: boolean;
-	/** Agent provides cost/pricing information */
-	supportsCostTracking: boolean;
-	/** Agent provides token usage statistics */
-	supportsUsageStats: boolean;
-	/** Agent supports batch/headless mode (non-interactive) */
-	supportsBatchMode: boolean;
-	/** Agent requires a prompt to start (no eager spawn on session creation) */
-	requiresPromptToStart: boolean;
-	/** Agent streams responses in real-time */
-	supportsStreaming: boolean;
-	/** Agent provides distinct "result" messages when done */
-	supportsResultMessages: boolean;
-	/** Agent supports selecting different models (e.g., --model flag) */
-	supportsModelSelection: boolean;
-	/** Agent supports --input-format stream-json for image input via stdin */
-	supportsStreamJsonInput: boolean;
-	/** Agent emits streaming thinking/reasoning content that can be displayed */
-	supportsThinkingDisplay: boolean;
-	/** Agent can receive merged context from other sessions/tabs */
-	supportsContextMerge: boolean;
-	/** Agent can export its context for transfer to other sessions/agents */
-	supportsContextExport: boolean;
-	/** Agent supports inline wizard structured output conversations */
-	supportsWizard: boolean;
-	/** Agent can serve as a group chat moderator */
-	supportsGroupChatModeration: boolean;
-	/** Agent uses JSON line (JSONL) output format in CLI batch mode */
-	usesJsonLineOutput: boolean;
-	/** Agent uses a combined input+output context window (vs separate limits) */
-	usesCombinedContextWindow: boolean;
-	/** Agent supports --append-system-prompt for separate system prompt delivery */
-	supportsAppendSystemPrompt: boolean;
-	/**
-	 * Agent maintains a per-project persistent memory store on disk that Maestro
-	 * can browse and edit. Claude Code does this at ~/.claude/projects/<path>/memory/.
-	 */
-	supportsProjectMemory: boolean;
-	/** How images should be handled on resume when -i flag is not available. */
-	imageResumeMode?: 'prompt-embed';
 }
 
 // ============================================================================
@@ -536,6 +692,7 @@ export interface AgentConfig {
 	configOptions?: AgentConfigOption[];
 	capabilities?: AgentCapabilities;
 	yoloModeArgs?: string[];
+	fullAccessArgs?: string[]; // Same as yoloModeArgs - preferred name. Args added in 'full' permission mode.
 	readOnlyCliEnforced?: boolean;
 	/**
 	 * Latest persisted capability snapshot for this agent in the requested
@@ -606,6 +763,39 @@ export interface AgentError {
 
 	/** Parsed JSON error details (if the error contains structured JSON) */
 	parsedJson?: unknown;
+
+	/**
+	 * For limit/credit/rate-limit errors: epoch ms when the provider window is
+	 * expected to reopen. Used by auto-resume to schedule the next probe. May be
+	 * undefined when the reset time is unknown (probe on the fixed interval instead).
+	 */
+	limitResetAt?: number;
+
+	/**
+	 * Number of resume attempts made for this paused agent so far. Used for
+	 * backoff and to enforce the give-up window after repeated limits.
+	 */
+	resumeAttemptCount?: number;
+
+	/**
+	 * Epoch ms marking when auto-resume first observed this limit pause. The
+	 * coordinator stamps it once (seeded from `timestamp`, the moment the limit
+	 * fired) and never overwrites it while the pause persists. Phase 4's give-up
+	 * decision is time-based off this stamp and the `autoResumeGiveUpDays`
+	 * setting, NOT a raw attempt count.
+	 */
+	limitPausedAt?: number;
+}
+
+/**
+ * True when an agent error is a provider "limit pause" - a token/API/credit or
+ * rate limit the agent can resume from once the window reopens. Both
+ * `rate_limited` and `token_exhaustion` count (some providers surface credit
+ * exhaustion as the latter). Single source of truth so every call site (error
+ * listener, goal runner, auto-resume coordinator) agrees on what to pause on.
+ */
+export function isLimitError(err: AgentError): boolean {
+	return err.type === 'rate_limited' || err.type === 'token_exhaustion';
 }
 
 /**
@@ -716,6 +906,39 @@ export interface SshRemoteConfig {
 
 	/** Environment variables to set on remote */
 	remoteEnv?: Record<string, string>;
+
+	/**
+	 * Environment variables the user switched OFF: same shape as `remoteEnv`,
+	 * kept so the value survives without reaching the remote. Nothing but the
+	 * editor reads it - see `src/shared/parkedRecords.ts`.
+	 */
+	remoteEnvDisabled?: Record<string, string>;
+
+	/**
+	 * Extra `ssh -o KEY=VALUE` options for this remote, merged over Maestro's
+	 * defaults by `resolveSshOptions()` in `src/shared/sshOptions.ts`.
+	 *
+	 * This is how an exotic transport is expressed without a field per
+	 * transport: a `ProxyCommand` through tailcat / cloudflared / Teleport, a
+	 * `ProxyJump` bastion, or simply a `ConnectTimeout` longer than the default
+	 * 10s that a tunnel needs to finish its handshake. It is also the only way
+	 * to change one of Maestro's defaults, since a command-line `-o` outranks
+	 * anything in `~/.ssh/config`.
+	 *
+	 * `RequestTTY` is reserved: it is derived per command from whether the
+	 * remote agent speaks stream-json, so pinning it per host corrupts the
+	 * stream. Overrides for it are rejected on write and ignored on read.
+	 */
+	sshOptions?: Record<string, string>;
+
+	/**
+	 * SSH options the user switched OFF, same shape as `sshOptions`. Being in
+	 * `sshOptions` is exactly the same statement as being live, so this record
+	 * is never merged into a resolved option set: it exists so a `ProxyCommand`
+	 * can be turned off for a while without the user having to keep the string
+	 * somewhere else to paste back.
+	 */
+	sshOptionsDisabled?: Record<string, string>;
 
 	/** Enable this remote configuration */
 	enabled: boolean;

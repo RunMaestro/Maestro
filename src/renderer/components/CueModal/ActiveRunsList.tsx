@@ -123,7 +123,7 @@ export function ActiveRunsList({
 									return pInfo ? <PipelineDot color={pInfo.color} name={pInfo.name} /> : null;
 								})()}
 								<span style={{ color: theme.colors.textMain }}>{run.sessionName}</span>
-								<span style={{ color: theme.colors.textDim }}>—</span>
+								<span style={{ color: theme.colors.textDim }}> - </span>
 								<span style={{ color: CUE_COLOR }}>"{run.subscriptionName}"</span>
 							</div>
 							<span
@@ -226,7 +226,7 @@ function LiveOutputPanel({ runId, theme }: LiveOutputPanelProps) {
 			<div className="flex items-center justify-between mt-2 mb-1">
 				<span style={{ color: theme.colors.textDim }}>
 					{stale
-						? 'Run finished — last buffered output (full result lands in Activity Log)'
+						? 'Run finished - last buffered output (full result lands in Activity Log)'
 						: `Live output (polling every ${Math.round(LIVE_OUTPUT_POLL_MS / 1000)}s)`}
 				</span>
 				<button

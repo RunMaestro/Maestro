@@ -12,16 +12,27 @@ import type {
 } from './types';
 import { PtySpawner } from './spawners/PtySpawner';
 import { ChildProcessSpawner } from './spawners/ChildProcessSpawner';
+import { OpencodeServerSpawner } from './spawners/OpencodeServerSpawner';
 import { DataBufferManager } from './handlers/DataBufferManager';
+import { pushResolvedOmpContextWindow } from './handlers/StdoutHandler';
 import { LocalCommandRunner } from './runners/LocalCommandRunner';
 import { SshCommandRunner } from './runners/SshCommandRunner';
+import { opencodeServerManager } from '../opencode-server/OpencodeServerManager';
 import { logger } from '../utils/logger';
+import { isPidAlive } from './utils/childProcessInfo';
 import { isWindows } from '../../shared/platformDetection';
 import { expandTilde } from '../../shared/pathUtils';
+import { agentAlreadyRunningMessage } from '../../shared/processErrors';
 import type { AgentError, SshRemoteConfig } from '../../shared/types';
 import { unusableCwdReason } from './utils/spawnCwd';
 import { getDefaultShell } from '../stores/defaults';
 import { captureException } from '../utils/sentry';
+import {
+	COWORKING_SESSION_ID_ENV_VAR,
+	COWORKING_SOCKET_OVERRIDE_ENV_VAR,
+} from '../coworking/coworking-types';
+import { resolveOwningMaestroSessionId } from '../coworking/coworking-session-id';
+import { getBridgeSocketPath } from '../coworking/coworking-socket-path';
 import { killPty } from './utils/commandKill';
 
 /** Time (ms) to wait for a PTY process to exit after SIGTERM before sending SIGKILL. */
@@ -41,14 +52,31 @@ export class ProcessManager extends EventEmitter {
 	private bufferManager: DataBufferManager;
 	private ptySpawner: PtySpawner;
 	private childProcessSpawner: ChildProcessSpawner;
+	private opencodeServerSpawner: OpencodeServerSpawner;
 	private localCommandRunner: LocalCommandRunner;
 	private sshCommandRunner: SshCommandRunner;
 
-	constructor() {
+	constructor(
+		/**
+		 * Live read of the `encoreFeatures.opencodeServer` gate. Defaults to off so
+		 * tests and any caller that builds ProcessManager without the wiring never
+		 * route to the SDK-serve path. Read on every spawn so toggling the plugin
+		 * takes effect without an app restart.
+		 */
+		private readonly isOpencodeServerEnabled: () => boolean = () => false
+	) {
 		super();
 		this.bufferManager = new DataBufferManager(this.processes, this);
 		this.ptySpawner = new PtySpawner(this.processes, this, this.bufferManager);
 		this.childProcessSpawner = new ChildProcessSpawner(this.processes, this, this.bufferManager);
+		// The OpenCode SDK path falls back to the CLI spawner when the shared
+		// server can't start, so local OpenCode never regresses to "broken".
+		this.opencodeServerSpawner = new OpencodeServerSpawner(
+			this.processes,
+			this,
+			this.bufferManager,
+			(config) => this.childProcessSpawner.spawn(config)
+		);
 		this.localCommandRunner = new LocalCommandRunner(this);
 		this.sshCommandRunner = new SshCommandRunner(this);
 	}
@@ -56,8 +84,8 @@ export class ProcessManager extends EventEmitter {
 	/**
 	 * Spawn a new process for a session.
 	 *
-	 * If a process already exists for the given sessionId, it is killed first
-	 * to prevent orphaned PTY/child processes that are no longer tracked.
+	 * Live AI processes own their sessionId until they exit. Terminal processes
+	 * retain replacement semantics so shell restarts continue to work.
 	 */
 	spawn(config: ProcessConfig): SpawnResult {
 		// Expand a leading `~` in the working directory before spawning. node-pty
@@ -102,30 +130,175 @@ export class ProcessManager extends EventEmitter {
 			return { pid: -1, success: false };
 		}
 
-		// Kill any existing process for this sessionId to prevent orphans.
-		// This guards against double-spawn race conditions where a second spawn
-		// overwrites the map entry and the first process becomes untracked.
+		// Never replace an AI process while it still owns the session entry. Node's
+		// `exit` event can set exitCode before `close` drains stdout, so exitCode is
+		// not enough to prove that the final response has been reconciled. The exit
+		// handler removes the entry before emitting `exit`, which lets replay flows
+		// start the next process without racing the old process's trailing output.
+		// Terminals intentionally keep their existing restart behavior.
 		const existing = this.processes.get(config.sessionId);
 		if (existing) {
-			logger.warn('[ProcessManager] Killing existing process before re-spawn', 'ProcessManager', {
-				sessionId: config.sessionId,
-				existingPid: existing.pid,
-			});
-			this.kill(config.sessionId);
+			const childProcessRunning =
+				existing.childProcess !== undefined &&
+				existing.childProcess.exitCode === null &&
+				(existing.childProcess.signalCode === null ||
+					existing.childProcess.signalCode === undefined);
+			const existingProcessRunning =
+				childProcessRunning ||
+				existing.ptyProcess !== undefined ||
+				existing.sdkController !== undefined;
+
+			if (!existing.isTerminal) {
+				// An agent entry is only ever removed by the exit handler, so an entry
+				// that is still here while its OS process is gone means `close` never
+				// arrived and never will (reported after the machine idled for hours:
+				// the child died without us seeing the event). Left alone, that entry
+				// owns the session id forever and every later turn throws, with no way
+				// back short of restarting the app. See issue #1339.
+				//
+				// The reconciliation is deliberately narrow so it cannot reopen the
+				// lost-response race from #1249. There, node HAD seen the child exit
+				// (`exitCode` is set) while `close` was still draining trailing stdout
+				// microseconds later, so anything node knows has exited stays refused.
+				// We only reclaim the opposite state: node still believes the child is
+				// running, yet the OS says the PID is gone. The two are disjoint, so
+				// the drain window keeps its protection.
+				//
+				// SDK-backed turns have no OS child of their own, so a liveness probe
+				// would be meaningless (and could match an unrelated recycled PID);
+				// they keep the strict refusal.
+				const nodeObservedExit = existing.childProcess !== undefined && !childProcessRunning;
+				const isStaleEntry =
+					!nodeObservedExit && existing.sdkController === undefined && !isPidAlive(existing.pid);
+
+				if (!isStaleEntry) {
+					logger.warn(
+						'[ProcessManager] Refusing to replace owned agent process',
+						'ProcessManager',
+						{
+							sessionId: config.sessionId,
+							existingPid: existing.pid,
+							existingToolType: existing.toolType,
+							requestedToolType: config.toolType,
+						}
+					);
+					throw new Error(agentAlreadyRunningMessage(config.sessionId));
+				}
+
+				logger.warn(
+					'[ProcessManager] Reclaiming stale agent process entry (PID no longer exists)',
+					'ProcessManager',
+					{
+						sessionId: config.sessionId,
+						stalePid: existing.pid,
+						existingToolType: existing.toolType,
+						requestedToolType: config.toolType,
+					}
+				);
+				// Drop the dead entry and let the spawn below take the session id. No
+				// kill() here: there is no process left to signal, and kill() would
+				// emit a spurious exit for a turn that ended long ago.
+				this.processes.delete(config.sessionId);
+			} else if (existingProcessRunning) {
+				logger.warn('[ProcessManager] Restarting existing terminal process', 'ProcessManager', {
+					sessionId: config.sessionId,
+					existingPid: existing.pid,
+				});
+				this.kill(config.sessionId);
+			} else {
+				this.processes.delete(config.sessionId);
+			}
 		}
 
-		const usePty = this.shouldUsePty(config);
-
-		if (usePty) {
-			return this.ptySpawner.spawn(config);
-		} else {
-			return this.childProcessSpawner.spawn(config);
+		// Decide the OpenCode SDK-serve path on the RAW config, before any coworking
+		// env injection. The serve transport uses a single, process-wide `opencode
+		// serve` keyed by an env fingerprint (OpencodeServerManager.buildServerKey);
+		// injecting the per-session MAESTRO_COWORKING_SESSION_ID here would fingerprint
+		// into a distinct server per session, fragmenting the shared server. Coworking
+		// over the serve transport needs a per-request mechanism (tracked follow-up),
+		// so we skip injection on this path. The coworking bridge fails closed for the
+		// resulting env-less MCP subprocess (its parent is the shared serve PID, not a
+		// tracked agent CLI), so the tools are cleanly unavailable, never mis-scoped.
+		if (this.shouldUseOpencodeServer(config)) {
+			return this.opencodeServerSpawner.spawn(config);
 		}
+
+		// Inject the *owning Maestro session id* into the agent CLI's env so the
+		// coworking MCP subprocess (spawned by the agent's MCP client, inheriting
+		// parent env) can announce the correct caller key to the bridge. We must
+		// strip the `-ai-{tabId}[-fp-{ts}]` composite suffix that ProcessManager
+		// uses for AI-tab spawns, because the registry pushes terminal records
+		// keyed by the bare Session.id from the renderer. Without this, the
+		// bridge handshake binds to a session id that never has records in the
+		// registry → `list_terminals` returns [] for the caller's own session.
+		// Terminals don't run MCP clients, so we skip them. Spawn-callers can
+		// override by passing the var explicitly in customEnvVars.
+		//
+		// We ALSO inject the owning window's bridge socket path
+		// (MAESTRO_COWORKING_SOCKET_OVERRIDE). The socket baked into the shared
+		// user-level MCP config is a single global value (last install wins), so
+		// with multiple windows open an agent could dial the wrong window's bridge.
+		// This override is recomputed per spawn from THIS window's userData and the
+		// MCP server script prefers it, so env-propagating CLIs (Claude Code,
+		// OpenCode) bind to the window that spawned them and self-heal when the
+		// config socket is stale. Codex does not propagate env and falls back to the
+		// config socket (single-window).
+		const configWithCoworkingSession =
+			config.toolType === 'terminal'
+				? config
+				: {
+						...config,
+						customEnvVars: {
+							[COWORKING_SESSION_ID_ENV_VAR]: resolveOwningMaestroSessionId(config.sessionId),
+							[COWORKING_SOCKET_OVERRIDE_ENV_VAR]: getBridgeSocketPath(),
+							...(config.customEnvVars ?? {}),
+						},
+					};
+
+		const usePty = this.shouldUsePty(configWithCoworkingSession);
+		const result = usePty
+			? this.ptySpawner.spawn(configWithCoworkingSession)
+			: this.childProcessSpawner.spawn(configWithCoworkingSession);
+
+		// Emit a spawn event AFTER the spawner returns so the agent-run capture
+		// service only records a running run for a process that actually started
+		// (symmetric with the 'exit' seam; no orphan on spawn failure). Guarded:
+		// a capture listener throwing must never break spawning.
+		try {
+			this.emit('spawn', config);
+		} catch {
+			// Capture is best-effort; never let it break process spawning.
+		}
+
+		return result;
 	}
 
 	private shouldUsePty(config: ProcessConfig): boolean {
 		const { toolType, requiresPty, prompt } = config;
 		return (toolType === 'terminal' || requiresPty === true) && !prompt;
+	}
+
+	/**
+	 * Route local, interactive OpenCode prompt turns through the SDK server path,
+	 * gated behind the default-off `encoreFeatures.opencodeServer` plugin.
+	 *
+	 * Excluded (stay on the CLI path):
+	 * - SSH-remote sessions (the SDK server spawn is local-only; deferred).
+	 * - Image prompts (handled by the CLI's file-based `-f` args; the SDK path is
+	 *   text-only for now and falls back anyway).
+	 * - Non-prompt spawns (the SDK path is prompt-driven).
+	 */
+	private shouldUseOpencodeServer(config: ProcessConfig): boolean {
+		return (
+			// Default-off plugin gate (encoreFeatures.opencodeServer). While it is
+			// off, OpenCode stays on the CLI path - which keeps the Coworking MCP
+			// working, since the serve transport can't inject per-session env.
+			this.isOpencodeServerEnabled() &&
+			config.toolType === 'opencode' &&
+			!!config.prompt &&
+			!config.sshRemoteId &&
+			!(config.images && config.images.length > 0)
+		);
 	}
 
 	/**
@@ -196,8 +369,19 @@ export class ProcessManager extends EventEmitter {
 		const process = this.processes.get(sessionId);
 		if (!process) return false;
 
+		// Mark the turn as user-interrupted BEFORE signalling. `interrupt()` (unlike
+		// `kill()`) leaves the process in the map, so its `close` still reaches
+		// ExitHandler - which coerces the null signal code to 0. Without this flag,
+		// an instant stop (no output yet) would look identical to a clean silent
+		// crash and trip the "exited without producing a response" guard.
+		process.interrupted = true;
+
 		try {
-			if (process.isTerminal && process.ptyProcess) {
+			if (process.sdkController) {
+				// Server-backed (OpenCode SDK) process: abort the in-flight turn.
+				process.sdkController.interrupt();
+				return true;
+			} else if (process.isTerminal && process.ptyProcess) {
 				process.ptyProcess.write('\x03');
 				return true;
 			} else if (process.childProcess) {
@@ -288,7 +472,12 @@ export class ProcessManager extends EventEmitter {
 			}
 			this.bufferManager.flushDataBuffer(sessionId);
 
-			if (proc.isTerminal && proc.ptyProcess) {
+			if (proc.sdkController) {
+				// Server-backed (OpenCode SDK) process: no OS child to signal. Abort
+				// the turn and tear down the SSE subscription; the stream ending emits
+				// the exit event. Fall through to the map deletion below.
+				proc.sdkController.kill();
+			} else if (proc.isTerminal && proc.ptyProcess) {
 				if (isWindows() && proc.pid) {
 					// On Windows, node-pty's kill() only terminates the direct ConPTY
 					// child (the shell), not grandchild processes it spawned (e.g., dev
@@ -411,6 +600,8 @@ export class ProcessManager extends EventEmitter {
 			// on POSIX this has no effect (SIGTERM is already non-blocking).
 			this.kill(sessionId, { sync: true, shutdown });
 		}
+		// Tear down the shared OpenCode server(s) that back the SDK path.
+		opencodeServerManager.shutdown();
 	}
 
 	/**
@@ -425,6 +616,40 @@ export class ProcessManager extends EventEmitter {
 	 */
 	get(sessionId: string): ManagedProcess | undefined {
 		return this.processes.get(sessionId);
+	}
+
+	/**
+	 * Re-emit a corrected `usage` event for a local omp process whose model
+	 * context window could not be resolved when its first usage arrived, because
+	 * the catalog prime was still running. Called by the spawn handler when a
+	 * prime that exceeded the spawn cap finally lands.
+	 *
+	 * @returns true when a corrected event was emitted.
+	 */
+	pushResolvedOmpContextWindow(sessionId: string, catalogKey: string): boolean {
+		return pushResolvedOmpContextWindow(this.processes, this, sessionId, catalogKey);
+	}
+
+	/**
+	 * Look up the *owning Maestro session id* for a given OS PID, or null if
+	 * the PID does not match any tracked agent-CLI process. Used by the
+	 * coworking bridge to bind a connection when an agent CLI (e.g. Codex)
+	 * does not propagate `MAESTRO_COWORKING_SESSION_ID` into the MCP
+	 * subprocess it spawned - the subprocess instead sends `process.ppid`
+	 * during handshake and we walk the parent chain to find the owning agent.
+	 *
+	 * Terminals are excluded: they don't spawn MCP clients, and skipping them
+	 * preserves the property that only AI-tab processes can ever satisfy a
+	 * coworking handshake.
+	 */
+	getSessionIdByPid(pid: number): string | null {
+		if (!Number.isInteger(pid) || pid <= 0) return null;
+		for (const proc of this.processes.values()) {
+			if (proc.pid === pid && proc.toolType !== 'terminal') {
+				return resolveOwningMaestroSessionId(proc.sessionId);
+			}
+		}
+		return null;
 	}
 
 	/**

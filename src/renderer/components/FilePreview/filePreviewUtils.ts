@@ -1,5 +1,3 @@
-import GithubSlugger from 'github-slugger';
-import type { TocEntry } from './types';
 import { formatSize } from '../../../shared/formatters';
 import { isImageFile } from '../../../shared/gitUtils';
 import { isParquetPreviewMarker } from '../../../shared/parquet/preview';
@@ -93,12 +91,25 @@ export type PreviewTier = 'rich' | 'fast' | 'giant';
  *     GIANT_TIER_LINES - used for markdown, text, and code alike.
  *   - Long-line escalation: lines above LINE_LENGTH_GIANT_THRESHOLD jump to
  *     Giant regardless of byte / line count to avoid wide-layer freeze.
+ *
+ * `isMarkdown` opts out of the long-line escalation: that jump exists to spare
+ * CodeMirror's syntax highlighter and Fast tier's pre-rendered DOM from a
+ * pathologically wide layer, but markdown renders to wrapping HTML (Rich/Fast)
+ * which has no wide layer to freeze. A long prose line (e.g. a pasted
+ * transcript) would otherwise demote a perfectly renderable note to Giant's
+ * raw-source view, so markdown keeps the byte/line thresholds but ignores
+ * maxLineLength.
  */
-export function pickPreviewTier(bytes: number, lines: number, maxLineLength = 0): PreviewTier {
+export function pickPreviewTier(
+	bytes: number,
+	lines: number,
+	maxLineLength = 0,
+	isMarkdown = false
+): PreviewTier {
 	if (
 		bytes > GIANT_TIER_BYTES ||
 		lines > GIANT_TIER_LINES ||
-		maxLineLength > LINE_LENGTH_GIANT_THRESHOLD
+		(!isMarkdown && maxLineLength > LINE_LENGTH_GIANT_THRESHOLD)
 	) {
 		return 'giant';
 	}
@@ -417,31 +428,20 @@ export const countMarkdownTasks = (content: string): { open: number; closed: num
 	return { open, closed };
 };
 
-/** Extract headings from markdown content for table of contents */
-export const extractHeadings = (content: string): TocEntry[] => {
-	const headings: TocEntry[] = [];
-	const lines = content.split('\n');
-	let inCodeFence = false;
-	const slugger = new GithubSlugger();
+/**
+ * Re-exported from the shared TOC library, which owns heading extraction now
+ * that Director's Notes builds a jump list too. Kept here so existing File
+ * Preview imports keep resolving.
+ */
+export { extractHeadings } from '../Toc';
 
-	for (const line of lines) {
-		if (/^ {0,3}(`{3,}|~{3,})/.test(line)) {
-			inCodeFence = !inCodeFence;
-			continue;
-		}
-		if (inCodeFence) continue;
-
-		const match = line.match(/^(#{1,6})\s+(.+)$/);
-		if (match) {
-			const level = match[1].length;
-			const text = match[2].trim();
-			const slug = slugger.slug(text);
-			headings.push({ level, text, slug });
-		}
-	}
-
-	return headings;
-};
+/**
+ * Re-exported from the shared markdown-task helper, which main extracted so the
+ * chat renderer's clickable checkboxes and the File Preview toggle share one
+ * implementation. Kept here so existing File Preview imports keep resolving.
+ */
+export { toggleTaskCheckboxAtLine } from '../../utils/markdownTasks';
+export type { TaskToggleResult } from '../../utils/markdownTasks';
 
 /**
  * Normalize a POSIX-style path by resolving `.` and `..` segments.

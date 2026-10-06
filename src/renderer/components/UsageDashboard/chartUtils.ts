@@ -14,6 +14,12 @@ import type { Session } from '../../types';
 import { AGENT_DISPLAY_NAMES } from '../../../shared/agentMetadata';
 import { widestLabelWidth } from '../../utils/labelWidth';
 
+// `clampTooltipToViewport` was relocated into the shared widget library (so the
+// library's ChartTooltip primitive owns its geometry without depending back on
+// UsageDashboard). Re-export it here to keep the historical chartUtils API
+// stable for any existing importer.
+export { clampTooltipToViewport } from '../widgets/output/tooltipGeometry';
+
 /**
  * Returns true if the session is a worktree child (was spawned from a parent agent).
  */
@@ -137,62 +143,6 @@ export function resolveAgentDisplayName(
 }
 
 /**
- * Clamp an absolute tooltip position so its bounding rect stays inside the
- * viewport. Pass `transform` to describe which corner of the tooltip the
- * anchor point represents - the function returns top-left coordinates the
- * caller can drop directly into `style.left` / `style.top` (and stop using
- * a CSS transform).
- *
- * **Why:** anchoring a tooltip at the right edge of a chart with
- * `transform: translate(-50%, -100%)` lets the tooltip extend off-screen.
- * `clampTooltipToViewport` keeps the rect inside the viewport.
- */
-export function clampTooltipToViewport(args: {
-	anchorX: number;
-	anchorY: number;
-	width: number;
-	height: number;
-	transform?: 'top-center' | 'bottom-center' | 'top-left' | 'left-center';
-	margin?: number;
-}): { left: number; top: number } {
-	const { anchorX, anchorY, width, height, transform = 'top-left', margin = 8 } = args;
-
-	let left: number;
-	let top: number;
-	switch (transform) {
-		case 'top-center':
-			left = anchorX - width / 2;
-			top = anchorY - height;
-			break;
-		case 'bottom-center':
-			left = anchorX - width / 2;
-			top = anchorY;
-			break;
-		case 'left-center':
-			left = anchorX;
-			top = anchorY - height / 2;
-			break;
-		case 'top-left':
-		default:
-			left = anchorX;
-			top = anchorY;
-			break;
-	}
-
-	const viewportWidth = typeof window !== 'undefined' ? window.innerWidth : 0;
-	const viewportHeight = typeof window !== 'undefined' ? window.innerHeight : 0;
-
-	if (viewportWidth > 0) {
-		left = Math.max(margin, Math.min(left, viewportWidth - width - margin));
-	}
-	if (viewportHeight > 0) {
-		top = Math.max(margin, Math.min(top, viewportHeight - height - margin));
-	}
-
-	return { left, top };
-}
-
-/**
  * Batch-resolve multiple chart keys to display names, disambiguating any
  * duplicate names by appending ` (2)`, ` (3)`, etc. in input order.
  *
@@ -216,6 +166,55 @@ export function buildNameMap(
 	}
 
 	return result;
+}
+
+/**
+ * Axis-label budget for a phone-width chart.
+ *
+ * The default seven labels assume a desktop axis: seven `Aug 20`-sized dates
+ * need roughly 300px, and a phone gives a chart about 340px total, so they
+ * printed on top of each other and every date read as a smear. Four fit.
+ */
+export const PHONE_AXIS_LABELS = 4;
+
+/**
+ * Pick which x-axis tick indices should carry a label.
+ *
+ * Every time-series chart on the dashboard wants roughly seven labels and always
+ * wants the final one, so the axis ends on the real end date. Naively forcing
+ * that last label is what caused overlapping text at the right edge: when the
+ * series length isn't a multiple of the interval, the forced label lands one or
+ * two slots after the previous one and the two strings collide (e.g. "Jul 25"
+ * printed on top of "Jul 26").
+ *
+ * Here the last label still always wins, but the preceding label is dropped when
+ * it would sit closer than a full interval - so labels are never spaced tighter
+ * than the interval the chart already deemed readable.
+ *
+ * @param count - number of ticks on the axis
+ * @returns the set of indices to label
+ */
+export function computeAxisLabelIndices(count: number, maxLabels = 7): Set<number> {
+	if (count <= 0) return new Set();
+
+	// Same density heuristic the charts used individually: ~7 labels max.
+	// `maxLabels` is how a caller says its axis is narrower than that assumes -
+	// seven "Aug 20"-sized labels need about 300px, so on a phone they printed
+	// on top of each other and every date read as a four-digit smear.
+	const budget = Math.max(2, maxLabels);
+	const interval = count > 2 * budget ? Math.ceil(count / budget) : count > budget ? 2 : 1;
+
+	const indices: number[] = [];
+	for (let i = 0; i < count; i += interval) indices.push(i);
+
+	const last = count - 1;
+	const previous = indices[indices.length - 1];
+	if (previous !== last) {
+		if (last - previous < interval) indices.pop();
+		indices.push(last);
+	}
+
+	return new Set(indices);
 }
 
 /**

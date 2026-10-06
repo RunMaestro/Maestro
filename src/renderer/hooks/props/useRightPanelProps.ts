@@ -160,11 +160,16 @@ export function useRightPanelProps(deps: UseRightPanelPropsDeps) {
 			onResumeAfterError: deps.handleResumeAfterError,
 			onJumpToAgentSession: deps.handleJumpToAgentSession,
 			onResumeSession: deps.handleResumeSession,
-			onOpenSessionAsTab: (agentSessionId: string, projectPath?: string) =>
+			// `sessionName` is the name the history entry already shows on its pill.
+			// It has to travel: the resume fallback reads the session-origins store,
+			// which is Claude-only and only ever written by a synopsis, so for every
+			// other provider (and for any session that never produced one) the history
+			// record is the ONLY surviving copy of that name.
+			onOpenSessionAsTab: (agentSessionId: string, projectPath?: string, sessionName?: string) =>
 				deps.handleResumeSession(
 					agentSessionId,
 					undefined,
-					undefined,
+					sessionName,
 					undefined,
 					undefined,
 					projectPath

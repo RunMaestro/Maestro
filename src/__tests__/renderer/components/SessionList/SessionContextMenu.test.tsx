@@ -368,4 +368,79 @@ describe('SessionContextMenu', () => {
 			'Zebra',
 		]);
 	});
+
+	// The menu itself is `overflow-y: auto` so a long one can scroll, and CSS
+	// computes the other axis to `auto` the moment one axis is not `visible`. A
+	// flyout rendered INSIDE it is therefore clipped away entirely, which is what
+	// made hovering these rows look like nothing happened at all.
+	describe('submenu flyouts escape the scrollable menu', () => {
+		const GROUPS = [{ id: 'g1', name: 'Alpha', emoji: '🅰️', collapsed: false }];
+
+		function openFlyout(label: string) {
+			fireEvent.mouseEnter(screen.getByText(label).closest('div') as HTMLElement);
+			return screen.getByTestId('session-context-flyout');
+		}
+
+		it('renders the Move to Group flyout outside the menu container', () => {
+			renderMenu({ groups: GROUPS, session: makeSession({ groupId: 'g1' }) });
+
+			const flyout = openFlyout('Move to Group');
+
+			expect(screen.getByTestId('session-context-menu')).not.toContainElement(flyout);
+			expect(flyout).toContainElement(screen.getByText('Ungrouped'));
+		});
+
+		it('renders the Move to Window flyout outside the menu container', () => {
+			renderMenu({
+				onMoveToNewWindow: vi.fn(),
+				onMoveToWindow: vi.fn(),
+				windowTargets: [
+					{
+						windowId: 'w1',
+						windowNumber: 1,
+						label: 'Main Window',
+						isMain: true,
+						isCurrentOwner: true,
+					},
+					{
+						windowId: 'w2',
+						windowNumber: 2,
+						label: 'Window 2',
+						isMain: false,
+						isCurrentOwner: false,
+					},
+				],
+			});
+
+			const flyout = openFlyout('Move to Window');
+
+			expect(screen.getByTestId('session-context-menu')).not.toContainElement(flyout);
+			expect(flyout).toContainElement(screen.getByText('Window 2'));
+		});
+
+		// Portaling puts the flyout outside `menuRef`, so the menu's click-outside
+		// watcher has to know about it: otherwise mousedown on a submenu item
+		// dismisses the menu and the click never reaches the item.
+		it('does not dismiss the menu when a flyout item is pressed', () => {
+			const props = renderMenu({ groups: GROUPS, session: makeSession({ groupId: 'g1' }) });
+
+			openFlyout('Move to Group');
+			const ungrouped = screen.getByText('Ungrouped').closest('button') as HTMLElement;
+
+			fireEvent.mouseDown(ungrouped);
+			expect(props.onDismiss).not.toHaveBeenCalled();
+
+			fireEvent.click(ungrouped);
+			expect(props.onMoveToGroup).toHaveBeenCalledWith('');
+		});
+
+		it('still closes the menu on a mousedown outside both the menu and its flyout', () => {
+			const props = renderMenu({ groups: GROUPS, session: makeSession({ groupId: 'g1' }) });
+
+			openFlyout('Move to Group');
+			fireEvent.mouseDown(document.body);
+
+			expect(props.onDismiss).toHaveBeenCalled();
+		});
+	});
 });

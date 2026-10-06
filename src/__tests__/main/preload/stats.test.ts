@@ -204,14 +204,25 @@ describe('Stats Preload API', () => {
 		});
 	});
 
-	describe('exportCsv', () => {
-		it('should invoke stats:export-csv', async () => {
-			mockInvoke.mockResolvedValue('/path/to/export.csv');
+	describe('exportUsage', () => {
+		it('should invoke stats:export with the range, format, and path', async () => {
+			const exportResult = {
+				path: '/path/to/export.json',
+				format: 'json',
+				rowCounts: { 'query-events': 2 },
+				notes: [],
+			};
+			mockInvoke.mockResolvedValue(exportResult);
 
-			const result = await api.exportCsv('month');
+			const result = await api.exportUsage('month', 'json', '/path/to/export.json');
 
-			expect(mockInvoke).toHaveBeenCalledWith('stats:export-csv', 'month');
-			expect(result).toBe('/path/to/export.csv');
+			expect(mockInvoke).toHaveBeenCalledWith(
+				'stats:export',
+				'month',
+				'json',
+				'/path/to/export.json'
+			);
+			expect(result).toEqual(exportResult);
 		});
 	});
 

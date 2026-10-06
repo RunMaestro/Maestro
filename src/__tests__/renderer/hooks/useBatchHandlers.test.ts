@@ -74,6 +74,7 @@ import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { useBatchStore } from '../../../renderer/stores/batchStore';
 import { useModalStore } from '../../../renderer/stores/modalStore';
+import { useFeedbackDraftStore } from '../../../renderer/stores/feedbackDraftStore';
 
 // ============================================================================
 // Helpers
@@ -234,7 +235,7 @@ describe('useBatchHandlers', () => {
 			expect(result.current).toHaveProperty('handleSyncAutoRunStats');
 		});
 
-		it('calls useBatchProcessor with sessions and groups from stores', () => {
+		it('calls useBatchProcessor with groups from the store (sessions via getState)', () => {
 			const session = createMockSession();
 			useSessionStore.setState({
 				sessions: [session],
@@ -246,7 +247,7 @@ describe('useBatchHandlers', () => {
 
 			expect(useBatchProcessor).toHaveBeenCalled();
 			const callArgs = vi.mocked(useBatchProcessor).mock.calls[0][0];
-			expect(callArgs.sessions).toEqual([session]);
+			expect(callArgs.sessions).toBeUndefined();
 			expect(callArgs.groups).toEqual([{ id: 'g1', name: 'Group 1' }]);
 		});
 
@@ -1417,7 +1418,7 @@ describe('useBatchHandlers', () => {
 			expect(stats.currentBadgeLevel).toBe(5);
 		});
 
-		it('does not preserve existing higher badge level — synced value overwrites', () => {
+		it('does not preserve existing higher badge level - synced value overwrites', () => {
 			// The sync function unconditionally sets badge tracking to the synced level.
 			// This tests that existing higher values are overwritten (server is source of truth).
 			useSettingsStore.setState({
@@ -1532,6 +1533,33 @@ describe('useBatchHandlers', () => {
 			// busySource is 'terminal' not 'ai', so agent is NOT in busyAgents filter
 			// No active auto-runs either, so quit should be confirmed
 			expect(window.maestro.app.confirmQuit).toHaveBeenCalled();
+		});
+
+		it('writes the open feedback draft out before deciding, then quits', async () => {
+			// A draft is no longer a reason to stop the user: the editor's live
+			// snapshot is persisted on the way out, so quitting cannot lose it and
+			// the confirmation modal never mentions it.
+			useSessionStore.setState({ sessions: [], activeSessionId: '' });
+			const saveActiveDraft = vi.fn().mockResolvedValue('draft-1');
+			useFeedbackDraftStore.setState({ hasDraft: true, saveActiveDraft } as never);
+
+			let quitCallback: () => Promise<void> = async () => {};
+			(window.maestro.app.onQuitConfirmationRequest as any).mockImplementation(
+				(cb: () => Promise<void>) => {
+					quitCallback = cb;
+					return vi.fn();
+				}
+			);
+
+			renderHook(() => useBatchHandlers(createDeps()));
+
+			await act(async () => {
+				await quitCallback();
+			});
+
+			expect(saveActiveDraft).toHaveBeenCalled();
+			expect(window.maestro.app.confirmQuit).toHaveBeenCalled();
+			expect(useModalStore.getState().modals.get('quitConfirm')?.open).not.toBe(true);
 		});
 
 		it('confirms quit immediately when there are no sessions at all', async () => {

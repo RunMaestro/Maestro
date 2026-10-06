@@ -9,6 +9,7 @@ import {
 } from '../../shared/typographyPresets';
 import { SANS_FALLBACK_STACK } from '../../shared/fontStack';
 import { isBundledFont } from '../../shared/bundledFonts';
+import { SETTINGS_DEFAULTS } from '../../main/stores/defaults';
 
 const FONT_KEYS: Array<keyof TypographyPresetFonts> = [
 	'fontFamily',
@@ -122,6 +123,21 @@ describe('typography presets', () => {
 			'File editor': 'mono',
 		});
 		expect(TYPOGRAPHY_PRESETS.hacker.surfaces.every((s) => s.kind === 'mono')).toBe(true);
+	});
+
+	it('names only real settings keys, so a preset can be written straight onto a settings file', () => {
+		// The showcase seed (`scripts/showcase/setup.js`) applies a preset by
+		// spreading `fonts` and `sizes` onto `maestro-settings.json`, rather than
+		// carrying a hand-copied duplicate of twelve values that would drift one
+		// field at a time. A key here that is NOT a settings key is written,
+		// ignored by the app, and every published screenshot then comes out in
+		// the previous font while the capture run reports success.
+		for (const id of TYPOGRAPHY_PRESET_IDS) {
+			const preset = TYPOGRAPHY_PRESETS[id];
+			for (const key of [...Object.keys(preset.fonts), ...Object.keys(preset.sizes)]) {
+				expect(SETTINGS_DEFAULTS).toHaveProperty(key);
+			}
+		}
 	});
 });
 

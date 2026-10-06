@@ -13,11 +13,12 @@
 import { ipcMain, Notification, BrowserWindow } from 'electron';
 import { spawn, type ChildProcess } from 'child_process';
 import { logger } from '../../utils/logger';
-import { isWebContentsAvailable } from '../../utils/safe-send';
+import { createSafeSend, type SafeSendFn } from '../../utils/safe-send';
 import { parseDeepLink, dispatchDeepLink } from '../../deep-links';
 import { buildSessionDeepLink } from '../../../shared/deep-link-urls';
 import { captureException } from '../../utils/sentry';
 import { parseToastClickAction, type ToastClickAction } from '../../../shared/toastClickAction';
+import type { WindowRegistry } from '../../window-registry';
 
 // ==========================================================================
 // Constants
@@ -128,6 +129,18 @@ const notificationQueue: NotificationQueueItem[] = [];
 
 /** Flag indicating if notification command is currently being processed */
 let isNotificationProcessing = false;
+
+/**
+ * safeSend used to push `notification:commandCompleted` to the renderer.
+ *
+ * The command-completion sends fire from the module-level queue helpers, which
+ * run outside `registerNotificationsHandlers`' closure, so the window getter is
+ * captured here and reassigned during registration. safeSend always fans out to
+ * web-desktop bridge clients (and to the desktop renderer when it is alive), so
+ * web/mobile users see the Stop button clear even with no desktop window. The
+ * default is a bridge-only sender for the pre-registration window.
+ */
+let commandCompletedSafeSend: SafeSendFn = createSafeSend(() => null);
 
 // ==========================================================================
 // Helper Functions
@@ -275,11 +288,7 @@ function executeNotificationCommand(
 				});
 				activeNotificationProcesses.delete(notificationId);
 				// Notify renderer of completion even on error
-				BrowserWindow.getAllWindows().forEach((win) => {
-					if (isWebContentsAvailable(win)) {
-						win.webContents.send('notification:commandCompleted', notificationId);
-					}
-				});
+				commandCompletedSafeSend('notification:commandCompleted', notificationId);
 				resolveCompleted();
 			});
 
@@ -311,11 +320,7 @@ function executeNotificationCommand(
 				activeNotificationProcesses.delete(notificationId);
 
 				// Notify renderer that notification command has completed
-				BrowserWindow.getAllWindows().forEach((win) => {
-					if (isWebContentsAvailable(win)) {
-						win.webContents.send('notification:commandCompleted', notificationId);
-					}
-				});
+				commandCompletedSafeSend('notification:commandCompleted', notificationId);
 
 				resolveCompleted();
 			});
@@ -405,6 +410,45 @@ async function processNextNotification(): Promise<void> {
 export interface NotificationsHandlerDependencies {
 	getMainWindow: () => BrowserWindow | null;
 	ensureMainWindow?: () => void;
+	/**
+	 * Multi-window registry getter. When wired, a notification's click handler
+	 * resolves the window that currently owns the agent (via
+	 * {@link WindowRegistry.getWindowForSession}) and focuses THAT window instead
+	 * of always the primary. Optional: single-window builds, the web interface,
+	 * and tests omit it and fall back to {@link getMainWindow}.
+	 */
+	getWindowRegistry?: () => WindowRegistry | null;
+}
+
+/**
+ * Resolve the window a notification click should focus.
+ *
+ * When a session (agent) id is present and the multi-window registry is wired,
+ * look up the window that currently owns that agent and return its
+ * `BrowserWindow`, so clicking the notification focuses the right window in a
+ * multi-window layout instead of always the primary. Resolution happens at
+ * click-time (not when the notification is shown) so an agent that was moved to
+ * another window after the notification fired still lands in the correct place.
+ *
+ * Falls back to the primary/main window when there is no session context, the
+ * registry is not wired (single-window build, web), the agent is untracked, or
+ * the owning window was destroyed.
+ */
+export function resolveNotificationClickWindow(
+	sessionId: string | undefined,
+	deps?: NotificationsHandlerDependencies
+): BrowserWindow | null {
+	const registry = deps?.getWindowRegistry?.();
+	if (sessionId && registry) {
+		const windowId = registry.getWindowForSession(sessionId);
+		if (windowId) {
+			const entry = registry.get(windowId);
+			if (entry && !entry.browserWindow.isDestroyed()) {
+				return entry.browserWindow;
+			}
+		}
+	}
+	return deps?.getMainWindow?.() ?? null;
 }
 
 /**
@@ -436,6 +480,9 @@ export function registerNotificationsHandlers(deps?: NotificationsHandlerDepende
 		}
 		flushActions();
 	});
+	// Capture the window getter for the module-level queue helpers so completion
+	// events reach both the desktop renderer and web-desktop bridge clients.
+	commandCompletedSafeSend = createSafeSend(deps?.getMainWindow ?? (() => null));
 
 	// Show OS notification (with optional click-to-navigate support)
 	ipcMain.handle(
@@ -482,7 +529,7 @@ export function registerNotificationsHandlers(deps?: NotificationsHandlerDepende
 						notification.on('click', () => {
 							const parsed = parseDeepLink(deepLinkUrl);
 							if (parsed) {
-								dispatchDeepLink(parsed, deps.getMainWindow);
+								dispatchDeepLink(parsed, () => resolveNotificationClickWindow(sessionId, deps));
 							}
 							releaseNotification();
 						});

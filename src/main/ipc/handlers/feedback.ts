@@ -15,7 +15,13 @@ import {
 	buildFeedbackConversationPrompt,
 	checkFeedbackGhAuth,
 	composeFeedbackPromptFromText,
+	deleteFeedbackDraft,
+	deleteSubmittedIssue,
 	getFeedbackGhLoginCommand,
+	listFeedbackDrafts,
+	listSubmittedIssues,
+	refreshSubmittedIssueStates,
+	saveFeedbackDraft,
 	searchFeedbackIssues,
 	submitFeedback,
 	submitFeedbackConversation,
@@ -120,5 +126,51 @@ export function registerFeedbackHandlers(deps: FeedbackHandlerDependencies): voi
 	ipcMain.handle(
 		'feedback:compose-prompt',
 		withIpcErrorLogging(handlerOpts('compose-prompt'), composeFeedbackPromptFromText)
+	);
+
+	// Persisted, resumable feedback drafts. Listed most-recently-updated first
+	// so the renderer can treat drafts[0] as the "most recent" draft.
+	ipcMain.handle(
+		'feedback:drafts:list',
+		withIpcErrorLogging(handlerOpts('drafts-list'), () => listFeedbackDrafts())
+	);
+
+	ipcMain.handle(
+		'feedback:drafts:save',
+		withIpcErrorLogging(handlerOpts('drafts-save'), (draft: unknown) => saveFeedbackDraft(draft))
+	);
+
+	ipcMain.handle(
+		'feedback:drafts:delete',
+		withIpcErrorLogging(
+			handlerOpts('drafts-delete'),
+			async (payload: { id?: string }): Promise<Record<string, never>> => {
+				await deleteFeedbackDraft(typeof payload?.id === 'string' ? payload.id : '');
+				return {};
+			}
+		)
+	);
+
+	// Submitted-issue history, most-recent-first.
+	ipcMain.handle(
+		'feedback:issues:list',
+		withIpcErrorLogging(handlerOpts('issues-list'), () => listSubmittedIssues())
+	);
+
+	// Delete one history record locally (does not touch GitHub).
+	ipcMain.handle(
+		'feedback:issues:delete',
+		withIpcErrorLogging(
+			handlerOpts('issues-delete'),
+			async (payload: { number?: number }): Promise<Record<string, never>> => {
+				await deleteSubmittedIssue(typeof payload?.number === 'number' ? payload.number : NaN);
+				return {};
+			}
+		)
+	);
+
+	ipcMain.handle(
+		'feedback:issues:refresh-states',
+		withIpcErrorLogging(handlerOpts('issues-refresh-states'), () => refreshSubmittedIssueStates())
 	);
 }

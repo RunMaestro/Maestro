@@ -8,6 +8,7 @@ import { useImageAnnotatorStore } from './ImageAnnotator/imageAnnotatorStore';
 import { addStagedImageIfUnique } from './InputArea/utils/stagedImages';
 import { notifyCenterFlash } from '../stores/centerFlashStore';
 import { captureException } from '../utils/sentry';
+import { displayImageSrc } from '../utils/sessionImageSrc';
 import { useSettingsStore } from '../stores/settingsStore';
 import { selectActiveSession, selectSessionById, useSessionStore } from '../stores/sessionStore';
 import { useKeyboardShortcutHelpers } from '../hooks/keyboard';
@@ -15,7 +16,7 @@ import { useResizableTextarea } from '../hooks/ui/useResizableTextarea';
 import { LightboxModal } from './LightboxModal';
 import { ModelEffortPills } from './InputArea/components/ModelEffortPills';
 import { useModelEffortMenus } from './InputArea/hooks/useModelEffortMenus';
-import { useProviderTurnOptions } from '../hooks/agent/useProviderTurnOptions';
+import { useAgentModelEffortOptions } from '../hooks/agent/useAgentModelEffortOptions';
 import { codifyTurnSettings } from '../utils/providerTabSessions';
 
 interface QueuedItemEditModalProps {
@@ -67,7 +68,7 @@ export function QueuedItemEditModal({
 
 	// Options come from the agent's own provider, never a hardcoded list: Claude
 	// Code's thinking levels and Codex's reasoning efforts are different sets.
-	const providerOptions = useProviderTurnOptions(session?.toolType);
+	const providerOptions = useAgentModelEffortOptions(session?.toolType);
 	const menus = useModelEffortMenus();
 	// Currently-viewed image in the local carousel; null when the carousel is closed.
 	const [lightboxImage, setLightboxImage] = useState<string | null>(null);
@@ -237,7 +238,7 @@ export function QueuedItemEditModal({
 										title="Click to view full size"
 									>
 										<img
-											src={img}
+											src={displayImageSrc(img)}
 											alt={`Attachment ${idx + 1}`}
 											className="h-16 rounded border cursor-pointer hover:opacity-80 transition-opacity block"
 											style={{

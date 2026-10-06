@@ -11,7 +11,7 @@
  * - Applies theme colors correctly
  */
 
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent, within } from '@testing-library/react';
 import React from 'react';
 import { ActivityHeatmap } from '../../../../renderer/components/UsageDashboard/ActivityHeatmap';
@@ -280,5 +280,62 @@ describe('ActivityHeatmap', () => {
 			const firstCell = cells[0] as HTMLElement;
 			expect(firstCell.style.transition).toContain('outline');
 		});
+	});
+});
+
+// The 4-hour-block month grid prints a day number per column. On a phone that
+// grid is ~270px wide across ~30 columns, so each column is about 6px where a
+// two-digit label needs 16 - every column printed one anyway and the row
+// rendered as a solid line of overlapping digits.
+vi.mock('../../../../renderer/hooks/ui/useElementWidth', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../../renderer/hooks/ui/useElementWidth')>()),
+	useElementWidth: vi.fn(() => 0),
+}));
+import { useElementWidth } from '../../../../renderer/hooks/ui/useElementWidth';
+
+function monthData(): StatsAggregation {
+	const byDay = Array.from({ length: 30 }, (_, i) => ({
+		date: `2024-12-${String(i + 1).padStart(2, '0')}`,
+		count: i,
+		duration: i * 1000,
+	}));
+	return { ...mockData, byDay };
+}
+
+/** Day numbers actually printed above the 4-hour-block grid. */
+function printedDayLabels(container: HTMLElement): string[] {
+	return Array.from(container.querySelectorAll('div[title]'))
+		.filter((el) => /^[A-Z][a-z]+day, /.test(el.getAttribute('title') ?? ''))
+		.map((el) => el.textContent ?? '')
+		.filter((text) => text.length > 0);
+}
+
+describe('ActivityHeatmap day labels', () => {
+	afterEach(() => {
+		vi.mocked(useElementWidth).mockReturnValue(0);
+	});
+
+	it('labels every column when each one has room', () => {
+		vi.mocked(useElementWidth).mockReturnValue(900);
+		const { container } = render(
+			<ActivityHeatmap data={monthData()} timeRange="month" theme={theme} />
+		);
+
+		expect(printedDayLabels(container).length).toBe(30);
+	});
+
+	it('thins the labels when the columns are too narrow to print into', () => {
+		vi.mocked(useElementWidth).mockReturnValue(270);
+		const { container } = render(
+			<ActivityHeatmap data={monthData()} timeRange="month" theme={theme} />
+		);
+
+		const labels = printedDayLabels(container);
+		expect(labels.length).toBeGreaterThan(1);
+		expect(labels.length).toBeLessThan(30);
+		// The month boundary is the one label kept off-stride. The grid is built
+		// from today rather than from the data, so assert on its SHAPE (a month
+		// abbreviation among day numbers) instead of naming a month.
+		expect(labels.filter((text) => !/^\d+$/.test(text)).length).toBeGreaterThanOrEqual(1);
 	});
 });

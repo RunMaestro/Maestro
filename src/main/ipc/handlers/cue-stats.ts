@@ -17,7 +17,7 @@ import { withIpcErrorLogging, type CreateHandlerOptions } from '../../utils/ipcH
 import { getCueStatsAggregation } from '../../cue/stats/cue-stats-query';
 import { getHistoricalConductorCreditMs } from '../../cue/cue-db';
 import type { CueStatsAggregation, CueStatsTimeRange } from '../../../shared/cue-stats-types';
-import { resolveEncoreFeatures } from '../../../shared/encoreFeatures';
+import { resolveEncoreFeatures } from '../../../shared/encoreFeatureDefaults';
 import type { CueEngine } from '../../cue/cue-engine';
 
 const LOG_CONTEXT = '[CueStats]';

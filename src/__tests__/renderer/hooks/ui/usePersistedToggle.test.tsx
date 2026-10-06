@@ -6,7 +6,7 @@
  * in-memory toggle rather than an exception on the way to painting a pane.
  */
 
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { installLocalStorageMock } from '../../../helpers/mockLocalStorage';
 import { usePersistedToggle } from '../../../../renderer/hooks/ui/usePersistedToggle';
@@ -64,6 +64,20 @@ describe('usePersistedToggle', () => {
 			get() {
 				throw new Error('storage blocked');
 			},
+		});
+
+		const { result } = renderHook(() => usePersistedToggle(KEY, false));
+		expect(result.current.value).toBe(false);
+		act(() => result.current.toggle());
+		expect(result.current.value).toBe(true);
+	});
+
+	it('still toggles in memory when setItem throws QuotaExceededError', () => {
+		// The accessor-only guard misses this: Storage is reachable, then the
+		// write refuses. A persist that called setItem directly would throw
+		// out of the toggle and take the pane down.
+		vi.spyOn(window.localStorage, 'setItem').mockImplementation(() => {
+			throw new DOMException('QuotaExceededError');
 		});
 
 		const { result } = renderHook(() => usePersistedToggle(KEY, false));

@@ -10,7 +10,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import * as path from 'path';
+import path from 'path';
 
 // Mock chokidar
 const mockChokidarOn = vi.fn().mockReturnThis();
@@ -69,7 +69,9 @@ describe('cue-yaml-loader', () => {
 
 		it('loads from canonical .maestro/cue.yaml path first', () => {
 			// Canonical path exists
-			mockExistsSync.mockImplementation((p: string) => String(p).includes('.maestro/cue.yaml'));
+			mockExistsSync.mockImplementation((p: string) =>
+				String(p).replace(/\\/g, '/').includes('.maestro/cue.yaml')
+			);
 			mockReadFileSync.mockReturnValue(`
 subscriptions:
   - name: canonical-sub
@@ -140,9 +142,10 @@ subscriptions:
 
 		it('falls back to legacy maestro-cue.yaml when canonical does not exist', () => {
 			// Only legacy path exists
-			mockExistsSync.mockImplementation(
-				(p: string) => String(p).includes('maestro-cue.yaml') && !String(p).includes('.maestro/')
-			);
+			mockExistsSync.mockImplementation((p: string) => {
+				const norm = String(p).replace(/\\/g, '/');
+				return norm.includes('maestro-cue.yaml') && !norm.includes('.maestro/');
+			});
 			mockReadFileSync.mockReturnValue(`
 subscriptions:
   - name: legacy-sub
@@ -253,7 +256,7 @@ subscriptions:
 			mockExistsSync.mockReturnValue(true);
 			mockReadFileSync.mockImplementation((p: string) => {
 				readCallCount++;
-				if (String(p).endsWith('.maestro/prompts/worker-pipeline.md')) {
+				if (String(p).replace(/\\/g, '/').endsWith('.maestro/prompts/worker-pipeline.md')) {
 					return 'Prompt from external file';
 				}
 				return `
@@ -338,7 +341,7 @@ subscriptions:
 		it('resolves output_prompt_file to output_prompt content', () => {
 			mockExistsSync.mockReturnValue(true);
 			mockReadFileSync.mockImplementation((p: string) => {
-				if (String(p).endsWith('.maestro/prompts/format-output.md')) {
+				if (String(p).replace(/\\/g, '/').endsWith('.maestro/prompts/format-output.md')) {
 					return 'Format the output as markdown';
 				}
 				return `
@@ -377,7 +380,7 @@ subscriptions:
 		it('sets output_prompt to undefined when output_prompt_file is missing', () => {
 			mockExistsSync.mockReturnValue(true);
 			mockReadFileSync.mockImplementation((p: string) => {
-				if (String(p).endsWith('.maestro/prompts/missing.md')) {
+				if (String(p).replace(/\\/g, '/').endsWith('.maestro/prompts/missing.md')) {
 					throw new Error('ENOENT: no such file or directory');
 				}
 				return `
@@ -593,7 +596,7 @@ subscriptions:
 			mockExistsSync.mockReturnValue(true);
 			mockReadFileSync.mockImplementation((p: string) => {
 				readCount++;
-				if (String(p).endsWith('.maestro/prompts/missing.md')) {
+				if (String(p).replace(/\\/g, '/').endsWith('.maestro/prompts/missing.md')) {
 					throw new Error('ENOENT: no such file');
 				}
 				return `
@@ -619,7 +622,7 @@ subscriptions:
 		it('surfaces a warning when output_prompt_file references a missing file', () => {
 			mockExistsSync.mockReturnValue(true);
 			mockReadFileSync.mockImplementation((p: string) => {
-				if (String(p).endsWith('.maestro/prompts/missing-output.md')) {
+				if (String(p).replace(/\\/g, '/').endsWith('.maestro/prompts/missing-output.md')) {
 					throw new Error('ENOENT: no such file');
 				}
 				return `
@@ -645,7 +648,7 @@ subscriptions:
 		it('returns no warnings when prompt_file resolves successfully', () => {
 			mockExistsSync.mockReturnValue(true);
 			mockReadFileSync.mockImplementation((p: string) => {
-				if (String(p).endsWith('.maestro/prompts/exists.md')) {
+				if (String(p).replace(/\\/g, '/').endsWith('.maestro/prompts/exists.md')) {
 					return 'Resolved prompt body';
 				}
 				return `
@@ -673,7 +676,7 @@ subscriptions:
 			// Should watch both .maestro/cue.yaml (canonical) and maestro-cue.yaml (legacy)
 			expect(chokidar.watch).toHaveBeenCalledWith(
 				expect.arrayContaining([
-					expect.stringContaining('.maestro/cue.yaml'),
+					expect.stringContaining(path.join('.maestro', 'cue.yaml')),
 					expect.stringContaining('maestro-cue.yaml'),
 				]),
 				expect.objectContaining({ persistent: true, ignoreInitial: true })
@@ -686,7 +689,7 @@ subscriptions:
 			// strands the engine with empty cached prompts because the YAML
 			// watcher never fires again.
 			expect(chokidar.watch).toHaveBeenCalledWith(
-				expect.arrayContaining([expect.stringContaining('.maestro/prompts/*.md')]),
+				expect.arrayContaining([expect.stringContaining(path.join('.maestro', 'prompts', '*.md'))]),
 				expect.anything()
 			);
 		});
@@ -1803,6 +1806,141 @@ subscriptions:
 		});
 	});
 
+	describe('validateCueConfig for webhook.received events', () => {
+		it('accepts a webhook subscription with secret_env', () => {
+			const result = validateCueConfig({
+				subscriptions: [
+					{
+						name: 'pr-review',
+						event: 'webhook.received',
+						prompt: 'Review',
+						webhook: { path: 'gh-pr', secret_env: 'GH_WEBHOOK_SECRET' },
+					},
+				],
+			});
+			expect(result.valid).toBe(true);
+			expect(result.errors).toHaveLength(0);
+		});
+
+		it('accepts a literal secret with a signature header', () => {
+			const result = validateCueConfig({
+				subscriptions: [
+					{
+						name: 'pr-review',
+						event: 'webhook.received',
+						prompt: 'Review',
+						webhook: { secret: 'shhh', signature_header: 'X-Hub-Signature-256' },
+					},
+				],
+			});
+			expect(result.valid).toBe(true);
+		});
+
+		it('requires a webhook block', () => {
+			const result = validateCueConfig({
+				subscriptions: [{ name: 'pr-review', event: 'webhook.received', prompt: 'Review' }],
+			});
+			expect(result.valid).toBe(false);
+			expect(result.errors).toEqual(
+				expect.arrayContaining([expect.stringContaining('"webhook" is required')])
+			);
+		});
+
+		it('rejects a webhook with no secret at all', () => {
+			const result = validateCueConfig({
+				subscriptions: [
+					{
+						name: 'pr-review',
+						event: 'webhook.received',
+						prompt: 'Review',
+						webhook: { path: 'gh-pr' },
+					},
+				],
+			});
+			expect(result.valid).toBe(false);
+			expect(result.errors).toEqual(
+				expect.arrayContaining([expect.stringContaining('webhook.secret_env')])
+			);
+		});
+
+		it('rejects secret and secret_env together', () => {
+			const result = validateCueConfig({
+				subscriptions: [
+					{
+						name: 'pr-review',
+						event: 'webhook.received',
+						prompt: 'Review',
+						webhook: { secret: 'shhh', secret_env: 'GH_WEBHOOK_SECRET' },
+					},
+				],
+			});
+			expect(result.valid).toBe(false);
+			expect(result.errors).toEqual(
+				expect.arrayContaining([expect.stringContaining('mutually exclusive')])
+			);
+		});
+
+		it('rejects a path that slugs to nothing', () => {
+			const result = validateCueConfig({
+				subscriptions: [
+					{
+						name: 'pr-review',
+						event: 'webhook.received',
+						prompt: 'Review',
+						webhook: { path: '///', secret_env: 'GH_WEBHOOK_SECRET' },
+					},
+				],
+			});
+			expect(result.valid).toBe(false);
+			expect(result.errors).toEqual(
+				expect.arrayContaining([expect.stringContaining('webhook.path')])
+			);
+		});
+
+		it('rejects a non-string webhook field', () => {
+			const result = validateCueConfig({
+				subscriptions: [
+					{
+						name: 'pr-review',
+						event: 'webhook.received',
+						prompt: 'Review',
+						webhook: { path: 42, secret_env: 'GH_WEBHOOK_SECRET' },
+					},
+				],
+			});
+			expect(result.valid).toBe(false);
+			expect(result.errors).toEqual(
+				expect.arrayContaining([expect.stringContaining('must be a string')])
+			);
+		});
+	});
+
+	describe('loadCueConfig with webhook.received', () => {
+		it('parses the webhook block from YAML', () => {
+			mockExistsSync.mockReturnValue(true);
+			mockReadFileSync.mockReturnValue(`
+subscriptions:
+  - name: pr-review
+    event: webhook.received
+    prompt: Review the PR
+    webhook:
+      path: gh-pr
+      secret_env: GH_WEBHOOK_SECRET
+      signature_header: X-Hub-Signature-256
+    filter:
+      body.action: opened
+`);
+			const config = loadCueConfig('/project');
+			expect(config?.subscriptions[0].webhook).toEqual({
+				path: 'gh-pr',
+				secret: undefined,
+				secret_env: 'GH_WEBHOOK_SECRET',
+				signature_header: 'X-Hub-Signature-256',
+			});
+			expect(config?.subscriptions[0].filter).toEqual({ 'body.action': 'opened' });
+		});
+	});
+
 	describe('loadCueConfig with task.pending', () => {
 		it('parses watch and poll_minutes from YAML', () => {
 			mockExistsSync.mockReturnValue(true);
@@ -1965,7 +2103,7 @@ subscriptions:
 		});
 	});
 
-	describe('validateCueConfig — name validation', () => {
+	describe('validateCueConfig - name validation', () => {
 		it('rejects empty string subscription name', () => {
 			const result = validateCueConfig({
 				subscriptions: [
@@ -2035,7 +2173,7 @@ subscriptions:
 		});
 	});
 
-	describe('validateCueConfig — schedule_times range validation', () => {
+	describe('validateCueConfig - schedule_times range validation', () => {
 		it('rejects schedule_times with hour out of range (25:00)', () => {
 			const result = validateCueConfig({
 				subscriptions: [
@@ -2155,7 +2293,7 @@ subscriptions:
 		});
 	});
 
-	describe('validateCueConfig — interval_minutes upper bound', () => {
+	describe('validateCueConfig - interval_minutes upper bound', () => {
 		it('rejects interval_minutes above 10080 (7 days)', () => {
 			const result = validateCueConfig({
 				subscriptions: [
@@ -2366,7 +2504,7 @@ subscriptions:
 		});
 	});
 
-	describe('validateCueConfig — app.startup', () => {
+	describe('validateCueConfig - app.startup', () => {
 		it('accepts a minimal app.startup subscription', () => {
 			const result = validateCueConfig({
 				subscriptions: [

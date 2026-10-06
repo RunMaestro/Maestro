@@ -1,19 +1,45 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { FileAudio, FileVideo, GripVertical, History, ListMusic, Minus, X } from 'lucide-react';
+import {
+	memo,
+	useCallback,
+	useEffect,
+	useLayoutEffect,
+	useMemo,
+	useRef,
+	useState,
+	type CSSProperties,
+	type ReactNode,
+} from 'react';
+import {
+	Copy,
+	FileAudio,
+	FileVideo,
+	GripVertical,
+	History,
+	ListMusic,
+	Minus,
+	X,
+} from 'lucide-react';
 
 import { GhostIconButton } from '../ui/GhostIconButton';
 import { ModalResizeGrip } from '../ui/ModalResizeGrip';
 import { MediaListMenu } from './MediaListMenu';
 import { useEventListener } from '../../hooks/utils/useEventListener';
 import { useMobileLandscape } from '../../hooks/remote/useMobileLandscape';
+import { useViewportBreakpoint } from '../../hooks/ui/useViewportBreakpoint';
+import { notifyToast } from '../../stores/notificationStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useMediaPlaybackStore } from '../../stores/mediaPlaybackStore';
+import { safeClipboardWrite } from '../../utils/clipboard';
+import { flashCopiedToClipboard } from '../../utils/flashCopiedToClipboard';
+import { captureException } from '../../utils/sentry';
+import { APP_TITLE_STRIP_HEIGHT, shouldShowAppTitleStrip } from '../../utils/appTitleStrip';
 import {
 	DEFAULT_MEDIA_ASPECT,
 	MEDIA_FLOAT_DEFAULT_WIDTH,
 	fitMediaFloatRect,
 	initialMediaFloatRect,
 	mediaFloatChromeHeight,
+	mediaFloatFootprint,
 	mediaFloatResizeWidth,
 	mediaFloatWidthFor,
 	type MediaFloatFit,
@@ -69,13 +95,6 @@ const DRAG_SLOP_PX = 4;
  */
 const FLOAT_Z_INDEX = 60;
 
-/**
- * Height of the custom title strip App.tsx draws (its `h-10`) when the native
- * title bar is off. That strip is `-webkit-app-region: drag`, so the widget is
- * kept below it.
- */
-const APP_TITLE_STRIP_HEIGHT = 40;
-
 /** Current viewport, read at call time so a resize is always measured fresh. */
 const measureViewport = (top: number) => ({
 	width: window.innerWidth,
@@ -130,11 +149,20 @@ export const FloatingMediaPlayer = memo(function FloatingMediaPlayer({
 	const resumeTimes = useMediaPlaybackStore((s) => s.resumeTimes);
 	const setActiveItem = useMediaPlaybackStore((s) => s.setActiveItem);
 	const closeItem = useMediaPlaybackStore((s) => s.closeItem);
+	const setFloatFootprint = useMediaPlaybackStore((s) => s.setFloatFootprint);
 
-	// Same condition App.tsx uses to draw the custom title strip.
+	// The custom title strip is an OS drag region, so the widget stays below it
+	// whenever AppShell draws it - asked through the same predicate AppShell uses.
 	const useNativeTitleBar = useSettingsStore((s) => s.useNativeTitleBar);
 	const isMobileLandscape = useMobileLandscape();
-	const topInset = useNativeTitleBar || isMobileLandscape ? 0 : APP_TITLE_STRIP_HEIGHT;
+	const { isMdDown: isMdDownViewport } = useViewportBreakpoint();
+	const topInset = shouldShowAppTitleStrip({
+		isMobileLandscape,
+		useNativeTitleBar,
+		isMdDownViewport,
+	})
+		? APP_TITLE_STRIP_HEIGHT
+		: 0;
 	const topInsetRef = useRef(topInset);
 	topInsetRef.current = topInset;
 	const viewport = useCallback(() => measureViewport(topInsetRef.current), []);
@@ -187,15 +215,113 @@ export const FloatingMediaPlayer = memo(function FloatingMediaPlayer({
 	} | null>(null);
 	const [gesturing, setGesturing] = useState(false);
 
+	const frameRef = useRef<HTMLDivElement>(null);
+	const focusRequest = useMediaPlaybackStore((s) => s.focusRequest);
+
+	// Take the caret whenever something asked for the player to be brought up.
+	//
+	// A layout effect, so it runs in the same commit that made the frame visible
+	// and BEFORE the deferred focus restore the layer stack schedules when the
+	// command palette unmounts - that restore stands down once it sees focus has
+	// landed somewhere, so getting there first is what keeps the caret here.
+	// Skipped on the very first render (`focusRequest` starts at 0), or a queue
+	// restored from disk would pull focus at launch.
+	useLayoutEffect(() => {
+		if (focusRequest === 0) return;
+		frameRef.current?.focus();
+	}, [focusRequest]);
+
 	const beginMove = useCallback(
 		(e: React.MouseEvent) => {
 			if (e.button !== 0) return;
 			e.preventDefault();
+			// `preventDefault` suppresses the click's own focus, so claim it here
+			// instead. Without this, grabbing the title bar leaves focus wherever it
+			// was and Escape would go to the surface behind the player the user is
+			// currently holding onto.
+			frameRef.current?.focus();
 			gestureRef.current = { mode: 'move', startX: e.clientX, startY: e.clientY, origin: rect };
 			setGesturing(true);
 		},
 		[rect]
 	);
+
+	/**
+	 * Dismisses the open queue / history list and puts the caret back on the
+	 * player frame.
+	 *
+	 * Handing focus back is the whole point: the list takes it on open (see
+	 * `MediaListMenu`), so closing without returning it leaves focus on `<body>`
+	 * and the NEXT Escape does nothing - the player is on screen, apparently
+	 * ready, and swallowing the key. Deliberately not wired to the outside-click
+	 * path, which closes the list precisely because the user went to click
+	 * something else.
+	 */
+	const closeList = useCallback(() => {
+		setOpenList(null);
+		frameRef.current?.focus();
+	}, []);
+
+	/**
+	 * Escape minimizes, matching every other dismissible surface in the app -
+	 * except that for this one "dismiss" has to mean MINIMIZE, never close. The
+	 * player is the one surface whose close button stops something the user is
+	 * listening to, and a reflexive Escape must not be able to kill playback.
+	 *
+	 * Scoped to the widget rather than registered with the layer stack: the
+	 * player is not modal, it floats over a workspace the user keeps typing in,
+	 * so Escape belongs to it only while focus is actually inside it.
+	 */
+	const handleKeyDown = useCallback(
+		(e: React.KeyboardEvent) => {
+			if (e.key !== 'Escape' || e.metaKey || e.ctrlKey || e.altKey) return;
+			// A fullscreen video is already using Escape to come back out of
+			// fullscreen; minimizing on the way would hide the player the user was
+			// only trying to un-maximize.
+			if (document.fullscreenElement) return;
+			// An open list is the innermost thing Escape can close, so it goes first.
+			// It normally answers the key itself (it holds focus); this branch is
+			// the fallback for a press that landed on the frame instead - the queue
+			// button keeps focus after the click that opened the list.
+			if (openList) {
+				closeList();
+			} else {
+				dismiss();
+			}
+			e.preventDefault();
+			e.stopPropagation();
+		},
+		[openList, closeList, dismiss]
+	);
+
+	/**
+	 * Copy the loaded file's name.
+	 *
+	 * The title bar is the only place that name exists in the UI, and it is a
+	 * drag handle with a truncated label rather than selectable text - the frame
+	 * is `select-none`, so a user who wants the name to paste into a note or a
+	 * prompt cannot get at it any other way. The button copies the name rather
+	 * than the path, matching what is on screen; the path is not shown here.
+	 *
+	 * Goes through `safeClipboardWrite` like every other copy in the app: the
+	 * Clipboard API rejects while the document is unfocused, and a player the
+	 * user is clicking on while another window has focus is exactly that case.
+	 */
+	const copyFileName = useCallback(async () => {
+		try {
+			if (await safeClipboardWrite(title)) {
+				flashCopiedToClipboard(title, 'File Name Copied');
+				return;
+			}
+		} catch (err) {
+			captureException(err);
+		}
+		notifyToast({
+			color: 'red',
+			title: 'Failed to Copy File Name',
+			message: 'Clipboard write was rejected. Check browser permissions and try again.',
+		});
+	}, [title]);
 
 	const beginResize = useCallback(
 		(e: React.MouseEvent) => {
@@ -272,6 +398,26 @@ export const FloatingMediaPlayer = memo(function FloatingMediaPlayer({
 		setRect((prev) => fitMediaFloatRect(prev, fitRef.current, viewport()))
 	);
 
+	/**
+	 * Tell the bottom-right toast lane where the widget is.
+	 *
+	 * Toasts sit at z-index 100000 so they stay visible over modals, and they
+	 * stack up from the same corner the player opens in - so an arriving
+	 * notification painted straight over the widget and it read as the player
+	 * having closed itself. The lane lifts over the widget instead, and this is
+	 * where the measurement comes from: the widget clamps itself to the
+	 * viewport, so its real rect is not derivable from the persisted position.
+	 *
+	 * Null while minimized - a parked widget is not on screen to be covered.
+	 */
+	useEffect(() => {
+		setFloatFootprint(hidden ? null : mediaFloatFootprint(rect, viewport()));
+	}, [rect, hidden, setFloatFootprint, viewport]);
+
+	// The widget is unmounted when the last item closes, which no `hidden` change
+	// announces.
+	useEffect(() => () => setFloatFootprint(null), [setFloatFootprint]);
+
 	// Close the open list on any outside click. Both buttons and the portaled
 	// list count as inside - the list is not a DOM descendant.
 	useEventListener(
@@ -310,6 +456,7 @@ export const FloatingMediaPlayer = memo(function FloatingMediaPlayer({
 
 	return (
 		<div
+			ref={frameRef}
 			data-testid="floating-media-player"
 			// Minimized keeps the frame mounted and merely invisible. `visibility:
 			// hidden` (not unmounting, not zero size) is what keeps a video's decode
@@ -317,7 +464,12 @@ export const FloatingMediaPlayer = memo(function FloatingMediaPlayer({
 			// use it - and `aria-hidden` keeps the off-screen controls out of the
 			// accessibility tree while the header pill stands in for them.
 			aria-hidden={hidden || undefined}
-			className="fixed flex flex-col rounded-lg shadow-2xl border overflow-hidden select-none"
+			// Focusable but not in the tab order: the widget floats over a workspace
+			// the user is typing in, so it must never steal a Tab. -1 is enough to
+			// hold focus after a click, which is what scopes Escape to it.
+			tabIndex={-1}
+			onKeyDown={handleKeyDown}
+			className="fixed flex flex-col rounded-lg shadow-2xl border overflow-hidden select-none outline-none"
 			style={
 				{
 					top: rect.top,
@@ -333,7 +485,7 @@ export const FloatingMediaPlayer = memo(function FloatingMediaPlayer({
 					// title strip's drag region, the OS would swallow clicks on its
 					// header (move, minimize, close). Opt the whole frame out.
 					WebkitAppRegion: hidden ? undefined : 'no-drag',
-				} as React.CSSProperties
+				} as CSSProperties
 			}
 		>
 			{/* Title bar doubles as the drag handle */}
@@ -368,6 +520,19 @@ export const FloatingMediaPlayer = memo(function FloatingMediaPlayer({
 						{subtitle}
 					</span>
 				</div>
+
+				{/* Copy the file name. Sits beside the label it copies, and stops the
+				    mousedown so grabbing it does not start a drag of the whole bar. */}
+				<GhostIconButton
+					onClick={() => void copyFileName()}
+					onMouseDown={(e) => e.stopPropagation()}
+					title="Copy file name"
+					ariaLabel="Copy file name"
+					color={theme.colors.textDim}
+					testId="media-copy-name"
+				>
+					<Copy className="w-3.5 h-3.5" />
+				</GhostIconButton>
 
 				{/* Queue and history. Each button appears only when its list has
 				    something in it, so a single file playing on its own shows neither
@@ -438,13 +603,14 @@ export const FloatingMediaPlayer = memo(function FloatingMediaPlayer({
 					resumeTimes={resumeTimes}
 					onSelect={(item) => {
 						setActiveItem(item.id, { autoplay: true });
-						setOpenList(null);
+						closeList();
 					}}
 					onRemove={closeItem}
 					onClear={() => {
 						clearQueue();
-						setOpenList(null);
+						closeList();
 					}}
+					onClose={closeList}
 					testId="media-queue-menu"
 					theme={theme}
 				/>
@@ -464,13 +630,14 @@ export const FloatingMediaPlayer = memo(function FloatingMediaPlayer({
 					// than activating a queue slot that may not exist.
 					onSelect={(item) => {
 						openMedia(item);
-						setOpenList(null);
+						closeList();
 					}}
 					onRemove={removeHistoryItem}
 					onClear={() => {
 						clearHistory();
-						setOpenList(null);
+						closeList();
 					}}
+					onClose={closeList}
 					testId="media-history-menu"
 					theme={theme}
 				/>

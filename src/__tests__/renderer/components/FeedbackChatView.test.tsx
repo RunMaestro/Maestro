@@ -1,7 +1,12 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { FeedbackChatView } from '../../../renderer/components/FeedbackChatView';
+import {
+	useFeedbackDraftStore,
+	type FeedbackDraft,
+} from '../../../renderer/stores/feedbackDraftStore';
 import type { Theme, Session } from '../../../renderer/types';
+import { FeedbackConversationManager } from '../../../renderer/services/feedbackConversation';
 import type { FeedbackAccount } from '../../../shared/feedbackAccounts';
 
 // The real login dialog spawns a PTY; here it is a stub that signs in on click.
@@ -510,5 +515,260 @@ describe('FeedbackChatView', () => {
 		expect(closeButton).toBeTruthy();
 		closeButton.click();
 		expect(onCancel).toHaveBeenCalledOnce();
+	});
+
+	it('hydrates the chat from a resumed draft (messages + attachments)', async () => {
+		const draft: FeedbackDraft = {
+			id: 'draft-1',
+			suggestedName: 'Crash on save',
+			category: 'bug_report',
+			summary: 'Crash on save',
+			confidence: 60,
+			agentType: 'claude-code',
+			messages: [{ role: 'user', content: 'Steps to reproduce the crash', timestamp: 1000 }],
+			attachments: [
+				{ id: 'a1', name: 'crash.png', dataUrl: 'data:image/png;base64,abc123', sizeBytes: 10 },
+			],
+			inputDraft: 'one more thing',
+			includeDebugPackage: false,
+			createdAt: 1000,
+			updatedAt: 1000,
+		};
+		useFeedbackDraftStore.setState({ drafts: [draft], activeDraftId: null, resumeDraftId: null });
+
+		window.maestro.feedback.checkGhAuth.mockResolvedValue({ authenticated: true });
+		window.maestro.feedback.listAccounts.mockResolvedValue({
+			accounts: [WORK, DEFAULT],
+			lastWorkingKey: null,
+		});
+		window.maestro.feedback.getConversationPrompt.mockResolvedValue({
+			prompt: 'system prompt',
+			environment: '- Maestro version: 1.0.0',
+		});
+
+		render(
+			<FeedbackChatView
+				theme={theme}
+				sessions={sessions}
+				onCancel={vi.fn()}
+				onSubmitSuccess={vi.fn()}
+				resumeDraftId="draft-1"
+			/>
+		);
+
+		await waitFor(() => {
+			expect(screen.getByText('Steps to reproduce the crash')).toBeTruthy();
+		});
+		expect(screen.getByAltText('crash.png')).toBeTruthy();
+	});
+
+	it('saves the current conversation as a draft when Save draft is clicked', async () => {
+		const draft: FeedbackDraft = {
+			id: 'draft-1',
+			suggestedName: 'Crash on save',
+			category: 'bug_report',
+			summary: 'Crash on save',
+			confidence: 60,
+			agentType: 'claude-code',
+			messages: [{ role: 'user', content: 'Steps to reproduce the crash', timestamp: 1000 }],
+			attachments: [
+				{ id: 'a1', name: 'crash.png', dataUrl: 'data:image/png;base64,abc123', sizeBytes: 10 },
+			],
+			inputDraft: '',
+			includeDebugPackage: false,
+			createdAt: 1000,
+			updatedAt: 1000,
+		};
+		useFeedbackDraftStore.setState({ drafts: [draft], activeDraftId: null, resumeDraftId: null });
+
+		window.maestro.feedback.checkGhAuth.mockResolvedValue({ authenticated: true });
+		window.maestro.feedback.listAccounts.mockResolvedValue({
+			accounts: [WORK, DEFAULT],
+			lastWorkingKey: null,
+		});
+		window.maestro.feedback.getConversationPrompt.mockResolvedValue({
+			prompt: 'system prompt',
+			environment: '- Maestro version: 1.0.0',
+		});
+
+		render(
+			<FeedbackChatView
+				theme={theme}
+				sessions={sessions}
+				onCancel={vi.fn()}
+				onSubmitSuccess={vi.fn()}
+				resumeDraftId="draft-1"
+			/>
+		);
+
+		const saveButton = await screen.findByText('Save draft');
+		saveButton.click();
+
+		await waitFor(() => {
+			expect(window.maestro.feedback.drafts.save).toHaveBeenCalled();
+		});
+		const payload = window.maestro.feedback.drafts.save.mock.calls[0][0];
+		expect(payload.messages[0].content).toBe('Steps to reproduce the crash');
+		expect(payload.attachments[0].name).toBe('crash.png');
+	});
+
+	it('falls back to an available provider when the resumed draft provider is gone', async () => {
+		const draft: FeedbackDraft = {
+			id: 'draft-codex',
+			suggestedName: 'Codex draft',
+			category: 'bug_report',
+			summary: '',
+			confidence: 0,
+			agentType: 'codex',
+			messages: [],
+			attachments: [],
+			inputDraft: 'half-written report',
+			includeDebugPackage: false,
+			createdAt: 1000,
+			updatedAt: 1000,
+		};
+		useFeedbackDraftStore.setState({ drafts: [draft], activeDraftId: null, resumeDraftId: null });
+
+		window.maestro.feedback.checkGhAuth.mockResolvedValue({ authenticated: true });
+		// The only codex account cannot run, so the saved provider is gone.
+		window.maestro.feedback.listAccounts.mockResolvedValue({
+			accounts: [
+				WORK,
+				account({ key: 'codex::/home/me/.codex', toolType: 'codex', status: 'not-installed' }),
+			],
+			lastWorkingKey: null,
+		});
+		window.maestro.feedback.getConversationPrompt.mockResolvedValue({
+			prompt: 'system prompt',
+			environment: '- Maestro version: 1.0.0',
+		});
+
+		const startSpy = vi.spyOn(FeedbackConversationManager.prototype, 'start');
+
+		render(
+			<FeedbackChatView
+				theme={theme}
+				sessions={sessions}
+				onCancel={vi.fn()}
+				onSubmitSuccess={vi.fn()}
+				resumeDraftId="draft-codex"
+			/>
+		);
+
+		await waitFor(() => {
+			expect(startSpy).toHaveBeenCalled();
+		});
+		// The saved provider ('codex') is no longer available, so the editor must
+		// start the conversation with the detected fallback instead of throwing.
+		expect(startSpy.mock.calls[0][0].agentType).toBe('claude-code');
+		startSpy.mockRestore();
+	});
+
+	it('resumes a draft on an account for its saved provider when one can run', async () => {
+		const draft: FeedbackDraft = {
+			id: 'draft-codex-ok',
+			suggestedName: 'Codex draft',
+			category: 'bug_report',
+			summary: '',
+			confidence: 0,
+			agentType: 'codex',
+			messages: [],
+			attachments: [],
+			inputDraft: 'half-written report',
+			includeDebugPackage: false,
+			createdAt: 1000,
+			updatedAt: 1000,
+		};
+		useFeedbackDraftStore.setState({ drafts: [draft], activeDraftId: null, resumeDraftId: null });
+
+		window.maestro.feedback.checkGhAuth.mockResolvedValue({ authenticated: true });
+		const codex = account({ key: 'codex::/home/me/.codex', toolType: 'codex' });
+		window.maestro.feedback.listAccounts.mockResolvedValue({
+			accounts: [WORK, codex],
+			lastWorkingKey: null,
+		});
+		window.maestro.feedback.getConversationPrompt.mockResolvedValue({
+			prompt: 'system prompt',
+			environment: '- Maestro version: 1.0.0',
+		});
+
+		const startSpy = vi.spyOn(FeedbackConversationManager.prototype, 'start');
+
+		render(
+			<FeedbackChatView
+				theme={theme}
+				sessions={sessions}
+				onCancel={vi.fn()}
+				onSubmitSuccess={vi.fn()}
+				resumeDraftId="draft-codex-ok"
+			/>
+		);
+
+		await waitFor(() => {
+			expect(startSpy).toHaveBeenCalled();
+		});
+		// The first usable account is a Claude one, but the draft was a Codex chat.
+		expect(startSpy.mock.calls[0][0].agentType).toBe('codex');
+		expect(startSpy.mock.calls[0][0].account).toMatchObject({ key: codex.key });
+		startSpy.mockRestore();
+	});
+
+	it('keeps a resumed submit-ready draft submittable by rehydrating lastResponse', async () => {
+		const draft: FeedbackDraft = {
+			id: 'ready-1',
+			suggestedName: 'Ready report',
+			category: 'bug_report',
+			summary: 'Crash on save',
+			confidence: 90,
+			agentType: 'claude-code',
+			messages: [
+				{ role: 'user', content: 'It crashes', timestamp: 1000 },
+				{ role: 'assistant', content: 'Got it', timestamp: 1001 },
+			],
+			attachments: [],
+			inputDraft: '',
+			includeDebugPackage: false,
+			createdAt: 1000,
+			updatedAt: 1000,
+			lastResponse: {
+				confidence: 90,
+				ready: true,
+				message: 'Got it',
+				category: 'bug_report',
+				summary: 'Crash on save',
+				structured: {
+					expectedBehavior: 'no crash',
+					actualBehavior: 'crash',
+					reproductionSteps: 'save',
+					additionalContext: '',
+				},
+			},
+		};
+		useFeedbackDraftStore.setState({ drafts: [draft], activeDraftId: null, resumeDraftId: null });
+
+		window.maestro.feedback.checkGhAuth.mockResolvedValue({ authenticated: true });
+		window.maestro.feedback.listAccounts.mockResolvedValue({
+			accounts: [WORK, DEFAULT],
+			lastWorkingKey: null,
+		});
+		window.maestro.feedback.getConversationPrompt.mockResolvedValue({
+			prompt: 'system prompt',
+			environment: '- Maestro version: 1.0.0',
+		});
+		window.maestro.feedback.searchIssues.mockResolvedValue({ issues: [] });
+
+		render(
+			<FeedbackChatView
+				theme={theme}
+				sessions={sessions}
+				onCancel={vi.fn()}
+				onSubmitSuccess={vi.fn()}
+				resumeDraftId="ready-1"
+			/>
+		);
+
+		// Submit button is gated on isReady, which must be restored from the
+		// persisted ready response without sending another message.
+		expect(await screen.findByText('Submit Feedback')).toBeTruthy();
 	});
 });

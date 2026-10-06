@@ -1,17 +1,19 @@
 /**
- * Helpers for the per-session AI execution queue, centralizing the "skip paused
- * items" rule so every dispatch path treats held items identically.
+ * Helpers for the per-session AI execution queue, centralizing the rules for
+ * user-paused items and connection-held items.
  *
  * A queued item with `paused: true` is held by the user: it stays in the queue
  * (preserving its position) but is invisible to dispatch. Auto-run, on-exit
  * dequeue, interrupt/kill re-dispatch, batch progression, and the manual
  * "process next" action all run the first *non-paused* item instead of blindly
- * taking index 0, and treat a queue with no runnable items as drained.
+ * taking index 0. A connection hold is an ordering barrier: later items cannot
+ * overtake a prompt whose delivery state is still unknown.
  */
 
 import type { LogEntry, QueuedItem, QueuedItemEditPatch, Session, SessionState } from '../types';
 import { generateId } from './ids';
 import {
+	getBusyTabs,
 	getTabDisplayName,
 	markTabRunningQueuedItem,
 	markTabRunningTurn,
@@ -30,32 +32,56 @@ import {
  * `turnSettings` is assigned, not merged. The modal always sends the complete
  * settings it was displaying, so clearing a picker back to "Default" has to
  * clear the stored field rather than leave the previous value behind.
+ *
+ * `crossAgent` is optional and carries the two `@mention` flags, re-derived by
+ * the caller from the EDITED text. It is a parameter rather than something this
+ * function works out for itself because deriving it needs `planCrossAgentMentions`,
+ * which reads the session store - a dependency a pure queue utility must not take
+ * on. Callers that can resolve a mention pass it; the rest omit it and leave the
+ * item's existing flags alone.
  */
 export function applyQueuedItemEdit(
 	queue: QueuedItem[],
 	itemId: string,
-	patch: QueuedItemEditPatch
+	patch: QueuedItemEditPatch,
+	crossAgent?: { crossAgentMention: boolean; crossAgentOnly: boolean }
 ): QueuedItem[] {
 	return queue.map((item) =>
 		item.id === itemId
-			? { ...item, text: patch.text, images: patch.images, turnSettings: patch.turnSettings }
+			? {
+					...item,
+					text: patch.text,
+					images: patch.images,
+					turnSettings: patch.turnSettings,
+					...(crossAgent ?? {}),
+				}
 			: item
 	);
 }
 
-/** A queued item is runnable when it is not held/paused by the user. */
+/** A queued item is runnable when neither the user nor the bridge holds it. */
 export function isRunnableQueueItem(item: QueuedItem): boolean {
-	return !item.paused;
+	return !item.paused && !item.waitingForConnection;
+}
+
+/** Release bridge holds after main process ownership is known. */
+export function releaseConnectionHeldQueueItems(queue: QueuedItem[]): QueuedItem[] {
+	if (!queue.some((item) => item.waitingForConnection)) return queue;
+	return queue.map(({ waitingForConnection: _waiting, ...item }) => item);
 }
 
 /** The first item that would actually run, or undefined if all are held/empty. */
 export function nextRunnableQueueItem(queue: QueuedItem[]): QueuedItem | undefined {
-	return queue.find(isRunnableQueueItem);
+	for (const item of queue) {
+		if (item.waitingForConnection) return undefined;
+		if (!item.paused) return item;
+	}
+	return undefined;
 }
 
 /** Whether the queue has at least one item that would run (not all held). */
 export function hasRunnableQueueItem(queue: QueuedItem[]): boolean {
-	return queue.some(isRunnableQueueItem);
+	return nextRunnableQueueItem(queue) !== undefined;
 }
 
 /**
@@ -68,13 +94,139 @@ export function takeNextRunnableQueueItem(queue: QueuedItem[]): {
 	item: QueuedItem | null;
 	remaining: QueuedItem[];
 } {
-	const index = queue.findIndex(isRunnableQueueItem);
-	if (index === -1) {
-		return { item: null, remaining: queue };
+	for (let index = 0; index < queue.length; index += 1) {
+		const candidate = queue[index];
+		if (candidate.waitingForConnection) return { item: null, remaining: queue };
+		if (candidate.paused) continue;
+		return {
+			item: candidate,
+			remaining: [...queue.slice(0, index), ...queue.slice(index + 1)],
+		};
 	}
+	return { item: null, remaining: queue };
+}
+
+/**
+ * Whether a message submitted right now would have work ahead of it in this
+ * agent's order: a tab mid-turn (including a closed-but-still-thinking orphan),
+ * or an item already waiting in the queue.
+ *
+ * This is the ORDERING question, deliberately separate from the fuller
+ * queue-vs-dispatch decision in `useInputProcessing`, which also weighs
+ * read-only parallelism and forced-parallel overrides. Those only matter to
+ * something that spawns a local turn. A cross-agent mention-only message spawns
+ * nothing, so the single thing that decides whether it waits is whether the user
+ * put work in front of it.
+ *
+ * `autoRunActive` comes from the batch store rather than the session (Auto Run
+ * runs in isolation and never marks the agent busy), so callers pass it in.
+ */
+export function hasWorkAheadOfNewMessage(
+	session: Session,
+	opts: { autoRunActive?: boolean } = {}
+): boolean {
+	if (opts.autoRunActive) return true;
+	if (getBusyTabs(session, { includeOrphans: true }).length > 0) return true;
+	return (session.executionQueue ?? []).some(
+		(item) => item.waitingForConnection || isRunnableQueueItem(item)
+	);
+}
+
+/**
+ * Release the busy state a dequeue took, without re-queueing anything: the
+ * inverse of {@link applyQueuedItemDispatch}'s state half.
+ *
+ * The agent only returns to idle when no OTHER tab is still working - a
+ * multi-tab agent can have a turn running elsewhere, and blanking the session
+ * state would strand its thinking pill.
+ *
+ * Used wherever a dequeued item ends without a process to close it out: a
+ * dispatch that threw before spawning, and a cross-agent mention-only item,
+ * which fires its consult and by design never spawns a local turn.
+ */
+export function applyQueuedItemRelease(session: Session, tabId: string | undefined): Session {
+	const releaseTab = <T extends { id: string; state?: string; thinkingStartTime?: number }>(
+		tab: T
+	): T => (tab.id === tabId ? { ...tab, state: 'idle', thinkingStartTime: undefined } : tab);
+
+	const aiTabs = session.aiTabs.map(releaseTab);
+	const orphans = session.orphanedThinkingTabs?.map(releaseTab);
+	const stillWorking =
+		aiTabs.some((tab) => tab.state === 'busy') || !!orphans?.some((tab) => tab.state === 'busy');
+
 	return {
-		item: queue[index],
-		remaining: [...queue.slice(0, index), ...queue.slice(index + 1)],
+		...session,
+		aiTabs,
+		...(orphans && { orphanedThinkingTabs: orphans }),
+		...(stillWorking
+			? {}
+			: {
+					state: 'idle' as SessionState,
+					busySource: undefined,
+					thinkingStartTime: undefined,
+				}),
+	};
+}
+
+/**
+ * The state transition for a dequeued item whose dispatch THREW before the
+ * agent process ever spawned: the exact inverse of
+ * {@link applyQueuedItemDispatch}.
+ *
+ * This is the one place that decides what happens to a prompt that was taken
+ * out of the queue and then failed to send, because the alternative - each
+ * dispatch site writing its own recovery - is what lost a user's work. Five of
+ * the eight sites had no recovery at all (the process-exit drain and the batch
+ * drain rejected into nothing; Stop and force-kill logged and moved on), so a
+ * spawn collision silently destroyed the message: the queue no longer held it,
+ * the transcript showed a card for it, and no model had ever seen it.
+ *
+ * Three things happen together, and they only make sense together:
+ *
+ * 1. **The tab is released.** Dispatch marked it busy; nothing is running.
+ * 2. **The card is removed.** The user-visible entry is appended BEFORE the
+ *    spawn, so a failed dispatch leaves a card for a prompt that was never
+ *    delivered. Matching is by `queuedItemId`, not by text, so an identical
+ *    message the user genuinely sent earlier is untouched.
+ * 3. **The item goes back to the head of the queue** - so it keeps its place
+ *    ahead of everything queued behind it - unless it is already there. The
+ *    idempotence matters: `retryStore.holdFailedItemInQueue` parks the failed
+ *    turn in the queue for the life of an outage, and a second copy would
+ *    double-send the prompt when the outage cleared.
+ *
+ * `hold` decides whether the item comes back runnable. A spawn collision (the
+ * tab's previous process has not exited yet) is transient and self-correcting,
+ * so the item stays runnable and the next drain trigger sends it a moment
+ * later. Any OTHER failure would fail again the same way on the next tick, so
+ * the item comes back `paused`: still there, still editable, still one click
+ * from Force Send, but not spinning the queue against a wall.
+ */
+export function applyQueuedItemDispatchFailure(
+	session: Session,
+	item: QueuedItem,
+	opts: { hold: boolean }
+): Session {
+	const released = applyQueuedItemRelease(session, item.tabId);
+
+	const stripCard = <T extends { id: string; logs: LogEntry[] }>(tab: T): T =>
+		tab.logs.some((log) => log.queuedItemId === item.id)
+			? { ...tab, logs: tab.logs.filter((log) => log.queuedItemId !== item.id) }
+			: tab;
+
+	const aiTabs = released.aiTabs.map(stripCard);
+	const orphans = released.orphanedThinkingTabs?.map(stripCard);
+
+	const queue = released.executionQueue ?? [];
+	const restored: QueuedItem = opts.hold ? { ...item, paused: true } : item;
+	const executionQueue = queue.some((i) => i.id === item.id)
+		? queue.map((i) => (i.id === item.id ? restored : i))
+		: [restored, ...queue];
+
+	return {
+		...released,
+		aiTabs,
+		...(orphans && { orphanedThinkingTabs: orphans }),
+		executionQueue,
 	};
 }
 

@@ -15,6 +15,7 @@ const KNOWN_YOLO_FLAGS = new Set([
 	'--dangerously-bypass-approvals-and-sandbox',
 	'--skip-permissions-unsafe',
 	'-y',
+	'--allow-all',
 ]);
 
 /**

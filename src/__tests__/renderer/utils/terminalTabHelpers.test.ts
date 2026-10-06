@@ -152,6 +152,31 @@ describe('addTerminalTab', () => {
 		expect(updated.activeTerminalTabId).toBe('new-tab');
 	});
 
+	it('leaves any active tiled group (clears activeGroupId)', () => {
+		// Regression: a new standalone terminal must exit the group, otherwise the
+		// group stays active and a tiled browser overlay bleeds over the terminal view.
+		const session = createMockSession({
+			activeGroupId: 'g1',
+			tabGroups: [
+				{
+					id: 'g1',
+					name: 'Group',
+					createdAt: 0,
+					focusedPaneId: 'l1',
+					layout: {
+						kind: 'split',
+						id: 's1',
+						direction: 'row',
+						sizes: [1],
+						children: [{ kind: 'leaf', id: 'l1', tab: { type: 'browser', id: 'b1' } }],
+					},
+				},
+			] as never,
+		});
+		const updated = addTerminalTab(session, createMockTerminalTab({ id: 'new-tab' }));
+		expect(updated.activeGroupId).toBeNull();
+	});
+
 	it('adds the tab without showing it when activate is false', () => {
 		// Background create: the tab is in the bar and in the unified order, but
 		// the selection and the input mode are untouched. The mode matters as much
@@ -180,6 +205,88 @@ describe('addTerminalTab', () => {
 		const tab = createMockTerminalTab({ id: 'new-tab' });
 		const updated = addTerminalTab(session, tab);
 		expect(updated.unifiedTabOrder).toContainEqual({ type: 'terminal', id: 'new-tab' });
+	});
+
+	it('touches no active-tab id and keeps the group when activate is false', () => {
+		// The tile-below path mints a terminal that goes straight into a pane.
+		// Activating it would clear the very group the caller is about to build,
+		// and pointing activeTerminalTabId at a tiled tab would leave the single
+		// view aimed at a tab it does not own.
+		const session = createMockSession({
+			activeGroupId: 'g1',
+			activeTerminalTabId: 'old-tab',
+			activeFileTabId: 'f1',
+			activeBrowserTabId: 'b1',
+		});
+		const updated = addTerminalTab(session, createMockTerminalTab({ id: 'new-tab' }), {
+			activate: false,
+		});
+		expect(updated.activeGroupId).toBe('g1');
+		expect(updated.activeTerminalTabId).toBe('old-tab');
+		expect(updated.activeFileTabId).toBe('f1');
+		expect(updated.activeBrowserTabId).toBe('b1');
+		// The tab is still created and ordered, just not focused.
+		expect(updated.terminalTabs).toHaveLength(1);
+		expect(updated.unifiedTabOrder).toContainEqual({ type: 'terminal', id: 'new-tab' });
+	});
+
+	it('mints a coworkingId starting at 1 and increments the session counter', () => {
+		const session = createMockSession();
+		const tab = createMockTerminalTab({ id: 'new-tab' });
+		const updated = addTerminalTab(session, tab);
+		expect(updated.terminalTabs![0].coworkingId).toBe(1);
+		expect(updated.nextCoworkingId).toBe(2);
+	});
+
+	it('clamps nextCoworkingId against existing ids even when the counter is set but stale', () => {
+		// Persisted counter is 3, but an existing tab already carries id=10. Without the
+		// Math.max clamp we'd hand out term:3 - a duplicate of nothing yet, but the next
+		// few adds would collide with the existing 10. The clamp must jump past it.
+		const existingTab = createMockTerminalTab({ id: 'old', coworkingId: 10 });
+		const session = createMockSession({
+			terminalTabs: [existingTab],
+			activeTerminalTabId: 'old',
+			unifiedTabOrder: [{ type: 'terminal', id: 'old' }],
+			nextCoworkingId: 3,
+		});
+		const updated = addTerminalTab(session, createMockTerminalTab({ id: 'new' }));
+		const newTab = updated.terminalTabs!.find((t) => t.id === 'new');
+		expect(newTab?.coworkingId).toBe(11);
+		expect(updated.nextCoworkingId).toBe(12);
+	});
+
+	it('falls back to max(existing coworkingId)+1 when nextCoworkingId is missing (legacy migration)', () => {
+		// Simulates a session deserialized from disk before nextCoworkingId existed:
+		// the existing tab already carries coworkingId=7, so a fresh add must mint 8 - not 1.
+		const existingTab = createMockTerminalTab({ id: 'old', coworkingId: 7 });
+		const session = createMockSession({
+			terminalTabs: [existingTab],
+			activeTerminalTabId: 'old',
+			unifiedTabOrder: [{ type: 'terminal', id: 'old' }],
+			// nextCoworkingId intentionally omitted to mimic legacy persisted state
+		});
+		const updated = addTerminalTab(session, createMockTerminalTab({ id: 'new' }));
+		const newTab = updated.terminalTabs!.find((t) => t.id === 'new');
+		expect(newTab?.coworkingId).toBe(8);
+		expect(updated.nextCoworkingId).toBe(9);
+	});
+
+	it('coworkingId is monotonic and never reused after close', () => {
+		let session = createMockSession();
+		session = addTerminalTab(session, createMockTerminalTab({ id: 'a' })); // id=1
+		session = addTerminalTab(session, createMockTerminalTab({ id: 'b' })); // id=2
+		session = addTerminalTab(session, createMockTerminalTab({ id: 'c' })); // id=3
+		// Drop the middle tab manually (closeTerminalTab path tested elsewhere) and add another.
+		session = {
+			...session,
+			terminalTabs: session.terminalTabs!.filter((t) => t.id !== 'b'),
+		};
+		session = addTerminalTab(session, createMockTerminalTab({ id: 'd' })); // must be id=4, not 2
+		const ids = session.terminalTabs!.map((t) => t.coworkingId);
+		expect(ids).toContain(1);
+		expect(ids).toContain(3);
+		expect(ids).toContain(4);
+		expect(ids).not.toContain(2);
 	});
 
 	it('preserves existing tabs', () => {

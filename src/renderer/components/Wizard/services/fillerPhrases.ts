@@ -180,7 +180,7 @@ const INITIAL_QUESTIONS = [
 	"What's the idea? A coding project? Research? Share away.",
 	'Tell me your vision. What are we building?',
 	"What's calling to you? What project should we tackle?",
-	"I'm curious—what are we creating together?",
+	"I'm curious - what are we creating together?",
 	"What project is on deck? Let's hear the details.",
 	'What do you have in mind? Code? Documentation? Other?',
 	"So, what's the project du jour? Tell me everything.",

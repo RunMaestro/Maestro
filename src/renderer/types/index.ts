@@ -9,6 +9,7 @@ export { isValidThemeId } from '../../shared/theme-types';
 
 // Re-export types from shared location
 export type {
+	AdditionalDirectory,
 	AgentError,
 	AgentErrorType,
 	AgentErrorRecovery,
@@ -24,6 +25,7 @@ export type {
 	BatchDocumentEntry,
 	PlaybookDocumentEntry,
 	Playbook,
+	PlaybookStatus,
 	TaskSelectionMode,
 	ThinkingMode,
 	WorktreeRunTarget,
@@ -36,6 +38,8 @@ import type { SymphonySessionMetadata } from '../../shared/symphony-types';
 
 // Import for extension in this file
 import type {
+	AdditionalDirectory,
+	SessionWorktreeConfig,
 	WorktreeConfig as BaseWorktreeConfig,
 	WorktreeRunTarget,
 	BatchDocumentEntry,
@@ -43,6 +47,7 @@ import type {
 	ToolType,
 	ThinkingMode,
 	TaskSelectionMode,
+	PlaybookStatus,
 } from '../../shared/types';
 
 // Re-export group chat types from shared location
@@ -57,6 +62,7 @@ export type {
 } from '../../shared/group-chat-types';
 // Import AgentError for use within this file
 import type { AgentError, SessionCliActivity } from '../../shared/types';
+import type { AgentDelegationKind } from '../../shared/agentDelegation';
 import type { ComposerCommandMode } from '../utils/shellCommandInput';
 import type { MindMapLayoutType } from '../components/DocumentGraph/layoutTypes';
 
@@ -72,6 +78,7 @@ export type UsageDashboardViewMode =
 	| 'agents'
 	| 'groups'
 	| 'agent-overview'
+	| 'tokens'
 	| 'activity'
 	| 'autorun'
 	| 'anthropic-usage'
@@ -227,18 +234,17 @@ export interface LogEntry {
 	};
 	// For user messages - tracks if message was successfully delivered to the agent
 	delivered?: boolean;
+	// For user messages written by a queue dispatch: the id of the QueuedItem
+	// this card was written for. A dispatch appends the card BEFORE the spawn,
+	// so a spawn that throws leaves a card for a prompt no model ever saw. The
+	// stamp lets the failure path remove exactly that card (see
+	// applyQueuedItemDispatchFailure) instead of matching on text, which would
+	// also delete an identical message the user really did send earlier.
+	queuedItemId?: string;
 	// For user messages - tracks if message was sent in read-only mode
 	readOnly?: boolean;
 	// For user messages - tracks if message was sent via forced parallel execution
 	forceParallel?: boolean;
-	// For user messages sent while an Auto Run was in flight: this message is a
-	// steering note, not a conversation turn. It rides in front of the next
-	// task's prompt instead of spawning an agent of its own.
-	//   'pending'   - parked, waiting for the next task to pick it up
-	//   'delivered' - handed to a task's prompt
-	//   'dropped'   - cancelled by the operator before any task saw it
-	// See shared/autorunSteering.ts and services/autoRunSteering.ts.
-	steeringNote?: 'pending' | 'delivered' | 'dropped';
 	// For error entries - stores the full AgentError for "View Details" functionality
 	agentError?: AgentError;
 	// For tool execution entries - stores tool state and details
@@ -248,9 +254,47 @@ export interface LogEntry {
 			input?: unknown;
 			output?: unknown;
 		};
+		/**
+		 * For tool entries produced inside a subagent: the `toolCallId` of the
+		 * parent tool call that spawned it (claude-code's Task tool). The
+		 * transcript nests these badges under the matching parent entry; entries
+		 * whose parent is not in the log render flat. Only claude-code sets it.
+		 */
+		parentToolUseId?: string;
 		hiddenProgress?: {
 			kind: 'thinking' | 'tool';
 			toolName?: string;
+		};
+		// Provenance for a cross-agent (@mention) response entry: this AI entry
+		// was produced by a DIFFERENT agent that the user consulted via `@target`.
+		// Phase 03 stamps it; Phase 04 renders the attribution pill from it.
+		crossAgent?: {
+			/** Correlates with the CrossAgentRequest that produced this entry. */
+			requestId: string;
+			/** The consulted agent's (target) session id. */
+			fromSessionId: string;
+			/**
+			 * The consult tab on the target agent that holds the persisted copy of
+			 * this exchange. The jump arrow deep-links to it so it lands on the actual
+			 * conversation, not a blank agent. Absent on older entries.
+			 */
+			fromTabId?: string;
+			/** The consulted agent's display name. */
+			fromAgentName: string;
+			/** The consulted agent's tool type (for the provider icon). */
+			fromToolType: ToolType;
+			/**
+			 * True while chunks are still streaming in (Phase 03 sets `!done`);
+			 * flips to false on the terminal chunk. Phase 04's pill shows a
+			 * spinner and pulses the bubble border while this is true.
+			 */
+			streaming?: boolean;
+			/**
+			 * Set on the terminal failure chunk (Phase 05). When present the
+			 * consulted agent could not respond; the bubble renders a red-tinted
+			 * error variant instead of the normal accent wash.
+			 */
+			error?: string;
 		};
 	};
 	// How this turn was captured. 'structured' (default) is the normal JSON-stream
@@ -328,6 +372,32 @@ export interface LogEntry {
 		/** Whether it returned on schedule or the user pulled it back early. */
 		resolution: 'woke' | 'unsnoozed';
 	};
+	// Marks a hand-off this agent made to ANOTHER agent from its own shell
+	// (`maestro-cli dispatch` / `ask`), the counterpart of the attribution header
+	// a typed @mention's reply carries. Written by services/agentDelegation.ts; a
+	// dispatch never changes afterwards, an ask is settled once when the answer
+	// lands. See components/AgentDelegationCard.tsx.
+	delegation?: {
+		kind: AgentDelegationKind;
+		/** The agent the work or question went to. */
+		toSessionId: string;
+		/** The tab it landed in, when known. The jump arrow deep-links to it. */
+		toTabId?: string;
+		/** The target's display name at the time of the hand-off. */
+		toAgentName: string;
+		/** The target's provider, for the glyph and label. */
+		toToolType: ToolType;
+		/** One line of what was handed over. */
+		subject: string;
+		/** The dispatch opened a fresh tab on the target. */
+		newTab?: boolean;
+		/** The dispatch joined the target's execution queue. */
+		queued?: boolean;
+		/** Ask only: `pending` until the answer lands, then how it ended. */
+		status?: 'pending' | 'done' | 'error' | 'canceled';
+		/** Ask only: why no answer came back. */
+		error?: string;
+	};
 }
 
 // Queued item for the session-level execution queue
@@ -396,6 +466,20 @@ export interface QueuedItem {
 	// Held/paused: kept in the queue (preserving order) but skipped by every
 	// dispatch path until the user resumes it. See utils/executionQueue.ts.
 	paused?: boolean;
+	// Hold set when the process ownership probe cannot reach main. The
+	// item becomes runnable only after bridge reconciliation confirms ownership.
+	waitingForConnection?: boolean;
+	// This message `@mentions` another agent, and that consult has NOT fired yet.
+	// It fires when the item is dispatched (agentStore.processQueuedItem), so the
+	// mentioned agent is pulled in at the moment the message becomes the agent's
+	// turn - not when the user typed it into a queue that was minutes deep.
+	crossAgentMention?: boolean;
+	// The message is addressed ONLY at the mentioned agent(s) - it leads with an
+	// `@agent` mention, so this agent does not answer it. Dispatching the item
+	// fires the consult and nothing else: no spawn, no turn. It still occupies a
+	// queue slot, because its POSITION is what the user is expressing ("finish
+	// that, then ask them"). Always paired with `crossAgentMention`.
+	crossAgentOnly?: boolean;
 	// Model/effort captured when the user queued this item. Both the spawn and
 	// the transcript pills read it, so a queued turn runs under - and is labeled
 	// with - the configuration it was queued with, not whatever is selected by
@@ -429,14 +513,11 @@ export interface WorktreeConfig extends BaseWorktreeConfig {
 }
 
 // Per-agent worktree settings, stored on parent sessions as `worktreeConfig`.
-// Distinct from `WorktreeConfig` above, which describes a single batch run's worktree.
-export interface SessionWorktreeConfig {
-	basePath: string; // Directory where worktrees are stored
-	watchEnabled: boolean; // Whether to watch for new worktrees via chokidar
-	// Shell command run inside each newly created worktree (copy .env files,
-	// run setup.sh, install deps). Blank/undefined disables it.
-	setupScript?: string;
-}
+// Distinct from `WorktreeConfig` above, which describes a single batch run's
+// worktree. The shape lives in shared/types so the CLI (`list agents --json`,
+// `show agent`) and the system prompt ({{WORKTREE_BASE_PATH}}) read the same
+// field the desktop writes.
+export type { SessionWorktreeConfig };
 
 // Worktree path validation state (used by useWorktreeValidation hook)
 export interface WorktreeValidationState {
@@ -465,6 +546,26 @@ export interface BatchRunConfig {
 	taskSelectionMode?: TaskSelectionMode; // 'task' (default) or 'document' - controls {{TASK_SELECTION_BLOCK}}
 	worktree?: WorktreeConfig; // Optional worktree configuration
 	worktreeTarget?: WorktreeRunTarget; // Optional target for dispatching to a worktree agent
+	// Per-run model override. Wins over session.customModel for this run's spawns
+	// only - the session and its interactive tabs are never modified, and the
+	// override dies with the run. Absent means "use the agent default".
+	model?: string;
+	effort?: string; // Per-run reasoning effort override, same run-scoped rules as `model`
+	// Skip the documents' MAESTRO:MODEL markers so every task runs at the
+	// override above, then the agent's settings. Run-scoped like `model`;
+	// absent means the markers apply as usual.
+	ignoreModelHints?: boolean;
+	// Auto-resume after an agent error pauses the run. All three are optional and
+	// absence means the documented default (ON, 5 minutes, 5 attempts) - see
+	// `resolveAutoResumePolicy` in shared/autorunAutoResume.ts, which is the only
+	// place that turns these into a policy.
+	autoResumeOnError?: boolean;
+	autoResumeAfterMin?: number;
+	maxAutoResumes?: number;
+	// Goal-Driven mode. Its presence is the discriminator that selects goal mode
+	// over the document/task-driven spec mode. When set, the run pursues a free-text
+	// goal instead of checking off `- [ ]` tasks. See src/shared/goalDriven/types.ts.
+	goalConfig?: import('../../shared/goalDriven/types').GoalRunConfig;
 }
 
 // Import BatchProcessingState for state machine integration
@@ -474,6 +575,18 @@ import type { BatchProcessingState } from '../hooks/batch/batchStateMachine';
 export interface BatchRunState {
 	isRunning: boolean;
 	isStopping: boolean; // Waiting for current task to finish before stopping
+
+	/**
+	 * True when this entry is a read-only MIRROR of a run owned by a different
+	 * Maestro client (see `useAutoRunStateMirror`). The run loop, its cursors,
+	 * and the refs the control actions poke all live in the owning client, so a
+	 * mirroring client can render the run but cannot steer it. Every mutator in
+	 * `useBatchControlActions` / `useBatchKillAction` bails on a mirrored entry,
+	 * and the controls that call them are disabled - a Stop button that quietly
+	 * did nothing would be worse than no Stop button. Absent (not `false`) on a
+	 * run this client actually owns.
+	 */
+	mirrored?: boolean;
 
 	// State machine integration (Phase 11)
 	// Tracks explicit processing state for invariant checking and debugging
@@ -514,6 +627,16 @@ export interface BatchRunState {
 
 	// Prompt configuration
 	customPrompt?: string; // User's custom prompt if modified
+	// Per-run model override chosen in the launch modal (empty/absent = use the
+	// session's configured model). Scoped to this run only and never persisted to
+	// the session. Read by the exit-path synopsis so per-task synopses spawn under
+	// the same model as the run's tasks, matching the CLI batch processor.
+	runModelOverride?: string;
+	// Resolved auto-resume policy for this run, stored so the agent-error
+	// listener can read it back through `getBatchStateRef` at the moment a
+	// failure lands. `null` means the run opted out. Resolved once at run start
+	// rather than per error so a run keeps the terms it was launched under.
+	autoResumePolicy?: import('../../shared/autorunAutoResume').AutoResumePolicy | null;
 	sessionIds: string[]; // Claude session IDs from each iteration
 	startTime?: number; // Timestamp when batch run started
 	cumulativeTaskTimeMs?: number; // Sum of actual task durations (most accurate work time measure)
@@ -525,6 +648,20 @@ export interface BatchRunState {
 	errorPaused?: boolean; // True if batch is paused waiting for error resolution
 	errorDocumentIndex?: number; // Which document had the error (for skip functionality)
 	errorTaskDescription?: string; // Description of the task that failed (for UI display)
+
+	// Goal-Driven mode (Goal-Driven Auto Run). The following fields are only
+	// meaningful when `goalMode` is true; in document/task mode they stay at their
+	// defaults and are ignored. See src/shared/goalDriven/types.ts.
+	goalMode?: boolean; // True when this run is pursuing a free-text goal (not documents)
+	goalProgress?: number; // Latest self-reported progress toward the goal (0-100)
+	goalRationale?: string; // One-line rationale accompanying the latest progress report
+	goalIteration?: number; // 1-based iteration number the goal loop is on
+	goalExitReason?: import('../../shared/goalDriven/types').GoalExitReason; // Why the goal run stopped
+
+	// Live playbook status parsed from .maestro/STATUS.json (feature, phase,
+	// tests, summary). Populated by the STATUS.json watcher while the run is
+	// active; cleared when the file is deleted or the run completes.
+	playbookStatus?: PlaybookStatus;
 }
 
 // Badge unlock record for history tracking
@@ -647,6 +784,7 @@ export interface AITab {
 	createdAt: number; // Timestamp for ordering
 	state: 'idle' | 'busy'; // Tab-level state for write-mode tracking
 	readOnlyMode?: boolean; // When true, agent operates in plan/read-only mode
+	permissionMode?: 'full' | 'standard' | 'readonly'; // Controls agent permission handling: full (bypass all), standard (default permission model), readonly (plan mode)
 	saveToHistory?: boolean; // When true, synopsis is requested after each completion and saved to History
 	lastSynopsisTime?: number; // Timestamp of last synopsis generation (for time-window context in prompts)
 	showThinking?: ThinkingMode; // Controls thinking display: 'off' | 'on' (temporary) | 'sticky' (persistent)
@@ -662,6 +800,34 @@ export interface AITab {
 	autoSendOnActivate?: boolean; // When true, automatically send inputValue when tab becomes active
 	wizardState?: SessionWizardState; // Per-tab inline wizard state for /wizard command
 	isGeneratingName?: boolean; // True while automatic tab naming is in progress
+	/**
+	 * When set, this tab holds the persisted transcript of a cross-agent consult:
+	 * another agent (`sourceSessionId` + `sourceTabId`) @mentioned this agent and
+	 * the answer was written here. It is the continuity key - a later mention from
+	 * the SAME source tab reuses this tab (and resumes its `agentSessionId`), while
+	 * a mention from a fresh source tab creates a new consult tab. Absent on normal
+	 * user-driven tabs.
+	 */
+	consultOrigin?: {
+		/** The calling agent (session) that consulted this agent. */
+		sourceSessionId: string;
+		/** The AI tab within the calling agent the mention was typed in. */
+		sourceTabId: string;
+	};
+	/**
+	 * When true, the tab exists as a data container but is NOT surfaced in the tab
+	 * strip or reachable by tab-cycling shortcuts. Set on consult tabs created by an
+	 * inbound `@mention`: the consulted agent's workspace belongs to the user, and a
+	 * mention typed in some OTHER agent must not spawn tabs there unprompted.
+	 *
+	 * The tab is revealed (flag cleared, permanently) the first time the user opens
+	 * it deliberately - clicking the attribution header on the response bubble, which
+	 * deep-links straight to this tab. See `revealAiTab`.
+	 *
+	 * Its `unifiedTabOrder` ref is kept while hidden, so revealing restores the tab
+	 * to its original position rather than appending it to the end of the strip.
+	 */
+	hidden?: boolean;
 	/**
 	 * Parked per-provider state for every provider this tab is NOT currently
 	 * using. The live provider's values stay in `agentSessionId` / `usageStats` /
@@ -738,6 +904,9 @@ export interface FilePreviewTab {
 	id: string; // Unique tab ID (UUID)
 	path: string; // Full file path
 	name: string; // Filename without extension (displayed as tab name)
+	// User-assigned tab name. When set, it locks the displayed label and overrides
+	// both the filename and the ambiguity-disambiguated label until the user clears it.
+	customName?: string;
 	extension: string; // File extension with dot (e.g., '.md', '.ts') - shown as badge
 	content: string; // File content (stored directly for simplicity - file previews are typically small)
 	scrollTop: number; // Saved scroll position
@@ -785,6 +954,10 @@ export interface TerminalTab {
 	exitCode?: number; // Exit code when state === 'exited'
 	scrollTop?: number; // Saved scroll position (restored on tab re-focus)
 	searchQuery?: string; // Preserved search query for the xterm.js search addon
+	// Stable, monotonic, per-session readable id used by the coworking MCP server
+	// (e.g. shown as "term:3"). Assigned on add, never reused on close. Undefined
+	// for tabs that predate the coworking feature; treated as "no pill, no MCP exposure."
+	coworkingId?: number;
 	// Command to run automatically each time the PTY is spawned for this tab
 	// (e.g. on app restart). Empty/undefined disables the feature.
 	startupCommand?: string;
@@ -810,6 +983,13 @@ export interface BrowserTab {
 	canGoForward: boolean; // Navigation state for toolbar forward button
 	isLoading: boolean; // Current loading state for toolbar and restore UX
 	favicon?: string | null; // Optional site icon URL/data for tab chrome
+	// When true, this tab is hidden from coworking agents: excluded from the
+	// registry so list_browsers / read_browser / interaction never see it. Persisted.
+	hiddenFromAgent?: boolean;
+	// When true, this is an incognito tab: it uses an in-memory (non-persist:)
+	// partition and is dropped from persisted session state, so it never
+	// survives an app restart.
+	ephemeral?: boolean;
 	// Runtime-only: populated by the embedded Electron browser surface, never persisted
 	webContentsId?: number;
 }
@@ -817,8 +997,14 @@ export interface BrowserTab {
 /**
  * Reference to any tab in the unified tab system.
  * Used for unified tab ordering across different tab types.
+ *
+ * The `'group'` kind lets a tiled TabGroup appear as a single entry in the tab
+ * strip. Unlike the other kinds (which point at a tab in aiTabs/filePreviewTabs/
+ * terminalTabs/browserTabs), a group ref's `id` points at a TabGroup in
+ * `Session.tabGroups`; the group's own layout still references the underlying
+ * tabs by leaf. See PanelLayoutNode below.
  */
-export type UnifiedTabRef = { type: 'ai' | 'file' | 'terminal' | 'browser'; id: string };
+export type UnifiedTabRef = { type: 'ai' | 'file' | 'terminal' | 'browser' | 'group'; id: string };
 
 /**
  * Unified tab entry for rendering in TabBar.
@@ -829,18 +1015,113 @@ export type UnifiedTab =
 	| { type: 'ai'; id: string; data: AITab }
 	| { type: 'file'; id: string; data: FilePreviewTab }
 	| { type: 'terminal'; id: string; data: TerminalTab }
-	| { type: 'browser'; id: string; data: BrowserTab };
+	| { type: 'browser'; id: string; data: BrowserTab }
+	| { type: 'group'; id: string; data: TabGroup };
+
+/**
+ * A node in a recursive split-pane layout tree (tmux-style tiling).
+ *
+ * A leaf does NOT own tab data - it references an existing tab by
+ * `{ type, id }` (a UnifiedTabRef). The actual tab lives in its current
+ * `aiTabs`/`filePreviewTabs`/`terminalTabs`/`browserTabs` array, so tiling a
+ * tab never copies or moves its state; the layout only describes where the
+ * tab renders. A split arranges its children horizontally (`row`) or
+ * vertically (`column`), with `sizes` holding one fractional weight per child
+ * (weights sum to 1).
+ */
+export type PanelLayoutNode =
+	| { kind: 'leaf'; id: string; tab: UnifiedTabRef }
+	| {
+			kind: 'split';
+			id: string;
+			direction: 'row' | 'column';
+			children: PanelLayoutNode[];
+			sizes: number[];
+	  };
+
+/**
+ * A tiled pane's content-box rectangle relative to the main-panel container,
+ * published by TiledLayout so keep-alive terminal/browser overlays can be
+ * repositioned onto each pane (they live at the panel level and can't render
+ * inline). See MainPanelContent / TiledLayout (Phase 04 tab tiling).
+ */
+export interface PaneRect {
+	top: number;
+	left: number;
+	width: number;
+	height: number;
+}
+
+/** Pane rects keyed by `tabRefKey` (e.g. `terminal:<id>` / `browser:<id>`). */
+export type PaneRects = Map<string, PaneRect>;
+
+/**
+ * A tiled group of tabs shown as one entry in the tab strip.
+ *
+ * `layout` is the recursive split tree whose leaves reference existing tabs
+ * (see PanelLayoutNode - leaves never own tab data). `focusedPaneId` is the id
+ * of the leaf node that currently has focus within the group (null when none).
+ * Groups live on `Session.tabGroups` and are strictly intra-session.
+ */
+export interface TabGroup {
+	id: string;
+	name: string;
+	/**
+	 * Optional emoji shown on the group's chip in place of the default grid glyph.
+	 * Picked via the shared emoji selector (the same one agent-list groups use).
+	 * Undefined/empty falls back to the grid icon. Rides `Session.tabGroups` through
+	 * persistence, so it survives restarts.
+	 */
+	emoji?: string;
+	layout: PanelLayoutNode;
+	focusedPaneId: string | null;
+	createdAt: number;
+}
+
+/**
+ * Where a closed tab sat inside a tiled group, captured at close time so
+ * Cmd+Shift+T can put the pane back in its tile instead of appending a
+ * standalone chip to the end of the strip.
+ *
+ * The pane is described relative to an ANCHOR (its nearest sibling leaf's tab
+ * ref) rather than by leaf id or index: leaf ids are regenerated whenever the
+ * tree is rebuilt, and a bare index goes stale as soon as another pane moves.
+ * An anchor survives both, and is what the restore re-splits against.
+ *
+ * `groupName`/`groupEmoji` are kept so a group that AUTO-DISSOLVED on the way
+ * down to one pane can be recreated with its original identity intact.
+ */
+export interface ClosedTabTilePlacement {
+	/** Group the pane belonged to at close time (reused when recreating it). */
+	groupId: string;
+	groupName: string;
+	groupEmoji?: string;
+	/** Nearest sibling leaf's tab ref - the pane the restore splits against. */
+	anchorRef: UnifiedTabRef;
+	/** Direction of the split that held the closed pane and its anchor. */
+	direction: 'row' | 'column';
+	/** True when the closed pane sat before (left of / above) the anchor. */
+	before: boolean;
+}
 
 /**
  * Unified closed tab entry for undo functionality (Cmd+Shift+T).
  * Can hold an AITab, FilePreviewTab, or TerminalTab with type discrimination.
- * Uses unifiedIndex for restoring position in the unified tab order.
+ * Uses unifiedIndex for restoring position in the unified tab order, or
+ * `tilePlacement` when the tab was a pane in a tiled group.
  */
+type ClosedTabEntryBase = {
+	unifiedIndex: number;
+	closedAt: number;
+	/** Set only when the tab was tiled at close time; undefined for standalone tabs. */
+	tilePlacement?: ClosedTabTilePlacement;
+};
+
 export type ClosedTabEntry =
-	| { type: 'ai'; tab: AITab; unifiedIndex: number; closedAt: number }
-	| { type: 'file'; tab: FilePreviewTab; unifiedIndex: number; closedAt: number }
-	| { type: 'terminal'; tab: TerminalTab; unifiedIndex: number; closedAt: number }
-	| { type: 'browser'; tab: BrowserTab; unifiedIndex: number; closedAt: number };
+	| ({ type: 'ai'; tab: AITab } & ClosedTabEntryBase)
+	| ({ type: 'file'; tab: FilePreviewTab } & ClosedTabEntryBase)
+	| ({ type: 'terminal'; tab: TerminalTab } & ClosedTabEntryBase)
+	| ({ type: 'browser'; tab: BrowserTab } & ClosedTabEntryBase);
 
 /**
  * A snoozed AI tab, held out of the tab bar until `wakeAt`.
@@ -893,6 +1174,25 @@ interface SnoozedTabEntryBase {
 	snoozedAt: number; // When the user snoozed it
 	wakeAt: number; // When it should come back (ms epoch)
 	note?: string; // Optional note-to-self surfaced in the wake notification
+	// Optional prompt sent to the agent the moment the tab is restored. Only an
+	// AI tab (or a group with an AI pane) can carry one - see
+	// `resolveWakePromptTabId` in utils/snoozeHelpers.ts.
+	wakePrompt?: string;
+}
+
+/**
+ * The free-text a snooze carries. Both fields are optional and both are edited
+ * together in the snooze dialog, so they travel as one object rather than as a
+ * growing tail of positional arguments.
+ *
+ * On a reschedule the two are read per field: an absent field keeps whatever
+ * the snooze already had, and an empty string clears it.
+ */
+export interface SnoozeContent {
+	/** Note-to-self, surfaced in the wake notification and the return card. */
+	note?: string;
+	/** Prompt dispatched to the agent the instant the tab comes back. */
+	wakePrompt?: string;
 }
 
 /**
@@ -911,15 +1211,55 @@ interface SnoozedTabEntryBase {
  * - `terminal` restores the tab and its position, NOT the shell. A PTY cannot
  *   be parked; it comes back as a fresh shell at the same cwd. That is the
  *   promise: the layout survives, the process does not.
+ * - `group` parks a whole tiled group. See {@link SnoozedGroupPayload}.
  */
 export type SnoozedTabEntry =
 	| ({ type: 'ai'; tab: AITab } & SnoozedTabEntryBase)
 	| ({ type: 'file'; tab: FilePreviewTab } & SnoozedTabEntryBase)
 	| ({ type: 'terminal'; tab: TerminalTab } & SnoozedTabEntryBase)
-	| ({ type: 'browser'; tab: BrowserTab } & SnoozedTabEntryBase);
+	| ({ type: 'browser'; tab: BrowserTab } & SnoozedTabEntryBase)
+	| (SnoozedGroupPayload & SnoozedTabEntryBase);
+
+/**
+ * One pane of a snoozed group - the same per-kind payload the single-tab
+ * variants carry, minus the snooze bookkeeping, which lives on the group.
+ * A group never nests, so `group` is not a member kind.
+ */
+export type SnoozedGroupMember =
+	| { type: 'ai'; tab: AITab }
+	| { type: 'file'; tab: FilePreviewTab }
+	| { type: 'terminal'; tab: TerminalTab }
+	| { type: 'browser'; tab: BrowserTab };
+
+/**
+ * A parked tiled group.
+ *
+ * `group` carries the whole {@link TabGroup} - crucially its `layout` tree and
+ * `focusedPaneId` - so the wake replays the arrangement verbatim rather than
+ * re-deriving it from a member list. Split direction, sizes and the focused
+ * pane are all inside `layout`, which is why nothing extra is stored for them.
+ *
+ * `members` holds each pane's tab, because the layout tree only references
+ * panes by `UnifiedTabRef` and those tabs are removed from the session while
+ * the group sleeps. Order is the tree's own leaf order, so a restore that has
+ * to drop a member (a file whose path is gone) can still rebuild the rest.
+ *
+ * Note the shape: this variant has `group`/`members` and NO `tab`. Anything
+ * reading `entry.tab` must narrow on `type` first - the compiler enforces it.
+ */
+export interface SnoozedGroupPayload {
+	type: 'group';
+	group: TabGroup;
+	members: SnoozedGroupMember[];
+}
+
+/** The group variant of {@link SnoozedTabEntry}, named so guards can return it. */
+export type SnoozedGroupEntry = SnoozedGroupPayload & SnoozedTabEntryBase;
 
 export interface Session {
 	id: string;
+	/** Browser-only marker. Main restores omitted content on every partial save. */
+	deferredContent?: import('../../shared/deferredSessionContent').DeferredSessionContent;
 	groupId?: string;
 	name: string;
 	toolType: ToolType;
@@ -927,6 +1267,10 @@ export interface Session {
 	cwd: string;
 	fullPath: string;
 	projectRoot: string; // The agent's working directory root (used for provider session storage). Moves only through withWorkingDirectory()
+	// Extra directories the agent may read from and/or write to beyond its
+	// working directory. Prompt-level grants: rendered into the Maestro system
+	// prompt as {{ADDITIONAL_DIRECTORIES}}, not enforced by a sandbox.
+	additionalDirectories?: AdditionalDirectory[];
 	createdAt: number; // Timestamp when the session was created
 	aiLogs: LogEntry[];
 	// DEPRECATED: Legacy shell output logs - terminal tabs use xterm.js with direct PTY streaming
@@ -1017,12 +1361,23 @@ export interface Session {
 	agentCommands?: { command: string; description: string; prompt?: string }[];
 	// Bookmark flag - bookmarked sessions appear in a dedicated section at the top
 	bookmarked?: boolean;
+	// Pianola flag - the single pinned autonomous-manager agent. Rendered at the
+	// very top of the Left Bar, cannot be deleted/renamed/moved/bookmarked, and is
+	// excluded from the normal session categories. Gated by the `pianola` Encore flag.
+	isPianola?: boolean;
 	// Pending AI command that will trigger a synopsis on completion (e.g., '/commit')
 	pendingAICommandForSynopsis?: string;
 	// Custom batch runner prompt (persisted per session)
 	batchRunnerPrompt?: string;
 	// Timestamp when the batch runner prompt was last modified
 	batchRunnerPromptModifiedAt?: number;
+	// Goal-Driven Auto Run: which Auto Run tab the user last used and the goal
+	// config they entered, persisted so the modal reopens in the same mode with
+	// the same inputs (NOT a playbook .md file). See src/shared/goalDriven/types.ts.
+	// NOTE: named `autoRunDriveMode` (not `autoRunMode`) because `autoRunMode`
+	// already exists above for the document editor's edit/preview state.
+	autoRunDriveMode?: 'spec' | 'goal';
+	autoRunGoalConfig?: import('../../shared/goalDriven/types').GoalRunConfig;
 	// CLI activity - present when CLI is running a playbook on this session.
 	// Shape lives in shared/types.ts (SessionCliActivity) so the persistence
 	// diff comparator stays in lock-step with this producer's contract.
@@ -1058,12 +1413,24 @@ export interface Session {
 	terminalTabs: TerminalTab[];
 	// Currently active terminal tab ID (null if an AI or file tab is active)
 	activeTerminalTabId: string | null;
+	// Monotonic counter for TerminalTab.coworkingId (used by the coworking MCP server).
+	// Increments on add, never decrements - readable ids never repeat within a session.
+	nextCoworkingId?: number;
 
 	// Unified tab ordering - determines visual order of all tabs (AI, file, browser, and terminal)
 	unifiedTabOrder: UnifiedTabRef[];
 	// Stack of recently closed tabs (AI, file, browser, and terminal) for undo (max 25, runtime-only, not persisted)
 	// Used by Cmd+Shift+T to restore any recently closed tab
 	unifiedClosedTabHistory: ClosedTabEntry[];
+
+	// Tab tiling (split panes) - each TabGroup renders several existing tabs side
+	// by side inside one tab-strip chip. Groups reference tabs by leaf, so the
+	// underlying tab data still lives in aiTabs/filePreviewTabs/etc.
+	tabGroups: TabGroup[];
+	// Currently active tab group id, or null when a standalone (non-tiled) tab is
+	// active. When set to an existing group, the main panel renders that group's
+	// tiled layout instead of the single-view content.
+	activeGroupId: string | null;
 
 	// Saved scroll position for terminal/shell output view
 	terminalScrollTop?: number;
@@ -1132,6 +1499,20 @@ export interface Session {
 	customEffort?: string; // Custom effort/reasoning level (overrides agent-level)
 	customProviderPath?: string; // Custom provider path (overrides agent-level)
 	customContextWindow?: number; // Custom context window size (overrides agent-level)
+	/**
+	 * Provenance of `customContextWindow` (finding AD1).
+	 *
+	 * `'user-edited'` means a human deliberately set this number and it outranks
+	 * a provider-reported window. Anything else - including ABSENT, which is
+	 * every value stored before AD1 shipped - means the value cannot be
+	 * distinguished from a materialized creation-time default, so P1's
+	 * precedence stands and the provider's own report wins.
+	 *
+	 * Deliberately NOT inferred from the value: an orphaned `400000` looks
+	 * nothing like an agent default yet is not a choice either, so any
+	 * value-comparison heuristic gets exactly the codex case wrong.
+	 */
+	contextWindowSource?: 'user-edited';
 	documentGraphLayout?: MindMapLayoutType; // Document Graph layout algorithm preference (overrides global default)
 	// Per-session SSH remote configuration (overrides agent-level SSH config)
 	// When set, this session uses the specified SSH remote; when not set, runs locally
@@ -1174,6 +1555,16 @@ export interface Session {
 	retryOnAvailabilityErrors?: boolean;
 	retryOnTokenExhaustion?: boolean;
 
+	// Codex only. When true, hitting a plan-quota wall spends one of the
+	// account's rate-limit reset credits automatically instead of waiting for the
+	// window to reopen. Defaults OFF, and unlike the two flags above that default
+	// is deliberate rather than historical: credits are finite, expire, and
+	// cannot be refunded, so unattended spending is something a user opts into
+	// rather than something they discover after the fact. See
+	// `shouldAutoSpendCredit` in shared/codexResetCredits for the (deliberately
+	// narrow) conditions under which the automation actually fires.
+	codexAutoResetOnExhaustion?: boolean;
+
 	// Last resolved Claude headless-mode state (only meaningful for Claude Code
 	// sessions with `enableMaestroP === true`). The spawner writes this after
 	// each `selectMode()` call so the context-window popover, sticky-limit
@@ -1202,6 +1593,7 @@ export interface ProcessConfig {
 	readOnlyMode?: boolean; // For read-only/plan mode (uses agent's readOnlyArgs)
 	modelId?: string; // For model selection (uses agent's modelArgs builder)
 	yoloMode?: boolean; // For YOLO/full-access mode (uses agent's yoloModeArgs)
+	permissionMode?: 'full' | 'standard' | 'readonly'; // Preferred over readOnlyMode + yoloMode
 	// Per-session overrides (take precedence over agent-level config)
 	sessionCustomPath?: string;
 	sessionCustomArgs?: string;
@@ -1209,6 +1601,10 @@ export interface ProcessConfig {
 	sessionCustomModel?: string;
 	sessionCustomEffort?: string;
 	sessionCustomContextWindow?: number;
+	// Session's Additional Directories. Providers that declare
+	// `supportsAdditionalDirectories` turn these into native grant flags
+	// (e.g. --add-dir); every agent also gets them via the system prompt.
+	sessionAdditionalDirectories?: AdditionalDirectory[];
 	// Per-session SSH remote config (takes precedence over agent-level SSH config)
 	sessionSshRemoteConfig?: {
 		enabled: boolean;
@@ -1218,9 +1614,9 @@ export interface ProcessConfig {
 	};
 	// System prompt delivery (separate from user message for token efficiency)
 	appendSystemPrompt?: string; // System prompt to pass via --append-system-prompt or embed in prompt
-	// Windows command line length workaround
-	sendPromptViaStdin?: boolean; // If true, send the prompt via stdin as JSON instead of command line
-	sendPromptViaStdinRaw?: boolean; // If true, send the prompt via stdin as raw text instead of command line
+	// NOTE: prompt delivery (argv vs stdin) is decided by the main process in
+	// handleProcessSpawn - it depends on the HOST platform and the agent's CLI,
+	// neither of which a renderer (possibly a browser on another OS) can know.
 	/** Who asked for this turn: a human ('user') or Auto Run ('auto'). Stamped into
 	 *  the spawned process env as MAESTRO_QUERY_SOURCE. Cue runs never come through
 	 *  this IPC path - they spawn in the main process and mark themselves 'cue'. */
@@ -1347,10 +1743,38 @@ export interface LeaderboardSubmitResponse {
 	};
 }
 
-// Encore Features - capabilities that graduated out of opt-in gating and now
-// ship on by default. Defined in src/shared/encoreFeatures.ts alongside
-// DEFAULT_ENCORE_FEATURES so the main process and CLI resolve the same shape.
-export type { EncoreFeatureFlags } from '../../shared/encoreFeatures';
+// Encore Features - capabilities behind a single toggle. The four graduated
+// ones ship ON by default (see ENCORE_FEATURE_DEFAULTS in
+// src/shared/encoreFeatureDefaults.ts); the rest start off.
+// Each key is a feature ID, value indicates whether it's enabled
+export interface EncoreFeatureFlags {
+	directorNotes: boolean;
+	usageStats: boolean;
+	symphony: boolean;
+	maestroCue: boolean;
+	pianola: boolean;
+	plugins: boolean;
+	// Coworking - agents can read terminal scrollback via per-agent MCP server.
+	// Off by default. Optional so existing literals (older test fixtures, persisted
+	// settings without the key) continue to type-check.
+	coworking?: boolean;
+	// OpenCode Server - run local interactive OpenCode via a shared `opencode
+	// serve` process (SDK) instead of a per-prompt CLI spawn. Off by default.
+	// Optional so existing literals (older fixtures, persisted settings without
+	// the key) continue to type-check.
+	opencodeServer?: boolean;
+	// Concerto - agents compose native movement panels + cadenza HUD cards.
+	// Off by default. Optional so existing literals (older test fixtures, persisted
+	// settings without the key) continue to type-check.
+	concerto?: boolean;
+	// Groups+ - nested groups, standard folder icons, and label colors.
+	// Off by default. Optional so older fixtures and persisted settings remain valid.
+	groupsPlus?: boolean;
+	// Web Login - require a username and password on the web interface, with
+	// per-account attribution on History and stats. Off by default. Optional so
+	// older fixtures and persisted settings remain valid.
+	webLogin?: boolean;
+}
 
 // Director's Notes settings for synopsis generation
 export interface DirectorNotesSettings {

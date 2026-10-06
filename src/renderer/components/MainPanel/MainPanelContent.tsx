@@ -6,11 +6,30 @@ import {
 	TerminalView,
 	createTabStateChangeHandler,
 	createTabPidChangeHandler,
+	type TerminalViewHandle,
 } from '../TerminalView';
 import { InputArea } from '../InputArea';
 import type { FilePreviewHandle } from '../FilePreview';
 import { WizardConversationView, DocumentGenerationView } from '../InlineWizard';
 import { BrowserTabView, type BrowserTabViewHandle } from './BrowserTabView';
+import {
+	TiledLayout,
+	type PaneChatActions,
+	type PaneFileActions,
+	type PaneTabActions,
+} from './TiledLayout';
+import { PaneDropZones } from './PaneDropZones';
+import { PaneDragOverlay } from './PaneDragOverlay';
+import {
+	findLeafById,
+	findLeafByTabRef,
+	focusPaneInSession,
+	normalizeTabGroups,
+	resolveTabRefTitle,
+	splitPaneRectsByKind,
+} from '../../utils/panelLayout';
+import { filePaneAttrs, focusPaneInputWhenReady } from '../../utils/paneFocus';
+import { updateSessionWith } from '../../stores/sessionStore';
 import { useBrowserTabMounting } from '../../hooks/browser/useBrowserTabMounting';
 import { useUIStore } from '../../stores/uiStore';
 import { useSettingsStore } from '../../stores/settingsStore';
@@ -26,8 +45,9 @@ import type {
 	BatchRunState,
 	BrowserTab,
 	FilePreviewTab,
-	ThinkingItem,
 	QueuedItem,
+	UnifiedTabRef,
+	PaneRects,
 	QueuedItemEditPatch,
 } from '../../types';
 import type { SlashCommand } from './types';
@@ -52,6 +72,15 @@ const FilePreview = React.lazy(() =>
 	import('../FilePreview').then((m) => ({ default: m.FilePreview }))
 );
 
+/**
+ * Delay before moving DOM focus into a newly focused tiled pane. Matches the
+ * 50ms the rest of the app waits before a post-commit `.focus()` (see
+ * FOCUS_AFTER_RENDER_DELAY_MS in useMainKeyboardHandler, and TerminalView's own
+ * focus-on-tab-change): the pane has to render and unhide before xterm will
+ * accept focus.
+ */
+const PANE_FOCUS_DELAY_MS = 50;
+
 export interface MainPanelContentProps {
 	// Core state (guaranteed by parent guard)
 	activeSession: Session;
@@ -75,13 +104,15 @@ export interface MainPanelContentProps {
 	handleFilePreviewSearchQueryChange: (searchQuery: string) => void;
 	handleFilePreviewReload: () => void;
 	handleBrowserTabUpdate?: (sessionId: string, tabId: string, updates: Partial<BrowserTab>) => void;
-	/** Ref registry for the currently-mounted BrowserTabView - used to extract the active tab's content */
-	browserViewRef?: React.MutableRefObject<import('./BrowserTabView').BrowserTabViewHandle | null>;
+	/** Ref to the active (visible) BrowserTabView handle - used to extract the active tab's content. */
+	browserViewRef?: React.MutableRefObject<BrowserTabViewHandle | null>;
+	/** Per-tab BrowserTabView handle map for ALL mounted browser tabs of the active
+	 *  agent. Lifted from MainPanel so the coworking browser responder can reach a
+	 *  mounted (possibly hidden) tab's handle without stealing focus. */
+	browserViewRefs?: React.MutableRefObject<Map<string, BrowserTabViewHandle>>;
 
 	// Terminal mounting props
-	terminalViewRefs: React.MutableRefObject<
-		Map<string, { clearActiveTerminal: () => void; focusActiveTerminal: () => void }>
-	>;
+	terminalViewRefs: React.MutableRefObject<Map<string, TerminalViewHandle>>;
 	mountedTerminalSessionIds: string[];
 	mountedTerminalSessionsRef: React.MutableRefObject<Map<string, Session>>;
 	terminalSearchOpen: boolean;
@@ -147,12 +178,12 @@ export interface MainPanelContentProps {
 	setAtMentionFilter?: (filter: string) => void;
 	atMentionStartIndex?: number;
 	setAtMentionStartIndex?: (index: number) => void;
-	atMentionSuggestions?: Array<{
-		value: string;
-		type: 'file' | 'folder';
-		displayText: string;
-		fullPath: string;
-	}>;
+	atMentionItems?: import('../../hooks/input/useMentionPicker').MentionPickerItem[];
+	atMentionCounts?: Record<import('../../hooks/input/useMentionPicker').MentionCategory, number>;
+	atMentionCategory?: import('../../hooks/input/useMentionPicker').MentionCategory;
+	setAtMentionCategory?: (
+		category: import('../../hooks/input/useMentionPicker').MentionCategory
+	) => void;
 	selectedAtMentionIndex?: number;
 	setSelectedAtMentionIndex?: (index: number) => void;
 	inputRef: React.RefObject<HTMLTextAreaElement>;
@@ -164,7 +195,6 @@ export interface MainPanelContentProps {
 	handleInputKeyDown: (e: React.KeyboardEvent<HTMLTextAreaElement>) => void;
 	handlePaste: (e: React.ClipboardEvent<HTMLTextAreaElement>) => void;
 	handleDrop: (e: React.DragEvent<HTMLElement>) => void;
-	thinkingItems: ThinkingItem[];
 	onStopBatchRun?: (sessionId?: string) => void;
 	onRemoveQueuedItem?: (itemId: string) => void;
 	onTogglePauseQueuedItem?: (itemId: string) => void;
@@ -203,6 +233,12 @@ export interface MainPanelContentProps {
 	onExitWizard?: () => void;
 	onStopWizardTurn?: (tabId?: string) => void;
 
+	// Per-kind action handlers for a tiled pane's chevron dropdown (bundled in
+	// MainPanel where the same handlers already feed the TabBar). Forwarded to
+	// TiledLayout so a hidden tiled tab still exposes its full menu.
+	paneTabActions?: PaneTabActions;
+	paneFileActions?: PaneFileActions;
+
 	// Props forwarded to child components (from MainPanelProps)
 	onDeleteLog?: (logId: string) => number | null;
 	onScrollPositionChange?: (scrollTop: number) => void;
@@ -238,7 +274,7 @@ export interface MainPanelContentProps {
 	backHistory?: { name: string; path: string; scrollTop?: number }[];
 	forwardHistory?: { name: string; path: string; scrollTop?: number }[];
 	currentHistoryIndex?: number;
-	onNavigateToIndex?: (index: number) => void;
+	onNavigateToIndex?: (index: number, tabId?: string) => void;
 	onOpenFuzzySearch?: () => void;
 	onShortcutUsed?: (shortcutId: string) => void;
 	ghCliAvailable?: boolean;
@@ -295,6 +331,7 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 		handleFilePreviewReload,
 		handleBrowserTabUpdate,
 		browserViewRef,
+		browserViewRefs: browserViewRefsProp,
 		terminalViewRefs,
 		mountedTerminalSessionIds,
 		mountedTerminalSessionsRef,
@@ -340,7 +377,10 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 		setAtMentionFilter,
 		atMentionStartIndex,
 		setAtMentionStartIndex,
-		atMentionSuggestions,
+		atMentionItems,
+		atMentionCounts,
+		atMentionCategory,
+		setAtMentionCategory,
 		selectedAtMentionIndex,
 		setSelectedAtMentionIndex,
 		inputRef,
@@ -352,7 +392,6 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 		handleInputKeyDown,
 		handlePaste,
 		handleDrop,
-		thinkingItems,
 		onStopBatchRun,
 		onRemoveQueuedItem,
 		onTogglePauseQueuedItem,
@@ -377,6 +416,8 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 		mergeTargetName,
 		onCancelMerge,
 		onExitWizard,
+		paneTabActions,
+		paneFileActions,
 		onStopWizardTurn,
 		onDeleteLog,
 		onScrollPositionChange,
@@ -437,9 +478,9 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 	// xterm paints to a canvas and cannot use a CSS variable.
 	const chat = useSurfaceTypography('chat');
 	const chatFontFamily = chat.fontFamily;
+	// The command terminal can use its own font (issue #1228).
 	const terminal = useSurfaceTypography('terminal');
 	const terminalFontFamily = terminal.fontFamily;
-	const terminalFontSize = terminal.fontSize;
 	const enterToSendAI = useSettingsStore((s) => s.enterToSendAI);
 	const chatRawTextMode = useSettingsStore((s) => s.chatRawTextMode);
 	const userMessageAlignment = useSettingsStore((s) => s.userMessageAlignment);
@@ -476,6 +517,174 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 	// page state survives switching away. All mounted tabs render through the persistent
 	// overlay block below (mirroring the terminal keep-alive overlay).
 	const mountedBrowserTabIds = useBrowserTabMounting(activeSession);
+
+	// Self-heal tiled groups when a member tab is closed. Closing a tab removes it
+	// from aiTabs/filePreviewTabs/etc. but the per-kind close paths don't touch group
+	// layouts, so the pane's leaf is left referencing a now-dead tab (rendering the
+	// "no longer available" fallback or an empty webview). normalizeTabGroups prunes
+	// the dangling leaf, collapses the split, and dissolves the group if it drops
+	// below two panes - the same cleanup it does on restore. It is idempotent by
+	// reference (returns the same session when nothing dangles), so this only commits
+	// when a group actually needs healing, and never loops. Covers EVERY close path
+	// (single, close-all, bulk, pane-menu) in one place instead of patching each.
+	// useLayoutEffect (not useEffect) so the prune commits before paint - otherwise
+	// the dead pane flashes "no longer available" for one frame before healing.
+	React.useLayoutEffect(() => {
+		if (!activeSession.tabGroups?.length) return;
+		if (normalizeTabGroups(activeSession) === activeSession) return;
+		updateSessionWith(activeSession.id, (s) => normalizeTabGroups(s));
+	}, [
+		activeSession.id,
+		activeSession.tabGroups,
+		activeSession.aiTabs,
+		activeSession.filePreviewTabs,
+		activeSession.terminalTabs,
+		activeSession.browserTabs,
+	]);
+
+	// Tab tiling (split panes): when a tab group is active, it takes over the
+	// panel and renders its tiled layout instead of the single-view content. This
+	// branch is ahead of the file/terminal/browser routing below so the group wins.
+	const activeGroup =
+		activeSession.activeGroupId != null
+			? activeSession.tabGroups?.find((g) => g.id === activeSession.activeGroupId)
+			: undefined;
+	// Current single-view tab ref (used only when no group is active): a tab drop
+	// onto the panel then pairs this tab with the dragged one into a new group. The
+	// precedence mirrors the single-view routing below (terminal mode -> terminal;
+	// else file, else browser, else the AI tab). Null when nothing tileable is
+	// showing (an empty agent) so a drop is a no-op.
+	const singleViewRef: UnifiedTabRef | null = React.useMemo(() => {
+		if (activeSession.inputMode === 'terminal' && activeSession.activeTerminalTabId) {
+			return { type: 'terminal', id: activeSession.activeTerminalTabId };
+		}
+		if (activeFileTabId) return { type: 'file', id: activeFileTabId };
+		if (activeBrowserTabId) return { type: 'browser', id: activeBrowserTabId };
+		if (activeTab) return { type: 'ai', id: activeTab.id };
+		return null;
+	}, [
+		activeSession.inputMode,
+		activeSession.activeTerminalTabId,
+		activeFileTabId,
+		activeBrowserTabId,
+		activeTab,
+	]);
+	// Title of the single-view tab (the first tab placed into a new group), resolved
+	// across all four kinds via the shared resolver so auto-naming a group off a
+	// terminal/browser view uses its real title, not a generic "Tabs".
+	const singleViewTitle = singleViewRef ? resolveTabRefTitle(activeSession, singleViewRef) : 'Tabs';
+	// Transient maximize/zoom (Ctrl+Cmd+Z): id of the pane rendered full-panel.
+	const zoomedPaneId = useUIStore((s) => s.zoomedPaneId);
+	// When a group is active, input routes to the tab its focused pane references
+	// (the focus handlers keep activeTabId in sync). A non-AI focused pane hides
+	// the AI input, matching how single-view suppresses it for non-AI tabs.
+	const groupFocusedLeaf =
+		activeGroup && activeGroup.focusedPaneId
+			? findLeafById(activeGroup.layout, activeGroup.focusedPaneId)
+			: null;
+	const groupFocusedIsNonAi =
+		!!groupFocusedLeaf && groupFocusedLeaf.kind === 'leaf' && groupFocusedLeaf.tab.type !== 'ai';
+	// The browser tab id of the group's focused pane (if the focused pane is a
+	// browser), so only that tiled webview holds Chromium keyboard input.
+	const groupFocusedBrowserTabId =
+		groupFocusedLeaf && groupFocusedLeaf.kind === 'leaf' && groupFocusedLeaf.tab.type === 'browser'
+			? groupFocusedLeaf.tab.id
+			: null;
+	// Tiling geometry published by TiledLayout: pane content-box rects keyed by
+	// `tabRefKey` (e.g. `terminal:<id>` / `browser:<id>`) relative to this panel.
+	// The keep-alive terminal/browser overlays below reposition onto these rects
+	// so those guests tile without unmount/remount. Empty when no group / no such
+	// leaves; TiledLayout clears it on unmount so no stale geometry lingers.
+	const [paneRects, setPaneRects] = React.useState<PaneRects>(() => new Map());
+	// Split the published rects by kind (bare tab id keys) so each overlay can look
+	// its tab up directly. Recomputed only when the map changes.
+	const { terminals: terminalPaneRects, browsers: browserPaneRects } = React.useMemo(
+		() => splitPaneRectsByKind(paneRects),
+		[paneRects]
+	);
+	// Click-to-focus for tiled terminal/browser panes: their live overlay sits on
+	// top of the transparent PaneFrame slot, so a click lands on the overlay (not
+	// the frame's own onMouseDown). This routes the click back to the owning leaf
+	// so focusedPaneId updates and the focus ring / AI-input suppression follow.
+	const focusTiledPaneByTab = React.useCallback(
+		(ref: UnifiedTabRef) => {
+			if (!activeGroup) return;
+			const leaf = findLeafByTabRef(activeGroup.layout, ref);
+			if (!leaf || leaf.kind !== 'leaf') return;
+			if (activeGroup.focusedPaneId === leaf.id) return;
+			const groupId = activeGroup.id;
+			const leafId = leaf.id;
+			updateSessionWith(activeSession.id, (s) => focusPaneInSession(s, groupId, leafId));
+		},
+		[activeGroup, activeSession.id]
+	);
+	// Creating or moving to a tab moves the focus RING (`focusedPaneId`, or just the
+	// active-tab ids), but the caret stays wherever it was - so tiling a terminal and
+	// typing sent the keystrokes to the previous pane. The commands publish a one-shot
+	// `focusRequest` and this consumes it, putting DOM focus inside the tab's real
+	// input:
+	//   - terminal -> that tab's xterm, by id. `focusActiveTerminal()` is NOT usable
+	//     here: a tiled terminal pane never sets `activeTerminalTabId`.
+	//   - ai       -> the shared chat textarea, which is already scoped to the
+	//     focused pane's tab (focusPaneInSession syncs activeTabId for AI panes).
+	//   - browser  -> that tab's address bar, selected.
+	//   - file     -> that tab's editor (or the preview container in preview mode).
+	// The per-kind routing lives in utils/paneFocus so it stays testable and so the
+	// two DOM-resolved kinds (browser overlay, CodeMirror editor) are described in
+	// one place rather than inline here.
+	//
+	// The retry is owned by a REF, not by the effect's cleanup. Consuming the request
+	// sets store state this effect subscribes to, so returning the canceller made the
+	// effect tear itself down: clear -> deps change -> React runs the cleanup ->
+	// cancel() -> the re-run sees a null request and does nothing. The retry was
+	// killed a few ms in, always before its first 50ms attempt, so NO pane ever took
+	// focus. A ref survives that re-run; a superseded request still cancels the one
+	// before it, which is all the cleanup was there for.
+	const focusRequest = useUIStore((s) => s.focusRequest);
+	const focusRetryRef = React.useRef<(() => void) | null>(null);
+	React.useEffect(() => () => focusRetryRef.current?.(), []);
+	React.useEffect(() => {
+		if (!focusRequest) return;
+		// Consume immediately so a stale request can never re-steal focus on a later
+		// remount, even if the lookups below bail out.
+		useUIStore.getState().clearFocusRequest();
+		// Whatever the previous request was still chasing, it is stale now.
+		focusRetryRef.current?.();
+		focusRetryRef.current = null;
+		// A pane request addresses a leaf in the active group; a tab request names the
+		// tab outright (a plain "new tab" never belongs to a group).
+		let tab: UnifiedTabRef;
+		if ('tab' in focusRequest) {
+			tab = focusRequest.tab;
+		} else {
+			if (!activeGroup) return;
+			const leaf = findLeafById(activeGroup.layout, focusRequest.leafId);
+			if (!leaf || leaf.kind !== 'leaf') return;
+			tab = leaf.tab;
+		}
+		const sessionId = activeSession.id;
+		// The pane shortcuts are not gated on activeFocus, so they can fire while the
+		// Left Bar or Right Bar owns it. Land it back on 'main' for EVERY pane kind or
+		// the arrow keys keep navigating that other region while the caret sits in a
+		// pane. Set synchronously - it is plain state, nothing to wait for.
+		useUIStore.getState().setActiveFocus('main');
+		// Retried rather than fired once: a tab created and tiled in the same commit
+		// has not rendered yet, and the file editor (lazy CodeMirror) and browser
+		// address bar (keep-alive overlay) can take several frames to exist.
+		focusRetryRef.current = focusPaneInputWhenReady(
+			tab,
+			{
+				focusTerminal: (tabId) =>
+					terminalViewRefs.current.get(sessionId)?.focusTerminal(tabId) ?? false,
+				focusAiInput: () => {
+					if (!inputRef.current) return false;
+					inputRef.current.focus();
+					return true;
+				},
+			},
+			{ intervalMs: PANE_FOCUS_DELAY_MS }
+		);
+	}, [focusRequest, activeGroup, activeSession.id, terminalViewRefs, inputRef]);
 	// Number of open modal/overlay layers. When any layer is open over a browser
 	// tab (e.g. the Tab Switcher), the guest <webview> must release Chromium input
 	// focus so keyboard navigation lands in the modal instead of the page. Driving
@@ -485,7 +694,8 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 	const inputAreaAvoidRef = useToastAvoidZone();
 	// Per-tab BrowserTabView handles. The single browserViewRef passed from MainPanel must
 	// point at the active (visible) tab's handle so resolveBrowserContent reads that webview.
-	const browserViewRefs = React.useRef<Map<string, BrowserTabViewHandle>>(new Map());
+	const fallbackBrowserViewRefs = React.useRef<Map<string, BrowserTabViewHandle>>(new Map());
+	const browserViewRefs = browserViewRefsProp ?? fallbackBrowserViewRefs;
 	React.useEffect(() => {
 		if (!browserViewRef) return;
 		const activeId = activeSession.activeBrowserTabId;
@@ -500,16 +710,132 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 		mountedBrowserTabIds,
 	]);
 
+	// The shared AI input renders exactly once, below whichever content the panel is
+	// showing - the single-view routing OR a tiled group. It targets
+	// activeSession.activeTabId, which focusPaneInSession keeps synced to a tiled
+	// group's focused AI pane, so inside a group it drives that pane's conversation.
+	// Hidden: mobile landscape, wizard doc generation, terminal mode (xterm owns
+	// input), and when a group's focused pane is a non-AI tab. In single view it also
+	// hides while a browser or file tab owns the panel (those have no AI input); a
+	// group ignores those stale single-view ids.
+	const shouldShowInputArea =
+		!isMobileLandscape &&
+		!activeTab?.wizardState?.isGeneratingDocs &&
+		!groupFocusedIsNonAi &&
+		activeSession.inputMode !== 'terminal' &&
+		(!!activeGroup || (!activeBrowserTabId && !activeFileTabId));
+
+	// The same chat handlers the single-view TerminalOutput below gets, bundled for
+	// the tiled AI panes so a tiled AI tab is a FULL chat, not a read-only mirror:
+	// Force Send / remove / pause / edit / reorder on queued items, delete message,
+	// replay, fork, session recovery, error details, file links, and the lightbox.
+	// See PaneChatActions for why every one of these is safe to fire from any pane.
+	const paneChatActions = React.useMemo<PaneChatActions>(
+		() => ({
+			onDeleteLog,
+			onRemoveQueuedItem,
+			onTogglePauseQueuedItem,
+			onEditQueuedItem,
+			onReorderQueuedItem,
+			onForceSendQueuedItem,
+			forcedParallelEnabled,
+			getForceSendContext,
+			onInterrupt: handleInterrupt,
+			setLightboxImage,
+			setMarkdownEditMode: useSettingsStore.getState().setChatRawTextMode,
+			onReplayMessage,
+			onForkConversation,
+			onSessionRecover,
+			isRecoveringSession,
+			sessionRecoveryError,
+			fileTree,
+			cwd: activeSession.cwd?.startsWith(activeSession.fullPath)
+				? activeSession.cwd.slice(activeSession.fullPath.length + 1)
+				: '',
+			onFileClick,
+			onFileSaved: refreshFileTree ? () => refreshFileTree(activeSession.id) : undefined,
+			onShowErrorDetails: onShowAgentErrorModal,
+			userMessageAlignment,
+			ghCliAvailable,
+			onPublishMessageGist,
+			onOpenInTab: onOpenSavedFileInTab,
+			// Escape inside a pane returns the caret to the shared composer, and
+			// "Jump to Bottom" scrolls logsEndRef's parent - both need the app's real
+			// refs. Only the FOCUSED pane claims logsEndRef (see TiledAiPane).
+			inputRef,
+			logsEndRef,
+		}),
+		[
+			onDeleteLog,
+			onRemoveQueuedItem,
+			onTogglePauseQueuedItem,
+			onEditQueuedItem,
+			onReorderQueuedItem,
+			onForceSendQueuedItem,
+			forcedParallelEnabled,
+			getForceSendContext,
+			handleInterrupt,
+			setLightboxImage,
+			onReplayMessage,
+			onForkConversation,
+			onSessionRecover,
+			isRecoveringSession,
+			sessionRecoveryError,
+			fileTree,
+			activeSession.cwd,
+			activeSession.fullPath,
+			activeSession.id,
+			onFileClick,
+			refreshFileTree,
+			onShowAgentErrorModal,
+			userMessageAlignment,
+			ghCliAvailable,
+			onPublishMessageGist,
+			onOpenSavedFileInTab,
+			inputRef,
+			logsEndRef,
+		]
+	);
+
 	return (
 		/* Content area: Show FilePreview when file tab is active, otherwise show terminal output */
 		/* Content wrapper: always-rendered relative container so terminal overlay covers
 		     only the content area. Terminal sessions are mounted here regardless of whether
 		     file preview, AI output, or terminal is active. */
 		<div className="flex-1 min-h-0 overflow-hidden relative flex flex-col">
-			{/* Browser tabs render through the persistent keep-alive overlay block below (not
+			{/* Tiling drop-zone overlay: inert (click-through) until a tab drag begins,
+			    then hit-tests the panel to tile the dropped tab. Sits above the content
+			    (z-30) and below modal layers. Reads/writes only the tiling dataTransfer
+			    channel, so it never disturbs tab-bar reorder or multi-window drag-out. */}
+			<PaneDropZones
+				session={activeSession}
+				activeGroup={activeGroup ?? null}
+				activeStandaloneRef={singleViewRef}
+				activeStandaloneTitle={singleViewTitle}
+				theme={theme}
+			/>
+			{/* Pointer-driven pane REARRANGE highlight (swap/move/pop-out). Separate from
+			    PaneDropZones, which handles the native-DnD tab-bar -> panel tiling. */}
+			<PaneDragOverlay theme={theme} />
+			{/* Tab tiling: an active tab group takes over the panel (ahead of the
+			    file/terminal/browser routing). The keep-alive terminal/browser overlays
+			    below still mount so their guests survive; they stay hidden while a group
+			    is active because no terminal/browser tab is the active single view. */}
+			{activeGroup ? (
+				<TiledLayout
+					group={activeGroup}
+					session={activeSession}
+					theme={theme}
+					zoomedPaneId={zoomedPaneId}
+					onPaneRectsChange={setPaneRects}
+					paneTabActions={paneTabActions}
+					paneChatActions={paneChatActions}
+					paneFileActions={paneFileActions}
+				/>
+			) : /* Browser tabs render through the persistent keep-alive overlay block below (not
 			    inline) so their <webview> never remounts when switching tabs. Skip rendering
-			    inline content when loading a remote file - loading state takes over the area. */}
-			{activeSession.inputMode === 'ai' && activeFileTab?.isLoading ? (
+			    inline content when loading a remote file - loading state takes over the area. */
+			activeSession.inputMode === 'ai' && activeFileTab?.isLoading ? (
 				<div
 					className="flex-1 flex items-center justify-center"
 					style={{ backgroundColor: theme.colors.bgMain }}
@@ -537,6 +863,10 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 					ref={filePreviewContainerRef}
 					tabIndex={-1}
 					className="flex-1 overflow-hidden outline-none"
+					// Same marker the tiled file pane carries, so the focus router can put
+					// the caret in THIS tab's editor. A standalone file tab needs it just
+					// as much as a tiled one: "new file tab" should land you in the text.
+					{...filePaneAttrs(activeFileTabId)}
 				>
 					<React.Suspense fallback={null}>
 						<FilePreview
@@ -711,122 +1041,129 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 							/>
 						)}
 					</div>
-
-					{/* Agent Resilience: the live auto-retry status now renders inline in
-					    the transcript as a collapsed RetryStatusCard (see TerminalOutput),
-					    so no separate countdown banner sits above the composer. */}
-
-					{/* Input Area (hidden in mobile landscape, during wizard doc generation, and in terminal mode - xterm.js handles its own input) */}
-					{!isMobileLandscape &&
-						!activeTab?.wizardState?.isGeneratingDocs &&
-						!activeBrowserTabId &&
-						activeSession.inputMode !== 'terminal' && (
-							<div data-tour="input-area" ref={inputAreaAvoidRef}>
-								<InputArea
-									session={activeSession}
-									theme={theme}
-									setInputValue={setInputValue}
-									enterToSend={activeTab?.enterToSend ?? enterToSendAI}
-									setEnterToSend={
-										onToggleTabEnterToSend
-											? () => onToggleTabEnterToSend()
-											: useSettingsStore.getState().setEnterToSendAI
-									}
-									stagedImages={stagedImages}
-									setStagedImages={setStagedImages}
-									setLightboxImage={setLightboxImage}
-									commandHistoryOpen={commandHistoryOpen}
-									setCommandHistoryOpen={setCommandHistoryOpen}
-									commandHistoryFilter={commandHistoryFilter}
-									setCommandHistoryFilter={setCommandHistoryFilter}
-									commandHistorySelectedIndex={commandHistorySelectedIndex}
-									setCommandHistorySelectedIndex={setCommandHistorySelectedIndex}
-									slashCommandOpen={slashCommandOpen}
-									setSlashCommandOpen={setSlashCommandOpen}
-									slashCommands={slashCommands}
-									selectedSlashCommandIndex={selectedSlashCommandIndex}
-									setSelectedSlashCommandIndex={setSelectedSlashCommandIndex}
-									tabCompletionOpen={tabCompletionOpen}
-									setTabCompletionOpen={setTabCompletionOpen}
-									tabCompletionSuggestions={tabCompletionSuggestions}
-									selectedTabCompletionIndex={selectedTabCompletionIndex}
-									setSelectedTabCompletionIndex={setSelectedTabCompletionIndex}
-									tabCompletionFilter={tabCompletionFilter}
-									setTabCompletionFilter={setTabCompletionFilter}
-									atMentionOpen={atMentionOpen}
-									setAtMentionOpen={setAtMentionOpen}
-									atMentionFilter={atMentionFilter}
-									setAtMentionFilter={setAtMentionFilter}
-									atMentionStartIndex={atMentionStartIndex}
-									setAtMentionStartIndex={setAtMentionStartIndex}
-									atMentionSuggestions={atMentionSuggestions}
-									selectedAtMentionIndex={selectedAtMentionIndex}
-									setSelectedAtMentionIndex={setSelectedAtMentionIndex}
-									inputRef={inputRef}
-									handleInputKeyDown={handleInputKeyDown}
-									handlePaste={handlePaste}
-									handleDrop={handleDrop}
-									toggleInputMode={toggleInputMode}
-									processInput={processInput}
-									handleInterrupt={handleInterrupt}
-									onInputFocus={handleInputFocus}
-									onInputBlur={onInputBlur}
-									isAutoModeActive={isCurrentSessionAutoMode}
-									thinkingItems={thinkingItems}
-									onSessionClick={handleSessionClick}
-									autoRunState={currentSessionBatchState || undefined}
-									onStopAutoRun={() => onStopBatchRun?.(activeSession.id)}
-									onOpenQueueBrowser={onOpenQueueBrowser}
-									tabReadOnlyMode={activeTab?.readOnlyMode ?? false}
-									onToggleTabReadOnlyMode={onToggleTabReadOnlyMode}
-									tabSaveToHistory={activeTab?.saveToHistory ?? false}
-									onToggleTabSaveToHistory={onToggleTabSaveToHistory}
-									tabShowThinking={activeTab?.showThinking ?? 'off'}
-									onToggleTabShowThinking={onToggleTabShowThinking}
-									supportsThinking={hasCapability('supportsThinkingDisplay')}
-									onOpenPromptComposer={onOpenPromptComposer}
-									shortcuts={shortcuts}
-									showFlashNotification={showFlashNotification}
-									// Context warning sash props (Phase 6) - use tab-level context usage
-									contextUsage={activeTabContextUsage}
-									contextWarningsEnabled={contextWarningsEnabled}
-									contextWarningYellowThreshold={contextWarningYellowThreshold}
-									contextWarningRedThreshold={contextWarningRedThreshold}
-									onSummarizeAndContinue={
-										onSummarizeAndContinue
-											? () => onSummarizeAndContinue(activeSession.activeTabId)
-											: undefined
-									}
-									// Summarization progress props
-									summarizeProgress={summarizeProgress}
-									summarizeResult={summarizeResult}
-									summarizeStartTime={summarizeStartTime}
-									isSummarizing={isSummarizing}
-									onCancelSummarize={onCancelSummarize}
-									// Merge progress props
-									mergeProgress={mergeProgress}
-									mergeResult={mergeResult}
-									mergeStartTime={mergeStartTime}
-									isMerging={isMerging}
-									mergeSourceName={mergeSourceName}
-									mergeTargetName={mergeTargetName}
-									onCancelMerge={onCancelMerge}
-									// Inline wizard mode
-									onExitWizard={onExitWizard}
-									onStopWizardTurn={onStopWizardTurn}
-									wizardShowThinking={activeTab?.wizardState?.showWizardThinking ?? false}
-									onToggleWizardShowThinking={onToggleWizardShowThinking}
-									// Model/Effort quick-change pills
-									currentModel={currentModel}
-									currentEffort={currentEffort}
-									availableModels={availableModels}
-									availableEfforts={availableEfforts}
-									onModelChange={onModelChange}
-									onEffortChange={onEffortChange}
-								/>
-							</div>
-						)}
 				</>
+			)}
+			{/* Shared AI input: one bar below whichever content the panel shows - the
+			    single-view routing above OR a tiled group - targeting the focused AI
+			    tab. See shouldShowInputArea for the visibility rules.
+
+			    `relative z-[3]` lifts the input above the terminal (z-1) and browser
+			    (z-2) keep-alive overlays. Those overlays are `absolute inset-0` on this
+			    panel, so they span over the input's area; during the reflow after focus
+			    moves to an AI pane in a tiled group (the input appears, the tiled region
+			    shrinks, but a positioned terminal/browser layer still holds its pre-shrink
+			    rect for a frame), the layer would otherwise paint over the input. The
+			    input's own opaque chrome, stacked above, hides that transient bleed. Stays
+			    below the z-30 tiling drop overlay so drags still hit-test on top. */}
+			{shouldShowInputArea && (
+				<div data-tour="input-area" ref={inputAreaAvoidRef} className="relative z-[3] shrink-0">
+					<InputArea
+						session={activeSession}
+						theme={theme}
+						setInputValue={setInputValue}
+						enterToSend={activeTab?.enterToSend ?? enterToSendAI}
+						setEnterToSend={
+							onToggleTabEnterToSend
+								? () => onToggleTabEnterToSend()
+								: useSettingsStore.getState().setEnterToSendAI
+						}
+						stagedImages={stagedImages}
+						setStagedImages={setStagedImages}
+						setLightboxImage={setLightboxImage}
+						commandHistoryOpen={commandHistoryOpen}
+						setCommandHistoryOpen={setCommandHistoryOpen}
+						commandHistoryFilter={commandHistoryFilter}
+						setCommandHistoryFilter={setCommandHistoryFilter}
+						commandHistorySelectedIndex={commandHistorySelectedIndex}
+						setCommandHistorySelectedIndex={setCommandHistorySelectedIndex}
+						slashCommandOpen={slashCommandOpen}
+						setSlashCommandOpen={setSlashCommandOpen}
+						slashCommands={slashCommands}
+						selectedSlashCommandIndex={selectedSlashCommandIndex}
+						setSelectedSlashCommandIndex={setSelectedSlashCommandIndex}
+						tabCompletionOpen={tabCompletionOpen}
+						setTabCompletionOpen={setTabCompletionOpen}
+						tabCompletionSuggestions={tabCompletionSuggestions}
+						selectedTabCompletionIndex={selectedTabCompletionIndex}
+						setSelectedTabCompletionIndex={setSelectedTabCompletionIndex}
+						tabCompletionFilter={tabCompletionFilter}
+						setTabCompletionFilter={setTabCompletionFilter}
+						atMentionOpen={atMentionOpen}
+						setAtMentionOpen={setAtMentionOpen}
+						atMentionFilter={atMentionFilter}
+						setAtMentionFilter={setAtMentionFilter}
+						atMentionStartIndex={atMentionStartIndex}
+						setAtMentionStartIndex={setAtMentionStartIndex}
+						atMentionItems={atMentionItems}
+						atMentionCounts={atMentionCounts}
+						atMentionCategory={atMentionCategory}
+						setAtMentionCategory={setAtMentionCategory}
+						selectedAtMentionIndex={selectedAtMentionIndex}
+						setSelectedAtMentionIndex={setSelectedAtMentionIndex}
+						inputRef={inputRef}
+						handleInputKeyDown={handleInputKeyDown}
+						handlePaste={handlePaste}
+						handleDrop={handleDrop}
+						toggleInputMode={toggleInputMode}
+						processInput={processInput}
+						handleInterrupt={handleInterrupt}
+						onInputFocus={handleInputFocus}
+						onInputBlur={onInputBlur}
+						isAutoModeActive={isCurrentSessionAutoMode}
+						onSessionClick={handleSessionClick}
+						autoRunState={currentSessionBatchState || undefined}
+						onStopAutoRun={() => onStopBatchRun?.(activeSession.id)}
+						onOpenQueueBrowser={onOpenQueueBrowser}
+						tabReadOnlyMode={
+							(activeTab?.readOnlyMode ?? false) || activeTab?.permissionMode === 'readonly'
+						}
+						onToggleTabReadOnlyMode={onToggleTabReadOnlyMode}
+						tabSaveToHistory={activeTab?.saveToHistory ?? false}
+						onToggleTabSaveToHistory={onToggleTabSaveToHistory}
+						tabShowThinking={activeTab?.showThinking ?? 'off'}
+						onToggleTabShowThinking={onToggleTabShowThinking}
+						supportsThinking={hasCapability('supportsThinkingDisplay')}
+						onOpenPromptComposer={onOpenPromptComposer}
+						shortcuts={shortcuts}
+						showFlashNotification={showFlashNotification}
+						// Context warning sash props (Phase 6) - use tab-level context usage
+						contextUsage={activeTabContextUsage}
+						contextWarningsEnabled={contextWarningsEnabled}
+						contextWarningYellowThreshold={contextWarningYellowThreshold}
+						contextWarningRedThreshold={contextWarningRedThreshold}
+						onSummarizeAndContinue={
+							onSummarizeAndContinue
+								? () => onSummarizeAndContinue(activeSession.activeTabId)
+								: undefined
+						}
+						// Summarization progress props
+						summarizeProgress={summarizeProgress}
+						summarizeResult={summarizeResult}
+						summarizeStartTime={summarizeStartTime}
+						isSummarizing={isSummarizing}
+						onCancelSummarize={onCancelSummarize}
+						// Merge progress props
+						mergeProgress={mergeProgress}
+						mergeResult={mergeResult}
+						mergeStartTime={mergeStartTime}
+						isMerging={isMerging}
+						mergeSourceName={mergeSourceName}
+						mergeTargetName={mergeTargetName}
+						onCancelMerge={onCancelMerge}
+						// Inline wizard mode
+						onExitWizard={onExitWizard}
+						onStopWizardTurn={onStopWizardTurn}
+						wizardShowThinking={activeTab?.wizardState?.showWizardThinking ?? false}
+						onToggleWizardShowThinking={onToggleWizardShowThinking}
+						// Model/Effort quick-change pills
+						currentModel={currentModel}
+						currentEffort={currentEffort}
+						availableModels={availableModels}
+						availableEfforts={availableEfforts}
+						onModelChange={onModelChange}
+						onEffortChange={onEffortChange}
+					/>
+				</div>
 			)}
 			{/* TerminalView is kept alive for every session that has terminal tabs so that
 		     switching between sessions (or to AI mode) does not destroy the xterm.js
@@ -838,15 +1175,28 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 					? activeSession
 					: mountedTerminalSessionsRef.current.get(sessionId);
 				if (!session) return null;
+				// Tiling: this session has terminal tabs that are leaves in the active
+				// group. Each such tab's layer is positioned onto its pane rect (below,
+				// inside TerminalView), so the overlay must be shown even though inputMode
+				// isn't 'terminal'. Only the current session can own the active group.
+				const hasTerminalPanes = isCurrentSession && terminalPaneRects.size > 0;
 				const isTerminalVisible = isCurrentSession && session.inputMode === 'terminal';
+				// Overlay shows for standalone terminal mode OR when tiling terminal panes.
+				// It always spans the full panel (inset-0) so the pane rects - which are
+				// panel-relative - map straight onto the absolutely-positioned tab layers.
+				const overlayShown = isTerminalVisible || hasTerminalPanes;
 				return (
 					<div
 						key={sessionId}
-						className={`absolute inset-0 flex flex-col${isTerminalVisible ? '' : ' terminal-hidden'}`}
+						className={`absolute inset-0 flex flex-col${overlayShown ? '' : ' terminal-hidden'}`}
 						style={{
-							visibility: isTerminalVisible ? 'visible' : 'hidden',
+							visibility: overlayShown ? 'visible' : 'hidden',
+							// Standalone terminal captures input across the whole panel. The tiled
+							// overlay wrapper is click-through (none) so clicks on other panes and
+							// dividers land; its positioned pane layers re-enable pointerEvents:auto
+							// over their own rects (set inside TerminalView).
 							pointerEvents: isTerminalVisible ? 'auto' : 'none',
-							zIndex: isTerminalVisible ? 1 : -1,
+							zIndex: overlayShown ? 1 : -1,
 						}}
 					>
 						<TerminalView
@@ -861,12 +1211,20 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 							// hard-coded 0.85 of the interface size, which is exactly
 							// the per-surface ratio the terminal size setting now
 							// expresses explicitly and lets the user change.
-							fontSize={terminalFontSize}
+							fontSize={terminal.fontSize}
 							onTabStateChange={createTabStateChangeHandler(sessionId)}
 							onTabPidChange={createTabPidChangeHandler(sessionId)}
 							searchOpen={isCurrentSession ? terminalSearchOpen : false}
 							onSearchClose={isCurrentSession ? () => setTerminalSearchOpen(false) : undefined}
-							isVisible={isTerminalVisible}
+							paneRects={hasTerminalPanes ? terminalPaneRects : undefined}
+							onPaneMouseDown={
+								hasTerminalPanes
+									? (tid) => focusTiledPaneByTab({ type: 'terminal', id: tid })
+									: undefined
+							}
+							// Visible in standalone terminal mode OR when tiling terminal panes,
+							// so XTerminal keeps its WebGL renderer alive and repaints on show.
+							isVisible={isTerminalVisible || hasTerminalPanes}
 							onCopySelection={onTerminalCopySelection}
 							onSendSelectionToAgent={onTerminalSendSelectionToAgent}
 						/>
@@ -881,22 +1239,56 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 			{mountedBrowserTabIds.map((tabId) => {
 				const browserTab = activeSession.browserTabs?.find((t) => t.id === tabId);
 				if (!browserTab) return null;
-				const isBrowserVisible =
-					activeSession.inputMode === 'ai' && activeSession.activeBrowserTabId === tabId;
+				// Tiling: this browser tab is a leaf in the active group. Position its
+				// overlay onto the published pane rect (multiple browsers visible at
+				// once); BrowserTabView is untouched so the per-agent <webview> partition
+				// isolation stays intact. Falls back to standalone when no rect.
+				const browserPaneRect = browserPaneRects.get(tabId);
+				const isBrowserTiled = browserPaneRect != null;
+				// A tiled browser pane is only visible while the group is the active view
+				// (inputMode 'ai'). Gating on inputMode is defensive: if a standalone
+				// terminal is showing but pane rects haven't cleared yet, the tiled webview
+				// (z-index 2) would otherwise bleed over the terminal overlay (z-index 1).
+				const isBrowserVisible = isBrowserTiled
+					? activeSession.inputMode === 'ai'
+					: activeSession.inputMode === 'ai' && activeSession.activeBrowserTabId === tabId;
 				// Hold keyboard focus only when no modal/overlay is layered above the
 				// page. The tab stays visually rendered (visibility/zIndex below are
 				// driven by isBrowserVisible), but the webview yields input focus to an
 				// open layer so its keyboard navigation works (e.g. the Tab Switcher).
-				const isBrowserFocusActive = isBrowserVisible && layerCount === 0;
+				// When tiled, only the group's focused browser pane holds webview input.
+				const isBrowserFocusActive = isBrowserTiled
+					? groupFocusedBrowserTabId === tabId && layerCount === 0
+					: isBrowserVisible && layerCount === 0;
 				return (
 					<div
 						key={tabId}
-						className="absolute inset-0 flex flex-col"
-						style={{
-							visibility: isBrowserVisible ? 'visible' : 'hidden',
-							pointerEvents: isBrowserVisible ? 'auto' : 'none',
-							zIndex: isBrowserVisible ? 2 : -1,
-						}}
+						className={`absolute flex flex-col${isBrowserTiled ? '' : ' inset-0'}`}
+						// Tiling: pressing this browser pane focuses it (its overlay sits over
+						// the transparent PaneFrame slot). Capture phase so focus lands before
+						// the toolbar/webview handles the press.
+						onMouseDownCapture={
+							isBrowserTiled ? () => focusTiledPaneByTab({ type: 'browser', id: tabId }) : undefined
+						}
+						style={
+							isBrowserTiled
+								? {
+										top: browserPaneRect.top,
+										left: browserPaneRect.left,
+										width: browserPaneRect.width,
+										height: browserPaneRect.height,
+										// Hidden (and click-through, sent behind) when the group isn't the
+										// active view, so a stale pane rect can't bleed over a terminal.
+										visibility: isBrowserVisible ? 'visible' : 'hidden',
+										pointerEvents: isBrowserVisible ? 'auto' : 'none',
+										zIndex: isBrowserVisible ? 2 : -1,
+									}
+								: {
+										visibility: isBrowserVisible ? 'visible' : 'hidden',
+										pointerEvents: isBrowserVisible ? 'auto' : 'none',
+										zIndex: isBrowserVisible ? 2 : -1,
+									}
+						}
 					>
 						<BrowserTabView
 							ref={(handle) => {

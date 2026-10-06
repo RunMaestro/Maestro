@@ -1,13 +1,11 @@
 /**
  * Data Management Operations
  *
- * Handles data cleanup (with transactional safety) and CSV export
- * (with proper escaping and complete field coverage).
+ * Handles data cleanup with transactional safety. Export lives in
+ * `usage-export.ts`.
  */
 
 import type Database from 'better-sqlite3';
-import type { StatsTimeRange } from '../../shared/stats-types';
-import { getQueryEvents } from './query-events';
 import { LOG_CONTEXT } from './utils';
 import { logger } from '../utils/logger';
 
@@ -117,57 +115,4 @@ export function clearOldData(
 			error: errorMessage,
 		};
 	}
-}
-
-// ============================================================================
-// CSV Export
-// ============================================================================
-
-/**
- * Escape a value for CSV output.
- *
- * Wraps the value in double quotes and escapes any embedded double quotes
- * by doubling them (RFC 4180 compliant).
- */
-function csvEscape(value: string): string {
-	return `"${value.replace(/"/g, '""')}"`;
-}
-
-/**
- * Export query events to CSV format.
- *
- * Includes all fields (including isRemote added in migration v2 and isWorktree
- * added in migration v5) with proper CSV escaping for values containing
- * quotes, commas, or newlines.
- */
-export function exportToCsv(db: Database.Database, range: StatsTimeRange): string {
-	const events = getQueryEvents(db, range);
-
-	const headers = [
-		'id',
-		'sessionId',
-		'agentType',
-		'source',
-		'startTime',
-		'duration',
-		'projectPath',
-		'tabId',
-		'isRemote',
-		'isWorktree',
-	];
-
-	const rows = events.map((e) => [
-		csvEscape(e.id),
-		csvEscape(e.sessionId),
-		csvEscape(e.agentType),
-		csvEscape(e.source),
-		csvEscape(new Date(e.startTime).toISOString()),
-		csvEscape(e.duration.toString()),
-		csvEscape(e.projectPath ?? ''),
-		csvEscape(e.tabId ?? ''),
-		csvEscape(e.isRemote !== undefined ? String(e.isRemote) : ''),
-		csvEscape(e.isWorktree !== undefined ? String(e.isWorktree) : ''),
-	]);
-
-	return [headers.join(','), ...rows.map((row) => row.join(','))].join('\n');
 }

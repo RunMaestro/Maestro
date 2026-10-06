@@ -9,8 +9,13 @@ const packageJson = JSON.parse(readFileSync(path.join(__dirname, 'package.json')
 // Use VITE_APP_VERSION env var if set (during CI builds), otherwise use package.json
 const appVersion = process.env.VITE_APP_VERSION || packageJson.version;
 
-// Get the first 8 chars of git commit hash for dev mode
+// Get the first 8 chars of the git commit hash. Honors VITE_COMMIT_HASH when set
+// (CI builds from a tarball / shallow checkout where `git rev-parse` may fail),
+// otherwise reads it from the local repo. Empty string when neither is available.
 function getCommitHash(): string {
+	if (process.env.VITE_COMMIT_HASH) {
+		return process.env.VITE_COMMIT_HASH.trim().slice(0, 8);
+	}
 	try {
 		// Note: execSync is safe here - no user input, static git command
 		return execSync('git rev-parse HEAD', { encoding: 'utf-8' }).trim().slice(0, 8);
@@ -43,8 +48,10 @@ export default defineConfig(({ mode }) => ({
 		// artifact, not in source, so a build from source reports nowhere - this flag is
 		// the renderer's copy of that decision. See src/shared/buildProvenance.ts.
 		__CRASH_REPORTING_BUILD__: JSON.stringify(Boolean(process.env.MAESTRO_SENTRY_DSN?.trim())),
-		// Show commit hash only in development mode
-		__COMMIT_HASH__: JSON.stringify(mode === 'development' ? getCommitHash() : ''),
+		// Embed the commit hash in every build (dev AND production) so the About modal
+		// can show exactly what HEAD a local/packaged build was cut from. Empty only
+		// when git isn't reachable and VITE_COMMIT_HASH isn't set.
+		__COMMIT_HASH__: JSON.stringify(getCommitHash()),
 		// Explicitly define NODE_ENV for React and related packages
 		'process.env.NODE_ENV': JSON.stringify(mode),
 	},
@@ -137,7 +144,7 @@ export default defineConfig(({ mode }) => ({
 									if (!resolvedMatch) {
 										throw new Error(
 											`skip-xterm-minify: could not resolve placeholder ${placeholder} ` +
-												`in ${asset.fileName} — Rolldown internals may have changed.`
+												`in ${asset.fileName} - Rolldown internals may have changed.`
 										);
 									}
 									fixed = fixed.split(placeholder).join(`${prefix}-${resolvedMatch[1]}.${ext}`);

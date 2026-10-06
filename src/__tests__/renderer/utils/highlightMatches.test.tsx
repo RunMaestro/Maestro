@@ -6,7 +6,7 @@ import { highlightMatches, searchMatchRanges } from '../../../renderer/utils/hig
 const ACCENT = '#ff0000';
 
 /** Render the helper's output into a container so <mark> elements can be counted. */
-const renderHighlight = (text: string, query: string) => {
+const renderHighlight = (text: string, query: string | string[]) => {
 	const { container } = render(<div>{highlightMatches(text, query, ACCENT)}</div>);
 	return container;
 };
@@ -94,7 +94,7 @@ describe('highlightMatches', () => {
  */
 describe('searchMatchRanges', () => {
 	/** The substrings the ranges actually point at - the thing that must be right. */
-	const sliced = (text: string, query: string) =>
+	const sliced = (text: string, query: string | string[]) =>
 		searchMatchRanges(text, query).map((r) => text.slice(r.from, r.to));
 
 	it('returns nothing for an empty query', () => {
@@ -145,5 +145,53 @@ describe('searchMatchRanges', () => {
 		const marks = renderHighlight(text, 'ab').querySelectorAll('mark');
 
 		expect(searchMatchRanges(text, 'ab')).toHaveLength(marks.length);
+	});
+});
+
+// The Git Log's filter ANDs whitespace-separated words, so what it matched on is
+// a LIST of terms rather than one literal. Highlighting has to take the same
+// list or it marks nothing it just filtered on.
+describe('multi-term highlighting', () => {
+	/** The substrings the ranges point at, the same check the single-term suite makes. */
+	const slicedTerms = (text: string, terms: string[]) =>
+		searchMatchRanges(text, terms).map((r) => text.slice(r.from, r.to));
+
+	it('returns the text untouched for an empty term list', () => {
+		expect(highlightMatches('hello', [], ACCENT)).toBe('hello');
+		expect(searchMatchRanges('hello', [])).toEqual([]);
+	});
+
+	it('ignores empty strings among the terms rather than matching everywhere', () => {
+		expect(highlightMatches('hello', ['', ''], ACCENT)).toBe('hello');
+		expect(searchMatchRanges('hello', ['', ''])).toEqual([]);
+	});
+
+	it('marks every term, not just the first', () => {
+		const container = renderHighlight('fix(usage): keep the account', ['fix', 'account']);
+
+		const marks = Array.from(container.querySelectorAll('mark')).map((m) => m.textContent);
+		expect(marks).toEqual(['fix', 'account']);
+		expect(container.textContent).toBe('fix(usage): keep the account');
+	});
+
+	it('prefers the longer term when one contains another', () => {
+		// Regex alternation takes the first branch that matches at a position, so
+		// an unsorted list would mark 'usa' and leave 'ge' plain.
+		const container = renderHighlight('usage', ['usa', 'usage']);
+
+		const marks = container.querySelectorAll('mark');
+		expect(marks).toHaveLength(1);
+		expect(marks[0]).toHaveTextContent('usage');
+	});
+
+	it('treats metacharacters in every term as literal text', () => {
+		expect(slicedTerms('cost is $5.00 (net)', ['$5.00', '(net)'])).toEqual(['$5.00', '(net)']);
+	});
+
+	it('reports ranges for each term in document order', () => {
+		expect(searchMatchRanges('one two three', ['three', 'one'])).toEqual([
+			{ from: 0, to: 3 },
+			{ from: 8, to: 13 },
+		]);
 	});
 });

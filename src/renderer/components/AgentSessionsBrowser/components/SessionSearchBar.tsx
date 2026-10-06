@@ -7,6 +7,7 @@ import type { Theme } from '../../../types';
 import type { SearchMode } from '../types';
 import { formatShortcutKeys } from '../../../utils/shortcutFormatter';
 import { SearchModeDropdown } from './SearchModeDropdown';
+import { usePhoneLayout } from '../../../hooks/ui/useViewportBreakpoint';
 
 interface SessionSearchBarProps {
 	showSearchPanel: boolean;
@@ -55,6 +56,10 @@ export const SessionSearchBar = React.memo(function SessionSearchBar({
 	onGraphBarClick,
 	onLookbackChange,
 }: SessionSearchBarProps) {
+	// Phone: the Named / Show All toggles and the mode dropdown drop to a second
+	// row so the search box keeps its width. On one row they left it about
+	// 60px, and its placeholder was drawn straight through the checkboxes.
+	const phone = usePhoneLayout();
 	const placeholder =
 		searchMode === 'title'
 			? 'Search titles...'
@@ -67,7 +72,7 @@ export const SessionSearchBar = React.memo(function SessionSearchBar({
 	return (
 		<div className="px-4 py-3 border-b" style={{ borderColor: theme.colors.border }}>
 			<div
-				className="flex items-center gap-3 px-4 py-2.5 rounded-lg"
+				className={`flex items-center gap-3 rounded-lg ${phone ? 'flex-wrap px-3 py-2' : 'px-4 py-2.5'}`}
 				style={{ backgroundColor: theme.colors.bgActivity }}
 			>
 				<button
@@ -85,10 +90,10 @@ export const SessionSearchBar = React.memo(function SessionSearchBar({
 
 				<div className="flex-1 min-w-0 flex items-center" style={{ height: '38px' }}>
 					{showSearchPanel ? (
-						<div className="flex-1 flex items-center gap-2">
+						<div className="flex-1 min-w-0 flex items-center gap-2">
 							<input
 								ref={inputRef}
-								className="flex-1 bg-transparent outline-none text-sm"
+								className="flex-1 min-w-0 bg-transparent outline-none text-sm"
 								placeholder={placeholder}
 								style={{ color: theme.colors.textMain }}
 								value={search}
@@ -117,43 +122,48 @@ export const SessionSearchBar = React.memo(function SessionSearchBar({
 					)}
 				</div>
 
-				<label
-					className="flex items-center gap-1.5 text-xs cursor-pointer select-none shrink-0"
-					style={{ color: namedOnly ? theme.colors.accent : theme.colors.textDim }}
-					title="Only show sessions with custom names"
+				<div
+					className={phone ? 'basis-full flex items-center justify-between gap-3' : 'contents'}
+					data-testid="session-search-filters"
 				>
-					<input
-						type="checkbox"
-						checked={namedOnly}
-						onChange={(e) => onToggleNamedOnly(e.target.checked)}
-						className="w-3.5 h-3.5 rounded cursor-pointer accent-current"
-						style={{ accentColor: theme.colors.accent }}
-					/>
-					<span>Named</span>
-				</label>
-				<label
-					className="flex items-center gap-1.5 text-xs cursor-pointer select-none shrink-0"
-					style={{ color: showAllSessions ? theme.colors.accent : theme.colors.textDim }}
-					title="Show sessions from all projects"
-				>
-					<input
-						type="checkbox"
-						checked={showAllSessions}
-						onChange={(e) => onToggleShowAll(e.target.checked)}
-						className="w-3.5 h-3.5 rounded cursor-pointer accent-current"
-						style={{ accentColor: theme.colors.accent }}
-					/>
-					<span>Show All</span>
-				</label>
+					<label
+						className="flex items-center gap-1.5 text-xs cursor-pointer select-none shrink-0"
+						style={{ color: namedOnly ? theme.colors.accent : theme.colors.textDim }}
+						title="Only show sessions with custom names"
+					>
+						<input
+							type="checkbox"
+							checked={namedOnly}
+							onChange={(e) => onToggleNamedOnly(e.target.checked)}
+							className="w-3.5 h-3.5 rounded cursor-pointer accent-current"
+							style={{ accentColor: theme.colors.accent }}
+						/>
+						<span>Named</span>
+					</label>
+					<label
+						className="flex items-center gap-1.5 text-xs cursor-pointer select-none shrink-0"
+						style={{ color: showAllSessions ? theme.colors.accent : theme.colors.textDim }}
+						title="Show sessions from all projects"
+					>
+						<input
+							type="checkbox"
+							checked={showAllSessions}
+							onChange={(e) => onToggleShowAll(e.target.checked)}
+							className="w-3.5 h-3.5 rounded cursor-pointer accent-current"
+							style={{ accentColor: theme.colors.accent }}
+						/>
+						<span>Show All</span>
+					</label>
 
-				<SearchModeDropdown
-					searchMode={searchMode}
-					isOpen={searchModeDropdownOpen}
-					dropdownRef={searchModeDropdownRef}
-					onToggle={onSearchModeDropdownToggle}
-					onSelect={onSearchModeSelect}
-					theme={theme}
-				/>
+					<SearchModeDropdown
+						searchMode={searchMode}
+						isOpen={searchModeDropdownOpen}
+						dropdownRef={searchModeDropdownRef}
+						onToggle={onSearchModeDropdownToggle}
+						onSelect={onSearchModeSelect}
+						theme={theme}
+					/>
+				</div>
 			</div>
 		</div>
 	);

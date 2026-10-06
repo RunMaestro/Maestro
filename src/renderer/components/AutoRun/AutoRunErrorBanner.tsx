@@ -12,6 +12,14 @@ export interface AutoRunErrorBannerProps {
 	isHumanGate?: boolean;
 	onResumeAfterError?: () => void;
 	onAbortBatchOnError?: () => void;
+	/**
+	 * When set, the actions render disabled with this string as their tooltip
+	 * instead of being hidden. Used when the paused run belongs to another
+	 * Maestro window: the pause is real and worth showing, but neither button
+	 * can reach the loop from here. Hiding them instead would make an error
+	 * pause look like it had no recovery path at all.
+	 */
+	disabledReason?: string;
 }
 
 export const AutoRunErrorBanner = memo(function AutoRunErrorBanner({
@@ -22,9 +30,11 @@ export const AutoRunErrorBanner = memo(function AutoRunErrorBanner({
 	isHumanGate = false,
 	onResumeAfterError,
 	onAbortBatchOnError,
+	disabledReason,
 }: AutoRunErrorBannerProps) {
 	const showResume = isRecoverable && Boolean(onResumeAfterError);
 	const showAbort = Boolean(onAbortBatchOnError);
+	const disabled = Boolean(disabledReason);
 
 	return (
 		<AutoRunNoticeBanner
@@ -38,15 +48,18 @@ export const AutoRunErrorBanner = memo(function AutoRunErrorBanner({
 						{showResume && (
 							<button
 								onClick={onResumeAfterError}
-								className="flex items-center gap-1.5 px-2 py-1 rounded text-2xs font-medium transition-colors hover:opacity-80"
+								disabled={disabled}
+								className={`flex items-center gap-1.5 px-2 py-1 rounded text-2xs font-medium transition-colors ${disabled ? 'cursor-not-allowed' : 'hover:opacity-80'}`}
 								style={{
 									backgroundColor: theme.colors.accent,
 									color: theme.colors.accentForeground,
+									opacity: disabled ? 0.6 : 1,
 								}}
 								title={
-									isHumanGate
+									disabledReason ??
+									(isHumanGate
 										? 'Tick the "Human step done" box under this gate and continue'
-										: 'Retry and resume Auto Run'
+										: 'Retry and resume Auto Run')
 								}
 							>
 								<Play className="w-3 h-3" />
@@ -57,12 +70,14 @@ export const AutoRunErrorBanner = memo(function AutoRunErrorBanner({
 						{showAbort && (
 							<button
 								onClick={onAbortBatchOnError}
-								className="flex items-center gap-1.5 px-2 py-1 rounded text-2xs font-medium transition-colors hover:opacity-80"
+								disabled={disabled}
+								className={`flex items-center gap-1.5 px-2 py-1 rounded text-2xs font-medium transition-colors ${disabled ? 'cursor-not-allowed' : 'hover:opacity-80'}`}
 								style={{
 									backgroundColor: theme.colors.error,
 									color: 'white',
+									opacity: disabled ? 0.6 : 1,
 								}}
-								title="Stop Auto Run completely"
+								title={disabledReason ?? 'Stop Auto Run completely'}
 							>
 								<XCircle className="w-3 h-3" />
 								Abort Run

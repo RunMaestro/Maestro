@@ -36,9 +36,19 @@ import { dispatchShellCommand } from '../../../renderer/services/shellCommand';
 import { requestAiCommand } from '../../../renderer/services/aiCommand';
 import { useAiCommandStore } from '../../../renderer/stores/aiCommandStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
-import { useRetryStore } from '../../../renderer/stores/retryStore';
+import {
+	cancelRetry,
+	registerDispatchDepsProvider,
+	scheduleRetryForError,
+	useRetryStore,
+} from '../../../renderer/stores/retryStore';
+import { useSessionStore } from '../../../renderer/stores/sessionStore';
+import { agentAlreadyRunningMessage } from '../../../shared/processErrors';
+import {
+	releaseConnectionHeldQueueItems,
+	takeNextRunnableQueueItem,
+} from '../../../renderer/utils/executionQueue';
 import { useAutoRunSteeringStore } from '../../../renderer/stores/autoRunSteeringStore';
-import { MAX_PENDING_STEERING_NOTES } from '../../../shared/autorunSteering';
 import type {
 	Session,
 	AITab,
@@ -95,17 +105,28 @@ describe('useInputProcessing', () => {
 	const mockSyncAiInputToSession = vi.fn();
 	const mockSyncTerminalInputToSession = vi.fn();
 	const mockGetBatchState = vi.fn(() => defaultBatchState);
-	const mockProcessQueuedItemRef = { current: vi.fn() };
+	// Resolves, like the real `processQueuedItem`: it returns Promise<void> and
+	// the dispatch sites attach a `.catch()` so a rejection is logged rather than
+	// surfacing as an unhandled crash report.
+	const mockProcessQueuedItemRef = { current: vi.fn().mockResolvedValue(undefined) };
 	const mockFlushBatchedUpdates = vi.fn();
 	const mockOnHistoryCommand = vi.fn().mockResolvedValue(undefined);
 	const mockInputRef = { current: null } as React.RefObject<HTMLTextAreaElement | null>;
+	const realSetSessions = useSessionStore.getState().setSessions;
 
 	// Store original window.maestro
 	const originalMaestro = { ...window.maestro };
 
 	beforeEach(() => {
 		vi.clearAllMocks();
+		mockProcessQueuedItemRef.current.mockResolvedValue(undefined);
 		mockGetBatchState.mockReturnValue(defaultBatchState);
+		useSessionStore.setState({ sessions: [], activeSessionId: '' });
+		// Automatic tab naming ships ON, and this harness routes the store's
+		// updateAiTab through mockSetSessions - so leaving it on makes the naming
+		// spinner the first setSessions call in every unrelated test. The naming
+		// describes below switch it back on for themselves.
+		useSettingsStore.setState({ automaticTabNamingEnabled: false } as any);
 
 		// Mock window.maestro.process.spawn
 		window.maestro = {
@@ -115,6 +136,9 @@ describe('useInputProcessing', () => {
 				spawn: vi.fn().mockResolvedValue(undefined),
 				write: vi.fn().mockResolvedValue(undefined),
 				runCommand: vi.fn().mockResolvedValue(undefined),
+				getActiveProcesses: vi.fn().mockResolvedValue([]),
+				broadcastUserInput: vi.fn().mockResolvedValue(undefined),
+				onUserInput: vi.fn().mockReturnValue(() => {}),
 			},
 			agents: {
 				...window.maestro?.agents,
@@ -134,6 +158,7 @@ describe('useInputProcessing', () => {
 
 	afterEach(() => {
 		Object.assign(window.maestro, originalMaestro);
+		useSessionStore.setState({ setSessions: realSetSessions });
 	});
 
 	// Helper to create hook dependencies.
@@ -147,7 +172,7 @@ describe('useInputProcessing', () => {
 		const session = createMockSession();
 		const sessionsRef = { current: [session] };
 
-		return {
+		const deps = {
 			activeSession: session,
 			activeSessionId: session.id,
 			setSessions: mockSetSessions,
@@ -169,6 +194,16 @@ describe('useInputProcessing', () => {
 			onHistoryCommand: mockOnHistoryCommand,
 			...rest,
 		};
+		const seed = deps.activeSession ?? undefined;
+		mockSetSessions.mockImplementation((updater) => {
+			realSetSessions(updater);
+		});
+		useSessionStore.setState({
+			sessions: seed ? [seed] : [],
+			activeSessionId: seed?.id ?? '',
+			setSessions: mockSetSessions as typeof realSetSessions,
+		});
+		return deps;
 	};
 
 	describe('hook initialization', () => {
@@ -450,7 +485,10 @@ describe('useInputProcessing', () => {
 			expect(mockOnWizardCommand).toHaveBeenCalledWith('');
 			expect(mockSetInputValue).toHaveBeenCalledWith('');
 			expect(mockSetSlashCommandOpen).toHaveBeenCalledWith(false);
-			expect(mockSyncAiInputToSession).toHaveBeenCalledWith('');
+			expect(mockSyncAiInputToSession).toHaveBeenCalledWith('', {
+				sessionId: 'session-1',
+				tabId: 'tab-1',
+			});
 		});
 
 		it('intercepts /wizard with arguments and passes them to handler', async () => {
@@ -575,7 +613,10 @@ describe('useInputProcessing', () => {
 			// Should clear input
 			expect(mockSetInputValue).toHaveBeenCalledWith('');
 			expect(mockSetSlashCommandOpen).toHaveBeenCalledWith(false);
-			expect(mockSyncAiInputToSession).toHaveBeenCalledWith('');
+			expect(mockSyncAiInputToSession).toHaveBeenCalledWith('', {
+				sessionId: 'session-1',
+				tabId: 'tab-1',
+			});
 			vi.useRealTimers();
 		});
 
@@ -894,6 +935,7 @@ describe('useInputProcessing', () => {
 			// Clear the processQueuedItemRef mock between tests in this suite
 			// to ensure mock.calls[0] always refers to current test's call
 			mockProcessQueuedItemRef.current.mockClear();
+			mockProcessQueuedItemRef.current.mockResolvedValue(undefined);
 		});
 
 		it('matches command with arguments and stores args in queued item', async () => {
@@ -1124,176 +1166,321 @@ describe('useInputProcessing', () => {
 		});
 	});
 
-	describe('Auto Run steering', () => {
+	describe('active process reconciliation', () => {
+		it('queues instead of replacing a live process when renderer state is stale idle', async () => {
+			const session = createMockSession({ state: 'idle' });
+			vi.mocked(window.maestro.process.getActiveProcesses).mockResolvedValue([
+				{
+					sessionId: `${session.id}-ai-${session.activeTabId}`,
+					toolType: session.toolType,
+					pid: 32828,
+					cwd: session.cwd,
+					isTerminal: false,
+					isBatchMode: true,
+					startTime: 1700000000000,
+				},
+			]);
+			const deps = createDeps({
+				activeSession: session,
+				sessionsRef: { current: [session] },
+				inputValue: 'where is my answer',
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			expect(window.maestro.process.spawn).not.toHaveBeenCalled();
+			expect(window.maestro.process.getActiveProcesses).toHaveBeenCalledWith({
+				includeChildProcesses: false,
+			});
+			const updateSessions = mockSetSessions.mock.calls[0][0];
+			const [updatedSession] = updateSessions([session]);
+			expect(updatedSession.state).toBe('busy');
+			expect(updatedSession.aiTabs[0].state).toBe('busy');
+			expect(updatedSession.executionQueue).toHaveLength(1);
+			expect(updatedSession.executionQueue[0].text).toBe('where is my answer');
+		});
+
+		it('queues when active process reconciliation fails', async () => {
+			const readOnlyTab = createMockTab({ readOnlyMode: true });
+			const session = createMockSession({
+				state: 'idle',
+				aiTabs: [readOnlyTab],
+				activeTabId: readOnlyTab.id,
+			});
+			vi.mocked(window.maestro.process.getActiveProcesses).mockRejectedValue(
+				new Error('process IPC unavailable')
+			);
+			const deps = createDeps({
+				activeSession: session,
+				sessionsRef: { current: [session] },
+				inputValue: 'preserve this message',
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			expect(window.maestro.process.spawn).not.toHaveBeenCalled();
+			const updateSessions = mockSetSessions.mock.calls[0][0];
+			const [updatedSession] = updateSessions([session]);
+			expect(updatedSession.state).toBe('idle');
+			expect(updatedSession.aiTabs[0].state).toBe('idle');
+			expect(updatedSession.executionQueue).toHaveLength(1);
+			expect(updatedSession.executionQueue[0].text).toBe('preserve this message');
+			expect(updatedSession.executionQueue[0].waitingForConnection).toBe(true);
+		});
+
+		it('keeps a new message behind an existing connection-held message', async () => {
+			const session = createMockSession({
+				state: 'idle',
+				executionQueue: [
+					{
+						id: 'held-a',
+						timestamp: 1,
+						tabId: 'tab-1',
+						type: 'message',
+						text: 'A',
+						waitingForConnection: true,
+					},
+				],
+			});
+			session.executionQueue[0].tabId = session.activeTabId;
+			const deps = createDeps({
+				activeSession: session,
+				sessionsRef: { current: [session] },
+				inputValue: 'B',
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			expect(window.maestro.process.spawn).not.toHaveBeenCalled();
+			const [updated] = useSessionStore.getState().sessions;
+			expect(updated.executionQueue.map((queued) => queued.text)).toEqual(['A', 'B']);
+			expect(updated.executionQueue.every((queued) => queued.waitingForConnection)).toBe(true);
+
+			const released = releaseConnectionHeldQueueItems(updated.executionQueue);
+			const first = takeNextRunnableQueueItem(released);
+			const second = takeNextRunnableQueueItem(first.remaining);
+			expect([first.item?.text, second.item?.text]).toEqual(['A', 'B']);
+		});
+
+		it('keeps queue order when reconciliation releases the hold during a new send', async () => {
+			let resolveProbe!: (value: []) => void;
+			vi.mocked(window.maestro.process.getActiveProcesses).mockReturnValue(
+				new Promise((resolve) => {
+					resolveProbe = resolve;
+				})
+			);
+			const session = createMockSession({
+				state: 'idle',
+				executionQueue: [
+					{
+						id: 'held-a',
+						timestamp: 1,
+						tabId: 'tab-1',
+						type: 'message',
+						text: 'A',
+						waitingForConnection: true,
+					},
+				],
+			});
+			session.executionQueue[0].tabId = session.activeTabId;
+			const deps = createDeps({
+				activeSession: session,
+				sessionsRef: { current: [session] },
+				inputValue: 'B',
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			let send!: Promise<void>;
+			act(() => {
+				send = result.current.processInput();
+			});
+			act(() => {
+				const [live] = useSessionStore.getState().sessions;
+				useSessionStore
+					.getState()
+					.setSessions([
+						{ ...live, executionQueue: releaseConnectionHeldQueueItems(live.executionQueue) },
+					]);
+				resolveProbe([]);
+			});
+			await act(async () => {
+				await send;
+			});
+
+			expect(window.maestro.process.spawn).not.toHaveBeenCalled();
+			const [updated] = useSessionStore.getState().sessions;
+			expect(updated.executionQueue.map((queued) => queued.text)).toEqual(['A', 'B']);
+			const first = takeNextRunnableQueueItem(updated.executionQueue);
+			const second = takeNextRunnableQueueItem(first.remaining);
+			expect([first.item?.text, second.item?.text]).toEqual(['A', 'B']);
+		});
+
+		it('re-queues the message when the spawn collides with a live turn', async () => {
+			// "Agent process already running" means the tab was mid-turn when this
+			// dispatch landed - the provider never saw the message. Dropping it is
+			// how one stalled phone socket destroyed 34 of 35 messages and left
+			// nothing but red system lines behind.
+			const session = createMockSession({ state: 'idle' });
+			vi.mocked(window.maestro.process.spawn).mockRejectedValue(
+				new Error(agentAlreadyRunningMessage(`${session.id}-ai-${session.activeTabId}`))
+			);
+			const deps = createDeps({
+				activeSession: session,
+				sessionsRef: { current: [session] },
+				inputValue: 'do not lose me',
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+				// The spawn runs in a fire-and-forget IIFE; let its rejection settle.
+				await Promise.resolve();
+				await Promise.resolve();
+			});
+
+			const [live] = useSessionStore.getState().sessions;
+			expect(live.executionQueue).toHaveLength(1);
+			expect(live.executionQueue[0].text).toBe('do not lose me');
+			// A collision leaves the busy state alone: a live process is still
+			// streaming into that tab, and clearing it told every busy-based rule in
+			// the app that the agent was free.
+			expect(live.aiTabs[0].state).toBe('busy');
+			expect(live.state).toBe('busy');
+			expect(
+				live.aiTabs[0].logs.some((log) => log.text?.includes('Failed to spawn agent process'))
+			).toBe(false);
+		});
+
+		it('still reports a genuine spawn failure and frees the tab', async () => {
+			// The other half of the branch: nothing is running, so the tab must be
+			// released and the user told, rather than silently re-queued forever.
+			const session = createMockSession({ state: 'idle' });
+			vi.mocked(window.maestro.process.spawn).mockRejectedValue(new Error('ENOENT: claude'));
+			const deps = createDeps({
+				activeSession: session,
+				sessionsRef: { current: [session] },
+				inputValue: 'this one really failed',
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+				await Promise.resolve();
+				await Promise.resolve();
+			});
+
+			const [live] = useSessionStore.getState().sessions;
+			expect(live.executionQueue).toHaveLength(0);
+			expect(live.aiTabs[0].state).toBe('idle');
+			expect(
+				live.aiTabs[0].logs.some((log) => log.text?.includes('Failed to spawn agent process'))
+			).toBe(true);
+		});
+
+		it('a second send that resumes after the first queues instead of racing it', async () => {
+			// The ownership probe is the only await between Enter and the busy-state
+			// write, and everything after it is synchronous. N sends parked on a
+			// stalled bridge all resume holding the PRE-await snapshot, which said
+			// idle for every one of them - so without a live re-read all N skip the
+			// queue and all N spawn, one wins, and the rest are refused.
+			const session = createMockSession({ state: 'idle' });
+			const deps = createDeps({
+				activeSession: session,
+				sessionsRef: { current: [session] },
+				inputValue: 'first',
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			expect(window.maestro.process.spawn).toHaveBeenCalledTimes(1);
+			const [live] = useSessionStore.getState().sessions;
+			expect(live.executionQueue).toHaveLength(1);
+			expect(live.executionQueue[0].text).toBe('first');
+		});
+
+		it('keeps the submitted tab pinned when the active tab changes during reconciliation', async () => {
+			const submittedTab = createMockTab({
+				id: 'submitted-tab',
+				agentSessionId: 'provider-session-submitted',
+			});
+			const switchedTab = createMockTab({
+				id: 'switched-tab',
+				agentSessionId: 'provider-session-switched',
+			});
+			const session = createMockSession({
+				state: 'idle',
+				aiTabs: [submittedTab, switchedTab],
+				activeTabId: submittedTab.id,
+			});
+			const sessionsRef = { current: [session] };
+			vi.mocked(window.maestro.process.getActiveProcesses).mockImplementation(async () => {
+				sessionsRef.current = [{ ...session, activeTabId: switchedTab.id }];
+				return [];
+			});
+			const deps = createDeps({
+				activeSession: session,
+				sessionsRef,
+				inputValue: 'send this to the submitted tab',
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			expect(window.maestro.process.spawn).toHaveBeenCalledWith(
+				expect.objectContaining({
+					sessionId: `${session.id}-ai-${submittedTab.id}`,
+					agentSessionId: submittedTab.agentSessionId,
+				})
+			);
+			const updateSessions = mockSetSessions.mock.calls[0][0];
+			const [loggedSession] = updateSessions(sessionsRef.current);
+			expect(
+				loggedSession.aiTabs.find((tab: AITab) => tab.id === submittedTab.id)?.logs.at(-1)?.text
+			).toBe('send this to the submitted tab');
+			expect(
+				loggedSession.aiTabs.find((tab: AITab) => tab.id === switchedTab.id)?.logs
+			).toHaveLength(0);
+		});
+	});
+
+	describe('Auto Run does not hijack the composer', () => {
 		const runningBatchState: BatchRunState = {
 			...defaultBatchState,
 			isRunning: true,
 		};
 
 		afterEach(() => {
-			useAutoRunSteeringStore.setState({ notes: {} });
+			useAutoRunSteeringStore.setState({ notes: {}, delivered: {} });
 		});
 
-		it('parks a write-mode message as a steering note instead of queueing a turn', async () => {
+		// Regression: a write-mode message typed during a run used to be swallowed
+		// and re-routed into an Auto Run steering note, so a message addressed to
+		// the agent silently meant something else. Steering is the Thought Stream's
+		// Steer button now; the composer only ever talks to the agent.
+		it('queues a write-mode message rather than parking it as a steering note', async () => {
 			mockGetBatchState.mockReturnValue(runningBatchState);
 
 			// Session state is irrelevant here: an Auto Run spawns its own isolated
-			// process and never marks the session busy, so the routing must key off
-			// the run, not the session.
+			// process and never marks the session busy, so the queue decision keys
+			// off the run, not the session.
 			const session = createMockSession({ state: 'idle' });
-			const deps = createDeps({
-				activeSession: session,
-				inputValue: 'Important notice: Maestro error.',
-				activeBatchRunState: runningBatchState,
-			});
-			const { result } = renderHook(() => useInputProcessing(deps));
-
-			await act(async () => {
-				await result.current.processInput();
-			});
-
-			const pending = useAutoRunSteeringStore.getState().notes[session.id] ?? [];
-			expect(pending).toHaveLength(1);
-			expect(pending[0].text).toBe('Important notice: Maestro error.');
-			expect(pending[0].tabId).toBe(session.activeTabId);
-			// The composer is cleared and nothing lands in the execution queue.
-			expect(mockSetInputValue).toHaveBeenCalledWith('');
-			expect(mockSetSessions).not.toHaveBeenCalled();
-		});
-
-		it('queues instead of steering when the message carries staged images', async () => {
-			mockGetBatchState.mockReturnValue(runningBatchState);
-
-			// A task prompt is text, so an image has nowhere to ride along. Queueing
-			// keeps the image rather than silently dropping it.
-			const session = createMockSession({ state: 'idle' });
-			const deps = createDeps({
-				activeSession: session,
-				inputValue: 'look at this',
-				stagedImages: ['data:image/png;base64,AAA'],
-				activeBatchRunState: runningBatchState,
-			});
-			const { result } = renderHook(() => useInputProcessing(deps));
-
-			await act(async () => {
-				await result.current.processInput();
-			});
-
-			expect(useAutoRunSteeringStore.getState().notes[session.id]).toBeUndefined();
-			expect(mockSetSessions).toHaveBeenCalled();
-			const updatedSessions = mockSetSessions.mock.calls[0][0]([session]);
-			expect(updatedSessions[0].executionQueue).toHaveLength(1);
-			expect(updatedSessions[0].executionQueue[0].text).toBe('look at this');
-		});
-
-		it('queues rather than steering once the pending-note cap is reached', async () => {
-			mockGetBatchState.mockReturnValue(runningBatchState);
-
-			const session = createMockSession({ state: 'idle' });
-			const tabId = session.activeTabId!;
-			for (let i = 0; i < MAX_PENDING_STEERING_NOTES; i++) {
-				useAutoRunSteeringStore.getState().addNote(session.id, tabId, `note ${i}`);
-			}
-
-			const deps = createDeps({
-				activeSession: session,
-				inputValue: 'one too many',
-				activeBatchRunState: runningBatchState,
-			});
-			const { result } = renderHook(() => useInputProcessing(deps));
-
-			await act(async () => {
-				await result.current.processInput();
-			});
-
-			// A rejected note must never swallow what the operator typed.
-			expect(useAutoRunSteeringStore.getState().notes[session.id]).toHaveLength(
-				MAX_PENDING_STEERING_NOTES
-			);
-			expect(mockSetSessions).toHaveBeenCalled();
-			const updatedSessions = mockSetSessions.mock.calls[0][0]([session]);
-			expect(updatedSessions[0].executionQueue[0].text).toBe('one too many');
-		});
-
-		it('queues a read-only message rather than steering when the session is busy', async () => {
-			mockGetBatchState.mockReturnValue(runningBatchState);
-
-			// Read-only keeps its own meaning during a run: a question that runs in
-			// parallel, not a course correction for the next task.
-			const tab = createMockTab({ id: 'ro-tab', state: 'busy', readOnlyMode: true });
-			const session = createMockSession({
-				state: 'busy',
-				aiTabs: [tab],
-				activeTabId: 'ro-tab',
-			});
-			const deps = createDeps({
-				activeSession: session,
-				inputValue: 'what is the current branch?',
-				activeBatchRunState: runningBatchState,
-			});
-			const { result } = renderHook(() => useInputProcessing(deps));
-
-			await act(async () => {
-				await result.current.processInput();
-			});
-
-			expect(useAutoRunSteeringStore.getState().notes[session.id]).toBeUndefined();
-			expect(mockSetSessions).toHaveBeenCalled();
-		});
-
-		it('sends now rather than steering when the operator hits Force Send', async () => {
-			mockGetBatchState.mockReturnValue(runningBatchState);
-			useSettingsStore.setState({ forcedParallelExecution: true } as never);
-
-			// Force Send bypasses the run entirely. Turning it into a steering note
-			// would silently demote an explicit "run this now" into "maybe later".
-			const session = createMockSession({ state: 'idle' });
-			const deps = createDeps({
-				activeSession: session,
-				inputValue: 'run this now',
-				activeBatchRunState: runningBatchState,
-			});
-			const { result } = renderHook(() => useInputProcessing(deps));
-
-			await act(async () => {
-				await result.current.processInput(undefined, { forceParallel: true });
-			});
-
-			expect(useAutoRunSteeringStore.getState().notes[session.id]).toBeUndefined();
-			// Sent, not queued: force-parallel only queues when THIS tab is busy.
-			const queued = mockSetSessions.mock.calls.some(
-				(call) => call[0]([session])[0].executionQueue.length > 0
-			);
-			expect(queued).toBe(false);
-
-			useSettingsStore.setState({ forcedParallelExecution: false } as never);
-		});
-
-		it('queues behind a pending retry instead of steering', async () => {
-			mockGetBatchState.mockReturnValue(runningBatchState);
-
-			// The provider is refusing work. A steering note cannot talk past a quota
-			// wall, and parking one here would drop the message the retry is holding.
-			const session = createMockSession({ state: 'idle' });
-			const tabId = session.activeTabId!;
-			useRetryStore.setState({
-				retries: {
-					[`${session.id}:${tabId}`]: {
-						sessionId: session.id,
-						tabId,
-						key: `${session.id}:${tabId}`,
-						outageId: 'outage-steering',
-						strategy: 'token-exhaustion',
-						mode: 'resend',
-						status: 'scheduled',
-						attempt: 0,
-						startedAt: Date.now(),
-						nextRetryAt: Date.now() + 60_000,
-						lastMessage: "You've hit your session limit",
-					},
-				},
-			} as never);
-
 			const deps = createDeps({
 				activeSession: session,
 				inputValue: 'change course',
@@ -1309,8 +1496,6 @@ describe('useInputProcessing', () => {
 			expect(mockSetSessions).toHaveBeenCalled();
 			const updatedSessions = mockSetSessions.mock.calls[0][0]([session]);
 			expect(updatedSessions[0].executionQueue[0].text).toBe('change course');
-
-			useRetryStore.setState({ retries: {}, outages: {} } as never);
 		});
 	});
 
@@ -1626,6 +1811,71 @@ describe('useInputProcessing', () => {
 			expect(updatedSessions[0].executionQueue.length).toBe(1);
 		});
 
+		// "Always" force-send mode: resolveForceParallel() treats every send as
+		// force-parallel, so callers no longer need to pass { forceParallel: true }.
+		describe('always mode', () => {
+			afterEach(() => {
+				useSettingsStore.setState({ forcedParallelAlways: false } as any);
+			});
+
+			it('sends immediately without an explicit forceParallel option', async () => {
+				useSettingsStore.setState({
+					forcedParallelExecution: true,
+					forcedParallelAlways: true,
+				} as any);
+
+				// Session busy (another tab running), but the active tab is idle.
+				const busySession = createMockSession({
+					state: 'busy',
+					aiTabs: [
+						createMockTab({ id: 'tab-1', state: 'idle' }),
+						createMockTab({ id: 'tab-2', state: 'busy' }),
+					],
+					activeTabId: 'tab-1',
+				});
+				const deps = createDeps({
+					activeSession: busySession,
+					sessionsRef: { current: [busySession] },
+					inputValue: 'always forced message',
+				});
+				const { result } = renderHook(() => useInputProcessing(deps));
+
+				await act(async () => {
+					await result.current.processInput();
+				});
+
+				expect(window.maestro.process.spawn).toHaveBeenCalled();
+			});
+
+			it('does not force-send when the master forcedParallelExecution gate is off', async () => {
+				useSettingsStore.setState({
+					forcedParallelExecution: false,
+					forcedParallelAlways: true,
+				} as any);
+
+				const busySession = createMockSession({
+					state: 'busy',
+					aiTabs: [
+						createMockTab({ id: 'tab-1', state: 'idle' }),
+						createMockTab({ id: 'tab-2', state: 'busy' }),
+					],
+					activeTabId: 'tab-1',
+				});
+				const deps = createDeps({
+					activeSession: busySession,
+					sessionsRef: { current: [busySession] },
+					inputValue: 'should not force send',
+				});
+				const { result } = renderHook(() => useInputProcessing(deps));
+
+				await act(async () => {
+					await result.current.processInput();
+				});
+
+				expect(window.maestro.process.spawn).not.toHaveBeenCalled();
+			});
+		});
+
 		it('queues normally when forceParallel is absent and session is busy', async () => {
 			useSettingsStore.setState({ forcedParallelExecution: true } as any);
 
@@ -1914,6 +2164,124 @@ describe('useInputProcessing', () => {
 
 			useSettingsStore.setState({ forcedParallelExecution: false } as any);
 			mockGetBatchState.mockReturnValue(defaultBatchState);
+		});
+
+		it('sends permissionMode "readonly" when Auto Run forces read-only despite tab permissionMode "full"', async () => {
+			const runningBatchState: BatchRunState = {
+				...defaultBatchState,
+				isRunning: true,
+				worktreeActive: false,
+			};
+			mockGetBatchState.mockReturnValue(runningBatchState);
+
+			// Tab explicitly opts into full permissions, but Auto Run without a
+			// worktree must still force the spawn config to readonly.
+			const fullPermissionTab = createMockTab({ readOnlyMode: true, permissionMode: 'full' });
+			const session = createMockSession({
+				aiTabs: [fullPermissionTab],
+				activeTabId: fullPermissionTab.id,
+			});
+			const deps = createDeps({
+				activeSession: session,
+				sessionsRef: { current: [session] },
+				inputValue: 'what does this function do',
+				activeBatchRunState: runningBatchState,
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			expect(window.maestro.process.spawn).toHaveBeenCalled();
+			const spawnCall = (window.maestro.process.spawn as ReturnType<typeof vi.fn>).mock.calls[0][0];
+			expect(spawnCall.readOnlyMode).toBe(true);
+			expect(spawnCall.permissionMode).toBe('readonly');
+		});
+
+		it('sends permissionMode "full" when tab permissionMode is "full" and Auto Run is not forcing read-only', async () => {
+			// Use a tab WITH agentSessionId so the message sends immediately (not queued)
+			const fullPermissionTab = createMockTab({
+				readOnlyMode: false,
+				permissionMode: 'full',
+				agentSessionId: 'existing-session-789',
+			});
+			const session = createMockSession({
+				aiTabs: [fullPermissionTab],
+				activeTabId: fullPermissionTab.id,
+			});
+			const deps = createDeps({
+				activeSession: session,
+				sessionsRef: { current: [session] },
+				inputValue: 'refactor this module',
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			expect(window.maestro.process.spawn).toHaveBeenCalled();
+			const spawnCall = (window.maestro.process.spawn as ReturnType<typeof vi.fn>).mock.calls[0][0];
+			expect(spawnCall.permissionMode).toBe('full');
+		});
+
+		it('sends permissionMode "full" for a tab whose permissionMode was never set (matches the pill)', async () => {
+			// The core drift bug: an unset permissionMode rendered "Full Access" in
+			// the toolbar but previously spawned with an undefined permissionMode, so
+			// buildAgentArgs withheld the bypass and the agent was silently denied.
+			// resolveTabPermissionMode now maps unset -> 'full' on the spawn path too.
+			const unsetTab = createMockTab({
+				agentSessionId: 'existing-session-unset',
+			});
+			expect(unsetTab.permissionMode).toBeUndefined();
+			const session = createMockSession({
+				aiTabs: [unsetTab],
+				activeTabId: unsetTab.id,
+			});
+			const deps = createDeps({
+				activeSession: session,
+				sessionsRef: { current: [session] },
+				inputValue: 'run the build',
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			expect(window.maestro.process.spawn).toHaveBeenCalled();
+			const spawnCall = vi.mocked(window.maestro.process.spawn).mock.calls[0][0];
+			expect(spawnCall.permissionMode).toBe('full');
+			expect(spawnCall.readOnlyMode).toBeFalsy();
+		});
+
+		it('sends permissionMode "standard" when tab permissionMode is "standard"', async () => {
+			// standard mode must propagate to the spawn config so the main process
+			// can wire up the permission relay (rather than defaulting to full).
+			const standardTab = createMockTab({
+				readOnlyMode: false,
+				permissionMode: 'standard',
+				agentSessionId: 'existing-session-standard',
+			});
+			const session = createMockSession({
+				aiTabs: [standardTab],
+				activeTabId: standardTab.id,
+			});
+			const deps = createDeps({
+				activeSession: session,
+				sessionsRef: { current: [session] },
+				inputValue: 'refactor this module',
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			expect(window.maestro.process.spawn).toHaveBeenCalled();
+			const spawnCall = (window.maestro.process.spawn as ReturnType<typeof vi.fn>).mock.calls[0][0];
+			expect(spawnCall.permissionMode).toBe('standard');
 		});
 
 		it('does not append read-only suffix when in normal write mode', async () => {
@@ -2341,6 +2709,364 @@ describe('useInputProcessing', () => {
 		});
 	});
 
+	// Cross-agent @mention dispatch. `onPlanCrossAgentMentions` RESOLVES the
+	// mentioned agents (it sends nothing) and reports whether the SOURCE agent's
+	// own send should be suppressed - true when the message leads with an `@agent`
+	// mention, so only the consulted agent(s) answer. The consult itself fires via
+	// `onDispatchCrossAgentMentions`, and only when this message dispatches now: a
+	// message that lands in the execution queue carries `crossAgentMention` and is
+	// consulted at dequeue time instead.
+	describe('cross-agent @mention dispatch', () => {
+		it('suppresses the local send when the plan says the message is addressed elsewhere', async () => {
+			const onPlanCrossAgentMentions = vi
+				.fn()
+				.mockReturnValue({ targetSessionIds: ['backend'], suppressLocal: true });
+			const onDispatchCrossAgentMentions = vi.fn();
+			const session = createMockSession({ state: 'idle' });
+			const deps = createDeps({
+				activeSession: session,
+				activeSessionId: session.id,
+				sessionsRef: { current: [session] },
+				inputValue: '@Backend does this look right?',
+				onPlanCrossAgentMentions,
+				onDispatchCrossAgentMentions,
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			// The mentions resolved against the message, source session, and its active tab...
+			expect(onPlanCrossAgentMentions).toHaveBeenCalledTimes(1);
+			expect(onPlanCrossAgentMentions).toHaveBeenCalledWith(
+				'@Backend does this look right?',
+				session,
+				session.activeTabId
+			);
+			// ...and the consult fired: there is no local turn for it to wait behind.
+			expect(onDispatchCrossAgentMentions).toHaveBeenCalledTimes(1);
+			expect(onDispatchCrossAgentMentions).toHaveBeenCalledWith(
+				{ targetSessionIds: ['backend'], suppressLocal: true },
+				'@Backend does this look right?',
+				session,
+				session.activeTabId
+			);
+
+			// Local dispatch is suppressed: no spawn/write to the source agent.
+			expect(window.maestro.process.spawn).not.toHaveBeenCalled();
+			expect(window.maestro.process.write).not.toHaveBeenCalled();
+
+			// The user's bubble is still recorded (anchor for the streamed replies).
+			expect(mockSetSessions).toHaveBeenCalled();
+			const [updated] = mockSetSessions.mock.calls[0][0]([session]);
+			const logs = updated.aiTabs[0].logs;
+			const lastEntry = logs[logs.length - 1];
+			expect(lastEntry.source).toBe('user');
+			expect(lastEntry.text).toBe('@Backend does this look right?');
+			// And appended to command history for arrow-up recall.
+			expect(updated.aiCommandHistory).toContain('@Backend does this look right?');
+
+			// The bubble is mirrored to other windows.
+			expect(window.maestro.process.broadcastUserInput).toHaveBeenCalledWith(
+				expect.objectContaining({
+					sessionId: session.id,
+					inputMode: 'ai',
+					entry: expect.objectContaining({ text: '@Backend does this look right?' }),
+				})
+			);
+
+			// The composer is cleared.
+			expect(mockSetInputValue).toHaveBeenCalledWith('');
+		});
+
+		it('proceeds with the local send when the plan does not suppress it', async () => {
+			// A trailing mention (`... to @Backend?`) does not suppress: the source
+			// agent answers too, so the normal spawn path must run.
+			const onPlanCrossAgentMentions = vi
+				.fn()
+				.mockReturnValue({ targetSessionIds: ['backend'], suppressLocal: false });
+			const onDispatchCrossAgentMentions = vi.fn();
+			const session = createMockSession({ state: 'idle' });
+			const deps = createDeps({
+				activeSession: session,
+				activeSessionId: session.id,
+				sessionsRef: { current: [session] },
+				inputValue: 'does this look right to @Backend?',
+				onPlanCrossAgentMentions,
+				onDispatchCrossAgentMentions,
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			expect(onPlanCrossAgentMentions).toHaveBeenCalledTimes(1);
+			// The agent is idle, so this message dispatches now - and so does the consult.
+			expect(onDispatchCrossAgentMentions).toHaveBeenCalledTimes(1);
+			// Not suppressed: the message dispatches to the source agent as usual.
+			expect(window.maestro.process.spawn).toHaveBeenCalled();
+		});
+
+		it('defers the consult when the message is queued behind a busy agent', async () => {
+			// The bug this guards: the consult used to fire the moment the user hit
+			// send, so the mentioned agent started answering a question that was
+			// still sitting in the queue behind other work.
+			const onPlanCrossAgentMentions = vi
+				.fn()
+				.mockReturnValue({ targetSessionIds: ['backend'], suppressLocal: false });
+			const onDispatchCrossAgentMentions = vi.fn();
+			const session = createMockSession({ state: 'busy' });
+			session.aiTabs[0].state = 'busy';
+			const deps = createDeps({
+				activeSession: session,
+				activeSessionId: session.id,
+				sessionsRef: { current: [session] },
+				inputValue: 'once that lands, ask @Backend to review',
+				onPlanCrossAgentMentions,
+				onDispatchCrossAgentMentions,
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			// Resolved, but NOT consulted: that happens when the item is dispatched.
+			expect(onPlanCrossAgentMentions).toHaveBeenCalledTimes(1);
+			expect(onDispatchCrossAgentMentions).not.toHaveBeenCalled();
+			expect(window.maestro.process.spawn).not.toHaveBeenCalled();
+
+			// The queued item carries the pending consult so the dequeue can fire it.
+			const [updated] = mockSetSessions.mock.calls[0][0]([session]);
+			const queued = updated.executionQueue[updated.executionQueue.length - 1];
+			expect(queued.text).toBe('once that lands, ask @Backend to review');
+			expect(queued.crossAgentMention).toBe(true);
+		});
+
+		// The reported bug: the user queued /commit, then sent "@rc sync up" meaning
+		// "after the commit". Because the message LEADS with the mention, the source
+		// agent does not answer it - but that does not mean it has nothing to wait
+		// for. Its POSITION in the queue is the instruction.
+		it('queues a mention-only message behind work the user already lined up', async () => {
+			const onPlanCrossAgentMentions = vi
+				.fn()
+				.mockReturnValue({ targetSessionIds: ['rc'], suppressLocal: true });
+			const onDispatchCrossAgentMentions = vi.fn();
+			const session = createMockSession({ state: 'idle' });
+			session.executionQueue = [
+				{
+					id: 'queued-commit',
+					timestamp: 1,
+					tabId: session.aiTabs[0].id,
+					type: 'command',
+					command: '/commit',
+				},
+			];
+			const deps = createDeps({
+				activeSession: session,
+				activeSessionId: session.id,
+				sessionsRef: { current: [session] },
+				inputValue: '@rc pull in the latest changes',
+				onPlanCrossAgentMentions,
+				onDispatchCrossAgentMentions,
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			// Resolved, but nobody consulted: /commit is still ahead of it.
+			expect(onPlanCrossAgentMentions).toHaveBeenCalledTimes(1);
+			expect(onDispatchCrossAgentMentions).not.toHaveBeenCalled();
+			expect(window.maestro.process.spawn).not.toHaveBeenCalled();
+
+			const [updated] = mockSetSessions.mock.calls[0][0]([session]);
+			// Queued AFTER the commit, flagged as consult-only so the drain fires the
+			// mention without spawning a local turn.
+			expect(updated.executionQueue.map((i: { id: string }) => i.id)).toEqual([
+				'queued-commit',
+				expect.any(String),
+			]);
+			const queued = updated.executionQueue[1];
+			expect(queued.text).toBe('@rc pull in the latest changes');
+			expect(queued.crossAgentMention).toBe(true);
+			expect(queued.crossAgentOnly).toBe(true);
+			// No user bubble yet - it is appended when the item actually dispatches.
+			expect(updated.aiTabs[0].logs).toEqual([]);
+		});
+
+		it('queues a mention-only message while the agent is mid-turn', async () => {
+			// Same rule with nothing in the queue: a turn in flight is still work
+			// ahead, and the consulted agent should see the transcript after it lands.
+			const onPlanCrossAgentMentions = vi
+				.fn()
+				.mockReturnValue({ targetSessionIds: ['rc'], suppressLocal: true });
+			const onDispatchCrossAgentMentions = vi.fn();
+			const session = createMockSession({ state: 'busy' });
+			session.aiTabs[0].state = 'busy';
+			const deps = createDeps({
+				activeSession: session,
+				activeSessionId: session.id,
+				sessionsRef: { current: [session] },
+				inputValue: '@rc pull in the latest changes',
+				onPlanCrossAgentMentions,
+				onDispatchCrossAgentMentions,
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			expect(onDispatchCrossAgentMentions).not.toHaveBeenCalled();
+			const [updated] = mockSetSessions.mock.calls[0][0]([session]);
+			expect(updated.executionQueue[0].crossAgentOnly).toBe(true);
+		});
+
+		it('queues a mention-only message when only MAIN knows a turn is live', async () => {
+			// The store can read idle for a moment after a turn starts. Trusting it
+			// here fires the consult into a gap the user never saw - the same
+			// premature ping this path exists to prevent - so the mention branch asks
+			// main, exactly like the ordinary queue decision does.
+			const onPlanCrossAgentMentions = vi
+				.fn()
+				.mockReturnValue({ targetSessionIds: ['rc'], suppressLocal: true });
+			const onDispatchCrossAgentMentions = vi.fn();
+			const session = createMockSession({ state: 'idle' });
+			vi.mocked(window.maestro.process.getActiveProcesses).mockResolvedValue([
+				{
+					sessionId: `${session.id}-ai-${session.activeTabId}`,
+					toolType: session.toolType,
+					pid: 4242,
+					cwd: session.cwd,
+					isTerminal: false,
+					isBatchMode: true,
+					startTime: 1700000000000,
+				},
+			]);
+			const deps = createDeps({
+				activeSession: session,
+				activeSessionId: session.id,
+				sessionsRef: { current: [session] },
+				inputValue: '@rc pull in the latest changes',
+				onPlanCrossAgentMentions,
+				onDispatchCrossAgentMentions,
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			expect(onDispatchCrossAgentMentions).not.toHaveBeenCalled();
+			const [updated] = mockSetSessions.mock.calls[0][0]([session]);
+			expect(updated.executionQueue[0].crossAgentOnly).toBe(true);
+		});
+
+		it('holds a mention-only message when process reconciliation fails', async () => {
+			const onPlanCrossAgentMentions = vi
+				.fn()
+				.mockReturnValue({ targetSessionIds: ['rc'], suppressLocal: true });
+			const onDispatchCrossAgentMentions = vi.fn();
+			const session = createMockSession({ state: 'idle' });
+			vi.mocked(window.maestro.process.getActiveProcesses).mockRejectedValue(
+				new Error('bridge down')
+			);
+			const deps = createDeps({
+				activeSession: session,
+				activeSessionId: session.id,
+				sessionsRef: { current: [session] },
+				inputValue: '@rc pull in the latest changes',
+				onPlanCrossAgentMentions,
+				onDispatchCrossAgentMentions,
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			expect(onDispatchCrossAgentMentions).not.toHaveBeenCalled();
+			const [updated] = mockSetSessions.mock.calls[0][0]([session]);
+			expect(updated.executionQueue[0]).toMatchObject({
+				crossAgentOnly: true,
+				waitingForConnection: true,
+			});
+		});
+
+		it('keeps a mention-only message behind an existing connection hold', async () => {
+			const onPlanCrossAgentMentions = vi
+				.fn()
+				.mockReturnValue({ targetSessionIds: ['rc'], suppressLocal: true });
+			const onDispatchCrossAgentMentions = vi.fn();
+			const session = createMockSession({
+				state: 'idle',
+				executionQueue: [
+					{
+						id: 'held-a',
+						timestamp: 1,
+						tabId: 'tab-1',
+						type: 'message',
+						text: 'A',
+						waitingForConnection: true,
+					},
+				],
+			});
+			session.executionQueue[0].tabId = session.activeTabId;
+			const deps = createDeps({
+				activeSession: session,
+				activeSessionId: session.id,
+				sessionsRef: { current: [session] },
+				inputValue: '@rc B',
+				onPlanCrossAgentMentions,
+				onDispatchCrossAgentMentions,
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			expect(onDispatchCrossAgentMentions).not.toHaveBeenCalled();
+			const [updated] = useSessionStore.getState().sessions;
+			expect(updated.executionQueue.map((queued) => queued.text)).toEqual(['A', '@rc B']);
+			expect(updated.executionQueue[1]).toMatchObject({
+				crossAgentOnly: true,
+				waitingForConnection: true,
+			});
+		});
+
+		it('does not resolve mentions on an override send (queued replay / force-send)', async () => {
+			// Cross-agent resolution is gated on a real input-box submit
+			// (`overrideInputValue === undefined`) so a queued replay never re-consults.
+			const onPlanCrossAgentMentions = vi
+				.fn()
+				.mockReturnValue({ targetSessionIds: ['backend'], suppressLocal: true });
+			const onDispatchCrossAgentMentions = vi.fn();
+			const session = createMockSession({ state: 'idle' });
+			const deps = createDeps({
+				activeSession: session,
+				activeSessionId: session.id,
+				sessionsRef: { current: [session] },
+				onPlanCrossAgentMentions,
+				onDispatchCrossAgentMentions,
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput('@Backend replayed message');
+			});
+
+			expect(onPlanCrossAgentMentions).not.toHaveBeenCalled();
+			expect(onDispatchCrossAgentMentions).not.toHaveBeenCalled();
+			// The override message dispatches normally (not suppressed).
+			expect(window.maestro.process.spawn).toHaveBeenCalled();
+		});
+	});
+
 	describe('automatic tab naming', () => {
 		// Naming spawns an ephemeral agent through this bridge; the tests assert
 		// that it is asked at all, not what it answers.
@@ -2434,6 +3160,75 @@ describe('useInputProcessing', () => {
 			});
 
 			expect(mockGenerateTabName).not.toHaveBeenCalled();
+		});
+	});
+
+	// ========================================================================
+	// Agent Resilience snapshot on the idle send
+	// ========================================================================
+
+	// The 2026-09-10 incident: a message typed into an IDLE tab took the direct
+	// spawn path, which never snapshotted the prompt. When it hit the weekly limit,
+	// scheduleRetryForError logged "No prompt snapshot to resend; falling back to
+	// modal" and the retry loop never started.
+	describe('Agent Resilience snapshot on the idle send', () => {
+		const weeklyLimit = {
+			type: 'rate_limited',
+			message: "You've hit your weekly limit · resets 10am (America/Chicago)",
+			recoverable: true,
+			timestamp: Date.now(),
+			agentId: 'claude-code',
+		} as never;
+
+		afterEach(() => {
+			registerDispatchDepsProvider(null);
+		});
+
+		it('snapshots the prompt before spawning, so a limit mid-send enters the retry loop', async () => {
+			registerDispatchDepsProvider(() => ({
+				conductorProfile: '',
+				customAICommands: [],
+				speckitCommands: [],
+				openspecCommands: [],
+			}));
+			const tab = createMockTab({ id: 'tab-snapshot', state: 'idle' });
+			// Default session id on purpose: createDeps pins activeSessionId to the
+			// default mock session, and a mismatched id resolves no session at all.
+			// The unique tab id is what isolates this retry key from other tests.
+			const session = createMockSession({
+				state: 'idle',
+				aiTabs: [tab],
+				activeTabId: tab.id,
+			});
+			useSessionStore.setState({ sessions: [session] });
+
+			// Ask the retry engine the question the error listener asks, from INSIDE
+			// the spawn: the limit error can arrive before the spawn promise settles,
+			// so a snapshot taken after the await would already be too late.
+			let wouldRetry: boolean | undefined;
+			vi.mocked(window.maestro.process.spawn).mockImplementation(async () => {
+				wouldRetry = scheduleRetryForError(session.id, tab.id, weeklyLimit);
+				return undefined as never;
+			});
+
+			const deps = createDeps({
+				activeSession: session,
+				sessionsRef: { current: [session] },
+				inputValue: 'almost perfect, just move it to the left a bit',
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			expect(window.maestro.process.spawn).toHaveBeenCalledTimes(1);
+			expect(wouldRetry).toBe(true);
+			expect(useRetryStore.getState().retries[`${session.id}:${tab.id}`]?.strategy).toBe(
+				'token-exhaustion'
+			);
+
+			cancelRetry(session.id, tab.id);
 		});
 	});
 });

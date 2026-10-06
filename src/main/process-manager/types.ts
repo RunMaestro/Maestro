@@ -1,7 +1,20 @@
 import type { ChildProcess } from 'child_process';
 import type { IPty } from 'node-pty';
+import type { OpencodeClient } from '@opencode-ai/sdk';
 import type { AgentOutputParser } from '../parsers';
 import type { AgentError } from '../../shared/types';
+
+/**
+ * Kill/interrupt handle for server-backed processes that have no OS child
+ * (currently the OpenCode SDK path). ProcessManager routes kill()/interrupt()
+ * here when `ManagedProcess.sdkController` is set.
+ */
+export interface SdkProcessController {
+	/** Abort the in-flight turn; the session/stream stays alive. */
+	interrupt: () => void;
+	/** Hard stop: abort the turn and tear down the event subscription. */
+	kill: () => void;
+}
 
 /**
  * Configuration for spawning a new process
@@ -29,6 +42,13 @@ export interface ProcessConfig {
 	querySource?: 'user' | 'auto';
 	tabId?: string;
 	projectPath?: string;
+	/**
+	 * Identity key for the omp model->context-window catalog (see
+	 * `computeOmpCatalogKey`). Set only for local omp spawns; carried onto the
+	 * managed process so StdoutHandler resolves against the catalog primed for
+	 * this exact binary + env, never another configuration's.
+	 */
+	ompModelCatalogKey?: string;
 	/** If true, always spawn in a shell (for PATH resolution on Windows) */
 	runInShell?: boolean;
 	/** If true, send the prompt via stdin as JSON instead of command line */
@@ -92,6 +112,12 @@ export interface ManagedProcess {
 	agentSessionId?: string;
 	resultEmitted?: boolean;
 	errorEmitted?: boolean;
+	/** Set by `ProcessManager.interrupt()` before it sends SIGINT (or writes
+	 *  Ctrl+C). Lets the exit path tell a user-initiated stop apart from a real
+	 *  silent crash: an interrupted turn that exits with a null signal code
+	 *  (coerced to 0 by the spawner's `close` handler) must NOT be surfaced as an
+	 *  "exited without producing a response" error. */
+	interrupted?: boolean;
 	/** An in-turn error notice held until the turn shows whether the agent
 	 *  recovered from it. See `AgentOutputParser.isProvisionalErrorNotice`. */
 	provisionalError?: AgentError;
@@ -101,6 +127,13 @@ export interface ManagedProcess {
 	stdoutBuffer?: string;
 	streamedText?: string;
 	contextWindow?: number;
+	ompModelCatalogKey?: string;
+	/** Last omp usage payload that was emitted WITHOUT a catalog-resolved context
+	 *  window (the catalog prime had not landed yet, so the stats carry the static
+	 *  fallback). Kept so a prime that completes after the spawn cap can re-emit a
+	 *  corrected `usage` event immediately instead of the gauge staying wrong until
+	 *  the next turn. Cleared once resolved or pushed, so no double emit. */
+	pendingOmpUsagePush?: { model: string; stats: UsageStats };
 	tempImageFiles?: string[];
 	command?: string;
 	args?: string[];
@@ -122,6 +155,14 @@ export interface ManagedProcess {
 	 *  Inherited system env is NOT included - this is the actionable set shown in the
 	 *  Process Details modal. */
 	maestroEnvVars?: Record<string, string>;
+	/** Kill/interrupt handle for server-backed processes (OpenCode SDK path). When
+	 *  set, this process has no `ptyProcess`/`childProcess`; ProcessManager routes
+	 *  lifecycle calls through here instead of OS signals. */
+	sdkController?: SdkProcessController;
+	/** OpenCode server session id for the SDK path (used to abort the turn). */
+	opencodeSessionId?: string;
+	/** OpenCode SDK client bound to the shared server, for abort calls. */
+	opencodeClient?: OpencodeClient;
 	/** Monotonic spawn number for this session id, claimed at registration.
 	 *  Lets a late event from a killed process recognize that a newer spawn owns
 	 *  the session even after that newer spawn has removed its own map entry.
@@ -160,6 +201,7 @@ export interface ProcessManagerEvents {
 	 *  (WIFSIGNALED). node-pty reports those with `code` 0, so the code alone
 	 *  cannot distinguish a clean exit from a kill. */
 	exit: (sessionId: string, code: number, signal?: number) => void;
+	spawn: (config: ProcessConfig) => void;
 	'command-exit': (sessionId: string, code: number) => void;
 	usage: (sessionId: string, stats: UsageStats) => void;
 	'session-id': (sessionId: string, agentSessionId: string) => void;
@@ -178,6 +220,10 @@ export interface ToolExecution {
 	 *  merge `running` and `completed`/`failed` events into a single
 	 *  log entry keyed by this id instead of appending two bubbles. */
 	toolCallId?: string;
+	/** When this tool ran inside a subagent, the `toolCallId` of the parent tool
+	 *  call that spawned it (claude-code's Task tool). Renderers nest the badge
+	 *  under that parent entry; absent for main-transcript tool calls. */
+	parentToolUseId?: string;
 }
 
 export interface QueryCompleteData {

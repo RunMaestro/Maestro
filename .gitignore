@@ -1,8 +1,6 @@
 # Maestro
-TEMP-REFACTORING-PLAN.md
-TEMP-REFACTORING-PLAN-2.md
-CUE-NOTES.md
-CUE-REFACTORING.md
+NOTES.md
+REFACTORING.md
 Auto\ Run\ Docs/
 Work\ Trees/
 .worktrees/
@@ -28,6 +26,9 @@ node_modules
 dist/
 release/
 *.log
+# Showcase Mode's seeded group-chat transcript is source data, not a log file.
+# Without this the blanket *.log above swallows it and the demo chat ships empty.
+!scripts/showcase/seed/data/**/*.log
 tmp/
 scratch/
 dogfood-output/
@@ -65,3 +66,9 @@ yarn-error.log*
 # Claude Code local settings
 .claude/settings.local.json
 .cue-migration-backup-*/
+
+# Bundled-plugin signing artifact (release-time build output; dev signs locally)
+examples/plugins/*/signature.json
+
+# Local media broker build and test evidence
+.build/

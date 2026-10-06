@@ -33,6 +33,39 @@ export function resolveCueConfigPath(projectRoot: string): string | null {
 }
 
 /**
+ * How many times to retry a config read interrupted by a signal. EINTR is
+ * transient by definition - the retry succeeds on the next attempt in practice,
+ * so a small bound is enough to absorb it without risking a spin.
+ */
+const EINTR_MAX_ATTEMPTS = 3;
+
+/**
+ * Read a file, retrying when the syscall is interrupted by a signal.
+ *
+ * `fs.readFileSync` surfaces EINTR to the caller instead of restarting the read
+ * itself. Electron's main process takes signals during startup, so a config read
+ * on the boot path can fail for a reason that has nothing to do with the file.
+ * That aborted `CueEngine.start('system-boot')` outright and left Cue disabled
+ * for the whole session until the user retried from Settings (MAESTRO-X9).
+ */
+function readFileRetryingOnEintr(filePath: string): string {
+	for (let attempt = 1; ; attempt++) {
+		try {
+			return fs.readFileSync(filePath, 'utf-8');
+		} catch (error) {
+			const code = (error as NodeJS.ErrnoException | null)?.code;
+			if (code !== 'EINTR' || attempt >= EINTR_MAX_ATTEMPTS) {
+				throw error;
+			}
+			logger.warn(
+				`[Cue] Config read interrupted (EINTR) for ${filePath}, retrying (${attempt}/${EINTR_MAX_ATTEMPTS})`,
+				'CueConfig'
+			);
+		}
+	}
+}
+
+/**
  * Read the raw YAML for a project's Cue config. Returns `null` if no config
  * file exists. Throws on filesystem read errors (other than missing file).
  */
@@ -44,7 +77,7 @@ export function readCueConfigFile(projectRoot: string): { filePath: string; raw:
 
 	return {
 		filePath,
-		raw: fs.readFileSync(filePath, 'utf-8'),
+		raw: readFileRetryingOnEintr(filePath),
 	};
 }
 

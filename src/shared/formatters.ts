@@ -17,6 +17,7 @@
  * - formatDurationCompact: Compact duration without seconds in minute range (5m, 2h 30m)
  * - formatDurationVerbose: Verbose duration with full words (5 minutes 30 seconds)
  * - formatDurationParts: Multi-part duration with days support (2d 5h 30m)
+ * - formatDurationLong: Two-unit duration laddering seconds -> years (6d 7h, 3w 2d, 1y 7w)
  * - formatDurationDecimal: Decimal duration for CLI output (5.2m, 1.3h)
  * - formatCost: USD currency display ($1.23, <$0.01)
  * - estimateTokenCount: Estimate token count from text (~4 chars/token)
@@ -295,6 +296,24 @@ export function formatAgeShort(dateOrTimestamp: Date | number | string): string 
 }
 
 /**
+ * Format a calendar day (`YYYY-MM-DD`) for display, e.g. "Jul 10, 2026".
+ *
+ * The parts are read out of the string and fed to a LOCAL `Date` rather than
+ * letting `new Date('2026-07-10')` do it: that form is parsed as UTC midnight,
+ * so every timezone west of Greenwich renders the day before. Returns the input
+ * unchanged when it is not a well-formed day, since the caller's alternative is
+ * showing nothing at all.
+ */
+export function formatCalendarDay(isoDay: string): string {
+	const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(isoDay.trim());
+	if (!match) return isoDay;
+	const [, year, month, day] = match;
+	const date = new Date(Number(year), Number(month) - 1, Number(day));
+	if (Number.isNaN(date.getTime())) return isoDay;
+	return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+/**
  * Format a future timestamp as a forward-looking relative string.
  *
  * `formatRelativeTime` only models the past - every future timestamp collapses
@@ -513,6 +532,21 @@ export function truncateCommand(command: string, maxLength: number = 40): string
 }
 
 /**
+ * Truncate arbitrary display text to a maximum length with a trailing ellipsis.
+ * Unlike {@link truncateCommand} it does not collapse newlines - use it for
+ * short single-token labels (agent names, titles) where the caller surfaces the
+ * full value elsewhere (e.g. a tooltip).
+ *
+ * @param text - The text to truncate
+ * @param maxLength - Maximum length of the returned string (default: 24)
+ * @returns Truncated string (e.g., "a-very-long-agent-nam…")
+ */
+export function truncateText(text: string, maxLength: number = 24): string {
+	if (text.length <= maxLength) return text;
+	return text.slice(0, maxLength - 1) + '…';
+}
+
+/**
  * Estimate token count from an array of log entries.
  * Uses the same ~4 characters per token heuristic as estimateTokenCount.
  *
@@ -616,6 +650,13 @@ export function formatTimestamp(
 	style: 'time' | 'datetime' | 'smart' | 'full' = 'smart'
 ): string {
 	const date = new Date(timestamp);
+	// `Intl.DateTimeFormat.format()` THROWS on an invalid date, where the
+	// `toLocale*String()` calls the cached formatters replaced returned the string
+	// "Invalid Date". Callers pass whatever a transcript, a group chat, or a
+	// history row carries - a numeric string that `Date` cannot parse reaches here
+	// in practice - so keep the old, non-throwing answer rather than letting a
+	// single bad row take a render down.
+	if (Number.isNaN(date.getTime())) return 'Invalid Date';
 
 	switch (style) {
 		case 'time':
@@ -674,6 +715,8 @@ export {
 	formatDurationWords,
 	formatActiveTime,
 	formatElapsedTime,
+	formatElapsedTicker,
+	formatElapsedTickerCompact,
 	formatTurnDuration,
 	DURATION_MS,
 	DURATION_LADDER_FULL,

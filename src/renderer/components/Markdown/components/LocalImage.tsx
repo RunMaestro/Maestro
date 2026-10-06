@@ -52,6 +52,10 @@ export interface LocalImageProps {
 	theme: Theme;
 	/** Optional width in pixels (from `![[image|300]]` syntax) */
 	width?: number;
+	/** Optional maximum height for compact surfaces such as Cadenza cards. */
+	maxHeight?: number;
+	/** Override native image dragging when the containing surface owns drag gestures. */
+	draggable?: boolean;
 	/** SSH remote ID for remote file operations */
 	sshRemoteId?: string;
 }
@@ -84,7 +88,8 @@ function getLocalImageInitialState(src: string | undefined) {
 	return { dataUrl: null, loading: true };
 }
 
-export const LocalImage = memo(({ src, alt, theme, width, sshRemoteId }: LocalImageProps) => {
+export const LocalImage = memo((props: LocalImageProps) => {
+	const { src, alt, theme, width, maxHeight, draggable, sshRemoteId } = props;
 	// Compute initial state synchronously from cache to prevent flicker
 	const initialState = useMemo(() => getLocalImageInitialState(src), [src]);
 
@@ -171,9 +176,12 @@ export const LocalImage = memo(({ src, alt, theme, width, sshRemoteId }: LocalIm
 	}
 
 	// Build style based on whether width is specified
-	const imageStyle: React.CSSProperties = width
-		? { width: `${width}px`, height: 'auto', borderRadius: '4px' }
-		: { maxWidth: '100%', height: 'auto', borderRadius: '4px' };
+	const imageStyle: React.CSSProperties = {
+		...(width ? { width: `${width}px` } : { maxWidth: '100%' }),
+		height: 'auto',
+		borderRadius: '4px',
+		...(maxHeight ? { maxHeight: `${maxHeight}px`, objectFit: 'contain' } : {}),
+	};
 
 	// Clicking the image opens the full-screen pan/zoom viewer, unless the image
 	// is a link: then the click belongs to the link and the corner button is
@@ -191,6 +199,7 @@ export const LocalImage = memo(({ src, alt, theme, width, sshRemoteId }: LocalIm
 				alt={alt || ''}
 				style={{ ...imageStyle, cursor: 'zoom-in' }}
 				onClick={handleClick}
+				draggable={draggable}
 			/>
 			<ExpandToViewerButton
 				theme={theme}

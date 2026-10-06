@@ -1,7 +1,9 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import React from 'react';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { MainPanelHeader } from '../../../../renderer/components/MainPanel/MainPanelHeader';
+import { useModalStore } from '../../../../renderer/stores/modalStore';
+import { useMediaPlaybackStore } from '../../../../renderer/stores/mediaPlaybackStore';
 import type { Session, Theme, AITab } from '../../../../renderer/types';
 
 import { mockTheme } from '../../../helpers/mockTheme';
@@ -12,19 +14,50 @@ vi.mock('../../../../renderer/stores/settingsStore', () => ({
 			shortcuts: {
 				agentSessions: { keys: ['Meta', 'Shift', 'l'] },
 				toggleRightPanel: { keys: ['Meta', 'b'] },
+				quickAction: { keys: ['Meta', 'k'] },
 			},
 			showAgentName: true,
 			showSessionIdPill: true,
 			showSessionCostPill: true,
+			// The header derives the Context Details width from the Timeline's
+			// remembered modal size, so the partial store needs the record even
+			// when no size was ever saved.
+			modalSizes: {},
 		})
 	),
 }));
 
+// Mutable UI state + stable setters so tests can drive the sidebar opener.
+// vi.hoisted keeps these visible inside the hoisted vi.mock factories below.
+const uiMocks = vi.hoisted(() => ({
+	state: { rightPanelOpen: false, leftSidebarHidden: false, leftSidebarOpen: true } as Record<
+		string,
+		unknown
+	>,
+	setRightPanelOpen: vi.fn(),
+	setLeftSidebarHidden: vi.fn(),
+	setLeftSidebarOpen: vi.fn(),
+}));
+
 vi.mock('../../../../renderer/stores/uiStore', () => ({
 	useUIStore: Object.assign(
-		vi.fn((selector) => selector({ rightPanelOpen: false })),
-		{ getState: () => ({ setRightPanelOpen: vi.fn() }) }
+		vi.fn((selector: (s: Record<string, unknown>) => unknown) => selector(uiMocks.state)),
+		{
+			getState: () => ({
+				setRightPanelOpen: uiMocks.setRightPanelOpen,
+				setLeftSidebarHidden: uiMocks.setLeftSidebarHidden,
+				setLeftSidebarOpen: uiMocks.setLeftSidebarOpen,
+			}),
+		}
 	),
+}));
+
+// isWebDesktop() distinguishes the browser build from the Electron desktop app.
+// Default false (desktop); individual tests flip it to true for phone cases.
+const runtimeMocks = vi.hoisted(() => ({ isWebDesktop: vi.fn(() => false) }));
+vi.mock('../../../../renderer/utils/runtimeContext', () => ({
+	isWebDesktop: runtimeMocks.isWebDesktop,
+	isElectronDesktop: () => !runtimeMocks.isWebDesktop(),
 }));
 
 // The barrel pulls in far more than this component needs, so it's mocked - but
@@ -71,13 +104,13 @@ vi.mock('../../../../renderer/contexts/GitStatusContext', () => ({
 	useGitFileStatus: () => ({ getFileCount: () => 0 }),
 }));
 
-const mockOpenModal = vi.fn();
-vi.mock('../../../../renderer/stores/modalStore', () => ({
-	useModalStore: Object.assign(
-		vi.fn((selector) => selector({ openModal: mockOpenModal })),
-		{ getState: () => ({ openModal: mockOpenModal }) }
-	),
-}));
+// Spy on the REAL store rather than replacing the module. A blanket vi.mock of
+// modalStore drops `getModalActions`, which the header's own Quick Actions
+// button calls, and its `getState()` would hand back a fresh object per call so
+// no spy could ever observe it. `getModalActions()` destructures `openModal`
+// from `getState()` at call time, so spying the live state object catches both
+// paths. Assigned in beforeEach, restored in afterEach.
+let mockOpenModal: ReturnType<typeof vi.spyOn>;
 
 function makeSession(overrides: Partial<Session> = {}): Session {
 	return {
@@ -147,10 +180,35 @@ const defaultProps = {
 	hasCapability: vi.fn(() => true) as any,
 };
 
+function setViewportWidth(width: number): void {
+	Object.defineProperty(window, 'innerWidth', {
+		writable: true,
+		configurable: true,
+		value: width,
+	});
+}
+
 describe('MainPanelHeader', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		uiMocks.state.rightPanelOpen = false;
+		uiMocks.state.leftSidebarHidden = false;
+		uiMocks.state.leftSidebarOpen = true;
+		// The header now draws the minimized player, so a test that parks one has
+		// to hand it back: a leaked pill is a stray control in every later test.
+		useMediaPlaybackStore.setState({ dismissed: false, dormant: true, activeItemId: null });
+		runtimeMocks.isWebDesktop.mockReturnValue(false);
+		// Default to a desktop-width viewport so useViewportBreakpoint reports a
+		// non-xs breakpoint unless a test opts into a phone width.
+		setViewportWidth(1280);
 		mockGetBranchInfo.mockReturnValue(DEFAULT_BRANCH_INFO);
+		mockOpenModal = vi
+			.spyOn(useModalStore.getState(), 'openModal')
+			.mockImplementation(() => {}) as ReturnType<typeof vi.spyOn>;
+	});
+
+	afterEach(() => {
+		mockOpenModal.mockRestore();
 	});
 
 	it('renders session name', () => {
@@ -283,6 +341,164 @@ describe('MainPanelHeader', () => {
 		expect(onStop).toHaveBeenCalledWith('session-1');
 	});
 
+	it('draws the AUTO pill as a bare wand on a phone, with the detail in its tooltip', () => {
+		runtimeMocks.isWebDesktop.mockReturnValue(true);
+		setViewportWidth(390);
+		render(
+			<MainPanelHeader
+				{...defaultProps}
+				isCurrentSessionAutoMode={true}
+				currentSessionBatchState={
+					{
+						isRunning: true,
+						isStopping: false,
+						completedTasks: 2,
+						totalTasks: 5,
+						worktreeActive: true,
+						worktreeBranch: 'feature-x',
+					} as any
+				}
+			/>
+		);
+		expect(screen.queryByText('Auto')).not.toBeInTheDocument();
+		expect(screen.queryByText('2/5')).not.toBeInTheDocument();
+		const pill = screen.getByLabelText('Stop auto-run');
+		expect(pill).toHaveAttribute('title', 'Click to stop auto-run - 2/5 - Worktree: feature-x');
+	});
+
+	it('still stops the run when the phone wand is clicked', () => {
+		runtimeMocks.isWebDesktop.mockReturnValue(true);
+		setViewportWidth(390);
+		const onStop = vi.fn();
+		render(
+			<MainPanelHeader
+				{...defaultProps}
+				isCurrentSessionAutoMode={true}
+				currentSessionBatchState={
+					{ isRunning: true, isStopping: false, completedTasks: 0, totalTasks: 1 } as any
+				}
+				onStopBatchRun={onStop}
+			/>
+		);
+		fireEvent.click(screen.getByLabelText('Stop auto-run'));
+		expect(onStop).toHaveBeenCalledWith('session-1');
+	});
+
+	describe('sidebar opener (hamburger)', () => {
+		it('shows the opener when the left sidebar is fully hidden', () => {
+			uiMocks.state.leftSidebarHidden = true;
+			uiMocks.state.leftSidebarOpen = false;
+			render(<MainPanelHeader {...defaultProps} />);
+			expect(screen.getByLabelText('Show agents sidebar')).toBeInTheDocument();
+		});
+
+		it('does not show the opener when the sidebar is merely collapsed on desktop', () => {
+			// Electron desktop keeps its 64px collapsed strip, so no header opener.
+			runtimeMocks.isWebDesktop.mockReturnValue(false);
+			setViewportWidth(390);
+			uiMocks.state.leftSidebarHidden = false;
+			uiMocks.state.leftSidebarOpen = false;
+			render(<MainPanelHeader {...defaultProps} />);
+			expect(screen.queryByLabelText('Show agents sidebar')).not.toBeInTheDocument();
+		});
+
+		it('shows the opener on a web-desktop phone when the sidebar is collapsed', () => {
+			// The collapsed strip is hidden at xs in web-desktop, so the header
+			// opener is the only way back to the sidebar.
+			runtimeMocks.isWebDesktop.mockReturnValue(true);
+			setViewportWidth(390);
+			uiMocks.state.leftSidebarHidden = false;
+			uiMocks.state.leftSidebarOpen = false;
+			render(<MainPanelHeader {...defaultProps} />);
+			expect(screen.getByLabelText('Show agents sidebar')).toBeInTheDocument();
+		});
+
+		it('does not show the opener on a web-desktop phone while the drawer is open', () => {
+			runtimeMocks.isWebDesktop.mockReturnValue(true);
+			setViewportWidth(390);
+			uiMocks.state.leftSidebarHidden = false;
+			uiMocks.state.leftSidebarOpen = true;
+			render(<MainPanelHeader {...defaultProps} />);
+			expect(screen.queryByLabelText('Show agents sidebar')).not.toBeInTheDocument();
+		});
+
+		// The minimized player parks in the Left Bar header pill. With the Left Bar
+		// hidden there is no such header, so minimizing used to take the widget off
+		// screen and leave nothing behind - which reads as the player closing
+		// itself, the one thing the minimize/close split exists to prevent. It
+		// rides alongside the opener because that button is here for exactly the
+		// same reason: its home is off screen.
+		it('carries the minimized player when the sidebar is hidden', () => {
+			useMediaPlaybackStore.setState({
+				dismissed: true,
+				dormant: false,
+				activeItemId: 'media-1',
+				items: [{ id: 'media-1', name: 'podcast.mp3', path: '/tmp/podcast.mp3', kind: 'audio' }],
+			} as never);
+			uiMocks.state.leftSidebarHidden = true;
+			uiMocks.state.leftSidebarOpen = false;
+			render(<MainPanelHeader {...defaultProps} />);
+
+			expect(screen.getByTestId('now-playing-indicator')).toBeInTheDocument();
+			expect(screen.getByTestId('now-playing-restore')).toBeInTheDocument();
+		});
+
+		it('leaves the header alone while the sidebar can hold the pill itself', () => {
+			useMediaPlaybackStore.setState({
+				dismissed: true,
+				dormant: false,
+				activeItemId: 'media-1',
+				items: [{ id: 'media-1', name: 'podcast.mp3', path: '/tmp/podcast.mp3', kind: 'audio' }],
+			} as never);
+			runtimeMocks.isWebDesktop.mockReturnValue(false);
+			uiMocks.state.leftSidebarHidden = false;
+			uiMocks.state.leftSidebarOpen = true;
+			render(<MainPanelHeader {...defaultProps} />);
+
+			// Two pills for one player is one control drawn twice.
+			expect(screen.queryByTestId('now-playing-indicator')).not.toBeInTheDocument();
+		});
+
+		it('opens the sidebar drawer when the opener is clicked', () => {
+			runtimeMocks.isWebDesktop.mockReturnValue(true);
+			setViewportWidth(390);
+			uiMocks.state.leftSidebarHidden = false;
+			uiMocks.state.leftSidebarOpen = false;
+			render(<MainPanelHeader {...defaultProps} />);
+			fireEvent.click(screen.getByLabelText('Show agents sidebar'));
+			expect(uiMocks.setLeftSidebarHidden).toHaveBeenCalledWith(false);
+			expect(uiMocks.setLeftSidebarOpen).toHaveBeenCalledWith(true);
+		});
+	});
+
+	describe('Quick Actions opener', () => {
+		it('shows the Quick Actions button on a narrow viewport', () => {
+			setViewportWidth(390);
+			render(<MainPanelHeader {...defaultProps} />);
+			expect(screen.getByLabelText('Quick Actions')).toBeInTheDocument();
+		});
+
+		it('hides the Quick Actions button on a wide viewport (Cmd+K suffices)', () => {
+			setViewportWidth(1280);
+			render(<MainPanelHeader {...defaultProps} />);
+			expect(screen.queryByLabelText('Quick Actions')).not.toBeInTheDocument();
+		});
+
+		it('opens the command palette when the Quick Actions button is clicked', () => {
+			setViewportWidth(390);
+			const openModalSpy = vi
+				.spyOn(useModalStore.getState(), 'openModal')
+				.mockImplementation(() => {});
+			render(<MainPanelHeader {...defaultProps} />);
+			fireEvent.click(screen.getByLabelText('Quick Actions'));
+			expect(openModalSpy).toHaveBeenCalledWith(
+				'quickAction',
+				expect.objectContaining({ initialMode: 'main' })
+			);
+			openModalSpy.mockRestore();
+		});
+	});
+
 	it('renders session UUID pill', () => {
 		render(<MainPanelHeader {...defaultProps} />);
 		expect(screen.getByText('AGENT-SESSION-1'.split('-')[0])).toBeInTheDocument();
@@ -298,9 +514,24 @@ describe('MainPanelHeader', () => {
 		expect(screen.queryByText('$1.23')).not.toBeInTheDocument();
 	});
 
-	it('renders context window widget', () => {
+	it('renders context-usage percentage', () => {
 		render(<MainPanelHeader {...defaultProps} />);
-		expect(screen.getByText('Context Window')).toBeInTheDocument();
+		// Plain-text "X%" replaced the verbose "Context Window" label + gauge bar
+		// so narrow viewports get the readout without the bar overflow.
+		expect(screen.getByText('25%')).toBeInTheDocument();
+	});
+
+	it('renders an over-limit context percentage past 100 without clamping', () => {
+		// Finding R1, Decision 2: the pill shows the true percentage whenever it
+		// has an over-limit measurement, so the header cannot silently disagree
+		// with the Context Timeline. The readout renders whatever number arrives;
+		// this pins that it is not clamped on the way out.
+		render(<MainPanelHeader {...defaultProps} activeTabContextUsage={147} />);
+		const readout = screen.getByText('147%');
+		expect(readout).toBeInTheDocument();
+		// A 4-character value must not wrap in the fixed-width mono pill.
+		expect(readout).toHaveClass('whitespace-nowrap');
+		expect(readout).toHaveClass('tabular-nums');
 	});
 
 	it('renders GitStatusWidget', () => {
