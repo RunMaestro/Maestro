@@ -94,10 +94,10 @@ export class WsRoute {
 	registerRoute(server: FastifyInstance): void {
 		const token = this.securityToken;
 
-		server.get(`/${token}/ws`, { websocket: true }, (connection, request) => {
+		server.get(`/${token}/ws`, { websocket: true }, (socket, request) => {
 			if (this.callbacks.isOriginAllowed?.(request.headers.origin, request.headers.host) !== true) {
 				logger.warn(`Refused WebSocket from origin ${String(request.headers.origin)}`, LOG_CONTEXT);
-				connection.socket.close(WS_CLOSE_POLICY_VIOLATION, 'Origin not allowed');
+				socket.close(WS_CLOSE_POLICY_VIOLATION, 'Origin not allowed');
 				return;
 			}
 
@@ -108,7 +108,7 @@ export class WsRoute {
 			const sessionId = url.searchParams.get('sessionId') || undefined;
 
 			const client: WebClient = {
-				socket: connection.socket,
+				socket,
 				id: clientId,
 				connectedAt: Date.now(),
 				subscribedSessionId: sessionId,
@@ -122,7 +122,7 @@ export class WsRoute {
 			);
 
 			// Send connection confirmation
-			connection.socket.send(
+			socket.send(
 				JSON.stringify({
 					type: 'connected',
 					clientId,
@@ -144,7 +144,7 @@ export class WsRoute {
 						isLive: this.callbacks.isSessionLive?.(s.id) || false,
 					};
 				});
-				connection.socket.send(
+				socket.send(
 					JSON.stringify({
 						type: 'sessions_list',
 						sessions: sessionsWithLiveInfo,
@@ -157,7 +157,7 @@ export class WsRoute {
 			if (this.callbacks.getTheme) {
 				const theme = this.callbacks.getTheme();
 				if (theme) {
-					connection.socket.send(
+					socket.send(
 						JSON.stringify({
 							type: 'theme',
 							theme,
@@ -169,7 +169,7 @@ export class WsRoute {
 
 			// Send current global Bionify reading-mode setting
 			if (this.callbacks.getBionifyReadingMode) {
-				connection.socket.send(
+				socket.send(
 					JSON.stringify({
 						type: 'bionify_reading_mode',
 						enabled: this.callbacks.getBionifyReadingMode(),
@@ -181,7 +181,7 @@ export class WsRoute {
 			// Send custom AI commands
 			if (this.callbacks.getCustomCommands) {
 				const customCommands = this.callbacks.getCustomCommands();
-				connection.socket.send(
+				socket.send(
 					JSON.stringify({
 						type: 'custom_commands',
 						commands: customCommands,
@@ -203,7 +203,7 @@ export class WsRoute {
 							`Sending initial AutoRun state for session ${sid}: tasks=${state.completedTasks}/${state.totalTasks}`,
 							LOG_CONTEXT
 						);
-						connection.socket.send(
+						socket.send(
 							JSON.stringify({
 								type: 'autorun_state',
 								sessionId: sid,
@@ -216,12 +216,12 @@ export class WsRoute {
 			}
 
 			// Handle incoming messages
-			connection.socket.on('message', (message) => {
+			socket.on('message', (message) => {
 				try {
 					const data = JSON.parse(message.toString()) as WebClientMessage;
 					this.callbacks.handleMessage?.(clientId, data);
 				} catch {
-					connection.socket.send(
+					socket.send(
 						JSON.stringify({
 							type: 'error',
 							message: 'Invalid message format',
@@ -231,13 +231,13 @@ export class WsRoute {
 			});
 
 			// Handle disconnection
-			connection.socket.on('close', () => {
+			socket.on('close', () => {
 				this.callbacks.onClientDisconnect?.(clientId);
 				logger.info(`Client disconnected: ${clientId}`, LOG_CONTEXT);
 			});
 
 			// Handle errors
-			connection.socket.on('error', (error) => {
+			socket.on('error', (error) => {
 				logger.error(`Client error (${clientId})`, LOG_CONTEXT, error);
 				this.callbacks.onClientError?.(clientId, error);
 			});
