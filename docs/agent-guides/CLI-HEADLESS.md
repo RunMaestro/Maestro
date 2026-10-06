@@ -161,9 +161,47 @@ Which agents: those whose project root has a Cue config and owns a subscription,
 - **`cue engine start`** always computes the report, after the data dir and SQLite checks and BEFORE the engine is built: no lock, trigger, webhook listener, timer or trigger inbox exists yet. Without `--require-ready` each gap is logged as a warning and the engine starts as before. With it, gaps are logged as errors and the command exits 1 without arming anything. Under `--json` stdout is `{"started": false, "code": "NOT_READY", "readiness": <report>}`; a successful start adds `ready` and `gaps` to its result. Under `--log-format json` each gap is its own line with `event: "readinessGap"` and `sessionId` / `subscriptionName` as fields.
 - **`cue engine check [--data-dir] [--json]`** is the same report without starting (no SQLite needed). Run it right after `bundle import`. Exit 0 when ready, 1 when not.
 - **Never a secret value**: gaps name secrets and paths only.
-- **Once, at startup.** The engine hot-reloads `cue.yaml` and secrets rotate, so a startup verdict goes stale. The status endpoint's `/readyz` should call `checkCueReadiness()` again (it is side-effect free, and costs a few binary probes) with a short cache, and report `ready`, `checkedAt` and the gaps; systemd `READY=1` should be sent once the startup report is ready and the engine has started.
+- **Re-checked on demand.** The engine hot-reloads `cue.yaml` and secrets rotate, so a startup verdict goes stale. With `--status-port`, `/readyz` and `/status` re-run `checkCueReadiness()` when the cached report is older than 60 seconds (one probe in flight at most); an engine nobody asks never probes. See [Status server](#status-server---status-port). systemd `READY=1` should be sent once the startup report is ready and the engine has started.
 
 Not checked (each would need a probe the launch does not make yet): whether `gh` is authenticated, an SSH agent's remote binary and secrets, the maestro-p TUI path for Claude agents in interactive mode, `owner_agent_id` ownership problems, and `source_session` names on `agent.completed` triggers.
+
+## Status server (`--status-port`)
+
+`cue engine start --status-port <port>` serves three read-only JSON endpoints so Docker, systemd and monitoring can ask the engine whether it is alive and ready. Code: `src/main/cue/cue-status-server.ts` (the listener) over `src/main/cue/cue-engine-health.ts` (the one state object it reads).
+
+- **Off unless the flag is given.** Without it nothing listens.
+- **`127.0.0.1` only, not configurable.** The endpoints are unauthenticated. Inside a container the HEALTHCHECK runs in the same network namespace, so loopback is enough; to scrape from outside, front it with a proxy you control.
+- **Documented port: `7433`.** `0` lets the OS pick (tests).
+- **Separate from the webhook listener** (`cue-webhook-server.ts`, port 17997): its own port and its own lifetime.
+- **Bound before the engine starts.** A taken port prints one line (`Status port 7433 on 127.0.0.1 is already in use...`; under `--json`, `{"started":false,"code":"STATUS_PORT_IN_USE","port":7433}`) and exits 1 with no lock, trigger or inbox armed. It closes on shutdown and when the lock is held by another engine.
+- **Only `GET` and `HEAD` on the three paths.** Any other path is 404; another method on a known path is 405 with `Allow: GET, HEAD`. A query string is ignored, a request body is never read, and requests time out after 5 seconds. Every response is `application/json` with `Cache-Control: no-store`.
+
+| Endpoint   | Question                                  | 200                                                                                    | 503                                                                                                      |
+| ---------- | ----------------------------------------- | -------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| `/healthz` | Liveness: "restart me if this fails"      | Event loop responsive and this process still holds the engine lock, in any other phase | The lock heartbeat found another engine took the lock over, or the event loop is saturated               |
+| `/readyz`  | Readiness: "send work / consider started" | Phase `running` and the last readiness report has no gaps                              | `starting`, `draining`, `stopped`, `lock-lost`, or any readiness gap (with or without `--require-ready`) |
+| `/status`  | What is it doing                          | Always, while the server answers                                                       |                                                                                                          |
+
+- **Readiness gaps fail `/readyz`, never `/healthz`.** A misconfigured engine runs but is not fully ready, and `/readyz` is how an operator sees that; restarting would not fix a missing binary, so liveness ignores gaps and the engine is never restart-looped.
+- **Lost lock:** learned from the engine's own lock heartbeat (`CueEngineDeps.onLockLost`), never by re-reading the lock file per request. The engine stops dispatching at that moment; `/healthz` stays 503 so a supervisor restarts it.
+- **Event loop:** `perf_hooks.monitorEventLoopDelay` (50 ms resolution), read over 30-second windows. Unhealthy when the last window's MEDIAN delay is 1 second or more, i.e. the loop was blocked for most of it. One long synchronous step moves p99 and max, not the median, so it does not trip liveness. A loop hung outright never answers, which the HEALTHCHECK's own timeout catches. The histogram runs only when the status server is on.
+
+Bodies:
+
+- `/healthz`: `{"status":"ok"|"fail","phase":"running","reasons":[...]}`.
+- `/readyz`: `{"ready":false,"phase":"running","reasons":["readiness: 1 gap(s)"],"checkedAt":"...","gaps":[{"kind":"secret-missing","agentId":"...","agentName":"Coder","secret":"DEPLOY_TOKEN","message":"..."}]}`.
+- `/status`: `phase` (`starting` / `running` / `draining` / `stopped` / `lock-lost`), `pid`, `version`, `dataDir`, `startedAt`, `uptimeMs`, `activeRuns` (`count` plus the first 20 as `runId`, `subscriptionName`, `agentId`, `agentName`, `eventType`, `startedAt`), `queue` (`agentId`, `agentName`, `depth` per agent), `agents` (`total`, `enabled`), `subscriptions` (`total` and `byTrigger`, enabled ones, a fan-out counted once), `readiness` (the last report), `memory` (`rssBytes`, `heapUsedBytes`, `heapTotalBytes`) and `eventLoopDelayMs` (`p50`, `p99`, `max`, `mean`, `windowMs`; `null` until the first window ends).
+- **Never a secret value, prompt text, run output or event payload.** Every field is picked explicitly; a gap carries names and paths only. A sentinel test (`src/__tests__/main/cue/cue-status-server.test.ts`) enforces it.
+- **Finding the port:** the engine records it in the lock file (`statusPort` in `cue-engine.lock`), and `cue engine status` prints `Status server: http://127.0.0.1:7433/status` (`statusPort` under `--json`). `--json` on `start` also returns `statusPort`.
+
+Docker HEALTHCHECK (needs no `curl` in the image):
+
+```dockerfile
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
+  CMD node -e "fetch('http://127.0.0.1:7433/healthz').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"
+```
+
+The drain and systemd notifications update the same state object (`markDraining()`, `markRunning()`), never a flag of their own.
 
 ## Engine logs (`--log-format`)
 
@@ -216,15 +254,17 @@ The agent's own transcripts go to the provider's store (`~/.claude/projects`, Op
 
 **Automated (a unit test can prove it):**
 
-| Test                                                   | What it checks                                                                                                                                                                      |
-| ------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `src/__tests__/cli/headless-records.test.ts`           | A data dir built by the real exporter and importer; all four verbs with a mocked agent leave their ledger runs (with usage) and history in that dir, and clear the activity marker. |
-| `src/__tests__/cli/plain-node-imports.test.ts`         | The CLI's static import graph never reaches `better-sqlite3`.                                                                                                                       |
-| `src/__tests__/cli/app-not-running.test.ts`            | Every app-dependent verb reports the one outcome.                                                                                                                                   |
-| `src/__tests__/cli/commands/data-dir-guard.test.ts`    | The guessed-directory refusal, and `--data-dir`: refusal of a missing folder on all five verbs, precedence over `MAESTRO_USER_DATA`, relative paths.                                |
-| `src/__tests__/cli/commands/cue-engine-sqlite.test.ts` | An unloadable `better-sqlite3` is the loader's message / `sqlite_unavailable`, before any engine or `cue.db` exists.                                                                |
-| `src/__tests__/shared/jsonLogLine.test.ts`             | The JSON log line shape and the id allowlist.                                                                                                                                       |
-| `src/__tests__/main/utils/logger.test.ts`              | The stderr routing, and `consoleJson()`.                                                                                                                                            |
+| Test                                                        | What it checks                                                                                                                                                                      |
+| ----------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/__tests__/cli/headless-records.test.ts`                | A data dir built by the real exporter and importer; all four verbs with a mocked agent leave their ledger runs (with usage) and history in that dir, and clear the activity marker. |
+| `src/__tests__/cli/plain-node-imports.test.ts`              | The CLI's static import graph never reaches `better-sqlite3`.                                                                                                                       |
+| `src/__tests__/cli/app-not-running.test.ts`                 | Every app-dependent verb reports the one outcome.                                                                                                                                   |
+| `src/__tests__/cli/commands/data-dir-guard.test.ts`         | The guessed-directory refusal, and `--data-dir`: refusal of a missing folder on all five verbs, precedence over `MAESTRO_USER_DATA`, relative paths.                                |
+| `src/__tests__/cli/commands/cue-engine-sqlite.test.ts`      | An unloadable `better-sqlite3` is the loader's message / `sqlite_unavailable`, before any engine or `cue.db` exists.                                                                |
+| `src/__tests__/main/cue/cue-status-server.test.ts`          | Each endpoint's codes and bodies through every phase, gaps and a lost lock; 404/405/HEAD; port in use; loopback-only bind; no secret value or prompt text in any body.              |
+| `src/__tests__/cli/commands/cue-engine-status-port.test.ts` | No listener without the flag; a taken port exits 1 before the engine starts; the port reaches the lock and `cue engine status`; a lost lock fails `/healthz`.                       |
+| `src/__tests__/shared/jsonLogLine.test.ts`                  | The JSON log line shape and the id allowlist.                                                                                                                                       |
+| `src/__tests__/main/utils/logger.test.ts`                   | The stderr routing, and `consoleJson()`.                                                                                                                                            |
 
 **Live, 2026-10-05.** Node v22.22.1 after `npm run build:cli` and `npm run build:maestro-p`, with Claude Code and OpenCode as installed on the dev machine.
 

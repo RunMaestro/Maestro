@@ -260,6 +260,34 @@ describe('cue-engine-lock', () => {
 		});
 	});
 
+	describe('status port', () => {
+		it('is written on acquire, kept by every heartbeat, and read back', async () => {
+			const {
+				acquireCueEngineLock,
+				touchCueEngineLock,
+				readCueEngineLock,
+				setCueEngineLockStatusPort,
+			} = await freshModule();
+			setCueEngineLockStatusPort(7433);
+			try {
+				acquireCueEngineLock('standalone');
+				expect(readCueEngineLock()?.statusPort).toBe(7433);
+				expect(touchCueEngineLock('standalone')).toBe('held');
+				expect(JSON.parse(fs.readFileSync(lockPath, 'utf-8')).statusPort).toBe(7433);
+				expect(readCueEngineLock()?.statusPort).toBe(7433);
+			} finally {
+				setCueEngineLockStatusPort(undefined);
+			}
+		});
+
+		it('is absent when no status server runs', async () => {
+			const { acquireCueEngineLock, readCueEngineLock } = await freshModule();
+			acquireCueEngineLock('desktop');
+			expect(readCueEngineLock()?.statusPort).toBeUndefined();
+			expect('statusPort' in JSON.parse(fs.readFileSync(lockPath, 'utf-8'))).toBe(false);
+		});
+	});
+
 	describe('touchCueEngineLock', () => {
 		it('refreshes the heartbeat and keeps the original startedAt', async () => {
 			const { acquireCueEngineLock, touchCueEngineLock } = await freshModule();

@@ -2,9 +2,9 @@
 // Maestro CLI
 // Command-line interface for Maestro
 
-import { Command, Option } from 'commander';
+import { Command, InvalidArgumentError, Option } from 'commander';
 import { asThinkingMode, type ThinkingMode } from '../shared/types';
-import { parseCliBool, isInheritValue } from './utils/parse';
+import { parseCliBool, parseCliPort, isInheritValue } from './utils/parse';
 import { listGroups } from './commands/list-groups';
 import { listAgents } from './commands/list-agents';
 import { listPlaybooks } from './commands/list-playbooks';
@@ -1158,7 +1158,18 @@ cueEngine
 		'--require-ready',
 		'Refuse to start (exit 1, nothing armed) when the readiness check finds any gap; see "cue engine check"'
 	)
-	.action(cueEngineStart);
+	.option(
+		'--status-port <port>',
+		'Serve /healthz, /readyz and /status on 127.0.0.1 at this port (documented port: 7433). Off unless given',
+		(value) => {
+			try {
+				return parseCliPort(value, '--status-port');
+			} catch (err) {
+				throw new InvalidArgumentError((err as Error).message);
+			}
+		}
+	)
+	.action((opts) => cueEngineStart({ ...opts, version: cliVersion }));
 
 cueEngine
 	.command('check')

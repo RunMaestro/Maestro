@@ -846,12 +846,13 @@ Run Maestro Cue unattended (no desktop app) and control that runner
 
 Start the Cue engine in this process and block until Ctrl+C / stopped
 
-| Option                  | Description                                                                                            | Default  |
-| ----------------------- | ------------------------------------------------------------------------------------------------------ | -------- |
-| `--json`                | Print machine-readable start/failure status                                                            | -        |
-| `--data-dir <path>`     | Maestro data directory to use (overrides MAESTRO_USER_DATA; must already exist)                        | -        |
-| `--log-format <format>` | Log line format: text, or one JSON object per line on stderr                                           | `"text"` |
-| `--require-ready`       | Refuse to start (exit 1, nothing armed) when the readiness check finds any gap; see "cue engine check" | -        |
+| Option                  | Description                                                                                             | Default  |
+| ----------------------- | ------------------------------------------------------------------------------------------------------- | -------- |
+| `--json`                | Print machine-readable start/failure status                                                             | -        |
+| `--data-dir <path>`     | Maestro data directory to use (overrides MAESTRO_USER_DATA; must already exist)                         | -        |
+| `--log-format <format>` | Log line format: text, or one JSON object per line on stderr                                            | `"text"` |
+| `--require-ready`       | Refuse to start (exit 1, nothing armed) when the readiness check finds any gap; see "cue engine check"  | -        |
+| `--status-port <port>`  | Serve /healthz, /readyz and /status on 127.0.0.1 at this port (documented port: 7433). Off unless given | -        |
 
 ## `maestro-cli cue engine check`
 

@@ -139,6 +139,13 @@ export interface CueEngineDeps {
 	 * kind of process is already running.
 	 */
 	runnerMode?: CueEngineRunnerMode;
+	/**
+	 * Called once when the lock heartbeat finds another engine has taken the
+	 * lock over, just before this engine stops itself. The standalone runner
+	 * uses it to fail `/healthz` (see `cue-engine-health.ts`) so a supervisor
+	 * learns why the engine went quiet without re-reading the lock file.
+	 */
+	onLockLost?: () => void;
 }
 
 /**
@@ -741,6 +748,7 @@ export class CueEngine {
 					'error',
 					'[CUE] Another Cue engine took over the lock for this data directory - stopping this one to avoid firing every trigger twice.'
 				);
+				this.deps.onLockLost?.();
 				this.stop();
 			}
 		}, CUE_ENGINE_LOCK_HEARTBEAT_MS);

@@ -228,6 +228,8 @@ async function reportStandaloneAuthFailure(
 
 export interface StandaloneCueEngineOptions {
 	onLog?: StandaloneCueLog;
+	/** See `CueEngineDeps.onLockLost`. */
+	onLockLost?: () => void;
 }
 
 /** Build the full `CueEngineDeps` for a standalone runner. Exported separately from the engine construction so a caller (tests, `inspect`) can build deps without booting a real engine loop. */
@@ -246,6 +248,7 @@ export function buildStandaloneCueEngineDeps(
 		},
 		onLog,
 		runnerMode: 'standalone',
+		...(options.onLockLost ? { onLockLost: options.onLockLost } : {}),
 	};
 }
 
