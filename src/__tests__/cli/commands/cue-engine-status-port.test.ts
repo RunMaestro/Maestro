@@ -252,3 +252,31 @@ describe('cue engine status', () => {
 		expect(String(logSpy.mock.calls[0][0])).toContain('Status server: not running');
 	});
 });
+
+describe('cue engine start --notify-webhook', () => {
+	it('refuses a non-http(s) URL before anything starts, without echoing it', async () => {
+		const bad = 'ftp://hook-user:hook-pass@hooks.example.com/in?token=s3cr3t-token';
+		await expect(cueEngineStart({ dataDir: tmp, notifyWebhook: bad, json: true })).rejects.toThrow(
+			'__exit__'
+		);
+		expect(process.exit).toHaveBeenCalledWith(2);
+		expect(createStandaloneCueEngine).not.toHaveBeenCalled();
+		const printed = logSpy.mock.calls.map((c) => String(c[0])).join('\n');
+		expect(JSON.parse(printed)).toMatchObject({ started: false, code: 'INVALID_OPTIONS' });
+		expect(printed).not.toContain('s3cr3t-token');
+		expect(printed).not.toContain('hook-pass');
+	});
+
+	it('logs only origin and path for a good one', async () => {
+		const stderr = vi.mocked(process.stderr.write);
+		void cueEngineStart({
+			dataDir: tmp,
+			notifyWebhook: 'https://hook-user:hook-pass@hooks.example.com/in?token=s3cr3t-token',
+		});
+		await vi.waitFor(() => expect(startCueTriggerInbox).toHaveBeenCalled());
+		const text = [...logSpy.mock.calls, ...stderr.mock.calls].map((c) => String(c[0])).join('\n');
+		expect(text).toContain('Notify webhook: https://hooks.example.com/in');
+		expect(text).not.toContain('s3cr3t-token');
+		expect(text).not.toContain('hook-pass');
+	});
+});
