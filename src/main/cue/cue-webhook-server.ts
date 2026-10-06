@@ -28,6 +28,7 @@ import * as http from 'http';
 import { normalizeWebhookPath } from '../../shared/cue';
 import type { MainLogLevel } from '../../shared/logger-types';
 import { captureException } from '../utils/sentry';
+import { claimWebhookDelivery } from './cue-db';
 
 /** Default port for the Cue webhook listener. Override with `MAESTRO_CUE_WEBHOOK_PORT`. */
 export const DEFAULT_CUE_WEBHOOK_PORT = 17997;
@@ -209,14 +210,32 @@ function resolveVendorEvent(headers: http.IncomingHttpHeaders): string {
 	return '';
 }
 
-/** Vendor delivery id, falling back to a locally generated one. */
-function resolveDeliveryId(headers: http.IncomingHttpHeaders): string {
+/**
+ * Vendor delivery id, falling back to a locally generated one. `fromSender`
+ * says which: only an id the sender chose can come back on a redelivery, so
+ * only that kind is worth remembering.
+ */
+function resolveDeliveryId(headers: http.IncomingHttpHeaders): { id: string; fromSender: boolean } {
 	const candidates = ['x-github-delivery', 'x-request-id', 'x-maestro-delivery'];
 	for (const key of candidates) {
 		const value = headers[key];
-		if (typeof value === 'string' && value.length > 0) return value;
+		if (typeof value === 'string' && value.length > 0) return { id: value, fromSender: true };
 	}
-	return crypto.randomUUID();
+	return { id: crypto.randomUUID(), fromSender: false };
+}
+
+/**
+ * True when this delivery has not been accepted on this path before. A failing
+ * database must not drop deliveries, so an error counts as new (the behavior
+ * before redeliveries were remembered) and is reported.
+ */
+function isFirstDelivery(path: string, deliveryId: string): boolean {
+	try {
+		return claimWebhookDelivery(path, deliveryId);
+	} catch (err) {
+		void captureException(err, { operation: 'cueWebhookClaimDelivery' });
+		return true;
+	}
 }
 
 function respond(
@@ -363,7 +382,21 @@ export async function handleCueWebhookRequest(
 	}
 
 	const event = resolveVendorEvent(req.headers);
-	const deliveryId = resolveDeliveryId(req.headers);
+	const { id: deliveryId, fromSender } = resolveDeliveryId(req.headers);
+
+	// A redelivery (same sender-chosen id within 24 hours) is acknowledged with
+	// a 2xx so the sender stops retrying, but fires nothing.
+	if (fromSender && !isFirstDelivery(path, deliveryId)) {
+		for (const reg of authenticated) {
+			reg.onLog(
+				'info',
+				`[CUE] webhook delivery ${deliveryId} to "/cue/${path}" was already handled - ignoring the redelivery`
+			);
+		}
+		respond(res, 200, { accepted: 0, duplicate: true });
+		return;
+	}
+
 	const receivedAt = new Date().toISOString();
 	const truncatedRaw =
 		rawBody.length > MAX_STORED_RAW_BODY

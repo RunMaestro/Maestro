@@ -32,7 +32,7 @@ import type { CueTriggerSource, CueTriggerSourceContext } from './cue-trigger-so
  * found, which leaves the subscription unregistered rather than listening
  * without authentication. Never logs the value.
  */
-function resolveSecret(webhook: {
+export function resolveWebhookSecret(webhook: {
 	secret?: string;
 	secret_env?: string;
 }): { secret: string } | { secret: null; reason?: string } {
@@ -85,7 +85,7 @@ export function createCueWebhookTriggerSource(
 	const path = normalizeWebhookPath(webhook.path || ctx.subscription.name);
 	if (!path) return null;
 
-	const resolved = resolveSecret(webhook);
+	const resolved = resolveWebhookSecret(webhook);
 	if (resolved.secret === null) {
 		ctx.onLog(
 			'error',
