@@ -78,14 +78,15 @@ Two of the errors below rarely reach you at all. **Rate Limit Exceeded** and a s
 
 When an AI agent encounters an error, Maestro displays a modal with clear recovery options. Common error types include:
 
-| Error Type                  | Description                        | Recovery Options                               |
-| --------------------------- | ---------------------------------- | ---------------------------------------------- |
-| **Authentication Required** | API key expired or invalid         | Re-authenticate, check API key settings        |
-| **Context Limit Reached**   | Conversation exceeded token limit  | Start new session, compact context             |
-| **Rate Limit Exceeded**     | Too many API requests              | Wait and retry, reduce request frequency       |
-| **Connection Error**        | Network connectivity issue         | Check internet, retry connection               |
-| **Agent Error**             | Agent process crashed unexpectedly | Restart agent, start new session               |
-| **Permission Denied**       | File or operation access denied    | Check permissions, run with appropriate access |
+| Error Type                     | Description                             | Recovery Options                               |
+| ------------------------------ | --------------------------------------- | ---------------------------------------------- |
+| **Authentication Required**    | API key expired or invalid              | Re-authenticate, check API key settings        |
+| **Context Limit Reached**      | Conversation exceeded token limit       | Start new session, compact context             |
+| **Rate Limit Exceeded**        | Too many API requests                   | Wait and retry, reduce request frequency       |
+| **Connection Error**           | Network connectivity issue              | Check internet, retry connection               |
+| **Agent Error**                | Agent process crashed unexpectedly      | Restart agent, start new session               |
+| **Provider CLI Not Installed** | The provider's CLI could not be started | Install it from the dialog, then retry         |
+| **Permission Denied**          | File or operation access denied         | Check permissions, run with appropriate access |
 
 Each error modal shows:
 
@@ -104,6 +105,14 @@ Two details worth knowing:
 - **Agents on an SSH remote log in on that remote.** The embedded terminal is spawned exactly like a terminal tab, so the login runs on the host the agent actually runs on. Codex switches to `codex login --device-auth` there: its default browser login waits for a callback on the remote's localhost, which your browser cannot reach.
 - **Cue pipelines raise the same dialog.** Cue spawns its agents outside the normal streaming path, so a pipeline that fails on expired credentials used to fail silently in the background. Maestro now classifies the failed run and prompts once per provider. It stays quiet after that until a run for that provider succeeds again, so a busy board cannot bury you in dialogs.
 - **You can sign in before anything breaks.** Command K -> **Re-authenticate Provider** opens the same dialog for the current agent's provider, with nothing failed. Useful when you are switching accounts, or when you know a token is about to lapse and would rather not have it expire mid-run.
+
+### Provider CLI Not Installed
+
+If an agent's provider CLI is missing from your `PATH` (never installed, uninstalled, or installed under a Node.js version that is not active), every message to that agent fails before the provider sees it. Maestro reports this as **Provider CLI Not Installed** instead of a bare "exited with code N", and the error dialog offers **Install <provider>**. That opens a terminal inside Maestro running the install command for your platform (for example `npm install -g @openai/codex` for Codex). When it finishes, click **Retry** to resend the message that failed.
+
+The same command is available to scripts and agents: `maestro-cli install-command codex` prints it for the current platform (`--platform win32` for another one, `--json` for the docs link too).
+
+If the message says the runtime (Node.js) is missing, the CLI is on disk but the Node.js version it was installed under is not on your `PATH`. Reinstalling the CLI under your current Node.js fixes it.
 
 ## Debug Package
 

@@ -560,6 +560,7 @@ export type AgentErrorType =
 	| 'rate_limited' // Too many requests, quota exceeded
 	| 'network_error' // Connection failed, timeout
 	| 'agent_crashed' // Process exited unexpectedly
+	| 'agent_not_installed' // Provider CLI not found on PATH, or its runtime (Node) missing
 	| 'permission_denied' // Agent lacks required permissions
 	| 'session_not_found' // Session was deleted or doesn't exist
 	| 'hitl_gate' // Playbook reached a human-in-the-loop review marker

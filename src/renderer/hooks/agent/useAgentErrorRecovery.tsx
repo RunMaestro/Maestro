@@ -19,8 +19,22 @@
  */
 
 import { useMemo, useCallback } from 'react';
-import { KeyRound, MessageSquarePlus, RefreshCw, RotateCcw, Wifi, Terminal } from 'lucide-react';
-import { formatAgentLoginCommand, getAgentLoginCommand } from '../../../shared/agentMetadata';
+import {
+	Download,
+	KeyRound,
+	MessageSquarePlus,
+	RefreshCw,
+	RotateCcw,
+	Wifi,
+	Terminal,
+} from 'lucide-react';
+import {
+	formatAgentLoginCommand,
+	getAgentDisplayName,
+	getAgentLoginCommand,
+} from '../../../shared/agentMetadata';
+import { getAgentInstallCommand } from '../../../shared/agentInstall';
+import { getPlatform } from '../../utils/platformUtils';
 import type { AgentError, ToolType } from '../../types';
 import type { RecoveryAction } from '../../components/AgentErrorModal';
 
@@ -41,6 +55,8 @@ export interface UseAgentErrorRecoveryOptions {
 	onRestartAgent?: () => void;
 	/** Callback to open authentication flow */
 	onAuthenticate?: () => void;
+	/** Callback to open the provider CLI install flow */
+	onInstall?: () => void;
 }
 
 export interface UseAgentErrorRecoveryResult {
@@ -88,6 +104,34 @@ function getRecoveryActionsForError(
 					description: 'Begin a fresh conversation',
 					icon: <MessageSquarePlus className="w-4 h-4" />,
 					onClick: options.onNewSession,
+				});
+			}
+			break;
+		}
+
+		case 'agent_not_installed': {
+			// The CLI never started, so restarting the agent would fail the same
+			// way. Offer the install for this platform; once it has run, a plain
+			// retry resends the turn that failed.
+			const install = getAgentInstallCommand(agentId, getPlatform());
+			if (options.onInstall && install) {
+				actions.push({
+					id: 'install',
+					label: `Install ${getAgentDisplayName(agentId)}`,
+					description: `Run "${install}" here`,
+					primary: true,
+					icon: <Download className="w-4 h-4" />,
+					onClick: options.onInstall,
+				});
+			}
+			if (options.onRetry) {
+				actions.push({
+					id: 'retry',
+					label: 'Try Again',
+					description: 'Installed it another way? Clear the error and send again',
+					primary: !(options.onInstall && install),
+					icon: <RefreshCw className="w-4 h-4" />,
+					onClick: options.onRetry,
 				});
 			}
 			break;
@@ -205,6 +249,7 @@ export function useAgentErrorRecovery(
 		error,
 		agentId,
 		options.onAuthenticate,
+		options.onInstall,
 		options.onNewSession,
 		options.onRestartAgent,
 		options.onRetry,

@@ -451,6 +451,18 @@ export function useModalHandlers(
 		if (providerKey) getModalActions().openReauthModal({ providerKey });
 	}, []);
 
+	// The CLI never started, so the fix is an install, not a restart. The install
+	// runs in its own terminal dialog, which replays the failed turn on Retry.
+	const handleInstallAfterError = useCallback((sessionId: string) => {
+		const session = selectSessionById(sessionId)(useSessionStore.getState());
+		getModalActions().setAgentErrorModalSessionId(null);
+		getModalActions().openProviderInstallModal({
+			sessionId,
+			tabId: session?.agentErrorTabId,
+			reason: session?.agentError?.message,
+		});
+	}, []);
+
 	// Determine the effective error: historical wins when explicitly requested (user clicked Details),
 	// otherwise fall back to live session error
 	const isHistorical = !!historicalAgentError;
@@ -480,6 +492,8 @@ export function useModalHandlers(
 			!isHistorical && errorSession
 				? () => handleAuthenticateAfterError(errorSession.id)
 				: undefined,
+		onInstall:
+			!isHistorical && errorSession ? () => handleInstallAfterError(errorSession.id) : undefined,
 	});
 
 	// ====================================================================

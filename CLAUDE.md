@@ -140,6 +140,7 @@ Grep-verified 2026-09-04 (`npm run docs:verify` re-checks every path). This is t
 - **Whether a configured env value means "unset":** `isBlankEnvValue()`, `isBlankEnvKey()`, `stripBlankEnvVars()` in `src/shared/agentEnvironment.ts`
 - **Suggesting an env-var name:** `suggestEnvVarKeys()`, `PROVIDER_ENV_VAR_SUGGESTIONS`, `withBlankEnvVarRow()` in `src/shared/envVarCatalog.ts`; `EnvVarKeyInput` in `src/renderer/components/shared/EnvVarKeyInput.tsx`
 - **Whether a login flow can fix an auth failure:** `classifyCredentialKind()`, `credentialKindBlocksLogin()` in `src/shared/providerAuthIdentity.ts`
+- **Installing a missing provider CLI / telling "not installed" from "crashed":** `getAgentInstallCommand()`, `classifyMissingBinary()`, `agentNotInstalledMessage()` in `src/shared/agentInstall.ts`
 - **Typing a login command into a shell:** `formatAgentLoginCommand(login, syntax?)`, `loginShellSyntaxFor(shellId, isWindows)` in `src/shared/agentMetadata.ts`
 - **Bucketing Director's Notes bullets:** `bucketNarrativeItems()`, `shouldRenderBuckets()` in `src/shared/directorNotesGrouping.ts`
 - **Which provider generates a synopsis:** `AUTO_SYNOPSIS_PROVIDER`, `synopsisProviderChoice()`, `pickFirstAvailableProvider()` in `src/shared/directorNotesProvider.ts`; `resolveSynopsisProvider()` in `src/main/utils/director-notes-provider.ts`

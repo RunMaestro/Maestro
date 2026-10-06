@@ -78,6 +78,7 @@ const NON_RETRYABLE_TYPES: ReadonlySet<AgentErrorType> = new Set<AgentErrorType>
 	'hitl_gate',
 	'token_exhaustion',
 	'agent_crashed',
+	'agent_not_installed',
 ]);
 
 /**

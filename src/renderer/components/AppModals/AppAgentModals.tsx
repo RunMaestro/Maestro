@@ -1,4 +1,4 @@
-import { memo } from 'react';
+import { memo, useCallback } from 'react';
 import { selectModalData, useModalStore } from '../../stores/modalStore';
 import { selectAuthOutage, useAuthOutageStore } from '../../stores/authOutageStore';
 import type {
@@ -16,6 +16,9 @@ import type { GroomingProgress, MergeResult } from '../../types/contextMerge';
 // Agent/Transfer Modal Components
 import { AgentErrorModal, type RecoveryAction } from '../AgentErrorModal';
 import { ReauthModal } from '../ReauthModal';
+import { ProviderInstallModal } from '../ProviderInstallModal';
+import { useAgentStore } from '../../stores/agentStore';
+import { replayAfterAuth } from '../../stores/retryStore';
 import { MergeSessionModal, type MergeOptions } from '../MergeSessionModal';
 import { SendToAgentModal, type SendToAgentOptions } from '../SendToAgentModal';
 import { TransferProgressModal } from '../TransferProgressModal';
@@ -165,6 +168,23 @@ export const AppAgentModals = memo(function AppAgentModals({
 		? sessions.find((s) => s.id === reauthOutage.blocked[0]?.sessionId)
 		: undefined;
 
+	// Self-sourced for the same reason: opened from the agent error dialog's
+	// Install action, which lives in useModalHandlers rather than App.tsx.
+	const providerInstallData = useModalStore(selectModalData('providerInstall'));
+	const providerInstallSession = providerInstallData
+		? sessions.find((s) => s.id === providerInstallData.sessionId)
+		: undefined;
+	const handleProviderInstallRetry = useCallback(() => {
+		if (!providerInstallData) return;
+		const { sessionId, tabId } = providerInstallData;
+		closeReauthModal('providerInstall');
+		// Releases the held queue and drops the error, then resends the turn that
+		// failed from its dispatch snapshot - the same replay a re-authentication
+		// uses, which also tells the user when there is nothing left to resend.
+		useAgentStore.getState().clearAgentError(sessionId);
+		if (tabId) replayAfterAuth(sessionId, [tabId]);
+	}, [providerInstallData, closeReauthModal]);
+
 	return (
 		<>
 			{/* --- LEADERBOARD REGISTRATION MODAL --- */}
@@ -208,6 +228,17 @@ export const AppAgentModals = memo(function AppAgentModals({
 					outage={reauthOutage}
 					session={reauthSession}
 					onClose={() => closeReauthModal('reauth')}
+				/>
+			)}
+
+			{/* --- PROVIDER CLI INSTALL MODAL --- */}
+			{providerInstallData && providerInstallSession && (
+				<ProviderInstallModal
+					theme={theme}
+					session={providerInstallSession}
+					reason={providerInstallData.reason}
+					onClose={() => closeReauthModal('providerInstall')}
+					onRetry={handleProviderInstallRetry}
 				/>
 			)}
 

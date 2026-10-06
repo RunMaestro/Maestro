@@ -542,6 +542,116 @@ describe('ExitHandler', () => {
 		});
 	});
 
+	describe('provider CLI that could not be started', () => {
+		function collectErrors(): AgentError[] {
+			const errors: AgentError[] = [];
+			emitter.on('agent-error', (_sid: string, err: AgentError) => errors.push(err));
+			return errors;
+		}
+
+		it('reports a spawn ENOENT as agent_not_installed, not a crash', () => {
+			processes.set('test-session', createMockProcess({ toolType: 'codex' }));
+			const errors = collectErrors();
+
+			const error = Object.assign(new Error('spawn codex ENOENT'), { code: 'ENOENT' });
+			exitHandler.handleError('test-session', error);
+
+			expect(errors).toHaveLength(1);
+			expect(errors[0].type).toBe('agent_not_installed');
+			expect(errors[0].message).toMatch(/^Codex CLI not installed/);
+			expect(errors[0].agentId).toBe('codex');
+		});
+
+		it('keeps other spawn errors as agent_crashed', () => {
+			processes.set('test-session', createMockProcess({ toolType: 'codex' }));
+			const errors = collectErrors();
+
+			const error = Object.assign(new Error('spawn codex EACCES'), { code: 'EACCES' });
+			exitHandler.handleError('test-session', error);
+
+			expect(errors).toHaveLength(1);
+			expect(errors[0].type).toBe('agent_crashed');
+		});
+
+		it('reports exit 127 as agent_not_installed ahead of the parser fallback', async () => {
+			const detectErrorFromExit = vi.fn(() => ({
+				type: 'agent_crashed' as const,
+				message: 'Agent exited with code 127',
+				recoverable: true,
+				agentId: 'codex',
+				timestamp: Date.now(),
+			}));
+			processes.set(
+				'test-session',
+				createMockProcess({
+					toolType: 'codex',
+					stderrBuffer: 'zsh: command not found: codex',
+					outputParser: createMockOutputParser({ detectErrorFromExit }),
+				})
+			);
+			const errors = collectErrors();
+
+			await exitHandler.handleExit('test-session', 127);
+
+			expect(errors).toHaveLength(1);
+			expect(errors[0].type).toBe('agent_not_installed');
+			expect(detectErrorFromExit).not.toHaveBeenCalled();
+		});
+
+		it('names the missing runtime when the shebang interpreter is not on PATH', async () => {
+			processes.set(
+				'test-session',
+				createMockProcess({
+					toolType: 'codex',
+					stderrBuffer: 'env: node: No such file or directory',
+				})
+			);
+			const errors = collectErrors();
+
+			await exitHandler.handleExit('test-session', 127);
+
+			expect(errors).toHaveLength(1);
+			expect(errors[0].type).toBe('agent_not_installed');
+			expect(errors[0].message).toMatch(/Node\.js/);
+		});
+
+		it('leaves an SSH remote to the SSH error bank', async () => {
+			vi.mocked(matchSshErrorPattern).mockReturnValue(null);
+			processes.set(
+				'test-session',
+				createMockProcess({
+					toolType: 'codex',
+					sshRemoteId: 'remote-1',
+					stderrBuffer: 'bash: codex: command not found',
+				})
+			);
+			const errors = collectErrors();
+
+			await exitHandler.handleExit('test-session', 127);
+
+			expect(errors.some((e) => e.type === 'agent_not_installed')).toBe(false);
+			vi.mocked(matchSshErrorPattern).mockReset();
+		});
+
+		it('does not classify an ordinary non-zero exit', async () => {
+			const detectErrorFromExit = vi.fn(() => null);
+			processes.set(
+				'test-session',
+				createMockProcess({
+					toolType: 'codex',
+					stderrBuffer: 'Error: something else went wrong',
+					outputParser: createMockOutputParser({ detectErrorFromExit }),
+				})
+			);
+			const errors = collectErrors();
+
+			await exitHandler.handleExit('test-session', 1);
+
+			expect(errors).toHaveLength(0);
+			expect(detectErrorFromExit).toHaveBeenCalled();
+		});
+	});
+
 	describe('SSH error pattern false-positive prevention', () => {
 		it('should only check stderr for SSH patterns, not stdout', async () => {
 			const mockedMatchSsh = vi.mocked(matchSshErrorPattern);

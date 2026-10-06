@@ -19,6 +19,8 @@
 
 import { getErrorPatterns, matchErrorPattern } from '../../../../shared/agentErrorPatterns';
 import { formatAgentLoginCommand, getAgentLoginCommand } from '../../../../shared/agentMetadata';
+import { getAgentInstallCommand } from '../../../../shared/agentInstall';
+import { getPlatform } from '../../../utils/platformUtils';
 import type { AgentErrorType, ToolType } from '../../../types';
 
 /**
@@ -43,6 +45,7 @@ const ERROR_TITLES: Record<AgentErrorType, string> = {
 	rate_limited: 'Rate Limited',
 	network_error: 'Network Error',
 	agent_crashed: 'Agent Error',
+	agent_not_installed: 'Provider CLI Not Installed',
 	permission_denied: 'Permission Denied',
 	session_not_found: 'Session Not Found',
 	hitl_gate: 'Review Required',
@@ -56,6 +59,7 @@ const RECOVERY_HINTS: Record<AgentErrorType, string> = {
 	rate_limited: 'Wait a moment, then try again.',
 	network_error: 'Check your internet connection, then try again.',
 	agent_crashed: 'Try again. If it keeps happening, check the agent installation.',
+	agent_not_installed: 'Install the provider CLI, then start the wizard over.',
 	permission_denied: 'The agent was refused access. Check the folder permissions, then try again.',
 	session_not_found: 'Start the wizard again with a fresh conversation.',
 	hitl_gate: 'The agent is waiting on a human review step. Try again once it is cleared.',
@@ -79,14 +83,19 @@ const RETRYABLE_TYPES: ReadonlySet<AgentErrorType> = new Set<AgentErrorType>([
 /**
  * The recovery hint for one error, named for the agent that produced it.
  *
- * Only `auth_expired` varies: the command differs per provider, and some
+ * Two types vary. `auth_expired`: the command differs per provider, and some
  * providers have no login subcommand at all (they expose the flow as a slash
  * command inside their TUI), which is exactly what `getAgentLoginCommand`
- * records. When the agent has no login flow, the generic hint stands rather
- * than inventing a command to type into a shell.
+ * records. `agent_not_installed`: the install command differs per provider AND
+ * per platform. When there is no command to name, the generic hint stands
+ * rather than inventing one to type into a shell.
  */
 function recoveryHintFor(type: AgentErrorType, agentType: ToolType): string {
 	const generic = RECOVERY_HINTS[type] ?? RECOVERY_HINTS.unknown;
+	if (type === 'agent_not_installed') {
+		const install = getAgentInstallCommand(agentType, getPlatform());
+		return install ? `Run "${install}" to install it, then start the wizard over.` : generic;
+	}
 	if (type !== 'auth_expired') return generic;
 
 	const login = getAgentLoginCommand(agentType);
