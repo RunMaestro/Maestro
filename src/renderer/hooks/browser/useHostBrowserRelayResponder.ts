@@ -10,7 +10,7 @@ import { useSettingsStore } from '../../stores/settingsStore';
 import { ensureInUnifiedTabOrder } from '../../utils/tabHelpers';
 import { prepareSessionForPersistence } from '../utils/useDebouncedPersistence';
 
-/** The trusted owning renderer authorizes existing tabs; main owns every browser workload. */
+/** The trusted owning renderer authorizes tabs and resolves their live native guest, if mounted. */
 export function useHostBrowserRelayResponder(): void {
 	const context = useWindowContextOptional();
 	const contextRef = useRef(context);
@@ -20,7 +20,7 @@ export function useHostBrowserRelayResponder(): void {
 		const api = window.maestro.browserSession;
 		const known = new Map<string, BrowserRelayTarget>();
 		const unsubscribe = api.onRelayRequest((request) => {
-			try {
+			void (async () => {
 				if (contextRef.current && !contextRef.current.ownsSession(request.sessionId))
 					throw new Error('Browser session belongs to a different owning host window');
 				const session = useSessionStore
@@ -29,17 +29,49 @@ export function useHostBrowserRelayResponder(): void {
 				const tab = session?.browserTabs?.find((candidate) => candidate.id === request.tabId);
 				if (!tab?.partition)
 					throw new Error('Browser tab does not exist in the requested host session');
+				// Resolve the actual DOM guest instead of a persisted/stale webContents id.
+				const native = Array.from(
+					document.querySelectorAll('webview[data-maestro-browser-tab]')
+				).find((element) => element.getAttribute('data-maestro-browser-tab') === tab.id) as
+					| (HTMLElement & { getWebContentsId(): number })
+					| undefined;
+				let webContentsId: number | undefined;
+				if (native) {
+					const deadline = Date.now() + 8000;
+					while (native.isConnected && Date.now() < deadline) {
+						try {
+							webContentsId = native.getWebContentsId();
+							break;
+						} catch {
+							/* guest attaching */
+						}
+						await new Promise((resolve) => setTimeout(resolve, 25));
+					}
+					if (!webContentsId) throw new Error('Native browser tab is not ready');
+				}
+				if (!native && !tab.remotePage) {
+					// Reserve the streamed presentation before replying. Otherwise the user
+					// could mount a native guest while main is opening its offscreen page.
+					updateSessionWith(session!.id, (current) => ({
+						...current,
+						browserTabs: current.browserTabs?.map((browser) =>
+							browser.id === tab.id ? { ...browser, remotePage: true } : browser
+						),
+					}));
+				}
+
 				api.relayRespond(request.requestId, {
 					ok: true,
 					partition: tab.partition,
+					webContentsId,
 					initialUrl: toWebviewSrc(tab.url),
 				});
-			} catch (error) {
+			})().catch((error) => {
 				api.relayRespond(request.requestId, {
 					ok: false,
 					error: error instanceof Error ? error.message : String(error),
 				});
-			}
+			});
 		});
 		const creations = api.onCreateTabRequest((request) => {
 			void (async () => {
@@ -115,7 +147,8 @@ export function useHostBrowserRelayResponder(): void {
 				tab.canGoForward === state.canGoForward &&
 				tab.isLoading === state.isLoading &&
 				tab.webContentsId === state.webContentsId &&
-				tab.favicon === state.favicon
+				tab.favicon === state.favicon &&
+				tab.remotePage === state.offscreen
 			)
 				return;
 			updateSessionWith(event.target.sessionId, (current) => ({
@@ -130,6 +163,7 @@ export function useHostBrowserRelayResponder(): void {
 								isLoading: state.isLoading,
 								webContentsId: state.webContentsId,
 								favicon: state.favicon,
+								remotePage: state.offscreen,
 							})
 						: browser
 				),

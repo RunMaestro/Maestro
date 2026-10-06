@@ -14,6 +14,8 @@ export interface BrowserTab {
 	hiddenFromAgent?: boolean;
 	ephemeral?: boolean;
 	webContentsId?: number;
+	/** Runtime only: this tab was opened remotely without a mounted native guest. */
+	remotePage?: boolean;
 }
 export interface BrowserTabCreationOptions {
 	url?: string;
@@ -28,6 +30,7 @@ export interface BrowserTabCreateRequest {
 }
 
 export interface BrowserPageState extends BrowserRelayViewport {
+	offscreen?: boolean;
 	url: string;
 	title: string;
 	canGoBack: boolean;

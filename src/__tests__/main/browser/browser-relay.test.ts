@@ -80,7 +80,9 @@ describe('host browser relay leases', () => {
 		relay.closeClient('client');
 		capture.resolve({ ok: true });
 		await expect(frame).rejects.toThrow('expired');
-		expect(released).toEqual([target.tabId]);
+		// Release immediately and again after the pending capture settles, since
+		// a frame request may recreate a page after its original guest disappears.
+		expect(released).toEqual([target.tabId, target.tabId]);
 		expect(hostTabs.has(target.tabId)).toBe(true);
 		await expect(relay.open('new-client', target, viewport)).resolves.toEqual(expect.any(String));
 	});
@@ -102,6 +104,78 @@ describe('host browser relay leases', () => {
 		relay.expire();
 		await expect(relay.run('client', id, 'resolve')).rejects.toThrow('expired');
 	});
+
+	it.each([
+		{ kind: 'resolve' as const, hasSuccessor: false },
+		{ kind: 'resolve' as const, hasSuccessor: true },
+		{ kind: 'frame' as const, hasSuccessor: false },
+		{ kind: 'frame' as const, hasSuccessor: true },
+	])(
+		'cleans up a disconnected pending $kind without suspending a successor (successor: $hasSuccessor)',
+		async ({ kind, hasSuccessor }) => {
+			const creation = Promise.withResolvers<void>();
+			let requests = 0;
+			let remoteActive = false;
+			const relay = new BrowserRelay(async (request) => {
+				if (request.kind === 'release') {
+					remoteActive = false;
+				} else {
+					if (++requests === 2) await creation.promise;
+					// A destroyed guest can be recreated by an in-flight resolve or frame.
+					remoteActive = true;
+				}
+				return { ok: true };
+			});
+			const id = await relay.open('disconnected-client', target, viewport);
+			const pending = relay.run('disconnected-client', id, kind);
+			relay.closeClient('disconnected-client');
+			expect(remoteActive).toBe(false);
+			const successor = hasSuccessor
+				? await relay.open('successor-client', target, viewport)
+				: undefined;
+			creation.resolve();
+			await expect(pending).rejects.toThrow('expired');
+			expect(remoteActive).toBe(hasSuccessor);
+			if (successor) {
+				relay.assertActive('successor-client', successor);
+				relay.close('successor-client', successor);
+				expect(remoteActive).toBe(false);
+			}
+		}
+	);
+
+	it.each([false, true])(
+		'cleans up a disconnected pending open without suspending a successor (successor: %s)',
+		async (hasSuccessor) => {
+			const firstResolve = Promise.withResolvers<void>();
+			let opens = 0;
+			let remoteActive = false;
+			const relay = new BrowserRelay(async (request) => {
+				if (request.kind === 'resolve') {
+					if (++opens === 1) await firstResolve.promise;
+					// Page creation can finish after the disconnect's early release.
+					remoteActive = true;
+				} else if (request.kind === 'release') {
+					remoteActive = false;
+				}
+				return { ok: true };
+			});
+			const opening = relay.open('disconnected-client', target, viewport);
+			relay.closeClient('disconnected-client');
+			expect(remoteActive).toBe(false);
+			const successor = hasSuccessor
+				? await relay.open('successor-client', target, viewport)
+				: undefined;
+			firstResolve.resolve();
+			await expect(opening).rejects.toThrow('disconnected while opening');
+			expect(remoteActive).toBe(hasSuccessor);
+			if (successor) {
+				relay.assertActive('successor-client', successor);
+				relay.close('successor-client', successor);
+				expect(remoteActive).toBe(false);
+			}
+		}
+	);
 });
 
 describe('browser target and input authorization', () => {

@@ -44,6 +44,22 @@ export class BrowserRelay {
 		return lease;
 	}
 
+	private async releaseUnusedPage(target: BrowserRelayTarget): Promise<void> {
+		if (
+			Array.from(this.leases.values()).some(
+				(current) => current.sessionId === target.sessionId && current.tabId === target.tabId
+			)
+		)
+			return;
+		// An early disconnect can release before page creation completes. Repeat
+		// cleanup after the pending request, unless a newer lease owns that page.
+		await this.request({
+			sessionId: target.sessionId,
+			tabId: target.tabId,
+			kind: 'release',
+		}).catch(() => {});
+	}
+
 	async open(
 		clientId: string,
 		target: BrowserRelayTarget,
@@ -80,7 +96,8 @@ export class BrowserRelay {
 			if (!this.leases.has(id)) throw new Error('Browser client disconnected while opening view');
 			return id;
 		} catch (error) {
-			this.close(clientId, id);
+			if (this.leases.has(id)) this.close(clientId, id);
+			else await this.releaseUnusedPage(target);
 			throw error;
 		} finally {
 			lease.busy = false;
@@ -122,6 +139,9 @@ export class BrowserRelay {
 			this.get(clientId, id);
 			if (!result.ok) throw new Error(result.error || 'Browser tab is unavailable');
 			return result;
+		} catch (error) {
+			if (!this.leases.has(id)) await this.releaseUnusedPage(lease);
+			throw error;
 		} finally {
 			lease.busy = false;
 		}
@@ -220,7 +240,7 @@ export function registerBrowserRelayHandlers(deps: {
 	};
 	const pages = new HostBrowserPages({
 		getOwner: getWindow,
-		input: (guest, input) => dispatchBrowserRelayInput(guest, validateInput(input)),
+		input: (guest, input, bounds) => dispatchBrowserRelayInput(guest, validateInput(input, bounds)),
 		resolve: async (target) => {
 			const owner = getWindow(target.sessionId);
 			if (!owner || owner.isDestroyed() || owner.webContents.isDestroyed())
@@ -228,7 +248,12 @@ export function registerBrowserRelayHandlers(deps: {
 			const result = await hostRequest('browser:relayRequest', { ...target, kind: 'resolve' });
 			if (!result.ok || !result.partition || typeof result.initialUrl !== 'string')
 				throw new Error(result.error || 'Host browser tab is not registered');
-			return { owner, partition: result.partition, url: result.initialUrl };
+			return {
+				owner,
+				partition: result.partition,
+				url: result.initialUrl,
+				webContentsId: result.webContentsId,
+			};
 		},
 	});
 	pages.registerNativeHandlers();
@@ -244,8 +269,10 @@ export function registerBrowserRelayHandlers(deps: {
 			const state = await pages.resolveRemote(target, payload.viewport!);
 			return { ok: true, target, webContentsId: state.webContentsId, state };
 		}
-		if (payload.kind === 'frame')
+		if (payload.kind === 'frame') {
+			await pages.resolveRemote(target, payload.viewport!);
 			return { ok: true, target, frame: await pages.frame(target, payload.viewport!) };
+		}
 		if (!payload.action) throw new Error('Missing browser action');
 		return { ok: true, target, value: await pages.action(target, payload.action) };
 	};
@@ -331,7 +358,10 @@ export function registerBrowserRelayHandlers(deps: {
 	);
 }
 
-export function validateInput(input: BrowserRelayInput): BrowserRelayInput {
+export function validateInput(
+	input: BrowserRelayInput,
+	bounds: BrowserRelayViewport = { width: 2560, height: 1600 }
+): BrowserRelayInput {
 	if (!input || typeof input !== 'object') throw new Error('Invalid browser input');
 	if (input.type === 'text') {
 		if (typeof input.text !== 'string' || input.text.length > 16_384)
@@ -357,8 +387,8 @@ export function validateInput(input: BrowserRelayInput): BrowserRelayInput {
 		!Number.isInteger(input.y) ||
 		input.x < 0 ||
 		input.y < 0 ||
-		input.x > 2560 ||
-		input.y > 1600
+		input.x > bounds.width ||
+		input.y > bounds.height
 	)
 		throw new Error('Invalid browser pointer');
 	if (input.type === 'mouseWheel') {

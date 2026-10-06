@@ -1,6 +1,8 @@
 import {
 	BrowserWindow,
 	ipcMain,
+	webContents,
+	session,
 	type WebContents,
 	type NativeImage,
 	type IpcMainInvokeEvent,
@@ -30,11 +32,13 @@ export function isHostBrowserPageWindow(window: BrowserWindow): boolean {
 
 interface Page {
 	target: BrowserRelayTarget;
-	window: BrowserWindow;
+	window: BrowserWindow | null;
+	guest: WebContents;
 	owner: BrowserWindow;
 	partition: string;
 	initialUrl: string;
 	viewport: BrowserRelayViewport;
+	nativeSize: BrowserRelayViewport | null;
 	ready: boolean;
 	favicon: string | null;
 	nativeViews: Map<string, boolean>;
@@ -81,11 +85,18 @@ export class HostBrowserPages {
 	private watchedOwners = new Set<BrowserWindow>();
 	constructor(
 		private deps: {
-			resolve: (
-				target: BrowserRelayTarget
-			) => Promise<{ owner: BrowserWindow; partition: string; url: string }>;
+			resolve: (target: BrowserRelayTarget) => Promise<{
+				owner: BrowserWindow;
+				partition: string;
+				url: string;
+				webContentsId?: number;
+			}>;
 			getOwner: (sessionId: string) => BrowserWindow | null;
-			input: (guest: WebContents, input: BrowserRelayInput) => Promise<void>;
+			input: (
+				guest: WebContents,
+				input: BrowserRelayInput,
+				bounds?: BrowserRelayViewport
+			) => Promise<void>;
 		}
 	) {}
 	private watchOwner(owner: BrowserWindow): void {
@@ -98,7 +109,7 @@ export class HostBrowserPages {
 				const next = this.deps.getOwner(page.target.sessionId);
 				if (next && next !== owner && !next.isDestroyed() && !next.webContents.isDestroyed())
 					this.bindOwner(page, next);
-				else if (!page.window.isDestroyed()) page.window.destroy();
+				else if (!page.guest.isDestroyed()) page.window?.destroy();
 			}
 		});
 	}
@@ -111,8 +122,9 @@ export class HostBrowserPages {
 	}
 
 	private state(page: Page): BrowserPageState {
-		const guest = page.window.webContents;
+		const guest = page.guest;
 		return {
+			offscreen: !!page.window,
 			...page.viewport,
 			url: guest.getURL() || page.initialUrl,
 			title: guest.getTitle(),
@@ -125,7 +137,7 @@ export class HostBrowserPages {
 		};
 	}
 	private publish(page: Page, type: string, details?: Record<string, unknown>): void {
-		if (page.window.isDestroyed()) return;
+		if (page.guest.isDestroyed()) return;
 		const currentOwner = this.deps.getOwner(page.target.sessionId);
 		if (currentOwner && !currentOwner.isDestroyed()) this.bindOwner(page, currentOwner);
 		if (!page.owner.isDestroyed() && !page.owner.webContents.isDestroyed())
@@ -144,7 +156,8 @@ export class HostBrowserPages {
 		return page.remoteActive || this.nativeActive(page);
 	}
 	private updatePainting(page: Page): void {
-		const guest = page.window.webContents;
+		if (!page.window) return;
+		const guest = page.guest;
 		if (this.painting(page)) {
 			guest.startPainting();
 			guest.invalidate();
@@ -155,17 +168,18 @@ export class HostBrowserPages {
 	}
 	private resize(page: Page, size: BrowserRelayViewport): void {
 		viewport(size);
+		if (!page.window) return;
 		if (page.viewport.width === size.width && page.viewport.height === size.height) return;
 		page.viewport = { ...size };
 		page.image = null;
 		page.window.setContentSize(size.width, size.height);
-		if (this.painting(page)) page.window.webContents.invalidate();
+		if (this.painting(page)) page.guest.invalidate();
 	}
 	private async ensure(target: BrowserRelayTarget, size: BrowserRelayViewport): Promise<Page> {
 		const id = key(target);
 		viewport(size);
 		const current = this.pages.get(id);
-		if (current && !current.window.isDestroyed()) return current;
+		if (current && !current.guest.isDestroyed()) return current;
 		const pending = this.opening.get(id);
 		if (pending) return pending;
 		const creation = (async () => {
@@ -177,33 +191,49 @@ export class HostBrowserPages {
 				throw new Error('Host browser tab has an invalid partition or URL');
 			if (resolved.owner.isDestroyed() || resolved.owner.webContents.isDestroyed())
 				throw new Error('Host browser owner closed while opening the tab');
-			const window = new BrowserWindow({
-				show: false,
-				frame: false,
-				useContentSize: true,
-				width: size.width,
-				height: size.height,
-				webPreferences: {
-					partition: resolved.partition,
-					offscreen: true,
-					backgroundThrottling: false,
-					nodeIntegration: false,
-					nodeIntegrationInSubFrames: false,
-					contextIsolation: true,
-					sandbox: true,
-					webSecurity: true,
-					allowRunningInsecureContent: false,
-				},
-			});
-			browserPageWindows.add(window);
+			const nativeGuest =
+				resolved.webContentsId === undefined ? null : webContents.fromId(resolved.webContentsId);
+			if (
+				resolved.webContentsId !== undefined &&
+				(!nativeGuest ||
+					nativeGuest.isDestroyed() ||
+					nativeGuest.getType() !== 'webview' ||
+					nativeGuest.hostWebContents !== resolved.owner.webContents ||
+					nativeGuest.session !== session.fromPartition(resolved.partition))
+			)
+				throw new Error('Native browser guest does not belong to the registered host tab');
+			const window = nativeGuest
+				? null
+				: new BrowserWindow({
+						show: false,
+						frame: false,
+						useContentSize: true,
+						width: size.width,
+						height: size.height,
+						webPreferences: {
+							partition: resolved.partition,
+							offscreen: true,
+							backgroundThrottling: false,
+							nodeIntegration: false,
+							nodeIntegrationInSubFrames: false,
+							contextIsolation: true,
+							sandbox: true,
+							webSecurity: true,
+							allowRunningInsecureContent: false,
+						},
+					});
+			if (window) browserPageWindows.add(window);
+			const guest = nativeGuest ?? window!.webContents;
 			const page: Page = {
 				target: { ...target },
 				owner: resolved.owner,
 				partition: resolved.partition,
 				initialUrl: resolved.url,
 				window,
+				guest,
 				viewport: { ...size },
-				ready: false,
+				nativeSize: null,
+				ready: !!nativeGuest && !nativeGuest.isLoading(),
 				favicon: null,
 				nativeViews: new Map(),
 				remoteActive: false,
@@ -215,24 +245,25 @@ export class HostBrowserPages {
 			};
 			this.watchOwner(resolved.owner);
 			this.pages.set(id, page);
-			const guest = window.webContents;
-			guest.setFrameRate(8);
-			guest.session.setPermissionRequestHandler((_contents, _permission, callback) =>
-				callback(false)
-			);
-			guest.session.setPermissionCheckHandler(() => false);
-			attachBrowserPageSecurity(guest, resolved.owner, () => page.owner);
-			guest.on('paint', (_event, _dirty, image) => {
-				// Offscreen startup can emit an empty image before the first usable frame.
-				if (image.isEmpty()) return;
-				page.image = image;
-				page.encodedJPEG = null;
-				for (const waiter of page.waiters) {
-					clearTimeout(waiter.timer);
-					waiter.resolve(image);
-				}
-				page.waiters.clear();
-			});
+			if (window) {
+				guest.setFrameRate(8);
+				guest.session.setPermissionRequestHandler((_contents, _permission, callback) =>
+					callback(false)
+				);
+				guest.session.setPermissionCheckHandler(() => false);
+				attachBrowserPageSecurity(guest, resolved.owner, () => page.owner);
+				guest.on('paint', (_event, _dirty, image) => {
+					// Offscreen startup can emit an empty image before the first usable frame.
+					if (image.isEmpty()) return;
+					page.image = image;
+					page.encodedJPEG = null;
+					for (const waiter of page.waiters) {
+						clearTimeout(waiter.timer);
+						waiter.resolve(image);
+					}
+					page.waiters.clear();
+				});
+			}
 			guest.on('dom-ready', () => {
 				page.ready = true;
 				this.publish(page, 'dom-ready');
@@ -269,14 +300,16 @@ export class HostBrowserPages {
 				}
 				page.waiters.clear();
 			});
-			guest.stopPainting();
-			void guest.loadURL(resolved.url).catch((error: Error) =>
-				this.publish(page, 'did-fail-load', {
-					validatedURL: resolved.url,
-					errorDescription: error.message,
-					isMainFrame: true,
-				})
-			);
+			if (window) {
+				guest.stopPainting();
+				void guest.loadURL(resolved.url).catch((error: Error) =>
+					this.publish(page, 'did-fail-load', {
+						validatedURL: resolved.url,
+						errorDescription: error.message,
+						isMainFrame: true,
+					})
+				);
+			}
 			this.publish(page, 'page-opened');
 			return page;
 		})();
@@ -289,7 +322,7 @@ export class HostBrowserPages {
 	}
 	private existing(target: BrowserRelayTarget): Page {
 		const page = this.pages.get(key(target));
-		if (!page || page.window.isDestroyed())
+		if (!page || page.guest.isDestroyed())
 			throw new Error('Registered host browser tab is unavailable');
 		return page;
 	}
@@ -302,6 +335,8 @@ export class HostBrowserPages {
 		return page;
 	}
 	private image(page: Page): Promise<NativeImage> {
+		if (!page.window)
+			return page.guest.capturePage(undefined, { stayHidden: true, stayAwake: true });
 		if (page.image) return Promise.resolve(page.image);
 		return new Promise((resolve, reject) => {
 			const waiter = {
@@ -313,7 +348,7 @@ export class HostBrowserPages {
 				}, 5000),
 			};
 			page.waiters.add(waiter);
-			page.window.webContents.invalidate();
+			page.guest.invalidate();
 		});
 	}
 	async resolveRemote(
@@ -329,14 +364,28 @@ export class HostBrowserPages {
 	}
 	releaseRemote(target: BrowserRelayTarget): void {
 		const page = this.pages.get(key(target));
-		if (!page || page.window.isDestroyed()) return;
+		if (!page || page.guest.isDestroyed()) return;
 		page.remoteActive = false;
 		this.updatePainting(page);
 	}
 	async frame(target: BrowserRelayTarget, size: BrowserRelayViewport): Promise<BrowserRelayFrame> {
-		const page = this.existing(target);
+		// A native guest follows the desktop keep-alive policy. If it was unmounted,
+		// an attached remote view can reopen this still-registered tab offscreen.
+		const page = await this.ensure(target, size);
 		if (!this.nativeActive(page)) this.resize(page, size);
-		const image = await this.image(page);
+		let image = await this.image(page);
+		if (!page.window) {
+			if (image.isEmpty()) throw new Error('Native browser did not paint a frame');
+			page.nativeSize = image.getSize();
+			const scale = Math.min(1, 2560 / page.nativeSize.width, 1600 / page.nativeSize.height);
+			if (scale < 1)
+				image = image.resize({
+					width: Math.max(1, Math.floor(page.nativeSize.width * scale)),
+					height: Math.max(1, Math.floor(page.nativeSize.height * scale)),
+				});
+			page.viewport = image.getSize();
+			page.encodedJPEG = null;
+		}
 		page.encodedJPEG ??= 'data:image/jpeg;base64,' + image.toJPEG(75).toString('base64');
 		return { ...this.state(page), dataUrl: page.encodedJPEG };
 	}
@@ -348,14 +397,24 @@ export class HostBrowserPages {
 		const page = this.existing(target);
 		const pending = page.inputQueue.then(() => {
 			assertActive?.();
-			return this.deps.input(page.window.webContents, input);
+			// Native windows retain their real viewport. The relay frame may be
+			// downscaled, so map pointer and wheel locations back to native pixels.
+			const mapped =
+				page.nativeSize && input && 'x' in input
+					? {
+							...input,
+							x: Math.round((input.x * page.nativeSize.width) / page.viewport.width),
+							y: Math.round((input.y * page.nativeSize.height) / page.viewport.height),
+						}
+					: input;
+			return this.deps.input(page.guest, mapped, page.nativeSize ?? undefined);
 		});
 		page.inputQueue = pending.catch(() => {});
 		return pending;
 	}
 	async action(target: BrowserRelayTarget, action: BrowserPageAction): Promise<unknown> {
 		const page = this.existing(target),
-			guest = page.window.webContents;
+			guest = page.guest;
 		switch (action.kind) {
 			case 'navigate':
 				if (!isAllowedBrowserTabUrl(action.url))
@@ -433,6 +492,7 @@ export class HostBrowserPages {
 				guest.reload();
 				return;
 			case 'snapshot': {
+				if (!page.window) return (await this.image(page)).toDataURL();
 				guest.startPainting();
 				guest.invalidate();
 				page.image = null;
@@ -462,6 +522,7 @@ export class HostBrowserPages {
 				if (typeof viewId !== 'string' || !viewId)
 					throw new Error('Invalid native browser presentation');
 				const page = await this.ensure(target, size);
+				if (!page.window) throw new Error('A native webview already presents this browser tab');
 				page.owner = owner;
 				page.nativeViews.set(viewId, false);
 				return this.state(page);
@@ -497,12 +558,12 @@ export class HostBrowserPages {
 				const page = this.owned(event, target);
 				page.nativeViews.delete(viewId);
 				this.updatePainting(page);
-				if (!page.nativeViews.size && !page.remoteRetained) page.window.destroy();
+				if (!page.nativeViews.size && !page.remoteRetained) page.window?.destroy();
 			}
 		);
 		ipcMain.handle('browser:pageClose', (event: IpcMainInvokeEvent, target: BrowserRelayTarget) => {
 			const page = this.owned(event, target);
-			page.window.destroy();
+			page.window?.destroy();
 		});
 		ipcMain.handle(
 			'browser:pageAction',
@@ -529,7 +590,7 @@ export class HostBrowserPages {
 				try {
 					event.returnValue = {
 						ok: true,
-						id: this.owned(event, target).window.webContents.findInPage(text, options),
+						id: this.owned(event, target).guest.findInPage(text, options),
 					};
 				} catch (error) {
 					event.returnValue = {

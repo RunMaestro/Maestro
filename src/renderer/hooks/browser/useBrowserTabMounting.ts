@@ -9,9 +9,10 @@ import {
 /**
  * Decides which of the active agent's browser tabs stay mounted.
  *
- * Browser workloads live in main-owned pages. This hook retains presentations
- * and coworking handles according to the existing keep-alive policy; unmounting
- * a presentation never destroys a remotely retained host workload.
+ * Native webviews follow the desktop keep-alive policy, including when a remote
+ * client is attached. If the host unmounts one, a still-attached remote client
+ * reopens the tab from its URL as an offscreen page; in-page state is not retained.
+ * Offscreen pages first opened remotely live in main independently of this hook.
  *
  * Policy comes from the `browserTabKeepAlive` setting:
  *  - 'off'    - only the active browser tab is mounted (lowest memory; page

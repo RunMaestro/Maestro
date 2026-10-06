@@ -29,14 +29,35 @@ import {
 	DEFAULT_BROWSER_TAB_URL,
 	getBrowserTabTitle,
 	resolveBrowserTabNavigationTarget,
+	toWebviewSrc,
 } from '../../utils/browserTabPersistence';
 import { isWebDesktop } from '../../utils/runtimeContext';
 import { RemoteBrowserTabView } from './RemoteBrowserTabView';
 import { useSessionStore } from '../../stores/sessionStore';
-import {
-	createHostBrowserPageView,
-	type HostBrowserPageElement,
-} from '../../utils/browserPageView';
+import { createHostBrowserPageView } from '../../utils/browserPageView';
+
+type ElectronWebviewElement = HTMLElement & {
+	src: string;
+	setActive?: (active: boolean) => void;
+	canGoBack: () => boolean;
+	canGoForward: () => boolean;
+	goBack: () => void;
+	goForward: () => void;
+	reload: () => void;
+	stop: () => void;
+	getURL: () => string;
+	getTitle: () => string;
+	isLoading: () => boolean;
+	getWebContentsId?: () => number | undefined;
+	executeJavaScript: (code: string) => Promise<unknown>;
+	insertCSS?: (css: string) => Promise<string>;
+	findInPage: (
+		text: string,
+		options?: { forward?: boolean; findNext?: boolean; matchCase?: boolean }
+	) => number;
+	stopFindInPage: (action: 'clearSelection' | 'keepSelection' | 'activateSelection') => void;
+	capturePage?: () => Promise<{ toDataURL: () => string }>;
+};
 
 interface BrowserTabViewProps {
 	tab: BrowserTab;
@@ -104,11 +125,11 @@ function delay(ms: number): Promise<void> {
 /** Poll until the guest webview reports it has stopped loading, or the deadline
  *  passes. An unreachable isLoading() is treated as "not loading" so a read is
  *  best-effort rather than hanging. */
-async function waitNotLoading(page: HostBrowserPageElement, deadline: number): Promise<void> {
+async function waitNotLoading(webview: ElectronWebviewElement, deadline: number): Promise<void> {
 	while (Date.now() < deadline) {
 		let loading = false;
 		try {
-			loading = page.isLoading();
+			loading = webview.isLoading();
 		} catch {
 			loading = false;
 		}
@@ -124,7 +145,7 @@ async function waitNotLoading(page: HostBrowserPageElement, deadline: number): P
  *  lets content that renders right after stop-loading (SPAs) appear. Bounded so
  *  a page that never goes network-idle still resolves. */
 async function waitForReadyToRead(
-	page: HostBrowserPageElement,
+	webview: ElectronWebviewElement,
 	isDomReadyRef: React.MutableRefObject<boolean>,
 	maxMs = 10000
 ): Promise<void> {
@@ -133,20 +154,20 @@ async function waitForReadyToRead(
 	while (!isDomReadyRef.current && Date.now() < deadline) {
 		await delay(50);
 	}
-	await waitNotLoading(page, deadline);
+	await waitNotLoading(webview, deadline);
 	await delay(300);
-	await waitNotLoading(page, deadline);
+	await waitNotLoading(webview, deadline);
 }
 
 /** Extract page text/HTML from the guest webview. Returns "" if unreachable or
  *  the injected script throws. Electron's executeJavaScript queues until the
  *  page is ready, so this is safe to call mid-navigation. */
-async function extractFromPage(
-	page: HostBrowserPageElement,
+async function extractFromWebview(
+	webview: ElectronWebviewElement,
 	isDomReadyRef: React.MutableRefObject<boolean>,
 	format: 'text' | 'innerText' | 'html'
 ): Promise<string> {
-	await waitForReadyToRead(page, isDomReadyRef);
+	await waitForReadyToRead(webview, isDomReadyRef);
 	const expr =
 		format === 'html'
 			? '(document.documentElement && document.documentElement.outerHTML) || ""'
@@ -154,7 +175,7 @@ async function extractFromPage(
 				? '(document.documentElement && document.documentElement.innerText) || ""'
 				: '(document.body && document.body.innerText) || ""';
 	try {
-		const result = await page.executeJavaScript(expr);
+		const result = await webview.executeJavaScript(expr);
 		return typeof result === 'string' ? result : '';
 	} catch {
 		return '';
@@ -184,12 +205,29 @@ function blankPageBackgroundCss(color: string): string | null {
 }
 
 /** Paint an empty guest document in the theme background instead of white. */
-function applyBlankPageBackground(page: HostBrowserPageElement | null, color: string) {
-	if (!page?.insertCSS) return;
-	if (!isBlankGuestUrl(page.getURL?.())) return;
+function applyBlankGuestBackground(webview: ElectronWebviewElement | null, color: string) {
+	if (!webview?.insertCSS) return;
+	if (!isBlankGuestUrl(webview.getURL?.())) return;
 	const css = blankPageBackgroundCss(color);
 	if (!css) return;
-	void page.insertCSS(css).catch(() => {});
+	void webview.insertCSS(css).catch(() => {});
+}
+
+function syncWebviewLayout(webview: ElectronWebviewElement | null) {
+	if (!webview) return;
+
+	webview.style.display = 'flex';
+	webview.style.width = '100%';
+	webview.style.height = '100%';
+	webview.style.flex = '1 1 auto';
+
+	const shadowHost = (webview as HTMLElement & { shadowRoot?: ShadowRoot | null }).shadowRoot;
+	const guestElement = shadowHost?.querySelector<HTMLElement>('object, embed, iframe, webview');
+	if (guestElement) {
+		guestElement.style.width = '100%';
+		guestElement.style.height = '100%';
+		guestElement.style.display = 'flex';
+	}
 }
 
 const NativeBrowserTabView = React.memo(
@@ -197,37 +235,28 @@ const NativeBrowserTabView = React.memo(
 		{ tab, theme, onUpdateTab, isActive = true },
 		ref
 	) {
-		const pageRef = useRef<HostBrowserPageElement | null>(null);
+		const webviewRef = useRef<ElectronWebviewElement | null>(null);
 		const hostRef = useRef<HTMLDivElement | null>(null);
 		const isDomReadyRef = useRef(false);
 		const latestTabRef = useRef(tab);
-		// Initialize the canonical page from host tab state once. Navigation metadata
-		// must never reload the live page on React renders.
-		const initialSrcRef = useRef(tab.url);
+		// The <webview> src is set ONCE at mount and never re-driven from React
+		// afterward. Both navigation paths (address-bar `navigateToAddress` and the
+		// coworking `navigate()` handle) assign `webview.src` imperatively with a
+		// `!==` guard, while `did-navigate` writes the live URL into `tab.url` only
+		// for the address bar / persistence. Binding `<webview src={tab.url}>` to
+		// that mutated value made React re-assign the src attribute on every
+		// navigation event, and re-assigning a <webview>'s src reloads it, so a
+		// redirecting/canonicalizing site (e.g. google.com to www.google.com/)
+		// refreshed forever. Capturing the initial url in a ref breaks the loop.
+		// Must go through toWebviewSrc: Electron parses the webview's src attribute
+		// with `new URL()` while attaching, and an unparseable value throws
+		// mid-commit and crashes the renderer (MAESTRO-QX/QY/QZ).
+		const initialSrcRef = useRef(toWebviewSrc(tab.url));
 		const isAddressFocusedRef = useRef(false);
-		useLayoutEffect(() => {
-			const host = hostRef.current;
-			const session = useSessionStore
-				.getState()
-				.sessions.find((candidate) =>
-					candidate.browserTabs?.some((browser) => browser.id === tab.id)
-				);
-			if (!host || !session) return;
-			const page = createHostBrowserPageView(
-				{ sessionId: session.id, tabId: tab.id },
-				initialSrcRef.current,
-				theme.colors.bgMain
-			);
-			host.append(page);
-			pageRef.current = page;
-			return () => {
-				pageRef.current = null;
-				page.dispose();
-			};
-		}, [tab.id]);
-		useEffect(() => {
-			pageRef.current?.setActive(isActive);
-		}, [isActive, tab.id]);
+		// Track whether the user explicitly clicked into the webview host area.
+		// Used to distinguish intentional focus (user click) from programmatic
+		// focus-stealing (page autofocus, window.focus(), etc.).
+		const userClickedRef = useRef(false);
 		const [addressValue, setAddressValue] = useState(tab.url);
 		const [addressError, setAddressError] = useState<string | null>(null);
 		const [addressBarHidden, setAddressBarHidden] = useState(false);
@@ -249,6 +278,33 @@ const NativeBrowserTabView = React.memo(
 			};
 		}, []);
 
+		// Only tabs opened remotely without a live native guest use a streamed page.
+		// A local tab stays a real webview, including while a remote client captures it.
+		useLayoutEffect(() => {
+			if (!tab.remotePage) return;
+			const host = hostRef.current;
+			const session = useSessionStore
+				.getState()
+				.sessions.find((candidate) =>
+					candidate.browserTabs?.some((browser) => browser.id === tab.id)
+				);
+			if (!host || !session) return;
+			const page = createHostBrowserPageView(
+				{ sessionId: session.id, tabId: tab.id },
+				initialSrcRef.current,
+				theme.colors.bgMain
+			);
+			host.prepend(page);
+			webviewRef.current = page;
+			return () => {
+				webviewRef.current = null;
+				page.dispose();
+			};
+		}, [tab.id, tab.remotePage]);
+		useEffect(() => {
+			webviewRef.current?.setActive?.(isActive);
+		}, [isActive, tab.id, tab.remotePage]);
+
 		useEffect(() => {
 			latestTabRef.current = tab;
 		}, [tab]);
@@ -259,7 +315,7 @@ const NativeBrowserTabView = React.memo(
 		useEffect(() => {
 			blankBackgroundRef.current = theme.colors.bgMain;
 			if (isDomReadyRef.current) {
-				applyBlankPageBackground(pageRef.current, theme.colors.bgMain);
+				applyBlankGuestBackground(webviewRef.current, theme.colors.bgMain);
 			}
 		}, [theme.colors.bgMain]);
 
@@ -278,21 +334,21 @@ const NativeBrowserTabView = React.memo(
 			ref,
 			(): BrowserTabViewHandle => ({
 				async getContent(): Promise<string> {
-					const page = pageRef.current;
-					if (!page) return '';
-					return extractFromPage(page, isDomReadyRef, 'text');
+					const webview = webviewRef.current;
+					if (!webview) return '';
+					return extractFromWebview(webview, isDomReadyRef, 'text');
 				},
 				async extract(format: 'text' | 'innerText' | 'html'): Promise<string> {
-					const page = pageRef.current;
-					if (!page) return '';
-					return extractFromPage(page, isDomReadyRef, format);
+					const webview = webviewRef.current;
+					if (!webview) return '';
+					return extractFromWebview(webview, isDomReadyRef, format);
 				},
 				getMeta(): { url: string; title: string } {
 					const tab = latestTabRef.current;
-					const page = pageRef.current;
+					const webview = webviewRef.current;
 					return {
-						url: page?.getURL?.() || tab.url || '',
-						title: page?.getTitle?.() || tab.title || '',
+						url: webview?.getURL?.() || tab.url || '',
+						title: webview?.getTitle?.() || tab.title || '',
 					};
 				},
 				getTabId(): string {
@@ -305,59 +361,137 @@ const NativeBrowserTabView = React.memo(
 					setFindOpen(true);
 				},
 				goBack(): void {
-					const page = pageRef.current;
-					if (page?.canGoBack()) page.goBack();
+					const webview = webviewRef.current;
+					if (webview?.canGoBack()) webview.goBack();
 				},
 				goForward(): void {
-					const page = pageRef.current;
-					if (page?.canGoForward()) page.goForward();
+					const webview = webviewRef.current;
+					if (webview?.canGoForward()) webview.goForward();
 				},
 				focusWebview(): void {
-					pageRef.current?.focus();
+					// Mark the focus as user-initiated so the host's focus-stealing
+					// guard does not immediately blur the webview back out.
+					userClickedRef.current = true;
+					webviewRef.current?.focus();
 				},
 				navigate(rawUrl: string): string {
-					const page = pageRef.current;
-					if (!page) throw new Error('Browser webview is not available');
+					const webview = webviewRef.current;
+					if (!webview) throw new Error('Browser webview is not available');
 					const result = resolveBrowserTabNavigationTarget(rawUrl);
 					if (result.kind === 'error') throw new Error(result.message);
-					if (page.src !== result.url) {
+					if (webview.src !== result.url) {
 						// The old page stays loaded until the new src reaches dom-ready;
 						// mark not-ready so a follow-up read/waitFor extracts the NEW page.
 						isDomReadyRef.current = false;
-						page.src = result.url;
+						webview.src = result.url;
 					}
 					return result.url;
 				},
 				reload(): void {
-					pageRef.current?.reload();
+					webviewRef.current?.reload();
 				},
 				stop(): void {
-					pageRef.current?.stop();
+					webviewRef.current?.stop();
 				},
 				async executeJavaScript(code: string): Promise<unknown> {
-					const page = pageRef.current;
-					if (!page) throw new Error('Browser webview is not available');
-					return page.executeJavaScript(code);
+					const webview = webviewRef.current;
+					if (!webview) throw new Error('Browser webview is not available');
+					return webview.executeJavaScript(code);
 				},
 				async capturePage(): Promise<string> {
-					const page = pageRef.current;
-					if (!page || !page.capturePage) {
+					const webview = webviewRef.current;
+					if (!webview || !webview.capturePage) {
 						throw new Error('Screenshot is not available for this tab');
 					}
-					// Snapshot the same canonical page used by native, Lite, and coworking.
-					return (await page.capturePage()).toDataURL();
+					// Electron can only capture a PAINTING webview; a kept-alive-but-hidden
+					// tab (host visibility:hidden) throws UnknownVizError. If this tab is not
+					// on the visible compositor, momentarily force it to paint behind an
+					// opaque cover so the capture succeeds without the user ever seeing it -
+					// capturePage returns the guest's own frame, not the cover. We trigger
+					// only on visibility:hidden (the active-agent kept-alive mount); the
+					// off-screen background host paints already and needs no cover.
+					const host = hostRef.current;
+					const hidden = !!host && getComputedStyle(host).visibility === 'hidden';
+					const priorVisibility = host ? host.style.visibility : '';
+					let cover: HTMLDivElement | null = null;
+					if (host && hidden) {
+						cover = document.createElement('div');
+						cover.style.cssText = `position:absolute;inset:0;z-index:2147483647;background:${
+							theme.colors.bgMain || '#000'
+						};`;
+						host.appendChild(cover);
+						host.style.visibility = 'visible';
+						// Give the compositor a beat to produce a frame for the now-visible guest.
+						await delay(180);
+					}
+					try {
+						let dataUrl = (await webview.capturePage()).toDataURL();
+						if (dataUrl.length < 64 && hidden) {
+							await delay(160);
+							dataUrl = (await webview.capturePage()).toDataURL();
+						}
+						return dataUrl;
+					} finally {
+						if (host && hidden) {
+							host.style.visibility = priorVisibility;
+							cover?.remove();
+						}
+					}
 				},
 			}),
 			[]
 		);
 
-		// Release presentation focus when another surface becomes active.
+		// Prevent webview from stealing host-page focus when pages auto-focus an
+		// element (e.g. search box, login form, window.focus()).  If the webview
+		// gains focus without a preceding user click inside the host area, blur
+		// it immediately so keyboard shortcuts keep flowing through the window
+		// handler.  The user can always click the webview to intentionally focus it.
+		useEffect(() => {
+			const host = hostRef.current;
+			if (!host) return;
+			const onPointerDown = () => {
+				userClickedRef.current = true;
+			};
+			const onFocusIn = () => {
+				if (!userClickedRef.current) {
+					// Focus was not user-initiated - push it back out, but leave the
+					// find-bar input alone (Cmd+F intentionally focuses it
+					// programmatically, and that is exactly the case this guard
+					// would otherwise mistakenly reject).
+					const active = document.activeElement;
+					const isFindInput = active === findInputRef.current;
+					if (active && host.contains(active) && !isFindInput) {
+						(active as HTMLElement).blur();
+					}
+				}
+				// Reset after each focus event so the next auto-focus is caught.
+				userClickedRef.current = false;
+			};
+			host.addEventListener('pointerdown', onPointerDown, true);
+			host.addEventListener('focusin', onFocusIn);
+			return () => {
+				host.removeEventListener('pointerdown', onPointerDown, true);
+				host.removeEventListener('focusin', onFocusIn);
+			};
+		}, []);
+
+		// Release keyboard focus from the guest webview whenever this tab stops
+		// being the active view. visibility:hidden on the host overlay is not
+		// enough: an Electron <webview> keeps Chromium input focus on its guest
+		// WebContents, so without an explicit blur a switch to a file/AI/terminal
+		// tab leaves keystrokes routed into the (now hidden) page. Blurring lets
+		// the destination view's own focus call land. Reset the user-click guard
+		// so a fresh activation is treated as a clean slate.
 		useEffect(() => {
 			if (isActive) return;
 			const host = hostRef.current;
 			const active = document.activeElement;
-			if (active instanceof HTMLElement && host?.contains(active)) active.blur();
-			pageRef.current?.blur();
+			if (host && active && host.contains(active)) {
+				(active as HTMLElement).blur();
+			}
+			webviewRef.current?.blur();
+			userClickedRef.current = false;
 		}, [isActive]);
 
 		useEffect(() => {
@@ -379,9 +513,9 @@ const NativeBrowserTabView = React.memo(
 		}, [tab.id]);
 
 		useEffect(() => {
-			const page = pageRef.current;
-			if (!page) return;
-			isDomReadyRef.current = page.dataset.maestroBrowserReady === 'true';
+			const webview = webviewRef.current;
+			if (!webview) return;
+			isDomReadyRef.current = false;
 
 			const updateTabState = (updates: Partial<BrowserTab>) => {
 				onUpdateTabRef.current(latestTabRef.current.id, updates);
@@ -390,14 +524,14 @@ const NativeBrowserTabView = React.memo(
 			const readWebviewState = (): Partial<BrowserTab> | null => {
 				if (!isDomReadyRef.current) return null;
 
-				const nextUrl = page.getURL?.() || latestTabRef.current.url || DEFAULT_BROWSER_TAB_URL;
+				const nextUrl = webview.getURL?.() || latestTabRef.current.url || DEFAULT_BROWSER_TAB_URL;
 				return {
 					url: nextUrl,
-					title: getBrowserTabTitle(nextUrl, page.getTitle?.() || latestTabRef.current.title),
-					canGoBack: page.canGoBack(),
-					canGoForward: page.canGoForward(),
-					isLoading: page.isLoading(),
-					webContentsId: page.getWebContentsId?.(),
+					title: getBrowserTabTitle(nextUrl, webview.getTitle?.() || latestTabRef.current.title),
+					canGoBack: webview.canGoBack(),
+					canGoForward: webview.canGoForward(),
+					isLoading: webview.isLoading(),
+					webContentsId: webview.getWebContentsId?.(),
 				};
 			};
 
@@ -420,12 +554,13 @@ const NativeBrowserTabView = React.memo(
 				// every main-frame nav; if dom-ready does not fire again before
 				// stop-loading, readWebviewState would bail and leave the spinner stuck.
 				isDomReadyRef.current = true;
+				syncWebviewLayout(webview);
 				updateNavigationState();
 			};
 			const handleNavigate = (event: Event) => {
 				const nextUrl =
 					(event as Event & { url?: string }).url ||
-					page.getURL?.() ||
+					webview.getURL?.() ||
 					latestTabRef.current.url ||
 					DEFAULT_BROWSER_TAB_URL;
 				if (!isAddressFocusedRef.current) {
@@ -448,7 +583,7 @@ const NativeBrowserTabView = React.memo(
 				isDomReadyRef.current = false;
 				const nextUrl =
 					(event as Event & { url?: string }).url ||
-					page.getURL?.() ||
+					webview.getURL?.() ||
 					latestTabRef.current.url ||
 					DEFAULT_BROWSER_TAB_URL;
 				if (!isAddressFocusedRef.current) {
@@ -469,8 +604,8 @@ const NativeBrowserTabView = React.memo(
 			};
 			const handleTitleUpdated = (event: Event) => {
 				const nextTitle = getBrowserTabTitle(
-					page.getURL?.() || latestTabRef.current.url,
-					(event as Event & { title?: string }).title || page.getTitle?.()
+					webview.getURL?.() || latestTabRef.current.url,
+					(event as Event & { title?: string }).title || webview.getTitle?.()
 				);
 				updateTabState({ title: nextTitle });
 			};
@@ -484,7 +619,7 @@ const NativeBrowserTabView = React.memo(
 				const nextUrl =
 					(event as Event & { validatedURL?: string; url?: string }).validatedURL ||
 					(event as Event & { validatedURL?: string; url?: string }).url ||
-					page.getURL?.() ||
+					webview.getURL?.() ||
 					latestTabRef.current.url ||
 					DEFAULT_BROWSER_TAB_URL;
 				if (!isAddressFocusedRef.current) {
@@ -494,12 +629,12 @@ const NativeBrowserTabView = React.memo(
 				updateTabState({
 					url: nextUrl,
 					title: getBrowserTabTitle(nextUrl),
-					canGoBack: isDomReadyRef.current ? page.canGoBack() : latestTabRef.current.canGoBack,
+					canGoBack: isDomReadyRef.current ? webview.canGoBack() : latestTabRef.current.canGoBack,
 					canGoForward: isDomReadyRef.current
-						? page.canGoForward()
+						? webview.canGoForward()
 						: latestTabRef.current.canGoForward,
 					isLoading: false,
-					webContentsId: page.getWebContentsId?.(),
+					webContentsId: webview.getWebContentsId?.(),
 				});
 			};
 			// Scroll-triggered address bar auto-hide: inject a scroll listener into the
@@ -571,8 +706,8 @@ const NativeBrowserTabView = React.memo(
 			},true);
 		})();`;
 			const injectGuestListeners = () => {
-				page.executeJavaScript(scrollInjection).catch(() => {});
-				page.executeJavaScript(keyboardInjection).catch(() => {});
+				webview.executeJavaScript(scrollInjection).catch(() => {});
+				webview.executeJavaScript(keyboardInjection).catch(() => {});
 			};
 			const handleConsoleMessage = (event: Event) => {
 				const msg = (event as Event & { message?: string }).message;
@@ -585,10 +720,11 @@ const NativeBrowserTabView = React.memo(
 
 			const handleDomReady = () => {
 				isDomReadyRef.current = true;
+				syncWebviewLayout(webview);
 				updateNavigationState();
 				setAddressBarHidden(false);
 				injectGuestListeners();
-				applyBlankPageBackground(page, blankBackgroundRef.current);
+				applyBlankGuestBackground(webview, blankBackgroundRef.current);
 			};
 			// Re-inject guest listeners on navigation (page JS state resets)
 			const handleDidNavigateForInjection = () => injectGuestListeners();
@@ -610,39 +746,48 @@ const NativeBrowserTabView = React.memo(
 					total: result.matches ?? 0,
 				});
 			};
-			page.addEventListener('console-message', handleConsoleMessage);
-			page.addEventListener('did-start-loading', handleStartLoading);
-			page.addEventListener('did-stop-loading', handleStopLoading);
-			page.addEventListener('did-start-navigation', handleNavigationStart);
-			page.addEventListener('did-redirect-navigation', handleNavigationStart);
-			page.addEventListener('did-navigate', handleNavigate);
-			page.addEventListener('did-navigate', handleDidNavigateForInjection);
-			page.addEventListener('did-navigate-in-page', handleNavigate);
-			page.addEventListener('did-fail-load', handleDidFailLoad);
-			page.addEventListener('did-finish-load', updateNavigationState);
-			page.addEventListener('page-title-updated', handleTitleUpdated);
-			page.addEventListener('page-favicon-updated', handleFaviconUpdated);
-			page.addEventListener('dom-ready', handleDomReady);
-			page.addEventListener('found-in-page', handleFoundInPage);
+			webview.addEventListener('console-message', handleConsoleMessage);
+			webview.addEventListener('did-start-loading', handleStartLoading);
+			webview.addEventListener('did-stop-loading', handleStopLoading);
+			webview.addEventListener('did-start-navigation', handleNavigationStart);
+			webview.addEventListener('did-redirect-navigation', handleNavigationStart);
+			webview.addEventListener('did-navigate', handleNavigate);
+			webview.addEventListener('did-navigate', handleDidNavigateForInjection);
+			webview.addEventListener('did-navigate-in-page', handleNavigate);
+			webview.addEventListener('did-fail-load', handleDidFailLoad);
+			webview.addEventListener('did-finish-load', updateNavigationState);
+			webview.addEventListener('page-title-updated', handleTitleUpdated);
+			webview.addEventListener('page-favicon-updated', handleFaviconUpdated);
+			webview.addEventListener('dom-ready', handleDomReady);
+			webview.addEventListener('found-in-page', handleFoundInPage);
 
-			if (isDomReadyRef.current) updateNavigationState();
+			const resizeObserver =
+				typeof ResizeObserver === 'undefined'
+					? null
+					: new ResizeObserver(() => syncWebviewLayout(webview));
+			if (resizeObserver && hostRef.current) {
+				resizeObserver.observe(hostRef.current);
+			}
+
+			syncWebviewLayout(webview);
 
 			return () => {
 				isDomReadyRef.current = false;
-				page.removeEventListener('console-message', handleConsoleMessage);
-				page.removeEventListener('did-start-loading', handleStartLoading);
-				page.removeEventListener('did-stop-loading', handleStopLoading);
-				page.removeEventListener('did-start-navigation', handleNavigationStart);
-				page.removeEventListener('did-redirect-navigation', handleNavigationStart);
-				page.removeEventListener('did-navigate', handleNavigate);
-				page.removeEventListener('did-navigate', handleDidNavigateForInjection);
-				page.removeEventListener('did-navigate-in-page', handleNavigate);
-				page.removeEventListener('did-fail-load', handleDidFailLoad);
-				page.removeEventListener('did-finish-load', updateNavigationState);
-				page.removeEventListener('page-title-updated', handleTitleUpdated);
-				page.removeEventListener('page-favicon-updated', handleFaviconUpdated);
-				page.removeEventListener('dom-ready', handleDomReady);
-				page.removeEventListener('found-in-page', handleFoundInPage);
+				resizeObserver?.disconnect();
+				webview.removeEventListener('console-message', handleConsoleMessage);
+				webview.removeEventListener('did-start-loading', handleStartLoading);
+				webview.removeEventListener('did-stop-loading', handleStopLoading);
+				webview.removeEventListener('did-start-navigation', handleNavigationStart);
+				webview.removeEventListener('did-redirect-navigation', handleNavigationStart);
+				webview.removeEventListener('did-navigate', handleNavigate);
+				webview.removeEventListener('did-navigate', handleDidNavigateForInjection);
+				webview.removeEventListener('did-navigate-in-page', handleNavigate);
+				webview.removeEventListener('did-fail-load', handleDidFailLoad);
+				webview.removeEventListener('did-finish-load', updateNavigationState);
+				webview.removeEventListener('page-title-updated', handleTitleUpdated);
+				webview.removeEventListener('page-favicon-updated', handleFaviconUpdated);
+				webview.removeEventListener('dom-ready', handleDomReady);
+				webview.removeEventListener('found-in-page', handleFoundInPage);
 			};
 		}, [tab.id]);
 
@@ -674,11 +819,11 @@ const NativeBrowserTabView = React.memo(
 		// Drive findInPage / stopFindInPage off the find-bar state.
 		// Each query change starts a fresh search; an empty query clears highlights.
 		useEffect(() => {
-			const page = pageRef.current;
-			if (!page) return;
+			const webview = webviewRef.current;
+			if (!webview) return;
 			if (!findOpen || findQuery.length === 0) {
 				try {
-					page.stopFindInPage('clearSelection');
+					webview.stopFindInPage('clearSelection');
 				} catch {
 					// webview not ready or already stopped
 				}
@@ -686,7 +831,7 @@ const NativeBrowserTabView = React.memo(
 				return;
 			}
 			try {
-				findRequestIdRef.current = page.findInPage(findQuery);
+				findRequestIdRef.current = webview.findInPage(findQuery);
 			} catch {
 				// webview not ready
 			}
@@ -701,10 +846,10 @@ const NativeBrowserTabView = React.memo(
 
 		const handleFindNext = useCallback(
 			(forward: boolean) => {
-				const page = pageRef.current;
-				if (!page || findQuery.length === 0) return;
+				const webview = webviewRef.current;
+				if (!webview || findQuery.length === 0) return;
 				try {
-					findRequestIdRef.current = page.findInPage(findQuery, { forward, findNext: true });
+					findRequestIdRef.current = webview.findInPage(findQuery, { forward, findNext: true });
 				} catch {
 					// webview not ready
 				}
@@ -737,9 +882,9 @@ const NativeBrowserTabView = React.memo(
 					isLoading: nextUrl !== DEFAULT_BROWSER_TAB_URL,
 				});
 
-				const page = pageRef.current;
-				if (page && page.src !== nextUrl) {
-					page.src = nextUrl;
+				const webview = webviewRef.current;
+				if (webview && webview.src !== nextUrl) {
+					webview.src = nextUrl;
 				}
 			},
 			[onUpdateTab, tab.id, tab.title]
@@ -764,28 +909,28 @@ const NativeBrowserTabView = React.memo(
 		}, []);
 
 		const handleBack = useCallback(() => {
-			const page = pageRef.current;
-			if (page?.canGoBack()) {
-				page.goBack();
+			const webview = webviewRef.current;
+			if (webview?.canGoBack()) {
+				webview.goBack();
 			}
 		}, []);
 
 		const handleForward = useCallback(() => {
-			const page = pageRef.current;
-			if (page?.canGoForward()) {
-				page.goForward();
+			const webview = webviewRef.current;
+			if (webview?.canGoForward()) {
+				webview.goForward();
 			}
 		}, []);
 
 		const handleReload = useCallback(() => {
-			const page = pageRef.current;
-			if (!page) return;
+			const webview = webviewRef.current;
+			if (!webview) return;
 			if (tab.isLoading) {
-				page.stop();
+				webview.stop();
 				onUpdateTab(tab.id, { isLoading: false });
 				return;
 			}
-			page.reload();
+			webview.reload();
 		}, [onUpdateTab, tab.id, tab.isLoading]);
 
 		const handleOpenExternal = useCallback(() => {
@@ -820,7 +965,7 @@ const NativeBrowserTabView = React.memo(
 					// instead of an unhandled rejection.
 					const res = await window.maestro.browserSession?.clearSessionData(partition);
 					if (res?.ok) {
-						pageRef.current?.reload();
+						webviewRef.current?.reload();
 					} else {
 						setAddressError(
 							`Could not clear browsing data: ${res?.error ?? 'not supported by this build'}`
@@ -927,7 +1072,8 @@ const NativeBrowserTabView = React.memo(
 												setAddressValue(latestTabRef.current.url);
 												setAddressError(null);
 												event.currentTarget.blur();
-												pageRef.current?.focus();
+												userClickedRef.current = true;
+												webviewRef.current?.focus();
 											}
 										}}
 										className="w-full bg-transparent outline-none text-sm"
@@ -993,9 +1139,23 @@ const NativeBrowserTabView = React.memo(
 					ref={hostRef}
 					className="relative flex-1 min-h-0 overflow-hidden"
 					style={{ backgroundColor: theme.colors.bgMain }}
-					data-browser-tab-id={tab.id}
 					data-testid="browser-tab-host"
 				>
+					{!tab.remotePage && (
+						<webview
+							ref={(element) => {
+								webviewRef.current = element as unknown as ElectronWebviewElement | null;
+							}}
+							// The element paints this until the guest produces its first frame,
+							// so a loading or empty tab matches the theme instead of flashing
+							// Chromium's white.
+							style={{ backgroundColor: theme.colors.bgMain }}
+							className="w-full h-full border-0"
+							data-maestro-browser-tab={tab.id}
+							partition={tab.partition}
+							src={initialSrcRef.current}
+						/>
+					)}
 					{findOpen ? (
 						<div
 							className="absolute top-2 right-3 z-10 flex items-center gap-1 rounded-md border px-2 py-1 shadow-md"
@@ -1096,12 +1256,17 @@ const NativeBrowserTabView = React.memo(
 		);
 	})
 );
+
 export const BrowserTabView = React.memo(
 	forwardRef<BrowserTabViewHandle, BrowserTabViewProps>(function BrowserTabView(props, ref) {
 		return isWebDesktop() ? (
 			<RemoteBrowserTabView {...props} ref={ref} />
 		) : (
-			<NativeBrowserTabView {...props} ref={ref} />
+			<NativeBrowserTabView
+				key={`${props.tab.id}:${!!props.tab.remotePage}`}
+				{...props}
+				ref={ref}
+			/>
 		);
 	})
 );
