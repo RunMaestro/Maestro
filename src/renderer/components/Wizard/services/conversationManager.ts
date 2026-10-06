@@ -703,7 +703,8 @@ class ConversationManager {
 				return args;
 			}
 
-			case 'opencode': {
+			case 'opencode':
+			case 'kilo': {
 				// OpenCode requires 'run' batch mode with JSON output for wizard conversations
 				const args = [];
 
@@ -803,7 +804,7 @@ class ConversationManager {
 			const lines = output.split('\n');
 
 			// For OpenCode: concatenate all text parts
-			if (agentType === 'opencode') {
+			if (agentType === 'opencode' || agentType === 'kilo') {
 				const textParts: string[] = [];
 				for (const line of lines) {
 					if (!line.trim()) continue;

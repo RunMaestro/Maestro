@@ -89,6 +89,26 @@ export function AgentLogo({
 				</svg>
 			);
 
+		case 'kilo':
+			// Kilo - lightning bolt
+			return (
+				<svg
+					className={LOGO_SIZE_CLASS}
+					viewBox="0 0 48 48"
+					fill="none"
+					xmlns="http://www.w3.org/2000/svg"
+					style={{ opacity }}
+				>
+					<path
+						d="M27 4L11 26h10l-3 18 19-26H27l0-14z"
+						fill={color}
+						stroke={color}
+						strokeWidth="1.5"
+						strokeLinejoin="round"
+					/>
+				</svg>
+			);
+
 		case 'factory-droid':
 			return (
 				<svg

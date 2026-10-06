@@ -109,6 +109,21 @@ export const AGENT_ARTIFACTS: Partial<Record<ToolType, string[]>> = {
 		'GPT',
 		'Gemini',
 	],
+	kilo: [
+		// Slash commands
+		'/help',
+		'/clear',
+		'/cost',
+		'/model',
+		// Brand references
+		'KiloCode',
+		'Kilo',
+		'kilo',
+		// Model references
+		'Claude',
+		'GPT',
+		'Gemini',
+	],
 	codex: [
 		// Slash commands
 		'/help',
@@ -154,6 +169,11 @@ export const AGENT_TARGET_NOTES: Partial<Record<ToolType, string>> = {
   `,
 	opencode: `
     OpenCode is a multi-model AI coding assistant.
+    It supports multiple AI providers and models.
+    It can read and edit files, run commands, and search code.
+  `,
+	kilo: `
+    Kilo (KiloCode) is a multi-model AI coding assistant, forked from OpenCode.
     It supports multiple AI providers and models.
     It can read and edit files, run commands, and search code.
   `,
