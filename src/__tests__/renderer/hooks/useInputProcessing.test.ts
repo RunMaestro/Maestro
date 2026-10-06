@@ -1413,6 +1413,186 @@ describe('useInputProcessing', () => {
 			expect(live.executionQueue[0].text).toBe('first');
 		});
 
+		describe('repeat submit while the ownership probe is out', () => {
+			// Field report: one message was sent AND queued. Two Enters 12ms apart
+			// both read the same draft before a 135ms probe; the first sent it, the
+			// second re-read the store, saw busy, and queued a copy.
+			const pendingProbe = () => {
+				let resolveProbe!: (value: []) => void;
+				vi.mocked(window.maestro.process.getActiveProcesses).mockReturnValue(
+					new Promise((resolve) => {
+						resolveProbe = resolve;
+					})
+				);
+				return () => resolveProbe([]);
+			};
+			// A live composer: the draft the hook reads is whatever it last wrote.
+			const liveComposer = (initial: string) => {
+				const composer = { draft: initial };
+				return {
+					composer,
+					getInputValue: () => composer.draft,
+					setInputValue: vi.fn((value: string) => {
+						composer.draft = value;
+					}),
+				};
+			};
+			const userLogs = () =>
+				useSessionStore
+					.getState()
+					.sessions[0].aiTabs[0].logs.filter((log) => log.source === 'user')
+					.map((log) => log.text);
+
+			it('clears the composer before the probe, so a second Enter sends nothing', async () => {
+				const resolveProbe = pendingProbe();
+				const session = createMockSession({ state: 'idle' });
+				const { composer, getInputValue, setInputValue } = liveComposer('only once');
+				const deps = createDeps({
+					activeSession: session,
+					sessionsRef: { current: [session] },
+					getInputValue,
+					setInputValue,
+				});
+				const { result } = renderHook(() => useInputProcessing(deps));
+
+				let first!: Promise<void>;
+				let second!: Promise<void>;
+				act(() => {
+					first = result.current.processInput();
+				});
+				expect(composer.draft).toBe('');
+				act(() => {
+					second = result.current.processInput();
+				});
+				await act(async () => {
+					resolveProbe();
+					await Promise.all([first, second]);
+				});
+
+				expect(window.maestro.process.spawn).toHaveBeenCalledTimes(1);
+				const [live] = useSessionStore.getState().sessions;
+				expect(live.executionQueue).toHaveLength(0);
+				expect(userLogs()).toEqual(['only once']);
+			});
+
+			it('ignores a repeat that still holds the same staged images from a stale render', async () => {
+				const resolveProbe = pendingProbe();
+				const session = createMockSession({ state: 'idle' });
+				const images = ['data:image/png;base64,AAAA'];
+				const { getInputValue, setInputValue } = liveComposer('look at this');
+				const deps = createDeps({
+					activeSession: session,
+					sessionsRef: { current: [session] },
+					getInputValue,
+					setInputValue,
+					// Not re-rendered between the two presses, so both calls close
+					// over the same staged-images array.
+					stagedImages: images,
+				});
+				const { result } = renderHook(() => useInputProcessing(deps));
+
+				let first!: Promise<void>;
+				let second!: Promise<void>;
+				act(() => {
+					first = result.current.processInput();
+					second = result.current.processInput();
+				});
+				await act(async () => {
+					resolveProbe();
+					await Promise.all([first, second]);
+				});
+
+				expect(window.maestro.process.spawn).toHaveBeenCalledTimes(1);
+				const [live] = useSessionStore.getState().sessions;
+				expect(live.executionQueue).toHaveLength(0);
+				expect(userLogs()).toEqual(['look at this']);
+			});
+
+			it('lets a NEW message typed during the probe through, queued behind the first', async () => {
+				const resolveProbe = pendingProbe();
+				const session = createMockSession({ state: 'idle' });
+				const { composer, getInputValue, setInputValue } = liveComposer('A');
+				const deps = createDeps({
+					activeSession: session,
+					sessionsRef: { current: [session] },
+					getInputValue,
+					setInputValue,
+				});
+				const { result } = renderHook(() => useInputProcessing(deps));
+
+				let first!: Promise<void>;
+				let second!: Promise<void>;
+				act(() => {
+					first = result.current.processInput();
+				});
+				composer.draft = 'B';
+				act(() => {
+					second = result.current.processInput();
+				});
+				await act(async () => {
+					resolveProbe();
+					await Promise.all([first, second]);
+				});
+
+				expect(window.maestro.process.spawn).toHaveBeenCalledTimes(1);
+				expect(userLogs()).toEqual(['A']);
+				const [live] = useSessionStore.getState().sessions;
+				expect(live.executionQueue.map((queued) => queued.text)).toEqual(['B']);
+			});
+
+			it('does not wipe a draft the user started while the probe was out', async () => {
+				const resolveProbe = pendingProbe();
+				const session = createMockSession({ state: 'idle' });
+				const { composer, getInputValue, setInputValue } = liveComposer('sent');
+				const deps = createDeps({
+					activeSession: session,
+					sessionsRef: { current: [session] },
+					getInputValue,
+					setInputValue,
+				});
+				const { result } = renderHook(() => useInputProcessing(deps));
+
+				let send!: Promise<void>;
+				act(() => {
+					send = result.current.processInput();
+				});
+				composer.draft = 'still typing';
+				await act(async () => {
+					resolveProbe();
+					await send;
+				});
+
+				expect(userLogs()).toEqual(['sent']);
+				expect(composer.draft).toBe('still typing');
+				expect(setInputValue).toHaveBeenCalledTimes(1);
+			});
+
+			it('releases the tab once the probe settles, so the next press sends normally', async () => {
+				const session = createMockSession({ state: 'idle' });
+				const { composer, getInputValue, setInputValue } = liveComposer('one');
+				const deps = createDeps({
+					activeSession: session,
+					sessionsRef: { current: [session] },
+					getInputValue,
+					setInputValue,
+				});
+				const { result } = renderHook(() => useInputProcessing(deps));
+
+				await act(async () => {
+					await result.current.processInput();
+				});
+				composer.draft = 'one';
+				await act(async () => {
+					await result.current.processInput();
+				});
+
+				// Same text, but sequential rather than overlapping: a deliberate
+				// resend, queued behind the running turn rather than ignored.
+				const [live] = useSessionStore.getState().sessions;
+				expect(live.executionQueue.map((queued) => queued.text)).toEqual(['one']);
+			});
+		});
+
 		it('keeps the submitted tab pinned when the active tab changes during reconciliation', async () => {
 			const submittedTab = createMockTab({
 				id: 'submitted-tab',

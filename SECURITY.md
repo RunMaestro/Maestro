@@ -21,6 +21,8 @@ If you discover a vulnerability that could cause significant harm if disclosed p
 
 This allows us to develop and release a patch before public disclosure.
 
+Maintainers handle every report with the same procedure, from triage to advisory, CVE, patched releases, and credit: [docs/agent-guides/SECURITY-RUNBOOK.md](docs/agent-guides/SECURITY-RUNBOOK.md).
+
 ## Scope
 
 ### In Scope
@@ -62,7 +64,7 @@ We appreciate security researchers who help improve Maestro. Contributors who re
 
 **Security Contributors:**
 
-- [CopperKoi](https://github.com/CopperKoi) - web control server exposure and cross-origin access (October 2026)
+- [CopperKoi](https://github.com/CopperKoi) - web control server exposure and cross-origin access (October 2026), with thanks to their mentor [notwo1f](https://github.com/notwo1f), who guided the audit
 - [YoAm](https://github.com/YoAm) - web control server exposure and token file permissions (August 2026)
 
 ## Bug Bounty

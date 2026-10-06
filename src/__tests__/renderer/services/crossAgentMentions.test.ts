@@ -152,6 +152,42 @@ describe('dispatchCrossAgentMentions', () => {
 	});
 });
 
+describe('dispatchCrossAgentMentions consult hold', () => {
+	const queueOf = () =>
+		useSessionStore.getState().sessions.find((s) => s.id === SOURCE_ID)?.executionQueue ?? [];
+
+	it('holds the source turn open when the source agent answers too', () => {
+		// A mid-message mention: both agents answer, and this one must not finish
+		// before the consulted agent replies.
+		const source = sourceSession({ executionQueue: [] });
+		seed([source, targetSession('session-backend', 'Backend')]);
+		const plan = planCrossAgentMentions('work with @Backend on this', SOURCE_ID)!;
+
+		const targets = dispatchCrossAgentMentions(
+			plan,
+			'work with @Backend on this',
+			source,
+			SOURCE_TAB
+		);
+
+		expect(targets).toEqual([{ targetSessionId: 'session-backend', targetAgentName: 'Backend' }]);
+		const [hold] = queueOf();
+		expect(hold.tabId).toBe(SOURCE_TAB);
+		expect(hold.awaitingConsult?.pending).toEqual(targets);
+	});
+
+	it('holds nothing for a leading mention, where the source agent does not answer', () => {
+		const source = sourceSession({ executionQueue: [] });
+		seed([source, targetSession('session-backend', 'Backend')]);
+		const plan = planCrossAgentMentions('@Backend look at this', SOURCE_ID)!;
+
+		expect(dispatchCrossAgentMentions(plan, '@Backend look at this', source, SOURCE_TAB)).toEqual(
+			[]
+		);
+		expect(queueOf()).toEqual([]);
+	});
+});
+
 describe('dispatchCrossAgentMentionsForMessage', () => {
 	it('re-resolves at dispatch time, so a deleted agent drops out', () => {
 		// The queue drain holds only the raw text. An agent the user deleted while

@@ -142,7 +142,7 @@ const CATEGORY_HELP: Record<string, string> = {
 	'group-chat':
 		'Prompts for Group Chat sessions - moderator system/synthesis prompts, participant behavior, and participant request formatting.',
 	context:
-		'Prompts for context management - grooming (trimming context), transferring context between sessions, and summarization.',
+		'Prompts for context management - grooming (trimming context), transferring context between sessions, summarization, and handing a cross-agent consult reply back to the agent that asked.',
 	commands:
 		'Prompts for built-in commands - image-only message handling and git commit message generation.',
 	includes:

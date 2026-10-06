@@ -546,6 +546,7 @@ function QueuedItemRow({
 	const isCommand = item.type === 'command';
 	const isPaused = !!item.paused;
 	const isWaitingForConnection = !!item.waitingForConnection;
+	const isAwaitingConsult = !!item.awaitingConsult;
 	const isHeldForRetry = useIsHeldRetryItem(item.id);
 	const displayText = isCommand ? (item.command ?? '') : (item.text ?? '');
 	const hiddenChars = Math.max(0, displayText.length - QUEUE_PREVIEW_CHARS);
@@ -580,7 +581,7 @@ function QueuedItemRow({
 					// recede the rest while a drag is in progress.
 					opacity: isDragging
 						? 0.95
-						: isPaused || isWaitingForConnection
+						: isPaused || isWaitingForConnection || isAwaitingConsult
 							? 0.35
 							: isDimmed
 								? 0.3
@@ -591,7 +592,7 @@ function QueuedItemRow({
 				{/* Drag handle - only show when draggable */}
 				{canDrag && <QueueDragHandle theme={theme} visible={showDragReady || showGrabbed} />}
 
-				{(isPaused || isWaitingForConnection || isHeldForRetry) && (
+				{(isPaused || isWaitingForConnection || isAwaitingConsult || isHeldForRetry) && (
 					<div className={`flex items-center gap-1.5 ${canDrag ? 'pl-4 mb-1.5' : 'mb-1.5'}`}>
 						{isHeldForRetry && <HeldForRetryBadge theme={theme} />}
 						{isPaused && <MiniBadge label="HELD" theme={theme} color={theme.colors.warning} />}
@@ -601,6 +602,14 @@ function QueuedItemRow({
 								theme={theme}
 								color={theme.colors.warning}
 								title="This message will run after Maestro reconnects"
+							/>
+						)}
+						{isAwaitingConsult && (
+							<MiniBadge
+								label="WAITING FOR CONSULT"
+								theme={theme}
+								color={theme.colors.warning}
+								title="This turn finishes once the agent it consulted replies"
 							/>
 						)}
 					</div>

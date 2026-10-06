@@ -441,6 +441,24 @@ export interface QueuedItemEditPatch {
 	turnSettings: QueuedTurnSettings;
 }
 
+/** One agent a held turn is waiting to hear from. */
+export interface ConsultHoldTarget {
+	targetSessionId: string;
+	targetAgentName: string;
+}
+
+/** A settled consult: what the target said, or why it could not answer. */
+export interface ConsultHoldReply extends ConsultHoldTarget {
+	text: string;
+	error?: string;
+}
+
+/** The consults a {@link QueuedItem} is waiting on (see `awaitingConsult`). */
+export interface ConsultHold {
+	pending: ConsultHoldTarget[];
+	replies: ConsultHoldReply[];
+}
+
 export interface QueuedItem {
 	id: string; // Unique item ID
 	timestamp: number; // When it was queued (for ordering)
@@ -480,6 +498,18 @@ export interface QueuedItem {
 	// queue slot, because its POSITION is what the user is expressing ("finish
 	// that, then ask them"). Always paired with `crossAgentMention`.
 	crossAgentOnly?: boolean;
+	// Maestro-generated continuation of a turn that @mentioned other agents
+	// mid-message. The local agent answers in parallel with the consult but must
+	// not FINISH before the reply arrives, so this item sits at the head of the
+	// queue as a barrier for its tab: while set, it is not runnable and no later
+	// item for the same tab may overtake it. Cleared (and `agentContext` filled
+	// with the replies) once every consult settles. See
+	// services/crossAgentConsultHold.ts.
+	awaitingConsult?: ConsultHold;
+	// Agent-only text prepended to the prompt at spawn and never rendered in the
+	// transcript. Carries a consult's replies verbatim without repeating them in
+	// the user bubble, where they are already shown as the consult's own reply.
+	agentContext?: string;
 	// Model/effort captured when the user queued this item. Both the spawn and
 	// the transcript pills read it, so a queued turn runs under - and is labeled
 	// with - the configuration it was queued with, not whatever is selected by
