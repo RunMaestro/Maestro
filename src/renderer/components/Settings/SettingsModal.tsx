@@ -294,8 +294,11 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 	useEffect(() => {
 		if (!isOpen || !initialSettingId) return;
 		pendingScrollIdRef.current = initialSettingId;
-		if (settingsPanels.some((p) => pluginSettingsId(p.id) === initialSettingId))
-			setActiveTab(initialSettingId as SettingsTabId);
+		if (initialSettingId.startsWith('plugin-settings:')) {
+			const available = settingsPanels.some((p) => pluginSettingsId(p.id) === initialSettingId);
+			setActiveTab(available ? (initialSettingId as SettingsTabId) : 'encore');
+			if (!available) pendingScrollIdRef.current = null;
+		}
 		setDeepLinkJump((n) => n + 1);
 	}, [isOpen, initialSettingId, settingsPanels]);
 

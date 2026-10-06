@@ -3018,6 +3018,24 @@ describe('plugin settings destinations', () => {
 		size: 'default',
 		hostSettings: ['media'],
 	};
+	it('falls back to plugin management for an unavailable or unknown plugin settings link', async () => {
+		__resetLastOpenSettingsTabForTests();
+		settingsPanels = [];
+		render(
+			<SettingsModal
+				isOpen
+				onClose={vi.fn()}
+				theme={mockTheme}
+				themes={{ dracula: mockTheme }}
+				initialSettingId="plugin-settings:missing/config"
+			/>
+		);
+		await waitFor(() =>
+			expect(screen.getByRole('button', { name: 'Plugins', exact: true })).toHaveClass('font-bold')
+		);
+		expect(screen.queryByTestId('plugin-settings-frame')).not.toBeInTheDocument();
+	});
+
 	it('navigates/searches/deep-links by stable panel identity and unmounts on removal', async () => {
 		__resetLastOpenSettingsTabForTests();
 		settingsPanels = [panel];
