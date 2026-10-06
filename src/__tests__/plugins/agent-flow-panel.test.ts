@@ -273,3 +273,80 @@ describe('agent-flow panel', () => {
 		expect(posted.map((m) => m.commandId)).toContain('clear');
 	});
 });
+
+describe('agent-flow panel "current agent only" filter', () => {
+	function toggleFilter(): void {
+		document.getElementById('focusOnly')?.dispatchEvent(new MouseEvent('click'));
+	}
+
+	function filterHint(): HTMLElement | null {
+		return document.getElementById('filterHint');
+	}
+
+	function pushThree(focusedSessionId: string): void {
+		pushSnapshot({
+			v: 1,
+			at: 0,
+			lanes: [
+				lane(),
+				lane({ sessionId: 's2', title: 'Beta' }),
+				lane({ sessionId: 's3', title: 'Gamma' }),
+			],
+			focusedSessionId,
+		});
+	}
+
+	it('is off by default so the fleet view renders untouched', () => {
+		pushThree('s2');
+
+		expect(agentNodes()).toHaveLength(3);
+		expect(document.getElementById('focusOnly')?.getAttribute('aria-pressed')).toBe('false');
+		expect(filterHint()?.classList.contains('hidden')).toBe(true);
+		// The all-agents view keeps its focused-agent highlight.
+		expect(agentNodes()[1].getAttribute('class')).toBe('agent focused');
+	});
+
+	it('renders only the focused agent when toggled on, and restores the fleet when off', () => {
+		pushThree('s2');
+
+		toggleFilter();
+
+		const filtered = agentNodes();
+		expect(filtered).toHaveLength(1);
+		expect(filtered[0].getAttribute('data-session')).toBe('s2');
+		expect(document.getElementById('focusOnly')?.getAttribute('aria-pressed')).toBe('true');
+		expect(filterHint()?.classList.contains('hidden')).toBe(true);
+
+		toggleFilter();
+
+		expect(agentNodes().map((n) => n.getAttribute('data-session'))).toEqual(['s1', 's2', 's3']);
+	});
+
+	it('keeps the filter across snapshots and follows the focus as it moves', () => {
+		pushThree('s2');
+		toggleFilter();
+
+		pushThree('s3');
+
+		expect(agentNodes().map((n) => n.getAttribute('data-session'))).toEqual(['s3']);
+	});
+
+	it('falls back to showing every agent with a hint when nothing is focused', () => {
+		pushThree('');
+
+		toggleFilter();
+
+		expect(agentNodes()).toHaveLength(3);
+		expect(filterHint()?.classList.contains('hidden')).toBe(false);
+		expect(filterHint()?.textContent).toContain('showing all');
+	});
+
+	it('falls back with the hint when the focused agent has no lane yet', () => {
+		pushThree('s9');
+
+		toggleFilter();
+
+		expect(agentNodes()).toHaveLength(3);
+		expect(filterHint()?.classList.contains('hidden')).toBe(false);
+	});
+});
