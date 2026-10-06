@@ -22,6 +22,7 @@ import {
 	type FanInSourceCompletion,
 } from './cue-output-filter';
 import { sliceTailByChars } from './cue-text-utils';
+import type { CueFanInPersistence, CueFanInStateRecord } from './cue-fan-in-persistence';
 
 // Re-exports preserve call-site compatibility for existing importers.
 export { SOURCE_OUTPUT_MAX_CHARS, type FanInSourceCompletion };
@@ -39,6 +40,30 @@ export interface CueFanInDeps {
 		chainRootId?: string,
 		parentEventId?: string
 	) => number;
+	/**
+	 * Write-through durability (standalone engine only, see
+	 * cue-fan-in-persistence.ts). Absent: the tracker is in memory only, as on
+	 * the desktop.
+	 */
+	persistence?: CueFanInPersistence;
+}
+
+/** What `restore` needs to know about a fan-in subscription as configured NOW. */
+export type FanInRestoreLookup = (
+	ownerSessionId: string,
+	subscriptionName: string
+) => { sub: CueSubscription; settings: CueSettings; sources: string[] } | null;
+
+/** Outcome of `CueFanInTracker.restore`. */
+export interface FanInRestoreResult {
+	/** Fan-ins re-armed with their remaining time. */
+	resumed: number;
+	/** Fan-ins whose timeout ran out while the engine was down; `timeout_on_fail` applied. */
+	expired: number;
+	/** Fan-ins that had every source already and fired. */
+	completed: number;
+	/** Fan-ins dropped because their subscription or a source no longer exists. */
+	invalid: number;
 }
 
 /**
@@ -80,6 +105,24 @@ export interface CueFanInTracker {
 	): void;
 	clearForSession(sessionId: string): void;
 	reset(): void;
+	/**
+	 * Forget every tracker in memory (timers included) WITHOUT deleting
+	 * persisted progress. The drain's teardown: what it keeps on disk is
+	 * restored at the next start.
+	 */
+	forgetInMemory(): void;
+	/**
+	 * Rebuild partial fan-ins from persisted progress at engine start. The
+	 * timeout counts from when the first source arrived, wall clock, downtime
+	 * included: one that already ran out gets `timeout_on_fail` exactly as a
+	 * live timeout would. Rows whose subscription or sources no longer exist
+	 * are dropped and logged.
+	 */
+	restore(
+		rows: CueFanInStateRecord[],
+		lookup: FanInRestoreLookup,
+		now?: number
+	): FanInRestoreResult;
 	/** Returns all active tracker keys (for cleanup inspection). */
 	getActiveTrackerKeys(): string[];
 	/** Returns the ms timestamp when the first completion arrived for a tracker, or undefined if not found. */
@@ -99,6 +142,60 @@ export function createCueFanInTracker(deps: CueFanInDeps): CueFanInTracker {
 	const fanInTimers = new Map<string, ReturnType<typeof setTimeout>>();
 	/** Tracks when the first completion arrived for each tracker key (for cleanup staleness checks). */
 	const fanInCreatedAt = new Map<string, number>();
+	/** Owner and subscription per tracker key, so persisted rows can be addressed without re-splitting the key. */
+	const fanInOwners = new Map<string, { ownerSessionId: string; subscriptionName: string }>();
+
+	/** Drop a tracker from memory and, when durable, its persisted rows. */
+	function forgetTracker(key: string, opts: { keepPersisted?: boolean } = {}): void {
+		const owner = fanInOwners.get(key);
+		fanInTrackers.delete(key);
+		fanInCreatedAt.delete(key);
+		fanInOwners.delete(key);
+		const timer = fanInTimers.get(key);
+		if (timer) {
+			clearTimeout(timer);
+			fanInTimers.delete(key);
+		}
+		if (owner && !opts.keepPersisted) {
+			deps.persistence?.remove(owner.ownerSessionId, owner.subscriptionName);
+		}
+	}
+
+	function timeoutMsFor(sub: CueSubscription, settings: CueSettings): number {
+		return (sub.fan_in_timeout_minutes ?? settings.timeout_minutes ?? 30) * 60 * 1000;
+	}
+
+	/** Every source has completed: drop the tracker (rows first: at most once) and dispatch. */
+	function fireComplete(key: string, ownerSessionId: string, sub: CueSubscription): void {
+		const tracker = fanInTrackers.get(key);
+		if (!tracker) return;
+		forgetTracker(key);
+
+		const completions = [...tracker.values()];
+		const { outputCompletions, perSourceOutputs, forwardedOutputs } = buildFilteredOutputs(
+			completions,
+			sub
+		);
+
+		const event = createCueEvent('agent.completed', sub.name, {
+			completedSessions: completions.map((c) => c.sessionId),
+			sourceSession: completions.map((c) => c.sessionName).join(', '),
+			sourceOutput: outputCompletions.map((c) => c.output).join('\n---\n'),
+			outputTruncated: outputCompletions.some((c) => c.truncated),
+			perSourceOutputs,
+			...(Object.keys(forwardedOutputs).length > 0 ? { forwardedOutputs } : {}),
+		});
+		const maxChainDepth =
+			completions.length > 0 ? Math.max(...completions.map((c) => c.chainDepth)) : 0;
+		deps.onLog('cue', `[CUE] "${sub.name}" triggered (agent.completed, fan-in complete)`);
+		deps.dispatchSubscription(
+			ownerSessionId,
+			sub,
+			event,
+			completions.map((c) => c.sessionName).join(', '),
+			maxChainDepth
+		);
+	}
 
 	/**
 	 * Resolve a user-authored `sources` list (names or IDs, possibly mixed) to a
@@ -155,8 +252,7 @@ export function createCueFanInTracker(deps: CueFanInDeps): CueFanInTracker {
 		if ((sub.fan_in_timeout_on_fail ?? settings.timeout_on_fail) === 'continue') {
 			// Fire with partial data
 			const completions = [...tracker.values()];
-			fanInTrackers.delete(key);
-			fanInCreatedAt.delete(key);
+			forgetTracker(key);
 
 			const { outputCompletions, perSourceOutputs, forwardedOutputs } = buildFilteredOutputs(
 				completions,
@@ -188,8 +284,7 @@ export function createCueFanInTracker(deps: CueFanInDeps): CueFanInTracker {
 			);
 		} else {
 			// 'break' mode - log failure and clear
-			fanInTrackers.delete(key);
-			fanInCreatedAt.delete(key);
+			forgetTracker(key);
 			deps.onLog(
 				'cue',
 				`[CUE] Fan-in "${sub.name}" timed out (break mode) - ${completedNames.length}/${totalSources} completed, waiting for: ${timedOutSources.join(', ')}`
@@ -213,25 +308,42 @@ export function createCueFanInTracker(deps: CueFanInDeps): CueFanInTracker {
 				fanInTrackers.set(key, new Map());
 			}
 			const tracker = fanInTrackers.get(key)!;
+			fanInOwners.set(key, { ownerSessionId, subscriptionName: sub.name });
 			const rawOutput = completionData?.stdout ?? '';
-			tracker.set(completedSessionId, {
+			const completion: FanInSourceCompletion = {
 				sessionId: completedSessionId,
 				sessionName: completedSessionName,
 				output: sliceTailByChars(rawOutput, SOURCE_OUTPUT_MAX_CHARS),
 				truncated: rawOutput.length > SOURCE_OUTPUT_MAX_CHARS,
 				chainDepth: completionData?.chainDepth ?? 0,
-			});
+			};
+			tracker.set(completedSessionId, completion);
 
 			// Start timeout timer on first source completion
 			if (tracker.size === 1 && !fanInTimers.has(key)) {
 				fanInCreatedAt.set(key, Date.now());
-				const timeoutMs =
-					(sub.fan_in_timeout_minutes ?? settings.timeout_minutes ?? 30) * 60 * 1000;
-				const timer = setTimeout(() => {
-					handleFanInTimeout(key, ownerSessionId, settings, sub, sources);
-				}, timeoutMs);
+				const timer = setTimeout(
+					() => {
+						handleFanInTimeout(key, ownerSessionId, settings, sub, sources);
+					},
+					timeoutMsFor(sub, settings)
+				);
 				fanInTimers.set(key, timer);
 			}
+
+			// Write-through, so a crash or a drain keeps this source's arrival.
+			const now = Date.now();
+			deps.persistence?.saveSource({
+				ownerSessionId,
+				subscriptionName: sub.name,
+				sourceSessionId: completion.sessionId,
+				sourceSessionName: completion.sessionName,
+				output: completion.output,
+				truncated: completion.truncated,
+				chainDepth: completion.chainDepth,
+				startedAt: fanInCreatedAt.get(key) ?? now,
+				completedAt: now,
+			});
 
 			// Use the deduped resolved-ID set as the completion target so fan-in
 			// does not hang when the same session is referenced by both name and
@@ -250,67 +362,102 @@ export function createCueFanInTracker(deps: CueFanInDeps): CueFanInTracker {
 				return;
 			}
 
-			// All sources completed - clear timer and fire
-			const timer = fanInTimers.get(key);
-			if (timer) {
-				clearTimeout(timer);
-				fanInTimers.delete(key);
-			}
-			fanInTrackers.delete(key);
-			// Drop the timestamp alongside the tracker - leaving it behind would
-			// leak a key into fanInCreatedAt forever (the success path used to
-			// only delete fanInTrackers, while every other path - timeout/break
-			// modes, clearForSession, expireTracker, reset - already cleaned up
-			// fanInCreatedAt correctly).
-			fanInCreatedAt.delete(key);
-
-			const completions = [...tracker.values()];
-			const { outputCompletions, perSourceOutputs, forwardedOutputs } = buildFilteredOutputs(
-				completions,
-				sub
-			);
-
-			const event = createCueEvent('agent.completed', sub.name, {
-				completedSessions: completions.map((c) => c.sessionId),
-				sourceSession: completions.map((c) => c.sessionName).join(', '),
-				sourceOutput: outputCompletions.map((c) => c.output).join('\n---\n'),
-				outputTruncated: outputCompletions.some((c) => c.truncated),
-				perSourceOutputs,
-				...(Object.keys(forwardedOutputs).length > 0 ? { forwardedOutputs } : {}),
-			});
-			const maxChainDepth =
-				completions.length > 0 ? Math.max(...completions.map((c) => c.chainDepth)) : 0;
-			deps.onLog('cue', `[CUE] "${sub.name}" triggered (agent.completed, fan-in complete)`);
-			deps.dispatchSubscription(
-				ownerSessionId,
-				sub,
-				event,
-				completions.map((c) => c.sessionName).join(', '),
-				maxChainDepth
-			);
+			// All sources completed - fire.
+			fireComplete(key, ownerSessionId, sub);
 		},
 
 		clearForSession(sessionId: string): void {
 			for (const key of [...fanInTrackers.keys()]) {
-				if (key.startsWith(`${sessionId}:`)) {
-					fanInTrackers.delete(key);
-					fanInCreatedAt.delete(key);
-					const timer = fanInTimers.get(key);
-					if (timer) {
-						clearTimeout(timer);
-						fanInTimers.delete(key);
-					}
-				}
+				if (key.startsWith(`${sessionId}:`)) forgetTracker(key);
 			}
 		},
 
 		reset(): void {
+			// Per key rather than a table wipe: cue.db is shared by every engine
+			// on the data dir, and only this tracker's rows are its to delete.
+			for (const key of [...fanInTrackers.keys()]) forgetTracker(key);
 			for (const timer of fanInTimers.values()) {
 				clearTimeout(timer);
 			}
-			fanInTrackers.clear();
 			fanInTimers.clear();
 			fanInCreatedAt.clear();
+		},
+
+		forgetInMemory(): void {
+			for (const key of [...fanInTrackers.keys()]) forgetTracker(key, { keepPersisted: true });
+			for (const timer of fanInTimers.values()) {
+				clearTimeout(timer);
+			}
+			fanInTimers.clear();
+		},
+
+		restore(rows, lookup, now = Date.now()): FanInRestoreResult {
+			const result: FanInRestoreResult = { resumed: 0, expired: 0, completed: 0, invalid: 0 };
+			const groups = new Map<string, CueFanInStateRecord[]>();
+			for (const row of rows) {
+				const key = `${row.ownerSessionId}:${row.subscriptionName}`;
+				const group = groups.get(key) ?? [];
+				group.push(row);
+				groups.set(key, group);
+			}
+
+			for (const [key, group] of groups) {
+				const { ownerSessionId, subscriptionName } = group[0];
+				const config = lookup(ownerSessionId, subscriptionName);
+				const resolved = config ? resolveSourcesToIds(config.sources) : new Set<string>();
+				const strangers = group.filter((row) => !resolved.has(row.sourceSessionId));
+				if (!config || resolved.size < 2 || strangers.length > 0) {
+					deps.persistence?.remove(ownerSessionId, subscriptionName);
+					result.invalid++;
+					deps.onLog(
+						'warn',
+						!config || resolved.size < 2
+							? `[CUE] Dropped saved fan-in progress for "${subscriptionName}": the subscription is no longer a fan-in in cue.yaml`
+							: `[CUE] Dropped saved fan-in progress for "${subscriptionName}": source(s) ${strangers.map((r) => r.sourceSessionName).join(', ')} are no longer among its sources`
+					);
+					continue;
+				}
+
+				const { sub, settings, sources } = config;
+				const tracker = new Map<string, FanInSourceCompletion>();
+				for (const row of group) {
+					tracker.set(row.sourceSessionId, {
+						sessionId: row.sourceSessionId,
+						sessionName: row.sourceSessionName,
+						output: row.output,
+						truncated: row.truncated,
+						chainDepth: row.chainDepth,
+					});
+				}
+				const startedAt = Math.min(...group.map((row) => row.startedAt));
+				fanInTrackers.set(key, tracker);
+				fanInCreatedAt.set(key, startedAt);
+				fanInOwners.set(key, { ownerSessionId, subscriptionName });
+
+				if ([...resolved].every((id) => tracker.has(id))) {
+					result.completed++;
+					fireComplete(key, ownerSessionId, sub);
+					continue;
+				}
+
+				const remainingMs = timeoutMsFor(sub, settings) - (now - startedAt);
+				if (remainingMs <= 0) {
+					result.expired++;
+					deps.onLog(
+						'cue',
+						`[CUE] Saved fan-in "${subscriptionName}" ran out of time while the engine was down (${tracker.size}/${resolved.size} sources) - applying timeout_on_fail`
+					);
+					handleFanInTimeout(key, ownerSessionId, settings, sub, sources);
+					continue;
+				}
+
+				const timer = setTimeout(() => {
+					handleFanInTimeout(key, ownerSessionId, settings, sub, sources);
+				}, remainingMs);
+				fanInTimers.set(key, timer);
+				result.resumed++;
+			}
+			return result;
 		},
 
 		getActiveTrackerKeys(): string[] {
@@ -322,13 +469,7 @@ export function createCueFanInTracker(deps: CueFanInDeps): CueFanInTracker {
 		},
 
 		expireTracker(key: string): void {
-			fanInTrackers.delete(key);
-			fanInCreatedAt.delete(key);
-			const timer = fanInTimers.get(key);
-			if (timer) {
-				clearTimeout(timer);
-				fanInTimers.delete(key);
-			}
+			forgetTracker(key);
 		},
 
 		// Phase 12D - return entries for trackers stalled > 50% of their timeout.

@@ -58,6 +58,8 @@ import { createCueSessionRuntimeService } from './cue-session-runtime-service';
 import type { CueSessionRuntimeService, SessionInitReason } from './cue-session-runtime-service';
 import { createCueSessionRegistry, type CueSessionRegistry } from './cue-session-registry';
 import { BACKGROUND_STOP_GRACE_MS } from '../../shared/maestro-lib/control/termination';
+import { createCueFanInPersistence, type CueFanInPersistence } from './cue-fan-in-persistence';
+import { getMatchingSources } from './cue-completion-service';
 import type { SessionState } from './cue-session-state';
 import { createCueRecoveryService, type CueRecoveryService } from './cue-recovery-service';
 import { createCueCleanupService, type CueCleanupService } from './cue-cleanup-service';
@@ -239,6 +241,8 @@ export class CueEngine {
 	private cleanupService: CueCleanupService;
 	private metrics: CueMetricsCollector = createCueMetrics();
 	private queuePersistence: CueQueuePersistence;
+	/** Durable fan-in progress; standalone runner only (see cue-fan-in-persistence.ts). */
+	private fanInPersistence: CueFanInPersistence | undefined;
 	private deps: CueEngineDeps;
 	/**
 	 * Per-`projectRoot` chain of pending YAML mutations. `setSubscriptionEnabled`
@@ -429,7 +433,12 @@ export class CueEngine {
 			// Phase 01: gate cue_events stats lineage writes on the Encore flag.
 			getUsageStatsEnabled: deps.getUsageStatsEnabled,
 		});
+		this.fanInPersistence =
+			deps.runnerMode === 'standalone'
+				? createCueFanInPersistence({ onLog: meteredOnLog })
+				: undefined;
 		this.fanInTracker = createCueFanInTracker({
+			persistence: this.fanInPersistence,
 			onLog: meteredOnLog,
 			getSessions: deps.getSessions,
 			dispatchSubscription: (
@@ -741,6 +750,10 @@ export class CueEngine {
 			}
 		}
 
+		// Partial fan-ins a previous run left on disk (standalone only). After
+		// sessions init, so the subscriptions they belong to can be looked up.
+		this.restoreFanInProgress();
+
 		// Detect the gap since the previous run's last heartbeat. Heartbeat
 		// subscriptions are skipped: each one already fired as its session
 		// initialized above, and a catch-up would run it twice in a row.
@@ -783,6 +796,28 @@ export class CueEngine {
 		this.meteredOnLog('cue', '[CUE] Engine stopped', {
 			type: 'engineStopped',
 		} satisfies CueLogPayload);
+	}
+
+	/**
+	 * Rebuild partial fan-ins from `cue_fan_in_state`, judged against the
+	 * configs just loaded (see `CueFanInTracker.restore`).
+	 */
+	private restoreFanInProgress(): void {
+		if (!this.fanInPersistence) return;
+		const rows = this.fanInPersistence.loadAll();
+		if (rows.length === 0) return;
+		const result = this.fanInTracker.restore(rows, (ownerSessionId, subscriptionName) => {
+			const state = this.registry.get(ownerSessionId);
+			const sub = state?.config.subscriptions.find(
+				(s) => s.name === subscriptionName && s.event === 'agent.completed' && s.enabled !== false
+			);
+			if (!state || !sub) return null;
+			return { sub, settings: state.config.settings ?? {}, sources: getMatchingSources(sub) };
+		});
+		this.meteredOnLog(
+			'cue',
+			`[CUE] Restored fan-in progress: ${result.resumed} waiting, ${result.completed} complete, ${result.expired} timed out while down, ${result.invalid} dropped`
+		);
 	}
 
 	/**
@@ -924,7 +959,9 @@ export class CueEngine {
 			this.logDrain(
 				'persisted',
 				`${persisted} queued event(s) persisted for the next start` +
-					(partialFanIns > 0 ? `; ${partialFanIns} partial fan-in(s) discarded` : ''),
+					(partialFanIns > 0
+						? `; ${partialFanIns} partial fan-in(s) ${this.fanInPersistence ? 'kept for the next start' : 'discarded'}`
+						: ''),
 				persisted
 			);
 
@@ -963,7 +1000,8 @@ export class CueEngine {
 		}
 		this.runManager.discardInMemory();
 		this.runManager.setDraining(false);
-		this.fanInTracker.reset();
+		// Persisted fan-in progress stays on disk for the next start.
+		this.fanInTracker.forgetInMemory();
 		this.sessionRuntimeService.clearAll();
 		this.sessionRuntimeService.clearAllStartupKeys();
 		releaseCueEngineLock();

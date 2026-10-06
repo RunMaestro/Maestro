@@ -46,7 +46,7 @@
  */
 
 import { vi } from 'vitest';
-import type { CueEventRecord } from '../../../main/cue/cue-db';
+import type { CueEventRecord, CueFanInStateRecord } from '../../../main/cue/cue-db';
 
 // ────────────────────────────────────────────────────────────────────────────
 // InMemoryCueDb - high-fidelity contract mirror of cue-db.ts
@@ -92,6 +92,9 @@ export interface InMemoryCueQueueRow {
 	parentEventId: string | null;
 }
 
+/** One `cue_fan_in_state` row (durable fan-in progress, standalone engine). */
+export type InMemoryCueFanInRow = CueFanInStateRecord;
+
 export interface InMemoryCueDbState {
 	events: Map<string, InMemoryCueEventRow>;
 	/** Insertion order of event IDs, for ORDER BY created_at DESC semantics. */
@@ -100,6 +103,8 @@ export interface InMemoryCueDbState {
 	githubSeen: Map<string, number>; // key = `${subscriptionId}\0${itemKey}`
 	/** Phase 12A persistent queue rows, keyed by row id. Insertion order preserved. */
 	queueRows: Map<string, InMemoryCueQueueRow>;
+	/** Durable fan-in progress, keyed by `${owner}\0${subscription}\0${source}`. */
+	fanInRows: Map<string, InMemoryCueFanInRow>;
 	closed: boolean;
 	ready: boolean;
 }
@@ -155,6 +160,12 @@ export interface InMemoryCueDb {
 	clearPersistedQueue(sessionId?: string): void;
 	safePersistQueuedEvent(record: InMemoryCueQueueRow): void;
 	safeRemoveQueuedEvent(id: string): void;
+	// Durable fan-in progress
+	persistFanInSource(record: InMemoryCueFanInRow): void;
+	removeFanInState(ownerSessionId: string, subscriptionName: string): void;
+	getFanInState(): InMemoryCueFanInRow[];
+	safePersistFanInSource(record: InMemoryCueFanInRow): void;
+	safeRemoveFanInState(ownerSessionId: string, subscriptionName: string): void;
 	// Test-only controls
 	/** Force a specific current time for prune/heartbeat tests. Reset with clearNowOverride(). */
 	setNowOverride(ts: number): void;
@@ -175,6 +186,7 @@ export function createInMemoryCueDb(): InMemoryCueDb {
 		heartbeat: null,
 		githubSeen: new Map(),
 		queueRows: new Map(),
+		fanInRows: new Map(),
 		closed: true,
 		ready: false,
 	};
@@ -451,7 +463,49 @@ export function createInMemoryCueDb(): InMemoryCueDb {
 			}
 		},
 
+		persistFanInSource(record) {
+			requireReady();
+			consumePendingFailure();
+			state.fanInRows.set(
+				`${record.ownerSessionId}\0${record.subscriptionName}\0${record.sourceSessionId}`,
+				{ ...record }
+			);
+		},
+
+		removeFanInState(ownerSessionId, subscriptionName) {
+			requireReady();
+			for (const [key, row] of state.fanInRows) {
+				if (row.ownerSessionId === ownerSessionId && row.subscriptionName === subscriptionName) {
+					state.fanInRows.delete(key);
+				}
+			}
+		},
+
+		getFanInState() {
+			requireReady();
+			return Array.from(state.fanInRows.values())
+				.map((row) => ({ ...row }))
+				.sort((a, b) => a.startedAt - b.startedAt || a.completedAt - b.completedAt);
+		},
+
+		safePersistFanInSource(record) {
+			try {
+				this.persistFanInSource(record);
+			} catch {
+				// non-throwing
+			}
+		},
+
+		safeRemoveFanInState(ownerSessionId, subscriptionName) {
+			try {
+				this.removeFanInState(ownerSessionId, subscriptionName);
+			} catch {
+				// non-throwing
+			}
+		},
+
 		resetAll() {
+			state.fanInRows.clear();
 			state.events.clear();
 			state.eventOrder.length = 0;
 			state.heartbeat = null;
@@ -520,6 +574,11 @@ export function buildCueDbModuleMock(getDb: () => InMemoryCueDb) {
 		clearPersistedQueue: (sessionId?: string) => getDb().clearPersistedQueue(sessionId),
 		safePersistQueuedEvent: (record: InMemoryCueQueueRow) => getDb().safePersistQueuedEvent(record),
 		safeRemoveQueuedEvent: (id: string) => getDb().safeRemoveQueuedEvent(id),
+		persistFanInSource: (record: InMemoryCueFanInRow) => getDb().persistFanInSource(record),
+		removeFanInState: (owner: string, sub: string) => getDb().removeFanInState(owner, sub),
+		getFanInState: () => getDb().getFanInState(),
+		safePersistFanInSource: (record: InMemoryCueFanInRow) => getDb().safePersistFanInSource(record),
+		safeRemoveFanInState: (owner: string, sub: string) => getDb().safeRemoveFanInState(owner, sub),
 	};
 }
 

@@ -205,6 +205,27 @@ const CREATE_CUE_EVENT_QUEUE_INDEXES_SQL = `
   CREATE INDEX IF NOT EXISTS idx_cue_event_queue_queued ON cue_event_queue(queued_at)
 `;
 
+// Partial fan-in progress (standalone engine only). One row per source that
+// has completed for a fan-in still waiting on others, written through as each
+// completion arrives and deleted when the fan-in fires, times out or is reset,
+// so a crash or a drain keeps it. `output` is the same tail-capped
+// (SOURCE_OUTPUT_MAX_CHARS) text the tracker holds in memory. Additive table;
+// no existing table changes.
+const CREATE_CUE_FAN_IN_STATE_SQL = `
+  CREATE TABLE IF NOT EXISTS cue_fan_in_state (
+    owner_session_id TEXT NOT NULL,
+    subscription_name TEXT NOT NULL,
+    source_session_id TEXT NOT NULL,
+    source_session_name TEXT NOT NULL,
+    output TEXT NOT NULL,
+    truncated INTEGER NOT NULL DEFAULT 0,
+    chain_depth INTEGER NOT NULL DEFAULT 0,
+    started_at INTEGER NOT NULL,
+    completed_at INTEGER NOT NULL,
+    PRIMARY KEY (owner_session_id, subscription_name, source_session_id)
+  )
+`;
+
 // Telemetry outbox - buffers telemetry events between flushes. Rows are
 // inserted from the dispatch / run-completion hot paths, read in batches by
 // the submitter, and deleted only after a successful POST to runmaestro.ai.
@@ -324,6 +345,7 @@ export function initCueDb(
 	for (const sql of CREATE_CUE_EVENT_QUEUE_INDEXES_SQL.split(';').filter((s) => s.trim())) {
 		db.prepare(sql).run();
 	}
+	db.prepare(CREATE_CUE_FAN_IN_STATE_SQL).run();
 	db.prepare(CREATE_CUE_TELEMETRY_OUTBOX_SQL).run();
 	db.prepare(CREATE_CUE_TELEMETRY_OUTBOX_INDEX_SQL).run();
 	db.prepare(CREATE_CUE_SUSFACTOR_BLOCKS_SQL).run();
@@ -1384,6 +1406,116 @@ export function safePersistQueuedEvent(record: CueQueuedEventRecord): void {
 			eventJsonLen: record.eventJson.length,
 		};
 		captureException(err, { operation: 'safePersistQueuedEvent', record: sanitized });
+	}
+}
+
+/** One completed source of a fan-in still waiting on others (`cue_fan_in_state`). */
+export interface CueFanInStateRecord {
+	ownerSessionId: string;
+	subscriptionName: string;
+	sourceSessionId: string;
+	sourceSessionName: string;
+	output: string;
+	truncated: boolean;
+	chainDepth: number;
+	/** When the fan-in's FIRST source completed; its timeout counts from here. */
+	startedAt: number;
+	completedAt: number;
+}
+
+/** Upsert one completed fan-in source. Throws on DB failure; see the safe wrapper. */
+export function persistFanInSource(record: CueFanInStateRecord): void {
+	getDb()
+		.prepare(
+			`INSERT OR REPLACE INTO cue_fan_in_state
+			 (owner_session_id, subscription_name, source_session_id, source_session_name,
+			  output, truncated, chain_depth, started_at, completed_at)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+		)
+		.run(
+			record.ownerSessionId,
+			record.subscriptionName,
+			record.sourceSessionId,
+			record.sourceSessionName,
+			record.output,
+			record.truncated ? 1 : 0,
+			record.chainDepth,
+			record.startedAt,
+			record.completedAt
+		);
+}
+
+/** Delete every persisted source of one fan-in. */
+export function removeFanInState(ownerSessionId: string, subscriptionName: string): void {
+	getDb()
+		.prepare(`DELETE FROM cue_fan_in_state WHERE owner_session_id = ? AND subscription_name = ?`)
+		.run(ownerSessionId, subscriptionName);
+}
+
+/** Every persisted fan-in source, oldest first. */
+export function getFanInState(): CueFanInStateRecord[] {
+	const rows = getDb()
+		.prepare(`SELECT * FROM cue_fan_in_state ORDER BY started_at ASC, completed_at ASC`)
+		.all() as Array<{
+		owner_session_id: string;
+		subscription_name: string;
+		source_session_id: string;
+		source_session_name: string;
+		output: string;
+		truncated: number;
+		chain_depth: number;
+		started_at: number;
+		completed_at: number;
+	}>;
+	return rows.map((row) => ({
+		ownerSessionId: row.owner_session_id,
+		subscriptionName: row.subscription_name,
+		sourceSessionId: row.source_session_id,
+		sourceSessionName: row.source_session_name,
+		output: row.output,
+		truncated: row.truncated === 1,
+		chainDepth: row.chain_depth,
+		startedAt: row.started_at,
+		completedAt: row.completed_at,
+	}));
+}
+
+/** Safe wrapper: persist a fan-in source; a failure degrades to in-memory only. */
+export function safePersistFanInSource(record: CueFanInStateRecord): void {
+	try {
+		persistFanInSource(record);
+	} catch (err) {
+		log(
+			'warn',
+			`Failed to persist fan-in progress (${record.subscriptionName}): ${err instanceof Error ? err.message : String(err)}`
+		);
+		// Ids and sizes only: the output may carry user content.
+		captureException(err, {
+			operation: 'safePersistFanInSource',
+			record: {
+				ownerSessionId: record.ownerSessionId,
+				subscriptionName: record.subscriptionName,
+				sourceSessionId: record.sourceSessionId,
+				outputLen: record.output.length,
+			},
+		});
+	}
+}
+
+/** Safe wrapper: delete one fan-in's persisted sources; non-throwing. */
+export function safeRemoveFanInState(ownerSessionId: string, subscriptionName: string): void {
+	try {
+		removeFanInState(ownerSessionId, subscriptionName);
+	} catch (err) {
+		log(
+			'warn',
+			`Failed to remove fan-in progress (${subscriptionName}): ${err instanceof Error ? err.message : String(err)}`
+		);
+		captureException(err, {
+			operation: 'safeRemoveFanInState',
+			ownerSessionId,
+			subscriptionName,
+		});
 	}
 }
 
