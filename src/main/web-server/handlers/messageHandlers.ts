@@ -264,7 +264,13 @@ export interface MessageHandlerCallbacks {
 	closeBrowserTab: (tabId: string) => Promise<boolean>;
 	openTerminalTab: (
 		sessionId: string,
-		config: { cwd?: string; shell?: string; name?: string | null; command?: string },
+		config: {
+			cwd?: string;
+			shell?: string;
+			name?: string | null;
+			command?: string;
+			inputRequired?: boolean;
+		},
 		options?: { background?: boolean }
 	) => Promise<{ success: boolean; tabId?: string }>;
 	writeTerminalTab: (
@@ -2299,6 +2305,7 @@ export class WebSocketMessageHandler {
 		const rawShell = message.shell;
 		const rawName = message.name;
 		const rawCommand = message.command;
+		const rawInputRequired = message.inputRequired;
 		const background = readBackgroundField(message);
 		// cwd/shell/name/command can leak local usernames, project names, or
 		// secrets in flags - log presence flags only.
@@ -2344,6 +2351,10 @@ export class WebSocketMessageHandler {
 		}
 		if (rawCommand !== undefined && typeof rawCommand !== 'string') {
 			sendErrorResult('Invalid command: must be a string');
+			return;
+		}
+		if (rawInputRequired !== undefined && typeof rawInputRequired !== 'boolean') {
+			sendErrorResult('Invalid inputRequired: must be a boolean');
 			return;
 		}
 		const cwd = typeof rawCwd === 'string' ? rawCwd : undefined;
@@ -2392,7 +2403,17 @@ export class WebSocketMessageHandler {
 		}
 
 		this.callbacks
-			.openTerminalTab(sessionId, { cwd: resolvedCwd, shell, name, command }, { background })
+			.openTerminalTab(
+				sessionId,
+				{
+					cwd: resolvedCwd,
+					shell,
+					name,
+					command,
+					...(rawInputRequired === true && { inputRequired: true }),
+				},
+				{ background }
+			)
 			.then((result) => {
 				this.send(client, {
 					type: 'open_terminal_tab_result',

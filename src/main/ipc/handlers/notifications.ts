@@ -17,6 +17,7 @@ import { isWebContentsAvailable } from '../../utils/safe-send';
 import { parseDeepLink, dispatchDeepLink } from '../../deep-links';
 import { buildSessionDeepLink } from '../../../shared/deep-link-urls';
 import { captureException } from '../../utils/sentry';
+import { parseToastClickAction, type ToastClickAction } from '../../../shared/toastClickAction';
 
 // ==========================================================================
 // Constants
@@ -403,12 +404,39 @@ async function processNextNotification(): Promise<void> {
  */
 export interface NotificationsHandlerDependencies {
 	getMainWindow: () => BrowserWindow | null;
+	ensureMainWindow?: () => void;
 }
 
 /**
  * Register all notification-related IPC handlers
  */
 export function registerNotificationsHandlers(deps?: NotificationsHandlerDependencies): void {
+	const pendingActions: ToastClickAction[] = [];
+	const readyRenderers = new WeakSet<Electron.WebContents>();
+	const flushActions = (): void => {
+		const target = deps?.getMainWindow();
+		if (!target || !isWebContentsAvailable(target) || !readyRenderers.has(target.webContents))
+			return;
+		if (pendingActions.length === 0) return;
+		if (target.isMinimized()) target.restore();
+		target.show();
+		target.focus();
+		while (pendingActions.length > 0) {
+			target.webContents.send('notification:clickAction', pendingActions.shift()!);
+		}
+	};
+	// The renderer announces readiness only after installing its click listener.
+	// A reopened window must not receive a queued action during initial loading.
+	ipcMain.handle('notification:ready', (event) => {
+		const target = deps?.getMainWindow();
+		if (!target || !isWebContentsAvailable(target) || event.sender !== target.webContents) return;
+		if (!readyRenderers.has(event.sender)) {
+			readyRenderers.add(event.sender);
+			event.sender.once('did-start-loading', () => readyRenderers.delete(event.sender));
+		}
+		flushActions();
+	});
+
 	// Show OS notification (with optional click-to-navigate support)
 	ipcMain.handle(
 		'notification:show',
@@ -417,9 +445,12 @@ export function registerNotificationsHandlers(deps?: NotificationsHandlerDepende
 			title: string,
 			body: string,
 			sessionId?: string,
-			tabId?: string
+			tabId?: string,
+			clickAction?: ToastClickAction
 		): Promise<NotificationShowResponse> => {
 			try {
+				const parsedAction = parseToastClickAction(clickAction);
+				if (parsedAction.error) return { success: false, error: parsedAction.error };
 				if (Notification.isSupported()) {
 					const notification = new Notification({
 						title,
@@ -435,7 +466,17 @@ export function registerNotificationsHandlers(deps?: NotificationsHandlerDepende
 					notification.on('close', releaseNotification);
 
 					// Wire click handler for navigation if session context is provided
-					if (sessionId && deps?.getMainWindow) {
+					const action = parsedAction.action;
+					if (action && deps?.getMainWindow) {
+						notification.on('click', () => {
+							pendingActions.push(action);
+							if (pendingActions.length > NOTIFICATION_MAX_QUEUE_SIZE) pendingActions.shift();
+							const target = deps.getMainWindow();
+							if (!target || target.isDestroyed()) deps.ensureMainWindow?.();
+							flushActions();
+							releaseNotification();
+						});
+					} else if (sessionId && deps?.getMainWindow) {
 						const deepLinkUrl = buildSessionDeepLink(sessionId, tabId);
 
 						notification.on('click', () => {

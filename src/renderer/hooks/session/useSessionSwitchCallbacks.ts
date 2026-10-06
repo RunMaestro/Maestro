@@ -26,6 +26,7 @@ import { outputSearchKeyFor } from '../../utils/outputSearch';
 import type { CrossTabSearchJumpTarget } from '../../components/CrossTabSearchModal';
 import { subscribeToInAppDeepLinks } from '../../utils/openMaestroLink';
 import type { ParsedDeepLink } from '../../../shared/types';
+import { dispatchToastClickAction } from '../../services/toastClickActions';
 
 /** Helper: update a single session by ID using an updater function */
 function updateSession(sessionId: string, updater: (s: Session) => Session): void {
@@ -176,6 +177,13 @@ export function useSessionSwitchCallbacks(
 		},
 		[setActiveSessionId]
 	);
+
+	// Native notifications use the same navigation as their in-app toast.
+	useEffect(() => {
+		return window.maestro?.notification?.onClickAction?.((action) =>
+			dispatchToastClickAction(action, { onSessionClick: handleToastSessionClick })
+		);
+	}, [handleToastSessionClick]);
 
 	// Deep link navigation handler - processes maestro:// URLs from OS notifications,
 	// external apps, CLI commands, AND in-renderer markdown link clicks.
