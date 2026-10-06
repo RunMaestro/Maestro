@@ -7,16 +7,22 @@ import type { AutoRunRemoteResult } from '../../../shared/autoRunRemote';
 
 export function registerAutoRunControlCallbacks(
 	server: WebServer,
-	deps: Pick<WebServerFactoryDependencies, 'getMainWindow'>
+	deps: Pick<WebServerFactoryDependencies, 'getMainWindow' | 'getWindowForSession'>
 ): void {
-	const { getMainWindow } = deps;
+	const { getMainWindow, getWindowForSession } = deps;
+	const resolveSessionWindow = (sessionId: string) =>
+		getWindowForSession?.(sessionId) ?? getMainWindow();
 	const remoteRequest = createRemoteRequest(getMainWindow);
 	const unavailable: AutoRunRemoteResult = {
 		success: false,
 		error: 'Host Auto Run owner did not acknowledge the command. Check host state before retrying.',
 	};
 	server.setStartAutoRunCallback(async (sessionId, config, folderPath) => {
-		const win = getMainWindow();
+		const targetSessionId =
+			config.worktreeTarget?.mode === 'existing-open'
+				? (config.worktreeTarget.sessionId ?? sessionId)
+				: sessionId;
+		const win = resolveSessionWindow(targetSessionId);
 		if (!win || !isWebContentsAvailable(win)) return unavailable;
 		return requestFromRenderer<AutoRunRemoteResult>(win, 'remote:startAutoRun', {
 			fallback: unavailable,
@@ -25,7 +31,7 @@ export function registerAutoRunControlCallbacks(
 		});
 	});
 	server.setControlAutoRunCallback(async (sessionId, control) => {
-		const win = getMainWindow();
+		const win = resolveSessionWindow(sessionId);
 		if (!win || !isWebContentsAvailable(win)) return unavailable;
 		return requestFromRenderer<AutoRunRemoteResult>(win, 'remote:controlAutoRun', {
 			fallback: unavailable,
