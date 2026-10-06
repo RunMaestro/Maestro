@@ -104,6 +104,8 @@
 			"node_modules/better-sqlite3/**/*",
 			"node_modules/@napi-rs/keyring/**/*",
 			"node_modules/@napi-rs/keyring-*/*",
+			"node_modules/@ast-grep/napi/**/*",
+			"node_modules/@ast-grep/napi-*/*",
 			"node_modules/bindings/**/*",
 			"node_modules/file-uri-to-path/**/*"
 		],
@@ -320,6 +322,7 @@
 		}
 	},
 	"dependencies": {
+		"@ast-grep/napi": "^0.44.1",
 		"@codemirror/commands": "^6.10.3",
 		"@codemirror/lang-cpp": "^6.0.3",
 		"@codemirror/lang-css": "^6.3.1",

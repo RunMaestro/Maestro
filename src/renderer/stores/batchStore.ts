@@ -106,6 +106,16 @@ export function selectHasAnyActiveBatch(s: BatchStoreState): boolean {
 }
 
 /**
+ * True while this session's Auto Run should force spawns read-only: a run is
+ * in flight and it is not isolated in a worktree, so a concurrent manual turn
+ * must not write into the same tree the run is working on.
+ */
+export function selectAutoRunForcesReadOnly(s: BatchStoreState, sessionId: string): boolean {
+	const state = s.batchRunStates[sessionId];
+	return !!state?.isRunning && !state.worktreeActive;
+}
+
+/**
  * True when this agent's Auto Run entry is a read-only MIRROR of a run owned by
  * a different Maestro client (see `useAutoRunStateMirror`). The run loop and the
  * refs its controls poke live in the owning client, so every mutator bails on a
