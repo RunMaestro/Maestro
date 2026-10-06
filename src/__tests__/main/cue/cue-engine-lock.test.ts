@@ -441,6 +441,7 @@ describe('cue-engine-lock: simultaneous stale takeover', () => {
 		pid: number;
 		acquired?: boolean;
 		touch?: 'held' | 'lost';
+		error?: string;
 	}
 
 	let rootDir: string;
@@ -462,9 +463,14 @@ setInterval(() => {
 		const req = JSON.parse(fs.readFileSync(path.join(ctrlDir, name), 'utf-8'));
 		while (Date.now() < (req.at || 0)) {}
 		const reply = { pid: process.pid };
-		if (req.action === 'acquire') reply.acquired = lock.acquireCueEngineLock('standalone', req.dataDir).acquired;
-		if (req.action === 'touch') reply.touch = lock.touchCueEngineLock('standalone', req.dataDir);
-		if (req.action === 'release') lock.releaseCueEngineLock(req.dataDir);
+		try {
+			if (req.action === 'acquire') reply.acquired = lock.acquireCueEngineLock('standalone', req.dataDir).acquired;
+			if (req.action === 'touch') reply.touch = lock.touchCueEngineLock('standalone', req.dataDir);
+			if (req.action === 'release') lock.releaseCueEngineLock(req.dataDir);
+		} catch (err) {
+			// Report instead of dying, so a throw fails the test by name rather than as a timeout.
+			reply.error = String((err && err.stack) || err);
+		}
 		const out = path.join(ctrlDir, name.replace('req-', 'res-'));
 		fs.writeFileSync(out + '.tmp', JSON.stringify(reply));
 		fs.renameSync(out + '.tmp', out);
@@ -576,6 +582,7 @@ setInterval(() => {
 	async function race(dataDir: string): Promise<void> {
 		const at = Date.now() + 40;
 		const replies = await Promise.all(workers.map((w) => request(w, 'acquire', dataDir, at)));
+		expect(replies.filter((r) => r.error).map((r) => r.error)).toEqual([]);
 		const winners = replies.filter((r) => r.acquired);
 		expect(winners).toHaveLength(1);
 		expect(lockOnDisk(dataDir).pid).toBe(winners[0].pid);
