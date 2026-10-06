@@ -76,6 +76,11 @@ const MIN_RELEVANCE = 5;
  * snippet that doesn't look like any of these scores low and falls through to
  * plaintext, which is the desired behaviour when we aren't sure. ids are
  * hljs language names; the winner is mapped to Shiki's id by `resolveLanguage`.
+ *
+ * Swift is left out on purpose: its keyword list is full of English words
+ * (`as`, `in`, `is`, `some`, `each`, `operator`, `indirect`), so prose and
+ * directory listings out-score every real language as Swift. A Swift fence
+ * without a tag renders as plain text; a tagged one still highlights.
  */
 const HLJS_DETECT_SUBSET = [
 	'javascript',
@@ -102,12 +107,19 @@ const HLJS_DETECT_SUBSET = [
 	'dockerfile',
 	'ini', // covers toml-style config
 	'kotlin',
-	'swift',
 ];
+
+/**
+ * A line drawn by `tree`-style output: optional indent, then a box-drawing
+ * branch glyph. No language puts these at the start of a line, so a block
+ * that has one is a listing, not code, and hljs only scores its names as noise.
+ */
+const TREE_LINE_REGEX = /^[\s│]*[├└│]/m;
 
 export async function detectLanguage(code: string): Promise<DetectionResult | null> {
 	const trimmed = code.trim();
 	if (trimmed.length < 8) return null;
+	if (TREE_LINE_REGEX.test(trimmed)) return null;
 	try {
 		const hljs = await loadHljs();
 		const result = hljs.highlightAuto(trimmed, HLJS_DETECT_SUBSET);
