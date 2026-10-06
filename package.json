@@ -36,6 +36,7 @@
 		"build:main": "tsc -p tsconfig.main.json && node scripts/gen-build-info.mjs",
 		"build:preload": "node scripts/build-preload.mjs",
 		"build:cli": "node scripts/build-cli.mjs",
+		"build:server": "npm run build:cli && node scripts/build-server.mjs",
 		"gen:cli-reference": "node scripts/gen-cli-reference.mjs",
 		"gen:og-image": "node scripts/generate-og-image.mjs",
 		"build:maestro-p": "node scripts/build-maestro-p.mjs",

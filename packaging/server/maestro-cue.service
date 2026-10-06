@@ -1,0 +1,58 @@
+# Maestro Cue engine as a systemd service.
+#
+# install.sh puts this at /etc/systemd/system/maestro-cue.service and
+# overwrites it on upgrade, so change it with a drop-in instead:
+#   sudo systemctl edit maestro-cue
+#
+# Agent API keys and other variables: /etc/maestro/maestro.env.
+# Secrets the engine reads as files: /etc/maestro/credentials, passed in with
+# LoadCredential= (example below). The engine finds them under
+# $CREDENTIALS_DIRECTORY by name.
+
+[Unit]
+Description=Maestro Cue engine
+Documentation=https://docs.runmaestro.ai/maestro-cue-server
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=notify
+# Readiness and watchdog pings come from a systemd-notify child process, not
+# the engine's own PID.
+NotifyAccess=all
+WatchdogSec=30
+User=maestro
+Group=maestro
+Environment=HOME=/var/lib/maestro
+# Inherited by agents, so a maestro-cli call from inside a run finds the same
+# data directory.
+Environment=MAESTRO_USER_DATA=/var/lib/maestro/data
+EnvironmentFile=-/etc/maestro/maestro.env
+WorkingDirectory=/var/lib/maestro
+ExecStart=/usr/local/bin/maestro-cli cue engine start --data-dir /var/lib/maestro/data --status-port 7433 --require-ready --log-format json --drain-timeout 90
+#LoadCredential=GH_WEBHOOK_SECRET:/etc/maestro/credentials/GH_WEBHOOK_SECRET
+
+# SIGTERM goes to the engine alone so it can drain its runs; whatever is left
+# in the cgroup is killed when TimeoutStopSec runs out. 120 s covers the 90 s
+# drain plus the stop step.
+KillMode=mixed
+TimeoutStopSec=120
+Restart=on-failure
+RestartSec=5
+
+StateDirectory=maestro
+StateDirectoryMode=0750
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+# Workspaces live under /srv/maestro by default. Add a drop-in with another
+# ReadWritePaths= for workspaces anywhere else.
+ReadWritePaths=/var/lib/maestro -/srv/maestro
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target
