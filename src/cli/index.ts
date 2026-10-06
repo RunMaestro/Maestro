@@ -1233,8 +1233,9 @@ cueEngine
 	.action(cueEngineInspect);
 
 // Bundle commands - pack a Cue pipeline or one agent into a portable zip, and
-// import one. Read the data directory directly, so these work with the app
-// closed (import refuses to run while it is open).
+// import one. With the app running (and no --data-dir), export and import go
+// through it, the same as the Cue modal's Bundles tab; otherwise they read and
+// write the data directory directly.
 const bundle = program
 	.command('bundle')
 	.description('Export, validate, inspect, and import portable Cue pipeline and agent bundles');
@@ -1248,6 +1249,12 @@ bundle
 	.option('--allow-inline-secrets', 'Export subscriptions that hold a literal webhook.secret')
 	.option('--data-dir <path>', "Read Maestro's data from this directory instead of the default")
 	.option('--created-at <iso>', 'Record this ISO-8601 time as the bundle creation time')
+	.option('--no-claude-skills', 'Leave out Claude Code skills (.claude/skills)')
+	.option('--no-claude-mcp', 'Leave out .mcp.json (exported with secrets as ${VAR} references)')
+	.option(
+		'--no-claude-memory',
+		'Leave out CLAUDE.md and Claude auto memory (exported with secret-looking tokens redacted)'
+	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((options) => bundleExport(cliVersion, options));
 
@@ -1269,7 +1276,7 @@ bundle
 bundle
 	.command('import <bundle>')
 	.description(
-		'Import a bundle into a data directory and local workspace folders (desktop and Cue engine must be stopped)'
+		'Import a bundle into the running app, or with it closed into a data directory, plus local workspace folders'
 	)
 	.option(
 		'-w, --workspace <key=path>',

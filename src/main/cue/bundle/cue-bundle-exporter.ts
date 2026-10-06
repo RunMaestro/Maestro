@@ -19,6 +19,9 @@
  *    every generated file for a known local root before anything is written.
  * 3. **Byte-identical output.** Entries are sorted, every entry carries the same
  *    fixed date, and `createdAt` is omitted unless the caller pins it.
+ *
+ * A workspace a Claude Code agent works in also carries its Claude assets
+ * (skills, `.mcp.json`, memory), scrubbed by `cue-bundle-claude-assets.ts`.
  */
 
 import * as fs from 'fs';
@@ -40,6 +43,7 @@ import {
 	CUE_BUNDLE_VERSION,
 	type CueBundleAgent,
 	type CueBundleAgentSettings,
+	type CueBundleClaudeAssetSelection,
 	type CueBundleFileEntry,
 	type CueBundleKind,
 	type CueBundleManifest,
@@ -50,6 +54,8 @@ import {
 import { resolveCueConfigPath } from '../config/cue-config-repository';
 import { readSessionsStoreFile } from '../../stores/sessions-store-file';
 import { readAgentConfigsStoreFile } from '../../stores/agent-configs-store-file';
+import { collectClaudeAssets, resolveClaudeAssetSelection } from './cue-bundle-claude-assets';
+import { resolveClaudeConfigDir } from '../../memory-manager';
 
 /** Every entry gets this date, so the archive bytes depend only on content. */
 export const CUE_BUNDLE_FIXED_MTIME = new Date('2026-01-01T00:00:00Z');
@@ -69,8 +75,20 @@ export interface CueBundleExportOptions {
 	createdAt?: string;
 	/** Version string recorded as `manifest.producer.version`. */
 	producerVersion?: string;
-	/** Environment consulted for `SOURCE_DATE_EPOCH`. Defaults to `process.env`. */
+	/** Environment consulted for `SOURCE_DATE_EPOCH` and `CLAUDE_CONFIG_DIR`. Defaults to `process.env`. */
 	env?: NodeJS.ProcessEnv;
+	/** Claude Code assets to include for workspaces a Claude agent works in. Each defaults to on. */
+	claudeAssets?: CueBundleClaudeAssetSelection;
+	/** Claude's config directory, for auto memory. Defaults to `CLAUDE_CONFIG_DIR` or `~/.claude`. */
+	claudeConfigDir?: string;
+	/**
+	 * The agents, when the caller holds them live (the desktop app, whose
+	 * sessions may sit in a custom sync folder). Defaults to the data
+	 * directory's `maestro-sessions.json`.
+	 */
+	sessions?: SessionInfo[];
+	/** Folder of `maestro-agent-configs.json`, when it is not the data directory. */
+	agentConfigsDir?: string;
 }
 
 export interface CueBundleExportResult {
@@ -483,7 +501,7 @@ function collectPromptFiles(
 
 function buildAgentSettings(
 	session: SessionInfo,
-	dataDir: string,
+	agentConfigsDir: string,
 	workspaceKey: string,
 	root: string,
 	autoRun: CueBundleAgentSettings['autoRun'],
@@ -520,7 +538,7 @@ function buildAgentSettings(
 	// `*Disabled` record that is simply never read here.
 	const env = effectiveAgentCustomEnvVars(
 		session.customEnvVars,
-		readProviderEnv(dataDir, session.toolType)
+		readProviderEnv(agentConfigsDir, session.toolType)
 	);
 	const values: Record<string, string> = {};
 	const required: string[] = [];
@@ -691,7 +709,10 @@ export async function exportCueBundle(
 	if (!options.outputPath) throw new Error('An output path is required');
 	const dataDir = path.resolve(options.dataDir);
 	// Stored order is Cue's ownership order.
-	const sessions = readSessionsStoreFile(dataDir).sessions;
+	const sessions = options.sessions ?? readSessionsStoreFile(dataDir).sessions;
+	const agentConfigsDir = options.agentConfigsDir ? path.resolve(options.agentConfigsDir) : dataDir;
+	const claudeSelection = resolveClaudeAssetSelection(options.claudeAssets);
+	const claudeConfigDir = options.claudeConfigDir ?? resolveClaudeConfigDir(options.env);
 	const sessionById = new Map(sessions.map((s) => [s.id, s]));
 	const builder = new BundleBuilder();
 	const createdAt = resolveCreatedAt(options);
@@ -833,6 +854,18 @@ export async function exportCueBundle(
 		}
 		const source = readGitSource(ws.root);
 		if (source) entry.source = source;
+		if (includedAgents.some((a) => a.toolType === 'claude-code' && agentRoot(a) === ws.root)) {
+			const claude = collectClaudeAssets({
+				root: ws.root,
+				key: ws.key,
+				selection: claudeSelection,
+				claudeConfigDir,
+			});
+			for (const file of claude.files) builder.add(file.archivePath, file.content);
+			for (const name of claude.secrets) secrets.add(name);
+			for (const warning of claude.warnings) builder.warnings.add(warning);
+			if (claude.assets) entry.claude = claude.assets;
+		}
 		manifestWorkspaces.push(entry);
 	}
 
@@ -889,7 +922,7 @@ export async function exportCueBundle(
 			);
 		}
 
-		const settings = buildAgentSettings(session, dataDir, wsKey, root, autoRun, builder);
+		const settings = buildAgentSettings(session, agentConfigsDir, wsKey, root, autoRun, builder);
 		for (const key of settings.env?.required ?? []) secrets.add(key);
 		const settingsPath = `agents/${session.id}.json`;
 		addGenerated(settingsPath, JSON.stringify(settings, null, '\t') + '\n');

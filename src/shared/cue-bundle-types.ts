@@ -15,8 +15,10 @@
  * agents/<agentId>.json                    agent settings
  * agents/<agentId>/playbooks.json          saved playbooks
  * workspaces/<key>/.maestro/cue.yaml       filtered subscriptions + settings
- * workspaces/<key>/<project-relative path> prompt files, Auto Run documents
+ * workspaces/<key>/<project-relative path> prompt files, Auto Run documents,
+ *                                          Claude Code skills, .mcp.json, CLAUDE.md
  * autorun/<agentId>/<filename>.md          Auto Run documents outside the workspace
+ * claude-memory/<key>/<name>.md            Claude Code auto memory for a workspace
  * ```
  *
  * Keep this module runtime-agnostic: it is read by the exporter (main and
@@ -41,6 +43,14 @@ export const CUE_BUNDLE_README_PATH = 'README.md';
 
 /** Archive path of the pipeline's layout entry (pipeline bundles only). */
 export const CUE_BUNDLE_LAYOUT_PATH = 'layout/pipeline.json';
+
+/**
+ * Archive folder holding Claude Code's auto memory, one subfolder per
+ * workspace key. Claude keeps it outside the project
+ * (`<config dir>/projects/<encoded project path>/memory`), so it cannot travel
+ * under `workspaces/`.
+ */
+export const CUE_BUNDLE_CLAUDE_MEMORY_DIR = 'claude-memory';
 
 /** What a bundle captures: one visual pipeline, or one agent. */
 export type CueBundleKind = 'maestro-pipeline' | 'maestro-agent';
@@ -77,6 +87,33 @@ export interface CueBundleWorkspace {
 	/** Archive path of this workspace's filtered cue.yaml, when it contributed one. */
 	cueConfig?: string;
 	source?: CueBundleWorkspaceSource;
+	/** Claude Code assets exported with this workspace, when a Claude agent works in it. */
+	claude?: CueBundleClaudeAssets;
+}
+
+/**
+ * Claude Code assets a workspace carries. The files themselves are listed in
+ * `files` like any other; this records what they are, for display and import.
+ */
+export interface CueBundleClaudeAssets {
+	/** Skill folder names under `.claude/skills/`. */
+	skills?: string[];
+	/** Server names in the exported `.mcp.json`. Secrets in it are `${VAR}` references. */
+	mcpServers?: string[];
+	/** Project memory files (`CLAUDE.md`, `.claude/CLAUDE.md`), workspace-relative. */
+	projectMemory?: string[];
+	/** Auto memory file names, stored under `claude-memory/<key>/`. */
+	autoMemory?: string[];
+}
+
+/** Which Claude Code assets an export includes. Each defaults to on. */
+export interface CueBundleClaudeAssetSelection {
+	/** `.claude/skills/` */
+	skills?: boolean;
+	/** `.mcp.json`, with secret values replaced by `${VAR}` references */
+	mcp?: boolean;
+	/** `CLAUDE.md`, `.claude/CLAUDE.md` and Claude's auto memory, secret-looking tokens redacted */
+	memory?: boolean;
 }
 
 /** One agent the bundle carries settings for. */
@@ -164,3 +201,29 @@ export interface CueBundleManifest {
 	 */
 	createdAt?: string;
 }
+
+/**
+ * Agent fields an import sets. Updating an existing agent (a forced import)
+ * replaces only these, so its tabs, history and run state stay as they are.
+ */
+export const CUE_BUNDLE_AGENT_FIELDS = [
+	'name',
+	'toolType',
+	'cwd',
+	'fullPath',
+	'projectRoot',
+	'shellCwd',
+	'autoRunFolderPath',
+	'customModel',
+	'customEffort',
+	'customArgs',
+	'customContextWindow',
+	'newSessionMessage',
+	'nudgeMessage',
+	'enableMaestroP',
+	'maestroPMode',
+	'customEnvVars',
+	// Set to exactly the names the bundle's agent declares, and cleared when it
+	// declares none, on the desktop path as on the file path.
+	'requiredSecrets',
+] as const;

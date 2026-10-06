@@ -614,6 +614,16 @@ const mockMaestro = {
 		selectFolder: vi.fn().mockResolvedValue(null),
 		saveFile: vi.fn().mockResolvedValue(null),
 	},
+	cueBundle: {
+		export: vi.fn().mockResolvedValue({ ok: false, code: 'EXPORT_FAILED', message: 'not mocked' }),
+		chooseFile: vi.fn().mockResolvedValue(null),
+		inspect: vi
+			.fn()
+			.mockResolvedValue({ ok: false, code: 'BUNDLE_UNREADABLE', message: 'not mocked' }),
+		import: vi.fn().mockResolvedValue({ ok: false, code: 'WRITE_FAILED', message: 'not mocked' }),
+		onApplyAgents: vi.fn().mockReturnValue(() => {}),
+		sendApplyAgentsResponse: vi.fn(),
+	},
 	shells: {
 		detect: vi.fn().mockResolvedValue([]),
 	},

@@ -2,19 +2,33 @@
 // deterministic zip (`src/shared/cue-bundle-types.ts`), check or describe one,
 // and import one into a data directory.
 //
-// Reads Maestro's data directory straight off disk, so it works with the
-// desktop app closed (import REQUIRES it closed). The exporter, validator,
-// importer, and zip reader are loaded with a dynamic `import()` so archiver,
-// js-yaml, and the Cue config reader stay out of every other command's startup
-// path.
+// With the desktop app running (and no --data-dir), export and import go
+// through it: the same functions as the Cue modal's Bundles tab
+// (`src/main/cue-bundle-service.ts`), so agents land in the running app
+// instead of a sessions file it would overwrite. Otherwise they read and
+// write the data directory straight off disk, and import refuses while an
+// app or engine runs against it. The exporter, validator, importer, and zip
+// reader are loaded with a dynamic `import()` so archiver, js-yaml, and the
+// Cue config reader stay out of every other command's startup path.
 
 import { assertUserDataDirExists, resolveUserDataDir } from '../../shared/userDataDir';
 import { resolveAgentId } from '../services/storage';
 import { readSessionsStoreFile } from '../../main/stores/sessions-store-file';
 import { resolveCliPath } from '../utils/parse';
 import { ExitCode } from '../exit-codes';
+import { isCliServerRunning } from '../../shared/cli-server-discovery';
+import { withMaestroClient } from '../services/maestro-client';
 import { formatSize } from '../../shared/formatters';
-import type { CueBundleManifest } from '../../shared/cue-bundle-types';
+import type {
+	CueBundleClaudeAssetSelection,
+	CueBundleManifest,
+} from '../../shared/cue-bundle-types';
+import type {
+	CueBundleExportOutcome,
+	CueBundleExportRequest,
+	CueBundleImportOutcome,
+	CueBundleImportRequest,
+} from '../../main/cue-bundle-service';
 import type { CueBundleValidationIssue } from '../../main/cue/bundle/cue-bundle-validator';
 import type {
 	CueBundleImportConflict,
@@ -29,7 +43,41 @@ export interface BundleExportOptions {
 	allowInlineSecrets?: boolean;
 	dataDir?: string;
 	createdAt?: string;
+	/** `--no-claude-skills` sets false. */
+	claudeSkills?: boolean;
+	/** `--no-claude-mcp` sets false. */
+	claudeMcp?: boolean;
+	/** `--no-claude-memory` sets false. */
+	claudeMemory?: boolean;
 	json?: boolean;
+}
+
+/** Bundle work can wait on the renderer and on disk; allow more than the default 10 s. */
+const APP_COMMAND_TIMEOUT_MS = 120_000;
+
+/** Go through the running app: no explicit data dir, and the app is up. */
+function shouldGoThroughApp(options: { dataDir?: string }): boolean {
+	return !options.dataDir && isCliServerRunning();
+}
+
+/** Run a bundle operation in the running app and return its outcome. */
+async function viaApp<T>(type: string, request: unknown): Promise<T> {
+	const response = await withMaestroClient((client) =>
+		client.sendCommand<{ type: string; outcome: T }>(
+			{ type, request },
+			`${type}_result`,
+			APP_COMMAND_TIMEOUT_MS
+		)
+	);
+	return response.outcome;
+}
+
+function claudeAssetSelection(options: BundleExportOptions): CueBundleClaudeAssetSelection {
+	return {
+		skills: options.claudeSkills !== false,
+		mcp: options.claudeMcp !== false,
+		memory: options.claudeMemory !== false,
+	};
 }
 
 /**
@@ -109,15 +157,33 @@ export async function bundleExport(
 			options.output ?? defaultOutputName(options.pipeline ?? agentName ?? 'bundle')
 		);
 
-		const result = await exportCueBundle({
-			dataDir,
-			agentId,
-			pipeline: options.pipeline,
-			outputPath,
-			allowInlineSecrets: options.allowInlineSecrets,
-			createdAt: options.createdAt,
-			producerVersion: cliVersion,
-		});
+		let result: { outputPath: string; size: number; sha256: string; manifest: CueBundleManifest };
+		if (shouldGoThroughApp(options)) {
+			const request: CueBundleExportRequest = {
+				agentId,
+				pipeline: options.pipeline,
+				outputPath,
+				allowInlineSecrets: options.allowInlineSecrets,
+				createdAt: options.createdAt,
+				claudeAssets: claudeAssetSelection(options),
+			};
+			const outcome = await viaApp<CueBundleExportOutcome>('cue_bundle_export', request);
+			if (!outcome.ok) {
+				fail(outcome.message, options, ExitCode.GeneralError, outcome.code, outcome.details);
+			}
+			result = outcome;
+		} else {
+			result = await exportCueBundle({
+				dataDir,
+				agentId,
+				pipeline: options.pipeline,
+				outputPath,
+				allowInlineSecrets: options.allowInlineSecrets,
+				createdAt: options.createdAt,
+				claudeAssets: claudeAssetSelection(options),
+				producerVersion: cliVersion,
+			});
+		}
 
 		if (options.json) {
 			console.log(
@@ -326,10 +392,15 @@ function formatConflict(conflict: CueBundleImportConflict): string {
 	return `  [${conflict.kind}] ${conflict.message}`;
 }
 
-function formatImportPlan(plan: CueBundleImportPlan, applied: boolean, force: boolean): string {
+function formatImportPlan(
+	plan: CueBundleImportPlan,
+	applied: boolean,
+	force: boolean,
+	viaRunningApp = false
+): string {
 	const kind = plan.bundle.kind === 'maestro-pipeline' ? 'pipeline' : 'agent';
 	const lines = [
-		`${applied ? 'Imported' : 'Would import'} ${kind} "${plan.bundle.name}" into ${plan.dataDir}${plan.createDataDir ? (applied ? ' (created)' : ' (would be created)') : ''}`,
+		`${applied ? 'Imported' : 'Would import'} ${kind} "${plan.bundle.name}" into ${viaRunningApp ? 'the running Maestro app' : plan.dataDir}${plan.createDataDir ? (applied ? ' (created)' : ' (would be created)') : ''}`,
 		'',
 		'Agents:',
 		...plan.agents.map(
@@ -409,10 +480,51 @@ function formatImportPlan(plan: CueBundleImportPlan, applied: boolean, force: bo
 }
 
 /**
+ * Report an import refusal (from the importer, or from the running app) and
+ * exit: 2 for a usage problem, 1 otherwise.
+ */
+function reportImportFailure(
+	code: string,
+	message: string,
+	details: Record<string, unknown>,
+	options: BundleImportOptions
+): never {
+	const exit = IMPORT_USAGE_CODES.has(code as CueBundleImportErrorCode)
+		? ExitCode.InvalidUsage
+		: ExitCode.GeneralError;
+	if (!options.json) {
+		const detail: string[] = [];
+		if (code === 'CONFLICTS') {
+			detail.push(
+				...((details.conflicts as CueBundleImportConflict[] | undefined) ?? []).map(formatConflict),
+				'Re-run with --dry-run to see the full plan, or --force to overwrite.'
+			);
+		} else if (code === 'WORKSPACE_UNMAPPED') {
+			const keys = (details.workspaces as string[] | undefined) ?? [];
+			detail.push(...keys.map((key) => `  --workspace ${key}=<local folder>`));
+		} else if (code === 'SHELL_COMMANDS_REFUSED') {
+			const commands =
+				(details.shellCommands as
+					| Array<{ workspace: string; subscription: string; command: string }>
+					| undefined) ?? [];
+			detail.push(...commands.map((c) => `  ${c.workspace} / ${c.subscription}: ${c.command}`));
+		} else if (code === 'BUNDLE_INVALID') {
+			const issues = (details.errors as CueBundleValidationIssue[] | undefined) ?? [];
+			detail.push(...issues.map(formatIssue));
+		}
+		console.error(`Error: ${message}`);
+		if (detail.length > 0) console.error(detail.join('\n'));
+		process.exit(exit);
+	}
+	fail(message, options, exit, code, details);
+}
+
+/**
  * Import a bundle into a data directory and the folders its workspaces map to.
- * Refuses while a Cue engine or the desktop app runs against that directory.
- * Exit 2 for a usage problem, 1 for any other refusal; the JSON `code` names
- * the exact kind (`CueBundleImportErrorCode`).
+ * With the desktop app running (and no --data-dir), the import goes into the
+ * app; otherwise it refuses while a Cue engine or the desktop app runs against
+ * that directory. Exit 2 for a usage problem, 1 for any other refusal; the
+ * JSON `code` names the exact kind (`CueBundleImportErrorCode`).
  */
 export async function bundleImport(
 	cliVersion: string,
@@ -434,6 +546,51 @@ export async function bundleImport(
 	}
 	const dataDir = options.dataDir ? resolveCliPath(options.dataDir) : resolveUserDataDir();
 
+	if (shouldGoThroughApp(options)) {
+		if (Object.keys(agentPaths).length > 0) {
+			fail(
+				'--agent-path cannot be used while the Maestro app is running. Set binary paths in Settings, or quit the app first.',
+				options,
+				ExitCode.InvalidUsage,
+				'INVALID_OPTIONS'
+			);
+		}
+		const request: CueBundleImportRequest = {
+			bundlePath: resolveCliPath(bundlePath),
+			workspaces,
+			force: options.force,
+			refuseShellCommands: options.rejectShellCommands,
+			dryRun: options.dryRun,
+		};
+		let outcome: CueBundleImportOutcome;
+		try {
+			outcome = await viaApp<CueBundleImportOutcome>('cue_bundle_import', request);
+		} catch (error) {
+			fail(error instanceof Error ? error.message : String(error), options);
+		}
+		if (!outcome.ok) {
+			reportImportFailure(outcome.code, outcome.message, outcome.details ?? {}, options);
+		}
+		if (options.json) {
+			console.log(
+				JSON.stringify(
+					{
+						success: true,
+						applied: outcome.applied,
+						dryRun: !!options.dryRun,
+						via: 'app',
+						plan: outcome.plan,
+					},
+					null,
+					2
+				)
+			);
+			return;
+		}
+		console.log(formatImportPlan(outcome.plan, outcome.applied, !!options.force, true));
+		return;
+	}
+
 	const { importCueBundle, CueBundleImportError } =
 		await import('../../main/cue/bundle/cue-bundle-importer');
 	let result: Awaited<ReturnType<typeof importCueBundle>>;
@@ -452,33 +609,7 @@ export async function bundleImport(
 		if (!(error instanceof CueBundleImportError)) {
 			fail(error instanceof Error ? error.message : String(error), options);
 		}
-		const exit = IMPORT_USAGE_CODES.has(error.code) ? ExitCode.InvalidUsage : ExitCode.GeneralError;
-		if (!options.json) {
-			const detail: string[] = [];
-			if (error.code === 'CONFLICTS') {
-				detail.push(
-					...(error.details.conflicts as CueBundleImportConflict[]).map(formatConflict),
-					'Re-run with --dry-run to see the full plan, or --force to overwrite.'
-				);
-			} else if (error.code === 'WORKSPACE_UNMAPPED') {
-				const keys = error.details.workspaces as string[];
-				detail.push(...keys.map((key) => `  --workspace ${key}=<local folder>`));
-			} else if (error.code === 'SHELL_COMMANDS_REFUSED') {
-				const commands = error.details.shellCommands as Array<{
-					workspace: string;
-					subscription: string;
-					command: string;
-				}>;
-				detail.push(...commands.map((c) => `  ${c.workspace} / ${c.subscription}: ${c.command}`));
-			} else if (error.code === 'BUNDLE_INVALID') {
-				const issues = (error.details.errors as CueBundleValidationIssue[] | undefined) ?? [];
-				detail.push(...issues.map(formatIssue));
-			}
-			console.error(`Error: ${error.message}`);
-			if (detail.length > 0) console.error(detail.join('\n'));
-			process.exit(exit);
-		}
-		fail(error.message, options, exit, error.code, error.details);
+		reportImportFailure(error.code, error.message, error.details, options);
 	}
 
 	if (options.json) {

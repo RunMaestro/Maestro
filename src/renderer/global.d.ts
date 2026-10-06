@@ -4553,6 +4553,9 @@ interface MaestroAPI {
 		delete: (filePath: string) => Promise<void>;
 	};
 
+	// Cue Bundle API (export / import a pipeline or an agent as a portable zip)
+	cueBundle: import('../main/preload/cueBundle').CueBundleApi;
+
 	// Pianola API (autonomous manager: rules + decision log)
 	// All channels reject with 'PianolaDisabled' when the Encore flag is off.
 	pianola: {

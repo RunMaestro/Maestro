@@ -516,6 +516,29 @@ describe('importCueBundle against a fixture bundle', () => {
 			);
 		});
 
+		it('replaces the declared secret names on a forced import, and clears them when none are declared', async () => {
+			const declaring = (required: string[]) => ({
+				files: (files: Map<string, string>) => {
+					const agent = JSON.parse(files.get('agents/agent-a.json')!);
+					agent.env.required = required;
+					files.set('agents/agent-a.json', JSON.stringify(agent));
+				},
+				manifest: (manifest: { requirements: { secrets: string[] } }) => {
+					manifest.requirements.secrets = [
+						...new Set([...manifest.requirements.secrets, ...required]),
+					];
+				},
+			});
+			await importCueBundle(options({}, { env: { API_KEY: 'k' } }));
+			expect(readSessionsStoreFile(dataDir).sessions[0].requiredSecrets).toEqual(['API_KEY']);
+
+			await importCueBundle(options(declaring(['OTHER_KEY']), { force: true }));
+			expect(readSessionsStoreFile(dataDir).sessions[0].requiredSecrets).toEqual(['OTHER_KEY']);
+
+			await importCueBundle(options(declaring([]), { force: true }));
+			expect(readSessionsStoreFile(dataDir).sessions[0].requiredSecrets).toBeUndefined();
+		});
+
 		it('reports a secret supplied only as a file as set, the way the launch will find it', async () => {
 			const credentials = path.join(tmp, 'credentials');
 			const runSecrets = path.join(tmp, 'run-secrets');
