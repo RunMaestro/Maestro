@@ -63,6 +63,14 @@ afterEach(async () => {
 	await new Promise<void>((resolve) => server.close(() => resolve()));
 });
 describe('private paired browser relay', () => {
+	it('rejects non-ASCII credentials without throwing or contacting the host', async () => {
+		const response = await fetch(relay.url + '/api/sessions', {
+			headers: { [ADMISSION_HEADER]: '\u00e9'.repeat(credential.length) },
+			signal: AbortSignal.timeout(1000),
+		});
+		expect(response.status).toBe(403);
+		expect(requests).toBe(0);
+	});
 	it('rejects missing credentials, cross-origin requests and sibling paths before contacting the host', async () => {
 		expect((await fetch(relay.url + '/api/sessions')).status).toBe(403);
 		expect(

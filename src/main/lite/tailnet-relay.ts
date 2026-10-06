@@ -58,7 +58,7 @@ export async function openTailnetRelay(
 		const auth = req.headers[ADMISSION_HEADER];
 		if (
 			typeof auth !== 'string' ||
-			auth.length !== credential.length ||
+			Buffer.byteLength(auth) !== Buffer.byteLength(credential) ||
 			!timingSafeEqual(Buffer.from(auth), Buffer.from(credential))
 		)
 			return false;
