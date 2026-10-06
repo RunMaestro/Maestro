@@ -234,10 +234,38 @@ export interface CueRunManager {
 		 * concurrency-gated notify runs still surface the right toast body
 		 * and sticky flag when they drain.
 		 */
-		notify?: CueNotifyConfig
+		notify?: CueNotifyConfig,
+		/**
+		 * Skip the `queue_size` cap (and the queue_size <= 0 drop) when this
+		 * event has to wait. Passed by the engine when it restores rows a
+		 * drain deferred: those were acknowledged work, not buffered
+		 * overflow, so a drain that deferred three successors for an agent
+		 * with `queue_size: 1` must run all three. Concurrency still applies.
+		 */
+		exemptFromQueueCap?: boolean
 	): void;
 	stopRun(runId: string): boolean;
 	stopAll(): void;
+	/**
+	 * Drain gate (`CueEngine.drain`). While on, `execute` never starts a run:
+	 * every event is queued and persisted regardless of `queue_size`, and
+	 * the queue never drains. Off by default; the desktop never sets it.
+	 */
+	setDraining(draining: boolean): void;
+	/** Resolves once no run is active (immediately when none is). */
+	whenIdle(): Promise<void>;
+	/**
+	 * Re-persist every queued entry stamped with `drainedAt`, so restore can
+	 * tell deferred work from a crash leftover (see cue-queue-persistence).
+	 * Returns how many entries were written.
+	 */
+	persistQueueForRestart(drainedAt: number): number;
+	/**
+	 * Forget active runs and the queue in memory WITHOUT touching persisted
+	 * rows. The drain's last step; `reset()` would delete the rows it just
+	 * deferred.
+	 */
+	discardInMemory(): void;
 	getActiveRuns(): CueRunResult[];
 	getActiveRunCount(sessionId: string): number;
 	getActiveRunMap(): Map<string, ActiveRun>;
@@ -260,6 +288,24 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 	// no-self-overlap rule explicit and independent of the slot count, while
 	// still letting DIFFERENT subscriptions run in parallel up to max_concurrent.
 	const activeRootKeys = new Set<string>();
+
+	/** Set by the drain (see `setDraining`): queue everything, start nothing. */
+	let draining = false;
+	/**
+	 * Runs the drain stopped. Their process exits after `stopRun` already
+	 * recorded `stopped`, and a shell or maestro-cli run reports that exit as
+	 * its own status (`failed` on a signal), which would overwrite the row. The
+	 * drain keeps `stopped`. (A desktop manual stop is left as it was.)
+	 */
+	const drainStoppedRuns = new Set<string>();
+	/** Callers of `whenIdle()` waiting for the last active run to leave. */
+	let idleWaiters: Array<() => void> = [];
+	function notifyIfIdle(): void {
+		if (activeRuns.size > 0 || idleWaiters.length === 0) return;
+		const waiters = idleWaiters;
+		idleWaiters = [];
+		for (const resolve of waiters) resolve();
+	}
 
 	/** Stable identity for a root trigger; null for chained (depth > 0) runs,
 	 *  which are part of an already-serialized chain and never self-guarded. */
@@ -290,6 +336,8 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 	}
 
 	function drainQueue(sessionId: string): void {
+		// The drain defers every queued event to the next start.
+		if (draining) return;
 		const queue = eventQueue.get(sessionId);
 		if (!queue || queue.length === 0) return;
 
@@ -507,6 +555,7 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 			runId,
 			sessionId,
 			subscriptionName,
+			...(pipelineName ? { pipelineId: pipelineName } : {}),
 		} satisfies CueLogPayload);
 		deps.onRunStarted?.({ runId, sessionId, subscriptionName });
 
@@ -527,11 +576,13 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 				// flight. The finally block's cleanup is gated on activeRuns
 				// having this run, so without an explicit DB write the row
 				// would stay `running` forever in the activity log.
+				const stoppedByDrain = drainStoppedRuns.delete(runId);
+				const finalStatus = stoppedByDrain ? 'stopped' : runResult.status;
 				safeUpdateCueEventStatus(
 					runId,
-					runResult.status,
+					finalStatus,
 					runResult.providerSessionId,
-					completionInfoFromResult(runResult)
+					completionInfoFromResult({ ...runResult, status: finalStatus })
 				);
 				// Emit with the structured runFinished payload so live
 				// listeners (activity log, queue indicators) observe the
@@ -539,13 +590,13 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 				// what renderer subscribers key off of.
 				deps.onLog(
 					'cue',
-					`[CUE] Run "${subscriptionName}" completed after engine stop - status recorded (${runResult.status}), result discarded`,
+					`[CUE] Run "${subscriptionName}" completed after engine stop - status recorded (${finalStatus}), result discarded`,
 					{
 						type: 'runFinished',
 						runId,
 						sessionId,
 						subscriptionName,
-						status: runResult.status,
+						status: finalStatus,
 					} satisfies CueLogPayload
 				);
 				return;
@@ -800,6 +851,7 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 					sessionId,
 					subscriptionName,
 					status: result.status,
+					...(pipelineName ? { pipelineId: pipelineName } : {}),
 				} satisfies CueLogPayload);
 
 				// Notify engine of completion (for activity log + chain propagation).
@@ -809,6 +861,9 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 				// same root identity (or this run's runId, if it was itself
 				// a root).
 				deps.onRunCompleted(sessionId, result, subscriptionName, chainDepth, effectiveChainRootId);
+				// After onRunCompleted, which can queue this run's successors: a drain
+				// waiting for idleness must see them before it persists the queue.
+				notifyIfIdle();
 			}
 		}
 	}
@@ -828,11 +883,15 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 			pipelineName?: string,
 			chainRootId?: string,
 			parentEventId?: string,
-			notify?: CueNotifyConfig
+			notify?: CueNotifyConfig,
+			exemptFromQueueCap?: boolean
 		): void {
 			const settings = deps.getSessionSettings(sessionId);
 			const maxConcurrent = settings?.max_concurrent ?? 1;
 			const queueSize = settings?.queue_size ?? 0;
+			// While draining, or for a deferred event restored after a drain, the
+			// queue is a deferral rather than a buffer: never cap or drop it.
+			const uncapped = draining || exemptFromQueueCap === true;
 			const currentCount = activeRunCount.get(sessionId) ?? 0;
 
 			// Self-overlap guard: a root trigger whose own subscription is already
@@ -844,7 +903,7 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 			const incomingRootKey = rootKeyFor(sessionId, subscriptionName, chainDepth);
 			const sameRootActive = incomingRootKey ? activeRootKeys.has(incomingRootKey) : false;
 
-			if (currentCount >= maxConcurrent || sameRootActive) {
+			if (draining || currentCount >= maxConcurrent || sameRootActive) {
 				// At concurrency limit (or blocked by an in-flight same-root run) -
 				// queue the event.
 				const sessionName = getSessionName(sessionId);
@@ -852,7 +911,7 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 				// Note in the log when the queueing is purely due to the
 				// self-overlap guard (a slot was free) so the wait isn't
 				// mistaken for a concurrency-limit backlog.
-				if (sameRootActive && currentCount < maxConcurrent) {
+				if (!draining && sameRootActive && currentCount < maxConcurrent) {
 					deps.onLog(
 						'cue',
 						`[CUE] "${subscriptionName}" already running - serializing re-trigger (slot free, same-subscription overlap blocked)`
@@ -863,7 +922,7 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 				// this, the overflow branch below dereferences queue[0] on an
 				// empty queue and crashes. Treat the incoming event itself as
 				// dropped (not the non-existent oldest) and return early.
-				if (queueSize <= 0) {
+				if (queueSize <= 0 && !uncapped) {
 					deps.onQueueOverflow?.({
 						sessionId,
 						sessionName,
@@ -882,7 +941,7 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 				}
 				const queue = eventQueue.get(sessionId)!;
 
-				if (queue.length >= queueSize) {
+				if (queue.length >= queueSize && !uncapped) {
 					// Drop the oldest entry. Surface this to the user via the
 					// onQueueOverflow callback (12B) - without it the drop is
 					// invisible except to someone scraping logs.
@@ -945,7 +1004,9 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 
 				deps.onLog(
 					'cue',
-					`[CUE] Event queued for "${sessionName}" (${queue.length}/${queueSize} in queue, ${currentCount}/${maxConcurrent} concurrent)`
+					draining
+						? `[CUE] Event deferred for "${sessionName}" (engine draining, ${queue.length} in queue)`
+						: `[CUE] Event queued for "${sessionName}" (${queue.length}/${queueSize} in queue, ${currentCount}/${maxConcurrent} concurrent)`
 				);
 				return;
 			}
@@ -975,6 +1036,7 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 			if (prevPhase === null) return false;
 
 			const run = activeRuns.get(runId)!;
+			if (draining) drainStoppedRuns.add(runId);
 
 			// Signal the process to stop - kill the currently executing child process.
 			// During output prompt phase, processRunId differs from the parent runId.
@@ -1015,7 +1077,9 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 				runId,
 				sessionId: run.result.sessionId,
 				subscriptionName: run.result.subscriptionName,
+				...(run.result.pipelineName ? { pipelineId: run.result.pipelineName } : {}),
 			} satisfies CueLogPayload);
+			notifyIfIdle();
 			return true;
 		},
 
@@ -1037,6 +1101,53 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 			// torn-down engine never leaves a stale guard that would wrongly
 			// block the first run after restart.
 			activeRootKeys.clear();
+		},
+
+		setDraining(on: boolean): void {
+			draining = on;
+		},
+
+		whenIdle(): Promise<void> {
+			if (activeRuns.size === 0) return Promise.resolve();
+			return new Promise<void>((resolve) => idleWaiters.push(resolve));
+		},
+
+		persistQueueForRestart(drainedAt: number): number {
+			const persistence = deps.queuePersistence;
+			if (!persistence) return 0;
+			let count = 0;
+			for (const [sessionId, queue] of eventQueue) {
+				for (const entry of queue) {
+					if (!entry.persistId) entry.persistId = crypto.randomUUID();
+					persistence.persist(sessionId, entry.persistId, {
+						event: entry.event,
+						subscriptionName: entry.subscriptionName,
+						prompt: entry.prompt,
+						outputPrompt: entry.outputPrompt,
+						cliOutput: entry.cliOutput,
+						action: entry.action,
+						command: entry.command,
+						chainDepth: entry.chainDepth,
+						queuedAt: entry.queuedAt,
+						chainRootId: entry.chainRootId,
+						parentEventId: entry.parentEventId,
+						drainedAt,
+					});
+					count++;
+				}
+			}
+			return count;
+		},
+
+		discardInMemory(): void {
+			for (const runId of activeRuns.keys()) {
+				deps.onAllowSleep?.(`cue:run:${runId}`);
+			}
+			activeRuns.clear();
+			activeRunCount.clear();
+			activeRootKeys.clear();
+			eventQueue.clear();
+			notifyIfIdle();
 		},
 
 		getActiveRuns(): CueRunResult[] {
@@ -1101,6 +1212,7 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 			// Reset tears down everything - persisted copies too. Any re-enqueue
 			// after reset() will generate fresh persist IDs.
 			deps.queuePersistence?.clearAll();
+			notifyIfIdle();
 		},
 	};
 }

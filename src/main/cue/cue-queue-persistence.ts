@@ -40,11 +40,27 @@ export interface PersistableQueueEntry {
 	 *  for root events (and for any entry queued while usageStats is off). */
 	chainRootId?: string;
 	parentEventId?: string;
+	/**
+	 * Set when a drain (`CueEngine.drain`) deferred this entry to the next
+	 * start: the epoch ms the engine stopped. Restore then measures staleness
+	 * as the time the entry waited while an engine was UP (`drainedAt -
+	 * queuedAt`), so a server that was down longer than the session timeout
+	 * does not throw away work it acknowledged. Unset for every other row (a
+	 * crash leftover), which keeps the wall-clock rule.
+	 */
+	drainedAt?: number;
 }
 
 export interface RestoredQueueEntry extends PersistableQueueEntry {
 	persistId: string;
 }
+
+/**
+ * Where the drain stamp lives: a reserved key inside the stored `event_json`.
+ * `cue_event_queue` itself is unchanged; this module owns the row's JSON shape
+ * and strips the key before the event reaches anything else.
+ */
+const DRAINED_AT_KEY = 'maestroDrainedAt';
 
 export interface CueQueuePersistence {
 	persist(sessionId: string, persistId: string, entry: PersistableQueueEntry): void;
@@ -80,7 +96,11 @@ export function createCueQueuePersistence(deps: CueQueuePersistenceDeps): CueQue
 			id: persistId,
 			sessionId,
 			subscriptionName: entry.subscriptionName,
-			eventJson: JSON.stringify(entry.event),
+			eventJson: JSON.stringify(
+				entry.drainedAt !== undefined
+					? { ...entry.event, [DRAINED_AT_KEY]: entry.drainedAt }
+					: entry.event
+			),
 			prompt: entry.prompt,
 			outputPrompt: entry.outputPrompt ?? null,
 			cliOutputJson: entry.cliOutput ? JSON.stringify(entry.cliOutput) : null,
@@ -199,23 +219,17 @@ export function createCueQueuePersistence(deps: CueQueuePersistenceDeps): CueQue
 				continue;
 			}
 
-			// Staleness check (mirrors cue-run-manager's runtime drainQueue check).
-			const ageMs = currentTime - row.queuedAt;
-			const timeoutMs = deps.getSessionTimeoutMs(row.sessionId);
-			if (timeoutMs > 0 && ageMs > timeoutMs) {
-				recordRestoredDrop(row, 'stale', { queuedForMs: ageMs });
-				safeRemoveQueuedEvent(row.id);
-				droppedStale++;
-				continue;
-			}
-
 			// Deserialize. Any JSON failure is a data integrity problem - drop the
 			// row so it doesn't stall restore every time the engine starts.
 			let event: CueEvent;
 			let cliOutput: { target: string } | undefined;
 			let command: CueCommand | undefined;
+			let drainedAt: number | undefined;
 			try {
-				event = JSON.parse(row.eventJson);
+				const parsed = JSON.parse(row.eventJson) as CueEvent & { [DRAINED_AT_KEY]?: unknown };
+				if (typeof parsed[DRAINED_AT_KEY] === 'number') drainedAt = parsed[DRAINED_AT_KEY];
+				delete parsed[DRAINED_AT_KEY];
+				event = parsed;
 				cliOutput = row.cliOutputJson ? JSON.parse(row.cliOutputJson) : undefined;
 				command = row.commandJson ? JSON.parse(row.commandJson) : undefined;
 			} catch (err) {
@@ -232,6 +246,21 @@ export function createCueQueuePersistence(deps: CueQueuePersistenceDeps): CueQue
 				continue;
 			}
 
+			// Staleness check (mirrors cue-run-manager's runtime drainQueue check).
+			// A drained row's age is the time it waited while an engine was up:
+			// downtime does not count against work a drain deferred.
+			const ageMs =
+				drainedAt !== undefined
+					? Math.max(0, drainedAt - row.queuedAt)
+					: currentTime - row.queuedAt;
+			const timeoutMs = deps.getSessionTimeoutMs(row.sessionId);
+			if (timeoutMs > 0 && ageMs > timeoutMs) {
+				recordRestoredDrop(row, 'stale', { queuedForMs: ageMs });
+				safeRemoveQueuedEvent(row.id);
+				droppedStale++;
+				continue;
+			}
+
 			const entry: RestoredQueueEntry = {
 				persistId: row.id,
 				event,
@@ -242,9 +271,12 @@ export function createCueQueuePersistence(deps: CueQueuePersistenceDeps): CueQue
 				action: (row.action as CueSubscription['action']) ?? undefined,
 				command,
 				chainDepth: row.chainDepth,
-				queuedAt: row.queuedAt,
+				// Rebased for a drained row, so the run manager's runtime stale
+				// check sees the same age restore just judged, not the downtime.
+				queuedAt: drainedAt !== undefined ? currentTime - ageMs : row.queuedAt,
 				chainRootId: row.chainRootId ?? undefined,
 				parentEventId: row.parentEventId ?? undefined,
+				...(drainedAt !== undefined ? { drainedAt } : {}),
 			};
 			if (!restored.has(row.sessionId)) restored.set(row.sessionId, []);
 			restored.get(row.sessionId)!.push(entry);

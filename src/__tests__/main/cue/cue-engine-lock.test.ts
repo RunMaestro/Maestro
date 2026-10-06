@@ -13,7 +13,7 @@
  * is not reliably true across POSIX and Windows CI hosts.
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, afterAll, afterEach, vi } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -260,6 +260,34 @@ describe('cue-engine-lock', () => {
 		});
 	});
 
+	describe('status port', () => {
+		it('is written on acquire, kept by every heartbeat, and read back', async () => {
+			const {
+				acquireCueEngineLock,
+				touchCueEngineLock,
+				readCueEngineLock,
+				setCueEngineLockStatusPort,
+			} = await freshModule();
+			setCueEngineLockStatusPort(7433);
+			try {
+				acquireCueEngineLock('standalone');
+				expect(readCueEngineLock()?.statusPort).toBe(7433);
+				expect(touchCueEngineLock('standalone')).toBe('held');
+				expect(JSON.parse(fs.readFileSync(lockPath, 'utf-8')).statusPort).toBe(7433);
+				expect(readCueEngineLock()?.statusPort).toBe(7433);
+			} finally {
+				setCueEngineLockStatusPort(undefined);
+			}
+		});
+
+		it('is absent when no status server runs', async () => {
+			const { acquireCueEngineLock, readCueEngineLock } = await freshModule();
+			acquireCueEngineLock('desktop');
+			expect(readCueEngineLock()?.statusPort).toBeUndefined();
+			expect('statusPort' in JSON.parse(fs.readFileSync(lockPath, 'utf-8'))).toBe(false);
+		});
+	});
+
 	describe('touchCueEngineLock', () => {
 		it('refreshes the heartbeat and keeps the original startedAt', async () => {
 			const { acquireCueEngineLock, touchCueEngineLock } = await freshModule();
@@ -417,5 +445,330 @@ describe('cue-engine-lock', () => {
 		} finally {
 			child.kill();
 		}
+	});
+});
+
+/**
+ * Stale-lock TAKEOVER races. The lock token is minted once per process, so a
+ * competing engine has to be a real separate process. The module is bundled
+ * once with esbuild and driven by long-lived worker processes over request /
+ * response files in a control directory: file polling (rather than IPC) is
+ * what lets a synchronous test hook block on a competitor finishing while
+ * this process sits in the middle of an acquire, touch or release.
+ */
+describe('cue-engine-lock: simultaneous stale takeover', () => {
+	const WORKER_COUNT = 6;
+	const RACE_ROUNDS = 25;
+
+	interface Worker {
+		child: ChildProcess;
+		ctrlDir: string;
+		seq: number;
+	}
+	interface WorkerReply {
+		pid: number;
+		acquired?: boolean;
+		touch?: 'held' | 'lost';
+		error?: string;
+	}
+
+	let rootDir: string;
+	let bundlePath: string;
+	let workerPath: string;
+	const workers: Worker[] = [];
+
+	const WORKER_SOURCE = `
+const fs = require('fs');
+const path = require('path');
+const lock = require(process.argv[2]);
+const ctrlDir = process.argv[3];
+const done = new Set();
+fs.writeFileSync(path.join(ctrlDir, 'ready'), '');
+setInterval(() => {
+	for (const name of fs.readdirSync(ctrlDir)) {
+		if (!name.startsWith('req-') || !name.endsWith('.json') || done.has(name)) continue;
+		done.add(name);
+		const req = JSON.parse(fs.readFileSync(path.join(ctrlDir, name), 'utf-8'));
+		while (Date.now() < (req.at || 0)) {}
+		const reply = { pid: process.pid };
+		try {
+			if (req.action === 'acquire') reply.acquired = lock.acquireCueEngineLock('standalone', req.dataDir).acquired;
+			if (req.action === 'touch') reply.touch = lock.touchCueEngineLock('standalone', req.dataDir);
+			if (req.action === 'release') lock.releaseCueEngineLock(req.dataDir);
+		} catch (err) {
+			// Report instead of dying, so a throw fails the test by name rather than as a timeout.
+			reply.error = String((err && err.stack) || err);
+		}
+		const out = path.join(ctrlDir, name.replace('req-', 'res-'));
+		fs.writeFileSync(out + '.tmp', JSON.stringify(reply));
+		fs.renameSync(out + '.tmp', out);
+	}
+}, 2);
+`;
+
+	function sleepSync(ms: number): void {
+		Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+	}
+
+	function sendRequest(worker: Worker, action: string, dataDir: string, at = 0): string {
+		const id = `${++worker.seq}`;
+		const req = path.join(worker.ctrlDir, `req-${id}.json`);
+		fs.writeFileSync(`${req}.tmp`, JSON.stringify({ action, dataDir, at }));
+		fs.renameSync(`${req}.tmp`, req);
+		return path.join(worker.ctrlDir, `res-${id}.json`);
+	}
+
+	/** Blocks this process until the worker answers - for use inside a synchronous lock hook. */
+	function requestSync(worker: Worker, action: string, dataDir: string): WorkerReply {
+		const res = sendRequest(worker, action, dataDir);
+		const deadline = Date.now() + 15_000;
+		while (!fs.existsSync(res)) {
+			if (Date.now() > deadline) throw new Error(`worker did not answer ${action}`);
+			sleepSync(2);
+		}
+		return JSON.parse(fs.readFileSync(res, 'utf-8'));
+	}
+
+	async function request(
+		worker: Worker,
+		action: string,
+		dataDir: string,
+		at = 0
+	): Promise<WorkerReply> {
+		const res = sendRequest(worker, action, dataDir, at);
+		const deadline = Date.now() + 15_000;
+		while (!fs.existsSync(res)) {
+			if (Date.now() > deadline) throw new Error(`worker did not answer ${action}`);
+			await new Promise((resolve) => setTimeout(resolve, 2));
+		}
+		return JSON.parse(fs.readFileSync(res, 'utf-8'));
+	}
+
+	let round = 0;
+	function freshDataDir(): string {
+		const dir = path.join(rootDir, `data-${++round}`);
+		fs.mkdirSync(dir);
+		return dir;
+	}
+
+	/** A lock nobody can still own: foreign token, heartbeat ten minutes old. */
+	function staleLockBody(): string {
+		const old = new Date(Date.now() - 10 * 60_000).toISOString();
+		return JSON.stringify({
+			pid: 999_999,
+			token: 'crashed-engine',
+			mode: 'standalone',
+			startedAt: old,
+			heartbeatAt: old,
+		});
+	}
+
+	function lockOnDisk(dataDir: string): { pid: number; token: string } {
+		return JSON.parse(fs.readFileSync(path.join(dataDir, 'cue-engine.lock'), 'utf-8'));
+	}
+
+	beforeAll(async () => {
+		rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cue-lock-race-'));
+		bundlePath = path.join(rootDir, 'cue-engine-lock.cjs');
+		workerPath = path.join(rootDir, 'worker.cjs');
+		const esbuild = await import('esbuild');
+		esbuild.buildSync({
+			entryPoints: [path.resolve(__dirname, '../../../main/cue/cue-engine-lock.ts')],
+			bundle: true,
+			platform: 'node',
+			format: 'cjs',
+			outfile: bundlePath,
+			logLevel: 'silent',
+		});
+		fs.writeFileSync(workerPath, WORKER_SOURCE);
+		for (let i = 0; i < WORKER_COUNT; i++) {
+			const ctrlDir = path.join(rootDir, `ctrl-${i}`);
+			fs.mkdirSync(ctrlDir);
+			const child = spawn(process.execPath, [workerPath, bundlePath, ctrlDir], {
+				stdio: 'ignore',
+			});
+			workers.push({ child, ctrlDir, seq: 0 });
+		}
+		const deadline = Date.now() + 15_000;
+		while (!workers.every((w) => fs.existsSync(path.join(w.ctrlDir, 'ready')))) {
+			if (Date.now() > deadline) throw new Error('lock workers did not start');
+			await new Promise((resolve) => setTimeout(resolve, 10));
+		}
+	}, 30_000);
+
+	afterAll(async () => {
+		// Wait for every worker to exit before removing its control directory:
+		// Windows refuses (EBUSY / EPERM) to delete a directory a dying process
+		// is still polling.
+		await Promise.all(
+			workers.map(
+				(w) =>
+					new Promise<void>((resolve) => {
+						if (w.child.exitCode !== null || w.child.signalCode !== null) return resolve();
+						w.child.once('exit', () => resolve());
+						w.child.kill();
+					})
+			)
+		);
+		fs.rmSync(rootDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+	}, 30_000);
+
+	afterEach(async () => {
+		const { __setCueEngineLockTestHook } = await import('../../../main/cue/cue-engine-lock');
+		__setCueEngineLockTestHook(undefined);
+	});
+
+	/** Every worker acquires at the same wall-clock instant; exactly one may win. */
+	async function race(dataDir: string): Promise<void> {
+		const at = Date.now() + 40;
+		const replies = await Promise.all(workers.map((w) => request(w, 'acquire', dataDir, at)));
+		expect(replies.filter((r) => r.error).map((r) => r.error)).toEqual([]);
+		const winners = replies.filter((r) => r.acquired);
+		expect(winners).toHaveLength(1);
+		expect(lockOnDisk(dataDir).pid).toBe(winners[0].pid);
+		const leftovers = fs.readdirSync(dataDir).filter((n) => n !== 'cue-engine.lock');
+		expect(leftovers).toEqual([]);
+	}
+
+	it('exactly one of N engines takes over the same stale lock, every round', async () => {
+		for (let i = 0; i < RACE_ROUNDS; i++) {
+			const dataDir = freshDataDir();
+			fs.writeFileSync(path.join(dataDir, 'cue-engine.lock'), staleLockBody());
+			await race(dataDir);
+		}
+	}, 60_000);
+
+	it('exactly one of N engines takes over a corrupt lock', async () => {
+		for (let i = 0; i < 10; i++) {
+			const dataDir = freshDataDir();
+			fs.writeFileSync(path.join(dataDir, 'cue-engine.lock'), 'not valid json{{{');
+			await race(dataDir);
+		}
+	}, 60_000);
+
+	it('exactly one of N engines creates a lock when none exists', async () => {
+		for (let i = 0; i < 10; i++) await race(freshDataDir());
+	}, 60_000);
+
+	describe('forced interleavings', () => {
+		async function lockModule() {
+			return import('../../../main/cue/cue-engine-lock');
+		}
+
+		it('backs off when a competitor finishes a takeover after we judged the lock stale', async () => {
+			const { acquireCueEngineLock, __setCueEngineLockTestHook } = await lockModule();
+			const dataDir = freshDataDir();
+			fs.writeFileSync(path.join(dataDir, 'cue-engine.lock'), staleLockBody());
+			let competitor: WorkerReply | undefined;
+			__setCueEngineLockTestHook((point) => {
+				if (point === 'acquireAfterJudgedStale' && !competitor) {
+					competitor = requestSync(workers[0], 'acquire', dataDir);
+				}
+			});
+
+			expect(acquireCueEngineLock('desktop', dataDir).acquired).toBe(false);
+			expect(competitor?.acquired).toBe(true);
+			expect(lockOnDisk(dataDir).pid).toBe(competitor?.pid);
+			await request(workers[0], 'release', dataDir);
+		});
+
+		it('a competitor cannot take over while we hold the claim', async () => {
+			const { acquireCueEngineLock, __setCueEngineLockTestHook } = await lockModule();
+			const dataDir = freshDataDir();
+			fs.writeFileSync(path.join(dataDir, 'cue-engine.lock'), staleLockBody());
+			let competitor: WorkerReply | undefined;
+			__setCueEngineLockTestHook((point) => {
+				if (point === 'afterClaim' && !competitor) {
+					competitor = requestSync(workers[1], 'acquire', dataDir);
+				}
+			});
+
+			expect(acquireCueEngineLock('desktop', dataDir).acquired).toBe(true);
+			expect(competitor?.acquired).toBe(false);
+			expect(lockOnDisk(dataDir).pid).toBe(process.pid);
+		});
+
+		it('touch never overwrites a lock created after it found none', async () => {
+			const { touchCueEngineLock, __setCueEngineLockTestHook } = await lockModule();
+			const dataDir = freshDataDir();
+			let competitor: WorkerReply | undefined;
+			__setCueEngineLockTestHook((point) => {
+				if (point === 'touchAfterRead' && !competitor) {
+					competitor = requestSync(workers[2], 'acquire', dataDir);
+				}
+			});
+
+			expect(touchCueEngineLock('desktop', dataDir)).toBe('lost');
+			expect(competitor?.acquired).toBe(true);
+			expect(lockOnDisk(dataDir).pid).toBe(competitor?.pid);
+			await request(workers[2], 'release', dataDir);
+		});
+
+		/** Make our own lock look like a suspended owner's: our token, heartbeat long gone. */
+		function ageOurLock(dataDir: string): void {
+			const file = path.join(dataDir, 'cue-engine.lock');
+			const old = new Date(Date.now() - 10 * 60_000).toISOString();
+			const info = JSON.parse(fs.readFileSync(file, 'utf-8'));
+			fs.writeFileSync(file, JSON.stringify({ ...info, heartbeatAt: old, startedAt: old }));
+		}
+
+		it("touch reports 'lost' when our stale lock is taken over between read and write", async () => {
+			const { acquireCueEngineLock, touchCueEngineLock, __setCueEngineLockTestHook } =
+				await lockModule();
+			const dataDir = freshDataDir();
+			expect(acquireCueEngineLock('desktop', dataDir).acquired).toBe(true);
+			ageOurLock(dataDir);
+			let competitor: WorkerReply | undefined;
+			__setCueEngineLockTestHook((point) => {
+				if (point === 'touchAfterRead' && !competitor) {
+					competitor = requestSync(workers[3], 'acquire', dataDir);
+				}
+			});
+
+			expect(touchCueEngineLock('desktop', dataDir)).toBe('lost');
+			expect(competitor?.acquired).toBe(true);
+			expect(lockOnDisk(dataDir).pid).toBe(competitor?.pid);
+			await request(workers[3], 'release', dataDir);
+		});
+
+		it('release leaves alone a lock taken over between read and remove', async () => {
+			const { acquireCueEngineLock, releaseCueEngineLock, __setCueEngineLockTestHook } =
+				await lockModule();
+			const dataDir = freshDataDir();
+			expect(acquireCueEngineLock('desktop', dataDir).acquired).toBe(true);
+			ageOurLock(dataDir);
+			let competitor: WorkerReply | undefined;
+			__setCueEngineLockTestHook((point) => {
+				if (point === 'releaseAfterRead' && !competitor) {
+					competitor = requestSync(workers[4], 'acquire', dataDir);
+				}
+			});
+
+			releaseCueEngineLock(dataDir);
+			expect(competitor?.acquired).toBe(true);
+			expect(lockOnDisk(dataDir).pid).toBe(competitor?.pid);
+			await request(workers[4], 'release', dataDir);
+		});
+
+		it('steps past an orphaned claim left by an engine killed mid-takeover', async () => {
+			const { acquireCueEngineLock } = await lockModule();
+			const dataDir = freshDataDir();
+			const file = path.join(dataDir, 'cue-engine.lock');
+			fs.writeFileSync(file, staleLockBody());
+			const crypto = await import('crypto');
+			const generation = crypto
+				.createHash('sha256')
+				.update(fs.readFileSync(file, 'utf-8'))
+				.digest('hex')
+				.slice(0, 16);
+			const orphan = `${file}.claim-${generation}.0`;
+			fs.mkdirSync(orphan);
+			const longAgo = new Date(Date.now() - 10 * 60_000);
+			fs.utimesSync(orphan, longAgo, longAgo);
+
+			expect(acquireCueEngineLock('desktop', dataDir).acquired).toBe(true);
+			expect(lockOnDisk(dataDir).pid).toBe(process.pid);
+			expect(fs.existsSync(orphan)).toBe(false);
+		});
 	});
 });

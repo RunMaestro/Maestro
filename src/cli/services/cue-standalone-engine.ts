@@ -65,6 +65,8 @@ import {
 	type CueRunSessionRecord,
 } from '../../main/cue/cue-run-router';
 import type { CueRunResult } from '../../shared/cue/contracts';
+import type { CueExternalNotification } from '../../main/cue/cue-notify-webhook';
+import { formatJsonLogLine } from '../../shared/jsonLogLine';
 import {
 	readSessions,
 	readSshRemotes,
@@ -88,7 +90,12 @@ function loadExecutorsUncached() {
 		import('../../main/cue/cue-cli-executor'),
 		import('../../main/cue/cue-notify-executor'),
 		import('../../main/cue/cue-auth-detector'),
-	]).then(([, executor, shell, cli, notify, authDetector]) => ({
+		// Every executor registers its children here; the drain counts and
+		// kills through it (see CueEngineDeps.countLiveCueProcesses).
+		import('../../main/cue/cue-process-lifecycle'),
+	]).then(([, executor, shell, cli, notify, authDetector, lifecycle]) => ({
+		countLiveCueProcesses: () => lifecycle.getActiveProcessMap().size,
+		killAllCueProcessesNow: lifecycle.stopAllProcesses,
 		executeCuePrompt: executor.executeCuePrompt,
 		stopCueRun: executor.stopCueRun,
 		executeCueShell: shell.executeCueShell,
@@ -135,6 +142,39 @@ export function consoleCueLog(level: string, message: string): void {
 	}
 }
 
+/**
+ * `--log-format json`: one JSON object per line on stderr, through the same
+ * `formatJsonLogLine()` the main-process logger uses in its JSON mode, so the
+ * engine's lines and the shared modules' lines carry the same fields. Run
+ * identifiers (`runId`, `subscriptionName`, `pipelineId`, `sessionId`) are
+ * lifted out of the engine's structured payload; the payload itself is never
+ * copied (see `jsonLogLine.ts`).
+ */
+export function jsonCueLog(level: string, message: string, data?: unknown): void {
+	process.stderr.write(`${formatJsonLogLine({ level, message, context: 'Cue', data })}\n`);
+}
+
+/** `consoleCueLog`'s text, every level on stderr: for `start --json`, whose stdout is the result. */
+export function stderrCueLog(_level: string, message: string): void {
+	console.error(`[Cue] ${message}`);
+}
+
+/**
+ * The engine log sink for a `--log-format` value. JSON lines always go to
+ * stderr; text lines keep the info-on-stdout split a human at a terminal
+ * expects, unless `stderrOnly` (the command printed `--json`, so stdout is a
+ * contract and a log line there would break the parse).
+ */
+export function cueLogForFormat(
+	format: CueLogFormat | undefined,
+	options: { stderrOnly?: boolean } = {}
+): StandaloneCueLog {
+	if (format === 'json') return jsonCueLog;
+	return options.stderrOnly ? stderrCueLog : consoleCueLog;
+}
+
+export type CueLogFormat = 'text' | 'json';
+
 function sshStoreAdapter(): SshRemoteSettingsStore {
 	return { getSshRemotes: () => readSshRemotes() };
 }
@@ -145,7 +185,23 @@ function sshStoreAdapter(): SshRemoteSettingsStore {
  * narrowings documented above. Executors arrive from `loadExecutors()` so the
  * router itself never imports them as values.
  */
-function buildOnCueRun(onLog: StandaloneCueLog): CueEngineDeps['onCueRun'] {
+/** Hand a notification to `--notify-webhook`'s sink; never lets it fail a run. */
+function forward(
+	sink: ((notification: CueExternalNotification) => void) | undefined,
+	notification: CueExternalNotification
+): void {
+	if (!sink) return;
+	try {
+		sink(notification);
+	} catch {
+		// Best effort by contract (see cue-notify-webhook.ts).
+	}
+}
+
+function buildOnCueRun(
+	onLog: StandaloneCueLog,
+	onExternalNotification?: (notification: CueExternalNotification) => void
+): CueEngineDeps['onCueRun'] {
 	return async (params) => {
 		const executors = await loadExecutors();
 		const deps: CueRunActionDeps = {
@@ -165,8 +221,27 @@ function buildOnCueRun(onLog: StandaloneCueLog): CueEngineDeps['onCueRun'] {
 				(readSettings() as { conductorProfile?: string }).conductorProfile || undefined,
 			// No window in a headless runner - executeCueNotify already
 			// degrades gracefully for this (see module doc, point 2).
-			onNotify: (notifyParams) => executors.executeCueNotify({ ...notifyParams, mainWindow: null }),
-			reportAuthFailure: (result, toolType) => reportStandaloneAuthFailure(result, toolType, onLog),
+			onNotify: async (notifyParams) => {
+				const result = await executors.executeCueNotify({ ...notifyParams, mainWindow: null });
+				// The toast the desktop would show, for --notify-webhook.
+				forward(onExternalNotification, {
+					type: 'cue.notify',
+					agent: {
+						id: notifyParams.agentId,
+						name: notifyParams.session.name,
+						toolType: notifyParams.session.toolType,
+					},
+					subscription: notifyParams.subscription.name,
+					pipeline: notifyParams.subscription.pipeline_name ?? null,
+					runId: notifyParams.runId,
+					title: notifyParams.title,
+					message: notifyParams.message,
+					sticky: notifyParams.sticky === true,
+				});
+				return result;
+			},
+			reportAuthFailure: (result, toolType) =>
+				reportStandaloneAuthFailure(result, toolType, onLog, onExternalNotification),
 		};
 		return executeCueRunAction(deps, params);
 	};
@@ -176,7 +251,8 @@ function buildOnCueRun(onLog: StandaloneCueLog): CueEngineDeps['onCueRun'] {
 async function reportStandaloneAuthFailure(
 	result: CueRunResult,
 	toolType: string,
-	onLog: StandaloneCueLog
+	onLog: StandaloneCueLog,
+	onExternalNotification?: (notification: CueExternalNotification) => void
 ): Promise<void> {
 	let message: string | null = null;
 	try {
@@ -186,6 +262,17 @@ async function reportStandaloneAuthFailure(
 		return;
 	}
 	if (!message) return;
+	// `message` is the error bank's fixed classification, never run output.
+	forward(onExternalNotification, {
+		type: 'agent.auth_expired',
+		agent: { id: result.sessionId, name: result.sessionName, toolType },
+		subscription: result.subscriptionName,
+		pipeline: result.pipelineName ?? null,
+		runId: result.runId,
+		title: `${result.sessionName}: login expired`,
+		message,
+		sticky: true,
+	});
 	onLog(
 		'error',
 		`"${result.subscriptionName}" failed on expired ${toolType} credentials: ${message}. Re-authenticate this agent (e.g. its CLI's own login command) and the next run will pick up fresh credentials.`
@@ -194,6 +281,16 @@ async function reportStandaloneAuthFailure(
 
 export interface StandaloneCueEngineOptions {
 	onLog?: StandaloneCueLog;
+	/** See `CueEngineDeps.onLockLost`. */
+	onLockLost?: () => void;
+	/** See `CueEngineDeps.onDrainPhase`. */
+	onDrainPhase?: CueEngineDeps['onDrainPhase'];
+	/**
+	 * Told every `action: notify` run and every run that failed on an expired
+	 * agent login (`--notify-webhook`). Must not throw or block; it is called
+	 * inline with the run.
+	 */
+	onExternalNotification?: (notification: CueExternalNotification) => void;
 }
 
 /** Build the full `CueEngineDeps` for a standalone runner. Exported separately from the engine construction so a caller (tests, `inspect`) can build deps without booting a real engine loop. */
@@ -203,7 +300,7 @@ export function buildStandaloneCueEngineDeps(
 	const onLog = options.onLog ?? consoleCueLog;
 	return {
 		getSessions: () => readSessions(),
-		onCueRun: buildOnCueRun(onLog),
+		onCueRun: buildOnCueRun(onLog, options.onExternalNotification),
 		onStopCueRun: (runId) => {
 			if (!settledExecutors) return false; // see settledExecutors' doc comment
 			// One registry holds every Cue spawn (agent, shell, maestro-cli), so
@@ -212,6 +309,12 @@ export function buildStandaloneCueEngineDeps(
 		},
 		onLog,
 		runnerMode: 'standalone',
+		...(options.onLockLost ? { onLockLost: options.onLockLost } : {}),
+		...(options.onDrainPhase ? { onDrainPhase: options.onDrainPhase } : {}),
+		// The drain's process accounting. Before the first run fires the
+		// executors are not loaded, so there is nothing alive to count or kill.
+		countLiveCueProcesses: () => settledExecutors?.countLiveCueProcesses() ?? 0,
+		killAllCueProcessesNow: () => settledExecutors?.killAllCueProcessesNow(),
 	};
 }
 

@@ -21,6 +21,7 @@ import {
 } from '../../shared/maestro-lib/providers/capabilities';
 import {
 	buildAgentLaunchPlan,
+	describeUndeliveredSecrets,
 	type AgentLaunchPlanResult,
 } from '../../shared/maestro-lib/launch/launch-plan';
 import {
@@ -135,6 +136,7 @@ type SpawnOverrides = Pick<
 	| 'customEffort'
 	| 'customArgs'
 	| 'customEnvVars'
+	| 'requiredSecrets'
 	| 'appendSystemPrompt'
 	| 'additionalDirectories'
 	| 'querySource'
@@ -210,9 +212,10 @@ function planCliLaunch(
 		isResuming: boolean;
 		querySource?: SpawnOverrides['querySource'];
 		sshRemoteConfig?: AgentSshRemoteConfig;
+		requiredSecrets?: string[];
 	}
 ): AgentLaunchPlanResult {
-	return buildAgentLaunchPlan({
+	const result = buildAgentLaunchPlan({
 		surface: 'cli',
 		agent: def ? { ...def, capabilities: getAgentCapabilities(toolType) } : null,
 		command: input.command,
@@ -227,7 +230,15 @@ function planCliLaunch(
 		querySource: input.querySource,
 		sshRemoteConfig: input.sshRemoteConfig,
 		sshStore: { getSshRemotes: () => readSshRemotes() },
+		requiredSecrets: input.requiredSecrets,
 	});
+	// Names only, on stderr: stdout is the command's result. The turn still
+	// runs, and the agent reports its own auth error if it needed the secret.
+	if (result.ok) {
+		const warning = describeUndeliveredSecrets(def?.name ?? toolType, result.plan.secrets);
+		if (warning) console.error(`[maestro-cli] ${warning}`);
+	}
+	return result;
 }
 
 /**
@@ -637,6 +648,7 @@ async function spawnClaudeAgent(
 		isResuming: !!agentSessionId,
 		querySource: overrides.querySource,
 		sshRemoteConfig,
+		requiredSecrets: overrides.requiredSecrets,
 	});
 	if (!planResult.ok) {
 		return spawnFailureResult(planResult.error);
@@ -1040,6 +1052,7 @@ async function spawnJsonLineAgent(
 		isResuming: isResume,
 		querySource: overrides.querySource,
 		sshRemoteConfig,
+		requiredSecrets: overrides.requiredSecrets,
 	});
 	if (!planResult.ok) {
 		return spawnFailureResult(planResult.error);
@@ -1169,6 +1182,12 @@ export interface SpawnAgentOptions {
 	/** Per-session env vars merged over agent-level customEnvVars and agent defaults. */
 	customEnvVars?: Record<string, string>;
 	/**
+	 * Secret names the agent declared (`SessionInfo.requiredSecrets`, from bundle
+	 * import). Resolved from systemd credentials, `/run/secrets` or the
+	 * environment and put in this agent's environment only.
+	 */
+	requiredSecrets?: string[];
+	/**
 	 * Per-session Additional Directories. Providers that declare
 	 * `supportsAdditionalDirectories` translate these into native grant flags via
 	 * the definition's `additionalDirArgs` (e.g. `--add-dir`); every agent also
@@ -1237,6 +1256,7 @@ export async function spawnAgent(
 		customEffort: options?.customEffort,
 		customArgs: options?.customArgs,
 		customEnvVars: options?.customEnvVars,
+		requiredSecrets: options?.requiredSecrets,
 		appendSystemPrompt: options?.appendSystemPrompt,
 		additionalDirectories: options?.additionalDirectories,
 		querySource: options?.querySource,

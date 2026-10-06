@@ -51,6 +51,8 @@ export interface CueRunSessionRecord {
 	sessionSshRemoteConfig?: { enabled: boolean; remoteId: string | null };
 	customArgs?: string;
 	customEnvVars?: Record<string, string>;
+	/** Secret names this agent needs; resolved per launch (see `SessionInfo.requiredSecrets`). */
+	requiredSecrets?: string[];
 	customModel?: string;
 	customEffort?: string;
 	enableMaestroP?: boolean;
@@ -256,6 +258,7 @@ export async function executeCueRunAction(
 		customPath: resolvedAgentPath,
 		customArgs: storedSession.customArgs,
 		customEnvVars: storedSession.customEnvVars,
+		requiredSecrets: storedSession.requiredSecrets,
 		customModel: storedSession.customModel,
 		customEffort: storedSession.customEffort,
 		// Claude token-source selection (TUI / API / dynamic), read from

@@ -710,11 +710,12 @@ Interact with Maestro Cue automation
 
 Manually trigger a Cue subscription by name
 
-| Option                   | Description                                       | Default |
-| ------------------------ | ------------------------------------------------- | ------- |
-| `-p, --prompt <text>`    | Override the subscription prompt with custom text | -       |
-| `--json`                 | Output as JSON (for scripting)                    | -       |
-| `--source-agent-id <id>` | Agent ID to pass as source context for write-back | -       |
+| Option                   | Description                                                                     | Default |
+| ------------------------ | ------------------------------------------------------------------------------- | ------- |
+| `-p, --prompt <text>`    | Override the subscription prompt with custom text                               | -       |
+| `--json`                 | Output as JSON (for scripting)                                                  | -       |
+| `--source-agent-id <id>` | Agent ID to pass as source context for write-back                               | -       |
+| `--data-dir <path>`      | Maestro data directory to use (overrides MAESTRO_USER_DATA; must already exist) | -       |
 
 ## `maestro-cli cue list`
 
@@ -845,34 +846,52 @@ Run Maestro Cue unattended (no desktop app) and control that runner
 
 Start the Cue engine in this process and block until Ctrl+C / stopped
 
-| Option   | Description                                 | Default |
-| -------- | ------------------------------------------- | ------- |
-| `--json` | Print machine-readable start/failure status | -       |
+| Option                      | Description                                                                                                    | Default  |
+| --------------------------- | -------------------------------------------------------------------------------------------------------------- | -------- |
+| `--json`                    | Print machine-readable start/failure status                                                                    | -        |
+| `--data-dir <path>`         | Maestro data directory to use (overrides MAESTRO_USER_DATA; must already exist)                                | -        |
+| `--log-format <format>`     | Log line format: text, or one JSON object per line on stderr                                                   | `"text"` |
+| `--require-ready`           | Refuse to start (exit 1, nothing armed) when the readiness check finds any gap; see "cue engine check"         | -        |
+| `--status-port <port>`      | Serve /healthz, /readyz and /status on 127.0.0.1 at this port (documented port: 7433). Off unless given        | -        |
+| `--drain-timeout <seconds>` | On SIGTERM/SIGINT, let runs in flight finish for this long before stopping them; a second signal stops at once | `90`     |
+| `--notify-webhook <url>`    | POST a JSON notice for every notify action and every expired agent login to this http(s) URL                   | -        |
+
+## `maestro-cli cue engine check`
+
+Check that every agent, secret, workspace, cue.yaml and tool the engine needs is present; list every gap (exit 1 when not ready)
+
+| Option              | Description                                                                     | Default |
+| ------------------- | ------------------------------------------------------------------------------- | ------- |
+| `--json`            | Output as JSON (for scripting)                                                  | -       |
+| `--data-dir <path>` | Maestro data directory to use (overrides MAESTRO_USER_DATA; must already exist) | -       |
 
 ## `maestro-cli cue engine stop`
 
 Stop a running standalone engine (refuses to signal a desktop-owned one)
 
-| Option           | Description                                            | Default |
-| ---------------- | ------------------------------------------------------ | ------- |
-| `--json`         | Output as JSON (for scripting)                         | -       |
-| `--wait-ms <ms>` | How long to wait for the lock to clear after signaling | -       |
+| Option              | Description                                                                     | Default |
+| ------------------- | ------------------------------------------------------------------------------- | ------- |
+| `--json`            | Output as JSON (for scripting)                                                  | -       |
+| `--data-dir <path>` | Maestro data directory to use (overrides MAESTRO_USER_DATA; must already exist) | -       |
+| `--wait-ms <ms>`    | How long to wait for the lock to clear after signaling                          | -       |
 
 ## `maestro-cli cue engine status`
 
 Report whether an engine is running and its last known heartbeat
 
-| Option   | Description                    | Default |
-| -------- | ------------------------------ | ------- |
-| `--json` | Output as JSON (for scripting) | -       |
+| Option              | Description                                                                     | Default |
+| ------------------- | ------------------------------------------------------------------------------- | ------- |
+| `--json`            | Output as JSON (for scripting)                                                  | -       |
+| `--data-dir <path>` | Maestro data directory to use (overrides MAESTRO_USER_DATA; must already exist) | -       |
 
 ## `maestro-cli cue engine inspect`
 
 List every agent with a readable .maestro/cue.yaml and its subscription counts
 
-| Option   | Description                    | Default |
-| -------- | ------------------------------ | ------- |
-| `--json` | Output as JSON (for scripting) | -       |
+| Option              | Description                                                                     | Default |
+| ------------------- | ------------------------------------------------------------------------------- | ------- |
+| `--json`            | Output as JSON (for scripting)                                                  | -       |
+| `--data-dir <path>` | Maestro data directory to use (overrides MAESTRO_USER_DATA; must already exist) | -       |
 
 ## `maestro-cli bundle`
 

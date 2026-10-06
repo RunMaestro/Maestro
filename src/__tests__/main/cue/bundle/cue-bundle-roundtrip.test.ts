@@ -292,16 +292,19 @@ describe('bundle round trip', () => {
 	 * What does NOT survive, and why. Each difference below is pinned exactly,
 	 * so a new one fails this test instead of hiding in it.
 	 *
-	 * - Secret env vars (`ANTHROPIC_API_KEY`), values that look like a
-	 *   credential (`DEPLOY_REF=ghp_...`) and machine paths
-	 *   (`CLAUDE_CONFIG_DIR`) travel by NAME only. The importer reports them,
-	 *   but an agent record has nowhere to keep a name without a value: a blank
-	 *   value REMOVES the inherited variable on the desktop (`applyEnvRecord`)
-	 *   and sets it to '' under Cue (`buildCueAgentEnvironment`), either of
-	 *   which would block the secret the operator supplies through the
-	 *   environment. So the re-export has no `env.required` /
-	 *   `env.machineSpecific`, no `requirements.secrets`, and none of the
-	 *   README lines or warnings derived from them.
+	 * - Secret env vars (`ANTHROPIC_API_KEY`) and values that look like a
+	 *   credential (`DEPLOY_REF=ghp_...`) travel by NAME only, and SURVIVE: the
+	 *   importer keeps the names on the agent record (`requiredSecrets`, which
+	 *   the CLI and Cue resolve at launch from files or the environment) and the
+	 *   exporter writes them back into `env.required`. What is lost is the
+	 *   warning about `DEPLOY_REF`'s value looking like a credential, since the
+	 *   re-export has no value to judge.
+	 * - Machine paths (`CLAUDE_CONFIG_DIR`) also travel by name, but an agent
+	 *   record has nowhere to keep a name without a value: a blank value REMOVES
+	 *   the inherited variable on the desktop (`applyEnvRecord`) and sets it to
+	 *   '' under Cue (`buildCueAgentEnvironment`). So the re-export has no
+	 *   `env.machineSpecific`, and none of the README lines or warnings derived
+	 *   from it.
 	 * - SSH: the exporter drops the remote config and warns; the imported agent
 	 *   is local, so the re-export has no SSH warning.
 	 */
@@ -345,15 +348,18 @@ describe('bundle round trip', () => {
 			required: ['ANTHROPIC_API_KEY', 'DEPLOY_REF'],
 			machineSpecific: ['CLAUDE_CONFIG_DIR'],
 		});
-		expect(leadB.env).toEqual({ values: { LOG_LEVEL: 'debug' } });
+		expect(leadB.env).toEqual({
+			values: { LOG_LEVEL: 'debug' },
+			required: ['ANTHROPIC_API_KEY', 'DEPLOY_REF'],
+		});
 		expect({ ...leadB, env: leadA.env }).toEqual(leadA);
 
-		// The manifest differs in the secrets, the warnings, and the hashes and
-		// sizes of the three files above. Nothing else.
+		// The manifest differs in the warnings, and the hashes and sizes of the
+		// three files above. Nothing else: the secrets survive.
 		const mA = manifestOf(first);
 		const mB = manifestOf(second);
 		expect(mA.requirements.secrets).toEqual(['ANTHROPIC_API_KEY', 'DEPLOY_REF']);
-		expect(mB.requirements.secrets).toEqual([]);
+		expect(mB.requirements.secrets).toEqual(['ANTHROPIC_API_KEY', 'DEPLOY_REF']);
 		expect(mA.warnings).toEqual([
 			'Agent "Lead" runs over SSH on the exporting machine; its remote configuration was not exported.',
 			'Agent "Lead" sets CLAUDE_CONFIG_DIR to a local path; set it again after import.',
@@ -362,7 +368,6 @@ describe('bundle round trip', () => {
 		expect(mB.warnings).toBeUndefined();
 		const strip = (m: CueBundleManifest) => ({
 			...m,
-			requirements: { ...m.requirements, secrets: [] },
 			warnings: undefined,
 			files: m.files.filter((f) => !changed.includes(f.path)),
 		});

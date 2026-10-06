@@ -34,6 +34,9 @@ export function createCueGitHubPollerTriggerSource(
 
 	let cleanup: (() => void) | null = null;
 	let pollNowFn: (() => void) | null = null;
+	// Guard decisions in flight. The poller has already marked these items seen,
+	// so the drain waits for them (see `settle`) rather than losing them.
+	const pendingGuards = new Set<Promise<void>>();
 
 	return {
 		start() {
@@ -62,7 +65,7 @@ export function createCueGitHubPollerTriggerSource(
 					// guard never rejects and fails open, so a 0DIN outage degrades
 					// to today's behaviour instead of stalling the subscription.
 					const settings = ctx.registry.get(ctx.session.id)?.config.settings;
-					void guardGitHubEvent({
+					const pending: Promise<void> = guardGitHubEvent({
 						event,
 						sessionId: ctx.session.id,
 						subscriptionId: `${ctx.session.id}:${ctx.subscription.name}`,
@@ -71,11 +74,16 @@ export function createCueGitHubPollerTriggerSource(
 						threshold:
 							settings?.susfactor_threshold ?? DEFAULT_CUE_SETTINGS.susfactor_threshold ?? 0.95,
 						onLog: (level, message) => ctx.onLog(level as Parameters<typeof ctx.onLog>[0], message),
-					}).then((allowed) => {
-						if (!allowed) return;
-						ctx.onLog('cue', `[CUE] "${ctx.subscription.name}" triggered (${eventType})`);
-						ctx.emit(event);
-					});
+					})
+						.then((allowed) => {
+							if (!allowed) return;
+							ctx.onLog('cue', `[CUE] "${ctx.subscription.name}" triggered (${eventType})`);
+							ctx.emit(event);
+						})
+						.finally(() => {
+							pendingGuards.delete(pending);
+						});
+					pendingGuards.add(pending);
 				},
 				onReady: (handle) => {
 					pollNowFn = handle.pollNow;
@@ -99,6 +107,12 @@ export function createCueGitHubPollerTriggerSource(
 
 		pollNow() {
 			pollNowFn?.();
+		},
+
+		async settle() {
+			// The guard never rejects (it fails open), and emit errors are the
+			// dispatcher's; swallow anyway so settle honors its contract.
+			await Promise.allSettled([...pendingGuards]);
 		},
 	};
 }

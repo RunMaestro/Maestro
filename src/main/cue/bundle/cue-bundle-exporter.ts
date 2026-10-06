@@ -536,6 +536,14 @@ function buildAgentSettings(
 			machineSpecific.push(key);
 		} else values[key] = String(value);
 	}
+	// Names an imported agent declared without a value (`requiredSecrets`): a
+	// server agent's secrets come from files or the environment, so they are on
+	// the record by name and nowhere else. Without this a re-export would drop
+	// the requirement the original bundle stated.
+	for (const name of session.requiredSecrets ?? []) {
+		if (!required.includes(name) && !(name in values)) required.push(name);
+	}
+	required.sort();
 	if (secretByValue.length > 0) {
 		builder.warnings.add(
 			`Agent "${session.name}" sets ${secretByValue.join(', ')} to a value that looks like a credential; ${secretByValue.length === 1 ? 'it was' : 'they were'} exported by name only. Set ${secretByValue.length === 1 ? 'it' : 'them'} again after import.`

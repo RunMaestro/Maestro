@@ -15,9 +15,15 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 
-vi.mock('../../../cli/services/cue-standalone-engine', () => ({
+vi.mock('../../../cli/services/cue-standalone-engine', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../cli/services/cue-standalone-engine')>()),
 	createStandaloneCueEngine: vi.fn(() => {
 		throw new Error('the engine must not be created for a missing data dir');
+	}),
+}));
+vi.mock('../../../cli/services/maestro-client', () => ({
+	withMaestroClient: vi.fn(() => {
+		throw new Error('cue trigger must not reach the desktop for a missing data dir');
 	}),
 }));
 
@@ -29,6 +35,8 @@ import {
 	cueEngineStop,
 } from '../../../cli/commands/cue-engine';
 import { bundleExport } from '../../../cli/commands/bundle';
+import { cueTrigger } from '../../../cli/commands/cue-trigger';
+import { withMaestroClient } from '../../../cli/services/maestro-client';
 
 let tmp: string;
 let missing: string;
@@ -90,5 +98,58 @@ describe('a data dir that exists', () => {
 		await cueEngineStatus({ json: true });
 		expect(exitSpy).not.toHaveBeenCalled();
 		expect(JSON.parse(String(logSpy.mock.calls[0][0]))).toEqual({ running: false });
+	});
+});
+
+/**
+ * `--data-dir <path>` names the folder explicitly. It wins over an inherited
+ * MAESTRO_USER_DATA (the operator typed that path), and a missing folder is
+ * still refused rather than created - a typo must not provision an empty data
+ * directory beside the real one.
+ */
+const flagVerbs: Array<[string, (dataDir: string, json: boolean) => Promise<void>]> = [
+	['cue engine start', (dataDir, json) => cueEngineStart({ dataDir, json })],
+	['cue engine stop', (dataDir, json) => cueEngineStop({ dataDir, json })],
+	['cue engine status', (dataDir, json) => cueEngineStatus({ dataDir, json })],
+	['cue engine inspect', (dataDir, json) => cueEngineInspect({ dataDir, json })],
+	['cue trigger', (dataDir, json) => cueTrigger('sub', { dataDir, json })],
+];
+
+describe.each(flagVerbs)('%s --data-dir', (_name, run) => {
+	it('refuses a missing folder with DATA_DIR_NOT_FOUND, even when MAESTRO_USER_DATA exists', async () => {
+		const real = path.join(tmp, 'real');
+		fs.mkdirSync(real);
+		process.env.MAESTRO_USER_DATA = real;
+		const typo = path.join(tmp, 'typo');
+
+		await expect(run(typo, true)).rejects.toThrow('__exit__');
+		expect(exitSpy.mock.calls[0]).toEqual([1]);
+		const payload = JSON.parse(String(logSpy.mock.calls[0][0]));
+		expect(payload).toMatchObject({ success: false, code: 'DATA_DIR_NOT_FOUND' });
+		expect(payload.error).toContain(`not found at ${typo}`);
+		expect(fs.existsSync(typo)).toBe(false);
+		expect(createStandaloneCueEngine).not.toHaveBeenCalled();
+		expect(withMaestroClient).not.toHaveBeenCalled();
+	});
+});
+
+describe('--data-dir precedence', () => {
+	it('wins over MAESTRO_USER_DATA, which is left pointing at the flag for every reader', async () => {
+		// The env names a folder that does not exist; the flag names one that does.
+		const real = path.join(tmp, 'real');
+		fs.mkdirSync(real);
+		await cueEngineStatus({ dataDir: real, json: true });
+		expect(exitSpy).not.toHaveBeenCalled();
+		expect(JSON.parse(String(logSpy.mock.calls[0][0]))).toEqual({ running: false });
+		expect(process.env.MAESTRO_USER_DATA).toBe(real);
+	});
+
+	it('resolves a relative path against the working directory', async () => {
+		const real = path.join(tmp, 'rel');
+		fs.mkdirSync(real);
+		vi.spyOn(process, 'cwd').mockReturnValue(tmp);
+		await cueEngineStatus({ dataDir: 'rel', json: true });
+		expect(exitSpy).not.toHaveBeenCalled();
+		expect(process.env.MAESTRO_USER_DATA).toBe(real);
 	});
 });

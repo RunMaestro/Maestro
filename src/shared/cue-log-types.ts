@@ -15,6 +15,12 @@
 export type CueLogPayload =
 	| { type: 'engineStarted' }
 	| { type: 'engineStopped' }
+	| {
+			/** One phase of a graceful drain (`CueEngine.drain`); counts are in the message. */
+			type: 'engineDrain';
+			drainPhase: 'disarmed' | 'waiting' | 'stopping' | 'persisted' | 'finished' | 'forced';
+			count?: number;
+	  }
 	| { type: 'configReloaded'; sessionId: string }
 	| { type: 'configRemoved'; sessionId: string }
 	| {
@@ -22,6 +28,8 @@ export type CueLogPayload =
 			runId: string;
 			sessionId: string;
 			subscriptionName: string;
+			/** The pipeline the subscription belongs to (its name, as `cue_events.pipeline_id` stores it). */
+			pipelineId?: string;
 	  }
 	| {
 			type: 'runFinished';
@@ -29,12 +37,15 @@ export type CueLogPayload =
 			sessionId: string;
 			subscriptionName: string;
 			status: string;
+			pipelineId?: string;
 	  }
 	| {
 			type: 'runStopped';
 			runId: string;
 			sessionId: string;
 			subscriptionName: string;
+			/** The pipeline the subscription belongs to (its name, as `cue_events.pipeline_id` stores it). */
+			pipelineId?: string;
 	  }
 	| {
 			type: 'queueOverflow';

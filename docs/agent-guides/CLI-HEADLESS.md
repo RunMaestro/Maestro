@@ -2,14 +2,70 @@
 
 What `maestro-cli` does on a machine with no desktop app: a server, a container, a CI runner. Read this before adding a verb, before changing how the CLI finds its data, and before telling a user that something "works headless".
 
-Verified on 2026-10-05 with real Claude Code and OpenCode turns (see [Verification](#verification)).
+Verified on 2026-10-05 with real Claude Code and OpenCode turns, and the Cue engine on 2026-10-06 (see [Verification](#verification)).
 
 ## Running headless
 
 - **Runtime: plain Node 20+.** `node maestro-cli.js <verb>`. The desktop installs a shim that runs the same bundle as `ELECTRON_RUN_AS_NODE=1 <app binary>`; a server has no app binary and does not need it.
 - **`electron` is never loaded.** `scripts/build-cli.mjs` aliases it to `src/cli/electron-shim.cjs`, which answers `app.getPath('userData')` with the same directory the CLI resolves.
-- **Nothing reachable at startup imports `better-sqlite3`.** It is built for Electron's ABI (`postinstall` runs `electron-rebuild`) and cannot load under plain Node. Code that needs SQLite sits behind a dynamic `import()`, and `src/__tests__/cli/plain-node-imports.test.ts` fails the build if a static import ever reaches it.
-- **stdout is the result, stderr is the log.** `--json` output and JSONL run events go to stdout. The main-process logger the CLI reuses is switched to stderr at startup (`logger.consoleToStderr()` in `src/cli/index.ts`), so a script can parse stdout line by line.
+- **Nothing reachable at startup imports `better-sqlite3`.** A checkout's copy is built for Electron's ABI (`postinstall` runs `electron-rebuild`) and cannot load under plain Node, so code that needs SQLite sits behind a dynamic `import()`, and `src/__tests__/cli/plain-node-imports.test.ts` fails the build if a static import ever reaches it. A server builds it for Node instead: see [Native modules on a server](#native-modules-on-a-server).
+- **stdout is the result, stderr is the log.** `--json` output and JSONL run events go to stdout. The main-process logger the CLI reuses is switched to stderr at startup (`logger.consoleToStderr()` in `src/cli/index.ts`), so a script can parse stdout line by line. `cue engine start --log-format json` keeps the same split; see [Engine logs](#engine-logs---log-format).
+
+## Service contract (Cue engine on a server)
+
+The whole contract a Dockerfile, systemd unit or install script builds against, in one place. Each row links to the section with the details; the code is the source of truth and `docs/cli-reference.md` is generated from it.
+
+**Verbs and flags** (all take `--json`):
+
+| Verb                           | Flag                        | Default      | Meaning                                                                                                   |
+| ------------------------------ | --------------------------- | ------------ | --------------------------------------------------------------------------------------------------------- |
+| `bundle import <zip>`          | `--data-dir <path>`         | resolved dir | Target data dir; created if missing (the only verb that creates one)                                      |
+|                                | `--workspace <key=path>`    |              | One per bundle workspace; the folder must already exist                                                   |
+|                                | `--agent-path <tool=path>`  |              | Binary a provider runs, written to `maestro-agent-configs.json`                                           |
+| `cue engine check`             | `--data-dir <path>`         | resolved dir | [Readiness](#readiness---require-ready-cue-engine-check) report without starting; needs no SQLite         |
+| `cue engine start`             | `--data-dir <path>`         | resolved dir | Must already exist ([data directory](#the-data-directory))                                                |
+|                                | `--log-format text\|json`   | `text`       | [Engine logs](#engine-logs---log-format); `json` is one object per line on stderr                         |
+|                                | `--require-ready`           | off          | Exit 1 with nothing armed when readiness has any gap                                                      |
+|                                | `--status-port <port>`      | off          | [Status server](#status-server---status-port) on `127.0.0.1` only. Documented port **7433**               |
+|                                | `--drain-timeout <seconds>` | `90`         | [Drain](#stopping-the-drain---drain-timeout) budget on the first SIGTERM/SIGINT; `0` allowed              |
+|                                | `--notify-webhook <url>`    | off          | [Notification webhook](#notification-webhook---notify-webhook), `http(s)` only                            |
+| `cue engine stop`              | `--data-dir`, `--wait-ms`   | wait 5000 ms | SIGTERM to a standalone engine, then waits for the lock to clear (see Known limits: shorter than a drain) |
+| `cue engine status`, `inspect` | `--data-dir`                | resolved dir | Read the lock (and `cue.db`); `status` reports `statusPort`                                               |
+| `cue trigger <sub>`            | `--data-dir`                | resolved dir | Reaches a standalone engine through its file inbox                                                        |
+
+**Endpoints** (`--status-port 7433`, `GET`/`HEAD`, JSON, `Cache-Control: no-store`):
+
+| Path       | 200                                                   | 503                                                            |
+| ---------- | ----------------------------------------------------- | -------------------------------------------------------------- |
+| `/healthz` | Lock held and event loop responsive, in any phase     | Lock lost to another engine, or event loop saturated (restart) |
+| `/readyz`  | Phase `running` and no readiness gap                  | `starting`, `draining`, `stopped`, `lock-lost`, or any gap     |
+| `/status`  | Always while answering: phase, runs, queue, readiness | -                                                              |
+
+**Exit codes:**
+
+| Verb / situation                                                                                              | Exit  | JSON `code`                 |
+| ------------------------------------------------------------------------------------------------------------- | ----- | --------------------------- |
+| `cue engine check`: ready / not ready                                                                         | 0 / 1 |                             |
+| any engine verb: `--data-dir` (or resolved dir) missing                                                       | 1     | `DATA_DIR_NOT_FOUND`        |
+| `start`: `better-sqlite3` cannot load in this runtime                                                         | 1     | `SQLITE_NATIVE_UNAVAILABLE` |
+| `start --require-ready` with a gap                                                                            | 1     | `NOT_READY`                 |
+| `start`: status port taken                                                                                    | 1     | `STATUS_PORT_IN_USE`        |
+| `start`: another engine holds the lock                                                                        | 1     |                             |
+| `start`: bad `--notify-webhook` URL                                                                           | 2     | `INVALID_OPTIONS`           |
+| `start`: malformed `--status-port`, `--drain-timeout`, `--log-format` value (rejected by the argument parser) | 1     |                             |
+| `start`: drained stop (first signal, drain resolved)                                                          | 0     |                             |
+| `start`: forced stop (second signal) or a failed drain                                                        | 1     |                             |
+| `stop`: lock not cleared within `--wait-ms`                                                                   | 1     | `reason: "timeout"`         |
+
+Every `start` failure above happens before the lock, a trigger or the inbox is armed. The `SQLITE_NATIVE_UNAVAILABLE` result is `{"success": false, ...}`; the other `start` failures are `{"started": false, ...}`.
+
+**Secrets** ([details](#secrets-on-a-server)): `$CREDENTIALS_DIRECTORY/<NAME>`, then `/run/secrets/<NAME>` (not read on Windows), then the environment variable. A file that exists wins even when unusable. Values reach only the agent whose `requiredSecrets` names them, and a webhook's `secret_env`.
+
+**systemd unit** ([details](#running-under-systemd)): `Type=notify`, `NotifyAccess=all`, `Restart=on-failure`, `WatchdogSec=30`, `TimeoutStartSec=60`, `KillMode=mixed`, `TimeoutStopSec=120` (must be at least `--drain-timeout + 15`).
+
+**Docker:** `HEALTHCHECK` on `/healthz` with `node -e "fetch(...)"` (no curl needed); `docker stop -t 120` or `stop_grace_period: 120s`. Run tini **without `-g`** to let runs finish during the drain: `tini -g` signals every agent too, so they die at once (recorded `failed`) while the drain still persists their successors.
+
+**Install:** the two-stage [server install recipe](#server-install-recipe) (`MAESTRO_SERVER_INSTALL=1`, same Node major in both stages).
 
 ## Which verbs need the app
 
@@ -30,8 +86,8 @@ Verified on 2026-10-05 with real Claude Code and OpenCode turns (see [Verificati
 `agent-run *`, `campaign *`, `list agents|groups|playbooks|sessions|ssh-remotes`, `show agent|playbook`, `clean playbooks`, `settings *` and `settings agent *`, `display *`, `create|update|remove|test-ssh-remote`, `cue schedule`, `director-notes history`, `prompts list|get`, `image list|save` (the file-tree refresh after a save is skipped silently), `encore list`, `theme show|export`, `set-theme --list`, `gloss` with no level (lists the levels), `pianola rules|add-rule|learn|profile|set-profile|log|plan *|supervise *`, `plugin *`, `reference`, `completions`.
 
 - **Writes to stores the app also owns:** `settings set`, the SSH remote verbs and `display *` write JSON directly. With no app that is fine; with the app running, the last writer wins (see doc 22 section 5.2).
-- **`cue engine start|stop|status|inspect`:** no bridge, but `start` opens `cue.db` through `better-sqlite3`, and so does `status` whenever an engine holds the lock. Both need a `better-sqlite3` built for the runtime: the server bundle (`npm run build:server`) installs one on the target, so use it rather than a checkout's `node_modules`.
-- **`cue trigger`:** reaches a standalone engine through its file inbox when one holds the engine lock, and the app otherwise. With neither, it reports the app as not running.
+- **`cue engine start|stop|status|inspect|check`:** no bridge. `start` opens `cue.db` through `better-sqlite3`, and so do `status` and `inspect` whenever an engine holds the lock, so they need a `better-sqlite3` built for the runtime running them (see [Native modules on a server](#native-modules-on-a-server)). Verified live under plain Node on 2026-10-06. All five take `--data-dir`.
+- **`cue trigger`:** reaches a standalone engine through its file inbox when one holds the engine lock, and the app otherwise. With neither, it reports the app as not running. Takes `--data-dir`.
 
 ### Need the app
 
@@ -46,12 +102,13 @@ Everything else: agent and group management (`create-agent`, `update-agent`, `re
 
 Resolved by `resolveUserDataDir()` in `src/shared/userDataDir.ts`, the only resolver; every CLI and shared reader goes through it.
 
-1. `MAESTRO_USER_DATA`, when set. **Set it on a server.** The desktop sets it for every process it spawns.
+0. `--data-dir <path>`, on `cue engine start|stop|status|inspect|check` and `cue trigger` (and `bundle export`, which reads a source directory, and `bundle import`, which writes the target). It is applied by setting `MAESTRO_USER_DATA` before anything reads the directory (`applyDataDirOption()` in `src/cli/services/data-dir-option.ts`), so it wins over an inherited value, reaches every reader at once (the engine lock, `cue.db`, the trigger inbox, the session and agent-config readers, the desktop discovery file), and is inherited by everything the engine spawns: server mode keeps `MAESTRO_*` (`filterServerProcessEnv`), so a `maestro-cli` an agent calls lands on the same folder. `~` and relative paths resolve with `resolveCliPath()`. `cue engine start` logs the resolved directory and where it came from once at startup.
+1. `MAESTRO_USER_DATA`, when set. **Set it on a server** (or pass `--data-dir`). The desktop sets it for every process it spawns.
 2. Otherwise the platform root plus the installed spelling: `~/.config/Maestro` on Linux (`$XDG_CONFIG_HOME` honored), `~/Library/Application Support/Maestro` on macOS, `%APPDATA%\Maestro` on Windows.
    - A dev checkout writes `maestro` or `maestro-dev` instead.
    - Linux is case-sensitive, so without the variable a CLI can land in the wrong folder.
 
-Commands that must never act on a guessed directory refuse when it does not exist: `cue engine start|stop|status|inspect` and `bundle export`. They exit 1 with code `DATA_DIR_NOT_FOUND`, naming any sibling folder that does exist. `bundle import` is the exception: provisioning a fresh directory is its job.
+Commands that must never act on a guessed directory refuse when it does not exist: `cue engine start|stop|status|inspect|check` and `bundle export`, plus `cue trigger` when given `--data-dir` (without it, a missing folder still reports the app as not running, exit 3). They exit 1 with code `DATA_DIR_NOT_FOUND`, naming any sibling folder that does exist. An explicit `--data-dir` is never created either: a typo must not provision an empty data directory beside the real one. `bundle import` is the exception: provisioning a fresh directory is its job.
 
 Provisioning a server, as verified:
 
@@ -60,6 +117,244 @@ export MAESTRO_USER_DATA=/srv/maestro/data
 node maestro-cli.js bundle import agent.zip --workspace proj=/srv/work/proj
 node maestro-cli.js send <agent-id> "..."
 ```
+
+## Native modules on a server
+
+`cue.db` (`src/main/cue/cue-db.ts`) needs `better-sqlite3`, a native addon whose binary is tied to one runtime ABI. Findings, reproduced on 2026-10-06 (Node v22.22.1, ABI 127; Electron, ABI 145):
+
+| Install                                                                  | `cue engine start` under it                                                                                                                                                  |
+| ------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Dev checkout, `node dist/cli/maestro-cli.js`                             | Fails: `postinstall` ran `electron-rebuild`, so the binary is ABI 145. Reported as one line (below), exit 1.                                                                 |
+| Desktop install, `maestro-cli` shim (`ELECTRON_RUN_AS_NODE=1 <app> ...`) | Works: the shim runs the bundle on Electron, matching the binary. The packaged app ships it through `asarUnpack`.                                                            |
+| Server, `MAESTRO_SERVER_INSTALL=1 npm ci`                                | Works: better-sqlite3's own install script (`prebuild-install`) fetches the prebuild for the installing Node (ABI 127 on Node 22, 137 on Node 24) and nothing overwrites it. |
+
+- **The cause is our `postinstall`, not the addon.** better-sqlite3 installs for whichever Node runs `npm install`; `electron-rebuild` then replaces that binary with Electron's. `scripts/postinstall.mjs` skips `ensure-electron` and `electron-rebuild` when `MAESTRO_SERVER_INSTALL=1` (or `true`). Unset, it runs exactly the chain it always did, so the desktop's copy is untouched.
+- **Docker / systemd host:** follow the [server install recipe](#server-install-recipe) below.
+- **An existing checkout that wants plain Node:** `npm run rebuild:node-native` (`npm rebuild better-sqlite3`). That breaks the checkout's desktop dev run until `npx electron-rebuild -f -w better-sqlite3`, since there is only one binary.
+- **When it cannot load:** `start` probes the addon before taking the lock and exits 1 with one line, e.g. `better-sqlite3 is built for a different runtime (module ABI 145, this Node v22.22.1 needs 127). Under plain Node, install with MAESTRO_SERVER_INSTALL=1 ...`; JSON code `SQLITE_NATIVE_UNAVAILABLE`. `status` and `inspect` do the same when they need `cue.db`. The diagnosis is `describeNativeModuleLoadError()` (`src/shared/nativeModuleError.ts`), which the engine's own database-init log line also uses; an error that is not a load failure is passed through unchanged.
+
+## Server install recipe
+
+Verified on 2026-10-06 in a clean `node:24-bookworm-slim` container: no Python, no `make` or `g++`, no git, no `.git`. Two stages, because building `maestro-cli.js` needs esbuild (a devDependency) while running it does not.
+
+**Build stage** (full dependencies, to produce the bundle):
+
+```bash
+export MAESTRO_SERVER_INSTALL=1 ELECTRON_SKIP_BINARY_DOWNLOAD=1
+npm ci
+npm run build:cli          # also build:maestro-p for Claude agents in TUI mode
+```
+
+**Runtime stage** (production dependencies only):
+
+```bash
+export MAESTRO_SERVER_INSTALL=1
+# copy in: package.json, package-lock.json, .npmrc, scripts/, dist/cli/, src/prompts/
+npm ci --omit=dev
+node dist/cli/maestro-cli.js cue engine start --data-dir /data --log-format json
+```
+
+- **Use the same Node major in both stages.** better-sqlite3 is ABI-specific, and `npm ci --omit=dev` fetches it for the runtime stage's Node. `.npmrc` sets `engine-strict=true` and `package.json` wants Node 22+.
+- **Keep the repo layout in the runtime stage:** `dist/cli/maestro-cli.js` (plus `maestro-p.js` if built) next to `src/prompts/`. The prompt loader finds `src/prompts/` two levels above the bundle (`src/cli/services/prompt-loader.ts`).
+- **`scripts/` must be present for `npm ci`:** `preinstall`, `postinstall` and `prepare` run `scripts/check-python.mjs`, `scripts/postinstall.mjs` and `scripts/setup-git-hooks.mjs`.
+- **Build tools: none needed on Debian/Ubuntu (glibc) x64 or arm64.** Every native module installs from a prebuild: better-sqlite3 (Node 24 prebuild via `prebuild-install`), node-pty (bundled N-API prebuilds), and in the build stage canvas and lzma-native too. Add `python3 make g++` only if a prebuild is missing for your platform (another libc such as Alpine/musl, another architecture, or a Node release newer than better-sqlite3's prebuilds), so that `node-gyp` can compile. Alpine is untested.
+- **Do not use `--ignore-scripts`.** It also skips better-sqlite3's own install script, leaving no binary at all.
+
+What is skipped, and why it is safe:
+
+| Skipped                               | How                                                               | Why it is safe                                                                                                                                                                     |
+| ------------------------------------- | ----------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `electron-rebuild`, `ensure-electron` | `MAESTRO_SERVER_INSTALL=1` (`scripts/postinstall.mjs`)            | They rebuild native modules for Electron, which plain Node cannot load.                                                                                                            |
+| Electron itself                       | `--omit=dev` (runtime); `ELECTRON_SKIP_BINARY_DOWNLOAD=1` (build) | It is a devDependency, never loaded by the CLI (`electron` is aliased to `src/cli/electron-shim.cjs`). Without the variable the build stage downloads a ~100MB binary for nothing. |
+| patch-package                         | `--omit=dev`; `postinstall.mjs` skips it when it is not installed | The repo has no `patches/` directory today. If one appears and patch-package is missing, `postinstall.mjs` fails the install instead of shipping unpatched dependencies.           |
+| Python toolchain check                | `check-python.mjs` exits 0 when no Python is found                | It is advisory only.                                                                                                                                                               |
+| Git hooks                             | `setup-git-hooks.mjs` exits 0 without `.git` or `git`             | Hooks are for development checkouts.                                                                                                                                               |
+
+**Packaged form of this recipe:** `packaging/server/` (see `docs/maestro-cue-server.md`). `npm run build:server` runs the build stage and packs `dist/maestro-server-<version>.tgz`: `maestro-cli.js`, its prompts under `prompts/core`, a wrapper that pins the data directory, the systemd unit and `install.sh`, plus a `package.json` naming only `better-sqlite3` at the lockfile's version, the one native module `maestro-cli.js` loads. The runtime stage is then `npm install --omit=dev` of that one dependency for the target's Node (the Dockerfile and `install.sh` both do this), instead of the whole app's production tree. The prompt loader finds `prompts/core` beside the bundle.
+
+**node-pty is never loaded by `maestro-cli.js`.** `cue engine start`, `send`, `run-doc`, `playbook` and `goal-run` run without it. Only `maestro-p.js` loads it, the driver for a Claude agent in TUI mode (`enableMaestroP`), which also needs `maestro-p.js` built and shipped. It installs from its prebuild anyway, so there is nothing to skip; on a platform without one, a failed node-pty compile fails `npm ci` even though the engine would never use it.
+
+## Secrets on a server
+
+A bundle never carries a secret value: `bundle export` reduces every secret-looking env var to its name (`env.required` per agent, `requirements.secrets` in the manifest, plus webhook `secret_env` names). On a server, the value comes from one of three places, looked up by `lookupSecret()` / `resolveSecrets()` in `src/shared/serverSecrets.ts`:
+
+| Order | Where                             | Set by                                                    |
+| ----- | --------------------------------- | --------------------------------------------------------- |
+| 1     | `$CREDENTIALS_DIRECTORY/<NAME>`   | systemd (`LoadCredential=NAME:/path` or `SetCredential=`) |
+| 2     | `/run/secrets/<NAME>`             | Docker / Kubernetes secret mounts (not read on Windows)   |
+| 3     | the environment variable `<NAME>` | the unit, the container, or the shell                     |
+
+- **Files before the environment.** A file is the deliberate channel: it is not visible in `/proc/<pid>/environ` or `docker inspect`, and it is not inherited by every child process. A stale value left in a unit file or a shell must not shadow a secret the operator just rotated in its file. systemd comes first because its directory is private to this one service.
+- **A file that exists is the answer.** If it is unreadable, a directory, empty, or over 64 KiB, the lookup reports that problem (by name and path) and does NOT fall back to the environment.
+- **File rules.** The file name is exactly the variable name. Names must be environment variable names (`[A-Za-z_][A-Za-z0-9_]*`), which also rules out separators and `..`. One trailing line ending (`\n` or `\r\n`) is dropped, since `echo token > file` writes one. Kubernetes' symlinked secret files are followed.
+- **Per agent, never global.** `bundle import` records each agent's names on its record (`requiredSecrets`). At launch the CLI and Cue resolve exactly those names and put the values in that one agent's process environment (`buildAgentLaunchPlan`, `requiredSecrets`). They are never written to `process.env`, so other agents do not receive them, and in server mode a declared secret reaches its agent WITHOUT being added to `MAESTRO_SERVER_ENV_ALLOW` (doing so would hand it to every agent). The layer sits directly above the inherited environment: the agent record's own value for the same name still wins. One caveat: the CLI passes the shell's whole environment to every agent it runs (it has no allowlist), so a secret supplied only as an environment variable reaches every CLI-run agent anyway; the per-agent scoping is what file-supplied secrets, and Cue in server mode, get.
+- **Where it applies.** Cue agent runs and `send`, `run-doc`, `playbook`, `goal-run`. Webhook `secret_env` uses the same lookup, so a webhook secret can be a file too. `bundle import` reports `set` (and `source`) with the same lookup, so a secret supplied only as a file is not reported missing. The desktop never reads secret files.
+- **Missing secrets do not stop a run.** The launch logs one warning naming what is missing (`Agent "X" requires secrets it did not receive - not set: NPM_TOKEN ...`) and the agent reports its own auth error. The readiness gate is where a missing secret should block startup.
+- **Never stored or logged.** Values go to the child environment and nowhere else: not `envVars` (Process Details, and what crosses to SSH), not the JSON or text logs (`formatJsonLogLine` lifts ids only), not `cue.db`, the history, the run ledger or the session store. An agent that prints its own environment is the one leak Maestro cannot prevent.
+
+Limits:
+
+- **SSH-remote agents get no secret values.** Sending one would put it on an ssh command line. The plan reports it (`not sent to the SSH remote`); set it on the remote host.
+- **Cue `action: command` shell steps get no declared secrets.** They inherit only the server allowlist. Name the variable in `MAESTRO_SERVER_ENV_ALLOW` if a shell step needs it.
+- **`requiredSecrets` has no editor.** It comes from import and goes back out on export. To change it, re-import, or edit the record while the app is closed.
+
+## Readiness (`--require-ready`, `cue engine check`)
+
+`checkCueReadiness()` (`src/main/cue/cue-readiness.ts`) checks everything an unattended engine over this data dir would need and returns ONE value, `CueReadinessReport`: `ready`, `checkedAt`, counts of agents, workspaces and subscriptions, and `gaps`, each with a `kind`, the `agentId` / `agentName` / `subscription` / `workspace` / `secret` / `tool` it concerns, and one actionable `message`. Every gap is collected; nothing stops at the first.
+
+Which agents: those whose project root has a Cue config and owns a subscription, plus every `fan_out` target. Other agents in the data dir (a desktop's unrelated ones) are not checked.
+
+| Gap kind                             | Checked by (the code the real run uses)                                                                                                                                       |
+| ------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `unsupported-provider`               | `planSessionTurn`: unknown provider, no batch mode, or no output parser (Hermes)                                                                                              |
+| `binary-missing`                     | `planSessionTurn` with the provider's configured path (`maestro-agent-configs.json`, written by `bundle import --agent-path`), else detection: what `cue-run-router` launches |
+| `workspace-missing`                  | the agent's working directory exists                                                                                                                                          |
+| `secret-missing` / `secret-unusable` | `resolveSecrets` / `lookupSecret` for each agent's `requiredSecrets` and each webhook `secret_env`                                                                            |
+| `ssh-remote`                         | `resolveSshLaunchTarget` for an SSH agent (its binary and secrets are on the remote and are not checked)                                                                      |
+| `cue-config`                         | `loadCueConfigDetailed`, the engine's loader: parse or validation failure, skipped subscriptions, missing prompt files                                                        |
+| `unknown-agent`                      | a `fan_out` target (`findFanOutTarget`, the dispatcher's lookup) or `agent_id` that is not an agent                                                                           |
+| `tool-missing`                       | `gh` (`isGhInstalled`) only when a `github.*` trigger exists; `git` (`checkBinaryExists`) only when such a trigger infers its repo from the checkout                          |
+| `not-a-git-checkout`                 | that inferring trigger's project root has no `.git`                                                                                                                           |
+
+- **`cue engine start`** always computes the report, after the data dir and SQLite checks and BEFORE the engine is built: no lock, trigger, webhook listener, timer or trigger inbox exists yet. Without `--require-ready` each gap is logged as a warning and the engine starts as before. With it, gaps are logged as errors and the command exits 1 without arming anything. Under `--json` stdout is `{"started": false, "code": "NOT_READY", "readiness": <report>}`; a successful start adds `ready` and `gaps` to its result. Under `--log-format json` each gap is its own line with `event: "readinessGap"` and `sessionId` / `subscriptionName` as fields.
+- **`cue engine check [--data-dir] [--json]`** is the same report without starting (no SQLite needed). Run it right after `bundle import`. Exit 0 when ready, 1 when not.
+- **Never a secret value**: gaps name secrets and paths only.
+- **Re-checked on demand.** The engine hot-reloads `cue.yaml` and secrets rotate, so a startup verdict goes stale. With `--status-port`, `/readyz` and `/status` re-run `checkCueReadiness()` when the cached report is older than 60 seconds (one probe in flight at most); an engine nobody asks never probes. See [Status server](#status-server---status-port). systemd `READY=1` should be sent once the startup report is ready and the engine has started.
+
+Not checked (each would need a probe the launch does not make yet): whether `gh` is authenticated, an SSH agent's remote binary and secrets, the maestro-p TUI path for Claude agents in interactive mode, `owner_agent_id` ownership problems, and `source_session` names on `agent.completed` triggers.
+
+## Status server (`--status-port`)
+
+`cue engine start --status-port <port>` serves three read-only JSON endpoints so Docker, systemd and monitoring can ask the engine whether it is alive and ready. Code: `src/main/cue/cue-status-server.ts` (the listener) over `src/main/cue/cue-engine-health.ts` (the one state object it reads).
+
+- **Off unless the flag is given.** Without it nothing listens.
+- **`127.0.0.1` only, not configurable.** The endpoints are unauthenticated. Inside a container the HEALTHCHECK runs in the same network namespace, so loopback is enough; to scrape from outside, front it with a proxy you control.
+- **Documented port: `7433`.** `0` lets the OS pick (tests).
+- **Separate from the webhook listener** (`cue-webhook-server.ts`, port 17997): its own port and its own lifetime.
+- **Bound before the engine starts.** A taken port prints one line (`Status port 7433 on 127.0.0.1 is already in use...`; under `--json`, `{"started":false,"code":"STATUS_PORT_IN_USE","port":7433}`) and exits 1 with no lock, trigger or inbox armed. It closes on shutdown and when the lock is held by another engine.
+- **Only `GET` and `HEAD` on the three paths.** Any other path is 404; another method on a known path is 405 with `Allow: GET, HEAD`. A query string is ignored, a request body is never read, and requests time out after 5 seconds. Every response is `application/json` with `Cache-Control: no-store`.
+
+| Endpoint   | Question                                  | 200                                                                                    | 503                                                                                                      |
+| ---------- | ----------------------------------------- | -------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| `/healthz` | Liveness: "restart me if this fails"      | Event loop responsive and this process still holds the engine lock, in any other phase | The lock heartbeat found another engine took the lock over, or the event loop is saturated               |
+| `/readyz`  | Readiness: "send work / consider started" | Phase `running` and the last readiness report has no gaps                              | `starting`, `draining`, `stopped`, `lock-lost`, or any readiness gap (with or without `--require-ready`) |
+| `/status`  | What is it doing                          | Always, while the server answers                                                       |                                                                                                          |
+
+- **Readiness gaps fail `/readyz`, never `/healthz`.** A misconfigured engine runs but is not fully ready, and `/readyz` is how an operator sees that; restarting would not fix a missing binary, so liveness ignores gaps and the engine is never restart-looped.
+- **Lost lock:** learned from the engine's own lock heartbeat (`CueEngineDeps.onLockLost`), never by re-reading the lock file per request. The engine stops dispatching at that moment; `/healthz` stays 503 so a supervisor restarts it.
+- **Event loop:** `perf_hooks.monitorEventLoopDelay` (50 ms resolution), read over 30-second windows. Unhealthy when the last window's MEDIAN delay is 1 second or more, i.e. the loop was blocked for most of it. One long synchronous step moves p99 and max, not the median, so it does not trip liveness. A loop hung outright never answers, which the HEALTHCHECK's own timeout catches. The histogram runs only when the status server is on.
+
+Bodies:
+
+- `/healthz`: `{"status":"ok"|"fail","phase":"running","reasons":[...]}`.
+- `/readyz`: `{"ready":false,"phase":"running","reasons":["readiness: 1 gap(s)"],"checkedAt":"...","gaps":[{"kind":"secret-missing","agentId":"...","agentName":"Coder","secret":"DEPLOY_TOKEN","message":"..."}]}`.
+- `/status`: `phase` (`starting` / `running` / `draining` / `stopped` / `lock-lost`), `pid`, `version`, `dataDir`, `startedAt`, `uptimeMs`, `activeRuns` (`count` plus the first 20 as `runId`, `subscriptionName`, `agentId`, `agentName`, `eventType`, `startedAt`), `queue` (`agentId`, `agentName`, `depth` per agent), `agents` (`total`, `enabled`), `subscriptions` (`total` and `byTrigger`, enabled ones, a fan-out counted once), `readiness` (the last report), `memory` (`rssBytes`, `heapUsedBytes`, `heapTotalBytes`) and `eventLoopDelayMs` (`p50`, `p99`, `max`, `mean`, `windowMs`; `null` until the first window ends).
+- **Never a secret value, prompt text, run output or event payload.** Every field is picked explicitly; a gap carries names and paths only. A sentinel test (`src/__tests__/main/cue/cue-status-server.test.ts`) enforces it.
+- **Finding the port:** the engine records it in the lock file (`statusPort` in `cue-engine.lock`), and `cue engine status` prints `Status server: http://127.0.0.1:7433/status` (`statusPort` under `--json`). `--json` on `start` also returns `statusPort`.
+
+Docker HEALTHCHECK (needs no `curl` in the image):
+
+```dockerfile
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
+  CMD node -e "fetch('http://127.0.0.1:7433/healthz').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"
+```
+
+The drain and systemd notifications update the same state object (`markDraining()`, `markRunning()`), never a flag of their own.
+
+## Stopping: the drain (`--drain-timeout`)
+
+`cue engine start` handles SIGTERM and SIGINT with `CueEngine.drain()` (`src/main/cue/cue-engine.ts`), so `systemctl stop` and `docker stop` let work finish and lose nothing that was acknowledged. `--drain-timeout <seconds>` (default 90, `0` allowed) bounds how long runs in flight may finish.
+
+| Phase (`engineDrain` log line, `drainPhase`) | What happens                                                                                                                                                                                                                                                                                                                                                      |
+| -------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `disarmed`                                   | The status server reports `draining` (`/readyz` 503, `/healthz` stays 200). The trigger inbox closes. Every trigger source and `cue.yaml` watcher stops, which also releases the webhook listener. From now on the run manager starts nothing: anything dispatched (a late trigger, a successor, a fan-in completing) is queued and persisted, past `queue_size`. |
+| `waiting`                                    | Up to `--drain-timeout`, until no run is active and every source has settled events it already acknowledged (a GitHub item whose SusFactor check is still in flight). A run that finishes chains as usual, and its successors land in `cue_event_queue`.                                                                                                          |
+| `stopping`                                   | Runs still active at the timeout are stopped through the shared stop ladder (SIGTERM, then SIGKILL for the whole tree after 5 s). They are recorded as `stopped` and, like a manual stop, fire no `agent.completed` chain. The drain then waits for their processes, up to the grace plus 2 s, and kills anything left at once.                                   |
+| `persisted`                                  | Every queued event is re-written with a drain stamp, so a restart does not drop it as stale however long the server was down.                                                                                                                                                                                                                                     |
+| `finished`                                   | Memory is released without deleting what was persisted, the lock is released, `cue.db` is closed, and the process exits 0.                                                                                                                                                                                                                                        |
+
+- **A second signal** (SIGTERM or SIGINT) during the drain stops every run (recorded `stopped`), kills every Cue process tree immediately through the ladder, persists the queue, releases the lock and exits **1**. The process never exits with an agent process still running.
+- **On restart** every deferred event and successor is restored and runs once. A drained row's age is the time it waited while an engine was up (`drainedAt - queuedAt`), so downtime does not count; it is still dropped if it was already past `timeout_minutes` when the engine stopped. Rows a crash left behind keep the wall-clock rule.
+- **systemd:** worst case is `drain-timeout + 5 s ladder grace + 2 s + the immediate kill`, 97 s at the default. Keep `TimeoutStopSec >= drain-timeout + 15`; the default 90 fits the documented `TimeoutStopSec=120`. `KillMode=mixed` (SIGTERM to the engine only) is what lets agents finish: with `KillMode=control-group` systemd signals every agent at the same moment.
+- **Docker and `tini -g`:** Cue agents run in the engine's process group, so `tini -g` forwards `docker stop`'s SIGTERM to every agent too. They die at once (recorded `failed`, since nobody asked them to stop) instead of finishing; the drain still persists their successors and exits cleanly. To let runs finish, run tini without `-g` (it still reaps zombies). `docker stop -t` must also exceed the drain: `docker stop -t 120`, or `stop_grace_period: 120s` in Compose.
+- **Fan-in progress survives too**, even a kill -9: the standalone engine writes each completed source of a fan-in to `cue_fan_in_state` as it arrives and restores it at start. The fan-in timeout counts from the first source's arrival, downtime included; one that ran out while the engine was down gets `timeout_on_fail` (`continue` fires with what arrived, `break` drops it). Saved progress for a subscription that is gone, or whose sources changed, is dropped with a warning.
+- **`stop()` is not the drain.** The desktop keeps calling `CueEngine.stop()`, which still clears the persisted queue, unchanged.
+
+## Running under systemd
+
+`cue engine start` speaks the `Type=notify` protocol when systemd sets `NOTIFY_SOCKET` (`src/main/cue/cue-systemd-notify.ts`). Without `NOTIFY_SOCKET` (Docker, a terminal, macOS) it does nothing and spawns nothing. Node cannot write to that unix datagram socket, so each message is sent by spawning `systemd-notify`; `NotifyAccess=all` is what lets systemd accept a message from that child.
+
+The unit must use these settings:
+
+```ini
+[Service]
+Type=notify
+NotifyAccess=all
+# Restart is what turns a missed watchdog into a restart; without it the unit just fails.
+Restart=on-failure
+WatchdogSec=30
+# Readiness probes run before READY; 60s covers a slow binary/PATH probe.
+TimeoutStartSec=60
+# SIGTERM to the engine only, so agents can finish during the drain.
+KillMode=mixed
+# Must be >= --drain-timeout + 15 (ladder grace and margin): 90 + 15 <= 120.
+TimeoutStopSec=120
+ExecStart=/usr/bin/node /opt/maestro/maestro-cli.js cue engine start --data-dir /var/lib/maestro --drain-timeout 90 --status-port 7433 --log-format json
+```
+
+| Message                            | When                                                                                                                                                                                                                                                                              |
+| ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `READY=1 MAINPID=<pid> STATUS=...` | Once the engine is running: readiness checked, lock held, triggers and the trigger inbox armed. `MAINPID` keeps `KillMode=mixed` aimed at the engine even if `ExecStart` is a wrapper that does not `exec`.                                                                       |
+| `WATCHDOG=1`                       | Every `WATCHDOG_USEC / 2` (15 s for `WatchdogSec=30`), read from the environment, and **only while `/healthz` would answer 200**: lock held, event loop not saturated. After a lost lock it never pings again, so systemd restarts the engine. It keeps pinging during the drain. |
+| `STOPPING=1 STATUS=Draining`       | When the drain starts (first SIGTERM).                                                                                                                                                                                                                                            |
+| `STATUS=Draining: ...`             | One per drain phase, with its counts; a newer STATUS replaces one still waiting. `STATUS=Stopped` last.                                                                                                                                                                           |
+
+- **READY with readiness gaps.** An engine that started with gaps (no `--require-ready`) still sends READY, with `STATUS=Running with N readiness gap(s); see /readyz or cue engine check`. READY means "start-up finished", which is `/readyz`'s `phase: running`; withholding it would leave the unit in `activating` until `TimeoutStartSec` killed a working engine. The gaps stay visible in `systemctl status` and as `/readyz` 503. With `--require-ready` the engine exits before READY and the unit fails.
+- **The form:** raw `VARIABLE=VALUE` arguments only (`systemd-notify READY=1 ...`, `systemd-notify WATCHDOG=1`), which every version accepts. `--stopping` only exists from systemd 253, so Debian 12 (252) and Ubuntu 22.04 (249) do not have it. No `--no-block`: since 246 `systemd-notify` waits until the manager has processed the message, which is what lets systemd attribute a message from a process that exits at once.
+- **Environment:** `NOTIFY_SOCKET`, `WATCHDOG_USEC` and `WATCHDOG_PID` are removed from the engine's environment once read (as `sd_notify(unset_environment=1)` does), so no agent or shell step inherits them and notifies systemd on the engine's behalf.
+- **Failures:** a missing `systemd-notify` logs one warning and turns notifications off; a failing or hung one (killed after 5 s) logs one warning per failure streak and one line when it recovers. Never a crash or a busy loop: messages are sent one at a time, and a watchdog ping is skipped while a previous `systemd-notify` is still running.
+- **Cost:** one short-lived `systemd-notify` per watchdog tick (4 a minute at `WatchdogSec=30`), a few ms of CPU each.
+
+## Notification webhook (`--notify-webhook`)
+
+A server has no window to toast in. `cue engine start --notify-webhook <url>` POSTs a small JSON body for every `action: notify` run and for every Cue run that failed on an expired agent login (`src/main/cue/cue-notify-webhook.ts`, fed from the standalone runner's notify and auth-failure hooks).
+
+```json
+{
+	"version": 1,
+	"type": "cue.notify",
+	"timestamp": "2026-10-06T19:45:55.451Z",
+	"agent": { "id": "wh-1", "name": "Hooky", "toolType": "claude-code" },
+	"subscription": "ping-me",
+	"pipeline": null,
+	"runId": "f3b5b0f9-d711-4f1b-aebe-8b310e26fa79",
+	"title": "Hooky",
+	"message": "Nightly build finished",
+	"sticky": true
+}
+```
+
+| Field                                        | `cue.notify`                                                                                                                                                  | `agent.auth_expired`                                                                     |
+| -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| `title`                                      | The agent's name (the toast title).                                                                                                                           | `<agent>: login expired`                                                                 |
+| `message`                                    | The toast text the notify action defines: `notify.message`, else `label`, else the notify subscription's own `prompt` field, else its name. Static YAML text. | The error bank's fixed classification (`agentErrorPatterns.ts`), never the run's output. |
+| `sticky`                                     | `notify.sticky`                                                                                                                                               | always `true`                                                                            |
+| `agent`, `subscription`, `runId`, `pipeline` | The run's ids and names.                                                                                                                                      | Same.                                                                                    |
+
+- **Never in the body:** the prompt of any agent run, the event payload, run output, environment values, secrets. Every field is picked explicitly.
+- **Never blocks a run:** `send` only queues. At most 4 POSTs are in flight and 100 wait; beyond that a notification is dropped. Each POST goes through `fetchWithTimeout` with a 5 s budget. **No retries**: these are advisory alerts, and a retry after a slow but successful POST would deliver one twice. On shutdown the engine waits up to 2 s for POSTs still in flight.
+- **Logging:** the first failure or drop of a burst logs one warning; later ones are counted until a delivery succeeds, which logs one recovery line with the count.
+- **The URL:** `http://` or `https://` only, checked before anything starts (exit 2, `INVALID_OPTIONS`). It is logged as origin + path only; its query string and `user:pass@` never appear in a log or error. `fetch` refuses a URL that carries credentials, so `user:pass@` is sent as an `Authorization: Basic` header instead; a token in the query string is sent as written.
+- The desktop app is unchanged: it toasts, and has no webhook.
+
+## Engine logs (`--log-format`)
+
+`cue engine start --log-format text|json`, default `text`.
+
+- **`json`:** every log line is one JSON object on **stderr**: `timestamp` (ISO), `level` (`debug|info|warn|error`), `message`, and when known `context`, `category` (the original Maestro level, e.g. `cue`), `event` (`runStarted`, `runFinished`, `engineStarted`, ...), `runId`, `subscriptionName`, `pipelineId`, `sessionId`, `status`.
+- **Both log paths are covered:** the engine's `onLog` (`jsonCueLog` in `src/cli/services/cue-standalone-engine.ts`) and the main-process `logger` its shared modules use (`logger.consoleJson()`). Both render through `formatJsonLogLine()` (`src/shared/jsonLogLine.ts`), so field names cannot drift.
+- **No payloads:** only the identifier fields above are lifted from a log entry's data, never the payload itself (prompt text, trigger data, environment-derived values). Messages are the same text the `text` format prints.
+- **`--json` and `--log-format json` coexist:** `--json` is the command RESULT, one object on stdout (`{"started":true,"pid":...,"dataDir":...}` or a failure with `code`); `--log-format` is the log STREAM, on stderr. With both, stdout parses as one object and stderr as JSONL. With `--json` alone, text log lines move to stderr too, so stdout stays parseable.
 
 ## Exit codes
 
@@ -72,6 +367,8 @@ node maestro-cli.js send <agent-id> "..."
 | 4    | The running app is an older build without this command        | `UNSUPPORTED` / `UNSUPPORTED_COMMAND` |
 | 5    | The app was reachable but did not answer in time              |                                       |
 | 130  | Interrupted (Ctrl+C); `send` reports `outcome: "interrupted"` |                                       |
+
+`cue engine start` is the exception to 130: a drained stop exits 0, a forced one (second signal) exits 1.
 
 Codes 4 and 5 are mapped where a verb routes through `exitCodeForError()` (`src/cli/exit-codes.ts`). The generic `failCommand` sites still exit 1 for them.
 
@@ -88,28 +385,49 @@ The agent's own transcripts go to the provider's store (`~/.claude/projects`, Op
 
 ## Known limits
 
-| Limit                                                                                                                                                                                                 | Why it is not fixed here                                                                                                                                                                                                                                                                                                                                                                                           |
-| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `cue.db` needs `better-sqlite3` built for the runtime, so `cue engine start` (and `cue engine status` while an engine runs) fail under plain Node from a checkout.                                    | A checkout's copy is rebuilt for Electron by `postinstall`. The server bundle (`packaging/server/`, `npm run build:server`) pins the version and installs a Node build on the target or in the image.                                                                                                                                                                                                              |
-| A Claude agent in TUI mode (`enableMaestroP`, `maestroPMode: interactive`) fails headless with `tui_exited` in a workspace Claude Code has not trusted. Every fresh `bundle import` workspace is one. | maestro-p deliberately never accepts the workspace-trust prompt on a turn, because trust persists for the folder. Accepting it silently on a server is a security decision. Either trust the folder once (run `claude` there interactively), or keep the agent in API mode, the default for new and imported agents. The runtime is not the cause: the same command succeeds under plain Node in a trusted folder. |
-| A server install must ship `prompts/core/` beside `maestro-cli.js`, plus `maestro-p.js` and `node-pty` for the TUI path.                                                                              | The server bundle ships the prompts (the loader probes the bundle's directory, `src/cli/services/prompt-loader.ts`). It leaves out `maestro-p.js` and `node-pty`: server agents run in API mode, and the TUI path also needs a trusted workspace.                                                                                                                                                                  |
-| A fresh imported directory has no `history-migrated.json`, so history goes to the legacy single file.                                                                                                 | Correct and lossless: the desktop migrates the file when it first opens the directory.                                                                                                                                                                                                                                                                                                                             |
-| The desktop-busy check (`src/cli/services/agent-busy.ts`) can never report busy.                                                                                                                      | The desktop does not persist `state: 'busy'`. Two CLI runs on one agent are still kept apart by the CLI activity marker, which the same check reads first.                                                                                                                                                                                                                                                         |
-| CLI runs do not appear in the Usage Dashboard query charts.                                                                                                                                           | Those read `stats.db` `query_events`, which only the desktop writes (SQLite). Their usage is in the ledger instead.                                                                                                                                                                                                                                                                                                |
-| The Maestro system prompt is thinner without a desktop-populated `conductorProfile` setting.                                                                                                          | It is a setting, so `settings set conductorProfile ...` fills it.                                                                                                                                                                                                                                                                                                                                                  |
-| Agents resolve by id or unique id prefix; name lookup differs per verb.                                                                                                                               | Pre-existing CLI behavior, unrelated to headless.                                                                                                                                                                                                                                                                                                                                                                  |
+| Limit                                                                                                                                                                                                                                  | Why it is not fixed here                                                                                                                                                                                                                                                                                                                                                                                           |
+| -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `cue.db` needs `better-sqlite3` built for the runtime, and a checkout has one binary, so it serves either the desktop (Electron) or plain Node at a time.                                                                              | A server installs with `MAESTRO_SERVER_INSTALL=1` (see [Native modules on a server](#native-modules-on-a-server)). Shipping a second, Node-ABI binary in the desktop app is a packaging decision not taken here: the shim already runs on Electron.                                                                                                                                                                |
+| A Claude agent in TUI mode (`enableMaestroP`, `maestroPMode: interactive`) fails headless with `tui_exited` in a workspace Claude Code has not trusted. Every fresh `bundle import` workspace is one.                                  | maestro-p deliberately never accepts the workspace-trust prompt on a turn, because trust persists for the folder. Accepting it silently on a server is a security decision. Either trust the folder once (run `claude` there interactively), or keep the agent in API mode, the default for new and imported agents. The runtime is not the cause: the same command succeeds under plain Node in a trusted folder. |
+| A server install must ship the prompts and `maestro-p.js` beside `maestro-cli.js`, plus `node-pty` for the TUI path (see [Server install recipe](#server-install-recipe)).                                                             | Packaging. The prompt loader probes the bundle's directory (`src/cli/services/prompt-loader.ts`); in a checkout it finds `src/prompts/`.                                                                                                                                                                                                                                                                           |
+| A fresh imported directory has no `history-migrated.json`, so history goes to the legacy single file.                                                                                                                                  | Correct and lossless: the desktop migrates the file when it first opens the directory.                                                                                                                                                                                                                                                                                                                             |
+| The desktop-busy check (`src/cli/services/agent-busy.ts`) can never report busy.                                                                                                                                                       | The desktop does not persist `state: 'busy'`. Two CLI runs on one agent are still kept apart by the CLI activity marker, which the same check reads first.                                                                                                                                                                                                                                                         |
+| CLI runs do not appear in the Usage Dashboard query charts.                                                                                                                                                                            | Those read `stats.db` `query_events`, which only the desktop writes (SQLite). Their usage is in the ledger instead.                                                                                                                                                                                                                                                                                                |
+| The Maestro system prompt is thinner without a desktop-populated `conductorProfile` setting.                                                                                                                                           | It is a setting, so `settings set conductorProfile ...` fills it.                                                                                                                                                                                                                                                                                                                                                  |
+| Agents resolve by id or unique id prefix; name lookup differs per verb.                                                                                                                                                                | Pre-existing CLI behavior, unrelated to headless.                                                                                                                                                                                                                                                                                                                                                                  |
+| A kill -9 (or power loss) can lose a GitHub item: the poller marks it seen before the async SusFactor check decides to emit it, a gap of up to about 8 s. It is never fired twice.                                                     | Moving the mark after the check changes poller dedupe semantics. The drain closes the gap for a clean stop (it waits for those checks), a crash does not.                                                                                                                                                                                                                                                          |
+| Runs in flight at a kill -9 are recorded `failed` at the next start (`failOrphanedRunningEvents`) and are not re-run; their successors never fire. Their child processes are orphaned, since nothing is left to stop them.             | Re-running work of unknown progress could repeat side effects. A clean stop drains instead.                                                                                                                                                                                                                                                                                                                        |
+| Queue rows a crash leaves behind are dropped as stale when the server was down longer than `timeout_minutes`.                                                                                                                          | Deliberate: only rows a drain stamped are known to be deferred work.                                                                                                                                                                                                                                                                                                                                               |
+| `file.changed` events debounced in memory at a crash are lost; time triggers rely on the reconciler's catch-up.                                                                                                                        | In-memory by design; the reconciler fires one catch-up per missed time subscription.                                                                                                                                                                                                                                                                                                                               |
+| Fan-in durability is standalone-only. The desktop engine keeps fan-in progress in memory, so a desktop restart mid fan-in loses the sources that already arrived.                                                                      | Deliberate: the desktop never wrote `cue_fan_in_state` and its restart semantics are unchanged. Only `cue engine start` (`runnerMode: 'standalone'`) writes through and restores.                                                                                                                                                                                                                                  |
+| The engine lock is unsupported on a network filesystem (NFS, SMB, CIFS, a FUSE mount). Keep the data directory on a local disk.                                                                                                        | Takeover relies on `link` / exclusive create, `rename` and `mtime` behaving atomically and promptly between processes on one host; network filesystems do not promise that, and attribute caching can make a live lock look stale.                                                                                                                                                                                 |
+| A process suspended (SIGSTOP, a VM pause, a laptop sleep) for longer than the claim staleness window (30 s) while inside a lock claim can wake to find another engine took the lock over.                                              | It is caught, not prevented: the next lock heartbeat (every 30 s) sees the foreign token, `/healthz` turns 503 and the engine stops dispatching, so a supervisor restarts it. Nothing it does between waking and that heartbeat is fenced.                                                                                                                                                                         |
+| `cue engine stop` waits 5 s by default (`--wait-ms`), far less than a drain (up to `--drain-timeout`, 90 s). Against an engine that is draining normally it reports `reason: "timeout"` and exits 1 while the drain carries on.        | Stop does not know the engine's drain timeout. Pass `--wait-ms` of at least `(drain-timeout + 10) * 1000`, or poll `cue engine status` / the lock, or stop through the supervisor (`systemctl stop`, `docker stop`).                                                                                                                                                                                               |
+| On Windows there is no drain from outside: `cue engine stop` (`process.kill(pid, 'SIGTERM')`) terminates the engine at once, and there is no SIGTERM from a service manager. Ctrl+C in the engine's own console (SIGINT) still drains. | Windows has no catchable termination signal for another process. Servers are Linux; Windows is a development target here.                                                                                                                                                                                                                                                                                          |
+| `cue engine check` reports ready (exit 0) for a data directory with no Cue agents at all, for example after a failed `bundle import`.                                                                                                  | Nothing to run is not a gap. An install script should also check `agents` and `subscriptions` in `cue engine check --json`.                                                                                                                                                                                                                                                                                        |
 
 ## Verification
 
 **Automated (a unit test can prove it):**
 
-| Test                                                | What it checks                                                                                                                                                                      |
-| --------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `src/__tests__/cli/headless-records.test.ts`        | A data dir built by the real exporter and importer; all four verbs with a mocked agent leave their ledger runs (with usage) and history in that dir, and clear the activity marker. |
-| `src/__tests__/cli/plain-node-imports.test.ts`      | The CLI's static import graph never reaches `better-sqlite3`.                                                                                                                       |
-| `src/__tests__/cli/app-not-running.test.ts`         | Every app-dependent verb reports the one outcome.                                                                                                                                   |
-| `src/__tests__/cli/commands/data-dir-guard.test.ts` | The guessed-directory refusal.                                                                                                                                                      |
-| `src/__tests__/main/utils/logger.test.ts`           | The stderr routing.                                                                                                                                                                 |
+| Test                                                               | What it checks                                                                                                                                                                                                                                                                     |
+| ------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/__tests__/cli/headless-records.test.ts`                       | A data dir built by the real exporter and importer; all four verbs with a mocked agent leave their ledger runs (with usage) and history in that dir, and clear the activity marker.                                                                                                |
+| `src/__tests__/cli/plain-node-imports.test.ts`                     | The CLI's static import graph never reaches `better-sqlite3`.                                                                                                                                                                                                                      |
+| `src/__tests__/cli/app-not-running.test.ts`                        | Every app-dependent verb reports the one outcome.                                                                                                                                                                                                                                  |
+| `src/__tests__/cli/commands/data-dir-guard.test.ts`                | The guessed-directory refusal, and `--data-dir`: refusal of a missing folder on all five verbs, precedence over `MAESTRO_USER_DATA`, relative paths.                                                                                                                               |
+| `src/__tests__/cli/commands/cue-engine-sqlite.test.ts`             | An unloadable `better-sqlite3` is one line / `SQLITE_NATIVE_UNAVAILABLE`, before any engine or `cue.db` exists.                                                                                                                                                                    |
+| `src/__tests__/main/cue/cue-status-server.test.ts`                 | Each endpoint's codes and bodies through every phase, gaps and a lost lock; 404/405/HEAD; port in use; loopback-only bind; no secret value or prompt text in any body.                                                                                                             |
+| `src/__tests__/main/cue/cue-engine-drain.test.ts`                  | Each drain phase: disarm, deferring successors of a single chain and a fan-in past `queue_size`, timeout stops (no chain), the process wait and kill, `forceStop`, restart runs each deferred successor once after long downtime while an unstamped crash row is still dropped.    |
+| `src/__tests__/main/cue/cue-engine-drain-processes.test.ts`        | Real `sh` + background `sleep` trees through the real registry and stop ladder: after a timed-out or forced drain no process of either generation is alive.                                                                                                                        |
+| `src/__tests__/main/cue/cue-fan-in-durable.test.ts`                | Fan-in write-through and deletes, `forgetInMemory`, restore (resume at the original deadline, complete, `timeout_on_fail` after downtime, invalidation), a kill -9 then restart firing the fan-in once, the drain keeping progress, and the desktop writing nothing.               |
+| `src/__tests__/main/cue/cue-systemd-notify.test.ts`                | No spawn without `NOTIFY_SOCKET`; READY only once running (with gaps in STATUS); WATCHDOG at `WATCHDOG_USEC/2` and only while healthy, never after a lost lock; STOPPING and per-phase STATUS; one warning for a missing or failing `systemd-notify`; env stripped; bounded flush. |
+| `src/__tests__/main/cue/cue-notify-webhook.test.ts`                | URL validation that never echoes a query or credentials, the documented body, sends that a hung endpoint cannot slow, the in-flight and queue bounds, one warning per failure burst, no retries, bounded flush.                                                                    |
+| `src/__tests__/cli/services/cue-standalone-notify-webhook.test.ts` | Notify runs and expired logins forwarded through the real router; a hung endpoint does not delay either run; a sentinel in the prompt, payload, output and env never reaches a body.                                                                                               |
+| `src/__tests__/cli/commands/cue-engine-drain.test.ts`              | First signal drains (`/readyz` 503, exit 0), second forces (exit 1), `--drain-timeout` parsing.                                                                                                                                                                                    |
+| `src/__tests__/cli/commands/cue-engine-status-port.test.ts`        | No listener without the flag; a taken port exits 1 before the engine starts; the port reaches the lock and `cue engine status`; a lost lock fails `/healthz`.                                                                                                                      |
+| `src/__tests__/shared/jsonLogLine.test.ts`                         | The JSON log line shape and the id allowlist.                                                                                                                                                                                                                                      |
+| `src/__tests__/main/utils/logger.test.ts`                          | The stderr routing, and `consoleJson()`.                                                                                                                                                                                                                                           |
 
 **Live, 2026-10-05.** Node v22.22.1 after `npm run build:cli` and `npm run build:maestro-p`, with Claude Code and OpenCode as installed on the dev machine.
 
@@ -134,5 +452,21 @@ Afterwards:
 - **History:** 16 history entries.
 - **Activity marker:** an empty `cli-activity.json`.
 - **Real data dirs:** `find ~/.config/maestro ~/.config/maestro-dev -newer <start stamp>` found nothing.
+
+**Live, 2026-10-06 (Cue engine under plain Node).** `npm run build:cli`; `$SRV` holds `dist/cli/maestro-cli.js` beside a `node_modules` whose `better-sqlite3` came from `prebuild-install` (the ABI 127 prebuild, what `MAESTRO_SERVER_INSTALL=1 npm ci` leaves); `$D` is a data dir with one agent whose project has a `time.heartbeat` shell subscription in pipeline `Smoke Pipeline`.
+
+| Command                                                                                                                 | Outcome                                                                                                                                                 |
+| ----------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `node dist/cli/maestro-cli.js cue engine start --data-dir $D` (dev checkout, ABI 145 binary)                            | exit 1, one line naming ABIs 145 and 127; `cue.db` not created                                                                                          |
+| `node $SRV/maestro-cli.js cue engine start --data-dir $D --log-format json --json`                                      | stdout: one result object. stderr: 12 lines, all valid JSON; `runStarted` / `runFinished` carry `runId`, `subscriptionName`, `pipelineId`, `sessionId`. |
+| `MAESTRO_USER_DATA=<missing> ... cue engine status\|inspect\|stop --data-dir $D`, `cue trigger echo-beat --data-dir $D` | each acts on `$D`; the trigger ran a second time through the inbox                                                                                      |
+| `... --data-dir <missing>` on `start` and `trigger`                                                                     | exit 1, `DATA_DIR_NOT_FOUND`, folder not created                                                                                                        |
+| `MAESTRO_SERVER_MODE=1` with a shell step printing `$MAESTRO_USER_DATA` and an unlisted secret                          | the child saw `$D` and not the secret                                                                                                                   |
+
+**Live, 2026-10-06 (secrets).** A two-agent pipeline exported from a source data dir where `Deployer` sets `DEPLOY_TOKEN` (exported by name only), imported into a server data dir with `CREDENTIALS_DIRECTORY` holding `DEPLOY_TOKEN` = a sentinel. A fake `codex` recorded each agent's `DEPLOY_TOKEN`. `bundle import` reported it `set (systemd credential)` and wrote `requiredSecrets: ["DEPLOY_TOKEN"]` on Deployer only. Under plain Node with real SQLite: `cue engine start` (server mode, JSON logs, an unrelated engine secret in its env), `send`, `run-doc`, `playbook` and `goal-run` all gave Deployer the sentinel and Reviewer nothing; the unrelated engine secret reached neither. The sentinel appeared in no stdout, stderr, JSON log line, `cue.db`, session store, run ledger or history file. Re-exporting from the server kept `env.required: ["DEPLOY_TOKEN"]`.
+
+**Live, 2026-10-06 (readiness).** In a clean `node:22-bookworm-slim` container (no `gh`, no `git`), a data dir with a Claude agent whose configured binary is missing and whose `DEPLOY_TOKEN` is unset, a Hermes agent, an agent whose working directory is missing, a `github.pull_request` trigger with no `repo` in a non-git folder, a webhook whose `HOOK_SECRET` is unset, and a `fan_out` to a missing agent: `cue engine check` listed all 9 gaps and exited 1; `cue engine start --require-ready` exited 1 with the same gaps (text, `--json` and JSON log lines) and the data dir afterwards held no `cue.db` and no trigger inbox. A healthy data dir (configured fake `codex`, secret in `/run/secrets`) reported ready, and `start --require-ready` started the engine and ran its subscription.
+
+**Live, 2026-10-06 (service mode, end to end).** In a clean `node:24-bookworm-slim` container built by the two-stage [server install recipe](#server-install-recipe) from this branch: a three-agent pipeline (heartbeat, an `agent.completed` chain, a fan-in, a signed webhook, one agent with a required secret) with a stub `codex`, imported with `--data-dir` and secrets in `/run/secrets`. `cue engine check` ready; `start --status-port 7433 --require-ready --log-format json` served `/healthz`, `/readyz`, `/status`; the chain, fan-in and webhook fired; the secret reached only its agent and no log, `/status` or `cue.db`; every JSON log line parsed. A SIGTERM mid-run drained (`/readyz` 503, exit 0, lock released) and the successor ran once after restart; after a kill -9 mid fan-in the fan-in completed after restart; a second SIGTERM forced exit 1 with no agent left. Commands and results: `Plans/headless-cue-verification.md`.
 
 To re-run: build, then repeat the table with a fresh `$S`. The source dir needs a `maestro-sessions.json` with one agent per provider (its `autoRunFolderPath` inside its workspace) and a `playbooks/<agent>.json`.

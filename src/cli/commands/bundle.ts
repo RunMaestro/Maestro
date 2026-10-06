@@ -372,13 +372,25 @@ function formatImportPlan(plan: CueBundleImportPlan, applied: boolean, force: bo
 	}
 	if (plan.secrets.length > 0) {
 		lines.push('', 'Secrets:');
+		// An agent's declared secrets reach that agent alone at launch, so there
+		// is no allowlist advice here: adding one to MAESTRO_SERVER_ENV_ALLOW
+		// would hand it to every agent the engine runs.
+		const sourceLabel = {
+			credentials: 'systemd credential',
+			'run-secrets': '/run/secrets',
+			env: 'env',
+		};
 		for (const secret of plan.secrets) {
-			const blocked =
-				secret.passesServerAllowlist === false
-					? '; in server mode add it to MAESTRO_SERVER_ENV_ALLOW'
-					: '';
+			const status = secret.set
+				? `set (${secret.source ? sourceLabel[secret.source] : 'env'})`
+				: secret.problem
+					? `UNUSABLE: ${secret.problem}`
+					: 'NOT SET';
+			lines.push(`  ${secret.name}  ${status}  (${secret.usedBy.join(', ')})`);
+		}
+		if (plan.secrets.some((secret) => !secret.set)) {
 			lines.push(
-				`  ${secret.name}  ${secret.set ? 'set' : 'NOT SET'}  (${secret.usedBy.join(', ')})${blocked}`
+				'  Supply each as $CREDENTIALS_DIRECTORY/<NAME> (systemd), /run/secrets/<NAME>, or an environment variable.'
 			);
 		}
 	}

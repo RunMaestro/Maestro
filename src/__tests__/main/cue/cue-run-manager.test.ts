@@ -1684,4 +1684,137 @@ describe('createCueRunManager', () => {
 			expect(manager.getQueueStatus().size).toBe(0);
 		});
 	});
+
+	describe('drain gate', () => {
+		function persistenceSpy() {
+			return {
+				persist: vi.fn(),
+				remove: vi.fn(),
+				clearSession: vi.fn(),
+				clearAll: vi.fn(),
+				persistedIds: vi.fn(() => new Set<string>()),
+				restoreAll: vi.fn(() => new Map()),
+			};
+		}
+
+		it('queues and persists instead of starting, past queue_size, and never drains', async () => {
+			const queuePersistence = persistenceSpy();
+			const onCueRun = vi.fn(async () => makeResult());
+			const deps = createDeps({
+				onCueRun,
+				queuePersistence,
+				getSessionSettings: vi.fn(() => ({ ...defaultSettings, queue_size: 1 })),
+			});
+			const manager = createCueRunManager(deps);
+			manager.setDraining(true);
+			for (let i = 0; i < 3; i++) manager.execute('session-1', 'p', createEvent(), `sub-${i}`);
+			await vi.advanceTimersByTimeAsync(0);
+
+			expect(onCueRun).not.toHaveBeenCalled();
+			expect(manager.getQueueStatus().get('session-1')).toBe(3);
+			expect(queuePersistence.persist).toHaveBeenCalledTimes(3);
+			expect(deps.onLog).not.toHaveBeenCalledWith(
+				'warn',
+				expect.stringContaining('Queue overflow'),
+				expect.anything()
+			);
+		});
+
+		it('defers even with queue_size 0', () => {
+			const deps = createDeps({
+				getSessionSettings: vi.fn(() => ({ ...defaultSettings, queue_size: 0 })),
+			});
+			const manager = createCueRunManager(deps);
+			manager.setDraining(true);
+			manager.execute('session-1', 'p', createEvent(), 'sub');
+			expect(manager.getQueueStatus().get('session-1')).toBe(1);
+		});
+
+		it('stamps every queued entry on persistQueueForRestart', () => {
+			const queuePersistence = persistenceSpy();
+			const manager = createCueRunManager(createDeps({ queuePersistence }));
+			manager.setDraining(true);
+			manager.execute('session-1', 'p', createEvent(), 'a');
+			manager.execute('session-1', 'p', createEvent(), 'b');
+			queuePersistence.persist.mockClear();
+
+			expect(manager.persistQueueForRestart(1234)).toBe(2);
+			const stamped = queuePersistence.persist.mock.calls.map((call) => call[2]);
+			expect(stamped.map((e) => [e.subscriptionName, e.drainedAt])).toEqual([
+				['a', 1234],
+				['b', 1234],
+			]);
+		});
+
+		it('discardInMemory forgets the queue without deleting persisted rows; reset() deletes them', () => {
+			const queuePersistence = persistenceSpy();
+			const manager = createCueRunManager(createDeps({ queuePersistence }));
+			manager.setDraining(true);
+			manager.execute('session-1', 'p', createEvent(), 'a');
+			manager.discardInMemory();
+			expect(manager.getQueueStatus().size).toBe(0);
+			expect(queuePersistence.clearAll).not.toHaveBeenCalled();
+			expect(queuePersistence.remove).not.toHaveBeenCalled();
+			manager.reset();
+			expect(queuePersistence.clearAll).toHaveBeenCalledTimes(1);
+		});
+
+		it('whenIdle resolves after the last active run finishes and its successors are queued', async () => {
+			let finish: () => void = () => {};
+			const onRunCompleted = vi.fn();
+			const manager = createCueRunManager(
+				createDeps({
+					onCueRun: vi.fn(
+						() =>
+							new Promise<CueRunResult>((resolve) => {
+								finish = () => resolve(makeResult());
+							})
+					),
+					onRunCompleted,
+				})
+			);
+			manager.execute('session-1', 'p', createEvent(), 'a');
+			let idle = false;
+			void manager.whenIdle().then(() => {
+				idle = true;
+			});
+			await vi.advanceTimersByTimeAsync(0);
+			expect(idle).toBe(false);
+			finish();
+			await vi.advanceTimersByTimeAsync(0);
+			expect(idle).toBe(true);
+			expect(onRunCompleted).toHaveBeenCalled();
+			await expect(manager.whenIdle()).resolves.toBeUndefined();
+		});
+
+		it('exemptFromQueueCap keeps a restored deferred entry past queue_size', () => {
+			const manager = createCueRunManager(
+				createDeps({
+					onCueRun: vi.fn(() => new Promise<CueRunResult>(() => {})),
+					getSessionSettings: vi.fn(() => ({ ...defaultSettings, queue_size: 1 })),
+				})
+			);
+			manager.execute('session-1', 'p', createEvent(), 'running');
+			for (let i = 0; i < 3; i++) {
+				manager.execute(
+					'session-1',
+					'p',
+					createEvent(),
+					`deferred-${i}`,
+					undefined,
+					1,
+					undefined,
+					undefined,
+					undefined,
+					Date.now(),
+					undefined,
+					undefined,
+					undefined,
+					undefined,
+					true
+				);
+			}
+			expect(manager.getQueueStatus().get('session-1')).toBe(3);
+		});
+	});
 });

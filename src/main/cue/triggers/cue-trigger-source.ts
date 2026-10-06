@@ -70,6 +70,17 @@ export interface CueTriggerSource {
 	 * on the epoch timeline, which a zone change does not move.
 	 */
 	onTimeZoneChange?(): void;
+
+	/**
+	 * Optional: resolves once every event this source has already ACKNOWLEDGED
+	 * upstream has been emitted (or rejected). Called by the engine's drain
+	 * after `stop()`, so an event the source accepted just before shutdown is
+	 * dispatched (and deferred to the queue) instead of lost. Only a source
+	 * whose emit can lag its acknowledgement needs it: the GitHub poller marks
+	 * an item seen before its async SusFactor guard decides whether to emit.
+	 * Must not reject.
+	 */
+	settle?(): Promise<void>;
 }
 
 /**
