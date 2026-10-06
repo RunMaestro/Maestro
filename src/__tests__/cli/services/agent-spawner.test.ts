@@ -2560,6 +2560,47 @@ Some text with [x] in it that's not a checkbox
 			}
 		});
 
+		it('delivers a declared secret from a credentials file to that agent only', async () => {
+			const actualFs = await vi.importActual<typeof import('fs')>('fs');
+			const credentials = actualFs.mkdtempSync(path.join(os.tmpdir(), 'cli-secret-'));
+			const secretFile = path.join(credentials, 'MAESTRO_TEST_DEPLOY_TOKEN');
+			actualFs.writeFileSync(secretFile, 'sentinel-cli-91f2\n');
+			// fs.readFileSync is mocked for this suite; serve the real secret file.
+			const readMock = vi.mocked(fs.readFileSync);
+			const fallback = readMock.getMockImplementation();
+			readMock.mockImplementation(((file: fs.PathOrFileDescriptor, ...rest: unknown[]) =>
+				file === secretFile
+					? actualFs.readFileSync(file, 'utf8')
+					: (fallback?.(file, ...(rest as [])) ?? undefined)) as typeof fs.readFileSync);
+			const prevCredentials = process.env.CREDENTIALS_DIRECTORY;
+			process.env.CREDENTIALS_DIRECTORY = credentials;
+			const stderr = vi.spyOn(console, 'error');
+
+			try {
+				const declared = spawnAgent('claude-code', '/p', 'hi', undefined, {
+					requiredSecrets: ['MAESTRO_TEST_DEPLOY_TOKEN'],
+				});
+				await driveSpawnToCompletion(declared, 0, CLAUDE_OK());
+				expect(spawnCall().options.env.MAESTRO_TEST_DEPLOY_TOKEN).toBe('sentinel-cli-91f2');
+
+				const other = spawnAgent('claude-code', '/p', 'hi');
+				await driveSpawnToCompletion(other, 0, CLAUDE_OK());
+				const lastEnv = (
+					mockSpawn.mock.calls.at(-1) as [string, string[], { env: NodeJS.ProcessEnv }]
+				)[2].env;
+				expect(mockSpawn).toHaveBeenCalledTimes(2);
+				expect(lastEnv.MAESTRO_TEST_DEPLOY_TOKEN).toBeUndefined();
+
+				expect(process.env.MAESTRO_TEST_DEPLOY_TOKEN).toBeUndefined();
+				expect(stderr.mock.calls.flat().map(String).join('\n')).not.toContain('sentinel-cli-91f2');
+			} finally {
+				if (prevCredentials === undefined) delete process.env.CREDENTIALS_DIRECTORY;
+				else process.env.CREDENTIALS_DIRECTORY = prevCredentials;
+				readMock.mockImplementation(fallback ?? (() => undefined as never));
+				actualFs.rmSync(credentials, { recursive: true, force: true });
+			}
+		});
+
 		it('session customEnvVars wins over agent-level customEnvVars', async () => {
 			mockReadAgentConfig.mockReturnValue({
 				customEnvVars: { MAESTRO_TEST_LAYER: 'agent' },

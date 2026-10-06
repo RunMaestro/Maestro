@@ -472,6 +472,16 @@ export interface BuildAgentEnvironmentOptions extends AgentEnvLayers {
 	 * {@link filterServerProcessEnv}). Also on when `MAESTRO_SERVER_MODE=1`.
 	 */
 	isServerMode?: boolean;
+	/**
+	 * CLI and Cue only: the secrets THIS agent declared it needs, already
+	 * resolved from systemd credentials, `/run/secrets` or the environment
+	 * (`src/shared/serverSecrets.ts`). Applied as part of the inherited tier:
+	 * above the server-mode allowlist, so a declared secret reaches its agent
+	 * without being allowlisted for every agent, and below every user and
+	 * Maestro layer. Desktop ignores it. Never part of `resolveAgentEnvVars`,
+	 * whose result is shown in Process Details and crosses to SSH remotes.
+	 */
+	secretEnvVars?: Record<string, string>;
 }
 
 /**
@@ -517,7 +527,8 @@ function buildDesktopAgentEnvironment(options: BuildAgentEnvironmentOptions): No
 /**
  * The CLI (`maestro-cli send`, Auto Run, playbooks):
  *
- *   defaultEnvVars and batchModeEnvVars fill only what the shell has NOT set
+ *   process.env < secretEnvVars
+ *     < defaultEnvVars and batchModeEnvVars, which fill only what is NOT set
  *     < (sessionCustomEnvVars ?? agentCustomEnvVars) < readOnlyEnvOverrides
  *     < maestroEnvVars < MAESTRO_QUERY_SOURCE
  *
@@ -530,7 +541,9 @@ function buildDesktopAgentEnvironment(options: BuildAgentEnvironmentOptions): No
  * that ran the command never reaches a fresh turn.
  */
 function buildCliAgentEnvironment(options: BuildAgentEnvironmentOptions): NodeJS.ProcessEnv {
-	const env: NodeJS.ProcessEnv = { ...process.env };
+	// The agent's declared secrets join what the shell exported (a secret file
+	// wins over the same name in the shell; see serverSecrets.ts).
+	const env: NodeJS.ProcessEnv = { ...process.env, ...(options.secretEnvVars ?? {}) };
 	env.PATH = buildExpandedPath();
 	if (options.isResuming) {
 		env.MAESTRO_SESSION_RESUMED = '1';
@@ -554,7 +567,7 @@ function buildCliAgentEnvironment(options: BuildAgentEnvironmentOptions): NodeJS
 /**
  * Cue:
  *
- *   process.env < defaultEnvVars < (sessionCustomEnvVars ?? agentCustomEnvVars)
+ *   process.env < secretEnvVars < defaultEnvVars < (sessionCustomEnvVars ?? agentCustomEnvVars)
  *     < readOnlyEnvOverrides < maestroEnvVars < MAESTRO_QUERY_SOURCE
  *
  * `process.env` is inherited as it is, with PATH rebuilt the way the desktop
@@ -564,6 +577,8 @@ function buildCliAgentEnvironment(options: BuildAgentEnvironmentOptions): NodeJS
  *
  * In server mode the inherited layer is cut down to an allowlist first (see
  * {@link filterServerProcessEnv}); every layer above it is applied unchanged.
+ * `secretEnvVars` sits directly on top of that cut, so the secrets this agent
+ * declared reach it while the rest of the engine's environment stays out.
  */
 function buildCueAgentEnvironment(options: BuildAgentEnvironmentOptions): NodeJS.ProcessEnv {
 	const inherited = isServerModeActive(options.isServerMode)
@@ -571,6 +586,7 @@ function buildCueAgentEnvironment(options: BuildAgentEnvironmentOptions): NodeJS
 		: process.env;
 	return {
 		...inherited,
+		...(options.secretEnvVars ?? {}),
 		PATH: buildSpawnPath(options.extraPathDirs),
 		...(resolveAgentEnvVars(options) ?? {}),
 		...(options.maestroEnvVars ?? {}),

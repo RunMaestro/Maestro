@@ -44,6 +44,8 @@ export interface CueExecutionConfig {
 	customPath?: string;
 	customArgs?: string;
 	customEnvVars?: Record<string, string>;
+	/** Secret names this agent needs; resolved into this run's env only (see `buildAgentLaunchPlan`). */
+	requiredSecrets?: string[];
 	customModel?: string;
 	customEffort?: string;
 	/** Legacy Adaptive Mode opt-in (maestro-p TUI). Off/absent means pure API. */
