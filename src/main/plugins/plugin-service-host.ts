@@ -444,12 +444,16 @@ export class PluginServiceHost {
 		}
 	}
 
-	cleanupPlugin(pluginId: string): void {
+	cleanupPlugin(pluginId: string): Promise<void> {
 		for (const key of this.registrations.keys())
 			if (key.startsWith(`${pluginId}/`)) this.registrations.delete(key);
-		for (const call of this.calls.values())
-			if (call.owner === pluginId || call.binding.provider === pluginId)
-				void this.abort(call, 'ServiceUnavailable').catch(() => {});
+		const drain = Promise.all(
+			[...this.calls.values()]
+				.filter((call) => call.owner === pluginId || call.binding.provider === pluginId)
+				.map((call) => this.abort(call, 'ServiceUnavailable'))
+		).then(() => {});
+		void drain.catch(() => {});
 		this.deps.changed?.();
+		return drain;
 	}
 }

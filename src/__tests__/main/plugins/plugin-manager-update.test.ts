@@ -125,6 +125,51 @@ describe('PluginManager.update', () => {
 		expect(fs.existsSync(path.join(installedDir, 'old-only.txt'))).toBe(false);
 	});
 
+	it.each([false, true])(
+		'awaits stop cleanup before swapping files (cleanup failure=%s)',
+		async (fail) => {
+			const gate = Promise.withResolvers<void>();
+			const stop = vi.fn(() => gate.promise);
+			const manager = new PluginManager({
+				isEnabled: () => true,
+				sandbox: {
+					start: vi.fn(),
+					stop,
+					stopAll: vi.fn(),
+					isRunning: () => false,
+					runningIds: () => [],
+					invokeCommand: () => false,
+					invokeTool: vi.fn(),
+				},
+			});
+			const original = writeSource(
+				path.join(workDir, 'original'),
+				{ version: '1.0.0' },
+				{ 'marker.txt': 'original' }
+			);
+			expect(manager.install(original).success).toBe(true);
+			const replacement = writeSource(
+				path.join(workDir, 'replacement'),
+				{ version: '2.0.0' },
+				{ 'marker.txt': 'replacement' }
+			);
+			const pending = manager.update(replacement);
+			await vi.waitFor(() => expect(stop).toHaveBeenCalledWith(PLUGIN_ID));
+			const marker = path.join(pluginsDir(), PLUGIN_ID, 'marker.txt');
+			expect(fs.readFileSync(marker, 'utf8')).toBe('original');
+			if (fail) {
+				const rejected = expect(pending).rejects.toThrow('MediaProcessFailed');
+				gate.reject(new Error('MediaProcessFailed'));
+				await rejected;
+				expect(fs.readFileSync(marker, 'utf8')).toBe('original');
+			} else {
+				gate.resolve();
+				await pending;
+				expect(fs.readFileSync(marker, 'utf8')).toBe('replacement');
+			}
+		}
+	);
+
 	it('rejects a downgrade', async () => {
 		const manager = makeManager();
 		const src2 = writeSource(path.join(workDir, 'src-v2'), { version: '2.0.0' });

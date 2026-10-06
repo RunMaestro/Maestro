@@ -295,7 +295,7 @@ export interface HostHandlerDeps {
 	/** Registers a per-plugin resource-cleanup callback with the host lifecycle
 	 * so the sandbox can release wake locks and close fs watchers when a plugin
 	 * stops, crashes, or is uninstalled. Invoked once during handler construction. */
-	registerResourceCleanup?: (cleanup: (pluginId: string) => void) => void;
+	registerResourceCleanup?: (cleanup: (pluginId: string) => Promise<void>) => void;
 	backgroundRegister?: (
 		pluginId: string,
 		service: PluginBackgroundService
@@ -1800,9 +1800,12 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 	// call these maps are never pruned, so a stopped plugin would otherwise leak an
 	// active powerSaveBlocker and an open fs.watch handle. Idempotent: a second
 	// call for the same plugin finds nothing left to release.
-	const cleanupPluginResources = (pluginId: string): void => {
-		services.cleanupPlugin(pluginId);
-		mediaTools.cleanupPlugin(pluginId);
+	const cleanupPluginResources = (pluginId: string): Promise<void> => {
+		const drain = Promise.all([
+			services.cleanupPlugin(pluginId),
+			mediaTools.cleanupPlugin(pluginId),
+		]).then(() => {});
+		void drain.catch(() => {});
 		for (const [watchId, entry] of fsWatchers) {
 			if (entry.pluginId !== pluginId) continue;
 			try {
@@ -1834,6 +1837,7 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 			});
 			netSockets.delete(socketId);
 		}
+		return drain;
 	};
 	deps.registerResourceCleanup?.(cleanupPluginResources);
 

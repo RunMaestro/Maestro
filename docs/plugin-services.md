@@ -187,13 +187,23 @@ fixture, not a bundled or automatically installed plugin.
    `whisper-cli` profile and the model/language frozen at start. It has no
    delegated download, owner-job open, arbitrary profile/argv/path, settings
    write or onward-delegation API. Decoding mints another alias for the same lease.
+   Delegated `run` projects Whisper JSON to `model.multilingual`, `params.language`,
+   `params.translate`, `result.language` and transcription segment `text` only.
+   Native model/input filenames, system metadata, tokens and other fields never
+   reach the provider. Malformed metadata fails closed before delivery.
 4. Owner media operations are blocked during delegation. Owner `media.close`
    still aborts it. Consumer/provider stop, crash, update, uninstall, permission
    revoke, explicit cancel or deadline expiry invalidate work. Main polls live
    permissions at most every 250 ms and rechecks around each effect/result.
-   The stopping sandbox is immediately barred from new service work. Stop/update
-   hooks initiate synchronous invalidation and asynchronous artifact cleanup;
-   their return is not a cleanup acknowledgment. `cancel` and `result` await it.
+   The stopping sandbox is immediately barred from new media/service work; release
+   requests remain usable. `PluginSandboxHost.stop()`/`stopAll()` return a drain
+   promise that resolves only after sandbox exit and the resource-cleanup callback.
+   Host IPC disable/revoke/uninstall acknowledgments await that barrier; updates
+   await it before replacing files. Synchronous registry refresh/watch hooks and
+   app shutdown initiate invalidation without awaiting: their return is not a
+   cleanup acknowledgment. `cancel` and `result` also await media cleanup. A failed
+   stop drain rejects and blocks process restart; it never reports successful cleanup.
+   Every unexpected sandbox exit, including code zero, also gates restart on its resource drain.
 5. Cancel kills/aborts pending media work and waits for child exit/artifact cleanup
    before returning. It is idempotent, remains available after revoke, and cannot
    cancel another consumer's call. Provider SDK callbacks are cooperative;
@@ -256,3 +266,25 @@ try {
 
 This host change does not install a plugin, download tools/models, restart
 Maestro or merge the existing upstream Media/Relay PRs.
+
+## Source verification of the Backstage gates
+
+The service error regression in `plugin-sandbox-host-invoke-tool.test.ts` runs the
+actual provider realm SDK, tool-result RPC, main sandbox host, service registry,
+consumer host-response RPC and consumer realm SDK. A code-only `ServiceEmpty`
+with a private diagnostic message arrives with exactly that allowlisted code and
+message; unknown codes become `ServiceFailed`, without raw provider diagnostics.
+Its delayed-start case withholds the successful reservation response, then waits
+for the consumer SDK's cancel response and cleanup before allowing continuation.
+This is a host SDK fixture, not the production Relay queue adapter.
+
+`plugin-media-tools.test.ts` composes the service registry with the real media
+broker and real temporary files. Cancel, provider stop, consumer revoke and a
+late start reply run against a blocked mocked native child. The test withholds
+its exit callback after SIGKILL and proves the drain remains pending and private
+files remain retained; only after native exit can the drain finish and the
+artifact directory disappear. Separate sandbox stop tests withhold sandbox exit
+and resource cleanup independently; IPC mutation and update tests prove the
+awaited barrier reaches the host UI response and precedes file removal/swap.
+These fixtures use synthetic media/process peers; real German Whisper inference,
+a packaged host UI and the production Backstage adapter remain separate gates.

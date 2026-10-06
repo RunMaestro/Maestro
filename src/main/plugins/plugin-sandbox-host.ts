@@ -47,13 +47,13 @@ export interface PluginSandboxHostDeps {
 	handlers: HostCallHandlers;
 	/** Forward plugin console/log lines somewhere visible. */
 	onLog?: (pluginId: string, level: string, message: string) => void;
-	/** Notified when a child exits unexpectedly (non-zero / crash). */
-	onCrash?: (pluginId: string, code: number) => void;
+	/** Notified on an unexpected exit (including code zero), or a non-zero crash. */
+	onCrash?: (pluginId: string, code: number) => void | Promise<void>;
 	/** Notified when a plugin is stopped ON PURPOSE (disable/uninstall/reload/
 	 * quit), BEFORE the shutdown message is posted - so intentional stops can
 	 * be distinguished from crashes by exit-time observers (e.g. the background
 	 * supervisor clears registrations here and never restarts on the exit). */
-	onStop?: (pluginId: string) => void;
+	onStop?: (pluginId: string) => void | Promise<void>;
 }
 
 /** One bounded recent-log entry observed for a running plugin. */
@@ -109,6 +109,8 @@ interface PendingTool {
 }
 
 interface RunningPlugin {
+	exited: Promise<void>;
+	markExited: () => void;
 	stopping?: boolean;
 	/** Separate bounded release slots so saturated ordinary calls cannot block cancellation. */
 	mediaClosesInFlight: number;
@@ -148,6 +150,8 @@ function toActivitySnapshot(a: Activity): ActivitySnapshot {
 }
 
 export class PluginSandboxHost {
+	/** Retain failed drains: a cleanup failure must never authorize a fresh process. */
+	private readonly drains = new Map<string, Promise<void>>();
 	private running = new Map<string, RunningPlugin>();
 	/** Per-plugin observability, keyed by plugin id. Separate from `running` so
 	 *  it survives a crashed child (crash counts must persist). */
@@ -219,6 +223,7 @@ export class PluginSandboxHost {
 	 */
 	start(pluginId: string, pluginDir: string, entryRelPath: string): void {
 		if (this.running.has(pluginId)) return;
+		if (this.drains.has(pluginId)) throw new Error('PluginDrainPending');
 
 		// Resolve and confine the entry path inside the plugin dir (defense in
 		// depth; the manifest validator already rejects traversal).
@@ -236,7 +241,13 @@ export class PluginSandboxHost {
 			env: {},
 		});
 
+		let markExited!: () => void;
+		const exited = new Promise<void>((resolve) => {
+			markExited = resolve;
+		});
 		const record: RunningPlugin = {
+			exited,
+			markExited,
 			proc,
 			inFlight: 0,
 			windowStart: Date.now(),
@@ -262,12 +273,27 @@ export class PluginSandboxHost {
 			if (existing)
 				this.rejectPendingTools(existing, 'plugin exited before returning a tool result');
 			this.running.delete(pluginId);
+			existing?.markExited();
 			const act = this.activity.get(pluginId);
 			if (act) act.inFlight = 0;
-			if (code !== 0) {
-				if (act) act.crashCount += 1;
+			if (code !== 0 || !existing?.stopping) {
+				if (act && code !== 0) act.crashCount += 1;
 				logger.warn(`[Plugins] sandbox "${pluginId}" exited with code ${code}`, '[Plugins]');
-				this.deps.onCrash?.(pluginId, code);
+				let cleanup: void | Promise<void>;
+				try {
+					cleanup = this.deps.onCrash?.(pluginId, code);
+				} catch {
+					cleanup = Promise.reject(new Error('ServiceFailed'));
+				}
+				if (existing?.stopping) {
+					void Promise.resolve(cleanup).catch(() => {});
+				} else if (cleanup) {
+					const drain = Promise.resolve(cleanup).then(() => {
+						this.drains.delete(pluginId);
+					});
+					this.drains.set(pluginId, drain);
+					void drain.catch(() => {});
+				}
 			}
 		});
 
@@ -420,11 +446,23 @@ export class PluginSandboxHost {
 	}
 
 	/** Stop a plugin: ask it to shut down, then hard-kill after a grace period. */
-	stop(pluginId: string): void {
+	stop(pluginId: string): Promise<void> {
+		const existingDrain = this.drains.get(pluginId);
+		if (existingDrain) return existingDrain;
 		const record = this.running.get(pluginId);
-		if (!record) return;
+		if (!record) return Promise.resolve();
 		record.stopping = true;
-		this.deps.onStop?.(pluginId);
+		let cleanup: void | Promise<void>;
+		try {
+			cleanup = this.deps.onStop?.(pluginId);
+		} catch {
+			cleanup = Promise.reject(new Error('ServiceFailed'));
+		}
+		const drain = Promise.all([record.exited, cleanup]).then(() => {
+			this.drains.delete(pluginId);
+		});
+		this.drains.set(pluginId, drain);
+		void drain.catch(() => {});
 		try {
 			record.proc.postMessage({ kind: 'shutdown' });
 		} catch {
@@ -437,11 +475,16 @@ export class PluginSandboxHost {
 				// Already dead.
 			}
 		}, SHUTDOWN_GRACE_MS);
+		return drain;
 	}
 
 	/** Stop every running plugin (app shutdown / feature disable). */
-	stopAll(): void {
-		for (const id of this.runningIds()) this.stop(id);
+	stopAll(): Promise<void> {
+		const drain = Promise.all(
+			[...new Set([...this.runningIds(), ...this.drains.keys()])].map((id) => this.stop(id))
+		).then(() => {});
+		void drain.catch(() => {});
+		return drain;
 	}
 
 	/** Authorize and execute one host request from a child. */
@@ -509,6 +552,21 @@ export class PluginSandboxHost {
 		// Backpressure + rate limiting against a flooding child.
 		const record = this.running.get(pluginId);
 		if (record) {
+			// Closing snapshots cannot admit new media resources during shutdown.
+			if (
+				record.stopping &&
+				((request.method.startsWith('media.') && request.method !== 'media.close') ||
+					(request.method.startsWith('services.') &&
+						!['services.cancel', 'services.result', 'services.unregister'].includes(
+							request.method
+						)))
+			) {
+				respond({
+					ok: false,
+					error: request.method.startsWith('services.') ? 'ServiceUnavailable' : 'MediaCancelled',
+				});
+				return;
+			}
 			if (
 				(request.method === 'media.close' || request.method === 'services.cancel') &&
 				record.mediaClosesInFlight >= MEDIA_LIMITS.maxJobsPerPlugin

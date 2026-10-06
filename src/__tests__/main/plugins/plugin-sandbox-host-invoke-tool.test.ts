@@ -80,9 +80,125 @@ describe('PluginSandboxHost.invokeTool request/response', () => {
 
 	afterEach(() => fs.rmSync(dir, { recursive: true, force: true }));
 
-	it.each(['ServiceEmpty', 'unknown'])(
+	it('stop waits for actual sandbox exit and resource cleanup, including repeated callers', async () => {
+		const cleanup = Promise.withResolvers<void>();
+		const stopping = new PluginSandboxHost({
+			broker: allowAll,
+			handlers: {},
+			onStop: () => cleanup.promise,
+		});
+		stopping.start('p', dir, 'entry.js');
+		let drained = false;
+		const drain = stopping.stop('p');
+		void drain.then(() => {
+			drained = true;
+		});
+		expect(stopping.stop('p')).toBe(drain);
+		expect(stopping.isAcceptingServiceCalls('p')).toBe(false);
+		emit('exit', 0);
+		await Promise.resolve();
+		expect(drained).toBe(false);
+		expect(() => stopping.start('p', dir, 'entry.js')).toThrow('PluginDrainPending');
+		cleanup.resolve();
+		await drain;
+		expect(drained).toBe(true);
+		stopping.start('p', dir, 'entry.js');
+		expect(stopping.isAcceptingServiceCalls('p')).toBe(true);
+	});
+	it('stop cannot resolve on cleanup alone before the uncooperative sandbox exits', async () => {
+		vi.useFakeTimers();
+		try {
+			let drained = false;
+			const drain = host.stop('p');
+			void drain.then(() => {
+				drained = true;
+			});
+			await vi.advanceTimersByTimeAsync(2000);
+			expect(proc.kill).toHaveBeenCalledTimes(1);
+			expect(drained).toBe(false);
+			emit('exit', 0);
+			await drain;
+			expect(drained).toBe(true);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+	it('rejects new media/service admissions during stop while keeping release requests usable', async () => {
+		const open = vi.fn();
+		const cancel = vi.fn(async () => null);
+		const stopping = new PluginSandboxHost({
+			broker: allowAll,
+			handlers: { 'media.open': open, 'services.register': open, 'services.cancel': cancel },
+		});
+		stopping.start('p', dir, 'entry.js');
+		const drain = stopping.stop('p');
+		emit('message', { id: 10, method: 'media.open', params: {} });
+		emit('message', {
+			id: 11,
+			method: 'services.register',
+			params: { serviceId: 'transcription' },
+		});
+		emit('message', { id: 12, method: 'services.cancel', params: { callId: 'owned' } });
+		await vi.waitFor(() => expect(cancel).toHaveBeenCalled());
+		expect(open).not.toHaveBeenCalled();
+		expect(proc.postMessage).toHaveBeenCalledWith({
+			id: 10,
+			ok: false,
+			error: 'MediaCancelled',
+			errorCode: 'MediaCancelled',
+		});
+		expect(proc.postMessage).toHaveBeenCalledWith({
+			id: 11,
+			ok: false,
+			error: 'ServiceUnavailable',
+			errorCode: 'ServiceUnavailable',
+		});
+		emit('exit', 0);
+		await drain;
+	});
+
+	it.each([0, 1])(
+		'blocks unexpected exit %s restart until the resource drain completes',
+		async (code) => {
+			const cleanup = Promise.withResolvers<void>();
+			const crashing = new PluginSandboxHost({
+				broker: allowAll,
+				handlers: {},
+				onCrash: () => cleanup.promise,
+			});
+			crashing.start('p', dir, 'entry.js');
+			emit('exit', code);
+			expect(() => crashing.start('p', dir, 'entry.js')).toThrow('PluginDrainPending');
+			const drain = crashing.stop('p');
+			cleanup.resolve();
+			await drain;
+			crashing.start('p', dir, 'entry.js');
+			expect(crashing.isAcceptingServiceCalls('p')).toBe(true);
+		}
+	);
+
+	it('retains a failed cleanup barrier after exit and denies restart', async () => {
+		const stopping = new PluginSandboxHost({
+			broker: allowAll,
+			handlers: {},
+			onStop: async () => {
+				throw new Error('MediaProcessFailed');
+			},
+		});
+		stopping.start('p', dir, 'entry.js');
+		const drain = stopping.stop('p');
+		emit('exit', 0);
+		await expect(drain).rejects.toThrow('MediaProcessFailed');
+		await expect(stopping.stop('p')).rejects.toThrow('MediaProcessFailed');
+		expect(() => stopping.start('p', dir, 'entry.js')).toThrow('PluginDrainPending');
+	});
+
+	it.each(['ServiceEmpty', 'unknown', 'late-start'])(
 		'preserves only allowlisted errors across provider realm, host invocation and consumer SDK (%s)',
 		async (code) => {
+			const cleanupGate = Promise.withResolvers<void>();
+			const startReply = Promise.withResolvers<{ callId: string }>();
+			let lateReservation: { callId: string } | undefined;
 			const providerLogs = vi.fn();
 			const provider = createSandboxRealm({
 				send: (json) => {
@@ -97,7 +213,9 @@ describe('PluginSandboxHost.invokeTool request/response', () => {
 			});
 			provider.init('p');
 			provider.runScript(
-				`module.exports={activate: function(sdk){return sdk.services.register('transcription',function(){var err=new Error('PRIVATE_PATH_MARKER');err.code=${JSON.stringify(code)};throw err;});}};`,
+				code === 'late-start'
+					? `module.exports={activate:function(sdk){return sdk.services.register('transcription',function(){return {text:'Guten Tag',language:'de',model:'base',durationSeconds:1,multilingual:true,translated:false};});}};`
+					: `module.exports={activate: function(sdk){return sdk.services.register('transcription',function(){var err=new Error('PRIVATE_PATH_MARKER');err.code=${JSON.stringify(code)};throw err;});}};`,
 				'provider-error'
 			);
 			await provider.activate();
@@ -154,6 +272,7 @@ describe('PluginSandboxHost.invokeTool request/response', () => {
 						call: vi.fn(),
 						close: async () => {
 							controller.abort();
+							if (code === 'late-start') await cleanupGate.promise;
 							cleaned = true;
 						},
 					}),
@@ -174,9 +293,15 @@ describe('PluginSandboxHost.invokeTool request/response', () => {
 				handlers: {
 					'services.start': (id, raw) => {
 						const p = raw as { requirementId: string; request: unknown };
-						return registry.start(id, p.requirementId, p.request);
+						const reservation = registry.start(id, p.requirementId, p.request);
+						if (code === 'late-start') {
+							lateReservation = reservation;
+							return startReply.promise;
+						}
+						return reservation;
 					},
 					'services.result': (id, raw) => registry.result(id, (raw as { callId: string }).callId),
+					'services.cancel': (id, raw) => registry.cancel(id, (raw as { callId: string }).callId),
 				},
 			});
 			const consumerLogs = vi.fn();
@@ -189,10 +314,25 @@ describe('PluginSandboxHost.invokeTool request/response', () => {
 			consumer.init('c');
 			consumerHost.start('c', dir, 'entry.js');
 			consumer.runScript(
-				`module.exports={activate:async function(sdk){var call=await sdk.services.start('voice',{jobId:'owner-job',audioId:'owner-audio',model:'base',language:'de'});try{await sdk.services.result(call.callId);}catch(err){console.log(err.code+':'+err.message);}}};`,
+				code === 'late-start'
+					? `module.exports={activate:async function(sdk){var locallyCancelled=true;var call=await sdk.services.start('voice',{jobId:'owner-job',audioId:'owner-audio',model:'base',language:'de'});if(locallyCancelled){await sdk.services.cancel(call.callId);console.log('cancel-drained');return;}throw new Error('unexpected dispatch');}};`
+					: `module.exports={activate:async function(sdk){var call=await sdk.services.start('voice',{jobId:'owner-job',audioId:'owner-audio',model:'base',language:'de'});try{await sdk.services.result(call.callId);}catch(err){console.log(err.code+':'+err.message);}}};`,
 				'consumer-error'
 			);
-			await consumer.activate();
+			const activation = consumer.activate();
+			if (code === 'late-start') {
+				await vi.waitFor(() => expect(lateReservation).toBeDefined());
+				startReply.resolve(lateReservation!);
+				await vi.waitFor(() => expect(controller.signal.aborted).toBe(true));
+				expect(consumerLogs).not.toHaveBeenCalled();
+				expect(cleaned).toBe(false);
+				cleanupGate.resolve();
+				await activation;
+				expect(consumerLogs).toHaveBeenCalledWith('info', 'cancel-drained');
+				expect(cleaned).toBe(true);
+				return;
+			}
+			await activation;
 			const expected = code === 'ServiceEmpty' ? code : 'ServiceFailed';
 			expect(consumerLogs).toHaveBeenCalledWith('info', expected + ':' + expected);
 			expect(providerLogs).toHaveBeenCalledWith('error', expected);

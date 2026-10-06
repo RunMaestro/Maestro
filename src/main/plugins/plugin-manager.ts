@@ -61,8 +61,8 @@ const HOT_RELOAD_DEBOUNCE_MS = 150;
  */
 export interface PluginSandboxLifecycle {
 	start: (pluginId: string, pluginDir: string, entryRelPath: string) => void;
-	stop: (pluginId: string) => void;
-	stopAll: () => void;
+	stop: (pluginId: string) => void | Promise<void>;
+	stopAll: () => void | Promise<void>;
 	isRunning: (pluginId: string) => boolean;
 	runningIds: () => string[];
 	invokeCommand: (pluginId: string, commandId: string, args?: unknown) => boolean;
@@ -631,7 +631,7 @@ export class PluginManager {
 			fs.cpSync(sourceDir, staged, { recursive: true });
 			// Stop the running sandbox before swapping files (mirrors uninstall's stop
 			// path); refresh() below restarts it if the new version is still runnable.
-			this.deps.sandbox?.stop(id);
+			await this.stopAndDrain(id);
 			// Move the old dir aside, then move the new one into place. If the second
 			// rename fails, restore the old dir so we never leave a partial state.
 			fs.renameSync(dest, backup);
@@ -678,6 +678,11 @@ export class PluginManager {
 		this.syncPluginWatchers();
 		this.deps.onChange?.(this.registry);
 		return { success: true };
+	}
+
+	/** Host mutation barrier: stop invalidates immediately; await confirms exit and media cleanup. */
+	async stopAndDrain(id: string): Promise<void> {
+		await this.deps.sandbox?.stop(id);
 	}
 
 	/** Stop all sandboxes (app shutdown / feature disable). */

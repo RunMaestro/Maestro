@@ -2252,7 +2252,7 @@ app
 		let serviceAvailable: ((pluginId: string, requirementId: string) => boolean) | undefined;
 		let serviceReconcileQueued = false;
 		let serviceReconcile: (() => void) | undefined;
-		let pluginResourceCleanup: ((pluginId: string) => void) | undefined;
+		let pluginResourceCleanup: ((pluginId: string) => Promise<void>) | undefined;
 		const groupingRegistry = new PluginGroupingRegistry(() => {
 			try {
 				mainWindow?.webContents.send('plugins:groupings-changed');
@@ -2486,17 +2486,19 @@ app
 				logger.info(`[Plugin:${pluginId}] ${level}: ${message}`, '[Plugins]');
 			},
 			onCrash: (pluginId, code) => {
-				pluginResourceCleanup?.(pluginId);
+				const drain = pluginResourceCleanup?.(pluginId);
 				pluginHostViews.purge(pluginId);
 				groupingRegistry.removePlugin(pluginId);
 				logger.warn(`[Plugins] plugin "${pluginId}" crashed (code ${code})`, '[Plugins]');
 				backgroundSupervisor.onPluginCrash(pluginId, code);
+				return drain;
 			},
 			onStop: (pluginId) => {
-				pluginResourceCleanup?.(pluginId);
+				const drain = pluginResourceCleanup?.(pluginId);
 				pluginHostViews.purge(pluginId);
 				groupingRegistry.removePlugin(pluginId);
 				backgroundSupervisor.onPluginStopped(pluginId);
+				return drain;
 			},
 		});
 		pluginSandboxHost = sandboxHost;
