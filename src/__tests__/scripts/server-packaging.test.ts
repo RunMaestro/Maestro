@@ -288,7 +288,8 @@ describe('install.sh --enable', () => {
 		expect(installer).not.toContain('maestro-sessions.json');
 	});
 
-	it('parses as a POSIX shell script', () => {
+	// Needs a POSIX sh, which a Windows runner does not promise (like the gate tests above).
+	it.skipIf(process.platform === 'win32')('parses as a POSIX shell script', () => {
 		expect(() => execFileSync('sh', ['-n', path.join(packagingDir, 'install.sh')])).not.toThrow();
 	});
 });
