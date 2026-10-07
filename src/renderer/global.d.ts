@@ -875,7 +875,7 @@ interface MaestroAPI {
 			cwd: string,
 			sshRemoteId?: string,
 			remoteCwd?: string
-		) => Promise<{ stdout: string; stderr: string }>;
+		) => Promise<{ stdout: string; stderr: string; timedOut?: boolean }>;
 		diff: (
 			cwd: string,
 			file?: string,
@@ -892,7 +892,7 @@ interface MaestroAPI {
 			cwd: string,
 			sshRemoteId?: string,
 			remoteCwd?: string
-		) => Promise<{ stdout: string; stderr: string }>;
+		) => Promise<{ stdout: string; stderr: string; timedOut?: boolean }>;
 		branch: (
 			cwd: string,
 			sshRemoteId?: string,

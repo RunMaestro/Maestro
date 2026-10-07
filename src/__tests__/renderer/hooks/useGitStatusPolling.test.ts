@@ -98,6 +98,69 @@ describe('useGitStatusPolling', () => {
 		});
 	});
 
+	describe('when git is slow (e.g. a repo in iCloud Drive)', () => {
+		it('keeps the last good counts when a status check times out', async () => {
+			vi.mocked(gitService.getStatus).mockResolvedValue({
+				files: [{ path: 'README.md', status: 'M' }],
+				branch: 'main',
+			});
+			const sessions = [createMockSession({ id: 'slow', isGitRepo: true })];
+
+			const { result } = renderHook(() => useGitStatusPolling(sessions));
+			await waitFor(() => {
+				expect(result.current.gitStatusMap.get('slow')?.fileCount).toBe(1);
+			});
+
+			vi.mocked(gitService.getStatus).mockResolvedValue({
+				files: [],
+				branch: undefined,
+				timedOut: true,
+			});
+			await act(async () => {
+				await result.current.refreshGitStatus();
+			});
+
+			expect(result.current.gitStatusMap.get('slow')?.fileCount).toBe(1);
+			expect(updateSessionWith).not.toHaveBeenCalled();
+		});
+
+		it('never runs two polls at once, and folds explicit refreshes into one more pass', async () => {
+			let finish!: () => void;
+			vi.mocked(gitService.getStatus).mockImplementationOnce(
+				() =>
+					new Promise((resolve) => {
+						finish = () => resolve({ files: [], branch: 'main' });
+					})
+			);
+			vi.mocked(gitService.getStatus).mockResolvedValue({ files: [], branch: 'main' });
+			const sessions = [createMockSession({ id: 'slow', isGitRepo: true })];
+
+			// A custom interval is not scaled, so the timer fires every 20ms.
+			const { result } = renderHook(() => useGitStatusPolling(sessions, { pollInterval: 20 }));
+			await waitFor(() => {
+				expect(gitService.getStatus).toHaveBeenCalledTimes(1);
+			});
+
+			// Timer ticks and two refreshes land while the first poll hangs.
+			let refreshes!: Promise<void[]>;
+			await act(async () => {
+				refreshes = Promise.all([
+					result.current.refreshGitStatus(),
+					result.current.refreshGitStatus(),
+				]);
+				await new Promise((resolve) => setTimeout(resolve, 100));
+			});
+			expect(gitService.getStatus).toHaveBeenCalledTimes(1);
+
+			await act(async () => {
+				finish();
+				await refreshes;
+			});
+			// Exactly one queued pass for both refreshes, nothing for the dropped ticks.
+			expect(gitService.getStatus).toHaveBeenCalledTimes(2);
+		});
+	});
+
 	describe('when a git agent stops being a repo', () => {
 		it('demotes the session and drops it from the status map', async () => {
 			vi.mocked(gitService.getStatus).mockResolvedValue({

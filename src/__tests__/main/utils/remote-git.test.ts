@@ -5,7 +5,7 @@
  * on remote hosts via SSH, including worktree management and parsing.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { ExecResult } from '../../../main/utils/execFile';
 import type { SshRemoteConfig } from '../../../shared/types';
 
@@ -35,6 +35,8 @@ import { buildSshCommand } from '../../../main/utils/ssh-command-builder';
 import {
 	execGitRemote,
 	execGit,
+	execGitReadOnly,
+	isGitTimeout,
 	listWorktreesRemote,
 	worktreeInfoRemote,
 	worktreeCheckoutRemote,
@@ -234,6 +236,111 @@ describe('remote-git.ts', () => {
 				sshRemote,
 				expect.objectContaining({ cwd: '/remote/cwd' })
 			);
+		});
+	});
+
+	// =========================================================================
+	// execGitReadOnly (background polls: locks flag, timeout, single-flight)
+	// =========================================================================
+	describe('execGitReadOnly', () => {
+		afterEach(() => {
+			vi.useRealTimers();
+		});
+
+		/** An exec that stays running until the test resolves it. */
+		function hangingExec() {
+			let finish!: (result: ExecResult) => void;
+			mockExecFileNoThrow.mockImplementationOnce(
+				() =>
+					new Promise<ExecResult>((resolve) => {
+						finish = resolve;
+					})
+			);
+			return (result: ExecResult) => finish(result);
+		}
+
+		it('skips optional locks and passes a timeout to the child', async () => {
+			mockExecFileNoThrow.mockResolvedValue(successResult(' M a.ts\n'));
+
+			const result = await execGitReadOnly(
+				['status', '--porcelain'],
+				'/repo',
+				null,
+				undefined,
+				5000
+			);
+
+			expect(mockExecFileNoThrow).toHaveBeenCalledWith(
+				'git',
+				['--no-optional-locks', 'status', '--porcelain'],
+				'/repo',
+				{ timeout: 5000 }
+			);
+			expect(result.stdout).toBe(' M a.ts\n');
+			expect(isGitTimeout(result)).toBe(false);
+		});
+
+		it('passes the timeout to the SSH invocation for a remote', async () => {
+			mockExecFileNoThrow.mockResolvedValue(successResult(''));
+
+			await execGitReadOnly(['status', '--porcelain'], '/repo', createSshRemote(), '/remote', 5000);
+
+			expect(mockBuildSshCommand).toHaveBeenCalledWith(
+				expect.anything(),
+				expect.objectContaining({ args: ['--no-optional-locks', 'status', '--porcelain'] })
+			);
+			expect(mockExecFileNoThrow).toHaveBeenCalledWith('ssh', ['mock-args'], undefined, {
+				timeout: 5000,
+			});
+		});
+
+		it('joins a running query for the same folder instead of spawning another', async () => {
+			const finish = hangingExec();
+
+			const first = execGitReadOnly(['status', '--porcelain'], '/repo');
+			const second = execGitReadOnly(['status', '--porcelain'], '/repo');
+			await Promise.resolve();
+			finish(successResult('?? new.ts\n'));
+
+			expect((await first).stdout).toBe('?? new.ts\n');
+			expect((await second).stdout).toBe('?? new.ts\n');
+			expect(mockExecFileNoThrow).toHaveBeenCalledTimes(1);
+		});
+
+		it('runs separate queries for different folders or commands', async () => {
+			mockExecFileNoThrow.mockResolvedValue(successResult(''));
+
+			await Promise.all([
+				execGitReadOnly(['status', '--porcelain'], '/repo-a'),
+				execGitReadOnly(['status', '--porcelain'], '/repo-b'),
+				execGitReadOnly(['diff', '--numstat'], '/repo-a'),
+			]);
+
+			expect(mockExecFileNoThrow).toHaveBeenCalledTimes(3);
+		});
+
+		it('times out a caller while git hangs, and spawns nothing new until git exits', async () => {
+			vi.useFakeTimers();
+			const finish = hangingExec();
+
+			const first = execGitReadOnly(['status', '--porcelain'], '/icloud', null, undefined, 1000);
+			await vi.advanceTimersByTimeAsync(1000);
+			const timedOut = await first;
+			expect(isGitTimeout(timedOut)).toBe(true);
+			expect(timedOut.stdout).toBe('');
+
+			// The stuck child is still alive: a later poll must join it, not pile on.
+			const second = execGitReadOnly(['status', '--porcelain'], '/icloud', null, undefined, 1000);
+			await vi.advanceTimersByTimeAsync(1000);
+			expect(isGitTimeout(await second)).toBe(true);
+			expect(mockExecFileNoThrow).toHaveBeenCalledTimes(1);
+
+			// Once it finally exits, the next poll starts a fresh process.
+			finish(failResult('ETIMEDOUT', 'ETIMEDOUT'));
+			await vi.advanceTimersByTimeAsync(0);
+			mockExecFileNoThrow.mockResolvedValueOnce(successResult(''));
+			await execGitReadOnly(['status', '--porcelain'], '/icloud', null, undefined, 1000);
+			expect(mockExecFileNoThrow).toHaveBeenCalledTimes(2);
 		});
 	});
 
