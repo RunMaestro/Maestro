@@ -206,6 +206,29 @@ describe('bundle import through the running app', () => {
 		expect(stdout()).toContain('Reviewer (claude-code) new');
 	});
 
+	it('previews the plan with a dry run and prints its shell commands before the app writes', async () => {
+		const shellCommands = [{ workspace: 'web', subscription: 'cleanup', command: 'rm -rf build' }];
+		const printedBeforeWrite: string[] = [];
+		sendCommand.mockImplementation(async (message: { request: { dryRun?: boolean } }) => {
+			if (!message.request.dryRun) printedBeforeWrite.push(stdout());
+			return {
+				type: 'cue_bundle_import_result',
+				outcome: { ok: true, applied: !message.request.dryRun, plan: plan({ shellCommands }) },
+			};
+		});
+
+		await bundleImport('0.18.6', bundlePath(), { workspace: ['web=/w'] });
+
+		expect(sendCommand.mock.calls.map((c) => c[0].request.dryRun)).toEqual([true, undefined]);
+		expect(printedBeforeWrite).toHaveLength(1);
+		expect(printedBeforeWrite[0]).toContain(
+			'Importing pipeline "Nightly" into the running Maestro app'
+		);
+		expect(printedBeforeWrite[0]).toContain('web / cleanup: rm -rf build');
+		expect(stdout()).toContain('Imported pipeline "Nightly" into the running Maestro app');
+		expect(stdout()).not.toContain('The bundle changed after the preview');
+	});
+
 	it('marks JSON output as going through the app', async () => {
 		sendCommand.mockResolvedValue({
 			type: 'cue_bundle_import_result',

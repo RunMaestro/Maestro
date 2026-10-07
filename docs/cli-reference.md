@@ -918,10 +918,10 @@ Export one Cue pipeline or one agent to a deterministic bundle zip
 
 Check a bundle zip: file hashes both ways, cue.yaml, references, secrets, and engine version
 
-| Option        | Description                                                         | Default |
-| ------------- | ------------------------------------------------------------------- | ------- |
-| `--check-env` | Also warn about required secrets that are unset in this environment | -       |
-| `--json`      | Output as JSON (for scripting)                                      | -       |
+| Option        | Description                                                                                                                                                        | Default |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------- |
+| `--check-env` | Also check that this machine supplies each required secret (systemd credential, /run/secrets file, or environment variable); missing or unusable ones are warnings | -       |
+| `--json`      | Output as JSON (for scripting)                                                                                                                                     | -       |
 
 ## `maestro-cli bundle inspect <bundle>`
 
@@ -933,17 +933,17 @@ Describe a bundle from its manifest and README without unpacking the rest
 
 ## `maestro-cli bundle import <bundle>`
 
-Import a bundle into the running app, or with it closed into a data directory, plus local workspace folders
+Import a bundle into the running app, or with it closed into a data directory, plus local workspace folders. Prints the plan, shell commands included, before the first write
 
-| Option                       | Description                                                                         | Default |
-| ---------------------------- | ----------------------------------------------------------------------------------- | ------- |
-| `-w, --workspace <key=path>` | Map a bundle workspace to a local folder (repeatable, one per workspace)            | `[]`    |
-| `--agent-path <tool=path>`   | Set the binary a provider runs, e.g. claude-code=/usr/local/bin/claude (repeatable) | `[]`    |
-| `--data-dir <path>`          | Import into this Maestro data directory instead of the default                      | -       |
-| `--dry-run`                  | Report everything the import would do, including conflicts; write nothing           | -       |
-| `--force`                    | Overwrite conflicting agents, subscriptions, playbooks, files, and paths            | -       |
-| `--reject-shell-commands`    | Refuse the import if any subscription runs a shell command                          | -       |
-| `--json`                     | Output as JSON (for scripting)                                                      | -       |
+| Option                       | Description                                                                             | Default |
+| ---------------------------- | --------------------------------------------------------------------------------------- | ------- |
+| `-w, --workspace <key=path>` | Map a bundle workspace to a local folder (repeatable, one per workspace)                | `[]`    |
+| `--agent-path <tool=path>`   | Set the binary a provider runs, e.g. claude-code=/usr/local/bin/claude (repeatable)     | `[]`    |
+| `--data-dir <path>`          | Import into this Maestro data directory instead of the default                          | -       |
+| `--dry-run`                  | Report everything the import would do, including conflicts; write nothing               | -       |
+| `--force`                    | Overwrite conflicting agents, subscriptions, playbooks, files, and paths                | -       |
+| `--reject-shell-commands`    | Refuse the import, before anything is written, if any subscription runs a shell command | -       |
+| `--json`                     | Output as JSON (for scripting): one document, after the import                          | -       |
 
 ## `maestro-cli director-notes`
 

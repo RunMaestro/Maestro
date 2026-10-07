@@ -510,7 +510,8 @@ function buildAgentSettings(
 	workspaceKey: string,
 	root: string,
 	autoRun: CueBundleAgentSettings['autoRun'],
-	builder: BundleBuilder
+	builder: BundleBuilder,
+	mcpSecrets: readonly string[]
 ): CueBundleAgentSettings {
 	const settings: CueBundleAgentSettings = {
 		id: session.id,
@@ -562,8 +563,11 @@ function buildAgentSettings(
 	// Names an imported agent declared without a value (`requiredSecrets`): a
 	// server agent's secrets come from files or the environment, so they are on
 	// the record by name and nowhere else. Without this a re-export would drop
-	// the requirement the original bundle stated.
-	for (const name of session.requiredSecrets ?? []) {
+	// the requirement the original bundle stated. A Claude agent also declares
+	// the secrets its workspace's `.mcp.json` references (`mcpSecrets`): on a
+	// server its launch carries only its own secrets, and Claude Code expands
+	// the references from that environment.
+	for (const name of [...(session.requiredSecrets ?? []), ...mcpSecrets]) {
 		if (!required.includes(name) && !(name in values)) required.push(name);
 	}
 	required.sort();
@@ -838,6 +842,8 @@ export async function exportCueBundle(
 	const manifestWorkspaces: CueBundleWorkspace[] = [];
 	const events = new Set<string>();
 	const secrets = new Set<string>();
+	/** Workspace key -> secrets its exported `.mcp.json` references. */
+	const mcpSecretsByKey = new Map<string, string[]>();
 	// Ordered by key, the bundle's only name for a project root. Ordering by the
 	// root's absolute path would make the manifest depend on where the projects
 	// happen to be checked out, so a bundle re-exported after an import into
@@ -901,6 +907,7 @@ export async function exportCueBundle(
 				if (file.executable) builder.executables.add(file.archivePath);
 			}
 			for (const name of claude.secrets) secrets.add(name);
+			mcpSecretsByKey.set(ws.key, claude.secrets);
 			for (const warning of claude.warnings) builder.warnings.add(warning);
 			if (claude.assets) entry.claude = claude.assets;
 		}
@@ -960,7 +967,15 @@ export async function exportCueBundle(
 			);
 		}
 
-		const settings = buildAgentSettings(session, agentConfigsDir, wsKey, root, autoRun, builder);
+		const settings = buildAgentSettings(
+			session,
+			agentConfigsDir,
+			wsKey,
+			root,
+			autoRun,
+			builder,
+			session.toolType === 'claude-code' ? (mcpSecretsByKey.get(wsKey) ?? []) : []
+		);
 		for (const key of settings.env?.required ?? []) secrets.add(key);
 		const settingsPath = `agents/${session.id}.json`;
 		addGenerated(settingsPath, JSON.stringify(settings, null, '\t') + '\n');

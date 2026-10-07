@@ -116,6 +116,33 @@ describe('applyImportedAgents', () => {
 		expect(updated.requiredSecrets).toBeUndefined();
 	});
 
+	it('clears them when the change crossed a JSON transport that drops undefined keys', async () => {
+		useSessionStore.setState({
+			sessions: [{ ...existing, requiredSecrets: ['OLD_TOKEN'] } as Session],
+		});
+		// What the web-desktop bridge (WebSocket, JSON) would deliver: the
+		// importer's `requiredSecrets: undefined` is gone, not undefined.
+		const change = JSON.parse(
+			JSON.stringify({
+				created: [],
+				updated: [
+					{
+						id: 'e1',
+						name: 'Old name',
+						toolType: 'codex',
+						cwd: '/old',
+						requiredSecrets: undefined,
+					},
+				],
+			})
+		) as { created: SessionInfo[]; updated: SessionInfo[] };
+		expect('requiredSecrets' in change.updated[0]).toBe(false);
+
+		await applyImportedAgents(change);
+		const updated = useSessionStore.getState().sessions.find((s) => s.id === 'e1')!;
+		expect(updated.requiredSecrets).toBeUndefined();
+	});
+
 	it('creates a new agent with its required secret names', async () => {
 		await applyImportedAgents({
 			created: [

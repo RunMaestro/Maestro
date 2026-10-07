@@ -235,6 +235,48 @@ describe('validateCueBundle', () => {
 		expect(without.warnings).toEqual([]);
 	});
 
+	it('looks each required secret up as a launch does: files, then the environment', async () => {
+		const VALUE = 'validate-secret-value-do-not-leak';
+		const credentials = path.join(tmp, 'credentials');
+		const runSecrets = path.join(tmp, 'run-secrets');
+		fs.mkdirSync(credentials);
+		fs.mkdirSync(runSecrets);
+		fs.writeFileSync(path.join(credentials, 'API_KEY'), `${VALUE}\n`);
+		fs.writeFileSync(path.join(runSecrets, 'EMPTY_TOKEN'), '');
+		const file = writeCueBundle(path.join(tmp, 'b.zip'), {
+			manifest: (m) => m.requirements.secrets.push('EMPTY_TOKEN', 'GONE_TOKEN'),
+		});
+
+		const result = await validateCueBundle(file, {
+			runningVersion: RUNNING,
+			checkEnv: true,
+			env: { CREDENTIALS_DIRECTORY: credentials, HOOK_SECRET: VALUE },
+			runSecretsDir: runSecrets,
+		});
+
+		expect(result.valid).toBe(true);
+		expect(result.secrets).toEqual([
+			{ name: 'API_KEY', status: 'found', source: 'credentials' },
+			{
+				name: 'EMPTY_TOKEN',
+				status: 'unusable',
+				problem: 'empty',
+				path: path.join(runSecrets, 'EMPTY_TOKEN'),
+			},
+			{ name: 'GONE_TOKEN', status: 'missing' },
+			{ name: 'HOOK_SECRET', status: 'found', source: 'env' },
+		]);
+		expect(result.warnings).toEqual([
+			{ code: 'secret-unusable', message: expect.stringContaining('EMPTY_TOKEN') },
+			{ code: 'secret-unset', message: 'GONE_TOKEN is not set in this environment' },
+		]);
+		// Names, sources and paths only.
+		expect(JSON.stringify(result)).not.toContain(VALUE);
+
+		const without = await validateCueBundle(file, { runningVersion: RUNNING, env: {} });
+		expect(without.secrets).toBeUndefined();
+	});
+
 	it('reports a missing manifest as an error and throws on a non-zip', async () => {
 		const noManifest = path.join(tmp, 'no-manifest.zip');
 		fs.writeFileSync(noManifest, zipSync({ 'README.md': strToU8('# hi') }));

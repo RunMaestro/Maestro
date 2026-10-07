@@ -99,6 +99,70 @@ describe('bundle validate', () => {
 		]);
 	});
 
+	describe('--check-env against secret files', () => {
+		const VALUE = 'cli-validate-secret-do-not-leak';
+
+		/** API_KEY as a systemd credential, HOOK_SECRET in the env, EMPTY_TOKEN unusable, GONE_TOKEN nowhere. */
+		async function validateHere(json: boolean): Promise<void> {
+			const credentials = path.join(tmp, 'credentials');
+			fs.mkdirSync(credentials);
+			fs.writeFileSync(path.join(credentials, 'API_KEY'), VALUE);
+			fs.mkdirSync(path.join(credentials, 'EMPTY_TOKEN'));
+			const file = writeCueBundle(path.join(tmp, 'ok.zip'), {
+				manifest: (m) => m.requirements.secrets.push('EMPTY_TOKEN', 'GONE_TOKEN'),
+			});
+			vi.stubEnv('CREDENTIALS_DIRECTORY', credentials);
+			vi.stubEnv('HOOK_SECRET', VALUE);
+			vi.stubEnv('API_KEY', '');
+			vi.stubEnv('GONE_TOKEN', '');
+			try {
+				await bundleValidate('0.18.6', file, { json, checkEnv: true });
+			} finally {
+				vi.unstubAllEnvs();
+			}
+		}
+
+		it('lists each secret by name and where it was found, in JSON', async () => {
+			await validateHere(true);
+			expect(exitSpy).not.toHaveBeenCalled();
+			const payload = JSON.parse(stdout());
+			expect(payload.valid).toBe(true);
+			expect(payload.secrets).toEqual([
+				{ name: 'API_KEY', status: 'found', source: 'credentials' },
+				{
+					name: 'EMPTY_TOKEN',
+					status: 'unusable',
+					problem: 'not-a-file',
+					path: path.join(tmp, 'credentials', 'EMPTY_TOKEN'),
+				},
+				{ name: 'GONE_TOKEN', status: 'missing' },
+				{ name: 'HOOK_SECRET', status: 'found', source: 'env' },
+			]);
+			expect(payload.warnings.map((w: { code: string }) => w.code)).toEqual([
+				'secret-unusable',
+				'secret-unset',
+			]);
+			expect(stdout()).not.toContain(VALUE);
+		});
+
+		it('prints the same in text, without values', async () => {
+			await validateHere(false);
+			const out = stdout();
+			expect(out).toContain('Secrets on this machine:');
+			expect(out).toContain('API_KEY  set (systemd credential)');
+			expect(out).toContain('HOOK_SECRET  set (env)');
+			expect(out).toContain('GONE_TOKEN  NOT SET');
+			expect(out).toMatch(/EMPTY_TOKEN {2}UNUSABLE \(not-a-file, /);
+			expect(out).not.toContain(VALUE);
+		});
+
+		it('checks nothing on this machine without --check-env', async () => {
+			const file = writeCueBundle(path.join(tmp, 'plain.zip'));
+			await bundleValidate('0.18.6', file, { json: true });
+			expect(JSON.parse(stdout()).secrets).toBeUndefined();
+		});
+	});
+
 	it('returns success:false when the archive cannot be read', async () => {
 		const file = path.join(tmp, 'not.zip');
 		fs.writeFileSync(file, 'plain text');

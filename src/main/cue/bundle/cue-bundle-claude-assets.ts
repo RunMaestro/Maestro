@@ -12,7 +12,9 @@
  * - `.mcp.json` values that look secret (by env name, header name, flag name,
  *   or a known credential prefix) become `${VAR}` references, which Claude
  *   Code expands from the environment. The names join the bundle's
- *   `requirements.secrets`, so the importer is told to set them.
+ *   `requirements.secrets`, so the importer is told to set them, and the
+ *   `env.required` of every Claude agent in that workspace, so a server
+ *   launch of that agent (and no other) receives them.
  * - Text files (memory, skills) have credential-shaped tokens replaced by
  *   `[redacted]` (`redactCredentialTokens()`). Their prose cannot be
  *   rewritten into a reference.
@@ -239,6 +241,20 @@ export function mcpConfigReferences(content: string): string[] {
 		names.add(match[1]);
 	}
 	return [...names].sort();
+}
+
+/**
+ * The secrets a bundled `.mcp.json` needs from the machine that runs it: the
+ * references the bundle declares in `requirements.secrets`, or whose name says
+ * they are secret. `${HOME}` and the like are configuration. The importer
+ * hands these names to the workspace's Claude agents (`requiredSecrets`),
+ * because a server agent's launch receives only the secrets it declares and
+ * Claude Code expands the references from that environment.
+ */
+export function mcpConfigSecretNames(content: string, declared: readonly string[]): string[] {
+	return mcpConfigReferences(content).filter(
+		(name) => isSecretEnvKey(name) || declared.includes(name)
+	);
 }
 
 /**

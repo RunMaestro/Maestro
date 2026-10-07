@@ -53,13 +53,17 @@ export const cueBundleService = {
 	},
 };
 
-/** Copy only the fields an import sets onto an existing agent. */
+/**
+ * Copy only the fields an import sets onto an existing agent. Every one of
+ * them, present or not: the importer sets them all, and one it cleared (a
+ * bundle that declares no secrets, say) is `undefined`. Electron IPC keeps
+ * such a key, but a JSON transport drops it, and a missing key must still
+ * clear the field rather than leave the stale value behind.
+ */
 function bundleFieldsOf(record: SessionInfo): Partial<Session> {
 	const source = record as unknown as Record<string, unknown>;
 	const out: Record<string, unknown> = {};
-	for (const field of CUE_BUNDLE_AGENT_FIELDS) {
-		if (field in source) out[field] = source[field];
-	}
+	for (const field of CUE_BUNDLE_AGENT_FIELDS) out[field] = source[field];
 	return out as Partial<Session>;
 }
 

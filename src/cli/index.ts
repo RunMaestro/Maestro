@@ -1263,7 +1263,10 @@ bundle
 	.description(
 		'Check a bundle zip: file hashes both ways, cue.yaml, references, secrets, and engine version'
 	)
-	.option('--check-env', 'Also warn about required secrets that are unset in this environment')
+	.option(
+		'--check-env',
+		'Also check that this machine supplies each required secret (systemd credential, /run/secrets file, or environment variable); missing or unusable ones are warnings'
+	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((bundlePath, options) => bundleValidate(cliVersion, bundlePath, options));
 
@@ -1276,7 +1279,7 @@ bundle
 bundle
 	.command('import <bundle>')
 	.description(
-		'Import a bundle into the running app, or with it closed into a data directory, plus local workspace folders'
+		'Import a bundle into the running app, or with it closed into a data directory, plus local workspace folders. Prints the plan, shell commands included, before the first write'
 	)
 	.option(
 		'-w, --workspace <key=path>',
@@ -1293,8 +1296,11 @@ bundle
 	.option('--data-dir <path>', 'Import into this Maestro data directory instead of the default')
 	.option('--dry-run', 'Report everything the import would do, including conflicts; write nothing')
 	.option('--force', 'Overwrite conflicting agents, subscriptions, playbooks, files, and paths')
-	.option('--reject-shell-commands', 'Refuse the import if any subscription runs a shell command')
-	.option('--json', 'Output as JSON (for scripting)')
+	.option(
+		'--reject-shell-commands',
+		'Refuse the import, before anything is written, if any subscription runs a shell command'
+	)
+	.option('--json', 'Output as JSON (for scripting): one document, after the import')
 	.action((bundlePath, options) => bundleImport(cliVersion, bundlePath, options));
 
 // Director's Notes commands

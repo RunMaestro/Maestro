@@ -299,6 +299,8 @@ changed with this: no row in Covered or Open gaps moved.
 
 Bundle export and import run the same functions either way. With the app running and no `--data-dir`, the CLI sends them through the WebSocket bridge to `src/main/cue-bundle-service.ts`, the module the Bundles tab's IPC handlers call, so imported agents land in the app's session store instead of a sessions file it would overwrite. With the app closed they read and write the data directory directly. `--agent-path` has no UI: the app sets provider binaries in Settings, and the bridge path refuses the flag.
 
+Both surfaces show the import plan, shell commands included, before anything is written. The Bundles tab shows its dry run and waits for **Import**. The CLI has no prompt: on the disk path it prints the plan from the importer's `onBeforeWrite` hook, which runs after every check and right before the first write, so what it prints is exactly what gets written. Through the app it sends a dry run of the same request first, prints that plan, then imports. `--json` stays one document, printed after the import. Both read their secrets status from the same `lookupSecret` call the launch uses (the Bundles tab's plan, `bundle import`'s plan, and `bundle validate --check-env`). The extra `--check-env` validation has no button of its own because the tab's plan already reports each secret's status on this machine.
+
 ## Open gaps
 
 Ranked by how often an agent is likely to hit them. None of these are blocked by

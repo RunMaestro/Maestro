@@ -42,6 +42,23 @@ async function run(options: BundleImportOptions, file = bundle): Promise<void> {
 	await bundleImport(VERSION, file, { workspace: [`proj=${projRoot}`], dataDir, ...options });
 }
 
+/** A bundle whose one extra subscription runs a shell command. */
+function shellBundle(): string {
+	return writeCueBundle(path.join(tmp, 'shell.zip'), {
+		cue: (doc) => {
+			doc.subscriptions.push({
+				name: 'cleanup',
+				event: 'time.heartbeat',
+				agent_id: 'agent-a',
+				interval_minutes: 60,
+				action: 'command',
+				command: { mode: 'shell', shell: 'rm -rf build' },
+				prompt: 'x',
+			});
+		},
+	});
+}
+
 /** Run an import expected to exit, returning the exit code. */
 async function runExit(options: BundleImportOptions, file = bundle): Promise<number> {
 	await expect(run(options, file)).rejects.toThrow('__exit__');
@@ -119,6 +136,54 @@ describe('bundle import', () => {
 		expect(stdout()).toContain('Dropped environment variables:\n  Alpha: LD_PRELOAD');
 	});
 
+	describe('shell commands', () => {
+		it('prints them, with the rest of the plan, before the first write', async () => {
+			const file = shellBundle();
+			const cueYaml = path.join(projRoot, '.maestro/cue.yaml');
+			// What was on disk at the moment each line went out.
+			const seen: Array<{ text: string; dataDir: boolean; proj: string[] }> = [];
+			logSpy.mockImplementation((text: unknown) => {
+				seen.push({
+					text: String(text),
+					dataDir: fs.existsSync(dataDir),
+					proj: snapshot(projRoot),
+				});
+			});
+
+			await run({}, file);
+
+			expect(exitSpy).not.toHaveBeenCalled();
+			const planLine = seen.findIndex((s) => s.text.includes('Shell commands (1):'));
+			expect(planLine).toBe(0);
+			expect(seen[0].text).toContain('Importing pipeline "Fixture"');
+			expect(seen[0].text).toContain('proj / cleanup: rm -rf build');
+			expect(seen[0]).toMatchObject({ dataDir: false, proj: [] });
+			// Then the write, then the confirmation.
+			expect(fs.existsSync(cueYaml)).toBe(true);
+			expect(seen[seen.length - 1].text).toBe(
+				`Imported pipeline "Fixture" into ${dataDir} (created)`
+			);
+		});
+
+		it('prints nothing early with --json: one document, after the import', async () => {
+			await run({ json: true }, shellBundle());
+			expect(logSpy).toHaveBeenCalledTimes(1);
+			expect(JSON.parse(stdout()).plan.shellCommands).toEqual([
+				{ workspace: 'proj', subscription: 'cleanup', command: 'rm -rf build' },
+			]);
+		});
+
+		it('lists them in a dry run and writes nothing', async () => {
+			await run({ dryRun: true }, shellBundle());
+			expect(logSpy).toHaveBeenCalledTimes(1);
+			expect(stdout()).toContain('Would import pipeline "Fixture"');
+			expect(stdout()).toContain('proj / cleanup: rm -rf build');
+			expect(stdout()).not.toContain('Importing');
+			expect(fs.existsSync(dataDir)).toBe(false);
+			expect(snapshot(projRoot)).toEqual([]);
+		});
+	});
+
 	describe('--dry-run', () => {
 		it('writes nothing, reports conflicts, and exits 0', async () => {
 			await run({});
@@ -163,25 +228,15 @@ describe('bundle import', () => {
 		it('overwrites them with --force', async () => {
 			await run({ force: true });
 			expect(exitSpy).not.toHaveBeenCalled();
-			expect(stdout()).toContain('Conflicts (overwritten):');
+			// Listed before the write, then confirmed.
+			expect(stdout()).toContain('Conflicts (overwriting):');
+			expect(stdout()).toContain('Imported pipeline "Fixture"');
 		});
 	});
 
 	describe('refusals', () => {
 		it('refuses shell commands when asked, with exit 1 and a code', async () => {
-			const file = writeCueBundle(path.join(tmp, 'shell.zip'), {
-				cue: (doc) => {
-					doc.subscriptions.push({
-						name: 'cleanup',
-						event: 'time.heartbeat',
-						agent_id: 'agent-a',
-						interval_minutes: 60,
-						action: 'command',
-						command: { mode: 'shell', shell: 'rm -rf build' },
-						prompt: 'x',
-					});
-				},
-			});
+			const file = shellBundle();
 			expect(await runExit({ rejectShellCommands: true, json: true }, file)).toBe(
 				ExitCode.GeneralError
 			);
@@ -193,8 +248,13 @@ describe('bundle import', () => {
 			expect(fs.existsSync(dataDir)).toBe(false);
 
 			exitSpy.mockClear();
+			logSpy.mockClear();
 			expect(await runExit({ rejectShellCommands: true }, file)).toBe(ExitCode.GeneralError);
 			expect(stderr()).toContain('proj / cleanup: rm -rf build');
+			// Refused before the plan is printed for writing, and before any write.
+			expect(stdout()).not.toContain('Importing');
+			expect(fs.existsSync(dataDir)).toBe(false);
+			expect(snapshot(projRoot)).toEqual([]);
 		});
 
 		it('treats a malformed --workspace as a usage error (exit 2)', async () => {

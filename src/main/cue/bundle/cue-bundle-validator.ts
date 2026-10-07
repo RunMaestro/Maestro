@@ -23,6 +23,12 @@ import {
 } from '../../../shared/cue-bundle-types';
 import { isUnsafeZipEntryName, readZipArchive } from '../../utils/zip-archive';
 import { validateCueConfigDocument } from '../config/cue-config-validator';
+import {
+	describeSecretProblem,
+	resolveSecrets,
+	type SecretProblem,
+	type SecretSource,
+} from '../../../shared/serverSecrets';
 
 export interface CueBundleValidationIssue {
 	/** Stable kebab-case identifier, for scripts. */
@@ -32,6 +38,22 @@ export interface CueBundleValidationIssue {
 	file?: string;
 }
 
+/**
+ * Whether the machine running the validation supplies one required secret,
+ * looked up exactly as a launch looks it up (`lookupSecret`). Names, sources
+ * and paths only: the value is never part of it.
+ */
+export interface CueBundleSecretCheck {
+	name: string;
+	status: 'found' | 'missing' | 'unusable';
+	/** Where the value was found. */
+	source?: SecretSource;
+	/** Why a secret file that exists cannot be used. */
+	problem?: SecretProblem;
+	/** The unusable file. */
+	path?: string;
+}
+
 export interface CueBundleValidationResult {
 	/** True when there are no errors. Warnings never invalidate a bundle. */
 	valid: boolean;
@@ -39,15 +61,25 @@ export interface CueBundleValidationResult {
 	warnings: CueBundleValidationIssue[];
 	/** The parsed manifest, when one could be read. */
 	manifest?: CueBundleManifest;
+	/** Each of `requirements.secrets` on this machine, sorted by name. Only with `checkEnv`. */
+	secrets?: CueBundleSecretCheck[];
 }
 
 export interface CueBundleValidateOptions {
 	/** Version of the program asking (the CLI passes its own). */
 	runningVersion: string;
-	/** Also report `requirements.secrets` that are unset in `env`, as warnings. */
+	/**
+	 * Also check that THIS machine supplies each of `requirements.secrets`: a
+	 * systemd credential, a `/run/secrets` file or an environment variable.
+	 * One that is missing or unusable is a warning, since the bundle itself is
+	 * fine; it is opt-in because a bundle is often checked on a desktop while
+	 * its secrets exist only on the server it is for.
+	 */
 	checkEnv?: boolean;
-	/** Environment consulted by `checkEnv`. Defaults to `process.env`. */
+	/** Environment consulted by `checkEnv` (and for `CREDENTIALS_DIRECTORY`). Defaults to `process.env`. */
 	env?: NodeJS.ProcessEnv;
+	/** Override the `/run/secrets` directory for `checkEnv`; `null` disables it. Tests use this. */
+	runSecretsDir?: string | null;
 }
 
 type RawSubscription = Record<string, unknown>;
@@ -112,11 +144,13 @@ export function validateCueBundleArchive(
 		errors.push(file ? { code, message, file } : { code, message });
 	const warn = (code: string, message: string, file?: string) =>
 		warnings.push(file ? { code, message, file } : { code, message });
+	let secretChecks: CueBundleSecretCheck[] | undefined;
 	const done = (manifest?: CueBundleManifest): CueBundleValidationResult => ({
 		valid: errors.length === 0,
 		errors,
 		warnings,
 		...(manifest ? { manifest } : {}),
+		...(secretChecks ? { secrets: secretChecks } : {}),
 	});
 
 	for (const name of archive.unsafeNames) {
@@ -428,11 +462,38 @@ export function validateCueBundleArchive(
 	}
 
 	// ─── Importing machine's environment ─────────────────────────────────────
+	// The same lookup a launch makes, so a secret supplied only as a file is not
+	// reported missing. The values it reads are dropped here.
 	if (options.checkEnv) {
-		const env = options.env ?? process.env;
-		for (const key of [...secrets].sort()) {
-			if (env[key] === undefined || env[key] === '') {
-				warnings.push({ code: 'secret-unset', message: `${key} is not set in this environment` });
+		const resolved = resolveSecrets([...secrets], {
+			env: options.env,
+			runSecretsDir: options.runSecretsDir,
+		});
+		secretChecks = [
+			...resolved.found.map(({ name, source }) => ({ name, status: 'found' as const, source })),
+			...resolved.missing.map((name) => ({ name, status: 'missing' as const })),
+			...resolved.unusable.map(({ name, problem, path }) => ({
+				name,
+				status: 'unusable' as const,
+				problem,
+				...(path ? { path } : {}),
+			})),
+		].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+		for (const check of secretChecks) {
+			if (check.status === 'missing') {
+				warnings.push({
+					code: 'secret-unset',
+					message: `${check.name} is not set in this environment`,
+				});
+			} else if (check.status === 'unusable') {
+				warnings.push({
+					code: 'secret-unusable',
+					message: describeSecretProblem({
+						name: check.name,
+						problem: check.problem!,
+						path: check.path,
+					}),
+				});
 			}
 		}
 	}

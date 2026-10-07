@@ -29,7 +29,10 @@ import type {
 	CueBundleImportOutcome,
 	CueBundleImportRequest,
 } from '../../main/cue-bundle-service';
-import type { CueBundleValidationIssue } from '../../main/cue/bundle/cue-bundle-validator';
+import type {
+	CueBundleSecretCheck,
+	CueBundleValidationIssue,
+} from '../../main/cue/bundle/cue-bundle-validator';
 import type {
 	CueBundleImportConflict,
 	CueBundleImportErrorCode,
@@ -242,6 +245,23 @@ function formatIssue(issue: CueBundleValidationIssue): string {
 	return `  [${issue.code}] ${issue.message}${issue.file ? ` (${issue.file})` : ''}`;
 }
 
+/** Human label for where a secret was found, shared by validate and import. */
+const SECRET_SOURCE_LABEL = {
+	credentials: 'systemd credential',
+	'run-secrets': '/run/secrets',
+	env: 'env',
+} as const;
+
+function formatSecretCheck(check: CueBundleSecretCheck): string {
+	const status =
+		check.status === 'found'
+			? `set (${SECRET_SOURCE_LABEL[check.source!]})`
+			: check.status === 'missing'
+				? 'NOT SET'
+				: `UNUSABLE (${check.problem}${check.path ? `, ${check.path}` : ''})`;
+	return `  ${check.name}  ${status}`;
+}
+
 function plural(count: number, noun: string): string {
 	return `${count} ${noun}${count === 1 ? '' : 's'}`;
 }
@@ -275,7 +295,13 @@ export async function bundleValidate(
 	if (options.json) {
 		console.log(
 			JSON.stringify(
-				{ success: true, valid: result.valid, errors: result.errors, warnings: result.warnings },
+				{
+					success: true,
+					valid: result.valid,
+					errors: result.errors,
+					warnings: result.warnings,
+					...(result.secrets ? { secrets: result.secrets } : {}),
+				},
 				null,
 				2
 			)
@@ -286,6 +312,9 @@ export async function bundleValidate(
 		];
 		if (result.errors.length > 0) lines.push('Errors:', ...result.errors.map(formatIssue));
 		if (result.warnings.length > 0) lines.push('Warnings:', ...result.warnings.map(formatIssue));
+		if (result.secrets && result.secrets.length > 0) {
+			lines.push('Secrets on this machine:', ...result.secrets.map(formatSecretCheck));
+		}
 		console.log(lines.join('\n'));
 	}
 	if (!result.valid) process.exit(ExitCode.GeneralError);
@@ -405,15 +434,36 @@ function formatConflict(conflict: CueBundleImportConflict): string {
 	return `  [${conflict.kind}] ${conflict.message}`;
 }
 
+/**
+ * Where an import stands when its plan is printed: a dry run, about to write
+ * (printed before the first write), or done.
+ */
+type ImportPhase = 'dry-run' | 'importing' | 'imported';
+
+/** `Imported pipeline "X" into <dir> (created)`, worded for the phase. */
+function importHeadline(plan: CueBundleImportPlan, phase: ImportPhase, viaRunningApp: boolean) {
+	const kind = plan.bundle.kind === 'maestro-pipeline' ? 'pipeline' : 'agent';
+	const verb = { 'dry-run': 'Would import', importing: 'Importing', imported: 'Imported' }[phase];
+	const created = {
+		'dry-run': ' (would be created)',
+		importing: ' (creating it)',
+		imported: ' (created)',
+	}[phase];
+	return `${verb} ${kind} "${plan.bundle.name}" into ${viaRunningApp ? 'the running Maestro app' : plan.dataDir}${plan.createDataDir ? created : ''}`;
+}
+
+function formatShellCommands(commands: CueBundleImportPlan['shellCommands']): string[] {
+	return commands.map((c) => `  ${c.workspace} / ${c.subscription}: ${c.command}`);
+}
+
 function formatImportPlan(
 	plan: CueBundleImportPlan,
-	applied: boolean,
+	phase: ImportPhase,
 	force: boolean,
 	viaRunningApp = false
 ): string {
-	const kind = plan.bundle.kind === 'maestro-pipeline' ? 'pipeline' : 'agent';
 	const lines = [
-		`${applied ? 'Imported' : 'Would import'} ${kind} "${plan.bundle.name}" into ${viaRunningApp ? 'the running Maestro app' : plan.dataDir}${plan.createDataDir ? (applied ? ' (created)' : ' (would be created)') : ''}`,
+		importHeadline(plan, phase, viaRunningApp),
 		'',
 		'Agents:',
 		...plan.agents.map(
@@ -444,10 +494,11 @@ function formatImportPlan(
 	}
 
 	if (plan.shellCommands.length > 0) {
-		lines.push('', `Shell commands (${plan.shellCommands.length}):`);
-		for (const c of plan.shellCommands) {
-			lines.push(`  ${c.workspace} / ${c.subscription}: ${c.command}`);
-		}
+		lines.push(
+			'',
+			`Shell commands (${plan.shellCommands.length}):`,
+			...formatShellCommands(plan.shellCommands)
+		);
 	}
 	const dropped = plan.env.filter((e) => e.dropped.length > 0);
 	if (dropped.length > 0) {
@@ -459,14 +510,9 @@ function formatImportPlan(
 		// An agent's declared secrets reach that agent alone at launch, so there
 		// is no allowlist advice here: adding one to MAESTRO_SERVER_ENV_ALLOW
 		// would hand it to every agent the engine runs.
-		const sourceLabel = {
-			credentials: 'systemd credential',
-			'run-secrets': '/run/secrets',
-			env: 'env',
-		};
 		for (const secret of plan.secrets) {
 			const status = secret.set
-				? `set (${secret.source ? sourceLabel[secret.source] : 'env'})`
+				? `set (${secret.source ? SECRET_SOURCE_LABEL[secret.source] : 'env'})`
 				: secret.problem
 					? `UNUSABLE: ${secret.problem}`
 					: 'NOT SET';
@@ -479,12 +525,14 @@ function formatImportPlan(
 		}
 	}
 	if (plan.conflicts.length > 0) {
-		lines.push(
-			'',
-			applied && force ? 'Conflicts (overwritten):' : 'Conflicts:',
-			...plan.conflicts.map(formatConflict)
-		);
-		if (!applied) lines.push('  Pass --force to overwrite them.');
+		const heading =
+			phase === 'dry-run' || !force
+				? 'Conflicts:'
+				: phase === 'importing'
+					? 'Conflicts (overwriting):'
+					: 'Conflicts (overwritten):';
+		lines.push('', heading, ...plan.conflicts.map(formatConflict));
+		if (phase === 'dry-run') lines.push('  Pass --force to overwrite them.');
 	}
 	if (plan.warnings.length > 0) {
 		lines.push('', 'Warnings:', ...plan.warnings.map((w) => `  ${w}`));
@@ -520,7 +568,7 @@ function reportImportFailure(
 				(details.shellCommands as
 					| Array<{ workspace: string; subscription: string; command: string }>
 					| undefined) ?? [];
-			detail.push(...commands.map((c) => `  ${c.workspace} / ${c.subscription}: ${c.command}`));
+			detail.push(...formatShellCommands(commands));
 		} else if (code === 'BUNDLE_INVALID') {
 			const issues = (details.errors as CueBundleValidationIssue[] | undefined) ?? [];
 			detail.push(...issues.map(formatIssue));
@@ -575,15 +623,31 @@ export async function bundleImport(
 			refuseShellCommands: options.rejectShellCommands,
 			dryRun: options.dryRun,
 		};
-		let outcome: CueBundleImportOutcome;
-		try {
-			outcome = await viaApp<CueBundleImportOutcome>('cue_bundle_import', request);
-		} catch (error) {
-			fail(error instanceof Error ? error.message : String(error), options);
+		const send = async (req: CueBundleImportRequest) => {
+			let outcome: CueBundleImportOutcome;
+			try {
+				outcome = await viaApp<CueBundleImportOutcome>('cue_bundle_import', req);
+			} catch (error) {
+				fail(error instanceof Error ? error.message : String(error), options);
+			}
+			if (!outcome.ok) {
+				reportImportFailure(outcome.code, outcome.message, outcome.details ?? {}, options);
+			}
+			return outcome;
+		};
+		// The app plans and writes in one call, so the plan is shown first from a
+		// dry run of the same request: what it installs, shell commands included,
+		// is on screen before anything is written. Skipped when the import is
+		// going to refuse its conflicts anyway.
+		let preview: CueBundleImportPlan | undefined;
+		if (!options.json && !options.dryRun) {
+			const planned = await send({ ...request, dryRun: true });
+			if (planned.plan.conflicts.length === 0 || options.force) {
+				preview = planned.plan;
+				console.log(formatImportPlan(preview, 'importing', !!options.force, true));
+			}
 		}
-		if (!outcome.ok) {
-			reportImportFailure(outcome.code, outcome.message, outcome.details ?? {}, options);
-		}
+		const outcome = await send(request);
 		if (options.json) {
 			console.log(
 				JSON.stringify(
@@ -600,7 +664,27 @@ export async function bundleImport(
 			);
 			return;
 		}
-		console.log(formatImportPlan(outcome.plan, outcome.applied, !!options.force, true));
+		if (!preview) {
+			console.log(
+				formatImportPlan(
+					outcome.plan,
+					outcome.applied ? 'imported' : 'dry-run',
+					!!options.force,
+					true
+				)
+			);
+			return;
+		}
+		console.log(importHeadline(outcome.plan, 'imported', true));
+		// The app planned again for the write; say so if the bundle changed between.
+		if (JSON.stringify(outcome.plan.shellCommands) !== JSON.stringify(preview.shellCommands)) {
+			console.log(
+				[
+					`The bundle changed after the preview. Shell commands imported (${outcome.plan.shellCommands.length}):`,
+					...formatShellCommands(outcome.plan.shellCommands),
+				].join('\n')
+			);
+		}
 		return;
 	}
 
@@ -617,6 +701,11 @@ export async function bundleImport(
 			dryRun: options.dryRun,
 			force: options.force,
 			refuseShellCommands: options.rejectShellCommands,
+			// The plan, shell commands included, goes out before the first write.
+			// The write applies this same plan; it is not planned again.
+			onBeforeWrite: options.json
+				? undefined
+				: (plan) => console.log(formatImportPlan(plan, 'importing', !!options.force)),
 		});
 	} catch (error) {
 		if (!(error instanceof CueBundleImportError)) {
@@ -635,5 +724,9 @@ export async function bundleImport(
 		);
 		return;
 	}
-	console.log(formatImportPlan(result.plan, result.applied, !!options.force));
+	console.log(
+		result.applied
+			? importHeadline(result.plan, 'imported', false)
+			: formatImportPlan(result.plan, 'dry-run', !!options.force)
+	);
 }

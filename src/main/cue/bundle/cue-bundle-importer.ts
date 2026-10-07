@@ -44,7 +44,6 @@ import {
 } from '../../../shared/cue-bundle-types';
 import { CUE_CONFIG_PATH, PLAYBOOKS_DIR } from '../../../shared/maestro-paths';
 import { isValidAgentId } from '../../../shared/agentIds';
-import { isSecretEnvKey } from '../../../shared/agentEnvironment';
 import { getSettingDefault } from '../../../shared/settingsMetadata';
 import { buildNewAgentRecord, newAgentClaudeInteractive } from '../../../shared/newAgentRecord';
 import { generateUUID } from '../../../shared/uuid';
@@ -89,7 +88,7 @@ import { isWithin } from './cue-bundle-exporter';
 import {
 	MCP_CONFIG_FILE,
 	isClaudeMemoryFileName,
-	mcpConfigReferences,
+	mcpConfigSecretNames,
 	mergeMcpConfig,
 } from './cue-bundle-claude-assets';
 import { claudeMemoryDir, resolveClaudeConfigDir } from '../../memory-manager';
@@ -179,6 +178,14 @@ export interface CueBundleImportOptions {
 	/** Import into a running desktop app instead of its files. See {@link CueBundleImportHost}. */
 	host?: CueBundleImportHost;
 	onLog?: (level: CueBundleImportLogLevel, message: string) => void;
+	/**
+	 * Called with the plan once the import has passed every check, right
+	 * before the first write; never for a dry run or a refusal. The CLI prints
+	 * the plan here, so the shell commands it installs are on screen before
+	 * anything lands. What is written is exactly this plan. A throw cancels the
+	 * import with nothing written.
+	 */
+	onBeforeWrite?: (plan: CueBundleImportPlan) => void | Promise<void>;
 }
 
 /**
@@ -754,6 +761,23 @@ async function buildPlan(options: CueBundleImportOptions): Promise<InternalPlan>
 	const nextSessions = [...existingSessions] as Array<SessionInfo & Record<string, unknown>>;
 	const bundleAgentIds = new Set(manifest.agents.map((a) => a.id));
 	const autoRunFolders = new Map<string, string>();
+	/**
+	 * Workspace key -> secrets its bundled `.mcp.json` references. Read from the
+	 * file itself, not only from the agents' `env.required`, so a bundle
+	 * exported before the exporter listed them there still gives them to its
+	 * Claude agents.
+	 */
+	const mcpSecretsByWorkspace = new Map<string, string[]>();
+	for (const ws of manifest.workspaces) {
+		const source = `workspaces/${ws.key}/${MCP_CONFIG_FILE}`;
+		const bytes = manifest.files.some((f) => f.path === source) ? entries.get(source) : undefined;
+		if (bytes) {
+			mcpSecretsByWorkspace.set(
+				ws.key,
+				mcpConfigSecretNames(bytes.toString('utf-8'), manifest.requirements.secrets)
+			);
+		}
+	}
 
 	for (const agent of manifest.agents) {
 		const settings = JSON.parse(
@@ -828,7 +852,14 @@ async function buildPlan(options: CueBundleImportOptions): Promise<InternalPlan>
 			customEnvVars,
 			// Names only. The CLI and Cue resolve them at launch from systemd
 			// credentials, /run/secrets or the environment, for this agent alone.
-			requiredSecrets: requiredSecretNames(settings.env?.required),
+			// A Claude agent also needs what its workspace's `.mcp.json` expands;
+			// no other provider reads that file.
+			requiredSecrets: requiredSecretNames([
+				...asStringList(settings.env?.required),
+				...(settings.toolType === 'claude-code'
+					? (mcpSecretsByWorkspace.get(settings.workspace) ?? [])
+					: []),
+			]),
 		} satisfies Record<(typeof CUE_BUNDLE_AGENT_FIELDS)[number], unknown>;
 		const sameName = existingSessions.find(
 			(s) => s.id !== agent.id && s.name.toLowerCase() === settings.name.toLowerCase()
@@ -927,11 +958,8 @@ async function buildPlan(options: CueBundleImportOptions): Promise<InternalPlan>
 		if (ws && roots.has(ws[1]) && ws[2] === MCP_CONFIG_FILE) {
 			const target = containedTarget(roots.get(ws[1])!, ws[2], source);
 			planMcpConfig(source, target, bytes);
-			for (const name of mcpConfigReferences(bytes.toString('utf-8'))) {
-				// `${HOME}` and the like are configuration, not something to set.
-				if (isSecretEnvKey(name) || manifest.requirements.secrets.includes(name)) {
-					mcpSecrets.push([name, `mcp:${ws[1]}`]);
-				}
+			for (const name of mcpSecretsByWorkspace.get(ws[1]) ?? []) {
+				mcpSecrets.push([name, `mcp:${ws[1]}`]);
 			}
 			continue;
 		}
@@ -1328,6 +1356,7 @@ export async function importCueBundle(
 	// The plan may be minutes old by now (a CLI prompt, a slow disk): look again
 	// right before the first write.
 	if (fs.existsSync(plan.dataDir) && !options.host) assertDataDirIdle(plan.dataDir, log);
+	await options.onBeforeWrite?.(plan);
 
 	const createdDirs: string[] = [];
 	const done: PlannedWrite[] = [];

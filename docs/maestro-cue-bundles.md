@@ -50,7 +50,7 @@ On import:
 - Auto memory goes where Claude Code reads it for the new folder: `~/.claude/projects/<folder>/memory`, or under `CLAUDE_CONFIG_DIR` when that is set.
 - An agent the bundle already has here is updated only when you accept the conflict. It is moved and switched the way Maestro moves an agent: a working agent cannot be moved (stop it first), and a change of provider keeps each tab's conversation for when you switch back.
 
-Every `${VAR}` an exported `.mcp.json` uses is listed with the bundle's secrets. Set them in the environment Maestro runs in before the agents need them.
+Every secret `${VAR}` an exported `.mcp.json` uses is listed with the bundle's secrets, and is also declared by each Claude Code agent in that workspace, since those are the agents that load the file. On a server each agent receives only the secrets it declares, so this is what lets Claude Code fill in its MCP servers there. Agents of other providers in the same workspace do not receive them. Set each one on the importing machine as a systemd credential, a `/run/secrets/<NAME>` file, or an environment variable (see [Running Cue on a Server](./maestro-cue-server)). A forced re-import replaces an agent's declared names with the bundle's, and bundles exported by older versions get the names on import from their `.mcp.json`.
 
 ## What never travels
 
@@ -58,6 +58,16 @@ Every `${VAR}` an exported `.mcp.json` uses is listed with the bundle's secrets.
 - **Absolute paths.** Folders become workspace keys and relative paths.
 - **SSH remote settings.** An agent that runs over SSH is exported without them, with a warning.
 
+## Check the secrets on the target machine
+
+`maestro-cli bundle validate <zip>` checks the bundle itself and says nothing about the machine it runs on, so it is just as useful on a desktop where the secrets will only exist on the server. Add `--check-env` on the machine that will run the bundle: each required secret is looked up the way an agent's launch looks it up (systemd credential, then `/run/secrets/<NAME>`, then the environment) and listed as set (with where it was found), not set, or unusable (a file that exists but is empty, a directory, unreadable or too large). Names, sources and file paths are printed, never values. A missing or unusable secret is a warning, not an error, so the exit code still describes the bundle. With `--json` the result gains a `secrets` array (`name`, `status`, and `source` or `problem` and `path`).
+
 ## Before you import
 
-A bundle can run shell commands (subscriptions with `action: command`), and Cue runs agents with full permissions. Import bundles you trust. The dry run lists every shell command before anything is written, and `maestro-cli bundle import --reject-shell-commands` refuses a bundle that has any.
+A bundle can run shell commands (subscriptions with `action: command`), and Cue runs agents with full permissions. Import bundles you trust.
+
+- The Bundles tab's dry run lists every shell command before you press **Import**.
+- `maestro-cli bundle import` prints the whole plan, shell commands included, before it writes anything, then writes exactly that plan and confirms with one line. Through the running app it gets the plan from a dry run first. No prompt is shown, so the command still works unattended.
+- `--dry-run` prints the plan and writes nothing.
+- `--json` prints one document after the import. To review the shell commands before anything is written, run `--dry-run --json` first.
+- `--reject-shell-commands` refuses a bundle that has any shell command, before anything is written.

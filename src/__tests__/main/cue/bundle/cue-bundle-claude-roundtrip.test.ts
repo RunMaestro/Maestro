@@ -15,6 +15,11 @@ import {
 } from '../../../../main/cue/bundle/cue-bundle-importer';
 import { claudeMemoryDir } from '../../../../main/memory-manager';
 import { readZipArchive } from '../../../../main/utils/zip-archive';
+import { readSessionsStoreFile } from '../../../../main/stores/sessions-store-file';
+import { buildAgentLaunchPlan } from '../../../../shared/maestro-lib/launch/launch-plan';
+import { getAgentDefinition } from '../../../../shared/maestro-lib/providers/definitions';
+import { getAgentCapabilities } from '../../../../shared/maestro-lib/providers/capabilities';
+import { writeCueBundle } from '../../../helpers/cueBundleFixture';
 import type { CueBundleManifest } from '../../../../shared/cue-bundle-types';
 import type { SessionInfo } from '../../../../shared/types';
 
@@ -208,7 +213,8 @@ describe('Claude Code assets in an agent bundle', () => {
 		expect(plan.files.find((f) => f.kind === 'claude-memory')?.target).toBe(memory);
 		expect(plan.secrets.find((s) => s.name === 'GITHUB_TOKEN')).toMatchObject({
 			set: false,
-			usedBy: ['mcp:app'],
+			// The Claude agent declares it too, so its launch receives it.
+			usedBy: ['agent:Reviewer', 'mcp:app'],
 		});
 	});
 
@@ -390,5 +396,192 @@ describe('manifest', () => {
 		const { outputPath } = await exportAgent();
 		const manifest = JSON.parse(entriesOf(outputPath).get('manifest.json')!) as CueBundleManifest;
 		expect(manifest.workspaces[0].claude?.autoMemory).toEqual(['MEMORY.md']);
+	});
+});
+
+describe('MCP secrets reach the Claude agents that load the config', () => {
+	const SECRET = 'REVIEW_GH_TOKEN';
+	const VALUE = 'mcp-secret-value-5c1d-do-not-leak';
+
+	/** Reviewer (Claude) and a Codex agent in the same workspace, in pipeline P. */
+	function seedPipeline(mcpEnvKey = SECRET): void {
+		write(
+			path.join(src.dataDir, 'maestro-sessions.json'),
+			JSON.stringify({
+				sessions: [
+					{
+						id: AGENT_ID,
+						name: 'Reviewer',
+						toolType: 'claude-code',
+						cwd: src.root,
+						projectRoot: src.root,
+					},
+					{ id: CODEX_ID, name: 'Coder', toolType: 'codex', cwd: src.root, projectRoot: src.root },
+				],
+			})
+		);
+		write(
+			path.join(src.root, '.maestro/cue.yaml'),
+			`subscriptions:\n  - name: a\n    event: time.heartbeat\n    interval_minutes: 60\n    prompt: x\n    agent_id: ${AGENT_ID}\n    pipeline_name: P\n  - name: b\n    event: time.heartbeat\n    interval_minutes: 60\n    prompt: y\n    agent_id: ${CODEX_ID}\n    pipeline_name: P\n`
+		);
+		write(
+			path.join(src.root, '.mcp.json'),
+			JSON.stringify({
+				mcpServers: {
+					github: { command: 'gh-mcp', env: { [mcpEnvKey]: GITHUB_PAT } },
+					// Configuration, not a secret: no agent is asked for HOME.
+					docs: { command: 'docs-mcp', args: ['--root', '${HOME}/docs'] },
+				},
+			})
+		);
+	}
+
+	async function exportPipeline(name: string) {
+		const outputPath = path.join(tmp, name);
+		const result = await exportCueBundle({
+			dataDir: src.dataDir,
+			pipeline: 'P',
+			outputPath,
+			producerVersion: '0.18.0',
+			claudeConfigDir: src.claudeDir,
+		});
+		return { outputPath, manifest: result.manifest };
+	}
+
+	function importedAgents(dataDir: string) {
+		const sessions = readSessionsStoreFile(dataDir).sessions;
+		return {
+			claude: sessions.find((s) => s.id === AGENT_ID)!,
+			codex: sessions.find((s) => s.id === CODEX_ID)!,
+		};
+	}
+
+	function launchEnv(toolType: 'claude-code' | 'codex', requiredSecrets: string[] | undefined) {
+		const runSecretsDir = path.join(tmp, 'run-secrets');
+		write(path.join(runSecretsDir, SECRET), `${VALUE}\n`);
+		const result = buildAgentLaunchPlan({
+			surface: 'cue',
+			agent: { ...getAgentDefinition(toolType), capabilities: getAgentCapabilities(toolType) },
+			command: `/usr/local/bin/${toolType}`,
+			args: [],
+			cwd: '/project',
+			prompt: 'go',
+			isWindowsHost: false,
+			isServerMode: true,
+			requiredSecrets,
+			secretLookup: { env: {}, runSecretsDir },
+		});
+		if (!result.ok) throw new Error(result.error);
+		return result.plan.env ?? {};
+	}
+
+	it("export lists them in the Claude agent's env.required and not the other agent's", async () => {
+		seedPipeline();
+		const { outputPath, manifest } = await exportPipeline('p.zip');
+		const entries = entriesOf(outputPath);
+		const settingsOf = (id: string) => JSON.parse(entries.get(`agents/${id}.json`)!);
+		expect(manifest.requirements.secrets).toContain(SECRET);
+		expect(manifest.requirements.secrets).not.toContain('HOME');
+		expect(settingsOf(AGENT_ID).env?.required).toEqual([SECRET]);
+		expect(settingsOf(CODEX_ID).env?.required).toBeUndefined();
+	});
+
+	it('import sets requiredSecrets on the Claude agent only, and its launch alone receives the file', async () => {
+		seedPipeline();
+		const { outputPath } = await exportPipeline('p.zip');
+		const dst = target();
+		await importCueBundle({
+			bundlePath: outputPath,
+			dataDir: dst.dataDir,
+			workspaces: { app: dst.root },
+			runningVersion: '99.0.0',
+			claudeConfigDir: dst.claudeDir,
+			env: {},
+			runSecretsDir: null,
+		});
+		const { claude, codex } = importedAgents(dst.dataDir);
+		expect(claude.requiredSecrets).toEqual([SECRET]);
+		expect(codex.requiredSecrets).toBeUndefined();
+
+		const claudeEnv = launchEnv('claude-code', claude.requiredSecrets);
+		expect(claudeEnv[SECRET]).toBe(VALUE);
+		const codexEnv = launchEnv('codex', codex.requiredSecrets);
+		expect(codexEnv[SECRET]).toBeUndefined();
+		expect(Object.values(codexEnv)).not.toContain(VALUE);
+		// Delivered as the one variable, nowhere else in the Claude launch.
+		expect(Object.entries(claudeEnv).filter(([, v]) => v === VALUE)).toEqual([[SECRET, VALUE]]);
+	});
+
+	it('a forced re-import replaces the names with what the new config references', async () => {
+		seedPipeline();
+		const dst = target();
+		const importIt = async (zip: string, force = false) =>
+			importCueBundle({
+				bundlePath: zip,
+				dataDir: dst.dataDir,
+				workspaces: { app: dst.root },
+				runningVersion: '99.0.0',
+				claudeConfigDir: dst.claudeDir,
+				env: {},
+				runSecretsDir: null,
+				force,
+			});
+		await importIt((await exportPipeline('first.zip')).outputPath);
+		expect(importedAgents(dst.dataDir).claude.requiredSecrets).toEqual([SECRET]);
+
+		seedPipeline(`${SECRET}_V2`);
+		await importIt((await exportPipeline('second.zip')).outputPath, true);
+		const { claude, codex } = importedAgents(dst.dataDir);
+		expect(claude.requiredSecrets).toEqual([`${SECRET}_V2`]);
+		expect(codex.requiredSecrets).toBeUndefined();
+	});
+
+	it("reads them from the bundled .mcp.json when an older export left them out of the agent's settings", async () => {
+		const file = writeCueBundle(path.join(tmp, 'older.zip'), {
+			files: (files) => {
+				files.set(
+					'workspaces/proj/.mcp.json',
+					JSON.stringify({
+						mcpServers: {
+							api: {
+								url: 'https://mcp.example.com',
+								headers: { Authorization: 'Bearer ${MCP_API_AUTHORIZATION}' },
+							},
+							docs: { command: 'docs-mcp', args: ['${HOME}/docs'] },
+						},
+					})
+				);
+				files.set(
+					'agents/agent-b.json',
+					JSON.stringify({ id: 'agent-b', name: 'Beta', toolType: 'codex', workspace: 'proj' })
+				);
+			},
+			manifest: (manifest) => {
+				manifest.requirements.secrets.push('MCP_API_AUTHORIZATION');
+				manifest.agents.push({
+					id: 'agent-b',
+					name: 'Beta',
+					toolType: 'codex',
+					workspace: 'proj',
+					settings: 'agents/agent-b.json',
+				});
+			},
+		});
+		const dst = target();
+		await importCueBundle({
+			bundlePath: file,
+			dataDir: dst.dataDir,
+			workspaces: { proj: dst.root },
+			runningVersion: '99.0.0',
+			claudeConfigDir: dst.claudeDir,
+			env: {},
+			runSecretsDir: null,
+		});
+		const sessions = readSessionsStoreFile(dst.dataDir).sessions;
+		expect(sessions.find((s) => s.id === 'agent-a')!.requiredSecrets).toEqual([
+			'API_KEY',
+			'MCP_API_AUTHORIZATION',
+		]);
+		expect(sessions.find((s) => s.id === 'agent-b')!.requiredSecrets).toBeUndefined();
 	});
 });
