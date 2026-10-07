@@ -30,7 +30,9 @@ export type CueEventType =
 	| 'github.issue'
 	| 'github.label'
 	| 'task.pending'
-	| 'cli.trigger';
+	| 'cli.trigger'
+	| 'presence.return'
+	| 'presence.leave';
 
 /** All valid event type values */
 export const CUE_EVENT_TYPES: CueEventType[] = [
@@ -45,7 +47,12 @@ export const CUE_EVENT_TYPES: CueEventType[] = [
 	'github.label',
 	'task.pending',
 	'cli.trigger',
+	'presence.return',
+	'presence.leave',
 ];
+
+/** Default `away_minutes` for `presence.*` subscriptions that omit it. */
+export const DEFAULT_PRESENCE_AWAY_MINUTES = 10;
 
 /** Valid GitHub state filters for polling triggers */
 export type CueGitHubState = 'open' | 'closed' | 'merged' | 'all';
@@ -146,6 +153,19 @@ export interface CueSubscription {
 	 *  a failure. Completed runs always self-destruct regardless of this flag.
 	 *  Only meaningful for `time.once`. */
 	self_destruct_on_failure?: boolean;
+	/** How long the user must have been away from the machine for a
+	 *  `presence.*` subscription to count it as an absence. For
+	 *  `presence.return` it is the minimum absence that fires on return (so a
+	 *  coffee break does not); for `presence.leave` it is how long after the
+	 *  user stops using the machine the event fires. Minutes, >= 1. Defaults
+	 *  to {@link DEFAULT_PRESENCE_AWAY_MINUTES}. Ignored by other event types. */
+	away_minutes?: number;
+	/** `presence.return` only. `0` / omitted fires on the very first sign of
+	 *  use after the absence. A positive value waits that many minutes after
+	 *  the return and fires only if the user is still there, so a quick
+	 *  unlock-glance-lock does not fire and bursty return activity collapses
+	 *  into one event. Minutes, >= 0. */
+	settle_minutes?: number;
 	/** Toast notification config for `action: 'notify'` subscriptions.
 	 *  Required when `action === 'notify'`. See {@link CueNotifyConfig}. */
 	notify?: CueNotifyConfig;

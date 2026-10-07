@@ -426,3 +426,35 @@ describe('normalizer - github.label field passthrough', () => {
 		).toBeUndefined();
 	});
 });
+
+describe('normalizer - presence field passthrough', () => {
+	function normalizeSub(sub: Record<string, unknown>) {
+		const raw = yaml.dump({ subscriptions: [sub] });
+		const doc = parseCueConfigDocument(raw, projectRoot);
+		return materializeCueConfig(doc!).config.subscriptions[0];
+	}
+
+	it('passes through away_minutes and settle_minutes', () => {
+		const sub = normalizeSub({
+			name: 'welcome-back',
+			event: 'presence.return',
+			prompt: 'Catch me up',
+			away_minutes: 30,
+			settle_minutes: 5,
+		});
+		expect(sub.event).toBe('presence.return');
+		expect(sub.away_minutes).toBe(30);
+		expect(sub.settle_minutes).toBe(5);
+	});
+
+	it('leaves both undefined when omitted or not numeric', () => {
+		const sub = normalizeSub({
+			name: 'stepped-away',
+			event: 'presence.leave',
+			prompt: 'Post away status',
+			away_minutes: 'soon',
+		});
+		expect(sub.away_minutes).toBeUndefined();
+		expect(sub.settle_minutes).toBeUndefined();
+	});
+});

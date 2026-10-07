@@ -508,6 +508,62 @@ export function CueHelpContent({ theme, cueShortcutKeys }: CueHelpContentProps) 
 							.
 						</p>
 					</div>
+					<div>
+						<p>
+							<strong style={{ color: theme.colors.textMain }}>User Returns / User Leaves</strong>{' '}
+							<code
+								className="px-1 rounded text-xs"
+								style={{ backgroundColor: theme.colors.bgActivity }}
+							>
+								presence.return
+							</code>{' '}
+							<code
+								className="px-1 rounded text-xs"
+								style={{ backgroundColor: theme.colors.bgActivity }}
+							>
+								presence.leave
+							</code>
+						</p>
+						<p className="mt-1">
+							Fires when you come back to this machine (unlock, or your first keystroke after going
+							idle) or once you have been away from it for{' '}
+							<code
+								className="px-1 rounded text-xs"
+								style={{ backgroundColor: theme.colors.bgActivity }}
+							>
+								away_minutes
+							</code>{' '}
+							(default 10). A return can wait{' '}
+							<code
+								className="px-1 rounded text-xs"
+								style={{ backgroundColor: theme.colors.bgActivity }}
+							>
+								settle_minutes
+							</code>{' '}
+							before firing and is dropped if you lock or leave again first. Exposes{' '}
+							<code
+								className="px-1 rounded text-xs"
+								style={{ backgroundColor: theme.colors.bgActivity }}
+							>
+								{'{{CUE_AWAY_MINUTES}}'}
+							</code>
+							,{' '}
+							<code
+								className="px-1 rounded text-xs"
+								style={{ backgroundColor: theme.colors.bgActivity }}
+							>
+								{'{{CUE_AWAY_SINCE}}'}
+							</code>
+							, and{' '}
+							<code
+								className="px-1 rounded text-xs"
+								style={{ backgroundColor: theme.colors.bgActivity }}
+							>
+								{'{{CUE_PRESENCE_REASON}}'}
+							</code>
+							.
+						</p>
+					</div>
 					<div
 						className="font-mono text-xs p-3 rounded border space-y-3"
 						style={{
@@ -599,6 +655,17 @@ export function CueHelpContent({ theme, cueShortcutKeys }: CueHelpContentProps) 
 							{'  '}event: cli.trigger
 							<br />
 							{'  '}prompt: prompts/manual.md
+						</div>
+						<div>
+							# User Returns
+							<br />
+							- name: "Welcome Back"
+							<br />
+							{'  '}event: presence.return
+							<br />
+							{'  '}away_minutes: 30
+							<br />
+							{'  '}prompt: prompts/catch-up.md
 						</div>
 					</div>
 				</div>
@@ -719,7 +786,8 @@ export function CueHelpContent({ theme, cueShortcutKeys }: CueHelpContentProps) 
 						<div>
 							<code style={{ color: theme.colors.accent }}>{'{{CUE_EVENT_TYPE}}'}</code> - Event
 							type (app.startup, time.heartbeat, time.scheduled, file.changed, agent.completed,
-							github.pull_request, github.issue, github.label, task.pending, cli.trigger)
+							github.pull_request, github.issue, github.label, task.pending, cli.trigger,
+							presence.return, presence.leave)
 						</div>
 						<div>
 							<code style={{ color: theme.colors.accent }}>{'{{CUE_EVENT_TIMESTAMP}}'}</code> -
@@ -886,6 +954,18 @@ export function CueHelpContent({ theme, cueShortcutKeys }: CueHelpContentProps) 
 								--source-agent-id
 							</code>{' '}
 							(cli.trigger)
+						</div>
+						<div>
+							<code style={{ color: theme.colors.accent }}>{'{{CUE_AWAY_MINUTES}}'}</code> - How
+							long the user was away, in minutes (presence.*)
+						</div>
+						<div>
+							<code style={{ color: theme.colors.accent }}>{'{{CUE_AWAY_SINCE}}'}</code> - When the
+							absence began (presence.*)
+						</div>
+						<div>
+							<code style={{ color: theme.colors.accent }}>{'{{CUE_PRESENCE_REASON}}'}</code> - What
+							marked it: unlock, input, lock, idle, suspend (presence.*)
 						</div>
 					</div>
 					<div

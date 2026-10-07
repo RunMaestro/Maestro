@@ -9,6 +9,7 @@ import { useState, useEffect, useCallback } from 'react';
 import type { Theme } from '../../../../types';
 import type { PipelineNode, TriggerNodeData } from '../../../../../shared/cue-pipeline-types';
 import { CUE_COLOR } from '../../../../../shared/cue-pipeline-types';
+import { DEFAULT_PRESENCE_AWAY_MINUTES } from '../../../../../shared/cue/contracts';
 import { useDebouncedCallback } from '../../../../hooks/utils';
 import { registerPendingEdit } from '../../../../hooks/cue/pendingEditsRegistry';
 import { getInputStyle, getLabelStyle } from './triggerConfigStyles';
@@ -432,6 +433,44 @@ export function TriggerConfig({ node, theme, onUpdateNode }: TriggerConfigProps)
 					</label>
 				</div>
 			);
+		case 'presence.return':
+		case 'presence.leave': {
+			const isReturn = data.eventType === 'presence.return';
+			return (
+				<div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+					{nameField}
+					<label style={themedLabelStyle}>
+						{isReturn ? 'Away at least N minutes' : 'Fire after N minutes away'}
+						<input
+							type="number"
+							min={1}
+							value={localConfig.away_minutes ?? ''}
+							onChange={(e) => updateNumericConfig('away_minutes', e.target.value)}
+							placeholder={String(DEFAULT_PRESENCE_AWAY_MINUTES)}
+							style={themedInputStyle}
+						/>
+					</label>
+					{isReturn && (
+						<label style={themedLabelStyle}>
+							Settle for N minutes (blank or 0 = fire immediately)
+							<input
+								type="number"
+								min={0}
+								value={localConfig.settle_minutes ?? ''}
+								onChange={(e) => updateNumericConfig('settle_minutes', e.target.value)}
+								placeholder="0"
+								style={themedInputStyle}
+							/>
+						</label>
+					)}
+					<div style={{ color: theme.colors.textDim, fontSize: 12, fontStyle: 'italic' }}>
+						{isReturn
+							? 'Fires when you come back to this machine (unlock, or the first keystroke after going idle) from an absence at least this long. A settle window waits that long after you return and drops the event if you lock or leave again first.'
+							: 'Fires once you have been away from this machine this long, counted from your last keystroke or mouse move. A machine that goes to sleep before then fires nothing.'}
+					</div>
+				</div>
+			);
+		}
 		case 'app.startup':
 			return (
 				<div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>

@@ -263,4 +263,30 @@ subscriptions:
 #   {{CUE_CLI_PROMPT}} - The prompt text passed via --prompt flag (empty if not provided)
 `,
 	},
+	{
+		id: 'presence-return',
+		name: 'Welcome Back',
+		description: 'Catch up when you return to the machine',
+		explanation:
+			'Fires when you come back to this machine (unlock, or your first keystroke after going idle) after being away at least `away_minutes`. Add `settle_minutes` to wait until you have actually sat back down, so a quick glance at the screen does not fire it. Pair it with `presence.leave` to post an away status when you step out.',
+		yaml: `subscriptions:
+  - name: "welcome back"
+    event: presence.return
+    away_minutes: 30      # ignore coffee breaks
+    settle_minutes: 2     # 0 or omitted = fire on the first sign of use
+    prompt: "I was away for {{CUE_AWAY_MINUTES}} minutes. Summarize what changed in this project since {{CUE_AWAY_SINCE}}."
+    enabled: true
+
+  - name: "stepped away"
+    event: presence.leave
+    away_minutes: 15
+    prompt: "I stepped away. Pause anything that needs my review and leave a status note."
+    enabled: true
+
+# Template variables available in your prompt:
+#   {{CUE_AWAY_MINUTES}}    - Whole minutes you were away
+#   {{CUE_AWAY_SINCE}}      - When the absence began (your last input)
+#   {{CUE_PRESENCE_REASON}} - unlock / input (return) or lock / idle / suspend (leave)
+`,
+	},
 ];

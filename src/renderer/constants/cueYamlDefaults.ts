@@ -62,6 +62,13 @@ export const CUE_YAML_TEMPLATE = `# .maestro/cue.yaml
 #     prompt: "Run the deployment pipeline for the current branch"
 #     enabled: true
 #
+#   - name: "welcome back"
+#     event: presence.return       # or presence.leave
+#     away_minutes: 30             # minimum absence (default 10)
+#     settle_minutes: 2            # return only: 0 = fire on the first sign of use
+#     prompt: prompts/catch-up.md  # {{CUE_AWAY_MINUTES}} / {{CUE_AWAY_SINCE}}
+#     enabled: true
+#
 # settings:
 #   timeout_minutes: 30
 #   timeout_on_fail: break

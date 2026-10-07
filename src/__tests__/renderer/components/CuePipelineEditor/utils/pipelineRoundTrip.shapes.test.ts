@@ -396,6 +396,26 @@ describe('round-trip: trigger event configs survive serialization', () => {
 		expect(data.config.filter).toEqual({ extension: 'ts' });
 	});
 
+	it('presence.return preserves away_minutes and settle_minutes', () => {
+		const data = getReconstructedTriggerConfig('presence.return', {
+			away_minutes: 30,
+			settle_minutes: 5,
+		});
+		expect(data.eventType).toBe('presence.return');
+		expect(data.config.away_minutes).toBe(30);
+		expect(data.config.settle_minutes).toBe(5);
+	});
+
+	it('presence.leave preserves away_minutes and never writes settle_minutes', () => {
+		const data = getReconstructedTriggerConfig('presence.leave', {
+			away_minutes: 15,
+			settle_minutes: 5,
+		});
+		expect(data.eventType).toBe('presence.leave');
+		expect(data.config.away_minutes).toBe(15);
+		expect(data.config.settle_minutes).toBeUndefined();
+	});
+
 	it('github.pull_request preserves repo and poll_minutes', () => {
 		const data = getReconstructedTriggerConfig('github.pull_request', {
 			repo: 'org/repo',

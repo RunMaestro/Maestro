@@ -15,6 +15,8 @@ import {
 	CheckSquare,
 	Power,
 	Terminal,
+	UserCheck,
+	UserX,
 } from 'lucide-react';
 import type { CueEventType } from '../../../shared/cue-pipeline-types';
 import { CUE_EVENT_LABELS } from '../../../shared/cue/cue-summary';
@@ -32,6 +34,8 @@ export const EVENT_ICONS: Record<CueEventType, typeof Clock> = {
 	'github.label': Tag,
 	'task.pending': CheckSquare,
 	'cli.trigger': Terminal,
+	'presence.return': UserCheck,
+	'presence.leave': UserX,
 };
 
 /**
@@ -82,6 +86,9 @@ All labels: {{CUE_GH_LABELS}}
 	'time.scheduled': '',
 	'time.once': '',
 	'app.startup': '',
+	'presence.return':
+		'The user is back after {{CUE_AWAY_MINUTES}} minutes away (since {{CUE_AWAY_SINCE}}).\n\n',
+	'presence.leave': 'The user stepped away at {{CUE_AWAY_SINCE}} ({{CUE_PRESENCE_REASON}}).\n\n',
 };
 
 /**
@@ -106,4 +113,6 @@ export const EVENT_COLORS: Record<CueEventType, string> = {
 	'github.label': '#ec4899',
 	'task.pending': '#06b6d4',
 	'cli.trigger': '#64748b',
+	'presence.return': '#84cc16',
+	'presence.leave': '#f43f5e',
 };

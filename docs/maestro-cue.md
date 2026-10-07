@@ -295,7 +295,7 @@ Cue is configured via a `.maestro/cue.yaml` file placed inside the `.maestro/` d
 
 ## Event Types
 
-Cue supports eleven event types that trigger subscriptions:
+Cue supports thirteen event types that trigger subscriptions:
 
 | Event Type            | Trigger                             | Key Fields                        |
 | --------------------- | ----------------------------------- | --------------------------------- |
@@ -309,6 +309,8 @@ Cue supports eleven event types that trigger subscriptions:
 | `github.issue`        | New issue opened on GitHub          | `repo` (optional)                 |
 | `github.label`        | A label lands on a PR or issue      | `gh_label_target`, `gh_labels`    |
 | `cli.trigger`         | Manual trigger via `maestro-cli`    | -                                 |
+| `presence.return`     | You come back to the machine        | `away_minutes`, `settle_minutes`  |
+| `presence.leave`      | You step away from the machine      | `away_minutes`                    |
 
 See [Event Types](./maestro-cue-events) for detailed documentation and examples for each type.
 

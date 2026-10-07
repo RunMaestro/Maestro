@@ -538,6 +538,29 @@ function validateEventSpecificFields(
 				);
 			}
 		}
+	} else if (event === 'presence.return' || event === 'presence.leave') {
+		if (sub.away_minutes !== undefined) {
+			if (
+				typeof sub.away_minutes !== 'number' ||
+				!Number.isFinite(sub.away_minutes) ||
+				sub.away_minutes < 1
+			) {
+				errors.push(`${prefix}: "away_minutes" must be a number >= 1 for ${event} events`);
+			}
+		}
+		if (sub.settle_minutes !== undefined) {
+			if (event === 'presence.leave') {
+				errors.push(
+					`${prefix}: "settle_minutes" only applies to presence.return events (a leave already waits "away_minutes")`
+				);
+			} else if (
+				typeof sub.settle_minutes !== 'number' ||
+				!Number.isFinite(sub.settle_minutes) ||
+				sub.settle_minutes < 0
+			) {
+				errors.push(`${prefix}: "settle_minutes" must be a number >= 0 for presence.return events`);
+			}
+		}
 	} else if (event === 'github.pull_request' || event === 'github.issue') {
 		if (sub.repo !== undefined && typeof sub.repo !== 'string') {
 			errors.push(`${prefix}: "repo" must be a string (e.g., "owner/repo") for ${event} events`);

@@ -14,17 +14,18 @@ Cue is an event-driven automation system that triggers AI agent prompts in respo
 
 ### Supported Trigger Types
 
-| Event Type            | Description                                               | Source Module                                  |
-| --------------------- | --------------------------------------------------------- | ---------------------------------------------- |
-| `app.startup`         | Fires once per process lifecycle on Electron launch       | `cue-session-runtime-service` (runtime loop)   |
-| `time.heartbeat`      | Periodic interval timer ("run every N minutes")           | `triggers/cue-heartbeat-trigger-source.ts`     |
-| `time.scheduled`      | Cron-like triggers (specific times/days)                  | `triggers/cue-scheduled-trigger-source.ts`     |
-| `file.changed`        | File system change via chokidar watcher                   | `triggers/cue-file-watcher-trigger-source.ts`  |
-| `agent.completed`     | Fires when another agent finishes                         | `cue-engine` (reactive)                        |
-| `github.pull_request` | New PRs detected via `gh` CLI polling                     | `triggers/cue-github-poller-trigger-source.ts` |
-| `github.issue`        | New issues detected via `gh` CLI polling                  | `triggers/cue-github-poller-trigger-source.ts` |
-| `github.label`        | A label added to a PR or issue (repo issue-event feed)    | `triggers/cue-github-poller-trigger-source.ts` |
-| `task.pending`        | Unchecked markdown tasks (`- [ ]`) found in watched files | `triggers/cue-task-scanner-trigger-source.ts`  |
+| Event Type                           | Description                                                                   | Source Module                                                            |
+| ------------------------------------ | ----------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| `app.startup`                        | Fires once per process lifecycle on Electron launch                           | `cue-session-runtime-service` (runtime loop)                             |
+| `time.heartbeat`                     | Periodic interval timer ("run every N minutes")                               | `triggers/cue-heartbeat-trigger-source.ts`                               |
+| `time.scheduled`                     | Cron-like triggers (specific times/days)                                      | `triggers/cue-scheduled-trigger-source.ts`                               |
+| `file.changed`                       | File system change via chokidar watcher                                       | `triggers/cue-file-watcher-trigger-source.ts`                            |
+| `agent.completed`                    | Fires when another agent finishes                                             | `cue-engine` (reactive)                                                  |
+| `github.pull_request`                | New PRs detected via `gh` CLI polling                                         | `triggers/cue-github-poller-trigger-source.ts`                           |
+| `github.issue`                       | New issues detected via `gh` CLI polling                                      | `triggers/cue-github-poller-trigger-source.ts`                           |
+| `github.label`                       | A label added to a PR or issue (repo issue-event feed)                        | `triggers/cue-github-poller-trigger-source.ts`                           |
+| `task.pending`                       | Unchecked markdown tasks (`- [ ]`) found in watched files                     | `triggers/cue-task-scanner-trigger-source.ts`                            |
+| `presence.return` / `presence.leave` | The user comes back to / steps away from the machine (OS lock + idle signals) | `triggers/cue-presence-trigger-source.ts` over `cue-presence-monitor.ts` |
 
 ### Execution Patterns
 
@@ -110,6 +111,7 @@ Template variables populated for events:
 - `file.changed`: `cue.filePath`, `cue.fileName`, `cue.fileDir`, `cue.fileExt`, `cue.fileChangeType`
 - `agent.completed`: `cue.sourceSession`, `cue.sourceOutput`, `cue.sourceStatus`, `cue.sourceExitCode`
 - `task.pending`: `cue.taskFile`, `cue.taskCount`, `cue.taskList`, `cue.taskContent`
+- `presence.*`: `cue.presenceReason`, `cue.awaySince`, `cue.awayMinutes`
 - `github.*`: `cue.ghNumber`, `cue.ghTitle`, `cue.ghAuthor`, `cue.ghUrl`, `cue.ghBody`, `cue.ghLabels`, etc.
 
 ### cue-yaml-loader.ts (~119 lines)
@@ -124,17 +126,18 @@ Thin facade over `config/` modules. Provides `loadCueConfig()`, `resolveCueConfi
 
 The `cue-subscription-setup.ts` module was deleted on rc. Each event source is now its own trigger source implementing a common interface in `triggers/cue-trigger-source.ts`:
 
-| File                                  | Purpose                                                             |
-| ------------------------------------- | ------------------------------------------------------------------- |
-| `cue-trigger-source.ts`               | Common trigger source interface                                     |
-| `cue-trigger-source-registry.ts`      | Registry and lookup of trigger sources                              |
-| `cue-trigger-filter.ts`               | Shared filter-matching helpers                                      |
-| `cue-heartbeat-trigger-source.ts`     | `time.heartbeat` interval timer                                     |
-| `cue-scheduled-trigger-source.ts`     | `time.scheduled` cron-like firing                                   |
-| `cue-schedule-utils.ts`               | Next-occurrence calculation (replaces `calculateNextScheduledTime`) |
-| `cue-file-watcher-trigger-source.ts`  | `file.changed` chokidar wrapper                                     |
-| `cue-github-poller-trigger-source.ts` | `github.pull_request` / `github.issue` / `github.label` poller      |
-| `cue-task-scanner-trigger-source.ts`  | `task.pending` markdown scanner                                     |
+| File                                  | Purpose                                                                            |
+| ------------------------------------- | ---------------------------------------------------------------------------------- |
+| `cue-trigger-source.ts`               | Common trigger source interface                                                    |
+| `cue-trigger-source-registry.ts`      | Registry and lookup of trigger sources                                             |
+| `cue-trigger-filter.ts`               | Shared filter-matching helpers                                                     |
+| `cue-heartbeat-trigger-source.ts`     | `time.heartbeat` interval timer                                                    |
+| `cue-scheduled-trigger-source.ts`     | `time.scheduled` cron-like firing                                                  |
+| `cue-schedule-utils.ts`               | Next-occurrence calculation (replaces `calculateNextScheduledTime`)                |
+| `cue-file-watcher-trigger-source.ts`  | `file.changed` chokidar wrapper                                                    |
+| `cue-github-poller-trigger-source.ts` | `github.pull_request` / `github.issue` / `github.label` poller                     |
+| `cue-task-scanner-trigger-source.ts`  | `task.pending` markdown scanner                                                    |
+| `cue-presence-trigger-source.ts`      | `presence.return` / `presence.leave` thresholds (`away_minutes`, `settle_minutes`) |
 
 ### cue-run-manager.ts (~452 lines)
 

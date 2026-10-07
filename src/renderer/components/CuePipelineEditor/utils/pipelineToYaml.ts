@@ -216,6 +216,21 @@ function applyTriggerEventConfig(sub: CueSubscription, triggerData: TriggerNodeD
 		case 'task.pending':
 			sub.watch = triggerData.config.watch ?? '**/*.md';
 			break;
+		case 'presence.return':
+		case 'presence.leave':
+			if (typeof triggerData.config.away_minutes === 'number') {
+				sub.away_minutes = triggerData.config.away_minutes;
+			}
+			// 0 is the runtime default (fire immediately), so only a real
+			// settle window reaches YAML - and never on a leave, which rejects it.
+			if (
+				triggerData.eventType === 'presence.return' &&
+				typeof triggerData.config.settle_minutes === 'number' &&
+				triggerData.config.settle_minutes > 0
+			) {
+				sub.settle_minutes = triggerData.config.settle_minutes;
+			}
+			break;
 		case 'agent.completed':
 			// source_session comes from node config, not edges
 			break;
@@ -949,6 +964,8 @@ export function pipelinesToSubscriptionRecords(
 			if (sub.max_notifications != null) record.max_notifications = sub.max_notifications;
 			if (sub.gh_label_target != null) record.gh_label_target = sub.gh_label_target;
 			if (sub.gh_labels != null) record.gh_labels = sub.gh_labels;
+			if (sub.away_minutes != null) record.away_minutes = sub.away_minutes;
+			if (sub.settle_minutes != null) record.settle_minutes = sub.settle_minutes;
 			if (sub.source_session != null) record.source_session = sub.source_session;
 			if (sub.source_session_ids != null) record.source_session_ids = sub.source_session_ids;
 			if (sub.source_sub != null) record.source_sub = sub.source_sub;

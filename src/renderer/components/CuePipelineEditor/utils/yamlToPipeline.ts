@@ -317,6 +317,11 @@ function extractTriggerConfig(sub: CueSubscription): TriggerNodeData['config'] {
 		case 'task.pending':
 			if (sub.watch != null) config.watch = sub.watch;
 			break;
+		case 'presence.return':
+		case 'presence.leave':
+			if (sub.away_minutes != null) config.away_minutes = sub.away_minutes;
+			if (sub.settle_minutes != null) config.settle_minutes = sub.settle_minutes;
+			break;
 	}
 
 	return config;
@@ -347,6 +352,10 @@ function triggerLabel(eventType: CueEventType): string {
 			return 'Agent Done';
 		case 'cli.trigger':
 			return 'CLI Trigger';
+		case 'presence.return':
+			return 'User Returns';
+		case 'presence.leave':
+			return 'User Leaves';
 		default:
 			return 'Trigger';
 	}

@@ -133,6 +133,17 @@ enricherRegistry.set('time.once', (event) => ({
 	fireAt: String(event.payload.fire_at ?? ''),
 }));
 
+/** presence.return / presence.leave enricher - when the user left and why. */
+function buildPresenceContext(event: CueEvent): Record<string, string> {
+	return {
+		presenceReason: String(event.payload.reason ?? ''),
+		awaySince: String(event.payload.away_since ?? ''),
+		awayMinutes: String(event.payload.away_minutes ?? ''),
+	};
+}
+enricherRegistry.set('presence.return', buildPresenceContext);
+enricherRegistry.set('presence.leave', buildPresenceContext);
+
 // ─── Public API ──────────────────────────────────────────────────────────────
 
 /**

@@ -58,6 +58,20 @@ describe('getCueEventDetail', () => {
 		expect(getCueEventDetail(event)).toBe('#42');
 	});
 
+	it('formats presence events with how long the user was away', () => {
+		expect(
+			getCueEventDetail(
+				makeEvent({ type: 'presence.return', payload: { away_duration_ms: 125 * 60_000 } })
+			)
+		).toBe('back after 2h 5m');
+		expect(
+			getCueEventDetail(
+				makeEvent({ type: 'presence.leave', payload: { away_duration_ms: 15 * 60_000 } })
+			)
+		).toBe('away 15m');
+		expect(getCueEventDetail(makeEvent({ type: 'presence.return', payload: {} }))).toBeUndefined();
+	});
+
 	it('formats github.pull_request with number only when title missing', () => {
 		const event = makeEvent({
 			type: 'github.pull_request',
