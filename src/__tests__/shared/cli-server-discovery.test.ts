@@ -300,7 +300,7 @@ describe('cli-server-discovery', () => {
 					'/Users/testuser',
 					'Library',
 					'Application Support',
-					'maestro',
+					'Maestro',
 					'cli-server.json'
 				) + '.tmp';
 			expect(mockFs.chmodSync).toHaveBeenCalledWith(expectedTmp, 0o600);
