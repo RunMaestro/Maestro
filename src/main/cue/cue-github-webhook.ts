@@ -28,8 +28,11 @@ import {
 	GITHUB_ITEM_BODY_LIMIT,
 	labelEventMatchesFilters,
 	matchesGitHubStateFilter,
-	recordLabelEventFired,
 	claimLabelEventFiredByOtherSource,
+	claimLabelEventInFlightForOtherSource,
+	reserveGitHubChange,
+	reserveLabelEvent,
+	type GitHubChangeReservation,
 	type GitHubComment,
 	type GitHubItemEventType,
 	type GitHubItemSnapshot,
@@ -62,6 +65,13 @@ export interface GitHubWebhookSubscription {
 export interface GitHubWebhookResult {
 	/** Events to dispatch, in order. */
 	events: CueEvent[];
+	/**
+	 * Holds the change while its event is on the way to the run manager. The
+	 * caller commits it (writing the `cue_github_seen` record) once the event
+	 * was dispatched or deliberately dropped, and releases it otherwise. Absent
+	 * when nothing is recorded (nothing fired, or the subscription is unseeded).
+	 */
+	reservation?: GitHubChangeReservation;
 	/** Why the delivery fired nothing, for the log. */
 	note?: string;
 	/** True when the subscription has never been seeded: the poller should
@@ -222,8 +232,9 @@ function labelEventFromDelivery(githubEvent: string, body: Json): GitHubLabelEve
 }
 
 /**
- * Decide what one authenticated GitHub delivery fires for a subscription, and
- * record it in `cue_github_seen` exactly as the poller would.
+ * Decide what one authenticated GitHub delivery fires for a subscription. The
+ * `cue_github_seen` record the poller would write is held in the returned
+ * reservation and written when the caller commits it, after dispatch.
  */
 export function handleGitHubWebhookDelivery(
 	sub: GitHubWebhookSubscription,
@@ -261,11 +272,18 @@ export function handleGitHubWebhookDelivery(
 		});
 		if (!matches)
 			return { events: [], note: `label "${ev.label}" does not match this subscription` };
-		if (claimLabelEventFiredByOtherSource(sub.subscriptionId, repo, ev, 'webhook')) {
+		if (
+			claimLabelEventFiredByOtherSource(sub.subscriptionId, repo, ev, 'webhook') ||
+			// A poll firing it right now: if that never completes, the poll did
+			// not move its watermark past it and reads it again.
+			claimLabelEventInFlightForOtherSource(sub.subscriptionId, repo, ev, 'webhook')
+		) {
 			return { events: [], note: `label "${ev.label}" on #${ev.number} already fired from a poll` };
 		}
-		recordLabelEventFired(sub.subscriptionId, repo, ev, 'webhook');
-		return { events: [buildGitHubLabelEvent(sub.triggerName, repo, ev)] };
+		return {
+			events: [buildGitHubLabelEvent(sub.triggerName, repo, ev)],
+			reservation: reserveLabelEvent(sub.subscriptionId, repo, ev, 'webhook'),
+		};
 	}
 
 	const found = itemFromDelivery(sub.eventType, githubEvent, body);
@@ -314,11 +332,14 @@ export function handleGitHubWebhookDelivery(
 		};
 	}
 	if (decision.kind === 'new') {
-		markGitHubItemSeen(sub.subscriptionId, itemKey, item.updatedAt);
-		return { events: [buildGitHubItemEvent(sub.eventType, sub.triggerName, repo, item, null)] };
+		return {
+			events: [buildGitHubItemEvent(sub.eventType, sub.triggerName, repo, item, null)],
+			reservation: reserveGitHubChange(sub.subscriptionId, itemKey, () =>
+				markGitHubItemSeen(sub.subscriptionId, itemKey, item.updatedAt)
+			),
+		};
 	}
 	if (decision.kind === 'retrigger') {
-		recordGitHubRetrigger(sub.subscriptionId, itemKey, item.updatedAt);
 		return {
 			events: [
 				buildGitHubItemEvent(sub.eventType, sub.triggerName, repo, item, {
@@ -326,6 +347,9 @@ export function handleGitHubWebhookDelivery(
 					newComments: commentFromDelivery(body),
 				}),
 			],
+			reservation: reserveGitHubChange(sub.subscriptionId, itemKey, () =>
+				recordGitHubRetrigger(sub.subscriptionId, itemKey, item.updatedAt)
+			),
 		};
 	}
 	return { events: [], note: `#${item.number} already fired` };

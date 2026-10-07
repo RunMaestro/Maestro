@@ -45,7 +45,8 @@ vi.mock('../../../../main/cue/cue-github-poller', () => ({
 	},
 }));
 
-vi.mock('../../../../main/cue/cue-webhook-server', () => ({
+vi.mock('../../../../main/cue/cue-webhook-server', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../../main/cue/cue-webhook-server')>()),
 	registerCueWebhook: (reg: Record<string, unknown>) => {
 		registrations.push(reg);
 		return mockUnregister;
@@ -61,9 +62,11 @@ vi.mock('../../../../main/cue/cue-github-webhook', () => ({
 let susFactorAllows = true;
 vi.mock('../../../../main/cue/cue-susfactor', () => ({
 	guardGitHubEvent: vi.fn(async () => susFactorAllows),
+	extractGitHubScorableText: () => 'third-party text',
 	extractWebhookScorableText: vi.fn(),
 	guardWebhookEvent: vi.fn(),
-	wouldScoreText: vi.fn(),
+	// Scoring "would run", so every event goes through the async guard above.
+	wouldScoreText: () => true,
 }));
 
 import {
@@ -72,7 +75,10 @@ import {
 } from '../../../../main/cue/triggers/cue-github-poller-trigger-source';
 import { createCueSessionRegistry } from '../../../../main/cue/cue-session-registry';
 import type { CueEvent, CueEventType, CueSubscription } from '../../../../main/cue/cue-types';
-import type { CueWebhookDelivery } from '../../../../main/cue/cue-webhook-server';
+import {
+	CueWebhookUnavailableError,
+	type CueWebhookDelivery,
+} from '../../../../main/cue/cue-webhook-server';
 import { resolveWebhookSecret } from '../../../../main/cue/triggers/cue-webhook-trigger-source';
 
 function makeSource(event: CueEventType, overrides: Partial<CueSubscription> = {}, enabled = true) {
@@ -100,6 +106,15 @@ function makeSource(event: CueEventType, overrides: Partial<CueSubscription> = {
 		emit,
 	})!;
 	return { source, onLog, emit };
+}
+
+/** Hand the registered subscriber a delivery, as the listener does. */
+function takeDelivery(d: CueWebhookDelivery, accepted: () => void = vi.fn()): Promise<void> {
+	const onDelivery = registrations[0].onDelivery as (
+		d: CueWebhookDelivery,
+		accepted: () => void
+	) => Promise<void>;
+	return onDelivery(d, accepted);
 }
 
 function delivery(): CueWebhookDelivery {
@@ -207,8 +222,8 @@ describe('GitHub trigger source with a webhook', () => {
 		});
 		source.start();
 
-		(registrations[0].onDelivery as (d: CueWebhookDelivery) => void)(delivery());
-		await vi.waitFor(() => expect(emit).toHaveBeenCalledOnce());
+		await takeDelivery(delivery());
+		expect(emit).toHaveBeenCalledOnce();
 
 		expect(handleMock.mock.calls[0][0]).toMatchObject({
 			eventType: 'github.pull_request',
@@ -228,45 +243,47 @@ describe('GitHub trigger source with a webhook', () => {
 		});
 		source.start();
 
-		(registrations[0].onDelivery as (d: CueWebhookDelivery) => void)(delivery());
-		await new Promise((r) => setTimeout(r, 0));
+		const accepted = vi.fn();
+		// A block is a final outcome: the delivery is still acknowledged.
+		await takeDelivery(delivery(), accepted);
 		expect(emit).not.toHaveBeenCalled();
+		expect(accepted).toHaveBeenCalledOnce();
 	});
 
-	it('asks the poller to seed when the subscription has never been polled', () => {
+	it('asks the poller to seed when the subscription has never been polled', async () => {
 		handleMock.mockReturnValue({ events: [], needsSeed: true });
 		const { source } = makeSource('github.pull_request', {
 			webhook: { secret_env: 'TEST_GH_SECRET' },
 		});
 		source.start();
 
-		(registrations[0].onDelivery as (d: CueWebhookDelivery) => void)(delivery());
+		await takeDelivery(delivery());
 		expect(mockPollNow).toHaveBeenCalledOnce();
 	});
 
-	it('asks the poller to run now for a change the delivery cannot fire itself', () => {
+	it('asks the poller to run now for a change the delivery cannot fire itself', async () => {
 		handleMock.mockReturnValue({ events: [], pollNow: true, note: 'no branch data' });
 		const { source } = makeSource('github.pull_request', {
 			webhook: { secret_env: 'TEST_GH_SECRET' },
 		});
 		source.start();
 
-		(registrations[0].onDelivery as (d: CueWebhookDelivery) => void)(delivery());
+		await takeDelivery(delivery());
 		expect(mockPollNow).toHaveBeenCalledOnce();
 	});
 
-	it('logs why a delivery fired nothing', () => {
+	it('logs why a delivery fired nothing', async () => {
 		handleMock.mockReturnValue({ events: [], note: '#42 already fired' });
 		const { source, onLog } = makeSource('github.pull_request', {
 			webhook: { secret_env: 'TEST_GH_SECRET' },
 		});
 		source.start();
 
-		(registrations[0].onDelivery as (d: CueWebhookDelivery) => void)(delivery());
+		await takeDelivery(delivery());
 		expect(onLog).toHaveBeenCalledWith('info', expect.stringContaining('#42 already fired'));
 	});
 
-	it('ignores deliveries while Cue is disabled', () => {
+	it('does not take deliveries while Cue is disabled, so the listener answers 503', async () => {
 		const { source } = makeSource(
 			'github.pull_request',
 			{ webhook: { secret_env: 'TEST_GH_SECRET' } },
@@ -274,8 +291,12 @@ describe('GitHub trigger source with a webhook', () => {
 		);
 		source.start();
 
-		(registrations[0].onDelivery as (d: CueWebhookDelivery) => void)(delivery());
+		const accepted = vi.fn();
+		await expect(takeDelivery(delivery(), accepted)).rejects.toBeInstanceOf(
+			CueWebhookUnavailableError
+		);
 		expect(handleMock).not.toHaveBeenCalled();
+		expect(accepted).not.toHaveBeenCalled();
 	});
 });
 

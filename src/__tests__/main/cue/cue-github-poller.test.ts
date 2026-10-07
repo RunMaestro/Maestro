@@ -91,6 +91,12 @@ vi.mock('../../../main/cue/cue-db', () => ({
 }));
 
 import {
+	reserveLabelEvent,
+	resetGitHubChangeReservationsForTests,
+} from '../../../main/cue/cue-github-items';
+import type { CueEmitOutcome } from '../../../main/cue/triggers/cue-guarded-emit';
+import type { CueEvent } from '../../../main/cue/cue-types';
+import {
 	createCueGitHubPoller,
 	isGitHubConnectivityError,
 	isGitHubAuthError,
@@ -216,7 +222,10 @@ function makeConfig(overrides: Partial<CueGitHubPollerConfig> = {}): CueGitHubPo
 		repo: 'owner/repo',
 		pollMinutes: 5,
 		projectRoot: '/projects/test',
-		onEvent: vi.fn(),
+		// Every event reaches the run manager at once (no SusFactor scoring).
+		onEvent: vi.fn((_event: unknown, onOutcome: (outcome: 'emitted') => void) =>
+			onOutcome('emitted')
+		),
 		onLog: vi.fn(),
 		triggerName: 'test-trigger',
 		subscriptionId: 'session-1:test-sub',
@@ -701,7 +710,8 @@ describe('cue-github-poller', () => {
 		// Track onEvent calls to call cleanup mid-iteration
 		let cleanupFn: (() => void) | null = null;
 		let eventCallCount = 0;
-		const originalOnEvent = vi.fn(() => {
+		const originalOnEvent = vi.fn((_event: unknown, onOutcome: (outcome: 'emitted') => void) => {
+			onOutcome('emitted');
 			eventCallCount++;
 			if (eventCallCount === 1 && cleanupFn) {
 				cleanupFn(); // Stop after first event
@@ -1626,6 +1636,13 @@ describe('cue-github-poller', () => {
 			);
 		}
 
+		/** Only the watermark row exists; no label add has a row yet. */
+		function watermarkAt(revision: string) {
+			mockGetGitHubItemState.mockImplementation((_subId: string, key: string) =>
+				key === '__label_watermark__' ? { lastRevision: revision, fireCount: 0 } : null
+			);
+		}
+
 		function labelConfig(overrides: Partial<CueGitHubPollerConfig> = {}) {
 			return makeConfig({ eventType: 'github.label', ...overrides });
 		}
@@ -1648,7 +1665,7 @@ describe('cue-github-poller', () => {
 		});
 
 		it('fires oldest-first for events past the watermark and carries the label payload', async () => {
-			mockGetGitHubItemState.mockReturnValue({ lastRevision: '4000', fireCount: 0 });
+			watermarkAt('4000');
 			const config = labelConfig();
 			setupLabelFeed({
 				1: [
@@ -1683,7 +1700,7 @@ describe('cue-github-poller', () => {
 		});
 
 		it('only fires for watched labels, matched case-insensitively', async () => {
-			mockGetGitHubItemState.mockReturnValue({ lastRevision: '4000', fireCount: 0 });
+			watermarkAt('4000');
 			const config = labelConfig({ watchLabels: ['Ready-To-Merge'] });
 			setupLabelFeed({
 				1: [
@@ -1703,7 +1720,7 @@ describe('cue-github-poller', () => {
 		});
 
 		it('narrows to issues when gh_label_target is "issue"', async () => {
-			mockGetGitHubItemState.mockReturnValue({ lastRevision: '4000', fireCount: 0 });
+			watermarkAt('4000');
 			const config = labelConfig({ labelTarget: 'issue' });
 			setupLabelFeed({
 				1: [
@@ -1724,7 +1741,7 @@ describe('cue-github-poller', () => {
 		});
 
 		it('pages back until it crosses the watermark', async () => {
-			mockGetGitHubItemState.mockReturnValue({ lastRevision: '4000', fireCount: 0 });
+			watermarkAt('4000');
 			const config = labelConfig();
 			setupLabelFeed({
 				1: Array.from({ length: 100 }, (_, i) => labelEvent({ id: 6000 - i })),
@@ -1744,7 +1761,7 @@ describe('cue-github-poller', () => {
 		});
 
 		it('fires once for an event that shifted onto the next page mid-scan', async () => {
-			mockGetGitHubItemState.mockReturnValue({ lastRevision: '4000', fireCount: 0 });
+			watermarkAt('4000');
 			const config = labelConfig();
 			setupLabelFeed({
 				1: Array.from({ length: 100 }, (_, i) => labelEvent({ id: 6000 - i })),
@@ -1760,7 +1777,7 @@ describe('cue-github-poller', () => {
 		});
 
 		it('warns when the watermark is out of reach instead of skipping silently', async () => {
-			mockGetGitHubItemState.mockReturnValue({ lastRevision: '1', fireCount: 0 });
+			watermarkAt('1');
 			const config = labelConfig();
 			const fullPage = (base: number) =>
 				Array.from({ length: 100 }, (_, i) => labelEvent({ id: base - i }));
@@ -1777,7 +1794,7 @@ describe('cue-github-poller', () => {
 		});
 
 		it('advances the watermark past events it filtered out', async () => {
-			mockGetGitHubItemState.mockReturnValue({ lastRevision: '4000', fireCount: 0 });
+			watermarkAt('4000');
 			const config = labelConfig({ watchLabels: ['nothing-matches'] });
 			setupLabelFeed({
 				1: [labelEvent({ id: 6000, label: 'wontfix' }), labelEvent({ id: 4000 })],
@@ -1793,6 +1810,105 @@ describe('cue-github-poller', () => {
 				'6000'
 			);
 			cleanup();
+		});
+
+		describe('an add that has not reached the run manager', () => {
+			/** `cue_github_seen` rows backed by a map, so what one poll writes the next one reads. */
+			function rowsBackedByMap(rows: Map<string, string>) {
+				mockGetGitHubItemState.mockImplementation((_subId: string, key: string) =>
+					rows.has(key) ? { lastRevision: rows.get(key)!, fireCount: 0 } : null
+				);
+				mockSetGitHubItemRevision.mockImplementation((_subId: string, key: string, rev: string) => {
+					rows.set(key, rev);
+				});
+			}
+
+			afterEach(() => {
+				resetGitHubChangeReservationsForTests();
+			});
+
+			it('keeps the watermark below it, and the next poll fires only it', async () => {
+				const rows = new Map([['__label_watermark__', '4000']]);
+				rowsBackedByMap(rows);
+				setupLabelFeed({
+					1: [
+						labelEvent({ id: 6000, label: 'needs-rebase', created_at: '2026-03-04T00:01:00Z' }),
+						labelEvent({ id: 5000, label: 'ready-to-merge' }),
+						labelEvent({ id: 4000, label: 'already-seen' }),
+					],
+				});
+				// The engine stopped while 5000 was on its way: it never dispatched.
+				const fired: string[] = [];
+				const config = labelConfig({
+					onEvent: vi.fn((event: CueEvent, onOutcome: (outcome: CueEmitOutcome) => void) => {
+						const label = String(event.payload.label);
+						fired.push(label);
+						onOutcome(label === 'ready-to-merge' && fired.length === 1 ? 'not-running' : 'emitted');
+					}),
+				});
+
+				const cleanup = createCueGitHubPoller(config);
+				await vi.advanceTimersByTimeAsync(2100);
+				expect(fired).toEqual(['ready-to-merge', 'needs-rebase']);
+				expect(rows.get('__label_watermark__')).toBe('4999');
+
+				await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
+				// 6000 already has its row, so only 5000 fires again.
+				expect(fired).toEqual(['ready-to-merge', 'needs-rebase', 'ready-to-merge']);
+				expect(rows.get('__label_watermark__')).toBe('6000');
+				cleanup();
+			});
+
+			it('waits for a webhook firing the same add, and reads it again if that never dispatched', async () => {
+				const rows = new Map([['__label_watermark__', '4000']]);
+				rowsBackedByMap(rows);
+				setupLabelFeed({ 1: [labelEvent({ id: 5000 }), labelEvent({ id: 4000 })] });
+				// The webhook took the same add first and is still scoring it.
+				const webhook = reserveLabelEvent(
+					'session-1:test-sub',
+					'owner/repo',
+					{ number: 42, label: 'ready-to-merge', labeledAt: '2026-03-04T00:00:00Z' },
+					'webhook'
+				);
+				const config = labelConfig();
+
+				const cleanup = createCueGitHubPoller(config);
+				await vi.advanceTimersByTimeAsync(2100);
+				expect(config.onEvent).not.toHaveBeenCalled();
+				// Still waiting on the webhook: the watermark has not moved.
+				expect(rows.get('__label_watermark__')).toBe('4000');
+
+				webhook.release();
+				await vi.advanceTimersByTimeAsync(0);
+				expect(rows.get('__label_watermark__')).toBe('4999');
+
+				await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
+				expect(config.onEvent).toHaveBeenCalledTimes(1);
+				expect(rows.get('__label_watermark__')).toBe('5000');
+				cleanup();
+			});
+
+			it('moves past an add the webhook fired, and never fires it from the poll', async () => {
+				const rows = new Map([['__label_watermark__', '4000']]);
+				rowsBackedByMap(rows);
+				setupLabelFeed({ 1: [labelEvent({ id: 5000 }), labelEvent({ id: 4000 })] });
+				const webhook = reserveLabelEvent(
+					'session-1:test-sub',
+					'owner/repo',
+					{ number: 42, label: 'ready-to-merge', labeledAt: '2026-03-04T00:00:00Z' },
+					'webhook'
+				);
+				const config = labelConfig();
+
+				const cleanup = createCueGitHubPoller(config);
+				await vi.advanceTimersByTimeAsync(2100);
+				webhook.commit();
+				await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
+
+				expect(config.onEvent).not.toHaveBeenCalled();
+				expect(rows.get('__label_watermark__')).toBe('5000');
+				cleanup();
+			});
 		});
 	});
 

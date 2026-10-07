@@ -136,7 +136,7 @@ import {
 	safeRecordCueEvent,
 	safeUpdateCueEventStatus,
 	claimWebhookDelivery,
-	releaseWebhookDelivery,
+	isWebhookDeliveryClaimed,
 	WEBHOOK_DELIVERY_RETENTION_MS,
 } from '../../../main/cue/cue-db';
 
@@ -739,15 +739,23 @@ describe('cue-db webhook delivery dedupe', () => {
 		expect(runCalls[1].slice(0, 2)).toEqual(['github', 'abc-123']);
 	});
 
-	it('releases a claim with one DELETE, so the retry is handled again', () => {
+	it('checks for a live claim with one SELECT, without writing', () => {
 		vi.clearAllMocks();
 		runCalls.length = 0;
+		getCalls.length = 0;
 		prepareCalls.length = 0;
-		releaseWebhookDelivery('github#session-1:sub', 'abc-123');
-		expect(prepareCalls).toEqual([
-			'DELETE FROM cue_webhook_deliveries WHERE path = ? AND delivery_id = ?',
-		]);
-		expect(runCalls).toEqual([['github#session-1:sub', 'abc-123']]);
+		const before = Date.now();
+		mockGetReturn = { 1: 1 };
+		expect(isWebhookDeliveryClaimed('github#session-1:sub', 'abc-123')).toBe(true);
+		mockGetReturn = undefined;
+		expect(isWebhookDeliveryClaimed('github#session-1:sub', 'abc-123')).toBe(false);
+		expect(
+			prepareCalls.every((sql) => sql.startsWith('SELECT 1 FROM cue_webhook_deliveries'))
+		).toBe(true);
+		expect(runCalls).toEqual([]);
+		const [path, id, cutoff] = getCalls[0] as [string, string, number];
+		expect([path, id]).toEqual(['github#session-1:sub', 'abc-123']);
+		expect(cutoff).toBeGreaterThanOrEqual(before - WEBHOOK_DELIVERY_RETENTION_MS);
 	});
 
 	it('reports a redelivery when the INSERT changes nothing', () => {
@@ -760,6 +768,7 @@ describe('cue-db webhook delivery dedupe', () => {
 	it('treats every delivery as new without a database', () => {
 		closeCueDb();
 		expect(claimWebhookDelivery('github', 'abc-123')).toBe(true);
+		expect(isWebhookDeliveryClaimed('github', 'abc-123')).toBe(false);
 	});
 
 	it('remembers deliveries for 24 hours', () => {

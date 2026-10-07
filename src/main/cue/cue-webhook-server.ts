@@ -28,7 +28,7 @@ import * as http from 'http';
 import { normalizeWebhookPath } from '../../shared/cue';
 import type { MainLogLevel } from '../../shared/logger-types';
 import { captureException } from '../utils/sentry';
-import { claimWebhookDelivery, releaseWebhookDelivery } from './cue-db';
+import { claimWebhookDelivery, isWebhookDeliveryClaimed } from './cue-db';
 
 /** Default port for the Cue webhook listener. Override with `MAESTRO_CUE_WEBHOOK_PORT`. */
 export const DEFAULT_CUE_WEBHOOK_PORT = 17997;
@@ -48,6 +48,23 @@ const OVERSIZE_DRAIN_MS = 5_000;
 /** Raw body retained on the event payload. Payloads are persisted with the run,
  *  so the full megabyte is not worth keeping once filters have run. */
 const MAX_STORED_RAW_BODY = 64 * 1024;
+
+/** `Retry-After` on a 503: how soon a sender should try again while Cue is
+ *  off or stopping. Short, since a restart is usually quick. */
+export const WEBHOOK_RETRY_AFTER_SECONDS = 30;
+
+/**
+ * Thrown by a subscriber that cannot take a delivery because Cue is not
+ * running (switched off, or stopping). Answered 503 with `Retry-After`, and
+ * nothing is recorded, so the retry is handled once Cue runs. A delivery
+ * Maestro will not act on is never acknowledged.
+ */
+export class CueWebhookUnavailableError extends Error {
+	constructor(message = 'Cue is not running') {
+		super(message);
+		this.name = 'CueWebhookUnavailableError';
+	}
+}
 
 /** Bind hosts that keep the listener on the local machine. Anything else gets
  *  a warning at startup, since it exposes an agent trigger to the network. */
@@ -95,8 +112,18 @@ export interface CueWebhookRegistration {
 	/** When set, authenticate by HMAC-SHA256 over the raw body using this
 	 *  header instead of expecting the secret to be presented directly. */
 	signatureHeader?: string;
-	/** Called once per authenticated delivery. */
-	onDelivery: (delivery: CueWebhookDelivery) => void;
+	/**
+	 * Called once per authenticated delivery. The delivery is ACKNOWLEDGED
+	 * (answered 2xx) only once this returns or its promise resolves, so it must
+	 * not settle before the event has reached the run manager (or was
+	 * deliberately dropped). Throwing or rejecting answers 5xx (503 for a
+	 * {@link CueWebhookUnavailableError}) and records nothing, so the sender
+	 * may retry. `accepted()` records the delivery id as
+	 * handled; call it in the same step that hands the event on, so a drain
+	 * waiting on the source covers it. It is also called on success if the
+	 * subscriber did not.
+	 */
+	onDelivery: (delivery: CueWebhookDelivery, accepted: () => void) => void | Promise<void>;
 	/** Logger for this registration's owning session. */
 	onLog: (level: MainLogLevel, message: string) => void;
 }
@@ -236,25 +263,97 @@ function claimScope(path: string, reg: CueWebhookRegistration): string {
 }
 
 /**
- * True when this subscriber has not accepted this delivery before. A failing
- * database must not drop deliveries, so an error counts as new (the behavior
- * before redeliveries were remembered) and is reported.
+ * Deliveries being handled right now, by dedupe key. A copy of one that
+ * arrives meanwhile waits for it instead of firing a second time; the record
+ * in `cue_webhook_deliveries` is written only once the first copy was taken.
+ * Process memory on purpose: a crash empties it, and since nothing was
+ * recorded and nothing was acknowledged, the sender's retry is handled anew.
  */
-function isFirstDelivery(scope: string, deliveryId: string): boolean {
+const inFlightDeliveries = new Map<string, Promise<void>>();
+
+/** True when this subscriber already took this delivery. A failing database
+ *  must not drop deliveries, so an error counts as not taken and is reported. */
+function wasDeliveryTaken(scope: string, deliveryId: string): boolean {
 	try {
-		return claimWebhookDelivery(scope, deliveryId);
+		return isWebhookDeliveryClaimed(scope, deliveryId);
 	} catch (err) {
 		void captureException(err, { operation: 'cueWebhookClaimDelivery' });
-		return true;
+		return false;
 	}
 }
 
-/** Undo a claim, so the sender's retry reaches this subscriber again. */
-function releaseDelivery(scope: string, deliveryId: string): void {
+/** Record that this subscriber took this delivery. */
+function recordDeliveryTaken(scope: string, deliveryId: string): void {
 	try {
-		releaseWebhookDelivery(scope, deliveryId);
+		claimWebhookDelivery(scope, deliveryId);
 	} catch (err) {
-		void captureException(err, { operation: 'cueWebhookReleaseDelivery' });
+		void captureException(err, { operation: 'cueWebhookClaimDelivery' });
+	}
+}
+
+type DeliveryResult = 'accepted' | 'duplicate' | 'unavailable' | 'failed';
+
+/**
+ * Hand one delivery to one subscriber. With a sender-chosen id it is deduped:
+ * a copy already taken is a duplicate, and a copy arriving while the first is
+ * still being handled waits for it and then decides again.
+ */
+async function deliverTo(
+	reg: CueWebhookRegistration,
+	path: string,
+	delivery: CueWebhookDelivery,
+	dedupe: boolean
+): Promise<DeliveryResult> {
+	const scope = claimScope(path, reg);
+	const key = `${scope}\u0000${delivery.deliveryId}`;
+	if (dedupe) {
+		for (;;) {
+			const pending = inFlightDeliveries.get(key);
+			if (!pending) break;
+			await pending;
+		}
+		if (wasDeliveryTaken(scope, delivery.deliveryId)) return 'duplicate';
+	}
+
+	let finished!: () => void;
+	if (dedupe) {
+		inFlightDeliveries.set(
+			key,
+			new Promise<void>((resolve) => {
+				finished = resolve;
+			})
+		);
+	}
+	let recorded = false;
+	const accepted = () => {
+		if (recorded || !dedupe) return;
+		recorded = true;
+		recordDeliveryTaken(scope, delivery.deliveryId);
+	};
+	try {
+		const pending = reg.onDelivery(delivery, accepted);
+		if (pending) await pending;
+		accepted();
+		return 'accepted';
+	} catch (err) {
+		if (err instanceof CueWebhookUnavailableError) {
+			reg.onLog(
+				'warn',
+				`[CUE] webhook delivery ${delivery.deliveryId} to "/cue/${path}" not taken (${err.message}) - answered 503 so the sender retries`
+			);
+			return 'unavailable';
+		}
+		reg.onLog(
+			'error',
+			`[CUE] webhook delivery ${delivery.deliveryId} to "/cue/${path}" failed: ${err instanceof Error ? err.message : String(err)}`
+		);
+		void captureException(err, { operation: 'cueWebhookDelivery', path });
+		return 'failed';
+	} finally {
+		if (dedupe) {
+			inFlightDeliveries.delete(key);
+			finished();
+		}
 	}
 }
 
@@ -262,13 +361,16 @@ function respond(
 	res: http.ServerResponse,
 	status: number,
 	body: Record<string, unknown>,
-	options: { closeConnection?: boolean } = {}
+	options: { closeConnection?: boolean; retryAfterSeconds?: number } = {}
 ): void {
 	const payload = JSON.stringify(body);
 	res.writeHead(status, {
 		'content-type': 'application/json',
 		'content-length': Buffer.byteLength(payload),
 		...(options.closeConnection ? { connection: 'close' } : {}),
+		...(options.retryAfterSeconds !== undefined
+			? { 'retry-after': String(options.retryAfterSeconds) }
+			: {}),
 	});
 	res.end(payload);
 }
@@ -404,62 +506,67 @@ export async function handleCueWebhookRequest(
 	const event = resolveVendorEvent(req.headers);
 	const { id: deliveryId, fromSender } = resolveDeliveryId(req.headers);
 
-	// A redelivery (same sender-chosen id within 24 hours) reaches only the
-	// subscribers that have not handled it; when none are left it is
-	// acknowledged with a 2xx so the sender stops retrying, and fires nothing.
-	const fresh = fromSender
-		? authenticated.filter((reg) => isFirstDelivery(claimScope(path, reg), deliveryId))
-		: authenticated;
-	for (const reg of authenticated) {
-		if (!fresh.includes(reg)) {
-			reg.onLog(
-				'info',
-				`[CUE] webhook delivery ${deliveryId} to "/cue/${path}" was already handled - ignoring the redelivery`
-			);
-		}
-	}
-	if (fresh.length === 0) {
-		respond(res, 200, { accepted: 0, duplicate: true });
-		return;
-	}
-
 	const receivedAt = new Date().toISOString();
 	const truncatedRaw =
 		rawBody.length > MAX_STORED_RAW_BODY
 			? rawBody.subarray(0, MAX_STORED_RAW_BODY).toString('utf8')
 			: decodedBody;
 
-	let failed = 0;
-	for (const reg of fresh) {
-		try {
-			reg.onDelivery({
+	// ACKNOWLEDGED means answered 2xx, and a 2xx is sent only after every
+	// subscriber has taken the delivery: its event reached the run manager
+	// (running or queued, durable either way) or was deliberately dropped
+	// (filter, SusFactor). Until then nothing is recorded, so a crash leaves
+	// no 2xx and no record, and the sender's retry is handled anew.
+	//
+	// A redelivery (same sender-chosen id within 24 hours) reaches only the
+	// subscribers that have not taken it; when none are left it is
+	// acknowledged with a 2xx so the sender stops retrying, and fires nothing.
+	const results = await Promise.all(
+		authenticated.map((reg) =>
+			deliverTo(
+				reg,
 				path,
-				event,
-				deliveryId,
-				receivedAt,
-				headers: sanitizeHeaders(req.headers, reg.signatureHeader),
-				body: parsed,
-				rawBody: truncatedRaw,
-			});
-		} catch (err) {
-			// This subscriber did not take the delivery: release its claim so a
-			// retry reaches it, while the ones that succeeded stay deduped.
-			failed++;
-			if (fromSender) releaseDelivery(claimScope(path, reg), deliveryId);
+				{
+					path,
+					event,
+					deliveryId,
+					receivedAt,
+					headers: sanitizeHeaders(req.headers, reg.signatureHeader),
+					body: parsed,
+					rawBody: truncatedRaw,
+				},
+				fromSender
+			)
+		)
+	);
+	authenticated.forEach((reg, i) => {
+		if (results[i] === 'duplicate') {
 			reg.onLog(
-				'error',
-				`[CUE] webhook delivery ${deliveryId} to "/cue/${path}" failed: ${err instanceof Error ? err.message : String(err)}`
+				'info',
+				`[CUE] webhook delivery ${deliveryId} to "/cue/${path}" was already handled - ignoring the redelivery`
 			);
-			void captureException(err, { operation: 'cueWebhookDelivery', path });
 		}
-	}
-
+	});
+	const accepted = results.filter((r) => r === 'accepted').length;
+	const failed = results.filter((r) => r === 'failed' || r === 'unavailable').length;
 	if (failed > 0) {
 		// A non-2xx so the sender retries; the retry skips who already has it.
-		respond(res, 500, { accepted: fresh.length - failed, failed });
+		// When the only reason is that Cue is not running, say so: 503 with a
+		// Retry-After. Any other failure is a 500.
+		const unavailable = results.every((r) => r !== 'failed');
+		respond(
+			res,
+			unavailable ? 503 : 500,
+			{ accepted, failed },
+			unavailable ? { retryAfterSeconds: WEBHOOK_RETRY_AFTER_SECONDS } : {}
+		);
 		return;
 	}
-	respond(res, 202, { accepted: fresh.length });
+	if (accepted === 0) {
+		respond(res, 200, { accepted: 0, duplicate: true });
+		return;
+	}
+	respond(res, 202, { accepted });
 }
 
 /** Open the shared socket if it isn't already listening. */
@@ -539,6 +646,7 @@ export function registerCueWebhook(reg: CueWebhookRegistration): () => void {
 /** Test-only: drop all registrations and close the socket. */
 export function resetCueWebhookServerForTests(): void {
 	registrations.clear();
+	inFlightDeliveries.clear();
 	bindFailed = false;
 	boundPort = null;
 	if (server) {

@@ -164,3 +164,20 @@ The engine logs one JSON object per line. On a VM they go to the journal (`journ
 ## Webhooks
 
 `webhook.received` subscriptions, and GitHub triggers that take webhooks, listen on port `17997`, bound to loopback. Do not expose the port directly: put a reverse proxy (nginx, Caddy) or a tunnel (cloudflared, ngrok) in front of `http://127.0.0.1:17997/cue/<path>`. See `webhook.received` and GitHub webhooks in [Cue Event Types](./maestro-cue-events).
+
+**What a `2xx` means.** Maestro acknowledges a delivery (answers `2xx`) only after it has handled it: its run has started or is queued, or it was dropped on purpose (a `filter` that does not match, or a SusFactor block, which is recorded). Once a sender has a `2xx`:
+
+- A crash (`kill -9`, out of memory, a host reboot) followed by a restart loses nothing. A queued delivery runs after the restart; a run that was in progress is marked failed at the next start.
+- `systemctl stop` and `docker stop` drain: a delivery still being checked when the stop begins is finished and queued for the next start, within the drain timeout.
+- A redelivery of the same id fires nothing for 24 hours, and a GitHub change seen by both a webhook and a poll fires once.
+
+Before the `2xx`, nothing is recorded. A crash while Maestro is still checking a delivery leaves the sender without an answer, and its retry fires once. GitHub does not retry on its own; the GitHub trigger's poll finds the change instead, or use **Redeliver**.
+
+**Limits:**
+
+- While Cue is off or stopping, including after a second stop signal cuts the drain short, a delivery is answered `503` with `Retry-After: 30` and nothing is recorded, so the sender should retry. A stopped engine has no listener at all, and the connection is refused.
+- The SusFactor check runs before the answer, so a slow 0DIN call delays it (each call gives up after 3 to 5 seconds). A sender that stops waiting first (GitHub waits 10 seconds) records a failure although the delivery runs; its retry is then a duplicate and fires nothing.
+- A full queue drops its oldest event, and `queue_size: 0` drops a delivery that arrives while the agent is busy. A subscription with no prompt, or a fan-out target that does not exist, does not run. Each of these is logged, and the delivery still counts as handled.
+- After a crash (not a drain), a queued delivery that has waited longer than its subscription's `timeout_minutes` by the time Maestro is back is dropped as stale and shown as timed out in the activity log. A drain stamps the queue so that rule does not apply.
+- The delivery id is recorded in the same step that hands the delivery on. A crash at exactly that instant can let one redelivery fire again.
+- A sender that sends no delivery id header (`X-GitHub-Delivery`, `X-Request-Id` or `X-Maestro-Delivery`) gets no protection against repeats.

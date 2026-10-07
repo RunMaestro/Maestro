@@ -9,6 +9,7 @@
 
 import { execFile as cpExecFile } from 'child_process';
 import type { CueEvent } from './cue-types';
+import { isFinalEmitOutcome, type CueEmitOutcome } from './triggers/cue-guarded-emit';
 import {
 	isCueDbReady,
 	markGitHubItemSeen,
@@ -37,8 +38,12 @@ import {
 	githubItemKey,
 	isNewerRevision,
 	labelEventMatchesFilters,
-	recordLabelEventFired,
 	claimLabelEventFiredByOtherSource,
+	claimLabelEventInFlightForOtherSource,
+	labelEventHandledBySource,
+	reserveGitHubChange,
+	reserveLabelEvent,
+	type GitHubChangeReservation,
 	type GitHubComment,
 	type GitHubItemEventType,
 	type GitHubItemSnapshot,
@@ -253,7 +258,13 @@ export interface CueGitHubPollerConfig {
 	repo?: string;
 	pollMinutes: number;
 	projectRoot: string;
-	onEvent: (event: CueEvent) => void;
+	/**
+	 * Hand an event on, and report how it ended by calling `onOutcome` exactly
+	 * once (possibly later, after SusFactor). The poller writes its
+	 * `cue_github_seen` record only on a final outcome, so an item whose event
+	 * never reached the run manager is found again by the next poll.
+	 */
+	onEvent: (event: CueEvent, onOutcome: (outcome: CueEmitOutcome) => void) => void;
 	onLog: (level: string, message: string, data?: unknown) => void;
 	triggerName: string;
 	subscriptionId: string;
@@ -515,30 +526,62 @@ export function createCueGitHubPoller(config: CueGitHubPollerConfig): () => void
 		if (decision.kind === 'skip') return;
 
 		if (decision.kind === 'retrigger') {
-			const newComments = await fetchNewComments(
-				itemEventType === 'github.pull_request' ? 'pr' : 'issue',
-				repo,
-				item.number,
-				decision.state.lastRevision
+			// Held from the decision on, so a webhook cannot fire the same change
+			// while the comments load or the event is scored.
+			const reservation = reserveGitHubChange(subscriptionId, itemKey, () =>
+				recordGitHubRetrigger(subscriptionId, itemKey, updatedAt)
 			);
-			if (stopped) return;
-			// A webhook can record this change, or a newer one, while the comments
-			// load; decide again on what is stored now.
+			let newComments: GitHubComment[] | null;
+			try {
+				newComments = await fetchNewComments(
+					itemEventType === 'github.pull_request' ? 'pr' : 'issue',
+					repo,
+					item.number,
+					decision.state.lastRevision
+				);
+			} catch (err) {
+				reservation.release();
+				throw err;
+			}
 			const current = getGitHubItemState(subscriptionId, itemKey);
-			if (!current || !isNewerRevision(updatedAt, current.lastRevision)) return;
-			if (current.fireCount >= cap) return;
-			onEvent(
+			if (
+				stopped ||
+				!current ||
+				!isNewerRevision(updatedAt, current.lastRevision) ||
+				current.fireCount >= cap
+			) {
+				reservation.release();
+				return;
+			}
+			fire(
 				buildGitHubItemEvent(itemEventType, triggerName, repo, item, {
 					retriggerCount: current.fireCount + 1,
 					newComments: newComments ?? [],
-				})
+				}),
+				reservation
 			);
-			recordGitHubRetrigger(subscriptionId, itemKey, updatedAt);
 			return;
 		}
 
-		onEvent(buildGitHubItemEvent(itemEventType, triggerName, repo, item, null));
-		markGitHubItemSeen(subscriptionId, itemKey, updatedAt);
+		fire(
+			buildGitHubItemEvent(itemEventType, triggerName, repo, item, null),
+			reserveGitHubChange(subscriptionId, itemKey, () =>
+				markGitHubItemSeen(subscriptionId, itemKey, updatedAt)
+			)
+		);
+	}
+
+	/** Emit, then record the change only once the event reached a final outcome. */
+	function fire(event: CueEvent, reservation: GitHubChangeReservation): void {
+		try {
+			onEvent(event, (outcome) => {
+				if (isFinalEmitOutcome(outcome)) reservation.commit();
+				else reservation.release();
+			});
+		} catch (err) {
+			reservation.release();
+			throw err;
+		}
 	}
 
 	async function pollPRs(repo: string): Promise<void> {
@@ -731,20 +774,43 @@ export function createCueGitHubPoller(config: CueGitHubPollerConfig): () => void
 		// a human applied them.
 		const ordered = [...collected.values()].sort((a, b) => a.id - b.id);
 
+		// Each add this poll fires, or leaves to a webhook firing it right now,
+		// with whether it reached a final outcome.
+		const pending: Array<{ id: number; settled: Promise<boolean> }> = [];
 		for (const raw of ordered) {
-			if (stopped) return;
+			if (stopped) break;
 			const ev = labelSnapshotFromFeed(raw);
 			if (!labelEventMatchesFilters(ev, labelFilters)) continue;
-			// A webhook may already have fired this add.
+			// Fired by an earlier poll whose watermark did not get past it.
+			if (labelEventHandledBySource(subscriptionId, repo, ev, 'poll')) continue;
+			// A webhook may already have fired this add, or be firing it now.
 			if (claimLabelEventFiredByOtherSource(subscriptionId, repo, ev, 'poll')) continue;
-			onEvent(buildGitHubLabelEvent(triggerName, repo, ev));
-			recordLabelEventFired(subscriptionId, repo, ev, 'poll');
+			const webhookInFlight = claimLabelEventInFlightForOtherSource(
+				subscriptionId,
+				repo,
+				ev,
+				'poll'
+			);
+			if (webhookInFlight) {
+				pending.push({ id: raw.id, settled: webhookInFlight });
+				continue;
+			}
+			const reservation = reserveLabelEvent(subscriptionId, repo, ev, 'poll');
+			fire(buildGitHubLabelEvent(triggerName, repo, ev), reservation);
+			pending.push({ id: raw.id, settled: reservation.settled });
 		}
 
 		// Advance past everything scanned, matched or not: an event filtered out
-		// by kind/label must not be re-examined forever.
-		if (highestId > watermark) {
-			setGitHubItemRevision(subscriptionId, LABEL_WATERMARK_KEY, String(highestId));
+		// by kind/label must not be re-examined forever. But never past an add
+		// that did not reach the run manager: the watermark stays just below
+		// it, so the next poll (or the next start, after a crash) reads it
+		// again, and the adds above it that did fire are skipped by their rows.
+		let next = stopped ? watermark : highestId;
+		for (const { id, settled } of pending) {
+			if (!(await settled)) next = Math.min(next, id - 1);
+		}
+		if (next > watermark) {
+			setGitHubItemRevision(subscriptionId, LABEL_WATERMARK_KEY, String(next));
 		}
 	}
 

@@ -1338,15 +1338,20 @@ export function claimWebhookDelivery(path: string, deliveryId: string): boolean 
 }
 
 /**
- * Forget a claimed delivery, so the sender's retry is handled again. For a
- * subscriber that failed on it: a claim it could not act on must not turn the
- * retry into a duplicate.
+ * Whether a (path, delivery id) pair was already claimed within
+ * {@link WEBHOOK_DELIVERY_RETENTION_MS}. Read-only: the listener checks it on
+ * arrival and claims only after the delivery was taken, so a crash in between
+ * leaves no claim to block the sender's retry. Without a database nothing
+ * counts as claimed.
  */
-export function releaseWebhookDelivery(path: string, deliveryId: string): void {
-	if (!db) return;
-	getDb()
-		.prepare(`DELETE FROM cue_webhook_deliveries WHERE path = ? AND delivery_id = ?`)
-		.run(path, deliveryId);
+export function isWebhookDeliveryClaimed(path: string, deliveryId: string): boolean {
+	if (!db) return false;
+	const row = getDb()
+		.prepare(
+			`SELECT 1 FROM cue_webhook_deliveries WHERE path = ? AND delivery_id = ? AND received_at >= ?`
+		)
+		.get(path, deliveryId, Date.now() - WEBHOOK_DELIVERY_RETENTION_MS);
+	return row !== undefined;
 }
 
 // ============================================================================

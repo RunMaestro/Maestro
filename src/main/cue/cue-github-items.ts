@@ -38,6 +38,91 @@ export const DEFAULT_MAX_NOTIFICATIONS = 10;
 export const GITHUB_ITEM_BODY_LIMIT = 5000;
 
 /**
+ * A change one source has decided to fire whose "already fired" record is not
+ * written yet, because its event is still on the way to the run manager
+ * (SusFactor scoring in flight). The record is written only once the event
+ * was dispatched or deliberately dropped (`commit`), so a crash in between
+ * leaves the change unrecorded and the poller fires it after the restart.
+ *
+ * While it is in flight, the other source treats the change as handled, so a
+ * webhook delivery and a poll of the same change still fire once. The map is
+ * process memory on purpose: a crash empties it together with the work it
+ * stood for.
+ */
+export interface GitHubChangeReservation {
+	/** Write the record and release the reservation. A no-op once settled. */
+	commit(): void;
+	/** Release without writing (the event never reached the run manager). */
+	release(): void;
+	/** Resolves `true` once committed, `false` once released. */
+	readonly settled: Promise<boolean>;
+}
+
+interface InFlightChange {
+	settled: Promise<boolean>;
+	/** Label adds only: the other source already paired an add with this one. */
+	paired: boolean;
+}
+
+const inFlightChanges = new Map<string, InFlightChange>();
+
+function inFlightKey(subscriptionId: string, itemKey: string): string {
+	return `${subscriptionId}\u0000${itemKey}`;
+}
+
+/** Whether a source is firing this change right now. */
+function isGitHubChangeInFlight(subscriptionId: string, itemKey: string): boolean {
+	return inFlightChanges.has(inFlightKey(subscriptionId, itemKey));
+}
+
+/**
+ * Reserve a change before its event leaves for the run manager. `write` is
+ * the record `commit` writes. Call it synchronously after the decision that
+ * chose to fire, with no await in between.
+ */
+export function reserveGitHubChange(
+	subscriptionId: string,
+	itemKey: string,
+	write: () => void
+): GitHubChangeReservation {
+	const key = inFlightKey(subscriptionId, itemKey);
+	let resolve!: (committed: boolean) => void;
+	const entry: InFlightChange = {
+		settled: new Promise<boolean>((r) => {
+			resolve = r;
+		}),
+		paired: false,
+	};
+	inFlightChanges.set(key, entry);
+	let done = false;
+	const finish = (committed: boolean) => {
+		if (done) return;
+		done = true;
+		if (inFlightChanges.get(key) === entry) inFlightChanges.delete(key);
+		resolve(committed);
+	};
+	return {
+		commit() {
+			if (done) return;
+			try {
+				write();
+			} finally {
+				finish(true);
+			}
+		},
+		release() {
+			finish(false);
+		},
+		settled: entry.settled,
+	};
+}
+
+/** Test-only: forget every reservation, as a crash would. */
+export function resetGitHubChangeReservationsForTests(): void {
+	inFlightChanges.clear();
+}
+
+/**
  * A pull request or issue as both sources see it. Fields are already
  * normalized: `state` is lowercase GitHub state (`open` / `closed`) and a
  * merged PR carries `mergedAt`.
@@ -138,6 +223,8 @@ export function decideGitHubItem(options: {
 	cap: number;
 }): GitHubItemDecision {
 	if (options.isFirstRun) return { kind: 'seed' };
+	// The other source is firing this item right now; its record follows.
+	if (isGitHubChangeInFlight(options.subscriptionId, options.itemKey)) return { kind: 'skip' };
 	if (!isGitHubItemSeen(options.subscriptionId, options.itemKey)) return { kind: 'new' };
 	if (!options.retrigger) return { kind: 'skip' };
 	const state = getGitHubItemState(options.subscriptionId, options.itemKey);
@@ -271,39 +358,92 @@ export function claimLabelEventFiredByOtherSource(
 	ev: Pick<GitHubLabelEventSnapshot, 'number' | 'label' | 'labeledAt'>,
 	source: GitHubLabelSource
 ): boolean {
-	const other: GitHubLabelSource = source === 'poll' ? 'webhook' : 'poll';
-	const second = labelSecond(ev.labeledAt);
-	const candidates: string[] = [];
-	if (second === null) {
-		candidates.push(labelEventKey(other, repo, ev.number, ev.label, ev.labeledAt));
-	} else {
-		// Nearest second first, so two adds close together pair up in order.
-		for (let delta = 0; delta <= LABEL_EVENT_MATCH_TOLERANCE_S; delta++) {
-			for (const s of delta === 0 ? [second] : [second - delta, second + delta]) {
-				candidates.push(`label-${other}:${repo}:${ev.number}:${ev.label.toLowerCase()}:${s}`);
-			}
-		}
-	}
-	for (const key of candidates) {
+	for (const key of otherSourceLabelKeys(repo, ev, source)) {
 		if (getGitHubItemState(subscriptionId, key)?.lastRevision === LABEL_FIRED) {
 			setGitHubItemRevision(subscriptionId, key, LABEL_MATCHED);
+			// This source's own row too, so reading the add again (a poll whose
+			// watermark did not move past it) finds it handled.
+			setGitHubItemRevision(
+				subscriptionId,
+				labelEventKey(source, repo, ev.number, ev.label, ev.labeledAt),
+				LABEL_MATCHED
+			);
 			return true;
 		}
 	}
 	return false;
 }
 
-/** Record that a source fired this label add. */
-export function recordLabelEventFired(
+/** The other source's keys this add may pair with, nearest second first. */
+function otherSourceLabelKeys(
+	repo: string,
+	ev: Pick<GitHubLabelEventSnapshot, 'number' | 'label' | 'labeledAt'>,
+	source: GitHubLabelSource
+): string[] {
+	const other: GitHubLabelSource = source === 'poll' ? 'webhook' : 'poll';
+	const second = labelSecond(ev.labeledAt);
+	if (second === null) return [labelEventKey(other, repo, ev.number, ev.label, ev.labeledAt)];
+	const keys: string[] = [];
+	// Nearest second first, so two adds close together pair up in order.
+	for (let delta = 0; delta <= LABEL_EVENT_MATCH_TOLERANCE_S; delta++) {
+		for (const s of delta === 0 ? [second] : [second - delta, second + delta]) {
+			keys.push(`label-${other}:${repo}:${ev.number}:${ev.label.toLowerCase()}:${s}`);
+		}
+	}
+	return keys;
+}
+
+/**
+ * Whether the other source is firing this label add right now. A match pairs
+ * with that add (so a second add close by does not pair with it too) and
+ * returns its `settled` promise, so a caller that must know the add really
+ * fired (the poller, before it moves its watermark) can wait for it. Its
+ * record is written as `fired`, as usual: if the poller has to read the add
+ * again after a restart, it pairs with that row then. Null when nothing
+ * unpaired is in flight.
+ */
+export function claimLabelEventInFlightForOtherSource(
 	subscriptionId: string,
 	repo: string,
 	ev: Pick<GitHubLabelEventSnapshot, 'number' | 'label' | 'labeledAt'>,
 	source: GitHubLabelSource
-): void {
-	setGitHubItemRevision(
-		subscriptionId,
-		labelEventKey(source, repo, ev.number, ev.label, ev.labeledAt),
-		LABEL_FIRED
+): Promise<boolean> | null {
+	for (const key of otherSourceLabelKeys(repo, ev, source)) {
+		const entry = inFlightChanges.get(inFlightKey(subscriptionId, key));
+		if (entry && !entry.paired) {
+			entry.paired = true;
+			return entry.settled;
+		}
+	}
+	return null;
+}
+
+/**
+ * Whether this source already fired (or is firing) this label add. The poller
+ * asks after a restart re-reads events its watermark had not passed yet.
+ */
+export function labelEventHandledBySource(
+	subscriptionId: string,
+	repo: string,
+	ev: Pick<GitHubLabelEventSnapshot, 'number' | 'label' | 'labeledAt'>,
+	source: GitHubLabelSource
+): boolean {
+	const key = labelEventKey(source, repo, ev.number, ev.label, ev.labeledAt);
+	return (
+		isGitHubChangeInFlight(subscriptionId, key) || getGitHubItemState(subscriptionId, key) !== null
+	);
+}
+
+/** Reserve a label add this source is about to fire; `commit` records it as fired. */
+export function reserveLabelEvent(
+	subscriptionId: string,
+	repo: string,
+	ev: Pick<GitHubLabelEventSnapshot, 'number' | 'label' | 'labeledAt'>,
+	source: GitHubLabelSource
+): GitHubChangeReservation {
+	const key = labelEventKey(source, repo, ev.number, ev.label, ev.labeledAt);
+	return reserveGitHubChange(subscriptionId, key, () =>
+		setGitHubItemRevision(subscriptionId, key, LABEL_FIRED)
 	);
 }
 

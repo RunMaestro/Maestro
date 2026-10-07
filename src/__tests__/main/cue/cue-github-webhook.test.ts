@@ -57,10 +57,13 @@ vi.mock('../../../main/utils/sentry', () => ({
 
 import { createCueGitHubPoller } from '../../../main/cue/cue-github-poller';
 import {
-	handleGitHubWebhookDelivery,
+	handleGitHubWebhookDelivery as handleGitHubWebhookDeliveryRaw,
 	type GitHubWebhookSubscription,
 } from '../../../main/cue/cue-github-webhook';
-import { labelEventKey } from '../../../main/cue/cue-github-items';
+import {
+	labelEventKey,
+	resetGitHubChangeReservationsForTests,
+} from '../../../main/cue/cue-github-items';
 import type { CueWebhookDelivery } from '../../../main/cue/cue-webhook-server';
 import type { CueEvent } from '../../../main/cue/cue-types';
 
@@ -156,6 +159,18 @@ function setupGh(commandResponses: Record<string, string>) {
 	);
 }
 
+/**
+ * Handle a delivery whose event is then dispatched at once, as the trigger
+ * source does when no SusFactor scoring runs: the reservation is committed.
+ */
+function handleGitHubWebhookDelivery(
+	...args: Parameters<typeof handleGitHubWebhookDeliveryRaw>
+): ReturnType<typeof handleGitHubWebhookDeliveryRaw> {
+	const result = handleGitHubWebhookDeliveryRaw(...args);
+	result.reservation?.commit();
+	return result;
+}
+
 /** Run one poll of a real poller and collect what it fired. */
 async function pollOnce(
 	eventType: 'github.pull_request' | 'github.issue' | 'github.label',
@@ -171,7 +186,10 @@ async function pollOnce(
 		subscriptionId: extra.subscriptionId ?? SUB_ID,
 		retriggerOnComments: extra.retriggerOnComments,
 		onLog: () => {},
-		onEvent: (e) => events.push(e),
+		onEvent: (e, onOutcome) => {
+			events.push(e);
+			onOutcome('emitted');
+		},
 	});
 	await vi.advanceTimersByTimeAsync(2100);
 	stop();
@@ -186,6 +204,7 @@ function seed(subId = SUB_ID): void {
 describe('handleGitHubWebhookDelivery', () => {
 	beforeEach(() => {
 		seen.clear();
+		resetGitHubChangeReservationsForTests();
 		vi.useFakeTimers();
 		mockExecFile.mockReset();
 	});

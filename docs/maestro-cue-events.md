@@ -631,7 +631,8 @@ GitHub sends a ping when the webhook is saved, and the Cue log reports it as con
 - Deliveries for a repository other than the subscription's `repo` are ignored.
 - A subscription that has never polled fires the delivery, then polls straight away so the items that already existed are recorded instead of fired.
 - A comment on a pull request (`issue_comment`) does not carry the pull request's branches or draft flag, which a `filter` may test. Instead of firing from it, Maestro polls right away, and the poll fires the change with the whole pull request.
-- GitHub's retries and its **Redeliver** button reuse the delivery id. Maestro remembers delivery ids for 24 hours and answers a repeat with `200` without firing it again. If a subscription fails on a delivery, the answer is `500` and a retry reaches that subscription only.
+- GitHub's retries and its **Redeliver** button reuse the delivery id. Maestro remembers delivery ids for 24 hours and answers a repeat with `200` without firing it again. If a subscription fails on a delivery, the answer is `500` and a retry reaches that subscription only. While Cue is off or stopping the answer is `503`.
+- The answer comes after the change has been handed on (or dropped on purpose), and the change is recorded as fired in that same step. If Maestro stops before that, nothing is recorded and the next poll fires the change.
 - When a webhook and a poll both report a label add, it fires once. Each add is matched on its own, so a label removed and re-added still fires twice, even a minute apart.
 - A delivery older than the change already fired (GitHub does not promise order) fires nothing.
 - `filter`, `gh_state`, and `max_notifications` apply to deliveries exactly as they do to polls, and the payload fields are the same.
@@ -722,7 +723,9 @@ A secret is mandatory. A webhook path with no authentication is a remote trigger
 - To take deliveries from the public internet, point a tunnel (ngrok, cloudflared) or a reverse proxy at the loopback port. Binding the listener itself to `0.0.0.0` is possible but puts an agent trigger directly on your network.
 - Only `POST` is accepted. Bodies over 1 MB are rejected with `413`.
 - Multiple subscriptions may share a `path`. Each authenticates independently, and every one that passes receives the delivery.
-- A delivery whose id (`X-GitHub-Delivery`, `X-Request-Id`, or `X-Maestro-Delivery`) a subscription already accepted in the last 24 hours is not fired for it again; when every subscription on the path has it, the answer is `200`. If a subscription fails on a delivery, the answer is `500` and a retry reaches only the subscriptions that did not get it. A delivery with no id header is never treated as a repeat.
+- A delivery is answered `202` only once Maestro has handled it: its run has started or is queued (the queue survives a restart), or it was dropped on purpose (a `filter` that does not match, a SusFactor block). The SusFactor check therefore runs before the answer.
+- A delivery whose id (`X-GitHub-Delivery`, `X-Request-Id`, or `X-Maestro-Delivery`) a subscription already handled in the last 24 hours is not fired for it again; when every subscription on the path has it, the answer is `200`. Two copies arriving together fire once. If a subscription fails on a delivery, the answer is `500` and a retry reaches only the subscriptions that did not get it. A delivery with no id header is never treated as a repeat.
+- While Cue is off or stopping, a delivery is answered `503` with `Retry-After: 30` and is not recorded, so the sender's retry fires once Cue runs.
 
 **Authenticating a delivery:**
 

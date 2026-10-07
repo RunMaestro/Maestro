@@ -15,10 +15,18 @@ import { isCueActive } from '../cue-active-state';
 import { DEFAULT_MAX_NOTIFICATIONS } from '../cue-github-items';
 import { createCueGitHubPoller } from '../cue-github-poller';
 import { GITHUB_SIGNATURE_HEADER, handleGitHubWebhookDelivery } from '../cue-github-webhook';
-import { guardGitHubEvent } from '../cue-susfactor';
-import { DEFAULT_CUE_SETTINGS, type CueEvent } from '../cue-types';
-import { buildCueWebhookUrl, registerCueWebhook } from '../cue-webhook-server';
-import { passesFilter } from './cue-trigger-filter';
+import { extractGitHubScorableText, guardGitHubEvent } from '../cue-susfactor';
+import type { CueEvent } from '../cue-types';
+import {
+	buildCueWebhookUrl,
+	CueWebhookUnavailableError,
+	registerCueWebhook,
+} from '../cue-webhook-server';
+import {
+	createCueGuardedEmitter,
+	isFinalEmitOutcome,
+	type CueEmitOutcome,
+} from './cue-guarded-emit';
 import type { CueTriggerSource, CueTriggerSourceContext } from './cue-trigger-source';
 import { resolveWebhookSecret } from './cue-webhook-trigger-source';
 
@@ -54,41 +62,20 @@ export function createCueGitHubPollerTriggerSource(
 
 	let cleanup: (() => void) | null = null;
 	let pollNowFn: (() => void) | null = null;
-	// Guard decisions in flight. The poller has already marked these items seen,
-	// so the drain waits for them (see `settle`) rather than losing them.
-	const pendingGuards = new Set<Promise<void>>();
+	// Filter, SusFactor and emit for both the poller and webhook deliveries;
+	// its settle() is what the drain waits on.
+	const emitter = createCueGuardedEmitter(ctx);
 	let getPollerRepo: (() => string | null) | null = null;
 	let unregisterWebhook: (() => void) | null = null;
 
 	/** Filter, score, then emit one event, whichever source produced it. */
-	function dispatch(event: CueEvent): void {
-		if (!ctx.enabled()) return;
-		if (!passesFilter(ctx.subscription, event, ctx.onLog)) return;
-
-		// SusFactor is the only async gate in this path, and the poller
-		// ignores onEvent's return value, so the emit is deferred into the
-		// promise rather than made to block the poll loop. The guard never
-		// rejects and fails open, so a 0DIN outage degrades to today's
-		// behaviour instead of stalling the subscription.
-		const settings = ctx.registry.get(ctx.session.id)?.config.settings;
-		const pending: Promise<void> = guardGitHubEvent({
-			event,
-			sessionId: ctx.session.id,
-			subscriptionId,
-			subscriptionName: ctx.subscription.name,
-			enabled: settings?.susfactor_enabled !== false,
-			threshold: settings?.susfactor_threshold ?? DEFAULT_CUE_SETTINGS.susfactor_threshold ?? 0.95,
-			onLog: (level, message) => ctx.onLog(level as Parameters<typeof ctx.onLog>[0], message),
-		})
-			.then((allowed) => {
-				if (!allowed) return;
-				ctx.onLog('cue', `[CUE] "${ctx.subscription.name}" triggered (${eventType})`);
-				ctx.emit(event);
-			})
-			.finally(() => {
-				pendingGuards.delete(pending);
-			});
-		pendingGuards.add(pending);
+	function dispatch(event: CueEvent, onOutcome: (outcome: CueEmitOutcome) => void): void {
+		void emitter.emit(event, {
+			label: eventType,
+			scorableText: extractGitHubScorableText(event.payload),
+			guard: guardGitHubEvent,
+			onOutcome,
+		});
 	}
 
 	/** Register on the shared webhook listener, or explain why not. */
@@ -117,9 +104,10 @@ export function createCueGitHubPollerTriggerSource(
 			secret,
 			signatureHeader: webhook.signature_header || GITHUB_SIGNATURE_HEADER,
 			onLog: ctx.onLog,
-			onDelivery: (delivery) => {
-				// The listener has no view of the engine's enabled flag.
-				if (!ctx.enabled()) return;
+			onDelivery: async (delivery, accepted) => {
+				// The listener has no view of the engine's enabled flag. Not
+				// running means not taken: a 503, so the sender retries.
+				if (!ctx.enabled()) throw new CueWebhookUnavailableError();
 				const result = handleGitHubWebhookDelivery(
 					{
 						eventType,
@@ -137,8 +125,32 @@ export function createCueGitHubPollerTriggerSource(
 				if (result.note) {
 					ctx.onLog('info', `[CUE] "${ctx.subscription.name}" webhook: ${result.note}`);
 				}
-				for (const event of result.events) dispatch(event);
 				if (result.needsSeed || result.pollNow) pollNowFn?.();
+				// The delivery is answered once its event has reached the run
+				// manager (or was deliberately dropped), and the change and the
+				// delivery id are recorded as handled in that same step.
+				let remaining = result.events.length;
+				let allFinal = true;
+				const outcomes = await Promise.all(
+					result.events.map(
+						(event) =>
+							new Promise<CueEmitOutcome>((resolve) =>
+								dispatch(event, (outcome) => {
+									if (isFinalEmitOutcome(outcome)) result.reservation?.commit();
+									else {
+										allFinal = false;
+										result.reservation?.release();
+									}
+									// The last outcome records the delivery id, inside the
+									// work the drain waits on.
+									if (--remaining === 0 && allFinal) accepted();
+									resolve(outcome);
+								})
+							)
+					)
+				);
+				if (outcomes.includes('not-running')) throw new CueWebhookUnavailableError();
+				if (!outcomes.every(isFinalEmitOutcome)) throw new Error('dispatch failed');
 			},
 		});
 		ctx.onLog(
@@ -198,10 +210,8 @@ export function createCueGitHubPollerTriggerSource(
 			pollNowFn?.();
 		},
 
-		async settle() {
-			// The guard never rejects (it fails open), and emit errors are the
-			// dispatcher's; swallow anyway so settle honors its contract.
-			await Promise.allSettled([...pendingGuards]);
+		settle() {
+			return emitter.settle();
 		},
 	};
 }

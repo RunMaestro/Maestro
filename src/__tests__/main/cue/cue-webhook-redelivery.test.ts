@@ -1,17 +1,18 @@
 /**
  * Redelivered webhooks: a sender retrying a delivery (same delivery id) is
  * answered with a 2xx but fires nothing the second time. Dedupe is kept per
- * subscriber, so a subscriber that failed on the delivery gets the retry.
+ * subscriber, so a subscriber that failed on the delivery gets the retry. A
+ * delivery id is recorded only once its subscriber took the delivery.
  *
- * `claimWebhookDelivery` / `releaseWebhookDelivery` are backed by an in-memory
- * set here; their SQL is covered in cue-db.test.ts.
+ * `claimWebhookDelivery` / `isWebhookDeliveryClaimed` are backed by an
+ * in-memory set here; their SQL is covered in cue-db.test.ts.
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { EventEmitter } from 'events';
 import * as http from 'http';
 
-const { claimed, claimMock, releaseMock } = vi.hoisted(() => {
+const { claimed, claimMock, isClaimedMock } = vi.hoisted(() => {
 	const claimed = new Set<string>();
 	return {
 		claimed,
@@ -21,15 +22,13 @@ const { claimed, claimMock, releaseMock } = vi.hoisted(() => {
 			claimed.add(key);
 			return true;
 		}),
-		releaseMock: vi.fn((path: string, id: string) => {
-			claimed.delete(`${path}\u0000${id}`);
-		}),
+		isClaimedMock: vi.fn((path: string, id: string) => claimed.has(`${path}\u0000${id}`)),
 	};
 });
 
 vi.mock('../../../main/cue/cue-db', () => ({
 	claimWebhookDelivery: (path: string, id: string) => claimMock(path, id),
-	releaseWebhookDelivery: (path: string, id: string) => releaseMock(path, id),
+	isWebhookDeliveryClaimed: (path: string, id: string) => isClaimedMock(path, id),
 }));
 
 vi.mock('../../../main/utils/sentry', () => ({
@@ -91,7 +90,7 @@ describe('webhook redelivery', () => {
 	beforeEach(() => {
 		claimed.clear();
 		claimMock.mockClear();
-		releaseMock.mockClear();
+		isClaimedMock.mockClear();
 		process.env.MAESTRO_CUE_WEBHOOK_PORT = '0';
 		deliveries = [];
 		onLog = vi.fn();
@@ -170,7 +169,8 @@ describe('webhook redelivery', () => {
 			expect(first.status).toBe(500);
 			expect(first.body).toEqual({ accepted: 1, failed: 1 });
 			expect(deliveries).toHaveLength(1);
-			expect(releaseMock).toHaveBeenCalledWith('my-hook#session-2:hook', 'abc-123');
+			// Only the subscriber that took it is recorded.
+			expect(claimMock.mock.calls).toEqual([['my-hook#session-1:hook', 'abc-123']]);
 			expect(onLog).toHaveBeenCalledWith('error', expect.stringContaining('database is locked'));
 
 			const retry = await send({ 'x-github-delivery': 'abc-123' });
@@ -184,7 +184,7 @@ describe('webhook redelivery', () => {
 	});
 
 	it('fires the delivery when the database cannot be read', async () => {
-		claimMock.mockImplementationOnce(() => {
+		isClaimedMock.mockImplementationOnce(() => {
 			throw new Error('disk I/O error');
 		});
 		const res = await send({ 'x-github-delivery': 'abc-123' });
