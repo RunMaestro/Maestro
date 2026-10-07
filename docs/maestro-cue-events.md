@@ -613,7 +613,7 @@ subscriptions:
 **Setting up the webhook on GitHub:**
 
 1. In the repository, open **Settings > Webhooks > Add webhook**.
-2. **Payload URL:** a public URL that forwards to `http://127.0.0.1:17997/cue/<path>`. GitHub cannot reach the loopback listener directly, so put a tunnel or a reverse proxy in front of it (see the listener notes under `webhook.received`).
+2. **Payload URL:** a public URL that forwards to `http://127.0.0.1:17997/cue/<path>`. GitHub cannot reach the loopback listener directly, so put a tunnel or a reverse proxy in front of it (see the listener notes under `webhook.received`, and [Webhooks behind a proxy](./maestro-cue-server#webhooks-behind-a-proxy) for nginx, Caddy and tunnel configurations).
 3. **Content type:** `application/json`. Form-encoded deliveries are ignored.
 4. **Secret:** the value of the environment variable named in `secret_env`.
 5. **Events:** pick individual events, matching the triggers that use this path:
@@ -720,8 +720,8 @@ A secret is mandatory. A webhook path with no authentication is a remote trigger
 
 - One listener serves every webhook subscription across every agent. It starts when the first one loads and stops when the last one unloads.
 - Binds to `127.0.0.1:17997` by default. Override with `MAESTRO_CUE_WEBHOOK_PORT` and `MAESTRO_CUE_WEBHOOK_HOST`.
-- To take deliveries from the public internet, point a tunnel (ngrok, cloudflared) or a reverse proxy at the loopback port. Binding the listener itself to `0.0.0.0` is possible but puts an agent trigger directly on your network.
-- Only `POST` is accepted. Bodies over 1 MB are rejected with `413`.
+- To take deliveries from the public internet, point a tunnel (ngrok, cloudflared) or a reverse proxy at the loopback port ([configurations](./maestro-cue-server#webhooks-behind-a-proxy)). Binding the listener itself to `0.0.0.0` is possible but puts an agent trigger directly on your network.
+- Only `POST` is accepted. Bodies over 1 MiB are rejected with `413`.
 - Multiple subscriptions may share a `path`. Each authenticates independently, and every one that passes receives the delivery.
 - A delivery is answered `202` only once Maestro has handled it: its run has started or is queued (the queue survives a restart), or it was dropped on purpose (a `filter` that does not match, a SusFactor block). The SusFactor check therefore runs before the answer.
 - A delivery whose id (`X-GitHub-Delivery`, `X-Request-Id`, or `X-Maestro-Delivery`) a subscription already handled in the last 24 hours is not fired for it again; when every subscription on the path has it, the answer is `200`. Two copies arriving together fire once. If a subscription fails on a delivery, the answer is `500` and a retry reaches only the subscriptions that did not get it. A delivery with no id header is never treated as a repeat.
